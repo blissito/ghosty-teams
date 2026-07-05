@@ -77,15 +77,36 @@ import {
   listWorkspaceUsersFn,
 } from "../server/channels";
 
+// Cache CLIENTE del shell (rooms + user). Navegar a un room que YA está en el
+// sidebar resuelve el loader al instante (sin round-trip) → cambio de pantalla
+// inmediato; el flujo sigue cargando client-side con su skeleton. SOLO cliente:
+// en SSR cada request es de otro usuario → jamás cachear ahí (fuga cross-user).
+let shellCache: { channels: Channel[]; user: Awaited<ReturnType<typeof me>> } | null = null;
+
 export const Route = createFileRoute("/c/$slug")({
   // El hilo y el flujo NO van en el loader (se cargan client-side con cache +
   // skeleton → abrir es instantáneo). El loader solo trae rooms + meta + user.
   loader: async ({ params }) => {
+    // Ruta rápida (cliente): el room ya está en el sidebar → resuelve sin red y
+    // revalida en segundo plano. El meta del room vive en la misma lista.
+    if (typeof window !== "undefined" && shellCache) {
+      const channel = shellCache.channels.find((c) => c.slug === params.slug);
+      if (channel) {
+        const user = shellCache.user;
+        getChannelView({ data: { slug: params.slug } })
+          .then((v) => {
+            if (v) shellCache = { channels: v.channels, user };
+          })
+          .catch(() => {});
+        return { channels: shellCache.channels, channel, user };
+      }
+    }
     const [view, user] = await Promise.all([
       getChannelView({ data: { slug: params.slug } }),
       me(),
     ]);
     if (!view) throw notFound();
+    if (typeof window !== "undefined") shellCache = { channels: view.channels, user };
     return { ...view, user };
   },
   component: ChannelPage,
@@ -1080,6 +1101,12 @@ function Sidebar({
 }
 
 function Modal({ children, onClose }: { children: React.ReactNode; onClose: () => void }) {
+  // Esc cierra (para cualquier modal que use este wrapper).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
   return (
     <motion.div
       initial={{ opacity: 0 }}
@@ -1447,7 +1474,7 @@ function NewDmModal({
           disabled={busy || !picked.length}
           className="rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-brand-fg disabled:opacity-50"
         >
-          {picked.length > 1 ? t("Iniciar grupo ({n})", { n: picked.length }) : t("Iniciar chat")}
+          {picked.length > 1 ? t("Iniciar grupo ({n})", { n: picked.length }) : t("Iniciar")}
         </button>
       </div>
     </Modal>
@@ -1479,21 +1506,17 @@ function SearchModal({ onClose, onOpenDm }: { onClose: () => void; onOpenDm: (id
   const router = useRouter();
   const [q, setQ] = useState("");
   const [results, setResults] = useState<{ rooms: RoomHit[]; dms: Message[] } | null>(null);
-  const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     const term = q.trim();
     if (term.length < 2) {
       setResults(null);
-      setBusy(false);
       return;
     }
-    setBusy(true);
     const h = setTimeout(() => {
       searchMessagesFn({ data: { q: term } })
-        .then((r) => setResults(r))
-        .catch(() => setResults({ rooms: [], dms: [] }))
-        .finally(() => setBusy(false));
+        .then((r) => setResults(r ?? { rooms: [], dms: [] }))
+        .catch(() => setResults({ rooms: [], dms: [] }));
     }, 250);
     return () => clearTimeout(h);
   }, [q]);
@@ -1551,7 +1574,7 @@ function SearchModal({ onClose, onOpenDm }: { onClose: () => void; onOpenDm: (id
         <div className="min-h-0 flex-1 overflow-y-auto p-2">
           {q.trim().length < 2 ? (
             <p className="px-3 py-6 text-center text-sm text-muted">{t("Escribe al menos 2 letras.")}</p>
-          ) : busy && !results ? (
+          ) : !results ? (
             <p className="px-3 py-6 text-center text-sm text-muted">{t("Buscando…")}</p>
           ) : empty ? (
             <p className="px-3 py-6 text-center text-sm text-muted">{t("Sin resultados.")}</p>
