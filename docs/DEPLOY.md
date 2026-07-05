@@ -38,11 +38,37 @@ VM efímera. **No** recrea VMs ni toca secrets; las VMs corriendo no se afectan.
 > si el bake falla, `mv` el backup de vuelta.
 
 Después, a mano (no automatizado):
-1. **Recrear las VMs existentes** que quieras migrar ya (vía EasyBits/provisioner).
-   Las nuevas nacen con el template actualizado automáticamente.
+1. **Cutover de un team existente** (para que tome el template nuevo). Las VMs
+   corriendo siguen con su ext4 viejo hasta recrearse. Para migrar un team ya:
+   - **Destruir su caja** en el host: `DELETE http://127.0.0.1:8080/v1/sandbox/<sandboxId>`
+     (bearer `SANDBOX_HOST_TOKEN` de `/etc/sandbox-host/.env`).
+   - **El owner recarga `teams.formmy.app` (logueado)** → el ingress
+     (`formmy_rrv7/server/server.ts`) detecta la caja muerta → `reviveBox()` levanta
+     una nueva **del template nuevo** sobre la MISMA DB, actualiza el `Team` y proxya.
+     Muestra una *warming page* con auto-refresh ~60-90s. **Ojo:** una petición NO
+     autenticada sólo redirige a login → no dispara el revive; tiene que ser el owner.
+   - Los teams nuevos nacen con el template nuevo automáticamente.
 2. **Verificación funcional** con secrets reales: `GET /api/stream` con cookie
    `gc_session` → `text/event-stream`; postear desde otra sesión y ver el evento
    en vivo. (La VM de smoke da 500 sin secrets — es correcto.)
+
+## Incidente 2026-07-05 (lecciones)
+
+Primer bake Fases 0-4 → prod dio `db 500: Unexpected Server Error`. Causa doble:
+
+- **Migraciones tragadas:** `ensureSchema()` corrió durante un blip de la DB, los
+  `ALTER/CREATE` fallaron, se tragaron y quedaron memoizados como hechos → nunca se
+  aplicaron (`no such column: archived`). **Arreglado en código** (`ensureSchema`
+  reintenta en vez de memoizar el fallo). **Recuperación en sitio** sin perder datos:
+  aplicar las DDL **directo al sqld** desde una máquina externa (evita el hairpin):
+  `POST https://easybits-db.fly.dev/v2/pipeline` con header `x-namespace:<dbId>` y
+  body `{"requests":[{"type":"execute","stmt":{"sql":"..."}},{"type":"close"}]}`.
+- **`Unexpected end of JSON input` en el app EasyBits** = recibe body vacío de sqld.
+  sqld sano (curl externo 200); el app **dentro de Fly** llama a su propio
+  `SQLD_URL=https://easybits-db.fly.dev` (público) → **hairpin de Fly** intermitente.
+  Se asentó tras reiniciar sqld+app. **NO cambiar el autostop de `easybits-db`**
+  (funciona así por diseño). Diagnosticar con `flyctl logs -a easybits` (busca el
+  error real) y `flyctl logs -a easybits-db` (salud de sqld), no adivinando.
 
 ## Migración de schema (dos vías, ya sincronizadas)
 
