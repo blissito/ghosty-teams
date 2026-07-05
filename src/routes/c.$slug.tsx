@@ -165,10 +165,16 @@ const viewCache = new Map<string, ViewHit[]>();
 const sentNonces = new Set<string>();
 
 // Contexto de chat (usuario + slug activo) para que MessageRow acceda sin prop-drilling.
-const ChatCtx = createContext<{ me: SessionUser | null; slug: string; emojis: CustomEmoji[] }>({
+const ChatCtx = createContext<{
+  me: SessionUser | null;
+  slug: string;
+  emojis: CustomEmoji[];
+  react: (m: Message, emoji: string) => void;
+}>({
   me: null,
   slug: "",
   emojis: [],
+  react: () => {},
 });
 
 // Emojis rápidos para el picker (evita una lib de ~1MB).
@@ -371,6 +377,21 @@ function ChannelPage() {
         dmFlowCache.set(did, arr.map((m) => (m.id === id ? fn(m) : m)));
     }
     applyPatch();
+  };
+
+  // Reacción OPTIMISTA: parchea la cache al instante (el chip aparece/desaparece
+  // sin esperar red) y dispara el server; el eco realtime confirma el count
+  // autoritativo. Si el server falla, revalida para reconciliar.
+  const react = (m: Message, emoji: string) => {
+    const mySub = user?.sub;
+    patchMessage(m.id, (msg) => {
+      const prev = (msg.reactions ?? []).find((r) => r.emoji === emoji);
+      const wasMine = prev?.mine ?? false;
+      const op: "add" | "remove" = wasMine ? "remove" : "add";
+      const count = (prev?.count ?? 0) + (wasMine ? -1 : 1);
+      return applyReaction(msg, { emoji, op, count, userSub: mySub ?? "" }, mySub);
+    });
+    toggleReactionFn({ data: { slug: channel.slug, messageId: m.id, emoji } }).catch(() => revalidate());
   };
 
   // Flujo del room: cacheado → volver a un room es instantáneo (sin skeleton si ya se vio).
@@ -660,7 +681,7 @@ function ChannelPage() {
   };
 
   return (
-    <ChatCtx.Provider value={{ me: user, slug: channel.slug, emojis }}>
+    <ChatCtx.Provider value={{ me: user, slug: channel.slug, emojis, react }}>
     <div className="flex h-[100dvh] bg-surface text-ink">
       {/* Backdrop del drawer (solo móvil): tap fuera cierra el sidebar. */}
       {navOpen && (
@@ -2321,7 +2342,7 @@ function MessageRow({
       {/* Acciones al hover: reaccionar · destacar · menú (copiar/fijar/editar/borrar) */}
       {m.kind === "msg" && !editing && (
         <div className="absolute right-2 top-0 z-10 flex -translate-y-1/2 items-center gap-0.5 rounded-lg border border-border bg-surface-2 px-0.5 opacity-100 shadow-sm transition md:opacity-0 md:group-hover:opacity-100">
-          {canReact && <ReactButton m={m} slug={slug} />}
+          {canReact && <ReactButton m={m} />}
           <StarButton m={m} />
           <MessageActions
             m={m}
@@ -2361,7 +2382,7 @@ function MessageRow({
           ) : null
         )}
         {m.attachments && m.attachments.length > 0 && <AttachmentList attachments={m.attachments} />}
-        {canReact && (m.reactions?.length ?? 0) > 0 && <ReactionBar m={m} slug={slug} />}
+        {canReact && (m.reactions?.length ?? 0) > 0 && <ReactionBar m={m} />}
         {showThreadLink && onOpenThread && (
           <div className="mt-1 flex items-center gap-3 text-xs">
             {m.reply_count ? (
@@ -2386,8 +2407,9 @@ function MessageRow({
   );
 }
 
-function ReactButton({ m, slug }: { m: Message; slug: string }) {
+function ReactButton({ m }: { m: Message }) {
   const t = useT();
+  const { react } = useContext(ChatCtx);
   const [open, setOpen] = useState(false);
   return (
     <div className="relative">
@@ -2402,7 +2424,7 @@ function ReactButton({ m, slug }: { m: Message; slug: string }) {
         <EmojiPicker
           onPick={(e) => {
             setOpen(false);
-            toggleReactionFn({ data: { slug, messageId: m.id, emoji: e } }).catch(() => {});
+            react(m, e);
           }}
           onClose={() => setOpen(false)}
         />
@@ -2599,16 +2621,15 @@ function EmojiPicker({ onPick, onClose }: { onPick: (e: string) => void; onClose
   );
 }
 
-function ReactionBar({ m, slug }: { m: Message; slug: string }) {
+function ReactionBar({ m }: { m: Message }) {
   const t = useT();
-  const react = (e: string) =>
-    toggleReactionFn({ data: { slug, messageId: m.id, emoji: e } }).catch(() => {});
+  const { react } = useContext(ChatCtx);
   return (
     <div className="mt-1 flex flex-wrap items-center gap-1">
       {(m.reactions ?? []).map((r) => (
         <button
           key={r.emoji}
-          onClick={() => react(r.emoji)}
+          onClick={() => react(m, r.emoji)}
           title={t("Toggle reacción")}
           className={`flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-xs transition ${
             r.mine
