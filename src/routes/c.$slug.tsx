@@ -580,10 +580,19 @@ function ChannelPage() {
     markReadFn({ data: { scope: "dm", scopeId: openDmId } }).catch(() => {});
     clearUnread("dm", openDmId);
   }, [openDmId]);
-  // Al reconciliar el flujo, limpia SOLO optimistic de flujo (parentId y dmId null);
-  // los de hilo (parentId) y DM (dmId) se limpian cuando su propio contexto recarga.
+  // Reconcilia optimistas de flujo (parentId y dmId null) contra el flujo real:
+  // quita un optimista SOLO cuando su mensaje real (mismo sender+body) ya llegó —
+  // así un evento SSE ajeno (otro autor) NO borra un optimista aún en vuelo.
+  // Los de hilo (parentId) y DM (dmId) se limpian en su propio contexto.
   useEffect(() => {
-    if (messages) setOptimistic((o) => o.filter((x) => x.parentId !== null || x.dmId !== null));
+    if (!messages) return;
+    setOptimistic((o) =>
+      o.filter((x) => {
+        if (x.parentId !== null || x.dmId !== null) return true;
+        const landed = messages.some((m) => m.sender === x.sender && m.body === x.body);
+        return !landed;
+      })
+    );
   }, [messages]);
   // Enfocar hilo, DM o vista en el centro son mutuamente excluyentes.
   const openThread = (id: number) => {
@@ -2738,7 +2747,6 @@ function Composer({
   useEffect(() => {
     setBody(typeof window !== "undefined" ? localStorage.getItem(draftKey) ?? "" : "");
   }, [draftKey]);
-  const [sending, setSending] = useState(false);
   const mentions = useMentions();
   const [mq, setMq] = useState<string | null>(null);
   const [mSel, setMSel] = useState(0);
@@ -2823,52 +2831,54 @@ function Composer({
     });
   }
 
-  async function submit() {
+  function submit() {
     // Adjuntos ya subidos (con fileId). Bloquea envío mientras alguno sube.
     const attachments = pending
       .filter((p) => p.fileId && !p.error)
       .map((p) => ({ fileId: p.fileId!, mime: p.mime, size: p.size, name: p.name }));
-    if ((!body.trim() && attachments.length === 0) || sending || uploading) return;
+    if ((!body.trim() && attachments.length === 0) || uploading) return;
     const sent = body;
     setBody("");
     setPending([]);
     if (typeof window !== "undefined") localStorage.removeItem(draftKey); // borrador consumido
-    setSending(true);
     if (sent.trim()) onOptimistic(sent);
     playSelfSound(); // confirmación sonora del envío propio (distinta de las notifs)
+    bodyRef.current?.focus(); // re-habilita al instante — no esperamos el round-trip
     // nonce: para descartar el eco realtime de mi propio mensaje (ya optimista).
     const nonce = crypto.randomUUID();
     sentNonces.add(nonce);
     setTimeout(() => sentNonces.delete(nonce), 15_000); // limpia si nunca ecoa
 
-    // ── DM: envío plano (sin hilos); @agente responde inline en el mismo DM ──
+    // Envío en SEGUNDO PLANO: el Composer NO espera el round-trip (el mensaje ya
+    // está optimista). Al resolver → revalida (+ dispara el agente si toca); si
+    // falla → revalida para reconciliar. Así varios envíos seguidos no se traban
+    // con la latencia de la DB/hairpin.
     if (dmId != null) {
-      const r = await postDmMessageFn({ data: { id: dmId, body: sent, nonce, attachments } });
-      onRevalidate?.();
-      setSending(false);
-      bodyRef.current?.focus();
-      if (r?.needsAgent && r.agentHandle) {
-        askDmAgentFn({ data: { id: dmId, body: sent, sender: "", handle: r.agentHandle } })
-          .then(() => onRevalidate?.())
-          .catch(() => onRevalidate?.());
-      }
+      postDmMessageFn({ data: { id: dmId, body: sent, nonce, attachments } })
+        .then((r) => {
+          onRevalidate?.();
+          if (r?.needsAgent && r.agentHandle) {
+            askDmAgentFn({ data: { id: dmId, body: sent, sender: "", handle: r.agentHandle } })
+              .then(() => onRevalidate?.())
+              .catch(() => onRevalidate?.());
+          }
+        })
+        .catch(() => onRevalidate?.());
       return;
     }
 
-    // ── Room / hilo ──
-    const r = await postMessage({ data: { slug, parentId, body: sent, nonce, attachments } });
-    onRevalidate?.();
-    setSending(false);
-    bodyRef.current?.focus();
-    if (r?.needsAgent && r.agentParent != null && r.agentHandle) {
-      // @agente en el flujo → abre el hilo donde responde (estado cliente).
-      if (parentId === null) {
-        onOpenThread?.(r.agentParent);
-      }
-      askAgent({ data: { slug, parentId: r.agentParent, body: sent, sender: "", handle: r.agentHandle } })
-        .then(() => onRevalidate?.())
-        .catch(() => onRevalidate?.());
-    }
+    postMessage({ data: { slug, parentId, body: sent, nonce, attachments } })
+      .then((r) => {
+        onRevalidate?.();
+        if (r?.needsAgent && r.agentParent != null && r.agentHandle) {
+          // @agente en el flujo → abre el hilo donde responde (estado cliente).
+          if (parentId === null) onOpenThread?.(r.agentParent);
+          askAgent({ data: { slug, parentId: r.agentParent, body: sent, sender: "", handle: r.agentHandle } })
+            .then(() => onRevalidate?.())
+            .catch(() => onRevalidate?.());
+        }
+      })
+      .catch(() => onRevalidate?.());
   }
 
   function onKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
@@ -2994,7 +3004,7 @@ function Composer({
         </div>
         <button
           type="submit"
-          disabled={sending || uploading}
+          disabled={uploading}
           title={uploading ? t("Subiendo adjunto…") : undefined}
           className="min-h-[42px] shrink-0 rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-brand-fg disabled:opacity-50"
         >
