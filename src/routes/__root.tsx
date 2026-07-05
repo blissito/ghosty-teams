@@ -7,6 +7,7 @@ import { me } from '../server/auth'
 // perder el evento — lo consume InstallAppBanner.
 import { registerSW } from '../utils/pwa-install'
 import { InstallAppBanner } from '../components/InstallAppBanner'
+import { LocaleProvider, DEFAULT_LOCALE } from '../i18n'
 
 export const Route = createRootRoute({
   // Guard: todo requiere sesión, salvo el login y las invitaciones.
@@ -62,13 +63,15 @@ function RootDocument({ children }: { children: React.ReactNode }) {
     registerSW()
   }, [])
   return (
-    <html lang="en">
+    <html lang={DEFAULT_LOCALE}>
       <head>
         <HeadContent />
       </head>
       <body>
-        {children}
-        <InstallAppBanner />
+        <LocaleProvider locale={DEFAULT_LOCALE}>
+          {children}
+          <InstallAppBanner />
+        </LocaleProvider>
         <Scripts />
       </body>
     </html>

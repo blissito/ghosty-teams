@@ -2,6 +2,7 @@ import { createFileRoute, useRouter, Link, redirect } from "@tanstack/react-rout
 import { useState } from "react";
 import { getSetup, selectFleetAgent } from "../server/setup";
 import { me, logout } from "../server/auth";
+import { useT } from "../i18n";
 
 // Wizard de onboarding del owner. Para iniciar: conecta EasyBits → elige agente.
 export const Route = createFileRoute("/setup")({
@@ -15,6 +16,7 @@ export const Route = createFileRoute("/setup")({
 });
 
 function Setup() {
+  const t = useT();
   const { user, connected, hasAgent, fleetName, agents } = Route.useLoaderData();
   const router = useRouter();
   async function doLogout() {
@@ -38,42 +40,41 @@ function Setup() {
         <div className="mb-4 flex items-center justify-between border-b border-border pb-3 text-xs text-muted">
           <span className="truncate">{user?.email}</span>
           <button onClick={doLogout} className="shrink-0 text-brand hover:underline">
-            Cerrar sesión
+            {t("Cerrar sesión")}
           </button>
         </div>
         <div className="mb-6 flex items-center gap-3">
           <img src="/ghosty.svg" alt="" className="h-10 w-10" />
           <div>
-            <h1 className="font-semibold">Configura tu Ghosty Teams</h1>
-            <p className="text-xs text-muted">Paso {step} de 2</p>
+            <h1 className="font-semibold">{t("Configura tu Ghosty Teams")}</h1>
+            <p className="text-xs text-muted">{t("Paso {step} de 2", { step })}</p>
           </div>
         </div>
 
         {/* Paso 1 — conectar EasyBits */}
-        <Stepline n={1} done={connected} active={step === 1} title="Conecta tu EasyBits">
+        <Stepline n={1} done={connected} active={step === 1} title={t("Conecta tu EasyBits")}>
           {step === 1 && (
             <>
               <p className="mb-3 text-sm text-muted">
-                Ghosty vive de tus recursos EasyBits (agentes, storage, cómputo).
-                Conecta tu cuenta para empezar.
+                {t("Ghosty vive de tus recursos EasyBits (agentes, storage, cómputo). Conecta tu cuenta para empezar.")}
               </p>
               <a
                 href="/setup/easybits/connect"
                 className="inline-block rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-brand-fg hover:opacity-90"
               >
-                Conectar EasyBits
+                {t("Conectar EasyBits")}
               </a>
             </>
           )}
         </Stepline>
 
         {/* Paso 2 — elegir agente */}
-        <Stepline n={2} done={hasAgent} active={step === 2} title="Elige tu agente Ghosty">
+        <Stepline n={2} done={hasAgent} active={step === 2} title={t("Elige tu agente Ghosty")}>
           {step === 2 && (
             <div className="space-y-2">
               {agents.length === 0 && (
                 <p className="text-sm text-muted">
-                  No encontré agentes de flota en tu cuenta. Crea uno en EasyBits y recarga.
+                  {t("No encontré agentes de flota en tu cuenta. Crea uno en EasyBits y recarga.")}
                 </p>
               )}
               {agents.map((a) => (
@@ -88,7 +89,7 @@ function Setup() {
                     <span className="font-medium text-ink">{a.name}</span>
                   </span>
                   <span className="text-xs text-muted">
-                    {busy === a.id ? "conectando…" : a.workerTemplate}
+                    {busy === a.id ? t("conectando…") : a.workerTemplate}
                   </span>
                 </button>
               ))}
@@ -100,14 +101,14 @@ function Setup() {
         {step === 3 && (
           <div className="mt-4 rounded-lg bg-brand/10 p-4 text-center">
             <p className="text-sm text-ink">
-              ✅ <span className="font-medium">{fleetName || "Ghosty"}</span> conectado.
+              ✅ <span className="font-medium">{fleetName || "Ghosty"}</span> {t("conectado.")}
             </p>
             <Link
               to="/c/$slug"
               params={{ slug: "general" }}
               className="mt-3 inline-block rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-brand-fg"
             >
-              Ir al chat →
+              {t("Ir al chat →")}
             </Link>
           </div>
         )}

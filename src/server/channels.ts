@@ -31,10 +31,25 @@ async function requireManage(slug: string) {
 }
 
 export const updateChannelFn = createServerFn({ method: "POST" })
-  .validator((d: { slug: string; name?: string; icon?: string | null; isPrivate?: boolean }) => d)
+  .validator(
+    (d: {
+      slug: string;
+      name?: string;
+      icon?: string | null;
+      isPrivate?: boolean;
+      description?: string | null;
+      archived?: boolean;
+    }) => d
+  )
   .handler(async ({ data }) => {
     const { db, ch } = await requireManage(data.slug);
-    await db.updateChannel(ch.id, { name: data.name, icon: data.icon, isPrivate: data.isPrivate });
+    await db.updateChannel(ch.id, {
+      name: data.name,
+      icon: data.icon,
+      isPrivate: data.isPrivate,
+      description: data.description,
+      archived: data.archived,
+    });
     return { ok: true as const };
   });
 

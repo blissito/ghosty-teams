@@ -1,6 +1,6 @@
 import { createFileRoute, Link, useRouter } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
-import { Bot, Plus, Trash2, X, Bell } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { Bot, Plus, Trash2, X, Bell, Smile, Loader2 } from "lucide-react";
 import { currentPushState, enablePush, disablePush } from "../utils/push-subscribe";
 import { me, logout } from "../server/auth";
 import { getSetup } from "../server/setup";
@@ -12,6 +12,9 @@ import {
   updateAgentFn,
   deleteAgentFn,
 } from "../server/agents";
+import { listEmojisFn, addEmojiFn, removeEmojiFn } from "../server/emojis";
+import type { CustomEmoji } from "../db.server";
+import { useT } from "../i18n";
 
 export const Route = createFileRoute("/settings")({
   loader: async () => {
@@ -23,6 +26,7 @@ export const Route = createFileRoute("/settings")({
 });
 
 function Settings() {
+  const t = useT();
   const { user, setup } = Route.useLoaderData();
   const router = useRouter();
   const [invite, setInvite] = useState<string | null>(null);
@@ -50,9 +54,9 @@ function Settings() {
   return (
     <div className="mx-auto max-w-lg p-6 text-ink">
       <div className="mb-6 flex items-center justify-between">
-        <h1 className="text-lg font-semibold">Ajustes</h1>
+        <h1 className="text-lg font-semibold">{t("Ajustes")}</h1>
         <Link to="/c/$slug" params={{ slug: "general" }} className="text-sm text-brand hover:underline">
-          ← Al chat
+          ← {t("Al chat")}
         </Link>
       </div>
 
@@ -70,7 +74,7 @@ function Settings() {
           <p className="truncate text-xs text-muted">{user?.email}</p>
         </div>
         <span className="rounded-full bg-brand/15 px-2 py-0.5 text-xs font-medium text-brand">
-          {user?.isOwner ? "Owner" : "Miembro"}
+          {user?.isOwner ? t("Owner") : t("Miembro")}
         </span>
       </div>
 
@@ -83,25 +87,27 @@ function Settings() {
             <h2 className="mb-1 text-sm font-semibold">EasyBits</h2>
             <p className="text-sm text-muted">
               {setup?.hasAgent ? (
-                <>Agente conectado: <span className="text-ink">{setup.fleetName}</span></>
+                <>{t("Agente conectado:")} <span className="text-ink">{setup.fleetName}</span></>
               ) : (
-                "Sin agente conectado."
+                t("Sin agente conectado.")
               )}
             </p>
             <Link
               to="/setup"
               className="mt-3 inline-block rounded-lg border border-border px-3 py-1.5 text-sm hover:border-brand"
             >
-              {setup?.hasAgent ? "Reconfigurar" : "Conectar EasyBits"}
+              {setup?.hasAgent ? t("Reconfigurar") : t("Conectar EasyBits")}
             </Link>
           </div>
 
           <AgentsManager />
 
+          <EmojiManager />
+
           <div className="mb-4 rounded-xl border border-border bg-surface-2 p-4">
-            <h2 className="mb-1 text-sm font-semibold">Invitar miembros</h2>
+            <h2 className="mb-1 text-sm font-semibold">{t("Invitar miembros")}</h2>
             <p className="mb-3 text-sm text-muted">
-              Genera un link. Quien lo abra entra con Formmy y se une a tu chat.
+              {t("Genera un link. Quien lo abra entra con Formmy y se une a tu chat.")}
             </p>
             {!invite ? (
               <button
@@ -109,7 +115,7 @@ function Settings() {
                 disabled={busy}
                 className="rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-brand-fg disabled:opacity-50"
               >
-                {busy ? "Generando…" : "Generar link de invitación"}
+                {busy ? t("Generando…") : t("Generar link de invitación")}
               </button>
             ) : (
               <div className="flex items-center gap-2">
@@ -122,7 +128,7 @@ function Settings() {
                   onClick={copy}
                   className="rounded-lg bg-brand px-3 py-2 text-sm font-semibold text-brand-fg"
                 >
-                  {copied ? "✓" : "Copiar"}
+                  {copied ? "✓" : t("Copiar")}
                 </button>
               </div>
             )}
@@ -134,7 +140,7 @@ function Settings() {
         onClick={doLogout}
         className="rounded-lg border border-border px-4 py-2 text-sm text-muted hover:text-ink"
       >
-        Cerrar sesión
+        {t("Cerrar sesión")}
       </button>
     </div>
   );
@@ -142,6 +148,7 @@ function Settings() {
 
 /* ── Notificaciones push: avisa cuando te taggean (@tu-handle) ── */
 function NotificationsCard() {
+  const t = useT();
   const [state, setState] = useState<"loading" | "unsupported" | "denied" | "on" | "off">("loading");
   const [busy, setBusy] = useState(false);
   useEffect(() => {
@@ -169,13 +176,13 @@ function NotificationsCard() {
           <Bell size={18} />
         </div>
         <div className="min-w-0 flex-1">
-          <h2 className="text-sm font-semibold">Notificaciones</h2>
+          <h2 className="text-sm font-semibold">{t("Notificaciones")}</h2>
           <p className="text-xs text-muted">
             {state === "unsupported"
-              ? "Tu navegador no soporta notificaciones push."
+              ? t("Tu navegador no soporta notificaciones push.")
               : state === "denied"
-                ? "Bloqueadas en el navegador. Actívalas desde los permisos del sitio."
-                : "Recibe un aviso cuando alguien te tagea (@tu-handle), aunque tengas la app cerrada."}
+                ? t("Bloqueadas en el navegador. Actívalas desde los permisos del sitio.")
+                : t("Recibe un aviso cuando alguien te tagea (@tu-handle), aunque tengas la app cerrada.")}
           </p>
         </div>
         {state !== "unsupported" && state !== "denied" && state !== "loading" && (
@@ -188,10 +195,113 @@ function NotificationsCard() {
                 : "bg-brand text-brand-fg hover:brightness-110"
             }`}
           >
-            {busy ? "…" : state === "on" ? "Desactivar" : "Activar"}
+            {busy ? "…" : state === "on" ? t("Desactivar") : t("Activar")}
           </button>
         )}
       </div>
+    </div>
+  );
+}
+
+/* ── Emojis custom del workspace: imagen (o GIF) → :name: reaccionable ── */
+function EmojiManager() {
+  const t = useT();
+  const [emojis, setEmojis] = useState<CustomEmoji[]>([]);
+  const [name, setName] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    listEmojisFn().then(setEmojis).catch(() => setEmojis([]));
+  }, []);
+
+  async function onFile(file: File) {
+    const clean = name.trim() || file.name.replace(/\.[^.]+$/, "");
+    setErr(null);
+    setBusy(true);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const res = await fetch("/api/upload", { method: "POST", body: fd });
+      if (!res.ok) throw new Error(t("no se pudo subir la imagen"));
+      const up = (await res.json()) as { fileId: string };
+      const { name: saved } = await addEmojiFn({ data: { name: clean, fileId: up.fileId } });
+      setEmojis((es) => [...es.filter((e) => e.name !== saved), { name: saved, file_id: up.fileId }].sort((a, b) => a.name.localeCompare(b.name)));
+      setName("");
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : t("error"));
+    } finally {
+      setBusy(false);
+      if (fileRef.current) fileRef.current.value = "";
+    }
+  }
+
+  async function remove(nm: string) {
+    setEmojis((es) => es.filter((e) => e.name !== nm));
+    await removeEmojiFn({ data: { name: nm } }).catch(() => {});
+  }
+
+  return (
+    <div className="mb-4 rounded-xl border border-border bg-surface-2 p-4">
+      <div className="mb-1 flex items-center gap-2">
+        <Smile size={16} className="text-brand" />
+        <h2 className="text-sm font-semibold">{t("Emojis custom")}</h2>
+      </div>
+      <p className="mb-3 text-sm text-muted">
+        {t("Sube una imagen o GIF. Se usa como reacción y en el picker escribiendo :nombre:.")}
+      </p>
+      <div className="mb-3 flex items-center gap-2">
+        <input
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder={t(":nombre:")}
+          className="w-32 rounded-lg border border-border bg-surface px-3 py-1.5 text-sm outline-none focus:border-brand"
+        />
+        <input
+          ref={fileRef}
+          type="file"
+          accept="image/*,image/gif"
+          className="hidden"
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            if (f) onFile(f);
+          }}
+        />
+        <button
+          onClick={() => fileRef.current?.click()}
+          disabled={busy}
+          className="flex items-center gap-1.5 rounded-lg bg-brand px-3 py-1.5 text-sm font-semibold text-brand-fg disabled:opacity-50"
+        >
+          {busy ? <Loader2 size={15} className="animate-spin" /> : <Plus size={15} />}
+          {t("Subir emoji")}
+        </button>
+      </div>
+      {err && <p className="mb-2 text-sm text-red-400">{err}</p>}
+      {emojis.length > 0 && (
+        <div className="flex flex-wrap gap-2">
+          {emojis.map((e) => (
+            <div
+              key={e.name}
+              className="group relative flex items-center gap-1.5 rounded-lg border border-border bg-surface px-2 py-1"
+            >
+              <img
+                src={`/api/attachment/${encodeURIComponent(e.file_id)}`}
+                alt={e.name}
+                className="h-5 w-5 object-contain"
+              />
+              <span className="text-xs text-muted">:{e.name}:</span>
+              <button
+                onClick={() => remove(e.name)}
+                title={t("Eliminar")}
+                className="text-muted hover:text-red-400"
+              >
+                <X size={13} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -208,6 +318,7 @@ type ManagedAgent = {
 };
 
 function AgentsManager() {
+  const t = useT();
   const [agents, setAgents] = useState<ManagedAgent[] | null>(null);
   const [adding, setAdding] = useState(false);
   const reload = () => listManagedAgentsFn().then((a) => setAgents(a as ManagedAgent[]));
@@ -220,7 +331,7 @@ function AgentsManager() {
     await updateAgentFn({ data: { id: a.id, enabled: !a.enabled } }).catch(reload);
   }
   async function remove(a: ManagedAgent) {
-    if (!confirm(`¿Quitar @${a.handle}?`)) return;
+    if (!confirm(t("¿Quitar @{handle}?", { handle: a.handle }))) return;
     setAgents((xs) => xs?.filter((x) => x.id !== a.id) ?? xs);
     await deleteAgentFn({ data: { id: a.id } }).catch(reload);
   }
@@ -228,25 +339,24 @@ function AgentsManager() {
   return (
     <div className="mb-4 rounded-xl border border-border bg-surface-2 p-4">
       <div className="mb-2 flex items-center justify-between">
-        <h2 className="text-sm font-semibold">Agentes</h2>
+        <h2 className="text-sm font-semibold">{t("Agentes")}</h2>
         {!adding && (
           <button
             onClick={() => setAdding(true)}
             className="flex items-center gap-1 rounded-lg border border-border px-2 py-1 text-xs text-muted transition hover:border-brand hover:text-ink"
           >
-            <Plus size={14} /> Agregar
+            <Plus size={14} /> {t("Agregar")}
           </button>
         )}
       </div>
       <p className="mb-3 text-xs text-muted">
-        <span className="text-brand">@ghosty</span> (el del wizard) siempre está. Agrega más agentes de tu
-        flota o bots externos por webhook; cada uno se tagea por su <span className="text-brand">@handle</span>.
+        <span className="text-brand">@ghosty</span> {t("(el del wizard) siempre está. Agrega más agentes de tu flota o bots externos por webhook; cada uno se tagea por su")} <span className="text-brand">@handle</span>.
       </p>
 
       {agents === null ? (
-        <p className="text-sm text-muted">Cargando…</p>
+        <p className="text-sm text-muted">{t("Cargando…")}</p>
       ) : agents.length === 0 && !adding ? (
-        <p className="text-sm text-muted">Sin agentes extra. Solo @ghosty por ahora.</p>
+        <p className="text-sm text-muted">{t("Sin agentes extra. Solo @ghosty por ahora.")}</p>
       ) : (
         <div className="space-y-1">
           {agents?.map((a) => (
@@ -259,19 +369,19 @@ function AgentsManager() {
                   {a.name} <span className="text-xs font-normal text-muted">@{a.handle}</span>
                 </p>
                 <p className="truncate text-xs text-muted">
-                  {a.kind === "fleet" ? "Flota EasyBits" : "Webhook externo"}
+                  {a.kind === "fleet" ? t("Flota EasyBits") : t("Webhook externo")}
                 </p>
               </div>
               <button
                 onClick={() => toggle(a)}
-                title={a.enabled ? "Deshabilitar" : "Habilitar"}
+                title={a.enabled ? t("Deshabilitar") : t("Habilitar")}
                 className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${
                   a.enabled ? "bg-brand/15 text-brand" : "bg-surface-3 text-muted"
                 }`}
               >
-                {a.enabled ? "activo" : "off"}
+                {a.enabled ? t("activo") : t("off")}
               </button>
-              <button onClick={() => remove(a)} className="p-1 text-muted hover:text-brand" title="Quitar">
+              <button onClick={() => remove(a)} className="p-1 text-muted hover:text-brand" title={t("Quitar")}>
                 <Trash2 size={15} />
               </button>
             </div>
@@ -293,6 +403,7 @@ function AgentsManager() {
 }
 
 function AddAgentForm({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
+  const t = useT();
   const [kind, setKind] = useState<"fleet" | "webhook">("fleet");
   const [name, setName] = useState("");
   const [handle, setHandle] = useState("");
@@ -322,7 +433,7 @@ function AddAgentForm({ onClose, onCreated }: { onClose: () => void; onCreated: 
       });
       onCreated();
     } catch (e) {
-      setErr(e instanceof Error ? e.message : "error");
+      setErr(e instanceof Error ? e.message : t("error"));
       setBusy(false);
     }
   }
@@ -331,7 +442,7 @@ function AddAgentForm({ onClose, onCreated }: { onClose: () => void; onCreated: 
   return (
     <div className="mt-3 rounded-lg border border-border bg-surface p-3">
       <div className="mb-2 flex items-center justify-between">
-        <p className="text-xs font-semibold text-muted">Nuevo agente</p>
+        <p className="text-xs font-semibold text-muted">{t("Nuevo agente")}</p>
         <button onClick={onClose} className="text-muted hover:text-ink">
           <X size={16} />
         </button>
@@ -345,7 +456,7 @@ function AddAgentForm({ onClose, onCreated }: { onClose: () => void; onCreated: 
               kind === k ? "bg-brand text-brand-fg" : "bg-surface-2 text-muted hover:text-ink"
             }`}
           >
-            {k === "fleet" ? "De mi flota" : "Webhook externo"}
+            {k === "fleet" ? t("De mi flota") : t("Webhook externo")}
           </button>
         ))}
       </div>
@@ -353,7 +464,7 @@ function AddAgentForm({ onClose, onCreated }: { onClose: () => void; onCreated: 
         {kind === "fleet" ? (
           <select value={fleetId} onChange={(e) => setFleetId(e.target.value)} className={input}>
             <option value="">
-              {fleet === null ? "Cargando flota…" : fleet.length ? "Elige un agente…" : "Sin agentes en tu flota"}
+              {fleet === null ? t("Cargando flota…") : fleet.length ? t("Elige un agente…") : t("Sin agentes en tu flota")}
             </option>
             {fleet?.map((f) => (
               <option key={f.id} value={f.id}>
@@ -365,7 +476,7 @@ function AddAgentForm({ onClose, onCreated }: { onClose: () => void; onCreated: 
           <input
             value={webhookUrl}
             onChange={(e) => setWebhookUrl(e.target.value)}
-            placeholder="https://tu-bot.com/webhook"
+            placeholder={t("https://tu-bot.com/webhook")}
             className={input}
           />
         )}
@@ -373,27 +484,27 @@ function AddAgentForm({ onClose, onCreated }: { onClose: () => void; onCreated: 
           <input
             value={handle}
             onChange={(e) => setHandle(e.target.value.replace(/[^a-zA-Z0-9]/g, "").toLowerCase())}
-            placeholder="handle (ej. soporte)"
+            placeholder={t("handle (ej. soporte)")}
             className={input}
           />
           <input
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder="nombre visible"
+            placeholder={t("nombre visible")}
             className={input}
           />
         </div>
         {err && <p className="text-sm text-red-400">{err}</p>}
         <div className="flex justify-end gap-2">
           <button onClick={onClose} className="rounded-lg px-3 py-1.5 text-sm text-muted hover:text-ink">
-            Cancelar
+            {t("Cancelar")}
           </button>
           <button
             onClick={create}
             disabled={busy || !handle.trim() || (kind === "fleet" ? !fleetId : !webhookUrl.trim())}
             className="rounded-lg bg-brand px-4 py-1.5 text-sm font-semibold text-brand-fg disabled:opacity-50"
           >
-            {busy ? "Agregando…" : "Agregar"}
+            {busy ? t("Agregando…") : t("Agregar")}
           </button>
         </div>
       </div>

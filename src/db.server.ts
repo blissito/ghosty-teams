@@ -1,23 +1,6 @@
 // Estado en EasyBits DB (libSQL) — modelo Slack: canal = flujo, threads nacen
 // de un mensaje (parent_id). Compute stateless, historial durable.
-const BASE = process.env.EASYBITS_BASE_URL ?? "https://www.easybits.cloud";
-const KEY = process.env.EASYBITS_API_KEY!;
-const DB_ID = process.env.EASYBITS_DB_ID!;
-
-type Row = Record<string, string | null>;
-
-async function dbq(sql: string, args: unknown[] = []): Promise<Row[]> {
-  const res = await fetch(`${BASE}/api/v2/databases/${DB_ID}/query`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${KEY}` },
-    body: JSON.stringify({ sql, args }),
-  });
-  if (!res.ok) throw new Error(`db ${res.status}: ${await res.text()}`);
-  const { cols, rows } = (await res.json()) as { cols: string[]; rows: (string | null)[][] };
-  return rows.map((r) => Object.fromEntries(cols.map((c, i) => [c, r[i]])));
-}
-
-const num = (v: string | null) => Number(v ?? 0);
+import { dbq, num, type Row } from "./dbq.server";
 
 export type Channel = {
   id: number;
@@ -25,6 +8,8 @@ export type Channel = {
   name: string;
   is_private: number;
   icon: string | null;
+  description?: string | null;
+  archived?: number;
   created_by?: string | null;
 };
 
@@ -35,6 +20,8 @@ function toChannel(r: Row): Channel {
     name: r.name!,
     is_private: num(r.is_private),
     icon: r.icon,
+    description: r.description ?? null,
+    archived: num(r.archived),
     created_by: r.created_by,
   };
 }
@@ -50,6 +37,7 @@ function slugify(name: string): string {
       .slice(0, 40) || "room"
   );
 }
+export type ReactionAgg = { emoji: string; count: number; mine: boolean };
 export type Message = {
   id: number;
   channel_id: number;
@@ -62,6 +50,21 @@ export type Message = {
   agent_handle: string | null;
   created_at: number;
   reply_count?: number;
+  topic?: string;
+  dm_id?: number | null;
+  edited_at?: number | null;
+  reactions?: ReactionAgg[];
+  starred?: boolean; // marcado por el usuario actual (personal)
+  pinned?: boolean;  // fijado en su room (visible para todos)
+  attachments?: Attachment[]; // adjuntos (EasyBits), Fase 4
+};
+
+export type Attachment = {
+  id: number;
+  file_id: string;
+  mime: string | null;
+  size: number | null;
+  name: string | null;
 };
 
 export const GHOSTY_RE = /@ghosty\b/i;
@@ -82,7 +85,349 @@ function toMessage(r: Row): Message {
     agent_handle: r.agent_handle ?? null,
     created_at: num(r.created_at),
     reply_count: r.reply_count == null ? undefined : num(r.reply_count),
+    topic: r.topic ?? "general",
+    dm_id: r.dm_id == null ? null : num(r.dm_id),
+    edited_at: r.edited_at == null ? null : num(r.edited_at),
   };
+}
+
+// ── Reacciones + edición ──
+// Toggle: si ya reaccioné con ese emoji lo quito; si no, lo pongo. Devuelve el nuevo total.
+export async function toggleReaction(
+  messageId: number,
+  userSub: string,
+  emoji: string
+): Promise<{ op: "add" | "remove"; count: number }> {
+  const existing = await dbq(
+    "SELECT 1 FROM gc_reactions WHERE message_id = ? AND user_sub = ? AND emoji = ?",
+    [messageId, userSub, emoji]
+  );
+  let op: "add" | "remove";
+  if (existing.length) {
+    await dbq("DELETE FROM gc_reactions WHERE message_id = ? AND user_sub = ? AND emoji = ?", [
+      messageId,
+      userSub,
+      emoji,
+    ]);
+    op = "remove";
+  } else {
+    await dbq(
+      "INSERT INTO gc_reactions (message_id, user_sub, emoji) VALUES (?, ?, ?) ON CONFLICT DO NOTHING",
+      [messageId, userSub, emoji]
+    );
+    op = "add";
+  }
+  const c = await dbq("SELECT COUNT(*) AS c FROM gc_reactions WHERE message_id = ? AND emoji = ?", [
+    messageId,
+    emoji,
+  ]);
+  return { op, count: num(c[0]?.c) };
+}
+
+// Agrega las reacciones de un lote de mensajes (1 query, evita N+1 sobre HTTP).
+export async function attachReactions(msgs: Message[], userSub: string): Promise<Message[]> {
+  if (!msgs.length) return msgs;
+  const ids = msgs.map((m) => m.id);
+  const ph = ids.map(() => "?").join(",");
+  const rows = await dbq(
+    `SELECT message_id, emoji, user_sub FROM gc_reactions WHERE message_id IN (${ph})`,
+    ids
+  );
+  const byMsg = new Map<number, Map<string, { count: number; mine: boolean }>>();
+  for (const r of rows) {
+    const mid = num(r.message_id);
+    const emoji = r.emoji!;
+    if (!byMsg.has(mid)) byMsg.set(mid, new Map());
+    const em = byMsg.get(mid)!;
+    const cur = em.get(emoji) ?? { count: 0, mine: false };
+    cur.count++;
+    if (r.user_sub === userSub) cur.mine = true;
+    em.set(emoji, cur);
+  }
+  return msgs.map((m) => {
+    const em = byMsg.get(m.id);
+    if (!em) return m;
+    return { ...m, reactions: [...em.entries()].map(([emoji, v]) => ({ emoji, count: v.count, mine: v.mine })) };
+  });
+}
+
+// Agrega los flags personales/de-room (star mío, pin del room) a un lote (2 queries).
+export async function attachStarPin(msgs: Message[], userSub: string): Promise<Message[]> {
+  if (!msgs.length) return msgs;
+  const ids = msgs.map((m) => m.id);
+  const ph = ids.map(() => "?").join(",");
+  const [starRows, pinRows] = await Promise.all([
+    dbq(`SELECT message_id FROM gc_stars WHERE user_sub = ? AND message_id IN (${ph})`, [userSub, ...ids]),
+    dbq(`SELECT message_id FROM gc_pins WHERE message_id IN (${ph})`, ids),
+  ]);
+  const starred = new Set(starRows.map((r) => num(r.message_id)));
+  const pinned = new Set(pinRows.map((r) => num(r.message_id)));
+  return msgs.map((m) => ({ ...m, starred: starred.has(m.id), pinned: pinned.has(m.id) }));
+}
+
+// ── Buscador (Fase 2.4) ─────────────────────────────────────────────────────
+// LIKE universal (sin depender de FTS5). Escapamos %/_ para tratar la query como
+// texto literal. Top-level (parent_id NULL) para que el resultado exista en el flujo.
+function likeArg(q: string): string {
+  return "%" + q.replace(/[\\%_]/g, (c) => "\\" + c) + "%";
+}
+
+export type RoomHit = Message & { slug: string; roomName: string };
+export async function searchRoomMessages(channelIds: number[], q: string): Promise<RoomHit[]> {
+  if (!channelIds.length || !q.trim()) return [];
+  const ph = channelIds.map(() => "?").join(",");
+  const rows = await dbq(
+    `SELECT m.*, ch.slug AS _slug, ch.name AS _rname
+       FROM gc_messages m JOIN gc_channels ch ON ch.id = m.channel_id
+      WHERE m.kind = 'msg' AND m.dm_id IS NULL AND m.parent_id IS NULL
+        AND m.channel_id IN (${ph}) AND m.body LIKE ? ESCAPE '\\'
+      ORDER BY m.created_at DESC LIMIT 40`,
+    [...channelIds, likeArg(q)]
+  );
+  return rows.map((r) => ({ ...toMessage(r), slug: r._slug!, roomName: r._rname! }));
+}
+
+export async function searchDmMessages(userSub: string, q: string): Promise<Message[]> {
+  if (!q.trim()) return [];
+  const rows = await dbq(
+    `SELECT m.* FROM gc_messages m
+       JOIN gc_dm_members dm ON dm.conversation_id = m.dm_id AND dm.user_sub = ?
+      WHERE m.kind = 'msg' AND m.dm_id IS NOT NULL AND m.body LIKE ? ESCAPE '\\'
+      ORDER BY m.created_at DESC LIMIT 20`,
+    [userSub, likeArg(q)]
+  );
+  return rows.map(toMessage);
+}
+
+// Adjunta los archivos (EasyBits) de cada mensaje en un lote (1 query).
+export async function attachAttachments(msgs: Message[]): Promise<Message[]> {
+  if (!msgs.length) return msgs;
+  const ids = msgs.map((m) => m.id);
+  const ph = ids.map(() => "?").join(",");
+  const rows = await dbq(
+    `SELECT id, message_id, file_id, mime, size, name FROM gc_attachments
+      WHERE message_id IN (${ph}) ORDER BY id`,
+    ids
+  );
+  if (!rows.length) return msgs;
+  const byMsg = new Map<number, Attachment[]>();
+  for (const r of rows) {
+    const mid = num(r.message_id);
+    const a: Attachment = {
+      id: num(r.id),
+      file_id: r.file_id!,
+      mime: r.mime ?? null,
+      size: r.size == null ? null : num(r.size),
+      name: r.name ?? null,
+    };
+    const arr = byMsg.get(mid) ?? [];
+    if (arr.length === 0) byMsg.set(mid, arr);
+    arr.push(a);
+  }
+  return msgs.map((m) => (byMsg.has(m.id) ? { ...m, attachments: byMsg.get(m.id) } : m));
+}
+
+// Inserta los adjuntos de un mensaje recién creado.
+export async function createAttachments(
+  messageId: number,
+  files: { fileId: string; mime: string; size: number; name: string }[]
+): Promise<void> {
+  for (const f of files) {
+    await dbq(
+      `INSERT INTO gc_attachments (message_id, file_id, mime, size, name) VALUES (?, ?, ?, ?, ?)`,
+      [messageId, f.fileId, f.mime, f.size, f.name]
+    );
+  }
+}
+
+// Lee los file_ids de un mensaje (para borrar en EasyBits al eliminar el mensaje).
+export async function attachmentFileIds(messageId: number): Promise<string[]> {
+  const rows = await dbq(`SELECT file_id FROM gc_attachments WHERE message_id = ?`, [messageId]);
+  return rows.map((r) => r.file_id!);
+}
+
+// Enriquece un lote con TODO lo de display: reacciones + star/pin + adjuntos (≤4 queries).
+export async function attachMeta(msgs: Message[], userSub: string): Promise<Message[]> {
+  return attachAttachments(await attachStarPin(await attachReactions(msgs, userSub), userSub));
+}
+
+// ── VIEWS (Fase 2.1): inbox/recent/mentions/starred ─────────────────────────
+// Un "hit" de vista es un Message + contexto para hacerlo clickable: si trae slug
+// es de un room; si trae dm_id (ya en Message) es de un DM.
+export type ViewHit = Message & { slug?: string; roomName?: string };
+
+export async function getUserHandle(sub: string): Promise<string | null> {
+  const rows = await dbq("SELECT handle FROM gc_users WHERE sub = ?", [sub]);
+  return rows[0]?.handle ?? null;
+}
+
+// Destacados (star) del usuario, con contexto de room cuando aplica.
+export async function listStarredHits(userSub: string): Promise<ViewHit[]> {
+  const rows = await dbq(
+    `SELECT m.*, ch.slug AS _slug, ch.name AS _rname
+       FROM gc_messages m
+       JOIN gc_stars s ON s.message_id = m.id AND s.user_sub = ?
+       LEFT JOIN gc_channels ch ON ch.id = m.channel_id AND m.dm_id IS NULL
+      WHERE m.kind = 'msg'
+      ORDER BY s.created_at DESC LIMIT 100`,
+    [userSub]
+  );
+  return rows.map((r) => ({ ...toMessage(r), slug: r._slug ?? undefined, roomName: r._rname ?? undefined }));
+}
+
+// Menciones a @handle en rooms visibles (Zulip: las menciones son de canal).
+export async function listMentionHits(handle: string, channelIds: number[]): Promise<ViewHit[]> {
+  if (!handle || !channelIds.length) return [];
+  const ph = channelIds.map(() => "?").join(",");
+  const rows = await dbq(
+    `SELECT m.*, ch.slug AS _slug, ch.name AS _rname
+       FROM gc_messages m JOIN gc_channels ch ON ch.id = m.channel_id
+      WHERE m.kind = 'msg' AND m.dm_id IS NULL AND m.channel_id IN (${ph})
+        AND m.body LIKE ? ESCAPE '\\'
+      ORDER BY m.created_at DESC LIMIT 60`,
+    [...channelIds, likeArg("@" + handle)]
+  );
+  return rows.map((r) => ({ ...toMessage(r), slug: r._slug!, roomName: r._rname! }));
+}
+
+// Recientes: último mensaje por conversación (rooms visibles + DMs propios), mezclados.
+export async function listRecentHits(userSub: string, channelIds: number[]): Promise<ViewHit[]> {
+  const out: ViewHit[] = [];
+  if (channelIds.length) {
+    const ph = channelIds.map(() => "?").join(",");
+    const roomRows = await dbq(
+      `SELECT m.*, ch.slug AS _slug, ch.name AS _rname
+         FROM gc_messages m JOIN gc_channels ch ON ch.id = m.channel_id
+         JOIN (SELECT channel_id, MAX(id) AS mid FROM gc_messages
+                WHERE dm_id IS NULL AND kind = 'msg' AND parent_id IS NULL
+                  AND channel_id IN (${ph}) GROUP BY channel_id) x ON x.mid = m.id`,
+      channelIds
+    );
+    for (const r of roomRows) out.push({ ...toMessage(r), slug: r._slug!, roomName: r._rname! });
+  }
+  const dmRows = await dbq(
+    `SELECT m.* FROM gc_messages m
+       JOIN gc_dm_members dm ON dm.conversation_id = m.dm_id AND dm.user_sub = ?
+       JOIN (SELECT dm_id, MAX(id) AS mid FROM gc_messages
+              WHERE dm_id IS NOT NULL AND kind = 'msg' GROUP BY dm_id) x ON x.mid = m.id`,
+    [userSub]
+  );
+  for (const r of dmRows) out.push({ ...toMessage(r) });
+  return out.sort((a, b) => b.created_at - a.created_at);
+}
+
+// Star (personal): toggle. Devuelve el nuevo estado.
+export async function toggleStar(userSub: string, messageId: number): Promise<{ starred: boolean }> {
+  const existing = await dbq(
+    "SELECT 1 FROM gc_stars WHERE user_sub = ? AND message_id = ?",
+    [userSub, messageId]
+  );
+  if (existing.length) {
+    await dbq("DELETE FROM gc_stars WHERE user_sub = ? AND message_id = ?", [userSub, messageId]);
+    return { starred: false };
+  }
+  await dbq(
+    "INSERT INTO gc_stars (user_sub, message_id) VALUES (?, ?) ON CONFLICT DO NOTHING",
+    [userSub, messageId]
+  );
+  return { starred: true };
+}
+
+// Los mensajes marcados por el usuario (para la vista Starred, Fase 2.1).
+export async function listStarred(userSub: string): Promise<Message[]> {
+  const rows = await dbq(
+    `SELECT m.* FROM gc_messages m
+       JOIN gc_stars s ON s.message_id = m.id
+      WHERE s.user_sub = ? AND m.kind = 'msg'
+      ORDER BY s.created_at DESC`,
+    [userSub]
+  );
+  return rows.map(toMessage);
+}
+
+// Pin (room-level): toggle. channel_id se guarda como TEXT (consistencia con scopes).
+export async function togglePin(
+  channelId: number,
+  messageId: number,
+  pinnedBy: string
+): Promise<{ pinned: boolean }> {
+  const existing = await dbq(
+    "SELECT 1 FROM gc_pins WHERE channel_id = ? AND message_id = ?",
+    [String(channelId), messageId]
+  );
+  if (existing.length) {
+    await dbq("DELETE FROM gc_pins WHERE channel_id = ? AND message_id = ?", [String(channelId), messageId]);
+    return { pinned: false };
+  }
+  await dbq(
+    "INSERT INTO gc_pins (channel_id, message_id, pinned_by) VALUES (?, ?, ?) ON CONFLICT DO NOTHING",
+    [String(channelId), messageId, pinnedBy]
+  );
+  return { pinned: true };
+}
+
+// Los mensajes fijados de un room (barra en el header), más recientes primero.
+export async function listPinned(channelId: number): Promise<Message[]> {
+  const rows = await dbq(
+    `SELECT m.* FROM gc_messages m
+       JOIN gc_pins p ON p.message_id = m.id
+      WHERE p.channel_id = ?
+      ORDER BY p.created_at DESC`,
+    [String(channelId)]
+  );
+  return rows.map(toMessage);
+}
+
+// Mute (silenciar un scope): toggle + listado (para el sidebar y el gating de push).
+export async function toggleMute(
+  userSub: string,
+  scope: "room" | "dm",
+  scopeId: number
+): Promise<{ muted: boolean }> {
+  const existing = await dbq(
+    "SELECT 1 FROM gc_mutes WHERE user_sub = ? AND scope = ? AND scope_id = ?",
+    [userSub, scope, String(scopeId)]
+  );
+  if (existing.length) {
+    await dbq("DELETE FROM gc_mutes WHERE user_sub = ? AND scope = ? AND scope_id = ?", [
+      userSub,
+      scope,
+      String(scopeId),
+    ]);
+    return { muted: false };
+  }
+  await dbq(
+    "INSERT INTO gc_mutes (user_sub, scope, scope_id) VALUES (?, ?, ?) ON CONFLICT DO NOTHING",
+    [userSub, scope, String(scopeId)]
+  );
+  return { muted: true };
+}
+
+// Scopes silenciados por el usuario (para pintar dimmed y suprimir badge/push).
+export async function listMutes(userSub: string): Promise<{ scope: string; scope_id: string }[]> {
+  const rows = await dbq("SELECT scope, scope_id FROM gc_mutes WHERE user_sub = ?", [userSub]);
+  return rows.map((r) => ({ scope: r.scope!, scope_id: r.scope_id! }));
+}
+
+// ¿Están silenciados estos subs para este scope? (filtra recipients de push.)
+export async function filterMutedOut(
+  subs: string[],
+  scope: "room" | "dm",
+  scopeId: number
+): Promise<string[]> {
+  if (!subs.length) return subs;
+  const ph = subs.map(() => "?").join(",");
+  const rows = await dbq(
+    `SELECT user_sub FROM gc_mutes WHERE scope = ? AND scope_id = ? AND user_sub IN (${ph})`,
+    [scope, String(scopeId), ...subs]
+  );
+  const muted = new Set(rows.map((r) => r.user_sub!));
+  return subs.filter((s) => !muted.has(s));
+}
+
+// Editar mensaje (autor u owner; marca edited_at).
+export async function editMessage(id: number, body: string): Promise<void> {
+  await dbq("UPDATE gc_messages SET body = ?, edited_at = unixepoch() WHERE id = ?", [body, id]);
 }
 
 // ── Agentes (multi-agente): el "ghosty" implícito del wizard + estos extra ──
@@ -201,10 +546,13 @@ export async function listPushSubsForUsers(subs: string[]): Promise<StoredPushSu
 
 // Rooms visibles para el user: públicos, o privados donde es miembro, o todos si owner.
 export async function listChannels(userSub: string, isOwner: boolean): Promise<Channel[]> {
+  // Archivados fuera del sidebar (columna dormida hasta Fase 4). COALESCE por si
+  // la fila es previa a la migración (NULL → 0).
   const rows = await dbq(
     `SELECT * FROM gc_channels
-      WHERE is_private = 0 OR ? = 1
-         OR id IN (SELECT channel_id FROM gc_channel_members WHERE user_sub = ?)
+      WHERE COALESCE(archived, 0) = 0
+        AND (is_private = 0 OR ? = 1
+         OR id IN (SELECT channel_id FROM gc_channel_members WHERE user_sub = ?))
       ORDER BY id`,
     [isOwner ? 1 : 0, userSub]
   );
@@ -254,13 +602,22 @@ export async function createChannel(input: {
 
 export async function updateChannel(
   id: number,
-  patch: { name?: string; icon?: string | null; isPrivate?: boolean }
+  patch: {
+    name?: string;
+    icon?: string | null;
+    isPrivate?: boolean;
+    description?: string | null;
+    archived?: boolean;
+  }
 ): Promise<void> {
   const sets: string[] = [];
   const args: unknown[] = [];
   if (patch.name !== undefined) (sets.push("name = ?"), args.push(patch.name.slice(0, 40)));
   if (patch.icon !== undefined) (sets.push("icon = ?"), args.push(patch.icon));
   if (patch.isPrivate !== undefined) (sets.push("is_private = ?"), args.push(patch.isPrivate ? 1 : 0));
+  if (patch.description !== undefined)
+    (sets.push("description = ?"), args.push(patch.description ? patch.description.slice(0, 280) : null));
+  if (patch.archived !== undefined) (sets.push("archived = ?"), args.push(patch.archived ? 1 : 0));
   if (!sets.length) return;
   args.push(id);
   await dbq(`UPDATE gc_channels SET ${sets.join(", ")} WHERE id = ?`, args);
@@ -305,15 +662,33 @@ export async function listChannelMembersInfo(channelId: number): Promise<MemberI
 }
 
 // Flujo principal del canal: mensajes top-level (parent_id NULL) + nº de respuestas.
-export async function listChannelFlow(channelId: number): Promise<Message[]> {
+// Con `topic` filtra al eje Zulip; sin él devuelve el room completo (compat).
+export async function listChannelFlow(channelId: number, topic?: string): Promise<Message[]> {
+  const filter = topic ? "AND m.topic = ?" : "";
+  const args: unknown[] = topic ? [channelId, topic] : [channelId];
   const rows = await dbq(
     `SELECT m.*, (SELECT COUNT(*) FROM gc_messages c WHERE c.parent_id = m.id) AS reply_count
        FROM gc_messages m
-      WHERE m.channel_id = ? AND m.parent_id IS NULL
+      WHERE m.channel_id = ? AND m.parent_id IS NULL ${filter}
       ORDER BY m.created_at ASC`,
-    [channelId]
+    args
   );
   return rows.map(toMessage);
+}
+
+// Topics del room (eje Zulip): distintos topics de mensajes top-level, con conteo
+// y actividad reciente, para pintar los submenús colapsables del sidebar.
+export type TopicInfo = { topic: string; count: number; last_at: number };
+export async function listTopics(channelId: number): Promise<TopicInfo[]> {
+  const rows = await dbq(
+    `SELECT topic, COUNT(*) AS count, MAX(created_at) AS last_at
+       FROM gc_messages
+      WHERE channel_id = ? AND parent_id IS NULL
+      GROUP BY topic
+      ORDER BY last_at DESC`,
+    [channelId]
+  );
+  return rows.map((r) => ({ topic: r.topic ?? "general", count: num(r.count), last_at: num(r.last_at) }));
 }
 
 // Todos los hilos del canal (mensajes raíz que tienen respuestas) — para no
@@ -334,12 +709,26 @@ export async function listThreadRoots(channelId: number): Promise<Message[]> {
 
 // Borra un mensaje. Si es raíz de hilo, borra también sus respuestas.
 export async function deleteMessage(id: number): Promise<void> {
+  await dbq("DELETE FROM gc_attachments WHERE message_id = ? OR message_id IN (SELECT id FROM gc_messages WHERE parent_id = ?)", [id, id]);
   await dbq("DELETE FROM gc_messages WHERE id = ? OR parent_id = ?", [id, id]);
 }
 
 export async function getMessage(id: number): Promise<Message | null> {
   const rows = await dbq("SELECT * FROM gc_messages WHERE id = ?", [id]);
   return rows[0] ? toMessage(rows[0]) : null;
+}
+
+// Catch-up (lo que hace lossless el realtime): todos los mensajes del room con
+// id > sinceId (flujo + respuestas de hilo), para rellenar huecos al reconectar.
+export async function listMessagesSince(channelId: number, sinceId: number): Promise<Message[]> {
+  const rows = await dbq(
+    `SELECT m.*, (SELECT COUNT(*) FROM gc_messages c WHERE c.parent_id = m.id) AS reply_count
+       FROM gc_messages m
+      WHERE m.channel_id = ? AND m.id > ?
+      ORDER BY m.id ASC`,
+    [channelId, sinceId]
+  );
+  return rows.map(toMessage);
 }
 
 // Un hilo: las respuestas de un mensaje.
@@ -358,12 +747,14 @@ export async function createMessage(input: {
   avatar?: string;
   body: string;
   agentHandle?: string | null; // qué agente fue mencionado (null = ninguno)
+  topic?: string; // eje Zulip; las respuestas heredan el del root (lo resuelve chat.ts)
 }): Promise<{ id: number }> {
   const handle = input.agentHandle ?? null;
+  const topic = (input.topic ?? "general").trim() || "general";
   const rows = await dbq(
-    `INSERT INTO gc_messages (channel_id, parent_id, sender, avatar, body, kind, mentions_ghosty, agent_handle)
-     VALUES (?, ?, ?, ?, ?, 'msg', ?, ?) RETURNING id`,
-    [input.channelId, input.parentId, input.sender, input.avatar ?? "", input.body, handle ? 1 : 0, handle]
+    `INSERT INTO gc_messages (channel_id, parent_id, sender, avatar, body, kind, mentions_ghosty, agent_handle, topic)
+     VALUES (?, ?, ?, ?, ?, 'msg', ?, ?, ?) RETURNING id`,
+    [input.channelId, input.parentId, input.sender, input.avatar ?? "", input.body, handle ? 1 : 0, handle, topic]
   );
   return { id: num(rows[0].id) };
 }
@@ -376,13 +767,244 @@ export async function postAgent(
   body: string,
   kind: "msg" | "status",
   agentHandle: string,
+  sender: string,
+  topic = "general" // hereda el topic del root del hilo (lo pasa chat.ts)
+): Promise<void> {
+  await dbq(
+    `INSERT INTO gc_messages (channel_id, parent_id, sender, body, kind, mentions_ghosty, agent_handle, topic)
+     VALUES (?, ?, ?, ?, ?, 0, ?, ?)`,
+    [channelId, parentId, sender, body, kind, agentHandle, topic]
+  );
+}
+
+// ── Mensajes directos (DMs) ─────────────────────────────────────────────────
+// Referencia Zulip: sección "Direct messages" por participantes, 1:1 y grupos.
+// Reusamos gc_messages con dm_id (channel_id = 0 centinela → nunca se filtra a un
+// room real, porque listChannelFlow/listMessagesSince filtran por channel_id real).
+export type DmConversation = {
+  id: number;
+  is_group: number;
+  title: string | null;
+  last_at: number | null;
+  members: MemberInfo[]; // los OTROS (excluye al usuario actual)
+};
+
+// Abre (o reusa) una conversación con estos subs. member_key = subs ordenados →
+// dedupe 1:1 y grupos. Idempotente/carrera-safe vía UNIQUE(member_key).
+export async function openDmConversation(subs: string[], createdBy: string): Promise<number> {
+  const unique = [...new Set(subs.filter(Boolean))].sort();
+  if (unique.length < 2) throw new Error("un DM necesita al menos 2 participantes");
+  const key = unique.join(",");
+  await dbq(
+    `INSERT INTO gc_dm_conversations (is_group, created_by, member_key)
+     VALUES (?, ?, ?) ON CONFLICT(member_key) DO NOTHING`,
+    [unique.length > 2 ? 1 : 0, createdBy, key]
+  );
+  const rows = await dbq("SELECT id FROM gc_dm_conversations WHERE member_key = ?", [key]);
+  const id = num(rows[0].id);
+  for (const s of unique) {
+    await dbq(
+      "INSERT INTO gc_dm_members (conversation_id, user_sub) VALUES (?, ?) ON CONFLICT DO NOTHING",
+      [id, s]
+    );
+  }
+  return id;
+}
+
+// Conversaciones del usuario, con los OTROS participantes y la última actividad,
+// ordenadas por reciente (las vacías al final).
+export async function listDmConversations(userSub: string): Promise<DmConversation[]> {
+  const convs = await dbq(
+    `SELECT c.id, c.is_group, c.title,
+            (SELECT MAX(created_at) FROM gc_messages m WHERE m.dm_id = c.id) AS last_at
+       FROM gc_dm_conversations c
+       JOIN gc_dm_members mm ON mm.conversation_id = c.id
+      WHERE mm.user_sub = ?
+      ORDER BY last_at DESC`,
+    [userSub]
+  );
+  if (!convs.length) return [];
+  const ids = convs.map((r) => num(r.id));
+  const ph = ids.map(() => "?").join(",");
+  const memberRows = await dbq(
+    `SELECT dm.conversation_id, u.sub, u.name, u.email, u.avatar
+       FROM gc_dm_members dm JOIN gc_users u ON u.sub = dm.user_sub
+      WHERE dm.conversation_id IN (${ph})`,
+    ids
+  );
+  const byConv = new Map<number, MemberInfo[]>();
+  for (const r of memberRows) {
+    if (r.sub === userSub) continue; // solo los otros
+    const cid = num(r.conversation_id);
+    if (!byConv.has(cid)) byConv.set(cid, []);
+    byConv.get(cid)!.push({ sub: r.sub!, name: r.name ?? "", email: r.email ?? "", avatar: r.avatar ?? "" });
+  }
+  return convs.map((r) => ({
+    id: num(r.id),
+    is_group: num(r.is_group),
+    title: r.title,
+    last_at: r.last_at == null ? null : num(r.last_at),
+    members: byConv.get(num(r.id)) ?? [],
+  }));
+}
+
+export async function getDmMembers(convId: number): Promise<string[]> {
+  const rows = await dbq("SELECT user_sub FROM gc_dm_members WHERE conversation_id = ?", [convId]);
+  return rows.map((r) => r.user_sub!);
+}
+
+export async function isDmMember(convId: number, userSub: string): Promise<boolean> {
+  const rows = await dbq(
+    "SELECT 1 FROM gc_dm_members WHERE conversation_id = ? AND user_sub = ?",
+    [convId, userSub]
+  );
+  return rows.length > 0;
+}
+
+// El flujo de un DM: sus mensajes (planos, sin hilos). channel_id = 0 los aísla.
+export async function listDmFlow(dmId: number): Promise<Message[]> {
+  const rows = await dbq(
+    "SELECT * FROM gc_messages WHERE dm_id = ? ORDER BY created_at ASC",
+    [dmId]
+  );
+  return rows.map(toMessage);
+}
+
+export async function createDmMessage(input: {
+  dmId: number;
+  sender: string;
+  avatar?: string;
+  body: string;
+  agentHandle?: string | null;
+}): Promise<{ id: number }> {
+  const handle = input.agentHandle ?? null;
+  const rows = await dbq(
+    `INSERT INTO gc_messages (channel_id, parent_id, sender, avatar, body, kind, mentions_ghosty, agent_handle, dm_id)
+     VALUES (0, NULL, ?, ?, ?, 'msg', ?, ?, ?) RETURNING id`,
+    [input.sender, input.avatar ?? "", input.body, handle ? 1 : 0, handle, input.dmId]
+  );
+  return { id: num(rows[0].id) };
+}
+
+// Un agente postea (status "pensando" o respuesta) dentro de un DM.
+export async function postDmAgent(
+  dmId: number,
+  body: string,
+  kind: "msg" | "status",
+  agentHandle: string,
   sender: string
 ): Promise<void> {
   await dbq(
-    `INSERT INTO gc_messages (channel_id, parent_id, sender, body, kind, mentions_ghosty, agent_handle)
-     VALUES (?, ?, ?, ?, ?, 0, ?)`,
-    [channelId, parentId, sender, body, kind, agentHandle]
+    `INSERT INTO gc_messages (channel_id, parent_id, sender, body, kind, mentions_ghosty, agent_handle, dm_id)
+     VALUES (0, NULL, ?, ?, ?, 0, ?, ?)`,
+    [sender, body, kind, agentHandle, dmId]
   );
+}
+
+export async function clearDmStatus(dmId: number): Promise<void> {
+  await dbq("DELETE FROM gc_messages WHERE dm_id = ? AND kind = 'status'", [dmId]);
+}
+
+// ── No-leídos / read-state (Fase 1.5) ───────────────────────────────────────
+// gc_reads(user_sub, scope, scope_id, last_read_at): marca hasta cuándo el usuario
+// leyó cada scope. Unread = mensajes 'msg' con created_at > last_read_at. El badge
+// del room cuenta el flujo top-level (parent_id NULL, lo que se ve); el del DM,
+// todos sus mensajes. Los 'status' (pensando…) son efímeros y NO cuentan.
+
+export type UnreadCount = { id: number; unread: number };
+
+// Cuenta no-leídos de TODOS los rooms del usuario en UNA query (no por-room).
+export async function unreadByRoom(userSub: string): Promise<UnreadCount[]> {
+  const rows = await dbq(
+    `SELECT m.channel_id AS id, COUNT(*) AS unread
+       FROM gc_messages m
+       LEFT JOIN gc_reads r
+         ON r.user_sub = ? AND r.scope = 'room' AND r.scope_id = CAST(m.channel_id AS TEXT)
+      WHERE m.dm_id IS NULL AND m.parent_id IS NULL AND m.kind = 'msg'
+        AND m.created_at > COALESCE(r.last_read_at, 0)
+        AND NOT EXISTS (SELECT 1 FROM gc_mutes mu
+              WHERE mu.user_sub = ? AND mu.scope = 'room'
+                AND mu.scope_id = CAST(m.channel_id AS TEXT))
+      GROUP BY m.channel_id`,
+    [userSub, userSub]
+  );
+  return rows.map((r) => ({ id: num(r.id), unread: num(r.unread) }));
+}
+
+// Cuenta no-leídos de los DMs del usuario en UNA query.
+export async function unreadByDm(userSub: string): Promise<UnreadCount[]> {
+  const rows = await dbq(
+    `SELECT m.dm_id AS id, COUNT(*) AS unread
+       FROM gc_messages m
+       JOIN gc_dm_members dm ON dm.conversation_id = m.dm_id AND dm.user_sub = ?
+       LEFT JOIN gc_reads r
+         ON r.user_sub = ? AND r.scope = 'dm' AND r.scope_id = CAST(m.dm_id AS TEXT)
+      WHERE m.dm_id IS NOT NULL AND m.kind = 'msg'
+        AND m.created_at > COALESCE(r.last_read_at, 0)
+        AND NOT EXISTS (SELECT 1 FROM gc_mutes mu
+              WHERE mu.user_sub = ? AND mu.scope = 'dm'
+                AND mu.scope_id = CAST(m.dm_id AS TEXT))
+      GROUP BY m.dm_id`,
+    [userSub, userSub, userSub]
+  );
+  return rows.map((r) => ({ id: num(r.id), unread: num(r.unread) }));
+}
+
+// Marca un scope como leído hasta AHORA (idempotente; nunca retrocede).
+export async function markRead(userSub: string, scope: "room" | "dm", scopeId: number): Promise<void> {
+  await dbq(
+    `INSERT INTO gc_reads (user_sub, scope, scope_id, last_read_at)
+     VALUES (?, ?, ?, unixepoch())
+     ON CONFLICT(user_sub, scope, scope_id)
+       DO UPDATE SET last_read_at = MAX(last_read_at, excluded.last_read_at)`,
+    [userSub, scope, String(scopeId)]
+  );
+}
+
+// ── Emojis custom del workspace (Fase 4) ────────────────────────────────────
+// Imágenes en EasyBits (guardamos file_id); se reaccionan como `:name:` y se
+// renderizan vía /api/attachment/:file_id. Nombre normalizado (a-z0-9_).
+export type CustomEmoji = { name: string; file_id: string };
+export async function listCustomEmojis(): Promise<CustomEmoji[]> {
+  const rows = await dbq("SELECT name, file_id FROM gc_emojis ORDER BY name").catch(() => [] as Row[]);
+  return rows.map((r) => ({ name: r.name!, file_id: r.file_id! }));
+}
+export async function addCustomEmoji(name: string, fileId: string, createdBy: string): Promise<void> {
+  await dbq(
+    `INSERT INTO gc_emojis (name, file_id, created_by) VALUES (?, ?, ?)
+     ON CONFLICT(name) DO UPDATE SET file_id = excluded.file_id`,
+    [name, fileId, createdBy]
+  );
+}
+export async function removeCustomEmoji(name: string): Promise<string | null> {
+  const rows = await dbq("SELECT file_id FROM gc_emojis WHERE name = ?", [name]);
+  const fileId = rows[0]?.file_id ?? null;
+  await dbq("DELETE FROM gc_emojis WHERE name = ?", [name]);
+  return fileId;
+}
+
+// Read receipts (Fase 4): quién ha leído hasta un mensaje. Un usuario "leyó" el
+// mensaje si su last_read_at del scope es >= created_at del mensaje. Reusa gc_reads
+// (no hay tabla nueva). Devuelve los lectores ordenados por recencia de lectura.
+export type ReadReceipt = { sub: string; name: string; avatar: string; at: number };
+export async function listReadReceipts(
+  scope: "room" | "dm",
+  scopeId: number,
+  createdAt: number
+): Promise<ReadReceipt[]> {
+  const rows = await dbq(
+    `SELECT u.sub, u.name, u.avatar, r.last_read_at
+       FROM gc_reads r JOIN gc_users u ON u.sub = r.user_sub
+      WHERE r.scope = ? AND r.scope_id = ? AND r.last_read_at >= ?
+      ORDER BY r.last_read_at DESC`,
+    [scope, String(scopeId), createdAt]
+  );
+  return rows.map((r) => ({
+    sub: r.sub!,
+    name: r.name ?? "",
+    avatar: r.avatar ?? "",
+    at: num(r.last_read_at),
+  }));
 }
 
 // Borra los "pensando…" (status) de un contexto — al llegar la respuesta real.

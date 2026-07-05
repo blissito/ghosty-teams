@@ -6,10 +6,12 @@ import {
   getDeferredPrompt,
   onInstallable,
 } from "../utils/pwa-install";
+import { useT } from "../i18n";
 
 const DISMISS_KEY = "ghosty-teams-pwa-dismissed";
 
 function ShareIcon() {
+  const t = useT();
   return (
     <svg
       viewBox="0 0 24 24"
@@ -19,7 +21,7 @@ function ShareIcon() {
       strokeWidth="2"
       strokeLinecap="round"
       strokeLinejoin="round"
-      aria-label="ícono Compartir"
+      aria-label={t("ícono Compartir")}
     >
       <path d="M12 16V4" />
       <path d="M8 8l4-4 4 4" />
@@ -60,6 +62,7 @@ function getIOSBrowser(): "safari" | "chrome" | "other" {
  * - Ya instalada (standalone) o descartada: no renderiza nada.
  */
 export function InstallAppBanner() {
+  const t = useT();
   const [deferred, setDeferred] = useState<BeforeInstallPromptEvent | null>(null);
   const [showIOS, setShowIOS] = useState(false);
   const [iosBrowser, setIosBrowser] = useState<"safari" | "chrome" | "other">("safari");
@@ -125,19 +128,21 @@ export function InstallAppBanner() {
 
   const textBlock = showIOS ? (
     <>
-      <p className="font-semibold text-ink">Instala Ghosty Teams en tu iPhone</p>
+      <p className="font-semibold text-ink">{t("Instala Ghosty Teams en tu iPhone")}</p>
       <p className="mt-1 text-sm text-muted">
-        1. Toca <ShareIcon /> <span className="font-semibold text-ink">Compartir</span>{" "}
-        {iosBrowser === "safari" ? "en la barra de abajo" : "del navegador"}.
+        {t("1. Toca")} <ShareIcon /> <span className="font-semibold text-ink">{t("Compartir")}</span>{" "}
+        {iosBrowser === "safari" ? t("en la barra de abajo") : t("del navegador")}.
         <br />
-        2. Elige <span className="font-semibold text-ink">"Agregar a inicio"</span>.
+        {t("2. Elige")} <span className="font-semibold text-ink">{t("\"Agregar a inicio\"")}</span>.
       </p>
     </>
   ) : (
     <>
-      <p className="font-semibold text-ink">Instala Ghosty Teams</p>
+      <p className="font-semibold text-ink">{t("Instala Ghosty Teams")}</p>
       <p className="mt-1 text-sm text-muted">
-        Ponlo en tu {isMobile ? "pantalla de inicio" : "escritorio"}: acceso directo, sin barra del navegador.
+        {t("Ponlo en tu {place}: acceso directo, sin barra del navegador.", {
+          place: isMobile ? t("pantalla de inicio") : t("escritorio"),
+        })}
       </p>
     </>
   );
@@ -155,7 +160,7 @@ export function InstallAppBanner() {
         full ? "w-full" : ""
       }`}
     >
-      {showIOS ? "Entendido" : "Instalar app"}
+      {showIOS ? t("Entendido") : t("Instalar app")}
     </button>
   );
 
@@ -202,7 +207,7 @@ export function InstallAppBanner() {
                     onClick={close}
                     className="min-h-[40px] text-sm text-muted transition hover:text-ink"
                   >
-                    Ahora no
+                    {t("Ahora no")}
                   </button>
                 </div>
               </div>
@@ -220,7 +225,7 @@ export function InstallAppBanner() {
           >
             <button
               onClick={close}
-              aria-label="Cerrar"
+              aria-label={t("Cerrar")}
               className="absolute right-3 top-3 text-muted transition hover:text-ink"
             >
               ✕
