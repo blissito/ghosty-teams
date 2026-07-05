@@ -57,7 +57,9 @@ async function fleetAgentsWithRefresh() {
 // Agentes de la flota EasyBits del owner (para elegir uno al agregar tipo fleet).
 export const listFleetAgentsFn = createServerFn({ method: "GET" }).handler(async () => {
   await requireOwner();
-  return (await fleetAgentsWithRefresh()).map((a) => ({ id: a.id, name: a.assistantName || a.name }));
+  // `name` = nombre distinto del pool (ej. "tania-0"); `assistantName` suele ser
+  // "Ghosty" para todos → priorizar `name` para distinguirlos en el selector.
+  return (await fleetAgentsWithRefresh()).map((a) => ({ id: a.id, name: a.name || a.assistantName || a.id }));
 });
 
 export const createAgentFn = createServerFn({ method: "POST" })
@@ -83,7 +85,7 @@ export const createAgentFn = createServerFn({ method: "POST" })
       if (!found) throw new Error("agente de flota no encontrado");
       fleetId = found.id;
       fleetToken = found.token;
-      if (!name) name = found.assistantName || found.name;
+      if (!name) name = found.name || found.assistantName || handle;
     } else {
       if (!data.webhookUrl?.trim()) throw new Error("URL del webhook requerida");
       try {
