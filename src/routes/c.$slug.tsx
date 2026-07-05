@@ -59,6 +59,7 @@ import {
   editMessageFn,
 } from "../server/chat";
 import { SmilePlus, Pencil, ArrowLeft } from "lucide-react";
+import { getDeferredPrompt, onInstallable, clearDeferredPrompt, type BeforeInstallPromptEvent } from "../utils/pwa-install";
 import { useLiveStream } from "../hooks/useLiveStream";
 import type { RtEvent } from "../server/bus.server";
 import { Markdown } from "../components/Markdown";
@@ -1048,6 +1049,8 @@ function Sidebar({
         </p>
       </div>
 
+      <InstallAppButton />
+
       <Link
         to="/settings"
         className="flex items-center gap-2 border-t border-border p-3 hover:bg-surface-3"
@@ -1097,6 +1100,43 @@ function Sidebar({
         )}
       </AnimatePresence>
     </aside>
+  );
+}
+
+// Botón pequeño y persistente para instalar la PWA (sidebar footer). Solo aparece
+// si el navegador la ofrece (`beforeinstallprompt`); oculto si ya está instalada
+// (standalone) o en navegadores sin prompt programático (iOS → usa el banner).
+function InstallAppButton() {
+  const t = useT();
+  const [deferred, setDeferred] = useState<BeforeInstallPromptEvent | null>(null);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (window.matchMedia("(display-mode: standalone)").matches) return; // ya instalada
+    const existing = getDeferredPrompt();
+    if (existing) setDeferred(existing);
+    const off = onInstallable((e) => setDeferred(e));
+    const onInstalled = () => setDeferred(null);
+    window.addEventListener("appinstalled", onInstalled);
+    return () => {
+      off();
+      window.removeEventListener("appinstalled", onInstalled);
+    };
+  }, []);
+  if (!deferred) return null;
+  const install = async () => {
+    await deferred.prompt().catch(() => {});
+    await deferred.userChoice.catch(() => {});
+    clearDeferredPrompt();
+    setDeferred(null);
+  };
+  return (
+    <button
+      onClick={install}
+      className="flex w-full items-center gap-2 border-t border-border px-3 py-2 text-xs text-muted hover:bg-surface-3 hover:text-ink"
+    >
+      <Download size={14} className="shrink-0" />
+      {t("Instalar app")}
+    </button>
   );
 }
 
