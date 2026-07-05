@@ -2999,7 +2999,7 @@ function Composer({
             onKeyDown={onKeyDown}
             rows={1}
             placeholder={placeholder}
-            className="min-h-[42px] w-full resize-none rounded-lg border border-border bg-surface px-3 py-2 text-sm text-ink outline-none focus:border-brand"
+            className="min-h-[42px] w-full resize-none rounded-lg border border-border bg-surface px-3 py-[11px] text-sm leading-5 text-ink outline-none focus:border-brand"
           />
         </div>
         <button
