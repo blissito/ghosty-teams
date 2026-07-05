@@ -1,67 +1,72 @@
 #!/usr/bin/env bash
-# Rebake del template inmutable `ghosty-chat` (ARCHITECTURE §6).
+# Rebake del template inmutable `ghosty-chat` (ARCHITECTURE §6). PROBADO 2026-07-05.
 #
-# El app corre en microVMs Firecracker desde un template ext4 horneado EN el
-# host OVH KS-5. Este script automatiza: build local (sanity) → rsync del código
-# al host → docker build → build_template.sh. NO crea/recrea VMs (eso es vía la
-# API de EasyBits / provisioner de Formmy) ni inyecta secrets (se reinyectan al
-# provisionar). Idempotente y seguro de re-correr.
+# Pipeline real (2 repos + host OVH KS-5):
+#   ~/ghosty-chat (source)  →  ~/sandbox-host/templates/ghosty-chat/app  →  host: docker build → ext4
 #
-# Uso:
-#   HOST=mi-alias-ovh ./scripts/rebake.sh
-# Variables:
-#   HOST        (requerida) alias/host SSH del OVH KS-5.
-#   REMOTE_DIR  (opcional)  dir del template en el host. Default: templates/ghosty-chat
-#   SKIP_BUILD  (opcional)  =1 para saltar el `npm run build` local.
+# El bake produce un rootfs ext4 de Firecracker → SOLO corre en el host Linux
+# (docker + mkfs.ext4 + loop mount + sandbox-agent), no en la Mac. Este script
+# sincroniza el source, sube el template al host y hornea allá. NO recrea VMs
+# (eso es vía EasyBits/provisioner) ni inyecta secrets (van en /app/secrets.env
+# al provisionar). Las VMs corriendo NO se afectan: usan su ext4 ya cargado.
+#
+# Uso:  ./scripts/rebake.sh
+# Vars: HOST (54.38.94.14) · KEY (~/.ssh/id_rsa_ovh) · SBHOST (~/sandbox-host) · SIZE (4096) · SKIP_BUILD=1
 set -euo pipefail
 
-HOST="${HOST:-}"
-REMOTE_DIR="${REMOTE_DIR:-templates/ghosty-chat}"
-REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+HOST="${HOST:-54.38.94.14}"
+KEY="${KEY:-$HOME/.ssh/id_rsa_ovh}"
+SBHOST="${SBHOST:-$HOME/sandbox-host}"
+SIZE="${SIZE:-4096}"
+REPO="$(cd "$(dirname "$0")/.." && pwd)"
+SSH="ssh -i $KEY -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR"
+APP="$SBHOST/templates/ghosty-chat/app"
 
-if [[ -z "$HOST" ]]; then
-  echo "✗ Falta HOST. Uso: HOST=mi-alias-ovh ./scripts/rebake.sh" >&2
-  exit 1
-fi
-
-echo "▸ Repo:   $REPO_DIR"
-echo "▸ Host:   $HOST:$REMOTE_DIR"
-echo
-
-# 1) Sanity local: que compile y buildee antes de subir nada.
+# 1) Sanity local.
 if [[ "${SKIP_BUILD:-}" != "1" ]]; then
-  echo "▸ [1/4] Build local (sanity)…"
-  ( cd "$REPO_DIR" && npx tsc --noEmit && npm run build >/dev/null )
-  echo "  ✓ tsc limpio + build OK"
-else
-  echo "▸ [1/4] Build local OMITIDO (SKIP_BUILD=1)"
+  echo "▸ [1/6] Build local (sanity)…"; ( cd "$REPO" && npx tsc --noEmit && npm run build >/dev/null ); echo "  ✓"
 fi
 
-# 2) Sync del código al host. Solo el source + manifiestos; NADA de secrets,
-#    .output, node_modules ni la DB local (el bake instala deps en el Dockerfile).
-echo "▸ [2/4] rsync → $HOST:$REMOTE_DIR/app/"
-rsync -az --delete \
-  --include='src/***' \
-  --include='public/***' \
-  --include='package.json' --include='package-lock.json' \
+# 2) Sync source → template app/. OJO: NO copiar package-lock.json — un lockfile
+#    de macOS hace que `npm install` en linux-amd64 omita los binarios nativos
+#    (rolldown/oxide) → build roto. package.json usa 'latest', se resuelve fresco.
+echo "▸ [2/6] Sync source → $APP"
+rsync -a --delete \
+  --include='src/***' --include='public/***' \
+  --include='package.json' \
   --include='vite.config.ts' --include='tsconfig.json' --include='tsr.config.json' \
-  --exclude='*' \
-  "$REPO_DIR/" "$HOST:$REMOTE_DIR/app/"
-echo "  ✓ código sincronizado"
+  --exclude='*' "$REPO/" "$APP/"
+rm -f "$APP/package-lock.json"
 
-# 3) Bake remoto: imagen docker → template ext4.
-echo "▸ [3/4] docker build + build_template.sh (remoto)…"
-ssh "$HOST" "cd '$REMOTE_DIR' && \
-  docker build --provenance=false --sbom=false -t ghosty-chat . && \
-  ./build_template.sh"
-echo "  ✓ template ghosty-chat horneado"
+# 3) Subir template + build_template.sh al host.
+echo "▸ [3/6] rsync template → host"
+rsync -az --delete -e "$SSH" "$SBHOST/templates/ghosty-chat/" "root@$HOST:/root/templates/ghosty-chat/"
+rsync -az -e "$SSH" "$SBHOST/scripts/build_template.sh" "root@$HOST:/root/build_template.sh"
 
-# 4) Recordatorio manual (no automatizado a propósito).
-echo
-echo "▸ [4/4] Falta a mano:"
-echo "   • Crear/recrear VM desde el template (API EasyBits / provisioner). El"
-echo "     provisioning reinyecta /app/secrets.env — no se hornean secrets."
-echo "   • Smoke test: GET https://teams.formmy.app/api/stream con cookie gc_session"
-echo "     → devuelve text/event-stream y llegan eventos entre dos sesiones."
-echo
-echo "✓ Rebake completado."
+# 4) docker build en el host (npm install + npm run build en el contenedor amd64).
+echo "▸ [4/6] docker build (host)…"
+$SSH "root@$HOST" "cd /root/templates/ghosty-chat && rm -f app/package-lock.json && docker build --provenance=false --sbom=false -t localhost/ghosty-chat:latest . 2>&1 | tail -5"
+
+# 5) Respaldo del ext4 vivo (el bake NO es atómico: rm -f antes de reconstruir) + bake.
+echo "▸ [5/6] backup + build_template.sh (host)…"
+$SSH "root@$HOST" "set -e
+  D=\$(date +%Y%m%d-%H%M)
+  cp -f /var/lib/sandbox-host/templates/ghosty-chat.ext4 /var/lib/sandbox-host/templates/ghosty-chat.ext4.bak-\$D
+  AGENT_BIN=/usr/local/bin/sandbox-agent bash /root/build_template.sh ghosty-chat localhost/ghosty-chat:latest $SIZE 2>&1 | tail -4"
+
+# 6) Smoke: VM efímera del template → systemd active + server en :3000 (500 sin
+#    secrets es OK; prueba que bootea y la app corre). Se borra al final.
+echo "▸ [6/6] smoke test (host)…"
+$SSH "root@$HOST" 'bash -s' <<'SMOKE'
+set -uo pipefail
+TOK=$(grep -oP '^SANDBOX_HOST_TOKEN=\K.*' /etc/sandbox-host/.env); API=http://127.0.0.1:8080
+SID=$(curl -s -X POST "$API/v1/sandbox" -H "Authorization: Bearer $TOK" -H "X-Easybits-Owner: smoke" -H "Content-Type: application/json" -d '{"template":"ghosty-chat","timeoutSeconds":180,"name":"smoke"}' | jq -r .sandboxId)
+trap 'curl -s -X DELETE "$API/v1/sandbox/$SID" -H "Authorization: Bearer $TOK" >/dev/null' EXIT
+for i in $(seq 1 30); do [ "$(curl -s -H "Authorization: Bearer $TOK" "$API/v1/sandbox/$SID" | jq -r .status)" = running ] && break; sleep 2; done
+sleep 6
+curl -s -X POST "$API/v1/sandbox/$SID/exec" -H "Authorization: Bearer $TOK" -H "Content-Type: application/json" \
+  -d '{"command":"systemctl is-active ghosty-chat; curl -s -o /dev/null -w \"http=%{http_code}\\n\" http://127.0.0.1:3000/","timeoutSeconds":30}' | jq -r '.stdout // .'
+SMOKE
+
+echo; echo "✓ Rebake completado. Las VMs nuevas nacen con este template; recrea las"
+echo "  existentes vía EasyBits/provisioner si quieres migrarlas ya."
