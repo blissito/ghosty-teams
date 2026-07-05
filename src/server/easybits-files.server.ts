@@ -29,7 +29,7 @@ async function currentToken(): Promise<string | null> {
 
 // Refresca el access token del owner con el refresh_token (OAuth). Best-effort:
 // si algo falta o falla, devuelve null y el caller cae al token vigente/global.
-async function refreshOwnerToken(): Promise<string | null> {
+export async function refreshOwnerToken(): Promise<string | null> {
   const [refresh, clientId, clientSecret] = await Promise.all([
     getConfig("eb_refresh_token"),
     getConfig("eb_client_id"),

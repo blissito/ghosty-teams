@@ -33,14 +33,31 @@ export const listManagedAgentsFn = createServerFn({ method: "GET" }).handler(asy
   }));
 });
 
+// Lista los fleet agents del owner, refrescando el OAuth token si expiró. El
+// eb_access_token es un JWT que CADUCA; ante 401 usamos el refresh_token para
+// renovarlo (y persistirlo) y reintentamos una vez. Sin conexión/refresh → [].
+// (Bug 2026-07-05: la flota salía vacía porque el token había expirado y esta
+// ruta no refrescaba, a diferencia de la Files API.)
+async function fleetAgentsWithRefresh() {
+  const { getConfig } = await import("../config.server");
+  const token = await getConfig("eb_access_token");
+  if (!token) return [];
+  const { listFleetAgents } = await import("./easybits-oauth.server");
+  try {
+    return await listFleetAgents(token);
+  } catch (e) {
+    if (!String(e).includes("401")) throw e;
+    const { refreshOwnerToken } = await import("./easybits-files.server");
+    const fresh = await refreshOwnerToken();
+    if (!fresh) return [];
+    return await listFleetAgents(fresh);
+  }
+}
+
 // Agentes de la flota EasyBits del owner (para elegir uno al agregar tipo fleet).
 export const listFleetAgentsFn = createServerFn({ method: "GET" }).handler(async () => {
   await requireOwner();
-  const { getConfig } = await import("../config.server");
-  const token = await getConfig("eb_access_token");
-  if (!token) return [] as { id: string; name: string }[];
-  const { listFleetAgents } = await import("./easybits-oauth.server");
-  return (await listFleetAgents(token)).map((a) => ({ id: a.id, name: a.assistantName || a.name }));
+  return (await fleetAgentsWithRefresh()).map((a) => ({ id: a.id, name: a.assistantName || a.name }));
 });
 
 export const createAgentFn = createServerFn({ method: "POST" })
@@ -62,10 +79,7 @@ export const createAgentFn = createServerFn({ method: "POST" })
 
     if (data.kind === "fleet") {
       if (!data.fleetId) throw new Error("elige un agente de la flota");
-      const token = await import("../config.server").then((m) => m.getConfig("eb_access_token"));
-      if (!token) throw new Error("EasyBits no conectado");
-      const { listFleetAgents } = await import("./easybits-oauth.server");
-      const found = (await listFleetAgents(token)).find((a) => a.id === data.fleetId);
+      const found = (await fleetAgentsWithRefresh()).find((a) => a.id === data.fleetId);
       if (!found) throw new Error("agente de flota no encontrado");
       fleetId = found.id;
       fleetToken = found.token;
