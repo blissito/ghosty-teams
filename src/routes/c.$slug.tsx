@@ -63,7 +63,7 @@ import { getDeferredPrompt, onInstallable, clearDeferredPrompt, type BeforeInsta
 import { useLiveStream } from "../hooks/useLiveStream";
 import type { RtEvent } from "../server/bus.server";
 import { Markdown } from "../components/Markdown";
-import { playNotificationSound } from "../utils/notificationSound";
+import { playNotificationSound, playGhostySound, playSelfSound } from "../utils/notificationSound";
 import { useT } from "../i18n";
 
 type Mention = { handle: string; name: string; avatar: string; kind: "agent" | "user" | "group" };
@@ -408,7 +408,8 @@ function ChannelPage() {
         // no suenan.
         if (ev.msg.kind === "msg" && ev.msg.sender !== user?.name) {
           const muteKey = ev.msg.dm_id != null ? `dm:${ev.msg.dm_id}` : `room:${ev.msg.channel_id}`;
-          if (!mutes.has(muteKey)) playNotificationSound();
+          // Ghosty/agentes (agent_handle) → sonido especial etéreo; humanos → knock.
+          if (!mutes.has(muteKey)) (ev.msg.agent_handle ? playGhostySound : playNotificationSound)();
         }
         // DM: parchea el flujo del DM y refresca la lista (orden / nueva conversación).
         if (ev.msg.dm_id != null) {
@@ -2800,6 +2801,7 @@ function Composer({
     if (typeof window !== "undefined") localStorage.removeItem(draftKey); // borrador consumido
     setSending(true);
     if (sent.trim()) onOptimistic(sent);
+    playSelfSound(); // confirmación sonora del envío propio (distinta de las notifs)
     // nonce: para descartar el eco realtime de mi propio mensaje (ya optimista).
     const nonce = crypto.randomUUID();
     sentNonces.add(nonce);

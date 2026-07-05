@@ -72,3 +72,69 @@ export function playNotificationSound(volume = 0.85): void {
   knock(now, 430, 150, 0.7);
   knock(now + 0.16, 385, 140, 0.55);
 }
+
+/**
+ * Sonido de GHOSTY / agentes — distinto del knock humano. Shimmer etéreo
+ * ("fantasmal"): dos tonos ascendentes (una quinta) con vibrato suave.
+ * @param volume 0–1 (default 0.7).
+ */
+export function playGhostySound(volume = 0.7): void {
+  const audio = getCtx();
+  if (!audio) return;
+  const now = audio.currentTime;
+  const master = audio.createGain();
+  master.gain.value = volume;
+  master.connect(audio.destination);
+
+  const tone = (t0: number, freq: number, vol: number, dur: number) => {
+    const o = audio.createOscillator();
+    const g = audio.createGain();
+    o.type = "triangle";
+    o.frequency.setValueAtTime(freq, t0);
+    o.frequency.exponentialRampToValueAtTime(freq * 1.5, t0 + dur); // sube una quinta
+    // Vibrato sutil → sensación etérea.
+    const lfo = audio.createOscillator();
+    const lfoG = audio.createGain();
+    lfo.frequency.value = 6;
+    lfoG.gain.value = freq * 0.02;
+    lfo.connect(lfoG);
+    lfoG.connect(o.frequency);
+    lfo.start(t0);
+    lfo.stop(t0 + dur + 0.05);
+    g.gain.setValueAtTime(0.0001, t0);
+    g.gain.exponentialRampToValueAtTime(vol, t0 + 0.03);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    o.connect(g);
+    g.connect(master);
+    o.start(t0);
+    o.stop(t0 + dur + 0.05);
+  };
+  tone(now, 520, 0.5, 0.22);
+  tone(now + 0.11, 690, 0.4, 0.28);
+}
+
+/**
+ * Sonido de MENSAJE PROPIO (al enviar): un "pip" corto y sutil, ascendente,
+ * como confirmación de "enviado". Más discreto que las notificaciones.
+ * @param volume 0–1 (default 0.4).
+ */
+export function playSelfSound(volume = 0.4): void {
+  const audio = getCtx();
+  if (!audio) return;
+  const now = audio.currentTime;
+  const master = audio.createGain();
+  master.gain.value = volume;
+  master.connect(audio.destination);
+  const o = audio.createOscillator();
+  const g = audio.createGain();
+  o.type = "sine";
+  o.frequency.setValueAtTime(880, now);
+  o.frequency.exponentialRampToValueAtTime(1320, now + 0.06); // sube = "enviado"
+  g.gain.setValueAtTime(0.0001, now);
+  g.gain.exponentialRampToValueAtTime(0.6, now + 0.005);
+  g.gain.exponentialRampToValueAtTime(0.0001, now + 0.08);
+  o.connect(g);
+  g.connect(master);
+  o.start(now);
+  o.stop(now + 0.1);
+}
