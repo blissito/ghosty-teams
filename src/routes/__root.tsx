@@ -1,0 +1,76 @@
+import { useEffect } from 'react'
+import { HeadContent, Scripts, createRootRoute, redirect } from '@tanstack/react-router'
+
+import '../styles.css'
+import { me } from '../server/auth'
+// Engancha `beforeinstallprompt` en module-scope (antes de hidratar) para no
+// perder el evento — lo consume InstallAppBanner.
+import { registerSW } from '../utils/pwa-install'
+import { InstallAppBanner } from '../components/InstallAppBanner'
+
+export const Route = createRootRoute({
+  // Guard: todo requiere sesión, salvo el login y las invitaciones.
+  beforeLoad: async ({ location }) => {
+    if (location.pathname === '/login' || location.pathname.startsWith('/join')) {
+      return { user: null }
+    }
+    const user = await me()
+    if (!user) throw redirect({ to: '/login' })
+    return { user }
+  },
+  head: () => ({
+    meta: [
+      {
+        charSet: 'utf-8',
+      },
+      {
+        name: 'viewport',
+        content: 'width=device-width, initial-scale=1, viewport-fit=cover',
+      },
+      {
+        title: 'Ghosty Teams',
+      },
+      // Instalable como app (PWA) en mobile y desktop.
+      { name: 'theme-color', content: '#7c3aed' },
+      { name: 'mobile-web-app-capable', content: 'yes' },
+      { name: 'apple-mobile-web-app-capable', content: 'yes' },
+      { name: 'apple-mobile-web-app-title', content: 'Ghosty Teams' },
+      { name: 'apple-mobile-web-app-status-bar-style', content: 'black-translucent' },
+    ],
+    links: [
+      {
+        rel: 'icon',
+        type: 'image/svg+xml',
+        href: '/ghosty.svg',
+      },
+      {
+        rel: 'apple-touch-icon',
+        href: '/apple-touch-icon.png',
+      },
+      {
+        rel: 'manifest',
+        href: '/manifest.webmanifest',
+      },
+    ],
+  }),
+  shellComponent: RootDocument,
+})
+
+function RootDocument({ children }: { children: React.ReactNode }) {
+  // Registra el service worker (requisito de instalabilidad de Chrome).
+  useEffect(() => {
+    registerSW()
+  }, [])
+  return (
+    <html lang="en">
+      <head>
+        <HeadContent />
+      </head>
+      <body>
+        {children}
+        <InstallAppBanner />
+        <Scripts />
+      </body>
+    </html>
+  )
+}

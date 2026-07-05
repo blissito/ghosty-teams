@@ -1,0 +1,31 @@
+{
+  "id": "/",
+  "name": "Ghosty Teams",
+  "short_name": "Ghosty Teams",
+  "description": "El chat de equipo con Ghosty: rooms, hilos y agentes que responden.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "theme_color": "#7c3aed",
+  "background_color": "#14121a",
+  "icons": [
+    {
+      "src": "/ghosty-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/ghosty-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/ghosty-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}
