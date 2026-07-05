@@ -63,7 +63,10 @@ import { getDeferredPrompt, onInstallable, clearDeferredPrompt, type BeforeInsta
 import { useLiveStream } from "../hooks/useLiveStream";
 import type { RtEvent } from "../server/bus.server";
 import { Markdown } from "../components/Markdown";
-import { playNotificationSound, playGhostySound, playSelfSound } from "../utils/notificationSound";
+import { playNotificationSound, playGhostySound, playSelfSound, playMentionSound, playDmSound } from "../utils/notificationSound";
+
+// Menciones que cuentan como "a ti": tu @handle o una grupal (@all/@channel/…).
+const SOUND_GROUP_MENTIONS = new Set(["all", "channel", "everyone", "aqui", "here", "todos"]);
 import { useT } from "../i18n";
 
 type Mention = { handle: string; name: string; avatar: string; kind: "agent" | "user" | "group" };
@@ -113,7 +116,7 @@ export const Route = createFileRoute("/c/$slug")({
   component: ChannelPage,
 });
 
-type SessionUser = { sub: string; name: string; email: string; avatar: string; isOwner: boolean };
+type SessionUser = { sub: string; name: string; email: string; avatar: string; isOwner: boolean; handle: string };
 type Optimistic = { id: string; parentId: number | null; dmId: number | null; sender: string; avatar: string; body: string };
 
 // Iconos de room (Lucide, no emojis). Se guarda el NOMBRE; se renderiza el componente.
@@ -408,8 +411,18 @@ function ChannelPage() {
         // no suenan.
         if (ev.msg.kind === "msg" && ev.msg.sender !== user?.name) {
           const muteKey = ev.msg.dm_id != null ? `dm:${ev.msg.dm_id}` : `room:${ev.msg.channel_id}`;
-          // Ghosty/agentes (agent_handle) → sonido especial etéreo; humanos → knock.
-          if (!mutes.has(muteKey)) (ev.msg.agent_handle ? playGhostySound : playNotificationSound)();
+          if (!mutes.has(muteKey)) {
+            // ¿Me menciona? (mi @handle o una grupal). Solo relevante en rooms.
+            const h = user?.handle?.toLowerCase();
+            const mentionsMe = (ev.msg.body.match(/@([\wáéíóúñ]+)/gi) ?? [])
+              .map((x) => x.slice(1).toLowerCase())
+              .some((x) => x === h || SOUND_GROUP_MENTIONS.has(x));
+            // Prioridad: agente → Ghosty · DM → DM · mención → atención · resto → knock.
+            if (ev.msg.agent_handle) playGhostySound();
+            else if (ev.msg.dm_id != null) playDmSound();
+            else if (mentionsMe) playMentionSound();
+            else playNotificationSound();
+          }
         }
         // DM: parchea el flujo del DM y refresca la lista (orden / nueva conversación).
         if (ev.msg.dm_id != null) {

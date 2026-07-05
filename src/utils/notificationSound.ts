@@ -114,6 +114,64 @@ export function playGhostySound(volume = 0.7): void {
 }
 
 /**
+ * Sonido de MENCIÓN (@ti / @all / @channel): el más notorio — doble campana
+ * brillante ascendente (G5→C6). Pide atención sin ser estridente.
+ * @param volume 0–1 (default 0.8).
+ */
+export function playMentionSound(volume = 0.8): void {
+  const audio = getCtx();
+  if (!audio) return;
+  const now = audio.currentTime;
+  const master = audio.createGain();
+  master.gain.value = volume;
+  master.connect(audio.destination);
+  const bell = (t0: number, freq: number, vol: number) => {
+    const o = audio.createOscillator();
+    const g = audio.createGain();
+    o.type = "triangle";
+    o.frequency.value = freq;
+    g.gain.setValueAtTime(0.0001, t0);
+    g.gain.exponentialRampToValueAtTime(vol, t0 + 0.006); // ataque brillante
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.3); // cola tipo campana
+    o.connect(g);
+    g.connect(master);
+    o.start(t0);
+    o.stop(t0 + 0.32);
+  };
+  bell(now, 784, 0.7); // G5
+  bell(now + 0.12, 1047, 0.7); // C6 → sube = "atención"
+}
+
+/**
+ * Sonido de MENSAJE DIRECTO (DM): dos notas cálidas descendentes (E5→C#5),
+ * íntimo y distinto del knock de room y de la mención.
+ * @param volume 0–1 (default 0.65).
+ */
+export function playDmSound(volume = 0.65): void {
+  const audio = getCtx();
+  if (!audio) return;
+  const now = audio.currentTime;
+  const master = audio.createGain();
+  master.gain.value = volume;
+  master.connect(audio.destination);
+  const note = (t0: number, freq: number, vol: number) => {
+    const o = audio.createOscillator();
+    const g = audio.createGain();
+    o.type = "sine";
+    o.frequency.value = freq;
+    g.gain.setValueAtTime(0.0001, t0);
+    g.gain.exponentialRampToValueAtTime(vol, t0 + 0.01);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.22);
+    o.connect(g);
+    g.connect(master);
+    o.start(t0);
+    o.stop(t0 + 0.24);
+  };
+  note(now, 660, 0.6); // E5
+  note(now + 0.13, 554, 0.55); // C#5 → baja suave, íntimo
+}
+
+/**
  * Sonido de MENSAJE PROPIO (al enviar): un "pip" corto y sutil, ascendente,
  * como confirmación de "enviado". Más discreto que las notificaciones.
  * @param volume 0–1 (default 0.4).
