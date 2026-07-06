@@ -38,6 +38,7 @@ import {
   Archive,
   ChevronDown,
   ChevronRight,
+  Layers,
 } from "lucide-react";
 import { searchMessagesFn } from "../server/search";
 import { createFileRoute, notFound, Link, useRouter } from "@tanstack/react-router";
@@ -320,6 +321,11 @@ function threadTitle(m: Message): string {
   const first = (m.body || "").split("\n")[0].trim();
   return first.length > 40 ? first.slice(0, 39) + "…" : first;
 }
+
+// Sidebar: solo los N hilos más recientes; el resto vive en el modal "Ver todos".
+// En el modal se revelan de a THREAD_PAGE (carga parcial sobre el array ya cacheado).
+const THREAD_PREVIEW = 5;
+const THREAD_PAGE = 20;
 
 // Nombre visible de un DM = título del grupo o los nombres de los OTROS miembros.
 function dmTitle(conv: DmConversation, fallback: string): string {
@@ -1104,6 +1110,144 @@ function ChannelPage() {
   );
 }
 
+/* ── Fila de hilo (compartida entre el submenú del sidebar y el modal "Ver todos") ── */
+function ThreadRow({
+  thr,
+  active,
+  onOpen,
+  onDelete,
+  canDelete,
+  variant,
+}: {
+  thr: Message;
+  active: boolean;
+  onOpen: (id: number) => void;
+  onDelete: (id: number) => void;
+  canDelete: boolean;
+  variant: "sidebar" | "modal";
+}) {
+  const t = useT();
+  const thrIsAgent = (thr.agent_handle != null && thr.mentions_ghosty === 0) || thr.sender === "ghosty";
+  const isGhosty = thrIsAgent && (thr.agent_handle === "ghosty" || thr.sender === "ghosty");
+  const compact = variant === "sidebar";
+  return (
+    <li className="group/thr flex items-center">
+      <button
+        onClick={() => onOpen(thr.id)}
+        title={thr.body}
+        className={`flex min-w-0 flex-1 items-center gap-1.5 rounded-md text-left ${
+          compact ? "px-2 py-1 text-xs" : "px-2.5 py-2 text-sm"
+        } ${
+          active ? "bg-brand/15 font-medium text-ink" : "text-muted hover:bg-surface-3 hover:text-ink"
+        }`}
+      >
+        {isGhosty ? (
+          <img src="/ghosty.svg" alt="" className={compact ? "h-3.5 w-3.5 shrink-0" : "h-4 w-4 shrink-0"} />
+        ) : thrIsAgent ? (
+          <Bot size={compact ? 13 : 15} className="shrink-0 text-brand" />
+        ) : (
+          <MessageSquare size={compact ? 12 : 14} className="shrink-0" />
+        )}
+        <span className="min-w-0 flex-1 truncate">{threadTitle(thr) || t("Hilo")}</span>
+        <span className={`shrink-0 tabular-nums text-muted ${compact ? "text-[10px]" : "text-xs"}`}>
+          {thr.reply_count ?? 0}
+        </span>
+      </button>
+      {canDelete && (
+        <button
+          onClick={() => onDelete(thr.id)}
+          title={t("Eliminar hilo")}
+          className="shrink-0 p-1 text-muted opacity-100 transition hover:text-brand md:opacity-0 md:group-hover/thr:opacity-100"
+        >
+          <Trash2 size={compact ? 13 : 15} />
+        </button>
+      )}
+    </li>
+  );
+}
+
+/* ── Modal "Ver todos los hilos": busca + revela de a THREAD_PAGE (carga parcial). ── */
+function AllThreadsModal({
+  threads,
+  roomName,
+  activeThreadId,
+  onOpen,
+  onDelete,
+  user,
+  onClose,
+}: {
+  threads: Message[];
+  roomName: string;
+  activeThreadId: number | null;
+  onOpen: (id: number) => void;
+  onDelete: (id: number) => void;
+  user: SessionUser | null;
+  onClose: () => void;
+}) {
+  const t = useT();
+  const [q, setQ] = useState("");
+  const [visible, setVisible] = useState(THREAD_PAGE);
+  const filtered = useMemo(() => {
+    const needle = q.trim().toLowerCase();
+    if (!needle) return threads;
+    return threads.filter(
+      (thr) =>
+        (threadTitle(thr) || "").toLowerCase().includes(needle) ||
+        (thr.body || "").toLowerCase().includes(needle)
+    );
+  }, [threads, q]);
+  // Al cambiar la búsqueda, reinicia la ventana de carga parcial.
+  useEffect(() => setVisible(THREAD_PAGE), [q]);
+  const shown = filtered.slice(0, visible);
+  const remaining = filtered.length - shown.length;
+  return (
+    <Modal onClose={onClose} wide>
+      <div className="mb-3 flex items-center gap-2">
+        <Layers size={18} className="shrink-0 text-brand" />
+        <h2 className="min-w-0 flex-1 truncate text-base font-semibold">
+          {t("Hilos de")} {roomName}
+        </h2>
+        <span className="shrink-0 tabular-nums text-xs text-muted">{filtered.length}</span>
+      </div>
+      <input
+        value={q}
+        onChange={(e) => setQ(e.target.value)}
+        placeholder={t("Buscar hilo…")}
+        autoFocus
+        className="mb-3 w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-ink outline-none placeholder:text-muted focus:border-brand"
+      />
+      {shown.length === 0 ? (
+        <p className="py-8 text-center text-sm text-muted">{t("No se encontraron hilos.")}</p>
+      ) : (
+        <ul className="space-y-0.5">
+          {shown.map((thr) => (
+            <ThreadRow
+              key={thr.id}
+              thr={thr}
+              active={activeThreadId === thr.id}
+              onOpen={(id) => {
+                onOpen(id);
+                onClose();
+              }}
+              onDelete={onDelete}
+              canDelete={!!(user?.isOwner || thr.sender === user?.name)}
+              variant="modal"
+            />
+          ))}
+        </ul>
+      )}
+      {remaining > 0 && (
+        <button
+          onClick={() => setVisible((v) => v + THREAD_PAGE)}
+          className="mt-3 w-full rounded-lg border border-border py-2 text-sm text-muted transition hover:bg-surface-3 hover:text-ink"
+        >
+          {t("Cargar más")} ({remaining})
+        </button>
+      )}
+    </Modal>
+  );
+}
+
 /* ── Sidebar: Rooms + hilos como submenús + identidad ── */
 // Badge de no-leídos (Fase 1.5): píldora compacta; 99+ como tope.
 function UnreadBadge({ n }: { n: number }) {
@@ -1179,6 +1323,10 @@ function Sidebar({
   const [createOpen, setCreateOpen] = useState(false);
   const [settingsSlug, setSettingsSlug] = useState<string | null>(null);
   const [newDmOpen, setNewDmOpen] = useState(false);
+  // Modal "Ver todos los hilos" del room activo (abierto desde el botón "+N más").
+  const [allThreadsOpen, setAllThreadsOpen] = useState(false);
+  // Cambiar de room cierra el modal (sus hilos ya no corresponden).
+  useEffect(() => setAllThreadsOpen(false), [active]);
   // Acordeón: hilos del room colapsados (por slug). Colapsar evita que el sidebar
   // crezca sin fin cuando un room tiene muchos hilos.
   const [collapsedThreads, setCollapsedThreads] = useState<Set<string>>(new Set());
@@ -1302,47 +1450,35 @@ function Sidebar({
                 </button>
               )}
             </div>
-            {/* Hilos del room activo como submenús (colapsables); clic → enfoca el hilo. */}
+            {/* Hilos del room activo como submenús (colapsables): solo los 5 más
+                recientes; el resto se ve en el modal "Ver todos" con carga parcial. */}
             {c.slug === active && threads.length > 0 && !collapsedThreads.has(c.slug) && (
-              <ul className="mb-1 ml-3.5 mt-0.5 max-h-64 space-y-0.5 overflow-y-auto border-l border-border pl-2">
-                {threads.map((thr) => {
-                  const thrIsAgent = (thr.agent_handle != null && thr.mentions_ghosty === 0) || thr.sender === "ghosty";
-                  const isGhosty = thrIsAgent && (thr.agent_handle === "ghosty" || thr.sender === "ghosty");
-                  const canDelete = user?.isOwner || thr.sender === user?.name;
-                  return (
-                    <li key={thr.id} className="group/thr flex items-center">
-                      <button
-                        onClick={() => onOpenThread(thr.id)}
-                        title={thr.body}
-                        className={`flex min-w-0 flex-1 items-center gap-1.5 rounded-md px-2 py-1 text-left text-xs ${
-                          activeThreadId === thr.id
-                            ? "bg-brand/15 font-medium text-ink"
-                            : "text-muted hover:bg-surface-3 hover:text-ink"
-                        }`}
-                      >
-                        {isGhosty ? (
-                          <img src="/ghosty.svg" alt="" className="h-3.5 w-3.5 shrink-0" />
-                        ) : thrIsAgent ? (
-                          <Bot size={13} className="shrink-0 text-brand" />
-                        ) : (
-                          <MessageSquare size={12} className="shrink-0" />
-                        )}
-                        <span className="min-w-0 flex-1 truncate">{threadTitle(thr) || t("Hilo")}</span>
-                        <span className="shrink-0 tabular-nums text-[10px] text-muted">{thr.reply_count ?? 0}</span>
-                      </button>
-                      {canDelete && (
-                        <button
-                          onClick={() => onDeleteThread(thr.id)}
-                          title={t("Eliminar hilo")}
-                          className="shrink-0 p-1 text-muted opacity-100 transition hover:text-brand md:opacity-0 md:group-hover/thr:opacity-100"
-                        >
-                          <Trash2 size={13} />
-                        </button>
-                      )}
-                    </li>
-                  );
-                })}
-              </ul>
+              <div className="mb-1 ml-3.5 mt-0.5 border-l border-border pl-2">
+                <ul className="space-y-0.5">
+                  {threads.slice(0, THREAD_PREVIEW).map((thr) => (
+                    <ThreadRow
+                      key={thr.id}
+                      thr={thr}
+                      active={activeThreadId === thr.id}
+                      onOpen={onOpenThread}
+                      onDelete={onDeleteThread}
+                      canDelete={!!(user?.isOwner || thr.sender === user?.name)}
+                      variant="sidebar"
+                    />
+                  ))}
+                </ul>
+                {threads.length > THREAD_PREVIEW && (
+                  <button
+                    onClick={() => setAllThreadsOpen(true)}
+                    className="mt-0.5 flex w-full items-center gap-1.5 rounded-md px-2 py-1 text-left text-xs text-muted transition hover:bg-surface-3 hover:text-brand"
+                  >
+                    <MoreHorizontal size={13} className="shrink-0" />
+                    <span className="truncate">
+                      +{threads.length - THREAD_PREVIEW} {t("más")}
+                    </span>
+                  </button>
+                )}
+              </div>
             )}
           </div>
           );
@@ -1467,6 +1603,17 @@ function Sidebar({
               onOpenDm(id);
               onRevalidate();
             }}
+          />
+        )}
+        {allThreadsOpen && (
+          <AllThreadsModal
+            threads={threads}
+            roomName={channels.find((c) => c.slug === active)?.name ?? t("Room")}
+            activeThreadId={activeThreadId}
+            onOpen={onOpenThread}
+            onDelete={onDeleteThread}
+            user={user}
+            onClose={() => setAllThreadsOpen(false)}
           />
         )}
       </AnimatePresence>
