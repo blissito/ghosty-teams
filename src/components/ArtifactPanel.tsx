@@ -1,10 +1,14 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { AnimatePresence, motion } from "motion/react";
+import { useEffect, useRef, useState } from "react";
 import { X, ExternalLink, FileText } from "lucide-react";
 import { useT } from "../i18n";
 
 // Panel lateral de artefactos del room. Fase 0 = visor PDF/imagen (adjuntos).
 // Fase 3 añadirá kind:"html" (editor Tiptap embebido / colab). El panel es
 // agnóstico a la fuente: solo conoce esta vista, no el modelo Attachment/Artifact.
+// Patrón calcado del PreviewDrawer noVNC de ghosty-studio: drawer overlay que se
+// desliza desde la derecha, redimensionable por el borde izquierdo, con un catcher
+// de pointer-events durante el arrastre para que el iframe no se coma el drag.
 export type ArtifactView =
   | { kind: "pdf"; title: string; src: string }
   | { kind: "image"; title: string; src: string }
@@ -25,28 +29,9 @@ export function viewFromAttachment(a: {
   return null;
 }
 
+const DEFAULT_W = 1100;
 const MIN_W = 360;
-const DEFAULT_W = 520;
 const STORE_KEY = "eb_artifact_w";
-
-function clampWidth(w: number): number {
-  const max = Math.min(1100, Math.round(window.innerWidth * 0.85));
-  return Math.max(MIN_W, Math.min(w, max));
-}
-
-// Solo en desktop el ancho es ajustable; en móvil el panel es overlay full-screen.
-function useIsDesktop(): boolean {
-  const [d, setD] = useState(() =>
-    typeof window !== "undefined" ? window.matchMedia("(min-width:768px)").matches : true,
-  );
-  useEffect(() => {
-    const mq = window.matchMedia("(min-width:768px)");
-    const h = () => setD(mq.matches);
-    mq.addEventListener("change", h);
-    return () => mq.removeEventListener("change", h);
-  }, []);
-  return d;
-}
 
 export default function ArtifactPanel({
   artifact,
@@ -56,106 +41,125 @@ export default function ArtifactPanel({
   onClose: () => void;
 }) {
   const t = useT();
-  const isDesktop = useIsDesktop();
   const [width, setWidth] = useState<number>(() => {
-    try {
-      const v = Number(localStorage.getItem(STORE_KEY));
-      return v >= MIN_W ? v : DEFAULT_W;
-    } catch {
-      return DEFAULT_W;
-    }
+    if (typeof window === "undefined") return DEFAULT_W;
+    const saved = Number(localStorage.getItem(STORE_KEY));
+    const max = window.innerWidth - 40;
+    return Math.min(saved || DEFAULT_W, max);
   });
   const widthRef = useRef(width);
-  const setW = useCallback((w: number) => {
-    widthRef.current = w;
-    setWidth(w);
+  widthRef.current = width;
+  const dragging = useRef(false);
+  const [isDragging, setIsDragging] = useState(false);
+
+  useEffect(() => {
+    const onMove = (e: PointerEvent) => {
+      if (!dragging.current) return;
+      // Panel anclado a la derecha → ancho = viewport - clientX.
+      const w = Math.min(Math.max(window.innerWidth - e.clientX, MIN_W), window.innerWidth - 40);
+      setWidth(w);
+    };
+    const onUp = () => {
+      if (!dragging.current) return;
+      dragging.current = false;
+      setIsDragging(false);
+      document.body.style.userSelect = "";
+      try {
+        localStorage.setItem(STORE_KEY, String(Math.round(widthRef.current)));
+      } catch {}
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    return () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+    };
   }, []);
 
-  // Arrastre desde el borde izquierdo. El panel está anclado a la derecha, así
-  // que el ancho = viewport - clientX. Listeners en window para no perder el
-  // drag si el cursor sale del handle.
-  const onDragStart = useCallback(
-    (e: React.MouseEvent) => {
-      e.preventDefault();
-      document.body.style.userSelect = "none";
-      document.body.style.cursor = "col-resize";
-      const onMove = (ev: MouseEvent) => setW(clampWidth(window.innerWidth - ev.clientX));
-      const onUp = () => {
-        document.body.style.userSelect = "";
-        document.body.style.cursor = "";
-        window.removeEventListener("mousemove", onMove);
-        window.removeEventListener("mouseup", onUp);
-        try {
-          localStorage.setItem(STORE_KEY, String(widthRef.current));
-        } catch {}
-      };
-      window.addEventListener("mousemove", onMove);
-      window.addEventListener("mouseup", onUp);
-    },
-    [setW],
-  );
-
-  if (!artifact) return null;
-
-  const externalHref = artifact.kind === "html" ? artifact.embedUrl : artifact.src;
+  const externalHref = artifact?.kind === "html" ? artifact.embedUrl : artifact?.src;
 
   return (
-    // Overlay a pantalla completa en móvil; columna redimensionable en desktop.
-    <aside
-      style={isDesktop ? { width } : undefined}
-      className="fixed inset-0 z-50 flex flex-col bg-surface md:static md:inset-auto md:z-auto md:shrink-0 md:border-l md:border-border"
-    >
-      {/* Handle de redimensión (solo desktop): barra en el borde izquierdo que
-          resalta al hover y arrastra para ensanchar. */}
-      <div
-        onMouseDown={onDragStart}
-        title={t("Arrastra para redimensionar")}
-        className="group absolute inset-y-0 -left-1 z-10 hidden w-2 cursor-col-resize md:block"
-      >
-        <div className="absolute inset-y-0 left-1 w-0.5 bg-transparent transition-colors group-hover:bg-brand" />
-      </div>
-
-      <header className="flex items-center gap-2 border-b border-border bg-surface-2 px-3 py-2">
-        <FileText size={16} className="shrink-0 text-brand" />
-        <span className="min-w-0 flex-1 truncate text-sm font-medium text-ink">
-          {artifact.title || t("Documento")}
-        </span>
-        <a
-          href={externalHref}
-          target="_blank"
-          rel="noreferrer"
-          className="grid size-7 place-items-center rounded-md text-muted transition hover:bg-surface-3 hover:text-brand"
-          title={t("Abrir en pestaña nueva")}
-        >
-          <ExternalLink size={15} />
-        </a>
-        <button
-          type="button"
-          onClick={onClose}
-          className="grid size-7 place-items-center rounded-md text-muted transition hover:bg-surface-3 hover:text-ink"
-          title={t("Cerrar")}
-        >
-          <X size={16} />
-        </button>
-      </header>
-
-      <div className="min-h-0 flex-1 overflow-auto bg-surface-3">
-        {artifact.kind === "image" ? (
-          <div className="grid min-h-full place-items-center p-4">
-            <img
-              src={artifact.src}
-              alt={artifact.title}
-              className="max-h-full max-w-full rounded-lg object-contain"
-            />
-          </div>
-        ) : (
-          <iframe
-            src={artifact.kind === "html" ? artifact.embedUrl : artifact.src}
-            title={artifact.title || "artifact"}
-            className="size-full border-0"
+    <AnimatePresence>
+      {artifact ? (
+        <>
+          <motion.div
+            className="fixed inset-0 z-40 bg-black/60"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={onClose}
           />
-        )}
-      </div>
-    </aside>
+          <motion.aside
+            className="fixed right-0 top-0 z-50 flex h-full max-w-full border-l border-border bg-surface shadow-2xl"
+            style={{ width }}
+            initial={{ x: "100%" }}
+            animate={{ x: 0 }}
+            exit={{ x: "100%" }}
+            transition={{ type: "spring", stiffness: 320, damping: 34 }}
+          >
+            {/* Handle de redimensión: arrastra el borde izquierdo; doble clic resetea. */}
+            <div
+              onPointerDown={(e) => {
+                dragging.current = true;
+                setIsDragging(true);
+                document.body.style.userSelect = "none";
+                e.preventDefault();
+              }}
+              onDoubleClick={() => setWidth(Math.min(DEFAULT_W, window.innerWidth - 40))}
+              title={t("Arrastra para redimensionar (doble clic: reset)")}
+              className="absolute left-0 top-0 z-10 -ml-1 h-full w-2 cursor-col-resize transition-colors hover:bg-brand/40 active:bg-brand/60"
+            />
+
+            <div className="flex min-w-0 flex-1 flex-col">
+              <header className="flex flex-shrink-0 items-center gap-2 border-b border-border bg-surface-2 px-3 py-2">
+                <FileText size={16} className="shrink-0 text-brand" />
+                <span className="min-w-0 flex-1 truncate text-sm font-medium text-ink">
+                  {artifact.title || t("Documento")}
+                </span>
+                <a
+                  href={externalHref}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="grid size-7 place-items-center rounded-md text-muted transition hover:bg-surface-3 hover:text-brand"
+                  title={t("Abrir en pestaña nueva")}
+                >
+                  <ExternalLink size={15} />
+                </a>
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="grid size-7 place-items-center rounded-md text-muted transition hover:bg-surface-3 hover:text-ink"
+                  title={t("Cerrar")}
+                >
+                  <X size={16} />
+                </button>
+              </header>
+
+              <div className="relative min-h-0 flex-1 overflow-auto bg-surface-3">
+                {artifact.kind === "image" ? (
+                  <div className="grid min-h-full place-items-center p-4">
+                    <img
+                      src={artifact.src}
+                      alt={artifact.title}
+                      className="max-h-full max-w-full rounded-lg object-contain"
+                    />
+                  </div>
+                ) : (
+                  <iframe
+                    src={artifact.kind === "html" ? artifact.embedUrl : artifact.src}
+                    title={artifact.title || "artifact"}
+                    className="size-full border-0 bg-surface-3"
+                  />
+                )}
+              </div>
+            </div>
+
+            {/* Catcher: durante el arrastre cubre todo (incluido el iframe) para que el
+                pointer no se pierda dentro del visor. */}
+            {isDragging ? <div className="fixed inset-0 z-[60] cursor-col-resize" /> : null}
+          </motion.aside>
+        </>
+      ) : null}
+    </AnimatePresence>
   );
 }
