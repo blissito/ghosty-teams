@@ -106,3 +106,41 @@ estos paths sólo se validan tras el primer bake:
 - **EasyBits:** uploads, adjuntos, emojis custom, refresh de token, y el scope
   `mcp` para la Files API. Si `mcp` no cubre Files, el fallback a
   `EASYBITS_API_KEY` global lo cubre (path probado en Formmy).
+
+---
+
+## INCIDENTE 2026-07-06 — team pegado en "Levantando tu team… reviviendo" (perpetuo)
+
+**Síntoma:** teams.formmy.app queda eternamente en la warming page ("Tu caja se durmió;
+la estamos reviviendo ~20s"), nunca carga el team.
+
+**Causa raíz (NO era el template):** el registro `Team` en la DB de formmy quedó pegado en
+`status='provisioning'`. El ingress (`formmy_rrv7/server/server.ts:271`) hace
+`if (team.status === 'provisioning') return sendReviving(res)` **antes** de cualquier
+health-check o re-disparo → una vez en 'provisioning', muestra la warming page en CADA
+request y **nunca re-dispara `reviveBox`**. No auto-sana. Se llega a ese estado cuando un
+`reviveBox` de fondo (`void (async …)`, línea ~310) se INTERRUMPE: pone `status='provisioning'`
+(línea 308) y nunca alcanza `status='ready'` (línea 315). Lo detonó la combinación de: (a)
+churn de kills de la VM del team, y (b) un **redeploy de formmy-v2** (reinicia el machine →
+mata el async de revive en vuelo).
+
+**Verificación (el template estaba SANO):** smoke y una box con secrets reales (dbId correcto
+`6a49a3be0d65b77d12dc7536`) devolvían **307** (redirect a login), no 500. EasyBits creaba boxes
+OK. La DB del team respondía `SELECT 1`. O sea: plataforma + template + DB sanos.
+
+**Recuperación (runbook):**
+1. Confirmar el estado del team (Mongo de formmy, vía `flyctl ssh console -a formmy-v2`):
+   `p.team.findUnique({where:{slug:'<slug>'}, select:{status,sandboxId,instanceUrl,dbNamespace}})`.
+2. Si `status==='provisioning'` y no avanza → **resetear a `ready`**:
+   `p.team.updateMany({where:{status:'provisioning'}, data:{status:'ready'}})`.
+   Con status='ready' e `instanceUrl` de una box muerta, el ingress: warmup → `boxDestroyed`
+   (proxy responde "not a valid preview host") = true → NO sirve el cadáver → re-dispara
+   `reviveBox` → crea box nueva → `status='ready'` + `instanceUrl` nuevo. Recupera solo.
+3. Acceso directo a las DBs de team vía EasyBits (la `EASYBITS_API_KEY` de dev = key de
+   PLATAFORMA): `GET {EB}/api/v2/databases` (lista todas), `POST {EB}/api/v2/databases/{dbId}/query`
+   `{sql,args}`. dbId del team = su `dbNamespace`.
+
+**Lección / hardening pendiente (formmy_rrv7 server.ts):** `status='provisioning'` debería
+**auto-sanar** — si `Date.now()-updatedAt` supera un umbral (p.ej. 2 min), tratar como caja
+muerta y re-disparar `reviveBox` en vez de mostrar la warming page indefinidamente. Y NO
+redeployar formmy-v2 mientras hay revives de team en vuelo (mata el async de fondo).
