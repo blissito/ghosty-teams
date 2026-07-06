@@ -1,3 +1,4 @@
+import { useCallback, useEffect, useRef, useState } from "react";
 import { X, ExternalLink, FileText } from "lucide-react";
 import { useT } from "../i18n";
 
@@ -24,6 +25,29 @@ export function viewFromAttachment(a: {
   return null;
 }
 
+const MIN_W = 360;
+const DEFAULT_W = 520;
+const STORE_KEY = "eb_artifact_w";
+
+function clampWidth(w: number): number {
+  const max = Math.min(1100, Math.round(window.innerWidth * 0.85));
+  return Math.max(MIN_W, Math.min(w, max));
+}
+
+// Solo en desktop el ancho es ajustable; en móvil el panel es overlay full-screen.
+function useIsDesktop(): boolean {
+  const [d, setD] = useState(() =>
+    typeof window !== "undefined" ? window.matchMedia("(min-width:768px)").matches : true,
+  );
+  useEffect(() => {
+    const mq = window.matchMedia("(min-width:768px)");
+    const h = () => setD(mq.matches);
+    mq.addEventListener("change", h);
+    return () => mq.removeEventListener("change", h);
+  }, []);
+  return d;
+}
+
 export default function ArtifactPanel({
   artifact,
   onClose,
@@ -32,14 +56,65 @@ export default function ArtifactPanel({
   onClose: () => void;
 }) {
   const t = useT();
+  const isDesktop = useIsDesktop();
+  const [width, setWidth] = useState<number>(() => {
+    try {
+      const v = Number(localStorage.getItem(STORE_KEY));
+      return v >= MIN_W ? v : DEFAULT_W;
+    } catch {
+      return DEFAULT_W;
+    }
+  });
+  const widthRef = useRef(width);
+  const setW = useCallback((w: number) => {
+    widthRef.current = w;
+    setWidth(w);
+  }, []);
+
+  // Arrastre desde el borde izquierdo. El panel está anclado a la derecha, así
+  // que el ancho = viewport - clientX. Listeners en window para no perder el
+  // drag si el cursor sale del handle.
+  const onDragStart = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault();
+      document.body.style.userSelect = "none";
+      document.body.style.cursor = "col-resize";
+      const onMove = (ev: MouseEvent) => setW(clampWidth(window.innerWidth - ev.clientX));
+      const onUp = () => {
+        document.body.style.userSelect = "";
+        document.body.style.cursor = "";
+        window.removeEventListener("mousemove", onMove);
+        window.removeEventListener("mouseup", onUp);
+        try {
+          localStorage.setItem(STORE_KEY, String(widthRef.current));
+        } catch {}
+      };
+      window.addEventListener("mousemove", onMove);
+      window.addEventListener("mouseup", onUp);
+    },
+    [setW],
+  );
+
   if (!artifact) return null;
 
-  const externalHref =
-    artifact.kind === "html" ? artifact.embedUrl : artifact.src;
+  const externalHref = artifact.kind === "html" ? artifact.embedUrl : artifact.src;
 
   return (
-    // Overlay a pantalla completa en móvil; columna fija hermana en desktop.
-    <aside className="fixed inset-0 z-50 flex flex-col bg-surface md:static md:inset-auto md:z-auto md:w-[480px] md:shrink-0 md:border-l md:border-border">
+    // Overlay a pantalla completa en móvil; columna redimensionable en desktop.
+    <aside
+      style={isDesktop ? { width } : undefined}
+      className="fixed inset-0 z-50 flex flex-col bg-surface md:static md:inset-auto md:z-auto md:shrink-0 md:border-l md:border-border"
+    >
+      {/* Handle de redimensión (solo desktop): barra en el borde izquierdo que
+          resalta al hover y arrastra para ensanchar. */}
+      <div
+        onMouseDown={onDragStart}
+        title={t("Arrastra para redimensionar")}
+        className="group absolute inset-y-0 -left-1 z-10 hidden w-2 cursor-col-resize md:block"
+      >
+        <div className="absolute inset-y-0 left-1 w-0.5 bg-transparent transition-colors group-hover:bg-brand" />
+      </div>
+
       <header className="flex items-center gap-2 border-b border-border bg-surface-2 px-3 py-2">
         <FileText size={16} className="shrink-0 text-brand" />
         <span className="min-w-0 flex-1 truncate text-sm font-medium text-ink">
