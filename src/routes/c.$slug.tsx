@@ -66,6 +66,7 @@ import { getDeferredPrompt, onInstallable, clearDeferredPrompt, type BeforeInsta
 import { useLiveStream } from "../hooks/useLiveStream";
 import type { RtEvent } from "../server/bus.server";
 import { Markdown } from "../components/Markdown";
+import ArtifactPanel, { type ArtifactView, viewFromAttachment } from "../components/ArtifactPanel";
 import { playNotificationSound, playGhostySound, playSelfSound, playMentionSound, playDmSound } from "../utils/notificationSound";
 
 // Menciones que cuentan como "a ti": tu @handle o una grupal (@all/@channel/…).
@@ -196,6 +197,8 @@ const ChatCtx = createContext<{
   // Uno solo a la vez (referencia Slack/Zulip): abrir otro cierra el anterior.
   pickerFor: number | null;
   setPickerFor: (id: number | null) => void;
+  // Abre un artefacto (pdf/imagen/doc) en el panel lateral del room.
+  onOpenArtifact: (a: ArtifactView) => void;
 }>({
   me: null,
   slug: "",
@@ -209,6 +212,7 @@ const ChatCtx = createContext<{
   discardSend: () => {},
   pickerFor: null,
   setPickerFor: () => {},
+  onOpenArtifact: () => {},
 });
 
 // Emojis rápidos para el picker (evita una lib de ~1MB).
