@@ -444,6 +444,9 @@ function ChannelPage() {
   // router. Igual que los hilos, un DM se enfoca en el CENTRO (referencia Zulip).
   const [openThreadId, setOpenThreadId] = useState<number | null>(null);
   const [openDmId, setOpenDmId] = useState<number | null>(null);
+  // Artefacto abierto en el panel lateral (pdf/imagen; doc en Fase 3). Estado
+  // cliente puro, como openThreadId — abre instantáneo sin tocar el router.
+  const [openArtifact, setOpenArtifact] = useState<ArtifactView | null>(null);
   // Vista Zulip enfocada en el centro (recientes/menciones/destacados) — otro modo
   // de estado-cliente, mutuamente excluyente con hilo/DM. null = flujo del room.
   const [view, setView] = useState<null | "recent" | "mentions" | "starred">(null);
@@ -1003,7 +1006,7 @@ function ChannelPage() {
 
   return (
     <ChatCtx.Provider
-      value={{ me: user, slug: channel.slug, emojis, react, star, pin, remove, editMsg, retrySend, discardSend, pickerFor, setPickerFor }}
+      value={{ me: user, slug: channel.slug, emojis, react, star, pin, remove, editMsg, retrySend, discardSend, pickerFor, setPickerFor, onOpenArtifact: setOpenArtifact }}
     >
     <div className="flex h-[100dvh] bg-surface text-ink">
       {/* Backdrop del drawer (solo móvil): tap fuera cierra el sidebar. */}
@@ -1097,6 +1100,9 @@ function ChannelPage() {
           onOpenNav={() => setNavOpen(true)}
         />
       )}
+      {/* Panel de artefactos: columna fija a la derecha (desktop) u overlay (móvil).
+          Se rinde null solo cuando no hay artefacto abierto. */}
+      <ArtifactPanel artifact={openArtifact} onClose={() => setOpenArtifact(null)} />
       <AnimatePresence>
         {paletteOpen && (
           <CommandPalette
@@ -2814,23 +2820,50 @@ function fmtBytes(n: number | null): string {
 // Todo pasa por el proxy autenticado /api/attachment/:fileId (re-firma readUrl).
 function AttachmentList({ attachments }: { attachments: Attachment[] }) {
   const t = useT();
+  const { onOpenArtifact } = useContext(ChatCtx);
   return (
     <div className="mt-1.5 flex flex-wrap gap-2">
       {attachments.map((a) => {
         const src = `/api/attachment/${encodeURIComponent(a.file_id)}`;
-        const isImage = (a.mime ?? "").startsWith("image/");
-        if (isImage) {
+        const view = viewFromAttachment(a);
+        // Imagen → abre en el panel lateral (antes: pestaña nueva).
+        if (view?.kind === "image") {
           return (
-            <a key={a.id} href={src} target="_blank" rel="noreferrer" className="block">
+            <button
+              key={a.id}
+              type="button"
+              onClick={() => onOpenArtifact(view)}
+              className="block cursor-pointer"
+              title={t("Abrir en panel")}
+            >
               <img
                 src={src}
                 alt={a.name ?? ""}
                 loading="lazy"
                 className="max-h-72 max-w-full rounded-lg border border-border object-cover"
               />
-            </a>
+            </button>
           );
         }
+        // PDF → card que abre el visor en el panel lateral.
+        if (view?.kind === "pdf") {
+          return (
+            <button
+              key={a.id}
+              type="button"
+              onClick={() => onOpenArtifact(view)}
+              className="group flex max-w-xs items-center gap-2.5 rounded-lg border border-border bg-surface-2 px-3 py-2 text-left transition hover:border-brand"
+              title={t("Abrir en panel")}
+            >
+              <FileText size={20} className="shrink-0 text-brand" />
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-sm text-ink">{a.name ?? t("Archivo")}</span>
+                <span className="block text-[11px] text-muted">{fmtBytes(a.size)}</span>
+              </span>
+            </button>
+          );
+        }
+        // Otros archivos (docx, zip, etc.) → descarga directa, sin visor.
         return (
           <a
             key={a.id}
