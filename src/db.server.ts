@@ -440,6 +440,7 @@ export type Agent = {
   fleet_token: string | null;
   webhook_url: string | null;
   avatar: string | null;
+  system_prompt: string | null;
   enabled: number;
   created_by: string | null;
 };
@@ -454,6 +455,7 @@ function toAgent(r: Row): Agent {
     fleet_token: r.fleet_token,
     webhook_url: r.webhook_url,
     avatar: r.avatar,
+    system_prompt: r.system_prompt ?? null,
     enabled: num(r.enabled),
     created_by: r.created_by,
   };
@@ -477,12 +479,13 @@ export async function createAgent(input: {
   fleetToken?: string | null;
   webhookUrl?: string | null;
   avatar?: string | null;
+  systemPrompt?: string | null;
   createdBy: string;
 }): Promise<Agent> {
   const handle = slugify(input.handle).replace(/-/g, "");
   const rows = await dbq(
-    `INSERT INTO gc_agents (handle, name, kind, fleet_id, fleet_token, webhook_url, avatar, created_by)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING *`,
+    `INSERT INTO gc_agents (handle, name, kind, fleet_id, fleet_token, webhook_url, avatar, system_prompt, created_by)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *`,
     [
       handle,
       input.name.slice(0, 40),
@@ -491,6 +494,7 @@ export async function createAgent(input: {
       input.fleetToken ?? null,
       input.webhookUrl ?? null,
       input.avatar ?? null,
+      input.systemPrompt ?? null,
       input.createdBy,
     ]
   );
@@ -499,7 +503,15 @@ export async function createAgent(input: {
 
 export async function updateAgent(
   id: number,
-  patch: { name?: string; fleetId?: string; fleetToken?: string; webhookUrl?: string; enabled?: boolean }
+  patch: {
+    name?: string;
+    fleetId?: string;
+    fleetToken?: string;
+    webhookUrl?: string;
+    avatar?: string | null;
+    systemPrompt?: string | null;
+    enabled?: boolean;
+  }
 ): Promise<void> {
   const sets: string[] = [];
   const args: unknown[] = [];
@@ -507,13 +519,48 @@ export async function updateAgent(
   if (patch.fleetId !== undefined) (sets.push("fleet_id = ?"), args.push(patch.fleetId));
   if (patch.fleetToken !== undefined) (sets.push("fleet_token = ?"), args.push(patch.fleetToken));
   if (patch.webhookUrl !== undefined) (sets.push("webhook_url = ?"), args.push(patch.webhookUrl));
+  if (patch.avatar !== undefined) (sets.push("avatar = ?"), args.push(patch.avatar));
+  if (patch.systemPrompt !== undefined) (sets.push("system_prompt = ?"), args.push(patch.systemPrompt));
   if (patch.enabled !== undefined) (sets.push("enabled = ?"), args.push(patch.enabled ? 1 : 0));
   if (!sets.length) return;
   args.push(id);
   await dbq(`UPDATE gc_agents SET ${sets.join(", ")} WHERE id = ?`, args);
 }
 
+// ── Colaboradores de agente (slice 4): pueden EDITAR la config, no ver secret ──
+export async function addAgentCollaborator(agentId: number, userSub: string): Promise<void> {
+  await dbq(
+    "INSERT INTO gc_agent_collaborators (agent_id, user_sub) VALUES (?, ?) ON CONFLICT DO NOTHING",
+    [agentId, userSub]
+  );
+}
+export async function removeAgentCollaborator(agentId: number, userSub: string): Promise<void> {
+  await dbq("DELETE FROM gc_agent_collaborators WHERE agent_id = ? AND user_sub = ?", [agentId, userSub]);
+}
+export async function isAgentCollaborator(agentId: number, userSub: string): Promise<boolean> {
+  const rows = await dbq(
+    "SELECT 1 FROM gc_agent_collaborators WHERE agent_id = ? AND user_sub = ?",
+    [agentId, userSub]
+  );
+  return !!rows[0];
+}
+export async function listAgentCollaboratorsInfo(agentId: number): Promise<MemberInfo[]> {
+  const rows = await dbq(
+    `SELECT u.sub, u.name, u.email, u.avatar
+       FROM gc_agent_collaborators c JOIN gc_users u ON u.sub = c.user_sub
+      WHERE c.agent_id = ?`,
+    [agentId]
+  );
+  return rows.map((r) => ({ sub: r.sub!, name: r.name ?? "", email: r.email ?? "", avatar: r.avatar ?? "" }));
+}
+// Ids de agentes donde el usuario es colaborador (para listar los que puede editar).
+export async function listCollaboratorAgentIds(userSub: string): Promise<number[]> {
+  const rows = await dbq("SELECT agent_id FROM gc_agent_collaborators WHERE user_sub = ?", [userSub]);
+  return rows.map((r) => num(r.agent_id));
+}
+
 export async function deleteAgent(id: number): Promise<void> {
+  await dbq("DELETE FROM gc_agent_collaborators WHERE agent_id = ?", [id]);
   await dbq("DELETE FROM gc_agents WHERE id = ?", [id]);
 }
 
@@ -768,12 +815,13 @@ export async function postAgent(
   kind: "msg" | "status",
   agentHandle: string,
   sender: string,
-  topic = "general" // hereda el topic del root del hilo (lo pasa chat.ts)
+  topic = "general", // hereda el topic del root del hilo (lo pasa chat.ts)
+  avatar = "" // avatar del agente → se ve en el chat
 ): Promise<{ id: number }> {
   const rows = await dbq(
-    `INSERT INTO gc_messages (channel_id, parent_id, sender, body, kind, mentions_ghosty, agent_handle, topic)
-     VALUES (?, ?, ?, ?, ?, 0, ?, ?) RETURNING id`,
-    [channelId, parentId, sender, body, kind, agentHandle, topic]
+    `INSERT INTO gc_messages (channel_id, parent_id, sender, avatar, body, kind, mentions_ghosty, agent_handle, topic)
+     VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?) RETURNING id`,
+    [channelId, parentId, sender, avatar, body, kind, agentHandle, topic]
   );
   return { id: num(rows[0].id) };
 }
@@ -893,12 +941,13 @@ export async function postDmAgent(
   body: string,
   kind: "msg" | "status",
   agentHandle: string,
-  sender: string
+  sender: string,
+  avatar = ""
 ): Promise<{ id: number }> {
   const rows = await dbq(
-    `INSERT INTO gc_messages (channel_id, parent_id, sender, body, kind, mentions_ghosty, agent_handle, dm_id)
-     VALUES (0, NULL, ?, ?, ?, 0, ?, ?) RETURNING id`,
-    [sender, body, kind, agentHandle, dmId]
+    `INSERT INTO gc_messages (channel_id, parent_id, sender, avatar, body, kind, mentions_ghosty, agent_handle, dm_id)
+     VALUES (0, NULL, ?, ?, ?, ?, 0, ?, ?) RETURNING id`,
+    [sender, avatar, body, kind, agentHandle, dmId]
   );
   return { id: num(rows[0].id) };
 }
@@ -1024,16 +1073,24 @@ export async function listReadReceipts(
 }
 
 // Borra los "pensando…" (status) de un contexto — al llegar la respuesta real.
-export async function clearStatus(channelId: number, parentId: number | null): Promise<void> {
+// handle opcional: con multi-agente, cada agente limpia SOLO su propio "pensando…"
+// (si no, el reply de uno borraría el status de los demás en el mismo hilo).
+export async function clearStatus(
+  channelId: number,
+  parentId: number | null,
+  agentHandle?: string
+): Promise<void> {
+  const hFilter = agentHandle ? " AND agent_handle = ?" : "";
+  const hArg = agentHandle ? [agentHandle] : [];
   if (parentId == null) {
     await dbq(
-      "DELETE FROM gc_messages WHERE channel_id = ? AND parent_id IS NULL AND kind = 'status'",
-      [channelId]
+      `DELETE FROM gc_messages WHERE channel_id = ? AND parent_id IS NULL AND kind = 'status'${hFilter}`,
+      [channelId, ...hArg]
     );
   } else {
     await dbq(
-      "DELETE FROM gc_messages WHERE channel_id = ? AND parent_id = ? AND kind = 'status'",
-      [channelId, parentId]
+      `DELETE FROM gc_messages WHERE channel_id = ? AND parent_id = ? AND kind = 'status'${hFilter}`,
+      [channelId, parentId, ...hArg]
     );
   }
 }

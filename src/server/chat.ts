@@ -298,7 +298,7 @@ export const postMessage = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     const db = await import("../db.server");
     const bus = await import("./bus.server");
-    const { resolvedAgents, detectMention } = await import("../agents.server");
+    const { resolvedAgents, detectMentions } = await import("../agents.server");
     const channel = await db.getChannel(data.slug);
     if (!channel) throw new Error("Canal no encontrado");
     const body = data.body.trim();
@@ -314,7 +314,9 @@ export const postMessage = createServerFn({ method: "POST" })
         : (data.topic ?? "general").trim() || "general";
 
     const agents = await resolvedAgents();
-    const mentioned = detectMention(body, agents.map((a) => a.handle));
+    const handles = agents.map((a) => a.handle);
+    const mentionedList = detectMentions(body, handles); // TODOS los @tagged, en orden
+    const mentioned = mentionedList[0] ?? null; // para el flag agent_handle del mensaje
     const me = await sessionUser();
     const name = me?.name || "invitado";
     const avatar = me?.avatar || "";
@@ -334,33 +336,31 @@ export const postMessage = createServerFn({ method: "POST" })
     if (created) bus.publish(bus.ch.room(channel.id), { t: "message:new", msg: created, nonce: data.nonce });
     // Push a los usuarios @tagged (fire-and-forget resiliente).
     await notifyMentions(channel.slug, channel.id, channel.name, body, name, me?.sub ?? "", channel.is_private === 1).catch(() => {});
-    // ¿Qué agente responde y dónde? (handle undefined = ninguno)
-    // - @handle en el flujo → abre un HILO bajo ese mensaje (parent = id).
-    // - @handle dentro de un hilo → mismo hilo (parent = parentId).
+    // ¿Qué agentes responden y dónde? (multi-mención: cada @tagged responde)
+    // - @handles en el flujo → abren un HILO bajo ese mensaje (parent = id).
+    // - @handles dentro de un hilo → mismo hilo (parent = parentId).
     // - mensaje en un hilo de un agente (root.agent_handle) → auto, sin re-tag.
-    let agentHandle: string | undefined;
-    let agentParent: number | undefined;
-    if (mentioned) {
-      agentHandle = mentioned;
-      agentParent = data.parentId === null ? id : data.parentId;
-    } else if (data.parentId !== null) {
-      if (parent?.agent_handle && agents.some((a) => a.handle === parent.agent_handle)) {
-        agentHandle = parent.agent_handle;
-        agentParent = data.parentId;
-      }
+    const respondents: { handle: string; parent: number }[] = [];
+    if (mentionedList.length) {
+      const parentFor = data.parentId === null ? id : data.parentId;
+      for (const h of mentionedList) respondents.push({ handle: h, parent: parentFor });
+    } else if (data.parentId !== null && parent?.agent_handle && agents.some((a) => a.handle === parent.agent_handle)) {
+      respondents.push({ handle: parent.agent_handle, parent: data.parentId });
     }
-    if (agentHandle !== undefined && agentParent !== undefined) {
-      const ag = agents.find((a) => a.handle === agentHandle);
-      await db.postAgent(channel.id, agentParent, "👾 pensando…", "status", agentHandle, ag?.name ?? "Ghosty", topic);
-      // El status "pensando…" aparece en vivo para todos (churn de agente → refresh).
-      bus.publish(bus.ch.room(channel.id), { t: "refresh", channelId: channel.id, parentId: agentParent });
+    // Un "pensando…" por agente (cada uno con su avatar); el cliente dispara askAgent
+    // por cada respondent y cada uno limpia SOLO su propio status al responder.
+    for (const r of respondents) {
+      const ag = agents.find((a) => a.handle === r.handle);
+      await db.postAgent(channel.id, r.parent, "👾 pensando…", "status", r.handle, ag?.name ?? "Ghosty", topic, ag?.avatar ?? "");
+    }
+    if (respondents.length) {
+      bus.publish(bus.ch.room(channel.id), { t: "refresh", channelId: channel.id, parentId: respondents[0].parent });
     }
     return {
       ok: true as const,
       id,
-      agentParent: agentParent ?? null,
-      agentHandle: agentHandle ?? null,
-      needsAgent: agentHandle !== undefined,
+      needsAgent: respondents.length > 0,
+      respondents, // [{handle, parent}] → el cliente llama askAgent por cada uno
     };
   });
 
@@ -379,7 +379,10 @@ export const askAgent = createServerFn({ method: "POST" })
       reply = `👾 @${data.handle} no está conectado. El owner lo configura en Ajustes → Agentes.`;
     } else {
       name = agent.name;
-      const groupId = `ghosty-chat-${channel.slug}-${data.parentId ?? "flow"}`;
+      // Incluye el HANDLE del agente: cada agente tiene su propia conversación/memoria
+      // en EasyBits. Sin esto, dos agentes en el mismo hilo comparten groupId → se
+      // contaminan (uno hereda la persona/contexto del otro).
+      const groupId = `ghosty-chat-${data.handle}-${channel.slug}-${data.parentId ?? "flow"}`;
       reply = await callAgentBackend(agent, groupId, data.sender, data.body);
     }
     // El reply es una respuesta de hilo (parentId no-null); hereda el topic del root.
@@ -388,8 +391,8 @@ export const askAgent = createServerFn({ method: "POST" })
       const root = await db.getMessage(data.parentId);
       topic = root?.topic ?? "general";
     }
-    await db.clearStatus(channel.id, data.parentId);
-    const { id: replyId } = await db.postAgent(channel.id, data.parentId, reply, "msg", data.handle, name, topic ?? "general");
+    await db.clearStatus(channel.id, data.parentId, data.handle); // solo el mío (multi-agente)
+    const { id: replyId } = await db.postAgent(channel.id, data.parentId, reply, "msg", data.handle, name, topic ?? "general", agent?.avatar ?? "");
     // La respuesta del agente se publica como message:new → suena (Ghosty), suma
     // unread y aparece en vivo. Su handler en el cliente ya revalida (borra el
     // "pensando…"). El nonce va vacío: nadie tiene un optimista del reply del agente.

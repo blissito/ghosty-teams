@@ -17,21 +17,79 @@ async function requireOwner() {
   return user;
 }
 
+// Puede EDITAR la config de este agente: owner o colaborador (slice 4). NO implica
+// ver el secret (nunca lo exponemos en la UI/lista).
+async function requireAgentManage(agentId: number) {
+  const user = await sessionUser();
+  if (!user) throw new Error("no autenticado");
+  if (user.isOwner) return user;
+  const db = await import("../db.server");
+  if (await db.isAgentCollaborator(agentId, user.sub)) return user;
+  throw new Error("no autorizado para este agente");
+}
+
 // Los gc_agents extra (para la UI de Ajustes → Agentes). NO incluye el ghosty
 // implícito (ese se gestiona en el wizard). Sin exponer tokens.
 export const listManagedAgentsFn = createServerFn({ method: "GET" }).handler(async () => {
-  await requireOwner();
+  const user = await sessionUser();
+  if (!user) throw new Error("no autenticado");
   const db = await import("../db.server");
-  return (await db.listAgents()).map((a) => ({
+  let list = await db.listAgents();
+  // Owner ve todos; un colaborador ve SOLO los agentes que le compartieron.
+  if (!user.isOwner) {
+    const ids = new Set(await db.listCollaboratorAgentIds(user.sub));
+    list = list.filter((a) => ids.has(a.id));
+  }
+  return list.map((a) => ({
     id: a.id,
     handle: a.handle,
     name: a.name,
     kind: a.kind,
     fleet_id: a.fleet_id,
     webhook_url: a.webhook_url,
+    avatar: a.avatar,
+    system_prompt: a.system_prompt,
     enabled: a.enabled,
   }));
 });
+
+// ¿El usuario puede ver la pestaña Agentes? (owner o colaborador de ≥1 agente.)
+export const agentAccessFn = createServerFn({ method: "GET" }).handler(async () => {
+  const user = await sessionUser();
+  if (!user) return { canManage: false };
+  if (user.isOwner) return { canManage: true };
+  const db = await import("../db.server");
+  return { canManage: (await db.listCollaboratorAgentIds(user.sub)).length > 0 };
+});
+
+// Colaboradores de un agente. Ver = owner o colaborador; gestionar (add/remove) = owner.
+export const listAgentCollaboratorsFn = createServerFn({ method: "GET" })
+  .validator((d: { id: number }) => d)
+  .handler(async ({ data }) => {
+    await requireAgentManage(data.id);
+    const db = await import("../db.server");
+    return db.listAgentCollaboratorsInfo(data.id);
+  });
+
+export const addAgentCollaboratorFn = createServerFn({ method: "POST" })
+  .validator((d: { id: number; email: string }) => d)
+  .handler(async ({ data }) => {
+    await requireOwner(); // solo el owner suma/quita colaboradores
+    const db = await import("../db.server");
+    const sub = await db.getUserSubByEmail(data.email);
+    if (!sub) throw new Error("ese usuario aún no ha entrado a Ghosty Teams");
+    await db.addAgentCollaborator(data.id, sub);
+    return { ok: true as const };
+  });
+
+export const removeAgentCollaboratorFn = createServerFn({ method: "POST" })
+  .validator((d: { id: number; sub: string }) => d)
+  .handler(async ({ data }) => {
+    await requireOwner();
+    const db = await import("../db.server");
+    await db.removeAgentCollaborator(data.id, data.sub);
+    return { ok: true as const };
+  });
 
 // Lista los fleet agents del owner, refrescando el OAuth token si expiró. El
 // eb_access_token es un JWT que CADUCA; ante 401 usamos el refresh_token para
@@ -64,7 +122,15 @@ export const listFleetAgentsFn = createServerFn({ method: "GET" }).handler(async
 
 export const createAgentFn = createServerFn({ method: "POST" })
   .validator(
-    (d: { handle: string; name: string; kind: "fleet" | "webhook"; fleetId?: string; webhookUrl?: string }) => d
+    (d: {
+      handle: string;
+      name: string;
+      kind: "fleet" | "webhook";
+      fleetId?: string;
+      webhookUrl?: string;
+      systemPrompt?: string;
+      avatar?: string;
+    }) => d
   )
   .handler(async ({ data }) => {
     const user = await requireOwner();
@@ -104,17 +170,34 @@ export const createAgentFn = createServerFn({ method: "POST" })
       fleetId,
       fleetToken,
       webhookUrl,
+      avatar: data.avatar?.trim() || null,
+      systemPrompt: data.systemPrompt?.trim() || null,
       createdBy: user.sub,
     });
     return { ok: true as const, handle: ag.handle };
   });
 
 export const updateAgentFn = createServerFn({ method: "POST" })
-  .validator((d: { id: number; name?: string; webhookUrl?: string; enabled?: boolean }) => d)
+  .validator(
+    (d: {
+      id: number;
+      name?: string;
+      webhookUrl?: string;
+      enabled?: boolean;
+      systemPrompt?: string | null;
+      avatar?: string | null;
+    }) => d
+  )
   .handler(async ({ data }) => {
-    await requireOwner();
+    await requireAgentManage(data.id); // owner o colaborador (editar config, no ver secret)
     const db = await import("../db.server");
-    await db.updateAgent(data.id, { name: data.name, webhookUrl: data.webhookUrl, enabled: data.enabled });
+    await db.updateAgent(data.id, {
+      name: data.name,
+      webhookUrl: data.webhookUrl,
+      enabled: data.enabled,
+      systemPrompt: data.systemPrompt,
+      avatar: data.avatar,
+    });
     return { ok: true as const };
   });
 

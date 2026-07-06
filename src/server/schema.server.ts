@@ -134,6 +134,18 @@ async function migrate(): Promise<void> {
   await addColumn("gc_channels", "description", "TEXT");
   await addColumn("gc_channels", "archived", "INTEGER NOT NULL DEFAULT 0");
 
+  // Agentes slice 1: persona/prompt por agente (se antepone/envía al backend para
+  // que cada agente hable distinto). gc_agents la crea el provisioner; aquí sumamos.
+  await addColumn("gc_agents", "system_prompt", "TEXT");
+
+  // Agentes slice 4: colaboradores de un agente (pueden EDITAR su config, no verlo
+  // el secret ni borrar/crear). Espejo de gc_channel_members para rooms privados.
+  await exec(`CREATE TABLE IF NOT EXISTS gc_agent_collaborators (
+    agent_id INTEGER NOT NULL,
+    user_sub TEXT NOT NULL,
+    PRIMARY KEY (agent_id, user_sub)
+  )`);
+
   // Fase 4: emojis custom del workspace (imágenes en EasyBits, guardamos file_id).
   await exec(`CREATE TABLE IF NOT EXISTS gc_emojis (
     name       TEXT PRIMARY KEY,

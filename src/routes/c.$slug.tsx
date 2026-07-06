@@ -624,7 +624,7 @@ function ChannelPage() {
             // Prioridad: DM → DM · agente(@ghosty en room) → Ghosty · mención → atención
             // · resto → knock. (DM antes que agente: un DM que tagea @ghosty suena a DM.)
             if (ev.msg.dm_id != null) playDmSound();
-            else if (ev.msg.agent_handle) playGhostySound();
+            else if (ev.msg.agent_handle && ev.msg.mentions_ghosty === 0) playGhostySound(); // reply real del agente
             else if (mentionsMe) playMentionSound();
             else playNotificationSound();
           }
@@ -921,11 +921,15 @@ function ChannelPage() {
     postMessage({ data: { slug: o.slug, parentId: o.parentId, body: o.body, nonce: o.nonce, attachments: o.attachments } })
       .then((r) => {
         revalidate();
-        if (r?.needsAgent && r.agentParent != null && r.agentHandle) {
-          if (o.parentId === null) openThread(r.agentParent); // @agente en el flujo → abre su hilo
-          askAgent({ data: { slug: o.slug, parentId: r.agentParent, body: o.body, sender: "", handle: r.agentHandle } })
-            .then(() => revalidate())
-            .catch(() => revalidate());
+        const respondents = r?.respondents ?? [];
+        if (respondents.length) {
+          if (o.parentId === null) openThread(respondents[0].parent); // @agente(s) en el flujo → abre su hilo
+          // Cada agente mencionado responde en paralelo (cada uno limpia su propio "pensando").
+          for (const ag of respondents) {
+            askAgent({ data: { slug: o.slug, parentId: ag.parent, body: o.body, sender: "", handle: ag.handle } })
+              .then(() => revalidate())
+              .catch(() => revalidate());
+          }
         }
       })
       .catch(() => markFailed(o.id));
@@ -1302,7 +1306,8 @@ function Sidebar({
             {c.slug === active && threads.length > 0 && !collapsedThreads.has(c.slug) && (
               <ul className="mb-1 ml-3.5 mt-0.5 max-h-64 space-y-0.5 overflow-y-auto border-l border-border pl-2">
                 {threads.map((thr) => {
-                  const isGhosty = thr.agent_handle === "ghosty" || thr.sender === "ghosty";
+                  const thrIsAgent = (thr.agent_handle != null && thr.mentions_ghosty === 0) || thr.sender === "ghosty";
+                  const isGhosty = thrIsAgent && (thr.agent_handle === "ghosty" || thr.sender === "ghosty");
                   const canDelete = user?.isOwner || thr.sender === user?.name;
                   return (
                     <li key={thr.id} className="group/thr flex items-center">
@@ -1317,7 +1322,7 @@ function Sidebar({
                       >
                         {isGhosty ? (
                           <img src="/ghosty.svg" alt="" className="h-3.5 w-3.5 shrink-0" />
-                        ) : thr.agent_handle ? (
+                        ) : thrIsAgent ? (
                           <Bot size={13} className="shrink-0 text-brand" />
                         ) : (
                           <MessageSquare size={12} className="shrink-0" />
@@ -2715,9 +2720,12 @@ function MessageRow({
   // desaparecer al perder el hover del row (si no, el popover se vuelve inclicable).
   const [menuOpen, setMenuOpen] = useState(false);
   const barVisible = menuOpen || pickerFor === m.id; // ⋯ propio o picker global de esta fila
-  const isAgent = m.agent_handle != null || m.sender === "ghosty";
-  const isGhostyAvatar = m.agent_handle === "ghosty" || m.sender === "ghosty";
-  const displayName = m.sender === "ghosty" ? "Ghosty" : m.sender;
+  // OJO: agent_handle también se setea en el mensaje HUMANO que TAGEA a un agente
+  // (createMessage guarda mentions_ghosty=1). El reply DEL agente lo hace postAgent
+  // con mentions_ghosty=0. Así, "es del agente" = tiene handle Y no es una mención.
+  const isAgent = (m.agent_handle != null && m.mentions_ghosty === 0) || m.sender === "ghosty";
+  const isGhostyAvatar = isAgent && (m.agent_handle === "ghosty" || m.sender === "ghosty");
+  const displayName = isAgent && m.sender === "ghosty" ? "Ghosty" : m.sender;
   const time = new Date(m.created_at * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   const canEdit = !!me && (me.isOwner || m.sender === me.name) && !isAgent && m.kind === "msg";
   const canDelete = !!me && (me.isOwner || m.sender === me.name) && m.kind === "msg";
@@ -2738,6 +2746,8 @@ function MessageRow({
         <div className="mt-0.5 grid h-9 w-9 shrink-0 place-items-center overflow-hidden rounded-lg bg-white">
           <img src="/ghosty.svg" alt="Ghosty" className="h-full w-full object-contain" />
         </div>
+      ) : isAgent && m.avatar ? (
+        <img src={m.avatar} alt={m.sender} className="mt-0.5 h-9 w-9 shrink-0 rounded-lg object-cover" />
       ) : isAgent ? (
         <div className="mt-0.5 grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-brand/15 text-brand">
           <Bot size={20} />

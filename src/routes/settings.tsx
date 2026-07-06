@@ -1,6 +1,6 @@
 import { createFileRoute, Link, useRouter } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
-import { Bot, Plus, Trash2, X, Bell, Smile, Loader2 } from "lucide-react";
+import { Bot, Plus, Trash2, X, Bell, Smile, Loader2, Pencil } from "lucide-react";
 import { currentPushState, enablePush, disablePush } from "../utils/push-subscribe";
 import { me, logout } from "../server/auth";
 import { getSetup } from "../server/setup";
@@ -11,6 +11,10 @@ import {
   createAgentFn,
   updateAgentFn,
   deleteAgentFn,
+  agentAccessFn,
+  listAgentCollaboratorsFn,
+  addAgentCollaboratorFn,
+  removeAgentCollaboratorFn,
 } from "../server/agents";
 import { listEmojisFn, addEmojiFn, removeEmojiFn } from "../server/emojis";
 import type { CustomEmoji } from "../db.server";
@@ -20,14 +24,16 @@ export const Route = createFileRoute("/settings")({
   loader: async () => {
     const user = await me();
     const setup = user?.isOwner ? await getSetup() : null;
-    return { user, setup };
+    // ¿Ve la pestaña Agentes? owner o colaborador de ≥1 agente (slice 4).
+    const agentAccess = user ? await agentAccessFn() : { canManage: false };
+    return { user, setup, agentAccess };
   },
   component: Settings,
 });
 
 function Settings() {
   const t = useT();
-  const { user, setup } = Route.useLoaderData();
+  const { user, setup, agentAccess } = Route.useLoaderData();
   const router = useRouter();
   const [invite, setInvite] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
@@ -51,17 +57,14 @@ function Settings() {
     router.navigate({ to: "/login" });
   }
 
-  // Pestañas: General siempre; Agentes/Emojis solo para el owner (tienen mucho que
-  // configurar → sección propia). El estado de pestaña vive en la URL-menos (cliente).
+  // Pestañas: General siempre; Agentes si owner O colaborador de algún agente;
+  // Emojis solo owner. El estado de pestaña vive en cliente.
   const isOwner = !!user?.isOwner;
+  const canManageAgents = !!agentAccess?.canManage;
   const tabs = [
     { id: "general" as const, label: t("General") },
-    ...(isOwner
-      ? [
-          { id: "agentes" as const, label: t("Agentes") },
-          { id: "emojis" as const, label: t("Emojis") },
-        ]
-      : []),
+    ...(canManageAgents ? [{ id: "agentes" as const, label: t("Agentes") }] : []),
+    ...(isOwner ? [{ id: "emojis" as const, label: t("Emojis") }] : []),
   ];
   const [tab, setTab] = useState<"general" | "agentes" | "emojis">("general");
 
@@ -157,27 +160,8 @@ function Settings() {
         </>
       )}
 
-      {tab === "agentes" && isOwner && (
-        <>
-          {/* Conexión EasyBits (la fuente de la flota de agentes) */}
-          <div className="mb-4 rounded-xl border border-border bg-surface-2 p-4">
-            <h2 className="mb-1 text-sm font-semibold">EasyBits</h2>
-            <p className="text-sm text-muted">
-              {setup?.hasAgent ? (
-                <>{t("Agente conectado:")} <span className="text-ink">{setup.fleetName}</span></>
-              ) : (
-                t("Sin agente conectado.")
-              )}
-            </p>
-            <Link
-              to="/setup"
-              className="mt-3 inline-block rounded-lg border border-border px-3 py-1.5 text-sm hover:border-brand"
-            >
-              {setup?.hasAgent ? t("Reconfigurar") : t("Conectar EasyBits")}
-            </Link>
-          </div>
-          <AgentsManager />
-        </>
+      {tab === "agentes" && canManageAgents && (
+        <AgentsManager isOwner={isOwner} hasAgent={!!setup?.hasAgent} ghostyName={setup?.fleetName ?? "Ghosty"} />
       )}
 
       {tab === "emojis" && isOwner && <EmojiManager />}
@@ -375,16 +359,19 @@ type ManagedAgent = {
   kind: "fleet" | "webhook";
   fleet_id: string | null;
   webhook_url: string | null;
+  avatar: string | null;
+  system_prompt: string | null;
   enabled: number;
 };
 
 // Cache de módulo → reabrir la pestaña Agentes pinta al instante y revalida en background.
 let agentsCache: ManagedAgent[] | null = null;
 
-function AgentsManager() {
+function AgentsManager({ isOwner, hasAgent, ghostyName }: { isOwner: boolean; hasAgent: boolean; ghostyName: string }) {
   const t = useT();
   const [agents, setAgents] = useState<ManagedAgent[] | null>(agentsCache);
   const [adding, setAdding] = useState(false);
+  const [editing, setEditing] = useState<number | null>(null); // id del agente en edición
   const reload = () =>
     listManagedAgentsFn().then((a) => {
       agentsCache = a as ManagedAgent[];
@@ -408,7 +395,7 @@ function AgentsManager() {
     <div className="mb-4 rounded-xl border border-border bg-surface-2 p-4">
       <div className="mb-2 flex items-center justify-between">
         <h2 className="text-sm font-semibold">{t("Agentes")}</h2>
-        {!adding && (
+        {isOwner && !adding && (
           <button
             onClick={() => setAdding(true)}
             className="flex items-center gap-1 rounded-lg border border-border px-2 py-1 text-xs text-muted transition hover:border-brand hover:text-ink"
@@ -418,44 +405,98 @@ function AgentsManager() {
         )}
       </div>
       <p className="mb-3 text-xs text-muted">
-        <span className="text-brand">@ghosty</span> {t("(el del wizard) siempre está. Agrega más agentes de tu flota o bots externos por webhook; cada uno se tagea por su")} <span className="text-brand">@handle</span>.
+        {isOwner
+          ? t("Todos tus agentes en un solo lugar. Cada uno se tagea por su @handle. Agrega de tu flota EasyBits o bots externos por webhook.")
+          : t("Agentes que te compartieron para configurar. Se tagean por su @handle.")}
       </p>
 
-      {agents === null ? (
-        <p className="text-sm text-muted">{t("Cargando…")}</p>
-      ) : agents.length === 0 && !adding ? (
-        <p className="text-sm text-muted">{t("Sin agentes extra. Solo @ghosty por ahora.")}</p>
-      ) : (
-        <div className="space-y-1">
-          {agents?.map((a) => (
-            <div key={a.id} className="flex items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-surface-3">
-              <div className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-brand/15 text-brand">
-                <Bot size={17} />
-              </div>
+      <div className="space-y-1">
+        {/* @ghosty (el del wizard) es del OWNER (se reconfigura en el wizard). Los
+            colaboradores no lo ven; solo ven los agentes que les compartieron. */}
+        {isOwner &&
+          (hasAgent ? (
+            <div className="flex items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-surface-3">
+              <img src="/ghosty.svg" alt="" className="h-8 w-8 shrink-0 rounded-lg bg-brand/15 p-1" />
               <div className="min-w-0 flex-1">
                 <p className="truncate text-sm font-medium">
-                  {a.name} <span className="text-xs font-normal text-muted">@{a.handle}</span>
+                  {ghostyName} <span className="text-xs font-normal text-muted">@ghosty</span>
                 </p>
-                <p className="truncate text-xs text-muted">
-                  {a.kind === "fleet" ? t("Flota EasyBits") : t("Webhook externo")}
-                </p>
+                <p className="truncate text-xs text-muted">{t("Flota EasyBits · del wizard")}</p>
               </div>
-              <button
-                onClick={() => toggle(a)}
-                title={a.enabled ? t("Deshabilitar") : t("Habilitar")}
-                className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${
-                  a.enabled ? "bg-brand/15 text-brand" : "bg-surface-3 text-muted"
-                }`}
-              >
-                {a.enabled ? t("activo") : t("off")}
-              </button>
-              <button onClick={() => remove(a)} className="p-1 text-muted hover:text-brand" title={t("Quitar")}>
-                <Trash2 size={15} />
-              </button>
+              <span className="shrink-0 rounded-full bg-brand/15 px-2 py-0.5 text-[11px] font-medium text-brand">
+                {t("siempre")}
+              </span>
+              <Link to="/setup" className="shrink-0 p-1 text-xs text-muted hover:text-brand" title={t("Reconfigurar")}>
+                {t("Reconfigurar")}
+              </Link>
             </div>
+          ) : (
+            <Link
+              to="/setup"
+              className="flex items-center gap-2 rounded-lg border border-dashed border-border px-2 py-3 text-sm text-muted hover:border-brand hover:text-ink"
+            >
+              <Bot size={17} className="shrink-0" /> {t("Conecta tu cuenta EasyBits para tener a @ghosty")}
+            </Link>
           ))}
-        </div>
-      )}
+
+        {agents === null ? (
+          <p className="px-2 py-1 text-sm text-muted">{t("Cargando…")}</p>
+        ) : (
+          agents.map((a) =>
+            editing === a.id ? (
+              <EditAgentForm
+                key={a.id}
+                agent={a}
+                isOwner={isOwner}
+                onClose={() => setEditing(null)}
+                onSaved={() => {
+                  setEditing(null);
+                  reload();
+                }}
+              />
+            ) : (
+              <div key={a.id} className="flex items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-surface-3">
+                {a.avatar ? (
+                  <img src={a.avatar} alt="" className="h-8 w-8 shrink-0 rounded-lg object-cover" />
+                ) : (
+                  <div className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-brand/15 text-brand">
+                    <Bot size={17} />
+                  </div>
+                )}
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-medium">
+                    {a.name} <span className="text-xs font-normal text-muted">@{a.handle}</span>
+                  </p>
+                  <p className="truncate text-xs text-muted">
+                    {a.system_prompt
+                      ? a.system_prompt
+                      : a.kind === "fleet"
+                        ? t("Flota EasyBits · sin persona")
+                        : t("Webhook externo · sin persona")}
+                  </p>
+                </div>
+                <button
+                  onClick={() => toggle(a)}
+                  title={a.enabled ? t("Deshabilitar") : t("Habilitar")}
+                  className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${
+                    a.enabled ? "bg-brand/15 text-brand" : "bg-surface-3 text-muted"
+                  }`}
+                >
+                  {a.enabled ? t("activo") : t("off")}
+                </button>
+                <button onClick={() => setEditing(a.id)} className="p-1 text-muted hover:text-brand" title={t("Configurar")}>
+                  <Pencil size={15} />
+                </button>
+                {isOwner && (
+                  <button onClick={() => remove(a)} className="p-1 text-muted hover:text-brand" title={t("Quitar")}>
+                    <Trash2 size={15} />
+                  </button>
+                )}
+              </div>
+            )
+          )
+        )}
+      </div>
 
       {adding && (
         <AddAgentForm
@@ -573,6 +614,209 @@ function AddAgentForm({ onClose, onCreated }: { onClose: () => void; onCreated: 
             className="rounded-lg bg-brand px-4 py-1.5 text-sm font-semibold text-brand-fg disabled:opacity-50"
           >
             {busy ? t("Agregando…") : t("Agregar")}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ── Configurar un agente: persona (system prompt), avatar y nombre ── */
+function EditAgentForm({
+  agent,
+  isOwner,
+  onClose,
+  onSaved,
+}: {
+  agent: ManagedAgent;
+  isOwner: boolean;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const t = useT();
+  const [name, setName] = useState(agent.name);
+  const [persona, setPersona] = useState(agent.system_prompt ?? "");
+  const [avatar, setAvatar] = useState(agent.avatar ?? "");
+  const [busy, setBusy] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+  // Colaboradores (solo owner los gestiona): pueden editar la config de este agente.
+  const [collabs, setCollabs] = useState<{ sub: string; name: string; email: string }[]>([]);
+  const [collabEmail, setCollabEmail] = useState("");
+  const [collabBusy, setCollabBusy] = useState(false);
+  useEffect(() => {
+    if (isOwner) listAgentCollaboratorsFn({ data: { id: agent.id } }).then(setCollabs).catch(() => {});
+  }, [isOwner, agent.id]);
+  async function addCollab() {
+    if (!collabEmail.trim() || collabBusy) return;
+    setCollabBusy(true);
+    setErr(null);
+    try {
+      await addAgentCollaboratorFn({ data: { id: agent.id, email: collabEmail.trim() } });
+      setCollabEmail("");
+      setCollabs(await listAgentCollaboratorsFn({ data: { id: agent.id } }));
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : t("error"));
+    } finally {
+      setCollabBusy(false);
+    }
+  }
+  async function removeCollab(sub: string) {
+    setCollabs((cs) => cs.filter((c) => c.sub !== sub));
+    await removeAgentCollaboratorFn({ data: { id: agent.id, sub } }).catch(() => {});
+  }
+
+  async function onAvatar(file: File) {
+    setUploading(true);
+    setErr(null);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const res = await fetch("/api/upload", { method: "POST", body: fd });
+      if (!res.ok) throw new Error(t("no se pudo subir la imagen"));
+      const up = (await res.json()) as { fileId: string };
+      setAvatar(`/api/attachment/${encodeURIComponent(up.fileId)}`);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : t("error"));
+    } finally {
+      setUploading(false);
+      if (fileRef.current) fileRef.current.value = "";
+    }
+  }
+
+  async function save() {
+    if (busy) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      await updateAgentFn({
+        data: {
+          id: agent.id,
+          name: name.trim() || agent.name,
+          systemPrompt: persona.trim() || null,
+          avatar: avatar || null,
+        },
+      });
+      onSaved();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : t("error"));
+      setBusy(false);
+    }
+  }
+
+  const input = "w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm outline-none focus:border-brand";
+  return (
+    <div className="rounded-lg border border-border bg-surface p-3">
+      <div className="mb-2 flex items-center justify-between">
+        <p className="text-xs font-semibold text-muted">
+          {t("Configurar")} <span className="text-brand">@{agent.handle}</span>
+        </p>
+        <button onClick={onClose} className="text-muted hover:text-ink">
+          <X size={16} />
+        </button>
+      </div>
+      <div className="space-y-2">
+        <div className="flex items-center gap-3">
+          {avatar ? (
+            <img src={avatar} alt="" className="h-12 w-12 shrink-0 rounded-lg object-cover" />
+          ) : (
+            <div className="grid h-12 w-12 shrink-0 place-items-center rounded-lg bg-brand/15 text-brand">
+              <Bot size={22} />
+            </div>
+          )}
+          <input
+            ref={fileRef}
+            type="file"
+            accept="image/*"
+            className="hidden"
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) onAvatar(f);
+            }}
+          />
+          <button
+            onClick={() => fileRef.current?.click()}
+            disabled={uploading}
+            className="flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-sm text-muted hover:border-brand hover:text-ink disabled:opacity-50"
+          >
+            {uploading ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
+            {t("Imagen")}
+          </button>
+          {avatar && (
+            <button onClick={() => setAvatar("")} className="text-xs text-muted hover:text-red-400">
+              {t("Quitar")}
+            </button>
+          )}
+        </div>
+        <input
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder={t("nombre visible")}
+          className={input}
+        />
+        <textarea
+          value={persona}
+          onChange={(e) => setPersona(e.target.value)}
+          rows={4}
+          placeholder={t("Persona / instrucciones del sistema (cómo debe comportarse, tono, rol)…")}
+          className={`${input} resize-none`}
+        />
+        <p className="text-[11px] text-muted">
+          {agent.kind === "fleet"
+            ? t("En agentes de flota, la persona se antepone al mensaje (EasyBits controla el prompt base).")
+            : t("Se envía a tu webhook como systemPrompt junto al mensaje.")}
+        </p>
+
+        {/* Colaboradores: solo el owner los gestiona; pueden EDITAR la config (no ver
+            el secret ni borrar). Mismo modelo que miembros de un room privado. */}
+        {isOwner && (
+          <div className="rounded-lg border border-border bg-surface-2 p-2.5">
+            <p className="mb-1.5 text-xs font-semibold text-muted">{t("Colaboradores")}</p>
+            {collabs.length > 0 && (
+              <div className="mb-2 space-y-1">
+                {collabs.map((c) => (
+                  <div key={c.sub} className="flex items-center gap-2 text-xs">
+                    <span className="min-w-0 flex-1 truncate">
+                      {c.name} <span className="text-muted">{c.email}</span>
+                    </span>
+                    <button onClick={() => removeCollab(c.sub)} className="text-muted hover:text-red-400" title={t("Quitar")}>
+                      <X size={13} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className="flex gap-2">
+              <input
+                value={collabEmail}
+                onChange={(e) => setCollabEmail(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && addCollab()}
+                placeholder={t("email de un miembro")}
+                className="flex-1 rounded-lg border border-border bg-surface px-2.5 py-1.5 text-xs outline-none focus:border-brand"
+              />
+              <button
+                onClick={addCollab}
+                disabled={collabBusy || !collabEmail.trim()}
+                className="rounded-lg border border-border px-2.5 py-1.5 text-xs text-muted hover:border-brand hover:text-ink disabled:opacity-50"
+              >
+                {t("Agregar")}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {err && <p className="text-sm text-red-400">{err}</p>}
+        <div className="flex justify-end gap-2">
+          <button onClick={onClose} className="rounded-lg px-3 py-1.5 text-sm text-muted hover:text-ink">
+            {t("Cancelar")}
+          </button>
+          <button
+            onClick={save}
+            disabled={busy || uploading}
+            className="rounded-lg bg-brand px-4 py-1.5 text-sm font-semibold text-brand-fg disabled:opacity-50"
+          >
+            {busy ? t("Guardando…") : t("Guardar")}
           </button>
         </div>
       </div>

@@ -144,11 +144,11 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
       reply = `👾 @${data.handle} no está conectado. El owner lo configura en Ajustes → Agentes.`;
     } else {
       name = agent.name;
-      const groupId = `ghosty-chat-dm-${data.id}`;
+      const groupId = `ghosty-chat-${data.handle}-dm-${data.id}`; // memoria por-agente
       reply = await callAgentBackend(agent, groupId, data.sender, data.body);
     }
     await db.clearDmStatus(data.id);
-    const { id: replyId } = await db.postDmAgent(data.id, reply, "msg", data.handle, name);
+    const { id: replyId } = await db.postDmAgent(data.id, reply, "msg", data.handle, name, agent?.avatar ?? "");
     // Publica el reply del agente como message:new a cada miembro (ch.user) → suena
     // (Ghosty) + suma unread + aparece en vivo; su handler ya revalida (borra status).
     const created = await db.getMessage(replyId);
