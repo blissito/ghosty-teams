@@ -5,10 +5,8 @@ const FORMMY = process.env.FORMMY_BASE_URL ?? "https://formmy.app";
 
 async function session() {
   const { useSession } = await import("@tanstack/react-start/server");
-  return useSession<{ user?: import("../users.server").SessionUser }>({
-    password: process.env.SESSION_SECRET!,
-    name: "gc_session",
-  });
+  const { sessionConfig } = await import("./session.server");
+  return useSession<{ user?: import("../users.server").SessionUser }>(sessionConfig());
 }
 
 export const me = createServerFn({ method: "GET" }).handler(async () => {

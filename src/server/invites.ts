@@ -32,15 +32,15 @@ export async function consumeInvite(token: string, sub: string): Promise<boolean
 // Owner genera un link de invitación. Requiere sesión de owner.
 export const createInvite = createServerFn({ method: "POST" }).handler(async () => {
   const { useSession } = await import("@tanstack/react-start/server");
-  const s = await useSession<{ user?: { sub: string; isOwner: boolean } }>({
-    password: process.env.SESSION_SECRET!,
-    name: "gc_session",
-  });
+  const { sessionConfig } = await import("./session.server");
+  const s = await useSession<{ user?: { sub: string; isOwner: boolean } }>(sessionConfig());
   const user = s.data.user;
   if (!user?.isOwner) throw new Error("solo el owner invita");
   const crypto = await import("node:crypto");
   const token = crypto.randomBytes(16).toString("hex");
   await dbq("INSERT INTO gc_invites (token, created_by) VALUES (?, ?)", [token, user.sub]);
-  const appUrl = process.env.APP_URL ?? "";
-  return { url: `${appUrl}/join/${token}` };
+  // Origin absoluto derivado del request (APP_URL no está seteado en prod → antes
+  // salía un link relativo `/join/…` sin host). reqOrigin usa x-ghosty-origin del ingress.
+  const { reqOrigin } = await import("../origin.server");
+  return { url: `${await reqOrigin()}/join/${token}` };
 });

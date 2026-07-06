@@ -30,7 +30,7 @@ export type RtEvent =
   | { t: "unread"; scope: "room" | "dm"; scopeId: number } // hay algo nuevo en un scope no-activo → badge
   | { t: "presence"; sub: string; name: string; status: "online" | "offline" }
   | { t: "presence:init"; online: string[] }
-  | { t: "typing"; sub: string; name: string; channelId: number | null };
+  | { t: "typing"; sub: string; name: string; channelId: number | null; parentId?: number | null; dmId?: number | null };
 
 type Listener = (ev: RtEvent) => void;
 type Client = { channels: Set<string>; listener: Listener; sub: string };

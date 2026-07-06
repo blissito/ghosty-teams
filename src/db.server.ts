@@ -769,12 +769,13 @@ export async function postAgent(
   agentHandle: string,
   sender: string,
   topic = "general" // hereda el topic del root del hilo (lo pasa chat.ts)
-): Promise<void> {
-  await dbq(
+): Promise<{ id: number }> {
+  const rows = await dbq(
     `INSERT INTO gc_messages (channel_id, parent_id, sender, body, kind, mentions_ghosty, agent_handle, topic)
-     VALUES (?, ?, ?, ?, ?, 0, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, 0, ?, ?) RETURNING id`,
     [channelId, parentId, sender, body, kind, agentHandle, topic]
   );
+  return { id: num(rows[0].id) };
 }
 
 // ── Mensajes directos (DMs) ─────────────────────────────────────────────────
@@ -893,12 +894,13 @@ export async function postDmAgent(
   kind: "msg" | "status",
   agentHandle: string,
   sender: string
-): Promise<void> {
-  await dbq(
+): Promise<{ id: number }> {
+  const rows = await dbq(
     `INSERT INTO gc_messages (channel_id, parent_id, sender, body, kind, mentions_ghosty, agent_handle, dm_id)
-     VALUES (0, NULL, ?, ?, ?, 0, ?, ?)`,
+     VALUES (0, NULL, ?, ?, ?, 0, ?, ?) RETURNING id`,
     [sender, body, kind, agentHandle, dmId]
   );
+  return { id: num(rows[0].id) };
 }
 
 export async function clearDmStatus(dmId: number): Promise<void> {
@@ -951,6 +953,20 @@ export async function unreadByDm(userSub: string): Promise<UnreadCount[]> {
 }
 
 // Marca un scope como leído hasta AHORA (idempotente; nunca retrocede).
+// last_read_at (segundos) del usuario para un scope, o 0 si nunca lo leyó.
+// Capturado ANTES de marcar leído → sirve de frontera para el divisor "nuevos".
+export async function getLastRead(
+  userSub: string,
+  scope: "room" | "dm",
+  scopeId: number
+): Promise<number> {
+  const rows = await dbq(
+    `SELECT last_read_at FROM gc_reads WHERE user_sub = ? AND scope = ? AND scope_id = ?`,
+    [userSub, scope, String(scopeId)]
+  );
+  return rows.length ? num(rows[0].last_read_at) : 0;
+}
+
 export async function markRead(userSub: string, scope: "room" | "dm", scopeId: number): Promise<void> {
   await dbq(
     `INSERT INTO gc_reads (user_sub, scope, scope_id, last_read_at)

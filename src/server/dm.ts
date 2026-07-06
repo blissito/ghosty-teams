@@ -148,9 +148,15 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
       reply = await callAgentBackend(agent, groupId, data.sender, data.body);
     }
     await db.clearDmStatus(data.id);
-    await db.postDmAgent(data.id, reply, "msg", data.handle, name);
+    const { id: replyId } = await db.postDmAgent(data.id, reply, "msg", data.handle, name);
+    // Publica el reply del agente como message:new a cada miembro (ch.user) → suena
+    // (Ghosty) + suma unread + aparece en vivo; su handler ya revalida (borra status).
+    const created = await db.getMessage(replyId);
     const members = await db.getDmMembers(data.id);
     for (const sub of members)
-      bus.publish(bus.ch.user(sub), { t: "refresh", channelId: null, parentId: null, dmId: data.id });
+      bus.publish(
+        bus.ch.user(sub),
+        created ? { t: "message:new", msg: created } : { t: "refresh", channelId: null, parentId: null, dmId: data.id }
+      );
     return { ok: true as const };
   });

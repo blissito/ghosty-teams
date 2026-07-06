@@ -51,38 +51,115 @@ function Settings() {
     router.navigate({ to: "/login" });
   }
 
+  // Pestañas: General siempre; Agentes/Emojis solo para el owner (tienen mucho que
+  // configurar → sección propia). El estado de pestaña vive en la URL-menos (cliente).
+  const isOwner = !!user?.isOwner;
+  const tabs = [
+    { id: "general" as const, label: t("General") },
+    ...(isOwner
+      ? [
+          { id: "agentes" as const, label: t("Agentes") },
+          { id: "emojis" as const, label: t("Emojis") },
+        ]
+      : []),
+  ];
+  const [tab, setTab] = useState<"general" | "agentes" | "emojis">("general");
+
   return (
     <div className="mx-auto max-w-lg p-6 text-ink">
-      <div className="mb-6 flex items-center justify-between">
+      <div className="mb-4 flex items-center justify-between">
         <h1 className="text-lg font-semibold">{t("Ajustes")}</h1>
         <Link to="/c/$slug" params={{ slug: "general" }} className="text-sm text-brand hover:underline">
-          ← {t("Al chat")}
+          ← {t("Volver al chat")}
         </Link>
       </div>
 
-      {/* Identidad */}
-      <div className="mb-4 flex items-center gap-3 rounded-xl border border-border bg-surface-2 p-4">
-        {user?.avatar ? (
-          <img src={user.avatar} alt="" className="h-10 w-10 rounded-full" />
-        ) : (
-          <div className="grid h-10 w-10 place-items-center rounded-full bg-surface-3 text-sm font-semibold">
-            {user?.name?.slice(0, 2).toUpperCase()}
-          </div>
-        )}
-        <div className="min-w-0 flex-1">
-          <p className="truncate font-medium">{user?.name}</p>
-          <p className="truncate text-xs text-muted">{user?.email}</p>
-        </div>
-        <span className="rounded-full bg-brand/15 px-2 py-0.5 text-xs font-medium text-brand">
-          {user?.isOwner ? t("Owner") : t("Miembro")}
-        </span>
+      {/* Barra de pestañas */}
+      <div className="mb-5 flex gap-1 border-b border-border">
+        {tabs.map((tb) => (
+          <button
+            key={tb.id}
+            onClick={() => setTab(tb.id)}
+            className={`-mb-px border-b-2 px-3 py-2 text-sm font-medium transition ${
+              tab === tb.id
+                ? "border-brand text-ink"
+                : "border-transparent text-muted hover:text-ink"
+            }`}
+          >
+            {tb.label}
+          </button>
+        ))}
       </div>
 
-      <NotificationsCard />
-
-      {/* Owner: EasyBits + invitaciones */}
-      {user?.isOwner && (
+      {tab === "general" && (
         <>
+          {/* Identidad */}
+          <div className="mb-4 flex items-center gap-3 rounded-xl border border-border bg-surface-2 p-4">
+            {user?.avatar ? (
+              <img src={user.avatar} alt="" className="h-10 w-10 rounded-full" />
+            ) : (
+              <div className="grid h-10 w-10 place-items-center rounded-full bg-surface-3 text-sm font-semibold">
+                {user?.name?.slice(0, 2).toUpperCase()}
+              </div>
+            )}
+            <div className="min-w-0 flex-1">
+              <p className="truncate font-medium">{user?.name}</p>
+              <p className="truncate text-xs text-muted">{user?.email}</p>
+            </div>
+            <span className="rounded-full bg-brand/15 px-2 py-0.5 text-xs font-medium text-brand">
+              {isOwner ? t("Owner") : t("Miembro")}
+            </span>
+          </div>
+
+          <NotificationsCard />
+
+          {isOwner && (
+            <div className="mb-4 rounded-xl border border-border bg-surface-2 p-4">
+              <h2 className="mb-1 text-sm font-semibold">{t("Invitar miembros")}</h2>
+              <p className="mb-3 text-sm text-muted">
+                {t("Genera un link. Quien lo abra entra con Formmy y se une a tu chat.")}
+              </p>
+              {!invite ? (
+                <button
+                  onClick={genInvite}
+                  disabled={busy}
+                  className="rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-brand-fg disabled:opacity-50"
+                >
+                  {busy ? t("Generando…") : t("Generar link de invitación")}
+                </button>
+              ) : (
+                <div className="flex items-center gap-2">
+                  <input
+                    readOnly
+                    value={invite}
+                    className="flex-1 rounded-lg border border-border bg-surface px-3 py-2 text-xs text-ink"
+                  />
+                  <button
+                    onClick={copy}
+                    className="rounded-lg bg-brand px-3 py-2 text-sm font-semibold text-brand-fg"
+                  >
+                    {copied ? "✓" : t("Copiar")}
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Cerrar sesión: discreto, en rojo y apartado — solo en General. */}
+          <div className="mt-10 border-t border-border pt-4 text-right">
+            <button
+              onClick={doLogout}
+              className="text-xs font-medium text-red-500/80 transition hover:text-red-500"
+            >
+              {t("Cerrar sesión")}
+            </button>
+          </div>
+        </>
+      )}
+
+      {tab === "agentes" && isOwner && (
+        <>
+          {/* Conexión EasyBits (la fuente de la flota de agentes) */}
           <div className="mb-4 rounded-xl border border-border bg-surface-2 p-4">
             <h2 className="mb-1 text-sm font-semibold">EasyBits</h2>
             <p className="text-sm text-muted">
@@ -99,49 +176,11 @@ function Settings() {
               {setup?.hasAgent ? t("Reconfigurar") : t("Conectar EasyBits")}
             </Link>
           </div>
-
           <AgentsManager />
-
-          <EmojiManager />
-
-          <div className="mb-4 rounded-xl border border-border bg-surface-2 p-4">
-            <h2 className="mb-1 text-sm font-semibold">{t("Invitar miembros")}</h2>
-            <p className="mb-3 text-sm text-muted">
-              {t("Genera un link. Quien lo abra entra con Formmy y se une a tu chat.")}
-            </p>
-            {!invite ? (
-              <button
-                onClick={genInvite}
-                disabled={busy}
-                className="rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-brand-fg disabled:opacity-50"
-              >
-                {busy ? t("Generando…") : t("Generar link de invitación")}
-              </button>
-            ) : (
-              <div className="flex items-center gap-2">
-                <input
-                  readOnly
-                  value={invite}
-                  className="flex-1 rounded-lg border border-border bg-surface px-3 py-2 text-xs text-ink"
-                />
-                <button
-                  onClick={copy}
-                  className="rounded-lg bg-brand px-3 py-2 text-sm font-semibold text-brand-fg"
-                >
-                  {copied ? "✓" : t("Copiar")}
-                </button>
-              </div>
-            )}
-          </div>
         </>
       )}
 
-      <button
-        onClick={doLogout}
-        className="rounded-lg border border-border px-4 py-2 text-sm text-muted hover:text-ink"
-      >
-        {t("Cerrar sesión")}
-      </button>
+      {tab === "emojis" && isOwner && <EmojiManager />}
     </div>
   );
 }
@@ -204,16 +243,28 @@ function NotificationsCard() {
 }
 
 /* ── Emojis custom del workspace: imagen (o GIF) → :name: reaccionable ── */
+// Cache de módulo (el `emojisCache` del chat es privado a c.$slug.tsx): reabrir la
+// pestaña pinta al instante desde aquí y revalida en background (stale-while-revalidate).
+let emojiCache: CustomEmoji[] | null = null;
+
 function EmojiManager() {
   const t = useT();
-  const [emojis, setEmojis] = useState<CustomEmoji[]>([]);
+  const [emojis, setEmojis] = useState<CustomEmoji[]>(() => emojiCache ?? []);
+  const [loading, setLoading] = useState(emojiCache === null); // spinner solo en la 1ª carga
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const save = (es: CustomEmoji[]) => {
+    emojiCache = es;
+    setEmojis(es);
+  };
 
   useEffect(() => {
-    listEmojisFn().then(setEmojis).catch(() => setEmojis([]));
+    listEmojisFn()
+      .then((es) => save(es))
+      .catch(() => {})
+      .finally(() => setLoading(false));
   }, []);
 
   async function onFile(file: File) {
@@ -227,7 +278,11 @@ function EmojiManager() {
       if (!res.ok) throw new Error(t("no se pudo subir la imagen"));
       const up = (await res.json()) as { fileId: string };
       const { name: saved } = await addEmojiFn({ data: { name: clean, fileId: up.fileId } });
-      setEmojis((es) => [...es.filter((e) => e.name !== saved), { name: saved, file_id: up.fileId }].sort((a, b) => a.name.localeCompare(b.name)));
+      save(
+        [...emojis.filter((e) => e.name !== saved), { name: saved, file_id: up.fileId }].sort((a, b) =>
+          a.name.localeCompare(b.name)
+        )
+      );
       setName("");
     } catch (e) {
       setErr(e instanceof Error ? e.message : t("error"));
@@ -238,7 +293,7 @@ function EmojiManager() {
   }
 
   async function remove(nm: string) {
-    setEmojis((es) => es.filter((e) => e.name !== nm));
+    save(emojis.filter((e) => e.name !== nm));
     await removeEmojiFn({ data: { name: nm } }).catch(() => {});
   }
 
@@ -278,7 +333,13 @@ function EmojiManager() {
         </button>
       </div>
       {err && <p className="mb-2 text-sm text-red-400">{err}</p>}
-      {emojis.length > 0 && (
+      {loading ? (
+        <div className="flex items-center gap-2 py-2 text-sm text-muted">
+          <Loader2 size={15} className="animate-spin" /> {t("Cargando emojis…")}
+        </div>
+      ) : emojis.length === 0 ? (
+        <p className="py-1 text-sm text-muted">{t("Aún no hay emojis custom.")}</p>
+      ) : (
         <div className="flex flex-wrap gap-2">
           {emojis.map((e) => (
             <div
@@ -317,11 +378,18 @@ type ManagedAgent = {
   enabled: number;
 };
 
+// Cache de módulo → reabrir la pestaña Agentes pinta al instante y revalida en background.
+let agentsCache: ManagedAgent[] | null = null;
+
 function AgentsManager() {
   const t = useT();
-  const [agents, setAgents] = useState<ManagedAgent[] | null>(null);
+  const [agents, setAgents] = useState<ManagedAgent[] | null>(agentsCache);
   const [adding, setAdding] = useState(false);
-  const reload = () => listManagedAgentsFn().then((a) => setAgents(a as ManagedAgent[]));
+  const reload = () =>
+    listManagedAgentsFn().then((a) => {
+      agentsCache = a as ManagedAgent[];
+      setAgents(agentsCache);
+    });
   useEffect(() => {
     reload();
   }, []);

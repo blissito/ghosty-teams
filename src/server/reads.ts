@@ -32,6 +32,17 @@ export const markReadFn = createServerFn({ method: "POST" })
     return { ok: true as const };
   });
 
+// last_read_at del scope (segundos), capturado al abrir para dibujar el divisor
+// "nuevos mensajes" ANTES de marcar leído. 0 = nunca leído (todo es nuevo).
+export const lastReadFn = createServerFn({ method: "GET" })
+  .validator((d: { scope: "room" | "dm"; scopeId: number }) => d)
+  .handler(async ({ data }) => {
+    const db = await import("../db.server");
+    const me = await sessionUser();
+    if (!me) return { at: 0 };
+    return { at: await db.getLastRead(me.sub, data.scope, data.scopeId) };
+  });
+
 // Read receipts (Fase 4): quién ha leído hasta este mensaje. Reusa gc_reads
 // (un lector = last_read_at del scope >= created_at del mensaje). Excluye al autor.
 export const readReceiptsFn = createServerFn({ method: "GET" })

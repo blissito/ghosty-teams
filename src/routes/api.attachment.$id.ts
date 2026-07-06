@@ -11,10 +11,8 @@ export const Route = createFileRoute("/api/attachment/$id")({
     handlers: {
       GET: async ({ params }: { params: { id: string } }) => {
         const { useSession } = await import("@tanstack/react-start/server");
-        const s = await useSession<{ user?: { sub: string } }>({
-          password: process.env.SESSION_SECRET!,
-          name: "gc_session",
-        });
+        const { sessionConfig } = await import("../server/session.server");
+        const s = await useSession<{ user?: { sub: string } }>(sessionConfig());
         if (!s.data.user) return new Response("unauthorized", { status: 401 });
 
         const { mintReadUrl } = await import("../server/easybits-files.server");

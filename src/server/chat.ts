@@ -5,9 +5,10 @@ import type { RtEvent } from "./bus.server";
 
 export async function sessionUser() {
   const { useSession } = await import("@tanstack/react-start/server");
+  const { sessionConfig } = await import("./session.server");
   const s = await useSession<{
     user?: { sub: string; name: string; avatar: string; isOwner: boolean };
-  }>({ password: process.env.SESSION_SECRET!, name: "gc_session" });
+  }>(sessionConfig());
   return s.data.user ?? null;
 }
 
@@ -40,6 +41,12 @@ async function notifyMentions(
     targets = audience.filter((s) => s && s !== senderSub);
   } else {
     targets = await users.resolveMentionedUserSubs(tokens, senderSub);
+    // En un room PRIVADO, no filtrar por membresía filtraría info (excerpt + deep
+    // link inservible) a no-miembros. Solo notifica a quienes pueden ver el room.
+    if (isPrivate) {
+      const members = new Set(await db.listChannelMembers(channelId));
+      targets = targets.filter((s) => members.has(s));
+    }
   }
   if (!targets.length) return;
   // Silencio (mute): quien silenció este room no recibe push por menciones.
@@ -139,10 +146,8 @@ export const deleteMessageFn = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     const db = await import("../db.server");
     const { useSession } = await import("@tanstack/react-start/server");
-    const s = await useSession<{ user?: { name: string; isOwner: boolean } }>({
-      password: process.env.SESSION_SECRET!,
-      name: "gc_session",
-    });
+    const { sessionConfig } = await import("./session.server");
+    const s = await useSession<{ user?: { name: string; isOwner: boolean } }>(sessionConfig());
     const user = s.data.user;
     const msg = await db.getMessage(data.id);
     if (!msg) return { ok: false as const };
@@ -176,20 +181,36 @@ export const getMessagesSince = createServerFn({ method: "GET" })
     return db.attachMeta(await db.listMessagesSince(channel.id, data.sinceId), user?.sub ?? "");
   });
 
-// Señal efímera de "escribiendo…" (sin DB) → se publica al room.
+// Señal efímera de "escribiendo…" (sin DB). Scope = room (+hilo) o DM. En DM se
+// publica a ch.user de cada miembro (menos el emisor); en room a ch.room.
 export const pingTypingFn = createServerFn({ method: "POST" })
-  .validator((d: { slug: string }) => d)
+  .validator((d: { slug?: string; dmId?: number; parentId?: number | null }) => d)
   .handler(async ({ data }) => {
     const db = await import("../db.server");
     const bus = await import("./bus.server");
     const user = await sessionUser();
-    const channel = await db.getChannel(data.slug);
-    if (!channel || !user) return { ok: false as const };
+    if (!user) return { ok: false as const };
+    if (data.dmId != null) {
+      for (const sub of await db.getDmMembers(data.dmId)) {
+        if (sub === user.sub) continue;
+        bus.publish(bus.ch.user(sub), {
+          t: "typing",
+          sub: user.sub,
+          name: user.name,
+          channelId: null,
+          dmId: data.dmId,
+        });
+      }
+      return { ok: true as const };
+    }
+    const channel = data.slug ? await db.getChannel(data.slug) : null;
+    if (!channel) return { ok: false as const };
     bus.publish(bus.ch.room(channel.id), {
       t: "typing",
       sub: user.sub,
       name: user.name,
       channelId: channel.id,
+      parentId: data.parentId ?? null,
     });
     return { ok: true as const };
   });
@@ -368,9 +389,13 @@ export const askAgent = createServerFn({ method: "POST" })
       topic = root?.topic ?? "general";
     }
     await db.clearStatus(channel.id, data.parentId);
-    await db.postAgent(channel.id, data.parentId, reply, "msg", data.handle, name, topic ?? "general");
-    // La respuesta del agente aparece en vivo para todos (borra el status + muestra reply).
+    const { id: replyId } = await db.postAgent(channel.id, data.parentId, reply, "msg", data.handle, name, topic ?? "general");
+    // La respuesta del agente se publica como message:new → suena (Ghosty), suma
+    // unread y aparece en vivo. Su handler en el cliente ya revalida (borra el
+    // "pensando…"). El nonce va vacío: nadie tiene un optimista del reply del agente.
     const bus = await import("./bus.server");
-    bus.publish(bus.ch.room(channel.id), { t: "refresh", channelId: channel.id, parentId: data.parentId });
+    const created = await db.getMessage(replyId);
+    if (created) bus.publish(bus.ch.room(channel.id), { t: "message:new", msg: created });
+    else bus.publish(bus.ch.room(channel.id), { t: "refresh", channelId: channel.id, parentId: data.parentId });
     return { ok: true as const };
   });

@@ -50,6 +50,20 @@
   box-sizing: border-box;
 }
 
+/* Tailwind v4 quitó el cursor:pointer por defecto de los botones. Lo restauramos
+   global (botones, tabs, links, [role=button]); disabled → not-allowed. */
+button:not(:disabled),
+[role="button"]:not([aria-disabled="true"]),
+label[for],
+a[href],
+summary {
+  cursor: pointer;
+}
+button:disabled,
+[aria-disabled="true"] {
+  cursor: not-allowed;
+}
+
 html,
 body,
 #app {

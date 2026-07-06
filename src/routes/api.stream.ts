@@ -11,9 +11,10 @@ export const Route = createFileRoute("/api/stream")({
     handlers: {
       GET: async () => {
         const { useSession } = await import("@tanstack/react-start/server");
+        const { sessionConfig } = await import("../server/session.server");
         const s = await useSession<{
           user?: { sub: string; name: string; isOwner: boolean };
-        }>({ password: process.env.SESSION_SECRET!, name: "gc_session" });
+        }>(sessionConfig());
         const user = s.data.user;
         if (!user) return new Response("unauthorized", { status: 401 });
 

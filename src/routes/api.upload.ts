@@ -12,10 +12,8 @@ export const Route = createFileRoute("/api/upload")({
     handlers: {
       POST: async ({ request }: { request: Request }) => {
         const { useSession } = await import("@tanstack/react-start/server");
-        const s = await useSession<{ user?: { sub: string } }>({
-          password: process.env.SESSION_SECRET!,
-          name: "gc_session",
-        });
+        const { sessionConfig } = await import("../server/session.server");
+        const s = await useSession<{ user?: { sub: string } }>(sessionConfig());
         if (!s.data.user) return new Response("unauthorized", { status: 401 });
 
         let form: FormData;

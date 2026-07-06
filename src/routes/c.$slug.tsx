@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { createContext, Fragment, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import {
   Hash,
@@ -36,6 +36,8 @@ import {
   Download,
   Loader2,
   Archive,
+  ChevronDown,
+  ChevronRight,
 } from "lucide-react";
 import { searchMessagesFn } from "../server/search";
 import { createFileRoute, notFound, Link, useRouter } from "@tanstack/react-router";
@@ -43,7 +45,7 @@ import type { Channel, Message, DmConversation, RoomHit, ViewHit, Attachment, Cu
 import { listEmojisFn } from "../server/emojis";
 import { recentViewFn, mentionsViewFn, starredViewFn } from "../server/views";
 import { openDmFn, listDmsFn, getDmFlowFn, postDmMessageFn, askDmAgentFn } from "../server/dm";
-import { unreadCountsFn, markReadFn, readReceiptsFn } from "../server/reads";
+import { unreadCountsFn, markReadFn, readReceiptsFn, lastReadFn } from "../server/reads";
 import { toggleStarFn, togglePinFn, getPinsFn, toggleMuteFn, listMutesFn } from "../server/stars";
 import {
   getChannelView,
@@ -58,7 +60,7 @@ import {
   toggleReactionFn,
   editMessageFn,
 } from "../server/chat";
-import { SmilePlus, Pencil, ArrowLeft } from "lucide-react";
+import { SmilePlus, Pencil, ArrowLeft, RotateCcw, Send } from "lucide-react";
 import { getDeferredPrompt, onInstallable, clearDeferredPrompt, type BeforeInstallPromptEvent } from "../utils/pwa-install";
 import { useLiveStream } from "../hooks/useLiveStream";
 import type { RtEvent } from "../server/bus.server";
@@ -117,7 +119,20 @@ export const Route = createFileRoute("/c/$slug")({
 });
 
 type SessionUser = { sub: string; name: string; email: string; avatar: string; isOwner: boolean; handle: string };
-type Optimistic = { id: string; parentId: number | null; dmId: number | null; sender: string; avatar: string; body: string };
+type Attach = { fileId: string; mime: string; size: number; name: string };
+// El optimista guarda su propio payload de envío → se puede reintentar tal cual.
+type Optimistic = {
+  id: string; // == nonce
+  parentId: number | null;
+  dmId: number | null;
+  slug: string;
+  sender: string;
+  avatar: string;
+  body: string;
+  attachments: Attach[];
+  nonce: string;
+  status: "sending" | "failed";
+};
 
 // Iconos de room (Lucide, no emojis). Se guarda el NOMBRE; se renderiza el componente.
 const ROOM_ICONS: { name: string; Icon: typeof Hash }[] = [
@@ -170,15 +185,135 @@ const ChatCtx = createContext<{
   slug: string;
   emojis: CustomEmoji[];
   react: (m: Message, emoji: string) => void;
+  star: (m: Message) => void;
+  pin: (m: Message) => void;
+  remove: (m: Message) => void;
+  editMsg: (m: Message, body: string) => void;
+  retrySend: (o: Optimistic) => void;
+  discardSend: (id: string) => void;
+  // Picker de reacciones GLOBAL (id del mensaje con el picker abierto, o null).
+  // Uno solo a la vez (referencia Slack/Zulip): abrir otro cierra el anterior.
+  pickerFor: number | null;
+  setPickerFor: (id: number | null) => void;
 }>({
   me: null,
   slug: "",
   emojis: [],
   react: () => {},
+  star: () => {},
+  pin: () => {},
+  remove: () => {},
+  editMsg: () => {},
+  retrySend: () => {},
+  discardSend: () => {},
+  pickerFor: null,
+  setPickerFor: () => {},
 });
 
 // Emojis rápidos para el picker (evita una lib de ~1MB).
 const QUICK_EMOJIS = ["👍", "❤️", "😂", "🎉", "🙌", "🔥", "👀", "✅", "💯", "🚀", "🤔", "😮"];
+
+// Set curado con keywords (ES+EN) para el buscador del picker — evita una lib de
+// ~1MB. Al escribir filtra esto + los emojis custom; vacío muestra los rápidos.
+const EMOJI_SEARCH: { c: string; k: string }[] = [
+  { c: "👍", k: "thumbsup like yes bien ok pulgar arriba aprobado +1" },
+  { c: "👎", k: "thumbsdown no mal pulgar abajo -1" },
+  { c: "❤️", k: "heart love corazon rojo amor" },
+  { c: "🧡", k: "heart orange corazon naranja" },
+  { c: "💛", k: "heart yellow corazon amarillo" },
+  { c: "💚", k: "heart green corazon verde" },
+  { c: "💙", k: "heart blue corazon azul" },
+  { c: "💜", k: "heart purple corazon morado" },
+  { c: "🖤", k: "heart black corazon negro" },
+  { c: "💔", k: "broken heart corazon roto" },
+  { c: "😂", k: "joy laugh risa lol jaja llorar" },
+  { c: "🤣", k: "rofl rolling laugh risa piso" },
+  { c: "😅", k: "sweat smile risa nervios" },
+  { c: "🙂", k: "slight smile sonrisa" },
+  { c: "😊", k: "blush smile sonrojo feliz" },
+  { c: "😍", k: "heart eyes enamorado amor ojos" },
+  { c: "😘", k: "kiss beso" },
+  { c: "😎", k: "cool sunglasses lentes genial" },
+  { c: "🤔", k: "thinking pensar duda hmm" },
+  { c: "🤨", k: "raised eyebrow ceja duda" },
+  { c: "😐", k: "neutral serio" },
+  { c: "😴", k: "sleep dormir sueno zzz" },
+  { c: "😭", k: "cry sob llorar triste" },
+  { c: "😢", k: "cry tear triste lagrima" },
+  { c: "😡", k: "angry enojado rabia rojo" },
+  { c: "🤯", k: "mind blown explota cabeza wow" },
+  { c: "🥳", k: "party face fiesta celebrar" },
+  { c: "🤩", k: "star struck estrellas wow" },
+  { c: "😱", k: "scream miedo shock grito" },
+  { c: "🙄", k: "eye roll ojos rodar" },
+  { c: "😬", k: "grimace mueca incomodo" },
+  { c: "🤗", k: "hug abrazo" },
+  { c: "🤝", k: "handshake trato acuerdo manos" },
+  { c: "🙏", k: "pray gracias porfavor thanks please rezar" },
+  { c: "👏", k: "clap aplauso bravo" },
+  { c: "🙌", k: "raised hands celebrar manos arriba" },
+  { c: "👋", k: "wave hola adios saludo mano" },
+  { c: "🤙", k: "call me shaka llamame" },
+  { c: "💪", k: "muscle fuerza biceps fuerte" },
+  { c: "🫡", k: "salute saludo militar" },
+  { c: "👀", k: "eyes ojos mirar viendo" },
+  { c: "🔥", k: "fire fuego caliente lit" },
+  { c: "✅", k: "check ok hecho listo done verde" },
+  { c: "❌", k: "cross no error mal x" },
+  { c: "⭐", k: "star estrella favorito" },
+  { c: "🌟", k: "glowing star estrella brillo" },
+  { c: "💯", k: "hundred cien perfecto 100" },
+  { c: "🎉", k: "tada party fiesta celebrar confeti" },
+  { c: "🎊", k: "confetti confeti fiesta" },
+  { c: "🚀", k: "rocket cohete lanzar rapido ship deploy" },
+  { c: "✨", k: "sparkles brillo magia" },
+  { c: "💡", k: "idea bombilla luz" },
+  { c: "⚡", k: "zap rayo energia rapido" },
+  { c: "💥", k: "boom explosion" },
+  { c: "🎯", k: "target dardo objetivo bullseye" },
+  { c: "🏆", k: "trophy trofeo ganar premio" },
+  { c: "🥇", k: "gold medal oro primero" },
+  { c: "👑", k: "crown corona rey" },
+  { c: "💎", k: "gem diamante joya" },
+  { c: "🤖", k: "robot bot ghosty agente ai" },
+  { c: "👻", k: "ghost fantasma ghosty" },
+  { c: "🙈", k: "see no evil mono ojos" },
+  { c: "💩", k: "poop caca mierda" },
+  { c: "🤡", k: "clown payaso" },
+  { c: "👀", k: "eyes ojos" },
+  { c: "🫠", k: "melting derretir calor" },
+  { c: "😤", k: "triumph resoplido enojo" },
+  { c: "🥺", k: "pleading suplica ojitos porfa" },
+  { c: "😉", k: "wink guino" },
+  { c: "😜", k: "wink tongue lengua broma" },
+  { c: "🤪", k: "zany loco" },
+  { c: "🫶", k: "heart hands manos corazon amor" },
+  { c: "👌", k: "ok perfecto bien" },
+  { c: "✌️", k: "peace paz victoria dedos" },
+  { c: "🤞", k: "fingers crossed suerte dedos" },
+  { c: "🫰", k: "fingers crossed dinero suerte" },
+  { c: "👊", k: "fist puno golpe bro" },
+  { c: "☕", k: "coffee cafe" },
+  { c: "🍕", k: "pizza comida" },
+  { c: "🍺", k: "beer cerveza chela" },
+  { c: "🎂", k: "cake pastel cumpleanos" },
+  { c: "🌮", k: "taco comida mexico" },
+  { c: "💀", k: "skull calavera muerto rip lol" },
+  { c: "👽", k: "alien extraterrestre" },
+  { c: "🐛", k: "bug insecto error" },
+  { c: "🎨", k: "art arte diseno paleta" },
+  { c: "📌", k: "pin fijar chincheta" },
+  { c: "⏰", k: "alarm reloj tiempo" },
+  { c: "✏️", k: "pencil lapiz editar" },
+  { c: "🔒", k: "lock candado seguro privado" },
+  { c: "💰", k: "money dinero bolsa" },
+  { c: "📈", k: "chart up grafica subir crecer" },
+  { c: "🎁", k: "gift regalo" },
+  { c: "🌈", k: "rainbow arcoiris" },
+  { c: "☀️", k: "sun sol" },
+  { c: "🌙", k: "moon luna noche" },
+  { c: "❄️", k: "snow nieve frio" },
+];
 
 // Título corto de un hilo = primera línea de su mensaje raíz (para los submenús).
 function threadTitle(m: Message): string {
@@ -353,7 +488,14 @@ function ChannelPage() {
       .then(() => refreshUnread())
       .catch(() => refreshMutes());
   };
-  const [typing, setTyping] = useState<{ sub: string; name: string } | null>(null);
+  const [typing, setTyping] = useState<
+    { sub: string; name: string; channelId: number | null; parentId: number | null; dmId: number | null } | null
+  >(null);
+  // Frontera de no-leídos del scope activo (last_read_at previo a abrirlo) → el
+  // primer mensaje con created_at > at (y no mío) lleva el divisor "nuevos".
+  const [boundary, setBoundary] = useState<{ key: string; at: number } | null>(null);
+  // Un ÚNICO picker de reacciones abierto a la vez (Slack/Zulip): id del mensaje.
+  const [pickerFor, setPickerFor] = useState<number | null>(null);
   const typingTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const channelsById = useMemo(() => new Map(channels.map((c) => [c.id, c.slug])), [channels]);
   const router = useRouter();
@@ -394,6 +536,38 @@ function ChannelPage() {
     toggleReactionFn({ data: { slug: channel.slug, messageId: m.id, emoji } }).catch(() => revalidate());
   };
 
+  // Quita un mensaje de todas las caches (flujo, hilos, DMs). Reusado por el
+  // evento message:deleted y por el borrado optimista.
+  const removeMessageLocal = (id: number) => {
+    for (const [slug, arr] of flowCache)
+      if (arr.some((m) => m.id === id)) flowCache.set(slug, arr.filter((m) => m.id !== id));
+    for (const [tid, t] of threadCache)
+      if (t.replies.some((m) => m.id === id))
+        threadCache.set(tid, { root: t.root, replies: t.replies.filter((m) => m.id !== id) });
+    for (const [did, arr] of dmFlowCache)
+      if (arr.some((m) => m.id === id)) dmFlowCache.set(did, arr.filter((m) => m.id !== id));
+    applyPatch();
+  };
+
+  // Mutaciones OPTIMISTAS de mensaje: patch local inmediato + server en 2º plano.
+  // El eco realtime confirma (idempotente, trae el valor absoluto); si falla, revalida.
+  const star = (m: Message) => {
+    patchMessage(m.id, (msg) => ({ ...msg, starred: !msg.starred }));
+    toggleStarFn({ data: { messageId: m.id } }).catch(() => revalidate());
+  };
+  const pin = (m: Message) => {
+    patchMessage(m.id, (msg) => ({ ...msg, pinned: !msg.pinned }));
+    togglePinFn({ data: { messageId: m.id } }).catch(() => revalidate());
+  };
+  const remove = (m: Message) => {
+    removeMessageLocal(m.id);
+    deleteMessageFn({ data: { id: m.id } }).catch(() => revalidate());
+  };
+  const editMsg = (m: Message, body: string) => {
+    patchMessage(m.id, (msg) => ({ ...msg, body, edited_at: Date.now() }));
+    editMessageFn({ data: { slug: channel.slug, id: m.id, body } }).catch(() => revalidate());
+  };
+
   // Flujo del room: cacheado → volver a un room es instantáneo (sin skeleton si ya se vio).
   const messages = useCachedQuery(
     flowCache,
@@ -432,15 +606,25 @@ function ChannelPage() {
         // no suenan.
         if (ev.msg.kind === "msg" && ev.msg.sender !== user?.name) {
           const muteKey = ev.msg.dm_id != null ? `dm:${ev.msg.dm_id}` : `room:${ev.msg.channel_id}`;
-          if (!mutes.has(muteKey)) {
+          // No sonar si el mensaje ya está a la vista en el scope enfocado (Slack/Zulip):
+          // DM abierto, hilo abierto, o el flujo del room activo. Si la pestaña está
+          // oculta sí suena (no lo estás viendo).
+          const visible = typeof document !== "undefined" && document.visibilityState === "visible";
+          const inFocus =
+            (openDmId != null && ev.msg.dm_id === openDmId) ||
+            (openThreadId != null && ev.msg.parent_id === openThreadId) ||
+            (openDmId == null && view == null && openThreadId == null &&
+              ev.msg.dm_id == null && ev.msg.parent_id == null && ev.msg.channel_id === channel.id);
+          if (!mutes.has(muteKey) && !(visible && inFocus)) {
             // ¿Me menciona? (mi @handle o una grupal). Solo relevante en rooms.
             const h = user?.handle?.toLowerCase();
             const mentionsMe = (ev.msg.body.match(/@([\wáéíóúñ]+)/gi) ?? [])
               .map((x) => x.slice(1).toLowerCase())
               .some((x) => x === h || SOUND_GROUP_MENTIONS.has(x));
-            // Prioridad: agente → Ghosty · DM → DM · mención → atención · resto → knock.
-            if (ev.msg.agent_handle) playGhostySound();
-            else if (ev.msg.dm_id != null) playDmSound();
+            // Prioridad: DM → DM · agente(@ghosty en room) → Ghosty · mención → atención
+            // · resto → knock. (DM antes que agente: un DM que tagea @ghosty suena a DM.)
+            if (ev.msg.dm_id != null) playDmSound();
+            else if (ev.msg.agent_handle) playGhostySound();
             else if (mentionsMe) playMentionSound();
             else playNotificationSound();
           }
@@ -487,20 +671,7 @@ function ChannelPage() {
         break;
       }
       case "message:deleted": {
-        const slug = ev.channelId != null ? channelsById.get(ev.channelId) : undefined;
-        if (slug) {
-          const arr = flowCache.get(slug);
-          if (arr) flowCache.set(slug, arr.filter((m) => m.id !== ev.id));
-        }
-        if (ev.parentId != null) {
-          const t = threadCache.get(ev.parentId);
-          if (t) threadCache.set(ev.parentId, { root: t.root, replies: t.replies.filter((m) => m.id !== ev.id) });
-        }
-        if (ev.dmId != null) {
-          const arr = dmFlowCache.get(ev.dmId);
-          if (arr) dmFlowCache.set(ev.dmId, arr.filter((m) => m.id !== ev.id));
-        }
-        applyPatch();
+        removeMessageLocal(ev.id); // idempotente — ya pudo quitarlo el borrado optimista
         break;
       }
       case "reaction":
@@ -539,8 +710,15 @@ function ChannelPage() {
         });
         break;
       case "typing":
-        if (ev.channelId === channel.id && ev.sub !== user?.sub) {
-          setTyping({ sub: ev.sub, name: ev.name });
+        // Room/hilo (channelId del room activo) o DM (dmId). El emisor se ignora.
+        if (ev.sub !== user?.sub && (ev.dmId != null || ev.channelId === channel.id)) {
+          setTyping({
+            sub: ev.sub,
+            name: ev.name,
+            channelId: ev.channelId,
+            parentId: ev.parentId ?? null,
+            dmId: ev.dmId ?? null,
+          });
           clearTimeout(typingTimer.current);
           typingTimer.current = setTimeout(() => setTyping(null), 3500);
         }
@@ -561,24 +739,65 @@ function ChannelPage() {
     refreshUnread();
     refreshMutes();
   }, []);
-  // Al cambiar de room, vuelve al flujo (cierra el hilo/DM/vista enfocado).
+  // En el MOUNT restaura el foco del centro tras un reload (deploy/refresh) desde
+  // sessionStorage; en cambios de room POSTERIORES cierra el foco (vuelve al flujo).
+  // Distinguir mount de room-switch evita que el reset pise lo restaurado.
+  const didRestoreFocus = useRef(false);
   useEffect(() => {
+    if (!didRestoreFocus.current) {
+      didRestoreFocus.current = true;
+      try {
+        const raw = sessionStorage.getItem(`focus:${channel.slug}`);
+        if (raw) {
+          const f = JSON.parse(raw) as { view?: typeof view; dm?: number; thread?: number };
+          if (f.view) setView(f.view);
+          else if (f.dm != null) setOpenDmId(f.dm);
+          else if (f.thread != null) setOpenThreadId(f.thread);
+        }
+      } catch {
+        /* sessionStorage/JSON inválido → arranca en el flujo */
+      }
+      return;
+    }
     setOpenThreadId(null);
     setOpenDmId(null);
     setView(null);
   }, [channel.slug]);
-  // Enfocar un room (sin DM ni vista abiertos) → marca leído + baja su badge
-  // (cross-device vía ch.user). También cubre "volver al room" al cerrar un DM/vista.
+  // Persiste el foco actual (mutuamente excluyente) para sobrevivir un reload.
+  useEffect(() => {
+    const f = view ? { view } : openDmId != null ? { dm: openDmId } : openThreadId != null ? { thread: openThreadId } : null;
+    try {
+      if (f) sessionStorage.setItem(`focus:${channel.slug}`, JSON.stringify(f));
+      else sessionStorage.removeItem(`focus:${channel.slug}`);
+    } catch {
+      /* storage lleno/bloqueado → no crítico */
+    }
+  }, [view, openDmId, openThreadId, channel.slug]);
+  // Enfocar un room (sin DM ni vista abiertos): PRIMERO captura la frontera de
+  // no-leídos (last_read_at previo → divisor "nuevos mensajes"), LUEGO marca leído
+  // y baja el badge. El orden importa: markRead pisa last_read_at con now().
   useEffect(() => {
     if (openDmId != null || view != null) return;
-    markReadFn({ data: { scope: "room", scopeId: channel.id } }).catch(() => {});
-    clearUnread("room", channel.id);
+    const key = `room:${channel.id}`;
+    lastReadFn({ data: { scope: "room", scopeId: channel.id } })
+      .then((r) => setBoundary({ key, at: r.at }))
+      .catch(() => setBoundary({ key, at: 0 }))
+      .finally(() => {
+        markReadFn({ data: { scope: "room", scopeId: channel.id } }).catch(() => {});
+        clearUnread("room", channel.id);
+      });
   }, [channel.id, openDmId, view]);
-  // Abrir un DM → marca leído + baja su badge.
+  // Abrir un DM → misma coreografía: frontera → marca leído → badge.
   useEffect(() => {
     if (openDmId == null) return;
-    markReadFn({ data: { scope: "dm", scopeId: openDmId } }).catch(() => {});
-    clearUnread("dm", openDmId);
+    const key = `dm:${openDmId}`;
+    lastReadFn({ data: { scope: "dm", scopeId: openDmId } })
+      .then((r) => setBoundary({ key, at: r.at }))
+      .catch(() => setBoundary({ key, at: 0 }))
+      .finally(() => {
+        markReadFn({ data: { scope: "dm", scopeId: openDmId } }).catch(() => {});
+        clearUnread("dm", openDmId);
+      });
   }, [openDmId]);
   // Reconcilia optimistas de flujo (parentId y dmId null) contra el flujo real:
   // quita un optimista SOLO cuando su mensaje real (mismo sender+body) ya llegó —
@@ -586,13 +805,26 @@ function ChannelPage() {
   // Los de hilo (parentId) y DM (dmId) se limpian en su propio contexto.
   useEffect(() => {
     if (!messages) return;
-    setOptimistic((o) =>
-      o.filter((x) => {
+    setOptimistic((prev) => {
+      // Multiset de mensajes reales por (sender|body) → reconcilia 1:1 aun con
+      // mensajes idénticos en vuelo (dos "ok" seguidos no se borran juntos).
+      const avail = new Map<string, number>();
+      for (const m of messages) {
+        const k = `${m.sender.length}:${m.sender}:${m.body}`;
+        avail.set(k, (avail.get(k) ?? 0) + 1);
+      }
+      return prev.filter((x) => {
+        if (x.status === "failed") return true; // pega hasta retry/descartar
         if (x.parentId !== null || x.dmId !== null) return true;
-        const landed = messages.some((m) => m.sender === x.sender && m.body === x.body);
-        return !landed;
-      })
-    );
+        const k = `${x.sender.length}:${x.sender}:${x.body}`;
+        const n = avail.get(k) ?? 0;
+        if (n > 0) {
+          avail.set(k, n - 1);
+          return false; // aterrizó → quita este optimista (consume un match)
+        }
+        return true;
+      });
+    });
   }, [messages]);
   // Enfocar hilo, DM o vista en el centro son mutuamente excluyentes.
   const openThread = (id: number) => {
@@ -641,34 +873,100 @@ function ChannelPage() {
       setTimeout(doJump, 500);
     }
   };
-  const addOptimistic = (parentId: number | null, body: string) =>
-    setOptimistic((o) => [
-      ...o,
-      {
-        id: `${Date.now()}-${o.length}`,
-        parentId,
-        dmId: null,
-        sender: user?.name ?? "tú",
-        avatar: user?.avatar ?? "",
-        body,
-      },
-    ]);
-  const addDmOptimistic = (dmId: number, body: string) =>
-    setOptimistic((o) => [
-      ...o,
-      {
-        id: `${Date.now()}-${o.length}`,
-        parentId: null,
-        dmId,
-        sender: user?.name ?? "tú",
-        avatar: user?.avatar ?? "",
-        body,
-      },
-    ]);
+  // Salta a una RESPUESTA de hilo (desde Destacados/Menciones/búsqueda): abre el hilo
+  // y scrollea a la respuesta. ThreadView carga sus replies async (useCachedQuery) →
+  // el nodo msg-{replyId} puede no existir aún, así que reintenta unas veces.
+  const jumpToThreadReply = (slug: string, parentId: number, replyId: number) => {
+    const focusAndScroll = () => {
+      setView(null);
+      setOpenDmId(null);
+      setOpenThreadId(parentId);
+      let tries = 0;
+      const tick = () => {
+        const el = document.getElementById(`msg-${replyId}`);
+        if (el) {
+          el.scrollIntoView({ behavior: "smooth", block: "center" });
+          el.classList.add("flash-highlight");
+          setTimeout(() => el.classList.remove("flash-highlight"), 1200);
+        } else if (tries++ < 20) {
+          setTimeout(tick, 100);
+        }
+      };
+      setTimeout(tick, 60);
+    };
+    if (slug === channel.slug) focusAndScroll();
+    else {
+      router.navigate({ to: "/c/$slug", params: { slug } });
+      setTimeout(focusAndScroll, 500);
+    }
+  };
+  // ── Outbox: el ENVÍO vive aquí (no en el Composer) para poder reintentar un
+  // fallo permanente. Cada optimista guarda su payload; sending→failed en error.
+  const markFailed = (id: string) =>
+    setOptimistic((o) => o.map((x) => (x.id === id ? { ...x, status: "failed" as const } : x)));
+  // Dispara la red para un optimista concreto (usado por el envío inicial y el retry).
+  const fireSend = (o: Optimistic) => {
+    if (o.dmId != null) {
+      postDmMessageFn({ data: { id: o.dmId, body: o.body, nonce: o.nonce, attachments: o.attachments } })
+        .then((r) => {
+          revalidate();
+          if (r?.needsAgent && r.agentHandle)
+            askDmAgentFn({ data: { id: o.dmId!, body: o.body, sender: "", handle: r.agentHandle } })
+              .then(() => revalidate())
+              .catch(() => revalidate());
+        })
+        .catch(() => markFailed(o.id));
+      return;
+    }
+    postMessage({ data: { slug: o.slug, parentId: o.parentId, body: o.body, nonce: o.nonce, attachments: o.attachments } })
+      .then((r) => {
+        revalidate();
+        if (r?.needsAgent && r.agentParent != null && r.agentHandle) {
+          if (o.parentId === null) openThread(r.agentParent); // @agente en el flujo → abre su hilo
+          askAgent({ data: { slug: o.slug, parentId: r.agentParent, body: o.body, sender: "", handle: r.agentHandle } })
+            .then(() => revalidate())
+            .catch(() => revalidate());
+        }
+      })
+      .catch(() => markFailed(o.id));
+  };
+  // Crea el optimista (con nonce para descartar mi propio eco SSE) y lo envía.
+  const sendOptimistic = (p: {
+    slug: string;
+    parentId: number | null;
+    dmId: number | null;
+    body: string;
+    attachments: Attach[];
+  }) => {
+    const nonce = crypto.randomUUID();
+    sentNonces.add(nonce);
+    setTimeout(() => sentNonces.delete(nonce), 15_000); // limpia si nunca ecoa
+    const o: Optimistic = {
+      id: nonce,
+      parentId: p.parentId,
+      dmId: p.dmId,
+      slug: p.slug,
+      sender: user?.name ?? "tú",
+      avatar: user?.avatar ?? "",
+      body: p.body,
+      attachments: p.attachments,
+      nonce,
+      status: "sending",
+    };
+    setOptimistic((prev) => [...prev, o]);
+    fireSend(o);
+  };
+  const retrySend = (o: Optimistic) => {
+    setOptimistic((prev) => prev.map((x) => (x.id === o.id ? { ...x, status: "sending" as const } : x)));
+    fireSend({ ...o, status: "sending" }); // reusa el mismo nonce (el server descarta mi eco)
+  };
+  const discardSend = (id: string) => setOptimistic((prev) => prev.filter((x) => x.id !== id));
+  // Al recargar una vista se limpian SUS optimistas ya aterrizados; los fallidos
+  // sobreviven (esperan retry/descartar del usuario).
   const clearOptimistic = (parentId: number | null) =>
-    setOptimistic((o) => o.filter((x) => x.parentId !== parentId || x.dmId !== null));
+    setOptimistic((o) => o.filter((x) => x.status === "failed" || x.parentId !== parentId || x.dmId !== null));
   const clearDmOptimistic = (dmId: number) =>
-    setOptimistic((o) => o.filter((x) => x.dmId !== dmId));
+    setOptimistic((o) => o.filter((x) => x.status === "failed" || x.dmId !== dmId));
   // Borra un hilo (autor u owner). Si es el enfocado, vuelve al flujo del room.
   const deleteThread = async (id: number) => {
     await deleteMessageFn({ data: { id } }).catch(() => {});
@@ -690,7 +988,9 @@ function ChannelPage() {
   };
 
   return (
-    <ChatCtx.Provider value={{ me: user, slug: channel.slug, emojis, react }}>
+    <ChatCtx.Provider
+      value={{ me: user, slug: channel.slug, emojis, react, star, pin, remove, editMsg, retrySend, discardSend, pickerFor, setPickerFor }}
+    >
     <div className="flex h-[100dvh] bg-surface text-ink">
       {/* Backdrop del drawer (solo móvil): tap fuera cierra el sidebar. */}
       {navOpen && (
@@ -735,6 +1035,7 @@ function ChannelPage() {
           rev={rev}
           patch={patch}
           onJumpToRoom={jumpToRoomMessage}
+          onJumpToThreadReply={jumpToThreadReply}
           onOpenDm={openDm}
           onOpenNav={() => setNavOpen(true)}
         />
@@ -747,9 +1048,10 @@ function ChannelPage() {
           patch={patch}
           online={online}
           optimistic={optimistic.filter((o) => o.dmId === openDmId)}
-          onOptimistic={(body) => addDmOptimistic(openDmId, body)}
+          onSend={(p) => sendOptimistic({ ...p, slug: "", parentId: null, dmId: openDmId })}
           onReloaded={() => clearDmOptimistic(openDmId)}
-          onRevalidate={revalidate}
+          typing={typing && typing.dmId === openDmId ? typing : null}
+          newAt={boundary?.key === `dm:${openDmId}` ? boundary.at : null}
           onBack={() => setOpenDmId(null)}
         />
       ) : openThreadId != null ? (
@@ -760,9 +1062,9 @@ function ChannelPage() {
           rev={rev}
           patch={patch}
           optimistic={optimistic.filter((o) => o.parentId === openThreadId)}
-          onOptimistic={(body) => addOptimistic(openThreadId, body)}
+          onSend={(p) => sendOptimistic({ ...p, slug: channel.slug, parentId: openThreadId, dmId: null })}
           onReloaded={() => clearOptimistic(openThreadId)}
-          onRevalidate={revalidate}
+          typing={typing && typing.parentId === openThreadId ? typing : null}
           onGoToOrigin={goToOrigin}
           onBack={() => setOpenThreadId(null)}
         />
@@ -771,10 +1073,10 @@ function ChannelPage() {
           channel={channel}
           messages={messages}
           optimistic={optimistic.filter((o) => o.parentId === null && o.dmId === null)}
-          onOptimistic={(body) => addOptimistic(null, body)}
+          onSend={(p) => sendOptimistic({ ...p, slug: channel.slug, parentId: null, dmId: null })}
           onOpenThread={openThread}
-          onRevalidate={revalidate}
-          typing={typing}
+          typing={typing && typing.dmId == null && typing.parentId == null ? typing : null}
+          newAt={boundary?.key === `room:${channel.id}` ? boundary.at : null}
           onlineCount={online.size}
           pins={pins}
           onOpenDm={openDm}
@@ -873,6 +1175,15 @@ function Sidebar({
   const [createOpen, setCreateOpen] = useState(false);
   const [settingsSlug, setSettingsSlug] = useState<string | null>(null);
   const [newDmOpen, setNewDmOpen] = useState(false);
+  // Acordeón: hilos del room colapsados (por slug). Colapsar evita que el sidebar
+  // crezca sin fin cuando un room tiene muchos hilos.
+  const [collapsedThreads, setCollapsedThreads] = useState<Set<string>>(new Set());
+  const toggleThreads = (slug: string) =>
+    setCollapsedThreads((prev) => {
+      const n = new Set(prev);
+      n.has(slug) ? n.delete(slug) : n.add(slug);
+      return n;
+    });
   const canManage = (c: Channel) => user?.isOwner || c.created_by === user?.sub;
 
   return (
@@ -934,6 +1245,17 @@ function Sidebar({
           return (
           <div key={c.id}>
             <div className="group flex items-center">
+              {c.slug === active && threads.length > 0 ? (
+                <button
+                  onClick={() => toggleThreads(c.slug)}
+                  title={collapsedThreads.has(c.slug) ? t("Mostrar hilos") : t("Ocultar hilos")}
+                  className="shrink-0 rounded p-0.5 text-muted transition hover:text-ink"
+                >
+                  {collapsedThreads.has(c.slug) ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
+                </button>
+              ) : (
+                <span className="w-[18px] shrink-0" />
+              )}
               <Link
                 to="/c/$slug"
                 params={{ slug: c.slug }}
@@ -976,9 +1298,9 @@ function Sidebar({
                 </button>
               )}
             </div>
-            {/* Hilos del room activo como submenús; clic → enfoca el hilo en el centro. */}
-            {c.slug === active && threads.length > 0 && (
-              <ul className="mb-1 ml-3.5 mt-0.5 space-y-0.5 border-l border-border pl-2">
+            {/* Hilos del room activo como submenús (colapsables); clic → enfoca el hilo. */}
+            {c.slug === active && threads.length > 0 && !collapsedThreads.has(c.slug) && (
+              <ul className="mb-1 ml-3.5 mt-0.5 max-h-64 space-y-0.5 overflow-y-auto border-l border-border pl-2">
                 {threads.map((thr) => {
                   const isGhosty = thr.agent_handle === "ghosty" || thr.sender === "ghosty";
                   const canDelete = user?.isOwner || thr.sender === user?.name;
@@ -1184,7 +1506,7 @@ function InstallAppButton() {
   );
 }
 
-function Modal({ children, onClose }: { children: React.ReactNode; onClose: () => void }) {
+function Modal({ children, onClose, wide }: { children: React.ReactNode; onClose: () => void; wide?: boolean }) {
   // Esc cierra (para cualquier modal que use este wrapper).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
@@ -1205,7 +1527,9 @@ function Modal({ children, onClose }: { children: React.ReactNode; onClose: () =
         exit={{ scale: 0.95, y: 8 }}
         transition={{ type: "spring", stiffness: 500, damping: 40 }}
         onClick={(e) => e.stopPropagation()}
-        className="max-h-[85dvh] w-full max-w-sm overflow-y-auto rounded-2xl border border-border bg-surface-2 p-5 text-ink"
+        className={`max-h-[85dvh] w-full overflow-y-auto rounded-2xl border border-border bg-surface-2 p-5 text-ink ${
+          wide ? "max-w-md" : "max-w-sm"
+        }`}
       >
         {children}
       </motion.div>
@@ -1241,31 +1565,34 @@ function CreateRoomModal({
   }
 
   return (
-    <Modal onClose={onClose}>
-      <h2 className="mb-3 font-semibold">{t("Crear room")}</h2>
+    <Modal onClose={onClose} wide>
+      <h2 className="mb-4 text-base font-semibold">{t("Crear room")}</h2>
+      <label className="mb-1.5 block text-xs font-medium text-muted">{t("Nombre")}</label>
       <input
         autoFocus
         value={name}
         onChange={(e) => setName(e.target.value)}
         onKeyDown={(e) => e.key === "Enter" && create()}
         placeholder={t("nombre del room")}
-        className="mb-3 w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm outline-none focus:border-brand"
+        className="mb-5 w-full rounded-lg border border-border bg-surface px-3 py-2.5 text-sm outline-none focus:border-brand"
       />
-      <p className="mb-1 text-xs text-muted">{t("Icono")}</p>
-      <div className="mb-3 flex flex-wrap gap-1">
+      <label className="mb-2 block text-xs font-medium text-muted">{t("Icono")}</label>
+      <div className="mb-5 grid grid-cols-8 gap-2">
         {ROOM_ICONS.map(({ name: n, Icon }) => (
           <button
             key={n}
             onClick={() => setIcon(n)}
-            className={`grid h-9 w-9 place-items-center rounded-lg transition ${
-              icon === n ? "bg-brand text-brand-fg" : "bg-surface text-muted hover:bg-surface-3 hover:text-ink"
+            className={`grid aspect-square place-items-center rounded-lg transition ${
+              icon === n
+                ? "bg-brand text-brand-fg"
+                : "bg-surface text-muted hover:bg-surface-3 hover:text-ink"
             }`}
           >
             <Icon size={18} />
           </button>
         ))}
       </div>
-      <label className="mb-4 flex items-center gap-2 text-sm">
+      <label className="mb-5 flex items-center gap-2 rounded-lg bg-surface px-3 py-2.5 text-sm">
         <input type="checkbox" checked={isPrivate} onChange={(e) => setIsPrivate(e.target.checked)} />
         <Lock size={14} className="text-muted" />
         <span>{t("Privado (solo miembros invitados)")}</span>
@@ -1850,6 +2177,7 @@ function ViewPane({
   rev,
   patch,
   onJumpToRoom,
+  onJumpToThreadReply,
   onOpenDm,
   onOpenNav,
 }: {
@@ -1857,6 +2185,7 @@ function ViewPane({
   rev: number;
   patch: number;
   onJumpToRoom: (slug: string, id: number) => void;
+  onJumpToThreadReply: (slug: string, parentId: number, replyId: number) => void;
   onOpenDm: (id: number) => void;
   onOpenNav: () => void;
 }) {
@@ -1873,8 +2202,8 @@ function ViewPane({
   const open = (m: ViewHit) => {
     if (m.dm_id != null) onOpenDm(m.dm_id);
     else if (m.slug) {
-      // Si es una respuesta de hilo, salta al origen visible del hilo en el flujo.
-      if (m.parent_id != null) onJumpToRoom(m.slug, m.parent_id);
+      // Respuesta de hilo → abre el hilo y scrollea a ESA respuesta (no al room).
+      if (m.parent_id != null) onJumpToThreadReply(m.slug, m.parent_id, m.id);
       else onJumpToRoom(m.slug, m.id);
     }
   };
@@ -1924,14 +2253,46 @@ function ViewPane({
 }
 
 /* ── Flujo del canal ── */
+// Primer mensaje no-leído del scope: el más antiguo con created_at > frontera y
+// que NO sea mío (no me notifico a mí mismo). null = nada nuevo → sin divisor.
+function firstUnreadId(messages: Message[] | null, newAt: number | null, meName?: string): number | null {
+  if (newAt == null || !messages) return null;
+  const m = messages.find((x) => x.created_at > newAt && x.sender !== meName);
+  return m ? m.id : null;
+}
+
+// Divisor "nuevos mensajes" (referencia Zulip: inline, no pill flotante).
+function NewDivider() {
+  const t = useT();
+  return (
+    <div className="my-2 flex items-center gap-2" aria-label={t("Nuevos mensajes")}>
+      <div className="h-px flex-1 bg-red-500/40" />
+      <span className="shrink-0 text-[11px] font-semibold uppercase tracking-wide text-red-500">
+        {t("Nuevos mensajes")}
+      </span>
+      <div className="h-px flex-1 bg-red-500/40" />
+    </div>
+  );
+}
+
+// Línea efímera "X está escribiendo…" (encima del Composer). Altura fija → no salta.
+function TypingLine({ typing }: { typing: { name: string } | null }) {
+  const t = useT();
+  return (
+    <div className="h-5 px-6 text-xs italic text-muted">
+      {typing ? t("{name} está escribiendo…", { name: typing.name }) : ""}
+    </div>
+  );
+}
+
 function Flow({
   channel,
   messages,
   optimistic,
-  onOptimistic,
+  onSend,
   onOpenThread,
-  onRevalidate,
   typing,
+  newAt,
   onlineCount,
   pins,
   onOpenDm,
@@ -1940,10 +2301,10 @@ function Flow({
   channel: Channel;
   messages: Message[] | null;
   optimistic: Optimistic[];
-  onOptimistic: (body: string) => void;
+  onSend: (p: { body: string; attachments: Attach[] }) => void;
   onOpenThread: (id: number) => void;
-  onRevalidate: () => void;
   typing: { sub: string; name: string } | null;
+  newAt: number | null;
   onlineCount: number;
   pins: Message[];
   onOpenDm: (id: number) => void;
@@ -1954,9 +2315,23 @@ function Flow({
   const canManage = !!me && (me.isOwner || channel.created_by === me.sub);
   const scrollRef = useRef<HTMLDivElement>(null);
   const count = messages?.length ?? 0;
+  const unreadId = firstUnreadId(messages, newAt, me?.name);
+  const didLand = useRef(false);
   useEffect(() => {
+    didLand.current = false; // al cambiar de room se recalcula el aterrizaje
+  }, [channel.id]);
+  useEffect(() => {
+    // Carga inicial con no-leídos → aterriza en el divisor (Zulip); si no, al fondo.
+    if (unreadId != null && !didLand.current) {
+      const el = document.getElementById(`msg-${unreadId}`);
+      if (el) {
+        el.scrollIntoView({ block: "center" });
+        didLand.current = true;
+        return;
+      }
+    }
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
-  }, [count, optimistic.length]);
+  }, [count, optimistic.length, unreadId]);
   // Scroll a un mensaje (clic en un fijado) con destello, estilo "ir al origen".
   const jumpTo = (id: number) => {
     const el = document.getElementById(`msg-${id}`);
@@ -1994,7 +2369,7 @@ function Flow({
         </div>
       </header>
       {pins.length > 0 && <PinnedBar pins={pins} onJump={jumpTo} />}
-      <div ref={scrollRef} className="flex-1 space-y-1 overflow-y-auto px-4 py-4">
+      <div ref={scrollRef} className="mx-auto w-full max-w-4xl flex-1 space-y-1 overflow-y-auto px-4 py-4">
         {messages === null ? (
           <ThreadSkeleton />
         ) : messages.length === 0 && optimistic.length === 0 ? (
@@ -2003,22 +2378,21 @@ function Flow({
           </p>
         ) : (
           messages.map((m) => (
-            <MessageRow key={m.id} m={m} onOpenThread={onOpenThread} showThreadLink canPin={canManage} />
+            <Fragment key={m.id}>
+              {m.id === unreadId && <NewDivider />}
+              <MessageRow m={m} onOpenThread={onOpenThread} showThreadLink canPin={canManage} />
+            </Fragment>
           ))
         )}
         {optimistic.map((o) => (
           <OptimisticRow key={o.id} o={o} />
         ))}
       </div>
-      <div className="h-5 px-6 text-xs italic text-muted">
-        {typing ? t("{name} está escribiendo…", { name: typing.name }) : ""}
-      </div>
+      <TypingLine typing={typing} />
       <Composer
         slug={channel.slug}
         parentId={null}
-        onOptimistic={onOptimistic}
-        onOpenThread={onOpenThread}
-        onRevalidate={onRevalidate}
+        onSend={onSend}
         placeholder={t("Mensaje a #{room}…", { room: channel.name })}
       />
     </section>
@@ -2032,9 +2406,9 @@ function ThreadView({
   rev,
   patch,
   optimistic,
-  onOptimistic,
+  onSend,
   onReloaded,
-  onRevalidate,
+  typing,
   onGoToOrigin,
   onBack,
 }: {
@@ -2043,9 +2417,9 @@ function ThreadView({
   rev: number;
   patch: number;
   optimistic: Optimistic[];
-  onOptimistic: (body: string) => void;
+  onSend: (p: { body: string; attachments: Attach[] }) => void;
   onReloaded: () => void;
-  onRevalidate: () => void;
+  typing: { name: string } | null;
   onGoToOrigin: (id: number) => void;
   onBack: () => void;
 }) {
@@ -2086,7 +2460,7 @@ function ThreadView({
           </button>
         </div>
       </header>
-      <div ref={scrollRef} className="flex-1 space-y-1 overflow-y-auto px-4 py-4">
+      <div ref={scrollRef} className="mx-auto w-full max-w-4xl flex-1 space-y-1 overflow-y-auto px-4 py-4">
         {!data ? (
           <ThreadSkeleton />
         ) : (
@@ -2114,11 +2488,11 @@ function ThreadView({
           </>
         )}
       </div>
+      <TypingLine typing={typing} />
       <Composer
         slug={channel.slug}
         parentId={threadId}
-        onOptimistic={onOptimistic}
-        onRevalidate={onRevalidate}
+        onSend={onSend}
         placeholder={t("Responder en el hilo…")}
       />
     </section>
@@ -2133,9 +2507,10 @@ function DmView({
   patch,
   online,
   optimistic,
-  onOptimistic,
+  onSend,
   onReloaded,
-  onRevalidate,
+  typing,
+  newAt,
   onBack,
 }: {
   dm: DmConversation | null;
@@ -2144,12 +2519,14 @@ function DmView({
   patch: number;
   online: Set<string>;
   optimistic: Optimistic[];
-  onOptimistic: (body: string) => void;
+  onSend: (p: { body: string; attachments: Attach[] }) => void;
   onReloaded: () => void;
-  onRevalidate: () => void;
+  typing: { name: string } | null;
+  newAt: number | null;
   onBack: () => void;
 }) {
   const t = useT();
+  const { me } = useContext(ChatCtx);
   // Cacheado por dmId → reabrir la misma conversación es instantáneo (sin skeleton).
   const flow = useCachedQuery(
     dmFlowCache,
@@ -2160,13 +2537,24 @@ function DmView({
   );
   const scrollRef = useRef<HTMLDivElement>(null);
   const count = flow?.length ?? 0;
+  const unreadId = firstUnreadId(flow, newAt, me?.name);
+  const didLand = useRef(false);
   useEffect(() => {
     if (flow) onReloaded();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [flow]);
   useEffect(() => {
+    // Igual que el Flow: aterriza en el primer no-leído si lo hay; si no, al fondo.
+    if (unreadId != null && !didLand.current) {
+      const el = document.getElementById(`msg-${unreadId}`);
+      if (el) {
+        el.scrollIntoView({ block: "center" });
+        didLand.current = true;
+        return;
+      }
+    }
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
-  }, [count, optimistic.length]);
+  }, [count, optimistic.length, unreadId]);
 
   const title = dm ? dmTitle(dm, t("Conversación")) : t("Conversación");
   const isOnline = dm?.members.some((m) => online.has(m.sub)) ?? false;
@@ -2202,7 +2590,7 @@ function DmView({
           </p>
         </div>
       </header>
-      <div ref={scrollRef} className="flex-1 space-y-1 overflow-y-auto px-4 py-4">
+      <div ref={scrollRef} className="mx-auto w-full max-w-4xl flex-1 space-y-1 overflow-y-auto px-4 py-4">
         {flow === null ? (
           <ThreadSkeleton />
         ) : flow.length === 0 && optimistic.length === 0 ? (
@@ -2210,18 +2598,23 @@ function DmView({
             {t("Escribe el primer mensaje de {name}.", { name: title })}
           </p>
         ) : (
-          flow.map((m) => <MessageRow key={m.id} m={m} />)
+          flow.map((m) => (
+            <Fragment key={m.id}>
+              {m.id === unreadId && <NewDivider />}
+              <MessageRow m={m} />
+            </Fragment>
+          ))
         )}
         {optimistic.map((o) => (
           <OptimisticRow key={o.id} o={o} />
         ))}
       </div>
+      <TypingLine typing={typing} />
       <Composer
         slug=""
         parentId={null}
         dmId={dmId}
-        onOptimistic={onOptimistic}
-        onRevalidate={onRevalidate}
+        onSend={onSend}
         placeholder={t("Mensaje a {name}…", { name: title })}
       />
     </section>
@@ -2316,8 +2709,12 @@ function MessageRow({
   canPin?: boolean;
 }) {
   const t = useT();
-  const { me, slug } = useContext(ChatCtx);
+  const { me, slug, pickerFor } = useContext(ChatCtx);
   const [editing, setEditing] = useState(false);
+  // Mientras un popover de la barra (reaccionar/⋯) esté abierto, la barra NO debe
+  // desaparecer al perder el hover del row (si no, el popover se vuelve inclicable).
+  const [menuOpen, setMenuOpen] = useState(false);
+  const barVisible = menuOpen || pickerFor === m.id; // ⋯ propio o picker global de esta fila
   const isAgent = m.agent_handle != null || m.sender === "ghosty";
   const isGhostyAvatar = m.agent_handle === "ghosty" || m.sender === "ghosty";
   const displayName = m.sender === "ghosty" ? "Ghosty" : m.sender;
@@ -2350,7 +2747,11 @@ function MessageRow({
       )}
       {/* Acciones al hover: reaccionar · destacar · menú (copiar/fijar/editar/borrar) */}
       {m.kind === "msg" && !editing && (
-        <div className="absolute right-2 top-0 z-10 flex -translate-y-1/2 items-center gap-0.5 rounded-lg border border-border bg-surface-2 px-0.5 opacity-100 shadow-sm transition md:opacity-0 md:group-hover:opacity-100">
+        <div
+          className={`absolute right-2 top-0 z-20 flex -translate-y-1/2 items-center gap-0.5 rounded-lg border border-border bg-surface-2 px-0.5 shadow-sm transition ${
+            barVisible ? "opacity-100" : "opacity-100 md:opacity-0 md:group-hover:opacity-100"
+          }`}
+        >
           {canReact && <ReactButton m={m} />}
           <StarButton m={m} />
           <MessageActions
@@ -2360,6 +2761,7 @@ function MessageRow({
             canDelete={canDelete}
             canPin={!!canPin}
             onEdit={() => setEditing(true)}
+            onOpenChange={setMenuOpen}
           />
         </div>
       )}
@@ -2382,7 +2784,7 @@ function MessageRow({
           ) : null}
         </div>
         {editing ? (
-          <EditBox m={m} slug={slug} onDone={() => setEditing(false)} />
+          <EditBox m={m} onDone={() => setEditing(false)} />
         ) : (
           m.body ? (
             <div className="text-sm text-ink">
@@ -2418,24 +2820,40 @@ function MessageRow({
 
 function ReactButton({ m }: { m: Message }) {
   const t = useT();
-  const { react } = useContext(ChatCtx);
-  const [open, setOpen] = useState(false);
+  const { react, pickerFor, setPickerFor } = useContext(ChatCtx);
+  const open = pickerFor === m.id; // estado GLOBAL → solo uno abierto a la vez
+  const wrapRef = useRef<HTMLDivElement>(null);
+  // Outside-close por listener de documento (NO backdrop `fixed`: la barra tiene
+  // `-translate-y-1/2` y un fixed dentro de un ancestro con transform se ancla a
+  // ese ancestro, no al viewport → el backdrop no cubría la pantalla).
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setPickerFor(null);
+    };
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setPickerFor(null);
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open, setPickerFor]);
   return (
-    <div className="relative">
+    <div ref={wrapRef} className="relative">
       <button
-        onClick={() => setOpen((o) => !o)}
+        onClick={() => setPickerFor(open ? null : m.id)}
         title={t("Reaccionar")}
-        className="rounded p-1 text-muted hover:text-ink"
+        className={`rounded p-1 transition ${open ? "text-brand" : "text-muted hover:text-ink"}`}
       >
         <SmilePlus size={14} />
       </button>
       {open && (
         <EmojiPicker
           onPick={(e) => {
-            setOpen(false);
+            setPickerFor(null);
             react(m, e);
           }}
-          onClose={() => setOpen(false)}
         />
       )}
     </div>
@@ -2446,9 +2864,10 @@ function ReactButton({ m }: { m: Message }) {
 // se sincroniza en todas mis pestañas, igual que las reacciones.
 function StarButton({ m }: { m: Message }) {
   const t = useT();
+  const { star } = useContext(ChatCtx);
   return (
     <button
-      onClick={() => toggleStarFn({ data: { messageId: m.id } }).catch(() => {})}
+      onClick={() => star(m)}
       title={m.starred ? t("Quitar destacado") : t("Destacar")}
       className={`rounded p-1 hover:text-ink ${m.starred ? "text-amber-500" : "text-muted"}`}
     >
@@ -2465,6 +2884,7 @@ function MessageActions({
   canDelete,
   canPin,
   onEdit,
+  onOpenChange,
 }: {
   m: Message;
   slug: string;
@@ -2472,9 +2892,12 @@ function MessageActions({
   canDelete: boolean;
   canPin: boolean;
   onEdit: () => void;
+  onOpenChange?: (open: boolean) => void;
 }) {
   const t = useT();
+  const { pin, remove } = useContext(ChatCtx);
   const [open, setOpen] = useState(false);
+  useEffect(() => onOpenChange?.(open), [open]); // mantiene la barra visible con el menú abierto
   const [receipts, setReceipts] = useState<{ sub: string; name: string; avatar: string }[] | null>(null);
   const close = () => {
     setOpen(false);
@@ -2541,7 +2964,7 @@ function MessageActions({
               <button
                 className={item}
                 onClick={() => {
-                  togglePinFn({ data: { messageId: m.id } }).catch(() => {});
+                  pin(m);
                   close();
                 }}
               >
@@ -2558,7 +2981,7 @@ function MessageActions({
               <button
                 className={`${item} !text-red-500 hover:bg-red-500/10`}
                 onClick={() => {
-                  deleteMessageFn({ data: { id: m.id } }).catch(() => {});
+                  remove(m);
                   close();
                 }}
               >
@@ -2600,33 +3023,60 @@ function PinnedBar({ pins, onJump }: { pins: Message[]; onJump: (id: number) => 
   );
 }
 
-function EmojiPicker({ onPick, onClose }: { onPick: (e: string) => void; onClose: () => void }) {
+function EmojiPicker({ onPick }: { onPick: (e: string) => void }) {
+  const t = useT();
   const { emojis } = useContext(ChatCtx);
+  const [q, setQ] = useState("");
+  const query = q.trim().toLowerCase();
+  // Buscando → filtra el set curado (por keywords) + los custom (por nombre). Sin
+  // texto → muestra los rápidos + todos los custom (comportamiento por defecto).
+  const unicode = query ? EMOJI_SEARCH.filter((e) => e.k.includes(query)).map((e) => e.c) : QUICK_EMOJIS;
+  const custom = query ? emojis.filter((e) => e.name.toLowerCase().includes(query)) : emojis;
+  const empty = unicode.length === 0 && custom.length === 0;
   return (
-    <>
-      <div className="fixed inset-0 z-10" onClick={onClose} />
-      <div className="absolute right-0 top-full z-20 mt-1 grid max-h-52 w-40 grid-cols-6 gap-0.5 overflow-y-auto rounded-lg border border-border bg-surface p-1 shadow-lg">
-        {QUICK_EMOJIS.map((e) => (
-          <button key={e} onClick={() => onPick(e)} className="rounded p-1 text-base hover:bg-surface-2">
-            {e}
-          </button>
-        ))}
-        {emojis.map((e) => (
-          <button
-            key={e.name}
-            onClick={() => onPick(`:${e.name}:`)}
-            title={`:${e.name}:`}
-            className="grid place-items-center rounded p-1 hover:bg-surface-2"
-          >
-            <img
-              src={`/api/attachment/${encodeURIComponent(e.file_id)}`}
-              alt={e.name}
-              className="h-5 w-5 object-contain"
-            />
-          </button>
-        ))}
-      </div>
-    </>
+    <div className="absolute right-0 top-full z-20 mt-1 w-52 overflow-hidden rounded-xl border border-border bg-surface shadow-xl">
+      {/* Buscador estilo Slack (el cierre por click-afuera lo maneja ReactButton). */}
+      <div className="border-b border-border p-1.5">
+        <input
+          autoFocus
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          placeholder={t("Buscar emoji…")}
+          className="w-full rounded-lg border border-border bg-surface-2 px-2.5 py-1.5 text-xs text-ink outline-none placeholder:text-muted focus:border-brand"
+        />
+        </div>
+        <div className="grid max-h-52 grid-cols-6 gap-0.5 overflow-y-auto p-1.5">
+          {empty ? (
+            <p className="col-span-6 px-2 py-3 text-center text-xs text-muted">{t("Sin resultados")}</p>
+          ) : (
+            <>
+              {unicode.map((e, i) => (
+                <button
+                  key={`${e}-${i}`}
+                  onClick={() => onPick(e)}
+                  className="rounded-md p-1 text-lg leading-none transition hover:scale-110 hover:bg-surface-2"
+                >
+                  {e}
+                </button>
+              ))}
+              {custom.map((e) => (
+                <button
+                  key={e.name}
+                  onClick={() => onPick(`:${e.name}:`)}
+                  title={`:${e.name}:`}
+                  className="grid place-items-center rounded-md p-1 transition hover:scale-110 hover:bg-surface-2"
+                >
+                  <img
+                    src={`/api/attachment/${encodeURIComponent(e.file_id)}`}
+                    alt={e.name}
+                    className="h-5 w-5 object-contain"
+                  />
+                </button>
+              ))}
+            </>
+          )}
+        </div>
+    </div>
   );
 }
 
@@ -2654,15 +3104,13 @@ function ReactionBar({ m }: { m: Message }) {
   );
 }
 
-function EditBox({ m, slug, onDone }: { m: Message; slug: string; onDone: () => void }) {
+function EditBox({ m, onDone }: { m: Message; onDone: () => void }) {
   const t = useT();
+  const { editMsg } = useContext(ChatCtx);
   const [val, setVal] = useState(m.body);
-  const [busy, setBusy] = useState(false);
-  async function save() {
-    if (!val.trim() || busy) return;
-    setBusy(true);
-    await editMessageFn({ data: { slug, id: m.id, body: val.trim() } }).catch(() => {});
-    setBusy(false);
+  function save() {
+    if (!val.trim()) return;
+    editMsg(m, val.trim()); // optimista: patch local + server en bg, cierra al instante
     onDone();
   }
   return (
@@ -2684,7 +3132,7 @@ function EditBox({ m, slug, onDone }: { m: Message; slug: string; onDone: () => 
       <div className="mt-1 flex gap-2 text-xs">
         <button
           onClick={save}
-          disabled={busy}
+          disabled={!val.trim()}
           className="rounded bg-brand px-2 py-0.5 font-semibold text-brand-fg disabled:opacity-50"
         >
           {t("Guardar")}
@@ -2699,17 +3147,36 @@ function EditBox({ m, slug, onDone }: { m: Message; slug: string; onDone: () => 
 
 function OptimisticRow({ o }: { o: Optimistic }) {
   const t = useT();
+  const { retrySend, discardSend } = useContext(ChatCtx);
+  const failed = o.status === "failed";
   return (
-    <div className="flex gap-3 rounded-lg px-2 py-1.5 opacity-50">
+    <div className={`flex gap-3 rounded-lg px-2 py-1.5 ${failed ? "" : "opacity-50"}`}>
       <Avatar name={o.sender} avatar={o.avatar} className="mt-0.5 h-9 w-9 !rounded-lg" />
       <div className="min-w-0 flex-1">
         <div className="flex items-baseline gap-2">
           <span className="text-sm font-semibold text-ink">{o.sender}</span>
-          <span className="text-[11px] text-muted">{t("enviando…")}</span>
+          {failed ? (
+            <span className="text-[11px] font-medium text-red-500">{t("No se envió")}</span>
+          ) : (
+            <span className="text-[11px] text-muted">{t("enviando…")}</span>
+          )}
         </div>
-        <div className="text-sm text-ink">
+        <div className={`text-sm ${failed ? "text-ink/70" : "text-ink"}`}>
           <Markdown body={o.body} />
         </div>
+        {failed && (
+          <div className="mt-1 flex items-center gap-3 text-xs">
+            <button
+              onClick={() => retrySend(o)}
+              className="inline-flex items-center gap-1 font-semibold text-brand hover:underline"
+            >
+              <RotateCcw size={12} /> {t("Reintentar")}
+            </button>
+            <button onClick={() => discardSend(o.id)} className="text-muted hover:text-ink">
+              {t("Descartar")}
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -2720,17 +3187,13 @@ function Composer({
   slug,
   parentId,
   dmId = null,
-  onOptimistic,
-  onOpenThread,
-  onRevalidate,
+  onSend,
   placeholder,
 }: {
   slug: string;
   parentId: number | null;
   dmId?: number | null;
-  onOptimistic: (body: string) => void;
-  onOpenThread?: (id: number) => void;
-  onRevalidate?: () => void;
+  onSend: (p: { body: string; attachments: Attach[] }) => void;
   placeholder: string;
 }) {
   const t = useT();
@@ -2804,11 +3267,11 @@ function Composer({
       if (val) localStorage.setItem(draftKey, val);
       else localStorage.removeItem(draftKey);
     }
-    // Señal "escribiendo…" throttled a 1 cada 2s (efímera, sin DB). Solo en rooms.
+    // Señal "escribiendo…" throttled a 1 cada 2s (efímera, sin DB). Room/hilo/DM.
     const now = Date.now();
-    if (dmId == null && val && now - lastTypingPing.current > 2000) {
+    if (val && now - lastTypingPing.current > 2000) {
       lastTypingPing.current = now;
-      pingTypingFn({ data: { slug } }).catch(() => {});
+      pingTypingFn({ data: dmId != null ? { dmId } : { slug, parentId } }).catch(() => {});
     }
     const upto = val.slice(0, e.target.selectionStart ?? val.length);
     const m = upto.match(/@(\w*)$/);
@@ -2841,44 +3304,11 @@ function Composer({
     setBody("");
     setPending([]);
     if (typeof window !== "undefined") localStorage.removeItem(draftKey); // borrador consumido
-    if (sent.trim()) onOptimistic(sent);
     playSelfSound(); // confirmación sonora del envío propio (distinta de las notifs)
     bodyRef.current?.focus(); // re-habilita al instante — no esperamos el round-trip
-    // nonce: para descartar el eco realtime de mi propio mensaje (ya optimista).
-    const nonce = crypto.randomUUID();
-    sentNonces.add(nonce);
-    setTimeout(() => sentNonces.delete(nonce), 15_000); // limpia si nunca ecoa
-
-    // Envío en SEGUNDO PLANO: el Composer NO espera el round-trip (el mensaje ya
-    // está optimista). Al resolver → revalida (+ dispara el agente si toca); si
-    // falla → revalida para reconciliar. Así varios envíos seguidos no se traban
-    // con la latencia de la DB/hairpin.
-    if (dmId != null) {
-      postDmMessageFn({ data: { id: dmId, body: sent, nonce, attachments } })
-        .then((r) => {
-          onRevalidate?.();
-          if (r?.needsAgent && r.agentHandle) {
-            askDmAgentFn({ data: { id: dmId, body: sent, sender: "", handle: r.agentHandle } })
-              .then(() => onRevalidate?.())
-              .catch(() => onRevalidate?.());
-          }
-        })
-        .catch(() => onRevalidate?.());
-      return;
-    }
-
-    postMessage({ data: { slug, parentId, body: sent, nonce, attachments } })
-      .then((r) => {
-        onRevalidate?.();
-        if (r?.needsAgent && r.agentParent != null && r.agentHandle) {
-          // @agente en el flujo → abre el hilo donde responde (estado cliente).
-          if (parentId === null) onOpenThread?.(r.agentParent);
-          askAgent({ data: { slug, parentId: r.agentParent, body: sent, sender: "", handle: r.agentHandle } })
-            .then(() => onRevalidate?.())
-            .catch(() => onRevalidate?.());
-        }
-      })
-      .catch(() => onRevalidate?.());
+    // El ENVÍO lo hace el padre (outbox): crea el optimista, dispara la red en 2º
+    // plano y, si falla permanentemente, marca la fila como "fallida" con retry.
+    onSend({ body: sent, attachments });
   }
 
   function onKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
@@ -2950,64 +3380,66 @@ function Composer({
           e.target.value = ""; // permite re-elegir el mismo archivo
         }}
       />
-      <div className="flex items-end gap-2">
+      {/* Caja UNIFICADA (referencia Slack/Zulip/Rocket.Chat): un solo borde envuelve
+          clip + textarea + Enviar → alineados por dentro, sin píldora suelta. Llena
+          el ancho del panel pero los botones fijos a los bordes lo hacen cohesivo. */}
+      <div className="relative mx-auto flex w-full max-w-4xl items-end gap-1 rounded-xl border border-border bg-surface px-1.5 py-1.5 transition focus-within:border-brand">
+        {mq !== null && matches.length > 0 && (
+          <ul className="absolute bottom-full left-10 mb-1 w-56 overflow-hidden rounded-lg border border-border bg-surface shadow-lg">
+            {matches.map((a, i) => (
+              <li key={a.handle}>
+                <button
+                  type="button"
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    insertMention(a.handle);
+                  }}
+                  className={`flex w-full items-center gap-2 px-3 py-2 text-left text-sm ${
+                    i === mSel ? "bg-brand/15" : "hover:bg-surface-2"
+                  }`}
+                >
+                  {a.kind === "group" ? (
+                    <Megaphone size={18} className="text-brand" />
+                  ) : a.kind === "agent" ? (
+                    a.avatar ? (
+                      <img src={a.avatar} alt="" className="h-5 w-5 rounded" />
+                    ) : (
+                      <Bot size={18} className="text-brand" />
+                    )
+                  ) : (
+                    <Avatar name={a.name} avatar={a.avatar} className="h-5 w-5 text-[9px]" />
+                  )}
+                  <span className="font-medium text-ink">{a.name}</span>
+                  <span className="text-xs text-muted">@{a.handle}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
         <button
           type="button"
           onClick={() => fileInputRef.current?.click()}
           title={t("Adjuntar archivo")}
-          className="grid h-[42px] w-[42px] shrink-0 place-items-center rounded-lg border border-border text-muted transition hover:bg-surface-2 hover:text-ink"
+          className="grid h-9 w-9 shrink-0 place-items-center rounded-lg text-muted transition hover:bg-surface-2 hover:text-ink"
         >
           <Paperclip size={18} />
         </button>
-        <div className="relative flex-1">
-          {mq !== null && matches.length > 0 && (
-            <ul className="absolute bottom-full left-0 mb-1 w-56 overflow-hidden rounded-lg border border-border bg-surface shadow-lg">
-              {matches.map((a, i) => (
-                <li key={a.handle}>
-                  <button
-                    type="button"
-                    onMouseDown={(e) => {
-                      e.preventDefault();
-                      insertMention(a.handle);
-                    }}
-                    className={`flex w-full items-center gap-2 px-3 py-2 text-left text-sm ${
-                      i === mSel ? "bg-brand/15" : "hover:bg-surface-2"
-                    }`}
-                  >
-                    {a.kind === "group" ? (
-                      <Megaphone size={18} className="text-brand" />
-                    ) : a.kind === "agent" ? (
-                      a.avatar ? (
-                        <img src={a.avatar} alt="" className="h-5 w-5 rounded" />
-                      ) : (
-                        <Bot size={18} className="text-brand" />
-                      )
-                    ) : (
-                      <Avatar name={a.name} avatar={a.avatar} className="h-5 w-5 text-[9px]" />
-                    )}
-                    <span className="font-medium text-ink">{a.name}</span>
-                    <span className="text-xs text-muted">@{a.handle}</span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
-          <textarea
-            ref={bodyRef}
-            value={body}
-            onChange={onChange}
-            onKeyDown={onKeyDown}
-            rows={1}
-            placeholder={placeholder}
-            className="min-h-[42px] w-full resize-none rounded-lg border border-border bg-surface px-3 py-[11px] text-sm leading-5 text-ink outline-none focus:border-brand"
-          />
-        </div>
+        <textarea
+          ref={bodyRef}
+          value={body}
+          onChange={onChange}
+          onKeyDown={onKeyDown}
+          rows={1}
+          placeholder={placeholder}
+          className="max-h-40 min-h-9 flex-1 resize-none bg-transparent px-1 py-2 text-sm leading-5 text-ink outline-none placeholder:text-muted"
+        />
         <button
           type="submit"
           disabled={uploading}
           title={uploading ? t("Subiendo adjunto…") : undefined}
-          className="min-h-[42px] shrink-0 rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-brand-fg disabled:opacity-50"
+          className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-lg bg-brand px-3.5 text-sm font-semibold text-brand-fg transition hover:brightness-110 disabled:opacity-50"
         >
+          <Send size={15} />
           {t("Enviar")}
         </button>
       </div>
