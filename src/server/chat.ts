@@ -151,6 +151,16 @@ export const officeToEditableFn = createServerFn({ method: "POST" })
     return embed ? { ok: true as const, embedUrl: embed.embedUrl } : { ok: false as const };
   });
 
+// Preview PRIVADO de un .docx: EasyBits lo convierte a HTML (mammoth) server-side y lo
+// devolvemos para renderizar inline en el panel. Sin Microsoft, sin CORS.
+export const officeToHtmlFn = createServerFn({ method: "POST" })
+  .validator((d: { url: string }) => d)
+  .handler(async ({ data }) => {
+    const { officeToHtml } = await import("./easybits-documents.server");
+    const html = await officeToHtml(data.url);
+    return html ? { ok: true as const, html } : { ok: false as const };
+  });
+
 export const deleteMessageFn = createServerFn({ method: "POST" })
   .validator((d: { id: number }) => d)
   .handler(async ({ data }) => {
@@ -455,7 +465,7 @@ export const askAgent = createServerFn({ method: "POST" })
         // Kind ROBUSTO por content-type real (HEAD) — la URL no trae ext y el texto no
         // siempre menciona el tipo → office/pdf/imagen se detectan aunque el reply calle.
         const kind = (await resolveFileKind(found.url)) ?? found.kind;
-        await db.createArtifact(id, { kind, url: found.url, title: null });
+        await db.createArtifact(id, { kind, url: found.url, title: found.title ?? null });
       }
       // Nació una card → refresca el contexto activo para que aparezca colgada del msg.
       if (found) bus.publish(bus.ch.room(channel.id), { t: "refresh", channelId: channel.id, parentId: data.parentId });

@@ -49,6 +49,23 @@ export async function officeToEditable(url: string, name?: string): Promise<Coll
   }
 }
 
+// Preview privado de un .docx → HTML (mammoth server-side en EasyBits). Devuelve el
+// HTML crudo o null (ej. xlsx/pptx no soportados). El panel lo renderiza inline.
+export async function officeToHtml(url: string): Promise<string | null> {
+  try {
+    const res = await ebFetch(`/api/v2/documents/office-to-html`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ url }),
+    });
+    if (!res.ok) return null;
+    const j = (await res.json()) as { ok?: boolean; html?: string };
+    return j.ok && j.html ? j.html : null;
+  } catch {
+    return null;
+  }
+}
+
 // Detecta un artefacto en el texto del reply del agente. Dos formas:
 //   - DOC EasyBits (easybits.cloud/s/<slug> o <slug>.easybits.cloud) → co-edición
 //     (se resuelve a link colab embebible vía mintCollabEmbed).
@@ -63,7 +80,30 @@ export type FileKind = "pdf" | "image" | "audio" | "video" | "office" | "file";
 
 export type DetectedArtifact =
   | { type: "doc"; slug?: string; documentId?: string }
-  | { type: "file"; url: string; kind: FileKind; fmt?: string };
+  | { type: "file"; url: string; kind: FileKind; fmt?: string; title?: string };
+
+// Deriva un título SEMÁNTICO para la card SIN depender del idioma del usuario. Señales
+// NEUTRAS (sirven para cualquier idioma):
+//   1. Nombre de archivo mencionado en el texto (la extensión .docx/.xlsx/… es universal)
+//      → se muestra sin la extensión (ej. "Contrato de arrendamiento").
+//   2. Si no hay filename: el label del link markdown TAL CUAL (lo que el agente escribió,
+//      en su idioma — no adivinamos ni recortamos verbos).
+// Devuelve undefined si no hay nada mejor que el genérico.
+function titleFromReply(reply: string, url: string): string | undefined {
+  // 1) Filename con extensión de documento (Unicode-friendly, sin lista de palabras).
+  const fn = reply.match(
+    /([^\s"'`(){}[\]<>/:]{1,80}\.(docx|xlsx|pptx|pdf|odt|ods|odp|doc|xls|ppt|csv|txt|md))\b/i
+  );
+  if (fn) return fn[1].replace(/\.[a-z0-9]+$/i, "").trim() || undefined;
+  // 2) Label del link que envuelve la URL, verbatim.
+  const esc = url.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const link = reply.match(new RegExp(`\\[([^\\]]{2,80})\\]\\(\\s*${esc}`));
+  if (link) {
+    const label = link[1].trim();
+    if (label) return label;
+  }
+  return undefined;
+}
 
 // Clasifica un archivo crudo por su extensión → familia de render. Lo desconocido
 // cae a "file" (card de descarga), nunca se pierde.
@@ -119,12 +159,13 @@ export function detectArtifact(reply: string): DetectedArtifact | null {
   const mf = reply.match(/https?:\/\/[^\s)]*(?:t3\.storage\.dev|easybits-public)[^\s)]*/i);
   if (mf) {
     const url = mf[0].replace(/[.,)]+$/, "");
+    const title = titleFromReply(reply, url);
     // La URL de upload_file NO trae extensión (`.../9i4`) → detectamos office por el
     // filename que el agente menciona en el texto (ej. "Oficio …docx"). Se previsualiza
-    // con el visor Office Online (iframe) sin convertir.
+    // con nuestro visor propio (mammoth docx→HTML) sin convertir.
     const off = reply.match(/\.(docx|xlsx|pptx|odt|doc|xls|ppt)\b/i);
-    if (off) return { type: "file", url, kind: "office", fmt: off[1].toLowerCase() };
-    return { type: "file", url, kind: fileKindFromUrl(url) };
+    if (off) return { type: "file", url, kind: "office", fmt: off[1].toLowerCase(), title };
+    return { type: "file", url, kind: fileKindFromUrl(url), title };
   }
   return null;
 }

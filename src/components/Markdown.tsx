@@ -39,11 +39,49 @@ const components: Components = Object.fromEntries(
   ])
 );
 
+const cleanUrl = (u: string) => u.replace(/[.,)]+$/, "");
+
 // Render Markdown seguro (GFM + sanitize) con look de chat compacto.
-export function Markdown({ body }: { body: string }) {
+// `artifactUrl`/`onOpenArtifact`: si un link apunta al artefacto del mensaje, el click
+// ABRE el panel (no descarga). El resto de links abren en pestaña nueva.
+export function Markdown({
+  body,
+  artifactUrl,
+  onOpenArtifact,
+}: {
+  body: string;
+  artifactUrl?: string;
+  onOpenArtifact?: () => void;
+}) {
+  const withLinks: Components = {
+    ...components,
+    a: ({ node, href, children, ...props }: { node?: unknown; href?: string; children?: React.ReactNode }) => {
+      const isArtifact = !!(artifactUrl && href && cleanUrl(href) === cleanUrl(artifactUrl) && onOpenArtifact);
+      if (isArtifact) {
+        return (
+          <a
+            href={href}
+            onClick={(e) => {
+              e.preventDefault();
+              onOpenArtifact!();
+            }}
+            className="cursor-pointer"
+            {...props}
+          >
+            {children}
+          </a>
+        );
+      }
+      return (
+        <a href={href} target="_blank" rel="noreferrer noopener" {...props}>
+          {children}
+        </a>
+      );
+    },
+  };
   return (
     <div className="prose prose-sm prose-invert max-w-none break-words text-ink leading-relaxed prose-p:my-2 prose-p:leading-relaxed prose-headings:mb-1 prose-headings:mt-3 prose-headings:font-semibold prose-pre:my-2 prose-pre:bg-surface-3 prose-code:rounded prose-code:bg-surface-3 prose-code:px-1 prose-code:before:content-none prose-code:after:content-none prose-ul:my-2 prose-ol:my-2 prose-li:my-1 prose-li:leading-relaxed prose-a:text-brand prose-strong:text-ink prose-hr:my-3">
-      <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeSanitize]} components={components}>
+      <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeSanitize]} components={withLinks}>
         {body}
       </ReactMarkdown>
     </div>

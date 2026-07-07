@@ -2982,29 +2982,34 @@ function AttachmentList({ attachments }: { attachments: Attachment[] }) {
 
 // Card del ARTEFACTO que produjo el agente (doc/pdf). Clic → abre en el panel del
 // room (co-edición en vivo si kind:"html"). Mapea el Artifact de la DB a la vista.
+// Registro de kinds (patrón sólido: agregar un tipo = una entrada, no editar N
+// switches). `embed` = va en iframe con embedUrl (editor colab); el resto comparte
+// shape {kind, src:url}. `label` = subtítulo HONESTO de la card.
+const ARTIFACT_KIND_META: Record<string, { embed?: boolean; labelKey: string }> = {
+  html: { embed: true, labelKey: "Abrir para editar en vivo" },
+  office: { labelKey: "Vista previa · Descargar" },
+  pdf: { labelKey: "Vista previa" },
+  image: { labelKey: "Vista previa" },
+  audio: { labelKey: "Reproducir" },
+  video: { labelKey: "Reproducir" },
+  file: { labelKey: "Descargar" },
+};
+
+// Construye la vista del panel desde un artefacto del mensaje (mapeo ÚNICO: lo usa la
+// card Y el link inline del reply). Kind desconocido → `file` (descarga segura).
+function artifactToView(a: Artifact): ArtifactView {
+  const title = a.title ?? "";
+  const kind = ARTIFACT_KIND_META[a.kind] ? a.kind : "file";
+  return ARTIFACT_KIND_META[kind].embed
+    ? { kind: "html", title, embedUrl: a.url }
+    : ({ kind, title, src: a.url } as ArtifactView);
+}
+
 function ArtifactCard({ artifact }: { artifact: Artifact }) {
   const t = useT();
   const { onOpenArtifact } = useContext(ChatCtx);
-  const title = artifact.title ?? "";
-  // Registro de kinds (patrón sólido: agregar un tipo = una entrada, no editar N
-  // switches). `embed` = va en iframe con embedUrl (editor colab); el resto comparte
-  // shape {kind, src:url}. `label` = subtítulo HONESTO de la card.
-  const KIND_META: Record<string, { embed?: boolean; label: string }> = {
-    html: { embed: true, label: t("Abrir para editar en vivo") },
-    office: { label: t("Vista previa · Descargar") },
-    pdf: { label: t("Vista previa") },
-    image: { label: t("Vista previa") },
-    audio: { label: t("Reproducir") },
-    video: { label: t("Reproducir") },
-    file: { label: t("Descargar") },
-  };
-  // Kind desconocido → cae a `file` (descarga segura), nunca a un iframe roto.
-  const resolvedKind = KIND_META[artifact.kind] ? artifact.kind : "file";
-  const meta = KIND_META[resolvedKind];
-  const view: ArtifactView = meta.embed
-    ? { kind: "html", title, embedUrl: artifact.url }
-    : ({ kind: resolvedKind, title, src: artifact.url } as ArtifactView);
-  const subtitle = meta.label;
+  const view = artifactToView(artifact);
+  const subtitle = t(ARTIFACT_KIND_META[view.kind]?.labelKey ?? "Descargar");
   return (
     <button
       type="button"
@@ -3033,7 +3038,7 @@ function MessageRow({
   canPin?: boolean;
 }) {
   const t = useT();
-  const { me, slug, pickerFor } = useContext(ChatCtx);
+  const { me, slug, pickerFor, onOpenArtifact } = useContext(ChatCtx);
   const [editing, setEditing] = useState(false);
   // Mientras un popover de la barra (reaccionar/⋯) esté abierto, la barra NO debe
   // desaparecer al perder el hover del row (si no, el popover se vuelve inclicable).
@@ -3122,7 +3127,11 @@ function MessageRow({
         ) : (
           m.body ? (
             <div className="text-sm text-ink">
-              <Markdown body={m.body} />
+              <Markdown
+                body={m.body}
+                artifactUrl={m.artifact?.url}
+                onOpenArtifact={m.artifact ? () => onOpenArtifact(artifactToView(m.artifact!)) : undefined}
+              />
             </div>
           ) : null
         )}

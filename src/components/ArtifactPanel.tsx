@@ -1,30 +1,8 @@
 import { AnimatePresence, motion } from "motion/react";
-import { useEffect, useRef, useState, lazy, Suspense } from "react";
+import { useEffect, useRef, useState } from "react";
 import { X, ExternalLink, FileText, Pencil, Download, Loader2 } from "lucide-react";
 import { useT } from "../i18n";
-import { officeToEditableFn } from "../server/chat";
-
-// Preview de office PRIVADO (client-side, self-hosted) → NO manda la URL del doc a
-// Microsoft (importa para legal). react-doc-viewer renderiza docx/xlsx/pptx/pdf en el
-// navegador. Lazy: la lib + su CSS solo cargan al abrir un office (no rompe el SSR).
-const OfficeViewer = lazy(async () => {
-  const mod = await import("@cyntler/react-doc-viewer");
-  await import("@cyntler/react-doc-viewer/dist/index.css").catch(() => {});
-  const DocViewer = mod.default;
-  const renderers = mod.DocViewerRenderers;
-  return {
-    // fileType explícito: la URL de upload_file NO trae extensión → sin esto el
-    // MSDocRenderer no matchea y se queda en spinner infinito.
-    default: ({ src, fileType }: { src: string; fileType?: string }) => (
-      <DocViewer
-        documents={[{ uri: src, fileType }]}
-        pluginRenderers={renderers}
-        config={{ header: { disableHeader: true, disableFileName: true } }}
-        className="size-full bg-white"
-      />
-    ),
-  };
-});
+import { officeToEditableFn, officeToHtmlFn } from "../server/chat";
 
 // Panel lateral de artefactos del room. Fase 0 = visor PDF/imagen (adjuntos).
 // Fase 3 añadirá kind:"html" (editor Tiptap embebido / colab). El panel es
@@ -84,11 +62,41 @@ export default function ArtifactPanel({
   // "Editar" un office: EasyBits lo importa a un doc editable → editUrl (editor colab).
   const [editUrl, setEditUrl] = useState<string | null>(null);
   const [converting, setConverting] = useState(false);
-  // Al cambiar de artefacto, resetea el modo edición.
+  // Preview PROPIO de un .docx: EasyBits lo convierte a HTML (mammoth) y lo renderizamos
+  // inline. "loading" | HTML sanitizado | "error" (xlsx/pptx no soportados → descarga).
+  const [officeHtml, setOfficeHtml] = useState<string | null>(null);
+  const [officeState, setOfficeState] = useState<"idle" | "loading" | "error">("idle");
+  // Al cambiar de artefacto, resetea el modo edición y el preview.
   useEffect(() => {
     setEditUrl(null);
     setConverting(false);
+    setOfficeHtml(null);
+    setOfficeState("idle");
   }, [artifact]);
+  // Fetch del HTML del office (solo docx; xlsx/pptx → error → card descarga).
+  useEffect(() => {
+    if (!artifact || artifact.kind !== "office" || editUrl) return;
+    let alive = true;
+    setOfficeState("loading");
+    (async () => {
+      try {
+        const r = await officeToHtmlFn({ data: { url: artifact.src } });
+        if (!alive) return;
+        if (r.ok && r.html) {
+          const DOMPurify = (await import("dompurify")).default;
+          setOfficeHtml(DOMPurify.sanitize(r.html));
+          setOfficeState("idle");
+        } else {
+          setOfficeState("error");
+        }
+      } catch {
+        if (alive) setOfficeState("error");
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [artifact, editUrl]);
   const handleEdit = async () => {
     if (converting || !artifact || artifact.kind !== "office") return;
     setConverting(true);
@@ -128,9 +136,6 @@ export default function ArtifactPanel({
   }, []);
 
   const externalHref = artifact && artifact.kind === "html" ? artifact.embedUrl : artifact?.src;
-  // Extensión del nombre (docx/xlsx/pptx/pdf) → fileType del visor office.
-  const officeExt =
-    artifact?.title?.match(/\.([a-z0-9]{2,5})$/i)?.[1]?.toLowerCase() || undefined;
 
   return (
     <AnimatePresence>
@@ -230,20 +235,33 @@ export default function ArtifactPanel({
                   // Modo EDICIÓN: EasyBits importó el docx a un doc editable → editor colab.
                   editUrl ? (
                     <iframe src={editUrl} title={artifact.title || "editor"} className="size-full border-0 bg-white" />
-                  ) : /^https?:\/\//.test(artifact.src) ? (
-                    // Preview PRIVADO (react-doc-viewer, client-side) — NO manda la URL a
-                    // Microsoft. + barra: Editar (importa a editable) · Descargar.
+                  ) : (
+                    // Preview PROPIO: EasyBits convierte el .docx a HTML (mammoth) server-side
+                    // y lo renderizamos inline en una "hoja" tipo Word. NO manda la URL a
+                    // Microsoft (privado), sin CORS. Barra: Editar (importa a editable) · Descargar.
                     <div className="flex h-full flex-col">
-                      <div className="min-h-0 flex-1 overflow-auto bg-white">
-                        <Suspense
-                          fallback={
-                            <div className="grid h-full place-items-center text-muted">
-                              <Loader2 size={20} className="animate-spin" />
-                            </div>
-                          }
-                        >
-                          <OfficeViewer src={artifact.src} fileType={officeExt} />
-                        </Suspense>
+                      <div className="min-h-0 flex-1 overflow-auto bg-surface-3 p-4 sm:p-6">
+                        {officeState === "loading" ? (
+                          <div className="grid h-full place-items-center text-muted">
+                            <Loader2 size={20} className="animate-spin" />
+                          </div>
+                        ) : officeHtml ? (
+                          <article
+                            className="prose prose-sm mx-auto max-w-[8.5in] rounded-sm bg-white p-10 text-black shadow-md sm:p-14"
+                            // HTML sanitizado con DOMPurify antes de setState.
+                            dangerouslySetInnerHTML={{ __html: officeHtml }}
+                          />
+                        ) : (
+                          <div className="grid h-full place-items-center p-6">
+                            <a href={artifact.src} target="_blank" rel="noreferrer" download className="flex flex-col items-center gap-3 rounded-xl border border-border bg-surface px-8 py-10 text-center transition hover:border-brand">
+                              <FileText size={40} className="text-brand" />
+                              <span className="max-w-xs truncate text-sm text-ink">{artifact.title || t("Documento")}</span>
+                              <span className="text-xs text-muted">
+                                {t("Vista previa solo para Word (.docx) por ahora — descarga el archivo")}
+                              </span>
+                            </a>
+                          </div>
+                        )}
                       </div>
                       <div className="flex shrink-0 items-stretch border-t border-border bg-surface-2 text-sm font-medium">
                         <button
@@ -265,14 +283,6 @@ export default function ArtifactPanel({
                           <Download size={15} /> {t("Descargar")}
                         </a>
                       </div>
-                    </div>
-                  ) : (
-                    <div className="grid min-h-full place-items-center p-6">
-                      <a href={artifact.src} target="_blank" rel="noreferrer" download className="flex flex-col items-center gap-3 rounded-xl border border-border bg-surface px-8 py-10 text-center transition hover:border-brand">
-                        <FileText size={40} className="text-brand" />
-                        <span className="max-w-xs truncate text-sm text-ink">{artifact.title || t("Documento")}</span>
-                        <span className="text-xs text-muted">{t("Descargar")}</span>
-                      </a>
                     </div>
                   )
                 ) : artifact.kind === "file" ? (
