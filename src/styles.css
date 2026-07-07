@@ -89,3 +89,12 @@ body {
 .flash-highlight {
   animation: gc-flash 1.2s ease-out;
 }
+
+/* Scroll sin barra visible (mantiene el scroll, oculta la barra) — flujo de mensajes. */
+.no-scrollbar {
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* IE/Edge */
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none; /* Chrome/Safari */
+}

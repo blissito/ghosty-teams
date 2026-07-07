@@ -2212,7 +2212,7 @@ function SearchModal({ onClose, onOpenDm }: { onClose: () => void; onOpenDm: (id
             <X size={16} />
           </button>
         </div>
-        <div className="min-h-0 flex-1 overflow-y-auto p-2">
+        <div className="min-h-0 flex-1 overflow-y-auto p-2 no-scrollbar">
           {q.trim().length < 2 ? (
             <p className="px-3 py-6 text-center text-sm text-muted">{t("Escribe al menos 2 letras.")}</p>
           ) : !results ? (
@@ -2360,7 +2360,7 @@ function CommandPalette({
           />
           <kbd className="shrink-0 rounded border border-border px-1.5 py-0.5 text-[10px] text-muted">esc</kbd>
         </div>
-        <div className="min-h-0 flex-1 overflow-y-auto p-2">
+        <div className="min-h-0 flex-1 overflow-y-auto p-2 no-scrollbar">
           {filtered.length === 0 ? (
             <p className="px-3 py-6 text-center text-sm text-muted">{t("Sin resultados.")}</p>
           ) : (
@@ -2448,7 +2448,7 @@ function ViewPane({
           <p className="text-xs text-muted">{meta.desc}</p>
         </div>
       </header>
-      <div className="flex-1 space-y-1 overflow-y-auto px-4 py-4">
+      <div className="flex-1 space-y-1 overflow-y-auto px-4 py-4 no-scrollbar">
         {hits === null ? (
           <ThreadSkeleton />
         ) : hits.length === 0 ? (
@@ -2599,7 +2599,7 @@ function Flow({
         </div>
       </header>
       {pins.length > 0 && <PinnedBar pins={pins} onJump={jumpTo} />}
-      <div ref={scrollRef} className="mx-auto w-full max-w-4xl flex-1 space-y-1 overflow-y-auto px-4 py-4">
+      <div ref={scrollRef} className="mx-auto w-full max-w-4xl flex-1 space-y-1 overflow-y-auto px-4 py-4 no-scrollbar">
         {messages === null ? (
           <ThreadSkeleton />
         ) : messages.length === 0 && optimistic.length === 0 ? (
@@ -2690,7 +2690,7 @@ function ThreadView({
           </button>
         </div>
       </header>
-      <div ref={scrollRef} className="mx-auto w-full max-w-4xl flex-1 space-y-1 overflow-y-auto px-4 py-4">
+      <div ref={scrollRef} className="mx-auto w-full max-w-4xl flex-1 space-y-1 overflow-y-auto px-4 py-4 no-scrollbar">
         {!data ? (
           <ThreadSkeleton />
         ) : !data.root ? (
@@ -2828,7 +2828,7 @@ function DmView({
           </p>
         </div>
       </header>
-      <div ref={scrollRef} className="mx-auto w-full max-w-4xl flex-1 space-y-1 overflow-y-auto px-4 py-4">
+      <div ref={scrollRef} className="mx-auto w-full max-w-4xl flex-1 space-y-1 overflow-y-auto px-4 py-4 no-scrollbar">
         {flow === null ? (
           <ThreadSkeleton />
         ) : flow.length === 0 && optimistic.length === 0 ? (
