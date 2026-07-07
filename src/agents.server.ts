@@ -104,7 +104,8 @@ export async function callAgentBackendStream(
   sender: string,
   text: string,
   onChunk: (chunk: string) => void | Promise<void>,
-  parts: MediaPart[] = []
+  parts: MediaPart[] = [],
+  onTool?: (name: string) => void | Promise<void>
 ): Promise<string> {
   if (agent.backend.kind !== "fleet") {
     // Sin SSE todavía: colecta el reply completo y lo emite de un tirón (el cliente
@@ -141,7 +142,7 @@ export async function callAgentBackendStream(
         buf = buf.slice(nl + 2);
         const line = frame.split("\n").find((l) => l.startsWith("data:"));
         if (!line) continue;
-        let ev: { type?: string; value?: string; message?: string };
+        let ev: { type?: string; value?: string; message?: string; name?: string };
         try {
           ev = JSON.parse(line.slice(5).trim());
         } catch {
@@ -150,6 +151,8 @@ export async function callAgentBackendStream(
         if (ev.type === "chunk" && ev.value) {
           streamed += ev.value;
           await onChunk(ev.value);
+        } else if (ev.type === "tool" && ev.name) {
+          await onTool?.(ev.name);
         } else if (ev.type === "done") {
           authoritative = ev.value ?? streamed;
         } else if (ev.type === "error") {
@@ -189,13 +192,19 @@ export async function runAgentTurn(opts: {
   const onChunk = async (chunk: string) => {
     opts.emitDelta(await ensure(), chunk);
   };
+  // Tool en vivo (checklist estilo Claude Code): se pinta como delta `⚡ <tool>` —
+  // el body autoritativo final (setMessageBody + message:body) lo reemplaza, así que
+  // NO persiste; solo se ve fluir durante el turno. Reusa el canal de deltas.
+  const onTool = async (name: string) => {
+    opts.emitDelta(await ensure(), `⚡ ${name}\n`);
+  };
 
   let reply: string;
   if (!opts.agent) {
     reply = `👾 @${opts.handle} no está conectado. El owner lo configura en Ajustes → Agentes.`;
     await onChunk(reply);
   } else {
-    reply = await callAgentBackendStream(opts.agent, opts.groupId, opts.sender, opts.text, onChunk, opts.parts ?? []);
+    reply = await callAgentBackendStream(opts.agent, opts.groupId, opts.sender, opts.text, onChunk, opts.parts ?? [], onTool);
   }
   if (!reply) reply = "(sin respuesta)";
   return { id: await ensure(), reply };
