@@ -122,7 +122,10 @@ export async function callAgentBackendStream(
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${agent.backend.token}` },
       // `parts` = FileParts A2A (media); EasyBits los normaliza por MIME (Slice E1).
-      body: JSON.stringify({ groupId, sender: sender || "invitado", text: outText, parts }),
+      // configGroupId "teams" = unidad de config ESTABLE de este canal en EasyBits
+      // (tools + comportamiento por-Teams via groupConfigs["teams"]); sin él la config
+      // caería por-conversación (groupId) → solo el default del agente.
+      body: JSON.stringify({ groupId, configGroupId: "teams", sender: sender || "invitado", text: outText, parts }),
     });
     if (!res.ok || !res.body) throw new Error(`fleet-stream ${res.status}: ${await res.text().catch(() => "")}`);
     // Parseo SSE: acumula por líneas `data: {json}`. `done.value` es el reply
@@ -285,7 +288,8 @@ export async function callAgentBackend(
     const res = await fetch(`${base}/api/v2/fleet-agents/${agent.backend.id}/message`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${agent.backend.token}` },
-      body: JSON.stringify({ groupId, sender: sender || "invitado", text: outText, parts }),
+      // configGroupId "teams" = unidad de config estable del canal (ver message-stream).
+      body: JSON.stringify({ groupId, configGroupId: "teams", sender: sender || "invitado", text: outText, parts }),
     });
     if (!res.ok) throw new Error(`fleet ${res.status}: ${await res.text()}`);
     return ((await res.json()) as { reply?: string }).reply ?? "(sin respuesta)";
