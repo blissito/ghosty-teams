@@ -194,7 +194,7 @@ const TOOL_LABELS: Record<string, { ing: string; done: string }> = {
   change_document_format: { ing: "Cambiando el formato", done: "Cambió el formato" },
   create_or_edit_image: { ing: "Editando una imagen", done: "Editó una imagen" },
   edit_image: { ing: "Editando una imagen", done: "Editó una imagen" },
-  upload_file: { ing: "Subiendo un archivo", done: "Subió un archivo" },
+  upload_file: { ing: "Subiendo el documento", done: "Subió el documento" },
   create_share_link: { ing: "Generando el link", done: "Generó un link para compartir" },
   render_url: { ing: "Renderizando a PDF", done: "Renderizó a PDF" },
   render_html: { ing: "Renderizando a PDF", done: "Renderizó a PDF" },
@@ -202,6 +202,9 @@ const TOOL_LABELS: Record<string, { ing: string; done: string }> = {
   deploy_document: { ing: "Publicando el documento", done: "Publicó el documento" },
   create_website: { ing: "Creando el sitio", done: "Creó el sitio" },
   WebSearch: { ing: "Buscando en la web", done: "Buscó en la web" },
+  // El agente redacta docs invocando un Skill (oficio/xlsx/pptx/doc-remix) → la acción
+  // visible = "Redactó el documento" (antes solo se veía "Subió", el paso final).
+  Skill: { ing: "Redactando el documento", done: "Redactó el documento" },
 };
 
 function toolLabel(raw: string): { ing: string; done: string } | null {
@@ -271,7 +274,8 @@ export async function runAgentTurn(opts: {
   const onTool = async (name: string) => {
     anyActivity = true;
     const label = toolLabel(name);
-    if (label) {
+    // Dedup por acción (varios Skill/tools con el mismo label → una sola línea).
+    if (label && !tools.some((t) => t.done === label.done)) {
       tools.push(label);
       brokeByTool = true;
     }
