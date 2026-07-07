@@ -856,6 +856,13 @@ function ChannelPage() {
   }, [messages]);
   // Enfocar hilo, DM o vista en el centro son mutuamente excluyentes.
   const openThread = (id: number) => {
+    // Siembra el root YA conocido del flujo → ThreadView lo muestra al instante (sin
+    // skeleton); getThread solo rellena las respuestas en background. Mata el skeleton
+    // molesto al navegar a un hilo cuyo mensaje ya tenemos.
+    if (!threadCache.get(id)) {
+      const root = flowCache.get(channel.slug)?.find((m) => m.id === id);
+      if (root) threadCache.set(id, { root, replies: [] });
+    }
     setView(null);
     setOpenDmId(null);
     setOpenThreadId(id);
