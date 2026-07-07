@@ -1152,9 +1152,21 @@ function ThreadRow({
   variant: "sidebar" | "modal";
 }) {
   const t = useT();
+  const [deleting, setDeleting] = useState(false);
   const thrIsAgent = (thr.agent_handle != null && thr.mentions_ghosty === 0) || thr.sender === "ghosty";
   const isGhosty = thrIsAgent && (thr.agent_handle === "ghosty" || thr.sender === "ghosty");
   const compact = variant === "sidebar";
+  // Borrar hilo = destructivo → confirma primero y muestra spinner mientras corre.
+  const handleDelete = async () => {
+    if (deleting) return;
+    if (!confirm(t("¿Eliminar este hilo y todas sus respuestas? No se puede deshacer."))) return;
+    setDeleting(true);
+    try {
+      await onDelete(thr.id);
+    } finally {
+      setDeleting(false);
+    }
+  };
   return (
     <li className="group/thr flex items-center">
       <button
@@ -1180,11 +1192,18 @@ function ThreadRow({
       </button>
       {canDelete && (
         <button
-          onClick={() => onDelete(thr.id)}
+          onClick={handleDelete}
+          disabled={deleting}
           title={t("Eliminar hilo")}
-          className="shrink-0 p-1 text-muted opacity-100 transition hover:text-brand md:opacity-0 md:group-hover/thr:opacity-100"
+          className={`shrink-0 p-1 text-muted transition hover:text-brand disabled:opacity-100 ${
+            deleting ? "opacity-100" : "opacity-100 md:opacity-0 md:group-hover/thr:opacity-100"
+          }`}
         >
-          <Trash2 size={compact ? 13 : 15} />
+          {deleting ? (
+            <Loader2 size={compact ? 13 : 15} className="animate-spin text-brand" />
+          ) : (
+            <Trash2 size={compact ? 13 : 15} />
+          )}
         </button>
       )}
     </li>
