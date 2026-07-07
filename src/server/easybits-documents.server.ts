@@ -30,18 +30,31 @@ export async function mintCollabEmbed(
   }
 }
 
-// Detecta una URL de documento EasyBits en el texto del reply del agente y
-// extrae su slug. Reconoce www.easybits.cloud/s/<slug>/ y <slug>.easybits.cloud.
+// Detecta un artefacto en el texto del reply del agente. Dos formas:
+//   - DOC EasyBits (easybits.cloud/s/<slug> o <slug>.easybits.cloud) → co-edición
+//     (se resuelve a link colab embebible vía mintCollabEmbed).
+//   - ARCHIVO crudo (storage público t3.storage.dev / easybits-public) → visor
+//     pdf/imagen directo en el panel (no editable, pero al menos se ve).
 // Devuelve el primer match, o null. (Fase 2: parseo del reply; el objetivo
 // posterior es que el fleet devuelva {reply, artifacts[]} estructurado.)
-export function detectDocRef(reply: string): { slug: string } | null {
-  // www.easybits.cloud/s/<slug>/  (share URL de un doc desplegado)
+export type DetectedArtifact =
+  | { type: "doc"; slug: string }
+  | { type: "file"; url: string; kind: "pdf" | "image" };
+
+export function detectArtifact(reply: string): DetectedArtifact | null {
+  // 1) Doc EasyBits desplegado (share URL con slug).
   const m1 = reply.match(/easybits\.cloud\/s\/([a-z0-9][a-z0-9-]*)/i);
-  if (m1) return { slug: m1[1] };
-  // <slug>.easybits.cloud  (subdominio; excluir www/api/sandboxes/otros conocidos)
+  if (m1) return { type: "doc", slug: m1[1] };
   const m2 = reply.match(/https?:\/\/([a-z0-9][a-z0-9-]*)\.easybits\.cloud/i);
   if (m2 && !["www", "api", "sandboxes", "easybits-db"].includes(m2[1].toLowerCase())) {
-    return { slug: m2[1] };
+    return { type: "doc", slug: m2[1] };
+  }
+  // 2) Archivo crudo en storage público → visor directo.
+  const mf = reply.match(/https?:\/\/[^\s)]*(?:t3\.storage\.dev|easybits-public)[^\s)]*/i);
+  if (mf) {
+    const url = mf[0].replace(/[.,)]+$/, "");
+    const kind = /\.(png|jpe?g|gif|webp|svg)(\?|$)/i.test(url) ? "image" : "pdf";
+    return { type: "file", url, kind };
   }
   return null;
 }

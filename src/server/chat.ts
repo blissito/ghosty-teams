@@ -397,11 +397,15 @@ export const askAgent = createServerFn({ method: "POST" })
     // el editor colab embebible y lo colgamos del mensaje → aparece como card que
     // abre el panel del room. Best-effort: si algo falla, el mensaje queda normal.
     try {
-      const { detectDocRef, mintCollabEmbed } = await import("./easybits-documents.server");
-      const ref = detectDocRef(reply);
-      if (ref) {
-        const embed = await mintCollabEmbed(ref);
+      const { detectArtifact, mintCollabEmbed } = await import("./easybits-documents.server");
+      const found = detectArtifact(reply);
+      if (found?.type === "doc") {
+        // Doc EasyBits → editor colaborativo embebido (co-edición en vivo).
+        const embed = await mintCollabEmbed({ slug: found.slug });
         if (embed) await db.createArtifact(replyId, { kind: "html", url: embed.embedUrl, title: embed.title });
+      } else if (found?.type === "file") {
+        // Archivo crudo (pdf/imagen) → visor directo en el panel.
+        await db.createArtifact(replyId, { kind: found.kind, url: found.url, title: null });
       }
     } catch (e) {
       console.error("[artifact] detect/mint failed", e);
