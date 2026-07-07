@@ -1004,8 +1004,10 @@ export async function postDmAgent(
   return { id: num(rows[0].id) };
 }
 
-export async function clearDmStatus(dmId: number): Promise<void> {
-  await dbq("DELETE FROM gc_messages WHERE dm_id = ? AND kind = 'status'", [dmId]);
+// Borra los "pensando…" del DM y devuelve sus ids (para message:deleted sin revalidar).
+export async function clearDmStatus(dmId: number): Promise<number[]> {
+  const rows = await dbq("DELETE FROM gc_messages WHERE dm_id = ? AND kind = 'status' RETURNING id", [dmId]);
+  return rows.map((r) => num(r.id));
 }
 
 // ── No-leídos / read-state (Fase 1.5) ───────────────────────────────────────

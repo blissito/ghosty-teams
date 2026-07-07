@@ -12,10 +12,13 @@ import { useT } from "../i18n";
 export type ArtifactView =
   | { kind: "pdf"; title: string; src: string }
   | { kind: "image"; title: string; src: string }
+  | { kind: "audio"; title: string; src: string }
+  | { kind: "video"; title: string; src: string }
+  | { kind: "file"; title: string; src: string } // fallback genérico → descarga
   | { kind: "html"; title: string; embedUrl: string };
 
-// Mapea un adjunto (PDF/imagen) a una vista de artefacto. Devuelve null si el
-// mime no es visualizable en el panel (se queda como card de descarga).
+// Mapea un adjunto a una vista de artefacto previsualizable en el panel. Devuelve
+// null solo para lo no-previsualizable (se queda como card de descarga en la lista).
 export function viewFromAttachment(a: {
   file_id: string;
   mime: string | null;
@@ -26,6 +29,8 @@ export function viewFromAttachment(a: {
   const title = a.name ?? "";
   if (mime === "application/pdf") return { kind: "pdf", title, src };
   if (mime.startsWith("image/")) return { kind: "image", title, src };
+  if (mime.startsWith("audio/")) return { kind: "audio", title, src };
+  if (mime.startsWith("video/")) return { kind: "video", title, src };
   return null;
 }
 
@@ -76,7 +81,7 @@ export default function ArtifactPanel({
     };
   }, []);
 
-  const externalHref = artifact?.kind === "html" ? artifact.embedUrl : artifact?.src;
+  const externalHref = artifact && artifact.kind === "html" ? artifact.embedUrl : artifact?.src;
 
   return (
     <AnimatePresence>
@@ -143,6 +148,28 @@ export default function ArtifactPanel({
                       alt={artifact.title}
                       className="max-h-full max-w-full rounded-lg object-contain"
                     />
+                  </div>
+                ) : artifact.kind === "audio" ? (
+                  <div className="grid min-h-full place-items-center p-6">
+                    <audio src={artifact.src} controls className="w-full max-w-xl" />
+                  </div>
+                ) : artifact.kind === "video" ? (
+                  <div className="grid min-h-full place-items-center p-4">
+                    <video src={artifact.src} controls className="max-h-full max-w-full rounded-lg" />
+                  </div>
+                ) : artifact.kind === "file" ? (
+                  <div className="grid min-h-full place-items-center p-6">
+                    <a
+                      href={artifact.src}
+                      target="_blank"
+                      rel="noreferrer"
+                      download
+                      className="flex flex-col items-center gap-3 rounded-xl border border-border bg-surface px-8 py-10 text-center transition hover:border-brand"
+                    >
+                      <FileText size={40} className="text-brand" />
+                      <span className="max-w-xs truncate text-sm text-ink">{artifact.title || t("Archivo")}</span>
+                      <span className="text-xs text-muted">{t("Descargar")}</span>
+                    </a>
                   </div>
                 ) : (
                   <iframe

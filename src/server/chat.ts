@@ -366,10 +366,20 @@ export const postMessage = createServerFn({ method: "POST" })
 
 // El agente responde en el MISMO contexto (flujo o hilo). Limpia el "pensando".
 export const askAgent = createServerFn({ method: "POST" })
-  .validator((d: { slug: string; parentId: number | null; body: string; sender: string; handle: string; topic?: string }) => d)
+  .validator(
+    (d: {
+      slug: string;
+      parentId: number | null;
+      body: string;
+      sender: string;
+      handle: string;
+      topic?: string;
+      attachments?: { fileId: string; mime: string; size: number; name: string }[];
+    }) => d
+  )
   .handler(async ({ data }) => {
     const db = await import("../db.server");
-    const { resolvedAgents, callAgentBackendStream } = await import("../agents.server");
+    const { resolvedAgents, runAgentTurn, buildMediaParts } = await import("../agents.server");
     const bus = await import("./bus.server");
     const channel = await db.getChannel(data.slug);
     if (!channel) throw new Error("Canal no encontrado");
@@ -383,46 +393,35 @@ export const askAgent = createServerFn({ method: "POST" })
       topic = root?.topic ?? "general";
     }
 
-    // Streaming first-class: la cáscara del reply (body vacío) se crea PEREZOSAMENTE
-    // al primer token → el "pensando…" se mantiene durante la latencia del agente y
-    // recién ahí se reemplaza por el texto que fluye. Contrato: docs/AGENT-MEDIA-CONTRACT.md §1.2.
-    let replyId: number | null = null;
-    const ensureShell = async (): Promise<number> => {
-      if (replyId != null) return replyId;
-      // Quita el "pensando…" en el cliente SIN revalidar (revalidar pisaría los deltas
-      // con el body aún vacío del DB).
-      const clearedIds = await db.clearStatus(channel.id, data.parentId, data.handle); // solo el mío (multi-agente)
-      for (const sid of clearedIds)
-        bus.publish(bus.ch.room(channel.id), { t: "message:deleted", id: sid, channelId: channel.id, parentId: data.parentId });
-      const { id } = await db.postAgent(channel.id, data.parentId, "", "msg", data.handle, name, topic ?? "general", agent?.avatar ?? "");
-      replyId = id;
-      // message:new de la cáscara: suena (Ghosty) y ancla el destino de los deltas.
-      // El nonce va vacío: nadie tiene un optimista del reply del agente.
-      const shell = await db.getMessage(id);
-      if (shell) bus.publish(bus.ch.room(channel.id), { t: "message:new", msg: shell });
-      return id;
-    };
-    const emitDelta = async (chunk: string) => {
-      const id = await ensureShell();
-      bus.publish(bus.ch.room(channel.id), { t: "message:delta", id, chunk, channelId: channel.id, parentId: data.parentId });
-    };
+    // Media de entrada: los adjuntos del usuario → FileParts (uri firmada / bytes).
+    const parts = await buildMediaParts(data.attachments ?? []);
 
-    let reply: string;
-    if (!agent) {
-      reply = `👾 @${data.handle} no está conectado. El owner lo configura en Ajustes → Agentes.`;
-      await emitDelta(reply);
-    } else {
-      // Incluye el HANDLE del agente: cada agente tiene su propia conversación/memoria
-      // en EasyBits. Sin esto, dos agentes en el mismo hilo comparten groupId → se
-      // contaminan (uno hereda la persona/contexto del otro).
-      const groupId = `ghosty-chat-${data.handle}-${channel.slug}-${data.parentId ?? "flow"}`;
-      reply = await callAgentBackendStream(agent, groupId, data.sender, data.body, emitDelta);
-    }
+    // Streaming first-class: la cáscara (body vacío) se crea al primer token → el
+    // "pensando…" se mantiene durante la latencia del agente. Contrato §1.2.
+    // groupId incluye el HANDLE → memoria por-agente (sin esto dos agentes en el mismo
+    // hilo comparten conversación y se contaminan).
+    const groupId = `ghosty-chat-${data.handle}-${channel.slug}-${data.parentId ?? "flow"}`;
+    const { id, reply } = await runAgentTurn({
+      agent,
+      handle: data.handle,
+      groupId,
+      sender: data.sender,
+      text: data.body,
+      parts,
+      createShell: async () => {
+        // Quita el "pensando…" en el cliente SIN revalidar (revalidar pisaría los deltas).
+        const clearedIds = await db.clearStatus(channel.id, data.parentId, data.handle);
+        for (const sid of clearedIds)
+          bus.publish(bus.ch.room(channel.id), { t: "message:deleted", id: sid, channelId: channel.id, parentId: data.parentId });
+        const { id } = await db.postAgent(channel.id, data.parentId, "", "msg", data.handle, name, topic ?? "general", agent?.avatar ?? "");
+        const shell = await db.getMessage(id);
+        if (shell) bus.publish(bus.ch.room(channel.id), { t: "message:new", msg: shell });
+        return id;
+      },
+      emitDelta: (mid, chunk) =>
+        bus.publish(bus.ch.room(channel.id), { t: "message:delta", id: mid, chunk, channelId: channel.id, parentId: data.parentId }),
+    });
 
-    // Si el agente no emitió ni un token (reply vacío), materializa la cáscara ahora
-    // para no dejar el "pensando…" colgado.
-    if (!reply) reply = "(sin respuesta)";
-    const id = await ensureShell();
     // Persiste el body final (autoritativo, sin marcar "editado") y reconcilia por si
     // se perdió algún delta (el bus es best-effort).
     await db.setMessageBody(id, reply);

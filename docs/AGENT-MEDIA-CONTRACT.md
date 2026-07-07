@@ -167,32 +167,39 @@ EasyBits (sin esto dos agentes en el mismo hilo se contaminan — bug raíz docu
 ## 5. Cambios por repo (implementación, pedacito a pedacito)
 
 ### GTeams (`ghosty-chat`) — este repo
-- **Slice 1 (streaming spine) — EN CURSO esta sesión.** `bus.server.ts`: evento `message:delta`.
-  `agents.server.ts`: `callAgentBackendStream(agent, ctx, onChunk)` → fleet vía `POST
-  /api/v2/fleet-agents/:id/message-stream` (SSE `chunk`/`done`/`error`). `chat.ts askAgent`:
-  cáscara → deltas → finalizar. Cliente `c.$slug.tsx`: handler `message:delta` (`patchMessage`).
-- **Slice 2 (entrega de media).** `askAgent`/`postMessage` reenvían los `attachments` del usuario
-  como **FileParts** (mint de `uri` firmada TTL corto vía `mintReadUrl`; bytes si < umbral). Hoy
-  los adjuntos **no llegan** al agente — hueco total.
-- **Slice 3 (recepción estructurada).** Reemplazar el regex-scraping de URLs (`detectArtifact`)
-  por consumo de **eventos `artifact-update`** del SSE → `artifact:new`/`artifact:update` en el bus.
-  `detectArtifact` queda solo como fallback para agentes viejos que aún mandan URL en el texto.
-- **Slice 4 (webhook A2A + community).** Cliente A2A completo para `kind:"webhook"`: leer Agent
-  Card, `message/stream` JSON-RPC/SSE, firma HMAC. (Prioridad: después de flota; no hay webhook
-  agents reales aún.)
+- **Slice 1 (streaming spine) — ✅ HECHA.** `bus.server.ts`: eventos `message:delta` + `message:body`.
+  `agents.server.ts`: `callAgentBackendStream(...)` → fleet vía `POST
+  /api/v2/fleet-agents/:id/message-stream` (SSE `chunk`/`done`/`error`) + `runAgentTurn` (orquestador
+  común room+DM, cáscara PEREZOSA al primer token). `chat.ts askAgent` + `dm.ts askDmAgentFn`:
+  cáscara → deltas → finalizar. Cliente `c.$slug.tsx`: handlers `message:delta`/`message:body`
+  (`patchMessage`) + guard anti-clobber (no revalidar la cáscara de un agente a media stream).
+- **Slice 2 (entrega de media) — ✅ HECHA.** `askAgent`/`askDmAgentFn` reciben los `attachments`
+  del usuario → `buildMediaParts` los vuelve **FileParts** (bytes inline si < 256KB vía
+  `mintFileBytes`; si no, `uri` firmada vía `mintReadUrl`) → viajan en el body a fleet/webhook.
+- **Slice 3 (recepción de todo tipo) — ✅ HECHA (por detección).** `detectArtifact` +
+  `fileKindFromUrl` clasifican el media producido por el agente en image/pdf/audio/video/**file**
+  (fallback genérico = descarga, cubre lo no reconocido). `ArtifactPanel`/`ArtifactCard`/
+  `viewFromAttachment` renderizan los 6 kinds. (Evolución futura: eventos `artifact-update` del
+  SSE en vez del scraping de URL — ver E2.)
+- **Slice 4 (webhook A2A + community) — pendiente.** Cliente A2A completo para `kind:"webhook"`:
+  leer Agent Card, `message/stream` JSON-RPC/SSE, firma HMAC. Hoy el webhook cae al camino
+  bloqueante (colecta+emite) y ya recibe `parts`. Prioridad baja: no hay webhook agents reales aún.
 
 ### EasyBits (`~/easybits`) — se puede modificar
-- **Ya existe** (reusar): `POST /api/v2/fleet-agents/:id/message-stream` (SSE `chunk`/`done`),
-  y superficie de media inbound `image{base64,ext}` / `audio{base64,mimeType}` / `mediaUrl`
-  (visión nativa + STT) en `routeMessage` (`app/.server/core/fleetAgentOperations.ts`).
-- **Slice E1 (entrada A2A).** Extender `InboundMessage` para aceptar `parts[]` (A2A) y normalizar
-  internamente a image/audio/mediaUrl/doc por MIME → cubre video, pdf, docs y `octet-stream`, no
-  solo image/audio. Mantener los campos legacy por compat.
-- **Slice E2 (salida estructurada).** `message-stream` emite eventos **`artifact`** (A2A
-  `artifact-update`) cuando el turno produce un doc/archivo, en vez de depender de que el agente
-  escriba la URL en el texto. `routeMessage` gana un `onArtifact` junto al `onChunk`.
-- **Slice E3 (Agent Card flota).** Publicar Agent Card por agente de flota → interop A2A hacia
-  afuera (que otros clientes A2A hablen con nuestra flota).
+- **Ya existía** (reusado): `POST /api/v2/fleet-agents/:id/message-stream` (SSE `chunk`/`done`),
+  y superficie de media inbound `image`/`audio`/`mediaUrl` (visión nativa + STT) en `routeMessage`.
+- **Slice E1 (entrada A2A) — ✅ HECHA (en el repo, PENDIENTE DEPLOY).** `InboundMessage.files[]`;
+  los endpoints `message-stream`/`message` parsean `body.parts` (FileParts→`files`, TextParts→texto);
+  `routeMessage` resuelve cada file a base64 (bytes o fetch de uri), transcribe audio sin texto, y
+  escribe el resto al worker (`/tmp/gt-file-…`, self-heal) con nota para `Read`. Cubre video/pdf/
+  docs/`octet-stream` por MIME (`extFromMime`). Legacy `image/audio/mediaUrl` intacto.
+  ⚠️ **Requiere deploy de EasyBits** para que la ENTREGA de media a fleet quede viva (el streaming
+  ya vivía; sin deploy, `parts` se ignora → degradación limpia a solo-texto).
+- **Slice E2 (salida estructurada) — pendiente.** `message-stream` emite eventos **`artifact`**
+  cuando el turno produce un doc/archivo (`routeMessage` gana `onArtifact`), en vez del scraping
+  de URL del lado GTeams.
+- **Slice E3 (Agent Card flota) — pendiente.** Publicar Agent Card por fleet agent → interop A2A
+  hacia afuera.
 
 ---
 

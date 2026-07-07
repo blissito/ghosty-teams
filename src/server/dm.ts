@@ -128,35 +128,55 @@ export const postDmMessageFn = createServerFn({ method: "POST" })
     };
   });
 
-// El agente responde dentro del DM. Limpia el "pensando" y publica el refresh.
+// El agente responde dentro del DM, con streaming first-class (igual que en rooms:
+// cáscara perezosa al primer token → deltas → body final). Media de entrada = los
+// adjuntos del usuario como FileParts. Contrato: docs/AGENT-MEDIA-CONTRACT.md.
 export const askDmAgentFn = createServerFn({ method: "POST" })
-  .validator((d: { id: number; body: string; sender: string; handle: string }) => d)
+  .validator(
+    (d: {
+      id: number;
+      body: string;
+      sender: string;
+      handle: string;
+      attachments?: { fileId: string; mime: string; size: number; name: string }[];
+    }) => d
+  )
   .handler(async ({ data }) => {
     const db = await import("../db.server");
     const bus = await import("./bus.server");
-    const { resolvedAgents, callAgentBackend } = await import("../agents.server");
+    const { resolvedAgents, runAgentTurn, buildMediaParts } = await import("../agents.server");
     const me = await sessionUser();
     if (!me || !(await db.isDmMember(data.id, me.sub))) throw new Error("no autorizado");
     const agent = (await resolvedAgents()).find((a) => a.handle === data.handle);
-    let reply: string;
-    let name = "Ghosty";
-    if (!agent) {
-      reply = `👾 @${data.handle} no está conectado. El owner lo configura en Ajustes → Agentes.`;
-    } else {
-      name = agent.name;
-      const groupId = `ghosty-chat-${data.handle}-dm-${data.id}`; // memoria por-agente
-      reply = await callAgentBackend(agent, groupId, data.sender, data.body);
-    }
-    await db.clearDmStatus(data.id);
-    const { id: replyId } = await db.postDmAgent(data.id, reply, "msg", data.handle, name, agent?.avatar ?? "");
-    // Publica el reply del agente como message:new a cada miembro (ch.user) → suena
-    // (Ghosty) + suma unread + aparece en vivo; su handler ya revalida (borra status).
-    const created = await db.getMessage(replyId);
+    const name = agent?.name ?? "Ghosty";
     const members = await db.getDmMembers(data.id);
-    for (const sub of members)
-      bus.publish(
-        bus.ch.user(sub),
-        created ? { t: "message:new", msg: created } : { t: "refresh", channelId: null, parentId: null, dmId: data.id }
-      );
+    const fanout = (ev: Parameters<typeof bus.publish>[1]) => {
+      for (const sub of members) bus.publish(bus.ch.user(sub), ev);
+    };
+
+    const parts = await buildMediaParts(data.attachments ?? []);
+    const groupId = `ghosty-chat-${data.handle}-dm-${data.id}`; // memoria por-agente
+
+    const { id, reply } = await runAgentTurn({
+      agent,
+      handle: data.handle,
+      groupId,
+      sender: data.sender,
+      text: data.body,
+      parts,
+      createShell: async () => {
+        const clearedIds = await db.clearDmStatus(data.id);
+        for (const sid of clearedIds)
+          fanout({ t: "message:deleted", id: sid, channelId: null, parentId: null, dmId: data.id });
+        const { id } = await db.postDmAgent(data.id, "", "msg", data.handle, name, agent?.avatar ?? "");
+        const shell = await db.getMessage(id);
+        if (shell) fanout({ t: "message:new", msg: shell });
+        return id;
+      },
+      emitDelta: (mid, chunk) => fanout({ t: "message:delta", id: mid, chunk, channelId: null, parentId: null, dmId: data.id }),
+    });
+
+    await db.setMessageBody(id, reply);
+    fanout({ t: "message:body", id, body: reply });
     return { ok: true as const };
   });

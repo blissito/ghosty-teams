@@ -37,9 +37,24 @@ export async function mintCollabEmbed(
 //     pdf/imagen directo en el panel (no editable, pero al menos se ve).
 // Devuelve el primer match, o null. (Fase 2: parseo del reply; el objetivo
 // posterior es que el fleet devuelva {reply, artifacts[]} estructurado.)
+// Familias de media que el panel/card sabe renderizar. "file" = fallback genérico
+// (descarga) para cualquier MIME/extensión no reconocida → cubre "archivos de todo
+// tipo, no reconocidos, todo". Contrato: docs/AGENT-MEDIA-CONTRACT.md §2.
+export type FileKind = "pdf" | "image" | "audio" | "video" | "file";
+
 export type DetectedArtifact =
   | { type: "doc"; slug?: string; documentId?: string }
-  | { type: "file"; url: string; kind: "pdf" | "image" };
+  | { type: "file"; url: string; kind: FileKind };
+
+// Clasifica un archivo crudo por su extensión → familia de render. Lo desconocido
+// cae a "file" (card de descarga), nunca se pierde.
+export function fileKindFromUrl(url: string): FileKind {
+  if (/\.(png|jpe?g|gif|webp|svg|avif|bmp)(\?|$)/i.test(url)) return "image";
+  if (/\.pdf(\?|$)/i.test(url)) return "pdf";
+  if (/\.(mp3|wav|ogg|oga|m4a|aac|flac|opus)(\?|$)/i.test(url)) return "audio";
+  if (/\.(mp4|webm|mov|m4v|mkv|avi)(\?|$)/i.test(url)) return "video";
+  return "file";
+}
 
 export function detectArtifact(reply: string): DetectedArtifact | null {
   // 1a) URL del editor dash (create_document) → /documents/<id 24-hex>.
@@ -52,12 +67,12 @@ export function detectArtifact(reply: string): DetectedArtifact | null {
   if (m2 && !["www", "api", "sandboxes", "easybits-db"].includes(m2[1].toLowerCase())) {
     return { type: "doc", slug: m2[1] };
   }
-  // 2) Archivo crudo en storage público → visor directo.
+  // 2) Archivo crudo en storage público → visor/descarga directo, clasificado por
+  // extensión (imagen/pdf/audio/video/archivo). Cubre toda la superficie de media.
   const mf = reply.match(/https?:\/\/[^\s)]*(?:t3\.storage\.dev|easybits-public)[^\s)]*/i);
   if (mf) {
     const url = mf[0].replace(/[.,)]+$/, "");
-    const kind = /\.(png|jpe?g|gif|webp|svg)(\?|$)/i.test(url) ? "image" : "pdf";
-    return { type: "file", url, kind };
+    return { type: "file", url, kind: fileKindFromUrl(url) };
   }
   return null;
 }

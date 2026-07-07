@@ -651,7 +651,9 @@ function ChannelPage() {
           if (openDmId === ev.msg.dm_id)
             markReadFn({ data: { scope: "dm", scopeId: ev.msg.dm_id } }).catch(() => {});
           else bumpUnread("dm", ev.msg.dm_id);
-          revalidate();
+          // No revalidar la cáscara de un agente (streaming): refetcharía el body vacío
+          // del DB y pisaría los deltas. El orden del DM ya se refresca al done.
+          if (!ev.msg.agent_handle) revalidate();
           applyPatch();
           return;
         }
@@ -678,7 +680,11 @@ function ChannelPage() {
               )
             );
           // Un hilo pudo nacer (primer reply) → refresca la lista de hilos del sidebar.
-          revalidate();
+          // PERO no para la cáscara de un agente (streaming): un revalidate a media
+          // corriente refetcha el body aún vacío del DB y pisa los deltas ya pintados.
+          // El hilo ya nació del mensaje del usuario; el sidebar se refresca al done
+          // (askAgent().then(revalidate)). Contrato: docs/AGENT-MEDIA-CONTRACT.md §1.2.
+          if (!ev.msg.agent_handle) revalidate();
         }
         applyPatch();
         break;
@@ -933,7 +939,7 @@ function ChannelPage() {
         .then((r) => {
           revalidate();
           if (r?.needsAgent && r.agentHandle)
-            askDmAgentFn({ data: { id: o.dmId!, body: o.body, sender: "", handle: r.agentHandle } })
+            askDmAgentFn({ data: { id: o.dmId!, body: o.body, sender: "", handle: r.agentHandle, attachments: o.attachments } })
               .then(() => revalidate())
               .catch(() => revalidate());
         })
@@ -948,7 +954,7 @@ function ChannelPage() {
           if (o.parentId === null) openThread(respondents[0].parent); // @agente(s) en el flujo → abre su hilo
           // Cada agente mencionado responde en paralelo (cada uno limpia su propio "pensando").
           for (const ag of respondents) {
-            askAgent({ data: { slug: o.slug, parentId: ag.parent, body: o.body, sender: "", handle: ag.handle } })
+            askAgent({ data: { slug: o.slug, parentId: ag.parent, body: o.body, sender: "", handle: ag.handle, attachments: o.attachments } })
               .then(() => revalidate())
               .catch(() => revalidate());
           }
@@ -2900,12 +2906,19 @@ function AttachmentList({ attachments }: { attachments: Attachment[] }) {
 function ArtifactCard({ artifact }: { artifact: Artifact }) {
   const t = useT();
   const { onOpenArtifact } = useContext(ChatCtx);
+  const title = artifact.title ?? "";
   const view: ArtifactView =
     artifact.kind === "pdf"
-      ? { kind: "pdf", title: artifact.title ?? "", src: artifact.url }
+      ? { kind: "pdf", title, src: artifact.url }
       : artifact.kind === "image"
-        ? { kind: "image", title: artifact.title ?? "", src: artifact.url }
-        : { kind: "html", title: artifact.title ?? "", embedUrl: artifact.url };
+        ? { kind: "image", title, src: artifact.url }
+        : artifact.kind === "audio"
+          ? { kind: "audio", title, src: artifact.url }
+          : artifact.kind === "video"
+            ? { kind: "video", title, src: artifact.url }
+            : artifact.kind === "file"
+              ? { kind: "file", title, src: artifact.url }
+              : { kind: "html", title, embedUrl: artifact.url };
   return (
     <button
       type="button"

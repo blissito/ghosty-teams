@@ -165,18 +165,55 @@ export async function callAgentBackendStream(
   }
 }
 
+// Orquestador común (room + DM) del turno de un agente con streaming first-class.
+// La CÁSCARA del reply se crea PEREZOSAMENTE al primer token (via createShell) → el
+// "pensando…" se mantiene durante la latencia del agente y recién ahí se reemplaza.
+// El caller provee cómo crear la cáscara y cómo emitir deltas (room=ch.room,
+// DM=per-miembro ch.user). Devuelve {id, reply}; el caller persiste el body final.
+// Contrato: docs/AGENT-MEDIA-CONTRACT.md §1.2.
+export async function runAgentTurn(opts: {
+  agent: ResolvedAgent | undefined;
+  handle: string;
+  groupId: string;
+  sender: string;
+  text: string;
+  parts?: MediaPart[];
+  createShell: () => Promise<number>; // limpia status, postea cáscara, publica message:new, devuelve id
+  emitDelta: (id: number, chunk: string) => void;
+}): Promise<{ id: number; reply: string }> {
+  let id: number | null = null;
+  const ensure = async (): Promise<number> => {
+    if (id == null) id = await opts.createShell();
+    return id;
+  };
+  const onChunk = async (chunk: string) => {
+    opts.emitDelta(await ensure(), chunk);
+  };
+
+  let reply: string;
+  if (!opts.agent) {
+    reply = `👾 @${opts.handle} no está conectado. El owner lo configura en Ajustes → Agentes.`;
+    await onChunk(reply);
+  } else {
+    reply = await callAgentBackendStream(opts.agent, opts.groupId, opts.sender, opts.text, onChunk, opts.parts ?? []);
+  }
+  if (!reply) reply = "(sin respuesta)";
+  return { id: await ensure(), reply };
+}
+
 // Llama al backend del agente y devuelve su respuesta en texto.
 export async function callAgentBackend(
   agent: ResolvedAgent,
   groupId: string,
   sender: string,
-  text: string
+  text: string,
+  parts: MediaPart[] = []
 ): Promise<string> {
   const persona = agent.systemPrompt?.trim() || null;
   if (agent.backend.kind === "webhook") {
     try {
       // Webhook: contrato que SÍ controlamos → mandamos identidad + persona explícita
-      // (el bot rutea su prompt por agente), además del texto crudo.
+      // (el bot rutea su prompt por agente), el texto crudo, y los FileParts (media).
       const res = await fetch(agent.backend.url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -184,6 +221,7 @@ export async function callAgentBackend(
           groupId,
           sender,
           text,
+          parts,
           agent: { handle: agent.handle, name: agent.name },
           systemPrompt: persona,
         }),
@@ -203,7 +241,7 @@ export async function callAgentBackend(
     const res = await fetch(`${base}/api/v2/fleet-agents/${agent.backend.id}/message`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${agent.backend.token}` },
-      body: JSON.stringify({ groupId, sender: sender || "invitado", text: outText }),
+      body: JSON.stringify({ groupId, sender: sender || "invitado", text: outText, parts }),
     });
     if (!res.ok) throw new Error(`fleet ${res.status}: ${await res.text()}`);
     return ((await res.json()) as { reply?: string }).reply ?? "(sin respuesta)";
