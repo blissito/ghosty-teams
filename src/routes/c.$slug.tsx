@@ -958,7 +958,23 @@ function ChannelPage() {
         revalidate();
         const respondents = r?.respondents ?? [];
         if (respondents.length) {
-          if (o.parentId === null) openThread(respondents[0].parent); // @agente(s) en el flujo → abre su hilo
+          if (o.parentId === null) {
+            // Al ABRIR el hilo recién creado, siembra el root desde el mensaje que
+            // acabamos de enviar (el optimista `o`, NO está en flowCache aún) → el hilo
+            // muestra el MENSAJE ORIGINAL al instante, sin skeleton.
+            const pid = respondents[0].parent;
+            if (!threadCache.get(pid)) {
+              const root = {
+                id: pid, channel_id: channel.id, parent_id: null, dm_id: null,
+                sender: o.sender, avatar: o.avatar, body: o.body, kind: "msg",
+                agent_handle: null, mentions_ghosty: 0,
+                created_at: Math.floor(Date.now() / 1000), edited_at: null,
+                reply_count: 0, reactions: [], pinned: false, starred: false, topic: null,
+              } as unknown as Message;
+              threadCache.set(pid, { root, replies: [] });
+            }
+            openThread(pid); // @agente(s) en el flujo → abre su hilo
+          }
           // Cada agente mencionado responde en paralelo (cada uno limpia su propio "pensando").
           for (const ag of respondents) {
             askAgent({ data: { slug: o.slug, parentId: ag.parent, body: o.body, sender: "", handle: ag.handle, attachments: o.attachments } })

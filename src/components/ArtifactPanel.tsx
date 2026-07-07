@@ -1,8 +1,28 @@
 import { AnimatePresence, motion } from "motion/react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, lazy, Suspense } from "react";
 import { X, ExternalLink, FileText, Pencil, Download, Loader2 } from "lucide-react";
 import { useT } from "../i18n";
 import { officeToEditableFn } from "../server/chat";
+
+// Preview de office PRIVADO (client-side, self-hosted) → NO manda la URL del doc a
+// Microsoft (importa para legal). react-doc-viewer renderiza docx/xlsx/pptx/pdf en el
+// navegador. Lazy: la lib + su CSS solo cargan al abrir un office (no rompe el SSR).
+const OfficeViewer = lazy(async () => {
+  const mod = await import("@cyntler/react-doc-viewer");
+  await import("@cyntler/react-doc-viewer/dist/index.css").catch(() => {});
+  const DocViewer = mod.default;
+  const renderers = mod.DocViewerRenderers;
+  return {
+    default: ({ src }: { src: string }) => (
+      <DocViewer
+        documents={[{ uri: src }]}
+        pluginRenderers={renderers}
+        config={{ header: { disableHeader: true, disableFileName: true } }}
+        className="size-full bg-white"
+      />
+    ),
+  };
+});
 
 // Panel lateral de artefactos del room. Fase 0 = visor PDF/imagen (adjuntos).
 // Fase 3 añadirá kind:"html" (editor Tiptap embebido / colab). El panel es
@@ -198,14 +218,20 @@ export default function ArtifactPanel({
                   editUrl ? (
                     <iframe src={editUrl} title={artifact.title || "editor"} className="size-full border-0 bg-white" />
                   ) : /^https?:\/\//.test(artifact.src) ? (
-                    // Preview con el visor Office Online (renderiza el archivo público
-                    // inline, sin convertir) + barra: Editar (importa a editable) · Descargar.
+                    // Preview PRIVADO (react-doc-viewer, client-side) — NO manda la URL a
+                    // Microsoft. + barra: Editar (importa a editable) · Descargar.
                     <div className="flex h-full flex-col">
-                      <iframe
-                        src={`https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(artifact.src)}`}
-                        title={artifact.title || "documento"}
-                        className="min-h-0 flex-1 border-0 bg-white"
-                      />
+                      <div className="min-h-0 flex-1 overflow-auto bg-white">
+                        <Suspense
+                          fallback={
+                            <div className="grid h-full place-items-center text-muted">
+                              <Loader2 size={20} className="animate-spin" />
+                            </div>
+                          }
+                        >
+                          <OfficeViewer src={artifact.src} />
+                        </Suspense>
+                      </div>
                       <div className="flex shrink-0 items-stretch border-t border-border bg-surface-2 text-sm font-medium">
                         <button
                           type="button"
