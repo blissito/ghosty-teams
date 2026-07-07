@@ -1,6 +1,6 @@
 import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useRef, useState } from "react";
-import { X, ExternalLink, FileText, Pencil, Download, Loader2 } from "lucide-react";
+import { X, ExternalLink, FileText, Pencil, Download, Loader2, ChevronRight } from "lucide-react";
 import { useT } from "../i18n";
 import { officeToEditableFn, officeToHtmlFn } from "../server/chat";
 import { Markdown } from "./Markdown";
@@ -68,21 +68,34 @@ export default function ArtifactPanel({
   // inline. "loading" | HTML sanitizado | "error" (xlsx/pptx no soportados → descarga).
   const [officeHtml, setOfficeHtml] = useState<string | null>(null);
   const [officeState, setOfficeState] = useState<"idle" | "loading" | "error">("idle");
-  // Al cambiar de artefacto, resetea el modo edición y el preview.
+  // Identidad ESTABLE del artefacto → los effects (reset + fetch office) NO se re-disparan
+  // al reabrir el MISMO artefacto (evita "recarga aunque ya esté visible"). El draft usa
+  // id constante para que su streaming NO resetee.
+  const officeSrc = artifact?.kind === "office" ? artifact.src : null;
+  const artifactId = !artifact
+    ? null
+    : artifact.kind === "office"
+      ? `office:${artifact.src}`
+      : artifact.kind === "draft"
+        ? "draft"
+        : artifact.kind === "html"
+          ? `html:${artifact.embedUrl}`
+          : `${artifact.kind}:${artifact.src}`;
+  // Al cambiar a OTRO artefacto (id distinto), resetea el modo edición y el preview.
   useEffect(() => {
     setEditUrl(null);
     setConverting(false);
     setOfficeHtml(null);
     setOfficeState("idle");
-  }, [artifact]);
+  }, [artifactId]);
   // Fetch del HTML del office (solo docx; xlsx/pptx → error → card descarga).
   useEffect(() => {
-    if (!artifact || artifact.kind !== "office" || editUrl) return;
+    if (!officeSrc || editUrl) return;
     let alive = true;
     setOfficeState("loading");
     (async () => {
       try {
-        const r = await officeToHtmlFn({ data: { url: artifact.src } });
+        const r = await officeToHtmlFn({ data: { url: officeSrc } });
         if (!alive) return;
         if (r.ok && r.html) {
           const DOMPurify = (await import("dompurify")).default;
@@ -98,7 +111,7 @@ export default function ArtifactPanel({
     return () => {
       alive = false;
     };
-  }, [artifact, editUrl]);
+  }, [officeSrc, editUrl]);
   const handleEdit = async () => {
     if (converting || !artifact || artifact.kind !== "office") return;
     setConverting(true);
@@ -137,8 +150,11 @@ export default function ArtifactPanel({
     };
   }, []);
 
+  // ↗ "abrir en pestaña": solo cuando abrir la URL MUESTRA algo (html/pdf/imagen).
+  // En office la URL es un .docx → el navegador la DESCARGA (no es "abrir"), así que
+  // no ponemos el ↗ ahí (la descarga vive en su botón). Draft no tiene URL.
   const externalHref =
-    !artifact || artifact.kind === "draft"
+    !artifact || artifact.kind === "draft" || artifact.kind === "office"
       ? undefined
       : artifact.kind === "html"
         ? artifact.embedUrl
@@ -182,15 +198,17 @@ export default function ArtifactPanel({
               title={t("Arrastra para redimensionar (doble clic: reset)")}
               className="absolute left-0 top-0 z-10 -ml-1 h-full w-2 cursor-col-resize transition-colors hover:bg-brand/40 active:bg-brand/60"
             />
-            {/* Cerrar sutil: pastilla al MEDIO del borde izquierdo (además del X del header). */}
+            {/* Colapsar: pastilla contrastante DENTRO del borde izquierdo (el overflow-hidden
+                del aside recortaba la versión que sobresalía). Chevron → indica "cerrar hacia
+                la derecha". */}
             <button
               type="button"
               onClick={onClose}
-              title={t("Cerrar")}
-              aria-label={t("Cerrar")}
-              className="absolute left-0 top-1/2 z-20 grid size-6 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full border border-border bg-surface text-muted opacity-40 shadow-sm transition hover:bg-surface-3 hover:text-ink hover:opacity-100"
+              title={t("Cerrar panel")}
+              aria-label={t("Cerrar panel")}
+              className="absolute left-2 top-1/2 z-20 grid size-7 -translate-y-1/2 place-items-center rounded-full bg-ink text-surface shadow-md ring-1 ring-black/10 transition hover:scale-105 hover:bg-brand active:scale-95"
             >
-              <X size={13} />
+              <ChevronRight size={16} />
             </button>
 
             {/* Ancho fijo = target: mientras el aside anima su width, este contenido

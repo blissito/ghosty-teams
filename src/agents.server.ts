@@ -258,6 +258,7 @@ export async function runAgentTurn(opts: {
   let acc = "";
   let brokeByTool = false; // corrió una tool desde el último texto → el próximo es segmento nuevo
   let anyActivity = false;  // corrió CUALQUIER tool (aunque oculta) → hay trabajo en curso
+  let ebDocSeen = false;    // el reply abrió un bloque ```eb-doc``` (redacción en vivo, sin tools)
 
   // El checklist ES el indicador de "trabajando" (reemplaza el "pensando…"). Si hay
   // actividad pero aún ninguna tool semántica, muestra "⏳ Trabajando…" para que el
@@ -285,6 +286,15 @@ export async function runAgentTurn(opts: {
       if (brokeByTool && acc.trim() && chunk.trim()) acc += "\n\n";
       if (chunk.trim()) brokeByTool = false;
       acc += chunk;
+      // eb-doc no llama tools → sin esto el checklist quedaría vacío. Sintetiza una
+      // entrada "Redactó el documento" en cuanto aparece el bloque.
+      if (!ebDocSeen && acc.includes("```eb-doc")) {
+        ebDocSeen = true;
+        anyActivity = true;
+        if (!tools.some((t) => t.done === "Redactó el documento")) {
+          tools.push({ ing: "Redactando el documento", done: "Redactó el documento" });
+        }
+      }
       await paint();
     } else {
       opts.emitDelta(await ensure(), chunk); // fallback legacy (append)
