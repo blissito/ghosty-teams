@@ -140,6 +140,16 @@ export default function ArtifactPanel({
               title={t("Arrastra para redimensionar (doble clic: reset)")}
               className="absolute left-0 top-0 z-10 -ml-1 h-full w-2 cursor-col-resize transition-colors hover:bg-brand/40 active:bg-brand/60"
             />
+            {/* Cerrar sutil: pastilla al MEDIO del borde izquierdo (además del X del header). */}
+            <button
+              type="button"
+              onClick={onClose}
+              title={t("Cerrar")}
+              aria-label={t("Cerrar")}
+              className="absolute left-0 top-1/2 z-20 grid size-6 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full border border-border bg-surface text-muted opacity-40 shadow-sm transition hover:bg-surface-3 hover:text-ink hover:opacity-100"
+            >
+              <X size={13} />
+            </button>
 
             <div className="flex min-w-0 flex-1 flex-col">
               <header className="flex flex-shrink-0 items-center gap-2 border-b border-border bg-surface-2 px-3 py-2">

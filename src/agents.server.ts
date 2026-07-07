@@ -235,18 +235,25 @@ export async function runAgentTurn(opts: {
   const tools: { ing: string; done: string }[] = [];
   let acc = "";
   let brokeByTool = false; // corrió una tool desde el último texto → el próximo es segmento nuevo
+  let anyActivity = false;  // corrió CUALQUIER tool (aunque oculta) → hay trabajo en curso
 
-  const renderChecklist = (allDone: boolean): string =>
-    tools.length
-      ? tools
+  // El checklist ES el indicador de "trabajando" (reemplaza el "pensando…"). Si hay
+  // actividad pero aún ninguna tool semántica, muestra "⏳ Trabajando…" para que el
+  // usuario vea feedback YA, no un "pensando" colgado.
+  const renderChecklist = (allDone: boolean): string => {
+    if (tools.length) {
+      return (
+        tools
           .map((tl, i) => `- ${allDone || i < tools.length - 1 ? `✅ ${tl.done}` : `⏳ ${tl.ing}`}`)
           .join("\n") + "\n\n"
-      : "";
+      );
+    }
+    return anyActivity && !allDone ? "- ⏳ Trabajando…\n\n" : "";
+  };
   const renderBody = (allDone: boolean): string => renderChecklist(allDone) + acc;
   const paint = async (allDone = false) => {
     const bodyId = await ensure();
     if (opts.emitBody) opts.emitBody(bodyId, renderBody(allDone));
-    else opts.emitDelta(bodyId, ""); // sin emitBody no hay repaint incremental (fallback abajo)
   };
 
   const onChunk = async (chunk: string) => {
@@ -262,12 +269,15 @@ export async function runAgentTurn(opts: {
     }
   };
   const onTool = async (name: string) => {
+    anyActivity = true;
     const label = toolLabel(name);
-    if (!label) return; // no-semántica/plumbing → oculta
-    tools.push(label);
-    brokeByTool = true;
+    if (label) {
+      tools.push(label);
+      brokeByTool = true;
+    }
+    // Aun si la tool es oculta, re-pinta → la cáscara nace YA y "pensando" desaparece.
     if (opts.emitBody) await paint();
-    else opts.emitDelta(await ensure(), `- ⏳ ${label.ing}\n`);
+    else if (label) opts.emitDelta(await ensure(), `- ⏳ ${label.ing}\n`);
   };
 
   let reply: string;
