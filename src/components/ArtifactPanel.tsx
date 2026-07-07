@@ -34,8 +34,9 @@ export function viewFromAttachment(a: {
   return null;
 }
 
-const DEFAULT_W = 1100;
+const DEFAULT_W = 680;
 const MIN_W = 360;
+const CHAT_MIN = 380; // deja SIEMPRE espacio de chat a la izquierda (split, no overlay)
 const STORE_KEY = "eb_artifact_w";
 
 export default function ArtifactPanel({
@@ -49,7 +50,7 @@ export default function ArtifactPanel({
   const [width, setWidth] = useState<number>(() => {
     if (typeof window === "undefined") return DEFAULT_W;
     const saved = Number(localStorage.getItem(STORE_KEY));
-    const max = window.innerWidth - 40;
+    const max = window.innerWidth - CHAT_MIN;
     return Math.min(saved || DEFAULT_W, max);
   });
   const widthRef = useRef(width);
@@ -61,7 +62,7 @@ export default function ArtifactPanel({
     const onMove = (e: PointerEvent) => {
       if (!dragging.current) return;
       // Panel anclado a la derecha → ancho = viewport - clientX.
-      const w = Math.min(Math.max(window.innerWidth - e.clientX, MIN_W), window.innerWidth - 40);
+      const w = Math.min(Math.max(window.innerWidth - e.clientX, MIN_W), window.innerWidth - CHAT_MIN);
       setWidth(w);
     };
     const onUp = () => {
@@ -87,15 +88,17 @@ export default function ArtifactPanel({
     <AnimatePresence>
       {artifact ? (
         <>
+          {/* Backdrop SOLO en móvil (overlay). En desktop el panel va en-flujo (split)
+              y NO oscurece el chat → puedes pedir y ver a la vez. */}
           <motion.div
-            className="fixed inset-0 z-40 bg-black/60"
+            className="fixed inset-0 z-40 bg-black/60 md:hidden"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             onClick={onClose}
           />
           <motion.aside
-            className="fixed right-0 top-0 z-50 flex h-full max-w-full border-l border-border bg-surface shadow-2xl"
+            className="fixed right-0 top-0 z-50 flex h-full max-w-full border-l border-border bg-surface shadow-2xl md:relative md:z-auto md:h-auto md:max-w-[75vw] md:shrink-0 md:shadow-none md:self-stretch"
             style={{ width }}
             initial={{ x: "100%" }}
             animate={{ x: 0 }}

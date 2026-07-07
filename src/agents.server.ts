@@ -174,6 +174,35 @@ export async function callAgentBackendStream(
 // El caller provee cómo crear la cáscara y cómo emitir deltas (room=ch.room,
 // DM=per-miembro ch.user). Devuelve {id, reply}; el caller persiste el body final.
 // Contrato: docs/AGENT-MEDIA-CONTRACT.md §1.2.
+// Nombre crudo de una tool (ej. `mcp__easybits__create_document`, `Bash`) → etiqueta
+// humana en pasado para el checklist ✓ (estilo Claude). Fallback: quita el prefijo
+// `mcp__<srv>__` y humaniza el snake_case.
+function toolLabel(raw: string): string {
+  const map: Record<string, string> = {
+    create_document: "Creó el documento",
+    structured_doc: "Generó el documento",
+    set_section_html: "Editó el documento",
+    update_document: "Editó el documento",
+    clone_document: "Clonó el documento",
+    apply_brand_kit: "Aplicó la marca",
+    create_or_edit_image: "Editó una imagen",
+    edit_image: "Editó una imagen",
+    upload_file: "Subió un archivo",
+    create_share_link: "Generó un link para compartir",
+    render_url: "Renderizó a PDF",
+    render_html: "Renderizó a PDF",
+    office_to_pdf: "Convirtió a PDF",
+    Bash: "Ejecutó un comando",
+    WebSearch: "Buscó en la web",
+    WebFetch: "Leyó una página web",
+  };
+  const short = raw.replace(/^mcp__[^_]+(?:__)?/, "").replace(/^mcp__/, "");
+  if (map[raw]) return map[raw];
+  if (map[short]) return map[short];
+  const words = short.replace(/_/g, " ").trim();
+  return words ? words.charAt(0).toUpperCase() + words.slice(1) : raw;
+}
+
 export async function runAgentTurn(opts: {
   agent: ResolvedAgent | undefined;
   handle: string;
@@ -192,11 +221,14 @@ export async function runAgentTurn(opts: {
   const onChunk = async (chunk: string) => {
     opts.emitDelta(await ensure(), chunk);
   };
-  // Tool en vivo (checklist estilo Claude Code): se pinta como delta `⚡ <tool>` —
-  // el body autoritativo final (setMessageBody + message:body) lo reemplaza, así que
-  // NO persiste; solo se ve fluir durante el turno. Reusa el canal de deltas.
+  // Checklist de tools (estilo Claude): en VIVO se pinta `⚡ <acción>` por delta; al
+  // final se PERSISTE como bloque ✓ legible ANTES del reply (setMessageBody lo asienta).
+  // Acumula labels únicos en orden de uso.
+  const doneTools: string[] = [];
   const onTool = async (name: string) => {
-    opts.emitDelta(await ensure(), `⚡ ${name}\n`);
+    const label = toolLabel(name);
+    if (!doneTools.includes(label)) doneTools.push(label);
+    opts.emitDelta(await ensure(), `⚡ ${label}\n`);
   };
 
   let reply: string;
@@ -207,7 +239,10 @@ export async function runAgentTurn(opts: {
     reply = await callAgentBackendStream(opts.agent, opts.groupId, opts.sender, opts.text, onChunk, opts.parts ?? [], onTool);
   }
   if (!reply) reply = "(sin respuesta)";
-  return { id: await ensure(), reply };
+  // Prepende el checklist ✓ persistente (solo si hubo tools). Queda en el body →
+  // sobrevive el reemplazo por message:body y el catch-up por cursor.
+  const checklist = doneTools.length ? doneTools.map((t) => `✓ ${t}`).join("\n") + "\n\n" : "";
+  return { id: await ensure(), reply: checklist + reply };
 }
 
 // Llama al backend del agente y devuelve su respuesta en texto.
