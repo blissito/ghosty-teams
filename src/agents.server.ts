@@ -273,11 +273,14 @@ export async function runAgentTurn(opts: {
   };
   const onTool = async (name: string) => {
     anyActivity = true;
+    // CUALQUIER tool (aunque sea oculta: Bash/Read/Write) corta el segmento de texto →
+    // el próximo texto va en párrafo nuevo. (Bug: antes solo se marcaba con tools CON
+    // label → "…docx." + [Bash] + "El NDA…" quedaba pegado "docx.El".)
+    brokeByTool = true;
     const label = toolLabel(name);
     // Dedup por acción (varios Skill/tools con el mismo label → una sola línea).
     if (label && !tools.some((t) => t.done === label.done)) {
       tools.push(label);
-      brokeByTool = true;
     }
     // Aun si la tool es oculta, re-pinta → la cáscara nace YA y "pensando" desaparece.
     if (opts.emitBody) await paint();

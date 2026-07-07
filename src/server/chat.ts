@@ -445,15 +445,17 @@ export const askAgent = createServerFn({ method: "POST" })
     // abre el panel del room. Best-effort: si algo falla, el mensaje queda normal.
     // (Slice 3 del contrato: reemplazar este scraping por eventos artifact del SSE.)
     try {
-      const { detectArtifact, mintCollabEmbed } = await import("./easybits-documents.server");
+      const { detectArtifact, mintCollabEmbed, resolveFileKind } = await import("./easybits-documents.server");
       const found = detectArtifact(reply);
       if (found?.type === "doc") {
         // Doc EasyBits → editor colaborativo embebido (co-edición en vivo).
         const embed = await mintCollabEmbed({ slug: found.slug, documentId: found.documentId });
         if (embed) await db.createArtifact(id, { kind: "html", url: embed.embedUrl, title: embed.title });
       } else if (found?.type === "file") {
-        // Archivo crudo (pdf/imagen) → visor directo en el panel.
-        await db.createArtifact(id, { kind: found.kind, url: found.url, title: null });
+        // Kind ROBUSTO por content-type real (HEAD) — la URL no trae ext y el texto no
+        // siempre menciona el tipo → office/pdf/imagen se detectan aunque el reply calle.
+        const kind = (await resolveFileKind(found.url)) ?? found.kind;
+        await db.createArtifact(id, { kind, url: found.url, title: null });
       }
       // Nació una card → refresca el contexto activo para que aparezca colgada del msg.
       if (found) bus.publish(bus.ch.room(channel.id), { t: "refresh", channelId: channel.id, parentId: data.parentId });

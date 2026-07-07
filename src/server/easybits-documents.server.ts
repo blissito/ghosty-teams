@@ -75,6 +75,34 @@ export function fileKindFromUrl(url: string): FileKind {
   return "file";
 }
 
+// Clasifica por CONTENT-TYPE (robusto): las URLs de upload_file NO traen extensión, y
+// el reply no siempre menciona ".docx" → detectar por texto falla. Un HEAD al archivo
+// da el mime real. Cubre "miles de tipos" por familia mime, no por adivinar.
+function fileKindFromContentType(ct: string): FileKind | null {
+  const t = ct.toLowerCase().split(";")[0].trim();
+  if (t === "application/pdf") return "pdf";
+  if (t.startsWith("image/")) return "image";
+  if (t.startsWith("audio/")) return "audio";
+  if (t.startsWith("video/")) return "video";
+  if (
+    /(wordprocessingml|spreadsheetml|presentationml|msword|ms-excel|ms-powerpoint|opendocument)/.test(t)
+  )
+    return "office";
+  return null;
+}
+
+// HEAD al archivo → kind por content-type real. Best-effort: si falla, null (el caller
+// cae a la heurística por texto/URL). Rápido (solo headers).
+export async function resolveFileKind(url: string): Promise<FileKind | null> {
+  try {
+    const res = await fetch(url, { method: "HEAD", signal: AbortSignal.timeout(6000) });
+    const ct = res.headers.get("content-type") || "";
+    return fileKindFromContentType(ct);
+  } catch {
+    return null;
+  }
+}
+
 export function detectArtifact(reply: string): DetectedArtifact | null {
   // 1a) URL del editor dash (create_document) → /documents/<id 24-hex>.
   const md = reply.match(/easybits\.cloud\/(?:dash\/)?documents\/(?:editor[^\s]*[?&]id=)?([a-f0-9]{24})/i);
