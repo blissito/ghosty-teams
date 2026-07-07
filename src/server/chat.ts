@@ -401,7 +401,7 @@ export const askAgent = createServerFn({ method: "POST" })
       const found = detectArtifact(reply);
       if (found?.type === "doc") {
         // Doc EasyBits → editor colaborativo embebido (co-edición en vivo).
-        const embed = await mintCollabEmbed({ slug: found.slug });
+        const embed = await mintCollabEmbed({ slug: found.slug, documentId: found.documentId });
         if (embed) await db.createArtifact(replyId, { kind: "html", url: embed.embedUrl, title: embed.title });
       } else if (found?.type === "file") {
         // Archivo crudo (pdf/imagen) → visor directo en el panel.

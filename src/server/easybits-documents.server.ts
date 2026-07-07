@@ -38,11 +38,14 @@ export async function mintCollabEmbed(
 // Devuelve el primer match, o null. (Fase 2: parseo del reply; el objetivo
 // posterior es que el fleet devuelva {reply, artifacts[]} estructurado.)
 export type DetectedArtifact =
-  | { type: "doc"; slug: string }
+  | { type: "doc"; slug?: string; documentId?: string }
   | { type: "file"; url: string; kind: "pdf" | "image" };
 
 export function detectArtifact(reply: string): DetectedArtifact | null {
-  // 1) Doc EasyBits desplegado (share URL con slug).
+  // 1a) URL del editor dash (create_document) → /documents/<id 24-hex>.
+  const md = reply.match(/easybits\.cloud\/(?:dash\/)?documents\/(?:editor[^\s]*[?&]id=)?([a-f0-9]{24})/i);
+  if (md) return { type: "doc", documentId: md[1] };
+  // 1b) Doc desplegado (share URL con slug).
   const m1 = reply.match(/easybits\.cloud\/s\/([a-z0-9][a-z0-9-]*)/i);
   if (m1) return { type: "doc", slug: m1[1] };
   const m2 = reply.match(/https?:\/\/([a-z0-9][a-z0-9-]*)\.easybits\.cloud/i);
