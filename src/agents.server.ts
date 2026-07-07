@@ -228,26 +228,45 @@ export async function runAgentTurn(opts: {
     if (id == null) id = await opts.createShell();
     return id;
   };
-  const onChunk = async (chunk: string) => {
-    opts.emitDelta(await ensure(), chunk);
-  };
-  // Checklist de tools (estilo Claude), INCREMENTAL: al iniciar la tool N, las N-1
-  // previas quedan ✓ (pasado) y la N queda ⚡ (gerundio) → se re-pinta la lista entera
-  // por message:body (no append), así el flip ocurre CONFORME corre cada tool, no de
-  // golpe. Una tool por línea (hard break `  \n` de markdown).
+  // Estado del turno. El BODY visible = checklist + texto acumulado, SIEMPRE re-pintado
+  // entero por emitBody (nunca se clobbea el texto ni se pierde en el flicker). `acc`
+  // acumula el texto del agente con separadores entre segmentos interrumpidos por tools
+  // (si no, "…contrato." + "Contrato generado" se pegan → muro amontonado).
   const tools: { ing: string; done: string }[] = [];
-  // LISTA markdown real (`- `) → prose-ul da espaciado (no amontonado). ✅ verde para
-  // terminadas, ⏳ para la en-progreso. Se re-pinta entera por message:body al iniciar
-  // cada tool (flip conforme corre, no de golpe).
+  let acc = "";
+  let brokeByTool = false; // corrió una tool desde el último texto → el próximo es segmento nuevo
+
   const renderChecklist = (allDone: boolean): string =>
-    tools
-      .map((tl, i) => `- ${allDone || i < tools.length - 1 ? `✅ ${tl.done}` : `⏳ ${tl.ing}`}`)
-      .join("\n");
+    tools.length
+      ? tools
+          .map((tl, i) => `- ${allDone || i < tools.length - 1 ? `✅ ${tl.done}` : `⏳ ${tl.ing}`}`)
+          .join("\n") + "\n\n"
+      : "";
+  const renderBody = (allDone: boolean): string => renderChecklist(allDone) + acc;
+  const paint = async (allDone = false) => {
+    const bodyId = await ensure();
+    if (opts.emitBody) opts.emitBody(bodyId, renderBody(allDone));
+    else opts.emitDelta(bodyId, ""); // sin emitBody no hay repaint incremental (fallback abajo)
+  };
+
+  const onChunk = async (chunk: string) => {
+    if (!chunk) return;
+    if (opts.emitBody) {
+      // Separa un segmento de texto nuevo (tras una tool) con doble salto → párrafos, no muro.
+      if (brokeByTool && acc.trim() && chunk.trim()) acc += "\n\n";
+      if (chunk.trim()) brokeByTool = false;
+      acc += chunk;
+      await paint();
+    } else {
+      opts.emitDelta(await ensure(), chunk); // fallback legacy (append)
+    }
+  };
   const onTool = async (name: string) => {
     const label = toolLabel(name);
     if (!label) return; // no-semántica/plumbing → oculta
     tools.push(label);
-    if (opts.emitBody) opts.emitBody(await ensure(), renderChecklist(false) + "\n\n");
+    brokeByTool = true;
+    if (opts.emitBody) await paint();
     else opts.emitDelta(await ensure(), `- ⏳ ${label.ing}\n`);
   };
 
@@ -258,10 +277,10 @@ export async function runAgentTurn(opts: {
   } else {
     reply = await callAgentBackendStream(opts.agent, opts.groupId, opts.sender, opts.text, onChunk, opts.parts ?? [], onTool);
   }
-  if (!reply) reply = "(sin respuesta)";
-  // Checklist final: TODAS ✓ (pasado). Queda en el body → persiste + catch-up por cursor.
-  const checklist = tools.length ? renderChecklist(true) + "\n\n" : "";
-  return { id: await ensure(), reply: checklist + reply };
+  // `acc` (con separadores) es el texto bonito; reply es la acumulación cruda del stream.
+  const finalText = acc.trim() || reply || "(sin respuesta)";
+  // Body final autoritativo: checklist TODO ✅ + texto separado. El caller lo persiste.
+  return { id: await ensure(), reply: renderChecklist(true) + finalText };
 }
 
 // Llama al backend del agente y devuelve su respuesta en texto.
