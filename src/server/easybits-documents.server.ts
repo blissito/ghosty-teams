@@ -30,6 +30,25 @@ export async function mintCollabEmbed(
   }
 }
 
+// "Editar" un artefacto office (.docx): EasyBits lo convierte a Documento editable
+// (mammoth docx→html → Landing v4) y minteamos el editor colab embebible. Devuelve el
+// embedUrl (que el panel abre como editor) o null si falla (ej. xlsx/pptx no soportados).
+export async function officeToEditable(url: string, name?: string): Promise<CollabEmbed | null> {
+  try {
+    const res = await ebFetch(`/api/v2/documents/from-office`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ url, name }),
+    });
+    if (!res.ok) return null;
+    const j = (await res.json()) as { ok?: boolean; documentId?: string };
+    if (!j.ok || !j.documentId) return null;
+    return mintCollabEmbed({ documentId: j.documentId });
+  } catch {
+    return null;
+  }
+}
+
 // Detecta un artefacto en el texto del reply del agente. Dos formas:
 //   - DOC EasyBits (easybits.cloud/s/<slug> o <slug>.easybits.cloud) → co-edición
 //     (se resuelve a link colab embebible vía mintCollabEmbed).

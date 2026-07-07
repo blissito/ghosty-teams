@@ -1,7 +1,8 @@
 import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useRef, useState } from "react";
-import { X, ExternalLink, FileText } from "lucide-react";
+import { X, ExternalLink, FileText, Pencil, Download, Loader2 } from "lucide-react";
 import { useT } from "../i18n";
+import { officeToEditableFn } from "../server/chat";
 
 // Panel lateral de artefactos del room. Fase 0 = visor PDF/imagen (adjuntos).
 // Fase 3 añadirá kind:"html" (editor Tiptap embebido / colab). El panel es
@@ -58,6 +59,27 @@ export default function ArtifactPanel({
   widthRef.current = width;
   const dragging = useRef(false);
   const [isDragging, setIsDragging] = useState(false);
+  // "Editar" un office: EasyBits lo importa a un doc editable → editUrl (editor colab).
+  const [editUrl, setEditUrl] = useState<string | null>(null);
+  const [converting, setConverting] = useState(false);
+  // Al cambiar de artefacto, resetea el modo edición.
+  useEffect(() => {
+    setEditUrl(null);
+    setConverting(false);
+  }, [artifact]);
+  const handleEdit = async () => {
+    if (converting || !artifact || artifact.kind !== "office") return;
+    setConverting(true);
+    try {
+      const r = await officeToEditableFn({ data: { url: artifact.src, name: artifact.title || "Documento" } });
+      if (r.ok && r.embedUrl) setEditUrl(r.embedUrl);
+      else alert(t("No se pudo abrir para editar (solo .docx es editable por ahora)."));
+    } catch {
+      alert(t("No se pudo abrir para editar. Intenta de nuevo."));
+    } finally {
+      setConverting(false);
+    }
+  };
 
   useEffect(() => {
     const onMove = (e: PointerEvent) => {
@@ -162,25 +184,38 @@ export default function ArtifactPanel({
                     <video src={artifact.src} controls className="max-h-full max-w-full rounded-lg" />
                   </div>
                 ) : artifact.kind === "office" ? (
-                  // docx/xlsx/pptx: preview con el visor Office Online (renderiza el
-                  // archivo público inline, sin convertir) + barra de descarga. Requiere
-                  // URL pública (los generados van a easybits-public).
-                  /^https?:\/\//.test(artifact.src) ? (
+                  // Modo EDICIÓN: EasyBits importó el docx a un doc editable → editor colab.
+                  editUrl ? (
+                    <iframe src={editUrl} title={artifact.title || "editor"} className="size-full border-0 bg-white" />
+                  ) : /^https?:\/\//.test(artifact.src) ? (
+                    // Preview con el visor Office Online (renderiza el archivo público
+                    // inline, sin convertir) + barra: Editar (importa a editable) · Descargar.
                     <div className="flex h-full flex-col">
                       <iframe
                         src={`https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(artifact.src)}`}
                         title={artifact.title || "documento"}
                         className="min-h-0 flex-1 border-0 bg-white"
                       />
-                      <a
-                        href={artifact.src}
-                        target="_blank"
-                        rel="noreferrer"
-                        download
-                        className="flex shrink-0 items-center justify-center gap-2 border-t border-border bg-surface-2 py-2 text-sm font-medium text-brand transition hover:bg-surface-3"
-                      >
-                        <FileText size={15} /> {t("Descargar")}
-                      </a>
+                      <div className="flex shrink-0 items-stretch border-t border-border bg-surface-2 text-sm font-medium">
+                        <button
+                          type="button"
+                          onClick={handleEdit}
+                          disabled={converting}
+                          className="flex flex-1 items-center justify-center gap-2 py-2 text-brand transition hover:bg-surface-3 disabled:opacity-60"
+                        >
+                          {converting ? <Loader2 size={15} className="animate-spin" /> : <Pencil size={15} />}
+                          {converting ? t("Abriendo editor…") : t("Editar")}
+                        </button>
+                        <a
+                          href={artifact.src}
+                          target="_blank"
+                          rel="noreferrer"
+                          download
+                          className="flex flex-1 items-center justify-center gap-2 border-l border-border py-2 text-muted transition hover:bg-surface-3 hover:text-ink"
+                        >
+                          <Download size={15} /> {t("Descargar")}
+                        </a>
+                      </div>
                     </div>
                   ) : (
                     <div className="grid min-h-full place-items-center p-6">

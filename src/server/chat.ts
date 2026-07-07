@@ -141,6 +141,16 @@ export const getChannelThreads = createServerFn({ method: "GET" })
   });
 
 // Borra un mensaje (y sus respuestas si es raíz). Solo autor u owner.
+// "Editar" un artefacto office (.docx) → EasyBits lo convierte a doc editable y
+// devuelve el editor colab embebible. El panel del artefacto abre ese embedUrl.
+export const officeToEditableFn = createServerFn({ method: "POST" })
+  .validator((d: { url: string; name?: string }) => d)
+  .handler(async ({ data }) => {
+    const { officeToEditable } = await import("./easybits-documents.server");
+    const embed = await officeToEditable(data.url, data.name);
+    return embed ? { ok: true as const, embedUrl: embed.embedUrl } : { ok: false as const };
+  });
+
 export const deleteMessageFn = createServerFn({ method: "POST" })
   .validator((d: { id: number }) => d)
   .handler(async ({ data }) => {
