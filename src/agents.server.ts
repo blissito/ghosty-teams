@@ -40,6 +40,41 @@ export async function resolvedAgents(): Promise<ResolvedAgent[]> {
   return out;
 }
 
+// ── Media (A2A FilePart) — entrega de adjuntos al agente ────────────────────
+// Contrato: docs/AGENT-MEDIA-CONTRACT.md §2/§3. Un FilePart por adjunto, tipado por
+// MIME → cubre audio/imagen/video/docs/desconocido con una sola forma. Transporte
+// híbrido: `bytes` inline si es chico (self-contained), `uri` firmada si es grande.
+export type MediaPart = {
+  kind: "file";
+  file: { name?: string; mimeType: string; uri?: string; bytes?: string };
+};
+
+const MEDIA_INLINE_MAX_BYTES = 256 * 1024; // < 256KB → bytes inline; ≥ → uri firmada
+
+export async function buildMediaParts(
+  attachments: { fileId: string; mime: string | null; size: number | null; name: string | null }[]
+): Promise<MediaPart[]> {
+  if (!attachments.length) return [];
+  const { mintReadUrl, mintFileBytes } = await import("./server/easybits-files.server");
+  const parts: MediaPart[] = [];
+  for (const a of attachments) {
+    const mimeType = a.mime || "application/octet-stream";
+    const name = a.name || undefined;
+    const small = a.size != null && a.size < MEDIA_INLINE_MAX_BYTES;
+    if (small) {
+      const bytes = await mintFileBytes(a.fileId);
+      if (bytes) {
+        parts.push({ kind: "file", file: { name, mimeType, bytes } });
+        continue;
+      }
+    }
+    // Grande, o falló el inline → uri firmada (TTL corto lo controla EasyBits).
+    const uri = await mintReadUrl(a.fileId);
+    if (uri) parts.push({ kind: "file", file: { name, mimeType, uri } });
+  }
+  return parts;
+}
+
 // ¿Qué agente se mencionó en el body? Devuelve el handle o null (el primero que
 // aparezca, entre los habilitados). Case-insensitive, @handle con borde de palabra.
 export function detectMention(body: string, handles: string[]): string | null {
@@ -56,6 +91,78 @@ export function detectMentions(body: string, handles: string[]): string[] {
     if (m && m.index != null) hits.push({ handle: h, idx: m.index });
   }
   return hits.sort((a, b) => a.idx - b.idx).map((x) => x.handle);
+}
+
+// Streaming (first-class): llama al backend y emite la respuesta pedacito a
+// pedacito por `onChunk`, devolviendo el texto final (autoritativo). Hoy solo el
+// backend fleet expone SSE (EasyBits /message-stream: `chunk`/`done`/`error`); el
+// webhook aún cae al camino bloqueante (Slice 4 = cliente A2A message/stream).
+// Contrato: docs/AGENT-MEDIA-CONTRACT.md §1.
+export async function callAgentBackendStream(
+  agent: ResolvedAgent,
+  groupId: string,
+  sender: string,
+  text: string,
+  onChunk: (chunk: string) => void | Promise<void>,
+  parts: MediaPart[] = []
+): Promise<string> {
+  if (agent.backend.kind !== "fleet") {
+    // Sin SSE todavía: colecta el reply completo y lo emite de un tirón (el cliente
+    // ya lo ve aterrizar). Cuando exista un webhook A2A real, aquí va message/stream.
+    const full = await callAgentBackend(agent, groupId, sender, text, parts);
+    if (full) await onChunk(full);
+    return full;
+  }
+  const persona = agent.systemPrompt?.trim() || null;
+  const base = process.env.EASYBITS_BASE_URL ?? "https://www.easybits.cloud";
+  const outText = persona ? `[Instrucciones para ${agent.name}: ${persona}]\n\n${text}` : text;
+  try {
+    const res = await fetch(`${base}/api/v2/fleet-agents/${agent.backend.id}/message-stream`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${agent.backend.token}` },
+      // `parts` = FileParts A2A (media); EasyBits los normaliza por MIME (Slice E1).
+      body: JSON.stringify({ groupId, sender: sender || "invitado", text: outText, parts }),
+    });
+    if (!res.ok || !res.body) throw new Error(`fleet-stream ${res.status}: ${await res.text().catch(() => "")}`);
+    // Parseo SSE: acumula por líneas `data: {json}`. `done.value` es el reply
+    // completo y autoritativo (correcto aun si un self-heal re-emitió chunks).
+    const reader = res.body.getReader();
+    const dec = new TextDecoder();
+    let buf = "";
+    let streamed = "";
+    let authoritative: string | null = null;
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      let nl: number;
+      while ((nl = buf.indexOf("\n\n")) !== -1) {
+        const frame = buf.slice(0, nl);
+        buf = buf.slice(nl + 2);
+        const line = frame.split("\n").find((l) => l.startsWith("data:"));
+        if (!line) continue;
+        let ev: { type?: string; value?: string; message?: string };
+        try {
+          ev = JSON.parse(line.slice(5).trim());
+        } catch {
+          continue;
+        }
+        if (ev.type === "chunk" && ev.value) {
+          streamed += ev.value;
+          await onChunk(ev.value);
+        } else if (ev.type === "done") {
+          authoritative = ev.value ?? streamed;
+        } else if (ev.type === "error") {
+          throw new Error(ev.message || "fleet stream error");
+        }
+      }
+    }
+    return authoritative || streamed || "(sin respuesta)";
+  } catch (e) {
+    const msg = `⚠️ No pude contactar a @${agent.handle}: ${e instanceof Error ? e.message : e}`;
+    await onChunk(msg);
+    return msg;
+  }
 }
 
 // Llama al backend del agente y devuelve su respuesta en texto.

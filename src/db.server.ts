@@ -475,6 +475,13 @@ export async function editMessage(id: number, body: string): Promise<void> {
   await dbq("UPDATE gc_messages SET body = ?, edited_at = unixepoch() WHERE id = ?", [body, id]);
 }
 
+// Persiste el body final de una respuesta de agente que llegó por streaming. NO
+// toca edited_at (no es una edición del autor, es el reply que terminó de fluir) →
+// no muestra "(editado)". El body autoritativo permite el catch-up por cursor.
+export async function setMessageBody(id: number, body: string): Promise<void> {
+  await dbq("UPDATE gc_messages SET body = ? WHERE id = ?", [body, id]);
+}
+
 // ── Agentes (multi-agente): el "ghosty" implícito del wizard + estos extra ──
 export type Agent = {
   id: number;
@@ -1120,22 +1127,25 @@ export async function listReadReceipts(
 // Borra los "pensando…" (status) de un contexto — al llegar la respuesta real.
 // handle opcional: con multi-agente, cada agente limpia SOLO su propio "pensando…"
 // (si no, el reply de uno borraría el status de los demás en el mismo hilo).
+// Borra los "pensando…" (kind:"status") y devuelve sus ids → el caller emite
+// message:deleted para que el cliente los quite SIN revalidar (un revalidate a
+// media corriente pisaría los deltas del streaming con el body aún vacío del DB).
 export async function clearStatus(
   channelId: number,
   parentId: number | null,
   agentHandle?: string
-): Promise<void> {
+): Promise<number[]> {
   const hFilter = agentHandle ? " AND agent_handle = ?" : "";
   const hArg = agentHandle ? [agentHandle] : [];
-  if (parentId == null) {
-    await dbq(
-      `DELETE FROM gc_messages WHERE channel_id = ? AND parent_id IS NULL AND kind = 'status'${hFilter}`,
-      [channelId, ...hArg]
-    );
-  } else {
-    await dbq(
-      `DELETE FROM gc_messages WHERE channel_id = ? AND parent_id = ? AND kind = 'status'${hFilter}`,
-      [channelId, parentId, ...hArg]
-    );
-  }
+  const rows =
+    parentId == null
+      ? await dbq(
+          `DELETE FROM gc_messages WHERE channel_id = ? AND parent_id IS NULL AND kind = 'status'${hFilter} RETURNING id`,
+          [channelId, ...hArg]
+        )
+      : await dbq(
+          `DELETE FROM gc_messages WHERE channel_id = ? AND parent_id = ? AND kind = 'status'${hFilter} RETURNING id`,
+          [channelId, parentId, ...hArg]
+        );
+  return rows.map((r) => num(r.id));
 }

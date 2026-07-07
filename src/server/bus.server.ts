@@ -23,6 +23,13 @@ export type RtEvent =
   | { t: "message:new"; msg: Message; nonce?: string }
   | { t: "message:deleted"; id: number; channelId: number | null; parentId: number | null; dmId?: number | null }
   | { t: "message:edited"; id: number; body: string; edited_at: number }
+  // Streaming de la respuesta de un agente, pedacito a pedacito: cada chunk se
+  // appendea al body del mensaje-cáscara ya visible (kind:"msg", body vacío al
+  // nacer). La durabilidad vive en gc_messages (body final al done); esto es señal.
+  | { t: "message:delta"; id: number; chunk: string; channelId: number | null; parentId: number | null; dmId?: number | null }
+  // Body autoritativo al terminar el stream (reconcilia por si se perdió un delta;
+  // NO es una edición → no marca edited_at).
+  | { t: "message:body"; id: number; body: string }
   | { t: "reaction"; messageId: number; emoji: string; userSub: string; op: "add" | "remove"; count: number }
   | { t: "pin"; channelId: number; messageId: number; pinned: boolean } // fijado/desfijado (room-wide)
   | { t: "star"; messageId: number; starred: boolean } // marcado personal (a ch.user, cross-device)

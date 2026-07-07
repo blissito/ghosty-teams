@@ -693,6 +693,15 @@ function ChannelPage() {
       case "message:edited":
         patchMessage(ev.id, (m) => ({ ...m, body: ev.body, edited_at: ev.edited_at }));
         break;
+      case "message:delta":
+        // Streaming del reply de un agente, pedacito a pedacito: appendea el chunk
+        // al body del mensaje-cáscara ya visible.
+        patchMessage(ev.id, (m) => ({ ...m, body: (m.body ?? "") + ev.chunk }));
+        break;
+      case "message:body":
+        // Body autoritativo al terminar el stream (reconcilia deltas perdidos).
+        patchMessage(ev.id, (m) => ({ ...m, body: ev.body }));
+        break;
       case "refresh":
         // Churn de agente/status (room o DM) → refetch del contexto activo (rev).
         if (ev.channelId === channel.id || ev.dmId != null) revalidate();

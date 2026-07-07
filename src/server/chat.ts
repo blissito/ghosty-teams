@@ -369,54 +369,84 @@ export const askAgent = createServerFn({ method: "POST" })
   .validator((d: { slug: string; parentId: number | null; body: string; sender: string; handle: string; topic?: string }) => d)
   .handler(async ({ data }) => {
     const db = await import("../db.server");
-    const { resolvedAgents, callAgentBackend } = await import("../agents.server");
+    const { resolvedAgents, callAgentBackendStream } = await import("../agents.server");
+    const bus = await import("./bus.server");
     const channel = await db.getChannel(data.slug);
     if (!channel) throw new Error("Canal no encontrado");
     const agent = (await resolvedAgents()).find((a) => a.handle === data.handle);
-    let reply: string;
-    let name = "Ghosty";
-    if (!agent) {
-      reply = `👾 @${data.handle} no está conectado. El owner lo configura en Ajustes → Agentes.`;
-    } else {
-      name = agent.name;
-      // Incluye el HANDLE del agente: cada agente tiene su propia conversación/memoria
-      // en EasyBits. Sin esto, dos agentes en el mismo hilo comparten groupId → se
-      // contaminan (uno hereda la persona/contexto del otro).
-      const groupId = `ghosty-chat-${data.handle}-${channel.slug}-${data.parentId ?? "flow"}`;
-      reply = await callAgentBackend(agent, groupId, data.sender, data.body);
-    }
+    const name = agent?.name ?? "Ghosty";
+
     // El reply es una respuesta de hilo (parentId no-null); hereda el topic del root.
     let topic = data.topic;
     if (topic == null && data.parentId != null) {
       const root = await db.getMessage(data.parentId);
       topic = root?.topic ?? "general";
     }
-    await db.clearStatus(channel.id, data.parentId, data.handle); // solo el mío (multi-agente)
-    const { id: replyId } = await db.postAgent(channel.id, data.parentId, reply, "msg", data.handle, name, topic ?? "general", agent?.avatar ?? "");
+
+    // Streaming first-class: la cáscara del reply (body vacío) se crea PEREZOSAMENTE
+    // al primer token → el "pensando…" se mantiene durante la latencia del agente y
+    // recién ahí se reemplaza por el texto que fluye. Contrato: docs/AGENT-MEDIA-CONTRACT.md §1.2.
+    let replyId: number | null = null;
+    const ensureShell = async (): Promise<number> => {
+      if (replyId != null) return replyId;
+      // Quita el "pensando…" en el cliente SIN revalidar (revalidar pisaría los deltas
+      // con el body aún vacío del DB).
+      const clearedIds = await db.clearStatus(channel.id, data.parentId, data.handle); // solo el mío (multi-agente)
+      for (const sid of clearedIds)
+        bus.publish(bus.ch.room(channel.id), { t: "message:deleted", id: sid, channelId: channel.id, parentId: data.parentId });
+      const { id } = await db.postAgent(channel.id, data.parentId, "", "msg", data.handle, name, topic ?? "general", agent?.avatar ?? "");
+      replyId = id;
+      // message:new de la cáscara: suena (Ghosty) y ancla el destino de los deltas.
+      // El nonce va vacío: nadie tiene un optimista del reply del agente.
+      const shell = await db.getMessage(id);
+      if (shell) bus.publish(bus.ch.room(channel.id), { t: "message:new", msg: shell });
+      return id;
+    };
+    const emitDelta = async (chunk: string) => {
+      const id = await ensureShell();
+      bus.publish(bus.ch.room(channel.id), { t: "message:delta", id, chunk, channelId: channel.id, parentId: data.parentId });
+    };
+
+    let reply: string;
+    if (!agent) {
+      reply = `👾 @${data.handle} no está conectado. El owner lo configura en Ajustes → Agentes.`;
+      await emitDelta(reply);
+    } else {
+      // Incluye el HANDLE del agente: cada agente tiene su propia conversación/memoria
+      // en EasyBits. Sin esto, dos agentes en el mismo hilo comparten groupId → se
+      // contaminan (uno hereda la persona/contexto del otro).
+      const groupId = `ghosty-chat-${data.handle}-${channel.slug}-${data.parentId ?? "flow"}`;
+      reply = await callAgentBackendStream(agent, groupId, data.sender, data.body, emitDelta);
+    }
+
+    // Si el agente no emitió ni un token (reply vacío), materializa la cáscara ahora
+    // para no dejar el "pensando…" colgado.
+    if (!reply) reply = "(sin respuesta)";
+    const id = await ensureShell();
+    // Persiste el body final (autoritativo, sin marcar "editado") y reconcilia por si
+    // se perdió algún delta (el bus es best-effort).
+    await db.setMessageBody(id, reply);
+    bus.publish(bus.ch.room(channel.id), { t: "message:body", id, body: reply });
+
     // Si el reply referencia un documento EasyBits, lo volvemos ARTEFACTO: minteamos
     // el editor colab embebible y lo colgamos del mensaje → aparece como card que
     // abre el panel del room. Best-effort: si algo falla, el mensaje queda normal.
+    // (Slice 3 del contrato: reemplazar este scraping por eventos artifact del SSE.)
     try {
       const { detectArtifact, mintCollabEmbed } = await import("./easybits-documents.server");
       const found = detectArtifact(reply);
       if (found?.type === "doc") {
         // Doc EasyBits → editor colaborativo embebido (co-edición en vivo).
         const embed = await mintCollabEmbed({ slug: found.slug, documentId: found.documentId });
-        if (embed) await db.createArtifact(replyId, { kind: "html", url: embed.embedUrl, title: embed.title });
+        if (embed) await db.createArtifact(id, { kind: "html", url: embed.embedUrl, title: embed.title });
       } else if (found?.type === "file") {
         // Archivo crudo (pdf/imagen) → visor directo en el panel.
-        await db.createArtifact(replyId, { kind: found.kind, url: found.url, title: null });
+        await db.createArtifact(id, { kind: found.kind, url: found.url, title: null });
       }
+      // Nació una card → refresca el contexto activo para que aparezca colgada del msg.
+      if (found) bus.publish(bus.ch.room(channel.id), { t: "refresh", channelId: channel.id, parentId: data.parentId });
     } catch (e) {
       console.error("[artifact] detect/mint failed", e);
     }
-    // La respuesta del agente se publica como message:new → suena (Ghosty), suma
-    // unread y aparece en vivo. Su handler en el cliente ya revalida (borra el
-    // "pensando…"). El nonce va vacío: nadie tiene un optimista del reply del agente.
-    const bus = await import("./bus.server");
-    let created = await db.getMessage(replyId);
-    if (created) [created] = await db.attachArtifacts([created]); // que el evento en vivo ya traiga la card
-    if (created) bus.publish(bus.ch.room(channel.id), { t: "message:new", msg: created });
-    else bus.publish(bus.ch.room(channel.id), { t: "refresh", channelId: channel.id, parentId: data.parentId });
     return { ok: true as const };
   });

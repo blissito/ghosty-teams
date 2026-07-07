@@ -133,6 +133,20 @@ export async function mintReadUrl(fileId: string): Promise<string | null> {
   }
 }
 
+// Descarga los bytes de un objeto y los devuelve en base64 (para FileParts inline
+// de media chico → el agente los recibe sin un fetch extra). Server-side. null si falla.
+export async function mintFileBytes(fileId: string): Promise<string | null> {
+  const url = await mintReadUrl(fileId);
+  if (!url) return null;
+  try {
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    return Buffer.from(await res.arrayBuffer()).toString("base64");
+  } catch {
+    return null;
+  }
+}
+
 // Borra un objeto (al eliminar un mensaje con adjuntos). 2xx o 404 = ok.
 export async function deleteEasyBitsFile(fileId: string): Promise<boolean> {
   if (!fileId) return false;
