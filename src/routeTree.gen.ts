@@ -19,6 +19,7 @@ import { Route as ApiUploadRouteImport } from './routes/api.upload'
 import { Route as ApiStreamRouteImport } from './routes/api.stream'
 import { Route as SetupEasybitsConnectRouteImport } from './routes/setup.easybits.connect'
 import { Route as SetupEasybitsCallbackRouteImport } from './routes/setup.easybits.callback'
+import { Route as ApiWebhookEasybitsRouteImport } from './routes/api.webhook.easybits'
 import { Route as ApiAttachmentIdRouteImport } from './routes/api.attachment.$id'
 
 const SetupRoute = SetupRouteImport.update({
@@ -71,6 +72,11 @@ const SetupEasybitsCallbackRoute = SetupEasybitsCallbackRouteImport.update({
   path: '/easybits/callback',
   getParentRoute: () => SetupRoute,
 } as any)
+const ApiWebhookEasybitsRoute = ApiWebhookEasybitsRouteImport.update({
+  id: '/api/webhook/easybits',
+  path: '/api/webhook/easybits',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiAttachmentIdRoute = ApiAttachmentIdRouteImport.update({
   id: '/api/attachment/$id',
   path: '/api/attachment/$id',
@@ -87,6 +93,7 @@ export interface FileRoutesByFullPath {
   '/c/$slug': typeof CSlugRoute
   '/join/$token': typeof JoinTokenRoute
   '/api/attachment/$id': typeof ApiAttachmentIdRoute
+  '/api/webhook/easybits': typeof ApiWebhookEasybitsRoute
   '/setup/easybits/callback': typeof SetupEasybitsCallbackRoute
   '/setup/easybits/connect': typeof SetupEasybitsConnectRoute
 }
@@ -100,6 +107,7 @@ export interface FileRoutesByTo {
   '/c/$slug': typeof CSlugRoute
   '/join/$token': typeof JoinTokenRoute
   '/api/attachment/$id': typeof ApiAttachmentIdRoute
+  '/api/webhook/easybits': typeof ApiWebhookEasybitsRoute
   '/setup/easybits/callback': typeof SetupEasybitsCallbackRoute
   '/setup/easybits/connect': typeof SetupEasybitsConnectRoute
 }
@@ -114,6 +122,7 @@ export interface FileRoutesById {
   '/c/$slug': typeof CSlugRoute
   '/join/$token': typeof JoinTokenRoute
   '/api/attachment/$id': typeof ApiAttachmentIdRoute
+  '/api/webhook/easybits': typeof ApiWebhookEasybitsRoute
   '/setup/easybits/callback': typeof SetupEasybitsCallbackRoute
   '/setup/easybits/connect': typeof SetupEasybitsConnectRoute
 }
@@ -129,6 +138,7 @@ export interface FileRouteTypes {
     | '/c/$slug'
     | '/join/$token'
     | '/api/attachment/$id'
+    | '/api/webhook/easybits'
     | '/setup/easybits/callback'
     | '/setup/easybits/connect'
   fileRoutesByTo: FileRoutesByTo
@@ -142,6 +152,7 @@ export interface FileRouteTypes {
     | '/c/$slug'
     | '/join/$token'
     | '/api/attachment/$id'
+    | '/api/webhook/easybits'
     | '/setup/easybits/callback'
     | '/setup/easybits/connect'
   id:
@@ -155,6 +166,7 @@ export interface FileRouteTypes {
     | '/c/$slug'
     | '/join/$token'
     | '/api/attachment/$id'
+    | '/api/webhook/easybits'
     | '/setup/easybits/callback'
     | '/setup/easybits/connect'
   fileRoutesById: FileRoutesById
@@ -169,6 +181,7 @@ export interface RootRouteChildren {
   CSlugRoute: typeof CSlugRoute
   JoinTokenRoute: typeof JoinTokenRoute
   ApiAttachmentIdRoute: typeof ApiAttachmentIdRoute
+  ApiWebhookEasybitsRoute: typeof ApiWebhookEasybitsRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -243,6 +256,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SetupEasybitsCallbackRouteImport
       parentRoute: typeof SetupRoute
     }
+    '/api/webhook/easybits': {
+      id: '/api/webhook/easybits'
+      path: '/api/webhook/easybits'
+      fullPath: '/api/webhook/easybits'
+      preLoaderRoute: typeof ApiWebhookEasybitsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/attachment/$id': {
       id: '/api/attachment/$id'
       path: '/api/attachment/$id'
@@ -275,6 +295,7 @@ const rootRouteChildren: RootRouteChildren = {
   CSlugRoute: CSlugRoute,
   JoinTokenRoute: JoinTokenRoute,
   ApiAttachmentIdRoute: ApiAttachmentIdRoute,
+  ApiWebhookEasybitsRoute: ApiWebhookEasybitsRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

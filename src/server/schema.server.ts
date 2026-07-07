@@ -167,6 +167,19 @@ async function migrate(): Promise<void> {
   )`);
   await exec(`CREATE INDEX IF NOT EXISTS gc_artifacts_msg ON gc_artifacts(message_id)`);
 
+  // Puente EasyBits Forms → room: mapea un form hospedado (form_id de EasyBits) al
+  // canal/expediente donde caen sus respuestas. Poblado al crear el intake desde el
+  // room; el webhook inbound (/api/webhook/easybits) resuelve form_id → channel_id.
+  await exec(`CREATE TABLE IF NOT EXISTS gc_expediente_forms (
+    form_id           TEXT PRIMARY KEY,
+    channel_id        INTEGER NOT NULL,
+    form_key          TEXT,
+    required          INTEGER NOT NULL DEFAULT 1,
+    submission_count  INTEGER NOT NULL DEFAULT 0,
+    last_submitted_at INTEGER
+  )`);
+  await exec(`CREATE INDEX IF NOT EXISTS gc_expediente_forms_chan ON gc_expediente_forms(channel_id)`);
+
   // Si algo falló (DB flapeando), LANZA → ensureSchema resetea `done` → reintento.
   if (fails.length) {
     throw new Error(`ensureSchema: ${fails.length} sentencia(s) fallaron, se reintentará: ${fails.join(" | ")}`);
