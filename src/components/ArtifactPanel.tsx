@@ -14,6 +14,7 @@ export type ArtifactView =
   | { kind: "image"; title: string; src: string }
   | { kind: "audio"; title: string; src: string }
   | { kind: "video"; title: string; src: string }
+  | { kind: "office"; title: string; src: string } // docx/xlsx/pptx → preview (visor) + descarga
   | { kind: "file"; title: string; src: string } // fallback genérico → descarga
   | { kind: "html"; title: string; embedUrl: string };
 
@@ -160,6 +161,36 @@ export default function ArtifactPanel({
                   <div className="grid min-h-full place-items-center p-4">
                     <video src={artifact.src} controls className="max-h-full max-w-full rounded-lg" />
                   </div>
+                ) : artifact.kind === "office" ? (
+                  // docx/xlsx/pptx: preview con el visor Office Online (renderiza el
+                  // archivo público inline, sin convertir) + barra de descarga. Requiere
+                  // URL pública (los generados van a easybits-public).
+                  /^https?:\/\//.test(artifact.src) ? (
+                    <div className="flex h-full flex-col">
+                      <iframe
+                        src={`https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(artifact.src)}`}
+                        title={artifact.title || "documento"}
+                        className="min-h-0 flex-1 border-0 bg-white"
+                      />
+                      <a
+                        href={artifact.src}
+                        target="_blank"
+                        rel="noreferrer"
+                        download
+                        className="flex shrink-0 items-center justify-center gap-2 border-t border-border bg-surface-2 py-2 text-sm font-medium text-brand transition hover:bg-surface-3"
+                      >
+                        <FileText size={15} /> {t("Descargar")}
+                      </a>
+                    </div>
+                  ) : (
+                    <div className="grid min-h-full place-items-center p-6">
+                      <a href={artifact.src} target="_blank" rel="noreferrer" download className="flex flex-col items-center gap-3 rounded-xl border border-border bg-surface px-8 py-10 text-center transition hover:border-brand">
+                        <FileText size={40} className="text-brand" />
+                        <span className="max-w-xs truncate text-sm text-ink">{artifact.title || t("Documento")}</span>
+                        <span className="text-xs text-muted">{t("Descargar")}</span>
+                      </a>
+                    </div>
+                  )
                 ) : artifact.kind === "file" ? (
                   <div className="grid min-h-full place-items-center p-6">
                     <a

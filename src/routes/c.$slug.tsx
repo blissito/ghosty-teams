@@ -2963,18 +2963,25 @@ function ArtifactCard({ artifact }: { artifact: Artifact }) {
   const t = useT();
   const { onOpenArtifact } = useContext(ChatCtx);
   const title = artifact.title ?? "";
-  const view: ArtifactView =
-    artifact.kind === "pdf"
-      ? { kind: "pdf", title, src: artifact.url }
-      : artifact.kind === "image"
-        ? { kind: "image", title, src: artifact.url }
-        : artifact.kind === "audio"
-          ? { kind: "audio", title, src: artifact.url }
-          : artifact.kind === "video"
-            ? { kind: "video", title, src: artifact.url }
-            : artifact.kind === "file"
-              ? { kind: "file", title, src: artifact.url }
-              : { kind: "html", title, embedUrl: artifact.url };
+  // Registro de kinds (patrón sólido: agregar un tipo = una entrada, no editar N
+  // switches). `embed` = va en iframe con embedUrl (editor colab); el resto comparte
+  // shape {kind, src:url}. `label` = subtítulo HONESTO de la card.
+  const KIND_META: Record<string, { embed?: boolean; label: string }> = {
+    html: { embed: true, label: t("Abrir para editar en vivo") },
+    office: { label: t("Vista previa · Descargar") },
+    pdf: { label: t("Vista previa") },
+    image: { label: t("Vista previa") },
+    audio: { label: t("Reproducir") },
+    video: { label: t("Reproducir") },
+    file: { label: t("Descargar") },
+  };
+  // Kind desconocido → cae a `file` (descarga segura), nunca a un iframe roto.
+  const resolvedKind = KIND_META[artifact.kind] ? artifact.kind : "file";
+  const meta = KIND_META[resolvedKind];
+  const view: ArtifactView = meta.embed
+    ? { kind: "html", title, embedUrl: artifact.url }
+    : ({ kind: resolvedKind, title, src: artifact.url } as ArtifactView);
+  const subtitle = meta.label;
   return (
     <button
       type="button"
@@ -2985,7 +2992,7 @@ function ArtifactCard({ artifact }: { artifact: Artifact }) {
       <FileText size={20} className="shrink-0 text-brand" />
       <span className="min-w-0 flex-1">
         <span className="block truncate text-sm text-ink">{artifact.title || t("Documento")}</span>
-        <span className="block text-[11px] text-muted">{t("Abrir para editar en vivo")}</span>
+        <span className="block text-[11px] text-muted">{subtitle}</span>
       </span>
     </button>
   );

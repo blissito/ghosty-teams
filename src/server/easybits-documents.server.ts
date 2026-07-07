@@ -40,11 +40,11 @@ export async function mintCollabEmbed(
 // Familias de media que el panel/card sabe renderizar. "file" = fallback genérico
 // (descarga) para cualquier MIME/extensión no reconocida → cubre "archivos de todo
 // tipo, no reconocidos, todo". Contrato: docs/AGENT-MEDIA-CONTRACT.md §2.
-export type FileKind = "pdf" | "image" | "audio" | "video" | "file";
+export type FileKind = "pdf" | "image" | "audio" | "video" | "office" | "file";
 
 export type DetectedArtifact =
   | { type: "doc"; slug?: string; documentId?: string }
-  | { type: "file"; url: string; kind: FileKind };
+  | { type: "file"; url: string; kind: FileKind; fmt?: string };
 
 // Clasifica un archivo crudo por su extensión → familia de render. Lo desconocido
 // cae a "file" (card de descarga), nunca se pierde.
@@ -72,6 +72,11 @@ export function detectArtifact(reply: string): DetectedArtifact | null {
   const mf = reply.match(/https?:\/\/[^\s)]*(?:t3\.storage\.dev|easybits-public)[^\s)]*/i);
   if (mf) {
     const url = mf[0].replace(/[.,)]+$/, "");
+    // La URL de upload_file NO trae extensión (`.../9i4`) → detectamos office por el
+    // filename que el agente menciona en el texto (ej. "Oficio …docx"). Se previsualiza
+    // con el visor Office Online (iframe) sin convertir.
+    const off = reply.match(/\.(docx|xlsx|pptx|odt|doc|xls|ppt)\b/i);
+    if (off) return { type: "file", url, kind: "office", fmt: off[1].toLowerCase() };
     return { type: "file", url, kind: fileKindFromUrl(url) };
   }
   return null;

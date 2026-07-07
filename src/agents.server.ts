@@ -236,17 +236,19 @@ export async function runAgentTurn(opts: {
   // por message:body (no append), así el flip ocurre CONFORME corre cada tool, no de
   // golpe. Una tool por línea (hard break `  \n` de markdown).
   const tools: { ing: string; done: string }[] = [];
+  // LISTA markdown real (`- `) → prose-ul da espaciado (no amontonado). ✅ verde para
+  // terminadas, ⏳ para la en-progreso. Se re-pinta entera por message:body al iniciar
+  // cada tool (flip conforme corre, no de golpe).
   const renderChecklist = (allDone: boolean): string =>
     tools
-      .map((tl, i) => (allDone || i < tools.length - 1 ? `✓ ${tl.done}` : `⚡ ${tl.ing}`))
-      .join("  \n");
+      .map((tl, i) => `- ${allDone || i < tools.length - 1 ? `✅ ${tl.done}` : `⏳ ${tl.ing}`}`)
+      .join("\n");
   const onTool = async (name: string) => {
     const label = toolLabel(name);
     if (!label) return; // no-semántica/plumbing → oculta
     tools.push(label);
-    // Re-pinta la lista: previas ✓, actual ⚡. Sin emitBody cae al append viejo.
     if (opts.emitBody) opts.emitBody(await ensure(), renderChecklist(false) + "\n\n");
-    else opts.emitDelta(await ensure(), `⚡ ${label.ing}  \n`);
+    else opts.emitDelta(await ensure(), `- ⏳ ${label.ing}\n`);
   };
 
   let reply: string;
