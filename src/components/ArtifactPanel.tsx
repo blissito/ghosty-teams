@@ -13,9 +13,11 @@ const OfficeViewer = lazy(async () => {
   const DocViewer = mod.default;
   const renderers = mod.DocViewerRenderers;
   return {
-    default: ({ src }: { src: string }) => (
+    // fileType explícito: la URL de upload_file NO trae extensión → sin esto el
+    // MSDocRenderer no matchea y se queda en spinner infinito.
+    default: ({ src, fileType }: { src: string; fileType?: string }) => (
       <DocViewer
-        documents={[{ uri: src }]}
+        documents={[{ uri: src, fileType }]}
         pluginRenderers={renderers}
         config={{ header: { disableHeader: true, disableFileName: true } }}
         className="size-full bg-white"
@@ -126,6 +128,9 @@ export default function ArtifactPanel({
   }, []);
 
   const externalHref = artifact && artifact.kind === "html" ? artifact.embedUrl : artifact?.src;
+  // Extensión del nombre (docx/xlsx/pptx/pdf) → fileType del visor office.
+  const officeExt =
+    artifact?.title?.match(/\.([a-z0-9]{2,5})$/i)?.[1]?.toLowerCase() || undefined;
 
   return (
     <AnimatePresence>
@@ -141,12 +146,17 @@ export default function ArtifactPanel({
             onClick={onClose}
           />
           <motion.aside
-            className="fixed right-0 top-0 z-50 flex h-full max-w-full border-l border-border bg-surface shadow-2xl md:relative md:z-auto md:h-auto md:max-w-[75vw] md:shrink-0 md:shadow-none md:self-stretch"
-            style={{ width }}
-            initial={{ x: "100%" }}
-            animate={{ x: 0 }}
-            exit={{ x: "100%" }}
-            transition={{ type: "spring", stiffness: 320, damping: 34 }}
+            className="fixed right-0 top-0 z-50 flex h-full max-w-full overflow-hidden border-l border-border bg-surface shadow-2xl md:relative md:z-auto md:h-auto md:max-w-[75vw] md:shrink-0 md:shadow-none md:self-stretch"
+            // Animamos el WIDTH (no x): en desktop el panel va en-flujo (flex child);
+            // con x el hueco flex quedaba reservado hasta el unmount → el chat saltaba
+            // de golpe al terminar el cierre. Animando width, el chat se expande/colapsa
+            // suave. Durante el resize (drag) la transición es instantánea para no lagear.
+            initial={{ width: 0 }}
+            animate={{ width }}
+            exit={{ width: 0 }}
+            transition={
+              isDragging ? { duration: 0 } : { type: "spring", stiffness: 320, damping: 34 }
+            }
           >
             {/* Handle de redimensión: arrastra el borde izquierdo; doble clic resetea. */}
             <div
@@ -171,7 +181,10 @@ export default function ArtifactPanel({
               <X size={13} />
             </button>
 
-            <div className="flex min-w-0 flex-1 flex-col">
+            {/* Ancho fijo = target: mientras el aside anima su width, este contenido
+                mantiene su tamaño y el overflow-hidden lo recorta → efecto slide/reveal
+                (no se aplasta). */}
+            <div className="flex min-w-0 shrink-0 flex-col" style={{ width }}>
               <header className="flex flex-shrink-0 items-center gap-2 border-b border-border bg-surface-2 px-3 py-2">
                 <FileText size={16} className="shrink-0 text-brand" />
                 <span className="min-w-0 flex-1 truncate text-sm font-medium text-ink">
@@ -229,7 +242,7 @@ export default function ArtifactPanel({
                             </div>
                           }
                         >
-                          <OfficeViewer src={artifact.src} />
+                          <OfficeViewer src={artifact.src} fileType={officeExt} />
                         </Suspense>
                       </div>
                       <div className="flex shrink-0 items-stretch border-t border-border bg-surface-2 text-sm font-medium">
