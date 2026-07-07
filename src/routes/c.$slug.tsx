@@ -2870,6 +2870,29 @@ function fmtBytes(n: number | null): string {
 }
 
 // Render de adjuntos (Fase 4): imágenes inline, resto como tarjeta con descarga.
+// Imagen del chat con skeleton (shimmer) mientras carga + fade-in al listo → mata el
+// pop-in feo. `decoding=async`+`loading=lazy` para no bloquear el hilo.
+function ChatImage({ src, alt }: { src: string; alt: string }) {
+  const [loaded, setLoaded] = useState(false);
+  return (
+    <span className="relative block overflow-hidden rounded-lg border border-border">
+      {!loaded && (
+        <span className="absolute inset-0 animate-pulse bg-surface-3" aria-hidden />
+      )}
+      <img
+        src={src}
+        alt={alt}
+        loading="lazy"
+        decoding="async"
+        onLoad={() => setLoaded(true)}
+        className={`max-h-72 max-w-full object-cover transition-opacity duration-300 ${
+          loaded ? "opacity-100" : "opacity-0"
+        }`}
+      />
+    </span>
+  );
+}
+
 // Todo pasa por el proxy autenticado /api/attachment/:fileId (re-firma readUrl).
 function AttachmentList({ attachments }: { attachments: Attachment[] }) {
   const t = useT();
@@ -2889,12 +2912,7 @@ function AttachmentList({ attachments }: { attachments: Attachment[] }) {
               className="block cursor-pointer"
               title={t("Abrir en panel")}
             >
-              <img
-                src={src}
-                alt={a.name ?? ""}
-                loading="lazy"
-                className="max-h-72 max-w-full rounded-lg border border-border object-cover"
-              />
+              <ChatImage src={src} alt={a.name ?? ""} />
             </button>
           );
         }
@@ -3492,6 +3510,10 @@ function Composer({
   const [body, setBody] = useState(() =>
     typeof window !== "undefined" ? localStorage.getItem(draftKey) ?? "" : ""
   );
+  // Indicador visual de arrastre de archivo sobre el composer (dragCounter evita el
+  // parpadeo por dragenter/leave de los hijos).
+  const [dragOver, setDragOver] = useState(false);
+  const dragCounter = useRef(0);
   // Recarga el borrador al cambiar de scope sin desmontar (p.ej. cambiar de room
   // en el Flow, que no se re-keya). Los paneles keyados (hilo/DM) ya remontan.
   useEffect(() => {
@@ -3613,7 +3635,7 @@ function Composer({
 
   return (
     <form
-      className="border-t border-border p-3"
+      className={`relative border-t p-3 transition-colors ${dragOver ? "border-brand bg-brand/5" : "border-border"}`}
       // Respeta la home-bar/notch en móvil (viewport-fit=cover): el composer no
       // queda tapado por el inset inferior.
       style={{ paddingBottom: "calc(0.75rem + env(safe-area-inset-bottom))" }}
@@ -3621,12 +3643,31 @@ function Composer({
         e.preventDefault();
         submit();
       }}
+      onDragEnter={(e) => {
+        e.preventDefault();
+        if (e.dataTransfer?.types?.includes("Files")) {
+          dragCounter.current += 1;
+          setDragOver(true);
+        }
+      }}
       onDragOver={(e) => e.preventDefault()}
+      onDragLeave={(e) => {
+        e.preventDefault();
+        dragCounter.current -= 1;
+        if (dragCounter.current <= 0) setDragOver(false);
+      }}
       onDrop={(e) => {
         e.preventDefault();
+        dragCounter.current = 0;
+        setDragOver(false);
         if (e.dataTransfer.files?.length) addFiles(e.dataTransfer.files);
       }}
     >
+      {dragOver && (
+        <div className="pointer-events-none absolute inset-1 z-10 flex items-center justify-center rounded-lg border-2 border-dashed border-brand bg-surface/80 text-sm font-medium text-brand backdrop-blur-sm">
+          {t("Suelta para adjuntar")}
+        </div>
+      )}
       {/* Chips de adjuntos (subiendo / listos / error). */}
       {pending.length > 0 && (
         <div className="mb-2 flex flex-wrap gap-2">
