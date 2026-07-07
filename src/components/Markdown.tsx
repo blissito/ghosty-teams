@@ -48,10 +48,12 @@ export function Markdown({
   body,
   artifactUrl,
   onOpenArtifact,
+  light,
 }: {
   body: string;
   artifactUrl?: string;
   onOpenArtifact?: () => void;
+  light?: boolean; // hoja clara (texto negro) para el draft del artefacto
 }) {
   const withLinks: Components = {
     ...components,
@@ -79,8 +81,11 @@ export function Markdown({
       );
     },
   };
+  const cls = light
+    ? "prose prose-sm max-w-none break-words text-black leading-relaxed prose-headings:font-semibold prose-headings:text-black prose-p:my-2 prose-a:text-brand prose-strong:text-black"
+    : "prose prose-sm prose-invert max-w-none break-words text-ink leading-relaxed prose-p:my-2 prose-p:leading-relaxed prose-headings:mb-1 prose-headings:mt-3 prose-headings:font-semibold prose-pre:my-2 prose-pre:bg-surface-3 prose-code:rounded prose-code:bg-surface-3 prose-code:px-1 prose-code:before:content-none prose-code:after:content-none prose-ul:my-2 prose-ol:my-2 prose-li:my-1 prose-li:leading-relaxed prose-a:text-brand prose-strong:text-ink prose-hr:my-3";
   return (
-    <div className="prose prose-sm prose-invert max-w-none break-words text-ink leading-relaxed prose-p:my-2 prose-p:leading-relaxed prose-headings:mb-1 prose-headings:mt-3 prose-headings:font-semibold prose-pre:my-2 prose-pre:bg-surface-3 prose-code:rounded prose-code:bg-surface-3 prose-code:px-1 prose-code:before:content-none prose-code:after:content-none prose-ul:my-2 prose-ol:my-2 prose-li:my-1 prose-li:leading-relaxed prose-a:text-brand prose-strong:text-ink prose-hr:my-3">
+    <div className={cls}>
       <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeSanitize]} components={withLinks}>
         {body}
       </ReactMarkdown>

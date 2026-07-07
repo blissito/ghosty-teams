@@ -455,7 +455,25 @@ export const askAgent = createServerFn({ method: "POST" })
     // abre el panel del room. Best-effort: si algo falla, el mensaje queda normal.
     // (Slice 3 del contrato: reemplazar este scraping por eventos artifact del SSE.)
     try {
-      const { detectArtifact, mintCollabEmbed, resolveFileKind } = await import("./easybits-documents.server");
+      const { detectArtifact, mintCollabEmbed, resolveFileKind, mdToDocx } = await import("./easybits-documents.server");
+      const { extractEbDoc, draftTitle, bubbleWithoutEbDoc } = await import("../lib/ebdoc");
+
+      // OLA 2 — artefacto en vivo: si el reply trae un ```eb-doc```, el agente redactó
+      // un doc de prosa en markdown (streameado al panel). Lo compilamos a .docx, limpiamos
+      // el fence del body persistido y colgamos el artefacto (el cliente hace swap del draft).
+      const ebdoc = extractEbDoc(reply);
+      if (ebdoc?.closed && ebdoc.md.trim()) {
+        const cleaned = bubbleWithoutEbDoc(reply);
+        await db.setMessageBody(id, cleaned);
+        bus.publish(bus.ch.room(channel.id), { t: "message:body", id, body: cleaned });
+        const doc = await mdToDocx(ebdoc.md, draftTitle(ebdoc.md));
+        if (doc) {
+          await db.createArtifact(id, { kind: "office", url: doc.fileUrl, title: doc.title });
+          bus.publish(bus.ch.room(channel.id), { t: "refresh", channelId: channel.id, parentId: data.parentId });
+        }
+        return { ok: true as const };
+      }
+
       const found = detectArtifact(reply);
       if (found?.type === "doc") {
         // Doc EasyBits → editor colaborativo embebido (co-edición en vivo).

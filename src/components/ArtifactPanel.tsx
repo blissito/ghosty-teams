@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { X, ExternalLink, FileText, Pencil, Download, Loader2 } from "lucide-react";
 import { useT } from "../i18n";
 import { officeToEditableFn, officeToHtmlFn } from "../server/chat";
+import { Markdown } from "./Markdown";
 
 // Panel lateral de artefactos del room. Fase 0 = visor PDF/imagen (adjuntos).
 // Fase 3 añadirá kind:"html" (editor Tiptap embebido / colab). El panel es
@@ -17,7 +18,8 @@ export type ArtifactView =
   | { kind: "video"; title: string; src: string }
   | { kind: "office"; title: string; src: string } // docx/xlsx/pptx → preview (visor) + descarga
   | { kind: "file"; title: string; src: string } // fallback genérico → descarga
-  | { kind: "html"; title: string; embedUrl: string };
+  | { kind: "html"; title: string; embedUrl: string }
+  | { kind: "draft"; title: string; md: string; streaming?: boolean }; // redacción en vivo (Canvas)
 
 // Mapea un adjunto a una vista de artefacto previsualizable en el panel. Devuelve
 // null solo para lo no-previsualizable (se queda como card de descarga en la lista).
@@ -135,7 +137,12 @@ export default function ArtifactPanel({
     };
   }, []);
 
-  const externalHref = artifact && artifact.kind === "html" ? artifact.embedUrl : artifact?.src;
+  const externalHref =
+    !artifact || artifact.kind === "draft"
+      ? undefined
+      : artifact.kind === "html"
+        ? artifact.embedUrl
+        : artifact.src;
 
   return (
     <AnimatePresence>
@@ -195,15 +202,17 @@ export default function ArtifactPanel({
                 <span className="min-w-0 flex-1 truncate text-sm font-medium text-ink">
                   {artifact.title || t("Documento")}
                 </span>
-                <a
-                  href={externalHref}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="grid size-7 place-items-center rounded-md text-muted transition hover:bg-surface-3 hover:text-brand"
-                  title={t("Abrir en pestaña nueva")}
-                >
-                  <ExternalLink size={15} />
-                </a>
+                {externalHref ? (
+                  <a
+                    href={externalHref}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="grid size-7 place-items-center rounded-md text-muted transition hover:bg-surface-3 hover:text-brand"
+                    title={t("Abrir en pestaña nueva")}
+                  >
+                    <ExternalLink size={15} />
+                  </a>
+                ) : null}
                 <button
                   type="button"
                   onClick={onClose}
@@ -215,7 +224,18 @@ export default function ArtifactPanel({
               </header>
 
               <div className="relative min-h-0 flex-1 overflow-auto bg-surface-3">
-                {artifact.kind === "image" ? (
+                {artifact.kind === "draft" ? (
+                  // Redacción EN VIVO (Canvas): el markdown streamea a la hoja mientras
+                  // el agente escribe; al terminar se reemplaza por el .docx real.
+                  <div className="min-h-0 flex-1 overflow-auto bg-surface-3 p-4 sm:p-6">
+                    <article className="mx-auto max-w-[8.5in] rounded-sm bg-white p-10 shadow-md sm:p-14">
+                      <Markdown body={artifact.md} light />
+                      {artifact.streaming ? (
+                        <span className="mt-1 inline-block h-4 w-[3px] animate-pulse bg-brand align-text-bottom" />
+                      ) : null}
+                    </article>
+                  </div>
+                ) : artifact.kind === "image" ? (
                   <div className="grid min-h-full place-items-center p-4">
                     <img
                       src={artifact.src}

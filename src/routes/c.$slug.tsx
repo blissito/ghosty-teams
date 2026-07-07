@@ -67,6 +67,7 @@ import { useLiveStream } from "../hooks/useLiveStream";
 import type { RtEvent } from "../server/bus.server";
 import { Markdown } from "../components/Markdown";
 import ArtifactPanel, { type ArtifactView, viewFromAttachment } from "../components/ArtifactPanel";
+import { extractEbDoc, draftTitle, bubbleWithoutEbDoc } from "../lib/ebdoc";
 import { playNotificationSound, playGhostySound, playSelfSound, playMentionSound, playDmSound } from "../utils/notificationSound";
 
 // Menciones que cuentan como "a ti": tu @handle o una grupal (@all/@channel/…).
@@ -534,6 +535,54 @@ function ChannelPage() {
     applyPatch();
   };
 
+  // ── Artefacto en vivo (Canvas / OLA 2) ───────────────────────────────────────
+  // Cuando el agente redacta un doc dentro de ```eb-doc```, el fence llega por los
+  // deltas del mensaje; lo streameamos al panel (kind:"draft") y, al cerrarse, el
+  // server compila el .docx y lo cuelga del mensaje → swap del draft al doc real.
+  const draftMsgIdRef = useRef<number | null>(null);
+  const findMessageInCaches = (id: number): Message | undefined => {
+    for (const arr of flowCache.values()) {
+      const m = arr.find((x) => x.id === id);
+      if (m) return m;
+    }
+    for (const t of threadCache.values()) {
+      if (t.root?.id === id) return t.root;
+      const m = t.replies.find((x) => x.id === id);
+      if (m) return m;
+    }
+    for (const arr of dmFlowCache.values()) {
+      const m = arr.find((x) => x.id === id);
+      if (m) return m;
+    }
+    return undefined;
+  };
+  const driveDraftFromBody = (id: number, body: string) => {
+    const doc = extractEbDoc(body);
+    if (!doc || !doc.md.trim()) return;
+    draftMsgIdRef.current = id;
+    setOpenArtifact((cur) => {
+      // Auto-abre si no hay panel o si ya estamos en el draft; NO pisa un artefacto
+      // que el usuario abrió aparte.
+      if (cur && cur.kind !== "draft") return cur;
+      return { kind: "draft", title: draftTitle(doc.md), md: doc.md, streaming: !doc.closed };
+    });
+  };
+  // Al cerrarse el fence, el server produce el .docx (refresh → refetch cuelga el
+  // artifact). Poll acotado sobre las caches → swap del draft al doc real.
+  const scheduleDraftSwap = (id: number) => {
+    let tries = 0;
+    const tick = () => {
+      const m = findMessageInCaches(id);
+      if (m?.artifact) {
+        setOpenArtifact((cur) => (cur?.kind === "draft" ? artifactToView(m.artifact!) : cur));
+        draftMsgIdRef.current = null;
+        return;
+      }
+      if (++tries < 12) setTimeout(tick, 500);
+    };
+    setTimeout(tick, 500);
+  };
+
   // Reacción OPTIMISTA: parchea la cache al instante (el chip aparece/desaparece
   // sin esperar red) y dispara el server; el eco realtime confirma el count
   // autoritativo. Si el server falla, revalida para reconciliar.
@@ -699,15 +748,26 @@ function ChannelPage() {
       case "message:edited":
         patchMessage(ev.id, (m) => ({ ...m, body: ev.body, edited_at: ev.edited_at }));
         break;
-      case "message:delta":
+      case "message:delta": {
         // Streaming del reply de un agente, pedacito a pedacito: appendea el chunk
         // al body del mensaje-cáscara ya visible.
-        patchMessage(ev.id, (m) => ({ ...m, body: (m.body ?? "") + ev.chunk }));
+        let nb = "";
+        patchMessage(ev.id, (m) => {
+          nb = (m.body ?? "") + ev.chunk;
+          return { ...m, body: nb };
+        });
+        driveDraftFromBody(ev.id, nb); // artefacto en vivo si hay ```eb-doc```
         break;
-      case "message:body":
+      }
+      case "message:body": {
         // Body autoritativo al terminar el stream (reconcilia deltas perdidos).
         patchMessage(ev.id, (m) => ({ ...m, body: ev.body }));
+        driveDraftFromBody(ev.id, ev.body);
+        // Fence cerrado → el server compila el .docx; swap del draft al doc real.
+        const doc = extractEbDoc(ev.body);
+        if (doc?.closed) scheduleDraftSwap(ev.id);
         break;
+      }
       case "refresh":
         // Churn de agente/status (room o DM) → refetch del contexto activo (rev).
         if (ev.channelId === channel.id || ev.dmId != null) revalidate();
@@ -3128,7 +3188,7 @@ function MessageRow({
           m.body ? (
             <div className="text-sm text-ink">
               <Markdown
-                body={m.body}
+                body={bubbleWithoutEbDoc(m.body)}
                 artifactUrl={m.artifact?.url}
                 onOpenArtifact={m.artifact ? () => onOpenArtifact(artifactToView(m.artifact!)) : undefined}
               />

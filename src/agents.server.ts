@@ -93,6 +93,18 @@ export function detectMentions(body: string, handles: string[]): string[] {
   return hits.sort((a, b) => a.idx - b.idx).map((x) => x.handle);
 }
 
+// Artefacto en vivo (OLA 2): instrucción per-turno SOLO para el canal Teams/web (que
+// tiene panel de artefacto). Para docs de PROSA simple el agente redacta el markdown
+// dentro de ```eb-doc``` (se streamea al panel) en vez de llamar a un skill de docx →
+// la plataforma lo compila a .docx. Docs con membrete/tablas/slides/PDF con diseño
+// siguen los skills normales (NO el bloque).
+const EB_DOC_STREAM_GUARDRAIL = [
+  "REDACCIÓN EN VIVO (canal Teams/web): cuando el usuario pida un DOCUMENTO DE PROSA simple —carta, oficio, memo, circular, contrato, convenio, dictamen, nota, minuta— SIN membrete institucional ni tablas complejas, NO llames a un skill de docx ni a upload_file para ese documento.",
+  "En su lugar, escribe el documento COMPLETO como Markdown DENTRO de un bloque cercado que abre con ```eb-doc y cierra con ``` — se muestra redactándose EN VIVO en el panel y la plataforma lo compila a un .docx editable automáticamente al terminar.",
+  "Fuera del bloque, solo UNA frase breve de contexto (no repitas el contenido). Usa headings (#, ##), listas y **negritas** normales de Markdown dentro del bloque.",
+  "EXCEPCIÓN: documentos CON membrete de marca, tablas/hojas de cálculo (xlsx), presentaciones (pptx) o PDFs con diseño → usa los skills normales, NO el bloque eb-doc.",
+].join(" ");
+
 // Streaming (first-class): llama al backend y emite la respuesta pedacito a
 // pedacito por `onChunk`, devolviendo el texto final (autoritativo). Hoy solo el
 // backend fleet expone SSE (EasyBits /message-stream: `chunk`/`done`/`error`); el
@@ -125,7 +137,14 @@ export async function callAgentBackendStream(
       // configGroupId "teams" = unidad de config ESTABLE de este canal en EasyBits
       // (tools + comportamiento por-Teams via groupConfigs["teams"]); sin él la config
       // caería por-conversación (groupId) → solo el default del agente.
-      body: JSON.stringify({ groupId, configGroupId: "teams", sender: sender || "invitado", text: outText, parts }),
+      body: JSON.stringify({
+        groupId,
+        configGroupId: "teams",
+        sender: sender || "invitado",
+        text: outText,
+        parts,
+        appendSystemPrompt: EB_DOC_STREAM_GUARDRAIL,
+      }),
     });
     if (!res.ok || !res.body) throw new Error(`fleet-stream ${res.status}: ${await res.text().catch(() => "")}`);
     // Parseo SSE: acumula por líneas `data: {json}`. `done.value` es el reply
@@ -341,7 +360,14 @@ export async function callAgentBackend(
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${agent.backend.token}` },
       // configGroupId "teams" = unidad de config estable del canal (ver message-stream).
-      body: JSON.stringify({ groupId, configGroupId: "teams", sender: sender || "invitado", text: outText, parts }),
+      body: JSON.stringify({
+        groupId,
+        configGroupId: "teams",
+        sender: sender || "invitado",
+        text: outText,
+        parts,
+        appendSystemPrompt: EB_DOC_STREAM_GUARDRAIL,
+      }),
     });
     if (!res.ok) throw new Error(`fleet ${res.status}: ${await res.text()}`);
     return ((await res.json()) as { reply?: string }).reply ?? "(sin respuesta)";

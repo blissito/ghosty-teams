@@ -66,6 +66,26 @@ export async function officeToHtml(url: string): Promise<string | null> {
   }
 }
 
+// Compila el markdown de un ```eb-doc``` a un .docx (endpoint md-to-docx de EasyBits) y
+// devuelve {fileUrl,title} o null. Es el "commit" del streaming en vivo del artefacto.
+export async function mdToDocx(
+  markdown: string,
+  title?: string
+): Promise<{ fileUrl: string; title: string } | null> {
+  try {
+    const res = await ebFetch(`/api/v2/documents/md-to-docx`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ markdown, title }),
+    });
+    if (!res.ok) return null;
+    const j = (await res.json()) as { ok?: boolean; fileUrl?: string; title?: string };
+    return j.ok && j.fileUrl ? { fileUrl: j.fileUrl, title: j.title ?? title ?? "Documento" } : null;
+  } catch {
+    return null;
+  }
+}
+
 // Detecta un artefacto en el texto del reply del agente. Dos formas:
 //   - DOC EasyBits (easybits.cloud/s/<slug> o <slug>.easybits.cloud) → co-edición
 //     (se resuelve a link colab embebible vía mintCollabEmbed).
