@@ -154,6 +154,19 @@ async function migrate(): Promise<void> {
     created_at INTEGER NOT NULL DEFAULT (unixepoch())
   )`);
 
+  // Artefactos: doc/pdf/imagen que el agente PRODUCE y se abren en el panel del
+  // room (no son adjuntos subidos por el user → tabla aparte). 1 por mensaje del
+  // agente. url = enlace público openable en iframe; kind gatea el modo del panel.
+  await exec(`CREATE TABLE IF NOT EXISTS gc_artifacts (
+    id         INTEGER PRIMARY KEY,
+    message_id INTEGER NOT NULL,
+    kind       TEXT NOT NULL,
+    url        TEXT NOT NULL,
+    title      TEXT,
+    created_at INTEGER NOT NULL DEFAULT (unixepoch())
+  )`);
+  await exec(`CREATE INDEX IF NOT EXISTS gc_artifacts_msg ON gc_artifacts(message_id)`);
+
   // Si algo falló (DB flapeando), LANZA → ensureSchema resetea `done` → reintento.
   if (fails.length) {
     throw new Error(`ensureSchema: ${fails.length} sentencia(s) fallaron, se reintentará: ${fails.join(" | ")}`);

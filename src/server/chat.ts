@@ -393,11 +393,25 @@ export const askAgent = createServerFn({ method: "POST" })
     }
     await db.clearStatus(channel.id, data.parentId, data.handle); // solo el mío (multi-agente)
     const { id: replyId } = await db.postAgent(channel.id, data.parentId, reply, "msg", data.handle, name, topic ?? "general", agent?.avatar ?? "");
+    // Si el reply referencia un documento EasyBits, lo volvemos ARTEFACTO: minteamos
+    // el editor colab embebible y lo colgamos del mensaje → aparece como card que
+    // abre el panel del room. Best-effort: si algo falla, el mensaje queda normal.
+    try {
+      const { detectDocRef, mintCollabEmbed } = await import("./easybits-documents.server");
+      const ref = detectDocRef(reply);
+      if (ref) {
+        const embed = await mintCollabEmbed(ref);
+        if (embed) await db.createArtifact(replyId, { kind: "html", url: embed.embedUrl, title: embed.title });
+      }
+    } catch (e) {
+      console.error("[artifact] detect/mint failed", e);
+    }
     // La respuesta del agente se publica como message:new → suena (Ghosty), suma
     // unread y aparece en vivo. Su handler en el cliente ya revalida (borra el
     // "pensando…"). El nonce va vacío: nadie tiene un optimista del reply del agente.
     const bus = await import("./bus.server");
-    const created = await db.getMessage(replyId);
+    let created = await db.getMessage(replyId);
+    if (created) [created] = await db.attachArtifacts([created]); // que el evento en vivo ya traiga la card
     if (created) bus.publish(bus.ch.room(channel.id), { t: "message:new", msg: created });
     else bus.publish(bus.ch.room(channel.id), { t: "refresh", channelId: channel.id, parentId: data.parentId });
     return { ok: true as const };

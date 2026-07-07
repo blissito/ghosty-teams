@@ -60,7 +60,7 @@ export async function refreshOwnerToken(): Promise<string | null> {
 // fetch a EasyBits con Bearer. Escalera ante 401: (1) refresca el token del owner
 // y reintenta (los OAuth caducan); (2) si sigue 401, cae al EASYBITS_API_KEY
 // global (por si el scope "mcp" del owner no cubre Files) — el path probado de Formmy.
-async function ebFetch(path: string, init: RequestInit): Promise<Response> {
+export async function ebFetch(path: string, init: RequestInit): Promise<Response> {
   const token = await currentToken();
   if (!token) throw new Error("easybits: sin token (ni eb_access_token ni EASYBITS_API_KEY)");
   const call = (tk: string) =>

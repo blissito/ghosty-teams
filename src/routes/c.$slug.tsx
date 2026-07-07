@@ -42,7 +42,7 @@ import {
 } from "lucide-react";
 import { searchMessagesFn } from "../server/search";
 import { createFileRoute, notFound, Link, useRouter } from "@tanstack/react-router";
-import type { Channel, Message, DmConversation, RoomHit, ViewHit, Attachment, CustomEmoji } from "../db.server";
+import type { Channel, Message, DmConversation, RoomHit, ViewHit, Attachment, Artifact, CustomEmoji } from "../db.server";
 import { listEmojisFn } from "../server/emojis";
 import { recentViewFn, mentionsViewFn, starredViewFn } from "../server/views";
 import { openDmFn, listDmsFn, getDmFlowFn, postDmMessageFn, askDmAgentFn } from "../server/dm";
@@ -2886,6 +2886,33 @@ function AttachmentList({ attachments }: { attachments: Attachment[] }) {
   );
 }
 
+// Card del ARTEFACTO que produjo el agente (doc/pdf). Clic → abre en el panel del
+// room (co-edición en vivo si kind:"html"). Mapea el Artifact de la DB a la vista.
+function ArtifactCard({ artifact }: { artifact: Artifact }) {
+  const t = useT();
+  const { onOpenArtifact } = useContext(ChatCtx);
+  const view: ArtifactView =
+    artifact.kind === "pdf"
+      ? { kind: "pdf", title: artifact.title ?? "", src: artifact.url }
+      : artifact.kind === "image"
+        ? { kind: "image", title: artifact.title ?? "", src: artifact.url }
+        : { kind: "html", title: artifact.title ?? "", embedUrl: artifact.url };
+  return (
+    <button
+      type="button"
+      onClick={() => onOpenArtifact(view)}
+      className="group mt-1.5 flex max-w-sm items-center gap-2.5 rounded-lg border border-border bg-surface-2 px-3 py-2 text-left transition hover:border-brand"
+      title={t("Abrir en el panel")}
+    >
+      <FileText size={20} className="shrink-0 text-brand" />
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-sm text-ink">{artifact.title || t("Documento")}</span>
+        <span className="block text-[11px] text-muted">{t("Abrir para editar en vivo")}</span>
+      </span>
+    </button>
+  );
+}
+
 function MessageRow({
   m,
   onOpenThread,
@@ -2987,6 +3014,7 @@ function MessageRow({
           ) : null
         )}
         {m.attachments && m.attachments.length > 0 && <AttachmentList attachments={m.attachments} />}
+        {m.artifact && <ArtifactCard artifact={m.artifact} />}
         {canReact && (m.reactions?.length ?? 0) > 0 && <ReactionBar m={m} />}
         {showThreadLink && onOpenThread && (
           <div className="mt-1 flex items-center gap-3 text-xs">

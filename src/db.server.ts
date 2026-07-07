@@ -57,6 +57,7 @@ export type Message = {
   starred?: boolean; // marcado por el usuario actual (personal)
   pinned?: boolean;  // fijado en su room (visible para todos)
   attachments?: Attachment[]; // adjuntos (EasyBits), Fase 4
+  artifact?: Artifact | null; // doc/pdf que PRODUCE el agente (abre en el panel)
 };
 
 export type Attachment = {
@@ -65,6 +66,15 @@ export type Attachment = {
   mime: string | null;
   size: number | null;
   name: string | null;
+};
+
+// Artefacto: doc/pdf/imagen que el agente genera y se abre en el panel del room.
+// kind gatea el modo del panel: "html" (editor colab embebido), "pdf", "image".
+export type Artifact = {
+  id: number;
+  kind: string;
+  url: string;
+  title: string | null;
 };
 
 export const GHOSTY_RE = /@ghosty\b/i;
@@ -246,9 +256,44 @@ export async function attachmentFileIds(messageId: number): Promise<string[]> {
   return rows.map((r) => r.file_id!);
 }
 
-// Enriquece un lote con TODO lo de display: reacciones + star/pin + adjuntos (≤4 queries).
+// Adjunta el artefacto (doc/pdf del agente) de cada mensaje en un lote (1 query).
+export async function attachArtifacts(msgs: Message[]): Promise<Message[]> {
+  if (!msgs.length) return msgs;
+  const ids = msgs.map((m) => m.id);
+  const ph = ids.map(() => "?").join(",");
+  const rows = await dbq(
+    `SELECT id, message_id, kind, url, title FROM gc_artifacts
+      WHERE message_id IN (${ph}) ORDER BY id`,
+    ids
+  );
+  if (!rows.length) return msgs;
+  const byMsg = new Map<number, Artifact>();
+  for (const r of rows) {
+    // 1 artefacto por mensaje (el último gana si hubiera varios).
+    byMsg.set(num(r.message_id), {
+      id: num(r.id),
+      kind: r.kind!,
+      url: r.url!,
+      title: r.title ?? null,
+    });
+  }
+  return msgs.map((m) => (byMsg.has(m.id) ? { ...m, artifact: byMsg.get(m.id) } : m));
+}
+
+// Inserta el artefacto de un mensaje del agente.
+export async function createArtifact(
+  messageId: number,
+  a: { kind: string; url: string; title?: string | null }
+): Promise<void> {
+  await dbq(
+    `INSERT INTO gc_artifacts (message_id, kind, url, title) VALUES (?, ?, ?, ?)`,
+    [messageId, a.kind, a.url, a.title ?? null]
+  );
+}
+
+// Enriquece un lote con TODO lo de display: reacciones + star/pin + adjuntos + artefacto.
 export async function attachMeta(msgs: Message[], userSub: string): Promise<Message[]> {
-  return attachAttachments(await attachStarPin(await attachReactions(msgs, userSub), userSub));
+  return attachArtifacts(await attachAttachments(await attachStarPin(await attachReactions(msgs, userSub), userSub)));
 }
 
 // ── VIEWS (Fase 2.1): inbox/recent/mentions/starred ─────────────────────────
