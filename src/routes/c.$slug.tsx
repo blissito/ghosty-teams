@@ -3051,6 +3051,11 @@ function MessageRow({
           <span className={`text-sm font-semibold ${isAgent ? "text-brand" : "text-ink"}`}>
             {displayName}
           </span>
+          {isAgent ? (
+            <span className="rounded bg-brand/15 px-1 py-px text-[9px] font-bold uppercase leading-none tracking-wide text-brand">
+              {t("Agente")}
+            </span>
+          ) : null}
           <span className="text-[11px] text-muted">{time}</span>
           {m.edited_at ? <span className="text-[11px] text-muted">{t("(editado)")}</span> : null}
           {m.pinned ? (

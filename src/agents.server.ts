@@ -177,33 +177,37 @@ export async function callAgentBackendStream(
 // El caller provee cómo crear la cáscara y cómo emitir deltas (room=ch.room,
 // DM=per-miembro ch.user). Devuelve {id, reply}; el caller persiste el body final.
 // Contrato: docs/AGENT-MEDIA-CONTRACT.md §1.2.
-// Nombre crudo de una tool (ej. `mcp__easybits__create_document`, `Bash`) → etiqueta
-// humana en pasado para el checklist ✓ (estilo Claude). Fallback: quita el prefijo
-// `mcp__<srv>__` y humaniza el snake_case.
-function toolLabel(raw: string): string {
-  const map: Record<string, string> = {
-    create_document: "Creó el documento",
-    structured_doc: "Generó el documento",
-    set_section_html: "Editó el documento",
-    update_document: "Editó el documento",
-    clone_document: "Clonó el documento",
-    apply_brand_kit: "Aplicó la marca",
-    create_or_edit_image: "Editó una imagen",
-    edit_image: "Editó una imagen",
-    upload_file: "Subió un archivo",
-    create_share_link: "Generó un link para compartir",
-    render_url: "Renderizó a PDF",
-    render_html: "Renderizó a PDF",
-    office_to_pdf: "Convirtió a PDF",
-    Bash: "Ejecutó un comando",
-    WebSearch: "Buscó en la web",
-    WebFetch: "Leyó una página web",
-  };
-  const short = raw.replace(/^mcp__[^_]+(?:__)?/, "").replace(/^mcp__/, "");
-  if (map[raw]) return map[raw];
-  if (map[short]) return map[short];
-  const words = short.replace(/_/g, " ").trim();
-  return words ? words.charAt(0).toUpperCase() + words.slice(1) : raw;
+// Labels SEMÁNTICOS (whitelist): un tool crudo → {ing: gerundio en-progreso, done:
+// pasado}. Solo acciones SIGNIFICATIVAS para el usuario aparecen en el checklist —
+// lo demás (lecturas get_/list_, ToolSearch, TodoWrite, plumbing) devuelve null y NO
+// se muestra (ruido). Estilo Claude: "Creó el documento", no "Set page html".
+const TOOL_LABELS: Record<string, { ing: string; done: string }> = {
+  create_document: { ing: "Creando el documento", done: "Creó el documento" },
+  structured_doc: { ing: "Generando el documento", done: "Generó el documento" },
+  set_section_html: { ing: "Editando el documento", done: "Editó el documento" },
+  set_page_html: { ing: "Editando el documento", done: "Editó el documento" },
+  update_document: { ing: "Editando el documento", done: "Editó el documento" },
+  insert_page: { ing: "Agregando una página", done: "Agregó una página" },
+  reorder_pages: { ing: "Reordenando páginas", done: "Reordenó las páginas" },
+  clone_document: { ing: "Clonando el documento", done: "Clonó el documento" },
+  apply_brand_kit: { ing: "Aplicando la marca", done: "Aplicó la marca" },
+  change_document_format: { ing: "Cambiando el formato", done: "Cambió el formato" },
+  create_or_edit_image: { ing: "Editando una imagen", done: "Editó una imagen" },
+  edit_image: { ing: "Editando una imagen", done: "Editó una imagen" },
+  upload_file: { ing: "Subiendo un archivo", done: "Subió un archivo" },
+  create_share_link: { ing: "Generando el link", done: "Generó un link para compartir" },
+  render_url: { ing: "Renderizando a PDF", done: "Renderizó a PDF" },
+  render_html: { ing: "Renderizando a PDF", done: "Renderizó a PDF" },
+  office_to_pdf: { ing: "Convirtiendo a PDF", done: "Convirtió a PDF" },
+  deploy_document: { ing: "Publicando el documento", done: "Publicó el documento" },
+  create_website: { ing: "Creando el sitio", done: "Creó el sitio" },
+  WebSearch: { ing: "Buscando en la web", done: "Buscó en la web" },
+};
+
+function toolLabel(raw: string): { ing: string; done: string } | null {
+  const short = raw.replace(/^mcp__[^_]+__/, "").replace(/^mcp__/, "");
+  // Solo whitelist: si no tiene label semántico, es ruido → no se muestra.
+  return TOOL_LABELS[raw] || TOOL_LABELS[short] || null;
 }
 
 export async function runAgentTurn(opts: {
@@ -215,6 +219,9 @@ export async function runAgentTurn(opts: {
   parts?: MediaPart[];
   createShell: () => Promise<number>; // limpia status, postea cáscara, publica message:new, devuelve id
   emitDelta: (id: number, chunk: string) => void;
+  // Reemplaza el body completo (no append). Para el checklist incremental: al iniciar
+  // una tool, las previas pasan a ✓ y la nueva queda ⚡ → se re-pinta la lista entera.
+  emitBody?: (id: number, body: string) => void;
 }): Promise<{ id: number; reply: string }> {
   let id: number | null = null;
   const ensure = async (): Promise<number> => {
@@ -224,14 +231,22 @@ export async function runAgentTurn(opts: {
   const onChunk = async (chunk: string) => {
     opts.emitDelta(await ensure(), chunk);
   };
-  // Checklist de tools (estilo Claude): en VIVO se pinta `⚡ <acción>` por delta; al
-  // final se PERSISTE como bloque ✓ legible ANTES del reply (setMessageBody lo asienta).
-  // Acumula labels únicos en orden de uso.
-  const doneTools: string[] = [];
+  // Checklist de tools (estilo Claude), INCREMENTAL: al iniciar la tool N, las N-1
+  // previas quedan ✓ (pasado) y la N queda ⚡ (gerundio) → se re-pinta la lista entera
+  // por message:body (no append), así el flip ocurre CONFORME corre cada tool, no de
+  // golpe. Una tool por línea (hard break `  \n` de markdown).
+  const tools: { ing: string; done: string }[] = [];
+  const renderChecklist = (allDone: boolean): string =>
+    tools
+      .map((tl, i) => (allDone || i < tools.length - 1 ? `✓ ${tl.done}` : `⚡ ${tl.ing}`))
+      .join("  \n");
   const onTool = async (name: string) => {
     const label = toolLabel(name);
-    if (!doneTools.includes(label)) doneTools.push(label);
-    opts.emitDelta(await ensure(), `⚡ ${label}\n`);
+    if (!label) return; // no-semántica/plumbing → oculta
+    tools.push(label);
+    // Re-pinta la lista: previas ✓, actual ⚡. Sin emitBody cae al append viejo.
+    if (opts.emitBody) opts.emitBody(await ensure(), renderChecklist(false) + "\n\n");
+    else opts.emitDelta(await ensure(), `⚡ ${label.ing}  \n`);
   };
 
   let reply: string;
@@ -242,9 +257,8 @@ export async function runAgentTurn(opts: {
     reply = await callAgentBackendStream(opts.agent, opts.groupId, opts.sender, opts.text, onChunk, opts.parts ?? [], onTool);
   }
   if (!reply) reply = "(sin respuesta)";
-  // Prepende el checklist ✓ persistente (solo si hubo tools). Queda en el body →
-  // sobrevive el reemplazo por message:body y el catch-up por cursor.
-  const checklist = doneTools.length ? doneTools.map((t) => `✓ ${t}`).join("\n") + "\n\n" : "";
+  // Checklist final: TODAS ✓ (pasado). Queda en el body → persiste + catch-up por cursor.
+  const checklist = tools.length ? renderChecklist(true) + "\n\n" : "";
   return { id: await ensure(), reply: checklist + reply };
 }
 

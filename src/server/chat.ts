@@ -420,6 +420,9 @@ export const askAgent = createServerFn({ method: "POST" })
       },
       emitDelta: (mid, chunk) =>
         bus.publish(bus.ch.room(channel.id), { t: "message:delta", id: mid, chunk, channelId: channel.id, parentId: data.parentId }),
+      // Checklist incremental: reemplaza el body con la lista re-pintada (previas ✓, actual ⚡).
+      emitBody: (mid, body) =>
+        bus.publish(bus.ch.room(channel.id), { t: "message:body", id: mid, body }),
     });
 
     // Persiste el body final (autoritativo, sin marcar "editado") y reconcilia por si

@@ -174,6 +174,7 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
         return id;
       },
       emitDelta: (mid, chunk) => fanout({ t: "message:delta", id: mid, chunk, channelId: null, parentId: null, dmId: data.id }),
+      emitBody: (mid, body) => fanout({ t: "message:body", id: mid, body }),
     });
 
     await db.setMessageBody(id, reply);
