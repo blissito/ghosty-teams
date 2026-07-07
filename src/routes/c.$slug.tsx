@@ -1168,7 +1168,14 @@ function ThreadRow({
     }
   };
   return (
-    <li className="group/thr flex items-center">
+    <motion.li
+      layout
+      initial={{ opacity: 0, height: 0 }}
+      animate={{ opacity: 1, height: "auto" }}
+      exit={{ opacity: 0, height: 0 }}
+      transition={{ duration: 0.18, ease: "easeOut" }}
+      className="group/thr flex items-center overflow-hidden"
+    >
       <button
         onClick={() => onOpen(thr.id)}
         title={thr.body}
@@ -1206,7 +1213,7 @@ function ThreadRow({
           )}
         </button>
       )}
-    </li>
+    </motion.li>
   );
 }
 
@@ -1264,20 +1271,22 @@ function AllThreadsModal({
         <p className="py-8 text-center text-sm text-muted">{t("No se encontraron hilos.")}</p>
       ) : (
         <ul className="space-y-0.5">
-          {shown.map((thr) => (
-            <ThreadRow
-              key={thr.id}
-              thr={thr}
-              active={activeThreadId === thr.id}
-              onOpen={(id) => {
-                onOpen(id);
-                onClose();
-              }}
-              onDelete={onDelete}
-              canDelete={!!(user?.isOwner || thr.sender === user?.name)}
-              variant="modal"
-            />
-          ))}
+          <AnimatePresence initial={false}>
+            {shown.map((thr) => (
+              <ThreadRow
+                key={thr.id}
+                thr={thr}
+                active={activeThreadId === thr.id}
+                onOpen={(id) => {
+                  onOpen(id);
+                  onClose();
+                }}
+                onDelete={onDelete}
+                canDelete={!!(user?.isOwner || thr.sender === user?.name)}
+                variant="modal"
+              />
+            ))}
+          </AnimatePresence>
         </ul>
       )}
       {remaining > 0 && (
@@ -1499,17 +1508,19 @@ function Sidebar({
             {c.slug === active && threads.length > 0 && !collapsedThreads.has(c.slug) && (
               <div className="mb-1 ml-3.5 mt-0.5 border-l border-border pl-2">
                 <ul className="space-y-0.5">
-                  {threads.slice(0, THREAD_PREVIEW).map((thr) => (
-                    <ThreadRow
-                      key={thr.id}
-                      thr={thr}
-                      active={activeThreadId === thr.id}
-                      onOpen={onOpenThread}
-                      onDelete={onDeleteThread}
-                      canDelete={!!(user?.isOwner || thr.sender === user?.name)}
-                      variant="sidebar"
-                    />
-                  ))}
+                  <AnimatePresence initial={false}>
+                    {threads.slice(0, THREAD_PREVIEW).map((thr) => (
+                      <ThreadRow
+                        key={thr.id}
+                        thr={thr}
+                        active={activeThreadId === thr.id}
+                        onOpen={onOpenThread}
+                        onDelete={onDeleteThread}
+                        canDelete={!!(user?.isOwner || thr.sender === user?.name)}
+                        variant="sidebar"
+                      />
+                    ))}
+                  </AnimatePresence>
                 </ul>
                 {threads.length > THREAD_PREVIEW && (
                   <button
@@ -2659,6 +2670,14 @@ function ThreadView({
       <div ref={scrollRef} className="mx-auto w-full max-w-4xl flex-1 space-y-1 overflow-y-auto px-4 py-4">
         {!data ? (
           <ThreadSkeleton />
+        ) : !data.root ? (
+          // Link viejo a un hilo ya eliminado → informa en vez de quedar en blanco.
+          <div className="grid flex-1 place-items-center p-8 text-center">
+            <div className="text-sm text-muted">
+              <Trash2 size={20} className="mx-auto mb-2 opacity-60" />
+              {t("Este hilo fue eliminado.")}
+            </div>
+          </div>
         ) : (
           <>
             {data.root && (

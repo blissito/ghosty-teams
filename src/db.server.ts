@@ -808,7 +808,14 @@ export async function listThreadRoots(channelId: number): Promise<Message[]> {
 
 // Borra un mensaje. Si es raíz de hilo, borra también sus respuestas.
 export async function deleteMessage(id: number): Promise<void> {
-  await dbq("DELETE FROM gc_attachments WHERE message_id = ? OR message_id IN (SELECT id FROM gc_messages WHERE parent_id = ?)", [id, id]);
+  // Borra el mensaje + TODAS sus respuestas (hilo completo) sin dejar residuo: primero
+  // las tablas satélite que referencian message_id (mientras las filas aún existen para
+  // el subquery), luego los mensajes. Cubre attachments, reacciones, stars, pins y
+  // artefactos del root y de cada respuesta.
+  const scope = "message_id = ? OR message_id IN (SELECT id FROM gc_messages WHERE parent_id = ?)";
+  for (const table of ["gc_attachments", "gc_reactions", "gc_stars", "gc_pins", "gc_artifacts"]) {
+    await dbq(`DELETE FROM ${table} WHERE ${scope}`, [id, id]);
+  }
   await dbq("DELETE FROM gc_messages WHERE id = ? OR parent_id = ?", [id, id]);
 }
 
