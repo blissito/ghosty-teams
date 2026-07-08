@@ -11,6 +11,7 @@ export type Channel = {
   description?: string | null;
   archived?: number;
   created_by?: string | null;
+  threads?: Message[]; // hilos raíz (adjuntados por getChannelView para el sidebar)
 };
 
 function toChannel(r: Row): Channel {
@@ -818,6 +819,33 @@ export async function listTopics(channelId: number): Promise<TopicInfo[]> {
 
 // Todos los hilos del canal (mensajes raíz que tienen respuestas) — para no
 // enterrarlos. Ordenados por actividad reciente.
+// Hilos raíz de VARIOS canales en UNA query → el loader los adjunta a cada room
+// para que el sidebar los muestre sin depender de haber visitado cada room.
+export async function listThreadRootsForChannels(
+  channelIds: number[]
+): Promise<Map<number, Message[]>> {
+  const out = new Map<number, Message[]>();
+  if (!channelIds.length) return out;
+  const ph = channelIds.map(() => "?").join(",");
+  const rows = await dbq(
+    `SELECT m.*,
+            (SELECT COUNT(*) FROM gc_messages c WHERE c.parent_id = m.id) AS reply_count,
+            (SELECT MAX(created_at) FROM gc_messages c WHERE c.parent_id = m.id) AS last_at
+       FROM gc_messages m
+      WHERE m.channel_id IN (${ph}) AND m.parent_id IS NULL
+        AND EXISTS (SELECT 1 FROM gc_messages c WHERE c.parent_id = m.id)
+      ORDER BY last_at DESC`,
+    channelIds
+  );
+  for (const r of rows) {
+    const m = toMessage(r);
+    const arr = out.get(m.channel_id) ?? [];
+    arr.push(m);
+    out.set(m.channel_id, arr);
+  }
+  return out;
+}
+
 export async function listThreadRoots(channelId: number): Promise<Message[]> {
   const rows = await dbq(
     `SELECT m.*,

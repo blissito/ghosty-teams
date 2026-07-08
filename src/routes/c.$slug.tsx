@@ -1555,7 +1555,10 @@ function Sidebar({
           // Hilos POR room desde el cache de módulo: si un room ya los cargó, se
           // quedan listados aunque no sea el activo (y no se recargan al volver).
           // El activo usa la lista viva (más fresca); los demás, lo cacheado.
-          const roomThreads = c.slug === active ? threads : threadsCache.get(c.slug) ?? [];
+          // Room activo: lista viva (más fresca). Los demás: los hilos que el
+          // loader adjuntó a cada room (persisten siempre) o el cache si ya se vio.
+          const roomThreads =
+            c.slug === active ? threads : threadsCache.get(c.slug) ?? c.threads ?? [];
           return (
           <div key={c.id}>
             <div className="group flex items-center">

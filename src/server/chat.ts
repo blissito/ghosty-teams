@@ -105,6 +105,10 @@ export const getChannelView = createServerFn({ method: "GET" })
     if (!channel) return null;
     if (user && !(await db.canSeeChannel(channel, user.sub, user.isOwner))) return null;
     const channels = await db.listChannels(user?.sub ?? "", !!user?.isOwner);
+    // Adjunta los hilos de CADA room (una query) → el sidebar los muestra sin
+    // haber visitado cada room y persisten al cambiar de room.
+    const byChannel = await db.listThreadRootsForChannels(channels.map((c) => c.id));
+    for (const c of channels) c.threads = byChannel.get(c.id) ?? [];
     return { channels, channel };
   });
 
