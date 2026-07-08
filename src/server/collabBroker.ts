@@ -1,20 +1,19 @@
 import * as Y from "yjs";
 import { HocuspocusProvider, HocuspocusProviderWebsocket } from "@hocuspocus/provider";
 import WebSocket from "ws";
-import { BlockNoteEditor, BlockNoteSchema } from "@blocknote/core";
-import { blocksToYXmlFragment } from "@blocknote/core/yjs";
+import { BlockNoteSchema } from "@blocknote/core";
 import { withMultiColumn } from "@blocknote/xl-multi-column";
+import { ServerBlockNoteEditor } from "@blocknote/server-util";
 
 // Broker: peer server-side que aplica los edits del AGENTE al MISMO Y.Doc que el usuario
-// ve en vivo en el editor nativo. Se conecta al sync server (sidecar :9400 vía loopback,
-// o el box) como un HocuspocusProvider más, con el mismo share token. Usa un editor
-// BlockNote HEADLESS (Node plano, sin DOM — probado en el spike) sólo para convertir
-// markdown → bloques y escribirlos al fragment compartido "document-store".
+// ve en vivo en el editor nativo. Se conecta al sync server (sidecar :9400) como un
+// HocuspocusProvider más, con el mismo share token, y usa ServerBlockNoteEditor (headless,
+// maneja el DOM internamente — `tryParseMarkdownToBlocks` lo necesita en Node) para
+// convertir el markdown del agente a bloques y escribirlos al fragment "document-store".
 //
-// Hoy (Stage 2, CREAR): el stream ```eb-doc``` del agente se re-parsea completo por tick
-// y reemplaza el fragment → el usuario ve el documento redactarse EN VIVO en el editor
-// real (no la hoja Markdown falsa). La co-edición concurrente humano↔agente (marks
-// accept/reject + posiciones relativas) es Stage 3.
+// Stage 2 (CREAR): el stream ```eb-doc``` del agente se re-parsea por tick y reemplaza el
+// fragment → el usuario ve el documento redactarse EN VIVO en el editor real (no la hoja
+// Markdown falsa). Co-edición concurrente + quirúrgico con marks = Stage 3.
 
 const FRAGMENT = "document-store";
 const schema = withMultiColumn(BlockNoteSchema.create());
@@ -34,7 +33,6 @@ export async function openDocBroker(opts: {
   timeoutMs?: number;
 }): Promise<DocBroker> {
   const ydoc = new Y.Doc();
-  // En Node el WebSocket se inyecta vía HocuspocusProviderWebsocket (WebSocketPolyfill).
   const socket = new HocuspocusProviderWebsocket({ url: opts.wsUrl, WebSocketPolyfill: WebSocket });
   const provider = new HocuspocusProvider({
     websocketProvider: socket,
@@ -42,10 +40,7 @@ export async function openDocBroker(opts: {
     token: opts.token,
     document: ydoc,
   });
-  // Editor headless sólo presta su schema a las utils Yjs (no se monta en DOM).
-  const editor = BlockNoteEditor.create({ schema } as never) as {
-    tryParseMarkdownToBlocks: (md: string) => Promise<unknown[]>;
-  };
+  const server = ServerBlockNoteEditor.create({ schema } as never);
 
   await new Promise<void>((resolve, reject) => {
     const to = setTimeout(() => reject(new Error("collab sync timeout")), opts.timeoutMs ?? 15000);
@@ -61,10 +56,10 @@ export async function openDocBroker(opts: {
   return {
     async applyMarkdown(md: string) {
       if (!md.trim()) return;
-      const blocks = await editor.tryParseMarkdownToBlocks(md);
+      const blocks = await server.tryParseMarkdownToBlocks(md);
       if (!blocks.length) return;
       // Una transacción → un solo update por tick a los clientes.
-      ydoc.transact(() => blocksToYXmlFragment(editor as never, blocks as never, frag()));
+      ydoc.transact(() => server.blocksToYXmlFragment(blocks as never, frag()));
     },
     close() {
       try {
