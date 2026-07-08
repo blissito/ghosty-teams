@@ -254,7 +254,14 @@ export function detectArtifact(reply: string): DetectedArtifact | null {
     // con nuestro visor propio (mammoth docx→HTML) sin convertir.
     const off = reply.match(/\.(docx|xlsx|pptx|odt|doc|xls|ppt)\b/i);
     if (off) return { type: "file", url, kind: "office", fmt: off[1].toLowerCase(), title };
-    return { type: "file", url, kind: fileKindFromUrl(url), title };
+    // PDF: la URL de upload_file NO trae extensión (`.../9i4`) → fileKindFromUrl cae a
+    // "file" (card de descarga), y el HEAD (resolveFileKind) a veces falla → el visor no
+    // renderizaba el PDF inline. Igual que con office (.docx), lo detectamos por el texto/
+    // título (el agente dice "PDF"). resolveFileKind (HEAD) sigue teniendo prioridad en
+    // chat.ts, así que si el content-type real difiere, gana el HEAD.
+    let kind = fileKindFromUrl(url);
+    if (kind === "file" && /\bpdf\b/i.test(`${reply} ${title ?? ""}`)) kind = "pdf";
+    return { type: "file", url, kind, title };
   }
   return null;
 }
