@@ -93,6 +93,34 @@ body {
   animation: gc-flash 1.2s ease-out;
 }
 
+/* "Pensando/trabajando" — anillo de puntos que brillan en secuencia (estilo Claude),
+   en morado Ghosty. Los puntos se posicionan alrededor del círculo (transform estático)
+   y solo animan opacidad con delay escalonado → shimmer rotatorio. */
+.gc-ring {
+  position: relative;
+  display: inline-block;
+  animation: gc-ring-float 2.4s ease-in-out infinite;
+}
+.gc-ring-dot {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 2.5px;
+  height: 2.5px;
+  margin: -1.25px 0 0 -1.25px;
+  border-radius: 9999px;
+  background: var(--color-brand);
+  animation: gc-ring-dot 1.1s linear infinite;
+}
+@keyframes gc-ring-dot {
+  0%, 100% { opacity: 0.18; }
+  50% { opacity: 1; }
+}
+@keyframes gc-ring-float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-1.5px); }
+}
+
 /* Scroll sin barra visible (mantiene el scroll, oculta la barra) — flujo de mensajes. */
 .no-scrollbar {
   scrollbar-width: none; /* Firefox */

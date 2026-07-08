@@ -68,6 +68,7 @@ import type { RtEvent } from "../server/bus.server";
 import { Markdown } from "../components/Markdown";
 import ArtifactPanel, { type ArtifactView, viewFromAttachment } from "../components/ArtifactPanel";
 import { extractEbDoc, draftTitle, bubbleWithoutEbDoc } from "../lib/ebdoc";
+import { ThinkingRing } from "../components/ThinkingRing";
 import { playNotificationSound, playGhostySound, playSelfSound, playMentionSound, playDmSound } from "../utils/notificationSound";
 
 // Menciones que cuentan como "a ti": tu @handle o una grupal (@all/@channel/…).
@@ -3117,9 +3118,9 @@ function MessageRow({
 
   if (m.kind === "status") {
     return (
-      <div className="flex items-center gap-2 py-1 pl-12 text-xs text-muted">
-        <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-brand" />
-        <span className="italic">{m.body}</span>
+      <div className="flex items-center gap-2.5 py-1 pl-11 text-xs text-muted">
+        <ThinkingRing size={20} />
+        <span className="italic">{m.body || t("Pensando…")}</span>
       </div>
     );
   }
