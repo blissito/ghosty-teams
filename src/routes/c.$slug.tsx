@@ -1552,10 +1552,14 @@ function Sidebar({
         </div>
         {channels.map((c) => {
           const muted = mutes.has(`room:${c.id}`);
+          // Hilos POR room desde el cache de módulo: si un room ya los cargó, se
+          // quedan listados aunque no sea el activo (y no se recargan al volver).
+          // El activo usa la lista viva (más fresca); los demás, lo cacheado.
+          const roomThreads = c.slug === active ? threads : threadsCache.get(c.slug) ?? [];
           return (
           <div key={c.id}>
             <div className="group flex items-center">
-              {c.slug === active && threads.length > 0 ? (
+              {roomThreads.length > 0 ? (
                 <button
                   onClick={() => toggleThreads(c.slug)}
                   title={collapsedThreads.has(c.slug) ? t("Mostrar hilos") : t("Ocultar hilos")}
@@ -1608,13 +1612,16 @@ function Sidebar({
                 </button>
               )}
             </div>
-            {/* Hilos del room activo como submenús (colapsables): solo los 5 más
-                recientes; el resto se ve en el modal "Ver todos" con carga parcial. */}
-            {c.slug === active && threads.length > 0 && !collapsedThreads.has(c.slug) && (
+            {/* Hilos del room como submenús (colapsables): solo los 5 más
+                recientes; el resto se ve en el modal "Ver todos" con carga parcial.
+                Se muestran para CUALQUIER room que ya los tenga cacheados —no solo
+                el activo— para que no desaparezcan al cambiar de room ni se
+                recarguen al volver. */}
+            {roomThreads.length > 0 && !collapsedThreads.has(c.slug) && (
               <div className="mb-1 ml-3.5 mt-0.5 border-l border-border pl-2">
                 <ul className="space-y-0.5">
                   <AnimatePresence initial={false}>
-                    {threads.slice(0, THREAD_PREVIEW).map((thr) => (
+                    {roomThreads.slice(0, THREAD_PREVIEW).map((thr) => (
                       <ThreadRow
                         key={thr.id}
                         thr={thr}
@@ -1627,16 +1634,32 @@ function Sidebar({
                     ))}
                   </AnimatePresence>
                 </ul>
-                {threads.length > THREAD_PREVIEW && (
-                  <button
-                    onClick={() => setAllThreadsOpen(true)}
-                    className="mt-0.5 flex w-full items-center gap-1.5 rounded-md px-2 py-1 text-left text-xs text-muted transition hover:bg-surface-3 hover:text-brand"
-                  >
-                    <MoreHorizontal size={13} className="shrink-0" />
-                    <span className="truncate">
-                      +{threads.length - THREAD_PREVIEW} {t("más")}
-                    </span>
-                  </button>
+                {roomThreads.length > THREAD_PREVIEW && (
+                  // "Ver todos" usa la lista viva del room ACTIVO; para rooms no
+                  // activos con >5 hilos, entrar al room primero (Link normal).
+                  c.slug === active ? (
+                    <button
+                      onClick={() => setAllThreadsOpen(true)}
+                      className="mt-0.5 flex w-full items-center gap-1.5 rounded-md px-2 py-1 text-left text-xs text-muted transition hover:bg-surface-3 hover:text-brand"
+                    >
+                      <MoreHorizontal size={13} className="shrink-0" />
+                      <span className="truncate">
+                        +{roomThreads.length - THREAD_PREVIEW} {t("más")}
+                      </span>
+                    </button>
+                  ) : (
+                    <Link
+                      to="/c/$slug"
+                      params={{ slug: c.slug }}
+                      onClick={() => onCloseNav()}
+                      className="mt-0.5 flex w-full items-center gap-1.5 rounded-md px-2 py-1 text-left text-xs text-muted transition hover:bg-surface-3 hover:text-brand"
+                    >
+                      <MoreHorizontal size={13} className="shrink-0" />
+                      <span className="truncate">
+                        +{roomThreads.length - THREAD_PREVIEW} {t("más")}
+                      </span>
+                    </Link>
+                  )
                 )}
               </div>
             )}
@@ -3652,8 +3675,13 @@ function OptimisticRow({ o }: { o: Optimistic }) {
   const t = useT();
   const { retrySend, discardSend } = useContext(ChatCtx);
   const failed = o.status === "failed";
+  // 100% optimista: mientras "sending" el mensaje se ve IDÉNTICO a uno entregado
+  // (opacidad plena, hora en vivo, sin "enviando…"); el reconciliador lo canjea
+  // por el real cuando aterriza por SSE. Solo si FALLA de verdad degrada a
+  // "No se envió" + reintentar/descartar.
+  const time = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   return (
-    <div className={`flex gap-3 rounded-lg px-2 py-1.5 ${failed ? "" : "opacity-50"}`}>
+    <div className="flex gap-3 rounded-lg px-2 py-1.5">
       <Avatar name={o.sender} avatar={o.avatar} className="mt-0.5 h-9 w-9 !rounded-lg" />
       <div className="min-w-0 flex-1">
         <div className="flex items-baseline gap-2">
@@ -3661,7 +3689,7 @@ function OptimisticRow({ o }: { o: Optimistic }) {
           {failed ? (
             <span className="text-[11px] font-medium text-red-500">{t("No se envió")}</span>
           ) : (
-            <span className="text-[11px] text-muted">{t("enviando…")}</span>
+            <span className="text-[11px] text-muted">{time}</span>
           )}
         </div>
         <div className={`text-sm ${failed ? "text-ink/70" : "text-ink"}`}>
