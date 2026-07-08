@@ -123,10 +123,16 @@ export const Route = createFileRoute("/c/$slug")({
     // SOLO en el server para que el primer paint ya traiga los mensajes; el cliente
     // lo siembra en flowCache antes de useCachedQuery. En navegación client-side
     // (window definido) NO se prefetchea → el switch entre rooms sigue instantáneo.
-    const initialFlow =
-      typeof window === "undefined"
-        ? await getChannelFlow({ data: { slug: params.slug } }).catch(() => undefined)
-        : undefined;
+    let initialFlow: Awaited<ReturnType<typeof getChannelFlow>> | undefined;
+    if (typeof window === "undefined") {
+      try {
+        initialFlow = await getChannelFlow({ data: { slug: params.slug } });
+        console.log(`[flow-prefetch] ssr slug=${params.slug} len=${initialFlow?.length ?? "null"}`);
+      } catch (e) {
+        console.log(`[flow-prefetch] ssr slug=${params.slug} THREW ${e instanceof Error ? e.message : String(e)}`);
+        initialFlow = undefined;
+      }
+    }
     return { ...view, user, initialFlow };
   },
   component: ChannelPage,
@@ -424,12 +430,17 @@ function useCachedQuery<K, T>(
   key: K,
   fetcher: () => Promise<T>,
   rev: number,
-  patch = 0
+  patch = 0,
+  initial?: T
 ): T | null {
   // El valor mostrado se LEE DEL CACHE EN CADA RENDER (no vía useState con lag) →
   // al cambiar de room, el render ya devuelve el cache de ESA key: instantáneo si
   // ya se vio (sin skeleton, sin flash del room anterior), skeleton solo si es nueva.
   // El fetch revalida en background y fuerza re-render cuando llega.
+  // `initial` = valor prefetcheado en SSR (loader). Se siembra el cache y se usa
+  // como fallback en el MISMO render → SSR e hidratación pintan idéntico (sin
+  // skeleton ni mismatch) sin depender del timing del Map de módulo.
+  if (initial != null && !cache.has(key)) cache.set(key, initial);
   const [, force] = useState(0);
   useEffect(() => {
     let alive = true;
@@ -449,15 +460,11 @@ function useCachedQuery<K, T>(
     force((n) => n + 1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [patch]);
-  return cache.get(key) ?? null;
+  return cache.get(key) ?? initial ?? null;
 }
 
 function ChannelPage() {
   const { channels, channel, user, initialFlow } = Route.useLoaderData();
-  // Siembra del flujo prefetcheado en SSR → el primer render ya lee flowCache (sin
-  // skeleton ni round-trip al hidratar). Guardado por !has para no pisar lo que el
-  // realtime/revalidación ya actualizó client-side; idempotente entre SSR e hidratación.
-  if (initialFlow && !flowCache.has(channel.slug)) flowCache.set(channel.slug, initialFlow);
   // Hilo / DM abierto = ESTADO CLIENTE (no URL) → abre instantáneo, sin revalidar el
   // router. Igual que los hilos, un DM se enfoca en el CENTRO (referencia Zulip).
   const [openThreadId, setOpenThreadId] = useState<number | null>(null);
@@ -657,7 +664,8 @@ function ChannelPage() {
     channel.slug,
     () => getChannelFlow({ data: { slug: channel.slug } }),
     rev,
-    patch
+    patch,
+    initialFlow ?? undefined
   );
   // Hilos del room (nacen al responder a un mensaje) → se listan como submenús del
   // sidebar; al abrir uno se enfoca en el centro (no en un drawer derecho).
