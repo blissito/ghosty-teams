@@ -58,10 +58,22 @@ function FormsPage() {
                     {f.lastSubmittedAt ? <span>última: {fmtDate(f.lastSubmittedAt)}</span> : null}
                   </div>
                 </div>
-                <div className="text-center px-3">
-                  <div className="text-xl font-bold text-[#a78bfa] tabular-nums">{f.submissions}</div>
-                  <div className="text-[10px] uppercase tracking-wide text-gray-600">respuestas</div>
-                </div>
+                {f.roomSlug ? (
+                  <Link
+                    to="/c/$slug"
+                    params={{ slug: f.roomSlug }}
+                    title="Ver las respuestas en el room del expediente"
+                    className="text-center px-3 py-1 rounded-lg hover:bg-white/5"
+                  >
+                    <div className="text-xl font-bold text-[#a78bfa] tabular-nums">{f.submissions}</div>
+                    <div className="text-[10px] uppercase tracking-wide text-gray-500">respuestas ↗</div>
+                  </Link>
+                ) : (
+                  <div className="text-center px-3">
+                    <div className="text-xl font-bold text-[#a78bfa] tabular-nums">{f.submissions}</div>
+                    <div className="text-[10px] uppercase tracking-wide text-gray-600">respuestas</div>
+                  </div>
+                )}
                 {f.url ? (
                   <div className="flex items-center gap-2">
                     <button
