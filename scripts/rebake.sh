@@ -54,9 +54,35 @@ $SSH "root@$HOST" "set -e
   cp -f /var/lib/sandbox-host/templates/ghosty-chat.ext4 /var/lib/sandbox-host/templates/ghosty-chat.ext4.bak-\$D
   AGENT_BIN=/usr/local/bin/sandbox-agent bash /root/build_template.sh ghosty-chat localhost/ghosty-chat:latest $SIZE 2>&1 | tail -4"
 
-# 6) Smoke: VM efímera del template → systemd active + server en :3000 (500 sin
+# 6) Refresca el LOOP BASE del template. CRÍTICO: el bake hace `rm -f`+recrea el
+#    ext4 (nuevo inode), pero `ensureBaseLoop` (dmsnapshot.go) cachea UN loop RO por
+#    template en memoria del daemon y lo reusa mientras el /dev/loopN exista → todo
+#    box nuevo forkea CoW del ext4 VIEJO (loop backed por inode "(deleted)"). Sin
+#    esto el rebake NO tiene efecto aunque el ext4 en disco sea nuevo. Fix: matar los
+#    boxes ghosty-chat (liberan el snapshot), detachar el loop base huérfano y
+#    reiniciar el daemon (limpia el cache; Reconcile re-adopta las VMs vivas → 0 loss).
+echo "▸ [6/7] refrescar loop base + reciclar boxes (host)…"
+$SSH "root@$HOST" 'bash -s' <<'REFRESH'
+set -uo pipefail
+TOK=$(grep -oP '^SANDBOX_HOST_TOKEN=\K.*' /etc/sandbox-host/.env); API=http://127.0.0.1:8080
+# 1) matar todos los boxes ghosty-chat (DELETE hace teardown del dm CoW)
+for SB in $(python3 -c "import json; d=json.load(open('/var/lib/sandbox-host/store.json')); it=d.items() if isinstance(d,dict) else enumerate(d); [print(v['sandboxId']) for k,v in it if v.get('template')=='ghosty-chat']"); do
+  curl -s -o /dev/null -X DELETE -H "Authorization: Bearer $TOK" "$API/v1/sandbox/$SB"; echo "  killed $SB"
+done
+sleep 2
+# 2) detachar cualquier loop respaldado por el ext4 borrado del template
+losetup -a | grep -E 'ghosty-chat\.ext4 \(deleted\)' | cut -d: -f1 | while read -r LP; do
+  losetup -d "$LP" 2>/dev/null && echo "  detached stale $LP" || echo "  $LP busy (skipped)"
+done
+# 3) reiniciar el daemon → limpia baseLoops en memoria; Reconcile re-adopta vivas
+systemctl restart sandbox-host; sleep 3
+echo -n "  daemon: "; systemctl is-active sandbox-host
+journalctl -u sandbox-host --no-pager -n 3 --since '8 seconds ago' | grep -i reconcile || true
+REFRESH
+
+# 7) Smoke: VM efímera del template → systemd active + server en :3000 (500 sin
 #    secrets es OK; prueba que bootea y la app corre). Se borra al final.
-echo "▸ [6/6] smoke test (host)…"
+echo "▸ [7/7] smoke test (host)…"
 $SSH "root@$HOST" 'bash -s' <<'SMOKE'
 set -uo pipefail
 TOK=$(grep -oP '^SANDBOX_HOST_TOKEN=\K.*' /etc/sandbox-host/.env); API=http://127.0.0.1:8080
