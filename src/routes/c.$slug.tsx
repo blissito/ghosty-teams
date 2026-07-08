@@ -512,6 +512,43 @@ function useCachedQuery<K, T>(
   return cache.get(key) ?? initial ?? null;
 }
 
+// Auto-scroll de chat "pegado al fondo": sigue mensajes nuevos Y el crecimiento de
+// contenido (streaming de la respuesta del agente rellena el body de UN mensaje → el
+// conteo no cambia, por eso antes no scrolleaba). El guard `stick` evita tironear si
+// el usuario subió a leer historia. `onScroll` (devuelto) va en el div scrollable.
+function useChatScroll(
+  scrollRef: React.RefObject<HTMLDivElement | null>,
+  msgs: { body?: string | null }[] | null,
+  extra: number,
+  unreadId: number | null,
+  resetKey?: unknown
+) {
+  const didLand = useRef(false);
+  const stick = useRef(true);
+  const count = msgs?.length ?? 0;
+  const contentLen = msgs?.reduce((n, m) => n + (m.body?.length ?? 0), 0) ?? 0;
+  useEffect(() => {
+    didLand.current = false;
+  }, [resetKey]);
+  const onScroll = () => {
+    const el = scrollRef.current;
+    if (el) stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+  };
+  useEffect(() => {
+    if (unreadId != null && !didLand.current) {
+      const el = document.getElementById(`msg-${unreadId}`);
+      if (el) {
+        el.scrollIntoView({ block: "center" });
+        didLand.current = true;
+        return;
+      }
+    }
+    if (stick.current) scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [count, contentLen, extra, unreadId]);
+  return onScroll;
+}
+
 function ChannelPage() {
   const { channels, channel, user, initialFlow, initialThreads } = Route.useLoaderData();
   // Marca la hidratación como completa → el loader deja de prefetchear en las
@@ -2794,24 +2831,8 @@ function Flow({
   const { me } = useContext(ChatCtx);
   const canManage = !!me && (me.isOwner || channel.created_by === me.sub);
   const scrollRef = useRef<HTMLDivElement>(null);
-  const count = messages?.length ?? 0;
   const unreadId = firstUnreadId(messages, newAt, me?.name);
-  const didLand = useRef(false);
-  useEffect(() => {
-    didLand.current = false; // al cambiar de room se recalcula el aterrizaje
-  }, [channel.id]);
-  useEffect(() => {
-    // Carga inicial con no-leídos → aterriza en el divisor (Zulip); si no, al fondo.
-    if (unreadId != null && !didLand.current) {
-      const el = document.getElementById(`msg-${unreadId}`);
-      if (el) {
-        el.scrollIntoView({ block: "center" });
-        didLand.current = true;
-        return;
-      }
-    }
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
-  }, [count, optimistic.length, unreadId]);
+  const onScroll = useChatScroll(scrollRef, messages, optimistic.length, unreadId, channel.id);
   // Scroll a un mensaje (clic en un fijado) con destello, estilo "ir al origen".
   const jumpTo = (id: number) => {
     const el = document.getElementById(`msg-${id}`);
@@ -2849,7 +2870,7 @@ function Flow({
         </div>
       </header>
       {pins.length > 0 && <PinnedBar pins={pins} onJump={jumpTo} />}
-      <div ref={scrollRef} className="mx-auto w-full max-w-4xl flex-1 space-y-1 overflow-y-auto px-4 py-4 no-scrollbar">
+      <div ref={scrollRef} onScroll={onScroll} className="mx-auto w-full max-w-4xl flex-1 space-y-1 overflow-y-auto px-4 py-4 no-scrollbar">
         {messages === null ? (
           <ThreadSkeleton />
         ) : messages.length === 0 && optimistic.length === 0 ? (
@@ -2918,9 +2939,8 @@ function ThreadView({
     if (data) onReloaded();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data]);
-  useEffect(() => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
-  }, [replyCount, optimistic.length]);
+  // Sigue las respuestas del hilo + el streaming de la respuesta del agente.
+  const onScroll = useChatScroll(scrollRef, data?.replies ?? null, optimistic.length, null);
 
   return (
     <section className="flex min-w-0 flex-1 flex-col">
@@ -2940,7 +2960,7 @@ function ThreadView({
           </button>
         </div>
       </header>
-      <div ref={scrollRef} className="mx-auto w-full max-w-4xl flex-1 space-y-1 overflow-y-auto px-4 py-4 no-scrollbar">
+      <div ref={scrollRef} onScroll={onScroll} className="mx-auto w-full max-w-4xl flex-1 space-y-1 overflow-y-auto px-4 py-4 no-scrollbar">
         {!data ? (
           <ThreadSkeleton />
         ) : !data.root ? (
@@ -3033,25 +3053,12 @@ function DmView({
     patch
   );
   const scrollRef = useRef<HTMLDivElement>(null);
-  const count = flow?.length ?? 0;
   const unreadId = firstUnreadId(flow, newAt, me?.name);
-  const didLand = useRef(false);
   useEffect(() => {
     if (flow) onReloaded();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [flow]);
-  useEffect(() => {
-    // Igual que el Flow: aterriza en el primer no-leído si lo hay; si no, al fondo.
-    if (unreadId != null && !didLand.current) {
-      const el = document.getElementById(`msg-${unreadId}`);
-      if (el) {
-        el.scrollIntoView({ block: "center" });
-        didLand.current = true;
-        return;
-      }
-    }
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
-  }, [count, optimistic.length, unreadId]);
+  const onScroll = useChatScroll(scrollRef, flow, optimistic.length, unreadId);
 
   const title = dm ? dmTitle(dm, t("Conversación")) : t("Conversación");
   const isOnline = dm?.members.some((m) => online.has(m.sub)) ?? false;
@@ -3087,7 +3094,7 @@ function DmView({
           </p>
         </div>
       </header>
-      <div ref={scrollRef} className="mx-auto w-full max-w-4xl flex-1 space-y-1 overflow-y-auto px-4 py-4 no-scrollbar">
+      <div ref={scrollRef} onScroll={onScroll} className="mx-auto w-full max-w-4xl flex-1 space-y-1 overflow-y-auto px-4 py-4 no-scrollbar">
         {flow === null ? (
           <ThreadSkeleton />
         ) : flow.length === 0 && optimistic.length === 0 ? (
