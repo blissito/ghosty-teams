@@ -1968,14 +1968,33 @@ function RoomSettingsModal({
   const [inviteEmail, setInviteEmail] = useState("");
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [name, setName] = useState(channel?.name ?? "");
+  const [icon, setIcon] = useState(channel?.icon ?? "hash");
+  const [isPrivate, setIsPrivate] = useState(channel?.is_private === 1);
   const [desc, setDesc] = useState(channel?.description ?? "");
-  const [descSaved, setDescSaved] = useState(false);
+  const [infoSaved, setInfoSaved] = useState(false);
 
-  async function saveDesc() {
-    await updateChannelFn({ data: { slug, description: desc.trim() || null } }).catch(() => {});
-    setDescSaved(true);
+  // Identidad del room (nombre + icono + privacidad + descripción) se guardan juntos.
+  const infoDirty =
+    name.trim() !== (channel?.name ?? "") ||
+    icon !== (channel?.icon ?? "hash") ||
+    isPrivate !== (channel?.is_private === 1) ||
+    desc.trim() !== (channel?.description ?? "");
+
+  async function saveInfo() {
+    if (!name.trim() || !infoDirty) return;
+    await updateChannelFn({
+      data: {
+        slug,
+        name: name.trim(),
+        icon,
+        isPrivate,
+        description: desc.trim() || null,
+      },
+    }).catch(() => {});
+    setInfoSaved(true);
     onChanged();
-    setTimeout(() => setDescSaved(false), 1500);
+    setTimeout(() => setInfoSaved(false), 1500);
   }
   async function archive() {
     if (!confirm(t("¿Archivar este room? Desaparece del sidebar (no se borra).")))
@@ -2034,29 +2053,74 @@ function RoomSettingsModal({
   }
 
   return (
-    <Modal onClose={onClose}>
-      <h2 className="mb-3 font-semibold">{t("Ajustes del room")}</h2>
-      <p className="mb-1 text-xs font-medium text-muted">{t("Descripción")}</p>
-      <div className="mb-4">
-        <textarea
-          value={desc}
-          onChange={(e) => setDesc(e.target.value)}
-          rows={2}
-          maxLength={280}
-          placeholder={t("¿De qué trata este room?")}
-          className="w-full resize-none rounded-lg border border-border bg-surface px-3 py-1.5 text-sm outline-none focus:border-brand"
-        />
-        <div className="mt-1 flex items-center justify-end gap-2">
-          {descSaved && <span className="text-xs text-brand">{t("Guardado")}</span>}
-          <button
-            onClick={saveDesc}
-            disabled={desc.trim() === (channel?.description ?? "")}
-            className="rounded-lg border border-border px-3 py-1 text-xs font-medium text-ink transition hover:bg-surface-2 disabled:opacity-40"
-          >
-            {t("Guardar descripción")}
-          </button>
+    <Modal onClose={onClose} wide>
+      <h2 className="mb-4 text-base font-semibold">{t("Ajustes del room")}</h2>
+
+      {/* Identidad: icono + nombre en la misma fila (estilo Zulip/Slack) */}
+      <label className="mb-1.5 block text-xs font-medium text-muted">{t("Nombre")}</label>
+      <div className="mb-3 flex items-center gap-2">
+        <div className="grid h-10 w-10 shrink-0 place-items-center rounded-lg border border-border bg-surface text-muted">
+          <RoomIcon name={icon} size={18} />
         </div>
+        <input
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && saveInfo()}
+          placeholder={t("nombre del room")}
+          className="min-w-0 flex-1 rounded-lg border border-border bg-surface px-3 py-2.5 text-sm outline-none focus:border-brand"
+        />
       </div>
+
+      {/* Icono */}
+      <label className="mb-2 block text-xs font-medium text-muted">{t("Icono")}</label>
+      <div className="mb-4 grid grid-cols-8 gap-2">
+        {ROOM_ICONS.map(({ name: n, Icon }) => (
+          <button
+            key={n}
+            onClick={() => setIcon(n)}
+            className={`grid aspect-square place-items-center rounded-lg transition ${
+              icon === n
+                ? "bg-brand text-brand-fg"
+                : "bg-surface text-muted hover:bg-surface-3 hover:text-ink"
+            }`}
+          >
+            <Icon size={18} />
+          </button>
+        ))}
+      </div>
+
+      {/* Descripción */}
+      <label className="mb-1.5 block text-xs font-medium text-muted">{t("Descripción")}</label>
+      <textarea
+        value={desc}
+        onChange={(e) => setDesc(e.target.value)}
+        rows={2}
+        maxLength={280}
+        placeholder={t("¿De qué trata este room?")}
+        className="mb-3 w-full resize-none rounded-lg border border-border bg-surface px-3 py-2 text-sm outline-none focus:border-brand"
+      />
+
+      {/* Privacidad */}
+      <label className="mb-4 flex cursor-pointer items-center gap-2 rounded-lg bg-surface px-3 py-2.5 text-sm">
+        <input type="checkbox" checked={isPrivate} onChange={(e) => setIsPrivate(e.target.checked)} />
+        <Lock size={14} className="text-muted" />
+        <span>{t("Privado (solo miembros invitados)")}</span>
+      </label>
+
+      {/* Guardar identidad (nombre/icono/privado/descripción juntos) */}
+      <div className="mb-5 flex items-center justify-end gap-2">
+        {infoSaved && <span className="text-xs text-brand">{t("Guardado")}</span>}
+        <button
+          onClick={saveInfo}
+          disabled={!name.trim() || !infoDirty}
+          className="rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-brand-fg transition disabled:opacity-40"
+        >
+          {t("Guardar cambios")}
+        </button>
+      </div>
+
+      <div className="mb-4 border-t border-border" />
+
       <p className="mb-1 text-xs font-medium text-muted">{t("Miembros (rooms privados)")}</p>
       <div className="mb-2 flex gap-2">
         <div className="relative flex-1">
@@ -2113,16 +2177,17 @@ function RoomSettingsModal({
           ))
         )}
       </div>
+      <div className="mb-3 border-t border-border" />
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-1">
-          <button onClick={del} className="flex items-center gap-1.5 rounded-lg px-2.5 py-2 text-sm text-red-400 hover:bg-red-400/10">
-            <Trash2 size={15} /> {t("Eliminar")}
-          </button>
           <button onClick={archive} className="flex items-center gap-1.5 rounded-lg px-2.5 py-2 text-sm text-muted hover:bg-surface-2 hover:text-ink">
             <Archive size={15} /> {t("Archivar")}
           </button>
+          <button onClick={del} className="flex items-center gap-1.5 rounded-lg px-2.5 py-2 text-sm text-red-400 hover:bg-red-400/10">
+            <Trash2 size={15} /> {t("Eliminar")}
+          </button>
         </div>
-        <button onClick={onClose} className="ml-auto rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-brand-fg">
+        <button onClick={onClose} className="ml-auto rounded-lg border border-border px-4 py-2 text-sm font-semibold text-ink transition hover:bg-surface-2">
           {t("Listo")}
         </button>
       </div>
