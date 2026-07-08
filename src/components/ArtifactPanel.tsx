@@ -2,7 +2,8 @@ import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useRef, useState } from "react";
 import { X, ExternalLink, FileText, Pencil, Download, Loader2, ChevronRight, RotateCw, Maximize2, Minimize2, Eye } from "lucide-react";
 import { useT } from "../i18n";
-import { officeToEditableFn, officeToHtmlFn, docToHtmlFn, docEmbedFn } from "../server/chat";
+import { officeToEditableFn, officeToHtmlFn, docToHtmlFn } from "../server/chat";
+import CollabArtifact from "./CollabArtifact";
 import { Markdown } from "./Markdown";
 
 // Panel lateral de artefactos del room. Fase 0 = visor PDF/imagen (adjuntos).
@@ -163,12 +164,15 @@ export default function ArtifactPanel({
   };
   const handleEdit = async () => {
     if (converting || !artifact || (artifact.kind !== "office" && artifact.kind !== "doc")) return;
+    // Doc → editor colaborativo NATIVO (BlockNote in-room, CollabArtifact resuelve la
+    // conexión). Sin iframe, sin mint aquí. Sentinel "native" para el toggle preview/editar.
+    if (artifact.kind === "doc") {
+      setEditUrl("native");
+      return;
+    }
     setConverting(true);
     try {
-      const r =
-        artifact.kind === "doc"
-          ? await docEmbedFn({ data: { documentId: artifact.documentId } })
-          : await officeToEditableFn({ data: { url: artifact.src, name: artifact.title || "Documento" } });
+      const r = await officeToEditableFn({ data: { url: artifact.src, name: artifact.title || "Documento" } });
       if (r.ok && r.embedUrl) setEditUrl(r.embedUrl);
       else alert(t("No se pudo abrir para editar."));
     } catch {
@@ -422,9 +426,9 @@ export default function ArtifactPanel({
                   )
                 ) : artifact.kind === "doc" ? (
                   // Documento VIVO: preview de las secciones actuales (se AUTO-REFRESCA cuando
-                  // el agente modifica) · Editar (editor colab) · Descargar Word.
+                  // el agente modifica) · Editar → editor colaborativo NATIVO (BlockNote+Yjs) · Descargar Word.
                   editUrl ? (
-                    <iframe src={editUrl} title={artifact.title || "editor"} className="size-full border-0 bg-white" />
+                    <CollabArtifact documentId={artifact.documentId} />
                   ) : (
                     <div className="flex h-full flex-col">
                       <div className="min-h-0 flex-1 overflow-auto bg-surface-3 p-4 sm:p-6">
