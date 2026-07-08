@@ -323,7 +323,7 @@ function BasePrompt({ value, saving, onSave }: { value: string; saving: boolean;
         onChange={(e) => { setVal(e.target.value); setDirty(true); }}
         rows={big ? 22 : 5}
         placeholder={t("Instrucciones base del agente (rol, tono, reglas)…")}
-        className="w-full resize-y rounded-lg border border-border bg-surface px-2.5 py-2 text-xs leading-relaxed outline-none focus:border-brand"
+        className="thin-scroll w-full resize-y rounded-lg border border-border bg-surface px-2.5 py-2 text-xs leading-relaxed outline-none focus:border-brand"
       />
       {dirty && (
         <button onClick={() => onSave(val)} disabled={saving} className="mt-1 flex items-center gap-1 rounded-lg bg-brand px-3 py-1 text-xs font-semibold text-brand-fg disabled:opacity-50">

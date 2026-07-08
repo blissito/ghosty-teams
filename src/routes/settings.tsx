@@ -723,7 +723,7 @@ function EditAgentForm({
         </div>
 
         {/* Cuerpo 2 columnas: izq = identidad/local, der = capacidades de flota */}
-        <div className="grid flex-1 grid-cols-1 gap-4 overflow-y-auto p-4 md:grid-cols-2">
+        <div className="thin-scroll grid flex-1 grid-cols-1 gap-4 overflow-y-auto p-4 md:grid-cols-2">
           {/* ── Columna izquierda: identidad + persona local + colaboradores ── */}
           <div className="space-y-3">
             <div className="flex items-center gap-3">
@@ -759,7 +759,7 @@ function EditAgentForm({
 
             <div>
               <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-muted">{t("Persona local (este espacio)")}</label>
-              <textarea value={persona} onChange={(e) => setPersona(e.target.value)} rows={5} placeholder={t("Cómo debe comportarse aquí (tono, rol)…")} className={`${input} resize-y`} />
+              <textarea value={persona} onChange={(e) => setPersona(e.target.value)} rows={5} placeholder={t("Cómo debe comportarse aquí (tono, rol)…")} className={`${input} thin-scroll resize-y`} />
               <p className="mt-1 text-[11px] text-muted">
                 {agent.kind === "fleet"
                   ? t("Se antepone al mensaje SOLO en este espacio. El prompt base (todos los canales) va en la derecha.")
