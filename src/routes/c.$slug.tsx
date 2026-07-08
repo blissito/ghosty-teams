@@ -205,6 +205,47 @@ const pinsCache = new Map<string, Message[]>();
 // VIEWS (recientes/menciones/destacados): resultado por nombre de vista.
 const viewCache = new Map<string, ViewHit[]>();
 
+// ── Persistencia de los caches entre refresh (sessionStorage) ──────────────
+// Los Map de módulo se pierden al recargar la página → un refresh re-fetcheaba
+// TODO (flujo, lista de hilos, CONTENIDO del hilo abierto, DMs, pins). Los
+// serializamos al salir (pagehide/hidden) y los restauramos SÍNCRONO al cargar el
+// módulo → el primer render del cliente ya tiene los datos: (1) el loader los
+// encuentra en cache y NO awaitea getChannelFlow (adiós "carga lenta"), (2) el
+// primer render iguala el HTML del SSR (sin parpadeo/revert de hidratación), (3) el
+// hilo/DM reabierto (estado cliente desde localStorage) aparece instantáneo.
+const PERSISTED_CACHES: [string, Map<unknown, unknown>][] = [
+  ["flow", flowCache as Map<unknown, unknown>],
+  ["threads", threadsCache as Map<unknown, unknown>],
+  ["thread", threadCache as Map<unknown, unknown>],
+  ["dmFlow", dmFlowCache as Map<unknown, unknown>],
+  ["pins", pinsCache as Map<unknown, unknown>],
+];
+if (typeof window !== "undefined") {
+  try {
+    const saved = JSON.parse(sessionStorage.getItem("gc-caches-v1") || "{}");
+    for (const [name, cache] of PERSISTED_CACHES) {
+      const entries = saved[name];
+      if (Array.isArray(entries)) for (const [k, v] of entries) cache.set(k, v);
+    }
+  } catch {
+    /* ausente/corrupto → arranca vacío */
+  }
+  const dumpCaches = () => {
+    try {
+      const out: Record<string, unknown> = {};
+      for (const [name, cache] of PERSISTED_CACHES) out[name] = [...cache.entries()];
+      sessionStorage.setItem("gc-caches-v1", JSON.stringify(out));
+    } catch {
+      /* quota/serialize → mejor esfuerzo, sin romper */
+    }
+  };
+  window.addEventListener("pagehide", dumpCaches);
+  // pagehide no siempre dispara (algunos móviles) → respaldo al ocultar la pestaña.
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") dumpCaches();
+  });
+}
+
 // Nonces de mensajes que ESTA pestaña envió → para descartar su propio eco vivo
 // (ya se muestra optimista). Módulo: compartido entre Composer y el handler SSE.
 const sentNonces = new Set<string>();
