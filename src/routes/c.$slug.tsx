@@ -1839,7 +1839,7 @@ function Modal({ children, onClose, wide }: { children: React.ReactNode; onClose
         exit={{ scale: 0.95, y: 8 }}
         transition={{ type: "spring", stiffness: 500, damping: 40 }}
         onClick={(e) => e.stopPropagation()}
-        className={`max-h-[85dvh] w-full overflow-y-auto rounded-2xl border border-border bg-surface-2 p-5 text-ink ${
+        className={`max-h-[85dvh] w-full overflow-y-auto overflow-x-hidden rounded-2xl border border-border bg-surface-2 p-5 text-ink ${
           wide ? "max-w-md" : "max-w-sm"
         }`}
       >
@@ -2090,16 +2090,16 @@ function RoomSettingsModal({
           ))
         )}
       </div>
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-1">
-          <button onClick={del} className="flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm text-red-400 hover:bg-red-400/10">
+          <button onClick={del} className="flex items-center gap-1.5 rounded-lg px-2.5 py-2 text-sm text-red-400 hover:bg-red-400/10">
             <Trash2 size={15} /> {t("Eliminar")}
           </button>
-          <button onClick={archive} className="flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm text-muted hover:bg-surface-2 hover:text-ink">
+          <button onClick={archive} className="flex items-center gap-1.5 rounded-lg px-2.5 py-2 text-sm text-muted hover:bg-surface-2 hover:text-ink">
             <Archive size={15} /> {t("Archivar")}
           </button>
         </div>
-        <button onClick={onClose} className="rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-brand-fg">
+        <button onClick={onClose} className="ml-auto rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-brand-fg">
           {t("Listo")}
         </button>
       </div>
@@ -3393,6 +3393,21 @@ function MessageActions({
     setOpen(false);
     setReceipts(null);
   };
+  const wrapRef = useRef<HTMLDivElement>(null);
+  // Cerrar con ESC y con click fuera (robusto, independiente del z-index).
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") close(); };
+    const onDown = (e: MouseEvent) => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) close();
+    };
+    document.addEventListener("keydown", onKey);
+    document.addEventListener("mousedown", onDown);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.removeEventListener("mousedown", onDown);
+    };
+  }, [open]);
   const item = "flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs text-ink hover:bg-surface-2";
   const showReceipts = () => {
     setReceipts([]);
@@ -3401,7 +3416,7 @@ function MessageActions({
       .catch(() => setReceipts([]));
   };
   return (
-    <div className="relative">
+    <div className="relative" ref={wrapRef}>
       <button
         onClick={() => setOpen((o) => !o)}
         title={t("Más acciones")}
@@ -3411,7 +3426,6 @@ function MessageActions({
       </button>
       {open && receipts !== null && (
         <>
-          <div className="fixed inset-0 z-10" onClick={close} />
           <div className="absolute right-0 top-full z-20 mt-1 max-h-64 w-56 overflow-y-auto rounded-lg border border-border bg-surface p-1 shadow-lg">
             <button className={`${item} text-muted`} onClick={() => setReceipts(null)}>
               <ArrowLeft size={14} /> {t("Leído por")}
@@ -3432,7 +3446,6 @@ function MessageActions({
       )}
       {open && receipts === null && (
         <>
-          <div className="fixed inset-0 z-10" onClick={close} />
           <div className="absolute right-0 top-full z-20 mt-1 w-48 rounded-lg border border-border bg-surface p-1 shadow-lg">
             {slug && (
               <button
