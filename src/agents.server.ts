@@ -106,6 +106,16 @@ const EB_DOC_STREAM_GUARDRAIL = [
   "EXCEPCIÓN: documentos CON membrete de marca, tablas/hojas de cálculo (xlsx), presentaciones (pptx) o PDFs con diseño → usa los skills normales, NO la tool artifact.",
 ].join(" ");
 
+// Guardrail + identidad conversacional: si el hilo ya tiene un artefacto, le decimos al
+// agente su id → al modificar usa artifact_update(id) aunque su sesión se haya reciclado.
+function artifactGuardrail(currentDocId?: string | null): string {
+  if (!currentDocId) return EB_DOC_STREAM_GUARDRAIL;
+  return (
+    EB_DOC_STREAM_GUARDRAIL +
+    ` IMPORTANTE: en esta conversación YA existe un documento con artifactId="${currentDocId}". Si el usuario pide modificar/ajustar/corregir/cambiar/reescribir/agregar algo al documento, llama a artifact_update({id:"${currentDocId}", markdown}) con el contenido COMPLETO actualizado — NO crees uno nuevo.`
+  );
+}
+
 // Streaming (first-class): llama al backend y emite la respuesta pedacito a
 // pedacito por `onChunk`, devolviendo el texto final (autoritativo). Hoy solo el
 // backend fleet expone SSE (EasyBits /message-stream: `chunk`/`done`/`error`); el
@@ -118,7 +128,8 @@ export async function callAgentBackendStream(
   text: string,
   onChunk: (chunk: string) => void | Promise<void>,
   parts: MediaPart[] = [],
-  onTool?: (name: string) => void | Promise<void>
+  onTool?: (name: string) => void | Promise<void>,
+  currentDocId?: string | null
 ): Promise<string> {
   if (agent.backend.kind !== "fleet") {
     // Sin SSE todavía: colecta el reply completo y lo emite de un tirón (el cliente
@@ -144,7 +155,7 @@ export async function callAgentBackendStream(
         sender: sender || "invitado",
         text: outText,
         parts,
-        appendSystemPrompt: EB_DOC_STREAM_GUARDRAIL,
+        appendSystemPrompt: artifactGuardrail(currentDocId),
       }),
     });
     if (!res.ok || !res.body) throw new Error(`fleet-stream ${res.status}: ${await res.text().catch(() => "")}`);
@@ -247,6 +258,8 @@ export async function runAgentTurn(opts: {
   // Reemplaza el body completo (no append). Para el checklist incremental: al iniciar
   // una tool, las previas pasan a ✓ y la nueva queda ⚡ → se re-pinta la lista entera.
   emitBody?: (id: number, body: string) => void;
+  // documentId del artefacto ACTUAL del hilo → se inyecta al guardrail para edit-in-place.
+  currentDocId?: string | null;
 }): Promise<{ id: number; reply: string }> {
   let id: number | null = null;
   const ensure = async (): Promise<number> => {
@@ -324,7 +337,7 @@ export async function runAgentTurn(opts: {
     reply = `👾 @${opts.handle} no está conectado. El owner lo configura en Ajustes → Agentes.`;
     await onChunk(reply);
   } else {
-    reply = await callAgentBackendStream(opts.agent, opts.groupId, opts.sender, opts.text, onChunk, opts.parts ?? [], onTool);
+    reply = await callAgentBackendStream(opts.agent, opts.groupId, opts.sender, opts.text, onChunk, opts.parts ?? [], onTool, opts.currentDocId);
   }
   // `acc` (con separadores) es el texto bonito; reply es la acumulación cruda del stream.
   const finalText = acc.trim() || reply || "(sin respuesta)";

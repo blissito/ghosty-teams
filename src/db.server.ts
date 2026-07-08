@@ -291,6 +291,32 @@ export async function createArtifact(
   );
 }
 
+// ── Identidad conversacional del artefacto vivo (Fase 1 edit-in-place) ──────────
+// conv_key = `${channelId}:${parentId ?? "root"}` → documentId del artefacto ACTUAL.
+function convKey(channelId: number, parentId?: number | null): string {
+  return `${channelId}:${parentId ?? "root"}`;
+}
+export async function getThreadArtifact(
+  channelId: number,
+  parentId?: number | null
+): Promise<string | null> {
+  const rows = await dbq("SELECT document_id FROM gc_thread_artifact WHERE conv_key = ?", [
+    convKey(channelId, parentId),
+  ]);
+  return (rows[0]?.document_id as string) ?? null;
+}
+export async function setThreadArtifact(
+  channelId: number,
+  parentId: number | null | undefined,
+  documentId: string
+): Promise<void> {
+  await dbq(
+    `INSERT INTO gc_thread_artifact (conv_key, document_id, updated_at) VALUES (?, ?, unixepoch())
+     ON CONFLICT(conv_key) DO UPDATE SET document_id = excluded.document_id, updated_at = excluded.updated_at`,
+    [convKey(channelId, parentId), documentId]
+  );
+}
+
 // Enriquece un lote con TODO lo de display: reacciones + star/pin + adjuntos + artefacto.
 export async function attachMeta(msgs: Message[], userSub: string): Promise<Message[]> {
   return attachArtifacts(await attachAttachments(await attachStarPin(await attachReactions(msgs, userSub), userSub)));

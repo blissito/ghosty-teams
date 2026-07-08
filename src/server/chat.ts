@@ -421,6 +421,10 @@ export const askAgent = createServerFn({ method: "POST" })
     // groupId incluye el HANDLE → memoria por-agente (sin esto dos agentes en el mismo
     // hilo comparten conversación y se contaminan).
     const groupId = `ghosty-chat-${data.handle}-${channel.slug}-${data.parentId ?? "flow"}`;
+    // Identidad conversacional durable: el documentId del artefacto ACTUAL de este hilo.
+    // Se inyecta en el guardrail → el agente hace artifact_update(id) al modificar, aunque
+    // el worker haya reciclado su sesión (si no, "modifícalo" crearía un doc nuevo).
+    const currentDocId = await db.getThreadArtifact(channel.id, data.parentId).catch(() => null);
     const { id, reply } = await runAgentTurn({
       agent,
       handle: data.handle,
@@ -428,6 +432,7 @@ export const askAgent = createServerFn({ method: "POST" })
       sender: data.sender,
       text: data.body,
       parts,
+      currentDocId,
       createShell: async () => {
         // Quita el "pensando…" en el cliente SIN revalidar (revalidar pisaría los deltas).
         const clearedIds = await db.clearStatus(channel.id, data.parentId, data.handle);
@@ -479,6 +484,10 @@ export const askAgent = createServerFn({ method: "POST" })
         // Doc EasyBits → editor colaborativo embebido (co-edición en vivo).
         const embed = await mintCollabEmbed({ slug: found.slug, documentId: found.documentId });
         if (embed) await db.createArtifact(id, { kind: "html", url: embed.embedUrl, title: embed.title });
+        // Recuerda este doc como el artefacto ACTUAL del hilo → el próximo "modifícalo"
+        // apunta al MISMO documentId aunque el worker recicle su sesión.
+        const docId = embed?.documentId || found.documentId;
+        if (docId) await db.setThreadArtifact(channel.id, data.parentId, docId).catch(() => {});
       } else if (found?.type === "file") {
         // Kind ROBUSTO por content-type real (HEAD) — la URL no trae ext y el texto no
         // siempre menciona el tipo → office/pdf/imagen se detectan aunque el reply calle.
