@@ -14,6 +14,29 @@ export const me = createServerFn({ method: "GET" }).handler(async () => {
   return s.data.user ?? null;
 });
 
+// Identidad cacheada para el CLIENTE. `me()` es un server fn (round-trip a la
+// cookie) y __root.beforeLoad lo corre en CADA navegación (defaultStaleTime 5s);
+// sin cache, volver de /settings esperaba la red antes de pintar → se sentía como
+// recarga total (rooms/hilos "recargando"). Cacheamos el primer resultado y
+// revalidamos en background: las navegaciones siguientes resuelven instantáneo y
+// la sesión se refresca en silencio. En SSR siempre va fresco (sin cache).
+type Me = Awaited<ReturnType<typeof me>>;
+let _meCache: Me | undefined; // undefined = aún sin resolver; null = sin sesión
+export async function cachedMe(): Promise<Me> {
+  if (typeof window === "undefined") return me();
+  if (_meCache !== undefined) {
+    me().then((u) => { _meCache = u; }).catch(() => {});
+    return _meCache;
+  }
+  _meCache = await me();
+  return _meCache;
+}
+// Al hacer logout hay que invalidar la cache o una nav protegida vería al usuario
+// viejo (el guard no redirigiría) hasta la siguiente revalidación.
+export function clearMeCache() {
+  _meCache = undefined;
+}
+
 // Devuelve el URL firmado del popup de identidad de Formmy (firma opener→Formmy).
 export const startFormmyLogin = createServerFn({ method: "GET" })
   .validator((d: { inviteToken?: string } | undefined) => d ?? {})

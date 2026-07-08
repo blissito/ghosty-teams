@@ -1,6 +1,6 @@
 import { createFileRoute, useRouter } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
-import { startFormmyLogin, completeFormmyLogin } from "../server/auth";
+import { startFormmyLogin, completeFormmyLogin, clearMeCache } from "../server/auth";
 import { useT } from "../i18n";
 
 export const Route = createFileRoute("/login")({
@@ -34,7 +34,10 @@ export function LoginCard({
 
   function onIdentity(payload: string, sig: string) {
     completeFormmyLogin({ data: { payload, sig, inviteToken } })
-      .then(() => router.navigate({ to: "/" }))
+      .then(() => {
+        clearMeCache(); // la sesión cambió → refresca la identidad cacheada
+        router.navigate({ to: "/" });
+      })
       .catch((err) => {
         setState("error");
         setError(err?.message ? String(err.message) : t("No se pudo iniciar sesión"));

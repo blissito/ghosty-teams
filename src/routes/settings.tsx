@@ -2,7 +2,7 @@ import { createFileRoute, Link, useRouter } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import { Bot, Plus, Trash2, X, Bell, Smile, Loader2, Pencil } from "lucide-react";
 import { currentPushState, enablePush, disablePush } from "../utils/push-subscribe";
-import { me, logout } from "../server/auth";
+import { me, logout, clearMeCache } from "../server/auth";
 import { getSetup } from "../server/setup";
 import { createInvite } from "../server/invites";
 import {
@@ -54,6 +54,7 @@ function Settings() {
   }
   async function doLogout() {
     await logout();
+    clearMeCache(); // invalida la identidad cacheada o el guard vería al user viejo
     router.navigate({ to: "/login" });
   }
 

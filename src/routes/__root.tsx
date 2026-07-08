@@ -2,7 +2,7 @@ import { useEffect } from 'react'
 import { HeadContent, Scripts, createRootRoute, redirect } from '@tanstack/react-router'
 
 import '../styles.css'
-import { me } from '../server/auth'
+import { cachedMe } from '../server/auth'
 // Engancha `beforeinstallprompt` en module-scope (antes de hidratar) para no
 // perder el evento — lo consume InstallAppBanner.
 import { registerSW } from '../utils/pwa-install'
@@ -15,7 +15,9 @@ export const Route = createRootRoute({
     if (location.pathname === '/login' || location.pathname.startsWith('/join')) {
       return { user: null }
     }
-    const user = await me()
+    // cachedMe: instantáneo en el cliente (revalida en background) → volver de
+    // /settings no espera la red. En SSR va fresco.
+    const user = await cachedMe()
     if (!user) throw redirect({ to: '/login' })
     return { user }
   },
