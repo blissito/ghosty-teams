@@ -29,7 +29,8 @@ estado aislado.
 ## Cómo funciona
 
 - **[Formmy](https://formmy.app)** → identidad + enruta a tu equipo desde el
-  dominio estable `teams.formmy.app`.
+  dominio estable `teams.formmy.app` (ingress **gateado por membresía**: solo
+  entras a la caja de un team del que eres miembro).
 - **[EasyBits](https://easybits.cloud)** → cada equipo levanta su microVM
   (Firecracker) + su DB aislada; `@ghosty` es un agente de tu flota (OAuth2).
 - **La app** → [TanStack Start](https://tanstack.com/start) (React 19 SSR) +

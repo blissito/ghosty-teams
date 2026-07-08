@@ -59,6 +59,15 @@ que **churnea en cada rebake**. La solución: un **dominio estable** delante.
   `sb-xxx` queda **interno, nunca lo ve el user**.
 - Sin cookie `gt_team` → 302 a `/teams` (**selector**). Login/assets/api pasan
   a Formmy (passthrough).
+- **Gate de membresía (seguridad)**: el cookie `gt_team` es un bearer sin binding
+  al usuario (Max-Age 30d). Antes de proxyar una **navegación** (GET `text/html`)
+  a la caja de un team, el ingress decodifica la `__session` de Formmy (domain
+  `.formmy.app` → llega al subdominio) y verifica que el user sea **miembro** de
+  ese team (dueño o `Permission` TEAM activa, espejo de `getMyTeams`). Si no → se
+  limpia el cookie y va a **su** selector. Sin esto, un `gt_team` heredado (mismo
+  browser, otra cuenta) metía al intruso a la caja ajena (la caja hace SSO
+  silencioso y lo daba de alta como miembro). Fail-closed; cache 30s por
+  `(slug|email)`.
 
 ### Beneficios del dominio estable
 - **PWA instalable durable**: el ícono no se rompe en rebakes (origin fijo).
@@ -126,6 +135,18 @@ Tres candados que hubo que resolver para que funcione detrás del proxy:
 > Por qué el wizard y no OAuth antes: para provisionar en TU cuenta se
 > necesitaría tu token antes de que exista el chat. En cambio: plataforma
 > spinnea (fungible) y **el wizard adopta** — un solo momento de conexión.
+
+**Idempotencia + cleanup** (evita apilar teams y fugar cupo de la cuenta
+plataforma):
+- **"Lanzar" reusa un team propio incompleto** (sin `instanceUrl`) en vez de
+  crear uno nuevo por click → un launch fallido ya no deja fantasmas en
+  "Reintentar". Revive sobre su DB si ya la tenía; solo crea uno nuevo si no hay
+  ninguno a medias.
+- **`spinAndExpose` destruye la caja best-effort si la provisión falla tras
+  crearla** (running/exec/expose). Sin esto, una caja creada-pero-no-expuesta
+  quedaba viva contando en `inUse = live + suspended` de la cuenta plataforma
+  hasta el hardTtl (7d) → suficientes fallos llenaban el cupo y **nadie más podía
+  lanzar**.
 
 ---
 
