@@ -3082,6 +3082,7 @@ function artifactToView(a: Artifact): ArtifactView {
 function ArtifactCard({ artifact }: { artifact: Artifact }) {
   const t = useT();
   const { onOpenArtifact } = useContext(ChatCtx);
+  const [downloading, setDownloading] = useState(false);
   const view = artifactToView(artifact);
   const isDoc = view.kind === "doc";
   const isOffice = view.kind === "office";
@@ -3111,15 +3112,42 @@ function ArtifactCard({ artifact }: { artifact: Artifact }) {
         </span>
       </button>
       {downloadHref ? (
-        <a
-          href={downloadHref}
-          download
-          {...(isOffice ? { target: "_blank", rel: "noreferrer" } : {})}
-          onClick={(e) => e.stopPropagation()}
-          className="shrink-0 rounded-lg border border-border px-3 py-1.5 text-xs font-medium text-ink transition hover:bg-surface-3"
+        <button
+          type="button"
+          disabled={downloading}
+          onClick={async (e) => {
+            e.stopPropagation();
+            if (downloading) return;
+            // Office = URL pública externa → navegación directa (evita CORS del blob).
+            if (isOffice) {
+              window.open(downloadHref, "_blank", "noopener");
+              return;
+            }
+            // Doc = proxy same-origin (export lento) → spinner. fetch → blob → download.
+            setDownloading(true);
+            try {
+              const r = await fetch(downloadHref);
+              if (!r.ok) throw new Error();
+              const blob = await r.blob();
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement("a");
+              a.href = url;
+              a.download = `${(artifact.title || "documento").replace(/[^\w.\- ]/g, "_")}.docx`;
+              document.body.appendChild(a);
+              a.click();
+              a.remove();
+              setTimeout(() => URL.revokeObjectURL(url), 4000);
+            } catch {
+              /* silencioso: el usuario reintenta */
+            } finally {
+              setDownloading(false);
+            }
+          }}
+          className="flex shrink-0 items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs font-medium text-ink transition hover:bg-surface-3 disabled:opacity-60"
         >
-          {t("Descargar")}
-        </a>
+          {downloading ? <Loader2 size={12} className="animate-spin" /> : null}
+          {downloading ? t("Descargando…") : t("Descargar")}
+        </button>
       ) : null}
     </div>
   );

@@ -74,6 +74,7 @@ export default function ArtifactPanel({
   const [officeState, setOfficeState] = useState<"idle" | "loading" | "error">("idle");
   const [refreshTick, setRefreshTick] = useState(0); // botón "refrescar" del header (re-fetch manual)
   const [expanded, setExpanded] = useState(false); // botón "expandir" (ancho máximo)
+  const [downloading, setDownloading] = useState(false); // el export docx es lento → spinner
   // Identidad ESTABLE del artefacto → los effects (reset + fetch office) NO se re-disparan
   // al reabrir el MISMO artefacto (evita "recarga aunque ya esté visible"). El draft usa
   // id constante para que su streaming NO resetee.
@@ -133,6 +134,33 @@ export default function ArtifactPanel({
       alive = false;
     };
   }, [previewKey, docId, officeSrc, editUrl, docRefreshKey, refreshTick]);
+  // Descarga con FEEDBACK: el export docx (doc) tarda; fetch same-origin → blob → download,
+  // con spinner. Office = URL pública externa → navegación directa (evita CORS del blob).
+  const doDownload = async () => {
+    if (!downloadHref || downloading) return;
+    if (artifact?.kind === "office") {
+      window.open(downloadHref, "_blank", "noopener");
+      return;
+    }
+    setDownloading(true);
+    try {
+      const r = await fetch(downloadHref);
+      if (!r.ok) throw new Error(String(r.status));
+      const blob = await r.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${(artifact?.title || "documento").replace(/[^\w.\- ]/g, "_")}.docx`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 4000);
+    } catch {
+      alert(t("No se pudo descargar. Intenta de nuevo."));
+    } finally {
+      setDownloading(false);
+    }
+  };
   const handleEdit = async () => {
     if (converting || !artifact || (artifact.kind !== "office" && artifact.kind !== "doc")) return;
     setConverting(true);
@@ -269,15 +297,15 @@ export default function ArtifactPanel({
                       </button>
                     )}
                     {downloadHref ? (
-                      <a
-                        href={downloadHref}
-                        download
-                        {...(artifact.kind === "office" ? { target: "_blank", rel: "noreferrer" } : {})}
-                        title={t("Descargar Word")}
-                        className="grid size-7 place-items-center rounded-md text-muted transition hover:bg-surface-3 hover:text-brand"
+                      <button
+                        type="button"
+                        onClick={doDownload}
+                        disabled={downloading}
+                        title={downloading ? t("Descargando…") : t("Descargar Word")}
+                        className="grid size-7 place-items-center rounded-md text-muted transition hover:bg-surface-3 hover:text-brand disabled:opacity-60"
                       >
-                        <Download size={15} />
-                      </a>
+                        {downloading ? <Loader2 size={15} className="animate-spin" /> : <Download size={15} />}
+                      </button>
                     ) : null}
                     <button
                       type="button"
