@@ -1529,6 +1529,14 @@ function Sidebar({
               <span className="truncate">{label}</span>
             </button>
           ))}
+          {/* Formularios de intake del team (ruta propia, no una vista de mensajes). */}
+          <Link
+            to="/forms"
+            className="flex w-full items-center gap-2 rounded-lg px-2 py-2.5 text-sm md:py-1.5 text-muted hover:bg-surface-3 hover:text-ink"
+          >
+            <FileText size={16} className="shrink-0" />
+            <span className="truncate">{t("Formularios")}</span>
+          </Link>
         </div>
         <div className="flex items-center justify-between px-2 pb-1 pt-2">
           <p className="text-[11px] font-semibold uppercase tracking-wider text-muted">{t("Rooms")}</p>
