@@ -1,6 +1,6 @@
 import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useRef, useState } from "react";
-import { X, ExternalLink, FileText, Pencil, Download, Loader2, ChevronRight } from "lucide-react";
+import { X, ExternalLink, FileText, Pencil, Download, Loader2, ChevronRight, RotateCw, Maximize2, Minimize2, Eye } from "lucide-react";
 import { useT } from "../i18n";
 import { officeToEditableFn, officeToHtmlFn, docToHtmlFn, docEmbedFn } from "../server/chat";
 import { Markdown } from "./Markdown";
@@ -72,6 +72,8 @@ export default function ArtifactPanel({
   // inline. "loading" | HTML sanitizado | "error" (xlsx/pptx no soportados → descarga).
   const [officeHtml, setOfficeHtml] = useState<string | null>(null);
   const [officeState, setOfficeState] = useState<"idle" | "loading" | "error">("idle");
+  const [refreshTick, setRefreshTick] = useState(0); // botón "refrescar" del header (re-fetch manual)
+  const [expanded, setExpanded] = useState(false); // botón "expandir" (ancho máximo)
   // Identidad ESTABLE del artefacto → los effects (reset + fetch office) NO se re-disparan
   // al reabrir el MISMO artefacto (evita "recarga aunque ya esté visible"). El draft usa
   // id constante para que su streaming NO resetee.
@@ -79,6 +81,13 @@ export default function ArtifactPanel({
   const docId = artifact?.kind === "doc" ? artifact.documentId : null;
   // Clave del preview: office (.docx) o doc (Landing) → mismo render de "hoja".
   const previewKey = officeSrc ?? docId;
+  const isDocLike = artifact?.kind === "doc" || artifact?.kind === "office";
+  const downloadHref =
+    artifact?.kind === "doc"
+      ? `/api/doc-docx/${encodeURIComponent(artifact.documentId)}?name=${encodeURIComponent(artifact.title || "documento")}`
+      : artifact?.kind === "office"
+        ? artifact.src
+        : null;
   const artifactId = !artifact
     ? null
     : artifact.kind === "office"
@@ -123,7 +132,7 @@ export default function ArtifactPanel({
     return () => {
       alive = false;
     };
-  }, [previewKey, docId, officeSrc, editUrl, docRefreshKey]);
+  }, [previewKey, docId, officeSrc, editUrl, docRefreshKey, refreshTick]);
   const handleEdit = async () => {
     if (converting || !artifact || (artifact.kind !== "office" && artifact.kind !== "doc")) return;
     setConverting(true);
@@ -230,12 +239,56 @@ export default function ArtifactPanel({
                 mantiene su tamaño y el overflow-hidden lo recorta → efecto slide/reveal
                 (no se aplasta). */}
             <div className="flex min-w-0 shrink-0 flex-col" style={{ width }}>
-              <header className="flex flex-shrink-0 items-center gap-2 border-b border-border bg-surface-2 px-3 py-2">
-                <FileText size={16} className="shrink-0 text-brand" />
+              <header className="flex flex-shrink-0 items-center gap-1 border-b border-border bg-surface-2 px-3 py-2">
+                <FileText size={16} className="mr-1 shrink-0 text-muted" />
                 <span className="min-w-0 flex-1 truncate text-sm font-medium text-ink">
                   {artifact.title || t("Documento")}
+                  {isDocLike ? <span className="ml-1.5 text-xs font-normal text-muted">· DOCX</span> : null}
                 </span>
-                {externalHref ? (
+                {/* Acciones estilo claude.ai: iconos en el header (no barra abajo). */}
+                {isDocLike ? (
+                  <>
+                    {editUrl ? (
+                      <button
+                        type="button"
+                        onClick={() => setEditUrl(null)}
+                        title={t("Ver documento")}
+                        className="grid size-7 place-items-center rounded-md text-muted transition hover:bg-surface-3 hover:text-brand"
+                      >
+                        <Eye size={15} />
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={handleEdit}
+                        disabled={converting}
+                        title={t("Editar")}
+                        className="grid size-7 place-items-center rounded-md text-muted transition hover:bg-surface-3 hover:text-brand disabled:opacity-50"
+                      >
+                        {converting ? <Loader2 size={15} className="animate-spin" /> : <Pencil size={15} />}
+                      </button>
+                    )}
+                    {downloadHref ? (
+                      <a
+                        href={downloadHref}
+                        download
+                        {...(artifact.kind === "office" ? { target: "_blank", rel: "noreferrer" } : {})}
+                        title={t("Descargar Word")}
+                        className="grid size-7 place-items-center rounded-md text-muted transition hover:bg-surface-3 hover:text-brand"
+                      >
+                        <Download size={15} />
+                      </a>
+                    ) : null}
+                    <button
+                      type="button"
+                      onClick={() => setRefreshTick((n) => n + 1)}
+                      title={t("Actualizar")}
+                      className="grid size-7 place-items-center rounded-md text-muted transition hover:bg-surface-3 hover:text-brand"
+                    >
+                      <RotateCw size={15} />
+                    </button>
+                  </>
+                ) : externalHref ? (
                   <a
                     href={externalHref}
                     target="_blank"
@@ -246,6 +299,18 @@ export default function ArtifactPanel({
                     <ExternalLink size={15} />
                   </a>
                 ) : null}
+                <button
+                  type="button"
+                  onClick={() => {
+                    const max = window.innerWidth - CHAT_MIN;
+                    setExpanded((e) => !e);
+                    setWidth(expanded ? Math.min(DEFAULT_W, max) : max);
+                  }}
+                  title={expanded ? t("Reducir") : t("Expandir")}
+                  className="grid size-7 place-items-center rounded-md text-muted transition hover:bg-surface-3 hover:text-brand"
+                >
+                  {expanded ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
+                </button>
                 <button
                   type="button"
                   onClick={onClose}
@@ -316,26 +381,6 @@ export default function ArtifactPanel({
                           </div>
                         )}
                       </div>
-                      <div className="flex shrink-0 items-stretch border-t border-border bg-surface-2 text-sm font-medium">
-                        <button
-                          type="button"
-                          onClick={handleEdit}
-                          disabled={converting}
-                          className="flex flex-1 items-center justify-center gap-2 py-2 text-brand transition hover:bg-surface-3 disabled:opacity-60"
-                        >
-                          {converting ? <Loader2 size={15} className="animate-spin" /> : <Pencil size={15} />}
-                          {converting ? t("Abriendo editor…") : t("Editar")}
-                        </button>
-                        <a
-                          href={artifact.src}
-                          target="_blank"
-                          rel="noreferrer"
-                          download
-                          className="flex flex-1 items-center justify-center gap-2 border-l border-border py-2 text-muted transition hover:bg-surface-3 hover:text-ink"
-                        >
-                          <Download size={15} /> {t("Descargar")}
-                        </a>
-                      </div>
                     </div>
                   )
                 ) : artifact.kind === "doc" ? (
@@ -358,24 +403,6 @@ export default function ArtifactPanel({
                         ) : (
                           <div className="grid h-full place-items-center text-sm text-muted">{t("Sin contenido")}</div>
                         )}
-                      </div>
-                      <div className="flex shrink-0 items-stretch border-t border-border bg-surface-2 text-sm font-medium">
-                        <button
-                          type="button"
-                          onClick={handleEdit}
-                          disabled={converting}
-                          className="flex flex-1 items-center justify-center gap-2 py-2 text-brand transition hover:bg-surface-3 disabled:opacity-60"
-                        >
-                          {converting ? <Loader2 size={15} className="animate-spin" /> : <Pencil size={15} />}
-                          {converting ? t("Abriendo editor…") : t("Editar")}
-                        </button>
-                        <a
-                          href={`/api/doc-docx/${encodeURIComponent(artifact.documentId)}?name=${encodeURIComponent(artifact.title || "documento")}`}
-                          download
-                          className="flex flex-1 items-center justify-center gap-2 border-l border-border py-2 text-muted transition hover:bg-surface-3 hover:text-ink"
-                        >
-                          <Download size={15} /> {t("Descargar Word")}
-                        </a>
                       </div>
                     </div>
                   )

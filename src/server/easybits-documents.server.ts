@@ -122,7 +122,10 @@ export async function docToHtml(documentId: string): Promise<{ html: string; tit
     const secs = doc.sections ?? [];
     const html = secs
       .filter((s) => s && s.id !== "__grapes_css__" && s.html)
-      .map((s) => s.html)
+      // Quita el wrapper <section class="bg-surface text-on-surface …"> (clases de tema de
+      // EasyBits que en GTeams salen oscuras) → deja el contenido limpio (h1/p/ol…) que la
+      // hoja `prose` estiliza en negro sobre blanco.
+      .map((s) => (s.html ?? "").replace(/<section\b[^>]*>/gi, "").replace(/<\/section>/gi, ""))
       .join("\n")
       .trim();
     if (!html) return null;
