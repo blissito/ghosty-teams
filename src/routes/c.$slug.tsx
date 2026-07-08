@@ -97,8 +97,17 @@ export const Route = createFileRoute("/c/$slug")({
   // El hilo y el flujo NO van en el loader (se cargan client-side con cache +
   // skeleton → abrir es instantáneo). El loader solo trae rooms + meta + user.
   loader: async ({ params }) => {
-    // Ruta rápida (cliente): el room ya está en el sidebar → resuelve sin red y
-    // revalida en segundo plano. El meta del room vive en la misma lista.
+    // Prefetch del flujo + hilos del room. En SSR SIEMPRE (primer paint con datos).
+    // En el cliente SOLO durante la hidratación inicial (`hydrated`=false): reusa el
+    // cache si existe (switch entre rooms sigue instantáneo) y si no fetchea, para
+    // que el render de hidratación sea IDÉNTICO al HTML del SSR. Sin esto había un
+    // hydration mismatch (SSR pinta mensajes, el cliente re-corría el loader y
+    // devolvía undefined → skeleton → React descartaba el SSR → parpadeo + recarga
+    // de hilos al refresh). Tras hidratar, una nav a un room nuevo devuelve undefined
+    // → skeleton instantáneo, comportamiento sin cambio.
+    const prefetch = typeof window === "undefined" || !hydrated;
+
+    // Ruta rápida (cliente ya hidratado): el room está en el sidebar → sin red.
     if (typeof window !== "undefined" && shellCache) {
       const channel = shellCache.channels.find((c) => c.slug === params.slug);
       if (channel) {
@@ -108,7 +117,7 @@ export const Route = createFileRoute("/c/$slug")({
             if (v) shellCache = { channels: v.channels, user };
           })
           .catch(() => {});
-        return { channels: shellCache.channels, channel, user, initialFlow: undefined };
+        return { channels: shellCache.channels, channel, user, initialFlow: undefined, initialThreads: undefined };
       }
     }
     const [view, user] = await Promise.all([
@@ -117,23 +126,18 @@ export const Route = createFileRoute("/c/$slug")({
     ]);
     if (!view) throw notFound();
     if (typeof window !== "undefined") shellCache = { channels: view.channels, user };
-    // Primer render (SSR/hard load): los useEffect NO corren en el server, así que
-    // sin esto el flujo del room se pintaba como skeleton y solo tras hidratar el
-    // cliente disparaba getChannelFlow (round-trip → pop). Prefetcheamos el flujo
-    // SOLO en el server para que el primer paint ya traiga los mensajes; el cliente
-    // lo siembra en flowCache antes de useCachedQuery. En navegación client-side
-    // (window definido) NO se prefetchea → el switch entre rooms sigue instantáneo.
+
     let initialFlow: Awaited<ReturnType<typeof getChannelFlow>> | undefined;
-    if (typeof window === "undefined") {
-      try {
-        initialFlow = await getChannelFlow({ data: { slug: params.slug } });
-        console.log(`[flow-prefetch] ssr slug=${params.slug} len=${initialFlow?.length ?? "null"}`);
-      } catch (e) {
-        console.log(`[flow-prefetch] ssr slug=${params.slug} THREW ${e instanceof Error ? e.message : String(e)}`);
-        initialFlow = undefined;
-      }
+    let initialThreads: Awaited<ReturnType<typeof getChannelThreads>> | undefined;
+    if (prefetch) {
+      const cachedFlow = typeof window !== "undefined" ? flowCache.get(params.slug) : undefined;
+      const cachedThreads = typeof window !== "undefined" ? threadsCache.get(params.slug) : undefined;
+      [initialFlow, initialThreads] = await Promise.all([
+        cachedFlow ?? getChannelFlow({ data: { slug: params.slug } }).catch(() => undefined),
+        cachedThreads ?? getChannelThreads({ data: { slug: params.slug } }).catch(() => undefined),
+      ]);
     }
-    return { ...view, user, initialFlow };
+    return { ...view, user, initialFlow, initialThreads };
   },
   component: ChannelPage,
 });
@@ -186,6 +190,10 @@ function RoomIcon({ name, size = 18, className }: { name?: string | null; size?:
 // (mostramos lo cacheado y revalidamos en background, sin skeleton ni glitch).
 const flowCache = new Map<string, Message[]>();
 const threadsCache = new Map<string, Message[]>();
+// `hydrated` = false hasta que el primer render del cliente se monta. El loader lo
+// usa para prefetchear flujo/hilos durante la hidratación (igualar el SSR, sin
+// parpadeo) pero NO en navegaciones posteriores (switch instantáneo con skeleton).
+let hydrated = false;
 // `pending` = sembramos el root al instante (sin skeleton en el detonador) pero las
 // RESPUESTAS aún cargan → ThreadView les muestra skeleton hasta que getThread las trae.
 const threadCache = new Map<number, { root: Message | null; replies: Message[]; pending?: boolean }>();
@@ -464,7 +472,12 @@ function useCachedQuery<K, T>(
 }
 
 function ChannelPage() {
-  const { channels, channel, user, initialFlow } = Route.useLoaderData();
+  const { channels, channel, user, initialFlow, initialThreads } = Route.useLoaderData();
+  // Marca la hidratación como completa → el loader deja de prefetchear en las
+  // navegaciones siguientes (solo lo hacía para igualar el SSR en el primer render).
+  useEffect(() => {
+    hydrated = true;
+  }, []);
   // Hilo / DM abierto = ESTADO CLIENTE (no URL) → abre instantáneo, sin revalidar el
   // router. Igual que los hilos, un DM se enfoca en el CENTRO (referencia Zulip).
   const [openThreadId, setOpenThreadId] = useState<number | null>(null);
@@ -675,7 +688,8 @@ function ChannelPage() {
       channel.slug,
       () => getChannelThreads({ data: { slug: channel.slug } }),
       rev,
-      patch
+      patch,
+      initialThreads ?? undefined
     ) ?? [];
   // Conversaciones directas del usuario (sección "Mensajes directos" del sidebar).
   const dms = useCachedQuery(dmListCache, "list", () => listDmsFn(), rev, patch) ?? [];
