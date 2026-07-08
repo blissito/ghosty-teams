@@ -108,7 +108,7 @@ export const Route = createFileRoute("/c/$slug")({
             if (v) shellCache = { channels: v.channels, user };
           })
           .catch(() => {});
-        return { channels: shellCache.channels, channel, user };
+        return { channels: shellCache.channels, channel, user, initialFlow: undefined };
       }
     }
     const [view, user] = await Promise.all([
@@ -117,7 +117,17 @@ export const Route = createFileRoute("/c/$slug")({
     ]);
     if (!view) throw notFound();
     if (typeof window !== "undefined") shellCache = { channels: view.channels, user };
-    return { ...view, user };
+    // Primer render (SSR/hard load): los useEffect NO corren en el server, así que
+    // sin esto el flujo del room se pintaba como skeleton y solo tras hidratar el
+    // cliente disparaba getChannelFlow (round-trip → pop). Prefetcheamos el flujo
+    // SOLO en el server para que el primer paint ya traiga los mensajes; el cliente
+    // lo siembra en flowCache antes de useCachedQuery. En navegación client-side
+    // (window definido) NO se prefetchea → el switch entre rooms sigue instantáneo.
+    const initialFlow =
+      typeof window === "undefined"
+        ? await getChannelFlow({ data: { slug: params.slug } }).catch(() => undefined)
+        : undefined;
+    return { ...view, user, initialFlow };
   },
   component: ChannelPage,
 });
@@ -443,7 +453,11 @@ function useCachedQuery<K, T>(
 }
 
 function ChannelPage() {
-  const { channels, channel, user } = Route.useLoaderData();
+  const { channels, channel, user, initialFlow } = Route.useLoaderData();
+  // Siembra del flujo prefetcheado en SSR → el primer render ya lee flowCache (sin
+  // skeleton ni round-trip al hidratar). Guardado por !has para no pisar lo que el
+  // realtime/revalidación ya actualizó client-side; idempotente entre SSR e hidratación.
+  if (initialFlow && !flowCache.has(channel.slug)) flowCache.set(channel.slug, initialFlow);
   // Hilo / DM abierto = ESTADO CLIENTE (no URL) → abre instantáneo, sin revalidar el
   // router. Igual que los hilos, un DM se enfoca en el CENTRO (referencia Zulip).
   const [openThreadId, setOpenThreadId] = useState<number | null>(null);
