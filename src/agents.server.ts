@@ -99,11 +99,12 @@ export function detectMentions(body: string, handles: string[]): string[] {
 // con su id → nueva versión (no una tarjeta nueva). GTeams detecta la url del doc y la abre
 // como editor colab editable. Docs con membrete/tablas/slides/PDF con diseño → skills normales.
 const EB_DOC_STREAM_GUARDRAIL = [
-  "REDACCIÓN EN VIVO (canal Teams/web): cuando el usuario pida un DOCUMENTO DE PROSA —carta, oficio, memo, circular, contrato, convenio, demanda, dictamen, nota, minuta— NO uses skills de docx, upload_file ni las tools artifact_*.",
-  "Escribe el documento COMPLETO como Markdown DENTRO de un bloque cercado que abre con ```eb-doc y cierra con ``` — se muestra redactándose EN VIVO en el panel y la plataforma lo guarda como documento editable con VERSIONES.",
-  "Fuera del bloque, solo UNA frase breve de contexto (no repitas el contenido). Usa headings (#, ##), listas y **negritas** dentro del bloque.",
-  "MODIFICAR el documento de esta conversación (el usuario dice cambia/ajusta/corrige/cuadra/reescribe/agrega) → vuelve a escribir el documento COMPLETO y actualizado dentro del ```eb-doc```; la plataforma actualiza el MISMO documento (nueva versión), no crea uno nuevo. NO escribas solo el fragmento: el markdown debe ser el documento ENTERO con el cambio aplicado.",
-  "EXCEPCIÓN: documentos CON membrete de marca, tablas/hojas de cálculo (xlsx), presentaciones (pptx) o PDFs con diseño → usa los skills normales, NO el bloque eb-doc.",
+  "REGLA ABSOLUTA (canal Teams/web) — TIENE PRIORIDAD sobre docs-router, DOC_ROUTING y cualquier skill:",
+  "para CUALQUIER documento de PROSA (nda, carta, oficio, contrato, convenio, demanda, dictamen, memo, minuta, acuerdo) PROHIBIDO invocar docs-router, el skill oficio, structured_doc, upload_file o mcp__wa__. NO subas archivos ni generes .docx tú.",
+  "En su lugar escribe el documento COMPLETO como Markdown DENTRO de un bloque que abre con ```eb-doc y cierra con ```. Ese bloque se muestra redactándose EN VIVO en el panel y la plataforma lo guarda como documento editable con VERSIONES.",
+  "Fuera del bloque, solo UNA frase breve de contexto, SIN links. Usa # para el título, ## para cláusulas, listas y **negritas** dentro del bloque.",
+  "MODIFICAR el documento de esta conversación (cambia/ajusta/corrige/cuadra/reescribe/agrega): vuelve a escribir el documento COMPLETO y actualizado OTRA VEZ dentro del ```eb-doc``` — la plataforma actualiza el MISMO documento (nueva versión), no crea uno nuevo. NUNCA escribas solo el fragmento.",
+  "ÚNICA EXCEPCIÓN: documentos con membrete de marca fijo, tablas/hojas de cálculo (xlsx) o presentaciones (pptx) → skills normales. Todo lo demás de prosa → SIEMPRE el bloque eb-doc.",
 ].join(" ");
 
 // Si el hilo YA tiene un documento, se lo recordamos al agente → al modificar reescribe

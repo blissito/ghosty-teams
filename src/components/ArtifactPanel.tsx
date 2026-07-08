@@ -279,7 +279,12 @@ export default function ArtifactPanel({
                     {editUrl ? (
                       <button
                         type="button"
-                        onClick={() => setEditUrl(null)}
+                        onClick={() => {
+                          // Vuelve al preview y re-fetchea tras el debounce de guardado del
+                          // editor colab (~800ms) → refleja lo editado.
+                          setEditUrl(null);
+                          setTimeout(() => setRefreshTick((n) => n + 1), 1200);
+                        }}
                         title={t("Ver documento")}
                         className="grid size-7 place-items-center rounded-md text-muted transition hover:bg-surface-3 hover:text-brand"
                       >
@@ -296,7 +301,9 @@ export default function ArtifactPanel({
                         {converting ? <Loader2 size={15} className="animate-spin" /> : <Pencil size={15} />}
                       </button>
                     )}
-                    {downloadHref ? (
+                    {/* Al editar, el editor colab trae su propia barra (Compartir/PDF/Word) →
+                        ocultamos Descargar/Actualizar para no duplicar. */}
+                    {!editUrl && downloadHref ? (
                       <button
                         type="button"
                         onClick={doDownload}
@@ -307,14 +314,16 @@ export default function ArtifactPanel({
                         {downloading ? <Loader2 size={15} className="animate-spin" /> : <Download size={15} />}
                       </button>
                     ) : null}
-                    <button
-                      type="button"
-                      onClick={() => setRefreshTick((n) => n + 1)}
-                      title={t("Actualizar")}
-                      className="grid size-7 place-items-center rounded-md text-muted transition hover:bg-surface-3 hover:text-brand"
-                    >
-                      <RotateCw size={15} />
-                    </button>
+                    {!editUrl ? (
+                      <button
+                        type="button"
+                        onClick={() => setRefreshTick((n) => n + 1)}
+                        title={t("Actualizar")}
+                        className="grid size-7 place-items-center rounded-md text-muted transition hover:bg-surface-3 hover:text-brand"
+                      >
+                        <RotateCw size={15} />
+                      </button>
+                    ) : null}
                   </>
                 ) : externalHref ? (
                   <a
