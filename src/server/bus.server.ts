@@ -34,6 +34,9 @@ export type RtEvent =
   | { t: "pin"; channelId: number; messageId: number; pinned: boolean } // fijado/desfijado (room-wide)
   | { t: "star"; messageId: number; starred: boolean } // marcado personal (a ch.user, cross-device)
   | { t: "refresh"; channelId: number | null; parentId: number | null; dmId?: number | null } // churn de agente/status
+  // El artefacto DOC avanzó de versión (el agente lo modificó) → el panel abierto que lo
+  // muestra recarga su preview a la última versión (auto-refresh, sin recargar todo).
+  | { t: "artifact:version"; documentId: string; version: number; channelId: number | null }
   | { t: "unread"; scope: "room" | "dm"; scopeId: number } // hay algo nuevo en un scope no-activo → badge
   | { t: "presence"; sub: string; name: string; status: "online" | "offline" }
   | { t: "presence:init"; online: string[] }

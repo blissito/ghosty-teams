@@ -449,6 +449,10 @@ function ChannelPage() {
   // Artefacto abierto en el panel lateral (pdf/imagen; doc en Fase 3). Estado
   // cliente puro, como openThreadId — abre instantáneo sin tocar el router.
   const [openArtifact, setOpenArtifact] = useState<ArtifactView | null>(null);
+  const openArtifactRef = useRef<ArtifactView | null>(null);
+  openArtifactRef.current = openArtifact;
+  // Sube cuando el doc ABIERTO en el panel avanzó de versión → el panel re-fetchea su preview.
+  const [docRefreshKey, setDocRefreshKey] = useState(0);
   // Vista Zulip enfocada en el centro (recientes/menciones/destacados) — otro modo
   // de estado-cliente, mutuamente excluyente con hilo/DM. null = flujo del room.
   const [view, setView] = useState<null | "recent" | "mentions" | "starred">(null);
@@ -562,9 +566,9 @@ function ChannelPage() {
     if (!doc || !doc.md.trim()) return;
     draftMsgIdRef.current = id;
     setOpenArtifact((cur) => {
-      // Auto-abre si no hay panel o si ya estamos en el draft; NO pisa un artefacto
-      // que el usuario abrió aparte.
-      if (cur && cur.kind !== "draft") return cur;
+      // Auto-abre si no hay panel, si ya estamos en el draft, o si está abierto el DOC que
+      // se está editando (para ver la edición EN VIVO). NO pisa otro artefacto (pdf/imagen…).
+      if (cur && cur.kind !== "draft" && cur.kind !== "doc") return cur;
       return { kind: "draft", title: draftTitle(doc.md), md: doc.md, streaming: !doc.closed };
     });
   };
@@ -773,6 +777,13 @@ function ChannelPage() {
         // Churn de agente/status (room o DM) → refetch del contexto activo (rev).
         if (ev.channelId === channel.id || ev.dmId != null) revalidate();
         break;
+      case "artifact:version": {
+        // El doc avanzó de versión (agente lo modificó). Si el panel muestra ESE doc,
+        // recárgalo a la nueva versión (auto-refresh) sin recargar todo.
+        const cur = openArtifactRef.current;
+        if (cur?.kind === "doc" && cur.documentId === ev.documentId) setDocRefreshKey((k) => k + 1);
+        break;
+      }
       case "unread":
         // Otra pestaña/dispositivo cambió el read-state → reconcilia con el server.
         refreshUnread();
@@ -1201,7 +1212,7 @@ function ChannelPage() {
       )}
       {/* Panel de artefactos: columna fija a la derecha (desktop) u overlay (móvil).
           Se rinde null solo cuando no hay artefacto abierto. */}
-      <ArtifactPanel artifact={openArtifact} onClose={() => setOpenArtifact(null)} />
+      <ArtifactPanel artifact={openArtifact} onClose={() => setOpenArtifact(null)} docRefreshKey={docRefreshKey} />
       <AnimatePresence>
         {paletteOpen && (
           <CommandPalette
@@ -3047,6 +3058,7 @@ function AttachmentList({ attachments }: { attachments: Attachment[] }) {
 // switches). `embed` = va en iframe con embedUrl (editor colab); el resto comparte
 // shape {kind, src:url}. `label` = subtítulo HONESTO de la card.
 const ARTIFACT_KIND_META: Record<string, { embed?: boolean; labelKey: string }> = {
+  doc: { labelKey: "Documento" },
   html: { embed: true, labelKey: "Abrir para editar en vivo" },
   office: { labelKey: "Vista previa · Descargar" },
   pdf: { labelKey: "Vista previa" },
@@ -3060,6 +3072,7 @@ const ARTIFACT_KIND_META: Record<string, { embed?: boolean; labelKey: string }> 
 // card Y el link inline del reply). Kind desconocido → `file` (descarga segura).
 function artifactToView(a: Artifact): ArtifactView {
   const title = a.title ?? "";
+  if (a.kind === "doc") return { kind: "doc", title, documentId: a.url };
   const kind = ARTIFACT_KIND_META[a.kind] ? a.kind : "file";
   return ARTIFACT_KIND_META[kind].embed
     ? { kind: "html", title, embedUrl: a.url }
@@ -3070,20 +3083,45 @@ function ArtifactCard({ artifact }: { artifact: Artifact }) {
   const t = useT();
   const { onOpenArtifact } = useContext(ChatCtx);
   const view = artifactToView(artifact);
-  const subtitle = t(ARTIFACT_KIND_META[view.kind]?.labelKey ?? "Descargar");
+  const isDoc = view.kind === "doc";
+  const isOffice = view.kind === "office";
+  // Subtítulo tipo "Documento · DOCX" (estilo claude.ai) para doc/office; el label del
+  // registro para el resto.
+  const subtitle =
+    isDoc || isOffice ? `${t("Documento")} · DOCX` : t(ARTIFACT_KIND_META[view.kind]?.labelKey ?? "Descargar");
+  const downloadHref = isDoc
+    ? `/api/doc-docx/${encodeURIComponent(view.documentId)}?name=${encodeURIComponent(artifact.title || "documento")}`
+    : isOffice
+      ? view.src
+      : null;
   return (
-    <button
-      type="button"
-      onClick={() => onOpenArtifact(view)}
-      className="group mt-1.5 flex max-w-sm items-center gap-2.5 rounded-lg border border-border bg-surface-2 px-3 py-2 text-left transition hover:border-brand"
-      title={t("Abrir en el panel")}
-    >
-      <FileText size={20} className="shrink-0 text-brand" />
-      <span className="min-w-0 flex-1">
-        <span className="block truncate text-sm text-ink">{artifact.title || t("Documento")}</span>
-        <span className="block text-[11px] text-muted">{subtitle}</span>
-      </span>
-    </button>
+    <div className="group mt-1.5 flex max-w-md items-center gap-3 rounded-xl border border-border bg-surface-2 p-2 pr-2.5 transition hover:border-brand/50">
+      <button
+        type="button"
+        onClick={() => onOpenArtifact(view)}
+        className="flex min-w-0 flex-1 items-center gap-3 text-left"
+        title={t("Abrir en el panel")}
+      >
+        <span className="grid size-10 shrink-0 place-items-center rounded-lg bg-surface-3 text-brand">
+          <FileText size={20} />
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-sm font-medium text-ink">{artifact.title || t("Documento")}</span>
+          <span className="block text-[11px] text-muted">{subtitle}</span>
+        </span>
+      </button>
+      {downloadHref ? (
+        <a
+          href={downloadHref}
+          download
+          {...(isOffice ? { target: "_blank", rel: "noreferrer" } : {})}
+          onClick={(e) => e.stopPropagation()}
+          className="shrink-0 rounded-lg border border-border px-3 py-1.5 text-xs font-medium text-ink transition hover:bg-surface-3"
+        >
+          {t("Descargar")}
+        </a>
+      ) : null}
+    </div>
   );
 }
 

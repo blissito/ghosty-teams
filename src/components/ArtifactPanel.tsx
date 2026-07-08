@@ -2,7 +2,7 @@ import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useRef, useState } from "react";
 import { X, ExternalLink, FileText, Pencil, Download, Loader2, ChevronRight } from "lucide-react";
 import { useT } from "../i18n";
-import { officeToEditableFn, officeToHtmlFn } from "../server/chat";
+import { officeToEditableFn, officeToHtmlFn, docToHtmlFn, docEmbedFn } from "../server/chat";
 import { Markdown } from "./Markdown";
 
 // Panel lateral de artefactos del room. Fase 0 = visor PDF/imagen (adjuntos).
@@ -19,7 +19,8 @@ export type ArtifactView =
   | { kind: "office"; title: string; src: string } // docx/xlsx/pptx → preview (visor) + descarga
   | { kind: "file"; title: string; src: string } // fallback genérico → descarga
   | { kind: "html"; title: string; embedUrl: string }
-  | { kind: "draft"; title: string; md: string; streaming?: boolean }; // redacción en vivo (Canvas)
+  | { kind: "draft"; title: string; md: string; streaming?: boolean } // redacción en vivo (Canvas)
+  | { kind: "doc"; title: string; documentId: string }; // documento vivo (preview + editar + versiones)
 
 // Mapea un adjunto a una vista de artefacto previsualizable en el panel. Devuelve
 // null solo para lo no-previsualizable (se queda como card de descarga en la lista).
@@ -46,9 +47,12 @@ const STORE_KEY = "eb_artifact_w";
 export default function ArtifactPanel({
   artifact,
   onClose,
+  docRefreshKey = 0,
 }: {
   artifact: ArtifactView | null;
   onClose: () => void;
+  // Sube cuando el doc abierto avanzó de versión (agente lo modificó) → re-fetch del preview.
+  docRefreshKey?: number;
 }) {
   const t = useT();
   const [width, setWidth] = useState<number>(() => {
@@ -72,15 +76,20 @@ export default function ArtifactPanel({
   // al reabrir el MISMO artefacto (evita "recarga aunque ya esté visible"). El draft usa
   // id constante para que su streaming NO resetee.
   const officeSrc = artifact?.kind === "office" ? artifact.src : null;
+  const docId = artifact?.kind === "doc" ? artifact.documentId : null;
+  // Clave del preview: office (.docx) o doc (Landing) → mismo render de "hoja".
+  const previewKey = officeSrc ?? docId;
   const artifactId = !artifact
     ? null
     : artifact.kind === "office"
       ? `office:${artifact.src}`
-      : artifact.kind === "draft"
-        ? "draft"
-        : artifact.kind === "html"
-          ? `html:${artifact.embedUrl}`
-          : `${artifact.kind}:${artifact.src}`;
+      : artifact.kind === "doc"
+        ? `doc:${artifact.documentId}`
+        : artifact.kind === "draft"
+          ? "draft"
+          : artifact.kind === "html"
+            ? `html:${artifact.embedUrl}`
+            : `${artifact.kind}:${artifact.src}`;
   // Al cambiar a OTRO artefacto (id distinto), resetea el modo edición y el preview.
   useEffect(() => {
     setEditUrl(null);
@@ -88,14 +97,17 @@ export default function ArtifactPanel({
     setOfficeHtml(null);
     setOfficeState("idle");
   }, [artifactId]);
-  // Fetch del HTML del office (solo docx; xlsx/pptx → error → card descarga).
+  // Fetch del HTML del preview (office = mammoth; doc = secciones actuales). Se re-dispara
+  // en docRefreshKey → auto-refresh a la nueva versión cuando el agente modifica.
   useEffect(() => {
-    if (!officeSrc || editUrl) return;
+    if (!previewKey || editUrl) return;
     let alive = true;
     setOfficeState("loading");
     (async () => {
       try {
-        const r = await officeToHtmlFn({ data: { url: officeSrc } });
+        const r = docId
+          ? await docToHtmlFn({ data: { documentId: docId } })
+          : await officeToHtmlFn({ data: { url: officeSrc! } });
         if (!alive) return;
         if (r.ok && r.html) {
           const DOMPurify = (await import("dompurify")).default;
@@ -111,14 +123,17 @@ export default function ArtifactPanel({
     return () => {
       alive = false;
     };
-  }, [officeSrc, editUrl]);
+  }, [previewKey, docId, officeSrc, editUrl, docRefreshKey]);
   const handleEdit = async () => {
-    if (converting || !artifact || artifact.kind !== "office") return;
+    if (converting || !artifact || (artifact.kind !== "office" && artifact.kind !== "doc")) return;
     setConverting(true);
     try {
-      const r = await officeToEditableFn({ data: { url: artifact.src, name: artifact.title || "Documento" } });
+      const r =
+        artifact.kind === "doc"
+          ? await docEmbedFn({ data: { documentId: artifact.documentId } })
+          : await officeToEditableFn({ data: { url: artifact.src, name: artifact.title || "Documento" } });
       if (r.ok && r.embedUrl) setEditUrl(r.embedUrl);
-      else alert(t("No se pudo abrir para editar (solo .docx es editable por ahora)."));
+      else alert(t("No se pudo abrir para editar."));
     } catch {
       alert(t("No se pudo abrir para editar. Intenta de nuevo."));
     } finally {
@@ -154,7 +169,7 @@ export default function ArtifactPanel({
   // En office la URL es un .docx → el navegador la DESCARGA (no es "abrir"), así que
   // no ponemos el ↗ ahí (la descarga vive en su botón). Draft no tiene URL.
   const externalHref =
-    !artifact || artifact.kind === "draft" || artifact.kind === "office"
+    !artifact || artifact.kind === "draft" || artifact.kind === "office" || artifact.kind === "doc"
       ? undefined
       : artifact.kind === "html"
         ? artifact.embedUrl
@@ -319,6 +334,47 @@ export default function ArtifactPanel({
                           className="flex flex-1 items-center justify-center gap-2 border-l border-border py-2 text-muted transition hover:bg-surface-3 hover:text-ink"
                         >
                           <Download size={15} /> {t("Descargar")}
+                        </a>
+                      </div>
+                    </div>
+                  )
+                ) : artifact.kind === "doc" ? (
+                  // Documento VIVO: preview de las secciones actuales (se AUTO-REFRESCA cuando
+                  // el agente modifica) · Editar (editor colab) · Descargar Word.
+                  editUrl ? (
+                    <iframe src={editUrl} title={artifact.title || "editor"} className="size-full border-0 bg-white" />
+                  ) : (
+                    <div className="flex h-full flex-col">
+                      <div className="min-h-0 flex-1 overflow-auto bg-surface-3 p-4 sm:p-6">
+                        {officeState === "loading" && !officeHtml ? (
+                          <div className="grid h-full place-items-center text-muted">
+                            <Loader2 size={20} className="animate-spin" />
+                          </div>
+                        ) : officeHtml ? (
+                          <article
+                            className="prose prose-sm mx-auto max-w-[8.5in] rounded-sm bg-white p-10 text-black shadow-md sm:p-14"
+                            dangerouslySetInnerHTML={{ __html: officeHtml }}
+                          />
+                        ) : (
+                          <div className="grid h-full place-items-center text-sm text-muted">{t("Sin contenido")}</div>
+                        )}
+                      </div>
+                      <div className="flex shrink-0 items-stretch border-t border-border bg-surface-2 text-sm font-medium">
+                        <button
+                          type="button"
+                          onClick={handleEdit}
+                          disabled={converting}
+                          className="flex flex-1 items-center justify-center gap-2 py-2 text-brand transition hover:bg-surface-3 disabled:opacity-60"
+                        >
+                          {converting ? <Loader2 size={15} className="animate-spin" /> : <Pencil size={15} />}
+                          {converting ? t("Abriendo editor…") : t("Editar")}
+                        </button>
+                        <a
+                          href={`/api/doc-docx/${encodeURIComponent(artifact.documentId)}?name=${encodeURIComponent(artifact.title || "documento")}`}
+                          download
+                          className="flex flex-1 items-center justify-center gap-2 border-l border-border py-2 text-muted transition hover:bg-surface-3 hover:text-ink"
+                        >
+                          <Download size={15} /> {t("Descargar Word")}
                         </a>
                       </div>
                     </div>

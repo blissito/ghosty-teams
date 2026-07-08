@@ -99,20 +99,20 @@ export function detectMentions(body: string, handles: string[]): string[] {
 // con su id → nueva versión (no una tarjeta nueva). GTeams detecta la url del doc y la abre
 // como editor colab editable. Docs con membrete/tablas/slides/PDF con diseño → skills normales.
 const EB_DOC_STREAM_GUARDRAIL = [
-  "DOCUMENTOS (canal Teams/web): cuando el usuario pida un DOCUMENTO DE PROSA —carta, oficio, memo, circular, contrato, convenio, demanda, dictamen, nota, minuta— NO uses skills de docx ni upload_file.",
-  "Documento NUEVO → llama a la tool `artifact_create({title, markdown})`. Devuelve {artifactId, url}. INCLUYE esa url en tu respuesta (una frase breve + el link markdown) y RECUERDA el artifactId de este documento.",
-  "MODIFICAR un documento que YA creaste en esta conversación (el usuario dice cambia/ajusta/corrige/cuadra/reescribe/agrega) → llama a `artifact_update({id, markdown})` con el artifactId del documento actual y el markdown COMPLETO y actualizado. NUNCA crees uno nuevo para una modificación; el usuario ve avanzar el MISMO documento de versión. Incluye la url de vuelta.",
-  "El markdown es el documento completo con headings (#, ##), listas y **negritas**. NO uses ToolSearch para esto: la tool `artifact` ya está disponible.",
-  "EXCEPCIÓN: documentos CON membrete de marca, tablas/hojas de cálculo (xlsx), presentaciones (pptx) o PDFs con diseño → usa los skills normales, NO la tool artifact.",
+  "REDACCIÓN EN VIVO (canal Teams/web): cuando el usuario pida un DOCUMENTO DE PROSA —carta, oficio, memo, circular, contrato, convenio, demanda, dictamen, nota, minuta— NO uses skills de docx, upload_file ni las tools artifact_*.",
+  "Escribe el documento COMPLETO como Markdown DENTRO de un bloque cercado que abre con ```eb-doc y cierra con ``` — se muestra redactándose EN VIVO en el panel y la plataforma lo guarda como documento editable con VERSIONES.",
+  "Fuera del bloque, solo UNA frase breve de contexto (no repitas el contenido). Usa headings (#, ##), listas y **negritas** dentro del bloque.",
+  "MODIFICAR el documento de esta conversación (el usuario dice cambia/ajusta/corrige/cuadra/reescribe/agrega) → vuelve a escribir el documento COMPLETO y actualizado dentro del ```eb-doc```; la plataforma actualiza el MISMO documento (nueva versión), no crea uno nuevo. NO escribas solo el fragmento: el markdown debe ser el documento ENTERO con el cambio aplicado.",
+  "EXCEPCIÓN: documentos CON membrete de marca, tablas/hojas de cálculo (xlsx), presentaciones (pptx) o PDFs con diseño → usa los skills normales, NO el bloque eb-doc.",
 ].join(" ");
 
-// Guardrail + identidad conversacional: si el hilo ya tiene un artefacto, le decimos al
-// agente su id → al modificar usa artifact_update(id) aunque su sesión se haya reciclado.
+// Si el hilo YA tiene un documento, se lo recordamos al agente → al modificar reescribe
+// el documento COMPLETO en el fence y el servidor actualiza ESE documento (nueva versión).
 function artifactGuardrail(currentDocId?: string | null): string {
   if (!currentDocId) return EB_DOC_STREAM_GUARDRAIL;
   return (
     EB_DOC_STREAM_GUARDRAIL +
-    ` IMPORTANTE: en esta conversación YA existe un documento con artifactId="${currentDocId}". Si el usuario pide modificar/ajustar/corregir/cambiar/reescribir/agregar algo al documento, llama a artifact_update({id:"${currentDocId}", markdown}) con el contenido COMPLETO actualizado — NO crees uno nuevo.`
+    " NOTA: en esta conversación YA existe un documento vivo. Si el usuario pide modificarlo, reescribe el documento COMPLETO y actualizado dentro del ```eb-doc``` — la plataforma lo reconoce y actualiza ese mismo documento (nueva versión), no crea uno nuevo."
   );
 }
 

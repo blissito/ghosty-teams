@@ -66,6 +66,72 @@ export async function officeToHtml(url: string): Promise<string | null> {
   }
 }
 
+// Commit del fence eb-doc → artefacto DOC con identidad + versiones. Si el hilo YA tiene
+// un documentId → PATCH /artifacts/:id (edit-in-place, nueva versión); si no → POST
+// /artifacts (crea v1). Preserva el streaming en vivo (el fence) + da edit-in-place.
+export async function createOrUpdateDoc(opts: {
+  documentId?: string | null;
+  markdown: string;
+  title?: string;
+}): Promise<{ documentId: string; version: number; title: string; url: string } | null> {
+  try {
+    const res = opts.documentId
+      ? await ebFetch(`/api/v2/artifacts/${opts.documentId}`, {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ markdown: opts.markdown }),
+        })
+      : await ebFetch(`/api/v2/artifacts`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ kind: "doc", title: opts.title, markdown: opts.markdown }),
+        });
+    if (!res.ok) return null;
+    const j = (await res.json()) as {
+      ok?: boolean;
+      artifactId?: string;
+      version?: number;
+      title?: string;
+      url?: string;
+    };
+    if (!j.ok || !j.artifactId) return null;
+    return {
+      documentId: j.artifactId,
+      version: j.version ?? 1,
+      title: j.title ?? opts.title ?? "Documento",
+      url: j.url ?? "",
+    };
+  } catch {
+    return null;
+  }
+}
+
+// HTML renderizado del documento (secciones ACTUALES de un Landing v4) para el preview
+// del panel. Trae el doc por id y une las secciones (filtra el pseudo __grapes_css__).
+// Se re-llama en cada auto-refresh → el panel siempre muestra la última versión.
+export async function docToHtml(documentId: string): Promise<{ html: string; title: string } | null> {
+  try {
+    const res = await ebFetch(`/api/v2/documents/${documentId}`, { method: "GET" });
+    if (!res.ok) return null;
+    const j = (await res.json()) as {
+      name?: string;
+      sections?: Array<{ id?: string; html?: string }>;
+      landing?: { name?: string; sections?: Array<{ id?: string; html?: string }> };
+    };
+    const doc = j.landing ?? j;
+    const secs = doc.sections ?? [];
+    const html = secs
+      .filter((s) => s && s.id !== "__grapes_css__" && s.html)
+      .map((s) => s.html)
+      .join("\n")
+      .trim();
+    if (!html) return null;
+    return { html, title: doc.name ?? "Documento" };
+  } catch {
+    return null;
+  }
+}
+
 // Compila el markdown de un ```eb-doc``` a un .docx (endpoint md-to-docx de EasyBits) y
 // devuelve {fileUrl,title} o null. Es el "commit" del streaming en vivo del artefacto.
 export async function mdToDocx(

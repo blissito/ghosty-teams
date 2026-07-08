@@ -161,6 +161,25 @@ export const officeToHtmlFn = createServerFn({ method: "POST" })
     return html ? { ok: true as const, html } : { ok: false as const };
   });
 
+// Preview del artefacto DOC (Landing v4): HTML de las secciones ACTUALES. Se re-llama en
+// cada auto-refresh → el panel muestra la última versión tras una modificación del agente.
+export const docToHtmlFn = createServerFn({ method: "POST" })
+  .validator((d: { documentId: string }) => d)
+  .handler(async ({ data }) => {
+    const { docToHtml } = await import("./easybits-documents.server");
+    const r = await docToHtml(data.documentId);
+    return r ? { ok: true as const, ...r } : { ok: false as const };
+  });
+
+// "Editar" un artefacto DOC → editor colab embebible (Yjs) por documentId.
+export const docEmbedFn = createServerFn({ method: "POST" })
+  .validator((d: { documentId: string }) => d)
+  .handler(async ({ data }) => {
+    const { mintCollabEmbed } = await import("./easybits-documents.server");
+    const embed = await mintCollabEmbed({ documentId: data.documentId });
+    return embed ? { ok: true as const, embedUrl: embed.embedUrl } : { ok: false as const };
+  });
+
 export const deleteMessageFn = createServerFn({ method: "POST" })
   .validator((d: { id: number }) => d)
   .handler(async ({ data }) => {
@@ -460,21 +479,34 @@ export const askAgent = createServerFn({ method: "POST" })
     // abre el panel del room. Best-effort: si algo falla, el mensaje queda normal.
     // (Slice 3 del contrato: reemplazar este scraping por eventos artifact del SSE.)
     try {
-      const { detectArtifact, mintCollabEmbed, resolveFileKind, mdToDocx } = await import("./easybits-documents.server");
+      const { detectArtifact, mintCollabEmbed, resolveFileKind, createOrUpdateDoc } = await import("./easybits-documents.server");
       const { extractEbDoc, draftTitle, bubbleWithoutEbDoc } = await import("../lib/ebdoc");
 
-      // OLA 2 — artefacto en vivo: si el reply trae un ```eb-doc```, el agente redactó
-      // un doc de prosa en markdown (streameado al panel). Lo compilamos a .docx, limpiamos
-      // el fence del body persistido y colgamos el artefacto (el cliente hace swap del draft).
+      // Artefacto vivo con identidad + versiones: el agente redactó un doc de prosa en
+      // markdown DENTRO de ```eb-doc``` (streameado EN VIVO al panel). Al cerrarse, lo
+      // commiteamos a un artefacto DOC: si el hilo ya tiene uno → UPDATE (nueva versión,
+      // edit-in-place); si no → CREATE (v1). Preserva el streaming + da edit-in-place.
       const ebdoc = extractEbDoc(reply);
       if (ebdoc?.closed && ebdoc.md.trim()) {
         const cleaned = bubbleWithoutEbDoc(reply);
         await db.setMessageBody(id, cleaned);
         bus.publish(bus.ch.room(channel.id), { t: "message:body", id, body: cleaned });
-        const doc = await mdToDocx(ebdoc.md, draftTitle(ebdoc.md));
-        if (doc) {
-          await db.createArtifact(id, { kind: "office", url: doc.fileUrl, title: doc.title });
+        const ref = await createOrUpdateDoc({
+          documentId: currentDocId,
+          markdown: ebdoc.md,
+          title: draftTitle(ebdoc.md),
+        });
+        if (ref) {
+          await db.createArtifact(id, { kind: "doc", url: ref.documentId, title: ref.title });
+          await db.setThreadArtifact(channel.id, data.parentId, ref.documentId).catch(() => {});
           bus.publish(bus.ch.room(channel.id), { t: "refresh", channelId: channel.id, parentId: data.parentId });
+          // Auto-refresh: si el panel ya muestra este doc, que recargue a la nueva versión.
+          bus.publish(bus.ch.room(channel.id), {
+            t: "artifact:version",
+            documentId: ref.documentId,
+            version: ref.version,
+            channelId: channel.id,
+          });
         }
         return { ok: true as const };
       }

@@ -3,8 +3,11 @@ import { createFileRoute } from "@tanstack/react-router";
 // ── Puente EasyBits Forms → room ────────────────────────────────────────────
 // EasyBits dispara `form.submitted` (firmado HMAC) cuando alguien responde un
 // formulario hospedado. Aquí verificamos la firma, resolvemos form_id → canal
-// vía gc_expediente_forms, y dejamos la respuesta como mensaje del bot en el room
-// (el expediente del cliente). Auth = HMAC (no sesión). Persist-then-publish.
+// vía gc_expediente_forms, y dejamos la respuesta en el room como una CARD
+// compacta + un ARTEFACTO documento (visor + Descargar PDF/Word) — NO un blob de
+// texto. La ficha es un Documento EasyBits real creado en el submit; aquí solo la
+// adjuntamos reusando el loop de artefacto (mintCollabEmbed + createArtifact).
+// Auth = HMAC (no sesión). Persist-then-publish.
 
 type EbField = { name: string; label: string; type: string; options?: string[]; rows?: string[] };
 
@@ -21,16 +24,17 @@ function renderValue(field: EbField, value: string): string {
   return value || "—";
 }
 
-function renderBody(formName: string, fields: EbField[], data: Record<string, string>): string {
-  const lines = fields.map((f) => `• **${f.label}**: ${renderValue(f, data[f.name] || "")}`);
-  return `📋 **Nueva respuesta — ${formName}**\n\n${lines.join("\n")}`;
+// Fallback SOLO si no hay ficha-documento: resumen legible (no el blob).
+function renderFallback(formName: string, fields: EbField[], data: Record<string, string>): string {
+  const lines = fields.slice(0, 8).map((f) => `• **${f.label}**: ${renderValue(f, data[f.name] || "")}`);
+  const more = fields.length > 8 ? `\n_…y ${fields.length - 8} campos más._` : "";
+  return `📋 **Nueva respuesta — ${formName}**\n\n${lines.join("\n")}${more}`;
 }
 
 export const Route = createFileRoute("/api/webhook/easybits")({
   server: {
     handlers: {
       POST: async ({ request }: { request: Request }) => {
-        // Raw body FIRST (single-use) — HMAC se computa sobre los bytes exactos.
         const raw = await request.text();
         const sig = request.headers.get("x-easybits-signature") ?? "";
         const secret = process.env.EASYBITS_WEBHOOK_SECRET;
@@ -46,7 +50,6 @@ export const Route = createFileRoute("/api/webhook/easybits")({
 
         let payload: any;
         try { payload = JSON.parse(raw); } catch { return new Response("bad json", { status: 400 }); }
-        // El engine de EasyBits envuelve: { event, timestamp, data }.
         const event = payload?.event;
         const p = payload?.data ?? {};
         if (event !== "form.submitted") return Response.json({ ok: true, ignored: event ?? "no-event" });
@@ -55,32 +58,43 @@ export const Route = createFileRoute("/api/webhook/easybits")({
         const formName: string = p.formName ?? "Formulario";
         const fields: EbField[] = Array.isArray(p.fields) ? p.fields : [];
         const data: Record<string, string> = p.data ?? {};
+        const fichaDocumentId: string | null = p.fichaDocumentId ?? null;
         if (!formId) return Response.json({ ok: true, ignored: "no-formId" });
 
         const { ensureSchema } = await import("../server/schema.server");
         await ensureSchema();
         const { dbq, num } = await import("../dbq.server");
 
-        // form_id → canal del expediente. Sin mapeo → no-op (una webhook por cuenta
-        // hace fan-out a varios rooms; los forms no mapeados a este team se ignoran).
         const rows = await dbq("SELECT channel_id, form_key FROM gc_expediente_forms WHERE form_id = ?", [formId]);
         if (!rows[0]) return Response.json({ ok: true, ignored: "unmapped" });
         const channelId = num(rows[0].channel_id);
         const topic = (rows[0].form_key ?? "expediente") || "expediente";
 
-        const body = fields.length
-          ? renderBody(formName, fields, data)
-          : `📋 **Nueva respuesta — ${formName}**\n\n${Object.entries(data).map(([k, v]) => `• **${k}**: ${v}`).join("\n")}`;
+        // Card compacta (la data completa vive en el artefacto-documento).
+        const empresa = data.razon_social || data.empresa || data.nombre || data.contacto || "";
+        const { mintCollabEmbed } = await import("../server/easybits-documents.server");
+        const embed = fichaDocumentId ? await mintCollabEmbed({ documentId: fichaDocumentId }) : null;
 
-        const { postAgent, getMessage, attachArtifacts } = await import("../db.server");
+        const body = embed
+          ? `📋 **Nueva respuesta de intake**${empresa ? ` — **${empresa}**` : ""}\n_${formName}_ · abre la ficha para ver todo y descargar PDF/Word.`
+          : renderFallback(formName, fields, data);
+
+        const { postAgent, getMessage, createArtifact, attachArtifacts } = await import("../db.server");
         const { id: msgId } = await postAgent(channelId, null, body, "msg", "easybits", "EasyBits Forms", topic, "");
+
+        if (embed) {
+          await createArtifact(msgId, {
+            kind: "html",
+            url: embed.embedUrl,
+            title: embed.title || `Ficha — ${empresa || formName}`,
+          });
+        }
 
         await dbq(
           "UPDATE gc_expediente_forms SET submission_count = submission_count + 1, last_submitted_at = unixepoch() WHERE form_id = ?",
           [formId]
         );
 
-        // Persist done → publica la señal realtime al room.
         const msg = await getMessage(msgId);
         if (msg) {
           const [withMeta] = await attachArtifacts([msg]);
@@ -88,7 +102,7 @@ export const Route = createFileRoute("/api/webhook/easybits")({
           bus.publish(bus.ch.room(channelId), { t: "message:new", msg: withMeta });
         }
 
-        return Response.json({ ok: true, messageId: msgId });
+        return Response.json({ ok: true, messageId: msgId, artifact: !!embed });
       },
     },
   },
