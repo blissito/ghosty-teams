@@ -1,5 +1,5 @@
-import { useEffect, useState, useCallback } from "react";
-import { Loader2, Plus, Trash2, Sparkles, Maximize2, Minimize2, KeyRound, Check } from "lucide-react";
+import { useEffect, useState, useCallback, useRef } from "react";
+import { Loader2, Plus, Trash2, Sparkles, Maximize2, Minimize2, KeyRound, Check, Upload } from "lucide-react";
 import { useT } from "../i18n";
 import { agentFleetConfigFn, setAgentFleetConfigFn } from "../server/agent-config";
 
@@ -16,13 +16,14 @@ type Cap = {
   secretsPresent: boolean; levels: { key: string; label: string }[] | null; curated: boolean;
 };
 type Bucket = { key: string; label: string; description: string; admin: boolean; levels: { key: string; label: string; buckets: string[] }[] | null };
-type GroupCfg = { mcpServers?: string[]; disabledBuiltins?: string[]; capLevels?: Record<string, string>; assets?: string[] };
+type GroupCfg = { mcpServers?: string[]; disabledBuiltins?: string[]; capLevels?: Record<string, string>; assets?: string[]; dbAllow?: string[] };
 type Cfg = {
   fleet: boolean;
   builtins?: { name: string; label: string; channel?: string | null; bucketScoped?: boolean }[];
   capabilities?: Cap[];
   groups?: Record<string, GroupCfg>;
   ownerFiles?: { id: string; name: string; contentType?: string }[];
+  ownerDbs?: { name: string; namespace: string }[];
   agent?: { systemPrompt: string; model: string; effort: string; hasOwnNumber: boolean; buckets: string[] };
   buckets?: Bucket[];
   models?: { key: string; label: string }[];
@@ -40,6 +41,8 @@ export function FleetCapabilities({ agentId }: { agentId: number }) {
   const [err, setErr] = useState<string | null>(null);
   const [saving, setSaving] = useState<string[]>([]);
   const [q, setQ] = useState("");
+  const [uploading, setUploading] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
 
   const load = useCallback(
     (query?: string) =>
@@ -71,6 +74,23 @@ export function FleetCapabilities({ agentId }: { agentId: number }) {
     }
   }
   const isSaving = (key: string) => saving.includes(key);
+
+  // Sube un archivo nuevo directo a EasyBits (proxy con el token) y lo adjunta como
+  // entregable. Tras subir, recargamos para que aparezca marcado.
+  async function uploadAsset(file: File) {
+    setUploading(true);
+    setErr(null);
+    try {
+      const res = await fetch(`/api/agent-asset?id=${agentId}`, { method: "POST", body: (() => { const f = new FormData(); f.set("file", file); return f; })() });
+      if (!res.ok) throw new Error(await res.text());
+      await load(q || undefined);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setUploading(false);
+      if (fileRef.current) fileRef.current.value = "";
+    }
+  }
 
   if (loadErr && !cfg) return <p className="px-1 py-2 text-xs text-red-400">{loadErr}</p>;
   if (!cfg) return <p className="flex items-center gap-2 px-1 py-2 text-xs text-muted"><Loader2 size={13} className="animate-spin" /> {t("Cargando capacidades…")}</p>;
@@ -136,25 +156,57 @@ export function FleetCapabilities({ agentId }: { agentId: number }) {
             );
           })}
         </div>
-        {/* Buckets granulares (Bases de datos: lectura/escritura/borrado) */}
+        {/* Buckets granulares (Bases de datos: lectura/escritura/borrado) + scope de BD */}
         {levelBuckets.map((b) => {
           const cur = [...(b.levels ?? [])].reverse().find((l) => l.buckets.every((x) => activeBuckets.has(x)))?.key ?? "off";
           const base = [...activeBuckets].filter((x) => !(b.levels ?? []).some((l) => l.buckets.includes(x)));
+          const isDb = b.key === "db";
+          const dbAllow = g.dbAllow ?? [];
+          const ownerDbs = cfg.ownerDbs ?? [];
+          const allNs = ownerDbs.map((d) => d.namespace);
+          const allowed = (ns: string) => dbAllow.length === 0 || dbAllow.includes(ns);
+          const toggleDb = (ns: string) => {
+            let next = (dbAllow.length === 0 ? [...allNs] : [...dbAllow]);
+            next = next.includes(ns) ? next.filter((x) => x !== ns) : [...next, ns];
+            const val = next.length === allNs.length ? [] : next; // todas → [] (sin scope)
+            mutate({ action: "set-db-allow", groupId: GROUP, dbAllow: val }, "dballow", (c) => { gc(c).dbAllow = val; });
+          };
           return (
-            <div key={b.key} className="mt-1.5 flex items-center gap-2">
-              <span className="min-w-0 flex-1 truncate text-xs" title={b.description}>{b.label} <span className="text-muted">★</span></span>
-              <select
-                className={sel}
-                value={cur}
-                onChange={(e) => {
-                  const lvl = (b.levels ?? []).find((l) => l.key === e.target.value);
-                  setBuckets(lvl ? [...base, ...lvl.buckets] : base, `bucket:${b.key}`);
-                }}
-              >
-                <option value="off">{t("Off")}</option>
-                {b.levels?.map((l) => <option key={l.key} value={l.key}>{l.label}</option>)}
-              </select>
-              <Spin k={`bucket:${b.key}`} />
+            <div key={b.key} className="mt-1.5">
+              <div className="flex items-center gap-2">
+                <span className="min-w-0 flex-1 truncate text-xs" title={b.description}>{b.label} <span className="text-muted">★</span></span>
+                <select
+                  className={sel}
+                  value={cur}
+                  onChange={(e) => {
+                    const lvl = (b.levels ?? []).find((l) => l.key === e.target.value);
+                    setBuckets(lvl ? [...base, ...lvl.buckets] : base, `bucket:${b.key}`);
+                  }}
+                >
+                  <option value="off">{t("Off")}</option>
+                  {b.levels?.map((l) => <option key={l.key} value={l.key}>{l.label}</option>)}
+                </select>
+                <Spin k={`bucket:${b.key}`} />
+              </div>
+              {/* ¿Cuáles bases? Solo cuando el bucket DB está activo. Vacío = todas. */}
+              {isDb && cur !== "off" && (
+                <div className="mt-1.5 rounded-lg border border-border bg-surface-2 p-2">
+                  <p className="mb-1 flex items-center gap-1 text-[11px] text-muted">{t("¿Qué bases puede tocar?")} <Spin k="dballow" /></p>
+                  {ownerDbs.length ? (
+                    <div className="space-y-1">
+                      {ownerDbs.map((d) => (
+                        <label key={d.namespace} className="flex items-center gap-2 text-xs">
+                          <input type="checkbox" checked={allowed(d.namespace)} onChange={() => toggleDb(d.namespace)} />
+                          <span className="min-w-0 flex-1 truncate">{d.name} <span className="text-muted">/{d.namespace}</span></span>
+                        </label>
+                      ))}
+                      {dbAllow.length === 0 && <p className="text-[11px] text-muted">{t("Todas permitidas (sin restricción).")}</p>}
+                    </div>
+                  ) : (
+                    <p className="text-[11px] text-muted">{t("Este dueño no tiene bases creadas todavía.")}</p>
+                  )}
+                </div>
+              )}
             </div>
           );
         })}
@@ -243,6 +295,10 @@ export function FleetCapabilities({ agentId }: { agentId: number }) {
         <div className="mb-1.5 flex gap-2">
           <input value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => e.key === "Enter" && load(q || undefined)} placeholder={t("Buscar un archivo…")} className={`flex-1 ${sel}`} />
           <button onClick={() => load(q || undefined)} className="rounded-lg border border-border px-2.5 text-xs text-muted hover:border-brand hover:text-ink">{t("Buscar")}</button>
+          <input ref={fileRef} type="file" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadAsset(f); }} />
+          <button onClick={() => fileRef.current?.click()} disabled={uploading} className="flex items-center gap-1 rounded-lg border border-border px-2.5 text-xs text-muted hover:border-brand hover:text-ink disabled:opacity-50" title={t("Subir a EasyBits")}>
+            {uploading ? <Loader2 size={12} className="animate-spin" /> : <Upload size={12} />} {t("Subir")}
+          </button>
         </div>
         <div className="space-y-1">
           {cfg.ownerFiles?.map((f) => {

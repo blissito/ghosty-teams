@@ -5,11 +5,11 @@ import { sessionUser } from "./chat";
 // la lee/escribe en vivo contra la API capabilities de EasyBits usando el fleet_token
 // del agente (nunca lo exponemos al browser; el server proxea). Fuente única = EasyBits.
 // Contrato: /api/v2/fleet-agents/:id/capabilities (GET catálogo+estado, POST 1 mutación).
-const EB = process.env.EASYBITS_BASE_URL ?? "https://www.easybits.cloud";
+export const EB = process.env.EASYBITS_BASE_URL ?? "https://www.easybits.cloud";
 
 // Puede gestionar este agente: owner o colaborador. Devuelve el fleet backend
 // (id + token) o null si no es de flota (webhook → sin capacidades EasyBits).
-async function resolveFleetAgent(agentId: number): Promise<{ id: string; token: string } | null> {
+export async function resolveFleetAgent(agentId: number): Promise<{ id: string; token: string } | null> {
   const user = await sessionUser();
   if (!user) throw new Error("no autenticado");
   const db = await import("../db.server");

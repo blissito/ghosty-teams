@@ -18,6 +18,7 @@ import { Route as JoinTokenRouteImport } from './routes/join.$token'
 import { Route as CSlugRouteImport } from './routes/c.$slug'
 import { Route as ApiUploadRouteImport } from './routes/api.upload'
 import { Route as ApiStreamRouteImport } from './routes/api.stream'
+import { Route as ApiAgentAssetRouteImport } from './routes/api.agent-asset'
 import { Route as SetupEasybitsConnectRouteImport } from './routes/setup.easybits.connect'
 import { Route as SetupEasybitsCallbackRouteImport } from './routes/setup.easybits.callback'
 import { Route as ApiWebhookEasybitsRouteImport } from './routes/api.webhook.easybits'
@@ -69,6 +70,11 @@ const ApiStreamRoute = ApiStreamRouteImport.update({
   path: '/api/stream',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiAgentAssetRoute = ApiAgentAssetRouteImport.update({
+  id: '/api/agent-asset',
+  path: '/api/agent-asset',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const SetupEasybitsConnectRoute = SetupEasybitsConnectRouteImport.update({
   id: '/easybits/connect',
   path: '/easybits/connect',
@@ -101,6 +107,7 @@ export interface FileRoutesByFullPath {
   '/login': typeof LoginRoute
   '/settings': typeof SettingsRoute
   '/setup': typeof SetupRouteWithChildren
+  '/api/agent-asset': typeof ApiAgentAssetRoute
   '/api/stream': typeof ApiStreamRoute
   '/api/upload': typeof ApiUploadRoute
   '/c/$slug': typeof CSlugRoute
@@ -117,6 +124,7 @@ export interface FileRoutesByTo {
   '/login': typeof LoginRoute
   '/settings': typeof SettingsRoute
   '/setup': typeof SetupRouteWithChildren
+  '/api/agent-asset': typeof ApiAgentAssetRoute
   '/api/stream': typeof ApiStreamRoute
   '/api/upload': typeof ApiUploadRoute
   '/c/$slug': typeof CSlugRoute
@@ -134,6 +142,7 @@ export interface FileRoutesById {
   '/login': typeof LoginRoute
   '/settings': typeof SettingsRoute
   '/setup': typeof SetupRouteWithChildren
+  '/api/agent-asset': typeof ApiAgentAssetRoute
   '/api/stream': typeof ApiStreamRoute
   '/api/upload': typeof ApiUploadRoute
   '/c/$slug': typeof CSlugRoute
@@ -152,6 +161,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/settings'
     | '/setup'
+    | '/api/agent-asset'
     | '/api/stream'
     | '/api/upload'
     | '/c/$slug'
@@ -168,6 +178,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/settings'
     | '/setup'
+    | '/api/agent-asset'
     | '/api/stream'
     | '/api/upload'
     | '/c/$slug'
@@ -184,6 +195,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/settings'
     | '/setup'
+    | '/api/agent-asset'
     | '/api/stream'
     | '/api/upload'
     | '/c/$slug'
@@ -201,6 +213,7 @@ export interface RootRouteChildren {
   LoginRoute: typeof LoginRoute
   SettingsRoute: typeof SettingsRoute
   SetupRoute: typeof SetupRouteWithChildren
+  ApiAgentAssetRoute: typeof ApiAgentAssetRoute
   ApiStreamRoute: typeof ApiStreamRoute
   ApiUploadRoute: typeof ApiUploadRoute
   CSlugRoute: typeof CSlugRoute
@@ -275,6 +288,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiStreamRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/agent-asset': {
+      id: '/api/agent-asset'
+      path: '/api/agent-asset'
+      fullPath: '/api/agent-asset'
+      preLoaderRoute: typeof ApiAgentAssetRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/setup/easybits/connect': {
       id: '/setup/easybits/connect'
       path: '/easybits/connect'
@@ -331,6 +351,7 @@ const rootRouteChildren: RootRouteChildren = {
   LoginRoute: LoginRoute,
   SettingsRoute: SettingsRoute,
   SetupRoute: SetupRouteWithChildren,
+  ApiAgentAssetRoute: ApiAgentAssetRoute,
   ApiStreamRoute: ApiStreamRoute,
   ApiUploadRoute: ApiUploadRoute,
   CSlugRoute: CSlugRoute,
@@ -342,12 +363,3 @@ const rootRouteChildren: RootRouteChildren = {
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
-
-import type { getRouter } from './router.tsx'
-import type { createStart } from '@tanstack/react-start'
-declare module '@tanstack/react-start' {
-  interface Register {
-    ssr: true
-    router: Awaited<ReturnType<typeof getRouter>>
-  }
-}
