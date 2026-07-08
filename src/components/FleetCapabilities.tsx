@@ -19,7 +19,7 @@ type Bucket = { key: string; label: string; description: string; admin: boolean;
 type GroupCfg = { mcpServers?: string[]; disabledBuiltins?: string[]; capLevels?: Record<string, string>; assets?: string[] };
 type Cfg = {
   fleet: boolean;
-  builtins?: { name: string; label: string }[];
+  builtins?: { name: string; label: string; channel?: string | null }[];
   capabilities?: Cap[];
   groups?: Record<string, GroupCfg>;
   ownerFiles?: { id: string; name: string; contentType?: string }[];
@@ -164,7 +164,9 @@ export function FleetCapabilities({ agentId }: { agentId: number }) {
       <div>
         <span className={label}>{t("Incluidos")}</span>
         <div className="space-y-1">
-          {cfg.builtins?.map((bi) => {
+          {/* Oculta builtins atados a otro canal (ej. `wa` = WhatsApp/Baileys por QR):
+              sus tools solo sirven pareado a WhatsApp; GTeams es canal web/teams. */}
+          {cfg.builtins?.filter((bi) => !bi.channel).map((bi) => {
             const on = !disabled.has(bi.name);
             return (
               <label key={bi.name} className="flex items-center gap-2 text-xs">
