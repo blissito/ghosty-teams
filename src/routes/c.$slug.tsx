@@ -206,23 +206,30 @@ const pinsCache = new Map<string, Message[]>();
 const viewCache = new Map<string, ViewHit[]>();
 
 // ── Persistencia de los caches entre refresh (sessionStorage) ──────────────
-// Los Map de módulo se pierden al recargar la página → un refresh re-fetcheaba
-// TODO (flujo, lista de hilos, CONTENIDO del hilo abierto, DMs, pins). Los
-// serializamos al salir (pagehide/hidden) y los restauramos SÍNCRONO al cargar el
-// módulo → el primer render del cliente ya tiene los datos: (1) el loader los
-// encuentra en cache y NO awaitea getChannelFlow (adiós "carga lenta"), (2) el
-// primer render iguala el HTML del SSR (sin parpadeo/revert de hidratación), (3) el
-// hilo/DM reabierto (estado cliente desde localStorage) aparece instantáneo.
+// Solo persistimos los caches que NO participan del PRIMER render (hidratación):
+// el hilo/DM abierto (`thread`/`dmFlow`) monta como estado-cliente DESPUÉS de
+// hidratar (restaurado de localStorage) → se reabre instantáneo, sin tocar el SSR.
+//
+// ⚠️ NO persistir `flow`/`threads`/`pins`: SÍ se pintan en el primer render.
+// - `flow`/`threads` ya llegan del loader SSR (`initialFlow`/`initialThreads`) → el
+//   refresh los tiene en el primer paint SIN sessionStorage. Pero si además los
+//   restaurábamos, `useCachedQuery` devolvía el cache VIEJO (has(key) gana sobre el
+//   `initial` del SSR) → el cliente pintaba N msgs ≠ los del SSR.
+// - `pins` NO se siembra en SSR (SSR pinta sin PinnedBar); restaurarlo hacía que el
+//   cliente SÍ pintara PinnedBar.
+// En ambos casos el árbol del cliente divergía del HTML del SSR → React tiraba en
+// hidratación → lo atrapaba el errorComponent ("Se nos cruzó un cable") en CADA
+// refresh (sessionStorage lo volvía determinista).
 const PERSISTED_CACHES: [string, Map<unknown, unknown>][] = [
-  ["flow", flowCache as Map<unknown, unknown>],
-  ["threads", threadsCache as Map<unknown, unknown>],
   ["thread", threadCache as Map<unknown, unknown>],
   ["dmFlow", dmFlowCache as Map<unknown, unknown>],
-  ["pins", pinsCache as Map<unknown, unknown>],
 ];
 if (typeof window !== "undefined") {
   try {
-    const saved = JSON.parse(sessionStorage.getItem("gc-caches-v1") || "{}");
+    // v2: descarta cualquier `gc-caches-v1` envenenado (con flow/threads/pins) que
+    // haya quedado en sesiones abiertas antes de este fix.
+    sessionStorage.removeItem("gc-caches-v1");
+    const saved = JSON.parse(sessionStorage.getItem("gc-caches-v2") || "{}");
     for (const [name, cache] of PERSISTED_CACHES) {
       const entries = saved[name];
       if (Array.isArray(entries)) for (const [k, v] of entries) cache.set(k, v);
@@ -234,7 +241,7 @@ if (typeof window !== "undefined") {
     try {
       const out: Record<string, unknown> = {};
       for (const [name, cache] of PERSISTED_CACHES) out[name] = [...cache.entries()];
-      sessionStorage.setItem("gc-caches-v1", JSON.stringify(out));
+      sessionStorage.setItem("gc-caches-v2", JSON.stringify(out));
     } catch {
       /* quota/serialize → mejor esfuerzo, sin romper */
     }

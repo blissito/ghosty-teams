@@ -22,7 +22,7 @@ function AppError() {
         fontFamily: 'system-ui, -apple-system, sans-serif',
       }}
     >
-      <div style={{ fontSize: '44px' }}>👻</div>
+      <div style={{ fontSize: '44px' }}>👾</div>
       <h1 style={{ fontSize: '20px', fontWeight: 700, margin: 0 }}>Se nos cruzó un cable</h1>
       <p style={{ margin: 0, maxWidth: '360px', color: '#a1a1aa', lineHeight: 1.5 }}>
         Nada grave. Recarga la página y seguimos justo donde estabas.
