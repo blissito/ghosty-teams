@@ -18,8 +18,11 @@ export async function resolvedAgents(): Promise<ResolvedAgent[]> {
   const db = await import("./db.server");
   const { getGhostyFleet, getConfig } = await import("./config.server");
   const out: ResolvedAgent[] = [];
+  const rows = await db.listAgents();
+  // @ghosty implícito (gc_config) SOLO si aún no se migró a fila gc_agents (dedup por
+  // handle) — evita duplicarlo una vez que listManagedAgentsFn lo materializó.
   const fleet = await getGhostyFleet();
-  if (fleet) {
+  if (fleet && !rows.some((a) => a.handle === db.GHOSTY_HANDLE)) {
     const name = (await getConfig("fleet_name")) || "Ghosty";
     out.push({
       handle: db.GHOSTY_HANDLE,
@@ -29,7 +32,7 @@ export async function resolvedAgents(): Promise<ResolvedAgent[]> {
       backend: { kind: "fleet", id: fleet.id, token: fleet.token },
     });
   }
-  for (const a of await db.listAgents()) {
+  for (const a of rows) {
     if (!a.enabled) continue;
     if (a.kind === "webhook" && a.webhook_url) {
       out.push({ handle: a.handle, name: a.name, avatar: a.avatar || "", systemPrompt: a.system_prompt, backend: { kind: "webhook", url: a.webhook_url } });

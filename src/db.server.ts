@@ -550,6 +550,37 @@ export async function getAgentByHandle(handle: string): Promise<Agent | null> {
   return rows[0] ? toAgent(rows[0]) : null;
 }
 
+export async function getAgentById(id: number): Promise<Agent | null> {
+  const rows = await dbq("SELECT * FROM gc_agents WHERE id = ?", [id]);
+  return rows[0] ? toAgent(rows[0]) : null;
+}
+
+// Inserta el @ghosty del wizard como fila real (bypass del guard de handle reservado)
+// para que use el MISMO CRUD/panel que los demás. Idempotente por handle único.
+export async function ensureGhostyAgentRow(input: {
+  fleetId: string;
+  fleetToken: string;
+  name: string;
+  systemPrompt: string | null;
+  createdBy: string;
+}): Promise<Agent> {
+  const existing = await getAgentByHandle(GHOSTY_HANDLE);
+  if (existing) {
+    // Refresca el token/id por si el owner reconfiguró la flota en el wizard.
+    if (existing.fleet_id !== input.fleetId || existing.fleet_token !== input.fleetToken) {
+      await updateAgent(existing.id, { fleetId: input.fleetId, fleetToken: input.fleetToken });
+      return { ...existing, fleet_id: input.fleetId, fleet_token: input.fleetToken };
+    }
+    return existing;
+  }
+  const rows = await dbq(
+    `INSERT INTO gc_agents (handle, name, kind, fleet_id, fleet_token, avatar, system_prompt, created_by)
+     VALUES (?, ?, 'fleet', ?, ?, '/ghosty.svg', ?, ?) RETURNING *`,
+    [GHOSTY_HANDLE, input.name.slice(0, 40), input.fleetId, input.fleetToken, input.systemPrompt, input.createdBy]
+  );
+  return toAgent(rows[0]);
+}
+
 export async function createAgent(input: {
   handle: string;
   name: string;

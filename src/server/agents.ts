@@ -34,6 +34,23 @@ export const listManagedAgentsFn = createServerFn({ method: "GET" }).handler(asy
   const user = await sessionUser();
   if (!user) throw new Error("no autenticado");
   const db = await import("../db.server");
+  // Migra el @ghosty del wizard (gc_config) a fila real → mismo card + panel que el
+  // resto. Idempotente; solo el owner (los colaboradores no ven config del wizard).
+  if (user.isOwner) {
+    const { getConfigMany } = await import("../config.server");
+    const c = await getConfigMany(["fleet_agent_id", "fleet_token", "fleet_name", "ghosty_prompt"]);
+    if (c.fleet_agent_id && c.fleet_token) {
+      await db
+        .ensureGhostyAgentRow({
+          fleetId: c.fleet_agent_id,
+          fleetToken: c.fleet_token,
+          name: c.fleet_name || "Ghosty",
+          systemPrompt: c.ghosty_prompt || null,
+          createdBy: user.sub,
+        })
+        .catch(() => {});
+    }
+  }
   let list = await db.listAgents();
   // Owner ve todos; un colaborador ve SOLO los agentes que le compartieron.
   if (!user.isOwner) {

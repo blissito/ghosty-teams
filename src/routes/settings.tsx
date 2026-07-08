@@ -1,6 +1,7 @@
 import { createFileRoute, Link, useRouter } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import { Bot, Plus, Trash2, X, Bell, Smile, Loader2, Pencil } from "lucide-react";
+import { FleetCapabilities } from "../components/FleetCapabilities";
 import { currentPushState, enablePush, disablePush } from "../utils/push-subscribe";
 import { me, logout, clearMeCache } from "../server/auth";
 import { getSetup } from "../server/setup";
@@ -162,7 +163,7 @@ function Settings() {
       )}
 
       {tab === "agentes" && canManageAgents && (
-        <AgentsManager isOwner={isOwner} hasAgent={!!setup?.hasAgent} ghostyName={setup?.fleetName ?? "Ghosty"} />
+        <AgentsManager isOwner={isOwner} hasAgent={!!setup?.hasAgent} />
       )}
 
       {tab === "emojis" && isOwner && <EmojiManager />}
@@ -368,7 +369,7 @@ type ManagedAgent = {
 // Cache de módulo → reabrir la pestaña Agentes pinta al instante y revalida en background.
 let agentsCache: ManagedAgent[] | null = null;
 
-function AgentsManager({ isOwner, hasAgent, ghostyName }: { isOwner: boolean; hasAgent: boolean; ghostyName: string }) {
+function AgentsManager({ isOwner, hasAgent }: { isOwner: boolean; hasAgent: boolean }) {
   const t = useT();
   const [agents, setAgents] = useState<ManagedAgent[] | null>(agentsCache);
   const [adding, setAdding] = useState(false);
@@ -412,33 +413,17 @@ function AgentsManager({ isOwner, hasAgent, ghostyName }: { isOwner: boolean; ha
       </p>
 
       <div className="space-y-1">
-        {/* @ghosty (el del wizard) es del OWNER (se reconfigura en el wizard). Los
-            colaboradores no lo ven; solo ven los agentes que les compartieron. */}
-        {isOwner &&
-          (hasAgent ? (
-            <div className="flex items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-surface-3">
-              <img src="/ghosty.svg" alt="" className="h-8 w-8 shrink-0 rounded-lg bg-brand/15 p-1" />
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-medium">
-                  {ghostyName} <span className="text-xs font-normal text-muted">@ghosty</span>
-                </p>
-                <p className="truncate text-xs text-muted">{t("Flota EasyBits · del wizard")}</p>
-              </div>
-              <span className="shrink-0 rounded-full bg-brand/15 px-2 py-0.5 text-[11px] font-medium text-brand">
-                {t("siempre")}
-              </span>
-              <Link to="/setup" className="shrink-0 p-1 text-xs text-muted hover:text-brand" title={t("Reconfigurar")}>
-                {t("Reconfigurar")}
-              </Link>
-            </div>
-          ) : (
-            <Link
-              to="/setup"
-              className="flex items-center gap-2 rounded-lg border border-dashed border-border px-2 py-3 text-sm text-muted hover:border-brand hover:text-ink"
-            >
-              <Bot size={17} className="shrink-0" /> {t("Conecta tu cuenta EasyBits para tener a @ghosty")}
-            </Link>
-          ))}
+        {/* @ghosty se migró a fila gc_agents (listManagedAgentsFn) → se renderiza en el
+            mismo map con el MISMO card + panel que el resto. Aquí solo queda el CTA de
+            conectar EasyBits cuando aún no hay agente del wizard. */}
+        {isOwner && !hasAgent && (
+          <Link
+            to="/setup"
+            className="flex items-center gap-2 rounded-lg border border-dashed border-border px-2 py-3 text-sm text-muted hover:border-brand hover:text-ink"
+          >
+            <Bot size={17} className="shrink-0" /> {t("Conecta tu cuenta EasyBits para tener a @ghosty")}
+          </Link>
+        )}
 
         {agents === null ? (
           <p className="px-2 py-1 text-sm text-muted">{t("Cargando…")}</p>
@@ -488,7 +473,8 @@ function AgentsManager({ isOwner, hasAgent, ghostyName }: { isOwner: boolean; ha
                 <button onClick={() => setEditing(a.id)} className="p-1 text-muted hover:text-brand" title={t("Configurar")}>
                   <Pencil size={15} />
                 </button>
-                {isOwner && (
+                {/* @ghosty (wizard) no se borra desde aquí — se reconfigura en /setup. */}
+                {isOwner && a.handle !== "ghosty" && (
                   <button onClick={() => remove(a)} className="p-1 text-muted hover:text-brand" title={t("Quitar")}>
                     <Trash2 size={15} />
                   </button>
@@ -765,9 +751,13 @@ function EditAgentForm({
         />
         <p className="text-[11px] text-muted">
           {agent.kind === "fleet"
-            ? t("En agentes de flota, la persona se antepone al mensaje (EasyBits controla el prompt base).")
+            ? t("Persona local: se antepone al mensaje SOLO en este espacio. El prompt base (todos los canales) y las capacidades se configuran abajo.")
             : t("Se envía a tu webhook como systemPrompt junto al mensaje.")}
         </p>
+
+        {/* Capacidades de flota (modelo, conectores, skills, entregables) — passthrough
+            en vivo a EasyBits. Solo para agentes de flota (webhook no tiene). */}
+        {agent.kind === "fleet" && <FleetCapabilities agentId={agent.id} />}
 
         {/* Colaboradores: solo el owner los gestiona; pueden EDITAR la config (no ver
             el secret ni borrar). Mismo modelo que miembros de un room privado. */}
