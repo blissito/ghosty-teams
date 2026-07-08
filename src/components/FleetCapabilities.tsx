@@ -19,7 +19,7 @@ type Bucket = { key: string; label: string; description: string; admin: boolean;
 type GroupCfg = { mcpServers?: string[]; disabledBuiltins?: string[]; capLevels?: Record<string, string>; assets?: string[] };
 type Cfg = {
   fleet: boolean;
-  builtins?: { name: string; label: string; channel?: string | null }[];
+  builtins?: { name: string; label: string; channel?: string | null; bucketScoped?: boolean }[];
   capabilities?: Cap[];
   groups?: Record<string, GroupCfg>;
   ownerFiles?: { id: string; name: string; contentType?: string }[];
@@ -160,26 +160,33 @@ export function FleetCapabilities({ agentId }: { agentId: number }) {
         })}
       </div>
 
-      {/* Incluidos (builtins) */}
-      <div>
-        <span className={label}>{t("Incluidos")}</span>
-        <div className="space-y-1">
-          {/* Oculta builtins atados a otro canal (ej. `wa` = WhatsApp/Baileys por QR):
-              sus tools solo sirven pareado a WhatsApp; GTeams es canal web/teams. */}
-          {cfg.builtins?.filter((bi) => !bi.channel).map((bi) => {
-            const on = !disabled.has(bi.name);
-            return (
-              <label key={bi.name} className="flex items-center gap-2 text-xs">
-                <input type="checkbox" checked={on} onChange={() => mutate({ action: "toggle-builtin", groupId: GROUP, builtin: bi.name, on: !on }, `bi:${bi.name}`, (c) => {
-                  const gg = gc(c); const set = new Set(gg.disabledBuiltins ?? []); on ? set.add(bi.name) : set.delete(bi.name); gg.disabledBuiltins = [...set];
-                })} />
-                <span className="min-w-0 flex-1 truncate">{bi.label}</span>
-                <Spin k={`bi:${bi.name}`} />
-              </label>
-            );
-          })}
-        </div>
-      </div>
+      {/* Incluidos (builtins) — solo los que NO están ya representados en otra parte:
+          `channel` (ej. wa/WhatsApp, no aplica a GTeams) y `bucketScoped` (easybits, ya
+          controlado por HERRAMIENTAS → un on/off aparte sería redundante con el granular).
+          Si no queda ninguno, la sección no se muestra. */}
+      {(() => {
+        const visible = cfg.builtins?.filter((bi) => !bi.channel && !bi.bucketScoped) ?? [];
+        if (!visible.length) return null;
+        return (
+          <div>
+            <span className={label}>{t("Incluidos")}</span>
+            <div className="space-y-1">
+              {visible.map((bi) => {
+                const on = !disabled.has(bi.name);
+                return (
+                  <label key={bi.name} className="flex items-center gap-2 text-xs">
+                    <input type="checkbox" checked={on} onChange={() => mutate({ action: "toggle-builtin", groupId: GROUP, builtin: bi.name, on: !on }, `bi:${bi.name}`, (c) => {
+                      const gg = gc(c); const set = new Set(gg.disabledBuiltins ?? []); on ? set.add(bi.name) : set.delete(bi.name); gg.disabledBuiltins = [...set];
+                    })} />
+                    <span className="min-w-0 flex-1 truncate">{bi.label}</span>
+                    <Spin k={`bi:${bi.name}`} />
+                  </label>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Conectores (curados + custom) */}
       {!!cfg.capabilities?.length && (
