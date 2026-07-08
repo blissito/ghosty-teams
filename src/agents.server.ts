@@ -93,16 +93,17 @@ export function detectMentions(body: string, handles: string[]): string[] {
   return hits.sort((a, b) => a.idx - b.idx).map((x) => x.handle);
 }
 
-// Artefacto en vivo (OLA 2): instrucción per-turno SOLO para el canal Teams/web (que
-// tiene panel de artefacto). Para docs de PROSA simple el agente redacta el markdown
-// dentro de ```eb-doc``` (se streamea al panel) en vez de llamar a un skill de docx →
-// la plataforma lo compila a .docx. Docs con membrete/tablas/slides/PDF con diseño
-// siguen los skills normales (NO el bloque).
+// Artefacto vivo con identidad + versiones (Fase 1): instrucción per-turno SOLO para el
+// canal Teams/web (panel de artefacto + editor colab). El agente usa la tool `artifact`
+// (edit-in-place): un documento NUEVO = artifact_create; MODIFICAR el mismo = artifact_update
+// con su id → nueva versión (no una tarjeta nueva). GTeams detecta la url del doc y la abre
+// como editor colab editable. Docs con membrete/tablas/slides/PDF con diseño → skills normales.
 const EB_DOC_STREAM_GUARDRAIL = [
-  "REDACCIÓN EN VIVO (canal Teams/web): cuando el usuario pida un DOCUMENTO DE PROSA simple —carta, oficio, memo, circular, contrato, convenio, dictamen, nota, minuta— SIN membrete institucional ni tablas complejas, NO llames a un skill de docx ni a upload_file para ese documento.",
-  "En su lugar, escribe el documento COMPLETO como Markdown DENTRO de un bloque cercado que abre con ```eb-doc y cierra con ``` — se muestra redactándose EN VIVO en el panel y la plataforma lo compila a un .docx editable automáticamente al terminar.",
-  "Fuera del bloque, solo UNA frase breve de contexto (no repitas el contenido). Usa headings (#, ##), listas y **negritas** normales de Markdown dentro del bloque.",
-  "EXCEPCIÓN: documentos CON membrete de marca, tablas/hojas de cálculo (xlsx), presentaciones (pptx) o PDFs con diseño → usa los skills normales, NO el bloque eb-doc.",
+  "DOCUMENTOS (canal Teams/web): cuando el usuario pida un DOCUMENTO DE PROSA —carta, oficio, memo, circular, contrato, convenio, demanda, dictamen, nota, minuta— NO uses skills de docx ni upload_file.",
+  "Documento NUEVO → llama a la tool `artifact_create({title, markdown})`. Devuelve {artifactId, url}. INCLUYE esa url en tu respuesta (una frase breve + el link markdown) y RECUERDA el artifactId de este documento.",
+  "MODIFICAR un documento que YA creaste en esta conversación (el usuario dice cambia/ajusta/corrige/cuadra/reescribe/agrega) → llama a `artifact_update({id, markdown})` con el artifactId del documento actual y el markdown COMPLETO y actualizado. NUNCA crees uno nuevo para una modificación; el usuario ve avanzar el MISMO documento de versión. Incluye la url de vuelta.",
+  "El markdown es el documento completo con headings (#, ##), listas y **negritas**. NO uses ToolSearch para esto: la tool `artifact` ya está disponible.",
+  "EXCEPCIÓN: documentos CON membrete de marca, tablas/hojas de cálculo (xlsx), presentaciones (pptx) o PDFs con diseño → usa los skills normales, NO la tool artifact.",
 ].join(" ");
 
 // Streaming (first-class): llama al backend y emite la respuesta pedacito a
@@ -224,6 +225,8 @@ const TOOL_LABELS: Record<string, { ing: string; done: string }> = {
   // El agente redacta docs invocando un Skill (oficio/xlsx/pptx/doc-remix) → la acción
   // visible = "Redactó el documento" (antes solo se veía "Subió", el paso final).
   Skill: { ing: "Redactando el documento", done: "Redactó el documento" },
+  artifact_create: { ing: "Redactando el documento", done: "Redactó el documento" },
+  artifact_update: { ing: "Actualizando el documento", done: "Actualizó el documento" },
 };
 
 function toolLabel(raw: string): { ing: string; done: string } | null {
