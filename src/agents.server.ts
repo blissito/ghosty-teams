@@ -107,13 +107,19 @@ const EB_DOC_STREAM_GUARDRAIL = [
   "ÚNICA EXCEPCIÓN: documentos con membrete de marca fijo, tablas/hojas de cálculo (xlsx) o presentaciones (pptx) → skills normales. Todo lo demás de prosa → SIEMPRE el bloque eb-doc.",
 ].join(" ");
 
-// Si el hilo YA tiene un documento, se lo recordamos al agente → al modificar reescribe
-// el documento COMPLETO en el fence y el servidor actualiza ESE documento (nueva versión).
-function artifactGuardrail(currentDocId?: string | null): string {
-  if (!currentDocId) return EB_DOC_STREAM_GUARDRAIL;
+// Si el hilo YA tiene un documento, al MODIFICAR el agente NO reescribe todo (pisaría las
+// ediciones manuales del usuario y no escala a docs grandes). En su lugar edita QUIRÚRGICO
+// con las tools de documento de EasyBits, sobre el estado ACTUAL.
+// Sufijo por-doc = contexto de TURNO (embebe el documentId actual, que cambia por
+// mensaje). Va en el TEXTO del mensaje, NO en el system prompt: la sesión persistente
+// del worker fija el system prompt al arrancar, así que un valor que cambia por turno
+// ahí forzaría cold-restart cada vez que cambia el doc. El BASE estable
+// (EB_DOC_STREAM_GUARDRAIL) sí va en appendSystemPrompt (idéntico todos los turnos →
+// persistencia-safe). Vacío cuando no hay doc en el hilo.
+function artifactDocHint(currentDocId?: string | null): string {
+  if (!currentDocId) return "";
   return (
-    EB_DOC_STREAM_GUARDRAIL +
-    " NOTA: en esta conversación YA existe un documento vivo. Si el usuario pide modificarlo, reescribe el documento COMPLETO y actualizado dentro del ```eb-doc``` — la plataforma lo reconoce y actualiza ese mismo documento (nueva versión), no crea uno nuevo."
+    `[Contexto del hilo — MODIFICACIÓN QUIRÚRGICA: YA existe el documento documentId="${currentDocId}". Si el usuario pide CAMBIAR/AJUSTAR/CORREGIR algo del documento existente, NO reescribas el documento completo ni uses el bloque eb-doc otra vez (eso PISA las ediciones manuales del usuario y no escala). En su lugar: 1) lee el estado ACTUAL con get_page_html("${currentDocId}") — ese HTML incluye lo que el usuario editó a mano. 2) Cambia SOLO lo que pide con replace_html({documentId:"${currentDocId}", find:"<fragmento HTML exacto viejo>", replace:"<fragmento nuevo>"}). Para AGREGAR una sección usa el mismo replace_html insertando en el lugar correcto, o add_page. PRESERVA todo lo demás tal cual. PROHIBIDO refine_document_section (gasta generaciones) y PROHIBIDO reescribir el documento entero.]\n\n`
   );
 }
 
@@ -141,7 +147,10 @@ export async function callAgentBackendStream(
   }
   const persona = agent.systemPrompt?.trim() || null;
   const base = process.env.EASYBITS_BASE_URL ?? "https://www.easybits.cloud";
-  const outText = persona ? `[Instrucciones para ${agent.name}: ${persona}]\n\n${text}` : text;
+  // docHint (contexto por-doc del turno) va PRIMERO en el texto; el system prompt
+  // queda estable (base) → la sesión persistente del worker no se rompe al cambiar doc.
+  const docHint = artifactDocHint(currentDocId);
+  const outText = docHint + (persona ? `[Instrucciones para ${agent.name}: ${persona}]\n\n${text}` : text);
   try {
     const res = await fetch(`${base}/api/v2/fleet-agents/${agent.backend.id}/message-stream`, {
       method: "POST",
@@ -156,7 +165,7 @@ export async function callAgentBackendStream(
         sender: sender || "invitado",
         text: outText,
         parts,
-        appendSystemPrompt: artifactGuardrail(currentDocId),
+        appendSystemPrompt: EB_DOC_STREAM_GUARDRAIL,
       }),
     });
     if (!res.ok || !res.body) throw new Error(`fleet-stream ${res.status}: ${await res.text().catch(() => "")}`);

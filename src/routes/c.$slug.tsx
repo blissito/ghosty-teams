@@ -170,7 +170,9 @@ function RoomIcon({ name, size = 18, className }: { name?: string | null; size?:
 // (mostramos lo cacheado y revalidamos en background, sin skeleton ni glitch).
 const flowCache = new Map<string, Message[]>();
 const threadsCache = new Map<string, Message[]>();
-const threadCache = new Map<number, { root: Message | null; replies: Message[] }>();
+// `pending` = sembramos el root al instante (sin skeleton en el detonador) pero las
+// RESPUESTAS aún cargan → ThreadView les muestra skeleton hasta que getThread las trae.
+const threadCache = new Map<number, { root: Message | null; replies: Message[]; pending?: boolean }>();
 // DMs: la lista de conversaciones (una key fija) y el flujo por conversación.
 const dmListCache = new Map<string, DmConversation[]>();
 const dmFlowCache = new Map<number, Message[]>();
@@ -933,7 +935,7 @@ function ChannelPage() {
     // molesto al navegar a un hilo cuyo mensaje ya tenemos.
     if (!threadCache.get(id)) {
       const root = flowCache.get(channel.slug)?.find((m) => m.id === id);
-      if (root) threadCache.set(id, { root, replies: [] });
+      if (root) threadCache.set(id, { root, replies: [], pending: true });
     }
     setView(null);
     setOpenDmId(null);
@@ -1043,7 +1045,7 @@ function ChannelPage() {
                 created_at: Math.floor(Date.now() / 1000), edited_at: null,
                 reply_count: 0, reactions: [], pinned: false, starred: false, topic: null,
               } as unknown as Message;
-              threadCache.set(pid, { root, replies: [] });
+              threadCache.set(pid, { root, replies: [], pending: true });
             }
             openThread(pid); // @agente(s) en el flujo → abre su hilo
           }
@@ -2794,12 +2796,21 @@ function ThreadView({
                 </button>
               </div>
             )}
-            <div className="my-2 border-t border-border pt-1 text-center text-[11px] text-muted">
-              {replyCount === 1 ? t("1 respuesta") : t("{n} respuestas", { n: replyCount })}
-            </div>
-            {data.replies.map((m) => (
-              <MessageRow key={m.id} m={m} />
-            ))}
+            {(data as { pending?: boolean }).pending && replyCount === 0 ? (
+              // Detonador ya visible (sin skeleton); las RESPUESTAS aún cargan → skeleton.
+              <div className="mt-2 border-t border-border pt-3">
+                <ThreadSkeleton />
+              </div>
+            ) : (
+              <>
+                <div className="my-2 border-t border-border pt-1 text-center text-[11px] text-muted">
+                  {replyCount === 1 ? t("1 respuesta") : t("{n} respuestas", { n: replyCount })}
+                </div>
+                {data.replies.map((m) => (
+                  <MessageRow key={m.id} m={m} />
+                ))}
+              </>
+            )}
             {optimistic.map((o) => (
               <OptimisticRow key={o.id} o={o} />
             ))}

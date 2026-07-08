@@ -22,7 +22,7 @@ export const listTeamFormsFn = createServerFn({ method: "GET" }).handler(async (
   // Detalles del form (nombre/slug/URL/conteo) desde EasyBits.
   const details: Record<string, { name?: string; slug?: string | null; url?: string | null; submissionCount?: number }> = {};
   try {
-    const res = await ebFetch(`/api/v2/forms`);
+    const res = await ebFetch(`/api/v2/forms`, { method: "GET" });
     if (res.ok) {
       const j = (await res.json()) as { items?: Array<{ id: string; name: string; slug: string | null; url: string | null; submissionCount: number }> };
       for (const f of j.items ?? []) details[f.id] = f;
