@@ -44,9 +44,30 @@ export const finishEasybitsConnect = createServerFn({ method: "POST" })
     const { exchangeCode } = await import("./easybits-oauth.server");
     const { reqOrigin } = await import("../origin.server");
     const appUrl = await reqOrigin();
-    await exchangeCode(`${appUrl}/setup/easybits/callback`, data.code, verifier);
+    const accessToken = await exchangeCode(`${appUrl}/setup/easybits/callback`, data.code, verifier);
+    // Adopción formal (fire-and-forget): transfiere la caja + DB de la cuenta de
+    // PLATAFORMA a la del user recién conectado, y re-keyea esta caja con la key del
+    // user. El endpoint reinicia ESTA caja al final → NO lo esperamos (nos mataría el
+    // proceso antes de responder el callback). Solo si la caja conoce su sandboxId
+    // (forward-only; sin él no hay rekey y reasignar la DB rompería la caja).
+    void adoptTeamResources(accessToken).catch(() => {});
     return { ok: true as const };
   });
+
+// Dispara la adopción contra EasyBits con la platform key (que esta caja YA tiene) +
+// el token OAuth del user como prueba de consentimiento. Idempotente del lado server.
+async function adoptTeamResources(accessToken: string): Promise<void> {
+  const platformKey = process.env.EASYBITS_API_KEY;
+  const dbId = process.env.EASYBITS_DB_ID;
+  const sandboxId = process.env.EASYBITS_SANDBOX_ID;
+  const base = process.env.EASYBITS_BASE_URL ?? "https://www.easybits.cloud";
+  if (!platformKey || !dbId || !sandboxId) return; // forward-only: teams sin sandboxId no adoptan
+  await fetch(`${base}/api/v2/admin/adopt-team`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${platformKey}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ targetUserToken: accessToken, dbId, sandboxId }),
+  });
+}
 
 // Paso 2: el owner elige su agente Ghosty → guardamos id + pool token.
 export const selectFleetAgent = createServerFn({ method: "POST" })
