@@ -98,8 +98,13 @@ Tres candados que hubo que resolver para que funcione detrás del proxy:
 ## 4. Multitenancy — modelo de datos
 
 - **Formmy** es el registro `usuario → teams`:
-  - `Team` (Prisma): `{ userId (owner), name, slug, instanceUrl, sandboxId, dbNamespace }`.
+  - `Team` (Prisma): `{ userId (owner), name, slug, instanceUrl, sandboxId, dbNamespace, failReason }`.
     Un Team = una instancia de Ghosty Teams.
+  - **Un team propio por user** (regla de producto): un usuario tiene EXACTAMENTE
+    un team propio y NO puede lanzar más. Ve otros SOLO si lo invitan. El selector
+    muestra `owned` (uno) + `invited`; el botón "Lanzar" solo si no tiene propio.
+    La acción `ensure` es idempotente (ya-listo→abre, existe-sin-instancia→revive,
+    no-existe→crea) — reemplaza los viejos `create`/`retry` que apilaban duplicados.
   - **Membresía** = `Permission` con `resourceType: TEAM` (reusa el sistema de
     colaboradores de Formmy: invitación por email + token + rol ADMIN/EDITOR/VIEWER).
   - `getMyTeams(userId, email)` = owned + member-via-Permission → alimenta el
