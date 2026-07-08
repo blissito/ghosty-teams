@@ -416,30 +416,30 @@ function useCachedQuery<K, T>(
   rev: number,
   patch = 0
 ): T | null {
-  const [data, setData] = useState<T | null>(() => cache.get(key) ?? null);
+  // El valor mostrado se LEE DEL CACHE EN CADA RENDER (no vía useState con lag) →
+  // al cambiar de room, el render ya devuelve el cache de ESA key: instantáneo si
+  // ya se vio (sin skeleton, sin flash del room anterior), skeleton solo si es nueva.
+  // El fetch revalida en background y fuerza re-render cuando llega.
+  const [, force] = useState(0);
   useEffect(() => {
     let alive = true;
-    const cached = cache.get(key);
-    setData(cached ?? null); // cacheado → sin skeleton; nuevo → skeleton
     fetcher().then((d) => {
       if (!alive) return;
       cache.set(key, d);
-      setData(d);
+      force((n) => n + 1);
     });
     return () => {
       alive = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key, rev]);
-  // Live-patch: un evento realtime ya mutó el Map (con referencia nueva) → re-lee
-  // el cache parcheado SIN red. Requiere updates inmutables (nueva ref) para re-render.
+  // Live-patch: un evento realtime mutó el Map (nueva ref) → re-render para releerlo.
   useEffect(() => {
     if (patch === 0) return;
-    const cached = cache.get(key);
-    if (cached !== undefined) setData(cached);
+    force((n) => n + 1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [patch]);
-  return data;
+  return cache.get(key) ?? null;
 }
 
 function ChannelPage() {

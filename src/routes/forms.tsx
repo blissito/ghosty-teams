@@ -1,15 +1,17 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { FileText, ExternalLink, Copy, Check, ArrowLeft, MessageSquare } from "lucide-react";
 import { me } from "../server/auth";
 import { listTeamFormsFn } from "../server/forms";
 
+// Cache a nivel de módulo: re-entrar a /forms es instantáneo (sin skeleton si ya se vio).
+type FormRow = Awaited<ReturnType<typeof listTeamFormsFn>>[number];
+let formsCache: FormRow[] | null = null;
+
 export const Route = createFileRoute("/forms")({
-  loader: async () => {
-    const user = await me();
-    const forms = user ? await listTeamFormsFn() : [];
-    return { user, forms };
-  },
+  // El loader SOLO resuelve auth (rápido) → navegar a /forms es instantáneo; la lista
+  // se carga client-side con skeleton (optimista), no bloquea la navegación.
+  loader: async () => ({ user: await me() }),
   component: FormsPage,
 });
 
@@ -19,8 +21,15 @@ function fmtDate(ts: number | null): string {
 }
 
 function FormsPage() {
-  const { forms } = Route.useLoaderData();
+  const [forms, setForms] = useState<FormRow[] | null>(formsCache);
   const [copied, setCopied] = useState<string | null>(null);
+  useEffect(() => {
+    let alive = true;
+    listTeamFormsFn()
+      .then((f) => { if (!alive) return; formsCache = f; setForms(f); })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, []);
 
   const copy = (url: string, id: string) => {
     navigator.clipboard?.writeText(url).then(() => {
@@ -42,7 +51,20 @@ function FormsPage() {
           </p>
         </header>
 
-        {forms.length === 0 ? (
+        {forms === null ? (
+          <ul className="flex flex-col gap-3">
+            {[0, 1, 2].map((i) => (
+              <li key={i} className="border border-gray-800 bg-[#1c1922] rounded-2xl p-4 flex items-center gap-4 animate-pulse">
+                <div className="flex-1">
+                  <div className="h-4 w-2/3 bg-gray-700/60 rounded mb-2" />
+                  <div className="h-3 w-1/3 bg-gray-800 rounded" />
+                </div>
+                <div className="h-8 w-16 bg-gray-800 rounded" />
+                <div className="h-8 w-20 bg-gray-800 rounded-lg" />
+              </li>
+            ))}
+          </ul>
+        ) : forms.length === 0 ? (
           <div className="border border-dashed border-gray-700 rounded-2xl p-10 text-center text-gray-500 text-sm">
             <p className="font-semibold text-gray-300 mb-1">Aún no hay formularios en tus expedientes</p>
             <p>Pídele a <span className="text-[#a78bfa]">@ghosty</span> “crea un formulario de diagnóstico” en el room del cliente.</p>
