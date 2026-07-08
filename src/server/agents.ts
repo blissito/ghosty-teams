@@ -199,6 +199,7 @@ export const updateAgentFn = createServerFn({ method: "POST" })
     (d: {
       id: number;
       name?: string;
+      handle?: string;
       webhookUrl?: string;
       enabled?: boolean;
       systemPrompt?: string | null;
@@ -208,8 +209,22 @@ export const updateAgentFn = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     await requireAgentManage(data.id); // owner o colaborador (editar config, no ver secret)
     const db = await import("../db.server");
+    // Cambio de @handle (el tag): normaliza, valida no-vacío y unicidad. "ghosty" es
+    // reservado — solo la propia fila @ghosty puede conservarlo (no se lo roba otro).
+    let handle: string | undefined;
+    if (data.handle !== undefined) {
+      handle = data.handle.trim().toLowerCase().replace(/[^a-z0-9]/g, "");
+      if (!handle) throw new Error("handle requerido");
+      const clash = await db.getAgentByHandle(handle);
+      if (clash && clash.id !== data.id) throw new Error(`@${handle} ya existe`);
+      if (handle === db.GHOSTY_HANDLE) {
+        const self = await db.getAgentById(data.id);
+        if (self?.handle !== db.GHOSTY_HANDLE) throw new Error("@ghosty está reservado");
+      }
+    }
     await db.updateAgent(data.id, {
       name: data.name,
+      handle,
       webhookUrl: data.webhookUrl,
       enabled: data.enabled,
       systemPrompt: data.systemPrompt,

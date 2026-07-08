@@ -622,6 +622,7 @@ function EditAgentForm({
 }) {
   const t = useT();
   const [name, setName] = useState(agent.name);
+  const [handle, setHandle] = useState(agent.handle);
   const [persona, setPersona] = useState(agent.system_prompt ?? "");
   const [avatar, setAvatar] = useState(agent.avatar ?? "");
   const [busy, setBusy] = useState(false);
@@ -677,10 +678,12 @@ function EditAgentForm({
     setBusy(true);
     setErr(null);
     try {
+      const cleanHandle = handle.trim().toLowerCase().replace(/[^a-z0-9]/g, "");
       await updateAgentFn({
         data: {
           id: agent.id,
           name: name.trim() || agent.name,
+          handle: cleanHandle && cleanHandle !== agent.handle ? cleanHandle : undefined,
           systemPrompt: persona.trim() || null,
           avatar: avatar || null,
         },
@@ -692,123 +695,120 @@ function EditAgentForm({
     }
   }
 
+  // ESC cierra el modal (convención de la app).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
   const input = "w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm outline-none focus:border-brand";
   return (
-    <div className="rounded-lg border border-border bg-surface p-3">
-      <div className="mb-2 flex items-center justify-between">
-        <p className="text-xs font-semibold text-muted">
-          {t("Configurar")} <span className="text-brand">@{agent.handle}</span>
-        </p>
-        <button onClick={onClose} className="text-muted hover:text-ink">
-          <X size={16} />
-        </button>
-      </div>
-      <div className="space-y-2">
-        <div className="flex items-center gap-3">
-          {avatar ? (
-            <img src={avatar} alt="" className="h-12 w-12 shrink-0 rounded-lg object-cover" />
-          ) : (
-            <div className="grid h-12 w-12 shrink-0 place-items-center rounded-lg bg-brand/15 text-brand">
-              <Bot size={22} />
-            </div>
-          )}
-          <input
-            ref={fileRef}
-            type="file"
-            accept="image/*"
-            className="hidden"
-            onChange={(e) => {
-              const f = e.target.files?.[0];
-              if (f) onAvatar(f);
-            }}
-          />
-          <button
-            onClick={() => fileRef.current?.click()}
-            disabled={uploading}
-            className="flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-sm text-muted hover:border-brand hover:text-ink disabled:opacity-50"
-          >
-            {uploading ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
-            {t("Imagen")}
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onMouseDown={onClose}>
+      <div
+        className="flex max-h-[88vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-border bg-surface shadow-2xl"
+        onMouseDown={(e) => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between border-b border-border px-4 py-3">
+          <p className="text-sm font-semibold">
+            {t("Configurar")} <span className="text-brand">@{handle || agent.handle}</span>
+            <span className="ml-2 text-[11px] font-normal text-muted">
+              {agent.kind === "fleet" ? t("Flota EasyBits") : t("Webhook externo")}
+            </span>
+          </p>
+          <button onClick={onClose} className="text-muted hover:text-ink">
+            <X size={18} />
           </button>
-          {avatar && (
-            <button onClick={() => setAvatar("")} className="text-xs text-muted hover:text-red-400">
-              {t("Quitar")}
-            </button>
-          )}
         </div>
-        <input
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          placeholder={t("nombre visible")}
-          className={input}
-        />
-        <textarea
-          value={persona}
-          onChange={(e) => setPersona(e.target.value)}
-          rows={4}
-          placeholder={t("Persona / instrucciones del sistema (cómo debe comportarse, tono, rol)…")}
-          className={`${input} resize-none`}
-        />
-        <p className="text-[11px] text-muted">
-          {agent.kind === "fleet"
-            ? t("Persona local: se antepone al mensaje SOLO en este espacio. El prompt base (todos los canales) y las capacidades se configuran abajo.")
-            : t("Se envía a tu webhook como systemPrompt junto al mensaje.")}
-        </p>
 
-        {/* Capacidades de flota (modelo, conectores, skills, entregables) — passthrough
-            en vivo a EasyBits. Solo para agentes de flota (webhook no tiene). */}
-        {agent.kind === "fleet" && <FleetCapabilities agentId={agent.id} />}
+        {/* Cuerpo 2 columnas: izq = identidad/local, der = capacidades de flota */}
+        <div className="grid flex-1 grid-cols-1 gap-4 overflow-y-auto p-4 md:grid-cols-2">
+          {/* ── Columna izquierda: identidad + persona local + colaboradores ── */}
+          <div className="space-y-3">
+            <div className="flex items-center gap-3">
+              {avatar ? (
+                <img src={avatar} alt="" className="h-14 w-14 shrink-0 rounded-xl object-cover" />
+              ) : (
+                <div className="grid h-14 w-14 shrink-0 place-items-center rounded-xl bg-brand/15 text-brand">
+                  <Bot size={24} />
+                </div>
+              )}
+              <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) onAvatar(f); }} />
+              <div className="flex flex-col gap-1">
+                <button onClick={() => fileRef.current?.click()} disabled={uploading} className="flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-sm text-muted hover:border-brand hover:text-ink disabled:opacity-50">
+                  {uploading ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />} {t("Imagen")}
+                </button>
+                {avatar && <button onClick={() => setAvatar("")} className="text-left text-xs text-muted hover:text-red-400">{t("Quitar imagen")}</button>}
+              </div>
+            </div>
 
-        {/* Colaboradores: solo el owner los gestiona; pueden EDITAR la config (no ver
-            el secret ni borrar). Mismo modelo que miembros de un room privado. */}
-        {isOwner && (
-          <div className="rounded-lg border border-border bg-surface-2 p-2.5">
-            <p className="mb-1.5 text-xs font-semibold text-muted">{t("Colaboradores")}</p>
-            {collabs.length > 0 && (
-              <div className="mb-2 space-y-1">
-                {collabs.map((c) => (
-                  <div key={c.sub} className="flex items-center gap-2 text-xs">
-                    <span className="min-w-0 flex-1 truncate">
-                      {c.name} <span className="text-muted">{c.email}</span>
-                    </span>
-                    <button onClick={() => removeCollab(c.sub)} className="text-muted hover:text-red-400" title={t("Quitar")}>
-                      <X size={13} />
-                    </button>
+            <div>
+              <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-muted">{t("Nombre visible")}</label>
+              <input value={name} onChange={(e) => setName(e.target.value)} placeholder={t("nombre visible")} className={input} />
+            </div>
+
+            <div>
+              <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-muted">{t("Handle (para @taguear)")}</label>
+              <div className="flex items-center rounded-lg border border-border bg-surface focus-within:border-brand">
+                <span className="pl-3 text-sm text-muted">@</span>
+                <input value={handle} onChange={(e) => setHandle(e.target.value.toLowerCase().replace(/[^a-z0-9]/g, ""))} placeholder="soporte" className="flex-1 bg-transparent px-1 py-2 text-sm outline-none" />
+              </div>
+              <p className="mt-1 text-[11px] text-muted">{t("Así lo mencionas en el chat: @{handle}", { handle: handle || "handle" })}</p>
+            </div>
+
+            <div>
+              <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-muted">{t("Persona local (este espacio)")}</label>
+              <textarea value={persona} onChange={(e) => setPersona(e.target.value)} rows={5} placeholder={t("Cómo debe comportarse aquí (tono, rol)…")} className={`${input} resize-y`} />
+              <p className="mt-1 text-[11px] text-muted">
+                {agent.kind === "fleet"
+                  ? t("Se antepone al mensaje SOLO en este espacio. El prompt base (todos los canales) va en la derecha.")
+                  : t("Se envía a tu webhook como systemPrompt junto al mensaje.")}
+              </p>
+            </div>
+
+            {isOwner && (
+              <div className="rounded-lg border border-border bg-surface-2 p-2.5">
+                <p className="mb-1.5 text-xs font-semibold text-muted">{t("Colaboradores")}</p>
+                {collabs.length > 0 && (
+                  <div className="mb-2 space-y-1">
+                    {collabs.map((c) => (
+                      <div key={c.sub} className="flex items-center gap-2 text-xs">
+                        <span className="min-w-0 flex-1 truncate">{c.name} <span className="text-muted">{c.email}</span></span>
+                        <button onClick={() => removeCollab(c.sub)} className="text-muted hover:text-red-400" title={t("Quitar")}><X size={13} /></button>
+                      </div>
+                    ))}
                   </div>
-                ))}
+                )}
+                <div className="flex gap-2">
+                  <input value={collabEmail} onChange={(e) => setCollabEmail(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addCollab()} placeholder={t("email de un miembro")} className="flex-1 rounded-lg border border-border bg-surface px-2.5 py-1.5 text-xs outline-none focus:border-brand" />
+                  <button onClick={addCollab} disabled={collabBusy || !collabEmail.trim()} className="rounded-lg border border-border px-2.5 py-1.5 text-xs text-muted hover:border-brand hover:text-ink disabled:opacity-50">{t("Agregar")}</button>
+                </div>
               </div>
             )}
-            <div className="flex gap-2">
-              <input
-                value={collabEmail}
-                onChange={(e) => setCollabEmail(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && addCollab()}
-                placeholder={t("email de un miembro")}
-                className="flex-1 rounded-lg border border-border bg-surface px-2.5 py-1.5 text-xs outline-none focus:border-brand"
-              />
-              <button
-                onClick={addCollab}
-                disabled={collabBusy || !collabEmail.trim()}
-                className="rounded-lg border border-border px-2.5 py-1.5 text-xs text-muted hover:border-brand hover:text-ink disabled:opacity-50"
-              >
-                {t("Agregar")}
-              </button>
-            </div>
           </div>
-        )}
 
-        {err && <p className="text-sm text-red-400">{err}</p>}
-        <div className="flex justify-end gap-2">
-          <button onClick={onClose} className="rounded-lg px-3 py-1.5 text-sm text-muted hover:text-ink">
-            {t("Cancelar")}
-          </button>
-          <button
-            onClick={save}
-            disabled={busy || uploading}
-            className="rounded-lg bg-brand px-4 py-1.5 text-sm font-semibold text-brand-fg disabled:opacity-50"
-          >
-            {busy ? t("Guardando…") : t("Guardar")}
-          </button>
+          {/* ── Columna derecha: capacidades de flota (o nota webhook) ── */}
+          <div className="md:border-l md:border-border md:pl-4">
+            {agent.kind === "fleet" ? (
+              <FleetCapabilities agentId={agent.id} />
+            ) : (
+              <div className="rounded-lg border border-dashed border-border p-4 text-center text-xs text-muted">
+                {t("Los bots por webhook no tienen capacidades de flota. Su comportamiento lo controla tu servidor.")}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div className="flex items-center justify-between gap-2 border-t border-border px-4 py-3">
+          <span className="text-xs text-red-400">{err}</span>
+          <div className="flex gap-2">
+            <button onClick={onClose} className="rounded-lg px-3 py-1.5 text-sm text-muted hover:text-ink">{t("Cerrar")}</button>
+            <button onClick={save} disabled={busy || uploading} className="rounded-lg bg-brand px-4 py-1.5 text-sm font-semibold text-brand-fg disabled:opacity-50">
+              {busy ? t("Guardando…") : t("Guardar")}
+            </button>
+          </div>
         </div>
       </div>
     </div>

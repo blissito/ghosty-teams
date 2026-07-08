@@ -615,6 +615,7 @@ export async function updateAgent(
   id: number,
   patch: {
     name?: string;
+    handle?: string;
     fleetId?: string;
     fleetToken?: string;
     webhookUrl?: string;
@@ -626,6 +627,7 @@ export async function updateAgent(
   const sets: string[] = [];
   const args: unknown[] = [];
   if (patch.name !== undefined) (sets.push("name = ?"), args.push(patch.name.slice(0, 40)));
+  if (patch.handle !== undefined) (sets.push("handle = ?"), args.push(patch.handle));
   if (patch.fleetId !== undefined) (sets.push("fleet_id = ?"), args.push(patch.fleetId));
   if (patch.fleetToken !== undefined) (sets.push("fleet_token = ?"), args.push(patch.fleetToken));
   if (patch.webhookUrl !== undefined) (sets.push("webhook_url = ?"), args.push(patch.webhookUrl));
