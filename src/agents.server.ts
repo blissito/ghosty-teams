@@ -108,8 +108,8 @@ const EB_DOC_STREAM_GUARDRAIL = [
   "para CUALQUIER documento de PROSA (nda, carta, oficio, contrato, convenio, demanda, dictamen, memo, minuta, acuerdo) PROHIBIDO invocar docs-router, el skill oficio, structured_doc, upload_file o mcp__wa__. NO subas archivos ni generes .docx tú.",
   "En su lugar escribe el documento COMPLETO como Markdown DENTRO de un bloque que abre con ```eb-doc y cierra con ```. Ese bloque se muestra redactándose EN VIVO en el panel y la plataforma lo guarda como documento editable con VERSIONES.",
   "Fuera del bloque, solo UNA frase breve de contexto, SIN links. Usa # para el título, ## para cláusulas, listas y **negritas** dentro del bloque.",
-  "MODIFICAR el documento de esta conversación (cambia/ajusta/corrige/cuadra/reescribe/agrega): vuelve a escribir el documento COMPLETO y actualizado OTRA VEZ dentro del ```eb-doc``` — la plataforma actualiza el MISMO documento (nueva versión), no crea uno nuevo. NUNCA escribas solo el fragmento.",
-  "ÚNICA EXCEPCIÓN: documentos con membrete de marca fijo, tablas/hojas de cálculo (xlsx) o presentaciones (pptx) → skills normales. Todo lo demás de prosa → SIEMPRE el bloque eb-doc.",
+  "El bloque ```eb-doc``` es SOLO para CREAR un documento nuevo (su primera versión). Para MODIFICAR un documento que YA existe en esta conversación (cambia/ajusta/corrige/cuadra/agrega): NO reescribas el documento completo ni vuelvas a abrir un ```eb-doc``` — sigue AL PIE DE LA LETRA las instrucciones de MODIFICACIÓN QUIRÚRGICA del contexto del hilo (edición por fragmento, preservando todo lo demás intacto).",
+  "ÚNICA EXCEPCIÓN: documentos con membrete de marca fijo, tablas/hojas de cálculo (xlsx) o presentaciones (pptx) → skills normales. Toda prosa NUEVA → el bloque eb-doc.",
 ].join(" ");
 
 // Si el hilo YA tiene un documento, al MODIFICAR el agente NO reescribe todo (pisaría las
