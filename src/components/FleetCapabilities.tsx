@@ -122,9 +122,6 @@ export function FleetCapabilities({ agentId }: { agentId: number }) {
   const sel = "rounded-lg border border-border bg-surface px-2 py-1.5 text-xs outline-none focus:border-brand";
   const Spin = ({ k }: { k: string }) => (isSaving(k) ? <Loader2 size={12} className="animate-spin text-brand" /> : null);
 
-  const chipBuckets = cfg.buckets?.filter((b) => !b.levels) ?? [];
-  const levelBuckets = cfg.buckets?.filter((b) => b.levels) ?? [];
-
   // Per-tool deny: default = todas las tools del bucket ON; destildar = deny.
   const bucketTools = cfg.bucketTools ?? {};
   const denyList = new Set(cfg.groups?.[GROUP]?.toolDeny ?? []);
@@ -170,107 +167,102 @@ export function FleetCapabilities({ agentId }: { agentId: number }) {
       {/* Herramientas (buckets) */}
       <div>
         <span className={label}>{t("Herramientas")} <Spin k="buckets" /></span>
-        <div className="flex flex-wrap gap-1.5">
-          {chipBuckets.map((b) => {
+        {/* Una fila por bucket: control (switch/nivel) + checklist per-tool inline
+            + (DB) allow-list de bases. Todo en UN lugar por bucket (no secciones sueltas). */}
+        <div className="flex flex-col gap-1.5">
+          {(cfg.buckets ?? []).map((b) => {
+            const isLevel = !!b.levels;
             const on = activeBuckets.has(b.key);
+            const cur = isLevel
+              ? ([...(b.levels ?? [])].reverse().find((l) => l.buckets.every((x) => activeBuckets.has(x)))?.key ?? "off")
+              : (on ? "on" : "off");
+            const isDb = b.key === "db";
+            const ownerDbs = cfg.ownerDbs ?? [];
+            const tools = bucketActiveTools(b);
+            const activeCount = tools.filter((tn) => !denyList.has(tn)).length;
             return (
-              <button
-                key={b.key} title={b.description}
-                onClick={() => mutate("buckets", (c) => {
-                  if (!c.agent) return {};
-                  const set = new Set(c.agent.buckets);
-                  set.has(b.key) ? set.delete(b.key) : set.add(b.key);
-                  c.agent.buckets = [...set];
-                  return { action: "set-toolgroup", groupId: GROUP, buckets: c.agent.buckets };
-                })}
-                className={`rounded-full px-2.5 py-1 text-xs font-medium transition ${on ? "bg-brand text-brand-fg" : "bg-surface-3 text-muted hover:text-ink"}`}
-              >
-                {b.label}
-              </button>
+              <div key={b.key} className="rounded-lg border border-border p-2">
+                <div className="flex items-center gap-2">
+                  <span className="min-w-0 flex-1 truncate text-xs" title={b.description}>
+                    {b.label}{b.admin && <span className="text-muted"> ★</span>}
+                  </span>
+                  {isLevel ? (
+                    <select
+                      className={sel} value={cur}
+                      onChange={(e) => { const lvlKey = e.target.value; mutate(`bucket:${b.key}`, (c) => {
+                        if (!c.agent) return {};
+                        const levelKeys = (b.levels ?? []).flatMap((l) => l.buckets);
+                        const base = c.agent.buckets.filter((x) => !levelKeys.includes(x));
+                        const lvl = (b.levels ?? []).find((l) => l.key === lvlKey);
+                        c.agent.buckets = lvl ? [...base, ...lvl.buckets] : base;
+                        return { action: "set-toolgroup", groupId: GROUP, buckets: c.agent.buckets };
+                      }); }}
+                    >
+                      <option value="off">{t("Off")}</option>
+                      {b.levels?.map((l) => <option key={l.key} value={l.key}>{l.label}</option>)}
+                    </select>
+                  ) : (
+                    <Switch on={on} disabled={isSaving("buckets")} onChange={() => mutate("buckets", (c) => {
+                      if (!c.agent) return {};
+                      const set = new Set(c.agent.buckets);
+                      set.has(b.key) ? set.delete(b.key) : set.add(b.key);
+                      c.agent.buckets = [...set];
+                      return { action: "set-toolgroup", groupId: GROUP, buckets: c.agent.buckets };
+                    })} />
+                  )}
+                  <Spin k={isLevel ? `bucket:${b.key}` : "buckets"} />
+                </div>
+                {/* Per-tool: destildar herramientas puntuales (default todas ON). */}
+                {tools.length > 0 && (
+                  <details className="mt-1.5">
+                    <summary className="cursor-pointer select-none text-[11px] text-muted">
+                      {t("herramientas")} ({activeCount}/{tools.length})
+                    </summary>
+                    <div className="mt-1 max-h-40 space-y-1.5 overflow-y-auto rounded-lg border border-border bg-surface-2 p-2">
+                      {tools.map((tn) => (
+                        <div key={tn} className="flex items-center gap-2 text-[11px]">
+                          <Switch on={!denyList.has(tn)} disabled={isSaving(`deny:${tn}`)} onChange={(v) => toggleTool(tn, v)} />
+                          <span className="min-w-0 flex-1 truncate font-mono">{tn}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </details>
+                )}
+                {/* DB: allow-list de QUÉ bases (vacío = todas). */}
+                {isDb && cur !== "off" && (
+                  <div className="mt-1.5 rounded-lg border border-border bg-surface-2 p-2">
+                    <p className="mb-1.5 flex items-center gap-1 text-[11px] text-muted">{t("¿Qué bases puede tocar?")} <Spin k="dballow" /></p>
+                    {ownerDbs.length ? (
+                      <>
+                        <div className="space-y-1.5">
+                          {ownerDbs.map((d) => {
+                            const dbOn = dbAllow.includes(d.namespace);
+                            return (
+                              <div key={d.namespace} className="flex items-center gap-2 text-xs">
+                                <Switch on={dbOn} disabled={isSaving("dballow")} onChange={() => mutate("dballow", (c) => {
+                                  const gg = gc(c); const set = new Set(gg.dbAllow ?? []);
+                                  set.has(d.namespace) ? set.delete(d.namespace) : set.add(d.namespace);
+                                  gg.dbAllow = [...set];
+                                  return { action: "set-db-allow", groupId: GROUP, dbAllow: gg.dbAllow };
+                                })} />
+                                <span className="min-w-0 flex-1 truncate">{d.name} <span className="text-muted">/{d.namespace.slice(0, 8)}…</span></span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                        <p className="mt-1.5 text-[11px] text-muted">
+                          {dbAllow.length === 0 ? t("Sin restricción: todas permitidas. Enciende alguna para limitar a solo esas.") : t("Restringido a {n} base(s).", { n: dbAllow.length })}
+                        </p>
+                      </>
+                    ) : (
+                      <p className="text-[11px] text-muted">{t("Este dueño no tiene bases creadas todavía.")}</p>
+                    )}
+                  </div>
+                )}
+              </div>
             );
           })}
         </div>
-        {/* Bases de datos: nivel granular + allow-list de QUÉ bases (vacío = todas) */}
-        {levelBuckets.map((b) => {
-          const cur = [...(b.levels ?? [])].reverse().find((l) => l.buckets.every((x) => activeBuckets.has(x)))?.key ?? "off";
-          const isDb = b.key === "db";
-          const ownerDbs = cfg.ownerDbs ?? [];
-          return (
-            <div key={b.key} className="mt-1.5">
-              <div className="flex items-center gap-2">
-                <span className="min-w-0 flex-1 truncate text-xs" title={b.description}>{b.label} <span className="text-muted">★</span></span>
-                <select
-                  className={sel} value={cur}
-                  onChange={(e) => { const lvlKey = e.target.value; mutate(`bucket:${b.key}`, (c) => {
-                    if (!c.agent) return {};
-                    const levelKeys = (b.levels ?? []).flatMap((l) => l.buckets);
-                    const base = c.agent.buckets.filter((x) => !levelKeys.includes(x));
-                    const lvl = (b.levels ?? []).find((l) => l.key === lvlKey);
-                    c.agent.buckets = lvl ? [...base, ...lvl.buckets] : base;
-                    return { action: "set-toolgroup", groupId: GROUP, buckets: c.agent.buckets };
-                  }); }}
-                >
-                  <option value="off">{t("Off")}</option>
-                  {b.levels?.map((l) => <option key={l.key} value={l.key}>{l.label}</option>)}
-                </select>
-                <Spin k={`bucket:${b.key}`} />
-              </div>
-              {/* Solo cuando el bucket DB está activo. Allow-list: nada encendido = TODAS
-                  permitidas (sin restricción). Enciende para limitar a SOLO esas. */}
-              {isDb && cur !== "off" && (
-                <div className="mt-1.5 rounded-lg border border-border bg-surface-2 p-2">
-                  <p className="mb-1.5 flex items-center gap-1 text-[11px] text-muted">{t("¿Qué bases puede tocar?")} <Spin k="dballow" /></p>
-                  {ownerDbs.length ? (
-                    <>
-                      <div className="space-y-1.5">
-                        {ownerDbs.map((d) => {
-                          const on = dbAllow.includes(d.namespace);
-                          return (
-                            <div key={d.namespace} className="flex items-center gap-2 text-xs">
-                              <Switch on={on} disabled={isSaving("dballow")} onChange={() => mutate("dballow", (c) => {
-                                const gg = gc(c); const set = new Set(gg.dbAllow ?? []);
-                                set.has(d.namespace) ? set.delete(d.namespace) : set.add(d.namespace);
-                                gg.dbAllow = [...set];
-                                return { action: "set-db-allow", groupId: GROUP, dbAllow: gg.dbAllow };
-                              })} />
-                              <span className="min-w-0 flex-1 truncate">{d.name} <span className="text-muted">/{d.namespace.slice(0, 8)}…</span></span>
-                            </div>
-                          );
-                        })}
-                      </div>
-                      <p className="mt-1.5 text-[11px] text-muted">
-                        {dbAllow.length === 0 ? t("Sin restricción: todas permitidas. Enciende alguna para limitar a solo esas.") : t("Restringido a {n} base(s).", { n: dbAllow.length })}
-                      </p>
-                    </>
-                  ) : (
-                    <p className="text-[11px] text-muted">{t("Este dueño no tiene bases creadas todavía.")}</p>
-                  )}
-                </div>
-              )}
-            </div>
-          );
-        })}
-        {/* Per-tool: destildar herramientas puntuales de cada bucket activo (default todas ON). */}
-        {(cfg.buckets ?? []).map((b) => {
-          const tools = bucketActiveTools(b);
-          if (!tools.length) return null;
-          const activeCount = tools.filter((tn) => !denyList.has(tn)).length;
-          return (
-            <details key={`tools:${b.key}`} className="mt-1.5">
-              <summary className="cursor-pointer select-none text-[11px] text-muted">
-                {b.label} · {t("herramientas")} ({activeCount}/{tools.length}) <Spin k={`deny:${b.key}`} />
-              </summary>
-              <div className="mt-1 max-h-40 space-y-1 overflow-y-auto rounded-lg border border-border bg-surface-2 p-2">
-                {tools.map((tn) => (
-                  <label key={tn} className="flex cursor-pointer items-center gap-2 text-[11px] hover:text-ink">
-                    <input type="checkbox" checked={!denyList.has(tn)} disabled={isSaving(`deny:${tn}`)} onChange={(e) => toggleTool(tn, e.target.checked)} />
-                    <span className="truncate font-mono">{tn}</span>
-                  </label>
-                ))}
-              </div>
-            </details>
-          );
-        })}
       </div>
 
       {/* Incluidos (builtins agnósticos: se ocultan channel/bucketScoped) */}
