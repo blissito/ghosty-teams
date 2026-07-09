@@ -53,7 +53,6 @@ export function FleetCapabilities({ agentId }: { agentId: number }) {
   const [loadErr, setLoadErr] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [saving, setSaving] = useState<string[]>([]);
-  const [q, setQ] = useState("");
   const [uploading, setUploading] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -80,10 +79,10 @@ export function FleetCapabilities({ agentId }: { agentId: number }) {
     setErr(null);
     try {
       await setAgentFleetConfigFn({ data: { id: agentId, body } });
-      if (reload) await load(q || undefined);
+      if (reload) await load();
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
-      await load(q || undefined);
+      await load();
     } finally {
       setSaving((s) => s.filter((k) => k !== key));
     }
@@ -97,7 +96,7 @@ export function FleetCapabilities({ agentId }: { agentId: number }) {
       const fd = new FormData(); fd.set("file", file);
       const res = await fetch(`/api/agent-asset?id=${agentId}`, { method: "POST", body: fd });
       if (!res.ok) throw new Error(await res.text());
-      await load(q || undefined);
+      await load();
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
@@ -313,11 +312,14 @@ export function FleetCapabilities({ agentId }: { agentId: number }) {
       <div>
         <span className={label}>{t("Entregables")}</span>
         <div className="mb-1.5 flex gap-2">
+          {/* Buscar entregables por nombre — DESACTIVADO (la búsqueda no filtra bien todavía).
+              Reactivar restaurando el estado `q`/`setQ` + `load(q || undefined)`:
           <input value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => e.key === "Enter" && load(q || undefined)} placeholder={t("Buscar un archivo…")} className={`flex-1 ${sel}`} />
           <button onClick={() => load(q || undefined)} className="rounded-lg border border-border px-2.5 text-xs text-muted hover:border-brand hover:text-ink">{t("Buscar")}</button>
+          */}
           <input ref={fileRef} type="file" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadAsset(f); }} />
-          <button onClick={() => fileRef.current?.click()} disabled={uploading} className="flex items-center gap-1 rounded-lg border border-border px-2.5 text-xs text-muted hover:border-brand hover:text-ink disabled:opacity-50" title={t("Subir a EasyBits")}>
-            {uploading ? <Loader2 size={12} className="animate-spin" /> : <Upload size={12} />} {t("Subir")}
+          <button onClick={() => fileRef.current?.click()} disabled={uploading} className="flex flex-1 items-center justify-center gap-1 rounded-lg border border-border px-2.5 py-1.5 text-xs text-muted hover:border-brand hover:text-ink disabled:opacity-50" title={t("Subir a EasyBits")}>
+            {uploading ? <Loader2 size={12} className="animate-spin" /> : <Upload size={12} />} {t("Subir entregable")}
           </button>
         </div>
         <div className="space-y-1.5">
@@ -333,7 +335,7 @@ export function FleetCapabilities({ agentId }: { agentId: number }) {
               </div>
             );
           })}
-          {!cfg.ownerFiles?.length && <p className="text-[11px] text-muted">{t("Busca por nombre o sube un archivo para adjuntar entregables.")}</p>}
+          {!cfg.ownerFiles?.length && <p className="text-[11px] text-muted">{t("Sube un archivo para adjuntar entregables.")}</p>}
         </div>
       </div>
 
