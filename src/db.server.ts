@@ -76,6 +76,7 @@ export type Artifact = {
   kind: string;
   url: string;
   title: string | null;
+  md?: string | null; // markdown fuente (kind:"doc") → el panel lo renderiza local
 };
 
 export const GHOSTY_RE = /@ghosty\b/i;
@@ -263,7 +264,7 @@ export async function attachArtifacts(msgs: Message[]): Promise<Message[]> {
   const ids = msgs.map((m) => m.id);
   const ph = ids.map(() => "?").join(",");
   const rows = await dbq(
-    `SELECT id, message_id, kind, url, title FROM gc_artifacts
+    `SELECT id, message_id, kind, url, title, md FROM gc_artifacts
       WHERE message_id IN (${ph}) ORDER BY id`,
     ids
   );
@@ -276,6 +277,7 @@ export async function attachArtifacts(msgs: Message[]): Promise<Message[]> {
       kind: r.kind!,
       url: r.url!,
       title: r.title ?? null,
+      md: r.md ?? null,
     });
   }
   return msgs.map((m) => (byMsg.has(m.id) ? { ...m, artifact: byMsg.get(m.id) } : m));
@@ -284,12 +286,33 @@ export async function attachArtifacts(msgs: Message[]): Promise<Message[]> {
 // Inserta el artefacto de un mensaje del agente.
 export async function createArtifact(
   messageId: number,
-  a: { kind: string; url: string; title?: string | null }
+  a: { kind: string; url: string; title?: string | null; md?: string | null }
 ): Promise<void> {
   await dbq(
-    `INSERT INTO gc_artifacts (message_id, kind, url, title) VALUES (?, ?, ?, ?)`,
-    [messageId, a.kind, a.url, a.title ?? null]
+    `INSERT INTO gc_artifacts (message_id, kind, url, title, md) VALUES (?, ?, ?, ?, ?)`,
+    [messageId, a.kind, a.url, a.title ?? null, a.md ?? null]
   );
+}
+
+// Artefacto vivo ACTUAL (doc = markdown | sheet = csv) por su documentId local. Última
+// versión gana. Es la verdad que se re-inyecta al agente al modificar → re-emite el
+// artefacto completo con el cambio.
+export async function getDoc(
+  documentId: string
+): Promise<{ kind: "doc" | "sheet"; md: string } | null> {
+  const rows = await dbq(
+    `SELECT kind, md FROM gc_artifacts
+      WHERE url = ? AND kind IN ('doc','sheet') AND md IS NOT NULL
+      ORDER BY id DESC LIMIT 1`,
+    [documentId]
+  );
+  const r = rows[0];
+  return r?.md ? { kind: r.kind as "doc" | "sheet", md: r.md } : null;
+}
+
+// Solo el contenido (para el export .docx del route). Delega en getDoc.
+export async function getDocMarkdown(documentId: string): Promise<string | null> {
+  return (await getDoc(documentId))?.md ?? null;
 }
 
 // ── Identidad conversacional del artefacto vivo (Fase 1 edit-in-place) ──────────

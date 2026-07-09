@@ -1,9 +1,8 @@
 import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useRef, useState } from "react";
-import { X, ExternalLink, FileText, Pencil, Download, Loader2, ChevronRight, RotateCw, Maximize2, Minimize2, Eye } from "lucide-react";
+import { X, ExternalLink, FileText, Download, Loader2, ChevronRight, RotateCw, Maximize2, Minimize2 } from "lucide-react";
 import { useT } from "../i18n";
-import { officeToEditableFn, officeToHtmlFn, docToHtmlFn } from "../server/chat";
-import CollabArtifact from "./CollabArtifact";
+import { officeToHtmlFn } from "../server/chat";
 import { Markdown } from "./Markdown";
 
 // Panel lateral de artefactos del room. Fase 0 = visor PDF/imagen (adjuntos).
@@ -20,8 +19,71 @@ export type ArtifactView =
   | { kind: "office"; title: string; src: string } // docx/xlsx/pptx → preview (visor) + descarga
   | { kind: "file"; title: string; src: string } // fallback genérico → descarga
   | { kind: "html"; title: string; embedUrl: string }
-  | { kind: "draft"; title: string; md: string; streaming?: boolean } // redacción en vivo (Canvas)
-  | { kind: "doc"; title: string; documentId: string }; // documento vivo (preview + editar + versiones)
+  // Redacción EN VIVO (Canvas): prosa (markdown) o tabla (csv), según `sheet`.
+  | { kind: "draft"; title: string; content: string; sheet: boolean; streaming?: boolean }
+  | { kind: "doc"; title: string; documentId: string; md: string } // documento vivo (markdown local + versiones)
+  | { kind: "sheet"; title: string; documentId: string; csv: string }; // hoja viva (CSV local + versiones)
+
+// URL del VISOR OFICIAL de Microsoft (Office Online) para un office con URL pública. Word/
+// Excel/PowerPoint renderizados fieles. Microsoft hace fetch server-side → solo sirve con
+// URLs públicas (no el proxy /api/attachment autenticado). Devuelve null si no aplica.
+export function officeViewerSrc(src: string): string | null {
+  if (!/^https?:\/\//i.test(src) || /\/api\/attachment\//.test(src)) return null;
+  return `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(src)}`;
+}
+
+// Parse CSV mínimo (comillas dobles, comas y saltos escapados). Suficiente para el CSV que
+// el agente emite en ```eb-sheet```. Devuelve filas de celdas.
+function parseCsv(csv: string): string[][] {
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let cell = "";
+  let quoted = false;
+  const text = csv.replace(/\r\n?/g, "\n");
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (quoted) {
+      if (c === '"') {
+        if (text[i + 1] === '"') { cell += '"'; i++; }
+        else quoted = false;
+      } else cell += c;
+    } else if (c === '"') quoted = true;
+    else if (c === ",") { row.push(cell); cell = ""; }
+    else if (c === "\n") { row.push(cell); rows.push(row); row = []; cell = ""; }
+    else cell += c;
+  }
+  if (cell !== "" || row.length) { row.push(cell); rows.push(row); }
+  return rows.filter((r) => r.length && !(r.length === 1 && r[0] === ""));
+}
+
+// Render de una hoja CSV como tabla estilo planilla (primera fila = encabezado).
+function CsvTable({ csv }: { csv: string }) {
+  const rows = parseCsv(csv);
+  if (!rows.length) return null;
+  const [head, ...body] = rows;
+  return (
+    <div className="mx-auto max-w-full overflow-x-auto rounded-sm bg-white shadow-md">
+      <table className="w-full border-collapse text-sm text-black">
+        <thead>
+          <tr>
+            {head.map((h, i) => (
+              <th key={i} className="border border-neutral-300 bg-neutral-100 px-3 py-1.5 text-left font-semibold">{h}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {body.map((r, ri) => (
+            <tr key={ri} className={ri % 2 ? "bg-neutral-50" : ""}>
+              {head.map((_, ci) => (
+                <td key={ci} className="border border-neutral-200 px-3 py-1.5 align-top">{r[ci] ?? ""}</td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
 
 // Mapea un adjunto a una vista de artefacto previsualizable en el panel. Devuelve
 // null solo para lo no-previsualizable (se queda como card de descarga en la lista).
@@ -48,12 +110,9 @@ const STORE_KEY = "eb_artifact_w";
 export default function ArtifactPanel({
   artifact,
   onClose,
-  docRefreshKey = 0,
 }: {
   artifact: ArtifactView | null;
   onClose: () => void;
-  // Sube cuando el doc abierto avanzó de versión (agente lo modificó) → re-fetch del preview.
-  docRefreshKey?: number;
 }) {
   const t = useT();
   const [width, setWidth] = useState<number>(() => {
@@ -66,59 +125,53 @@ export default function ArtifactPanel({
   widthRef.current = width;
   const dragging = useRef(false);
   const [isDragging, setIsDragging] = useState(false);
-  // "Editar" un office: EasyBits lo importa a un doc editable → editUrl (editor colab).
-  const [editUrl, setEditUrl] = useState<string | null>(null);
-  const [converting, setConverting] = useState(false);
-  // Preview PROPIO de un .docx: EasyBits lo convierte a HTML (mammoth) y lo renderizamos
-  // inline. "loading" | HTML sanitizado | "error" (xlsx/pptx no soportados → descarga).
+  // Preview PROPIO de un .docx ADJUNTO (subido por el usuario): EasyBits lo convierte a HTML
+  // (mammoth) y lo renderizamos inline. "loading" | HTML sanitizado | "error" (xlsx/pptx no
+  // soportados → descarga). Los docs que REDACTA el agente NO pasan por aquí: son `md` local.
   const [officeHtml, setOfficeHtml] = useState<string | null>(null);
   const [officeState, setOfficeState] = useState<"idle" | "loading" | "error">("idle");
   const [refreshTick, setRefreshTick] = useState(0); // botón "refrescar" del header (re-fetch manual)
   const [expanded, setExpanded] = useState(false); // botón "expandir" (ancho máximo)
   const [downloading, setDownloading] = useState(false); // el export docx es lento → spinner
-  // Identidad ESTABLE del artefacto → los effects (reset + fetch office) NO se re-disparan
-  // al reabrir el MISMO artefacto (evita "recarga aunque ya esté visible"). El draft usa
-  // id constante para que su streaming NO resetee.
+  // Identidad ESTABLE del artefacto → el effect de fetch office NO se re-dispara al reabrir
+  // el MISMO artefacto. El draft usa id constante para que su streaming NO resetee.
   const officeSrc = artifact?.kind === "office" ? artifact.src : null;
-  const docId = artifact?.kind === "doc" ? artifact.documentId : null;
-  // Clave del preview: office (.docx) o doc (Landing) → mismo render de "hoja".
-  const previewKey = officeSrc ?? docId;
-  const isDocLike = artifact?.kind === "doc" || artifact?.kind === "office";
+  const isDocLike = artifact?.kind === "doc" || artifact?.kind === "office" || artifact?.kind === "sheet";
+  const docBadge =
+    artifact?.kind === "sheet" ? "CSV" : artifact?.kind === "doc" || artifact?.kind === "office" ? "DOCX" : null;
   const downloadHref =
     artifact?.kind === "doc"
       ? `/api/doc-docx/${encodeURIComponent(artifact.documentId)}?name=${encodeURIComponent(artifact.title || "documento")}`
       : artifact?.kind === "office"
         ? artifact.src
-        : null;
+        : null; // sheet → descarga CSV client-side (blob), ver doDownload
   const artifactId = !artifact
     ? null
     : artifact.kind === "office"
       ? `office:${artifact.src}`
       : artifact.kind === "doc"
         ? `doc:${artifact.documentId}`
-        : artifact.kind === "draft"
-          ? "draft"
-          : artifact.kind === "html"
-            ? `html:${artifact.embedUrl}`
-            : `${artifact.kind}:${artifact.src}`;
-  // Al cambiar a OTRO artefacto (id distinto), resetea el modo edición y el preview.
+        : artifact.kind === "sheet"
+          ? `sheet:${artifact.documentId}`
+          : artifact.kind === "draft"
+            ? "draft"
+            : artifact.kind === "html"
+              ? `html:${artifact.embedUrl}`
+              : `${artifact.kind}:${artifact.src}`;
+  // Al cambiar a OTRO artefacto, resetea el preview office.
   useEffect(() => {
-    setEditUrl(null);
-    setConverting(false);
     setOfficeHtml(null);
     setOfficeState("idle");
   }, [artifactId]);
-  // Fetch del HTML del preview (office = mammoth; doc = secciones actuales). Se re-dispara
-  // en docRefreshKey → auto-refresh a la nueva versión cuando el agente modifica.
+  // Fetch del HTML del preview de un .docx ADJUNTO (mammoth). Solo office; el doc del agente
+  // se renderiza desde su markdown local (sin fetch).
   useEffect(() => {
-    if (!previewKey || editUrl) return;
+    if (!officeSrc) return;
     let alive = true;
     setOfficeState("loading");
     (async () => {
       try {
-        const r = docId
-          ? await docToHtmlFn({ data: { documentId: docId } })
-          : await officeToHtmlFn({ data: { url: officeSrc! } });
+        const r = await officeToHtmlFn({ data: { url: officeSrc } });
         if (!alive) return;
         if (r.ok && r.html) {
           const DOMPurify = (await import("dompurify")).default;
@@ -134,11 +187,25 @@ export default function ArtifactPanel({
     return () => {
       alive = false;
     };
-  }, [previewKey, docId, officeSrc, editUrl, docRefreshKey, refreshTick]);
+  }, [officeSrc, refreshTick]);
   // Descarga con FEEDBACK: el export docx (doc) tarda; fetch same-origin → blob → download,
   // con spinner. Office = URL pública externa → navegación directa (evita CORS del blob).
+  // Sheet = el CSV vive en el cliente → blob directo, sin red.
   const doDownload = async () => {
-    if (!downloadHref || downloading) return;
+    if (downloading) return;
+    if (artifact?.kind === "sheet") {
+      const blob = new Blob([artifact.csv], { type: "text/csv;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${(artifact.title || "hoja").replace(/[^\w.\- ]/g, "_")}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 4000);
+      return;
+    }
+    if (!downloadHref) return;
     if (artifact?.kind === "office") {
       window.open(downloadHref, "_blank", "noopener");
       return;
@@ -160,25 +227,6 @@ export default function ArtifactPanel({
       alert(t("No se pudo descargar. Intenta de nuevo."));
     } finally {
       setDownloading(false);
-    }
-  };
-  const handleEdit = async () => {
-    if (converting || !artifact || (artifact.kind !== "office" && artifact.kind !== "doc")) return;
-    // Doc → editor colaborativo NATIVO (BlockNote in-room, CollabArtifact resuelve la
-    // conexión). Sin iframe, sin mint aquí. Sentinel "native" para el toggle preview/editar.
-    if (artifact.kind === "doc") {
-      setEditUrl("native");
-      return;
-    }
-    setConverting(true);
-    try {
-      const r = await officeToEditableFn({ data: { url: artifact.src, name: artifact.title || "Documento" } });
-      if (r.ok && r.embedUrl) setEditUrl(r.embedUrl);
-      else alert(t("No se pudo abrir para editar."));
-    } catch {
-      alert(t("No se pudo abrir para editar. Intenta de nuevo."));
-    } finally {
-      setConverting(false);
     }
   };
 
@@ -210,7 +258,11 @@ export default function ArtifactPanel({
   // En office la URL es un .docx → el navegador la DESCARGA (no es "abrir"), así que
   // no ponemos el ↗ ahí (la descarga vive en su botón). Draft no tiene URL.
   const externalHref =
-    !artifact || artifact.kind === "draft" || artifact.kind === "office" || artifact.kind === "doc"
+    !artifact ||
+    artifact.kind === "draft" ||
+    artifact.kind === "office" ||
+    artifact.kind === "doc" ||
+    artifact.kind === "sheet"
       ? undefined
       : artifact.kind === "html"
         ? artifact.embedUrl
@@ -275,50 +327,25 @@ export default function ArtifactPanel({
                 <FileText size={16} className="mr-1 shrink-0 text-muted" />
                 <span className="min-w-0 flex-1 truncate text-sm font-medium text-ink">
                   {artifact.title || t("Documento")}
-                  {isDocLike ? <span className="ml-1.5 text-xs font-normal text-muted">· DOCX</span> : null}
+                  {docBadge ? <span className="ml-1.5 text-xs font-normal text-muted">· {docBadge}</span> : null}
                 </span>
-                {/* Acciones estilo claude.ai: iconos en el header (no barra abajo). */}
+                {/* Acciones estilo claude.ai: iconos en el header (no barra abajo). La EDICIÓN
+                    de un doc/hoja del agente se hace CHATEANDO (se re-redacta en vivo) — sin
+                    editor embebido. Aquí solo Descargar y, para un .docx adjunto, Actualizar. */}
                 {isDocLike ? (
                   <>
-                    {editUrl ? (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          // Vuelve al preview y re-fetchea tras el debounce de guardado del
-                          // editor colab (~800ms) → refleja lo editado.
-                          setEditUrl(null);
-                          setTimeout(() => setRefreshTick((n) => n + 1), 1200);
-                        }}
-                        title={t("Ver documento")}
-                        className="grid size-7 place-items-center rounded-md text-muted transition hover:bg-surface-3 hover:text-brand"
-                      >
-                        <Eye size={15} />
-                      </button>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={handleEdit}
-                        disabled={converting}
-                        title={t("Editar")}
-                        className="grid size-7 place-items-center rounded-md text-muted transition hover:bg-surface-3 hover:text-brand disabled:opacity-50"
-                      >
-                        {converting ? <Loader2 size={15} className="animate-spin" /> : <Pencil size={15} />}
-                      </button>
-                    )}
-                    {/* Al editar, el editor colab trae su propia barra (Compartir/PDF/Word) →
-                        ocultamos Descargar/Actualizar para no duplicar. */}
-                    {!editUrl && downloadHref ? (
+                    {downloadHref || artifact.kind === "sheet" ? (
                       <button
                         type="button"
                         onClick={doDownload}
                         disabled={downloading}
-                        title={downloading ? t("Descargando…") : t("Descargar Word")}
+                        title={downloading ? t("Descargando…") : artifact.kind === "sheet" ? t("Descargar CSV") : t("Descargar Word")}
                         className="grid size-7 place-items-center rounded-md text-muted transition hover:bg-surface-3 hover:text-brand disabled:opacity-60"
                       >
                         {downloading ? <Loader2 size={15} className="animate-spin" /> : <Download size={15} />}
                       </button>
                     ) : null}
-                    {!editUrl ? (
+                    {artifact.kind === "office" ? (
                       <button
                         type="button"
                         onClick={() => setRefreshTick((n) => n + 1)}
@@ -364,15 +391,24 @@ export default function ArtifactPanel({
 
               <div className="relative min-h-0 flex-1 overflow-auto bg-surface-3">
                 {artifact.kind === "draft" ? (
-                  // Redacción EN VIVO (Canvas): el markdown streamea a la hoja mientras
-                  // el agente escribe; al terminar se reemplaza por el .docx real.
+                  // Redacción EN VIVO (Canvas): prosa (markdown) o tabla (csv) streamea a la
+                  // hoja mientras el agente escribe; al cerrar el fence pasa a doc/sheet real.
                   <div className="min-h-0 flex-1 overflow-auto bg-surface-3 p-4 sm:p-6">
-                    <article className="mx-auto max-w-[8.5in] rounded-sm bg-white p-10 shadow-md sm:p-14">
-                      <Markdown body={artifact.md} light />
-                      {artifact.streaming ? (
-                        <span className="mt-1 inline-block h-4 w-[3px] animate-pulse bg-brand align-text-bottom" />
-                      ) : null}
-                    </article>
+                    {artifact.sheet ? (
+                      <>
+                        <CsvTable csv={artifact.content} />
+                        {artifact.streaming ? (
+                          <span className="mt-2 inline-block h-4 w-[3px] animate-pulse bg-brand" />
+                        ) : null}
+                      </>
+                    ) : (
+                      <article className="mx-auto max-w-[8.5in] rounded-sm bg-white p-10 shadow-md sm:p-14">
+                        <Markdown body={artifact.content} light />
+                        {artifact.streaming ? (
+                          <span className="mt-1 inline-block h-4 w-[3px] animate-pulse bg-brand align-text-bottom" />
+                        ) : null}
+                      </article>
+                    )}
                   </div>
                 ) : artifact.kind === "image" ? (
                   <div className="grid min-h-full place-items-center p-4">
@@ -391,62 +427,64 @@ export default function ArtifactPanel({
                     <video src={artifact.src} controls className="max-h-full max-w-full rounded-lg" />
                   </div>
                 ) : artifact.kind === "office" ? (
-                  // Modo EDICIÓN: EasyBits importó el docx a un doc editable → editor colab.
-                  editUrl ? (
-                    <iframe src={editUrl} title={artifact.title || "editor"} className="size-full border-0 bg-white" />
-                  ) : (
-                    // Preview PROPIO: EasyBits convierte el .docx a HTML (mammoth) server-side
-                    // y lo renderizamos inline en una "hoja" tipo Word. NO manda la URL a
-                    // Microsoft (privado), sin CORS. Barra: Editar (importa a editable) · Descargar.
-                    <div className="flex h-full flex-col">
-                      <div className="min-h-0 flex-1 overflow-auto bg-surface-3 p-4 sm:p-6">
-                        {officeState === "loading" ? (
-                          <div className="grid h-full place-items-center text-muted">
-                            <Loader2 size={20} className="animate-spin" />
-                          </div>
-                        ) : officeHtml ? (
-                          <article
-                            className="prose prose-sm mx-auto max-w-[8.5in] rounded-sm bg-white p-10 text-black shadow-md sm:p-14"
-                            // HTML sanitizado con DOMPurify antes de setState.
-                            dangerouslySetInnerHTML={{ __html: officeHtml }}
-                          />
-                        ) : (
-                          <div className="grid h-full place-items-center p-6">
-                            <a href={artifact.src} target="_blank" rel="noreferrer" download className="flex flex-col items-center gap-3 rounded-xl border border-border bg-surface px-8 py-10 text-center transition hover:border-brand">
-                              <FileText size={40} className="text-brand" />
-                              <span className="max-w-xs truncate text-sm text-ink">{artifact.title || t("Documento")}</span>
-                              <span className="text-xs text-muted">
-                                {t("Vista previa solo para Word (.docx) por ahora — descarga el archivo")}
-                              </span>
-                            </a>
-                          </div>
-                        )}
-                      </div>
+                  // Office (.docx/.xlsx/.pptx). Preview propio con mammoth (docx → HTML, privado)
+                  // cuando existe; si no (xlsx/pptx, o mammoth vacío) y la URL es pública →
+                  // VISOR OFICIAL DE MICROSOFT (Office Online) embebido, que renderiza fiel
+                  // Word/Excel/PowerPoint. Fallback final: card de descarga.
+                  <div className="flex h-full flex-col">
+                    <div className="min-h-0 flex-1 overflow-auto bg-surface-3 p-4 sm:p-6">
+                      {officeState === "loading" ? (
+                        <div className="grid h-full place-items-center text-muted">
+                          <Loader2 size={20} className="animate-spin" />
+                        </div>
+                      ) : officeHtml ? (
+                        <article
+                          className="prose prose-sm mx-auto max-w-[8.5in] rounded-sm bg-white p-10 text-black shadow-md sm:p-14"
+                          // HTML sanitizado con DOMPurify antes de setState.
+                          dangerouslySetInnerHTML={{ __html: officeHtml }}
+                        />
+                      ) : officeViewerSrc(artifact.src) ? (
+                        <iframe
+                          src={officeViewerSrc(artifact.src)!}
+                          title={artifact.title || "Office"}
+                          className="mx-auto block h-full w-full max-w-[8.5in] rounded-sm border-0 bg-white shadow-md"
+                        />
+                      ) : (
+                        <div className="grid h-full place-items-center p-6">
+                          <a href={artifact.src} target="_blank" rel="noreferrer" download className="flex flex-col items-center gap-3 rounded-xl border border-border bg-surface px-8 py-10 text-center transition hover:border-brand">
+                            <FileText size={40} className="text-brand" />
+                            <span className="max-w-xs truncate text-sm text-ink">{artifact.title || t("Documento")}</span>
+                            <span className="text-xs text-muted">{t("Descarga el archivo")}</span>
+                          </a>
+                        </div>
+                      )}
                     </div>
-                  )
+                  </div>
+                ) : artifact.kind === "sheet" ? (
+                  // Hoja de cálculo VIVA: el CSV FUENTE (local) se renderiza como tabla. Mismo
+                  // render que el draft de hoja en vivo → al modificarla (chateando), el draft
+                  // streamea encima y al cerrarse vuelve aquí con la nueva versión.
+                  <div className="min-h-0 flex-1 overflow-auto bg-surface-3 p-4 sm:p-6">
+                    {artifact.csv.trim() ? (
+                      <CsvTable csv={artifact.csv} />
+                    ) : (
+                      <div className="grid h-full place-items-center text-sm text-neutral-400">{t("Sin contenido")}</div>
+                    )}
+                  </div>
                 ) : artifact.kind === "doc" ? (
-                  // Documento VIVO: preview de las secciones actuales (se AUTO-REFRESCA cuando
-                  // el agente modifica) · Editar → editor colaborativo NATIVO (BlockNote+Yjs) · Descargar Word.
-                  editUrl ? (
-                    <CollabArtifact documentId={artifact.documentId} />
-                  ) : (
-                    <div className="flex h-full flex-col">
-                      <div className="min-h-0 flex-1 overflow-auto bg-surface-3 p-4 sm:p-6">
-                        {officeState === "loading" && !officeHtml ? (
-                          <div className="grid h-full place-items-center text-muted">
-                            <Loader2 size={20} className="animate-spin" />
-                          </div>
-                        ) : officeHtml ? (
-                          <article
-                            className="prose prose-sm mx-auto max-w-[8.5in] rounded-sm bg-white p-10 text-black shadow-md sm:p-14"
-                            dangerouslySetInnerHTML={{ __html: officeHtml }}
-                          />
-                        ) : (
-                          <div className="grid h-full place-items-center text-sm text-muted">{t("Sin contenido")}</div>
-                        )}
-                      </div>
-                    </div>
-                  )
+                  // Documento VIVO: el markdown FUENTE (local) se renderiza en una "hoja" tipo
+                  // Word. Es el MISMO render que el draft en vivo → al modificarlo (chateando),
+                  // el draft streamea encima y al cerrarse vuelve aquí con la nueva versión.
+                  // Editar = chatear con el agente (re-redacta completo). Descargar Word arriba.
+                  <div className="min-h-0 flex-1 overflow-auto bg-surface-3 p-4 sm:p-6">
+                    <article className="mx-auto max-w-[8.5in] rounded-sm bg-white p-10 text-black shadow-md sm:p-14">
+                      {artifact.md.trim() ? (
+                        <Markdown body={artifact.md} light />
+                      ) : (
+                        <div className="grid h-full place-items-center text-sm text-neutral-400">{t("Sin contenido")}</div>
+                      )}
+                    </article>
+                  </div>
                 ) : artifact.kind === "file" ? (
                   <div className="grid min-h-full place-items-center p-6">
                     <a

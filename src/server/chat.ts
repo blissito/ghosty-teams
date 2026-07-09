@@ -144,44 +144,16 @@ export const getChannelThreads = createServerFn({ method: "GET" })
     return db.listThreadRoots(channel.id);
   });
 
-// Borra un mensaje (y sus respuestas si es raíz). Solo autor u owner.
-// "Editar" un artefacto office (.docx) → EasyBits lo convierte a doc editable y
-// devuelve el editor colab embebible. El panel del artefacto abre ese embedUrl.
-export const officeToEditableFn = createServerFn({ method: "POST" })
-  .validator((d: { url: string; name?: string }) => d)
-  .handler(async ({ data }) => {
-    const { officeToEditable } = await import("./easybits-documents.server");
-    const embed = await officeToEditable(data.url, data.name);
-    return embed ? { ok: true as const, embedUrl: embed.embedUrl } : { ok: false as const };
-  });
-
-// Preview PRIVADO de un .docx: EasyBits lo convierte a HTML (mammoth) server-side y lo
-// devolvemos para renderizar inline en el panel. Sin Microsoft, sin CORS.
+// Preview PRIVADO de un .docx (adjunto office subido por el usuario): EasyBits lo convierte
+// a HTML (mammoth) server-side y lo devolvemos para renderizar inline en el panel. Sin
+// Microsoft, sin CORS. (Los docs que el agente REDACTA ya no pasan por aquí: son markdown
+// local — ver askAgent / ArtifactPanel kind:"doc".)
 export const officeToHtmlFn = createServerFn({ method: "POST" })
   .validator((d: { url: string }) => d)
   .handler(async ({ data }) => {
     const { officeToHtml } = await import("./easybits-documents.server");
     const html = await officeToHtml(data.url);
     return html ? { ok: true as const, html } : { ok: false as const };
-  });
-
-// Preview del artefacto DOC (Landing v4): HTML de las secciones ACTUALES. Se re-llama en
-// cada auto-refresh → el panel muestra la última versión tras una modificación del agente.
-export const docToHtmlFn = createServerFn({ method: "POST" })
-  .validator((d: { documentId: string }) => d)
-  .handler(async ({ data }) => {
-    const { docToHtml } = await import("./easybits-documents.server");
-    const r = await docToHtml(data.documentId);
-    return r ? { ok: true as const, ...r } : { ok: false as const };
-  });
-
-// "Editar" un artefacto DOC → editor colab embebible (Yjs) por documentId.
-export const docEmbedFn = createServerFn({ method: "POST" })
-  .validator((d: { documentId: string }) => d)
-  .handler(async ({ data }) => {
-    const { mintCollabEmbed } = await import("./easybits-documents.server");
-    const embed = await mintCollabEmbed({ documentId: data.documentId });
-    return embed ? { ok: true as const, embedUrl: embed.embedUrl } : { ok: false as const };
   });
 
 export const deleteMessageFn = createServerFn({ method: "POST" })
@@ -383,12 +355,19 @@ export const postMessage = createServerFn({ method: "POST" })
     // - @handles en el flujo → abren un HILO bajo ese mensaje (parent = id).
     // - @handles dentro de un hilo → mismo hilo (parent = parentId).
     // - mensaje en un hilo de un agente (root.agent_handle) → auto, sin re-tag.
-    const respondents: { handle: string; parent: number }[] = [];
+    // fleetThread = clave de conversación de la FLOTA (memoria + worker pegajoso),
+    // DESACOPLADA del hilo de UI: los top-level (parentId null) comparten "flow" del
+    // canal → UN worker + memoria continua. Sin esto, cada mensaje top-level abría una
+    // conversación de flota nueva (parent = id del propio mensaje) → un agente por
+    // mensaje + arranque en frío por turno. Un hilo ABIERTO a propósito (reply dentro
+    // de un hilo) conserva su propia conversación de flota.
+    const respondents: { handle: string; parent: number; fleetThread: string }[] = [];
     if (mentionedList.length) {
       const parentFor = data.parentId === null ? id : data.parentId;
-      for (const h of mentionedList) respondents.push({ handle: h, parent: parentFor });
+      const fleetThread = data.parentId === null ? "flow" : String(data.parentId);
+      for (const h of mentionedList) respondents.push({ handle: h, parent: parentFor, fleetThread });
     } else if (data.parentId !== null && parent?.agent_handle && agents.some((a) => a.handle === parent.agent_handle)) {
-      respondents.push({ handle: parent.agent_handle, parent: data.parentId });
+      respondents.push({ handle: parent.agent_handle, parent: data.parentId, fleetThread: String(data.parentId) });
     }
     // Un "pensando…" por agente (cada uno con su avatar); el cliente dispara askAgent
     // por cada respondent y cada uno limpia SOLO su propio status al responder.
@@ -417,6 +396,7 @@ export const askAgent = createServerFn({ method: "POST" })
       sender: string;
       handle: string;
       topic?: string;
+      fleetThread?: string; // clave de flota (desacoplada del hilo UI; ver postMessage)
       attachments?: { fileId: string; mime: string; size: number; name: string }[];
     }) => d
   )
@@ -443,11 +423,18 @@ export const askAgent = createServerFn({ method: "POST" })
     // "pensando…" se mantiene durante la latencia del agente. Contrato §1.2.
     // groupId incluye el HANDLE → memoria por-agente (sin esto dos agentes en el mismo
     // hilo comparten conversación y se contaminan).
-    const groupId = `ghosty-chat-${data.handle}-${channel.slug}-${data.parentId ?? "flow"}`;
-    // Identidad conversacional durable: el documentId del artefacto ACTUAL de este hilo.
-    // Se inyecta en el guardrail → el agente hace artifact_update(id) al modificar, aunque
-    // el worker haya reciclado su sesión (si no, "modifícalo" crearía un doc nuevo).
+    // Clave de flota DESACOPLADA del hilo de UI (ver postMessage): top-level → "flow"
+    // compartido del canal; reply-en-hilo → su root. Fallback al comportamiento viejo
+    // (parentId) si un cliente sin actualizar no manda fleetThread.
+    const fleetThread = data.fleetThread ?? (data.parentId != null ? String(data.parentId) : "flow");
+    const groupId = `ghosty-chat-${data.handle}-${channel.slug}-${fleetThread}`;
+    // Identidad conversacional durable: el documentId (local) del artefacto ACTUAL de este
+    // hilo + su contenido fuente (doc=markdown | sheet=csv). El contenido se re-inyecta al
+    // turno → al modificar, el agente re-emite el artefacto COMPLETO (misma vía de streaming
+    // que al crear); el documentId preserva la identidad (nueva versión, no card nueva)
+    // aunque el worker recicle su sesión.
     const currentDocId = await db.getThreadArtifact(channel.id, data.parentId).catch(() => null);
+    const currentDoc = currentDocId ? await db.getDoc(currentDocId).catch(() => null) : null;
     const { id, reply } = await runAgentTurn({
       agent,
       handle: data.handle,
@@ -455,7 +442,7 @@ export const askAgent = createServerFn({ method: "POST" })
       sender: data.sender,
       text: data.body,
       parts,
-      currentDocId,
+      currentDoc,
       createShell: async () => {
         // Quita el "pensando…" en el cliente SIN revalidar (revalidar pisaría los deltas).
         const clearedIds = await db.clearStatus(channel.id, data.parentId, data.handle);
@@ -483,35 +470,30 @@ export const askAgent = createServerFn({ method: "POST" })
     // abre el panel del room. Best-effort: si algo falla, el mensaje queda normal.
     // (Slice 3 del contrato: reemplazar este scraping por eventos artifact del SSE.)
     try {
-      const { detectArtifact, mintCollabEmbed, resolveFileKind, createOrUpdateDoc } = await import("./easybits-documents.server");
+      const { detectArtifact, mintCollabEmbed, resolveFileKind } = await import("./easybits-documents.server");
       const { extractEbDoc, draftTitle, bubbleWithoutEbDoc } = await import("../lib/ebdoc");
+      const { randomUUID } = await import("node:crypto");
 
-      // Artefacto vivo con identidad + versiones: el agente redactó un doc de prosa en
-      // markdown DENTRO de ```eb-doc``` (streameado EN VIVO al panel). Al cerrarse, lo
-      // commiteamos a un artefacto DOC: si el hilo ya tiene uno → UPDATE (nueva versión,
-      // edit-in-place); si no → CREATE (v1). Preserva el streaming + da edit-in-place.
+      // Artefacto vivo con identidad + versiones: el agente generó/re-generó un doc de prosa
+      // (```eb-doc```, markdown) o una hoja (```eb-sheet```, csv), streameado EN VIVO al panel
+      // (igual al crear que al editar). Al cerrarse lo commiteamos LOCAL: el contenido es la
+      // verdad (columna gc_artifacts.md). El documentId se conserva si el hilo ya tenía uno
+      // (misma identidad = nueva versión) o se acuña uno nuevo (v1). Sin EasyBits: el panel
+      // renderiza el contenido local y el próximo "modifícalo" re-inyecta esta versión.
       const ebdoc = extractEbDoc(reply);
       if (ebdoc?.closed && ebdoc.md.trim()) {
         const cleaned = bubbleWithoutEbDoc(reply);
         await db.setMessageBody(id, cleaned);
         bus.publish(bus.ch.room(channel.id), { t: "message:body", id, body: cleaned });
-        const ref = await createOrUpdateDoc({
-          documentId: currentDocId,
-          markdown: ebdoc.md,
-          title: draftTitle(ebdoc.md),
+        const documentId = currentDocId ?? `${ebdoc.kind}_${randomUUID()}`;
+        await db.createArtifact(id, {
+          kind: ebdoc.kind, // "doc" | "sheet"
+          url: documentId,
+          title: draftTitle(ebdoc.md, ebdoc.kind, ebdoc.fenceTitle),
+          md: ebdoc.md,
         });
-        if (ref) {
-          await db.createArtifact(id, { kind: "doc", url: ref.documentId, title: ref.title });
-          await db.setThreadArtifact(channel.id, data.parentId, ref.documentId).catch(() => {});
-          bus.publish(bus.ch.room(channel.id), { t: "refresh", channelId: channel.id, parentId: data.parentId });
-          // Auto-refresh: si el panel ya muestra este doc, que recargue a la nueva versión.
-          bus.publish(bus.ch.room(channel.id), {
-            t: "artifact:version",
-            documentId: ref.documentId,
-            version: ref.version,
-            channelId: channel.id,
-          });
-        }
+        await db.setThreadArtifact(channel.id, data.parentId, documentId).catch(() => {});
+        bus.publish(bus.ch.room(channel.id), { t: "refresh", channelId: channel.id, parentId: data.parentId });
         return { ok: true as const };
       }
 

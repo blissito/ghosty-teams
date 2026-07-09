@@ -179,5 +179,28 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
 
     await db.setMessageBody(id, reply);
     fanout({ t: "message:body", id, body: reply });
+
+    // Artefacto vivo en DM: si el agente generó un ```eb-doc```/```eb-sheet```, lo limpiamos
+    // de la burbuja y lo commiteamos LOCAL (misma verdad markdown/csv que en el room). En DM
+    // no cableamos identidad por-hilo → cada artefacto es una card nueva (co-edición diferida).
+    try {
+      const { extractEbDoc, draftTitle, bubbleWithoutEbDoc } = await import("../lib/ebdoc");
+      const { randomUUID } = await import("node:crypto");
+      const ebdoc = extractEbDoc(reply);
+      if (ebdoc?.closed && ebdoc.md.trim()) {
+        const cleaned = bubbleWithoutEbDoc(reply);
+        await db.setMessageBody(id, cleaned);
+        fanout({ t: "message:body", id, body: cleaned });
+        await db.createArtifact(id, {
+          kind: ebdoc.kind,
+          url: `${ebdoc.kind}_${randomUUID()}`,
+          title: draftTitle(ebdoc.md, ebdoc.kind, ebdoc.fenceTitle),
+          md: ebdoc.md,
+        });
+        fanout({ t: "refresh", channelId: null, parentId: null, dmId: data.id });
+      }
+    } catch (e) {
+      console.error("[dm artifact] commit failed", e);
+    }
     return { ok: true as const };
   });

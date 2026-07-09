@@ -39,6 +39,9 @@ import {
   ChevronDown,
   ChevronRight,
   Layers,
+  Table2,
+  Image as ImageIcon,
+  FileType,
 } from "lucide-react";
 import { searchMessagesFn } from "../server/search";
 import { createFileRoute, notFound, Link, useRouter } from "@tanstack/react-router";
@@ -572,8 +575,6 @@ function ChannelPage() {
   const [openArtifact, setOpenArtifact] = useState<ArtifactView | null>(null);
   const openArtifactRef = useRef<ArtifactView | null>(null);
   openArtifactRef.current = openArtifact;
-  // Sube cuando el doc ABIERTO en el panel avanzó de versión → el panel re-fetchea su preview.
-  const [docRefreshKey, setDocRefreshKey] = useState(0);
   // Vista Zulip enfocada en el centro (recientes/menciones/destacados) — otro modo
   // de estado-cliente, mutuamente excluyente con hilo/DM. null = flujo del room.
   const [view, setView] = useState<null | "recent" | "mentions" | "starred">(null);
@@ -687,10 +688,16 @@ function ChannelPage() {
     if (!doc || !doc.md.trim()) return;
     draftMsgIdRef.current = id;
     setOpenArtifact((cur) => {
-      // Auto-abre si no hay panel, si ya estamos en el draft, o si está abierto el DOC que
-      // se está editando (para ver la edición EN VIVO). NO pisa otro artefacto (pdf/imagen…).
-      if (cur && cur.kind !== "draft" && cur.kind !== "doc") return cur;
-      return { kind: "draft", title: draftTitle(doc.md), md: doc.md, streaming: !doc.closed };
+      // Auto-abre si no hay panel, si ya estamos en el draft, o si está abierto el doc/hoja
+      // que se está editando (para ver la edición EN VIVO). NO pisa otro artefacto (pdf/imagen…).
+      if (cur && cur.kind !== "draft" && cur.kind !== "doc" && cur.kind !== "sheet") return cur;
+      return {
+        kind: "draft",
+        title: draftTitle(doc.md, doc.kind, doc.fenceTitle),
+        content: doc.md,
+        sheet: doc.kind === "sheet",
+        streaming: !doc.closed,
+      };
     });
   };
   // Al cerrarse el fence, el server produce el .docx (refresh → refetch cuelga el
@@ -900,13 +907,6 @@ function ChannelPage() {
         // Churn de agente/status (room o DM) → refetch del contexto activo (rev).
         if (ev.channelId === channel.id || ev.dmId != null) revalidate();
         break;
-      case "artifact:version": {
-        // El doc avanzó de versión (agente lo modificó). Si el panel muestra ESE doc,
-        // recárgalo a la nueva versión (auto-refresh) sin recargar todo.
-        const cur = openArtifactRef.current;
-        if (cur?.kind === "doc" && cur.documentId === ev.documentId) setDocRefreshKey((k) => k + 1);
-        break;
-      }
       case "unread":
         // Otra pestaña/dispositivo cambió el read-state → reconcilia con el server.
         refreshUnread();
@@ -1172,7 +1172,7 @@ function ChannelPage() {
           }
           // Cada agente mencionado responde en paralelo (cada uno limpia su propio "pensando").
           for (const ag of respondents) {
-            askAgent({ data: { slug: o.slug, parentId: ag.parent, body: o.body, sender: "", handle: ag.handle, attachments: o.attachments } })
+            askAgent({ data: { slug: o.slug, parentId: ag.parent, fleetThread: ag.fleetThread, body: o.body, sender: "", handle: ag.handle, attachments: o.attachments } })
               .then(() => revalidate())
               .catch(() => revalidate());
           }
@@ -1335,7 +1335,7 @@ function ChannelPage() {
       )}
       {/* Panel de artefactos: columna fija a la derecha (desktop) u overlay (móvil).
           Se rinde null solo cuando no hay artefacto abierto. */}
-      <ArtifactPanel artifact={openArtifact} onClose={() => setOpenArtifact(null)} docRefreshKey={docRefreshKey} />
+      <ArtifactPanel artifact={openArtifact} onClose={() => setOpenArtifact(null)} />
       <AnimatePresence>
         {paletteOpen && (
           <CommandPalette
@@ -1659,6 +1659,15 @@ function Sidebar({
           >
             <FileText size={16} className="shrink-0" />
             <span className="truncate">{t("Formularios")}</span>
+          </Link>
+          {/* Artefactos del team (crear + guardar en GTeams). Debajo de Formularios.
+              SCAFFOLD (WIP) — la página es un stub; ver docs/ARTIFACTS-STUDIO.md. */}
+          <Link
+            to="/artifacts"
+            className="flex w-full items-center gap-2 rounded-lg px-2 py-2.5 text-sm md:py-1.5 text-muted hover:bg-surface-3 hover:text-ink"
+          >
+            <Layers size={16} className="shrink-0" />
+            <span className="truncate">{t("Artefactos")}</span>
           </Link>
         </div>
         <div className="flex items-center justify-between px-2 pb-1 pt-2">
@@ -3258,8 +3267,22 @@ function AttachmentList({ attachments }: { attachments: Attachment[] }) {
 // Registro de kinds (patrón sólido: agregar un tipo = una entrada, no editar N
 // switches). `embed` = va en iframe con embedUrl (editor colab); el resto comparte
 // shape {kind, src:url}. `label` = subtítulo HONESTO de la card.
+// Título por defecto por tipo → una imagen sin título no se llama "Documento".
+function defaultArtifactTitle(kind: string): string {
+  switch (kind) {
+    case "image": return "Imagen";
+    case "sheet": return "Hoja de cálculo";
+    case "pdf": return "PDF";
+    case "audio": return "Audio";
+    case "video": return "Video";
+    case "file": return "Archivo";
+    default: return "Documento";
+  }
+}
+
 const ARTIFACT_KIND_META: Record<string, { embed?: boolean; labelKey: string }> = {
   doc: { labelKey: "Documento" },
+  sheet: { labelKey: "Hoja de cálculo" },
   html: { embed: true, labelKey: "Abrir para editar en vivo" },
   office: { labelKey: "Vista previa · Descargar" },
   pdf: { labelKey: "Vista previa" },
@@ -3273,7 +3296,8 @@ const ARTIFACT_KIND_META: Record<string, { embed?: boolean; labelKey: string }> 
 // card Y el link inline del reply). Kind desconocido → `file` (descarga segura).
 function artifactToView(a: Artifact): ArtifactView {
   const title = a.title ?? "";
-  if (a.kind === "doc") return { kind: "doc", title, documentId: a.url };
+  if (a.kind === "doc") return { kind: "doc", title, documentId: a.url, md: a.md ?? "" };
+  if (a.kind === "sheet") return { kind: "sheet", title, documentId: a.url, csv: a.md ?? "" };
   const kind = ARTIFACT_KIND_META[a.kind] ? a.kind : "file";
   return ARTIFACT_KIND_META[kind].embed
     ? { kind: "html", title, embedUrl: a.url }
@@ -3287,15 +3311,32 @@ function ArtifactCard({ artifact }: { artifact: Artifact }) {
   const view = artifactToView(artifact);
   const isDoc = view.kind === "doc";
   const isOffice = view.kind === "office";
-  // Subtítulo tipo "Documento · DOCX" (estilo claude.ai) para doc/office; el label del
-  // registro para el resto.
-  const subtitle =
-    isDoc || isOffice ? `${t("Documento")} · DOCX` : t(ARTIFACT_KIND_META[view.kind]?.labelKey ?? "Descargar");
+  const isSheet = view.kind === "sheet";
+  // Subtítulo tipo "Documento · DOCX" / "Hoja de cálculo · CSV" (estilo claude.ai); el label
+  // del registro para el resto.
+  const subtitle = isSheet
+    ? `${t("Hoja de cálculo")} · CSV`
+    : isDoc || isOffice
+      ? `${t("Documento")} · DOCX`
+      : t(ARTIFACT_KIND_META[view.kind]?.labelKey ?? "Descargar");
   const downloadHref = isDoc
     ? `/api/doc-docx/${encodeURIComponent(view.documentId)}?name=${encodeURIComponent(artifact.title || "documento")}`
     : isOffice
       ? view.src
       : null;
+  // Sheet: el CSV vive en el cliente → descarga por blob (sin red).
+  const downloadSheet = () => {
+    if (!isSheet) return;
+    const blob = new Blob([view.csv], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${(artifact.title || "hoja").replace(/[^\w.\- ]/g, "_")}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 4000);
+  };
   return (
     <div className="group mt-1.5 flex max-w-md items-center gap-3 rounded-xl border border-border bg-surface-2 p-2 pr-2.5 transition hover:border-brand/50">
       <button
@@ -3304,15 +3345,39 @@ function ArtifactCard({ artifact }: { artifact: Artifact }) {
         className="flex min-w-0 flex-1 items-center gap-3 text-left"
         title={t("Abrir en el panel")}
       >
-        <span className="grid size-10 shrink-0 place-items-center rounded-lg bg-surface-3 text-brand">
-          <FileText size={20} />
-        </span>
+        {view.kind === "image" ? (
+          // Miniatura real → una imagen se ve como imagen, no como "Documento".
+          <img src={view.src} alt={artifact.title || ""} className="size-10 shrink-0 rounded-lg object-cover" />
+        ) : (
+          <span className="grid size-10 shrink-0 place-items-center rounded-lg bg-surface-3 text-brand">
+            {view.kind === "sheet" ? (
+              <Table2 size={20} />
+            ) : view.kind === "pdf" ? (
+              <FileType size={20} />
+            ) : view.kind === "video" ? (
+              <ImageIcon size={20} />
+            ) : (
+              <FileText size={20} />
+            )}
+          </span>
+        )}
         <span className="min-w-0 flex-1">
-          <span className="block truncate text-sm font-medium text-ink">{artifact.title || t("Documento")}</span>
+          <span className="block truncate text-sm font-medium text-ink">{artifact.title || t(defaultArtifactTitle(view.kind))}</span>
           <span className="block text-[11px] text-muted">{subtitle}</span>
         </span>
       </button>
-      {downloadHref ? (
+      {isSheet ? (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            downloadSheet();
+          }}
+          className="flex shrink-0 items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs font-medium text-ink transition hover:bg-surface-3"
+        >
+          {t("Descargar")}
+        </button>
+      ) : downloadHref ? (
         <button
           type="button"
           disabled={downloading}

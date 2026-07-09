@@ -157,15 +157,23 @@ async function migrate(): Promise<void> {
   // Artefactos: doc/pdf/imagen que el agente PRODUCE y se abren en el panel del
   // room (no son adjuntos subidos por el user → tabla aparte). 1 por mensaje del
   // agente. url = enlace público openable en iframe; kind gatea el modo del panel.
+  // `md` = markdown FUENTE del doc (kind:"doc"), guardado local → es la verdad. El panel
+  // lo renderiza sin ir a EasyBits, y al modificar se re-inyecta al agente para que
+  // re-emita el documento completo. url = para docs = documentId local (identidad estable
+  // por conversación); para archivos = enlace público. kind gatea el modo del panel.
   await exec(`CREATE TABLE IF NOT EXISTS gc_artifacts (
     id         INTEGER PRIMARY KEY,
     message_id INTEGER NOT NULL,
     kind       TEXT NOT NULL,
     url        TEXT NOT NULL,
     title      TEXT,
+    md         TEXT,
     created_at INTEGER NOT NULL DEFAULT (unixepoch())
   )`);
   await exec(`CREATE INDEX IF NOT EXISTS gc_artifacts_msg ON gc_artifacts(message_id)`);
+  await exec(`CREATE INDEX IF NOT EXISTS gc_artifacts_doc ON gc_artifacts(url)`);
+  // Migración: DBs previas no tienen `md` → añádela (idempotente vía hasColumn).
+  await addColumn("gc_artifacts", "md", "TEXT");
 
   // Identidad conversacional del artefacto "vivo" (Fase 1 edit-in-place): mapea una
   // conversación (channel + thread) al documentId del artefacto ACTUAL, para que

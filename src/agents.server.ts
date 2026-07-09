@@ -105,26 +105,33 @@ export function detectMentions(body: string, handles: string[]): string[] {
 // como editor colab editable. Docs con membrete/tablas/slides/PDF con diseño → skills normales.
 const EB_DOC_STREAM_GUARDRAIL = [
   "REGLA ABSOLUTA (canal Teams/web) — TIENE PRIORIDAD sobre docs-router, DOC_ROUTING y cualquier skill:",
-  "para CUALQUIER documento de PROSA (nda, carta, oficio, contrato, convenio, demanda, dictamen, memo, minuta, acuerdo) PROHIBIDO invocar docs-router, el skill oficio, structured_doc, upload_file o mcp__wa__. NO subas archivos ni generes .docx tú.",
-  "En su lugar escribe el documento COMPLETO como Markdown DENTRO de un bloque que abre con ```eb-doc y cierra con ```. Ese bloque se muestra redactándose EN VIVO en el panel y la plataforma lo guarda como documento editable con VERSIONES.",
-  "Fuera del bloque, solo UNA frase breve de contexto, SIN links. Usa # para el título, ## para cláusulas, listas y **negritas** dentro del bloque.",
-  "El bloque ```eb-doc``` es SOLO para CREAR un documento nuevo (su primera versión). Para MODIFICAR un documento que YA existe en esta conversación (cambia/ajusta/corrige/cuadra/agrega): NO reescribas el documento completo ni vuelvas a abrir un ```eb-doc``` — sigue AL PIE DE LA LETRA las instrucciones de MODIFICACIÓN QUIRÚRGICA del contexto del hilo (edición por fragmento, preservando todo lo demás intacto).",
-  "ÚNICA EXCEPCIÓN: documentos con membrete de marca fijo, tablas/hojas de cálculo (xlsx) o presentaciones (pptx) → skills normales. Toda prosa NUEVA → el bloque eb-doc.",
+  "para CUALQUIER documento de PROSA (nda, carta, oficio, contrato, convenio, demanda, dictamen, memo, minuta, acuerdo) o HOJA DE CÁLCULO (tabla, listado, dataset, leads, inventario, presupuesto — lo que iría en xlsx/csv) PROHIBIDO invocar docs-router, el skill oficio, structured_doc, upload_file, mcp__wa__ o cualquier tool de documento (get_page_html, replace_html, set_page_html, add_page…). NO subas archivos ni generes .docx/.xlsx tú.",
+  "PROSA → escribe el documento COMPLETO como Markdown DENTRO de un bloque que abre con ```eb-doc y cierra con ```. Usa # para el título, ## para cláusulas, listas y **negritas**.",
+  "HOJA DE CÁLCULO / TABLA / DATOS → escribe TODA la tabla como CSV DENTRO de un bloque que abre con ```eb-sheet y cierra con ```. Primera fila = encabezados; una fila por registro; comas como separador y comillas dobles si un valor lleva comas. Puedes poner un título tras la apertura: ```eb-sheet Leads Barranquilla.",
+  "Cualquiera de esos bloques se muestra generándose EN VIVO en el panel; la plataforma lo guarda con VERSIONES. Fuera del bloque, solo UNA frase breve de contexto, SIN links.",
+  "MODIFICAR un artefacto que YA existe (cambia/ajusta/corrige/agrega/añade una introducción/columna/fila, etc.): usa OTRA VEZ el MISMO tipo de bloque (```eb-doc``` para prosa, ```eb-sheet``` para tabla) y RE-EMITE el artefacto COMPLETO ya con el cambio aplicado. Conserva TODO lo demás idéntico; solo integra lo que el usuario pidió. NUNCA mandes solo el fragmento ni un diff: siempre el artefacto entero, para que se re-genere en vivo.",
+  "ÚNICA EXCEPCIÓN: documentos con membrete de marca fijo o presentaciones (pptx) → skills normales. Toda prosa → eb-doc; toda tabla/datos → eb-sheet.",
 ].join(" ");
 
-// Si el hilo YA tiene un documento, al MODIFICAR el agente NO reescribe todo (pisaría las
-// ediciones manuales del usuario y no escala a docs grandes). En su lugar edita QUIRÚRGICO
-// con las tools de documento de EasyBits, sobre el estado ACTUAL.
-// Sufijo por-doc = contexto de TURNO (embebe el documentId actual, que cambia por
-// mensaje). Va en el TEXTO del mensaje, NO en el system prompt: la sesión persistente
-// del worker fija el system prompt al arrancar, así que un valor que cambia por turno
-// ahí forzaría cold-restart cada vez que cambia el doc. El BASE estable
-// (EB_DOC_STREAM_GUARDRAIL) sí va en appendSystemPrompt (idéntico todos los turnos →
-// persistencia-safe). Vacío cuando no hay doc en el hilo.
-function artifactDocHint(currentDocId?: string | null): string {
-  if (!currentDocId) return "";
+// Si el hilo YA tiene un artefacto, al MODIFICAR el agente re-emite el artefacto COMPLETO
+// (misma experiencia de streaming que al crear). Para que pueda hacerlo con fidelidad —
+// aunque el worker haya reciclado su sesión — le inyectamos el contenido ACTUAL (la verdad
+// local) en el TEXTO del turno. Va en el texto, NO en el system prompt: cambia por turno,
+// y el system prompt de la sesión persistente se fija al arrancar (un valor variable ahí
+// forzaría cold-restart). El BASE estable (EB_DOC_STREAM_GUARDRAIL) sí va en
+// appendSystemPrompt (idéntico todos los turnos → persistencia-safe). Vacío si no hay artefacto.
+function artifactDocHint(currentDoc?: { kind: "doc" | "sheet"; md: string } | null): string {
+  const md = currentDoc?.md.trim();
+  if (!md) return "";
+  const isSheet = currentDoc!.kind === "sheet";
+  const fence = isSheet ? "eb-sheet" : "eb-doc";
+  const noun = isSheet ? "esta hoja de cálculo (CSV)" : "este documento";
+  const lang = isSheet ? "CSV" : "Markdown";
   return (
-    `[Contexto del hilo — MODIFICACIÓN QUIRÚRGICA: YA existe el documento documentId="${currentDocId}". Si el usuario pide CAMBIAR/AJUSTAR/CORREGIR algo del documento existente, NO reescribas el documento completo ni uses el bloque eb-doc otra vez (eso PISA las ediciones manuales del usuario y no escala). En su lugar: 1) lee el estado ACTUAL con get_page_html("${currentDocId}") — ese HTML incluye lo que el usuario editó a mano. 2) Cambia SOLO lo que pide con replace_html({documentId:"${currentDocId}", find:"<fragmento HTML exacto viejo>", replace:"<fragmento nuevo>"}). Para AGREGAR una sección usa el mismo replace_html insertando en el lugar correcto, o add_page. PRESERVA todo lo demás tal cual. PROHIBIDO refine_document_section (gasta generaciones) y PROHIBIDO reescribir el documento entero.]\n\n`
+    `[Contexto del hilo — ARTEFACTO ACTUAL. En esta conversación ya existe ${noun}. ` +
+    `Si el usuario pide modificarlo (cambiar, ajustar, corregir, agregar/añadir algo), ` +
+    `RE-EMITE el artefacto COMPLETO en un bloque \`\`\`${fence} con el cambio ya integrado y todo ` +
+    `lo demás idéntico. Este es su contenido actual en ${lang}:\n\n\`\`\`\n${md}\n\`\`\`]\n\n`
   );
 }
 
@@ -141,7 +148,7 @@ export async function callAgentBackendStream(
   onChunk: (chunk: string) => void | Promise<void>,
   parts: MediaPart[] = [],
   onTool?: (name: string) => void | Promise<void>,
-  currentDocId?: string | null
+  currentDoc?: { kind: "doc" | "sheet"; md: string } | null
 ): Promise<string> {
   if (agent.backend.kind !== "fleet") {
     // Sin SSE todavía: colecta el reply completo y lo emite de un tirón (el cliente
@@ -154,7 +161,7 @@ export async function callAgentBackendStream(
   const base = process.env.EASYBITS_BASE_URL ?? "https://www.easybits.cloud";
   // docHint (contexto por-doc del turno) va PRIMERO en el texto; el system prompt
   // queda estable (base) → la sesión persistente del worker no se rompe al cambiar doc.
-  const docHint = artifactDocHint(currentDocId);
+  const docHint = artifactDocHint(currentDoc);
   const outText = docHint + (persona ? `[Instrucciones para ${agent.name}: ${persona}]\n\n${text}` : text);
   try {
     const res = await fetch(`${base}/api/v2/fleet-agents/${agent.backend.id}/message-stream`, {
@@ -273,8 +280,9 @@ export async function runAgentTurn(opts: {
   // Reemplaza el body completo (no append). Para el checklist incremental: al iniciar
   // una tool, las previas pasan a ✓ y la nueva queda ⚡ → se re-pinta la lista entera.
   emitBody?: (id: number, body: string) => void;
-  // documentId del artefacto ACTUAL del hilo → se inyecta al guardrail para edit-in-place.
-  currentDocId?: string | null;
+  // Artefacto ACTUAL del hilo (doc/sheet + contenido) → se inyecta al turno para re-emisión
+  // completa al editar.
+  currentDoc?: { kind: "doc" | "sheet"; md: string } | null;
 }): Promise<{ id: number; reply: string }> {
   let id: number | null = null;
   const ensure = async (): Promise<number> => {
@@ -317,14 +325,16 @@ export async function runAgentTurn(opts: {
       if (brokeByTool && acc.trim() && chunk.trim()) acc += "\n\n";
       if (chunk.trim()) brokeByTool = false;
       acc += chunk;
-      // eb-doc no llama tools → sin esto el checklist quedaría vacío. Sintetiza una
-      // entrada "Redactó el documento" en cuanto aparece el bloque.
-      if (!ebDocSeen && acc.includes("```eb-doc")) {
+      // eb-doc/eb-sheet no llaman tools → sin esto el checklist quedaría vacío. Sintetiza una
+      // entrada en cuanto aparece el bloque ("Redactó el documento" / "Generó la hoja").
+      if (!ebDocSeen && /```eb-(doc|sheet)/.test(acc)) {
         ebDocSeen = true;
         anyActivity = true;
-        if (!tools.some((t) => t.done === "Redactó el documento")) {
-          tools.push({ ing: "Redactando el documento", done: "Redactó el documento" });
-        }
+        const isSheet = /```eb-sheet/.test(acc);
+        const label = isSheet
+          ? { ing: "Generando la hoja", done: "Generó la hoja" }
+          : { ing: "Redactando el documento", done: "Redactó el documento" };
+        if (!tools.some((t) => t.done === label.done)) tools.push(label);
       }
       await paint();
     } else {
@@ -352,7 +362,7 @@ export async function runAgentTurn(opts: {
     reply = `👾 @${opts.handle} no está conectado. El owner lo configura en Ajustes → Agentes.`;
     await onChunk(reply);
   } else {
-    reply = await callAgentBackendStream(opts.agent, opts.groupId, opts.sender, opts.text, onChunk, opts.parts ?? [], onTool, opts.currentDocId);
+    reply = await callAgentBackendStream(opts.agent, opts.groupId, opts.sender, opts.text, onChunk, opts.parts ?? [], onTool, opts.currentDoc);
   }
   // `acc` (con separadores) es el texto bonito; reply es la acumulación cruda del stream.
   const finalText = acc.trim() || reply || "(sin respuesta)";
