@@ -87,11 +87,13 @@ export function detectMention(body: string, handles: string[]): string | null {
 }
 
 // TODOS los agentes mencionados, en orden de aparición (para multi-mención: cada
-// uno responde). Case-insensitive, @handle con borde de palabra, sin duplicados.
+// uno responde). Case-insensitive, @handle con borde de palabra a ambos lados, sin
+// duplicados. El boundary IZQUIERDO `(?<![\w@.])` evita que un email (foo@blue.com)
+// dispare al agente cuyo handle coincide con el dominio.
 export function detectMentions(body: string, handles: string[]): string[] {
   const hits: { handle: string; idx: number }[] = [];
   for (const h of handles) {
-    const re = new RegExp(`@${h.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i");
+    const re = new RegExp(`(?<![\\w@.])@${h.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i");
     const m = body.match(re);
     if (m && m.index != null) hits.push({ handle: h, idx: m.index });
   }

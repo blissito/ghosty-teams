@@ -8,7 +8,11 @@ import rehypeSanitize from "rehype-sanitize";
 function highlightMentions(children: React.ReactNode): React.ReactNode {
   return Children.map(children, (child) => {
     if (typeof child === "string") {
-      return child.split(/(@\w+)/g).map((chunk, i) =>
+      // Boundary a la izquierda `(?<![\w@.])` → NO matchea el "@gmail" DENTRO de un
+      // email (fixtergeek@gmail.com). Slack evita esto con tokens encodeados <@Uxxx>;
+      // aquí, en texto plano, exigimos que el @ abra en inicio/espacio/puntuación,
+      // nunca pegado a un carácter de palabra o a otro @/. (local-part de email).
+      return child.split(/((?<![\w@.])@\w+)/g).map((chunk, i) =>
         /^@\w+$/.test(chunk) ? (
           <span key={i} className="rounded bg-brand/15 px-1 font-medium text-brand">
             {chunk}

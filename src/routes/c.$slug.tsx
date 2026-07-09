@@ -3283,7 +3283,7 @@ function defaultArtifactTitle(kind: string): string {
 const ARTIFACT_KIND_META: Record<string, { embed?: boolean; labelKey: string }> = {
   doc: { labelKey: "Documento" },
   sheet: { labelKey: "Hoja de cálculo" },
-  html: { embed: true, labelKey: "Abrir para editar en vivo" },
+  html: { embed: true, labelKey: "Vista previa" },
   office: { labelKey: "Vista previa · Descargar" },
   pdf: { labelKey: "Vista previa" },
   image: { labelKey: "Vista previa" },
@@ -4033,7 +4033,9 @@ function Composer({
       pingTypingFn({ data: dmId != null ? { dmId } : { slug, parentId } }).catch(() => {});
     }
     const upto = val.slice(0, e.target.selectionStart ?? val.length);
-    const m = upto.match(/@(\w*)$/);
+    // Boundary: el popup de mención SOLO abre si el @ arranca en inicio o tras espacio
+    // — no dentro de un email (fixtergeek@gmail…). Mismo criterio que el resaltado.
+    const m = upto.match(/(?:^|\s)@(\w*)$/);
     if (m) {
       setMq(m[1]);
       setMSel(0);
@@ -4043,7 +4045,7 @@ function Composer({
     const el = bodyRef.current;
     if (!el) return;
     const caret = el.selectionStart ?? body.length;
-    const before = body.slice(0, caret).replace(/@\w*$/, `@${id} `);
+    const before = body.slice(0, caret).replace(/(^|\s)@\w*$/, `$1@${id} `);
     const next = before + body.slice(caret);
     setBody(next);
     setMq(null);

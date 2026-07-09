@@ -165,7 +165,7 @@ export async function mdToDocx(
 // Familias de media que el panel/card sabe renderizar. "file" = fallback genérico
 // (descarga) para cualquier MIME/extensión no reconocida → cubre "archivos de todo
 // tipo, no reconocidos, todo". Contrato: docs/AGENT-MEDIA-CONTRACT.md §2.
-export type FileKind = "pdf" | "image" | "audio" | "video" | "office" | "file";
+export type FileKind = "pdf" | "image" | "audio" | "video" | "office" | "html" | "file";
 
 export type DetectedArtifact =
   | { type: "doc"; slug?: string; documentId?: string }
@@ -201,6 +201,7 @@ export function fileKindFromUrl(url: string): FileKind {
   if (/\.pdf(\?|$)/i.test(url)) return "pdf";
   if (/\.(mp3|wav|ogg|oga|m4a|aac|flac|opus)(\?|$)/i.test(url)) return "audio";
   if (/\.(mp4|webm|mov|m4v|mkv|avi)(\?|$)/i.test(url)) return "video";
+  if (/\.x?html?(\?|$)/i.test(url)) return "html";
   return "file";
 }
 
@@ -217,6 +218,10 @@ function fileKindFromContentType(ct: string): FileKind | null {
     /(wordprocessingml|spreadsheetml|presentationml|msword|ms-excel|ms-powerpoint|opendocument)/.test(t)
   )
     return "office";
+  // HTML: el agente genera páginas/correos brandeados y los sube a storage SIN
+  // extensión (.../fXA) → solo el content-type revela que es HTML. Sin esto cae a
+  // "file" (card de descarga muerta) y el link inline se desvía al panel vacío.
+  if (t === "text/html" || t === "application/xhtml+xml") return "html";
   return null;
 }
 
