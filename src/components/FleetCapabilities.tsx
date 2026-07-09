@@ -16,7 +16,7 @@ type Cap = {
   secretsPresent: boolean; levels: { key: string; label: string }[] | null; curated: boolean;
 };
 type Bucket = { key: string; label: string; description: string; admin: boolean; levels: { key: string; label: string; buckets: string[] }[] | null };
-type GroupCfg = { mcpServers?: string[]; disabledBuiltins?: string[]; capLevels?: Record<string, string>; assets?: string[]; dbAllow?: string[] };
+type GroupCfg = { mcpServers?: string[]; disabledBuiltins?: string[]; capLevels?: Record<string, string>; assets?: string[]; dbAllow?: string[]; toolDeny?: string[] };
 type Cfg = {
   fleet: boolean;
   builtins?: { name: string; label: string; channel?: string | null; bucketScoped?: boolean }[];
@@ -26,6 +26,7 @@ type Cfg = {
   ownerDbs?: { name: string; namespace: string }[];
   agent?: { systemPrompt: string; model: string; modelLabel?: string; effort: string; hasOwnNumber: boolean; buckets: string[] };
   buckets?: Bucket[];
+  bucketTools?: Record<string, string[]>;
   models?: { key: string; label: string }[];
   efforts?: string[];
   skills?: { id: string; name: string; description: string; enabled: boolean; fileCount: number }[];
@@ -123,6 +124,23 @@ export function FleetCapabilities({ agentId }: { agentId: number }) {
 
   const chipBuckets = cfg.buckets?.filter((b) => !b.levels) ?? [];
   const levelBuckets = cfg.buckets?.filter((b) => b.levels) ?? [];
+
+  // Per-tool deny: default = todas las tools del bucket ON; destildar = deny.
+  const bucketTools = cfg.bucketTools ?? {};
+  const denyList = new Set(cfg.groups?.[GROUP]?.toolDeny ?? []);
+  // Tools reales de los sub-buckets ACTIVOS de un bucket (para el checklist).
+  const bucketActiveTools = (b: Bucket) => {
+    const keys = b.levels
+      ? b.levels.flatMap((l) => l.buckets).filter((k) => activeBuckets.has(k))
+      : (activeBuckets.has(b.key) ? [b.key] : []);
+    return [...new Set(keys.flatMap((k) => bucketTools[k] ?? []))].sort();
+  };
+  const toggleTool = (tool: string, allow: boolean) => mutate(`deny:${tool}`, (c) => {
+    const gg = gc(c); const set = new Set(gg.toolDeny ?? []);
+    allow ? set.delete(tool) : set.add(tool);
+    gg.toolDeny = [...set];
+    return { action: "set-tool-deny", groupId: GROUP, tool, on: allow };
+  });
 
   return (
     <div className="space-y-3">
@@ -230,6 +248,27 @@ export function FleetCapabilities({ agentId }: { agentId: number }) {
                 </div>
               )}
             </div>
+          );
+        })}
+        {/* Per-tool: destildar herramientas puntuales de cada bucket activo (default todas ON). */}
+        {(cfg.buckets ?? []).map((b) => {
+          const tools = bucketActiveTools(b);
+          if (!tools.length) return null;
+          const activeCount = tools.filter((tn) => !denyList.has(tn)).length;
+          return (
+            <details key={`tools:${b.key}`} className="mt-1.5">
+              <summary className="cursor-pointer select-none text-[11px] text-muted">
+                {b.label} · {t("herramientas")} ({activeCount}/{tools.length}) <Spin k={`deny:${b.key}`} />
+              </summary>
+              <div className="mt-1 max-h-40 space-y-1 overflow-y-auto rounded-lg border border-border bg-surface-2 p-2">
+                {tools.map((tn) => (
+                  <label key={tn} className="flex cursor-pointer items-center gap-2 text-[11px] hover:text-ink">
+                    <input type="checkbox" checked={!denyList.has(tn)} disabled={isSaving(`deny:${tn}`)} onChange={(e) => toggleTool(tn, e.target.checked)} />
+                    <span className="truncate font-mono">{tn}</span>
+                  </label>
+                ))}
+              </div>
+            </details>
           );
         })}
       </div>
