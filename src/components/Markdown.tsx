@@ -8,19 +8,28 @@ import rehypeSanitize from "rehype-sanitize";
 function highlightMentions(children: React.ReactNode): React.ReactNode {
   return Children.map(children, (child) => {
     if (typeof child === "string") {
-      // Boundary a la izquierda `(?<![\w@.])` → NO matchea el "@gmail" DENTRO de un
-      // email (fixtergeek@gmail.com). Slack evita esto con tokens encodeados <@Uxxx>;
-      // aquí, en texto plano, exigimos que el @ abra en inicio/espacio/puntuación,
-      // nunca pegado a un carácter de palabra o a otro @/. (local-part de email).
-      return child.split(/((?<![\w@.])@\w+)/g).map((chunk, i) =>
-        /^@\w+$/.test(chunk) ? (
-          <span key={i} className="rounded bg-brand/15 px-1 font-medium text-brand">
-            {chunk}
+      // Boundary a la izquierda SIN lookbehind: Safari <16.4 rechaza `(?<!…)` en el
+      // literal → SyntaxError al parsear el bundle → crashea toda la app en esos
+      // browsers. Tokenizamos `@\w+` y validamos EN CÓDIGO que el char previo no sea
+      // palabra/@/. → NO matchea el "@gmail" dentro de un email (fixtergeek@gmail.com).
+      // Slack lo evita con tokens <@Uxxx>; aquí, en texto plano, este es el equivalente.
+      const out: React.ReactNode[] = [];
+      const re = /@\w+/g;
+      let last = 0;
+      let m: RegExpExecArray | null;
+      while ((m = re.exec(child)) !== null) {
+        const prev = m.index > 0 ? child[m.index - 1] : "";
+        if (/[\w@.]/.test(prev)) continue; // pegado a palabra/@/. (local-part) → no es mención
+        if (m.index > last) out.push(child.slice(last, m.index));
+        out.push(
+          <span key={m.index} className="rounded bg-brand/15 px-1 font-medium text-brand">
+            {m[0]}
           </span>
-        ) : (
-          chunk
-        )
-      );
+        );
+        last = m.index + m[0].length;
+      }
+      if (last < child.length) out.push(child.slice(last));
+      return out.length ? out : child;
     }
     if (isValidElement(child)) {
       const type = child.type as unknown as string;
