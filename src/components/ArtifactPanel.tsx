@@ -465,7 +465,7 @@ export default function ArtifactPanel({
                   // render que el draft de hoja en vivo → al modificarla (chateando), el draft
                   // streamea encima y al cerrarse vuelve aquí con la nueva versión.
                   <div className="min-h-0 flex-1 overflow-auto bg-surface-3 p-4 sm:p-6">
-                    {artifact.csv.trim() ? (
+                    {(artifact.csv ?? "").trim() ? (
                       <CsvTable csv={artifact.csv} />
                     ) : (
                       <div className="grid h-full place-items-center text-sm text-neutral-400">{t("Sin contenido")}</div>
@@ -478,7 +478,7 @@ export default function ArtifactPanel({
                   // Editar = chatear con el agente (re-redacta completo). Descargar Word arriba.
                   <div className="min-h-0 flex-1 overflow-auto bg-surface-3 p-4 sm:p-6">
                     <article className="mx-auto max-w-[8.5in] rounded-sm bg-white p-10 text-black shadow-md sm:p-14">
-                      {artifact.md.trim() ? (
+                      {(artifact.md ?? "").trim() ? (
                         <Markdown body={artifact.md} light />
                       ) : (
                         <div className="grid h-full place-items-center text-sm text-neutral-400">{t("Sin contenido")}</div>

@@ -1,4 +1,4 @@
-import { createContext, Fragment, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { Component, createContext, Fragment, type ReactNode, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import {
   Hash,
@@ -1335,7 +1335,9 @@ function ChannelPage() {
       )}
       {/* Panel de artefactos: columna fija a la derecha (desktop) u overlay (móvil).
           Se rinde null solo cuando no hay artefacto abierto. */}
-      <ArtifactPanel artifact={openArtifact} onClose={() => setOpenArtifact(null)} />
+      <ArtifactBoundary key={openArtifact?.title ?? "none"}>
+        <ArtifactPanel artifact={openArtifact} onClose={() => setOpenArtifact(null)} />
+      </ArtifactBoundary>
       <AnimatePresence>
         {paletteOpen && (
           <CommandPalette
@@ -3304,6 +3306,24 @@ function artifactToView(a: Artifact): ArtifactView {
     : ({ kind, title, src: a.url } as ArtifactView);
 }
 
+// Contiene cualquier fallo de render de un artefacto (campo faltante, dato viejo con
+// forma inesperada) a un placeholder — NUNCA debe tumbar el hilo/room entero. Incidente
+// 2026-07-09: un `.trim()` sobre md/csv undefined en ArtifactPanel crasheaba el room al
+// abrir hilos con artefacto. Reset por `key` (id del artefacto) al montar la boundary.
+class ArtifactBoundary extends Component<{ children: ReactNode; fallback?: ReactNode }, { failed: boolean }> {
+  state = { failed: false };
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+  componentDidCatch(err: unknown) {
+    console.warn("[artifact] render failed:", err);
+  }
+  render() {
+    if (this.state.failed) return this.props.fallback ?? null;
+    return this.props.children;
+  }
+}
+
 function ArtifactCard({ artifact }: { artifact: Artifact }) {
   const t = useT();
   const { onOpenArtifact } = useContext(ChatCtx);
@@ -3529,7 +3549,18 @@ function MessageRow({
           ) : null
         )}
         {m.attachments && m.attachments.length > 0 && <AttachmentList attachments={m.attachments} />}
-        {m.artifact && <ArtifactCard artifact={m.artifact} />}
+        {m.artifact && (
+          <ArtifactBoundary
+            key={m.artifact.url}
+            fallback={
+              <div className="mt-1 rounded-lg border border-border bg-surface px-3 py-2 text-xs text-muted">
+                No se pudo mostrar el artefacto.
+              </div>
+            }
+          >
+            <ArtifactCard artifact={m.artifact} />
+          </ArtifactBoundary>
+        )}
         {canReact && (m.reactions?.length ?? 0) > 0 && <ReactionBar m={m} />}
         {showThreadLink && onOpenThread && (
           <div className="mt-1 flex items-center gap-3 text-xs">
