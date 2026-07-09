@@ -1,11 +1,32 @@
+import { useEffect } from 'react'
 import { createRouter as createTanStackRouter } from '@tanstack/react-router'
 import { routeTree } from './routeTree.gen'
+
+// Purga los caches de sessionStorage (`gc-caches-*`). Un cache envenenado —datos de
+// hilo serializados por una versión del app y re-renderizados por otra tras un
+// deploy— provoca un mismatch de hidratación que cae SIEMPRE aquí; sin purgar, el
+// botón "Recargar" re-restaura el MISMO cache → loop infinito de error (incidente
+// 2026-07-09, el usuario tuvo que borrar datos del sitio a mano). Purgar aquí hace
+// que la recarga se auto-cure. Barremos cualquier `gc-caches-v*` (no solo la actual).
+function purgePoisonedCaches() {
+  try {
+    for (let i = sessionStorage.length - 1; i >= 0; i--) {
+      const k = sessionStorage.key(i)
+      if (k && k.startsWith('gc-caches-')) sessionStorage.removeItem(k)
+    }
+  } catch {
+    /* sessionStorage inaccesible → nada que purgar */
+  }
+}
 
 // Error component amigable (reemplaza el "Something went wrong!" default de TanStack).
 // Estilos inline por robustez: si el fallo fue de render/CSS, no dependemos de Tailwind.
 // Invita a recargar — la mayoría de los errores transitorios (red, hidratación) se van
-// con un refresh, y con la persistencia en sessionStorage el estado se restaura.
+// con un refresh; al montar PURGAMOS el cache para que la recarga arranque limpia.
 function AppError() {
+  useEffect(() => {
+    purgePoisonedCaches()
+  }, [])
   return (
     <div
       style={{

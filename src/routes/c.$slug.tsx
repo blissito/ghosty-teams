@@ -229,10 +229,14 @@ const PERSISTED_CACHES: [string, Map<unknown, unknown>][] = [
 ];
 if (typeof window !== "undefined") {
   try {
-    // v2: descarta cualquier `gc-caches-v1` envenenado (con flow/threads/pins) que
-    // haya quedado en sesiones abiertas antes de este fix.
+    // v3: descarta v1/v2 envenenados. Un cache de hilo serializado por una versión del
+    // app y re-renderizado por otra tras un deploy → mismatch de hidratación → crash
+    // (incidente 2026-07-09: el usuario tuvo que borrar datos del sitio a mano). Bumpear
+    // ESTA versión al cambiar la forma de Message/thread invalida los viejos ANTES de
+    // que rompan; el purge-on-error de router.tsx cubre los que se escapen.
     sessionStorage.removeItem("gc-caches-v1");
-    const saved = JSON.parse(sessionStorage.getItem("gc-caches-v2") || "{}");
+    sessionStorage.removeItem("gc-caches-v2");
+    const saved = JSON.parse(sessionStorage.getItem("gc-caches-v3") || "{}");
     for (const [name, cache] of PERSISTED_CACHES) {
       const entries = saved[name];
       if (Array.isArray(entries)) for (const [k, v] of entries) cache.set(k, v);
@@ -244,7 +248,7 @@ if (typeof window !== "undefined") {
     try {
       const out: Record<string, unknown> = {};
       for (const [name, cache] of PERSISTED_CACHES) out[name] = [...cache.entries()];
-      sessionStorage.setItem("gc-caches-v2", JSON.stringify(out));
+      sessionStorage.setItem("gc-caches-v3", JSON.stringify(out));
     } catch {
       /* quota/serialize → mejor esfuerzo, sin romper */
     }
