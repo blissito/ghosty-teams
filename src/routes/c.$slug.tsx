@@ -580,6 +580,16 @@ function ChannelPage() {
   const [openArtifact, setOpenArtifact] = useState<ArtifactView | null>(null);
   const openArtifactRef = useRef<ArtifactView | null>(null);
   openArtifactRef.current = openArtifact;
+  // El índice de Documentos (📂) SIGUE el room/hilo actual: al navegar (cambia el channel o
+  // el hilo abierto) se re-scopea → no queda stale mostrando otro room/hilo. Solo el docindex;
+  // otros artefactos (un doc/office ya abierto) se quedan como estén.
+  useEffect(() => {
+    setOpenArtifact((cur) =>
+      cur?.kind === "docindex"
+        ? { kind: "docindex", title: cur.title, channelId: channel.id, channelSlug: channel.slug, threadRootId: openThreadId ?? undefined }
+        : cur
+    );
+  }, [channel.id, channel.slug, openThreadId]);
   // Vista Zulip enfocada en el centro (recientes/menciones/destacados) — otro modo
   // de estado-cliente, mutuamente excluyente con hilo/DM. null = flujo del room.
   const [view, setView] = useState<null | "recent" | "mentions" | "starred">(null);
