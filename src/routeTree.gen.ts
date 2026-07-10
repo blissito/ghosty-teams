@@ -24,6 +24,7 @@ import { Route as SetupEasybitsConnectRouteImport } from './routes/setup.easybit
 import { Route as SetupEasybitsCallbackRouteImport } from './routes/setup.easybits.callback'
 import { Route as ApiWebhookEasybitsRouteImport } from './routes/api.webhook.easybits'
 import { Route as ApiDocDocxIdRouteImport } from './routes/api.doc-docx.$id'
+import { Route as ApiDevDriveRouteImport } from './routes/api.dev.drive'
 import { Route as ApiAttachmentIdRouteImport } from './routes/api.attachment.$id'
 
 const SetupRoute = SetupRouteImport.update({
@@ -101,6 +102,11 @@ const ApiDocDocxIdRoute = ApiDocDocxIdRouteImport.update({
   path: '/api/doc-docx/$id',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiDevDriveRoute = ApiDevDriveRouteImport.update({
+  id: '/api/dev/drive',
+  path: '/api/dev/drive',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiAttachmentIdRoute = ApiAttachmentIdRouteImport.update({
   id: '/api/attachment/$id',
   path: '/api/attachment/$id',
@@ -120,6 +126,7 @@ export interface FileRoutesByFullPath {
   '/c/$slug': typeof CSlugRoute
   '/join/$token': typeof JoinTokenRoute
   '/api/attachment/$id': typeof ApiAttachmentIdRoute
+  '/api/dev/drive': typeof ApiDevDriveRoute
   '/api/doc-docx/$id': typeof ApiDocDocxIdRoute
   '/api/webhook/easybits': typeof ApiWebhookEasybitsRoute
   '/setup/easybits/callback': typeof SetupEasybitsCallbackRoute
@@ -138,6 +145,7 @@ export interface FileRoutesByTo {
   '/c/$slug': typeof CSlugRoute
   '/join/$token': typeof JoinTokenRoute
   '/api/attachment/$id': typeof ApiAttachmentIdRoute
+  '/api/dev/drive': typeof ApiDevDriveRoute
   '/api/doc-docx/$id': typeof ApiDocDocxIdRoute
   '/api/webhook/easybits': typeof ApiWebhookEasybitsRoute
   '/setup/easybits/callback': typeof SetupEasybitsCallbackRoute
@@ -157,6 +165,7 @@ export interface FileRoutesById {
   '/c/$slug': typeof CSlugRoute
   '/join/$token': typeof JoinTokenRoute
   '/api/attachment/$id': typeof ApiAttachmentIdRoute
+  '/api/dev/drive': typeof ApiDevDriveRoute
   '/api/doc-docx/$id': typeof ApiDocDocxIdRoute
   '/api/webhook/easybits': typeof ApiWebhookEasybitsRoute
   '/setup/easybits/callback': typeof SetupEasybitsCallbackRoute
@@ -177,6 +186,7 @@ export interface FileRouteTypes {
     | '/c/$slug'
     | '/join/$token'
     | '/api/attachment/$id'
+    | '/api/dev/drive'
     | '/api/doc-docx/$id'
     | '/api/webhook/easybits'
     | '/setup/easybits/callback'
@@ -195,6 +205,7 @@ export interface FileRouteTypes {
     | '/c/$slug'
     | '/join/$token'
     | '/api/attachment/$id'
+    | '/api/dev/drive'
     | '/api/doc-docx/$id'
     | '/api/webhook/easybits'
     | '/setup/easybits/callback'
@@ -213,6 +224,7 @@ export interface FileRouteTypes {
     | '/c/$slug'
     | '/join/$token'
     | '/api/attachment/$id'
+    | '/api/dev/drive'
     | '/api/doc-docx/$id'
     | '/api/webhook/easybits'
     | '/setup/easybits/callback'
@@ -232,6 +244,7 @@ export interface RootRouteChildren {
   CSlugRoute: typeof CSlugRoute
   JoinTokenRoute: typeof JoinTokenRoute
   ApiAttachmentIdRoute: typeof ApiAttachmentIdRoute
+  ApiDevDriveRoute: typeof ApiDevDriveRoute
   ApiDocDocxIdRoute: typeof ApiDocDocxIdRoute
   ApiWebhookEasybitsRoute: typeof ApiWebhookEasybitsRoute
 }
@@ -343,6 +356,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiDocDocxIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/dev/drive': {
+      id: '/api/dev/drive'
+      path: '/api/dev/drive'
+      fullPath: '/api/dev/drive'
+      preLoaderRoute: typeof ApiDevDriveRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/attachment/$id': {
       id: '/api/attachment/$id'
       path: '/api/attachment/$id'
@@ -378,6 +398,7 @@ const rootRouteChildren: RootRouteChildren = {
   CSlugRoute: CSlugRoute,
   JoinTokenRoute: JoinTokenRoute,
   ApiAttachmentIdRoute: ApiAttachmentIdRoute,
+  ApiDevDriveRoute: ApiDevDriveRoute,
   ApiDocDocxIdRoute: ApiDocDocxIdRoute,
   ApiWebhookEasybitsRoute: ApiWebhookEasybitsRoute,
 }

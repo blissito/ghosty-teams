@@ -237,31 +237,31 @@ export async function callAgentBackendStream(
 // lo demás (lecturas get_/list_, ToolSearch, TodoWrite, plumbing) devuelve null y NO
 // se muestra (ruido). Estilo Claude: "Creó el documento", no "Set page html".
 const TOOL_LABELS: Record<string, { ing: string; done: string }> = {
-  create_document: { ing: "Creando el documento", done: "Creó el documento" },
-  structured_doc: { ing: "Generando el documento", done: "Generó el documento" },
-  set_section_html: { ing: "Editando el documento", done: "Editó el documento" },
-  set_page_html: { ing: "Editando el documento", done: "Editó el documento" },
-  update_document: { ing: "Editando el documento", done: "Editó el documento" },
-  insert_page: { ing: "Agregando una página", done: "Agregó una página" },
-  reorder_pages: { ing: "Reordenando páginas", done: "Reordenó las páginas" },
-  clone_document: { ing: "Clonando el documento", done: "Clonó el documento" },
-  apply_brand_kit: { ing: "Aplicando la marca", done: "Aplicó la marca" },
-  change_document_format: { ing: "Cambiando el formato", done: "Cambió el formato" },
-  create_or_edit_image: { ing: "Editando una imagen", done: "Editó una imagen" },
-  edit_image: { ing: "Editando una imagen", done: "Editó una imagen" },
-  upload_file: { ing: "Subiendo el documento", done: "Subió el documento" },
-  create_share_link: { ing: "Generando el link", done: "Generó un link para compartir" },
-  render_url: { ing: "Renderizando a PDF", done: "Renderizó a PDF" },
-  render_html: { ing: "Renderizando a PDF", done: "Renderizó a PDF" },
-  office_to_pdf: { ing: "Convirtiendo a PDF", done: "Convirtió a PDF" },
-  deploy_document: { ing: "Publicando el documento", done: "Publicó el documento" },
-  create_website: { ing: "Creando el sitio", done: "Creó el sitio" },
-  WebSearch: { ing: "Buscando en la web", done: "Buscó en la web" },
+  create_document: { ing: "Creando el documento", done: "Creé el documento" },
+  structured_doc: { ing: "Generando el documento", done: "Generé el documento" },
+  set_section_html: { ing: "Editando el documento", done: "Edité el documento" },
+  set_page_html: { ing: "Editando el documento", done: "Edité el documento" },
+  update_document: { ing: "Editando el documento", done: "Edité el documento" },
+  insert_page: { ing: "Agregando una página", done: "Agregué una página" },
+  reorder_pages: { ing: "Reordenando páginas", done: "Reordené las páginas" },
+  clone_document: { ing: "Clonando el documento", done: "Cloné el documento" },
+  apply_brand_kit: { ing: "Aplicando la marca", done: "Apliqué la marca" },
+  change_document_format: { ing: "Cambiando el formato", done: "Cambié el formato" },
+  create_or_edit_image: { ing: "Editando una imagen", done: "Edité una imagen" },
+  edit_image: { ing: "Editando una imagen", done: "Edité una imagen" },
+  upload_file: { ing: "Subiendo el documento", done: "Subí el documento" },
+  create_share_link: { ing: "Generando el link", done: "Generé un link para compartir" },
+  render_url: { ing: "Renderizando a PDF", done: "Generé el PDF" },
+  render_html: { ing: "Renderizando a PDF", done: "Generé el PDF" },
+  office_to_pdf: { ing: "Convirtiendo a PDF", done: "Convertí a PDF" },
+  deploy_document: { ing: "Publicando el documento", done: "Publiqué el documento" },
+  create_website: { ing: "Creando el sitio", done: "Creé el sitio" },
+  WebSearch: { ing: "Buscando en la web", done: "Busqué en la web" },
   // El agente redacta docs invocando un Skill (oficio/xlsx/pptx/doc-remix) → la acción
-  // visible = "Redactó el documento" (antes solo se veía "Subió", el paso final).
-  Skill: { ing: "Redactando el documento", done: "Redactó el documento" },
-  artifact_create: { ing: "Redactando el documento", done: "Redactó el documento" },
-  artifact_update: { ing: "Actualizando el documento", done: "Actualizó el documento" },
+  // visible = "Redacté el documento" (antes solo se veía "Subió", el paso final).
+  Skill: { ing: "Redactando el documento", done: "Redacté el documento" },
+  artifact_create: { ing: "Redactando el documento", done: "Redacté el documento" },
+  artifact_update: { ing: "Actualizando el documento", done: "Actualicé el documento" },
 };
 
 function toolLabel(raw: string): { ing: string; done: string } | null {
@@ -334,8 +334,8 @@ export async function runAgentTurn(opts: {
         anyActivity = true;
         const isSheet = /```eb-sheet/.test(acc);
         const label = isSheet
-          ? { ing: "Generando la hoja", done: "Generó la hoja" }
-          : { ing: "Redactando el documento", done: "Redactó el documento" };
+          ? { ing: "Generando la hoja", done: "Generé la hoja" }
+          : { ing: "Redactando el documento", done: "Redacté el documento" };
         if (!tools.some((t) => t.done === label.done)) tools.push(label);
       }
       await paint();

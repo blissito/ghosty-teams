@@ -1,9 +1,30 @@
 import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useRef, useState } from "react";
-import { X, ExternalLink, FileText, Download, Loader2, ChevronRight, RotateCw, Maximize2, Minimize2 } from "lucide-react";
+import { X, ExternalLink, FileText, Download, Loader2, ChevronRight, ChevronLeft, RotateCw, Upload } from "lucide-react";
 import { useT } from "../i18n";
-import { officeToHtmlFn } from "../server/chat";
+import { officeToHtmlFn, xlsxToCsvFn, postMessage } from "../server/chat";
+import { listTeamDocumentsFn, type TeamDocument } from "../server/documents";
 import { Markdown } from "./Markdown";
+
+// Un documento del team (generado o subido) → vista del panel. Null si no es
+// previsualizable. Reusado por el índice Cowork (kind:"docindex").
+export function docToView(d: TeamDocument): ArtifactView | null {
+  if (d.source === "uploaded" && d.fileId) {
+    const src = `/api/attachment/${encodeURIComponent(d.fileId)}`;
+    if (d.kind === "pdf") return { kind: "pdf", title: d.title, src };
+    if (d.kind === "office") return { kind: "office", title: d.title, src };
+    return { kind: "file", title: d.title, src };
+  }
+  if (d.kind === "doc") return { kind: "doc", title: d.title, documentId: d.documentId ?? d.key, md: d.md ?? "" };
+  if (d.kind === "sheet") return { kind: "sheet", title: d.title, documentId: d.documentId ?? d.key, csv: d.md ?? "" };
+  if (d.kind === "html" && d.documentId) return { kind: "html", title: d.title, embedUrl: d.documentId };
+  return null;
+}
+
+// Cache a nivel módulo de la lista de documentos del team (patrón forms.tsx/artifacts.tsx):
+// abrir el índice 📂 muestra al instante lo cacheado y refresca en background — sin spinner
+// cada vez. Se invalida al re-abrir (refreshTick) o al recargar la app.
+let docsIndexCache: TeamDocument[] | null = null;
 
 // Panel lateral de artefactos del room. Fase 0 = visor PDF/imagen (adjuntos).
 // Fase 3 añadirá kind:"html" (editor Tiptap embebido / colab). El panel es
@@ -22,7 +43,11 @@ export type ArtifactView =
   // Redacción EN VIVO (Canvas): prosa (markdown) o tabla (csv), según `sheet`.
   | { kind: "draft"; title: string; content: string; sheet: boolean; streaming?: boolean }
   | { kind: "doc"; title: string; documentId: string; md: string } // documento vivo (markdown local + versiones)
-  | { kind: "sheet"; title: string; documentId: string; csv: string }; // hoja viva (CSV local + versiones)
+  | { kind: "sheet"; title: string; documentId: string; csv: string } // hoja viva (CSV local + versiones)
+  // Índice Cowork: lista los documentos de UN caso (room) como tiles; clic abre uno.
+  // channelSlug para subir archivos al caso directo desde el panel (sin el agente).
+  // threadRootId (opcional): abierto desde un HILO → toggle "Este hilo / Todo el caso".
+  | { kind: "docindex"; title: string; channelId: number; channelSlug: string; threadRootId?: number };
 
 // URL del VISOR OFICIAL de Microsoft (Office Online) para un office con URL pública. Word/
 // Excel/PowerPoint renderizados fieles. Microsoft hace fetch server-side → solo sirve con
@@ -85,6 +110,23 @@ function CsvTable({ csv }: { csv: string }) {
   );
 }
 
+// Documentos office (Word/Excel/PowerPoint) por MIME o por extensión (el MIME a
+// veces llega genérico octet-stream). Se abren en el panel con preview propio
+// (mammoth docx→HTML inline) + descarga → el expediente que el usuario arroja al
+// room queda VISIBLE como artefacto, no solo como card de adjunto.
+const OFFICE_MIMES = new Set([
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document", // docx
+  "application/msword", // doc
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", // xlsx
+  "application/vnd.ms-excel", // xls
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation", // pptx
+  "application/vnd.ms-powerpoint", // ppt
+]);
+function isOfficeDoc(mime: string, name?: string | null): boolean {
+  if (OFFICE_MIMES.has(mime)) return true;
+  return /\.(docx?|xlsx?|pptx?)$/i.test(name ?? "");
+}
+
 // Mapea un adjunto a una vista de artefacto previsualizable en el panel. Devuelve
 // null solo para lo no-previsualizable (se queda como card de descarga en la lista).
 export function viewFromAttachment(a: {
@@ -99,6 +141,7 @@ export function viewFromAttachment(a: {
   if (mime.startsWith("image/")) return { kind: "image", title, src };
   if (mime.startsWith("audio/")) return { kind: "audio", title, src };
   if (mime.startsWith("video/")) return { kind: "video", title, src };
+  if (isOfficeDoc(mime, a.name)) return { kind: "office", title, src };
   return null;
 }
 
@@ -108,12 +151,19 @@ const CHAT_MIN = 380; // deja SIEMPRE espacio de chat a la izquierda (split, no 
 const STORE_KEY = "eb_artifact_w";
 
 export default function ArtifactPanel({
-  artifact,
+  artifact: rootArtifact,
   onClose,
 }: {
   artifact: ArtifactView | null;
   onClose: () => void;
+  onOpen?: (a: ArtifactView) => void; // (compat) el caller aún lo pasa; el drill-down es interno (`detail`)
 }) {
+  // Drill-down índice→doc como estado INTERNO (`detail`): NO cambia `rootArtifact` (el
+  // estado de "abierto") → el aside no se remonta al seleccionar → SIN re-slide/doble
+  // apertura. `artifact` = la vista EFECTIVA (todo el render existente la usa sin cambios).
+  // `open` = único disparador del slide (abrir/cerrar). Ver análisis en el plan.
+  const [detail, setDetail] = useState<ArtifactView | null>(null);
+  const artifact = detail ?? rootArtifact;
   const t = useT();
   const [width, setWidth] = useState<number>(() => {
     if (typeof window === "undefined") return DEFAULT_W;
@@ -125,20 +175,41 @@ export default function ArtifactPanel({
   widthRef.current = width;
   const dragging = useRef(false);
   const [isDragging, setIsDragging] = useState(false);
+  const scrollRef = useRef<HTMLDivElement>(null); // contenedor del draft en vivo → auto-scroll al escribir
   // Preview PROPIO de un .docx ADJUNTO (subido por el usuario): EasyBits lo convierte a HTML
   // (mammoth) y lo renderizamos inline. "loading" | HTML sanitizado | "error" (xlsx/pptx no
   // soportados → descarga). Los docs que REDACTA el agente NO pasan por aquí: son `md` local.
   const [officeHtml, setOfficeHtml] = useState<string | null>(null);
   const [officeState, setOfficeState] = useState<"idle" | "loading" | "error">("idle");
+  const [sheetCsv, setSheetCsv] = useState<string | null>(null); // xlsx → CSV (SheetJS, lazy)
+  const [sheetState, setSheetState] = useState<"idle" | "loading" | "error">("idle");
+  const [idxDocs, setIdxDocs] = useState<TeamDocument[] | null>(null); // docindex: docs del room (Cowork)
+  const [idxScope, setIdxScope] = useState<"thread" | "case">("case"); // alcance del índice
+  const [uploadingDoc, setUploadingDoc] = useState(false); // subir archivo al caso desde el índice
+  const [dropActive, setDropActive] = useState(false); // arrastrar-y-soltar sobre el índice
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [refreshTick, setRefreshTick] = useState(0); // botón "refrescar" del header (re-fetch manual)
-  const [expanded, setExpanded] = useState(false); // botón "expandir" (ancho máximo)
   const [downloading, setDownloading] = useState(false); // el export docx es lento → spinner
   // Identidad ESTABLE del artefacto → el effect de fetch office NO se re-dispara al reabrir
   // el MISMO artefacto. El draft usa id constante para que su streaming NO resetee.
   const officeSrc = artifact?.kind === "office" ? artifact.src : null;
+  // xlsx no lo cubre mammoth (docx-only) → lo previsualizamos con SheetJS (§effect abajo).
+  const isXlsx = artifact?.kind === "office" && /\.xlsx?$/i.test(artifact.title ?? "");
   const isDocLike = artifact?.kind === "doc" || artifact?.kind === "office" || artifact?.kind === "sheet";
+  // Badge por tipo REAL: sheet vivo = CSV, doc generado = DOCX, office = su extensión
+  // real (XLSX/PPTX/DOCX) derivada del nombre — no hardcodear DOCX para todo office.
+  const extBadge = (title?: string): string | null => {
+    const m = /\.(docx?|xlsx?|pptx?|pdf)$/i.exec(title ?? "");
+    return m ? m[1].toUpperCase() : null;
+  };
   const docBadge =
-    artifact?.kind === "sheet" ? "CSV" : artifact?.kind === "doc" || artifact?.kind === "office" ? "DOCX" : null;
+    artifact?.kind === "sheet"
+      ? "CSV"
+      : artifact?.kind === "doc"
+        ? "DOCX"
+        : artifact?.kind === "office"
+          ? extBadge(artifact.title) ?? "DOCX"
+          : null;
   const downloadHref =
     artifact?.kind === "doc"
       ? `/api/doc-docx/${encodeURIComponent(artifact.documentId)}?name=${encodeURIComponent(artifact.title || "documento")}`
@@ -157,16 +228,24 @@ export default function ArtifactPanel({
             ? "draft"
             : artifact.kind === "html"
               ? `html:${artifact.embedUrl}`
-              : `${artifact.kind}:${artifact.src}`;
+              : artifact.kind === "docindex"
+                ? `docindex:${artifact.channelId}`
+                : `${artifact.kind}:${artifact.src}`;
   // Al cambiar a OTRO artefacto, resetea el preview office.
   useEffect(() => {
     setOfficeHtml(null);
     setOfficeState("idle");
+    setSheetCsv(null);
+    setSheetState("idle");
   }, [artifactId]);
-  // Fetch del HTML del preview de un .docx ADJUNTO (mammoth). Solo office; el doc del agente
-  // se renderiza desde su markdown local (sin fetch).
+  // Al abrir/cerrar un artefacto NUEVO desde afuera (rootArtifact cambia), sal del detalle.
+  // Seleccionar en el índice (setDetail) NO cambia rootArtifact → el detalle persiste.
   useEffect(() => {
-    if (!officeSrc) return;
+    setDetail(null);
+  }, [rootArtifact]);
+  // Fetch del HTML del preview de un .docx ADJUNTO (mammoth). Solo docx; xlsx va por SheetJS.
+  useEffect(() => {
+    if (!officeSrc || isXlsx) return;
     let alive = true;
     setOfficeState("loading");
     (async () => {
@@ -187,7 +266,66 @@ export default function ArtifactPanel({
     return () => {
       alive = false;
     };
-  }, [officeSrc, refreshTick]);
+  }, [officeSrc, refreshTick, isXlsx]);
+  // Preview de XLSX: SheetJS (lazy) parsea el .xlsx → CSV → tabla (mammoth es docx-only).
+  // Fetch same-origin del adjunto (/api/attachment) con la sesión del navegador.
+  useEffect(() => {
+    if (!officeSrc || !isXlsx) return;
+    let alive = true;
+    setSheetState("loading");
+    xlsxToCsvFn({ data: { url: officeSrc } })
+      .then((r) => {
+        if (!alive) return;
+        if (r.ok) {
+          setSheetCsv(r.csv);
+          setSheetState("idle");
+        } else {
+          setSheetState("error");
+        }
+      })
+      .catch(() => {
+        if (alive) setSheetState("error");
+      });
+    return () => {
+      alive = false;
+    };
+  }, [officeSrc, isXlsx, refreshTick]);
+  // Índice Cowork (kind:"docindex"): trae los docs del team (ya scopeados por membresía)
+  // y los filtra al caso (room) abierto. Tiles → clic abre el doc vía onOpen.
+  const idxChannelId = rootArtifact?.kind === "docindex" ? rootArtifact.channelId : null;
+  const idxThreadRootId = rootArtifact?.kind === "docindex" ? rootArtifact.threadRootId : undefined;
+  // Default del alcance: abierto desde un HILO → "Este hilo"; desde el room → "Todo el caso".
+  useEffect(() => {
+    setIdxScope(idxThreadRootId != null ? "thread" : "case");
+  }, [idxChannelId, idxThreadRootId]);
+  const shownDocs =
+    idxDocs && idxScope === "thread" && idxThreadRootId != null
+      ? idxDocs.filter((d) => d.threadRootId === idxThreadRootId)
+      : idxDocs;
+  useEffect(() => {
+    if (idxChannelId == null) return;
+    let alive = true;
+    // Cache-first: pinta lo cacheado al instante (sin spinner), refresca en background.
+    if (docsIndexCache) setIdxDocs(docsIndexCache.filter((d) => d.channelId === idxChannelId));
+    else setIdxDocs(null);
+    listTeamDocumentsFn()
+      .then((all) => {
+        docsIndexCache = all;
+        if (alive) setIdxDocs(all.filter((d) => d.channelId === idxChannelId));
+      })
+      .catch(() => { if (alive && !docsIndexCache) setIdxDocs([]); });
+    return () => { alive = false; };
+  }, [idxChannelId, refreshTick]);
+  // Auto-scroll EN VIVO: mientras el agente ESCRIBE el draft (streaming), seguimos el
+  // texto conforme aparece → "ver construirse" el documento. Solo durante el streaming
+  // (al terminar, no peleamos el scroll del usuario).
+  const draftLen = artifact?.kind === "draft" ? artifact.content.length : 0;
+  const draftStreaming = artifact?.kind === "draft" && !!artifact.streaming;
+  useEffect(() => {
+    if (!draftStreaming) return;
+    const el = scrollRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [draftLen, draftStreaming]);
   // Descarga con FEEDBACK: el export docx (doc) tarda; fetch same-origin → blob → download,
   // con spinner. Office = URL pública externa → navegación directa (evita CORS del blob).
   // Sheet = el CSV vive en el cliente → blob directo, sin red.
@@ -230,6 +368,31 @@ export default function ArtifactPanel({
     }
   };
 
+  // Subir archivo(s) directo al CASO desde el índice (sin pasar por el agente): sube a
+  // EasyBits privado (/api/upload) y lo cuelga del room como adjunto SIN @mención → el
+  // agente no responde; el archivo aparece en el índice y en el room.
+  const doUploadToCase = async (files: FileList | null) => {
+    if (!files?.length || artifact?.kind !== "docindex") return;
+    const slug = artifact.channelSlug;
+    setUploadingDoc(true);
+    try {
+      for (const f of Array.from(files)) {
+        const fd = new FormData();
+        fd.append("file", f);
+        const r = await fetch("/api/upload", { method: "POST", body: fd });
+        if (!r.ok) continue;
+        const up = (await r.json()) as { fileId: string; mime: string; size: number; name: string };
+        await postMessage({ data: { slug, parentId: null, body: "", attachments: [up] } });
+      }
+      docsIndexCache = null; // invalida el cache → el refresh trae el nuevo
+      setRefreshTick((n) => n + 1);
+    } catch {
+      alert(t("No se pudo subir. Intenta de nuevo."));
+    } finally {
+      setUploadingDoc(false);
+    }
+  };
+
   useEffect(() => {
     const onMove = (e: PointerEvent) => {
       if (!dragging.current) return;
@@ -254,26 +417,27 @@ export default function ArtifactPanel({
     };
   }, []);
 
-  // ↗ "abrir en pestaña": solo cuando abrir la URL MUESTRA algo (html/pdf/imagen).
-  // En office la URL es un .docx → el navegador la DESCARGA (no es "abrir"), así que
-  // no ponemos el ↗ ahí (la descarga vive en su botón). Draft no tiene URL.
-  const externalHref =
-    !artifact ||
-    artifact.kind === "draft" ||
-    artifact.kind === "office" ||
-    artifact.kind === "doc" ||
-    artifact.kind === "sheet"
+  // ↗ "abrir en pestaña nueva" (reemplaza el botón expandir, que era defectuoso). Donde
+  // hay URL real: docindex → la página global /artifacts; office/pdf/imagen/etc → su src
+  // (firmado); html → embed. doc/sheet (md local) y draft no tienen URL → sin botón.
+  const newTabHref =
+    !artifact || artifact.kind === "draft" || artifact.kind === "doc" || artifact.kind === "sheet"
       ? undefined
-      : artifact.kind === "html"
-        ? artifact.embedUrl
-        : artifact.src;
+      : artifact.kind === "docindex"
+        ? "/artifacts"
+        : artifact.kind === "html"
+          ? artifact.embedUrl
+          : artifact.src;
 
   return (
     <AnimatePresence>
-      {artifact ? (
+      {/* Estructura IDÉNTICA a la de ayer (HEAD 3697c7b, cierre animado OK): fragmento
+          gated en `rootArtifact` (abrir/cerrar). El drill-down índice→doc es INTERNO
+          (`detail`) → NO cambia `rootArtifact` → el aside NO se remonta → sin re-slide.
+          El contenido usa la sombra `artifact` (= detail ?? rootArtifact), envuelto para TS. */}
+      {rootArtifact ? (
         <>
-          {/* Backdrop SOLO en móvil (overlay). En desktop el panel va en-flujo (split)
-              y NO oscurece el chat → puedes pedir y ver a la vez. */}
+          {/* Backdrop SOLO en móvil (overlay). En desktop el panel va en-flujo (split). */}
           <motion.div
             className="fixed inset-0 z-40 bg-black/60 md:hidden"
             initial={{ opacity: 0 }}
@@ -283,17 +447,13 @@ export default function ArtifactPanel({
           />
           <motion.aside
             className="fixed right-0 top-0 z-50 flex h-full max-w-full overflow-hidden border-l border-border bg-surface shadow-2xl md:relative md:z-auto md:h-auto md:max-w-[75vw] md:shrink-0 md:shadow-none md:self-stretch"
-            // Animamos el WIDTH (no x): en desktop el panel va en-flujo (flex child);
-            // con x el hueco flex quedaba reservado hasta el unmount → el chat saltaba
-            // de golpe al terminar el cierre. Animando width, el chat se expande/colapsa
-            // suave. Durante el resize (drag) la transición es instantánea para no lagear.
             initial={{ width: 0 }}
             animate={{ width }}
             exit={{ width: 0 }}
-            transition={
-              isDragging ? { duration: 0 } : { type: "spring", stiffness: 320, damping: 34 }
-            }
+            transition={isDragging ? { duration: 0 } : { type: "spring", stiffness: 320, damping: 34 }}
           >
+            {artifact ? (
+              <>
             {/* Handle de redimensión: arrastra el borde izquierdo; doble clic resetea. */}
             <div
               onPointerDown={(e) => {
@@ -322,9 +482,23 @@ export default function ArtifactPanel({
             {/* Ancho fijo = target: mientras el aside anima su width, este contenido
                 mantiene su tamaño y el overflow-hidden lo recorta → efecto slide/reveal
                 (no se aplasta). */}
+            {/* Contenido: cambio INSTANTÁNEO al alternar de artefacto estando el panel ya
+                abierto (sin fade ni re-animación → no se siente como "abrir de nuevo"). El
+                deslizamiento vive solo en el motion.aside (abrir/cerrar). */}
             <div className="flex min-w-0 shrink-0 flex-col" style={{ width }}>
               <header className="flex flex-shrink-0 items-center gap-1 border-b border-border bg-surface-2 px-3 py-2">
-                <FileText size={16} className="mr-1 shrink-0 text-muted" />
+                {detail ? (
+                  <button
+                    type="button"
+                    onClick={() => setDetail(null)}
+                    title={t("Volver a Documentos")}
+                    className="mr-0.5 inline-flex shrink-0 items-center gap-0.5 rounded-md py-1 pl-1 pr-1.5 text-xs font-medium text-muted transition hover:bg-surface-3 hover:text-ink"
+                  >
+                    <ChevronLeft size={16} /> {t("Documentos")}
+                  </button>
+                ) : (
+                  <FileText size={16} className="mr-1 shrink-0 text-muted" />
+                )}
                 <span className="min-w-0 flex-1 truncate text-sm font-medium text-ink">
                   {artifact.title || t("Documento")}
                   {docBadge ? <span className="ml-1.5 text-xs font-normal text-muted">· {docBadge}</span> : null}
@@ -339,7 +513,7 @@ export default function ArtifactPanel({
                         type="button"
                         onClick={doDownload}
                         disabled={downloading}
-                        title={downloading ? t("Descargando…") : artifact.kind === "sheet" ? t("Descargar CSV") : t("Descargar Word")}
+                        title={downloading ? t("Descargando…") : artifact.kind === "sheet" ? t("Descargar CSV") : artifact.kind === "office" ? t("Descargar") : t("Descargar Word")}
                         className="grid size-7 place-items-center rounded-md text-muted transition hover:bg-surface-3 hover:text-brand disabled:opacity-60"
                       >
                         {downloading ? <Loader2 size={15} className="animate-spin" /> : <Download size={15} />}
@@ -356,9 +530,10 @@ export default function ArtifactPanel({
                       </button>
                     ) : null}
                   </>
-                ) : externalHref ? (
+                ) : null}
+                {newTabHref ? (
                   <a
-                    href={externalHref}
+                    href={newTabHref}
                     target="_blank"
                     rel="noreferrer"
                     className="grid size-7 place-items-center rounded-md text-muted transition hover:bg-surface-3 hover:text-brand"
@@ -367,18 +542,6 @@ export default function ArtifactPanel({
                     <ExternalLink size={15} />
                   </a>
                 ) : null}
-                <button
-                  type="button"
-                  onClick={() => {
-                    const max = window.innerWidth - CHAT_MIN;
-                    setExpanded((e) => !e);
-                    setWidth(expanded ? Math.min(DEFAULT_W, max) : max);
-                  }}
-                  title={expanded ? t("Reducir") : t("Expandir")}
-                  className="grid size-7 place-items-center rounded-md text-muted transition hover:bg-surface-3 hover:text-brand"
-                >
-                  {expanded ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
-                </button>
                 <button
                   type="button"
                   onClick={onClose}
@@ -390,10 +553,125 @@ export default function ArtifactPanel({
               </header>
 
               <div className="relative min-h-0 flex-1 overflow-auto bg-surface-3">
-                {artifact.kind === "draft" ? (
+                {artifact.kind === "docindex" ? (
+                  // Índice Cowork: los documentos del caso (room). Arriba, subir archivo
+                  // directo al caso (sin el agente); abajo, la lista; clic abre uno.
+                  // Toda el área es zona de DROP (arrastrar-y-soltar archivos al caso).
+                  <div
+                    className={`relative flex min-h-0 flex-1 flex-col p-3 sm:p-4 ${dropActive ? "ring-2 ring-inset ring-brand" : ""}`}
+                    onDragOver={(e) => {
+                      e.preventDefault();
+                      if (!dropActive) setDropActive(true);
+                    }}
+                    onDragLeave={(e) => {
+                      if (e.currentTarget === e.target) setDropActive(false);
+                    }}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      setDropActive(false);
+                      void doUploadToCase(e.dataTransfer.files);
+                    }}
+                  >
+                    {dropActive ? (
+                      <div className="pointer-events-none absolute inset-0 z-10 grid place-items-center rounded-lg bg-brand/10 text-sm font-semibold text-brand backdrop-blur-[1px]">
+                        <span className="inline-flex items-center gap-2">
+                          <Upload size={18} /> {t("Suelta para subir a este caso")}
+                        </span>
+                      </div>
+                    ) : null}
+                    <div className="mb-3 flex shrink-0 items-center justify-between gap-2">
+                      <span className="truncate text-xs text-muted">
+                        {shownDocs ? `${shownDocs.length} ${shownDocs.length === 1 ? t("documento") : t("documentos")}` : ""}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => fileInputRef.current?.click()}
+                        disabled={uploadingDoc}
+                        title={t("Subir archivo a este caso")}
+                        className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-border bg-surface px-3 py-1.5 text-xs font-medium text-ink transition hover:border-brand disabled:opacity-60"
+                      >
+                        {uploadingDoc ? <Loader2 size={13} className="animate-spin" /> : <Upload size={13} />}
+                        {uploadingDoc ? t("Subiendo…") : t("Subir archivo")}
+                      </button>
+                      <input
+                        ref={fileInputRef}
+                        type="file"
+                        multiple
+                        className="hidden"
+                        onChange={(e) => {
+                          void doUploadToCase(e.target.files);
+                          e.currentTarget.value = "";
+                        }}
+                      />
+                    </div>
+                    {idxThreadRootId != null ? (
+                      // Alcance: docs de ESTE hilo vs TODO el caso (mismo artefacto).
+                      <div className="mb-3 flex shrink-0 gap-1 rounded-lg bg-surface-3 p-0.5 text-xs font-medium">
+                        <button
+                          type="button"
+                          onClick={() => setIdxScope("thread")}
+                          className={`flex-1 rounded-md px-2 py-1 transition ${idxScope === "thread" ? "bg-surface text-ink shadow-sm" : "text-muted hover:text-ink"}`}
+                        >
+                          {t("Este hilo")}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setIdxScope("case")}
+                          className={`flex-1 rounded-md px-2 py-1 transition ${idxScope === "case" ? "bg-surface text-ink shadow-sm" : "text-muted hover:text-ink"}`}
+                        >
+                          {t("Todo el room")}
+                        </button>
+                      </div>
+                    ) : null}
+                    <div className="min-h-0 flex-1 overflow-auto">
+                    {shownDocs === null ? (
+                      <div className="grid h-full place-items-center text-muted">
+                        <Loader2 size={20} className="animate-spin" />
+                      </div>
+                    ) : shownDocs.length === 0 ? (
+                      <div className="grid h-full place-items-center px-6 text-center text-sm text-muted">
+                        {idxScope === "thread" ? t("Este hilo aún no tiene documentos.") : t("Aún no hay documentos en este caso.")}
+                      </div>
+                    ) : (
+                      <div className="flex flex-col gap-2">
+                        {shownDocs.map((d) => {
+                          const v = docToView(d);
+                          return (
+                            <button
+                              key={d.key}
+                              type="button"
+                              onClick={() => {
+                                if (!v) return;
+                                // Drill-down INTERNO: no cambia rootArtifact → el aside no se
+                                // remonta (sin re-slide). "← Documentos" vuelve con setDetail(null).
+                                setDetail(v);
+                              }}
+                              className={`flex items-start gap-3 rounded-xl border border-border bg-surface p-3 text-left transition hover:border-brand ${v ? "cursor-pointer" : "cursor-default opacity-70"}`}
+                            >
+                              <div className="grid size-9 shrink-0 place-items-center rounded-lg bg-surface-3">
+                                <FileText size={18} className="text-brand" />
+                              </div>
+                              <div className="min-w-0 flex-1">
+                                <div className="truncate text-sm font-medium text-ink">{d.title}</div>
+                                <div className="mt-0.5 truncate text-xs text-muted">
+                                  {d.source === "generated" ? t("Redactado") : t("Subido")} · {d.kind === "sheet" ? "hoja" : d.kind}
+                                  {d.createdAt
+                                    ? ` · ${new Date(d.createdAt * 1000).toLocaleString("es-MX", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}`
+                                    : ""}
+                                  {d.versions && d.versions > 1 ? ` · ${d.versions} versiones` : ""}
+                                </div>
+                              </div>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                    </div>
+                  </div>
+                ) : artifact.kind === "draft" ? (
                   // Redacción EN VIVO (Canvas): prosa (markdown) o tabla (csv) streamea a la
                   // hoja mientras el agente escribe; al cerrar el fence pasa a doc/sheet real.
-                  <div className="min-h-0 flex-1 overflow-auto bg-surface-3 p-4 sm:p-6">
+                  <div ref={scrollRef} className="min-h-0 flex-1 overflow-auto bg-surface-3 p-4 sm:p-6">
                     {artifact.sheet ? (
                       <>
                         <CsvTable csv={artifact.content} />
@@ -433,7 +711,25 @@ export default function ArtifactPanel({
                   // Word/Excel/PowerPoint. Fallback final: card de descarga.
                   <div className="flex h-full flex-col">
                     <div className="min-h-0 flex-1 overflow-auto bg-surface-3 p-4 sm:p-6">
-                      {officeState === "loading" ? (
+                      {isXlsx ? (
+                        sheetState === "loading" ? (
+                          <div className="grid h-full place-items-center text-muted">
+                            <Loader2 size={20} className="animate-spin" />
+                          </div>
+                        ) : sheetCsv && sheetCsv.trim() ? (
+                          <div className="mx-auto max-w-full rounded-sm bg-white p-4 shadow-md sm:p-6">
+                            <CsvTable csv={sheetCsv} />
+                          </div>
+                        ) : (
+                          <div className="grid h-full place-items-center p-6">
+                            <a href={artifact.src} target="_blank" rel="noreferrer" download className="flex flex-col items-center gap-3 rounded-xl border border-border bg-surface px-8 py-10 text-center transition hover:border-brand">
+                              <FileText size={40} className="text-brand" />
+                              <span className="max-w-xs truncate text-sm text-ink">{artifact.title || t("Documento")}</span>
+                              <span className="text-xs text-muted">{t("Descarga el archivo")}</span>
+                            </a>
+                          </div>
+                        )
+                      ) : officeState === "loading" ? (
                         <div className="grid h-full place-items-center text-muted">
                           <Loader2 size={20} className="animate-spin" />
                         </div>
@@ -512,6 +808,8 @@ export default function ArtifactPanel({
             {/* Catcher: durante el arrastre cubre todo (incluido el iframe) para que el
                 pointer no se pierda dentro del visor. */}
             {isDragging ? <div className="fixed inset-0 z-[60] cursor-col-resize" /> : null}
+              </>
+            ) : null}
           </motion.aside>
         </>
       ) : null}

@@ -152,8 +152,47 @@ export const officeToHtmlFn = createServerFn({ method: "POST" })
   .validator((d: { url: string }) => d)
   .handler(async ({ data }) => {
     const { officeToHtml } = await import("./easybits-documents.server");
-    const html = await officeToHtml(data.url);
+    let url = data.url;
+    // Adjunto privado del room (/api/attachment/:fileId): EasyBits no puede hacer fetch
+    // de esa URL local y autenticada. Resuélvela a la readUrl FIRMADA del file (mismo
+    // objeto EasyBits privado que subió api.upload) para que el preview mammoth funcione.
+    const m = url.match(/^\/api\/attachment\/(.+)$/);
+    if (m) {
+      const { mintReadUrl } = await import("./easybits-files.server");
+      const signed = await mintReadUrl(decodeURIComponent(m[1])).catch(() => null);
+      if (signed) url = signed;
+    }
+    const html = await officeToHtml(url);
     return html ? { ok: true as const, html } : { ok: false as const };
+  });
+
+// XLSX → CSV para el visor: mammoth es docx-only, así que las hojas de cálculo se
+// parsean con SheetJS EN EL SERVER (el adjunto /api/attachment redirige a una URL
+// firmada cross-origin que el fetch del browser no puede leer por CORS). Server-side
+// resolvemos la URL firmada y leemos los bytes sin CORS. Devuelve la 1ª hoja como CSV.
+export const xlsxToCsvFn = createServerFn({ method: "POST" })
+  .validator((d: { url: string }) => d)
+  .handler(async ({ data }) => {
+    let url = data.url;
+    const m = url.match(/^\/api\/attachment\/(.+)$/);
+    if (m) {
+      const { mintReadUrl } = await import("./easybits-files.server");
+      const signed = await mintReadUrl(decodeURIComponent(m[1])).catch(() => null);
+      if (signed) url = signed;
+    }
+    try {
+      const r = await fetch(url);
+      if (!r.ok) return { ok: false as const };
+      const buf = Buffer.from(await r.arrayBuffer());
+      const XLSX = await import("xlsx");
+      const wb = XLSX.read(buf, { type: "buffer" });
+      const first = wb.SheetNames[0];
+      const ws = first ? wb.Sheets[first] : null;
+      const csv = ws ? XLSX.utils.sheet_to_csv(ws) : "";
+      return { ok: true as const, csv, sheets: wb.SheetNames };
+    } catch {
+      return { ok: false as const };
+    }
   });
 
 export const deleteMessageFn = createServerFn({ method: "POST" })

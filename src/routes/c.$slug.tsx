@@ -33,6 +33,7 @@ import {
   Menu,
   Paperclip,
   FileText,
+  FolderOpen,
   Download,
   Loader2,
   Archive,
@@ -1339,8 +1340,15 @@ function ChannelPage() {
       )}
       {/* Panel de artefactos: columna fija a la derecha (desktop) u overlay (móvil).
           Se rinde null solo cuando no hay artefacto abierto. */}
-      <ArtifactBoundary key={openArtifact?.title ?? "none"}>
-        <ArtifactPanel artifact={openArtifact} onClose={() => setOpenArtifact(null)} />
+      {/* ⚠️ ANIMACIÓN DEL PANEL — NO regresar a `key={...}` aquí. Un `key` atado al artefacto
+          (p.ej. openArtifact?.title) cambia al CERRAR o CAMBIAR de doc → React REMONTA el
+          ArtifactPanel → destruye su <AnimatePresence> interno → el slide de CIERRE no corre
+          y hay "doble apertura" al seleccionar. Usar SIEMPRE `resetKey` (resetea el error
+          boundary SIN remontar). El drill-down lista↔detalle es estado INTERNO del panel
+          (`detail`), no cambia `openArtifact`. Ver plan moonlit-soaring-kitten.md + memoria
+          project_gteams_legal_vertical_live (GOTCHA de oro). */}
+      <ArtifactBoundary resetKey={openArtifact?.title ?? "none"}>
+        <ArtifactPanel artifact={openArtifact} onClose={() => setOpenArtifact(null)} onOpen={setOpenArtifact} />
       </ArtifactBoundary>
       <AnimatePresence>
         {paletteOpen && (
@@ -1666,14 +1674,14 @@ function Sidebar({
             <FileText size={16} className="shrink-0" />
             <span className="truncate">{t("Formularios")}</span>
           </Link>
-          {/* Artefactos del team (crear + guardar en GTeams). Debajo de Formularios.
-              SCAFFOLD (WIP) — la página es un stub; ver docs/ARTIFACTS-STUDIO.md. */}
+          {/* Documentos del team: los que redacta @ghosty (eb-doc) + los subidos al
+              chat (pdf/office). Ruta /artifacts, página "Documentos". */}
           <Link
             to="/artifacts"
             className="flex w-full items-center gap-2 rounded-lg px-2 py-2.5 text-sm md:py-1.5 text-muted hover:bg-surface-3 hover:text-ink"
           >
             <Layers size={16} className="shrink-0" />
-            <span className="truncate">{t("Artefactos")}</span>
+            <span className="truncate">{t("Documentos")}</span>
           </Link>
         </div>
         <div className="flex items-center justify-between px-2 pb-1 pt-2">
@@ -2432,6 +2440,25 @@ function NewDmModal({
 }
 
 // Buscador (Fase 2.4): botón en el header → overlay tipo spotlight con resultados.
+// Botón de Documentos del CASO (matter-centric): abre el índice Cowork del room en
+// el panel (todos sus docs generados + subidos). Convención Slack/Zulip: acción por
+// canal a la derecha del header. Mismo channelId para el room y sus hilos.
+function DocsButton({ channelId, channelSlug, threadRootId }: { channelId: number; channelSlug: string; threadRootId?: number }) {
+  const t = useT();
+  const { onOpenArtifact } = useContext(ChatCtx);
+  return (
+    <button
+      type="button"
+      onClick={() => onOpenArtifact({ kind: "docindex", title: t("Documentos"), channelId, channelSlug, threadRootId })}
+      title={t("Documentos del caso")}
+      aria-label={t("Documentos del caso")}
+      className="grid h-9 w-9 shrink-0 place-items-center rounded-lg text-muted transition hover:bg-surface-3 hover:text-ink"
+    >
+      <FolderOpen size={17} />
+    </button>
+  );
+}
+
 function SearchButton({ onOpenDm }: { onOpenDm: (id: number) => void }) {
   const t = useT();
   const [open, setOpen] = useState(false);
@@ -2888,6 +2915,7 @@ function Flow({
               <span className="hidden sm:inline">{t("{n} en línea", { n: onlineCount })}</span>
             </span>
           )}
+          <DocsButton channelId={channel.id} channelSlug={channel.slug} />
           <SearchButton onOpenDm={onOpenDm} />
         </div>
       </header>
@@ -2980,6 +3008,9 @@ function ThreadView({
           <button onClick={onBack} className="truncate text-xs text-muted transition hover:text-brand">
             {channel.name}
           </button>
+        </div>
+        <div className="ml-auto shrink-0">
+          <DocsButton channelId={channel.id} channelSlug={channel.slug} threadRootId={threadId} />
         </div>
       </header>
       <div ref={scrollRef} onScroll={onScroll} className="mx-auto w-full max-w-4xl flex-1 space-y-1 overflow-y-auto px-4 py-4 no-scrollbar">
@@ -3227,8 +3258,9 @@ function AttachmentList({ attachments }: { attachments: Attachment[] }) {
             </button>
           );
         }
-        // PDF → card que abre el visor en el panel lateral.
-        if (view?.kind === "pdf") {
+        // PDF y Office (docx/xlsx/pptx) → card que abre el VISOR en el panel lateral
+        // (preview mammoth / tabla xlsx), no descarga. La descarga vive en el header del panel.
+        if (view?.kind === "pdf" || view?.kind === "office") {
           return (
             <button
               key={a.id}
@@ -3314,10 +3346,23 @@ function artifactToView(a: Artifact): ArtifactView {
 // forma inesperada) a un placeholder — NUNCA debe tumbar el hilo/room entero. Incidente
 // 2026-07-09: un `.trim()` sobre md/csv undefined en ArtifactPanel crasheaba el room al
 // abrir hilos con artefacto. Reset por `key` (id del artefacto) al montar la boundary.
-class ArtifactBoundary extends Component<{ children: ReactNode; fallback?: ReactNode }, { failed: boolean }> {
-  state = { failed: false };
+class ArtifactBoundary extends Component<
+  { children: ReactNode; fallback?: ReactNode; resetKey?: unknown },
+  { failed: boolean; key: unknown }
+> {
+  state = { failed: false, key: this.props.resetKey };
   static getDerivedStateFromError() {
     return { failed: true };
+  }
+  // Resetea el estado de error cuando cambia `resetKey` (nuevo artefacto) SIN remontar los
+  // hijos → el ArtifactPanel persiste montado y su AnimatePresence anima abrir/cerrar. Antes
+  // se reseteaba con `key` en el JSX, que remontaba el panel al cerrar → mataba el exit.
+  static getDerivedStateFromProps(
+    props: { resetKey?: unknown },
+    state: { failed: boolean; key: unknown }
+  ) {
+    if (props.resetKey !== state.key) return { failed: false, key: props.resetKey };
+    return null;
   }
   componentDidCatch(err: unknown) {
     console.warn("[artifact] render failed:", err);
