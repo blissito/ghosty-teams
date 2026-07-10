@@ -385,7 +385,10 @@ export default function ArtifactPanel({
   // agente no responde; el archivo aparece en el índice y en el room.
   const doUploadToCase = async (files: FileList | null) => {
     if (!files?.length || artifact?.kind !== "docindex") return;
-    const slug = artifact.channelSlug;
+    // Sube al room REAL del hilo (derivado de sus docs), NO al room seleccionado: en un hilo
+    // cuyo room ≠ el seleccionado (o estando en #general) el slug seleccionado mandaba el
+    // archivo al chat equivocado y no aparecía en esta lista. Fallback al slug del artefacto.
+    const slug = threadDocs?.[0]?.channelSlug ?? roomDocs?.[0]?.channelSlug ?? artifact.channelSlug;
     setUploadingDoc(true);
     try {
       for (const f of Array.from(files)) {
@@ -677,9 +680,19 @@ export default function ArtifactPanel({
                               }}
                               className={`flex items-start gap-3 rounded-xl border border-border bg-surface p-3 text-left transition hover:border-brand ${v ? "cursor-pointer" : "cursor-default opacity-70"}`}
                             >
-                              <div className="grid size-9 shrink-0 place-items-center rounded-lg bg-surface-3">
-                                <FileText size={18} className="text-brand" />
-                              </div>
+                              {d.kind === "image" && d.fileId ? (
+                                // Thumbnail real de la imagen subida (el tile ya no muestra ícono genérico).
+                                <img
+                                  src={`/api/attachment/${encodeURIComponent(d.fileId)}`}
+                                  alt=""
+                                  loading="lazy"
+                                  className="size-9 shrink-0 rounded-lg object-cover"
+                                />
+                              ) : (
+                                <div className="grid size-9 shrink-0 place-items-center rounded-lg bg-surface-3">
+                                  <FileText size={18} className="text-brand" />
+                                </div>
+                              )}
                               <div className="min-w-0 flex-1">
                                 <div className="truncate text-sm font-medium text-ink">{d.title}</div>
                                 <div className="mt-0.5 truncate text-xs text-muted">
