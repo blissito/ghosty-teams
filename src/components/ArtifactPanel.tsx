@@ -298,20 +298,31 @@ export default function ArtifactPanel({
   useEffect(() => {
     setIdxScope(idxThreadRootId != null ? "thread" : "case");
   }, [idxChannelId, idxThreadRootId]);
-  const shownDocs =
-    idxDocs && idxScope === "thread" && idxThreadRootId != null
-      ? idxDocs.filter((d) => d.threadRootId === idxThreadRootId)
-      : idxDocs;
+  // Docs de ESTE hilo: por threadRootId (GLOBAL) → funciona aunque el room seleccionado no
+  // sea el del hilo. La "sala" real del índice = el canal de esos docs (o idxChannelId si el
+  // hilo aún no tiene docs). "Todo el room" muestra los docs de esa sala REAL, no la seleccionada.
+  const threadDocs =
+    idxDocs && idxThreadRootId != null ? idxDocs.filter((d) => d.threadRootId === idxThreadRootId) : null;
+  const roomChannelId = threadDocs && threadDocs.length ? threadDocs[0].channelId : idxChannelId;
+  const roomDocs = idxDocs ? idxDocs.filter((d) => d.channelId === roomChannelId) : null;
+  const roomLabel =
+    (threadDocs && threadDocs.length ? threadDocs[0].channelName : null) ??
+    (roomDocs && roomDocs.length ? roomDocs[0].channelName : null) ??
+    null;
+  const shownDocs = idxScope === "thread" && idxThreadRootId != null ? threadDocs : roomDocs;
   useEffect(() => {
     if (idxChannelId == null) return;
     let alive = true;
-    // Cache-first: pinta lo cacheado al instante (sin spinner), refresca en background.
-    if (docsIndexCache) setIdxDocs(docsIndexCache.filter((d) => d.channelId === idxChannelId));
+    // Guardamos TODOS los docs accesibles (el alcance se filtra en `shownDocs`): así el
+    // alcance "Este hilo" funciona por threadRootId aunque el room seleccionado NO sea el
+    // del hilo (ThreadView pasa el room seleccionado, no el real → el channelId podía no
+    // coincidir). Cache-first: pinta al instante, refresca en background.
+    if (docsIndexCache) setIdxDocs(docsIndexCache);
     else setIdxDocs(null);
     listTeamDocumentsFn()
       .then((all) => {
         docsIndexCache = all;
-        if (alive) setIdxDocs(all.filter((d) => d.channelId === idxChannelId));
+        if (alive) setIdxDocs(all);
       })
       .catch(() => { if (alive && !docsIndexCache) setIdxDocs([]); });
     return () => { alive = false; };
@@ -575,54 +586,71 @@ export default function ArtifactPanel({
                     {dropActive ? (
                       <div className="pointer-events-none absolute inset-0 z-10 grid place-items-center rounded-lg bg-brand/10 text-sm font-semibold text-brand backdrop-blur-[1px]">
                         <span className="inline-flex items-center gap-2">
-                          <Upload size={18} /> {t("Suelta para subir a este caso")}
+                          <Upload size={18} /> {t("Suelta para subir a este room")}
                         </span>
                       </div>
                     ) : null}
-                    <div className="mb-3 flex shrink-0 items-center justify-between gap-2">
-                      <span className="truncate text-xs text-muted">
-                        {shownDocs ? `${shownDocs.length} ${shownDocs.length === 1 ? t("documento") : t("documentos")}` : ""}
+                    {/* Nombre del ROOM (real, derivado de los docs) + conteo → claridad de dónde estás. */}
+                    <div className="mb-2 flex shrink-0 items-center gap-1.5 text-xs">
+                      <span className="min-w-0 truncate font-semibold text-ink">
+                        {idxScope === "thread" && idxThreadRootId != null
+                          ? t("Este hilo")
+                          : roomLabel
+                            ? `# ${roomLabel}`
+                            : t("Documentos")}
                       </span>
-                      <button
-                        type="button"
-                        onClick={() => fileInputRef.current?.click()}
-                        disabled={uploadingDoc}
-                        title={t("Subir archivo a este caso")}
-                        className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-border bg-surface px-3 py-1.5 text-xs font-medium text-ink transition hover:border-brand disabled:opacity-60"
-                      >
-                        {uploadingDoc ? <Loader2 size={13} className="animate-spin" /> : <Upload size={13} />}
-                        {uploadingDoc ? t("Subiendo…") : t("Subir archivo")}
-                      </button>
-                      <input
-                        ref={fileInputRef}
-                        type="file"
-                        multiple
-                        className="hidden"
-                        onChange={(e) => {
-                          void doUploadToCase(e.target.files);
-                          e.currentTarget.value = "";
-                        }}
-                      />
+                      {shownDocs ? (
+                        <span className="shrink-0 text-muted">
+                          · {shownDocs.length} {shownDocs.length === 1 ? t("documento") : t("documentos")}
+                        </span>
+                      ) : null}
                     </div>
                     {idxThreadRootId != null ? (
-                      // Alcance: docs de ESTE hilo vs TODO el caso (mismo artefacto).
+                      // Alcance: docs de ESTE hilo vs TODO el room (mismo artefacto). El room muestra su nombre.
                       <div className="mb-3 flex shrink-0 gap-1 rounded-lg bg-surface-3 p-0.5 text-xs font-medium">
                         <button
                           type="button"
                           onClick={() => setIdxScope("thread")}
-                          className={`flex-1 rounded-md px-2 py-1 transition ${idxScope === "thread" ? "bg-surface text-ink shadow-sm" : "text-muted hover:text-ink"}`}
+                          className={`flex-1 truncate rounded-md px-2 py-1 transition ${idxScope === "thread" ? "bg-surface text-ink shadow-sm" : "text-muted hover:text-ink"}`}
                         >
                           {t("Este hilo")}
                         </button>
                         <button
                           type="button"
                           onClick={() => setIdxScope("case")}
-                          className={`flex-1 rounded-md px-2 py-1 transition ${idxScope === "case" ? "bg-surface text-ink shadow-sm" : "text-muted hover:text-ink"}`}
+                          className={`flex-1 truncate rounded-md px-2 py-1 transition ${idxScope === "case" ? "bg-surface text-ink shadow-sm" : "text-muted hover:text-ink"}`}
                         >
-                          {t("Todo el room")}
+                          {roomLabel ? `# ${roomLabel}` : t("Todo el room")}
                         </button>
                       </div>
                     ) : null}
+                    {/* Área de DROP VISIBLE (además de que todo el panel acepta soltar). Clic = picker. */}
+                    <button
+                      type="button"
+                      onClick={() => fileInputRef.current?.click()}
+                      disabled={uploadingDoc}
+                      className="mb-3 flex shrink-0 items-center justify-center gap-2 rounded-lg border border-dashed border-border py-3 text-xs font-medium text-muted transition hover:border-brand hover:text-brand disabled:opacity-60"
+                    >
+                      {uploadingDoc ? (
+                        <>
+                          <Loader2 size={14} className="animate-spin" /> {t("Subiendo…")}
+                        </>
+                      ) : (
+                        <>
+                          <Upload size={14} /> {t("Arrastra archivos aquí o haz clic para subir")}
+                        </>
+                      )}
+                    </button>
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      multiple
+                      className="hidden"
+                      onChange={(e) => {
+                        void doUploadToCase(e.target.files);
+                        e.currentTarget.value = "";
+                      }}
+                    />
                     <div className="min-h-0 flex-1 overflow-auto">
                     {shownDocs === null ? (
                       <div className="grid h-full place-items-center text-muted">
@@ -630,7 +658,7 @@ export default function ArtifactPanel({
                       </div>
                     ) : shownDocs.length === 0 ? (
                       <div className="grid h-full place-items-center px-6 text-center text-sm text-muted">
-                        {idxScope === "thread" ? t("Este hilo aún no tiene documentos.") : t("Aún no hay documentos en este caso.")}
+                        {idxScope === "thread" ? t("Este hilo aún no tiene documentos.") : t("Este room aún no tiene documentos.")}
                       </div>
                     ) : (
                       <div className="flex flex-col gap-2">
