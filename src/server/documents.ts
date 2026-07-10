@@ -10,7 +10,7 @@ import { createServerFn } from "@tanstack/react-start";
 export type TeamDocument = {
   key: string;
   source: "generated" | "uploaded";
-  kind: "doc" | "sheet" | "office" | "pdf" | "html" | "file";
+  kind: "doc" | "sheet" | "office" | "pdf" | "html" | "image" | "file";
   title: string;
   channelId: number;
   channelName: string | null;
@@ -40,6 +40,7 @@ const OFFICE_MIMES = [
 function uploadedKind(mime: string, name: string): TeamDocument["kind"] {
   if (mime === "application/pdf" || /\.pdf$/i.test(name)) return "pdf";
   if (OFFICE_MIMES.includes(mime) || /\.(docx?|xlsx?|pptx?)$/i.test(name)) return "office";
+  if (mime.startsWith("image/") || /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(name)) return "image";
   return "file";
 }
 

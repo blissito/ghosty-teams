@@ -1292,7 +1292,32 @@ function ChannelPage() {
         activeView={view}
         onOpenView={openView}
       />
-      {/* Centro: vista Zulip, DM, hilo, o flujo del room (nunca drawer derecho). */}
+      {/* Centro: vista Zulip, DM, hilo, o flujo del room (nunca drawer derecho).
+          CONTENIDO envuelto en boundary: un crash de render de un hilo/flujo/DM cae a un
+          fallback RECUPERABLE (no tumba TODA la ruta / AppError) y se LOGUEA para diagnóstico.
+          resetKey = el contexto → navegar (cambiar hilo/room/vista) resetea y recupera. */}
+      <ArtifactBoundary
+        resetKey={`${channel.id}:${view ?? ""}:${openDmId ?? ""}:${openThreadId ?? ""}`}
+        fallback={
+          <section className="flex min-w-0 flex-1 flex-col items-center justify-center gap-3 p-8 text-center">
+            <div className="text-3xl">💤</div>
+            <p className="max-w-xs text-sm text-muted">
+              Algo en esta vista se atoró. No se perdió nada.
+            </p>
+            <button
+              type="button"
+              onClick={() => {
+                setOpenThreadId(null);
+                setOpenDmId(null);
+                setView(null);
+              }}
+              className="rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white transition hover:brightness-110"
+            >
+              Volver al room
+            </button>
+          </section>
+        }
+      >
       {view != null ? (
         <ViewPane
           key={`view-${view}`}
@@ -1348,6 +1373,7 @@ function ChannelPage() {
           onOpenNav={() => setNavOpen(true)}
         />
       )}
+      </ArtifactBoundary>
       {/* Panel de artefactos: columna fija a la derecha (desktop) u overlay (móvil).
           Se rinde null solo cuando no hay artefacto abierto. */}
       {/* ⚠️ ANIMACIÓN DEL PANEL — NO regresar a `key={...}` aquí. Un `key` atado al artefacto
@@ -3374,8 +3400,9 @@ class ArtifactBoundary extends Component<
     if (props.resetKey !== state.key) return { failed: false, key: props.resetKey };
     return null;
   }
-  componentDidCatch(err: unknown) {
-    console.warn("[artifact] render failed:", err);
+  componentDidCatch(err: unknown, info: unknown) {
+    // Log fuerte para diagnóstico (el fallback ya evitó tumbar la ruta).
+    console.error("[gt boundary] render failed:", err, info);
   }
   render() {
     if (this.state.failed) return this.props.fallback ?? null;

@@ -13,6 +13,7 @@ export function docToView(d: TeamDocument): ArtifactView | null {
     const src = `/api/attachment/${encodeURIComponent(d.fileId)}`;
     if (d.kind === "pdf") return { kind: "pdf", title: d.title, src };
     if (d.kind === "office") return { kind: "office", title: d.title, src };
+    if (d.kind === "image") return { kind: "image", title: d.title, src };
     return { kind: "file", title: d.title, src };
   }
   if (d.kind === "doc") return { kind: "doc", title: d.title, documentId: d.documentId ?? d.key, md: d.md ?? "" };
