@@ -500,9 +500,12 @@ export const askAgent = createServerFn({ method: "POST" })
     });
 
     // Persiste el body final (autoritativo, sin marcar "editado") y reconcilia por si
-    // se perdió algún delta (el bus es best-effort).
-    await db.setMessageBody(id, reply);
-    bus.publish(bus.ch.room(channel.id), { t: "message:body", id, body: reply });
+    // se perdió algún delta (el bus es best-effort). NUNCA persistas un body VACÍO:
+    // deepseek/ghosty-gc a veces cierra el turno en blanco → se guardaba "" en la DB y
+    // el mensaje quedaba vacío (y reaparecía vacío al refetch, borrando lo streameado).
+    const finalBody = reply.trim() ? reply : "(sin respuesta)";
+    await db.setMessageBody(id, finalBody);
+    bus.publish(bus.ch.room(channel.id), { t: "message:body", id, body: finalBody });
 
     // Si el reply referencia un documento EasyBits, lo volvemos ARTEFACTO: minteamos
     // el editor colab embebible y lo colgamos del mensaje → aparece como card que

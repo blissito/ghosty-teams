@@ -177,8 +177,11 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
       emitBody: (mid, body) => fanout({ t: "message:body", id: mid, body }),
     });
 
-    await db.setMessageBody(id, reply);
-    fanout({ t: "message:body", id, body: reply });
+    // Nunca persistas un body VACÍO (deepseek cierra el turno en blanco a veces) → el
+    // mensaje quedaba vacío. Mismo guard que el room (chat.ts).
+    const finalBody = reply.trim() ? reply : "(sin respuesta)";
+    await db.setMessageBody(id, finalBody);
+    fanout({ t: "message:body", id, body: finalBody });
 
     // Artefacto vivo en DM: si el agente generó un ```eb-doc```/```eb-sheet```, lo limpiamos
     // de la burbuja y lo commiteamos LOCAL (misma verdad markdown/csv que en el room). En DM
