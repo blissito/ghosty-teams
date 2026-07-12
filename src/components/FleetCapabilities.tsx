@@ -16,7 +16,7 @@ type Cap = {
   secretsPresent: boolean; levels: { key: string; label: string }[] | null; curated: boolean;
 };
 type Bucket = { key: string; label: string; description: string; admin: boolean; levels: { key: string; label: string; buckets: string[] }[] | null };
-type GroupCfg = { mcpServers?: string[]; disabledBuiltins?: string[]; capLevels?: Record<string, string>; assets?: string[]; dbAllow?: string[]; toolDeny?: string[] };
+type GroupCfg = { mcpServers?: string[]; disabledBuiltins?: string[]; capLevels?: Record<string, string>; assets?: string[]; dbAllow?: string[]; toolDeny?: string[]; systemPrompt?: string };
 type Cfg = {
   fleet: boolean;
   builtins?: { name: string; label: string; channel?: string | null; bucketScoped?: boolean }[];
@@ -164,8 +164,21 @@ export function FleetCapabilities({ agentId }: { agentId: number }) {
         </div>
       </div>
 
-      {/* Prompt base (todos los canales) */}
+      {/* Prompt base (todos los canales) = identidad del agente en TODAS partes. */}
       <BasePrompt value={cfg.agent?.systemPrompt ?? ""} saving={isSaving("prompt")} onSave={(p) => mutate("prompt", (c) => { if (c.agent) c.agent.systemPrompt = p; return { action: "set-agent-prompt", systemPrompt: p }; })} />
+
+      {/* Personalidad SOLO en este espacio (GTeams) = capa append sobre la base, NO
+          reemplaza la identidad. Escribe groupConfigs["teams"].systemPrompt (set-prompt
+          groupId "teams"); el runtime NO cae de "*"→teams para el prompt, por eso va en
+          "teams". Vacío = el agente usa solo su base. */}
+      <BasePrompt
+        value={cfg.groups?.teams?.systemPrompt ?? ""}
+        saving={isSaving("teamsPrompt")}
+        title={t("Personalidad en este espacio")}
+        hint={t("Capa que se suma a la base SOLO en Ghosty Teams (tono, reglas del espacio). No cambia quién es el agente; déjala vacía para usar solo la base.")}
+        placeholder={t("Ej. Aquí eres más formal y citas siempre la fuente. Termina cada respuesta ofreciendo el siguiente paso…")}
+        onSave={(p) => mutate("teamsPrompt", (c) => { const gs = (c.groups ??= {}); gs.teams = { ...(gs.teams ?? {}), systemPrompt: p }; return { action: "set-prompt", groupId: "teams", systemPrompt: p }; })}
+      />
 
       {/* Herramientas (buckets) */}
       <div>
@@ -421,7 +434,7 @@ function Connector({ cap, box, sel, saving, cur, onLevel, onSecret, onRemove }: 
   );
 }
 
-function BasePrompt({ value, saving, onSave }: { value: string; saving: boolean; onSave: (p: string) => void }) {
+function BasePrompt({ value, saving, onSave, title, placeholder, hint }: { value: string; saving: boolean; onSave: (p: string) => void; title?: string; placeholder?: string; hint?: string }) {
   const t = useT();
   const [val, setVal] = useState(value);
   const [dirty, setDirty] = useState(false);
@@ -430,14 +443,15 @@ function BasePrompt({ value, saving, onSave }: { value: string; saving: boolean;
   return (
     <div>
       <span className="mb-1 flex items-center justify-between text-[11px] font-semibold uppercase tracking-wide text-muted">
-        <span>{t("Prompt base (todos los canales)")}</span>
+        <span>{title ?? t("Prompt base (todos los canales)")}</span>
         <button onClick={() => setBig((v) => !v)} className="text-muted hover:text-brand" title={big ? t("Contraer") : t("Expandir")}>
           {big ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
         </button>
       </span>
+      {hint && <p className="mb-1 text-[11px] leading-snug text-muted">{hint}</p>}
       <textarea
         value={val} onChange={(e) => { setVal(e.target.value); setDirty(true); }} rows={big ? 22 : 5}
-        placeholder={t("Instrucciones base del agente (rol, tono, reglas)…")}
+        placeholder={placeholder ?? t("Instrucciones base del agente (rol, tono, reglas)…")}
         className="thin-scroll w-full resize-y rounded-lg border border-border bg-surface px-2.5 py-2 text-xs leading-relaxed outline-none focus:border-brand"
       />
       {dirty && (
