@@ -704,13 +704,13 @@ function EditAgentForm({
 
   const input = "w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm outline-none focus:border-brand";
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onMouseDown={onClose}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-3 sm:p-5" onMouseDown={onClose}>
       <div
-        className="flex max-h-[88vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-border bg-surface shadow-2xl"
+        className="flex h-full max-h-[94vh] w-full max-w-[min(1200px,96vw)] flex-col overflow-hidden rounded-2xl border border-border bg-surface shadow-2xl"
         onMouseDown={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="flex items-center justify-between border-b border-border px-4 py-3">
+        <div className="flex items-center justify-between border-b border-border px-6 py-3">
           <p className="text-sm font-semibold">
             {t("Configurar")} <span className="text-brand">@{handle || agent.handle}</span>
             <span className="ml-2 text-[11px] font-normal text-muted">
@@ -722,10 +722,11 @@ function EditAgentForm({
           </button>
         </div>
 
-        {/* Cuerpo 2 columnas: izq = identidad/local, der = capacidades de flota */}
-        <div className="thin-scroll grid flex-1 grid-cols-1 gap-4 overflow-y-auto p-4 md:grid-cols-2">
+        {/* Cuerpo: izq (1/3) = identidad + persona local + colaboradores; der (2/3) =
+            capacidades de flota. Full-width para aprovechar la pantalla. */}
+        <div className="thin-scroll grid flex-1 grid-cols-1 gap-6 overflow-y-auto p-5 sm:p-6 lg:grid-cols-3">
           {/* ── Columna izquierda: identidad + persona local + colaboradores ── */}
-          <div className="space-y-3">
+          <div className="space-y-4 lg:col-span-1">
             <div className="flex items-center gap-3">
               {avatar ? (
                 <img src={avatar} alt="" className="h-14 w-14 shrink-0 rounded-xl object-cover" />
@@ -758,11 +759,11 @@ function EditAgentForm({
             </div>
 
             <div>
-              <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-muted">{t("Persona local (este espacio)")}</label>
-              <textarea value={persona} onChange={(e) => setPersona(e.target.value)} rows={5} placeholder={t("Cómo debe comportarse aquí (tono, rol)…")} className={`${input} thin-scroll resize-y`} />
+              <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-muted">{t("Personalidad en este espacio")}</label>
+              <textarea value={persona} onChange={(e) => setPersona(e.target.value)} rows={8} placeholder={t("Tono, rol y reglas SOLO para este espacio (ej. más formal, cita la fuente, ofrece el siguiente paso)…")} className={`${input} thin-scroll resize-y`} />
               <p className="mt-1 text-[11px] text-muted">
                 {agent.kind === "fleet"
-                  ? t("Se antepone al mensaje SOLO en este espacio. El prompt base (todos los canales) va en la derecha.")
+                  ? t("Capa que se suma a la base SOLO en este espacio. No cambia quién es el agente; su identidad y el prompt base (todos los canales) van a la derecha. Déjala vacía para usar solo la base.")
                   : t("Se envía a tu webhook como systemPrompt junto al mensaje.")}
               </p>
             </div>
@@ -788,8 +789,8 @@ function EditAgentForm({
             )}
           </div>
 
-          {/* ── Columna derecha: capacidades de flota (o nota webhook) ── */}
-          <div className="md:border-l md:border-border md:pl-4">
+          {/* ── Columna derecha (2/3): capacidades de flota (o nota webhook) ── */}
+          <div className="lg:col-span-2 lg:border-l lg:border-border lg:pl-6">
             {agent.kind === "fleet" ? (
               <FleetCapabilities agentId={agent.id} />
             ) : (
@@ -801,7 +802,7 @@ function EditAgentForm({
         </div>
 
         {/* Footer */}
-        <div className="flex items-center justify-between gap-2 border-t border-border px-4 py-3">
+        <div className="flex items-center justify-between gap-2 border-t border-border px-6 py-3">
           <span className="text-xs text-red-400">{err}</span>
           <div className="flex gap-2">
             <button onClick={onClose} className="rounded-lg px-3 py-1.5 text-sm text-muted hover:text-ink">{t("Cerrar")}</button>

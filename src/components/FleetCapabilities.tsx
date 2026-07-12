@@ -164,21 +164,10 @@ export function FleetCapabilities({ agentId }: { agentId: number }) {
         </div>
       </div>
 
-      {/* Prompt base (todos los canales) = identidad del agente en TODAS partes. */}
+      {/* Prompt base (todos los canales) = identidad del agente en TODAS partes. La
+          personalidad SOLO-en-este-espacio vive en el campo "Persona local" (columna de
+          identidad) → una sola fuente, sin duplicar. */}
       <BasePrompt value={cfg.agent?.systemPrompt ?? ""} saving={isSaving("prompt")} onSave={(p) => mutate("prompt", (c) => { if (c.agent) c.agent.systemPrompt = p; return { action: "set-agent-prompt", systemPrompt: p }; })} />
-
-      {/* Personalidad SOLO en este espacio (GTeams) = capa append sobre la base, NO
-          reemplaza la identidad. Escribe groupConfigs["teams"].systemPrompt (set-prompt
-          groupId "teams"); el runtime NO cae de "*"→teams para el prompt, por eso va en
-          "teams". Vacío = el agente usa solo su base. */}
-      <BasePrompt
-        value={cfg.groups?.teams?.systemPrompt ?? ""}
-        saving={isSaving("teamsPrompt")}
-        title={t("Personalidad en este espacio")}
-        hint={t("Capa que se suma a la base SOLO en Ghosty Teams (tono, reglas del espacio). No cambia quién es el agente; déjala vacía para usar solo la base.")}
-        placeholder={t("Ej. Aquí eres más formal y citas siempre la fuente. Termina cada respuesta ofreciendo el siguiente paso…")}
-        onSave={(p) => mutate("teamsPrompt", (c) => { const gs = (c.groups ??= {}); gs.teams = { ...(gs.teams ?? {}), systemPrompt: p }; return { action: "set-prompt", groupId: "teams", systemPrompt: p }; })}
-      />
 
       {/* Herramientas (buckets) */}
       <div>
