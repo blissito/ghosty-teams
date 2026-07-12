@@ -1,4 +1,4 @@
-import { Component, createContext, Fragment, type ReactNode, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { Component, createContext, forwardRef, Fragment, type ReactNode, useCallback, useContext, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import {
   Hash,
@@ -38,11 +38,13 @@ import {
   Loader2,
   Archive,
   ChevronDown,
+  Copy,
+  Check,
   ChevronRight,
   Layers,
   Table2,
   Image as ImageIcon,
-  FileType,
+  ImagePlus,
 } from "lucide-react";
 import { searchMessagesFn } from "../server/search";
 import { createFileRoute, notFound, Link, useRouter } from "@tanstack/react-router";
@@ -576,6 +578,8 @@ function useChatScroll(
 ) {
   const didLand = useRef(false);
   const stick = useRef(true);
+  // Estado REACTIVO de "¿estoy abajo?" → gatea el botón flotante "ir al final".
+  const [atBottom, setAtBottom] = useState(true);
   const count = msgs?.length ?? 0;
   const contentLen = msgs?.reduce((n, m) => n + (m.body?.length ?? 0), 0) ?? 0;
   useEffect(() => {
@@ -583,7 +587,20 @@ function useChatScroll(
   }, [resetKey]);
   const onScroll = () => {
     const el = scrollRef.current;
-    if (el) stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+    if (!el) return;
+    const near = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+    stick.current = near;
+    setAtBottom((prev) => (prev === near ? prev : near)); // solo re-render al cambiar
+  };
+  // Fuerza el scroll al fondo (envío propio / botón flotante), aunque estés arriba.
+  const scrollToBottom = () => {
+    stick.current = true;
+    setAtBottom(true);
+    const el = scrollRef.current;
+    if (el) {
+      el.scrollTo({ top: el.scrollHeight });
+      requestAnimationFrame(() => el.scrollTo({ top: el.scrollHeight, behavior: "smooth" }));
+    }
   };
   useEffect(() => {
     if (unreadId != null && !didLand.current) {
@@ -597,7 +614,7 @@ function useChatScroll(
     if (stick.current) scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [count, contentLen, extra, unreadId]);
-  return onScroll;
+  return { onScroll, atBottom, scrollToBottom };
 }
 
 function ChannelPage() {
@@ -2964,7 +2981,9 @@ function Flow({
   const canManage = !!me && (me.isOwner || channel.created_by === me.sub);
   const scrollRef = useRef<HTMLDivElement>(null);
   const unreadId = firstUnreadId(messages, newAt, me?.name);
-  const onScroll = useChatScroll(scrollRef, messages, optimistic.length, unreadId, channel.id);
+  const { onScroll, atBottom, scrollToBottom } = useChatScroll(scrollRef, messages, optimistic.length, unreadId, channel.id);
+  const composerRef = useRef<ComposerHandle>(null);
+  const { dragOver, handlers } = useFileDrop((f) => composerRef.current?.addFiles(f));
   // Scroll a un mensaje (clic en un fijado) con destello, estilo "ir al origen".
   const jumpTo = (id: number) => {
     const el = document.getElementById(`msg-${id}`);
@@ -2974,7 +2993,8 @@ function Flow({
   };
 
   return (
-    <section className="flex min-w-0 flex-1 flex-col">
+    <section className="relative flex min-w-0 flex-1 flex-col" {...handlers}>
+      <DropOverlay show={dragOver} />
       <header className="flex items-center justify-between gap-3 border-b border-border px-4 py-3 md:px-6">
         <div className="flex min-w-0 items-center gap-2">
           <NavToggle onOpen={onOpenNav} />
@@ -3022,11 +3042,13 @@ function Flow({
           <OptimisticRow key={o.id} o={o} />
         ))}
       </div>
+      <ScrollDownButton show={!atBottom} onClick={scrollToBottom} />
       <TypingLine typing={typing} />
       <Composer
+        ref={composerRef}
         slug={channel.slug}
         parentId={null}
-        onSend={onSend}
+        onSend={(p) => { onSend(p); scrollToBottom(); }}
         placeholder={t("Mensaje a #{room}…", { room: channel.name })}
       />
     </section>
@@ -3077,10 +3099,13 @@ function ThreadView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data]);
   // Sigue las respuestas del hilo + el streaming de la respuesta del agente.
-  const onScroll = useChatScroll(scrollRef, data?.replies ?? null, optimistic.length, null);
+  const { onScroll, atBottom, scrollToBottom } = useChatScroll(scrollRef, data?.replies ?? null, optimistic.length, null);
+  const composerRef = useRef<ComposerHandle>(null);
+  const { dragOver, handlers } = useFileDrop((f) => composerRef.current?.addFiles(f));
 
   return (
-    <section className="flex min-w-0 flex-1 flex-col">
+    <section className="relative flex min-w-0 flex-1 flex-col" {...handlers}>
+      <DropOverlay show={dragOver} />
       <header className="flex items-center gap-2 border-b border-border px-3 py-3 md:gap-3 md:px-6">
         <button
           onClick={onBack}
@@ -3145,11 +3170,13 @@ function ThreadView({
           </>
         )}
       </div>
+      <ScrollDownButton show={!atBottom} onClick={scrollToBottom} />
       <TypingLine typing={typing} />
       <Composer
+        ref={composerRef}
         slug={channel.slug}
         parentId={threadId}
-        onSend={onSend}
+        onSend={(p) => { onSend(p); scrollToBottom(); }}
         placeholder={t("Responder en el hilo…")}
       />
     </section>
@@ -3202,14 +3229,17 @@ function DmView({
     if (flow) onReloaded();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [flow]);
-  const onScroll = useChatScroll(scrollRef, flow, optimistic.length, unreadId);
+  const { onScroll, atBottom, scrollToBottom } = useChatScroll(scrollRef, flow, optimistic.length, unreadId);
+  const composerRef = useRef<ComposerHandle>(null);
+  const { dragOver, handlers } = useFileDrop((f) => composerRef.current?.addFiles(f));
 
   const title = dm ? dmTitle(dm, t("Conversación")) : t("Conversación");
   const isOnline = dm?.members.some((m) => online.has(m.sub)) ?? false;
   const first = dm?.members[0];
 
   return (
-    <section className="flex min-w-0 flex-1 flex-col">
+    <section className="relative flex min-w-0 flex-1 flex-col" {...handlers}>
+      <DropOverlay show={dragOver} />
       <header className="flex items-center gap-2 border-b border-border px-3 py-3 md:gap-3 md:px-6">
         <button
           onClick={onBack}
@@ -3257,12 +3287,14 @@ function DmView({
           <OptimisticRow key={o.id} o={o} />
         ))}
       </div>
+      <ScrollDownButton show={!atBottom} onClick={scrollToBottom} />
       <TypingLine typing={typing} />
       <Composer
+        ref={composerRef}
         slug=""
         parentId={null}
         dmId={dmId}
-        onSend={onSend}
+        onSend={(p) => { onSend(p); scrollToBottom(); }}
         placeholder={t("Mensaje a {name}…", { name: title })}
       />
     </section>
@@ -3476,13 +3508,22 @@ function ArtifactCard({ artifact }: { artifact: Artifact }) {
   const isDoc = view.kind === "doc";
   const isOffice = view.kind === "office";
   const isSheet = view.kind === "sheet";
-  // Subtítulo tipo "Documento · DOCX" / "Hoja de cálculo · CSV" (estilo claude.ai); el label
-  // del registro para el resto.
+  const isPdf = view.kind === "pdf";
+  // Subtítulo tipo "Documento · PDF" / "Documento · DOCX" / "Hoja · CSV" (estilo claude.ai).
   const subtitle = isSheet
     ? `${t("Hoja de cálculo")} · CSV`
-    : isDoc || isOffice
-      ? `${t("Documento")} · DOCX`
-      : t(ARTIFACT_KIND_META[view.kind]?.labelKey ?? "Descargar");
+    : isPdf
+      ? `${t("Documento")} · PDF`
+      : isDoc || isOffice
+        ? `${t("Documento")} · DOCX`
+        : t(ARTIFACT_KIND_META[view.kind]?.labelKey ?? "Descargar");
+  // Nombre mostrado: si es PDF y el título no trae extensión, le añadimos `.pdf` para que
+  // se lea como archivo (el nombre SEMÁNTICO por contenido lo debe poner el agente al
+  // generarlo — hoy a veces es un slug de storage tipo "df1VVGQO").
+  const rawTitle = artifact.title?.trim();
+  const displayTitle = rawTitle
+    ? (isPdf && !/\.[a-z0-9]{1,5}$/i.test(rawTitle) ? `${rawTitle}.pdf` : rawTitle)
+    : t(defaultArtifactTitle(view.kind));
   const downloadHref = isDoc
     ? `/api/doc-docx/${encodeURIComponent(view.documentId)}?name=${encodeURIComponent(artifact.title || "documento")}`
     : isOffice
@@ -3512,12 +3553,15 @@ function ArtifactCard({ artifact }: { artifact: Artifact }) {
         {view.kind === "image" ? (
           // Miniatura real → una imagen se ve como imagen, no como "Documento".
           <img src={view.src} alt={artifact.title || ""} className="size-10 shrink-0 rounded-lg object-cover" />
+        ) : isPdf ? (
+          // Icono que SÍ representa un PDF (rojo, badge "PDF" como un lector).
+          <span className="grid size-10 shrink-0 place-items-center rounded-lg bg-red-500/15 text-[9px] font-bold tracking-wider text-red-500">
+            PDF
+          </span>
         ) : (
           <span className="grid size-10 shrink-0 place-items-center rounded-lg bg-surface-3 text-brand">
             {view.kind === "sheet" ? (
               <Table2 size={20} />
-            ) : view.kind === "pdf" ? (
-              <FileType size={20} />
             ) : view.kind === "video" ? (
               <ImageIcon size={20} />
             ) : (
@@ -3526,7 +3570,7 @@ function ArtifactCard({ artifact }: { artifact: Artifact }) {
           </span>
         )}
         <span className="min-w-0 flex-1">
-          <span className="block truncate text-sm font-medium text-ink">{artifact.title || t(defaultArtifactTitle(view.kind))}</span>
+          <span className="block truncate text-sm font-medium text-ink">{displayTitle}</span>
           <span className="block text-[11px] text-muted">{subtitle}</span>
         </span>
       </button>
@@ -3644,6 +3688,7 @@ function MessageRow({
           }`}
         >
           {canReact && <ReactButton m={m} />}
+          <CopyButton m={m} />
           <StarButton m={m} />
           <MessageActions
             m={m}
@@ -3774,6 +3819,41 @@ function ReactButton({ m }: { m: Message }) {
 
 // Destacar (star): marcador personal. Va por el evento `star` (ch.user) → el flag
 // se sincroniza en todas mis pestañas, igual que las reacciones.
+// Copia TODO el contenido del mensaje al portapapeles, con palomita animada (~1.5s).
+// Junto a Destacar. Fallback a execCommand si el Clipboard API no está disponible.
+function CopyButton({ m }: { m: Message }) {
+  const t = useT();
+  const [copied, setCopied] = useState(false);
+  const copy = async () => {
+    const text = (m.body ?? "").trim();
+    if (!text) return;
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      try { document.execCommand("copy"); } catch {}
+      ta.remove();
+    }
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  };
+  return (
+    <button
+      type="button"
+      onClick={copy}
+      title={copied ? t("¡Copiado!") : t("Copiar mensaje")}
+      className={`rounded p-1 transition hover:text-ink ${copied ? "text-green-500" : "text-muted"}`}
+    >
+      {copied ? <Check size={14} className="gc-pop" /> : <Copy size={14} />}
+    </button>
+  );
+}
+
 function StarButton({ m }: { m: Message }) {
   const t = useT();
   const { star } = useContext(ChatCtx);
@@ -4113,19 +4193,89 @@ function OptimisticRow({ o }: { o: Optimistic }) {
 }
 
 /* ── Composer con typeahead de menciones + optimistic + @ghosty ── */
-function Composer({
-  slug,
-  parentId,
-  dmId = null,
-  onSend,
-  placeholder,
-}: {
+// Drag-drop de archivos sobre un contenedor GRANDE (toda la conversación, no solo el
+// composer): más fácil de acertar, estilo WhatsApp. `counter` evita el parpadeo por
+// dragenter/leave de los hijos. Solo reacciona a arrastres de ARCHIVOS (no de texto/links).
+function useFileDrop(onFiles: (files: FileList | File[]) => void) {
+  const [dragOver, setDragOver] = useState(false);
+  const counter = useRef(0);
+  const handlers = {
+    onDragEnter: (e: React.DragEvent) => {
+      if (!e.dataTransfer?.types?.includes("Files")) return;
+      e.preventDefault();
+      counter.current += 1;
+      setDragOver(true);
+    },
+    onDragOver: (e: React.DragEvent) => {
+      if (e.dataTransfer?.types?.includes("Files")) e.preventDefault();
+    },
+    onDragLeave: (e: React.DragEvent) => {
+      if (!e.dataTransfer?.types?.includes("Files")) return;
+      e.preventDefault();
+      counter.current -= 1;
+      if (counter.current <= 0) setDragOver(false);
+    },
+    onDrop: (e: React.DragEvent) => {
+      e.preventDefault();
+      counter.current = 0;
+      setDragOver(false);
+      if (e.dataTransfer.files?.length) onFiles(e.dataTransfer.files);
+    },
+  };
+  return { dragOver, handlers };
+}
+
+// Overlay GRANDE de "suelta aquí" que cubre toda la conversación (WhatsApp-like). El
+// contenedor padre debe ser `relative`.
+function DropOverlay({ show }: { show: boolean }) {
+  const t = useT();
+  if (!show) return null;
+  return (
+    <div className="pointer-events-none absolute inset-0 z-30 flex flex-col items-center justify-center gap-3 border-[3px] border-dashed border-brand bg-surface/85 backdrop-blur-sm">
+      <div className="grid size-16 place-items-center rounded-2xl bg-brand/15 text-brand">
+        <ImagePlus size={32} />
+      </div>
+      <p className="text-lg font-semibold text-brand">{t("Suelta para enviar")}</p>
+      <p className="text-sm text-muted">{t("Imágenes y archivos")}</p>
+    </div>
+  );
+}
+
+// Handle imperativo del Composer → la zona de drop grande (nivel conversación) le pasa
+// los archivos soltados.
+type ComposerHandle = { addFiles: (files: FileList | File[]) => void };
+
+// Botón flotante SUTIL "ir al final" — solo cuando estás scrolleado arriba. Se posa sobre
+// el composer (el contenedor padre es `relative`).
+function ScrollDownButton({ show, onClick }: { show: boolean; onClick: () => void }) {
+  const t = useT();
+  if (!show) return null;
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label={t("Ir al final")}
+      title={t("Ir al final")}
+      className="absolute bottom-24 right-4 z-20 grid size-9 place-items-center rounded-full border border-border bg-surface-2/90 text-muted shadow-lg backdrop-blur transition hover:text-ink hover:border-brand/50"
+    >
+      <ChevronDown size={18} />
+    </button>
+  );
+}
+
+const Composer = forwardRef<ComposerHandle, {
   slug: string;
   parentId: number | null;
   dmId?: number | null;
   onSend: (p: { body: string; attachments: Attach[] }) => void;
   placeholder: string;
-}) {
+}>(function Composer({
+  slug,
+  parentId,
+  dmId = null,
+  onSend,
+  placeholder,
+}, ref) {
   const t = useT();
   const bodyRef = useRef<HTMLTextAreaElement>(null);
   // Borrador por scope (Fase 4): persiste lo tecleado en localStorage para no
@@ -4135,10 +4285,6 @@ function Composer({
   const [body, setBody] = useState(() =>
     typeof window !== "undefined" ? localStorage.getItem(draftKey) ?? "" : ""
   );
-  // Indicador visual de arrastre de archivo sobre el composer (dragCounter evita el
-  // parpadeo por dragenter/leave de los hijos).
-  const [dragOver, setDragOver] = useState(false);
-  const dragCounter = useRef(0);
   // Recarga el borrador al cambiar de scope sin desmontar (p.ej. cambiar de room
   // en el Flow, que no se re-keya). Los paneles keyados (hilo/DM) ya remontan.
   useEffect(() => {
@@ -4162,18 +4308,22 @@ function Composer({
     fileId?: string;
     uploading: boolean;
     error?: boolean;
+    previewUrl?: string; // objectURL de la imagen → miniatura INSTANTÁNEA (antes de subir)
   };
   const [pending, setPending] = useState<Pending[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const uploading = pending.some((p) => p.uploading);
 
-  const addFiles = (files: FileList | File[]) => {
+  // Solo depende de setPending (estable) → estable entre renders; seguro exponerlo por ref.
+  const addFiles = useCallback((files: FileList | File[]) => {
     const list = Array.from(files);
     for (const f of list) {
-      const localId = `${Date.now()}-${f.name}-${Math.round(f.size)}`;
+      const localId = `${Date.now()}-${Math.round(Math.random() * 1e6)}-${f.name}`;
+      // WhatsApp-like: la miniatura aparece YA (objectURL local), sin esperar la subida.
+      const previewUrl = f.type.startsWith("image/") ? URL.createObjectURL(f) : undefined;
       setPending((p) => [
         ...p,
-        { localId, name: f.name, mime: f.type || "application/octet-stream", size: f.size, uploading: true },
+        { localId, name: f.name, mime: f.type || "application/octet-stream", size: f.size, uploading: true, previewUrl },
       ]);
       const fd = new FormData();
       fd.append("file", f);
@@ -4189,9 +4339,17 @@ function Composer({
           setPending((p) => p.map((x) => (x.localId === localId ? { ...x, uploading: false, error: true } : x)))
         );
     }
-  };
+  }, []);
+  // La zona de drop grande (nivel conversación) empuja los archivos aquí.
+  useImperativeHandle(ref, () => ({ addFiles }), [addFiles]);
   const removePending = (localId: string) =>
-    setPending((p) => p.filter((x) => x.localId !== localId));
+    setPending((p) => {
+      const gone = p.find((x) => x.localId === localId);
+      if (gone?.previewUrl) URL.revokeObjectURL(gone.previewUrl); // libera el objectURL
+      return p.filter((x) => x.localId !== localId);
+    });
+  // Libera los objectURL pendientes al desmontar (cambiar de hilo/DM/room).
+  useEffect(() => () => setPending((p) => { p.forEach((x) => x.previewUrl && URL.revokeObjectURL(x.previewUrl)); return p; }), []);
 
   function onChange(e: React.ChangeEvent<HTMLTextAreaElement>) {
     const val = e.target.value;
@@ -4238,7 +4396,7 @@ function Composer({
     if ((!body.trim() && attachments.length === 0) || uploading) return;
     const sent = body;
     setBody("");
-    setPending([]);
+    setPending((p) => { p.forEach((x) => x.previewUrl && URL.revokeObjectURL(x.previewUrl)); return []; });
     if (typeof window !== "undefined") localStorage.removeItem(draftKey); // borrador consumido
     playSelfSound(); // confirmación sonora del envío propio (distinta de las notifs)
     bodyRef.current?.focus(); // re-habilita al instante — no esperamos el round-trip
@@ -4262,7 +4420,7 @@ function Composer({
 
   return (
     <form
-      className={`relative border-t p-3 transition-colors ${dragOver ? "border-brand bg-brand/5" : "border-border"}`}
+      className="relative border-t border-border p-3"
       // Respeta la home-bar/notch en móvil (viewport-fit=cover): el composer no
       // queda tapado por el inset inferior.
       style={{ paddingBottom: "calc(0.75rem + env(safe-area-inset-bottom))" }}
@@ -4270,58 +4428,49 @@ function Composer({
         e.preventDefault();
         submit();
       }}
-      onDragEnter={(e) => {
-        e.preventDefault();
-        if (e.dataTransfer?.types?.includes("Files")) {
-          dragCounter.current += 1;
-          setDragOver(true);
-        }
-      }}
-      onDragOver={(e) => e.preventDefault()}
-      onDragLeave={(e) => {
-        e.preventDefault();
-        dragCounter.current -= 1;
-        if (dragCounter.current <= 0) setDragOver(false);
-      }}
-      onDrop={(e) => {
-        e.preventDefault();
-        dragCounter.current = 0;
-        setDragOver(false);
-        if (e.dataTransfer.files?.length) addFiles(e.dataTransfer.files);
-      }}
     >
-      {dragOver && (
-        <div className="pointer-events-none absolute inset-1 z-10 flex items-center justify-center rounded-lg border-2 border-dashed border-brand bg-surface/80 text-sm font-medium text-brand backdrop-blur-sm">
-          {t("Suelta para adjuntar")}
-        </div>
-      )}
-      {/* Chips de adjuntos (subiendo / listos / error). */}
+      {/* Adjuntos: miniatura INSTANTÁNEA (objectURL) para imágenes; chip para el resto.
+          Spinner sobrepuesto mientras sube; error en rojo. El drag-drop grande vive a
+          nivel de toda la conversación (ver DropOverlay en Flow/ThreadView/DmView). */}
       {pending.length > 0 && (
         <div className="mb-2 flex flex-wrap gap-2">
           {pending.map((p) => (
-            <span
-              key={p.localId}
-              className={`flex items-center gap-1.5 rounded-lg border px-2 py-1 text-xs ${
-                p.error ? "border-red-500/40 text-red-500" : "border-border text-muted"
-              }`}
-            >
-              {p.uploading ? (
-                <Loader2 size={13} className="animate-spin" />
-              ) : p.error ? (
-                <X size={13} />
+            <div key={p.localId} className="relative">
+              {p.previewUrl ? (
+                <img
+                  src={p.previewUrl}
+                  alt={p.name}
+                  className={`size-16 rounded-lg border border-border object-cover ${p.error ? "opacity-40" : ""}`}
+                />
               ) : (
-                <Paperclip size={13} className="text-brand" />
+                <div
+                  className={`flex size-16 flex-col items-center justify-center gap-1 rounded-lg border px-1 text-center text-[10px] ${
+                    p.error ? "border-red-500/40 text-red-500" : "border-border text-muted"
+                  }`}
+                >
+                  <Paperclip size={16} className="text-brand" />
+                  <span className="w-full truncate">{p.name}</span>
+                </div>
               )}
-              <span className="max-w-[10rem] truncate">{p.name}</span>
+              {p.uploading && (
+                <span className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-lg bg-black/40">
+                  <Loader2 size={18} className="animate-spin text-white" />
+                </span>
+              )}
+              {p.error && (
+                <span className="pointer-events-none absolute inset-x-0 bottom-0 rounded-b-lg bg-red-500/80 py-0.5 text-center text-[9px] font-semibold text-white">
+                  {t("Error")}
+                </span>
+              )}
               <button
                 type="button"
                 onClick={() => removePending(p.localId)}
-                className="text-muted hover:text-ink"
+                className="absolute -right-1.5 -top-1.5 grid size-5 place-items-center rounded-full bg-surface-3 text-muted shadow ring-1 ring-border transition hover:text-ink"
                 aria-label={t("Quitar adjunto")}
               >
-                <X size={13} />
+                <X size={12} />
               </button>
-            </span>
+            </div>
           ))}
         </div>
       )}
@@ -4400,4 +4549,4 @@ function Composer({
       </div>
     </form>
   );
-}
+});

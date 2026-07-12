@@ -93,6 +93,16 @@ body {
   animation: gc-flash 1.2s ease-out;
 }
 
+/* Palomita al copiar un mensaje: aparece con un pop (escala + rebote breve). */
+@keyframes gc-pop {
+  0% { transform: scale(0.3); opacity: 0; }
+  60% { transform: scale(1.25); opacity: 1; }
+  100% { transform: scale(1); }
+}
+.gc-pop {
+  animation: gc-pop 0.3s ease-out;
+}
+
 /* "Pensando/trabajando" — anillo de puntos que brillan en secuencia (estilo Claude),
    en morado Ghosty. Los puntos se posicionan alrededor del círculo (transform estático)
    y solo animan opacidad con delay escalonado → shimmer rotatorio. */
