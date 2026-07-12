@@ -243,6 +243,32 @@ function persistCaches() {
   }
 }
 
+// Una entrada cacheada puede quedar PARCIAL si se recicló la caja del worker a mitad de un
+// stream (o si la serialización se truncó por quota). Validamos la forma AL CARGAR y
+// descartamos las corruptas → `useCachedQuery` las re-fetchea limpias del server (los datos
+// en la DB están intactos). Solo checamos los campos cuyo tipo malo CRASHEA el render
+// (id/created_at/kind y que replies/flow sean arrays); los opcionales ya van guardados en
+// MessageRow, así que no se rechazan entradas sanas.
+function isRenderableMessage(m: unknown): boolean {
+  if (!m || typeof m !== "object") return false;
+  const x = m as Record<string, unknown>;
+  return (
+    typeof x.id === "number" &&
+    typeof x.created_at === "number" &&
+    (x.kind === "msg" || x.kind === "status")
+  );
+}
+function isValidThreadEntry(v: unknown): boolean {
+  if (!v || typeof v !== "object") return false;
+  const e = v as { root?: unknown; replies?: unknown };
+  if (!Array.isArray(e.replies)) return false; // ← el crash de ThreadView (replies.length/.map)
+  if (e.root != null && !isRenderableMessage(e.root)) return false;
+  return e.replies.every(isRenderableMessage);
+}
+function isValidDmEntry(v: unknown): boolean {
+  return Array.isArray(v) && v.every(isRenderableMessage); // ← el crash de DmView (flow.find/.map)
+}
+
 if (typeof window !== "undefined") {
   try {
     // v3: descarta v1/v2 envenenados. Un cache de hilo serializado por una versión del
@@ -255,7 +281,11 @@ if (typeof window !== "undefined") {
     const saved = JSON.parse(sessionStorage.getItem("gc-caches-v3") || "{}");
     for (const [name, cache] of PERSISTED_CACHES) {
       const entries = saved[name];
-      if (Array.isArray(entries)) for (const [k, v] of entries) cache.set(k, v);
+      if (!Array.isArray(entries)) continue;
+      const ok = name === "thread" ? isValidThreadEntry : isValidDmEntry;
+      // Entrada corrupta → se DESCARTA (no se inserta) → la key queda ausente y
+      // useCachedQuery la re-fetchea limpia del server en vez de crashear el render.
+      for (const [k, v] of entries) if (typeof k === "number" && ok(v)) cache.set(k, v);
     }
   } catch {
     /* ausente/corrupto → arranca vacío */
@@ -3037,7 +3067,11 @@ function ThreadView({
     patch
   );
   const scrollRef = useRef<HTMLDivElement>(null);
-  const replyCount = data?.replies.length ?? 0;
+  // `replies` SIEMPRE un array: una entrada de cache producida en vivo (realtime crudo)
+  // podría traer `replies` no-array → `.length`/`.map` crasheaban el render. Normalizar
+  // aquí complementa la validación-al-cargar (cubre también corrupción de esta sesión).
+  const replies = Array.isArray(data?.replies) ? data.replies : [];
+  const replyCount = replies.length;
   useEffect(() => {
     if (data) onReloaded();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -3100,7 +3134,7 @@ function ThreadView({
                 <div className="my-2 border-t border-border pt-1 text-center text-[11px] text-muted">
                   {replyCount === 1 ? t("1 respuesta") : t("{n} respuestas", { n: replyCount })}
                 </div>
-                {data.replies.map((m) => (
+                {replies.map((m) => (
                   <MessageRow key={m.id} m={m} />
                 ))}
               </>
@@ -3151,13 +3185,17 @@ function DmView({
   const t = useT();
   const { me } = useContext(ChatCtx);
   // Cacheado por dmId → reabrir la misma conversación es instantáneo (sin skeleton).
-  const flow = useCachedQuery(
+  const flowRaw = useCachedQuery(
     dmFlowCache,
     dmId,
     () => getDmFlowFn({ data: { id: dmId } }).then((r) => r?.flow ?? []),
     rev,
     patch
   );
+  // `flow` SIEMPRE array-o-null: una entrada de cache corrupta (no-array) pasaba los guards
+  // de null/length y crasheaba en `firstUnreadId`/`.map`. Normalizar complementa la
+  // validación-al-cargar (cubre corrupción de esta sesión).
+  const flow = Array.isArray(flowRaw) ? flowRaw : null;
   const scrollRef = useRef<HTMLDivElement>(null);
   const unreadId = firstUnreadId(flow, newAt, me?.name);
   useEffect(() => {
