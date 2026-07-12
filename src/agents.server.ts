@@ -164,7 +164,11 @@ export async function callAgentBackendStream(
   // docHint (contexto por-doc del turno) va PRIMERO en el texto; el system prompt
   // queda estable (base) → la sesión persistente del worker no se rompe al cambiar doc.
   const docHint = artifactDocHint(currentDoc);
-  const outText = docHint + (persona ? `[Instrucciones para ${agent.name}: ${persona}]\n\n${text}` : text);
+  // La persona por-agente va en la CAPA SYSTEM (appendSystemPrompt), NUNCA en el texto
+  // del usuario. Antes se anteponía como `[Instrucciones para X: …]` dentro del mensaje;
+  // el modelo lo leía como instrucciones incrustadas y lo rechazaba como intento de
+  // inyección de prompt (incidente 2026-07-12 en Teams). El texto solo lleva el turno.
+  const outText = docHint + text;
   try {
     const res = await fetch(`${base}/api/v2/fleet-agents/${agent.backend.id}/message-stream`, {
       method: "POST",
@@ -179,7 +183,15 @@ export async function callAgentBackendStream(
         sender: sender || "invitado",
         text: outText,
         parts,
-        appendSystemPrompt: EB_DOC_STREAM_GUARDRAIL,
+        // Persona por-agente + guardrail eb-doc, ambos en la capa system. EasyBits los
+        // mergea al system del worker (claude-worker) o al marco de confianza del turno
+        // (ghosty-gc). Nunca en el texto del usuario → nunca se lee como inyección.
+        appendSystemPrompt: [
+          persona ? `[Persona de ${agent.name}]\n${persona}` : null,
+          EB_DOC_STREAM_GUARDRAIL,
+        ]
+          .filter(Boolean)
+          .join("\n\n"),
       }),
     });
     if (!res.ok || !res.body) throw new Error(`fleet-stream ${res.status}: ${await res.text().catch(() => "")}`);
@@ -404,10 +416,10 @@ export async function callAgentBackend(
       return `⚠️ No pude contactar a @${agent.handle}: ${e instanceof Error ? e.message : e}`;
     }
   }
-  // fleet: el endpoint de EasyBits solo acepta {groupId, sender, text}, así que la
-  // persona se ANTEPONE al texto como preámbulo (única palanca desde nuestro lado).
+  // fleet: la persona por-agente va en la CAPA SYSTEM (appendSystemPrompt), NO en el
+  // texto. Meterla en el texto (`[Instrucciones para X: …]`) hacía que el modelo la
+  // leyera como inyección de prompt y la rechazara. El texto solo lleva el turno.
   const base = process.env.EASYBITS_BASE_URL ?? "https://www.easybits.cloud";
-  const outText = persona ? `[Instrucciones para ${agent.name}: ${persona}]\n\n${text}` : text;
   try {
     const res = await fetch(`${base}/api/v2/fleet-agents/${agent.backend.id}/message`, {
       method: "POST",
@@ -417,9 +429,14 @@ export async function callAgentBackend(
         groupId,
         configGroupId: "teams",
         sender: sender || "invitado",
-        text: outText,
+        text,
         parts,
-        appendSystemPrompt: EB_DOC_STREAM_GUARDRAIL,
+        appendSystemPrompt: [
+          persona ? `[Persona de ${agent.name}]\n${persona}` : null,
+          EB_DOC_STREAM_GUARDRAIL,
+        ]
+          .filter(Boolean)
+          .join("\n\n"),
       }),
     });
     if (!res.ok) throw new Error(`fleet ${res.status}: ${await res.text()}`);
