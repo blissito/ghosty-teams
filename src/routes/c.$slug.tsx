@@ -321,6 +321,9 @@ const ChatCtx = createContext<{
   setPickerFor: (id: number | null) => void;
   // Abre un artefacto (pdf/imagen/doc) en el panel lateral del room.
   onOpenArtifact: (a: ArtifactView) => void;
+  // Envía `body` como respuesta del usuario en el MISMO hilo/DM que `ownerMsg`
+  // (usado por artefactos interactivos inline, ej. ask-user: un clic = enviar).
+  sendQuickReply: (body: string, ownerMsg: Message) => void;
 }>({
   me: null,
   slug: "",
@@ -335,6 +338,7 @@ const ChatCtx = createContext<{
   pickerFor: null,
   setPickerFor: () => {},
   onOpenArtifact: () => {},
+  sendQuickReply: () => {},
 });
 
 // Emojis rápidos para el picker (evita una lib de ~1MB).
@@ -963,12 +967,19 @@ function ChannelPage() {
         break;
       }
       case "message:body": {
-        // Body autoritativo al terminar el stream (reconcilia deltas perdidos).
-        patchMessage(ev.id, (m) => ({ ...m, body: ev.body }));
-        driveDraftFromBody(ev.id, ev.body);
-        // Fence cerrado → el server compila el .docx; swap del draft al doc real.
-        const doc = extractEbDoc(ev.body);
-        if (doc?.closed) scheduleDraftSwap(ev.id);
+        // Body autoritativo al terminar el stream (reconcilia deltas perdidos). PERO si
+        // llega EN BLANCO y ya había texto streameado, NO lo borres: deepseek/ghosty-gc a
+        // veces cierra el turno con un body final vacío ("(sin respuesta)"/"") que hacía
+        // DESAPARECER una respuesta ya renderizada. Conserva lo visible si el autoritativo
+        // viene vacío.
+        const blank = !(ev.body ?? "").trim();
+        patchMessage(ev.id, (m) => (blank && (m.body ?? "").trim() ? m : { ...m, body: ev.body }));
+        if (!blank) {
+          driveDraftFromBody(ev.id, ev.body);
+          // Fence cerrado → el server compila el .docx; swap del draft al doc real.
+          const doc = extractEbDoc(ev.body);
+          if (doc?.closed) scheduleDraftSwap(ev.id);
+        }
         break;
       }
       case "refresh":
@@ -1274,6 +1285,19 @@ function ChannelPage() {
     setOptimistic((prev) => [...prev, o]);
     fireSend(o);
   };
+  // Respuesta rápida desde un artefacto inline (ask-user): envía `body` en el MISMO
+  // hilo/DM que la pregunta. parentId = ownerMsg.parent_id ?? ownerMsg.id (coincide
+  // con el parentFor del server); DM si el mensaje es de DM.
+  const sendQuickReply = (body: string, ownerMsg: Message) => {
+    const text = body.trim();
+    if (!text) return;
+    const dmId = (ownerMsg as { dm_id?: number | null }).dm_id ?? null;
+    if (dmId != null) {
+      sendOptimistic({ slug: "", parentId: null, dmId, body: text, attachments: [] });
+    } else {
+      sendOptimistic({ slug: channel.slug, parentId: ownerMsg.parent_id ?? ownerMsg.id, dmId: null, body: text, attachments: [] });
+    }
+  };
   const retrySend = (o: Optimistic) => {
     setOptimistic((prev) => prev.map((x) => (x.id === o.id ? { ...x, status: "sending" as const } : x)));
     fireSend({ ...o, status: "sending" }); // reusa el mismo nonce (el server descarta mi eco)
@@ -1307,7 +1331,7 @@ function ChannelPage() {
 
   return (
     <ChatCtx.Provider
-      value={{ me: user, slug: channel.slug, emojis, react, star, pin, remove, editMsg, retrySend, discardSend, pickerFor, setPickerFor, onOpenArtifact: setOpenArtifact }}
+      value={{ me: user, slug: channel.slug, emojis, react, star, pin, remove, editMsg, retrySend, discardSend, pickerFor, setPickerFor, onOpenArtifact: setOpenArtifact, sendQuickReply }}
     >
     <div className="flex h-[100dvh] bg-surface text-ink">
       {/* Backdrop del drawer (solo móvil): tap fuera cierra el sidebar. */}
@@ -3451,6 +3475,7 @@ const ARTIFACT_KIND_META: Record<string, { embed?: boolean; labelKey: string }> 
   audio: { labelKey: "Reproducir" },
   video: { labelKey: "Reproducir" },
   file: { labelKey: "Descargar" },
+  "ask-user": { labelKey: "Elige una opción" },
 };
 
 // Construye la vista del panel desde un artefacto del mensaje (mapeo ÚNICO: lo usa la
@@ -3459,6 +3484,11 @@ function artifactToView(a: Artifact): ArtifactView {
   const title = a.title ?? "";
   if (a.kind === "doc") return { kind: "doc", title, documentId: a.url, md: a.md ?? "" };
   if (a.kind === "sheet") return { kind: "sheet", title, documentId: a.url, csv: a.md ?? "" };
+  if (a.kind === "ask-user") {
+    let options: string[] = [];
+    try { const p = JSON.parse(a.md ?? "[]"); if (Array.isArray(p)) options = p.map(String); } catch {}
+    return { kind: "ask-user", title, question: a.title ?? "", options };
+  }
   const kind = ARTIFACT_KIND_META[a.kind] ? a.kind : "file";
   return ARTIFACT_KIND_META[kind].embed
     ? { kind: "html", title, embedUrl: a.url }
@@ -3500,11 +3530,169 @@ class ArtifactBoundary extends Component<
   }
 }
 
-function ArtifactCard({ artifact }: { artifact: Artifact }) {
+// ── ask-user: artefacto INLINE de opciones clicables ────────────────────────
+// Un solo listener de teclado a nivel módulo; la ÚLTIMA card interactiva montada
+// "reclama" el teclado (activeAsk) para que teclas 1..9 no las peleen varias cards.
+let activeAsk: { id: number; handle: (e: KeyboardEvent) => void } | null = null;
+let auListenerBound = false;
+function bindAuListener() {
+  if (auListenerBound || typeof document === "undefined") return;
+  auListenerBound = true;
+  document.addEventListener("keydown", (e) => activeAsk?.handle(e));
+}
+// Estado persistido (sobrevive revalidate): respondida (opción elegida) / descartada.
+function readAuState(id: number): { answered?: string; dismissed?: boolean } {
+  if (typeof localStorage === "undefined") return {};
+  try { return JSON.parse(localStorage.getItem(`askuser:${id}`) || "{}"); } catch { return {}; }
+}
+function writeAuState(id: number, s: { answered?: string; dismissed?: boolean }) {
+  try { localStorage.setItem(`askuser:${id}`, JSON.stringify(s)); } catch {}
+}
+
+function AskUserCard({
+  artifactId,
+  question,
+  options,
+  onPick,
+}: {
+  artifactId: number;
+  question: string;
+  options: string[];
+  onPick: (opt: string) => void;
+}) {
   const t = useT();
-  const { onOpenArtifact } = useContext(ChatCtx);
+  const init = readAuState(artifactId);
+  const [answered, setAnswered] = useState<string | null>(init.answered ?? null);
+  const [dismissed, setDismissed] = useState<boolean>(!!init.dismissed);
+  const [focusIdx, setFocusIdx] = useState(-1);
+  const btnRefs = useRef<(HTMLButtonElement | null)[]>([]);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const active = !answered && !dismissed;
+
+  const pick = useCallback((opt: string) => {
+    if (!opt) return;
+    setAnswered(opt);
+    writeAuState(artifactId, { answered: opt });
+    onPick(opt);
+  }, [artifactId, onPick]);
+  const dismiss = useCallback(() => {
+    setDismissed(true);
+    writeAuState(artifactId, { dismissed: true });
+  }, [artifactId]);
+  const undo = useCallback(() => {
+    setDismissed(false);
+    writeAuState(artifactId, {});
+  }, [artifactId]);
+
+  // Handler de teclado (siempre la versión más fresca vía ref → el listener módulo la llama).
+  const handlerRef = useRef<(e: KeyboardEvent) => void>(() => {});
+  handlerRef.current = (e: KeyboardEvent) => {
+    if (!active || e.metaKey || e.ctrlKey || e.altKey) return;
+    const ae = document.activeElement as HTMLElement | null;
+    const editing = !!ae && (ae.tagName === "TEXTAREA" || ae.tagName === "INPUT" || ae.isContentEditable);
+    const withinCard = !!ae && !!containerRef.current?.contains(ae);
+    // 1..9 → elige directo (pero NO si estás escribiendo en el composer).
+    if (/^[1-9]$/.test(e.key)) {
+      if (editing && !withinCard) return;
+      const i = Number(e.key) - 1;
+      if (i < options.length) { e.preventDefault(); pick(options[i]); }
+      return;
+    }
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      if (editing && !withinCard) return;
+      e.preventDefault();
+      const dir = e.key === "ArrowDown" ? 1 : -1;
+      const next = focusIdx < 0 ? (dir === 1 ? 0 : options.length - 1) : Math.min(Math.max(focusIdx + dir, 0), options.length - 1);
+      setFocusIdx(next);
+      btnRefs.current[next]?.focus();
+      return;
+    }
+    if (e.key === "Enter" && withinCard && focusIdx >= 0) { e.preventDefault(); pick(options[focusIdx]); return; }
+    if (e.key === "Escape" && !editing) { e.preventDefault(); dismiss(); }
+  };
+
+  // Reclama el teclado mientras esté activa; libera al responder/descartar/desmontar.
+  useEffect(() => {
+    if (!active) { if (activeAsk?.id === artifactId) activeAsk = null; return; }
+    bindAuListener();
+    activeAsk = { id: artifactId, handle: (e) => handlerRef.current(e) };
+    return () => { if (activeAsk?.id === artifactId) activeAsk = null; };
+  }, [active, artifactId]);
+
+  if (dismissed) {
+    return (
+      <div className="mt-1.5 flex items-center gap-2 text-[11px] text-muted">
+        {t("Pregunta descartada")}
+        <button type="button" onClick={undo} className="font-medium text-brand hover:underline">{t("Mostrar")}</button>
+      </div>
+    );
+  }
+
+  return (
+    <div ref={containerRef} className="mt-1.5 max-w-md rounded-xl border border-border bg-surface-2 p-3">
+      <div className="mb-2 flex items-start justify-between gap-2">
+        <span className="text-sm font-medium text-ink">{question || t("Elige una opción")}</span>
+        {active && (
+          <button
+            type="button"
+            onClick={dismiss}
+            title={t("Descartar (Esc)")}
+            className="shrink-0 rounded-md p-0.5 text-muted transition hover:bg-surface-3 hover:text-ink"
+          >
+            <X size={14} />
+          </button>
+        )}
+      </div>
+      <div className="flex flex-col gap-1.5">
+        {options.map((opt, i) => {
+          const chosen = answered === opt;
+          return (
+            <button
+              key={i}
+              ref={(el) => { btnRefs.current[i] = el; }}
+              type="button"
+              disabled={!active}
+              onClick={() => pick(opt)}
+              className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-left text-sm transition ${
+                chosen
+                  ? "border-brand bg-brand/10 text-ink"
+                  : active
+                    ? "border-border text-ink hover:border-brand/60 hover:bg-surface-3"
+                    : "border-border text-muted"
+              }`}
+            >
+              <span className={`grid size-5 shrink-0 place-items-center rounded text-[10px] font-bold ${chosen ? "bg-brand text-white" : "bg-surface-3 text-muted"}`}>
+                {chosen ? <Check size={12} /> : i + 1}
+              </span>
+              <span className="min-w-0 flex-1 truncate">{opt}</span>
+            </button>
+          );
+        })}
+      </div>
+      {active && (
+        <p className="mt-2 text-[11px] text-muted">{t("Un clic o teclas 1–{n} · ↑↓ Enter · Esc descarta", { n: Math.min(options.length, 9) })}</p>
+      )}
+    </div>
+  );
+}
+
+function ArtifactCard({ artifact, ownerMsg }: { artifact: Artifact; ownerMsg: Message }) {
+  const t = useT();
+  const { onOpenArtifact, sendQuickReply } = useContext(ChatCtx);
   const [downloading, setDownloading] = useState(false);
   const view = artifactToView(artifact);
+  // ask-user: artefacto INLINE de opciones clicables → botones directos en el bubble
+  // (un clic = enviar). No abre el panel lateral. Ver AskUserCard.
+  if (view.kind === "ask-user") {
+    return (
+      <AskUserCard
+        artifactId={artifact.id}
+        question={view.question}
+        options={view.options}
+        onPick={(opt) => sendQuickReply(opt, ownerMsg)}
+      />
+    );
+  }
   const isDoc = view.kind === "doc";
   const isOffice = view.kind === "office";
   const isSheet = view.kind === "sheet";
@@ -3554,9 +3742,9 @@ function ArtifactCard({ artifact }: { artifact: Artifact }) {
           // Miniatura real → una imagen se ve como imagen, no como "Documento".
           <img src={view.src} alt={artifact.title || ""} className="size-10 shrink-0 rounded-lg object-cover" />
         ) : isPdf ? (
-          // Icono que SÍ representa un PDF (rojo, badge "PDF" como un lector).
-          <span className="grid size-10 shrink-0 place-items-center rounded-lg bg-red-500/15 text-[9px] font-bold tracking-wider text-red-500">
-            PDF
+          // Documento en ROJO = convención universal de PDF (icono, no texto).
+          <span className="grid size-10 shrink-0 place-items-center rounded-lg bg-red-500/15 text-red-500">
+            <FileText size={20} />
           </span>
         ) : (
           <span className="grid size-10 shrink-0 place-items-center rounded-lg bg-surface-3 text-brand">
@@ -3747,7 +3935,7 @@ function MessageRow({
               </div>
             }
           >
-            <ArtifactCard artifact={m.artifact} />
+            <ArtifactCard artifact={m.artifact} ownerMsg={m} />
           </ArtifactBoundary>
         )}
         {canReact && (m.reactions?.length ?? 0) > 0 && <ReactionBar m={m} />}
@@ -4533,6 +4721,15 @@ const Composer = forwardRef<ComposerHandle, {
           value={body}
           onChange={onChange}
           onKeyDown={onKeyDown}
+          // Pegar (Cmd/Ctrl+V) una imagen del portapapeles — el caso típico de un
+          // screenshot. La adjunta con miniatura INSTANTÁNEA (mismo addFiles que el drop).
+          onPaste={(e) => {
+            const files = Array.from(e.clipboardData?.files ?? []).filter((f) => f.type.startsWith("image/"));
+            if (files.length) {
+              e.preventDefault();
+              addFiles(files);
+            }
+          }}
           rows={1}
           placeholder={placeholder}
           className="max-h-40 min-h-9 flex-1 resize-none bg-transparent px-1 py-2 text-sm leading-5 text-ink outline-none placeholder:text-muted"
