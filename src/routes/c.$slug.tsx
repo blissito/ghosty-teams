@@ -81,7 +81,7 @@ import { playNotificationSound, playGhostySound, playSelfSound, playMentionSound
 const SOUND_GROUP_MENTIONS = new Set(["all", "channel", "everyone", "aqui", "here", "todos"]);
 import { useT } from "../i18n";
 
-type Mention = { handle: string; name: string; avatar: string; kind: "agent" | "user" | "group" };
+type Mention = { handle: string; name: string; avatar: string; nickname?: string; kind: "agent" | "user" | "group" };
 import { me } from "../server/auth";
 import {
   createChannelFn,
@@ -324,6 +324,9 @@ const ChatCtx = createContext<{
   // Envía `body` como respuesta del usuario en el MISMO hilo/DM que `ownerMsg`
   // (usado por artefactos interactivos inline, ej. ask-user: un clic = enviar).
   sendQuickReply: (body: string, ownerMsg: Message) => void;
+  // Nickname a mostrar para un sender (nombre del mensaje) → resuelto desde la lista
+  // de usuarios (Ajustes → perfil). null = sin nickname, usar el sender tal cual.
+  nickFor: (sender: string) => string | null;
 }>({
   me: null,
   slug: "",
@@ -339,6 +342,7 @@ const ChatCtx = createContext<{
   setPickerFor: () => {},
   onOpenArtifact: () => {},
   sendQuickReply: () => {},
+  nickFor: () => null,
 });
 
 // Emojis rápidos para el picker (evita una lib de ~1MB).
@@ -1329,9 +1333,19 @@ function ChannelPage() {
     );
   };
 
+  // Mapa nombre→nickname (Ajustes → perfil) para re-pintar el nombre en cada mensaje
+  // sin tocar `sender`. Se refresca solo cuando cambian las menciones (cache módulo).
+  const mentions = useMentions();
+  const nickByName = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const u of mentions) if (u.kind === "user" && u.nickname) map[u.name] = u.nickname;
+    return map;
+  }, [mentions]);
+  const nickFor = useCallback((sender: string) => nickByName[sender] ?? null, [nickByName]);
+
   return (
     <ChatCtx.Provider
-      value={{ me: user, slug: channel.slug, emojis, react, star, pin, remove, editMsg, retrySend, discardSend, pickerFor, setPickerFor, onOpenArtifact: setOpenArtifact, sendQuickReply }}
+      value={{ me: user, slug: channel.slug, emojis, react, star, pin, remove, editMsg, retrySend, discardSend, pickerFor, setPickerFor, onOpenArtifact: setOpenArtifact, sendQuickReply, nickFor }}
     >
     <div className="flex h-[100dvh] bg-surface text-ink">
       {/* Backdrop del drawer (solo móvil): tap fuera cierra el sidebar. */}
@@ -3827,7 +3841,7 @@ function MessageRow({
   canPin?: boolean;
 }) {
   const t = useT();
-  const { me, slug, pickerFor, onOpenArtifact } = useContext(ChatCtx);
+  const { me, slug, pickerFor, onOpenArtifact, nickFor } = useContext(ChatCtx);
   const [editing, setEditing] = useState(false);
   // Mientras un popover de la barra (reaccionar/⋯) esté abierto, la barra NO debe
   // desaparecer al perder el hover del row (si no, el popover se vuelve inclicable).
@@ -3838,7 +3852,7 @@ function MessageRow({
   // con mentions_ghosty=0. Así, "es del agente" = tiene handle Y no es una mención.
   const isAgent = (m.agent_handle != null && m.mentions_ghosty === 0) || m.sender === "ghosty";
   const isGhostyAvatar = isAgent && (m.agent_handle === "ghosty" || m.sender === "ghosty");
-  const displayName = isAgent && m.sender === "ghosty" ? "Ghosty" : m.sender;
+  const displayName = isAgent && m.sender === "ghosty" ? "Ghosty" : (nickFor(m.sender) ?? m.sender);
   const time = new Date(m.created_at * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   const canEdit = !!me && (me.isOwner || m.sender === me.name) && !isAgent && m.kind === "msg";
   const canDelete = !!me && (me.isOwner || m.sender === me.name) && m.kind === "msg";

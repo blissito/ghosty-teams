@@ -77,10 +77,10 @@ export async function upsertUser(id: {
   return { ...id, isOwner: isOwner === 1, handle };
 }
 
-export type MentionUser = { sub: string; handle: string; name: string; email: string; avatar: string };
+export type MentionUser = { sub: string; handle: string; name: string; email: string; avatar: string; nickname: string };
 export async function listUsers(): Promise<MentionUser[]> {
   const { rows, cols } = await dbq(
-    "SELECT sub, handle, name, email, avatar FROM gc_users WHERE handle IS NOT NULL ORDER BY name"
+    "SELECT sub, handle, name, email, avatar, nickname FROM gc_users WHERE handle IS NOT NULL ORDER BY name"
   );
   const idx = (c: string) => cols.indexOf(c);
   return rows.map((r) => ({
@@ -89,7 +89,19 @@ export async function listUsers(): Promise<MentionUser[]> {
     name: (r[idx("name")] as string) ?? "",
     email: (r[idx("email")] as string) ?? "",
     avatar: (r[idx("avatar")] as string) ?? "",
+    nickname: (r[idx("nickname")] as string) ?? "",
   }));
+}
+
+// Nickname editable por el dueño de la cuenta (Ajustes → perfil). Vacío = usar el
+// nombre. El chat lo resuelve al render por nombre→nickname; no toca sender/permisos.
+export async function setNickname(sub: string, nickname: string): Promise<void> {
+  await dbq("UPDATE gc_users SET nickname=? WHERE sub=?", [nickname.trim() || null, sub]);
+}
+
+export async function getNickname(sub: string): Promise<string> {
+  const { rows } = await dbq("SELECT nickname FROM gc_users WHERE sub=?", [sub]);
+  return (rows[0]?.[0] as string) ?? "";
 }
 
 // Subs de usuarios cuyos @handle aparecen (para push). Excluye a excludeSub.

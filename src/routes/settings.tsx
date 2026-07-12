@@ -4,6 +4,7 @@ import { Bot, Plus, Trash2, X, Bell, Smile, Loader2, Pencil } from "lucide-react
 import { FleetCapabilities } from "../components/FleetCapabilities";
 import { currentPushState, enablePush, disablePush } from "../utils/push-subscribe";
 import { me, logout, clearMeCache } from "../server/auth";
+import { getMyNicknameFn, setMyNicknameFn } from "../server/chat";
 import { getSetup } from "../server/setup";
 import { createInvite } from "../server/invites";
 import {
@@ -135,6 +136,7 @@ function Settings() {
             </span>
           </div>
 
+          <NicknameCard />
           <NotificationsCard />
 
           {isOwner && (
@@ -186,6 +188,57 @@ function Settings() {
       )}
 
       {tab === "emojis" && isOwner && <EmojiManager />}
+    </div>
+  );
+}
+
+/* ── Nombre para mostrar (nickname): cómo apareces en rooms/hilos ── */
+function NicknameCard() {
+  const t = useT();
+  const [nickname, setNickname] = useState("");
+  const [initial, setInitial] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  useEffect(() => {
+    getMyNicknameFn().then((r) => {
+      setNickname(r.nickname);
+      setInitial(r.nickname);
+    });
+  }, []);
+  const dirty = nickname.trim() !== initial.trim();
+  async function save() {
+    if (!dirty || saving) return;
+    setSaving(true);
+    const r = await setMyNicknameFn({ data: { nickname } });
+    setNickname(r.nickname);
+    setInitial(r.nickname);
+    setSaving(false);
+    setSaved(true);
+    setTimeout(() => setSaved(false), 1500);
+  }
+  return (
+    <div className="mb-4 rounded-xl border border-border bg-surface-2 p-4">
+      <h2 className="mb-1 text-sm font-semibold">{t("Nombre para mostrar")}</h2>
+      <p className="mb-3 text-xs text-muted">
+        {t("Cómo apareces en los rooms e hilos. Vacío = tu nombre de cuenta.")}
+      </p>
+      <div className="flex items-center gap-2">
+        <input
+          value={nickname}
+          onChange={(e) => setNickname(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && save()}
+          maxLength={40}
+          placeholder={t("Tu apodo…")}
+          className="flex-1 rounded-lg border border-border bg-surface px-3 py-2 text-sm text-ink"
+        />
+        <button
+          onClick={save}
+          disabled={!dirty || saving}
+          className="grid min-w-[92px] place-items-center rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-brand-fg disabled:opacity-50"
+        >
+          {saving ? <Loader2 size={14} className="animate-spin" /> : saved ? t("Guardado") : t("Guardar")}
+        </button>
+      </div>
     </div>
   );
 }

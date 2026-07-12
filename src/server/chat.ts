@@ -87,10 +87,33 @@ export const listMentionsFn = createServerFn({ method: "GET" }).handler(async ()
     // Menciones grupales (notifican a toda la audiencia del room).
     { handle: "all", name: "Notificar a todos", avatar: "", kind: "group" as const },
     { handle: "channel", name: "Notificar al room", avatar: "", kind: "group" as const },
-    ...agents.map((a) => ({ handle: a.handle, name: a.name, avatar: a.avatar, kind: "agent" as const })),
-    ...us.map((u) => ({ handle: u.handle, name: u.name, avatar: u.avatar, kind: "user" as const })),
+    ...agents.map((a) => ({ handle: a.handle, name: a.name, avatar: a.avatar, nickname: "", kind: "agent" as const })),
+    ...us.map((u) => ({ handle: u.handle, name: u.name, avatar: u.avatar, nickname: u.nickname, kind: "user" as const })),
   ];
 });
+
+// Nickname del usuario actual (Ajustes → perfil). El chat lo resuelve al render por
+// nombre→nickname (viene en listMentionsFn); aquí solo lee/escribe el propio.
+export const getMyNicknameFn = createServerFn({ method: "GET" }).handler(async () => {
+  const user = await sessionUser();
+  if (!user) return { nickname: "" };
+  // Ajustes no pasa por getChannelView → asegura la columna `nickname` en caja fresca.
+  await (await import("./schema.server")).ensureSchema().catch(() => {});
+  const users = await import("../users.server");
+  return { nickname: await users.getNickname(user.sub) };
+});
+
+export const setMyNicknameFn = createServerFn({ method: "POST" })
+  .validator((d: { nickname: string }) => d)
+  .handler(async ({ data }) => {
+    const user = await sessionUser();
+    if (!user) throw new Error("no autenticado");
+    await (await import("./schema.server")).ensureSchema().catch(() => {});
+    const nickname = (data.nickname ?? "").trim().slice(0, 40);
+    const users = await import("../users.server");
+    await users.setNickname(user.sub, nickname);
+    return { nickname };
+  });
 
 // Shell del room (sidebar + meta), SIN el flujo → el loader es ligero y el
 // flujo carga client-side con skeleton (apertura inmediata). Filtra visibilidad.
