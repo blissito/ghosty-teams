@@ -228,6 +228,21 @@ const PERSISTED_CACHES: [string, Map<unknown, unknown>][] = [
   ["thread", threadCache as Map<unknown, unknown>],
   ["dmFlow", dmFlowCache as Map<unknown, unknown>],
 ];
+
+// Persiste los caches al sessionStorage. Módulo-scope para que lo llamen tanto los
+// listeners (pagehide/visibilitychange) COMO el error boundary al EVICTAR una entrada
+// envenenada (así el refresh no la restaura). No-op fuera del browser.
+function persistCaches() {
+  if (typeof window === "undefined") return;
+  try {
+    const out: Record<string, unknown> = {};
+    for (const [name, cache] of PERSISTED_CACHES) out[name] = [...cache.entries()];
+    sessionStorage.setItem("gc-caches-v3", JSON.stringify(out));
+  } catch {
+    /* quota/serialize → mejor esfuerzo, sin romper */
+  }
+}
+
 if (typeof window !== "undefined") {
   try {
     // v3: descarta v1/v2 envenenados. Un cache de hilo serializado por una versión del
@@ -245,19 +260,10 @@ if (typeof window !== "undefined") {
   } catch {
     /* ausente/corrupto → arranca vacío */
   }
-  const dumpCaches = () => {
-    try {
-      const out: Record<string, unknown> = {};
-      for (const [name, cache] of PERSISTED_CACHES) out[name] = [...cache.entries()];
-      sessionStorage.setItem("gc-caches-v3", JSON.stringify(out));
-    } catch {
-      /* quota/serialize → mejor esfuerzo, sin romper */
-    }
-  };
-  window.addEventListener("pagehide", dumpCaches);
+  window.addEventListener("pagehide", persistCaches);
   // pagehide no siempre dispara (algunos móviles) → respaldo al ocultar la pestaña.
   document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "hidden") dumpCaches();
+    if (document.visibilityState === "hidden") persistCaches();
   });
 }
 
@@ -1298,6 +1304,17 @@ function ChannelPage() {
           resetKey = el contexto → navegar (cambiar hilo/room/vista) resetea y recupera. */}
       <ArtifactBoundary
         resetKey={`${channel.id}:${view ?? ""}:${openDmId ?? ""}:${openThreadId ?? ""}`}
+        onCatch={() => {
+          // Rompe el bucle "crash → Volver al room → reabrir → re-crash": el cache del
+          // cliente (persistido en sessionStorage) tenía una entrada PARCIAL de este
+          // contexto — p.ej. un stream del agente que se cortó al reciclar su caja. La
+          // evictamos y re-persistimos → al reabrir se re-fetchea limpio del server (los
+          // datos en la DB están bien; lo roto era solo la copia cacheada del cliente).
+          if (openThreadId != null) threadCache.delete(openThreadId);
+          else if (openDmId != null) dmFlowCache.delete(openDmId);
+          else if (view != null) viewCache.delete(view);
+          persistCaches();
+        }}
         fallback={
           <section className="flex min-w-0 flex-1 flex-col items-center justify-center gap-3 p-8 text-center">
             <div className="text-3xl">💤</div>
@@ -1381,7 +1398,7 @@ function ChannelPage() {
           ArtifactPanel → destruye su <AnimatePresence> interno → el slide de CIERRE no corre
           y hay "doble apertura" al seleccionar. Usar SIEMPRE `resetKey` (resetea el error
           boundary SIN remontar). El drill-down lista↔detalle es estado INTERNO del panel
-          (`detail`), no cambia `openArtifact`. Ver plan moonlit-soaring-kitten.md + memoria
+          (`detail`), no cambia `openArtifact`. Ver plan gteams-vertical-legal-y-documentos-cowork.md + memoria
           project_gteams_legal_vertical_live (GOTCHA de oro). */}
       <ArtifactBoundary resetKey={openArtifact?.title ?? "none"}>
         <ArtifactPanel artifact={openArtifact} onClose={() => setOpenArtifact(null)} onOpen={setOpenArtifact} />
@@ -3383,7 +3400,7 @@ function artifactToView(a: Artifact): ArtifactView {
 // 2026-07-09: un `.trim()` sobre md/csv undefined en ArtifactPanel crasheaba el room al
 // abrir hilos con artefacto. Reset por `key` (id del artefacto) al montar la boundary.
 class ArtifactBoundary extends Component<
-  { children: ReactNode; fallback?: ReactNode; resetKey?: unknown },
+  { children: ReactNode; fallback?: ReactNode; resetKey?: unknown; onCatch?: () => void },
   { failed: boolean; key: unknown }
 > {
   state = { failed: false, key: this.props.resetKey };
@@ -3403,6 +3420,9 @@ class ArtifactBoundary extends Component<
   componentDidCatch(err: unknown, info: unknown) {
     // Log fuerte para diagnóstico (el fallback ya evitó tumbar la ruta).
     console.error("[gt boundary] render failed:", err, info);
+    // Deja que el padre limpie el cache envenenado del contexto que crasheó (ver
+    // el onCatch del boundary central) → reabrir re-fetchea limpio en vez de re-crashear.
+    this.props.onCatch?.();
   }
   render() {
     if (this.state.failed) return this.props.fallback ?? null;
