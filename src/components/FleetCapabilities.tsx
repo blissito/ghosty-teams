@@ -145,14 +145,17 @@ export function FleetCapabilities({ agentId }: { agentId: number }) {
         <Sparkles size={13} /> {t("Capacidades de flota")}
       </p>
 
-      {/* Modelo (label real por template: Modelo/Claude o Cerebro/LLM) + razonamiento */}
+      {/* Modelo (registry-driven: solo si el motor tiene modelos seleccionables) +
+          razonamiento. Motores de modelo fijo (easybits) → sin selector. */}
       <div className="grid grid-cols-2 gap-3">
-        <div>
-          <span className={label}>{(cfg.agent?.modelLabel || t("Modelo"))} <Spin k="model" /></span>
-          <select className={`w-full ${sel}`} value={cfg.agent?.model ?? ""} onChange={(e) => { const v = e.target.value; mutate("model", (c) => { if (c.agent) c.agent.model = v; return { action: "set-model", model: v }; }); }}>
-            {cfg.models?.map((m) => <option key={m.key} value={m.key}>{m.label}</option>)}
-          </select>
-        </div>
+        {cfg.models?.length ? (
+          <div>
+            <span className={label}>{(cfg.agent?.modelLabel || t("Modelo"))} <Spin k="model" /></span>
+            <select className={`w-full ${sel}`} value={cfg.agent?.model ?? ""} onChange={(e) => { const v = e.target.value; mutate("model", (c) => { if (c.agent) c.agent.model = v; return { action: "set-model", model: v }; }); }}>
+              {cfg.models.map((m) => <option key={m.key} value={m.key}>{m.label}</option>)}
+            </select>
+          </div>
+        ) : null}
         <div>
           <span className={label}>{t("Razonamiento")} <Spin k="effort" /></span>
           <select className={`w-full ${sel}`} value={cfg.agent?.effort ?? "medium"} onChange={(e) => { const v = e.target.value; mutate("effort", (c) => { if (c.agent) c.agent.effort = v; return { action: "set-effort", effort: v }; }); }}>
