@@ -69,6 +69,25 @@ function Settings() {
     ...(isOwner ? [{ id: "emojis" as const, label: t("Emojis") }] : []),
   ];
   const [tab, setTab] = useState<"general" | "agentes" | "emojis">("general");
+  // Recuerda la última pestaña abierta (localStorage). SSR-safe: init estable en
+  // "general" (server + primer render cliente coinciden → sin mismatch de hidratación)
+  // y se restaura en effect. Depende de la disponibilidad (Agentes/Emojis cargan async):
+  // si la guardada aún no está disponible, no restaura hasta que aparezca; `restored`
+  // evita pisar un cambio manual del usuario una vez hecha la restauración.
+  const restored = useRef(false);
+  useEffect(() => {
+    if (restored.current) return;
+    try {
+      const saved = localStorage.getItem("settings.tab");
+      if (!saved || saved === "general") { restored.current = true; return; }
+      if (tabs.some((tb) => tb.id === saved)) { setTab(saved as typeof tab); restored.current = true; }
+    } catch { restored.current = true; }
+  }, [canManageAgents, isOwner]);
+  const selectTab = (id: "general" | "agentes" | "emojis") => {
+    restored.current = true;
+    setTab(id);
+    try { localStorage.setItem("settings.tab", id); } catch {}
+  };
 
   return (
     <div className="mx-auto max-w-lg p-6 text-ink">
@@ -84,7 +103,7 @@ function Settings() {
         {tabs.map((tb) => (
           <button
             key={tb.id}
-            onClick={() => setTab(tb.id)}
+            onClick={() => selectTab(tb.id)}
             className={`-mb-px border-b-2 px-3 py-2 text-sm font-medium transition ${
               tab === tb.id
                 ? "border-brand text-ink"
