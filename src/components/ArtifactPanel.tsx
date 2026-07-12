@@ -19,6 +19,16 @@ export function docToView(d: TeamDocument): ArtifactView | null {
   if (d.kind === "doc") return { kind: "doc", title: d.title, documentId: d.documentId ?? d.key, md: d.md ?? "" };
   if (d.kind === "sheet") return { kind: "sheet", title: d.title, documentId: d.documentId ?? d.key, csv: d.md ?? "" };
   if (d.kind === "html" && d.documentId) return { kind: "html", title: d.title, embedUrl: d.documentId };
+  // Doc GENERADO y hospedado (pdf/imagen/office/file): `documentId` = URL pública (g.url).
+  // Antes caía a `null` → en el índice salía DISABLED (opacity-70) "como si ya no existiera",
+  // aunque abre bien desde la tarjeta del chat (que usa esa misma URL).
+  if (d.source === "generated" && d.documentId) {
+    const src = d.documentId;
+    if (d.kind === "pdf") return { kind: "pdf", title: d.title, src };
+    if (d.kind === "image") return { kind: "image", title: d.title, src };
+    if (d.kind === "office") return { kind: "office", title: d.title, src };
+    if (d.kind === "file") return { kind: "file", title: d.title, src };
+  }
   return null;
 }
 
