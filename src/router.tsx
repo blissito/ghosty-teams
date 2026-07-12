@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { createRouter as createTanStackRouter } from '@tanstack/react-router'
 import { routeTree } from './routeTree.gen'
 
@@ -24,8 +24,24 @@ function purgePoisonedCaches() {
 // Invita a recargar — la mayoría de los errores transitorios (red, hidratación) se van
 // con un refresh; al montar PURGAMOS el cache para que la recarga arranque limpia.
 function AppError() {
+  // El 99% de estos errores = caja suspendida (el load de ruta falla mientras despierta);
+  // el reload la reanuda server-side. Auto-reanudamos SIN esperar el clic, con guard
+  // anti-loop: si un error PERSISTE (bug real / caja caída), auto-reload sin tope sería
+  // un loop infinito → máx 3 intentos en 30s; si persiste, caemos al botón manual.
+  const [manual, setManual] = useState(false)
   useEffect(() => {
     purgePoisonedCaches()
+    const now = Date.now()
+    let n = 0, t = 0
+    try {
+      const p = JSON.parse(sessionStorage.getItem('gc-resume') || '{}')
+      n = p.n || 0; t = p.t || 0
+    } catch { /* sessionStorage inaccesible */ }
+    if (t && now - t > 30_000) { n = 0; t = 0 } // ventana expiró (>30s sin error) → reset
+    if (n >= 3) { setManual(true); return }      // topó el guard → esperar clic (evita loop)
+    try { sessionStorage.setItem('gc-resume', JSON.stringify({ n: n + 1, t: t || now })) } catch {}
+    const id = setTimeout(() => window.location.reload(), 800)
+    return () => clearTimeout(id)
   }, [])
   return (
     <div
@@ -46,7 +62,9 @@ function AppError() {
       <div style={{ fontSize: '44px' }}>💤</div>
       <h1 style={{ fontSize: '20px', fontWeight: 700, margin: 0 }}>El asistente se tomó una pausa</h1>
       <p style={{ margin: 0, maxWidth: '360px', color: '#a1a1aa', lineHeight: 1.5 }}>
-        La sesión se suspendió por seguridad. No se perdió nada — reanuda justo donde estabas.
+        {manual
+          ? 'Reintentamos varias veces sin éxito. No se perdió nada — reanuda manualmente.'
+          : 'Reanudando justo donde estabas… no se perdió nada.'}
       </p>
       <button
         onClick={() => window.location.reload()}
@@ -62,7 +80,7 @@ function AppError() {
           cursor: 'pointer',
         }}
       >
-        Reanudar
+        {manual ? 'Reanudar' : 'Reanudar ahora'}
       </button>
     </div>
   )
