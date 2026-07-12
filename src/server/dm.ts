@@ -184,7 +184,7 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
     // de la burbuja y lo commiteamos LOCAL (misma verdad markdown/csv que en el room). En DM
     // no cableamos identidad por-hilo → cada artefacto es una card nueva (co-edición diferida).
     try {
-      const { extractEbDoc, draftTitle, bubbleWithoutEbDoc } = await import("../lib/ebdoc");
+      const { extractEbDoc, draftTitle, bubbleWithoutEbDoc, extractAskUser, stripAskUser } = await import("../lib/ebdoc");
       const { randomUUID } = await import("node:crypto");
       const ebdoc = extractEbDoc(reply);
       if (ebdoc?.closed && ebdoc.md.trim()) {
@@ -198,6 +198,21 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
           md: ebdoc.md,
         });
         fanout({ t: "refresh", channelId: null, parentId: null, dmId: data.id });
+      } else {
+        // ask-user: pregunta con opciones clicables (mismo formato que en el room).
+        const ask = extractAskUser(reply);
+        if (ask) {
+          const cleaned = stripAskUser(reply);
+          await db.setMessageBody(id, cleaned);
+          fanout({ t: "message:body", id, body: cleaned });
+          await db.createArtifact(id, {
+            kind: "ask-user",
+            url: "",
+            title: ask.question || null,
+            md: JSON.stringify(ask.options),
+          });
+          fanout({ t: "refresh", channelId: null, parentId: null, dmId: data.id });
+        }
       }
     } catch (e) {
       console.error("[dm artifact] commit failed", e);

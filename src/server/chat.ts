@@ -510,7 +510,7 @@ export const askAgent = createServerFn({ method: "POST" })
     // (Slice 3 del contrato: reemplazar este scraping por eventos artifact del SSE.)
     try {
       const { detectArtifact, mintCollabEmbed, resolveFileKind } = await import("./easybits-documents.server");
-      const { extractEbDoc, draftTitle, bubbleWithoutEbDoc } = await import("../lib/ebdoc");
+      const { extractEbDoc, draftTitle, bubbleWithoutEbDoc, extractAskUser, stripAskUser } = await import("../lib/ebdoc");
       const { randomUUID } = await import("node:crypto");
 
       // Artefacto vivo con identidad + versiones: el agente generó/re-generó un doc de prosa
@@ -532,6 +532,25 @@ export const askAgent = createServerFn({ method: "POST" })
           md: ebdoc.md,
         });
         await db.setThreadArtifact(channel.id, data.parentId, documentId).catch(() => {});
+        bus.publish(bus.ch.room(channel.id), { t: "refresh", channelId: channel.id, parentId: data.parentId });
+        return { ok: true as const };
+      }
+
+      // ask-user: pregunta con opciones clicables. Quitamos el fence del bubble y
+      // colgamos un artefacto inline; los botones los pinta el surface. La pregunta
+      // va en `title`, las opciones (JSON) en `md` (no hay columna dedicada, mismo
+      // truco que doc/sheet con `md`). Agnóstico al motor — texto puro.
+      const ask = extractAskUser(reply);
+      if (ask) {
+        const cleaned = stripAskUser(reply);
+        await db.setMessageBody(id, cleaned);
+        bus.publish(bus.ch.room(channel.id), { t: "message:body", id, body: cleaned });
+        await db.createArtifact(id, {
+          kind: "ask-user",
+          url: "",
+          title: ask.question || null,
+          md: JSON.stringify(ask.options),
+        });
         bus.publish(bus.ch.room(channel.id), { t: "refresh", channelId: channel.id, parentId: data.parentId });
         return { ok: true as const };
       }

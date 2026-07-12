@@ -45,6 +45,9 @@ export type ArtifactView =
   | { kind: "draft"; title: string; content: string; sheet: boolean; streaming?: boolean }
   | { kind: "doc"; title: string; documentId: string; md: string } // documento vivo (markdown local + versiones)
   | { kind: "sheet"; title: string; documentId: string; csv: string } // hoja viva (CSV local + versiones)
+  // ask-user: pregunta con opciones clicables. Se pinta INLINE en el bubble (AskUserCard);
+  // esta variante solo cubre el fallback read-only si se abriera en el panel.
+  | { kind: "ask-user"; title: string; question: string; options: string[] }
   // Índice Cowork: lista los documentos de UN caso (room) como tiles; clic abre uno.
   // channelSlug para subir archivos al caso directo desde el panel (sin el agente).
   // threadRootId (opcional): abierto desde un HILO → toggle "Este hilo / Todo el caso".
@@ -231,7 +234,9 @@ export default function ArtifactPanel({
               ? `html:${artifact.embedUrl}`
               : artifact.kind === "docindex"
                 ? `docindex:${artifact.channelId}`
-                : `${artifact.kind}:${artifact.src}`;
+                : artifact.kind === "ask-user"
+                  ? "ask-user"
+                  : `${artifact.kind}:${artifact.src}`;
   // Al cambiar a OTRO artefacto, resetea el preview office.
   useEffect(() => {
     setOfficeHtml(null);
@@ -436,7 +441,7 @@ export default function ArtifactPanel({
   // hay URL real: docindex → la página global /artifacts; office/pdf/imagen/etc → su src
   // (firmado); html → embed. doc/sheet (md local) y draft no tienen URL → sin botón.
   const newTabHref =
-    !artifact || artifact.kind === "draft" || artifact.kind === "doc" || artifact.kind === "sheet"
+    !artifact || artifact.kind === "draft" || artifact.kind === "doc" || artifact.kind === "sheet" || artifact.kind === "ask-user"
       ? undefined
       : artifact.kind === "docindex"
         ? "/artifacts"
@@ -822,6 +827,19 @@ export default function ArtifactPanel({
                         <div className="grid h-full place-items-center text-sm text-neutral-400">{t("Sin contenido")}</div>
                       )}
                     </article>
+                  </div>
+                ) : artifact.kind === "ask-user" ? (
+                  // Fallback read-only (lo normal es que se pinte inline en el chat, no aquí).
+                  <div className="grid min-h-full place-items-center p-6">
+                    <div className="w-full max-w-md rounded-xl border border-border bg-surface p-5">
+                      <p className="mb-3 text-sm font-medium text-ink">{artifact.question || t("Elige una opción")}</p>
+                      <div className="flex flex-col gap-2">
+                        {artifact.options.map((o, i) => (
+                          <div key={i} className="rounded-lg border border-border px-3 py-2 text-sm text-muted">{o}</div>
+                        ))}
+                      </div>
+                      <p className="mt-3 text-xs text-muted">{t("Responde desde el chat.")}</p>
+                    </div>
                   </div>
                 ) : artifact.kind === "file" ? (
                   <div className="grid min-h-full place-items-center p-6">

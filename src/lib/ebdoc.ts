@@ -56,6 +56,55 @@ export function draftTitle(md: string, kind: EbDocKind = "doc", fenceTitle?: str
   return (clean && clean.slice(0, 80)) || "Documento";
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// ask-user — artefacto INLINE de opciones clicables. El agente cierra el turno con
+//   ```ask-user
+//   {"question":"…","options":["A","B","C"]}
+//   ```
+// El surface lo detecta, quita el fence del bubble y pinta botones inline (un clic
+// = enviar esa opción como respuesta). Agnóstico al modelo (texto puro): funciona
+// igual para deepseek (ghosty-gc) y claude (claude-worker). Gemelo de extractEbDoc.
+
+export type AskUser = {
+  question: string; // pregunta (puede venir vacía → el bubble alrededor la cubre)
+  options: string[]; // el texto de cada opción ES el body que se envía al elegirla
+};
+
+// Extrae el bloque ```ask-user``` (JSON {question, options[]}). Solo cuenta CERRADO y
+// con al menos una opción válida — un fence a medio streamear no dispara la card.
+export function extractAskUser(body: string): AskUser | null {
+  const open = body.match(/```ask-user[^\n]*\n/);
+  if (!open || open.index == null) return null;
+  const start = open.index + open[0].length;
+  const rest = body.slice(start);
+  const closeIdx = rest.indexOf("```");
+  if (closeIdx === -1) return null; // aún streameando → no pintamos card todavía
+  const json = rest.slice(0, closeIdx).trim();
+  try {
+    const parsed = JSON.parse(json) as { question?: unknown; options?: unknown };
+    const options = Array.isArray(parsed.options)
+      ? parsed.options.map((o) => String(o).trim()).filter(Boolean)
+      : [];
+    if (!options.length) return null;
+    const question = typeof parsed.question === "string" ? parsed.question.trim() : "";
+    return { question, options: options.slice(0, 9) }; // cap 9 → teclas 1..9
+  } catch {
+    return null;
+  }
+}
+
+// Texto de la burbuja SIN el bloque ask-user (narración alrededor). La pregunta se
+// muestra dentro de la card, así que si no hay narración dejamos el bubble vacío.
+export function stripAskUser(body: string): string {
+  const open = body.match(/```ask-user[^\n]*\n/);
+  if (!open || open.index == null) return body;
+  const before = body.slice(0, open.index);
+  const rest = body.slice(open.index + open[0].length);
+  const closeIdx = rest.indexOf("```");
+  const after = closeIdx === -1 ? "" : rest.slice(closeIdx + 3);
+  return [before.trim(), after.trim()].filter(Boolean).join("\n\n");
+}
+
 // Texto de la burbuja del chat SIN el bloque (narración alrededor). Mientras streamea (no
 // cerrado) deja un marcador para que el chat no muestre el markdown/csv crudo.
 export function bubbleWithoutEbDoc(body: string): string {
