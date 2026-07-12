@@ -194,6 +194,19 @@ export default function ArtifactPanel({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [refreshTick, setRefreshTick] = useState(0); // botón "refrescar" del header (re-fetch manual)
   const [downloading, setDownloading] = useState(false); // el export docx es lento → spinner
+
+  // ESC cierra el panel, igual que el visor de docs (Modal). Solo activo cuando hay
+  // artefacto abierto. Si estás en un drill-down (detail), ESC vuelve al índice primero.
+  useEffect(() => {
+    if (!rootArtifact) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      if (detail) setDetail(null);
+      else onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [rootArtifact, detail, onClose]);
   // Identidad ESTABLE del artefacto → el effect de fetch office NO se re-dispara al reabrir
   // el MISMO artefacto. El draft usa id constante para que su streaming NO resetee.
   const officeSrc = artifact?.kind === "office" ? artifact.src : null;
