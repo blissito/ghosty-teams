@@ -3301,8 +3301,7 @@ function DmView({
         <div className="min-w-0">
           <h2 className="truncate font-semibold leading-tight text-ink">{title}</h2>
           <p className="text-xs text-muted">
-            {isOnline ? t("En línea") : t("Mensaje directo")} · {t("tagea")}{" "}
-            <span className="text-brand">@ghosty</span>
+            {isOnline ? t("En línea") : t("Mensaje directo")}
           </p>
         </div>
       </header>
