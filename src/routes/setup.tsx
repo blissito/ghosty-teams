@@ -24,6 +24,7 @@ function Setup() {
     router.navigate({ to: "/login" });
   }
   const [busy, setBusy] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
   // Paso efectivo: el server siembra el inicial, pero las mutaciones lo mueven en el
   // cliente al instante (router.invalidate() no re-corría el loader → "el botón no
   // hacía nada"). `over` = override local; null = usa el del server. Igual para el
@@ -47,14 +48,26 @@ function Setup() {
   async function confirm() {
     if (!sel) return;
     setBusy("confirm");
+    setErr(null);
     try {
       if (sel.kind === "new") {
-        const r = await createFleetAgent({ data: { engine: sel.engine } });
-        setOver({ step: 3, fleetName: r?.name ?? "Ghosty" });
+        await createFleetAgent({ data: { engine: sel.engine } });
       } else {
         await selectFleetAgent({ data: { id: sel.id } });
-        setOver({ step: 3, fleetName: sel.name });
       }
+      // Listo → directo al chat (la pantalla de "conectado · Ir al chat" sobra).
+      router.navigate({ to: "/c/$slug", params: { slug: "general" } });
+      return; // no reseteamos busy: navegamos fuera del wizard
+    } catch (e) {
+      // Antes: try/finally sin catch → el error se perdía y el botón se desbloqueaba
+      // "sin hacer nada". Ahora lo mostramos. Un 401/Unauthorized = token EasyBits
+      // expirado → hay que reconectar (no se puede crear/seleccionar sin token válido).
+      const msg = e instanceof Error ? e.message : String(e);
+      setErr(
+        /401|unauthorized/i.test(msg)
+          ? t("Tu conexión con EasyBits expiró. Reconéctala abajo (← Desconectar EasyBits) y vuelve a intentar.")
+          : t("No se pudo crear el agente: {msg}", { msg })
+      );
     } finally {
       setBusy(null);
     }
@@ -98,9 +111,13 @@ function Setup() {
               </p>
               <a
                 href="/setup/easybits/connect"
-                className="inline-block rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-brand-fg hover:opacity-90"
+                onClick={() => setBusy("connect")}
+                aria-disabled={busy === "connect"}
+                className={`inline-block rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-brand-fg hover:opacity-90 ${
+                  busy === "connect" ? "pointer-events-none opacity-60" : ""
+                }`}
               >
-                {t("Conectar EasyBits")}
+                {busy === "connect" ? t("Conectando…") : t("Conectar EasyBits")}
               </a>
             </>
           )}
@@ -167,6 +184,10 @@ function Setup() {
                     ? t("Crear y continuar →")
                     : t("Continuar →")}
               </button>
+
+              {err && (
+                <p className="rounded-lg bg-red-500/10 px-3 py-2 text-xs text-red-400">{err}</p>
+              )}
 
               {/* Volver al paso 1 */}
               <button
