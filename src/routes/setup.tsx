@@ -1,6 +1,6 @@
 import { createFileRoute, useRouter, Link, redirect } from "@tanstack/react-router";
 import { useState } from "react";
-import { getSetup, selectFleetAgent } from "../server/setup";
+import { getSetup, selectFleetAgent, createFleetAgent } from "../server/setup";
 import { me, logout } from "../server/auth";
 import { useT } from "../i18n";
 
@@ -24,13 +24,32 @@ function Setup() {
     router.navigate({ to: "/login" });
   }
   const [busy, setBusy] = useState<string | null>(null);
+  // Optimista: al elegir/crear saltamos a "listo" YA; si el server falla, revertimos.
+  const [optimistic, setOptimistic] = useState<{ name: string } | null>(null);
 
-  const step = !connected ? 1 : !hasAgent ? 2 : 3;
+  const step = optimistic ? 3 : !connected ? 1 : !hasAgent ? 2 : 3;
 
-  async function pick(id: string) {
+  async function pick(id: string, name: string) {
     setBusy(id);
-    await selectFleetAgent({ data: { id } });
-    router.invalidate();
+    setOptimistic({ name });
+    try {
+      await selectFleetAgent({ data: { id } });
+      router.invalidate();
+    } catch {
+      setOptimistic(null);
+    }
+    setBusy(null);
+  }
+
+  async function create(engine: "deepseek" | "claude") {
+    setBusy(`new:${engine}`);
+    setOptimistic({ name: "Ghosty" });
+    try {
+      await createFleetAgent({ data: { engine } });
+      router.invalidate();
+    } catch {
+      setOptimistic(null);
+    }
     setBusy(null);
   }
 
@@ -72,15 +91,41 @@ function Setup() {
         <Stepline n={2} done={hasAgent} active={step === 2} title={t("Elige tu agente Ghosty")}>
           {step === 2 && (
             <div className="space-y-2">
-              {agents.length === 0 && (
-                <p className="text-sm text-muted">
-                  {t("No encontré agentes de flota en tu cuenta. Crea uno en EasyBits y recarga.")}
-                </p>
+              {/* Crear un @ghosty nuevo — Flash por default (rápido), Claude opcional */}
+              <button
+                onClick={() => create("deepseek")}
+                disabled={!!busy}
+                className="flex w-full items-center justify-between rounded-lg border border-brand bg-brand/10 px-3 py-2 text-left text-sm hover:bg-brand/20 disabled:opacity-50"
+              >
+                <span className="flex items-center gap-2">
+                  <img src="/ghosty.svg" alt="" className="h-5 w-5" />
+                  <span className="font-medium text-ink">{t("Crear Ghosty")}</span>
+                </span>
+                <span className="text-xs text-muted">
+                  {busy === "new:deepseek" ? t("creando…") : t("DeepSeek Flash · rápido")}
+                </span>
+              </button>
+              <button
+                onClick={() => create("claude")}
+                disabled={!!busy}
+                className="flex w-full items-center justify-between rounded-lg border border-border bg-surface px-3 py-2 text-left text-sm hover:border-brand disabled:opacity-50"
+              >
+                <span className="flex items-center gap-2">
+                  <img src="/ghosty.svg" alt="" className="h-5 w-5" />
+                  <span className="font-medium text-ink">{t("Crear Ghosty")}</span>
+                </span>
+                <span className="text-xs text-muted">
+                  {busy === "new:claude" ? t("creando…") : t("Claude Sonnet · capaz")}
+                </span>
+              </button>
+
+              {agents.length > 0 && (
+                <p className="pt-2 text-xs text-muted">{t("O usa uno existente:")}</p>
               )}
               {agents.map((a) => (
                 <button
                   key={a.id}
-                  onClick={() => pick(a.id)}
+                  onClick={() => pick(a.id, a.name)}
                   disabled={!!busy}
                   className="flex w-full items-center justify-between rounded-lg border border-border bg-surface px-3 py-2 text-left text-sm hover:border-brand disabled:opacity-50"
                 >
@@ -101,7 +146,7 @@ function Setup() {
         {step === 3 && (
           <div className="mt-4 rounded-lg bg-brand/10 p-4 text-center">
             <p className="text-sm text-ink">
-              ✅ <span className="font-medium">{fleetName || "Ghosty"}</span> {t("conectado.")}
+              ✅ <span className="font-medium">{fleetName || optimistic?.name || "Ghosty"}</span> {t("conectado.")}
             </p>
             <Link
               to="/c/$slug"

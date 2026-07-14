@@ -97,3 +97,36 @@ export async function listFleetAgents(accessToken: string) {
   const j = (await res.json()) as { pools?: Array<{ id: string; name: string; assistantName?: string; token: string; workerTemplate?: string }> };
   return j.pools ?? [];
 }
+
+// Motores ofrecidos al crear el @ghosty inicial del team. DeepSeek Flash = default
+// (modelo rápido, ~3s warm, ~4× vs sonnet-5 — Teams prioriza latencia de chat);
+// Claude Sonnet = más capaz + sesión persistente, piso ~13s. El create endpoint
+// resuelve `engine` → template + env (deepseek→ghosty-gc, claude→claude-worker).
+export const AGENT_ENGINES = {
+  deepseek: { engine: "deepseek", model: "deepseek-v4-flash", label: "DeepSeek Flash (rápido)" },
+  claude: { engine: "claude", model: "claude-sonnet-5", label: "Claude Sonnet (capaz)" },
+} as const;
+export type AgentEngineId = keyof typeof AGENT_ENGINES;
+
+export async function createFleetAgent(
+  accessToken: string,
+  opts: { name?: string; systemPrompt?: string; engine?: AgentEngineId } = {},
+) {
+  const spec = AGENT_ENGINES[opts.engine ?? "deepseek"];
+  const res = await fetch(`${EB}/api/v2/fleet-agents`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      name: opts.name ?? "Ghosty",
+      engine: spec.engine,
+      model: spec.model,
+      systemPrompt: opts.systemPrompt,
+    }),
+  });
+  if (!res.ok) throw new Error(`fleet-agents create ${res.status}: ${await res.text()}`);
+  const j = (await res.json()) as {
+    fleetAgent?: { id: string; name: string; assistantName?: string; token: string };
+  };
+  if (!j.fleetAgent) throw new Error("create: respuesta sin fleetAgent");
+  return j.fleetAgent;
+}

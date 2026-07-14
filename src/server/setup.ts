@@ -69,6 +69,23 @@ async function adoptTeamResources(accessToken: string): Promise<void> {
   });
 }
 
+// Paso 2 (alterno): crear un @ghosty nuevo desde el wizard. engine "deepseek"
+// (default, rápido) o "claude". El motor se puede cambiar después recreando el
+// agente; el MODELO dentro del motor se ajusta en /dash/flota (set-model).
+export const createFleetAgent = createServerFn({ method: "POST" })
+  .validator((d: { engine?: "deepseek" | "claude" }) => d)
+  .handler(async ({ data }) => {
+    const { getConfig, setConfig } = await import("../config.server");
+    const token = await getConfig("eb_access_token");
+    if (!token) throw new Error("EasyBits no conectado");
+    const { createFleetAgent: create } = await import("./easybits-oauth.server");
+    const agent = await create(token, { engine: data.engine ?? "deepseek" });
+    await setConfig("fleet_agent_id", agent.id);
+    await setConfig("fleet_token", agent.token);
+    await setConfig("fleet_name", agent.assistantName || agent.name);
+    return { ok: true as const };
+  });
+
 // Paso 2: el owner elige su agente Ghosty → guardamos id + pool token.
 export const selectFleetAgent = createServerFn({ method: "POST" })
   .validator((d: { id: string }) => d)
