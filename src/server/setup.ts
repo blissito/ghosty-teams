@@ -10,13 +10,22 @@ export const getSetup = createServerFn({ method: "GET" }).handler(async () => {
   // agente" puede volver al paso 2 con la lista ya cargada, sin recargar la página.
   let agents: Array<{ id: string; name: string; assistantName?: string; workerTemplate?: string }> = [];
   if (connected && c.eb_access_token) {
-    const { listFleetAgents } = await import("./easybits-oauth.server");
-    agents = (await listFleetAgents(c.eb_access_token)).map((a) => ({
-      id: a.id,
-      name: a.name,
-      assistantName: a.assistantName,
-      workerTemplate: a.workerTemplate,
-    }));
+    // La lista de agentes de la flota es SOLO para el picker del wizard; `hasAgent` ya
+    // viene de la DB (fleet_agent_id). Si la API de flota falla (token OAuth expirado →
+    // 401, red, etc.) NO debe tumbar la app: el loader de `/` llama a getSetup en cada
+    // carga fresca (box recién revivido) y un throw aquí caía SIEMPRE en el AppError.
+    // Degradamos a lista vacía; el chat carga igual (el wizard solo se ve si !hasAgent).
+    try {
+      const { listFleetAgents } = await import("./easybits-oauth.server");
+      agents = (await listFleetAgents(c.eb_access_token)).map((a) => ({
+        id: a.id,
+        name: a.name,
+        assistantName: a.assistantName,
+        workerTemplate: a.workerTemplate,
+      }));
+    } catch (e) {
+      console.error("[getSetup] listFleetAgents falló (degradando a []):", e instanceof Error ? e.message : e);
+    }
   }
   return { connected, hasAgent, fleetName: c.fleet_name, agents };
 });

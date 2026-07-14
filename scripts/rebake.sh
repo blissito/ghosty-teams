@@ -44,8 +44,12 @@ rsync -az --delete -e "$SSH" "$SBHOST/templates/ghosty-chat/" "root@$HOST:/root/
 rsync -az -e "$SSH" "$SBHOST/scripts/build_template.sh" "root@$HOST:/root/build_template.sh"
 
 # 4) docker build en el host (npm install + npm run build en el contenedor amd64).
+#    OJO: `set -o pipefail` en el comando REMOTO es OBLIGATORIO. Sin él, `docker build |
+#    tail` devuelve el exit de tail (0) → un build FALLIDO pasa desapercibido y el paso 5
+#    hornea la imagen VIEJA `localhost/ghosty-chat:latest` (bake silencioso de lo stale).
+#    El pipefail local NO cubre el pipe remoto (shell distinto). Incidente 2026-07-14.
 echo "▸ [4/6] docker build (host)…"
-$SSH "root@$HOST" "cd /root/templates/ghosty-chat && rm -f app/package-lock.json && docker build --provenance=false --sbom=false -t localhost/ghosty-chat:latest . 2>&1 | tail -5"
+$SSH "root@$HOST" "set -o pipefail; cd /root/templates/ghosty-chat && rm -f app/package-lock.json && docker build --provenance=false --sbom=false -t localhost/ghosty-chat:latest . 2>&1 | tail -8"
 
 # 5) Respaldo del ext4 vivo (el bake NO es atómico: rm -f antes de reconstruir) + bake.
 echo "▸ [5/6] backup + build_template.sh (host)…"
