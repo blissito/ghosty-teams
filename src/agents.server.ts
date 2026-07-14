@@ -22,9 +22,11 @@ export async function resolvedAgents(): Promise<ResolvedAgent[]> {
   // @ghosty implícito (gc_config) SOLO si aún no se migró a fila gc_agents (dedup por
   // handle) — evita duplicarlo una vez que listManagedAgentsFn lo materializó.
   const fleet = await getGhostyFleet();
-  // Dedup por fleet_id (no por handle) → robusto si el owner renombró el @handle del
-  // @ghosty ya migrado. Sin fila con ese fleet_id → aún no migrado, lo añadimos.
-  if (fleet && !rows.some((a) => a.fleet_id === fleet.id)) {
+  // Dedup por fleet_id O por handle: si ya existe una fila gc_agents que USA el handle
+  // @ghosty (fila explícita con persona), esa gana y NO añadimos el implícito del config
+  // (evita DOS @ghosty en el picker cuando el config apunta a un fleet nuevo pero ya hay
+  // una fila @ghosty configurada). Sin fila @ghosty → añadimos el implícito.
+  if (fleet && !rows.some((a) => a.fleet_id === fleet.id || a.handle === db.GHOSTY_HANDLE)) {
     const name = (await getConfig("fleet_name")) || "Ghosty";
     out.push({
       handle: db.GHOSTY_HANDLE,
