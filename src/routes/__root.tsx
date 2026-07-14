@@ -68,9 +68,11 @@ function RootDocument({ children }: { children: React.ReactNode }) {
   // Cuando el scheme es "system", sigue en vivo el cambio de preferencia del SO.
   useEffect(() => watchSystemScheme(), [])
   return (
-    <html lang={DEFAULT_LOCALE}>
+    <html lang={DEFAULT_LOCALE} suppressHydrationWarning>
       <head>
-        {/* Aplica preset+scheme ANTES del primer paint (sin FOUC). */}
+        {/* Aplica preset+scheme ANTES del primer paint (sin FOUC). El boot script muta
+            <html> (data-theme + vars inline) antes de hidratar → suppressHydrationWarning
+            evita que React trate esos atributos como mismatch. */}
         <script dangerouslySetInnerHTML={{ __html: THEME_BOOT }} />
         <HeadContent />
       </head>

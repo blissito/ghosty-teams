@@ -1,4 +1,4 @@
-import { Component, createContext, forwardRef, Fragment, type ReactNode, useCallback, useContext, useEffect, useImperativeHandle, useMemo, useReducer, useRef, useState, useSyncExternalStore } from "react";
+import { Component, createContext, forwardRef, Fragment, type ReactNode, useCallback, useContext, useEffect, useImperativeHandle, useMemo, useReducer, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useEditor, EditorContent } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
@@ -1859,12 +1859,24 @@ function Sidebar({
   const [wsOpen, setWsOpen] = useState(false); // dropdown del switcher de workspace
   const [tasksOpen, setTasksOpen] = useState(false); // modal "Tareas (próximamente)"
   // Dark sidebar: si está activo y el modo es claro, forzamos la paleta OSCURA del
-  // preset SOLO en este subárbol (vars inline). Si ya es oscuro, no hace falta.
-  const theme = useSyncExternalStore(subscribeTheme, getTheme, getTheme);
-  const sidebarStyle = useMemo<React.CSSProperties | undefined>(() => {
-    if (!theme.darkSidebar || resolveDark(theme.scheme)) return undefined;
-    return paletteVars(presetById(theme.preset), true) as React.CSSProperties;
-  }, [theme.darkSidebar, theme.scheme, theme.preset]);
+  // preset SOLO en este subárbol (vars inline). Es una preferencia de CLIENTE
+  // (localStorage) → se aplica POST-montaje vía ref (NO en el render), para no meter
+  // estado dependiente de localStorage en SSR/hidratación (evita mismatch → AppError).
+  const asideRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const KEYS = ["brand", "brand-2", "brand-fg", "surface", "surface-2", "surface-3", "border", "ink", "muted"];
+    const apply = () => {
+      const el = asideRef.current;
+      if (!el) return;
+      const th = getTheme();
+      KEYS.forEach((k) => el.style.removeProperty(`--color-${k}`));
+      if (th.darkSidebar && !resolveDark(th.scheme)) {
+        for (const [k, v] of Object.entries(paletteVars(presetById(th.preset), true))) el.style.setProperty(k, v);
+      }
+    };
+    apply();
+    return subscribeTheme(apply);
+  }, []);
   const [createOpen, setCreateOpen] = useState(false);
   const [settingsSlug, setSettingsSlug] = useState<string | null>(null);
   const [newDmOpen, setNewDmOpen] = useState(false);
@@ -1885,13 +1897,13 @@ function Sidebar({
 
   return (
     <aside
+      ref={asideRef}
       className={`fixed inset-y-0 left-0 z-40 flex w-[84vw] max-w-xs flex-col border-r border-border bg-surface-2 transition-transform duration-200 ease-out md:static md:z-auto md:w-60 md:max-w-none md:translate-x-0 ${
         mobileOpen ? "translate-x-0 shadow-2xl" : "-translate-x-full"
       }`}
       style={{
         paddingTop: "env(safe-area-inset-top)",
         paddingBottom: "env(safe-area-inset-bottom)",
-        ...sidebarStyle,
       }}
     >
       <div className="relative flex items-center gap-1 border-b border-border px-2 py-2">
