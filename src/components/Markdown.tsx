@@ -1,4 +1,4 @@
-import { Children, cloneElement, createElement, isValidElement } from "react";
+import { Children, cloneElement, createElement, isValidElement, memo } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeSanitize from "rehype-sanitize";
@@ -57,7 +57,7 @@ const cleanUrl = (u: string) => u.replace(/[.,)]+$/, "");
 // Render Markdown seguro (GFM + sanitize) con look de chat compacto.
 // `artifactUrl`/`onOpenArtifact`: si un link apunta al artefacto del mensaje, el click
 // ABRE el panel (no descarga). El resto de links abren en pestaña nueva.
-export function Markdown({
+export const Markdown = memo(function Markdown({
   body,
   artifactUrl,
   onOpenArtifact,
@@ -104,4 +104,4 @@ export function Markdown({
       </ReactMarkdown>
     </div>
   );
-}
+});
