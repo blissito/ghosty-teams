@@ -33,23 +33,28 @@ function Setup() {
   const step = over?.step ?? baseStep;
   const shownName = over?.fleetName ?? fleetName;
 
-  async function pick(id: string, name: string) {
-    setBusy(id);
-    try {
-      await selectFleetAgent({ data: { id } });
-      setOver({ step: 3, fleetName: name });
-    } finally {
-      setBusy(null);
-    }
-  }
+  // Selección del paso 2 — SOLO resalta, sin efecto. El agente se crea/conecta hasta
+  // "Continuar" (antes clickear ya creaba un FleetAgent en la flota = mal diseño).
+  // Sel = motor nuevo { kind:"new", engine } | agente existente { kind:"existing", id, name }.
+  type Sel =
+    | { kind: "new"; engine: "deepseek" | "claude" }
+    | { kind: "existing"; id: string; name: string };
+  const [sel, setSel] = useState<Sel | null>(null);
+  const selId =
+    sel?.kind === "new" ? `new:${sel.engine}` : sel?.kind === "existing" ? sel.id : null;
 
-  // Crear un agente CREA un recurso real (VMs, cuota) → NADA de optimismo: espera
-  // a que el server confirme y recién ahí avanza a paso 3. El botón es la confirmación.
-  async function create(engine: "deepseek" | "claude") {
-    setBusy(`new:${engine}`);
+  // Confirmar la selección: recién aquí se CREA (motor nuevo) o se conecta (existente).
+  async function confirm() {
+    if (!sel) return;
+    setBusy("confirm");
     try {
-      const r = await createFleetAgent({ data: { engine } });
-      setOver({ step: 3, fleetName: r?.name ?? "Ghosty" });
+      if (sel.kind === "new") {
+        const r = await createFleetAgent({ data: { engine: sel.engine } });
+        setOver({ step: 3, fleetName: r?.name ?? "Ghosty" });
+      } else {
+        await selectFleetAgent({ data: { id: sel.id } });
+        setOver({ step: 3, fleetName: sel.name });
+      }
     } finally {
       setBusy(null);
     }
@@ -60,6 +65,7 @@ function Setup() {
     setBusy(`back:${scope}`);
     try {
       await disconnectSetup({ data: { scope } });
+      setSel(null);
       setOver({ step: scope === "easybits" ? 1 : 2 });
     } finally {
       setBusy(null);
@@ -104,33 +110,28 @@ function Setup() {
         <Stepline n={2} done={step > 2} active={step === 2} title={t("Elige tu agente Ghosty")}>
           {step === 2 && (
             <div className="space-y-2">
-              {/* Crear un @ghosty nuevo — Flash por default (rápido), Claude opcional */}
-              <button
-                onClick={() => create("deepseek")}
-                disabled={!!busy}
-                className="flex w-full items-center justify-between rounded-lg border border-brand bg-brand/10 px-3 py-2 text-left text-sm hover:bg-brand/20 disabled:opacity-50"
-              >
-                <span className="flex items-center gap-2">
-                  <img src="/ghosty.svg" alt="" className="h-5 w-5" />
-                  <span className="font-medium text-ink">{t("Crear Ghosty")}</span>
-                </span>
-                <span className="text-xs text-muted">
-                  {busy === "new:deepseek" ? t("creando…") : t("DeepSeek Flash · rápido")}
-                </span>
-              </button>
-              <button
-                onClick={() => create("claude")}
-                disabled={!!busy}
-                className="flex w-full items-center justify-between rounded-lg border border-border bg-surface px-3 py-2 text-left text-sm hover:border-brand disabled:opacity-50"
-              >
-                <span className="flex items-center gap-2">
-                  <img src="/ghosty.svg" alt="" className="h-5 w-5" />
-                  <span className="font-medium text-ink">{t("Crear Ghosty")}</span>
-                </span>
-                <span className="text-xs text-muted">
-                  {busy === "new:claude" ? t("creando…") : t("Claude Sonnet · capaz")}
-                </span>
-              </button>
+              {/* Las opciones SOLO seleccionan (resaltan). Se crea/conecta en "Continuar". */}
+              {(
+                [
+                  { id: "new:deepseek", sel: { kind: "new", engine: "deepseek" } as Sel, name: t("Crear Ghosty"), sub: t("DeepSeek Flash · rápido") },
+                  { id: "new:claude", sel: { kind: "new", engine: "claude" } as Sel, name: t("Crear Ghosty"), sub: t("Claude Sonnet · capaz") },
+                ]
+              ).map((o) => (
+                <button
+                  key={o.id}
+                  onClick={() => setSel(o.sel)}
+                  disabled={!!busy}
+                  className={`flex w-full items-center justify-between rounded-lg border px-3 py-2 text-left text-sm disabled:opacity-50 ${
+                    selId === o.id ? "border-brand bg-brand/15 ring-1 ring-brand" : "border-border bg-surface hover:border-brand"
+                  }`}
+                >
+                  <span className="flex items-center gap-2">
+                    <img src="/ghosty.svg" alt="" className="h-5 w-5" />
+                    <span className="font-medium text-ink">{o.name}</span>
+                  </span>
+                  <span className="text-xs text-muted">{o.sub}</span>
+                </button>
+              ))}
 
               {agents.length > 0 && (
                 <p className="pt-2 text-xs text-muted">{t("O usa uno existente:")}</p>
@@ -138,25 +139,40 @@ function Setup() {
               {agents.map((a) => (
                 <button
                   key={a.id}
-                  onClick={() => pick(a.id, a.name)}
+                  onClick={() => setSel({ kind: "existing", id: a.id, name: a.name })}
                   disabled={!!busy}
-                  className="flex w-full items-center justify-between rounded-lg border border-border bg-surface px-3 py-2 text-left text-sm hover:border-brand disabled:opacity-50"
+                  className={`flex w-full items-center justify-between rounded-lg border px-3 py-2 text-left text-sm disabled:opacity-50 ${
+                    selId === a.id ? "border-brand bg-brand/15 ring-1 ring-brand" : "border-border bg-surface hover:border-brand"
+                  }`}
                 >
                   <span className="flex items-center gap-2">
                     <img src="/ghosty.svg" alt="" className="h-5 w-5" />
                     <span className="font-medium text-ink">{a.name}</span>
                   </span>
-                  <span className="text-xs text-muted">
-                    {busy === a.id ? t("conectando…") : a.workerTemplate}
-                  </span>
+                  <span className="text-xs text-muted">{a.workerTemplate}</span>
                 </button>
               ))}
+
+              {/* Continuar: recién aquí se crea/conecta el agente */}
+              <button
+                onClick={confirm}
+                disabled={!sel || !!busy}
+                className="mt-2 w-full rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-brand-fg hover:opacity-90 disabled:opacity-40"
+              >
+                {busy === "confirm"
+                  ? sel?.kind === "new"
+                    ? t("Creando…")
+                    : t("Conectando…")
+                  : sel?.kind === "new"
+                    ? t("Crear y continuar →")
+                    : t("Continuar →")}
+              </button>
 
               {/* Volver al paso 1 */}
               <button
                 onClick={() => goBack("easybits")}
                 disabled={!!busy}
-                className="pt-2 text-xs text-muted hover:text-brand disabled:opacity-50"
+                className="pt-1 text-xs text-muted hover:text-brand disabled:opacity-50"
               >
                 {busy === "back:easybits" ? t("desconectando…") : t("← Desconectar EasyBits")}
               </button>
