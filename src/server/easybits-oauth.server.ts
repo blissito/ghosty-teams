@@ -108,16 +108,30 @@ export const AGENT_ENGINES = {
 } as const;
 export type AgentEngineId = keyof typeof AGENT_ENGINES;
 
+// Nombre único y legible para el @ghosty sugerido, p.ej. "Ghosty-teams-nocturno".
+// Evita colisiones entre teams/agentes del mismo owner sin pedirle nada al user.
+const NAME_WORDS = [
+  "nocturno", "solar", "lunar", "boreal", "austral", "cobalto", "ambar", "carmesi",
+  "esmeralda", "indigo", "cometa", "nimbo", "aurora", "cenit", "onix", "zafiro",
+  "quasar", "vega", "orion", "delta",
+];
+export function suggestAgentName() {
+  const w = NAME_WORDS[Math.floor(Math.random() * NAME_WORDS.length)];
+  const s = Math.random().toString(36).slice(2, 5); // 3 chars → unicidad dura
+  return `Ghosty-teams-${w}-${s}`;
+}
+
 export async function createFleetAgent(
   accessToken: string,
   opts: { name?: string; systemPrompt?: string; engine?: AgentEngineId } = {},
 ) {
   const spec = AGENT_ENGINES[opts.engine ?? "deepseek"];
+  const name = opts.name ?? suggestAgentName();
   const res = await fetch(`${EB}/api/v2/fleet-agents`, {
     method: "POST",
     headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
     body: JSON.stringify({
-      name: opts.name ?? "Ghosty",
+      name,
       engine: spec.engine,
       model: spec.model,
       systemPrompt: opts.systemPrompt,

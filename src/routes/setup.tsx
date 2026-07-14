@@ -24,33 +24,33 @@ function Setup() {
     router.navigate({ to: "/login" });
   }
   const [busy, setBusy] = useState<string | null>(null);
+  // Paso efectivo: el server siembra el inicial, pero las mutaciones lo mueven en el
+  // cliente al instante (router.invalidate() no re-corría el loader → "el botón no
+  // hacía nada"). `over` = override local; null = usa el del server. Igual para el
+  // nombre mostrado en el paso 3.
+  const [over, setOver] = useState<{ step: number; fleetName?: string } | null>(null);
+  const baseStep = !connected ? 1 : !hasAgent ? 2 : 3;
+  const step = over?.step ?? baseStep;
+  const shownName = over?.fleetName ?? fleetName;
 
-  const step = !connected ? 1 : !hasAgent ? 2 : 3;
-
-  // Tras CUALQUIER mutación del wizard recargamos /setup de verdad. router.invalidate()
-  // no re-corría el loader en este setup (la vista se quedaba en el paso viejo → "el
-  // botón no hace nada"); un reload fuerza getSetup fresco y el paso correcto.
-  const reload = () => window.location.assign("/setup");
-
-  async function pick(id: string) {
+  async function pick(id: string, name: string) {
     setBusy(id);
     try {
       await selectFleetAgent({ data: { id } });
-      reload();
-    } catch {
+      setOver({ step: 3, fleetName: name });
+    } finally {
       setBusy(null);
     }
   }
 
   // Crear un agente CREA un recurso real (VMs, cuota) → NADA de optimismo: espera
-  // a que el server confirme y recién ahí recarga. Si no, se sentía "creó sin
-  // preguntar ni terminar". El botón mismo es la confirmación.
+  // a que el server confirme y recién ahí avanza a paso 3. El botón es la confirmación.
   async function create(engine: "deepseek" | "claude") {
     setBusy(`new:${engine}`);
     try {
-      await createFleetAgent({ data: { engine } });
-      reload();
-    } catch {
+      const r = await createFleetAgent({ data: { engine } });
+      setOver({ step: 3, fleetName: r?.name ?? "Ghosty" });
+    } finally {
       setBusy(null);
     }
   }
@@ -60,8 +60,8 @@ function Setup() {
     setBusy(`back:${scope}`);
     try {
       await disconnectSetup({ data: { scope } });
-      reload();
-    } catch {
+      setOver({ step: scope === "easybits" ? 1 : 2 });
+    } finally {
       setBusy(null);
     }
   }
@@ -84,7 +84,7 @@ function Setup() {
         </div>
 
         {/* Paso 1 — conectar EasyBits */}
-        <Stepline n={1} done={connected} active={step === 1} title={t("Conecta tu EasyBits")}>
+        <Stepline n={1} done={step > 1} active={step === 1} title={t("Conecta tu EasyBits")}>
           {step === 1 && (
             <>
               <p className="mb-3 text-sm text-muted">
@@ -101,7 +101,7 @@ function Setup() {
         </Stepline>
 
         {/* Paso 2 — elegir agente */}
-        <Stepline n={2} done={hasAgent} active={step === 2} title={t("Elige tu agente Ghosty")}>
+        <Stepline n={2} done={step > 2} active={step === 2} title={t("Elige tu agente Ghosty")}>
           {step === 2 && (
             <div className="space-y-2">
               {/* Crear un @ghosty nuevo — Flash por default (rápido), Claude opcional */}
@@ -138,7 +138,7 @@ function Setup() {
               {agents.map((a) => (
                 <button
                   key={a.id}
-                  onClick={() => pick(a.id)}
+                  onClick={() => pick(a.id, a.name)}
                   disabled={!!busy}
                   className="flex w-full items-center justify-between rounded-lg border border-border bg-surface px-3 py-2 text-left text-sm hover:border-brand disabled:opacity-50"
                 >
@@ -168,7 +168,7 @@ function Setup() {
         {step === 3 && (
           <div className="mt-4 rounded-lg bg-brand/10 p-4 text-center">
             <p className="text-sm text-ink">
-              ✅ <span className="font-medium">{fleetName || "Ghosty"}</span> {t("conectado.")}
+              ✅ <span className="font-medium">{shownName || "Ghosty"}</span> {t("conectado.")}
             </p>
             <Link
               to="/c/$slug"

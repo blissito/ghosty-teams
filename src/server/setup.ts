@@ -6,8 +6,10 @@ export const getSetup = createServerFn({ method: "GET" }).handler(async () => {
   const c = await getConfigMany(["eb_connected", "eb_access_token", "fleet_agent_id", "fleet_name"]);
   const connected = c.eb_connected === "1";
   const hasAgent = !!c.fleet_agent_id;
+  // Traemos los agentes SIEMPRE que haya conexión (no solo en paso 2): así "← Cambiar
+  // agente" puede volver al paso 2 con la lista ya cargada, sin recargar la página.
   let agents: Array<{ id: string; name: string; assistantName?: string; workerTemplate?: string }> = [];
-  if (connected && !hasAgent && c.eb_access_token) {
+  if (connected && c.eb_access_token) {
     const { listFleetAgents } = await import("./easybits-oauth.server");
     agents = (await listFleetAgents(c.eb_access_token)).map((a) => ({
       id: a.id,
@@ -80,10 +82,13 @@ export const createFleetAgent = createServerFn({ method: "POST" })
     if (!token) throw new Error("EasyBits no conectado");
     const { createFleetAgent: create } = await import("./easybits-oauth.server");
     const agent = await create(token, { engine: data.engine ?? "deepseek" });
+    // El nombre ÚNICO sugerido vive en agent.name (assistantName lo hardcodea EasyBits
+    // a "Ghosty"); lo guardamos como fleet_name para mostrarlo en el wizard.
+    const name = agent.name || agent.assistantName || "Ghosty";
     await setConfig("fleet_agent_id", agent.id);
     await setConfig("fleet_token", agent.token);
-    await setConfig("fleet_name", agent.assistantName || agent.name);
-    return { ok: true as const };
+    await setConfig("fleet_name", name);
+    return { ok: true as const, name };
   });
 
 // Volver: desconectar el agente (paso 3 → paso 2) o EasyBits entero (→ paso 1).
