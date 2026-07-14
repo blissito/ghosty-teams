@@ -1,6 +1,6 @@
 import { createFileRoute, useRouter, Link, redirect } from "@tanstack/react-router";
 import { useState } from "react";
-import { getSetup, selectFleetAgent, createFleetAgent } from "../server/setup";
+import { getSetup, selectFleetAgent, createFleetAgent, disconnectSetup } from "../server/setup";
 import { me, logout } from "../server/auth";
 import { useT } from "../i18n";
 
@@ -24,33 +24,42 @@ function Setup() {
     router.navigate({ to: "/login" });
   }
   const [busy, setBusy] = useState<string | null>(null);
-  // Optimista: al elegir/crear saltamos a "listo" YA; si el server falla, revertimos.
-  const [optimistic, setOptimistic] = useState<{ name: string } | null>(null);
 
-  const step = optimistic ? 3 : !connected ? 1 : !hasAgent ? 2 : 3;
+  const step = !connected ? 1 : !hasAgent ? 2 : 3;
 
-  async function pick(id: string, name: string) {
+  // Elegir un agente existente es barato/reversible → optimista está OK aquí.
+  async function pick(id: string) {
     setBusy(id);
-    setOptimistic({ name });
     try {
       await selectFleetAgent({ data: { id } });
-      router.invalidate();
-    } catch {
-      setOptimistic(null);
+    } finally {
+      await router.invalidate();
+      setBusy(null);
     }
-    setBusy(null);
   }
 
+  // Crear un agente CREA un recurso real (VMs, cuota) → NADA de optimismo: espera
+  // a que el server confirme y recién ahí avanza. Si no, se sentía "creó sin
+  // preguntar ni terminar". El botón mismo es la confirmación.
   async function create(engine: "deepseek" | "claude") {
     setBusy(`new:${engine}`);
-    setOptimistic({ name: "Ghosty" });
     try {
       await createFleetAgent({ data: { engine } });
-      router.invalidate();
-    } catch {
-      setOptimistic(null);
+    } finally {
+      await router.invalidate();
+      setBusy(null);
     }
-    setBusy(null);
+  }
+
+  // Volver: paso 3 → 2 (cambiar agente) o paso 2 → 1 (desconectar EasyBits).
+  async function goBack(scope: "agent" | "easybits") {
+    setBusy(`back:${scope}`);
+    try {
+      await disconnectSetup({ data: { scope } });
+    } finally {
+      await router.invalidate();
+      setBusy(null);
+    }
   }
 
   return (
@@ -125,7 +134,7 @@ function Setup() {
               {agents.map((a) => (
                 <button
                   key={a.id}
-                  onClick={() => pick(a.id, a.name)}
+                  onClick={() => pick(a.id)}
                   disabled={!!busy}
                   className="flex w-full items-center justify-between rounded-lg border border-border bg-surface px-3 py-2 text-left text-sm hover:border-brand disabled:opacity-50"
                 >
@@ -138,6 +147,15 @@ function Setup() {
                   </span>
                 </button>
               ))}
+
+              {/* Volver al paso 1 */}
+              <button
+                onClick={() => goBack("easybits")}
+                disabled={!!busy}
+                className="pt-2 text-xs text-muted hover:text-brand disabled:opacity-50"
+              >
+                {busy === "back:easybits" ? t("desconectando…") : t("← Desconectar EasyBits")}
+              </button>
             </div>
           )}
         </Stepline>
@@ -146,7 +164,7 @@ function Setup() {
         {step === 3 && (
           <div className="mt-4 rounded-lg bg-brand/10 p-4 text-center">
             <p className="text-sm text-ink">
-              ✅ <span className="font-medium">{fleetName || optimistic?.name || "Ghosty"}</span> {t("conectado.")}
+              ✅ <span className="font-medium">{fleetName || "Ghosty"}</span> {t("conectado.")}
             </p>
             <Link
               to="/c/$slug"
@@ -155,6 +173,15 @@ function Setup() {
             >
               {t("Ir al chat →")}
             </Link>
+            <div>
+              <button
+                onClick={() => goBack("agent")}
+                disabled={!!busy}
+                className="mt-3 text-xs text-muted hover:text-brand disabled:opacity-50"
+              >
+                {busy === "back:agent" ? t("cambiando…") : t("← Cambiar agente")}
+              </button>
+            </div>
           </div>
         )}
       </div>

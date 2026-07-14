@@ -86,6 +86,22 @@ export const createFleetAgent = createServerFn({ method: "POST" })
     return { ok: true as const };
   });
 
+// Volver: desconectar el agente (paso 3 → paso 2) o EasyBits entero (→ paso 1).
+// Limpia las llaves del wizard en gc_config poniéndolas en "" (getSetup gatea por
+// verdad/no-vacío). NO borra el FleetAgent ni la cuenta — solo "olvida" el wiring;
+// el agente sigue en /dash/flota, reusable. `scope` = "agent" | "easybits".
+export const disconnectSetup = createServerFn({ method: "POST" })
+  .validator((d: { scope?: "agent" | "easybits" }) => d)
+  .handler(async ({ data }) => {
+    const { setConfig } = await import("../config.server");
+    const keys =
+      data.scope === "easybits"
+        ? ["fleet_agent_id", "fleet_token", "fleet_name", "eb_connected", "eb_access_token", "eb_refresh_token"]
+        : ["fleet_agent_id", "fleet_token", "fleet_name"];
+    for (const k of keys) await setConfig(k, "");
+    return { ok: true as const };
+  });
+
 // Paso 2: el owner elige su agente Ghosty → guardamos id + pool token.
 export const selectFleetAgent = createServerFn({ method: "POST" })
   .validator((d: { id: string }) => d)
