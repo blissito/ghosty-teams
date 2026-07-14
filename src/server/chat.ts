@@ -414,18 +414,16 @@ export const postMessage = createServerFn({ method: "POST" })
     // Push a los usuarios @tagged (fire-and-forget resiliente).
     await notifyMentions(channel.slug, channel.id, channel.name, body, name, me?.sub ?? "", channel.is_private === 1).catch(() => {});
     // ¿Qué agentes responden y dónde? (multi-mención: cada @tagged responde)
-    // - @handles en el flujo → abren un HILO bajo ese mensaje (parent = id).
+    // - @handles en el flujo → responden INLINE en el flujo (parent = null), como una
+    //   persona más. NO se abre un hilo (decisión UX: el agente conversa en el room).
     // - @handles dentro de un hilo → mismo hilo (parent = parentId).
     // - mensaje en un hilo de un agente (root.agent_handle) → auto, sin re-tag.
     // fleetThread = clave de conversación de la FLOTA (memoria + worker pegajoso),
-    // DESACOPLADA del hilo de UI: los top-level (parentId null) comparten "flow" del
-    // canal → UN worker + memoria continua. Sin esto, cada mensaje top-level abría una
-    // conversación de flota nueva (parent = id del propio mensaje) → un agente por
-    // mensaje + arranque en frío por turno. Un hilo ABIERTO a propósito (reply dentro
-    // de un hilo) conserva su propia conversación de flota.
-    const respondents: { handle: string; parent: number; fleetThread: string }[] = [];
+    // DESACOPLADA del hilo de UI: los top-level comparten "flow" del canal → UN worker +
+    // memoria continua; un hilo abierto a propósito conserva su propia conversación.
+    const respondents: { handle: string; parent: number | null; fleetThread: string }[] = [];
     if (mentionedList.length) {
-      const parentFor = data.parentId === null ? id : data.parentId;
+      const parentFor = data.parentId; // top-level → inline (null); en hilo → mismo hilo
       const fleetThread = data.parentId === null ? "flow" : String(data.parentId);
       for (const h of mentionedList) respondents.push({ handle: h, parent: parentFor, fleetThread });
     } else if (data.parentId !== null && parent?.agent_handle && agents.some((a) => a.handle === parent.agent_handle)) {
