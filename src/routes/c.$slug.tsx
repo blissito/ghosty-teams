@@ -51,6 +51,9 @@ import {
   Table2,
   Image as ImageIcon,
   ImagePlus,
+  Home as HomeIcon,
+  Hash as HashIcon,
+  Sparkles,
 } from "lucide-react";
 import { searchMessagesFn } from "../server/search";
 import { createFileRoute, notFound, Link, useRouter } from "@tanstack/react-router";
@@ -695,6 +698,9 @@ function ChannelPage() {
   // Vista Zulip enfocada en el centro (recientes/menciones/destacados) — otro modo
   // de estado-cliente, mutuamente excluyente con hilo/DM. null = flujo del room.
   const [view, setView] = useState<null | "recent" | "mentions" | "starred">(null);
+  // Home: dashboard de inicio (personaje Ghosty + resumen). Mutuamente excluyente con
+  // room/hilo/DM/vista. Estado cliente puro (como `view`), se resetea al cambiar de room.
+  const [homeOpen, setHomeOpen] = useState(false);
   // Drawer del sidebar en móvil (off-canvas). En ≥md el sidebar es fijo y esto se ignora.
   const [navOpen, setNavOpen] = useState(false);
   // Command palette (⌘K): salto rápido a room/DM/vista.
@@ -1114,8 +1120,9 @@ function ChannelPage() {
       try {
         const raw = sessionStorage.getItem(`focus:${channel.slug}`);
         if (raw) {
-          const f = JSON.parse(raw) as { view?: typeof view; dm?: number; thread?: number };
-          if (f.view) setView(f.view);
+          const f = JSON.parse(raw) as { view?: typeof view; dm?: number; thread?: number; home?: boolean };
+          if (f.home) setHomeOpen(true);
+          else if (f.view) setView(f.view);
           else if (f.dm != null) setOpenDmId(f.dm);
           else if (f.thread != null) setOpenThreadId(f.thread);
         }
@@ -1127,17 +1134,18 @@ function ChannelPage() {
     setOpenThreadId(null);
     setOpenDmId(null);
     setView(null);
+    setHomeOpen(false);
   }, [channel.slug]);
   // Persiste el foco actual (mutuamente excluyente) para sobrevivir un reload.
   useEffect(() => {
-    const f = view ? { view } : openDmId != null ? { dm: openDmId } : openThreadId != null ? { thread: openThreadId } : null;
+    const f = homeOpen ? { home: true } : view ? { view } : openDmId != null ? { dm: openDmId } : openThreadId != null ? { thread: openThreadId } : null;
     try {
       if (f) sessionStorage.setItem(`focus:${channel.slug}`, JSON.stringify(f));
       else sessionStorage.removeItem(`focus:${channel.slug}`);
     } catch {
       /* storage lleno/bloqueado → no crítico */
     }
-  }, [view, openDmId, openThreadId, channel.slug]);
+  }, [homeOpen, view, openDmId, openThreadId, channel.slug]);
   // Enfocar un room (sin DM ni vista abiertos): PRIMERO captura la frontera de
   // no-leídos (last_read_at previo → divisor "nuevos mensajes"), LUEGO marca leído
   // y baja el badge. El orden importa: markRead pisa last_read_at con now().
@@ -1201,12 +1209,14 @@ function ChannelPage() {
       if (root) threadCache.set(id, { root, replies: [], pending: true });
     }
     setView(null);
+    setHomeOpen(false);
     setOpenDmId(null);
     setOpenThreadId(id);
     setNavOpen(false); // en móvil, elegir cierra el drawer y enfoca el centro
   };
   const openDm = (id: number) => {
     setView(null);
+    setHomeOpen(false);
     setOpenThreadId(null);
     setOpenDmId(id);
     setNavOpen(false);
@@ -1214,7 +1224,15 @@ function ChannelPage() {
   const openView = (v: "recent" | "mentions" | "starred") => {
     setOpenThreadId(null);
     setOpenDmId(null);
+    setHomeOpen(false);
     setView(v);
+    setNavOpen(false);
+  };
+  const openHome = () => {
+    setView(null);
+    setOpenThreadId(null);
+    setOpenDmId(null);
+    setHomeOpen(true);
     setNavOpen(false);
   };
   // Hotkey global ⌘K / Ctrl-K → abre/cierra el command palette (salto rápido).
@@ -1431,6 +1449,8 @@ function ChannelPage() {
         onToggleMute={toggleMute}
         activeView={view}
         onOpenView={openView}
+        homeActive={homeOpen}
+        onOpenHome={openHome}
       />
       {/* Centro: vista Zulip, DM, hilo, o flujo del room (nunca drawer derecho).
           CONTENIDO envuelto en boundary: un crash de render de un hilo/flujo/DM cae a un
@@ -1469,7 +1489,25 @@ function ChannelPage() {
           </section>
         }
       >
-      {view != null ? (
+      {homeOpen ? (
+        <HomeDashboard
+          user={user}
+          channels={channels}
+          dms={dms}
+          online={online}
+          unreadRooms={unreadRooms}
+          unreadDms={unreadDms}
+          onOpenRoom={(slug) => router.navigate({ to: "/c/$slug", params: { slug } })}
+          onOpenDm={openDm}
+          onOpenNav={() => setNavOpen(true)}
+          onQuickPost={(body) => {
+            const slug = channels[0]?.slug ?? "general";
+            sendOptimistic({ slug, parentId: null, dmId: null, body, attachments: [] });
+            setHomeOpen(false);
+            router.navigate({ to: "/c/$slug", params: { slug } });
+          }}
+        />
+      ) : view != null ? (
         <ViewPane
           key={`view-${view}`}
           view={view}
@@ -1772,6 +1810,8 @@ function Sidebar({
   onToggleMute,
   activeView,
   onOpenView,
+  homeActive,
+  onOpenHome,
 }: {
   mobileOpen: boolean;
   onCloseNav: () => void;
@@ -1794,6 +1834,8 @@ function Sidebar({
   onToggleMute: (scope: "room" | "dm", id: number) => void;
   activeView: null | "recent" | "mentions" | "starred";
   onOpenView: (v: "recent" | "mentions" | "starred") => void;
+  homeActive: boolean;
+  onOpenHome: () => void;
 }) {
   const t = useT();
   const router = useRouter();
@@ -1847,6 +1889,15 @@ function Sidebar({
         </button>
       </div>
       <div className="flex-1 overflow-y-auto p-2 thin-scroll">
+        {/* Home: dashboard de inicio con el personaje Ghosty. */}
+        <button
+          onClick={onOpenHome}
+          className={`mb-1 flex w-full items-center gap-2 rounded-lg px-2 py-2.5 text-sm md:py-1.5 ${
+            homeActive ? "bg-brand/15 font-medium text-ink" : "text-muted hover:bg-surface-3 hover:text-ink"
+          }`}
+        >
+          <HomeIcon size={16} className="shrink-0" /> {t("Inicio")}
+        </button>
         {/* Vistas (Zulip): recientes / menciones / destacados, enfocadas en el centro. */}
         <div className="mb-1 space-y-0.5">
           {([
@@ -2955,6 +3006,191 @@ function CommandPalette({
         </div>
       </motion.div>
     </motion.div>
+  );
+}
+
+/* ── Home dashboard ─────────────────────────────────────────────────────────
+   Pantalla de inicio con el personaje Ghosty: saludo, tarjetas de resumen (datos
+   reales del cliente), acceso a rooms/DMs/gente, y un composer "pregunta lo que sea"
+   que postea al primer room (dispara @ghosty inline si lo tageas). Sin backend nuevo. */
+function HomeDashboard({
+  user,
+  channels,
+  dms,
+  online,
+  unreadRooms,
+  unreadDms,
+  onOpenRoom,
+  onOpenDm,
+  onOpenNav,
+  onQuickPost,
+}: {
+  user: SessionUser | null;
+  channels: Channel[];
+  dms: DmConversation[];
+  online: Set<string>;
+  unreadRooms: Map<number, number>;
+  unreadDms: Map<number, number>;
+  onOpenRoom: (slug: string) => void;
+  onOpenDm: (id: number) => void;
+  onOpenNav: () => void;
+  onQuickPost: (body: string) => void;
+}) {
+  const t = useT();
+  const people = useMentions();
+  const [ask, setAsk] = useState("");
+
+  const totalUnread =
+    [...unreadRooms.values()].reduce((a, b) => a + b, 0) +
+    [...unreadDms.values()].reduce((a, b) => a + b, 0);
+  const firstName = (user?.name ?? "").split(" ")[0] || t("ahí");
+  const today = new Date().toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" });
+  const dmLabel = (d: DmConversation) => d.title || d.members.map((m) => m.name).join(", ") || t("Conversación");
+
+  const stats: { label: string; value: number; sub: string; tint: string }[] = [
+    { label: t("Sin leer"), value: totalUnread, sub: totalUnread ? t("mensajes te esperan") : t("estás al día"), tint: "bg-rose-500/15 text-rose-500" },
+    { label: t("Rooms"), value: channels.length, sub: t("en el workspace"), tint: "bg-amber-500/15 text-amber-500" },
+    { label: t("Conversaciones"), value: dms.length, sub: t("mensajes directos"), tint: "bg-fuchsia-500/15 text-fuchsia-500" },
+    { label: t("En línea"), value: online.size, sub: t("ahora mismo"), tint: "bg-sky-500/15 text-sky-500" },
+  ];
+
+  const submitAsk = () => {
+    const body = ask.trim();
+    if (!body) return;
+    onQuickPost(body);
+    setAsk("");
+  };
+
+  return (
+    <main className="flex min-w-0 flex-1 flex-col overflow-y-auto thin-scroll">
+      {/* Header móvil (hamburguesa). */}
+      <div className="flex items-center gap-2 border-b border-border px-4 py-3 md:hidden">
+        <button onClick={onOpenNav} className="grid h-9 w-9 place-items-center rounded-lg text-muted hover:bg-surface-3 hover:text-ink" aria-label={t("Abrir menú")}>
+          <Menu size={20} />
+        </button>
+        <span className="font-semibold">{t("Inicio")}</span>
+      </div>
+
+      <div className="mx-auto w-full max-w-3xl px-6 py-8">
+        {/* Saludo + Ghosty */}
+        <div className="mb-8 flex items-start justify-between gap-4">
+          <div className="min-w-0">
+            <p className="mb-1 text-xs font-medium uppercase tracking-wide text-muted">{today}</p>
+            <h1 className="text-3xl font-bold leading-tight text-ink sm:text-4xl">
+              {t("¿Qué construimos hoy,")}<br />{firstName}?
+            </h1>
+          </div>
+          <img src="/ghosty.svg" alt="Ghosty" className="h-24 w-24 shrink-0 opacity-90 sm:h-28 sm:w-28" />
+        </div>
+
+        {/* Tarjetas de resumen */}
+        <div className="mb-8 grid grid-cols-2 gap-3">
+          {stats.map((s) => (
+            <div key={s.label} className="rounded-2xl border border-border bg-surface-2 p-4">
+              <div className="mb-3 flex items-center justify-between">
+                <span className={`grid h-8 w-8 place-items-center rounded-lg ${s.tint}`}>
+                  <Sparkles size={16} />
+                </span>
+                <span className="text-[11px] font-medium uppercase tracking-wide text-muted">{s.label}</span>
+              </div>
+              <p className="text-3xl font-bold text-ink">{s.value}</p>
+              <p className="mt-0.5 text-xs text-muted">{s.sub}</p>
+            </div>
+          ))}
+        </div>
+
+        {/* Rooms + Conversaciones */}
+        <div className="mb-8 grid gap-4 sm:grid-cols-2">
+          <section className="rounded-2xl border border-border bg-surface-2 p-4">
+            <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold">
+              <HashIcon size={15} className="text-muted" /> {t("Rooms")}
+            </h2>
+            <div className="space-y-0.5">
+              {channels.slice(0, 6).map((c) => (
+                <button key={c.slug} onClick={() => onOpenRoom(c.slug)} className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm hover:bg-surface-3">
+                  <HashIcon size={14} className="shrink-0 text-muted" />
+                  <span className="min-w-0 flex-1 truncate">{c.name}</span>
+                  <UnreadBadge n={unreadRooms.get(c.id) ?? 0} />
+                </button>
+              ))}
+              {channels.length === 0 && <p className="px-2 py-1 text-xs text-muted">{t("Aún no hay rooms.")}</p>}
+            </div>
+          </section>
+
+          <section className="rounded-2xl border border-border bg-surface-2 p-4">
+            <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold">
+              <MessageSquare size={15} className="text-muted" /> {t("Conversaciones")}
+            </h2>
+            <div className="space-y-0.5">
+              {dms.slice(0, 6).map((d) => (
+                <button key={d.id} onClick={() => onOpenDm(d.id)} className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm hover:bg-surface-3">
+                  <Avatar name={dmLabel(d)} avatar={d.members[0]?.avatar} className="h-6 w-6 shrink-0" />
+                  <span className="min-w-0 flex-1 truncate">{dmLabel(d)}</span>
+                  <UnreadBadge n={unreadDms.get(d.id) ?? 0} />
+                </button>
+              ))}
+              {dms.length === 0 && <p className="px-2 py-1 text-xs text-muted">{t("Aún no hay conversaciones.")}</p>}
+            </div>
+          </section>
+        </div>
+
+        {/* Personas y agentes */}
+        <section className="mb-8 rounded-2xl border border-border bg-surface-2 p-4">
+          <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold">
+            <Users size={15} className="text-muted" /> {t("Personas y agentes")}
+            <span className="ml-auto text-xs font-normal text-muted">{people.length}</span>
+          </h2>
+          <div className="grid gap-1 sm:grid-cols-2">
+            {people.slice(0, 8).map((p) => (
+              <div key={`${p.kind}:${p.handle}`} className="flex items-center gap-2 rounded-lg px-2 py-1.5">
+                {p.kind === "agent" ? (
+                  p.avatar ? (
+                    <img src={p.avatar} alt="" loading="lazy" decoding="async" className="h-7 w-7 shrink-0 rounded-lg object-cover" />
+                  ) : (
+                    <span className="grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-brand/15 text-brand"><Bot size={15} /></span>
+                  )
+                ) : (
+                  <Avatar name={p.name} avatar={p.avatar} className="h-7 w-7 shrink-0" />
+                )}
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-medium">{p.nickname || p.name}</p>
+                  <p className="truncate text-xs text-muted">
+                    {p.kind === "agent" ? t("Agente") : `@${p.handle}`}
+                  </p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        {/* Composer "pregunta lo que sea" → postea al primer room (dispara @ghosty inline). */}
+        <div className="rounded-2xl border border-border bg-surface-2 p-2">
+          <div className="flex items-end gap-2">
+            <textarea
+              value={ask}
+              onChange={(e) => setAsk(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  submitAsk();
+                }
+              }}
+              rows={2}
+              placeholder={t("Pregunta lo que sea… (tagea @ghosty)")}
+              className="thin-scroll max-h-32 min-h-[44px] flex-1 resize-none bg-transparent px-3 py-2 text-sm text-ink outline-none placeholder:text-muted"
+            />
+            <button
+              onClick={submitAsk}
+              disabled={!ask.trim()}
+              className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-brand text-brand-fg disabled:opacity-40"
+              aria-label={t("Enviar")}
+            >
+              <Send size={16} />
+            </button>
+          </div>
+        </div>
+      </div>
+    </main>
   );
 }
 

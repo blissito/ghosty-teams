@@ -21,7 +21,7 @@ import {
 import { listEmojisFn, addEmojiFn, removeEmojiFn } from "../server/emojis";
 import type { CustomEmoji } from "../db.server";
 import { useT } from "../i18n";
-import { Monitor, Sun, Moon, Check, SlidersHorizontal, Palette } from "lucide-react";
+import { Monitor, Sun, Moon, Check, SlidersHorizontal, Palette, Github, Plug, Slack, Calendar } from "lucide-react";
 import {
   PRESETS,
   getTheme,
@@ -59,7 +59,7 @@ export async function loadSettingsData(): Promise<SettingsData> {
  * @param initial datos precargados por el loader de la ruta (evita flash en SSR).
  * @param onClose si viene → modo modal (header con X). Si no → modo ruta (link "volver").
  */
-type TabId = "general" | "notifications" | "appearance" | "agentes" | "emojis";
+type TabId = "general" | "notifications" | "appearance" | "integraciones" | "agentes" | "emojis";
 
 export function SettingsContent({
   initialTab,
@@ -112,6 +112,7 @@ export function SettingsContent({
     { id: "general", label: t("General"), icon: SlidersHorizontal },
     { id: "notifications", label: t("Notificaciones"), icon: Bell },
     { id: "appearance", label: t("Apariencia"), icon: Palette },
+    { id: "integraciones", label: t("Integraciones"), icon: Plug },
     ...(canManageAgents ? [{ id: "agentes" as const, label: t("Agentes"), icon: Bot }] : []),
     ...(isOwner ? [{ id: "emojis" as const, label: t("Emojis"), icon: Smile }] : []),
   ];
@@ -241,6 +242,8 @@ export function SettingsContent({
 
           {tab === "appearance" && <AppearancePanel />}
 
+          {tab === "integraciones" && <IntegrationsPanel />}
+
           {tab === "agentes" && canManageAgents && (
             <AgentsManager isOwner={isOwner} hasAgent={!!data?.setup?.hasAgent} />
           )}
@@ -248,6 +251,41 @@ export function SettingsContent({
           {tab === "emojis" && isOwner && <EmojiManager />}
         </div>
       </div>
+    </div>
+  );
+}
+
+/* ── Integraciones: conectores externos. Hoy todos "próximamente" (placeholder
+   visual, mismo estilo que el resto de tarjetas). ── */
+function IntegrationsPanel() {
+  const t = useT();
+  const items = [
+    { icon: Github, name: "GitHub", desc: t("Trae issues y PRs al chat; @ghosty los resume y comenta.") },
+    { icon: Slack, name: "Slack", desc: t("Reenvía canales y menciones desde tu workspace de Slack.") },
+    { icon: Calendar, name: "Google Calendar", desc: t("Recordatorios y contexto de reuniones dentro del room.") },
+  ];
+  return (
+    <div className="space-y-3">
+      <p className="text-sm text-muted">
+        {t("Conecta herramientas externas para que @ghosty trabaje con tu contexto.")}
+      </p>
+      {items.map((it) => {
+        const Icon = it.icon;
+        return (
+          <div key={it.name} className="flex items-center gap-3 rounded-xl border border-border bg-surface-2 p-4">
+            <div className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-surface-3 text-ink">
+              <Icon size={20} />
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-semibold">{it.name}</p>
+              <p className="text-xs text-muted">{it.desc}</p>
+            </div>
+            <span className="shrink-0 rounded-full border border-border px-2.5 py-1 text-[11px] font-medium text-muted">
+              {t("Próximamente")}
+            </span>
+          </div>
+        );
+      })}
     </div>
   );
 }
