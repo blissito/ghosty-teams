@@ -1856,6 +1856,8 @@ function Sidebar({
   const t = useT();
   const router = useRouter();
   const { openPrefs } = useContext(ChatCtx); // Ajustes in-panel (modal a nivel shell)
+  const [wsOpen, setWsOpen] = useState(false); // dropdown del switcher de workspace
+  const [tasksOpen, setTasksOpen] = useState(false); // modal "Tareas (próximamente)"
   // Dark sidebar: si está activo y el modo es claro, forzamos la paleta OSCURA del
   // preset SOLO en este subárbol (vars inline). Si ya es oscuro, no hace falta.
   const theme = useSyncExternalStore(subscribeTheme, getTheme, getTheme);
@@ -1892,27 +1894,69 @@ function Sidebar({
         ...sidebarStyle,
       }}
     >
-      <div className="flex items-center gap-2 border-b border-border px-4 py-3">
-        <img src="/ghosty.svg" alt="" className="h-7 w-7" />
-        <span className="font-semibold">Ghosty Teams</span>
+      <div className="relative flex items-center gap-1 border-b border-border px-2 py-2">
+        {/* Switcher de workspace (multi-workspace: hoy uno; "nuevo" próximamente). */}
+        <button
+          onClick={() => setWsOpen((o) => !o)}
+          className="flex min-w-0 flex-1 items-center gap-2 rounded-lg px-2 py-1.5 text-left hover:bg-surface-3"
+        >
+          <img src="/ghosty.svg" alt="" className="h-6 w-6 shrink-0" />
+          <span className="min-w-0 flex-1 truncate font-semibold">Ghosty Teams</span>
+          <ChevronDown size={15} className={`shrink-0 text-muted transition ${wsOpen ? "rotate-180" : ""}`} />
+        </button>
         {/* Cerrar drawer (solo móvil). */}
         <button
           onClick={onCloseNav}
-          className="ml-auto grid h-9 w-9 place-items-center rounded-lg text-muted hover:bg-surface-3 hover:text-ink md:hidden"
+          className="grid h-9 w-9 shrink-0 place-items-center rounded-lg text-muted hover:bg-surface-3 hover:text-ink md:hidden"
           aria-label={t("Cerrar menú")}
         >
           <X size={20} />
         </button>
+        {wsOpen && (
+          <>
+            <div className="fixed inset-0 z-40" onClick={() => setWsOpen(false)} aria-hidden />
+            <div className="absolute left-2 right-2 top-full z-50 mt-1 rounded-xl border border-border bg-surface p-1 shadow-xl">
+              <p className="px-2 py-1 text-[11px] font-medium uppercase tracking-wide text-muted">{t("Workspace")}</p>
+              <div className="flex items-center gap-2 rounded-lg bg-surface-3 px-2 py-1.5">
+                <img src="/ghosty.svg" alt="" className="h-5 w-5 shrink-0" />
+                <span className="min-w-0 flex-1 truncate text-sm font-medium">Ghosty Teams</span>
+                <Check size={15} className="shrink-0 text-brand" />
+              </div>
+              <button
+                onClick={() => { setWsOpen(false); openPrefs(); }}
+                className="mt-0.5 flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm text-muted hover:bg-surface-3 hover:text-ink"
+              >
+                <Settings size={15} className="shrink-0" /> {t("Ajustes del workspace")}
+              </button>
+              <button
+                disabled
+                title={t("Próximamente")}
+                className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm text-muted opacity-50"
+              >
+                <Plus size={15} className="shrink-0" /> {t("Nuevo workspace")}
+                <span className="ml-auto text-[10px]">{t("pronto")}</span>
+              </button>
+            </div>
+          </>
+        )}
       </div>
       <div className="flex-1 overflow-y-auto p-2 thin-scroll">
         {/* Home: dashboard de inicio con el personaje Ghosty. */}
         <button
           onClick={onOpenHome}
-          className={`mb-1 flex w-full items-center gap-2 rounded-lg px-2 py-2.5 text-sm md:py-1.5 ${
+          className={`flex w-full items-center gap-2 rounded-lg px-2 py-2.5 text-sm md:py-1.5 ${
             homeActive ? "bg-brand/15 font-medium text-ink" : "text-muted hover:bg-surface-3 hover:text-ink"
           }`}
         >
           <HomeIcon size={16} className="shrink-0" /> {t("Inicio")}
+        </button>
+        {/* Tareas de equipo (próximamente). */}
+        <button
+          onClick={() => setTasksOpen(true)}
+          className="mb-1 flex w-full items-center gap-2 rounded-lg px-2 py-2.5 text-sm text-muted transition hover:bg-surface-3 hover:text-ink md:py-1.5"
+        >
+          <CheckCircle2 size={16} className="shrink-0" /> {t("Tareas")}
+          <span className="ml-auto rounded-full border border-border px-1.5 text-[10px] text-muted">{t("pronto")}</span>
         </button>
         {/* Vistas (Zulip): recientes / menciones / destacados, enfocadas en el centro. */}
         <div className="mb-1 space-y-0.5">
@@ -2214,6 +2258,22 @@ function Sidebar({
             user={user}
             onClose={() => setAllThreadsOpen(false)}
           />
+        )}
+        {tasksOpen && (
+          <Modal onClose={() => setTasksOpen(false)} wide>
+            <div className="flex flex-col items-center px-2 py-4 text-center">
+              <div className="mb-3 grid h-16 w-16 place-items-center rounded-2xl bg-brand/15 text-brand">
+                <CheckCircle2 size={30} />
+              </div>
+              <h2 className="text-base font-semibold">{t("Tareas de equipo")}</h2>
+              <p className="mt-1 max-w-xs text-sm text-muted">
+                {t("Tareas, epics y responsables junto a la conversación — @ghosty podrá crearlas y cerrarlas desde el chat.")}
+              </p>
+              <span className="mt-4 rounded-full border border-border px-3 py-1 text-xs font-medium text-muted">
+                {t("Próximamente")}
+              </span>
+            </div>
+          </Modal>
         )}
       </AnimatePresence>
     </aside>
