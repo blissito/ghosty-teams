@@ -10,7 +10,6 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as SetupRouteImport } from './routes/setup'
-import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as FormsRouteImport } from './routes/forms'
 import { Route as ArtifactsRouteImport } from './routes/artifacts'
@@ -30,11 +29,6 @@ import { Route as ApiAttachmentIdRouteImport } from './routes/api.attachment.$id
 const SetupRoute = SetupRouteImport.update({
   id: '/setup',
   path: '/setup',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const SettingsRoute = SettingsRouteImport.update({
-  id: '/settings',
-  path: '/settings',
   getParentRoute: () => rootRouteImport,
 } as any)
 const LoginRoute = LoginRouteImport.update({
@@ -118,7 +112,6 @@ export interface FileRoutesByFullPath {
   '/artifacts': typeof ArtifactsRoute
   '/forms': typeof FormsRoute
   '/login': typeof LoginRoute
-  '/settings': typeof SettingsRoute
   '/setup': typeof SetupRouteWithChildren
   '/api/agent-asset': typeof ApiAgentAssetRoute
   '/api/stream': typeof ApiStreamRoute
@@ -137,7 +130,6 @@ export interface FileRoutesByTo {
   '/artifacts': typeof ArtifactsRoute
   '/forms': typeof FormsRoute
   '/login': typeof LoginRoute
-  '/settings': typeof SettingsRoute
   '/setup': typeof SetupRouteWithChildren
   '/api/agent-asset': typeof ApiAgentAssetRoute
   '/api/stream': typeof ApiStreamRoute
@@ -157,7 +149,6 @@ export interface FileRoutesById {
   '/artifacts': typeof ArtifactsRoute
   '/forms': typeof FormsRoute
   '/login': typeof LoginRoute
-  '/settings': typeof SettingsRoute
   '/setup': typeof SetupRouteWithChildren
   '/api/agent-asset': typeof ApiAgentAssetRoute
   '/api/stream': typeof ApiStreamRoute
@@ -178,7 +169,6 @@ export interface FileRouteTypes {
     | '/artifacts'
     | '/forms'
     | '/login'
-    | '/settings'
     | '/setup'
     | '/api/agent-asset'
     | '/api/stream'
@@ -197,7 +187,6 @@ export interface FileRouteTypes {
     | '/artifacts'
     | '/forms'
     | '/login'
-    | '/settings'
     | '/setup'
     | '/api/agent-asset'
     | '/api/stream'
@@ -216,7 +205,6 @@ export interface FileRouteTypes {
     | '/artifacts'
     | '/forms'
     | '/login'
-    | '/settings'
     | '/setup'
     | '/api/agent-asset'
     | '/api/stream'
@@ -236,7 +224,6 @@ export interface RootRouteChildren {
   ArtifactsRoute: typeof ArtifactsRoute
   FormsRoute: typeof FormsRoute
   LoginRoute: typeof LoginRoute
-  SettingsRoute: typeof SettingsRoute
   SetupRoute: typeof SetupRouteWithChildren
   ApiAgentAssetRoute: typeof ApiAgentAssetRoute
   ApiStreamRoute: typeof ApiStreamRoute
@@ -256,13 +243,6 @@ declare module '@tanstack/react-router' {
       path: '/setup'
       fullPath: '/setup'
       preLoaderRoute: typeof SetupRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/settings': {
-      id: '/settings'
-      path: '/settings'
-      fullPath: '/settings'
-      preLoaderRoute: typeof SettingsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/login': {
@@ -390,7 +370,6 @@ const rootRouteChildren: RootRouteChildren = {
   ArtifactsRoute: ArtifactsRoute,
   FormsRoute: FormsRoute,
   LoginRoute: LoginRoute,
-  SettingsRoute: SettingsRoute,
   SetupRoute: SetupRouteWithChildren,
   ApiAgentAssetRoute: ApiAgentAssetRoute,
   ApiStreamRoute: ApiStreamRoute,

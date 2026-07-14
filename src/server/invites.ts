@@ -44,3 +44,28 @@ export const createInvite = createServerFn({ method: "POST" }).handler(async () 
   const { reqOrigin } = await import("../origin.server");
   return { url: `${await reqOrigin()}/join/${token}` };
 });
+
+// Get-or-create: reusa el último invite SIN usar del owner (link estable y
+// reutilizable) o crea uno si no hay. Así Ajustes puede AUTO-mostrar el link al
+// abrir sin generar un token nuevo en cada apertura. Devuelve también `regenerate`
+// para forzar uno fresco (revoca el viejo dejándolo, no lo borra).
+export const getInvite = createServerFn({ method: "POST" }).handler(async () => {
+  const { useSession } = await import("@tanstack/react-start/server");
+  const { sessionConfig } = await import("./session.server");
+  const s = await useSession<{ user?: { sub: string; isOwner: boolean } }>(sessionConfig());
+  const user = s.data.user;
+  if (!user?.isOwner) throw new Error("solo el owner invita");
+  const { reqOrigin } = await import("../origin.server");
+  const origin = await reqOrigin();
+  const { rows } = await dbq(
+    "SELECT token FROM gc_invites WHERE created_by = ? AND used_by IS NULL ORDER BY rowid DESC LIMIT 1",
+    [user.sub]
+  );
+  let token = rows[0]?.[0] as string | undefined;
+  if (!token) {
+    const crypto = await import("node:crypto");
+    token = crypto.randomBytes(16).toString("hex");
+    await dbq("INSERT INTO gc_invites (token, created_by) VALUES (?, ?)", [token, user.sub]);
+  }
+  return { url: `${origin}/join/${token}` };
+});

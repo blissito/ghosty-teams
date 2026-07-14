@@ -1,12 +1,12 @@
-import { createFileRoute, Link, useRouter } from "@tanstack/react-router";
+import { Link, useRouter } from "@tanstack/react-router"; // Link: CTA "conecta EasyBits" / setup
 import { useEffect, useRef, useState } from "react";
 import { Bot, Plus, Trash2, X, Bell, Smile, Loader2, Pencil } from "lucide-react";
-import { FleetCapabilities } from "../components/FleetCapabilities";
+import { FleetCapabilities } from "./FleetCapabilities";
 import { currentPushState, enablePush, disablePush } from "../utils/push-subscribe";
 import { me, logout, clearMeCache } from "../server/auth";
 import { getMyNicknameFn, setMyNicknameFn } from "../server/chat";
 import { getSetup } from "../server/setup";
-import { createInvite } from "../server/invites";
+import { createInvite, getInvite } from "../server/invites";
 import {
   listManagedAgentsFn,
   listFleetAgentsFn,
@@ -22,26 +22,58 @@ import { listEmojisFn, addEmojiFn, removeEmojiFn } from "../server/emojis";
 import type { CustomEmoji } from "../db.server";
 import { useT } from "../i18n";
 
-export const Route = createFileRoute("/settings")({
-  loader: async () => {
-    const user = await me();
-    const setup = user?.isOwner ? await getSetup() : null;
-    // ¿Ve la pestaña Agentes? owner o colaborador de ≥1 agente (slice 4).
-    const agentAccess = user ? await agentAccessFn() : { canManage: false };
-    return { user, setup, agentAccess };
-  },
-  component: Settings,
-});
+// Datos que Ajustes necesita (identidad + setup + acceso a agentes). Se cargan una vez
+// y se cachean a nivel módulo → reabrir Preferencias (modal) pinta al instante y revalida
+// en background (mismo patrón stale-while-revalidate que agentsCache/emojiCache).
+export type SettingsData = {
+  user: Awaited<ReturnType<typeof me>>;
+  setup: Awaited<ReturnType<typeof getSetup>> | null;
+  agentAccess: { canManage: boolean };
+};
+let settingsDataCache: SettingsData | null = null;
 
-function Settings() {
+export async function loadSettingsData(): Promise<SettingsData> {
+  const user = await me();
+  const setup = user?.isOwner ? await getSetup() : null;
+  const agentAccess = user ? await agentAccessFn() : { canManage: false };
+  const data = { user, setup, agentAccess };
+  settingsDataCache = data;
+  return data;
+}
+
+/**
+ * Contenido de Ajustes/Preferencias — compartido por la ruta `/settings` (deep-link,
+ * SSR) y el modal in-panel `PreferencesModal` (SPA, snappy). Sin padding externo:
+ * el contenedor (ruta o Modal) lo aporta.
+ * @param initial datos precargados por el loader de la ruta (evita flash en SSR).
+ * @param onClose si viene → modo modal (header con X). Si no → modo ruta (link "volver").
+ */
+export function SettingsContent({
+  initialTab,
+  onClose,
+}: {
+  initialTab?: "general" | "agentes" | "emojis";
+  onClose?: () => void;
+}) {
   const t = useT();
-  const { user, setup, agentAccess } = Route.useLoaderData();
   const router = useRouter();
+  const [data, setData] = useState<SettingsData | null>(settingsDataCache);
   const [invite, setInvite] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [busy, setBusy] = useState(false);
 
-  async function genInvite() {
+  // Revalida en background siempre (aunque haya cache/initial): datos frescos sin bloquear.
+  useEffect(() => {
+    loadSettingsData().then(setData).catch(() => {});
+  }, []);
+
+  // Auto-muestra el link de invitación en cuanto sabemos que es owner (get-or-create
+  // reutiliza el último sin usar → no crea un token nuevo en cada apertura).
+  useEffect(() => {
+    if (data?.user?.isOwner && !invite) getInvite().then((r) => setInvite(r.url)).catch(() => {});
+  }, [data?.user?.isOwner]);
+
+  async function regenInvite() {
     setBusy(true);
     const r = await createInvite();
     setInvite(r.url);
@@ -60,22 +92,22 @@ function Settings() {
     router.navigate({ to: "/login" });
   }
 
-  // Pestañas: General siempre; Agentes si owner O colaborador de algún agente;
-  // Emojis solo owner. El estado de pestaña vive en cliente.
+  const user = data?.user ?? null;
   const isOwner = !!user?.isOwner;
-  const canManageAgents = !!agentAccess?.canManage;
+  const canManageAgents = !!data?.agentAccess?.canManage;
   const tabs = [
     { id: "general" as const, label: t("General") },
     ...(canManageAgents ? [{ id: "agentes" as const, label: t("Agentes") }] : []),
     ...(isOwner ? [{ id: "emojis" as const, label: t("Emojis") }] : []),
   ];
-  const [tab, setTab] = useState<"general" | "agentes" | "emojis">("general");
+  const [tab, setTab] = useState<"general" | "agentes" | "emojis">(initialTab ?? "general");
   // Recuerda la última pestaña abierta (localStorage). SSR-safe: init estable en
   // "general" (server + primer render cliente coinciden → sin mismatch de hidratación)
   // y se restaura en effect. Depende de la disponibilidad (Agentes/Emojis cargan async):
   // si la guardada aún no está disponible, no restaura hasta que aparezca; `restored`
   // evita pisar un cambio manual del usuario una vez hecha la restauración.
-  const restored = useRef(false);
+  // Si viene `initialTab` explícita (ej. picker → "emojis"), esa manda: no restaurar.
+  const restored = useRef(!!initialTab);
   useEffect(() => {
     if (restored.current) return;
     try {
@@ -91,16 +123,21 @@ function Settings() {
   };
 
   return (
-    <div className="mx-auto max-w-lg p-6 text-ink">
-      <div className="mb-4 flex items-center justify-between">
+    // Altura FIJA (estándar Slack/Linear/Notion): header+tabs fijos, cuerpo con scroll
+    // interno → el modal NO cambia de tamaño al cambiar de pestaña.
+    <div className="flex h-[85dvh] max-h-[600px] flex-col text-ink">
+      {/* Header (fijo) */}
+      <div className="flex shrink-0 items-center justify-between px-6 pb-4 pt-5">
         <h1 className="text-lg font-semibold">{t("Ajustes")}</h1>
-        <Link to="/c/$slug" params={{ slug: "general" }} className="text-sm text-brand hover:underline">
-          ← {t("Volver al chat")}
-        </Link>
+        {onClose && (
+          <button onClick={onClose} className="text-muted hover:text-ink" title={t("Cerrar")}>
+            <X size={18} />
+          </button>
+        )}
       </div>
 
-      {/* Barra de pestañas */}
-      <div className="mb-5 flex gap-1 border-b border-border">
+      {/* Barra de pestañas (fija) */}
+      <div className="flex shrink-0 gap-1 border-b border-border px-6">
         {tabs.map((tb) => (
           <button
             key={tb.id}
@@ -116,12 +153,14 @@ function Settings() {
         ))}
       </div>
 
+      {/* Cuerpo (scroll interno) — altura estable entre pestañas */}
+      <div className="thin-scroll flex-1 overflow-y-auto px-6 py-5">
       {tab === "general" && (
         <>
           {/* Identidad */}
           <div className="mb-4 flex items-center gap-3 rounded-xl border border-border bg-surface-2 p-4">
             {user?.avatar ? (
-              <img src={user.avatar} alt="" className="h-10 w-10 rounded-full" />
+              <img src={user.avatar} alt="" loading="lazy" decoding="async" className="h-10 w-10 rounded-full" />
             ) : (
               <div className="grid h-10 w-10 place-items-center rounded-full bg-surface-3 text-sm font-semibold">
                 {user?.name?.slice(0, 2).toUpperCase()}
@@ -143,31 +182,30 @@ function Settings() {
             <div className="mb-4 rounded-xl border border-border bg-surface-2 p-4">
               <h2 className="mb-1 text-sm font-semibold">{t("Invitar miembros")}</h2>
               <p className="mb-3 text-sm text-muted">
-                {t("Genera un link. Quien lo abra entra con Formmy y se une a tu chat.")}
+                {t("Comparte este link. Quien lo abra entra con Formmy y se une a tu chat.")}
               </p>
-              {!invite ? (
+              {/* Link auto-generado (get-or-create): ya visible al abrir, sin clic. */}
+              <div className="flex items-center gap-2">
+                <input
+                  readOnly
+                  value={invite ?? t("Generando link…")}
+                  className="flex-1 rounded-lg border border-border bg-surface px-3 py-2 text-xs text-ink"
+                />
                 <button
-                  onClick={genInvite}
-                  disabled={busy}
-                  className="rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-brand-fg disabled:opacity-50"
+                  onClick={copy}
+                  disabled={!invite}
+                  className="rounded-lg bg-brand px-3 py-2 text-sm font-semibold text-brand-fg disabled:opacity-50"
                 >
-                  {busy ? t("Generando…") : t("Generar link de invitación")}
+                  {copied ? "✓" : t("Copiar")}
                 </button>
-              ) : (
-                <div className="flex items-center gap-2">
-                  <input
-                    readOnly
-                    value={invite}
-                    className="flex-1 rounded-lg border border-border bg-surface px-3 py-2 text-xs text-ink"
-                  />
-                  <button
-                    onClick={copy}
-                    className="rounded-lg bg-brand px-3 py-2 text-sm font-semibold text-brand-fg"
-                  >
-                    {copied ? "✓" : t("Copiar")}
-                  </button>
-                </div>
-              )}
+              </div>
+              <button
+                onClick={regenInvite}
+                disabled={busy}
+                className="mt-2 text-xs text-muted transition hover:text-ink disabled:opacity-50"
+              >
+                {busy ? t("Regenerando…") : t("Regenerar link")}
+              </button>
             </div>
           )}
 
@@ -184,10 +222,11 @@ function Settings() {
       )}
 
       {tab === "agentes" && canManageAgents && (
-        <AgentsManager isOwner={isOwner} hasAgent={!!setup?.hasAgent} />
+        <AgentsManager isOwner={isOwner} hasAgent={!!data?.setup?.hasAgent} />
       )}
 
       {tab === "emojis" && isOwner && <EmojiManager />}
+      </div>
     </div>
   );
 }
@@ -407,6 +446,8 @@ function EmojiManager() {
               <img
                 src={`/api/attachment/${encodeURIComponent(e.file_id)}`}
                 alt={e.name}
+                loading="lazy"
+                decoding="async"
                 className="h-5 w-5 object-contain"
               />
               <span className="text-xs text-muted">:{e.name}:</span>
@@ -515,7 +556,7 @@ function AgentsManager({ isOwner, hasAgent }: { isOwner: boolean; hasAgent: bool
             ) : (
               <div key={a.id} className="flex items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-surface-3">
                 {a.avatar ? (
-                  <img src={a.avatar} alt="" className="h-8 w-8 shrink-0 rounded-lg object-cover" />
+                  <img src={a.avatar} alt="" loading="lazy" decoding="async" className="h-8 w-8 shrink-0 rounded-lg object-cover" />
                 ) : (
                   <div className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-brand/15 text-brand">
                     <Bot size={17} />
@@ -801,7 +842,7 @@ function EditAgentForm({
           <div className="space-y-4 lg:col-span-1">
             <div className="flex items-center gap-3">
               {avatar ? (
-                <img src={avatar} alt="" className="h-14 w-14 shrink-0 rounded-xl object-cover" />
+                <img src={avatar} alt="" loading="lazy" decoding="async" className="h-14 w-14 shrink-0 rounded-xl object-cover" />
               ) : (
                 <div className="grid h-14 w-14 shrink-0 place-items-center rounded-xl bg-brand/15 text-brand">
                   <Bot size={24} />

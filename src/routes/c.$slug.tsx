@@ -78,6 +78,7 @@ import { getDeferredPrompt, onInstallable, clearDeferredPrompt, type BeforeInsta
 import { useLiveStream } from "../hooks/useLiveStream";
 import type { RtEvent } from "../server/bus.server";
 import { Markdown } from "../components/Markdown";
+import { SettingsContent } from "../components/SettingsContent";
 import ArtifactPanel, { type ArtifactView, viewFromAttachment } from "../components/ArtifactPanel";
 import { extractEbDoc, draftTitle, bubbleWithoutEbDoc } from "../lib/ebdoc";
 import { ThinkingRing } from "../components/ThinkingRing";
@@ -336,6 +337,8 @@ const ChatCtx = createContext<{
   // Nickname a mostrar para un sender (nombre del mensaje) → resuelto desde la lista
   // de usuarios (Ajustes → perfil). null = sin nickname, usar el sender tal cual.
   nickFor: (sender: string) => string | null;
+  // Abre Ajustes/Preferencias como modal in-panel (SPA) en la pestaña indicada.
+  openPrefs: (tab?: "general" | "agentes" | "emojis") => void;
 }>({
   me: null,
   slug: "",
@@ -352,6 +355,7 @@ const ChatCtx = createContext<{
   onOpenArtifact: () => {},
   sendQuickReply: () => {},
   nickFor: () => null,
+  openPrefs: () => {},
 });
 
 // Emojis rápidos para el picker (evita una lib de ~1MB).
@@ -563,6 +567,8 @@ function EmojiText({ code, className }: { code: string; className?: string }) {
         src={`/api/attachment/${encodeURIComponent(custom.file_id)}`}
         alt={code}
         title={code}
+        loading="lazy"
+        decoding="async"
         className={className ?? "inline-block h-[1.15em] w-[1.15em] object-contain align-[-0.15em]"}
       />
     );
@@ -1395,9 +1401,14 @@ function ChannelPage() {
   }, [mentions]);
   const nickFor = useCallback((sender: string) => nickByName[sender] ?? null, [nickByName]);
 
+  // Ajustes/Preferencias como modal in-panel (SPA): estado a nivel shell para que
+  // lo abran tanto el footer del sidebar como el "+ Añadir emoji" del picker.
+  const [prefsTab, setPrefsTab] = useState<null | "general" | "agentes" | "emojis">(null);
+  const openPrefs = useCallback((tab: "general" | "agentes" | "emojis" = "general") => setPrefsTab(tab), []);
+
   return (
     <ChatCtx.Provider
-      value={{ me: user, slug: channel.slug, emojis, react, star, pin, remove, editMsg, retrySend, discardSend, pickerFor, setPickerFor, onOpenArtifact: setOpenArtifact, sendQuickReply, nickFor }}
+      value={{ me: user, slug: channel.slug, emojis, react, star, pin, remove, editMsg, retrySend, discardSend, pickerFor, setPickerFor, onOpenArtifact: setOpenArtifact, sendQuickReply, nickFor, openPrefs }}
     >
     <div className="flex h-[100dvh] bg-surface text-ink">
       {/* Backdrop del drawer (solo móvil): tap fuera cierra el sidebar. */}
@@ -1550,6 +1561,11 @@ function ChannelPage() {
             onOpenView={openView}
             onClose={() => setPaletteOpen(false)}
           />
+        )}
+        {prefsTab && (
+          <Modal onClose={() => setPrefsTab(null)} size="lg" flush>
+            <SettingsContent initialTab={prefsTab} onClose={() => setPrefsTab(null)} />
+          </Modal>
         )}
       </AnimatePresence>
     </div>
@@ -1795,6 +1811,7 @@ function Sidebar({
 }) {
   const t = useT();
   const router = useRouter();
+  const { openPrefs } = useContext(ChatCtx); // Ajustes in-panel (modal a nivel shell)
   const [createOpen, setCreateOpen] = useState(false);
   const [settingsSlug, setSettingsSlug] = useState<string | null>(null);
   const [newDmOpen, setNewDmOpen] = useState(false);
@@ -2078,9 +2095,10 @@ function Sidebar({
 
       <InstallAppButton />
 
-      <Link
-        to="/settings"
-        className="flex items-center gap-2 border-t border-border p-3 hover:bg-surface-3"
+      {/* Ajustes = modal instantáneo in-panel (SPA), no navegación de ruta. */}
+      <button
+        onClick={() => openPrefs()}
+        className="flex w-full items-center gap-2 border-t border-border p-3 text-left hover:bg-surface-3"
       >
         <Avatar name={user?.name} avatar={user?.avatar} className="h-8 w-8" />
         <div className="min-w-0 flex-1">
@@ -2088,7 +2106,7 @@ function Sidebar({
           <p className="truncate text-xs text-muted">{user?.isOwner ? t("Owner") : t("Miembro")}</p>
         </div>
         <Settings size={16} className="text-muted" />
-      </Link>
+      </button>
 
       <AnimatePresence>
         {createOpen && (
@@ -2178,7 +2196,27 @@ function InstallAppButton() {
   );
 }
 
-function Modal({ children, onClose, wide }: { children: React.ReactNode; onClose: () => void; wide?: boolean }) {
+function Modal({
+  children,
+  onClose,
+  wide,
+  size,
+  flush,
+}: {
+  children: React.ReactNode;
+  onClose: () => void;
+  wide?: boolean;
+  size?: "sm" | "md" | "lg";
+  // flush = sin padding ni scroll propio → el hijo controla su layout (ej. panel de
+  // altura fija con header/tabs fijos y cuerpo scrolleable, estilo Ajustes).
+  flush?: boolean;
+}) {
+  // `size` gana; `wide` se mantiene por compatibilidad (equivale a "md").
+  const maxW = size
+    ? { sm: "max-w-sm", md: "max-w-md", lg: "max-w-2xl" }[size]
+    : wide
+      ? "max-w-md"
+      : "max-w-sm";
   // Esc cierra (para cualquier modal que use este wrapper).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
@@ -2199,8 +2237,8 @@ function Modal({ children, onClose, wide }: { children: React.ReactNode; onClose
         exit={{ scale: 0.95, y: 8 }}
         transition={{ type: "spring", stiffness: 500, damping: 40 }}
         onClick={(e) => e.stopPropagation()}
-        className={`max-h-[85dvh] w-full overflow-y-auto overflow-x-hidden rounded-2xl border border-border bg-surface-2 p-5 text-ink ${
-          wide ? "max-w-md" : "max-w-sm"
+        className={`max-h-[85dvh] w-full overflow-x-hidden rounded-2xl border border-border bg-surface-2 text-ink ${maxW} ${
+          flush ? "overflow-y-hidden" : "thin-scroll overflow-y-auto p-5"
         }`}
       >
         {children}
@@ -3408,7 +3446,7 @@ function ThreadSkeleton() {
 }
 
 function Avatar({ name, avatar, className }: { name?: string; avatar?: string; className?: string }) {
-  if (avatar) return <img src={avatar} alt="" className={`shrink-0 rounded-full ${className}`} />;
+  if (avatar) return <img src={avatar} alt="" loading="lazy" decoding="async" className={`shrink-0 rounded-full ${className}`} />;
   return (
     <div className={`grid shrink-0 place-items-center rounded-full bg-surface-3 text-xs font-semibold text-ink ${className}`}>
       {(name || "?").slice(0, 2).toUpperCase()}
@@ -3805,7 +3843,7 @@ function ArtifactCard({ artifact, ownerMsg }: { artifact: Artifact; ownerMsg: Me
       >
         {view.kind === "image" ? (
           // Miniatura real → una imagen se ve como imagen, no como "Documento".
-          <img src={view.src} alt={artifact.title || ""} className="size-10 shrink-0 rounded-lg object-cover" />
+          <img src={view.src} alt={artifact.title || ""} loading="lazy" decoding="async" className="size-10 shrink-0 rounded-lg object-cover" />
         ) : isPdf ? (
           // Documento en ROJO = convención universal de PDF (icono, no texto).
           <span className="grid size-10 shrink-0 place-items-center rounded-lg bg-red-500/15 text-red-500">
@@ -3925,7 +3963,7 @@ function MessageRow({
           <img src="/ghosty.svg" alt="Ghosty" className="h-full w-full object-contain" />
         </div>
       ) : isAgent && m.avatar ? (
-        <img src={m.avatar} alt={m.sender} className="mt-0.5 h-9 w-9 shrink-0 rounded-lg object-cover" />
+        <img src={m.avatar} alt={m.sender} loading="lazy" decoding="async" className="mt-0.5 h-9 w-9 shrink-0 rounded-lg object-cover" />
       ) : isAgent ? (
         <div className="mt-0.5 grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-brand/15 text-brand">
           <Bot size={20} />
@@ -4375,7 +4413,7 @@ function PinnedBar({ pins, onJump }: { pins: Message[]; onJump: (id: number) => 
 
 function EmojiPicker({ onPick }: { onPick: (e: string) => void }) {
   const t = useT();
-  const { emojis } = useContext(ChatCtx);
+  const { emojis, openPrefs } = useContext(ChatCtx);
   const [q, setQ] = useState("");
   const [cat, setCat] = useState<string>("recents");
   const query = q.trim().toLowerCase();
@@ -4417,7 +4455,7 @@ function EmojiPicker({ onPick }: { onPick: (e: string) => void }) {
       title={`:${e.name}:`}
       className="grid aspect-square place-items-center rounded-md transition hover:scale-110 hover:bg-surface-2"
     >
-      <img src={`/api/attachment/${encodeURIComponent(e.file_id)}`} alt={e.name} className="h-5 w-5 object-contain" />
+      <img src={`/api/attachment/${encodeURIComponent(e.file_id)}`} alt={e.name} loading="lazy" decoding="async" className="h-5 w-5 object-contain" />
     </button>
   );
 
@@ -4462,13 +4500,14 @@ function EmojiPicker({ onPick }: { onPick: (e: string) => void }) {
         )}
       </div>
 
-      {/* Footer: añadir emoji custom del workspace (owner). */}
-      <Link
-        to="/settings"
-        className="flex items-center gap-1.5 border-t border-border px-3 py-2 text-xs text-muted transition hover:bg-surface-2 hover:text-ink"
+      {/* Footer: añadir emoji custom del workspace (owner) → Preferencias en la pestaña
+          Emojis, in-panel (SPA), no navegación de ruta. */}
+      <button
+        onClick={() => openPrefs("emojis")}
+        className="flex w-full items-center gap-1.5 border-t border-border px-3 py-2 text-left text-xs text-muted transition hover:bg-surface-2 hover:text-ink"
       >
         <Plus size={13} /> {t("Añadir emoji")}
-      </Link>
+      </button>
     </div>
   );
 }
@@ -4973,7 +5012,7 @@ const Composer = forwardRef<ComposerHandle, {
                     <Megaphone size={18} className="text-brand" />
                   ) : a.kind === "agent" ? (
                     a.avatar ? (
-                      <img src={a.avatar} alt="" className="h-5 w-5 rounded" />
+                      <img src={a.avatar} alt="" loading="lazy" decoding="async" className="h-5 w-5 rounded" />
                     ) : (
                       <Bot size={18} className="text-brand" />
                     )

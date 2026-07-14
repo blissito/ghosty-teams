@@ -714,6 +714,7 @@ export default function ArtifactPanel({
                                   src={`/api/attachment/${encodeURIComponent(d.fileId)}`}
                                   alt=""
                                   loading="lazy"
+                                  decoding="async"
                                   className="size-9 shrink-0 rounded-lg object-cover"
                                 />
                               ) : (
@@ -760,9 +761,11 @@ export default function ArtifactPanel({
                   </div>
                 ) : artifact.kind === "image" ? (
                   <div className="grid min-h-full place-items-center p-4">
+                    {/* Vista activa del artefacto → eager (no lazy); solo decoding async. */}
                     <img
                       src={artifact.src}
                       alt={artifact.title}
+                      decoding="async"
                       className="max-h-full max-w-full rounded-lg object-contain"
                     />
                   </div>
