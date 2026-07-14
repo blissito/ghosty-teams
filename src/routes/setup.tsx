@@ -27,26 +27,30 @@ function Setup() {
 
   const step = !connected ? 1 : !hasAgent ? 2 : 3;
 
-  // Elegir un agente existente es barato/reversible → optimista está OK aquí.
+  // Tras CUALQUIER mutación del wizard recargamos /setup de verdad. router.invalidate()
+  // no re-corría el loader en este setup (la vista se quedaba en el paso viejo → "el
+  // botón no hace nada"); un reload fuerza getSetup fresco y el paso correcto.
+  const reload = () => window.location.assign("/setup");
+
   async function pick(id: string) {
     setBusy(id);
     try {
       await selectFleetAgent({ data: { id } });
-    } finally {
-      await router.invalidate();
+      reload();
+    } catch {
       setBusy(null);
     }
   }
 
   // Crear un agente CREA un recurso real (VMs, cuota) → NADA de optimismo: espera
-  // a que el server confirme y recién ahí avanza. Si no, se sentía "creó sin
+  // a que el server confirme y recién ahí recarga. Si no, se sentía "creó sin
   // preguntar ni terminar". El botón mismo es la confirmación.
   async function create(engine: "deepseek" | "claude") {
     setBusy(`new:${engine}`);
     try {
       await createFleetAgent({ data: { engine } });
-    } finally {
-      await router.invalidate();
+      reload();
+    } catch {
       setBusy(null);
     }
   }
@@ -56,8 +60,8 @@ function Setup() {
     setBusy(`back:${scope}`);
     try {
       await disconnectSetup({ data: { scope } });
-    } finally {
-      await router.invalidate();
+      reload();
+    } catch {
       setBusy(null);
     }
   }
