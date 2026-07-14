@@ -74,6 +74,37 @@ export function playNotificationSound(volume = 0.85): void {
 }
 
 /**
+ * Sonido de APP LISTA (al abrir/cargar): arpegio breve ascendente (C5-E5-G5),
+ * cálido y con cola, tipo "chime de bienvenida". Se dispara una vez cuando el
+ * chat queda usable. Suena a "estás dentro" sin robar protagonismo.
+ * @param volume 0–1 (default 0.5).
+ */
+export function playReadySound(volume = 0.5): void {
+  const audio = getCtx();
+  if (!audio) return;
+  const now = audio.currentTime;
+  const master = audio.createGain();
+  master.gain.value = volume;
+  master.connect(audio.destination);
+  const ping = (t0: number, freq: number, vol: number) => {
+    const o = audio.createOscillator();
+    const g = audio.createGain();
+    o.type = "triangle";
+    o.frequency.value = freq;
+    g.gain.setValueAtTime(0.0001, t0);
+    g.gain.exponentialRampToValueAtTime(vol, t0 + 0.008);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.34); // cola tipo chime
+    o.connect(g);
+    g.connect(master);
+    o.start(t0);
+    o.stop(t0 + 0.36);
+  };
+  ping(now, 523, 0.5); // C5
+  ping(now + 0.09, 659, 0.45); // E5
+  ping(now + 0.18, 784, 0.42); // G5 → tríada mayor = "listo/bienvenida"
+}
+
+/**
  * Sonido de GHOSTY / agentes — distinto del knock humano. Shimmer etéreo
  * ("fantasmal"): dos tonos ascendentes (una quinta) con vibrato suave.
  * @param volume 0–1 (default 0.7).

@@ -1,4 +1,10 @@
-import { Component, createContext, forwardRef, Fragment, type ReactNode, useCallback, useContext, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
+import { Component, createContext, forwardRef, Fragment, type ReactNode, useCallback, useContext, useEffect, useImperativeHandle, useMemo, useReducer, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import { useEditor, EditorContent } from "@tiptap/react";
+import StarterKit from "@tiptap/starter-kit";
+import Placeholder from "@tiptap/extension-placeholder";
+import Mention from "@tiptap/extension-mention";
+import { Markdown as MarkdownExt } from "tiptap-markdown";
 import { motion, AnimatePresence } from "motion/react";
 import {
   Hash,
@@ -67,7 +73,7 @@ import {
   toggleReactionFn,
   editMessageFn,
 } from "../server/chat";
-import { SmilePlus, Pencil, ArrowLeft, RotateCcw, Send } from "lucide-react";
+import { SmilePlus, Pencil, ArrowLeft, RotateCcw, Send, Bold, Italic, Strikethrough, List, ListOrdered, Quote, Code, Type } from "lucide-react";
 import { getDeferredPrompt, onInstallable, clearDeferredPrompt, type BeforeInstallPromptEvent } from "../utils/pwa-install";
 import { useLiveStream } from "../hooks/useLiveStream";
 import type { RtEvent } from "../server/bus.server";
@@ -75,7 +81,7 @@ import { Markdown } from "../components/Markdown";
 import ArtifactPanel, { type ArtifactView, viewFromAttachment } from "../components/ArtifactPanel";
 import { extractEbDoc, draftTitle, bubbleWithoutEbDoc } from "../lib/ebdoc";
 import { ThinkingRing } from "../components/ThinkingRing";
-import { playNotificationSound, playGhostySound, playSelfSound, playMentionSound, playDmSound } from "../utils/notificationSound";
+import { playNotificationSound, playGhostySound, playSelfSound, playMentionSound, playDmSound, playReadySound } from "../utils/notificationSound";
 
 // Menciones que cuentan como "a ti": tu @handle o una grupal (@all/@channel/…).
 const SOUND_GROUP_MENTIONS = new Set(["all", "channel", "everyone", "aqui", "here", "todos"]);
@@ -200,6 +206,9 @@ const threadsCache = new Map<string, Message[]>();
 // usa para prefetchear flujo/hilos durante la hidratación (igualar el SSR, sin
 // parpadeo) pero NO en navegaciones posteriores (switch instantáneo con skeleton).
 let hydrated = false;
+// Guard para el chime de "app lista": se resetea al recargar (módulo re-ejecuta),
+// así suena una vez por carga y no en cada cambio de room dentro de la SPA.
+let readyChimePlayed = false;
 // `pending` = sembramos el root al instante (sin skeleton en el detonador) pero las
 // RESPUESTAS aún cargan → ThreadView les muestra skeleton hasta que getThread las trae.
 const threadCache = new Map<number, { root: Message | null; replies: Message[]; pending?: boolean }>();
@@ -311,7 +320,7 @@ const ChatCtx = createContext<{
   react: (m: Message, emoji: string) => void;
   star: (m: Message) => void;
   pin: (m: Message) => void;
-  remove: (m: Message) => void;
+  remove: (m: Message) => Promise<void>;
   editMsg: (m: Message, body: string) => void;
   retrySend: (o: Optimistic) => void;
   discardSend: (id: string) => void;
@@ -334,7 +343,7 @@ const ChatCtx = createContext<{
   react: () => {},
   star: () => {},
   pin: () => {},
-  remove: () => {},
+  remove: async () => {},
   editMsg: () => {},
   retrySend: () => {},
   discardSend: () => {},
@@ -347,6 +356,31 @@ const ChatCtx = createContext<{
 
 // Emojis rápidos para el picker (evita una lib de ~1MB).
 const QUICK_EMOJIS = ["👍", "❤️", "😂", "🎉", "🙌", "🔥", "👀", "✅", "💯", "🚀", "🤔", "😮"];
+
+// Categorías del picker (estilo Slack) — set curado, sin lib de ~1MB. Cada tab
+// tiene un glifo (para la barra de categorías) y su lista de emojis. El buscador
+// sigue usando EMOJI_SEARCH (keywords); esto es solo el navegado por categoría.
+const EMOJI_CATEGORIES: { id: string; icon: string; label: string; emojis: string[] }[] = [
+  { id: "people", icon: "🙂", label: "Personas", emojis: ["🙂","😊","😄","😁","😅","😂","🤣","😍","😘","😎","🤔","🤨","😐","🙄","😬","😴","😭","😢","😡","🤯","🥳","🤩","😱","🤗","😉","😜","🤪","🥺","😤","🫠","🤡","💀","👽","👻","🤖"] },
+  { id: "gestures", icon: "👍", label: "Gestos", emojis: ["👍","👎","👏","🙌","👋","🤙","💪","🫡","🙏","🤝","🫶","👌","✌️","🤞","🫰","👊","🤛","🖐️","✋","🤚","🖖"] },
+  { id: "hearts", icon: "❤️", label: "Corazones", emojis: ["❤️","🧡","💛","💚","💙","💜","🖤","🤍","🤎","💔","❣️","💕","💞","💓","💗","💖","💘","💝"] },
+  { id: "symbols", icon: "✅", label: "Símbolos", emojis: ["✅","❌","⭐","🌟","💯","✨","💡","⚡","💥","🎯","🔥","👀","📌","⏰","✏️","🔒","💰","📈","🎨","🐛"] },
+  { id: "celebrate", icon: "🎉", label: "Fiesta", emojis: ["🎉","🎊","🚀","🏆","🥇","👑","💎","🎁","🌈","☀️","🌙","❄️","🎂","🍕","☕","🍺","🌮","🍩","🥤"] },
+];
+
+// Recientes del picker: localStorage, tope 24, más nuevo primero. Módulo-cacheado
+// para pintar al instante al reabrir.
+let emojiRecents: string[] | null = null;
+function getEmojiRecents(): string[] {
+  if (emojiRecents) return emojiRecents;
+  try { emojiRecents = JSON.parse(localStorage.getItem("emoji:recents") || "[]"); } catch { emojiRecents = []; }
+  return emojiRecents || [];
+}
+function pushEmojiRecent(e: string) {
+  const cur = getEmojiRecents().filter((x) => x !== e);
+  emojiRecents = [e, ...cur].slice(0, 24);
+  try { localStorage.setItem("emoji:recents", JSON.stringify(emojiRecents)); } catch { /* storage bloqueado */ }
+}
 
 // Set curado con keywords (ES+EN) para el buscador del picker — evita una lib de
 // ~1MB. Al escribir filtra esto + los emojis custom; vacío muestra los rápidos.
@@ -817,6 +851,11 @@ function ChannelPage() {
         threadCache.set(tid, { root: t.root, replies: t.replies.filter((m) => m.id !== id) });
     for (const [did, arr] of dmFlowCache)
       if (arr.some((m) => m.id === id)) dmFlowCache.set(did, arr.filter((m) => m.id !== id));
+    // Si el mensaje borrado era la RAÍZ de un hilo, el server borra el hilo en cascada;
+    // reflejarlo aquí quita su submenú del sidebar (threadsCache) y su thread cacheado.
+    for (const [slug, roots] of threadsCache)
+      if (roots.some((m) => m.id === id)) threadsCache.set(slug, roots.filter((m) => m.id !== id));
+    if (threadCache.has(id)) threadCache.delete(id);
     applyPatch();
   };
 
@@ -830,9 +869,15 @@ function ChannelPage() {
     patchMessage(m.id, (msg) => ({ ...msg, pinned: !msg.pinned }));
     togglePinFn({ data: { messageId: m.id } }).catch(() => revalidate());
   };
-  const remove = (m: Message) => {
-    removeMessageLocal(m.id);
-    deleteMessageFn({ data: { id: m.id } }).catch(() => revalidate());
+  // Borrado destructivo → NO optimista: espera al server (spinner en el modal) y
+  // recién entonces quita local. El eco realtime message:deleted es idempotente.
+  const remove = async (m: Message) => {
+    try {
+      await deleteMessageFn({ data: { id: m.id } });
+      removeMessageLocal(m.id);
+    } catch {
+      revalidate();
+    }
   };
   const editMsg = (m: Message, body: string) => {
     patchMessage(m.id, (msg) => ({ ...msg, body, edited_at: Date.now() }));
@@ -1044,6 +1089,13 @@ function ChannelPage() {
   useEffect(() => {
     refreshUnread();
     refreshMutes();
+  }, []);
+  // Chime de "app lista": una vez por CARGA de página (el guard de módulo se
+  // resetea en un reload → re-suena; pero no en cambios de room dentro de la SPA).
+  useEffect(() => {
+    if (readyChimePlayed) return;
+    readyChimePlayed = true;
+    playReadySound();
   }, []);
   // En el MOUNT restaura el foco del centro tras un reload (deploy/refresh) desde
   // sessionStorage; en cambios de room POSTERIORES cierra el foco (vuelve al flujo).
@@ -1783,7 +1835,7 @@ function Sidebar({
           <X size={20} />
         </button>
       </div>
-      <div className="flex-1 overflow-y-auto p-2">
+      <div className="flex-1 overflow-y-auto p-2 thin-scroll">
         {/* Vistas (Zulip): recientes / menciones / destacados, enfocadas en el centro. */}
         <div className="mb-1 space-y-0.5">
           {([
@@ -2922,7 +2974,7 @@ function ViewPane({
           <p className="text-xs text-muted">{meta.desc}</p>
         </div>
       </header>
-      <div className="flex-1 space-y-1 overflow-y-auto px-4 py-4 no-scrollbar">
+      <div className="flex-1 space-y-1 overflow-y-auto px-6 py-4 thin-scroll">
         {hits === null ? (
           <ThreadSkeleton />
         ) : hits.length === 0 ? (
@@ -3061,7 +3113,7 @@ function Flow({
         </div>
       </header>
       {pins.length > 0 && <PinnedBar pins={pins} onJump={jumpTo} />}
-      <div ref={scrollRef} onScroll={onScroll} className="mx-auto w-full max-w-4xl flex-1 space-y-1 overflow-y-auto px-4 py-4 no-scrollbar">
+      <div ref={scrollRef} onScroll={onScroll} className="w-full flex-1 space-y-1 overflow-y-auto px-6 py-4 thin-scroll">
         {messages === null ? (
           <ThreadSkeleton />
         ) : messages.length === 0 && optimistic.length === 0 ? (
@@ -3163,7 +3215,7 @@ function ThreadView({
           <DocsButton channelId={channel.id} channelSlug={channel.slug} threadRootId={threadId} />
         </div>
       </header>
-      <div ref={scrollRef} onScroll={onScroll} className="mx-auto w-full max-w-4xl flex-1 space-y-1 overflow-y-auto px-4 py-4 no-scrollbar">
+      <div ref={scrollRef} onScroll={onScroll} className="w-full flex-1 space-y-1 overflow-y-auto px-6 py-4 thin-scroll">
         {!data ? (
           <ThreadSkeleton />
         ) : !data.root ? (
@@ -3305,7 +3357,7 @@ function DmView({
           </p>
         </div>
       </header>
-      <div ref={scrollRef} onScroll={onScroll} className="mx-auto w-full max-w-4xl flex-1 space-y-1 overflow-y-auto px-4 py-4 no-scrollbar">
+      <div ref={scrollRef} onScroll={onScroll} className="w-full flex-1 space-y-1 overflow-y-auto px-6 py-4 thin-scroll">
         {flow === null ? (
           <ThreadSkeleton />
         ) : flow.length === 0 && optimistic.length === 0 ? (
@@ -4090,6 +4142,7 @@ function MessageActions({
   const t = useT();
   const { pin, remove } = useContext(ChatCtx);
   const [open, setOpen] = useState(false);
+  const [confirmDel, setConfirmDel] = useState(false);
   useEffect(() => onOpenChange?.(open), [open]); // mantiene la barra visible con el menú abierto
   const [receipts, setReceipts] = useState<{ sub: string; name: string; avatar: string }[] | null>(null);
   const close = () => {
@@ -4187,8 +4240,8 @@ function MessageActions({
               <button
                 className={`${item} !text-red-500 hover:bg-red-500/10`}
                 onClick={() => {
-                  remove(m);
                   close();
+                  setConfirmDel(true);
                 }}
               >
                 <Trash2 size={14} /> {t("Eliminar")}
@@ -4197,7 +4250,98 @@ function MessageActions({
           </div>
         </>
       )}
+      {confirmDel && (
+        <ConfirmModal
+          title={t("Eliminar mensaje")}
+          body={t("Esto no se puede deshacer.")}
+          confirmLabel={t("Eliminar")}
+          danger
+          onCancel={() => setConfirmDel(false)}
+          onConfirm={() => remove(m)}
+        />
+      )}
     </div>
+  );
+}
+
+// Confirmación destructiva reutilizable (borrar mensaje/hilo/room). Overlay centrado
+// con backdrop; ESC = cancelar, Enter = confirmar. Estilo alineado a la app.
+function ConfirmModal({
+  title,
+  body,
+  confirmLabel,
+  danger,
+  onCancel,
+  onConfirm,
+}: {
+  title: string;
+  body: string;
+  confirmLabel: string;
+  danger?: boolean;
+  onCancel: () => void;
+  onConfirm: () => void | Promise<void>;
+}) {
+  const t = useT();
+  const [busy, setBusy] = useState(false);
+  // Ejecuta la acción mostrando spinner; si resuelve OK normalmente el componente
+  // se desmonta (el ítem borrado desaparece). Si falla, se libera el spinner.
+  const run = async () => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      await onConfirm();
+    } catch {
+      setBusy(false);
+    }
+  };
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onCancel();
+      else if (e.key === "Enter") void run();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [onCancel, busy]);
+  // Portal a document.body: un `fixed` dentro de un ancestro con `transform`
+  // (la barra de acciones usa -translate-y-1/2) se ancla a ESE ancestro, no al
+  // viewport → se aplasta. El portal lo saca del árbol transformado.
+  if (typeof document === "undefined") return null;
+  return createPortal(
+    <div
+      className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4"
+      onMouseDown={onCancel}
+    >
+      <div
+        className="w-full max-w-sm rounded-2xl border border-border bg-surface p-5 shadow-2xl"
+        onMouseDown={(e) => e.stopPropagation()}
+      >
+        <h2 className="text-sm font-semibold text-ink">{title}</h2>
+        <p className="mt-1 text-xs text-muted">{body}</p>
+        <div className="mt-5 flex justify-end gap-2">
+          <button
+            autoFocus
+            onClick={onCancel}
+            disabled={busy}
+            className="rounded-lg border border-border px-3.5 py-1.5 text-sm text-muted transition hover:text-ink disabled:opacity-50"
+          >
+            {/* Cancelar es el default seguro → foco aquí */}
+            {t("Cancelar")}
+          </button>
+          <button
+            onClick={run}
+            disabled={busy}
+            className={`inline-flex items-center gap-1.5 rounded-lg px-3.5 py-1.5 text-sm font-semibold text-white transition disabled:opacity-70 ${
+              danger ? "bg-red-500 hover:bg-red-600" : "bg-brand hover:brightness-110"
+            }`}
+          >
+            {busy && <Loader2 size={14} className="animate-spin" />}
+            {confirmLabel}
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body
   );
 }
 
@@ -4233,16 +4377,54 @@ function EmojiPicker({ onPick }: { onPick: (e: string) => void }) {
   const t = useT();
   const { emojis } = useContext(ChatCtx);
   const [q, setQ] = useState("");
+  const [cat, setCat] = useState<string>("recents");
   const query = q.trim().toLowerCase();
-  // Buscando → filtra el set curado (por keywords) + los custom (por nombre). Sin
-  // texto → muestra los rápidos + todos los custom (comportamiento por defecto).
-  const unicode = query ? EMOJI_SEARCH.filter((e) => e.k.includes(query)).map((e) => e.c) : QUICK_EMOJIS;
-  const custom = query ? emojis.filter((e) => e.name.toLowerCase().includes(query)) : emojis;
+  const searching = query.length > 0;
+  const recents = getEmojiRecents();
+  // Envuelve onPick para registrar el reciente (unicode y :custom: por igual).
+  const pick = (e: string) => { pushEmojiRecent(e); onPick(e); };
+
+  // Buscando → filtra el set curado (keywords) + custom (nombre). Navegando →
+  // recientes (o rápidos si aún no hay) o la categoría activa.
+  const unicode = searching
+    ? EMOJI_SEARCH.filter((e) => e.k.includes(query)).map((e) => e.c)
+    : cat === "recents"
+      ? (recents.length ? recents : QUICK_EMOJIS)
+      : EMOJI_CATEGORIES.find((c) => c.id === cat)?.emojis ?? [];
+  // Los custom (imágenes/GIFs del workspace) salen al buscar, en su tab, y también
+  // en "recientes" (vista por defecto) para que no queden escondidos.
+  const custom = searching
+    ? emojis.filter((e) => e.name.toLowerCase().includes(query))
+    : cat === "custom" || cat === "recents"
+      ? emojis
+      : [];
   const empty = unicode.length === 0 && custom.length === 0;
+
+  const renderEmoji = (e: string, i: number) =>
+    e.startsWith(":") ? null : (
+      <button
+        key={`${e}-${i}`}
+        onClick={() => pick(e)}
+        className="grid aspect-square place-items-center rounded-md text-lg leading-none transition hover:scale-110 hover:bg-surface-2"
+      >
+        {e}
+      </button>
+    );
+  const renderCustom = (e: CustomEmoji) => (
+    <button
+      key={e.name}
+      onClick={() => pick(`:${e.name}:`)}
+      title={`:${e.name}:`}
+      className="grid aspect-square place-items-center rounded-md transition hover:scale-110 hover:bg-surface-2"
+    >
+      <img src={`/api/attachment/${encodeURIComponent(e.file_id)}`} alt={e.name} className="h-5 w-5 object-contain" />
+    </button>
+  );
+
   return (
-    <div className="absolute right-0 top-full z-20 mt-1 w-52 overflow-hidden rounded-xl border border-border bg-surface shadow-xl">
-      {/* Buscador estilo Slack (el cierre por click-afuera lo maneja ReactButton). */}
-      <div className="border-b border-border p-1.5">
+    <div className="absolute right-0 top-full z-20 mt-1 w-64 overflow-hidden rounded-xl border border-border bg-surface shadow-xl">
+      {/* Buscador (el cierre por click-afuera lo maneja ReactButton). */}
+      <div className="p-1.5">
         <input
           autoFocus
           value={q}
@@ -4250,38 +4432,43 @@ function EmojiPicker({ onPick }: { onPick: (e: string) => void }) {
           placeholder={t("Buscar emoji…")}
           className="w-full rounded-lg border border-border bg-surface-2 px-2.5 py-1.5 text-xs text-ink outline-none placeholder:text-muted focus:border-brand"
         />
+      </div>
+
+      {/* Barra de categorías (oculta al buscar). */}
+      {!searching && (
+        <div className="flex items-center gap-0.5 border-y border-border px-1.5 py-1">
+          {[{ id: "recents", icon: "🕐" }, ...EMOJI_CATEGORIES.map((c) => ({ id: c.id, icon: c.icon })), ...(emojis.length ? [{ id: "custom", icon: "🧩" }] : [])].map((c) => (
+            <button
+              key={c.id}
+              onClick={() => setCat(c.id)}
+              className={`grid h-7 w-7 place-items-center rounded-md text-base transition hover:bg-surface-2 ${
+                cat === c.id ? "bg-surface-2 ring-1 ring-brand" : ""
+              }`}
+            >
+              {c.icon}
+            </button>
+          ))}
         </div>
-        <div className="grid max-h-52 grid-cols-6 gap-0.5 overflow-y-auto p-1.5">
-          {empty ? (
-            <p className="col-span-6 px-2 py-3 text-center text-xs text-muted">{t("Sin resultados")}</p>
-          ) : (
-            <>
-              {unicode.map((e, i) => (
-                <button
-                  key={`${e}-${i}`}
-                  onClick={() => onPick(e)}
-                  className="rounded-md p-1 text-lg leading-none transition hover:scale-110 hover:bg-surface-2"
-                >
-                  {e}
-                </button>
-              ))}
-              {custom.map((e) => (
-                <button
-                  key={e.name}
-                  onClick={() => onPick(`:${e.name}:`)}
-                  title={`:${e.name}:`}
-                  className="grid place-items-center rounded-md p-1 transition hover:scale-110 hover:bg-surface-2"
-                >
-                  <img
-                    src={`/api/attachment/${encodeURIComponent(e.file_id)}`}
-                    alt={e.name}
-                    className="h-5 w-5 object-contain"
-                  />
-                </button>
-              ))}
-            </>
-          )}
-        </div>
+      )}
+
+      <div className="grid max-h-52 grid-cols-7 gap-0.5 overflow-y-auto p-1.5">
+        {empty ? (
+          <p className="col-span-7 px-2 py-3 text-center text-xs text-muted">{t("Sin resultados")}</p>
+        ) : (
+          <>
+            {unicode.map(renderEmoji)}
+            {custom.map(renderCustom)}
+          </>
+        )}
+      </div>
+
+      {/* Footer: añadir emoji custom del workspace (owner). */}
+      <Link
+        to="/settings"
+        className="flex items-center gap-1.5 border-t border-border px-3 py-2 text-xs text-muted transition hover:bg-surface-2 hover:text-ink"
+      >
+        <Plus size={13} /> {t("Añadir emoji")}
+      </Link>
     </div>
   );
 }
@@ -4478,25 +4665,32 @@ const Composer = forwardRef<ComposerHandle, {
   placeholder,
 }, ref) {
   const t = useT();
-  const bodyRef = useRef<HTMLTextAreaElement>(null);
   // Borrador por scope (Fase 4): persiste lo tecleado en localStorage para no
   // perderlo al cambiar de room/hilo/DM o recargar. Clave estable por conversación.
   const draftKey =
     dmId != null ? `draft:dm:${dmId}` : parentId != null ? `draft:thread:${parentId}` : `draft:room:${slug}`;
-  const [body, setBody] = useState(() =>
-    typeof window !== "undefined" ? localStorage.getItem(draftKey) ?? "" : ""
-  );
-  // Recarga el borrador al cambiar de scope sin desmontar (p.ej. cambiar de room
-  // en el Flow, que no se re-keya). Los paneles keyados (hilo/DM) ya remontan.
-  useEffect(() => {
-    setBody(typeof window !== "undefined" ? localStorage.getItem(draftKey) ?? "" : "");
-  }, [draftKey]);
   const mentions = useMentions();
-  const [mq, setMq] = useState<string | null>(null);
-  const [mSel, setMSel] = useState(0);
+  const mentionsRef = useRef(mentions);
+  mentionsRef.current = mentions; // el suggestion de TipTap lee la lista fresca por ref
   const lastTypingPing = useRef(0);
-  const matches =
-    mq === null ? [] : mentions.filter((a) => a.handle.startsWith(mq.toLowerCase()));
+  const submitRef = useRef<() => void>(() => {}); // handleKeyDown llama al submit más reciente
+  // Toolbar de formato: toggle recordado en localStorage.
+  const [showFormat, setShowFormat] = useState(() => {
+    try { return localStorage.getItem("composer:format") === "1"; } catch { return false; }
+  });
+  const toggleFormat = () => setShowFormat((v) => {
+    const n = !v;
+    try { localStorage.setItem("composer:format", n ? "1" : "0"); } catch { /* bloqueado */ }
+    return n;
+  });
+  // ── Popup de mención: el suggestion de TipTap actualiza este estado (ref +
+  //    force-render) y reusamos la UI de menciones. mentionOpenRef corta el Enter-envía. ──
+  type MentionPopup = { items: Mention[]; command: (a: { handle: string; name: string }) => void; rect: DOMRect | null; index: number };
+  const popup = useRef<MentionPopup | null>(null);
+  const [, forcePopup] = useReducer((x: number) => x + 1, 0);
+  const setPopup = (v: MentionPopup | null) => { popup.current = v; forcePopup(); };
+  const mentionOpenRef = useRef(false);
+  mentionOpenRef.current = popup.current != null;
 
   // ── Adjuntos (Fase 4) ──────────────────────────────────────────────────────
   // Cada archivo se sube en cuanto se elige/suelta (POST /api/upload → EasyBits);
@@ -4552,72 +4746,145 @@ const Composer = forwardRef<ComposerHandle, {
   // Libera los objectURL pendientes al desmontar (cambiar de hilo/DM/room).
   useEffect(() => () => setPending((p) => { p.forEach((x) => x.previewUrl && URL.revokeObjectURL(x.previewUrl)); return p; }), []);
 
-  function onChange(e: React.ChangeEvent<HTMLTextAreaElement>) {
-    const val = e.target.value;
-    setBody(val);
-    // Persiste/limpia el borrador de este scope.
-    if (typeof window !== "undefined") {
-      if (val) localStorage.setItem(draftKey, val);
-      else localStorage.removeItem(draftKey);
-    }
-    // Señal "escribiendo…" throttled a 1 cada 2s (efímera, sin DB). Room/hilo/DM.
-    const now = Date.now();
-    if (val && now - lastTypingPing.current > 2000) {
-      lastTypingPing.current = now;
-      pingTypingFn({ data: dmId != null ? { dmId } : { slug, parentId } }).catch(() => {});
-    }
-    const upto = val.slice(0, e.target.selectionStart ?? val.length);
-    // Boundary: el popup de mención SOLO abre si el @ arranca en inicio o tras espacio
-    // — no dentro de un email (fixtergeek@gmail…). Mismo criterio que el resaltado.
-    const m = upto.match(/(?:^|\s)@(\w*)$/);
-    if (m) {
-      setMq(m[1]);
-      setMSel(0);
-    } else setMq(null);
-  }
-  function insertMention(id: string) {
-    const el = bodyRef.current;
-    if (!el) return;
-    const caret = el.selectionStart ?? body.length;
-    const before = body.slice(0, caret).replace(/(^|\s)@\w*$/, `$1@${id} `);
-    const next = before + body.slice(caret);
-    setBody(next);
-    setMq(null);
-    requestAnimationFrame(() => {
-      el.focus();
-      el.selectionStart = el.selectionEnd = before.length;
-    });
-  }
+  // ── Editor TipTap (WYSIWYG) ─────────────────────────────────────────────────
+  // Mention extendido: (a) serializa a markdown como texto plano @handle → el server
+  // (detectMentions) y el resaltado del cliente lo siguen detectando; (b) el suggestion
+  // puentea al popup React de arriba. Se crea una vez (deps = refs/setters estables).
+  const MentionMd = useMemo(
+    () =>
+      Mention.extend({
+        addStorage() {
+          return { markdown: { serialize: (state: any, node: any) => state.write(`@${node.attrs.id}`), parse: {} } };
+        },
+      }).configure({
+        HTMLAttributes: { class: "mention" },
+        renderText: ({ node }: any) => `@${node.attrs.id}`,
+        suggestion: {
+          char: "@",
+          items: ({ query }: { query: string }) =>
+            mentionsRef.current.filter((a) => a.handle.startsWith(query.toLowerCase())).slice(0, 8),
+          command: ({ editor, range, props }: any) =>
+            editor
+              .chain()
+              .focus()
+              .insertContentAt(range, [
+                { type: "mention", attrs: { id: props.handle, label: props.name } },
+                { type: "text", text: " " },
+              ])
+              .run(),
+          render: () => ({
+            onStart: (props: any) =>
+              setPopup({ items: props.items, command: props.command, rect: props.clientRect?.() ?? null, index: 0 }),
+            onUpdate: (props: any) =>
+              setPopup(
+                popup.current
+                  ? { ...popup.current, items: props.items, command: props.command, rect: props.clientRect?.() ?? null, index: Math.min(popup.current.index, Math.max(0, props.items.length - 1)) }
+                  : null
+              ),
+            onKeyDown: (props: any) => {
+              const p = popup.current;
+              if (!p || !p.items.length) return false;
+              const k = props.event.key;
+              if (k === "ArrowDown") { setPopup({ ...p, index: (p.index + 1) % p.items.length }); return true; }
+              if (k === "ArrowUp") { setPopup({ ...p, index: (p.index - 1 + p.items.length) % p.items.length }); return true; }
+              if (k === "Enter" || k === "Tab") { const it = p.items[p.index]; if (it) p.command({ handle: it.handle, name: it.name }); return true; }
+              if (k === "Escape") { setPopup(null); return true; }
+              return false;
+            },
+            onExit: () => setPopup(null),
+          }),
+        },
+      }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    []
+  );
+
+  const editor = useEditor({
+    immediatelyRender: false, // SSR de TanStack Start: sin esto → mismatch de hidratación
+    extensions: [
+      StarterKit.configure({ link: { openOnClick: false, autolink: true } }),
+      Placeholder.configure({ placeholder }),
+      MarkdownExt.configure({ html: false, bulletListMarker: "-", linkify: false, breaks: false, transformPastedText: true }),
+      MentionMd,
+    ],
+    content: typeof window !== "undefined" ? localStorage.getItem(draftKey) ?? "" : "",
+    editorProps: {
+      attributes: { class: "thin-scroll max-h-40 min-h-9 flex-1 overflow-y-auto px-1 py-2 text-sm leading-5 text-ink" },
+      // Enter envía (salvo popup de mención abierto o Shift). Shift+Enter → salto nativo.
+      handleKeyDown: (_v, event) => {
+        if (event.key === "Enter" && !event.shiftKey && !mentionOpenRef.current) {
+          event.preventDefault();
+          submitRef.current();
+          return true;
+        }
+        return false;
+      },
+      // Pegar imagen del portapapeles → adjunto con miniatura instantánea (mismo addFiles).
+      handlePaste: (_v, event) => {
+        const files = Array.from(event.clipboardData?.files ?? []).filter((f) => f.type.startsWith("image/"));
+        if (files.length) { addFiles(files); return true; }
+        return false;
+      },
+    },
+    onUpdate: ({ editor }) => {
+      const md = (editor.storage as any).markdown.getMarkdown() as string;
+      if (typeof window !== "undefined") {
+        if (md.trim()) localStorage.setItem(draftKey, md);
+        else localStorage.removeItem(draftKey);
+      }
+      // Señal "escribiendo…" throttled a 1 cada 2s (efímera, sin DB). Room/hilo/DM.
+      const now = Date.now();
+      if (md.trim() && now - lastTypingPing.current > 2000) {
+        lastTypingPing.current = now;
+        pingTypingFn({ data: dmId != null ? { dmId } : { slug, parentId } }).catch(() => {});
+      }
+    },
+  });
+
+  // Recarga el borrador al cambiar de scope sin desmontar (room-switch en Flow). Los
+  // paneles keyados (hilo/DM) ya remontan. setContent parsea markdown (tiptap-markdown).
+  useEffect(() => {
+    if (!editor) return;
+    editor.commands.setContent(typeof window !== "undefined" ? localStorage.getItem(draftKey) ?? "" : "");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draftKey, editor]);
 
   function submit() {
     // Adjuntos ya subidos (con fileId). Bloquea envío mientras alguno sube.
     const attachments = pending
       .filter((p) => p.fileId && !p.error)
       .map((p) => ({ fileId: p.fileId!, mime: p.mime, size: p.size, name: p.name }));
-    if ((!body.trim() && attachments.length === 0) || uploading) return;
-    const sent = body;
-    setBody("");
+    const body = editor ? ((editor.storage as any).markdown.getMarkdown() as string).trim() : "";
+    if ((!body && attachments.length === 0) || uploading) return;
     setPending((p) => { p.forEach((x) => x.previewUrl && URL.revokeObjectURL(x.previewUrl)); return []; });
     if (typeof window !== "undefined") localStorage.removeItem(draftKey); // borrador consumido
+    editor?.commands.clearContent(true);
     playSelfSound(); // confirmación sonora del envío propio (distinta de las notifs)
-    bodyRef.current?.focus(); // re-habilita al instante — no esperamos el round-trip
-    // El ENVÍO lo hace el padre (outbox): crea el optimista, dispara la red en 2º
-    // plano y, si falla permanentemente, marca la fila como "fallida" con retry.
-    onSend({ body: sent, attachments });
+    editor?.commands.focus(); // re-habilita al instante — no esperamos el round-trip
+    // El ENVÍO lo hace el padre (outbox): crea el optimista, dispara la red en 2º plano.
+    onSend({ body, attachments });
   }
+  submitRef.current = submit;
 
-  function onKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
-    if (mq !== null && matches.length) {
-      if (e.key === "ArrowDown") return e.preventDefault(), setMSel((i) => (i + 1) % matches.length);
-      if (e.key === "ArrowUp") return e.preventDefault(), setMSel((i) => (i - 1 + matches.length) % matches.length);
-      if (e.key === "Enter" || e.key === "Tab") return e.preventDefault(), insertMention(matches[mSel].handle);
-      if (e.key === "Escape") return e.preventDefault(), setMq(null);
-    }
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      submit();
-    }
-  }
+  // Toolbar → comandos del editor (WYSIWYG), con estado activo resaltado.
+  const FMT_TOOLS = editor
+    ? [
+        { icon: Bold, title: t("Negrita"), active: editor.isActive("bold"), fn: () => editor.chain().focus().toggleBold().run() },
+        { icon: Italic, title: t("Itálica"), active: editor.isActive("italic"), fn: () => editor.chain().focus().toggleItalic().run() },
+        { icon: Strikethrough, title: t("Tachado"), active: editor.isActive("strike"), fn: () => editor.chain().focus().toggleStrike().run() },
+        { icon: Link2, title: t("Enlace"), active: editor.isActive("link"), fn: () => {
+            const prev = editor.getAttributes("link").href as string | undefined;
+            const url = window.prompt(t("URL del enlace"), prev || "https://");
+            if (url === null) return;
+            if (url === "") editor.chain().focus().extendMarkRange("link").unsetLink().run();
+            else editor.chain().focus().extendMarkRange("link").setLink({ href: url }).run();
+          } },
+        { icon: List, title: t("Lista"), active: editor.isActive("bulletList"), fn: () => editor.chain().focus().toggleBulletList().run() },
+        { icon: ListOrdered, title: t("Lista numerada"), active: editor.isActive("orderedList"), fn: () => editor.chain().focus().toggleOrderedList().run() },
+        { icon: Quote, title: t("Cita"), active: editor.isActive("blockquote"), fn: () => editor.chain().focus().toggleBlockquote().run() },
+        { icon: Code, title: t("Código"), active: editor.isActive("code"), fn: () => editor.chain().focus().toggleCode().run() },
+      ]
+    : [];
 
   return (
     <form
@@ -4685,22 +4952,21 @@ const Composer = forwardRef<ComposerHandle, {
           e.target.value = ""; // permite re-elegir el mismo archivo
         }}
       />
-      {/* Caja UNIFICADA (referencia Slack/Zulip/Rocket.Chat): un solo borde envuelve
-          clip + textarea + Enviar → alineados por dentro, sin píldora suelta. Llena
-          el ancho del panel pero los botones fijos a los bordes lo hacen cohesivo. */}
-      <div className="relative mx-auto flex w-full max-w-4xl items-end gap-1 rounded-xl border border-border bg-surface px-1.5 py-1.5 transition focus-within:border-brand">
-        {mq !== null && matches.length > 0 && (
-          <ul className="absolute bottom-full left-10 mb-1 w-56 overflow-hidden rounded-lg border border-border bg-surface shadow-lg">
-            {matches.map((a, i) => (
+      {/* Popup de mención (@) — por portal a body y posicionado sobre el caret, para
+          que no lo clipe el overflow del composer. Reusa la UI de menciones. */}
+      {popup.current && popup.current.items.length > 0 && popup.current.rect &&
+        createPortal(
+          <ul
+            style={{ position: "fixed", left: popup.current.rect.left, top: popup.current.rect.top - 6, transform: "translateY(-100%)", zIndex: 60 }}
+            className="thin-scroll max-h-64 w-60 overflow-y-auto overflow-x-hidden rounded-lg border border-border bg-surface shadow-lg"
+          >
+            {popup.current.items.map((a, i) => (
               <li key={a.handle}>
                 <button
                   type="button"
-                  onMouseDown={(e) => {
-                    e.preventDefault();
-                    insertMention(a.handle);
-                  }}
+                  onMouseDown={(e) => { e.preventDefault(); popup.current?.command({ handle: a.handle, name: a.name }); }}
                   className={`flex w-full items-center gap-2 px-3 py-2 text-left text-sm ${
-                    i === mSel ? "bg-brand/15" : "hover:bg-surface-2"
+                    i === popup.current!.index ? "bg-brand/15" : "hover:bg-surface-2"
                   }`}
                 >
                   {a.kind === "group" ? (
@@ -4719,8 +4985,42 @@ const Composer = forwardRef<ComposerHandle, {
                 </button>
               </li>
             ))}
-          </ul>
+          </ul>,
+          document.body
         )}
+      {/* Caja UNIFICADA (referencia Slack/Zulip/Rocket.Chat): un solo borde envuelve
+          toolbar + clip + editor + Enviar. El toolbar de formato vive DENTRO de la
+          caja (divisor arriba), no como barra suelta → se siente parte del composer. */}
+      <div className="w-full rounded-xl border border-border bg-surface transition focus-within:border-brand">
+        {showFormat && (
+          <div className="flex flex-wrap items-center gap-0.5 border-b border-border px-1.5 py-1">
+            {FMT_TOOLS.map((tool, i) => (
+              <button
+                key={i}
+                type="button"
+                title={tool.title}
+                onMouseDown={(e) => e.preventDefault()} // no robar el foco del editor
+                onClick={tool.fn}
+                className={`grid h-7 w-7 place-items-center rounded-md transition hover:bg-surface-2 hover:text-ink ${
+                  tool.active ? "bg-surface-2 text-brand" : "text-muted"
+                }`}
+              >
+                <tool.icon size={15} />
+              </button>
+            ))}
+          </div>
+        )}
+        <div className="relative flex w-full items-end gap-1 px-1.5 py-1.5">
+        <button
+          type="button"
+          onClick={toggleFormat}
+          title={showFormat ? t("Ocultar formato") : t("Mostrar formato")}
+          className={`grid h-9 w-9 shrink-0 place-items-center rounded-lg transition hover:bg-surface-2 hover:text-ink ${
+            showFormat ? "bg-surface-2 text-brand" : "text-muted"
+          }`}
+        >
+          <Type size={17} />
+        </button>
         <button
           type="button"
           onClick={() => fileInputRef.current?.click()}
@@ -4729,24 +5029,9 @@ const Composer = forwardRef<ComposerHandle, {
         >
           <Paperclip size={18} />
         </button>
-        <textarea
-          ref={bodyRef}
-          value={body}
-          onChange={onChange}
-          onKeyDown={onKeyDown}
-          // Pegar (Cmd/Ctrl+V) una imagen del portapapeles — el caso típico de un
-          // screenshot. La adjunta con miniatura INSTANTÁNEA (mismo addFiles que el drop).
-          onPaste={(e) => {
-            const files = Array.from(e.clipboardData?.files ?? []).filter((f) => f.type.startsWith("image/"));
-            if (files.length) {
-              e.preventDefault();
-              addFiles(files);
-            }
-          }}
-          rows={1}
-          placeholder={placeholder}
-          className="max-h-40 min-h-9 flex-1 resize-none bg-transparent px-1 py-2 text-sm leading-5 text-ink outline-none placeholder:text-muted"
-        />
+        {/* Editor WYSIWYG (TipTap). El formato se ve visualmente; el body sale como
+            markdown (getMarkdown) al enviar. Paste de imagen y Enter-envía en editorProps. */}
+        <EditorContent editor={editor} className="min-w-0 flex-1" />
         <button
           type="submit"
           disabled={uploading}
@@ -4756,6 +5041,7 @@ const Composer = forwardRef<ComposerHandle, {
           <Send size={15} />
           {t("Enviar")}
         </button>
+        </div>
       </div>
     </form>
   );

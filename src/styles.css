@@ -145,7 +145,7 @@ body {
    sin la barra gruesa/fea del sistema. Para modales/paneles y textareas. */
 .thin-scroll {
   scrollbar-width: thin; /* Firefox */
-  scrollbar-color: rgba(148, 148, 168, 0.35) transparent;
+  scrollbar-color: color-mix(in srgb, var(--color-brand) 40%, transparent) transparent;
 }
 .thin-scroll::-webkit-scrollbar {
   width: 6px;
@@ -155,9 +155,62 @@ body {
   background: transparent;
 }
 .thin-scroll::-webkit-scrollbar-thumb {
-  background: rgba(148, 148, 168, 0.28);
+  background: color-mix(in srgb, var(--color-brand) 35%, transparent);
   border-radius: 9999px;
 }
 .thin-scroll:hover::-webkit-scrollbar-thumb {
-  background: rgba(148, 148, 168, 0.5);
+  background: color-mix(in srgb, var(--color-brand) 60%, transparent);
+}
+
+/* ── Composer WYSIWYG (TipTap / ProseMirror) ────────────────────────────────
+   El editor debe verse como un input de chat: sin outline, párrafos pegados,
+   negrita/itálica visibles. La mención sale como pill (mismo look que el
+   resaltado de mensajes). El placeholder usa data-placeholder de Placeholder. */
+.ProseMirror {
+  outline: none;
+}
+.ProseMirror p {
+  margin: 0;
+}
+.ProseMirror > * + * {
+  margin-top: 0.35rem;
+}
+.ProseMirror ul,
+.ProseMirror ol {
+  padding-left: 1.25rem;
+  margin: 0.15rem 0;
+}
+.ProseMirror ul { list-style: disc; }
+.ProseMirror ol { list-style: decimal; }
+.ProseMirror blockquote {
+  border-left: 3px solid var(--color-border);
+  padding-left: 0.6rem;
+  color: var(--color-muted);
+}
+.ProseMirror code {
+  background: var(--color-surface-2);
+  border-radius: 0.25rem;
+  padding: 0.05rem 0.3rem;
+  font-size: 0.85em;
+}
+.ProseMirror a {
+  color: var(--color-brand);
+  text-decoration: underline;
+}
+/* Placeholder (extension-placeholder) — solo en editor vacío. */
+.ProseMirror p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  color: var(--color-muted);
+  float: left;
+  height: 0;
+  pointer-events: none;
+}
+/* Pill de mención — igual que highlightMentions en Markdown.tsx. */
+.ProseMirror .mention {
+  border-radius: 0.25rem;
+  background: color-mix(in srgb, var(--color-brand) 15%, transparent);
+  padding: 0.05rem 0.3rem;
+  font-weight: 500;
+  color: var(--color-brand);
+  white-space: nowrap;
 }
