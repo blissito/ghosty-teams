@@ -69,3 +69,37 @@ export const getInvite = createServerFn({ method: "POST" }).handler(async () => 
   }
   return { url: `${origin}/join/${token}` };
 });
+
+// Lista los links de invitación del owner (para gestionarlos: ver usados y revocar).
+export const listInvitesFn = createServerFn({ method: "GET" }).handler(async () => {
+  const { useSession } = await import("@tanstack/react-start/server");
+  const { sessionConfig } = await import("./session.server");
+  const s = await useSession<{ user?: { sub: string; isOwner: boolean } }>(sessionConfig());
+  const user = s.data.user;
+  if (!user?.isOwner) return [];
+  const { reqOrigin } = await import("../origin.server");
+  const origin = await reqOrigin();
+  const { rows } = await dbq(
+    "SELECT token, used_by, used_at FROM gc_invites WHERE created_by = ? ORDER BY rowid DESC LIMIT 50",
+    [user.sub]
+  );
+  return rows.map((r) => ({
+    token: r[0] as string,
+    url: `${origin}/join/${r[0]}`,
+    used: !!r[1],
+    usedAt: r[2] != null ? Number(r[2]) : null,
+  }));
+});
+
+// Revoca (elimina) un link de invitación del owner. Solo toca invites propios.
+export const revokeInviteFn = createServerFn({ method: "POST" })
+  .validator((d: { token: string }) => d)
+  .handler(async ({ data }) => {
+    const { useSession } = await import("@tanstack/react-start/server");
+    const { sessionConfig } = await import("./session.server");
+    const s = await useSession<{ user?: { sub: string; isOwner: boolean } }>(sessionConfig());
+    const user = s.data.user;
+    if (!user?.isOwner) throw new Error("solo el owner invita");
+    await dbq("DELETE FROM gc_invites WHERE token = ? AND created_by = ?", [data.token, user.sub]);
+    return { ok: true as const };
+  });

@@ -6,7 +6,7 @@ import { currentPushState, enablePush, disablePush } from "../utils/push-subscri
 import { me, logout, clearMeCache } from "../server/auth";
 import { getMyNicknameFn, setMyNicknameFn } from "../server/chat";
 import { getSetup } from "../server/setup";
-import { createInvite, getInvite } from "../server/invites";
+import { createInvite, getInvite, listInvitesFn, revokeInviteFn } from "../server/invites";
 import {
   listManagedAgentsFn,
   listFleetAgentsFn,
@@ -216,13 +216,21 @@ export function SettingsContent({
                       {copied ? "✓" : t("Copiar")}
                     </button>
                   </div>
-                  <button
-                    onClick={regenInvite}
-                    disabled={busy}
-                    className="mt-2 text-xs text-muted transition hover:text-ink disabled:opacity-50"
-                  >
-                    {busy ? t("Regenerando…") : t("Regenerar link")}
-                  </button>
+                  <div className="mt-2 flex items-center gap-3">
+                    <button
+                      onClick={regenInvite}
+                      disabled={busy}
+                      className="text-xs text-muted transition hover:text-ink disabled:opacity-50"
+                    >
+                      {busy ? t("Regenerando…") : t("Regenerar link")}
+                    </button>
+                    <span className="text-xs text-muted">·</span>
+                    <span className="text-xs text-muted" title={t("Próximamente")}>
+                      {t("Por email · Rol (próximamente)")}
+                    </span>
+                  </div>
+                  {/* Gestionar: todos los links, revocables. */}
+                  <InviteManage onRegened={() => setInvite(null)} />
                 </div>
               )}
 
@@ -472,6 +480,59 @@ function Toggle({ on, onChange }: { on: boolean; onChange: (v: boolean) => void 
         className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-all ${on ? "left-[22px]" : "left-0.5"}`}
       />
     </button>
+  );
+}
+
+/* ── Gestionar links de invitación: ver todos (usados/activos) y revocar. ── */
+type InviteRow = { token: string; url: string; used: boolean; usedAt: number | null };
+function InviteManage({ onRegened }: { onRegened: () => void }) {
+  const t = useT();
+  const [open, setOpen] = useState(false);
+  const [rows, setRows] = useState<InviteRow[] | null>(null);
+  const load = () => listInvitesFn().then(setRows).catch(() => setRows([]));
+  useEffect(() => {
+    if (open && rows === null) load();
+  }, [open]);
+  async function revoke(token: string) {
+    setRows((rs) => rs?.filter((r) => r.token !== token) ?? rs);
+    await revokeInviteFn({ data: { token } }).catch(() => {});
+    onRegened();
+  }
+  return (
+    <div className="mt-3 border-t border-border pt-3">
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className="text-xs font-medium text-muted transition hover:text-ink"
+      >
+        {open ? t("Ocultar links") : t("Gestionar links")}
+      </button>
+      {open && (
+        <div className="mt-2 space-y-1.5">
+          {rows === null ? (
+            <p className="text-xs text-muted">{t("Cargando…")}</p>
+          ) : rows.length === 0 ? (
+            <p className="text-xs text-muted">{t("No hay links todavía.")}</p>
+          ) : (
+            rows.map((r) => (
+              <div key={r.token} className="flex items-center gap-2 rounded-lg bg-surface px-2 py-1.5">
+                <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${r.used ? "bg-muted" : "bg-green-500"}`} />
+                <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-muted">
+                  …/join/{r.token.slice(0, 8)}
+                </span>
+                <span className="shrink-0 text-[11px] text-muted">
+                  {r.used ? t("usado") : t("activo")}
+                </span>
+                {!r.used && (
+                  <button onClick={() => revoke(r.token)} className="shrink-0 text-muted hover:text-red-400" title={t("Revocar")}>
+                    <X size={13} />
+                  </button>
+                )}
+              </div>
+            ))
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 
