@@ -343,6 +343,8 @@ const ChatCtx = createContext<{
   nickFor: (sender: string) => string | null;
   // Abre Ajustes/Preferencias como modal in-panel (SPA) en la pestaña indicada.
   openPrefs: (tab?: "general" | "agentes" | "emojis") => void;
+  // Abre el perfil (drawer) de una persona o agente.
+  openProfile: (p: ProfileTarget) => void;
 }>({
   me: null,
   slug: "",
@@ -360,7 +362,11 @@ const ChatCtx = createContext<{
   sendQuickReply: () => {},
   nickFor: () => null,
   openPrefs: () => {},
+  openProfile: () => {},
 });
+
+// Identidad mostrada en el drawer de perfil (persona o agente).
+type ProfileTarget = { name: string; avatar?: string | null; handle?: string | null; isAgent: boolean };
 
 // Emojis rápidos para el picker (evita una lib de ~1MB).
 const QUICK_EMOJIS = ["👍", "❤️", "😂", "🎉", "🙌", "🔥", "👀", "✅", "💯", "🚀", "🤔", "😮"];
@@ -1409,10 +1415,12 @@ function ChannelPage() {
   // lo abran tanto el footer del sidebar como el "+ Añadir emoji" del picker.
   const [prefsTab, setPrefsTab] = useState<null | "general" | "agentes" | "emojis">(null);
   const openPrefs = useCallback((tab: "general" | "agentes" | "emojis" = "general") => setPrefsTab(tab), []);
+  const [profile, setProfile] = useState<ProfileTarget | null>(null);
+  const openProfile = useCallback((p: ProfileTarget) => setProfile(p), []);
 
   return (
     <ChatCtx.Provider
-      value={{ me: user, slug: channel.slug, emojis, react, star, pin, remove, editMsg, retrySend, discardSend, pickerFor, setPickerFor, onOpenArtifact: setOpenArtifact, sendQuickReply, nickFor, openPrefs }}
+      value={{ me: user, slug: channel.slug, emojis, react, star, pin, remove, editMsg, retrySend, discardSend, pickerFor, setPickerFor, onOpenArtifact: setOpenArtifact, sendQuickReply, nickFor, openPrefs, openProfile }}
     >
     <div className="flex h-[100dvh] bg-surface text-ink">
       {/* Backdrop del drawer (solo móvil): tap fuera cierra el sidebar. */}
@@ -1590,6 +1598,14 @@ function ChannelPage() {
           <Modal onClose={() => setPrefsTab(null)} size="xl" flush>
             <SettingsContent initialTab={prefsTab} onClose={() => setPrefsTab(null)} />
           </Modal>
+        )}
+        {profile && (
+          <ProfileDrawer
+            target={profile}
+            isOwner={!!user?.isOwner}
+            onClose={() => setProfile(null)}
+            onConfigure={() => { setProfile(null); openPrefs("agentes"); }}
+          />
         )}
       </AnimatePresence>
     </div>
@@ -2238,6 +2254,116 @@ function InstallAppButton() {
       <Download size={14} className="shrink-0" />
       {t("Instalar app")}
     </button>
+  );
+}
+
+/* ── Perfil (drawer derecho) ─────────────────────────────────────────────────
+   Identidad de una persona o agente. Informativo + acciones seguras: para agentes,
+   el owner puede "Configurar" (→ Preferencias · Agentes). El DM 1:1 a un agente y el
+   mensaje directo a personas se marcan como próximos (requieren backend de DM). */
+function ProfileDrawer({
+  target,
+  isOwner,
+  onClose,
+  onConfigure,
+}: {
+  target: ProfileTarget;
+  isOwner: boolean;
+  onClose: () => void;
+  onConfigure: () => void;
+}) {
+  const t = useT();
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+  const isGhosty = target.handle === "ghosty";
+  return createPortal(
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      onClick={onClose}
+      className="fixed inset-0 z-50 flex justify-end bg-black/40"
+    >
+      <motion.aside
+        initial={{ x: 32, opacity: 0.6 }}
+        animate={{ x: 0, opacity: 1 }}
+        exit={{ x: 32, opacity: 0 }}
+        transition={{ type: "spring", stiffness: 500, damping: 42 }}
+        onClick={(e) => e.stopPropagation()}
+        className="thin-scroll flex h-full w-[88vw] max-w-sm flex-col overflow-y-auto border-l border-border bg-surface-2 text-ink"
+        style={{ paddingTop: "env(safe-area-inset-top)", paddingBottom: "env(safe-area-inset-bottom)" }}
+      >
+        <div className="flex items-center justify-between px-4 py-3">
+          <span className="text-sm font-semibold">{t("Perfil")}</span>
+          <button onClick={onClose} className="text-muted hover:text-ink" title={t("Cerrar")}>
+            <X size={18} />
+          </button>
+        </div>
+        {/* Cabecera: avatar grande + nombre + tipo/handle */}
+        <div className="flex flex-col items-center px-6 pb-2 pt-2 text-center">
+          {isGhosty ? (
+            <div className="grid h-24 w-24 place-items-center overflow-hidden rounded-2xl bg-white">
+              <img src="/ghosty.svg" alt="" className="h-full w-full object-contain" />
+            </div>
+          ) : target.isAgent ? (
+            target.avatar ? (
+              <img src={target.avatar} alt="" loading="lazy" decoding="async" className="h-24 w-24 rounded-2xl object-cover" />
+            ) : (
+              <div className="grid h-24 w-24 place-items-center rounded-2xl bg-brand/15 text-brand"><Bot size={40} /></div>
+            )
+          ) : (
+            <Avatar name={target.name} avatar={target.avatar ?? undefined} className="h-24 w-24 !rounded-2xl text-2xl" />
+          )}
+          <h2 className="mt-3 text-lg font-semibold">{target.name}</h2>
+          <p className="text-sm text-muted">
+            {target.isAgent ? t("Agente") : t("Miembro")}
+            {target.handle ? ` · @${target.handle}` : ""}
+          </p>
+        </div>
+
+        <div className="mt-4 space-y-2 px-4">
+          {target.isAgent ? (
+            <>
+              <button
+                disabled
+                title={t("Próximamente")}
+                className="flex w-full items-center justify-center gap-2 rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-brand-fg opacity-50"
+              >
+                <MessageSquare size={15} /> {t("Mensaje directo")}
+              </button>
+              {isOwner && (
+                <button
+                  onClick={onConfigure}
+                  className="flex w-full items-center justify-center gap-2 rounded-lg border border-border px-4 py-2 text-sm font-medium text-muted transition hover:border-brand hover:text-ink"
+                >
+                  <Settings size={15} /> {t("Configurar agente")}
+                </button>
+              )}
+              <p className="px-1 pt-1 text-center text-xs text-muted">
+                {t("Tagéalo con @{handle} en cualquier mensaje para que responda.", { handle: target.handle || "handle" })}
+              </p>
+            </>
+          ) : (
+            <>
+              <button
+                disabled
+                title={t("Próximamente")}
+                className="flex w-full items-center justify-center gap-2 rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-brand-fg opacity-50"
+              >
+                <MessageSquare size={15} /> {t("Mensaje directo")}
+              </button>
+              <p className="px-1 pt-1 text-center text-xs text-muted">
+                {target.handle ? t("Mencionable como @{handle}.", { handle: target.handle }) : ""}
+              </p>
+            </>
+          )}
+        </div>
+      </motion.aside>
+    </motion.div>,
+    document.body
   );
 }
 
@@ -3038,6 +3164,7 @@ function HomeDashboard({
 }) {
   const t = useT();
   const people = useMentions();
+  const { openProfile } = useContext(ChatCtx);
   const [ask, setAsk] = useState("");
 
   const totalUnread =
@@ -3142,7 +3269,11 @@ function HomeDashboard({
           </h2>
           <div className="grid gap-1 sm:grid-cols-2">
             {people.slice(0, 8).map((p) => (
-              <div key={`${p.kind}:${p.handle}`} className="flex items-center gap-2 rounded-lg px-2 py-1.5">
+              <button
+                key={`${p.kind}:${p.handle}`}
+                onClick={() => openProfile({ name: p.nickname || p.name, avatar: p.avatar, handle: p.handle, isAgent: p.kind === "agent" })}
+                className="flex items-center gap-2 rounded-lg px-2 py-1.5 text-left hover:bg-surface-3"
+              >
                 {p.kind === "agent" ? (
                   p.avatar ? (
                     <img src={p.avatar} alt="" loading="lazy" decoding="async" className="h-7 w-7 shrink-0 rounded-lg object-cover" />
@@ -3158,7 +3289,7 @@ function HomeDashboard({
                     {p.kind === "agent" ? t("Agente") : `@${p.handle}`}
                   </p>
                 </div>
-              </div>
+              </button>
             ))}
           </div>
         </section>
@@ -4160,7 +4291,7 @@ function MessageRow({
   canPin?: boolean;
 }) {
   const t = useT();
-  const { me, slug, pickerFor, onOpenArtifact, nickFor } = useContext(ChatCtx);
+  const { me, slug, pickerFor, onOpenArtifact, nickFor, openProfile } = useContext(ChatCtx);
   const [editing, setEditing] = useState(false);
   // Mientras un popover de la barra (reaccionar/⋯) esté abierto, la barra NO debe
   // desaparecer al perder el hover del row (si no, el popover se vuelve inclicable).
@@ -4188,6 +4319,12 @@ function MessageRow({
 
   return (
     <div id={`msg-${m.id}`} className="group relative flex gap-3 rounded-lg px-2 py-1.5 transition-colors hover:bg-surface-2">
+      {/* Avatar clickable → perfil (persona o agente). */}
+      <button
+        onClick={() => openProfile({ name: displayName, avatar: m.avatar, handle: m.agent_handle ?? (isGhostyAvatar ? "ghosty" : null), isAgent })}
+        className="shrink-0 rounded-lg transition hover:opacity-80"
+        title={t("Ver perfil")}
+      >
       {isGhostyAvatar ? (
         <div className="mt-0.5 grid h-9 w-9 shrink-0 place-items-center overflow-hidden rounded-lg bg-white">
           <img src="/ghosty.svg" alt="Ghosty" className="h-full w-full object-contain" />
@@ -4201,6 +4338,7 @@ function MessageRow({
       ) : (
         <Avatar name={m.sender} avatar={m.avatar} className="mt-0.5 h-9 w-9 !rounded-lg" />
       )}
+      </button>
       {/* Acciones al hover: reaccionar · destacar · menú (copiar/fijar/editar/borrar) */}
       {m.kind === "msg" && !editing && (
         <div
