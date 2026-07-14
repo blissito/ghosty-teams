@@ -8,6 +8,7 @@ import { cachedMe } from '../server/auth'
 import { registerSW } from '../utils/pwa-install'
 import { InstallAppBanner } from '../components/InstallAppBanner'
 import { LocaleProvider, DEFAULT_LOCALE } from '../i18n'
+import { THEME_BOOT, watchSystemScheme } from '../utils/theme'
 
 export const Route = createRootRoute({
   // Guard: todo requiere sesión, salvo el login y las invitaciones.
@@ -64,9 +65,13 @@ function RootDocument({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     registerSW()
   }, [])
+  // Cuando el scheme es "system", sigue en vivo el cambio de preferencia del SO.
+  useEffect(() => watchSystemScheme(), [])
   return (
     <html lang={DEFAULT_LOCALE}>
       <head>
+        {/* Aplica preset+scheme ANTES del primer paint (sin FOUC). */}
+        <script dangerouslySetInnerHTML={{ __html: THEME_BOOT }} />
         <HeadContent />
       </head>
       <body>

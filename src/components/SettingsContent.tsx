@@ -21,6 +21,17 @@ import {
 import { listEmojisFn, addEmojiFn, removeEmojiFn } from "../server/emojis";
 import type { CustomEmoji } from "../db.server";
 import { useT } from "../i18n";
+import { Monitor, Sun, Moon, Check, SlidersHorizontal, Palette } from "lucide-react";
+import {
+  PRESETS,
+  getTheme,
+  setThemePartial,
+  subscribeTheme,
+  type ThemeScheme,
+  type TextSize,
+  type FontChoice,
+} from "../utils/theme";
+import { useSyncExternalStore } from "react";
 
 // Datos que Ajustes necesita (identidad + setup + acceso a agentes). Se cargan una vez
 // y se cachean a nivel módulo → reabrir Preferencias (modal) pinta al instante y revalida
@@ -48,11 +59,13 @@ export async function loadSettingsData(): Promise<SettingsData> {
  * @param initial datos precargados por el loader de la ruta (evita flash en SSR).
  * @param onClose si viene → modo modal (header con X). Si no → modo ruta (link "volver").
  */
+type TabId = "general" | "notifications" | "appearance" | "agentes" | "emojis";
+
 export function SettingsContent({
   initialTab,
   onClose,
 }: {
-  initialTab?: "general" | "agentes" | "emojis";
+  initialTab?: TabId;
   onClose?: () => void;
 }) {
   const t = useT();
@@ -95,139 +108,332 @@ export function SettingsContent({
   const user = data?.user ?? null;
   const isOwner = !!user?.isOwner;
   const canManageAgents = !!data?.agentAccess?.canManage;
-  const tabs = [
-    { id: "general" as const, label: t("General") },
-    ...(canManageAgents ? [{ id: "agentes" as const, label: t("Agentes") }] : []),
-    ...(isOwner ? [{ id: "emojis" as const, label: t("Emojis") }] : []),
+  const tabs: { id: TabId; label: string; icon: typeof Bell }[] = [
+    { id: "general", label: t("General"), icon: SlidersHorizontal },
+    { id: "notifications", label: t("Notificaciones"), icon: Bell },
+    { id: "appearance", label: t("Apariencia"), icon: Palette },
+    ...(canManageAgents ? [{ id: "agentes" as const, label: t("Agentes"), icon: Bot }] : []),
+    ...(isOwner ? [{ id: "emojis" as const, label: t("Emojis"), icon: Smile }] : []),
   ];
-  const [tab, setTab] = useState<"general" | "agentes" | "emojis">(initialTab ?? "general");
-  // Recuerda la última pestaña abierta (localStorage). SSR-safe: init estable en
-  // "general" (server + primer render cliente coinciden → sin mismatch de hidratación)
-  // y se restaura en effect. Depende de la disponibilidad (Agentes/Emojis cargan async):
-  // si la guardada aún no está disponible, no restaura hasta que aparezca; `restored`
-  // evita pisar un cambio manual del usuario una vez hecha la restauración.
-  // Si viene `initialTab` explícita (ej. picker → "emojis"), esa manda: no restaurar.
+  const [tab, setTab] = useState<TabId>(initialTab ?? "general");
+  // Recuerda la última pestaña abierta (localStorage). Si viene `initialTab` explícita
+  // (ej. picker → "emojis"), esa manda: no restaurar. `restored` evita pisar un cambio
+  // manual del usuario. Depende de disponibilidad (Agentes/Emojis cargan async).
   const restored = useRef(!!initialTab);
   useEffect(() => {
     if (restored.current) return;
     try {
-      const saved = localStorage.getItem("settings.tab");
+      const saved = localStorage.getItem("settings.tab") as TabId | null;
       if (!saved || saved === "general") { restored.current = true; return; }
-      if (tabs.some((tb) => tb.id === saved)) { setTab(saved as typeof tab); restored.current = true; }
+      if (tabs.some((tb) => tb.id === saved)) { setTab(saved); restored.current = true; }
     } catch { restored.current = true; }
   }, [canManageAgents, isOwner]);
-  const selectTab = (id: "general" | "agentes" | "emojis") => {
+  const selectTab = (id: TabId) => {
     restored.current = true;
     setTab(id);
     try { localStorage.setItem("settings.tab", id); } catch {}
   };
+  const activeLabel = tabs.find((tb) => tb.id === tab)?.label ?? t("Ajustes");
 
   return (
-    // Altura FIJA (estándar Slack/Linear/Notion): header+tabs fijos, cuerpo con scroll
-    // interno → el modal NO cambia de tamaño al cambiar de pestaña.
-    <div className="flex h-[85dvh] max-h-[600px] flex-col text-ink">
-      {/* Header (fijo) */}
-      <div className="flex shrink-0 items-center justify-between px-6 pb-4 pt-5">
-        <h1 className="text-lg font-semibold">{t("Ajustes")}</h1>
-        {onClose && (
-          <button onClick={onClose} className="text-muted hover:text-ink" title={t("Cerrar")}>
-            <X size={18} />
-          </button>
-        )}
+    // Altura FIJA (estándar Slack/Linear/Notion) + rail vertical: no cambia de tamaño
+    // al cambiar de pestaña. El cuerpo derecho scrollea por dentro.
+    <div className="flex h-[85dvh] max-h-[620px] text-ink">
+      {/* Rail de navegación (fijo) */}
+      <div className="flex w-16 shrink-0 flex-col gap-1 border-r border-border bg-surface p-2 sm:w-52 sm:p-3">
+        <p className="hidden px-2 pb-2 pt-1 text-sm font-semibold sm:block">{t("Preferencias")}</p>
+        {tabs.map((tb) => {
+          const Icon = tb.icon;
+          return (
+            <button
+              key={tb.id}
+              onClick={() => selectTab(tb.id)}
+              title={tb.label}
+              className={`flex items-center justify-center gap-2 rounded-lg px-2 py-2 text-sm font-medium transition sm:justify-start sm:px-3 ${
+                tab === tb.id ? "bg-brand/12 text-brand" : "text-muted hover:bg-surface-3 hover:text-ink"
+              }`}
+            >
+              <Icon size={16} className="shrink-0" />
+              <span className="hidden sm:inline">{tb.label}</span>
+            </button>
+          );
+        })}
       </div>
 
-      {/* Barra de pestañas (fija) */}
-      <div className="flex shrink-0 gap-1 border-b border-border px-6">
-        {tabs.map((tb) => (
-          <button
-            key={tb.id}
-            onClick={() => selectTab(tb.id)}
-            className={`-mb-px border-b-2 px-3 py-2 text-sm font-medium transition ${
-              tab === tb.id
-                ? "border-brand text-ink"
-                : "border-transparent text-muted hover:text-ink"
-            }`}
-          >
-            {tb.label}
-          </button>
-        ))}
-      </div>
+      {/* Panel derecho */}
+      <div className="flex min-w-0 flex-1 flex-col">
+        <div className="flex shrink-0 items-center justify-between px-6 pb-3 pt-5">
+          <h2 className="text-lg font-semibold">{activeLabel}</h2>
+          {onClose && (
+            <button onClick={onClose} className="text-muted hover:text-ink" title={t("Cerrar")}>
+              <X size={18} />
+            </button>
+          )}
+        </div>
 
-      {/* Cuerpo (scroll interno) — altura estable entre pestañas */}
-      <div className="thin-scroll flex-1 overflow-y-auto px-6 py-5">
-      {tab === "general" && (
-        <>
-          {/* Identidad */}
-          <div className="mb-4 flex items-center gap-3 rounded-xl border border-border bg-surface-2 p-4">
-            {user?.avatar ? (
-              <img src={user.avatar} alt="" loading="lazy" decoding="async" className="h-10 w-10 rounded-full" />
-            ) : (
-              <div className="grid h-10 w-10 place-items-center rounded-full bg-surface-3 text-sm font-semibold">
-                {user?.name?.slice(0, 2).toUpperCase()}
+        <div className="thin-scroll flex-1 overflow-y-auto px-6 pb-6">
+          {tab === "general" && (
+            <>
+              {/* Identidad */}
+              <div className="mb-4 flex items-center gap-3 rounded-xl border border-border bg-surface-2 p-4">
+                {user?.avatar ? (
+                  <img src={user.avatar} alt="" loading="lazy" decoding="async" className="h-10 w-10 rounded-full" />
+                ) : (
+                  <div className="grid h-10 w-10 place-items-center rounded-full bg-surface-3 text-sm font-semibold">
+                    {user?.name?.slice(0, 2).toUpperCase()}
+                  </div>
+                )}
+                <div className="min-w-0 flex-1">
+                  <p className="truncate font-medium">{user?.name}</p>
+                  <p className="truncate text-xs text-muted">{user?.email}</p>
+                </div>
+                <span className="rounded-full bg-brand/15 px-2 py-0.5 text-xs font-medium text-brand">
+                  {isOwner ? t("Owner") : t("Miembro")}
+                </span>
               </div>
-            )}
-            <div className="min-w-0 flex-1">
-              <p className="truncate font-medium">{user?.name}</p>
-              <p className="truncate text-xs text-muted">{user?.email}</p>
-            </div>
-            <span className="rounded-full bg-brand/15 px-2 py-0.5 text-xs font-medium text-brand">
-              {isOwner ? t("Owner") : t("Miembro")}
-            </span>
-          </div>
 
-          <NicknameCard />
-          <NotificationsCard />
+              <NicknameCard />
 
-          {isOwner && (
-            <div className="mb-4 rounded-xl border border-border bg-surface-2 p-4">
-              <h2 className="mb-1 text-sm font-semibold">{t("Invitar miembros")}</h2>
-              <p className="mb-3 text-sm text-muted">
-                {t("Comparte este link. Quien lo abra entra con Formmy y se une a tu chat.")}
-              </p>
-              {/* Link auto-generado (get-or-create): ya visible al abrir, sin clic. */}
-              <div className="flex items-center gap-2">
-                <input
-                  readOnly
-                  value={invite ?? t("Generando link…")}
-                  className="flex-1 rounded-lg border border-border bg-surface px-3 py-2 text-xs text-ink"
-                />
+              {isOwner && (
+                <div className="mb-4 rounded-xl border border-border bg-surface-2 p-4">
+                  <h2 className="mb-1 text-sm font-semibold">{t("Invitar miembros")}</h2>
+                  <p className="mb-3 text-sm text-muted">
+                    {t("Comparte este link. Quien lo abra entra con Formmy y se une a tu chat.")}
+                  </p>
+                  {/* Link auto-generado (get-or-create): ya visible al abrir, sin clic. */}
+                  <div className="flex items-center gap-2">
+                    <input
+                      readOnly
+                      value={invite ?? t("Generando link…")}
+                      className="flex-1 rounded-lg border border-border bg-surface px-3 py-2 text-xs text-ink"
+                    />
+                    <button
+                      onClick={copy}
+                      disabled={!invite}
+                      className="rounded-lg bg-brand px-3 py-2 text-sm font-semibold text-brand-fg disabled:opacity-50"
+                    >
+                      {copied ? "✓" : t("Copiar")}
+                    </button>
+                  </div>
+                  <button
+                    onClick={regenInvite}
+                    disabled={busy}
+                    className="mt-2 text-xs text-muted transition hover:text-ink disabled:opacity-50"
+                  >
+                    {busy ? t("Regenerando…") : t("Regenerar link")}
+                  </button>
+                </div>
+              )}
+
+              {/* Cerrar sesión: discreto, en rojo y apartado. */}
+              <div className="mt-10 border-t border-border pt-4 text-right">
                 <button
-                  onClick={copy}
-                  disabled={!invite}
-                  className="rounded-lg bg-brand px-3 py-2 text-sm font-semibold text-brand-fg disabled:opacity-50"
+                  onClick={doLogout}
+                  className="text-xs font-medium text-red-500/80 transition hover:text-red-500"
                 >
-                  {copied ? "✓" : t("Copiar")}
+                  {t("Cerrar sesión")}
                 </button>
               </div>
-              <button
-                onClick={regenInvite}
-                disabled={busy}
-                className="mt-2 text-xs text-muted transition hover:text-ink disabled:opacity-50"
-              >
-                {busy ? t("Regenerando…") : t("Regenerar link")}
-              </button>
-            </div>
+            </>
           )}
 
-          {/* Cerrar sesión: discreto, en rojo y apartado — solo en General. */}
-          <div className="mt-10 border-t border-border pt-4 text-right">
-            <button
-              onClick={doLogout}
-              className="text-xs font-medium text-red-500/80 transition hover:text-red-500"
-            >
-              {t("Cerrar sesión")}
-            </button>
-          </div>
-        </>
-      )}
+          {tab === "notifications" && <NotificationsCard />}
 
-      {tab === "agentes" && canManageAgents && (
-        <AgentsManager isOwner={isOwner} hasAgent={!!data?.setup?.hasAgent} />
-      )}
+          {tab === "appearance" && <AppearancePanel />}
 
-      {tab === "emojis" && isOwner && <EmojiManager />}
+          {tab === "agentes" && canManageAgents && (
+            <AgentsManager isOwner={isOwner} hasAgent={!!data?.setup?.hasAgent} />
+          )}
+
+          {tab === "emojis" && isOwner && <EmojiManager />}
+        </div>
       </div>
     </div>
+  );
+}
+
+/* ── Apariencia: modo (claro/oscuro/sistema) + dark sidebar + estilos + tamaño +
+   fuente + reducir movimiento. Todo instantáneo y persistente (theme.ts). ── */
+function useThemeStore() {
+  return useSyncExternalStore(subscribeTheme, getTheme, getTheme);
+}
+
+function AppearancePanel() {
+  const t = useT();
+  const s = useThemeStore();
+
+  const Segmented = <T extends string>({
+    value,
+    options,
+    onChange,
+  }: {
+    value: T;
+    options: { id: T; label: string; icon?: typeof Sun }[];
+    onChange: (v: T) => void;
+  }) => (
+    <div className="inline-flex rounded-lg border border-border bg-surface p-0.5">
+      {options.map((o) => {
+        const Icon = o.icon;
+        return (
+          <button
+            key={o.id}
+            onClick={() => onChange(o.id)}
+            className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition ${
+              value === o.id ? "bg-brand text-brand-fg" : "text-muted hover:text-ink"
+            }`}
+          >
+            {Icon && <Icon size={14} />}
+            {o.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+
+  return (
+    <div className="space-y-7">
+      {/* Modo */}
+      <Row title={t("Modo")}>
+        <Segmented<ThemeScheme>
+          value={s.scheme}
+          onChange={(scheme) => setThemePartial({ scheme })}
+          options={[
+            { id: "system", label: t("Sistema"), icon: Monitor },
+            { id: "light", label: t("Claro"), icon: Sun },
+            { id: "dark", label: t("Oscuro"), icon: Moon },
+          ]}
+        />
+      </Row>
+
+      {/* Dark sidebar */}
+      <Row
+        title={t("Sidebar oscuro")}
+        desc={t("Mantén el rail izquierdo oscuro en todos los modos — aunque el resto esté claro.")}
+      >
+        <Toggle on={s.darkSidebar} onChange={(darkSidebar) => setThemePartial({ darkSidebar })} />
+      </Row>
+
+      {/* Estilos */}
+      <div>
+        <h3 className="mb-3 text-sm font-semibold">{t("Estilo")}</h3>
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+          {PRESETS.map((p) => (
+            <button
+              key={p.id}
+              onClick={() => setThemePartial({ preset: p.id })}
+              className={`rounded-xl border p-2 text-left transition ${
+                s.preset === p.id ? "border-brand ring-1 ring-brand" : "border-border hover:border-brand/60"
+              }`}
+            >
+              <div className="mb-1.5 flex gap-1.5">
+                <PresetSwatch pal={p.light} />
+                <PresetSwatch pal={p.dark} />
+              </div>
+              <div className="flex items-center justify-between px-0.5">
+                <span className="text-xs font-medium">{p.label}</span>
+                {s.preset === p.id && <Check size={13} className="text-brand" />}
+              </div>
+            </button>
+          ))}
+        </div>
+        <p className="mt-2 text-xs text-muted">
+          {t("Cada estilo tiene variante clara y oscura — sigue el modo de arriba.")}
+        </p>
+      </div>
+
+      {/* Tamaño de texto */}
+      <div>
+        <h3 className="mb-3 text-sm font-semibold">{t("Tamaño de texto")}</h3>
+        <Segmented<TextSize>
+          value={s.textSize}
+          onChange={(textSize) => setThemePartial({ textSize })}
+          options={[
+            { id: "tiny", label: t("Pequeño") },
+            { id: "regular", label: t("Normal") },
+            { id: "large", label: t("Grande") },
+            { id: "xl", label: t("Extra") },
+          ]}
+        />
+        <p className="mt-2 text-xs text-muted">{t("Escala toda la interfaz — texto y espaciado juntos.")}</p>
+      </div>
+
+      {/* Fuente */}
+      <div>
+        <h3 className="mb-3 text-sm font-semibold">{t("Fuente")}</h3>
+        <div className="grid grid-cols-3 gap-2">
+          {([
+            { id: "default", label: t("Default"), sample: "Ag", cls: "" },
+            { id: "serif", label: t("Serif"), sample: "Ag", cls: "font-serif" },
+            { id: "mono", label: t("Mono"), sample: "Ag", cls: "font-mono" },
+          ] as { id: FontChoice; label: string; sample: string; cls: string }[]).map((f) => (
+            <button
+              key={f.id}
+              onClick={() => setThemePartial({ font: f.id })}
+              className={`rounded-xl border p-3 text-center transition ${
+                s.font === f.id ? "border-brand ring-1 ring-brand" : "border-border hover:border-brand/60"
+              }`}
+            >
+              <span className={`block text-2xl ${f.cls}`}>{f.sample}</span>
+              <span className="mt-0.5 block text-xs text-muted">{f.label}</span>
+            </button>
+          ))}
+        </div>
+        <p className="mt-2 text-xs text-muted">
+          {t("Default sigue la fuente del estilo — Paper es serif; Terminal, Neon y Solarized son mono.")}
+        </p>
+      </div>
+
+      {/* Reducir movimiento */}
+      <Row
+        title={t("Reducir movimiento")}
+        desc={t("Apaga las animaciones no esenciales. También respeta la preferencia de tu sistema.")}
+      >
+        <Toggle on={s.reduceMotion} onChange={(reduceMotion) => setThemePartial({ reduceMotion })} />
+      </Row>
+    </div>
+  );
+}
+
+// Preview de media paleta (Aa + 2 puntos de acento) para las tarjetas de estilo.
+function PresetSwatch({ pal }: { pal: { surface: string; ink: string; brand: string; "brand-2": string } }) {
+  return (
+    <div
+      className="flex flex-1 flex-col justify-between rounded-lg border border-black/10 p-1.5"
+      style={{ background: pal.surface, color: pal.ink }}
+    >
+      <span className="text-xs font-semibold leading-none">Aa</span>
+      <div className="mt-2 flex gap-1">
+        <span className="h-2 w-2 rounded-full" style={{ background: pal.brand }} />
+        <span className="h-2 w-2 rounded-full" style={{ background: pal["brand-2"] }} />
+      </div>
+    </div>
+  );
+}
+
+function Row({ title, desc, children }: { title: string; desc?: string; children: React.ReactNode }) {
+  return (
+    <div className="flex items-start justify-between gap-4">
+      <div className="min-w-0">
+        <h3 className="text-sm font-semibold">{title}</h3>
+        {desc && <p className="mt-0.5 text-xs text-muted">{desc}</p>}
+      </div>
+      <div className="shrink-0">{children}</div>
+    </div>
+  );
+}
+
+function Toggle({ on, onChange }: { on: boolean; onChange: (v: boolean) => void }) {
+  return (
+    <button
+      onClick={() => onChange(!on)}
+      role="switch"
+      aria-checked={on}
+      className={`relative h-6 w-11 rounded-full transition ${on ? "bg-brand" : "bg-surface-3"}`}
+    >
+      <span
+        className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-all ${on ? "left-[22px]" : "left-0.5"}`}
+      />
+    </button>
   );
 }
 

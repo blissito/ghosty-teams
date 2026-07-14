@@ -1,4 +1,4 @@
-import { Component, createContext, forwardRef, Fragment, type ReactNode, useCallback, useContext, useEffect, useImperativeHandle, useMemo, useReducer, useRef, useState } from "react";
+import { Component, createContext, forwardRef, Fragment, type ReactNode, useCallback, useContext, useEffect, useImperativeHandle, useMemo, useReducer, useRef, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import { useEditor, EditorContent } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
@@ -79,6 +79,7 @@ import { useLiveStream } from "../hooks/useLiveStream";
 import type { RtEvent } from "../server/bus.server";
 import { Markdown } from "../components/Markdown";
 import { SettingsContent } from "../components/SettingsContent";
+import { getTheme, subscribeTheme, resolveDark, presetById, paletteVars } from "../utils/theme";
 import ArtifactPanel, { type ArtifactView, viewFromAttachment } from "../components/ArtifactPanel";
 import { extractEbDoc, draftTitle, bubbleWithoutEbDoc } from "../lib/ebdoc";
 import { ThinkingRing } from "../components/ThinkingRing";
@@ -1563,7 +1564,7 @@ function ChannelPage() {
           />
         )}
         {prefsTab && (
-          <Modal onClose={() => setPrefsTab(null)} size="lg" flush>
+          <Modal onClose={() => setPrefsTab(null)} size="xl" flush>
             <SettingsContent initialTab={prefsTab} onClose={() => setPrefsTab(null)} />
           </Modal>
         )}
@@ -1812,6 +1813,13 @@ function Sidebar({
   const t = useT();
   const router = useRouter();
   const { openPrefs } = useContext(ChatCtx); // Ajustes in-panel (modal a nivel shell)
+  // Dark sidebar: si está activo y el modo es claro, forzamos la paleta OSCURA del
+  // preset SOLO en este subárbol (vars inline). Si ya es oscuro, no hace falta.
+  const theme = useSyncExternalStore(subscribeTheme, getTheme, getTheme);
+  const sidebarStyle = useMemo<React.CSSProperties | undefined>(() => {
+    if (!theme.darkSidebar || resolveDark(theme.scheme)) return undefined;
+    return paletteVars(presetById(theme.preset), true) as React.CSSProperties;
+  }, [theme.darkSidebar, theme.scheme, theme.preset]);
   const [createOpen, setCreateOpen] = useState(false);
   const [settingsSlug, setSettingsSlug] = useState<string | null>(null);
   const [newDmOpen, setNewDmOpen] = useState(false);
@@ -1838,6 +1846,7 @@ function Sidebar({
       style={{
         paddingTop: "env(safe-area-inset-top)",
         paddingBottom: "env(safe-area-inset-bottom)",
+        ...sidebarStyle,
       }}
     >
       <div className="flex items-center gap-2 border-b border-border px-4 py-3">
@@ -2206,14 +2215,14 @@ function Modal({
   children: React.ReactNode;
   onClose: () => void;
   wide?: boolean;
-  size?: "sm" | "md" | "lg";
+  size?: "sm" | "md" | "lg" | "xl";
   // flush = sin padding ni scroll propio → el hijo controla su layout (ej. panel de
   // altura fija con header/tabs fijos y cuerpo scrolleable, estilo Ajustes).
   flush?: boolean;
 }) {
   // `size` gana; `wide` se mantiene por compatibilidad (equivale a "md").
   const maxW = size
-    ? { sm: "max-w-sm", md: "max-w-md", lg: "max-w-2xl" }[size]
+    ? { sm: "max-w-sm", md: "max-w-md", lg: "max-w-2xl", xl: "max-w-3xl" }[size]
     : wide
       ? "max-w-md"
       : "max-w-sm";

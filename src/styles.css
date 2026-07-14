@@ -49,6 +49,30 @@
   }
 }
 
+/* ── Presets de tema ─────────────────────────────────────────────────────────
+   Las paletas de los presets viven en src/utils/theme.ts (fuente única) y se aplican
+   como variables inline en <html> (--color-*), incluido el boot script sin-FOUC. Aquí
+   arriba queda solo el default (ghosty) para el fallback SSR/sin-JS. */
+
+/* Movimiento reducido: lo fuerza el usuario (data-reduce-motion) o el sistema
+   (@media). Anula animaciones/transiciones no esenciales. */
+:root[data-reduce-motion="1"] *,
+:root[data-reduce-motion="1"] *::before,
+:root[data-reduce-motion="1"] *::after {
+  animation-duration: 0.001ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.001ms !important;
+  scroll-behavior: auto !important;
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
 * {
   box-sizing: border-box;
 }
