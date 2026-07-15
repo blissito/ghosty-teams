@@ -87,7 +87,7 @@ export const listFormmyAgentsFn = createServerFn({ method: "GET" }).handler(
 // con ese fleetId (el token lo resuelve de la flota del owner). Distinto de connectFormmyAgentFn,
 // que cablea el @ghosty del wizard.
 export const ensureFormmyMirrorFn = createServerFn({ method: "POST" })
-  .validator((d: { agentId: string }) => d)
+  .validator((d: { agentId: string; engine?: string }) => d)
   .handler(async ({ data }): Promise<{ ok: true; fleetId: string } | { ok: false; needsOAuth?: boolean }> => {
     const ctx = await ownerContext();
     if (!ctx) return { ok: false };
@@ -98,6 +98,7 @@ export const ensureFormmyMirrorFn = createServerFn({ method: "POST" })
       intent: "ensure",
       agentId: data.agentId,
       ebToken: ebToken ?? undefined,
+      engine: data.engine,
     });
     if (res.status === 409) return { ok: false, needsOAuth: true };
     if (!res.ok) return { ok: false };
@@ -127,5 +128,8 @@ export const connectFormmyAgentFn = createServerFn({ method: "POST" })
     await setConfig("fleet_agent_id", j.fleetId);
     await setConfig("fleet_token", j.fleetToken);
     await setConfig("fleet_name", (data.name || "Ghosty").trim() || "Ghosty");
+    // Marca el canal Teams conectado de una (sin esperar el primer mensaje). Best-effort.
+    const { connectTeamsChannel } = await import("./agent-config");
+    await connectTeamsChannel(j.fleetId, j.fleetToken);
     return { ok: true as const };
   });

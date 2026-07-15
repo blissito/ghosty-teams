@@ -31,6 +31,8 @@ type Cfg = {
   bucketTools?: Record<string, string[]>;
   models?: { key: string; label: string }[];
   efforts?: string[];
+  engine?: string | null; // motor actual (claude/deepseek/codex/…)
+  engines?: { id: string; label: string; model: string; ready: boolean }[];
   skills?: { id: string; name: string; description: string; enabled: boolean; fileCount: number }[];
 };
 
@@ -198,6 +200,19 @@ export function FleetCapabilities({ agentId }: { agentId: number }) {
       <p className="flex items-center gap-1.5 text-xs font-semibold text-brand">
         <Sparkles size={13} /> {t("Capacidades de flota")}
       </p>
+
+      {/* Motor (engine): claude-worker / deepseek (ghosty-gc) / codex. Cambiarlo recicla
+          la box (el worker está horneado en la VM). Recarga modelos/llave al cambiar. */}
+      {cfg.engines?.length ? (
+        <div>
+          <span className={label}>{t("Motor")} <Spin k="engine" /></span>
+          <select className={`w-full ${sel}`} value={cfg.engine ?? ""} disabled={isSaving("engine")} onChange={(e) => { const v = e.target.value; if (v === (cfg.engine ?? "")) return; mutate("engine", (c) => { c.engine = v; return { action: "set-engine", engine: v }; }, true); }}>
+            {!cfg.engine && <option value="">{t("Elige un motor…")}</option>}
+            {cfg.engines.map((en) => <option key={en.id} value={en.id} disabled={!en.ready}>{en.label}{en.ready ? "" : t(" (próximamente)")}</option>)}
+          </select>
+          <p className="mt-1 text-[11px] text-muted">{t("Cambiar de motor recicla la caja (unos segundos).")}</p>
+        </div>
+      ) : null}
 
       {/* Modelo (registry-driven: solo si el motor tiene modelos seleccionables) +
           razonamiento. Motores de modelo fijo (easybits) → sin selector. */}

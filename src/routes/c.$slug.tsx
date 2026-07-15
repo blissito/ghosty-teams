@@ -85,6 +85,7 @@ import { Markdown } from "../components/Markdown";
 import { SettingsContent, loadSettingsData } from "../components/SettingsContent";
 import { getTheme, subscribeTheme, resolveDark, presetById, paletteVars } from "../utils/theme";
 import { subscribeMentions } from "../utils/mentions-bus";
+import { registerModalEsc } from "../utils/modal-esc";
 import ArtifactPanel, { type ArtifactView, viewFromAttachment } from "../components/ArtifactPanel";
 import { extractEbDoc, draftTitle, bubbleWithoutEbDoc } from "../lib/ebdoc";
 import { ThinkingRing } from "../components/ThinkingRing";
@@ -2513,12 +2514,9 @@ function Modal({
     : wide
       ? "max-w-md"
       : "max-w-sm";
-  // Esc cierra (para cualquier modal que use este wrapper).
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  // Esc cierra SOLO el modal superior (stack compartido) → un modal anidado no cierra
+  // también el de abajo. Ver utils/modal-esc.
+  useEffect(() => registerModalEsc(onClose), [onClose]);
   if (typeof document === "undefined") return null; // SSR-safe (portal necesita document)
   // PORTAL a document.body: varios modales se renderizan DENTRO del <aside> (sidebar),
   // que tiene `transform` → un `fixed inset-0` se anclaría a la sidebar (modal "atrapado

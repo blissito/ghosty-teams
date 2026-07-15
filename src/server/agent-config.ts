@@ -21,6 +21,18 @@ export async function resolveFleetAgent(agentId: number): Promise<{ id: string; 
   return { id: a.fleet_id, token: a.fleet_token };
 }
 
+// Marca el canal "Ghosty Teams" del fleet agent como conectado (action connect-teams).
+// Best-effort: NO debe tumbar el flujo de agregar/conectar agente. Auth = fleetToken.
+export async function connectTeamsChannel(fleetId: string, fleetToken: string): Promise<void> {
+  try {
+    await fetch(`${EB}/api/v2/fleet-agents/${fleetId}/capabilities`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${fleetToken}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "connect-teams" }),
+    });
+  } catch {}
+}
+
 // GET: catálogo + estado de config del agente (builtins, capacidades, secrets,
 // persona/modelo/effort/buckets, skills, MCPs custom, grupos). `q` = búsqueda de
 // archivos para el picker de entregables. Devuelve null si el agente no es de flota.

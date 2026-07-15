@@ -34,6 +34,7 @@ import {
 } from "../utils/theme";
 import { useSyncExternalStore } from "react";
 import { bumpMentions } from "../utils/mentions-bus";
+import { registerModalEsc } from "../utils/modal-esc";
 
 // Datos que Ajustes necesita (identidad + setup + acceso a agentes). Se cargan una vez
 // y se cachean a nivel módulo → reabrir Preferencias (modal) pinta al instante y revalida
@@ -958,6 +959,7 @@ function AddAgentForm({ onClose, onCreated }: { onClose: () => void; onCreated: 
   const [webhookUrl, setWebhookUrl] = useState("");
   const [fleet, setFleet] = useState<{ id: string; name: string }[] | null>(null);
   const [formmy, setFormmy] = useState<FormmyAgent[]>([]);
+  const [engine, setEngine] = useState("deepseek"); // motor al crear el espejo (deepseek = edge/rápido)
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -977,7 +979,7 @@ function AddAgentForm({ onClose, onCreated }: { onClose: () => void; onCreated: 
       // espejo en la flota → obtenemos su fleetId real y con ese creamos la fila.
       let realFleetId = fleetId;
       if (kind === "fleet" && fleetId.startsWith("formmy:")) {
-        const r = await ensureFormmyMirrorFn({ data: { agentId: fleetId.slice("formmy:".length) } });
+        const r = await ensureFormmyMirrorFn({ data: { agentId: fleetId.slice("formmy:".length), engine } });
         if (!r.ok) {
           setErr(r.needsOAuth ? t("Conecta tu EasyBits del lado de Formmy y reintenta.") : t("No se pudo asegurar el agente en la flota."));
           setBusy(false);
@@ -1053,6 +1055,15 @@ function AddAgentForm({ onClose, onCreated }: { onClose: () => void; onCreated: 
             placeholder={t("https://tu-bot.com/webhook")}
             className={input}
           />
+        )}
+        {/* Motor: solo al conectar un agente de Formmy (crea un fleet nuevo). Los pools
+            existentes ya tienen su motor. */}
+        {kind === "fleet" && fleetId.startsWith("formmy:") && (
+          <select value={engine} onChange={(e) => setEngine(e.target.value)} className={input}>
+            <option value="deepseek">{t("DeepSeek (rápido · cache)")}</option>
+            <option value="claude">{t("Claude (capaz)")}</option>
+            <option value="codex">{t("Codex (OpenAI)")}</option>
+          </select>
         )}
         <div className="flex gap-2">
           <div className="flex flex-1 min-w-0 items-center rounded-lg border border-border bg-surface pl-3 text-sm focus-within:border-brand">
@@ -1176,12 +1187,9 @@ function EditAgentForm({
     }
   }
 
-  // ESC cierra el modal (convención de la app).
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  // ESC cierra SOLO el modal superior (stack compartido) → editar agente sobre Ajustes
+  // no cierra también Ajustes. Ver utils/modal-esc.
+  useEffect(() => registerModalEsc(onClose), [onClose]);
 
   const input = "w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm outline-none focus:border-brand";
   return (

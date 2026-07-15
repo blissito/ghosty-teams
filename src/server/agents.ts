@@ -173,6 +173,10 @@ export const createAgentFn = createServerFn({ method: "POST" })
       fleetId = found.id;
       fleetToken = found.token;
       if (!name) name = found.name || found.assistantName || handle;
+      // Marca el canal Teams como conectado → el agente aparece "Activo · Conectado" de
+      // una (sin esperar el primer mensaje que estamparía connectedAt). Best-effort.
+      const { connectTeamsChannel } = await import("./agent-config");
+      await connectTeamsChannel(fleetId, fleetToken);
     } else {
       if (!data.webhookUrl?.trim()) throw new Error("URL del webhook requerida");
       try {
