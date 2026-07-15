@@ -238,6 +238,13 @@ export const deleteAgentFn = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     await requireOwner();
     const db = await import("../db.server");
+    const a = await db.getAgentById(data.id);
     await db.deleteAgent(data.id);
+    // Si borramos el @ghosty del wizard (fila migrada del config), limpia también las
+    // claves de config → NO se re-materializa al recargar. Manda de vuelta al wizard.
+    if (a && a.handle === db.GHOSTY_HANDLE) {
+      const { setConfig } = await import("../config.server");
+      for (const k of ["fleet_agent_id", "fleet_token", "fleet_name", "ghosty_prompt"]) await setConfig(k, "");
+    }
     return { ok: true as const };
   });

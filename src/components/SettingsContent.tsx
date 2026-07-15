@@ -891,8 +891,9 @@ function AgentsManager({ isOwner, hasAgent }: { isOwner: boolean; hasAgent: bool
                 <button onClick={() => setEditing(a.id)} className="p-1 text-muted hover:text-brand" title={t("Configurar")}>
                   <Pencil size={15} />
                 </button>
-                {/* @ghosty (wizard) no se borra desde aquí — se reconfigura en /setup. */}
-                {isOwner && a.handle !== "ghosty" && (
+                {/* TODOS los agentes son manejables, incluido @ghosty. Borrar @ghosty
+                    limpia también su config (server) para que no se re-materialice. */}
+                {isOwner && (
                   <button onClick={() => remove(a)} className="p-1 text-muted hover:text-brand" title={t("Quitar")}>
                     <Trash2 size={15} />
                   </button>
