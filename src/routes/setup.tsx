@@ -55,21 +55,21 @@ function Setup() {
       } else {
         await selectFleetAgent({ data: { id: sel.id } });
       }
-      // Listo → directo al chat (la pantalla de "conectado · Ir al chat" sobra).
+      // Listo → directo al chat (la pantalla de "conectado · Ir al chat" sobra). NO
+      // reseteamos busy: seguimos navegando fuera del wizard, el botón queda deshabilitado
+      // hasta que se desmonta. (OJO: un `finally { setBusy(null) }` corre AUNQUE haya
+      // return → re-habilitaba el botón antes de navegar. Por eso el reset va SOLO en error.)
       router.navigate({ to: "/c/$slug", params: { slug: "general" } });
-      return; // no reseteamos busy: navegamos fuera del wizard
     } catch (e) {
-      // Antes: try/finally sin catch → el error se perdía y el botón se desbloqueaba
-      // "sin hacer nada". Ahora lo mostramos. Un 401/Unauthorized = token EasyBits
-      // expirado → hay que reconectar (no se puede crear/seleccionar sin token válido).
+      // Error visible + re-habilitar (antes el try/finally sin catch lo perdía). Un
+      // 401/Unauthorized = token EasyBits expirado → reconectar.
       const msg = e instanceof Error ? e.message : String(e);
       setErr(
         /401|unauthorized/i.test(msg)
           ? t("Tu conexión con EasyBits expiró. Reconéctala abajo (← Desconectar EasyBits) y vuelve a intentar.")
           : t("No se pudo crear el agente: {msg}", { msg })
       );
-    } finally {
-      setBusy(null);
+      setBusy(null); // solo en error re-habilitamos; en éxito navegamos (se desmonta)
     }
   }
 
