@@ -323,11 +323,31 @@ const TOOL_LABELS: Record<string, { ing: string; done: string }> = {
   deploy_document: { ing: "Publicando el documento", done: "Publiqué el documento" },
   create_website: { ing: "Creando el sitio", done: "Creé el sitio" },
   WebSearch: { ing: "Buscando en la web", done: "Busqué en la web" },
+  research_search: { ing: "Investigando en la web", done: "Investigué en la web" },
   // El agente redacta docs invocando un Skill (oficio/xlsx/pptx/doc-remix) → la acción
   // visible = "Redacté el documento" (antes solo se veía "Subió", el paso final).
   Skill: { ing: "Redactando el documento", done: "Redacté el documento" },
   artifact_create: { ing: "Redactando el documento", done: "Redacté el documento" },
   artifact_update: { ing: "Actualizando el documento", done: "Actualicé el documento" },
+  // Feedback de acciones significativas (visibilidad estilo Quick): lecturas de datos,
+  // consultas a la base, y envíos. Se ocultan las lecturas de plumbing (Bash/Glob/Grep/get_).
+  Read: { ing: "Leyendo un archivo", done: "Leí un archivo" },
+  WebFetch: { ing: "Leyendo una página", done: "Leí una página" },
+  research_scrape: { ing: "Leyendo una página", done: "Leí una página" },
+  db_query: { ing: "Consultando la base", done: "Consulté la base" },
+  db_select: { ing: "Consultando la base", done: "Consulté la base" },
+  db_get: { ing: "Consultando la base", done: "Consulté la base" },
+  db_list: { ing: "Consultando la base", done: "Consulté la base" },
+  db_exec: { ing: "Escribiendo en la base", done: "Escribí en la base" },
+  db_create: { ing: "Escribiendo en la base", done: "Escribí en la base" },
+  db_import: { ing: "Importando datos", done: "Importé datos" },
+  send_message: { ing: "Enviando el mensaje", done: "Envié el mensaje" },
+  send_email: { ing: "Enviando el correo", done: "Envié el correo" },
+  send_broadcast: { ing: "Enviando el broadcast", done: "Envié el broadcast" },
+  create_form: { ing: "Creando el formulario", done: "Creé el formulario" },
+  create_payment_link: { ing: "Generando el link de pago", done: "Generé el link de pago" },
+  create_quotation: { ing: "Preparando la cotización", done: "Preparé la cotización" },
+  fast_quotation: { ing: "Preparando la cotización", done: "Preparé la cotización" },
 };
 
 function toolLabel(raw: string): { ing: string; done: string } | null {

@@ -59,6 +59,8 @@ export function FleetCapabilities({ agentId }: { agentId: number }) {
   const [recycling, setRecycling] = useState(false);
   const [uploading, setUploading] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+  const [uploadingSkill, setUploadingSkill] = useState(false);
+  const skillRef = useRef<HTMLInputElement>(null);
 
   const apply = (c: Cfg | null) => { cfgRef.current = c; setCfg(c); };
   const load = useCallback(
@@ -127,6 +129,34 @@ export function FleetCapabilities({ agentId }: { agentId: number }) {
     } finally {
       setUploading(false);
       if (fileRef.current) fileRef.current.value = "";
+    }
+  }
+
+  // Crear un skill: sube el SKILL.md + script(s) a EasyBits (Files) → obtiene fileIds
+  // (el .md va PRIMERO: files[0]=SKILL.md) → action `add-skill`. El motor ya inyecta el
+  // skill al agente (progressive disclosure). Ver docs de skills de EasyBits.
+  async function addSkill(files: File[]) {
+    if (!files.length) return;
+    setUploadingSkill(true);
+    setErr(null);
+    try {
+      const md = files.find((f) => /\.md$/i.test(f.name)) ?? files[0];
+      const ordered = [md, ...files.filter((f) => f !== md)];
+      const fileIds: string[] = [];
+      for (const file of ordered) {
+        const fd = new FormData(); fd.set("file", file);
+        const res = await fetch(`/api/agent-asset?id=${agentId}`, { method: "POST", body: fd });
+        if (!res.ok) throw new Error(await res.text());
+        const j = (await res.json()) as { fileId?: string };
+        if (j.fileId) fileIds.push(j.fileId);
+      }
+      if (!fileIds.length) throw new Error(t("No se subió ningún archivo"));
+      await mutate("addskill", () => ({ action: "add-skill", files: fileIds }), true);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setUploadingSkill(false);
+      if (skillRef.current) skillRef.current.value = "";
     }
   }
 
@@ -357,10 +387,10 @@ export function FleetCapabilities({ agentId }: { agentId: number }) {
       <AddMcpForm saving={isSaving("addmcp")} onAdd={(body) => mutate("addmcp", () => body, true)} />
 
       {/* Skills */}
-      {!!cfg.skills?.length && (
-        <div>
-          <span className={label}>{t("Skills")}</span>
-          <div className="space-y-1">
+      <div>
+        <span className={label}>{t("Skills")}</span>
+        {!!cfg.skills?.length && (
+          <div className="mb-1.5 space-y-1">
             {cfg.skills.map((s) => (
               <div key={s.id} className={`flex items-center gap-2 ${box}`}>
                 <Switch on={s.enabled} disabled={isSaving(`sk:${s.id}`)} onChange={(v) => mutate(`sk:${s.id}`, (c) => { const sk = c.skills?.find((x) => x.id === s.id); if (sk) sk.enabled = v; return { action: "toggle-skill", skillId: s.id, on: v }; })} />
@@ -375,8 +405,13 @@ export function FleetCapabilities({ agentId }: { agentId: number }) {
               </div>
             ))}
           </div>
-        </div>
-      )}
+        )}
+        {/* Agregar skill: sube SKILL.md + script(s). El .md lleva el frontmatter name/description. */}
+        <input ref={skillRef} type="file" multiple accept=".md,.mjs,.js,.txt" className="hidden" onChange={(e) => { const fs = Array.from(e.target.files ?? []); if (fs.length) addSkill(fs); }} />
+        <button onClick={() => skillRef.current?.click()} disabled={uploadingSkill || isSaving("addskill")} className="flex w-full items-center justify-center gap-1 rounded-lg border border-border px-2.5 py-1.5 text-xs text-muted hover:border-brand hover:text-ink disabled:opacity-50" title={t("Sube el SKILL.md y sus scripts")}>
+          {uploadingSkill || isSaving("addskill") ? <Loader2 size={12} className="animate-spin" /> : <Upload size={12} />} {t("Agregar skill (SKILL.md + script)")}
+        </button>
+      </div>
 
       {/* Entregables */}
       <div>
