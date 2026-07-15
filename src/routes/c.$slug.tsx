@@ -1400,11 +1400,37 @@ function ChannelPage() {
   };
   const discardSend = (id: string) => setOptimistic((prev) => prev.filter((x) => x.id !== id));
   // Al recargar una vista se limpian SUS optimistas ya aterrizados; los fallidos
-  // sobreviven (esperan retry/descartar del usuario).
-  const clearOptimistic = (parentId: number | null) =>
-    setOptimistic((o) => o.filter((x) => x.status === "failed" || x.parentId !== parentId || x.dmId !== null));
-  const clearDmOptimistic = (dmId: number) =>
-    setOptimistic((o) => o.filter((x) => x.status === "failed" || x.dmId !== dmId));
+  // sobreviven (esperan retry/descartar del usuario). Reconcilia 1:1 por (sender+body)
+  // contra los mensajes ya cargados: un optimista SOLO se retira cuando su mensaje real
+  // ya está en la lista → nunca hay un hueco (el mensaje NO parpadea/desaparece si el
+  // refetch resuelve un instante antes de que el row real sea consultable). Mismo criterio
+  // que el reconciliador del flujo (arriba).
+  const reconcileOptimistic = (
+    loaded: { sender: string; body: string }[],
+    inScope: (o: Optimistic) => boolean
+  ) =>
+    setOptimistic((prev) => {
+      const avail = new Map<string, number>();
+      for (const m of loaded) {
+        const k = `${m.sender.length}:${m.sender}:${m.body}`;
+        avail.set(k, (avail.get(k) ?? 0) + 1);
+      }
+      return prev.filter((x) => {
+        if (x.status === "failed") return true; // pega hasta retry/descartar
+        if (!inScope(x)) return true; // otro scope → no lo toca
+        const k = `${x.sender.length}:${x.sender}:${x.body}`;
+        const n = avail.get(k) ?? 0;
+        if (n > 0) {
+          avail.set(k, n - 1);
+          return false; // aterrizó → quita este optimista (consume un match)
+        }
+        return true; // aún no llega el real → conserva el optimista (sin hueco)
+      });
+    });
+  const clearOptimistic = (parentId: number | null, loaded: { sender: string; body: string }[]) =>
+    reconcileOptimistic(loaded, (x) => x.dmId === null && x.parentId === parentId);
+  const clearDmOptimistic = (dmId: number, loaded: { sender: string; body: string }[]) =>
+    reconcileOptimistic(loaded, (x) => x.dmId === dmId);
   // Borra un hilo (autor u owner). Si es el enfocado, vuelve al flujo del room.
   const deleteThread = async (id: number) => {
     await deleteMessageFn({ data: { id } }).catch(() => {});
@@ -1563,7 +1589,7 @@ function ChannelPage() {
           online={online}
           optimistic={optimistic.filter((o) => o.dmId === openDmId)}
           onSend={(p) => sendOptimistic({ ...p, slug: "", parentId: null, dmId: openDmId })}
-          onReloaded={() => clearDmOptimistic(openDmId)}
+          onReloaded={(loaded) => clearDmOptimistic(openDmId, loaded)}
           typing={typing && typing.dmId === openDmId ? typing : null}
           newAt={boundary?.key === `dm:${openDmId}` ? boundary.at : null}
           onBack={() => setOpenDmId(null)}
@@ -1577,7 +1603,7 @@ function ChannelPage() {
           patch={patch}
           optimistic={optimistic.filter((o) => o.parentId === openThreadId)}
           onSend={(p) => sendOptimistic({ ...p, slug: channel.slug, parentId: openThreadId, dmId: null })}
-          onReloaded={() => clearOptimistic(openThreadId)}
+          onReloaded={(loaded) => clearOptimistic(openThreadId, loaded)}
           typing={typing && typing.parentId === openThreadId ? typing : null}
           onGoToOrigin={goToOrigin}
           onBack={() => setOpenThreadId(null)}
@@ -3668,7 +3694,7 @@ function ThreadView({
   patch: number;
   optimistic: Optimistic[];
   onSend: (p: { body: string; attachments: Attach[] }) => void;
-  onReloaded: () => void;
+  onReloaded: (loaded: { sender: string; body: string }[]) => void;
   typing: { name: string } | null;
   onGoToOrigin: (id: number) => void;
   onBack: () => void;
@@ -3689,7 +3715,7 @@ function ThreadView({
   const replies = Array.isArray(data?.replies) ? data.replies : [];
   const replyCount = replies.length;
   useEffect(() => {
-    if (data) onReloaded();
+    if (data) onReloaded(replies);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data]);
   // Sigue las respuestas del hilo + el streaming de la respuesta del agente.
@@ -3798,7 +3824,7 @@ function DmView({
   online: Set<string>;
   optimistic: Optimistic[];
   onSend: (p: { body: string; attachments: Attach[] }) => void;
-  onReloaded: () => void;
+  onReloaded: (loaded: { sender: string; body: string }[]) => void;
   typing: { name: string } | null;
   newAt: number | null;
   onBack: () => void;
@@ -3820,7 +3846,7 @@ function DmView({
   const scrollRef = useRef<HTMLDivElement>(null);
   const unreadId = firstUnreadId(flow, newAt, me?.name);
   useEffect(() => {
-    if (flow) onReloaded();
+    if (flow) onReloaded(flow);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [flow]);
   const { onScroll, atBottom, scrollToBottom } = useChatScroll(scrollRef, flow, optimistic.length, unreadId);
@@ -4022,6 +4048,20 @@ function AttachmentList({ attachments }: { attachments: Attachment[] }) {
 // switches). `embed` = va en iframe con embedUrl (editor colab); el resto comparte
 // shape {kind, src:url}. `label` = subtítulo HONESTO de la card.
 // Título por defecto por tipo → una imagen sin título no se llama "Documento".
+// Los nombres (título de artefacto / adjunto) son TEXTO PLANO, pero el agente a veces los
+// entrega con markdown — `**leads_crm.xlsx**`, `` `informe` ``, `[x](url)` — y se vería el
+// `**` crudo en la card (o `**leads_crm` si el título viene truncado). Quita los marcadores
+// de énfasis/código/enlace comunes. Conserva `_` intra-palabra (leads_crm) — solo colapsa
+// `__bold__` balanceado; los `*`/`` ` ``/`~` no son válidos en nombres de archivo, se van todos.
+function stripMdName(s: string): string {
+  return s
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1") // [texto](url) → texto
+    .replace(/`+/g, "") // `código`
+    .replace(/\*+/g, "") // **negrita** *cursiva* (y marcadores sueltos/truncados)
+    .replace(/~~/g, "") // ~~tachado~~
+    .replace(/(^|[^\w])__([^_]+)__(?=[^\w]|$)/g, "$1$2") // __negrita__ (respeta a_b)
+    .trim();
+}
 function defaultArtifactTitle(kind: string): string {
   switch (kind) {
     case "image": return "Imagen";
@@ -4277,12 +4317,12 @@ function ArtifactCard({ artifact, ownerMsg }: { artifact: Artifact; ownerMsg: Me
   // Nombre mostrado: si es PDF y el título no trae extensión, le añadimos `.pdf` para que
   // se lea como archivo (el nombre SEMÁNTICO por contenido lo debe poner el agente al
   // generarlo — hoy a veces es un slug de storage tipo "df1VVGQO").
-  const rawTitle = artifact.title?.trim();
+  const rawTitle = stripMdName(artifact.title?.trim() ?? "");
   const displayTitle = rawTitle
     ? (isPdf && !/\.[a-z0-9]{1,5}$/i.test(rawTitle) ? `${rawTitle}.pdf` : rawTitle)
     : t(defaultArtifactTitle(view.kind));
   const downloadHref = isDoc
-    ? `/api/doc-docx/${encodeURIComponent(view.documentId)}?name=${encodeURIComponent(artifact.title || "documento")}`
+    ? `/api/doc-docx/${encodeURIComponent(view.documentId)}?name=${encodeURIComponent(rawTitle || "documento")}`
     : isOffice
       ? view.src
       : null;
@@ -4293,7 +4333,7 @@ function ArtifactCard({ artifact, ownerMsg }: { artifact: Artifact; ownerMsg: Me
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `${(artifact.title || "hoja").replace(/[^\w.\- ]/g, "_")}.csv`;
+    a.download = `${(rawTitle || "hoja").replace(/[^\w.\- ]/g, "_")}.csv`;
     document.body.appendChild(a);
     a.click();
     a.remove();
@@ -4363,7 +4403,7 @@ function ArtifactCard({ artifact, ownerMsg }: { artifact: Artifact; ownerMsg: Me
               const url = URL.createObjectURL(blob);
               const a = document.createElement("a");
               a.href = url;
-              a.download = `${(artifact.title || "documento").replace(/[^\w.\- ]/g, "_")}.docx`;
+              a.download = `${(rawTitle || "documento").replace(/[^\w.\- ]/g, "_")}.docx`;
               document.body.appendChild(a);
               a.click();
               a.remove();
@@ -4504,7 +4544,7 @@ function MessageRow({
             // con avatar+nombre ya está arriba y PERMANECE). Se reemplaza al primer token.
             <div className="flex items-center gap-2 py-0.5 text-xs text-muted">
               <ThinkingRing size={16} />
-              <span className="italic">{t("escribiendo…")}</span>
+              <span className="italic">{t("pensando…")}</span>
             </div>
           ) : null
         )}
