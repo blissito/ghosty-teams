@@ -5260,7 +5260,9 @@ const Composer = forwardRef<ComposerHandle, {
               .chain()
               .focus()
               .insertContentAt(range, [
-                { type: "mention", attrs: { id: props.handle, label: props.name } },
+                // label = handle (NO el nombre): el pill del composer debe mostrar @ghosty,
+                // igual que el mensaje enviado y el resaltado — no el nombre del fleet agent.
+                { type: "mention", attrs: { id: props.handle, label: props.handle } },
                 { type: "text", text: " " },
               ])
               .run(),

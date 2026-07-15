@@ -103,9 +103,9 @@ export const createFleetAgent = createServerFn({ method: "POST" })
     if (!token) throw new Error("EasyBits no conectado");
     const { createFleetAgent: create } = await import("./easybits-oauth.server");
     const agent = await create(token, { engine: data.engine ?? "deepseek" });
-    // El nombre ÚNICO sugerido vive en agent.name (assistantName lo hardcodea EasyBits
-    // a "Ghosty"); lo guardamos como fleet_name para mostrarlo en el wizard.
-    const name = agent.name || agent.assistantName || "Ghosty";
+    // Nombre visible = "Ghosty" (marca), NO el nombre crudo del pool (ej. "Ghosty-teams-
+    // onix-yy4"). El owner puede renombrarlo en Ajustes → Agentes.
+    const name = agent.assistantName || "Ghosty";
     await setConfig("fleet_agent_id", agent.id);
     await setConfig("fleet_token", agent.token);
     await setConfig("fleet_name", name);
@@ -140,6 +140,9 @@ export const selectFleetAgent = createServerFn({ method: "POST" })
     if (!agent) throw new Error("Agente no encontrado");
     await setConfig("fleet_agent_id", agent.id);
     await setConfig("fleet_token", agent.token);
-    await setConfig("fleet_name", agent.assistantName || agent.name);
+    // Nombre visible = "Ghosty" (marca), NO el nombre crudo del pool (ej. "Ghosty-teams-
+    // onix-yy4"). assistantName suele ser "Ghosty"; si no, fallback a "Ghosty". El owner
+    // puede renombrarlo en Ajustes → Agentes.
+    await setConfig("fleet_name", agent.assistantName || "Ghosty");
     return { ok: true as const };
   });
