@@ -49,6 +49,27 @@ export async function resolvedAgents(): Promise<ResolvedAgent[]> {
   return out;
 }
 
+// Refresca el fleet_token (pool) de un agente cuando caducó: renueva el OAuth con el
+// refresh_token y re-lista la flota para tomar el token FRESCO del agente; lo persiste
+// en config si es el @ghosty del wizard. Best-effort → null si el refresh no funciona
+// (falta client creds / refresh_token expirado → hace falta un connect completo).
+export async function refreshFleetToken(fleetId: string): Promise<string | null> {
+  try {
+    const { refreshOwnerToken } = await import("./server/easybits-files.server");
+    const fresh = await refreshOwnerToken();
+    if (!fresh) return null;
+    const { listFleetAgents } = await import("./server/easybits-oauth.server");
+    const agents = (await listFleetAgents(fresh)) as Array<{ id: string; token?: string }>;
+    const a = agents.find((x) => x.id === fleetId);
+    if (!a?.token) return null;
+    const { getConfig, setConfig } = await import("./config.server");
+    if ((await getConfig("fleet_agent_id")) === fleetId) await setConfig("fleet_token", a.token);
+    return a.token;
+  } catch {
+    return null;
+  }
+}
+
 // ── Media (A2A FilePart) — entrega de adjuntos al agente ────────────────────
 // Contrato: docs/AGENT-MEDIA-CONTRACT.md §2/§3. Un FilePart por adjunto, tipado por
 // MIME → cubre audio/imagen/video/docs/desconocido con una sola forma. Transporte
@@ -174,30 +195,41 @@ export async function callAgentBackendStream(
   // inyección de prompt (incidente 2026-07-12 en Teams). El texto solo lleva el turno.
   const outText = docHint + text;
   try {
-    const res = await fetch(`${base}/api/v2/fleet-agents/${agent.backend.id}/message-stream`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${agent.backend.token}` },
-      // `parts` = FileParts A2A (media); EasyBits los normaliza por MIME (Slice E1).
-      // configGroupId "teams" = unidad de config ESTABLE de este canal en EasyBits
-      // (tools + comportamiento por-Teams via groupConfigs["teams"]); sin él la config
-      // caería por-conversación (groupId) → solo el default del agente.
-      body: JSON.stringify({
-        groupId,
-        configGroupId: "teams",
-        sender: sender || "invitado",
-        text: outText,
-        parts,
-        // Persona por-agente + guardrail eb-doc, ambos en la capa system. EasyBits los
-        // mergea al system del worker (claude-worker) o al marco de confianza del turno
-        // (ghosty-gc). Nunca en el texto del usuario → nunca se lee como inyección.
-        appendSystemPrompt: [
-          persona ? `[Persona de ${agent.name}]\n${persona}` : null,
-          EB_DOC_STREAM_GUARDRAIL,
-        ]
-          .filter(Boolean)
-          .join("\n\n"),
-      }),
+    // `parts` = FileParts A2A (media); EasyBits los normaliza por MIME (Slice E1).
+    // configGroupId "teams" = unidad de config ESTABLE de este canal en EasyBits
+    // (tools + comportamiento por-Teams via groupConfigs["teams"]); sin él la config
+    // caería por-conversación (groupId) → solo el default del agente.
+    const streamBody = JSON.stringify({
+      groupId,
+      configGroupId: "teams",
+      sender: sender || "invitado",
+      text: outText,
+      parts,
+      // Persona por-agente + guardrail eb-doc, ambos en la capa system. EasyBits los
+      // mergea al system del worker (claude-worker) o al marco de confianza del turno
+      // (ghosty-gc). Nunca en el texto del usuario → nunca se lee como inyección.
+      appendSystemPrompt: [
+        persona ? `[Persona de ${agent.name}]\n${persona}` : null,
+        EB_DOC_STREAM_GUARDRAIL,
+      ]
+        .filter(Boolean)
+        .join("\n\n"),
     });
+    const doStream = (tok: string) =>
+      fetch(`${base}/api/v2/fleet-agents/${(agent.backend as { id: string }).id}/message-stream`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${tok}` },
+        body: streamBody,
+      });
+    // SELF-HEAL: el fleet_token (pool) CADUCA. Ante 401 refrescamos el OAuth + re-obtenemos
+    // el token fresco del agente (listFleetAgents) y reintentamos UNA vez → @ghosty no muere
+    // cuando el token expira (incidente 2026-07-14). Requiere que refreshOwnerToken funcione
+    // (client creds + refresh_token en config, que se llenan con el connect completo).
+    let res = await doStream(agent.backend.token);
+    if (res.status === 401) {
+      const fresh = await refreshFleetToken((agent.backend as { id: string }).id);
+      if (fresh) res = await doStream(fresh);
+    }
     if (!res.ok || !res.body) throw new Error(`fleet-stream ${res.status}: ${await res.text().catch(() => "")}`);
     // Parseo SSE: acumula por líneas `data: {json}`. `done.value` es el reply
     // completo y autoritativo (correcto aun si un self-heal re-emitió chunks).
@@ -425,24 +457,32 @@ export async function callAgentBackend(
   // leyera como inyección de prompt y la rechazara. El texto solo lleva el turno.
   const base = process.env.EASYBITS_BASE_URL ?? "https://www.easybits.cloud";
   try {
-    const res = await fetch(`${base}/api/v2/fleet-agents/${agent.backend.id}/message`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${agent.backend.token}` },
-      // configGroupId "teams" = unidad de config estable del canal (ver message-stream).
-      body: JSON.stringify({
-        groupId,
-        configGroupId: "teams",
-        sender: sender || "invitado",
-        text,
-        parts,
-        appendSystemPrompt: [
-          persona ? `[Persona de ${agent.name}]\n${persona}` : null,
-          EB_DOC_STREAM_GUARDRAIL,
-        ]
-          .filter(Boolean)
-          .join("\n\n"),
-      }),
+    // configGroupId "teams" = unidad de config estable del canal (ver message-stream).
+    const msgBody = JSON.stringify({
+      groupId,
+      configGroupId: "teams",
+      sender: sender || "invitado",
+      text,
+      parts,
+      appendSystemPrompt: [
+        persona ? `[Persona de ${agent.name}]\n${persona}` : null,
+        EB_DOC_STREAM_GUARDRAIL,
+      ]
+        .filter(Boolean)
+        .join("\n\n"),
     });
+    const doMsg = (tok: string) =>
+      fetch(`${base}/api/v2/fleet-agents/${(agent.backend as { id: string }).id}/message`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${tok}` },
+        body: msgBody,
+      });
+    // Self-heal en 401 (mismo patrón que el stream): refresca el fleet_token y reintenta.
+    let res = await doMsg(agent.backend.token);
+    if (res.status === 401) {
+      const fresh = await refreshFleetToken((agent.backend as { id: string }).id);
+      if (fresh) res = await doMsg(fresh);
+    }
     if (!res.ok) throw new Error(`fleet ${res.status}: ${await res.text()}`);
     return ((await res.json()) as { reply?: string }).reply ?? "(sin respuesta)";
   } catch (e) {

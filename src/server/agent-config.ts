@@ -31,7 +31,14 @@ export const agentFleetConfigFn = createServerFn({ method: "GET" })
     if (!be) return { fleet: false as const };
     const url = new URL(`${EB}/api/v2/fleet-agents/${be.id}/capabilities`);
     if (data.q) url.searchParams.set("q", data.q);
-    const res = await fetch(url, { headers: { Authorization: `Bearer ${be.token}` } });
+    const get = (tok: string) => fetch(url, { headers: { Authorization: `Bearer ${tok}` } });
+    // Self-heal en 401 (el fleet_token caduca): refresca y reintenta una vez.
+    let res = await get(be.token);
+    if (res.status === 401) {
+      const { refreshFleetToken } = await import("../agents.server");
+      const fresh = await refreshFleetToken(be.id);
+      if (fresh) res = await get(fresh);
+    }
     if (!res.ok) throw new Error(`capabilities ${res.status}: ${await res.text()}`);
     return { fleet: true as const, ...(await res.json()) };
   });

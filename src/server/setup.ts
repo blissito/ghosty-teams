@@ -17,12 +17,24 @@ export const getSetup = createServerFn({ method: "GET" }).handler(async () => {
     // Degradamos a lista vacía; el chat carga igual (el wizard solo se ve si !hasAgent).
     try {
       const { listFleetAgents } = await import("./easybits-oauth.server");
-      agents = (await listFleetAgents(c.eb_access_token)).map((a) => ({
-        id: a.id,
-        name: a.name,
-        assistantName: a.assistantName,
-        workerTemplate: a.workerTemplate,
-      }));
+      const fetchAgents = async (tok: string) =>
+        (await listFleetAgents(tok)).map((a) => ({
+          id: a.id,
+          name: a.name,
+          assistantName: a.assistantName,
+          workerTemplate: a.workerTemplate,
+        }));
+      try {
+        agents = await fetchAgents(c.eb_access_token);
+      } catch (e) {
+        // 401 → el access token caducó: refrescamos con el refresh_token y reintentamos
+        // (así el wizard/dropdown reaparecen sin re-conectar a mano). Requiere connect
+        // completo previo (client creds + refresh_token en config).
+        if (!String(e).includes("401")) throw e;
+        const { refreshOwnerToken } = await import("./easybits-files.server");
+        const fresh = await refreshOwnerToken();
+        if (fresh) agents = await fetchAgents(fresh);
+      }
     } catch (e) {
       console.error("[getSetup] listFleetAgents falló (degradando a []):", e instanceof Error ? e.message : e);
     }
