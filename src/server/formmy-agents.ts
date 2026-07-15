@@ -60,7 +60,7 @@ async function resolveEbToken(): Promise<string | null> {
   return null;
 }
 
-export type FormmyAgent = { id: string; name: string; hasFleetMirror: boolean };
+export type FormmyAgent = { id: string; name: string; hasFleetMirror: boolean; fleetId?: string };
 
 // Lista los Agents de Formmy del owner (para el wizard "agregar agente"). Marca cuáles
 // ya tienen espejo en la flota. Degrada a [] si el puente falla (no tumba el wizard).

@@ -764,6 +764,7 @@ async function dbqRaw(sql: string, args: unknown[] = []) {
 // ── Rooms CRUD ──
 export async function createChannel(input: {
   name: string;
+  description?: string;
   icon?: string;
   isPrivate: boolean;
   createdBy: string;
@@ -773,9 +774,9 @@ export async function createChannel(input: {
   // slug único
   for (let i = 2; (await getChannel(slug)) != null; i++) slug = `${base}-${i}`;
   const rows = await dbq(
-    `INSERT INTO gc_channels (slug, name, is_private, icon, created_by)
-     VALUES (?, ?, ?, ?, ?) RETURNING *`,
-    [slug, input.name.slice(0, 40), input.isPrivate ? 1 : 0, input.icon ?? null, input.createdBy]
+    `INSERT INTO gc_channels (slug, name, description, is_private, icon, created_by)
+     VALUES (?, ?, ?, ?, ?, ?) RETURNING *`,
+    [slug, input.name.slice(0, 40), input.description?.slice(0, 280) || null, input.isPrivate ? 1 : 0, input.icon ?? null, input.createdBy]
   );
   const ch = toChannel(rows[0]);
   if (ch.is_private) await addChannelMember(ch.id, input.createdBy);

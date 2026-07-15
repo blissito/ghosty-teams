@@ -43,7 +43,7 @@ function toView(d: TeamDocument): ArtifactView | null {
 }
 
 function DocIcon({ kind }: { kind: TeamDocument["kind"] }) {
-  const cls = "text-[#a78bfa]";
+  const cls = "text-brand";
   if (kind === "sheet") return <FileSpreadsheet size={22} className={cls} />;
   return <FileText size={22} className={cls} />;
 }
@@ -54,14 +54,14 @@ function DocTile({ d, onOpen }: { d: TeamDocument; onOpen: (v: ArtifactView) => 
     <button
       type="button"
       onClick={() => (view ? onOpen(view) : undefined)}
-      className={`group flex items-start gap-3 rounded-2xl border border-gray-800 bg-[#1c1922] p-4 text-left transition hover:border-[#7c5ce0]/60 hover:bg-[#221e2b] ${view ? "cursor-pointer" : "cursor-default"}`}
+      className={`group flex items-start gap-3 rounded-2xl border border-border bg-surface-2 p-4 text-left transition hover:border-brand/60 hover:bg-surface-3 ${view ? "cursor-pointer" : "cursor-default"}`}
     >
-      <div className="grid size-11 shrink-0 place-items-center rounded-xl bg-[#2a2436]">
+      <div className="grid size-11 shrink-0 place-items-center rounded-xl bg-surface-3">
         <DocIcon kind={d.kind} />
       </div>
       <div className="min-w-0 flex-1">
-        <div className="truncate text-[15px] font-semibold text-gray-100">{d.title}</div>
-        <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-gray-500">
+        <div className="truncate text-[15px] font-semibold text-ink">{d.title}</div>
+        <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted">
           <span className="inline-flex items-center gap-1">
             {d.source === "generated" ? <><Sparkles size={11} /> Redactado</> : <><Upload size={11} /> Subido</>}
           </span>
@@ -102,15 +102,15 @@ function ArtifactsPage() {
   }, [docs]);
 
   return (
-    <div className="flex min-h-dvh bg-[#14121a] text-gray-100">
+    <div className="flex min-h-dvh bg-bg text-ink">
       <div className="min-w-0 flex-1 overflow-auto">
         <div className="mx-auto max-w-4xl px-5 py-8">
-          <Link to="/c/$slug" params={{ slug: "general" }} className="mb-4 inline-flex items-center gap-1.5 text-sm text-gray-400 hover:text-gray-200">
+          <Link to="/c/$slug" params={{ slug: "general" }} className="mb-4 inline-flex items-center gap-1.5 text-sm text-muted hover:text-ink">
             <ArrowLeft size={15} /> Volver al chat
           </Link>
           <header className="mb-6">
-            <h1 className="flex items-center gap-2 text-2xl font-bold"><Layers size={22} className="text-[#a78bfa]" /> Documentos</h1>
-            <p className="mt-1 text-sm text-gray-500">
+            <h1 className="flex items-center gap-2 text-2xl font-bold"><Layers size={22} className="text-brand" /> Documentos</h1>
+            <p className="mt-1 text-sm text-muted">
               Todos los documentos del team: los que redacta @ghosty y los que arrojas al chat. Haz clic para verlos.
             </p>
           </header>
@@ -118,16 +118,16 @@ function ArtifactsPage() {
           {docs === null ? (
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               {[0, 1, 2, 3].map((i) => (
-                <div key={i} className="animate-pulse rounded-2xl border border-gray-800 bg-[#1c1922] p-4">
-                  <div className="mb-3 h-5 w-2/3 rounded bg-gray-700/60" />
-                  <div className="h-3 w-1/3 rounded bg-gray-800" />
+                <div key={i} className="animate-pulse rounded-2xl border border-border bg-surface-2 p-4">
+                  <div className="mb-3 h-5 w-2/3 rounded bg-surface-3" />
+                  <div className="h-3 w-1/3 rounded bg-surface-3" />
                 </div>
               ))}
             </div>
           ) : docs.length === 0 ? (
-            <div className="rounded-2xl border border-dashed border-gray-700 p-10 text-center text-sm text-gray-500">
-              <p className="mb-1 font-semibold text-gray-300">Aún no hay documentos</p>
-              <p>Pídele a <span className="text-[#a78bfa]">@ghosty</span> que redacte algo, o arroja un PDF/Word al chat.</p>
+            <div className="rounded-2xl border border-dashed border-border p-10 text-center text-sm text-muted">
+              <p className="mb-1 font-semibold text-ink">Aún no hay documentos</p>
+              <p>Pídele a <span className="text-brand">@ghosty</span> que redacte algo, o arroja un PDF/Word al chat.</p>
             </div>
           ) : (
             // Matter-centric: agrupado por CASO (room). Cada sección = los docs de un
@@ -135,16 +135,16 @@ function ArtifactsPage() {
             <div className="flex flex-col gap-8">
               {groups!.map((g) => (
                 <section key={g.channelId}>
-                  <div className="mb-3 flex items-center gap-2 border-b border-gray-800/70 pb-2">
-                    <Hash size={15} className="shrink-0 text-[#a78bfa]" />
+                  <div className="mb-3 flex items-center gap-2 border-b border-border/70 pb-2">
+                    <Hash size={15} className="shrink-0 text-brand" />
                     {g.channelSlug ? (
-                      <Link to="/c/$slug" params={{ slug: g.channelSlug }} className="truncate text-sm font-semibold text-gray-200 hover:text-white">
+                      <Link to="/c/$slug" params={{ slug: g.channelSlug }} className="truncate text-sm font-semibold text-ink hover:text-ink">
                         {g.channelName ?? g.channelSlug}
                       </Link>
                     ) : (
-                      <span className="truncate text-sm font-semibold text-gray-200">{g.channelName ?? "Sin caso"}</span>
+                      <span className="truncate text-sm font-semibold text-ink">{g.channelName ?? "Sin caso"}</span>
                     )}
-                    <span className="text-xs text-gray-600">· {g.docs.length}</span>
+                    <span className="text-xs text-faint">· {g.docs.length}</span>
                   </div>
                   <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                     {g.docs.map((d) => (

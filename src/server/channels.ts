@@ -4,7 +4,7 @@ import { sessionUser } from "./chat";
 // CRUD de Rooms + miembros (privados). Auth: creador u owner.
 
 export const createChannelFn = createServerFn({ method: "POST" })
-  .validator((d: { name: string; icon?: string; isPrivate: boolean }) => d)
+  .validator((d: { name: string; description?: string; icon?: string; isPrivate: boolean }) => d)
   .handler(async ({ data }) => {
     const user = await sessionUser();
     if (!user) throw new Error("no autenticado");
@@ -13,6 +13,7 @@ export const createChannelFn = createServerFn({ method: "POST" })
     const db = await import("../db.server");
     const ch = await db.createChannel({
       name,
+      description: data.description?.trim() || undefined,
       icon: data.icon,
       isPrivate: data.isPrivate,
       createdBy: user.sub,

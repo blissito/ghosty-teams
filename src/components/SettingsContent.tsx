@@ -939,6 +939,7 @@ function AgentsManager({ isOwner, hasAgent }: { isOwner: boolean; hasAgent: bool
 
       {adding && (
         <AddAgentForm
+          connected={new Set((agents ?? []).map((a) => a.fleet_id).filter((x): x is string => !!x))}
           onClose={() => setAdding(false)}
           onCreated={() => {
             setAdding(false);
@@ -950,7 +951,7 @@ function AgentsManager({ isOwner, hasAgent }: { isOwner: boolean; hasAgent: bool
   );
 }
 
-function AddAgentForm({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
+function AddAgentForm({ onClose, onCreated, connected }: { onClose: () => void; onCreated: () => void; connected: Set<string> }) {
   const t = useT();
   const [kind, setKind] = useState<"fleet" | "webhook">("fleet");
   const [name, setName] = useState("");
@@ -1033,18 +1034,22 @@ function AddAgentForm({ onClose, onCreated }: { onClose: () => void; onCreated: 
             </option>
             {fleet && fleet.length > 0 && (
               <optgroup label={t("De tu flota EasyBits")}>
-                {fleet.map((f) => (
-                  <option key={f.id} value={f.id}>{f.name}</option>
-                ))}
+                {fleet.map((f) => {
+                  const already = connected.has(f.id);
+                  return <option key={f.id} value={f.id} disabled={already}>{f.name}{already ? t(" · ya conectado") : ""}</option>;
+                })}
               </optgroup>
             )}
             {formmy.length > 0 && (
               <optgroup label={t("De tus agentes de Formmy")}>
-                {formmy.map((a) => (
-                  <option key={`formmy:${a.id}`} value={`formmy:${a.id}`}>
-                    {a.name}{a.hasFleetMirror ? "" : t(" · nuevo en flota")}
-                  </option>
-                ))}
+                {formmy.map((a) => {
+                  const already = !!a.fleetId && connected.has(a.fleetId);
+                  return (
+                    <option key={`formmy:${a.id}`} value={`formmy:${a.id}`} disabled={already}>
+                      {a.name}{already ? t(" · ya conectado") : a.hasFleetMirror ? "" : t(" · nuevo en flota")}
+                    </option>
+                  );
+                })}
               </optgroup>
             )}
           </select>

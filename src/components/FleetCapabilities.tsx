@@ -401,11 +401,17 @@ export function FleetCapabilities({ agentId }: { agentId: number }) {
 
       <AddMcpForm saving={isSaving("addmcp")} onAdd={(body) => mutate("addmcp", () => body, true)} />
 
-      {/* Skills */}
+      {/* Skills: header con add inline (más prominente y mejor uso del espacio). */}
       <div>
-        <span className={label}>{t("Skills")}</span>
-        {!!cfg.skills?.length && (
-          <div className="mb-1.5 space-y-1">
+        <div className="flex items-center justify-between">
+          <span className={label}>{t("Skills")}</span>
+          <input ref={skillRef} type="file" multiple accept=".md,.mjs,.js,.txt" className="hidden" onChange={(e) => { const fs = Array.from(e.target.files ?? []); if (fs.length) addSkill(fs); }} />
+          <button onClick={() => skillRef.current?.click()} disabled={uploadingSkill || isSaving("addskill")} className="mb-1 flex items-center gap-1 rounded-lg border border-border px-2 py-1 text-[11px] font-medium text-muted transition hover:border-brand hover:text-ink disabled:opacity-50" title={t("Sube el SKILL.md y sus scripts")}>
+            {uploadingSkill || isSaving("addskill") ? <Loader2 size={12} className="animate-spin" /> : <Plus size={12} />} {t("Agregar")}
+          </button>
+        </div>
+        {cfg.skills?.length ? (
+          <div className="space-y-1">
             {cfg.skills.map((s) => (
               <div key={s.id} className={`flex items-center gap-2 ${box}`}>
                 <Switch on={s.enabled} disabled={isSaving(`sk:${s.id}`)} onChange={(v) => mutate(`sk:${s.id}`, (c) => { const sk = c.skills?.find((x) => x.id === s.id); if (sk) sk.enabled = v; return { action: "toggle-skill", skillId: s.id, on: v }; })} />
@@ -420,12 +426,9 @@ export function FleetCapabilities({ agentId }: { agentId: number }) {
               </div>
             ))}
           </div>
+        ) : (
+          <p className="text-[11px] text-muted">{t("Empaqueta un SKILL.md + script(s) → una capacidad determinista que el agente usa on-demand.")}</p>
         )}
-        {/* Agregar skill: sube SKILL.md + script(s). El .md lleva el frontmatter name/description. */}
-        <input ref={skillRef} type="file" multiple accept=".md,.mjs,.js,.txt" className="hidden" onChange={(e) => { const fs = Array.from(e.target.files ?? []); if (fs.length) addSkill(fs); }} />
-        <button onClick={() => skillRef.current?.click()} disabled={uploadingSkill || isSaving("addskill")} className="flex w-full items-center justify-center gap-1 rounded-lg border border-border px-2.5 py-1.5 text-xs text-muted hover:border-brand hover:text-ink disabled:opacity-50" title={t("Sube el SKILL.md y sus scripts")}>
-          {uploadingSkill || isSaving("addskill") ? <Loader2 size={12} className="animate-spin" /> : <Upload size={12} />} {t("Agregar skill (SKILL.md + script)")}
-        </button>
       </div>
 
       {/* Entregables */}

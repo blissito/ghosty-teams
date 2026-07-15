@@ -2556,6 +2556,7 @@ function CreateRoomModal({
 }) {
   const t = useT();
   const [name, setName] = useState("");
+  const [description, setDescription] = useState("");
   const [icon, setIcon] = useState("hash");
   const [isPrivate, setIsPrivate] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -2566,7 +2567,7 @@ function CreateRoomModal({
     setBusy(true);
     setErr(null);
     try {
-      const ch = await createChannelFn({ data: { name: name.trim(), icon, isPrivate } });
+      const ch = await createChannelFn({ data: { name: name.trim(), description: description.trim() || undefined, icon, isPrivate } });
       onCreated(ch.slug);
     } catch (e) {
       setErr(e instanceof Error ? e.message : t("error"));
@@ -2584,8 +2585,18 @@ function CreateRoomModal({
         onChange={(e) => setName(e.target.value)}
         onKeyDown={(e) => e.key === "Enter" && create()}
         placeholder={t("nombre del room")}
-        className="mb-5 w-full rounded-lg border border-border bg-surface px-3 py-2.5 text-sm outline-none focus:border-brand"
+        className="mb-4 w-full rounded-lg border border-border bg-surface px-3 py-2.5 text-sm outline-none focus:border-brand"
       />
+      <label className="mb-1.5 block text-xs font-medium text-muted">{t("Descripción")} <span className="text-faint">({t("opcional")})</span></label>
+      <textarea
+        value={description}
+        onChange={(e) => setDescription(e.target.value)}
+        placeholder={t("¿De qué trata este room?")}
+        rows={2}
+        maxLength={280}
+        className="mb-1 w-full resize-none rounded-lg border border-border bg-surface px-3 py-2 text-sm outline-none focus:border-brand"
+      />
+      <p className="mb-5 text-right text-[11px] text-faint tabular-nums">{description.length}/280</p>
       <label className="mb-2 block text-xs font-medium text-muted">{t("Icono")}</label>
       <div className="mb-5 grid grid-cols-8 gap-2">
         {ROOM_ICONS.map(({ name: n, Icon }) => (
