@@ -70,6 +70,7 @@ import {
   getChannelThreads,
   postMessage,
   askAgent,
+  warmAgentFn,
   deleteMessageFn,
   listMentionsFn,
   pingTypingFn,
@@ -81,7 +82,7 @@ import { getDeferredPrompt, onInstallable, clearDeferredPrompt, type BeforeInsta
 import { useLiveStream } from "../hooks/useLiveStream";
 import type { RtEvent } from "../server/bus.server";
 import { Markdown } from "../components/Markdown";
-import { SettingsContent } from "../components/SettingsContent";
+import { SettingsContent, loadSettingsData } from "../components/SettingsContent";
 import { getTheme, subscribeTheme, resolveDark, presetById, paletteVars } from "../utils/theme";
 import { subscribeMentions } from "../utils/mentions-bus";
 import ArtifactPanel, { type ArtifactView, viewFromAttachment } from "../components/ArtifactPanel";
@@ -803,6 +804,9 @@ function ChannelPage() {
   // deltas del mensaje; lo streameamos al panel (kind:"draft") y, al cerrarse, el
   // server compila el .docx y lo cuelga del mensaje → swap del draft al doc real.
   const draftMsgIdRef = useRef<number | null>(null);
+  // Sonido del agente al PRIMER token (no al crear la cáscara vacía): ids ya sonados
+  // para no repetir en cada re-pintado del stream. Ver message:body/message:delta.
+  const chimedAgentIds = useRef<Set<number>>(new Set());
   const findMessageInCaches = (id: number): Message | undefined => {
     for (const arr of flowCache.values()) {
       const m = arr.find((x) => x.id === id);
@@ -818,6 +822,16 @@ function ChannelPage() {
       if (m) return m;
     }
     return undefined;
+  };
+  // Suena el sonido oficial del agente UNA vez, al primer token de su reply (no al crear la
+  // caja vacía). Gate por mute del scope; ignora el foco (quieres oír que empezó a responder).
+  const maybeChimeAgent = (id: number) => {
+    if (chimedAgentIds.current.has(id)) return;
+    const m = findMessageInCaches(id);
+    if (!m || m.agent_handle == null || m.mentions_ghosty !== 0) return;
+    chimedAgentIds.current.add(id);
+    const muteKey = m.dm_id != null ? `dm:${m.dm_id}` : `room:${m.channel_id}`;
+    if (!mutes.has(muteKey)) playGhostySound();
   };
   const driveDraftFromBody = (id: number, body: string) => {
     const doc = extractEbDoc(body);
@@ -945,10 +959,12 @@ function ChannelPage() {
           sentNonces.delete(ev.nonce);
           return;
         }
-        // Sonido oficial de notificación: mensaje real de alguien más (incluye
-        // agentes/Ghosty) en un scope no silenciado. Los "status" (churn de agente)
-        // no suenan.
-        if (ev.msg.kind === "msg" && ev.msg.sender !== user?.name) {
+        // Sonido oficial de notificación: mensaje real de alguien más en un scope no
+        // silenciado. Los "status" no suenan, y la CÁSCARA del agente (kind:"msg" con
+        // agent_handle y mentions_ghosty=0) tampoco AQUÍ: nace vacía al enviar → su sonido
+        // se dispara al PRIMER token (message:body/delta), no al aparecer la caja.
+        const isAgentShell = ev.msg.agent_handle != null && ev.msg.mentions_ghosty === 0;
+        if (ev.msg.kind === "msg" && ev.msg.sender !== user?.name && !isAgentShell) {
           const muteKey = ev.msg.dm_id != null ? `dm:${ev.msg.dm_id}` : `room:${ev.msg.channel_id}`;
           // No sonar si el mensaje ya está a la vista en el scope enfocado (Slack/Zulip):
           // DM abierto, hilo abierto, o el flujo del room activo. Si la pestaña está
@@ -965,10 +981,9 @@ function ChannelPage() {
             const mentionsMe = (ev.msg.body.match(/@([\wáéíóúñ]+)/gi) ?? [])
               .map((x) => x.slice(1).toLowerCase())
               .some((x) => x === h || SOUND_GROUP_MENTIONS.has(x));
-            // Prioridad: DM → DM · agente(@ghosty en room) → Ghosty · mención → atención
-            // · resto → knock. (DM antes que agente: un DM que tagea @ghosty suena a DM.)
+            // Prioridad: DM → DM · mención → atención · resto → knock. (El reply del
+            // agente ya no suena aquí: se maneja al primer token — ver isAgentShell arriba.)
             if (ev.msg.dm_id != null) playDmSound();
-            else if (ev.msg.agent_handle && ev.msg.mentions_ghosty === 0) playGhostySound(); // reply real del agente
             else if (mentionsMe) playMentionSound();
             else playNotificationSound();
           }
@@ -1038,6 +1053,7 @@ function ChannelPage() {
           nb = (m.body ?? "") + ev.chunk;
           return { ...m, body: nb };
         });
+        if (ev.chunk.trim()) maybeChimeAgent(ev.id); // primer token → sonido del agente
         driveDraftFromBody(ev.id, nb); // artefacto en vivo si hay ```eb-doc```
         break;
       }
@@ -1050,6 +1066,7 @@ function ChannelPage() {
         const blank = !(ev.body ?? "").trim();
         patchMessage(ev.id, (m) => (blank && (m.body ?? "").trim() ? m : { ...m, body: ev.body }));
         if (!blank) {
+          maybeChimeAgent(ev.id); // primer contenido del reply → sonido del agente
           driveDraftFromBody(ev.id, ev.body);
           // Fence cerrado → el server compila el .docx; swap del draft al doc real.
           const doc = extractEbDoc(ev.body);
@@ -1314,7 +1331,7 @@ function ChannelPage() {
         .then((r) => {
           revalidate();
           if (r?.needsAgent && r.agentHandle)
-            askDmAgentFn({ data: { id: o.dmId!, body: o.body, sender: "", handle: r.agentHandle, attachments: o.attachments } })
+            askDmAgentFn({ data: { id: o.dmId!, body: o.body, sender: "", handle: r.agentHandle, shellId: r.shellId ?? undefined, attachments: o.attachments } })
               .then(() => revalidate())
               .catch(() => revalidate());
         })
@@ -1330,7 +1347,7 @@ function ChannelPage() {
           // hilo nuevo. Cada agente mencionado responde en paralelo y limpia su propio
           // "pensando…"; el streaming (message:delta) aterriza en el flujo por su id.
           for (const ag of respondents) {
-            askAgent({ data: { slug: o.slug, parentId: ag.parent, fleetThread: ag.fleetThread, body: o.body, sender: "", handle: ag.handle, attachments: o.attachments } })
+            askAgent({ data: { slug: o.slug, parentId: ag.parent, fleetThread: ag.fleetThread, body: o.body, sender: "", handle: ag.handle, shellId: ag.shellId, attachments: o.attachments } })
               .then(() => revalidate())
               .catch(() => revalidate());
           }
@@ -1422,6 +1439,9 @@ function ChannelPage() {
   // lo abran tanto el footer del sidebar como el "+ Añadir emoji" del picker.
   const [prefsTab, setPrefsTab] = useState<null | "general" | "agentes" | "emojis">(null);
   const openPrefs = useCallback((tab: "general" | "agentes" | "emojis" = "general") => setPrefsTab(tab), []);
+  // Precalienta la cache de Ajustes al montar el shell (idle) → al abrir Preferencias
+  // no hay ni spinner ni pop-in de tabs; la data (setup/agentAccess) ya está lista.
+  useEffect(() => { loadSettingsData().catch(() => {}); }, []);
   const [profile, setProfile] = useState<ProfileTarget | null>(null);
   const openProfile = useCallback((p: ProfileTarget) => setProfile(p), []);
 
@@ -3923,7 +3943,7 @@ function ChatImage({ src, alt }: { src: string; alt: string }) {
         loading="lazy"
         decoding="async"
         onLoad={() => setLoaded(true)}
-        className={`max-h-72 max-w-full object-cover transition-opacity duration-300 ${
+        className={`max-h-80 w-auto max-w-full object-contain transition-opacity duration-300 ${
           loaded ? "opacity-100" : "opacity-0"
         }`}
       />
@@ -4478,6 +4498,13 @@ function MessageRow({
                 artifactUrl={m.artifact?.url}
                 onOpenArtifact={m.artifact ? () => onOpenArtifact(artifactToView(m.artifact!)) : undefined}
               />
+            </div>
+          ) : isAgent ? (
+            // Caja caliente: cáscara del agente aún sin texto → indicador inline (la fila
+            // con avatar+nombre ya está arriba y PERMANECE). Se reemplaza al primer token.
+            <div className="flex items-center gap-2 py-0.5 text-xs text-muted">
+              <ThinkingRing size={16} />
+              <span className="italic">{t("escribiendo…")}</span>
             </div>
           ) : null
         )}
@@ -5136,7 +5163,7 @@ function ScrollDownButton({ show, onClick }: { show: boolean; onClick: () => voi
       onClick={onClick}
       aria-label={t("Ir al final")}
       title={t("Ir al final")}
-      className="absolute bottom-24 right-4 z-20 grid size-9 place-items-center rounded-full border border-border bg-surface-2/90 text-muted shadow-lg backdrop-blur transition hover:text-ink hover:border-brand/50"
+      className="absolute bottom-24 left-1/2 z-20 grid size-9 -translate-x-1/2 place-items-center rounded-full border border-border bg-surface-2/90 text-muted shadow-lg backdrop-blur transition hover:text-ink hover:border-brand/50"
     >
       <ChevronDown size={18} />
     </button>
@@ -5255,7 +5282,10 @@ const Composer = forwardRef<ComposerHandle, {
           char: "@",
           items: ({ query }: { query: string }) =>
             mentionsRef.current.filter((a) => a.handle.startsWith(query.toLowerCase())).slice(0, 8),
-          command: ({ editor, range, props }: any) =>
+          command: ({ editor, range, props }: any) => {
+            // Warm seam: elegir un @agente = alta intención de enviarle → pre-calienta su
+            // turno (fire-and-forget, el server no-opea si el handle no es agente de flota).
+            warmAgentFn({ data: { handle: props.handle } }).catch(() => {});
             editor
               .chain()
               .focus()
@@ -5265,7 +5295,8 @@ const Composer = forwardRef<ComposerHandle, {
                 { type: "mention", attrs: { id: props.handle, label: props.handle } },
                 { type: "text", text: " " },
               ])
-              .run(),
+              .run();
+          },
           render: () => ({
             onStart: (props: any) =>
               setPopup({ items: props.items, command: props.command, rect: props.clientRect?.() ?? null, index: 0 }),

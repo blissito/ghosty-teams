@@ -114,14 +114,18 @@ export const removeAgentCollaboratorFn = createServerFn({ method: "POST" })
 // (Bug 2026-07-05: la flota salía vacía porque el token había expirado y esta
 // ruta no refrescaba, a diferencia de la Files API.)
 async function fleetAgentsWithRefresh() {
-  const { getConfig } = await import("../config.server");
-  const token = await getConfig("eb_access_token");
+  const { getConfigMany } = await import("../config.server");
+  const { resolveFleetAuth } = await import("./setup");
+  const c = await getConfigMany(["eb_access_token", "eb_owner_key"]);
+  const token = resolveFleetAuth(c);
   if (!token) return [];
   const { listFleetAgents } = await import("./easybits-oauth.server");
   try {
     return await listFleetAgents(token);
   } catch (e) {
     if (!String(e).includes("401")) throw e;
+    // 401 solo aplica al carril OAuth (JWT que caduca); la key del owner no expira.
+    if (c.eb_owner_key === "1") return [];
     const { refreshOwnerToken } = await import("./easybits-files.server");
     const fresh = await refreshOwnerToken();
     if (!fresh) return [];

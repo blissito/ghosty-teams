@@ -70,6 +70,24 @@ export async function refreshFleetToken(fleetId: string): Promise<string | null>
   }
 }
 
+// Warm seam: pre-calienta el turno de un agente ANTES de que el usuario envíe (se dispara
+// al elegir @handle en el composer). Hoy: resuelve el agente (calienta el grafo de imports
+// + la lectura de gc_agents) y abre la conexión al backend de la flota (DNS/TLS/keep-alive)
+// para que el primer POST /message-stream no pague ese costo. Best-effort, nunca lanza.
+// LÍMITE: el verdadero cuello (cold-start de la SESIÓN del worker) NO se puede calentar
+// desde aquí — no hay endpoint ligero en la flota (solo turnos completos).
+// TODO: cuando EasyBits exponga /warm|session-open, pingearlo aquí para primar la sesión.
+export async function warmAgent(handle: string): Promise<void> {
+  try {
+    const agent = (await resolvedAgents()).find((a) => a.handle === handle);
+    if (!agent || agent.backend.kind !== "fleet") return;
+    const base = process.env.EASYBITS_BASE_URL ?? "https://www.easybits.cloud";
+    await fetch(base, { method: "HEAD" }).catch(() => {}); // calienta la conexión
+  } catch {
+    // best-effort: el warm nunca debe afectar el flujo del usuario
+  }
+}
+
 // ── Media (A2A FilePart) — entrega de adjuntos al agente ────────────────────
 // Contrato: docs/AGENT-MEDIA-CONTRACT.md §2/§3. Un FilePart por adjunto, tipado por
 // MIME → cubre audio/imagen/video/docs/desconocido con una sola forma. Transporte

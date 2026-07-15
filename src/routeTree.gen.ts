@@ -22,6 +22,7 @@ import { Route as ApiAgentAssetRouteImport } from './routes/api.agent-asset'
 import { Route as SetupEasybitsConnectRouteImport } from './routes/setup.easybits.connect'
 import { Route as SetupEasybitsCallbackRouteImport } from './routes/setup.easybits.callback'
 import { Route as ApiWebhookEasybitsRouteImport } from './routes/api.webhook.easybits'
+import { Route as ApiDocXlsxIdRouteImport } from './routes/api.doc-xlsx.$id'
 import { Route as ApiDocDocxIdRouteImport } from './routes/api.doc-docx.$id'
 import { Route as ApiDevDriveRouteImport } from './routes/api.dev.drive'
 import { Route as ApiAttachmentIdRouteImport } from './routes/api.attachment.$id'
@@ -91,6 +92,11 @@ const ApiWebhookEasybitsRoute = ApiWebhookEasybitsRouteImport.update({
   path: '/api/webhook/easybits',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiDocXlsxIdRoute = ApiDocXlsxIdRouteImport.update({
+  id: '/api/doc-xlsx/$id',
+  path: '/api/doc-xlsx/$id',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiDocDocxIdRoute = ApiDocDocxIdRouteImport.update({
   id: '/api/doc-docx/$id',
   path: '/api/doc-docx/$id',
@@ -121,6 +127,7 @@ export interface FileRoutesByFullPath {
   '/api/attachment/$id': typeof ApiAttachmentIdRoute
   '/api/dev/drive': typeof ApiDevDriveRoute
   '/api/doc-docx/$id': typeof ApiDocDocxIdRoute
+  '/api/doc-xlsx/$id': typeof ApiDocXlsxIdRoute
   '/api/webhook/easybits': typeof ApiWebhookEasybitsRoute
   '/setup/easybits/callback': typeof SetupEasybitsCallbackRoute
   '/setup/easybits/connect': typeof SetupEasybitsConnectRoute
@@ -139,6 +146,7 @@ export interface FileRoutesByTo {
   '/api/attachment/$id': typeof ApiAttachmentIdRoute
   '/api/dev/drive': typeof ApiDevDriveRoute
   '/api/doc-docx/$id': typeof ApiDocDocxIdRoute
+  '/api/doc-xlsx/$id': typeof ApiDocXlsxIdRoute
   '/api/webhook/easybits': typeof ApiWebhookEasybitsRoute
   '/setup/easybits/callback': typeof SetupEasybitsCallbackRoute
   '/setup/easybits/connect': typeof SetupEasybitsConnectRoute
@@ -158,6 +166,7 @@ export interface FileRoutesById {
   '/api/attachment/$id': typeof ApiAttachmentIdRoute
   '/api/dev/drive': typeof ApiDevDriveRoute
   '/api/doc-docx/$id': typeof ApiDocDocxIdRoute
+  '/api/doc-xlsx/$id': typeof ApiDocXlsxIdRoute
   '/api/webhook/easybits': typeof ApiWebhookEasybitsRoute
   '/setup/easybits/callback': typeof SetupEasybitsCallbackRoute
   '/setup/easybits/connect': typeof SetupEasybitsConnectRoute
@@ -178,6 +187,7 @@ export interface FileRouteTypes {
     | '/api/attachment/$id'
     | '/api/dev/drive'
     | '/api/doc-docx/$id'
+    | '/api/doc-xlsx/$id'
     | '/api/webhook/easybits'
     | '/setup/easybits/callback'
     | '/setup/easybits/connect'
@@ -196,6 +206,7 @@ export interface FileRouteTypes {
     | '/api/attachment/$id'
     | '/api/dev/drive'
     | '/api/doc-docx/$id'
+    | '/api/doc-xlsx/$id'
     | '/api/webhook/easybits'
     | '/setup/easybits/callback'
     | '/setup/easybits/connect'
@@ -214,6 +225,7 @@ export interface FileRouteTypes {
     | '/api/attachment/$id'
     | '/api/dev/drive'
     | '/api/doc-docx/$id'
+    | '/api/doc-xlsx/$id'
     | '/api/webhook/easybits'
     | '/setup/easybits/callback'
     | '/setup/easybits/connect'
@@ -233,6 +245,7 @@ export interface RootRouteChildren {
   ApiAttachmentIdRoute: typeof ApiAttachmentIdRoute
   ApiDevDriveRoute: typeof ApiDevDriveRoute
   ApiDocDocxIdRoute: typeof ApiDocDocxIdRoute
+  ApiDocXlsxIdRoute: typeof ApiDocXlsxIdRoute
   ApiWebhookEasybitsRoute: typeof ApiWebhookEasybitsRoute
 }
 
@@ -329,6 +342,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiWebhookEasybitsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/doc-xlsx/$id': {
+      id: '/api/doc-xlsx/$id'
+      path: '/api/doc-xlsx/$id'
+      fullPath: '/api/doc-xlsx/$id'
+      preLoaderRoute: typeof ApiDocXlsxIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/doc-docx/$id': {
       id: '/api/doc-docx/$id'
       path: '/api/doc-docx/$id'
@@ -379,6 +399,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiAttachmentIdRoute: ApiAttachmentIdRoute,
   ApiDevDriveRoute: ApiDevDriveRoute,
   ApiDocDocxIdRoute: ApiDocDocxIdRoute,
+  ApiDocXlsxIdRoute: ApiDocXlsxIdRoute,
   ApiWebhookEasybitsRoute: ApiWebhookEasybitsRoute,
 }
 export const routeTree = rootRouteImport

@@ -1,6 +1,7 @@
 import { createFileRoute, useRouter, Link, redirect } from "@tanstack/react-router";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { getSetup, selectFleetAgent, createFleetAgent, disconnectSetup } from "../server/setup";
+import { listFormmyAgentsFn, connectFormmyAgentFn, type FormmyAgent } from "../server/formmy-agents.server";
 import { me, logout } from "../server/auth";
 import { useT } from "../i18n";
 
@@ -36,15 +37,32 @@ function Setup() {
 
   // Selección del paso 2 — SOLO resalta, sin efecto. El agente se crea/conecta hasta
   // "Continuar" (antes clickear ya creaba un FleetAgent en la flota = mal diseño).
-  // Sel = motor nuevo { kind:"new", engine } | agente existente { kind:"existing", id, name }.
+  // Sel = motor nuevo { kind:"new" } | agente de flota existente { kind:"existing" }
+  //     | Agent de Formmy { kind:"formmy" } (asegura su espejo en la flota al conectar).
   type Sel =
     | { kind: "new"; engine: "deepseek" | "claude" }
-    | { kind: "existing"; id: string; name: string };
+    | { kind: "existing"; id: string; name: string }
+    | { kind: "formmy"; id: string; name: string };
   const [sel, setSel] = useState<Sel | null>(null);
   const selId =
-    sel?.kind === "new" ? `new:${sel.engine}` : sel?.kind === "existing" ? sel.id : null;
+    sel?.kind === "new"
+      ? `new:${sel.engine}`
+      : sel?.kind === "formmy"
+        ? `formmy:${sel.id}`
+        : sel?.kind === "existing"
+          ? sel.id
+          : null;
 
-  // Confirmar la selección: recién aquí se CREA (motor nuevo) o se conecta (existente).
+  // Agents de Formmy del owner (el "agente de verdad" es su espejo en la flota).
+  // Carga best-effort; degrada a [] si el puente falla → no bloquea el wizard.
+  const [formmyAgents, setFormmyAgents] = useState<FormmyAgent[]>([]);
+  useEffect(() => {
+    if (step !== 2) return;
+    listFormmyAgentsFn().then(setFormmyAgents).catch(() => setFormmyAgents([]));
+  }, [step]);
+
+  // Confirmar la selección: recién aquí se CREA (motor nuevo), se conecta (flota) o se
+  // asegura el espejo del Agent de Formmy.
   async function confirm() {
     if (!sel) return;
     setBusy("confirm");
@@ -52,6 +70,9 @@ function Setup() {
     try {
       if (sel.kind === "new") {
         await createFleetAgent({ data: { engine: sel.engine } });
+      } else if (sel.kind === "formmy") {
+        const r = await connectFormmyAgentFn({ data: { agentId: sel.id, name: sel.name } });
+        if (!r.ok) throw new Error("401");
       } else {
         await selectFleetAgent({ data: { id: sel.id } });
       }
@@ -167,6 +188,30 @@ function Setup() {
                     <span className="font-medium text-ink">{a.name}</span>
                   </span>
                   <span className="text-xs text-muted">{a.workerTemplate}</span>
+                </button>
+              ))}
+
+              {/* Agents de Formmy del owner: conectarlos asegura su espejo en la flota
+                  (el "agente de verdad" donde corre la inferencia en la microVM). */}
+              {formmyAgents.length > 0 && (
+                <p className="pt-2 text-xs text-muted">{t("O uno de tus agentes de Formmy:")}</p>
+              )}
+              {formmyAgents.map((a) => (
+                <button
+                  key={`formmy:${a.id}`}
+                  onClick={() => setSel({ kind: "formmy", id: a.id, name: a.name })}
+                  disabled={!!busy}
+                  className={`flex w-full items-center justify-between rounded-lg border px-3 py-2 text-left text-sm disabled:opacity-50 ${
+                    selId === `formmy:${a.id}` ? "border-brand bg-brand/15 ring-1 ring-brand" : "border-border bg-surface hover:border-brand"
+                  }`}
+                >
+                  <span className="flex items-center gap-2">
+                    <img src="/ghosty.svg" alt="" className="h-5 w-5" />
+                    <span className="font-medium text-ink">{a.name}</span>
+                  </span>
+                  <span className="text-xs text-muted">
+                    {a.hasFleetMirror ? t("en la flota") : t("Formmy")}
+                  </span>
                 </button>
               ))}
 

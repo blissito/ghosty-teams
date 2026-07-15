@@ -1,15 +1,29 @@
 import { createServerFn } from "@tanstack/react-start";
 
+// Resuelve el Bearer para operar la flota EasyBits del owner. Modelo multitenant
+// nuevo: el provisioner siembra `eb_owner_key=1` y la caja lleva la key scoped del
+// OWNER en `EASYBITS_API_KEY` — sirve como Bearer para /api/v2/fleet-agents (EB
+// scopa por el userId de la key → fa.ownerId = owner). Legacy (sin el marcador):
+// el OAuth in-chat del owner (`eb_access_token`). Devuelve null si ninguno aplica.
+export function resolveFleetAuth(c: {
+  eb_owner_key?: string;
+  eb_access_token?: string;
+}): string | null {
+  if (c.eb_owner_key === "1" && process.env.EASYBITS_API_KEY) return process.env.EASYBITS_API_KEY;
+  return c.eb_access_token ?? null;
+}
+
 // Estado del wizard (para el loader de /setup).
 export const getSetup = createServerFn({ method: "GET" }).handler(async () => {
   const { getConfigMany } = await import("../config.server");
-  const c = await getConfigMany(["eb_connected", "eb_access_token", "fleet_agent_id", "fleet_name"]);
+  const c = await getConfigMany(["eb_connected", "eb_access_token", "eb_owner_key", "fleet_agent_id", "fleet_name"]);
   const connected = c.eb_connected === "1";
   const hasAgent = !!c.fleet_agent_id;
+  const fleetAuth = resolveFleetAuth(c);
   // Traemos los agentes SIEMPRE que haya conexión (no solo en paso 2): así "← Cambiar
   // agente" puede volver al paso 2 con la lista ya cargada, sin recargar la página.
   let agents: Array<{ id: string; name: string; assistantName?: string; workerTemplate?: string }> = [];
-  if (connected && c.eb_access_token) {
+  if (connected && fleetAuth) {
     // La lista de agentes de la flota es SOLO para el picker del wizard; `hasAgent` ya
     // viene de la DB (fleet_agent_id). Si la API de flota falla (token OAuth expirado →
     // 401, red, etc.) NO debe tumbar la app: el loader de `/` llama a getSetup en cada
@@ -25,7 +39,7 @@ export const getSetup = createServerFn({ method: "GET" }).handler(async () => {
           workerTemplate: a.workerTemplate,
         }));
       try {
-        agents = await fetchAgents(c.eb_access_token);
+        agents = await fetchAgents(fleetAuth);
       } catch (e) {
         // 401 → el access token caducó: refrescamos con el refresh_token y reintentamos
         // (así el wizard/dropdown reaparecen sin re-conectar a mano). Requiere connect
@@ -98,8 +112,9 @@ async function adoptTeamResources(accessToken: string): Promise<void> {
 export const createFleetAgent = createServerFn({ method: "POST" })
   .validator((d: { engine?: "deepseek" | "claude" }) => d)
   .handler(async ({ data }) => {
-    const { getConfig, setConfig } = await import("../config.server");
-    const token = await getConfig("eb_access_token");
+    const { getConfigMany, setConfig } = await import("../config.server");
+    const c = await getConfigMany(["eb_access_token", "eb_owner_key"]);
+    const token = resolveFleetAuth(c);
     if (!token) throw new Error("EasyBits no conectado");
     const { createFleetAgent: create } = await import("./easybits-oauth.server");
     const agent = await create(token, { engine: data.engine ?? "deepseek" });
@@ -132,8 +147,9 @@ export const disconnectSetup = createServerFn({ method: "POST" })
 export const selectFleetAgent = createServerFn({ method: "POST" })
   .validator((d: { id: string }) => d)
   .handler(async ({ data }) => {
-    const { getConfig, setConfig } = await import("../config.server");
-    const token = await getConfig("eb_access_token");
+    const { getConfigMany, setConfig } = await import("../config.server");
+    const c = await getConfigMany(["eb_access_token", "eb_owner_key"]);
+    const token = resolveFleetAuth(c);
     if (!token) throw new Error("EasyBits no conectado");
     const { listFleetAgents } = await import("./easybits-oauth.server");
     const agent = (await listFleetAgents(token)).find((a) => a.id === data.id);

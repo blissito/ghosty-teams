@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { Bot, Plus, Trash2, X, Bell, Smile, Loader2, Pencil } from "lucide-react";
 import { FleetCapabilities } from "./FleetCapabilities";
 import { currentPushState, enablePush, disablePush } from "../utils/push-subscribe";
-import { me, logout, clearMeCache } from "../server/auth";
+import { me, cachedMe, peekMe, logout, clearMeCache } from "../server/auth";
 import { getMyNicknameFn, setMyNicknameFn } from "../server/chat";
 import { getSetup } from "../server/setup";
 import { createInvite, getInvite, listInvitesFn, revokeInviteFn } from "../server/invites";
@@ -45,12 +45,27 @@ export type SettingsData = {
 let settingsDataCache: SettingsData | null = null;
 
 export async function loadSettingsData(): Promise<SettingsData> {
-  const user = await me();
+  const user = await cachedMe(); // reusa la identidad ya caliente en el cliente
   const setup = user?.isOwner ? await getSetup() : null;
   const agentAccess = user ? await agentAccessFn() : { canManage: false };
   const data = { user, setup, agentAccess };
   settingsDataCache = data;
   return data;
+}
+
+/**
+ * Estado inicial SÍNCRONO para pintar sin flash de "Cargando…":
+ * 1) la cache completa (2ª apertura) → todo instantáneo;
+ * 2) si no, la identidad ya cacheada (`peekMe`) → pinta la General completa al
+ *    instante (avatar/nombre/Owner correctos); `setup`/`agentAccess` los rellena
+ *    la revalidación en background (solo afectan tabs Agentes/Emojis del rail).
+ * Solo cae a `null` (spinner) en frío real (identidad aún sin resolver).
+ */
+function seedSettingsData(): SettingsData | null {
+  if (settingsDataCache) return settingsDataCache;
+  const peeked = peekMe();
+  if (peeked === undefined) return null;
+  return { user: peeked, setup: null, agentAccess: { canManage: false } };
 }
 
 /**
@@ -71,7 +86,7 @@ export function SettingsContent({
 }) {
   const t = useT();
   const router = useRouter();
-  const [data, setData] = useState<SettingsData | null>(settingsDataCache);
+  const [data, setData] = useState<SettingsData | null>(seedSettingsData);
   const [invite, setInvite] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -174,14 +189,16 @@ export function SettingsContent({
         </div>
 
         <div className="thin-scroll flex-1 overflow-y-auto px-6 pb-6">
-          {/* Mientras la identidad/setup cargan (primer open sin cache) mostramos carga
-              explícita — NO el estado parcial (avatar vacío / "Miembro" / sin Owner). */}
-          {tab === "general" && !data && (
+          {/* Solo mostramos "Cargando…" en frío REAL (identidad aún sin resolver, sin
+              cache ni `peekMe`). Con la identidad ya caliente, la General pinta al
+              instante — el badge Owner/Miembro es correcto desde el arranque, y el link
+              de invitación tiene su propio placeholder ("Generando link…"). */}
+          {tab === "general" && !user && (
             <div className="flex items-center gap-2 py-10 text-sm text-muted">
               <Loader2 size={16} className="animate-spin" /> {t("Cargando…")}
             </div>
           )}
-          {tab === "general" && data && (
+          {tab === "general" && user && (
             <>
               {/* Identidad */}
               <div className="mb-4 flex items-center gap-3 rounded-xl border border-border bg-surface-2 p-4">
@@ -213,8 +230,9 @@ export function SettingsContent({
                   <div className="flex items-center gap-2">
                     <input
                       readOnly
-                      value={invite ?? t("Generando link…")}
-                      className="flex-1 rounded-lg border border-border bg-surface px-3 py-2 text-xs text-ink"
+                      disabled={!invite || busy}
+                      value={busy ? t("Regenerando…") : invite ?? t("Generando link…")}
+                      className="flex-1 rounded-lg border border-border bg-surface px-3 py-2 text-xs text-ink disabled:cursor-not-allowed disabled:opacity-50"
                     />
                     <button
                       onClick={copy}
@@ -551,11 +569,14 @@ function NicknameCard() {
   const [initial, setInitial] = useState("");
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [loading, setLoading] = useState(true); // cargando el nickname actual → input disabled
   useEffect(() => {
-    getMyNicknameFn().then((r) => {
-      setNickname(r.nickname);
-      setInitial(r.nickname);
-    });
+    getMyNicknameFn()
+      .then((r) => {
+        setNickname(r.nickname);
+        setInitial(r.nickname);
+      })
+      .finally(() => setLoading(false));
   }, []);
   const dirty = nickname.trim() !== initial.trim();
   async function save() {
@@ -580,12 +601,13 @@ function NicknameCard() {
           onChange={(e) => setNickname(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && save()}
           maxLength={40}
-          placeholder={t("Tu apodo…")}
-          className="flex-1 rounded-lg border border-border bg-surface px-3 py-2 text-sm text-ink"
+          disabled={loading || saving}
+          placeholder={loading ? t("Cargando…") : t("Tu apodo…")}
+          className="flex-1 rounded-lg border border-border bg-surface px-3 py-2 text-sm text-ink disabled:cursor-not-allowed disabled:opacity-50"
         />
         <button
           onClick={save}
-          disabled={!dirty || saving}
+          disabled={loading || !dirty || saving}
           className="grid min-w-[92px] place-items-center rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-brand-fg disabled:opacity-50"
         >
           {saving ? <Loader2 size={14} className="animate-spin" /> : saved ? t("Guardado") : t("Guardar")}

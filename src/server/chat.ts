@@ -421,28 +421,30 @@ export const postMessage = createServerFn({ method: "POST" })
     // fleetThread = clave de conversación de la FLOTA (memoria + worker pegajoso),
     // DESACOPLADA del hilo de UI: los top-level comparten "flow" del canal → UN worker +
     // memoria continua; un hilo abierto a propósito conserva su propia conversación.
-    const respondents: { handle: string; parent: number | null; fleetThread: string }[] = [];
+    const respondents: { handle: string; parent: number | null; fleetThread: string; shellId: number }[] = [];
     if (mentionedList.length) {
       const parentFor = data.parentId; // top-level → inline (null); en hilo → mismo hilo
       const fleetThread = data.parentId === null ? "flow" : String(data.parentId);
-      for (const h of mentionedList) respondents.push({ handle: h, parent: parentFor, fleetThread });
+      for (const h of mentionedList) respondents.push({ handle: h, parent: parentFor, fleetThread, shellId: 0 });
     } else if (data.parentId !== null && parent?.agent_handle && agents.some((a) => a.handle === parent.agent_handle)) {
-      respondents.push({ handle: parent.agent_handle, parent: data.parentId, fleetThread: String(data.parentId) });
+      respondents.push({ handle: parent.agent_handle, parent: data.parentId, fleetThread: String(data.parentId), shellId: 0 });
     }
-    // Un "pensando…" por agente (cada uno con su avatar); el cliente dispara askAgent
-    // por cada respondent y cada uno limpia SOLO su propio status al responder.
+    // Caja caliente: la cáscara del agente se crea EAGER (kind:"msg" VACÍA, con avatar+nombre)
+    // aquí mismo → aparece al instante y PERMANECE; el turno (askAgent) streamea sobre este
+    // MISMO id vía message:body/delta. Sin "pensando…" que borrar/recrear → cero parpadeo.
+    // El cliente recibe el shellId por respondent y se lo pasa a askAgent.
     for (const r of respondents) {
       const ag = agents.find((a) => a.handle === r.handle);
-      await db.postAgent(channel.id, r.parent, "👾 pensando…", "status", r.handle, ag?.name ?? "Ghosty", topic, ag?.avatar ?? "");
-    }
-    if (respondents.length) {
-      bus.publish(bus.ch.room(channel.id), { t: "refresh", channelId: channel.id, parentId: respondents[0].parent });
+      const { id: shellId } = await db.postAgent(channel.id, r.parent, "", "msg", r.handle, ag?.name ?? "Ghosty", topic, ag?.avatar ?? "");
+      r.shellId = shellId;
+      const shell = await db.getMessage(shellId);
+      if (shell) bus.publish(bus.ch.room(channel.id), { t: "message:new", msg: shell });
     }
     return {
       ok: true as const,
       id,
       needsAgent: respondents.length > 0,
-      respondents, // [{handle, parent}] → el cliente llama askAgent por cada uno
+      respondents, // [{handle, parent, fleetThread, shellId}] → el cliente llama askAgent por cada uno
     };
   });
 
@@ -457,6 +459,7 @@ export const askAgent = createServerFn({ method: "POST" })
       handle: string;
       topic?: string;
       fleetThread?: string; // clave de flota (desacoplada del hilo UI; ver postMessage)
+      shellId?: number; // caja caliente: cáscara ya creada por postMessage (reutilizar su id)
       attachments?: { fileId: string; mime: string; size: number; name: string }[];
     }) => d
   )
@@ -469,11 +472,25 @@ export const askAgent = createServerFn({ method: "POST" })
     const agent = (await resolvedAgents()).find((a) => a.handle === data.handle);
     const name = agent?.name ?? "Ghosty";
 
+    // Root del hilo (si aplica): fuente del topic heredado y del contexto sembrado (abajo).
+    const root = data.parentId != null ? await db.getMessage(data.parentId) : null;
     // El reply es una respuesta de hilo (parentId no-null); hereda el topic del root.
-    let topic = data.topic;
-    if (topic == null && data.parentId != null) {
-      const root = await db.getMessage(data.parentId);
-      topic = root?.topic ?? "general";
+    const topic = data.topic ?? (data.parentId != null ? root?.topic ?? "general" : undefined);
+
+    // Continuidad de contexto en hilos: un hilo abierto sobre la respuesta de un agente
+    // arranca con groupId nuevo (fleetThread=parentId) → memoria del worker VACÍA. En el
+    // PRIMER turno de agente del hilo sembramos el mensaje RAÍZ como contexto para que
+    // referencias como "esa db" tengan referente (modelo Slack: el hilo muestra su root).
+    // La cáscara VACÍA recién creada no cuenta como turno previo (body sin texto).
+    let text = data.body;
+    if (data.parentId != null && root) {
+      const replies = await db.listThread(data.parentId).catch(() => []);
+      const priorAgentTurn = replies.some((m) => m.agent_handle && m.kind === "msg" && (m.body ?? "").trim());
+      const rootBody = (root.body ?? "").trim();
+      if (!priorAgentTurn && rootBody) {
+        const ctx = rootBody.length > 2000 ? rootBody.slice(0, 2000) + "…" : rootBody;
+        text = `[Contexto del hilo — mensaje raíz de ${root.sender || "el remitente"}]\n${ctx}\n\n[Mensaje]\n${data.body}`;
+      }
     }
 
     // Media de entrada: los adjuntos del usuario → FileParts (uri firmada / bytes).
@@ -500,14 +517,13 @@ export const askAgent = createServerFn({ method: "POST" })
       handle: data.handle,
       groupId,
       sender: data.sender,
-      text: data.body,
+      text,
       parts,
       currentDoc,
       createShell: async () => {
-        // Quita el "pensando…" en el cliente SIN revalidar (revalidar pisaría los deltas).
-        const clearedIds = await db.clearStatus(channel.id, data.parentId, data.handle);
-        for (const sid of clearedIds)
-          bus.publish(bus.ch.room(channel.id), { t: "message:deleted", id: sid, channelId: channel.id, parentId: data.parentId });
+        // Caja caliente: la cáscara ya fue creada EAGER por postMessage → reutiliza su id
+        // (cero borrar/recrear, cero parpadeo). Fallback (cliente sin shellId): créala aquí.
+        if (data.shellId != null) return data.shellId;
         const { id } = await db.postAgent(channel.id, data.parentId, "", "msg", data.handle, name, topic ?? "general", agent?.avatar ?? "");
         const shell = await db.getMessage(id);
         if (shell) bus.publish(bus.ch.room(channel.id), { t: "message:new", msg: shell });
@@ -599,5 +615,16 @@ export const askAgent = createServerFn({ method: "POST" })
     } catch (e) {
       console.error("[artifact] detect/mint failed", e);
     }
+    return { ok: true as const };
+  });
+
+// Warm seam: el cliente lo dispara fire-and-forget al ELEGIR un @agente en el composer,
+// antes de enviar → pre-calienta el turno (resolución del agente + conexión a la flota).
+// Best-effort: nunca lanza, nunca bloquea el envío. Ver agents.server warmAgent().
+export const warmAgentFn = createServerFn({ method: "POST" })
+  .validator((d: { handle: string }) => d)
+  .handler(async ({ data }) => {
+    const { warmAgent } = await import("../agents.server");
+    await warmAgent(data.handle).catch(() => {});
     return { ok: true as const };
   });

@@ -162,7 +162,12 @@ export function viewFromAttachment(a: {
 const DEFAULT_W = 680;
 const MIN_W = 360;
 const CHAT_MIN = 380; // deja SIEMPRE espacio de chat a la izquierda (split, no overlay)
+const SIDEBAR_W = 240; // el sidebar (md:w-60) también es hermano in-flow → réstalo del ancho
 const STORE_KEY = "eb_artifact_w";
+// Máximo ancho del panel dejando SIEMPRE sidebar (240) + chat (380) visibles. Sin restar el
+// sidebar, en tablet el centro se aplastaba a ~1 palabra/línea (chat = vw − panel, sin contar
+// los 240 del sidebar). En overlay (<lg) el max-w-full manda; este clamp aplica al split.
+const maxPanelW = (vw: number) => Math.max(MIN_W, vw - SIDEBAR_W - CHAT_MIN);
 
 export default function ArtifactPanel({
   artifact: rootArtifact,
@@ -182,8 +187,7 @@ export default function ArtifactPanel({
   const [width, setWidth] = useState<number>(() => {
     if (typeof window === "undefined") return DEFAULT_W;
     const saved = Number(localStorage.getItem(STORE_KEY));
-    const max = window.innerWidth - CHAT_MIN;
-    return Math.min(saved || DEFAULT_W, max);
+    return Math.min(saved || DEFAULT_W, maxPanelW(window.innerWidth));
   });
   const widthRef = useRef(width);
   widthRef.current = width;
@@ -231,7 +235,7 @@ export default function ArtifactPanel({
   };
   const docBadge =
     artifact?.kind === "sheet"
-      ? "CSV"
+      ? "XLSX"
       : artifact?.kind === "doc"
         ? "DOCX"
         : artifact?.kind === "office"
@@ -240,9 +244,11 @@ export default function ArtifactPanel({
   const downloadHref =
     artifact?.kind === "doc"
       ? `/api/doc-docx/${encodeURIComponent(artifact.documentId)}?name=${encodeURIComponent(artifact.title || "documento")}`
-      : artifact?.kind === "office"
-        ? artifact.src
-        : null; // sheet → descarga CSV client-side (blob), ver doDownload
+      : artifact?.kind === "sheet"
+        ? `/api/doc-xlsx/${encodeURIComponent(artifact.documentId)}?name=${encodeURIComponent(artifact.title || "hoja")}`
+        : artifact?.kind === "office"
+          ? artifact.src
+          : null;
   const artifactId = !artifact
     ? null
     : artifact.kind === "office"
@@ -366,28 +372,18 @@ export default function ArtifactPanel({
     const el = scrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;
   }, [draftLen, draftStreaming]);
-  // Descarga con FEEDBACK: el export docx (doc) tarda; fetch same-origin → blob → download,
+  // Descarga con FEEDBACK: doc→.docx (compila en EasyBits) y sheet→.xlsx (convierte el CSV
+  // fuente con SheetJS en /api/doc-xlsx) tardan un poco; fetch same-origin → blob → download,
   // con spinner. Office = URL pública externa → navegación directa (evita CORS del blob).
-  // Sheet = el CSV vive en el cliente → blob directo, sin red.
   const doDownload = async () => {
     if (downloading) return;
-    if (artifact?.kind === "sheet") {
-      const blob = new Blob([artifact.csv], { type: "text/csv;charset=utf-8" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `${(artifact.title || "hoja").replace(/[^\w.\- ]/g, "_")}.csv`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 4000);
-      return;
-    }
     if (!downloadHref) return;
     if (artifact?.kind === "office") {
       window.open(downloadHref, "_blank", "noopener");
       return;
     }
+    const ext = artifact?.kind === "sheet" ? "xlsx" : "docx";
+    const fallbackName = artifact?.kind === "sheet" ? "hoja" : "documento";
     setDownloading(true);
     try {
       const r = await fetch(downloadHref);
@@ -396,7 +392,7 @@ export default function ArtifactPanel({
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `${(artifact?.title || "documento").replace(/[^\w.\- ]/g, "_")}.docx`;
+      a.download = `${(artifact?.title || fallbackName).replace(/[^\w.\- ]/g, "_")}.${ext}`;
       document.body.appendChild(a);
       a.click();
       a.remove();
@@ -440,7 +436,7 @@ export default function ArtifactPanel({
     const onMove = (e: PointerEvent) => {
       if (!dragging.current) return;
       // Panel anclado a la derecha → ancho = viewport - clientX.
-      const w = Math.min(Math.max(window.innerWidth - e.clientX, MIN_W), window.innerWidth - CHAT_MIN);
+      const w = Math.min(Math.max(window.innerWidth - e.clientX, MIN_W), maxPanelW(window.innerWidth));
       setWidth(w);
     };
     const onUp = () => {
@@ -458,6 +454,14 @@ export default function ArtifactPanel({
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
     };
+  }, []);
+
+  // Re-clampa el ancho al redimensionar la ventana: un ancho guardado en una sesión desktop
+  // ancha (localStorage) NO debe heredarse tal cual en tablet y aplastar el centro.
+  useEffect(() => {
+    const onResize = () => setWidth((w) => Math.min(w, maxPanelW(window.innerWidth)));
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
   }, []);
 
   // ↗ "abrir en pestaña nueva" (reemplaza el botón expandir, que era defectuoso). Donde
@@ -480,16 +484,17 @@ export default function ArtifactPanel({
           El contenido usa la sombra `artifact` (= detail ?? rootArtifact), envuelto para TS. */}
       {rootArtifact ? (
         <>
-          {/* Backdrop SOLO en móvil (overlay). En desktop el panel va en-flujo (split). */}
+          {/* Backdrop en móvil Y tablet (overlay hasta lg). Solo en desktop ≥lg el panel va
+              en-flujo (split de 3 columnas); en tablet iría aplastando el centro. */}
           <motion.div
-            className="fixed inset-0 z-40 bg-black/60 md:hidden"
+            className="fixed inset-0 z-40 bg-black/60 lg:hidden"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             onClick={onClose}
           />
           <motion.aside
-            className="fixed right-0 top-0 z-50 flex h-full max-w-full overflow-hidden border-l border-border bg-surface shadow-2xl md:relative md:z-auto md:h-auto md:max-w-[75vw] md:shrink-0 md:shadow-none md:self-stretch"
+            className="fixed right-0 top-0 z-50 flex h-full max-w-full overflow-hidden border-l border-border bg-surface shadow-2xl lg:relative lg:z-auto lg:h-auto lg:max-w-[75vw] lg:shrink-0 lg:shadow-none lg:self-stretch"
             initial={{ width: 0 }}
             animate={{ width }}
             exit={{ width: 0 }}
@@ -551,12 +556,12 @@ export default function ArtifactPanel({
                     editor embebido. Aquí solo Descargar y, para un .docx adjunto, Actualizar. */}
                 {isDocLike ? (
                   <>
-                    {downloadHref || artifact.kind === "sheet" ? (
+                    {downloadHref ? (
                       <button
                         type="button"
                         onClick={doDownload}
                         disabled={downloading}
-                        title={downloading ? t("Descargando…") : artifact.kind === "sheet" ? t("Descargar CSV") : artifact.kind === "office" ? t("Descargar") : t("Descargar Word")}
+                        title={downloading ? t("Descargando…") : artifact.kind === "sheet" ? t("Descargar Excel") : artifact.kind === "office" ? t("Descargar") : t("Descargar Word")}
                         className="grid size-7 place-items-center rounded-md text-muted transition hover:bg-surface-3 hover:text-brand disabled:opacity-60"
                       >
                         {downloading ? <Loader2 size={15} className="animate-spin" /> : <Download size={15} />}

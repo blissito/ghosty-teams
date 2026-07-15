@@ -113,18 +113,23 @@ export const postDmMessageFn = createServerFn({ method: "POST" })
         bus.publish(bus.ch.user(sub), { t: "message:new", msg: created, nonce: data.nonce });
     await notifyDm(data.id, members, me.sub, me.name, body).catch(() => {});
 
-    // @agente en un DM → responde inline en el mismo DM.
+    // @agente en un DM → responde inline en el mismo DM. Caja caliente: la cáscara del
+    // agente se crea EAGER (kind:"msg" VACÍA, con avatar+nombre) aquí → aparece al instante
+    // y PERMANECE; askDmAgentFn streamea sobre este mismo id. Sin "pensando…" que borrar.
+    let shellId: number | null = null;
     if (mentioned) {
       const ag = agents.find((a) => a.handle === mentioned);
-      await db.postDmAgent(data.id, "👾 pensando…", "status", mentioned, ag?.name ?? "Ghosty");
-      for (const sub of members)
-        bus.publish(bus.ch.user(sub), { t: "refresh", channelId: null, parentId: null, dmId: data.id });
+      const { id: sid } = await db.postDmAgent(data.id, "", "msg", mentioned, ag?.name ?? "Ghosty", ag?.avatar ?? "");
+      shellId = sid;
+      const shell = await db.getMessage(sid);
+      if (shell) for (const sub of members) bus.publish(bus.ch.user(sub), { t: "message:new", msg: shell });
     }
     return {
       ok: true as const,
       id,
       needsAgent: mentioned != null,
       agentHandle: mentioned ?? null,
+      shellId,
     };
   });
 
@@ -138,6 +143,7 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
       body: string;
       sender: string;
       handle: string;
+      shellId?: number; // caja caliente: cáscara ya creada por postDmMessageFn
       attachments?: { fileId: string; mime: string; size: number; name: string }[];
     }) => d
   )
@@ -165,9 +171,9 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
       text: data.body,
       parts,
       createShell: async () => {
-        const clearedIds = await db.clearDmStatus(data.id);
-        for (const sid of clearedIds)
-          fanout({ t: "message:deleted", id: sid, channelId: null, parentId: null, dmId: data.id });
+        // Caja caliente: la cáscara ya fue creada EAGER por postDmMessageFn → reutiliza su
+        // id. Fallback (cliente sin shellId): créala aquí.
+        if (data.shellId != null) return data.shellId;
         const { id } = await db.postDmAgent(data.id, "", "msg", data.handle, name, agent?.avatar ?? "");
         const shell = await db.getMessage(id);
         if (shell) fanout({ t: "message:new", msg: shell });

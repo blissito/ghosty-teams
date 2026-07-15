@@ -70,6 +70,21 @@ export const Markdown = memo(function Markdown({
 }) {
   const withLinks: Components = {
     ...components,
+    // Imágenes del agente (memes/gráficas) al tamaño de Slack: alto acotado (~320px),
+    // ancho de la columna, sin recorte (object-contain), clic → abre el original en pestaña.
+    // Sin esto una imagen markdown crecía a lo alto de todo el mensaje.
+    img: ({ node, src, alt, ...props }: { node?: unknown; src?: string; alt?: string }) => (
+      <a href={src} target="_blank" rel="noreferrer noopener" className="mt-1 block w-fit">
+        <img
+          src={src}
+          alt={alt ?? ""}
+          loading="lazy"
+          decoding="async"
+          className="max-h-80 w-auto max-w-full rounded-lg border border-border object-contain"
+          {...props}
+        />
+      </a>
+    ),
     a: ({ node, href, children, ...props }: { node?: unknown; href?: string; children?: React.ReactNode }) => {
       const isArtifact = !!(artifactUrl && href && cleanUrl(href) === cleanUrl(artifactUrl) && onOpenArtifact);
       if (isArtifact) {

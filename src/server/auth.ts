@@ -31,6 +31,14 @@ export async function cachedMe(): Promise<Me> {
   _meCache = await me();
   return _meCache;
 }
+// Lectura SÍNCRONA de la identidad ya cacheada (sin round-trip). `undefined` = aún
+// sin resolver; `null` = sin sesión; objeto = user. __root.beforeLoad corre `cachedMe`
+// en cada nav, así que en el cliente casi siempre está poblado → permite pintar al
+// instante (ej. Preferencias) sin esperar la red.
+export function peekMe(): Me | undefined {
+  return _meCache;
+}
+
 // Al hacer logout hay que invalidar la cache o una nav protegida vería al usuario
 // viejo (el guard no redirigiría) hasta la siguiente revalidación.
 export function clearMeCache() {
