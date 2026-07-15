@@ -18,6 +18,7 @@ import {
   addAgentCollaboratorFn,
   removeAgentCollaboratorFn,
 } from "../server/agents";
+import { listFormmyAgentsFn, ensureFormmyMirrorFn, type FormmyAgent } from "../server/formmy-agents";
 import { listEmojisFn, addEmojiFn, removeEmojiFn } from "../server/emojis";
 import type { CustomEmoji } from "../db.server";
 import { useT } from "../i18n";
@@ -956,11 +957,15 @@ function AddAgentForm({ onClose, onCreated }: { onClose: () => void; onCreated: 
   const [fleetId, setFleetId] = useState("");
   const [webhookUrl, setWebhookUrl] = useState("");
   const [fleet, setFleet] = useState<{ id: string; name: string }[] | null>(null);
+  const [formmy, setFormmy] = useState<FormmyAgent[]>([]);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
   useEffect(() => {
     listFleetAgentsFn().then(setFleet).catch(() => setFleet([]));
+    // Agents de Formmy del owner: al elegir uno se asegura su espejo en la flota
+    // (el "agente de verdad" donde corre la inferencia) antes de crear la fila.
+    listFormmyAgentsFn().then(setFormmy).catch(() => setFormmy([]));
   }, []);
 
   async function create() {
@@ -968,12 +973,24 @@ function AddAgentForm({ onClose, onCreated }: { onClose: () => void; onCreated: 
     setBusy(true);
     setErr(null);
     try {
+      // Si el seleccionado es un Agent de Formmy (`formmy:<id>`), primero aseguramos su
+      // espejo en la flota → obtenemos su fleetId real y con ese creamos la fila.
+      let realFleetId = fleetId;
+      if (kind === "fleet" && fleetId.startsWith("formmy:")) {
+        const r = await ensureFormmyMirrorFn({ data: { agentId: fleetId.slice("formmy:".length) } });
+        if (!r.ok) {
+          setErr(r.needsOAuth ? t("Conecta tu EasyBits del lado de Formmy y reintenta.") : t("No se pudo asegurar el agente en la flota."));
+          setBusy(false);
+          return;
+        }
+        realFleetId = r.fleetId;
+      }
       await createAgentFn({
         data: {
           handle: handle.trim(),
           name: name.trim(),
           kind,
-          fleetId: kind === "fleet" ? fleetId : undefined,
+          fleetId: kind === "fleet" ? realFleetId : undefined,
           webhookUrl: kind === "webhook" ? webhookUrl.trim() : undefined,
         },
       });
@@ -1010,13 +1027,24 @@ function AddAgentForm({ onClose, onCreated }: { onClose: () => void; onCreated: 
         {kind === "fleet" ? (
           <select value={fleetId} onChange={(e) => setFleetId(e.target.value)} className={input}>
             <option value="">
-              {fleet === null ? t("Cargando flota…") : fleet.length ? t("Elige un agente…") : t("Sin agentes en tu flota")}
+              {fleet === null ? t("Cargando flota…") : fleet.length || formmy.length ? t("Elige un agente…") : t("Sin agentes en tu flota")}
             </option>
-            {fleet?.map((f) => (
-              <option key={f.id} value={f.id}>
-                {f.name}
-              </option>
-            ))}
+            {fleet && fleet.length > 0 && (
+              <optgroup label={t("De tu flota EasyBits")}>
+                {fleet.map((f) => (
+                  <option key={f.id} value={f.id}>{f.name}</option>
+                ))}
+              </optgroup>
+            )}
+            {formmy.length > 0 && (
+              <optgroup label={t("De tus agentes de Formmy")}>
+                {formmy.map((a) => (
+                  <option key={`formmy:${a.id}`} value={`formmy:${a.id}`}>
+                    {a.name}{a.hasFleetMirror ? "" : t(" · nuevo en flota")}
+                  </option>
+                ))}
+              </optgroup>
+            )}
           </select>
         ) : (
           <input

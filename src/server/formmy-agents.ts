@@ -65,6 +65,28 @@ export const listFormmyAgentsFn = createServerFn({ method: "GET" }).handler(
 // Conecta un Agent de Formmy a este team: asegura su FleetAgent espejo (bajo la cuenta
 // del owner) y cablea el @ghosty en gc_config. `needsOAuth` si el owner no tiene EasyBits
 // conectado del lado Formmy (no debería pasar en el flujo nuevo, pero lo señalamos).
+// Asegura el espejo en la flota de un Agent de Formmy y devuelve su fleetId (SIN tocar
+// gc_config) — para "Agregar agente" en Ajustes: luego createAgentFn crea la fila gc_agents
+// con ese fleetId (el token lo resuelve de la flota del owner). Distinto de connectFormmyAgentFn,
+// que cablea el @ghosty del wizard.
+export const ensureFormmyMirrorFn = createServerFn({ method: "POST" })
+  .validator((d: { agentId: string }) => d)
+  .handler(async ({ data }): Promise<{ ok: true; fleetId: string } | { ok: false; needsOAuth?: boolean }> => {
+    const ctx = await ownerContext();
+    if (!ctx) return { ok: false };
+    const res = await partnerCall({
+      email: ctx.email,
+      origin: ctx.origin,
+      intent: "ensure",
+      agentId: data.agentId,
+    });
+    if (res.status === 409) return { ok: false, needsOAuth: true };
+    if (!res.ok) return { ok: false };
+    const j = (await res.json()) as { ok?: boolean; fleetId?: string };
+    if (!j.ok || !j.fleetId) return { ok: false };
+    return { ok: true, fleetId: j.fleetId };
+  });
+
 export const connectFormmyAgentFn = createServerFn({ method: "POST" })
   .validator((d: { agentId: string; name?: string }) => d)
   .handler(async ({ data }) => {
