@@ -1006,6 +1006,7 @@ export type DmConversation = {
   title: string | null;
   last_at: number | null;
   members: MemberInfo[]; // los OTROS (excluye al usuario actual)
+  agent_handle: string | null; // DM 1:1 con un agente de la flota (null = entre personas)
 };
 
 // Abre (o reusa) una conversación con estos subs. member_key = subs ordenados →
@@ -1034,7 +1035,7 @@ export async function openDmConversation(subs: string[], createdBy: string): Pro
 // ordenadas por reciente (las vacías al final).
 export async function listDmConversations(userSub: string): Promise<DmConversation[]> {
   const convs = await dbq(
-    `SELECT c.id, c.is_group, c.title,
+    `SELECT c.id, c.is_group, c.title, c.agent_handle,
             (SELECT MAX(created_at) FROM gc_messages m WHERE m.dm_id = c.id) AS last_at
        FROM gc_dm_conversations c
        JOIN gc_dm_members mm ON mm.conversation_id = c.id
@@ -1058,13 +1059,58 @@ export async function listDmConversations(userSub: string): Promise<DmConversati
     if (!byConv.has(cid)) byConv.set(cid, []);
     byConv.get(cid)!.push({ sub: r.sub!, name: r.name ?? "", email: r.email ?? "", avatar: r.avatar ?? "" });
   }
-  return convs.map((r) => ({
-    id: num(r.id),
-    is_group: num(r.is_group),
-    title: r.title,
-    last_at: r.last_at == null ? null : num(r.last_at),
-    members: byConv.get(num(r.id)) ?? [],
-  }));
+  // DMs de agente: el "otro" es un agente (no un gc_user) → resolvemos su name/avatar de
+  // gc_agents para que la UI lo muestre como miembro sintético, sin cambios en el render.
+  const agentHandles = [...new Set(convs.map((r) => r.agent_handle).filter(Boolean))] as string[];
+  const agentByHandle = new Map<string, { name: string; avatar: string }>();
+  if (agentHandles.length) {
+    const ph2 = agentHandles.map(() => "?").join(",");
+    const arows = await dbq(`SELECT handle, name, avatar FROM gc_agents WHERE handle IN (${ph2})`, agentHandles);
+    for (const a of arows) agentByHandle.set(a.handle!, { name: a.name ?? a.handle!, avatar: a.avatar ?? "" });
+  }
+  return convs.map((r) => {
+    const handle = r.agent_handle ?? null;
+    const members = handle
+      ? [{
+          sub: `agent:${handle}`,
+          name: agentByHandle.get(handle)?.name ?? (handle === "ghosty" ? "Ghosty" : handle),
+          email: "",
+          avatar: agentByHandle.get(handle)?.avatar ?? "",
+        }]
+      : byConv.get(num(r.id)) ?? [];
+    return {
+      id: num(r.id),
+      is_group: num(r.is_group),
+      title: r.title,
+      last_at: r.last_at == null ? null : num(r.last_at),
+      members,
+      agent_handle: handle,
+    };
+  });
+}
+
+// Abre (o reusa) un DM 1:1 con un AGENTE de la flota. member_key único por (user, agente)
+// → no colisiona con DMs entre personas. Guarda agent_handle → cada mensaje enruta al agente.
+export async function openAgentDm(agentHandle: string, createdBy: string): Promise<number> {
+  const key = `agent:${createdBy}:${agentHandle}`;
+  await dbq(
+    `INSERT INTO gc_dm_conversations (is_group, created_by, member_key, agent_handle)
+     VALUES (0, ?, ?, ?) ON CONFLICT(member_key) DO NOTHING`,
+    [createdBy, key, agentHandle]
+  );
+  const rows = await dbq("SELECT id FROM gc_dm_conversations WHERE member_key = ?", [key]);
+  const id = num(rows[0].id);
+  await dbq(
+    "INSERT INTO gc_dm_members (conversation_id, user_sub) VALUES (?, ?) ON CONFLICT DO NOTHING",
+    [id, createdBy]
+  );
+  return id;
+}
+
+// El agent_handle de un DM (null = entre personas). Para enrutar cada mensaje al agente.
+export async function getDmAgentHandle(convId: number): Promise<string | null> {
+  const rows = await dbq("SELECT agent_handle FROM gc_dm_conversations WHERE id = ?", [convId]);
+  return rows[0]?.agent_handle ?? null;
 }
 
 export async function getDmMembers(convId: number): Promise<string[]> {

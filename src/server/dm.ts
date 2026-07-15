@@ -40,13 +40,20 @@ async function notifyDm(
 
 // Abre (o reusa) un DM con un usuario (o varios → grupo). Devuelve el id.
 export const openDmFn = createServerFn({ method: "POST" })
-  .validator((d: { subs: string[] }) => d)
+  .validator((d: { subs?: string[]; agentHandle?: string }) => d)
   .handler(async ({ data }) => {
     await (await import("./schema.server")).ensureSchema().catch(() => {});
     const db = await import("../db.server");
     const me = await sessionUser();
     if (!me) throw new Error("no autorizado");
-    const subs = [...new Set([me.sub, ...data.subs].filter(Boolean))];
+    // DM 1:1 con un agente de la flota: cada mensaje enruta a ese agente (sin @mención).
+    if (data.agentHandle) {
+      const handle = data.agentHandle.trim().toLowerCase().replace(/[^a-z0-9]/g, "");
+      if (!handle) throw new Error("agente inválido");
+      const id = await db.openAgentDm(handle, me.sub);
+      return { id };
+    }
+    const subs = [...new Set([me.sub, ...(data.subs ?? [])].filter(Boolean))];
     if (subs.length < 2) throw new Error("elige al menos un destinatario");
     const id = await db.openDmConversation(subs, me.sub);
     return { id };
@@ -95,7 +102,11 @@ export const postDmMessageFn = createServerFn({ method: "POST" })
     if (!body && files.length === 0) return { ok: false as const };
 
     const agents = await resolvedAgents();
-    const mentioned = detectMention(body, agents.map((a) => a.handle));
+    // DM 1:1 con un agente → cada mensaje enruta a ESE agente (sin @mención). Si no,
+    // se detecta @mención normal. El handle del DM gana.
+    const dmAgent = await db.getDmAgentHandle(data.id);
+    const mentioned = (dmAgent && agents.some((a) => a.handle === dmAgent) ? dmAgent : null)
+      ?? detectMention(body, agents.map((a) => a.handle));
     const { id } = await db.createDmMessage({
       dmId: data.id,
       sender: me.name,

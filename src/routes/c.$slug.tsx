@@ -44,6 +44,7 @@ import {
   Loader2,
   Archive,
   ChevronDown,
+  Headphones,
   Copy,
   Check,
   ChevronRight,
@@ -61,6 +62,7 @@ import type { Channel, Message, DmConversation, RoomHit, ViewHit, Attachment, Ar
 import { listEmojisFn } from "../server/emojis";
 import { recentViewFn, mentionsViewFn, starredViewFn } from "../server/views";
 import { openDmFn, listDmsFn, getDmFlowFn, postDmMessageFn, askDmAgentFn } from "../server/dm";
+import { listAgentsFn } from "../server/agents";
 import { unreadCountsFn, markReadFn, readReceiptsFn, lastReadFn } from "../server/reads";
 import { toggleStarFn, togglePinFn, getPinsFn, toggleMuteFn, listMutesFn } from "../server/stars";
 import {
@@ -2895,13 +2897,27 @@ function NewDmModal({
   const [users, setUsers] = useState<
     { sub: string; handle: string; name: string; email: string; avatar: string }[]
   >([]);
+  const [agents, setAgents] = useState<{ handle: string; name: string; avatar: string }[]>([]);
   const [q, setQ] = useState("");
   const [picked, setPicked] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     listWorkspaceUsersFn().then(setUsers).catch(() => setUsers([]));
+    listAgentsFn().then(setAgents).catch(() => setAgents([]));
   }, []);
+
+  // DM 1:1 con un agente = inmediato (no multi-select): abre y entra.
+  async function startAgent(handle: string) {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const { id } = await openDmFn({ data: { agentHandle: handle } });
+      onOpened(id);
+    } catch {
+      setBusy(false);
+    }
+  }
 
   const query = q.trim().toLowerCase();
   const list = users
@@ -2938,7 +2954,32 @@ function NewDmModal({
         className="mb-3 w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm outline-none focus:border-brand"
       />
       <div className="mb-4 max-h-56 space-y-1 overflow-y-auto">
-        {list.length === 0 ? (
+        {/* Agentes de la flota: DM 1:1 directo (cada mensaje enruta al agente). */}
+        {(() => {
+          const ags = agents.filter((a) => !query || a.handle.includes(query) || a.name.toLowerCase().includes(query));
+          return ags.length ? (
+            <>
+              <p className="px-2 pb-0.5 pt-1 text-[10px] font-medium uppercase tracking-wide text-faint">{t("Agentes")}</p>
+              {ags.map((a) => (
+                <button
+                  key={`ag:${a.handle}`}
+                  onClick={() => startAgent(a.handle)}
+                  disabled={busy}
+                  className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm hover:bg-surface-3 disabled:opacity-50"
+                >
+                  <Avatar name={a.name} avatar={a.avatar} className="h-7 w-7 text-[10px]" />
+                  <span className="min-w-0 flex-1 truncate">
+                    <span className="font-medium text-ink">{a.name}</span>{" "}
+                    <span className="text-xs text-muted">@{a.handle}</span>
+                  </span>
+                  <MessageSquare size={14} className="shrink-0 text-muted" />
+                </button>
+              ))}
+              {list.length > 0 && <p className="px-2 pb-0.5 pt-2 text-[10px] font-medium uppercase tracking-wide text-faint">{t("Personas")}</p>}
+            </>
+          ) : null;
+        })()}
+        {list.length === 0 && agents.filter((a) => !query || a.handle.includes(query) || a.name.toLowerCase().includes(query)).length === 0 ? (
           <p className="px-2 py-1 text-sm text-muted">{t("Sin resultados.")}</p>
         ) : (
           list.map((u) => {
@@ -3647,6 +3688,17 @@ function Flow({
               <span className="hidden sm:inline">{t("{n} en línea", { n: onlineCount })}</span>
             </span>
           )}
+          {/* Llamada de voz/video del room. UI en su lugar; se cablea a la caja Studio
+              (LiveKit) después → por ahora "Próximamente". */}
+          <button
+            disabled
+            title={t("Llamada del room · Próximamente")}
+            className="flex items-center gap-1.5 rounded-full border border-border px-2.5 py-1 text-xs font-medium text-muted opacity-60"
+          >
+            <Headphones size={15} className="shrink-0" />
+            <span className="hidden sm:inline">{t("Llamada")}</span>
+            <span className="rounded-full bg-surface-3 px-1.5 py-0.5 text-[9px] uppercase tracking-wide">{t("pronto")}</span>
+          </button>
           <DocsButton channelId={channel.id} channelSlug={channel.slug} />
           <SearchButton onOpenDm={onOpenDm} />
         </div>
@@ -3889,12 +3941,23 @@ function DmView({
             <span className="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border-2 border-surface bg-green-500" />
           )}
         </span>
-        <div className="min-w-0">
+        <div className="min-w-0 flex-1">
           <h2 className="truncate font-semibold leading-tight text-ink">{title}</h2>
           <p className="text-xs text-muted">
             {isOnline ? t("En línea") : t("Mensaje directo")}
           </p>
         </div>
+        {/* Llamada 1:1 (Slack: las llamadas van en room + DM, no en hilo). UI en su lugar;
+            se cablea a la caja Studio (LiveKit) después → por ahora "Próximamente". */}
+        <button
+          disabled
+          title={t("Llamada · Próximamente")}
+          className="flex shrink-0 items-center gap-1.5 rounded-full border border-border px-2.5 py-1 text-xs font-medium text-muted opacity-60"
+        >
+          <Headphones size={15} className="shrink-0" />
+          <span className="hidden sm:inline">{t("Llamada")}</span>
+          <span className="rounded-full bg-surface-3 px-1.5 py-0.5 text-[9px] uppercase tracking-wide">{t("pronto")}</span>
+        </button>
       </header>
       <div ref={scrollRef} onScroll={onScroll} className="w-full flex-1 space-y-1 overflow-y-auto px-6 py-4 thin-scroll">
         {flow === null ? (
@@ -5212,7 +5275,7 @@ function ScrollDownButton({ show, onClick }: { show: boolean; onClick: () => voi
       onClick={onClick}
       aria-label={t("Ir al final")}
       title={t("Ir al final")}
-      className="absolute bottom-24 left-1/2 z-20 grid size-9 -translate-x-1/2 place-items-center rounded-full border border-border bg-surface-2/90 text-muted shadow-lg backdrop-blur transition hover:text-ink hover:border-brand/50"
+      className="pointer-events-auto absolute bottom-28 left-1/2 z-30 grid size-10 -translate-x-1/2 place-items-center rounded-full border border-border bg-surface-2 text-muted shadow-lg transition hover:text-ink hover:border-brand/60 hover:bg-surface-3"
     >
       <ChevronDown size={18} />
     </button>

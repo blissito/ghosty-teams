@@ -136,6 +136,9 @@ async function migrate(): Promise<void> {
   // Fase 4: descripción + archivado de rooms.
   await addColumn("gc_channels", "description", "TEXT");
   await addColumn("gc_channels", "archived", "INTEGER NOT NULL DEFAULT 0");
+  // DM 1:1 con un agente de la flota: la conversación guarda su @handle → cada mensaje
+  // enruta a ese agente (sin necesidad de @mención). null = DM normal entre personas.
+  await addColumn("gc_dm_conversations", "agent_handle", "TEXT");
 
   // Agentes slice 1: persona/prompt por agente (se antepone/envía al backend para
   // que cada agente hable distinto). gc_agents la crea el provisioner; aquí sumamos.
