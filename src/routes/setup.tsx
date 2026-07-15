@@ -1,7 +1,7 @@
 import { createFileRoute, useRouter, Link, redirect } from "@tanstack/react-router";
 import { useState, useEffect } from "react";
 import { getSetup, selectFleetAgent, createFleetAgent, disconnectSetup } from "../server/setup";
-import { listFormmyAgentsFn, connectFormmyAgentFn, type FormmyAgent } from "../server/formmy-agents.server";
+import { listFormmyAgentsFn, connectFormmyAgentFn, type FormmyAgent } from "../server/formmy-agents";
 import { me, logout } from "../server/auth";
 import { useT } from "../i18n";
 
