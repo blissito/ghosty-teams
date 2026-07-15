@@ -46,7 +46,7 @@ export const agentFleetConfigFn = createServerFn({ method: "GET" })
 // POST: aplica UNA mutación de config. `action` + payload van tal cual al POST de
 // EasyBits (set-agent-prompt, set-model, set-effort, set-cap-level, toggle-builtin,
 // set-toolgroup, set-prompt, toggle-asset, add-mcp, remove-mcp, toggle-skill,
-// delete-skill, set-secret, toggle-own-number). El groupId por-canal default = "*".
+// delete-skill, set-secret, recycle-box, toggle-own-number). El groupId por-canal default = "*".
 export const setAgentFleetConfigFn = createServerFn({ method: "POST" })
   .validator((d: { id: number; body: Record<string, unknown> }) => d)
   .handler(async ({ data }) => {

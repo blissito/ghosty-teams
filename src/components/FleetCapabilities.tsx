@@ -25,6 +25,8 @@ type Cfg = {
   ownerFiles?: { id: string; name: string; contentType?: string }[];
   ownerDbs?: { name: string; namespace: string }[];
   agent?: { systemPrompt: string; model: string; modelLabel?: string; effort: string; hasOwnNumber: boolean; buckets: string[] };
+  // Llave BYOK del motor de ESTE agente (null = motor medido easybits, sin key).
+  engineSecret?: { name: string; kind: "oauth" | "apiKey"; placeholder: string; present: boolean } | null;
   buckets?: Bucket[];
   bucketTools?: Record<string, string[]>;
   models?: { key: string; label: string }[];
@@ -54,6 +56,7 @@ export function FleetCapabilities({ agentId }: { agentId: number }) {
   const [loadErr, setLoadErr] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [saving, setSaving] = useState<string[]>([]);
+  const [recycling, setRecycling] = useState(false);
   const [uploading, setUploading] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -89,6 +92,27 @@ export function FleetCapabilities({ agentId }: { agentId: number }) {
     }
   }
   const isSaving = (key: string) => saving.includes(key);
+
+  // Llave del motor (BYOK): guarda el secret en el vault del owner y RECICLA la caja
+  // para que el spawn nuevo la lea (la key es spawn-baked → una VM viva sigue con la
+  // credencial vieja hasta reciclar). Dos acciones encadenadas, no `mutate` (que manda
+  // un solo body). Refresca al terminar para reflejar `present`.
+  async function saveEngineKey(name: string, value: string) {
+    setSaving((s) => [...s, "enginekey"]);
+    setErr(null);
+    try {
+      await setAgentFleetConfigFn({ data: { id: agentId, body: { action: "set-secret", name, value } } });
+      setRecycling(true);
+      await setAgentFleetConfigFn({ data: { id: agentId, body: { action: "recycle-box" } } });
+      await load();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+      await load();
+    } finally {
+      setRecycling(false);
+      setSaving((s) => s.filter((k) => k !== "enginekey"));
+    }
+  }
 
   async function uploadAsset(file: File) {
     setUploading(true);
@@ -163,6 +187,16 @@ export function FleetCapabilities({ agentId }: { agentId: number }) {
           </select>
         </div>
       </div>
+
+      {/* Llave del motor (BYOK): correr con la cuenta del propio user, off-meter. Solo
+          si el motor pide credencial (easybits medido → engineSecret null → oculto). */}
+      {cfg.engineSecret && (
+        <EngineKey
+          secret={cfg.engineSecret} box={box} label={label}
+          saving={isSaving("enginekey")} recycling={recycling}
+          onSave={saveEngineKey}
+        />
+      )}
 
       {/* Prompt base (todos los canales) = identidad del agente en TODAS partes. La
           personalidad SOLO-en-este-espacio vive en el campo "Persona local" (columna de
@@ -376,6 +410,46 @@ export function FleetCapabilities({ agentId }: { agentId: number }) {
       </div>
 
       {err && <p className="rounded-lg bg-red-500/10 px-2 py-1 text-xs text-red-400">{err}</p>}
+    </div>
+  );
+}
+
+function EngineKey({ secret, box, label, saving, recycling, onSave }: {
+  secret: { name: string; kind: "oauth" | "apiKey"; placeholder: string; present: boolean };
+  box: string; label: string; saving: boolean; recycling: boolean;
+  onSave: (name: string, value: string) => void;
+}) {
+  const t = useT();
+  const [open, setOpen] = useState(false);
+  const [val, setVal] = useState("");
+  const isOauth = secret.kind === "oauth";
+  return (
+    <div>
+      <span className={label}>{t("Llave del motor")} {saving && <Loader2 size={12} className="inline animate-spin text-brand" />}</span>
+      <div className={box}>
+        <div className="flex items-center gap-2 text-xs">
+          <span className={`h-2 w-2 shrink-0 rounded-full ${secret.present ? "bg-green-500" : "bg-surface-3"}`} />
+          <span className="min-w-0 flex-1 truncate font-mono text-[11px]">{secret.name}</span>
+          <span className="shrink-0 text-[11px] text-muted">{secret.present ? t("configurada") : t("falta")}</span>
+          <button onClick={() => setOpen((v) => !v)} disabled={saving} className="flex shrink-0 items-center gap-1 rounded-lg border border-border px-2 py-1 text-[11px] text-muted hover:border-brand hover:text-ink disabled:opacity-50">
+            <KeyRound size={11} /> {secret.present ? t("Cambiar") : t("Usar mi llave")}
+          </button>
+        </div>
+        {open && (
+          <div className="mt-2">
+            <p className="mb-1 text-[11px] leading-snug text-muted">
+              {isOauth
+                ? t("Token de tu cuenta Claude Max (corre `claude setup-token`), no un API key de la consola. Corre off-meter en tu cuenta.")
+                : t("Tu API key del proveedor. Corre off-meter en tu cuenta en vez del proxy medido.")}
+            </p>
+            <div className="flex gap-2">
+              <input type="password" value={val} onChange={(e) => setVal(e.target.value)} placeholder={secret.placeholder || t("Pega tu llave…")} className="flex-1 rounded-lg border border-border bg-surface px-2 py-1.5 text-xs outline-none focus:border-brand" />
+              <button onClick={() => { if (val.trim()) { onSave(secret.name, val.trim()); setOpen(false); setVal(""); } }} disabled={!val.trim() || saving} className="flex items-center gap-1 rounded-lg bg-brand px-3 text-xs font-semibold text-brand-fg disabled:opacity-50"><Check size={12} /> {t("Guardar")}</button>
+            </div>
+          </div>
+        )}
+        {recycling && <p className="mt-1.5 flex items-center gap-1 text-[11px] text-brand"><Loader2 size={11} className="animate-spin" /> {t("Reciclando caja… el próximo mensaje usa tu llave.")}</p>}
+      </div>
     </div>
   );
 }
