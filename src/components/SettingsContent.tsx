@@ -32,6 +32,7 @@ import {
   type FontChoice,
 } from "../utils/theme";
 import { useSyncExternalStore } from "react";
+import { bumpMentions } from "../utils/mentions-bus";
 
 // Datos que Ajustes necesita (identidad + setup + acceso a agentes). Se cargan una vez
 // y se cachean a nivel módulo → reabrir Preferencias (modal) pinta al instante y revalida
@@ -173,7 +174,14 @@ export function SettingsContent({
         </div>
 
         <div className="thin-scroll flex-1 overflow-y-auto px-6 pb-6">
-          {tab === "general" && (
+          {/* Mientras la identidad/setup cargan (primer open sin cache) mostramos carga
+              explícita — NO el estado parcial (avatar vacío / "Miembro" / sin Owner). */}
+          {tab === "general" && !data && (
+            <div className="flex items-center gap-2 py-10 text-sm text-muted">
+              <Loader2 size={16} className="animate-spin" /> {t("Cargando…")}
+            </div>
+          )}
+          {tab === "general" && data && (
             <>
               {/* Identidad */}
               <div className="mb-4 flex items-center gap-3 rounded-xl border border-border bg-surface-2 p-4">
@@ -796,6 +804,7 @@ function AgentsManager({ isOwner, hasAgent }: { isOwner: boolean; hasAgent: bool
     listManagedAgentsFn().then((a) => {
       agentsCache = a as ManagedAgent[];
       setAgents(agentsCache);
+      bumpMentions(); // el picker del composer re-fetchea (sin agente fantasma)
     });
   useEffect(() => {
     reload();
@@ -803,12 +812,12 @@ function AgentsManager({ isOwner, hasAgent }: { isOwner: boolean; hasAgent: bool
 
   async function toggle(a: ManagedAgent) {
     setAgents((xs) => xs?.map((x) => (x.id === a.id ? { ...x, enabled: x.enabled ? 0 : 1 } : x)) ?? xs);
-    await updateAgentFn({ data: { id: a.id, enabled: !a.enabled } }).catch(reload);
+    await updateAgentFn({ data: { id: a.id, enabled: !a.enabled } }).then(() => bumpMentions()).catch(reload);
   }
   async function remove(a: ManagedAgent) {
     if (!confirm(t("¿Quitar @{handle}?", { handle: a.handle }))) return;
     setAgents((xs) => xs?.filter((x) => x.id !== a.id) ?? xs);
-    await deleteAgentFn({ data: { id: a.id } }).catch(reload);
+    await deleteAgentFn({ data: { id: a.id } }).then(() => bumpMentions()).catch(reload);
   }
 
   return (

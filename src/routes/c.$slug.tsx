@@ -83,6 +83,7 @@ import type { RtEvent } from "../server/bus.server";
 import { Markdown } from "../components/Markdown";
 import { SettingsContent } from "../components/SettingsContent";
 import { getTheme, subscribeTheme, resolveDark, presetById, paletteVars } from "../utils/theme";
+import { subscribeMentions } from "../utils/mentions-bus";
 import ArtifactPanel, { type ArtifactView, viewFromAttachment } from "../components/ArtifactPanel";
 import { extractEbDoc, draftTitle, bubbleWithoutEbDoc } from "../lib/ebdoc";
 import { ThinkingRing } from "../components/ThinkingRing";
@@ -536,12 +537,18 @@ function useMentions(): Mention[] {
   const [mentions, setMentions] = useState<Mention[]>(mentionsCache ?? []);
   useEffect(() => {
     let alive = true;
-    listMentionsFn().then((m) => {
-      mentionsCache = m as Mention[];
-      if (alive) setMentions(m as Mention[]);
-    });
+    const load = () =>
+      listMentionsFn().then((m) => {
+        mentionsCache = m as Mention[];
+        if (alive) setMentions(m as Mention[]);
+      });
+    load();
+    // Re-fetch cuando cambian los agentes (crear/borrar/editar en Ajustes) → el picker
+    // no queda con un agente fantasma tras borrarlo.
+    const off = subscribeMentions(load);
     return () => {
       alive = false;
+      off();
     };
   }, []);
   return mentions;
@@ -2466,7 +2473,12 @@ function Modal({
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
-  return (
+  if (typeof document === "undefined") return null; // SSR-safe (portal necesita document)
+  // PORTAL a document.body: varios modales se renderizan DENTRO del <aside> (sidebar),
+  // que tiene `transform` → un `fixed inset-0` se anclaría a la sidebar (modal "atrapado
+  // en la barra"), no al viewport. El portal lo saca del ancestro transformado → SIEMPRE
+  // centrado sobre toda la pantalla.
+  return createPortal(
     <motion.div
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
@@ -2486,7 +2498,8 @@ function Modal({
       >
         {children}
       </motion.div>
-    </motion.div>
+    </motion.div>,
+    document.body
   );
 }
 
