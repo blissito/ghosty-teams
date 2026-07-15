@@ -1055,20 +1055,20 @@ function AddAgentForm({ onClose, onCreated }: { onClose: () => void; onCreated: 
           />
         )}
         <div className="flex gap-2">
-          <div className={`flex flex-1 items-center ${input} px-0 pl-3`}>
+          <div className="flex flex-1 min-w-0 items-center rounded-lg border border-border bg-surface pl-3 text-sm focus-within:border-brand">
             <span className="select-none text-muted">@</span>
             <input
               value={handle}
               onChange={(e) => setHandle(e.target.value.replace(/[^a-zA-Z0-9]/g, "").toLowerCase())}
               placeholder={t("handle (ej. soporte)")}
-              className="w-full bg-transparent px-1 outline-none"
+              className="w-full min-w-0 bg-transparent py-2 pr-3 pl-1 outline-none"
             />
           </div>
           <input
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder={t("nombre visible")}
-            className={input}
+            className={`${input} flex-1 min-w-0`}
           />
         </div>
         {err && <p className="text-sm text-red-400">{err}</p>}
