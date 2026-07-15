@@ -1,7 +1,12 @@
 import { Children, cloneElement, createElement, isValidElement, memo } from "react";
-import ReactMarkdown, { type Components } from "react-markdown";
-import remarkGfm from "remark-gfm";
-import rehypeSanitize from "rehype-sanitize";
+import { Streamdown, type StreamdownProps } from "streamdown";
+
+// Streamdown (Vercel) es stream-aware: completa markdown incompleto EN VIVO (tablas/code
+// fences a medio cerrar) mientras entran tokens → sin el parpadeo de react-markdown que la
+// caja caliente dejó más visible. Es superset de react-markdown: reusamos el mismo shape de
+// `components` (menciones + links de artefacto + cap de imagen). GFM + hardening/sanitize +
+// resaltado de código (Shiki, lazy) vienen built-in.
+type Components = NonNullable<StreamdownProps["components"]>;
 
 // Resalta @menciones dentro del árbol ya renderizado (recursivo), sin tocar código
 // ni links. Conserva el comportamiento del viejo renderBody.
@@ -114,9 +119,12 @@ export const Markdown = memo(function Markdown({
     : "prose prose-sm prose-invert max-w-none break-words text-ink leading-relaxed prose-p:my-2 prose-p:leading-relaxed prose-headings:mb-1 prose-headings:mt-3 prose-headings:font-semibold prose-pre:my-2 prose-pre:bg-surface-3 prose-code:rounded prose-code:bg-surface-3 prose-code:px-1 prose-code:before:content-none prose-code:after:content-none prose-ul:my-2 prose-ol:my-2 prose-li:my-1 prose-li:leading-relaxed prose-a:text-brand prose-strong:text-ink prose-hr:my-3";
   return (
     <div className={cls}>
-      <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeSanitize]} components={withLinks}>
+      {/* parseIncompleteMarkdown (default) cierra markdown a medio-stream → sin parpadeo.
+          controls=false: sin botones de copiar/descargar en code/tablas (look de chat limpio,
+          paridad con el render previo). shikiTheme por defecto resalta el código. */}
+      <Streamdown components={withLinks} controls={false} className="min-w-0 break-words">
         {body}
-      </ReactMarkdown>
+      </Streamdown>
     </div>
   );
 });

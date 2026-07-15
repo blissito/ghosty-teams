@@ -2,6 +2,11 @@
 /* Tailwind v4 carga plugins por CSS (no config). Sin esto, TODAS las clases prose-*
    del render markdown son INERTES → mensajes amontonados sin importar los ajustes. */
 @plugin "@tailwindcss/typography";
+/* Streamdown (render markdown del chat): sus animaciones/estilos propios + escaneo de su
+   dist para que Tailwind v4 GENERE las utilidades que usa por dentro (code/tablas/mermaid).
+   Sin el @source, las clases internas de Streamdown quedan inertes → layout roto. */
+@import "streamdown/styles.css";
+@source "../node_modules/streamdown/dist";
 
 /* ── Design tokens ──────────────────────────────────────────────
    Theme por default = "ghosty" (morado, estilo EasyBits).
