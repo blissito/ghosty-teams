@@ -35,6 +35,13 @@ import {
 import { useSyncExternalStore } from "react";
 import { bumpMentions } from "../utils/mentions-bus";
 import { registerModalEsc } from "../utils/modal-esc";
+import {
+  getSoundPrefs,
+  setSoundPref,
+  SOUND_CATEGORIES,
+  playNotificationSound,
+  type SoundPrefs,
+} from "../utils/notificationSound";
 
 // Datos que Ajustes necesita (identidad + setup + acceso a agentes). Se cargan una vez
 // y se cachean a nivel módulo → reabrir Preferencias (modal) pinta al instante y revalida
@@ -464,6 +471,39 @@ function AppearancePanel() {
       >
         <Toggle on={s.reduceMotion} onChange={(reduceMotion) => setThemePartial({ reduceMotion })} />
       </Row>
+
+      {/* Sonidos */}
+      <SoundSettings />
+    </div>
+  );
+}
+
+/* ── Sonidos: master + por-categoría. Persistente en localStorage (notificationSound.ts).
+   El master apaga todo; abajo se afinan las categorías (siguen deshabilitadas si el
+   master está apagado). Un toque en cada toggle reproduce una muestra al encender. ── */
+function SoundSettings() {
+  const t = useT();
+  const [prefs, setPrefs] = useState<SoundPrefs>(() => getSoundPrefs());
+  const set = (key: "all" | (typeof SOUND_CATEGORIES)[number]["key"], on: boolean) => {
+    setPrefs(setSoundPref(key, on));
+    if (on) playNotificationSound(); // muestra al ENCENDER (confirma que suena)
+  };
+  return (
+    <div>
+      <Row
+        title={t("Sonidos")}
+        desc={t("Reproduce un sonido corto cuando llega algo nuevo. Apágalos todos o afina por tipo.")}
+      >
+        <Toggle on={prefs.all} onChange={(on) => set("all", on)} />
+      </Row>
+      <div className={`mt-3 space-y-2.5 border-l border-border pl-4 ${prefs.all ? "" : "pointer-events-none opacity-40"}`}>
+        {SOUND_CATEGORIES.map((c) => (
+          <div key={c.key} className="flex items-center justify-between gap-4">
+            <span className="text-sm text-ink">{t(c.label)}</span>
+            <Toggle on={prefs.all && prefs[c.key]} onChange={(on) => set(c.key, on)} />
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

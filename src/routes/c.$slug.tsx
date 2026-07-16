@@ -91,7 +91,7 @@ import { registerModalEsc } from "../utils/modal-esc";
 import ArtifactPanel, { type ArtifactView, viewFromAttachment } from "../components/ArtifactPanel";
 import { extractEbDoc, draftTitle, bubbleWithoutEbDoc } from "../lib/ebdoc";
 import { ThinkingRing } from "../components/ThinkingRing";
-import { playNotificationSound, playGhostySound, playSelfSound, playMentionSound, playDmSound, playReadySound } from "../utils/notificationSound";
+import { playNotificationSound, playGhostySound, playSelfSound, playMentionSound, playDmSound, playReadySound, playDeleteSound } from "../utils/notificationSound";
 
 // Menciones que cuentan como "a ti": tu @handle o una grupal (@all/@channel/…).
 const SOUND_GROUP_MENTIONS = new Set(["all", "channel", "everyone", "aqui", "here", "todos"]);
@@ -918,6 +918,7 @@ function ChannelPage() {
     try {
       await deleteMessageFn({ data: { id: m.id } });
       removeMessageLocal(m.id);
+      playDeleteSound();
     } catch {
       revalidate();
     }
@@ -948,7 +949,9 @@ function ChannelPage() {
       initialThreads ?? undefined
     ) ?? [];
   // Conversaciones directas del usuario (sección "Mensajes directos" del sidebar).
-  const dms = useCachedQuery(dmListCache, "list", () => listDmsFn(), rev, patch) ?? [];
+  const dmsRaw = useCachedQuery(dmListCache, "list", () => listDmsFn(), rev, patch);
+  const dms = dmsRaw ?? [];
+  const dmsLoading = dmsRaw === undefined; // aún sin resolver → skeleton (no "vacío" falso)
   // Mensajes fijados del room activo (barra en el header del flujo).
   const pins =
     useCachedQuery(pinsCache, channel.slug, () => getPinsFn({ data: { slug: channel.slug } }), rev, patch) ?? [];
@@ -957,9 +960,31 @@ function ChannelPage() {
   const onEvent = (ev: RtEvent) => {
     switch (ev.t) {
       case "message:new": {
-        // Eco de mi propio envío → ya está optimista, descartar.
+        // Eco de mi propio envío. NO basta descartarlo: hay que ATERRIZARLO como real y
+        // retirar el optimista. Si sólo se descarta, mi mensaje sigue siendo optimista (se
+        // renderiza en un bloque AL FINAL) y la CÁSCARA del agente —que llega como mensaje
+        // real justo después (DM/hilo a un agente)— se pinta ENCIMA de mi mensaje, y luego
+        // "salta" abajo al recargar. Al promover mi eco al flujo, la cáscara (created_at
+        // posterior, llega después) ordena naturalmente DESPUÉS de mi mensaje. Sin sonido
+        // ni badge (es mío).
         if (ev.nonce && sentNonces.has(ev.nonce)) {
           sentNonces.delete(ev.nonce);
+          setOptimistic((prev) => prev.filter((o) => o.nonce !== ev.nonce));
+          if (ev.msg.dm_id != null) {
+            const arr = dmFlowCache.get(ev.msg.dm_id);
+            if (arr && !arr.some((m) => m.id === ev.msg.id)) dmFlowCache.set(ev.msg.dm_id, [...arr, ev.msg]);
+          } else if (ev.msg.parent_id == null) {
+            const slug = channelsById.get(ev.msg.channel_id);
+            if (slug) {
+              const arr = flowCache.get(slug);
+              if (arr && !arr.some((m) => m.id === ev.msg.id)) flowCache.set(slug, [...arr, ev.msg]);
+            }
+          } else {
+            const th = threadCache.get(ev.msg.parent_id);
+            if (th && !th.replies.some((m) => m.id === ev.msg.id))
+              threadCache.set(ev.msg.parent_id, { root: th.root, replies: [...th.replies, ev.msg] });
+          }
+          applyPatch();
           return;
         }
         // Sonido oficial de notificación: mensaje real de alguien más en un scope no
@@ -1439,6 +1464,7 @@ function ChannelPage() {
     await deleteMessageFn({ data: { id } }).catch(() => {});
     threadCache.delete(id);
     if (openThreadId === id) setOpenThreadId(null);
+    playDeleteSound();
     revalidate();
   };
   // Clic en el origen del hilo → vuelve al flujo y scrollea al mensaje (estilo Slack).
@@ -1503,6 +1529,7 @@ function ChannelPage() {
         }}
         onDeleteThread={deleteThread}
         dms={dms}
+        dmsLoading={dmsLoading}
         activeDmId={openDmId}
         online={online}
         onOpenDm={openDm}
@@ -1872,6 +1899,7 @@ function Sidebar({
   onBackToRoom,
   onDeleteThread,
   dms,
+  dmsLoading,
   activeDmId,
   online,
   onOpenDm,
@@ -1896,6 +1924,7 @@ function Sidebar({
   onBackToRoom: () => void;
   onDeleteThread: (id: number) => void;
   dms: DmConversation[];
+  dmsLoading: boolean;
   activeDmId: number | null;
   online: Set<string>;
   onOpenDm: (id: number) => void;
@@ -2207,53 +2236,72 @@ function Sidebar({
             <Plus size={17} />
           </button>
         </div>
-        {dms.length === 0 ? (
-          <p className="px-2 py-1 text-xs text-muted">{t("Aún no tienes DMs.")}</p>
+        {dmsLoading ? (
+          <DmListSkeleton />
+        ) : dms.length === 0 ? (
+          <motion.p
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ duration: 0.2 }}
+            className="px-2 py-1 text-xs text-muted"
+          >
+            {t("Aún no tienes DMs.")}
+          </motion.p>
         ) : (
-          dms.map((dm) => {
-            const isOnline = dm.members.some((m) => online.has(m.sub));
-            const first = dm.members[0];
-            const muted = mutes.has(`dm:${dm.id}`);
-            return (
-              <div key={dm.id} className="group flex items-center">
-                <button
-                  onClick={() => onOpenDm(dm.id)}
-                  title={dmTitle(dm, t("Conversación"))}
-                  className={`flex min-w-0 flex-1 items-center gap-2 rounded-lg px-2 py-2.5 text-left text-sm md:py-1.5 ${
-                    activeDmId === dm.id
-                      ? "bg-brand/15 font-medium text-ink"
-                      : "text-muted hover:bg-surface-3 hover:text-ink"
-                  } ${muted ? "opacity-50" : ""}`}
+          <AnimatePresence initial={false}>
+            {dms.map((dm, i) => {
+              const isOnline = dm.members.some((m) => online.has(m.sub));
+              const first = dm.members[0];
+              const muted = mutes.has(`dm:${dm.id}`);
+              return (
+                <motion.div
+                  key={dm.id}
+                  layout
+                  initial={{ opacity: 0, y: 4, height: 0 }}
+                  animate={{ opacity: 1, y: 0, height: "auto" }}
+                  exit={{ opacity: 0, height: 0 }}
+                  transition={{ duration: 0.2, ease: "easeOut", delay: Math.min(i * 0.03, 0.24) }}
+                  className="group flex items-center overflow-hidden"
                 >
-                  <span className="relative shrink-0">
-                    {dm.is_group ? (
-                      <span className="grid h-6 w-6 place-items-center rounded-full bg-surface-3 text-ink">
-                        <Users size={14} />
-                      </span>
+                  <button
+                    onClick={() => onOpenDm(dm.id)}
+                    title={dmTitle(dm, t("Conversación"))}
+                    className={`flex min-w-0 flex-1 items-center gap-2 rounded-lg px-2 py-2.5 text-left text-sm md:py-1.5 ${
+                      activeDmId === dm.id
+                        ? "bg-brand/15 font-medium text-ink"
+                        : "text-muted hover:bg-surface-3 hover:text-ink"
+                    } ${muted ? "opacity-50" : ""}`}
+                  >
+                    <span className="relative shrink-0">
+                      {dm.is_group ? (
+                        <span className="grid h-6 w-6 place-items-center rounded-full bg-surface-3 text-ink">
+                          <Users size={14} />
+                        </span>
+                      ) : (
+                        <Avatar name={first?.name} avatar={first?.avatar} className="h-6 w-6 text-[10px]" />
+                      )}
+                      {isOnline && (
+                        <span className="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border-2 border-surface-2 bg-green-500" />
+                      )}
+                    </span>
+                    <span className="min-w-0 flex-1 truncate">{dmTitle(dm, t("Conversación"))}</span>
+                    {muted ? (
+                      <BellOff size={12} className="shrink-0 text-muted" />
                     ) : (
-                      <Avatar name={first?.name} avatar={first?.avatar} className="h-6 w-6 text-[10px]" />
+                      <UnreadBadge n={unreadDms.get(dm.id) ?? 0} />
                     )}
-                    {isOnline && (
-                      <span className="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border-2 border-surface-2 bg-green-500" />
-                    )}
-                  </span>
-                  <span className="min-w-0 flex-1 truncate">{dmTitle(dm, t("Conversación"))}</span>
-                  {muted ? (
-                    <BellOff size={12} className="shrink-0 text-muted" />
-                  ) : (
-                    <UnreadBadge n={unreadDms.get(dm.id) ?? 0} />
-                  )}
-                </button>
-                <button
-                  onClick={() => onToggleMute("dm", dm.id)}
-                  title={muted ? t("Reactivar notificaciones") : t("Silenciar conversación")}
-                  className="p-1 text-muted opacity-100 transition hover:text-ink md:opacity-0 md:group-hover:opacity-100"
-                >
-                  {muted ? <BellOff size={15} /> : <Bell size={15} />}
-                </button>
-              </div>
-            );
-          })
+                  </button>
+                  <button
+                    onClick={() => onToggleMute("dm", dm.id)}
+                    title={muted ? t("Reactivar notificaciones") : t("Silenciar conversación")}
+                    className="p-1 text-muted opacity-100 transition hover:text-ink md:opacity-0 md:group-hover:opacity-100"
+                  >
+                    {muted ? <BellOff size={15} /> : <Bell size={15} />}
+                  </button>
+                </motion.div>
+              );
+            })}
+          </AnimatePresence>
         )}
       </div>
 
@@ -2737,6 +2785,7 @@ function RoomSettingsModal({
   async function del() {
     if (!confirm(t("¿Eliminar este room y todos sus mensajes?"))) return;
     await deleteChannelFn({ data: { slug } }).catch(() => {});
+    playDeleteSound();
     onDeleted();
   }
 
@@ -4004,6 +4053,27 @@ function ThreadSkeleton() {
             <div className="h-3 w-2/3 animate-pulse rounded bg-surface-3" />
           </div>
         </div>
+      ))}
+    </div>
+  );
+}
+
+// Placeholder de carga de la lista de DMs (sidebar): filas con avatar + línea que
+// pulsan y entran con fade → nunca "vacío falso" ni pop abrupto (animación de presencia).
+function DmListSkeleton() {
+  return (
+    <div className="space-y-0.5">
+      {[0, 1, 2].map((i) => (
+        <motion.div
+          key={i}
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ duration: 0.2, delay: i * 0.05 }}
+          className="flex items-center gap-2 px-2 py-2 md:py-1.5"
+        >
+          <div className="h-6 w-6 shrink-0 animate-pulse rounded-full bg-surface-3" />
+          <div className="h-3 flex-1 animate-pulse rounded bg-surface-3" style={{ maxWidth: `${70 - i * 12}%` }} />
+        </motion.div>
       ))}
     </div>
   );

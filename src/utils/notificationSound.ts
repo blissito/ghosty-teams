@@ -23,11 +23,57 @@ function getCtx(): AudioContext | null {
   return ctx;
 }
 
+// ── Preferencias de sonido (por-categoría) ──────────────────────────────────
+// El usuario puede apagar TODOS los sonidos o sólo algunas categorías (Ajustes →
+// Apariencia). Se persiste en localStorage; el default es todo encendido. Cada
+// play* consulta su categoría antes de sonar. `all:false` silencia todo de un tiro.
+export type SoundCategory = "message" | "mention" | "dm" | "agent" | "system";
+export const SOUND_CATEGORIES: { key: SoundCategory; label: string }[] = [
+  { key: "message", label: "Mensajes de sala" },
+  { key: "mention", label: "Menciones" },
+  { key: "dm", label: "Mensajes directos" },
+  { key: "agent", label: "Respuesta del agente" },
+  { key: "system", label: "Sistema (envío · listo)" },
+];
+export type SoundPrefs = { all: boolean } & Record<SoundCategory, boolean>;
+const SOUND_KEY = "gc_sound_prefs";
+const DEFAULT_PREFS: SoundPrefs = { all: true, message: true, mention: true, dm: true, agent: true, system: true };
+let prefsCache: SoundPrefs | null = null;
+
+export function getSoundPrefs(): SoundPrefs {
+  if (prefsCache) return prefsCache;
+  if (typeof window === "undefined") return { ...DEFAULT_PREFS };
+  let loaded: SoundPrefs;
+  try {
+    loaded = { ...DEFAULT_PREFS, ...JSON.parse(localStorage.getItem(SOUND_KEY) || "{}") };
+  } catch {
+    loaded = { ...DEFAULT_PREFS };
+  }
+  prefsCache = loaded;
+  return loaded;
+}
+
+export function setSoundPref(key: "all" | SoundCategory, enabled: boolean): SoundPrefs {
+  const next = { ...getSoundPrefs(), [key]: enabled };
+  prefsCache = next;
+  if (typeof window !== "undefined") {
+    try { localStorage.setItem(SOUND_KEY, JSON.stringify(next)); } catch { /* almacenamiento lleno/negado */ }
+  }
+  return next;
+}
+
+// ¿Suena esta categoría? Gate: el master (`all`) manda; luego la categoría concreta.
+function soundOn(cat: SoundCategory): boolean {
+  const p = getSoundPrefs();
+  return p.all !== false && p[cat] !== false;
+}
+
 /**
  * Reproduce el sonido oficial de notificación (doble knock).
  * @param volume 0–1 (default 0.85).
  */
 export function playNotificationSound(volume = 0.85): void {
+  if (!soundOn("message")) return;
   const audio = getCtx();
   if (!audio) return;
   const now = audio.currentTime;
@@ -80,6 +126,7 @@ export function playNotificationSound(volume = 0.85): void {
  * @param volume 0–1 (default 0.5).
  */
 export function playReadySound(volume = 0.5): void {
+  if (!soundOn("system")) return;
   const audio = getCtx();
   if (!audio) return;
   const now = audio.currentTime;
@@ -110,6 +157,7 @@ export function playReadySound(volume = 0.5): void {
  * @param volume 0–1 (default 0.7).
  */
 export function playGhostySound(volume = 0.7): void {
+  if (!soundOn("agent")) return;
   const audio = getCtx();
   if (!audio) return;
   const now = audio.currentTime;
@@ -150,6 +198,7 @@ export function playGhostySound(volume = 0.7): void {
  * @param volume 0–1 (default 0.8).
  */
 export function playMentionSound(volume = 0.8): void {
+  if (!soundOn("mention")) return;
   const audio = getCtx();
   if (!audio) return;
   const now = audio.currentTime;
@@ -179,6 +228,7 @@ export function playMentionSound(volume = 0.8): void {
  * @param volume 0–1 (default 0.65).
  */
 export function playDmSound(volume = 0.65): void {
+  if (!soundOn("dm")) return;
   const audio = getCtx();
   if (!audio) return;
   const now = audio.currentTime;
@@ -208,6 +258,7 @@ export function playDmSound(volume = 0.65): void {
  * @param volume 0–1 (default 0.4).
  */
 export function playSelfSound(volume = 0.4): void {
+  if (!soundOn("system")) return;
   const audio = getCtx();
   if (!audio) return;
   const now = audio.currentTime;
@@ -226,4 +277,48 @@ export function playSelfSound(volume = 0.4): void {
   g.connect(master);
   o.start(now);
   o.stop(now + 0.1);
+}
+
+/**
+ * Sonido de ELIMINAR (mensaje / hilo / lo que sea): un "thunk" corto y DESCENDENTE
+ * (lo opuesto al "pip" de enviar), con un toque de ruido → sensación de "se fue".
+ * Discreto, categoría "system". @param volume 0–1 (default 0.45).
+ */
+export function playDeleteSound(volume = 0.45): void {
+  if (!soundOn("system")) return;
+  const audio = getCtx();
+  if (!audio) return;
+  const now = audio.currentTime;
+  const master = audio.createGain();
+  master.gain.value = volume;
+  master.connect(audio.destination);
+  // Cuerpo: seno que CAE de tono (descarte).
+  const o = audio.createOscillator();
+  const g = audio.createGain();
+  o.type = "sine";
+  o.frequency.setValueAtTime(440, now);
+  o.frequency.exponentialRampToValueAtTime(150, now + 0.13); // baja = "se fue"
+  g.gain.setValueAtTime(0.0001, now);
+  g.gain.exponentialRampToValueAtTime(0.6, now + 0.006);
+  g.gain.exponentialRampToValueAtTime(0.0001, now + 0.16);
+  o.connect(g);
+  g.connect(master);
+  o.start(now);
+  o.stop(now + 0.18);
+  // Transitorio "pf": ráfaga corta de ruido pasa-altos (el "barrido").
+  const n = audio.createBuffer(1, Math.floor(audio.sampleRate * 0.05), audio.sampleRate);
+  const d = n.getChannelData(0);
+  for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / d.length);
+  const src = audio.createBufferSource();
+  src.buffer = n;
+  const hp = audio.createBiquadFilter();
+  hp.type = "highpass";
+  hp.frequency.value = 1200;
+  const ng = audio.createGain();
+  ng.gain.value = 0.25;
+  src.connect(hp);
+  hp.connect(ng);
+  ng.connect(master);
+  src.start(now);
+  src.stop(now + 0.05);
 }
