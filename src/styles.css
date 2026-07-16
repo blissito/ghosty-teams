@@ -111,6 +111,14 @@ body {
   background: var(--color-surface);
   color: var(--color-ink);
   font-family: var(--font-sans);
+  /* iOS/Safari standalone infla el texto ("text autosizing") → la app arranca
+     "zoomeada". Fijarlo a 100% mantiene el tamaño real (initial-scale=1). */
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+  /* Nada debe empujar el ancho más allá del viewport: un overflow horizontal
+     hace la página pannable/zoomeable en móvil (se sentía como zoom extra). */
+  overflow-x: hidden;
+  max-width: 100%;
 }
 
 /* Destello al scrollear al mensaje origen de un hilo (clic "Ver en el room"). */

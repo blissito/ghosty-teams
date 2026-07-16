@@ -666,10 +666,15 @@ function useChatScroll(
     stick.current = true;
     setAtBottom(true);
     const el = scrollRef.current;
-    if (el) {
-      el.scrollTo({ top: el.scrollHeight });
-      requestAnimationFrame(() => el.scrollTo({ top: el.scrollHeight, behavior: "smooth" }));
-    }
+    if (!el) return;
+    // En móvil, al enviar el mensaje optimista aún no está en el DOM (setState) y el
+    // teclado reflowa el layout después → un solo scroll aterriza en el alto viejo y
+    // el mensaje recién enviado queda tapado. Reintentamos tras el render y el reflow.
+    const jump = () => el.scrollTo({ top: el.scrollHeight });
+    jump();
+    requestAnimationFrame(jump);
+    setTimeout(jump, 80);
+    setTimeout(jump, 300);
   };
   useEffect(() => {
     if (unreadId != null && !didLand.current) {
@@ -1504,7 +1509,11 @@ function ChannelPage() {
     <ChatCtx.Provider
       value={{ me: user, slug: channel.slug, emojis, react, star, pin, remove, editMsg, retrySend, discardSend, pickerFor, setPickerFor, onOpenArtifact: setOpenArtifact, sendQuickReply, nickFor, openPrefs, openProfile }}
     >
-    <div className="flex h-[100dvh] bg-surface text-ink">
+    {/* pt safe-area: en PWA standalone (viewport-fit=cover + status-bar black-translucent)
+        el contenido va DEBAJO de la hora/notch → el header y su botón de menú quedaban
+        tapados. El inset superior empuja todo bajo la barra de estado (h-[100dvh] es
+        border-box → el alto interior se ajusta). En desktop el inset es 0 (sin efecto). */}
+    <div className="flex h-[100dvh] bg-surface text-ink pt-[env(safe-area-inset-top)] md:pt-0">
       {/* Backdrop del drawer (solo móvil): tap fuera cierra el sidebar. */}
       {navOpen && (
         <div
