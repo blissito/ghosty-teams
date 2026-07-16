@@ -27,17 +27,18 @@ function getCtx(): AudioContext | null {
 // El usuario puede apagar TODOS los sonidos o sólo algunas categorías (Ajustes →
 // Apariencia). Se persiste en localStorage; el default es todo encendido. Cada
 // play* consulta su categoría antes de sonar. `all:false` silencia todo de un tiro.
-export type SoundCategory = "message" | "mention" | "dm" | "agent" | "system";
+export type SoundCategory = "message" | "mention" | "dm" | "agent" | "delete" | "system";
 export const SOUND_CATEGORIES: { key: SoundCategory; label: string }[] = [
   { key: "message", label: "Mensajes de sala" },
   { key: "mention", label: "Menciones" },
   { key: "dm", label: "Mensajes directos" },
   { key: "agent", label: "Respuesta del agente" },
+  { key: "delete", label: "Eliminar" },
   { key: "system", label: "Sistema (envío · listo)" },
 ];
 export type SoundPrefs = { all: boolean } & Record<SoundCategory, boolean>;
 const SOUND_KEY = "gc_sound_prefs";
-const DEFAULT_PREFS: SoundPrefs = { all: true, message: true, mention: true, dm: true, agent: true, system: true };
+const DEFAULT_PREFS: SoundPrefs = { all: true, message: true, mention: true, dm: true, agent: true, delete: true, system: true };
 let prefsCache: SoundPrefs | null = null;
 
 export function getSoundPrefs(): SoundPrefs {
@@ -280,45 +281,54 @@ export function playSelfSound(volume = 0.4): void {
 }
 
 /**
- * Sonido de ELIMINAR (mensaje / hilo / lo que sea): un "thunk" corto y DESCENDENTE
- * (lo opuesto al "pip" de enviar), con un toque de ruido → sensación de "se fue".
- * Discreto, categoría "system". @param volume 0–1 (default 0.45).
+ * Sonido de ELIMINAR (mensaje / hilo / lo que sea): gesto MELÓDICO descendente en
+ * modo MENOR (tríada de La menor bajando: E4 → C4 → A3) con un golpe grave al final
+ * → lee como "negativo / se fue", NO como un pip alegre. Timbre apagado (lowpass),
+ * sin destellos agudos. Categoría "delete". @param volume 0–1 (default 0.5).
  */
-export function playDeleteSound(volume = 0.45): void {
-  if (!soundOn("system")) return;
+export function playDeleteSound(volume = 0.5): void {
+  if (!soundOn("delete")) return;
   const audio = getCtx();
   if (!audio) return;
   const now = audio.currentTime;
   const master = audio.createGain();
   master.gain.value = volume;
-  master.connect(audio.destination);
-  // Cuerpo: seno que CAE de tono (descarte).
-  const o = audio.createOscillator();
-  const g = audio.createGain();
-  o.type = "sine";
-  o.frequency.setValueAtTime(440, now);
-  o.frequency.exponentialRampToValueAtTime(150, now + 0.13); // baja = "se fue"
-  g.gain.setValueAtTime(0.0001, now);
-  g.gain.exponentialRampToValueAtTime(0.6, now + 0.006);
-  g.gain.exponentialRampToValueAtTime(0.0001, now + 0.16);
-  o.connect(g);
-  g.connect(master);
-  o.start(now);
-  o.stop(now + 0.18);
-  // Transitorio "pf": ráfaga corta de ruido pasa-altos (el "barrido").
-  const n = audio.createBuffer(1, Math.floor(audio.sampleRate * 0.05), audio.sampleRate);
-  const d = n.getChannelData(0);
-  for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / d.length);
-  const src = audio.createBufferSource();
-  src.buffer = n;
-  const hp = audio.createBiquadFilter();
-  hp.type = "highpass";
-  hp.frequency.value = 1200;
-  const ng = audio.createGain();
-  ng.gain.value = 0.25;
-  src.connect(hp);
-  hp.connect(ng);
-  ng.connect(master);
-  src.start(now);
-  src.stop(now + 0.05);
+  // Lowpass global → mantiene todo oscuro/mate (nada brillante = nada "feliz").
+  const lp = audio.createBiquadFilter();
+  lp.type = "lowpass";
+  lp.frequency.value = 900;
+  lp.connect(audio.destination);
+  master.connect(lp);
+
+  // Tres notas DESCENDENTES en menor (E4, C4, A3) → melodía que "cae".
+  const step = (t0: number, freq: number, vol: number, dur: number) => {
+    const o = audio.createOscillator();
+    const g = audio.createGain();
+    o.type = "triangle";
+    o.frequency.value = freq;
+    g.gain.setValueAtTime(0.0001, t0);
+    g.gain.exponentialRampToValueAtTime(vol, t0 + 0.012); // ataque suave (sin click)
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    o.connect(g);
+    g.connect(master);
+    o.start(t0);
+    o.stop(t0 + dur + 0.02);
+  };
+  step(now, 330, 0.5, 0.13); // E4
+  step(now + 0.1, 262, 0.5, 0.15); // C4
+  step(now + 0.21, 220, 0.55, 0.3); // A3 (nota final, más larga = "se asienta abajo")
+
+  // Golpe grave bajo la última nota → peso/finalidad ("cayó y se fue").
+  const thud = audio.createOscillator();
+  const tg = audio.createGain();
+  thud.type = "sine";
+  thud.frequency.setValueAtTime(110, now + 0.21);
+  thud.frequency.exponentialRampToValueAtTime(55, now + 0.45); // sub que cae
+  tg.gain.setValueAtTime(0.0001, now + 0.21);
+  tg.gain.exponentialRampToValueAtTime(0.4, now + 0.24);
+  tg.gain.exponentialRampToValueAtTime(0.0001, now + 0.5);
+  thud.connect(tg);
+  tg.connect(master);
+  thud.start(now + 0.21);
+  thud.stop(now + 0.52);
 }
