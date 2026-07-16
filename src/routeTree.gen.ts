@@ -16,6 +16,7 @@ import { Route as ArtifactsRouteImport } from './routes/artifacts'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as JoinTokenRouteImport } from './routes/join.$token'
 import { Route as CSlugRouteImport } from './routes/c.$slug'
+import { Route as ApiWarmRouteImport } from './routes/api.warm'
 import { Route as ApiUploadRouteImport } from './routes/api.upload'
 import { Route as ApiStreamRouteImport } from './routes/api.stream'
 import { Route as ApiAgentAssetRouteImport } from './routes/api.agent-asset'
@@ -60,6 +61,11 @@ const JoinTokenRoute = JoinTokenRouteImport.update({
 const CSlugRoute = CSlugRouteImport.update({
   id: '/c/$slug',
   path: '/c/$slug',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiWarmRoute = ApiWarmRouteImport.update({
+  id: '/api/warm',
+  path: '/api/warm',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiUploadRoute = ApiUploadRouteImport.update({
@@ -122,6 +128,7 @@ export interface FileRoutesByFullPath {
   '/api/agent-asset': typeof ApiAgentAssetRoute
   '/api/stream': typeof ApiStreamRoute
   '/api/upload': typeof ApiUploadRoute
+  '/api/warm': typeof ApiWarmRoute
   '/c/$slug': typeof CSlugRoute
   '/join/$token': typeof JoinTokenRoute
   '/api/attachment/$id': typeof ApiAttachmentIdRoute
@@ -141,6 +148,7 @@ export interface FileRoutesByTo {
   '/api/agent-asset': typeof ApiAgentAssetRoute
   '/api/stream': typeof ApiStreamRoute
   '/api/upload': typeof ApiUploadRoute
+  '/api/warm': typeof ApiWarmRoute
   '/c/$slug': typeof CSlugRoute
   '/join/$token': typeof JoinTokenRoute
   '/api/attachment/$id': typeof ApiAttachmentIdRoute
@@ -161,6 +169,7 @@ export interface FileRoutesById {
   '/api/agent-asset': typeof ApiAgentAssetRoute
   '/api/stream': typeof ApiStreamRoute
   '/api/upload': typeof ApiUploadRoute
+  '/api/warm': typeof ApiWarmRoute
   '/c/$slug': typeof CSlugRoute
   '/join/$token': typeof JoinTokenRoute
   '/api/attachment/$id': typeof ApiAttachmentIdRoute
@@ -182,6 +191,7 @@ export interface FileRouteTypes {
     | '/api/agent-asset'
     | '/api/stream'
     | '/api/upload'
+    | '/api/warm'
     | '/c/$slug'
     | '/join/$token'
     | '/api/attachment/$id'
@@ -201,6 +211,7 @@ export interface FileRouteTypes {
     | '/api/agent-asset'
     | '/api/stream'
     | '/api/upload'
+    | '/api/warm'
     | '/c/$slug'
     | '/join/$token'
     | '/api/attachment/$id'
@@ -220,6 +231,7 @@ export interface FileRouteTypes {
     | '/api/agent-asset'
     | '/api/stream'
     | '/api/upload'
+    | '/api/warm'
     | '/c/$slug'
     | '/join/$token'
     | '/api/attachment/$id'
@@ -240,6 +252,7 @@ export interface RootRouteChildren {
   ApiAgentAssetRoute: typeof ApiAgentAssetRoute
   ApiStreamRoute: typeof ApiStreamRoute
   ApiUploadRoute: typeof ApiUploadRoute
+  ApiWarmRoute: typeof ApiWarmRoute
   CSlugRoute: typeof CSlugRoute
   JoinTokenRoute: typeof JoinTokenRoute
   ApiAttachmentIdRoute: typeof ApiAttachmentIdRoute
@@ -298,6 +311,13 @@ declare module '@tanstack/react-router' {
       path: '/c/$slug'
       fullPath: '/c/$slug'
       preLoaderRoute: typeof CSlugRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/warm': {
+      id: '/api/warm'
+      path: '/api/warm'
+      fullPath: '/api/warm'
+      preLoaderRoute: typeof ApiWarmRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/upload': {
@@ -394,6 +414,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiAgentAssetRoute: ApiAgentAssetRoute,
   ApiStreamRoute: ApiStreamRoute,
   ApiUploadRoute: ApiUploadRoute,
+  ApiWarmRoute: ApiWarmRoute,
   CSlugRoute: CSlugRoute,
   JoinTokenRoute: JoinTokenRoute,
   ApiAttachmentIdRoute: ApiAttachmentIdRoute,
