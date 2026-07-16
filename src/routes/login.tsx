@@ -48,7 +48,21 @@ export function LoginCard({
   // (`silent=1`). Si ya hay sesión → identidad firmada → entra sin click. Si no
   // (o timeout) → muestra el botón. teams.formmy.app y formmy.app son same-site,
   // así que la cookie de Formmy viaja en el iframe.
+  //
+  // ANTES de probar el iframe: si volvemos de un redirect top-level (modo mobile),
+  // Formmy nos dejó `?payload=&sig=` en la URL. Lo consumimos y saltamos el iframe.
   useEffect(() => {
+    const q = new URLSearchParams(window.location.search);
+    const cbPayload = q.get("payload");
+    const cbSig = q.get("sig");
+    if (cbPayload && cbSig) {
+      // Limpia la query para que un back/refresh no reintente con firma vieja.
+      window.history.replaceState({}, "", window.location.pathname);
+      setState("probing");
+      onIdentity(cbPayload, cbSig);
+      return;
+    }
+
     let settled = false;
     const iframe = document.createElement("iframe");
     iframe.style.display = "none";
@@ -87,40 +101,15 @@ export function LoginCard({
   function connect() {
     setState("waiting");
     setError(null);
-    // Popup centrado en la ventana (fallback manual del SSO silencioso).
-    const w = 480;
-    const h = 680;
-    const left = window.screenX + Math.max(0, (window.outerWidth - w) / 2);
-    const top = window.screenY + Math.max(0, (window.outerHeight - h) / 2);
-    const popup = window.open(
-      url,
-      "formmy-login",
-      `width=${w},height=${h},left=${Math.round(left)},top=${Math.round(top)}`
-    );
-    let done = false;
-    let timer: ReturnType<typeof setInterval>;
-    function cleanup() {
-      window.removeEventListener("message", onMsg);
-      clearInterval(timer);
-    }
-    function onMsg(e: MessageEvent) {
-      if (e.origin !== formmyOrigin) return;
-      const d = e.data as { type?: string; payload?: string; sig?: string };
-      if (d?.type === "ghosty-identity" && d.payload && d.sig) {
-        done = true;
-        cleanup();
-        popup?.close();
-        onIdentity(d.payload, d.sig);
-      }
-    }
-    window.addEventListener("message", onMsg);
-    // Si cierran el popup sin completar → desbloquea el botón.
-    timer = setInterval(() => {
-      if (popup?.closed && !done) {
-        cleanup();
-        setState("idle");
-      }
-    }, 500);
+    // Redirect TOP-LEVEL (no popup). En mobile / PWA standalone los popups
+    // (`window.open`) se abren en otra pestaña o en el navegador del sistema,
+    // rompen la relación opener↔popup y el postMessage de vuelta nunca llega.
+    // Navegando la ventana completa, la cookie de Formmy viaja first-party (ITP
+    // no la bloquea) y Formmy nos regresa por 302 a esta ruta con ?payload&sig.
+    // `return` preserva la ruta actual para que /join/<token> vuelva a sí mismo.
+    const sep = url.includes("?") ? "&" : "?";
+    const ret = encodeURIComponent(window.location.pathname);
+    window.location.href = `${url}${sep}redirect=1&return=${ret}`;
   }
 
   return (

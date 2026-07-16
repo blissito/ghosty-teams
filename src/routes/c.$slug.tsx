@@ -4448,14 +4448,24 @@ function ArtifactCard({ artifact, ownerMsg }: { artifact: Artifact; ownerMsg: Me
   const isOffice = view.kind === "office";
   const isSheet = view.kind === "sheet";
   const isPdf = view.kind === "pdf";
-  // Subtítulo tipo "Documento · PDF" / "Documento · DOCX" / "Hoja · CSV" (estilo claude.ai).
+  // Subtítulo tipo "Documento · PDF" / "Hoja de cálculo · XLSX" / "Hoja · CSV" (estilo claude.ai).
+  // Office = badge + tipo REALES derivados de la extensión del nombre — no hardcodear DOCX
+  // para todo (xlsx/pptx/docx colapsan en kind "office"). Ver ArtifactPanel.extBadge.
+  const officeExt = (/\.(docx?|xlsx?|pptx?)$/i.exec(view.kind === "office" ? artifact.title ?? "" : "")?.[1] ?? "").toUpperCase();
+  const officeLabel = /^XLS/.test(officeExt)
+    ? t("Hoja de cálculo")
+    : /^PPT/.test(officeExt)
+      ? t("Presentación")
+      : t("Documento");
   const subtitle = isSheet
     ? `${t("Hoja de cálculo")} · CSV`
     : isPdf
       ? `${t("Documento")} · PDF`
-      : isDoc || isOffice
+      : isDoc
         ? `${t("Documento")} · DOCX`
-        : t(ARTIFACT_KIND_META[view.kind]?.labelKey ?? "Descargar");
+        : isOffice
+          ? `${officeLabel} · ${officeExt || "DOCX"}`
+          : t(ARTIFACT_KIND_META[view.kind]?.labelKey ?? "Descargar");
   // Nombre mostrado: si es PDF y el título no trae extensión, le añadimos `.pdf` para que
   // se lea como archivo (el nombre SEMÁNTICO por contenido lo debe poner el agente al
   // generarlo — hoy a veces es un slug de storage tipo "df1VVGQO").
@@ -4499,7 +4509,7 @@ function ArtifactCard({ artifact, ownerMsg }: { artifact: Artifact; ownerMsg: Me
           </span>
         ) : (
           <span className="grid size-10 shrink-0 place-items-center rounded-lg bg-surface-3 text-brand">
-            {view.kind === "sheet" ? (
+            {view.kind === "sheet" || /^XLS/.test(officeExt) ? (
               <Table2 size={20} />
             ) : view.kind === "video" ? (
               <ImageIcon size={20} />
