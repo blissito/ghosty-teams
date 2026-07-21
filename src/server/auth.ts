@@ -1,7 +1,8 @@
 import { createServerFn } from "@tanstack/react-start";
 
-// Sesión + login con Formmy (identidad). Formmy = quién eres; EasyBits = recursos.
-const FORMMY = process.env.FORMMY_BASE_URL ?? "https://formmy.app";
+// Sesión + login con Ghosty.studio (IdP del ecosistema). ghosty.studio = quién eres;
+// EasyBits = recursos. (Antes esto era Formmy — ya NO dependemos de Formmy para identidad.)
+const IDP = process.env.GHOSTY_IDENTITY_URL ?? "https://www.ghosty.studio";
 
 async function session() {
   const { useSession } = await import("@tanstack/react-start/server");
@@ -45,23 +46,23 @@ export function clearMeCache() {
   _meCache = undefined;
 }
 
-// Devuelve el URL firmado del popup de identidad de Formmy (firma opener→Formmy).
-export const startFormmyLogin = createServerFn({ method: "GET" })
+// Devuelve el URL firmado del handshake de identidad de ghosty.studio (firma
+// box→IdP). El IdP verifica `ts.origin` con GHOSTY_PARTNER_SECRET y, si hay sesión
+// gs, regresa por 302 a `<origin><return>?payload&sig`.
+export const startGhostyLogin = createServerFn({ method: "GET" })
   .validator((d: { inviteToken?: string } | undefined) => d ?? {})
   .handler(async ({ data }) => {
     const crypto = await import("node:crypto");
-    // El origin se deriva del request (cada sandbox tiene su URL) — multitenant,
-    // sin env fijo. Detrás del proxy EasyBits el host público va en x-forwarded-*.
-    // APP_URL solo como override opcional.
+    // El origin se deriva del request (cada workspace tiene su subdominio) —
+    // multitenant, sin env fijo. El ingress pone x-ghosty-origin (dominio estable);
+    // detrás del proxy el host público va en x-forwarded-*. APP_URL solo override.
     let origin = process.env.APP_URL ?? "";
     if (!origin) {
       const { getRequestHeader, getRequestHost, getRequestProtocol } = await import(
         "@tanstack/react-start/server"
       );
-      // 1) x-ghosty-origin: lo pone el ingress de teams.formmy.app y EasyBits NO
-      //    lo toca (header custom) → origin = dominio estable. Gana sobre todo.
-      // 2) x-forwarded-host: acceso directo al sb-xxx (EasyBits lo setea).
-      // 3) Host crudo (=localhost:3000 dentro de la VM) como último recurso.
+      // 1) x-ghosty-origin: lo pone el ingress (Caddy) → origin = dominio estable.
+      // 2) x-forwarded-host: acceso directo al sb-xxx. 3) Host crudo como último recurso.
       const ghostyOrigin = getRequestHeader("x-ghosty-origin");
       if (ghostyOrigin) {
         origin = ghostyOrigin;
@@ -73,19 +74,19 @@ export const startFormmyLogin = createServerFn({ method: "GET" })
     }
     const ts = Math.floor(Date.now() / 1000);
     const sig = crypto
-      .createHmac("sha256", process.env.FORMMY_PARTNER_SECRET_GHOSTY!)
+      .createHmac("sha256", process.env.GHOSTY_PARTNER_SECRET!)
       .update(`${ts}.${origin}`)
       .digest("hex");
-    const p = new URLSearchParams({ ts: String(ts), sig, o: origin, p: "ghosty-chat" });
-    return { url: `${FORMMY}/identity/connect?${p}`, formmyOrigin: FORMMY, inviteToken: data.inviteToken };
+    const p = new URLSearchParams({ ts: String(ts), sig, o: origin });
+    return { url: `${IDP}/identity/connect?${p}`, idpOrigin: IDP, inviteToken: data.inviteToken };
   });
 
-// Recibe la identidad firmada por Formmy (firma Formmy→opener), crea sesión.
-export const completeFormmyLogin = createServerFn({ method: "POST" })
+// Recibe la identidad firmada por ghosty.studio (firma IdP→box), crea sesión.
+export const completeGhostyLogin = createServerFn({ method: "POST" })
   .validator((d: { payload: string; sig: string; inviteToken?: string }) => d)
   .handler(async ({ data }) => {
     const crypto = await import("node:crypto");
-    const secret = process.env.FORMMY_PARTNER_SECRET_GHOSTY!;
+    const secret = process.env.GHOSTY_PARTNER_SECRET!;
     const expected = crypto.createHmac("sha256", secret).update(data.payload).digest("hex");
     const a = Buffer.from(expected);
     const b = Buffer.from(data.sig);

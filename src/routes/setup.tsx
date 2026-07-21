@@ -107,7 +107,7 @@ function Setup() {
   }
 
   return (
-    <div className="grid min-h-screen place-items-center bg-surface p-6 text-ink">
+    <div className="grid min-h-[100dvh] place-items-center bg-surface text-ink pl-[max(1.5rem,env(safe-area-inset-left))] pr-[max(1.5rem,env(safe-area-inset-right))] pt-[max(1.5rem,env(safe-area-inset-top))] pb-[max(1.5rem,env(safe-area-inset-bottom))]">
       <div className="w-full max-w-md rounded-2xl border border-border bg-surface-2 p-8">
         <div className="mb-4 flex items-center justify-between border-b border-border pb-3 text-xs text-muted">
           <span className="truncate">{user?.email}</span>
