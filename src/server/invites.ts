@@ -1,5 +1,12 @@
 import { createServerFn } from "@tanstack/react-start";
-import { dbqRaw as dbq } from "../dbq.server";
+
+// invites.ts lo importa SettingsContent (cliente) por sus server fns; por eso NO
+// puede importar `dbq.server` estáticamente (import-protection lo prohíbe en el
+// bundle cliente). Import dinámico dentro del wrapper → solo se resuelve en server.
+async function dbq(sql: string, args: unknown[] = []) {
+  const { dbqRaw } = await import("../dbq.server");
+  return dbqRaw(sql, args);
+}
 
 // ¿El sub ya es un usuario conocido (owner o member)? (para gating de login)
 export async function isKnownUser(sub: string): Promise<boolean> {
