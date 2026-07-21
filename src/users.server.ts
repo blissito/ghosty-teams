@@ -1,17 +1,6 @@
-// gc_users en EasyBits DB. Primer usuario en loguearse = owner.
-const BASE = process.env.EASYBITS_BASE_URL ?? "https://www.easybits.cloud";
-const KEY = process.env.EASYBITS_API_KEY!;
-const DB_ID = process.env.EASYBITS_DB_ID!;
-
-async function dbq(sql: string, args: unknown[] = []) {
-  const res = await fetch(`${BASE}/api/v2/databases/${DB_ID}/query`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${KEY}` },
-    body: JSON.stringify({ sql, args }),
-  });
-  if (!res.ok) throw new Error(`db ${res.status}: ${await res.text()}`);
-  return (await res.json()) as { cols: string[]; rows: (string | null)[][] };
-}
+// gc_users en la DB del tenant (sqld, namespace por workspace). Primer usuario en
+// loguearse = owner. Cliente compartido y multitenant (ver dbq.server.ts).
+import { dbqRaw as dbq } from "./dbq.server";
 
 export type SessionUser = {
   sub: string;

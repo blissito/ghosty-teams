@@ -1,18 +1,7 @@
-// Config de la instancia (cloud-native): vive en EasyBits DB (gc_config),
-// NO en el compute. El wizard del owner la llena; @ghosty se gatea con ella.
-const BASE = process.env.EASYBITS_BASE_URL ?? "https://www.easybits.cloud";
-const KEY = process.env.EASYBITS_API_KEY!;
-const DB_ID = process.env.EASYBITS_DB_ID!;
-
-async function dbq(sql: string, args: unknown[] = []) {
-  const res = await fetch(`${BASE}/api/v2/databases/${DB_ID}/query`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${KEY}` },
-    body: JSON.stringify({ sql, args }),
-  });
-  if (!res.ok) throw new Error(`db ${res.status}: ${await res.text()}`);
-  return (await res.json()) as { cols: string[]; rows: (string | null)[][] };
-}
+// Config de la instancia (cloud-native): vive en la DB del tenant (gc_config, sqld
+// namespace por workspace), NO en el compute. El wizard del owner la llena; @ghosty
+// se gatea con ella. Cliente compartido y multitenant (ver dbq.server.ts).
+import { dbqRaw as dbq } from "./dbq.server";
 
 export async function getConfig(k: string): Promise<string | null> {
   const { rows } = await dbq("SELECT v FROM gc_config WHERE k = ?", [k]);

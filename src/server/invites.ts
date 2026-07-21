@@ -1,18 +1,5 @@
 import { createServerFn } from "@tanstack/react-start";
-
-const BASE = process.env.EASYBITS_BASE_URL ?? "https://www.easybits.cloud";
-const KEY = process.env.EASYBITS_API_KEY!;
-const DB_ID = process.env.EASYBITS_DB_ID!;
-
-async function dbq(sql: string, args: unknown[] = []) {
-  const res = await fetch(`${BASE}/api/v2/databases/${DB_ID}/query`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${KEY}` },
-    body: JSON.stringify({ sql, args }),
-  });
-  if (!res.ok) throw new Error(`db ${res.status}: ${await res.text()}`);
-  return (await res.json()) as { cols: string[]; rows: (string | null)[][] };
-}
+import { dbqRaw as dbq } from "../dbq.server";
 
 // ¿El sub ya es un usuario conocido (owner o member)? (para gating de login)
 export async function isKnownUser(sub: string): Promise<boolean> {
