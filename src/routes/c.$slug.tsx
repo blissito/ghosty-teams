@@ -591,6 +591,11 @@ function useEmojis(): CustomEmoji[] {
     const load = () =>
       listEmojisFn()
         .then((e) => {
+          // NO pisar una lista poblada con un resultado VACÍO: listCustomEmojis traga sus
+          // errores como [] (fetch transitorio, hiccup de sqld) → sin esta guardia un
+          // refresh fallido BORRABA todos los emojis del cliente ("se perdió el emoji").
+          // Conservar lo que ya teníamos es más seguro que vaciar.
+          if (e.length === 0 && (emojisCache?.length ?? 0) > 0) return;
           emojisCache = e;
           if (alive) setEmojis(e);
         })
