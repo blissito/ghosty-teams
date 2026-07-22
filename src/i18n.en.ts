@@ -351,7 +351,6 @@ export const en: Record<string, string> = {
   "Tono, rol y reglas SOLO para este espacio (ej. más formal, cita la fuente, ofrece el siguiente paso)…": "Tone, role and rules ONLY for this space (e.g. more formal, cite the source, offer the next step)…",
   "Trae issues y PRs al chat; @ghosty los resume y comenta.": "Brings issues and PRs into the chat; @ghosty summarizes and comments on them.",
   "Tu API key del proveedor. Corre off-meter en tu cuenta en vez del proxy medido.": "Your provider API key. Runs off-meter on your account instead of the metered proxy.",
-  "Tu apodo…": "Your nickname…",
   "Tu conexión con EasyBits expiró. Reconéctala abajo (← Desconectar EasyBits) y vuelve a intentar.": "Your EasyBits connection expired. Reconnect it below (← Disconnect EasyBits) and try again.",
   "Tu navegador no soporta notificaciones push.": "Your browser doesn't support push notifications.",
   "Tus mensajes marcados.": "Your starred messages.",

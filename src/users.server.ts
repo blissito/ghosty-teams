@@ -71,6 +71,20 @@ export async function upsertUser(id: {
 // Perfil editable por el dueño de la cuenta (Ajustes → perfil): nombre visible y
 // avatar. El email lo ancla el IdP (no editable aquí). avatar vacío = quitar (null).
 // upsertUser ya NO pisa estos campos en logins posteriores, así que persisten.
+// ¿otro usuario (sub distinto) ya usa este display name? El authz de editar/borrar
+// mensajes se apoya en `msg.sender === user.name` (identidad = string mutable, sin
+// sender_sub), así que permitir dos usuarios con el MISMO nombre dejaría a uno
+// editar/borrar los mensajes del otro. Comparación normalizada (trim + lower).
+export async function isNameTakenByOther(sub: string, name: string): Promise<boolean> {
+  const norm = name.trim().toLowerCase();
+  if (!norm) return false;
+  const { rows } = await dbq(
+    "SELECT 1 FROM gc_users WHERE sub<>? AND lower(trim(name))=? LIMIT 1",
+    [sub, norm]
+  );
+  return !!rows[0];
+}
+
 export async function updateProfile(
   sub: string,
   patch: { name?: string; avatar?: string }

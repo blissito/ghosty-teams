@@ -107,12 +107,28 @@ export const updateMyProfileFn = createServerFn({ method: "POST" })
     if (!user) throw new Error("no autenticado");
 
     const name = data.name?.trim().slice(0, 60);
-    const avatar = data.avatar?.trim();
-    const patch: { name?: string; avatar?: string } = {};
-    if (name) patch.name = name; // nombre vacío = se conserva el actual
-    if (avatar !== undefined) patch.avatar = avatar;
-
+    const rawAvatar = data.avatar?.trim();
     const users = await import("../users.server");
+
+    const patch: { name?: string; avatar?: string } = {};
+    if (name) {
+      // El authz de mensajes se apoya en el display name (msg.sender === user.name):
+      // dos usuarios con el mismo nombre → uno editaría/borraría los mensajes del otro.
+      if (await users.isNameTakenByOther(user.sub, name)) {
+        throw new Error("Ese nombre ya está en uso");
+      }
+      patch.name = name; // nombre vacío = se conserva el actual
+    }
+    if (rawAvatar !== undefined) {
+      // Solo aceptamos el path servido por nosotros (/api/attachment/<id>, del /api/upload)
+      // o vacío (quitar). Evita URLs externas (tracking pixel: filtra la IP de cada
+      // viewer) o data: URLs — el avatar se pinta como <img src> a todos los que te ven.
+      if (rawAvatar !== "" && !rawAvatar.startsWith("/api/attachment/")) {
+        throw new Error("Avatar inválido");
+      }
+      patch.avatar = rawAvatar;
+    }
+
     await users.updateProfile(user.sub, patch);
 
     const next: SessionUser = { ...user, ...patch };

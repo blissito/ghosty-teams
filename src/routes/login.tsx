@@ -13,7 +13,9 @@ export function parseLoginSearch(s: Record<string, unknown>): LoginSearch {
     payload: typeof s.payload === "string" ? s.payload : undefined,
     sig: typeof s.sig === "string" ? s.sig : undefined,
     attempted:
-      s.attempted === "1" || s.attempted === 1 || s.attempted === true ? true : undefined,
+      s.attempted === "1" || s.attempted === 1 || s.attempted === true || s.attempted === "true"
+        ? true
+        : undefined,
   };
 }
 
