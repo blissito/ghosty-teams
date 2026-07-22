@@ -96,6 +96,7 @@ import { subscribeMentions } from "../utils/mentions-bus";
 import { subscribeEmojis } from "../utils/emojis-bus";
 import { subscribeUsers, bumpUsers } from "../utils/users-bus";
 import { clearMeCache } from "../server/auth";
+import { unfurlLinkFn } from "../server/unfurl";
 import { registerModalEsc } from "../utils/modal-esc";
 import ArtifactPanel, { type ArtifactView, viewFromAttachment } from "../components/ArtifactPanel";
 import { extractEbDoc, draftTitle, bubbleWithoutEbDoc } from "../lib/ebdoc";
@@ -4089,6 +4090,37 @@ function firstUnreadId(messages: Message[] | null, newAt: number | null, meName?
 }
 
 // Divisor "nuevos mensajes" (referencia Zulip: inline, no pill flotante).
+// Preview de link (unfurl) estilo Slack/WhatsApp: tarjeta con imagen OG + título + desc.
+// El fetch + parseo es server-side (unfurlLinkFn), cacheado por URL en el cliente también.
+type LinkData = { url: string; title?: string; description?: string; image?: string; site?: string } | null;
+const unfurlCache = new Map<string, LinkData>();
+function LinkPreview({ url }: { url: string }) {
+  const [data, setData] = useState<LinkData>(unfurlCache.get(url) ?? null);
+  useEffect(() => {
+    if (unfurlCache.has(url)) { setData(unfurlCache.get(url) ?? null); return; }
+    let alive = true;
+    unfurlLinkFn({ data: { url } }).then((d) => { unfurlCache.set(url, d); if (alive) setData(d); }).catch(() => {});
+    return () => { alive = false; };
+  }, [url]);
+  if (!data) return null;
+  return (
+    <a href={url} target="_blank" rel="noreferrer noopener"
+      className="mt-1.5 flex max-w-md overflow-hidden rounded-lg border-l-2 border-brand bg-surface-2 transition hover:bg-surface-3">
+      {data.image ? <img src={data.image} alt="" loading="lazy" decoding="async" className="h-auto max-h-28 w-24 shrink-0 object-cover" /> : null}
+      <div className="min-w-0 flex-1 p-2.5">
+        {data.site ? <p className="truncate text-[11px] uppercase tracking-wide text-muted">{data.site}</p> : null}
+        {data.title ? <p className="truncate text-sm font-semibold text-ink">{data.title}</p> : null}
+        {data.description ? <p className="mt-0.5 line-clamp-2 text-xs text-muted">{data.description}</p> : null}
+      </div>
+    </a>
+  );
+}
+// Primera URL http(s) del cuerpo (para unfurl). Quita puntuación final pegada.
+function firstUrl(body: string): string | null {
+  const m = body.match(/https?:\/\/[^\s<>()]+/);
+  return m ? m[0].replace(/[.,;:!?)\]]+$/, "") : null;
+}
+
 function NewDivider() {
   const t = useT();
   return (
@@ -5223,6 +5255,11 @@ function MessageRow({
             </div>
           ) : null
         )}
+        {/* Link preview (unfurl) de la primera URL — salvo que el link sea el del artefacto. */}
+        {!editing && m.body && !m.artifact && (() => {
+          const u = firstUrl(bubbleWithoutEbDoc(m.body));
+          return u ? <LinkPreview url={u} /> : null;
+        })()}
         {m.attachments && m.attachments.length > 0 && <AttachmentList attachments={m.attachments} />}
         {m.artifact && (
           <ArtifactBoundary
