@@ -700,15 +700,26 @@ function useChatScroll(
     setTimeout(jump, 300);
   };
   useEffect(() => {
+    // Tras aterrizar, RECALCULA atBottom con la posición real → el botón "ir al final"
+    // aparece de una si el landing dejó mid-history (ej. salto al no-leído). Sin esto
+    // atBottom quedaba stale-true hasta el primer scroll y el botón no salía al abrir.
+    const measure = () => {
+      const el = scrollRef.current;
+      if (!el) return;
+      const near = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+      setAtBottom((prev) => (prev === near ? prev : near));
+    };
     if (unreadId != null && !didLand.current) {
       const el = document.getElementById(`msg-${unreadId}`);
       if (el) {
         el.scrollIntoView({ block: "center" });
         didLand.current = true;
+        requestAnimationFrame(measure);
         return;
       }
     }
     if (stick.current) scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
+    requestAnimationFrame(measure);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [count, contentLen, extra, unreadId]);
   return { onScroll, atBottom, scrollToBottom };
@@ -1013,6 +1024,11 @@ function ChannelPage() {
             if (th && !th.replies.some((m) => m.id === ev.msg.id))
               threadCache.set(ev.msg.parent_id, { root: th.root, replies: [...th.replies, ev.msg] });
           }
+          // Yo lo envié → avanza MI cursor de lectura en el server para ese scope. Sin esto,
+          // mi propio mensaje queda con created_at > last_read_at → reaparece como no-leído
+          // (badge) al recargar/renavegar. (Este es el path común: eco de mi misma pestaña.)
+          if (ev.msg.dm_id != null) markReadFn({ data: { scope: "dm", scopeId: ev.msg.dm_id } }).catch(() => {});
+          else if (ev.msg.parent_id == null) markReadFn({ data: { scope: "room", scopeId: ev.msg.channel_id } }).catch(() => {});
           applyPatch();
           return;
         }
