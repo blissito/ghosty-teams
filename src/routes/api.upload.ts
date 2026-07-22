@@ -27,8 +27,20 @@ export const Route = createFileRoute("/api/upload")({
         if (file.size === 0) return new Response("empty file", { status: 400 });
         if (file.size > MAX_BYTES) return new Response("file too large", { status: 413 });
 
-        const { uploadToEasyBits } = await import("../server/easybits-files.server");
+        const isImage = (file.type || "").startsWith("image/");
         try {
+          if (isImage) {
+            // Imagen → pipeline con thumbnail WebP (sirve el derivado inline; original para
+            // vista completa / agente). Devuelve thumbFileId (o null si no aplica/sharp ausente).
+            const { processAndStoreImage } = await import("../server/image.server");
+            const up = await processAndStoreImage({
+              blob: file,
+              contentType: file.type || "application/octet-stream",
+              fileName: file.name || `file-${file.size}`,
+            });
+            return Response.json(up);
+          }
+          const { uploadToEasyBits } = await import("../server/easybits-files.server");
           const up = await uploadToEasyBits({
             blob: file,
             contentType: file.type || "application/octet-stream",

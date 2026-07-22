@@ -175,7 +175,7 @@ export const Route = createFileRoute("/c/$slug")({
 });
 
 type SessionUser = { sub: string; name: string; email: string; avatar: string; isOwner: boolean; handle: string };
-type Attach = { fileId: string; mime: string; size: number; name: string };
+type Attach = { fileId: string; mime: string; size: number; name: string; thumbFileId?: string | null };
 // El optimista guarda su propio payload de envío → se puede reintentar tal cual.
 type Optimistic = {
   id: string; // == nonce
@@ -4640,6 +4640,8 @@ function AttachmentList({ attachments }: { attachments: Attachment[] }) {
     <div className="mt-1.5 flex flex-wrap gap-2">
       {attachments.map((a) => {
         const src = `/api/attachment/${encodeURIComponent(a.file_id)}`;
+        // Inline: usa el thumbnail WebP si existe (liviano/rápido); el panel abre el original.
+        const inlineSrc = a.thumb_file_id ? `/api/attachment/${encodeURIComponent(a.thumb_file_id)}` : src;
         const view = viewFromAttachment(a);
         // Imagen → abre en el panel lateral (antes: pestaña nueva).
         if (view?.kind === "image") {
@@ -4651,7 +4653,7 @@ function AttachmentList({ attachments }: { attachments: Attachment[] }) {
               className="block cursor-pointer"
               title={t("Abrir en panel")}
             >
-              <ChatImage src={src} alt={a.name ?? ""} />
+              <ChatImage src={inlineSrc} alt={a.name ?? ""} />
             </button>
           );
         }
@@ -6041,6 +6043,7 @@ const Composer = forwardRef<ComposerHandle, {
     mime: string;
     size: number;
     fileId?: string;
+    thumbFileId?: string | null; // derivado WebP (del /api/upload de imágenes)
     uploading: boolean;
     error?: boolean;
     previewUrl?: string; // objectURL de la imagen → miniatura INSTANTÁNEA (antes de subir)
@@ -6065,10 +6068,10 @@ const Composer = forwardRef<ComposerHandle, {
       fetch("/api/upload", { method: "POST", body: fd })
         .then(async (r) => {
           if (!r.ok) throw new Error(await r.text());
-          return r.json() as Promise<{ fileId: string; mime: string; size: number; name: string }>;
+          return r.json() as Promise<{ fileId: string; mime: string; size: number; name: string; thumbFileId?: string | null }>;
         })
         .then((up) =>
-          setPending((p) => p.map((x) => (x.localId === localId ? { ...x, uploading: false, fileId: up.fileId } : x)))
+          setPending((p) => p.map((x) => (x.localId === localId ? { ...x, uploading: false, fileId: up.fileId, thumbFileId: up.thumbFileId ?? null } : x)))
         )
         .catch(() =>
           setPending((p) => p.map((x) => (x.localId === localId ? { ...x, uploading: false, error: true } : x)))
@@ -6199,7 +6202,7 @@ const Composer = forwardRef<ComposerHandle, {
     // Adjuntos ya subidos (con fileId). Bloquea envío mientras alguno sube.
     const attachments = pending
       .filter((p) => p.fileId && !p.error)
-      .map((p) => ({ fileId: p.fileId!, mime: p.mime, size: p.size, name: p.name }));
+      .map((p) => ({ fileId: p.fileId!, mime: p.mime, size: p.size, name: p.name, thumbFileId: p.thumbFileId ?? null }));
     const body = editor ? ((editor.storage as any).markdown.getMarkdown() as string).trim() : "";
     if ((!body && attachments.length === 0) || uploading) return;
     setPending((p) => { p.forEach((x) => x.previewUrl && URL.revokeObjectURL(x.previewUrl)); return []; });

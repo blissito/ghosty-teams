@@ -89,7 +89,7 @@ export const postDmMessageFn = createServerFn({ method: "POST" })
       body: string;
       nonce?: string;
       quotedId?: number | null; // quote-reply
-      attachments?: { fileId: string; mime: string; size: number; name: string }[];
+      attachments?: { fileId: string; mime: string; size: number; name: string; thumbFileId?: string | null }[];
     }) => d
   )
   .handler(async ({ data }) => {
@@ -165,7 +165,7 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
       shellId?: number; // caja caliente: cáscara ya creada por postDmMessageFn
       quotedAuthor?: string | null; // quote-reply: superficie para el agente
       quotedExcerpt?: string | null;
-      attachments?: { fileId: string; mime: string; size: number; name: string }[];
+      attachments?: { fileId: string; mime: string; size: number; name: string; thumbFileId?: string | null }[];
     }) => d
   )
   .handler(async ({ data }) => {

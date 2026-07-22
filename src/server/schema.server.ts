@@ -157,6 +157,9 @@ async function migrate(): Promise<void> {
   await addColumn("gc_users", "bio", "TEXT");
   await addColumn("gc_users", "banned", "INTEGER NOT NULL DEFAULT 0");
 
+  // Thumbnail WebP de adjuntos-imagen (se sirve inline; el original queda para full/agente).
+  await addColumn("gc_attachments", "thumb_file_id", "TEXT");
+
   // Agentes slice 1: persona/prompt por agente (se antepone/envía al backend para
   // que cada agente hable distinto). gc_agents la crea el provisioner; aquí sumamos.
   await addColumn("gc_agents", "system_prompt", "TEXT");

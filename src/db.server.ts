@@ -73,6 +73,7 @@ export type Attachment = {
   mime: string | null;
   size: number | null;
   name: string | null;
+  thumb_file_id?: string | null; // derivado WebP para render inline (null = usa el original)
 };
 
 // Artefacto: doc/pdf/imagen que el agente genera y se abre en el panel del room.
@@ -227,7 +228,7 @@ export async function attachAttachments(msgs: Message[]): Promise<Message[]> {
   const ids = msgs.map((m) => m.id);
   const ph = ids.map(() => "?").join(",");
   const rows = await dbq(
-    `SELECT id, message_id, file_id, mime, size, name FROM gc_attachments
+    `SELECT id, message_id, file_id, mime, size, name, thumb_file_id FROM gc_attachments
       WHERE message_id IN (${ph}) ORDER BY id`,
     ids
   );
@@ -241,6 +242,7 @@ export async function attachAttachments(msgs: Message[]): Promise<Message[]> {
       mime: r.mime ?? null,
       size: r.size == null ? null : num(r.size),
       name: r.name ?? null,
+      thumb_file_id: (r.thumb_file_id as string | null) ?? null,
     };
     const arr = byMsg.get(mid) ?? [];
     if (arr.length === 0) byMsg.set(mid, arr);
@@ -252,20 +254,20 @@ export async function attachAttachments(msgs: Message[]): Promise<Message[]> {
 // Inserta los adjuntos de un mensaje recién creado.
 export async function createAttachments(
   messageId: number,
-  files: { fileId: string; mime: string; size: number; name: string }[]
+  files: { fileId: string; mime: string; size: number; name: string; thumbFileId?: string | null }[]
 ): Promise<void> {
   for (const f of files) {
     await dbq(
-      `INSERT INTO gc_attachments (message_id, file_id, mime, size, name) VALUES (?, ?, ?, ?, ?)`,
-      [messageId, f.fileId, f.mime, f.size, f.name]
+      `INSERT INTO gc_attachments (message_id, file_id, mime, size, name, thumb_file_id) VALUES (?, ?, ?, ?, ?, ?)`,
+      [messageId, f.fileId, f.mime, f.size, f.name, f.thumbFileId ?? null]
     );
   }
 }
 
-// Lee los file_ids de un mensaje (para borrar en EasyBits al eliminar el mensaje).
+// Lee los file_ids (original + thumb) de un mensaje (para borrar el objeto al eliminarlo).
 export async function attachmentFileIds(messageId: number): Promise<string[]> {
-  const rows = await dbq(`SELECT file_id FROM gc_attachments WHERE message_id = ?`, [messageId]);
-  return rows.map((r) => r.file_id!);
+  const rows = await dbq(`SELECT file_id, thumb_file_id FROM gc_attachments WHERE message_id = ?`, [messageId]);
+  return rows.flatMap((r) => [r.file_id, r.thumb_file_id].filter(Boolean) as string[]);
 }
 
 // Adjunta el artefacto (doc/pdf del agente) de cada mensaje en un lote (1 query).

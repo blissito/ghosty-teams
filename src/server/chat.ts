@@ -436,7 +436,7 @@ export const postMessage = createServerFn({ method: "POST" })
       nonce?: string;
       topic?: string;
       quotedId?: number | null; // quote-reply: id del mensaje citado
-      attachments?: { fileId: string; mime: string; size: number; name: string }[];
+      attachments?: { fileId: string; mime: string; size: number; name: string; thumbFileId?: string | null }[];
     }) => d
   )
   .handler(async ({ data }) => {
@@ -545,7 +545,7 @@ export const askAgent = createServerFn({ method: "POST" })
       shellId?: number; // caja caliente: cáscara ya creada por postMessage (reutilizar su id)
       quotedAuthor?: string | null; // quote-reply: cita para que el agente SIEMPRE la vea
       quotedExcerpt?: string | null;
-      attachments?: { fileId: string; mime: string; size: number; name: string }[];
+      attachments?: { fileId: string; mime: string; size: number; name: string; thumbFileId?: string | null }[];
     }) => d
   )
   .handler(async ({ data }) => {
