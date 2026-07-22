@@ -336,6 +336,9 @@ const sentNonces = new Set<string>();
 // Quote-reply: mensaje que el composer está citando (snapshot para UI + payload).
 type ReplyTarget = { id: number; author: string; excerpt: string };
 
+// Toast in-app de notificación (sonido + aviso visual). onOpen enfoca el scope de origen.
+type ToastItem = { id: string; sender: string; avatar: string; preview: string; kind: "dm" | "mention" | "room"; onOpen: () => void };
+
 // Payload de envío del Composer → outbox. La cita (quote-reply) es opcional.
 type SendPayload = {
   body: string;
@@ -780,6 +783,15 @@ function ChannelPage() {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const emojis = useEmojis();
   const [optimistic, setOptimistic] = useState<Optimistic[]>([]);
+  // Toasts in-app: notificación VISUAL que acompaña al sonido (antes solo sonaba → la gente
+  // no lo relacionaba con una notificación). Cada uno se auto-descarta; clic → salta al scope.
+  const [toasts, setToasts] = useState<ToastItem[]>([]);
+  const pushToast = useCallback((tst: Omit<ToastItem, "id">) => {
+    const id = crypto.randomUUID();
+    setToasts((prev) => [...prev.slice(-3), { ...tst, id }]); // máx ~4 en pantalla
+    setTimeout(() => setToasts((prev) => prev.filter((x) => x.id !== id)), 5000);
+  }, []);
+  const dismissToast = useCallback((id: string) => setToasts((prev) => prev.filter((x) => x.id !== id)), []);
   const [rev, setRev] = useState(0);
   const revalidate = () => setRev((r) => r + 1);
   // Live-patch: contador que sube cuando un evento realtime ya mutó un Map de cache
@@ -1059,18 +1071,18 @@ function ChannelPage() {
         // agent_handle y mentions_ghosty=0) tampoco AQUÍ: nace vacía al enviar → su sonido
         // se dispara al PRIMER token (message:body/delta), no al aparecer la caja.
         const isAgentShell = ev.msg.agent_handle != null && ev.msg.mentions_ghosty === 0;
-        if (ev.msg.kind === "msg" && ev.msg.sender !== user?.name && !isAgentShell) {
+        // ¿Realmente lo estoy viendo? = scope enfocado Y pestaña visible. Gatea sonido,
+        // toast, notificación de escritorio Y el auto-marcado de leído.
+        const visible = typeof document !== "undefined" && document.visibilityState === "visible";
+        const inFocus =
+          (openDmId != null && ev.msg.dm_id === openDmId) ||
+          (openThreadId != null && ev.msg.parent_id === openThreadId) ||
+          (openDmId == null && view == null && openThreadId == null &&
+            ev.msg.dm_id == null && ev.msg.parent_id == null && ev.msg.channel_id === channel.id);
+        const activeScope = inFocus && visible;
+        if (ev.msg.kind === "msg" && !isMine && !isAgentShell) {
           const muteKey = ev.msg.dm_id != null ? `dm:${ev.msg.dm_id}` : `room:${ev.msg.channel_id}`;
-          // No sonar si el mensaje ya está a la vista en el scope enfocado (Slack/Zulip):
-          // DM abierto, hilo abierto, o el flujo del room activo. Si la pestaña está
-          // oculta sí suena (no lo estás viendo).
-          const visible = typeof document !== "undefined" && document.visibilityState === "visible";
-          const inFocus =
-            (openDmId != null && ev.msg.dm_id === openDmId) ||
-            (openThreadId != null && ev.msg.parent_id === openThreadId) ||
-            (openDmId == null && view == null && openThreadId == null &&
-              ev.msg.dm_id == null && ev.msg.parent_id == null && ev.msg.channel_id === channel.id);
-          if (!mutes.has(muteKey) && !(visible && inFocus)) {
+          if (!mutes.has(muteKey) && !activeScope) {
             // ¿Me menciona? (mi @handle o una grupal). Solo relevante en rooms.
             const h = user?.handle?.toLowerCase();
             const mentionsMe = (ev.msg.body.match(/@([\wáéíóúñ]+)/gi) ?? [])
@@ -1081,6 +1093,24 @@ function ChannelPage() {
             if (ev.msg.dm_id != null) playDmSound();
             else if (mentionsMe) playMentionSound();
             else playNotificationSound();
+            // Aviso VISUAL que acompaña al sonido: toast in-app + (si la pestaña está oculta)
+            // notificación de escritorio. Resuelve "suena pero no tengo notificaciones".
+            const kind: ToastItem["kind"] = ev.msg.dm_id != null ? "dm" : mentionsMe ? "mention" : "room";
+            const preview = plainExcerpt(ev.msg.body) || (ev.msg.attachments?.length ? "📎 Adjunto" : "");
+            const dmId = ev.msg.dm_id, chId = ev.msg.channel_id, parentId = ev.msg.parent_id;
+            const onOpen = () => {
+              if (dmId != null) { setOpenThreadId(null); setView(null); setOpenDmId(dmId); }
+              else if (parentId != null) { setOpenDmId(null); setView(null); setOpenThreadId(parentId); }
+              else { setOpenDmId(null); setOpenThreadId(null); setView(null); setHomeOpen(false);
+                     const s = channelsById.get(chId); if (s && s !== channel.slug) router.navigate({ to: "/c/$slug", params: { slug: s } }); }
+            };
+            pushToast({ sender: ev.msg.sender, avatar: ev.msg.avatar, preview, kind, onOpen });
+            if (!visible && typeof Notification !== "undefined" && Notification.permission === "granted") {
+              try {
+                const n = new Notification(ev.msg.sender, { body: preview, icon: "/ghosty.svg", tag: `gc-${dmId ?? chId}` });
+                n.onclick = () => { window.focus(); onOpen(); n.close(); };
+              } catch { /* algunos browsers exigen SW para notificar */ }
+            }
           }
         }
         // DM: parchea el flujo del DM y refresca la lista (orden / nueva conversación).
@@ -1088,10 +1118,9 @@ function ChannelPage() {
           const arr = dmFlowCache.get(ev.msg.dm_id);
           if (arr && !arr.some((m) => m.id === ev.msg.id))
             dmFlowCache.set(ev.msg.dm_id, [...arr, ev.msg]);
-          // Badge: si NO estoy viendo este DM → +1; si sí, márcalo leído (server). PERO si el
-          // mensaje es MÍO (eco cuyo nonce ya expiró, u otra pestaña/dispositivo) nunca badgea:
-          // lo marco leído (yo lo mandé → ya lo "vi"; evita que reaparezca unread al recargar).
-          if (openDmId === ev.msg.dm_id || isMine)
+          // Auto-marca leído SOLO si de verdad lo estoy viendo (scope enfocado + pestaña
+          // visible) o si es mío; si la pestaña está oculta → badgea (acumula no-leído).
+          if (isMine || (openDmId === ev.msg.dm_id && visible))
             markReadFn({ data: { scope: "dm", scopeId: ev.msg.dm_id } }).catch(() => {});
           else bumpUnread("dm", ev.msg.dm_id);
           // No revalidar la cáscara de un agente (streaming): refetcharía el body vacío
@@ -1105,10 +1134,10 @@ function ChannelPage() {
         if (ev.msg.parent_id == null) {
           const arr = flowCache.get(slug);
           if (arr && !arr.some((m) => m.id === ev.msg.id)) flowCache.set(slug, [...arr, ev.msg]);
-          // Badge del room (solo top-level, como cuenta el server). El room activo
-          // (sin DM abierto) se marca leído; los demás rooms visibles suman. Mis propios
-          // mensajes NUNCA badgean → los marco leídos (evita unread fantasma al recargar).
-          if ((openDmId == null && ev.msg.channel_id === channel.id) || isMine)
+          // Badge del room (solo top-level, como cuenta el server). Auto-marca leído SOLO si
+          // de verdad lo estoy viendo (room activo + pestaña visible) o si es mío; oculto →
+          // badgea (acumula no-leído aunque el room esté "abierto" pero miro a otro lado).
+          if (isMine || (openDmId == null && ev.msg.channel_id === channel.id && visible))
             markReadFn({ data: { scope: "room", scopeId: ev.msg.channel_id } }).catch(() => {});
           else bumpUnread("room", ev.msg.channel_id);
         } else {
@@ -1373,17 +1402,28 @@ function ChannelPage() {
     setHomeOpen(true);
     setNavOpen(false);
   };
-  // Hotkey global ⌘K / Ctrl-K → abre/cierra el command palette (salto rápido).
+  // Hotkeys globales. ⌘K/Ctrl-K → command palette. Esc → cierra el foco actual en orden
+  // de prioridad (panel de artefacto → hilo → DM), como Slack/Discord. No hace nada si
+  // estás escribiendo (el composer maneja su propio Esc) o si hay un modal/palette abierto.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
         e.preventDefault();
         setPaletteOpen((o) => !o);
+        return;
+      }
+      if (e.key === "Escape") {
+        const el = document.activeElement as HTMLElement | null;
+        // No robar el Esc si estás en un input/editor (cancelar cita, cerrar popups, etc.).
+        if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable)) return;
+        if (openArtifactRef.current) { setOpenArtifact(null); return; }
+        if (openThreadId != null) { setOpenThreadId(null); return; }
+        if (openDmId != null) { setOpenDmId(null); return; }
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  }, [openThreadId, openDmId]);
   // Salta a un mensaje de room desde una vista/búsqueda (navega si es otro room).
   const jumpToRoomMessage = (slug: string, id: number) => {
     setView(null);
@@ -1773,8 +1813,57 @@ function ChannelPage() {
           />
         )}
       </AnimatePresence>
+      <ToastStack toasts={toasts} onDismiss={dismissToast} />
     </div>
     </ChatCtx.Provider>
+  );
+}
+
+// Stack de toasts de notificación (abajo-derecha). Acompaña al sonido con un aviso
+// VISUAL: avatar + autor + preview; clic → salta al scope; auto-descarta a los 5s.
+function ToastStack({ toasts, onDismiss }: { toasts: ToastItem[]; onDismiss: (id: string) => void }) {
+  const t = useT();
+  if (typeof document === "undefined") return null;
+  return createPortal(
+    <div className="pointer-events-none fixed bottom-4 right-4 z-[60] flex w-[min(92vw,22rem)] flex-col gap-2">
+      <AnimatePresence>
+        {toasts.map((tst) => (
+          <motion.button
+            key={tst.id}
+            layout
+            initial={{ opacity: 0, x: 24, scale: 0.98 }}
+            animate={{ opacity: 1, x: 0, scale: 1 }}
+            exit={{ opacity: 0, x: 24, scale: 0.98 }}
+            transition={{ type: "spring", stiffness: 500, damping: 40 }}
+            onClick={() => { tst.onOpen(); onDismiss(tst.id); }}
+            className="pointer-events-auto flex w-full items-start gap-2.5 rounded-xl border border-border bg-surface-2 p-3 text-left shadow-xl transition hover:bg-surface-3"
+          >
+            <Avatar name={tst.sender} avatar={tst.avatar} className="mt-0.5 h-8 w-8 shrink-0 !rounded-lg" />
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-1.5">
+                <span className="truncate text-sm font-semibold text-ink">{tst.sender}</span>
+                {tst.kind !== "room" && (
+                  <span className="shrink-0 rounded bg-brand/15 px-1 text-[9px] font-bold uppercase tracking-wide text-brand">
+                    {tst.kind === "dm" ? t("DM") : t("Mención")}
+                  </span>
+                )}
+              </div>
+              <p className="mt-0.5 line-clamp-2 text-xs text-muted">{tst.preview}</p>
+            </div>
+            <span
+              role="button"
+              tabIndex={-1}
+              onClick={(e) => { e.stopPropagation(); onDismiss(tst.id); }}
+              className="shrink-0 rounded p-0.5 text-muted transition hover:text-ink"
+              title={t("Cerrar")}
+            >
+              <X size={14} />
+            </span>
+          </motion.button>
+        ))}
+      </AnimatePresence>
+    </div>,
+    document.body
   );
 }
 
@@ -3886,7 +3975,7 @@ function Flow({
         </div>
       </header>
       {pins.length > 0 && <PinnedBar pins={pins} onJump={jumpTo} />}
-      <div ref={scrollRef} onScroll={onScroll} className="w-full flex-1 space-y-1 overflow-y-auto px-6 py-4 thin-scroll">
+      <div ref={scrollRef} onScroll={onScroll} className="w-full flex-1 overflow-y-auto px-6 py-4 thin-scroll">
         {messages === null ? (
           <ThreadSkeleton />
         ) : messages.length === 0 && optimistic.length === 0 ? (
@@ -3993,7 +4082,7 @@ function ThreadView({
           <DocsButton channelId={channel.id} channelSlug={channel.slug} threadRootId={threadId} />
         </div>
       </header>
-      <div ref={scrollRef} onScroll={onScroll} className="w-full flex-1 space-y-1 overflow-y-auto px-6 py-4 thin-scroll">
+      <div ref={scrollRef} onScroll={onScroll} className="w-full flex-1 overflow-y-auto px-6 py-4 thin-scroll">
         {!data ? (
           <ThreadSkeleton />
         ) : !data.root ? (
@@ -4146,7 +4235,7 @@ function DmView({
           <span className="rounded-full bg-surface-3 px-1.5 py-0.5 text-[9px] uppercase tracking-wide">{t("pronto")}</span>
         </button>
       </header>
-      <div ref={scrollRef} onScroll={onScroll} className="w-full flex-1 space-y-1 overflow-y-auto px-6 py-4 thin-scroll">
+      <div ref={scrollRef} onScroll={onScroll} className="w-full flex-1 overflow-y-auto px-6 py-4 thin-scroll">
         {flow === null ? (
           <ThreadSkeleton />
         ) : flow.length === 0 && optimistic.length === 0 ? (
@@ -4773,7 +4862,7 @@ function MessageRow({
   }
 
   return (
-    <div id={`msg-${m.id}`} className={`group relative flex items-start gap-3 rounded-lg px-2 transition-colors hover:bg-surface-2 ${grouped ? "py-0.5" : "mt-1 py-0.5"}`}>
+    <div id={`msg-${m.id}`} className={`group relative flex items-start gap-3 rounded-lg px-2 transition-colors hover:bg-surface-2 ${grouped ? "py-px" : "mt-2 py-0.5"}`}>
       {grouped ? (
         // Agrupado: sin avatar. Gutter angosto que muestra la hora SOLO al hover (Slack).
         <div className="w-9 shrink-0 select-none pt-0.5 text-right text-[10px] leading-5 text-muted opacity-0 group-hover:opacity-100">

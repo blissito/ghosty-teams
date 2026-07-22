@@ -106,15 +106,15 @@ export function SettingsContent({
     loadSettingsData().then(setData).catch(() => {});
   }, []);
 
-  // Lee el link permanente activo del owner (solo lee; si fue cancelado → null → CTA "Crear").
+  // Lee el link permanente activo (per-usuario; Slack default: cualquier member invita).
   useEffect(() => {
-    if (data?.user?.isOwner && !inviteLoaded) {
+    if (data?.user && !inviteLoaded) {
       getInvite()
         .then((r) => setInvite(r.url))
         .catch(() => {})
         .finally(() => setInviteLoaded(true));
     }
-  }, [data?.user?.isOwner, inviteLoaded]);
+  }, [data?.user, inviteLoaded]);
 
   async function makeInvite() {
     setBusy(true);
@@ -227,7 +227,8 @@ export function SettingsContent({
               {/* Identidad (editable: nombre + avatar) */}
               <ProfileCard user={user} isOwner={isOwner} />
 
-              {isOwner && (
+              {/* Invitar: Slack default → cualquier member puede invitar (link propio). */}
+              {user && (
                 <div className="mb-4 rounded-2xl border border-border bg-surface-2 p-5">
                   <h2 className="mb-1 text-sm font-semibold">{t("Invitar miembros")}</h2>
                   <p className="mb-4 text-sm text-muted">

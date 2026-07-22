@@ -23,12 +23,15 @@ export async function consumeInvite(token: string, _sub: string): Promise<boolea
 }
 
 // ── Helpers (server-only) ────────────────────────────────────────────────────
-async function ownerSub(): Promise<string> {
+// Slack default: CUALQUIER member puede invitar. El link es per-creador (get-or-create):
+// cada quien tiene el suyo, revoca/refresca solo el propio. Un token válido sin usar deja
+// entrar (ver auth.ts). Antes era owner-only.
+async function currentSub(): Promise<string> {
   const { useSession } = await import("@tanstack/react-start/server");
   const { sessionConfig } = await import("./session.server");
   const s = await useSession<{ user?: { sub: string; isOwner: boolean } }>(sessionConfig());
   const user = s.data.user;
-  if (!user?.isOwner) throw new Error("solo el owner invita");
+  if (!user) throw new Error("no autenticado");
   return user.sub;
 }
 
@@ -57,14 +60,14 @@ async function mint(sub: string): Promise<string> {
 // Lee el link permanente activo (NO crea). null = cancelado o nunca creado → la UI
 // muestra el CTA "Crear link". Así "Cancelar" deja la tarjeta sin link (no se re-crea).
 export const getInvite = createServerFn({ method: "GET" }).handler(async () => {
-  const sub = await ownerSub();
+  const sub = await currentSub();
   const token = await activeToken(sub);
   return { url: token ? await urlFor(token) : null };
 });
 
 // Get-or-create idempotente: crea el link permanente si no hay, o devuelve el actual.
 export const createInvite = createServerFn({ method: "POST" }).handler(async () => {
-  const sub = await ownerSub();
+  const sub = await currentSub();
   const token = (await activeToken(sub)) ?? (await mint(sub));
   return { url: await urlFor(token) };
 });
@@ -72,14 +75,14 @@ export const createInvite = createServerFn({ method: "POST" }).handler(async () 
 // Refresca: invalida el link actual (lo borra) y emite uno nuevo. El link viejo deja
 // de resolver → útil si se filtró.
 export const refreshInvite = createServerFn({ method: "POST" }).handler(async () => {
-  const sub = await ownerSub();
+  const sub = await currentSub();
   await dbq("DELETE FROM gc_invites WHERE created_by = ? AND used_by IS NULL", [sub]);
   return { url: await urlFor(await mint(sub)) };
 });
 
 // Cancela: elimina el link permanente. Nadie más puede unirse hasta crear uno nuevo.
 export const revokeInvite = createServerFn({ method: "POST" }).handler(async () => {
-  const sub = await ownerSub();
+  const sub = await currentSub();
   await dbq("DELETE FROM gc_invites WHERE created_by = ? AND used_by IS NULL", [sub]);
   return { ok: true as const };
 });
