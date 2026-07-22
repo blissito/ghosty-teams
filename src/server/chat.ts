@@ -395,18 +395,25 @@ export const postMessage = createServerFn({ method: "POST" })
       body: string;
       nonce?: string;
       topic?: string;
+      quotedId?: number | null; // quote-reply: id del mensaje citado
       attachments?: { fileId: string; mime: string; size: number; name: string }[];
     }) => d
   )
   .handler(async ({ data }) => {
     const db = await import("../db.server");
     const bus = await import("./bus.server");
-    const { resolvedAgents, detectMentions } = await import("../agents.server");
+    const { resolvedAgents, detectMentions, quoteExcerpt } = await import("../agents.server");
     const channel = await db.getChannel(data.slug);
     if (!channel) throw new Error("Canal no encontrado");
     const body = data.body.trim();
     const files = data.attachments ?? [];
     if (!body && files.length === 0) return { ok: false as const };
+
+    // Quote-reply: resuelve el mensaje citado y arma el SNAPSHOT (autor + extracto)
+    // server-side → autoritativo y robusto (sobrevive si el original se borra luego).
+    const quoted = data.quotedId != null ? await db.getMessage(data.quotedId).catch(() => null) : null;
+    const quotedAuthor = quoted?.sender ?? null;
+    const quotedExcerpt = quoted ? quoteExcerpt(quoted.body ?? "") : null;
 
     // Topic (eje Zulip): los top-level llevan el topic elegido; las respuestas
     // heredan el del root del hilo (un hilo no cambia de topic a media conversación).
@@ -432,6 +439,9 @@ export const postMessage = createServerFn({ method: "POST" })
       body,
       agentHandle: mentioned,
       topic,
+      quotedId: quoted?.id ?? null,
+      quotedAuthor,
+      quotedExcerpt,
     });
     if (files.length) await db.createAttachments(id, files);
     // Realtime: publica el mensaje ya persistido a los suscriptores del room.
@@ -455,6 +465,12 @@ export const postMessage = createServerFn({ method: "POST" })
       for (const h of mentionedList) respondents.push({ handle: h, parent: parentFor, fleetThread, shellId: 0 });
     } else if (data.parentId !== null && parent?.agent_handle && agents.some((a) => a.handle === parent.agent_handle)) {
       respondents.push({ handle: parent.agent_handle, parent: data.parentId, fleetThread: String(data.parentId), shellId: 0 });
+    } else if (quoted?.agent_handle && agents.some((a) => a.handle === quoted.agent_handle)) {
+      // Citar el mensaje de un agente (sin re-@mención) = responderle → ese agente contesta
+      // en el MISMO contexto. La cita ya viaja al agente por askAgent (superficie WABA).
+      const parentFor = data.parentId;
+      const fleetThread = data.parentId === null ? "flow" : String(data.parentId);
+      respondents.push({ handle: quoted.agent_handle, parent: parentFor, fleetThread, shellId: 0 });
     }
     // Caja caliente: la cáscara del agente se crea EAGER (kind:"msg" VACÍA, con avatar+nombre)
     // aquí mismo → aparece al instante y PERMANECE; el turno (askAgent) streamea sobre este
@@ -487,12 +503,14 @@ export const askAgent = createServerFn({ method: "POST" })
       topic?: string;
       fleetThread?: string; // clave de flota (desacoplada del hilo UI; ver postMessage)
       shellId?: number; // caja caliente: cáscara ya creada por postMessage (reutilizar su id)
+      quotedAuthor?: string | null; // quote-reply: cita para que el agente SIEMPRE la vea
+      quotedExcerpt?: string | null;
       attachments?: { fileId: string; mime: string; size: number; name: string }[];
     }) => d
   )
   .handler(async ({ data }) => {
     const db = await import("../db.server");
-    const { resolvedAgents, runAgentTurn, buildMediaParts } = await import("../agents.server");
+    const { resolvedAgents, runAgentTurn, buildMediaParts, quotedContextPrefix } = await import("../agents.server");
     const bus = await import("./bus.server");
     const channel = await db.getChannel(data.slug);
     if (!channel) throw new Error("Canal no encontrado");
@@ -518,6 +536,11 @@ export const askAgent = createServerFn({ method: "POST" })
         const ctx = rootBody.length > 2000 ? rootBody.slice(0, 2000) + "…" : rootBody;
         text = `[Contexto del hilo — mensaje raíz de ${root.sender || "el remitente"}]\n${ctx}\n\n[Mensaje]\n${data.body}`;
       }
+    }
+    // Quote-reply: si el usuario citó un mensaje, embébelo en el texto del turno (patrón
+    // WABA) → el agente SIEMPRE ve a qué se responde, aunque no esté en su memoria.
+    if (data.quotedExcerpt?.trim()) {
+      text = quotedContextPrefix(data.quotedAuthor ?? "", data.quotedExcerpt, text);
     }
 
     // Media de entrada: los adjuntos del usuario → FileParts (uri firmada / bytes).

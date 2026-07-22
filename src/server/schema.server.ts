@@ -62,6 +62,13 @@ async function migrate(): Promise<void> {
   // esto — NO en `sender` (display name, ahora editable en Ajustes → perfil, que sería
   // suplantable). Mensajes viejos sin sender_sub caen al chequeo por nombre (legacy).
   await addColumn("gc_messages", "sender_sub", "TEXT");
+  // Quote-reply (estilo WhatsApp/WABA): un mensaje puede CITAR a otro. Guardamos el id
+  // del citado + un SNAPSHOT denormalizado (autor + extracto) — como el contextInfo.
+  // quotedMessage de Baileys: la cita viaja EN el mensaje, así el render y el agente la
+  // ven sin un join, y sobrevive aunque el original se borre/edite.
+  await addColumn("gc_messages", "quoted_id", "INTEGER");
+  await addColumn("gc_messages", "quoted_author", "TEXT");
+  await addColumn("gc_messages", "quoted_excerpt", "TEXT");
 
   await exec(`CREATE INDEX IF NOT EXISTS gc_messages_chan_topic
               ON gc_messages(channel_id, topic, created_at)`);

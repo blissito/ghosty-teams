@@ -123,6 +123,29 @@ export async function buildMediaParts(
   return parts;
 }
 
+// ── Quote-reply (cita) ──────────────────────────────────────────────────────
+// Extracto plano del mensaje citado para el SNAPSHOT (denormalizado en el mensaje).
+// Quita bloques eb-doc/eb-sheet (ruido enorme) y colapsa espacios; ~220 chars.
+export function quoteExcerpt(body: string): string {
+  const stripped = (body || "")
+    .replace(/```eb-(doc|sheet)[\s\S]*?```/g, "[documento]")
+    .replace(/```[\s\S]*?```/g, "[código]")
+    .replace(/\s+/g, " ")
+    .trim();
+  return stripped.length > 220 ? stripped.slice(0, 220) + "…" : stripped;
+}
+
+// Superficie para el agente: embebe la cita EN el texto del turno (patrón WABA/Baileys
+// contextInfo.quotedMessage) → el agente SIEMPRE ve a qué se está respondiendo, sin
+// tener que buscar en el historial. Va en el TEXTO (no en el system prompt) porque
+// cambia por turno.
+export function quotedContextPrefix(author: string, excerpt: string, body: string): string {
+  const who = author?.trim() || "alguien";
+  const cite = (excerpt || "").trim();
+  if (!cite) return body;
+  return `[En respuesta a un mensaje de ${who}]\n> ${cite}\n\n[Mensaje]\n${body}`;
+}
+
 // ¿Qué agente se mencionó en el body? Devuelve el handle o null (el primero que
 // aparezca, entre los habilitados). Case-insensitive, @handle con borde de palabra.
 export function detectMention(body: string, handles: string[]): string | null {

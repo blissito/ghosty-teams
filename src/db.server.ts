@@ -60,6 +60,11 @@ export type Message = {
   pinned?: boolean;  // fijado en su room (visible para todos)
   attachments?: Attachment[]; // adjuntos (EasyBits), Fase 4
   artifact?: Artifact | null; // doc/pdf que PRODUCE el agente (abre en el panel)
+  // Quote-reply: cita a otro mensaje. Snapshot denormalizado (autor+extracto) → el
+  // render y el agente la ven sin join y sobrevive al borrado del original.
+  quoted_id?: number | null;
+  quoted_author?: string | null;
+  quoted_excerpt?: string | null;
 };
 
 export type Attachment = {
@@ -102,6 +107,9 @@ function toMessage(r: Row): Message {
     topic: r.topic ?? "general",
     dm_id: r.dm_id == null ? null : num(r.dm_id),
     edited_at: r.edited_at == null ? null : num(r.edited_at),
+    quoted_id: r.quoted_id == null ? null : num(r.quoted_id),
+    quoted_author: (r.quoted_author as string | null) ?? null,
+    quoted_excerpt: (r.quoted_excerpt as string | null) ?? null,
   };
 }
 
@@ -968,13 +976,16 @@ export async function createMessage(input: {
   body: string;
   agentHandle?: string | null; // qué agente fue mencionado (null = ninguno)
   topic?: string; // eje Zulip; las respuestas heredan el del root (lo resuelve chat.ts)
+  quotedId?: number | null; // quote-reply: id + snapshot del mensaje citado
+  quotedAuthor?: string | null;
+  quotedExcerpt?: string | null;
 }): Promise<{ id: number }> {
   const handle = input.agentHandle ?? null;
   const topic = (input.topic ?? "general").trim() || "general";
   const rows = await dbq(
-    `INSERT INTO gc_messages (channel_id, parent_id, sender, sender_sub, avatar, body, kind, mentions_ghosty, agent_handle, topic)
-     VALUES (?, ?, ?, ?, ?, ?, 'msg', ?, ?, ?) RETURNING id`,
-    [input.channelId, input.parentId, input.sender, input.senderSub ?? null, input.avatar ?? "", input.body, handle ? 1 : 0, handle, topic]
+    `INSERT INTO gc_messages (channel_id, parent_id, sender, sender_sub, avatar, body, kind, mentions_ghosty, agent_handle, topic, quoted_id, quoted_author, quoted_excerpt)
+     VALUES (?, ?, ?, ?, ?, ?, 'msg', ?, ?, ?, ?, ?, ?) RETURNING id`,
+    [input.channelId, input.parentId, input.sender, input.senderSub ?? null, input.avatar ?? "", input.body, handle ? 1 : 0, handle, topic, input.quotedId ?? null, input.quotedAuthor ?? null, input.quotedExcerpt ?? null]
   );
   return { id: num(rows[0].id) };
 }
@@ -1145,12 +1156,15 @@ export async function createDmMessage(input: {
   avatar?: string;
   body: string;
   agentHandle?: string | null;
+  quotedId?: number | null; // quote-reply (mismo snapshot que en rooms)
+  quotedAuthor?: string | null;
+  quotedExcerpt?: string | null;
 }): Promise<{ id: number }> {
   const handle = input.agentHandle ?? null;
   const rows = await dbq(
-    `INSERT INTO gc_messages (channel_id, parent_id, sender, sender_sub, avatar, body, kind, mentions_ghosty, agent_handle, dm_id)
-     VALUES (0, NULL, ?, ?, ?, ?, 'msg', ?, ?, ?) RETURNING id`,
-    [input.sender, input.senderSub ?? null, input.avatar ?? "", input.body, handle ? 1 : 0, handle, input.dmId]
+    `INSERT INTO gc_messages (channel_id, parent_id, sender, sender_sub, avatar, body, kind, mentions_ghosty, agent_handle, dm_id, quoted_id, quoted_author, quoted_excerpt)
+     VALUES (0, NULL, ?, ?, ?, ?, 'msg', ?, ?, ?, ?, ?, ?) RETURNING id`,
+    [input.sender, input.senderSub ?? null, input.avatar ?? "", input.body, handle ? 1 : 0, handle, input.dmId, input.quotedId ?? null, input.quotedAuthor ?? null, input.quotedExcerpt ?? null]
   );
   return { id: num(rows[0].id) };
 }

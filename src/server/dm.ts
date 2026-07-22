@@ -88,18 +88,22 @@ export const postDmMessageFn = createServerFn({ method: "POST" })
       id: number;
       body: string;
       nonce?: string;
+      quotedId?: number | null; // quote-reply
       attachments?: { fileId: string; mime: string; size: number; name: string }[];
     }) => d
   )
   .handler(async ({ data }) => {
     const db = await import("../db.server");
     const bus = await import("./bus.server");
-    const { resolvedAgents, detectMention } = await import("../agents.server");
+    const { resolvedAgents, detectMention, quoteExcerpt } = await import("../agents.server");
     const me = await sessionUser();
     if (!me || !(await db.isDmMember(data.id, me.sub))) throw new Error("no autorizado");
     const body = data.body.trim();
     const files = data.attachments ?? [];
     if (!body && files.length === 0) return { ok: false as const };
+
+    // Quote-reply: snapshot autoritativo del citado (mismo criterio que en rooms).
+    const quoted = data.quotedId != null ? await db.getMessage(data.quotedId).catch(() => null) : null;
 
     const agents = await resolvedAgents();
     // DM 1:1 con un agente → cada mensaje enruta a ESE agente (sin @mención). Si no,
@@ -114,6 +118,9 @@ export const postDmMessageFn = createServerFn({ method: "POST" })
       avatar: me.avatar,
       body,
       agentHandle: mentioned,
+      quotedId: quoted?.id ?? null,
+      quotedAuthor: quoted?.sender ?? null,
+      quotedExcerpt: quoted ? quoteExcerpt(quoted.body ?? "") : null,
     });
     if (files.length) await db.createAttachments(id, files);
     let created = await db.getMessage(id);
@@ -156,13 +163,15 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
       sender: string;
       handle: string;
       shellId?: number; // caja caliente: cáscara ya creada por postDmMessageFn
+      quotedAuthor?: string | null; // quote-reply: superficie para el agente
+      quotedExcerpt?: string | null;
       attachments?: { fileId: string; mime: string; size: number; name: string }[];
     }) => d
   )
   .handler(async ({ data }) => {
     const db = await import("../db.server");
     const bus = await import("./bus.server");
-    const { resolvedAgents, runAgentTurn, buildMediaParts } = await import("../agents.server");
+    const { resolvedAgents, runAgentTurn, buildMediaParts, quotedContextPrefix } = await import("../agents.server");
     const me = await sessionUser();
     if (!me || !(await db.isDmMember(data.id, me.sub))) throw new Error("no autorizado");
     const agent = (await resolvedAgents()).find((a) => a.handle === data.handle);
@@ -174,13 +183,17 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
 
     const parts = await buildMediaParts(data.attachments ?? []);
     const groupId = `ghosty-chat-${data.handle}-dm-${data.id}`; // memoria por-agente
+    // Quote-reply: embebe la cita en el texto (superficie WABA → el agente siempre la ve).
+    const text = data.quotedExcerpt?.trim()
+      ? quotedContextPrefix(data.quotedAuthor ?? "", data.quotedExcerpt, data.body)
+      : data.body;
 
     const { id, reply } = await runAgentTurn({
       agent,
       handle: data.handle,
       groupId,
       sender: data.sender,
-      text: data.body,
+      text,
       parts,
       createShell: async () => {
         // Caja caliente: la cáscara ya fue creada EAGER por postDmMessageFn → reutiliza su

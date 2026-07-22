@@ -80,7 +80,7 @@ import {
   toggleReactionFn,
   editMessageFn,
 } from "../server/chat";
-import { SmilePlus, Pencil, ArrowLeft, RotateCcw, Send, Bold, Italic, Strikethrough, List, ListOrdered, Quote, Code, Type } from "lucide-react";
+import { SmilePlus, Pencil, ArrowLeft, RotateCcw, Send, Bold, Italic, Strikethrough, List, ListOrdered, Quote, Code, Type, Reply } from "lucide-react";
 import { getDeferredPrompt, onInstallable, clearDeferredPrompt, type BeforeInstallPromptEvent } from "../utils/pwa-install";
 import { useLiveStream } from "../hooks/useLiveStream";
 import type { RtEvent } from "../server/bus.server";
@@ -179,6 +179,10 @@ type Optimistic = {
   attachments: Attach[];
   nonce: string;
   status: "sending" | "failed";
+  // Quote-reply: snapshot para render optimista + payload al server/agente.
+  quotedId?: number | null;
+  quotedAuthor?: string | null;
+  quotedExcerpt?: string | null;
 };
 
 // Iconos de room (Lucide, no emojis). Se guarda el NOMBRE; se renderiza el componente.
@@ -323,6 +327,18 @@ if (typeof window !== "undefined") {
 // (ya se muestra optimista). Módulo: compartido entre Composer y el handler SSE.
 const sentNonces = new Set<string>();
 
+// Quote-reply: mensaje que el composer está citando (snapshot para UI + payload).
+type ReplyTarget = { id: number; author: string; excerpt: string };
+
+// Payload de envío del Composer → outbox. La cita (quote-reply) es opcional.
+type SendPayload = {
+  body: string;
+  attachments: Attach[];
+  quotedId?: number | null;
+  quotedAuthor?: string | null;
+  quotedExcerpt?: string | null;
+};
+
 // Contexto de chat (usuario + slug activo) para que MessageRow acceda sin prop-drilling.
 const ChatCtx = createContext<{
   me: SessionUser | null;
@@ -335,6 +351,9 @@ const ChatCtx = createContext<{
   editMsg: (m: Message, body: string) => void;
   retrySend: (o: Optimistic) => void;
   discardSend: (id: string) => void;
+  // Quote-reply: cita activa del composer (una global; solo un composer visible a la vez).
+  replyTo: ReplyTarget | null;
+  setReplyTo: (r: ReplyTarget | null) => void;
   // Picker de reacciones GLOBAL (id del mensaje con el picker abierto, o null).
   // Uno solo a la vez (referencia Slack/Zulip): abrir otro cierra el anterior.
   pickerFor: number | null;
@@ -359,6 +378,8 @@ const ChatCtx = createContext<{
   editMsg: () => {},
   retrySend: () => {},
   discardSend: () => {},
+  replyTo: null,
+  setReplyTo: () => {},
   pickerFor: null,
   setPickerFor: () => {},
   onOpenArtifact: () => {},
@@ -720,6 +741,7 @@ function ChannelPage() {
   // Home: dashboard de inicio (personaje Ghosty + resumen). Mutuamente excluyente con
   // room/hilo/DM/vista. Estado cliente puro (como `view`), se resetea al cambiar de room.
   const [homeOpen, setHomeOpen] = useState(false);
+  const [replyTo, setReplyTo] = useState<ReplyTarget | null>(null);
   // Drawer del sidebar en móvil (off-canvas). En ≥md el sidebar es fijo y esto se ignora.
   const [navOpen, setNavOpen] = useState(false);
   // Command palette (⌘K): salto rápido a room/DM/vista.
@@ -1211,6 +1233,11 @@ function ChannelPage() {
       /* storage lleno/bloqueado → no crítico */
     }
   }, [homeOpen, view, openDmId, openThreadId, channel.slug]);
+  // Cambiar de contexto (room/hilo/DM/vista/inicio) descarta la cita pendiente — su
+  // referente pertenece al contexto donde se citó; arrastrarla a otro sería confuso.
+  useEffect(() => {
+    setReplyTo(null);
+  }, [homeOpen, view, openDmId, openThreadId, channel.slug]);
   // Enfocar un room (sin DM ni vista abiertos): PRIMERO captura la frontera de
   // no-leídos (last_read_at previo → divisor "nuevos mensajes"), LUEGO marca leído
   // y baja el badge. El orden importa: markRead pisa last_read_at con now().
@@ -1362,18 +1389,18 @@ function ChannelPage() {
   // Dispara la red para un optimista concreto (usado por el envío inicial y el retry).
   const fireSend = (o: Optimistic) => {
     if (o.dmId != null) {
-      postDmMessageFn({ data: { id: o.dmId, body: o.body, nonce: o.nonce, attachments: o.attachments } })
+      postDmMessageFn({ data: { id: o.dmId, body: o.body, nonce: o.nonce, quotedId: o.quotedId ?? null, attachments: o.attachments } })
         .then((r) => {
           revalidate();
           if (r?.needsAgent && r.agentHandle)
-            askDmAgentFn({ data: { id: o.dmId!, body: o.body, sender: "", handle: r.agentHandle, shellId: r.shellId ?? undefined, attachments: o.attachments } })
+            askDmAgentFn({ data: { id: o.dmId!, body: o.body, sender: "", handle: r.agentHandle, shellId: r.shellId ?? undefined, quotedAuthor: o.quotedAuthor ?? null, quotedExcerpt: o.quotedExcerpt ?? null, attachments: o.attachments } })
               .then(() => revalidate())
               .catch(() => revalidate());
         })
         .catch(() => markFailed(o.id));
       return;
     }
-    postMessage({ data: { slug: o.slug, parentId: o.parentId, body: o.body, nonce: o.nonce, attachments: o.attachments } })
+    postMessage({ data: { slug: o.slug, parentId: o.parentId, body: o.body, nonce: o.nonce, quotedId: o.quotedId ?? null, attachments: o.attachments } })
       .then((r) => {
         revalidate();
         const respondents = r?.respondents ?? [];
@@ -1382,7 +1409,7 @@ function ChannelPage() {
           // hilo nuevo. Cada agente mencionado responde en paralelo y limpia su propio
           // "pensando…"; el streaming (message:delta) aterriza en el flujo por su id.
           for (const ag of respondents) {
-            askAgent({ data: { slug: o.slug, parentId: ag.parent, fleetThread: ag.fleetThread, body: o.body, sender: "", handle: ag.handle, shellId: ag.shellId, attachments: o.attachments } })
+            askAgent({ data: { slug: o.slug, parentId: ag.parent, fleetThread: ag.fleetThread, body: o.body, sender: "", handle: ag.handle, shellId: ag.shellId, quotedAuthor: o.quotedAuthor ?? null, quotedExcerpt: o.quotedExcerpt ?? null, attachments: o.attachments } })
               .then(() => revalidate())
               .catch(() => revalidate());
           }
@@ -1397,6 +1424,9 @@ function ChannelPage() {
     dmId: number | null;
     body: string;
     attachments: Attach[];
+    quotedId?: number | null;
+    quotedAuthor?: string | null;
+    quotedExcerpt?: string | null;
   }) => {
     const nonce = crypto.randomUUID();
     sentNonces.add(nonce);
@@ -1412,6 +1442,9 @@ function ChannelPage() {
       attachments: p.attachments,
       nonce,
       status: "sending",
+      quotedId: p.quotedId ?? null,
+      quotedAuthor: p.quotedAuthor ?? null,
+      quotedExcerpt: p.quotedExcerpt ?? null,
     };
     setOptimistic((prev) => [...prev, o]);
     fireSend(o);
@@ -1500,7 +1533,7 @@ function ChannelPage() {
 
   return (
     <ChatCtx.Provider
-      value={{ me: user, slug: channel.slug, emojis, react, star, pin, remove, editMsg, retrySend, discardSend, pickerFor, setPickerFor, onOpenArtifact: setOpenArtifact, sendQuickReply, openPrefs, openProfile }}
+      value={{ me: user, slug: channel.slug, emojis, react, star, pin, remove, editMsg, retrySend, discardSend, replyTo, setReplyTo, pickerFor, setPickerFor, onOpenArtifact: setOpenArtifact, sendQuickReply, openPrefs, openProfile }}
     >
     {/* pt safe-area: en PWA standalone (viewport-fit=cover + status-bar black-translucent)
         el contenido va DEBAJO de la hora/notch → el header y su botón de menú quedaban
@@ -3732,7 +3765,7 @@ function Flow({
   channel: Channel;
   messages: Message[] | null;
   optimistic: Optimistic[];
-  onSend: (p: { body: string; attachments: Attach[] }) => void;
+  onSend: (p: SendPayload) => void;
   onOpenThread: (id: number) => void;
   typing: { sub: string; name: string } | null;
   newAt: number | null;
@@ -3849,7 +3882,7 @@ function ThreadView({
   rev: number;
   patch: number;
   optimistic: Optimistic[];
-  onSend: (p: { body: string; attachments: Attach[] }) => void;
+  onSend: (p: SendPayload) => void;
   onReloaded: (loaded: { sender: string; body: string }[]) => void;
   typing: { name: string } | null;
   onGoToOrigin: (id: number) => void;
@@ -3979,7 +4012,7 @@ function DmView({
   patch: number;
   online: Set<string>;
   optimistic: Optimistic[];
-  onSend: (p: { body: string; attachments: Attach[] }) => void;
+  onSend: (p: SendPayload) => void;
   onReloaded: (loaded: { sender: string; body: string }[]) => void;
   typing: { name: string } | null;
   newAt: number | null;
@@ -4661,7 +4694,7 @@ function MessageRow({
   }
 
   return (
-    <div id={`msg-${m.id}`} className="group relative flex gap-3 rounded-lg px-2 py-1.5 transition-colors hover:bg-surface-2">
+    <div id={`msg-${m.id}`} className="group relative flex items-start gap-3 rounded-lg px-2 py-1.5 transition-colors hover:bg-surface-2">
       {/* Avatar clickable → perfil (persona o agente). */}
       <button
         onClick={() => openProfile({ name: displayName, avatar: m.avatar, handle: m.agent_handle ?? (isGhostyAvatar ? "ghosty" : null), isAgent })}
@@ -4690,6 +4723,7 @@ function MessageRow({
           }`}
         >
           {canReact && <ReactButton m={m} />}
+          <ReplyButton m={m} author={displayName} />
           <CopyButton m={m} />
           <StarButton m={m} />
           <MessageActions
@@ -4726,6 +4760,8 @@ function MessageRow({
             </span>
           ) : null}
         </div>
+        {/* Quote-reply: cita del mensaje al que responde (sobre el cuerpo, clic → salta). */}
+        {m.quoted_excerpt ? <QuotedCitation m={m} /> : null}
         {editing ? (
           <EditBox m={m} onDone={() => setEditing(false)} />
         ) : (
@@ -4781,6 +4817,62 @@ function MessageRow({
         )}
       </div>
     </div>
+  );
+}
+
+// Extracto de texto plano de un mensaje para la cita (quita fences eb-doc/código,
+// markdown básico, y colapsa espacios). Espejo de quoteExcerpt del server.
+function plainExcerpt(body: string): string {
+  const s = (body || "")
+    .replace(/```eb-(doc|sheet)[\s\S]*?```/g, "[documento]")
+    .replace(/```[\s\S]*?```/g, "[código]")
+    .replace(/!\[[^\]]*\]\([^)]*\)/g, "[imagen]")
+    .replace(/[*_`#>~]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  return s.length > 140 ? s.slice(0, 140) + "…" : s;
+}
+
+// Cita renderizada sobre el mensaje (quote-reply). Clic → salta al original si está en
+// pantalla (resalta un instante). Snapshot denormalizado → se ve aunque el original ya
+// no exista.
+function QuotedCitation({ m }: { m: Message }) {
+  const jump = () => {
+    if (m.quoted_id == null) return;
+    const el = document.getElementById(`msg-${m.quoted_id}`);
+    if (!el) return;
+    el.scrollIntoView({ behavior: "smooth", block: "center" });
+    el.classList.add("ring-2", "ring-brand");
+    setTimeout(() => el.classList.remove("ring-2", "ring-brand"), 1200);
+  };
+  return (
+    <button
+      onClick={jump}
+      className="mb-1 flex w-full max-w-md items-start gap-1.5 rounded-md border-l-2 border-brand/60 bg-surface-2 px-2 py-1 text-left transition hover:bg-surface-3"
+    >
+      <Reply size={12} className="mt-0.5 shrink-0 text-muted" />
+      <span className="min-w-0">
+        <span className="mr-1.5 text-xs font-semibold text-brand">{m.quoted_author || "—"}</span>
+        <span className="text-xs text-muted">
+          {(m.quoted_excerpt ?? "").length > 140 ? (m.quoted_excerpt ?? "").slice(0, 140) + "…" : m.quoted_excerpt}
+        </span>
+      </span>
+    </button>
+  );
+}
+
+// Botón "Responder" (quote-reply, estilo WhatsApp/WABA): arma la cita en el composer.
+function ReplyButton({ m, author }: { m: Message; author: string }) {
+  const t = useT();
+  const { setReplyTo } = useContext(ChatCtx);
+  return (
+    <button
+      onClick={() => setReplyTo({ id: m.id, author, excerpt: plainExcerpt(m.body) })}
+      title={t("Responder")}
+      className="grid h-7 w-7 place-items-center rounded-md text-muted transition hover:bg-surface-3 hover:text-ink"
+    >
+      <Reply size={14} />
+    </button>
   );
 }
 
@@ -5305,7 +5397,7 @@ function OptimisticRow({ o }: { o: Optimistic }) {
   // "No se envió" + reintentar/descartar.
   const time = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   return (
-    <div className="flex gap-3 rounded-lg px-2 py-1.5">
+    <div className="flex items-start gap-3 rounded-lg px-2 py-1.5">
       <Avatar name={o.sender} avatar={o.avatar} className="mt-0.5 h-9 w-9 !rounded-lg" />
       <div className="min-w-0 flex-1">
         <div className="flex items-baseline gap-2">
@@ -5316,6 +5408,16 @@ function OptimisticRow({ o }: { o: Optimistic }) {
             <span className="text-[11px] text-muted">{time}</span>
           )}
         </div>
+        {/* Cita optimista: se ve al instante (mismo look que el mensaje ya entregado). */}
+        {o.quotedExcerpt ? (
+          <div className="mb-1 flex w-full max-w-md items-start gap-1.5 rounded-md border-l-2 border-brand/60 bg-surface-2 px-2 py-1">
+            <Reply size={12} className="mt-0.5 shrink-0 text-muted" />
+            <span className="min-w-0">
+              <span className="mr-1.5 text-xs font-semibold text-brand">{o.quotedAuthor || "—"}</span>
+              <span className="truncate text-xs text-muted">{o.quotedExcerpt}</span>
+            </span>
+          </div>
+        ) : null}
         <div className={`text-sm ${failed ? "text-ink/70" : "text-ink"}`}>
           <Markdown body={o.body} />
         </div>
@@ -5412,7 +5514,7 @@ const Composer = forwardRef<ComposerHandle, {
   slug: string;
   parentId: number | null;
   dmId?: number | null;
-  onSend: (p: { body: string; attachments: Attach[] }) => void;
+  onSend: (p: SendPayload) => void;
   placeholder: string;
 }>(function Composer({
   slug,
@@ -5422,6 +5524,9 @@ const Composer = forwardRef<ComposerHandle, {
   placeholder,
 }, ref) {
   const t = useT();
+  // Quote-reply: la cita activa vive en ChatCtx (global; solo un composer visible a la
+  // vez). Al enviar viaja en el payload y se limpia.
+  const { replyTo, setReplyTo } = useContext(ChatCtx);
   // Borrador por scope (Fase 4): persiste lo tecleado en localStorage para no
   // perderlo al cambiar de room/hilo/DM o recargar. Clave estable por conversación.
   const draftKey =
@@ -5625,9 +5730,21 @@ const Composer = forwardRef<ComposerHandle, {
     playSelfSound(); // confirmación sonora del envío propio (distinta de las notifs)
     editor?.commands.focus(); // re-habilita al instante — no esperamos el round-trip
     // El ENVÍO lo hace el padre (outbox): crea el optimista, dispara la red en 2º plano.
-    onSend({ body, attachments });
+    // La cita (si hay) viaja en el payload; se limpia al enviar.
+    onSend(
+      replyTo
+        ? { body, attachments, quotedId: replyTo.id, quotedAuthor: replyTo.author, quotedExcerpt: replyTo.excerpt }
+        : { body, attachments }
+    );
+    if (replyTo) setReplyTo(null);
   }
   submitRef.current = submit;
+
+  // Al citar un mensaje, enfoca el editor para escribir la respuesta de inmediato.
+  useEffect(() => {
+    if (replyTo) editor?.commands.focus();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [replyTo?.id]);
 
   // Toolbar → comandos del editor (WYSIWYG), con estado activo resaltado.
   const FMT_TOOLS = editor
@@ -5660,6 +5777,27 @@ const Composer = forwardRef<ComposerHandle, {
         submit();
       }}
     >
+      {/* Quote-reply: cita activa. Barra con autor + extracto + cerrar. Al enviar viaja
+          en el payload y se pinta como cita del mensaje (y el agente la recibe). */}
+      {replyTo && (
+        <div className="mb-2 flex items-start gap-2 rounded-lg border-l-2 border-brand bg-surface-2 px-2.5 py-1.5">
+          <Reply size={14} className="mt-0.5 shrink-0 text-brand" />
+          <div className="min-w-0 flex-1">
+            <p className="text-xs font-semibold text-brand">
+              {t("Respondiendo a {name}", { name: replyTo.author })}
+            </p>
+            <p className="truncate text-xs text-muted">{replyTo.excerpt || t("(sin texto)")}</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setReplyTo(null)}
+            title={t("Cancelar")}
+            className="shrink-0 rounded p-0.5 text-muted transition hover:text-ink"
+          >
+            <X size={14} />
+          </button>
+        </div>
+      )}
       {/* Adjuntos: miniatura INSTANTÁNEA (objectURL) para imágenes; chip para el resto.
           Spinner sobrepuesto mientras sube; error en rojo. El drag-drop grande vive a
           nivel de toda la conversación (ver DropOverlay en Flow/ThreadView/DmView). */}
