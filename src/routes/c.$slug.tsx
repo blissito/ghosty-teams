@@ -574,11 +574,15 @@ function applyReaction(
   mySub?: string
 ): Message {
   const cur = m.reactions ?? [];
-  const others = cur.filter((r) => r.emoji !== ev.emoji);
-  if (ev.count <= 0) return { ...m, reactions: others };
-  const prev = cur.find((r) => r.emoji === ev.emoji);
-  const mine = ev.userSub === mySub ? ev.op === "add" : prev?.mine ?? false;
-  return { ...m, reactions: [...others, { emoji: ev.emoji, count: ev.count, mine }] };
+  if (ev.count <= 0) return { ...m, reactions: cur.filter((r) => r.emoji !== ev.emoji) };
+  const existing = cur.find((r) => r.emoji === ev.emoji);
+  const mine = ev.userSub === mySub ? ev.op === "add" : existing?.mine ?? false;
+  const updated = { emoji: ev.emoji, count: ev.count, mine };
+  // Emoji YA presente → actualiza EN SU LUGAR (no reordena). Antes se filtraba y se
+  // re-append al final → los chips se "intercambiaban" al reaccionar. Nuevo → al final.
+  return existing
+    ? { ...m, reactions: cur.map((r) => (r.emoji === ev.emoji ? updated : r)) }
+    : { ...m, reactions: [...cur, updated] };
 }
 
 // Menciones disponibles (agentes + usuarios) para el typeahead @. Cache módulo.
