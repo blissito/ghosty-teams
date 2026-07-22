@@ -58,6 +58,10 @@ async function migrate(): Promise<void> {
   await addColumn("gc_messages", "dm_id", "INTEGER");
   // Editar: marca de tiempo de última edición.
   await addColumn("gc_messages", "edited_at", "INTEGER");
+  // Identidad ESTABLE del autor (sub del IdP). El authz de editar/borrar se apoya en
+  // esto — NO en `sender` (display name, ahora editable en Ajustes → perfil, que sería
+  // suplantable). Mensajes viejos sin sender_sub caen al chequeo por nombre (legacy).
+  await addColumn("gc_messages", "sender_sub", "TEXT");
 
   await exec(`CREATE INDEX IF NOT EXISTS gc_messages_chan_topic
               ON gc_messages(channel_id, topic, created_at)`);

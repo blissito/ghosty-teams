@@ -110,6 +110,7 @@ export const postDmMessageFn = createServerFn({ method: "POST" })
     const { id } = await db.createDmMessage({
       dmId: data.id,
       sender: me.name,
+      senderSub: me.sub,
       avatar: me.avatar,
       body,
       agentHandle: mentioned,

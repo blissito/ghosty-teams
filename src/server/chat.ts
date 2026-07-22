@@ -245,11 +245,14 @@ export const deleteMessageFn = createServerFn({ method: "POST" })
     const db = await import("../db.server");
     const { useSession } = await import("@tanstack/react-start/server");
     const { sessionConfig } = await import("./session.server");
-    const s = await useSession<{ user?: { name: string; isOwner: boolean } }>(sessionConfig());
+    const s = await useSession<{ user?: { sub: string; name: string; isOwner: boolean } }>(sessionConfig());
     const user = s.data.user;
     const msg = await db.getMessage(data.id);
     if (!msg) return { ok: false as const };
-    if (!user?.isOwner && msg.sender !== user?.name) throw new Error("no autorizado");
+    // Authz por sub estable (no por el display name, ahora editable → suplantable).
+    // Mensajes legacy sin sender_sub caen al chequeo por nombre.
+    const owns = msg.sender_sub ? msg.sender_sub === user?.sub : msg.sender === user?.name;
+    if (!user?.isOwner && !owns) throw new Error("no autorizado");
     // Borra los objetos en EasyBits antes de quitar el mensaje (best-effort).
     const fileIds = await db.attachmentFileIds(data.id).catch(() => [] as string[]);
     if (fileIds.length) {
@@ -346,7 +349,9 @@ export const editMessageFn = createServerFn({ method: "POST" })
     if (!body) return { ok: false as const };
     const msg = await db.getMessage(data.id);
     if (!msg) return { ok: false as const };
-    if (!user?.isOwner && msg.sender !== user?.name) throw new Error("no autorizado");
+    // Authz por sub estable (no por el display name editable). Legacy → por nombre.
+    const owns = msg.sender_sub ? msg.sender_sub === user?.sub : msg.sender === user?.name;
+    if (!user?.isOwner && !owns) throw new Error("no autorizado");
     await db.editMessage(data.id, body);
     await publishToAudience(msg, {
       t: "message:edited",
@@ -422,6 +427,7 @@ export const postMessage = createServerFn({ method: "POST" })
       channelId: channel.id,
       parentId: data.parentId,
       sender: name,
+      senderSub: me?.sub ?? null,
       avatar,
       body,
       agentHandle: mentioned,

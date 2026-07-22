@@ -44,6 +44,7 @@ export type Message = {
   channel_id: number;
   parent_id: number | null;
   sender: string;
+  sender_sub?: string | null; // sub estable del autor (authz de editar/borrar); null en legacy/agentes
   avatar: string;
   body: string;
   kind: "msg" | "status";
@@ -90,6 +91,7 @@ function toMessage(r: Row): Message {
     channel_id: num(r.channel_id),
     parent_id: r.parent_id == null ? null : num(r.parent_id),
     sender: r.sender!,
+    sender_sub: (r.sender_sub as string | null) ?? null,
     avatar: r.avatar ?? "",
     body: r.body!,
     kind: (r.kind as "msg" | "status") ?? "msg",
@@ -961,6 +963,7 @@ export async function createMessage(input: {
   channelId: number;
   parentId: number | null;
   sender: string;
+  senderSub?: string | null; // sub estable del autor (authz); null si no lo postea un user
   avatar?: string;
   body: string;
   agentHandle?: string | null; // qué agente fue mencionado (null = ninguno)
@@ -969,9 +972,9 @@ export async function createMessage(input: {
   const handle = input.agentHandle ?? null;
   const topic = (input.topic ?? "general").trim() || "general";
   const rows = await dbq(
-    `INSERT INTO gc_messages (channel_id, parent_id, sender, avatar, body, kind, mentions_ghosty, agent_handle, topic)
-     VALUES (?, ?, ?, ?, ?, 'msg', ?, ?, ?) RETURNING id`,
-    [input.channelId, input.parentId, input.sender, input.avatar ?? "", input.body, handle ? 1 : 0, handle, topic]
+    `INSERT INTO gc_messages (channel_id, parent_id, sender, sender_sub, avatar, body, kind, mentions_ghosty, agent_handle, topic)
+     VALUES (?, ?, ?, ?, ?, ?, 'msg', ?, ?, ?) RETURNING id`,
+    [input.channelId, input.parentId, input.sender, input.senderSub ?? null, input.avatar ?? "", input.body, handle ? 1 : 0, handle, topic]
   );
   return { id: num(rows[0].id) };
 }
@@ -1138,15 +1141,16 @@ export async function listDmFlow(dmId: number): Promise<Message[]> {
 export async function createDmMessage(input: {
   dmId: number;
   sender: string;
+  senderSub?: string | null; // sub estable del autor (authz); null si no lo postea un user
   avatar?: string;
   body: string;
   agentHandle?: string | null;
 }): Promise<{ id: number }> {
   const handle = input.agentHandle ?? null;
   const rows = await dbq(
-    `INSERT INTO gc_messages (channel_id, parent_id, sender, avatar, body, kind, mentions_ghosty, agent_handle, dm_id)
-     VALUES (0, NULL, ?, ?, ?, 'msg', ?, ?, ?) RETURNING id`,
-    [input.sender, input.avatar ?? "", input.body, handle ? 1 : 0, handle, input.dmId]
+    `INSERT INTO gc_messages (channel_id, parent_id, sender, sender_sub, avatar, body, kind, mentions_ghosty, agent_handle, dm_id)
+     VALUES (0, NULL, ?, ?, ?, ?, 'msg', ?, ?, ?) RETURNING id`,
+    [input.sender, input.senderSub ?? null, input.avatar ?? "", input.body, handle ? 1 : 0, handle, input.dmId]
   );
   return { id: num(rows[0].id) };
 }
