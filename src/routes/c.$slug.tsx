@@ -55,6 +55,7 @@ import {
   Home as HomeIcon,
   Hash as HashIcon,
   Sparkles,
+  ExternalLink,
 } from "lucide-react";
 import { searchMessagesFn } from "../server/search";
 import { createFileRoute, notFound, Link, useRouter } from "@tanstack/react-router";
@@ -65,6 +66,7 @@ import { openDmFn, listDmsFn, getDmFlowFn, postDmMessageFn, askDmAgentFn } from 
 import { listAgentsFn } from "../server/agents";
 import { unreadCountsFn, markReadFn, readReceiptsFn, lastReadFn } from "../server/reads";
 import { toggleStarFn, togglePinFn, getPinsFn, toggleMuteFn, listMutesFn } from "../server/stars";
+import { listMyWorkspacesFn } from "../server/workspaces";
 import {
   getChannelView,
   getChannelFlow,
@@ -1952,6 +1954,21 @@ function Sidebar({
   const { openPrefs } = useContext(ChatCtx); // Ajustes in-panel (modal a nivel shell)
   const [wsOpen, setWsOpen] = useState(false); // dropdown del switcher de workspace
   const [tasksOpen, setTasksOpen] = useState(false); // modal "Tareas (próximamente)"
+  // Multi-workspace: la lista de workspaces del user (verdad en gs). Se resuelve al
+  // montar (barato) para poder etiquetar el workspace actual y ofrecer el salto.
+  const [ws, setWs] = useState<{
+    current: string | null;
+    portal: string;
+    workspaces: Array<{ slug: string; role: string; url: string }>;
+  } | null>(null);
+  useEffect(() => {
+    let alive = true;
+    listMyWorkspacesFn().then((r) => { if (alive) setWs(r); }).catch(() => {});
+    return () => { alive = false; };
+  }, []);
+  // Nombre a mostrar del workspace actual (slug capitalizado; fallback "Ghosty Teams").
+  const wsLabel = ws?.current ? ws.current.charAt(0).toUpperCase() + ws.current.slice(1) : "Ghosty Teams";
+  const portal = ws?.portal || "https://www.ghosty.studio";
   // Dark sidebar: si está activo y el modo es claro, forzamos la paleta OSCURA del
   // preset SOLO en este subárbol (vars inline). Es una preferencia de CLIENTE
   // (localStorage) → se aplica POST-montaje vía ref (NO en el render), para no meter
@@ -2007,7 +2024,7 @@ function Sidebar({
           className="flex min-w-0 flex-1 items-center gap-2 rounded-lg px-2 py-1.5 text-left hover:bg-surface-3"
         >
           <img src="/ghosty.svg" alt="" className="h-6 w-6 shrink-0" />
-          <span className="min-w-0 flex-1 truncate font-semibold">Ghosty Teams</span>
+          <span className="min-w-0 flex-1 truncate font-semibold">{wsLabel}</span>
           <ChevronDown size={15} className={`shrink-0 text-muted transition ${wsOpen ? "rotate-180" : ""}`} />
         </button>
         {/* Cerrar drawer (solo móvil). */}
@@ -2022,26 +2039,54 @@ function Sidebar({
           <>
             <div className="fixed inset-0 z-40" onClick={() => setWsOpen(false)} aria-hidden />
             <div className="absolute left-2 right-2 top-full z-50 mt-1 rounded-xl border border-border bg-surface p-1 shadow-xl">
-              <p className="px-2 py-1 text-[11px] font-medium uppercase tracking-wide text-muted">{t("Workspace")}</p>
-              <div className="flex items-center gap-2 rounded-lg bg-surface-3 px-2 py-1.5">
-                <img src="/ghosty.svg" alt="" className="h-5 w-5 shrink-0" />
-                <span className="min-w-0 flex-1 truncate text-sm font-medium">Ghosty Teams</span>
-                <Check size={15} className="shrink-0 text-brand" />
-              </div>
+              <p className="px-2 py-1 text-[11px] font-medium uppercase tracking-wide text-muted">
+                {ws && ws.workspaces.length > 1 ? t("Tus workspaces") : t("Workspace")}
+              </p>
+              {/* Lista real de workspaces del user (verdad en gs). El actual va marcado;
+                  los demás son enlaces top-level a su subdominio (cambia de tenant). */}
+              {(ws?.workspaces.length ? ws.workspaces : [{ slug: ws?.current ?? "", role: "", url: "" }]).map((w) => {
+                const isCurrent = !!ws?.current && w.slug === ws.current;
+                const label = w.slug ? w.slug.charAt(0).toUpperCase() + w.slug.slice(1) : "Ghosty Teams";
+                if (isCurrent || !w.url) {
+                  return (
+                    <div key={w.slug || "current"} className="flex items-center gap-2 rounded-lg bg-surface-3 px-2 py-1.5">
+                      <img src="/ghosty.svg" alt="" className="h-5 w-5 shrink-0" />
+                      <span className="min-w-0 flex-1 truncate text-sm font-medium">{label}</span>
+                      <Check size={15} className="shrink-0 text-brand" />
+                    </div>
+                  );
+                }
+                return (
+                  <a
+                    key={w.slug}
+                    href={w.url}
+                    className="flex items-center gap-2 rounded-lg px-2 py-1.5 text-sm text-muted hover:bg-surface-3 hover:text-ink"
+                  >
+                    <img src="/ghosty.svg" alt="" className="h-5 w-5 shrink-0 opacity-70" />
+                    <span className="min-w-0 flex-1 truncate font-medium">{label}</span>
+                  </a>
+                );
+              })}
               <button
                 onClick={() => { setWsOpen(false); openPrefs(); }}
                 className="mt-0.5 flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm text-muted hover:bg-surface-3 hover:text-ink"
               >
                 <Settings size={15} className="shrink-0" /> {t("Ajustes del workspace")}
               </button>
-              <button
-                disabled
-                title={t("Próximamente")}
-                className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm text-muted opacity-50"
+              <div className="my-1 border-t border-border" />
+              {/* Volver al portal del ecosistema (donde también se crea un workspace nuevo). */}
+              <a
+                href={portal}
+                className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm text-muted hover:bg-surface-3 hover:text-ink"
+              >
+                <ExternalLink size={15} className="shrink-0" /> {t("Volver a Ghosty Studio")}
+              </a>
+              <a
+                href={portal}
+                className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm text-muted hover:bg-surface-3 hover:text-ink"
               >
                 <Plus size={15} className="shrink-0" /> {t("Nuevo workspace")}
-                <span className="ml-auto text-[10px]">{t("pronto")}</span>
-              </button>
+              </a>
             </div>
           </>
         )}

@@ -75,6 +75,11 @@ export async function currentNamespace(): Promise<string> {
   return resolveNamespace(slug);
 }
 
+/** Slug del workspace de este request (o null en apex/dev sin subdominio). */
+export async function currentSlug(): Promise<string | null> {
+  return slugFromHost(await currentHost());
+}
+
 /** Invalida la cache de un slug (p.ej. tras re-provisionar). */
 export function invalidateTenant(slug: string): void {
   cache.delete(slug);
