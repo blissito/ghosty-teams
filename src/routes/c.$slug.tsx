@@ -55,7 +55,6 @@ import {
   Home as HomeIcon,
   Hash as HashIcon,
   Sparkles,
-  ExternalLink,
 } from "lucide-react";
 import { searchMessagesFn } from "../server/search";
 import { createFileRoute, notFound, Link, useRouter } from "@tanstack/react-router";
@@ -2079,7 +2078,7 @@ function Sidebar({
                 href={portal}
                 className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm text-muted hover:bg-surface-3 hover:text-ink"
               >
-                <ExternalLink size={15} className="shrink-0" /> {t("Volver a Ghosty Studio")}
+                <ArrowLeft size={15} className="shrink-0" /> {t("Volver a Ghosty Studio")}
               </a>
               <a
                 href={portal}
