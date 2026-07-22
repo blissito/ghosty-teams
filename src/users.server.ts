@@ -143,6 +143,21 @@ export async function listWorkspaceUsers(): Promise<WorkspaceUser[]> {
   }));
 }
 
+// Búsqueda de miembros (para el DM picker a ESCALA): filtra en el server por
+// handle/name/email, tope N → no baja todo el workspace. Query vacío = primeros N.
+export async function searchWorkspaceUsers(query: string, limit = 25): Promise<{ sub: string; name: string; handle: string; avatar: string }[]> {
+  const q = query.trim().toLowerCase().replace(/[%_]/g, "");
+  const like = `%${q}%`;
+  const where = q ? "AND (LOWER(handle) LIKE ? OR LOWER(name) LIKE ? OR LOWER(email) LIKE ?)" : "";
+  const args = q ? [like, like, like, limit] : [limit];
+  const { rows, cols } = await dbq(
+    `SELECT sub, name, handle, avatar FROM gc_users WHERE handle IS NOT NULL AND COALESCE(banned,0)=0 ${where} ORDER BY name LIMIT ?`,
+    args
+  );
+  const i = (c: string) => cols.indexOf(c);
+  return rows.map((r) => ({ sub: r[i("sub")] as string, name: (r[i("name")] as string) ?? "", handle: (r[i("handle")] as string) ?? "", avatar: (r[i("avatar")] as string) ?? "" }));
+}
+
 // ¿El sub está expulsado del workspace? (el login lo checa para impedir re-entrar).
 export async function isBanned(sub: string): Promise<boolean> {
   const { rows } = await dbq("SELECT COALESCE(banned,0) FROM gc_users WHERE sub=?", [sub]);

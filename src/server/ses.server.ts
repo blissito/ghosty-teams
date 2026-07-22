@@ -7,7 +7,7 @@ import { SESClient, SendEmailCommand } from "@aws-sdk/client-ses";
 const REGION = process.env.SES_REGION || "us-east-1";
 const KEY = process.env.SES_KEY;
 const SECRET = process.env.SES_SECRET;
-const FROM = process.env.SES_FROM || "Ghosty <no-reply@ghosty.studio>";
+const FROM = process.env.SES_FROM || "Ghosty <noreply@ghosty.studio>";
 
 let client: SESClient | null = null;
 function ses(): SESClient | null {

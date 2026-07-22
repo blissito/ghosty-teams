@@ -82,6 +82,7 @@ import {
   toggleReactionFn,
   editMessageFn,
   listUsersFn,
+  searchUsersFn,
   updateMyProfileFn,
   expelMemberFn,
 } from "../server/chat";
@@ -3394,21 +3395,28 @@ function NewDmModal({
   onOpened: (id: number) => void;
 }) {
   const t = useT();
-  const [users, setUsers] = useState<
-    { sub: string; handle: string; name: string; email: string; avatar: string }[]
-  >([]);
+  const [users, setUsers] = useState<{ sub: string; handle: string; name: string; avatar: string }[]>([]);
   const [agents, setAgents] = useState<{ handle: string; name: string; avatar: string }[]>([]);
   const [q, setQ] = useState("");
   const [picked, setPicked] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
 
+  // Agentes: pocos, se cargan una vez. Personas: BÚSQUEDA server-side (no baja todo el
+  // workspace → escala). Query vacío = primeros N; con texto, debounce 200ms.
   useEffect(() => {
-    Promise.allSettled([
-      listWorkspaceUsersFn().then(setUsers).catch(() => setUsers([])),
-      listAgentsFn().then(setAgents).catch(() => setAgents([])),
-    ]).finally(() => setLoading(false));
+    listAgentsFn().then(setAgents).catch(() => setAgents([]));
   }, []);
+  useEffect(() => {
+    setLoading(true);
+    const h = setTimeout(() => {
+      searchUsersFn({ data: { query: q } })
+        .then(setUsers)
+        .catch(() => setUsers([]))
+        .finally(() => setLoading(false));
+    }, q.trim() ? 200 : 0);
+    return () => clearTimeout(h);
+  }, [q]);
 
   // DM 1:1 con un agente = inmediato (no multi-select): abre y entra.
   async function startAgent(handle: string) {
@@ -3423,15 +3431,8 @@ function NewDmModal({
   }
 
   const query = q.trim().toLowerCase();
-  const list = users
-    .filter((u) => u.sub !== me?.sub)
-    .filter(
-      (u) =>
-        !query ||
-        u.handle.includes(query) ||
-        u.name.toLowerCase().includes(query) ||
-        u.email.toLowerCase().includes(query)
-    );
+  // El filtro de personas ya lo hace el server (searchUsersFn); aquí solo excluyo mi propio sub.
+  const list = users.filter((u) => u.sub !== me?.sub);
   const toggle = (sub: string) =>
     setPicked((p) => (p.includes(sub) ? p.filter((s) => s !== sub) : [...p, sub]));
 

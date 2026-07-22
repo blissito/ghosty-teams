@@ -159,6 +159,16 @@ export const listUsersFn = createServerFn({ method: "GET" }).handler(async () =>
   return listWorkspaceUsers();
 });
 
+// Búsqueda de miembros (DM picker a escala): server filtra + tope, no baja todo.
+export const searchUsersFn = createServerFn({ method: "POST" })
+  .validator((d: { query: string; limit?: number }) => d)
+  .handler(async ({ data }) => {
+    const me = await sessionUser();
+    if (!me) throw new Error("no autenticado");
+    const { searchWorkspaceUsers } = await import("../users.server");
+    return searchWorkspaceUsers(data.query ?? "", Math.min(data.limit ?? 25, 50));
+  });
+
 // Expulsar del workspace (owner-only). Marca banned=1 → el login lo rebota. No al owner
 // ni a uno mismo. Publica un evento para que el expulsado se entere (best-effort).
 export const expelMemberFn = createServerFn({ method: "POST" })
