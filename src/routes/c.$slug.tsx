@@ -2180,7 +2180,7 @@ function Sidebar({
                   onCloseNav();
                 }}
                 className={`flex min-w-0 flex-1 items-center gap-2 rounded-lg px-2 py-2.5 text-sm md:py-1.5 ${
-                  c.slug === active && !homeActive && activeThreadId == null && activeView == null
+                  c.slug === active && !homeActive && activeThreadId == null && activeView == null && activeDmId == null
                     ? "bg-brand/15 font-medium text-ink"
                     : "text-muted hover:bg-surface-3 hover:text-ink"
                 } ${muted ? "opacity-50" : ""}`}
