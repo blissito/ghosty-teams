@@ -1184,11 +1184,15 @@ function ChannelPage() {
       try {
         const raw = sessionStorage.getItem(`focus:${channel.slug}`);
         if (raw) {
-          const f = JSON.parse(raw) as { view?: typeof view; dm?: number; thread?: number; home?: boolean };
+          const f = JSON.parse(raw) as { view?: typeof view; dm?: number; thread?: number; home?: boolean; room?: boolean };
           if (f.home) setHomeOpen(true);
           else if (f.view) setView(f.view);
           else if (f.dm != null) setOpenDmId(f.dm);
           else if (f.thread != null) setOpenThreadId(f.thread);
+          // f.room → canal plano (homeOpen queda false).
+        } else {
+          // Primera entrada (sin foco guardado) → Teams arranca en INICIO, no en el canal.
+          setHomeOpen(true);
         }
       } catch {
         /* sessionStorage/JSON inválido → arranca en el flujo */
@@ -1202,10 +1206,11 @@ function ChannelPage() {
   }, [channel.slug]);
   // Persiste el foco actual (mutuamente excluyente) para sobrevivir un reload.
   useEffect(() => {
-    const f = homeOpen ? { home: true } : view ? { view } : openDmId != null ? { dm: openDmId } : openThreadId != null ? { thread: openThreadId } : null;
+    // Siempre persiste algo (incluido `{room}` = canal plano) para que un reload en un
+    // canal restaure el canal y NO caiga al default de Inicio (primera-entrada).
+    const f = homeOpen ? { home: true } : view ? { view } : openDmId != null ? { dm: openDmId } : openThreadId != null ? { thread: openThreadId } : { room: true };
     try {
-      if (f) sessionStorage.setItem(`focus:${channel.slug}`, JSON.stringify(f));
-      else sessionStorage.removeItem(`focus:${channel.slug}`);
+      sessionStorage.setItem(`focus:${channel.slug}`, JSON.stringify(f));
     } catch {
       /* storage lleno/bloqueado → no crítico */
     }
