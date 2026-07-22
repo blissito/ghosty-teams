@@ -24,8 +24,9 @@ export const listEmojisFn = createServerFn({ method: "GET" }).handler(async () =
 export const addEmojiFn = createServerFn({ method: "POST" })
   .validator((d: { name: string; fileId: string }) => d)
   .handler(async ({ data }) => {
+    // Slack default: CUALQUIER member puede agregar emojis del workspace (no solo el owner).
     const me = await sessionUser();
-    if (!me?.isOwner) throw new Error("solo el owner");
+    if (!me) throw new Error("inicia sesión");
     const name = normalizeName(data.name);
     if (!name) throw new Error("nombre inválido");
     if (!data.fileId) throw new Error("falta la imagen");
@@ -37,9 +38,12 @@ export const addEmojiFn = createServerFn({ method: "POST" })
 export const removeEmojiFn = createServerFn({ method: "POST" })
   .validator((d: { name: string }) => d)
   .handler(async ({ data }) => {
+    // Borrar sí es restringido: el owner o QUIEN lo creó (no cualquier member borra el de otro).
     const me = await sessionUser();
-    if (!me?.isOwner) throw new Error("solo el owner");
+    if (!me) throw new Error("inicia sesión");
     const db = await import("../db.server");
+    const creator = await db.getCustomEmojiCreator(data.name);
+    if (!me.isOwner && creator && creator !== me.sub) throw new Error("solo el owner o quien lo creó");
     const fileId = await db.removeCustomEmoji(data.name);
     // Borra también el objeto en EasyBits (best-effort).
     if (fileId) {

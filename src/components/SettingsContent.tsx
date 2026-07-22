@@ -151,7 +151,9 @@ export function SettingsContent({
     { id: "appearance", label: t("Apariencia"), icon: Palette },
     { id: "integraciones", label: t("Integraciones"), icon: Plug },
     ...(canManageAgents ? [{ id: "agentes" as const, label: t("Agentes"), icon: Bot }] : []),
-    ...(isOwner ? [{ id: "emojis" as const, label: t("Emojis"), icon: Smile }] : []),
+    // Emojis: visible para TODOS los members (Slack default — cualquiera agrega; borrar
+    // queda restringido al owner o al creador, gateado en EmojiManager).
+    { id: "emojis" as const, label: t("Emojis"), icon: Smile },
   ];
   const [tab, setTab] = useState<TabId>(initialTab ?? "general");
   // Recuerda la última pestaña abierta (localStorage). Si viene `initialTab` explícita
@@ -311,7 +313,7 @@ export function SettingsContent({
             <AgentsManager isOwner={isOwner} hasAgent={!!data?.setup?.hasAgent} />
           )}
 
-          {tab === "emojis" && isOwner && <EmojiManager />}
+          {tab === "emojis" && <EmojiManager isOwner={isOwner} mySub={user?.sub ?? null} />}
         </div>
       </div>
     </div>
@@ -765,7 +767,7 @@ function NotificationsCard() {
 // pestaña pinta al instante desde aquí y revalida en background (stale-while-revalidate).
 let emojiCache: CustomEmoji[] | null = null;
 
-function EmojiManager() {
+function EmojiManager({ isOwner, mySub }: { isOwner: boolean; mySub: string | null }) {
   const t = useT();
   const [emojis, setEmojis] = useState<CustomEmoji[]>(() => emojiCache ?? []);
   const [loading, setLoading] = useState(emojiCache === null); // spinner solo en la 1ª carga
@@ -797,7 +799,7 @@ function EmojiManager() {
       const up = (await res.json()) as { fileId: string };
       const { name: saved } = await addEmojiFn({ data: { name: clean, fileId: up.fileId } });
       save(
-        [...emojis.filter((e) => e.name !== saved), { name: saved, file_id: up.fileId }].sort((a, b) =>
+        [...emojis.filter((e) => e.name !== saved), { name: saved, file_id: up.fileId, created_by: mySub }].sort((a, b) =>
           a.name.localeCompare(b.name)
         )
       );
@@ -872,13 +874,16 @@ function EmojiManager() {
                 className="h-5 w-5 object-contain"
               />
               <span className="text-xs text-muted">:{e.name}:</span>
-              <button
-                onClick={() => remove(e.name)}
-                title={t("Eliminar")}
-                className="text-muted hover:text-red-400"
-              >
-                <X size={13} />
-              </button>
+              {/* Borrar: solo el owner o quien lo creó (emojis legacy sin creador → solo owner). */}
+              {(isOwner || (!!mySub && e.created_by === mySub)) && (
+                <button
+                  onClick={() => remove(e.name)}
+                  title={t("Eliminar")}
+                  className="text-muted hover:text-red-400"
+                >
+                  <X size={13} />
+                </button>
+              )}
             </div>
           ))}
         </div>

@@ -1265,10 +1265,15 @@ export async function markRead(userSub: string, scope: "room" | "dm", scopeId: n
 // ── Emojis custom del workspace (Fase 4) ────────────────────────────────────
 // Imágenes en EasyBits (guardamos file_id); se reaccionan como `:name:` y se
 // renderizan vía /api/attachment/:file_id. Nombre normalizado (a-z0-9_).
-export type CustomEmoji = { name: string; file_id: string };
+export type CustomEmoji = { name: string; file_id: string; created_by?: string | null };
 export async function listCustomEmojis(): Promise<CustomEmoji[]> {
-  const rows = await dbq("SELECT name, file_id FROM gc_emojis ORDER BY name").catch(() => [] as Row[]);
-  return rows.map((r) => ({ name: r.name!, file_id: r.file_id! }));
+  const rows = await dbq("SELECT name, file_id, created_by FROM gc_emojis ORDER BY name").catch(() => [] as Row[]);
+  return rows.map((r) => ({ name: r.name!, file_id: r.file_id!, created_by: (r.created_by as string | null) ?? null }));
+}
+// Autor de un emoji (para authz de borrado: owner o quien lo creó). null si no existe.
+export async function getCustomEmojiCreator(name: string): Promise<string | null> {
+  const rows = await dbq("SELECT created_by FROM gc_emojis WHERE name = ?", [name]);
+  return (rows[0]?.created_by as string | null) ?? null;
 }
 export async function addCustomEmoji(name: string, fileId: string, createdBy: string): Promise<void> {
   await dbq(
