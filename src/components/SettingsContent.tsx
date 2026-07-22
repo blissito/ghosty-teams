@@ -4,8 +4,8 @@ import { Bot, Plus, Trash2, X, Bell, Smile, Loader2, Pencil } from "lucide-react
 import { FleetCapabilities } from "./FleetCapabilities";
 import { currentPushState, enablePush, disablePush } from "../utils/push-subscribe";
 import { me, cachedMe, peekMe, logout, clearMeCache } from "../server/auth";
-import { getMyNicknameFn, setMyNicknameFn } from "../server/chat";
 import { getSetup } from "../server/setup";
+import { updateMyProfileFn } from "../server/chat";
 import { createInvite, getInvite, refreshInvite, revokeInvite } from "../server/invites";
 import {
   listManagedAgentsFn,
@@ -21,7 +21,7 @@ import {
 import { listFormmyAgentsFn, ensureFormmyMirrorFn, type FormmyAgent } from "../server/formmy-agents";
 import { listEmojisFn, addEmojiFn, removeEmojiFn } from "../server/emojis";
 import type { CustomEmoji } from "../db.server";
-import { useT } from "../i18n";
+import { useT, useLocale, useSetLocale, type Locale } from "../i18n";
 import { Monitor, Sun, Moon, Check, SlidersHorizontal, Palette, Github, Plug, Slack, Calendar, Link2, RefreshCw } from "lucide-react";
 import {
   PRESETS,
@@ -221,25 +221,8 @@ export function SettingsContent({
           )}
           {tab === "general" && user && (
             <>
-              {/* Identidad */}
-              <div className="mb-4 flex items-center gap-3 rounded-xl border border-border bg-surface-2 p-4">
-                {user?.avatar ? (
-                  <img src={user.avatar} alt="" loading="lazy" decoding="async" className="h-10 w-10 rounded-full" />
-                ) : (
-                  <div className="grid h-10 w-10 place-items-center rounded-full bg-surface-3 text-sm font-semibold">
-                    {user?.name?.slice(0, 2).toUpperCase()}
-                  </div>
-                )}
-                <div className="min-w-0 flex-1">
-                  <p className="truncate font-medium">{user?.name}</p>
-                  <p className="truncate text-xs text-muted">{user?.email}</p>
-                </div>
-                <span className="rounded-full bg-brand/15 px-2 py-0.5 text-xs font-medium text-brand">
-                  {isOwner ? t("Owner") : t("Miembro")}
-                </span>
-              </div>
-
-              <NicknameCard />
+              {/* Identidad (editable: nombre + avatar) */}
+              <ProfileCard user={user} isOwner={isOwner} />
 
               {isOwner && (
                 <div className="mb-4 rounded-2xl border border-border bg-surface-2 p-5">
@@ -379,6 +362,8 @@ function useThemeStore() {
 function AppearancePanel() {
   const t = useT();
   const s = useThemeStore();
+  const locale = useLocale();
+  const setLocale = useSetLocale();
 
   const Segmented = <T extends string>({
     value,
@@ -410,6 +395,18 @@ function AppearancePanel() {
 
   return (
     <div className="space-y-7">
+      {/* Idioma */}
+      <Row title={t("Idioma")}>
+        <Segmented<Locale>
+          value={locale}
+          onChange={setLocale}
+          options={[
+            { id: "es", label: "Español" },
+            { id: "en", label: "English" },
+          ]}
+        />
+      </Row>
+
       {/* Modo */}
       <Row title={t("Modo")}>
         <Segmented<ThemeScheme>
@@ -588,53 +585,116 @@ function Toggle({ on, onChange }: { on: boolean; onChange: (v: boolean) => void 
   );
 }
 
-/* ── Nombre para mostrar (nickname): cómo apareces en rooms/hilos ── */
-function NicknameCard() {
+/* ── Perfil editable: nombre + avatar. El email lo ancla el IdP (read-only). El
+   avatar se sube por /api/upload (→ Tigris, sin CORS) y se guarda su URL. Al guardar
+   re-sella la sesión → invalidamos la cache de identidad para que el resto de la app
+   lo refleje. ── */
+function ProfileCard({
+  user,
+  isOwner,
+}: {
+  user: { sub: string; name: string; avatar: string; email: string };
+  isOwner: boolean;
+}) {
   const t = useT();
-  const [nickname, setNickname] = useState("");
-  const [initial, setInitial] = useState("");
+  const [name, setName] = useState(user.name ?? "");
+  const [avatar, setAvatar] = useState(user.avatar ?? "");
+  const [uploading, setUploading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
-  const [loading, setLoading] = useState(true); // cargando el nickname actual → input disabled
-  useEffect(() => {
-    getMyNicknameFn()
-      .then((r) => {
-        setNickname(r.nickname);
-        setInitial(r.nickname);
-      })
-      .finally(() => setLoading(false));
-  }, []);
-  const dirty = nickname.trim() !== initial.trim();
+  const [err, setErr] = useState<string | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  const dirty = name.trim() !== (user.name ?? "").trim() || avatar !== (user.avatar ?? "");
+
+  async function onAvatar(file: File) {
+    setUploading(true);
+    setErr(null);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const res = await fetch("/api/upload", { method: "POST", body: fd });
+      if (!res.ok) throw new Error(t("No se pudo subir la imagen"));
+      const up = (await res.json()) as { fileId: string };
+      setAvatar(`/api/attachment/${encodeURIComponent(up.fileId)}`);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : t("Error"));
+    } finally {
+      setUploading(false);
+      if (fileRef.current) fileRef.current.value = "";
+    }
+  }
+
   async function save() {
     if (!dirty || saving) return;
     setSaving(true);
-    const r = await setMyNicknameFn({ data: { nickname } });
-    setNickname(r.nickname);
-    setInitial(r.nickname);
-    setSaving(false);
-    setSaved(true);
-    setTimeout(() => setSaved(false), 1500);
+    setErr(null);
+    try {
+      await updateMyProfileFn({ data: { name: name.trim() || undefined, avatar } });
+      // La sesión cambió server-side → invalida la identidad cacheada para que el
+      // resto de la app (rooms, header) lea el perfil nuevo en la próxima nav.
+      clearMeCache();
+      setSaved(true);
+      setTimeout(() => setSaved(false), 1500);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : t("Error"));
+    } finally {
+      setSaving(false);
+    }
   }
+
   return (
     <div className="mb-4 rounded-xl border border-border bg-surface-2 p-4">
-      <h2 className="mb-1 text-sm font-semibold">{t("Nombre para mostrar")}</h2>
-      <p className="mb-3 text-xs text-muted">
-        {t("Cómo apareces en los rooms e hilos. Vacío = tu nombre de cuenta.")}
-      </p>
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-3">
+        <button
+          type="button"
+          onClick={() => fileRef.current?.click()}
+          disabled={uploading}
+          title={t("Cambiar foto")}
+          className="group relative h-14 w-14 shrink-0 overflow-hidden rounded-full border border-border"
+        >
+          {avatar ? (
+            <img src={avatar} alt="" className="h-full w-full object-cover" />
+          ) : (
+            <span className="grid h-full w-full place-items-center bg-surface-3 text-base font-semibold">
+              {(name || user.name)?.slice(0, 2).toUpperCase()}
+            </span>
+          )}
+          <span className="absolute inset-0 grid place-items-center bg-black/40 opacity-0 transition group-hover:opacity-100">
+            {uploading ? <Loader2 size={16} className="animate-spin text-white" /> : <Pencil size={14} className="text-white" />}
+          </span>
+        </button>
         <input
-          value={nickname}
-          onChange={(e) => setNickname(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && save()}
-          maxLength={40}
-          disabled={loading || saving}
-          placeholder={loading ? t("Cargando…") : t("Tu apodo…")}
-          className="flex-1 rounded-lg border border-border bg-surface px-3 py-2 text-sm text-ink disabled:cursor-not-allowed disabled:opacity-50"
+          ref={fileRef}
+          type="file"
+          accept="image/*"
+          className="hidden"
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            if (f) void onAvatar(f);
+          }}
         />
+        <div className="min-w-0 flex-1">
+          <input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && save()}
+            maxLength={60}
+            placeholder={t("Tu nombre")}
+            className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm font-medium text-ink"
+          />
+          <p className="mt-1 truncate px-1 text-xs text-muted">{user.email}</p>
+        </div>
+        <span className="self-start rounded-full bg-brand/15 px-2 py-0.5 text-xs font-medium text-brand">
+          {isOwner ? t("Owner") : t("Miembro")}
+        </span>
+      </div>
+      {err && <p className="mt-2 text-xs text-red-400">{err}</p>}
+      <div className="mt-3 flex justify-end">
         <button
           onClick={save}
-          disabled={loading || !dirty || saving}
-          className="grid min-w-[92px] place-items-center rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-brand-fg disabled:opacity-50"
+          disabled={!dirty || saving || uploading}
+          className="grid min-w-[92px] place-items-center rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-brand-fg transition disabled:opacity-50"
         >
           {saving ? <Loader2 size={14} className="animate-spin" /> : saved ? t("Guardado") : t("Guardar")}
         </button>

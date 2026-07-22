@@ -58,9 +58,6 @@ async function migrate(): Promise<void> {
   await addColumn("gc_messages", "dm_id", "INTEGER");
   // Editar: marca de tiempo de última edición.
   await addColumn("gc_messages", "edited_at", "INTEGER");
-  // Nickname editable por el usuario (Ajustes → perfil). Se resuelve al render en el
-  // chat (mapa nombre→nickname); NO toca `sender` (identidad) ni permisos.
-  await addColumn("gc_users", "nickname", "TEXT");
 
   await exec(`CREATE INDEX IF NOT EXISTS gc_messages_chan_topic
               ON gc_messages(channel_id, topic, created_at)`);

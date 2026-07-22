@@ -1,5 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 import type { RtEvent } from "./bus.server";
+import type { SessionUser } from "../users.server";
 
 // Server functions — modelo Slack. El pool_ token nunca toca el browser.
 
@@ -87,32 +88,36 @@ export const listMentionsFn = createServerFn({ method: "GET" }).handler(async ()
     // Menciones grupales (notifican a toda la audiencia del room).
     { handle: "all", name: "Notificar a todos", avatar: "", kind: "group" as const },
     { handle: "channel", name: "Notificar al room", avatar: "", kind: "group" as const },
-    ...agents.map((a) => ({ handle: a.handle, name: a.name, avatar: a.avatar, nickname: "", kind: "agent" as const })),
-    ...us.map((u) => ({ handle: u.handle, name: u.name, avatar: u.avatar, nickname: u.nickname, kind: "user" as const })),
+    ...agents.map((a) => ({ handle: a.handle, name: a.name, avatar: a.avatar, kind: "agent" as const })),
+    ...us.map((u) => ({ handle: u.handle, name: u.name, avatar: u.avatar, kind: "user" as const })),
   ];
 });
 
-// Nickname del usuario actual (Ajustes → perfil). El chat lo resuelve al render por
-// nombre→nickname (viene en listMentionsFn); aquí solo lee/escribe el propio.
-export const getMyNicknameFn = createServerFn({ method: "GET" }).handler(async () => {
-  const user = await sessionUser();
-  if (!user) return { nickname: "" };
-  // Ajustes no pasa por getChannelView → asegura la columna `nickname` en caja fresca.
-  await (await import("./schema.server")).ensureSchema().catch(() => {});
-  const users = await import("../users.server");
-  return { nickname: await users.getNickname(user.sub) };
-});
-
-export const setMyNicknameFn = createServerFn({ method: "POST" })
-  .validator((d: { nickname: string }) => d)
+// Perfil propio (Ajustes → perfil): nombre visible + avatar. Actualiza gc_users y
+// RE-SELLA la sesión con el user mergeado → me() refleja el cambio sin re-login.
+// El avatar se sube antes por /api/upload (→ /api/attachment/<fileId>); aquí solo
+// se persiste la URL. upsertUser ya no pisa estos campos en logins posteriores.
+export const updateMyProfileFn = createServerFn({ method: "POST" })
+  .validator((d: { name?: string; avatar?: string }) => d)
   .handler(async ({ data }) => {
-    const user = await sessionUser();
+    const { useSession } = await import("@tanstack/react-start/server");
+    const { sessionConfig } = await import("./session.server");
+    const s = await useSession<{ user?: SessionUser }>(sessionConfig());
+    const user = s.data.user;
     if (!user) throw new Error("no autenticado");
-    await (await import("./schema.server")).ensureSchema().catch(() => {});
-    const nickname = (data.nickname ?? "").trim().slice(0, 40);
+
+    const name = data.name?.trim().slice(0, 60);
+    const avatar = data.avatar?.trim();
+    const patch: { name?: string; avatar?: string } = {};
+    if (name) patch.name = name; // nombre vacío = se conserva el actual
+    if (avatar !== undefined) patch.avatar = avatar;
+
     const users = await import("../users.server");
-    await users.setNickname(user.sub, nickname);
-    return { nickname };
+    await users.updateProfile(user.sub, patch);
+
+    const next: SessionUser = { ...user, ...patch };
+    await s.update({ user: next });
+    return { ok: true as const, user: next };
   });
 
 // Shell del room (sidebar + meta), SIN el flujo → el loader es ligero y el

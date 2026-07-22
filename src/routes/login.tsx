@@ -1,107 +1,101 @@
-import { createFileRoute, useRouter } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+import { createFileRoute, redirect } from "@tanstack/react-router";
 import { startGhostyLogin, completeGhostyLogin, clearMeCache } from "../server/auth";
 import { useT } from "../i18n";
 
+// Search params del handshake: `payload`/`sig` = identidad firmada de vuelta del IdP;
+// `attempted` = marca puesta en el `return` de ida para detectar la vuelta-sin-identidad
+// (anti-loop). El IdP preserva el query del `return` (URL.searchParams.set), así que
+// `return=/login?attempted=1` vuelve como `/login?attempted=1&payload&sig`.
+export type LoginSearch = { payload?: string; sig?: string; attempted?: boolean };
+
+export function parseLoginSearch(s: Record<string, unknown>): LoginSearch {
+  return {
+    payload: typeof s.payload === "string" ? s.payload : undefined,
+    sig: typeof s.sig === "string" ? s.sig : undefined,
+    attempted:
+      s.attempted === "1" || s.attempted === 1 || s.attempted === true ? true : undefined,
+  };
+}
+
+// Loader ISOMÓRFICO del login: el card SOBRA en el happy path. En vez de montarlo y
+// auto-redirigir desde un effect (flash "Redirigiendo…/Entrando…"), el loader hace todo
+// server-side —
+//   1. Sin params → 302 top-level al IdP (con `return=<path>?attempted=1`). Cero card.
+//   2. Vuelta con ?payload&sig → completa la sesión server-side (el Set-Cookie viaja en
+//      el 302, igual que setup.easybits.connect) y 302 a "/".
+//   3. Vuelta con ?attempted pero sin identidad, o error al completar → devuelve `{ error }`
+//      y se pinta LoginCard como FALLBACK manual (sin re-redirigir solo → anti-loop).
+export async function runLoginLoader(search: LoginSearch, inviteToken?: string) {
+  if (search.payload && search.sig) {
+    let error: string | null = null;
+    try {
+      await completeGhostyLogin({
+        data: { payload: search.payload, sig: search.sig, inviteToken },
+      });
+    } catch (e) {
+      error = (e as Error)?.message || "No se pudo iniciar sesión";
+    }
+    if (!error) {
+      // La sesión cambió → invalida la identidad cacheada para que la nav a "/" lea
+      // fresco (en SSR es no-op; importa en nav de cliente donde _meCache seguiría null).
+      clearMeCache();
+      throw redirect({ to: "/" });
+    }
+    return { error };
+  }
+  if (search.attempted) {
+    // Volvimos del IdP sin identidad (cancelado / sin sesión gs). NO re-redirigir solo:
+    // el usuario reintenta con el botón (anti-loop).
+    return { error: null as string | null };
+  }
+  // Primer intento: rebote server-side al IdP. `return` lleva ?attempted=1 para que una
+  // vuelta-sin-identidad caiga al fallback manual en vez de re-rebotar en bucle.
+  const { url } = await startGhostyLogin({ data: { inviteToken } });
+  // `attempted=true` (no `=1`): TanStack coacciona `1`→boolean y re-serializa a `true`,
+  // metiendo un redirect de canonicalización extra. Generándolo ya como `true`, el
+  // valor round-trip es estable y no hay hop intermedio.
+  const retPath = `${inviteToken ? `/join/${inviteToken}` : "/login"}?attempted=true`;
+  const sep = url.includes("?") ? "&" : "?";
+  throw redirect({ href: `${url}${sep}return=${encodeURIComponent(retPath)}` });
+}
+
 export const Route = createFileRoute("/login")({
-  loader: () => startGhostyLogin({ data: {} }),
+  validateSearch: (s: Record<string, unknown>) => parseLoginSearch(s),
+  loaderDeps: ({ search }) => search,
+  loader: ({ deps }) => runLoginLoader(deps),
   component: Login,
 });
 
 function Login() {
-  const { url } = Route.useLoaderData();
-  return <LoginCard url={url} />;
+  const { error } = Route.useLoaderData();
+  return <LoginCard error={error} retryTo="/login" />;
 }
 
-// Reutilizado por /login y /join/:token.
+// Fallback manual: SOLO se pinta cuando el redirect automático no ocurrió (vuelta del IdP
+// sin identidad, o error al completar). Un click reintenta el flujo — navegación full-page
+// a `retryTo`, cuyo loader rebota al IdP con un `ts` fresco. Reutilizado por /join/$token.
 export function LoginCard({
-  url,
-  inviteToken,
+  error,
+  retryTo,
   subtitle,
 }: {
-  url: string;
-  inviteToken?: string;
+  error: string | null;
+  retryTo: string;
   subtitle?: string;
 }) {
   const t = useT();
-  const router = useRouter();
-  // Arrancamos en "waiting": la pantalla de login sobra, auto-redirigimos al IdP.
-  // El effect decide: si volvimos con ?payload → completa; si ya intentamos y
-  // volvimos sin payload (cancelado/error) → cae a "idle" (botón manual, anti-loop).
-  const [state, setState] = useState<"idle" | "waiting" | "completing" | "error">("waiting");
-  const [error, setError] = useState<string | null>(null);
-
-  function onIdentity(payload: string, sig: string) {
-    setState("completing");
-    completeGhostyLogin({ data: { payload, sig, inviteToken } })
-      .then(() => {
-        clearMeCache(); // la sesión cambió → refresca la identidad cacheada
-        router.navigate({ to: "/" });
-      })
-      .catch((err) => {
-        setState("error");
-        setError(err?.message ? String(err.message) : t("No se pudo iniciar sesión"));
-      });
-  }
-
-  // Al volver del IdP (ghosty.studio) por redirect top-level llega `?payload&sig`.
-  // Lo consumimos y limpiamos la query para que un back/refresh no reintente con
-  // firma vieja. Si NO hay callback, auto-redirigimos UNA vez (guard en sessionStorage
-  // para no entrar en loop si el IdP nos regresa sin identidad).
-  useEffect(() => {
-    const q = new URLSearchParams(window.location.search);
-    const cbPayload = q.get("payload");
-    const cbSig = q.get("sig");
-    if (cbPayload && cbSig) {
-      window.history.replaceState({}, "", window.location.pathname);
-      sessionStorage.removeItem("gt_login_attempt");
-      onIdentity(cbPayload, cbSig);
-      return;
-    }
-    // Sin callback: si ya intentamos en esta sesión y volvimos vacíos, muestra el
-    // botón manual (no vuelvas a redirigir solo). Si es el primer intento, ve.
-    if (sessionStorage.getItem("gt_login_attempt")) {
-      setState("idle");
-      return;
-    }
-    connect();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  function connect() {
-    setState("waiting");
-    setError(null);
-    sessionStorage.setItem("gt_login_attempt", "1");
-    // Redirect TOP-LEVEL a ghosty.studio (IdP). En mobile / PWA standalone los
-    // popups (`window.open`) se abren en otra pestaña y rompen el opener → el
-    // postMessage nunca llega. Navegando la ventana completa, la cookie del IdP
-    // viaja first-party (ITP no la bloquea) y el IdP nos regresa por 302 con
-    // ?payload&sig. `return` preserva la ruta (para que /join/<token> vuelva a sí).
-    const sep = url.includes("?") ? "&" : "?";
-    const ret = encodeURIComponent(window.location.pathname);
-    window.location.href = `${url}${sep}return=${ret}`;
-  }
-
-  const busy = state === "waiting" || state === "completing";
   return (
     <div className="grid min-h-[100dvh] place-items-center bg-surface text-ink pl-[max(1.5rem,env(safe-area-inset-left))] pr-[max(1.5rem,env(safe-area-inset-right))] pt-[max(1.5rem,env(safe-area-inset-top))] pb-[max(1.5rem,env(safe-area-inset-bottom))]">
       <div className="w-full max-w-sm rounded-2xl border border-border bg-surface-2 p-8 text-center">
         <img src="/ghosty.svg" alt="Ghosty" className="mx-auto h-16 w-16" />
         <h1 className="mt-4 text-lg font-semibold">Ghosty Teams</h1>
         <p className="mt-1 text-sm text-muted">{subtitle ?? t("Entra con tu cuenta de Ghosty.")}</p>
-        {state === "completing" || state === "waiting" ? (
-          <p className="mt-5 text-sm text-muted">
-            {state === "completing" ? t("Entrando…") : t("Redirigiendo…")}
-          </p>
-        ) : (
-          <button
-            onClick={connect}
-            disabled={busy}
-            className="mt-5 w-full min-h-[44px] cursor-pointer rounded-lg bg-brand px-4 py-3 text-sm font-semibold text-brand-fg transition hover:brightness-110 hover:shadow-lg hover:shadow-brand/30 active:scale-[0.98] disabled:cursor-default disabled:opacity-50 disabled:hover:brightness-100 disabled:hover:shadow-none"
-          >
-            {t("Continuar con Ghosty")}
-          </button>
-        )}
+        <a
+          href={retryTo}
+          className="mt-5 block w-full min-h-[44px] cursor-pointer rounded-lg bg-brand px-4 py-3 text-sm font-semibold text-brand-fg transition hover:brightness-110 hover:shadow-lg hover:shadow-brand/30 active:scale-[0.98]"
+        >
+          {t("Continuar con Ghosty")}
+        </a>
         {error && <p className="mt-3 text-sm text-red-400">{error}</p>}
       </div>
     </div>

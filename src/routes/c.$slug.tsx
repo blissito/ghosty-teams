@@ -98,7 +98,7 @@ import { playNotificationSound, playGhostySound, playSelfSound, playMentionSound
 const SOUND_GROUP_MENTIONS = new Set(["all", "channel", "everyone", "aqui", "here", "todos"]);
 import { useT } from "../i18n";
 
-type Mention = { handle: string; name: string; avatar: string; nickname?: string; kind: "agent" | "user" | "group" };
+type Mention = { handle: string; name: string; avatar: string; kind: "agent" | "user" | "group" };
 import { me } from "../server/auth";
 import {
   createChannelFn,
@@ -344,9 +344,6 @@ const ChatCtx = createContext<{
   // Envía `body` como respuesta del usuario en el MISMO hilo/DM que `ownerMsg`
   // (usado por artefactos interactivos inline, ej. ask-user: un clic = enviar).
   sendQuickReply: (body: string, ownerMsg: Message) => void;
-  // Nickname a mostrar para un sender (nombre del mensaje) → resuelto desde la lista
-  // de usuarios (Ajustes → perfil). null = sin nickname, usar el sender tal cual.
-  nickFor: (sender: string) => string | null;
   // Abre Ajustes/Preferencias como modal in-panel (SPA) en la pestaña indicada.
   openPrefs: (tab?: "general" | "agentes" | "emojis") => void;
   // Abre el perfil (drawer) de una persona o agente.
@@ -366,7 +363,6 @@ const ChatCtx = createContext<{
   setPickerFor: () => {},
   onOpenArtifact: () => {},
   sendQuickReply: () => {},
-  nickFor: () => null,
   openPrefs: () => {},
   openProfile: () => {},
 });
@@ -1491,15 +1487,6 @@ function ChannelPage() {
     );
   };
 
-  // Mapa nombre→nickname (Ajustes → perfil) para re-pintar el nombre en cada mensaje
-  // sin tocar `sender`. Se refresca solo cuando cambian las menciones (cache módulo).
-  const mentions = useMentions();
-  const nickByName = useMemo(() => {
-    const map: Record<string, string> = {};
-    for (const u of mentions) if (u.kind === "user" && u.nickname) map[u.name] = u.nickname;
-    return map;
-  }, [mentions]);
-  const nickFor = useCallback((sender: string) => nickByName[sender] ?? null, [nickByName]);
 
   // Ajustes/Preferencias como modal in-panel (SPA): estado a nivel shell para que
   // lo abran tanto el footer del sidebar como el "+ Añadir emoji" del picker.
@@ -1513,7 +1500,7 @@ function ChannelPage() {
 
   return (
     <ChatCtx.Provider
-      value={{ me: user, slug: channel.slug, emojis, react, star, pin, remove, editMsg, retrySend, discardSend, pickerFor, setPickerFor, onOpenArtifact: setOpenArtifact, sendQuickReply, nickFor, openPrefs, openProfile }}
+      value={{ me: user, slug: channel.slug, emojis, react, star, pin, remove, editMsg, retrySend, discardSend, pickerFor, setPickerFor, onOpenArtifact: setOpenArtifact, sendQuickReply, openPrefs, openProfile }}
     >
     {/* pt safe-area: en PWA standalone (viewport-fit=cover + status-bar black-translucent)
         el contenido va DEBAJO de la hora/notch → el header y su botón de menú quedaban
@@ -3559,7 +3546,7 @@ function HomeDashboard({
             {people.slice(0, 8).map((p) => (
               <button
                 key={`${p.kind}:${p.handle}`}
-                onClick={() => openProfile({ name: p.nickname || p.name, avatar: p.avatar, handle: p.handle, isAgent: p.kind === "agent" })}
+                onClick={() => openProfile({ name: p.name, avatar: p.avatar, handle: p.handle, isAgent: p.kind === "agent" })}
                 className="flex items-center gap-2 rounded-lg px-2 py-1.5 text-left hover:bg-surface-3"
               >
                 {p.kind === "agent" ? (
@@ -3572,7 +3559,7 @@ function HomeDashboard({
                   <Avatar name={p.name} avatar={p.avatar} className="h-7 w-7 shrink-0" />
                 )}
                 <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-medium">{p.nickname || p.name}</p>
+                  <p className="truncate text-sm font-medium">{p.name}</p>
                   <p className="truncate text-xs text-muted">
                     {p.kind === "agent" ? t("Agente") : `@${p.handle}`}
                   </p>
@@ -4646,7 +4633,7 @@ function MessageRow({
   canPin?: boolean;
 }) {
   const t = useT();
-  const { me, slug, pickerFor, onOpenArtifact, nickFor, openProfile } = useContext(ChatCtx);
+  const { me, slug, pickerFor, onOpenArtifact, openProfile } = useContext(ChatCtx);
   const [editing, setEditing] = useState(false);
   // Mientras un popover de la barra (reaccionar/⋯) esté abierto, la barra NO debe
   // desaparecer al perder el hover del row (si no, el popover se vuelve inclicable).
@@ -4657,7 +4644,7 @@ function MessageRow({
   // con mentions_ghosty=0. Así, "es del agente" = tiene handle Y no es una mención.
   const isAgent = (m.agent_handle != null && m.mentions_ghosty === 0) || m.sender === "ghosty";
   const isGhostyAvatar = isAgent && (m.agent_handle === "ghosty" || m.sender === "ghosty");
-  const displayName = isAgent && m.sender === "ghosty" ? "Ghosty" : (nickFor(m.sender) ?? m.sender);
+  const displayName = isAgent && m.sender === "ghosty" ? "Ghosty" : m.sender;
   const time = new Date(m.created_at * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   const canEdit = !!me && (me.isOwner || m.sender === me.name) && !isAgent && m.kind === "msg";
   const canDelete = !!me && (me.isOwner || m.sender === me.name) && m.kind === "msg";

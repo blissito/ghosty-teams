@@ -40,20 +40,22 @@ export async function upsertUser(id: {
   avatar: string;
 }): Promise<SessionUser> {
   const base = id.email.split("@")[0] || id.name;
-  const existing = await dbq("SELECT is_owner, handle FROM gc_users WHERE sub = ?", [id.sub]);
+  const existing = await dbq("SELECT is_owner, handle, name, avatar FROM gc_users WHERE sub = ?", [id.sub]);
   if (existing.rows[0]) {
-    let handle = existing.rows[0][1] as string | null;
+    const row = existing.rows[0];
+    let handle = row[1] as string | null;
     if (!handle) {
       handle = await ensureUniqueHandle(base, id.sub);
       await dbq("UPDATE gc_users SET handle=? WHERE sub=?", [handle, id.sub]);
     }
-    await dbq("UPDATE gc_users SET email=?, name=?, avatar=? WHERE sub=?", [
-      id.email,
-      id.name,
-      id.avatar,
-      id.sub,
-    ]);
-    return { ...id, isOwner: Number(existing.rows[0][0]) === 1, handle };
+    // Mantén el email sincronizado con el IdP (ancla de identidad), pero NO pises
+    // name/avatar: tras el primer login el perfil es EDITABLE por el usuario
+    // (Ajustes → perfil, updateProfile). Sella en sesión el perfil GUARDADO, no el
+    // crudo del IdP (que hoy manda name=local-part del email, avatar="").
+    await dbq("UPDATE gc_users SET email=? WHERE sub=?", [id.email, id.sub]);
+    const name = (row[2] as string) || id.name;
+    const avatar = (row[3] as string) || id.avatar;
+    return { sub: id.sub, email: id.email, name, avatar, isOwner: Number(row[0]) === 1, handle };
   }
   // Primer usuario de la instancia → owner.
   const { rows } = await dbq("SELECT COUNT(*) FROM gc_users");
@@ -66,10 +68,32 @@ export async function upsertUser(id: {
   return { ...id, isOwner: isOwner === 1, handle };
 }
 
-export type MentionUser = { sub: string; handle: string; name: string; email: string; avatar: string; nickname: string };
+// Perfil editable por el dueño de la cuenta (Ajustes → perfil): nombre visible y
+// avatar. El email lo ancla el IdP (no editable aquí). avatar vacío = quitar (null).
+// upsertUser ya NO pisa estos campos en logins posteriores, así que persisten.
+export async function updateProfile(
+  sub: string,
+  patch: { name?: string; avatar?: string }
+): Promise<void> {
+  const sets: string[] = [];
+  const vals: (string | null)[] = [];
+  if (patch.name !== undefined) {
+    sets.push("name=?");
+    vals.push(patch.name);
+  }
+  if (patch.avatar !== undefined) {
+    sets.push("avatar=?");
+    vals.push(patch.avatar || null);
+  }
+  if (!sets.length) return;
+  vals.push(sub);
+  await dbq(`UPDATE gc_users SET ${sets.join(", ")} WHERE sub=?`, vals);
+}
+
+export type MentionUser = { sub: string; handle: string; name: string; email: string; avatar: string };
 export async function listUsers(): Promise<MentionUser[]> {
   const { rows, cols } = await dbq(
-    "SELECT sub, handle, name, email, avatar, nickname FROM gc_users WHERE handle IS NOT NULL ORDER BY name"
+    "SELECT sub, handle, name, email, avatar FROM gc_users WHERE handle IS NOT NULL ORDER BY name"
   );
   const idx = (c: string) => cols.indexOf(c);
   return rows.map((r) => ({
@@ -78,19 +102,7 @@ export async function listUsers(): Promise<MentionUser[]> {
     name: (r[idx("name")] as string) ?? "",
     email: (r[idx("email")] as string) ?? "",
     avatar: (r[idx("avatar")] as string) ?? "",
-    nickname: (r[idx("nickname")] as string) ?? "",
   }));
-}
-
-// Nickname editable por el dueño de la cuenta (Ajustes → perfil). Vacío = usar el
-// nombre. El chat lo resuelve al render por nombre→nickname; no toca sender/permisos.
-export async function setNickname(sub: string, nickname: string): Promise<void> {
-  await dbq("UPDATE gc_users SET nickname=? WHERE sub=?", [nickname.trim() || null, sub]);
-}
-
-export async function getNickname(sub: string): Promise<string> {
-  const { rows } = await dbq("SELECT nickname FROM gc_users WHERE sub=?", [sub]);
-  return (rows[0]?.[0] as string) ?? "";
 }
 
 // Subs de usuarios cuyos @handle aparecen (para push). Excluye a excludeSub.
