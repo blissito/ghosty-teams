@@ -85,10 +85,29 @@ export interface UploadedFile {
   name: string;
 }
 
-// Sube un Blob (el File de la request es un Blob): init → PUT a Tigris. Devuelve
-// el fileId persistible. Server-side (los bytes pasan por la VM) para evitar CORS
-// browser→Tigris.
+// Sube un Blob → NUESTRO storage (Tigris propio, ver storage.server). Devuelve el
+// fileId persistible (una key `t3/…`). Server-side para evitar CORS browser→Tigris.
+// Si el storage propio no está configurado (sin creds Tigris), cae al path legacy
+// de EasyBits — por si algún box aún no tiene las env inyectadas.
 export async function uploadToEasyBits(opts: {
+  blob: Blob;
+  contentType: string;
+  fileName: string;
+}): Promise<UploadedFile> {
+  const storage = await import("./storage.server");
+  if (storage.storageConfigured()) {
+    const r = await storage.put({
+      blob: opts.blob,
+      contentType: opts.contentType,
+      fileName: opts.fileName,
+      visibility: "private",
+    });
+    return { fileId: r.key, mime: r.mime, size: r.size, name: r.name };
+  }
+  return uploadToEasyBitsLegacy(opts);
+}
+
+async function uploadToEasyBitsLegacy(opts: {
   blob: Blob;
   contentType: string;
   fileName: string;
@@ -119,10 +138,12 @@ export async function uploadToEasyBits(opts: {
   return { fileId: init.file.id, mime: contentType, size, name: opts.fileName };
 }
 
-// Re-firma un readUrl (TTL ~1h) para servir un objeto ya subido. El proxy lo
-// llama on-demand por cada render de adjunto.
+// Re-firma un readUrl para servir un objeto ya subido. Keys `t3/…` → storage propio;
+// ids legacy → EasyBits (compat con adjuntos previos). El proxy lo llama on-demand.
 export async function mintReadUrl(fileId: string): Promise<string | null> {
   if (!fileId) return null;
+  const storage = await import("./storage.server");
+  if (storage.isOwnKey(fileId)) return storage.signedUrl(fileId, 3600);
   try {
     const res = await ebFetch(`/api/v2/files/${encodeURIComponent(fileId)}`, { method: "GET" });
     if (!res.ok) return null;
@@ -136,6 +157,12 @@ export async function mintReadUrl(fileId: string): Promise<string | null> {
 // Descarga los bytes de un objeto y los devuelve en base64 (para FileParts inline
 // de media chico → el agente los recibe sin un fetch extra). Server-side. null si falla.
 export async function mintFileBytes(fileId: string): Promise<string | null> {
+  if (!fileId) return null;
+  const storage = await import("./storage.server");
+  if (storage.isOwnKey(fileId)) {
+    const buf = await storage.getBytes(fileId);
+    return buf ? buf.toString("base64") : null;
+  }
   const url = await mintReadUrl(fileId);
   if (!url) return null;
   try {
@@ -150,6 +177,8 @@ export async function mintFileBytes(fileId: string): Promise<string | null> {
 // Borra un objeto (al eliminar un mensaje con adjuntos). 2xx o 404 = ok.
 export async function deleteEasyBitsFile(fileId: string): Promise<boolean> {
   if (!fileId) return false;
+  const storage = await import("./storage.server");
+  if (storage.isOwnKey(fileId)) return storage.del(fileId);
   try {
     const res = await ebFetch(`/api/v2/files/${encodeURIComponent(fileId)}`, { method: "DELETE" });
     return res.ok || res.status === 404;
