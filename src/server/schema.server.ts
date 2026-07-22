@@ -148,6 +148,15 @@ async function migrate(): Promise<void> {
   // enruta a ese agente (sin necesidad de @mención). null = DM normal entre personas.
   await addColumn("gc_dm_conversations", "agent_handle", "TEXT");
 
+  // Perfil enriquecido (estilo Slack, editable en el drawer): status (emoji + texto),
+  // título/rol, pronombres, bio. + `banned` para expulsar del workspace (login lo checa).
+  await addColumn("gc_users", "status_emoji", "TEXT");
+  await addColumn("gc_users", "status_text", "TEXT");
+  await addColumn("gc_users", "title", "TEXT");
+  await addColumn("gc_users", "pronouns", "TEXT");
+  await addColumn("gc_users", "bio", "TEXT");
+  await addColumn("gc_users", "banned", "INTEGER NOT NULL DEFAULT 0");
+
   // Agentes slice 1: persona/prompt por agente (se antepone/envía al backend para
   // que cada agente hable distinto). gc_agents la crea el provisioner; aquí sumamos.
   await addColumn("gc_agents", "system_prompt", "TEXT");

@@ -21,6 +21,7 @@ import {
 import { listFormmyAgentsFn, ensureFormmyMirrorFn, type FormmyAgent } from "../server/formmy-agents";
 import { listEmojisFn, addEmojiFn, removeEmojiFn } from "../server/emojis";
 import { bumpEmojis } from "../utils/emojis-bus";
+import { bumpUsers } from "../utils/users-bus";
 import type { CustomEmoji } from "../db.server";
 import { useT, useLocale, useSetLocale, type Locale } from "../i18n";
 import { Monitor, Sun, Moon, Check, SlidersHorizontal, Palette, Github, Plug, Slack, Calendar, Link2, RefreshCw } from "lucide-react";
@@ -638,6 +639,7 @@ function ProfileCard({
       // La sesión cambió server-side → invalida la identidad cacheada para que el
       // resto de la app (rooms, header) lea el perfil nuevo en la próxima nav.
       clearMeCache();
+      bumpUsers(); // directorio vivo → avatar/nombre nuevos en mensajes viejos + sidebar al instante
       setSaved(true);
       setTimeout(() => setSaved(false), 1500);
     } catch (e) {

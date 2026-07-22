@@ -81,6 +81,9 @@ import {
   pingTypingFn,
   toggleReactionFn,
   editMessageFn,
+  listUsersFn,
+  updateMyProfileFn,
+  expelMemberFn,
 } from "../server/chat";
 import { SmilePlus, Pencil, ArrowLeft, RotateCcw, Send, Bold, Italic, Strikethrough, List, ListOrdered, Quote, Code, Type, Reply } from "lucide-react";
 import { getDeferredPrompt, onInstallable, clearDeferredPrompt, type BeforeInstallPromptEvent } from "../utils/pwa-install";
@@ -91,6 +94,7 @@ import { SettingsContent, loadSettingsData } from "../components/SettingsContent
 import { getTheme, subscribeTheme, resolveDark, presetById, paletteVars } from "../utils/theme";
 import { subscribeMentions } from "../utils/mentions-bus";
 import { subscribeEmojis } from "../utils/emojis-bus";
+import { subscribeUsers, bumpUsers } from "../utils/users-bus";
 import { registerModalEsc } from "../utils/modal-esc";
 import ArtifactPanel, { type ArtifactView, viewFromAttachment } from "../components/ArtifactPanel";
 import { extractEbDoc, draftTitle, bubbleWithoutEbDoc } from "../lib/ebdoc";
@@ -353,6 +357,7 @@ const ChatCtx = createContext<{
   me: SessionUser | null;
   slug: string;
   emojis: CustomEmoji[];
+  users: Map<string, WsUser>; // directorio vivo sub→perfil (avatars/nombres/status)
   react: (m: Message, emoji: string) => void;
   star: (m: Message) => void;
   pin: (m: Message) => void;
@@ -380,6 +385,7 @@ const ChatCtx = createContext<{
   me: null,
   slug: "",
   emojis: [],
+  users: new Map(),
   react: () => {},
   star: () => {},
   pin: () => {},
@@ -398,7 +404,7 @@ const ChatCtx = createContext<{
 });
 
 // Identidad mostrada en el drawer de perfil (persona o agente).
-type ProfileTarget = { name: string; avatar?: string | null; handle?: string | null; isAgent: boolean };
+type ProfileTarget = { name: string; avatar?: string | null; handle?: string | null; isAgent: boolean; sub?: string | null };
 
 // Emojis rápidos para el picker (evita una lib de ~1MB).
 const QUICK_EMOJIS = ["👍", "❤️", "😂", "🎉", "🙌", "🔥", "👀", "✅", "💯", "🚀", "🤔", "😮"];
@@ -583,6 +589,36 @@ function useMentions(): Mention[] {
     };
   }, []);
   return mentions;
+}
+
+// Directorio vivo de miembros (sub→perfil). Resuelve avatars/nombres en TODOS lados
+// (mensajes viejos incluidos) → al editar tu avatar se ve al instante, como Slack. Cache
+// módulo, refrescado por bus (edición propia) + al reenfocar (cross-cliente).
+export type WsUser = {
+  sub: string; name: string; avatar: string; handle: string; isOwner: boolean;
+  statusEmoji: string | null; statusText: string | null; title: string | null; pronouns: string | null; bio: string | null;
+};
+let usersCache: Map<string, WsUser> | null = null;
+function useUsersMap(): Map<string, WsUser> {
+  const [users, setUsers] = useState<Map<string, WsUser>>(usersCache ?? new Map());
+  useEffect(() => {
+    let alive = true;
+    const load = () =>
+      listUsersFn()
+        .then((list) => {
+          if (list.length === 0 && (usersCache?.size ?? 0) > 0) return; // no vaciar por error transitorio
+          const m = new Map(list.map((u) => [u.sub, u as WsUser]));
+          usersCache = m;
+          if (alive) setUsers(m);
+        })
+        .catch(() => {});
+    load();
+    const off = subscribeUsers(load);
+    const onVis = () => { if (document.visibilityState === "visible") load(); };
+    document.addEventListener("visibilitychange", onVis);
+    return () => { alive = false; off(); document.removeEventListener("visibilitychange", onVis); };
+  }, []);
+  return users;
 }
 
 // Emojis custom del workspace (para picker + render de reacciones/cuerpo). Cache módulo.
@@ -782,6 +818,7 @@ function ChannelPage() {
   // Command palette (⌘K): salto rápido a room/DM/vista.
   const [paletteOpen, setPaletteOpen] = useState(false);
   const emojis = useEmojis();
+  const users = useUsersMap();
   const [optimistic, setOptimistic] = useState<Optimistic[]>([]);
   // Toasts in-app: notificación VISUAL que acompaña al sonido (antes solo sonaba → la gente
   // no lo relacionaba con una notificación). Cada uno se auto-descarta; clic → salta al scope.
@@ -1099,10 +1136,15 @@ function ChannelPage() {
             const preview = plainExcerpt(ev.msg.body) || (ev.msg.attachments?.length ? "📎 Adjunto" : "");
             const dmId = ev.msg.dm_id, chId = ev.msg.channel_id, parentId = ev.msg.parent_id;
             const onOpen = () => {
-              if (dmId != null) { setOpenThreadId(null); setView(null); setOpenDmId(dmId); }
-              else if (parentId != null) { setOpenDmId(null); setView(null); setOpenThreadId(parentId); }
-              else { setOpenDmId(null); setOpenThreadId(null); setView(null); setHomeOpen(false);
-                     const s = channelsById.get(chId); if (s && s !== channel.slug) router.navigate({ to: "/c/$slug", params: { slug: s } }); }
+              // Limpia SIEMPRE Inicio/vista (si no, el Home tapa la conversación y "no lleva").
+              setHomeOpen(false); setView(null);
+              if (dmId != null) { setOpenThreadId(null); setOpenDmId(dmId); }
+              else if (parentId != null) { setOpenDmId(null); setOpenThreadId(parentId); }
+              else {
+                setOpenDmId(null); setOpenThreadId(null);
+                const s = channelsById.get(chId);
+                if (s && s !== channel.slug) router.navigate({ to: "/c/$slug", params: { slug: s } });
+              }
             };
             pushToast({ sender: ev.msg.sender, avatar: ev.msg.avatar, preview, kind, onOpen });
             if (!visible && typeof Notification !== "undefined" && Notification.permission === "granted") {
@@ -1619,7 +1661,7 @@ function ChannelPage() {
 
   return (
     <ChatCtx.Provider
-      value={{ me: user, slug: channel.slug, emojis, react, star, pin, remove, editMsg, retrySend, discardSend, replyTo, setReplyTo, pickerFor, setPickerFor, onOpenArtifact: setOpenArtifact, sendQuickReply, openPrefs, openProfile }}
+      value={{ me: user, slug: channel.slug, emojis, users, react, star, pin, remove, editMsg, retrySend, discardSend, replyTo, setReplyTo, pickerFor, setPickerFor, onOpenArtifact: setOpenArtifact, sendQuickReply, openPrefs, openProfile }}
     >
     {/* pt safe-area: en PWA standalone (viewport-fit=cover + status-bar black-translucent)
         el contenido va DEBAJO de la hora/notch → el header y su botón de menú quedaban
@@ -1810,6 +1852,10 @@ function ChannelPage() {
             isOwner={!!user?.isOwner}
             onClose={() => setProfile(null)}
             onConfigure={() => { setProfile(null); openPrefs("agentes"); }}
+            onStartDm={(sub) => {
+              setProfile(null);
+              openDmFn({ data: { subs: [sub] } }).then(({ id }) => openDm(id)).catch(() => {});
+            }}
           />
         )}
       </AnimatePresence>
@@ -2656,31 +2702,69 @@ function ProfileDrawer({
   isOwner,
   onClose,
   onConfigure,
+  onStartDm,
 }: {
   target: ProfileTarget;
   isOwner: boolean;
   onClose: () => void;
   onConfigure: () => void;
+  onStartDm: (sub: string) => void;
 }) {
   const t = useT();
+  const { users, me } = useContext(ChatCtx);
+  const dir = target.sub ? users.get(target.sub) : undefined; // perfil vivo del directorio
+  const isSelf = !!me && !!target.sub && target.sub === me.sub;
+  const isGhosty = target.handle === "ghosty";
+  const name = dir?.name || target.name;
+  const avatar = dir?.avatar || target.avatar || undefined;
+  const handle = dir?.handle || target.handle;
+
+  const [editing, setEditing] = useState(false);
+  const [sEmoji, setSEmoji] = useState(dir?.statusEmoji ?? "");
+  const [sText, setSText] = useState(dir?.statusText ?? "");
+  const [title, setTitle] = useState(dir?.title ?? "");
+  const [pronouns, setPronouns] = useState(dir?.pronouns ?? "");
+  const [bio, setBio] = useState(dir?.bio ?? "");
+  const [saving, setSaving] = useState(false);
+  const [expelBusy, setExpelBusy] = useState(false);
+  const [confirmExpel, setConfirmExpel] = useState(false);
+
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && (editing ? setEditing(false) : onClose());
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
-  const isGhosty = target.handle === "ghosty";
+  }, [onClose, editing]);
+
+  async function saveProfile() {
+    setSaving(true);
+    try {
+      await updateMyProfileFn({ data: { statusEmoji: sEmoji || null, statusText: sText || null, title: title || null, pronouns: pronouns || null, bio: bio || null } });
+      bumpUsers(); // se refleja al instante en el directorio (drawer + mensajes)
+      setEditing(false);
+    } catch { /* noop */ } finally { setSaving(false); }
+  }
+  async function doExpel() {
+    if (!target.sub) return;
+    setExpelBusy(true);
+    try { await expelMemberFn({ data: { sub: target.sub } }); bumpUsers(); onClose(); }
+    catch { setExpelBusy(false); }
+  }
+
+  const Field = ({ label, children }: { label: string; children: React.ReactNode }) => (
+    <div className="rounded-lg border border-border bg-surface px-3 py-2">
+      <p className="text-[11px] font-semibold uppercase tracking-wide text-muted">{label}</p>
+      <div className="mt-0.5 text-sm text-ink">{children}</div>
+    </div>
+  );
+
   return createPortal(
     <motion.div
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
+      initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
       onClick={onClose}
       className="fixed inset-0 z-50 flex justify-end bg-black/40"
     >
       <motion.aside
-        initial={{ x: 32, opacity: 0.6 }}
-        animate={{ x: 0, opacity: 1 }}
-        exit={{ x: 32, opacity: 0 }}
+        initial={{ x: 32, opacity: 0.6 }} animate={{ x: 0, opacity: 1 }} exit={{ x: 32, opacity: 0 }}
         transition={{ type: "spring", stiffness: 500, damping: 42 }}
         onClick={(e) => e.stopPropagation()}
         className="thin-scroll flex h-full w-[88vw] max-w-sm flex-col overflow-y-auto border-l border-border bg-surface-2 text-ink"
@@ -2692,62 +2776,103 @@ function ProfileDrawer({
             <X size={18} />
           </button>
         </div>
-        {/* Cabecera: avatar grande + nombre + tipo/handle */}
+        {/* Cabecera: avatar + nombre + status + tipo/handle */}
         <div className="flex flex-col items-center px-6 pb-2 pt-2 text-center">
           {isGhosty ? (
             <div className="grid h-24 w-24 place-items-center overflow-hidden rounded-2xl bg-white">
               <img src="/ghosty.svg" alt="" className="h-full w-full object-contain" />
             </div>
           ) : target.isAgent ? (
-            target.avatar ? (
-              <img src={target.avatar} alt="" loading="lazy" decoding="async" className="h-24 w-24 rounded-2xl object-cover" />
+            avatar ? (
+              <img src={avatar} alt="" loading="lazy" decoding="async" className="h-24 w-24 rounded-2xl object-cover" />
             ) : (
               <div className="grid h-24 w-24 place-items-center rounded-2xl bg-brand/15 text-brand"><Bot size={40} /></div>
             )
           ) : (
-            <Avatar name={target.name} avatar={target.avatar ?? undefined} className="h-24 w-24 !rounded-2xl text-2xl" />
+            <Avatar name={name} avatar={avatar} className="h-24 w-24 !rounded-2xl text-2xl" />
           )}
-          <h2 className="mt-3 text-lg font-semibold">{target.name}</h2>
-          <p className="text-sm text-muted">
+          <h2 className="mt-3 text-lg font-semibold">{name}</h2>
+          {!editing && (dir?.statusText || dir?.statusEmoji) && (
+            <p className="mt-0.5 text-sm text-ink">{dir?.statusEmoji} {dir?.statusText}</p>
+          )}
+          <p className="mt-0.5 text-sm text-muted">
             {target.isAgent ? t("Agente") : t("Miembro")}
-            {target.handle ? ` · @${target.handle}` : ""}
+            {handle ? ` · @${handle}` : ""}
+            {dir?.pronouns ? ` · ${dir.pronouns}` : ""}
           </p>
+          {dir?.title && !editing ? <p className="text-xs text-muted">{dir.title}</p> : null}
         </div>
 
-        <div className="mt-4 space-y-2 px-4">
+        <div className="mt-3 space-y-2 px-4 pb-6">
           {target.isAgent ? (
             <>
-              <button
-                disabled
-                title={t("Próximamente")}
-                className="flex w-full items-center justify-center gap-2 rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-brand-fg opacity-50"
-              >
+              <button disabled title={t("Próximamente")} className="flex w-full items-center justify-center gap-2 rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-brand-fg opacity-50">
                 <MessageSquare size={15} /> {t("Mensaje directo")}
               </button>
               {isOwner && (
-                <button
-                  onClick={onConfigure}
-                  className="flex w-full items-center justify-center gap-2 rounded-lg border border-border px-4 py-2 text-sm font-medium text-muted transition hover:border-brand hover:text-ink"
-                >
+                <button onClick={onConfigure} className="flex w-full items-center justify-center gap-2 rounded-lg border border-border px-4 py-2 text-sm font-medium text-muted transition hover:border-brand hover:text-ink">
                   <Settings size={15} /> {t("Configurar agente")}
                 </button>
               )}
               <p className="px-1 pt-1 text-center text-xs text-muted">
-                {t("Tagéalo con @{handle} en cualquier mensaje para que responda.", { handle: target.handle || "handle" })}
+                {t("Tagéalo con @{handle} en cualquier mensaje para que responda.", { handle: handle || "handle" })}
               </p>
+            </>
+          ) : editing ? (
+            // Editar MI perfil (status/título/pronombres/bio). Nombre+avatar = en Ajustes.
+            <>
+              <div className="flex gap-2">
+                <input value={sEmoji} onChange={(e) => setSEmoji(e.target.value)} placeholder="😀" maxLength={8}
+                  className="w-14 rounded-lg border border-border bg-surface px-2 py-2 text-center text-lg" />
+                <input value={sText} onChange={(e) => setSText(e.target.value)} placeholder={t("¿En qué andas?")} maxLength={80}
+                  className="min-w-0 flex-1 rounded-lg border border-border bg-surface px-3 py-2 text-sm" />
+              </div>
+              <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder={t("Título / rol")} maxLength={80}
+                className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm" />
+              <input value={pronouns} onChange={(e) => setPronouns(e.target.value)} placeholder={t("Pronombres")} maxLength={40}
+                className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm" />
+              <textarea value={bio} onChange={(e) => setBio(e.target.value)} placeholder={t("Sobre ti")} maxLength={400} rows={3}
+                className="w-full resize-none rounded-lg border border-border bg-surface px-3 py-2 text-sm" />
+              <div className="flex gap-2 pt-1">
+                <button onClick={saveProfile} disabled={saving} className="flex-1 rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-brand-fg disabled:opacity-50">
+                  {saving ? t("Guardando…") : t("Guardar")}
+                </button>
+                <button onClick={() => setEditing(false)} className="rounded-lg border border-border px-4 py-2 text-sm text-muted hover:text-ink">
+                  {t("Cancelar")}
+                </button>
+              </div>
             </>
           ) : (
             <>
-              <button
-                disabled
-                title={t("Próximamente")}
-                className="flex w-full items-center justify-center gap-2 rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-brand-fg opacity-50"
-              >
-                <MessageSquare size={15} /> {t("Mensaje directo")}
-              </button>
-              <p className="px-1 pt-1 text-center text-xs text-muted">
-                {target.handle ? t("Mencionable como @{handle}.", { handle: target.handle }) : ""}
-              </p>
+              {isSelf ? (
+                <button onClick={() => setEditing(true)} className="flex w-full items-center justify-center gap-2 rounded-lg border border-border px-4 py-2 text-sm font-medium text-ink transition hover:border-brand">
+                  <Pencil size={15} /> {t("Editar perfil")}
+                </button>
+              ) : (
+                <button onClick={() => target.sub && onStartDm(target.sub)} disabled={!target.sub}
+                  className="flex w-full items-center justify-center gap-2 rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-brand-fg transition hover:brightness-110 disabled:opacity-50">
+                  <MessageSquare size={15} /> {t("Enviar mensaje")}
+                </button>
+              )}
+              {dir?.bio ? <Field label={t("Sobre")}>{dir.bio}</Field> : null}
+              {/* Expulsar (owner, no a sí mismo, no agentes). Doble clic de confirmación. */}
+              {isOwner && !isSelf && target.sub && (
+                confirmExpel ? (
+                  <div className="rounded-lg border border-red-500/40 bg-red-500/5 p-3">
+                    <p className="mb-2 text-xs text-muted">{t("¿Expulsar a {name} del workspace? No podrá volver a entrar.", { name })}</p>
+                    <div className="flex gap-2">
+                      <button onClick={doExpel} disabled={expelBusy} className="flex-1 rounded-lg bg-red-600 px-3 py-2 text-sm font-semibold text-white disabled:opacity-50">
+                        {expelBusy ? t("Expulsando…") : t("Sí, expulsar")}
+                      </button>
+                      <button onClick={() => setConfirmExpel(false)} className="rounded-lg border border-border px-3 py-2 text-sm text-muted">{t("Cancelar")}</button>
+                    </div>
+                  </div>
+                ) : (
+                  <button onClick={() => setConfirmExpel(true)} className="flex w-full items-center justify-center gap-2 rounded-lg border border-red-500/40 px-4 py-2 text-sm font-medium text-red-400 transition hover:bg-red-500/10">
+                    <Trash2 size={15} /> {t("Expulsar del workspace")}
+                  </button>
+                )
+              )}
             </>
           )}
         </div>
@@ -4821,7 +4946,7 @@ function MessageRow({
   canPin?: boolean;
 }) {
   const t = useT();
-  const { me, slug, emojis, pickerFor, onOpenArtifact, openProfile } = useContext(ChatCtx);
+  const { me, slug, emojis, users, pickerFor, onOpenArtifact, openProfile } = useContext(ChatCtx);
   const [editing, setEditing] = useState(false);
   // Mientras un popover de la barra (reaccionar/⋯) esté abierto, la barra NO debe
   // desaparecer al perder el hover del row (si no, el popover se vuelve inclicable).
@@ -4832,7 +4957,12 @@ function MessageRow({
   // con mentions_ghosty=0. Así, "es del agente" = tiene handle Y no es una mención.
   const isAgent = (m.agent_handle != null && m.mentions_ghosty === 0) || m.sender === "ghosty";
   const isGhostyAvatar = isAgent && (m.agent_handle === "ghosty" || m.sender === "ghosty");
-  const displayName = isAgent && m.sender === "ghosty" ? "Ghosty" : m.sender;
+  // Personas: resuelve nombre/avatar del DIRECTORIO VIVO por sub (fallback al denormalizado
+  // del mensaje) → editar tu avatar se ve en mensajes viejos también, como Slack. Agentes
+  // conservan su propio nombre/avatar (no están en el directorio de personas).
+  const dirUser = !isAgent && m.sender_sub ? users.get(m.sender_sub) : undefined;
+  const displayName = isAgent && m.sender === "ghosty" ? "Ghosty" : (dirUser?.name || m.sender);
+  const avatarSrc = dirUser?.avatar || m.avatar;
   const time = new Date(m.created_at * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   const canEdit = !!me && (me.isOwner || m.sender === me.name) && !isAgent && m.kind === "msg";
   const canDelete = !!me && (me.isOwner || m.sender === me.name) && m.kind === "msg";
@@ -4871,7 +5001,7 @@ function MessageRow({
       ) : (
       /* Avatar clickable → perfil (persona o agente). */
       <button
-        onClick={() => openProfile({ name: displayName, avatar: m.avatar, handle: m.agent_handle ?? (isGhostyAvatar ? "ghosty" : null), isAgent })}
+        onClick={() => openProfile({ name: displayName, avatar: avatarSrc, handle: m.agent_handle ?? (isGhostyAvatar ? "ghosty" : null), isAgent, sub: isAgent ? null : m.sender_sub })}
         className="shrink-0 rounded-lg transition hover:opacity-80"
         title={t("Ver perfil")}
       >
@@ -4886,7 +5016,7 @@ function MessageRow({
           <Bot size={20} />
         </div>
       ) : (
-        <Avatar name={m.sender} avatar={m.avatar} className="mt-0.5 h-9 w-9 !rounded-lg" />
+        <Avatar name={displayName} avatar={avatarSrc} className="mt-0.5 h-9 w-9 !rounded-lg" />
       )}
       </button>
       )}

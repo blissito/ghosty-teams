@@ -101,6 +101,11 @@ export const completeGhostyLogin = createServerFn({ method: "POST" })
     // (o es el primer login = owner).
     const invited = data.inviteToken ? await consumeInvite(data.inviteToken, id.sub) : false;
 
+    // Expulsado del workspace → rebota (aunque tenga identidad IdP válida). Antes del
+    // upsert para no re-crearlo/tocarlo.
+    const { isBanned } = await import("../users.server");
+    if (await isBanned(id.sub)) throw new Error("sin acceso a este workspace");
+
     const { upsertUser } = await import("../users.server");
     const user = await upsertUser({ sub: id.sub, email: id.email, name: id.name, avatar: id.avatar });
 

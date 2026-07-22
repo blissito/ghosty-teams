@@ -98,7 +98,11 @@ export const listMentionsFn = createServerFn({ method: "GET" }).handler(async ()
 // El avatar se sube antes por /api/upload (→ /api/attachment/<fileId>); aquí solo
 // se persiste la URL. upsertUser ya no pisa estos campos en logins posteriores.
 export const updateMyProfileFn = createServerFn({ method: "POST" })
-  .validator((d: { name?: string; avatar?: string }) => d)
+  .validator((d: {
+    name?: string; avatar?: string;
+    statusEmoji?: string | null; statusText?: string | null;
+    title?: string | null; pronouns?: string | null; bio?: string | null;
+  }) => d)
   .handler(async ({ data }) => {
     const { useSession } = await import("@tanstack/react-start/server");
     const { sessionConfig } = await import("./session.server");
@@ -109,8 +113,10 @@ export const updateMyProfileFn = createServerFn({ method: "POST" })
     const name = data.name?.trim().slice(0, 60);
     const rawAvatar = data.avatar?.trim();
     const users = await import("../users.server");
+    const cap = (v: string | null | undefined, n: number) =>
+      v === undefined ? undefined : v === null ? null : v.trim().slice(0, n);
 
-    const patch: { name?: string; avatar?: string } = {};
+    const patch: Parameters<typeof users.updateProfile>[1] = {};
     if (name) {
       // El authz de mensajes se apoya en el display name (msg.sender === user.name):
       // dos usuarios con el mismo nombre → uno editaría/borraría los mensajes del otro.
@@ -128,12 +134,46 @@ export const updateMyProfileFn = createServerFn({ method: "POST" })
       }
       patch.avatar = rawAvatar;
     }
+    // Perfil enriquecido (estilo Slack): status/título/pronombres/bio. Caps razonables.
+    patch.statusEmoji = cap(data.statusEmoji, 16);
+    patch.statusText = cap(data.statusText, 80);
+    patch.title = cap(data.title, 80);
+    patch.pronouns = cap(data.pronouns, 40);
+    patch.bio = cap(data.bio, 400);
 
     await users.updateProfile(user.sub, patch);
 
-    const next: SessionUser = { ...user, ...patch };
+    // La sesión solo lleva la identidad base (name/avatar); status/etc viven en el
+    // directorio (listWorkspaceUsers) que el cliente refresca.
+    const next: SessionUser = { ...user, ...(patch.name ? { name: patch.name } : {}), ...(patch.avatar !== undefined ? { avatar: patch.avatar || "" } : {}) };
     await s.update({ user: next });
     return { ok: true as const, user: next };
+  });
+
+// Directorio de miembros (mapa vivo sub→perfil): resuelve avatars en TODOS lados
+// (mensajes viejos, sidebar) y alimenta el drawer de perfil. GET, cualquier member.
+export const listUsersFn = createServerFn({ method: "GET" }).handler(async () => {
+  const me = await sessionUser();
+  if (!me) throw new Error("no autenticado");
+  const { listWorkspaceUsers } = await import("../users.server");
+  return listWorkspaceUsers();
+});
+
+// Expulsar del workspace (owner-only). Marca banned=1 → el login lo rebota. No al owner
+// ni a uno mismo. Publica un evento para que el expulsado se entere (best-effort).
+export const expelMemberFn = createServerFn({ method: "POST" })
+  .validator((d: { sub: string }) => d)
+  .handler(async ({ data }) => {
+    const me = await sessionUser();
+    if (!me?.isOwner) throw new Error("solo el owner expulsa");
+    if (data.sub === me.sub) throw new Error("no puedes expulsarte");
+    const { expelMember } = await import("../users.server");
+    await expelMember(data.sub);
+    try {
+      const bus = await import("./bus.server");
+      bus.publish(bus.ch.user(data.sub), { t: "expelled" } as never);
+    } catch { /* best-effort */ }
+    return { ok: true as const };
   });
 
 // Shell del room (sidebar + meta), SIN el flujo → el loader es ligero y el

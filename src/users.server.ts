@@ -87,21 +87,72 @@ export async function isNameTakenByOther(sub: string, name: string): Promise<boo
 
 export async function updateProfile(
   sub: string,
-  patch: { name?: string; avatar?: string }
+  patch: { name?: string; avatar?: string; statusEmoji?: string | null; statusText?: string | null; title?: string | null; pronouns?: string | null; bio?: string | null }
 ): Promise<void> {
   const sets: string[] = [];
   const vals: (string | null)[] = [];
-  if (patch.name !== undefined) {
-    sets.push("name=?");
-    vals.push(patch.name);
-  }
-  if (patch.avatar !== undefined) {
-    sets.push("avatar=?");
-    vals.push(patch.avatar || null);
-  }
+  const col = (name: string, v: string | null | undefined) => {
+    if (v === undefined) return;
+    sets.push(`${name}=?`);
+    vals.push(v || null);
+  };
+  if (patch.name !== undefined) { sets.push("name=?"); vals.push(patch.name); }
+  if (patch.avatar !== undefined) { sets.push("avatar=?"); vals.push(patch.avatar || null); }
+  col("status_emoji", patch.statusEmoji);
+  col("status_text", patch.statusText);
+  col("title", patch.title);
+  col("pronouns", patch.pronouns);
+  col("bio", patch.bio);
   if (!sets.length) return;
   vals.push(sub);
   await dbq(`UPDATE gc_users SET ${sets.join(", ")} WHERE sub=?`, vals);
+  // Avatar/nombre están DENORMALIZADOS en gc_messages (se sellan al enviar). Para que el
+  // cambio se vea en mensajes VIEJOS también, los reescribimos por sub. (El cliente resuelve
+  // por el directorio vivo, pero esto mantiene la DB coherente para fetches frescos/otros.)
+  if (patch.avatar !== undefined || patch.name !== undefined) {
+    const s2: string[] = []; const v2: (string | null)[] = [];
+    if (patch.avatar !== undefined) { s2.push("avatar=?"); v2.push(patch.avatar || ""); }
+    if (patch.name !== undefined) { s2.push("sender=?"); v2.push(patch.name); }
+    v2.push(sub);
+    await dbq(`UPDATE gc_messages SET ${s2.join(", ")} WHERE sender_sub=?`, v2).catch(() => {});
+  }
+}
+
+// Directorio de miembros del workspace (para el mapa vivo sub→perfil del cliente: avatars
+// que se actualizan en todos lados + el drawer de perfil estilo Slack).
+export type WorkspaceUser = {
+  sub: string; name: string; avatar: string; handle: string; isOwner: boolean;
+  statusEmoji: string | null; statusText: string | null; title: string | null; pronouns: string | null; bio: string | null;
+};
+export async function listWorkspaceUsers(): Promise<WorkspaceUser[]> {
+  const { rows, cols } = await dbq(
+    "SELECT sub, name, avatar, handle, is_owner, status_emoji, status_text, title, pronouns, bio FROM gc_users WHERE handle IS NOT NULL AND COALESCE(banned,0)=0 ORDER BY name"
+  );
+  const i = (c: string) => cols.indexOf(c);
+  return rows.map((r) => ({
+    sub: r[i("sub")] as string,
+    name: (r[i("name")] as string) ?? "",
+    avatar: (r[i("avatar")] as string) ?? "",
+    handle: (r[i("handle")] as string) ?? "",
+    isOwner: Number(r[i("is_owner")]) === 1,
+    statusEmoji: (r[i("status_emoji")] as string) ?? null,
+    statusText: (r[i("status_text")] as string) ?? null,
+    title: (r[i("title")] as string) ?? null,
+    pronouns: (r[i("pronouns")] as string) ?? null,
+    bio: (r[i("bio")] as string) ?? null,
+  }));
+}
+
+// ¿El sub está expulsado del workspace? (el login lo checa para impedir re-entrar).
+export async function isBanned(sub: string): Promise<boolean> {
+  const { rows } = await dbq("SELECT COALESCE(banned,0) FROM gc_users WHERE sub=?", [sub]);
+  return Number(rows[0]?.[0] ?? 0) === 1;
+}
+
+// Expulsa a un member (owner-only, validado en el server fn). Marca banned=1 (conserva
+// su fila + mensajes; el login lo rebota). No se puede expulsar al owner.
+export async function expelMember(sub: string): Promise<void> {
+  await dbq("UPDATE gc_users SET banned=1 WHERE sub=? AND COALESCE(is_owner,0)=0", [sub]);
 }
 
 export type MentionUser = { sub: string; handle: string; name: string; email: string; avatar: string };
