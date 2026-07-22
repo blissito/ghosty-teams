@@ -20,6 +20,7 @@ import {
 } from "../server/agents";
 import { listFormmyAgentsFn, ensureFormmyMirrorFn, type FormmyAgent } from "../server/formmy-agents";
 import { listEmojisFn, addEmojiFn, removeEmojiFn } from "../server/emojis";
+import { bumpEmojis } from "../utils/emojis-bus";
 import type { CustomEmoji } from "../db.server";
 import { useT, useLocale, useSetLocale, type Locale } from "../i18n";
 import { Monitor, Sun, Moon, Check, SlidersHorizontal, Palette, Github, Plug, Slack, Calendar, Link2, RefreshCw } from "lucide-react";
@@ -803,6 +804,7 @@ function EmojiManager({ isOwner, mySub }: { isOwner: boolean; mySub: string | nu
           a.name.localeCompare(b.name)
         )
       );
+      bumpEmojis(); // picker + render de mensajes resuelven :saved: al instante (sin recargar)
       setName("");
     } catch (e) {
       setErr(e instanceof Error ? e.message : t("error"));
@@ -815,6 +817,7 @@ function EmojiManager({ isOwner, mySub }: { isOwner: boolean; mySub: string | nu
   async function remove(nm: string) {
     save(emojis.filter((e) => e.name !== nm));
     await removeEmojiFn({ data: { name: nm } }).catch(() => {});
+    bumpEmojis();
   }
 
   return (

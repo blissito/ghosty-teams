@@ -90,6 +90,7 @@ import { Markdown } from "../components/Markdown";
 import { SettingsContent, loadSettingsData } from "../components/SettingsContent";
 import { getTheme, subscribeTheme, resolveDark, presetById, paletteVars } from "../utils/theme";
 import { subscribeMentions } from "../utils/mentions-bus";
+import { subscribeEmojis } from "../utils/emojis-bus";
 import { registerModalEsc } from "../utils/modal-esc";
 import ArtifactPanel, { type ArtifactView, viewFromAttachment } from "../components/ArtifactPanel";
 import { extractEbDoc, draftTitle, bubbleWithoutEbDoc } from "../lib/ebdoc";
@@ -581,20 +582,30 @@ function useMentions(): Mention[] {
   return mentions;
 }
 
-// Emojis custom del workspace (para picker + render de reacciones). Cache módulo.
+// Emojis custom del workspace (para picker + render de reacciones/cuerpo). Cache módulo.
 let emojisCache: CustomEmoji[] | null = null;
 function useEmojis(): CustomEmoji[] {
   const [emojis, setEmojis] = useState<CustomEmoji[]>(emojisCache ?? []);
   useEffect(() => {
     let alive = true;
-    listEmojisFn()
-      .then((e) => {
-        emojisCache = e;
-        if (alive) setEmojis(e);
-      })
-      .catch(() => {});
+    const load = () =>
+      listEmojisFn()
+        .then((e) => {
+          emojisCache = e;
+          if (alive) setEmojis(e);
+        })
+        .catch(() => {});
+    load();
+    // Refresca al agregar/borrar en Ajustes (mismo cliente, instantáneo) …
+    const off = subscribeEmojis(load);
+    // … y al reenfocar la pestaña (cross-cliente barato: si otro subió un emoji, al
+    // volver a la ventana se resuelve sin recargar). Solo cuando vuelve a visible.
+    const onVis = () => { if (document.visibilityState === "visible") load(); };
+    document.addEventListener("visibilitychange", onVis);
     return () => {
       alive = false;
+      off();
+      document.removeEventListener("visibilitychange", onVis);
     };
   }, []);
   return emojis;

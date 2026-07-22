@@ -82,6 +82,23 @@ function textComponents(emojiMap: Map<string, string>): Components {
 
 const cleanUrl = (u: string) => u.replace(/[.,)]+$/, "");
 
+// Emoji unicode (pictográficos + ZWJ + variation selector + regional + tonos de piel).
+const UNICODE_EMOJI = /[\p{Extended_Pictographic}\u200D\uFE0F\u{1F1E6}-\u{1F1FF}\u{1F3FB}-\u{1F3FF}]/gu;
+// ¿El mensaje es SOLO emojis? (custom `:name:` conocidos y/o unicode, más espacios) →
+// se renderiza JUMBO (grande), como Slack/Discord. Un `:foo:` que NO es emoji conocido
+// cuenta como texto → no jumbo.
+function emojiOnly(body: string, emojiMap: Map<string, string>): { jumbo: boolean; count: number } {
+  const trimmed = body.trim();
+  if (!trimmed) return { jumbo: false, count: 0 };
+  const customTokens = trimmed.match(/:([a-z0-9_]+):/g) ?? [];
+  const knownCustom = customTokens.filter((tok) => emojiMap.has(tok.slice(1, -1)));
+  const unicode = trimmed.match(UNICODE_EMOJI) ?? [];
+  let rest = trimmed.replace(/:([a-z0-9_]+):/g, (full, n) => (emojiMap.has(n) ? "" : full));
+  rest = rest.replace(UNICODE_EMOJI, "").replace(/\s+/g, "");
+  const count = knownCustom.length + unicode.length;
+  return { jumbo: rest.length === 0 && count > 0, count };
+}
+
 // Render Markdown seguro (GFM + sanitize) con look de chat compacto.
 // `artifactUrl`/`onOpenArtifact`: si un link apunta al artefacto del mensaje, el click
 // ABRE el panel (no descarga). El resto de links abren en pestaña nueva.
@@ -99,6 +116,14 @@ export const Markdown = memo(function Markdown({
   emojis?: { name: string; file_id: string }[]; // emojis custom → `:name:` inline en el cuerpo
 }) {
   const emojiMap = new Map((emojis ?? []).map((e) => [e.name, e.file_id]));
+  // Mensaje solo-emoji → JUMBO (grande), como Slack. Se salta markdown (no hace falta):
+  // highlightText resuelve `:name:` custom → <img> y deja el unicode como texto; el
+  // font-size grande del contenedor agranda ambos (el <img> es h-[1.25em], relativo).
+  const { jumbo, count } = emojiOnly(body, emojiMap);
+  if (jumbo) {
+    const sizeCls = count <= 6 ? "text-[2.75rem]" : count <= 12 ? "text-3xl" : "text-2xl";
+    return <div className={`${sizeCls} leading-none ${light ? "text-black" : "text-ink"}`}>{highlightText(body, emojiMap)}</div>;
+  }
   const withLinks: Components = {
     ...textComponents(emojiMap),
     // Imágenes del agente (memes/gráficas) al tamaño de Slack: alto acotado (~320px),
