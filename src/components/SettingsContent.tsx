@@ -1,11 +1,11 @@
 import { Link } from "@tanstack/react-router"; // Link: CTA "conecta EasyBits" / setup
 import { useEffect, useRef, useState } from "react";
-import { Bot, Plus, Trash2, X, Bell, Smile, Loader2, Pencil } from "lucide-react";
+import { Bot, Plus, Trash2, X, Bell, Smile, Loader2, Pencil, Mail } from "lucide-react";
 import { FleetCapabilities } from "./FleetCapabilities";
 import { currentPushState, enablePush, disablePush } from "../utils/push-subscribe";
 import { me, cachedMe, peekMe, logout, clearMeCache } from "../server/auth";
 import { getSetup } from "../server/setup";
-import { updateMyProfileFn } from "../server/chat";
+import { updateMyProfileFn, getNotifyPrefsFn, setEmailNotifsFn } from "../server/chat";
 import { createInvite, getInvite, refreshInvite, revokeInvite } from "../server/invites";
 import {
   listManagedAgentsFn,
@@ -715,8 +715,11 @@ function NotificationsCard() {
   const t = useT();
   const [state, setState] = useState<"loading" | "unsupported" | "denied" | "on" | "off">("loading");
   const [busy, setBusy] = useState(false);
+  const [emailOn, setEmailOn] = useState<boolean | null>(null);
+  const [emailBusy, setEmailBusy] = useState(false);
   useEffect(() => {
     currentPushState().then(setState);
+    getNotifyPrefsFn().then((p) => setEmailOn(p.emailNotifs)).catch(() => setEmailOn(true));
   }, []);
 
   async function toggle() {
@@ -732,8 +735,18 @@ function NotificationsCard() {
       setBusy(false);
     }
   }
+  async function toggleEmail() {
+    if (emailOn == null || emailBusy) return;
+    const next = !emailOn;
+    setEmailOn(next);
+    setEmailBusy(true);
+    try { await setEmailNotifsFn({ data: { on: next } }); }
+    catch { setEmailOn(!next); }
+    finally { setEmailBusy(false); }
+  }
 
   return (
+    <>
     <div className="mb-4 rounded-xl border border-border bg-surface-2 p-4">
       <div className="flex items-center gap-3">
         <div className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-brand/15 text-brand">
@@ -764,6 +777,33 @@ function NotificationsCard() {
         )}
       </div>
     </div>
+
+    {/* Notificaciones por correo (opt-out). Solo se manda a offline; aquí lo apagas del todo. */}
+    <div className="mb-4 rounded-xl border border-border bg-surface-2 p-4">
+      <div className="flex items-center gap-3">
+        <div className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-brand/15 text-brand">
+          <Mail size={18} />
+        </div>
+        <div className="min-w-0 flex-1">
+          <h2 className="text-sm font-semibold">{t("Notificaciones por correo")}</h2>
+          <p className="text-xs text-muted">{t("Recibe un correo cuando te mencionan o te escriben por DM y no estás conectado.")}</p>
+        </div>
+        <button
+          type="button"
+          role="switch"
+          aria-checked={!!emailOn}
+          disabled={emailOn == null || emailBusy}
+          onClick={toggleEmail}
+          title={emailOn ? t("Desactivar") : t("Activar")}
+          className="shrink-0 disabled:opacity-50"
+        >
+          <span className={`relative block h-5 w-9 rounded-full transition-colors ${emailOn ? "bg-brand" : "bg-surface-3"}`}>
+            <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform ${emailOn ? "translate-x-[18px]" : "translate-x-0.5"}`} />
+          </span>
+        </button>
+      </div>
+    </div>
+    </>
   );
 }
 

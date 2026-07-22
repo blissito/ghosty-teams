@@ -156,6 +156,8 @@ async function migrate(): Promise<void> {
   await addColumn("gc_users", "pronouns", "TEXT");
   await addColumn("gc_users", "bio", "TEXT");
   await addColumn("gc_users", "banned", "INTEGER NOT NULL DEFAULT 0");
+  // Preferencia: recibir notificaciones por CORREO (menciones/DM offline). Default ON (opt-out).
+  await addColumn("gc_users", "email_notifs", "INTEGER NOT NULL DEFAULT 1");
 
   // Thumbnail WebP de adjuntos-imagen (se sirve inline; el original queda para full/agente).
   await addColumn("gc_attachments", "thumb_file_id", "TEXT");

@@ -159,6 +159,23 @@ export const listUsersFn = createServerFn({ method: "GET" }).handler(async () =>
   return listWorkspaceUsers();
 });
 
+// Preferencias de notificación por correo (opt-out). GET lee, POST setea.
+export const getNotifyPrefsFn = createServerFn({ method: "GET" }).handler(async () => {
+  const me = await sessionUser();
+  if (!me) return { emailNotifs: true };
+  const db = await import("../db.server");
+  return { emailNotifs: await db.getEmailNotifs(me.sub) };
+});
+export const setEmailNotifsFn = createServerFn({ method: "POST" })
+  .validator((d: { on: boolean }) => d)
+  .handler(async ({ data }) => {
+    const me = await sessionUser();
+    if (!me) throw new Error("no autenticado");
+    const db = await import("../db.server");
+    await db.setEmailNotifs(me.sub, data.on);
+    return { ok: true as const };
+  });
+
 // Búsqueda de miembros (DM picker a escala): server filtra + tope, no baja todo.
 export const searchUsersFn = createServerFn({ method: "POST" })
   .validator((d: { query: string; limit?: number }) => d)

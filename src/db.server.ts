@@ -845,12 +845,22 @@ export async function getUserSubByEmail(email: string): Promise<string | null> {
   return rows[0]?.sub ?? null;
 }
 
-// Emails de una lista de subs (para notificar por correo). Omite banned/sin email.
+// Emails de una lista de subs (para notificar por correo). Omite banned, sin email, y
+// quienes desactivaron el correo (email_notifs=0, opt-out en Ajustes → Notificaciones).
 export async function emailsForSubs(subs: string[]): Promise<{ sub: string; email: string; name: string }[]> {
   if (!subs.length) return [];
   const ph = subs.map(() => "?").join(",");
-  const rows = await dbq(`SELECT sub, email, name FROM gc_users WHERE sub IN (${ph}) AND email IS NOT NULL AND COALESCE(banned,0)=0`, subs);
+  const rows = await dbq(`SELECT sub, email, name FROM gc_users WHERE sub IN (${ph}) AND email IS NOT NULL AND COALESCE(banned,0)=0 AND COALESCE(email_notifs,1)=1`, subs);
   return rows.map((r) => ({ sub: r.sub!, email: r.email!, name: r.name ?? "" })).filter((r) => r.email.includes("@"));
+}
+
+// Preferencia de correo del usuario (para el toggle). Default ON.
+export async function getEmailNotifs(sub: string): Promise<boolean> {
+  const rows = await dbq("SELECT COALESCE(email_notifs,1) AS en FROM gc_users WHERE sub=?", [sub]);
+  return num(rows[0]?.en ?? "1") === 1;
+}
+export async function setEmailNotifs(sub: string, on: boolean): Promise<void> {
+  await dbq("UPDATE gc_users SET email_notifs=? WHERE sub=?", [on ? 1 : 0, sub]);
 }
 
 export type MemberInfo = { sub: string; name: string; email: string; avatar: string };
