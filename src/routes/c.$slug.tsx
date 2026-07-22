@@ -3397,10 +3397,13 @@ function NewDmModal({
   const [q, setQ] = useState("");
   const [picked, setPicked] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    listWorkspaceUsersFn().then(setUsers).catch(() => setUsers([]));
-    listAgentsFn().then(setAgents).catch(() => setAgents([]));
+    Promise.allSettled([
+      listWorkspaceUsersFn().then(setUsers).catch(() => setUsers([])),
+      listAgentsFn().then(setAgents).catch(() => setAgents([])),
+    ]).finally(() => setLoading(false));
   }, []);
 
   // DM 1:1 con un agente = inmediato (no multi-select): abre y entra.
@@ -3475,7 +3478,11 @@ function NewDmModal({
             </>
           ) : null;
         })()}
-        {list.length === 0 && agents.filter((a) => !query || a.handle.includes(query) || a.name.toLowerCase().includes(query)).length === 0 ? (
+        {loading ? (
+          <div className="flex items-center gap-2 px-2 py-3 text-sm text-muted">
+            <Loader2 size={15} className="animate-spin" /> {t("Cargando personas…")}
+          </div>
+        ) : list.length === 0 && agents.filter((a) => !query || a.handle.includes(query) || a.name.toLowerCase().includes(query)).length === 0 ? (
           <p className="px-2 py-1 text-sm text-muted">{t("Sin resultados.")}</p>
         ) : (
           list.map((u) => {
