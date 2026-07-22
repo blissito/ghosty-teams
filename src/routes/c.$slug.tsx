@@ -1528,6 +1528,7 @@ function ChannelPage() {
           setOpenThreadId(null);
           setOpenDmId(null);
           setView(null);
+          setHomeOpen(false); // clickear el room activo desde Inicio también cierra Inicio
         }}
         onDeleteThread={deleteThread}
         dms={dms}
@@ -2179,7 +2180,7 @@ function Sidebar({
                   onCloseNav();
                 }}
                 className={`flex min-w-0 flex-1 items-center gap-2 rounded-lg px-2 py-2.5 text-sm md:py-1.5 ${
-                  c.slug === active && activeThreadId == null && activeView == null
+                  c.slug === active && !homeActive && activeThreadId == null && activeView == null
                     ? "bg-brand/15 font-medium text-ink"
                     : "text-muted hover:bg-surface-3 hover:text-ink"
                 } ${muted ? "opacity-50" : ""}`}
