@@ -27,6 +27,8 @@ import {
   Waves,
   Users,
   Bot,
+  Ghost,
+  Flag,
   Pin,
   PinOff,
   Star,
@@ -202,6 +204,9 @@ const ROOM_ICONS: { name: string; Icon: typeof Hash }[] = [
   { name: "coffee", Icon: Coffee },
   { name: "waves", Icon: Waves },
   { name: "users", Icon: Users },
+  { name: "bot", Icon: Bot },      // robot
+  { name: "ghost", Icon: Ghost },  // ghosty 👾
+  { name: "flag", Icon: Flag },    // bandera negra
 ];
 const ROOM_ICON_MAP: Record<string, typeof Hash> = Object.fromEntries(
   ROOM_ICONS.map((i) => [i.name, i.Icon])
@@ -1011,6 +1016,12 @@ function ChannelPage() {
           applyPatch();
           return;
         }
+        // ¿El mensaje es MÍO? (llegó por SSE sin match de nonce: eco tardío, u otra
+        // pestaña/dispositivo). Identidad estable por sub; fallback a nombre en legacy.
+        // Nunca debe sonar ni badgear (yo lo envié).
+        const isMine = ev.msg.sender_sub
+          ? ev.msg.sender_sub === user?.sub
+          : ev.msg.sender === user?.name;
         // Sonido oficial de notificación: mensaje real de alguien más en un scope no
         // silenciado. Los "status" no suenan, y la CÁSCARA del agente (kind:"msg" con
         // agent_handle y mentions_ghosty=0) tampoco AQUÍ: nace vacía al enviar → su sonido
@@ -1045,8 +1056,10 @@ function ChannelPage() {
           const arr = dmFlowCache.get(ev.msg.dm_id);
           if (arr && !arr.some((m) => m.id === ev.msg.id))
             dmFlowCache.set(ev.msg.dm_id, [...arr, ev.msg]);
-          // Badge: si NO estoy viendo este DM → +1; si sí, márcalo leído (server).
-          if (openDmId === ev.msg.dm_id)
+          // Badge: si NO estoy viendo este DM → +1; si sí, márcalo leído (server). PERO si el
+          // mensaje es MÍO (eco cuyo nonce ya expiró, u otra pestaña/dispositivo) nunca badgea:
+          // lo marco leído (yo lo mandé → ya lo "vi"; evita que reaparezca unread al recargar).
+          if (openDmId === ev.msg.dm_id || isMine)
             markReadFn({ data: { scope: "dm", scopeId: ev.msg.dm_id } }).catch(() => {});
           else bumpUnread("dm", ev.msg.dm_id);
           // No revalidar la cáscara de un agente (streaming): refetcharía el body vacío
@@ -1061,9 +1074,10 @@ function ChannelPage() {
           const arr = flowCache.get(slug);
           if (arr && !arr.some((m) => m.id === ev.msg.id)) flowCache.set(slug, [...arr, ev.msg]);
           // Badge del room (solo top-level, como cuenta el server). El room activo
-          // (sin DM abierto) se marca leído; los demás rooms visibles suman.
-          if (openDmId == null && ev.msg.channel_id === channel.id)
-            markReadFn({ data: { scope: "room", scopeId: channel.id } }).catch(() => {});
+          // (sin DM abierto) se marca leído; los demás rooms visibles suman. Mis propios
+          // mensajes NUNCA badgean → los marco leídos (evita unread fantasma al recargar).
+          if ((openDmId == null && ev.msg.channel_id === channel.id) || isMine)
+            markReadFn({ data: { scope: "room", scopeId: ev.msg.channel_id } }).catch(() => {});
           else bumpUnread("room", ev.msg.channel_id);
         } else {
           const t = threadCache.get(ev.msg.parent_id);
@@ -2742,11 +2756,19 @@ function CreateRoomModal({
           </button>
         ))}
       </div>
-      <label className="mb-5 flex items-center gap-2 rounded-lg bg-surface px-3 py-2.5 text-sm">
-        <input type="checkbox" checked={isPrivate} onChange={(e) => setIsPrivate(e.target.checked)} />
+      <button
+        type="button"
+        role="switch"
+        aria-checked={isPrivate}
+        onClick={() => setIsPrivate((v) => !v)}
+        className="mb-5 flex w-full items-center gap-2 rounded-lg bg-surface px-3 py-2.5 text-left text-sm transition hover:bg-surface-2"
+      >
         <Lock size={14} className="text-muted" />
-        <span>{t("Privado (solo miembros invitados)")}</span>
-      </label>
+        <span className="flex-1">{t("Privado (solo miembros invitados)")}</span>
+        <span className={`relative h-5 w-9 shrink-0 rounded-full transition-colors ${isPrivate ? "bg-brand" : "bg-surface-3"}`}>
+          <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform ${isPrivate ? "translate-x-[18px]" : "translate-x-0.5"}`} />
+        </span>
+      </button>
       {err && <p className="mb-3 text-sm text-red-400">{err}</p>}
       <div className="flex justify-end gap-2">
         <button onClick={onClose} className="rounded-lg px-3 py-2 text-sm text-muted hover:text-ink">
@@ -5745,6 +5767,15 @@ const Composer = forwardRef<ComposerHandle, {
     if (replyTo) editor?.commands.focus();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [replyTo?.id]);
+  // Autofocus al entrar a un room/hilo/DM (o cambiar de scope): poder escribir de una,
+  // sin clickear el input (como Slack). Solo en DESKTOP — en móvil (puntero grueso) NO,
+  // para no abrir el teclado de golpe. draftKey cambia con el scope → re-enfoca al navegar.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (window.matchMedia?.("(pointer: coarse)")?.matches) return;
+    editor?.commands.focus("end");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editor, draftKey]);
 
   // Toolbar → comandos del editor (WYSIWYG), con estado activo resaltado.
   const FMT_TOOLS = editor
