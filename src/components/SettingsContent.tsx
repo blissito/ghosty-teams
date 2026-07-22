@@ -1,4 +1,4 @@
-import { Link, useRouter } from "@tanstack/react-router"; // Link: CTA "conecta EasyBits" / setup
+import { Link } from "@tanstack/react-router"; // Link: CTA "conecta EasyBits" / setup
 import { useEffect, useRef, useState } from "react";
 import { Bot, Plus, Trash2, X, Bell, Smile, Loader2, Pencil } from "lucide-react";
 import { FleetCapabilities } from "./FleetCapabilities";
@@ -94,7 +94,6 @@ export function SettingsContent({
   onClose?: () => void;
 }) {
   const t = useT();
-  const router = useRouter();
   const [data, setData] = useState<SettingsData | null>(seedSettingsData);
   const [invite, setInvite] = useState<string | null>(null); // null = sin link activo
   const [inviteLoaded, setInviteLoaded] = useState(false); // ya resolvimos el estado inicial
@@ -136,9 +135,11 @@ export function SettingsContent({
     }
   }
   async function doLogout() {
-    await logout();
+    const r = await logout();
     clearMeCache(); // invalida la identidad cacheada o el guard vería al user viejo
-    router.navigate({ to: "/login" });
+    // Top-level a gs /logout: cierra también la sesión del IdP (single-logout) y
+    // aterriza en el landing de Ghosty.studio. Evita el auto-re-login silencioso.
+    window.location.href = r.next;
   }
 
   const user = data?.user ?? null;

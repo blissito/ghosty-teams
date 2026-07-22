@@ -148,5 +148,9 @@ async function registerMembership(sub: string): Promise<void> {
 export const logout = createServerFn({ method: "POST" }).handler(async () => {
   const s = await session();
   await s.clear();
-  return { ok: true as const };
+  // Single-logout: además de la sesión de Teams, cerramos la del IdP (gs). Si no,
+  // /login auto-reautentica en silencio con la sesión de gs viva → "vuelve a iniciarla
+  // sin más". Mandamos a gs /logout (top-level) → limpia gs_session → aterriza en el
+  // landing de Ghosty.studio (sin ver el card puente de Teams).
+  return { ok: true as const, next: `${IDP}/logout` };
 });
