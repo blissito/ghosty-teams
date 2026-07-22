@@ -40,6 +40,24 @@ export const Route = createRootRoute({
       { name: 'apple-mobile-web-app-capable', content: 'yes' },
       { name: 'apple-mobile-web-app-title', content: 'Ghosty Teams' },
       { name: 'apple-mobile-web-app-status-bar-style', content: 'black-translucent' },
+      // Open Graph / Twitter → preview con imagen en WhatsApp, iMessage, etc. (p.ej.
+      // al compartir un link de invitación /join/…). Imagen absoluta PNG con
+      // dimensiones declaradas (WhatsApp omite la imagen si no puede medirla).
+      { name: 'description', content: 'Chat de equipo con @ghosty integrado.' },
+      { property: 'og:title', content: 'Ghosty Teams' },
+      { property: 'og:description', content: 'Chat de equipo con @ghosty integrado.' },
+      { property: 'og:image', content: 'https://www.ghosty.studio/ghosty-og.png' },
+      { property: 'og:image:secure_url', content: 'https://www.ghosty.studio/ghosty-og.png' },
+      { property: 'og:image:type', content: 'image/png' },
+      { property: 'og:image:width', content: '512' },
+      { property: 'og:image:height', content: '512' },
+      { property: 'og:image:alt', content: 'Ghosty Teams' },
+      { property: 'og:type', content: 'website' },
+      { property: 'og:site_name', content: 'Ghosty Teams' },
+      { name: 'twitter:card', content: 'summary' },
+      { name: 'twitter:title', content: 'Ghosty Teams' },
+      { name: 'twitter:description', content: 'Chat de equipo con @ghosty integrado.' },
+      { name: 'twitter:image', content: 'https://www.ghosty.studio/ghosty-og.png' },
     ],
     links: [
       {
