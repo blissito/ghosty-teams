@@ -6,7 +6,7 @@ import { currentPushState, enablePush, disablePush } from "../utils/push-subscri
 import { me, cachedMe, peekMe, logout, clearMeCache } from "../server/auth";
 import { getMyNicknameFn, setMyNicknameFn } from "../server/chat";
 import { getSetup } from "../server/setup";
-import { createInvite, getInvite, listInvitesFn, revokeInviteFn } from "../server/invites";
+import { createInvite, getInvite, refreshInvite, revokeInvite } from "../server/invites";
 import {
   listManagedAgentsFn,
   listFleetAgentsFn,
@@ -22,7 +22,7 @@ import { listFormmyAgentsFn, ensureFormmyMirrorFn, type FormmyAgent } from "../s
 import { listEmojisFn, addEmojiFn, removeEmojiFn } from "../server/emojis";
 import type { CustomEmoji } from "../db.server";
 import { useT } from "../i18n";
-import { Monitor, Sun, Moon, Check, SlidersHorizontal, Palette, Github, Plug, Slack, Calendar } from "lucide-react";
+import { Monitor, Sun, Moon, Check, SlidersHorizontal, Palette, Github, Plug, Slack, Calendar, Link2, RefreshCw } from "lucide-react";
 import {
   PRESETS,
   getTheme,
@@ -96,7 +96,8 @@ export function SettingsContent({
   const t = useT();
   const router = useRouter();
   const [data, setData] = useState<SettingsData | null>(seedSettingsData);
-  const [invite, setInvite] = useState<string | null>(null);
+  const [invite, setInvite] = useState<string | null>(null); // null = sin link activo
+  const [inviteLoaded, setInviteLoaded] = useState(false); // ya resolvimos el estado inicial
   const [copied, setCopied] = useState(false);
   const [busy, setBusy] = useState(false);
 
@@ -105,17 +106,27 @@ export function SettingsContent({
     loadSettingsData().then(setData).catch(() => {});
   }, []);
 
-  // Auto-muestra el link de invitación en cuanto sabemos que es owner (get-or-create
-  // reutiliza el último sin usar → no crea un token nuevo en cada apertura).
+  // Lee el link permanente activo del owner (solo lee; si fue cancelado → null → CTA "Crear").
   useEffect(() => {
-    if (data?.user?.isOwner && !invite) getInvite().then((r) => setInvite(r.url)).catch(() => {});
-  }, [data?.user?.isOwner]);
+    if (data?.user?.isOwner && !inviteLoaded) {
+      getInvite()
+        .then((r) => setInvite(r.url))
+        .catch(() => {})
+        .finally(() => setInviteLoaded(true));
+    }
+  }, [data?.user?.isOwner, inviteLoaded]);
 
+  async function makeInvite() {
+    setBusy(true);
+    try { setInvite((await createInvite()).url); } finally { setBusy(false); }
+  }
   async function regenInvite() {
     setBusy(true);
-    const r = await createInvite();
-    setInvite(r.url);
-    setBusy(false);
+    try { setInvite((await refreshInvite()).url); } finally { setBusy(false); }
+  }
+  async function cancelInvite() {
+    setBusy(true);
+    try { await revokeInvite(); setInvite(null); } finally { setBusy(false); }
   }
   async function copy() {
     if (invite) {
@@ -230,42 +241,67 @@ export function SettingsContent({
               <NicknameCard />
 
               {isOwner && (
-                <div className="mb-4 rounded-xl border border-border bg-surface-2 p-4">
+                <div className="mb-4 rounded-2xl border border-border bg-surface-2 p-5">
                   <h2 className="mb-1 text-sm font-semibold">{t("Invitar miembros")}</h2>
-                  <p className="mb-3 text-sm text-muted">
-                    {t("Comparte este link. Quien lo abra entra con Formmy y se une a tu chat.")}
+                  <p className="mb-4 text-sm text-muted">
+                    {t("Comparte este link con tu equipo. Quien lo abra entra con Ghosty y se une como miembro.")}
                   </p>
-                  {/* Link auto-generado (get-or-create): ya visible al abrir, sin clic. */}
-                  <div className="flex items-center gap-2">
-                    <input
-                      readOnly
-                      disabled={!invite || busy}
-                      value={busy ? t("Regenerando…") : invite ?? t("Generando link…")}
-                      className="flex-1 rounded-lg border border-border bg-surface px-3 py-2 text-xs text-ink disabled:cursor-not-allowed disabled:opacity-50"
-                    />
+
+                  {!inviteLoaded ? (
+                    // Estado inicial (resolviendo si hay link activo).
+                    <div className="flex items-center gap-2 py-1 text-sm text-muted">
+                      <Loader2 size={16} className="animate-spin" /> {t("Cargando…")}
+                    </div>
+                  ) : invite ? (
+                    // Con link permanente activo.
+                    <>
+                      <div className="flex items-center gap-2">
+                        <input
+                          readOnly
+                          value={invite}
+                          onFocus={(e) => e.currentTarget.select()}
+                          className="min-w-0 flex-1 rounded-lg border border-border bg-surface px-3 py-2.5 text-xs text-ink"
+                        />
+                        <button
+                          onClick={copy}
+                          disabled={busy}
+                          className="shrink-0 rounded-lg bg-brand px-4 py-2.5 text-sm font-semibold text-brand-fg transition hover:brightness-110 active:scale-[0.98] disabled:opacity-50"
+                        >
+                          {copied ? t("¡Copiado!") : t("Copiar")}
+                        </button>
+                      </div>
+                      <div className="mt-3 flex items-center gap-4">
+                        <button
+                          onClick={regenInvite}
+                          disabled={busy}
+                          className="inline-flex items-center gap-1.5 text-xs font-medium text-muted transition hover:text-ink disabled:opacity-50"
+                          title={t("Genera un link nuevo; el actual deja de funcionar.")}
+                        >
+                          {busy ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />}
+                          {t("Refrescar")}
+                        </button>
+                        <button
+                          onClick={cancelInvite}
+                          disabled={busy}
+                          className="text-xs font-medium text-red-500/80 transition hover:text-red-500 disabled:opacity-50"
+                          title={t("Desactiva el link; nadie más podrá unirse.")}
+                        >
+                          {t("Cancelar link")}
+                        </button>
+                        <span className="ml-auto text-[11px] text-muted">{t("Todos entran como miembro")}</span>
+                      </div>
+                    </>
+                  ) : (
+                    // Sin link (cancelado o nunca creado) → CTA.
                     <button
-                      onClick={copy}
-                      disabled={!invite}
-                      className="rounded-lg bg-brand px-3 py-2 text-sm font-semibold text-brand-fg disabled:opacity-50"
-                    >
-                      {copied ? "✓" : t("Copiar")}
-                    </button>
-                  </div>
-                  <div className="mt-2 flex items-center gap-3">
-                    <button
-                      onClick={regenInvite}
+                      onClick={makeInvite}
                       disabled={busy}
-                      className="text-xs text-muted transition hover:text-ink disabled:opacity-50"
+                      className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-brand px-4 py-2.5 text-sm font-semibold text-brand-fg transition hover:brightness-110 active:scale-[0.98] disabled:opacity-50"
                     >
-                      {busy ? t("Regenerando…") : t("Regenerar link")}
+                      {busy ? <Loader2 size={16} className="animate-spin" /> : <Link2 size={16} />}
+                      {t("Crear link de invitación")}
                     </button>
-                    <span className="text-xs text-muted">·</span>
-                    <span className="text-xs text-muted" title={t("Próximamente")}>
-                      {t("Por email · Rol (próximamente)")}
-                    </span>
-                  </div>
-                  {/* Gestionar: todos los links, revocables. */}
-                  <InviteManage onRegened={() => setInvite(null)} />
+                  )}
                 </div>
               )}
 
@@ -548,59 +584,6 @@ function Toggle({ on, onChange }: { on: boolean; onChange: (v: boolean) => void 
         className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-all ${on ? "left-[22px]" : "left-0.5"}`}
       />
     </button>
-  );
-}
-
-/* ── Gestionar links de invitación: ver todos (usados/activos) y revocar. ── */
-type InviteRow = { token: string; url: string; used: boolean; usedAt: number | null };
-function InviteManage({ onRegened }: { onRegened: () => void }) {
-  const t = useT();
-  const [open, setOpen] = useState(false);
-  const [rows, setRows] = useState<InviteRow[] | null>(null);
-  const load = () => listInvitesFn().then(setRows).catch(() => setRows([]));
-  useEffect(() => {
-    if (open && rows === null) load();
-  }, [open]);
-  async function revoke(token: string) {
-    setRows((rs) => rs?.filter((r) => r.token !== token) ?? rs);
-    await revokeInviteFn({ data: { token } }).catch(() => {});
-    onRegened();
-  }
-  return (
-    <div className="mt-3 border-t border-border pt-3">
-      <button
-        onClick={() => setOpen((o) => !o)}
-        className="text-xs font-medium text-muted transition hover:text-ink"
-      >
-        {open ? t("Ocultar links") : t("Gestionar links")}
-      </button>
-      {open && (
-        <div className="mt-2 space-y-1.5">
-          {rows === null ? (
-            <p className="text-xs text-muted">{t("Cargando…")}</p>
-          ) : rows.length === 0 ? (
-            <p className="text-xs text-muted">{t("No hay links todavía.")}</p>
-          ) : (
-            rows.map((r) => (
-              <div key={r.token} className="flex items-center gap-2 rounded-lg bg-surface px-2 py-1.5">
-                <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${r.used ? "bg-muted" : "bg-green-500"}`} />
-                <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-muted">
-                  …/join/{r.token.slice(0, 8)}
-                </span>
-                <span className="shrink-0 text-[11px] text-muted">
-                  {r.used ? t("usado") : t("activo")}
-                </span>
-                {!r.used && (
-                  <button onClick={() => revoke(r.token)} className="shrink-0 text-muted hover:text-red-400" title={t("Revocar")}>
-                    <X size={13} />
-                  </button>
-                )}
-              </div>
-            ))
-          )}
-        </div>
-      )}
-    </div>
   );
 }
 

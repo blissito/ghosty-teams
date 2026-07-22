@@ -104,6 +104,18 @@ export const completeGhostyLogin = createServerFn({ method: "POST" })
     const { upsertUser } = await import("../users.server");
     const user = await upsertUser({ sub: id.sub, email: id.email, name: id.name, avatar: id.avatar });
 
+    // Forward-compat: si se unió por invite, registra `Membership(MEMBER)` en gs
+    // (fuente única de verdad de membership+rol). Así el switcher multi-workspace
+    // muestra el ws al invitado y la futura UI de roles solo hace UPDATE. Best-effort:
+    // no bloquea el login si gs falla (se reconcilia luego).
+    if (invited) {
+      try {
+        await registerMembership(id.sub);
+      } catch (e) {
+        console.warn("[auth] registerMembership falló (best-effort):", (e as Error)?.message);
+      }
+    }
+
     // Un no-owner sin invitación no puede entrar (solo el owner y los invitados).
     if (!user.isOwner && !invited) {
       const { isKnownUser } = await import("./invites");
@@ -114,6 +126,24 @@ export const completeGhostyLogin = createServerFn({ method: "POST" })
     await s.update({ user });
     return { ok: true as const, user };
   });
+
+// Registra Membership(MEMBER) del invitado en gs (control-plane), firmado HMAC
+// `ts.sub.slug`. El slug sale del subdominio del request (tenant.server). En apex/dev
+// sin subdominio no hay workspace que registrar → no-op.
+async function registerMembership(sub: string): Promise<void> {
+  const { currentSlug } = await import("./tenant.server");
+  const slug = await currentSlug();
+  if (!slug) return;
+  const crypto = await import("node:crypto");
+  const ts = Math.floor(Date.now() / 1000);
+  const sig = crypto
+    .createHmac("sha256", process.env.GHOSTY_PARTNER_SECRET!)
+    .update(`${ts}.${sub}.${slug}`)
+    .digest("hex");
+  const p = new URLSearchParams({ sub, slug, ts: String(ts), sig });
+  const res = await fetch(`${IDP}/internal/memberships?${p}`, { method: "POST" });
+  if (!res.ok) throw new Error(`gs ${res.status}`);
+}
 
 export const logout = createServerFn({ method: "POST" }).handler(async () => {
   const s = await session();

@@ -14,86 +14,72 @@ export async function isKnownUser(sub: string): Promise<boolean> {
   return !!rows[0];
 }
 
-// Valida y marca usado un invite (member). Devuelve true si válido.
-export async function consumeInvite(token: string, sub: string): Promise<boolean> {
-  const { rows } = await dbq("SELECT used_by FROM gc_invites WHERE token = ?", [token]);
-  if (!rows[0]) return false;
-  if (rows[0][0]) return rows[0][0] === sub; // ya usado por este mismo → ok
-  await dbq("UPDATE gc_invites SET used_by = ?, used_at = unixepoch() WHERE token = ?", [sub, token]);
-  return true;
+// El invite es un LINK PERMANENTE del equipo: el mismo link sirve para todos. NO se
+// "gasta" — nunca marcamos `used_by` (esa columna queda para tokens legacy). "Activo"
+// = fila con `used_by IS NULL`. Cancelar = borrar; refrescar = borrar + emitir otro.
+export async function consumeInvite(token: string, _sub: string): Promise<boolean> {
+  const { rows } = await dbq("SELECT 1 FROM gc_invites WHERE token = ?", [token]);
+  return !!rows[0]; // válido si el token existe (no fue cancelado). Multi-uso.
 }
 
-// Owner genera un link de invitación. Requiere sesión de owner.
-export const createInvite = createServerFn({ method: "POST" }).handler(async () => {
+// ── Helpers (server-only) ────────────────────────────────────────────────────
+async function ownerSub(): Promise<string> {
   const { useSession } = await import("@tanstack/react-start/server");
   const { sessionConfig } = await import("./session.server");
   const s = await useSession<{ user?: { sub: string; isOwner: boolean } }>(sessionConfig());
   const user = s.data.user;
   if (!user?.isOwner) throw new Error("solo el owner invita");
-  const crypto = await import("node:crypto");
-  const token = crypto.randomBytes(16).toString("hex");
-  await dbq("INSERT INTO gc_invites (token, created_by) VALUES (?, ?)", [token, user.sub]);
-  // Origin absoluto derivado del request (APP_URL no está seteado en prod → antes
-  // salía un link relativo `/join/…` sin host). reqOrigin usa x-ghosty-origin del ingress.
-  const { reqOrigin } = await import("../origin.server");
-  return { url: `${await reqOrigin()}/join/${token}` };
-});
+  return user.sub;
+}
 
-// Get-or-create: reusa el último invite SIN usar del owner (link estable y
-// reutilizable) o crea uno si no hay. Así Ajustes puede AUTO-mostrar el link al
-// abrir sin generar un token nuevo en cada apertura. Devuelve también `regenerate`
-// para forzar uno fresco (revoca el viejo dejándolo, no lo borra).
-export const getInvite = createServerFn({ method: "POST" }).handler(async () => {
-  const { useSession } = await import("@tanstack/react-start/server");
-  const { sessionConfig } = await import("./session.server");
-  const s = await useSession<{ user?: { sub: string; isOwner: boolean } }>(sessionConfig());
-  const user = s.data.user;
-  if (!user?.isOwner) throw new Error("solo el owner invita");
+async function urlFor(token: string): Promise<string> {
   const { reqOrigin } = await import("../origin.server");
-  const origin = await reqOrigin();
+  return `${await reqOrigin()}/join/${token}`;
+}
+
+async function activeToken(sub: string): Promise<string | null> {
   const { rows } = await dbq(
     "SELECT token FROM gc_invites WHERE created_by = ? AND used_by IS NULL ORDER BY rowid DESC LIMIT 1",
-    [user.sub]
+    [sub]
   );
-  let token = rows[0]?.[0] as string | undefined;
-  if (!token) {
-    const crypto = await import("node:crypto");
-    token = crypto.randomBytes(16).toString("hex");
-    await dbq("INSERT INTO gc_invites (token, created_by) VALUES (?, ?)", [token, user.sub]);
-  }
-  return { url: `${origin}/join/${token}` };
+  return (rows[0]?.[0] as string) ?? null;
+}
+
+async function mint(sub: string): Promise<string> {
+  const crypto = await import("node:crypto");
+  const token = crypto.randomBytes(16).toString("hex");
+  await dbq("INSERT INTO gc_invites (token, created_by) VALUES (?, ?)", [token, sub]);
+  return token;
+}
+
+// ── Server fns (owner) ───────────────────────────────────────────────────────
+
+// Lee el link permanente activo (NO crea). null = cancelado o nunca creado → la UI
+// muestra el CTA "Crear link". Así "Cancelar" deja la tarjeta sin link (no se re-crea).
+export const getInvite = createServerFn({ method: "GET" }).handler(async () => {
+  const sub = await ownerSub();
+  const token = await activeToken(sub);
+  return { url: token ? await urlFor(token) : null };
 });
 
-// Lista los links de invitación del owner (para gestionarlos: ver usados y revocar).
-export const listInvitesFn = createServerFn({ method: "GET" }).handler(async () => {
-  const { useSession } = await import("@tanstack/react-start/server");
-  const { sessionConfig } = await import("./session.server");
-  const s = await useSession<{ user?: { sub: string; isOwner: boolean } }>(sessionConfig());
-  const user = s.data.user;
-  if (!user?.isOwner) return [];
-  const { reqOrigin } = await import("../origin.server");
-  const origin = await reqOrigin();
-  const { rows } = await dbq(
-    "SELECT token, used_by, used_at FROM gc_invites WHERE created_by = ? ORDER BY rowid DESC LIMIT 50",
-    [user.sub]
-  );
-  return rows.map((r) => ({
-    token: r[0] as string,
-    url: `${origin}/join/${r[0]}`,
-    used: !!r[1],
-    usedAt: r[2] != null ? Number(r[2]) : null,
-  }));
+// Get-or-create idempotente: crea el link permanente si no hay, o devuelve el actual.
+export const createInvite = createServerFn({ method: "POST" }).handler(async () => {
+  const sub = await ownerSub();
+  const token = (await activeToken(sub)) ?? (await mint(sub));
+  return { url: await urlFor(token) };
 });
 
-// Revoca (elimina) un link de invitación del owner. Solo toca invites propios.
-export const revokeInviteFn = createServerFn({ method: "POST" })
-  .validator((d: { token: string }) => d)
-  .handler(async ({ data }) => {
-    const { useSession } = await import("@tanstack/react-start/server");
-    const { sessionConfig } = await import("./session.server");
-    const s = await useSession<{ user?: { sub: string; isOwner: boolean } }>(sessionConfig());
-    const user = s.data.user;
-    if (!user?.isOwner) throw new Error("solo el owner invita");
-    await dbq("DELETE FROM gc_invites WHERE token = ? AND created_by = ?", [data.token, user.sub]);
-    return { ok: true as const };
-  });
+// Refresca: invalida el link actual (lo borra) y emite uno nuevo. El link viejo deja
+// de resolver → útil si se filtró.
+export const refreshInvite = createServerFn({ method: "POST" }).handler(async () => {
+  const sub = await ownerSub();
+  await dbq("DELETE FROM gc_invites WHERE created_by = ? AND used_by IS NULL", [sub]);
+  return { url: await urlFor(await mint(sub)) };
+});
+
+// Cancela: elimina el link permanente. Nadie más puede unirse hasta crear uno nuevo.
+export const revokeInvite = createServerFn({ method: "POST" }).handler(async () => {
+  const sub = await ownerSub();
+  await dbq("DELETE FROM gc_invites WHERE created_by = ? AND used_by IS NULL", [sub]);
+  return { ok: true as const };
+});
