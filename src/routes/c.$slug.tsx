@@ -4102,6 +4102,32 @@ function NewDivider() {
   );
 }
 
+// Divisor de fecha (Hoy/Ayer/fecha), estilo Slack, cuando cambia el día en el feed.
+function DateDivider({ at }: { at: number }) {
+  const label = useMemo(() => {
+    const d = new Date(at * 1000);
+    const today = new Date();
+    const yst = new Date(today); yst.setDate(today.getDate() - 1);
+    const same = (a: Date, b: Date) => a.toDateString() === b.toDateString();
+    if (same(d, today)) return "Hoy";
+    if (same(d, yst)) return "Ayer";
+    return d.toLocaleDateString(undefined, { day: "numeric", month: "long", ...(d.getFullYear() !== today.getFullYear() ? { year: "numeric" } : {}) });
+  }, [at]);
+  const t = useT();
+  return (
+    <div className="my-3 flex items-center gap-2">
+      <div className="h-px flex-1 bg-border" />
+      <span className="shrink-0 rounded-full border border-border bg-surface-2 px-2.5 py-0.5 text-[11px] font-medium text-muted">{t(label)}</span>
+      <div className="h-px flex-1 bg-border" />
+    </div>
+  );
+}
+// ¿m y prev cruzan un límite de día? (para insertar DateDivider antes de m).
+function crossesDay(prevAt: number | undefined, at: number): boolean {
+  if (prevAt == null) return true; // primer mensaje → siempre muestra su fecha
+  return new Date(prevAt * 1000).toDateString() !== new Date(at * 1000).toDateString();
+}
+
 // Línea efímera "X está escribiendo…" (encima del Composer). Altura fija → no salta.
 function TypingLine({ typing }: { typing: { name: string } | null }) {
   const t = useT();
@@ -4206,9 +4232,11 @@ function Flow({
           messages.map((m, i) => {
             // El divisor de no-leídos rompe el grupo (el primer no-leído siempre con header).
             const divider = m.id === unreadId;
-            const prev = divider ? undefined : messages[i - 1];
+            const dayBreak = crossesDay(messages[i - 1]?.created_at, m.created_at);
+            const prev = divider || dayBreak ? undefined : messages[i - 1];
             return (
               <Fragment key={m.id}>
+                {dayBreak && <DateDivider at={m.created_at} />}
                 {divider && <NewDivider />}
                 <MessageRow m={m} prev={prev} onOpenThread={onOpenThread} showThreadLink canPin={canManage} />
               </Fragment>
@@ -4465,9 +4493,11 @@ function DmView({
         ) : (
           flow.map((m, i) => {
             const divider = m.id === unreadId;
-            const prev = divider ? undefined : flow[i - 1];
+            const dayBreak = crossesDay(flow[i - 1]?.created_at, m.created_at);
+            const prev = divider || dayBreak ? undefined : flow[i - 1];
             return (
               <Fragment key={m.id}>
+                {dayBreak && <DateDivider at={m.created_at} />}
                 {divider && <NewDivider />}
                 <MessageRow m={m} prev={prev} />
               </Fragment>
@@ -5176,6 +5206,12 @@ function MessageRow({
                 artifactUrl={m.artifact?.url}
                 onOpenArtifact={m.artifact ? () => onOpenArtifact(artifactToView(m.artifact!)) : undefined}
                 emojis={emojis}
+                onMention={(h) => {
+                  // Clic en @mención → abre el perfil de esa persona (Slack: hovercard con
+                  // Message). Resuelve por handle en el directorio vivo; grupos (@all…) no matchean.
+                  const u = [...users.values()].find((x) => x.handle.toLowerCase() === h.toLowerCase());
+                  if (u) openProfile({ name: u.name, avatar: u.avatar, handle: u.handle, isAgent: false, sub: u.sub });
+                }}
               />
             </div>
           ) : isAgent ? (

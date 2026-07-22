@@ -10,7 +10,7 @@ type Components = NonNullable<StreamdownProps["components"]>;
 
 // Resalta @menciones Y emojis custom (`:name:` → <img>) dentro del árbol ya renderizado
 // (recursivo), sin tocar código ni links. `emojiMap` = nombre→file_id del workspace.
-function highlightText(children: React.ReactNode, emojiMap: Map<string, string>): React.ReactNode {
+function highlightText(children: React.ReactNode, emojiMap: Map<string, string>, onMention?: (handle: string) => void): React.ReactNode {
   return Children.map(children, (child) => {
     if (typeof child === "string") {
       // Boundary a la izquierda SIN lookbehind: Safari <16.4 rechaza `(?<!…)` en el
@@ -29,7 +29,11 @@ function highlightText(children: React.ReactNode, emojiMap: Map<string, string>)
           if (/[\w@.]/.test(prev)) continue; // pegado a palabra/@/. (local-part) → no es mención
           if (m.index > last) out.push(child.slice(last, m.index));
           out.push(
-            <span key={m.index} className="rounded bg-brand/15 px-1 font-medium text-brand">
+            <span
+              key={m.index}
+              onClick={onMention ? () => onMention(tok.slice(1)) : undefined}
+              className={`rounded bg-brand/15 px-1 font-medium text-brand ${onMention ? "cursor-pointer hover:bg-brand/25" : ""}`}
+            >
               {tok}
             </span>
           );
@@ -61,7 +65,7 @@ function highlightText(children: React.ReactNode, emojiMap: Map<string, string>)
       const type = child.type as unknown as string;
       if (type === "code" || type === "pre" || type === "a") return child;
       const kids = (child.props as { children?: React.ReactNode }).children;
-      if (kids != null) return cloneElement(child, undefined, highlightText(kids, emojiMap));
+      if (kids != null) return cloneElement(child, undefined, highlightText(kids, emojiMap, onMention));
     }
     return child;
   });
@@ -70,12 +74,12 @@ function highlightText(children: React.ReactNode, emojiMap: Map<string, string>)
 // Envuelve los contenedores de texto para inyectar el resaltado; highlightText
 // desciende a strong/em/etc. anidados, así que basta con los bloques de nivel alto.
 const TEXT_TAGS = ["p", "li", "td", "th", "h1", "h2", "h3", "h4", "h5", "h6", "blockquote"] as const;
-function textComponents(emojiMap: Map<string, string>): Components {
+function textComponents(emojiMap: Map<string, string>, onMention?: (handle: string) => void): Components {
   return Object.fromEntries(
     TEXT_TAGS.map((tag) => [
       tag,
       ({ node, children, ...props }: { node?: unknown; children?: React.ReactNode }) =>
-        createElement(tag, props, highlightText(children, emojiMap)),
+        createElement(tag, props, highlightText(children, emojiMap, onMention)),
     ])
   );
 }
@@ -108,12 +112,14 @@ export const Markdown = memo(function Markdown({
   onOpenArtifact,
   light,
   emojis,
+  onMention,
 }: {
   body: string;
   artifactUrl?: string;
   onOpenArtifact?: () => void;
   light?: boolean; // hoja clara (texto negro) para el draft del artefacto
   emojis?: { name: string; file_id: string }[]; // emojis custom → `:name:` inline en el cuerpo
+  onMention?: (handle: string) => void; // clic en @mención → hovercard/perfil (estilo Slack)
 }) {
   const emojiMap = new Map((emojis ?? []).map((e) => [e.name, e.file_id]));
   // Mensaje solo-emoji → JUMBO (grande), como Slack. Se salta markdown (no hace falta):
@@ -122,10 +128,10 @@ export const Markdown = memo(function Markdown({
   const { jumbo, count } = emojiOnly(body, emojiMap);
   if (jumbo) {
     const sizeCls = count <= 6 ? "text-[2.75rem]" : count <= 12 ? "text-3xl" : "text-2xl";
-    return <div className={`${sizeCls} leading-none ${light ? "text-black" : "text-ink"}`}>{highlightText(body, emojiMap)}</div>;
+    return <div className={`${sizeCls} leading-none ${light ? "text-black" : "text-ink"}`}>{highlightText(body, emojiMap, onMention)}</div>;
   }
   const withLinks: Components = {
-    ...textComponents(emojiMap),
+    ...textComponents(emojiMap, onMention),
     // Imágenes del agente (memes/gráficas) al tamaño de Slack: alto acotado (~320px),
     // ancho de la columna, sin recorte (object-contain), clic → abre el original en pestaña.
     // Sin esto una imagen markdown crecía a lo alto de todo el mensaje.
