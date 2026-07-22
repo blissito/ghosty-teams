@@ -45,6 +45,12 @@ type Client = { channels: Set<string>; listener: Listener; sub: string };
 const clients = new Set<Client>();
 const online = new Map<string, number>(); // sub -> nº de conexiones abiertas
 
+// ¿El usuario tiene alguna pestaña conectada ahora? (para el gate de email: solo se
+// notifica por correo a quien está OFFLINE, estilo Slack/Zulip).
+export function isOnline(sub: string): boolean {
+  return (online.get(sub) ?? 0) > 0;
+}
+
 // Publica un evento a todos los clientes suscritos a `channel`. Síncrono, best-effort:
 // un listener que falle (controller ya cerrado) no debe tumbar a los demás.
 export function publish(channel: string, ev: RtEvent): void {

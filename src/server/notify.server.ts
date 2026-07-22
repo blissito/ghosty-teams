@@ -38,9 +38,29 @@ async function deliverWebPush(ev: NotifyEvent): Promise<void> {
   );
 }
 
-// Canal: Email (seam). Se activa cuando haya proveedor + preferencias de usuario.
-// Punto único para: resolver emails (gc_users), respetar "solo si offline/idle"
-// (consultar bus.onlineUsers()) y las preferencias por-usuario, y enviar. Hoy no-op.
-async function deliverEmail(_ev: NotifyEvent): Promise<void> {
-  // TODO(email): proveedor (Resend/SMTP) + gc_notify_prefs + gate por presencia.
+// Canal: Email (AWS SES). Estilo Slack/Zulip: SOLO se envía correo a quien está
+// OFFLINE (sin pestaña conectada) — si estás online, el toast/push ya te avisó. Sin
+// creds SES → no-op. TODO: gc_notify_prefs (opt-out por usuario) + digest/agrupación.
+async function deliverEmail(ev: NotifyEvent): Promise<void> {
+  const { sesConfigured, sendSesEmail } = await import("./ses.server");
+  if (!sesConfigured()) return;
+  const { isOnline } = await import("./bus.server");
+  const offline = ev.recipients.filter((sub) => !isOnline(sub));
+  if (!offline.length) return;
+  const db = await import("../db.server");
+  const people = await db.emailsForSubs(offline);
+  if (!people.length) return;
+  const base = process.env.PUBLIC_BASE_URL || process.env.TEAMS_ROOT_DOMAIN || "https://teams.ghosty.studio";
+  const link = ev.url.startsWith("http") ? ev.url : `${base}${ev.url}`;
+  const html = `<div style="font-family:system-ui,sans-serif;max-width:480px">
+    <h2 style="margin:0 0 8px">${escapeHtml(ev.title)}</h2>
+    <p style="color:#444;white-space:pre-wrap">${escapeHtml(ev.body)}</p>
+    <p style="margin-top:16px"><a href="${link}" style="background:#111;color:#fff;padding:10px 16px;border-radius:8px;text-decoration:none">Abrir en Ghosty Teams</a></p>
+  </div>`;
+  // Un envío por persona (To individual → no filtra los emails entre destinatarios).
+  await Promise.allSettled(people.map((p) => sendSesEmail({ to: p.email, subject: ev.title, html })));
+}
+
+function escapeHtml(s: string): string {
+  return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]!));
 }

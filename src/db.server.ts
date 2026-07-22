@@ -845,6 +845,14 @@ export async function getUserSubByEmail(email: string): Promise<string | null> {
   return rows[0]?.sub ?? null;
 }
 
+// Emails de una lista de subs (para notificar por correo). Omite banned/sin email.
+export async function emailsForSubs(subs: string[]): Promise<{ sub: string; email: string; name: string }[]> {
+  if (!subs.length) return [];
+  const ph = subs.map(() => "?").join(",");
+  const rows = await dbq(`SELECT sub, email, name FROM gc_users WHERE sub IN (${ph}) AND email IS NOT NULL AND COALESCE(banned,0)=0`, subs);
+  return rows.map((r) => ({ sub: r.sub!, email: r.email!, name: r.name ?? "" })).filter((r) => r.email.includes("@"));
+}
+
 export type MemberInfo = { sub: string; name: string; email: string; avatar: string };
 export async function listChannelMembersInfo(channelId: number): Promise<MemberInfo[]> {
   const rows = await dbq(

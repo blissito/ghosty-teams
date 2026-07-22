@@ -5188,6 +5188,7 @@ function MessageRow({
         >
           {canReact && <ReactButton m={m} />}
           <ReplyButton m={m} author={displayName} />
+          {showThreadLink && onOpenThread && !m.reply_count && <ThreadReplyButton onOpen={() => onOpenThread(m.id)} />}
           <CopyButton m={m} />
           <StarButton m={m} />
           <MessageActions
@@ -5276,25 +5277,20 @@ function MessageRow({
           </ArtifactBoundary>
         )}
         {canReact && (m.reactions?.length ?? 0) > 0 && <ReactionBar m={m} />}
-        {showThreadLink && onOpenThread && (
+        {/* Con respuestas → "N respuestas" es contenido REAL, siempre visible (reserva su
+            espacio legítimo). SIN respuestas → NO se renderiza nada inline: el afordance
+            "responder en hilo" vive en la barra flotante de hover (posición absoluta → cero
+            reserva de espacio, cero brinco de layout, como Slack). */}
+        {showThreadLink && onOpenThread && m.reply_count ? (
           <div className="mt-1 flex items-center gap-3 text-xs">
-            {m.reply_count ? (
-              <button
-                onClick={() => onOpenThread(m.id)}
-                className="flex items-center gap-1.5 font-medium text-brand hover:underline"
-              >
-                <MessageSquare size={13} /> {m.reply_count === 1 ? t("1 respuesta") : t("{n} respuestas", { n: m.reply_count })}
-              </button>
-            ) : (
-              <button
-                onClick={() => onOpenThread(m.id)}
-                className="text-muted opacity-100 transition hover:text-ink md:opacity-0 md:group-hover:opacity-100"
-              >
-                {t("Responder en hilo")}
-              </button>
-            )}
+            <button
+              onClick={() => onOpenThread(m.id)}
+              className="flex items-center gap-1.5 font-medium text-brand hover:underline"
+            >
+              <MessageSquare size={13} /> {m.reply_count === 1 ? t("1 respuesta") : t("{n} respuestas", { n: m.reply_count })}
+            </button>
           </div>
-        )}
+        ) : null}
       </div>
     </div>
   );
@@ -5337,6 +5333,21 @@ function QuotedCitation({ m }: { m: Message }) {
           {(m.quoted_excerpt ?? "").length > 140 ? (m.quoted_excerpt ?? "").slice(0, 140) + "…" : m.quoted_excerpt}
         </span>
       </span>
+    </button>
+  );
+}
+
+// Botón "Responder en hilo" en la barra flotante de hover (Slack): abre el hilo. Vive
+// en la barra absoluta → no reserva espacio inline ni provoca brincos de layout.
+function ThreadReplyButton({ onOpen }: { onOpen: () => void }) {
+  const t = useT();
+  return (
+    <button
+      onClick={onOpen}
+      title={t("Responder en hilo")}
+      className="grid h-7 w-7 place-items-center rounded-md text-muted transition hover:bg-surface-3 hover:text-ink"
+    >
+      <MessageSquare size={14} />
     </button>
   );
 }
