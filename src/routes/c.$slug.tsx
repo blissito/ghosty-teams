@@ -2955,23 +2955,27 @@ function ProfileDrawer({
                 </button>
               )}
               {dir?.bio ? <Field label={t("Sobre")}>{dir.bio}</Field> : null}
-              {/* Expulsar (owner, no a sí mismo, no agentes). Doble clic de confirmación. */}
+              {/* Expulsar (owner, no a sí mismo, no agentes). Acción destructiva → DISCRETA:
+                  separada por un divisor, texto chico apagado (rojo solo al hover), lejos de
+                  "Enviar mensaje", y con confirmación explícita (advertencia) al clickear. */}
               {isOwner && !isSelf && target.sub && (
-                confirmExpel ? (
-                  <div className="rounded-lg border border-red-500/40 bg-red-500/5 p-3">
-                    <p className="mb-2 text-xs text-muted">{t("¿Expulsar a {name} del workspace? No podrá volver a entrar.", { name })}</p>
-                    <div className="flex gap-2">
-                      <button onClick={doExpel} disabled={expelBusy} className="flex-1 rounded-lg bg-red-600 px-3 py-2 text-sm font-semibold text-white disabled:opacity-50">
-                        {expelBusy ? t("Expulsando…") : t("Sí, expulsar")}
-                      </button>
-                      <button onClick={() => setConfirmExpel(false)} className="rounded-lg border border-border px-3 py-2 text-sm text-muted">{t("Cancelar")}</button>
+                <div className="mt-5 border-t border-border pt-3">
+                  {confirmExpel ? (
+                    <div className="rounded-lg border border-red-500/40 bg-red-500/5 p-3">
+                      <p className="mb-2 text-xs text-muted">{t("¿Expulsar a {name} del workspace? No podrá volver a entrar.", { name })}</p>
+                      <div className="flex gap-2">
+                        <button onClick={doExpel} disabled={expelBusy} className="flex-1 rounded-lg bg-red-600 px-3 py-2 text-sm font-semibold text-white disabled:opacity-50">
+                          {expelBusy ? t("Expulsando…") : t("Sí, expulsar")}
+                        </button>
+                        <button onClick={() => setConfirmExpel(false)} className="rounded-lg border border-border px-3 py-2 text-sm text-muted">{t("Cancelar")}</button>
+                      </div>
                     </div>
-                  </div>
-                ) : (
-                  <button onClick={() => setConfirmExpel(true)} className="flex w-full items-center justify-center gap-2 rounded-lg border border-red-500/40 px-4 py-2 text-sm font-medium text-red-400 transition hover:bg-red-500/10">
-                    <Trash2 size={15} /> {t("Expulsar del workspace")}
-                  </button>
-                )
+                  ) : (
+                    <button onClick={() => setConfirmExpel(true)} className="mx-auto block text-xs text-muted transition hover:text-red-400">
+                      {t("Expulsar del workspace")}
+                    </button>
+                  )}
+                </div>
               )}
             </>
           )}
