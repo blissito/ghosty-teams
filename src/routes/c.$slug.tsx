@@ -3862,12 +3862,17 @@ function Flow({
             {t("Sé el primero en escribir en {room}.", { room: channel.name })}
           </p>
         ) : (
-          messages.map((m) => (
-            <Fragment key={m.id}>
-              {m.id === unreadId && <NewDivider />}
-              <MessageRow m={m} onOpenThread={onOpenThread} showThreadLink canPin={canManage} />
-            </Fragment>
-          ))
+          messages.map((m, i) => {
+            // El divisor de no-leídos rompe el grupo (el primer no-leído siempre con header).
+            const divider = m.id === unreadId;
+            const prev = divider ? undefined : messages[i - 1];
+            return (
+              <Fragment key={m.id}>
+                {divider && <NewDivider />}
+                <MessageRow m={m} prev={prev} onOpenThread={onOpenThread} showThreadLink canPin={canManage} />
+              </Fragment>
+            );
+          })
         )}
         {optimistic.map((o) => (
           <OptimisticRow key={o.id} o={o} />
@@ -3990,8 +3995,8 @@ function ThreadView({
                 <div className="my-2 border-t border-border pt-1 text-center text-[11px] text-muted">
                   {replyCount === 1 ? t("1 respuesta") : t("{n} respuestas", { n: replyCount })}
                 </div>
-                {replies.map((m) => (
-                  <MessageRow key={m.id} m={m} />
+                {replies.map((m, i) => (
+                  <MessageRow key={m.id} m={m} prev={replies[i - 1]} />
                 ))}
               </>
             )}
@@ -4117,12 +4122,16 @@ function DmView({
             {t("Escribe el primer mensaje de {name}.", { name: title })}
           </p>
         ) : (
-          flow.map((m) => (
-            <Fragment key={m.id}>
-              {m.id === unreadId && <NewDivider />}
-              <MessageRow m={m} />
-            </Fragment>
-          ))
+          flow.map((m, i) => {
+            const divider = m.id === unreadId;
+            const prev = divider ? undefined : flow[i - 1];
+            return (
+              <Fragment key={m.id}>
+                {divider && <NewDivider />}
+                <MessageRow m={m} prev={prev} />
+              </Fragment>
+            );
+          })
         )}
         {optimistic.map((o) => (
           <OptimisticRow key={o.id} o={o} />
@@ -4679,11 +4688,13 @@ function ArtifactCard({ artifact, ownerMsg }: { artifact: Artifact; ownerMsg: Me
 
 function MessageRow({
   m,
+  prev,
   onOpenThread,
   showThreadLink,
   canPin,
 }: {
   m: Message;
+  prev?: Message;
   onOpenThread?: (id: number) => void;
   showThreadLink?: boolean;
   canPin?: boolean;
@@ -4705,6 +4716,20 @@ function MessageRow({
   const canEdit = !!me && (me.isOwner || m.sender === me.name) && !isAgent && m.kind === "msg";
   const canDelete = !!me && (me.isOwner || m.sender === me.name) && m.kind === "msg";
   const canReact = m.kind === "msg" && !!slug;
+  // Agrupación estilo Slack: mensajes CONSECUTIVOS del mismo autor dentro de ~5 min se
+  // colapsan (sin repetir avatar/nombre/hora → feed denso). No agrupa si el previo es de
+  // otro autor, si cambia el tipo (humano↔agente), si pasó la ventana, o si ESTE cita
+  // a otro (la cita necesita su header). El divisor de no-leídos rompe la cadena (el
+  // caller pasa prev=undefined en el primer no-leído).
+  const prevIsAgent = prev ? ((prev.agent_handle != null && prev.mentions_ghosty === 0) || prev.sender === "ghosty") : false;
+  const grouped =
+    !!prev &&
+    prev.kind === "msg" &&
+    m.kind === "msg" &&
+    !m.quoted_excerpt &&
+    prevIsAgent === isAgent &&
+    (prev.sender_sub && m.sender_sub ? prev.sender_sub === m.sender_sub : prev.sender === m.sender) &&
+    m.created_at - prev.created_at < 300;
 
   if (m.kind === "status") {
     return (
@@ -4716,8 +4741,14 @@ function MessageRow({
   }
 
   return (
-    <div id={`msg-${m.id}`} className="group relative flex items-start gap-3 rounded-lg px-2 py-1.5 transition-colors hover:bg-surface-2">
-      {/* Avatar clickable → perfil (persona o agente). */}
+    <div id={`msg-${m.id}`} className={`group relative flex items-start gap-3 rounded-lg px-2 transition-colors hover:bg-surface-2 ${grouped ? "py-0.5" : "mt-1 py-0.5"}`}>
+      {grouped ? (
+        // Agrupado: sin avatar. Gutter angosto que muestra la hora SOLO al hover (Slack).
+        <div className="w-9 shrink-0 select-none pt-0.5 text-right text-[10px] leading-5 text-muted opacity-0 group-hover:opacity-100">
+          {time}
+        </div>
+      ) : (
+      /* Avatar clickable → perfil (persona o agente). */
       <button
         onClick={() => openProfile({ name: displayName, avatar: m.avatar, handle: m.agent_handle ?? (isGhostyAvatar ? "ghosty" : null), isAgent })}
         className="shrink-0 rounded-lg transition hover:opacity-80"
@@ -4737,6 +4768,7 @@ function MessageRow({
         <Avatar name={m.sender} avatar={m.avatar} className="mt-0.5 h-9 w-9 !rounded-lg" />
       )}
       </button>
+      )}
       {/* Acciones al hover: reaccionar · destacar · menú (copiar/fijar/editar/borrar) */}
       {m.kind === "msg" && !editing && (
         <div
@@ -4760,6 +4792,9 @@ function MessageRow({
         </div>
       )}
       <div className="min-w-0 flex-1">
+        {/* Header (nombre/badges/hora) SOLO en el primer mensaje del grupo. Los agrupados
+            van sin header (más denso); la hora aparece en el gutter al hover. */}
+        {!grouped && (
         <div className="flex items-baseline gap-2">
           <span className={`text-sm font-semibold ${isAgent ? "text-brand" : "text-ink"}`}>
             {displayName}
@@ -4782,6 +4817,7 @@ function MessageRow({
             </span>
           ) : null}
         </div>
+        )}
         {/* Quote-reply: cita del mensaje al que responde (sobre el cuerpo, clic → salta). */}
         {m.quoted_excerpt ? <QuotedCitation m={m} /> : null}
         {editing ? (
