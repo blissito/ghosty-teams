@@ -159,9 +159,15 @@ export async function searchWorkspaceUsers(query: string, limit = 25): Promise<{
 }
 
 // ¿El sub está expulsado del workspace? (el login lo checa para impedir re-entrar).
+// A PRUEBA DE ERROR: si la columna `banned` aún no existe en el namespace (ensureSchema
+// no corrió), NO rompas el login — trata como no-baneado (nadie baneado = seguro).
 export async function isBanned(sub: string): Promise<boolean> {
-  const { rows } = await dbq("SELECT COALESCE(banned,0) FROM gc_users WHERE sub=?", [sub]);
-  return Number(rows[0]?.[0] ?? 0) === 1;
+  try {
+    const { rows } = await dbq("SELECT COALESCE(banned,0) AS b FROM gc_users WHERE sub=?", [sub]);
+    return Number((rows[0]?.[0] as unknown) ?? 0) === 1;
+  } catch {
+    return false;
+  }
 }
 
 // Expulsa a un member (owner-only, validado en el server fn). Marca banned=1 (conserva

@@ -96,6 +96,11 @@ export const completeGhostyLogin = createServerFn({ method: "POST" })
     };
     if (Math.abs(Math.floor(Date.now() / 1000) - id.ts) > 300) throw new Error("identidad expirada");
 
+    // Asegura el schema del namespace ANTES de cualquier query (columnas nuevas como
+    // banned/status_*/email_notifs). Un workspace NUEVO (primer login = se crea) o uno
+    // que no ha corrido ensureSchema rompería con "no such column" si no. Idempotente.
+    await (await import("./schema.server")).ensureSchema().catch(() => {});
+
     const { consumeInvite } = await import("./invites");
     // Si trae invite, valídalo (member). Sin invite solo entra si ya hay owner
     // (o es el primer login = owner).
