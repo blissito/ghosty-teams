@@ -95,6 +95,7 @@ import { getTheme, subscribeTheme, resolveDark, presetById, paletteVars } from "
 import { subscribeMentions } from "../utils/mentions-bus";
 import { subscribeEmojis } from "../utils/emojis-bus";
 import { subscribeUsers, bumpUsers } from "../utils/users-bus";
+import { clearMeCache } from "../server/auth";
 import { registerModalEsc } from "../utils/modal-esc";
 import ArtifactPanel, { type ArtifactView, viewFromAttachment } from "../components/ArtifactPanel";
 import { extractEbDoc, draftTitle, bubbleWithoutEbDoc } from "../lib/ebdoc";
@@ -339,6 +340,17 @@ const sentNonces = new Set<string>();
 
 // Quote-reply: mensaje que el composer está citando (snapshot para UI + payload).
 type ReplyTarget = { id: number; author: string; excerpt: string };
+
+// Estados rápidos sugeridos (estilo Slack): emoji + texto, un clic los llena.
+const STATUS_PRESETS: { emoji: string; text: string }[] = [
+  { emoji: "🗓️", text: "En una reunión" },
+  { emoji: "🎧", text: "En foco" },
+  { emoji: "🍔", text: "Almorzando" },
+  { emoji: "🏠", text: "Trabajando remoto" },
+  { emoji: "🤒", text: "Enfermo" },
+  { emoji: "🌴", text: "De vacaciones" },
+  { emoji: "🚌", text: "En camino" },
+];
 
 // Toast in-app de notificación (sonido + aviso visual). onOpen enfoca el scope de origen.
 type ToastItem = { id: string; sender: string; avatar: string; preview: string; kind: "dm" | "mention" | "room"; onOpen: () => void };
@@ -1466,6 +1478,13 @@ function ChannelPage() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [openThreadId, openDmId]);
+  // Al editar MI perfil (nombre/avatar), revalida el loader → el `user` (sidebar/header/
+  // composer) se actualiza sin recargar. Los mensajes ya propagan por el directorio vivo.
+  useEffect(() => {
+    const on = () => router.invalidate();
+    window.addEventListener("gt:me-updated", on);
+    return () => window.removeEventListener("gt:me-updated", on);
+  }, [router]);
   // Salta a un mensaje de room desde una vista/búsqueda (navega si es otro room).
   const jumpToRoomMessage = (slug: string, id: number) => {
     setView(null);
@@ -2728,6 +2747,24 @@ function ProfileDrawer({
   const [saving, setSaving] = useState(false);
   const [expelBusy, setExpelBusy] = useState(false);
   const [confirmExpel, setConfirmExpel] = useState(false);
+  const [pickEmoji, setPickEmoji] = useState(false);
+  const [nameEdit, setNameEdit] = useState(dir?.name ?? target.name ?? "");
+  const [avatarEdit, setAvatarEdit] = useState(dir?.avatar || target.avatar || "");
+  const [avUploading, setAvUploading] = useState(false);
+  const avFileRef = useRef<HTMLInputElement>(null);
+  async function onAvatar(file: File) {
+    setAvUploading(true);
+    try {
+      const fd = new FormData(); fd.append("file", file);
+      const res = await fetch("/api/upload", { method: "POST", body: fd });
+      if (!res.ok) throw new Error("upload");
+      const up = (await res.json()) as { fileId: string };
+      setAvatarEdit(`/api/attachment/${encodeURIComponent(up.fileId)}`);
+    } catch { /* noop */ } finally {
+      setAvUploading(false);
+      if (avFileRef.current) avFileRef.current.value = "";
+    }
+  }
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && (editing ? setEditing(false) : onClose());
@@ -2738,8 +2775,16 @@ function ProfileDrawer({
   async function saveProfile() {
     setSaving(true);
     try {
-      await updateMyProfileFn({ data: { statusEmoji: sEmoji || null, statusText: sText || null, title: title || null, pronouns: pronouns || null, bio: bio || null } });
-      bumpUsers(); // se refleja al instante en el directorio (drawer + mensajes)
+      const origName = dir?.name ?? target.name ?? "";
+      const origAvatar = dir?.avatar || target.avatar || "";
+      await updateMyProfileFn({ data: {
+        ...(nameEdit.trim() && nameEdit.trim() !== origName ? { name: nameEdit.trim() } : {}),
+        ...(avatarEdit !== origAvatar ? { avatar: avatarEdit } : {}),
+        statusEmoji: sEmoji || null, statusText: sText || null, title: title || null, pronouns: pronouns || null, bio: bio || null,
+      } });
+      clearMeCache();
+      bumpUsers(); // se refleja al instante en el directorio (drawer + mensajes viejos + sidebar)
+      window.dispatchEvent(new Event("gt:me-updated")); // revalida loader → header/sidebar/composer
       setEditing(false);
     } catch { /* noop */ } finally { setSaving(false); }
   }
@@ -2778,7 +2823,28 @@ function ProfileDrawer({
         </div>
         {/* Cabecera: avatar + nombre + status + tipo/handle */}
         <div className="flex flex-col items-center px-6 pb-2 pt-2 text-center">
-          {isGhosty ? (
+          {editing && isSelf && !target.isAgent ? (
+            // Editando MI perfil → el avatar se sube desde aquí (clic → archivo).
+            <>
+              <button
+                type="button"
+                onClick={() => avFileRef.current?.click()}
+                disabled={avUploading}
+                title={t("Cambiar foto")}
+                className="group relative h-24 w-24 overflow-hidden rounded-2xl border border-border"
+              >
+                {avatarEdit ? (
+                  <img src={avatarEdit} alt="" className="h-full w-full object-cover" />
+                ) : (
+                  <span className="grid h-full w-full place-items-center bg-surface-3 text-2xl font-semibold">{(nameEdit || name).slice(0, 2).toUpperCase()}</span>
+                )}
+                <span className="absolute inset-0 grid place-items-center bg-black/40 opacity-0 transition group-hover:opacity-100">
+                  {avUploading ? <Loader2 size={18} className="animate-spin text-white" /> : <Pencil size={16} className="text-white" />}
+                </span>
+              </button>
+              <input ref={avFileRef} type="file" accept="image/*" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) void onAvatar(f); }} />
+            </>
+          ) : isGhosty ? (
             <div className="grid h-24 w-24 place-items-center overflow-hidden rounded-2xl bg-white">
               <img src="/ghosty.svg" alt="" className="h-full w-full object-contain" />
             </div>
@@ -2791,7 +2857,7 @@ function ProfileDrawer({
           ) : (
             <Avatar name={name} avatar={avatar} className="h-24 w-24 !rounded-2xl text-2xl" />
           )}
-          <h2 className="mt-3 text-lg font-semibold">{name}</h2>
+          {!editing && <h2 className="mt-3 text-lg font-semibold">{name}</h2>}
           {!editing && (dir?.statusText || dir?.statusEmoji) && (
             <p className="mt-0.5 text-sm text-ink">{dir?.statusEmoji} {dir?.statusText}</p>
           )}
@@ -2819,13 +2885,42 @@ function ProfileDrawer({
               </p>
             </>
           ) : editing ? (
-            // Editar MI perfil (status/título/pronombres/bio). Nombre+avatar = en Ajustes.
+            // Editar MI perfil completo: apodo (display name) + status (emoji picker +
+            // presets) + título + pronombres + bio. Avatar se sube en la cabecera.
             <>
-              <div className="flex gap-2">
-                <input value={sEmoji} onChange={(e) => setSEmoji(e.target.value)} placeholder="😀" maxLength={8}
-                  className="w-14 rounded-lg border border-border bg-surface px-2 py-2 text-center text-lg" />
-                <input value={sText} onChange={(e) => setSText(e.target.value)} placeholder={t("¿En qué andas?")} maxLength={80}
-                  className="min-w-0 flex-1 rounded-lg border border-border bg-surface px-3 py-2 text-sm" />
+              <label className="block">
+                <span className="text-[11px] font-semibold uppercase tracking-wide text-muted">{t("Apodo (nombre visible)")}</span>
+                <input value={nameEdit} onChange={(e) => setNameEdit(e.target.value)} placeholder={t("Tu apodo")} maxLength={60}
+                  className="mt-1 w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm" />
+              </label>
+              {/* Status: presets rápidos + emoji (picker) + texto. */}
+              <div>
+                <span className="text-[11px] font-semibold uppercase tracking-wide text-muted">{t("Status")}</span>
+                <div className="mt-1 mb-1.5 flex flex-wrap gap-1">
+                  {STATUS_PRESETS.map((p) => (
+                    <button key={p.text} type="button" onClick={() => { setSEmoji(p.emoji); setSText(p.text); }}
+                      className="rounded-full border border-border bg-surface px-2 py-0.5 text-xs text-muted transition hover:border-brand hover:text-ink">
+                      {p.emoji} {t(p.text)}
+                    </button>
+                  ))}
+                </div>
+                <div className="flex gap-2">
+                  <div className="relative">
+                    <button type="button" onClick={() => setPickEmoji((v) => !v)} title={t("Elegir emoji")}
+                      className="grid h-[42px] w-14 place-items-center rounded-lg border border-border bg-surface text-lg transition hover:border-brand">
+                      {sEmoji ? <EmojiText code={sEmoji} className="h-6 w-6 object-contain" /> : <SmilePlus size={18} className="text-muted" />}
+                    </button>
+                    {pickEmoji && (
+                      <EmojiPicker onPick={(e) => { setSEmoji(e); setPickEmoji(false); }} />
+                    )}
+                  </div>
+                  <input value={sText} onChange={(e) => setSText(e.target.value)} placeholder={t("¿En qué andas?")} maxLength={80}
+                    className="min-w-0 flex-1 rounded-lg border border-border bg-surface px-3 py-2 text-sm" />
+                  {(sEmoji || sText) && (
+                    <button type="button" onClick={() => { setSEmoji(""); setSText(""); }} title={t("Limpiar")}
+                      className="shrink-0 rounded-lg border border-border px-2 text-muted hover:text-ink"><X size={14} /></button>
+                  )}
+                </div>
               </div>
               <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder={t("Título / rol")} maxLength={80}
                 className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm" />

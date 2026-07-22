@@ -640,6 +640,7 @@ function ProfileCard({
       // resto de la app (rooms, header) lea el perfil nuevo en la próxima nav.
       clearMeCache();
       bumpUsers(); // directorio vivo → avatar/nombre nuevos en mensajes viejos + sidebar al instante
+      window.dispatchEvent(new Event("gt:me-updated")); // revalida loader → header/sidebar/composer
       setSaved(true);
       setTimeout(() => setSaved(false), 1500);
     } catch (e) {
