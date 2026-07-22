@@ -3385,6 +3385,12 @@ function RoomSettingsModal({
 }
 
 /* ── Nuevo DM: elegir persona(s) del workspace (1:1 o grupo) ── */
+// Cache de módulo para el picker de DM (mismo patrón que emojis/menciones/directorio):
+// re-abrir el modal es INSTANTÁNEO. Agentes = una vez; búsquedas = por término, TTL corto.
+let dmAgentsCache: { handle: string; name: string; avatar: string }[] | null = null;
+const dmSearchCache = new Map<string, { at: number; users: { sub: string; handle: string; name: string; avatar: string }[] }>();
+const DM_SEARCH_TTL = 30_000;
+
 function NewDmModal({
   me,
   onClose,
@@ -3395,26 +3401,32 @@ function NewDmModal({
   onOpened: (id: number) => void;
 }) {
   const t = useT();
-  const [users, setUsers] = useState<{ sub: string; handle: string; name: string; avatar: string }[]>([]);
-  const [agents, setAgents] = useState<{ handle: string; name: string; avatar: string }[]>([]);
+  // Seed desde cache → re-abrir el modal pinta al instante (revalida en background).
+  const [users, setUsers] = useState(() => dmSearchCache.get("")?.users ?? []);
+  const [agents, setAgents] = useState(() => dmAgentsCache ?? []);
   const [q, setQ] = useState("");
   const [picked, setPicked] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(!dmSearchCache.has(""));
 
-  // Agentes: pocos, se cargan una vez. Personas: BÚSQUEDA server-side (no baja todo el
-  // workspace → escala). Query vacío = primeros N; con texto, debounce 200ms.
+  // Agentes: pocos, se cargan una vez y se cachean.
   useEffect(() => {
-    listAgentsFn().then(setAgents).catch(() => setAgents([]));
+    if (dmAgentsCache) return;
+    listAgentsFn().then((a) => { dmAgentsCache = a; setAgents(a); }).catch(() => setAgents([]));
   }, []);
+  // Personas: BÚSQUEDA server-side (escala) con cache por término (TTL 30s). Si hay hit
+  // fresco → instantáneo, sin spinner; si no → debounce + fetch + cachea.
   useEffect(() => {
+    const key = q.trim().toLowerCase();
+    const hit = dmSearchCache.get(key);
+    if (hit && Date.now() - hit.at < DM_SEARCH_TTL) { setUsers(hit.users); setLoading(false); return; }
     setLoading(true);
     const h = setTimeout(() => {
       searchUsersFn({ data: { query: q } })
-        .then(setUsers)
+        .then((u) => { dmSearchCache.set(key, { at: Date.now(), users: u }); setUsers(u); })
         .catch(() => setUsers([]))
         .finally(() => setLoading(false));
-    }, q.trim() ? 200 : 0);
+    }, key ? 200 : 0);
     return () => clearTimeout(h);
   }, [q]);
 
