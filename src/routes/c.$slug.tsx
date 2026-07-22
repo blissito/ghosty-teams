@@ -4700,7 +4700,7 @@ function MessageRow({
   canPin?: boolean;
 }) {
   const t = useT();
-  const { me, slug, pickerFor, onOpenArtifact, openProfile } = useContext(ChatCtx);
+  const { me, slug, emojis, pickerFor, onOpenArtifact, openProfile } = useContext(ChatCtx);
   const [editing, setEditing] = useState(false);
   // Mientras un popover de la barra (reaccionar/⋯) esté abierto, la barra NO debe
   // desaparecer al perder el hover del row (si no, el popover se vuelve inclicable).
@@ -4829,6 +4829,7 @@ function MessageRow({
                 body={bubbleWithoutEbDoc(m.body)}
                 artifactUrl={m.artifact?.url}
                 onOpenArtifact={m.artifact ? () => onOpenArtifact(artifactToView(m.artifact!)) : undefined}
+                emojis={emojis}
               />
             </div>
           ) : isAgent ? (
@@ -5447,7 +5448,7 @@ function EditBox({ m, onDone }: { m: Message; onDone: () => void }) {
 
 function OptimisticRow({ o }: { o: Optimistic }) {
   const t = useT();
-  const { retrySend, discardSend } = useContext(ChatCtx);
+  const { retrySend, discardSend, emojis } = useContext(ChatCtx);
   const failed = o.status === "failed";
   // 100% optimista: mientras "sending" el mensaje se ve IDÉNTICO a uno entregado
   // (opacidad plena, hora en vivo, sin "enviando…"); el reconciliador lo canjea
@@ -5477,7 +5478,7 @@ function OptimisticRow({ o }: { o: Optimistic }) {
           </div>
         ) : null}
         <div className={`text-sm ${failed ? "text-ink/70" : "text-ink"}`}>
-          <Markdown body={o.body} />
+          <Markdown body={o.body} emojis={emojis} />
         </div>
         {failed && (
           <div className="mt-1 flex items-center gap-3 text-xs">

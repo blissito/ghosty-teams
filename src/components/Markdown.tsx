@@ -8,30 +8,51 @@ import { Streamdown, type StreamdownProps } from "streamdown";
 // resaltado de código (Shiki, lazy) vienen built-in.
 type Components = NonNullable<StreamdownProps["components"]>;
 
-// Resalta @menciones dentro del árbol ya renderizado (recursivo), sin tocar código
-// ni links. Conserva el comportamiento del viejo renderBody.
-function highlightMentions(children: React.ReactNode): React.ReactNode {
+// Resalta @menciones Y emojis custom (`:name:` → <img>) dentro del árbol ya renderizado
+// (recursivo), sin tocar código ni links. `emojiMap` = nombre→file_id del workspace.
+function highlightText(children: React.ReactNode, emojiMap: Map<string, string>): React.ReactNode {
   return Children.map(children, (child) => {
     if (typeof child === "string") {
       // Boundary a la izquierda SIN lookbehind: Safari <16.4 rechaza `(?<!…)` en el
       // literal → SyntaxError al parsear el bundle → crashea toda la app en esos
-      // browsers. Tokenizamos `@\w+` y validamos EN CÓDIGO que el char previo no sea
-      // palabra/@/. → NO matchea el "@gmail" dentro de un email (fixtergeek@gmail.com).
-      // Slack lo evita con tokens <@Uxxx>; aquí, en texto plano, este es el equivalente.
+      // browsers. Tokenizamos `@\w+` (mención) y `:name:` (emoji custom) y validamos
+      // EN CÓDIGO que el char previo de una @ no sea palabra/@/. → NO matchea el "@gmail"
+      // dentro de un email. Slack usa tokens <@Uxxx>; aquí, en texto plano, el equivalente.
       const out: React.ReactNode[] = [];
-      const re = /@\w+/g;
+      const re = /@\w+|:[a-z0-9_]+:/g;
       let last = 0;
       let m: RegExpExecArray | null;
       while ((m = re.exec(child)) !== null) {
-        const prev = m.index > 0 ? child[m.index - 1] : "";
-        if (/[\w@.]/.test(prev)) continue; // pegado a palabra/@/. (local-part) → no es mención
-        if (m.index > last) out.push(child.slice(last, m.index));
-        out.push(
-          <span key={m.index} className="rounded bg-brand/15 px-1 font-medium text-brand">
-            {m[0]}
-          </span>
-        );
-        last = m.index + m[0].length;
+        const tok = m[0];
+        if (tok[0] === "@") {
+          const prev = m.index > 0 ? child[m.index - 1] : "";
+          if (/[\w@.]/.test(prev)) continue; // pegado a palabra/@/. (local-part) → no es mención
+          if (m.index > last) out.push(child.slice(last, m.index));
+          out.push(
+            <span key={m.index} className="rounded bg-brand/15 px-1 font-medium text-brand">
+              {tok}
+            </span>
+          );
+          last = m.index + tok.length;
+        } else {
+          // `:name:` — solo si es un emoji custom conocido; si no, se deja literal.
+          const name = tok.slice(1, -1);
+          const fileId = emojiMap.get(name);
+          if (!fileId) continue;
+          if (m.index > last) out.push(child.slice(last, m.index));
+          out.push(
+            <img
+              key={m.index}
+              src={`/api/attachment/${encodeURIComponent(fileId)}`}
+              alt={tok}
+              title={tok}
+              loading="lazy"
+              decoding="async"
+              className="inline-block h-[1.25em] w-[1.25em] object-contain align-[-0.2em]"
+            />
+          );
+          last = m.index + tok.length;
+        }
       }
       if (last < child.length) out.push(child.slice(last));
       return out.length ? out : child;
@@ -40,22 +61,24 @@ function highlightMentions(children: React.ReactNode): React.ReactNode {
       const type = child.type as unknown as string;
       if (type === "code" || type === "pre" || type === "a") return child;
       const kids = (child.props as { children?: React.ReactNode }).children;
-      if (kids != null) return cloneElement(child, undefined, highlightMentions(kids));
+      if (kids != null) return cloneElement(child, undefined, highlightText(kids, emojiMap));
     }
     return child;
   });
 }
 
-// Envuelve los contenedores de texto para inyectar el resaltado; highlightMentions
+// Envuelve los contenedores de texto para inyectar el resaltado; highlightText
 // desciende a strong/em/etc. anidados, así que basta con los bloques de nivel alto.
 const TEXT_TAGS = ["p", "li", "td", "th", "h1", "h2", "h3", "h4", "h5", "h6", "blockquote"] as const;
-const components: Components = Object.fromEntries(
-  TEXT_TAGS.map((tag) => [
-    tag,
-    ({ node, children, ...props }: { node?: unknown; children?: React.ReactNode }) =>
-      createElement(tag, props, highlightMentions(children)),
-  ])
-);
+function textComponents(emojiMap: Map<string, string>): Components {
+  return Object.fromEntries(
+    TEXT_TAGS.map((tag) => [
+      tag,
+      ({ node, children, ...props }: { node?: unknown; children?: React.ReactNode }) =>
+        createElement(tag, props, highlightText(children, emojiMap)),
+    ])
+  );
+}
 
 const cleanUrl = (u: string) => u.replace(/[.,)]+$/, "");
 
@@ -67,14 +90,17 @@ export const Markdown = memo(function Markdown({
   artifactUrl,
   onOpenArtifact,
   light,
+  emojis,
 }: {
   body: string;
   artifactUrl?: string;
   onOpenArtifact?: () => void;
   light?: boolean; // hoja clara (texto negro) para el draft del artefacto
+  emojis?: { name: string; file_id: string }[]; // emojis custom → `:name:` inline en el cuerpo
 }) {
+  const emojiMap = new Map((emojis ?? []).map((e) => [e.name, e.file_id]));
   const withLinks: Components = {
-    ...components,
+    ...textComponents(emojiMap),
     // Imágenes del agente (memes/gráficas) al tamaño de Slack: alto acotado (~320px),
     // ancho de la columna, sin recorte (object-contain), clic → abre el original en pestaña.
     // Sin esto una imagen markdown crecía a lo alto de todo el mensaje.
