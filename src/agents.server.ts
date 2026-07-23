@@ -226,7 +226,12 @@ export async function callAgentBackendStream(
     return full;
   }
   const persona = agent.systemPrompt?.trim() || null;
-  const base = process.env.EASYBITS_BASE_URL ?? "https://www.easybits.cloud";
+  // Cutover: si GHOSTY_RUNTIME_URL está seteada → runtime nativo de Studio (HMAC,
+  // co-locado, sin refresh de token); si no → EasyBits (fallback). Ver
+  // server/ghosty-runtime.server.ts.
+  const { nativeRuntimeBase, partnerHeaders } = await import("./server/ghosty-runtime.server");
+  const native = nativeRuntimeBase();
+  const base = native ?? process.env.EASYBITS_BASE_URL ?? "https://www.easybits.cloud";
   // docHint (contexto por-doc del turno) va PRIMERO en el texto; el system prompt
   // queda estable (base) → la sesión persistente del worker no se rompe al cambiar doc.
   const docHint = artifactDocHint(currentDoc);
@@ -256,18 +261,20 @@ export async function callAgentBackendStream(
         .filter(Boolean)
         .join("\n\n"),
     });
+    const url = `${base}/api/v2/fleet-agents/${(agent.backend as { id: string }).id}/message-stream`;
     const doStream = (tok: string) =>
-      fetch(`${base}/api/v2/fleet-agents/${(agent.backend as { id: string }).id}/message-stream`, {
+      fetch(url, {
         method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${tok}` },
+        headers: native
+          ? partnerHeaders(streamBody) // nativo: firma HMAC del body
+          : { "Content-Type": "application/json", Authorization: `Bearer ${tok}` },
         body: streamBody,
       });
-    // SELF-HEAL: el fleet_token (pool) CADUCA. Ante 401 refrescamos el OAuth + re-obtenemos
-    // el token fresco del agente (listFleetAgents) y reintentamos UNA vez → @ghosty no muere
-    // cuando el token expira (incidente 2026-07-14). Requiere que refreshOwnerToken funcione
-    // (client creds + refresh_token en config, que se llenan con el connect completo).
+    // SELF-HEAL (solo EasyBits): el fleet_token (pool) CADUCA. Ante 401 refrescamos el
+    // OAuth + re-obtenemos el token fresco y reintentamos UNA vez (incidente 2026-07-14).
+    // En el runtime nativo NO aplica: la HMAC no caduca por turno.
     let res = await doStream(agent.backend.token);
-    if (res.status === 401) {
+    if (!native && res.status === 401) {
       const fresh = await refreshFleetToken((agent.backend as { id: string }).id);
       if (fresh) res = await doStream(fresh);
     }
@@ -516,7 +523,9 @@ export async function callAgentBackend(
   // fleet: la persona por-agente va en la CAPA SYSTEM (appendSystemPrompt), NO en el
   // texto. Meterla en el texto (`[Instrucciones para X: …]`) hacía que el modelo la
   // leyera como inyección de prompt y la rechazara. El texto solo lleva el turno.
-  const base = process.env.EASYBITS_BASE_URL ?? "https://www.easybits.cloud";
+  const { nativeRuntimeBase, partnerHeaders } = await import("./server/ghosty-runtime.server");
+  const native = nativeRuntimeBase();
+  const base = native ?? process.env.EASYBITS_BASE_URL ?? "https://www.easybits.cloud";
   try {
     // configGroupId "teams" = unidad de config estable del canal (ver message-stream).
     const msgBody = JSON.stringify({
@@ -532,15 +541,18 @@ export async function callAgentBackend(
         .filter(Boolean)
         .join("\n\n"),
     });
+    const url = `${base}/api/v2/fleet-agents/${(agent.backend as { id: string }).id}/message`;
     const doMsg = (tok: string) =>
-      fetch(`${base}/api/v2/fleet-agents/${(agent.backend as { id: string }).id}/message`, {
+      fetch(url, {
         method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${tok}` },
+        headers: native
+          ? partnerHeaders(msgBody)
+          : { "Content-Type": "application/json", Authorization: `Bearer ${tok}` },
         body: msgBody,
       });
-    // Self-heal en 401 (mismo patrón que el stream): refresca el fleet_token y reintenta.
+    // Self-heal en 401 solo EasyBits (la HMAC nativa no caduca).
     let res = await doMsg(agent.backend.token);
-    if (res.status === 401) {
+    if (!native && res.status === 401) {
       const fresh = await refreshFleetToken((agent.backend as { id: string }).id);
       if (fresh) res = await doMsg(fresh);
     }
