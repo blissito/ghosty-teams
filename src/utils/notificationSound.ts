@@ -332,3 +332,47 @@ export function playDeleteSound(volume = 0.5): void {
   thud.start(now + 0.21);
   thud.stop(now + 0.52);
 }
+
+/**
+ * RING de llamada entrante (estilo teléfono). Un patrón de dos notas ("bring-bring")
+ * que se REPITE en loop hasta que se llama a stopCallRing(). Para DM 1:1 (aviso fuerte
+ * tipo Discord). Devuelve una función stop; también se puede parar con stopCallRing().
+ * Categoría "dm" (respeta el toggle de sonidos). No-op si el sonido está apagado.
+ * @param volume 0–1 (default 0.5).
+ */
+let callRingTimer: ReturnType<typeof setInterval> | null = null;
+export function startCallRing(volume = 0.5): () => void {
+  stopCallRing(); // nunca dos rings a la vez
+  if (!soundOn("dm")) return () => {};
+  const burst = () => {
+    const audio = getCtx();
+    if (!audio) return;
+    const now = audio.currentTime;
+    const master = audio.createGain();
+    master.gain.value = volume;
+    master.connect(audio.destination);
+    const ring = (t0: number) => {
+      const o = audio.createOscillator();
+      const g = audio.createGain();
+      o.type = "sine";
+      o.frequency.value = 480;
+      const o2 = audio.createOscillator();
+      o2.type = "sine";
+      o2.frequency.value = 620; // dos tonos = timbre "telefónico"
+      g.gain.setValueAtTime(0.0001, t0);
+      g.gain.exponentialRampToValueAtTime(0.6, t0 + 0.02);
+      g.gain.setValueAtTime(0.6, t0 + 0.34);
+      g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.4);
+      o.connect(g); o2.connect(g); g.connect(master);
+      o.start(t0); o2.start(t0); o.stop(t0 + 0.42); o2.stop(t0 + 0.42);
+    };
+    ring(now);
+    ring(now + 0.5); // "bring-bring"
+  };
+  burst();
+  callRingTimer = setInterval(burst, 2400); // repite cada ~2.4s hasta stop
+  return stopCallRing;
+}
+export function stopCallRing(): void {
+  if (callRingTimer) { clearInterval(callRingTimer); callRingTimer = null; }
+}

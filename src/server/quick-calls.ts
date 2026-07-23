@@ -166,12 +166,19 @@ async function resolveTarget(target: Target) {
     if (!ch) throw new Error("canal no encontrado");
     if (!(await db.canSeeChannel(ch, me.sub, !!me.isOwner))) throw new Error("no eres miembro de este canal");
     const room = callRoom(cfg, ns, "room", ch.id);
+    // Miembros a "timbrar" per-user (aviso de llamada entrante estés donde estés): en un
+    // room PRIVADO, sus miembros explícitos; en uno público, [] (no timbramos a todo el
+    // workspace — el card por el canal del room basta; híbrido "room = menos intrusivo").
+    const ringSubs =
+      ch.is_private === 0 ? [] : (await db.getChannelMemberSubs(ch.id).catch(() => [] as string[]));
     return {
       me: person, cfg, ns, db, bus,
       scope: "room" as const,
       scopeId: ch.id,
+      slug: ch.slug,
       label: ch.name,
       room,
+      ringSubs,
       join: { scope: "room" as const, slug: ch.slug, scopeId: ch.id, label: ch.name } as JoinDesc,
       fanout: (ev: import("./bus.server").RtEvent) => bus.publish(bus.ch.room(ns, ch.id), ev),
     };
@@ -186,8 +193,10 @@ async function resolveTarget(target: Target) {
     me: person, cfg, ns, db, bus,
     scope: "dm" as const,
     scopeId: target.dmId,
+    slug: undefined as string | undefined,
     label: "Llamada",
     room,
+    ringSubs: [] as string[], // el fanout del DM YA va a los user-channels de los miembros
     join: { scope: "dm" as const, dmId: target.dmId, label: "Llamada" } as JoinDesc,
     fanout: (ev: import("./bus.server").RtEvent) => {
       for (const sub of members) bus.publish(bus.ch.user(ns, sub), ev);
@@ -231,15 +240,23 @@ export const startCallFn = createServerFn({ method: "POST" })
       active.set(k, c);
       const msg = await t.db.getMessage(id);
       if (msg) t.fanout({ t: "message:new", msg });
-      t.fanout({
-        t: "quickcall:started",
+      const startedEv = {
+        t: "quickcall:started" as const,
         scope: c.scope,
         scopeId: c.scopeId,
+        slug: t.slug,
         callId: c.callId,
         host: c.host,
         label: c.label,
         startedAt: c.startedAt,
-      });
+      };
+      t.fanout(startedEv);
+      // Timbre per-user "estés donde estés": para rooms privados, a los miembros que NO
+      // están suscritos al canal del room (el fanout de arriba solo llega a quien lo ve).
+      // En DM, el fanout YA es per-user → ringSubs=[]. Nunca a mí mismo (soy el host).
+      for (const sub of t.ringSubs) {
+        if (sub !== t.me.sub) t.bus.publish(t.bus.ch.user(t.ns, sub), startedEv);
+      }
     } else if (addPerson(c, t.me)) {
       await refreshCard(t.db, t.fanout, c);
     }

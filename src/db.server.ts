@@ -773,6 +773,13 @@ export async function canSeeChannel(ch: Channel, userSub: string, isOwner: boole
   return rows.length > 0;
 }
 
+// Subs de los miembros EXPLÍCITOS de un canal privado (gc_channel_members) — para timbrar
+// la llamada entrante a quien no está viendo el room. Un room público no tiene filas aquí.
+export async function getChannelMemberSubs(channelId: number): Promise<string[]> {
+  const rows = await dbq("SELECT user_sub FROM gc_channel_members WHERE channel_id = ?", [channelId]);
+  return rows.map((r) => r.user_sub!);
+}
+
 // helper que devuelve rows crudas (para EXISTS checks)
 async function dbqRaw(sql: string, args: unknown[] = []) {
   const rows = await dbq(sql, args);

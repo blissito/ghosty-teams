@@ -8,6 +8,7 @@ export const en: Record<string, string> = {
   "En llamada": "In call",
   "Estás en la llamada": "You're in the call",
   "{name} inició una llamada": "{name} started a quick call",
+  "{name} te está llamando": "{name} is calling you",
   "Salir de la llamada": "Leave call",
   "Salir": "Leave",
   "Restaurar": "Restore",

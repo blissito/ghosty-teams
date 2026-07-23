@@ -44,7 +44,7 @@ export type RtEvent =
   | { t: "typing"; sub: string; name: string; channelId: number | null; parentId?: number | null; dmId?: number | null }
   // Quick-call arrancada/terminada en un scope → banner de "unirse" para la audiencia.
   // NO lleva token (cada quien acuña el suyo al unirse, ver quick-calls.ts).
-  | { t: "quickcall:started"; scope: "room" | "dm"; scopeId: number; callId: string; host: { sub: string; name: string; avatar: string }; label: string; startedAt: number }
+  | { t: "quickcall:started"; scope: "room" | "dm"; scopeId: number; slug?: string; callId: string; host: { sub: string; name: string; avatar: string }; label: string; startedAt: number }
   | { t: "quickcall:ended"; scope: "room" | "dm"; scopeId: number; callId: string };
 
 type Listener = (ev: RtEvent) => void;

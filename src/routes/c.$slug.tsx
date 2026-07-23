@@ -114,7 +114,7 @@ import { registerModalEsc } from "../utils/modal-esc";
 import ArtifactPanel, { type ArtifactView, viewFromAttachment } from "../components/ArtifactPanel";
 import { extractEbDoc, draftTitle, bubbleWithoutEbDoc } from "../lib/ebdoc";
 import { ThinkingRing } from "../components/ThinkingRing";
-import { playNotificationSound, playGhostySound, playSelfSound, playMentionSound, playDmSound, playReadySound, playDeleteSound } from "../utils/notificationSound";
+import { playNotificationSound, playGhostySound, playSelfSound, playMentionSound, playDmSound, playReadySound, playDeleteSound, startCallRing, stopCallRing } from "../utils/notificationSound";
 
 // Menciones que cuentan como "a ti": tu @handle o una grupal (@all/@channel/…).
 const SOUND_GROUP_MENTIONS = new Set(["all", "channel", "everyone", "aqui", "here", "todos"]);
@@ -904,6 +904,24 @@ function ChannelPage() {
   const [joinedCall, setJoinedCall] = useState<
     { scope: "room" | "dm"; scopeId: number; conn: CallConn; label: string; target: CallTarget } | null
   >(null);
+  // ── Llamada entrante (aviso GLOBAL estés donde estés) ────────────────────────
+  // `incomingCalls` = llamadas que arrancó OTRO en un scope del que soy miembro y al que
+  // aún NO me uní. Se pinta un overlay fijo (Unirse/Descartar) fuera del scope activo, y
+  // suena ring (DM 1:1, loop tipo teléfono) o un chime (room). Timeout 30s → auto-descarta.
+  type Incoming = { callId: string; host: { sub: string; name: string; avatar: string }; label: string; startedAt: number; scope: "room" | "dm"; scopeId: number; slug?: string };
+  const [incomingCalls, setIncomingCalls] = useState<Map<string, Incoming>>(new Map());
+  const incomingTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+  const dismissIncoming = (key: string) =>
+    setIncomingCalls((prev) => {
+      if (!prev.has(key)) return prev;
+      const n = new Map(prev);
+      n.delete(key);
+      return n;
+    });
+  const clearIncomingTimer = (key: string) => {
+    const tm = incomingTimers.current.get(key);
+    if (tm) { clearTimeout(tm); incomingTimers.current.delete(key); }
+  };
   const openCall = async (
     fn: (o: { data: CallTarget }) => Promise<CallConn>,
     scope: "room" | "dm",
@@ -911,6 +929,10 @@ function ChannelPage() {
     target: CallTarget,
     label: string
   ) => {
+    // Al unirme (o iniciar) ese scope deja de ser "entrante" → quita el aviso + su ring.
+    const k = `${scope}:${scopeId}`;
+    clearIncomingTimer(k);
+    dismissIncoming(k);
     try {
       const r = await fn({ data: target });
       setJoinedCall({ scope, scopeId, conn: { token: r.token, wss: r.wss, room: r.room, name: r.name }, label, target });
@@ -929,6 +951,14 @@ function ChannelPage() {
     else openCall(joinCallFn, "dm", join.dmId, { scope: "dm", dmId: join.dmId }, join.label);
   };
   const myCallKey = joinedCall ? `${joinedCall.scope}:${joinedCall.scopeId}` : null;
+  // Ring en loop mientras haya alguna llamada entrante de DM sin contestar (estilo teléfono).
+  // Room usa un chime puntual (no loop). Al vaciarse las entrantes DM → para el ring.
+  const hasIncomingDm = Array.from(incomingCalls.values()).some((c) => c.scope === "dm");
+  useEffect(() => {
+    if (hasIncomingDm) startCallRing();
+    else stopCallRing();
+    return () => stopCallRing();
+  }, [hasIncomingDm]);
   // Semilla del call activo del canal actual (por si arrancó antes de que yo entrara).
   useEffect(() => {
     let alive = true;
@@ -1412,22 +1442,40 @@ function ChannelPage() {
           typingTimer.current = setTimeout(() => setTyping(null), 3500);
         }
         break;
-      case "quickcall:started":
-        setActiveCalls((prev) =>
-          new Map(prev).set(`${ev.scope}:${ev.scopeId}`, { callId: ev.callId, host: ev.host, label: ev.label, startedAt: ev.startedAt })
-        );
+      case "quickcall:started": {
+        const k = `${ev.scope}:${ev.scopeId}`;
+        setActiveCalls((prev) => new Map(prev).set(k, { callId: ev.callId, host: ev.host, label: ev.label, startedAt: ev.startedAt }));
+        // Aviso GLOBAL de llamada entrante: si la arrancó otro, no estoy ya unido a ESE
+        // call, no lo tengo silenciado, y no lo estoy mostrando ya como entrante.
+        const iStarted = ev.host.sub === user?.sub;
+        const alreadyJoined = joinedCall?.scope === ev.scope && joinedCall?.scopeId === ev.scopeId;
+        if (!iStarted && !alreadyJoined && !mutes.has(k)) {
+          setIncomingCalls((prev) => {
+            if (prev.has(k) && prev.get(k)!.callId === ev.callId) return prev;
+            return new Map(prev).set(k, { callId: ev.callId, host: ev.host, label: ev.label, startedAt: ev.startedAt, scope: ev.scope, scopeId: ev.scopeId, slug: ev.slug });
+          });
+          // DM 1:1 = ring en loop (el effect de abajo lo gestiona). Room = un chime.
+          if (ev.scope === "room") playNotificationSound();
+          // Auto-descarta a los 30s (llamada no contestada) si sigue viva.
+          clearIncomingTimer(k);
+          incomingTimers.current.set(k, setTimeout(() => { clearIncomingTimer(k); dismissIncoming(k); }, 30000));
+        }
         break;
-      case "quickcall:ended":
+      }
+      case "quickcall:ended": {
+        const k = `${ev.scope}:${ev.scopeId}`;
         setActiveCalls((prev) => {
-          const k = `${ev.scope}:${ev.scopeId}`;
           if (!prev.has(k)) return prev;
           const n = new Map(prev);
           n.delete(k);
           return n;
         });
+        clearIncomingTimer(k);
+        dismissIncoming(k); // ya no timbra: la llamada terminó
         // Si estaba en ESE call, cierra mi dock.
         setJoinedCall((j) => (j && j.scope === ev.scope && j.scopeId === ev.scopeId ? null : j));
         break;
+      }
     }
   };
   // Al (re)conectar o volver a la pestaña: catch-up (refetch de lo montado) → lossless.
@@ -2029,6 +2077,11 @@ function ChannelPage() {
       {joinedCall && (
         <QuickCallDock conn={joinedCall.conn} label={joinedCall.label} onClose={leaveCall} />
       )}
+      <IncomingCallStack
+        calls={Array.from(incomingCalls.values())}
+        onJoin={(c) => joinCallFromCard(c.scope === "room" ? { scope: "room", slug: c.slug ?? "", scopeId: c.scopeId, label: c.label } : { scope: "dm", dmId: c.scopeId, label: c.label })}
+        onDismiss={(c) => { clearIncomingTimer(`${c.scope}:${c.scopeId}`); dismissIncoming(`${c.scope}:${c.scopeId}`); }}
+      />
       <ToastStack toasts={toasts} onDismiss={dismissToast} />
       <NovedadesModal />
     </div>
@@ -4780,7 +4833,9 @@ function QuickCallDock({ conn, label, onClose }: { conn: CallConn; label: string
           : compact
             ? "fixed h-64 w-[min(340px,92vw)]" + (positioned ? "" : " bottom-4 right-4")
             : "fixed h-[min(80vh,720px)] w-[min(960px,94vw)]" + (positioned || sized ? "" : " bottom-4 right-4")) +
-        " z-50 flex flex-col overflow-hidden rounded-xl border-2 border-ink/20 bg-surface shadow-2xl ring-1 ring-ink/10"
+        // bg-surface-2 (como el sidebar) + borde brand → NO se funde con el chat (bg-surface)
+        // en claro NI oscuro; antes era bg-surface con borde ink tenue y se perdía.
+        " z-50 flex flex-col overflow-hidden rounded-xl border-2 border-brand/40 bg-surface-2 shadow-2xl ring-1 ring-black/10"
       }
     >
       <div
@@ -5771,6 +5826,55 @@ function parseCallCard(body: string | null | undefined): CallCardData | null {
     return null;
   }
 }
+// Aviso GLOBAL de llamada entrante (fijo, arriba a la derecha) — se ve estés en el room/DM
+// que sea. Una tarjeta por llamada: quién llama + Unirse / Descartar. El ring (DM) lo maneja
+// el shell; aquí solo la UI. Estilo teléfono: avatar con halo que pulsa.
+type IncomingCallItem = { callId: string; host: { sub: string; name: string; avatar: string }; label: string; startedAt: number; scope: "room" | "dm"; scopeId: number; slug?: string };
+function IncomingCallStack({ calls, onJoin, onDismiss }: { calls: IncomingCallItem[]; onJoin: (c: IncomingCallItem) => void; onDismiss: (c: IncomingCallItem) => void }) {
+  const t = useT();
+  if (!calls.length) return null;
+  return (
+    <div className="fixed right-3 top-3 z-[60] flex w-[min(92vw,20rem)] flex-col gap-2">
+      {calls.map((c) => (
+        <div
+          key={`${c.scope}:${c.scopeId}`}
+          className="flex items-center gap-3 rounded-2xl border border-brand/40 bg-surface-2 p-3 shadow-2xl ring-1 ring-black/5"
+        >
+          <span className="relative grid shrink-0 place-items-center">
+            <span className="absolute inline-flex size-11 animate-ping rounded-full bg-brand/30" />
+            <Avatar name={c.host.name} avatar={c.host.avatar} className="relative h-10 w-10" />
+          </span>
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-1.5">
+              <Phone size={13} className="shrink-0 text-brand" />
+              <span className="truncate text-sm font-semibold text-ink">
+                {c.scope === "dm" ? t("{name} te está llamando", { name: c.host.name }) : t("{name} inició una llamada", { name: c.host.name })}
+              </span>
+            </div>
+            {c.scope === "room" && <span className="mt-0.5 block truncate text-xs text-muted">{c.label}</span>}
+          </div>
+          <div className="flex shrink-0 items-center gap-1.5">
+            <button
+              onClick={() => onDismiss(c)}
+              title={t("Descartar")}
+              aria-label={t("Descartar")}
+              className="grid size-9 place-items-center rounded-full border border-border text-muted transition hover:bg-surface-3 hover:text-ink"
+            >
+              <PhoneOff size={16} />
+            </button>
+            <button
+              onClick={() => onJoin(c)}
+              className="flex h-9 items-center gap-1.5 rounded-full bg-brand px-3.5 text-xs font-semibold text-brand-fg shadow-sm transition hover:opacity-90 active:scale-95"
+            >
+              <Phone size={15} /> {t("Unirse")}
+            </button>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function CallCard({ data }: { data: CallCardData }) {
   const t = useT();
   const { joinCall, myCallKey } = useContext(ChatCtx);
@@ -7011,6 +7115,11 @@ const Composer = forwardRef<ComposerHandle, {
   useEffect(() => {
     if (!editor) return;
     editor.commands.setContent(typeof window !== "undefined" ? localStorage.getItem(draftKey) ?? "" : "");
+    // Autofocus al cambiar de room/DM → puedes escribir de inmediato sin clic. Solo en
+    // punteros finos (desktop): en táctil abriría el teclado en cada cambio (molesto).
+    if (typeof window !== "undefined" && window.matchMedia?.("(pointer: fine)").matches) {
+      editor.commands.focus("end");
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draftKey, editor]);
 
