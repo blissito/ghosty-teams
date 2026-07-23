@@ -5039,7 +5039,7 @@ function ArtifactCard({ artifact, ownerMsg }: { artifact: Artifact; ownerMsg: Me
       ? t("Presentación")
       : t("Documento");
   const subtitle = isSheet
-    ? `${t("Hoja de cálculo")} · CSV`
+    ? `${t("Hoja de cálculo")} · XLSX`
     : isPdf
       ? `${t("Documento")} · PDF`
       : isDoc
@@ -5059,14 +5059,18 @@ function ArtifactCard({ artifact, ownerMsg }: { artifact: Artifact; ownerMsg: Me
     : isOffice
       ? view.src
       : null;
-  // Sheet: el CSV vive en el cliente → descarga por blob (sin red).
-  const downloadSheet = () => {
+  // Sheet: descarga XLSX (mismo formato que el panel — /api/doc-xlsx convierte el CSV
+  // fuente con SheetJS). Antes bajaba .csv acá y .xlsx en el panel → card decía "CSV"
+  // pero salía XLSX (mislabel). Fetch same-origin → blob → download con nombre .xlsx.
+  const downloadSheet = async () => {
     if (!isSheet) return;
-    const blob = new Blob([view.csv], { type: "text/csv;charset=utf-8" });
+    const href = `/api/doc-xlsx/${encodeURIComponent(view.documentId)}?name=${encodeURIComponent(rawTitle || "hoja")}`;
+    const r = await fetch(href);
+    const blob = await r.blob();
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `${(rawTitle || "hoja").replace(/[^\w.\- ]/g, "_")}.csv`;
+    a.download = `${(rawTitle || "hoja").replace(/[^\w.\- ]/g, "_")}.xlsx`;
     document.body.appendChild(a);
     a.click();
     a.remove();
