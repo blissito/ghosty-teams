@@ -89,7 +89,7 @@ function Tile({ p, source, local }: { p: Participant; source: Track.Source; loca
   );
 }
 
-export function QuickCall({ conn, onLeft }: { conn: CallConn; onLeft: () => void }) {
+export function QuickCall({ conn, onLeft }: { conn: CallConn; onLeft: (alone?: boolean) => void }) {
   const t = useT();
   const [room] = useState(() => new Room({ adaptiveStream: true, dynacast: true }));
   const [status, setStatus] = useState<"connecting" | "live" | "error">("connecting");
@@ -111,7 +111,7 @@ export function QuickCall({ conn, onLeft }: { conn: CallConn; onLeft: () => void
       .on(RoomEvent.LocalTrackUnpublished, tick)
       .on(RoomEvent.TrackMuted, tick)
       .on(RoomEvent.TrackUnmuted, tick)
-      .on(RoomEvent.Disconnected, () => onLeft());
+      .on(RoomEvent.Disconnected, () => onLeft(room.remoteParticipants.size === 0));
     (async () => {
       try {
         await room.connect(conn.wss, conn.token);
@@ -133,7 +133,7 @@ export function QuickCall({ conn, onLeft }: { conn: CallConn; onLeft: () => void
 
   const leave = () => {
     byeSound();
-    onLeft();
+    onLeft(room.remoteParticipants.size === 0); // el cliente sabe si quedó solo → cierre confiable
   };
 
   const lp = room.localParticipant;

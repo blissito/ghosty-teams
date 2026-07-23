@@ -4,23 +4,22 @@ import { sessionUser } from "./chat";
 
 // ── Quick-calls ──────────────────────────────────────────────────────────────
 // Llamadas en vivo (audio + video + pantalla), servidas por UNA caja `livekit-svc`
-// compartida por TODOS los workspaces. La UI es NATIVA en Teams (livekit-client en
-// el browser) → estas fns devuelven los DATOS DE CONEXIÓN (token + wss + sala), no
-// una URL. Aislamiento por token:
-//   • room = HMAC(LK_ROOM_SALT, `${ns}:${scope}:${id}`) → inadivinable + namespaceado
-//     por workspace (dos tenants con el mismo id nunca colisionan).
-//   • token scoped a ESA sala (roomJoin + room=X, sin roomList/wildcard) acuñado AQUÍ
-//     tras verificar membresía. LiveKit rechaza otra sala → cero cruce de llamadas.
-// El box está en modo LOCK_TOKEN (su /token abierto está cerrado) → el único emisor
-// de tokens es este server.
+// compartida por TODOS los workspaces. UI NATIVA en Teams (livekit-client). Estas
+// fns devuelven los DATOS DE CONEXIÓN (token + wss + sala), no una URL. Aislamiento
+// por token: room = HMAC(salt, ns:scope:id) inadivinable + namespaceado; token scoped
+// a esa sala, acuñado tras verificar membresía → cero cruce de llamadas.
+//
+// RASTRO estilo Slack: cada call deja UN mensaje-tarjeta (kind:"status", body=JSON)
+// en el timeline que se ACTUALIZA en vivo: activa (avatares + "Unirse") → terminada
+// (resumen: duración + participantes). Ver CallCard en el cliente.
 
 type CallConfig = {
-  controlUrl: string; // https://sb-<id>-8088.<pubDomain>  (solo server-side: /participants)
-  wssUrl: string; // wss://sb-<id>-7880.<pubDomain>        (señalización LiveKit, al browser)
+  controlUrl: string; // https://sb-<id>-8088.<pubDomain> (solo server-side: /participants)
+  wssUrl: string; // wss://sb-<id>-7880.<pubDomain> (señalización LiveKit, al browser)
   apiKey: string;
   apiSecret: string;
   salt: string;
-  adminToken: string; // Bearer para /participants (box en LOCK_TOKEN)
+  adminToken: string;
 };
 
 function callConfig(): CallConfig | null {
@@ -34,7 +33,6 @@ function callConfig(): CallConfig | null {
   return { controlUrl: controlUrl.replace(/\/$/, ""), wssUrl, apiKey, apiSecret, salt, adminToken };
 }
 
-// Nombre de sala: determinista por (ns, scope, id), namespaceado e inadivinable.
 function callRoom(cfg: CallConfig, ns: string, scope: "room" | "dm", id: number): string {
   const h = crypto.createHmac("sha256", cfg.salt).update(`${ns}:${scope}:${id}`).digest("hex");
   return "qc_" + h.slice(0, 24);
@@ -43,7 +41,6 @@ function callRoom(cfg: CallConfig, ns: string, scope: "room" | "dm", id: number)
 const b64url = (s: string | Buffer) =>
   Buffer.from(s).toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 
-// Access token LiveKit (JWT HS256). Scoped a UNA sala; sin roomList/roomAdmin.
 function mintToken(cfg: CallConfig, room: string, identity: string, name: string, ttlSec = 6 * 3600): string {
   const now = Math.floor(Date.now() / 1000);
   const header = b64url(JSON.stringify({ alg: "HS256", typ: "JWT" }));
@@ -61,11 +58,10 @@ function mintToken(cfg: CallConfig, room: string, identity: string, name: string
   return `${header}.${payload}.${b64url(sig)}`;
 }
 
-// ¿Cuánta gente hay en la sala? (banner + auto-cierre). Box en LOCK_TOKEN → admin.
 async function participantCount(cfg: CallConfig, room: string): Promise<number> {
   try {
     const ac = new AbortController();
-    const to = setTimeout(() => ac.abort(), 4000); // nunca colgar el server
+    const to = setTimeout(() => ac.abort(), 4000);
     const res = await fetch(`${cfg.controlUrl}/participants?room=${encodeURIComponent(room)}`, {
       headers: cfg.adminToken ? { authorization: `Bearer ${cfg.adminToken}` } : undefined,
       signal: ac.signal,
@@ -78,24 +74,60 @@ async function participantCount(cfg: CallConfig, room: string): Promise<number> 
   }
 }
 
-// Llamada activa (efímera, en memoria, por tenant). Se pierde en restart del proceso
-// (la llamada vive en el SFU) → solo se cae el banner; self-heal por participantCount.
+type Person = { sub: string; name: string; avatar: string };
+// Descriptor para el botón "Unirse" de la tarjeta (el cliente sabe a qué unirse).
+type JoinDesc =
+  | { scope: "room"; slug: string; scopeId: number; label: string }
+  | { scope: "dm"; dmId: number; label: string };
+
 type ActiveCall = {
   callId: string;
   scope: "room" | "dm";
   scopeId: number;
   room: string;
   label: string;
-  host: { sub: string; name: string; avatar: string };
+  host: Person;
   startedAt: number;
-  statusMsgId: number; // mensaje-rastro (📞) en el timeline; se actualiza al colgar
-  joiners: Set<string>; // subs distintos que entraron (para el conteo del rastro)
+  statusMsgId: number; // mensaje-tarjeta en el timeline (se actualiza en vivo)
+  people: Person[]; // participantes distintos que entraron
+  join: JoinDesc;
 };
 const active = new Map<string, ActiveCall>(); // key: `${ns}::${scope}::${id}`
 const keyOf = (ns: string, scope: "room" | "dm", id: number) => `${ns}::${scope}::${id}`;
 
-// Cierra una call: quita del mapa, avisa quickcall:ended y ACTUALIZA el rastro del
-// timeline con duración + nº de participantes (estilo Slack).
+// Body de la tarjeta (JSON que parsea CallCard en el cliente).
+function cardBody(c: ActiveCall, ended: boolean): string {
+  return JSON.stringify({
+    call: {
+      v: 1,
+      state: ended ? "ended" : "active",
+      host: c.host,
+      people: c.people,
+      startedAt: c.startedAt,
+      durationSec: ended ? Math.round((Date.now() - c.startedAt) / 1000) : null,
+      join: c.join,
+    },
+  });
+}
+
+function addPerson(c: ActiveCall, me: Person): boolean {
+  if (c.people.some((p) => p.sub === me.sub)) return false;
+  c.people.push({ sub: me.sub, name: me.name, avatar: me.avatar });
+  return true;
+}
+
+async function refreshCard(
+  db: typeof import("../db.server"),
+  fanout: (ev: import("./bus.server").RtEvent) => void,
+  c: ActiveCall
+): Promise<void> {
+  const body = cardBody(c, false);
+  await db.setMessageBody(c.statusMsgId, body);
+  fanout({ t: "message:body", id: c.statusMsgId, body });
+}
+
+// Cierra una call: quita del mapa, avisa quickcall:ended y COLAPSA la tarjeta a
+// resumen (terminada · duración · N personas).
 async function endCall(
   db: typeof import("../db.server"),
   fanout: (ev: import("./bus.server").RtEvent) => void,
@@ -105,10 +137,7 @@ async function endCall(
   active.delete(k);
   fanout({ t: "quickcall:ended", scope: c.scope, scopeId: c.scopeId, callId: c.callId });
   try {
-    const secs = Math.round((Date.now() - c.startedAt) / 1000);
-    const dur = secs < 60 ? `${secs}s` : `${Math.round(secs / 60)} min`;
-    const n = c.joiners.size;
-    const body = `📞 Llamada terminada · ${dur} · ${n} ${n === 1 ? "persona" : "personas"}`;
+    const body = cardBody(c, true);
     await db.setMessageBody(c.statusMsgId, body);
     fanout({ t: "message:body", id: c.statusMsgId, body });
   } catch {
@@ -127,6 +156,7 @@ async function resolveTarget(target: Target) {
   const bus = await import("./bus.server");
   const { currentNamespace } = await import("./tenant.server");
   const ns = await currentNamespace();
+  const person: Person = { sub: me.sub, name: me.name, avatar: me.avatar };
 
   if (target.scope === "room") {
     const ch = await db.getChannel(target.slug);
@@ -134,11 +164,12 @@ async function resolveTarget(target: Target) {
     if (!(await db.canSeeChannel(ch, me.sub, !!me.isOwner))) throw new Error("no eres miembro de este canal");
     const room = callRoom(cfg, ns, "room", ch.id);
     return {
-      me, cfg, ns, db, bus,
+      me: person, cfg, ns, db, bus,
       scope: "room" as const,
       scopeId: ch.id,
       label: ch.name,
       room,
+      join: { scope: "room" as const, slug: ch.slug, scopeId: ch.id, label: ch.name } as JoinDesc,
       fanout: (ev: import("./bus.server").RtEvent) => bus.publish(bus.ch.room(ns, ch.id), ev),
     };
   }
@@ -149,23 +180,24 @@ async function resolveTarget(target: Target) {
   const members = await db.getDmMembers(target.dmId);
   const room = callRoom(cfg, ns, "dm", target.dmId);
   return {
-    me, cfg, ns, db, bus,
+    me: person, cfg, ns, db, bus,
     scope: "dm" as const,
     scopeId: target.dmId,
     label: "Llamada",
     room,
+    join: { scope: "dm" as const, dmId: target.dmId, label: "Llamada" } as JoinDesc,
     fanout: (ev: import("./bus.server").RtEvent) => {
       for (const sub of members) bus.publish(bus.ch.user(ns, sub), ev);
     },
   };
 }
 
-// Datos de conexión para el cliente nativo (livekit-client).
 function conn(t: Awaited<ReturnType<typeof resolveTarget>>) {
   return { token: mintToken(t.cfg, t.room, t.me.sub, t.me.name), wss: t.cfg.wssUrl, room: t.room, name: t.me.name };
 }
 
-// Inicia una llamada: marca activa, avisa a la audiencia (banner) y devuelve MI conexión.
+// Inicia (o se une a) una call: crea el rastro/tarjeta la 1ª vez, agrega participante,
+// avisa a la audiencia y devuelve MI conexión.
 export const startCallFn = createServerFn({ method: "POST" })
   .validator((d: Target) => d)
   .handler(async ({ data }) => {
@@ -173,22 +205,23 @@ export const startCallFn = createServerFn({ method: "POST" })
     const k = keyOf(t.ns, t.scope, t.scopeId);
     let c = active.get(k);
     if (!c) {
-      // Rastro persistente en el timeline (se actualiza al colgar).
-      const scopeArg = t.scope === "room" ? { channelId: t.scopeId } : { dmId: t.scopeId };
-      const { id: statusMsgId } = await t.db.createCallStatus(scopeArg, t.me.name, t.me.avatar, `📞 ${t.me.name} inició una llamada`);
       c = {
         callId: crypto.randomUUID(),
         scope: t.scope,
         scopeId: t.scopeId,
         room: t.room,
         label: t.label,
-        host: { sub: t.me.sub, name: t.me.name, avatar: t.me.avatar },
+        host: t.me,
         startedAt: Date.now(),
-        statusMsgId,
-        joiners: new Set([t.me.sub]),
+        statusMsgId: 0,
+        people: [t.me],
+        join: t.join,
       };
+      const scopeArg = t.scope === "room" ? { channelId: t.scopeId } : { dmId: t.scopeId };
+      const { id } = await t.db.createCallStatus(scopeArg, t.me.name, t.me.avatar, cardBody(c, false));
+      c.statusMsgId = id;
       active.set(k, c);
-      const msg = await t.db.getMessage(statusMsgId);
+      const msg = await t.db.getMessage(id);
       if (msg) t.fanout({ t: "message:new", msg });
       t.fanout({
         t: "quickcall:started",
@@ -199,33 +232,36 @@ export const startCallFn = createServerFn({ method: "POST" })
         label: c.label,
         startedAt: c.startedAt,
       });
-    } else {
-      c.joiners.add(t.me.sub);
+    } else if (addPerson(c, t.me)) {
+      await refreshCard(t.db, t.fanout, c);
     }
     return { callId: c.callId, ...conn(t) };
   });
 
-// Únete a una llamada en curso: MI propio token scoped (no se comparten tokens).
+// Únete a una call en curso: MI propio token scoped; agrega mi avatar a la tarjeta.
 export const joinCallFn = createServerFn({ method: "POST" })
   .validator((d: Target) => d)
   .handler(async ({ data }) => {
     const t = await resolveTarget(data);
     const c = active.get(keyOf(t.ns, t.scope, t.scopeId));
-    if (c) c.joiners.add(t.me.sub); // cuenta al que se une (para el rastro)
+    if (c && addPerson(c, t.me)) await refreshCard(t.db, t.fanout, c);
     return conn(t);
   });
 
-// Al salir: sondea la sala; si quedó vacía, marca ended + limpia el banner.
+// Al salir: sondea la sala; si quedó vacía, colapsa la tarjeta a resumen.
 export const leaveCallFn = createServerFn({ method: "POST" })
-  .validator((d: Target) => d)
+  .validator((d: Target & { alone?: boolean }) => d)
   .handler(async ({ data }) => {
     const t = await resolveTarget(data);
     const k = keyOf(t.ns, t.scope, t.scopeId);
     const c = active.get(k);
     if (!c) return { ok: true as const, ended: false };
-    // Confirma vacío con reintentos: el disconnect del que sale tarda ~1-3s en
-    // reflejarse en el SFU. Solo cerramos si OBSERVAMOS 0 (si quedan otros nunca
-    // llega a 0 → el banner se mantiene). Fire-and-forget desde el cliente.
+    // El cliente sabe en vivo si quedó SOLO → cierre inmediato y confiable.
+    if (data.alone) {
+      await endCall(t.db, t.fanout, c, k);
+      return { ok: true as const, ended: true };
+    }
+    // Fallback: confirma vacío con reintentos (el disconnect tarda en reflejarse).
     for (let i = 0; i < 5; i++) {
       const n = await participantCount(t.cfg, t.room);
       if (n === 0) {
@@ -237,7 +273,7 @@ export const leaveCallFn = createServerFn({ method: "POST" })
     return { ok: true as const, ended: false };
   });
 
-// Llamada activa del scope (banner en carga/refresh). Self-heal: SFU vacío → ended.
+// Call activa del scope (banner en carga/refresh). Self-heal: SFU vacío → ended.
 export const getActiveCallFn = createServerFn({ method: "GET" })
   .validator((d: Target) => d)
   .handler(async ({ data }) => {

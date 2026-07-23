@@ -73,6 +73,8 @@ import type { CallConn } from "../components/QuickCall";
 // Lazy: livekit-client toca APIs del browser al importar → solo cargar en cliente
 // cuando se abre una llamada (evita romper el SSR de la ruta).
 const QuickCall = lazy(() => import("../components/QuickCall").then((m) => ({ default: m.QuickCall })));
+// Descriptor para unirse a una call desde una tarjeta del timeline.
+type CallJoin = { scope: "room"; slug: string; scopeId: number; label: string } | { scope: "dm"; dmId: number; label: string };
 import { listAgentsFn } from "../server/agents";
 import { unreadCountsFn, markReadFn, readReceiptsFn, lastReadFn } from "../server/reads";
 import { unreadAnnouncementsFn, markAnnouncementSeenFn, type Announcement } from "../server/announcements";
@@ -405,6 +407,10 @@ const ChatCtx = createContext<{
   openPrefs: (tab?: "general" | "agentes" | "emojis") => void;
   // Abre el perfil (drawer) de una persona o agente.
   openProfile: (p: ProfileTarget) => void;
+  // Unirse a una call desde una tarjeta del timeline (CallCard); myCallKey = la call
+  // en la que estoy ahora (`scope:scopeId`) para mostrar "En llamada" en vez de "Unirse".
+  joinCall: (join: CallJoin) => void;
+  myCallKey: string | null;
 }>({
   me: null,
   slug: "",
@@ -425,6 +431,8 @@ const ChatCtx = createContext<{
   sendQuickReply: () => {},
   openPrefs: () => {},
   openProfile: () => {},
+  joinCall: () => {},
+  myCallKey: null,
 });
 
 // Identidad mostrada en el drawer de perfil (persona o agente).
@@ -908,11 +916,17 @@ function ChannelPage() {
       console.error("[call] no se pudo abrir", e);
     }
   };
-  const leaveCall = () =>
+  const leaveCall = (alone?: boolean) =>
     setJoinedCall((j) => {
-      if (j) leaveCallFn({ data: j.target }).catch(() => {});
+      if (j) leaveCallFn({ data: { ...j.target, alone } }).catch(() => {});
       return null;
     });
+  // Unirse a una call desde una tarjeta del timeline (CallCard).
+  const joinCallFromCard = (join: CallJoin) => {
+    if (join.scope === "room") openCall(joinCallFn, "room", join.scopeId, { scope: "room", slug: join.slug }, join.label);
+    else openCall(joinCallFn, "dm", join.dmId, { scope: "dm", dmId: join.dmId }, join.label);
+  };
+  const myCallKey = joinedCall ? `${joinedCall.scope}:${joinedCall.scopeId}` : null;
   // Semilla del call activo del canal actual (por si arrancó antes de que yo entrara).
   useEffect(() => {
     let alive = true;
@@ -1794,7 +1808,7 @@ function ChannelPage() {
 
   return (
     <ChatCtx.Provider
-      value={{ me: user, slug: channel.slug, emojis, users, react, star, pin, remove, editMsg, retrySend, discardSend, replyTo, setReplyTo, pickerFor, setPickerFor, onOpenArtifact: setOpenArtifact, sendQuickReply, openPrefs, openProfile }}
+      value={{ me: user, slug: channel.slug, emojis, users, react, star, pin, remove, editMsg, retrySend, discardSend, replyTo, setReplyTo, pickerFor, setPickerFor, onOpenArtifact: setOpenArtifact, sendQuickReply, openPrefs, openProfile, joinCall: joinCallFromCard, myCallKey }}
     >
     {/* pt safe-area: en PWA standalone (viewport-fit=cover + status-bar black-translucent)
         el contenido va DEBAJO de la hora/notch → el header y su botón de menú quedaban
@@ -4675,7 +4689,7 @@ function CallBanner({ h }: { h: CallWiring }) {
 
 // Dock flotante nativo: renderiza <QuickCall> (livekit-client) con los tokens de
 // Teams → hereda light/dark. Header = título + expandir; salir vive en QuickCall.
-function QuickCallDock({ conn, label, onClose }: { conn: CallConn; label: string; onClose: () => void }) {
+function QuickCallDock({ conn, label, onClose }: { conn: CallConn; label: string; onClose: (alone?: boolean) => void }) {
   const t = useT();
   const [expanded, setExpanded] = useState(false);
   const [pos, setPos] = useState<{ x: number; y: number } | null>(null); // null = anclado abajo-derecha
@@ -5695,6 +5709,79 @@ function ArtifactCard({ artifact, ownerMsg }: { artifact: Artifact; ownerMsg: Me
   );
 }
 
+// ── Tarjeta de quick-call en el timeline (estilo Slack) ──────────────────────
+// Nace del mensaje kind:"status" cuyo body es el JSON de la call (quick-calls.ts).
+// Activa: verde, avatares en vivo + "Unirse". Terminada: colapsa a resumen (dur · N).
+type CallCardData = {
+  state: "active" | "ended";
+  host: { name: string; avatar: string };
+  people: { sub: string; name: string; avatar: string }[];
+  startedAt: number;
+  durationSec: number | null;
+  join: CallJoin;
+};
+function parseCallCard(body: string | null | undefined): CallCardData | null {
+  if (!body || body[0] !== "{") return null;
+  try {
+    const j = JSON.parse(body);
+    return j?.call?.v === 1 ? (j.call as CallCardData) : null;
+  } catch {
+    return null;
+  }
+}
+function CallCard({ data }: { data: CallCardData }) {
+  const t = useT();
+  const { joinCall, myCallKey } = useContext(ChatCtx);
+  const live = data.state === "active";
+  const key = data.join.scope === "room" ? `room:${data.join.scopeId}` : `dm:${data.join.dmId}`;
+  const mine = myCallKey === key;
+  const n = data.people.length;
+  const dur = data.durationSec != null ? (data.durationSec < 60 ? `${data.durationSec}s` : `${Math.round(data.durationSec / 60)} min`) : null;
+  return (
+    <div
+      className={
+        "my-1.5 ml-11 flex max-w-md items-center gap-3 rounded-2xl border px-3.5 py-3 shadow-sm " +
+        (live ? "border-green-500/30 bg-gradient-to-br from-green-500/10 to-transparent" : "border-border bg-surface-2")
+      }
+    >
+      <div className={"grid h-10 w-10 shrink-0 place-items-center rounded-full " + (live ? "bg-green-500/15 text-green-500" : "bg-surface-3 text-muted")}>
+        {live ? <Phone size={18} /> : <PhoneOff size={18} />}
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-1.5">
+          <span className="truncate text-sm font-semibold text-ink">{live ? t("Llamada en curso") : t("Llamada terminada")}</span>
+          {live && <span className="inline-block h-2 w-2 shrink-0 animate-pulse rounded-full bg-green-500" />}
+        </div>
+        <div className="mt-1 flex items-center gap-2">
+          <div className="flex -space-x-2">
+            {data.people.slice(0, 5).map((p) => (
+              <Avatar key={p.sub} name={p.name} avatar={p.avatar} className={"h-6 w-6 ring-2 ring-surface-2 " + (live ? "" : "opacity-70")} />
+            ))}
+            {n > 5 && (
+              <span className="grid h-6 w-6 place-items-center rounded-full bg-surface-3 text-[10px] font-semibold text-muted ring-2 ring-surface-2">+{n - 5}</span>
+            )}
+          </div>
+          <span className="text-xs text-muted">
+            {dur ? dur + " · " : ""}
+            {n} {n === 1 ? t("persona") : t("personas")}
+          </span>
+        </div>
+      </div>
+      {live &&
+        (mine ? (
+          <span className="shrink-0 rounded-full border border-green-500/40 bg-green-500/10 px-3 py-1.5 text-xs font-semibold text-green-600">{t("En llamada")}</span>
+        ) : (
+          <button
+            onClick={() => joinCall(data.join)}
+            className="shrink-0 rounded-full bg-green-600 px-4 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-green-700 active:scale-95"
+          >
+            {t("Unirse")}
+          </button>
+        ))}
+    </div>
+  );
+}
+
 function MessageRow({
   m,
   prev,
@@ -5750,8 +5837,10 @@ function MessageRow({
     m.created_at - prev.created_at < 300;
 
   if (m.kind === "status") {
-    // Rastro de quick-call (marcador 📞): línea de sistema con ícono propio, SIN
-    // spinner. Verde al iniciar; teléfono colgado gris al terminar (no parece activa).
+    // Tarjeta de quick-call (body = JSON) → tarjeta rica estilo Slack.
+    const card = parseCallCard(m.body);
+    if (card) return <CallCard data={card} />;
+    // Rastro viejo (texto "📞 …") — compat con mensajes previos a la tarjeta.
     if (m.body?.startsWith("📞")) {
       const ended = m.body.includes("terminada");
       const text = m.body.replace(/^📞\s*/, "");
