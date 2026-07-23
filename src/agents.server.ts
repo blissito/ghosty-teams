@@ -299,7 +299,8 @@ export async function callAgentBackendStream(
   onChunk: (chunk: string) => void | Promise<void>,
   parts: MediaPart[] = [],
   onTool?: (name: string) => void | Promise<void>,
-  currentDoc?: { kind: "doc" | "sheet" | "artifact"; md: string; src?: string | null } | null
+  currentDoc?: { kind: "doc" | "sheet" | "artifact"; md: string; src?: string | null } | null,
+  invokerSub?: string
 ): Promise<string> {
   if (agent.backend.kind !== "fleet") {
     // Sin SSE todavía: colecta el reply completo y lo emite de un tirón (el cliente
@@ -315,6 +316,19 @@ export async function callAgentBackendStream(
   const { nativeRuntimeBase, partnerHeaders } = await import("./server/ghosty-runtime.server");
   const native = await nativeRuntimeBase();
   const base = native ?? process.env.EASYBITS_BASE_URL ?? "https://www.easybits.cloud";
+  // Tools de conectores per-invocador (solo runtime nativo): mintamos un token-capacidad
+  // firmado con el `sub` del que escribe + la URL de ESTE tenant (Teams conoce su origin).
+  // El box los recibe por turnEnv y llama de vuelta a /api/connectors/tools. Best-effort.
+  let toolToken: string | undefined;
+  let toolsUrl: string | undefined;
+  if (native && invokerSub) {
+    try {
+      const { mintToolToken } = await import("./server/connectors/tool-token.server");
+      const { reqOrigin } = await import("./origin.server");
+      toolToken = mintToolToken(invokerSub);
+      toolsUrl = `${await reqOrigin()}/api/connectors/tools`;
+    } catch { /* sin secret/origin → sin tools este turno, no rompe */ }
+  }
   // docHint (contexto por-doc del turno) va PRIMERO en el texto; el system prompt
   // queda estable (base) → la sesión persistente del worker no se rompe al cambiar doc.
   const docHint = artifactDocHint(currentDoc);
@@ -349,6 +363,8 @@ export async function callAgentBackendStream(
       ]
         .filter(Boolean)
         .join("\n\n"),
+      // Solo runtime nativo + hay invocador → tools de conectores per-user (opaco a Studio).
+      ...(toolToken && toolsUrl ? { toolToken, toolsUrl } : {}),
     });
     const url = `${base}/api/v2/fleet-agents/${(agent.backend as { id: string }).id}/message-stream`;
     const doStream = (tok: string) =>
@@ -524,6 +540,8 @@ export async function runAgentTurn(opts: {
   // Artefacto ACTUAL del hilo (doc/sheet + contenido) → se inyecta al turno para re-emisión
   // completa al editar.
   currentDoc?: { kind: "doc" | "sheet" | "artifact"; md: string; src?: string | null } | null;
+  // `sub` del que escribe → tools de conectores per-invocador (token-capacidad al box).
+  invokerSub?: string;
 }): Promise<{ id: number; reply: string }> {
   let id: number | null = null;
   const ensure = async (): Promise<number> => {
@@ -603,7 +621,7 @@ export async function runAgentTurn(opts: {
     reply = `👾 @${opts.handle} no está conectado. El owner lo configura en Ajustes → Agentes.`;
     await onChunk(reply);
   } else {
-    reply = await callAgentBackendStream(opts.agent, opts.groupId, opts.sender, opts.text, onChunk, opts.parts ?? [], onTool, opts.currentDoc);
+    reply = await callAgentBackendStream(opts.agent, opts.groupId, opts.sender, opts.text, onChunk, opts.parts ?? [], onTool, opts.currentDoc, opts.invokerSub);
   }
   // `acc` (con separadores) es el texto bonito; reply es la acumulación cruda del stream.
   const finalText = acc.trim() || reply || "(sin respuesta)";

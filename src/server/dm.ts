@@ -269,6 +269,7 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
       text,
       parts,
       currentDoc,
+      invokerSub: me.sub, // DM 1:1: el humano del DM es el invocador → sus tools de conectores
       createShell: async () => {
         // Caja caliente: la cáscara ya fue creada EAGER por postDmMessageFn → reutiliza su
         // id. Fallback (cliente sin shellId): créala aquí.

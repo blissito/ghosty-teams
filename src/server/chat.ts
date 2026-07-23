@@ -672,6 +672,7 @@ export const askAgent = createServerFn({ method: "POST" })
     // aunque el worker recicle su sesión.
     const currentDocId = await db.getThreadArtifact(channel.id, data.parentId).catch(() => null);
     const currentDoc = currentDocId ? await db.getDoc(currentDocId).catch(() => null) : null;
+    const poster = await sessionUser(); // el que postea/mencionó este turno = invocador
     const { id, reply } = await runAgentTurn({
       agent,
       handle: data.handle,
@@ -680,6 +681,7 @@ export const askAgent = createServerFn({ method: "POST" })
       text,
       parts,
       currentDoc,
+      invokerSub: poster?.sub, // sus tools de conectores (per-invocador, no del owner)
       createShell: async () => {
         // Caja caliente: la cáscara ya fue creada EAGER por postMessage → reutiliza su id
         // (cero borrar/recrear, cero parpadeo). Fallback (cliente sin shellId): créala aquí.
