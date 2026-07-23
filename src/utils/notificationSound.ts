@@ -191,6 +191,43 @@ export function playArtifactOpen(volume = 0.3): void {
 }
 
 /**
+ * Sonido de CERRAR ARTEFACTO: el rastrillo INVERSO — los clics DESACELERAN y BAJAN de tono,
+ * como el panel deslizándose de vuelta al cerrar. Misma categoría "artifact".
+ * @param volume 0–1 (default 0.3).
+ */
+export function playArtifactClose(volume = 0.3): void {
+  if (!soundOn("artifact")) return;
+  const audio = getCtx();
+  if (!audio) return;
+  const now = audio.currentTime;
+  const master = audio.createGain();
+  master.gain.value = volume;
+  master.connect(audio.destination);
+  const N = 13;
+  let t = now;
+  for (let i = 0; i < N; i++) {
+    const p = i / (N - 1);
+    const dur = 0.006;
+    const buf = audio.createBuffer(1, Math.max(1, Math.floor(audio.sampleRate * dur)), audio.sampleRate);
+    const d = buf.getChannelData(0);
+    for (let j = 0; j < d.length; j++) d[j] = (Math.random() * 2 - 1) * (1 - j / d.length);
+    const src = audio.createBufferSource();
+    src.buffer = buf;
+    const hp = audio.createBiquadFilter();
+    hp.type = "highpass";
+    hp.frequency.value = 4600 - p * 2600; // BAJA de tono conforme "cierra" (inverso del abrir)
+    const g = audio.createGain();
+    g.gain.value = 0.5 + 0.5 * (1 - Math.abs(p - 0.5) * 2);
+    src.connect(hp);
+    hp.connect(g);
+    g.connect(master);
+    src.start(t);
+    src.stop(t + dur);
+    t += 0.009 + 0.011 * p; // el intervalo DESACELERA: ~9ms → ~20ms (frena, "se cierra")
+  }
+}
+
+/**
  * Sonido de GHOSTY / agentes — distinto del knock humano. Shimmer etéreo
  * ("fantasmal"): dos tonos ascendentes (una quinta) con vibrato suave.
  * @param volume 0–1 (default 0.7).

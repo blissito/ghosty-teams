@@ -117,7 +117,7 @@ import { registerModalEsc } from "../utils/modal-esc";
 import ArtifactPanel, { type ArtifactView, viewFromAttachment } from "../components/ArtifactPanel";
 import { extractEbDoc, draftTitle, bubbleWithoutEbDoc } from "../lib/ebdoc";
 import { ThinkingRing } from "../components/ThinkingRing";
-import { playNotificationSound, playGhostySound, playSelfSound, playMentionSound, playDmSound, playReadySound, playDeleteSound, playArtifactOpen, startCallRing, stopCallRing } from "../utils/notificationSound";
+import { playNotificationSound, playGhostySound, playSelfSound, playMentionSound, playDmSound, playReadySound, playDeleteSound, playArtifactOpen, playArtifactClose, startCallRing, stopCallRing } from "../utils/notificationSound";
 
 // Menciones que cuentan como "a ti": tu @handle o una grupal (@all/@channel/…).
 const SOUND_GROUP_MENTIONS = new Set(["all", "channel", "everyone", "aqui", "here", "todos"]);
@@ -1659,7 +1659,7 @@ function ChannelPage() {
         const el = document.activeElement as HTMLElement | null;
         // No robar el Esc si estás en un input/editor (cancelar cita, cerrar popups, etc.).
         if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable)) return;
-        if (openArtifactRef.current) { setOpenArtifact(null); return; }
+        if (openArtifactRef.current) { playArtifactClose(); setOpenArtifact(null); return; }
         if (openThreadId != null) { setOpenThreadId(null); return; }
       }
     };
@@ -2091,7 +2091,7 @@ function ChannelPage() {
           (`detail`), no cambia `openArtifact`. Ver plan gteams-vertical-legal-y-documentos-cowork.md + memoria
           project_gteams_legal_vertical_live (GOTCHA de oro). */}
       <ArtifactBoundary resetKey={openArtifact?.title ?? "none"}>
-        <ArtifactPanel artifact={openArtifact} onClose={() => setOpenArtifact(null)} onOpen={setOpenArtifact} />
+        <ArtifactPanel artifact={openArtifact} onClose={() => { playArtifactClose(); setOpenArtifact(null); }} onOpen={setOpenArtifact} />
       </ArtifactBoundary>
       <AnimatePresence>
         {paletteOpen && (
