@@ -166,6 +166,8 @@ export const en: Record<string, string> = {
   "Enlace": "Link",
   "Entendido": "Got it",
   "Novedad": "What's new",
+  "Anterior": "Back",
+  "Siguiente": "Next",
   "Entra con tu cuenta de Ghosty.": "Sign in with your Ghosty account.",
   "Entrando…": "Signing in…",
   "Entregables": "Deliverables",

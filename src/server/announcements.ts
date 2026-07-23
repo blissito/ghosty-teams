@@ -1,15 +1,15 @@
 import { createServerFn } from "@tanstack/react-start";
 import { sessionUser } from "./chat";
 
-// ── Novedades / anuncios ("What's New" estilo Discord) ──────────────────────
-// El CONTENIDO es GLOBAL y lo redactan los admins de sistema en el control-plane gs
-// (modelo Announcement, UI en /admin/announcements). Teams solo CONSUME: pide la última
-// publicada al endpoint interno HMAC de gs y la cruza con el estado "visto" per-usuario
-// (gt_announcement_reads). La card se muestra si announcement.id != lastSeenId.
+// ── Novedades / anuncios ("What's New" estilo Discord) — GALERÍA ────────────
+// El CONTENIDO es GLOBAL y lo redactan los admins de sistema en gs (modelo Announcement,
+// UI en /admin/announcements). Teams CONSUME: pide TODAS las publicadas al endpoint
+// interno HMAC de gs y muestra las que el usuario NO ha visto (set gt_announcement_seen),
+// una por una en carrusel. Al pasar cada card se marca vista.
 //
-// IMPORTANTE: este módulo lo importa el cliente (c.$slug.tsx usa las server fns + el
-// type). NADA de node:crypto / process.env a nivel módulo → romperían el bundle del
-// browser. Todo lo server-only vive DENTRO de los handlers (dynamic import).
+// IMPORTANTE: este módulo lo importa el cliente (c.$slug.tsx). NADA de node:crypto /
+// process.env a nivel módulo → romperían el bundle del browser. Todo server-only vive
+// DENTRO de los handlers (dynamic import).
 
 export type Announcement = {
   id: string;
@@ -19,40 +19,41 @@ export type Announcement = {
   publishedAt: string | null;
 };
 
-// Última novedad publicada (global, desde gs) firmada con GHOSTY_PARTNER_SECRET.
-// Solo se ejecuta server-side (dentro del handler).
-async function fetchLatestFromControlPlane(): Promise<Announcement | null> {
+// Todas las novedades publicadas (global, desde gs) firmado con GHOSTY_PARTNER_SECRET.
+async function fetchPublishedFromControlPlane(): Promise<Announcement[]> {
   const crypto = await import("node:crypto");
   const secret = process.env.GHOSTY_PARTNER_SECRET;
-  if (!secret) return null;
+  if (!secret) return [];
   const IDP = process.env.GHOSTY_IDENTITY_URL ?? "https://www.ghosty.studio";
   const ts = Math.floor(Date.now() / 1000);
   const sig = crypto.createHmac("sha256", secret).update(`${ts}.announcements`).digest("hex");
   try {
     const res = await fetch(`${IDP}/internal/announcements?ts=${ts}&sig=${sig}`);
-    if (!res.ok) return null;
-    const j = (await res.json()) as { announcement?: Announcement | null };
-    return j.announcement ?? null;
+    if (!res.ok) return [];
+    const j = (await res.json()) as { announcements?: Announcement[] | null };
+    return Array.isArray(j.announcements) ? j.announcements : [];
   } catch {
-    return null;
+    return [];
   }
 }
 
-// La última novedad publicada + el id que este usuario ya vio (para decidir la card).
-export const latestAnnouncementFn = createServerFn({ method: "GET" }).handler(
-  async (): Promise<{ announcement: Announcement | null; lastSeenId: string }> => {
+// Las novedades que el usuario AÚN NO ha visto (para la galería). Orden = como llegan
+// de gs (más nuevas primero).
+export const unreadAnnouncementsFn = createServerFn({ method: "GET" }).handler(
+  async (): Promise<Announcement[]> => {
     const me = await sessionUser();
-    if (!me) return { announcement: null, lastSeenId: "" };
+    if (!me) return [];
     const db = await import("../db.server");
-    const [announcement, lastSeenId] = await Promise.all([
-      fetchLatestFromControlPlane(),
-      db.getAnnouncementLastSeen(me.sub),
+    const [published, seen] = await Promise.all([
+      fetchPublishedFromControlPlane(),
+      db.getSeenAnnouncementIds(me.sub),
     ]);
-    return { announcement, lastSeenId };
+    const seenSet = new Set(seen);
+    return published.filter((a) => !seenSet.has(a.id));
   }
 );
 
-// Marca una novedad como vista (al cerrar la card). Idempotente.
+// Marca UNA novedad como vista (al pasar la card en la galería). Idempotente.
 export const markAnnouncementSeenFn = createServerFn({ method: "POST" })
   .validator((d: { id: string }) => d)
   .handler(async ({ data }) => {

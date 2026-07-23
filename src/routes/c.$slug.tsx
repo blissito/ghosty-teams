@@ -73,7 +73,7 @@ import type { CallConn } from "../components/QuickCall";
 const QuickCall = lazy(() => import("../components/QuickCall").then((m) => ({ default: m.QuickCall })));
 import { listAgentsFn } from "../server/agents";
 import { unreadCountsFn, markReadFn, readReceiptsFn, lastReadFn } from "../server/reads";
-import { latestAnnouncementFn, markAnnouncementSeenFn, type Announcement } from "../server/announcements";
+import { unreadAnnouncementsFn, markAnnouncementSeenFn, type Announcement } from "../server/announcements";
 import { toggleStarFn, togglePinFn, getPinsFn, toggleMuteFn, listMutesFn } from "../server/stars";
 import { listMyWorkspacesFn } from "../server/workspaces";
 import {
@@ -2114,20 +2114,25 @@ function startConfetti(): () => void {
   };
 }
 
-// Card "Novedades" ("What's New" estilo Discord): al entrar, si el último anuncio
-// publicado es más nuevo que el que el usuario ya vio (id > lastSeenId), se muestra una
-// vez. Hero ilustrado arriba (Ghosty actuando la feature) + confetti + un solo CTA.
-// Al cerrar se marca visto (server-side, cross-device). Fetch on-mount como el resto de
-// datos de arranque; degrada a silencio si algo falla. Tema del user vía tokens.
+// Galería "Novedades" ("What's New" estilo Discord): al entrar, muestra las novedades
+// GLOBALES publicadas que el usuario NO ha visto, UNA POR UNA (carrusel). Cada card que
+// se ve se marca vista (persistente/cross-device) → si cierra a medias, las restantes
+// vuelven a salir. Hero ilustrado (Ghosty actuando la feature) + confetti continuo +
+// navegación Anterior/Siguiente. Tema del user vía tokens.
 function NovedadesModal() {
   const t = useT();
-  const [ann, setAnn] = useState<Announcement | null>(null);
+  const [list, setList] = useState<Announcement[]>([]);
+  const [idx, setIdx] = useState(0);
+  const open = list.length > 0;
 
   useEffect(() => {
     let alive = true;
-    latestAnnouncementFn()
-      .then(({ announcement, lastSeenId }) => {
-        if (alive && announcement && announcement.id !== lastSeenId) setAnn(announcement);
+    unreadAnnouncementsFn()
+      .then((rows) => {
+        if (alive && rows.length) {
+          setList(rows);
+          setIdx(0);
+        }
       })
       .catch(() => {});
     return () => {
@@ -2135,34 +2140,41 @@ function NovedadesModal() {
     };
   }, []);
 
-  // Confetti PERSISTENTE mientras el anuncio está abierto; al cerrar/desmontar el
-  // stop() deja caer lo que queda y limpia el canvas.
+  // Marca vista la card ACTUAL en cuanto se muestra (persiste lectura parcial).
   useEffect(() => {
-    if (!ann) return;
+    const cur = list[idx];
+    if (cur) markAnnouncementSeenFn({ data: { id: cur.id } }).catch(() => {});
+  }, [idx, list]);
+
+  // Confetti PERSISTENTE mientras la galería está abierta; al cerrar cae y se limpia.
+  useEffect(() => {
+    if (!open) return;
     let stop = () => {};
     const id = setTimeout(() => {
       stop = startConfetti();
-    }, 180); // tras la animación de entrada del modal
+    }, 180);
     return () => {
       clearTimeout(id);
       stop();
     };
-  }, [ann]);
+  }, [open]);
 
-  if (!ann) return null;
+  if (!open) return null;
 
-  const close = () => {
-    markAnnouncementSeenFn({ data: { id: ann.id } }).catch(() => {});
-    setAnn(null);
-  };
+  const cur = list[idx];
+  const total = list.length;
+  const isLast = idx >= total - 1;
+  const close = () => setList([]);
+  const next = () => (isLast ? close() : setIdx((i) => i + 1));
+  const prev = () => setIdx((i) => Math.max(0, i - 1));
 
   return (
     <AnimatePresence>
       <Modal onClose={close} size="lg" flush>
         <div className="flex max-h-[85dvh] flex-col overflow-y-auto thin-scroll">
-          {ann.heroImage ? (
+          {cur.heroImage ? (
             <img
-              src={ann.heroImage}
+              src={cur.heroImage}
               alt=""
               className="aspect-[3/2] w-full shrink-0 object-cover"
               loading="eager"
@@ -2176,17 +2188,39 @@ function NovedadesModal() {
             <span className="mb-2 inline-flex items-center gap-1.5 rounded-full bg-brand/12 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-brand">
               <Megaphone size={12} /> {t("Novedad")}
             </span>
-            <h2 className="text-xl font-bold leading-snug">{ann.title}</h2>
+            <h2 className="text-xl font-bold leading-snug">{cur.title}</h2>
             <div className="mt-2 text-sm leading-relaxed text-muted [&_a]:text-brand [&_strong]:text-ink">
-              <Markdown body={ann.body} />
+              <Markdown body={cur.body} />
             </div>
-            <div className="mt-6 flex justify-end">
-              <button
-                onClick={close}
-                className="rounded-xl bg-brand px-5 py-2.5 text-sm font-semibold text-brand-fg shadow-sm transition hover:opacity-90"
-              >
-                {t("Entendido")}
-              </button>
+            <div className="mt-6 flex items-center justify-between gap-3">
+              {/* Puntitos de progreso (obliga a verlas una por una) */}
+              <div className="flex items-center gap-1.5">
+                {total > 1 &&
+                  list.map((_, i) => (
+                    <span
+                      key={i}
+                      className={`h-1.5 rounded-full transition-all ${
+                        i === idx ? "w-4 bg-brand" : "w-1.5 bg-surface-3"
+                      }`}
+                    />
+                  ))}
+              </div>
+              <div className="flex items-center gap-2">
+                {idx > 0 && (
+                  <button
+                    onClick={prev}
+                    className="rounded-xl px-4 py-2.5 text-sm font-medium text-muted transition hover:text-ink"
+                  >
+                    {t("Anterior")}
+                  </button>
+                )}
+                <button
+                  onClick={next}
+                  className="rounded-xl bg-brand px-5 py-2.5 text-sm font-semibold text-brand-fg shadow-sm transition hover:opacity-90"
+                >
+                  {isLast ? t("Entendido") : `${t("Siguiente")} (${idx + 1}/${total})`}
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -4582,16 +4616,46 @@ function CallBanner({ h }: { h: CallWiring }) {
 function QuickCallDock({ conn, label, onClose }: { conn: CallConn; label: string; onClose: () => void }) {
   const t = useT();
   const [expanded, setExpanded] = useState(false);
+  const [pos, setPos] = useState<{ x: number; y: number } | null>(null); // null = anclado abajo-derecha
+  const dockRef = useRef<HTMLDivElement>(null);
+  const positioned = !!pos && !expanded;
+
+  // Arrastra el dock por su barra (solo acoplado). Se clampa al viewport.
+  const startDrag = (e: React.PointerEvent) => {
+    if (expanded || (e.target as HTMLElement).closest("button")) return;
+    const el = dockRef.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    const dx = e.clientX - r.left;
+    const dy = e.clientY - r.top;
+    const move = (ev: PointerEvent) => {
+      const x = Math.max(4, Math.min(window.innerWidth - 120, ev.clientX - dx));
+      const y = Math.max(4, Math.min(window.innerHeight - 60, ev.clientY - dy));
+      setPos({ x, y });
+    };
+    const up = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  };
+
   return (
     <div
+      ref={dockRef}
+      style={positioned ? { left: pos!.x, top: pos!.y } : undefined}
       className={
         (expanded
           ? "fixed inset-3 md:inset-6"
-          : "fixed bottom-4 right-4 h-[min(80vh,720px)] w-[min(960px,94vw)]") +
+          : "fixed h-[min(80vh,720px)] w-[min(960px,94vw)]" + (positioned ? "" : " bottom-4 right-4")) +
         " z-50 flex flex-col overflow-hidden rounded-xl border border-border bg-surface shadow-2xl"
       }
     >
-      <div className="flex items-center justify-between gap-2 border-b border-border bg-surface-2 px-3 py-2">
+      <div
+        onPointerDown={startDrag}
+        className={"flex items-center justify-between gap-2 border-b border-border bg-surface-2 px-3 py-2" + (expanded ? "" : " cursor-move select-none")}
+      >
         <div className="flex min-w-0 items-center gap-2">
           <Headphones size={15} className="shrink-0 text-brand" />
           <span className="truncate text-sm font-semibold text-ink">{t("Llamada")} · {label}</span>

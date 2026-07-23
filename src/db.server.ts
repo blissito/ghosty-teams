@@ -1284,26 +1284,30 @@ export async function markRead(userSub: string, scope: "room" | "dm", scopeId: n
   );
 }
 
-// ── Novedades / anuncios ("What's New") — estado "visto" per-usuario ─────────
+// ── Novedades / anuncios ("What's New") — SET de vistas per-usuario ──────────
 // El CONTENIDO de las novedades es GLOBAL y vive en gs (control-plane, modelo
-// Announcement). Aquí SOLO guardamos, por usuario, el id (cuid string de gs) de la
-// última novedad que vio. La card se muestra si latest.id != last_seen_id.
-export async function getAnnouncementLastSeen(userSub: string): Promise<string> {
+// Announcement). Aquí guardamos el SET de ids (cuid de gs) que el usuario YA VIO. La
+// galería en Teams muestra las publicadas que NO estén en el set.
+export async function getSeenAnnouncementIds(userSub: string): Promise<string[]> {
   const rows = await dbq(
-    "SELECT last_seen_id FROM gt_announcement_reads WHERE user_sub = ?",
+    "SELECT announcement_id FROM gt_announcement_seen WHERE user_sub = ?",
     [userSub]
   );
-  return rows.length ? (rows[0].last_seen_id ?? "") : "";
+  return rows.map((r) => r.announcement_id!).filter(Boolean);
 }
 
-// Marca vista la novedad `id` (idempotente; simple overwrite — el id es el de la última).
+// Marca vista UNA novedad (idempotente). Se llama al pasar cada card de la galería.
 export async function markAnnouncementSeen(userSub: string, id: string): Promise<void> {
   await dbq(
-    `INSERT INTO gt_announcement_reads (user_sub, last_seen_id)
-     VALUES (?, ?)
-     ON CONFLICT(user_sub) DO UPDATE SET last_seen_id = excluded.last_seen_id`,
+    `INSERT INTO gt_announcement_seen (user_sub, announcement_id)
+     VALUES (?, ?) ON CONFLICT(user_sub, announcement_id) DO NOTHING`,
     [userSub, id]
   );
+}
+
+// Reset: olvida TODO lo visto por un usuario (las novedades le vuelven a salir).
+export async function resetAnnouncementsSeen(userSub: string): Promise<void> {
+  await dbq("DELETE FROM gt_announcement_seen WHERE user_sub = ?", [userSub]);
 }
 
 // ── Emojis custom del workspace (Fase 4) ────────────────────────────────────
