@@ -4629,8 +4629,9 @@ function QuickCallDock({ conn, label, onClose }: { conn: CallConn; label: string
     const dx = e.clientX - r.left;
     const dy = e.clientY - r.top;
     const move = (ev: PointerEvent) => {
-      const x = Math.max(4, Math.min(window.innerWidth - 120, ev.clientX - dx));
-      const y = Math.max(4, Math.min(window.innerHeight - 60, ev.clientY - dy));
+      // Clampa el dock COMPLETO dentro del viewport (nunca sale de la ventana).
+      const x = Math.max(4, Math.min(window.innerWidth - r.width - 4, ev.clientX - dx));
+      const y = Math.max(4, Math.min(window.innerHeight - r.height - 4, ev.clientY - dy));
       setPos({ x, y });
     };
     const up = () => {
@@ -4649,7 +4650,7 @@ function QuickCallDock({ conn, label, onClose }: { conn: CallConn; label: string
         (expanded
           ? "fixed inset-3 md:inset-6"
           : "fixed h-[min(80vh,720px)] w-[min(960px,94vw)]" + (positioned ? "" : " bottom-4 right-4")) +
-        " z-50 flex flex-col overflow-hidden rounded-xl border border-border bg-surface shadow-2xl"
+        " z-50 flex flex-col overflow-hidden rounded-xl border-2 border-ink/20 bg-surface shadow-2xl ring-1 ring-ink/10"
       }
     >
       <div
