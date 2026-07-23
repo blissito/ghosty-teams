@@ -4703,6 +4703,20 @@ function QuickCallDock({ conn, label, onClose }: { conn: CallConn; label: string
   // Solo-audio y sin tamaño manual ni expandido → ventana mínima (avatares + controles).
   const compact = !hasVideo && !expanded && !sized;
 
+  // Al CRECER (compact→grande cuando alguien comparte/prende cámara) el dock arrastrado
+  // conservaba su top-left → se salía del viewport. Tras cada cambio de tamaño (compact/
+  // hasVideo/expanded), re-clampa la posición guardada para que la ventana quepa completa.
+  useLayoutEffect(() => {
+    if (!pos || expanded) return;
+    const el = dockRef.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    const x = Math.max(4, Math.min(pos.x, window.innerWidth - r.width - 4));
+    const y = Math.max(4, Math.min(pos.y, window.innerHeight - r.height - 4));
+    if (x !== pos.x || y !== pos.y) setPos({ x, y });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [compact, hasVideo, expanded]);
+
   // Arrastra el dock por su barra (solo acoplado). Se clampa al viewport.
   const startDrag = (e: React.PointerEvent) => {
     if (expanded || (e.target as HTMLElement).closest("button")) return;
