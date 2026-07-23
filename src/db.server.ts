@@ -74,6 +74,8 @@ export type Attachment = {
   size: number | null;
   name: string | null;
   thumb_file_id?: string | null; // derivado WebP para render inline (null = usa el original)
+  width?: number | null;  // dims intrínsecas → el render reserva el alto exacto (0 layout-shift)
+  height?: number | null;
 };
 
 // Artefacto: doc/pdf/imagen que el agente genera y se abre en el panel del room.
@@ -229,7 +231,7 @@ export async function attachAttachments(msgs: Message[]): Promise<Message[]> {
   const ids = msgs.map((m) => m.id);
   const ph = ids.map(() => "?").join(",");
   const rows = await dbq(
-    `SELECT id, message_id, file_id, mime, size, name, thumb_file_id FROM gc_attachments
+    `SELECT id, message_id, file_id, mime, size, name, thumb_file_id, width, height FROM gc_attachments
       WHERE message_id IN (${ph}) ORDER BY id`,
     ids
   );
@@ -244,6 +246,8 @@ export async function attachAttachments(msgs: Message[]): Promise<Message[]> {
       size: r.size == null ? null : num(r.size),
       name: r.name ?? null,
       thumb_file_id: (r.thumb_file_id as string | null) ?? null,
+      width: r.width == null ? null : num(r.width),
+      height: r.height == null ? null : num(r.height),
     };
     const arr = byMsg.get(mid) ?? [];
     if (arr.length === 0) byMsg.set(mid, arr);
@@ -255,12 +259,12 @@ export async function attachAttachments(msgs: Message[]): Promise<Message[]> {
 // Inserta los adjuntos de un mensaje recién creado.
 export async function createAttachments(
   messageId: number,
-  files: { fileId: string; mime: string; size: number; name: string; thumbFileId?: string | null }[]
+  files: { fileId: string; mime: string; size: number; name: string; thumbFileId?: string | null; width?: number | null; height?: number | null }[]
 ): Promise<void> {
   for (const f of files) {
     await dbq(
-      `INSERT INTO gc_attachments (message_id, file_id, mime, size, name, thumb_file_id) VALUES (?, ?, ?, ?, ?, ?)`,
-      [messageId, f.fileId, f.mime, f.size, f.name, f.thumbFileId ?? null]
+      `INSERT INTO gc_attachments (message_id, file_id, mime, size, name, thumb_file_id, width, height) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [messageId, f.fileId, f.mime, f.size, f.name, f.thumbFileId ?? null, f.width ?? null, f.height ?? null]
     );
   }
 }
@@ -852,14 +856,14 @@ export async function getUserSubByEmail(email: string): Promise<string | null> {
 export async function emailsForSubs(subs: string[]): Promise<{ sub: string; email: string; name: string }[]> {
   if (!subs.length) return [];
   const ph = subs.map(() => "?").join(",");
-  const rows = await dbq(`SELECT sub, email, name FROM gc_users WHERE sub IN (${ph}) AND email IS NOT NULL AND COALESCE(banned,0)=0 AND COALESCE(email_notifs,1)=1`, subs);
+  const rows = await dbq(`SELECT sub, email, name FROM gc_users WHERE sub IN (${ph}) AND email IS NOT NULL AND COALESCE(banned,0)=0 AND COALESCE(email_notifs,0)=1`, subs);
   return rows.map((r) => ({ sub: r.sub!, email: r.email!, name: r.name ?? "" })).filter((r) => r.email.includes("@"));
 }
 
-// Preferencia de correo del usuario (para el toggle). Default ON.
+// Preferencia de correo del usuario (para el toggle). Default OFF (opt-in).
 export async function getEmailNotifs(sub: string): Promise<boolean> {
-  const rows = await dbq("SELECT COALESCE(email_notifs,1) AS en FROM gc_users WHERE sub=?", [sub]);
-  return num(rows[0]?.en ?? "1") === 1;
+  const rows = await dbq("SELECT COALESCE(email_notifs,0) AS en FROM gc_users WHERE sub=?", [sub]);
+  return num(rows[0]?.en ?? "0") === 1;
 }
 export async function setEmailNotifs(sub: string, on: boolean): Promise<void> {
   await dbq("UPDATE gc_users SET email_notifs=? WHERE sub=?", [on ? 1 : 0, sub]);

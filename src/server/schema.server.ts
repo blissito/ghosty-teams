@@ -165,11 +165,19 @@ async function migrate(): Promise<void> {
   await addColumn("gc_users", "pronouns", "TEXT");
   await addColumn("gc_users", "bio", "TEXT");
   await addColumn("gc_users", "banned", "INTEGER NOT NULL DEFAULT 0");
-  // Preferencia: recibir notificaciones por CORREO (menciones/DM offline). Default ON (opt-out).
-  await addColumn("gc_users", "email_notifs", "INTEGER NOT NULL DEFAULT 1");
+  // Preferencia: recibir notificaciones por CORREO (menciones/DM offline). Default OFF (opt-in):
+  // el usuario las activa desde Ajustes → Notificaciones. (Antes era opt-out/DEFAULT 1; en DBs
+  // vivas la columna ya existe → addColumn no la re-altera, el flip a existentes va por UPDATE
+  // guardado con flag en gc_config, ver más abajo.)
+  await addColumn("gc_users", "email_notifs", "INTEGER NOT NULL DEFAULT 0");
 
   // Thumbnail WebP de adjuntos-imagen (se sirve inline; el original queda para full/agente).
   await addColumn("gc_attachments", "thumb_file_id", "TEXT");
+  // Dimensiones intrínsecas de la imagen (px) → el render reserva el alto EXACTO antes
+  // de cargar (aspect-ratio) → 0 layout-shift al abrir el canal (scroll aterriza al fondo
+  // sin que las imágenes empujen). NULL en adjuntos viejos / no-imagen → fallback min-h.
+  await addColumn("gc_attachments", "width", "INTEGER");
+  await addColumn("gc_attachments", "height", "INTEGER");
 
   // Agentes slice 1: persona/prompt por agente (se antepone/envía al backend para
   // que cada agente hable distinto). gc_agents la crea el provisioner; aquí sumamos.
@@ -252,6 +260,35 @@ async function migrate(): Promise<void> {
     seen_at         INTEGER NOT NULL DEFAULT (unixepoch()),
     PRIMARY KEY (user_sub, announcement_id)
   )`);
+
+  // Conectores OAuth PER-USER (Calendly y futuros GitHub/Slack/GCal). Modelo Cowork:
+  // cada usuario conecta SU cuenta; @ghosty agenda/actúa con el token del que lo invoca.
+  // Una fila por (usuario, proveedor). Tokens en la DB del tenant (no en compute), patrón
+  // gc_stars/gt_announcement_seen. La def de cada proveedor vive en connectors/registry.ts.
+  await exec(`CREATE TABLE IF NOT EXISTS gc_user_connectors (
+    user_sub      TEXT NOT NULL,
+    provider      TEXT NOT NULL,
+    access_token  TEXT,
+    refresh_token TEXT,
+    expires_at    INTEGER,
+    external_id   TEXT,
+    meta          TEXT,
+    created_at    INTEGER NOT NULL DEFAULT (unixepoch()),
+    PRIMARY KEY (user_sub, provider)
+  )`);
+
+  // Flip único: correo por default OFF (opt-in). Las filas existentes heredaron el viejo
+  // DEFAULT 1 (opt-out silencioso, nadie lo eligió conscientemente) → las apagamos una sola
+  // vez, guardado por flag en gc_config. Reversible: el usuario lo reactiva en el panel.
+  try {
+    const { getConfig, setConfig } = await import("../config.server");
+    if ((await getConfig("email_default_off_applied")) !== "1") {
+      await exec("UPDATE gc_users SET email_notifs=0 WHERE COALESCE(email_notifs,1)=1");
+      await setConfig("email_default_off_applied", "1");
+    }
+  } catch (e) {
+    fails.push(`email_default_off → ${String(e).slice(0, 90)}`);
+  }
 
   // Si algo falló (DB flapeando), LANZA → ensureSchema resetea `done` → reintento.
   if (fails.length) {

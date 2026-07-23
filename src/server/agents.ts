@@ -202,6 +202,44 @@ export const createAgentFn = createServerFn({ method: "POST" })
     return { ok: true as const, handle: ag.handle };
   });
 
+// Crea un agente NUEVO: da de alta un fleet-agent propio (el "de verdad" donde corre
+// la inferencia) con el motor elegido, y registra la fila de Teams apuntando a él. La
+// flota es INVISIBLE para el usuario — cada agente de Teams nace con su propio
+// fleet-agent (ya no se elige de una lista). Motor: hoy solo "claude" (el select del
+// modal deja los demás para después).
+export const createManagedAgentFn = createServerFn({ method: "POST" })
+  .validator((d: { handle: string; name: string; engine: "claude" | "deepseek" }) => d)
+  .handler(async ({ data }) => {
+    const user = await requireOwner();
+    const db = await import("../db.server");
+    const handle = data.handle.trim().toLowerCase().replace(/[^a-z0-9]/g, "");
+    if (!handle) throw new Error("handle requerido");
+    if (handle === db.GHOSTY_HANDLE) throw new Error("@ghosty está reservado");
+    if (await db.getAgentByHandle(handle)) throw new Error(`@${handle} ya existe`);
+
+    const { getConfigMany } = await import("../config.server");
+    const { resolveFleetAuth } = await import("./setup");
+    const c = await getConfigMany(["eb_access_token", "eb_owner_key"]);
+    const token = resolveFleetAuth(c);
+    if (!token) throw new Error("Conecta tu cuenta para crear agentes");
+
+    const name = data.name.trim() || handle;
+    const { createFleetAgent } = await import("./easybits-oauth.server");
+    const agent = await createFleetAgent(token, { engine: data.engine, name });
+    // Marca el canal Teams como conectado (best-effort) → aparece "Activo" de una.
+    const { connectTeamsChannel } = await import("./agent-config");
+    await connectTeamsChannel(agent.id, agent.token).catch(() => {});
+    const ag = await db.createAgent({
+      handle,
+      name,
+      kind: "fleet",
+      fleetId: agent.id,
+      fleetToken: agent.token,
+      createdBy: user.sub,
+    });
+    return { ok: true as const, handle: ag.handle };
+  });
+
 export const updateAgentFn = createServerFn({ method: "POST" })
   .validator(
     (d: {

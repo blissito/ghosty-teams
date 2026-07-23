@@ -164,7 +164,7 @@ export const listUsersFn = createServerFn({ method: "GET" }).handler(async () =>
 // Preferencias de notificación por correo (opt-out). GET lee, POST setea.
 export const getNotifyPrefsFn = createServerFn({ method: "GET" }).handler(async () => {
   const me = await sessionUser();
-  if (!me) return { emailNotifs: true };
+  if (!me) return { emailNotifs: false };
   const db = await import("../db.server");
   return { emailNotifs: await db.getEmailNotifs(me.sub) };
 });
@@ -475,7 +475,7 @@ export const postMessage = createServerFn({ method: "POST" })
       nonce?: string;
       topic?: string;
       quotedId?: number | null; // quote-reply: id del mensaje citado
-      attachments?: { fileId: string; mime: string; size: number; name: string; thumbFileId?: string | null }[];
+      attachments?: { fileId: string; mime: string; size: number; name: string; thumbFileId?: string | null; width?: number | null; height?: number | null }[];
     }) => d
   )
   .handler(async ({ data }) => {
@@ -546,9 +546,13 @@ export const postMessage = createServerFn({ method: "POST" })
       for (const h of mentionedList) respondents.push({ handle: h, parent: parentFor, fleetThread, shellId: 0 });
     } else if (data.parentId !== null && parent?.agent_handle && agents.some((a) => a.handle === parent.agent_handle)) {
       respondents.push({ handle: parent.agent_handle, parent: data.parentId, fleetThread: String(data.parentId), shellId: 0 });
-    } else if (quoted?.agent_handle && agents.some((a) => a.handle === quoted.agent_handle)) {
-      // Citar el mensaje de un agente (sin re-@mención) = responderle → ese agente contesta
-      // en el MISMO contexto. La cita ya viaja al agente por askAgent (superficie WABA).
+    } else if (quoted?.agent_handle && quoted.sender_sub == null && agents.some((a) => a.handle === quoted.agent_handle)) {
+      // Citar el mensaje ESCRITO POR un agente (sin re-@mención) = responderle → ese agente
+      // contesta en el MISMO contexto. `sender_sub == null` distingue un mensaje AUTORADO por
+      // el agente (postAgent no setea sub) de un mensaje de un HUMANO que sólo TAGUEÓ al agente
+      // (ese lleva agent_handle + sender_sub del humano): citar ese último NO debe disparar al
+      // agente (como Slack/Discord: el bot sólo responde si lo @mencionas en el mensaje NUEVO).
+      // La cita ya viaja al agente por askAgent (superficie WABA).
       const parentFor = data.parentId;
       const fleetThread = data.parentId === null ? "flow" : String(data.parentId);
       respondents.push({ handle: quoted.agent_handle, parent: parentFor, fleetThread, shellId: 0 });
@@ -586,7 +590,7 @@ export const askAgent = createServerFn({ method: "POST" })
       shellId?: number; // caja caliente: cáscara ya creada por postMessage (reutilizar su id)
       quotedAuthor?: string | null; // quote-reply: cita para que el agente SIEMPRE la vea
       quotedExcerpt?: string | null;
-      attachments?: { fileId: string; mime: string; size: number; name: string; thumbFileId?: string | null }[];
+      attachments?: { fileId: string; mime: string; size: number; name: string; thumbFileId?: string | null; width?: number | null; height?: number | null }[];
     }) => d
   )
   .handler(async ({ data }) => {

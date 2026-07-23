@@ -9,8 +9,8 @@ import { updateMyProfileFn, getNotifyPrefsFn, setEmailNotifsFn } from "../server
 import { createInvite, getInvite, refreshInvite, revokeInvite } from "../server/invites";
 import {
   listManagedAgentsFn,
-  listFleetAgentsFn,
   createAgentFn,
+  createManagedAgentFn,
   updateAgentFn,
   deleteAgentFn,
   agentAccessFn,
@@ -18,7 +18,6 @@ import {
   addAgentCollaboratorFn,
   removeAgentCollaboratorFn,
 } from "../server/agents";
-import { listFormmyAgentsFn, ensureFormmyMirrorFn, type FormmyAgent } from "../server/formmy-agents";
 import { listEmojisFn, addEmojiFn, removeEmojiFn } from "../server/emojis";
 import { bumpEmojis } from "../utils/emojis-bus";
 import { bumpUsers } from "../utils/users-bus";
@@ -719,7 +718,7 @@ function NotificationsCard() {
   const [emailBusy, setEmailBusy] = useState(false);
   useEffect(() => {
     currentPushState().then(setState);
-    getNotifyPrefsFn().then((p) => setEmailOn(p.emailNotifs)).catch(() => setEmailOn(true));
+    getNotifyPrefsFn().then((p) => setEmailOn(p.emailNotifs)).catch(() => setEmailOn(false));
   }, []);
 
   async function toggle() {
@@ -1089,52 +1088,30 @@ function AgentsManager({ isOwner, hasAgent }: { isOwner: boolean; hasAgent: bool
   );
 }
 
-function AddAgentForm({ onClose, onCreated, connected }: { onClose: () => void; onCreated: () => void; connected: Set<string> }) {
+function AddAgentForm({ onClose, onCreated }: { onClose: () => void; onCreated: () => void; connected: Set<string> }) {
   const t = useT();
-  const [kind, setKind] = useState<"fleet" | "webhook">("fleet");
+  // "create" = agente nuevo (nace con su propio agente de cómputo, invisible) ·
+  // "webhook" = bot externo · "formmy" = importar (próximamente, deshabilitado).
+  const [tab, setTab] = useState<"create" | "webhook">("create");
   const [name, setName] = useState("");
   const [handle, setHandle] = useState("");
-  const [fleetId, setFleetId] = useState("");
   const [webhookUrl, setWebhookUrl] = useState("");
-  const [fleet, setFleet] = useState<{ id: string; name: string }[] | null>(null);
-  const [formmy, setFormmy] = useState<FormmyAgent[]>([]);
-  const [engine, setEngine] = useState("deepseek"); // motor al crear el espejo (deepseek = edge/rápido)
+  const [engine, setEngine] = useState<"claude">("claude"); // hoy solo Claude
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-
-  useEffect(() => {
-    listFleetAgentsFn().then(setFleet).catch(() => setFleet([]));
-    // Agents de Formmy del owner: al elegir uno se asegura su espejo en la flota
-    // (el "agente de verdad" donde corre la inferencia) antes de crear la fila.
-    listFormmyAgentsFn().then(setFormmy).catch(() => setFormmy([]));
-  }, []);
 
   async function create() {
     if (busy) return;
     setBusy(true);
     setErr(null);
     try {
-      // Si el seleccionado es un Agent de Formmy (`formmy:<id>`), primero aseguramos su
-      // espejo en la flota → obtenemos su fleetId real y con ese creamos la fila.
-      let realFleetId = fleetId;
-      if (kind === "fleet" && fleetId.startsWith("formmy:")) {
-        const r = await ensureFormmyMirrorFn({ data: { agentId: fleetId.slice("formmy:".length), engine } });
-        if (!r.ok) {
-          setErr(r.needsOAuth ? t("Conecta tu EasyBits del lado de Formmy y reintenta.") : t("No se pudo asegurar el agente en la flota."));
-          setBusy(false);
-          return;
-        }
-        realFleetId = r.fleetId;
+      if (tab === "create") {
+        await createManagedAgentFn({ data: { handle: handle.trim(), name: name.trim(), engine } });
+      } else {
+        await createAgentFn({
+          data: { handle: handle.trim(), name: name.trim(), kind: "webhook", webhookUrl: webhookUrl.trim() },
+        });
       }
-      await createAgentFn({
-        data: {
-          handle: handle.trim(),
-          name: name.trim(),
-          kind,
-          fleetId: kind === "fleet" ? realFleetId : undefined,
-          webhookUrl: kind === "webhook" ? webhookUrl.trim() : undefined,
-        },
-      });
       onCreated();
     } catch (e) {
       setErr(e instanceof Error ? e.message : t("error"));
@@ -1152,45 +1129,36 @@ function AddAgentForm({ onClose, onCreated, connected }: { onClose: () => void; 
         </button>
       </div>
       <div className="mb-2 flex gap-1">
-        {(["fleet", "webhook"] as const).map((k) => (
+        {(["create", "webhook"] as const).map((k) => (
           <button
             key={k}
-            onClick={() => setKind(k)}
+            onClick={() => setTab(k)}
             className={`flex-1 rounded-lg px-2 py-1.5 text-xs font-medium ${
-              kind === k ? "bg-brand text-brand-fg" : "bg-surface-2 text-muted hover:text-ink"
+              tab === k ? "bg-brand text-brand-fg" : "bg-surface-2 text-muted hover:text-ink"
             }`}
           >
-            {k === "fleet" ? t("De mi flota") : t("Webhook externo")}
+            {k === "create" ? t("Crear agente") : t("Webhook externo")}
           </button>
         ))}
+        {/* Importar desde Formmy — próximamente (deshabilitado). */}
+        <button
+          disabled
+          title={t("Próximamente")}
+          className="flex-1 cursor-not-allowed rounded-lg bg-surface-2 px-2 py-1.5 text-xs font-medium text-muted opacity-50"
+        >
+          {t("Importar de Formmy")}
+        </button>
       </div>
       <div className="space-y-2">
-        {kind === "fleet" ? (
-          <select value={fleetId} onChange={(e) => setFleetId(e.target.value)} className={input}>
-            <option value="">
-              {fleet === null ? t("Cargando flota…") : fleet.length || formmy.length ? t("Elige un agente…") : t("Sin agentes en tu flota")}
-            </option>
-            {fleet && fleet.length > 0 && (
-              <optgroup label={t("De tu flota EasyBits")}>
-                {fleet.map((f) => {
-                  const already = connected.has(f.id);
-                  return <option key={f.id} value={f.id} disabled={already}>{f.name}{already ? t(" · ya conectado") : ""}</option>;
-                })}
-              </optgroup>
-            )}
-            {formmy.length > 0 && (
-              <optgroup label={t("De tus agentes de Formmy")}>
-                {formmy.map((a) => {
-                  const already = !!a.fleetId && connected.has(a.fleetId);
-                  return (
-                    <option key={`formmy:${a.id}`} value={`formmy:${a.id}`} disabled={already}>
-                      {a.name}{already ? t(" · ya conectado") : a.hasFleetMirror ? "" : t(" · nuevo en flota")}
-                    </option>
-                  );
-                })}
-              </optgroup>
-            )}
-          </select>
+        {tab === "create" ? (
+          <>
+            {/* Motor: hoy solo Claude; el select queda para los que vienen. */}
+            <select value={engine} onChange={(e) => setEngine(e.target.value as "claude")} className={input}>
+              <option value="claude">{t("Claude (capaz)")}</option>
+              <option value="deepseek" disabled>{t("DeepSeek · próximamente")}</option>
+              <option value="codex" disabled>{t("Codex · próximamente")}</option>
+            </select>
+          </>
         ) : (
           <input
             value={webhookUrl}
@@ -1198,15 +1166,6 @@ function AddAgentForm({ onClose, onCreated, connected }: { onClose: () => void; 
             placeholder={t("https://tu-bot.com/webhook")}
             className={input}
           />
-        )}
-        {/* Motor: solo al conectar un agente de Formmy (crea un fleet nuevo). Los pools
-            existentes ya tienen su motor. */}
-        {kind === "fleet" && fleetId.startsWith("formmy:") && (
-          <select value={engine} onChange={(e) => setEngine(e.target.value)} className={input}>
-            <option value="deepseek">{t("DeepSeek (rápido · cache)")}</option>
-            <option value="claude">{t("Claude (capaz)")}</option>
-            <option value="codex">{t("Codex (OpenAI)")}</option>
-          </select>
         )}
         <div className="flex gap-2">
           <div className="flex flex-1 min-w-0 items-center rounded-lg border border-border bg-surface pl-3 text-sm focus-within:border-brand">
@@ -1232,7 +1191,7 @@ function AddAgentForm({ onClose, onCreated, connected }: { onClose: () => void; 
           </button>
           <button
             onClick={create}
-            disabled={busy || !handle.trim() || (kind === "fleet" ? !fleetId : !webhookUrl.trim())}
+            disabled={busy || !handle.trim() || (tab === "webhook" && !webhookUrl.trim())}
             className="rounded-lg bg-brand px-4 py-1.5 text-sm font-semibold text-brand-fg disabled:opacity-50"
           >
             {busy ? t("Agregando…") : t("Agregar")}

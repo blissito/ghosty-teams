@@ -22,10 +22,15 @@ async function verify(ts: string, sig: string): Promise<boolean> {
 }
 
 function namespaces(): string[] {
-  return (process.env.ANNOUNCEMENT_NAMESPACES ?? "")
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean);
+  // Dedupe: un ns repetido en el env duplicaría TODAS sus filas en el agregado.
+  return [
+    ...new Set(
+      (process.env.ANNOUNCEMENT_NAMESPACES ?? "")
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean)
+    ),
+  ];
 }
 
 // Query sqld crudo contra un namespace específico (bypass currentNamespace).
@@ -61,11 +66,15 @@ export const Route = createFileRoute("/api/internal/announcements")({
         const reads: Array<{ announcementId: string; sub: string; name: string | null; email: string | null; ns: string; seenAt: number }> = [];
         for (const ns of namespaces()) {
           try {
+            // GROUP BY (announcement, user): garantiza UNA fila por persona aunque gc_users
+            // tenga filas duplicadas por sub (el LEFT JOIN, si no, multiplicaría cada vista).
             const rows = await sqld(
               ns,
-              `SELECT s.announcement_id AS aid, s.user_sub AS sub, s.seen_at AS seen, u.name AS name, u.email AS email
+              `SELECT s.announcement_id AS aid, s.user_sub AS sub, MAX(s.seen_at) AS seen,
+                      MAX(u.name) AS name, MAX(u.email) AS email
                FROM gt_announcement_seen s LEFT JOIN gc_users u ON u.sub = s.user_sub
-               ORDER BY s.seen_at DESC`
+               GROUP BY s.announcement_id, s.user_sub
+               ORDER BY seen DESC`
             );
             for (const r of rows)
               reads.push({

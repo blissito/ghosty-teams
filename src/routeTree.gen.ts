@@ -23,6 +23,8 @@ import { Route as ApiManifestRouteImport } from './routes/api.manifest'
 import { Route as ApiAgentAssetRouteImport } from './routes/api.agent-asset'
 import { Route as SetupEasybitsConnectRouteImport } from './routes/setup.easybits.connect'
 import { Route as SetupEasybitsCallbackRouteImport } from './routes/setup.easybits.callback'
+import { Route as SetupProviderConnectRouteImport } from './routes/setup.$provider.connect'
+import { Route as SetupProviderCallbackRouteImport } from './routes/setup.$provider.callback'
 import { Route as ApiWebhookEasybitsRouteImport } from './routes/api.webhook.easybits'
 import { Route as ApiInternalAnnouncementsRouteImport } from './routes/api.internal.announcements'
 import { Route as ApiDocXlsxIdRouteImport } from './routes/api.doc-xlsx.$id'
@@ -100,6 +102,16 @@ const SetupEasybitsCallbackRoute = SetupEasybitsCallbackRouteImport.update({
   path: '/easybits/callback',
   getParentRoute: () => SetupRoute,
 } as any)
+const SetupProviderConnectRoute = SetupProviderConnectRouteImport.update({
+  id: '/$provider/connect',
+  path: '/$provider/connect',
+  getParentRoute: () => SetupRoute,
+} as any)
+const SetupProviderCallbackRoute = SetupProviderCallbackRouteImport.update({
+  id: '/$provider/callback',
+  path: '/$provider/callback',
+  getParentRoute: () => SetupRoute,
+} as any)
 const ApiWebhookEasybitsRoute = ApiWebhookEasybitsRouteImport.update({
   id: '/api/webhook/easybits',
   path: '/api/webhook/easybits',
@@ -151,6 +163,8 @@ export interface FileRoutesByFullPath {
   '/api/doc-xlsx/$id': typeof ApiDocXlsxIdRoute
   '/api/internal/announcements': typeof ApiInternalAnnouncementsRoute
   '/api/webhook/easybits': typeof ApiWebhookEasybitsRoute
+  '/setup/$provider/callback': typeof SetupProviderCallbackRoute
+  '/setup/$provider/connect': typeof SetupProviderConnectRoute
   '/setup/easybits/callback': typeof SetupEasybitsCallbackRoute
   '/setup/easybits/connect': typeof SetupEasybitsConnectRoute
 }
@@ -173,6 +187,8 @@ export interface FileRoutesByTo {
   '/api/doc-xlsx/$id': typeof ApiDocXlsxIdRoute
   '/api/internal/announcements': typeof ApiInternalAnnouncementsRoute
   '/api/webhook/easybits': typeof ApiWebhookEasybitsRoute
+  '/setup/$provider/callback': typeof SetupProviderCallbackRoute
+  '/setup/$provider/connect': typeof SetupProviderConnectRoute
   '/setup/easybits/callback': typeof SetupEasybitsCallbackRoute
   '/setup/easybits/connect': typeof SetupEasybitsConnectRoute
 }
@@ -196,6 +212,8 @@ export interface FileRoutesById {
   '/api/doc-xlsx/$id': typeof ApiDocXlsxIdRoute
   '/api/internal/announcements': typeof ApiInternalAnnouncementsRoute
   '/api/webhook/easybits': typeof ApiWebhookEasybitsRoute
+  '/setup/$provider/callback': typeof SetupProviderCallbackRoute
+  '/setup/$provider/connect': typeof SetupProviderConnectRoute
   '/setup/easybits/callback': typeof SetupEasybitsCallbackRoute
   '/setup/easybits/connect': typeof SetupEasybitsConnectRoute
 }
@@ -220,6 +238,8 @@ export interface FileRouteTypes {
     | '/api/doc-xlsx/$id'
     | '/api/internal/announcements'
     | '/api/webhook/easybits'
+    | '/setup/$provider/callback'
+    | '/setup/$provider/connect'
     | '/setup/easybits/callback'
     | '/setup/easybits/connect'
   fileRoutesByTo: FileRoutesByTo
@@ -242,6 +262,8 @@ export interface FileRouteTypes {
     | '/api/doc-xlsx/$id'
     | '/api/internal/announcements'
     | '/api/webhook/easybits'
+    | '/setup/$provider/callback'
+    | '/setup/$provider/connect'
     | '/setup/easybits/callback'
     | '/setup/easybits/connect'
   id:
@@ -264,6 +286,8 @@ export interface FileRouteTypes {
     | '/api/doc-xlsx/$id'
     | '/api/internal/announcements'
     | '/api/webhook/easybits'
+    | '/setup/$provider/callback'
+    | '/setup/$provider/connect'
     | '/setup/easybits/callback'
     | '/setup/easybits/connect'
   fileRoutesById: FileRoutesById
@@ -389,6 +413,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SetupEasybitsCallbackRouteImport
       parentRoute: typeof SetupRoute
     }
+    '/setup/$provider/connect': {
+      id: '/setup/$provider/connect'
+      path: '/$provider/connect'
+      fullPath: '/setup/$provider/connect'
+      preLoaderRoute: typeof SetupProviderConnectRouteImport
+      parentRoute: typeof SetupRoute
+    }
+    '/setup/$provider/callback': {
+      id: '/setup/$provider/callback'
+      path: '/$provider/callback'
+      fullPath: '/setup/$provider/callback'
+      preLoaderRoute: typeof SetupProviderCallbackRouteImport
+      parentRoute: typeof SetupRoute
+    }
     '/api/webhook/easybits': {
       id: '/api/webhook/easybits'
       path: '/api/webhook/easybits'
@@ -435,11 +473,15 @@ declare module '@tanstack/react-router' {
 }
 
 interface SetupRouteChildren {
+  SetupProviderCallbackRoute: typeof SetupProviderCallbackRoute
+  SetupProviderConnectRoute: typeof SetupProviderConnectRoute
   SetupEasybitsCallbackRoute: typeof SetupEasybitsCallbackRoute
   SetupEasybitsConnectRoute: typeof SetupEasybitsConnectRoute
 }
 
 const SetupRouteChildren: SetupRouteChildren = {
+  SetupProviderCallbackRoute: SetupProviderCallbackRoute,
+  SetupProviderConnectRoute: SetupProviderConnectRoute,
   SetupEasybitsCallbackRoute: SetupEasybitsCallbackRoute,
   SetupEasybitsConnectRoute: SetupEasybitsConnectRoute,
 }

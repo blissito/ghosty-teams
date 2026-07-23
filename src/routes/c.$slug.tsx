@@ -1,4 +1,4 @@
-import { Component, createContext, forwardRef, Fragment, lazy, type ReactNode, Suspense, useCallback, useContext, useEffect, useImperativeHandle, useMemo, useReducer, useRef, useState } from "react";
+import { Component, createContext, forwardRef, Fragment, lazy, type ReactNode, Suspense, useCallback, useContext, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useReducer, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useEditor, EditorContent } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
@@ -188,7 +188,7 @@ export const Route = createFileRoute("/c/$slug")({
 });
 
 type SessionUser = { sub: string; name: string; email: string; avatar: string; isOwner: boolean; handle: string };
-type Attach = { fileId: string; mime: string; size: number; name: string; thumbFileId?: string | null };
+type Attach = { fileId: string; mime: string; size: number; name: string; thumbFileId?: string | null; width?: number | null; height?: number | null };
 // El optimista guarda su propio payload de envío → se puede reintentar tal cual.
 type Optimistic = {
   id: string; // == nonce
@@ -759,6 +759,9 @@ function useChatScroll(
   unreadId: number | null,
   resetKey?: unknown
 ) {
+  // Envuelve el contenido del scroller → un ResizeObserver lo vigila y re-ancla al fondo
+  // ante CUALQUIER crecimiento (imágenes lazy, streaming, fuentes) mientras sigamos pegados.
+  const contentRef = useRef<HTMLDivElement | null>(null);
   const didLand = useRef(false);
   const stick = useRef(true);
   // Estado REACTIVO de "¿estoy abajo?" → gatea el botón flotante "ir al final".
@@ -814,27 +817,26 @@ function useChatScroll(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [count, contentLen, extra, unreadId]);
   useEffect(() => {
-    // Media (imágenes) carga DESPUÉS del primer paint y su reflow crece el contenido por
-    // debajo → si el scroll-to-bottom corrió con el scrollHeight subestimado, el canal
-    // abre "arriba" y el botón "ir al final" no aparece (el layout mentía que ya estaba
-    // al fondo). Escuchamos el `load` de CUALQUIER imagen del scroller (captura: `load`
-    // no burbujea) y: si seguíamos pegados al fondo, re-anclamos; si no, recalculamos
-    // atBottom para que el botón salga cuando el crecimiento nos dejó mid-history.
+    // El contenido crece DESPUÉS del primer paint (imágenes que decodifican —incluidas las
+    // `loading=lazy` que aparecen al hacer scroll—, streaming del agente, fuentes) y empuja
+    // por debajo. Un ResizeObserver sobre el wrapper del contenido reacciona a TODO ese
+    // crecimiento (más robusto que escuchar `load` sólo de imágenes): si seguíamos pegados
+    // al fondo re-anclamos; si no, recalculamos atBottom para que salga el botón "ir al final".
     const el = scrollRef.current;
-    if (!el) return;
-    const onImgLoad = (e: Event) => {
-      if (!(e.target instanceof HTMLImageElement)) return;
+    const content = contentRef.current;
+    if (!el || !content) return;
+    const ro = new ResizeObserver(() => {
       if (stick.current) {
         el.scrollTo({ top: el.scrollHeight });
       } else {
         const near = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
         setAtBottom((prev) => (prev === near ? prev : near));
       }
-    };
-    el.addEventListener("load", onImgLoad, true);
-    return () => el.removeEventListener("load", onImgLoad, true);
+    });
+    ro.observe(content);
+    return () => ro.disconnect();
   }, [scrollRef]);
-  return { onScroll, atBottom, scrollToBottom };
+  return { onScroll, atBottom, scrollToBottom, contentRef };
 }
 
 function ChannelPage() {
@@ -4694,9 +4696,12 @@ function QuickCallDock({ conn, label, onClose }: { conn: CallConn; label: string
   const [expanded, setExpanded] = useState(false);
   const [pos, setPos] = useState<{ x: number; y: number } | null>(null); // null = anclado abajo-derecha
   const [size, setSize] = useState<{ w: number; h: number } | null>(null); // null = tamaño default
+  const [hasVideo, setHasVideo] = useState(false); // solo-audio → dock compacto (mínimo)
   const dockRef = useRef<HTMLDivElement>(null);
   const positioned = !!pos && !expanded;
   const sized = !!size && !expanded;
+  // Solo-audio y sin tamaño manual ni expandido → ventana mínima (avatares + controles).
+  const compact = !hasVideo && !expanded && !sized;
 
   // Arrastra el dock por su barra (solo acoplado). Se clampa al viewport.
   const startDrag = (e: React.PointerEvent) => {
@@ -4754,7 +4759,9 @@ function QuickCallDock({ conn, label, onClose }: { conn: CallConn; label: string
       className={
         (expanded
           ? "fixed inset-3 md:inset-6"
-          : "fixed h-[min(80vh,720px)] w-[min(960px,94vw)]" + (positioned || sized ? "" : " bottom-4 right-4")) +
+          : compact
+            ? "fixed h-64 w-[min(340px,92vw)]" + (positioned ? "" : " bottom-4 right-4")
+            : "fixed h-[min(80vh,720px)] w-[min(960px,94vw)]" + (positioned || sized ? "" : " bottom-4 right-4")) +
         " z-50 flex flex-col overflow-hidden rounded-xl border-2 border-ink/20 bg-surface shadow-2xl ring-1 ring-ink/10"
       }
     >
@@ -4775,7 +4782,7 @@ function QuickCallDock({ conn, label, onClose }: { conn: CallConn; label: string
         </button>
       </div>
       <Suspense fallback={<div className="flex flex-1 items-center justify-center text-sm text-muted">{t("Conectando…")}</div>}>
-        <QuickCall conn={conn} onLeft={onClose} />
+        <QuickCall conn={conn} onLeft={onClose} onVideoChange={setHasVideo} />
       </Suspense>
       {!expanded && (
         <div
@@ -4820,7 +4827,7 @@ function Flow({
   const canManage = !!me && (me.isOwner || channel.created_by === me.sub);
   const scrollRef = useRef<HTMLDivElement>(null);
   const unreadId = firstUnreadId(messages, newAt, me?.name);
-  const { onScroll, atBottom, scrollToBottom } = useChatScroll(scrollRef, messages, optimistic.length, unreadId, channel.id);
+  const { onScroll, atBottom, scrollToBottom, contentRef } = useChatScroll(scrollRef, messages, optimistic.length, unreadId, channel.id);
   const composerRef = useRef<ComposerHandle>(null);
   const { dragOver, handlers } = useFileDrop((f) => composerRef.current?.addFiles(f));
   // Scroll a un mensaje (clic en un fijado) con destello, estilo "ir al origen".
@@ -4866,6 +4873,7 @@ function Flow({
       <CallBanner h={call} />
       {pins.length > 0 && <PinnedBar pins={pins} onJump={jumpTo} />}
       <div ref={scrollRef} onScroll={onScroll} className="w-full flex-1 overflow-y-auto px-6 py-4 thin-scroll">
+        <div ref={contentRef}>
         {messages === null ? (
           <ThreadSkeleton />
         ) : messages.length === 0 && optimistic.length === 0 ? (
@@ -4890,6 +4898,7 @@ function Flow({
         {optimistic.map((o) => (
           <OptimisticRow key={o.id} o={o} />
         ))}
+        </div>
       </div>
       <ScrollDownButton show={!atBottom} onClick={scrollToBottom} />
       <TypingLine typing={typing} />
@@ -4948,7 +4957,7 @@ function ThreadView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data]);
   // Sigue las respuestas del hilo + el streaming de la respuesta del agente.
-  const { onScroll, atBottom, scrollToBottom } = useChatScroll(scrollRef, data?.replies ?? null, optimistic.length, null);
+  const { onScroll, atBottom, scrollToBottom, contentRef } = useChatScroll(scrollRef, data?.replies ?? null, optimistic.length, null);
   const composerRef = useRef<ComposerHandle>(null);
   const { dragOver, handlers } = useFileDrop((f) => composerRef.current?.addFiles(f));
 
@@ -4975,6 +4984,7 @@ function ThreadView({
         </div>
       </header>
       <div ref={scrollRef} onScroll={onScroll} className="w-full flex-1 overflow-y-auto px-6 py-4 thin-scroll">
+        <div ref={contentRef}>
         {!data ? (
           <ThreadSkeleton />
         ) : !data.root ? (
@@ -5018,6 +5028,7 @@ function ThreadView({
             ))}
           </>
         )}
+        </div>
       </div>
       <ScrollDownButton show={!atBottom} onClick={scrollToBottom} />
       <TypingLine typing={typing} />
@@ -5080,7 +5091,7 @@ function DmView({
     if (flow) onReloaded(flow);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [flow]);
-  const { onScroll, atBottom, scrollToBottom } = useChatScroll(scrollRef, flow, optimistic.length, unreadId);
+  const { onScroll, atBottom, scrollToBottom, contentRef } = useChatScroll(scrollRef, flow, optimistic.length, unreadId);
   const composerRef = useRef<ComposerHandle>(null);
   const { dragOver, handlers } = useFileDrop((f) => composerRef.current?.addFiles(f));
 
@@ -5123,6 +5134,7 @@ function DmView({
       </header>
       {!isAgentDm && <CallBanner h={call} />}
       <div ref={scrollRef} onScroll={onScroll} className="w-full flex-1 overflow-y-auto px-6 py-4 thin-scroll">
+        <div ref={contentRef}>
         {flow === null ? (
           <ThreadSkeleton />
         ) : flow.length === 0 && optimistic.length === 0 ? (
@@ -5146,6 +5158,7 @@ function DmView({
         {optimistic.map((o) => (
           <OptimisticRow key={o.id} o={o} />
         ))}
+        </div>
       </div>
       <ScrollDownButton show={!atBottom} onClick={scrollToBottom} />
       <TypingLine typing={typing} />
@@ -5218,26 +5231,33 @@ function fmtBytes(n: number | null): string {
 // Render de adjuntos (Fase 4): imágenes inline, resto como tarjeta con descarga.
 // Imagen del chat con skeleton (shimmer) mientras carga + fade-in al listo → mata el
 // pop-in feo. `decoding=async`+`loading=lazy` para no bloquear el hilo.
-function ChatImage({ src, alt }: { src: string; alt: string }) {
+function ChatImage({ src, alt, width, height }: { src: string; alt: string; width?: number | null; height?: number | null }) {
   const [loaded, setLoaded] = useState(false);
+  // Con dims conocidas reservamos el alto EXACTO por aspect-ratio (patrón CLS de Slack/
+  // Discord): el navegador pinta el box correcto ANTES de cargar el byte → 0 layout-shift,
+  // el canal abre al fondo sin que las imágenes empujen. Sin dims (adjuntos viejos / sharp
+  // ausente) caemos al placeholder min-h-40 y el ResizeObserver re-ancla al cargar.
+  const hasDims = !!(width && height);
   return (
     <span
-      className={`relative block overflow-hidden rounded-lg border border-border ${
-        // Reserva un alto mientras carga → el scroller no subestima scrollHeight (canal
-        // abre al fondo + botón "ir al final" correcto); al cargar, el alto real manda.
-        loaded ? "" : "min-h-40 w-60 max-w-full"
+      className={`relative inline-block overflow-hidden rounded-lg border border-border ${
+        // Sin dims: placeholder fijo mientras carga (el ResizeObserver re-ancla al cargar).
+        // Con dims: los atributos width/height del <img> ya reservan el box exacto.
+        hasDims ? "" : loaded ? "" : "min-h-40 w-60 max-w-full"
       }`}
     >
       {!loaded && (
-        <span className="absolute inset-0 animate-pulse bg-surface-3" aria-hidden />
+        <span className="absolute inset-0 z-10 animate-pulse bg-surface-3" aria-hidden />
       )}
       <img
         src={src}
         alt={alt}
+        width={width ?? undefined}
+        height={height ?? undefined}
         loading="lazy"
         decoding="async"
         onLoad={() => setLoaded(true)}
-        className={`max-h-80 w-auto max-w-full object-contain transition-opacity duration-300 ${
+        className={`block h-auto max-h-80 w-auto max-w-full object-contain transition-opacity duration-300 ${
           loaded ? "opacity-100" : "opacity-0"
         }`}
       />
@@ -5266,7 +5286,7 @@ function AttachmentList({ attachments }: { attachments: Attachment[] }) {
               className="block cursor-pointer"
               title={t("Abrir en panel")}
             >
-              <ChatImage src={inlineSrc} alt={a.name ?? ""} />
+              <ChatImage src={inlineSrc} alt={a.name ?? ""} width={a.width} height={a.height} />
             </button>
           );
         }
@@ -6087,7 +6107,11 @@ function ReactButton({ m }: { m: Message }) {
   useEffect(() => {
     if (!open) return;
     const onDown = (e: MouseEvent) => {
-      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setPickerFor(null);
+      const target = e.target as HTMLElement;
+      // El panel vive en un portal (fuera de wrapRef) → excluirlo por su marca para no
+      // cerrar al hacer click DENTRO del picker (si no, el pick nunca registraba).
+      if (target.closest?.("[data-emoji-picker]")) return;
+      if (wrapRef.current && !wrapRef.current.contains(target)) setPickerFor(null);
     };
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && setPickerFor(null);
     document.addEventListener("mousedown", onDown);
@@ -6097,9 +6121,11 @@ function ReactButton({ m }: { m: Message }) {
       document.removeEventListener("keydown", onKey);
     };
   }, [open, setPickerFor]);
+  const btnRef = useRef<HTMLButtonElement>(null);
   return (
     <div ref={wrapRef} className="relative">
       <button
+        ref={btnRef}
         onClick={() => setPickerFor(open ? null : m.id)}
         title={t("Reaccionar")}
         className={`rounded p-1 transition ${open ? "text-brand" : "text-muted hover:text-ink"}`}
@@ -6108,6 +6134,7 @@ function ReactButton({ m }: { m: Message }) {
       </button>
       {open && (
         <EmojiPicker
+          anchorRef={btnRef}
           onPick={(e) => {
             setPickerFor(null);
             react(m, e);
@@ -6421,9 +6448,39 @@ function PinnedBar({ pins, onJump }: { pins: Message[]; onJump: (id: number) => 
   );
 }
 
-function EmojiPicker({ onPick }: { onPick: (e: string) => void }) {
+function EmojiPicker({ onPick, anchorRef }: { onPick: (e: string) => void; anchorRef?: React.RefObject<HTMLElement | null> }) {
   const t = useT();
   const { emojis, openPrefs } = useContext(ChatCtx);
+  // Con anchor → portal a body en posición `fixed`, calculada desde el rect del trigger,
+  // con flip arriba/abajo según el espacio → NUNCA lo recorta el scroller `overflow-y-auto`
+  // (que sí clippeaba el panel `absolute` en mensajes intermedios). Sin anchor → absolute
+  // (uso legacy en el editor de perfil, dentro de un contenedor sin overflow).
+  const portaled = !!anchorRef;
+  const [pos, setPos] = useState<{ left: number; top?: number; bottom?: number } | null>(null);
+  useLayoutEffect(() => {
+    if (!anchorRef?.current) return;
+    const W = 256; // w-64
+    const compute = () => {
+      const r = anchorRef.current?.getBoundingClientRect();
+      if (!r) return;
+      const gap = 6;
+      const left = Math.min(Math.max(8, r.right - W), window.innerWidth - W - 8);
+      const spaceBelow = window.innerHeight - r.bottom;
+      // ~360px de alto máximo del panel → si no cabe abajo, ancla por arriba del trigger.
+      if (spaceBelow < 360 && r.top > spaceBelow) {
+        setPos({ left, bottom: window.innerHeight - r.top + gap });
+      } else {
+        setPos({ left, top: r.bottom + gap });
+      }
+    };
+    compute();
+    window.addEventListener("resize", compute);
+    window.addEventListener("scroll", compute, true);
+    return () => {
+      window.removeEventListener("resize", compute);
+      window.removeEventListener("scroll", compute, true);
+    };
+  }, [anchorRef]);
   const [q, setQ] = useState("");
   const [cat, setCat] = useState<string>("recents");
   const query = q.trim().toLowerCase();
@@ -6469,8 +6526,18 @@ function EmojiPicker({ onPick }: { onPick: (e: string) => void }) {
     </button>
   );
 
-  return (
-    <div className="absolute right-0 top-full z-20 mt-1 w-64 overflow-hidden rounded-xl border border-border bg-surface shadow-xl">
+  // Portal → oculto hasta tener posición (evita un flash en 0,0 en el 1er paint).
+  if (portaled && !pos) return null;
+  const panel = (
+    <div
+      data-emoji-picker
+      className={
+        portaled
+          ? "fixed z-[70] w-64 overflow-hidden rounded-xl border border-border bg-surface shadow-xl"
+          : "absolute right-0 top-full z-20 mt-1 w-64 overflow-hidden rounded-xl border border-border bg-surface shadow-xl"
+      }
+      style={portaled && pos ? { left: pos.left, top: pos.top, bottom: pos.bottom } : undefined}
+    >
       {/* Buscador (el cierre por click-afuera lo maneja ReactButton). */}
       <div className="p-1.5">
         <input
@@ -6520,6 +6587,7 @@ function EmojiPicker({ onPick }: { onPick: (e: string) => void }) {
       </button>
     </div>
   );
+  return portaled ? createPortal(panel, document.body) : panel;
 }
 
 function ReactionBar({ m }: { m: Message }) {
@@ -6764,6 +6832,8 @@ const Composer = forwardRef<ComposerHandle, {
     size: number;
     fileId?: string;
     thumbFileId?: string | null; // derivado WebP (del /api/upload de imágenes)
+    width?: number | null; // dims intrínsecas → reserva de alto exacta al renderizar
+    height?: number | null;
     uploading: boolean;
     error?: boolean;
     previewUrl?: string; // objectURL de la imagen → miniatura INSTANTÁNEA (antes de subir)
@@ -6788,10 +6858,10 @@ const Composer = forwardRef<ComposerHandle, {
       fetch("/api/upload", { method: "POST", body: fd })
         .then(async (r) => {
           if (!r.ok) throw new Error(await r.text());
-          return r.json() as Promise<{ fileId: string; mime: string; size: number; name: string; thumbFileId?: string | null }>;
+          return r.json() as Promise<{ fileId: string; mime: string; size: number; name: string; thumbFileId?: string | null; width?: number | null; height?: number | null }>;
         })
         .then((up) =>
-          setPending((p) => p.map((x) => (x.localId === localId ? { ...x, uploading: false, fileId: up.fileId, thumbFileId: up.thumbFileId ?? null } : x)))
+          setPending((p) => p.map((x) => (x.localId === localId ? { ...x, uploading: false, fileId: up.fileId, thumbFileId: up.thumbFileId ?? null, width: up.width ?? null, height: up.height ?? null } : x)))
         )
         .catch(() =>
           setPending((p) => p.map((x) => (x.localId === localId ? { ...x, uploading: false, error: true } : x)))
@@ -6922,7 +6992,7 @@ const Composer = forwardRef<ComposerHandle, {
     // Adjuntos ya subidos (con fileId). Bloquea envío mientras alguno sube.
     const attachments = pending
       .filter((p) => p.fileId && !p.error)
-      .map((p) => ({ fileId: p.fileId!, mime: p.mime, size: p.size, name: p.name, thumbFileId: p.thumbFileId ?? null }));
+      .map((p) => ({ fileId: p.fileId!, mime: p.mime, size: p.size, name: p.name, thumbFileId: p.thumbFileId ?? null, width: p.width ?? null, height: p.height ?? null }));
     const body = editor ? ((editor.storage as any).markdown.getMarkdown() as string).trim() : "";
     if ((!body && attachments.length === 0) || uploading) return;
     setPending((p) => { p.forEach((x) => x.previewUrl && URL.revokeObjectURL(x.previewUrl)); return []; });

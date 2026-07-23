@@ -89,7 +89,7 @@ function Tile({ p, source, local }: { p: Participant; source: Track.Source; loca
   );
 }
 
-export function QuickCall({ conn, onLeft }: { conn: CallConn; onLeft: (alone?: boolean) => void }) {
+export function QuickCall({ conn, onLeft, onVideoChange }: { conn: CallConn; onLeft: (alone?: boolean) => void; onVideoChange?: (hasVideo: boolean) => void }) {
   const t = useT();
   const [room] = useState(() => new Room({ adaptiveStream: true, dynacast: true }));
   const [status, setStatus] = useState<"connecting" | "live" | "error">("connecting");
@@ -153,6 +153,18 @@ export function QuickCall({ conn, onLeft }: { conn: CallConn; onLeft: (alone?: b
   }
   const cams = participants; // una cámara-tile por participante
   const cols = Math.min(3, Math.max(1, Math.ceil(Math.sqrt(cams.length))));
+
+  // ¿Hay algún video vivo (cámara o pantalla)? → el dock encoge a tamaño mínimo cuando
+  // la llamada es solo-audio (nadie con cámara/pantalla), como Slack/Discord.
+  const camOnAnyone = participants.some((p) => {
+    const cp = p.getTrackPublication(Track.Source.Camera);
+    return !!(cp && cp.track && !cp.isMuted && (p === lp || cp.isSubscribed));
+  });
+  const hasVideo = !!sharer || camOnAnyone;
+  useEffect(() => {
+    onVideoChange?.(hasVideo);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasVideo]);
 
   const ctrl = "grid h-10 w-10 place-items-center rounded-full border border-border text-ink transition hover:bg-surface-3";
   const ctrlOff = "grid h-10 w-10 place-items-center rounded-full bg-red-600 text-white transition hover:bg-red-700";

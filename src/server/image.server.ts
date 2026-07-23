@@ -1,6 +1,8 @@
 export type UploadedImage = {
   fileId: string; mime: string; size: number; name: string;
   thumbFileId: string | null; // derivado WebP inline (null = sin thumbnail)
+  width?: number | null;  // dimensiones intrínsecas → reserva de alto exacta en el render
+  height?: number | null;
 };
 
 // ── Pipeline de imagen (thumbnail WebP) sobre NUESTRO storage (Tigris) ───────
@@ -30,9 +32,10 @@ export async function processAndStoreImage(opts: {
   const orig = await storage.put({ blob: opts.blob, contentType: opts.contentType, fileName: opts.fileName, visibility: "private" });
   const base: UploadedImage = { fileId: orig.key, mime: orig.mime, size: orig.size, name: orig.name, thumbFileId: null };
 
-  // ¿Vale la pena un thumbnail? Solo raster razonablemente grande. GIF/SVG → sin thumb.
+  // Raster → leemos dimensiones (para reserva de alto en el render) y, si vale la pena,
+  // generamos el thumbnail. GIF/SVG → ni dims ni thumb. Sharp ausente → graceful (sin dims).
   const isRaster = /^image\/(jpeg|png|webp|heic|heif|avif|tiff)$/i.test(opts.contentType);
-  if (!isRaster || opts.blob.size < THUMB_MIN_BYTES) return base;
+  if (!isRaster) return base;
 
   try {
     const sharpMod = await import("sharp").catch(() => null);
@@ -40,6 +43,12 @@ export async function processAndStoreImage(opts: {
     if (!sharp) return base; // sharp no está en el box → sin thumbnail (graceful)
     const buf = Buffer.from(await opts.blob.arrayBuffer());
     const meta = await sharp(buf).metadata();
+    // Dims tras EXIF-rotate: si la orientación gira 90°/270°, ancho↔alto se intercambian.
+    const rotated = meta.orientation != null && meta.orientation >= 5;
+    base.width = (rotated ? meta.height : meta.width) ?? null;
+    base.height = (rotated ? meta.width : meta.height) ?? null;
+    // ¿Vale la pena un thumbnail? Solo si es razonablemente grande.
+    if (opts.blob.size < THUMB_MIN_BYTES) return base;
     const big = Math.max(meta.width ?? 0, meta.height ?? 0);
     if (big && big <= THUMB_MAX_EDGE && /webp/i.test(opts.contentType)) return base; // ya es webp chico
     const thumb = await sharp(buf)
