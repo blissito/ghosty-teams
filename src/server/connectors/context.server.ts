@@ -8,13 +8,7 @@
 // aquí — son TOOLS/SKILLS que el runtime nativo descubre y el agente invoca on-demand (así
 // no se inyectan miles de conectores en cada mensaje). Ese surface es el siguiente paso.
 
-type AmbientModule = { ambientContext?: (sub: string, sender: string) => Promise<string | null> };
-
-// Carga PEREZOSA por id → solo se importa el módulo de un conector si el usuario lo conectó
-// (no arrastramos miles de integraciones en cada request). Una línea por integración.
-const IMPL_LOADERS: Record<string, () => Promise<AmbientModule>> = {
-  calendly: () => import("./calendly.server"),
-};
+import { loaderFor } from "./impl";
 
 /** Contexto ambiente de TODOS los conectores conectados del usuario, listo para el prompt. */
 export async function buildConnectorContext(sub: string, sender: string): Promise<string> {
@@ -24,7 +18,7 @@ export async function buildConnectorContext(sub: string, sender: string): Promis
     if (!connected.size) return "";
     const parts = await Promise.all(
       [...connected].map(async (id) => {
-        const load = IMPL_LOADERS[id];
+        const load = loaderFor(id);
         if (!load) return null;
         try {
           const mod = await load();

@@ -44,3 +44,18 @@ export function partnerHeaders(rawBody: string): Record<string, string> {
     "x-ghosty-sig": sig,
   };
 }
+
+/**
+ * Verifica una firma de partner ENTRANTE (runtime nativo → Teams, p.ej. dispatch de tools).
+ * Mismo canonical que `partnerHeaders` (`${ts}.${rawBody}`), ventana ±300s anti-replay.
+ */
+export function verifyPartner(rawBody: string, ts: string | null, sig: string | null): boolean {
+  const secret = process.env.GHOSTY_PARTNER_SECRET;
+  if (!secret || !ts || !sig) return false;
+  const tsNum = Number(ts);
+  if (!Number.isFinite(tsNum) || Math.abs(Math.floor(Date.now() / 1000) - tsNum) > 300) return false;
+  const expected = crypto.createHmac("sha256", secret).update(`${ts}.${rawBody}`).digest("hex");
+  const a = Buffer.from(sig);
+  const b = Buffer.from(expected);
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}

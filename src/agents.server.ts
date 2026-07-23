@@ -411,6 +411,28 @@ export async function callAgentBackendStream(
   }
 }
 
+// Reset de la sesión del agente para un groupId (comando /clear): el runtime rota su
+// sessionUuid → el próximo turno arranca sin memoria. Solo aplica al runtime NATIVO
+// (Studio expone POST /session/reset con HMAC); en EasyBits no hay reset por sesión →
+// no-op silencioso. Best-effort: devuelve true si el runtime confirmó.
+export async function resetAgentSession(agent: ResolvedAgent, groupId: string): Promise<boolean> {
+  if (agent.backend.kind !== "fleet") return false;
+  const { nativeRuntimeBase, partnerHeaders } = await import("./server/ghosty-runtime.server");
+  const base = await nativeRuntimeBase();
+  if (!base) return false; // EasyBits: sin reset por sesión
+  const body = JSON.stringify({ groupId });
+  try {
+    const res = await fetch(`${base}/api/v2/fleet-agents/${(agent.backend as { id: string }).id}/session/reset`, {
+      method: "POST",
+      headers: partnerHeaders(body),
+      body,
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
 // Orquestador común (room + DM) del turno de un agente con streaming first-class.
 // La CÁSCARA del reply se crea PEREZOSAMENTE al primer token (via createShell) → el
 // "pensando…" se mantiene durante la latencia del agente y recién ahí se reemplaza.

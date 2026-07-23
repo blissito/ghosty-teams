@@ -68,7 +68,7 @@ import { createFileRoute, notFound, Link, useRouter } from "@tanstack/react-rout
 import type { Channel, Message, DmConversation, RoomHit, ViewHit, Attachment, Artifact, CustomEmoji } from "../db.server";
 import { listEmojisFn } from "../server/emojis";
 import { recentViewFn, mentionsViewFn, starredViewFn } from "../server/views";
-import { openDmFn, listDmsFn, getDmFlowFn, postDmMessageFn, askDmAgentFn } from "../server/dm";
+import { openDmFn, listDmsFn, getDmFlowFn, postDmMessageFn, askDmAgentFn, clearDmAgentFn } from "../server/dm";
 import { forwardTargetsFn, forwardMessageFn } from "../server/forward";
 import { startCallFn, joinCallFn, leaveCallFn, getActiveCallFn } from "../server/quick-calls";
 import type { CallConn } from "../components/QuickCall";
@@ -5294,7 +5294,18 @@ function DmView({
         slug=""
         parentId={null}
         dmId={dmId}
-        onSend={(p) => { onSend(p); scrollToBottom(); }}
+        onSend={(p) => {
+          // Comando /clear en DM con agente: borra la memoria de la conversación.
+          // Acción destructiva → ADVERTENCIA antes de invocar (no se postea el "/clear").
+          if (isAgentDm && p.body?.trim() === "/clear") {
+            if (confirm(t("Esto borra la memoria de esta conversación. {name} empezará de cero. ¿Continuar?", { name: title })))
+              clearDmAgentFn({ data: { id: dmId } }).catch(() => {});
+            scrollToBottom();
+            return;
+          }
+          onSend(p);
+          scrollToBottom();
+        }}
         placeholder={t("Mensaje a {name}…", { name: title })}
       />
     </section>

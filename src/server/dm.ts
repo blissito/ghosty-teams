@@ -155,6 +155,43 @@ export const postDmMessageFn = createServerFn({ method: "POST" })
     };
   });
 
+// Comando /clear en un DM con agente: rota la sesión del agente (arranca sin memoria)
+// y deja una burbuja de confirmación del agente. Idempotente/best-effort. El cliente
+// muestra la ADVERTENCIA antes de invocar esto (acción destructiva: borra el contexto).
+export const clearDmAgentFn = createServerFn({ method: "POST" })
+  .validator((d: { id: number }) => d)
+  .handler(async ({ data }) => {
+    const db = await import("../db.server");
+    const bus = await import("./bus.server");
+    const { currentNamespace } = await import("./tenant.server");
+    const { resolvedAgents, resetAgentSession } = await import("../agents.server");
+    const me = await sessionUser();
+    if (!me || !(await db.isDmMember(data.id, me.sub))) throw new Error("no autorizado");
+    const ns = await currentNamespace();
+    const handle = await db.getDmAgentHandle(data.id);
+    const agent = handle ? (await resolvedAgents()).find((a) => a.handle === handle) : null;
+    if (!agent) return { ok: false as const };
+
+    const groupId = `ghosty-chat-${agent.handle}-dm-${data.id}`; // == askDmAgentFn
+    await resetAgentSession(agent, groupId);
+
+    // Burbuja del agente confirmando el reset (queda en el historial del DM).
+    const { id } = await db.postDmAgent(
+      data.id,
+      "🧹 Listo, borré la memoria de esta conversación. Empezamos de cero.",
+      "msg",
+      agent.handle,
+      agent.name ?? "Ghosty",
+      agent.avatar ?? ""
+    );
+    const msg = await db.getMessage(id);
+    if (msg) {
+      const members = await db.getDmMembers(data.id);
+      for (const sub of members) bus.publish(bus.ch.user(ns, sub), { t: "message:new", msg });
+    }
+    return { ok: true as const };
+  });
+
 // El agente responde dentro del DM, con streaming first-class (igual que en rooms:
 // cáscara perezosa al primer token → deltas → body final). Media de entrada = los
 // adjuntos del usuario como FileParts. Contrato: docs/AGENT-MEDIA-CONTRACT.md.

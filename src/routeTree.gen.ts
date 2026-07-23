@@ -33,6 +33,7 @@ import { Route as ApiInternalAnnouncementsRouteImport } from './routes/api.inter
 import { Route as ApiDocXlsxIdRouteImport } from './routes/api.doc-xlsx.$id'
 import { Route as ApiDocDocxIdRouteImport } from './routes/api.doc-docx.$id'
 import { Route as ApiDevDriveRouteImport } from './routes/api.dev.drive'
+import { Route as ApiConnectorsToolsRouteImport } from './routes/api.connectors.tools'
 import { Route as ApiAttachmentIdRouteImport } from './routes/api.attachment.$id'
 
 const SetupRoute = SetupRouteImport.update({
@@ -156,6 +157,11 @@ const ApiDevDriveRoute = ApiDevDriveRouteImport.update({
   path: '/api/dev/drive',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiConnectorsToolsRoute = ApiConnectorsToolsRouteImport.update({
+  id: '/api/connectors/tools',
+  path: '/api/connectors/tools',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiAttachmentIdRoute = ApiAttachmentIdRouteImport.update({
   id: '/api/attachment/$id',
   path: '/api/attachment/$id',
@@ -178,6 +184,7 @@ export interface FileRoutesByFullPath {
   '/t3/$': typeof T3SplatRoute
   '/setup/': typeof SetupIndexRoute
   '/api/attachment/$id': typeof ApiAttachmentIdRoute
+  '/api/connectors/tools': typeof ApiConnectorsToolsRoute
   '/api/dev/drive': typeof ApiDevDriveRoute
   '/api/doc-docx/$id': typeof ApiDocDocxIdRoute
   '/api/doc-xlsx/$id': typeof ApiDocXlsxIdRoute
@@ -204,6 +211,7 @@ export interface FileRoutesByTo {
   '/t3/$': typeof T3SplatRoute
   '/setup': typeof SetupIndexRoute
   '/api/attachment/$id': typeof ApiAttachmentIdRoute
+  '/api/connectors/tools': typeof ApiConnectorsToolsRoute
   '/api/dev/drive': typeof ApiDevDriveRoute
   '/api/doc-docx/$id': typeof ApiDocDocxIdRoute
   '/api/doc-xlsx/$id': typeof ApiDocXlsxIdRoute
@@ -232,6 +240,7 @@ export interface FileRoutesById {
   '/t3/$': typeof T3SplatRoute
   '/setup/': typeof SetupIndexRoute
   '/api/attachment/$id': typeof ApiAttachmentIdRoute
+  '/api/connectors/tools': typeof ApiConnectorsToolsRoute
   '/api/dev/drive': typeof ApiDevDriveRoute
   '/api/doc-docx/$id': typeof ApiDocDocxIdRoute
   '/api/doc-xlsx/$id': typeof ApiDocXlsxIdRoute
@@ -261,6 +270,7 @@ export interface FileRouteTypes {
     | '/t3/$'
     | '/setup/'
     | '/api/attachment/$id'
+    | '/api/connectors/tools'
     | '/api/dev/drive'
     | '/api/doc-docx/$id'
     | '/api/doc-xlsx/$id'
@@ -287,6 +297,7 @@ export interface FileRouteTypes {
     | '/t3/$'
     | '/setup'
     | '/api/attachment/$id'
+    | '/api/connectors/tools'
     | '/api/dev/drive'
     | '/api/doc-docx/$id'
     | '/api/doc-xlsx/$id'
@@ -314,6 +325,7 @@ export interface FileRouteTypes {
     | '/t3/$'
     | '/setup/'
     | '/api/attachment/$id'
+    | '/api/connectors/tools'
     | '/api/dev/drive'
     | '/api/doc-docx/$id'
     | '/api/doc-xlsx/$id'
@@ -341,6 +353,7 @@ export interface RootRouteChildren {
   JoinTokenRoute: typeof JoinTokenRoute
   T3SplatRoute: typeof T3SplatRoute
   ApiAttachmentIdRoute: typeof ApiAttachmentIdRoute
+  ApiConnectorsToolsRoute: typeof ApiConnectorsToolsRoute
   ApiDevDriveRoute: typeof ApiDevDriveRoute
   ApiDocDocxIdRoute: typeof ApiDocDocxIdRoute
   ApiDocXlsxIdRoute: typeof ApiDocXlsxIdRoute
@@ -519,6 +532,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiDevDriveRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/connectors/tools': {
+      id: '/api/connectors/tools'
+      path: '/api/connectors/tools'
+      fullPath: '/api/connectors/tools'
+      preLoaderRoute: typeof ApiConnectorsToolsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/attachment/$id': {
       id: '/api/attachment/$id'
       path: '/api/attachment/$id'
@@ -562,6 +582,7 @@ const rootRouteChildren: RootRouteChildren = {
   JoinTokenRoute: JoinTokenRoute,
   T3SplatRoute: T3SplatRoute,
   ApiAttachmentIdRoute: ApiAttachmentIdRoute,
+  ApiConnectorsToolsRoute: ApiConnectorsToolsRoute,
   ApiDevDriveRoute: ApiDevDriveRoute,
   ApiDocDocxIdRoute: ApiDocDocxIdRoute,
   ApiDocXlsxIdRoute: ApiDocXlsxIdRoute,

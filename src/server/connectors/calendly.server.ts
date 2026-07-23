@@ -4,6 +4,7 @@
 // `listEventTypes`/`createSchedulingLink` llaman a la API (para la tool MCP, Fase B-full).
 import { getValidToken } from "./oauth.server";
 import { getConnectorRow } from "./store.server";
+import type { ConnectorTool } from "./impl";
 
 const API = "https://api.calendly.com";
 
@@ -157,3 +158,68 @@ export async function getSchedulingDigest(sub: string, senderLabel: string): Pro
   digestCache.set(sub, { text, exp: Date.now() + DIGEST_TTL_MS });
   return text;
 }
+
+// ── Tools (contrato uniforme → el agente las invoca on-demand vía runtime) ────────
+// Names prefijados por conector (global-únicos). Requieren los scopes correspondientes
+// en el token; si faltan, la API responde 403 y el handler devuelve el error (el user
+// debe reconectar con más scopes). El `sub` resuelve el token internamente.
+const EMPTY_SCHEMA = { type: "object", properties: {}, additionalProperties: false } as const;
+
+export const tools: ConnectorTool[] = [
+  {
+    name: "calendly_scheduling_link",
+    description: "Devuelve el link de agendamiento (scheduling_url) del usuario en Calendly.",
+    inputSchema: EMPTY_SCHEMA,
+    handler: async (sub) => {
+      const ctx = await getSchedulingContext(sub);
+      if (!ctx) return { error: "el usuario no tiene Calendly conectado" };
+      return { schedulingUrl: ctx.schedulingUrl, name: ctx.name, timezone: ctx.timezone };
+    },
+  },
+  {
+    name: "calendly_event_types",
+    description: "Lista los tipos de reunión activos del usuario (nombre, duración, link, uri).",
+    inputSchema: EMPTY_SCHEMA,
+    handler: async (sub) => ({ eventTypes: await listEventTypes(sub) }),
+  },
+  {
+    name: "calendly_availability",
+    description: "Horario de disponibilidad recurrente del usuario (reglas por día de la semana).",
+    inputSchema: EMPTY_SCHEMA,
+    handler: async (sub) => {
+      const [token, row, ctx] = await Promise.all([
+        getValidToken(sub, "calendly"), getConnectorRow(sub, "calendly"), getSchedulingContext(sub),
+      ]);
+      if (!token || !row?.external_id) return { error: "sin conexión o sin permiso availability:read" };
+      return { availability: await fetchAvailability(token, row.external_id, ctx?.timezone ?? null) };
+    },
+  },
+  {
+    name: "calendly_upcoming_events",
+    description: "Próximas citas agendadas del usuario (máx 5, orden cronológico).",
+    inputSchema: EMPTY_SCHEMA,
+    handler: async (sub) => {
+      const [token, row, ctx] = await Promise.all([
+        getValidToken(sub, "calendly"), getConnectorRow(sub, "calendly"), getSchedulingContext(sub),
+      ]);
+      if (!token || !row?.external_id) return { error: "sin conexión o sin permiso scheduled_events:read" };
+      return { upcoming: await fetchUpcoming(token, row.external_id, ctx?.timezone ?? null) };
+    },
+  },
+  {
+    name: "calendly_create_scheduling_link",
+    description: "Crea un link de agendamiento de UN SOLO USO para un tipo de evento (por su uri, de calendly_event_types). Requiere permiso de escritura.",
+    inputSchema: {
+      type: "object",
+      properties: { eventTypeUri: { type: "string", description: "uri del event type" } },
+      required: ["eventTypeUri"],
+      additionalProperties: false,
+    },
+    handler: async (sub, args) => {
+      const uri = typeof args.eventTypeUri === "string" ? args.eventTypeUri : "";
+      if (!uri) return { error: "falta eventTypeUri" };
+      const bookingUrl = await createSchedulingLink(sub, uri);
+      return bookingUrl ? { bookingUrl } : { error: "no se pudo crear el link (¿falta scheduling_links:write?)" };
+    },
+  },
+];
