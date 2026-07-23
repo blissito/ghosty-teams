@@ -12,10 +12,8 @@ self.addEventListener("activate", (event) => {
   event.waitUntil(self.clients.claim());
 });
 
-self.addEventListener("fetch", () => {
-  // Handler intencionalmente vacío: sin `respondWith`, el navegador resuelve
-  // cada request normal. Solo existe para contar como "tiene fetch handler".
-});
+// (Sin handler `fetch`: Chrome moderno ya NO lo exige para instalabilidad y un
+// no-op agrega overhead en cada navegación — Chrome lo marca como warning.)
 
 // Push: notificación cuando te taggean.
 self.addEventListener("push", (event) => {
@@ -31,8 +29,14 @@ self.addEventListener("push", (event) => {
     icon: "/ghosty-192.png",
     badge: "/ghosty-192.png",
     data: { url: data.url || "/" },
-    tag: data.url || "ghosty-teams",
+    // Tag ÚNICO por notificación (a menos que el server mande uno explícito): con
+    // un tag compartido (antes = data.url), notifs seguidas se REEMPLAZAN
+    // silenciosamente entre sí en vez de mostrarse cada una → parecía "no llegan".
+    tag: data.tag || "gt-" + Date.now() + "-" + Math.round(Math.random() * 1e6),
     renotify: true,
+    // Persiste hasta que el usuario la cierre (más confiable de ver en desktop,
+    // donde el banner se auto-oculta rápido y con throttling puede perderse).
+    requireInteraction: true,
   };
   event.waitUntil(self.registration.showNotification(title, options));
 });
