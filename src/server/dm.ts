@@ -209,20 +209,14 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
     let lastAgentIdx = -1;
     recent.forEach((m, i) => { if (m.agent_handle && (m.body ?? "").trim()) lastAgentIdx = i; });
     const history = historyContext(recent.slice(lastAgentIdx + 1), data.body);
-    // Conector Calendly per-user (Fase B, DM 1:1): el DM tiene UN solo humano (`me`), así
-    // que su identidad es inequívoca sin propagación de runtime. Si conectó su Calendly,
-    // inyectamos su link de agendamiento como CONTEXTO del turno (en el texto, no en el
-    // system prompt: es variable por-turno, patrón quote/artifactDocHint) → @ghosty puede
-    // compartirlo/agendar con la cuenta del que pregunta. Best-effort, nunca rompe el turno.
+    // Conectores per-user (DM 1:1): el DM tiene UN solo humano (`me`), identidad inequívoca.
+    // GENÉRICO y escalable — dm.ts NO sabe de Calendly ni de ningún conector: el builder
+    // itera los conectados del usuario y concatena su `ambientContext` (contrato uniforme).
+    // Va en el TEXTO del turno (variable por-turno, patrón quote/artifactDocHint), best-effort.
     let calHint = "";
     try {
-      const { getSchedulingContext } = await import("./connectors/calendly.server");
-      const cal = await getSchedulingContext(me.sub);
-      if (cal) {
-        calHint =
-          `[Contexto — Calendly de ${data.sender || "el usuario"}: su link de agendamiento es ${cal.schedulingUrl}` +
-          `${cal.timezone ? ` (zona horaria ${cal.timezone})` : ""}. Si pide agendar una llamada/reunión o su disponibilidad, comparte ESTE link.]\n\n`;
-      }
+      const { buildConnectorContext } = await import("./connectors/context.server");
+      calHint = await buildConnectorContext(me.sub, data.sender || "el usuario");
     } catch {}
     const text = history + calHint + quoted;
 

@@ -39,9 +39,11 @@ export const CONNECTORS: ConnectorDef[] = [
       authUrl: "https://auth.calendly.com/oauth/authorize",
       tokenUrl: "https://auth.calendly.com/oauth/token",
       pkce: false, // Calendly = Authorization Code confidencial estándar (client_secret_post)
-      // La app nueva de Calendly exige scopes; users:read cubre users/me (scheduling_url →
-      // link que @ghosty inyecta en el DM). La app tiene registrados todos los *:read; aquí
-      // pedimos sólo lo que usamos (menos fricción al aprobar). Ampliar en Fase B si hace falta.
+      // Least-privilege por lo que HOY se consume: users:read → users/me (scheduling_url)
+      // para el ambientContext del DM. Las capacidades ricas (availability/scheduled_events/
+      // event_types read + scheduling_links:write) ya tienen su impl en calendly.server.ts,
+      // pero se PIDEN cuando se cablee la tool/skill que las usa (evita consent de write sin
+      // uso). La app de Calendly ya tiene todos registrados → subir aquí + reconectar y listo.
       scopes: "users:read",
       clientIdEnv: "CALENDLY_CLIENT_ID",
       clientSecretEnv: "CALENDLY_CLIENT_SECRET",
