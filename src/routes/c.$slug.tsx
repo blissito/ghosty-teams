@@ -598,7 +598,13 @@ function applyReaction(
   if (ev.count <= 0) return { ...m, reactions: cur.filter((r) => r.emoji !== ev.emoji) };
   const existing = cur.find((r) => r.emoji === ev.emoji);
   const mine = ev.userSub === mySub ? ev.op === "add" : existing?.mine ?? false;
-  const updated = { emoji: ev.emoji, count: ev.count, mine };
+  // Mantiene el set de reactores (para el tooltip "quién reaccionó").
+  const prevSubs = existing?.subs ?? [];
+  const subs =
+    ev.op === "add"
+      ? prevSubs.includes(ev.userSub) ? prevSubs : [...prevSubs, ev.userSub]
+      : prevSubs.filter((s) => s !== ev.userSub);
+  const updated = { emoji: ev.emoji, count: ev.count, mine, subs };
   // Emoji YA presente → actualiza EN SU LUGAR (no reordena). Antes se filtraba y se
   // re-append al final → los chips se "intercambiaban" al reaccionar. Nuevo → al final.
   return existing
@@ -6883,14 +6889,23 @@ function EmojiPicker({ onPick, anchorRef }: { onPick: (e: string) => void; ancho
 
 function ReactionBar({ m }: { m: Message }) {
   const t = useT();
-  const { react } = useContext(ChatCtx);
+  const { react, users, me } = useContext(ChatCtx);
+  // Tooltip de hover = quién reaccionó (nombres del directorio vivo; yo primero). Cae a
+  // "Toggle reacción" si aún no hay subs (mensaje viejo sin recargar / evento en vuelo).
+  const reactorsTitle = (r: NonNullable<Message["reactions"]>[number]) => {
+    const subs = r.subs ?? [];
+    const names = subs
+      .map((s) => (s === me?.sub ? me?.name : users.get(s)?.name))
+      .filter((n): n is string => !!n);
+    return names.length ? names.join(", ") : t("Toggle reacción");
+  };
   return (
     <div className="mt-1 flex flex-wrap items-center gap-1">
       {(m.reactions ?? []).map((r) => (
         <button
           key={r.emoji}
           onClick={() => react(m, r.emoji)}
-          title={t("Toggle reacción")}
+          title={reactorsTitle(r)}
           className={`flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-xs transition ${
             r.mine
               ? "border-brand bg-brand/15 text-brand"

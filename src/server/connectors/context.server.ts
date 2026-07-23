@@ -11,7 +11,7 @@
 import { loaderFor } from "./impl";
 
 /** Contexto ambiente de TODOS los conectores conectados del usuario, listo para el prompt. */
-export async function buildConnectorContext(sub: string, sender: string): Promise<string> {
+export async function buildConnectorContext(sub: string, sender: string, message: string): Promise<string> {
   try {
     const { listConnectorProviders } = await import("./store.server");
     const connected = await listConnectorProviders(sub);
@@ -22,7 +22,7 @@ export async function buildConnectorContext(sub: string, sender: string): Promis
         if (!load) return null;
         try {
           const mod = await load();
-          return (await mod.ambientContext?.(sub, sender)) ?? null;
+          return (await mod.ambientContext?.(sub, sender, message)) ?? null;
         } catch {
           return null; // un conector roto nunca tumba el turno ni a los demás
         }

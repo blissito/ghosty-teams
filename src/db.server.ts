@@ -38,7 +38,7 @@ function slugify(name: string): string {
       .slice(0, 40) || "room"
   );
 }
-export type ReactionAgg = { emoji: string; count: number; mine: boolean };
+export type ReactionAgg = { emoji: string; count: number; mine: boolean; subs: string[] };
 export type Message = {
   id: number;
   channel_id: number;
@@ -166,21 +166,22 @@ export async function attachReactions(msgs: Message[], userSub: string): Promise
     `SELECT message_id, emoji, user_sub FROM gc_reactions WHERE message_id IN (${ph})`,
     ids
   );
-  const byMsg = new Map<number, Map<string, { count: number; mine: boolean }>>();
+  const byMsg = new Map<number, Map<string, { count: number; mine: boolean; subs: string[] }>>();
   for (const r of rows) {
     const mid = num(r.message_id);
     const emoji = r.emoji!;
     if (!byMsg.has(mid)) byMsg.set(mid, new Map());
     const em = byMsg.get(mid)!;
-    const cur = em.get(emoji) ?? { count: 0, mine: false };
+    const cur = em.get(emoji) ?? { count: 0, mine: false, subs: [] };
     cur.count++;
     if (r.user_sub === userSub) cur.mine = true;
+    if (r.user_sub) cur.subs.push(r.user_sub); // quién reaccionó → tooltip de hover
     em.set(emoji, cur);
   }
   return msgs.map((m) => {
     const em = byMsg.get(m.id);
     if (!em) return m;
-    return { ...m, reactions: [...em.entries()].map(([emoji, v]) => ({ emoji, count: v.count, mine: v.mine })) };
+    return { ...m, reactions: [...em.entries()].map(([emoji, v]) => ({ emoji, count: v.count, mine: v.mine, subs: v.subs })) };
   });
 }
 

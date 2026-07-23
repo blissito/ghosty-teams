@@ -39,12 +39,11 @@ export const CONNECTORS: ConnectorDef[] = [
       authUrl: "https://auth.calendly.com/oauth/authorize",
       tokenUrl: "https://auth.calendly.com/oauth/token",
       pkce: false, // Calendly = Authorization Code confidencial estándar (client_secret_post)
-      // Least-privilege por lo que HOY se consume: users:read → users/me (scheduling_url)
-      // para el ambientContext del DM. Las capacidades ricas (availability/scheduled_events/
-      // event_types read + scheduling_links:write) ya tienen su impl en calendly.server.ts,
-      // pero se PIDEN cuando se cablee la tool/skill que las usa (evita consent de write sin
-      // uso). La app de Calendly ya tiene todos registrados → subir aquí + reconectar y listo.
-      scopes: "users:read",
+      // Read set: users/me (scheduling_url) + disponibilidad real + próximas citas + tipos de
+      // evento → el ambientContext del DM enriquece con esto en intención de agenda (read-aware,
+      // 100% lado Teams, sin rebake del worker). El write (scheduling_links:write) se agrega
+      // cuando se cablee el tool-loop en la imagen del agente. Cambiar esto exige RECONECTAR.
+      scopes: "users:read availability:read scheduled_events:read event_types:read",
       clientIdEnv: "CALENDLY_CLIENT_ID",
       clientSecretEnv: "CALENDLY_CLIENT_SECRET",
       userInfoUrl: "https://api.calendly.com/users/me",

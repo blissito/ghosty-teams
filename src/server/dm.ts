@@ -253,7 +253,7 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
     let calHint = "";
     try {
       const { buildConnectorContext } = await import("./connectors/context.server");
-      calHint = await buildConnectorContext(me.sub, data.sender || "el usuario");
+      calHint = await buildConnectorContext(me.sub, data.sender || "el usuario", data.body || "");
     } catch {}
     const text = history + calHint + quoted;
 

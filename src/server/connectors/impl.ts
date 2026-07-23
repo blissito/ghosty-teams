@@ -18,7 +18,9 @@ export type ConnectorTool = {
 };
 
 export type ConnectorModule = {
-  ambientContext?: (sub: string, sender: string) => Promise<string | null>;
+  // `message` = texto del turno del usuario → el conector decide si enriquece (p.ej. Calendly
+  // sólo pega a la API en intención de agenda). La lógica per-conector vive AQUÍ, no en dm.ts.
+  ambientContext?: (sub: string, sender: string, message: string) => Promise<string | null>;
   tools?: ConnectorTool[];
 };
 
