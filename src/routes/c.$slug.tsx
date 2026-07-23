@@ -6766,10 +6766,12 @@ function EditBox({ m, onDone }: { m: Message; onDone: () => void }) {
         className="w-full resize-none rounded-lg border border-border bg-surface px-2 py-1 text-sm text-ink outline-none focus:border-brand"
       />
       <div className="mt-1 flex gap-2 text-xs">
+        {/* Neutro (bg-ink = negro en claro / blanco en oscuro), NO brand: el color de marca
+            se reserva para el botón de ENVIAR principal del composer. */}
         <button
           onClick={save}
           disabled={!val.trim()}
-          className="rounded bg-brand px-2 py-0.5 font-semibold text-brand-fg disabled:opacity-50"
+          className="rounded bg-ink px-2 py-0.5 font-semibold text-surface transition hover:opacity-90 disabled:opacity-50"
         >
           {t("Guardar")}
         </button>

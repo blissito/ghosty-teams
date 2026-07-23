@@ -61,7 +61,9 @@ function mintToken(cfg: CallConfig, room: string, identity: string, name: string
   return `${header}.${payload}.${b64url(sig)}`;
 }
 
-async function participantCount(cfg: CallConfig, room: string): Promise<number> {
+// Roster VIVO del SFU (nombres de display; livekit-svc /participants devuelve `name`).
+// null = SFU inalcanzable (distinto de [] = vacío confirmado).
+async function participantNames(cfg: CallConfig, room: string): Promise<string[] | null> {
   try {
     const ac = new AbortController();
     const to = setTimeout(() => ac.abort(), 4000);
@@ -69,12 +71,17 @@ async function participantCount(cfg: CallConfig, room: string): Promise<number> 
       headers: cfg.adminToken ? { authorization: `Bearer ${cfg.adminToken}` } : undefined,
       signal: ac.signal,
     }).finally(() => clearTimeout(to));
-    if (!res.ok) return -1;
+    if (!res.ok) return null;
     const j = (await res.json()) as { participants?: unknown[] };
-    return Array.isArray(j.participants) ? j.participants.filter(Boolean).length : 0;
+    return Array.isArray(j.participants) ? j.participants.filter((x): x is string => typeof x === "string") : [];
   } catch {
-    return -1;
+    return null;
   }
+}
+
+async function participantCount(cfg: CallConfig, room: string): Promise<number> {
+  const names = await participantNames(cfg, room);
+  return names === null ? -1 : names.length;
 }
 
 type Person = { sub: string; name: string; avatar: string };
@@ -281,12 +288,27 @@ export const leaveCallFn = createServerFn({ method: "POST" })
     const k = keyOf(t.ns, t.scope, t.scopeId);
     const c = active.get(k);
     if (!c) return { ok: true as const, ended: false };
-    // El cliente sabe en vivo si quedó SOLO → cierre inmediato y confiable.
+    // Termina SOLO si el SFU confirma que no queda NADIE más que yo. NO confiamos en el
+    // hint `alone` del cliente a secas: un REFRESH dispara alone=true aunque el otro siga
+    // dentro → antes eso mataba la call, y al volver se recreaba SIN los que seguían (card
+    // "1 persona" sin ti). Verdad = roster del SFU, quitando UNA instancia de mi propio
+    // nombre (el disconnect del que sale tarda en reflejarse).
+    const names = await participantNames(t.cfg, t.room);
+    if (names !== null) {
+      const rest = [...names];
+      const mine = rest.indexOf(t.me.name);
+      if (mine >= 0) rest.splice(mine, 1);
+      if (rest.length === 0) {
+        await endCall(t.db, t.fanout, c, k);
+        return { ok: true as const, ended: true };
+      }
+      return { ok: true as const, ended: false }; // queda alguien → la call sigue viva
+    }
+    // SFU inalcanzable → fallback previo: confía en el hint + reintentos de conteo.
     if (data.alone) {
       await endCall(t.db, t.fanout, c, k);
       return { ok: true as const, ended: true };
     }
-    // Fallback: confirma vacío con reintentos (el disconnect tarda en reflejarse).
     for (let i = 0; i < 5; i++) {
       const n = await participantCount(t.cfg, t.room);
       if (n === 0) {
