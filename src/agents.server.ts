@@ -217,6 +217,20 @@ const EB_DOC_STREAM_GUARDRAIL = [
   "EXCEPCIONES (→ usa las skills/tools normales, NO un bloque eb-doc): (a) documentos con membrete de marca fijo; (b) presentaciones (pptx); (c) cuando el usuario pide EXPLÍCITAMENTE un PDF, o un documento 'con diseño'/'vistoso'/'maquetado'/'bonito' → NO lo entregues como eb-doc (eso baja como .docx sin diseño): usa las tools/skills de PDF avanzadas (docs-router / structured_doc / el generador de PDF con diseño de EasyBits) para producir el PDF real y entregar su enlace. La regla 'toda prosa → eb-doc' aplica al documento de prosa por DEFECTO; una petición explícita de PDF/diseño la manda a esas tools. Toda tabla/datos → eb-sheet.",
 ].join(" ");
 
+// Conocimiento del PRODUCTO Ghosty Teams: para que el agente pueda GUIAR a los usuarios
+// sobre cómo se usa la app (cómo escribirle en DM, @mencionarlo, canales/hilos, llamadas,
+// artefactos) en vez de quedar perdido cuando preguntan "¿cómo te escribo directo?" (le
+// pasó 2026-07-23). Estable → va en appendSystemPrompt (persistencia-safe). Describe SOLO
+// lo que existe de verdad; ante duda, la vía de la @mención (que siempre funciona).
+const TEAMS_PRODUCT_CONTEXT = [
+  "SOBRE DÓNDE VIVES — eres un agente de IA dentro de **Ghosty Teams**, una app de chat de equipo (estilo Slack) con canales, hilos, mensajes directos, llamadas y artefactos. Conoces el producto y puedes ORIENTAR a los usuarios sobre cómo usarlo.",
+  "CÓMO TE ESCRIBEN: (1) **@mención** — te escriben `@" + "handle` (p.ej. @ghosty) en cualquier mensaje de un canal o respuesta de hilo, y respondes AHÍ MISMO; esto SIEMPRE funciona. (2) **Mensaje directo (DM 1:1)** — abren un chat privado contigo: haciendo clic en tu nombre/avatar para abrir tu perfil y tocando **“Mensaje directo”**, o desde el botón **“Nuevo mensaje directo” (+)** en la barra lateral eligiendo tu @handle.",
+  "Si alguien dice que NO puede escribirte directo o no te encuentra: dile con calma que puede @mencionarte en CUALQUIER canal (funciona siempre) y que para un DM abra tu perfil (clic en tu nombre) → “Mensaje directo”. No lo mandes a menús que no conoces; ofrece la vía de la @mención como la segura.",
+  "ESTRUCTURA: los **canales** (públicos o privados) agrupan conversaciones; los **hilos** ramifican de un mensaje para no ensuciar el canal; se puede **citar** (responder a) un mensaje puntual. Las **llamadas** (audio/video/pantalla) se inician con el botón de llamada de un canal o DM y avisan a los demás con una tarjeta y notificación entrante.",
+  "ARTEFACTOS: puedes producir documentos vivos (prosa con eb-doc), hojas de cálculo (eb-sheet) y apps HTML interactivas (eb-artifact) que se renderizan en un panel lateral y se pueden descargar/compartir; e imágenes reales con tu tool de imagen. Cuando te pidan algo así, prodúcelo — no digas que no puedes.",
+  "No inventes funciones ni pantallas que no existen. Si no estás seguro de un detalle de la interfaz, describe la vía de la @mención (universal) y ofrece ayudar con lo que intentaban lograr.",
+].join(" ");
+
 // Si el hilo YA tiene un artefacto, al MODIFICAR el agente re-emite el artefacto COMPLETO
 // (misma experiencia de streaming que al crear). Para que pueda hacerlo con fidelidad —
 // aunque el worker haya reciclado su sesión — le inyectamos el contenido ACTUAL (la verdad
@@ -304,6 +318,7 @@ export async function callAgentBackendStream(
       // (ghosty-gc). Nunca en el texto del usuario → nunca se lee como inyección.
       appendSystemPrompt: [
         persona ? `[Persona de ${agent.name}]\n${persona}` : null,
+        TEAMS_PRODUCT_CONTEXT,
         EB_DOC_STREAM_GUARDRAIL,
       ]
         .filter(Boolean)
@@ -584,6 +599,7 @@ export async function callAgentBackend(
       parts,
       appendSystemPrompt: [
         persona ? `[Persona de ${agent.name}]\n${persona}` : null,
+        TEAMS_PRODUCT_CONTEXT,
         EB_DOC_STREAM_GUARDRAIL,
       ]
         .filter(Boolean)

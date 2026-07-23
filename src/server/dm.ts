@@ -200,8 +200,13 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
     const quoted = quoteCite?.trim()
       ? quotedContextPrefix(data.quotedAuthor ?? "", quoteCite, data.body)
       : data.body;
-    // Historial reciente del DM → contexto para "otra vez"/"esto" aunque el worker esté frío.
-    const history = historyContext(await db.recentContext({ dmId: data.id }, 12).catch(() => []), data.body);
+    // Historial: SEED-ONCE. El claude-worker mantiene el transcript por sesión (resume) y
+    // auto-compacta (Agent SDK), así que re-mandar el historial CADA turno es redundante y
+    // caro. Solo lo sembramos cuando la sesión está FRESCA (el agente aún no ha respondido en
+    // este DM); si ya respondió, confiamos en su memoria. La cita completa SÍ va por-turno.
+    const recent = await db.recentContext({ dmId: data.id }, 12).catch(() => []);
+    const priorAgentTurn = recent.some((m) => m.agent_handle && (m.body ?? "").trim());
+    const history = priorAgentTurn ? "" : historyContext(recent, data.body);
     // Conector Calendly per-user (Fase B, DM 1:1): el DM tiene UN solo humano (`me`), así
     // que su identidad es inequívoca sin propagación de runtime. Si conectó su Calendly,
     // inyectamos su link de agendamiento como CONTEXTO del turno (en el texto, no en el

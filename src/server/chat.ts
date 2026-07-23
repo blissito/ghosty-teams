@@ -636,13 +636,18 @@ export const askAgent = createServerFn({ method: "POST" })
     if (quoteCite?.trim()) {
       text = quotedContextPrefix(data.quotedAuthor ?? "", quoteCite, text);
     }
-    // Historial reciente del scope (flow del canal o hilo) → contexto para "otra vez"/"esto"
-    // aunque la memoria del worker esté fría o un turno haya fallado.
-    const histScope = data.parentId != null
-      ? { channelId: channel.id, parentId: data.parentId }
-      : { channelId: channel.id };
-    const history = historyContext(await db.recentContext(histScope, 12).catch(() => []), data.body);
-    if (history) text = history + text;
+    // Historial: SEED-ONCE (solo sesión fresca). El claude-worker resume + auto-compacta →
+    // re-mandar cada turno es redundante. Los HILOS ya siembran su raíz arriba (mismo criterio
+    // priorAgentTurn); aquí sembramos el FLOW top-level solo si el agente aún no respondió en
+    // el canal. La cita completa SÍ va por-turno.
+    if (data.parentId == null) {
+      const recent = await db.recentContext({ channelId: channel.id }, 12).catch(() => []);
+      const priorAgentTurn = recent.some((m) => m.agent_handle && (m.body ?? "").trim());
+      if (!priorAgentTurn) {
+        const history = historyContext(recent, data.body);
+        if (history) text = history + text;
+      }
+    }
 
     // Media de entrada: los adjuntos del usuario → FileParts (uri firmada / bytes).
     const parts = await buildMediaParts(data.attachments ?? []);
