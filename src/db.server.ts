@@ -1282,6 +1282,114 @@ export async function markRead(userSub: string, scope: "room" | "dm", scopeId: n
   );
 }
 
+// ── Novedades / anuncios ("What's New") ─────────────────────────────────────
+// Cards en markdown que el admin publica; al entrar se muestra la última no vista.
+// `last_seen_id` es per-usuario (calca gc_reads → cross-device, server-side).
+export type Announcement = {
+  id: number;
+  title: string;
+  body: string;
+  hero_image?: string | null;
+  published: number;
+  created_by?: string | null;
+  created_at: number;
+  updated_at: number;
+};
+function toAnnouncement(r: Row): Announcement {
+  return {
+    id: num(r.id),
+    title: r.title!,
+    body: r.body!,
+    hero_image: (r.hero_image as string | null) ?? null,
+    published: num(r.published),
+    created_by: (r.created_by as string | null) ?? null,
+    created_at: num(r.created_at),
+    updated_at: num(r.updated_at),
+  };
+}
+
+// El último anuncio PUBLICADO (para la card de inicio). null si no hay ninguno.
+export async function latestPublishedAnnouncement(): Promise<Announcement | null> {
+  const rows = await dbq(
+    "SELECT * FROM gt_announcements WHERE published = 1 ORDER BY id DESC LIMIT 1"
+  );
+  return rows.length ? toAnnouncement(rows[0]) : null;
+}
+
+// Todos los anuncios (admin: incluye borradores), más nuevos primero.
+export async function listAnnouncements(): Promise<Announcement[]> {
+  const rows = await dbq("SELECT * FROM gt_announcements ORDER BY id DESC");
+  return rows.map(toAnnouncement);
+}
+
+export async function getAnnouncement(id: number): Promise<Announcement | null> {
+  const rows = await dbq("SELECT * FROM gt_announcements WHERE id = ?", [id]);
+  return rows.length ? toAnnouncement(rows[0]) : null;
+}
+
+export async function createAnnouncement(input: {
+  title: string;
+  body: string;
+  heroImage?: string | null;
+  createdBy: string;
+  published?: boolean;
+}): Promise<Announcement> {
+  const rows = await dbq(
+    `INSERT INTO gt_announcements (title, body, hero_image, published, created_by)
+     VALUES (?, ?, ?, ?, ?) RETURNING *`,
+    [input.title, input.body, input.heroImage ?? null, input.published ? 1 : 0, input.createdBy]
+  );
+  return toAnnouncement(rows[0]);
+}
+
+export async function updateAnnouncement(
+  id: number,
+  input: { title: string; body: string; heroImage?: string | null }
+): Promise<Announcement | null> {
+  const rows = await dbq(
+    `UPDATE gt_announcements SET title = ?, body = ?, hero_image = ?, updated_at = unixepoch()
+     WHERE id = ? RETURNING *`,
+    [input.title, input.body, input.heroImage ?? null, id]
+  );
+  return rows.length ? toAnnouncement(rows[0]) : null;
+}
+
+export async function setAnnouncementPublished(
+  id: number,
+  published: boolean
+): Promise<Announcement | null> {
+  const rows = await dbq(
+    `UPDATE gt_announcements SET published = ?, updated_at = unixepoch()
+     WHERE id = ? RETURNING *`,
+    [published ? 1 : 0, id]
+  );
+  return rows.length ? toAnnouncement(rows[0]) : null;
+}
+
+export async function deleteAnnouncement(id: number): Promise<void> {
+  await dbq("DELETE FROM gt_announcements WHERE id = ?", [id]);
+}
+
+// id del último anuncio que el usuario ya vio (0 = ninguno).
+export async function getAnnouncementLastSeen(userSub: string): Promise<number> {
+  const rows = await dbq(
+    "SELECT last_seen_id FROM gt_announcement_reads WHERE user_sub = ?",
+    [userSub]
+  );
+  return rows.length ? num(rows[0].last_seen_id) : 0;
+}
+
+// Marca visto hasta `id` (idempotente; nunca retrocede — calca markRead).
+export async function markAnnouncementSeen(userSub: string, id: number): Promise<void> {
+  await dbq(
+    `INSERT INTO gt_announcement_reads (user_sub, last_seen_id)
+     VALUES (?, ?)
+     ON CONFLICT(user_sub)
+       DO UPDATE SET last_seen_id = MAX(last_seen_id, excluded.last_seen_id)`,
+    [userSub, String(id)]
+  );
+}
+
 // ── Emojis custom del workspace (Fase 4) ────────────────────────────────────
 // Imágenes en EasyBits (guardamos file_id); se reaccionan como `:name:` y se
 // renderizan vía /api/attachment/:file_id. Nombre normalizado (a-z0-9_).

@@ -1,5 +1,15 @@
 // Auto-generated ES→EN dictionary for dictionaries.en — 421 keys
 export const en: Record<string, string> = {
+  // Huddles → en inglés se llaman "quick calls"
+  "Huddle": "Quick call",
+  "Iniciar huddle": "Start quick call",
+  "Unirse": "Join",
+  "Unirse al huddle": "Join the quick call",
+  "En huddle": "In call",
+  "Estás en el huddle": "You're in the quick call",
+  "{name} inició un huddle": "{name} started a quick call",
+  "Salir del huddle": "Leave quick call",
+  "Salir": "Leave",
   "Idioma": "Language",
   "Cambiar foto": "Change photo",
   "Tu nombre": "Your name",

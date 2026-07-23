@@ -1,6 +1,6 @@
 import { Link } from "@tanstack/react-router"; // Link: CTA "conecta EasyBits" / setup
 import { useEffect, useRef, useState } from "react";
-import { Bot, Plus, Trash2, X, Bell, Smile, Loader2, Pencil, Mail } from "lucide-react";
+import { Bot, Plus, Trash2, X, Bell, Smile, Loader2, Pencil, Mail, Megaphone } from "lucide-react";
 import { FleetCapabilities } from "./FleetCapabilities";
 import { currentPushState, enablePush, disablePush } from "../utils/push-subscribe";
 import { me, cachedMe, peekMe, logout, clearMeCache } from "../server/auth";
@@ -20,6 +20,15 @@ import {
 } from "../server/agents";
 import { listFormmyAgentsFn, ensureFormmyMirrorFn, type FormmyAgent } from "../server/formmy-agents";
 import { listEmojisFn, addEmojiFn, removeEmojiFn } from "../server/emojis";
+import {
+  listAnnouncementsFn,
+  createAnnouncementFn,
+  updateAnnouncementFn,
+  publishAnnouncementFn,
+  deleteAnnouncementFn,
+} from "../server/announcements";
+import { Markdown } from "./Markdown";
+import type { Announcement } from "../db.server";
 import { bumpEmojis } from "../utils/emojis-bus";
 import { bumpUsers } from "../utils/users-bus";
 import type { CustomEmoji } from "../db.server";
@@ -86,7 +95,7 @@ function seedSettingsData(): SettingsData | null {
  * @param initial datos precargados por el loader de la ruta (evita flash en SSR).
  * @param onClose si viene → modo modal (header con X). Si no → modo ruta (link "volver").
  */
-type TabId = "general" | "notifications" | "appearance" | "integraciones" | "agentes" | "emojis";
+type TabId = "general" | "notifications" | "appearance" | "integraciones" | "agentes" | "emojis" | "novedades";
 
 export function SettingsContent({
   initialTab,
@@ -156,6 +165,8 @@ export function SettingsContent({
     // Emojis: visible para TODOS los members (Slack default — cualquiera agrega; borrar
     // queda restringido al owner o al creador, gateado en EmojiManager).
     { id: "emojis" as const, label: t("Emojis"), icon: Smile },
+    // Novedades: redacción/publicación de anuncios "What's New". Solo owner (autoría).
+    ...(isOwner ? [{ id: "novedades" as const, label: t("Novedades"), icon: Megaphone }] : []),
   ];
   const [tab, setTab] = useState<TabId>(initialTab ?? "general");
   // Recuerda la última pestaña abierta (localStorage). Si viene `initialTab` explícita
@@ -317,6 +328,8 @@ export function SettingsContent({
           )}
 
           {tab === "emojis" && <EmojiManager isOwner={isOwner} mySub={user?.sub ?? null} />}
+
+          {tab === "novedades" && isOwner && <AnnouncementsManager />}
         </div>
       </div>
     </div>
@@ -933,6 +946,213 @@ function EmojiManager({ isOwner, mySub }: { isOwner: boolean; mySub: string | nu
                   <X size={13} />
                 </button>
               )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ── Novedades: redacción/publicación de anuncios "What's New" (owner) ────── */
+// Cache de módulo → reabrir la pestaña pinta al instante y revalida en background.
+let announcementsCache: Announcement[] | null = null;
+
+function AnnouncementsManager() {
+  const t = useT();
+  const [items, setItems] = useState<Announcement[]>(() => announcementsCache ?? []);
+  const [loading, setLoading] = useState(announcementsCache === null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  // Editor: null = cerrado; {id:null} = nuevo; {id} = editando existente.
+  const [editing, setEditing] = useState<{
+    id: number | null;
+    title: string;
+    body: string;
+    heroImage: string;
+  } | null>(null);
+  const [preview, setPreview] = useState(false);
+
+  const save = (xs: Announcement[]) => {
+    announcementsCache = xs;
+    setItems(xs);
+  };
+
+  useEffect(() => {
+    listAnnouncementsFn()
+      .then((xs) => save(xs))
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, []);
+
+  function openNew() {
+    setErr(null);
+    setPreview(false);
+    setEditing({ id: null, title: "", body: "", heroImage: "" });
+  }
+  function openEdit(a: Announcement) {
+    setErr(null);
+    setPreview(false);
+    setEditing({ id: a.id, title: a.title, body: a.body, heroImage: a.hero_image ?? "" });
+  }
+
+  async function submit() {
+    if (!editing) return;
+    setErr(null);
+    setBusy(true);
+    try {
+      if (editing.id == null) {
+        const created = await createAnnouncementFn({
+          data: { title: editing.title, body: editing.body, heroImage: editing.heroImage },
+        });
+        save([created, ...items]);
+      } else {
+        const updated = await updateAnnouncementFn({
+          data: { id: editing.id, title: editing.title, body: editing.body, heroImage: editing.heroImage },
+        });
+        save(items.map((x) => (x.id === updated.id ? updated : x)));
+      }
+      setEditing(null);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : t("error"));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function togglePublish(a: Announcement) {
+    const next = a.published ? 0 : 1;
+    save(items.map((x) => (x.id === a.id ? { ...x, published: next } : x))); // optimista
+    try {
+      await publishAnnouncementFn({ data: { id: a.id, published: !a.published } });
+    } catch {
+      save(items.map((x) => (x.id === a.id ? { ...x, published: a.published } : x))); // revierte
+    }
+  }
+
+  async function remove(a: Announcement) {
+    if (!window.confirm(t("¿Eliminar este anuncio?"))) return;
+    save(items.filter((x) => x.id !== a.id));
+    await deleteAnnouncementFn({ data: { id: a.id } }).catch(() => {});
+  }
+
+  return (
+    <div className="mb-4 rounded-xl border border-border bg-surface-2 p-4">
+      <div className="mb-1 flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <Megaphone size={16} className="text-brand" />
+          <h2 className="text-sm font-semibold">{t("Novedades")}</h2>
+        </div>
+        {!editing && (
+          <button
+            onClick={openNew}
+            className="flex items-center gap-1.5 rounded-lg bg-brand px-3 py-1.5 text-sm font-semibold text-brand-fg"
+          >
+            <Plus size={15} /> {t("Nuevo anuncio")}
+          </button>
+        )}
+      </div>
+      <p className="mb-3 text-sm text-muted">
+        {t("Publica un anuncio y los usuarios verán una card al entrar. Acepta markdown.")}
+      </p>
+
+      {editing ? (
+        <div className="rounded-lg border border-border bg-surface p-3">
+          <input
+            value={editing.title}
+            onChange={(e) => setEditing({ ...editing, title: e.target.value })}
+            placeholder={t("Título (por beneficio, ej. “Hablen en vivo sin salir del chat”)")}
+            className="mb-2 w-full rounded-lg border border-border bg-surface-2 px-3 py-2 text-sm outline-none focus:border-brand"
+          />
+          <input
+            value={editing.heroImage}
+            onChange={(e) => setEditing({ ...editing, heroImage: e.target.value })}
+            placeholder={t("URL de la ilustración hero (opcional, ej. /novedades/quick-calls-hero.png)")}
+            className="mb-2 w-full rounded-lg border border-border bg-surface-2 px-3 py-2 text-sm outline-none focus:border-brand"
+          />
+          {editing.heroImage.trim() && !preview && (
+            <img
+              src={editing.heroImage.trim()}
+              alt=""
+              className="mb-2 max-h-40 w-full rounded-lg border border-border object-cover"
+            />
+          )}
+          {preview ? (
+            <div className="mb-2 min-h-[8rem] rounded-lg border border-border bg-surface-2 px-3 py-2">
+              <Markdown body={editing.body || t("_(sin contenido)_")} />
+            </div>
+          ) : (
+            <textarea
+              value={editing.body}
+              onChange={(e) => setEditing({ ...editing, body: e.target.value })}
+              placeholder={t("Cuerpo del anuncio (markdown)…")}
+              rows={8}
+              className="mb-2 w-full resize-y rounded-lg border border-border bg-surface-2 px-3 py-2 font-mono text-sm outline-none focus:border-brand"
+            />
+          )}
+          {err && <p className="mb-2 text-sm text-red-400">{err}</p>}
+          <div className="flex items-center gap-2">
+            <button
+              onClick={submit}
+              disabled={busy}
+              className="flex items-center gap-1.5 rounded-lg bg-brand px-3 py-1.5 text-sm font-semibold text-brand-fg disabled:opacity-50"
+            >
+              {busy ? <Loader2 size={15} className="animate-spin" /> : <Check size={15} />}
+              {t("Guardar")}
+            </button>
+            <button
+              onClick={() => setPreview((p) => !p)}
+              className="rounded-lg border border-border px-3 py-1.5 text-sm text-muted hover:text-ink"
+            >
+              {preview ? t("Editar") : t("Vista previa")}
+            </button>
+            <button
+              onClick={() => setEditing(null)}
+              className="rounded-lg px-3 py-1.5 text-sm text-muted hover:text-ink"
+            >
+              {t("Cancelar")}
+            </button>
+          </div>
+        </div>
+      ) : loading ? (
+        <div className="flex items-center gap-2 py-2 text-sm text-muted">
+          <Loader2 size={15} className="animate-spin" /> {t("Cargando…")}
+        </div>
+      ) : items.length === 0 ? (
+        <p className="py-1 text-sm text-muted">{t("Aún no hay anuncios.")}</p>
+      ) : (
+        <div className="flex flex-col gap-2">
+          {items.map((a) => (
+            <div
+              key={a.id}
+              className="flex items-center justify-between gap-3 rounded-lg border border-border bg-surface px-3 py-2"
+            >
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <span className="truncate text-sm font-medium">{a.title}</span>
+                  <span
+                    className={`shrink-0 rounded px-1.5 py-0.5 text-[11px] ${
+                      a.published ? "bg-brand/15 text-brand" : "bg-surface-3 text-muted"
+                    }`}
+                  >
+                    {a.published ? t("Publicado") : t("Borrador")}
+                  </span>
+                </div>
+              </div>
+              <div className="flex shrink-0 items-center gap-1">
+                <button
+                  onClick={() => togglePublish(a)}
+                  className="rounded-lg border border-border px-2 py-1 text-xs text-muted hover:text-ink"
+                >
+                  {a.published ? t("Despublicar") : t("Publicar")}
+                </button>
+                <button onClick={() => openEdit(a)} title={t("Editar")} className="p-1 text-muted hover:text-ink">
+                  <Pencil size={15} />
+                </button>
+                <button onClick={() => remove(a)} title={t("Eliminar")} className="p-1 text-muted hover:text-red-400">
+                  <Trash2 size={15} />
+                </button>
+              </div>
             </div>
           ))}
         </div>

@@ -235,6 +235,29 @@ async function migrate(): Promise<void> {
   )`);
   await exec(`CREATE INDEX IF NOT EXISTS gc_expediente_forms_chan ON gc_expediente_forms(channel_id)`);
 
+  // Novedades ("What's New" estilo Discord/Revolt): anuncios en markdown que el admin
+  // redacta/publica; al entrar, si hay uno nuevo (id > last_seen del usuario) se muestra
+  // una card. `published`=0 son borradores. El estado "visto" es per-usuario y server-side
+  // (calca gc_reads → cross-device, no localStorage).
+  // NOTA prefijo: las tablas NUEVAS nacen con `gs_` (las gc_* son legacy de ghosty-chat).
+  await exec(`CREATE TABLE IF NOT EXISTS gt_announcements (
+    id         INTEGER PRIMARY KEY,
+    title      TEXT NOT NULL,
+    body       TEXT NOT NULL,
+    published  INTEGER NOT NULL DEFAULT 0,
+    created_by TEXT,
+    created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+    updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+  )`);
+  await exec(`CREATE INDEX IF NOT EXISTS gt_announcements_pub ON gt_announcements(published, id)`);
+  // Ilustración hero (estilo Discord "What's New"): URL pública de la imagen que
+  // encabeza la card. Opcional; si falta, la card va sin hero.
+  await addColumn("gt_announcements", "hero_image", "TEXT");
+  await exec(`CREATE TABLE IF NOT EXISTS gt_announcement_reads (
+    user_sub     TEXT PRIMARY KEY,
+    last_seen_id INTEGER NOT NULL DEFAULT 0
+  )`);
+
   // Si algo falló (DB flapeando), LANZA → ensureSchema resetea `done` → reintento.
   if (fails.length) {
     throw new Error(`ensureSchema: ${fails.length} sentencia(s) fallaron, se reintentará: ${fails.join(" | ")}`);
