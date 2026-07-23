@@ -2123,6 +2123,7 @@ function NovedadesModal() {
   const t = useT();
   const [list, setList] = useState<Announcement[]>([]);
   const [idx, setIdx] = useState(0);
+  const [dir, setDir] = useState(1); // dirección del slide: 1 siguiente, -1 anterior
   const open = list.length > 0;
 
   useEffect(() => {
@@ -2165,62 +2166,84 @@ function NovedadesModal() {
   const total = list.length;
   const isLast = idx >= total - 1;
   const close = () => setList([]);
-  const next = () => (isLast ? close() : setIdx((i) => i + 1));
-  const prev = () => setIdx((i) => Math.max(0, i - 1));
+  const next = () => {
+    setDir(1);
+    if (isLast) close();
+    else setIdx((i) => i + 1);
+  };
+  const prev = () => {
+    setDir(-1);
+    setIdx((i) => Math.max(0, i - 1));
+  };
 
   return (
     <AnimatePresence>
       <Modal onClose={close} size="lg" flush>
-        <div className="flex max-h-[85dvh] flex-col overflow-y-auto thin-scroll">
-          {cur.heroImage ? (
-            <img
-              src={cur.heroImage}
-              alt=""
-              className="aspect-[3/2] w-full shrink-0 object-cover"
-              loading="eager"
-            />
-          ) : (
-            <div className="grid h-28 shrink-0 place-items-center bg-gradient-to-br from-brand/20 to-surface-3">
-              <Megaphone size={34} className="text-brand" />
-            </div>
-          )}
-          <div className="p-6">
-            <span className="mb-2 inline-flex items-center gap-1.5 rounded-full bg-brand/12 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-brand">
-              <Megaphone size={12} /> {t("Novedad")}
-            </span>
-            <h2 className="text-xl font-bold leading-snug">{cur.title}</h2>
-            <div className="mt-2 text-sm leading-relaxed text-muted [&_a]:text-brand [&_strong]:text-ink">
-              <Markdown body={cur.body} />
-            </div>
-            <div className="mt-6 flex items-center justify-between gap-3">
-              {/* Puntitos de progreso (obliga a verlas una por una) */}
-              <div className="flex items-center gap-1.5">
-                {total > 1 &&
-                  list.map((_, i) => (
-                    <span
-                      key={i}
-                      className={`h-1.5 rounded-full transition-all ${
-                        i === idx ? "w-4 bg-brand" : "w-1.5 bg-surface-3"
-                      }`}
-                    />
-                  ))}
-              </div>
-              <div className="flex items-center gap-2">
-                {idx > 0 && (
-                  <button
-                    onClick={prev}
-                    className="rounded-xl px-4 py-2.5 text-sm font-medium text-muted transition hover:text-ink"
-                  >
-                    {t("Anterior")}
-                  </button>
+        <div className="flex max-h-[85dvh] flex-col overflow-hidden">
+          {/* Contenido que cambia por card → slide direccional */}
+          <div className="min-h-0 flex-1 overflow-y-auto thin-scroll">
+            <AnimatePresence mode="wait" custom={dir} initial={false}>
+              <motion.div
+                key={cur.id}
+                custom={dir}
+                variants={novedadCardVariants}
+                initial="enter"
+                animate="center"
+                exit="exit"
+                transition={{ duration: 0.22, ease: "easeOut" }}
+              >
+                {cur.heroImage ? (
+                  <img
+                    src={cur.heroImage}
+                    alt=""
+                    className="aspect-[3/2] w-full object-cover"
+                    loading="eager"
+                  />
+                ) : (
+                  <div className="grid h-28 place-items-center bg-gradient-to-br from-brand/20 to-surface-3">
+                    <Megaphone size={34} className="text-brand" />
+                  </div>
                 )}
+                <div className="px-6 pt-6">
+                  <span className="mb-2 inline-flex items-center gap-1.5 rounded-full bg-brand/12 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-brand">
+                    <Megaphone size={12} /> {t("Novedad")}
+                  </span>
+                  <h2 className="text-xl font-bold leading-snug">{cur.title}</h2>
+                  <div className="mt-2 text-sm leading-relaxed text-muted [&_a]:text-brand [&_strong]:text-ink">
+                    <Markdown body={cur.body} />
+                  </div>
+                </div>
+              </motion.div>
+            </AnimatePresence>
+          </div>
+          {/* Navegación (fija, no desliza) */}
+          <div className="flex shrink-0 items-center justify-between gap-3 border-t border-border px-6 py-4">
+            <div className="flex items-center gap-1.5">
+              {total > 1 &&
+                list.map((_, i) => (
+                  <span
+                    key={i}
+                    className={`h-1.5 rounded-full transition-all ${
+                      i === idx ? "w-4 bg-brand" : "w-1.5 bg-surface-3"
+                    }`}
+                  />
+                ))}
+            </div>
+            <div className="flex items-center gap-2">
+              {idx > 0 && (
                 <button
-                  onClick={next}
-                  className="rounded-xl bg-brand px-5 py-2.5 text-sm font-semibold text-brand-fg shadow-sm transition hover:opacity-90"
+                  onClick={prev}
+                  className="rounded-xl px-4 py-2.5 text-sm font-medium text-muted transition hover:text-ink"
                 >
-                  {isLast ? t("Entendido") : `${t("Siguiente")} (${idx + 1}/${total})`}
+                  {t("Anterior")}
                 </button>
-              </div>
+              )}
+              <button
+                onClick={next}
+                className="rounded-xl bg-brand px-5 py-2.5 text-sm font-semibold text-brand-fg shadow-sm transition hover:opacity-90"
+              >
+                {isLast ? t("Entendido") : `${t("Siguiente")} (${idx + 1}/${total})`}
+              </button>
             </div>
           </div>
         </div>
@@ -2228,6 +2251,13 @@ function NovedadesModal() {
     </AnimatePresence>
   );
 }
+
+// Variantes del slide entre cards de la galería (dir: 1 = siguiente, -1 = anterior).
+const novedadCardVariants = {
+  enter: (d: number) => ({ x: d > 0 ? 60 : -60, opacity: 0 }),
+  center: { x: 0, opacity: 1 },
+  exit: (d: number) => ({ x: d > 0 ? -60 : 60, opacity: 0 }),
+};
 
 // Stack de toasts de notificación (abajo-derecha). Acompaña al sonido con un aviso
 // VISUAL: avatar + autor + preview; clic → salta al scope; auto-descarta a los 5s.
@@ -4617,8 +4647,10 @@ function QuickCallDock({ conn, label, onClose }: { conn: CallConn; label: string
   const t = useT();
   const [expanded, setExpanded] = useState(false);
   const [pos, setPos] = useState<{ x: number; y: number } | null>(null); // null = anclado abajo-derecha
+  const [size, setSize] = useState<{ w: number; h: number } | null>(null); // null = tamaño default
   const dockRef = useRef<HTMLDivElement>(null);
   const positioned = !!pos && !expanded;
+  const sized = !!size && !expanded;
 
   // Arrastra el dock por su barra (solo acoplado). Se clampa al viewport.
   const startDrag = (e: React.PointerEvent) => {
@@ -4629,7 +4661,6 @@ function QuickCallDock({ conn, label, onClose }: { conn: CallConn; label: string
     const dx = e.clientX - r.left;
     const dy = e.clientY - r.top;
     const move = (ev: PointerEvent) => {
-      // Clampa el dock COMPLETO dentro del viewport (nunca sale de la ventana).
       const x = Math.max(4, Math.min(window.innerWidth - r.width - 4, ev.clientX - dx));
       const y = Math.max(4, Math.min(window.innerHeight - r.height - 4, ev.clientY - dy));
       setPos({ x, y });
@@ -4642,14 +4673,42 @@ function QuickCallDock({ conn, label, onClose }: { conn: CallConn; label: string
     window.addEventListener("pointerup", up);
   };
 
+  // Redimensiona por la esquina inf-derecha. Ancla arriba-izquierda (fija pos) para
+  // crecer hacia abajo-derecha con el cursor; clampado al viewport.
+  const startResize = (e: React.PointerEvent) => {
+    if (expanded) return;
+    e.stopPropagation();
+    const el = dockRef.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    setPos({ x: r.left, y: r.top });
+    const sx = e.clientX, sy = e.clientY, sw = r.width, sh = r.height, left = r.left, top = r.top;
+    const move = (ev: PointerEvent) => {
+      const w = Math.max(320, Math.min(window.innerWidth - left - 4, sw + (ev.clientX - sx)));
+      const h = Math.max(240, Math.min(window.innerHeight - top - 4, sh + (ev.clientY - sy)));
+      setSize({ w, h });
+    };
+    const up = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  };
+
+  const style =
+    !expanded && (positioned || sized)
+      ? { ...(positioned ? { left: pos!.x, top: pos!.y } : {}), ...(sized ? { width: size!.w, height: size!.h } : {}) }
+      : undefined;
+
   return (
     <div
       ref={dockRef}
-      style={positioned ? { left: pos!.x, top: pos!.y } : undefined}
+      style={style}
       className={
         (expanded
           ? "fixed inset-3 md:inset-6"
-          : "fixed h-[min(80vh,720px)] w-[min(960px,94vw)]" + (positioned ? "" : " bottom-4 right-4")) +
+          : "fixed h-[min(80vh,720px)] w-[min(960px,94vw)]" + (positioned || sized ? "" : " bottom-4 right-4")) +
         " z-50 flex flex-col overflow-hidden rounded-xl border-2 border-ink/20 bg-surface shadow-2xl ring-1 ring-ink/10"
       }
     >
@@ -4672,6 +4731,13 @@ function QuickCallDock({ conn, label, onClose }: { conn: CallConn; label: string
       <Suspense fallback={<div className="flex flex-1 items-center justify-center text-sm text-muted">{t("Conectando…")}</div>}>
         <QuickCall conn={conn} onLeft={onClose} />
       </Suspense>
+      {!expanded && (
+        <div
+          onPointerDown={startResize}
+          title={t("Redimensionar")}
+          className="absolute bottom-0.5 right-0.5 z-20 h-4 w-4 cursor-nwse-resize rounded-sm border-b-2 border-r-2 border-ink/40"
+        />
+      )}
     </div>
   );
 }

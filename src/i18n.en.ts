@@ -11,6 +11,7 @@ export const en: Record<string, string> = {
   "Salir de la llamada": "Leave call",
   "Salir": "Leave",
   "Restaurar": "Restore",
+  "Redimensionar": "Resize",
   "No se pudo conectar a la llamada": "Couldn't connect to the call",
   "Silenciar": "Mute",
   "Activar micrófono": "Unmute",
