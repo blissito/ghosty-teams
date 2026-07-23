@@ -40,11 +40,17 @@ export const startConnectFn = createServerFn({ method: "GET" })
 
     const { setCookie } = await import("@tanstack/react-start/server");
     const { reqOrigin } = await import("../origin.server");
-    const { randomState, pkce, buildAuthorizeUrl } = await import("./connectors/oauth.server");
+    const { currentSlug } = await import("./tenant.server");
+    const { randomState, pkce, buildAuthorizeUrl, callbackBase, signState } = await import("./connectors/oauth.server");
     const appUrl = await reqOrigin();
-    const redirectUri = `${appUrl}/setup/${def.id}/callback`;
-    const state = randomState();
-    setCookie("conn_state", state, { httpOnly: true, path: "/", maxAge: 600, sameSite: "lax" });
+    // redirect_uri GLOBAL (apex) — el mismo registrado en el provider, no el subdominio.
+    const redirectUri = `${callbackBase(appUrl)}/oauth/${def.id}/callback`;
+    // El workspace de origen viaja firmado en el state → el relay del apex sabe a qué
+    // subdominio volver. El nonce se liga a la cookie (validada al cerrar en el subdominio).
+    const slug = await currentSlug().catch(() => null);
+    const nonce = randomState();
+    const state = signState({ slug, nonce });
+    setCookie("conn_state", nonce, { httpOnly: true, path: "/", maxAge: 600, sameSite: "lax" });
     let challenge: string | undefined;
     if (def.oauth.pkce) {
       const p = pkce();
@@ -52,6 +58,21 @@ export const startConnectFn = createServerFn({ method: "GET" })
       challenge = p.challenge;
     }
     return { url: buildAuthorizeUrl(def, redirectUri, state, challenge) };
+  });
+
+// Relay del apex: el redirect global (teams.ghosty.studio/oauth/$provider/callback) no
+// tiene sesión ni tenant. Verifica el state firmado, saca el workspace de origen y
+// devuelve la URL del subdominio donde /setup/$provider/callback SÍ cierra el OAuth
+// (con sesión + cookies + namespace). Sin slug (dev/single-tenant) → mismo origin.
+export const relayConnectorFn = createServerFn({ method: "GET" })
+  .validator((d: { provider: string; code: string; state: string }) => d)
+  .handler(async ({ data }) => {
+    const { verifyState } = await import("./connectors/oauth.server");
+    const parsed = verifyState(data.state);
+    const ROOT = process.env.TEAMS_ROOT_DOMAIN ?? "teams.ghosty.studio";
+    const qs = `?code=${encodeURIComponent(data.code)}&state=${encodeURIComponent(data.state)}`;
+    const path = `/setup/${encodeURIComponent(data.provider)}/callback${qs}`;
+    return { target: parsed?.slug ? `https://${parsed.slug}.${ROOT}${path}` : path };
   });
 
 // Cierra el OAuth: valida state (cookie), intercambia code→token, captura external_id +
@@ -66,14 +87,17 @@ export const finishConnectFn = createServerFn({ method: "POST" })
     if (!def?.oauth) return { ok: false as const };
 
     const { getCookie } = await import("@tanstack/react-start/server");
-    if (!data.code || data.state !== getCookie("conn_state")) return { ok: false as const };
+    const { exchangeCode, callbackBase, verifyState } = await import("./connectors/oauth.server");
+    // Valida el state firmado y liga su nonce a la cookie del subdominio (anti-CSRF).
+    const parsed = verifyState(data.state);
+    if (!data.code || !parsed || parsed.nonce !== getCookie("conn_state")) return { ok: false as const };
     const verifier = def.oauth.pkce ? getCookie("conn_pkce") : undefined;
 
     const { reqOrigin } = await import("../origin.server");
-    const { exchangeCode } = await import("./connectors/oauth.server");
     const { setConnectorRow } = await import("./connectors/store.server");
     const appUrl = await reqOrigin();
-    const redirectUri = `${appUrl}/setup/${def.id}/callback`;
+    // MISMO redirect_uri global que en authorize (requisito del token-exchange OAuth).
+    const redirectUri = `${callbackBase(appUrl)}/oauth/${def.id}/callback`;
     const tok = await exchangeCode(def, redirectUri, data.code, verifier ?? undefined);
     const now = Math.floor(Date.now() / 1000);
 

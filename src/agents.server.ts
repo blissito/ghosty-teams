@@ -338,7 +338,11 @@ export async function callAgentBackendStream(
       // mergea al system del worker (claude-worker) o al marco de confianza del turno
       // (ghosty-gc). Nunca en el texto del usuario → nunca se lee como inyección.
       appendSystemPrompt: [
-        persona ? `[Persona de ${agent.name}]\n${persona}` : null,
+        // NATIVO: Studio es dueño de la identidad (FleetAgent.persona.prompt, aplicada
+        // en routeTurn) → NO la mandamos desde aquí para evitar doble prompt. EasyBits
+        // sí la lleva (su worker no la conoce). Product-context/self-identity/guardrail
+        // son contexto del canal (Teams), van siempre.
+        !native && persona ? `[Persona de ${agent.name}]\n${persona}` : null,
         TEAMS_PRODUCT_CONTEXT,
         selfIdentity(agent),
         EB_DOC_STREAM_GUARDRAIL,
@@ -632,7 +636,11 @@ export async function callAgentBackend(
       text,
       parts,
       appendSystemPrompt: [
-        persona ? `[Persona de ${agent.name}]\n${persona}` : null,
+        // NATIVO: Studio es dueño de la identidad (FleetAgent.persona.prompt, aplicada
+        // en routeTurn) → NO la mandamos desde aquí para evitar doble prompt. EasyBits
+        // sí la lleva (su worker no la conoce). Product-context/self-identity/guardrail
+        // son contexto del canal (Teams), van siempre.
+        !native && persona ? `[Persona de ${agent.name}]\n${persona}` : null,
         TEAMS_PRODUCT_CONTEXT,
         selfIdentity(agent),
         EB_DOC_STREAM_GUARDRAIL,

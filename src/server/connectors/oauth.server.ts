@@ -25,6 +25,43 @@ export function pkce() {
   return { verifier, challenge };
 }
 
+// ── Multi-tenant: un solo redirect_uri global + state firmado ────────────────────
+// El provider (Calendly) sólo deja registrar UN redirect_uri, pero cada workspace vive
+// en su subdominio. Solución estándar: registramos el apex `${base}/oauth/$provider/
+// callback`; el `state` lleva el workspace de origen (firmado) para que el relay del
+// apex sepa a qué subdominio volver a cerrar el OAuth. Ver routes/oauth.$provider.callback.
+
+// Base FIJA del redirect_uri (misma en authorize y en el token-exchange, requisito OAuth).
+// CONNECTORS_CALLBACK_BASE en prod = https://teams.ghosty.studio; sin env (dev/single-
+// tenant) cae al origin del request.
+export function callbackBase(fallbackOrigin: string): string {
+  return process.env.CONNECTORS_CALLBACK_BASE?.replace(/\/$/, "") || fallbackOrigin;
+}
+
+type StatePayload = { slug: string | null; nonce: string };
+function stateSecret(): string {
+  return envOrThrow("GHOSTY_PARTNER_SECRET");
+}
+// state = base64url(payload).hmac — el slug viaja firmado (no manipulable); el nonce se
+// liga a una cookie httpOnly en el subdominio de origen (anti-CSRF, validado al cerrar).
+export function signState(payload: StatePayload): string {
+  const body = Buffer.from(JSON.stringify(payload)).toString("base64url");
+  const sig = crypto.createHmac("sha256", stateSecret()).update(body).digest("base64url");
+  return `${body}.${sig}`;
+}
+export function verifyState(state: string): StatePayload | null {
+  const [body, sig] = (state || "").split(".");
+  if (!body || !sig) return null;
+  const expect = crypto.createHmac("sha256", stateSecret()).update(body).digest("base64url");
+  const a = Buffer.from(sig), b = Buffer.from(expect);
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return null;
+  try {
+    return JSON.parse(Buffer.from(body, "base64url").toString()) as StatePayload;
+  } catch {
+    return null;
+  }
+}
+
 export function buildAuthorizeUrl(def: ConnectorDef, redirectUri: string, state: string, challenge?: string): string {
   const o = def.oauth!;
   const p = new URLSearchParams({
