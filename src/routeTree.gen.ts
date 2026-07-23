@@ -14,6 +14,7 @@ import { Route as LoginRouteImport } from './routes/login'
 import { Route as FormsRouteImport } from './routes/forms'
 import { Route as ArtifactsRouteImport } from './routes/artifacts'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as SetupIndexRouteImport } from './routes/setup.index'
 import { Route as T3SplatRouteImport } from './routes/t3.$'
 import { Route as JoinTokenRouteImport } from './routes/join.$token'
 import { Route as CSlugRouteImport } from './routes/c.$slug'
@@ -57,6 +58,11 @@ const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => rootRouteImport,
+} as any)
+const SetupIndexRoute = SetupIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => SetupRoute,
 } as any)
 const T3SplatRoute = T3SplatRouteImport.update({
   id: '/t3/$',
@@ -164,6 +170,7 @@ export interface FileRoutesByFullPath {
   '/c/$slug': typeof CSlugRoute
   '/join/$token': typeof JoinTokenRoute
   '/t3/$': typeof T3SplatRoute
+  '/setup/': typeof SetupIndexRoute
   '/api/attachment/$id': typeof ApiAttachmentIdRoute
   '/api/dev/drive': typeof ApiDevDriveRoute
   '/api/doc-docx/$id': typeof ApiDocDocxIdRoute
@@ -180,7 +187,6 @@ export interface FileRoutesByTo {
   '/artifacts': typeof ArtifactsRoute
   '/forms': typeof FormsRoute
   '/login': typeof LoginRoute
-  '/setup': typeof SetupRouteWithChildren
   '/api/agent-asset': typeof ApiAgentAssetRoute
   '/api/manifest': typeof ApiManifestRoute
   '/api/stream': typeof ApiStreamRoute
@@ -189,6 +195,7 @@ export interface FileRoutesByTo {
   '/c/$slug': typeof CSlugRoute
   '/join/$token': typeof JoinTokenRoute
   '/t3/$': typeof T3SplatRoute
+  '/setup': typeof SetupIndexRoute
   '/api/attachment/$id': typeof ApiAttachmentIdRoute
   '/api/dev/drive': typeof ApiDevDriveRoute
   '/api/doc-docx/$id': typeof ApiDocDocxIdRoute
@@ -215,6 +222,7 @@ export interface FileRoutesById {
   '/c/$slug': typeof CSlugRoute
   '/join/$token': typeof JoinTokenRoute
   '/t3/$': typeof T3SplatRoute
+  '/setup/': typeof SetupIndexRoute
   '/api/attachment/$id': typeof ApiAttachmentIdRoute
   '/api/dev/drive': typeof ApiDevDriveRoute
   '/api/doc-docx/$id': typeof ApiDocDocxIdRoute
@@ -242,6 +250,7 @@ export interface FileRouteTypes {
     | '/c/$slug'
     | '/join/$token'
     | '/t3/$'
+    | '/setup/'
     | '/api/attachment/$id'
     | '/api/dev/drive'
     | '/api/doc-docx/$id'
@@ -258,7 +267,6 @@ export interface FileRouteTypes {
     | '/artifacts'
     | '/forms'
     | '/login'
-    | '/setup'
     | '/api/agent-asset'
     | '/api/manifest'
     | '/api/stream'
@@ -267,6 +275,7 @@ export interface FileRouteTypes {
     | '/c/$slug'
     | '/join/$token'
     | '/t3/$'
+    | '/setup'
     | '/api/attachment/$id'
     | '/api/dev/drive'
     | '/api/doc-docx/$id'
@@ -292,6 +301,7 @@ export interface FileRouteTypes {
     | '/c/$slug'
     | '/join/$token'
     | '/t3/$'
+    | '/setup/'
     | '/api/attachment/$id'
     | '/api/dev/drive'
     | '/api/doc-docx/$id'
@@ -362,6 +372,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
+    }
+    '/setup/': {
+      id: '/setup/'
+      path: '/'
+      fullPath: '/setup/'
+      preLoaderRoute: typeof SetupIndexRouteImport
+      parentRoute: typeof SetupRoute
     }
     '/t3/$': {
       id: '/t3/$'
@@ -493,6 +510,7 @@ declare module '@tanstack/react-router' {
 }
 
 interface SetupRouteChildren {
+  SetupIndexRoute: typeof SetupIndexRoute
   SetupProviderCallbackRoute: typeof SetupProviderCallbackRoute
   SetupProviderConnectRoute: typeof SetupProviderConnectRoute
   SetupEasybitsCallbackRoute: typeof SetupEasybitsCallbackRoute
@@ -500,6 +518,7 @@ interface SetupRouteChildren {
 }
 
 const SetupRouteChildren: SetupRouteChildren = {
+  SetupIndexRoute: SetupIndexRoute,
   SetupProviderCallbackRoute: SetupProviderCallbackRoute,
   SetupProviderConnectRoute: SetupProviderConnectRoute,
   SetupEasybitsCallbackRoute: SetupEasybitsCallbackRoute,

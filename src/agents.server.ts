@@ -439,6 +439,18 @@ const TOOL_LABELS: Record<string, { ing: string; done: string }> = {
   create_website: { ing: "Creando el sitio", done: "Creé el sitio" },
   WebSearch: { ing: "Buscando en la web", done: "Busqué en la web" },
   research_search: { ing: "Investigando en la web", done: "Investigué en la web" },
+  // GS Tools SDK (code-mode): el worker mapea el comando Bash real (`node …/image.mjs`)
+  // a estos ids semánticos → burbujas nítidas estilo Claude Code aunque el trabajo corra
+  // como Bash (que está oculto por diseño). Ver semanticToolName en claude-worker/provider.ts.
+  gs_image_generate: { ing: "Generando la imagen", done: "Generé la imagen" },
+  gs_image_edit: { ing: "Editando la imagen", done: "Edité la imagen" },
+  gs_image_describe: { ing: "Analizando la imagen", done: "Analicé la imagen" },
+  gs_web_search: { ing: "Buscando en la web", done: "Busqué en la web" },
+  gs_web_scrape: { ing: "Leyendo una página", done: "Leí una página" },
+  gs_render: { ing: "Generando el PDF", done: "Generé el PDF" },
+  gs_doc: { ing: "Generando el documento", done: "Generé el documento" },
+  gs_db_query: { ing: "Consultando la base", done: "Consulté la base" },
+  gs_db_write: { ing: "Escribiendo en la base", done: "Escribí en la base" },
   // El agente redacta docs invocando un Skill (oficio/xlsx/pptx/doc-remix) → la acción
   // visible = "Redacté el documento" (antes solo se veía "Subió", el paso final).
   Skill: { ing: "Redactando el documento", done: "Redacté el documento" },
