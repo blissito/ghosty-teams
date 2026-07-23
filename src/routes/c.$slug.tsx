@@ -1,4 +1,4 @@
-import { Component, createContext, forwardRef, Fragment, type ReactNode, useCallback, useContext, useEffect, useImperativeHandle, useMemo, useReducer, useRef, useState } from "react";
+import { Component, createContext, forwardRef, Fragment, lazy, type ReactNode, Suspense, useCallback, useContext, useEffect, useImperativeHandle, useMemo, useReducer, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useEditor, EditorContent } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
@@ -67,7 +67,10 @@ import { listEmojisFn } from "../server/emojis";
 import { recentViewFn, mentionsViewFn, starredViewFn } from "../server/views";
 import { openDmFn, listDmsFn, getDmFlowFn, postDmMessageFn, askDmAgentFn } from "../server/dm";
 import { startCallFn, joinCallFn, leaveCallFn, getActiveCallFn } from "../server/quick-calls";
-import { QuickCall, type CallConn } from "../components/QuickCall";
+import type { CallConn } from "../components/QuickCall";
+// Lazy: livekit-client toca APIs del browser al importar → solo cargar en cliente
+// cuando se abre una llamada (evita romper el SSR de la ruta).
+const QuickCall = lazy(() => import("../components/QuickCall").then((m) => ({ default: m.QuickCall })));
 import { listAgentsFn } from "../server/agents";
 import { unreadCountsFn, markReadFn, readReceiptsFn, lastReadFn } from "../server/reads";
 import { latestAnnouncementFn, markAnnouncementSeenFn, type Announcement } from "../server/announcements";
@@ -4600,7 +4603,9 @@ function QuickCallDock({ conn, label, onClose }: { conn: CallConn; label: string
           {expanded ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
         </button>
       </div>
-      <QuickCall conn={conn} onLeft={onClose} />
+      <Suspense fallback={<div className="flex flex-1 items-center justify-center text-sm text-muted">{t("Conectando…")}</div>}>
+        <QuickCall conn={conn} onLeft={onClose} />
+      </Suspense>
     </div>
   );
 }
