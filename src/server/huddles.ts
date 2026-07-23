@@ -140,6 +140,8 @@ async function resolveTarget(target: Target) {
 
   // DM
   if (!(await db.isDmMember(target.dmId, me.sub))) throw new Error("no eres parte de esta conversación");
+  // Sin llamadas con agentes de la flota (aún): un DM 1:1 con un agente no tiene call.
+  if (await db.getDmAgentHandle(target.dmId)) throw new Error("sin llamadas con agentes");
   const members = await db.getDmMembers(target.dmId);
   const room = huddleRoom(cfg, ns, "dm", target.dmId);
   return {

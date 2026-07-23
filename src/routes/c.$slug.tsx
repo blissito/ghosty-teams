@@ -1057,12 +1057,13 @@ function ChannelPage() {
     setOpenArtifact((cur) => {
       // Auto-abre si no hay panel, si ya estamos en el draft, o si está abierto el doc/hoja
       // que se está editando (para ver la edición EN VIVO). NO pisa otro artefacto (pdf/imagen…).
-      if (cur && cur.kind !== "draft" && cur.kind !== "doc" && cur.kind !== "sheet") return cur;
+      if (cur && cur.kind !== "draft" && cur.kind !== "doc" && cur.kind !== "sheet" && cur.kind !== "artifact") return cur;
       return {
         kind: "draft",
         title: draftTitle(doc.md, doc.kind, doc.fenceTitle),
         content: doc.md,
         sheet: doc.kind === "sheet",
+        artifact: doc.kind === "artifact",
         streaming: !doc.closed,
       };
     });
@@ -4877,6 +4878,7 @@ function DmView({
 
   const title = dm ? dmTitle(dm, t("Conversación")) : t("Conversación");
   const isOnline = dm?.members.some((m) => online.has(m.sub)) ?? false;
+  const isAgentDm = dm?.agent_handle != null; // DM 1:1 con un agente → sin llamadas (aún)
   const first = dm?.members[0];
 
   return (
@@ -4908,10 +4910,10 @@ function DmView({
             {isOnline ? t("En línea") : t("Mensaje directo")}
           </p>
         </div>
-        {/* Huddle 1:1/grupo (Slack: llamadas en room + DM, no en hilo) — caja LiveKit compartida. */}
-        <HuddleHeaderButton h={huddle} />
+        {/* Llamada 1:1/grupo (caja LiveKit compartida). NO con agentes de la flota (aún). */}
+        {!isAgentDm && <HuddleHeaderButton h={huddle} />}
       </header>
-      <HuddleBanner h={huddle} />
+      {!isAgentDm && <HuddleBanner h={huddle} />}
       <div ref={scrollRef} onScroll={onScroll} className="w-full flex-1 overflow-y-auto px-6 py-4 thin-scroll">
         {flow === null ? (
           <ThreadSkeleton />
@@ -5153,6 +5155,7 @@ function artifactToView(a: Artifact): ArtifactView {
   const title = a.title ?? "";
   if (a.kind === "doc") return { kind: "doc", title, documentId: a.url, md: a.md ?? "" };
   if (a.kind === "sheet") return { kind: "sheet", title, documentId: a.url, csv: a.md ?? "" };
+  if (a.kind === "artifact") return { kind: "artifact", title, documentId: a.url, html: a.md ?? "", src: a.src ?? "" };
   if (a.kind === "ask-user") {
     let options: string[] = [];
     try { const p = JSON.parse(a.md ?? "[]"); if (Array.isArray(p)) options = p.map(String); } catch {}
