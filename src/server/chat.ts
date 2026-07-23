@@ -636,17 +636,21 @@ export const askAgent = createServerFn({ method: "POST" })
     if (quoteCite?.trim()) {
       text = quotedContextPrefix(data.quotedAuthor ?? "", quoteCite, text);
     }
-    // Historial: SEED-ONCE (solo sesión fresca). El claude-worker resume + auto-compacta →
-    // re-mandar cada turno es redundante. Los HILOS ya siembran su raíz arriba (mismo criterio
-    // priorAgentTurn); aquí sembramos el FLOW top-level solo si el agente aún no respondió en
-    // el canal. La cita completa SÍ va por-turno.
-    if (data.parentId == null) {
-      const recent = await db.recentContext({ channelId: channel.id }, 12).catch(() => []);
-      const priorAgentTurn = recent.some((m) => m.agent_handle && (m.body ?? "").trim());
-      if (!priorAgentTurn) {
-        const history = historyContext(recent, data.body);
-        if (history) text = history + text;
-      }
+    // Catch-up del scope: en un CANAL solo te invocan al @mencionarte, así que entre menciones
+    // hay mensajes (sin tag) que el agente NUNCA vio en su sesión. El worker ya tiene SUS
+    // turnos (resume+compact); le inyectamos los mensajes POSTERIORES a su última respuesta en
+    // este scope (el "gap"), acotado por historyContext. Si nunca respondió aquí (sesión
+    // fresca), el gap = lo reciente = seed inicial. Corre cada turno pero está acotado al gap
+    // → eficiente cuando está al día (gap = solo el turno actual → historyContext lo filtra).
+    {
+      const scope = data.parentId != null
+        ? { channelId: channel.id, parentId: data.parentId }
+        : { channelId: channel.id };
+      const recent = await db.recentContext(scope, 25).catch(() => []);
+      let lastAgentIdx = -1;
+      recent.forEach((m, i) => { if (m.agent_handle && (m.body ?? "").trim()) lastAgentIdx = i; });
+      const history = historyContext(recent.slice(lastAgentIdx + 1), data.body);
+      if (history) text = history + text;
     }
 
     // Media de entrada: los adjuntos del usuario → FileParts (uri firmada / bytes).

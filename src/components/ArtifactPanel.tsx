@@ -378,6 +378,19 @@ export default function ArtifactPanel({
     const el = scrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;
   }, [draftLen, draftStreaming]);
+  // PREVIEW EN VIVO del artefacto HTML: renderizamos el HTML PARCIAL en el iframe mientras
+  // se construye (el navegador auto-cierra tags → se ve armarse). THROTTLE a ~400ms: no
+  // recargamos el iframe en cada token (parpadearía); refrescamos periódicamente desde un ref.
+  const isDraftArtifact = artifact?.kind === "draft" && !!artifact.artifact;
+  const draftHtmlRef = useRef("");
+  draftHtmlRef.current = isDraftArtifact && artifact?.kind === "draft" ? artifact.content : "";
+  const [draftPreview, setDraftPreview] = useState("");
+  useEffect(() => {
+    if (!isDraftArtifact) { setDraftPreview(""); return; }
+    setDraftPreview(draftHtmlRef.current);
+    const iv = setInterval(() => setDraftPreview(draftHtmlRef.current), 400);
+    return () => clearInterval(iv);
+  }, [isDraftArtifact]);
   // Descarga con FEEDBACK: doc→.docx (compila en EasyBits) y sheet→.xlsx (convierte el CSV
   // fuente con SheetJS en /api/doc-xlsx) tardan un poco; fetch same-origin → blob → download,
   // con spinner. Office = URL pública externa → navegación directa (evita CORS del blob).
@@ -878,23 +891,22 @@ export default function ArtifactPanel({
                     </div>
                   </div>
                 ) : artifact.kind === "draft" && artifact.artifact ? (
-                  // Artefacto HTML: mientras STREAMEA mostramos el CÓDIGO fuente construyéndose
-                  // EN VIVO (como Claude Artifacts / v0). NO ejecutamos HTML/JS a medio escribir
-                  // en el iframe (parpadea y lanza errores) — mostramos el texto. Al cerrarse el
-                  // fence, scheduleDraftSwap cambia a la vista final (iframe renderizado).
-                  <div className="flex min-h-0 flex-1 flex-col bg-surface-3">
-                    <div className="flex items-center gap-2 border-b border-border px-4 py-2 text-xs text-muted">
+                  // Artefacto HTML: PREVIEW EN VIVO — renderizamos el HTML PARCIAL en el iframe
+                  // mientras se construye (throttle ~400ms → el navegador auto-cierra tags y se
+                  // ve armarse la página). Al cerrarse el fence, scheduleDraftSwap cambia a la
+                  // vista final ya publicada. Sandbox aislado → un <script> a medias no afecta al app.
+                  <div className="flex min-h-0 flex-1 flex-col bg-white">
+                    <div className="flex items-center gap-2 border-b border-border bg-surface-2 px-4 py-2 text-xs text-muted">
                       <Loader2 size={13} className="animate-spin text-brand" />
                       <span className="truncate">{t("Construyendo artefacto…")} · <span className="text-neutral-400">{artifact.title}</span></span>
                     </div>
-                    <div ref={scrollRef} className="min-h-0 flex-1 overflow-auto p-4">
-                      <pre className="whitespace-pre-wrap break-words font-mono text-[11px] leading-relaxed text-ink">
-                        <code>{artifact.content}</code>
-                        {artifact.streaming ? (
-                          <span className="ml-px inline-block h-3.5 w-[3px] animate-pulse bg-brand align-text-bottom" />
-                        ) : null}
-                      </pre>
-                    </div>
+                    <iframe
+                      title={artifact.title || "artefacto"}
+                      sandbox="allow-scripts allow-forms allow-popups"
+                      referrerPolicy="no-referrer"
+                      srcDoc={draftPreview}
+                      className="min-h-0 flex-1 border-0 bg-white"
+                    />
                   </div>
                 ) : artifact.kind === "draft" ? (
                   // Redacción EN VIVO (Canvas): prosa (markdown) o tabla (csv) streamea a la

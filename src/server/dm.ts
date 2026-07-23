@@ -200,13 +200,15 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
     const quoted = quoteCite?.trim()
       ? quotedContextPrefix(data.quotedAuthor ?? "", quoteCite, data.body)
       : data.body;
-    // Historial: SEED-ONCE. El claude-worker mantiene el transcript por sesión (resume) y
-    // auto-compacta (Agent SDK), así que re-mandar el historial CADA turno es redundante y
-    // caro. Solo lo sembramos cuando la sesión está FRESCA (el agente aún no ha respondido en
-    // este DM); si ya respondió, confiamos en su memoria. La cita completa SÍ va por-turno.
-    const recent = await db.recentContext({ dmId: data.id }, 12).catch(() => []);
-    const priorAgentTurn = recent.some((m) => m.agent_handle && (m.body ?? "").trim());
-    const history = priorAgentTurn ? "" : historyContext(recent, data.body);
+    // Catch-up (mismo modelo que en canales): el worker ya tiene SUS turnos (resume+compact);
+    // le inyectamos solo los mensajes POSTERIORES a su última respuesta en este DM (el "gap").
+    // En un DM 1:1 normalmente responde a todo → el gap = solo el turno actual → historyContext
+    // lo filtra → sin inyección (eficiente). Si acumuló mensajes sin verlos (o sesión fresca),
+    // el gap los trae. La cita completa SÍ va por-turno.
+    const recent = await db.recentContext({ dmId: data.id }, 25).catch(() => []);
+    let lastAgentIdx = -1;
+    recent.forEach((m, i) => { if (m.agent_handle && (m.body ?? "").trim()) lastAgentIdx = i; });
+    const history = historyContext(recent.slice(lastAgentIdx + 1), data.body);
     // Conector Calendly per-user (Fase B, DM 1:1): el DM tiene UN solo humano (`me`), así
     // que su identidad es inequívoca sin propagación de runtime. Si conectó su Calendly,
     // inyectamos su link de agendamiento como CONTEXTO del turno (en el texto, no en el
@@ -224,6 +226,10 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
     } catch {}
     const text = history + calHint + quoted;
 
+    // Identidad del artefacto del DM → el agente recibe el artefacto ACTUAL (artifactDocHint)
+    // para MODIFICARLO (re-emitir la misma versión), no recrearlo desde cero ni duplicar la card.
+    const currentDocId = await db.getDmArtifact(data.id).catch(() => null);
+    const currentDoc = currentDocId ? await db.getDoc(currentDocId).catch(() => null) : null;
     const { id, reply } = await runAgentTurn({
       agent,
       handle: data.handle,
@@ -231,6 +237,7 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
       sender: data.sender,
       text,
       parts,
+      currentDoc,
       createShell: async () => {
         // Caja caliente: la cáscara ya fue creada EAGER por postDmMessageFn → reutiliza su
         // id. Fallback (cliente sin shellId): créala aquí.
@@ -261,12 +268,37 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
         const cleaned = bubbleWithoutEbDoc(reply);
         await db.setMessageBody(id, cleaned);
         fanout({ t: "message:body", id, body: cleaned });
+        // Reusa el documentId existente del DM (misma identidad = nueva versión, MISMA card)
+        // o acuña uno v1 → sin duplicados. Parea con el room (chat.ts).
+        const documentId = currentDocId ?? `${ebdoc.kind}_${randomUUID()}`;
+        const title = draftTitle(ebdoc.md, ebdoc.kind, ebdoc.fenceTitle);
+        // Artefacto HTML → publícalo a S3 público como enlace compartible (igual que el room).
+        let src: string | null = null;
+        if (ebdoc.kind === "artifact") {
+          try {
+            const storage = await import("./storage.server");
+            if (storage.storageConfigured()) {
+              const put = await storage.put({
+                blob: new Blob([ebdoc.md], { type: "text/html" }),
+                contentType: "text/html; charset=utf-8",
+                fileName: `${(title || "artefacto").slice(0, 60)}.html`,
+                visibility: "public",
+              });
+              const base = process.env.ARTIFACT_PUBLIC_BASE?.replace(/\/$/, "");
+              src = base ? `${base}/${put.key}` : storage.publicUrl(put.key);
+            }
+          } catch (e) {
+            console.error("[artifact][dm] publish failed", e);
+          }
+        }
         await db.createArtifact(id, {
           kind: ebdoc.kind,
-          url: `${ebdoc.kind}_${randomUUID()}`,
-          title: draftTitle(ebdoc.md, ebdoc.kind, ebdoc.fenceTitle),
+          url: documentId,
+          title,
           md: ebdoc.md,
+          src,
         });
+        await db.setDmArtifact(data.id, documentId).catch(() => {});
         fanout({ t: "refresh", channelId: null, parentId: null, dmId: data.id });
       } else {
         // ask-user: pregunta con opciones clicables (mismo formato que en el room).

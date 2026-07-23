@@ -359,6 +359,21 @@ export async function setThreadArtifact(
   );
 }
 
+// Igual que get/setThreadArtifact pero para un DM (channel_id=0 colisiona en convKey → clave
+// propia `dm:<id>`). Da IDENTIDAD al artefacto del DM: al modificarlo se reusa el MISMO
+// documentId (nueva versión, misma card) en vez de crear un duplicado y regenerar de cero.
+export async function getDmArtifact(dmId: number): Promise<string | null> {
+  const rows = await dbq("SELECT document_id FROM gc_thread_artifact WHERE conv_key = ?", [`dm:${dmId}`]);
+  return (rows[0]?.document_id as string) ?? null;
+}
+export async function setDmArtifact(dmId: number, documentId: string): Promise<void> {
+  await dbq(
+    `INSERT INTO gc_thread_artifact (conv_key, document_id, updated_at) VALUES (?, ?, unixepoch())
+     ON CONFLICT(conv_key) DO UPDATE SET document_id = excluded.document_id, updated_at = excluded.updated_at`,
+    [`dm:${dmId}`, documentId]
+  );
+}
+
 // Enriquece un lote con TODO lo de display: reacciones + star/pin + adjuntos + artefacto.
 export async function attachMeta(msgs: Message[], userSub: string): Promise<Message[]> {
   return attachArtifacts(await attachAttachments(await attachStarPin(await attachReactions(msgs, userSub), userSub)));
