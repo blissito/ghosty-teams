@@ -43,10 +43,14 @@ export const Route = createFileRoute("/api/manifest")({
           display: "standalone",
           theme_color: "#7c3aed",
           background_color: "#14121a",
+          // ?v=2: iconos nuevos (ghosty con lentes, 2026-07-22). Chrome cachea el
+          // icono del PWA por URL; sin versionar el src seguía instalando el viejo
+          // cacheado aunque el archivo ya sirviera bytes nuevos. Bumpear al cambiar
+          // el arte.
           icons: [
-            { src: "/ghosty-192.png", sizes: "192x192", type: "image/png", purpose: "any" },
-            { src: "/ghosty-512.png", sizes: "512x512", type: "image/png", purpose: "any" },
-            { src: "/ghosty-maskable-512.png", sizes: "512x512", type: "image/png", purpose: "maskable" },
+            { src: "/ghosty-192.png?v=2", sizes: "192x192", type: "image/png", purpose: "any" },
+            { src: "/ghosty-512.png?v=2", sizes: "512x512", type: "image/png", purpose: "any" },
+            { src: "/ghosty-maskable-512.png?v=2", sizes: "512x512", type: "image/png", purpose: "maskable" },
           ],
         };
 
