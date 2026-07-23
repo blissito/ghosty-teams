@@ -1206,6 +1206,24 @@ export async function listDmFlow(dmId: number): Promise<Message[]> {
   return rows.map(toMessage);
 }
 
+// Últimos `limit` mensajes de un scope (DM, room o hilo) en orden CRONOLÓGICO — contexto
+// de historial para el agente cuando la memoria de su worker está fría o un turno falló
+// (así resuelve "otra vez"/"esto"). Solo kind='msg' (sin tarjetas de llamada/sistema).
+export async function recentContext(
+  scope: { dmId: number } | { channelId: number; parentId?: number | null },
+  limit = 12
+): Promise<Message[]> {
+  let rows;
+  if ("dmId" in scope) {
+    rows = await dbq("SELECT * FROM gc_messages WHERE dm_id = ? AND kind = 'msg' ORDER BY created_at DESC LIMIT ?", [scope.dmId, limit]);
+  } else if (scope.parentId != null) {
+    rows = await dbq("SELECT * FROM gc_messages WHERE parent_id = ? AND kind = 'msg' ORDER BY created_at DESC LIMIT ?", [scope.parentId, limit]);
+  } else {
+    rows = await dbq("SELECT * FROM gc_messages WHERE channel_id = ? AND parent_id IS NULL AND kind = 'msg' ORDER BY created_at DESC LIMIT ?", [scope.channelId, limit]);
+  }
+  return rows.map(toMessage).reverse();
+}
+
 export async function createDmMessage(input: {
   dmId: number;
   sender: string;

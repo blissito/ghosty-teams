@@ -168,6 +168,7 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
       shellId?: number; // caja caliente: cáscara ya creada por postDmMessageFn
       quotedAuthor?: string | null; // quote-reply: superficie para el agente
       quotedExcerpt?: string | null;
+      quotedId?: number | null; // id del mensaje citado → cita COMPLETA (no el excerpt)
       attachments?: { fileId: string; mime: string; size: number; name: string; thumbFileId?: string | null }[];
     }) => d
   )
@@ -175,7 +176,7 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
     const db = await import("../db.server");
     const bus = await import("./bus.server");
     const { currentNamespace } = await import("./tenant.server");
-    const { resolvedAgents, runAgentTurn, buildMediaParts, quotedContextPrefix } = await import("../agents.server");
+    const { resolvedAgents, runAgentTurn, buildMediaParts, quotedContextPrefix, clampQuote, historyContext } = await import("../agents.server");
     const me = await sessionUser();
     if (!me || !(await db.isDmMember(data.id, me.sub))) throw new Error("no autorizado");
     const ns = await currentNamespace();
@@ -189,9 +190,18 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
     const parts = await buildMediaParts(data.attachments ?? []);
     const groupId = `ghosty-chat-${data.handle}-dm-${data.id}`; // memoria por-agente
     // Quote-reply: embebe la cita en el texto (superficie WABA → el agente siempre la ve).
-    const quoted = data.quotedExcerpt?.trim()
-      ? quotedContextPrefix(data.quotedAuthor ?? "", data.quotedExcerpt, data.body)
+    // Si tenemos el id del citado, mandamos su cuerpo COMPLETO (no el excerpt de 220 chars)
+    // → "dame tips sobre ESTO" tiene el contenido real. Fallback al excerpt.
+    let quoteCite = data.quotedExcerpt ?? null;
+    if (data.quotedId != null) {
+      const qm = await db.getMessage(data.quotedId).catch(() => null);
+      if (qm?.body?.trim()) quoteCite = clampQuote(qm.body);
+    }
+    const quoted = quoteCite?.trim()
+      ? quotedContextPrefix(data.quotedAuthor ?? "", quoteCite, data.body)
       : data.body;
+    // Historial reciente del DM → contexto para "otra vez"/"esto" aunque el worker esté frío.
+    const history = historyContext(await db.recentContext({ dmId: data.id }, 12).catch(() => []), data.body);
     // Conector Calendly per-user (Fase B, DM 1:1): el DM tiene UN solo humano (`me`), así
     // que su identidad es inequívoca sin propagación de runtime. Si conectó su Calendly,
     // inyectamos su link de agendamiento como CONTEXTO del turno (en el texto, no en el
@@ -207,7 +217,7 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
           `${cal.timezone ? ` (zona horaria ${cal.timezone})` : ""}. Si pide agendar una llamada/reunión o su disponibilidad, comparte ESTE link.]\n\n`;
       }
     } catch {}
-    const text = calHint + quoted;
+    const text = history + calHint + quoted;
 
     const { id, reply } = await runAgentTurn({
       agent,

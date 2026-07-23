@@ -590,12 +590,13 @@ export const askAgent = createServerFn({ method: "POST" })
       shellId?: number; // caja caliente: cáscara ya creada por postMessage (reutilizar su id)
       quotedAuthor?: string | null; // quote-reply: cita para que el agente SIEMPRE la vea
       quotedExcerpt?: string | null;
+      quotedId?: number | null; // id del citado → cita COMPLETA (no el excerpt)
       attachments?: { fileId: string; mime: string; size: number; name: string; thumbFileId?: string | null; width?: number | null; height?: number | null }[];
     }) => d
   )
   .handler(async ({ data }) => {
     const db = await import("../db.server");
-    const { resolvedAgents, runAgentTurn, buildMediaParts, quotedContextPrefix } = await import("../agents.server");
+    const { resolvedAgents, runAgentTurn, buildMediaParts, quotedContextPrefix, clampQuote, historyContext } = await import("../agents.server");
     const bus = await import("./bus.server");
     const { currentNamespace } = await import("./tenant.server");
     const channel = await db.getChannel(data.slug);
@@ -625,10 +626,23 @@ export const askAgent = createServerFn({ method: "POST" })
       }
     }
     // Quote-reply: si el usuario citó un mensaje, embébelo en el texto del turno (patrón
-    // WABA) → el agente SIEMPRE ve a qué se responde, aunque no esté en su memoria.
-    if (data.quotedExcerpt?.trim()) {
-      text = quotedContextPrefix(data.quotedAuthor ?? "", data.quotedExcerpt, text);
+    // WABA) → el agente SIEMPRE ve a qué se responde, aunque no esté en su memoria. Con el
+    // id del citado mandamos su cuerpo COMPLETO (no el excerpt de 220 chars).
+    let quoteCite = data.quotedExcerpt ?? null;
+    if (data.quotedId != null) {
+      const qm = await db.getMessage(data.quotedId).catch(() => null);
+      if (qm?.body?.trim()) quoteCite = clampQuote(qm.body);
     }
+    if (quoteCite?.trim()) {
+      text = quotedContextPrefix(data.quotedAuthor ?? "", quoteCite, text);
+    }
+    // Historial reciente del scope (flow del canal o hilo) → contexto para "otra vez"/"esto"
+    // aunque la memoria del worker esté fría o un turno haya fallado.
+    const histScope = data.parentId != null
+      ? { channelId: channel.id, parentId: data.parentId }
+      : { channelId: channel.id };
+    const history = historyContext(await db.recentContext(histScope, 12).catch(() => []), data.body);
+    if (history) text = history + text;
 
     // Media de entrada: los adjuntos del usuario → FileParts (uri firmada / bytes).
     const parts = await buildMediaParts(data.attachments ?? []);

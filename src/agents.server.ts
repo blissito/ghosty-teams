@@ -146,6 +146,38 @@ export function quotedContextPrefix(author: string, excerpt: string, body: strin
   return `[En respuesta a un mensaje de ${who}]\n> ${cite}\n\n[Mensaje]\n${body}`;
 }
 
+// Cita COMPLETA para el agente: a diferencia del excerpt del snapshot (220 chars + tapa
+// bloques), conserva el contenido real del mensaje citado (para que "dame tips sobre ESTO"
+// tenga el material). Cap generoso para no explotar el turno.
+export function clampQuote(body: string, max = 2000): string {
+  const s = (body || "").trim();
+  return s.length > max ? s.slice(0, max) + "\n…[citado recortado]" : s;
+}
+
+// Bloque de HISTORIAL reciente para el turno del agente: resuelve referencias ("otra vez",
+// "esto", "lo de antes") aunque la memoria del worker esté fría o un turno haya fallado.
+// Va en el TEXTO (cambia por turno). Omite el mensaje ACTUAL (ya va aparte) y los vacíos.
+export function historyContext(
+  messages: { sender: string; agent_handle: string | null; body: string }[],
+  currentBody: string
+): string {
+  const cur = (currentBody || "").trim();
+  const lines: string[] = [];
+  let total = 0;
+  for (const m of messages) {
+    const body = (m.body || "").trim();
+    if (!body || body === cur) continue; // vacío o el propio turno actual
+    const who = m.agent_handle ? `@${m.agent_handle}` : m.sender || "usuario";
+    const snippet = body.length > 1200 ? body.slice(0, 1200) + "…" : body;
+    const line = `${who}: ${snippet}`;
+    if (total + line.length > 6000) break;
+    total += line.length;
+    lines.push(line);
+  }
+  if (!lines.length) return "";
+  return `[Historial reciente de la conversación (de más antiguo a más nuevo), SOLO como contexto — no lo repitas literal]\n${lines.join("\n")}\n\n`;
+}
+
 // ¿Qué agente se mencionó en el body? Devuelve el handle o null (el primero que
 // aparezca, entre los habilitados). Case-insensitive, @handle con borde de palabra.
 export function detectMention(body: string, handles: string[]): string | null {

@@ -1718,7 +1718,7 @@ function ChannelPage() {
         .then((r) => {
           revalidate();
           if (r?.needsAgent && r.agentHandle)
-            askDmAgentFn({ data: { id: o.dmId!, body: o.body, sender: "", handle: r.agentHandle, shellId: r.shellId ?? undefined, quotedAuthor: o.quotedAuthor ?? null, quotedExcerpt: o.quotedExcerpt ?? null, attachments: o.attachments } })
+            askDmAgentFn({ data: { id: o.dmId!, body: o.body, sender: "", handle: r.agentHandle, shellId: r.shellId ?? undefined, quotedAuthor: o.quotedAuthor ?? null, quotedExcerpt: o.quotedExcerpt ?? null, quotedId: o.quotedId ?? null, attachments: o.attachments } })
               .then(() => revalidate())
               .catch(() => revalidate());
         })
@@ -1734,7 +1734,7 @@ function ChannelPage() {
           // hilo nuevo. Cada agente mencionado responde en paralelo y limpia su propio
           // "pensando…"; el streaming (message:delta) aterriza en el flujo por su id.
           for (const ag of respondents) {
-            askAgent({ data: { slug: o.slug, parentId: ag.parent, fleetThread: ag.fleetThread, body: o.body, sender: "", handle: ag.handle, shellId: ag.shellId, quotedAuthor: o.quotedAuthor ?? null, quotedExcerpt: o.quotedExcerpt ?? null, attachments: o.attachments } })
+            askAgent({ data: { slug: o.slug, parentId: ag.parent, fleetThread: ag.fleetThread, body: o.body, sender: "", handle: ag.handle, shellId: ag.shellId, quotedAuthor: o.quotedAuthor ?? null, quotedExcerpt: o.quotedExcerpt ?? null, quotedId: o.quotedId ?? null, attachments: o.attachments } })
               .then(() => revalidate())
               .catch(() => revalidate());
           }
