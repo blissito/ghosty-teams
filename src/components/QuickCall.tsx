@@ -61,6 +61,14 @@ function Tile({ p, source, local }: { p: Participant; source: Track.Source; loca
   const base = p.name || p.identity;
   const label = base + (local ? " (tú)" : "") + (screen ? " · pantalla" : "");
   const initial = (base || "?").trim().charAt(0).toUpperCase();
+  // Avatar del user (claim `metadata` del token). Fallback a la inicial si no tiene.
+  const avatar = (() => {
+    try {
+      return p.metadata ? (JSON.parse(p.metadata) as { avatar?: string }).avatar || "" : "";
+    } catch {
+      return "";
+    }
+  })();
 
   return (
     <div className="relative flex h-full min-h-0 w-full items-center justify-center overflow-hidden rounded-xl border border-border bg-surface-3">
@@ -72,6 +80,8 @@ function Tile({ p, source, local }: { p: Participant; source: Track.Source; loca
           muted={local && !screen}
           className={"h-full w-full " + (screen ? "object-contain" : "object-cover") + (local && !screen ? " -scale-x-100" : "")}
         />
+      ) : avatar ? (
+        <img src={avatar} alt={base} className="h-14 w-14 rounded-full object-cover" />
       ) : (
         <div className="grid h-14 w-14 place-items-center rounded-full bg-brand text-lg font-bold text-brand-fg">
           {initial}

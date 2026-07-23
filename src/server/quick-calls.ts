@@ -41,14 +41,17 @@ function callRoom(cfg: CallConfig, ns: string, scope: "room" | "dm", id: number)
 const b64url = (s: string | Buffer) =>
   Buffer.from(s).toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 
-function mintToken(cfg: CallConfig, room: string, identity: string, name: string, ttlSec = 6 * 3600): string {
+function mintToken(cfg: CallConfig, room: string, identity: string, name: string, ttlSec = 6 * 3600, metadata?: string): string {
   const now = Math.floor(Date.now() / 1000);
   const header = b64url(JSON.stringify({ alg: "HS256", typ: "JWT" }));
+  // `metadata` (claim top-level de LiveKit) → participant.metadata en el browser. Lo
+  // usamos para el avatar del user en el tile de la llamada (fallback a la inicial).
   const payload = b64url(
     JSON.stringify({
       iss: cfg.apiKey,
       sub: identity,
       name,
+      ...(metadata ? { metadata } : {}),
       nbf: now - 10,
       exp: now + ttlSec,
       video: { room, roomJoin: true, canPublish: true, canSubscribe: true, canPublishData: true },
@@ -193,7 +196,12 @@ async function resolveTarget(target: Target) {
 }
 
 function conn(t: Awaited<ReturnType<typeof resolveTarget>>) {
-  return { token: mintToken(t.cfg, t.room, t.me.sub, t.me.name), wss: t.cfg.wssUrl, room: t.room, name: t.me.name };
+  return {
+    token: mintToken(t.cfg, t.room, t.me.sub, t.me.name, undefined, JSON.stringify({ avatar: t.me.avatar || "" })),
+    wss: t.cfg.wssUrl,
+    room: t.room,
+    name: t.me.name,
+  };
 }
 
 // Inicia (o se une a) una call: crea el rastro/tarjeta la 1ª vez, agrega participante,
