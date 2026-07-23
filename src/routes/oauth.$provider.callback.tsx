@@ -2,10 +2,11 @@ import { createFileRoute, redirect } from "@tanstack/react-router";
 import { relayConnectorFn } from "../server/connectors";
 
 // Relay GLOBAL del OAuth per-user (multi-tenant). Es el redirect_uri ÚNICO registrado en
-// el provider (Calendly): https://teams.ghosty.studio/oauth/$provider/callback. El apex
-// no tiene sesión ni tenant, así que aquí NO se cierra el OAuth: se lee el workspace de
-// origen del state firmado y se rebota a su subdominio, donde /setup/$provider/callback
-// intercambia el code con sesión + cookies + namespace. Ver server/connectors.ts.
+// el provider (Calendly): https://oauth.teams.ghosty.studio/oauth/$provider/callback. Este
+// host central no tiene sesión ni tenant (cubierto por el wildcard *.teams.ghosty.studio),
+// así que aquí NO se cierra el OAuth: se lee el workspace de origen del state firmado y se
+// rebota a su subdominio, donde /setup/$provider/callback intercambia el code con sesión +
+// cookies + namespace. __root exime /oauth/ del guard. Ver server/connectors.ts.
 export const Route = createFileRoute("/oauth/$provider/callback")({
   validateSearch: (s: Record<string, unknown>) => ({
     code: typeof s.code === "string" ? s.code : undefined,

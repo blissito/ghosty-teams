@@ -60,8 +60,8 @@ export const startConnectFn = createServerFn({ method: "GET" })
     return { url: buildAuthorizeUrl(def, redirectUri, state, challenge) };
   });
 
-// Relay del apex: el redirect global (teams.ghosty.studio/oauth/$provider/callback) no
-// tiene sesión ni tenant. Verifica el state firmado, saca el workspace de origen y
+// Relay central: el redirect global (oauth.teams.ghosty.studio/oauth/$provider/callback)
+// no tiene sesión ni tenant. Verifica el state firmado, saca el workspace de origen y
 // devuelve la URL del subdominio donde /setup/$provider/callback SÍ cierra el OAuth
 // (con sesión + cookies + namespace). Sin slug (dev/single-tenant) → mismo origin.
 export const relayConnectorFn = createServerFn({ method: "GET" })
