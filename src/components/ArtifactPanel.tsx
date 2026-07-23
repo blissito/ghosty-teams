@@ -1,6 +1,6 @@
 import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useRef, useState } from "react";
-import { X, ExternalLink, FileText, Download, Loader2, ChevronRight, ChevronLeft, RotateCw, Upload } from "lucide-react";
+import { X, ExternalLink, FileText, Download, Loader2, ChevronRight, ChevronLeft, RotateCw, Upload, Link as LinkIcon, Check } from "lucide-react";
 import { useT } from "../i18n";
 import { officeToHtmlFn, xlsxToCsvFn, postMessage } from "../server/chat";
 import { listTeamDocumentsFn, type TeamDocument } from "../server/documents";
@@ -211,6 +211,7 @@ export default function ArtifactPanel({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [refreshTick, setRefreshTick] = useState(0); // botón "refrescar" del header (re-fetch manual)
   const [downloading, setDownloading] = useState(false); // el export docx es lento → spinner
+  const [copied, setCopied] = useState(false); // feedback del botón "Copiar enlace" del artefacto HTML
 
   // ESC cierra el panel, igual que el visor de docs (Modal). Solo activo cuando hay
   // artefacto abierto. Si estás en un drill-down (detail), ESC vuelve al índice primero.
@@ -409,6 +410,92 @@ export default function ArtifactPanel({
     }
   };
 
+  // Artefacto HTML (kind:"artifact"): acciones self-contained a partir de la fuente
+  // (`artifact.html`), que SIEMPRE está disponible aunque el publish a S3 haya fallado o
+  // `src` sea null. Antes el header no mostraba ningún botón para HTML (newTabHref=src → si
+  // src=null, nada; y no es isDocLike → sin descarga). Ahora: abrir (src o blob), descargar
+  // .html, y copiar enlace cuando hay src.
+  const artifactFileName = () =>
+    `${((artifact?.kind === "artifact" ? artifact.title : "") || "artefacto").replace(/[^\w.\- ]/g, "_")}.html`;
+  const openHtmlArtifact = () => {
+    if (artifact?.kind !== "artifact") return;
+    if (artifact.src) {
+      window.open(artifact.src, "_blank", "noopener");
+      return;
+    }
+    const url = URL.createObjectURL(new Blob([artifact.html], { type: "text/html" }));
+    window.open(url, "_blank", "noopener");
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+  };
+  const downloadHtmlArtifact = () => {
+    if (artifact?.kind !== "artifact") return;
+    const url = URL.createObjectURL(new Blob([artifact.html], { type: "text/html" }));
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = artifactFileName();
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 4000);
+  };
+  const copyArtifactLink = async () => {
+    if (artifact?.kind !== "artifact" || !artifact.src) return;
+    try {
+      await navigator.clipboard.writeText(artifact.src);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1600);
+    } catch {
+      window.prompt(t("Copia el enlace:"), artifact.src);
+    }
+  };
+
+  // Descarga de MEDIA (imagen/audio/video/file): antes solo tenían "abrir" (el src es una
+  // URL firmada/presigned → abrir la previsualiza, no la baja). Intenta fetch→blob (funciona
+  // same-origin /api/attachment y si el bucket permite CORS); si falla (cross-origin), cae a
+  // un <a download> directo. Nombre = título + extensión adivinada de la URL.
+  const mediaSrc = artifact && (artifact.kind === "image" || artifact.kind === "audio" || artifact.kind === "video" || artifact.kind === "file") ? artifact.src : null;
+  const [dlingMedia, setDlingMedia] = useState(false);
+  const downloadMedia = async () => {
+    if (!mediaSrc || dlingMedia) return;
+    const extFromUrl = (() => {
+      try {
+        const p = new URL(mediaSrc, window.location.origin).pathname;
+        const m = /\.([a-z0-9]{2,5})$/i.exec(p);
+        return m ? m[1] : "";
+      } catch {
+        return "";
+      }
+    })();
+    const fallbackExt = artifact?.kind === "image" ? "png" : artifact?.kind === "audio" ? "mp3" : artifact?.kind === "video" ? "mp4" : "bin";
+    const base = (artifact?.title || "archivo").replace(/\.[a-z0-9]{2,5}$/i, "").replace(/[^\w.\- ]/g, "_");
+    const name = `${base}.${extFromUrl || fallbackExt}`;
+    setDlingMedia(true);
+    try {
+      const r = await fetch(mediaSrc);
+      if (!r.ok) throw new Error(String(r.status));
+      const blob = await r.blob();
+      const u = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = u;
+      a.download = name;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(u), 4000);
+    } catch {
+      const a = document.createElement("a");
+      a.href = mediaSrc;
+      a.download = name;
+      a.target = "_blank";
+      a.rel = "noopener";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    } finally {
+      setDlingMedia(false);
+    }
+  };
+
   // Subir archivo(s) directo al CASO desde el índice (sin pasar por el agente): sube a
   // EasyBits privado (/api/upload) y lo cuelga del room como adjunto SIN @mención → el
   // agente no responde; el archivo aparece en el índice y en el room.
@@ -473,7 +560,7 @@ export default function ArtifactPanel({
   // hay URL real: docindex → la página global /artifacts; office/pdf/imagen/etc → su src
   // (firmado); html → embed. doc/sheet (md local) y draft no tienen URL → sin botón.
   const newTabHref =
-    !artifact || artifact.kind === "draft" || artifact.kind === "doc" || artifact.kind === "sheet" || artifact.kind === "ask-user"
+    !artifact || artifact.kind === "draft" || artifact.kind === "doc" || artifact.kind === "sheet" || artifact.kind === "ask-user" || artifact.kind === "artifact"
       ? undefined
       : artifact.kind === "docindex"
         ? "/artifacts"
@@ -583,6 +670,47 @@ export default function ArtifactPanel({
                       </button>
                     ) : null}
                   </>
+                ) : null}
+                {artifact.kind === "artifact" ? (
+                  <>
+                    {artifact.src ? (
+                      <button
+                        type="button"
+                        onClick={copyArtifactLink}
+                        title={copied ? t("¡Copiado!") : t("Copiar enlace")}
+                        className="grid size-7 place-items-center rounded-md text-muted transition hover:bg-surface-3 hover:text-brand"
+                      >
+                        {copied ? <Check size={15} className="text-brand" /> : <LinkIcon size={15} />}
+                      </button>
+                    ) : null}
+                    <button
+                      type="button"
+                      onClick={downloadHtmlArtifact}
+                      title={t("Descargar HTML")}
+                      className="grid size-7 place-items-center rounded-md text-muted transition hover:bg-surface-3 hover:text-brand"
+                    >
+                      <Download size={15} />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={openHtmlArtifact}
+                      title={t("Abrir en pestaña nueva")}
+                      className="grid size-7 place-items-center rounded-md text-muted transition hover:bg-surface-3 hover:text-brand"
+                    >
+                      <ExternalLink size={15} />
+                    </button>
+                  </>
+                ) : null}
+                {mediaSrc ? (
+                  <button
+                    type="button"
+                    onClick={downloadMedia}
+                    disabled={dlingMedia}
+                    title={t("Descargar")}
+                    className="grid size-7 place-items-center rounded-md text-muted transition hover:bg-surface-3 hover:text-brand disabled:opacity-60"
+                  >
+                    {dlingMedia ? <Loader2 size={15} className="animate-spin" /> : <Download size={15} />}
+                  </button>
                 ) : null}
                 {newTabHref ? (
                   <a

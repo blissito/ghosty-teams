@@ -2672,7 +2672,11 @@ function Sidebar({
           className="flex min-w-0 flex-1 items-center gap-2 rounded-lg px-2 py-1.5 text-left hover:bg-surface-3"
         >
           <img src="/ghosty.svg" alt="" className="h-6 w-6 shrink-0" />
-          <span className="min-w-0 flex-1 truncate font-semibold">{wsLabel}</span>
+          {/* text-ink EXPLÍCITO: sin él, el span hereda el color YA computado del body
+              (ink del modo claro) y con "sidebar oscuro" queda texto oscuro sobre fondo
+              oscuro → invisible. Con la clase, resuelve el --color-ink que el aside sobre-
+              escribe a la paleta oscura en su subárbol. */}
+          <span className="min-w-0 flex-1 truncate font-semibold text-ink">{wsLabel}</span>
           <ChevronDown size={15} className={`shrink-0 text-muted transition ${wsOpen ? "rotate-180" : ""}`} />
         </button>
         {/* Cerrar drawer (solo móvil). */}
@@ -2699,7 +2703,7 @@ function Sidebar({
                   return (
                     <div key={w.slug || "current"} className="flex items-center gap-2 rounded-lg bg-surface-3 px-2 py-1.5">
                       <img src="/ghosty.svg" alt="" className="h-5 w-5 shrink-0" />
-                      <span className="min-w-0 flex-1 truncate text-sm font-medium">{label}</span>
+                      <span className="min-w-0 flex-1 truncate text-sm font-medium text-ink">{label}</span>
                       <Check size={15} className="shrink-0 text-brand" />
                     </div>
                   );
@@ -4640,10 +4644,10 @@ function CallHeaderButton({ h }: { h: CallWiring }) {
   if (h.joined)
     return (
       <span
-        className="flex shrink-0 items-center gap-1.5 rounded-full border border-green-500/40 bg-green-500/10 px-2.5 py-1 text-xs font-medium text-green-600"
+        className="flex shrink-0 items-center gap-1.5 rounded-full border border-brand/40 bg-brand/10 px-2.5 py-1 text-xs font-medium text-brand"
         title={t("Estás en la llamada")}
       >
-        <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-green-500" />
+        <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-brand" />
         <span className="hidden sm:inline">{t("En llamada")}</span>
       </span>
     );
@@ -4652,7 +4656,7 @@ function CallHeaderButton({ h }: { h: CallWiring }) {
       <button
         onClick={h.onJoin}
         title={t("Unirse a la llamada")}
-        className="flex shrink-0 items-center gap-1.5 rounded-full border border-green-500/50 bg-green-500/10 px-2.5 py-1 text-xs font-semibold text-green-600 transition hover:bg-green-500/20"
+        className="flex shrink-0 items-center gap-1.5 rounded-full border border-brand/50 bg-brand/10 px-2.5 py-1 text-xs font-semibold text-brand transition hover:bg-brand/20"
       >
         <Headphones size={15} className="shrink-0" />
         <span className="hidden sm:inline">{t("Unirse")}</span>
@@ -4674,14 +4678,14 @@ function CallBanner({ h }: { h: CallWiring }) {
   const t = useT();
   if (!h.active || h.joined) return null;
   return (
-    <div className="flex items-center gap-3 border-b border-green-500/30 bg-green-500/10 px-4 py-2 md:px-6">
+    <div className="flex items-center gap-3 border-b border-brand/30 bg-brand/10 px-4 py-2 md:px-6">
       <Avatar name={h.active.host.name} avatar={h.active.host.avatar} className="h-6 w-6" />
       <span className="min-w-0 flex-1 truncate text-sm text-ink">
         {t("{name} inició una llamada", { name: h.active.host.name })}
       </span>
       <button
         onClick={h.onJoin}
-        className="shrink-0 rounded-full bg-green-600 px-3 py-1 text-xs font-semibold text-white transition hover:bg-green-700"
+        className="shrink-0 rounded-full bg-brand px-3 py-1 text-xs font-semibold text-brand-fg transition hover:opacity-90"
       >
         {t("Unirse")}
       </button>
@@ -4801,9 +4805,13 @@ function QuickCallDock({ conn, label, onClose }: { conn: CallConn; label: string
       {!expanded && (
         <div
           onPointerDown={startResize}
-          title={t("Redimensionar")}
-          className="absolute bottom-0.5 right-0.5 z-20 h-4 w-4 cursor-nwse-resize rounded-sm border-b-2 border-r-2 border-ink/40"
-        />
+          title={t("Arrastra para redimensionar")}
+          className="absolute bottom-0 right-0 z-20 grid size-6 cursor-nwse-resize place-items-center rounded-tl-md text-ink/60 transition hover:bg-surface-3 hover:text-brand"
+        >
+          <svg width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round">
+            <path d="M12 4 L4 12 M12 8.5 L8.5 12" />
+          </svg>
+        </div>
       )}
     </div>
   );
@@ -5775,16 +5783,16 @@ function CallCard({ data }: { data: CallCardData }) {
     <div
       className={
         "my-1.5 ml-11 flex max-w-md items-center gap-3 rounded-2xl border px-3.5 py-3 shadow-sm " +
-        (live ? "border-green-500/30 bg-gradient-to-br from-green-500/10 to-transparent" : "border-border bg-surface-2")
+        (live ? "border-brand/30 bg-gradient-to-br from-brand/10 to-transparent" : "border-border bg-surface-2")
       }
     >
-      <div className={"grid h-10 w-10 shrink-0 place-items-center rounded-full " + (live ? "bg-green-500/15 text-green-500" : "bg-surface-3 text-muted")}>
+      <div className={"grid h-10 w-10 shrink-0 place-items-center rounded-full " + (live ? "bg-brand/15 text-brand" : "bg-surface-3 text-muted")}>
         {live ? <Phone size={18} /> : <PhoneOff size={18} />}
       </div>
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-1.5">
           <span className="truncate text-sm font-semibold text-ink">{live ? t("Llamada en curso") : t("Llamada terminada")}</span>
-          {live && <span className="inline-block h-2 w-2 shrink-0 animate-pulse rounded-full bg-green-500" />}
+          {live && <span className="inline-block h-2 w-2 shrink-0 animate-pulse rounded-full bg-brand" />}
         </div>
         <div className="mt-1 flex items-center gap-2">
           <div className="flex -space-x-2">
@@ -5803,11 +5811,11 @@ function CallCard({ data }: { data: CallCardData }) {
       </div>
       {live &&
         (mine ? (
-          <span className="shrink-0 rounded-full border border-green-500/40 bg-green-500/10 px-3 py-1.5 text-xs font-semibold text-green-600">{t("En llamada")}</span>
+          <span className="shrink-0 rounded-full border border-brand/40 bg-brand/10 px-3 py-1.5 text-xs font-semibold text-brand">{t("En llamada")}</span>
         ) : (
           <button
             onClick={() => joinCall(data.join)}
-            className="shrink-0 rounded-full bg-green-600 px-4 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-green-700 active:scale-95"
+            className="shrink-0 rounded-full bg-brand px-4 py-1.5 text-xs font-semibold text-brand-fg shadow-sm transition hover:opacity-90 active:scale-95"
           >
             {t("Unirse")}
           </button>
@@ -5880,7 +5888,7 @@ function MessageRow({
       const text = m.body.replace(/^📞\s*/, "");
       return (
         <div className="flex items-center gap-2 py-1 pl-11 text-xs">
-          {ended ? <PhoneOff size={14} className="shrink-0 text-muted" /> : <Phone size={14} className="shrink-0 text-green-500" />}
+          {ended ? <PhoneOff size={14} className="shrink-0 text-muted" /> : <Phone size={14} className="shrink-0 text-brand" />}
           <span className={ended ? "text-muted" : "font-medium text-ink"}>{text}</span>
         </div>
       );
@@ -6955,7 +6963,11 @@ const Composer = forwardRef<ComposerHandle, {
   const editor = useEditor({
     immediatelyRender: false, // SSR de TanStack Start: sin esto → mismatch de hidratación
     extensions: [
-      StarterKit.configure({ link: { openOnClick: false, autolink: true } }),
+      // autolink:false → al teclear una URL NO se convierte en <a> dentro del editor: eso
+      // atrapaba el caret dentro del link (no se podía escribir después, y el texto seguía
+      // enlazado tras el espacio). La URL viaja como texto plano en el markdown; al RENDERIZAR
+      // el mensaje, Streamdown (remark-gfm autolink) la vuelve clickable igual → sin pérdida.
+      StarterKit.configure({ link: { openOnClick: false, autolink: false } }),
       Placeholder.configure({ placeholder }),
       MarkdownExt.configure({ html: false, bulletListMarker: "-", linkify: false, breaks: false, transformPastedText: true }),
       MentionMd,

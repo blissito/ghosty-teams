@@ -173,14 +173,15 @@ export function detectMentions(body: string, handles: string[]): string[] {
 // como editor colab editable. Docs con membrete/tablas/slides/PDF con diseño → skills normales.
 const EB_DOC_STREAM_GUARDRAIL = [
   "REGLA ABSOLUTA (canal Teams/web) — TIENE PRIORIDAD sobre docs-router, DOC_ROUTING y cualquier skill:",
-  "para CUALQUIER documento de PROSA (nda, carta, oficio, contrato, convenio, demanda, dictamen, memo, minuta, acuerdo) o HOJA DE CÁLCULO (tabla, listado, dataset, leads, inventario, presupuesto — lo que iría en xlsx/csv) PROHIBIDO invocar docs-router, el skill oficio, structured_doc, upload_file, mcp__wa__ o cualquier tool de documento (get_page_html, replace_html, set_page_html, add_page…). NO subas archivos ni generes .docx/.xlsx tú.",
+  "para CUALQUIER documento de PROSA (nda, carta, oficio, contrato, convenio, demanda, dictamen, memo, minuta, acuerdo) o HOJA DE CÁLCULO (tabla, listado, dataset, leads, inventario, presupuesto — lo que iría en xlsx/csv) PROHIBIDO invocar docs-router, el skill oficio, structured_doc, upload_file, mcp__wa__ o cualquier tool de documento (get_page_html, replace_html, set_page_html, add_page…). NO subas archivos ni generes .docx/.xlsx tú. (SALVO la EXCEPCIÓN de PDF/diseño explícito descrita más abajo.)",
   "PROSA → escribe el documento COMPLETO como Markdown DENTRO de un bloque que abre con ```eb-doc y cierra con ```. Usa # para el título, ## para cláusulas, listas y **negritas**.",
   "HOJA DE CÁLCULO / TABLA / DATOS → escribe TODA la tabla como CSV DENTRO de un bloque que abre con ```eb-sheet y cierra con ```. Primera fila = encabezados; una fila por registro; comas como separador y comillas dobles si un valor lleva comas. Puedes poner un título tras la apertura: ```eb-sheet Leads Barranquilla.",
   "ARTEFACTO INTERACTIVO (app, herramienta, calculadora, visualización, gráfica interactiva, juego, demo, landing con estilo/JS, cualquier cosa que corra en el navegador) → escribe UN SOLO archivo HTML COMPLETO Y AUTOCONTENIDO (con su <style> y <script> inline; para React usa Babel-standalone embebido con CDN en <script>) DENTRO de un bloque que abre con ```eb-artifact y cierra con ```. Se renderiza EN VIVO en un iframe del panel y se publica con URL compartible. Pon <title> para nombrarlo. NO uses este bloque para prosa (usa eb-doc) ni para tablas de datos (usa eb-sheet).",
+  "IMAGEN / FOTO / ILUSTRACIÓN / DIBUJO / LOGO / render visual (cuando el usuario pide 'genera/crea/dibuja una imagen/foto/ilustración/logo de …') → GENERA un PNG real con gpt-image-2. La forma depende de tu runtime: si tienes una tool MCP de imagen (generate_image / create_or_edit_image), úsala; si trabajas en code-mode con el SDK local, hazlo con el módulo `/opt/gs-sdk/image.mjs` (función `generate` para crear, `edit` para editar) — léelo y córrelo con node. En AMBOS casos SÍ puedes generar imágenes: NUNCA digas que no tienes herramienta de imagen. PROHIBIDO dibujarlo como SVG a mano dentro de un bloque eb-artifact: eb-artifact es para APPS/HTML interactivo, NUNCA para entregar una imagen pedida. Para EDITAR una imagen existente usa `edit` (o la tool de edición), no re-dibujes.",
   "Cualquiera de esos bloques se muestra generándose EN VIVO en el panel; la plataforma lo guarda con VERSIONES. Fuera del bloque, solo UNA frase breve de contexto, SIN links.",
   "NO anuncies formatos ni archivos que NO vas a producir en ESTE turno: la frase de contexto describe SOLO el/los bloque(s) que realmente emites. Un bloque = un artefacto. Si solo emites eb-doc, NO digas que también harás una hoja/xlsx (ni viceversa). Si el usuario pide prosa Y tabla, emite AMBOS bloques; no prometas uno que no sale.",
   "MODIFICAR un artefacto que YA existe (cambia/ajusta/corrige/agrega/añade una introducción/columna/fila, etc.): usa OTRA VEZ el MISMO tipo de bloque (```eb-doc``` para prosa, ```eb-sheet``` para tabla, ```eb-artifact``` para HTML) y RE-EMITE el artefacto COMPLETO ya con el cambio aplicado. Conserva TODO lo demás idéntico; solo integra lo que el usuario pidió. NUNCA mandes solo el fragmento ni un diff: siempre el artefacto entero, para que se re-genere en vivo.",
-  "ÚNICA EXCEPCIÓN: documentos con membrete de marca fijo o presentaciones (pptx) → skills normales. Toda prosa → eb-doc; toda tabla/datos → eb-sheet.",
+  "EXCEPCIONES (→ usa las skills/tools normales, NO un bloque eb-doc): (a) documentos con membrete de marca fijo; (b) presentaciones (pptx); (c) cuando el usuario pide EXPLÍCITAMENTE un PDF, o un documento 'con diseño'/'vistoso'/'maquetado'/'bonito' → NO lo entregues como eb-doc (eso baja como .docx sin diseño): usa las tools/skills de PDF avanzadas (docs-router / structured_doc / el generador de PDF con diseño de EasyBits) para producir el PDF real y entregar su enlace. La regla 'toda prosa → eb-doc' aplica al documento de prosa por DEFECTO; una petición explícita de PDF/diseño la manda a esas tools. Toda tabla/datos → eb-sheet.",
 ].join(" ");
 
 // Si el hilo YA tiene un artefacto, al MODIFICAR el agente re-emite el artefacto COMPLETO
@@ -190,7 +191,7 @@ const EB_DOC_STREAM_GUARDRAIL = [
 // y el system prompt de la sesión persistente se fija al arrancar (un valor variable ahí
 // forzaría cold-restart). El BASE estable (EB_DOC_STREAM_GUARDRAIL) sí va en
 // appendSystemPrompt (idéntico todos los turnos → persistencia-safe). Vacío si no hay artefacto.
-function artifactDocHint(currentDoc?: { kind: "doc" | "sheet" | "artifact"; md: string } | null): string {
+function artifactDocHint(currentDoc?: { kind: "doc" | "sheet" | "artifact"; md: string; src?: string | null } | null): string {
   const md = currentDoc?.md.trim();
   if (!md) return "";
   const kind = currentDoc!.kind;
@@ -198,8 +199,19 @@ function artifactDocHint(currentDoc?: { kind: "doc" | "sheet" | "artifact"; md: 
   const noun =
     kind === "sheet" ? "esta hoja de cálculo (CSV)" : kind === "artifact" ? "este artefacto (HTML autocontenido)" : "este documento";
   const lang = kind === "sheet" ? "CSV" : kind === "artifact" ? "HTML" : "Markdown";
+  // Enlace público YA emitido por la plataforma al publicar el artefacto (columna
+  // gc_artifacts.src). Se lo damos al agente para que, si el usuario pide "el link"/
+  // "publícalo"/"compártelo", lo entregue TAL CUAL en vez de decir que no puede (antes
+  // se disculpaba e inventaba que "no tengo tool para crear URLs" — incidente 2026-07-23).
+  const src = currentDoc!.src?.trim();
+  const linkLine =
+    kind === "artifact" && src
+      ? `Este artefacto YA está publicado; su enlace compartible es: ${src} . ` +
+        `Si el usuario pide el link / que lo publiques / que lo compartas, entrégaselo TAL CUAL (no digas que no puedes ni inventes otra URL). `
+      : "";
   return (
     `[Contexto del hilo — ARTEFACTO ACTUAL. En esta conversación ya existe ${noun}. ` +
+    linkLine +
     `Si el usuario pide modificarlo (cambiar, ajustar, corregir, agregar/añadir algo), ` +
     `RE-EMITE el artefacto COMPLETO en un bloque \`\`\`${fence} con el cambio ya integrado y todo ` +
     `lo demás idéntico. Este es su contenido actual en ${lang}:\n\n\`\`\`\n${md}\n\`\`\`]\n\n`
@@ -219,7 +231,7 @@ export async function callAgentBackendStream(
   onChunk: (chunk: string) => void | Promise<void>,
   parts: MediaPart[] = [],
   onTool?: (name: string) => void | Promise<void>,
-  currentDoc?: { kind: "doc" | "sheet" | "artifact"; md: string } | null
+  currentDoc?: { kind: "doc" | "sheet" | "artifact"; md: string; src?: string | null } | null
 ): Promise<string> {
   if (agent.backend.kind !== "fleet") {
     // Sin SSE todavía: colecta el reply completo y lo emite de un tirón (el cliente
@@ -403,7 +415,7 @@ export async function runAgentTurn(opts: {
   emitBody?: (id: number, body: string) => void;
   // Artefacto ACTUAL del hilo (doc/sheet + contenido) → se inyecta al turno para re-emisión
   // completa al editar.
-  currentDoc?: { kind: "doc" | "sheet" | "artifact"; md: string } | null;
+  currentDoc?: { kind: "doc" | "sheet" | "artifact"; md: string; src?: string | null } | null;
 }): Promise<{ id: number; reply: string }> {
   let id: number | null = null;
   const ensure = async (): Promise<number> => {

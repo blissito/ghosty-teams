@@ -317,15 +317,15 @@ export async function createArtifact(
 // artefacto completo con el cambio.
 export async function getDoc(
   documentId: string
-): Promise<{ kind: "doc" | "sheet" | "artifact"; md: string } | null> {
+): Promise<{ kind: "doc" | "sheet" | "artifact"; md: string; src?: string | null } | null> {
   const rows = await dbq(
-    `SELECT kind, md FROM gc_artifacts
+    `SELECT kind, md, src FROM gc_artifacts
       WHERE url = ? AND kind IN ('doc','sheet','artifact') AND md IS NOT NULL
       ORDER BY id DESC LIMIT 1`,
     [documentId]
   );
   const r = rows[0];
-  return r?.md ? { kind: r.kind as "doc" | "sheet" | "artifact", md: r.md } : null;
+  return r?.md ? { kind: r.kind as "doc" | "sheet" | "artifact", md: r.md, src: r.src ?? null } : null;
 }
 
 // Solo el contenido (para el export .docx del route). Delega en getDoc.
