@@ -1,14 +1,14 @@
 // Auto-generated ES→EN dictionary for dictionaries.en — 421 keys
 export const en: Record<string, string> = {
-  // Huddles → en inglés se llaman "quick calls"
-  "Huddle": "Quick call",
-  "Iniciar huddle": "Start quick call",
+  // Llamadas (quick calls) — ES "Llamada", EN "Quick call" (nunca "huddle" en UI)
+  "Llamada": "Quick call",
+  "Iniciar llamada": "Start quick call",
   "Unirse": "Join",
-  "Unirse al huddle": "Join the quick call",
-  "En huddle": "In call",
-  "Estás en el huddle": "You're in the quick call",
-  "{name} inició un huddle": "{name} started a quick call",
-  "Salir del huddle": "Leave quick call",
+  "Unirse a la llamada": "Join the quick call",
+  "En llamada": "In call",
+  "Estás en la llamada": "You're in the call",
+  "{name} inició una llamada": "{name} started a quick call",
+  "Salir de la llamada": "Leave call",
   "Salir": "Leave",
   "Idioma": "Language",
   "Cambiar foto": "Change photo",
@@ -222,7 +222,6 @@ export const en: Record<string, string> = {
   "Lista": "List",
   "Lista numerada": "Numbered list",
   "Listo": "Done",
-  "Llamada": "Call",
   "Llamada del room · Próximamente": "Room call · Coming soon",
   "Llamada · Próximamente": "Call · Coming soon",
   "Llave del motor": "Engine key",

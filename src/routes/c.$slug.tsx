@@ -4502,17 +4502,17 @@ function HuddleHeaderButton({ h }: { h: HuddleWiring }) {
     return (
       <span
         className="flex shrink-0 items-center gap-1.5 rounded-full border border-green-500/40 bg-green-500/10 px-2.5 py-1 text-xs font-medium text-green-600"
-        title={t("Estás en el huddle")}
+        title={t("Estás en la llamada")}
       >
         <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-green-500" />
-        <span className="hidden sm:inline">{t("En huddle")}</span>
+        <span className="hidden sm:inline">{t("En llamada")}</span>
       </span>
     );
   if (h.active)
     return (
       <button
         onClick={h.onJoin}
-        title={t("Unirse al huddle")}
+        title={t("Unirse a la llamada")}
         className="flex shrink-0 items-center gap-1.5 rounded-full border border-green-500/50 bg-green-500/10 px-2.5 py-1 text-xs font-semibold text-green-600 transition hover:bg-green-500/20"
       >
         <Headphones size={15} className="shrink-0" />
@@ -4522,11 +4522,11 @@ function HuddleHeaderButton({ h }: { h: HuddleWiring }) {
   return (
     <button
       onClick={h.onStart}
-      title={t("Iniciar huddle")}
+      title={t("Iniciar llamada")}
       className="flex shrink-0 items-center gap-1.5 rounded-full border border-border px-2.5 py-1 text-xs font-medium text-muted transition hover:border-brand hover:text-brand"
     >
       <Headphones size={15} className="shrink-0" />
-      <span className="hidden sm:inline">{t("Huddle")}</span>
+      <span className="hidden sm:inline">{t("Llamada")}</span>
     </button>
   );
 }
@@ -4538,7 +4538,7 @@ function HuddleBanner({ h }: { h: HuddleWiring }) {
     <div className="flex items-center gap-3 border-b border-green-500/30 bg-green-500/10 px-4 py-2 md:px-6">
       <Avatar name={h.active.host.name} avatar={h.active.host.avatar} className="h-6 w-6" />
       <span className="min-w-0 flex-1 truncate text-sm text-ink">
-        {t("{name} inició un huddle", { name: h.active.host.name })}
+        {t("{name} inició una llamada", { name: h.active.host.name })}
       </span>
       <button
         onClick={h.onJoin}
@@ -4559,11 +4559,11 @@ function HuddleDock({ url, label, onClose }: { url: string; label: string; onClo
       <div className="flex items-center justify-between gap-2 border-b border-border bg-surface-2 px-3 py-2">
         <div className="flex min-w-0 items-center gap-2">
           <Headphones size={15} className="shrink-0 text-brand" />
-          <span className="truncate text-sm font-semibold text-ink">{t("Huddle")} · {label}</span>
+          <span className="truncate text-sm font-semibold text-ink">{t("Llamada")} · {label}</span>
         </div>
         <button
           onClick={onClose}
-          title={t("Salir del huddle")}
+          title={t("Salir de la llamada")}
           className="rounded-md px-2 py-1 text-xs font-medium text-muted transition hover:bg-surface-3 hover:text-ink"
         >
           {t("Salir")}
@@ -4571,7 +4571,7 @@ function HuddleDock({ url, label, onClose }: { url: string; label: string; onClo
       </div>
       <iframe
         src={url}
-        title={t("Huddle")}
+        title={t("Llamada")}
         allow="camera; microphone; display-capture; autoplay"
         className="h-[min(52vh,460px)] w-full border-0 bg-black"
       />
