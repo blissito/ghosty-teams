@@ -65,6 +65,7 @@ export type Message = {
   quoted_id?: number | null;
   quoted_author?: string | null;
   quoted_excerpt?: string | null;
+  forwarded_from?: string | null; // reenviado: autor original (rótulo "Reenviado")
 };
 
 export type Attachment = {
@@ -114,7 +115,13 @@ function toMessage(r: Row): Message {
     quoted_id: r.quoted_id == null ? null : num(r.quoted_id),
     quoted_author: (r.quoted_author as string | null) ?? null,
     quoted_excerpt: (r.quoted_excerpt as string | null) ?? null,
+    forwarded_from: (r.forwarded_from as string | null) ?? null,
   };
+}
+
+// Marca un mensaje como REENVIADO (guarda el autor original) — lo usa el forward al copiar.
+export async function setForwardedFrom(messageId: number, originalAuthor: string): Promise<void> {
+  await dbq("UPDATE gc_messages SET forwarded_from = ? WHERE id = ?", [originalAuthor, messageId]);
 }
 
 // ── Reacciones + edición ──

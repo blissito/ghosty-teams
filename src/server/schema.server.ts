@@ -78,6 +78,9 @@ async function migrate(): Promise<void> {
   await addColumn("gc_messages", "quoted_id", "INTEGER");
   await addColumn("gc_messages", "quoted_author", "TEXT");
   await addColumn("gc_messages", "quoted_excerpt", "TEXT");
+  // Reenviar (forward estilo WhatsApp): al reenviar un mensaje a otro canal/DM se copia su
+  // contenido; este campo guarda el AUTOR original para pintar el rótulo "Reenviado".
+  await addColumn("gc_messages", "forwarded_from", "TEXT");
 
   await exec(`CREATE INDEX IF NOT EXISTS gc_messages_chan_topic
               ON gc_messages(channel_id, topic, created_at)`);

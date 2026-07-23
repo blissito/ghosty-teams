@@ -37,6 +37,7 @@ import {
   Bell,
   BellOff,
   Search,
+  Forward,
   X,
   Menu,
   Paperclip,
@@ -68,6 +69,7 @@ import type { Channel, Message, DmConversation, RoomHit, ViewHit, Attachment, Ar
 import { listEmojisFn } from "../server/emojis";
 import { recentViewFn, mentionsViewFn, starredViewFn } from "../server/views";
 import { openDmFn, listDmsFn, getDmFlowFn, postDmMessageFn, askDmAgentFn } from "../server/dm";
+import { forwardTargetsFn, forwardMessageFn } from "../server/forward";
 import { startCallFn, joinCallFn, leaveCallFn, getActiveCallFn } from "../server/quick-calls";
 import type { CallConn } from "../components/QuickCall";
 // Lazy: livekit-client toca APIs del browser al importar → solo cargar en cliente
@@ -6099,6 +6101,13 @@ function MessageRow({
           ) : null}
         </div>
         )}
+        {/* Reenviado (forward): rótulo sutil estilo WhatsApp sobre el cuerpo. */}
+        {m.forwarded_from ? (
+          <div className="mb-0.5 flex items-center gap-1 text-xs italic text-muted">
+            <Forward size={12} className="shrink-0" /> {t("Reenviado")}
+            <span className="not-italic">· {m.forwarded_from}</span>
+          </div>
+        ) : null}
         {/* Quote-reply: cita del mensaje al que responde (sobre el cuerpo, clic → salta). */}
         {m.quoted_excerpt ? <QuotedCitation m={m} /> : null}
         {editing ? (
@@ -6359,6 +6368,7 @@ function MessageActions({
   const { pin, remove } = useContext(ChatCtx);
   const [open, setOpen] = useState(false);
   const [confirmDel, setConfirmDel] = useState(false);
+  const [forwardOpen, setForwardOpen] = useState(false);
   useEffect(() => onOpenChange?.(open), [open]); // mantiene la barra visible con el menú abierto
   const [receipts, setReceipts] = useState<{ sub: string; name: string; avatar: string }[] | null>(null);
   const close = () => {
@@ -6432,6 +6442,9 @@ function MessageActions({
                 <Link2 size={14} className="text-muted" /> {t("Copiar enlace")}
               </button>
             )}
+            <button className={item} onClick={() => { close(); setForwardOpen(true); }}>
+              <Forward size={14} className="text-muted" /> {t("Reenviar")}
+            </button>
             <button className={item} onClick={showReceipts}>
               <CheckCircle2 size={14} className="text-muted" /> {t("Leído por")}
             </button>
@@ -6476,7 +6489,97 @@ function MessageActions({
           onConfirm={() => remove(m)}
         />
       )}
+      {forwardOpen && <ForwardModal message={m} onClose={() => setForwardOpen(false)} />}
     </div>
+  );
+}
+
+// Reenviar (forward WhatsApp): elige un canal o DM y re-publica el mensaje COMPLETO ahí.
+// Busca en vivo; un clic reenvía y confirma. Fuente de destinos = forwardTargetsFn (canales
+// visibles + DMs del usuario).
+function ForwardModal({ message, onClose }: { message: Message; onClose: () => void }) {
+  const t = useT();
+  const [targets, setTargets] = useState<{ channels: { slug: string; name: string; icon: string | null }[]; dms: { id: number; name: string; avatar: string }[] } | null>(null);
+  const [q, setQ] = useState("");
+  const [sending, setSending] = useState<string | null>(null); // key del destino en curso
+  const [done, setDone] = useState<string | null>(null); // nombre del destino reenviado
+  useEffect(() => {
+    forwardTargetsFn().then(setTargets).catch(() => setTargets({ channels: [], dms: [] }));
+  }, []);
+  const ql = q.trim().toLowerCase();
+  const channels = (targets?.channels ?? []).filter((c) => !ql || c.name.toLowerCase().includes(ql));
+  const dms = (targets?.dms ?? []).filter((d) => !ql || d.name.toLowerCase().includes(ql));
+  const send = async (key: string, to: { slug: string } | { dmId: number }, name: string) => {
+    if (sending) return;
+    setSending(key);
+    try {
+      await forwardMessageFn({ data: { messageId: message.id, to } });
+      setDone(name);
+      setTimeout(onClose, 900);
+    } catch {
+      setSending(null);
+      alert(t("No se pudo reenviar. Intenta de nuevo."));
+    }
+  };
+  return (
+    <Modal onClose={onClose}>
+      <div className="flex max-h-[70vh] w-[min(92vw,26rem)] flex-col">
+        <h3 className="mb-1 text-sm font-semibold text-ink">{t("Reenviar mensaje")}</h3>
+        {done ? (
+          <div className="grid place-items-center gap-2 py-10 text-center">
+            <Check size={28} className="text-brand" />
+            <span className="text-sm text-ink">{t("Reenviado a {name}", { name: done })}</span>
+          </div>
+        ) : (
+          <>
+            <div className="relative mb-2">
+              <Search size={14} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-muted" />
+              <input
+                autoFocus
+                value={q}
+                onChange={(e) => setQ(e.target.value)}
+                placeholder={t("Buscar canal o persona…")}
+                className="w-full rounded-lg border border-border bg-surface py-2 pl-8 pr-3 text-sm text-ink outline-none focus:border-brand"
+              />
+            </div>
+            <div className="thin-scroll -mx-1 min-h-0 flex-1 overflow-y-auto px-1">
+              {targets == null ? (
+                <div className="grid place-items-center py-8"><Loader2 size={18} className="animate-spin text-muted" /></div>
+              ) : channels.length === 0 && dms.length === 0 ? (
+                <p className="px-2 py-6 text-center text-xs text-muted">{t("Sin destinos")}</p>
+              ) : (
+                <>
+                  {channels.length > 0 && <p className="px-2 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-wide text-muted">{t("Canales")}</p>}
+                  {channels.map((c) => {
+                    const key = `c:${c.slug}`;
+                    return (
+                      <button key={key} disabled={!!sending} onClick={() => send(key, { slug: c.slug }, c.name)}
+                        className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm text-ink transition hover:bg-surface-2 disabled:opacity-50">
+                        <Hash size={15} className="shrink-0 text-muted" />
+                        <span className="min-w-0 flex-1 truncate">{c.name}</span>
+                        {sending === key ? <Loader2 size={14} className="animate-spin text-brand" /> : null}
+                      </button>
+                    );
+                  })}
+                  {dms.length > 0 && <p className="px-2 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-wide text-muted">{t("Directos")}</p>}
+                  {dms.map((d) => {
+                    const key = `d:${d.id}`;
+                    return (
+                      <button key={key} disabled={!!sending} onClick={() => send(key, { dmId: d.id }, d.name)}
+                        className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm text-ink transition hover:bg-surface-2 disabled:opacity-50">
+                        <Avatar name={d.name} avatar={d.avatar} className="h-6 w-6 shrink-0 text-[10px]" />
+                        <span className="min-w-0 flex-1 truncate">{d.name}</span>
+                        {sending === key ? <Loader2 size={14} className="animate-spin text-brand" /> : null}
+                      </button>
+                    );
+                  })}
+                </>
+              )}
+            </div>
+          </>
+        )}
+      </div>
+    </Modal>
   );
 }
 
