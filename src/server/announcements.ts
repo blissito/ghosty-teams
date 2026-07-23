@@ -1,5 +1,4 @@
 import { createServerFn } from "@tanstack/react-start";
-import crypto from "node:crypto";
 import { sessionUser } from "./chat";
 
 // ── Novedades / anuncios ("What's New" estilo Discord) ──────────────────────
@@ -7,6 +6,10 @@ import { sessionUser } from "./chat";
 // (modelo Announcement, UI en /admin/announcements). Teams solo CONSUME: pide la última
 // publicada al endpoint interno HMAC de gs y la cruza con el estado "visto" per-usuario
 // (gt_announcement_reads). La card se muestra si announcement.id != lastSeenId.
+//
+// IMPORTANTE: este módulo lo importa el cliente (c.$slug.tsx usa las server fns + el
+// type). NADA de node:crypto / process.env a nivel módulo → romperían el bundle del
+// browser. Todo lo server-only vive DENTRO de los handlers (dynamic import).
 
 export type Announcement = {
   id: string;
@@ -16,12 +19,13 @@ export type Announcement = {
   publishedAt: string | null;
 };
 
-const IDP = process.env.GHOSTY_IDENTITY_URL ?? "https://www.ghosty.studio";
-
 // Última novedad publicada (global, desde gs) firmada con GHOSTY_PARTNER_SECRET.
+// Solo se ejecuta server-side (dentro del handler).
 async function fetchLatestFromControlPlane(): Promise<Announcement | null> {
+  const crypto = await import("node:crypto");
   const secret = process.env.GHOSTY_PARTNER_SECRET;
   if (!secret) return null;
+  const IDP = process.env.GHOSTY_IDENTITY_URL ?? "https://www.ghosty.studio";
   const ts = Math.floor(Date.now() / 1000);
   const sig = crypto.createHmac("sha256", secret).update(`${ts}.announcements`).digest("hex");
   try {

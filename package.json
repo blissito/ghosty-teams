@@ -38,6 +38,7 @@
     "@tiptap/starter-kit": "^3.27.4",
     "@tiptap/suggestion": "^3.27.4",
     "dompurify": "^3.4.11",
+    "livekit-client": "^2.20.2",
     "lucide-react": "^0.545.0",
     "motion": "^12.42.2",
     "nitro": "npm:nitro-nightly@latest",

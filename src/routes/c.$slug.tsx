@@ -66,7 +66,8 @@ import type { Channel, Message, DmConversation, RoomHit, ViewHit, Attachment, Ar
 import { listEmojisFn } from "../server/emojis";
 import { recentViewFn, mentionsViewFn, starredViewFn } from "../server/views";
 import { openDmFn, listDmsFn, getDmFlowFn, postDmMessageFn, askDmAgentFn } from "../server/dm";
-import { startHuddleFn, joinHuddleFn, leaveHuddleFn, getActiveHuddleFn } from "../server/huddles";
+import { startCallFn, joinCallFn, leaveCallFn, getActiveCallFn } from "../server/quick-calls";
+import { QuickCall, type CallConn } from "../components/QuickCall";
 import { listAgentsFn } from "../server/agents";
 import { unreadCountsFn, markReadFn, readReceiptsFn, lastReadFn } from "../server/reads";
 import { latestAnnouncementFn, markAnnouncementSeenFn, type Announcement } from "../server/announcements";
@@ -879,51 +880,43 @@ function ChannelPage() {
   const [patch, setPatch] = useState(0);
   const applyPatch = () => setPatch((p) => p + 1);
   const [online, setOnline] = useState<Set<string>>(new Set());
-  // ── Huddles (quick calls) ──────────────────────────────────────────────────
-  // Un huddle activo por scope (canal/DM), sembrado por el bus (huddle:started/ended)
-  // y por getActiveHuddleFn al entrar. `joinedHuddle` = el dock (iframe) que tengo abierto.
-  const [activeHuddles, setActiveHuddles] = useState<
-    Map<string, { huddleId: string; host: { sub: string; name: string; avatar: string }; label: string; startedAt: number }>
+  // ── Quick-calls ────────────────────────────────────────────────────────────
+  // Una call activa por scope (canal/DM), sembrada por el bus (quickcall:started/ended)
+  // y por getActiveCallFn al entrar. `joinedCall` = la llamada nativa (dock) que tengo abierta.
+  const [activeCalls, setActiveCalls] = useState<
+    Map<string, { callId: string; host: { sub: string; name: string; avatar: string }; label: string; startedAt: number }>
   >(new Map());
-  const [joinedHuddle, setJoinedHuddle] = useState<
-    { scope: "room" | "dm"; scopeId: number; url: string; label: string; target: HuddleTarget } | null
+  const [joinedCall, setJoinedCall] = useState<
+    { scope: "room" | "dm"; scopeId: number; conn: CallConn; label: string; target: CallTarget } | null
   >(null);
-  const openHuddle = async (
-    fn: (o: { data: HuddleTarget }) => Promise<{ url: string }>,
+  const openCall = async (
+    fn: (o: { data: CallTarget }) => Promise<CallConn>,
     scope: "room" | "dm",
     scopeId: number,
-    target: HuddleTarget,
+    target: CallTarget,
     label: string
   ) => {
     try {
       const r = await fn({ data: target });
-      setJoinedHuddle({ scope, scopeId, url: r.url, label, target });
+      setJoinedCall({ scope, scopeId, conn: { token: r.token, wss: r.wss, room: r.room, name: r.name }, label, target });
     } catch (e) {
-      console.error("[huddle] no se pudo abrir", e);
+      console.error("[call] no se pudo abrir", e);
     }
   };
-  const leaveHuddle = () =>
-    setJoinedHuddle((j) => {
-      if (j) leaveHuddleFn({ data: j.target }).catch(() => {});
+  const leaveCall = () =>
+    setJoinedCall((j) => {
+      if (j) leaveCallFn({ data: j.target }).catch(() => {});
       return null;
     });
-  // El /room del box avisa por postMessage cuando el usuario cuelga DENTRO del iframe.
-  useEffect(() => {
-    const onMsg = (e: MessageEvent) => {
-      if (e && e.data && e.data.type === "gs-huddle-left") leaveHuddle();
-    };
-    window.addEventListener("message", onMsg);
-    return () => window.removeEventListener("message", onMsg);
-  }, []);
-  // Semilla del huddle activo del canal actual (por si arrancó antes de que yo entrara).
+  // Semilla del call activo del canal actual (por si arrancó antes de que yo entrara).
   useEffect(() => {
     let alive = true;
-    getActiveHuddleFn({ data: { scope: "room", slug: channel.slug } })
+    getActiveCallFn({ data: { scope: "room", slug: channel.slug } })
       .then((h) => {
         if (!alive) return;
-        setActiveHuddles((prev) => {
+        setActiveCalls((prev) => {
           const n = new Map(prev);
-          if (h) n.set(`room:${channel.id}`, { huddleId: h.huddleId, host: h.host, label: h.label, startedAt: h.startedAt });
+          if (h) n.set(`room:${channel.id}`, { callId: h.callId, host: h.host, label: h.label, startedAt: h.startedAt });
           else n.delete(`room:${channel.id}`);
           return n;
         });
@@ -933,14 +926,14 @@ function ChannelPage() {
       alive = false;
     };
   }, [channel.id, channel.slug]);
-  // Semilla del huddle activo del DM que abro.
+  // Semilla del call activo del DM que abro.
   useEffect(() => {
     if (openDmId == null) return;
     let alive = true;
     const id = openDmId;
-    getActiveHuddleFn({ data: { scope: "dm", dmId: id } })
+    getActiveCallFn({ data: { scope: "dm", dmId: id } })
       .then((h) => {
-        if (alive && h) setActiveHuddles((prev) => new Map(prev).set(`dm:${id}`, { huddleId: h.huddleId, host: h.host, label: h.label, startedAt: h.startedAt }));
+        if (alive && h) setActiveCalls((prev) => new Map(prev).set(`dm:${id}`, { callId: h.callId, host: h.host, label: h.label, startedAt: h.startedAt }));
       })
       .catch(() => {});
     return () => {
@@ -1398,21 +1391,21 @@ function ChannelPage() {
           typingTimer.current = setTimeout(() => setTyping(null), 3500);
         }
         break;
-      case "huddle:started":
-        setActiveHuddles((prev) =>
-          new Map(prev).set(`${ev.scope}:${ev.scopeId}`, { huddleId: ev.huddleId, host: ev.host, label: ev.label, startedAt: ev.startedAt })
+      case "quickcall:started":
+        setActiveCalls((prev) =>
+          new Map(prev).set(`${ev.scope}:${ev.scopeId}`, { callId: ev.callId, host: ev.host, label: ev.label, startedAt: ev.startedAt })
         );
         break;
-      case "huddle:ended":
-        setActiveHuddles((prev) => {
+      case "quickcall:ended":
+        setActiveCalls((prev) => {
           const k = `${ev.scope}:${ev.scopeId}`;
           if (!prev.has(k)) return prev;
           const n = new Map(prev);
           n.delete(k);
           return n;
         });
-        // Si estaba en ESE huddle, cierra mi dock.
-        setJoinedHuddle((j) => (j && j.scope === ev.scope && j.scopeId === ev.scopeId ? null : j));
+        // Si estaba en ESE call, cierra mi dock.
+        setJoinedCall((j) => (j && j.scope === ev.scope && j.scopeId === ev.scopeId ? null : j));
         break;
     }
   };
@@ -1922,12 +1915,12 @@ function ChannelPage() {
           typing={typing && typing.dmId === openDmId ? typing : null}
           newAt={boundary?.key === `dm:${openDmId}` ? boundary.at : null}
           onBack={() => setOpenDmId(null)}
-          huddle={{
-            active: activeHuddles.get(`dm:${openDmId}`) ?? null,
-            joined: joinedHuddle?.scope === "dm" && joinedHuddle.scopeId === openDmId,
-            onStart: () => openHuddle(startHuddleFn, "dm", openDmId, { scope: "dm", dmId: openDmId }, "Huddle"),
-            onJoin: () => openHuddle(joinHuddleFn, "dm", openDmId, { scope: "dm", dmId: openDmId }, "Huddle"),
-            onLeave: leaveHuddle,
+          call={{
+            active: activeCalls.get(`dm:${openDmId}`) ?? null,
+            joined: joinedCall?.scope === "dm" && joinedCall.scopeId === openDmId,
+            onStart: () => openCall(startCallFn, "dm", openDmId, { scope: "dm", dmId: openDmId }, "Llamada"),
+            onJoin: () => openCall(joinCallFn, "dm", openDmId, { scope: "dm", dmId: openDmId }, "Llamada"),
+            onLeave: leaveCall,
           }}
         />
       ) : openThreadId != null ? (
@@ -1957,12 +1950,12 @@ function ChannelPage() {
           pins={pins}
           onOpenDm={openDm}
           onOpenNav={() => setNavOpen(true)}
-          huddle={{
-            active: activeHuddles.get(`room:${channel.id}`) ?? null,
-            joined: joinedHuddle?.scope === "room" && joinedHuddle.scopeId === channel.id,
-            onStart: () => openHuddle(startHuddleFn, "room", channel.id, { scope: "room", slug: channel.slug }, channel.name),
-            onJoin: () => openHuddle(joinHuddleFn, "room", channel.id, { scope: "room", slug: channel.slug }, channel.name),
-            onLeave: leaveHuddle,
+          call={{
+            active: activeCalls.get(`room:${channel.id}`) ?? null,
+            joined: joinedCall?.scope === "room" && joinedCall.scopeId === channel.id,
+            onStart: () => openCall(startCallFn, "room", channel.id, { scope: "room", slug: channel.slug }, channel.name),
+            onJoin: () => openCall(joinCallFn, "room", channel.id, { scope: "room", slug: channel.slug }, channel.name),
+            onLeave: leaveCall,
           }}
         />
       )}
@@ -2012,8 +2005,8 @@ function ChannelPage() {
           />
         )}
       </AnimatePresence>
-      {joinedHuddle && (
-        <HuddleDock url={joinedHuddle.url} label={joinedHuddle.label} onClose={leaveHuddle} />
+      {joinedCall && (
+        <QuickCallDock conn={joinedCall.conn} label={joinedCall.label} onClose={leaveCall} />
       )}
       <ToastStack toasts={toasts} onDismiss={dismissToast} />
       <NovedadesModal />
@@ -2022,12 +2015,13 @@ function ChannelPage() {
   );
 }
 
-// Confetti one-shot, self-contained (sin dep), acorde al tema del user: lee el acento
-// (--color-brand/-2) y lo mezcla con los pastel del hero. Dos "cañones" desde arriba,
-// gravedad + giro + fade ~1.6s, luego se limpia. Respeta data-reduce-motion.
-function fireConfetti() {
-  if (typeof document === "undefined") return;
-  if (document.documentElement.getAttribute("data-reduce-motion") === "1") return;
+// Confetti PERSISTENTE mientras el anuncio está abierto, self-contained (sin dep),
+// acorde al tema (--color-brand/-2 + pastel del hero). Burst inicial fuerte + lluvia
+// suave continua desde arriba; al cerrar (stop) deja caer lo que queda y limpia.
+// Respeta data-reduce-motion. Devuelve una función stop().
+function startConfetti(): () => void {
+  if (typeof document === "undefined") return () => {};
+  if (document.documentElement.getAttribute("data-reduce-motion") === "1") return () => {};
   const cs = getComputedStyle(document.documentElement);
   const brand = cs.getPropertyValue("--color-brand").trim() || "#a78bfa";
   const brand2 = cs.getPropertyValue("--color-brand-2").trim() || "#7c3aed";
@@ -2037,64 +2031,84 @@ function fireConfetti() {
     "position:fixed;inset:0;width:100%;height:100%;pointer-events:none;z-index:60";
   document.body.appendChild(canvas);
   const ctx = canvas.getContext("2d")!;
+  let W = window.innerWidth;
+  let H = window.innerHeight;
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
-  const W = window.innerWidth;
-  const H = window.innerHeight;
-  canvas.width = W * dpr;
-  canvas.height = H * dpr;
-  ctx.scale(dpr, dpr);
-  type P = { x: number; y: number; vx: number; vy: number; rot: number; vr: number; s: number; c: string; life: number };
+  const resize = () => {
+    W = window.innerWidth;
+    H = window.innerHeight;
+    canvas.width = W * dpr;
+    canvas.height = H * dpr;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  };
+  resize();
+  window.addEventListener("resize", resize);
+
+  type P = { x: number; y: number; vx: number; vy: number; rot: number; vr: number; s: number; c: string; drift: number };
   const parts: P[] = [];
-  const N = 120;
-  for (let i = 0; i < N; i++) {
-    const fromLeft = i < N / 2;
-    const ang = (fromLeft ? -Math.PI / 4 : (-Math.PI * 3) / 4) + (Math.random() - 0.5) * 0.8;
-    const sp = 9 + Math.random() * 9;
-    parts.push({
-      x: fromLeft ? W * 0.15 : W * 0.85,
-      y: H * 0.28,
-      vx: Math.cos(ang) * sp,
-      vy: Math.sin(ang) * sp,
-      rot: Math.random() * Math.PI,
-      vr: (Math.random() - 0.5) * 0.4,
-      s: 6 + Math.random() * 6,
-      c: colors[(Math.random() * colors.length) | 0],
-      life: 1,
-    });
-  }
+  const mk = (burst: boolean): P => {
+    const c = colors[(Math.random() * colors.length) | 0];
+    if (burst) {
+      const fromLeft = Math.random() < 0.5;
+      const ang = (fromLeft ? -Math.PI / 4 : (-Math.PI * 3) / 4) + (Math.random() - 0.5) * 0.8;
+      const sp = 9 + Math.random() * 9;
+      return { x: fromLeft ? W * 0.15 : W * 0.85, y: H * 0.28, vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp, rot: Math.random() * Math.PI, vr: (Math.random() - 0.5) * 0.4, s: 6 + Math.random() * 6, c, drift: Math.random() * Math.PI * 2 };
+    }
+    // lluvia suave desde el borde superior
+    return { x: Math.random() * W, y: -20, vx: (Math.random() - 0.5) * 1.5, vy: 1.5 + Math.random() * 2, rot: Math.random() * Math.PI, vr: (Math.random() - 0.5) * 0.3, s: 5 + Math.random() * 5, c, drift: Math.random() * Math.PI * 2 };
+  };
+  for (let i = 0; i < 140; i++) parts.push(mk(true)); // burst inicial
+
+  let running = true;
   let raf = 0;
-  const start = performance.now();
+  let sinceSpawn = 0;
+  let last = performance.now();
   const tick = (now: number) => {
-    const elapsed = now - start;
+    const dt = Math.min(32, now - last);
+    last = now;
     ctx.clearRect(0, 0, W, H);
-    let alive = false;
-    for (const p of parts) {
-      p.vy += 0.32; // gravedad
-      p.vx *= 0.99;
-      p.x += p.vx;
-      p.y += p.vy;
-      p.rot += p.vr;
-      p.life = Math.max(0, 1 - elapsed / 1700);
-      if (p.life > 0 && p.y < H + 30) {
-        alive = true;
-        ctx.save();
-        ctx.globalAlpha = p.life;
-        ctx.translate(p.x, p.y);
-        ctx.rotate(p.rot);
-        ctx.fillStyle = p.c;
-        ctx.fillRect(-p.s / 2, -p.s / 2, p.s, p.s * 0.6);
-        ctx.restore();
+    // mientras esté abierto, repone lluvia suave (cap ~180 partículas)
+    if (running) {
+      sinceSpawn += dt;
+      while (sinceSpawn > 90 && parts.length < 180) {
+        parts.push(mk(false));
+        sinceSpawn -= 90;
       }
     }
-    if (alive) raf = requestAnimationFrame(tick);
-    else canvas.remove();
+    for (let i = parts.length - 1; i >= 0; i--) {
+      const p = parts[i];
+      p.vy += 0.06; // gravedad suave
+      p.drift += 0.05;
+      p.x += p.vx + Math.sin(p.drift) * 0.5;
+      p.y += p.vy;
+      p.rot += p.vr;
+      if (p.y > H + 30) {
+        parts.splice(i, 1);
+        continue;
+      }
+      ctx.save();
+      ctx.translate(p.x, p.y);
+      ctx.rotate(p.rot);
+      ctx.fillStyle = p.c;
+      ctx.fillRect(-p.s / 2, -p.s / 2, p.s, p.s * 0.6);
+      ctx.restore();
+    }
+    if (running || parts.length > 0) {
+      raf = requestAnimationFrame(tick);
+    } else {
+      cleanup();
+    }
+  };
+  const cleanup = () => {
+    cancelAnimationFrame(raf);
+    window.removeEventListener("resize", resize);
+    canvas.remove();
   };
   raf = requestAnimationFrame(tick);
-  // Salvavidas: limpia pase lo que pase a los 3s.
-  setTimeout(() => {
-    cancelAnimationFrame(raf);
-    canvas.remove();
-  }, 3000);
+  // stop(): deja de reponer; las partículas restantes caen y luego se limpia solo.
+  return () => {
+    running = false;
+  };
 }
 
 // Card "Novedades" ("What's New" estilo Discord): al entrar, si el último anuncio
@@ -2117,12 +2131,18 @@ function NovedadesModal() {
     };
   }, []);
 
-  // Confetti una vez, cuando la card aparece.
+  // Confetti PERSISTENTE mientras el anuncio está abierto; al cerrar/desmontar el
+  // stop() deja caer lo que queda y limpia el canvas.
   useEffect(() => {
-    if (ann) {
-      const id = setTimeout(fireConfetti, 180); // tras la animación de entrada del modal
-      return () => clearTimeout(id);
-    }
+    if (!ann) return;
+    let stop = () => {};
+    const id = setTimeout(() => {
+      stop = startConfetti();
+    }, 180); // tras la animación de entrada del modal
+    return () => {
+      clearTimeout(id);
+      stop();
+    };
   }, [ann]);
 
   if (!ann) return null;
@@ -4486,20 +4506,20 @@ function TypingLine({ typing }: { typing: { name: string } | null }) {
   );
 }
 
-// ── Huddles (quick calls) — botón de header, banner de "unirse" y dock (iframe) ──
-// El target distingue canal (por slug) de DM (por id); el server (huddles.ts) verifica
+// ── Quick-calls (quick calls) — botón de header, banner de "unirse" y dock (iframe) ──
+// El target distingue canal (por slug) de DM (por id); el server (quick-calls.ts) verifica
 // membresía y acuña un token scoped a la sala HMAC del scope. Cero cruce de llamadas.
-type HuddleTarget = { scope: "room"; slug: string } | { scope: "dm"; dmId: number };
-type HuddleActiveInfo = { huddleId: string; host: { sub: string; name: string; avatar: string }; label: string; startedAt: number };
-type HuddleWiring = {
-  active: HuddleActiveInfo | null; // hay un huddle en curso en este scope
+type CallTarget = { scope: "room"; slug: string } | { scope: "dm"; dmId: number };
+type CallActiveInfo = { callId: string; host: { sub: string; name: string; avatar: string }; label: string; startedAt: number };
+type CallWiring = {
+  active: CallActiveInfo | null; // hay un call en curso en este scope
   joined: boolean; // estoy dentro (dock abierto)
   onStart: () => void;
   onJoin: () => void;
   onLeave: () => void;
 };
 
-function HuddleHeaderButton({ h }: { h: HuddleWiring }) {
+function CallHeaderButton({ h }: { h: CallWiring }) {
   const t = useT();
   if (h.joined)
     return (
@@ -4534,7 +4554,7 @@ function HuddleHeaderButton({ h }: { h: HuddleWiring }) {
   );
 }
 
-function HuddleBanner({ h }: { h: HuddleWiring }) {
+function CallBanner({ h }: { h: CallWiring }) {
   const t = useT();
   if (!h.active || h.joined) return null;
   return (
@@ -4553,9 +4573,9 @@ function HuddleBanner({ h }: { h: HuddleWiring }) {
   );
 }
 
-// Dock flotante con el /room del box embebido (tema gs). El iframe trae sus propios
-// controles (mic/cam/pantalla); al colgar adentro, room.html postMessea gs-huddle-left.
-function HuddleDock({ url, label, onClose }: { url: string; label: string; onClose: () => void }) {
+// Dock flotante nativo: renderiza <QuickCall> (livekit-client) con los tokens de
+// Teams → hereda light/dark. Header = título + expandir; salir vive en QuickCall.
+function QuickCallDock({ conn, label, onClose }: { conn: CallConn; label: string; onClose: () => void }) {
   const t = useT();
   const [expanded, setExpanded] = useState(false);
   return (
@@ -4572,29 +4592,15 @@ function HuddleDock({ url, label, onClose }: { url: string; label: string; onClo
           <Headphones size={15} className="shrink-0 text-brand" />
           <span className="truncate text-sm font-semibold text-ink">{t("Llamada")} · {label}</span>
         </div>
-        <div className="flex shrink-0 items-center gap-1">
-          <button
-            onClick={() => setExpanded((e) => !e)}
-            title={expanded ? t("Restaurar") : t("Expandir")}
-            className="grid h-7 w-7 place-items-center rounded-md text-muted transition hover:bg-surface-3 hover:text-ink"
-          >
-            {expanded ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
-          </button>
-          <button
-            onClick={onClose}
-            title={t("Salir de la llamada")}
-            className="rounded-md px-2 py-1 text-xs font-medium text-muted transition hover:bg-surface-3 hover:text-ink"
-          >
-            {t("Salir")}
-          </button>
-        </div>
+        <button
+          onClick={() => setExpanded((e) => !e)}
+          title={expanded ? t("Restaurar") : t("Expandir")}
+          className="grid h-7 w-7 shrink-0 place-items-center rounded-md text-muted transition hover:bg-surface-3 hover:text-ink"
+        >
+          {expanded ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
+        </button>
       </div>
-      <iframe
-        src={url}
-        title={t("Llamada")}
-        allow="camera; microphone; display-capture; autoplay"
-        className="w-full flex-1 border-0 bg-black"
-      />
+      <QuickCall conn={conn} onLeft={onClose} />
     </div>
   );
 }
@@ -4611,7 +4617,7 @@ function Flow({
   pins,
   onOpenDm,
   onOpenNav,
-  huddle,
+  call,
 }: {
   channel: Channel;
   messages: Message[] | null;
@@ -4624,7 +4630,7 @@ function Flow({
   pins: Message[];
   onOpenDm: (id: number) => void;
   onOpenNav: () => void;
-  huddle: HuddleWiring;
+  call: CallWiring;
 }) {
   const t = useT();
   const { me } = useContext(ChatCtx);
@@ -4668,13 +4674,13 @@ function Flow({
               <span className="hidden sm:inline">{t("{n} en línea", { n: onlineCount })}</span>
             </span>
           )}
-          {/* Huddle (quick call) del room — audio/video/pantalla vía la caja LiveKit compartida. */}
-          <HuddleHeaderButton h={huddle} />
+          {/* Quick-call (quick call) del room — audio/video/pantalla vía la caja LiveKit compartida. */}
+          <CallHeaderButton h={call} />
           <DocsButton channelId={channel.id} channelSlug={channel.slug} />
           <SearchButton onOpenDm={onOpenDm} />
         </div>
       </header>
-      <HuddleBanner h={huddle} />
+      <CallBanner h={call} />
       {pins.length > 0 && <PinnedBar pins={pins} onJump={jumpTo} />}
       <div ref={scrollRef} onScroll={onScroll} className="w-full flex-1 overflow-y-auto px-6 py-4 thin-scroll">
         {messages === null ? (
@@ -4856,7 +4862,7 @@ function DmView({
   typing,
   newAt,
   onBack,
-  huddle,
+  call,
 }: {
   dm: DmConversation | null;
   dmId: number;
@@ -4869,7 +4875,7 @@ function DmView({
   typing: { name: string } | null;
   newAt: number | null;
   onBack: () => void;
-  huddle: HuddleWiring;
+  call: CallWiring;
 }) {
   const t = useT();
   const { me } = useContext(ChatCtx);
@@ -4930,9 +4936,9 @@ function DmView({
           </p>
         </div>
         {/* Llamada 1:1/grupo (caja LiveKit compartida). NO con agentes de la flota (aún). */}
-        {!isAgentDm && <HuddleHeaderButton h={huddle} />}
+        {!isAgentDm && <CallHeaderButton h={call} />}
       </header>
-      {!isAgentDm && <HuddleBanner h={huddle} />}
+      {!isAgentDm && <CallBanner h={call} />}
       <div ref={scrollRef} onScroll={onScroll} className="w-full flex-1 overflow-y-auto px-6 py-4 thin-scroll">
         {flow === null ? (
           <ThreadSkeleton />

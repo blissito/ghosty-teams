@@ -42,10 +42,10 @@ export type RtEvent =
   | { t: "presence"; sub: string; name: string; status: "online" | "offline" }
   | { t: "presence:init"; online: string[] }
   | { t: "typing"; sub: string; name: string; channelId: number | null; parentId?: number | null; dmId?: number | null }
-  // Huddle (quick call) arrancado/terminado en un scope → banner de "unirse" para
-  // la audiencia. NO lleva token (cada quien acuña el suyo al unirse, ver huddles.ts).
-  | { t: "huddle:started"; scope: "room" | "dm"; scopeId: number; huddleId: string; host: { sub: string; name: string; avatar: string }; label: string; startedAt: number }
-  | { t: "huddle:ended"; scope: "room" | "dm"; scopeId: number; huddleId: string };
+  // Quick-call arrancada/terminada en un scope → banner de "unirse" para la audiencia.
+  // NO lleva token (cada quien acuña el suyo al unirse, ver quick-calls.ts).
+  | { t: "quickcall:started"; scope: "room" | "dm"; scopeId: number; callId: string; host: { sub: string; name: string; avatar: string }; label: string; startedAt: number }
+  | { t: "quickcall:ended"; scope: "room" | "dm"; scopeId: number; callId: string };
 
 type Listener = (ev: RtEvent) => void;
 type Client = { ns: string; channels: Set<string>; listener: Listener; sub: string };
