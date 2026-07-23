@@ -181,6 +181,10 @@ async function migrate(): Promise<void> {
   // sin que las imágenes empujen). NULL en adjuntos viejos / no-imagen → fallback min-h.
   await addColumn("gc_attachments", "width", "INTEGER");
   await addColumn("gc_attachments", "height", "INTEGER");
+  // Nota de voz (adjunto audio): onda de amplitud (64 bytes 0..100, base64) que dibuja
+  // la burbuja tipo PTT + duración en ms para el "0:12". NULL en adjuntos no-audio.
+  await addColumn("gc_attachments", "waveform", "TEXT");
+  await addColumn("gc_attachments", "duration_ms", "INTEGER");
 
   // Agentes slice 1: persona/prompt por agente (se antepone/envía al backend para
   // que cada agente hable distinto). gc_agents la crea el provisioner; aquí sumamos.

@@ -77,6 +77,8 @@ export type Attachment = {
   thumb_file_id?: string | null; // derivado WebP para render inline (null = usa el original)
   width?: number | null;  // dims intrínsecas → el render reserva el alto exacto (0 layout-shift)
   height?: number | null;
+  waveform?: string | null;    // nota de voz: 64 amplitudes (0..100) en base64 → onda PTT
+  duration_ms?: number | null; // nota de voz: duración en ms → "0:12"
 };
 
 // Artefacto: doc/pdf/imagen que el agente genera y se abre en el panel del room.
@@ -239,7 +241,7 @@ export async function attachAttachments(msgs: Message[]): Promise<Message[]> {
   const ids = msgs.map((m) => m.id);
   const ph = ids.map(() => "?").join(",");
   const rows = await dbq(
-    `SELECT id, message_id, file_id, mime, size, name, thumb_file_id, width, height FROM gc_attachments
+    `SELECT id, message_id, file_id, mime, size, name, thumb_file_id, width, height, waveform, duration_ms FROM gc_attachments
       WHERE message_id IN (${ph}) ORDER BY id`,
     ids
   );
@@ -256,6 +258,8 @@ export async function attachAttachments(msgs: Message[]): Promise<Message[]> {
       thumb_file_id: (r.thumb_file_id as string | null) ?? null,
       width: r.width == null ? null : num(r.width),
       height: r.height == null ? null : num(r.height),
+      waveform: (r.waveform as string | null) ?? null,
+      duration_ms: r.duration_ms == null ? null : num(r.duration_ms),
     };
     const arr = byMsg.get(mid) ?? [];
     if (arr.length === 0) byMsg.set(mid, arr);
@@ -267,12 +271,12 @@ export async function attachAttachments(msgs: Message[]): Promise<Message[]> {
 // Inserta los adjuntos de un mensaje recién creado.
 export async function createAttachments(
   messageId: number,
-  files: { fileId: string; mime: string; size: number; name: string; thumbFileId?: string | null; width?: number | null; height?: number | null }[]
+  files: { fileId: string; mime: string; size: number; name: string; thumbFileId?: string | null; width?: number | null; height?: number | null; waveform?: string | null; durationMs?: number | null }[]
 ): Promise<void> {
   for (const f of files) {
     await dbq(
-      `INSERT INTO gc_attachments (message_id, file_id, mime, size, name, thumb_file_id, width, height) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [messageId, f.fileId, f.mime, f.size, f.name, f.thumbFileId ?? null, f.width ?? null, f.height ?? null]
+      `INSERT INTO gc_attachments (message_id, file_id, mime, size, name, thumb_file_id, width, height, waveform, duration_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [messageId, f.fileId, f.mime, f.size, f.name, f.thumbFileId ?? null, f.width ?? null, f.height ?? null, f.waveform ?? null, f.durationMs ?? null]
     );
   }
 }

@@ -487,6 +487,7 @@ const TOOL_LABELS: Record<string, { ing: string; done: string }> = {
   gs_image_generate: { ing: "Generando la imagen", done: "Generé la imagen" },
   gs_image_edit: { ing: "Editando la imagen", done: "Edité la imagen" },
   gs_image_describe: { ing: "Analizando la imagen", done: "Analicé la imagen" },
+  gs_voice_speak: { ing: "Grabando la nota de voz", done: "Grabé una nota de voz" },
   gs_web_search: { ing: "Buscando en la web", done: "Busqué en la web" },
   gs_web_scrape: { ing: "Leyendo una página", done: "Leí una página" },
   gs_render: { ing: "Generando el PDF", done: "Generé el PDF" },

@@ -63,6 +63,8 @@ import {
   Minimize2,
   Phone,
   PhoneOff,
+  Play,
+  Pause,
 } from "lucide-react";
 import { searchMessagesFn } from "../server/search";
 import { createFileRoute, notFound, Link, useRouter } from "@tanstack/react-router";
@@ -5420,6 +5422,96 @@ function ChatImage({ src, alt, width, height }: { src: string; alt: string; widt
   );
 }
 
+// Nota de voz: reproductor compacto con onda (waveform PTT). La onda son 64 amplitudes
+// (0..100) que sintetizó el TTS (o el grabador); las pintamos como barras y las rellenamos
+// según el progreso. El ogg se sirve por /api/attachment/:fileId (302 a URL firmada).
+function decodeWaveform(b64?: string | null): number[] {
+  if (!b64) return [];
+  try {
+    const bin = atob(b64);
+    const out: number[] = [];
+    for (let i = 0; i < bin.length; i++) out.push(bin.charCodeAt(i));
+    return out;
+  } catch {
+    return [];
+  }
+}
+function fmtDur(sec: number): string {
+  if (!isFinite(sec) || sec < 0) sec = 0;
+  const m = Math.floor(sec / 60);
+  const s = Math.floor(sec % 60);
+  return `${m}:${String(s).padStart(2, "0")}`;
+}
+function VoiceNote({ src, waveform, durationMs }: { src: string; waveform?: string | null; durationMs?: number | null }) {
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const [playing, setPlaying] = useState(false);
+  const [cur, setCur] = useState(0);
+  const [dur, setDur] = useState((durationMs ?? 0) / 1000);
+  const bars = useMemo(() => {
+    const w = decodeWaveform(waveform);
+    if (w.length) return w;
+    // Sin onda → 40 barras pseudo-uniformes para no ver una caja vacía.
+    return Array.from({ length: 40 }, (_, i) => 30 + 30 * Math.abs(Math.sin(i * 0.7)));
+  }, [waveform]);
+  const total = dur || (durationMs ?? 0) / 1000 || 0;
+  const progress = total > 0 ? Math.min(1, cur / total) : 0;
+
+  const toggle = () => {
+    const el = audioRef.current;
+    if (!el) return;
+    if (el.paused) { el.play(); setPlaying(true); }
+    else { el.pause(); setPlaying(false); }
+  };
+  const seek = (frac: number) => {
+    const el = audioRef.current;
+    if (!el || !total) return;
+    el.currentTime = Math.max(0, Math.min(total, frac * total));
+    setCur(el.currentTime);
+  };
+
+  return (
+    <div className="flex max-w-xs items-center gap-2.5 rounded-2xl border border-border bg-surface-2 px-3 py-2">
+      <button
+        type="button"
+        onClick={toggle}
+        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-brand text-white transition hover:opacity-90"
+        aria-label={playing ? "Pausar" : "Reproducir"}
+      >
+        {playing ? <Pause size={16} /> : <Play size={16} className="ml-0.5" />}
+      </button>
+      <div
+        className="flex h-8 flex-1 items-center gap-[2px] cursor-pointer"
+        onClick={(e) => {
+          const r = e.currentTarget.getBoundingClientRect();
+          seek((e.clientX - r.left) / r.width);
+        }}
+      >
+        {bars.map((amp, i) => {
+          const played = i / bars.length <= progress;
+          const h = Math.max(3, (Math.min(100, amp) / 100) * 28);
+          return (
+            <span
+              key={i}
+              className={`w-[2px] shrink-0 rounded-full ${played ? "bg-brand" : "bg-border"}`}
+              style={{ height: `${h}px` }}
+            />
+          );
+        })}
+      </div>
+      <span className="shrink-0 text-[11px] tabular-nums text-muted">{fmtDur(playing || cur ? cur : total)}</span>
+      <audio
+        ref={audioRef}
+        src={src}
+        preload="metadata"
+        onLoadedMetadata={(e) => { const d = e.currentTarget.duration; if (isFinite(d) && d > 0) setDur(d); }}
+        onTimeUpdate={(e) => setCur(e.currentTarget.currentTime)}
+        onEnded={() => { setPlaying(false); setCur(0); }}
+        className="hidden"
+      />
+    </div>
+  );
+}
+
 // Todo pasa por el proxy autenticado /api/attachment/:fileId (re-firma readUrl).
 function AttachmentList({ attachments }: { attachments: Attachment[] }) {
   const t = useT();
@@ -5463,6 +5555,10 @@ function AttachmentList({ attachments }: { attachments: Attachment[] }) {
               </span>
             </button>
           );
+        }
+        // Audio (nota de voz) → burbuja con reproductor + onda (waveform PTT).
+        if (view?.kind === "audio") {
+          return <VoiceNote key={a.id} src={src} waveform={a.waveform} durationMs={a.duration_ms} />;
         }
         // Otros archivos (docx, zip, etc.) → descarga directa, sin visor.
         return (

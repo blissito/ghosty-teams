@@ -110,6 +110,39 @@ export function stripAskUser(body: string): string {
   return [before.trim(), after.trim()].filter(Boolean).join("\n\n");
 }
 
+// ── Nota de voz ────────────────────────────────────────────────────────────────
+// El SDK del box (voice.mjs) sintetiza el audio, lo publica y emite un bloque
+//   ```eb-audio\n{"url","waveform","durationMs","mime"}\n```
+// que el agente incluye en su respuesta. El server lo parsea → re-sube el ogg a
+// nuestro storage → adjunto audio (gc_attachments) → burbuja de nota de voz.
+export type EbAudio = { url: string; waveform?: string; durationMs?: number; mime?: string };
+
+export function extractEbAudio(body: string): EbAudio | null {
+  const open = body.match(/```eb-audio[^\n]*\n/);
+  if (!open || open.index == null) return null;
+  const rest = body.slice(open.index + open[0].length);
+  const closeIdx = rest.indexOf("```");
+  if (closeIdx === -1) return null; // sólo al cerrar (el JSON debe estar completo)
+  try {
+    const obj = JSON.parse(rest.slice(0, closeIdx).trim()) as EbAudio;
+    if (!obj?.url || typeof obj.url !== "string") return null;
+    return obj;
+  } catch {
+    return null;
+  }
+}
+
+// Quita el bloque ```eb-audio``` de la burbuja (el audio se muestra como adjunto).
+export function stripEbAudio(body: string): string {
+  const open = body.match(/```eb-audio[^\n]*\n/);
+  if (!open || open.index == null) return body;
+  const before = body.slice(0, open.index);
+  const rest = body.slice(open.index + open[0].length);
+  const closeIdx = rest.indexOf("```");
+  const after = closeIdx === -1 ? "" : rest.slice(closeIdx + 3);
+  return [before.trim(), after.trim()].filter(Boolean).join("\n\n");
+}
+
 // Texto de la burbuja del chat SIN el bloque (narración alrededor). Mientras streamea (no
 // cerrado) deja un marcador para que el chat no muestre el markdown/csv crudo.
 export function bubbleWithoutEbDoc(body: string): string {

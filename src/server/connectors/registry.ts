@@ -41,9 +41,10 @@ export const CONNECTORS: ConnectorDef[] = [
       pkce: false, // Calendly = Authorization Code confidencial estándar (client_secret_post)
       // Read set: users/me (scheduling_url) + disponibilidad real + próximas citas + tipos de
       // evento → el ambientContext del DM enriquece con esto en intención de agenda (read-aware,
-      // 100% lado Teams, sin rebake del worker). El write (scheduling_links:write) se agrega
-      // cuando se cablee el tool-loop en la imagen del agente. Cambiar esto exige RECONECTAR.
-      scopes: "users:read availability:read scheduled_events:read event_types:read",
+      // 100% lado Teams, sin rebake del worker). El write (scheduling_links:write) ya está
+      // cableado en el tool-loop del agente (calendly_create_scheduling_link). Cambiar esto
+      // exige RECONECTAR (re-consent) para que el nuevo scope entre al token.
+      scopes: "users:read availability:read scheduled_events:read event_types:read scheduling_links:write",
       clientIdEnv: "CALENDLY_CLIENT_ID",
       clientSecretEnv: "CALENDLY_CLIENT_SECRET",
       userInfoUrl: "https://api.calendly.com/users/me",
