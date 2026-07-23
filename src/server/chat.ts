@@ -20,6 +20,7 @@ const GROUP_MENTIONS = new Set(["all", "channel", "everyone", "aqui", "here", "t
 // Push a los usuarios cuyos @handle aparecen en el mensaje (excluye al autor).
 // Soporta menciones grupales (@all/@channel) que abarcan a toda la audiencia.
 async function notifyMentions(
+  ns: string,
   slug: string,
   channelId: number,
   channelName: string,
@@ -61,21 +62,22 @@ async function notifyMentions(
     title: `${senderName} te mencionó en #${channelName}`,
     body: excerpt,
     url: `/c/${slug}`,
-  });
+  }, ns);
 }
 
 // Publica un evento a la audiencia de un mensaje: si es DM → a cada miembro
 // (ch.user); si es de room → al room. Unifica delete/edit/react para rooms y DMs.
 async function publishToAudience(
+  ns: string,
   msg: { channel_id: number; dm_id?: number | null },
   ev: RtEvent
 ): Promise<void> {
   const bus = await import("./bus.server");
   if (msg.dm_id != null) {
     const db = await import("../db.server");
-    for (const sub of await db.getDmMembers(msg.dm_id)) bus.publish(bus.ch.user(sub), ev);
+    for (const sub of await db.getDmMembers(msg.dm_id)) bus.publish(bus.ch.user(ns, sub), ev);
   } else {
-    bus.publish(bus.ch.room(msg.channel_id), ev);
+    bus.publish(bus.ch.room(ns, msg.channel_id), ev);
   }
 }
 
@@ -198,7 +200,9 @@ export const expelMemberFn = createServerFn({ method: "POST" })
     await expelMember(data.sub);
     try {
       const bus = await import("./bus.server");
-      bus.publish(bus.ch.user(data.sub), { t: "expelled" } as never);
+      const { currentNamespace } = await import("./tenant.server");
+      const ns = await currentNamespace();
+      bus.publish(bus.ch.user(ns, data.sub), { t: "expelled" } as never);
     } catch { /* best-effort */ }
     return { ok: true as const };
   });
@@ -327,7 +331,9 @@ export const deleteMessageFn = createServerFn({ method: "POST" })
       await Promise.all(fileIds.map((fid) => deleteEasyBitsFile(fid).catch(() => false)));
     }
     await db.deleteMessage(data.id);
-    await publishToAudience(msg, {
+    const { currentNamespace } = await import("./tenant.server");
+    const ns = await currentNamespace();
+    await publishToAudience(ns, msg, {
       t: "message:deleted",
       id: msg.id,
       channelId: msg.channel_id,
@@ -356,12 +362,14 @@ export const pingTypingFn = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     const db = await import("../db.server");
     const bus = await import("./bus.server");
+    const { currentNamespace } = await import("./tenant.server");
     const user = await sessionUser();
     if (!user) return { ok: false as const };
+    const ns = await currentNamespace();
     if (data.dmId != null) {
       for (const sub of await db.getDmMembers(data.dmId)) {
         if (sub === user.sub) continue;
-        bus.publish(bus.ch.user(sub), {
+        bus.publish(bus.ch.user(ns, sub), {
           t: "typing",
           sub: user.sub,
           name: user.name,
@@ -373,7 +381,7 @@ export const pingTypingFn = createServerFn({ method: "POST" })
     }
     const channel = data.slug ? await db.getChannel(data.slug) : null;
     if (!channel) return { ok: false as const };
-    bus.publish(bus.ch.room(channel.id), {
+    bus.publish(bus.ch.room(ns, channel.id), {
       t: "typing",
       sub: user.sub,
       name: user.name,
@@ -395,7 +403,9 @@ export const toggleReactionFn = createServerFn({ method: "POST" })
     const msg = await db.getMessage(data.messageId);
     if (!msg) throw new Error("Mensaje no encontrado");
     const { op, count } = await db.toggleReaction(data.messageId, user.sub, data.emoji);
-    await publishToAudience(msg, {
+    const { currentNamespace } = await import("./tenant.server");
+    const ns = await currentNamespace();
+    await publishToAudience(ns, msg, {
       t: "reaction",
       messageId: data.messageId,
       emoji: data.emoji,
@@ -420,7 +430,9 @@ export const editMessageFn = createServerFn({ method: "POST" })
     const owns = msg.sender_sub ? msg.sender_sub === user?.sub : msg.sender === user?.name;
     if (!user?.isOwner && !owns) throw new Error("no autorizado");
     await db.editMessage(data.id, body);
-    await publishToAudience(msg, {
+    const { currentNamespace } = await import("./tenant.server");
+    const ns = await currentNamespace();
+    await publishToAudience(ns, msg, {
       t: "message:edited",
       id: msg.id,
       body,
@@ -469,9 +481,11 @@ export const postMessage = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     const db = await import("../db.server");
     const bus = await import("./bus.server");
+    const { currentNamespace } = await import("./tenant.server");
     const { resolvedAgents, detectMentions, quoteExcerpt } = await import("../agents.server");
     const channel = await db.getChannel(data.slug);
     if (!channel) throw new Error("Canal no encontrado");
+    const ns = await currentNamespace();
     const body = data.body.trim();
     const files = data.attachments ?? [];
     if (!body && files.length === 0) return { ok: false as const };
@@ -514,9 +528,9 @@ export const postMessage = createServerFn({ method: "POST" })
     // Realtime: publica el mensaje ya persistido a los suscriptores del room.
     let created = await db.getMessage(id);
     if (created && files.length) [created] = await db.attachAttachments([created]);
-    if (created) bus.publish(bus.ch.room(channel.id), { t: "message:new", msg: created, nonce: data.nonce });
+    if (created) bus.publish(bus.ch.room(ns, channel.id), { t: "message:new", msg: created, nonce: data.nonce });
     // Push a los usuarios @tagged (fire-and-forget resiliente).
-    await notifyMentions(channel.slug, channel.id, channel.name, body, name, me?.sub ?? "", channel.is_private === 1).catch(() => {});
+    await notifyMentions(ns, channel.slug, channel.id, channel.name, body, name, me?.sub ?? "", channel.is_private === 1).catch(() => {});
     // ¿Qué agentes responden y dónde? (multi-mención: cada @tagged responde)
     // - @handles en el flujo → responden INLINE en el flujo (parent = null), como una
     //   persona más. NO se abre un hilo (decisión UX: el agente conversa en el room).
@@ -548,7 +562,7 @@ export const postMessage = createServerFn({ method: "POST" })
       const { id: shellId } = await db.postAgent(channel.id, r.parent, "", "msg", r.handle, ag?.name ?? "Ghosty", topic, ag?.avatar ?? "");
       r.shellId = shellId;
       const shell = await db.getMessage(shellId);
-      if (shell) bus.publish(bus.ch.room(channel.id), { t: "message:new", msg: shell });
+      if (shell) bus.publish(bus.ch.room(ns, channel.id), { t: "message:new", msg: shell });
     }
     return {
       ok: true as const,
@@ -579,8 +593,10 @@ export const askAgent = createServerFn({ method: "POST" })
     const db = await import("../db.server");
     const { resolvedAgents, runAgentTurn, buildMediaParts, quotedContextPrefix } = await import("../agents.server");
     const bus = await import("./bus.server");
+    const { currentNamespace } = await import("./tenant.server");
     const channel = await db.getChannel(data.slug);
     if (!channel) throw new Error("Canal no encontrado");
+    const ns = await currentNamespace();
     const agent = (await resolvedAgents()).find((a) => a.handle === data.handle);
     const name = agent?.name ?? "Ghosty";
 
@@ -643,14 +659,14 @@ export const askAgent = createServerFn({ method: "POST" })
         if (data.shellId != null) return data.shellId;
         const { id } = await db.postAgent(channel.id, data.parentId, "", "msg", data.handle, name, topic ?? "general", agent?.avatar ?? "");
         const shell = await db.getMessage(id);
-        if (shell) bus.publish(bus.ch.room(channel.id), { t: "message:new", msg: shell });
+        if (shell) bus.publish(bus.ch.room(ns, channel.id), { t: "message:new", msg: shell });
         return id;
       },
       emitDelta: (mid, chunk) =>
-        bus.publish(bus.ch.room(channel.id), { t: "message:delta", id: mid, chunk, channelId: channel.id, parentId: data.parentId }),
+        bus.publish(bus.ch.room(ns, channel.id), { t: "message:delta", id: mid, chunk, channelId: channel.id, parentId: data.parentId }),
       // Checklist incremental: reemplaza el body con la lista re-pintada (previas ✓, actual ⚡).
       emitBody: (mid, body) =>
-        bus.publish(bus.ch.room(channel.id), { t: "message:body", id: mid, body }),
+        bus.publish(bus.ch.room(ns, channel.id), { t: "message:body", id: mid, body }),
     });
 
     // Persiste el body final (autoritativo, sin marcar "editado") y reconcilia por si
@@ -659,7 +675,7 @@ export const askAgent = createServerFn({ method: "POST" })
     // el mensaje quedaba vacío (y reaparecía vacío al refetch, borrando lo streameado).
     const finalBody = reply.trim() ? reply : "(sin respuesta)";
     await db.setMessageBody(id, finalBody);
-    bus.publish(bus.ch.room(channel.id), { t: "message:body", id, body: finalBody });
+    bus.publish(bus.ch.room(ns, channel.id), { t: "message:body", id, body: finalBody });
 
     // Si el reply referencia un documento EasyBits, lo volvemos ARTEFACTO: minteamos
     // el editor colab embebible y lo colgamos del mensaje → aparece como card que
@@ -680,7 +696,7 @@ export const askAgent = createServerFn({ method: "POST" })
       if (ebdoc?.closed && ebdoc.md.trim()) {
         const cleaned = bubbleWithoutEbDoc(reply);
         await db.setMessageBody(id, cleaned);
-        bus.publish(bus.ch.room(channel.id), { t: "message:body", id, body: cleaned });
+        bus.publish(bus.ch.room(ns, channel.id), { t: "message:body", id, body: cleaned });
         const documentId = currentDocId ?? `${ebdoc.kind}_${randomUUID()}`;
         await db.createArtifact(id, {
           kind: ebdoc.kind, // "doc" | "sheet"
@@ -689,7 +705,7 @@ export const askAgent = createServerFn({ method: "POST" })
           md: ebdoc.md,
         });
         await db.setThreadArtifact(channel.id, data.parentId, documentId).catch(() => {});
-        bus.publish(bus.ch.room(channel.id), { t: "refresh", channelId: channel.id, parentId: data.parentId });
+        bus.publish(bus.ch.room(ns, channel.id), { t: "refresh", channelId: channel.id, parentId: data.parentId });
         return { ok: true as const };
       }
 
@@ -701,14 +717,14 @@ export const askAgent = createServerFn({ method: "POST" })
       if (ask) {
         const cleaned = stripAskUser(reply);
         await db.setMessageBody(id, cleaned);
-        bus.publish(bus.ch.room(channel.id), { t: "message:body", id, body: cleaned });
+        bus.publish(bus.ch.room(ns, channel.id), { t: "message:body", id, body: cleaned });
         await db.createArtifact(id, {
           kind: "ask-user",
           url: "",
           title: ask.question || null,
           md: JSON.stringify(ask.options),
         });
-        bus.publish(bus.ch.room(channel.id), { t: "refresh", channelId: channel.id, parentId: data.parentId });
+        bus.publish(bus.ch.room(ns, channel.id), { t: "refresh", channelId: channel.id, parentId: data.parentId });
         return { ok: true as const };
       }
 
@@ -728,7 +744,7 @@ export const askAgent = createServerFn({ method: "POST" })
         await db.createArtifact(id, { kind, url: found.url, title: found.title ?? null });
       }
       // Nació una card → refresca el contexto activo para que aparezca colgada del msg.
-      if (found) bus.publish(bus.ch.room(channel.id), { t: "refresh", channelId: channel.id, parentId: data.parentId });
+      if (found) bus.publish(bus.ch.room(ns, channel.id), { t: "refresh", channelId: channel.id, parentId: data.parentId });
     } catch (e) {
       console.error("[artifact] detect/mint failed", e);
     }

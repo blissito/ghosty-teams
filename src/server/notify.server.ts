@@ -17,10 +17,10 @@ export type NotifyEvent = {
   url: string;
 };
 
-export async function notify(ev: NotifyEvent): Promise<void> {
+export async function notify(ev: NotifyEvent, ns: string): Promise<void> {
   if (!ev.recipients.length) return;
   // Best-effort y en paralelo: un canal que falle no tumba a los demás.
-  await Promise.allSettled([deliverWebPush(ev), deliverEmail(ev)]);
+  await Promise.allSettled([deliverWebPush(ev), deliverEmail(ev, ns)]);
 }
 
 // Canal: Web Push (PWA). Ya operativo (VAPID + gc_push_subs).
@@ -41,11 +41,11 @@ async function deliverWebPush(ev: NotifyEvent): Promise<void> {
 // Canal: Email (AWS SES). Estilo Slack/Zulip: SOLO se envía correo a quien está
 // OFFLINE (sin pestaña conectada) — si estás online, el toast/push ya te avisó. Sin
 // creds SES → no-op. TODO: gc_notify_prefs (opt-out por usuario) + digest/agrupación.
-async function deliverEmail(ev: NotifyEvent): Promise<void> {
+async function deliverEmail(ev: NotifyEvent, ns: string): Promise<void> {
   const { sesConfigured, sendSesEmail } = await import("./ses.server");
   if (!sesConfigured()) return;
   const { isOnline } = await import("./bus.server");
-  const offline = ev.recipients.filter((sub) => !isOnline(sub));
+  const offline = ev.recipients.filter((sub) => !isOnline(ns, sub));
   if (!offline.length) return;
   const db = await import("../db.server");
   const people = await db.emailsForSubs(offline);

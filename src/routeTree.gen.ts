@@ -19,6 +19,7 @@ import { Route as CSlugRouteImport } from './routes/c.$slug'
 import { Route as ApiWarmRouteImport } from './routes/api.warm'
 import { Route as ApiUploadRouteImport } from './routes/api.upload'
 import { Route as ApiStreamRouteImport } from './routes/api.stream'
+import { Route as ApiManifestRouteImport } from './routes/api.manifest'
 import { Route as ApiAgentAssetRouteImport } from './routes/api.agent-asset'
 import { Route as SetupEasybitsConnectRouteImport } from './routes/setup.easybits.connect'
 import { Route as SetupEasybitsCallbackRouteImport } from './routes/setup.easybits.callback'
@@ -78,6 +79,11 @@ const ApiStreamRoute = ApiStreamRouteImport.update({
   path: '/api/stream',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiManifestRoute = ApiManifestRouteImport.update({
+  id: '/api/manifest',
+  path: '/api/manifest',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiAgentAssetRoute = ApiAgentAssetRouteImport.update({
   id: '/api/agent-asset',
   path: '/api/agent-asset',
@@ -126,6 +132,7 @@ export interface FileRoutesByFullPath {
   '/login': typeof LoginRoute
   '/setup': typeof SetupRouteWithChildren
   '/api/agent-asset': typeof ApiAgentAssetRoute
+  '/api/manifest': typeof ApiManifestRoute
   '/api/stream': typeof ApiStreamRoute
   '/api/upload': typeof ApiUploadRoute
   '/api/warm': typeof ApiWarmRoute
@@ -146,6 +153,7 @@ export interface FileRoutesByTo {
   '/login': typeof LoginRoute
   '/setup': typeof SetupRouteWithChildren
   '/api/agent-asset': typeof ApiAgentAssetRoute
+  '/api/manifest': typeof ApiManifestRoute
   '/api/stream': typeof ApiStreamRoute
   '/api/upload': typeof ApiUploadRoute
   '/api/warm': typeof ApiWarmRoute
@@ -167,6 +175,7 @@ export interface FileRoutesById {
   '/login': typeof LoginRoute
   '/setup': typeof SetupRouteWithChildren
   '/api/agent-asset': typeof ApiAgentAssetRoute
+  '/api/manifest': typeof ApiManifestRoute
   '/api/stream': typeof ApiStreamRoute
   '/api/upload': typeof ApiUploadRoute
   '/api/warm': typeof ApiWarmRoute
@@ -189,6 +198,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/setup'
     | '/api/agent-asset'
+    | '/api/manifest'
     | '/api/stream'
     | '/api/upload'
     | '/api/warm'
@@ -209,6 +219,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/setup'
     | '/api/agent-asset'
+    | '/api/manifest'
     | '/api/stream'
     | '/api/upload'
     | '/api/warm'
@@ -229,6 +240,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/setup'
     | '/api/agent-asset'
+    | '/api/manifest'
     | '/api/stream'
     | '/api/upload'
     | '/api/warm'
@@ -250,6 +262,7 @@ export interface RootRouteChildren {
   LoginRoute: typeof LoginRoute
   SetupRoute: typeof SetupRouteWithChildren
   ApiAgentAssetRoute: typeof ApiAgentAssetRoute
+  ApiManifestRoute: typeof ApiManifestRoute
   ApiStreamRoute: typeof ApiStreamRoute
   ApiUploadRoute: typeof ApiUploadRoute
   ApiWarmRoute: typeof ApiWarmRoute
@@ -334,6 +347,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiStreamRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/manifest': {
+      id: '/api/manifest'
+      path: '/api/manifest'
+      fullPath: '/api/manifest'
+      preLoaderRoute: typeof ApiManifestRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/agent-asset': {
       id: '/api/agent-asset'
       path: '/api/agent-asset'
@@ -412,6 +432,7 @@ const rootRouteChildren: RootRouteChildren = {
   LoginRoute: LoginRoute,
   SetupRoute: SetupRouteWithChildren,
   ApiAgentAssetRoute: ApiAgentAssetRoute,
+  ApiManifestRoute: ApiManifestRoute,
   ApiStreamRoute: ApiStreamRoute,
   ApiUploadRoute: ApiUploadRoute,
   ApiWarmRoute: ApiWarmRoute,

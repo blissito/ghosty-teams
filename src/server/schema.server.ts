@@ -1,4 +1,5 @@
 import { dbq } from "../dbq.server";
+import { currentNamespace } from "./tenant.server";
 
 // Migraciones ADITIVAS e idempotentes de Fases 1-4. Las tablas base gc_* las crea
 // el provisioner de Formmy; aquí solo SUMAMOS columnas/tablas nuevas, seguro de
@@ -13,15 +14,23 @@ import { dbq } from "../dbq.server";
 // (2) migrate() acumula fallos y LANZA al final, para que ese reset ocurra. Como
 // todo es idempotente (IF NOT EXISTS / ADD COLUMN guardado por hasColumn), reintentar
 // es seguro y converge en cuanto la DB responde.
-let done: Promise<void> | null = null;
-export function ensureSchema(): Promise<void> {
-  if (!done) {
-    done = migrate().catch((e) => {
-      done = null; // no cachear el fallo → reintenta en el próximo request
+// MULTITENANT: memo POR NAMESPACE. Una sola caja sirve a muchos workspaces en el
+// mismo proceso; un memo global (`let done`) hacía que el PRIMER workspace fijara
+// `done` y los DEMÁS se saltaran sus migraciones → tablas/columnas faltantes →
+// 500 (`no such column`) en workspaces recién provisionados. Keyed por `ns`, cada
+// tenant corre (y reintenta ante fallo) sus propias migraciones idempotentes.
+const done = new Map<string, Promise<void>>();
+export async function ensureSchema(): Promise<void> {
+  const ns = await currentNamespace();
+  let p = done.get(ns);
+  if (!p) {
+    p = migrate().catch((e) => {
+      done.delete(ns); // no cachear el fallo → reintenta en el próximo request
       throw e;
     });
+    done.set(ns, p);
   }
-  return done;
+  return p;
 }
 
 async function hasColumn(table: string, col: string): Promise<boolean> {

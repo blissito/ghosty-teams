@@ -1,6 +1,9 @@
 // ── Bus realtime en proceso (SSE in-VM) ─────────────────────────────────────
-// Una microVM por team = UN proceso Node sirviendo a todos los usuarios del team,
-// así que un pub/sub a nivel de módulo ES el fan-out correcto (sin infra externa).
+// UNA caja multitenant sirve a MUCHOS workspaces (un proceso Node, N tenants),
+// así que TODO en este bus DEBE ir particionado por el namespace del tenant `ns`
+// (el 24-hex del sqld del workspace). Sin eso, los canales colisionan entre
+// tenants (`room:5` de A == `room:5` de B) y presencia/mensajes/notifs se filtran
+// entre workspaces distintos. `ns` viene de currentNamespace() en cada request.
 // La durabilidad NO vive aquí: cada mensaje se persiste en gc_messages ANTES de
 // publicarse; esto es solo la señal "avísales ya". Un evento perdido nunca pierde
 // el mensaje — el cliente reconcilia con getMessagesSince (catch-up por cursor).
@@ -9,12 +12,13 @@
 // la implementación de publish/addClient por un tier Centrifugo, sin tocar features.
 import type { Message } from "../db.server";
 
-// Canales namespaced (dentro del proceso ya es de un solo team, no hace falta teamId).
+// Canales namespaced POR TENANT: cada nombre lleva el prefijo `${ns}|` para que
+// publish() nunca cruce workspaces (los clients de otro ns no matchean el canal).
 export const ch = {
-  room: (id: number) => `room:${id}`,
-  dm: (id: number) => `dm:${id}`,
-  user: (sub: string) => `user:${sub}`,
-  presence: () => "presence",
+  room: (ns: string, id: number) => `${ns}|room:${id}`,
+  dm: (ns: string, id: number) => `${ns}|dm:${id}`,
+  user: (ns: string, sub: string) => `${ns}|user:${sub}`,
+  presence: (ns: string) => `${ns}|presence`,
 };
 
 // Union versionada de eventos. `nonce` = id del cliente devuelto en el eco para que
@@ -40,19 +44,31 @@ export type RtEvent =
   | { t: "typing"; sub: string; name: string; channelId: number | null; parentId?: number | null; dmId?: number | null };
 
 type Listener = (ev: RtEvent) => void;
-type Client = { channels: Set<string>; listener: Listener; sub: string };
+type Client = { ns: string; channels: Set<string>; listener: Listener; sub: string };
 
 const clients = new Set<Client>();
-const online = new Map<string, number>(); // sub -> nº de conexiones abiertas
+// Presencia POR TENANT: ns -> (sub -> nº de conexiones abiertas). Nunca global,
+// o "quién está online" se filtraría entre workspaces distintos.
+const online = new Map<string, Map<string, number>>();
 
-// ¿El usuario tiene alguna pestaña conectada ahora? (para el gate de email: solo se
-// notifica por correo a quien está OFFLINE, estilo Slack/Zulip).
-export function isOnline(sub: string): boolean {
-  return (online.get(sub) ?? 0) > 0;
+function nsOnline(ns: string): Map<string, number> {
+  let m = online.get(ns);
+  if (!m) {
+    m = new Map();
+    online.set(ns, m);
+  }
+  return m;
+}
+
+// ¿El usuario tiene alguna pestaña conectada ahora, EN ESTE tenant? (gate de email:
+// solo se notifica por correo a quien está OFFLINE, estilo Slack/Zulip).
+export function isOnline(ns: string, sub: string): boolean {
+  return (online.get(ns)?.get(sub) ?? 0) > 0;
 }
 
 // Publica un evento a todos los clientes suscritos a `channel`. Síncrono, best-effort:
-// un listener que falle (controller ya cerrado) no debe tumbar a los demás.
+// un listener que falle (controller ya cerrado) no debe tumbar a los demás. El
+// aislamiento por tenant lo garantiza el prefijo `${ns}|` del nombre del canal.
 export function publish(channel: string, ev: RtEvent): void {
   for (const c of clients) {
     if (!c.channels.has(channel)) continue;
@@ -64,32 +80,36 @@ export function publish(channel: string, ev: RtEvent): void {
   }
 }
 
-// Registra una conexión (una pestaña). Gestiona presencia por conteo de conexiones.
-// Devuelve el unsub que debe llamarse al cerrar el stream.
+// Registra una conexión (una pestaña) para el tenant `ns`. Gestiona presencia por
+// conteo de conexiones, scopeada al tenant. Devuelve el unsub al cerrar el stream.
 export function addClient(
+  ns: string,
   sub: string,
   name: string,
   channels: string[],
   listener: Listener
 ): () => void {
-  const client: Client = { channels: new Set(channels), listener, sub };
+  const client: Client = { ns, channels: new Set(channels), listener, sub };
   clients.add(client);
-  const prev = online.get(sub) ?? 0;
-  online.set(sub, prev + 1);
-  if (prev === 0) publish(ch.presence(), { t: "presence", sub, name, status: "online" });
+  const om = nsOnline(ns);
+  const prev = om.get(sub) ?? 0;
+  om.set(sub, prev + 1);
+  if (prev === 0) publish(ch.presence(ns), { t: "presence", sub, name, status: "online" });
 
   return () => {
     clients.delete(client);
-    const n = (online.get(sub) ?? 1) - 1;
+    const n = (om.get(sub) ?? 1) - 1;
     if (n <= 0) {
-      online.delete(sub);
-      publish(ch.presence(), { t: "presence", sub, name, status: "offline" });
+      om.delete(sub);
+      if (om.size === 0) online.delete(ns);
+      publish(ch.presence(ns), { t: "presence", sub, name, status: "offline" });
     } else {
-      online.set(sub, n);
+      om.set(sub, n);
     }
   };
 }
 
-export function onlineUsers(): string[] {
-  return [...online.keys()];
+// Subs online EN ESTE tenant (para presence:init del recién llegado).
+export function onlineUsers(ns: string): string[] {
+  return [...(online.get(ns)?.keys() ?? [])];
 }

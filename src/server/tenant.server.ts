@@ -10,9 +10,10 @@ const IDP = process.env.GHOSTY_IDENTITY_URL ?? "https://www.ghosty.studio";
 const ROOT = process.env.TEAMS_ROOT_DOMAIN ?? "teams.ghosty.studio";
 
 // Fallback single-tenant: namespace fijo por env (dev local; o caja dedicada
-// enterprise que sirve UN solo workspace).
+// enterprise que sirve UN solo workspace). La DB de tenants es sqld/libsql
+// self-hosted (Turso local), NO EasyBits → la var es SQLD_NAMESPACE.
 function envNamespace(): string | null {
-  return process.env.SQLD_NAMESPACE || process.env.EASYBITS_DB_ID || null;
+  return process.env.SQLD_NAMESPACE || null;
 }
 
 const cache = new Map<string, { ns: string; exp: number }>();
@@ -69,7 +70,7 @@ export async function currentNamespace(): Promise<string> {
     const env = envNamespace();
     if (env) return env;
     throw new Error(
-      "sin tenant: host sin subdominio de workspace y sin SQLD_NAMESPACE/EASYBITS_DB_ID"
+      "sin tenant: host sin subdominio de workspace y sin SQLD_NAMESPACE"
     );
   }
   return resolveNamespace(slug);

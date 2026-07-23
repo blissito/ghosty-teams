@@ -99,7 +99,11 @@ export const Route = createFileRoute("/api/webhook/easybits")({
         if (msg) {
           const [withMeta] = await attachArtifacts([msg]);
           const bus = await import("../server/bus.server");
-          bus.publish(bus.ch.room(channelId), { t: "message:new", msg: withMeta });
+          // Mismo ns que resolvió dbq para escribir el mensaje (el handler ya opera
+          // dentro de este tenant): así el publish realtime cae en el workspace correcto.
+          const { currentNamespace } = await import("../server/tenant.server");
+          const ns = await currentNamespace();
+          bus.publish(bus.ch.room(ns, channelId), { t: "message:new", msg: withMeta });
         }
 
         return Response.json({ ok: true, messageId: msgId, artifact: !!embed });

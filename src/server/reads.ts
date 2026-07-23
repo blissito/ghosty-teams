@@ -24,11 +24,13 @@ export const markReadFn = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     const db = await import("../db.server");
     const bus = await import("./bus.server");
+    const { currentNamespace } = await import("./tenant.server");
     const me = await sessionUser();
     if (!me) return { ok: false as const };
+    const ns = await currentNamespace();
     await db.markRead(me.sub, data.scope, data.scopeId);
     // Señal a las demás conexiones del usuario: relean su mapa de no-leídos.
-    bus.publish(bus.ch.user(me.sub), { t: "unread", scope: data.scope, scopeId: data.scopeId });
+    bus.publish(bus.ch.user(ns, me.sub), { t: "unread", scope: data.scope, scopeId: data.scopeId });
     return { ok: true as const };
   });
 

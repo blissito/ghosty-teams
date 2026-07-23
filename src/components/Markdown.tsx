@@ -1,5 +1,6 @@
 import { Children, cloneElement, createElement, isValidElement, memo } from "react";
 import { Streamdown, type StreamdownProps } from "streamdown";
+import * as nodeEmoji from "node-emoji";
 
 // Streamdown (Vercel) es stream-aware: completa markdown incompleto EN VIVO (tablas/code
 // fences a medio cerrar) mientras entran tokens → sin el parpadeo de react-markdown que la
@@ -39,23 +40,32 @@ function highlightText(children: React.ReactNode, emojiMap: Map<string, string>,
           );
           last = m.index + tok.length;
         } else {
-          // `:name:` — solo si es un emoji custom conocido; si no, se deja literal.
+          // `:name:` → emoji custom del workspace (imagen) tiene PRECEDENCIA (estilo
+          // Slack); si no, shortcode estándar (unicode via node-emoji); si ninguno, literal.
           const name = tok.slice(1, -1);
           const fileId = emojiMap.get(name);
-          if (!fileId) continue;
-          if (m.index > last) out.push(child.slice(last, m.index));
-          out.push(
-            <img
-              key={m.index}
-              src={`/api/attachment/${encodeURIComponent(fileId)}`}
-              alt={tok}
-              title={tok}
-              loading="lazy"
-              decoding="async"
-              className="inline-block h-[1.25em] w-[1.25em] object-contain align-[-0.2em]"
-            />
-          );
-          last = m.index + tok.length;
+          if (fileId) {
+            if (m.index > last) out.push(child.slice(last, m.index));
+            out.push(
+              <img
+                key={m.index}
+                src={`/api/attachment/${encodeURIComponent(fileId)}`}
+                alt={tok}
+                title={tok}
+                loading="lazy"
+                decoding="async"
+                className="inline-block h-[1.25em] w-[1.25em] object-contain align-[-0.2em]"
+              />
+            );
+            last = m.index + tok.length;
+          } else if (nodeEmoji.has(name)) {
+            // Shortcode estándar → carácter unicode (texto). El font-size del jumbo lo agranda.
+            if (m.index > last) out.push(child.slice(last, m.index));
+            out.push(nodeEmoji.get(name));
+            last = m.index + tok.length;
+          } else {
+            continue; // desconocido → se deja literal
+          }
         }
       }
       if (last < child.length) out.push(child.slice(last));
@@ -94,12 +104,16 @@ const UNICODE_EMOJI = /[\p{Extended_Pictographic}\u200D\uFE0F\u{1F1E6}-\u{1F1FF}
 function emojiOnly(body: string, emojiMap: Map<string, string>): { jumbo: boolean; count: number } {
   const trimmed = body.trim();
   if (!trimmed) return { jumbo: false, count: 0 };
-  const customTokens = trimmed.match(/:([a-z0-9_]+):/g) ?? [];
-  const knownCustom = customTokens.filter((tok) => emojiMap.has(tok.slice(1, -1)));
+  const shortcodeTokens = trimmed.match(/:([a-z0-9_]+):/g) ?? [];
+  // Cuenta como emoji tanto los custom del workspace como los shortcodes estándar (node-emoji).
+  const knownTokens = shortcodeTokens.filter((tok) => {
+    const n = tok.slice(1, -1);
+    return emojiMap.has(n) || nodeEmoji.has(n);
+  });
   const unicode = trimmed.match(UNICODE_EMOJI) ?? [];
-  let rest = trimmed.replace(/:([a-z0-9_]+):/g, (full, n) => (emojiMap.has(n) ? "" : full));
+  let rest = trimmed.replace(/:([a-z0-9_]+):/g, (full, n) => (emojiMap.has(n) || nodeEmoji.has(n) ? "" : full));
   rest = rest.replace(UNICODE_EMOJI, "").replace(/\s+/g, "");
-  const count = knownCustom.length + unicode.length;
+  const count = knownTokens.length + unicode.length;
   return { jumbo: rest.length === 0 && count > 0, count };
 }
 

@@ -80,7 +80,7 @@ export const Route = createRootRoute({
       },
       {
         rel: 'manifest',
-        href: '/manifest.webmanifest',
+        href: '/api/manifest', // per-tenant (dinámico) — ver src/routes/api.manifest.ts
       },
     ],
   }),

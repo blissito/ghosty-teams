@@ -11,6 +11,7 @@ import { sessionUser } from "./chat";
 // Notifica a los demás miembros del DM (un DM es un ping directo, sin @mención).
 // Pasa por la capa agnóstica (Web Push hoy; email mañana, sin tocar aquí).
 async function notifyDm(
+  ns: string,
   dmId: number,
   members: string[],
   senderSub: string,
@@ -35,7 +36,7 @@ async function notifyDm(
     title: `${senderName} te escribió`,
     body: excerpt,
     url: `/`,
-  });
+  }, ns);
 }
 
 // Abre (o reusa) un DM con un usuario (o varios → grupo). Devuelve el id.
@@ -95,9 +96,11 @@ export const postDmMessageFn = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     const db = await import("../db.server");
     const bus = await import("./bus.server");
+    const { currentNamespace } = await import("./tenant.server");
     const { resolvedAgents, detectMention, quoteExcerpt } = await import("../agents.server");
     const me = await sessionUser();
     if (!me || !(await db.isDmMember(data.id, me.sub))) throw new Error("no autorizado");
+    const ns = await currentNamespace();
     const body = data.body.trim();
     const files = data.attachments ?? [];
     if (!body && files.length === 0) return { ok: false as const };
@@ -129,8 +132,8 @@ export const postDmMessageFn = createServerFn({ method: "POST" })
     // Realtime: una vez por miembro (incluye al emisor → dedupe por nonce).
     if (created)
       for (const sub of members)
-        bus.publish(bus.ch.user(sub), { t: "message:new", msg: created, nonce: data.nonce });
-    await notifyDm(data.id, members, me.sub, me.name, body).catch(() => {});
+        bus.publish(bus.ch.user(ns, sub), { t: "message:new", msg: created, nonce: data.nonce });
+    await notifyDm(ns, data.id, members, me.sub, me.name, body).catch(() => {});
 
     // @agente en un DM → responde inline en el mismo DM. Caja caliente: la cáscara del
     // agente se crea EAGER (kind:"msg" VACÍA, con avatar+nombre) aquí → aparece al instante
@@ -141,7 +144,7 @@ export const postDmMessageFn = createServerFn({ method: "POST" })
       const { id: sid } = await db.postDmAgent(data.id, "", "msg", mentioned, ag?.name ?? "Ghosty", ag?.avatar ?? "");
       shellId = sid;
       const shell = await db.getMessage(sid);
-      if (shell) for (const sub of members) bus.publish(bus.ch.user(sub), { t: "message:new", msg: shell });
+      if (shell) for (const sub of members) bus.publish(bus.ch.user(ns, sub), { t: "message:new", msg: shell });
     }
     return {
       ok: true as const,
@@ -171,14 +174,16 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     const db = await import("../db.server");
     const bus = await import("./bus.server");
+    const { currentNamespace } = await import("./tenant.server");
     const { resolvedAgents, runAgentTurn, buildMediaParts, quotedContextPrefix } = await import("../agents.server");
     const me = await sessionUser();
     if (!me || !(await db.isDmMember(data.id, me.sub))) throw new Error("no autorizado");
+    const ns = await currentNamespace();
     const agent = (await resolvedAgents()).find((a) => a.handle === data.handle);
     const name = agent?.name ?? "Ghosty";
     const members = await db.getDmMembers(data.id);
     const fanout = (ev: Parameters<typeof bus.publish>[1]) => {
-      for (const sub of members) bus.publish(bus.ch.user(sub), ev);
+      for (const sub of members) bus.publish(bus.ch.user(ns, sub), ev);
     };
 
     const parts = await buildMediaParts(data.attachments ?? []);

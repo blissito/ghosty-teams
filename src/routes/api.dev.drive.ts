@@ -58,9 +58,11 @@ export const Route = createFileRoute("/api/dev/drive")({
           const sender = body.sender || "Bliss";
           if (!slug || !text) return json({ error: "faltan slug/text" }, 400);
           const bus = await import("../server/bus.server");
+          const { currentNamespace } = await import("../server/tenant.server");
           const { askAgent } = await import("../server/chat");
           const channel = await db.getChannel(slug);
           if (!channel) return json({ error: "canal no encontrado" }, 404);
+          const ns = await currentNamespace();
 
           // 1) Mensaje del usuario (como si lo hubiera escrito él) + aviso al bus.
           const { id: userMsgId } = await db.createMessage({
@@ -73,11 +75,11 @@ export const Route = createFileRoute("/api/dev/drive")({
             topic: "general",
           });
           const created = await db.getMessage(userMsgId);
-          if (created) bus.publish(bus.ch.room(channel.id), { t: "message:new", msg: created });
+          if (created) bus.publish(bus.ch.room(ns, channel.id), { t: "message:new", msg: created });
 
           // 2) "pensando…" bajo el mensaje (askAgent lo limpia al primer token).
           await db.postAgent(channel.id, userMsgId, "👾 pensando…", "status", "ghosty", "Ghosty", "general", "");
-          bus.publish(bus.ch.room(channel.id), { t: "refresh", channelId: channel.id, parentId: userMsgId });
+          bus.publish(bus.ch.room(ns, channel.id), { t: "refresh", channelId: channel.id, parentId: userMsgId });
 
           // 3) Turno del agente: MISMO camino del composer (streamea al panel eb-doc).
           //    Un top-level abre hilo bajo el mensaje (parent = userMsgId), fleetThread="flow".

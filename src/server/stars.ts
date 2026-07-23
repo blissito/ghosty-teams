@@ -12,11 +12,13 @@ export const toggleStarFn = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     const db = await import("../db.server");
     const bus = await import("./bus.server");
+    const { currentNamespace } = await import("./tenant.server");
     const me = await sessionUser();
     if (!me) throw new Error("no autorizado");
+    const ns = await currentNamespace();
     const { starred } = await db.toggleStar(me.sub, data.messageId);
     // Personal: sincroniza mis otras pestañas/dispositivos.
-    bus.publish(bus.ch.user(me.sub), { t: "star", messageId: data.messageId, starred });
+    bus.publish(bus.ch.user(ns, me.sub), { t: "star", messageId: data.messageId, starred });
     return { ok: true as const, starred };
   });
 
@@ -25,15 +27,17 @@ export const togglePinFn = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     const db = await import("../db.server");
     const bus = await import("./bus.server");
+    const { currentNamespace } = await import("./tenant.server");
     const me = await sessionUser();
     if (!me) throw new Error("no autorizado");
+    const ns = await currentNamespace();
     const msg = await db.getMessage(data.messageId);
     if (!msg) throw new Error("mensaje no encontrado");
     // Fijar es acción de room: solo owner o creador del room.
     const ch = (await db.listChannels(me.sub, !!me.isOwner)).find((c) => c.id === msg.channel_id);
     if (!ch || (!me.isOwner && ch.created_by !== me.sub)) throw new Error("no autorizado");
     const { pinned } = await db.togglePin(msg.channel_id, data.messageId, me.sub);
-    bus.publish(bus.ch.room(msg.channel_id), {
+    bus.publish(bus.ch.room(ns, msg.channel_id), {
       t: "pin",
       channelId: msg.channel_id,
       messageId: data.messageId,
