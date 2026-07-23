@@ -795,6 +795,27 @@ function useChatScroll(
     requestAnimationFrame(measure);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [count, contentLen, extra, unreadId]);
+  useEffect(() => {
+    // Media (imágenes) carga DESPUÉS del primer paint y su reflow crece el contenido por
+    // debajo → si el scroll-to-bottom corrió con el scrollHeight subestimado, el canal
+    // abre "arriba" y el botón "ir al final" no aparece (el layout mentía que ya estaba
+    // al fondo). Escuchamos el `load` de CUALQUIER imagen del scroller (captura: `load`
+    // no burbujea) y: si seguíamos pegados al fondo, re-anclamos; si no, recalculamos
+    // atBottom para que el botón salga cuando el crecimiento nos dejó mid-history.
+    const el = scrollRef.current;
+    if (!el) return;
+    const onImgLoad = (e: Event) => {
+      if (!(e.target instanceof HTMLImageElement)) return;
+      if (stick.current) {
+        el.scrollTo({ top: el.scrollHeight });
+      } else {
+        const near = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+        setAtBottom((prev) => (prev === near ? prev : near));
+      }
+    };
+    el.addEventListener("load", onImgLoad, true);
+    return () => el.removeEventListener("load", onImgLoad, true);
+  }, [scrollRef]);
   return { onScroll, atBottom, scrollToBottom };
 }
 
@@ -1881,6 +1902,10 @@ function ChannelPage() {
               setProfile(null);
               openDmFn({ data: { subs: [sub] } }).then(({ id }) => openDm(id)).catch(() => {});
             }}
+            onStartAgentDm={(handle) => {
+              setProfile(null);
+              openDmFn({ data: { agentHandle: handle } }).then(({ id }) => openDm(id)).catch(() => {});
+            }}
           />
         )}
       </AnimatePresence>
@@ -2728,12 +2753,14 @@ function ProfileDrawer({
   onClose,
   onConfigure,
   onStartDm,
+  onStartAgentDm,
 }: {
   target: ProfileTarget;
   isOwner: boolean;
   onClose: () => void;
   onConfigure: () => void;
   onStartDm: (sub: string) => void;
+  onStartAgentDm: (handle: string) => void;
 }) {
   const t = useT();
   const { users, me } = useContext(ChatCtx);
@@ -2878,7 +2905,12 @@ function ProfileDrawer({
         <div className="mt-3 space-y-2 px-4 pb-6">
           {target.isAgent ? (
             <>
-              <button disabled title={t("Próximamente")} className="flex w-full items-center justify-center gap-2 rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-brand-fg opacity-50">
+              <button
+                onClick={() => handle && onStartAgentDm(handle)}
+                disabled={!handle}
+                title={t("Mensaje directo")}
+                className="flex w-full items-center justify-center gap-2 rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-brand-fg transition hover:opacity-90 disabled:opacity-50"
+              >
                 <MessageSquare size={15} /> {t("Mensaje directo")}
               </button>
               {isOwner && (
@@ -4642,7 +4674,13 @@ function fmtBytes(n: number | null): string {
 function ChatImage({ src, alt }: { src: string; alt: string }) {
   const [loaded, setLoaded] = useState(false);
   return (
-    <span className="relative block overflow-hidden rounded-lg border border-border">
+    <span
+      className={`relative block overflow-hidden rounded-lg border border-border ${
+        // Reserva un alto mientras carga → el scroller no subestima scrollHeight (canal
+        // abre al fondo + botón "ir al final" correcto); al cargar, el alto real manda.
+        loaded ? "" : "min-h-40 w-60 max-w-full"
+      }`}
+    >
       {!loaded && (
         <span className="absolute inset-0 animate-pulse bg-surface-3" aria-hidden />
       )}
