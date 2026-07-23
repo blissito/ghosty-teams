@@ -127,6 +127,7 @@ export const Markdown = memo(function Markdown({
   light,
   emojis,
   onMention,
+  onImage,
 }: {
   body: string;
   artifactUrl?: string;
@@ -134,6 +135,7 @@ export const Markdown = memo(function Markdown({
   light?: boolean; // hoja clara (texto negro) para el draft del artefacto
   emojis?: { name: string; file_id: string }[]; // emojis custom → `:name:` inline en el cuerpo
   onMention?: (handle: string) => void; // clic en @mención → hovercard/perfil (estilo Slack)
+  onImage?: (src: string, alt?: string) => void; // clic en imagen del agente → panel lateral
 }) {
   const emojiMap = new Map((emojis ?? []).map((e) => [e.name, e.file_id]));
   // Mensaje solo-emoji → JUMBO (grande), como Slack. Se salta markdown (no hace falta):
@@ -147,20 +149,27 @@ export const Markdown = memo(function Markdown({
   const withLinks: Components = {
     ...textComponents(emojiMap, onMention),
     // Imágenes del agente (memes/gráficas) al tamaño de Slack: alto acotado (~320px),
-    // ancho de la columna, sin recorte (object-contain), clic → abre el original en pestaña.
-    // Sin esto una imagen markdown crecía a lo alto de todo el mensaje.
-    img: ({ node, src, alt, ...props }: { node?: unknown; src?: string; alt?: string }) => (
-      <a href={src} target="_blank" rel="noreferrer noopener" className="mt-1 block w-fit">
-        <img
-          src={src}
-          alt={alt ?? ""}
-          loading="lazy"
-          decoding="async"
-          className="max-h-80 w-auto max-w-full rounded-lg border border-border object-contain"
-          {...props}
-        />
-      </a>
-    ),
+    // ancho de la columna, sin recorte (object-contain). Clic → abre en el PANEL lateral
+    // (onImage), no en pestaña nueva; fallback al link si no hay handler. Sin esto una
+    // imagen markdown crecía a lo alto de todo el mensaje.
+    img: ({ node, src, alt, ...props }: { node?: unknown; src?: string; alt?: string }) => {
+      const cls = "max-h-80 w-auto max-w-full rounded-lg border border-border object-contain";
+      const im = (
+        <img src={src} alt={alt ?? ""} loading="lazy" decoding="async" className={cls} {...props} />
+      );
+      if (onImage && src) {
+        return (
+          <button type="button" onClick={() => onImage(src, alt)} className="mt-1 block w-fit cursor-zoom-in">
+            {im}
+          </button>
+        );
+      }
+      return (
+        <a href={src} target="_blank" rel="noreferrer noopener" className="mt-1 block w-fit">
+          {im}
+        </a>
+      );
+    },
     a: ({ node, href, children, ...props }: { node?: unknown; href?: string; children?: React.ReactNode }) => {
       const isArtifact = !!(artifactUrl && href && cleanUrl(href) === cleanUrl(artifactUrl) && onOpenArtifact);
       if (isArtifact) {

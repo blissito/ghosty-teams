@@ -13,20 +13,21 @@ const API = "https://api.calendly.com";
 // el conector (sin llamadas a la API pesadas). Las capacidades ricas (disponibilidad real,
 // agendar) NO van aquí —serían tools/skills que el agente invoca on-demand— para no engordar
 // cada turno ni acoplar dm.ts a cada integración. Ver connectors/context.server.ts.
-export async function ambientContext(sub: string, sender: string, message: string): Promise<string | null> {
+export async function ambientContext(sub: string, sender: string, _message: string): Promise<string | null> {
   const cal = await getSchedulingContext(sub);
   if (!cal) return null;
-  // Intención de agenda → digest RICO (disponibilidad real + tipos + próximas citas, vía API,
-  // cacheado 5 min). Mensaje normal → solo el link (barato, sin API). El gate vive AQUÍ (en el
-  // conector), no en dm.ts → escalable: cada integración decide su propio enriquecimiento.
-  const wantsScheduling = /\b(agend|disponib|cita|reuni[oó]n|llamad|calendario|horario|libre|schedul|availab|meeting|book|\bcall\b)/i.test(message);
-  if (wantsScheduling) {
-    const digest = await getSchedulingDigest(sub, sender);
-    if (digest) return digest;
-  }
+  // DIRIGE al agente a las TOOLS (no a scrapear ni al "no tengo acceso"). Las acciones corren
+  // en Teams con las creds del usuario; el agente sólo las invoca vía el SDK code-mode. Esto es
+  // lo que hace que USE la integración en vez de sólo compartir el link.
   return (
-    `[Contexto — Calendly de ${sender}: su link de agendamiento es ${cal.schedulingUrl}` +
-    `${cal.timezone ? ` (zona horaria ${cal.timezone})` : ""}. Si pide agendar una llamada/reunión o su disponibilidad, comparte ESTE link.]`
+    `[INTEGRACIÓN Calendly de ${sender} (conectada). TIENES HERRAMIENTAS para su cuenta vía el ` +
+    `GS Tools SDK: importa /opt/gs-sdk/connectors.mjs y usa list() y run(name, args). Tools: ` +
+    `calendly_scheduling_link, calendly_event_types, calendly_availability, calendly_upcoming_events, ` +
+    `calendly_create_scheduling_link. Para CUALQUIER pregunta de agenda/disponibilidad/citas de ` +
+    `${sender}, USA estas tools — NO scrapees calendly.com ni digas que no tienes acceso (SÍ lo ` +
+    `tienes). Si una tool devuelve error de permiso, dile que reconecte Calendly en Ajustes → ` +
+    `Integraciones. Su link directo para compartir es ${cal.schedulingUrl}` +
+    `${cal.timezone ? ` (zona ${cal.timezone})` : ""}.]`
   );
 }
 

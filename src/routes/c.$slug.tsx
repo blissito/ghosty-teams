@@ -1642,9 +1642,11 @@ function ChannelPage() {
     setHomeOpen(true);
     setNavOpen(false);
   };
-  // Hotkeys globales. ⌘K/Ctrl-K → command palette. Esc → cierra el foco actual en orden
-  // de prioridad (panel de artefacto → hilo → DM), como Slack/Discord. No hace nada si
-  // estás escribiendo (el composer maneja su propio Esc) o si hay un modal/palette abierto.
+  // Hotkeys globales. ⌘K/Ctrl-K → command palette. Esc → cierra el OVERLAY actual en orden
+  // de prioridad (panel de artefacto → hilo). NO cierra el DM: un DM es un DESTINO al que
+  // entraste a propósito (no un overlay), y sacarte de él con Esc era sorpresivo e
+  // inconsistente (dependía de si el foco estaba en el composer → "a veces sí, a veces no").
+  // Se navega entre DMs/canales por el sidebar. No hace nada si estás escribiendo.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
@@ -1658,12 +1660,11 @@ function ChannelPage() {
         if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable)) return;
         if (openArtifactRef.current) { setOpenArtifact(null); return; }
         if (openThreadId != null) { setOpenThreadId(null); return; }
-        if (openDmId != null) { setOpenDmId(null); return; }
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [openThreadId, openDmId]);
+  }, [openThreadId]);
   // Al editar MI perfil (nombre/avatar), revalida el loader → el `user` (sidebar/header/
   // composer) se actualiza sin recargar. Los mensajes ya propagan por el directorio vivo.
   useEffect(() => {
@@ -5020,8 +5021,8 @@ function Flow({
             );
           })
         )}
-        {optimistic.map((o) => (
-          <OptimisticRow key={o.id} o={o} />
+        {optimistic.map((o, i) => (
+          <OptimisticRow key={o.id} o={o} grouped={optIsGrouped(o, i > 0 ? optimistic[i - 1] : messages ? messages[messages.length - 1] : undefined)} />
         ))}
         </div>
       </div>
@@ -5152,8 +5153,8 @@ function ThreadView({
                 ))}
               </>
             )}
-            {optimistic.map((o) => (
-              <OptimisticRow key={o.id} o={o} />
+            {optimistic.map((o, i) => (
+              <OptimisticRow key={o.id} o={o} grouped={optIsGrouped(o, i > 0 ? optimistic[i - 1] : replies[replies.length - 1])} />
             ))}
           </>
         )}
@@ -5288,8 +5289,8 @@ function DmView({
             );
           })
         )}
-        {optimistic.map((o) => (
-          <OptimisticRow key={o.id} o={o} />
+        {optimistic.map((o, i) => (
+          <OptimisticRow key={o.id} o={o} grouped={optIsGrouped(o, i > 0 ? optimistic[i - 1] : flow ? flow[flow.length - 1] : undefined)} />
         ))}
         </div>
       </div>
@@ -6172,6 +6173,7 @@ function MessageRow({
                 body={bubbleWithoutEbDoc(m.body)}
                 artifactUrl={m.artifact?.url}
                 onOpenArtifact={m.artifact ? () => onOpenArtifact(artifactToView(m.artifact!)) : undefined}
+                onImage={(src, alt) => onOpenArtifact({ kind: "image", title: alt || "Imagen", src })}
                 emojis={emojis}
                 onMention={(h) => {
                   // Clic en @mención → abre el perfil de esa persona (Slack: hovercard con
@@ -6963,7 +6965,19 @@ function EditBox({ m, onDone }: { m: Message; onDone: () => void }) {
   );
 }
 
-function OptimisticRow({ o }: { o: Optimistic }) {
+// ¿El mensaje optimista debe AGRUPARSE con el anterior (real u optimista)? Espeja la
+// lógica de MessageRow → el optimista nace YA agrupado (sin header) igual que quedará el
+// real → sin el "brinco" de header que aparece y desaparece al reconciliar.
+function optIsGrouped(o: Optimistic, prev: Message | Optimistic | undefined): boolean {
+  if (o.quotedExcerpt || !prev) return false;
+  if ("nonce" in prev) return !prev.quotedExcerpt; // optimista consecutivo = mismo yo, recién
+  if (prev.kind !== "msg" || prev.quoted_excerpt) return false;
+  const prevIsAgent = (prev.agent_handle != null && prev.mentions_ghosty === 0) || prev.sender === "ghosty";
+  if (prevIsAgent) return false;
+  return prev.sender === o.sender && Date.now() / 1000 - prev.created_at < 300;
+}
+
+function OptimisticRow({ o, grouped }: { o: Optimistic; grouped?: boolean }) {
   const t = useT();
   const { retrySend, discardSend, emojis } = useContext(ChatCtx);
   const failed = o.status === "failed";
@@ -6972,10 +6986,20 @@ function OptimisticRow({ o }: { o: Optimistic }) {
   // por el real cuando aterriza por SSE. Solo si FALLA de verdad degrada a
   // "No se envió" + reintentar/descartar.
   const time = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  // Agrupado (mismo look que MessageRow): sin avatar/header, gutter angosto. Si FALLÓ,
+  // forzamos header para mostrar "No se envió" + reintentar.
+  const g = !!grouped && !failed;
   return (
-    <div className="flex items-start gap-3 rounded-lg px-2 py-1.5">
-      <Avatar name={o.sender} avatar={o.avatar} className="mt-0.5 h-9 w-9 !rounded-lg" />
+    <div className={`group relative flex items-start gap-3 rounded-lg px-2 ${g ? "py-px" : "mt-2 py-0.5"}`}>
+      {g ? (
+        <div className="w-9 shrink-0 select-none whitespace-nowrap pt-0.5 text-right text-[10px] leading-5 tabular-nums text-muted opacity-0 group-hover:opacity-100">
+          {time}
+        </div>
+      ) : (
+        <Avatar name={o.sender} avatar={o.avatar} className="mt-0.5 h-9 w-9 !rounded-lg" />
+      )}
       <div className="min-w-0 flex-1">
+        {!g && (
         <div className="flex items-baseline gap-2">
           <span className="text-sm font-semibold text-ink">{o.sender}</span>
           {failed ? (
@@ -6984,6 +7008,7 @@ function OptimisticRow({ o }: { o: Optimistic }) {
             <span className="text-[11px] text-muted">{time}</span>
           )}
         </div>
+        )}
         {/* Cita optimista: se ve al instante (mismo look que el mensaje ya entregado). */}
         {o.quotedExcerpt ? (
           <div className="mb-1 flex w-full max-w-md items-start gap-1.5 rounded-md border-l-2 border-brand/60 bg-surface-2 px-2 py-1">
