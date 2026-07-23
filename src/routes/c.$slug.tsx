@@ -120,7 +120,7 @@ import { playNotificationSound, playGhostySound, playSelfSound, playMentionSound
 const SOUND_GROUP_MENTIONS = new Set(["all", "channel", "everyone", "aqui", "here", "todos"]);
 import { useT } from "../i18n";
 
-type Mention = { handle: string; name: string; avatar: string; kind: "agent" | "user" | "group" };
+type Mention = { handle: string; name: string; avatar: string; kind: "agent" | "user" | "group"; sub?: string | null };
 import { me } from "../server/auth";
 import {
   createChannelFn,
@@ -4396,7 +4396,7 @@ function HomeDashboard({
             {people.slice(0, 8).map((p) => (
               <button
                 key={`${p.kind}:${p.handle}`}
-                onClick={() => openProfile({ name: p.name, avatar: p.avatar, handle: p.handle, isAgent: p.kind === "agent" })}
+                onClick={() => openProfile({ name: p.name, avatar: p.avatar, handle: p.handle, isAgent: p.kind === "agent", sub: p.kind === "user" ? p.sub : null })}
                 className="flex items-center gap-2 rounded-lg px-2 py-1.5 text-left hover:bg-surface-3"
               >
                 {p.kind === "agent" ? (

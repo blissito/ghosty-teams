@@ -217,24 +217,44 @@ export const createManagedAgentFn = createServerFn({ method: "POST" })
     if (handle === db.GHOSTY_HANDLE) throw new Error("@ghosty está reservado");
     if (await db.getAgentByHandle(handle)) throw new Error(`@${handle} ya existe`);
 
-    const { getConfigMany } = await import("../config.server");
-    const { resolveFleetAuth } = await import("./setup");
-    const c = await getConfigMany(["eb_access_token", "eb_owner_key"]);
-    const token = resolveFleetAuth(c);
-    if (!token) throw new Error("Conecta tu cuenta para crear agentes");
-
     const name = data.name.trim() || handle;
-    const { createFleetAgent } = await import("./easybits-oauth.server");
-    const agent = await createFleetAgent(token, { engine: data.engine, name });
+    let fleetId: string;
+    let fleetToken: string;
+
+    // Cutover per-tenant (igual que el path de mensajes): si el workspace ya es
+    // NATIVO (gc_config.agent_runtime_url / env GHOSTY_RUNTIME_URL), el alta nace en
+    // Studio por HMAC (owner = el user de GS = sub). Si no, sigue por EasyBits (path
+    // actual, sin cambio). ADITIVO: no flipea a nadie que hoy esté en EasyBits.
+    const { nativeRuntimeBase, partnerHeaders } = await import("./ghosty-runtime.server");
+    const base = await nativeRuntimeBase();
+    if (base) {
+      const payload = JSON.stringify({ ownerUserId: user.sub, engine: data.engine, name, persona: { name } });
+      const res = await fetch(`${base}/api/v2/fleet-agents`, { method: "POST", headers: partnerHeaders(payload), body: payload });
+      if (!res.ok) throw new Error(`alta nativa ${res.status}: ${(await res.text()).slice(0, 200)}`);
+      const j = (await res.json()) as { id: string; token: string };
+      fleetId = j.id;
+      fleetToken = j.token;
+    } else {
+      const { getConfigMany } = await import("../config.server");
+      const { resolveFleetAuth } = await import("./setup");
+      const c = await getConfigMany(["eb_access_token", "eb_owner_key"]);
+      const token = resolveFleetAuth(c);
+      if (!token) throw new Error("Conecta tu cuenta para crear agentes");
+      const { createFleetAgent } = await import("./easybits-oauth.server");
+      const agent = await createFleetAgent(token, { engine: data.engine, name });
+      fleetId = agent.id;
+      fleetToken = agent.token;
+    }
+
     // Marca el canal Teams como conectado (best-effort) → aparece "Activo" de una.
     const { connectTeamsChannel } = await import("./agent-config");
-    await connectTeamsChannel(agent.id, agent.token).catch(() => {});
+    await connectTeamsChannel(fleetId, fleetToken).catch(() => {});
     const ag = await db.createAgent({
       handle,
       name,
       kind: "fleet",
-      fleetId: agent.id,
-      fleetToken: agent.token,
+      fleetId,
+      fleetToken,
       createdBy: user.sub,
     });
     return { ok: true as const, handle: ag.handle };
