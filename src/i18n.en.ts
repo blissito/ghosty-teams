@@ -328,6 +328,8 @@ export const en: Record<string, string> = {
   "Quitar imagen": "Remove image",
   "Razonamiento": "Reasoning",
   "Reaccionar": "React",
+  "Responder": "Reply",
+  "Abrir artefacto": "Open artifact",
   "Reactivar notificaciones": "Re-enable notifications",
   "Recibe un aviso cuando alguien te tagea (@tu-handle), aunque tengas la app cerrada.": "Get a heads-up when someone tags you (@your-handle), even when the app is closed.",
   "Reciclando caja… el próximo mensaje usa tu llave.": "Recycling box… the next message uses your key.",

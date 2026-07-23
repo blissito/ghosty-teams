@@ -117,7 +117,7 @@ import { registerModalEsc } from "../utils/modal-esc";
 import ArtifactPanel, { type ArtifactView, viewFromAttachment } from "../components/ArtifactPanel";
 import { extractEbDoc, draftTitle, bubbleWithoutEbDoc } from "../lib/ebdoc";
 import { ThinkingRing } from "../components/ThinkingRing";
-import { playNotificationSound, playGhostySound, playSelfSound, playMentionSound, playDmSound, playReadySound, playDeleteSound, startCallRing, stopCallRing } from "../utils/notificationSound";
+import { playNotificationSound, playGhostySound, playSelfSound, playMentionSound, playDmSound, playReadySound, playDeleteSound, playArtifactOpen, startCallRing, stopCallRing } from "../utils/notificationSound";
 
 // Menciones que cuentan como "a ti": tu @handle o una grupal (@all/@channel/…).
 const SOUND_GROUP_MENTIONS = new Set(["all", "channel", "everyone", "aqui", "here", "todos"]);
@@ -1886,10 +1886,16 @@ function ChannelPage() {
   }, []);
   const [profile, setProfile] = useState<ProfileTarget | null>(null);
   const openProfile = useCallback((p: ProfileTarget) => setProfile(p), []);
+  // Abrir artefacto CON sonido de rastrillo — SOLO en la transición cerrado→abierto (no al
+  // cambiar de un artefacto a otro con el panel ya abierto). Gate en la categoría "artifact".
+  const openArtifactWithSound = useCallback((v: ArtifactView) => {
+    if (!openArtifactRef.current) playArtifactOpen();
+    setOpenArtifact(v);
+  }, []);
 
   return (
     <ChatCtx.Provider
-      value={{ me: user, slug: channel.slug, emojis, users, react, star, pin, remove, editMsg, retrySend, discardSend, replyTo, setReplyTo, pickerFor, setPickerFor, onOpenArtifact: setOpenArtifact, sendQuickReply, openPrefs, openProfile, joinCall: joinCallFromCard, myCallKey }}
+      value={{ me: user, slug: channel.slug, emojis, users, react, star, pin, remove, editMsg, retrySend, discardSend, replyTo, setReplyTo, pickerFor, setPickerFor, onOpenArtifact: openArtifactWithSound, sendQuickReply, openPrefs, openProfile, joinCall: joinCallFromCard, myCallKey }}
     >
     {/* pt safe-area: en PWA standalone (viewport-fit=cover + status-bar black-translucent)
         el contenido va DEBAJO de la hora/notch → el header y su botón de menú quedaban

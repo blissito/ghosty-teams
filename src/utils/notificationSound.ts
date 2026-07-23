@@ -27,18 +27,19 @@ function getCtx(): AudioContext | null {
 // El usuario puede apagar TODOS los sonidos o sólo algunas categorías (Ajustes →
 // Apariencia). Se persiste en localStorage; el default es todo encendido. Cada
 // play* consulta su categoría antes de sonar. `all:false` silencia todo de un tiro.
-export type SoundCategory = "message" | "mention" | "dm" | "agent" | "delete" | "system";
+export type SoundCategory = "message" | "mention" | "dm" | "agent" | "delete" | "system" | "artifact";
 export const SOUND_CATEGORIES: { key: SoundCategory; label: string }[] = [
   { key: "message", label: "Mensajes de sala" },
   { key: "mention", label: "Menciones" },
   { key: "dm", label: "Mensajes directos" },
   { key: "agent", label: "Respuesta del agente" },
   { key: "delete", label: "Eliminar" },
+  { key: "artifact", label: "Abrir artefacto" },
   { key: "system", label: "Sistema (envío · listo)" },
 ];
 export type SoundPrefs = { all: boolean } & Record<SoundCategory, boolean>;
 const SOUND_KEY = "gc_sound_prefs";
-const DEFAULT_PREFS: SoundPrefs = { all: true, message: true, mention: true, dm: true, agent: true, delete: true, system: true };
+const DEFAULT_PREFS: SoundPrefs = { all: true, message: true, mention: true, dm: true, agent: true, delete: true, system: true, artifact: true };
 let prefsCache: SoundPrefs | null = null;
 
 export function getSoundPrefs(): SoundPrefs {
@@ -150,6 +151,43 @@ export function playReadySound(volume = 0.5): void {
   ping(now, 523, 0.5); // C5
   ping(now + 0.09, 659, 0.45); // E5
   ping(now + 0.18, 784, 0.42); // G5 → tríada mayor = "listo/bienvenida"
+}
+
+/**
+ * Sonido de ABRIR ARTEFACTO: "rastrillo"/trinquete — ráfaga de clics rápidos que ACELERA
+ * y sube de tono, como un panel que se desliza/despliega. Cada clic = ráfaga muy corta de
+ * ruido pasa-altos. Categoría "system". @param volume 0–1 (default 0.3).
+ */
+export function playArtifactOpen(volume = 0.3): void {
+  if (!soundOn("artifact")) return;
+  const audio = getCtx();
+  if (!audio) return;
+  const now = audio.currentTime;
+  const master = audio.createGain();
+  master.gain.value = volume;
+  master.connect(audio.destination);
+  const N = 13;
+  let t = now;
+  for (let i = 0; i < N; i++) {
+    const p = i / (N - 1);
+    const dur = 0.006;
+    const buf = audio.createBuffer(1, Math.max(1, Math.floor(audio.sampleRate * dur)), audio.sampleRate);
+    const d = buf.getChannelData(0);
+    for (let j = 0; j < d.length; j++) d[j] = (Math.random() * 2 - 1) * (1 - j / d.length); // clic con decaimiento
+    const src = audio.createBufferSource();
+    src.buffer = buf;
+    const hp = audio.createBiquadFilter();
+    hp.type = "highpass";
+    hp.frequency.value = 2000 + p * 2600; // sube de tono conforme "abre"
+    const g = audio.createGain();
+    g.gain.value = 0.5 + 0.5 * (1 - Math.abs(p - 0.5) * 2); // envolvente en campana (arranca/frena)
+    src.connect(hp);
+    hp.connect(g);
+    g.connect(master);
+    src.start(t);
+    src.stop(t + dur);
+    t += 0.02 - 0.011 * p; // el intervalo ACELERA: ~20ms → ~9ms (trinquete)
+  }
 }
 
 /**
