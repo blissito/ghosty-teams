@@ -68,17 +68,29 @@ export async function listEventTypes(
 }
 
 // Link de agendamiento de UN solo uso para un tipo de evento (POST /scheduling_links).
-export async function createSchedulingLink(sub: string, eventTypeUri: string): Promise<string | null> {
+// Devuelve el booking_url o un error CON el texto real de Calendly (status + body) —
+// no lo adivinamos: si es scope, plan de pago, o uri malo, que se vea tal cual.
+export async function createSchedulingLink(
+  sub: string,
+  eventTypeUri: string
+): Promise<{ bookingUrl?: string; error?: string }> {
   const token = await getValidToken(sub, "calendly");
-  if (!token) return null;
+  if (!token) return { error: "sin conexión a Calendly (reconecta en Ajustes → Integraciones)" };
   const res = await fetch(`${API}/scheduling_links`, {
     method: "POST",
     headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
     body: JSON.stringify({ max_event_count: 1, owner: eventTypeUri, owner_type: "EventType" }),
   });
-  if (!res.ok) return null;
-  const j = (await res.json()) as { resource?: { booking_url?: string } };
-  return j.resource?.booking_url ?? null;
+  const text = await res.text();
+  if (!res.ok) return { error: `Calendly ${res.status}: ${text.slice(0, 400)}` };
+  try {
+    const j = JSON.parse(text) as { resource?: { booking_url?: string } };
+    return j.resource?.booking_url
+      ? { bookingUrl: j.resource.booking_url }
+      : { error: `respuesta sin booking_url: ${text.slice(0, 300)}` };
+  } catch {
+    return { error: `respuesta no-JSON de Calendly: ${text.slice(0, 300)}` };
+  }
 }
 
 // ── Digest read-aware (para inyectar en DM cuando el mensaje es de agenda) ────────
@@ -227,8 +239,7 @@ export const tools: ConnectorTool[] = [
     handler: async (sub, args) => {
       const uri = typeof args.eventTypeUri === "string" ? args.eventTypeUri : "";
       if (!uri) return { error: "falta eventTypeUri" };
-      const bookingUrl = await createSchedulingLink(sub, uri);
-      return bookingUrl ? { bookingUrl } : { error: "no se pudo crear el link (¿falta scheduling_links:write?)" };
+      return await createSchedulingLink(sub, uri);
     },
   },
 ];
