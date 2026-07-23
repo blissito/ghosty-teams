@@ -101,9 +101,36 @@ type ActiveCall = {
   statusMsgId: number; // mensaje-tarjeta en el timeline (se actualiza en vivo)
   people: Person[]; // participantes distintos que entraron
   join: JoinDesc;
+  ns: string; // para el reaper (fanout del quickcall:ended sin request)
+  fanout: (ev: import("./bus.server").RtEvent) => void; // notifica a la audiencia
 };
 const active = new Map<string, ActiveCall>(); // key: `${ns}::${scope}::${id}`
 const keyOf = (ns: string, scope: "room" | "dm", id: number) => `${ns}::${scope}::${id}`;
+
+// Reaper: la call se termina cuando el ÚLTIMO sale, pero si ese último cierra la pestaña o
+// refresca, su leaveCall no alcanza a dispararse → la call queda "activa" y el banner
+// "Unirse" persiste aunque no haya nadie (bug 2026-07-23). Este barrido periódico consulta
+// el roster REAL del SFU de cada call viva y cierra las que quedaron en 0 (source of truth).
+let reaper: ReturnType<typeof setInterval> | null = null;
+function ensureReaper(): void {
+  if (reaper) return;
+  reaper = setInterval(async () => {
+    if (active.size === 0) return;
+    const cfg = callConfig();
+    if (!cfg) return;
+    const db = await import("../db.server");
+    for (const [k, c] of Array.from(active.entries())) {
+      // Gracia: no barras una call recién creada — el host tarda un momento en conectarse
+      // al SFU (mint token → connect async); sin esto la mataríamos antes de que entre.
+      if (Date.now() - c.startedAt < 15000) continue;
+      try {
+        const names = await participantNames(cfg, c.room);
+        if (names !== null && names.length === 0) await endCall(db, c.fanout, c, k);
+      } catch { /* red flaky → reintenta en el próximo barrido */ }
+    }
+  }, 20000);
+  reaper.unref?.(); // no mantiene vivo el proceso
+}
 
 // Body de la tarjeta (JSON que parsea CallCard en el cliente).
 function cardBody(c: ActiveCall, ended: boolean): string {
@@ -240,11 +267,14 @@ export const startCallFn = createServerFn({ method: "POST" })
         statusMsgId: 0,
         people: [t.me],
         join: t.join,
+        ns: t.ns,
+        fanout: t.fanout,
       };
       const scopeArg = t.scope === "room" ? { channelId: t.scopeId } : { dmId: t.scopeId };
       const { id } = await t.db.createCallStatus(scopeArg, t.me.name, t.me.avatar, cardBody(c, false));
       c.statusMsgId = id;
       active.set(k, c);
+      ensureReaper();
       const msg = await t.db.getMessage(id);
       if (msg) t.fanout({ t: "message:new", msg });
       const startedEv = {
