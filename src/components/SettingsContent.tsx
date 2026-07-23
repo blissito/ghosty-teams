@@ -797,8 +797,10 @@ function NotificationsCard() {
           title={emailOn ? t("Desactivar") : t("Activar")}
           className="shrink-0 disabled:opacity-50"
         >
-          <span className={`relative block h-5 w-9 rounded-full transition-colors ${emailOn ? "bg-brand" : "bg-surface-3"}`}>
-            <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform ${emailOn ? "translate-x-[18px]" : "translate-x-0.5"}`} />
+          {/* Mismo patrón/geometría que <Toggle> (left explícito, no translate desde
+              absolute sin left → evita el thumb chueco/desbordado entre browsers). */}
+          <span className={`relative block h-6 w-11 rounded-full transition-colors ${emailOn ? "bg-brand" : "bg-surface-3"}`}>
+            <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-all ${emailOn ? "left-[22px]" : "left-0.5"}`} />
           </span>
         </button>
       </div>

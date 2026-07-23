@@ -5151,6 +5151,10 @@ function MessageRow({
   const displayName = isAgent && m.sender === "ghosty" ? "Ghosty" : (dirUser?.name || m.sender);
   const avatarSrc = dirUser?.avatar || m.avatar;
   const time = new Date(m.created_at * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  // Hora compacta (24h, sin am/pm) para el gutter angosto de mensajes agrupados: "18:47"
+  // cabe en w-9 (36px) en UNA línea → no wrappea a 2 líneas (lo que inflaba el alto de la
+  // fila y descuadraba el spacing) ni se corta. Los headers (no-agrupados) siguen con `time`.
+  const timeShort = new Date(m.created_at * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
   const canEdit = !!me && (me.isOwner || m.sender === me.name) && !isAgent && m.kind === "msg";
   const canDelete = !!me && (me.isOwner || m.sender === me.name) && m.kind === "msg";
   const canReact = m.kind === "msg" && !!slug;
@@ -5182,8 +5186,8 @@ function MessageRow({
     <div id={`msg-${m.id}`} className={`group relative flex items-start gap-3 rounded-lg px-2 transition-colors hover:bg-surface-2 ${grouped ? "py-px" : "mt-2 py-0.5"}`}>
       {grouped ? (
         // Agrupado: sin avatar. Gutter angosto que muestra la hora SOLO al hover (Slack).
-        <div className="w-9 shrink-0 select-none pt-0.5 text-right text-[10px] leading-5 text-muted opacity-0 group-hover:opacity-100">
-          {time}
+        <div className="w-9 shrink-0 select-none whitespace-nowrap pt-0.5 text-right text-[10px] leading-5 tabular-nums text-muted opacity-0 group-hover:opacity-100">
+          {timeShort}
         </div>
       ) : (
       /* Avatar clickable → perfil (persona o agente). */

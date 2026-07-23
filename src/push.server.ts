@@ -2,8 +2,12 @@
 // (env VAPID_PRIVATE_KEY, inyectada en secrets.env). Notifica cuando te taggean.
 import webpush from "web-push";
 
+// Par VAPID vigente (2026-07-22). La private (VAPID_PRIVATE_KEY) va en secrets.env
+// del box de Teams; la de antes se perdió (nunca se inyectó la private → sendPush
+// fallaba silencioso y solo llegaba email). Rotar ambas juntas: cambiar la public
+// aquí invalida las subs viejas → los usuarios re-activan (Notification permission).
 export const VAPID_PUBLIC_KEY =
-  "BF9hOvpvzJcxOag4jrpOmDgeOU0DRh7oLF8-fn7bqVasjb_g99W9QZ5oTHXd15NAIHdjSAf-GswdpQbBfkpp8wo";
+  "BAqEbKVbkG2QihOqoPy60YhaIdlrsq2kYdubz-lP4Jkw0ad0ePC3jy6-K4ZbRmiTphderpmO_oFeiwqmF-Qrtmw";
 
 let configured = false;
 function ensureConfigured(): boolean {
