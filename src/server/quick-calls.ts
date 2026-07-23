@@ -88,9 +88,33 @@ type ActiveCall = {
   label: string;
   host: { sub: string; name: string; avatar: string };
   startedAt: number;
+  statusMsgId: number; // mensaje-rastro (📞) en el timeline; se actualiza al colgar
+  joiners: Set<string>; // subs distintos que entraron (para el conteo del rastro)
 };
 const active = new Map<string, ActiveCall>(); // key: `${ns}::${scope}::${id}`
 const keyOf = (ns: string, scope: "room" | "dm", id: number) => `${ns}::${scope}::${id}`;
+
+// Cierra una call: quita del mapa, avisa quickcall:ended y ACTUALIZA el rastro del
+// timeline con duración + nº de participantes (estilo Slack).
+async function endCall(
+  db: typeof import("../db.server"),
+  fanout: (ev: import("./bus.server").RtEvent) => void,
+  c: ActiveCall,
+  k: string
+): Promise<void> {
+  active.delete(k);
+  fanout({ t: "quickcall:ended", scope: c.scope, scopeId: c.scopeId, callId: c.callId });
+  try {
+    const secs = Math.round((Date.now() - c.startedAt) / 1000);
+    const dur = secs < 60 ? `${secs}s` : `${Math.round(secs / 60)} min`;
+    const n = c.joiners.size;
+    const body = `📞 Llamada terminada · ${dur} · ${n} ${n === 1 ? "persona" : "personas"}`;
+    await db.setMessageBody(c.statusMsgId, body);
+    fanout({ t: "message:body", id: c.statusMsgId, body });
+  } catch {
+    /* el mensaje ya no existe → ignora */
+  }
+}
 
 type Target = { scope: "room"; slug: string } | { scope: "dm"; dmId: number };
 
@@ -149,6 +173,9 @@ export const startCallFn = createServerFn({ method: "POST" })
     const k = keyOf(t.ns, t.scope, t.scopeId);
     let c = active.get(k);
     if (!c) {
+      // Rastro persistente en el timeline (se actualiza al colgar).
+      const scopeArg = t.scope === "room" ? { channelId: t.scopeId } : { dmId: t.scopeId };
+      const { id: statusMsgId } = await t.db.createCallStatus(scopeArg, t.me.name, t.me.avatar, `📞 ${t.me.name} inició una llamada`);
       c = {
         callId: crypto.randomUUID(),
         scope: t.scope,
@@ -157,8 +184,12 @@ export const startCallFn = createServerFn({ method: "POST" })
         label: t.label,
         host: { sub: t.me.sub, name: t.me.name, avatar: t.me.avatar },
         startedAt: Date.now(),
+        statusMsgId,
+        joiners: new Set([t.me.sub]),
       };
       active.set(k, c);
+      const msg = await t.db.getMessage(statusMsgId);
+      if (msg) t.fanout({ t: "message:new", msg });
       t.fanout({
         t: "quickcall:started",
         scope: c.scope,
@@ -168,6 +199,8 @@ export const startCallFn = createServerFn({ method: "POST" })
         label: c.label,
         startedAt: c.startedAt,
       });
+    } else {
+      c.joiners.add(t.me.sub);
     }
     return { callId: c.callId, ...conn(t) };
   });
@@ -177,6 +210,8 @@ export const joinCallFn = createServerFn({ method: "POST" })
   .validator((d: Target) => d)
   .handler(async ({ data }) => {
     const t = await resolveTarget(data);
+    const c = active.get(keyOf(t.ns, t.scope, t.scopeId));
+    if (c) c.joiners.add(t.me.sub); // cuenta al que se une (para el rastro)
     return conn(t);
   });
 
@@ -194,8 +229,7 @@ export const leaveCallFn = createServerFn({ method: "POST" })
     for (let i = 0; i < 5; i++) {
       const n = await participantCount(t.cfg, t.room);
       if (n === 0) {
-        active.delete(k);
-        t.fanout({ t: "quickcall:ended", scope: c.scope, scopeId: c.scopeId, callId: c.callId });
+        await endCall(t.db, t.fanout, c, k);
         return { ok: true as const, ended: true };
       }
       await new Promise((r) => setTimeout(r, 1200));
@@ -213,8 +247,7 @@ export const getActiveCallFn = createServerFn({ method: "GET" })
     if (!c) return null;
     const n = await participantCount(t.cfg, t.room);
     if (n === 0) {
-      active.delete(k);
-      t.fanout({ t: "quickcall:ended", scope: c.scope, scopeId: c.scopeId, callId: c.callId });
+      await endCall(t.db, t.fanout, c, k);
       return null;
     }
     return { callId: c.callId, host: c.host, label: c.label, startedAt: c.startedAt, participants: n < 0 ? null : n };

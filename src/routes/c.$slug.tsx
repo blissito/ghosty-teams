@@ -2160,12 +2160,10 @@ function NovedadesModal() {
     };
   }, [open]);
 
-  if (!open) return null;
-
   const cur = list[idx];
   const total = list.length;
   const isLast = idx >= total - 1;
-  const close = () => setList([]);
+  const close = () => setList([]); // vacía la lista → AnimatePresence anima la salida
   const next = () => {
     setDir(1);
     if (isLast) close();
@@ -2176,78 +2174,110 @@ function NovedadesModal() {
     setIdx((i) => Math.max(0, i - 1));
   };
 
+  // AnimatePresence SIEMPRE montado (no return null antes) → al cerrar, el Modal
+  // hace su exit-animation en vez de desaparecer de golpe.
   return (
     <AnimatePresence>
-      <Modal onClose={close} size="lg" flush>
-        <div className="flex max-h-[85dvh] flex-col overflow-hidden">
-          {/* Contenido que cambia por card → slide direccional */}
-          <div className="min-h-0 flex-1 overflow-y-auto thin-scroll">
-            <AnimatePresence mode="wait" custom={dir} initial={false}>
-              <motion.div
-                key={cur.id}
-                custom={dir}
-                variants={novedadCardVariants}
-                initial="enter"
-                animate="center"
-                exit="exit"
-                transition={{ duration: 0.22, ease: "easeOut" }}
-              >
-                {cur.heroImage ? (
-                  <img
-                    src={cur.heroImage}
-                    alt=""
-                    className="aspect-[3/2] w-full object-cover"
-                    loading="eager"
-                  />
-                ) : (
-                  <div className="grid h-28 place-items-center bg-gradient-to-br from-brand/20 to-surface-3">
-                    <Megaphone size={34} className="text-brand" />
-                  </div>
-                )}
-                <div className="px-6 pt-6">
-                  <span className="mb-2 inline-flex items-center gap-1.5 rounded-full bg-brand/12 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-brand">
-                    <Megaphone size={12} /> {t("Novedad")}
-                  </span>
-                  <h2 className="text-xl font-bold leading-snug">{cur.title}</h2>
-                  <div className="mt-2 text-sm leading-relaxed text-muted [&_a]:text-brand [&_strong]:text-ink">
-                    <Markdown body={cur.body} />
-                  </div>
-                </div>
-              </motion.div>
-            </AnimatePresence>
-          </div>
-          {/* Navegación (fija, no desliza) */}
-          <div className="flex shrink-0 items-center justify-between gap-3 border-t border-border px-6 py-4">
-            <div className="flex items-center gap-1.5">
-              {total > 1 &&
-                list.map((_, i) => (
-                  <span
-                    key={i}
-                    className={`h-1.5 rounded-full transition-all ${
-                      i === idx ? "w-4 bg-brand" : "w-1.5 bg-surface-3"
-                    }`}
-                  />
-                ))}
-            </div>
-            <div className="flex items-center gap-2">
-              {idx > 0 && (
-                <button
-                  onClick={prev}
-                  className="rounded-xl px-4 py-2.5 text-sm font-medium text-muted transition hover:text-ink"
+      {open && cur && (
+        <Modal key="novedades" onClose={close} size="lg" flush>
+          <div className="flex max-h-[85dvh] flex-col overflow-hidden">
+            {/* Contenido que cambia por card → slide direccional */}
+            <div className="min-h-0 flex-1 overflow-y-auto thin-scroll">
+              <AnimatePresence mode="wait" custom={dir} initial={false}>
+                <motion.div
+                  key={cur.id}
+                  custom={dir}
+                  variants={novedadCardVariants}
+                  initial="enter"
+                  animate="center"
+                  exit="exit"
+                  transition={{ duration: 0.26, ease: [0.22, 1, 0.36, 1] }}
                 >
-                  {t("Anterior")}
-                </button>
-              )}
-              <button
-                onClick={next}
-                className="rounded-xl bg-brand px-5 py-2.5 text-sm font-semibold text-brand-fg shadow-sm transition hover:opacity-90"
-              >
-                {isLast ? t("Entendido") : `${t("Siguiente")} (${idx + 1}/${total})`}
-              </button>
+                  <div className="relative">
+                    {cur.heroImage ? (
+                      <img
+                        src={cur.heroImage}
+                        alt=""
+                        className="aspect-[3/2] w-full object-cover"
+                        loading="eager"
+                      />
+                    ) : (
+                      <div className="grid h-32 place-items-center bg-gradient-to-br from-brand/25 to-surface-3">
+                        <Megaphone size={36} className="text-brand" />
+                      </div>
+                    )}
+                    {/* Blend del hero hacia el cuerpo */}
+                    <div className="pointer-events-none absolute inset-x-0 bottom-0 h-20 bg-gradient-to-t from-surface-2 to-transparent" />
+                  </div>
+                  <div className="relative px-6 pb-8 pt-4">
+                    <motion.span
+                      initial={{ opacity: 0, y: 8 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ delay: 0.06 }}
+                      className="inline-flex items-center gap-1.5 rounded-full bg-gradient-to-r from-brand/25 to-brand/10 px-3 py-1 text-[11px] font-bold uppercase tracking-wider text-brand ring-1 ring-brand/20"
+                    >
+                      <Megaphone size={12} /> {t("Novedad")}
+                    </motion.span>
+                    <motion.h2
+                      initial={{ opacity: 0, y: 10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ delay: 0.12 }}
+                      className="mt-3 text-2xl font-extrabold leading-tight tracking-tight"
+                    >
+                      {cur.title}
+                    </motion.h2>
+                    <motion.div
+                      initial={{ opacity: 0, y: 10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ delay: 0.18 }}
+                      className="mt-3 text-[15px] leading-relaxed text-muted [&_a]:text-brand [&_ol]:mt-2 [&_ol]:list-decimal [&_ol]:pl-5 [&_strong]:text-ink"
+                    >
+                      <Markdown body={cur.body} />
+                    </motion.div>
+                  </div>
+                </motion.div>
+              </AnimatePresence>
+            </div>
+            {/* Navegación (fija, no desliza) */}
+            <div className="flex shrink-0 items-center justify-between gap-3 border-t border-border bg-surface-2 px-6 py-4">
+              <div className="flex items-center gap-1.5">
+                {total > 1 &&
+                  list.map((_, i) => (
+                    <button
+                      key={i}
+                      onClick={() => {
+                        setDir(i > idx ? 1 : -1);
+                        setIdx(i);
+                      }}
+                      aria-label={`Ir a ${i + 1}`}
+                      className={`h-1.5 rounded-full transition-all ${
+                        i === idx ? "w-5 bg-brand" : "w-1.5 bg-surface-3 hover:bg-brand/40"
+                      }`}
+                    />
+                  ))}
+              </div>
+              <div className="flex items-center gap-2">
+                {idx > 0 && (
+                  <button
+                    onClick={prev}
+                    className="rounded-xl px-4 py-2.5 text-sm font-medium text-muted transition hover:text-ink"
+                  >
+                    {t("Anterior")}
+                  </button>
+                )}
+                <motion.button
+                  whileHover={{ scale: 1.04 }}
+                  whileTap={{ scale: 0.97 }}
+                  onClick={next}
+                  className="rounded-xl bg-gradient-to-br from-brand to-brand-2 px-5 py-2.5 text-sm font-bold text-brand-fg shadow-lg shadow-brand/25 ring-1 ring-white/10 transition"
+                >
+                  {isLast ? t("Entendido") : `${t("Siguiente")} · ${idx + 1}/${total}`}
+                </motion.button>
+              </div>
             </div>
           </div>
-        </div>
-      </Modal>
+        </Modal>
+      )}
     </AnimatePresence>
   );
 }

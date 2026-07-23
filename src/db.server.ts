@@ -1012,6 +1012,30 @@ export async function createMessage(input: {
   return { id: num(rows[0].id) };
 }
 
+// Rastro de una quick-call (📞 inició → terminó) como mensaje kind:"status" (línea
+// de sistema en el timeline, persistente). senderSub=null (evento de sistema).
+// Devuelve el id para poder actualizar el body al colgar. Sirve para canal o DM.
+export async function createCallStatus(
+  scope: { channelId: number } | { dmId: number },
+  sender: string,
+  avatar: string,
+  body: string
+): Promise<{ id: number }> {
+  const rows =
+    "channelId" in scope
+      ? await dbq(
+          `INSERT INTO gc_messages (channel_id, parent_id, sender, sender_sub, avatar, body, kind, mentions_ghosty, topic)
+           VALUES (?, NULL, ?, NULL, ?, ?, 'status', 0, 'general') RETURNING id`,
+          [scope.channelId, sender, avatar, body]
+        )
+      : await dbq(
+          `INSERT INTO gc_messages (channel_id, parent_id, sender, sender_sub, avatar, body, kind, mentions_ghosty, dm_id)
+           VALUES (0, NULL, ?, NULL, ?, ?, 'status', 0, ?) RETURNING id`,
+          [sender, avatar, body, scope.dmId]
+        );
+  return { id: num(rows[0].id) };
+}
+
 // Un agente postea (respuesta o status "pensando") en el mismo contexto.
 // sender = nombre visible del agente; agentHandle marca el mensaje como suyo.
 export async function postAgent(

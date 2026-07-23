@@ -201,7 +201,7 @@ export function QuickCall({ conn, onLeft }: { conn: CallConn; onLeft: () => void
           {camOn ? <Video size={17} /> : <VideoOff size={17} />}
         </button>
         <button
-          onClick={() => lp?.setScreenShareEnabled(!screenOn)}
+          onClick={() => lp?.setScreenShareEnabled(!screenOn, { audio: true })}
           className={"grid h-10 w-10 place-items-center rounded-full border border-border transition hover:bg-surface-3 " + (screenOn ? "bg-brand text-brand-fg" : "text-ink")}
           title={t("Compartir pantalla")}
         >
