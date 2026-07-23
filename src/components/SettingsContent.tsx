@@ -1,7 +1,7 @@
 import { Link } from "@tanstack/react-router"; // Link: CTA "conecta EasyBits" / setup
 import { useEffect, useRef, useState } from "react";
 import { Bot, Plus, Trash2, X, Bell, Smile, Loader2, Pencil, Mail } from "lucide-react";
-import { FleetCapabilities } from "./FleetCapabilities";
+import { FleetAgentControls } from "./FleetAgentControls";
 import { currentPushState, enablePush, disablePush } from "../utils/push-subscribe";
 import { me, cachedMe, peekMe, logout, clearMeCache } from "../server/auth";
 import { getSetup } from "../server/setup";
@@ -1484,7 +1484,7 @@ function EditAgentForm({
           {/* ── Columna derecha (2/3): capacidades de flota (o nota webhook) ── */}
           <div className="lg:col-span-2 lg:border-l lg:border-border lg:pl-6">
             {agent.kind === "fleet" ? (
-              <FleetCapabilities agentId={agent.id} />
+              <FleetAgentControls agentId={agent.id} />
             ) : (
               <div className="rounded-lg border border-dashed border-border p-4 text-center text-xs text-muted">
                 {t("Los bots por webhook no tienen capacidades de flota. Su comportamiento lo controla tu servidor.")}
