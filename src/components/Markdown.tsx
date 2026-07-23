@@ -187,7 +187,12 @@ export const Markdown = memo(function Markdown({
   };
   const cls = light
     ? "prose prose-sm max-w-none break-words text-black leading-relaxed prose-headings:font-semibold prose-headings:text-black prose-p:my-0.5 prose-a:text-brand prose-strong:text-black"
-    : "prose prose-sm prose-invert max-w-none break-words text-ink leading-relaxed prose-p:my-0.5 prose-p:leading-relaxed prose-headings:mb-1 prose-headings:mt-3 prose-headings:font-semibold prose-pre:my-2 prose-pre:bg-surface-3 prose-code:rounded prose-code:bg-surface-3 prose-code:px-1 prose-code:before:content-none prose-code:after:content-none prose-ul:my-2 prose-ol:my-2 prose-li:my-1 prose-li:leading-relaxed prose-a:text-brand prose-strong:text-ink prose-hr:my-3";
+    // prose-invert asume fondo OSCURO → sus colores (títulos, blockquote, hr, listas)
+    // salen CLAROS. Correcto en tema oscuro, pero en tema CLARO quedan claro-sobre-blanco
+    // → sin contraste (afectaba los títulos h1-h6, que solo tenían font-semibold sin color).
+    // Forzamos los colores dependientes de tema a tokens theme-aware (text-ink / muted /
+    // border), que se invierten solos con el tema → contraste correcto en claro Y oscuro.
+    : "prose prose-sm prose-invert max-w-none break-words text-ink leading-relaxed prose-p:my-0.5 prose-p:leading-relaxed prose-headings:mb-1 prose-headings:mt-3 prose-headings:font-semibold prose-headings:text-ink prose-blockquote:text-muted prose-blockquote:border-border prose-hr:border-border prose-pre:my-2 prose-pre:bg-surface-3 prose-code:rounded prose-code:bg-surface-3 prose-code:px-1 prose-code:before:content-none prose-code:after:content-none prose-ul:my-2 prose-ol:my-2 prose-li:my-1 prose-li:leading-relaxed prose-a:text-brand prose-strong:text-ink prose-hr:my-3";
   return (
     <div className={cls}>
       {/* parseIncompleteMarkdown (default) cierra markdown a medio-stream → sin parpadeo.
