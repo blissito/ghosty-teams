@@ -13,10 +13,23 @@
 // se manda aquí: el path de mensaje sólo firma y postea.
 import crypto from "node:crypto";
 
-/** Base del runtime nativo, o null si el cutover no está activado (→ EasyBits). */
-export function nativeRuntimeBase(): string | null {
-  const u = process.env.GHOSTY_RUNTIME_URL?.trim();
-  return u ? u.replace(/\/+$/, "") : null;
+/**
+ * Base del runtime nativo para el tenant ACTUAL, o null si sigue en EasyBits.
+ * Cutover POR-TENANT: la URL vive en `gc_config.agent_runtime_url` del workspace
+ * (namespace por request vía dbq) → prendo el nativo en un solo team sin romper a
+ * los demás (que siguen en EasyBits). Fallback: env `GHOSTY_RUNTIME_URL` a nivel
+ * box (para un flip global futuro). Async porque lee gc_config del tenant.
+ */
+export async function nativeRuntimeBase(): Promise<string | null> {
+  try {
+    const { getConfig } = await import("../config.server");
+    const perTenant = (await getConfig("agent_runtime_url"))?.trim();
+    if (perTenant) return perTenant.replace(/\/+$/, "");
+  } catch {
+    // sin config/tenant → cae al env global
+  }
+  const env = process.env.GHOSTY_RUNTIME_URL?.trim();
+  return env ? env.replace(/\/+$/, "") : null;
 }
 
 /** Headers de partner firmados sobre `rawBody` (x-ghosty-ts + x-ghosty-sig). */

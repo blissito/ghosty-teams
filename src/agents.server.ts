@@ -230,7 +230,7 @@ export async function callAgentBackendStream(
   // co-locado, sin refresh de token); si no → EasyBits (fallback). Ver
   // server/ghosty-runtime.server.ts.
   const { nativeRuntimeBase, partnerHeaders } = await import("./server/ghosty-runtime.server");
-  const native = nativeRuntimeBase();
+  const native = await nativeRuntimeBase();
   const base = native ?? process.env.EASYBITS_BASE_URL ?? "https://www.easybits.cloud";
   // docHint (contexto por-doc del turno) va PRIMERO en el texto; el system prompt
   // queda estable (base) → la sesión persistente del worker no se rompe al cambiar doc.
@@ -524,7 +524,7 @@ export async function callAgentBackend(
   // texto. Meterla en el texto (`[Instrucciones para X: …]`) hacía que el modelo la
   // leyera como inyección de prompt y la rechazara. El texto solo lleva el turno.
   const { nativeRuntimeBase, partnerHeaders } = await import("./server/ghosty-runtime.server");
-  const native = nativeRuntimeBase();
+  const native = await nativeRuntimeBase();
   const base = native ?? process.env.EASYBITS_BASE_URL ?? "https://www.easybits.cloud";
   try {
     // configGroupId "teams" = unidad de config estable del canal (ver message-stream).
