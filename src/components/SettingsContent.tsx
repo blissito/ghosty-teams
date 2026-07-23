@@ -433,9 +433,15 @@ function IntegrationsPanel() {
                   ) : (
                     <a
                       href={`/setup/${c.id}/connect`}
-                      className="rounded-lg bg-brand px-3 py-1.5 text-xs font-semibold text-brand-fg hover:brightness-110"
+                      // Navegación full-page (loader → OAuth authorize). Marcamos busy al
+                      // click para dar feedback mientras redirige (antes: sin estado).
+                      onClick={() => setBusy(c.id)}
+                      aria-disabled={busy === c.id}
+                      className={`rounded-lg bg-brand px-3 py-1.5 text-xs font-semibold text-brand-fg hover:brightness-110 ${
+                        busy === c.id ? "pointer-events-none opacity-60" : ""
+                      }`}
                     >
-                      {t("Conectar")}
+                      {busy === c.id ? t("Conectando…") : t("Conectar")}
                     </a>
                   )}
                 </div>
