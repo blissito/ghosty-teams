@@ -59,6 +59,8 @@ import {
   Sparkles,
   Maximize2,
   Minimize2,
+  Phone,
+  PhoneOff,
 } from "lucide-react";
 import { searchMessagesFn } from "../server/search";
 import { createFileRoute, notFound, Link, useRouter } from "@tanstack/react-router";
@@ -5748,6 +5750,18 @@ function MessageRow({
     m.created_at - prev.created_at < 300;
 
   if (m.kind === "status") {
+    // Rastro de quick-call (marcador 📞): línea de sistema con ícono propio, SIN
+    // spinner. Verde al iniciar; teléfono colgado gris al terminar (no parece activa).
+    if (m.body?.startsWith("📞")) {
+      const ended = m.body.includes("terminada");
+      const text = m.body.replace(/^📞\s*/, "");
+      return (
+        <div className="flex items-center gap-2 py-1 pl-11 text-xs">
+          {ended ? <PhoneOff size={14} className="shrink-0 text-muted" /> : <Phone size={14} className="shrink-0 text-green-500" />}
+          <span className={ended ? "text-muted" : "font-medium text-ink"}>{text}</span>
+        </div>
+      );
+    }
     return (
       <div className="flex items-center gap-2.5 py-1 pl-11 text-xs text-muted">
         <ThinkingRing size={20} />
