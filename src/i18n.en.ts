@@ -10,6 +10,7 @@ export const en: Record<string, string> = {
   "{name} inició una llamada": "{name} started a quick call",
   "Salir de la llamada": "Leave call",
   "Salir": "Leave",
+  "Restaurar": "Restore",
   "Idioma": "Language",
   "Cambiar foto": "Change photo",
   "Tu nombre": "Your name",

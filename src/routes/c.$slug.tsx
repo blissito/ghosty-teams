@@ -57,17 +57,19 @@ import {
   Home as HomeIcon,
   Hash as HashIcon,
   Sparkles,
+  Maximize2,
+  Minimize2,
 } from "lucide-react";
 import { searchMessagesFn } from "../server/search";
 import { createFileRoute, notFound, Link, useRouter } from "@tanstack/react-router";
-import type { Channel, Message, DmConversation, RoomHit, ViewHit, Attachment, Artifact, CustomEmoji, Announcement } from "../db.server";
+import type { Channel, Message, DmConversation, RoomHit, ViewHit, Attachment, Artifact, CustomEmoji } from "../db.server";
 import { listEmojisFn } from "../server/emojis";
 import { recentViewFn, mentionsViewFn, starredViewFn } from "../server/views";
 import { openDmFn, listDmsFn, getDmFlowFn, postDmMessageFn, askDmAgentFn } from "../server/dm";
 import { startHuddleFn, joinHuddleFn, leaveHuddleFn, getActiveHuddleFn } from "../server/huddles";
 import { listAgentsFn } from "../server/agents";
 import { unreadCountsFn, markReadFn, readReceiptsFn, lastReadFn } from "../server/reads";
-import { latestAnnouncementFn, markAnnouncementSeenFn } from "../server/announcements";
+import { latestAnnouncementFn, markAnnouncementSeenFn, type Announcement } from "../server/announcements";
 import { toggleStarFn, togglePinFn, getPinsFn, toggleMuteFn, listMutesFn } from "../server/stars";
 import { listMyWorkspacesFn } from "../server/workspaces";
 import {
@@ -2107,7 +2109,7 @@ function NovedadesModal() {
     let alive = true;
     latestAnnouncementFn()
       .then(({ announcement, lastSeenId }) => {
-        if (alive && announcement && announcement.id > lastSeenId) setAnn(announcement);
+        if (alive && announcement && announcement.id !== lastSeenId) setAnn(announcement);
       })
       .catch(() => {});
     return () => {
@@ -2134,9 +2136,9 @@ function NovedadesModal() {
     <AnimatePresence>
       <Modal onClose={close} size="lg" flush>
         <div className="flex max-h-[85dvh] flex-col overflow-y-auto thin-scroll">
-          {ann.hero_image ? (
+          {ann.heroImage ? (
             <img
-              src={ann.hero_image}
+              src={ann.heroImage}
               alt=""
               className="aspect-[3/2] w-full shrink-0 object-cover"
               loading="eager"
@@ -4555,26 +4557,43 @@ function HuddleBanner({ h }: { h: HuddleWiring }) {
 // controles (mic/cam/pantalla); al colgar adentro, room.html postMessea gs-huddle-left.
 function HuddleDock({ url, label, onClose }: { url: string; label: string; onClose: () => void }) {
   const t = useT();
+  const [expanded, setExpanded] = useState(false);
   return (
-    <div className="fixed bottom-4 right-4 z-50 flex w-[min(760px,92vw)] flex-col overflow-hidden rounded-xl border border-border bg-surface shadow-2xl">
+    <div
+      className={
+        (expanded
+          ? "fixed inset-3 md:inset-6"
+          : "fixed bottom-4 right-4 h-[min(80vh,720px)] w-[min(960px,94vw)]") +
+        " z-50 flex flex-col overflow-hidden rounded-xl border border-border bg-surface shadow-2xl"
+      }
+    >
       <div className="flex items-center justify-between gap-2 border-b border-border bg-surface-2 px-3 py-2">
         <div className="flex min-w-0 items-center gap-2">
           <Headphones size={15} className="shrink-0 text-brand" />
           <span className="truncate text-sm font-semibold text-ink">{t("Llamada")} · {label}</span>
         </div>
-        <button
-          onClick={onClose}
-          title={t("Salir de la llamada")}
-          className="rounded-md px-2 py-1 text-xs font-medium text-muted transition hover:bg-surface-3 hover:text-ink"
-        >
-          {t("Salir")}
-        </button>
+        <div className="flex shrink-0 items-center gap-1">
+          <button
+            onClick={() => setExpanded((e) => !e)}
+            title={expanded ? t("Restaurar") : t("Expandir")}
+            className="grid h-7 w-7 place-items-center rounded-md text-muted transition hover:bg-surface-3 hover:text-ink"
+          >
+            {expanded ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
+          </button>
+          <button
+            onClick={onClose}
+            title={t("Salir de la llamada")}
+            className="rounded-md px-2 py-1 text-xs font-medium text-muted transition hover:bg-surface-3 hover:text-ink"
+          >
+            {t("Salir")}
+          </button>
+        </div>
       </div>
       <iframe
         src={url}
         title={t("Llamada")}
         allow="camera; microphone; display-capture; autoplay"
-        className="h-[min(52vh,460px)] w-full border-0 bg-black"
+        className="w-full flex-1 border-0 bg-black"
       />
     </div>
   );
