@@ -1,6 +1,6 @@
 import { Link } from "@tanstack/react-router"; // Link: CTA "conecta EasyBits" / setup
 import { useEffect, useRef, useState } from "react";
-import { Bot, Plus, Trash2, X, Bell, Smile, Loader2, Pencil, Mail } from "lucide-react";
+import { Bot, Plus, Trash2, X, Bell, Smile, Loader2, Pencil, Mail, ExternalLink } from "lucide-react";
 import { FleetAgentControls } from "./FleetAgentControls";
 import { currentPushState, enablePush, disablePush } from "../utils/push-subscribe";
 import { me, cachedMe, peekMe, logout, clearMeCache } from "../server/auth";
@@ -44,6 +44,10 @@ import {
   playNotificationSound,
   type SoundPrefs,
 } from "../utils/notificationSound";
+
+// Panel de flota de Studio (gs): dónde se crean+configuran los agentes gestionados.
+// Los agentes NO se crean inline en Teams; se dan de alta aquí y aparecen solos.
+const STUDIO_AGENTS_URL = "https://ghosty.studio/app/agents";
 
 // Datos que Ajustes necesita (identidad + setup + acceso a agentes). Se cargan una vez
 // y se cachean a nivel módulo → reabrir Preferencias (modal) pinta al instante y revalida
@@ -1097,7 +1101,7 @@ function AgentsManager({ isOwner, hasAgent }: { isOwner: boolean; hasAgent: bool
       </div>
       <p className="mb-3 text-xs text-muted">
         {isOwner
-          ? t("Todos tus agentes en un solo lugar. Cada uno se tagea por su @handle. Agrega de tu flota EasyBits o bots externos por webhook.")
+          ? t("Todos tus agentes en un solo lugar. Cada uno se tagea por su @handle. Crea y configura agentes gestionados en Studio, o conecta bots externos por webhook.")
           : t("Agentes que te compartieron para configurar. Se tagean por su @handle.")}
       </p>
 
@@ -1110,7 +1114,7 @@ function AgentsManager({ isOwner, hasAgent }: { isOwner: boolean; hasAgent: bool
             to="/setup"
             className="flex items-center gap-2 rounded-lg border border-dashed border-border px-2 py-3 text-sm text-muted hover:border-brand hover:text-ink"
           >
-            <Bot size={17} className="shrink-0" /> {t("Conecta tu cuenta EasyBits para tener a @ghosty")}
+            <Bot size={17} className="shrink-0" /> {t("Conecta tu cuenta para tener a @ghosty")}
           </Link>
         )}
 
@@ -1146,7 +1150,7 @@ function AgentsManager({ isOwner, hasAgent }: { isOwner: boolean; hasAgent: bool
                     {a.system_prompt
                       ? a.system_prompt
                       : a.kind === "fleet"
-                        ? t("Flota EasyBits · sin persona")
+                        ? t("Agente gestionado · sin persona")
                         : t("Webhook externo · sin persona")}
                   </p>
                 </div>
@@ -1197,7 +1201,7 @@ function AddAgentForm({ onClose, onCreated }: { onClose: () => void; onCreated: 
   const [name, setName] = useState("");
   const [handle, setHandle] = useState("");
   const [webhookUrl, setWebhookUrl] = useState("");
-  const [engine, setEngine] = useState<"claude">("claude"); // hoy solo Claude
+  const [engine] = useState<"claude">("claude"); // hoy solo Claude; el alta real vive en Studio
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -1252,52 +1256,61 @@ function AddAgentForm({ onClose, onCreated }: { onClose: () => void; onCreated: 
       </div>
       <div className="space-y-2">
         {tab === "create" ? (
-          <>
-            {/* Motor: hoy solo Claude; el select queda para los que vienen. */}
-            <select value={engine} onChange={(e) => setEngine(e.target.value as "claude")} className={input}>
-              <option value="claude">{t("Claude (capaz)")}</option>
-              <option value="deepseek" disabled>{t("DeepSeek · próximamente")}</option>
-              <option value="codex" disabled>{t("Codex · próximamente")}</option>
-            </select>
-          </>
-        ) : (
-          <input
-            value={webhookUrl}
-            onChange={(e) => setWebhookUrl(e.target.value)}
-            placeholder={t("https://tu-bot.com/webhook")}
-            className={input}
-          />
-        )}
-        <div className="flex gap-2">
-          <div className="flex flex-1 min-w-0 items-center rounded-lg border border-border bg-surface pl-3 text-sm focus-within:border-brand">
-            <span className="select-none text-muted">@</span>
-            <input
-              value={handle}
-              onChange={(e) => setHandle(e.target.value.replace(/[^a-zA-Z0-9]/g, "").toLowerCase())}
-              placeholder={t("handle (ej. soporte)")}
-              className="w-full min-w-0 bg-transparent py-2 pr-3 pl-1 outline-none"
-            />
+          /* Los agentes gestionados se CREAN y configuran (prompt, modelo, canales) en
+             Studio (gs), no inline en Teams. Redirige al panel de flota. */
+          <div className="rounded-lg border border-border bg-surface-2 p-4 text-center">
+            <p className="mb-3 text-xs text-muted">
+              {t("Crea y configura agentes gestionados (prompt, modelo, canales) en Studio. Aparecen aquí automáticamente para @taguearlos.")}
+            </p>
+            <a
+              href={STUDIO_AGENTS_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1.5 rounded-lg bg-brand px-4 py-1.5 text-sm font-semibold text-brand-fg"
+            >
+              {t("Crear en Studio")} <ExternalLink size={14} />
+            </a>
           </div>
-          <input
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder={t("nombre visible")}
-            className={`${input} flex-1 min-w-0`}
-          />
-        </div>
-        {err && <p className="text-sm text-red-400">{err}</p>}
-        <div className="flex justify-end gap-2">
-          <button onClick={onClose} className="rounded-lg px-3 py-1.5 text-sm text-muted hover:text-ink">
-            {t("Cancelar")}
-          </button>
-          <button
-            onClick={create}
-            disabled={busy || !handle.trim() || (tab === "webhook" && !webhookUrl.trim())}
-            className="rounded-lg bg-brand px-4 py-1.5 text-sm font-semibold text-brand-fg disabled:opacity-50"
-          >
-            {busy ? t("Agregando…") : t("Agregar")}
-          </button>
-        </div>
+        ) : (
+          <>
+            <input
+              value={webhookUrl}
+              onChange={(e) => setWebhookUrl(e.target.value)}
+              placeholder={t("https://tu-bot.com/webhook")}
+              className={input}
+            />
+            <div className="flex gap-2">
+              <div className="flex flex-1 min-w-0 items-center rounded-lg border border-border bg-surface pl-3 text-sm focus-within:border-brand">
+                <span className="select-none text-muted">@</span>
+                <input
+                  value={handle}
+                  onChange={(e) => setHandle(e.target.value.replace(/[^a-zA-Z0-9]/g, "").toLowerCase())}
+                  placeholder={t("handle (ej. soporte)")}
+                  className="w-full min-w-0 bg-transparent py-2 pr-3 pl-1 outline-none"
+                />
+              </div>
+              <input
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder={t("nombre visible")}
+                className={`${input} flex-1 min-w-0`}
+              />
+            </div>
+            {err && <p className="text-sm text-red-400">{err}</p>}
+            <div className="flex justify-end gap-2">
+              <button onClick={onClose} className="rounded-lg px-3 py-1.5 text-sm text-muted hover:text-ink">
+                {t("Cancelar")}
+              </button>
+              <button
+                onClick={create}
+                disabled={busy || !handle.trim() || !webhookUrl.trim()}
+                className="rounded-lg bg-brand px-4 py-1.5 text-sm font-semibold text-brand-fg disabled:opacity-50"
+              >
+                {busy ? t("Agregando…") : t("Agregar")}
+              </button>
+            </div>
+          </>
+        )}
       </div>
     </div>
   );
@@ -1406,7 +1419,7 @@ function EditAgentForm({
           <p className="text-sm font-semibold">
             {t("Configurar")} <span className="text-brand">@{handle || agent.handle}</span>
             <span className="ml-2 text-[11px] font-normal text-muted">
-              {agent.kind === "fleet" ? t("Flota EasyBits") : t("Webhook externo")}
+              {agent.kind === "fleet" ? t("Agente gestionado") : t("Webhook externo")}
             </span>
           </p>
           <button onClick={onClose} className="text-muted hover:text-ink">
