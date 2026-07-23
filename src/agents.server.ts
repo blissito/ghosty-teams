@@ -128,7 +128,7 @@ export async function buildMediaParts(
 // Quita bloques eb-doc/eb-sheet (ruido enorme) y colapsa espacios; ~220 chars.
 export function quoteExcerpt(body: string): string {
   const stripped = (body || "")
-    .replace(/```eb-(doc|sheet)[\s\S]*?```/g, "[documento]")
+    .replace(/```eb-(doc|sheet|artifact)[\s\S]*?```/g, "[documento]")
     .replace(/```[\s\S]*?```/g, "[código]")
     .replace(/\s+/g, " ")
     .trim();
@@ -176,9 +176,10 @@ const EB_DOC_STREAM_GUARDRAIL = [
   "para CUALQUIER documento de PROSA (nda, carta, oficio, contrato, convenio, demanda, dictamen, memo, minuta, acuerdo) o HOJA DE CÁLCULO (tabla, listado, dataset, leads, inventario, presupuesto — lo que iría en xlsx/csv) PROHIBIDO invocar docs-router, el skill oficio, structured_doc, upload_file, mcp__wa__ o cualquier tool de documento (get_page_html, replace_html, set_page_html, add_page…). NO subas archivos ni generes .docx/.xlsx tú.",
   "PROSA → escribe el documento COMPLETO como Markdown DENTRO de un bloque que abre con ```eb-doc y cierra con ```. Usa # para el título, ## para cláusulas, listas y **negritas**.",
   "HOJA DE CÁLCULO / TABLA / DATOS → escribe TODA la tabla como CSV DENTRO de un bloque que abre con ```eb-sheet y cierra con ```. Primera fila = encabezados; una fila por registro; comas como separador y comillas dobles si un valor lleva comas. Puedes poner un título tras la apertura: ```eb-sheet Leads Barranquilla.",
+  "ARTEFACTO INTERACTIVO (app, herramienta, calculadora, visualización, gráfica interactiva, juego, demo, landing con estilo/JS, cualquier cosa que corra en el navegador) → escribe UN SOLO archivo HTML COMPLETO Y AUTOCONTENIDO (con su <style> y <script> inline; para React usa Babel-standalone embebido con CDN en <script>) DENTRO de un bloque que abre con ```eb-artifact y cierra con ```. Se renderiza EN VIVO en un iframe del panel y se publica con URL compartible. Pon <title> para nombrarlo. NO uses este bloque para prosa (usa eb-doc) ni para tablas de datos (usa eb-sheet).",
   "Cualquiera de esos bloques se muestra generándose EN VIVO en el panel; la plataforma lo guarda con VERSIONES. Fuera del bloque, solo UNA frase breve de contexto, SIN links.",
   "NO anuncies formatos ni archivos que NO vas a producir en ESTE turno: la frase de contexto describe SOLO el/los bloque(s) que realmente emites. Un bloque = un artefacto. Si solo emites eb-doc, NO digas que también harás una hoja/xlsx (ni viceversa). Si el usuario pide prosa Y tabla, emite AMBOS bloques; no prometas uno que no sale.",
-  "MODIFICAR un artefacto que YA existe (cambia/ajusta/corrige/agrega/añade una introducción/columna/fila, etc.): usa OTRA VEZ el MISMO tipo de bloque (```eb-doc``` para prosa, ```eb-sheet``` para tabla) y RE-EMITE el artefacto COMPLETO ya con el cambio aplicado. Conserva TODO lo demás idéntico; solo integra lo que el usuario pidió. NUNCA mandes solo el fragmento ni un diff: siempre el artefacto entero, para que se re-genere en vivo.",
+  "MODIFICAR un artefacto que YA existe (cambia/ajusta/corrige/agrega/añade una introducción/columna/fila, etc.): usa OTRA VEZ el MISMO tipo de bloque (```eb-doc``` para prosa, ```eb-sheet``` para tabla, ```eb-artifact``` para HTML) y RE-EMITE el artefacto COMPLETO ya con el cambio aplicado. Conserva TODO lo demás idéntico; solo integra lo que el usuario pidió. NUNCA mandes solo el fragmento ni un diff: siempre el artefacto entero, para que se re-genere en vivo.",
   "ÚNICA EXCEPCIÓN: documentos con membrete de marca fijo o presentaciones (pptx) → skills normales. Toda prosa → eb-doc; toda tabla/datos → eb-sheet.",
 ].join(" ");
 
@@ -189,13 +190,14 @@ const EB_DOC_STREAM_GUARDRAIL = [
 // y el system prompt de la sesión persistente se fija al arrancar (un valor variable ahí
 // forzaría cold-restart). El BASE estable (EB_DOC_STREAM_GUARDRAIL) sí va en
 // appendSystemPrompt (idéntico todos los turnos → persistencia-safe). Vacío si no hay artefacto.
-function artifactDocHint(currentDoc?: { kind: "doc" | "sheet"; md: string } | null): string {
+function artifactDocHint(currentDoc?: { kind: "doc" | "sheet" | "artifact"; md: string } | null): string {
   const md = currentDoc?.md.trim();
   if (!md) return "";
-  const isSheet = currentDoc!.kind === "sheet";
-  const fence = isSheet ? "eb-sheet" : "eb-doc";
-  const noun = isSheet ? "esta hoja de cálculo (CSV)" : "este documento";
-  const lang = isSheet ? "CSV" : "Markdown";
+  const kind = currentDoc!.kind;
+  const fence = kind === "sheet" ? "eb-sheet" : kind === "artifact" ? "eb-artifact" : "eb-doc";
+  const noun =
+    kind === "sheet" ? "esta hoja de cálculo (CSV)" : kind === "artifact" ? "este artefacto (HTML autocontenido)" : "este documento";
+  const lang = kind === "sheet" ? "CSV" : kind === "artifact" ? "HTML" : "Markdown";
   return (
     `[Contexto del hilo — ARTEFACTO ACTUAL. En esta conversación ya existe ${noun}. ` +
     `Si el usuario pide modificarlo (cambiar, ajustar, corregir, agregar/añadir algo), ` +
@@ -217,7 +219,7 @@ export async function callAgentBackendStream(
   onChunk: (chunk: string) => void | Promise<void>,
   parts: MediaPart[] = [],
   onTool?: (name: string) => void | Promise<void>,
-  currentDoc?: { kind: "doc" | "sheet"; md: string } | null
+  currentDoc?: { kind: "doc" | "sheet" | "artifact"; md: string } | null
 ): Promise<string> {
   if (agent.backend.kind !== "fleet") {
     // Sin SSE todavía: colecta el reply completo y lo emite de un tirón (el cliente
@@ -401,7 +403,7 @@ export async function runAgentTurn(opts: {
   emitBody?: (id: number, body: string) => void;
   // Artefacto ACTUAL del hilo (doc/sheet + contenido) → se inyecta al turno para re-emisión
   // completa al editar.
-  currentDoc?: { kind: "doc" | "sheet"; md: string } | null;
+  currentDoc?: { kind: "doc" | "sheet" | "artifact"; md: string } | null;
 }): Promise<{ id: number; reply: string }> {
   let id: number | null = null;
   const ensure = async (): Promise<number> => {

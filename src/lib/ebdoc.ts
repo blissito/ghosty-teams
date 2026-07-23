@@ -1,15 +1,16 @@
 // Protocolo del artefacto en vivo (OLA 2 — "Canvas"). El agente redacta el artefacto DENTRO
 // de un bloque cercado en su respuesta y GTeams lo streamea al panel EN VIVO:
-//   ```eb-doc   … ```  → documento de PROSA (Markdown)   → hoja tipo Word, export .docx
-//   ```eb-sheet … ```  → HOJA de cálculo (CSV)            → tabla, export .csv
+//   ```eb-doc      … ```  → documento de PROSA (Markdown)  → hoja tipo Word, export .docx
+//   ```eb-sheet    … ```  → HOJA de cálculo (CSV)           → tabla, export .csv
+//   ```eb-artifact … ```  → ARTEFACTO HTML interactivo      → iframe sandbox + publicado a S3
 // Al terminar, GTeams lo commitea LOCAL (gc_artifacts.md = la verdad) y al MODIFICAR re-inyecta
 // ese contenido al agente para que re-emita el artefacto COMPLETO (misma vía de streaming).
 // Funciones PURAS: las usa el cliente (parseo en vivo) y el server (post-step + limpieza).
 
-export type EbDocKind = "doc" | "sheet";
+export type EbDocKind = "doc" | "sheet" | "artifact";
 
 export type EbDoc = {
-  kind: EbDocKind; // doc = markdown; sheet = csv
+  kind: EbDocKind; // doc = markdown; sheet = csv; artifact = HTML autocontenido
   before: string; // texto antes del bloque (narración)
   md: string; // el contenido del artefacto (markdown | csv)
   after: string; // texto después del bloque (vacío mientras streamea)
@@ -20,7 +21,7 @@ export type EbDoc = {
 // Extrae el bloque ```eb-doc``` o ```eb-sheet``` del texto. Tolera el fence ABIERTO (aún
 // streameando, sin cierre) → toma todo lo que va después de la apertura como el contenido.
 export function extractEbDoc(body: string): EbDoc | null {
-  const open = body.match(/```eb-(doc|sheet)([^\n]*)\n/);
+  const open = body.match(/```eb-(doc|sheet|artifact)([^\n]*)\n/);
   if (!open || open.index == null) return null;
   const kind = open[1] as EbDocKind;
   const fenceTitle = open[2]?.trim() || undefined;
@@ -44,6 +45,10 @@ export function extractEbDoc(body: string): EbDoc | null {
 // o la primera celda/columna (sheet); fallback genérico por tipo.
 export function draftTitle(md: string, kind: EbDocKind = "doc", fenceTitle?: string): string {
   if (fenceTitle) return fenceTitle.slice(0, 80);
+  if (kind === "artifact") {
+    const t = md.match(/<title[^>]*>([^<]+)<\/title>/i)?.[1] ?? md.match(/<h[1-6][^>]*>([^<]+)<\/h[1-6]>/i)?.[1];
+    return (t?.trim().slice(0, 80)) || "Artefacto";
+  }
   if (kind === "sheet") {
     const first = md.trim().split("\n").find((l) => l.trim());
     const cell = first?.split(",")[0]?.replace(/^"|"$/g, "").trim();
@@ -112,9 +117,10 @@ export function bubbleWithoutEbDoc(body: string): string {
   if (!doc) return body;
   const around = [doc.before.trim(), doc.after.trim()].filter(Boolean).join("\n\n");
   if (doc.closed) {
-    const ready = doc.kind === "sheet" ? "📊 Hoja lista" : "📄 Documento listo";
+    const ready = doc.kind === "sheet" ? "📊 Hoja lista" : doc.kind === "artifact" ? "🎨 Artefacto listo" : "📄 Documento listo";
     return around || `${ready} — ábrelo en el panel.`;
   }
-  const writing = doc.kind === "sheet" ? "📊 Generando la hoja…" : "✍️ Redactando el documento…";
+  const writing =
+    doc.kind === "sheet" ? "📊 Generando la hoja…" : doc.kind === "artifact" ? "🎨 Generando el artefacto…" : "✍️ Redactando el documento…";
   return around ? `${around}\n\n${writing}` : writing;
 }

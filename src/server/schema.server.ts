@@ -211,6 +211,9 @@ async function migrate(): Promise<void> {
   await exec(`CREATE INDEX IF NOT EXISTS gc_artifacts_doc ON gc_artifacts(url)`);
   // Migración: DBs previas no tienen `md` → añádela (idempotente vía hasColumn).
   await addColumn("gc_artifacts", "md", "TEXT");
+  // `src` = URL pública del objeto en S3 (kind:"artifact" → HTML publicado, enlace compartible).
+  // El render in-Teams usa `md` (HTML fuente) vía iframe srcDoc; `src` es la puerta pública.
+  await addColumn("gc_artifacts", "src", "TEXT");
 
   // Identidad conversacional del artefacto "vivo" (Fase 1 edit-in-place): mapea una
   // conversación (channel + thread) al documentId del artefacto ACTUAL, para que

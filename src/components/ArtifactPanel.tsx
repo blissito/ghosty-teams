@@ -51,10 +51,13 @@ export type ArtifactView =
   | { kind: "office"; title: string; src: string } // docx/xlsx/pptx → preview (visor) + descarga
   | { kind: "file"; title: string; src: string } // fallback genérico → descarga
   | { kind: "html"; title: string; embedUrl: string }
-  // Redacción EN VIVO (Canvas): prosa (markdown) o tabla (csv), según `sheet`.
-  | { kind: "draft"; title: string; content: string; sheet: boolean; streaming?: boolean }
+  // Redacción EN VIVO (Canvas): prosa (markdown), tabla (csv) o HTML (artifact). `sheet`/`artifact`
+  // eligen el render; los tres streamean por el mismo camino de draft.
+  | { kind: "draft"; title: string; content: string; sheet: boolean; streaming?: boolean; artifact?: boolean }
   | { kind: "doc"; title: string; documentId: string; md: string } // documento vivo (markdown local + versiones)
   | { kind: "sheet"; title: string; documentId: string; csv: string } // hoja viva (CSV local + versiones)
+  // Artefacto HTML interactivo: `html` = fuente (iframe srcDoc, sandbox aislado); `src` = URL pública S3.
+  | { kind: "artifact"; title: string; documentId: string; html: string; src: string }
   // ask-user: pregunta con opciones clicables. Se pinta INLINE en el bubble (AskUserCard);
   // esta variante solo cubre el fallback read-only si se abriera en el panel.
   | { kind: "ask-user"; title: string; question: string; options: string[] }
@@ -257,6 +260,8 @@ export default function ArtifactPanel({
         ? `doc:${artifact.documentId}`
         : artifact.kind === "sheet"
           ? `sheet:${artifact.documentId}`
+          : artifact.kind === "artifact"
+            ? `artifact:${artifact.documentId}`
           : artifact.kind === "draft"
             ? "draft"
             : artifact.kind === "html"
@@ -744,6 +749,17 @@ export default function ArtifactPanel({
                     )}
                     </div>
                   </div>
+                ) : artifact.kind === "draft" && artifact.artifact ? (
+                  // Artefacto HTML: mientras STREAMEA mostramos un estado "construyendo" (ejecutar
+                  // HTML/JS a medio escribir en el iframe parpadea y lanza errores). Al cerrarse el
+                  // fence el server lo commitea y scheduleDraftSwap cambia a la vista final (iframe).
+                  <div className="grid min-h-full place-items-center bg-surface-3 p-6">
+                    <div className="flex flex-col items-center gap-3 text-center">
+                      <Loader2 size={22} className="animate-spin text-brand" />
+                      <span className="text-sm text-muted">{t("Construyendo artefacto…")}</span>
+                      <span className="max-w-xs truncate text-xs text-neutral-400">{artifact.title}</span>
+                    </div>
+                  </div>
                 ) : artifact.kind === "draft" ? (
                   // Redacción EN VIVO (Canvas): prosa (markdown) o tabla (csv) streamea a la
                   // hoja mientras el agente escribe; al cerrar el fence pasa a doc/sheet real.
@@ -858,6 +874,32 @@ export default function ArtifactPanel({
                         <div className="grid h-full place-items-center text-sm text-neutral-400">{t("Sin contenido")}</div>
                       )}
                     </article>
+                  </div>
+                ) : artifact.kind === "artifact" ? (
+                  // Artefacto HTML interactivo: render desde el HTML FUENTE (local) en un iframe
+                  // AISLADO (sandbox sin allow-same-origin → no lee cookies/DOM del app). El HTML
+                  // vive también publicado en S3; `src` es el enlace compartible (barra inferior).
+                  <div className="flex h-full flex-col">
+                    <iframe
+                      title={artifact.title || "artefacto"}
+                      sandbox="allow-scripts allow-forms allow-popups"
+                      referrerPolicy="no-referrer"
+                      srcDoc={artifact.html}
+                      className="min-h-0 flex-1 border-0 bg-white"
+                    />
+                    {artifact.src ? (
+                      <div className="flex items-center gap-2 border-t border-border bg-surface px-3 py-2">
+                        <span className="truncate text-xs text-muted">{artifact.src}</span>
+                        <a
+                          href={artifact.src}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="ml-auto shrink-0 rounded-md border border-border px-2 py-1 text-xs text-ink transition hover:border-brand"
+                        >
+                          {t("Abrir")}
+                        </a>
+                      </div>
+                    ) : null}
                   </div>
                 ) : artifact.kind === "ask-user" ? (
                   // Fallback read-only (lo normal es que se pinte inline en el chat, no aquí).

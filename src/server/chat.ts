@@ -698,11 +698,35 @@ export const askAgent = createServerFn({ method: "POST" })
         await db.setMessageBody(id, cleaned);
         bus.publish(bus.ch.room(ns, channel.id), { t: "message:body", id, body: cleaned });
         const documentId = currentDocId ?? `${ebdoc.kind}_${randomUUID()}`;
+        const title = draftTitle(ebdoc.md, ebdoc.kind, ebdoc.fenceTitle);
+        // kind:"artifact" → el HTML fuente es la verdad (md, para render srcDoc + re-emit) Y se
+        // publica a S3 público como enlace compartible. `md` es siempre in-Teams; `src` es opcional
+        // (si no hay storage, el panel igual renderiza el HTML local). Base pública configurable:
+        // ARTIFACT_PUBLIC_BASE=https://artefacto.ghosty.studio (Caddy→bucket); sin ella, URL cruda Tigris.
+        let src: string | null = null;
+        if (ebdoc.kind === "artifact") {
+          try {
+            const storage = await import("./storage.server");
+            if (storage.storageConfigured()) {
+              const put = await storage.put({
+                blob: new Blob([ebdoc.md], { type: "text/html" }),
+                contentType: "text/html; charset=utf-8",
+                fileName: `${(title || "artefacto").slice(0, 60)}.html`,
+                visibility: "public",
+              });
+              const base = process.env.ARTIFACT_PUBLIC_BASE?.replace(/\/$/, "");
+              src = base ? `${base}/${put.key}` : storage.publicUrl(put.key);
+            }
+          } catch (e) {
+            console.error("[artifact] publish failed", e);
+          }
+        }
         await db.createArtifact(id, {
-          kind: ebdoc.kind, // "doc" | "sheet"
+          kind: ebdoc.kind, // "doc" | "sheet" | "artifact"
           url: documentId,
-          title: draftTitle(ebdoc.md, ebdoc.kind, ebdoc.fenceTitle),
+          title,
           md: ebdoc.md,
+          src,
         });
         await db.setThreadArtifact(channel.id, data.parentId, documentId).catch(() => {});
         bus.publish(bus.ch.room(ns, channel.id), { t: "refresh", channelId: channel.id, parentId: data.parentId });
