@@ -41,10 +41,21 @@ export function onInstallable(cb: (event: BeforeInstallPromptEvent) => void) {
   };
 }
 
-// Registra el service worker (requisito de instalabilidad). Idempotente.
+// Registra el service worker (requisito de instalabilidad + push). Idempotente.
+// BUG (2026-07-22): antes registraba SOLO en `window.addEventListener("load", …)`,
+// pero registerSW() se llama desde un useEffect (post-hydration) → el evento `load`
+// YA disparó → el listener nunca corría → el SW NUNCA se registraba →
+// `serviceWorker.ready` colgaba para siempre en enablePush ("..." infinito) y 0 subs.
+// Fix: registrar YA si el documento ya cargó; si no, en el próximo `load`.
 export function registerSW() {
   if (typeof navigator === "undefined" || !("serviceWorker" in navigator)) return;
-  window.addEventListener("load", () => {
-    navigator.serviceWorker.register("/sw.js", { scope: "/", updateViaCache: "none" }).catch(() => {});
-  });
+  const doRegister = () =>
+    navigator.serviceWorker
+      .register("/sw.js", { scope: "/", updateViaCache: "none" })
+      .catch(() => {});
+  if (typeof document !== "undefined" && document.readyState === "complete") {
+    doRegister();
+  } else {
+    window.addEventListener("load", doRegister, { once: true });
+  }
 }
