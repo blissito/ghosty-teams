@@ -23,7 +23,7 @@ import { bumpEmojis } from "../utils/emojis-bus";
 import { bumpUsers } from "../utils/users-bus";
 import type { CustomEmoji } from "../db.server";
 import { useT, useLocale, useSetLocale, type Locale } from "../i18n";
-import { Monitor, Sun, Moon, Check, SlidersHorizontal, Palette, Github, Plug, Slack, Calendar, CalendarClock, Link2, RefreshCw } from "lucide-react";
+import { Monitor, Sun, Moon, Check, SlidersHorizontal, Palette, Github, Plug, Users, Calendar, CalendarClock, Link2, RefreshCw } from "lucide-react";
 import { listMyConnectorsFn, disconnectConnectorFn } from "../server/connectors";
 import {
   PRESETS,
@@ -336,7 +336,7 @@ function connIcon(icon: string) {
   switch (icon) {
     case "calendly": return CalendarClock;
     case "github": return Github;
-    case "slack": return Slack;
+    case "hubspot": return Users;
     case "google-calendar": return Calendar;
     default: return Plug;
   }
@@ -352,8 +352,12 @@ function IntegrationsPanel() {
 
   async function disconnect(id: string) {
     setBusy(id);
-    try { await disconnectConnectorFn({ data: { provider: id } }); load(); }
-    finally { setBusy(null); }
+    // catch explícito: si la desconexión falla (p.ej. DB caída) NO dejar el estado colgado;
+    // recargamos igual para reflejar la verdad del server (antes sin catch el throw se
+    // tragaba el load → el UI seguía "Conectado" sin feedback).
+    try { await disconnectConnectorFn({ data: { provider: id } }); }
+    catch (e) { console.error("[connectors] disconnect failed", e); }
+    finally { load(); setBusy(null); }
   }
 
   const list = (items ?? []).filter((c) =>
@@ -401,14 +405,14 @@ function IntegrationsPanel() {
                   </div>
                   <div className="min-w-0">
                     <div className="flex items-center gap-2">
-                      <p className="truncate text-sm font-semibold">{c.name}</p>
+                      <p className="truncate text-sm font-semibold">{c.name}</p>{/* nombre propio, no se traduce */}
                       {c.custom && (
                         <span className="rounded border border-border px-1.5 py-0.5 text-[10px] font-medium text-muted">
                           {t("Personalizado")}
                         </span>
                       )}
                     </div>
-                    <p className="truncate text-xs text-muted">{c.blurb}</p>
+                    <p className="truncate text-xs text-muted">{t(c.blurb)}</p>
                   </div>
                 </div>
                 <span className="text-xs text-muted">{c.type}</span>

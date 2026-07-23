@@ -50,7 +50,7 @@ export const CONNECTORS: ConnectorDef[] = [
   },
   // Próximamente (sin oauth aún → el panel los muestra como "Próximamente"):
   { id: "github", name: "GitHub", blurb: "Trae issues y PRs al chat; @ghosty los resume y comenta.", icon: "github", type: "Web", status: "soon" },
-  { id: "slack", name: "Slack", blurb: "Reenvía canales y menciones desde tu workspace de Slack.", icon: "slack", type: "Web", status: "soon" },
+  { id: "hubspot", name: "HubSpot", blurb: "Trae contactos y negocios de tu CRM; @ghosty responde con ese contexto.", icon: "hubspot", type: "Web", status: "soon" },
   { id: "google-calendar", name: "Google Calendar", blurb: "Recordatorios y contexto de reuniones dentro del room.", icon: "google-calendar", type: "Web", status: "soon" },
 ];
 

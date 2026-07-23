@@ -1850,11 +1850,32 @@ function ChannelPage() {
 
   // Ajustes/Preferencias como modal in-panel (SPA): estado a nivel shell para que
   // lo abran tanto el footer del sidebar como el "+ Añadir emoji" del picker.
-  const [prefsTab, setPrefsTab] = useState<null | "general" | "agentes" | "emojis">(null);
+  const t = useT();
+  const [prefsTab, setPrefsTab] = useState<null | "general" | "agentes" | "emojis" | "integraciones">(null);
   const openPrefs = useCallback((tab: "general" | "agentes" | "emojis" = "general") => setPrefsTab(tab), []);
   // Precalienta la cache de Ajustes al montar el shell (idle) → al abrir Preferencias
   // no hay ni spinner ni pop-in de tabs; la data (setup/agentAccess) ya está lista.
   useEffect(() => { loadSettingsData().catch(() => {}); }, []);
+  // Vuelta del OAuth de un conector: el callback redirige a ?connected=<p> | ?conn_error=<p>.
+  // Abrimos Ajustes en Integraciones (que VEA el estado), toast + confetti al éxito, y
+  // limpiamos el query (replace) para no re-disparar en cada render.
+  const [connToast, setConnToast] = useState<{ ok: boolean; provider: string } | null>(null);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const sp = new URLSearchParams(window.location.search);
+    const ok = sp.get("connected");
+    const provider = ok || sp.get("conn_error");
+    if (!provider) return;
+    setPrefsTab("integraciones");
+    setConnToast({ ok: !!ok, provider });
+    const stop = ok ? startConfetti() : () => {};
+    const hide = setTimeout(() => { stop(); setConnToast(null); }, ok ? 3500 : 5000);
+    sp.delete("connected"); sp.delete("conn_error");
+    const qs = sp.toString();
+    window.history.replaceState({}, "", window.location.pathname + (qs ? `?${qs}` : ""));
+    return () => { clearTimeout(hide); stop(); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [profile, setProfile] = useState<ProfileTarget | null>(null);
   const openProfile = useCallback((p: ProfileTarget) => setProfile(p), []);
 
@@ -1867,6 +1888,21 @@ function ChannelPage() {
         tapados. El inset superior empuja todo bajo la barra de estado (h-[100dvh] es
         border-box → el alto interior se ajusta). En desktop el inset es 0 (sin efecto). */}
     <div className="flex h-[100dvh] bg-surface text-ink pt-[env(safe-area-inset-top)] md:pt-0">
+      {/* Toast de resultado del OAuth de conectores (éxito → verde + confetti; error → rojo). */}
+      {connToast && (
+        <div
+          role="status"
+          className={`fixed left-1/2 top-4 z-[100] -translate-x-1/2 rounded-xl border px-4 py-2.5 text-sm font-medium shadow-lg ${
+            connToast.ok
+              ? "border-emerald-500/30 bg-emerald-500/15 text-emerald-500"
+              : "border-red-500/30 bg-red-500/15 text-red-400"
+          }`}
+        >
+          {connToast.ok
+            ? `✅ ${connToast.provider[0].toUpperCase()}${connToast.provider.slice(1)} ${t("conectado")}`
+            : `⚠️ ${t("No se pudo conectar")} ${connToast.provider[0].toUpperCase()}${connToast.provider.slice(1)}`}
+        </div>
+      )}
       {/* Backdrop del drawer (solo móvil): tap fuera cierra el sidebar. */}
       {navOpen && (
         <div
