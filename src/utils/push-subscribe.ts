@@ -33,6 +33,20 @@ export async function enablePush(): Promise<"on" | "denied" | "unsupported"> {
   if (perm !== "granted") return "denied";
   const reg = await navigator.serviceWorker.ready;
   const { key } = await getVapidKeyFn();
+  // Rotación de VAPID: si ya existe una suscripción (posiblemente con la llave
+  // ANTERIOR), `subscribe()` con la nueva applicationServerKey lanza
+  // ("a subscription with a different applicationServerKey already exists").
+  // Desuscribimos la vieja primero → suscribir con la llave vigente siempre
+  // funciona (idempotente ante rotación). Best-effort: si no hay o falla, seguimos.
+  const existing = await reg.pushManager.getSubscription();
+  if (existing) {
+    try {
+      await unsubscribePushFn({ data: { endpoint: existing.endpoint } });
+    } catch {
+      // el borrado server-side es best-effort
+    }
+    await existing.unsubscribe().catch(() => {});
+  }
   const sub = await reg.pushManager.subscribe({
     userVisibleOnly: true,
     applicationServerKey: urlBase64ToUint8Array(key) as BufferSource,
