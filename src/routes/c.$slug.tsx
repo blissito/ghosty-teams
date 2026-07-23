@@ -4949,7 +4949,11 @@ function Flow({
       </header>
       <CallBanner h={call} />
       {pins.length > 0 && <PinnedBar pins={pins} onJump={jumpTo} />}
-      <div ref={scrollRef} onScroll={onScroll} className="w-full flex-1 overflow-y-auto px-6 py-4 thin-scroll">
+      {/* overflow-anchor:none → desactiva el scroll-anchoring nativo del navegador. Al cargar
+          una imagen ARRIBA del viewport el browser movía scrollTop para conservar la vista, lo
+          que disparaba onScroll → apagaba `stick` a media carga y el ResizeObserver dejaba de
+          re-anclar (quedaba a la mitad). Con none, el RO es el ÚNICO ancla y pega al fondo bien. */}
+      <div ref={scrollRef} onScroll={onScroll} className="w-full flex-1 overflow-y-auto px-6 py-4 thin-scroll [overflow-anchor:none]">
         <div ref={contentRef}>
         {messages === null ? (
           <ThreadSkeleton />
@@ -5060,7 +5064,11 @@ function ThreadView({
           <DocsButton channelId={channel.id} channelSlug={channel.slug} threadRootId={threadId} />
         </div>
       </header>
-      <div ref={scrollRef} onScroll={onScroll} className="w-full flex-1 overflow-y-auto px-6 py-4 thin-scroll">
+      {/* overflow-anchor:none → desactiva el scroll-anchoring nativo del navegador. Al cargar
+          una imagen ARRIBA del viewport el browser movía scrollTop para conservar la vista, lo
+          que disparaba onScroll → apagaba `stick` a media carga y el ResizeObserver dejaba de
+          re-anclar (quedaba a la mitad). Con none, el RO es el ÚNICO ancla y pega al fondo bien. */}
+      <div ref={scrollRef} onScroll={onScroll} className="w-full flex-1 overflow-y-auto px-6 py-4 thin-scroll [overflow-anchor:none]">
         <div ref={contentRef}>
         {!data ? (
           <ThreadSkeleton />
@@ -5210,7 +5218,11 @@ function DmView({
         {!isAgentDm && <CallHeaderButton h={call} />}
       </header>
       {!isAgentDm && <CallBanner h={call} />}
-      <div ref={scrollRef} onScroll={onScroll} className="w-full flex-1 overflow-y-auto px-6 py-4 thin-scroll">
+      {/* overflow-anchor:none → desactiva el scroll-anchoring nativo del navegador. Al cargar
+          una imagen ARRIBA del viewport el browser movía scrollTop para conservar la vista, lo
+          que disparaba onScroll → apagaba `stick` a media carga y el ResizeObserver dejaba de
+          re-anclar (quedaba a la mitad). Con none, el RO es el ÚNICO ancla y pega al fondo bien. */}
+      <div ref={scrollRef} onScroll={onScroll} className="w-full flex-1 overflow-y-auto px-6 py-4 thin-scroll [overflow-anchor:none]">
         <div ref={contentRef}>
         {flow === null ? (
           <ThreadSkeleton />
@@ -5318,9 +5330,12 @@ function ChatImage({ src, alt, width, height }: { src: string; alt: string; widt
   return (
     <span
       className={`relative inline-block overflow-hidden rounded-lg border border-border ${
-        // Sin dims: placeholder fijo mientras carga (el ResizeObserver re-ancla al cargar).
-        // Con dims: los atributos width/height del <img> ya reservan el box exacto.
-        hasDims ? "" : loaded ? "" : "min-h-40 w-60 max-w-full"
+        // Sin dims (agente/generadas, GIF/SVG, adjuntos viejos, sharp ausente): slot FIJO
+        // 240×240 → 0 layout-shift, la imagen entra con object-contain (letterbox si no calza)
+        // pero el box NO crece al cargar → nada empuja. La solución de raíz es backfillear las
+        // dims en el path del agente (TODO) para que caigan al camino con box exacto de abajo.
+        // Con dims: los atributos width/height del <img> ya reservan el box exacto (natural).
+        hasDims ? "" : "h-60 w-60 max-w-full"
       }`}
     >
       {!loaded && (
@@ -5334,9 +5349,9 @@ function ChatImage({ src, alt, width, height }: { src: string; alt: string; widt
         loading="lazy"
         decoding="async"
         onLoad={() => setLoaded(true)}
-        className={`block h-auto max-h-80 w-auto max-w-full object-contain transition-opacity duration-300 ${
-          loaded ? "opacity-100" : "opacity-0"
-        }`}
+        className={`block object-contain transition-opacity duration-300 ${
+          hasDims ? "h-auto max-h-80 w-auto max-w-full" : "h-full w-full"
+        } ${loaded ? "opacity-100" : "opacity-0"}`}
       />
     </span>
   );

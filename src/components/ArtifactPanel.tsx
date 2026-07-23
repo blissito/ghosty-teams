@@ -388,9 +388,14 @@ export default function ArtifactPanel({
   useEffect(() => {
     if (!isDraftArtifact) { setDraftPreview(""); return; }
     setDraftPreview(draftHtmlRef.current);
-    const iv = setInterval(() => setDraftPreview(draftHtmlRef.current), 400);
+    const iv = setInterval(() => setDraftPreview(draftHtmlRef.current), 500);
     return () => clearInterval(iv);
   }, [isDraftArtifact]);
+  // El HTML del artefacto suele llegar HEAD-FIRST (todo el <style> antes del <body>), así que
+  // hasta que empieza el <body> no hay NADA visual que renderizar (iframe en blanco). Detectamos
+  // ese arranque para mostrar "preparando estilos…" en vez de un blanco que parece congelado, y
+  // recién pintamos el iframe cuando ya hay cuerpo que se ve construirse.
+  const draftBodyStarted = /<body[\s>]/i.test(draftPreview);
   // Descarga con FEEDBACK: doc→.docx (compila en EasyBits) y sheet→.xlsx (convierte el CSV
   // fuente con SheetJS en /api/doc-xlsx) tardan un poco; fetch same-origin → blob → download,
   // con spinner. Office = URL pública externa → navegación directa (evita CORS del blob).
@@ -898,15 +903,30 @@ export default function ArtifactPanel({
                   <div className="flex min-h-0 flex-1 flex-col bg-white">
                     <div className="flex items-center gap-2 border-b border-border bg-surface-2 px-4 py-2 text-xs text-muted">
                       <Loader2 size={13} className="animate-spin text-brand" />
-                      <span className="truncate">{t("Construyendo artefacto…")} · <span className="text-neutral-400">{artifact.title}</span></span>
+                      <span className="truncate">
+                        {draftBodyStarted ? t("Construyendo artefacto…") : t("Preparando estilos…")} · <span className="text-neutral-400">{artifact.title}</span>
+                      </span>
                     </div>
-                    <iframe
-                      title={artifact.title || "artefacto"}
-                      sandbox="allow-scripts allow-forms allow-popups"
-                      referrerPolicy="no-referrer"
-                      srcDoc={draftPreview}
-                      className="min-h-0 flex-1 border-0 bg-white"
-                    />
+                    <div className="relative min-h-0 flex-1">
+                      <iframe
+                        title={artifact.title || "artefacto"}
+                        sandbox="allow-scripts allow-forms allow-popups"
+                        referrerPolicy="no-referrer"
+                        srcDoc={draftPreview}
+                        className="absolute inset-0 h-full w-full border-0 bg-white"
+                      />
+                      {!draftBodyStarted ? (
+                        // Todavía en el <head>/<style> → el iframe está en blanco a propósito.
+                        // Mostramos un estado de progreso encima para que no parezca colgado.
+                        <div className="pointer-events-none absolute inset-0 grid place-items-center bg-white">
+                          <div className="flex flex-col items-center gap-3 text-center">
+                            <div className="h-8 w-8 animate-spin rounded-full border-2 border-brand/30 border-t-brand" />
+                            <span className="text-sm text-neutral-500">{t("Preparando estilos…")}</span>
+                            <span className="text-xs text-neutral-400">{Math.round(draftPreview.length / 100) / 10} KB</span>
+                          </div>
+                        </div>
+                      ) : null}
+                    </div>
                   </div>
                 ) : artifact.kind === "draft" ? (
                   // Redacción EN VIVO (Canvas): prosa (markdown) o tabla (csv) streamea a la

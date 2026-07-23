@@ -735,14 +735,21 @@ export const askAgent = createServerFn({ method: "POST" })
           try {
             const storage = await import("./storage.server");
             if (storage.storageConfigured()) {
+              // Bucket PRIVADO: el "público" de Tigris no sirve objetos sin firma
+              // (AccessDenied). La URL branded artefacto.ghosty.studio/<key> la sirve
+              // el app (ruta /t3/$) leyendo el objeto firmado → público + permanente.
               const put = await storage.put({
                 blob: new Blob([ebdoc.md], { type: "text/html" }),
                 contentType: "text/html; charset=utf-8",
                 fileName: `${(title || "artefacto").slice(0, 60)}.html`,
-                visibility: "public",
+                visibility: "private",
               });
+              // El link branded oculta el prefijo interno `t3/` (Caddy lo re-antepone
+              // en el vhost artefacto → ruta /t3/$ del app).
               const base = process.env.ARTIFACT_PUBLIC_BASE?.replace(/\/$/, "");
-              src = base ? `${base}/${put.key}` : storage.publicUrl(put.key);
+              src = base
+                ? `${base}/${put.key.replace(/^t3\//, "")}`
+                : storage.signedUrl(put.key, 604800, "private");
             }
           } catch (e) {
             console.error("[artifact] publish failed", e);

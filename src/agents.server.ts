@@ -175,7 +175,14 @@ export function historyContext(
     lines.push(line);
   }
   if (!lines.length) return "";
-  return `[Historial reciente de la conversación (de más antiguo a más nuevo), SOLO como contexto — no lo repitas literal]\n${lines.join("\n")}\n\n`;
+  return (
+    `[Mensajes recientes de la conversación que quizá NO viste (de más antiguo a más nuevo). ` +
+    `En un canal solo te invocan al @mencionarte, así que puede que el usuario haya escrito lo que ` +
+    `quiere en estos mensajes y luego te haya etiquetado aparte. Si el mensaje que te menciona NO trae ` +
+    `una instrucción completa, la PETICIÓN real está aquí: tómala de estos mensajes y ACTÚA sobre ella ` +
+    `(p. ej. "editalo, ponle otros colores" = edita el artefacto actual con otros colores). No los repitas literal.]\n` +
+    `${lines.join("\n")}\n\n`
+  );
 }
 
 // ¿Qué agente se mencionó en el body? Devuelve el handle o null (el primero que

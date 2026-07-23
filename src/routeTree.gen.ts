@@ -14,6 +14,7 @@ import { Route as LoginRouteImport } from './routes/login'
 import { Route as FormsRouteImport } from './routes/forms'
 import { Route as ArtifactsRouteImport } from './routes/artifacts'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as T3SplatRouteImport } from './routes/t3.$'
 import { Route as JoinTokenRouteImport } from './routes/join.$token'
 import { Route as CSlugRouteImport } from './routes/c.$slug'
 import { Route as ApiWarmRouteImport } from './routes/api.warm'
@@ -55,6 +56,11 @@ const ArtifactsRoute = ArtifactsRouteImport.update({
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const T3SplatRoute = T3SplatRouteImport.update({
+  id: '/t3/$',
+  path: '/t3/$',
   getParentRoute: () => rootRouteImport,
 } as any)
 const JoinTokenRoute = JoinTokenRouteImport.update({
@@ -157,6 +163,7 @@ export interface FileRoutesByFullPath {
   '/api/warm': typeof ApiWarmRoute
   '/c/$slug': typeof CSlugRoute
   '/join/$token': typeof JoinTokenRoute
+  '/t3/$': typeof T3SplatRoute
   '/api/attachment/$id': typeof ApiAttachmentIdRoute
   '/api/dev/drive': typeof ApiDevDriveRoute
   '/api/doc-docx/$id': typeof ApiDocDocxIdRoute
@@ -181,6 +188,7 @@ export interface FileRoutesByTo {
   '/api/warm': typeof ApiWarmRoute
   '/c/$slug': typeof CSlugRoute
   '/join/$token': typeof JoinTokenRoute
+  '/t3/$': typeof T3SplatRoute
   '/api/attachment/$id': typeof ApiAttachmentIdRoute
   '/api/dev/drive': typeof ApiDevDriveRoute
   '/api/doc-docx/$id': typeof ApiDocDocxIdRoute
@@ -206,6 +214,7 @@ export interface FileRoutesById {
   '/api/warm': typeof ApiWarmRoute
   '/c/$slug': typeof CSlugRoute
   '/join/$token': typeof JoinTokenRoute
+  '/t3/$': typeof T3SplatRoute
   '/api/attachment/$id': typeof ApiAttachmentIdRoute
   '/api/dev/drive': typeof ApiDevDriveRoute
   '/api/doc-docx/$id': typeof ApiDocDocxIdRoute
@@ -232,6 +241,7 @@ export interface FileRouteTypes {
     | '/api/warm'
     | '/c/$slug'
     | '/join/$token'
+    | '/t3/$'
     | '/api/attachment/$id'
     | '/api/dev/drive'
     | '/api/doc-docx/$id'
@@ -256,6 +266,7 @@ export interface FileRouteTypes {
     | '/api/warm'
     | '/c/$slug'
     | '/join/$token'
+    | '/t3/$'
     | '/api/attachment/$id'
     | '/api/dev/drive'
     | '/api/doc-docx/$id'
@@ -280,6 +291,7 @@ export interface FileRouteTypes {
     | '/api/warm'
     | '/c/$slug'
     | '/join/$token'
+    | '/t3/$'
     | '/api/attachment/$id'
     | '/api/dev/drive'
     | '/api/doc-docx/$id'
@@ -305,6 +317,7 @@ export interface RootRouteChildren {
   ApiWarmRoute: typeof ApiWarmRoute
   CSlugRoute: typeof CSlugRoute
   JoinTokenRoute: typeof JoinTokenRoute
+  T3SplatRoute: typeof T3SplatRoute
   ApiAttachmentIdRoute: typeof ApiAttachmentIdRoute
   ApiDevDriveRoute: typeof ApiDevDriveRoute
   ApiDocDocxIdRoute: typeof ApiDocDocxIdRoute
@@ -348,6 +361,13 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/t3/$': {
+      id: '/t3/$'
+      path: '/t3/$'
+      fullPath: '/t3/$'
+      preLoaderRoute: typeof T3SplatRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/join/$token': {
@@ -501,6 +521,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiWarmRoute: ApiWarmRoute,
   CSlugRoute: CSlugRoute,
   JoinTokenRoute: JoinTokenRoute,
+  T3SplatRoute: T3SplatRoute,
   ApiAttachmentIdRoute: ApiAttachmentIdRoute,
   ApiDevDriveRoute: ApiDevDriveRoute,
   ApiDocDocxIdRoute: ApiDocDocxIdRoute,
