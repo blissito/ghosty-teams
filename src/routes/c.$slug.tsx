@@ -2120,6 +2120,7 @@ function startConfetti(): () => void {
 // Al cerrar se marca visto (server-side, cross-device). Fetch on-mount como el resto de
 // datos de arranque; degrada a silencio si algo falla. Tema del user vía tokens.
 function NovedadesModal() {
+  const t = useT();
   const [ann, setAnn] = useState<Announcement | null>(null);
 
   useEffect(() => {
@@ -2173,7 +2174,7 @@ function NovedadesModal() {
           )}
           <div className="p-6">
             <span className="mb-2 inline-flex items-center gap-1.5 rounded-full bg-brand/12 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-brand">
-              <Megaphone size={12} /> Novedad
+              <Megaphone size={12} /> {t("Novedad")}
             </span>
             <h2 className="text-xl font-bold leading-snug">{ann.title}</h2>
             <div className="mt-2 text-sm leading-relaxed text-muted [&_a]:text-brand [&_strong]:text-ink">
@@ -2184,7 +2185,7 @@ function NovedadesModal() {
                 onClick={close}
                 className="rounded-xl bg-brand px-5 py-2.5 text-sm font-semibold text-brand-fg shadow-sm transition hover:opacity-90"
               >
-                Entendido
+                {t("Entendido")}
               </button>
             </div>
           </div>

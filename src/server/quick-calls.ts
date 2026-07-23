@@ -188,11 +188,17 @@ export const leaveCallFn = createServerFn({ method: "POST" })
     const k = keyOf(t.ns, t.scope, t.scopeId);
     const c = active.get(k);
     if (!c) return { ok: true as const, ended: false };
-    const n = await participantCount(t.cfg, t.room);
-    if (n === 0) {
-      active.delete(k);
-      t.fanout({ t: "quickcall:ended", scope: c.scope, scopeId: c.scopeId, callId: c.callId });
-      return { ok: true as const, ended: true };
+    // Confirma vacío con reintentos: el disconnect del que sale tarda ~1-3s en
+    // reflejarse en el SFU. Solo cerramos si OBSERVAMOS 0 (si quedan otros nunca
+    // llega a 0 → el banner se mantiene). Fire-and-forget desde el cliente.
+    for (let i = 0; i < 5; i++) {
+      const n = await participantCount(t.cfg, t.room);
+      if (n === 0) {
+        active.delete(k);
+        t.fanout({ t: "quickcall:ended", scope: c.scope, scopeId: c.scopeId, callId: c.callId });
+        return { ok: true as const, ended: true };
+      }
+      await new Promise((r) => setTimeout(r, 1200));
     }
     return { ok: true as const, ended: false };
   });

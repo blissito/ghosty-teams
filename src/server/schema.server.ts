@@ -243,12 +243,14 @@ async function migrate(): Promise<void> {
   // una card. `published`=0 son borradores. El estado "visto" es per-usuario y server-side
   // (calca gc_reads → cross-device, no localStorage).
   // Novedades ("What's New"): el CONTENIDO es GLOBAL y vive en el control-plane gs
-  // (modelo Announcement, redactado por admins de sistema). Aquí solo guardamos el
-  // estado "visto" POR-USUARIO: el id (cuid string de gs) de la última novedad que vio.
-  // La card se muestra si el id de la última publicada != last_seen_id. Tablas nuevas → gt_.
-  await exec(`CREATE TABLE IF NOT EXISTS gt_announcement_reads (
-    user_sub     TEXT PRIMARY KEY,
-    last_seen_id TEXT NOT NULL DEFAULT ''
+  // (modelo Announcement, redactado por admins de sistema). Aquí guardamos el SET de
+  // novedades que cada usuario YA VIO (una fila por (user, announcement)). La galería
+  // muestra las publicadas que NO estén en el set; al pasar cada card se inserta aquí.
+  await exec(`CREATE TABLE IF NOT EXISTS gt_announcement_seen (
+    user_sub        TEXT NOT NULL,
+    announcement_id TEXT NOT NULL,
+    seen_at         INTEGER NOT NULL DEFAULT (unixepoch()),
+    PRIMARY KEY (user_sub, announcement_id)
   )`);
 
   // Si algo falló (DB flapeando), LANZA → ensureSchema resetea `done` → reintento.
