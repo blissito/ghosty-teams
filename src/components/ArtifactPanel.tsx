@@ -878,14 +878,22 @@ export default function ArtifactPanel({
                     </div>
                   </div>
                 ) : artifact.kind === "draft" && artifact.artifact ? (
-                  // Artefacto HTML: mientras STREAMEA mostramos un estado "construyendo" (ejecutar
-                  // HTML/JS a medio escribir en el iframe parpadea y lanza errores). Al cerrarse el
-                  // fence el server lo commitea y scheduleDraftSwap cambia a la vista final (iframe).
-                  <div className="grid min-h-full place-items-center bg-surface-3 p-6">
-                    <div className="flex flex-col items-center gap-3 text-center">
-                      <Loader2 size={22} className="animate-spin text-brand" />
-                      <span className="text-sm text-muted">{t("Construyendo artefacto…")}</span>
-                      <span className="max-w-xs truncate text-xs text-neutral-400">{artifact.title}</span>
+                  // Artefacto HTML: mientras STREAMEA mostramos el CÓDIGO fuente construyéndose
+                  // EN VIVO (como Claude Artifacts / v0). NO ejecutamos HTML/JS a medio escribir
+                  // en el iframe (parpadea y lanza errores) — mostramos el texto. Al cerrarse el
+                  // fence, scheduleDraftSwap cambia a la vista final (iframe renderizado).
+                  <div className="flex min-h-0 flex-1 flex-col bg-surface-3">
+                    <div className="flex items-center gap-2 border-b border-border px-4 py-2 text-xs text-muted">
+                      <Loader2 size={13} className="animate-spin text-brand" />
+                      <span className="truncate">{t("Construyendo artefacto…")} · <span className="text-neutral-400">{artifact.title}</span></span>
+                    </div>
+                    <div ref={scrollRef} className="min-h-0 flex-1 overflow-auto p-4">
+                      <pre className="whitespace-pre-wrap break-words font-mono text-[11px] leading-relaxed text-ink">
+                        <code>{artifact.content}</code>
+                        {artifact.streaming ? (
+                          <span className="ml-px inline-block h-3.5 w-[3px] animate-pulse bg-brand align-text-bottom" />
+                        ) : null}
+                      </pre>
                     </div>
                   </div>
                 ) : artifact.kind === "draft" ? (
