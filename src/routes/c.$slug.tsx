@@ -6115,15 +6115,15 @@ function MessageRow({
           {canReact && <ReactButton m={m} />}
           <ReplyButton m={m} author={displayName} />
           {showThreadLink && onOpenThread && !m.reply_count && <ThreadReplyButton onOpen={() => onOpenThread(m.id)} />}
-          <CopyButton m={m} />
-          <StarButton m={m} />
+          {/* Rápidas: reenviar (antes copiar) + editar (antes destacar, solo si es MÍO).
+              Copiar y destacar viven ahora en el menú ⋯. */}
+          <ForwardButton m={m} />
+          {canEdit && <EditButton onEdit={() => setEditing(true)} />}
           <MessageActions
             m={m}
             slug={slug}
-            canEdit={canEdit}
             canDelete={canDelete}
             canPin={!!canPin}
-            onEdit={() => setEditing(true)}
             onOpenChange={setMenuOpen}
           />
         </div>
@@ -6352,51 +6352,26 @@ function ReactButton({ m }: { m: Message }) {
 
 // Destacar (star): marcador personal. Va por el evento `star` (ch.user) → el flag
 // se sincroniza en todas mis pestañas, igual que las reacciones.
-// Copia TODO el contenido del mensaje al portapapeles, con palomita animada (~1.5s).
-// Junto a Destacar. Fallback a execCommand si el Clipboard API no está disponible.
-function CopyButton({ m }: { m: Message }) {
+// Rápida: reenviar (abre el selector de destino). Reemplaza a copiar en la barra.
+function ForwardButton({ m }: { m: Message }) {
   const t = useT();
-  const [copied, setCopied] = useState(false);
-  const copy = async () => {
-    const text = (m.body ?? "").trim();
-    if (!text) return;
-    try {
-      await navigator.clipboard.writeText(text);
-    } catch {
-      const ta = document.createElement("textarea");
-      ta.value = text;
-      ta.style.position = "fixed";
-      ta.style.opacity = "0";
-      document.body.appendChild(ta);
-      ta.select();
-      try { document.execCommand("copy"); } catch {}
-      ta.remove();
-    }
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
-  };
+  const [open, setOpen] = useState(false);
   return (
-    <button
-      type="button"
-      onClick={copy}
-      title={copied ? t("¡Copiado!") : t("Copiar mensaje")}
-      className={`rounded p-1 transition hover:text-ink ${copied ? "text-green-500" : "text-muted"}`}
-    >
-      {copied ? <Check size={14} className="gc-pop" /> : <Copy size={14} />}
-    </button>
+    <>
+      <button onClick={() => setOpen(true)} title={t("Reenviar")} className="rounded p-1 text-muted hover:text-ink">
+        <Forward size={14} />
+      </button>
+      {open && <ForwardModal message={m} onClose={() => setOpen(false)} />}
+    </>
   );
 }
 
-function StarButton({ m }: { m: Message }) {
+// Rápida: editar (solo mensajes propios). Reemplaza a destacar en la barra.
+function EditButton({ onEdit }: { onEdit: () => void }) {
   const t = useT();
-  const { star } = useContext(ChatCtx);
   return (
-    <button
-      onClick={() => star(m)}
-      title={m.starred ? t("Quitar destacado") : t("Destacar")}
-      className={`rounded p-1 hover:text-ink ${m.starred ? "text-amber-500" : "text-muted"}`}
-    >
-      <Star size={14} fill={m.starred ? "currentColor" : "none"} />
+    <button onClick={onEdit} title={t("Editar")} className="rounded p-1 text-muted hover:text-ink">
+      <Pencil size={14} />
     </button>
   );
 }
@@ -6405,25 +6380,21 @@ function StarButton({ m }: { m: Message }) {
 function MessageActions({
   m,
   slug,
-  canEdit,
   canDelete,
   canPin,
-  onEdit,
   onOpenChange,
 }: {
   m: Message;
   slug: string;
-  canEdit: boolean;
   canDelete: boolean;
   canPin: boolean;
-  onEdit: () => void;
   onOpenChange?: (open: boolean) => void;
 }) {
   const t = useT();
-  const { pin, remove } = useContext(ChatCtx);
+  const { pin, remove, star } = useContext(ChatCtx);
   const [open, setOpen] = useState(false);
   const [confirmDel, setConfirmDel] = useState(false);
-  const [forwardOpen, setForwardOpen] = useState(false);
+  const [dropUp, setDropUp] = useState(false); // último mensaje: abre hacia arriba (no se corta)
   useEffect(() => onOpenChange?.(open), [open]); // mantiene la barra visible con el menú abierto
   const [receipts, setReceipts] = useState<{ sub: string; name: string; avatar: string }[] | null>(null);
   const close = () => {
@@ -6455,7 +6426,17 @@ function MessageActions({
   return (
     <div className="relative" ref={wrapRef}>
       <button
-        onClick={() => setOpen((o) => !o)}
+        onClick={() =>
+          setOpen((o) => {
+            // Al ABRIR, decide dirección: si abajo no cabe el menú (~260px), lo abrimos
+            // hacia ARRIBA → el ⋯ del último mensaje ya no se corta contra el composer.
+            if (!o && wrapRef.current) {
+              const r = wrapRef.current.getBoundingClientRect();
+              setDropUp(window.innerHeight - r.bottom < 260);
+            }
+            return !o;
+          })
+        }
         title={t("Más acciones")}
         className="rounded p-1 text-muted hover:text-ink"
       >
@@ -6463,7 +6444,7 @@ function MessageActions({
       </button>
       {open && receipts !== null && (
         <>
-          <div className="absolute right-0 top-full z-20 mt-1 max-h-64 w-56 overflow-y-auto rounded-lg border border-border bg-surface p-1 shadow-lg">
+          <div className={`absolute right-0 z-20 max-h-64 w-56 overflow-y-auto rounded-lg border border-border bg-surface p-1 shadow-lg ${dropUp ? "bottom-full mb-1" : "top-full mt-1"}`}>
             <button className={`${item} text-muted`} onClick={() => setReceipts(null)}>
               <ArrowLeft size={14} /> {t("Leído por")}
             </button>
@@ -6483,7 +6464,22 @@ function MessageActions({
       )}
       {open && receipts === null && (
         <>
-          <div className="absolute right-0 top-full z-20 mt-1 w-48 rounded-lg border border-border bg-surface p-1 shadow-lg">
+          <div className={`absolute right-0 z-20 w-48 rounded-lg border border-border bg-surface p-1 shadow-lg ${dropUp ? "bottom-full mb-1" : "top-full mt-1"}`}>
+            {/* Copiar el TEXTO del mensaje (antes era acción rápida). */}
+            <button
+              className={item}
+              onClick={() => {
+                navigator.clipboard?.writeText(m.body ?? "").catch(() => {});
+                close();
+              }}
+            >
+              <Copy size={14} className="text-muted" /> {t("Copiar mensaje")}
+            </button>
+            {/* Destacar (antes era acción rápida). */}
+            <button className={item} onClick={() => { star(m); close(); }}>
+              <Star size={14} className={m.starred ? "text-amber-500" : "text-muted"} fill={m.starred ? "currentColor" : "none"} />
+              {m.starred ? t("Quitar destacado") : t("Destacar")}
+            </button>
             {slug && (
               <button
                 className={item}
@@ -6497,9 +6493,6 @@ function MessageActions({
                 <Link2 size={14} className="text-muted" /> {t("Copiar enlace")}
               </button>
             )}
-            <button className={item} onClick={() => { close(); setForwardOpen(true); }}>
-              <Forward size={14} className="text-muted" /> {t("Reenviar")}
-            </button>
             <button className={item} onClick={showReceipts}>
               <CheckCircle2 size={14} className="text-muted" /> {t("Leído por")}
             </button>
@@ -6513,11 +6506,6 @@ function MessageActions({
               >
                 {m.pinned ? <PinOff size={14} className="text-muted" /> : <Pin size={14} className="text-muted" />}
                 {m.pinned ? t("Desfijar") : t("Fijar en el room")}
-              </button>
-            )}
-            {canEdit && (
-              <button className={item} onClick={() => { onEdit(); close(); }}>
-                <Pencil size={14} className="text-muted" /> {t("Editar")}
               </button>
             )}
             {canDelete && (
@@ -6544,7 +6532,6 @@ function MessageActions({
           onConfirm={() => remove(m)}
         />
       )}
-      {forwardOpen && <ForwardModal message={m} onClose={() => setForwardOpen(false)} />}
     </div>
   );
 }
