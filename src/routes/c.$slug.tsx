@@ -38,7 +38,7 @@ import {
   BellOff,
   Search,
   Forward,
-  ChevronsRight,
+  ReplyAll,
   X,
   Menu,
   Paperclip,
@@ -6360,7 +6360,9 @@ function ForwardButton({ m }: { m: Message }) {
   return (
     <>
       <button onClick={() => setOpen(true)} title={t("Reenviar")} className="rounded p-1 text-muted hover:text-ink">
-        <ChevronsRight size={16} />
+        {/* ReplyAll = doble flecha curva (apunta a la izq); la volteo → doble flecha curva
+            a la DERECHA = el ícono clásico de reenviar. */}
+        <ReplyAll size={15} className="-scale-x-100" />
       </button>
       {open && <ForwardModal message={m} onClose={() => setOpen(false)} />}
     </>
