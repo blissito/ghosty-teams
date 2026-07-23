@@ -38,6 +38,7 @@ import {
   BellOff,
   Search,
   Forward,
+  ChevronsRight,
   X,
   Menu,
   Paperclip,
@@ -6112,11 +6113,11 @@ function MessageRow({
             barVisible ? "opacity-100" : "opacity-100 md:opacity-0 md:group-hover:opacity-100"
           }`}
         >
-          {canReact && <ReactButton m={m} />}
-          <ReplyButton m={m} author={displayName} />
-          {showThreadLink && onOpenThread && !m.reply_count && <ThreadReplyButton onOpen={() => onOpenThread(m.id)} />}
-          {/* Rápidas: reenviar (antes copiar) + editar (antes destacar, solo si es MÍO).
+          {/* Orden: emoji → hilo → flechas (responder, reenviar) → editar (propio) → ⋯.
               Copiar y destacar viven ahora en el menú ⋯. */}
+          {canReact && <ReactButton m={m} />}
+          {showThreadLink && onOpenThread && !m.reply_count && <ThreadReplyButton onOpen={() => onOpenThread(m.id)} />}
+          <ReplyButton m={m} author={displayName} />
           <ForwardButton m={m} />
           {canEdit && <EditButton onEdit={() => setEditing(true)} />}
           <MessageActions
@@ -6359,7 +6360,7 @@ function ForwardButton({ m }: { m: Message }) {
   return (
     <>
       <button onClick={() => setOpen(true)} title={t("Reenviar")} className="rounded p-1 text-muted hover:text-ink">
-        <Forward size={14} />
+        <ChevronsRight size={16} />
       </button>
       {open && <ForwardModal message={m} onClose={() => setOpen(false)} />}
     </>
