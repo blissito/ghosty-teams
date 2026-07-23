@@ -32,22 +32,23 @@ export async function processAndStoreImage(opts: {
   const orig = await storage.put({ blob: opts.blob, contentType: opts.contentType, fileName: opts.fileName, visibility: "private" });
   const base: UploadedImage = { fileId: orig.key, mime: orig.mime, size: orig.size, name: orig.name, thumbFileId: null };
 
-  // Raster → leemos dimensiones (para reserva de alto en el render) y, si vale la pena,
-  // generamos el thumbnail. GIF/SVG → ni dims ni thumb. Sharp ausente → graceful (sin dims).
+  // Leemos dims para reserva de alto en el render (0 layout-shift al abrir el canal) de
+  // TODO lo que sharp sepa parsear —incluido GIF/SVG—; el thumbnail WebP sí se limita al
+  // subset rasterizable. Sharp ausente → graceful (sin dims → el render cae al slot fijo).
   const isRaster = /^image\/(jpeg|png|webp|heic|heif|avif|tiff)$/i.test(opts.contentType);
-  if (!isRaster) return base;
 
   try {
     const sharpMod = await import("sharp").catch(() => null);
     const sharp = (sharpMod as { default?: (b: Buffer) => import("sharp").Sharp } | null)?.default;
-    if (!sharp) return base; // sharp no está en el box → sin thumbnail (graceful)
+    if (!sharp) return base; // sharp no está en el box → sin dims/thumbnail (graceful)
     const buf = Buffer.from(await opts.blob.arrayBuffer());
     const meta = await sharp(buf).metadata();
     // Dims tras EXIF-rotate: si la orientación gira 90°/270°, ancho↔alto se intercambian.
     const rotated = meta.orientation != null && meta.orientation >= 5;
     base.width = (rotated ? meta.height : meta.width) ?? null;
     base.height = (rotated ? meta.width : meta.height) ?? null;
-    // ¿Vale la pena un thumbnail? Solo si es razonablemente grande.
+    // Thumbnail WebP: solo raster (GIF animado/SVG → dims sí, derivado no) y si vale la pena.
+    if (!isRaster) return base;
     if (opts.blob.size < THUMB_MIN_BYTES) return base;
     const big = Math.max(meta.width ?? 0, meta.height ?? 0);
     if (big && big <= THUMB_MAX_EDGE && /webp/i.test(opts.contentType)) return base; // ya es webp chico

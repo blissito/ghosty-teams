@@ -14,7 +14,10 @@ export const Route = createFileRoute("/t3/$")({
       GET: async ({ params }: { params: { _splat?: string } }) => {
         const splat = params._splat ?? "";
         if (!splat || splat.includes("..")) return new Response("not found", { status: 404 });
-        const key = `t3/${splat}`;
+        // Tolera ambas formas de link: el nuevo /<uuid>-name.html (Caddy le antepone t3/) y
+        // el viejo /t3/<uuid>-name.html (que tras el rewrite llega como t3/t3/…). Normaliza a
+        // UNA sola key `t3/<uuid>-name.html` quitando cualquier prefijo t3/ redundante.
+        const key = `t3/${splat.replace(/^(?:t3\/)+/, "")}`;
         const storage = await import("../server/storage.server");
         if (!storage.storageConfigured()) return new Response("storage off", { status: 503 });
         const bytes =
