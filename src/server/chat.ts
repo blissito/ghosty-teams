@@ -91,7 +91,7 @@ export const listMentionsFn = createServerFn({ method: "GET" }).handler(async ()
     { handle: "all", name: "Notificar a todos", avatar: "", kind: "group" as const },
     { handle: "channel", name: "Notificar al room", avatar: "", kind: "group" as const },
     ...agents.map((a) => ({ handle: a.handle, name: a.name, avatar: a.avatar, kind: "agent" as const })),
-    ...us.map((u) => ({ handle: u.handle, name: u.name, avatar: u.avatar, kind: "user" as const })),
+    ...us.map((u) => ({ handle: u.handle, name: u.name, avatar: u.avatar, kind: "user" as const, sub: u.sub })),
   ];
 });
 

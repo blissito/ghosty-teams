@@ -189,9 +189,25 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
     const parts = await buildMediaParts(data.attachments ?? []);
     const groupId = `ghosty-chat-${data.handle}-dm-${data.id}`; // memoria por-agente
     // Quote-reply: embebe la cita en el texto (superficie WABA → el agente siempre la ve).
-    const text = data.quotedExcerpt?.trim()
+    const quoted = data.quotedExcerpt?.trim()
       ? quotedContextPrefix(data.quotedAuthor ?? "", data.quotedExcerpt, data.body)
       : data.body;
+    // Conector Calendly per-user (Fase B, DM 1:1): el DM tiene UN solo humano (`me`), así
+    // que su identidad es inequívoca sin propagación de runtime. Si conectó su Calendly,
+    // inyectamos su link de agendamiento como CONTEXTO del turno (en el texto, no en el
+    // system prompt: es variable por-turno, patrón quote/artifactDocHint) → @ghosty puede
+    // compartirlo/agendar con la cuenta del que pregunta. Best-effort, nunca rompe el turno.
+    let calHint = "";
+    try {
+      const { getSchedulingContext } = await import("./connectors/calendly.server");
+      const cal = await getSchedulingContext(me.sub);
+      if (cal) {
+        calHint =
+          `[Contexto — Calendly de ${data.sender || "el usuario"}: su link de agendamiento es ${cal.schedulingUrl}` +
+          `${cal.timezone ? ` (zona horaria ${cal.timezone})` : ""}. Si pide agendar una llamada/reunión o su disponibilidad, comparte ESTE link.]\n\n`;
+      }
+    } catch {}
+    const text = calHint + quoted;
 
     const { id, reply } = await runAgentTurn({
       agent,

@@ -23,7 +23,8 @@ import { bumpEmojis } from "../utils/emojis-bus";
 import { bumpUsers } from "../utils/users-bus";
 import type { CustomEmoji } from "../db.server";
 import { useT, useLocale, useSetLocale, type Locale } from "../i18n";
-import { Monitor, Sun, Moon, Check, SlidersHorizontal, Palette, Github, Plug, Slack, Calendar, Link2, RefreshCw } from "lucide-react";
+import { Monitor, Sun, Moon, Check, SlidersHorizontal, Palette, Github, Plug, Slack, Calendar, CalendarClock, Link2, RefreshCw } from "lucide-react";
+import { listMyConnectorsFn, disconnectConnectorFn } from "../server/connectors";
 import {
   PRESETS,
   getTheme,
@@ -322,37 +323,127 @@ export function SettingsContent({
   );
 }
 
-/* ── Integraciones: conectores externos. Hoy todos "próximamente" (placeholder
-   visual, mismo estilo que el resto de tarjetas). ── */
+/* ── Integraciones: conectores externos PER-USER (modelo Cowork). Lista tipo tabla
+   (estilo claude.ai → Conectores): Conector · Tipo · Estado, con filtros. Cada usuario
+   conecta SU cuenta; @ghosty actúa con la del que lo invoca. Data-driven sobre el
+   registro server (connectors/registry.ts). ── */
+type ConnItem = {
+  id: string; name: string; blurb: string; icon: string; type: string;
+  custom: boolean; status: "available" | "soon"; connected: boolean;
+};
+
+function connIcon(icon: string) {
+  switch (icon) {
+    case "calendly": return CalendarClock;
+    case "github": return Github;
+    case "slack": return Slack;
+    case "google-calendar": return Calendar;
+    default: return Plug;
+  }
+}
+
 function IntegrationsPanel() {
   const t = useT();
-  const items = [
-    { icon: Github, name: "GitHub", desc: t("Trae issues y PRs al chat; @ghosty los resume y comenta.") },
-    { icon: Slack, name: "Slack", desc: t("Reenvía canales y menciones desde tu workspace de Slack.") },
-    { icon: Calendar, name: "Google Calendar", desc: t("Recordatorios y contexto de reuniones dentro del room.") },
-  ];
+  const [items, setItems] = useState<ConnItem[] | null>(null);
+  const [filter, setFilter] = useState<"all" | "connected" | "disconnected">("all");
+  const [busy, setBusy] = useState<string | null>(null);
+  const load = () => { listMyConnectorsFn().then(setItems).catch(() => setItems([])); };
+  useEffect(() => { load(); }, []);
+
+  async function disconnect(id: string) {
+    setBusy(id);
+    try { await disconnectConnectorFn({ data: { provider: id } }); load(); }
+    finally { setBusy(null); }
+  }
+
+  const list = (items ?? []).filter((c) =>
+    filter === "all" ? true : filter === "connected" ? c.connected : !c.connected
+  );
+
   return (
-    <div className="space-y-3">
+    <div className="space-y-4">
       <p className="text-sm text-muted">
         {t("Conecta herramientas externas para que @ghosty trabaje con tu contexto.")}
       </p>
-      {items.map((it) => {
-        const Icon = it.icon;
-        return (
-          <div key={it.name} className="flex items-center gap-3 rounded-xl border border-border bg-surface-2 p-4">
-            <div className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-surface-3 text-ink">
-              <Icon size={20} />
-            </div>
-            <div className="min-w-0 flex-1">
-              <p className="text-sm font-semibold">{it.name}</p>
-              <p className="text-xs text-muted">{it.desc}</p>
-            </div>
-            <span className="shrink-0 rounded-full border border-border px-2.5 py-1 text-[11px] font-medium text-muted">
-              {t("Próximamente")}
-            </span>
-          </div>
-        );
-      })}
+
+      {/* Filtros (segmento), estilo claude.ai */}
+      <div className="inline-flex rounded-lg border border-border bg-surface-2 p-0.5 text-sm">
+        {([["all", "Todo"], ["connected", "Conectado"], ["disconnected", "No conectado"]] as const).map(([k, label]) => (
+          <button
+            key={k}
+            onClick={() => setFilter(k)}
+            className={`rounded-md px-3 py-1 font-medium transition ${filter === k ? "bg-surface-3 text-ink" : "text-muted hover:text-ink"}`}
+          >
+            {t(label)}
+          </button>
+        ))}
+      </div>
+
+      {/* Tabla: Conector · Tipo · Estado */}
+      <div className="overflow-hidden rounded-xl border border-border">
+        <div className="grid grid-cols-[1fr_auto_auto] items-center gap-3 border-b border-border bg-surface-2 px-4 py-2 text-[11px] font-semibold uppercase tracking-wide text-muted">
+          <span>{t("Conector")}</span>
+          <span>{t("Tipo")}</span>
+          <span className="text-right">{t("Estado")}</span>
+        </div>
+        {items == null ? (
+          <div className="px-4 py-6 text-center text-muted"><Loader2 size={16} className="mx-auto animate-spin" /></div>
+        ) : list.length === 0 ? (
+          <div className="px-4 py-6 text-center text-sm text-muted">{t("Nada por aquí.")}</div>
+        ) : (
+          list.map((c) => {
+            const Icon = connIcon(c.icon);
+            return (
+              <div key={c.id} className="grid grid-cols-[1fr_auto_auto] items-center gap-3 border-b border-border px-4 py-3 last:border-0">
+                <div className="flex min-w-0 items-center gap-3">
+                  <div className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-surface-3 text-ink">
+                    <Icon size={18} />
+                  </div>
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <p className="truncate text-sm font-semibold">{c.name}</p>
+                      {c.custom && (
+                        <span className="rounded border border-border px-1.5 py-0.5 text-[10px] font-medium text-muted">
+                          {t("Personalizado")}
+                        </span>
+                      )}
+                    </div>
+                    <p className="truncate text-xs text-muted">{c.blurb}</p>
+                  </div>
+                </div>
+                <span className="text-xs text-muted">{c.type}</span>
+                <div className="flex items-center justify-end">
+                  {c.status === "soon" ? (
+                    <span className="rounded-full border border-border px-2.5 py-1 text-[11px] font-medium text-muted">
+                      {t("Próximamente")}
+                    </span>
+                  ) : c.connected ? (
+                    <div className="flex items-center gap-2">
+                      <span className="inline-flex items-center gap-1 text-xs font-medium text-emerald-500">
+                        <Check size={14} />{t("Conectado")}
+                      </span>
+                      <button
+                        onClick={() => disconnect(c.id)}
+                        disabled={busy === c.id}
+                        className="rounded-lg border border-border px-2.5 py-1 text-xs text-muted hover:text-ink disabled:opacity-50"
+                      >
+                        {busy === c.id ? "…" : t("Desconectar")}
+                      </button>
+                    </div>
+                  ) : (
+                    <a
+                      href={`/setup/${c.id}/connect`}
+                      className="rounded-lg bg-brand px-3 py-1.5 text-xs font-semibold text-brand-fg hover:brightness-110"
+                    >
+                      {t("Conectar")}
+                    </a>
+                  )}
+                </div>
+              </div>
+            );
+          })
+        )}
+      </div>
     </div>
   );
 }
