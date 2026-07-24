@@ -4981,6 +4981,19 @@ function Flow({
   const scrollRef = useRef<HTMLDivElement>(null);
   const unreadId = firstUnreadId(messages, newAt, me?.name);
   const { onScroll, atBottom, scrollToBottom, contentRef } = useChatScroll(scrollRef, messages, optimistic.length, unreadId, channel.id);
+  // TRAZA de arranque (temporal): imprime en consola cuándo el flujo llega al DOM y con
+  // cuántos mensajes, medido desde el inicio de la navegación. Sirve para separar
+  // "el servidor tarda" de "el cliente tarda en pintar".
+  const bootLogged = useRef(false);
+  useEffect(() => {
+    if (bootLogged.current || !messages?.length) return;
+    bootLogged.current = true;
+    const nav = performance.getEntriesByType("navigation")[0] as PerformanceNavigationTiming | undefined;
+    console.log(
+      `[gt-boot] flujo pintado a ${Math.round(performance.now())}ms · msgs=${messages?.length ?? 0}` +
+        (nav ? ` · ttfb=${Math.round(nav.responseStart)}ms · domInteractive=${Math.round(nav.domInteractive)}ms · load=${Math.round(nav.loadEventStart)}ms` : "")
+    );
+  }, [messages?.length]);
   const composerRef = useRef<ComposerHandle>(null);
   const { dragOver, handlers } = useFileDrop((f) => composerRef.current?.addFiles(f));
   // Scroll a un mensaje (clic en un fijado) con destello, estilo "ir al origen".
