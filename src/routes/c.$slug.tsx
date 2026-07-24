@@ -1152,7 +1152,10 @@ function ChannelPage() {
         draftMsgIdRef.current = null;
         return;
       }
-      if (++tries < 12) setTimeout(tick, 500);
+      // 60 intentos (~30s): publicar un artefacto grande a storage tarda más que los
+      // 6s de antes → el panel se quedaba en "Construyendo…" para siempre aunque el
+      // mensaje ya decía "listo".
+      if (++tries < 60) setTimeout(tick, 500);
     };
     setTimeout(tick, 500);
   };
