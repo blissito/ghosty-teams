@@ -6300,9 +6300,11 @@ function MessageRow({
                 }}
               />
             </div>
-          ) : isAgent ? (
+          ) : isAgent && !m.attachments?.length && !m.artifact ? (
             // Caja caliente: cáscara del agente aún sin texto → indicador inline (la fila
             // con avatar+nombre ya está arriba y PERMANECE). Se reemplaza al primer token.
+            // Con adjunto/artefacto (p.ej. nota de voz SIN texto) NO es "pensando": el body
+            // queda vacío a propósito y el contenido baja como adjunto → mostrar solo eso.
             <div className="flex items-center gap-2 py-0.5 text-xs text-muted">
               <ThinkingRing size={16} />
               <span className="italic">{t("pensando…")}</span>
