@@ -24,6 +24,7 @@ function nodeToHtml(node: Node, indent: string): string {
   if (node.cls) attrs.push(`class="${escAttr(node.cls)}"`)
   if (node.src != null) attrs.push(`src="${escAttr(node.src)}"`)
   if (node.href != null) attrs.push(`href="${escAttr(node.href)}"`)
+  if (node.style != null && node.style !== '') attrs.push(`style="${escAttr(node.style)}"`)
   if (node.hidden) attrs.push('hidden')
   const open = `<${node.tag} ${attrs.join(' ')}>`
 
@@ -168,6 +169,8 @@ function elToNode(el: Element): Node {
   if (text) node.text = text
   if (src != null) node.src = src
   if (href != null) node.href = href
+  const styleAttr = el.getAttribute('style')
+  if (styleAttr) node.style = styleAttr
   if (el.hasAttribute('hidden')) node.hidden = true
   return node
 }

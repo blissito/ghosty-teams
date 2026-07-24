@@ -836,7 +836,22 @@ function useChatScroll(
     const el = scrollRef.current;
     const content = contentRef.current;
     if (!el || !content) return;
+    // Al ABRIR/CERRAR el panel de artefacto la columna del chat cambia de ANCHO: el mismo
+    // contenido reflowa a otra altura y, como scrollTop se conserva, la vista salta hacia
+    // arriba. Ante un cambio de ancho conservamos la DISTANCIA AL FONDO (no scrollTop), que
+    // es lo que el ojo percibe como "no se movió".
+    let lastW = el.clientWidth;
+    let bottomGap = el.scrollHeight - el.scrollTop - el.clientHeight;
+    const trackGap = () => { bottomGap = el.scrollHeight - el.scrollTop - el.clientHeight; };
+    el.addEventListener("scroll", trackGap, { passive: true });
     const ro = new ResizeObserver(() => {
+      if (el.clientWidth !== lastW) {
+        lastW = el.clientWidth;
+        if (!stick.current) {
+          el.scrollTop = Math.max(0, el.scrollHeight - el.clientHeight - bottomGap);
+          return;
+        }
+      }
       if (stick.current) {
         el.scrollTo({ top: el.scrollHeight });
       } else {
@@ -845,7 +860,8 @@ function useChatScroll(
       }
     });
     ro.observe(content);
-    return () => ro.disconnect();
+    ro.observe(el);
+    return () => { ro.disconnect(); el.removeEventListener("scroll", trackGap); };
   }, [scrollRef]);
   return { onScroll, atBottom, scrollToBottom, contentRef };
 }

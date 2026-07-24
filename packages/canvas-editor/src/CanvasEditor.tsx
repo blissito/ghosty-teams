@@ -59,9 +59,17 @@ export interface CanvasEditorProps {
   onSave?: (doc: Doc) => Promise<void> | void
   /** Provide an existing store to share state with the host (optional). */
   store?: EditorStore
+  /** Host-provided CSS injected into the canvas (scoped) + the preview HTML. Use it
+   *  to bring a host design-token system (e.g. Denik/SDK bg-surface/text-on-surface). */
+  extraCss?: string
+  /** Skip the editor's own theme CSS (themeToCss) — the host provides tokens via extraCss. */
+  suppressThemeCss?: boolean
+  /** Host-provided preview HTML (▶). If given, the preview iframe renders this instead
+   *  of docToHtml(doc) — e.g. Denik passes buildDeployHtml for pixel-parity with publish. */
+  renderPreview?: (doc: Doc) => string
 }
 
-export function CanvasEditor({ doc, onChange, refineProvider, imageProvider, onAgentAction, onSelectionChange, onSave, store: externalStore }: CanvasEditorProps) {
+export function CanvasEditor({ doc, onChange, refineProvider, imageProvider, onAgentAction, onSelectionChange, onSave, store: externalStore, extraCss, suppressThemeCss, renderPreview }: CanvasEditorProps) {
   const store = useMemo(() => externalStore ?? new EditorStore(doc, onChange), [externalStore])
   const state = useEditor(store)
   const viewportRef = useRef<HTMLDivElement | null>(null)
@@ -414,18 +422,26 @@ export function CanvasEditor({ doc, onChange, refineProvider, imageProvider, onA
     transform: `translate(${camera.x}px, ${camera.y}px) scale(${camera.z})`,
   } as const
 
-  // artboard-level culling: only render content of artboards intersecting the viewport
+  // artboard-level culling: only render content of artboards intersecting the viewport.
+  // NOTE: culls by the artboard's NOMINAL height (ab.h); real content often overflows
+  // far below (e.g. a whole landing in one artboard). So we only cull when there are
+  // MANY frames — with few artboards we always render, or a tall single artboard would
+  // vanish when scrolled past its nominal height.
   const visibleIds = useMemo(() => {
+    const ids = new Set<string>()
+    if (state.doc.artboards.length <= 8) {
+      for (const ab of state.doc.artboards) ids.add(ab.id)
+      return ids
+    }
     const el = viewportRef.current
     const vw = el?.clientWidth ?? 1200
     const vh = el?.clientHeight ?? 800
-    const margin = 400
-    const ids = new Set<string>()
+    const margin = 800
     for (const ab of state.doc.artboards) {
       const sx = ab.x * camera.z + camera.x
       const sy = ab.y * camera.z + camera.y
       const sw = ab.w * camera.z
-      const sh = ab.h * camera.z
+      const sh = Math.max(ab.h, 6000) * camera.z // assume content may overflow well past ab.h
       if (sx + sw > -margin && sx < vw + margin && sy + sh > -margin && sy < vh + margin) ids.add(ab.id)
     }
     return ids
@@ -500,7 +516,7 @@ export function CanvasEditor({ doc, onChange, refineProvider, imageProvider, onA
     if (onAgentAction) onAgentAction({ nodeId: id, nodeHtml: nodeSubtreeToHtml(node) })
   }, [store, state.selection, onAgentAction])
 
-  const themeStyle = themeToCss(state.doc.theme, { scope: '.ce-artboard' })
+  const themeStyle = suppressThemeCss ? '' : themeToCss(state.doc.theme, { scope: '.ce-artboard' })
   const jitStyle = arbitraryUtilityCss(state.doc, '.ce-artboard')
 
   if (state.mode === 'preview') {
@@ -508,7 +524,7 @@ export function CanvasEditor({ doc, onChange, refineProvider, imageProvider, onA
       <div className="ce-root" style={styles.root}>
         <style>{CHROME_CSS}</style>
         <Toolbar store={store} state={state} refineProvider={refineProvider} onSave={onSave} />
-        <PreviewPane doc={state.doc} />
+        <PreviewPane doc={state.doc} renderPreview={renderPreview} />
       </div>
     )
   }
@@ -517,8 +533,9 @@ export function CanvasEditor({ doc, onChange, refineProvider, imageProvider, onA
     <div className="ce-root" style={styles.root}>
       <link rel="stylesheet" href={googleFontsHref()} />
       <style>{CHROME_CSS}</style>
-      <style>{themeStyle}</style>
+      {themeStyle && <style>{themeStyle}</style>}
       <style>{jitStyle}</style>
+      {extraCss && <style>{extraCss}</style>}
       <Toolbar store={store} state={state} refineProvider={refineProvider} onSave={onSave} />
       <div style={styles.body}>
         {state.panels && <LayersTree store={store} state={state} viewportRef={viewportRef} />}
@@ -673,11 +690,11 @@ function SelectionOverlay({
 }
 
 // Preview with a real device-size switcher (Desktop/Tablet/Mobile/Full).
-function PreviewPane({ doc }: { doc: Doc }) {
+function PreviewPane({ doc, renderPreview }: { doc: Doc; renderPreview?: (doc: Doc) => string }) {
   const [device, setDevice] = useState<'full' | 'desktop' | 'tablet' | 'mobile'>('full')
   const widths = { full: '100%', desktop: 1440, tablet: 768, mobile: 375 } as const
   const w = widths[device]
-  const html = useMemo(() => docToHtml(doc), [doc])
+  const html = useMemo(() => (renderPreview ? renderPreview(doc) : docToHtml(doc)), [doc, renderPreview])
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
       <div style={{ display: 'flex', gap: 4, justifyContent: 'center', padding: 6, borderBottom: '1px solid #1f2937', background: '#111318' }}>

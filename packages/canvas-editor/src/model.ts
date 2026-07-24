@@ -12,6 +12,7 @@ export interface Node {
   text?: string // text content for leaf text nodes
   src?: string // for <img>
   href?: string // for <a>
+  style?: string // raw inline style attribute (preserved verbatim for fidelity)
   hidden?: boolean // display:none (layer eye toggle)
   locked?: boolean // not selectable/draggable on canvas (layer lock toggle)
   children: Node[]

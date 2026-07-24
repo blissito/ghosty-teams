@@ -1,10 +1,13 @@
 import { AnimatePresence, motion } from "motion/react";
-import { useEffect, useRef, useState } from "react";
-import { X, ExternalLink, FileText, Download, Loader2, ChevronRight, ChevronLeft, RotateCw, Upload, Link as LinkIcon, Check } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { X, ExternalLink, FileText, Download, Loader2, ChevronRight, ChevronLeft, RotateCw, Upload, Link as LinkIcon, Check, Pencil, Eye, Maximize2, Minimize2 } from "lucide-react";
 import { useT } from "../i18n";
 import { officeToHtmlFn, xlsxToCsvFn, postMessage } from "../server/chat";
 import { listTeamDocumentsFn, type TeamDocument } from "../server/documents";
+import { updateArtifactHtmlFn } from "../server/artifacts";
+import { CanvasEditor, htmlToDoc, docToHtml } from "@ghosty/canvas-editor";
 import { Markdown } from "./Markdown";
+import { StreamingHtmlFrame } from "./StreamingHtmlFrame";
 
 // Un documento del team (generado o subido) → vista del panel. Null si no es
 // previsualizable. Reusado por el índice Cowork (kind:"docindex").
@@ -57,7 +60,8 @@ export type ArtifactView =
   | { kind: "doc"; title: string; documentId: string; md: string } // documento vivo (markdown local + versiones)
   | { kind: "sheet"; title: string; documentId: string; csv: string } // hoja viva (CSV local + versiones)
   // Artefacto HTML interactivo: `html` = fuente (iframe srcDoc, sandbox aislado); `src` = URL pública S3.
-  | { kind: "artifact"; title: string; documentId: string; html: string; src: string }
+  // `messageId` = mensaje ancla en gc_artifacts → guardado de ediciones del Canvas (nueva versión).
+  | { kind: "artifact"; title: string; documentId: string; html: string; src: string; messageId: number }
   // ask-user: pregunta con opciones clicables. Se pinta INLINE en el bubble (AskUserCard);
   // esta variante solo cubre el fallback read-only si se abriera en el panel.
   | { kind: "ask-user"; title: string; question: string; options: string[] }
@@ -212,6 +216,13 @@ export default function ArtifactPanel({
   const [refreshTick, setRefreshTick] = useState(0); // botón "refrescar" del header (re-fetch manual)
   const [downloading, setDownloading] = useState(false); // el export docx es lento → spinner
   const [copied, setCopied] = useState(false); // feedback del botón "Copiar enlace" del artefacto HTML
+  const [editing, setEditing] = useState(false); // artefacto HTML: modo Ver (iframe) vs Editar (Canvas)
+  const [fullscreen, setFullscreen] = useState(false); // panel a pantalla completa (cubre el chat)
+  // Ancho del viewport → ancho efectivo del panel en fullscreen (100vw). Se mantiene al día
+  // con el resize handler de abajo (setVw). El editor mide su viewport con ResizeObserver →
+  // re-fluye solo al cambiar el contenedor a ancho completo.
+  const [vw, setVw] = useState<number>(() => (typeof window === "undefined" ? DEFAULT_W : window.innerWidth));
+  const effectiveW = fullscreen ? vw : width;
 
   // ESC cierra el panel, igual que el visor de docs (Modal). Solo activo cuando hay
   // artefacto abierto. Si estás en un drill-down (detail), ESC vuelve al índice primero.
@@ -219,18 +230,45 @@ export default function ArtifactPanel({
     if (!rootArtifact) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
-      if (detail) setDetail(null);
+      if (fullscreen) setFullscreen(false);
+      else if (detail) setDetail(null);
       else onClose();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [rootArtifact, detail, onClose]);
+  }, [rootArtifact, detail, onClose, fullscreen]);
   // Identidad ESTABLE del artefacto → el effect de fetch office NO se re-dispara al reabrir
   // el MISMO artefacto. El draft usa id constante para que su streaming NO resetee.
   const officeSrc = artifact?.kind === "office" ? artifact.src : null;
   // xlsx no lo cubre mammoth (docx-only) → lo previsualizamos con SheetJS (§effect abajo).
   const isXlsx = artifact?.kind === "office" && /\.xlsx?$/i.test(artifact.title ?? "");
   const isDocLike = artifact?.kind === "doc" || artifact?.kind === "office" || artifact?.kind === "sheet";
+  // Artefacto HTML → Doc del Canvas. Se re-parsea SOLO al cambiar de artefacto (documentId),
+  // no en cada guardado (el editor es dueño de su estado interno mientras edita).
+  const artifactHtml = artifact?.kind === "artifact" ? artifact.html : null;
+  // Identidad ÚNICA por tarjeta: todos los artefactos de un hilo comparten
+  // documentId (son versiones del mismo doc), así que memoizar/keyear por documentId
+  // mostraba el artefacto equivocado al cambiar de tarjeta. El messageId sí distingue
+  // cada tarjeta y se mantiene estable al guardar (updateArtifactHtmlFn reusa el mismo).
+  const artifactKey =
+    artifact?.kind === "artifact"
+      ? String(artifact.messageId ?? artifact.documentId)
+      : null;
+  const editorDoc = useMemo(
+    () => (artifactHtml != null ? htmlToDoc(artifactHtml) : null),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [artifactKey]
+  );
+  // Los estilos embebidos del artefacto (<style>…</style>) se pierden al parsear a
+  // nodes → inyectarlos como extraCss para que el modo Editar se vea como Ver.
+  const artifactStyleCss = useMemo(() => {
+    if (!artifactHtml) return "";
+    const blocks = artifactHtml.match(/<style[^>]*>([\s\S]*?)<\/style>/gi) || [];
+    return blocks.map((b) => b.replace(/<\/?style[^>]*>/gi, "")).join("\n");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [artifactKey]);
+  // Al cambiar de artefacto (o cerrar), volver a modo Ver.
+  useEffect(() => { setEditing(false); }, [artifactKey]);
   // Badge por tipo REAL: sheet vivo = CSV, doc generado = DOCX, office = su extensión
   // real (XLSX/PPTX/DOCX) derivada del nombre — no hardcodear DOCX para todo office.
   const extBadge = (title?: string): string | null => {
@@ -378,24 +416,11 @@ export default function ArtifactPanel({
     const el = scrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;
   }, [draftLen, draftStreaming]);
-  // PREVIEW EN VIVO del artefacto HTML: renderizamos el HTML PARCIAL en el iframe mientras
-  // se construye (el navegador auto-cierra tags → se ve armarse). THROTTLE a ~400ms: no
-  // recargamos el iframe en cada token (parpadearía); refrescamos periódicamente desde un ref.
+  // PREVIEW EN VIVO del artefacto HTML: el HTML PARCIAL se escribe con document.write() dentro
+  // del iframe (ver StreamingHtmlFrame) → el parser incremental del navegador lo pinta desde el
+  // primer token, igual que una página que llega por red. Sin throttle de re-montaje ni gates.
   const isDraftArtifact = artifact?.kind === "draft" && !!artifact.artifact;
-  const draftHtmlRef = useRef("");
-  draftHtmlRef.current = isDraftArtifact && artifact?.kind === "draft" ? artifact.content : "";
-  const [draftPreview, setDraftPreview] = useState("");
-  useEffect(() => {
-    if (!isDraftArtifact) { setDraftPreview(""); return; }
-    setDraftPreview(draftHtmlRef.current);
-    const iv = setInterval(() => setDraftPreview(draftHtmlRef.current), 500);
-    return () => clearInterval(iv);
-  }, [isDraftArtifact]);
-  // El HTML del artefacto suele llegar HEAD-FIRST (todo el <style> antes del <body>), así que
-  // hasta que empieza el <body> no hay NADA visual que renderizar (iframe en blanco). Detectamos
-  // ese arranque para mostrar "preparando estilos…" en vez de un blanco que parece congelado, y
-  // recién pintamos el iframe cuando ya hay cuerpo que se ve construirse.
-  const draftBodyStarted = /<body[\s>]/i.test(draftPreview);
+  const draftPreview = isDraftArtifact && artifact?.kind === "draft" ? artifact.content : "";
   // Descarga con FEEDBACK: doc→.docx (compila en EasyBits) y sheet→.xlsx (convierte el CSV
   // fuente con SheetJS en /api/doc-xlsx) tardan un poco; fetch same-origin → blob → download,
   // con spinner. Office = URL pública externa → navegación directa (evita CORS del blob).
@@ -569,10 +594,18 @@ export default function ArtifactPanel({
   // Re-clampa el ancho al redimensionar la ventana: un ancho guardado en una sesión desktop
   // ancha (localStorage) NO debe heredarse tal cual en tablet y aplastar el centro.
   useEffect(() => {
-    const onResize = () => setWidth((w) => Math.min(w, maxPanelW(window.innerWidth)));
+    const onResize = () => {
+      setVw(window.innerWidth);
+      setWidth((w) => Math.min(w, maxPanelW(window.innerWidth)));
+    };
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
   }, []);
+
+  // Al cerrar el panel, vuelve al split normal → la próxima apertura no hereda fullscreen.
+  useEffect(() => {
+    if (!rootArtifact) setFullscreen(false);
+  }, [rootArtifact]);
 
   // ↗ "abrir en pestaña nueva" (reemplaza el botón expandir, que era defectuoso). Donde
   // hay URL real: docindex → la página global /artifacts; office/pdf/imagen/etc → su src
@@ -604,15 +637,21 @@ export default function ArtifactPanel({
             onClick={onClose}
           />
           <motion.aside
-            className="fixed right-0 top-0 z-50 flex h-full max-w-full overflow-hidden border-l border-border bg-surface shadow-2xl lg:relative lg:z-auto lg:h-auto lg:max-w-[75vw] lg:shrink-0 lg:shadow-none lg:self-stretch"
+            className={
+              fullscreen
+                ? "fixed inset-0 z-[100] flex h-full w-screen max-w-none overflow-hidden bg-surface"
+                : "fixed right-0 top-0 z-50 flex h-full max-w-full overflow-hidden border-l border-border bg-surface shadow-2xl lg:relative lg:z-auto lg:h-auto lg:max-w-[75vw] lg:shrink-0 lg:shadow-none lg:self-stretch"
+            }
             initial={{ width: 0 }}
-            animate={{ width }}
+            animate={{ width: effectiveW }}
             exit={{ width: 0 }}
             transition={isDragging ? { duration: 0 } : { type: "spring", stiffness: 320, damping: 34 }}
           >
             {artifact ? (
               <>
-            {/* Handle de redimensión: arrastra el borde izquierdo; doble clic resetea. */}
+            {/* Handle de redimensión: arrastra el borde izquierdo; doble clic resetea. En
+                fullscreen no aplica (el panel ocupa todo el viewport) → se oculta. */}
+            {!fullscreen ? (
             <div
               onPointerDown={(e) => {
                 dragging.current = true;
@@ -624,6 +663,7 @@ export default function ArtifactPanel({
               title={t("Arrastra para redimensionar (doble clic: reset)")}
               className="absolute left-0 top-0 z-10 -ml-1 h-full w-2 cursor-col-resize transition-colors hover:bg-brand/40 active:bg-brand/60"
             />
+            ) : null}
             {/* Colapsar: pastilla contrastante DENTRO del borde izquierdo (el overflow-hidden
                 del aside recortaba la versión que sobresalía). Chevron → indica "cerrar hacia
                 la derecha". */}
@@ -643,7 +683,7 @@ export default function ArtifactPanel({
             {/* Contenido: cambio INSTANTÁNEO al alternar de artefacto estando el panel ya
                 abierto (sin fade ni re-animación → no se siente como "abrir de nuevo"). El
                 deslizamiento vive solo en el motion.aside (abrir/cerrar). */}
-            <div className="flex min-w-0 shrink-0 flex-col" style={{ width }}>
+            <div className="flex min-w-0 shrink-0 flex-col" style={{ width: effectiveW }}>
               <header className="flex flex-shrink-0 items-center gap-1 border-b border-border bg-surface-2 px-3 py-2">
                 {detail ? (
                   <button
@@ -741,6 +781,15 @@ export default function ArtifactPanel({
                     <ExternalLink size={15} />
                   </a>
                 ) : null}
+                <button
+                  type="button"
+                  onClick={() => setFullscreen((v) => !v)}
+                  className="grid size-7 place-items-center rounded-md text-muted transition hover:bg-surface-3 hover:text-brand"
+                  title={fullscreen ? t("Salir de pantalla completa") : t("Expandir por completo")}
+                  aria-label={fullscreen ? t("Salir de pantalla completa") : t("Expandir por completo")}
+                >
+                  {fullscreen ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
+                </button>
                 <button
                   type="button"
                   onClick={onClose}
@@ -904,28 +953,15 @@ export default function ArtifactPanel({
                     <div className="flex items-center gap-2 border-b border-border bg-surface-2 px-4 py-2 text-xs text-muted">
                       <Loader2 size={13} className="animate-spin text-brand" />
                       <span className="truncate">
-                        {draftBodyStarted ? t("Construyendo artefacto…") : t("Preparando estilos…")} · <span className="text-neutral-400">{artifact.title}</span>
+                        {t("Construyendo artefacto…")} · <span className="text-neutral-400">{artifact.title}</span> <span className="text-neutral-500">· {Math.round(draftPreview.length / 100) / 10} KB</span>
                       </span>
                     </div>
                     <div className="relative min-h-0 flex-1">
-                      <iframe
+                      <StreamingHtmlFrame
+                        html={draftPreview}
                         title={artifact.title || "artefacto"}
-                        sandbox="allow-scripts allow-forms allow-popups"
-                        referrerPolicy="no-referrer"
-                        srcDoc={draftPreview}
                         className="absolute inset-0 h-full w-full border-0 bg-white"
                       />
-                      {!draftBodyStarted ? (
-                        // Todavía en el <head>/<style> → el iframe está en blanco a propósito.
-                        // Mostramos un estado de progreso encima para que no parezca colgado.
-                        <div className="pointer-events-none absolute inset-0 grid place-items-center bg-white">
-                          <div className="flex flex-col items-center gap-3 text-center">
-                            <div className="h-8 w-8 animate-spin rounded-full border-2 border-brand/30 border-t-brand" />
-                            <span className="text-sm text-neutral-500">{t("Preparando estilos…")}</span>
-                            <span className="text-xs text-neutral-400">{Math.round(draftPreview.length / 100) / 10} KB</span>
-                          </div>
-                        </div>
-                      ) : null}
                     </div>
                   </div>
                 ) : artifact.kind === "draft" ? (
@@ -1044,17 +1080,56 @@ export default function ArtifactPanel({
                     </article>
                   </div>
                 ) : artifact.kind === "artifact" ? (
-                  // Artefacto HTML interactivo: render desde el HTML FUENTE (local) en un iframe
-                  // AISLADO (sandbox sin allow-same-origin → no lee cookies/DOM del app). El HTML
-                  // vive también publicado en S3; `src` es el enlace compartible (barra inferior).
+                  // Artefacto HTML interactivo. Modo Ver: iframe AISLADO (sandbox sin
+                  // allow-same-origin → no lee cookies/DOM del app), render desde el HTML
+                  // FUENTE local. Modo Editar: el Canvas (@ghosty/canvas-editor) sobre el mismo
+                  // HTML; al Guardar publica una NUEVA versión (gc_artifacts) + re-publica a S3.
                   <div className="flex h-full flex-col">
-                    <iframe
-                      title={artifact.title || "artefacto"}
-                      sandbox="allow-scripts allow-forms allow-popups"
-                      referrerPolicy="no-referrer"
-                      srcDoc={artifact.html}
-                      className="min-h-0 flex-1 border-0 bg-white"
-                    />
+                    <div className="flex items-center gap-2 border-b border-border bg-surface px-3 py-1.5">
+                      <button
+                        onClick={() => setEditing((v) => !v)}
+                        className="flex items-center gap-1.5 rounded-md border border-border px-2 py-1 text-xs text-ink transition hover:border-brand"
+                        title={editing ? t("Ver") : t("Editar")}
+                      >
+                        {editing ? <Eye size={13} /> : <Pencil size={13} />}
+                        {editing ? t("Ver") : t("Editar")}
+                      </button>
+                    </div>
+                    {editing && editorDoc ? (
+                      <div className="min-h-0 flex-1">
+                        <CanvasEditor
+                          key={artifactKey ?? artifact.documentId}
+                          doc={editorDoc}
+                          extraCss={artifactStyleCss}
+                          suppressThemeCss
+                          renderPreview={(doc) =>
+                            docToHtml(doc).replace(
+                              "</head>",
+                              `<style>${artifactStyleCss}</style></head>`
+                            )
+                          }
+                          onSave={async (doc) => {
+                            const html = docToHtml(doc);
+                            await updateArtifactHtmlFn({
+                              data: {
+                                documentId: artifact.documentId,
+                                messageId: artifact.messageId,
+                                html,
+                                title: artifact.title || undefined,
+                              },
+                            });
+                          }}
+                        />
+                      </div>
+                    ) : (
+                      <iframe
+                        title={artifact.title || "artefacto"}
+                        sandbox="allow-scripts allow-forms allow-popups"
+                        referrerPolicy="no-referrer"
+                        srcDoc={artifact.html}
+                        className="min-h-0 flex-1 border-0 bg-white"
+                      />
+                    )}
                     {artifact.src ? (
                       <div className="flex items-center gap-2 border-t border-border bg-surface px-3 py-2">
                         <span className="truncate text-xs text-muted">{artifact.src}</span>

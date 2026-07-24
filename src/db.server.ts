@@ -85,6 +85,7 @@ export type Attachment = {
 // kind gatea el modo del panel: "html" (editor colab embebido), "pdf", "image".
 export type Artifact = {
   id: number;
+  messageId: number; // mensaje ancla en gc_artifacts → guardado de ediciones del Canvas
   kind: string;
   url: string;
   title: string | null;
@@ -303,6 +304,7 @@ export async function attachArtifacts(msgs: Message[]): Promise<Message[]> {
     // 1 artefacto por mensaje (el último gana si hubiera varios).
     byMsg.set(num(r.message_id), {
       id: num(r.id),
+      messageId: num(r.message_id),
       kind: r.kind!,
       url: r.url!,
       title: r.title ?? null,

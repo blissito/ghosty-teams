@@ -171,7 +171,7 @@ const styles = {
   btnActive: { background: '#3730a3', color: '#fff', borderColor: '#4f46e5' },
   zoom: { minWidth: 44, textAlign: 'center', fontSize: 12, color: '#9ca3af' },
   dot: { width: 8, height: 8, borderRadius: 999, display: 'inline-block' },
-  menu: { position: 'absolute', top: 34, left: 0, zIndex: 20, minWidth: 180, padding: 4, background: '#161922', border: '1px solid #2a2f3a', borderRadius: 10, boxShadow: '0 12px 40px rgba(0,0,0,.5)' },
+  menu: { position: 'absolute', top: 34, left: 0, zIndex: 1000, minWidth: 180, padding: 4, background: '#161922', border: '1px solid #2a2f3a', borderRadius: 10, boxShadow: '0 12px 40px rgba(0,0,0,.5)' },
   menuItem: { display: 'flex', justifyContent: 'space-between', gap: 10, width: '100%', textAlign: 'left', padding: '7px 10px', fontSize: 12, color: '#e5e7eb', background: 'transparent', border: 'none', borderRadius: 6, cursor: 'pointer' },
   dim: { color: '#6b7280', fontSize: 11 },
   overlay: { position: 'fixed', inset: 0, zIndex: 100, background: 'rgba(0,0,0,.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 },

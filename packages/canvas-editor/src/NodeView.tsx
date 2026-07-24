@@ -2,10 +2,27 @@
 // className — the canvas content is live DOM, not a picture. Adds data-id/data-tag
 // for addressing + x-ray, click-to-select, and a selection outline.
 
-import { createElement, type MouseEvent, type ReactNode } from 'react'
+import { createElement, type CSSProperties, type MouseEvent, type ReactNode } from 'react'
 import type { Node } from './model'
 
 const VOID_TAGS = new Set(['img', 'br', 'hr', 'input', 'meta', 'link'])
+
+// Parse a raw inline `style` attribute string into a React style object so we can
+// preserve it verbatim (Teams artifacts / SDK sections often use inline styles).
+function parseStyle(s: string): CSSProperties {
+  const out: Record<string, string> = {}
+  for (const decl of s.split(';')) {
+    const i = decl.indexOf(':')
+    if (i < 0) continue
+    const prop = decl.slice(0, i).trim()
+    const value = decl.slice(i + 1).trim()
+    if (!prop) continue
+    // custom properties (--x) stay as-is; others camelCase
+    const key = prop.startsWith('--') ? prop : prop.replace(/-([a-z])/g, (_, c) => c.toUpperCase())
+    out[key] = value
+  }
+  return out as CSSProperties
+}
 
 export function NodeView({
   node,
@@ -30,6 +47,7 @@ export function NodeView({
   }
   if (node.src != null) props.src = node.src
   if (node.href != null) props.href = node.href
+  if (node.style) props.style = parseStyle(node.style)
   if (node.hidden) props.hidden = true
   if (node.tag === 'input') props.readOnly = true
 
@@ -53,7 +71,7 @@ export function NodeView({
   // it) but hide its text — the floating textarea overlay (Excalidraw/tldraw pattern)
   // is the single source of truth while editing.
   if (editing) {
-    return createElement(node.tag, { ...props, style: { visibility: 'hidden' } }, ...children)
+    return createElement(node.tag, { ...props, style: { ...(props.style as CSSProperties), visibility: 'hidden' } }, ...children)
   }
   return createElement(node.tag, props, ...children)
 }
