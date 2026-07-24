@@ -5270,6 +5270,20 @@ function DmView({
         </div>
         {/* Llamada 1:1/grupo (caja LiveKit compartida). NO con agentes de la flota (aún). */}
         {!isAgentDm && <CallHeaderButton h={call} />}
+        {/* DM con agente: borrar memoria (mismo reset que el comando /clear). Acción
+            destructiva → ADVERTENCIA antes de invocar. */}
+        {isAgentDm && (
+          <button
+            onClick={() => {
+              if (confirm(t("Esto borra la memoria de esta conversación. {name} empezará de cero. ¿Continuar?", { name: title })))
+                clearDmAgentFn({ data: { id: dmId } }).catch(() => {});
+            }}
+            title={t("Borrar memoria de la conversación")}
+            className="grid h-11 w-11 shrink-0 place-items-center rounded-lg text-muted transition hover:bg-surface-3 hover:text-ink md:h-9 md:w-9"
+          >
+            <RotateCcw size={17} />
+          </button>
+        )}
       </header>
       {!isAgentDm && <CallBanner h={call} />}
       {/* overflow-anchor:none → desactiva el scroll-anchoring nativo del navegador. Al cargar

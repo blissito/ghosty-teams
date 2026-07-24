@@ -79,6 +79,8 @@ export const en: Record<string, string> = {
   "Aún no hay rooms.": "No rooms yet.",
   "Aún no tienes DMs.": "You don't have any DMs yet.",
   "Bloqueadas en el navegador. Actívalas desde los permisos del sitio.": "Blocked in the browser. Enable them from the site permissions.",
+  "Borrar memoria de la conversación": "Clear conversation memory",
+  "Esto borra la memoria de esta conversación. {name} empezará de cero. ¿Continuar?": "This clears this conversation's memory. {name} will start fresh. Continue?",
   "Buscando…": "Searching…",
   "Buscar": "Search",
   "Buscar emoji…": "Search emoji…",
