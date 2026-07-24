@@ -223,6 +223,13 @@ export default function ArtifactPanel({
   // re-fluye solo al cambiar el contenedor a ancho completo.
   const [vw, setVw] = useState<number>(() => (typeof window === "undefined" ? DEFAULT_W : window.innerWidth));
   const effectiveW = fullscreen ? vw : width;
+  // ¿La animación en curso es un toggle de pantalla completa? (vs abrir/cerrar el panel)
+  // → elige la curva: tween suave para el fullscreen, spring para abrir/cerrar.
+  const fullscreenAnim = useRef(false);
+  const toggleFullscreen = () => {
+    fullscreenAnim.current = true;
+    setFullscreen((v) => !v);
+  };
 
   // ESC cierra el panel, igual que el visor de docs (Modal). Solo activo cuando hay
   // artefacto abierto. Si estás en un drill-down (detail), ESC vuelve al índice primero.
@@ -230,7 +237,7 @@ export default function ArtifactPanel({
     if (!rootArtifact) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
-      if (fullscreen) setFullscreen(false);
+      if (fullscreen) toggleFullscreen();
       else if (detail) setDetail(null);
       else onClose();
     };
@@ -661,16 +668,35 @@ export default function ArtifactPanel({
             exit={{ opacity: 0 }}
             onClick={onClose}
           />
+          {/* Espaciador: en fullscreen el aside sale del flujo (fixed). Sin este hueco del
+              ancho que tenía, el chat de atrás reflowaba de golpe al entrar/salir → el
+              movimiento se veía tosco (saltaba el layout mientras el ancho animaba). */}
+          {fullscreen ? <div className="hidden shrink-0 lg:block" style={{ width }} /> : null}
           <motion.aside
             className={
               fullscreen
-                ? "fixed inset-0 z-[100] flex h-full w-screen max-w-none overflow-hidden bg-surface"
+                // Anclado a la derecha (no inset-0): así crece/decrece SOLO por el borde
+                // izquierdo, que es el mismo eje del panel normal → una única animación
+                // continua de ancho, sin reposicionar nada a media transición.
+                ? "fixed inset-y-0 right-0 z-[100] flex max-w-none overflow-hidden bg-surface"
                 : "fixed right-0 top-0 z-50 flex h-full max-w-full overflow-hidden border-l border-border bg-surface shadow-2xl lg:relative lg:z-auto lg:h-auto lg:max-w-[75vw] lg:shrink-0 lg:shadow-none lg:self-stretch"
             }
             initial={{ width: 0 }}
             animate={{ width: effectiveW }}
             exit={{ width: 0 }}
-            transition={isDragging ? { duration: 0 } : { type: "spring", stiffness: 320, damping: 34 }}
+            // Al arrastrar, sin animación. Para expandir/contraer a pantalla completa un
+            // spring rebotón se sentía tosco (overshoot sobre un panel enorme) → tween con
+            // ease de salida; la apertura/cierre del panel conserva el spring de siempre.
+            transition={
+              isDragging
+                ? { duration: 0 }
+                : fullscreenAnim.current
+                  ? { duration: 0.34, ease: [0.32, 0.72, 0, 1] }
+                  : { type: "spring", stiffness: 320, damping: 34 }
+            }
+            onAnimationComplete={() => {
+              fullscreenAnim.current = false;
+            }}
           >
             {artifact ? (
               <>
@@ -808,7 +834,7 @@ export default function ArtifactPanel({
                 ) : null}
                 <button
                   type="button"
-                  onClick={() => setFullscreen((v) => !v)}
+                  onClick={toggleFullscreen}
                   className="grid size-7 place-items-center rounded-md text-muted transition hover:bg-surface-3 hover:text-brand"
                   title={fullscreen ? t("Salir de pantalla completa") : t("Expandir por completo")}
                   aria-label={fullscreen ? t("Salir de pantalla completa") : t("Expandir por completo")}
