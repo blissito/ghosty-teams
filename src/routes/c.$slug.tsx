@@ -4731,7 +4731,10 @@ function DateDivider({ at }: { at: number }) {
   return (
     <div className="my-3 flex items-center gap-2">
       <div className="h-px flex-1 bg-border" />
-      <span className="shrink-0 rounded-full border border-border bg-surface-2 px-2.5 py-0.5 text-[11px] font-medium text-muted">{t(label)}</span>
+      {/* Misma razón que la hora de cada mensaje: la fecha depende de zona horaria y
+          locale del que renderiza (el SSR escribía "July 22", el cliente "22 de julio")
+          → mismatch de hidratación. */}
+      <span suppressHydrationWarning className="shrink-0 rounded-full border border-border bg-surface-2 px-2.5 py-0.5 text-[11px] font-medium text-muted">{t(label)}</span>
       <div className="h-px flex-1 bg-border" />
     </div>
   );
@@ -6216,7 +6219,12 @@ function MessageRow({
     <div id={`msg-${m.id}`} className={`group relative flex items-start gap-3 rounded-lg px-2 transition-colors hover:bg-surface-2 ${grouped ? "py-px" : "mt-2 py-0.5"}`}>
       {grouped ? (
         // Agrupado: sin avatar. Gutter angosto que muestra la hora SOLO al hover (Slack).
-        <div className="w-9 shrink-0 select-none whitespace-nowrap pt-0.5 text-right text-[10px] leading-5 tabular-nums text-muted opacity-0 group-hover:opacity-100">
+        // suppressHydrationWarning: la hora se formatea en la ZONA HORARIA del que
+        // renderiza — el SSR (UTC) escribía "18:49" y el cliente "12:49" → mismatch de
+        // hidratación EN CADA MENSAJE (React error #418): React tiraba el HTML del SSR y
+        // re-renderizaba todo el flujo en el cliente, que es por qué el room aparecía
+        // "mensaje a mensaje". El texto del cliente es el correcto; toleramos la diferencia.
+        <div suppressHydrationWarning className="w-9 shrink-0 select-none whitespace-nowrap pt-0.5 text-right text-[10px] leading-5 tabular-nums text-muted opacity-0 group-hover:opacity-100">
           {timeShort}
         </div>
       ) : (
@@ -6277,7 +6285,7 @@ function MessageRow({
               {t("Agente")}
             </span>
           ) : null}
-          <span className="text-[11px] text-muted">{time}</span>
+          <span suppressHydrationWarning className="text-[11px] text-muted">{time}</span>
           {m.edited_at ? <span className="text-[11px] text-muted">{t("(editado)")}</span> : null}
           {m.pinned ? (
             <span title={t("Fijado")} className="inline-flex">
@@ -7200,7 +7208,7 @@ function OptimisticRow({ o, grouped }: { o: Optimistic; grouped?: boolean }) {
           {failed ? (
             <span className="text-[11px] font-medium text-red-500">{t("No se envió")}</span>
           ) : (
-            <span className="text-[11px] text-muted">{time}</span>
+            <span suppressHydrationWarning className="text-[11px] text-muted">{time}</span>
           )}
         </div>
         )}
