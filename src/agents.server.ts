@@ -641,15 +641,27 @@ export async function runAgentTurn(opts: {
   };
   const onTool = async (ev: ToolEvent) => {
     anyActivity = true;
+    // Subagente hijo (fila viva): cada uno es una fila propia (label = su tarea), NUNCA se
+    // dedup, y al cerrar el `detail` pasa a ser su duración ("22.9s"). Es la visibilidad
+    // tipo Claude Code (N background agents con tarea + estado + tiempo).
+    const isChild = ev.name === "gs_subagent_child";
     if (ev.phase === "end") {
-      // Cierre de una tool → marca su id como terminada en la entrada correlacionada.
-      // Tools ocultas (sin label → sin entrada) no están en idToEntry → no-op.
       const entry = ev.id ? idToEntry.get(ev.id) : undefined;
       if (entry) {
         if (ev.id) entry.ended.add(ev.id);
         if (ev.ok === false) entry.failed = true;
+        if (isChild && ev.detail) entry.detail = ev.detail; // duración
         if (opts.emitBody) await paint();
       }
+      return;
+    }
+    if (isChild) {
+      const task = ev.detail || "Subagente";
+      const entry: ToolEntry = { ing: task, done: task, started: new Set(), ended: new Set(), failed: false };
+      if (ev.id) { entry.started.add(ev.id); idToEntry.set(ev.id, entry); }
+      tools.push(entry);
+      brokeByTool = true;
+      if (opts.emitBody) await paint();
       return;
     }
     // start. CUALQUIER tool (aunque sea oculta: Bash/Read/Write) corta el segmento de texto →
