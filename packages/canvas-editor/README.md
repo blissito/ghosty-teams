@@ -116,7 +116,14 @@ the DOM's practical ceiling is ~1–3k *visible* nodes, so we cull.
 - **Edit ⇄ Preview** with device sizes (Full/Desktop/Tablet/Mobile); **Export Code** modal (HTML+Tailwind) + copy; **dirty/Save** indicator; focus mode (hide panels).
 - 15 unit tests (round-trip, moveNode, group/ungroup/duplicate, selection, undo/dirty). Demo route: `/canvas-demo`.
 
-Also shipped: marquee-select, arrow-key reorder, per-layer lock/hide, effects (shadow/opacity).
+Also shipped: marquee-select, arrow-key reorder, per-layer lock/hide + **layers drag-and-drop reorder/reparent**, effects (shadow/opacity), border width/color, grid columns, **Space/H/V pan** (Figma-standard), **Figma-style drill selection with scope memory** (click container → click again drills → sibling clicks stay at that level), **12 real community palettes** (Nord/Dracula/Catppuccin/Rosé Pine/Tokyo Night/Atom One/Solarized/Gruvbox/Everforest/Ayu/Twitter/shadcn-Zinc — sourced + contrast-vetted) via a preset picker + 🎲 random, and **inline text editing** (double-click).
+
+### Inline text editing — the gotchas (why it was hard)
+Editing text on a CSS-transformed DOM canvas fights four things at once; the working recipe (Excalidraw/tldraw pattern) handles all of them:
+1. **`setPointerCapture` eats the native `dblclick`** → use `onDoubleClick` as primary trigger + a manual timing fallback (`tryBeginEdit`) on the **deepest** node (drill makes consecutive clicks target different ids, so detect on the stable deepest id, not the drill result).
+2. **Global shortcuts steal keys** (Backspace deletes the node) → the keydown/space handlers must ignore `input/textarea/select` **and `isContentEditable`**.
+3. **React resets contentEditable text on re-render** → don't use controlled contentEditable; use a **floating `<textarea>` overlay** with local `editText` state, commit to the store on blur/Enter.
+4. **Camera scale mismatch** → the node lives in a `scale(z)` world; `getComputedStyle` font-size is unscaled but `getBoundingClientRect` is scaled → draw the textarea at the node's **unscaled** size and apply `transform: scale(z)` (the node renders `visibility:hidden` to keep layout for measurement).
 
 ## Pending / roadmap
 

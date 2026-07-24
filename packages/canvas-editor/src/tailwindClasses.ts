@@ -89,6 +89,7 @@ export const GROUPS: Record<string, PropOption[]> = {
   padding: [['p-0', '0'], ['p-2', '2'], ['p-4', '4'], ['p-6', '6'], ['p-8', '8'], ['p-12', '12'], ['p-16', '16'], ['p-24', '24']],
   margin: [['m-0', '0'], ['m-2', '2'], ['m-4', '4'], ['m-6', '6'], ['m-8', '8'], ['mx-auto', 'x-auto']],
   gap: [['gap-0', '0'], ['gap-1', '1'], ['gap-2', '2'], ['gap-3', '3'], ['gap-4', '4'], ['gap-6', '6'], ['gap-8', '8']],
+  gridCols: [['grid-cols-1', '1'], ['grid-cols-2', '2'], ['grid-cols-3', '3'], ['grid-cols-4', '4'], ['grid-cols-5', '5'], ['grid-cols-6', '6'], ['grid-flow-col', 'auto→']],
   items: [['items-start', 'start'], ['items-center', 'center'], ['items-end', 'end'], ['items-stretch', 'stretch']],
   justify: [['justify-start', 'start'], ['justify-center', 'center'], ['justify-between', 'between'], ['justify-end', 'end'], ['justify-around', 'around']],
   overflow: [['overflow-visible', 'visible'], ['overflow-hidden', 'hidden'], ['overflow-auto', 'auto'], ['overflow-scroll', 'scroll']],
@@ -97,6 +98,8 @@ export const GROUPS: Record<string, PropOption[]> = {
   radius: [['rounded-none', 'none'], ['rounded', 'sm'], ['rounded-lg', 'lg'], ['rounded-xl', 'xl'], ['rounded-2xl', '2xl'], ['rounded-full', 'full'], ['rounded-[var(--radius)]', 'theme']],
   shadow: [['shadow-none', 'none'], ['shadow-sm', 'sm'], ['shadow', 'base'], ['shadow-md', 'md'], ['shadow-lg', 'lg'], ['shadow-xl', 'xl'], ['shadow-2xl', '2xl']],
   opacity: [['opacity-100', '100'], ['opacity-90', '90'], ['opacity-75', '75'], ['opacity-50', '50'], ['opacity-25', '25'], ['opacity-0', '0']],
+  borderWidth: [['border-0', 'off'], ['border', '1'], ['border-2', '2'], ['border-4', '4']],
+  borderColor: [['border-border', 'border'], ['border-primary', 'primary'], ['border-muted', 'muted'], ['border-accent', 'accent'], ['border-foreground', 'text']],
 }
 
 /** Current value of a group (the class present), or '' if none. */
@@ -119,9 +122,11 @@ export function getWidthSizing(cls: string): Sizing {
   return 'hug' // w-auto or unspecified
 }
 export function setWidthSizing(cls: string, s: Sizing, fixedPx = 320): string {
+  // also strip max-w-* so an explicit/fill width actually takes effect (a leftover
+  // max-w-xl from a block would otherwise cap the element and "resize does nothing").
   const cleaned = replaceGroup(cls, W_GROUP, null)
     .split(/\s+/)
-    .filter((c) => !/^w-\[.+\]$/.test(c) && !/^w-\d/.test(c))
+    .filter((c) => !/^w-\[.+\]$/.test(c) && !/^w-\d/.test(c) && !(s !== 'hug' && /^max-w-/.test(c)))
     .join(' ')
   if (s === 'hug') return addClass(cleaned, 'w-auto')
   if (s === 'fill') return addClass(cleaned, 'w-full')

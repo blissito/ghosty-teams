@@ -422,6 +422,10 @@ export class EditorStore {
   setTheme(patch: Partial<Doc['theme']>) {
     this.commit({ ...this.state.doc, theme: { ...this.state.doc.theme, ...patch } })
   }
+  /** Apply a full palette preset (both light + dark) keeping fonts/radius/mode. */
+  applyPalette(p: { name: string; light: Record<string, string>; dark: Record<string, string> }) {
+    this.setTheme({ name: p.name, light: p.light, dark: p.dark })
+  }
   /** Set one color token in the theme's ACTIVE mode palette. */
   setToken(key: string, value: string) {
     const t = this.state.doc.theme

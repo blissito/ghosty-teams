@@ -1,10 +1,16 @@
-// Left panel: the layers pyramid (artboards → node tree). Clicking a layer
-// selects it AND centers the camera on it — for nodes we measure the real
-// rendered element (by data-id), convert screen→world, then centerOnRect.
+// Left panel: the layers pyramid (artboards → node tree). Click selects + centers
+// the camera; per-row eye/lock toggles; and drag-and-drop to reorder / reparent
+// (drop above/below a row = sibling, drop onto the middle = nest inside).
 
-import type { RefObject } from 'react'
-import type { Artboard, Node } from './model'
+import { useState, type RefObject } from 'react'
+import { findNode, locateNode, type Artboard, type Node } from './model'
 import type { EditorState, EditorStore } from './store'
+
+type DropPos = 'before' | 'after' | 'inside'
+interface DropTarget {
+  id: string
+  pos: DropPos
+}
 
 export function LayersTree({
   store,
@@ -15,6 +21,9 @@ export function LayersTree({
   state: EditorState
   viewportRef: RefObject<HTMLDivElement | null>
 }) {
+  const [dragId, setDragId] = useState<string | null>(null)
+  const [drop, setDrop] = useState<DropTarget | null>(null)
+
   function centerOnNode(id: string, additive: boolean) {
     if (additive) {
       store.toggleSelect(id)
@@ -28,19 +37,36 @@ export function LayersTree({
     const vr = vp.getBoundingClientRect()
     const er = el.getBoundingClientRect()
     const cam = store.getSnapshot().camera
-    const world = {
-      x: (er.left - vr.left - cam.x) / cam.z,
-      y: (er.top - vr.top - cam.y) / cam.z,
-      w: er.width / cam.z,
-      h: er.height / cam.z,
-    }
-    store.centerOnRect(world, { w: vr.width, h: vr.height })
+    store.centerOnRect(
+      { x: (er.left - vr.left - cam.x) / cam.z, y: (er.top - vr.top - cam.y) / cam.z, w: er.width / cam.z, h: er.height / cam.z },
+      { w: vr.width, h: vr.height },
+    )
   }
   function centerOnArtboard(ab: Artboard) {
     const vp = viewportRef.current
     if (!vp) return
     const vr = vp.getBoundingClientRect()
     store.centerOnRect({ x: ab.x, y: ab.y, w: ab.w, h: ab.h }, { w: vr.width, h: vr.height })
+  }
+
+  function performDrop() {
+    if (!dragId || !drop || dragId === drop.id) {
+      setDragId(null)
+      setDrop(null)
+      return
+    }
+    const doc = store.getSnapshot().doc
+    const over = findNode(doc, drop.id)
+    const loc = locateNode(doc, drop.id)
+    if (over && loc) {
+      if (drop.pos === 'inside') {
+        store.moveNode(dragId, { artboardId: loc.artboardId, parentId: drop.id, index: over.children.length })
+      } else {
+        store.moveNode(dragId, { artboardId: loc.artboardId, parentId: loc.parentId, index: loc.index + (drop.pos === 'after' ? 1 : 0) })
+      }
+    }
+    setDragId(null)
+    setDrop(null)
   }
 
   return (
@@ -53,7 +79,23 @@ export function LayersTree({
               ▦ {ab.name}
             </button>
             {ab.nodes.map((nd) => (
-              <NodeRow key={nd.id} node={nd} depth={1} selection={state.selectionSet} onPick={centerOnNode} store={store} />
+              <NodeRow
+                key={nd.id}
+                node={nd}
+                depth={1}
+                selection={state.selectionSet}
+                onPick={centerOnNode}
+                store={store}
+                dragId={dragId}
+                drop={drop}
+                onDragStartRow={setDragId}
+                onDragOverRow={setDrop}
+                onDropRow={performDrop}
+                onDragEndRow={() => {
+                  setDragId(null)
+                  setDrop(null)
+                }}
+              />
             ))}
           </div>
         ))}
@@ -68,18 +110,57 @@ function NodeRow({
   selection,
   onPick,
   store,
+  dragId,
+  drop,
+  onDragStartRow,
+  onDragOverRow,
+  onDropRow,
+  onDragEndRow,
 }: {
   node: Node
   depth: number
   selection: string[]
   onPick: (id: string, additive: boolean) => void
   store: EditorStore
+  dragId: string | null
+  drop: DropTarget | null
+  onDragStartRow: (id: string) => void
+  onDragOverRow: (t: DropTarget) => void
+  onDropRow: () => void
+  onDragEndRow: () => void
 }) {
   const selected = selection.includes(node.id)
   const label = node.text ? `${node.tag} · ${node.text.slice(0, 18)}` : node.tag
+  const isDrop = drop?.id === node.id
   return (
     <>
-      <div style={{ ...styles.rowWrap, background: selected ? '#3730a3' : 'transparent', opacity: node.hidden ? 0.45 : 1 }}>
+      <div
+        draggable
+        onDragStart={(e) => {
+          e.dataTransfer.effectAllowed = 'move'
+          onDragStartRow(node.id)
+        }}
+        onDragOver={(e) => {
+          if (!dragId || dragId === node.id) return
+          e.preventDefault()
+          const r = e.currentTarget.getBoundingClientRect()
+          const rel = (e.clientY - r.top) / r.height
+          const pos: DropPos = rel < 0.28 ? 'before' : rel > 0.72 ? 'after' : 'inside'
+          onDragOverRow({ id: node.id, pos })
+        }}
+        onDrop={(e) => {
+          e.preventDefault()
+          onDropRow()
+        }}
+        onDragEnd={onDragEndRow}
+        style={{
+          ...styles.rowWrap,
+          background: isDrop && drop?.pos === 'inside' ? '#4338ca' : selected ? '#3730a3' : 'transparent',
+          opacity: node.hidden ? 0.45 : dragId === node.id ? 0.4 : 1,
+          boxShadow:
+            isDrop && drop?.pos === 'before' ? 'inset 0 2px 0 #8b5cf6' : isDrop && drop?.pos === 'after' ? 'inset 0 -2px 0 #8b5cf6' : undefined,
+        }}
+      >
         <button
           onClick={(e) => onPick(node.id, e.metaKey || e.ctrlKey || e.shiftKey)}
           style={{ ...styles.nodeRow, paddingLeft: 8 + depth * 14, color: selected ? '#fff' : '#cbd5e1' }}
@@ -95,7 +176,20 @@ function NodeRow({
         </button>
       </div>
       {node.children.map((c) => (
-        <NodeRow key={c.id} node={c} depth={depth + 1} selection={selection} onPick={onPick} store={store} />
+        <NodeRow
+          key={c.id}
+          node={c}
+          depth={depth + 1}
+          selection={selection}
+          onPick={onPick}
+          store={store}
+          dragId={dragId}
+          drop={drop}
+          onDragStartRow={onDragStartRow}
+          onDragOverRow={onDragOverRow}
+          onDropRow={onDropRow}
+          onDragEndRow={onDragEndRow}
+        />
       ))}
     </>
   )
@@ -109,7 +203,6 @@ function glyph(tag: string): string {
 }
 
 function cssEscape(s: string): string {
-  // minimal escape for querySelector; ids are alnum + _ so this is mostly a no-op
   if (typeof CSS !== 'undefined' && CSS.escape) return CSS.escape(s)
   return s.replace(/["\\]/g, '\\$&')
 }

@@ -12,13 +12,16 @@ export function NodeView({
   selection,
   onSelect,
   interactive,
+  editingId,
 }: {
   node: Node
   selection: string[]
   onSelect: (id: string) => void
   interactive: boolean
+  editingId?: string | null
 }): ReactNode {
   const selected = selection.includes(node.id)
+  const editing = editingId === node.id
 
   const props: Record<string, unknown> = {
     className: node.cls + (selected ? ' ce-selected' : ''),
@@ -44,7 +47,13 @@ export function NodeView({
   const children: ReactNode[] = []
   if (node.text != null && node.text !== '') children.push(node.text)
   for (const c of node.children) {
-    children.push(<NodeView key={c.id} node={c} selection={selection} onSelect={onSelect} interactive={interactive} />)
+    children.push(<NodeView key={c.id} node={c} selection={selection} onSelect={onSelect} interactive={interactive} editingId={editingId} />)
+  }
+  // inline text editing (double-click): keep the node laid out (so we can measure
+  // it) but hide its text — the floating textarea overlay (Excalidraw/tldraw pattern)
+  // is the single source of truth while editing.
+  if (editing) {
+    return createElement(node.tag, { ...props, style: { visibility: 'hidden' } }, ...children)
   }
   return createElement(node.tag, props, ...children)
 }

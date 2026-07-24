@@ -9,7 +9,7 @@ export const Route = createFileRoute('/canvas-demo')({
   component: CanvasDemo,
 })
 
-const DOC_KEY = 'ce-demo-doc'
+const DOC_KEY = 'ce-demo-doc-v2'
 
 function seedDoc(): Doc {
   // In the demo, persist the doc to localStorage so refreshes keep edits

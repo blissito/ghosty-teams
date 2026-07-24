@@ -4,7 +4,7 @@
 // artboards) is what we persist in gc_artifacts.md and serve at artefacto.ghosty.studio.
 
 import type { Artboard, Doc, Node, Theme } from './model'
-import { DEFAULT_THEME, activeTokens, genId, walk } from './model'
+import { DEFAULT_THEME, activeTokens, genId, googleFontsHref, walk } from './model'
 
 const VOID_TAGS = new Set(['img', 'br', 'hr', 'input', 'meta', 'link'])
 
@@ -64,9 +64,17 @@ export function semanticUtilityCss(scope = ''): string {
   const text = ['foreground', 'muted-foreground', 'primary-foreground', 'secondary-foreground']
     .map((name) => `${p}.text-${name}{color:var(--color-${name})}`)
     .join('\n')
-  const border = `${p}.border-border{border-color:var(--color-border)}`
+  const border = ['border', 'primary', 'secondary', 'muted', 'accent', 'foreground']
+    .map((name) => `${p}.border-${name}{border-color:var(--color-${name === 'border' ? 'border' : name})}`)
+    .join('\n')
   const radius = `${p}.rounded-\\[var\\(--radius\\)\\]{border-radius:var(--radius)}`
-  return [bg, text, border, radius].join('\n')
+  // Grid column utilities — the host's compiled Tailwind may not emit these, so
+  // define them (like the color tokens) or they'd silently no-op in the canvas.
+  const gridCols = [1, 2, 3, 4, 5, 6]
+    .map((n) => `${p}.grid-cols-${n}{grid-template-columns:repeat(${n},minmax(0,1fr))}`)
+    .join('\n')
+  const gridFlow = `${p}.grid-flow-col{grid-auto-flow:column}`
+  return [bg, text, border, radius, gridCols, gridFlow].join('\n')
 }
 
 /**
@@ -111,6 +119,7 @@ export function docToHtml(doc: Doc): string {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <script src="https://cdn.tailwindcss.com"></script>
+<link rel="stylesheet" href="${googleFontsHref([doc.theme.fonts.heading, doc.theme.fonts.body])}">
 <style>
 ${themeToCss(doc.theme)}
 ${arbitraryUtilityCss(doc)}

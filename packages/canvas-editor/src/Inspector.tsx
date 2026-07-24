@@ -5,7 +5,7 @@
 // box. Controls read/write Tailwind classes via the GROUPS helpers.
 
 import { useState } from 'react'
-import { FONT_OPTIONS, activeTokens, findNode, type Node } from './model'
+import { FONT_OPTIONS, PALETTE_PRESETS, activeTokens, findNode, type Node } from './model'
 import { htmlToNode, nodeSubtreeToHtml } from './serialize'
 import {
   GROUPS,
@@ -188,6 +188,7 @@ function NodePanel({ store, node }: { store: EditorStore; node: Node }) {
 function LayoutPanel({ store, node }: { store: EditorStore; node: Node }) {
   const display = getDisplay(node.cls)
   const isFlex = display === 'flex-row' || display === 'flex-col'
+  const isGrid = display === 'grid'
   const set = (cls: string) => store.setNodeClasses(node.id, cls)
   return (
     <Section title="Layout">
@@ -195,22 +196,23 @@ function LayoutPanel({ store, node }: { store: EditorStore; node: Node }) {
         <Segmented<Display>
           value={display}
           options={[
-            ['block', '▭', 'Block (flujo normal)'],
-            ['flex-row', '→', 'Flex fila (autolayout horizontal)'],
-            ['flex-col', '↓', 'Flex columna (autolayout vertical)'],
-            ['grid', '▦', 'Grid'],
-            ['hidden', '∅', 'Oculto (display none)'],
+            ['block', IconBlock, 'Block (flujo normal)'],
+            ['flex-row', IconRow, 'Flex fila (autolayout horizontal)'],
+            ['flex-col', IconCol, 'Flex columna (autolayout vertical)'],
+            ['grid', IconGrid, 'Grid'],
+            ['hidden', IconHidden, 'Oculto (display none)'],
           ]}
           onChange={(d) => set(setDisplay(node.cls, d))}
         />
       </Row>
+      {isGrid && <PropSelect label="Columnas" cls={node.cls} group={GROUPS.gridCols} onSet={set} />}
       {isFlex && (
         <>
           <PropSelect label="Align" cls={node.cls} group={GROUPS.items} onSet={set} />
           <PropSelect label="Justify" cls={node.cls} group={GROUPS.justify} onSet={set} />
-          <PropSelect label="Gap" cls={node.cls} group={GROUPS.gap} onSet={set} />
         </>
       )}
+      {(isFlex || isGrid) && <PropSelect label="Gap" cls={node.cls} group={GROUPS.gap} onSet={set} />}
     </Section>
   )
 }
@@ -265,6 +267,8 @@ function ColorsPanel({ store, node }: { store: EditorStore; node: Node }) {
     <Section title="Color">
       <PropSelect label="Text" cls={node.cls} group={GROUPS.textColor} onSet={set} />
       <PropSelect label="Fondo" cls={node.cls} group={GROUPS.bgColor} onSet={set} />
+      <PropSelect label="Borde" cls={node.cls} group={GROUPS.borderWidth} onSet={set} />
+      <PropSelect label="Color borde" cls={node.cls} group={GROUPS.borderColor} onSet={set} />
       <PropSelect label="Radius" cls={node.cls} group={GROUPS.radius} onSet={set} />
     </Section>
   )
@@ -402,8 +406,11 @@ const SWATCHES: [string, string][] = [
   ['background', 'Fondo'],
   ['foreground', 'Texto'],
   ['primary', 'Primary'],
+  ['primary-foreground', 'on-Primary'],
   ['secondary', 'Secondary'],
+  ['secondary-foreground', 'on-Secondary'],
   ['muted', 'Muted'],
+  ['muted-foreground', 'on-Muted'],
   ['accent', 'Accent'],
   ['border', 'Borde'],
 ]
@@ -429,32 +436,82 @@ function ThemePanel({ store, state }: { store: EditorStore; state: EditorState }
           ))}
         </select>
       </Row>
-      <div style={{ marginTop: 8 }}>
-        <div style={{ ...styles.sectionTitle, marginBottom: 6 }}>Paleta · {t.mode}</div>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
-          {SWATCHES.map(([key, label]) => (
-            <label key={key} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: '#9ca3af' }}>
-              <input style={styles.color} type="color" value={normalizeHex(tokens[key])} onChange={(e) => store.setToken(key, e.target.value)} />
-              {label}
-            </label>
+      <Row label="Paleta">
+        <select
+          style={styles.select}
+          value={PALETTE_PRESETS.some((p) => p.name === t.name) ? t.name : ''}
+          onChange={(e) => {
+            const p = PALETTE_PRESETS.find((x) => x.name === e.target.value)
+            if (p) store.applyPalette(p)
+          }}
+        >
+          {!PALETTE_PRESETS.some((p) => p.name === t.name) && <option value="">{t.name}</option>}
+          {PALETTE_PRESETS.map((p) => (
+            <option key={p.name} value={p.name}>{p.name}</option>
           ))}
+        </select>
+      </Row>
+      <div style={{ marginTop: 8 }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+          <span style={styles.sectionTitle}>{t.name} · {t.mode}</span>
+          <button
+            title="Paleta aleatoria (conocidas, con contraste)"
+            style={styles.iconBtn}
+            onClick={() => store.applyPalette(PALETTE_PRESETS[Math.floor(Math.random() * PALETTE_PRESETS.length)])}
+          >
+            🎲
+          </button>
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
+          {SWATCHES.map(([key, label]) => {
+            const hex = normalizeHex(tokens[key])
+            return (
+              <label key={key} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: '#9ca3af', cursor: 'pointer', position: 'relative' }}>
+                <span style={{ width: 22, height: 22, borderRadius: 5, border: '1px solid #3a3f4a', background: hex, flexShrink: 0, boxShadow: 'inset 0 0 0 1px rgba(255,255,255,.04)' }} />
+                <input type="color" value={hex} onChange={(e) => store.setToken(key, e.target.value)} style={{ position: 'absolute', left: 0, top: 0, width: 22, height: 22, opacity: 0, cursor: 'pointer' }} />
+                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {label}
+                  <span style={{ display: 'block', fontSize: 9, color: '#6b7280', fontFamily: 'monospace' }}>{tokens[key] ?? '—'}</span>
+                </span>
+              </label>
+            )
+          })}
         </div>
       </div>
     </Section>
   )
 }
 
+// Custom dropdown so each option previews in its own typeface (native <option>
+// font-family is unreliable, esp. Safari).
 function FontSelect({ value, onChange }: { value: string; onChange: (f: string) => void }) {
-  const known = FONT_OPTIONS.includes(value) ? value : ''
+  const [open, setOpen] = useState(false)
   return (
-    <select style={{ ...styles.select, fontFamily: value }} value={known} onChange={(e) => onChange(e.target.value)}>
-      {!known && <option value="">{value}</option>}
-      {FONT_OPTIONS.map((f) => (
-        <option key={f} value={f} style={{ fontFamily: f }}>
-          {f}
-        </option>
-      ))}
-    </select>
+    <div style={{ position: 'relative' }}>
+      <button style={{ ...styles.select, fontFamily: value, textAlign: 'left', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }} onClick={() => setOpen((o) => !o)}>
+        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{value}</span>
+        <span style={{ opacity: 0.6, marginLeft: 4 }}>▾</span>
+      </button>
+      {open && (
+        <>
+          <div style={{ position: 'fixed', inset: 0, zIndex: 19 }} onClick={() => setOpen(false)} />
+          <div style={styles.menu}>
+            {FONT_OPTIONS.map((f) => (
+              <button
+                key={f}
+                style={{ ...styles.menuItem, fontFamily: f, background: f === value ? '#3730a3' : 'transparent' }}
+                onClick={() => {
+                  onChange(f)
+                  setOpen(false)
+                }}
+              >
+                {f}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
   )
 }
 
@@ -500,17 +557,29 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
     </div>
   )
 }
-function Segmented<T extends string>({ value, options, onChange }: { value: T; options: (readonly [T, string] | readonly [T, string, string])[]; onChange: (v: T) => void }) {
+function Segmented<T extends string>({ value, options, onChange }: { value: T; options: (readonly [T, React.ReactNode] | readonly [T, React.ReactNode, string])[]; onChange: (v: T) => void }) {
   return (
     <div style={styles.segmented}>
       {options.map((opt) => (
-        <button key={opt[0]} title={opt[2] ?? opt[1]} style={{ ...styles.seg, ...(opt[0] === value ? styles.segActive : null) }} onClick={() => onChange(opt[0])}>
+        <button key={opt[0]} title={opt[2] ?? (typeof opt[1] === 'string' ? (opt[1] as string) : undefined)} style={{ ...styles.seg, display: 'flex', alignItems: 'center', justifyContent: 'center', ...(opt[0] === value ? styles.segActive : null) }} onClick={() => onChange(opt[0])}>
           {opt[1]}
         </button>
       ))}
     </div>
   )
 }
+
+// Display icons (crisp SVG instead of ambiguous unicode glyphs)
+const svg = (children: React.ReactNode) => (
+  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    {children}
+  </svg>
+)
+const IconBlock = svg(<><rect x="4" y="6" width="16" height="4" rx="1" /><rect x="4" y="14" width="16" height="4" rx="1" /></>)
+const IconRow = svg(<><rect x="3" y="6" width="7" height="12" rx="1" /><rect x="14" y="6" width="7" height="12" rx="1" /></>)
+const IconCol = svg(<><rect x="6" y="3" width="12" height="7" rx="1" /><rect x="6" y="14" width="12" height="7" rx="1" /></>)
+const IconGrid = svg(<><rect x="4" y="4" width="7" height="7" rx="1" /><rect x="13" y="4" width="7" height="7" rx="1" /><rect x="4" y="13" width="7" height="7" rx="1" /><rect x="13" y="13" width="7" height="7" rx="1" /></>)
+const IconHidden = svg(<><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z" opacity="0.4" /><line x1="3" y1="3" x2="21" y2="21" /></>)
 
 const styles = {
   panel: { width: 280, flexShrink: 0, borderLeft: '1px solid #1f2937', display: 'flex', flexDirection: 'column', background: '#111318' },

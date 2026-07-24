@@ -5,6 +5,7 @@
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { Doc } from './model'
+import { googleFontsHref } from './model'
 import { arbitraryUtilityCss, docToHtml, nodeSubtreeToHtml, themeToCss } from './serialize'
 import { EditorStore, useEditor } from './store'
 import type { AgentAction, ImageProvider, RefineProvider } from './refine'
@@ -114,7 +115,7 @@ export function CanvasEditor({ doc, onChange, refineProvider, imageProvider, onA
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement | null
-      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT')) return
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) return
       const mod = e.metaKey || e.ctrlKey
       const sel = store.getSnapshot().selection
       if (mod && e.key.toLowerCase() === 'z') {
@@ -135,27 +136,187 @@ export function CanvasEditor({ doc, onChange, refineProvider, imageProvider, onA
       } else if (e.key === 'ArrowDown' && sel) {
         e.preventDefault()
         store.reorderSibling(sel, 1)
+      } else if (!mod && e.key.toLowerCase() === 'h') {
+        store.setTool('hand') // hand tool (Figma-standard)
+      } else if (!mod && e.key.toLowerCase() === 'v') {
+        store.setTool('select')
       }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [store])
 
-  // drag to pan (hand tool / middle mouse) + marquee-select (select tool on bg)
+  // drag to pan (hand tool / middle mouse / Space-drag) + marquee-select
   const drag = useRef<{ x: number; y: number; moved: boolean } | null>(null)
   const marquee = useRef<{ x0: number; y0: number } | null>(null)
   const [marqueeRect, setMarqueeRect] = useState<{ left: number; top: number; w: number; h: number } | null>(null)
-  const onPointerDown = useCallback(
-    (e: { button: number; clientX: number; clientY: number; currentTarget: Element; target: EventTarget | null; pointerId: number; altKey: boolean; metaKey: boolean; ctrlKey: boolean; shiftKey: boolean }) => {
-      const onBackground = e.target === e.currentTarget
+
+  // inline text editing (double-click) — floating textarea overlay matching the
+  // node's metrics (Excalidraw/tldraw pattern). Uncontrolled-ish: local editText
+  // state (synchronous, no caret jump), commit to the store on blur/Enter.
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [editText, setEditText] = useState('')
+  const [editBox, setEditBox] = useState<{ left: number; top: number; w: number; h: number; z: number; style: React.CSSProperties } | null>(null)
+  useLayoutEffect(() => {
+    const vp = viewportRef.current
+    if (!editingId || !vp) {
+      setEditBox(null)
+      return
+    }
+    const el = vp.querySelector(`[data-id="${ceEscape(editingId)}"]`) as HTMLElement | null
+    if (!el) {
+      setEditBox(null)
+      return
+    }
+    const vr = vp.getBoundingClientRect()
+    const er = el.getBoundingClientRect()
+    const z = store.getSnapshot().camera.z
+    const cs = getComputedStyle(el)
+    // draw the textarea at the node's UNSCALED size, then scale(z) to match — font
+    // metrics from getComputedStyle are unscaled, but the on-screen box is scaled.
+    setEditBox({
+      left: er.left - vr.left,
+      top: er.top - vr.top,
+      w: er.width / z,
+      h: er.height / z,
+      z,
+      style: {
+        fontFamily: cs.fontFamily,
+        fontSize: cs.fontSize,
+        fontWeight: cs.fontWeight,
+        fontStyle: cs.fontStyle,
+        letterSpacing: cs.letterSpacing,
+        lineHeight: cs.lineHeight,
+        color: cs.color,
+        textAlign: cs.textAlign as React.CSSProperties['textAlign'],
+        padding: cs.padding,
+      },
+    })
+  }, [editingId, state.camera])
+  // manual double-click detection (native dblclick doesn't fire reliably once we
+  // setPointerCapture on pointerdown). Returns true if this press was a 2nd click
+  // on the same text node → enters inline editing.
+  const lastClick = useRef<{ id: string; t: number } | null>(null)
+  const tryBeginEdit = useCallback(
+    (id: string, t: number): boolean => {
+      const prev = lastClick.current
+      if (prev && prev.id === id && t - prev.t < 400) {
+        const node = store.findNodePublic(id)
+        if (node && node.text != null && node.children.length === 0) {
+          lastClick.current = null
+          store.select(id)
+          setEditText(node.text)
+          setEditingId(id)
+          return true
+        }
+      }
+      lastClick.current = { id, t }
+      return false
+    },
+    [store],
+  )
+  // native double-click as the primary trigger (Excalidraw/tldraw pattern)
+  const onDoubleClick = useCallback(
+    (e: { target: EventTarget | null }) => {
       const idEl = (e.target as Element | null)?.closest?.('[data-id]') as Element | null
-      // press on a node with the select tool → select (Cmd/Shift = add to selection)
-      // + arm a reorder drag (Alt/Option held = clone on drop)
-      if (state.tool === 'select' && idEl && !onBackground) {
-        const id = idEl.getAttribute('data-id')!
+      if (!idEl) return
+      const id = idEl.getAttribute('data-id')!
+      const node = store.findNodePublic(id)
+      if (node && node.text != null && node.children.length === 0) {
+        store.select(id)
+        setEditText(node.text)
+        setEditingId(id)
+      }
+    },
+    [store],
+  )
+  const commitText = useCallback(
+    (text: string) => {
+      setEditingId((cur) => {
+        if (cur) store.setNodeText(cur, text)
+        return null
+      })
+    },
+    [store],
+  )
+
+  // hold Space to pan the canvas (Figma-style), with any tool
+  const spaceDown = useRef(false)
+  const [spacePan, setSpacePan] = useState(false)
+  useEffect(() => {
+    const isTyping = (t: EventTarget | null) => {
+      const el = t as HTMLElement | null
+      return !!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable)
+    }
+    const down = (e: KeyboardEvent) => {
+      if (e.code === 'Space' && !isTyping(e.target)) {
+        e.preventDefault()
+        if (!spaceDown.current) {
+          spaceDown.current = true
+          setSpacePan(true)
+        }
+      }
+    }
+    const up = (e: KeyboardEvent) => {
+      if (e.code === 'Space') {
+        spaceDown.current = false
+        setSpacePan(false)
+      }
+    }
+    window.addEventListener('keydown', down)
+    window.addEventListener('keyup', up)
+    return () => {
+      window.removeEventListener('keydown', down)
+      window.removeEventListener('keyup', up)
+    }
+  }, [])
+  const onPointerDown = useCallback(
+    (e: { button: number; clientX: number; clientY: number; currentTarget: Element; target: EventTarget | null; pointerId: number; altKey: boolean; metaKey: boolean; ctrlKey: boolean; shiftKey: boolean; timeStamp: number }) => {
+      // while inline-editing, let clicks inside the editing node place the caret
+      if (editingId) {
+        const t = (e.target as Element | null)?.closest?.('[data-id]') as Element | null
+        if (t?.getAttribute('data-id') === editingId) return
+      }
+      // Space held (any tool) → pan
+      if (spaceDown.current) {
+        drag.current = { x: e.clientX, y: e.clientY, moved: false }
+        e.currentTarget.setPointerCapture?.(e.pointerId)
+        return
+      }
+      const onBackground = e.target === e.currentTarget
+      // build the data-id element chain under the cursor: [deepest ... outermost]
+      const chainEls: Element[] = []
+      let el = (e.target as Element | null)?.closest?.('[data-id]') as Element | null
+      while (el) {
+        chainEls.push(el)
+        el = el.parentElement?.closest('[data-id]') ?? null
+      }
+      if (state.tool === 'select' && chainEls.length && !onBackground) {
+        const idOf = (x: Element) => x.getAttribute('data-id')!
+        const scopeOf = (x: Element | null) => x?.parentElement?.closest('[data-id],[data-artboard-id]') ?? null
+        // double-click on the DEEPEST node under the cursor (stable across clicks) →
+        // inline-edit if it's a text node. Checked before drill so it actually triggers.
+        if (!e.metaKey && !e.ctrlKey && !e.shiftKey && tryBeginEdit(idOf(chainEls[0]), e.timeStamp)) return
         if (e.metaKey || e.ctrlKey || e.shiftKey) {
-          store.toggleSelect(id)
+          store.toggleSelect(idOf(chainEls[0])) // additive → the exact element under cursor
         } else {
+          const cur = store.getSnapshot().selection
+          const vp = viewportRef.current
+          const curEl = cur && vp ? (vp.querySelector(`[data-id="${ceEscape(cur)}"]`) as Element | null) : null
+          const scope = scopeOf(curEl)
+          const chainIds = chainEls.map(idOf)
+          const idx = cur ? chainIds.indexOf(cur) : -1
+          let target: Element
+          if (idx !== -1) {
+            // clicked on the current selection / its ancestor → drill one level deeper toward cursor
+            target = chainEls[Math.max(0, idx - 1)]
+          } else if (scope) {
+            // clicked a DIFFERENT element → stay at the same level: pick the sibling under `scope`
+            target = chainEls.find((x) => scopeOf(x) === scope) ?? chainEls[chainEls.length - 1]
+          } else {
+            target = chainEls[chainEls.length - 1] // outermost
+          }
+          const id = idOf(target)
           if (!store.getSnapshot().selectionSet.includes(id)) store.select(id)
           reorder.arm(id, e.clientX, e.clientY, e.altKey)
         }
@@ -171,7 +332,7 @@ export function CanvasEditor({ doc, onChange, refineProvider, imageProvider, onA
         e.currentTarget.setPointerCapture?.(e.pointerId)
       }
     },
-    [state.tool, reorder],
+    [state.tool, reorder, editingId, tryBeginEdit],
   )
   const onPointerMove = useCallback(
     (e: { clientX: number; clientY: number }) => {
@@ -354,6 +515,7 @@ export function CanvasEditor({ doc, onChange, refineProvider, imageProvider, onA
 
   return (
     <div className="ce-root" style={styles.root}>
+      <link rel="stylesheet" href={googleFontsHref()} />
       <style>{CHROME_CSS}</style>
       <style>{themeStyle}</style>
       <style>{jitStyle}</style>
@@ -363,10 +525,11 @@ export function CanvasEditor({ doc, onChange, refineProvider, imageProvider, onA
         <div
           ref={viewportRef}
           className={'ce-viewport' + (state.xray ? ' ce-xray' : '')}
-          style={{ cursor: state.tool === 'hand' ? 'grab' : 'default' }}
+          style={{ cursor: spacePan || state.tool === 'hand' ? 'grab' : 'default' }}
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}
           onPointerUp={onPointerUp}
+          onDoubleClick={onDoubleClick}
         >
           <div className="ce-world" style={worldStyle}>
             {state.doc.artboards.map((ab) => (
@@ -381,7 +544,7 @@ export function CanvasEditor({ doc, onChange, refineProvider, imageProvider, onA
                 </span>
                 {visibleIds.has(ab.id)
                   ? ab.nodes.map((nd) => (
-                      <NodeView key={nd.id} node={nd} selection={state.selectionSet} onSelect={(id) => store.select(id)} interactive={state.tool === 'select'} />
+                      <NodeView key={nd.id} node={nd} selection={state.selectionSet} onSelect={(id) => store.select(id)} interactive={state.tool === 'select'} editingId={editingId} />
                     ))
                   : null}
               </div>
@@ -400,6 +563,44 @@ export function CanvasEditor({ doc, onChange, refineProvider, imageProvider, onA
           )}
           {marqueeRect && (
             <div style={{ position: 'absolute', left: marqueeRect.left, top: marqueeRect.top, width: marqueeRect.w, height: marqueeRect.h, background: 'rgba(124,58,237,.12)', border: '1px solid #8b5cf6', pointerEvents: 'none', zIndex: 60 }} />
+          )}
+          {editingId && editBox && (
+            <textarea
+              autoFocus
+              value={editText}
+              onChange={(e) => setEditText(e.target.value)}
+              onFocus={(e) => e.currentTarget.select()}
+              onPointerDown={(e) => e.stopPropagation()}
+              onBlur={(e) => commitText(e.target.value)}
+              onKeyDown={(e) => {
+                e.stopPropagation()
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault()
+                  commitText((e.target as HTMLTextAreaElement).value)
+                } else if (e.key === 'Escape') {
+                  e.preventDefault()
+                  setEditingId(null)
+                }
+              }}
+              style={{
+                position: 'absolute',
+                left: editBox.left,
+                top: editBox.top,
+                width: Math.max(editBox.w, 24),
+                height: Math.max(editBox.h, 20),
+                transform: `scale(${editBox.z})`,
+                transformOrigin: 'top left',
+                margin: 0,
+                border: 'none',
+                outline: `${2 / editBox.z}px solid #8b5cf6`,
+                background: 'transparent',
+                resize: 'none',
+                overflow: 'hidden',
+                zIndex: 70,
+                boxSizing: 'border-box',
+                ...editBox.style,
+              }}
+            />
           )}
         </div>
         {state.panels && <Inspector store={store} state={state} refineProvider={refineProvider} imageProvider={imageProvider} onAgentAction={onAgentAction} />}

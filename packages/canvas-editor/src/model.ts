@@ -121,6 +121,88 @@ export const FONT_OPTIONS = [
   'Space Grotesk', 'DM Sans', 'Sora', 'Lora', 'Roboto', 'Work Sans', 'ui-monospace',
 ]
 
+// Known community palettes (Tailwind/shadcn named themes). Each is built from a
+// primary color over a neutral scaffold; primary-foreground is chosen for contrast.
+function luminance(hex: string): number {
+  const m = hex.replace('#', '')
+  const r = parseInt(m.slice(0, 2), 16) / 255
+  const g = parseInt(m.slice(2, 4), 16) / 255
+  const b = parseInt(m.slice(4, 6), 16) / 255
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b
+}
+/** Pick #0a0a0a or #fafafa for legible text over a background color. */
+export function onColor(bg: string): string {
+  return luminance(bg) > 0.55 ? '#0a0a0a' : '#fafafa'
+}
+
+export interface PalettePreset {
+  name: string
+  light: Record<string, string>
+  dark: Record<string, string>
+}
+
+// Real, community-recognized palettes (contrast-vetted by their communities).
+// Full semantic token sets so a generated theme is cohesive, not one-color.
+function P(
+  l: [string, string, string, string, string, string, string, string, string, string, string],
+  d: [string, string, string, string, string, string, string, string, string, string, string],
+) {
+  const keys = ['background', 'foreground', 'primary', 'primary-foreground', 'secondary', 'secondary-foreground', 'muted', 'muted-foreground', 'accent', 'accent-foreground', 'border']
+  const obj = (a: string[]) => Object.fromEntries(keys.map((k, i) => [k, a[i]])) as Record<string, string>
+  return { light: obj(l), dark: obj(d) }
+}
+
+// Sourced + contrast-vetted (Nord, Catppuccin, Dracula, Rosé Pine, Tokyo Night,
+// Atom One, Solarized, Gruvbox, Everforest, Ayu, Twitter/tweakcn, shadcn Zinc).
+export const PALETTE_PRESETS: PalettePreset[] = [
+  { name: 'shadcn Zinc', ...P(
+    ['#ffffff', '#09090b', '#18181b', '#fafafa', '#f4f4f5', '#18181b', '#f4f4f5', '#71717a', '#f4f4f5', '#18181b', '#e4e4e7'],
+    ['#09090b', '#fafafa', '#fafafa', '#18181b', '#27272a', '#fafafa', '#27272a', '#a1a1aa', '#27272a', '#fafafa', '#27272a']) },
+  { name: 'Nord', ...P(
+    ['#eceff4', '#2e3440', '#5e81ac', '#eceff4', '#d8dee9', '#2e3440', '#e5e9f0', '#4c566a', '#88c0d0', '#2e3440', '#d8dee9'],
+    ['#2e3440', '#eceff4', '#88c0d0', '#2e3440', '#3b4252', '#eceff4', '#3b4252', '#d8dee9', '#434c5e', '#eceff4', '#3b4252']) },
+  { name: 'Dracula', ...P(
+    ['#fffbeb', '#1f1f1f', '#644ac9', '#fffbeb', '#efe9ce', '#1f1f1f', '#efe9ce', '#6c664b', '#a3144d', '#fffbeb', '#ddd6b8'],
+    ['#282a36', '#f8f8f2', '#bd93f9', '#282a36', '#44475a', '#f8f8f2', '#44475a', '#6272a4', '#ff79c6', '#282a36', '#44475a']) },
+  { name: 'Catppuccin', ...P(
+    ['#eff1f5', '#4c4f69', '#8839ef', '#eff1f5', '#ccd0da', '#4c4f69', '#e6e9ef', '#6c6f85', '#dce0e8', '#4c4f69', '#ccd0da'],
+    ['#1e1e2e', '#cdd6f4', '#cba6f7', '#1e1e2e', '#313244', '#cdd6f4', '#181825', '#a6adc8', '#45475a', '#cdd6f4', '#313244']) },
+  { name: 'Rosé Pine', ...P(
+    ['#faf4ed', '#575279', '#286983', '#faf4ed', '#f2e9e1', '#575279', '#fffaf3', '#797593', '#907aa9', '#faf4ed', '#dfdad9'],
+    ['#191724', '#e0def4', '#c4a7e7', '#191724', '#26233a', '#e0def4', '#1f1d2e', '#908caa', '#403d52', '#e0def4', '#403d52']) },
+  { name: 'Tokyo Night', ...P(
+    ['#e1e2e7', '#3760bf', '#2e7de9', '#ffffff', '#d5d6db', '#3760bf', '#d5d6db', '#6172b0', '#9854f1', '#ffffff', '#a8aecb'],
+    ['#1a1b26', '#c0caf5', '#7aa2f7', '#1a1b26', '#292e42', '#c0caf5', '#1f2335', '#a9b1d6', '#bb9af7', '#1a1b26', '#3b4261']) },
+  { name: 'Atom One', ...P(
+    ['#fafafa', '#383a42', '#4078f2', '#ffffff', '#e5e5e6', '#383a42', '#eaeaeb', '#696c77', '#a626a4', '#ffffff', '#d4d4d5'],
+    ['#282c34', '#abb2bf', '#61afef', '#282c34', '#3e4451', '#abb2bf', '#21252b', '#828997', '#c678dd', '#282c34', '#3e4451']) },
+  { name: 'Solarized', ...P(
+    ['#fdf6e3', '#657b83', '#268bd2', '#fdf6e3', '#eee8d5', '#586e75', '#eee8d5', '#93a1a1', '#2aa198', '#002b36', '#e6dfc8'],
+    ['#002b36', '#839496', '#268bd2', '#002b36', '#073642', '#93a1a1', '#073642', '#586e75', '#2aa198', '#002b36', '#073642']) },
+  { name: 'Gruvbox', ...P(
+    ['#fbf1c7', '#3c3836', '#af3a03', '#fbf1c7', '#ebdbb2', '#3c3836', '#ebdbb2', '#7c6f64', '#427b58', '#fbf1c7', '#d5c4a1'],
+    ['#282828', '#ebdbb2', '#fe8019', '#282828', '#3c3836', '#ebdbb2', '#3c3836', '#a89984', '#504945', '#ebdbb2', '#504945']) },
+  { name: 'Everforest', ...P(
+    ['#fdf6e3', '#5c6a72', '#8da101', '#2d353b', '#efebd4', '#5c6a72', '#efebd4', '#829181', '#3a94c5', '#2d353b', '#e6e2cc'],
+    ['#2d353b', '#d3c6aa', '#a7c080', '#2d353b', '#3d484d', '#d3c6aa', '#3d484d', '#859289', '#475258', '#d3c6aa', '#475258']) },
+  { name: 'Ayu', ...P(
+    ['#fafafa', '#5c6166', '#fa8d3e', '#3b3f42', '#f0f0f1', '#5c6166', '#f0f0f1', '#8a9199', '#399ee6', '#3b3f42', '#e7e8e9'],
+    ['#0f1419', '#bfbdb6', '#ffb454', '#0f1419', '#1c232b', '#bfbdb6', '#151a1e', '#808b98', '#59c2ff', '#0f1419', '#1c232b']) },
+  { name: 'Twitter', ...P(
+    ['#ffffff', '#30313f', '#1da1f2', '#ffffff', '#30313f', '#ffffff', '#ebf0f5', '#64748b', '#f0f8ff', '#30313f', '#eceef4'],
+    ['#000000', '#eff3f4', '#1da1f2', '#ffffff', '#f7f9fa', '#30313f', '#36363c', '#9aa0a6', '#1a2632', '#eff3f4', '#44444e']) },
+]
+
+/** Google Fonts stylesheet URL for the given families (skips system fonts).
+ *  Used to actually load the fonts in the editor + exported HTML so selects
+ *  preview correctly and the canvas renders the chosen typography. */
+export function googleFontsHref(names: string[] = FONT_OPTIONS): string {
+  const families = names
+    .filter((n) => n && !n.startsWith('ui-') && !n.includes('monospace') && !n.includes('system'))
+    .map((n) => `family=${n.trim().replace(/\s+/g, '+')}:wght@400;500;600;700;800`)
+  return `https://fonts.googleapis.com/css2?${families.join('&')}&display=swap`
+}
+
 // ---------------------------------------------------------------------------
 // ID generation (dependency-free, no nanoid) — stable, URL-safe
 // ---------------------------------------------------------------------------
@@ -156,6 +238,27 @@ export function findNode(doc: Doc, id: NodeId): Node | null {
     if (found) break
   }
   return found
+}
+
+/** Locate a node: which artboard, its parent (null = artboard root), and index. */
+export function locateNode(doc: Doc, id: NodeId): { artboardId: ArtboardId; parentId: NodeId | null; index: number } | null {
+  for (const ab of doc.artboards) {
+    const root = ab.nodes.findIndex((n) => n.id === id)
+    if (root >= 0) return { artboardId: ab.id, parentId: null, index: root }
+    let found: { artboardId: ArtboardId; parentId: NodeId | null; index: number } | null = null
+    const dig = (parent: Node) => {
+      if (found) return
+      const i = parent.children.findIndex((n) => n.id === id)
+      if (i >= 0) {
+        found = { artboardId: ab.id, parentId: parent.id, index: i }
+        return
+      }
+      parent.children.forEach(dig)
+    }
+    ab.nodes.forEach(dig)
+    if (found) return found
+  }
+  return null
 }
 
 /** Find which artboard contains a node id. */
