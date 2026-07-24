@@ -117,7 +117,7 @@ import { clearMeCache } from "../server/auth";
 import { unfurlLinkFn } from "../server/unfurl";
 import { registerModalEsc } from "../utils/modal-esc";
 import ArtifactPanel, { type ArtifactView, viewFromAttachment } from "../components/ArtifactPanel";
-import { extractEbDoc, draftTitle, bubbleWithoutEbDoc } from "../lib/ebdoc";
+import { extractEbDoc, draftTitle, bubbleWithoutEbDoc, extractToolState, type ToolState } from "../lib/ebdoc";
 import { ThinkingRing } from "../components/ThinkingRing";
 import { playNotificationSound, playGhostySound, playSelfSound, playMentionSound, playDmSound, playReadySound, playDeleteSound, playArtifactOpen, playArtifactClose, startCallRing, stopCallRing } from "../utils/notificationSound";
 
@@ -6286,6 +6286,11 @@ function MessageRow({
         ) : (
           m.body ? (
             <div className="text-sm text-ink">
+              {(() => {
+                const ts = extractToolState(m.body);
+                return ts ? <ToolGroup tools={ts} /> : null;
+              })()}
+              {bubbleWithoutEbDoc(m.body).trim() ? (
               <Markdown
                 body={bubbleWithoutEbDoc(m.body)}
                 artifactUrl={m.artifact?.url}
@@ -6299,6 +6304,7 @@ function MessageRow({
                   if (u) openProfile({ name: u.name, avatar: u.avatar, handle: u.handle, isAgent: false, sub: u.sub });
                 }}
               />
+              ) : null}
             </div>
           ) : isAgent && !m.attachments?.length && !m.artifact ? (
             // Caja caliente: cáscara del agente aún sin texto → indicador inline (la fila
@@ -6349,10 +6355,62 @@ function MessageRow({
   );
 }
 
-// Extracto de texto plano de un mensaje para la cita (quita fences eb-doc/código,
+// Burbuja de herramientas estilo Claude Code: tarjeta colapsable con el estado real de
+// cada tool del turno (⏳/✓/✕). Los subagentes concurrentes (mismo label, n>1) muestran
+// su conteo. Abierta mientras trabaja, se colapsa sola al terminar (salvo toggle manual).
+function ToolGroup({ tools }: { tools: ToolState[] }) {
+  const anyRunning = tools.some((t) => t.status === "running");
+  const anyError = tools.some((t) => t.status === "error");
+  const overall: ToolState["status"] = anyError ? "error" : anyRunning ? "running" : "done";
+  const [open, setOpen] = useState(anyRunning);
+  const touched = useRef(false);
+  useEffect(() => {
+    if (!touched.current) setOpen(anyRunning);
+  }, [anyRunning]);
+  const icon = (s: ToolState["status"], sz = 13) =>
+    s === "error" ? (
+      <X size={sz} className="shrink-0 text-red-500" />
+    ) : s === "done" ? (
+      <Check size={sz} className="shrink-0 text-emerald-500" />
+    ) : (
+      <ThinkingRing size={sz} />
+    );
+  const total = tools.reduce((n, t) => n + (t.n ?? 1), 0);
+  const summary = tools.length === 1 ? tools[0].label : `${total} ${total === 1 ? "herramienta" : "herramientas"}`;
+  return (
+    <div className="mb-1.5 max-w-md overflow-hidden rounded-lg border border-border bg-surface-2/50">
+      <button
+        onClick={() => {
+          touched.current = true;
+          setOpen((o) => !o);
+        }}
+        className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-xs hover:bg-surface-3/40"
+      >
+        <Wrench size={12} className="shrink-0 text-muted" />
+        <span className="truncate font-medium text-ink">{summary}</span>
+        {icon(overall, 12)}
+        <ChevronDown size={14} className={`ml-auto shrink-0 text-muted transition-transform ${open ? "rotate-180" : ""}`} />
+      </button>
+      {open && (
+        <div className="border-t border-border/60 px-2.5 py-1.5">
+          {tools.map((t, i) => (
+            <div key={i} className="flex items-center gap-2 py-0.5 text-xs">
+              {icon(t.status)}
+              <span className={t.status === "error" ? "text-red-500" : "text-muted"}>{t.label}</span>
+              {t.n && t.n > 1 ? <span className="text-[10px] text-muted/70">×{t.n}</span> : null}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Extracto de texto plano de un mensaje para la cita (quita fences gt-tools/eb-doc/código,
 // markdown básico, y colapsa espacios). Espejo de quoteExcerpt del server.
 function plainExcerpt(body: string): string {
   const s = (body || "")
+    .replace(/```gt-tools[\s\S]*?```/g, "")
     .replace(/```eb-(doc|sheet)[\s\S]*?```/g, "[documento]")
     .replace(/```[\s\S]*?```/g, "[código]")
     .replace(/!\[[^\]]*\]\([^)]*\)/g, "[imagen]")

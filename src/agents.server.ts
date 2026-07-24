@@ -584,23 +584,24 @@ export async function runAgentTurn(opts: {
     if (t.started.size > 0 && t.ended.size >= t.started.size) return "done";
     return "running";
   };
-  const renderChecklist = (allDone: boolean): string => {
+  // Estado de tools como bloque cercado ```gt-tools``` (JSON) al inicio del body → el cliente
+  // lo pinta como burbuja colapsable estilo Claude Code (ebdoc.ts extractToolState + ToolGroup
+  // en c.$slug.tsx). done → label pasado ("Generé la imagen"); running/error → gerundio (el
+  // ícono ❌ marca el fallo). `n` = nº de tools concurrentes con el mismo label (ej. subagentes).
+  const renderToolBlock = (allDone: boolean): string => {
+    const emit = (arr: { label: string; status: string; n?: number }[]) =>
+      "```gt-tools\n" + JSON.stringify({ tools: arr }) + "\n```\n\n";
     if (tools.length) {
-      return (
-        tools
-          .map((tl) => {
-            const st = statusOf(tl, allDone);
-            const icon = st === "error" ? "❌" : st === "done" ? "✅" : "⏳";
-            // done → pasado ("Generé la imagen"); running/error → gerundio ("Generando…"),
-            // el ícono ❌ ya marca el fallo (evita "✅ Generé" cuando en realidad reventó).
-            return `- ${icon} ${st === "done" ? tl.done : tl.ing}`;
-          })
-          .join("\n") + "\n\n"
+      return emit(
+        tools.map((tl) => {
+          const st = statusOf(tl, allDone);
+          return { label: st === "done" ? tl.done : tl.ing, status: st, ...(tl.started.size > 1 ? { n: tl.started.size } : {}) };
+        })
       );
     }
-    return anyActivity && !allDone ? "- ⏳ Trabajando…\n\n" : "";
+    return anyActivity && !allDone ? emit([{ label: "Trabajando…", status: "running" }]) : "";
   };
-  const renderBody = (allDone: boolean): string => renderChecklist(allDone) + acc;
+  const renderBody = (allDone: boolean): string => renderToolBlock(allDone) + acc;
   const paint = async (allDone = false) => {
     const bodyId = await ensure();
     if (opts.emitBody) opts.emitBody(bodyId, renderBody(allDone));
@@ -674,8 +675,8 @@ export async function runAgentTurn(opts: {
   }
   // `acc` (con separadores) es el texto bonito; reply es la acumulación cruda del stream.
   const finalText = acc.trim() || reply || "(sin respuesta)";
-  // Body final autoritativo: checklist TODO ✅ + texto separado. El caller lo persiste.
-  return { id: await ensure(), reply: renderChecklist(true) + finalText };
+  // Body final autoritativo: bloque gt-tools TODO ✅ + texto separado. El caller lo persiste.
+  return { id: await ensure(), reply: renderToolBlock(true) + finalText };
 }
 
 // Llama al backend del agente y devuelve su respuesta en texto.

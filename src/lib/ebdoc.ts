@@ -167,10 +167,46 @@ export function bubbleWithoutEbAudio(body: string): string {
   return [before, after].filter(Boolean).join("\n\n");
 }
 
+// ── Estado de tools (checklist estilo Claude Code) ───────────────────────────────
+// El server emite el estado de las herramientas del turno como un bloque cercado al
+// INICIO del body:  ```gt-tools\n{"tools":[{label,status,n?}]}\n```  . El cliente lo
+// parsea → burbuja ToolGroup colapsable; el resto del body es prosa. Se re-emite entero
+// en cada paint (siempre cerrado) → el cliente ve un bloque completo en cada update.
+export type ToolStatus = "running" | "done" | "error";
+export type ToolState = { label: string; status: ToolStatus; n?: number };
+
+export function extractToolState(body: string): ToolState[] | null {
+  const open = body.match(/```gt-tools[^\n]*\n/);
+  if (!open || open.index == null) return null;
+  const rest = body.slice(open.index + open[0].length);
+  const closeIdx = rest.indexOf("```");
+  if (closeIdx === -1) return null; // JSON a medio streamear → espera al cierre
+  try {
+    const obj = JSON.parse(rest.slice(0, closeIdx).trim()) as { tools?: unknown };
+    if (!Array.isArray(obj.tools)) return null;
+    const tools = (obj.tools as ToolState[]).filter((t) => t && typeof t.label === "string" && !!t.status);
+    return tools.length ? tools : null;
+  } catch {
+    return null;
+  }
+}
+
+// Quita el bloque ```gt-tools``` del body (el estado se muestra como burbuja, no como texto).
+export function stripToolBlock(body: string): string {
+  const open = body.match(/```gt-tools[^\n]*\n/);
+  if (!open || open.index == null) return body;
+  const before = body.slice(0, open.index);
+  const rest = body.slice(open.index + open[0].length);
+  const closeIdx = rest.indexOf("```");
+  const after = closeIdx === -1 ? "" : rest.slice(closeIdx + 3);
+  return (before + after).replace(/^\s+/, "");
+}
+
 // Texto de la burbuja del chat SIN el bloque (narración alrededor). Mientras streamea (no
 // cerrado) deja un marcador para que el chat no muestre el markdown/csv crudo.
 export function bubbleWithoutEbDoc(body: string): string {
-  // Primero limpia cualquier bloque de nota de voz (no debe verse el JSON crudo).
+  // Primero saca el bloque de estado de tools (se pinta como burbuja) y la nota de voz.
+  body = stripToolBlock(body);
   body = bubbleWithoutEbAudio(body);
   const doc = extractEbDoc(body);
   if (!doc) return body;
