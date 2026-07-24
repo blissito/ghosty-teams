@@ -6376,7 +6376,21 @@ function ToolGroup({ tools }: { tools: ToolState[] }) {
       <ThinkingRing size={sz} />
     );
   const total = tools.reduce((n, t) => n + (t.n ?? 1), 0);
-  const summary = tools.length === 1 ? tools[0].label : `${total} ${total === 1 ? "herramienta" : "herramientas"}`;
+  // UNA herramienta → una sola línea, sin colapsable (el header y la fila expandida
+  // dirían lo mismo = info repetida). El ×n y el detalle van en esa línea.
+  if (tools.length === 1) {
+    const t = tools[0];
+    return (
+      <div className="mb-1.5 flex max-w-md items-center gap-2 rounded-lg border border-border bg-surface-2/50 px-2.5 py-1.5 text-xs">
+        <Wrench size={12} className="shrink-0 text-muted" />
+        {icon(t.status, 12)}
+        <span className={`truncate ${t.status === "error" ? "text-red-500" : "text-ink"}`}>{t.label}</span>
+        {t.detail ? <span className="truncate font-mono text-[10px] text-muted/70">· {t.detail}</span> : null}
+        {t.n && t.n > 1 ? <span className="shrink-0 text-[10px] text-muted/70">×{t.n}</span> : null}
+      </div>
+    );
+  }
+  const summary = `${total} ${total === 1 ? "herramienta" : "herramientas"}`;
   return (
     <div className="mb-1.5 max-w-md overflow-hidden rounded-lg border border-border bg-surface-2/50">
       <button

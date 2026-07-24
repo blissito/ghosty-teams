@@ -53,14 +53,28 @@ async function resolveNamespace(slug: string): Promise<string> {
     .createHmac("sha256", process.env.GHOSTY_PARTNER_SECRET!)
     .update(`${ts}.${slug}`)
     .digest("hex");
-  const res = await fetch(
-    `${IDP}/internal/workspaces/${encodeURIComponent(slug)}?ts=${ts}&sig=${sig}`
-  );
-  if (!res.ok) throw new Error(`workspace "${slug}" no resoluble (${res.status})`);
-  const j = (await res.json()) as { namespace?: string; status?: string };
-  if (!j.namespace) throw new Error(`workspace "${slug}" sin namespace`);
-  cache.set(slug, { ns: j.namespace, exp: Date.now() + TTL_MS });
-  return j.namespace;
+  // Camino CRÍTICO: CADA server-fn de teams resuelve el namespace antes de tocar la DB.
+  // Sin timeout, un gs lento/reiniciando cuelga TODO request de teams (carga a gotas).
+  // 1) timeout duro (falla rápido). 2) si hay un valor cacheado —aunque expirado— se
+  //    sirve stale ante error (stale-while-error): un hipo de gs no debe tirar la carga.
+  try {
+    const res = await fetch(
+      `${IDP}/internal/workspaces/${encodeURIComponent(slug)}?ts=${ts}&sig=${sig}`,
+      { signal: AbortSignal.timeout(3000) }
+    );
+    if (!res.ok) throw new Error(`workspace "${slug}" no resoluble (${res.status})`);
+    const j = (await res.json()) as { namespace?: string; status?: string };
+    if (!j.namespace) throw new Error(`workspace "${slug}" sin namespace`);
+    cache.set(slug, { ns: j.namespace, exp: Date.now() + TTL_MS });
+    return j.namespace;
+  } catch (e) {
+    if (hit) {
+      // Extiende el stale un ratito para no martillar a gs mientras se recupera.
+      cache.set(slug, { ns: hit.ns, exp: Date.now() + 30_000 });
+      return hit.ns;
+    }
+    throw e;
+  }
 }
 
 /** Namespace sqld del tenant de este request (por subdominio; fallback a env). */
