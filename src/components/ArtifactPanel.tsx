@@ -289,7 +289,14 @@ export default function ArtifactPanel({
     () =>
       artifactStyleCssRaw
         .replace(/(^|[\s,{}])(html|body)\b/gi, "$1.ce-artboard")
-        .replace(/:root\b/gi, ".ce-artboard"),
+        .replace(/:root\b/gi, ".ce-artboard")
+        // EN EDICIÓN el TEMA lo manda el editor. El artefacto trae su propia paleta en
+        // `:root` (autocontenida para su URL pública); al reescribirla a `.ce-artboard`
+        // quedaba con la MISMA especificidad que la del editor y, al ir después en la
+        // cascada, GANABA → cambiar de paleta en el panel no hacía nada (reportado
+        // 2026-07-24). Quitamos solo esas declaraciones de token; el resto del CSS del
+        // artefacto (keyframes, reglas propias) se conserva intacto.
+        .replace(/^\s*--(?:color-[\w-]+|radius|font-(?:heading|body|mono))\s*:[^;]*;/gim, ""),
     [artifactStyleCssRaw]
   );
   // Al cambiar de artefacto (o cerrar), volver a modo Ver.
