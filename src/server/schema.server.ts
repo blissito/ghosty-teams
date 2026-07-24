@@ -86,6 +86,11 @@ async function migrate(): Promise<void> {
               ON gc_messages(channel_id, topic, created_at)`);
   await exec(`CREATE INDEX IF NOT EXISTS gc_messages_dm
               ON gc_messages(dm_id, created_at)`);
+  // reply_count de listChannelFlow es un subquery correlacionado COUNT(*) WHERE parent_id=m.id
+  // → sin este índice era un full-scan de gc_messages POR CADA mensaje top-level (O(M×N)):
+  // causa raíz del arranque lentísimo de rooms grandes (general). Con el índice = lookup.
+  await exec(`CREATE INDEX IF NOT EXISTS gc_messages_parent
+              ON gc_messages(parent_id)`);
 
   await exec(`CREATE TABLE IF NOT EXISTS gc_reactions (
     message_id INTEGER NOT NULL,
