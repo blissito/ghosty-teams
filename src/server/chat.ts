@@ -349,6 +349,11 @@ export const getMessagesSince = createServerFn({ method: "GET" })
   .validator((d: { slug: string; sinceId: number }) => d)
   .handler(async ({ data }) => {
     const db = await import("../db.server");
+    // Asegura columnas nuevas (p.ej. gc_attachments.waveform/duration_ms) ANTES de
+    // hidratar adjuntos: un usuario con sesión viva puede abrir un room y disparar
+    // este catch-up ANTES de cualquier login/envío en el proceso recién deployado.
+    // Idempotente + cacheado (done) → costo ~0 tras la 1ª vez.
+    await (await import("./schema.server")).ensureSchema().catch(() => {});
     const channel = await db.getChannel(data.slug);
     if (!channel) return [];
     const user = await sessionUser();
