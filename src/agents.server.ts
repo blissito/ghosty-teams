@@ -496,6 +496,7 @@ const TOOL_LABELS: Record<string, { ing: string; done: string }> = {
   gs_doc: { ing: "Generando el documento", done: "Generé el documento" },
   gs_db_query: { ing: "Consultando la base", done: "Consulté la base" },
   gs_db_write: { ing: "Escribiendo en la base", done: "Escribí en la base" },
+  gs_subagent_spawn: { ing: "Lanzando subagentes", done: "Subagentes listos" },
   // El agente redacta docs invocando un Skill (oficio/xlsx/pptx/doc-remix) → la acción
   // visible = "Redacté el documento" (antes solo se veía "Subió", el paso final).
   Skill: { ing: "Redactando el documento", done: "Redacté el documento" },
