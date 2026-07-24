@@ -140,18 +140,33 @@ async function uploadToEasyBitsLegacy(opts: {
 
 // Re-firma un readUrl para servir un objeto ya subido. Keys `t3/…` → storage propio;
 // ids legacy → EasyBits (compat con adjuntos previos). El proxy lo llama on-demand.
+// Cache en memoria del readUrl firmado por fileId. Cada <img src="/api/attachment/:id">
+// pegaba aquí y, para los adjuntos LEGACY (EasyBits, remoto), hacía un fetch de red POR
+// IMAGEN y POR VISITA → el timeline se pintaba "mensaje por mensaje". El TTL del signed
+// URL es ~1h; cacheamos 50 min y medimos lo que tarda mintear.
+const readUrlCache = new Map<string, { url: string; exp: number }>();
+
 export async function mintReadUrl(fileId: string): Promise<string | null> {
   if (!fileId) return null;
+  const hit = readUrlCache.get(fileId);
+  if (hit && hit.exp > Date.now()) return hit.url;
   const storage = await import("./storage.server");
-  if (storage.isOwnKey(fileId)) return storage.signedUrl(fileId, 3600);
-  try {
-    const res = await ebFetch(`/api/v2/files/${encodeURIComponent(fileId)}`, { method: "GET" });
-    if (!res.ok) return null;
-    const j = (await res.json()) as GetResponse;
-    return j.readUrl || null;
-  } catch {
-    return null;
+  const t0 = performance.now();
+  let url: string | null = null;
+  if (storage.isOwnKey(fileId)) {
+    url = await storage.signedUrl(fileId, 3600);
+  } else {
+    try {
+      const res = await ebFetch(`/api/v2/files/${encodeURIComponent(fileId)}`, { method: "GET" });
+      if (res.ok) url = ((await res.json()) as GetResponse).readUrl || null;
+    } catch {
+      url = null;
+    }
   }
+  const ms = performance.now() - t0;
+  if (ms > 200) console.log(`[mintReadUrl ${Math.round(ms)}ms own=${storage.isOwnKey(fileId)}] ${fileId.slice(0, 40)}`);
+  if (url) readUrlCache.set(fileId, { url, exp: Date.now() + 50 * 60_000 });
+  return url;
 }
 
 // Descarga los bytes de un objeto y los devuelve en base64 (para FileParts inline
