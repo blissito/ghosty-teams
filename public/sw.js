@@ -1,11 +1,11 @@
-// Ghosty Teams PWA — Service Worker.
-// Cachea SOLO los assets con hash de contenido (/assets/*.js|css|woff…): son
-// INMUTABLES (el filename cambia en cada build) → cache-first sin caducidad es
-// seguro y hace que la PWA arranque casi instantánea (no re-descarga ~2-3 MB de
-// JS en cada apertura en frío). TODO lo demás — HTML, /api, server functions,
-// SSE — pasa SIEMPRE a red (la app es dinámica; NUNCA cachear la app ni datos).
-
-const ASSET_CACHE = "gt-assets-v1";
+// Ghosty Teams PWA — Service Worker (solo push + instalabilidad).
+// ⚠️ SIN handler `fetch` a propósito: un cache-first para /assets/ (probado 2026-07-24)
+// EMPEORÓ la carga — con la red sobre HTTP/3 (QUIC) dando ERR_QUIC_PROTOCOL_ERROR, el
+// `fetch` del SW fallaba y `cache.put` reventaba → el `respondWith` rechazaba → el asset
+// no cargaba y el browser reintentaba lento (carga de ~10 min). Dejar que el browser
+// maneje los assets NATIVO (retry/fallback a H2) es más robusto. El caché offline, si se
+// hace, debe tolerar fetch fallido (never-reject) y NO cachear respuestas parciales.
+// Limpia cualquier caché viejo que dejó la versión con fetch handler.
 
 self.addEventListener("install", () => {
   self.skipWaiting();
@@ -15,38 +15,8 @@ self.addEventListener("activate", (event) => {
   event.waitUntil(
     Promise.all([
       self.clients.claim(),
-      // Limpia versiones viejas del caché de assets (deja solo la actual).
-      caches
-        .keys()
-        .then((keys) =>
-          Promise.all(keys.filter((k) => k.startsWith("gt-assets-") && k !== ASSET_CACHE).map((k) => caches.delete(k)))
-        ),
+      caches.keys().then((keys) => Promise.all(keys.filter((k) => k.startsWith("gt-assets-")).map((k) => caches.delete(k)))),
     ])
-  );
-});
-
-// Cache-first estricto para assets hasheados del mismo origen. El resto: red directa.
-self.addEventListener("fetch", (event) => {
-  const req = event.request;
-  if (req.method !== "GET") return;
-  let url;
-  try {
-    url = new URL(req.url);
-  } catch {
-    return;
-  }
-  // Solo /assets/ del mismo origen (JS/CSS/fuentes con hash inmutable). HTML y datos NO.
-  if (url.origin !== self.location.origin || !url.pathname.startsWith("/assets/")) return;
-  event.respondWith(
-    caches.open(ASSET_CACHE).then((cache) =>
-      cache.match(req).then((hit) => {
-        if (hit) return hit;
-        return fetch(req).then((res) => {
-          if (res.ok) cache.put(req, res.clone());
-          return res;
-        });
-      })
-    )
   );
 });
 
