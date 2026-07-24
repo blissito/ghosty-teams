@@ -1,6 +1,6 @@
 // Estado en EasyBits DB (libSQL) — modelo Slack: canal = flujo, threads nacen
 // de un mensaje (parent_id). Compute stateless, historial durable.
-import { dbq, num, type Row } from "./dbq.server";
+import { dbq, dbqMany, num, type Row } from "./dbq.server";
 
 export type Channel = {
   id: number;
@@ -390,7 +390,76 @@ export async function setDmArtifact(dmId: number, documentId: string): Promise<v
 
 // Enriquece un lote con TODO lo de display: reacciones + star/pin + adjuntos + artefacto.
 export async function attachMeta(msgs: Message[], userSub: string): Promise<Message[]> {
-  return attachArtifacts(await attachAttachments(await attachStarPin(await attachReactions(msgs, userSub), userSub)));
+  if (!msgs.length) return msgs;
+  // UN SOLO round-trip para las 5 consultas de display (antes: 5 viajes SERIADOS al
+  // sqld, cada uno con un IN(...) de TODOS los mensajes del room → el arranque de
+  // `general` pagaba 5× la latencia sobre el historial completo).
+  const ids = msgs.map((m) => m.id);
+  const ph = ids.map(() => "?").join(",");
+  const [reacRows, starRows, pinRows, attRows, artRows] = await dbqMany([
+    { sql: `SELECT message_id, emoji, user_sub FROM gc_reactions WHERE message_id IN (${ph})`, args: ids },
+    { sql: `SELECT message_id FROM gc_stars WHERE user_sub = ? AND message_id IN (${ph})`, args: [userSub, ...ids] },
+    { sql: `SELECT message_id FROM gc_pins WHERE message_id IN (${ph})`, args: ids },
+    { sql: `SELECT id, message_id, file_id, mime, size, name, thumb_file_id, width, height, waveform, duration_ms
+              FROM gc_attachments WHERE message_id IN (${ph}) ORDER BY id`, args: ids },
+    { sql: `SELECT id, message_id, kind, url, title, md, src FROM gc_artifacts
+              WHERE message_id IN (${ph}) ORDER BY id`, args: ids },
+  ]);
+
+  const reactions = new Map<number, Map<string, { count: number; mine: boolean; subs: string[] }>>();
+  for (const r of reacRows) {
+    const mid = num(r.message_id);
+    let em = reactions.get(mid);
+    if (!em) { em = new Map(); reactions.set(mid, em); }
+    const cur = em.get(r.emoji!) ?? { count: 0, mine: false, subs: [] };
+    cur.count++;
+    if (r.user_sub === userSub) cur.mine = true;
+    if (r.user_sub) cur.subs.push(r.user_sub);
+    em.set(r.emoji!, cur);
+  }
+  const starred = new Set(starRows.map((r) => num(r.message_id)));
+  const pinned = new Set(pinRows.map((r) => num(r.message_id)));
+  const atts = new Map<number, Attachment[]>();
+  for (const r of attRows) {
+    const mid = num(r.message_id);
+    const arr = atts.get(mid) ?? [];
+    if (!arr.length) atts.set(mid, arr);
+    arr.push({
+      id: num(r.id),
+      file_id: r.file_id!,
+      mime: r.mime ?? null,
+      size: r.size == null ? null : num(r.size),
+      name: r.name ?? null,
+      thumb_file_id: (r.thumb_file_id as string | null) ?? null,
+      width: r.width == null ? null : num(r.width),
+      height: r.height == null ? null : num(r.height),
+      waveform: (r.waveform as string | null) ?? null,
+      duration_ms: r.duration_ms == null ? null : num(r.duration_ms),
+    });
+  }
+  const arts = new Map<number, Artifact>();
+  for (const r of artRows) {
+    arts.set(num(r.message_id), {
+      id: num(r.id),
+      messageId: num(r.message_id),
+      kind: r.kind!,
+      url: r.url!,
+      title: r.title ?? null,
+      md: r.md ?? null,
+      src: r.src ?? null,
+    });
+  }
+
+  return msgs.map((m) => {
+    const out: Message = { ...m, starred: starred.has(m.id), pinned: pinned.has(m.id) };
+    const em = reactions.get(m.id);
+    if (em) out.reactions = [...em.entries()].map(([emoji, v]) => ({ emoji, count: v.count, mine: v.mine, subs: v.subs }));
+    const a = atts.get(m.id);
+    if (a) out.attachments = a;
+    const art = arts.get(m.id);
+    if (art) out.artifact = art;
+    return out;
+  });
 }
 
 // ── VIEWS (Fase 2.1): inbox/recent/mentions/starred ─────────────────────────
@@ -918,19 +987,29 @@ export async function listChannelMembersInfo(channelId: number): Promise<MemberI
 
 // Flujo principal del canal: mensajes top-level (parent_id NULL) + nº de respuestas.
 // Con `topic` filtra al eje Zulip; sin él devuelve el room completo (compat).
-// NOTA perf: carga TODO el historial top-level → arranque lento en rooms grandes
-// (general). El cap a los últimos N se intentó (2026-07-24) pero truncar el flujo
-// rompe al cliente (threads cuyo root queda fuera del N → render revienta); requiere
-// paginación con soporte del cliente (scroll-back por cursor). TODO, ver plan.
+// PERF (2026-07-24): antes traía TODO el historial top-level → arranque de minutos en
+// rooms grandes (general). Ahora el flujo = últimos FLOW_LIMIT mensajes ∪ TODOS los
+// roots de hilo. Esa unión es la clave: el intento previo de cap seco reventaba el
+// render cuando un hilo quedaba con su root fuera de la ventana. El resto del historial
+// queda para scroll-back por cursor (pendiente).
+const FLOW_LIMIT = 300;
 export async function listChannelFlow(channelId: number, topic?: string): Promise<Message[]> {
   const filter = topic ? "AND m.topic = ?" : "";
-  const args: unknown[] = topic ? [channelId, topic] : [channelId];
+  const base: unknown[] = topic ? [channelId, topic] : [channelId];
   const rows = await dbq(
-    `SELECT m.*, (SELECT COUNT(*) FROM gc_messages c WHERE c.parent_id = m.id) AS reply_count
-       FROM gc_messages m
-      WHERE m.channel_id = ? AND m.parent_id IS NULL ${filter}
-      ORDER BY m.created_at ASC`,
-    args
+    `SELECT * FROM (
+       SELECT m.*, (SELECT COUNT(*) FROM gc_messages c WHERE c.parent_id = m.id) AS reply_count
+         FROM gc_messages m
+        WHERE m.channel_id = ? AND m.parent_id IS NULL ${filter}
+        ORDER BY m.created_at DESC
+        LIMIT ${FLOW_LIMIT}
+       UNION
+       SELECT m.*, (SELECT COUNT(*) FROM gc_messages c WHERE c.parent_id = m.id) AS reply_count
+         FROM gc_messages m
+        WHERE m.channel_id = ? AND m.parent_id IS NULL ${filter}
+          AND EXISTS (SELECT 1 FROM gc_messages c WHERE c.parent_id = m.id)
+     ) ORDER BY created_at ASC`,
+    [...base, ...base]
   );
   return rows.map(toMessage);
 }
@@ -967,7 +1046,7 @@ export async function listThreadRootsForChannels(
        FROM gc_messages m
       WHERE m.channel_id IN (${ph}) AND m.parent_id IS NULL
         AND EXISTS (SELECT 1 FROM gc_messages c WHERE c.parent_id = m.id)
-      ORDER BY last_at DESC`,
+      ORDER BY last_at DESC LIMIT 400`,
     channelIds
   );
   for (const r of rows) {
@@ -987,7 +1066,7 @@ export async function listThreadRoots(channelId: number): Promise<Message[]> {
        FROM gc_messages m
       WHERE m.channel_id = ? AND m.parent_id IS NULL
         AND EXISTS (SELECT 1 FROM gc_messages c WHERE c.parent_id = m.id)
-      ORDER BY last_at DESC`,
+      ORDER BY last_at DESC LIMIT 200`,
     [channelId]
   );
   return rows.map(toMessage);
@@ -1233,7 +1312,10 @@ export async function isDmMember(convId: number, userSub: string): Promise<boole
 // El flujo de un DM: sus mensajes (planos, sin hilos). channel_id = 0 los aísla.
 export async function listDmFlow(dmId: number): Promise<Message[]> {
   const rows = await dbq(
-    "SELECT * FROM gc_messages WHERE dm_id = ? ORDER BY created_at ASC",
+    // Últimos 300 (mismo criterio que el flujo de room: el arranque no puede pagar
+    // el historial completo). El resto queda para scroll-back por cursor.
+    `SELECT * FROM (SELECT * FROM gc_messages WHERE dm_id = ? ORDER BY created_at DESC LIMIT 300)
+      ORDER BY created_at ASC`,
     [dmId]
   );
   return rows.map(toMessage);

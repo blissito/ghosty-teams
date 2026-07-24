@@ -81,4 +81,44 @@ export async function dbq(sql: string, args: unknown[] = []): Promise<Row[]> {
   return rows.map((r) => Object.fromEntries(cols.map((c, i) => [c, r[i]])));
 }
 
+// N queries en UN SOLO round-trip al sqld. El protocolo pipeline ya acepta varios
+// `execute` en el mismo body: cada `dbq()` suelto paga su propia latencia HTTP, y en
+// el arranque de un room eso se multiplica (attachMeta = 5 viajes seriados sobre TODO
+// el historial). Mismo contrato de valores que dbq (strings|null).
+export async function dbqMany(
+  stmts: { sql: string; args?: unknown[] }[]
+): Promise<Row[][]> {
+  if (!stmts.length) return [];
+  const namespace = await currentNamespace();
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    "x-namespace": namespace,
+  };
+  if (SQLD_AUTH) headers.Authorization = `Bearer ${SQLD_AUTH}`;
+  const res = await fetch(`${SQLD_URL}/v2/pipeline`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({
+      requests: [
+        ...stmts.map((s) => ({
+          type: "execute",
+          stmt: { sql: s.sql, args: (s.args ?? []).map(toArg) },
+        })),
+        { type: "close" },
+      ],
+    }),
+  });
+  if (!res.ok) throw new Error(`db ${res.status}: ${await res.text()}`);
+  const data = (await res.json()) as PipelineResponse;
+  return stmts.map((_, i) => {
+    const r = data.results[i];
+    if (!r || r.type === "error") throw new Error(`db: ${r?.error?.message ?? "sqld error"}`);
+    const result = r.response!.result;
+    const cols = result.cols.map((c) => c.name);
+    return result.rows.map((row) =>
+      Object.fromEntries(cols.map((c, ci) => [c, row[ci]?.value == null ? null : String(row[ci]!.value)]))
+    ) as Row[];
+  });
+}
+
 export const num = (v: string | null | undefined) => Number(v ?? 0);

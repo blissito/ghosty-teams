@@ -86,6 +86,11 @@ async function migrate(): Promise<void> {
               ON gc_messages(channel_id, topic, created_at)`);
   await exec(`CREATE INDEX IF NOT EXISTS gc_messages_dm
               ON gc_messages(dm_id, created_at)`);
+  // listChannelFlow filtra channel_id y ORDENA por created_at SIN predicado de topic →
+  // el índice (channel_id, topic, created_at) solo servía de prefijo y sqlite tenía que
+  // materializar + ORDER BY todo el room. Con este el flujo sale ya ordenado del índice.
+  await exec(`CREATE INDEX IF NOT EXISTS gc_messages_chan_created
+              ON gc_messages(channel_id, created_at)`);
   // reply_count de listChannelFlow es un subquery correlacionado COUNT(*) WHERE parent_id=m.id
   // → sin este índice era un full-scan de gc_messages POR CADA mensaje top-level (O(M×N)):
   // causa raíz del arranque lentísimo de rooms grandes (general). Con el índice = lookup.

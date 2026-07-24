@@ -5,7 +5,7 @@ import { useT } from "../i18n";
 import { officeToHtmlFn, xlsxToCsvFn, postMessage } from "../server/chat";
 import { listTeamDocumentsFn, type TeamDocument } from "../server/documents";
 import { updateArtifactHtmlFn } from "../server/artifacts";
-import { CanvasEditor, htmlToDoc, docToHtml } from "@ghosty/canvas-editor";
+import { CanvasEditor, htmlToDoc, docToHtml, type Node as CeNode } from "@ghosty/canvas-editor";
 import { Markdown } from "./Markdown";
 import { StreamingHtmlFrame } from "./StreamingHtmlFrame";
 
@@ -254,17 +254,31 @@ export default function ArtifactPanel({
     artifact?.kind === "artifact"
       ? String(artifact.messageId ?? artifact.documentId)
       : null;
-  const editorDoc = useMemo(
-    () => (artifactHtml != null ? htmlToDoc(artifactHtml) : null),
+  const editorDoc = useMemo(() => {
+    if (artifactHtml == null) return null;
+    const doc = htmlToDoc(artifactHtml);
+    // Quitar nodos no-visuales (style/script/meta/link/title): su CSS lo inyectamos
+    // por extraCss (reescrito); dejarlos como nodos ensucia Capas y no aporta.
+    const NON_VISUAL = new Set(["style", "script", "meta", "link", "title", "head"]);
+    const strip = (nodes: CeNode[]): CeNode[] =>
+      nodes
+        .filter((n) => !NON_VISUAL.has(n.tag))
+        .map((n) => ({ ...n, children: strip(n.children) }));
+    for (const ab of doc.artboards) ab.nodes = strip(ab.nodes);
+    return doc;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [artifactKey]
-  );
-  // Los estilos embebidos del artefacto (<style>…</style>) se pierden al parsear a
-  // nodes → inyectarlos como extraCss para que el modo Editar se vea como Ver.
+  }, [artifactKey]);
+  // Estilos embebidos del artefacto (<style>…</style>) → extraCss para que Editar se
+  // vea como Ver. Los selectores body/html/:root no matchean dentro del editor (el
+  // contenido vive en un <div.ce-artboard>, no en <body>) → reescribirlos al lienzo.
   const artifactStyleCss = useMemo(() => {
     if (!artifactHtml) return "";
     const blocks = artifactHtml.match(/<style[^>]*>([\s\S]*?)<\/style>/gi) || [];
-    return blocks.map((b) => b.replace(/<\/?style[^>]*>/gi, "")).join("\n");
+    let css = blocks.map((b) => b.replace(/<\/?style[^>]*>/gi, "")).join("\n");
+    css = css
+      .replace(/(^|[\s,{}])(html|body)\b/gi, "$1.ce-artboard")
+      .replace(/:root\b/gi, ".ce-artboard");
+    return css;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [artifactKey]);
   // Al cambiar de artefacto (o cerrar), volver a modo Ver.
