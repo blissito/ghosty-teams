@@ -117,6 +117,7 @@ import { clearMeCache } from "../server/auth";
 import { unfurlLinkFn } from "../server/unfurl";
 import { registerModalEsc } from "../utils/modal-esc";
 import ArtifactPanel, { type ArtifactView, viewFromAttachment } from "../components/ArtifactPanel";
+import { belongsToOpenConversation } from "../lib/conversation-scope";
 import { extractEbDoc, draftTitle, bubbleWithoutEbDoc, extractToolState, type ToolState } from "../lib/ebdoc";
 import { ThinkingRing } from "../components/ThinkingRing";
 import { playNotificationSound, playGhostySound, playSelfSound, playMentionSound, playDmSound, playReadySound, playDeleteSound, playArtifactOpen, playArtifactClose, startCallRing, stopCallRing } from "../utils/notificationSound";
@@ -155,7 +156,16 @@ export const Route = createFileRoute("/c/$slug")({
     // devolvía undefined → skeleton → React descartaba el SSR → parpadeo + recarga
     // de hilos al refresh). Tras hidratar, una nav a un room nuevo devuelve undefined
     // → skeleton instantáneo, comportamiento sin cambio.
-    const prefetch = typeof window === "undefined" || !hydrated;
+    // 2026-07-24 (perf): el SSR ya NO prefetchea el flujo. Renderizar 80+ mensajes a
+    // string en la caja (2 vCPU) dominaba el TTFB del documento (~15s medidos desde el
+    // cliente, con los server-fn en 60-100ms). Ahora el documento trae la cáscara y el
+    // flujo entra client-side con skeleton — camino que ya existía para navegar entre
+    // rooms. La hidratación no se rompe porque el cliente arranca con el MISMO skeleton.
+    // ...y en la HIDRATACIÓN tampoco: si el cliente re-corriera el loader y SÍ trajera el
+    // flujo, su árbol no coincidiría con el skeleton del SSR → otro mismatch. Ambos lados
+    // arrancan con skeleton y el flujo entra por el fetch client-side del componente (el
+    // mismo camino que ya se usa al cambiar de room).
+    const prefetch = false;
 
     // Ruta rápida (cliente ya hidratado): el room está en el sidebar → sin red.
     if (typeof window !== "undefined" && shellCache) {
@@ -251,10 +261,12 @@ function RoomIcon({ name, size = 18, className }: { name?: string | null; size?:
 // (mostramos lo cacheado y revalidamos en background, sin skeleton ni glitch).
 const flowCache = new Map<string, Message[]>();
 const threadsCache = new Map<string, Message[]>();
-// `hydrated` = false hasta que el primer render del cliente se monta. El loader lo
-// usa para prefetchear flujo/hilos durante la hidratación (igualar el SSR, sin
-// parpadeo) pero NO en navegaciones posteriores (switch instantáneo con skeleton).
+// `hydrated` = false hasta que el primer render del cliente se monta. Ya NO gatea el
+// prefetch del loader (desde 2026-07-24 el flujo SIEMPRE entra client-side), pero se
+// mantiene por si algún camino necesita distinguir la hidratación inicial.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 let hydrated = false;
+void hydrated;
 // Guard para el chime de "app lista": se resetea al recargar (módulo re-ejecuta),
 // así suena una vez por carga y no en cada cambio de room dentro de la SPA.
 let readyChimePlayed = false;
@@ -1134,12 +1146,7 @@ function ChannelPage() {
     // un artefacto que un agente arma en #general te abría el panel aunque estuvieras
     // leyendo un DM (reportado 2026-07-24). Solo maneja el draft si el mensaje pertenece
     // a la conversación que el usuario tiene ABIERTA.
-    const src = findMessageInCaches(id);
-    if (src) {
-      const inOpenDm = openDmId != null && src.dm_id === openDmId;
-      const inOpenRoom = openDmId == null && src.dm_id == null && src.channel_id === channel.id;
-      if (!inOpenDm && !inOpenRoom) return;
-    }
+    if (!belongsToOpenConversation(findMessageInCaches(id), openDmId, channel.id)) return;
     draftMsgIdRef.current = id;
     setOpenArtifact((cur) => {
       // Auto-abre si no hay panel, si ya estamos en el draft, o si está abierto el doc/hoja
