@@ -17,16 +17,18 @@ export const Route = createRootRoute({
     // sin tenant ni sesión propios (la cookie es por-subdominio del workspace). Exímelo
     // de AMBOS guards, si no rebota a portal/login antes de poder rebotar al subdominio.
     const isOAuthRelay = location.pathname.startsWith('/oauth/')
+    // Ruta demo del editor de lienzo (@ghosty/canvas-editor) — pública, sin tenant/sesión.
+    const isCanvasDemo = location.pathname.startsWith('/canvas-demo')
     // Guard de tenant (solo SSR → barato, sin round-trips en cada nav de cliente):
     // si caes en el subdominio de un workspace que ya no existe (borrado) o del que
     // el resolver no sabe, te mandamos al PORTAL en vez de un shell roto / label
     // fantasma. Aplica también a /login y /join (en un ws muerto no sirven).
-    if (typeof window === 'undefined' && !isOAuthRelay) {
+    if (typeof window === 'undefined' && !isOAuthRelay && !isCanvasDemo) {
       const { tenantStatusFn } = await import('../server/workspaces')
       const st = await tenantStatusFn()
       if (!st.ok) throw redirect({ href: `${st.portal}/app` })
     }
-    if (isOAuthRelay || location.pathname === '/login' || location.pathname.startsWith('/join')) {
+    if (isOAuthRelay || isCanvasDemo || location.pathname === '/login' || location.pathname.startsWith('/join')) {
       return { user: null }
     }
     // cachedMe: instantáneo en el cliente (revalida en background) → volver de

@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as SetupRouteImport } from './routes/setup'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as FormsRouteImport } from './routes/forms'
+import { Route as CanvasDemoRouteImport } from './routes/canvas-demo'
 import { Route as ArtifactsRouteImport } from './routes/artifacts'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as SetupIndexRouteImport } from './routes/setup.index'
@@ -49,6 +50,11 @@ const LoginRoute = LoginRouteImport.update({
 const FormsRoute = FormsRouteImport.update({
   id: '/forms',
   path: '/forms',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const CanvasDemoRoute = CanvasDemoRouteImport.update({
+  id: '/canvas-demo',
+  path: '/canvas-demo',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ArtifactsRoute = ArtifactsRouteImport.update({
@@ -171,6 +177,7 @@ const ApiAttachmentIdRoute = ApiAttachmentIdRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/artifacts': typeof ArtifactsRoute
+  '/canvas-demo': typeof CanvasDemoRoute
   '/forms': typeof FormsRoute
   '/login': typeof LoginRoute
   '/setup': typeof SetupRouteWithChildren
@@ -199,6 +206,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/artifacts': typeof ArtifactsRoute
+  '/canvas-demo': typeof CanvasDemoRoute
   '/forms': typeof FormsRoute
   '/login': typeof LoginRoute
   '/api/agent-asset': typeof ApiAgentAssetRoute
@@ -227,6 +235,7 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/artifacts': typeof ArtifactsRoute
+  '/canvas-demo': typeof CanvasDemoRoute
   '/forms': typeof FormsRoute
   '/login': typeof LoginRoute
   '/setup': typeof SetupRouteWithChildren
@@ -257,6 +266,7 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/artifacts'
+    | '/canvas-demo'
     | '/forms'
     | '/login'
     | '/setup'
@@ -285,6 +295,7 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/artifacts'
+    | '/canvas-demo'
     | '/forms'
     | '/login'
     | '/api/agent-asset'
@@ -312,6 +323,7 @@ export interface FileRouteTypes {
     | '__root__'
     | '/'
     | '/artifacts'
+    | '/canvas-demo'
     | '/forms'
     | '/login'
     | '/setup'
@@ -341,6 +353,7 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   ArtifactsRoute: typeof ArtifactsRoute
+  CanvasDemoRoute: typeof CanvasDemoRoute
   FormsRoute: typeof FormsRoute
   LoginRoute: typeof LoginRoute
   SetupRoute: typeof SetupRouteWithChildren
@@ -383,6 +396,13 @@ declare module '@tanstack/react-router' {
       path: '/forms'
       fullPath: '/forms'
       preLoaderRoute: typeof FormsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/canvas-demo': {
+      id: '/canvas-demo'
+      path: '/canvas-demo'
+      fullPath: '/canvas-demo'
+      preLoaderRoute: typeof CanvasDemoRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/artifacts': {
@@ -570,6 +590,7 @@ const SetupRouteWithChildren = SetupRoute._addFileChildren(SetupRouteChildren)
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   ArtifactsRoute: ArtifactsRoute,
+  CanvasDemoRoute: CanvasDemoRoute,
   FormsRoute: FormsRoute,
   LoginRoute: LoginRoute,
   SetupRoute: SetupRouteWithChildren,
