@@ -295,7 +295,7 @@ function artifactDocHint(currentDoc?: { kind: "doc" | "sheet" | "artifact"; md: 
 // Contrato: docs/AGENT-MEDIA-CONTRACT.md §1.
 // Evento de tool del stream nativo. `start` inicia (name+id), `end` cierra (id+ok).
 // El `id` (tool_use del SDK) correlaciona ambos → estado real ✅/❌ por tool, no posicional.
-export type ToolEvent = { name?: string; id?: string; phase?: "start" | "end"; ok?: boolean };
+export type ToolEvent = { name?: string; id?: string; phase?: "start" | "end"; ok?: boolean; detail?: string };
 
 export async function callAgentBackendStream(
   agent: ResolvedAgent,
@@ -407,7 +407,7 @@ export async function callAgentBackendStream(
         buf = buf.slice(nl + 2);
         const line = frame.split("\n").find((l) => l.startsWith("data:"));
         if (!line) continue;
-        let ev: { type?: string; value?: string; message?: string; name?: string; id?: string; phase?: "start" | "end"; ok?: boolean };
+        let ev: { type?: string; value?: string; message?: string; name?: string; id?: string; phase?: "start" | "end"; ok?: boolean; detail?: string };
         try {
           ev = JSON.parse(line.slice(5).trim());
         } catch {
@@ -417,8 +417,8 @@ export async function callAgentBackendStream(
           streamed += ev.value;
           await onChunk(ev.value);
         } else if (ev.type === "tool") {
-          // start trae name+id; end trae id+ok. Correlación por id en runAgentTurn.
-          await onTool?.({ name: ev.name, id: ev.id, phase: ev.phase ?? "start", ok: ev.ok });
+          // start trae name+id+detail; end trae id+ok. Correlación por id en runAgentTurn.
+          await onTool?.({ name: ev.name, id: ev.id, phase: ev.phase ?? "start", ok: ev.ok, detail: ev.detail });
         } else if (ev.type === "done") {
           authoritative = ev.value ?? streamed;
         } else if (ev.type === "error") {
@@ -498,6 +498,7 @@ const TOOL_LABELS: Record<string, { ing: string; done: string }> = {
   gs_web_search: { ing: "Buscando en la web", done: "Busqué en la web" },
   gs_web_scrape: { ing: "Leyendo una página", done: "Leí una página" },
   gs_render: { ing: "Generando el PDF", done: "Generé el PDF" },
+  gs_render_png: { ing: "Generando la imagen", done: "Generé la imagen" },
   gs_doc: { ing: "Generando el documento", done: "Generé el documento" },
   gs_db_query: { ing: "Consultando la base", done: "Consulté la base" },
   gs_db_write: { ing: "Escribiendo en la base", done: "Escribí en la base" },
@@ -564,7 +565,7 @@ export async function runAgentTurn(opts: {
   // Cada entrada = una acción visible (dedup por label). `started`/`ended` = ids de tool_use
   // que la componen (varias concurrentes con el mismo label colapsan a una línea, pero su
   // estado agrega correctamente). `failed` = alguna terminó en error → ❌ real, no ✅ posicional.
-  type ToolEntry = { ing: string; done: string; started: Set<string>; ended: Set<string>; failed: boolean };
+  type ToolEntry = { ing: string; done: string; started: Set<string>; ended: Set<string>; failed: boolean; detail?: string };
   const tools: ToolEntry[] = [];
   const idToEntry = new Map<string, ToolEntry>(); // id de tool_use → su entrada (para el 'end')
   let acc = "";
@@ -595,7 +596,14 @@ export async function runAgentTurn(opts: {
       return emit(
         tools.map((tl) => {
           const st = statusOf(tl, allDone);
-          return { label: st === "done" ? tl.done : tl.ing, status: st, ...(tl.started.size > 1 ? { n: tl.started.size } : {}) };
+          const many = tl.started.size > 1;
+          return {
+            label: st === "done" ? tl.done : tl.ing,
+            status: st,
+            // detalle (archivo/URL) solo si la entrada es UNA tool; si son varias (×n) el
+            // conteo reemplaza al detalle (no hay un solo arg representativo).
+            ...(many ? { n: tl.started.size } : tl.detail ? { detail: tl.detail } : {}),
+          };
         })
       );
     }
@@ -653,7 +661,7 @@ export async function runAgentTurn(opts: {
       // Dedup por acción (varias tools con el mismo label → una línea; sus ids agregan estado).
       let entry = tools.find((t) => t.done === label.done);
       if (!entry) {
-        entry = { ing: label.ing, done: label.done, started: new Set(), ended: new Set(), failed: false };
+        entry = { ing: label.ing, done: label.done, started: new Set(), ended: new Set(), failed: false, detail: ev.detail };
         tools.push(entry);
       }
       if (ev.id) {

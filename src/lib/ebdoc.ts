@@ -173,7 +173,7 @@ export function bubbleWithoutEbAudio(body: string): string {
 // parsea → burbuja ToolGroup colapsable; el resto del body es prosa. Se re-emite entero
 // en cada paint (siempre cerrado) → el cliente ve un bloque completo en cada update.
 export type ToolStatus = "running" | "done" | "error";
-export type ToolState = { label: string; status: ToolStatus; n?: number };
+export type ToolState = { label: string; status: ToolStatus; n?: number; detail?: string };
 
 export function extractToolState(body: string): ToolState[] | null {
   const open = body.match(/```gt-tools[^\n]*\n/);

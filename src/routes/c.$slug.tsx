@@ -5648,7 +5648,7 @@ function artifactToView(a: Artifact): ArtifactView {
   const title = a.title ?? "";
   if (a.kind === "doc") return { kind: "doc", title, documentId: a.url, md: a.md ?? "" };
   if (a.kind === "sheet") return { kind: "sheet", title, documentId: a.url, csv: a.md ?? "" };
-  if (a.kind === "artifact") return { kind: "artifact", title, documentId: a.url, html: a.md ?? "", src: a.src ?? "" };
+  if (a.kind === "artifact") return { kind: "artifact", title, documentId: a.url, html: a.md ?? "", src: a.src ?? "", messageId: a.messageId };
   if (a.kind === "ask-user") {
     let options: string[] = [];
     try { const p = JSON.parse(a.md ?? "[]"); if (Array.isArray(p)) options = p.map(String); } catch {}
@@ -6397,6 +6397,7 @@ function ToolGroup({ tools }: { tools: ToolState[] }) {
             <div key={i} className="flex items-center gap-2 py-0.5 text-xs">
               {icon(t.status)}
               <span className={t.status === "error" ? "text-red-500" : "text-muted"}>{t.label}</span>
+              {t.detail ? <span className="truncate font-mono text-[10px] text-muted/70">· {t.detail}</span> : null}
               {t.n && t.n > 1 ? <span className="text-[10px] text-muted/70">×{t.n}</span> : null}
             </div>
           ))}
