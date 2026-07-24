@@ -1172,7 +1172,11 @@ export default function ArtifactPanel({
                           key={artifactKey ?? artifact.documentId}
                           doc={editorDoc}
                           extraCss={artifactStyleCss}
-                          suppressThemeCss
+                          // Ya NO se suprime: themeToCss emite los tokens SCOPED a
+                          // .ce-artboard (no al :root global), así que el selector de
+                          // paleta del panel sí recolorea el artefacto sin tocar la UI.
+                          // La paleta inicial sale del propio artefacto: htmlToDoc lee su
+                          // bloque :root y siembra doc.theme.
                           tailwindPlay
                           renderPreview={(doc) =>
                             docToHtml(doc).replace(

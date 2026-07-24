@@ -1139,6 +1139,7 @@ function ChannelPage() {
     const muteKey = m.dm_id != null ? `dm:${m.dm_id}` : `room:${m.channel_id}`;
     if (!mutes.has(muteKey)) playGhostySound();
   };
+  const draftSeenLenRef = useRef(0);
   const driveDraftFromBody = (id: number, body: string) => {
     const doc = extractEbDoc(body);
     if (!doc || !doc.md.trim()) return;
@@ -1147,6 +1148,14 @@ function ChannelPage() {
     // leyendo un DM (reportado 2026-07-24). Solo maneja el draft si el mensaje pertenece
     // a la conversación que el usuario tiene ABIERTA.
     if (!belongsToOpenConversation(findMessageInCaches(id), openDmId, channel.id)) return;
+    // TRAZA (temporal): ¿el artefacto llega en gotitas o de un golpe? Cada línea es una
+    // actualización del bloque; si solo sale UNA, el runtime no está streameando el bloque
+    // y el preview no puede pintarse "token por token" por más que el iframe lo permita.
+    if (doc.kind === "artifact") {
+      const prev = draftSeenLenRef.current;
+      draftSeenLenRef.current = doc.md.length;
+      console.log(`[gt-draft] +${doc.md.length - prev}b total=${doc.md.length}b closed=${doc.closed} t=${Math.round(performance.now())}ms`);
+    }
     draftMsgIdRef.current = id;
     setOpenArtifact((cur) => {
       // Auto-abre si no hay panel, si ya estamos en el draft, o si está abierto el doc/hoja

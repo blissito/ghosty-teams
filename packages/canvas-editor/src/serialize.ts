@@ -91,7 +91,12 @@ export function themeToCss(theme: Theme, opts: { scope?: string } = {}): string 
   const vars = Object.entries(activeTokens(theme))
     .map(([k, v]) => `    --color-${k}: ${v};`)
     .join('\n')
-  return `  :root {\n${vars}\n    --radius: ${theme.radius};\n    --font-heading: ${theme.fonts.heading};\n    --font-body: ${theme.fonts.body};\n    --font-mono: ${theme.fonts.mono};\n  }
+  // Los tokens viven en el SCOPE cuando hay uno. Antes salían siempre en `:root` global:
+  // dentro del editor de Teams eso clobbereaba los tokens Tailwind v4 de la propia UI, y
+  // por eso el host los suprimía (`suppressThemeCss`) — con el efecto de que el selector
+  // de paleta no pintaba NADA sobre el artefacto. Scoped = sin fuga y con tema aplicable.
+  const varScope = scope || ':root'
+  return `  ${varScope} {\n${vars}\n    --radius: ${theme.radius};\n    --font-heading: ${theme.fonts.heading};\n    --font-body: ${theme.fonts.body};\n    --font-mono: ${theme.fonts.mono};\n  }
   ${base} { font-family: var(--font-body), system-ui, sans-serif; background-color: var(--color-background); color: var(--color-foreground); }
   ${headings} { font-family: var(--font-heading), system-ui, sans-serif; }
 ${semanticUtilityCss(scope)}`
