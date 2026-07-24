@@ -293,6 +293,10 @@ function artifactDocHint(currentDoc?: { kind: "doc" | "sheet" | "artifact"; md: 
 // backend fleet expone SSE (EasyBits /message-stream: `chunk`/`done`/`error`); el
 // webhook aún cae al camino bloqueante (Slice 4 = cliente A2A message/stream).
 // Contrato: docs/AGENT-MEDIA-CONTRACT.md §1.
+// Evento de tool del stream nativo. `start` inicia (name+id), `end` cierra (id+ok).
+// El `id` (tool_use del SDK) correlaciona ambos → estado real ✅/❌ por tool, no posicional.
+export type ToolEvent = { name?: string; id?: string; phase?: "start" | "end"; ok?: boolean };
+
 export async function callAgentBackendStream(
   agent: ResolvedAgent,
   groupId: string,
@@ -300,7 +304,7 @@ export async function callAgentBackendStream(
   text: string,
   onChunk: (chunk: string) => void | Promise<void>,
   parts: MediaPart[] = [],
-  onTool?: (name: string) => void | Promise<void>,
+  onTool?: (ev: ToolEvent) => void | Promise<void>,
   currentDoc?: { kind: "doc" | "sheet" | "artifact"; md: string; src?: string | null } | null,
   invokerSub?: string
 ): Promise<string> {
@@ -403,7 +407,7 @@ export async function callAgentBackendStream(
         buf = buf.slice(nl + 2);
         const line = frame.split("\n").find((l) => l.startsWith("data:"));
         if (!line) continue;
-        let ev: { type?: string; value?: string; message?: string; name?: string };
+        let ev: { type?: string; value?: string; message?: string; name?: string; id?: string; phase?: "start" | "end"; ok?: boolean };
         try {
           ev = JSON.parse(line.slice(5).trim());
         } catch {
@@ -412,8 +416,9 @@ export async function callAgentBackendStream(
         if (ev.type === "chunk" && ev.value) {
           streamed += ev.value;
           await onChunk(ev.value);
-        } else if (ev.type === "tool" && ev.name) {
-          await onTool?.(ev.name);
+        } else if (ev.type === "tool") {
+          // start trae name+id; end trae id+ok. Correlación por id en runAgentTurn.
+          await onTool?.({ name: ev.name, id: ev.id, phase: ev.phase ?? "start", ok: ev.ok });
         } else if (ev.type === "done") {
           authoritative = ev.value ?? streamed;
         } else if (ev.type === "error") {
@@ -556,7 +561,12 @@ export async function runAgentTurn(opts: {
   // entero por emitBody (nunca se clobbea el texto ni se pierde en el flicker). `acc`
   // acumula el texto del agente con separadores entre segmentos interrumpidos por tools
   // (si no, "…contrato." + "Contrato generado" se pegan → muro amontonado).
-  const tools: { ing: string; done: string }[] = [];
+  // Cada entrada = una acción visible (dedup por label). `started`/`ended` = ids de tool_use
+  // que la componen (varias concurrentes con el mismo label colapsan a una línea, pero su
+  // estado agrega correctamente). `failed` = alguna terminó en error → ❌ real, no ✅ posicional.
+  type ToolEntry = { ing: string; done: string; started: Set<string>; ended: Set<string>; failed: boolean };
+  const tools: ToolEntry[] = [];
+  const idToEntry = new Map<string, ToolEntry>(); // id de tool_use → su entrada (para el 'end')
   let acc = "";
   let brokeByTool = false; // corrió una tool desde el último texto → el próximo es segmento nuevo
   let anyActivity = false;  // corrió CUALQUIER tool (aunque oculta) → hay trabajo en curso
@@ -565,11 +575,26 @@ export async function runAgentTurn(opts: {
   // El checklist ES el indicador de "trabajando" (reemplaza el "pensando…"). Si hay
   // actividad pero aún ninguna tool semántica, muestra "⏳ Trabajando…" para que el
   // usuario vea feedback YA, no un "pensando" colgado.
+  // Estado REAL por entrada (no posicional): error si alguna id falló; done si todas sus ids
+  // cerraron (o el turno acabó); si no, running. Entradas legacy sin ids (start sin id) solo
+  // pasan a done al cerrar el turno (allDone) — compat con workers viejos.
+  const statusOf = (t: ToolEntry, allDone: boolean): "running" | "done" | "error" => {
+    if (t.failed) return "error";
+    if (allDone) return "done";
+    if (t.started.size > 0 && t.ended.size >= t.started.size) return "done";
+    return "running";
+  };
   const renderChecklist = (allDone: boolean): string => {
     if (tools.length) {
       return (
         tools
-          .map((tl, i) => `- ${allDone || i < tools.length - 1 ? `✅ ${tl.done}` : `⏳ ${tl.ing}`}`)
+          .map((tl) => {
+            const st = statusOf(tl, allDone);
+            const icon = st === "error" ? "❌" : st === "done" ? "✅" : "⏳";
+            // done → pasado ("Generé la imagen"); running/error → gerundio ("Generando…"),
+            // el ícono ❌ ya marca el fallo (evita "✅ Generé" cuando en realidad reventó).
+            return `- ${icon} ${st === "done" ? tl.done : tl.ing}`;
+          })
           .join("\n") + "\n\n"
       );
     }
@@ -597,23 +622,43 @@ export async function runAgentTurn(opts: {
         const label = isSheet
           ? { ing: "Generando la hoja", done: "Generé la hoja" }
           : { ing: "Redactando el documento", done: "Redacté el documento" };
-        if (!tools.some((t) => t.done === label.done)) tools.push(label);
+        if (!tools.some((t) => t.done === label.done))
+          tools.push({ ing: label.ing, done: label.done, started: new Set(), ended: new Set(), failed: false });
       }
       await paint();
     } else {
       opts.emitDelta(await ensure(), chunk); // fallback legacy (append)
     }
   };
-  const onTool = async (name: string) => {
+  const onTool = async (ev: ToolEvent) => {
     anyActivity = true;
-    // CUALQUIER tool (aunque sea oculta: Bash/Read/Write) corta el segmento de texto →
-    // el próximo texto va en párrafo nuevo. (Bug: antes solo se marcaba con tools CON
-    // label → "…docx." + [Bash] + "El NDA…" quedaba pegado "docx.El".)
+    if (ev.phase === "end") {
+      // Cierre de una tool → marca su id como terminada en la entrada correlacionada.
+      // Tools ocultas (sin label → sin entrada) no están en idToEntry → no-op.
+      const entry = ev.id ? idToEntry.get(ev.id) : undefined;
+      if (entry) {
+        if (ev.id) entry.ended.add(ev.id);
+        if (ev.ok === false) entry.failed = true;
+        if (opts.emitBody) await paint();
+      }
+      return;
+    }
+    // start. CUALQUIER tool (aunque sea oculta: Bash/Read/Write) corta el segmento de texto →
+    // el próximo texto va en párrafo nuevo. (Bug: antes solo se marcaba con tools CON label →
+    // "…docx." + [Bash] + "El NDA…" quedaba pegado "docx.El".)
     brokeByTool = true;
-    const label = toolLabel(name);
-    // Dedup por acción (varios Skill/tools con el mismo label → una sola línea).
-    if (label && !tools.some((t) => t.done === label.done)) {
-      tools.push(label);
+    const label = toolLabel(ev.name ?? "");
+    if (label) {
+      // Dedup por acción (varias tools con el mismo label → una línea; sus ids agregan estado).
+      let entry = tools.find((t) => t.done === label.done);
+      if (!entry) {
+        entry = { ing: label.ing, done: label.done, started: new Set(), ended: new Set(), failed: false };
+        tools.push(entry);
+      }
+      if (ev.id) {
+        entry.started.add(ev.id);
+        idToEntry.set(ev.id, entry);
+      }
     }
     // Aun si la tool es oculta, re-pinta → la cáscara nace YA y "pensando" desaparece.
     if (opts.emitBody) await paint();

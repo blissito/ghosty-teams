@@ -916,6 +916,10 @@ export async function listChannelMembersInfo(channelId: number): Promise<MemberI
 
 // Flujo principal del canal: mensajes top-level (parent_id NULL) + nº de respuestas.
 // Con `topic` filtra al eje Zulip; sin él devuelve el room completo (compat).
+// NOTA perf: carga TODO el historial top-level → arranque lento en rooms grandes
+// (general). El cap a los últimos N se intentó (2026-07-24) pero truncar el flujo
+// rompe al cliente (threads cuyo root queda fuera del N → render revienta); requiere
+// paginación con soporte del cliente (scroll-back por cursor). TODO, ver plan.
 export async function listChannelFlow(channelId: number, topic?: string): Promise<Message[]> {
   const filter = topic ? "AND m.topic = ?" : "";
   const args: unknown[] = topic ? [channelId, topic] : [channelId];
