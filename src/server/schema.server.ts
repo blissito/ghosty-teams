@@ -1,4 +1,4 @@
-import { dbq } from "../dbq.server";
+import { dbq, dbqManySettled } from "../dbq.server";
 import { currentNamespace } from "./tenant.server";
 
 // Migraciones ADITIVAS e idempotentes de Fases 1-4. Las tablas base gc_* las crea
@@ -33,31 +33,56 @@ export async function ensureSchema(): Promise<void> {
   return p;
 }
 
-async function hasColumn(table: string, col: string): Promise<boolean> {
-  // Propaga si falla (DB caída) → se registra como fallo → reintento.
-  const rows = await dbq(`PRAGMA table_info(${table})`);
-  return rows.some((r) => r.name === col);
-}
-
 async function migrate(): Promise<void> {
   const fails: string[] = [];
-  const exec = async (sql: string) => {
+  const _t0 = performance.now();
+  let _rtt = 0;
+  // PERF (2026-07-24): migrate() hacía ~100 round-trips SECUENCIALES al sqld (53 DDL +
+  // un PRAGMA por columna), y corre DENTRO del primer request de cada proceso/namespace
+  // → el primer usuario tras cada deploy pagaba decenas de segundos de TTFB (medido: 26s
+  // en getChannelView, con las queries del room en 60ms). Ahora:
+  //   · las sentencias sin lectura se ACUMULAN y se mandan en UN solo pipeline;
+  //   · el PRAGMA de cada tabla se lee UNA vez y se cachea.
+  // El ORDEN se conserva: cualquier lectura hace flush de lo pendiente antes.
+  const pending: string[] = [];
+  const flush = async () => {
+    if (!pending.length) return;
+    const batch = pending.splice(0, pending.length);
+    _rtt++;
     try {
-      await dbq(sql);
+      const out = await dbqManySettled(batch.map((sql) => ({ sql })));
+      out.forEach((r, i) => {
+        if (!r.ok) fails.push(`${batch[i].slice(0, 48)}… → ${String(r.error).slice(0, 90)}`);
+      });
     } catch (e) {
-      fails.push(`${sql.slice(0, 48)}… → ${String(e).slice(0, 90)}`);
+      fails.push(`batch(${batch.length}) → ${String(e).slice(0, 90)}`);
     }
+  };
+  const exec = async (sql: string) => {
+    pending.push(sql);
+  };
+  const cols = new Map<string, Set<string>>();
+  const tableColumns = async (table: string): Promise<Set<string>> => {
+    const hit = cols.get(table);
+    if (hit) return hit;
+    await flush(); // el PRAGMA debe ver los CREATE/ALTER previos
+    _rtt++;
+    const rows = await dbq(`PRAGMA table_info(${table})`);
+    const set = new Set(rows.map((r) => r.name!).filter(Boolean));
+    cols.set(table, set);
+    return set;
   };
   const addColumn = async (table: string, col: string, decl: string) => {
     let has: boolean;
     try {
-      has = await hasColumn(table, col);
+      has = (await tableColumns(table)).has(col);
     } catch (e) {
       // No pudimos leer el esquema (DB caída) → fallo, para forzar reintento.
       fails.push(`PRAGMA ${table} → ${String(e).slice(0, 90)}`);
       return;
     }
     if (has) return;
+    cols.get(table)?.add(col); // la cache refleja el ALTER que acabamos de encolar
     await exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${decl}`);
   };
 
@@ -297,6 +322,7 @@ async function migrate(): Promise<void> {
   // Flip único: correo por default OFF (opt-in). Las filas existentes heredaron el viejo
   // DEFAULT 1 (opt-out silencioso, nadie lo eligió conscientemente) → las apagamos una sola
   // vez, guardado por flag en gc_config. Reversible: el usuario lo reactiva en el panel.
+  await flush();
   try {
     const { getConfig, setConfig } = await import("../config.server");
     if ((await getConfig("email_default_off_applied")) !== "1") {
@@ -306,6 +332,10 @@ async function migrate(): Promise<void> {
   } catch (e) {
     fails.push(`email_default_off → ${String(e).slice(0, 90)}`);
   }
+
+  await flush();
+
+  console.log(`[ensureSchema ${Math.round(performance.now() - _t0)}ms · ${_rtt} round-trips · ${fails.length} fallos]`);
 
   // Si algo falló (DB flapeando), LANZA → ensureSchema resetea `done` → reintento.
   if (fails.length) {

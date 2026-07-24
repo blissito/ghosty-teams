@@ -133,4 +133,43 @@ export async function dbqMany(
   });
 }
 
+// Como dbqMany pero SIN abortar: devuelve el resultado o el error de CADA sentencia.
+// Lo usan las migraciones, que toleran fallos por-sentencia y los acumulan.
+export async function dbqManySettled(
+  stmts: { sql: string; args?: unknown[] }[]
+): Promise<{ ok: boolean; rows: Row[]; error?: string }[]> {
+  if (!stmts.length) return [];
+  const namespace = await currentNamespace();
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    "x-namespace": namespace,
+  };
+  if (SQLD_AUTH) headers.Authorization = `Bearer ${SQLD_AUTH}`;
+  const res = await fetch(`${SQLD_URL}/v2/pipeline`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({
+      requests: [
+        ...stmts.map((s) => ({
+          type: "execute",
+          stmt: { sql: s.sql, args: (s.args ?? []).map(toArg) },
+        })),
+        { type: "close" },
+      ],
+    }),
+  });
+  if (!res.ok) throw new Error(`db ${res.status}: ${await res.text()}`);
+  const data = (await res.json()) as PipelineResponse;
+  return stmts.map((_, i) => {
+    const r = data.results[i];
+    if (!r || r.type === "error") return { ok: false, rows: [], error: r?.error?.message ?? "sqld error" };
+    const result = r.response!.result;
+    const cols = result.cols.map((c) => c.name);
+    const rows = result.rows.map((row) =>
+      Object.fromEntries(cols.map((c, ci) => [c, row[ci]?.value == null ? null : String(row[ci]!.value)]))
+    ) as Row[];
+    return { ok: true, rows };
+  });
+}
+
 export const num = (v: string | null | undefined) => Number(v ?? 0);
