@@ -439,6 +439,13 @@ export default function ArtifactPanel({
   // primer token, igual que una página que llega por red. Sin throttle de re-montaje ni gates.
   const isDraftArtifact = artifact?.kind === "draft" && !!artifact.artifact;
   const draftPreview = isDraftArtifact && artifact?.kind === "draft" ? artifact.content : "";
+  // Hasta que abre el <body> no hay nada visual: mostramos el código en vivo (auto-scroll).
+  const draftBodyStarted = /<body[\s>]/i.test(draftPreview);
+  const draftSrcRef = useRef<HTMLPreElement | null>(null);
+  useEffect(() => {
+    const el = draftSrcRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [draftPreview]);
   // Descarga con FEEDBACK: doc→.docx (compila en EasyBits) y sheet→.xlsx (convierte el CSV
   // fuente con SheetJS en /api/doc-xlsx) tardan un poco; fetch same-origin → blob → download,
   // con spinner. Office = URL pública externa → navegación directa (evita CORS del blob).
@@ -971,15 +978,28 @@ export default function ArtifactPanel({
                     <div className="flex items-center gap-2 border-b border-border bg-surface-2 px-4 py-2 text-xs text-muted">
                       <Loader2 size={13} className="animate-spin text-brand" />
                       <span className="truncate">
-                        {t("Construyendo artefacto…")} · <span className="text-neutral-400">{artifact.title}</span> <span className="text-neutral-500">· {Math.round(draftPreview.length / 100) / 10} KB</span>
+                        {draftBodyStarted ? t("Construyendo artefacto…") : t("Escribiendo estilos…")} · <span className="text-neutral-400">{artifact.title}</span> <span className="text-neutral-500">· {Math.round(draftPreview.length / 100) / 10} KB</span>
                       </span>
                     </div>
                     <div className="relative min-h-0 flex-1">
-                      <StreamingHtmlFrame
-                        html={draftPreview}
-                        title={artifact.title || "artefacto"}
-                        className="absolute inset-0 h-full w-full border-0 bg-white"
-                      />
+                      {draftBodyStarted ? (
+                        <StreamingHtmlFrame
+                          html={draftPreview}
+                          title={artifact.title || "artefacto"}
+                          className="absolute inset-0 h-full w-full border-0 bg-white"
+                        />
+                      ) : (
+                        // Todavía en el <head>/<style>: no hay NADA que pintar (el iframe
+                        // en blanco parecía colgado). En vez de esperar, mostramos el CÓDIGO
+                        // llegando en vivo → se ve armarse desde el primer token, y al abrir
+                        // el <body> cambia al render real.
+                        <pre
+                          ref={draftSrcRef}
+                          className="absolute inset-0 overflow-auto bg-surface-3 p-4 font-mono text-[11px] leading-relaxed text-muted"
+                        >
+                          {draftPreview.slice(-4000)}
+                        </pre>
+                      )}
                     </div>
                   </div>
                 ) : artifact.kind === "draft" ? (
