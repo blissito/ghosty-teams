@@ -170,10 +170,12 @@ export const Route = createFileRoute("/c/$slug")({
         return { channels: shellCache.channels, channel, user, initialFlow: undefined, initialThreads: undefined };
       }
     }
+    const _tl = performance.now();
     const [view, user] = await Promise.all([
       getChannelView({ data: { slug: params.slug } }),
       me(),
     ]);
+    if (typeof window === "undefined") console.log(`[ssr loader shell ${Math.round(performance.now() - _tl)}ms] ${params.slug}`);
     if (!view) throw notFound();
     if (typeof window !== "undefined") shellCache = { channels: view.channels, user };
 
@@ -182,10 +184,12 @@ export const Route = createFileRoute("/c/$slug")({
     if (prefetch) {
       const cachedFlow = typeof window !== "undefined" ? flowCache.get(params.slug) : undefined;
       const cachedThreads = typeof window !== "undefined" ? threadsCache.get(params.slug) : undefined;
+      const _tf = performance.now();
       [initialFlow, initialThreads] = await Promise.all([
         cachedFlow ?? getChannelFlow({ data: { slug: params.slug } }).catch(() => undefined),
         cachedThreads ?? getChannelThreads({ data: { slug: params.slug } }).catch(() => undefined),
       ]);
+      if (typeof window === "undefined") console.log(`[ssr loader flow ${Math.round(performance.now() - _tf)}ms] total=${Math.round(performance.now() - _tl)}ms`);
     }
     return { ...view, user, initialFlow, initialThreads };
   },
@@ -1126,6 +1130,16 @@ function ChannelPage() {
   const driveDraftFromBody = (id: number, body: string) => {
     const doc = extractEbDoc(body);
     if (!doc || !doc.md.trim()) return;
+    // El stream SSE trae los mensajes de TODOS los rooms visibles + DMs: sin este filtro,
+    // un artefacto que un agente arma en #general te abría el panel aunque estuvieras
+    // leyendo un DM (reportado 2026-07-24). Solo maneja el draft si el mensaje pertenece
+    // a la conversación que el usuario tiene ABIERTA.
+    const src = findMessageInCaches(id);
+    if (src) {
+      const inOpenDm = openDmId != null && src.dm_id === openDmId;
+      const inOpenRoom = openDmId == null && src.dm_id == null && src.channel_id === channel.id;
+      if (!inOpenDm && !inOpenRoom) return;
+    }
     draftMsgIdRef.current = id;
     setOpenArtifact((cur) => {
       // Auto-abre si no hay panel, si ya estamos en el draft, o si está abierto el doc/hoja

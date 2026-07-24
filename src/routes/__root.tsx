@@ -25,7 +25,10 @@ export const Route = createRootRoute({
     // fantasma. Aplica también a /login y /join (en un ws muerto no sirven).
     if (typeof window === 'undefined' && !isOAuthRelay && !isCanvasDemo) {
       const { tenantStatusFn } = await import('../server/workspaces')
+      const _t = performance.now()
       const st = await tenantStatusFn()
+      const _ms = performance.now() - _t
+      if (_ms > 200) console.log(`[ssr tenantStatus ${Math.round(_ms)}ms]`)
       if (!st.ok) throw redirect({ href: `${st.portal}/app` })
     }
     if (isOAuthRelay || isCanvasDemo || location.pathname === '/login' || location.pathname.startsWith('/join')) {
@@ -33,7 +36,12 @@ export const Route = createRootRoute({
     }
     // cachedMe: instantáneo en el cliente (revalida en background) → volver de
     // /settings no espera la red. En SSR va fresco.
+    const _t2 = performance.now()
     const user = await cachedMe()
+    if (typeof window === 'undefined') {
+      const _ms2 = performance.now() - _t2
+      if (_ms2 > 200) console.log(`[ssr cachedMe ${Math.round(_ms2)}ms]`)
+    }
     if (!user) throw redirect({ to: '/login' })
     return { user }
   },
