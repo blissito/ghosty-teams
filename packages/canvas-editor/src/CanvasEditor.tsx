@@ -44,6 +44,44 @@ const CHROME_CSS = `
   background: #7c3aed; color: #fff; padding: 0 3px; transform: translateY(-100%); opacity: .8; }
 `
 
+// Tailwind preflight (reset) SCOPED to the artboard — the published artifact loads
+// Play CDN with preflight ON (globally, in its own iframe/page); the edit surface can't
+// run global preflight without wrecking the host UI, so we replicate the essential base
+// rules scoped to .ce-artboard. Keeps edit == published for headings/lists/margins.
+const SCOPED_PREFLIGHT = `
+.ce-artboard *, .ce-artboard ::before, .ce-artboard ::after { box-sizing: border-box; border: 0 solid currentColor; }
+.ce-artboard h1,.ce-artboard h2,.ce-artboard h3,.ce-artboard h4,.ce-artboard h5,.ce-artboard h6 { font-size: inherit; font-weight: inherit; margin: 0; }
+.ce-artboard p,.ce-artboard figure,.ce-artboard blockquote,.ce-artboard dl,.ce-artboard dd,.ce-artboard pre,.ce-artboard hr { margin: 0; }
+.ce-artboard a { color: inherit; text-decoration: inherit; }
+.ce-artboard ol,.ce-artboard ul,.ce-artboard menu { list-style: none; margin: 0; padding: 0; }
+.ce-artboard img,.ce-artboard svg,.ce-artboard video,.ce-artboard canvas,.ce-artboard picture { display: block; vertical-align: middle; max-width: 100%; height: auto; }
+.ce-artboard button,.ce-artboard input,.ce-artboard select,.ce-artboard textarea { font: inherit; color: inherit; margin: 0; padding: 0; }
+.ce-artboard button,.ce-artboard [role="button"] { cursor: pointer; background: transparent; }
+.ce-artboard table { border-collapse: collapse; }
+`
+
+// Load the Tailwind Play CDN ONCE, configured so every utility is scoped as a
+// descendant of .ce-artboard (important: '.ce-artboard') and preflight is OFF — so it
+// styles ONLY the canvas content and never leaks into the host (Teams) UI. Used by
+// hosts whose artifacts are authored in real Tailwind (vs the semantic-token system).
+let twPlayStarted = false
+function ensureTailwindPlay(): void {
+  if (twPlayStarted || typeof document === 'undefined') return
+  twPlayStarted = true
+  const s = document.createElement('script')
+  s.src = 'https://cdn.tailwindcss.com'
+  s.async = false
+  s.onload = () => {
+    try {
+      const w = window as unknown as { tailwind?: { config?: unknown } }
+      if (w.tailwind) w.tailwind.config = { important: '.ce-artboard', corePlugins: { preflight: false } }
+    } catch {
+      /* noop */
+    }
+  }
+  document.head.appendChild(s)
+}
+
 export interface CanvasEditorProps {
   doc: Doc
   onChange?: (doc: Doc) => void
@@ -67,12 +105,20 @@ export interface CanvasEditorProps {
   /** Host-provided preview HTML (▶). If given, the preview iframe renders this instead
    *  of docToHtml(doc) — e.g. Denik passes buildDeployHtml for pixel-parity with publish. */
   renderPreview?: (doc: Doc) => string
+  /** Load the Tailwind Play CDN (scoped to .ce-artboard, preflight off) so artifacts
+   *  authored in real Tailwind render faithfully in the edit surface. Teams passes this. */
+  tailwindPlay?: boolean
 }
 
-export function CanvasEditor({ doc, onChange, refineProvider, imageProvider, onAgentAction, onSelectionChange, onSave, store: externalStore, extraCss, suppressThemeCss, renderPreview }: CanvasEditorProps) {
+export function CanvasEditor({ doc, onChange, refineProvider, imageProvider, onAgentAction, onSelectionChange, onSave, store: externalStore, extraCss, suppressThemeCss, renderPreview, tailwindPlay }: CanvasEditorProps) {
   const store = useMemo(() => externalStore ?? new EditorStore(doc, onChange), [externalStore])
   const state = useEditor(store)
   const viewportRef = useRef<HTMLDivElement | null>(null)
+
+  // real-Tailwind hosts (Teams artifacts): load Play CDN scoped to the canvas
+  useEffect(() => {
+    if (tailwindPlay) ensureTailwindPlay()
+  }, [tailwindPlay])
 
   // publish selection changes to the host (→ chat agent context)
   useEffect(() => {
@@ -533,6 +579,7 @@ export function CanvasEditor({ doc, onChange, refineProvider, imageProvider, onA
     <div className="ce-root" style={styles.root}>
       <link rel="stylesheet" href={googleFontsHref()} />
       <style>{CHROME_CSS}</style>
+      {tailwindPlay && <style>{SCOPED_PREFLIGHT}</style>}
       {themeStyle && <style>{themeStyle}</style>}
       <style>{jitStyle}</style>
       {extraCss && <style>{extraCss}</style>}

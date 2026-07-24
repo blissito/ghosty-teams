@@ -41,10 +41,19 @@ interface PipelineResponse {
 // los valores se stringifican (contrato histórico: las tablas gc_* se leen como
 // string|null y se coercionan con num()). Usado por los callers que indexan por
 // posición (users/config/invites).
+// Traza de queries LENTAS (>SLOW_MS) al journal del proceso: sin esto, diagnosticar
+// "la carga tarda minutos" es adivinar. Se activa siempre; el ruido es mínimo.
+const SLOW_MS = Number(process.env.DB_SLOW_MS ?? 200);
+function slow(sql: string, ms: number, rows: number) {
+  if (ms < SLOW_MS) return;
+  console.log(`[db ${Math.round(ms)}ms rows=${rows}] ${sql.replace(/\s+/g, " ").slice(0, 140)}`);
+}
+
 export async function dbqRaw(
   sql: string,
   args: unknown[] = []
 ): Promise<{ cols: string[]; rows: (string | null)[][] }> {
+  const t0 = performance.now();
   const namespace = await currentNamespace();
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
@@ -72,6 +81,7 @@ export async function dbqRaw(
   const rows = r.rows.map((row) =>
     row.map((cell) => (cell?.value == null ? null : String(cell.value)))
   );
+  slow(sql, performance.now() - t0, rows.length);
   return { cols, rows };
 }
 
@@ -89,6 +99,7 @@ export async function dbqMany(
   stmts: { sql: string; args?: unknown[] }[]
 ): Promise<Row[][]> {
   if (!stmts.length) return [];
+  const t0 = performance.now();
   const namespace = await currentNamespace();
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
@@ -110,6 +121,7 @@ export async function dbqMany(
   });
   if (!res.ok) throw new Error(`db ${res.status}: ${await res.text()}`);
   const data = (await res.json()) as PipelineResponse;
+  slow(`[many x${stmts.length}] ${stmts[0].sql}`, performance.now() - t0, 0);
   return stmts.map((_, i) => {
     const r = data.results[i];
     if (!r || r.type === "error") throw new Error(`db: ${r?.error?.message ?? "sqld error"}`);

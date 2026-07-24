@@ -268,19 +268,23 @@ export default function ArtifactPanel({
     return doc;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [artifactKey]);
-  // Estilos embebidos del artefacto (<style>…</style>) → extraCss para que Editar se
-  // vea como Ver. Los selectores body/html/:root no matchean dentro del editor (el
-  // contenido vive en un <div.ce-artboard>, no en <body>) → reescribirlos al lienzo.
-  const artifactStyleCss = useMemo(() => {
+  // Estilos embebidos del artefacto (<style>…</style>). Los quitamos del doc (nodos
+  // no-visuales) → hay que reinyectarlos: RAW (body intacto) para el preview iframe
+  // (docToHtml envuelve en <body>), y REESCRITO (body→.ce-artboard) para la superficie
+  // de edición (el contenido vive en un <div.ce-artboard>, no en <body>).
+  const artifactStyleCssRaw = useMemo(() => {
     if (!artifactHtml) return "";
     const blocks = artifactHtml.match(/<style[^>]*>([\s\S]*?)<\/style>/gi) || [];
-    let css = blocks.map((b) => b.replace(/<\/?style[^>]*>/gi, "")).join("\n");
-    css = css
-      .replace(/(^|[\s,{}])(html|body)\b/gi, "$1.ce-artboard")
-      .replace(/:root\b/gi, ".ce-artboard");
-    return css;
+    return blocks.map((b) => b.replace(/<\/?style[^>]*>/gi, "")).join("\n");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [artifactKey]);
+  const artifactStyleCss = useMemo(
+    () =>
+      artifactStyleCssRaw
+        .replace(/(^|[\s,{}])(html|body)\b/gi, "$1.ce-artboard")
+        .replace(/:root\b/gi, ".ce-artboard"),
+    [artifactStyleCssRaw]
+  );
   // Al cambiar de artefacto (o cerrar), volver a modo Ver.
   useEffect(() => { setEditing(false); }, [artifactKey]);
   // Badge por tipo REAL: sheet vivo = CSV, doc generado = DOCX, office = su extensión
@@ -1116,10 +1120,11 @@ export default function ArtifactPanel({
                           doc={editorDoc}
                           extraCss={artifactStyleCss}
                           suppressThemeCss
+                          tailwindPlay
                           renderPreview={(doc) =>
                             docToHtml(doc).replace(
                               "</head>",
-                              `<style>${artifactStyleCss}</style></head>`
+                              `<style>${artifactStyleCssRaw}</style></head>`
                             )
                           }
                           onSave={async (doc) => {

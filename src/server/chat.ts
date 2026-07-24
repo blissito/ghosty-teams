@@ -213,6 +213,7 @@ export const getChannelView = createServerFn({ method: "GET" })
   .validator((d: { slug: string }) => d)
   .handler(async ({ data }) => {
     // Auto-cura el schema de teams existentes (aditivo, idempotente, memoizado).
+    const _t0 = performance.now();
     await (await import("./schema.server")).ensureSchema().catch(() => {});
     const db = await import("../db.server");
     const user = await sessionUser();
@@ -224,6 +225,7 @@ export const getChannelView = createServerFn({ method: "GET" })
     // haber visitado cada room y persisten al cambiar de room.
     const byChannel = await db.listThreadRootsForChannels(channels.map((c) => c.id));
     for (const c of channels) c.threads = byChannel.get(c.id) ?? [];
+    console.log(`[fn getChannelView ${Math.round(performance.now() - _t0)}ms] rooms=${channels.length}`);
     return { channels, channel };
   });
 
@@ -232,11 +234,14 @@ export const getChannelView = createServerFn({ method: "GET" })
 export const getChannelFlow = createServerFn({ method: "GET" })
   .validator((d: { slug: string; topic?: string }) => d)
   .handler(async ({ data }) => {
+    const _t0 = performance.now();
     const db = await import("../db.server");
     const channel = await db.getChannel(data.slug);
     if (!channel) return [];
     const user = await sessionUser();
-    return db.attachMeta(await db.listChannelFlow(channel.id, data.topic), user?.sub ?? "");
+    const out = await db.attachMeta(await db.listChannelFlow(channel.id, data.topic), user?.sub ?? "");
+    console.log(`[fn getChannelFlow ${Math.round(performance.now() - _t0)}ms] msgs=${out.length}`);
+    return out;
   });
 
 // Topics del room (submenús del sidebar) — distintos topics con conteo/actividad.

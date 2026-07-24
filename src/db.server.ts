@@ -997,18 +997,16 @@ export async function listChannelFlow(channelId: number, topic?: string): Promis
   const filter = topic ? "AND m.topic = ?" : "";
   const base: unknown[] = topic ? [channelId, topic] : [channelId];
   const rows = await dbq(
-    `SELECT * FROM (
-       SELECT m.*, (SELECT COUNT(*) FROM gc_messages c WHERE c.parent_id = m.id) AS reply_count
-         FROM gc_messages m
-        WHERE m.channel_id = ? AND m.parent_id IS NULL ${filter}
-        ORDER BY m.created_at DESC
-        LIMIT ${FLOW_LIMIT}
-       UNION
-       SELECT m.*, (SELECT COUNT(*) FROM gc_messages c WHERE c.parent_id = m.id) AS reply_count
-         FROM gc_messages m
-        WHERE m.channel_id = ? AND m.parent_id IS NULL ${filter}
-          AND EXISTS (SELECT 1 FROM gc_messages c WHERE c.parent_id = m.id)
-     ) ORDER BY created_at ASC`,
+    `SELECT m.*, (SELECT COUNT(*) FROM gc_messages c WHERE c.parent_id = m.id) AS reply_count
+       FROM gc_messages m
+      WHERE m.channel_id = ? AND m.parent_id IS NULL ${filter}
+        AND (
+          m.id IN (SELECT id FROM gc_messages
+                    WHERE channel_id = ? AND parent_id IS NULL ${topic ? "AND topic = ?" : ""}
+                    ORDER BY created_at DESC LIMIT ${FLOW_LIMIT})
+          OR EXISTS (SELECT 1 FROM gc_messages c WHERE c.parent_id = m.id)
+        )
+      ORDER BY m.created_at ASC`,
     [...base, ...base]
   );
   return rows.map(toMessage);
