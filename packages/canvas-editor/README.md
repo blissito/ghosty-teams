@@ -133,6 +133,7 @@ Editing text on a CSS-transformed DOM canvas fights four things at once; the wor
 - **F4 — Denik/agenda**: consume the package to replace GrapesJS; adapter `Section3[] ⇄ Doc`; inject the provider per host (Gemini 2.5/3, Kimi K3 — provider switch).
 
 **Known issues:**
+- **No se puede borrar un frame/artboard**: el store tiene `deleteArtboard` pero no hay atajo ni UI para invocarlo (Delete borra el NODO seleccionado, no el artboard). Falta: seleccionar artboard (click en su label/tree) + Delete → `deleteArtboard`, o un botón en el árbol de capas.
 - **Preview no renderiza imágenes subidas**: en la demo, `ImageProvider.upload` devuelve un `blob:`/object URL (`URL.createObjectURL`) que el iframe **sandboxed** del preview (documento aparte) no puede resolver → la imagen no aparece. En producción el `upload` debe devolver una **URL hospedada (https)** y se resuelve. Fix real = subir a storage y usar la URL pública.
 
 **Requested (stakeholder):**
