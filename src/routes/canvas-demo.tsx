@@ -9,7 +9,7 @@ export const Route = createFileRoute('/canvas-demo')({
   component: CanvasDemo,
 })
 
-const DOC_KEY = 'ce-demo-doc-v2'
+const DOC_KEY = 'ce-demo-doc-v3'
 
 function seedDoc(): Doc {
   // In the demo, persist the doc to localStorage so refreshes keep edits
@@ -32,7 +32,6 @@ function seedDoc(): Doc {
     y: 0,
     w: 375,
     h: 812,
-    cls: 'bg-white',
     nodes: [BLOCKS.find((b) => b.key === 'cta')!.make()],
   })
   return doc

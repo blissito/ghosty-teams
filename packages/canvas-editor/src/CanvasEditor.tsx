@@ -35,7 +35,7 @@ const CHROME_CSS = `
 .ce-viewport { position: relative; flex: 1; overflow: hidden; background: #0f0f12;
   background-image: radial-gradient(circle, #2a2a30 1px, transparent 1px); background-size: 22px 22px; }
 .ce-world { position: absolute; top: 0; left: 0; transform-origin: 0 0; }
-.ce-artboard { position: absolute; overflow: hidden; background: #fff;
+.ce-artboard { position: absolute; overflow: hidden; background: var(--color-background, #fff);
   box-shadow: 0 8px 40px rgba(0,0,0,.35); }
 .ce-artboard-label { position: absolute; top: -22px; left: 0; font: 12px ui-sans-serif, system-ui;
   color: #9ca3af; white-space: nowrap; }

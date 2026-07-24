@@ -389,7 +389,7 @@ export function makeArtboard(opts: { name?: string; w: number; h: number; x?: nu
     y: opts.y ?? 0,
     w: opts.w,
     h: opts.h,
-    cls: 'bg-white',
+    // no hardcoded bg — the artboard follows the theme background (var(--color-background))
     nodes: [],
   }
 }

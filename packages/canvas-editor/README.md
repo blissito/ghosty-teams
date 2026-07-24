@@ -132,6 +132,12 @@ Editing text on a CSS-transformed DOM canvas fights four things at once; the wor
 - **F3 — agent refine**: SSE endpoint running the pluggable model; wire `RefineProvider` + `onAgentAction` (robot button) to the Teams chat agent so edits stream back into the canvas by `data-id`.
 - **F4 — Denik/agenda**: consume the package to replace GrapesJS; adapter `Section3[] ⇄ Doc`; inject the provider per host (Gemini 2.5/3, Kimi K3 — provider switch).
 
+**Known issues:**
+- **Preview no renderiza imágenes subidas**: en la demo, `ImageProvider.upload` devuelve un `blob:`/object URL (`URL.createObjectURL`) que el iframe **sandboxed** del preview (documento aparte) no puede resolver → la imagen no aparece. En producción el `upload` debe devolver una **URL hospedada (https)** y se resuelve. Fix real = subir a storage y usar la URL pública.
+
+**Requested (stakeholder):**
+- **Actions on nodes** (pedido de Brenda/"brendi") — un click que lleve a otra página / URL / ancla / otro artboard. Empezar simple: `href` en `<a>`/`button` (ya hay `href` en el modelo) + un campo "Al hacer clic → ir a {url/página}" en el inspector; luego navegación entre artboards/páginas del mismo doc. Es interacción ligera (links/anchors), NO animación Framer.
+
 **High-value editor features not yet built (gap audit vs Figma/efecto/Framer/Webflow):**
 - **Reusable components / instances** (symbols) — needs a `components` registry in the model + instance refs + serialization (embed a JSON blob in the exported HTML). Highest product ROI; a dedicated piece.
 - **Responsive per-breakpoint overrides** (Desktop↔Mobile sync) — needs per-artboard override model.
