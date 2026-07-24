@@ -143,9 +143,35 @@ export function stripEbAudio(body: string): string {
   return [before.trim(), after.trim()].filter(Boolean).join("\n\n");
 }
 
+// Versión para RENDER (cliente): mientras el bloque ```eb-audio``` aún streamea (sin
+// cierre), en vez de mostrar el JSON crudo pinta un placeholder; ya cerrado lo quita
+// (el reproductor entra como adjunto). Tolera el fence a medio abrir (```eb-au…).
+export function bubbleWithoutEbAudio(body: string): string {
+  const open = body.match(/```eb-audio[^\n]*(\n|$)/);
+  if (!open || open.index == null) {
+    // ¿fence a medio escribir mientras streamea? (```eb-a … sin newline aún)
+    const partial = body.match(/```eb-a[a-z-]*$/);
+    if (partial && partial.index != null) {
+      const before = body.slice(0, partial.index).trim();
+      return [before, "🎙️ Grabando la nota de voz…"].filter(Boolean).join("\n\n");
+    }
+    return body;
+  }
+  const before = body.slice(0, open.index).trim();
+  const rest = body.slice(open.index + open[0].length);
+  const closeIdx = rest.indexOf("```");
+  if (closeIdx === -1) {
+    return [before, "🎙️ Grabando la nota de voz…"].filter(Boolean).join("\n\n");
+  }
+  const after = rest.slice(closeIdx + 3).trim();
+  return [before, after].filter(Boolean).join("\n\n");
+}
+
 // Texto de la burbuja del chat SIN el bloque (narración alrededor). Mientras streamea (no
 // cerrado) deja un marcador para que el chat no muestre el markdown/csv crudo.
 export function bubbleWithoutEbDoc(body: string): string {
+  // Primero limpia cualquier bloque de nota de voz (no debe verse el JSON crudo).
+  body = bubbleWithoutEbAudio(body);
   const doc = extractEbDoc(body);
   if (!doc) return body;
   const around = [doc.before.trim(), doc.after.trim()].filter(Boolean).join("\n\n");
