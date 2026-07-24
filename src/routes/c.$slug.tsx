@@ -6362,11 +6362,9 @@ function ToolGroup({ tools }: { tools: ToolState[] }) {
   const anyRunning = tools.some((t) => t.status === "running");
   const anyError = tools.some((t) => t.status === "error");
   const overall: ToolState["status"] = anyError ? "error" : anyRunning ? "running" : "done";
-  const [open, setOpen] = useState(anyRunning);
-  const touched = useRef(false);
-  useEffect(() => {
-    if (!touched.current) setOpen(anyRunning);
-  }, [anyRunning]);
+  // Abierta por default (el usuario quiere ver las tools sin tener que expandir cada vez).
+  // Se queda como la deje: si la colapsa, respeta su elección para ese mensaje.
+  const [open, setOpen] = useState(true);
   const icon = (s: ToolState["status"], sz = 13) =>
     s === "error" ? (
       <X size={sz} className="shrink-0 text-red-500" />
@@ -6394,10 +6392,7 @@ function ToolGroup({ tools }: { tools: ToolState[] }) {
   return (
     <div className="mb-1.5 max-w-md overflow-hidden rounded-lg border border-border bg-surface-2/50">
       <button
-        onClick={() => {
-          touched.current = true;
-          setOpen((o) => !o);
-        }}
+        onClick={() => setOpen((o) => !o)}
         className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-xs hover:bg-surface-3/40"
       >
         <Wrench size={12} className="shrink-0 text-muted" />
