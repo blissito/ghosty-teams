@@ -5076,7 +5076,7 @@ function Flow({
           una imagen ARRIBA del viewport el browser movía scrollTop para conservar la vista, lo
           que disparaba onScroll → apagaba `stick` a media carga y el ResizeObserver dejaba de
           re-anclar (quedaba a la mitad). Con none, el RO es el ÚNICO ancla y pega al fondo bien. */}
-      <div ref={scrollRef} onScroll={onScroll} className="w-full flex-1 overflow-y-auto px-6 py-4 thin-scroll [overflow-anchor:none]">
+      <div ref={scrollRef} onScroll={onScroll} className="w-full min-w-0 flex-1 overflow-y-auto overflow-x-hidden px-6 py-4 thin-scroll [overflow-anchor:none]">
         <div ref={contentRef}>
         {messages === null ? (
           <ThreadSkeleton />
@@ -5191,7 +5191,7 @@ function ThreadView({
           una imagen ARRIBA del viewport el browser movía scrollTop para conservar la vista, lo
           que disparaba onScroll → apagaba `stick` a media carga y el ResizeObserver dejaba de
           re-anclar (quedaba a la mitad). Con none, el RO es el ÚNICO ancla y pega al fondo bien. */}
-      <div ref={scrollRef} onScroll={onScroll} className="w-full flex-1 overflow-y-auto px-6 py-4 thin-scroll [overflow-anchor:none]">
+      <div ref={scrollRef} onScroll={onScroll} className="w-full min-w-0 flex-1 overflow-y-auto overflow-x-hidden px-6 py-4 thin-scroll [overflow-anchor:none]">
         <div ref={contentRef}>
         {!data ? (
           <ThreadSkeleton />
@@ -5359,7 +5359,7 @@ function DmView({
           una imagen ARRIBA del viewport el browser movía scrollTop para conservar la vista, lo
           que disparaba onScroll → apagaba `stick` a media carga y el ResizeObserver dejaba de
           re-anclar (quedaba a la mitad). Con none, el RO es el ÚNICO ancla y pega al fondo bien. */}
-      <div ref={scrollRef} onScroll={onScroll} className="w-full flex-1 overflow-y-auto px-6 py-4 thin-scroll [overflow-anchor:none]">
+      <div ref={scrollRef} onScroll={onScroll} className="w-full min-w-0 flex-1 overflow-y-auto overflow-x-hidden px-6 py-4 thin-scroll [overflow-anchor:none]">
         <div ref={contentRef}>
         {flow === null ? (
           <ThreadSkeleton />

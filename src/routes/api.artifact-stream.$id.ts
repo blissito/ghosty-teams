@@ -17,7 +17,38 @@ import { createFileRoute } from "@tanstack/react-router";
 export const Route = createFileRoute("/api/artifact-stream/$id")({
   server: {
     handlers: {
-      GET: async ({ params }) => {
+      GET: async ({ params, request }) => {
+        // Modo demo (?demo=1): HTML canned emitido en pedacitos, SIN sesión. Existe para
+        // COMPROBAR el transporte de punta a punta (¿llega en chunks o alguien lo
+        // bufferea: Nitro, Caddy, el iframe?). Contenido estático, no toca datos.
+        if (new URL(request.url).searchParams.get("demo")) {
+          const enc = new TextEncoder();
+          const parts = [
+            `<!doctype html><html><head><script src="https://cdn.tailwindcss.com"></script>`,
+            `<style>:root{--color-background:#0b1020;--color-primary:#8b5cf6}</style></head>`,
+            `<body class="bg-[var(--color-background)] text-white p-10 font-sans">`,
+            ...Array.from({ length: 8 }, (_, i) =>
+              `<div class="mb-4 rounded-xl bg-[var(--color-primary)] p-6 text-2xl font-bold">bloque ${i + 1}</div>`
+            ),
+            `</body></html>`,
+          ];
+          let i = 0;
+          const s = new ReadableStream<Uint8Array>({
+            async pull(c) {
+              if (i >= parts.length) return c.close();
+              c.enqueue(enc.encode(parts[i++]));
+              await new Promise((r) => setTimeout(r, 700));
+            },
+          });
+          return new Response(s, {
+            headers: {
+              "Content-Type": "text/html; charset=utf-8",
+              "Cache-Control": "no-store, no-transform",
+              "Content-Security-Policy": "sandbox allow-scripts",
+              "X-Accel-Buffering": "no",
+            },
+          });
+        }
         const { useSession } = await import("@tanstack/react-start/server");
         const { sessionConfig } = await import("../server/session.server");
         const s = await useSession<{ user?: { sub: string } }>(sessionConfig());

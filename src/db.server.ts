@@ -1003,10 +1003,10 @@ export async function listChannelFlow(channelId: number, topic?: string): Promis
         AND (
           m.id IN (SELECT id FROM gc_messages
                     WHERE channel_id = ? AND parent_id IS NULL ${topic ? "AND topic = ?" : ""}
-                    ORDER BY created_at DESC LIMIT ${FLOW_LIMIT})
+                    ORDER BY created_at DESC, id DESC LIMIT ${FLOW_LIMIT})
           OR EXISTS (SELECT 1 FROM gc_messages c WHERE c.parent_id = m.id)
         )
-      ORDER BY m.created_at ASC`,
+      ORDER BY m.created_at ASC, m.id ASC`,
     [...base, ...base]
   );
   return rows.map(toMessage);
@@ -1104,7 +1104,7 @@ export async function listMessagesSince(channelId: number, sinceId: number): Pro
 // Un hilo: las respuestas de un mensaje.
 export async function listThread(parentId: number): Promise<Message[]> {
   const rows = await dbq(
-    "SELECT * FROM gc_messages WHERE parent_id = ? ORDER BY created_at ASC",
+    "SELECT * FROM gc_messages WHERE parent_id = ? ORDER BY created_at ASC, id ASC",
     [parentId]
   );
   return rows.map(toMessage);
@@ -1312,8 +1312,8 @@ export async function listDmFlow(dmId: number): Promise<Message[]> {
   const rows = await dbq(
     // Últimos 300 (mismo criterio que el flujo de room: el arranque no puede pagar
     // el historial completo). El resto queda para scroll-back por cursor.
-    `SELECT * FROM (SELECT * FROM gc_messages WHERE dm_id = ? ORDER BY created_at DESC LIMIT 300)
-      ORDER BY created_at ASC`,
+    `SELECT * FROM (SELECT * FROM gc_messages WHERE dm_id = ? ORDER BY created_at DESC, id DESC LIMIT 300)
+      ORDER BY created_at ASC, id ASC`,
     [dmId]
   );
   return rows.map(toMessage);
