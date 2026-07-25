@@ -1160,7 +1160,10 @@ function ChannelPage() {
     setOpenArtifact((cur) => {
       // Auto-abre si no hay panel, si ya estamos en el draft, o si está abierto el doc/hoja
       // que se está editando (para ver la edición EN VIVO). NO pisa otro artefacto (pdf/imagen…).
-      if (cur && cur.kind !== "draft" && cur.kind !== "doc" && cur.kind !== "sheet" && cur.kind !== "artifact") return cur;
+      // HTML en construcción: SIEMPRE toma el panel — el usuario quiere ver armarse el
+      // artefacto cada vez que el agente escribe HTML (pedido explícito 2026-07-25). Para
+      // doc/hoja seguimos siendo respetuosos: no pisamos un pdf/imagen ya abierto.
+      if (doc.kind !== "artifact" && cur && cur.kind !== "draft" && cur.kind !== "doc" && cur.kind !== "sheet" && cur.kind !== "artifact") return cur;
       return {
         kind: "draft",
         title: draftTitle(doc.md, doc.kind, doc.fenceTitle),

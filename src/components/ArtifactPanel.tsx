@@ -1032,22 +1032,23 @@ export default function ArtifactPanel({
                       </span>
                     </div>
                     <div className="relative min-h-0 flex-1">
-                      {draftBodyStarted ? (
-                        <StreamingHtmlFrame
-                          html={draftPreview}
-                          title={artifact.title || "artefacto"}
-                          className="absolute inset-0 h-full w-full border-0 bg-transparent"
-                        />
-                      ) : (
-                        // Todavía en el <head>/<style>: no hay NADA que pintar (el iframe
-                        // en blanco parecía colgado). En vez de esperar, mostramos el CÓDIGO
-                        // llegando en vivo → se ve armarse desde el primer token, y al abrir
-                        // el <body> cambia al render real.
+                      {/* NUNCA hay pantalla de espera: el iframe se monta desde el PRIMER
+                          token. Mientras el HTML va en el <head> el render está vacío pero
+                          ya toma el fondo del :root del artefacto (se ve "naciendo", no
+                          colgado); en cuanto abre el <body> aparece el contenido. */}
+                      <StreamingHtmlFrame
+                        html={draftPreview}
+                        title={artifact.title || "artefacto"}
+                        className="absolute inset-0 h-full w-full border-0 bg-transparent"
+                      />
+                      {/* Ticker del código llegando — solo hasta que hay algo visual que ver.
+                          Franja inferior, no tapa el render. */}
+                      {draftBodyStarted ? null : (
                         <pre
                           ref={draftSrcRef}
-                          className="absolute inset-0 overflow-auto bg-surface-3 p-4 font-mono text-[11px] leading-relaxed text-muted"
+                          className="pointer-events-none absolute inset-x-0 bottom-0 max-h-40 overflow-hidden bg-gradient-to-t from-surface-3 to-transparent p-4 font-mono text-[11px] leading-relaxed text-muted"
                         >
-                          {draftPreview.slice(-4000)}
+                          {draftPreview.slice(-600)}
                         </pre>
                       )}
                     </div>

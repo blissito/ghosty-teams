@@ -616,6 +616,12 @@ export async function runAgentTurn(opts: {
     if (opts.emitBody) opts.emitBody(bodyId, renderBody(allDone));
   };
 
+  // SONDA del goteo (temporal): ¿el HTML del artefacto llega token a token o de un jalón?
+  // Va AQUÍ, upstream del bus, para distinguir "el runtime no streamea" de "se perdió
+  // en el camino al cliente". Una sola línea con +Nb gigante = el agente lo escupe entero.
+  const chunkT0 = Date.now();
+  let chunkN = 0;
+  let artifactOpenAt = -1;
   const onChunk = async (chunk: string) => {
     if (!chunk) return;
     if (opts.emitBody) {
@@ -625,16 +631,27 @@ export async function runAgentTurn(opts: {
       acc += chunk;
       // eb-doc/eb-sheet no llaman tools → sin esto el checklist quedaría vacío. Sintetiza una
       // entrada en cuanto aparece el bloque ("Redactó el documento" / "Generó la hoja").
-      if (!ebDocSeen && /```eb-(doc|sheet)/.test(acc)) {
+      if (!ebDocSeen && /```eb-(doc|sheet|artifact)/.test(acc)) {
         ebDocSeen = true;
         anyActivity = true;
-        const isSheet = /```eb-sheet/.test(acc);
-        const label = isSheet
+        const label = /```eb-sheet/.test(acc)
           ? { ing: "Generando la hoja", done: "Generé la hoja" }
-          : { ing: "Redactando el documento", done: "Redacté el documento" };
+          : /```eb-artifact/.test(acc)
+            ? { ing: "Construyendo el artefacto", done: "Construí el artefacto" }
+            : { ing: "Redactando el documento", done: "Redacté el documento" };
         if (!tools.some((t) => t.done === label.done))
           tools.push({ ing: label.ing, done: label.done, started: new Set(), ended: new Set(), failed: false });
       }
+      chunkN++;
+      if (artifactOpenAt < 0 && /```eb-artifact/.test(acc)) {
+        artifactOpenAt = chunkN;
+        console.log(`[gt-chunk] eb-artifact ABRE en chunk #${chunkN} t=${Date.now() - chunkT0}ms`);
+      }
+      if (artifactOpenAt >= 0)
+        console.log(
+          `[gt-chunk] #${chunkN} +${chunk.length}b acc=${acc.length}b t=${Date.now() - chunkT0}ms` +
+            (/<body[\s>]/i.test(acc) ? " body✓" : "")
+        );
       await paint();
     } else {
       opts.emitDelta(await ensure(), chunk); // fallback legacy (append)
