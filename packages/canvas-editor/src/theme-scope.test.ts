@@ -89,3 +89,14 @@ describe('utilidades arbitrarias con tokens', () => {
     expect(arbitraryUtilityCss(doc, '.ce-artboard')).toMatch(/background-color:var\(--color-primary\)/)
   })
 })
+
+describe('HTML exportado', () => {
+  it('un solo frame sale full-bleed (sin ancho fijo ni franja en pantallas anchas)', () => {
+    const doc = htmlToDoc(ARTIFACT)
+    const out = docToHtml(doc)
+    const style = /<section[^>]*style="([^"]*)"/.exec(out)?.[1] ?? ''
+    expect(style).toContain('width:100%')
+    expect(style).not.toMatch(/width:\d+px/)
+    expect(style).not.toContain('max-width')
+  })
+})

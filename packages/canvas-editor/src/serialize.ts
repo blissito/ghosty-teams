@@ -106,9 +106,17 @@ function artboardToHtml(ab: Artboard, opts: { centered?: boolean } = {}): string
   const cls = ab.cls ? ` class="${escAttr(ab.cls)}"` : ''
   // In preview/publish, center each artboard (margin:auto) and cap at its design
   // width so it doesn't sit left-aligned inside a wider viewport ("chueco").
+  // SIEMPRE responsivo: con `width:${ab.w}px` fijo (el caso de un solo artboard) el HTML
+  // publicado medía 1440px pasara lo que pasara → scroll horizontal en el panel y en móvil
+  // (regresión vista al guardar desde el editor, 2026-07-24). `width:100%` + `max-width`
+  // conserva el ancho de diseño sin desbordar.
+  // Un solo frame (el caso de un artefacto) → FULL-BLEED: `width:100%` sin tope. Con
+  // `width:${ab.w}px` fijo salía scroll horizontal en el panel, y con `max-width` quedaba
+  // una franja blanca en pantallas anchas (reportado 2026-07-24). Con varios frames sí se
+  // centra cada uno a su ancho de diseño para poder distinguirlos.
   const style = opts.centered
     ? `width:100%;max-width:${ab.w}px;min-height:${ab.h}px;margin:0 auto`
-    : `width:${ab.w}px;min-height:${ab.h}px`
+    : `width:100%;min-height:${ab.h}px`
   const inner = ab.nodes.map((n) => nodeToHtml(n, '      ')).join('\n')
   return `    <section data-artboard-id="${escAttr(ab.id)}" data-artboard-name="${escAttr(
     ab.name,

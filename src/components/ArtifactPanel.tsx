@@ -1198,7 +1198,18 @@ export default function ArtifactPanel({
                             )
                           }
                           onSave={async (doc) => {
-                            const html = docToHtml(doc);
+                            // El export del editor NO conserva el <style> propio del
+                            // artefacto (keyframes, reglas custom): sin esto, guardar lo
+                            // borraba. Lo reinyectamos sin sus tokens (esos los emite el
+                            // tema del editor, que es lo que el usuario acaba de elegir).
+                            const custom = artifactStyleCssRaw.replace(
+                              /^\s*--(?:color-[\w-]+|radius|font-(?:heading|body|mono))\s*:[^;]*;/gim,
+                              ""
+                            );
+                            const html = docToHtml(doc).replace(
+                              "</head>",
+                              custom.trim() ? `<style>${custom}</style></head>` : "</head>"
+                            );
                             await updateArtifactHtmlFn({
                               data: {
                                 documentId: artifact.documentId,
