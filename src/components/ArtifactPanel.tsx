@@ -7,7 +7,6 @@ import { listTeamDocumentsFn, type TeamDocument } from "../server/documents";
 import { updateArtifactHtmlFn } from "../server/artifacts";
 import { CanvasEditor, htmlToDoc, docToHtml, type Node as CeNode } from "@ghosty/canvas-editor";
 import { Markdown } from "./Markdown";
-import { StreamingHtmlFrame } from "./StreamingHtmlFrame";
 
 // Un documento del team (generado o subido) → vista del panel. Null si no es
 // previsualizable. Reusado por el índice Cowork (kind:"docindex").
@@ -1033,22 +1032,14 @@ export default function ArtifactPanel({
                           remonta mientras el agente escribe (remontarlo era justo lo que
                           impedía ver la construcción). Sin messageId (cliente viejo / draft
                           sin ancla) caemos al re-emisor de srcDoc. */}
-                      {artifact.messageId != null ? (
-                        <iframe
-                          key={`stream-${artifact.messageId}`}
-                          title={artifact.title || "artefacto"}
-                          src={`/api/artifact-stream/${artifact.messageId}`}
-                          sandbox="allow-scripts allow-forms allow-popups"
-                          referrerPolicy="no-referrer"
-                          className="absolute inset-0 h-full w-full border-0 bg-transparent"
-                        />
-                      ) : (
-                        <StreamingHtmlFrame
-                          html={draftPreview}
-                          title={artifact.title || "artefacto"}
-                          className="absolute inset-0 h-full w-full border-0 bg-transparent"
-                        />
-                      )}
+                      <iframe
+                        key={`stream-${artifact.messageId ?? "draft"}`}
+                        title={artifact.title || "artefacto"}
+                        src={`/api/artifact-stream/${artifact.messageId}`}
+                        sandbox="allow-scripts allow-forms allow-popups"
+                        referrerPolicy="no-referrer"
+                        className="absolute inset-0 h-full w-full border-0 bg-transparent"
+                      />
                     </div>
                   </div>
                 ) : artifact.kind === "draft" ? (
