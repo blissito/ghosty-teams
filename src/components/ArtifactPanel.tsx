@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from "motion/react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ARTIFACT_CHROME_CSS } from "../lib/artifact-stream-doc";
 import { LiveArtifactPreview, ArtifactSkeleton } from "./LiveArtifactPreview";
 import { X, ExternalLink, FileText, Download, Loader2, ChevronRight, ChevronLeft, RotateCw, Upload, Link as LinkIcon, Check, Pencil, Eye, Maximize2, Minimize2 } from "lucide-react";
@@ -64,7 +64,18 @@ export type ArtifactView =
   | { kind: "html"; title: string; embedUrl: string }
   // Redacción EN VIVO (Canvas): prosa (markdown), tabla (csv) o HTML (artifact). `sheet`/`artifact`
   // eligen el render; los tres streamean por el mismo camino de draft.
-  | { kind: "draft"; title: string; content: string; sheet: boolean; streaming?: boolean; artifact?: boolean; messageId?: number }
+  // `patches` = edición QUIRÚRGICA en curso: en vez de un documento nuevo, el agente manda
+  // subárboles por `data-id` que se aplican sobre `content` sin repintar el resto.
+  | {
+      kind: "draft";
+      title: string;
+      content: string;
+      sheet: boolean;
+      streaming?: boolean;
+      artifact?: boolean;
+      messageId?: number;
+      patches?: { nodeId: string; html: string; closed: boolean }[];
+    }
   | { kind: "doc"; title: string; documentId: string; md: string } // documento vivo (markdown local + versiones)
   | { kind: "sheet"; title: string; documentId: string; csv: string } // hoja viva (CSV local + versiones)
   // Artefacto HTML interactivo: `html` = fuente (iframe srcDoc, sandbox aislado); `src` = URL pública S3.
@@ -496,6 +507,15 @@ export default function ArtifactPanel({
   // primer token, igual que una página que llega por red. Sin throttle de re-montaje ni gates.
   const isDraftArtifact = artifact?.kind === "draft" && !!artifact.artifact;
   const draftPreview = isDraftArtifact && artifact?.kind === "draft" ? artifact.content : "";
+  // Patches que NO encontraron su nodo. Se muestran con el id a la vista (ver la franja de
+  // estado): si el modo quirúrgico se rompiera, tiene que verse en el primer turno, no
+  // quedar tapado por un camino de respaldo silencioso.
+  const [failedPatches, setFailedPatches] = useState<string[]>([]);
+  const patchSig = artifact?.kind === "draft" ? (artifact.patches ?? []).map((p) => p.nodeId).join(",") : "";
+  useEffect(() => { setFailedPatches([]); }, [patchSig]);
+  const onPatchFail = useCallback((nodeId: string) => {
+    setFailedPatches((cur) => (cur.includes(nodeId) ? cur : [...cur, nodeId]));
+  }, []);
   // Hasta que abre el <body> no hay nada visual: mostramos el código en vivo (auto-scroll).
   const draftSrcRef = useRef<HTMLPreElement | null>(null);
   useEffect(() => {
@@ -1060,12 +1080,25 @@ export default function ArtifactPanel({
                         llegando (bytes subiendo) o no (0 B) — la diferencia entre "el agente
                         no manda nada" y "llega pero no se pinta". Desaparece al cerrar el
                         fence. */}
-                    {artifact.streaming ? (
+                    {artifact.streaming || failedPatches.length ? (
                       <div className="flex items-center gap-2 border-b border-border bg-surface px-3 py-1.5 text-xs text-muted">
-                        <span className="h-1.5 w-1.5 animate-ping rounded-full bg-brand" />
-                        {t("Construyendo el artefacto…")}
+                        {artifact.streaming ? (
+                          <>
+                            <span className="h-1.5 w-1.5 animate-ping rounded-full bg-brand" />
+                            {artifact.patches?.length ? t("Ajustando el artefacto…") : t("Construyendo el artefacto…")}
+                          </>
+                        ) : null}
+                        {/* Fallo VISIBLE con el id a la vista: un aviso genérico (o ninguno)
+                            deja "el patch nunca aplica" disfrazado de "todo bien". */}
+                        {failedPatches.length ? (
+                          <span className="rounded bg-red-500/15 px-1.5 py-0.5 text-[11px] text-red-300">
+                            {failedPatches.length} {t("sin aplicar")} ({failedPatches.join(", ")})
+                          </span>
+                        ) : null}
                         <span className="ml-auto tabular-nums">
-                          {(draftPreview.length / 1024).toFixed(1)} KB
+                          {artifact.patches?.length
+                            ? `${artifact.patches.length} ${t("ajuste(s)")}`
+                            : `${(draftPreview.length / 1024).toFixed(1)} KB`}
                         </span>
                       </div>
                     ) : null}
@@ -1081,6 +1114,8 @@ export default function ArtifactPanel({
                           reiniciar, así que cada pedazo que llega se ve al instante. */}
                       <LiveArtifactPreview
                         html={draftPreview}
+                        patches={artifact.patches}
+                        onPatchFail={onPatchFail}
                         loadingLabel={t("Construyendo el artefacto…")}
                         className="absolute inset-0 overflow-auto thin-scroll"
                       />

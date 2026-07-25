@@ -57,6 +57,23 @@ export function splitArtifact(html: string): { css: string; body: string } {
   return { css, body };
 }
 
+// Destello del nodo recién parcheado: sin él, cambiar un precio o un color pasa
+// inadvertido y el usuario cree que no ocurrió nada.
+const PATCH_CSS =
+  `@keyframes gt-patch-in{from{outline-color:rgba(139,92,246,.9);background-color:rgba(139,92,246,.14)}` +
+  `to{outline-color:rgba(139,92,246,0);background-color:transparent}}` +
+  `.gt-live .gt-patching{outline:2px solid rgba(139,92,246,.9);outline-offset:2px;border-radius:6px;` +
+  `animation:gt-patch-in .7s ease-out forwards}`;
+
+// Mismo saneado que el cuerpo completo, para un fragmento suelto (patch): sin scripts del
+// agente ni handlers inline. El preview NO ejecuta el JS del artefacto.
+function sanitizeFragment(html: string): string {
+  return html
+    .replace(/<script[\s\S]*?(?:<\/script>|$)/gi, "")
+    .replace(/\son\w+\s*=\s*"[^"]*"/gi, "")
+    .replace(/\son\w+\s*=\s*'[^']*'/gi, "");
+}
+
 // Clases del <body> del artefacto (fondo/tipografía) → se aplican al contenedor.
 function bodyClasses(html: string): string {
   const m = /<body([^>]*)>/i.exec(html);
@@ -94,24 +111,69 @@ export function ArtifactSkeleton({ label }: { label: string }) {
   );
 }
 
+export type LivePatch = { nodeId: string; html: string; closed: boolean };
+
 export function LiveArtifactPreview({
   html,
+  patches,
   className,
   loadingLabel = "Construyendo el artefacto…",
-}: { html: string; className?: string; loadingLabel?: string }) {
+  onPatchFail,
+}: {
+  html: string;
+  patches?: LivePatch[];
+  className?: string;
+  loadingLabel?: string;
+  onPatchFail?: (nodeId: string) => void;
+}) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const styleRef = useRef<HTMLStyleElement | null>(null);
   const lastCss = useRef("");
   const [empty, setEmpty] = useState(true);
+  // Longitud ya aplicada por nodo: el body acumulado se re-parsea en cada chunk, así que sin
+  // esto re-aplicaríamos el mismo patch decenas de veces (y perderíamos el flash de cambio).
+  const appliedRef = useRef(new Map<string, number>());
 
   useEffect(() => { ensureTailwindPlay(); }, []);
+
+  // PATCH QUIRÚRGICO sobre el DOM ya pintado: se reemplaza SOLO el nodo direccionado y el
+  // resto del artefacto ni se toca (nada de innerHTML global → sin parpadeo, sin perder el
+  // scroll). Es el mismo cambio que el server persistirá; aquí es para que se VEA ocurrir.
+  useEffect(() => {
+    const host = hostRef.current;
+    if (!host || !patches?.length) return;
+    for (const p of patches) {
+      if (!p.html.trim()) continue;
+      if (appliedRef.current.get(p.nodeId) === p.html.length) continue;
+      const el = host.querySelector(`[data-id="${CSS.escape(p.nodeId)}"]`);
+      if (!el) {
+        // No se aplica y nada se rompe. El server es la autoridad y lo reportará; aquí
+        // avisamos hacia arriba para que el panel lo muestre (fallo visible, no mudo).
+        if (p.closed) onPatchFail?.(p.nodeId);
+        continue;
+      }
+      // El fragmento debe ser UN elemento; mientras streamea todavía no lo es → se espera.
+      const tpl = document.createElement("template");
+      tpl.innerHTML = sanitizeFragment(p.html);
+      const next = tpl.content.children.length === 1 ? (tpl.content.firstElementChild as HTMLElement) : null;
+      if (!next) continue;
+      next.setAttribute("data-id", p.nodeId);
+      el.replaceWith(next);
+      appliedRef.current.set(p.nodeId, p.html.length);
+      // Destello: el usuario VE cuál nodo cambió (si no, un cambio pequeño pasa inadvertido
+      // y parece que no pasó nada).
+      next.classList.add("gt-patching");
+      setTimeout(() => next.classList.remove("gt-patching"), 700);
+    }
+  }, [patches, onPatchFail]);
 
   useEffect(() => {
     const host = hostRef.current;
     if (!host) return;
     const { css, body } = splitArtifact(html);
     if (css !== lastCss.current && styleRef.current) {
-      styleRef.current.textContent = css;
+      // PATCH_CSS acompaña siempre al CSS del artefacto: es el destello del nodo parcheado.
+      styleRef.current.textContent = PATCH_CSS + css;
       lastCss.current = css;
     }
     const cls = bodyClasses(html);
@@ -119,6 +181,8 @@ export function LiveArtifactPreview({
     // innerHTML directo: barato y sin parser de documento que reiniciar. El navegador
     // repinta en el mismo frame, así que la página se ve CRECER.
     host.innerHTML = body;
+    // Documento repintado → lo aplicado antes ya no vale (los nodos son otros).
+    appliedRef.current.clear();
     // Vacío = todavía no hay nada VISIBLE. Se mide sobre el DOM (no sobre html.length, que ya
     // crece con el <head>) y por ALTURA REAL, no por "¿hay algún nodo?": los primeros nodos
     // del agente suelen ser contenedores sin contenido todavía (un <div> de 0px cuenta como

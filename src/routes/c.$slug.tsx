@@ -118,7 +118,7 @@ import { unfurlLinkFn } from "../server/unfurl";
 import { registerModalEsc } from "../utils/modal-esc";
 import ArtifactPanel, { type ArtifactView, viewFromAttachment } from "../components/ArtifactPanel";
 import { belongsToOpenConversation } from "../lib/conversation-scope";
-import { extractEbDoc, draftTitle, bubbleWithoutEbDoc, extractToolState, type ToolState } from "../lib/ebdoc";
+import { extractEbDoc, extractEbPatches, draftTitle, bubbleWithoutEbDoc, extractToolState, type ToolState } from "../lib/ebdoc";
 import { ThinkingRing } from "../components/ThinkingRing";
 import { playNotificationSound, playGhostySound, playSelfSound, playMentionSound, playDmSound, playReadySound, playDeleteSound, playArtifactOpen, playArtifactClose, startCallRing, stopCallRing } from "../utils/notificationSound";
 
@@ -1155,7 +1155,32 @@ function ChannelPage() {
   const draftSeenLenRef = useRef(0);
   const driveDraftFromBody = (id: number, body: string) => {
     const doc = extractEbDoc(body);
-    if (!doc || !doc.md.trim()) return;
+    // EDICIÓN QUIRÚRGICA: el turno trae ```eb-patch``` en vez del artefacto entero. No hay
+    // documento nuevo que pintar — se reemplazan nodos del que YA está en el panel. Solo
+    // aplica si el panel muestra ese artefacto; si no hay nada abierto, el `refresh` del
+    // final traerá la versión nueva (no abrimos un panel a media edición).
+    if (!doc) {
+      const patches = extractEbPatches(body);
+      if (!patches.length) return;
+      if (!belongsToOpenConversation(findMessageInCaches(id), openDmId, channel.id)) return;
+      setOpenArtifact((cur) => {
+        const base =
+          cur?.kind === "artifact" ? cur.html : cur?.kind === "draft" && cur.artifact ? cur.content : null;
+        if (base == null) return cur;
+        return {
+          kind: "draft",
+          title: cur!.title,
+          content: base,
+          sheet: false,
+          artifact: true,
+          streaming: !patches.every((p) => p.closed),
+          patches,
+          messageId: cur?.kind === "artifact" ? cur.messageId : cur?.kind === "draft" ? cur.messageId : undefined,
+        };
+      });
+      return;
+    }
+    if (!doc.md.trim()) return;
     // El stream SSE trae los mensajes de TODOS los rooms visibles + DMs: sin este filtro,
     // un artefacto que un agente arma en #general te abría el panel aunque estuvieras
     // leyendo un DM (reportado 2026-07-24). Solo maneja el draft si el mensaje pertenece
