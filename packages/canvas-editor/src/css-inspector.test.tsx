@@ -149,3 +149,24 @@ describe('el select refleja el valor efectivo (sin duplicar opciones en el "—"
     expect(tracking.options[0].text).toContain('3px')
   })
 })
+
+describe('el editor queda activo al montar (entrar a Editar basta)', () => {
+  it('la raíz toma el foco sola', () => {
+    render(<CanvasEditor doc={htmlToDoc('<!doctype html><html><body><div data-id="a">x</div></body></html>')} />)
+    expect(document.activeElement).toBe(document.querySelector('.ce-root'))
+  })
+
+  it('soltar el puntero libera la captura (si no, se come el clic siguiente)', () => {
+    render(<CanvasEditor doc={htmlToDoc('<!doctype html><html><body><div data-id="a">x</div></body></html>')} />)
+    const vp = document.querySelector('.ce-viewport') as HTMLElement
+    let captured = false
+    vp.setPointerCapture = () => { captured = true }
+    vp.hasPointerCapture = () => captured
+    vp.releasePointerCapture = () => { captured = false }
+    act(() => {
+      fireEvent.pointerDown(el('a'), { pointerId: 1, button: 0 })
+      fireEvent.pointerUp(vp, { pointerId: 1 })
+    })
+    expect(captured).toBe(false)
+  })
+})

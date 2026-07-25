@@ -113,6 +113,12 @@ export function CanvasEditor({ doc, onChange, refineProvider, imageProvider, onA
   const store = useMemo(() => externalStore ?? new EditorStore(doc, onChange), [externalStore])
   const state = useEditor(store)
   const viewportRef = useRef<HTMLDivElement | null>(null)
+  // Al montar (entrar a Editar) el editor se queda ACTIVO: sin esto el primer clic
+  // se gastaba en darle foco al área y el botón no respondía hasta el segundo.
+  const rootRef = useRef<HTMLDivElement | null>(null)
+  useEffect(() => {
+    rootRef.current?.focus?.({ preventScroll: true })
+  }, [])
 
   // real-Tailwind hosts (Teams artifacts): load Play CDN scoped to the canvas
   useEffect(() => {
@@ -418,7 +424,19 @@ export function CanvasEditor({ doc, onChange, refineProvider, imageProvider, onA
     [store, reorder],
   )
   const onPointerUp = useCallback(
-    (e: { target: EventTarget | null; currentTarget: EventTarget | null; clientX: number; clientY: number }) => {
+    (e: { target: EventTarget | null; currentTarget: EventTarget | null; clientX: number; clientY: number; pointerId?: number }) => {
+      // Liberar SIEMPRE la captura: si se queda puesta, el siguiente clic en
+      // cualquier parte (la barra, Fit) se lo come el lienzo → "clic desfasado".
+      const vp = e.currentTarget as Element | null
+      if (e.pointerId != null && vp && 'hasPointerCapture' in vp) {
+        try {
+          if ((vp as Element & { hasPointerCapture(id: number): boolean }).hasPointerCapture(e.pointerId)) {
+            (vp as Element & { releasePointerCapture(id: number): void }).releasePointerCapture(e.pointerId)
+          }
+        } catch {
+          /* noop */
+        }
+      }
       if (reorder.isArmed()) {
         const wasActive = reorder.active
         reorder.drop()
@@ -579,7 +597,7 @@ export function CanvasEditor({ doc, onChange, refineProvider, imageProvider, onA
   }
 
   return (
-    <div className="ce-root" style={styles.root}>
+    <div className="ce-root" ref={rootRef} tabIndex={-1} style={{ ...styles.root, outline: 'none' }}>
       <link rel="stylesheet" href={googleFontsHref()} />
       <style>{CHROME_CSS}</style>
       {tailwindPlay && <style>{SCOPED_PREFLIGHT}</style>}
