@@ -18,7 +18,7 @@ export const Route = createRootRoute({
     // de AMBOS guards, si no rebota a portal/login antes de poder rebotar al subdominio.
     const isOAuthRelay = location.pathname.startsWith('/oauth/')
     // Ruta demo del editor de lienzo (@ghosty/canvas-editor) — pública, sin tenant/sesión.
-    const isCanvasDemo = location.pathname.startsWith('/canvas-demo')
+    const isCanvasDemo = location.pathname.startsWith('/canvas-demo') || location.pathname.startsWith('/canvas-probe')
     // Guard de tenant (solo SSR → barato, sin round-trips en cada nav de cliente):
     // si caes en el subdominio de un workspace que ya no existe (borrado) o del que
     // el resolver no sabe, te mandamos al PORTAL en vez de un shell roto / label

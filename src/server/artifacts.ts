@@ -33,6 +33,8 @@ export const updateArtifactHtmlFn = createServerFn({ method: "POST" })
     // ruta /t3/$ del app) o URL firmada si no hay base. Sin storage: `src` queda null y
     // el panel igual renderiza el HTML local.
     let src: string | null = null;
+    const _t0 = performance.now();
+    let _tPut = 0;
     try {
       const storage = await import("./storage.server");
       if (storage.storageConfigured()) {
@@ -43,7 +45,8 @@ export const updateArtifactHtmlFn = createServerFn({ method: "POST" })
           fileName: `${title.slice(0, 60)}.html`,
           visibility: "private",
         });
-        const base = process.env.ARTIFACT_PUBLIC_BASE?.replace(/\/$/, "");
+          _tPut = performance.now() - _t0;
+      const base = process.env.ARTIFACT_PUBLIC_BASE?.replace(/\/$/, "");
         src = base
           ? `${base}/${put.key.replace(/^t3\//, "")}`
           : storage.signedUrl(put.key, 604800, "private");
@@ -54,6 +57,7 @@ export const updateArtifactHtmlFn = createServerFn({ method: "POST" })
 
     // Nueva versión (INSERT). Mismo documentId (url) = misma identidad → la card re-fetchea
     // la última. `md` = HTML fuente (render srcDoc + re-emit al agente).
+    const _t1 = performance.now();
     await db.createArtifact(messageId, {
       kind: "artifact",
       url: data.documentId,
@@ -79,5 +83,9 @@ export const updateArtifactHtmlFn = createServerFn({ method: "POST" })
       /* best-effort */
     }
 
+    console.log(
+      `[artifact save] put=${Math.round(_tPut)}ms publish-total=${Math.round(_t1 - _t0)}ms ` +
+        `insert+refresh=${Math.round(performance.now() - _t1)}ms html=${data.html.length}b`
+    );
     return { ok: true as const, src };
   });

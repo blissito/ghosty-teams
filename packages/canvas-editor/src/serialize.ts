@@ -288,7 +288,11 @@ export function arbitraryUtilityCss(doc: Doc, scope = ''): string {
       if (!m) continue
       const prefix = m[1]
       const value = m[2].replace(/_/g, ' ')
-      const key = prefix === 'text' ? (value.startsWith('#') ? 'text-color' : 'text-size') : prefix
+      // `text-[…]` es color o tamaño según el valor. Antes solo `#hex` contaba como color:
+      // `text-[var(--color-foreground)]` (lo que emiten los artefactos con tokens) caía en
+      // font-size → el texto perdía su color Y heredaba un font-size inválido.
+      const isColor = /^(#|rgb|hsl|oklch|color\()/i.test(value) || /^var\(\s*--color-/i.test(value)
+      const key = prefix === 'text' ? (isColor ? 'text-color' : 'text-size') : prefix
       const prop = key === 'text-color' ? 'color' : key === 'text-size' ? 'font-size' : ARBITRARY_PROP[key]
       if (!prop) continue
       seen.add(raw)

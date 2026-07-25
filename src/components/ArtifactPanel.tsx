@@ -252,7 +252,20 @@ export default function ArtifactPanel({
   const isDocLike = artifact?.kind === "doc" || artifact?.kind === "office" || artifact?.kind === "sheet";
   // Artefacto HTML → Doc del Canvas. Se re-parsea SOLO al cambiar de artefacto (documentId),
   // no en cada guardado (el editor es dueño de su estado interno mientras edita).
-  const artifactHtml = artifact?.kind === "artifact" ? artifact.html : null;
+  // HTML del artefacto. Tras GUARDAR desde el Canvas, la vista `artifact` que llega por
+  // props sigue trayendo el HTML VIEJO (viene de la cache del mensaje, que se refresca por
+  // el bus con retraso) → al salir del editor se veía la versión anterior y parecía que no
+  // había guardado. Guardamos el HTML recién guardado y tiene prioridad mientras el panel
+  // muestre ese mismo artefacto.
+  const [savedHtml, setSavedHtml] = useState<{ id: string; html: string } | null>(null);
+  const artifactIdent =
+    artifact?.kind === "artifact" ? String(artifact.messageId ?? artifact.documentId) : null;
+  const artifactHtml =
+    artifact?.kind === "artifact"
+      ? savedHtml && savedHtml.id === artifactIdent
+        ? savedHtml.html
+        : artifact.html
+      : null;
   // Identidad ÚNICA por tarjeta: todos los artefactos de un hilo comparten
   // documentId (son versiones del mismo doc), así que memoizar/keyear por documentId
   // mostraba el artefacto equivocado al cambiar de tarjeta. El messageId sí distingue
@@ -1193,6 +1206,13 @@ export default function ArtifactPanel({
                                 html,
                                 title: artifact.title || undefined,
                               },
+                            });
+                            // Lo guardado manda en el panel hasta que el refresh del bus
+                            // traiga la nueva versión: sin esto, salir del editor mostraba
+                            // el HTML viejo y parecía que no se guardó.
+                            setSavedHtml({
+                              id: String(artifact.messageId ?? artifact.documentId),
+                              html,
                             });
                           }}
                         />
