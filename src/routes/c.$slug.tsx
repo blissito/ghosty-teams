@@ -1714,6 +1714,9 @@ function ChannelPage() {
         const el = document.activeElement as HTMLElement | null;
         // No robar el Esc si estás en un input/editor (cancelar cita, cerrar popups, etc.).
         if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable)) return;
+        // Editando un artefacto, ESC es del editor (y el panel pide confirmación
+        // para cerrar): este atajo global NO debe tirar el panel con cambios vivos.
+        if (document.body.dataset.artifactEditing) return;
         if (openArtifactRef.current) { playArtifactClose(); setOpenArtifact(null); return; }
         if (openThreadId != null) { setOpenThreadId(null); return; }
       }

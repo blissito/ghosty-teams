@@ -216,6 +216,7 @@ export default function ArtifactPanel({
   const [downloading, setDownloading] = useState(false); // el export docx es lento → spinner
   const [copied, setCopied] = useState(false); // feedback del botón "Copiar enlace" del artefacto HTML
   const [editing, setEditing] = useState(false); // artefacto HTML: modo Ver (iframe) vs Editar (Canvas)
+  const [confirmClose, setConfirmClose] = useState(false); // ESC en edición → advertencia
   const [fullscreen, setFullscreen] = useState(false); // panel a pantalla completa (cubre el chat)
   // Ancho del viewport → ancho efectivo del panel en fullscreen (100vw). Se mantiene al día
   // con el resize handler de abajo (setVw). El editor mide su viewport con ResizeObserver →
@@ -232,14 +233,26 @@ export default function ArtifactPanel({
 
   // ESC cierra el panel, igual que el visor de docs (Modal). Solo activo cuando hay
   // artefacto abierto. Si estás en un drill-down (detail), ESC vuelve al índice primero.
-  // En MODO EDICIÓN ESC nunca cierra: ahí pertenece al editor (sube un nivel de
-  // selección / cancela la edición de texto) y cerrar tiraría cambios sin guardar.
-  // Para salir: el botón "Ver" o la ✕ del panel.
+  // Bandera en el DOM: el chat (c.$slug) tiene SU PROPIO listener global de ESC que
+  // cierra el artefacto (con sonido). Sin esta marca, editando se cerraba igual.
+  useEffect(() => {
+    if (editing) document.body.dataset.artifactEditing = "1";
+    else delete document.body.dataset.artifactEditing;
+    return () => {
+      delete document.body.dataset.artifactEditing;
+    };
+  }, [editing]);
+
+  // En MODO EDICIÓN ESC no cierra de golpe: pide confirmación, porque cerrar tira
+  // los cambios sin guardar. Fuera de edición, ESC cierra como siempre.
   useEffect(() => {
     if (!rootArtifact) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
-      if (editing) return;
+      if (editing) {
+        setConfirmClose(true);
+        return;
+      }
       if (fullscreen) toggleFullscreen();
       else if (detail) setDetail(null);
       else onClose();
@@ -1162,7 +1175,33 @@ export default function ArtifactPanel({
                   // allow-same-origin → no lee cookies/DOM del app), render desde el HTML
                   // FUENTE local. Modo Editar: el Canvas (@ghosty/canvas-editor) sobre el mismo
                   // HTML; al Guardar publica una NUEVA versión (gc_artifacts) + re-publica a S3.
-                  <div className="flex h-full flex-col">
+                  <div className="relative flex h-full flex-col">
+                    {/* ESC en edición → advertencia en vez de cerrar y perder cambios. */}
+                    {confirmClose ? (
+                      <div className="absolute inset-0 z-30 grid place-items-center bg-black/50 p-6">
+                        <div className="w-full max-w-xs rounded-xl border border-border bg-surface p-4 shadow-xl">
+                          <p className="text-sm text-ink">{t("Estás editando el artefacto. Si cierras ahora, pierdes los cambios sin guardar.")}</p>
+                          <div className="mt-3 flex justify-end gap-2">
+                            <button
+                              onClick={() => setConfirmClose(false)}
+                              className="rounded-md border border-border px-2.5 py-1 text-xs text-ink transition hover:border-brand"
+                            >
+                              {t("Seguir editando")}
+                            </button>
+                            <button
+                              onClick={() => {
+                                setConfirmClose(false);
+                                setEditing(false);
+                                onClose();
+                              }}
+                              className="rounded-md bg-ink px-2.5 py-1 text-xs text-surface transition hover:bg-brand"
+                            >
+                              {t("Cerrar sin guardar")}
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    ) : null}
                     <div className="flex items-center gap-2 border-b border-border bg-surface px-3 py-1.5">
                       <button
                         onClick={() => setEditing((v) => !v)}
