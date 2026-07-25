@@ -293,7 +293,7 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
     // de la burbuja y lo commiteamos LOCAL (misma verdad markdown/csv que en el room). En DM
     // no cableamos identidad por-hilo → cada artefacto es una card nueva (co-edición diferida).
     try {
-      const { extractEbDoc, draftTitle, bubbleWithoutEbDoc, extractAskUser, stripAskUser, extractEbAudio, stripEbAudio } = await import("../lib/ebdoc");
+      const { extractEbDoc, extractEbPatches, draftTitle, bubbleWithoutEbDoc, extractAskUser, stripAskUser, extractEbAudio, stripEbAudio } = await import("../lib/ebdoc");
       const { randomUUID } = await import("node:crypto");
 
       // Nota de voz en DM: mismo protocolo que el room (```eb-audio``` → adjunto audio).
@@ -322,6 +322,44 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
         }
         return { ok: true as const };
       }
+      // EDICIÓN QUIRÚRGICA (mismo contrato que el room): el turno trae ```eb-patch``` en
+      // vez del artefacto entero → se aplican por DOM sobre la versión actual. Fallo
+      // VISIBLE: lo que no aplica se loguea con su nodeId y, si no aplica nada, no se
+      // crea versión y el bubble lo dice.
+      const patches = extractEbPatches(reply);
+      if (patches.length && patches.every((p) => p.closed) && currentDoc?.kind === "artifact" && currentDocId) {
+        const { applyPatches } = await import("../lib/artifact-patch");
+        const { serverParseOpts } = await import("./artifact-dom.server");
+        const t0 = performance.now();
+        const res = applyPatches(currentDoc.md, patches, await serverParseOpts());
+        console.log(
+          `[gt-patch][dm] msg=${id} pedidos=${patches.length} aplicados=${res.applied.length} ` +
+            `fallidos=${res.failed.length} ${Math.round(performance.now() - t0)}ms` +
+            (res.failed.length ? ` → ${res.failed.map((f) => `${f.nodeId}:${f.reason}`).join(",")}` : "")
+        );
+        const cleaned = bubbleWithoutEbDoc(reply);
+        await db.setMessageBody(id, cleaned);
+        fanout({ t: "message:body", id, body: cleaned });
+        if (res.applied.length) {
+          const { publishArtifactVersion } = await import("./artifacts");
+          await publishArtifactVersion({
+            messageId: id,
+            documentId: currentDocId,
+            kind: "artifact",
+            title: draftTitle(res.html, "artifact"),
+            md: res.html,
+            visibility: "public",
+            setPointer: (docId) => db.setDmArtifact(data.id, docId),
+            notify: () => fanout({ t: "refresh", channelId: null, parentId: null, dmId: data.id }),
+          });
+        } else {
+          const aviso = `${cleaned}\n\n⚠️ No pude aplicar el ajuste (${res.failed.map((f) => `${f.nodeId}: ${f.reason}`).join(", ")}). Pídemelo otra vez y regenero el artefacto completo.`;
+          await db.setMessageBody(id, aviso);
+          fanout({ t: "message:body", id, body: aviso });
+        }
+        return { ok: true as const };
+      }
+
       const ebdoc = extractEbDoc(reply);
       if (ebdoc?.closed && ebdoc.md.trim()) {
         const cleaned = bubbleWithoutEbDoc(reply);
@@ -331,34 +369,19 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
         // o acuña uno v1 → sin duplicados. Parea con el room (chat.ts).
         const documentId = currentDocId ?? `${ebdoc.kind}_${randomUUID()}`;
         const title = draftTitle(ebdoc.md, ebdoc.kind, ebdoc.fenceTitle);
-        // Artefacto HTML → publícalo a S3 público como enlace compartible (igual que el room).
-        let src: string | null = null;
-        if (ebdoc.kind === "artifact") {
-          try {
-            const storage = await import("./storage.server");
-            if (storage.storageConfigured()) {
-              const put = await storage.put({
-                blob: new Blob([ebdoc.md], { type: "text/html" }),
-                contentType: "text/html; charset=utf-8",
-                fileName: `${(title || "artefacto").slice(0, 60)}.html`,
-                visibility: "public",
-              });
-              const base = process.env.ARTIFACT_PUBLIC_BASE?.replace(/\/$/, "");
-              src = base ? `${base}/${put.key}` : storage.publicUrl(put.key);
-            }
-          } catch (e) {
-            console.error("[artifact][dm] publish failed", e);
-          }
-        }
-        await db.createArtifact(id, {
+        // MISMO camino que el room y que el editor humano: estampa los data-id (dirección
+        // para el próximo patch), publica a storage, INSERTa la versión y avisa.
+        const { publishArtifactVersion } = await import("./artifacts");
+        await publishArtifactVersion({
+          messageId: id,
+          documentId,
           kind: ebdoc.kind,
-          url: documentId,
           title,
           md: ebdoc.md,
-          src,
+          visibility: "public",
+          setPointer: (docId) => db.setDmArtifact(data.id, docId),
+          notify: () => fanout({ t: "refresh", channelId: null, parentId: null, dmId: data.id }),
         });
-        await db.setDmArtifact(data.id, documentId).catch(() => {});
-        fanout({ t: "refresh", channelId: null, parentId: null, dmId: data.id });
       } else {
         // ask-user: pregunta con opciones clicables (mismo formato que en el room).
         const ask = extractAskUser(reply);

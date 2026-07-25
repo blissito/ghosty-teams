@@ -788,8 +788,9 @@ export const askAgent = createServerFn({ method: "POST" })
             kind: "artifact",
             title: draftTitle(res.html, "artifact"),
             md: res.html,
-            channelId: channel.id,
-            parentId: data.parentId ?? null,
+            setPointer: (docId) => db.setThreadArtifact(channel.id, data.parentId, docId),
+            notify: () =>
+              bus.publish(bus.ch.room(ns, channel.id), { t: "refresh", channelId: channel.id, parentId: data.parentId }),
           });
           return { ok: true as const };
         }
@@ -818,8 +819,9 @@ export const askAgent = createServerFn({ method: "POST" })
           kind: ebdoc.kind, // "doc" | "sheet" | "artifact"
           title,
           md: ebdoc.md,
-          channelId: channel.id,
-          parentId: data.parentId ?? null,
+          setPointer: (docId) => db.setThreadArtifact(channel.id, data.parentId, docId),
+          notify: () =>
+            bus.publish(bus.ch.room(ns, channel.id), { t: "refresh", channelId: channel.id, parentId: data.parentId }),
         });
         return { ok: true as const };
       }

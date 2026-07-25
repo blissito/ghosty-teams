@@ -7,7 +7,7 @@ import { useT } from "../i18n";
 import { officeToHtmlFn, xlsxToCsvFn, postMessage } from "../server/chat";
 import { listTeamDocumentsFn, type TeamDocument } from "../server/documents";
 import { updateArtifactHtmlFn } from "../server/artifacts";
-import { CanvasEditor, htmlToDoc, docToHtml, type Node as CeNode } from "@ghosty/canvas-editor";
+import { CanvasEditor, EditorStore, htmlToDoc, htmlToNode, docToHtml, type Node as CeNode } from "@ghosty/canvas-editor";
 import { Markdown } from "./Markdown";
 
 // Un documento del team (generado o subido) → vista del panel. Null si no es
@@ -329,6 +329,25 @@ export default function ArtifactPanel({
     // Ver sí se vieran). Reconstruirlo mientras editas es inocuo: el CanvasEditor
     // crea su store una sola vez al montar e ignora cambios del prop `doc`.
   }, [artifactKey, artifactHtml]);
+  // El STORE del editor lo posee el PANEL (no el CanvasEditor): así los patches del agente
+  // pueden entrar al documento abierto mientras el usuario edita. Se recrea con el doc —
+  // misma dependencia que `editorDoc`.
+  const editorStore = useMemo(
+    () => (editorDoc ? new EditorStore(editorDoc) : null),
+    [editorDoc]
+  );
+  // PATCHES DEL AGENTE → EDITOR ABIERTO. `replaceNodeSubtree` hace commit al historial, así
+  // que el cambio del agente es des-hacible con ⌘Z como cualquier edición propia (no hace
+  // falta un merge de tres vías: el agente gana y el usuario tiene undo).
+  const editorPatches = artifact?.kind === "draft" ? artifact.patches : undefined;
+  useEffect(() => {
+    if (!editorStore || !editorPatches?.length) return;
+    for (const p of editorPatches) {
+      if (!p.closed) continue; // a medio streamear no parsea a un nodo
+      const node = htmlToNode(p.html, p.nodeId);
+      if (node) editorStore.replaceNodeSubtree(p.nodeId, node);
+    }
+  }, [editorStore, editorPatches]);
   // Estilos embebidos del artefacto (<style>…</style>). Los quitamos del doc (nodos
   // no-visuales) → hay que reinyectarlos: RAW (body intacto) para el preview iframe
   // (docToHtml envuelve en <body>), y REESCRITO (body→.ce-artboard) para la superficie
@@ -1283,6 +1302,9 @@ export default function ArtifactPanel({
                         <CanvasEditor
                           key={artifactKey ?? artifact.documentId}
                           doc={editorDoc}
+                          // El store lo posee el panel: así los ```eb-patch``` del agente
+                          // entran al documento ABIERTO mientras el usuario edita.
+                          store={editorStore ?? undefined}
                           extraCss={artifactStyleCss}
                           // Ya NO se suprime: themeToCss emite los tokens SCOPED a
                           // .ce-artboard (no al :root global), así que el selector de
