@@ -126,17 +126,24 @@ export function LiveArtifactPreview({
   className,
   loadingLabel = "Construyendo el artefacto…",
   onPatchFail,
+  skeleton = true,
 }: {
   html: string;
   patches?: LivePatch[];
   className?: string;
   loadingLabel?: string;
   onPatchFail?: (nodeId: string) => void;
+  /** El esqueleto solo tiene sentido mientras se CONSTRUYE. Cuando este preview se usa como
+   *  calco de un documento ya completo (tapar el arranque del iframe), mostrarlo produciría
+   *  justo el parpadeo que se quiere evitar: gris un frame y luego el contenido. */
+  skeleton?: boolean;
 }) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const styleRef = useRef<HTMLStyleElement | null>(null);
   const lastCss = useRef("");
-  const [empty, setEmpty] = useState(true);
+  // Arranca "no vacío" cuando el HTML ya trae cuerpo: así el primer frame no es el
+  // esqueleto (el efecto de pintado corre justo después y ya hay contenido real).
+  const [empty, setEmpty] = useState(() => !/<body[^>]*>[\s\S]*\S/i.test(html));
   // Longitud ya aplicada por nodo: el body acumulado se re-parsea en cada chunk, así que sin
   // esto re-aplicaríamos el mismo patch decenas de veces (y perderíamos el flash de cambio).
   const appliedRef = useRef(new Map<string, number>());
@@ -225,7 +232,7 @@ export function LiveArtifactPreview({
     <div className={className}>
       <style ref={styleRef} />
       <div ref={hostRef} className="gt-live" />
-      {empty ? <ArtifactSkeleton label={loadingLabel} /> : null}
+      {skeleton && empty ? <ArtifactSkeleton label={loadingLabel} /> : null}
     </div>
   );
 }

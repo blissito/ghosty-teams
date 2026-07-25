@@ -1417,6 +1417,7 @@ export default function ArtifactPanel({
                         {!frameReady ? (
                           <LiveArtifactPreview
                             html={artifactHtml ?? artifact.html}
+                            skeleton={false}
                             className="pointer-events-none absolute inset-0 overflow-hidden transition-opacity duration-200"
                           />
                         ) : null}
