@@ -1498,6 +1498,15 @@ function ChannelPage() {
           // Fence cerrado → el server compila el .docx; swap del draft al doc real.
           const doc = extractEbDoc(ev.body);
           if (doc?.closed) scheduleDraftSwap(ev.id);
+          // Patches cerrados → MISMO swap. El preview aplica los patches en vivo sobre su
+          // propia copia (para que se vea ocurrir), pero la VERDAD es la versión que
+          // publica el server; sin este swap el panel se quedaba con su composición y
+          // divergía (una tarjeta añadida que no aparecía hasta cerrar y reabrir el
+          // artefacto — 2026-07-25).
+          else {
+            const ps = extractEbPatches(ev.body);
+            if (ps.length && ps.every((p) => p.closed)) scheduleDraftSwap(ev.id);
+          }
         }
         break;
       }
