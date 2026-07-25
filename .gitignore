@@ -11,3 +11,6 @@ dist-ssr
 .vinxi
 __unconfig*
 todos.json
+
+# Backups del .env (contienen secretos — nunca al repo)
+.env.bak.*

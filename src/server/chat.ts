@@ -767,44 +767,19 @@ export const askAgent = createServerFn({ method: "POST" })
         bus.publish(bus.ch.room(ns, channel.id), { t: "message:body", id, body: cleaned });
         const documentId = currentDocId ?? `${ebdoc.kind}_${randomUUID()}`;
         const title = draftTitle(ebdoc.md, ebdoc.kind, ebdoc.fenceTitle);
-        // kind:"artifact" → el HTML fuente es la verdad (md, para render srcDoc + re-emit) Y se
-        // publica a S3 público como enlace compartible. `md` es siempre in-Teams; `src` es opcional
-        // (si no hay storage, el panel igual renderiza el HTML local). Base pública configurable:
-        // ARTIFACT_PUBLIC_BASE=https://artefacto.ghosty.studio (Caddy→bucket); sin ella, URL cruda Tigris.
-        let src: string | null = null;
-        if (ebdoc.kind === "artifact") {
-          try {
-            const storage = await import("./storage.server");
-            if (storage.storageConfigured()) {
-              // Bucket PRIVADO: el "público" de Tigris no sirve objetos sin firma
-              // (AccessDenied). La URL branded artefacto.ghosty.studio/<key> la sirve
-              // el app (ruta /t3/$) leyendo el objeto firmado → público + permanente.
-              const put = await storage.put({
-                blob: new Blob([ebdoc.md], { type: "text/html" }),
-                contentType: "text/html; charset=utf-8",
-                fileName: `${(title || "artefacto").slice(0, 60)}.html`,
-                visibility: "private",
-              });
-              // El link branded oculta el prefijo interno `t3/` (Caddy lo re-antepone
-              // en el vhost artefacto → ruta /t3/$ del app).
-              const base = process.env.ARTIFACT_PUBLIC_BASE?.replace(/\/$/, "");
-              src = base
-                ? `${base}/${put.key.replace(/^t3\//, "")}`
-                : storage.signedUrl(put.key, 604800, "private");
-            }
-          } catch (e) {
-            console.error("[artifact] publish failed", e);
-          }
-        }
-        await db.createArtifact(id, {
+        // Publicación por el camino ÚNICO (mismo que la edición humana del Canvas): siembra
+        // los `data-id` del artefacto (dirección para el próximo ```eb-patch```), sube el HTML
+        // a storage como enlace compartible, INSERTa la versión, apunta el hilo y refresca.
+        const { publishArtifactVersion } = await import("./artifacts");
+        await publishArtifactVersion({
+          messageId: id,
+          documentId,
           kind: ebdoc.kind, // "doc" | "sheet" | "artifact"
-          url: documentId,
           title,
           md: ebdoc.md,
-          src,
+          channelId: channel.id,
+          parentId: data.parentId ?? null,
         });
-        await db.setThreadArtifact(channel.id, data.parentId, documentId).catch(() => {});
-        bus.publish(bus.ch.room(ns, channel.id), { t: "refresh", channelId: channel.id, parentId: data.parentId });
         return { ok: true as const };
       }
 
