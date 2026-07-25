@@ -552,16 +552,29 @@ export default function ArtifactPanel({
   // ¿Ya arrancó el iframe del artefacto final? Hasta entonces se muestra el calco en DOM
   // (evita el parpadeo en blanco al pasar del preview al iframe). Con tope de seguridad:
   // si `onLoad` no llega (subrecurso colgado), no dejamos el calco para siempre.
-  const [frameReady, setFrameReady] = useState(false);
+  // Fases del calco: "on" (tapando) → "fading" (desvaneciéndose) → "off" (desmontado).
+  // No basta con quitarlo en `onLoad`: el artefacto carga Tailwind por CDN y sus estilos se
+  // aplican DESPUÉS del load, así que destapar justo ahí deja ver un instante el HTML crudo
+  // — el mismo parpadeo, disfrazado. Se espera un poco y se desvanece.
+  const [calque, setCalque] = useState<"on" | "fading" | "off">("on");
   const frameKey = artifact?.kind === "artifact" ? String(artifact.messageId ?? artifact.documentId) : null;
   useEffect(() => {
     if (!frameKey) return;
-    setFrameReady(false);
-    // Red de seguridad generosa: si `onLoad` no llega (un subrecurso colgado), quitamos el
-    // calco igual. Corto sería peor que largo — destaparía el iframe a medio estilar.
-    const id = setTimeout(() => setFrameReady(true), 6000);
+    setCalque("on");
+    // Red de seguridad: si `onLoad` no llega (un subrecurso colgado), el calco se va igual.
+    const id = setTimeout(() => setCalque("fading"), 6000);
     return () => clearTimeout(id);
   }, [frameKey]);
+  // Desvanecido en dos tiempos, para que el iframe alcance a aplicar sus estilos.
+  useEffect(() => {
+    if (calque !== "fading") return;
+    const id = setTimeout(() => setCalque("off"), 260);
+    return () => clearTimeout(id);
+  }, [calque]);
+  const onFrameLoad = useCallback(() => {
+    // +200ms tras el load: margen para que el CDN de Tailwind del artefacto pinte.
+    setTimeout(() => setCalque((c) => (c === "on" ? "fading" : c)), 200);
+  }, []);
   const patchSig = artifact?.kind === "draft" ? (artifact.patches ?? []).map((p) => p.nodeId).join(",") : "";
   useEffect(() => { setFailedPatches([]); }, [patchSig]);
   const onPatchFail = useCallback((nodeId: string) => {
@@ -1405,7 +1418,7 @@ export default function ArtifactPanel({
                           // al salir del editor se veía el cambio "perdido" hasta cerrar y
                           // reabrir el artefacto.
                           srcDoc={withArtifactChrome(artifactHtml ?? artifact.html)}
-                          onLoad={() => setFrameReady(true)}
+                          onLoad={onFrameLoad}
                           className="absolute inset-0 h-full w-full border-0 bg-transparent"
                         />
                         {/* CALCO del artefacto mientras el iframe arranca. Al terminar la
@@ -1416,10 +1429,12 @@ export default function ArtifactPanel({
                             pinta abajo desde el primer pixel y esta capa —el MISMO HTML, en
                             DOM directo, sin documento que arrancar— lo tapa sin vacío y se
                             desvanece en cuanto el iframe está listo. */}
-                        {!frameReady ? (
+                        {calque !== "off" ? (
                           <ArtifactCalque
                             html={artifactHtml ?? artifact.html}
-                            className="pointer-events-none absolute inset-0 overflow-hidden"
+                            className={`pointer-events-none absolute inset-0 overflow-hidden transition-opacity duration-200 ${
+                              calque === "fading" ? "opacity-0" : "opacity-100"
+                            }`}
                           />
                         ) : null}
                       </div>
