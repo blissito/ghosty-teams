@@ -67,7 +67,7 @@ function bodyClasses(html: string): string {
 // tokens son <!doctype>/<head>/<style> → splitArtifact devuelve body vacío y el panel se veía
 // NEGRO varios segundos (parecía colgado). Mientras no haya UN nodo pintado tapamos con este
 // placeholder; se quita solo con el primer nodo real del artefacto.
-function Skeleton({ label }: { label: string }) {
+export function ArtifactSkeleton({ label }: { label: string }) {
   return (
     <div className="absolute inset-0 grid place-items-center bg-surface-2">
       <div className="w-full max-w-md px-8">
@@ -124,7 +124,7 @@ export function LiveArtifactPreview({
     <div className={className}>
       <style ref={styleRef} />
       <div ref={hostRef} className="gt-live" />
-      {empty ? <Skeleton label={loadingLabel} /> : null}
+      {empty ? <ArtifactSkeleton label={loadingLabel} /> : null}
     </div>
   );
 }

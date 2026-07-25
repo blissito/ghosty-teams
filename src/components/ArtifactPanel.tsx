@@ -1,7 +1,7 @@
 import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ARTIFACT_CHROME_CSS } from "../lib/artifact-stream-doc";
-import { LiveArtifactPreview } from "./LiveArtifactPreview";
+import { LiveArtifactPreview, ArtifactSkeleton } from "./LiveArtifactPreview";
 import { X, ExternalLink, FileText, Download, Loader2, ChevronRight, ChevronLeft, RotateCw, Upload, Link as LinkIcon, Check, Pencil, Eye, Maximize2, Minimize2 } from "lucide-react";
 import { useT } from "../i18n";
 import { officeToHtmlFn, xlsxToCsvFn, postMessage } from "../server/chat";
@@ -1047,7 +1047,7 @@ export default function ArtifactPanel({
                 ) : artifact.kind === "draft" && artifact.artifact ? (
                   // Artefacto HTML EN CONSTRUCCIÓN: el usuario ve el RESULTADO formándose
                   // (nunca código, nunca esqueleto, nunca barra de espera).
-                  <div className="flex min-h-0 flex-1 flex-col bg-surface-2">
+                  <div data-gt-branch="draft-artifact" className="flex min-h-0 flex-1 flex-col bg-surface-2">
                     {/* SIN barra de estado: el artefacto ocupa TODO el panel desde el primer
                         token. Cualquier franja de "construyendo…" se lee como pantalla de
                         espera, que es justo lo que no queremos. */}
@@ -1281,7 +1281,13 @@ export default function ArtifactPanel({
                       // artefacto ya renderizado debajo — se leía como pantalla de espera y
                       // luego "aparece todo de golpe". El iframe se ve DESDE EL PRIMER PIXEL;
                       // el fondo del tema detrás evita el flash blanco.
-                      <div className="relative min-h-0 flex-1 bg-surface-2">
+                      <div data-gt-branch="artifact-final" className="relative min-h-0 flex-1 bg-surface-2">
+                        {/* HTML vacío = el artefacto todavía no tiene contenido (se está
+                            regenerando / la fila llegó sin md). Sin esto el panel es un
+                            rectángulo NEGRO indistinguible de un cuelgue. */}
+                        {!(artifactHtml ?? artifact.html ?? "").trim() ? (
+                          <ArtifactSkeleton label={t("Construyendo el artefacto…")} />
+                        ) : null}
                         <iframe
                           key={artifactKey ?? "artifact"}
                           title={artifact.title || "artefacto"}
