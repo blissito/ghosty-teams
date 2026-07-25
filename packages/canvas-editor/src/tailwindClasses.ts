@@ -139,6 +139,36 @@ export function setTextSize(cls: string, value: string): string {
   return setGroup(cleaned, GROUPS.size, value)
 }
 
+/**
+ * Quita declaraciones de un atributo `style` inline. Sirve para que una clase del
+ * inspector pueda ganar: el inline gana SIEMPRE sobre cualquier clase, así que
+ * poner `text-[#e41111]` sobre un `<span style="color:#a78bfa">` no pintaba nada.
+ */
+export function stripStyleProps(style: string | undefined, props: string[]): string {
+  if (!style) return ''
+  const drop = new Set(props.map((p) => p.toLowerCase()))
+  return style
+    .split(';')
+    .filter((decl) => {
+      const i = decl.indexOf(':')
+      if (i < 0) return decl.trim() !== ''
+      return !drop.has(decl.slice(0, i).trim().toLowerCase())
+    })
+    .map((d) => d.trim())
+    .filter(Boolean)
+    .join('; ')
+}
+
+/** Props inline que hay que limpiar al fijar cada cosa desde el inspector. */
+export const STYLE_CONFLICTS = {
+  // `-webkit-text-fill-color:transparent` + background-clip:text es el truco de
+  // texto en degradado: si no se quita, el color elegido queda invisible.
+  text: ['color', '-webkit-text-fill-color', 'background-clip', '-webkit-background-clip'],
+  bg: ['background', 'background-color', 'background-image'],
+  border: ['border-color', 'border'],
+  fontSize: ['font-size'],
+} as const
+
 export type ColorPrefix = 'text' | 'bg' | 'border'
 const COLOR_GROUP: Record<ColorPrefix, PropOption[]> = {
   text: [],

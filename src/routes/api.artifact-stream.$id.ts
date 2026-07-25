@@ -67,8 +67,14 @@ export const Route = createFileRoute("/api/artifact-stream/$id")({
           return { html: doc.md, closed: doc.closed };
         };
 
+        // El body abre en el PRIMER chunk (ver lib/artifact-stream-doc: el navegador no
+        // pinta nada mientras el HTML va en el <head>, así que abrimos el documento y todo
+        // lo del agente entra dentro del body ya abierto). Probado en artifact-stream-doc.test.
+        const { makeArtifactHtmlTransform } = await import("../lib/artifact-stream-doc");
+        const transform = makeArtifactHtmlTransform();
+
         const enc = new TextEncoder();
-        let sent = 0; // bytes de HTML ya escritos → solo mandamos el SUFIJO nuevo
+        let sent = 0; // bytes de FUENTE ya consumidos → solo transformamos el SUFIJO nuevo
         let unsub = () => {};
         let idle: ReturnType<typeof setTimeout> | undefined;
 
@@ -86,11 +92,17 @@ export const Route = createFileRoute("/api/artifact-stream/$id")({
               if (done) return;
               const { html, closed } = htmlOf(body);
               if (html.length > sent) {
-                try { controller.enqueue(enc.encode(html.slice(sent))); } catch { return finish(); }
+                const piece = transform(html.slice(sent));
                 sent = html.length;
+                if (piece) {
+                  try { controller.enqueue(enc.encode(piece)); } catch { return finish(); }
+                }
               }
               if (closed) finish();
             };
+            // Abre el documento YA (aunque el agente aún no haya escrito nada): el iframe
+            // deja de estar en blanco desde el instante en que se monta.
+            try { controller.enqueue(enc.encode(transform(""))); } catch { return finish(); }
             // Lo que ya se escribió antes de que el panel abriera este stream.
             push(bus.liveBody(ns, id));
             unsub = bus.tapBody(ns, id, push);

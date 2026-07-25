@@ -5,6 +5,7 @@
 import { useSyncExternalStore } from 'react'
 import type { Artboard, Doc, MoveTarget, Node, NodeId } from './model'
 import { cloneNode, genId, insertNode, mapArtboard, mapNode, moveNode, replaceNode, walk } from './model'
+import { stripStyleProps } from './tailwindClasses'
 
 export interface Camera {
   x: number
@@ -235,6 +236,23 @@ export class EditorStore {
   }
   setNodeClasses(id: NodeId, cls: string) {
     this.updateNode(id, { cls })
+  }
+  /**
+   * Aplica clases Y limpia del atributo `style` inline las propiedades que esas
+   * clases gobiernan. El HTML que escribe el agente trae `style="color:#a78bfa"`
+   * y el inline SIEMPRE le gana a una clase → el control del inspector "no hacía
+   * nada". Quitar la declaración en conflicto es lo que lo vuelve real.
+   */
+  setNodeClassesOverriding(id: NodeId, cls: string, styleProps: string[]) {
+    this.commit(
+      mapNode(this.state.doc, id, (n) => {
+        const style = stripStyleProps(n.style, styleProps)
+        const next: Node = { ...n, cls }
+        if (style) next.style = style
+        else delete next.style
+        return next
+      }),
+    )
   }
   setNodeText(id: NodeId, text: string) {
     this.updateNode(id, { text })

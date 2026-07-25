@@ -473,10 +473,6 @@ export default function ArtifactPanel({
   const isDraftArtifact = artifact?.kind === "draft" && !!artifact.artifact;
   const draftPreview = isDraftArtifact && artifact?.kind === "draft" ? artifact.content : "";
   // Hasta que abre el <body> no hay nada visual: mostramos el código en vivo (auto-scroll).
-  // Dos momentos, NINGUNO es espera (así lo hacen v0/Lovable/Replit): mientras el HTML va
-  // en el <head> no hay nada que un navegador pueda pintar, así que se ve el CÓDIGO
-  // escribiéndose; en cuanto abre el <body> entra el iframe con el render en vivo.
-  const draftBodyStarted = /<body[\s>]/i.test(draftPreview);
   const draftSrcRef = useRef<HTMLPreElement | null>(null);
   useEffect(() => {
     const el = draftSrcRef.current;
@@ -1025,21 +1021,13 @@ export default function ArtifactPanel({
                     </div>
                   </div>
                 ) : artifact.kind === "draft" && artifact.artifact ? (
-                  // Artefacto HTML: PREVIEW EN VIVO — renderizamos el HTML PARCIAL en el iframe
-                  // mientras se construye (throttle ~400ms → el navegador auto-cierra tags y se
-                  // ve armarse la página). Al cerrarse el fence, scheduleDraftSwap cambia a la
-                  // vista final ya publicada. Sandbox aislado → un <script> a medias no afecta al app.
-                  // Fondo del tema de Teams (no blanco): mientras el artefacto se arma, el
-                  // blanco brillante se lee como un flash.
+                  // Artefacto HTML EN CONSTRUCCIÓN: el usuario ve el RESULTADO formándose
+                  // (nunca código, nunca esqueleto, nunca barra de espera).
                   <div className="flex min-h-0 flex-1 flex-col bg-surface-2">
                     {/* SIN barra de estado: el artefacto ocupa TODO el panel desde el primer
                         token. Cualquier franja de "construyendo…" se lee como pantalla de
                         espera, que es justo lo que no queremos. */}
                     <div className="relative min-h-0 flex-1">
-                      {/* NUNCA hay pantalla de espera: el iframe se monta desde el PRIMER
-                          token. Mientras el HTML va en el <head> el render está vacío pero
-                          ya toma el fondo del :root del artefacto (se ve "naciendo", no
-                          colgado); en cuanto abre el <body> aparece el contenido. */}
                       {/* ES EL MISMO IFRAME DEL RESULTADO, desde el primer token: apunta UNA
                           vez a /api/artifact-stream/:id (respuesta HTTP en chunks) y el
                           navegador lo pinta conforme llega. `key` fijo al mensaje → NO se

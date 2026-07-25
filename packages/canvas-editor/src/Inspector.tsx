@@ -18,6 +18,7 @@ import {
   getTextSize,
   setColorClass,
   setTextSize,
+  STYLE_CONFLICTS,
   type ColorPrefix,
   getHeightSizing,
   getWidthSizing,
@@ -234,7 +235,7 @@ function TypographyPanel({ store, node }: { store: EditorStore; node: Node }) {
       {/* Size no puede usar PropSelect a secas: los bloques/artefactos traen tamaños
           arbitrarios (text-[clamp(…)]) que hay que QUITAR o el dropdown no hace nada. */}
       <Row label="Size">
-        <select style={styles.select} value={GROUPS.size.some(([c]) => c === size) ? size : ''} onChange={(e) => set(setTextSize(node.cls, e.target.value))}>
+        <select style={styles.select} value={GROUPS.size.some(([c]) => c === size) ? size : ''} onChange={(e) => store.setNodeClassesOverriding(node.id, setTextSize(node.cls, e.target.value), [...STYLE_CONFLICTS.fontSize])}>
           <option value="">{size ? size.replace(/^text-\[|\]$/g, '') : '—'}</option>
           {GROUPS.size.map(([c, l]) => (
             <option key={c} value={c}>{l}</option>
@@ -283,10 +284,10 @@ function ColorsPanel({ store, node }: { store: EditorStore; node: Node }) {
   const set = (cls: string) => store.setNodeClasses(node.id, cls)
   return (
     <Section title="Color">
-      <ColorRow label="Text" cls={node.cls} prefix="text" group={GROUPS.textColor} onSet={set} />
-      <ColorRow label="Fondo" cls={node.cls} prefix="bg" group={GROUPS.bgColor} onSet={set} />
+      <ColorRow label="Text" node={node} store={store} prefix="text" group={GROUPS.textColor} />
+      <ColorRow label="Fondo" node={node} store={store} prefix="bg" group={GROUPS.bgColor} />
       <PropSelect label="Borde" cls={node.cls} group={GROUPS.borderWidth} onSet={set} />
-      <ColorRow label="Color borde" cls={node.cls} prefix="border" group={GROUPS.borderColor} onSet={set} />
+      <ColorRow label="Color borde" node={node} store={store} prefix="border" group={GROUPS.borderColor} />
       <PropSelect label="Radius" cls={node.cls} group={GROUPS.radius} onSet={set} />
     </Section>
   )
@@ -562,7 +563,10 @@ function PropSelect({ label, cls, group, onSet }: { label: string; cls: string; 
  * serialize.ts convierte en CSS real — así funciona igual en el canvas y en el
  * HTML publicado, sin depender del Tailwind del host.
  */
-function ColorRow({ label, cls, prefix, group, onSet }: { label: string; cls: string; prefix: ColorPrefix; group: PropOption[]; onSet: (cls: string) => void }) {
+function ColorRow({ label, node, store, prefix, group }: { label: string; node: Node; store: EditorStore; prefix: ColorPrefix; group: PropOption[] }) {
+  const cls = node.cls
+  // limpia también la declaración inline en conflicto (style="color:…" gana siempre)
+  const onSet = (next: string) => store.setNodeClassesOverriding(node.id, next, [...STYLE_CONFLICTS[prefix]])
   const cur = getColorClass(cls, prefix)
   const isToken = group.some(([c]) => c === cur)
   const hex = colorClassHex(cur)
