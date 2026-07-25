@@ -311,8 +311,12 @@ export default function ArtifactPanel({
         .map((n) => ({ ...n, children: strip(n.children) }));
     for (const ab of doc.artboards) ab.nodes = strip(ab.nodes);
     return doc;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [artifactKey]);
+    // Depende del HTML, no solo de la tarjeta: al Guardar, `savedHtml` cambia
+    // `artifactHtml` y hay que re-parsear, o al volver a Editar el editor se
+    // remonta con el doc VIEJO y los cambios guardados "se pierden" (aunque en
+    // Ver sí se vieran). Reconstruirlo mientras editas es inocuo: el CanvasEditor
+    // crea su store una sola vez al montar e ignora cambios del prop `doc`.
+  }, [artifactKey, artifactHtml]);
   // Estilos embebidos del artefacto (<style>…</style>). Los quitamos del doc (nodos
   // no-visuales) → hay que reinyectarlos: RAW (body intacto) para el preview iframe
   // (docToHtml envuelve en <body>), y REESCRITO (body→.ce-artboard) para la superficie
@@ -1053,6 +1057,17 @@ export default function ArtifactPanel({
                           remonta mientras el agente escribe (remontarlo era justo lo que
                           impedía ver la construcción). Sin messageId (cliente viejo / draft
                           sin ancla) caemos al re-emisor de srcDoc. */}
+                      {/* Mismo stream, en pestaña: separa "el iframe no pinta" de "no llega
+                          nada". Si aquí se ve armarse y en el panel no, el problema es del
+                          contexto del iframe, no del streaming. */}
+                      <a
+                        href={`/api/artifact-stream/${artifact.messageId}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="absolute right-3 top-3 z-10 rounded-md border border-border bg-surface/90 px-2 py-1 text-[11px] text-muted transition hover:border-brand hover:text-ink"
+                      >
+                        abrir en pestaña
+                      </a>
                       <iframe
                         key={`stream-${artifact.messageId ?? "draft"}`}
                         title={artifact.title || "artefacto"}
