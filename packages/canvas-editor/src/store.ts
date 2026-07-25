@@ -267,6 +267,22 @@ export class EditorStore {
       }),
     )
   }
+  /** Varias declaraciones en una sola operación (un solo paso de undo). */
+  setNodeStyleProps(id: NodeId, decls: Record<string, string | null>) {
+    this.commit(
+      mapNode(this.state.doc, id, (n) => {
+        let style = stripStyleProps(n.style, Object.keys(decls))
+        for (const [prop, value] of Object.entries(decls)) {
+          if (value == null || value === '') continue
+          style = style ? `${style}; ${prop}: ${value}` : `${prop}: ${value}`
+        }
+        const next: Node = { ...n }
+        if (style) next.style = style
+        else delete next.style
+        return next
+      }),
+    )
+  }
   setNodeText(id: NodeId, text: string) {
     this.updateNode(id, { text })
   }

@@ -7,33 +7,20 @@
 import { useLayoutEffect, useState } from 'react'
 import { FONT_OPTIONS, PALETTE_PRESETS, activeTokens, findNode, type Node } from './model'
 import { htmlToNode, nodeSubtreeToHtml } from './serialize'
-import { applyGuaranteed, computedProp, rgbToHex } from './computed'
+import { nodeEl } from './computed'
+import { addClass, autocomplete, classList, removeClass, toggleClass } from './tailwindClasses'
 import {
-  GROUPS,
-  addClass,
-  autocomplete,
-  classList,
-  colorClassHex,
-  getColorClass,
-  getDisplay,
-  getTextSize,
-  setColorClass,
-  setTextSize,
-  STYLE_CONFLICTS,
-  type ColorPrefix,
-  getHeightSizing,
-  getWidthSizing,
-  groupValue,
-  removeClass,
-  setDisplay,
-  setGroup,
-  setHeightSizing,
-  setWidthSizing,
-  toggleClass,
-  type Display,
-  type PropOption,
+  COLOR_TOKENS,
+  CSS_OPTIONS,
+  displayDecls,
+  displayOf,
+  sizingOf,
+  sizingValue,
+  toHex,
+  type DisplayMode,
+  type Opt,
   type Sizing,
-} from './tailwindClasses'
+} from './cssProps'
 import type { EditorState, EditorStore } from './store'
 import type { AgentAction, ImageProvider, RefineProvider } from './refine'
 
@@ -77,11 +64,12 @@ export function Inspector({
             </div>
           )}
           <NodePanel store={store} node={node} />
-          <LayoutPanel store={store} node={node} />
-          {(TEXT_TAGS.has(node.tag) || node.text != null) && <TypographyPanel store={store} node={node} />}
-          <SizeSpacingPanel store={store} node={node} />
-          <ColorsPanel store={store} node={node} />
-          <EffectsPanel store={store} node={node} />
+          <LayoutPanel store={store} node={node} dep={state.doc} />
+          <ChildLayoutPanel store={store} node={node} dep={state.doc} />
+          {(TEXT_TAGS.has(node.tag) || node.text != null) && <TypographyPanel store={store} node={node} dep={state.doc} />}
+          <SizeSpacingPanel store={store} node={node} dep={state.doc} />
+          <ColorsPanel store={store} node={node} dep={state.doc} />
+          <EffectsPanel store={store} node={node} dep={state.doc} />
           {node.tag === 'img' && <ImagePanel store={store} node={node} imageProvider={imageProvider} />}
           <ClassChips store={store} node={node} />
           <InlineStylePanel store={store} node={node} />
@@ -241,114 +229,322 @@ function NodePanel({ store, node }: { store: EditorStore; node: Node }) {
   )
 }
 
-// --- Layout: display + (flex) align/justify/gap ---
-function LayoutPanel({ store, node }: { store: EditorStore; node: Node }) {
-  const display = getDisplay(node.cls)
-  const isFlex = display === 'flex-row' || display === 'flex-col'
-  const isGrid = display === 'grid'
-  const set = (cls: string) => store.setNodeClasses(node.id, cls)
+// --- Layout: display, position, flex/grid del contenedor Y del hijo ---
+function LayoutPanel({ store, node, dep }: { store: EditorStore; node: Node; dep: unknown }) {
+  const c = useComputed(node.id, ['display', 'flex-direction', 'flex-wrap', 'position', 'z-index'], dep)
+  const mode = displayOf(c.display ?? '', c['flex-direction'] ?? '')
+  const isFlex = mode === 'flex-row' || mode === 'flex-col'
+  const isGrid = mode === 'grid'
+  const positioned = (c.position ?? 'static') !== 'static'
   return (
     <Section title="Layout">
       <Row label="Display">
-        <Segmented<Display>
-          value={display}
+        <Segmented<DisplayMode>
+          value={mode}
           options={[
             ['block', IconBlock, 'Block (flujo normal)'],
             ['flex-row', IconRow, 'Flex fila (autolayout horizontal)'],
             ['flex-col', IconCol, 'Flex columna (autolayout vertical)'],
             ['grid', IconGrid, 'Grid'],
-            ['hidden', IconHidden, 'Oculto (display none)'],
+            ['none', IconHidden, 'Oculto (display none)'],
           ]}
-          onChange={(d) => set(setDisplay(node.cls, d))}
+          onChange={(m) => store.setNodeStyleProps(node.id, displayDecls(m))}
         />
       </Row>
-      {isGrid && <PropSelect label="Columnas" cls={node.cls} group={GROUPS.gridCols} onSet={set} />}
       {isFlex && (
         <>
-          <PropSelect label="Align" cls={node.cls} group={GROUPS.items} onSet={set} />
-          <PropSelect label="Justify" cls={node.cls} group={GROUPS.justify} onSet={set} />
+          <CssRow label="Wrap" prop="flex-wrap" node={node} store={store} computed={c} options={WRAP_OPTS} />
+          <CssRow label="Align" prop="align-items" node={node} store={store} computed={c} />
+          <CssRow label="Justify" prop="justify-content" node={node} store={store} computed={c} />
         </>
       )}
-      {(isFlex || isGrid) && <PropSelect label="Gap" cls={node.cls} group={GROUPS.gap} onSet={set} />}
+      {isGrid && (
+        <>
+          <CssRow label="Columnas" prop="grid-template-columns" node={node} store={store} computed={c} />
+          <CssRow label="Flow" prop="grid-auto-flow" node={node} store={store} computed={c} options={FLOW_OPTS} />
+          <CssRow label="Align" prop="align-items" node={node} store={store} computed={c} />
+          <CssRow label="Justify" prop="justify-items" node={node} store={store} computed={c} options={CSS_OPTIONS['align-items']} />
+        </>
+      )}
+      {(isFlex || isGrid) && <CssRow label="Gap" prop="gap" node={node} store={store} computed={c} />}
+      <CssRow label="Position" prop="position" node={node} store={store} computed={c} />
+      {positioned && (
+        <>
+          <SidesRow label="Inset" props={['top', 'right', 'bottom', 'left']} node={node} store={store} dep={dep} />
+          <CssRow label="z-index" prop="z-index" node={node} store={store} computed={c} options={Z_OPTS} />
+        </>
+      )}
+    </Section>
+  )
+}
+
+/**
+ * Controles del nodo COMO HIJO de su contenedor. Sin esto, un bento cuyo CSS
+ * coloca cada tarjeta con `grid-column`/`grid-row` explícitos es inarreglable
+ * desde el panel: cambias las columnas del padre y las tarjetas siguen clavadas
+ * en su celda (o se encinan). Aquí se ven y se quitan.
+ */
+function ChildLayoutPanel({ store, node, dep }: { store: EditorStore; node: Node; dep: unknown }) {
+  const parentDisplay = useParentComputed(node.id, ['display', 'flex-direction'], dep)
+  const pMode = displayOf(parentDisplay.display ?? '', parentDisplay['flex-direction'] ?? '')
+  const c = useComputed(node.id, ['flex-grow', 'flex-shrink', 'align-self', 'order', 'grid-column', 'grid-row'], dep)
+  if (pMode !== 'grid' && pMode !== 'flex-row' && pMode !== 'flex-col') return null
+  return (
+    <Section title="En el contenedor" collapsible defaultOpen={pMode === 'grid'}>
+      <CssRow label="Self" prop="align-self" node={node} store={store} computed={c} options={SELF_OPTS} />
+      {pMode === 'grid' ? (
+        <>
+          <CssRow label="Columna" prop="grid-column" node={node} store={store} computed={c} options={SPAN_OPTS} />
+          <CssRow label="Fila" prop="grid-row" node={node} store={store} computed={c} options={SPAN_OPTS} />
+        </>
+      ) : (
+        <>
+          <CssRow label="Grow" prop="flex-grow" node={node} store={store} computed={c} options={GROW_OPTS} />
+          <CssRow label="Shrink" prop="flex-shrink" node={node} store={store} computed={c} options={GROW_OPTS} />
+        </>
+      )}
+      <CssRow label="Orden" prop="order" node={node} store={store} computed={c} options={ORDER_OPTS} />
     </Section>
   )
 }
 
 // --- Typography ---
-function TypographyPanel({ store, node }: { store: EditorStore; node: Node }) {
-  const set = (cls: string) => store.setNodeClasses(node.id, cls)
-  const size = getTextSize(node.cls)
+function TypographyPanel({ store, node, dep }: { store: EditorStore; node: Node; dep: unknown }) {
+  const c = useComputed(node.id, ['font-size', 'line-height', 'font-weight', 'letter-spacing', 'text-align'], dep)
   return (
     <Section title="Tipografía">
-      {/* Size no puede usar PropSelect a secas: los bloques/artefactos traen tamaños
-          arbitrarios (text-[clamp(…)]) que hay que QUITAR o el dropdown no hace nada. */}
-      <Row label="Size">
-        <select style={styles.select} value={GROUPS.size.some(([c]) => c === size) ? size : ''} onChange={(e) => applyGuaranteed(store, node.id, setTextSize(node.cls, e.target.value), [...STYLE_CONFLICTS.fontSize], e.target.value ? { prop: 'font-size', value: SIZE_REM[e.target.value] } : undefined)}>
-          <option value="">{size ? size.replace(/^text-\[|\]$/g, '') : '—'}</option>
-          {GROUPS.size.map(([c, l]) => (
-            <option key={c} value={c}>{l}</option>
-          ))}
-        </select>
-      </Row>
-      <PropSelect label="Leading" cls={node.cls} group={GROUPS.leading} onSet={set} />
-      <PropSelect label="Weight" cls={node.cls} group={GROUPS.weight} onSet={set} />
-      <PropSelect label="Tracking" cls={node.cls} group={GROUPS.tracking} onSet={set} />
-      <Row label="Align">
-        <Segmented<string>
-          value={groupValue(node.cls, GROUPS.align) || 'text-left'}
-          options={GROUPS.align.map(([c, l]) => [c, l] as [string, string])}
-          onChange={(v) => set(setGroup(node.cls, GROUPS.align, v))}
-        />
-      </Row>
+      <CssRow label="Size" prop="font-size" node={node} store={store} computed={c} />
+      <CssRow label="Leading" prop="line-height" node={node} store={store} computed={c} />
+      <CssRow label="Weight" prop="font-weight" node={node} store={store} computed={c} />
+      <CssRow label="Tracking" prop="letter-spacing" node={node} store={store} computed={c} />
+      <CssRow label="Align" prop="text-align" node={node} store={store} computed={c} />
     </Section>
   )
 }
 
 // --- Size & Spacing ---
-function SizeSpacingPanel({ store, node }: { store: EditorStore; node: Node }) {
-  const set = (cls: string) => store.setNodeClasses(node.id, cls)
+function SizeSpacingPanel({ store, node, dep }: { store: EditorStore; node: Node; dep: unknown }) {
+  const c = useComputed(node.id, ['width', 'height', 'overflow'], dep)
   const sizingOpts: [Sizing, string][] = [
     ['hug', 'Hug'],
     ['fixed', 'Fixed'],
     ['fill', 'Fill'],
   ]
+  const sizeRow = (label: string, prop: 'width' | 'height') => {
+    const inline = inlineValue(node.style, prop)
+    const effective = inline ?? c[prop] ?? ''
+    const s = inline ? sizingOf(inline) : 'hug'
+    const px = Math.round(parseFloat(c[prop] ?? '0')) || 0
+    return (
+      <Row label={label}>
+        <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <Segmented<Sizing> value={s} options={sizingOpts} onChange={(next) => store.setNodeStyleProp(node.id, prop, next === 'hug' ? null : sizingValue(next, px))} />
+          </div>
+          {s === 'fixed' && (
+            <input
+              style={{ ...styles.input, width: 62 }}
+              value={parseFloat(effective) || 0}
+              onChange={(e) => store.setNodeStyleProp(node.id, prop, `${e.target.value || 0}px`)}
+            />
+          )}
+        </div>
+      </Row>
+    )
+  }
   return (
     <Section title="Size & Spacing">
-      <Row label="W">
-        <Segmented<Sizing> value={getWidthSizing(node.cls)} options={sizingOpts} onChange={(s) => set(setWidthSizing(node.cls, s))} />
-      </Row>
-      <Row label="H">
-        <Segmented<Sizing> value={getHeightSizing(node.cls)} options={sizingOpts} onChange={(s) => set(setHeightSizing(node.cls, s))} />
-      </Row>
-      <PropSelect label="Padding" cls={node.cls} group={GROUPS.padding} onSet={set} />
-      <PropSelect label="Margin" cls={node.cls} group={GROUPS.margin} onSet={set} />
-      <PropSelect label="Overflow" cls={node.cls} group={GROUPS.overflow} onSet={set} />
+      {sizeRow('W', 'width')}
+      {sizeRow('H', 'height')}
+      <SidesRow label="Padding" props={['padding-top', 'padding-right', 'padding-bottom', 'padding-left']} node={node} store={store} dep={dep} />
+      <SidesRow label="Margin" props={['margin-top', 'margin-right', 'margin-bottom', 'margin-left']} node={node} store={store} dep={dep} />
+      <CssRow label="Overflow" prop="overflow" node={node} store={store} computed={c} />
     </Section>
   )
 }
 
-// --- Colors + radius ---
-function ColorsPanel({ store, node }: { store: EditorStore; node: Node }) {
-  const set = (cls: string) => store.setNodeClasses(node.id, cls)
+// --- Colors + border/radius ---
+function ColorsPanel({ store, node, dep }: { store: EditorStore; node: Node; dep: unknown }) {
+  const c = useComputed(node.id, ['color', 'background-color', 'border-width', 'border-color', 'border-radius'], dep)
   return (
     <Section title="Color">
-      <ColorRow label="Text" node={node} store={store} prefix="text" group={GROUPS.textColor} />
-      <ColorRow label="Fondo" node={node} store={store} prefix="bg" group={GROUPS.bgColor} />
-      <PropSelect label="Borde" cls={node.cls} group={GROUPS.borderWidth} onSet={set} />
-      <ColorRow label="Color borde" node={node} store={store} prefix="border" group={GROUPS.borderColor} />
-      <PropSelect label="Radius" cls={node.cls} group={GROUPS.radius} onSet={set} />
+      <CssColorRow label="Text" prop="color" node={node} store={store} computed={c} />
+      <CssColorRow label="Fondo" prop="background-color" node={node} store={store} computed={c} />
+      <CssRow label="Borde" prop="border-width" node={node} store={store} computed={c} onExtra={{ 'border-style': 'solid' }} />
+      <CssColorRow label="Color borde" prop="border-color" node={node} store={store} computed={c} />
+      <CssRow label="Radius" prop="border-radius" node={node} store={store} computed={c} />
     </Section>
   )
 }
 
-// --- Effects: shadow + opacity ---
-function EffectsPanel({ store, node }: { store: EditorStore; node: Node }) {
-  const set = (cls: string) => store.setNodeClasses(node.id, cls)
+// --- Effects ---
+function EffectsPanel({ store, node, dep }: { store: EditorStore; node: Node; dep: unknown }) {
+  const c = useComputed(node.id, ['box-shadow', 'opacity'], dep)
   return (
     <Section title="Efectos">
-      <PropSelect label="Sombra" cls={node.cls} group={GROUPS.shadow} onSet={set} />
-      <PropSelect label="Opacidad" cls={node.cls} group={GROUPS.opacity} onSet={set} />
+      <CssRow label="Sombra" prop="box-shadow" node={node} store={store} computed={c} />
+      <CssRow label="Opacidad" prop="opacity" node={node} store={store} computed={c} />
     </Section>
+  )
+}
+
+// --- primitivas CSS-first -------------------------------------------------
+const WRAP_OPTS: Opt[] = [['nowrap', 'no'], ['wrap', 'sí'], ['wrap-reverse', 'reverse']]
+const FLOW_OPTS: Opt[] = [['row', 'filas'], ['column', 'columnas'], ['row dense', 'filas dense']]
+const Z_OPTS: Opt[] = [['0', '0'], ['1', '1'], ['10', '10'], ['50', '50'], ['-1', '-1']]
+const SELF_OPTS: Opt[] = [['auto', 'auto'], ['flex-start', 'start'], ['center', 'center'], ['flex-end', 'end'], ['stretch', 'stretch']]
+const GROW_OPTS: Opt[] = [['0', '0'], ['1', '1'], ['2', '2']]
+const ORDER_OPTS: Opt[] = [['-1', 'primero'], ['0', 'normal'], ['1', 'después']]
+const SPAN_OPTS: Opt[] = [
+  ['auto', 'auto'], ['span 1', 'span 1'], ['span 2', 'span 2'], ['span 3', 'span 3'], ['span 4', 'span 4'], ['1 / -1', 'todo'],
+]
+
+/** Valor de una declaración dentro del `style` inline del nodo, o null. */
+function inlineValue(style: string | undefined, prop: string): string | null {
+  if (!style) return null
+  for (const decl of style.split(';')) {
+    const i = decl.indexOf(':')
+    if (i < 0) continue
+    if (decl.slice(0, i).trim().toLowerCase() === prop) return decl.slice(i + 1).trim()
+  }
+  return null
+}
+
+/** Lee del DOM VIVO. `dep` (el doc) fuerza la relectura tras cada cambio, incluido
+ *  el cambio de TEMA — que no toca el nodo pero sí sus colores computados. */
+function useComputed(nodeId: string, props: string[], dep: unknown): Record<string, string> {
+  const [v, setV] = useState<Record<string, string>>({})
+  const key = props.join('|')
+  useLayoutEffect(() => {
+    const el = nodeEl(nodeId)
+    if (!el) {
+      setV({})
+      return
+    }
+    const cs = getComputedStyle(el)
+    const out: Record<string, string> = {}
+    for (const p of key.split('|')) out[p] = cs.getPropertyValue(p).trim()
+    setV(out)
+  }, [nodeId, key, dep])
+  return v
+}
+function useParentComputed(nodeId: string, props: string[], dep: unknown): Record<string, string> {
+  const [v, setV] = useState<Record<string, string>>({})
+  const key = props.join('|')
+  useLayoutEffect(() => {
+    const el = nodeEl(nodeId)?.parentElement
+    if (!el) {
+      setV({})
+      return
+    }
+    const cs = getComputedStyle(el)
+    const out: Record<string, string> = {}
+    for (const p of key.split('|')) out[p] = cs.getPropertyValue(p).trim()
+    setV(out)
+  }, [nodeId, key, dep])
+  return v
+}
+
+/**
+ * Fila de una propiedad CSS. Muestra el valor EFECTIVO (venga de una clase, de
+ * una regla del artefacto o de inline) y al elegir escribe la declaración inline,
+ * que gana sobre todo lo demás. "—" borra la declaración y devuelve el control al
+ * CSS del autor.
+ */
+function CssRow({
+  label,
+  prop,
+  node,
+  store,
+  computed,
+  options,
+  onExtra,
+}: {
+  label: string
+  prop: string
+  node: Node
+  store: EditorStore
+  computed: Record<string, string>
+  options?: Opt[]
+  onExtra?: Record<string, string>
+}) {
+  const opts = options ?? CSS_OPTIONS[prop] ?? []
+  const inline = inlineValue(node.style, prop)
+  const value = opts.some(([v]) => v === inline) ? inline! : ''
+  const effective = (inline ?? computed[prop] ?? '').trim()
+  return (
+    <Row label={label}>
+      <select
+        style={styles.select}
+        value={value}
+        title={effective}
+        onChange={(e) => {
+          const v = e.target.value
+          if (onExtra && v) store.setNodeStyleProps(node.id, { [prop]: v, ...onExtra })
+          else store.setNodeStyleProp(node.id, prop, v || null)
+        }}
+      >
+        <option value="">{effective && effective !== 'normal' && effective !== 'auto' ? shortValue(effective) : '—'}</option>
+        {opts.map(([v, l]) => (
+          <option key={v} value={v}>{l}</option>
+        ))}
+      </select>
+    </Row>
+  )
+}
+
+/** Acorta valores computados largos para que quepan en el select. */
+function shortValue(v: string): string {
+  return v.length > 22 ? v.slice(0, 21) + '…' : v
+}
+
+/** Color: tokens del tema + color libre, siempre sobre la propiedad CSS real. */
+function CssColorRow({ label, prop, node, store, computed }: { label: string; prop: string; node: Node; store: EditorStore; computed: Record<string, string> }) {
+  const inline = inlineValue(node.style, prop)
+  const token = COLOR_TOKENS.some(([v]) => v === inline) ? inline! : ''
+  const hex = toHex(inline ?? '') ?? toHex(computed[prop] ?? '')
+  return (
+    <Row label={label}>
+      <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+        <select style={{ ...styles.select, flex: 1, minWidth: 0 }} value={token} onChange={(e) => store.setNodeStyleProp(node.id, prop, e.target.value || null)}>
+          <option value="">{inline && !token ? shortValue(inline) : '—'}</option>
+          {COLOR_TOKENS.map(([v, l]) => (
+            <option key={v} value={v}>{l}</option>
+          ))}
+        </select>
+        <label title="Color libre" style={{ position: 'relative', width: 26, height: 26, flexShrink: 0, borderRadius: 6, border: '1px solid #262b36', overflow: 'hidden', cursor: 'pointer', background: hex ?? 'repeating-conic-gradient(#2a2f3a 0% 25%, #1a1d24 0% 50%) 50%/8px 8px' }}>
+          <input type="color" value={hex ?? '#000000'} onChange={(e) => store.setNodeStyleProp(node.id, prop, e.target.value)} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', opacity: 0, cursor: 'pointer' }} />
+        </label>
+      </div>
+    </Row>
+  )
+}
+
+/** Cuatro lados (padding/margin/inset) en px, con el valor efectivo de placeholder. */
+function SidesRow({ label, props, node, store, dep }: { label: string; props: string[]; node: Node; store: EditorStore; dep: unknown }) {
+  const c = useComputed(node.id, props, dep)
+  return (
+    <Row label={label}>
+      <div style={{ display: 'flex', gap: 4 }}>
+        {props.map((p, i) => {
+          const inline = inlineValue(node.style, p)
+          const eff = (inline ?? c[p] ?? '').replace('px', '')
+          return (
+            <input
+              key={p}
+              title={p}
+              style={{ ...styles.input, padding: '5px 4px', textAlign: 'center' }}
+              placeholder={['T', 'R', 'B', 'L'][i]}
+              value={eff === 'auto' ? 'auto' : Math.round(parseFloat(eff) || 0)}
+              onChange={(e) => {
+                const raw = e.target.value.trim()
+                store.setNodeStyleProp(node.id, p, raw === '' ? null : raw === 'auto' ? 'auto' : `${parseFloat(raw) || 0}px`)
+              }}
+            />
+          )
+        })}
+      </div>
+    </Row>
   )
 }
 
@@ -588,81 +784,7 @@ function normalizeHex(v: string | undefined): string {
   return /^#[0-9a-fA-F]{6}$/.test(s) ? s : '#000000'
 }
 
-// --- primitives ---
-function PropSelect({ label, cls, group, onSet }: { label: string; cls: string; group: PropOption[]; onSet: (cls: string) => void }) {
-  const cur = groupValue(cls, group)
-  return (
-    <Row label={label}>
-      <select style={styles.select} value={cur} onChange={(e) => onSet(setGroup(cls, group, e.target.value))}>
-        <option value="">—</option>
-        {group.map(([c, l]) => (
-          <option key={c} value={c}>
-            {l}
-          </option>
-        ))}
-      </select>
-    </Row>
-  )
-}
-
-/**
- * Fila de color: tokens del tema + color LIBRE (hex) por el swatch. El hex se
- * escribe como utilidad arbitraria (`text-[#ff0055]`), que el mini-JIT de
- * serialize.ts convierte en CSS real — así funciona igual en el canvas y en el
- * HTML publicado, sin depender del Tailwind del host.
- */
-function ColorRow({ label, node, store, prefix, group }: { label: string; node: Node; store: EditorStore; prefix: ColorPrefix; group: PropOption[] }) {
-  const cls = node.cls
-  const cur = getColorClass(cls, prefix)
-  const isToken = group.some(([c]) => c === cur)
-  const custom = !!cur && !isToken
-  // La verdad la manda el DOM: el color puede venir de una clase propia del
-  // artefacto (`.heading{color:…}`) o de `style` inline. Lo leemos para que el
-  // swatch muestre el color REAL aunque el select diga "—".
-  const [live, setLive] = useState<string | null>(null)
-  const prop = prefix === 'text' ? 'color' : prefix === 'bg' ? 'background-color' : 'border-color'
-  useLayoutEffect(() => {
-    setLive(rgbToHex(computedProp(node.id, prop)))
-  }, [node.id, node.cls, node.style, prop])
-  const hex = colorClassHex(cur) ?? live
-  const apply = (nextCls: string, guaranteeValue: string | null) =>
-    applyGuaranteed(store, node.id, nextCls, [...STYLE_CONFLICTS[prefix]], guaranteeValue ? { prop, value: guaranteeValue } : undefined)
-  return (
-    <Row label={label}>
-      <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-        <select
-          style={{ ...styles.select, flex: 1, minWidth: 0 }}
-          value={isToken ? cur : ''}
-          onChange={(e) => {
-            const v = e.target.value
-            apply(setColorClass(cls, prefix, v), v ? `var(--color-${v.slice(prefix.length + 1)})` : null)
-          }}
-        >
-          <option value="">{custom ? cur.replace(new RegExp(`^${prefix}-\\[|\\]$`, 'g'), '') : '—'}</option>
-          {group.map(([c, l]) => (
-            <option key={c} value={c}>{l}</option>
-          ))}
-        </select>
-        <label title="Color libre" style={{ position: 'relative', width: 26, height: 26, flexShrink: 0, borderRadius: 6, border: '1px solid #262b36', overflow: 'hidden', cursor: 'pointer', background: hex ?? 'repeating-conic-gradient(#2a2f3a 0% 25%, #1a1d24 0% 50%) 50%/8px 8px' }}>
-          <input
-            type="color"
-            value={hex ?? '#000000'}
-            onChange={(e) => apply(setColorClass(cls, prefix, `${prefix}-[${e.target.value}]`), e.target.value)}
-            style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', opacity: 0, cursor: 'pointer' }}
-          />
-        </label>
-      </div>
-    </Row>
-  )
-}
-
-/** Fallback en rem para garantizar el tamaño cuando una regla del artefacto gana. */
-const SIZE_REM: Record<string, string> = {
-  'text-xs': '0.75rem', 'text-sm': '0.875rem', 'text-base': '1rem', 'text-lg': '1.125rem',
-  'text-xl': '1.25rem', 'text-2xl': '1.5rem', 'text-3xl': '1.875rem', 'text-4xl': '2.25rem',
-  'text-5xl': '3rem', 'text-6xl': '3.75rem', 'text-7xl': '4.5rem',
-}
-
+// --- primitivas de UI ---
 function Section({ title, children, action, collapsible, defaultOpen = true }: { title: string; children: React.ReactNode; action?: React.ReactNode; collapsible?: boolean; defaultOpen?: boolean }) {
   const [open, setOpen] = useState(defaultOpen)
   const shown = !collapsible || open

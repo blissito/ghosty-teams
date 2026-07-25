@@ -92,6 +92,7 @@ export const Route = createFileRoute("/api/artifact-stream/$id")({
               if (done) return;
               const { html, closed } = htmlOf(body);
               if (html.length > sent) {
+                console.log(`[gt-stream] id=${id} +${html.length - sent}b total=${html.length}b closed=${closed}`);
                 const piece = transform(html.slice(sent));
                 sent = html.length;
                 if (piece) {
@@ -103,6 +104,7 @@ export const Route = createFileRoute("/api/artifact-stream/$id")({
             // Abre el documento YA (aunque el agente aún no haya escrito nada): el iframe
             // deja de estar en blanco desde el instante en que se monta.
             try { controller.enqueue(enc.encode(transform(""))); } catch { return finish(); }
+            console.log(`[gt-stream] ABRE id=${id} ns=${ns.slice(0, 8)} live=${(bus.liveBody(ns, id) ?? "").length}b`);
             // Lo que ya se escribió antes de que el panel abriera este stream.
             push(bus.liveBody(ns, id));
             unsub = bus.tapBody(ns, id, push);

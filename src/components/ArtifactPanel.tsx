@@ -263,7 +263,6 @@ export default function ArtifactPanel({
   // muestre ese mismo artefacto.
   const [savedHtml, setSavedHtml] = useState<{ id: string; html: string } | null>(null);
   // ¿ya cargó el iframe del artefacto? (para revelarlo con fade y no mostrar el blanco)
-  const [frameReady, setFrameReady] = useState(false);
   const artifactIdent =
     artifact?.kind === "artifact" ? String(artifact.messageId ?? artifact.documentId) : null;
   const artifactHtml =
@@ -319,7 +318,7 @@ export default function ArtifactPanel({
     [artifactStyleCssRaw]
   );
   // Al cambiar de artefacto (o cerrar), volver a modo Ver.
-  useEffect(() => { setEditing(false); setFrameReady(false); }, [artifactKey]);
+  useEffect(() => { setEditing(false); }, [artifactKey]);
   // Badge por tipo REAL: sheet vivo = CSV, doc generado = DOCX, office = su extensión
   // real (XLSX/PPTX/DOCX) derivada del nombre — no hardcodear DOCX para todo office.
   const extBadge = (title?: string): string | null => {
@@ -1233,9 +1232,12 @@ export default function ArtifactPanel({
                         />
                       </div>
                     ) : (
-                      // El iframe pinta BLANCO hasta que el documento parsea → un flash
-                      // brillante al abrir el artefacto. Lo montamos sobre el fondo del tema
-                      // de Teams y lo revelamos con un fade cuando carga.
+                      // NADA de ocultar el iframe hasta que "cargue": `onLoad` espera a TODOS
+                      // los subrecursos (CDN de Tailwind, fuentes, imágenes), así que gatear
+                      // la opacidad con él dejaba el panel en negro varios segundos con el
+                      // artefacto ya renderizado debajo — se leía como pantalla de espera y
+                      // luego "aparece todo de golpe". El iframe se ve DESDE EL PRIMER PIXEL;
+                      // el fondo del tema detrás evita el flash blanco.
                       <div className="relative min-h-0 flex-1 bg-surface-2">
                         <iframe
                           key={artifactKey ?? "artifact"}
@@ -1247,9 +1249,7 @@ export default function ArtifactPanel({
                           // al salir del editor se veía el cambio "perdido" hasta cerrar y
                           // reabrir el artefacto.
                           srcDoc={artifactHtml ?? artifact.html}
-                          onLoad={() => setFrameReady(true)}
-                          style={{ opacity: frameReady ? 1 : 0 }}
-                          className="absolute inset-0 h-full w-full border-0 bg-transparent transition-opacity duration-200"
+                          className="absolute inset-0 h-full w-full border-0 bg-transparent"
                         />
                       </div>
                     )}

@@ -113,6 +113,7 @@ function recordLiveBody(channel: string, ev: RtEvent): void {
   liveBodies.set(k, ev.body);
   setTimeout(() => liveBodies.delete(k), LIVE_TTL_MS).unref?.();
   const taps = bodyTaps.get(k);
+  if (/```eb-artifact/.test(ev.body) && !taps) console.log(`[gt-live] id=${ev.id} ns=${ns.slice(0, 8)} ${ev.body.length}b SIN taps`);
   if (!taps) return;
   for (const fn of taps) {
     try { fn(ev.body); } catch { /* stream cerrado en carrera */ }
