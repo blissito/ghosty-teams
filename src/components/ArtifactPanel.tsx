@@ -258,6 +258,8 @@ export default function ArtifactPanel({
   // había guardado. Guardamos el HTML recién guardado y tiene prioridad mientras el panel
   // muestre ese mismo artefacto.
   const [savedHtml, setSavedHtml] = useState<{ id: string; html: string } | null>(null);
+  // ¿ya cargó el iframe del artefacto? (para revelarlo con fade y no mostrar el blanco)
+  const [frameReady, setFrameReady] = useState(false);
   const artifactIdent =
     artifact?.kind === "artifact" ? String(artifact.messageId ?? artifact.documentId) : null;
   const artifactHtml =
@@ -313,7 +315,7 @@ export default function ArtifactPanel({
     [artifactStyleCssRaw]
   );
   // Al cambiar de artefacto (o cerrar), volver a modo Ver.
-  useEffect(() => { setEditing(false); }, [artifactKey]);
+  useEffect(() => { setEditing(false); setFrameReady(false); }, [artifactKey]);
   // Badge por tipo REAL: sheet vivo = CSV, doc generado = DOCX, office = su extensión
   // real (XLSX/PPTX/DOCX) derivada del nombre — no hardcodear DOCX para todo office.
   const extBadge = (title?: string): string | null => {
@@ -1020,7 +1022,9 @@ export default function ArtifactPanel({
                   // mientras se construye (throttle ~400ms → el navegador auto-cierra tags y se
                   // ve armarse la página). Al cerrarse el fence, scheduleDraftSwap cambia a la
                   // vista final ya publicada. Sandbox aislado → un <script> a medias no afecta al app.
-                  <div className="flex min-h-0 flex-1 flex-col bg-white">
+                  // Fondo del tema de Teams (no blanco): mientras el artefacto se arma, el
+                  // blanco brillante se lee como un flash.
+                  <div className="flex min-h-0 flex-1 flex-col bg-surface-2">
                     <div className="flex items-center gap-2 border-b border-border bg-surface-2 px-4 py-2 text-xs text-muted">
                       <Loader2 size={13} className="animate-spin text-brand" />
                       <span className="truncate">
@@ -1032,7 +1036,7 @@ export default function ArtifactPanel({
                         <StreamingHtmlFrame
                           html={draftPreview}
                           title={artifact.title || "artefacto"}
-                          className="absolute inset-0 h-full w-full border-0 bg-white"
+                          className="absolute inset-0 h-full w-full border-0 bg-transparent"
                         />
                       ) : (
                         // Todavía en el <head>/<style>: no hay NADA que pintar (el iframe
@@ -1229,17 +1233,25 @@ export default function ArtifactPanel({
                         />
                       </div>
                     ) : (
-                      <iframe
-                        title={artifact.title || "artefacto"}
-                        sandbox="allow-scripts allow-forms allow-popups"
-                        referrerPolicy="no-referrer"
-                        // `artifactHtml`, NO `artifact.html`: el prop viene de la cache del
-                        // mensaje y tras guardar sigue trayendo la versión anterior — por eso
-                        // al salir del editor se veía el cambio "perdido" hasta cerrar y
-                        // reabrir el artefacto.
-                        srcDoc={artifactHtml ?? artifact.html}
-                        className="min-h-0 flex-1 border-0 bg-white"
-                      />
+                      // El iframe pinta BLANCO hasta que el documento parsea → un flash
+                      // brillante al abrir el artefacto. Lo montamos sobre el fondo del tema
+                      // de Teams y lo revelamos con un fade cuando carga.
+                      <div className="relative min-h-0 flex-1 bg-surface-2">
+                        <iframe
+                          key={artifactKey ?? "artifact"}
+                          title={artifact.title || "artefacto"}
+                          sandbox="allow-scripts allow-forms allow-popups"
+                          referrerPolicy="no-referrer"
+                          // `artifactHtml`, NO `artifact.html`: el prop viene de la cache del
+                          // mensaje y tras guardar sigue trayendo la versión anterior — por eso
+                          // al salir del editor se veía el cambio "perdido" hasta cerrar y
+                          // reabrir el artefacto.
+                          srcDoc={artifactHtml ?? artifact.html}
+                          onLoad={() => setFrameReady(true)}
+                          style={{ opacity: frameReady ? 1 : 0 }}
+                          className="absolute inset-0 h-full w-full border-0 bg-transparent transition-opacity duration-200"
+                        />
+                      </div>
                     )}
                     {artifact.src ? (
                       <div className="flex items-center gap-2 border-t border-border bg-surface px-3 py-2">
