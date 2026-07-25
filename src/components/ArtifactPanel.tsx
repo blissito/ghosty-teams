@@ -1,7 +1,7 @@
 import { AnimatePresence, motion } from "motion/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ARTIFACT_CHROME_CSS } from "../lib/artifact-stream-doc";
-import { LiveArtifactPreview, ArtifactSkeleton } from "./LiveArtifactPreview";
+import { LiveArtifactPreview, ArtifactSkeleton, ArtifactCalque } from "./LiveArtifactPreview";
 import { X, ExternalLink, FileText, Download, Loader2, ChevronRight, ChevronLeft, RotateCw, Upload, Link as LinkIcon, Check, Pencil, Eye, Maximize2, Minimize2 } from "lucide-react";
 import { useT } from "../i18n";
 import { officeToHtmlFn, xlsxToCsvFn, postMessage } from "../server/chat";
@@ -557,7 +557,9 @@ export default function ArtifactPanel({
   useEffect(() => {
     if (!frameKey) return;
     setFrameReady(false);
-    const id = setTimeout(() => setFrameReady(true), 2500);
+    // Red de seguridad generosa: si `onLoad` no llega (un subrecurso colgado), quitamos el
+    // calco igual. Corto sería peor que largo — destaparía el iframe a medio estilar.
+    const id = setTimeout(() => setFrameReady(true), 6000);
     return () => clearTimeout(id);
   }, [frameKey]);
   const patchSig = artifact?.kind === "draft" ? (artifact.patches ?? []).map((p) => p.nodeId).join(",") : "";
@@ -1415,10 +1417,9 @@ export default function ArtifactPanel({
                             DOM directo, sin documento que arrancar— lo tapa sin vacío y se
                             desvanece en cuanto el iframe está listo. */}
                         {!frameReady ? (
-                          <LiveArtifactPreview
+                          <ArtifactCalque
                             html={artifactHtml ?? artifact.html}
-                            skeleton={false}
-                            className="pointer-events-none absolute inset-0 overflow-hidden transition-opacity duration-200"
+                            className="pointer-events-none absolute inset-0 overflow-hidden"
                           />
                         ) : null}
                       </div>

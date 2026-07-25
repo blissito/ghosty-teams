@@ -111,6 +111,24 @@ export function ArtifactSkeleton({ label }: { label: string }) {
   );
 }
 
+/**
+ * CALCO ESTÁTICO del artefacto — mismo pintado que el preview pero SÍNCRONO: el HTML va por
+ * `dangerouslySetInnerHTML`, así React lo emite en el MISMO commit y aparece en el primer
+ * frame. `LiveArtifactPreview` pinta dentro de un `useEffect` (necesario para el streaming y
+ * los patches incrementales), y ese frame de retraso es exactamente el parpadeo que se ve al
+ * pasar del preview al iframe del resultado. Sin estado, sin efectos, sin scripts.
+ */
+export function ArtifactCalque({ html, className }: { html: string; className?: string }) {
+  const { css, body } = splitArtifact(html);
+  const cls = bodyClasses(html);
+  return (
+    <div className={className} aria-hidden>
+      <style>{PATCH_CSS + css}</style>
+      <div className={`gt-live ${cls}`} dangerouslySetInnerHTML={{ __html: body }} />
+    </div>
+  );
+}
+
 export type LivePatch = {
   nodeId: string;
   html: string;
