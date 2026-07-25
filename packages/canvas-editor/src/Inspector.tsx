@@ -2,12 +2,12 @@
 // Content), Layout (Display), Typography (Size/Leading/Weight/Tracking/Align),
 // Size & Spacing (W/H Hug/Fill/Fixed, Padding, Margin, Overflow), Colors, Radius,
 // plus a collapsible </> code panel for the raw className, and a streaming Refine
-// box. Controls read/write Tailwind classes via the GROUPS helpers.
+// box. Los controles leen el CSS efectivo del DOM y escriben declaraciones inline
+// (ver cssProps.ts): así ganan sobre las clases y sobre el <style> del artefacto.
 
 import { useLayoutEffect, useState } from 'react'
 import { FONT_OPTIONS, PALETTE_PRESETS, activeTokens, findNode, type Node } from './model'
 import { htmlToNode, nodeSubtreeToHtml } from './serialize'
-import { nodeEl } from './computed'
 import { addClass, autocomplete, classList, removeClass, toggleClass } from './tailwindClasses'
 import {
   COLOR_TOKENS,
@@ -17,6 +17,7 @@ import {
   sizingOf,
   sizingValue,
   toHex,
+  nodeEl,
   type DisplayMode,
   type Opt,
   type Sizing,

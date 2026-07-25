@@ -493,6 +493,22 @@ export class EditorStore {
   previewNodeClasses(id: NodeId, cls: string) {
     this.set({ doc: mapNode(this.state.doc, id, (n) => ({ ...n, cls })) })
   }
+  /** Preview transitorio de declaraciones inline (arrastre de los handles). */
+  previewNodeStyle(id: NodeId, decls: Record<string, string | null>) {
+    this.set({
+      doc: mapNode(this.state.doc, id, (n) => {
+        let style = stripStyleProps(n.style, Object.keys(decls))
+        for (const [prop, value] of Object.entries(decls)) {
+          if (value == null || value === '') continue
+          style = style ? `${style}; ${prop}: ${value}` : `${prop}: ${value}`
+        }
+        const next: Node = { ...n }
+        if (style) next.style = style
+        else delete next.style
+        return next
+      }),
+    })
+  }
   commitTransient(before: Doc) {
     if (before === this.state.doc) return
     this.history.push(before)

@@ -116,3 +116,10 @@ export function toHex(v: string): string | null {
   if (parts.length > 3 && parseFloat(parts[3]) === 0) return null
   return '#' + [r, g, b].map((x) => x.toString(16).padStart(2, '0')).join('')
 }
+
+/** El elemento vivo de un nodo dentro del lienzo (fuente de verdad para leer). */
+export function nodeEl(id: string): HTMLElement | null {
+  if (typeof document === 'undefined') return null
+  const esc = typeof CSS !== 'undefined' && CSS.escape ? CSS.escape(id) : id.replace(/["\\]/g, '\\$&')
+  return document.querySelector(`.ce-artboard [data-id="${esc}"]`) as HTMLElement | null
+}

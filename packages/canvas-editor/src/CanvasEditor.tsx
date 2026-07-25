@@ -9,7 +9,6 @@ import { googleFontsHref } from './model'
 import { arbitraryUtilityCss, docToHtml, nodeSubtreeToHtml, themeToCss } from './serialize'
 import { EditorStore, useEditor } from './store'
 import type { AgentAction, ImageProvider, RefineProvider } from './refine'
-import { setHeightSizing, setWidthSizing } from './tailwindClasses'
 import { NodeView } from './NodeView'
 import { Toolbar } from './Toolbar'
 import { LayersTree } from './LayersTree'
@@ -532,17 +531,19 @@ export function CanvasEditor({ doc, onChange, refineProvider, imageProvider, onA
       const startW = selBox.w
       const startH = selBox.h
       const z = store.getSnapshot().camera.z
+      // El resize escribe CSS inline (no clases `w-[Npx]`): mismo canal que el
+      // inspector, así el ancho arrastrado SE VE en el control de W/H.
       const move = (ev: PointerEvent) => {
-        let cls = node.cls
+        const decls: Record<string, string> = {}
         if (hx !== 0.5) {
           const wScreen = hx === 1 ? startW + (ev.clientX - startX) : startW - (ev.clientX - startX)
-          cls = setWidthSizing(cls, 'fixed', Math.max(8, Math.round(wScreen / z)))
+          decls.width = `${Math.max(8, Math.round(wScreen / z))}px`
         }
         if (hy !== 0.5) {
           const hScreen = hy === 1 ? startH + (ev.clientY - startY) : startH - (ev.clientY - startY)
-          cls = setHeightSizing(cls, 'fixed', Math.max(8, Math.round(hScreen / z)))
+          decls.height = `${Math.max(8, Math.round(hScreen / z))}px`
         }
-        store.previewNodeClasses(id, cls)
+        store.previewNodeStyle(id, decls)
       }
       const up = () => {
         window.removeEventListener('pointermove', move)
