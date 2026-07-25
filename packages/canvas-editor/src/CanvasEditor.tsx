@@ -348,8 +348,12 @@ export function CanvasEditor({ doc, onChange, refineProvider, imageProvider, onA
       }
       const onBackground = e.target === e.currentTarget
       // build the data-id element chain under the cursor: [deepest ... outermost]
+      // El target del evento es el elemento de ARRIBA en el punto — con los overlays
+      // (degradados/blur absolutos) que traen los artefactos, eso era un contenedor y
+      // no el texto que se ve debajo. Hit-test real: de TODOS los elementos bajo el
+      // cursor nos quedamos con el [data-id] más PROFUNDO del árbol.
       const chainEls: Element[] = []
-      let el = (e.target as Element | null)?.closest?.('[data-id]') as Element | null
+      let el = deepestNodeAt(e.clientX, e.clientY) ?? ((e.target as Element | null)?.closest?.('[data-id]') as Element | null)
       while (el) {
         chainEls.push(el)
         el = el.parentElement?.closest('[data-id]') ?? null
@@ -758,6 +762,32 @@ function PreviewPane({ doc, renderPreview }: { doc: Doc; renderPreview?: (doc: D
       </div>
     </div>
   )
+}
+
+/**
+ * Hit-test honesto: de TODOS los elementos bajo el cursor (no solo el de arriba,
+ * que suele ser un overlay absoluto de degradado/blur), devuelve el nodo del editor
+ * más PROFUNDO — el que el usuario está viendo y quiere tocar.
+ */
+function deepestNodeAt(clientX: number, clientY: number): Element | null {
+  if (typeof document === 'undefined' || !document.elementsFromPoint) return null
+  let best: Element | null = null
+  let bestDepth = -1
+  for (const el of document.elementsFromPoint(clientX, clientY)) {
+    const node = el.closest('[data-id]')
+    if (!node || !node.closest('.ce-artboard')) continue
+    let depth = 0
+    let p = node.parentElement?.closest('[data-id]') ?? null
+    while (p) {
+      depth++
+      p = p.parentElement?.closest('[data-id]') ?? null
+    }
+    if (depth > bestDepth) {
+      bestDepth = depth
+      best = node
+    }
+  }
+  return best
 }
 
 function ceEscape(s: string): string {

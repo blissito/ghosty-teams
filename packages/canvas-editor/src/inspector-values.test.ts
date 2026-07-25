@@ -1,7 +1,7 @@
 // Los controles del inspector tienen que GANARLE a las clases arbitrarias que
 // traen los bloques insertables y los artefactos del agente.
 import { describe, expect, it } from 'vitest'
-import { getColorClass, getTextSize, setColorClass, setTextSize, colorClassHex } from './tailwindClasses'
+import { getColorClass, getTextSize, setColorClass, setTextSize, colorClassHex, stripStyleProps, STYLE_CONFLICTS } from './tailwindClasses'
 
 describe('text size', () => {
   const fluid = 'text-[clamp(0.95rem,2vw,1rem)] text-muted-foreground leading-relaxed'
@@ -47,5 +47,14 @@ describe('color libre', () => {
     expect(colorClassHex('bg-[#ff0055]')).toBe('#ff0055')
     expect(colorClassHex('bg-primary')).toBeNull()
     expect(colorClassHex('bg-[var(--color-primary)]')).toBeNull()
+  })
+})
+
+describe('estilo inline en conflicto', () => {
+  it('quita solo la declaración que la clase gobierna', () => {
+    const s = 'color: #a78bfa; font-weight: 700; -webkit-text-fill-color: transparent'
+    expect(stripStyleProps(s, [...STYLE_CONFLICTS.text])).toBe('font-weight: 700')
+    expect(stripStyleProps(s, [...STYLE_CONFLICTS.bg])).toBe(s.split('; ').join('; '))
+    expect(stripStyleProps(undefined, ['color'])).toBe('')
   })
 })

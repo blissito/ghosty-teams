@@ -254,6 +254,19 @@ export class EditorStore {
       }),
     )
   }
+  /** Escribe (o borra con null) UNA declaración del `style` inline del nodo. */
+  setNodeStyleProp(id: NodeId, prop: string, value: string | null) {
+    this.commit(
+      mapNode(this.state.doc, id, (n) => {
+        const base = stripStyleProps(n.style, [prop])
+        const style = value ? (base ? `${base}; ${prop}: ${value}` : `${prop}: ${value}`) : base
+        const next: Node = { ...n }
+        if (style) next.style = style
+        else delete next.style
+        return next
+      }),
+    )
+  }
   setNodeText(id: NodeId, text: string) {
     this.updateNode(id, { text })
   }

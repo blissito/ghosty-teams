@@ -4,9 +4,10 @@
 // plus a collapsible </> code panel for the raw className, and a streaming Refine
 // box. Controls read/write Tailwind classes via the GROUPS helpers.
 
-import { useState } from 'react'
+import { useLayoutEffect, useState } from 'react'
 import { FONT_OPTIONS, PALETTE_PRESETS, activeTokens, findNode, type Node } from './model'
 import { htmlToNode, nodeSubtreeToHtml } from './serialize'
+import { applyGuaranteed, computedProp, rgbToHex } from './computed'
 import {
   GROUPS,
   addClass,
@@ -83,6 +84,7 @@ export function Inspector({
           <EffectsPanel store={store} node={node} />
           {node.tag === 'img' && <ImagePanel store={store} node={node} imageProvider={imageProvider} />}
           <ClassChips store={store} node={node} />
+          <InlineStylePanel store={store} node={node} />
           {refineProvider && <RefinePanel store={store} node={node} refineProvider={refineProvider} />}
         </div>
       )}
@@ -149,6 +151,52 @@ function ClassChips({ store, node }: { store: EditorStore; node: Node }) {
             )}
           </div>
         </>
+      )}
+    </Section>
+  )
+}
+
+/**
+ * `style="…"` inline del nodo, como chips que se pueden QUITAR uno por uno (y
+ * editar en crudo). Es la tercera estrategia con la que el agente estiliza —
+ * junto a las clases Tailwind y a las reglas del <style> del artefacto (esas se
+ * desactivan quitando la clase que las dispara, ej. `heading`). Nada queda fuera
+ * del alcance del editor.
+ */
+function InlineStylePanel({ store, node }: { store: EditorStore; node: Node }) {
+  const [raw, setRaw] = useState(false)
+  const decls = (node.style ?? '')
+    .split(';')
+    .map((d) => d.trim())
+    .filter(Boolean)
+  if (!decls.length && !raw) return null
+  return (
+    <Section
+      title="Estilo inline"
+      action={
+        <button title={raw ? 'Chips' : 'Editar como texto'} style={styles.iconBtn} onClick={() => setRaw(!raw)}>
+          {raw ? IconChips : IconCode}
+        </button>
+      }
+    >
+      {raw ? (
+        <textarea
+          style={{ ...styles.input, fontFamily: 'monospace', minHeight: 60, resize: 'vertical' }}
+          value={node.style ?? ''}
+          spellCheck={false}
+          onChange={(e) => store.updateNode(node.id, { style: e.target.value })}
+        />
+      ) : (
+        <div style={styles.chips}>
+          {decls.map((d) => {
+            const prop = d.slice(0, d.indexOf(':')).trim()
+            return (
+              <button key={d} style={styles.chip} title="Quitar" onClick={() => store.setNodeStyleProp(node.id, prop, null)}>
+                {d} <span style={{ opacity: 0.6 }}>✕</span>
+              </button>
+            )
+          })}
+        </div>
       )}
     </Section>
   )
@@ -235,7 +283,7 @@ function TypographyPanel({ store, node }: { store: EditorStore; node: Node }) {
       {/* Size no puede usar PropSelect a secas: los bloques/artefactos traen tamaños
           arbitrarios (text-[clamp(…)]) que hay que QUITAR o el dropdown no hace nada. */}
       <Row label="Size">
-        <select style={styles.select} value={GROUPS.size.some(([c]) => c === size) ? size : ''} onChange={(e) => store.setNodeClassesOverriding(node.id, setTextSize(node.cls, e.target.value), [...STYLE_CONFLICTS.fontSize])}>
+        <select style={styles.select} value={GROUPS.size.some(([c]) => c === size) ? size : ''} onChange={(e) => applyGuaranteed(store, node.id, setTextSize(node.cls, e.target.value), [...STYLE_CONFLICTS.fontSize], e.target.value ? { prop: 'font-size', value: SIZE_REM[e.target.value] } : undefined)}>
           <option value="">{size ? size.replace(/^text-\[|\]$/g, '') : '—'}</option>
           {GROUPS.size.map(([c, l]) => (
             <option key={c} value={c}>{l}</option>
@@ -565,19 +613,30 @@ function PropSelect({ label, cls, group, onSet }: { label: string; cls: string; 
  */
 function ColorRow({ label, node, store, prefix, group }: { label: string; node: Node; store: EditorStore; prefix: ColorPrefix; group: PropOption[] }) {
   const cls = node.cls
-  // limpia también la declaración inline en conflicto (style="color:…" gana siempre)
-  const onSet = (next: string) => store.setNodeClassesOverriding(node.id, next, [...STYLE_CONFLICTS[prefix]])
   const cur = getColorClass(cls, prefix)
   const isToken = group.some(([c]) => c === cur)
-  const hex = colorClassHex(cur)
   const custom = !!cur && !isToken
+  // La verdad la manda el DOM: el color puede venir de una clase propia del
+  // artefacto (`.heading{color:…}`) o de `style` inline. Lo leemos para que el
+  // swatch muestre el color REAL aunque el select diga "—".
+  const [live, setLive] = useState<string | null>(null)
+  const prop = prefix === 'text' ? 'color' : prefix === 'bg' ? 'background-color' : 'border-color'
+  useLayoutEffect(() => {
+    setLive(rgbToHex(computedProp(node.id, prop)))
+  }, [node.id, node.cls, node.style, prop])
+  const hex = colorClassHex(cur) ?? live
+  const apply = (nextCls: string, guaranteeValue: string | null) =>
+    applyGuaranteed(store, node.id, nextCls, [...STYLE_CONFLICTS[prefix]], guaranteeValue ? { prop, value: guaranteeValue } : undefined)
   return (
     <Row label={label}>
       <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
         <select
           style={{ ...styles.select, flex: 1, minWidth: 0 }}
           value={isToken ? cur : ''}
-          onChange={(e) => onSet(setColorClass(cls, prefix, e.target.value))}
+          onChange={(e) => {
+            const v = e.target.value
+            apply(setColorClass(cls, prefix, v), v ? `var(--color-${v.slice(prefix.length + 1)})` : null)
+          }}
         >
           <option value="">{custom ? cur.replace(new RegExp(`^${prefix}-\\[|\\]$`, 'g'), '') : '—'}</option>
           {group.map(([c, l]) => (
@@ -588,13 +647,20 @@ function ColorRow({ label, node, store, prefix, group }: { label: string; node: 
           <input
             type="color"
             value={hex ?? '#000000'}
-            onChange={(e) => onSet(setColorClass(cls, prefix, `${prefix}-[${e.target.value}]`))}
+            onChange={(e) => apply(setColorClass(cls, prefix, `${prefix}-[${e.target.value}]`), e.target.value)}
             style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', opacity: 0, cursor: 'pointer' }}
           />
         </label>
       </div>
     </Row>
   )
+}
+
+/** Fallback en rem para garantizar el tamaño cuando una regla del artefacto gana. */
+const SIZE_REM: Record<string, string> = {
+  'text-xs': '0.75rem', 'text-sm': '0.875rem', 'text-base': '1rem', 'text-lg': '1.125rem',
+  'text-xl': '1.25rem', 'text-2xl': '1.5rem', 'text-3xl': '1.875rem', 'text-4xl': '2.25rem',
+  'text-5xl': '3rem', 'text-6xl': '3.75rem', 'text-7xl': '4.5rem',
 }
 
 function Section({ title, children, action, collapsible, defaultOpen = true }: { title: string; children: React.ReactNode; action?: React.ReactNode; collapsible?: boolean; defaultOpen?: boolean }) {
