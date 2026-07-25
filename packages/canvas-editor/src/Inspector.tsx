@@ -18,6 +18,7 @@ import {
   sizingValue,
   toHex,
   nodeEl,
+  optionForValue,
   type DisplayMode,
   type Opt,
   type Sizing,
@@ -254,25 +255,25 @@ function LayoutPanel({ store, node, dep }: { store: EditorStore; node: Node; dep
       </Row>
       {isFlex && (
         <>
-          <CssRow label="Wrap" prop="flex-wrap" node={node} store={store} computed={c} options={WRAP_OPTS} />
-          <CssRow label="Align" prop="align-items" node={node} store={store} computed={c} />
-          <CssRow label="Justify" prop="justify-content" node={node} store={store} computed={c} />
+          <CssRow label="Wrap" prop="flex-wrap" node={node} store={store} dep={dep} options={WRAP_OPTS} />
+          <CssRow label="Align" prop="align-items" node={node} store={store} dep={dep} />
+          <CssRow label="Justify" prop="justify-content" node={node} store={store} dep={dep} />
         </>
       )}
       {isGrid && (
         <>
-          <CssRow label="Columnas" prop="grid-template-columns" node={node} store={store} computed={c} />
-          <CssRow label="Flow" prop="grid-auto-flow" node={node} store={store} computed={c} options={FLOW_OPTS} />
-          <CssRow label="Align" prop="align-items" node={node} store={store} computed={c} />
-          <CssRow label="Justify" prop="justify-items" node={node} store={store} computed={c} options={CSS_OPTIONS['align-items']} />
+          <CssRow label="Columnas" prop="grid-template-columns" node={node} store={store} dep={dep} />
+          <CssRow label="Flow" prop="grid-auto-flow" node={node} store={store} dep={dep} options={FLOW_OPTS} />
+          <CssRow label="Align" prop="align-items" node={node} store={store} dep={dep} />
+          <CssRow label="Justify" prop="justify-items" node={node} store={store} dep={dep} options={CSS_OPTIONS['align-items']} />
         </>
       )}
-      {(isFlex || isGrid) && <CssRow label="Gap" prop="gap" node={node} store={store} computed={c} />}
-      <CssRow label="Position" prop="position" node={node} store={store} computed={c} />
+      {(isFlex || isGrid) && <CssRow label="Gap" prop="gap" node={node} store={store} dep={dep} />}
+      <CssRow label="Position" prop="position" node={node} store={store} dep={dep} />
       {positioned && (
         <>
           <SidesRow label="Inset" props={['top', 'right', 'bottom', 'left']} node={node} store={store} dep={dep} />
-          <CssRow label="z-index" prop="z-index" node={node} store={store} computed={c} options={Z_OPTS} />
+          <CssRow label="z-index" prop="z-index" node={node} store={store} dep={dep} options={Z_OPTS} />
         </>
       )}
     </Section>
@@ -288,37 +289,36 @@ function LayoutPanel({ store, node, dep }: { store: EditorStore; node: Node; dep
 function ChildLayoutPanel({ store, node, dep }: { store: EditorStore; node: Node; dep: unknown }) {
   const parentDisplay = useParentComputed(node.id, ['display', 'flex-direction'], dep)
   const pMode = displayOf(parentDisplay.display ?? '', parentDisplay['flex-direction'] ?? '')
-  const c = useComputed(node.id, ['flex-grow', 'flex-shrink', 'align-self', 'order', 'grid-column', 'grid-row'], dep)
   if (pMode !== 'grid' && pMode !== 'flex-row' && pMode !== 'flex-col') return null
   return (
     <Section title="En el contenedor" collapsible defaultOpen={pMode === 'grid'}>
-      <CssRow label="Self" prop="align-self" node={node} store={store} computed={c} options={SELF_OPTS} />
+      <CssRow label="Self ↕" prop="align-self" node={node} store={store} dep={dep} options={SELF_OPTS} />
+      <CssRow label="Self ↔" prop="justify-self" node={node} store={store} dep={dep} options={JUSTIFY_SELF_OPTS} />
       {pMode === 'grid' ? (
         <>
-          <CssRow label="Columna" prop="grid-column" node={node} store={store} computed={c} options={SPAN_OPTS} />
-          <CssRow label="Fila" prop="grid-row" node={node} store={store} computed={c} options={SPAN_OPTS} />
+          <CssRow label="Columna" prop="grid-column" node={node} store={store} dep={dep} options={SPAN_OPTS} />
+          <CssRow label="Fila" prop="grid-row" node={node} store={store} dep={dep} options={SPAN_OPTS} />
         </>
       ) : (
         <>
-          <CssRow label="Grow" prop="flex-grow" node={node} store={store} computed={c} options={GROW_OPTS} />
-          <CssRow label="Shrink" prop="flex-shrink" node={node} store={store} computed={c} options={GROW_OPTS} />
+          <CssRow label="Grow" prop="flex-grow" node={node} store={store} dep={dep} options={GROW_OPTS} />
+          <CssRow label="Shrink" prop="flex-shrink" node={node} store={store} dep={dep} options={GROW_OPTS} />
         </>
       )}
-      <CssRow label="Orden" prop="order" node={node} store={store} computed={c} options={ORDER_OPTS} />
+      <CssRow label="Orden" prop="order" node={node} store={store} dep={dep} options={ORDER_OPTS} />
     </Section>
   )
 }
 
 // --- Typography ---
 function TypographyPanel({ store, node, dep }: { store: EditorStore; node: Node; dep: unknown }) {
-  const c = useComputed(node.id, ['font-size', 'line-height', 'font-weight', 'letter-spacing', 'text-align'], dep)
   return (
     <Section title="Tipografía">
-      <CssRow label="Size" prop="font-size" node={node} store={store} computed={c} />
-      <CssRow label="Leading" prop="line-height" node={node} store={store} computed={c} />
-      <CssRow label="Weight" prop="font-weight" node={node} store={store} computed={c} />
-      <CssRow label="Tracking" prop="letter-spacing" node={node} store={store} computed={c} />
-      <CssRow label="Align" prop="text-align" node={node} store={store} computed={c} />
+      <CssRow label="Size" prop="font-size" node={node} store={store} dep={dep} />
+      <CssRow label="Leading" prop="line-height" node={node} store={store} dep={dep} />
+      <CssRow label="Weight" prop="font-weight" node={node} store={store} dep={dep} />
+      <CssRow label="Tracking" prop="letter-spacing" node={node} store={store} dep={dep} />
+      <CssRow label="Align" prop="text-align" node={node} store={store} dep={dep} />
     </Section>
   )
 }
@@ -359,32 +359,30 @@ function SizeSpacingPanel({ store, node, dep }: { store: EditorStore; node: Node
       {sizeRow('H', 'height')}
       <SidesRow label="Padding" props={['padding-top', 'padding-right', 'padding-bottom', 'padding-left']} node={node} store={store} dep={dep} />
       <SidesRow label="Margin" props={['margin-top', 'margin-right', 'margin-bottom', 'margin-left']} node={node} store={store} dep={dep} />
-      <CssRow label="Overflow" prop="overflow" node={node} store={store} computed={c} />
+      <CssRow label="Overflow" prop="overflow" node={node} store={store} dep={dep} />
     </Section>
   )
 }
 
 // --- Colors + border/radius ---
 function ColorsPanel({ store, node, dep }: { store: EditorStore; node: Node; dep: unknown }) {
-  const c = useComputed(node.id, ['color', 'background-color', 'border-width', 'border-color', 'border-radius'], dep)
   return (
     <Section title="Color">
-      <CssColorRow label="Text" prop="color" node={node} store={store} computed={c} />
-      <CssColorRow label="Fondo" prop="background-color" node={node} store={store} computed={c} />
-      <CssRow label="Borde" prop="border-width" node={node} store={store} computed={c} onExtra={{ 'border-style': 'solid' }} />
-      <CssColorRow label="Color borde" prop="border-color" node={node} store={store} computed={c} />
-      <CssRow label="Radius" prop="border-radius" node={node} store={store} computed={c} />
+      <CssColorRow label="Text" prop="color" node={node} store={store} dep={dep} />
+      <CssColorRow label="Fondo" prop="background-color" node={node} store={store} dep={dep} />
+      <CssRow label="Borde" prop="border-width" node={node} store={store} dep={dep} onExtra={{ 'border-style': 'solid' }} />
+      <CssColorRow label="Color borde" prop="border-color" node={node} store={store} dep={dep} />
+      <CssRow label="Radius" prop="border-radius" node={node} store={store} dep={dep} />
     </Section>
   )
 }
 
 // --- Effects ---
 function EffectsPanel({ store, node, dep }: { store: EditorStore; node: Node; dep: unknown }) {
-  const c = useComputed(node.id, ['box-shadow', 'opacity'], dep)
   return (
     <Section title="Efectos">
-      <CssRow label="Sombra" prop="box-shadow" node={node} store={store} computed={c} />
-      <CssRow label="Opacidad" prop="opacity" node={node} store={store} computed={c} />
+      <CssRow label="Sombra" prop="box-shadow" node={node} store={store} dep={dep} />
+      <CssRow label="Opacidad" prop="opacity" node={node} store={store} dep={dep} />
     </Section>
   )
 }
@@ -397,8 +395,10 @@ const SELF_OPTS: Opt[] = [['auto', 'auto'], ['flex-start', 'start'], ['center', 
 const GROW_OPTS: Opt[] = [['0', '0'], ['1', '1'], ['2', '2']]
 const ORDER_OPTS: Opt[] = [['-1', 'primero'], ['0', 'normal'], ['1', 'después']]
 const SPAN_OPTS: Opt[] = [
-  ['auto', 'auto'], ['span 1', 'span 1'], ['span 2', 'span 2'], ['span 3', 'span 3'], ['span 4', 'span 4'], ['1 / -1', 'todo'],
+  ['auto', 'auto'], ['span 1', 'span 1'], ['span 2', 'span 2'], ['span 3', 'span 3'],
+  ['span 4', 'span 4'], ['span 5', 'span 5'], ['span 6', 'span 6'], ['1 / -1', 'todo el ancho'],
 ]
+const JUSTIFY_SELF_OPTS: Opt[] = [['auto', 'auto'], ['start', 'start'], ['center', 'center'], ['end', 'end'], ['stretch', 'llenar']]
 
 /** Valor de una declaración dentro del `style` inline del nodo, o null. */
 function inlineValue(style: string | undefined, prop: string): string | null {
@@ -457,7 +457,7 @@ function CssRow({
   prop,
   node,
   store,
-  computed,
+  dep,
   options,
   onExtra,
 }: {
@@ -465,27 +465,34 @@ function CssRow({
   prop: string
   node: Node
   store: EditorStore
-  computed: Record<string, string>
+  dep: unknown
   options?: Opt[]
   onExtra?: Record<string, string>
 }) {
+  // Cada fila lee SU propiedad: antes dependía de que el panel padre la incluyera
+  // en su lista de computed y bastaba un olvido (align-items) para que el control
+  // mostrara "—" con el valor real colgando del placeholder.
+  const computed = useComputed(node.id, [prop], dep)
   const opts = options ?? CSS_OPTIONS[prop] ?? []
   const inline = inlineValue(node.style, prop)
-  const value = opts.some(([v]) => v === inline) ? inline! : ''
   const effective = (inline ?? computed[prop] ?? '').trim()
+  // El select refleja el valor EFECTIVO, esté fijado aquí o heredado del CSS del
+  // autor. En gris = heredado (no hay declaración nuestra); en blanco = fijado.
+  const value = optionForValue(opts, effective)
+  const pinned = !!inline
   return (
     <Row label={label}>
       <select
-        style={styles.select}
+        style={{ ...styles.select, color: pinned || !value ? '#e5e7eb' : '#9ca3af' }}
         value={value}
-        title={effective}
+        title={pinned ? `${prop}: ${effective}` : `heredado — ${prop}: ${effective}`}
         onChange={(e) => {
           const v = e.target.value
           if (onExtra && v) store.setNodeStyleProps(node.id, { [prop]: v, ...onExtra })
           else store.setNodeStyleProp(node.id, prop, v || null)
         }}
       >
-        <option value="">{effective && effective !== 'normal' && effective !== 'auto' ? shortValue(effective) : '—'}</option>
+        <option value="">{effective && !value && effective !== 'normal' && effective !== 'auto' ? `— (${shortValue(effective)})` : '—'}</option>
         {opts.map(([v, l]) => (
           <option key={v} value={v}>{l}</option>
         ))}
@@ -500,7 +507,8 @@ function shortValue(v: string): string {
 }
 
 /** Color: tokens del tema + color libre, siempre sobre la propiedad CSS real. */
-function CssColorRow({ label, prop, node, store, computed }: { label: string; prop: string; node: Node; store: EditorStore; computed: Record<string, string> }) {
+function CssColorRow({ label, prop, node, store, dep }: { label: string; prop: string; node: Node; store: EditorStore; dep: unknown }) {
+  const computed = useComputed(node.id, [prop], dep)
   const inline = inlineValue(node.style, prop)
   const token = COLOR_TOKENS.some(([v]) => v === inline) ? inline! : ''
   const hex = toHex(inline ?? '') ?? toHex(computed[prop] ?? '')
@@ -508,7 +516,7 @@ function CssColorRow({ label, prop, node, store, computed }: { label: string; pr
     <Row label={label}>
       <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
         <select style={{ ...styles.select, flex: 1, minWidth: 0 }} value={token} onChange={(e) => store.setNodeStyleProp(node.id, prop, e.target.value || null)}>
-          <option value="">{inline && !token ? shortValue(inline) : '—'}</option>
+          <option value="">{inline && !token ? `— (${shortValue(inline)})` : '—'}</option>
           {COLOR_TOKENS.map(([v, l]) => (
             <option key={v} value={v}>{l}</option>
           ))}

@@ -47,6 +47,12 @@ export const CSS_OPTIONS: Record<string, Opt[]> = {
   'grid-template-columns': [
     ['repeat(1, minmax(0, 1fr))', '1'], ['repeat(2, minmax(0, 1fr))', '2'], ['repeat(3, minmax(0, 1fr))', '3'],
     ['repeat(4, minmax(0, 1fr))', '4'], ['repeat(5, minmax(0, 1fr))', '5'], ['repeat(6, minmax(0, 1fr))', '6'],
+    // Responsivas: las columnas se acomodan solas al ancho. `auto-fit` ESTIRA las
+    // que hay para llenar la fila (lo que uno quiere cuando "sobra espacio");
+    // `auto-fill` deja los huecos vacíos.
+    ['repeat(auto-fit, minmax(240px, 1fr))', 'auto-fit 240'],
+    ['repeat(auto-fit, minmax(320px, 1fr))', 'auto-fit 320'],
+    ['repeat(auto-fill, minmax(240px, 1fr))', 'auto-fill 240'],
   ],
 }
 
@@ -122,4 +128,33 @@ export function nodeEl(id: string): HTMLElement | null {
   if (typeof document === 'undefined') return null
   const esc = typeof CSS !== 'undefined' && CSS.escape ? CSS.escape(id) : id.replace(/["\\]/g, '\\$&')
   return document.querySelector(`.ce-artboard [data-id="${esc}"]`) as HTMLElement | null
+}
+
+/**
+ * Empareja un valor CSS efectivo con una opción del control. El computed llega
+ * normalizado por el navegador (`24px`, `rgb(…)`) mientras las opciones están en
+ * unidades de autor (`1.5rem`), así que compara también en px. Sin esto el select
+ * mostraba "—" aunque el valor SÍ fuera uno de la lista.
+ */
+export function optionForValue(opts: Opt[], value: string): string {
+  const v = value.trim()
+  if (!v) return ''
+  const exact = opts.find(([o]) => o === v)
+  if (exact) return exact[0]
+  const px = toPx(v)
+  if (px == null) return ''
+  const near = opts.find(([o]) => {
+    const p = toPx(o)
+    return p != null && Math.abs(p - px) < 0.5
+  })
+  return near ? near[0] : ''
+}
+
+/** rem/em/px/número → px (raíz 16). null si no es una longitud simple. */
+function toPx(v: string): number | null {
+  const m = v.trim().match(/^(-?[\d.]+)(px|rem|em)?$/)
+  if (!m) return null
+  const n = parseFloat(m[1])
+  if (!Number.isFinite(n)) return null
+  return m[2] === 'rem' || m[2] === 'em' ? n * 16 : n
 }

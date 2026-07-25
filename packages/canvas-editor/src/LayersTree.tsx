@@ -2,7 +2,7 @@
 // the camera; per-row eye/lock toggles; and drag-and-drop to reorder / reparent
 // (drop above/below a row = sibling, drop onto the middle = nest inside).
 
-import { useState, type RefObject } from 'react'
+import { useEffect, useRef, useState, type RefObject } from 'react'
 import { findNode, locateNode, type Artboard, type Node } from './model'
 import type { EditorState, EditorStore } from './store'
 
@@ -130,11 +130,18 @@ function NodeRow({
   onDragEndRow: () => void
 }) {
   const selected = selection.includes(node.id)
+  // Con un artefacto grande el nodo seleccionado en el lienzo caía fuera de vista
+  // en el árbol. Al seleccionarlo, la fila se trae a la vista (sin saltos: 'nearest').
+  const rowRef = useRef<HTMLDivElement | null>(null)
+  useEffect(() => {
+    if (selected) rowRef.current?.scrollIntoView?.({ block: 'nearest' })
+  }, [selected])
   const label = node.text ? `${node.tag} · ${node.text.slice(0, 18)}` : node.tag
   const isDrop = drop?.id === node.id
   return (
     <>
       <div
+        ref={rowRef}
         draggable
         onDragStart={(e) => {
           e.dataTransfer.effectAllowed = 'move'

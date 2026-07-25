@@ -124,3 +124,28 @@ describe('el resize escribe por el MISMO canal que el inspector', () => {
     expect(el('box').className).not.toMatch(/w-\[/)
   })
 })
+
+describe('el select refleja el valor efectivo (sin duplicar opciones en el "—")', () => {
+  const HTML = `<!doctype html><html><body>
+    <div data-id="g" class="g"><p data-id="ch" class="g">x</p></div></body></html>`
+  const CSS = '.ce-artboard .g { display: grid; align-items: center; grid-auto-flow: row dense; font-size: 24px; letter-spacing: 3px; }'
+
+  it('un valor heredado del CSS del autor sale SELECCIONADO, no como placeholder', () => {
+    mount(HTML, CSS, 'g')
+    const align = selectWith('flex-start')
+    expect(align.value).toBe('center') // no ''
+    expect(align.options[0].text).toBe('—') // el placeholder no repite el valor
+  })
+
+  it('empareja aunque el navegador normalice unidades (24px ↔ 1.5rem)', () => {
+    mount(HTML, CSS, 'ch')
+    expect(selectWith('1.875rem').value).toBe('1.5rem')
+  })
+
+  it('lo que NO está en la lista se muestra entre paréntesis en el placeholder', () => {
+    mount(HTML, CSS, 'ch')
+    const tracking = selectWith('0.025em')
+    expect(tracking.value).toBe('')
+    expect(tracking.options[0].text).toContain('3px')
+  })
+})
