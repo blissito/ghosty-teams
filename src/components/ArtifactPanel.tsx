@@ -1048,9 +1048,21 @@ export default function ArtifactPanel({
                   // Artefacto HTML EN CONSTRUCCIÓN: el usuario ve el RESULTADO formándose
                   // (nunca código, nunca esqueleto, nunca barra de espera).
                   <div data-gt-branch="draft-artifact" className="flex min-h-0 flex-1 flex-col bg-surface-2">
-                    {/* SIN barra de estado: el artefacto ocupa TODO el panel desde el primer
-                        token. Cualquier franja de "construyendo…" se lee como pantalla de
-                        espera, que es justo lo que no queremos. */}
+                    {/* Franja de ESTADO mientras streamea. Va aquí arriba, FUERA del preview,
+                        porque es la única señal que no depende de que el preview logre pintar
+                        algo: si el artefacto no aparece, esta línea dice si el HTML está
+                        llegando (bytes subiendo) o no (0 B) — la diferencia entre "el agente
+                        no manda nada" y "llega pero no se pinta". Desaparece al cerrar el
+                        fence. */}
+                    {artifact.streaming ? (
+                      <div className="flex items-center gap-2 border-b border-border bg-surface px-3 py-1.5 text-xs text-muted">
+                        <span className="h-1.5 w-1.5 animate-ping rounded-full bg-brand" />
+                        {t("Construyendo el artefacto…")}
+                        <span className="ml-auto tabular-nums">
+                          {(draftPreview.length / 1024).toFixed(1)} KB
+                        </span>
+                      </div>
+                    ) : null}
                     <div className="relative min-h-0 flex-1">
                       {/* ES EL MISMO IFRAME DEL RESULTADO, desde el primer token: apunta UNA
                           vez a /api/artifact-stream/:id (respuesta HTTP en chunks) y el
