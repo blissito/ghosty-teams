@@ -62,7 +62,7 @@ export function semanticUtilityCss(scope = ''): string {
     .filter(([, prop]) => prop === 'background-color')
     .map(([name]) => `${p}.bg-${name}{background-color:var(--color-${name})}`)
     .join('\n')
-  const text = ['foreground', 'muted-foreground', 'primary-foreground', 'secondary-foreground']
+  const text = ['foreground', 'muted-foreground', 'primary-foreground', 'secondary-foreground', 'accent', 'primary']
     .map((name) => `${p}.text-${name}{color:var(--color-${name})}`)
     .join('\n')
   const border = ['border', 'primary', 'secondary', 'muted', 'accent', 'foreground']

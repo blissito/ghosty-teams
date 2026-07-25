@@ -93,8 +93,8 @@ export const GROUPS: Record<string, PropOption[]> = {
   items: [['items-start', 'start'], ['items-center', 'center'], ['items-end', 'end'], ['items-stretch', 'stretch']],
   justify: [['justify-start', 'start'], ['justify-center', 'center'], ['justify-between', 'between'], ['justify-end', 'end'], ['justify-around', 'around']],
   overflow: [['overflow-visible', 'visible'], ['overflow-hidden', 'hidden'], ['overflow-auto', 'auto'], ['overflow-scroll', 'scroll']],
-  textColor: [['text-foreground', 'foreground'], ['text-muted-foreground', 'muted'], ['text-primary-foreground', 'on-primary'], ['text-secondary-foreground', 'on-secondary']],
-  bgColor: [['bg-background', 'background'], ['bg-primary', 'primary'], ['bg-secondary', 'secondary'], ['bg-muted', 'muted']],
+  textColor: [['text-foreground', 'foreground'], ['text-muted-foreground', 'muted'], ['text-primary-foreground', 'on-primary'], ['text-secondary-foreground', 'on-secondary'], ['text-accent', 'accent'], ['text-primary', 'primary']],
+  bgColor: [['bg-background', 'background'], ['bg-primary', 'primary'], ['bg-secondary', 'secondary'], ['bg-muted', 'muted'], ['bg-accent', 'accent']],
   radius: [['rounded-none', 'none'], ['rounded', 'sm'], ['rounded-lg', 'lg'], ['rounded-xl', 'xl'], ['rounded-2xl', '2xl'], ['rounded-full', 'full'], ['rounded-[var(--radius)]', 'theme']],
   shadow: [['shadow-none', 'none'], ['shadow-sm', 'sm'], ['shadow', 'base'], ['shadow-md', 'md'], ['shadow-lg', 'lg'], ['shadow-xl', 'xl'], ['shadow-2xl', '2xl']],
   opacity: [['opacity-100', '100'], ['opacity-90', '90'], ['opacity-75', '75'], ['opacity-50', '50'], ['opacity-25', '25'], ['opacity-0', '0']],
@@ -111,6 +111,67 @@ export function groupValue(cls: string, group: PropOption[]): string {
 /** Set (or clear with '') the group's class, removing any sibling in the group. */
 export function setGroup(cls: string, group: PropOption[], value: string): string {
   return replaceGroup(cls, group.map(([c]) => c), value || null)
+}
+
+// --- Arbitrary-value awareness (text size / colors) -----------------------
+// Los bloques insertables usan tamaños fluidos como `text-[clamp(1rem,2vw,1.25rem)]`
+// y los artefactos del agente usan `text-[#hex]` / `bg-[var(--color-primary)]`.
+// Sin esto, elegir "3xl" en el dropdown AÑADÍA text-3xl pero la clase arbitraria
+// seguía ahí y ganaba → "el control no hace nada".
+
+export function isColorValue(v: string): boolean {
+  return /^(#|rgb|hsl|oklch|color\()/i.test(v.trim()) || /^var\(\s*--color-/i.test(v.trim())
+}
+/** `text-[…]` cuyo valor NO es color (o sea, un font-size arbitrario). */
+function isArbitraryTextSize(c: string): boolean {
+  const m = c.match(/^text-\[(.+)\]$/)
+  return !!m && !isColorValue(m[1])
+}
+
+/** Valor actual del tamaño de texto: la clase del grupo, o la arbitraria si la hay. */
+export function getTextSize(cls: string): string {
+  const arb = classList(cls).find(isArbitraryTextSize)
+  return arb ?? groupValue(cls, GROUPS.size)
+}
+/** Fija el tamaño quitando TAMBIÉN cualquier text-[…] de tamaño arbitrario. */
+export function setTextSize(cls: string, value: string): string {
+  const cleaned = classList(cls).filter((c) => !isArbitraryTextSize(c)).join(' ')
+  return setGroup(cleaned, GROUPS.size, value)
+}
+
+export type ColorPrefix = 'text' | 'bg' | 'border'
+const COLOR_GROUP: Record<ColorPrefix, PropOption[]> = {
+  text: [],
+  bg: [],
+  border: [],
+}
+function colorGroupOf(prefix: ColorPrefix): PropOption[] {
+  if (!COLOR_GROUP[prefix].length) {
+    COLOR_GROUP[prefix] = prefix === 'text' ? GROUPS.textColor : prefix === 'bg' ? GROUPS.bgColor : GROUPS.borderColor
+  }
+  return COLOR_GROUP[prefix]
+}
+function isArbitraryColor(prefix: ColorPrefix, c: string): boolean {
+  const m = c.match(new RegExp(`^${prefix}-\\[(.+)\\]$`))
+  return !!m && isColorValue(m[1])
+}
+/** Clase de color activa para el prefijo (token del grupo o arbitraria), o ''. */
+export function getColorClass(cls: string, prefix: ColorPrefix): string {
+  const arb = classList(cls).find((c) => isArbitraryColor(prefix, c))
+  return arb ?? groupValue(cls, colorGroupOf(prefix))
+}
+/** Fija (o limpia con '') el color: quita tokens del grupo Y arbitrarios del prefijo. */
+export function setColorClass(cls: string, prefix: ColorPrefix, value: string): string {
+  const cleaned = classList(cls).filter((c) => !isArbitraryColor(prefix, c)).join(' ')
+  return setGroup(cleaned, colorGroupOf(prefix), value)
+}
+/** Hex (#rrggbb) de una clase de color arbitraria, o null si es token/var/vacío. */
+export function colorClassHex(cls: string): string | null {
+  const m = cls.match(/^(?:text|bg|border)-\[(#[0-9a-fA-F]{3,8})\]$/)
+  if (!m) return null
+  const h = m[1]
+  if (h.length === 4) return '#' + h.slice(1).split('').map((c) => c + c).join('')
+  return h.slice(0, 7)
 }
 
 export type Sizing = 'hug' | 'fill' | 'fixed'

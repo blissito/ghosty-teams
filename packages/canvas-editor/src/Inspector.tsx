@@ -12,7 +12,13 @@ import {
   addClass,
   autocomplete,
   classList,
+  colorClassHex,
+  getColorClass,
   getDisplay,
+  getTextSize,
+  setColorClass,
+  setTextSize,
+  type ColorPrefix,
   getHeightSizing,
   getWidthSizing,
   groupValue,
@@ -79,7 +85,9 @@ export function Inspector({
           {refineProvider && <RefinePanel store={store} node={node} refineProvider={refineProvider} />}
         </div>
       )}
-      <ThemePanel store={store} state={state} />
+      {/* Con un nodo seleccionado el Tema estorba: nace CONTRAÍDO (y se resetea al
+          cambiar de contexto gracias al key). Sin selección queda abierto. */}
+      <ThemePanel key={node ? 'sel' : 'nosel'} store={store} state={state} defaultOpen={!node} />
     </div>
   )
 }
@@ -220,9 +228,19 @@ function LayoutPanel({ store, node }: { store: EditorStore; node: Node }) {
 // --- Typography ---
 function TypographyPanel({ store, node }: { store: EditorStore; node: Node }) {
   const set = (cls: string) => store.setNodeClasses(node.id, cls)
+  const size = getTextSize(node.cls)
   return (
     <Section title="Tipografía">
-      <PropSelect label="Size" cls={node.cls} group={GROUPS.size} onSet={set} />
+      {/* Size no puede usar PropSelect a secas: los bloques/artefactos traen tamaños
+          arbitrarios (text-[clamp(…)]) que hay que QUITAR o el dropdown no hace nada. */}
+      <Row label="Size">
+        <select style={styles.select} value={GROUPS.size.some(([c]) => c === size) ? size : ''} onChange={(e) => set(setTextSize(node.cls, e.target.value))}>
+          <option value="">{size ? size.replace(/^text-\[|\]$/g, '') : '—'}</option>
+          {GROUPS.size.map(([c, l]) => (
+            <option key={c} value={c}>{l}</option>
+          ))}
+        </select>
+      </Row>
       <PropSelect label="Leading" cls={node.cls} group={GROUPS.leading} onSet={set} />
       <PropSelect label="Weight" cls={node.cls} group={GROUPS.weight} onSet={set} />
       <PropSelect label="Tracking" cls={node.cls} group={GROUPS.tracking} onSet={set} />
@@ -265,10 +283,10 @@ function ColorsPanel({ store, node }: { store: EditorStore; node: Node }) {
   const set = (cls: string) => store.setNodeClasses(node.id, cls)
   return (
     <Section title="Color">
-      <PropSelect label="Text" cls={node.cls} group={GROUPS.textColor} onSet={set} />
-      <PropSelect label="Fondo" cls={node.cls} group={GROUPS.bgColor} onSet={set} />
+      <ColorRow label="Text" cls={node.cls} prefix="text" group={GROUPS.textColor} onSet={set} />
+      <ColorRow label="Fondo" cls={node.cls} prefix="bg" group={GROUPS.bgColor} onSet={set} />
       <PropSelect label="Borde" cls={node.cls} group={GROUPS.borderWidth} onSet={set} />
-      <PropSelect label="Color borde" cls={node.cls} group={GROUPS.borderColor} onSet={set} />
+      <ColorRow label="Color borde" cls={node.cls} prefix="border" group={GROUPS.borderColor} onSet={set} />
       <PropSelect label="Radius" cls={node.cls} group={GROUPS.radius} onSet={set} />
     </Section>
   )
@@ -415,11 +433,11 @@ const SWATCHES: [string, string][] = [
   ['border', 'Borde'],
 ]
 
-function ThemePanel({ store, state }: { store: EditorStore; state: EditorState }) {
+function ThemePanel({ store, state, defaultOpen = true }: { store: EditorStore; state: EditorState; defaultOpen?: boolean }) {
   const t = state.doc.theme
   const tokens = activeTokens(t)
   return (
-    <Section title="Tema">
+    <Section title="Tema" collapsible defaultOpen={defaultOpen}>
       <Row label="Modo">
         <Segmented<'light' | 'dark'> value={t.mode} options={[['light', '☀ Light'], ['dark', '☾ Dark']]} onChange={(mode) => store.setTheme({ mode })} />
       </Row>
@@ -538,14 +556,63 @@ function PropSelect({ label, cls, group, onSet }: { label: string; cls: string; 
   )
 }
 
-function Section({ title, children, action }: { title: string; children: React.ReactNode; action?: React.ReactNode }) {
+/**
+ * Fila de color: tokens del tema + color LIBRE (hex) por el swatch. El hex se
+ * escribe como utilidad arbitraria (`text-[#ff0055]`), que el mini-JIT de
+ * serialize.ts convierte en CSS real — así funciona igual en el canvas y en el
+ * HTML publicado, sin depender del Tailwind del host.
+ */
+function ColorRow({ label, cls, prefix, group, onSet }: { label: string; cls: string; prefix: ColorPrefix; group: PropOption[]; onSet: (cls: string) => void }) {
+  const cur = getColorClass(cls, prefix)
+  const isToken = group.some(([c]) => c === cur)
+  const hex = colorClassHex(cur)
+  const custom = !!cur && !isToken
+  return (
+    <Row label={label}>
+      <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+        <select
+          style={{ ...styles.select, flex: 1, minWidth: 0 }}
+          value={isToken ? cur : ''}
+          onChange={(e) => onSet(setColorClass(cls, prefix, e.target.value))}
+        >
+          <option value="">{custom ? cur.replace(new RegExp(`^${prefix}-\\[|\\]$`, 'g'), '') : '—'}</option>
+          {group.map(([c, l]) => (
+            <option key={c} value={c}>{l}</option>
+          ))}
+        </select>
+        <label title="Color libre" style={{ position: 'relative', width: 26, height: 26, flexShrink: 0, borderRadius: 6, border: '1px solid #262b36', overflow: 'hidden', cursor: 'pointer', background: hex ?? 'repeating-conic-gradient(#2a2f3a 0% 25%, #1a1d24 0% 50%) 50%/8px 8px' }}>
+          <input
+            type="color"
+            value={hex ?? '#000000'}
+            onChange={(e) => onSet(setColorClass(cls, prefix, `${prefix}-[${e.target.value}]`))}
+            style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', opacity: 0, cursor: 'pointer' }}
+          />
+        </label>
+      </div>
+    </Row>
+  )
+}
+
+function Section({ title, children, action, collapsible, defaultOpen = true }: { title: string; children: React.ReactNode; action?: React.ReactNode; collapsible?: boolean; defaultOpen?: boolean }) {
+  const [open, setOpen] = useState(defaultOpen)
+  const shown = !collapsible || open
   return (
     <div style={styles.section}>
-      <div style={{ ...styles.sectionTitle, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <span>{title}</span>
+      <div style={{ ...styles.sectionTitle, display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: shown ? 8 : 0 }}>
+        {collapsible ? (
+          <button
+            onClick={() => setOpen((o) => !o)}
+            style={{ ...styles.sectionTitle, marginBottom: 0, display: 'flex', alignItems: 'center', gap: 5, background: 'transparent', border: 'none', padding: 0, cursor: 'pointer' }}
+          >
+            <span style={{ display: 'inline-block', transform: open ? 'rotate(90deg)' : 'none', transition: 'transform .12s' }}>▸</span>
+            {title}
+          </button>
+        ) : (
+          <span>{title}</span>
+        )}
         {action}
       </div>
-      {children}
+      {shown && children}
     </div>
   )
 }
