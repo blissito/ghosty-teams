@@ -233,17 +233,21 @@ export default function ArtifactPanel({
 
   // ESC cierra el panel, igual que el visor de docs (Modal). Solo activo cuando hay
   // artefacto abierto. Si estás en un drill-down (detail), ESC vuelve al índice primero.
+  // En MODO EDICIÓN ESC nunca cierra: ahí pertenece al editor (sube un nivel de
+  // selección / cancela la edición de texto) y cerrar tiraría cambios sin guardar.
+  // Para salir: el botón "Ver" o la ✕ del panel.
   useEffect(() => {
     if (!rootArtifact) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
+      if (editing) return;
       if (fullscreen) toggleFullscreen();
       else if (detail) setDetail(null);
       else onClose();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [rootArtifact, detail, onClose, fullscreen]);
+  }, [rootArtifact, detail, onClose, fullscreen, editing]);
   // Identidad ESTABLE del artefacto → el effect de fetch office NO se re-dispara al reabrir
   // el MISMO artefacto. El draft usa id constante para que su streaming NO resetee.
   const officeSrc = artifact?.kind === "office" ? artifact.src : null;
@@ -469,6 +473,10 @@ export default function ArtifactPanel({
   const isDraftArtifact = artifact?.kind === "draft" && !!artifact.artifact;
   const draftPreview = isDraftArtifact && artifact?.kind === "draft" ? artifact.content : "";
   // Hasta que abre el <body> no hay nada visual: mostramos el código en vivo (auto-scroll).
+  // Dos momentos, NINGUNO es espera (así lo hacen v0/Lovable/Replit): mientras el HTML va
+  // en el <head> no hay nada que un navegador pueda pintar, así que se ve el CÓDIGO
+  // escribiéndose; en cuanto abre el <body> entra el iframe con el render en vivo.
+  const draftBodyStarted = /<body[\s>]/i.test(draftPreview);
   const draftSrcRef = useRef<HTMLPreElement | null>(null);
   useEffect(() => {
     const el = draftSrcRef.current;

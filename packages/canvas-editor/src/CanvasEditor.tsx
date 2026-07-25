@@ -181,6 +181,15 @@ export function CanvasEditor({ doc, onChange, refineProvider, imageProvider, onA
       } else if (mod && e.key.toLowerCase() === 'g' && sel) {
         e.preventDefault()
         e.shiftKey ? store.ungroupNode(sel) : store.groupSelection()
+      } else if (e.key === 'Escape') {
+        // Escape = SUBIR un nivel (contraparte del clic directo al nodo más profundo).
+        // Sin selección, deselecciona. Nunca deja que el host lo lea como "cerrar".
+        e.preventDefault()
+        e.stopPropagation()
+        const vp = viewportRef.current
+        const el = sel && vp ? (vp.querySelector(`[data-id="${ceEscape(sel)}"]`) as Element | null) : null
+        const parent = el?.parentElement?.closest('[data-id]') as Element | null
+        store.select(parent ? parent.getAttribute('data-id') : null)
       } else if ((e.key === 'Delete' || e.key === 'Backspace') && sel) {
         e.preventDefault()
         store.deleteNode(sel)
@@ -354,23 +363,12 @@ export function CanvasEditor({ doc, onChange, refineProvider, imageProvider, onA
         if (e.metaKey || e.ctrlKey || e.shiftKey) {
           store.toggleSelect(idOf(chainEls[0])) // additive → the exact element under cursor
         } else {
-          const cur = store.getSnapshot().selection
-          const vp = viewportRef.current
-          const curEl = cur && vp ? (vp.querySelector(`[data-id="${ceEscape(cur)}"]`) as Element | null) : null
-          const scope = scopeOf(curEl)
-          const chainIds = chainEls.map(idOf)
-          const idx = cur ? chainIds.indexOf(cur) : -1
-          let target: Element
-          if (idx !== -1) {
-            // clicked on the current selection / its ancestor → drill one level deeper toward cursor
-            target = chainEls[Math.max(0, idx - 1)]
-          } else if (scope) {
-            // clicked a DIFFERENT element → stay at the same level: pick the sibling under `scope`
-            target = chainEls.find((x) => scopeOf(x) === scope) ?? chainEls[chainEls.length - 1]
-          } else {
-            target = chainEls[chainEls.length - 1] // outermost
-          }
-          const id = idOf(target)
+          // SELECCIÓN DIRECTA: un clic = el nodo más profundo bajo el cursor. Antes se
+          // subía "en escalera" desde el contenedor externo (≈6 clics para llegar a un
+          // texto anidado). Para SUBIR de nivel: Escape (selecciona el padre) o el
+          // árbol de capas. `scopeOf` sigue usándose por el reorder.
+          void scopeOf
+          const id = idOf(chainEls[0])
           if (!store.getSnapshot().selectionSet.includes(id)) store.select(id)
           reorder.arm(id, e.clientX, e.clientY, e.altKey)
         }
