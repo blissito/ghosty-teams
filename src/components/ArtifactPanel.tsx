@@ -469,7 +469,6 @@ export default function ArtifactPanel({
   const isDraftArtifact = artifact?.kind === "draft" && !!artifact.artifact;
   const draftPreview = isDraftArtifact && artifact?.kind === "draft" ? artifact.content : "";
   // Hasta que abre el <body> no hay nada visual: mostramos el código en vivo (auto-scroll).
-  const draftBodyStarted = /<body[\s>]/i.test(draftPreview);
   const draftSrcRef = useRef<HTMLPreElement | null>(null);
   useEffect(() => {
     const el = draftSrcRef.current;
@@ -1025,12 +1024,9 @@ export default function ArtifactPanel({
                   // Fondo del tema de Teams (no blanco): mientras el artefacto se arma, el
                   // blanco brillante se lee como un flash.
                   <div className="flex min-h-0 flex-1 flex-col bg-surface-2">
-                    <div className="flex items-center gap-2 border-b border-border bg-surface-2 px-4 py-2 text-xs text-muted">
-                      <Loader2 size={13} className="animate-spin text-brand" />
-                      <span className="truncate">
-                        {draftBodyStarted ? t("Construyendo artefacto…") : t("Escribiendo estilos…")} · <span className="text-neutral-400">{artifact.title}</span> <span className="text-neutral-500">· {Math.round(draftPreview.length / 100) / 10} KB</span>
-                      </span>
-                    </div>
+                    {/* SIN barra de estado: el artefacto ocupa TODO el panel desde el primer
+                        token. Cualquier franja de "construyendo…" se lee como pantalla de
+                        espera, que es justo lo que no queremos. */}
                     <div className="relative min-h-0 flex-1">
                       {/* NUNCA hay pantalla de espera: el iframe se monta desde el PRIMER
                           token. Mientras el HTML va en el <head> el render está vacío pero
