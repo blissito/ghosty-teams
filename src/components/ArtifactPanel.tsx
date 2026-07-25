@@ -1,6 +1,7 @@
 import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ARTIFACT_CHROME_CSS } from "../lib/artifact-stream-doc";
+import { LiveArtifactPreview } from "./LiveArtifactPreview";
 import { X, ExternalLink, FileText, Download, Loader2, ChevronRight, ChevronLeft, RotateCw, Upload, Link as LinkIcon, Check, Pencil, Eye, Maximize2, Minimize2 } from "lucide-react";
 import { useT } from "../i18n";
 import { officeToHtmlFn, xlsxToCsvFn, postMessage } from "../server/chat";
@@ -1057,24 +1058,12 @@ export default function ArtifactPanel({
                           remonta mientras el agente escribe (remontarlo era justo lo que
                           impedía ver la construcción). Sin messageId (cliente viejo / draft
                           sin ancla) caemos al re-emisor de srcDoc. */}
-                      {/* Mismo stream, en pestaña: separa "el iframe no pinta" de "no llega
-                          nada". Si aquí se ve armarse y en el panel no, el problema es del
-                          contexto del iframe, no del streaming. */}
-                      <a
-                        href={`/api/artifact-stream/${artifact.messageId}`}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="absolute right-3 top-3 z-10 rounded-md border border-border bg-surface/90 px-2 py-1 text-[11px] text-muted transition hover:border-brand hover:text-ink"
-                      >
-                        abrir en pestaña
-                      </a>
-                      <iframe
-                        key={`stream-${artifact.messageId ?? "draft"}`}
-                        title={artifact.title || "artefacto"}
-                        src={`/api/artifact-stream/${artifact.messageId}`}
-                        sandbox="allow-scripts allow-forms allow-popups"
-                        referrerPolicy="no-referrer"
-                        className="absolute inset-0 h-full w-full border-0 bg-transparent"
+                      {/* SIN IFRAME: el HTML parcial se pinta como DOM real dentro del
+                          panel (mismo montaje que el editor). No hay documento que
+                          reiniciar, así que cada pedazo que llega se ve al instante. */}
+                      <LiveArtifactPreview
+                        html={draftPreview}
+                        className="absolute inset-0 overflow-auto thin-scroll"
                       />
                     </div>
                   </div>
