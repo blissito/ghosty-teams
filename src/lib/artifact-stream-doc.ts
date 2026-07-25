@@ -10,6 +10,16 @@
 //
 // Es incremental de verdad: se llama con el SUFIJO nuevo de la fuente y devuelve los
 // bytes a escribir. Nunca parte una etiqueta a la mitad (guarda el `<…` incompleto).
+// Scrollbar del artefacto = el mismo del chat (delgado, morado, pista transparente). Sin
+// esto el iframe usa el del sistema: una barra BLANCA gruesa dentro de un panel oscuro.
+// `color-scheme: dark` además evita el flash blanco del canvas del documento.
+export const ARTIFACT_CHROME_CSS =
+  `html{color-scheme:dark;scrollbar-width:thin;scrollbar-color:rgba(139,92,246,.4) transparent}` +
+  `::-webkit-scrollbar{width:6px;height:6px}` +
+  `::-webkit-scrollbar-track{background:transparent}` +
+  `::-webkit-scrollbar-thumb{background:rgba(139,92,246,.35);border-radius:9999px}` +
+  `:hover::-webkit-scrollbar-thumb{background:rgba(139,92,246,.6)}`;
+
 export function makeArtifactHtmlTransform(): (src: string) => string {
   let opened = false;
   let buf = "";
@@ -20,7 +30,7 @@ export function makeArtifactHtmlTransform(): (src: string) => string {
       out +=
         `<!doctype html><html><head><meta charset="utf-8">` +
         `<meta name="viewport" content="width=device-width,initial-scale=1">` +
-        `</head><body>`;
+        `<style>${ARTIFACT_CHROME_CSS}</style></head><body>`;
     }
     buf += src;
     const lt = buf.lastIndexOf("<");

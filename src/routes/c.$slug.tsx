@@ -860,9 +860,22 @@ function useChatScroll(
     let bottomGap = el.scrollHeight - el.scrollTop - el.clientHeight;
     const trackGap = () => { bottomGap = el.scrollHeight - el.scrollTop - el.clientHeight; };
     el.addEventListener("scroll", trackGap, { passive: true });
+    // El panel ANIMA su ancho (~340ms): el reflow del chat ocurre en muchos frames, no en
+    // uno. Un solo reajuste al detectar el cambio no basta — la vista sigue desplazándose
+    // durante el resto de la animación. Mantenemos el anclaje CADA FRAME mientras dura.
+    let holdUntil = 0;
+    let holding = false;
+    const hold = () => {
+      if (performance.now() > holdUntil) { holding = false; return; }
+      if (stick.current) el.scrollTop = el.scrollHeight;
+      else el.scrollTop = Math.max(0, el.scrollHeight - el.clientHeight - bottomGap);
+      requestAnimationFrame(hold);
+    };
     const ro = new ResizeObserver(() => {
       if (el.clientWidth !== lastW) {
         lastW = el.clientWidth;
+        holdUntil = performance.now() + 600;
+        if (!holding) { holding = true; requestAnimationFrame(hold); }
         if (!stick.current) {
           el.scrollTop = Math.max(0, el.scrollHeight - el.clientHeight - bottomGap);
           return;

@@ -1,5 +1,6 @@
 import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { ARTIFACT_CHROME_CSS } from "../lib/artifact-stream-doc";
 import { X, ExternalLink, FileText, Download, Loader2, ChevronRight, ChevronLeft, RotateCw, Upload, Link as LinkIcon, Check, Pencil, Eye, Maximize2, Minimize2 } from "lucide-react";
 import { useT } from "../i18n";
 import { officeToHtmlFn, xlsxToCsvFn, postMessage } from "../server/chat";
@@ -45,6 +46,13 @@ let docsIndexCache: TeamDocument[] | null = null;
 // Patrón calcado del PreviewDrawer noVNC de ghosty-studio: drawer overlay que se
 // desliza desde la derecha, redimensionable por el borde izquierdo, con un catcher
 // de pointer-events durante el arrastre para que el iframe no se coma el drag.
+// Mismo cromado que el artefacto en construcción: scrollbar del tema (no la barra blanca
+// del sistema) dentro del iframe del resultado.
+function withArtifactChrome(html: string): string {
+  const tag = `<style>${ARTIFACT_CHROME_CSS}</style>`;
+  return html.includes("</head>") ? html.replace("</head>", `${tag}</head>`) : tag + html;
+}
+
 export type ArtifactView =
   | { kind: "pdf"; title: string; src: string }
   | { kind: "image"; title: string; src: string }
@@ -1278,7 +1286,7 @@ export default function ArtifactPanel({
                           // mensaje y tras guardar sigue trayendo la versión anterior — por eso
                           // al salir del editor se veía el cambio "perdido" hasta cerrar y
                           // reabrir el artefacto.
-                          srcDoc={artifactHtml ?? artifact.html}
+                          srcDoc={withArtifactChrome(artifactHtml ?? artifact.html)}
                           className="absolute inset-0 h-full w-full border-0 bg-transparent"
                         />
                       </div>
