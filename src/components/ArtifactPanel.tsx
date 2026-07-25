@@ -1047,7 +1047,13 @@ export default function ArtifactPanel({
                 ) : artifact.kind === "draft" && artifact.artifact ? (
                   // Artefacto HTML EN CONSTRUCCIÓN: el usuario ve el RESULTADO formándose
                   // (nunca código, nunca esqueleto, nunca barra de espera).
-                  <div data-gt-branch="draft-artifact" className="flex min-h-0 flex-1 flex-col bg-surface-2">
+                  // `absolute inset-0`, NO `flex-1`: el contenedor de arriba es un BLOQUE con
+                  // overflow-auto (no un flex container), así que `flex-1` aquí no aplicaba y
+                  // esta caja quedaba con ALTURA 0 — su único hijo real es absolute. Por eso el
+                  // preview en vivo (y luego el esqueleto) nunca se veían: se pintaban en 0px de
+                  // alto y el panel se leía como un rectángulo negro. CAUSA RAÍZ del "artefacto
+                  // vacío mientras se construye" (2026-07-25).
+                  <div data-gt-branch="draft-artifact" className="absolute inset-0 flex flex-col bg-surface-2">
                     {/* Franja de ESTADO mientras streamea. Va aquí arriba, FUERA del preview,
                         porque es la única señal que no depende de que el preview logre pintar
                         algo: si el artefacto no aparece, esta línea dice si el HTML está
