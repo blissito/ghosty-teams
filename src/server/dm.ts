@@ -337,7 +337,10 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
             `fallidos=${res.failed.length} ${Math.round(performance.now() - t0)}ms` +
             (res.failed.length ? ` → ${res.failed.map((f) => `${f.nodeId}:${f.reason}`).join(",")}` : "")
         );
-        const cleaned = bubbleWithoutEbDoc(reply);
+        const cleaned = bubbleWithoutEbDoc(reply, {
+          applied: res.applied.length,
+          failed: res.failed.map((f) => `${f.nodeId}: ${f.reason}`),
+        });
         await db.setMessageBody(id, cleaned);
         fanout({ t: "message:body", id, body: cleaned });
         if (res.applied.length) {
@@ -352,10 +355,6 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
             setPointer: (docId) => db.setDmArtifact(data.id, docId),
             notify: () => fanout({ t: "refresh", channelId: null, parentId: null, dmId: data.id }),
           });
-        } else {
-          const aviso = `${cleaned}\n\n⚠️ No pude aplicar el ajuste (${res.failed.map((f) => `${f.nodeId}: ${f.reason}`).join(", ")}). Pídemelo otra vez y regenero el artefacto completo.`;
-          await db.setMessageBody(id, aviso);
-          fanout({ t: "message:body", id, body: aviso });
         }
         return { ok: true as const };
       }

@@ -777,7 +777,10 @@ export const askAgent = createServerFn({ method: "POST" })
             `fallidos=${res.failed.length} ${Math.round(performance.now() - t0)}ms` +
             (res.failed.length ? ` → ${res.failed.map((f) => `${f.nodeId}:${f.reason}`).join(",")}` : "")
         );
-        const cleaned = bubbleWithoutEbDoc(reply);
+        const cleaned = bubbleWithoutEbDoc(reply, {
+          applied: res.applied.length,
+          failed: res.failed.map((f) => `${f.nodeId}: ${f.reason}`),
+        });
         await db.setMessageBody(id, cleaned);
         bus.publish(bus.ch.room(ns, channel.id), { t: "message:body", id, body: cleaned });
         if (res.applied.length) {
@@ -794,11 +797,8 @@ export const askAgent = createServerFn({ method: "POST" })
           });
           return { ok: true as const };
         }
-        // Ningún patch aplicó → no se toca el artefacto. El usuario ve el anterior intacto
-        // y el aviso en el bubble; el log de arriba dice exactamente por qué falló.
-        const aviso = `${cleaned}\n\n⚠️ No pude aplicar el ajuste (${res.failed.map((f) => `${f.nodeId}: ${f.reason}`).join(", ")}). Pídemelo otra vez y regenero el artefacto completo.`;
-        await db.setMessageBody(id, aviso);
-        bus.publish(bus.ch.room(ns, channel.id), { t: "message:body", id, body: aviso });
+        // Ningún patch aplicó → el artefacto anterior queda intacto; el bubble ya lo dice
+        // (bubbleWithoutEbDoc recibió el resultado) y el log de arriba dice por qué.
         return { ok: true as const };
       }
 

@@ -111,3 +111,25 @@ describe("extractEbPatches — remove e insert", () => {
     expect(bubble).toContain("Va una más:");
   });
 });
+
+// El bubble NUNCA debe decir dos cosas contradictorias ("✅ actualizado" + "⚠️ no pude"):
+// el server le pasa el resultado real de aplicar.
+describe("bubbleWithoutEbDoc — resultado real del patch", () => {
+  const body = "Listo:\n```eb-patch a17\n<div data-id=\"a17\">x</div>\n```";
+
+  it("sin resultado (cliente, aún sin aplicar) → cuenta los pedidos", () => {
+    expect(bubbleWithoutEbDoc(body)).toContain("1 ajuste");
+  });
+
+  it("nada aplicado → solo el aviso, sin '✅ actualizado'", () => {
+    const out = bubbleWithoutEbDoc(body, { applied: 0, failed: ["a17: missing"] });
+    expect(out).toContain("No pude aplicar");
+    expect(out).not.toContain("✅");
+  });
+
+  it("parcial → lo dice con números y los ids que fallaron", () => {
+    const out = bubbleWithoutEbDoc(body, { applied: 2, failed: ["a47: unparseable"] });
+    expect(out).toContain("2 de 3 ajustes");
+    expect(out).toContain("a47");
+  });
+});

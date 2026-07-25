@@ -66,34 +66,35 @@ export function applyPatches(html: string, patches: EbPatch[], opts?: ParseOpts)
       applied.push(p.nodeId);
       continue;
     }
-    // Verificación de que el fragmento es UN elemento (y no prosa del modelo o markup a
-    // medias): se parsea aparte antes de tocar el documento.
-    let fragEl: Element | null = null;
+    // El bloque debe traer AL MENOS un elemento (y no prosa del modelo ni markup a medias).
+    // VARIOS hermanos son válidos: pedirle "añade dos tarjetas" produce dos <div> en un mismo
+    // bloque, y exigir uno solo lo mandaba a `unparseable` (reportado 2026-07-25).
+    let fragEls: Element[] = [];
     try {
       const frag = parser.parseFromString(`<body>${p.html}</body>`, "text/html");
-      const kids = Array.from(frag.body?.children ?? []);
-      fragEl = kids.length === 1 ? kids[0] : null;
+      fragEls = Array.from(frag.body?.children ?? []);
     } catch {
-      fragEl = null;
+      fragEls = [];
     }
-    if (!fragEl) {
+    if (!fragEls.length) {
       failed.push({ nodeId: p.nodeId, reason: "unparseable" });
       continue;
     }
+    const fragEl = fragEls[0];
     // El id de la CABECERA manda aunque el modelo lo haya omitido o cambiado.
     if (p.op === "insert") {
-      // El id de la cabecera es el ANCLA, no el nodo nuevo: el nuevo no tiene dirección
+      // El id de la cabecera es el ANCLA, no los nodos nuevos: estos no tienen dirección
       // todavía (se la pone stampIds al final).
-      fragEl.removeAttribute("data-id");
-      if (p.pos === "prepend") el.prepend(fragEl);
-      else if (p.pos === "before") el.before(fragEl);
-      else if (p.pos === "after") el.after(fragEl);
-      else el.append(fragEl);
+      for (const e of fragEls) e.removeAttribute("data-id");
+      if (p.pos === "prepend") el.prepend(...fragEls);
+      else if (p.pos === "before") el.before(...fragEls);
+      else if (p.pos === "after") el.after(...fragEls);
+      else el.append(...fragEls);
       applied.push(p.nodeId);
       continue;
     }
     fragEl.setAttribute("data-id", p.nodeId);
-    el.replaceWith(fragEl);
+    el.replaceWith(...fragEls); // reemplazar por VARIOS nodos también es legítimo
     applied.push(p.nodeId);
   }
 

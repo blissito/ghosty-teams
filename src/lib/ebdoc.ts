@@ -293,7 +293,7 @@ export function stripToolBlock(body: string): string {
 
 // Texto de la burbuja del chat SIN el bloque (narración alrededor). Mientras streamea (no
 // cerrado) deja un marcador para que el chat no muestre el markdown/csv crudo.
-export function bubbleWithoutEbDoc(body: string): string {
+export function bubbleWithoutEbDoc(body: string, patchOutcome?: { applied: number; failed: string[] }): string {
   // Primero saca el bloque de estado de tools (se pinta como burbuja) y la nota de voz.
   body = stripToolBlock(body);
   body = bubbleWithoutEbAudio(body);
@@ -303,9 +303,18 @@ export function bubbleWithoutEbDoc(body: string): string {
   if (patches.length) {
     const around = stripEbPatches(body);
     const done = patches.every((p) => p.closed);
-    const mark = done
-      ? `✅ Artefacto actualizado — ${patches.length} ajuste${patches.length > 1 ? "s" : ""}`
-      : "🩹 Ajustando el artefacto…";
+    // Con el resultado REAL (lo sabe el server tras aplicar) el marcador dice la verdad:
+    // nada de "✅ actualizado" seguido de "⚠️ no pude aplicar" en el mismo mensaje.
+    let mark: string;
+    if (!done) mark = "🩹 Ajustando el artefacto…";
+    else if (!patchOutcome) mark = `✅ Artefacto actualizado — ${patches.length} ajuste${patches.length > 1 ? "s" : ""}`;
+    else if (patchOutcome.applied === 0)
+      mark = `⚠️ No pude aplicar el ajuste (${patchOutcome.failed.join(", ")}). Pídemelo otra vez y regenero el artefacto completo.`;
+    else if (patchOutcome.failed.length)
+      mark =
+        `✅ Artefacto actualizado — ${patchOutcome.applied} de ${patchOutcome.applied + patchOutcome.failed.length} ajustes` +
+        ` (no aplicó: ${patchOutcome.failed.join(", ")})`;
+    else mark = `✅ Artefacto actualizado — ${patchOutcome.applied} ajuste${patchOutcome.applied > 1 ? "s" : ""}`;
     return around ? `${around}\n\n${mark}` : mark;
   }
   const doc = extractEbDoc(body);
