@@ -32,7 +32,7 @@ function getParser(opts?: ParseOpts): { parseFromString(s: string, t: string): D
 export function applyPatches(html: string, patches: EbPatch[], opts?: ParseOpts): PatchResult {
   const applied: string[] = [];
   const failed: PatchFailure[] = [];
-  const usable = patches.filter((p) => p.closed && p.nodeId && p.html.trim());
+  const usable = patches.filter((p) => p.closed && p.nodeId && (p.op === "remove" || p.remove || p.html.trim()));
   if (!html?.trim() || !usable.length) {
     return { html, applied, failed: patches.filter((p) => !p.closed).map((p) => ({ nodeId: p.nodeId, reason: "empty" as const })) };
   }
@@ -53,8 +53,17 @@ export function applyPatches(html: string, patches: EbPatch[], opts?: ParseOpts)
     }
     // `outerHTML` exige padre: un patch al <body>/<html> no es quirúrgico, es un rediseño
     // → que se re-emita el artefacto completo.
-    if (!el.parentNode || el === dom.body || el === dom.documentElement) {
+    // replace/remove necesitan padre (outerHTML/remove sobre <body> no es quirúrgico);
+    // insert sí puede colgar DENTRO del body.
+    const needsParent = p.op !== "insert" || p.pos === "before" || p.pos === "after";
+    if (needsParent && (!el.parentNode || el === dom.body || el === dom.documentElement)) {
       failed.push({ nodeId: p.nodeId, reason: "root" });
+      continue;
+    }
+    // Borrado explícito: se quita el nodo y sus hermanos ni se enteran.
+    if (p.op === "remove" || p.remove) {
+      el.remove();
+      applied.push(p.nodeId);
       continue;
     }
     // Verificación de que el fragmento es UN elemento (y no prosa del modelo o markup a
@@ -72,6 +81,17 @@ export function applyPatches(html: string, patches: EbPatch[], opts?: ParseOpts)
       continue;
     }
     // El id de la CABECERA manda aunque el modelo lo haya omitido o cambiado.
+    if (p.op === "insert") {
+      // El id de la cabecera es el ANCLA, no el nodo nuevo: el nuevo no tiene dirección
+      // todavía (se la pone stampIds al final).
+      fragEl.removeAttribute("data-id");
+      if (p.pos === "prepend") el.prepend(fragEl);
+      else if (p.pos === "before") el.before(fragEl);
+      else if (p.pos === "after") el.after(fragEl);
+      else el.append(fragEl);
+      applied.push(p.nodeId);
+      continue;
+    }
     fragEl.setAttribute("data-id", p.nodeId);
     el.replaceWith(fragEl);
     applied.push(p.nodeId);

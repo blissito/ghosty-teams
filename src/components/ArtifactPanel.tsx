@@ -74,7 +74,14 @@ export type ArtifactView =
       streaming?: boolean;
       artifact?: boolean;
       messageId?: number;
-      patches?: { nodeId: string; html: string; closed: boolean }[];
+      patches?: {
+        nodeId: string;
+        html: string;
+        closed: boolean;
+        op?: "replace" | "remove" | "insert";
+        pos?: "append" | "prepend" | "before" | "after";
+        remove?: boolean;
+      }[];
     }
   | { kind: "doc"; title: string; documentId: string; md: string } // documento vivo (markdown local + versiones)
   | { kind: "sheet"; title: string; documentId: string; csv: string } // hoja viva (CSV local + versiones)
@@ -344,6 +351,18 @@ export default function ArtifactPanel({
     if (!editorStore || !editorPatches?.length) return;
     for (const p of editorPatches) {
       if (!p.closed) continue; // a medio streamear no parsea a un nodo
+      const op = p.op ?? (p.remove ? "remove" : "replace");
+      if (op === "remove") {
+        editorStore.deleteNode(p.nodeId);
+        continue;
+      }
+      if (op === "insert") {
+        // El nodo nuevo estrena id propio (el de la cabecera es el ANCLA).
+        const node = htmlToNode(p.html);
+        const ab = editorStore.getSnapshot().doc.artboards[0];
+        if (node && ab) editorStore.addNode(ab.id, p.nodeId, node);
+        continue;
+      }
       const node = htmlToNode(p.html, p.nodeId);
       if (node) editorStore.replaceNodeSubtree(p.nodeId, node);
     }

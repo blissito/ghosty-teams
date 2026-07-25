@@ -41,7 +41,7 @@ describe("extractEbPatches", () => {
 
   it("extrae un patch cerrado con su nodeId", () => {
     const ps = extractEbPatches("Quito la tarjeta:\n" + closed("a17", '<div data-id="a17">x</div>'));
-    expect(ps).toEqual([{ nodeId: "a17", html: '<div data-id="a17">x</div>', closed: true }]);
+    expect(ps).toEqual([{ nodeId: "a17", html: '<div data-id="a17">x</div>', closed: true, op: "replace" }]);
   });
 
   it("es idempotente sobre el mismo body", () => {
@@ -83,5 +83,31 @@ describe("extractEbPatches", () => {
 
   it("mientras streamea el bubble dice que está ajustando", () => {
     expect(bubbleWithoutEbDoc(open("a17", "<div"))).toContain("Ajustando");
+  });
+});
+
+// Las tres operaciones de árbol (reemplazar / quitar / agregar) — genéricas, sin nada
+// específico de un artefacto concreto.
+describe("extractEbPatches — remove e insert", () => {
+  it("eb-remove marca el nodo para borrarse, sin HTML", () => {
+    const ps = extractEbPatches("Quito esa:\n```eb-remove a17\n```");
+    expect(ps).toEqual([{ nodeId: "a17", html: "", closed: true, op: "remove", remove: true }]);
+  });
+
+  it("eb-insert trae ancla, posición y el HTML del nodo nuevo", () => {
+    const ps = extractEbPatches("```eb-insert a12 append\n<div>nueva</div>\n```");
+    expect(ps[0]).toMatchObject({ nodeId: "a12", op: "insert", pos: "append", closed: true });
+    expect(ps[0].html).toBe("<div>nueva</div>");
+  });
+
+  it("posición ausente o inválida → append", () => {
+    expect(extractEbPatches("```eb-insert a12\n<p>x</p>\n```")[0].pos).toBe("append");
+    expect(extractEbPatches("```eb-insert a12 encima\n<p>x</p>\n```")[0].pos).toBe("append");
+  });
+
+  it("el bubble tampoco muestra el HTML de un insert", () => {
+    const bubble = bubbleWithoutEbDoc("Va una más:\n```eb-insert a12 append\n<div>nueva</div>\n```");
+    expect(bubble).not.toContain("<div");
+    expect(bubble).toContain("Va una más:");
   });
 });

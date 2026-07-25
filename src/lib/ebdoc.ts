@@ -57,13 +57,29 @@ export function extractEbDoc(body: string): EbDoc | null {
 // todavía no llegó el atributo, y el panel necesita saber YA a qué nodo apunta para
 // resaltarlo. Si el fragmento trae otro `data-id`, gana la cabecera (mismo criterio que
 // `htmlToNode(html, keepId)` del canvas-editor).
+// Las TRES operaciones mínimas sobre un árbol — nada específico de un artefacto concreto:
+//   ```eb-patch  a17```           reemplaza el nodo a17 por el subárbol que trae el bloque
+//   ```eb-remove a17```           lo quita (sin re-emitir a sus hermanos)
+//   ```eb-insert a12 append```    inserta el subárbol; `pos` = append|prepend|before|after
+//                                 (append/prepend cuelgan DENTRO de a12; before/after lo
+//                                  ponen junto a a12, como hermano)
+export type EbPatchOp = "replace" | "remove" | "insert";
+export type EbInsertPos = "append" | "prepend" | "before" | "after";
+
 export type EbPatch = {
-  nodeId: string; // dirección: el `data-id` del nodo a reemplazar
-  html: string; // subárbol completo (outerHTML) ya con el cambio
+  nodeId: string; // dirección: el nodo objetivo (o el ancla, en insert)
+  html: string; // subárbol completo (outerHTML); "" en remove
   closed: boolean; // ¿llegó el ``` de cierre? (mientras no, sigue streameando)
+  op?: EbPatchOp; // por defecto "replace"
+  pos?: EbInsertPos; // solo en insert
+  remove?: boolean; // atajo de compatibilidad para op === "remove"
 };
 
-const PATCH_OPEN = /(^|\n)```eb-patch[ \t]+([^\n`]+)\n/g;
+const PATCH_OPEN = /(^|\n)```eb-(patch|insert)[ \t]+([^\n`]+)\n/g;
+// Borrado explícito. Sin esto, quitar una tarjeta obligaba a re-emitir el nodo PADRE
+// completo (un bloque vacío no se distingue de uno a medio escribir) — y el preview
+// repintaba toda la rejilla, que es justo lo que la edición quirúrgica quiere evitar.
+const REMOVE_LINE = /(^|\n)```eb-remove[ \t]+([^\n`]+)\n?```/g;
 
 /**
  * Extrae TODOS los bloques ```eb-patch``` del body acumulado. Igual que `extractEbDoc`:
@@ -74,15 +90,32 @@ const PATCH_OPEN = /(^|\n)```eb-patch[ \t]+([^\n`]+)\n/g;
  */
 export function extractEbPatches(body: string): EbPatch[] {
   const out: EbPatch[] = [];
+  REMOVE_LINE.lastIndex = 0;
+  let r: RegExpExecArray | null;
+  while ((r = REMOVE_LINE.exec(body))) {
+    const nodeId = r[2].trim();
+    if (nodeId) out.push({ nodeId, html: "", closed: true, op: "remove", remove: true });
+  }
   PATCH_OPEN.lastIndex = 0;
   let m: RegExpExecArray | null;
   while ((m = PATCH_OPEN.exec(body))) {
-    const nodeId = m[2].trim();
+    const isInsert = m[2] === "insert";
+    // En insert la cabecera es `<ancla> <posición>`; en patch, solo el id.
+    const [nodeId, rawPos] = m[3].trim().split(/[ \t]+/);
+    const pos = (["append", "prepend", "before", "after"] as const).includes(rawPos as EbInsertPos)
+      ? (rawPos as EbInsertPos)
+      : "append";
     const start = m.index + m[0].length;
     const rest = body.slice(start);
     const closeIdx = rest.indexOf("\n```");
     const html = closeIdx === -1 ? rest : rest.slice(0, closeIdx);
-    if (nodeId && html.trim()) out.push({ nodeId, html, closed: closeIdx !== -1 });
+    if (nodeId && html.trim()) {
+      out.push(
+        isInsert
+          ? { nodeId, html, closed: closeIdx !== -1, op: "insert", pos }
+          : { nodeId, html, closed: closeIdx !== -1, op: "replace" }
+      );
+    }
     if (closeIdx === -1) break; // fence abierto → no hay nada más que parsear
     PATCH_OPEN.lastIndex = start + closeIdx;
   }
@@ -91,7 +124,10 @@ export function extractEbPatches(body: string): EbPatch[] {
 
 /** Quita los bloques de patch del texto (para el bubble del chat). */
 export function stripEbPatches(body: string): string {
-  return body.replace(/(^|\n)```eb-patch[ \t]+[^\n`]+\n[\s\S]*?(\n```|$)/g, "$1").trim();
+  return body
+    .replace(/(^|\n)```eb-(patch|insert)[ \t]+[^\n`]+\n[\s\S]*?(\n```|$)/g, "$1")
+    .replace(/(^|\n)```eb-remove[ \t]+[^\n`]+\n?```/g, "$1")
+    .trim();
 }
 
 // Título del artefacto. Prioriza el título del fence; si no, el primer heading markdown (doc)

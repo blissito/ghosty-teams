@@ -82,3 +82,33 @@ describe("applyPatches", () => {
     expect(r.html).toContain(">Dos<");
   });
 });
+
+describe("applyPatches — quitar y agregar sin tocar a los hermanos", () => {
+  it("eb-remove quita solo ese nodo", () => {
+    const r = applyPatches(BASE, [{ nodeId: "a3", html: "", closed: true, op: "remove", remove: true }]);
+    expect(r.applied).toEqual(["a3"]);
+    expect(r.html.match(/class="card"/g)).toHaveLength(2);
+    expect(r.html).not.toContain(">Dos<");
+    expect(r.html).toContain(">Uno<");
+    expect(r.html).toContain(">Tres<");
+  });
+
+  it("eb-insert append cuelga el nodo nuevo dentro del ancla y lo estampa", () => {
+    const r = applyPatches(BASE, [
+      { nodeId: "a1", html: `<div class="card">Cuatro</div>`, closed: true, op: "insert", pos: "append" },
+    ]);
+    expect(r.applied).toEqual(["a1"]);
+    expect(r.html.match(/class="card"/g)).toHaveLength(4);
+    // el nuevo estrena dirección propia (no hereda la del ancla)
+    expect(/<div class="card" data-id="a\d+">Cuatro<\/div>/.test(r.html)).toBe(true);
+  });
+
+  it("eb-insert after lo pone como hermano", () => {
+    const r = applyPatches(BASE, [
+      { nodeId: "a2", html: `<div class="card">Uno y medio</div>`, closed: true, op: "insert", pos: "after" },
+    ]);
+    expect(r.applied).toEqual(["a2"]);
+    expect(r.html.indexOf("Uno y medio")).toBeGreaterThan(r.html.indexOf(">Uno<"));
+    expect(r.html.indexOf("Uno y medio")).toBeLessThan(r.html.indexOf(">Dos<"));
+  });
+});

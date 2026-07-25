@@ -111,7 +111,14 @@ export function ArtifactSkeleton({ label }: { label: string }) {
   );
 }
 
-export type LivePatch = { nodeId: string; html: string; closed: boolean };
+export type LivePatch = {
+  nodeId: string;
+  html: string;
+  closed: boolean;
+  op?: "replace" | "remove" | "insert";
+  pos?: "append" | "prepend" | "before" | "after";
+  remove?: boolean;
+};
 
 export function LiveArtifactPreview({
   html,
@@ -143,8 +150,9 @@ export function LiveArtifactPreview({
     const host = hostRef.current;
     if (!host || !patches?.length) return;
     for (const p of patches) {
-      if (!p.html.trim()) continue;
-      if (appliedRef.current.get(p.nodeId) === p.html.length) continue;
+      const op = p.op ?? (p.remove ? "remove" : "replace");
+      if (op !== "remove" && !p.html.trim()) continue;
+      if (appliedRef.current.has(p.nodeId) && appliedRef.current.get(p.nodeId) === p.html.length) continue;
       const el = host.querySelector(`[data-id="${CSS.escape(p.nodeId)}"]`);
       if (!el) {
         // No se aplica y nada se rompe. El server es la autoridad y lo reportará; aquí
@@ -152,13 +160,31 @@ export function LiveArtifactPreview({
         if (p.closed) onPatchFail?.(p.nodeId);
         continue;
       }
+      // Borrado: el nodo se va y sus hermanos no se re-pintan (por eso existe eb-remove).
+      if (op === "remove") {
+        el.remove();
+        appliedRef.current.set(p.nodeId, 0);
+        continue;
+      }
       // El fragmento debe ser UN elemento; mientras streamea todavía no lo es → se espera.
       const tpl = document.createElement("template");
       tpl.innerHTML = sanitizeFragment(p.html);
       const next = tpl.content.children.length === 1 ? (tpl.content.firstElementChild as HTMLElement) : null;
       if (!next) continue;
-      next.setAttribute("data-id", p.nodeId);
-      el.replaceWith(next);
+      if (op === "insert") {
+        // Insertar mientras streamea re-insertaría en cada chunk: se quita la copia previa
+        // y se vuelve a poner, así el nodo nuevo también se ve crecer.
+        const prev = host.querySelector(`[data-gt-inserted="${CSS.escape(p.nodeId)}"]`);
+        prev?.remove();
+        next.setAttribute("data-gt-inserted", p.nodeId);
+        if (p.pos === "prepend") el.prepend(next);
+        else if (p.pos === "before") el.before(next);
+        else if (p.pos === "after") el.after(next);
+        else el.append(next);
+      } else {
+        next.setAttribute("data-id", p.nodeId);
+        el.replaceWith(next);
+      }
       appliedRef.current.set(p.nodeId, p.html.length);
       // Destello: el usuario VE cuál nodo cambió (si no, un cambio pequeño pasa inadvertido
       // y parece que no pasó nada).
