@@ -549,6 +549,17 @@ export default function ArtifactPanel({
   // estado): si el modo quirúrgico se rompiera, tiene que verse en el primer turno, no
   // quedar tapado por un camino de respaldo silencioso.
   const [failedPatches, setFailedPatches] = useState<string[]>([]);
+  // ¿Ya arrancó el iframe del artefacto final? Hasta entonces se muestra el calco en DOM
+  // (evita el parpadeo en blanco al pasar del preview al iframe). Con tope de seguridad:
+  // si `onLoad` no llega (subrecurso colgado), no dejamos el calco para siempre.
+  const [frameReady, setFrameReady] = useState(false);
+  const frameKey = artifact?.kind === "artifact" ? String(artifact.messageId ?? artifact.documentId) : null;
+  useEffect(() => {
+    if (!frameKey) return;
+    setFrameReady(false);
+    const id = setTimeout(() => setFrameReady(true), 2500);
+    return () => clearTimeout(id);
+  }, [frameKey]);
   const patchSig = artifact?.kind === "draft" ? (artifact.patches ?? []).map((p) => p.nodeId).join(",") : "";
   useEffect(() => { setFailedPatches([]); }, [patchSig]);
   const onPatchFail = useCallback((nodeId: string) => {
@@ -1392,8 +1403,23 @@ export default function ArtifactPanel({
                           // al salir del editor se veía el cambio "perdido" hasta cerrar y
                           // reabrir el artefacto.
                           srcDoc={withArtifactChrome(artifactHtml ?? artifact.html)}
+                          onLoad={() => setFrameReady(true)}
                           className="absolute inset-0 h-full w-full border-0 bg-transparent"
                         />
+                        {/* CALCO del artefacto mientras el iframe arranca. Al terminar la
+                            edición, el panel pasa del preview (DOM, ya pintado) al iframe, y
+                            ese cambio dejaba un parpadeo en blanco antes de mostrar todo de
+                            golpe. Aquí NO se gatea el iframe con onLoad (eso fue el error
+                            anterior: dejaba el panel en negro esperando el CDN); el iframe se
+                            pinta abajo desde el primer pixel y esta capa —el MISMO HTML, en
+                            DOM directo, sin documento que arrancar— lo tapa sin vacío y se
+                            desvanece en cuanto el iframe está listo. */}
+                        {!frameReady ? (
+                          <LiveArtifactPreview
+                            html={artifactHtml ?? artifact.html}
+                            className="pointer-events-none absolute inset-0 overflow-hidden transition-opacity duration-200"
+                          />
+                        ) : null}
                       </div>
                     )}
                     {artifact.src ? (
