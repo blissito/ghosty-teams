@@ -518,13 +518,13 @@ export default function ArtifactPanel({
       window.open(artifact.src, "_blank", "noopener");
       return;
     }
-    const url = URL.createObjectURL(new Blob([artifact.html], { type: "text/html" }));
+    const url = URL.createObjectURL(new Blob([artifactHtml ?? artifact.html], { type: "text/html" }));
     window.open(url, "_blank", "noopener");
     setTimeout(() => URL.revokeObjectURL(url), 60000);
   };
   const downloadHtmlArtifact = () => {
     if (artifact?.kind !== "artifact") return;
-    const url = URL.createObjectURL(new Blob([artifact.html], { type: "text/html" }));
+    const url = URL.createObjectURL(new Blob([artifactHtml ?? artifact.html], { type: "text/html" }));
     const a = document.createElement("a");
     a.href = url;
     a.download = artifactFileName();
@@ -1233,7 +1233,11 @@ export default function ArtifactPanel({
                         title={artifact.title || "artefacto"}
                         sandbox="allow-scripts allow-forms allow-popups"
                         referrerPolicy="no-referrer"
-                        srcDoc={artifact.html}
+                        // `artifactHtml`, NO `artifact.html`: el prop viene de la cache del
+                        // mensaje y tras guardar sigue trayendo la versión anterior — por eso
+                        // al salir del editor se veía el cambio "perdido" hasta cerrar y
+                        // reabrir el artefacto.
+                        srcDoc={artifactHtml ?? artifact.html}
                         className="min-h-0 flex-1 border-0 bg-white"
                       />
                     )}
