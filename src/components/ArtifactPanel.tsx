@@ -1063,6 +1063,7 @@ export default function ArtifactPanel({
                           reiniciar, así que cada pedazo que llega se ve al instante. */}
                       <LiveArtifactPreview
                         html={draftPreview}
+                        loadingLabel={t("Construyendo el artefacto…")}
                         className="absolute inset-0 overflow-auto thin-scroll"
                       />
                     </div>

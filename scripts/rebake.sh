@@ -30,9 +30,15 @@ fi
 # 2) Sync source → template app/. OJO: NO copiar package-lock.json — un lockfile
 #    de macOS hace que `npm install` en linux-amd64 omita los binarios nativos
 #    (rolldown/oxide) → build roto. package.json usa 'latest', se resuelve fresco.
+#
+#    `packages/` (workspaces locales como @ghosty/canvas-editor) DEBE ir: Vite los
+#    resuelve vía tsconfig paths (resolve.tsconfigPaths), no por node_modules — sin
+#    el dir físico el build del contenedor rompe con "failed to resolve import
+#    @ghosty/canvas-editor". El último bake exitoso (2026-07-21) fue anterior a la
+#    introducción del editor; los bakes posteriores fallaron silenciosamente.
 echo "▸ [2/6] Sync source → $APP"
 rsync -a --delete \
-  --include='src/***' --include='public/***' \
+  --include='src/***' --include='public/***' --include='packages/***' \
   --include='package.json' \
   --include='vite.config.ts' --include='tsconfig.json' --include='tsr.config.json' \
   --exclude='*' "$REPO/" "$APP/"

@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 
 // PREVIEW EN VIVO **SIN IFRAME**: el HTML parcial del agente se pinta como DOM REAL
 // dentro del panel, igual que hace el editor con el artefacto.
@@ -63,10 +63,42 @@ function bodyClasses(html: string): string {
   return m ? (/class\s*=\s*"([^"]*)"/i.exec(m[1])?.[1] ?? "") : "";
 }
 
-export function LiveArtifactPreview({ html, className }: { html: string; className?: string }) {
+// Esqueleto de CARGA: el panel se abre en cuanto el agente abre el fence, pero los primeros
+// tokens son <!doctype>/<head>/<style> → splitArtifact devuelve body vacío y el panel se veía
+// NEGRO varios segundos (parecía colgado). Mientras no haya UN nodo pintado tapamos con este
+// placeholder; se quita solo con el primer nodo real del artefacto.
+function Skeleton({ label }: { label: string }) {
+  return (
+    <div className="absolute inset-0 grid place-items-center bg-surface-2">
+      <div className="w-full max-w-md px-8">
+        <div className="mb-6 flex items-center gap-2 text-sm text-muted">
+          <span className="h-2 w-2 animate-ping rounded-full bg-brand" />
+          {label}
+        </div>
+        <div className="space-y-3">
+          <div className="h-28 w-full animate-pulse rounded-lg bg-white/[0.06]" />
+          <div className="h-3 w-2/3 animate-pulse rounded bg-white/[0.06] [animation-delay:120ms]" />
+          <div className="h-3 w-5/6 animate-pulse rounded bg-white/[0.06] [animation-delay:240ms]" />
+          <div className="grid grid-cols-3 gap-3 pt-2">
+            <div className="h-16 animate-pulse rounded-lg bg-white/[0.06] [animation-delay:300ms]" />
+            <div className="h-16 animate-pulse rounded-lg bg-white/[0.06] [animation-delay:400ms]" />
+            <div className="h-16 animate-pulse rounded-lg bg-white/[0.06] [animation-delay:500ms]" />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export function LiveArtifactPreview({
+  html,
+  className,
+  loadingLabel = "Construyendo el artefacto…",
+}: { html: string; className?: string; loadingLabel?: string }) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const styleRef = useRef<HTMLStyleElement | null>(null);
   const lastCss = useRef("");
+  const [empty, setEmpty] = useState(true);
 
   useEffect(() => { ensureTailwindPlay(); }, []);
 
@@ -83,12 +115,16 @@ export function LiveArtifactPreview({ html, className }: { html: string; classNa
     // innerHTML directo: barato y sin parser de documento que reiniciar. El navegador
     // repinta en el mismo frame, así que la página se ve CRECER.
     host.innerHTML = body;
+    // Vacío = todavía NADA pintado (solo head/style/espacios) → decide el esqueleto. Se mide
+    // sobre el DOM, no sobre html.length (que ya crece con el <head> sin nada visible).
+    setEmpty(!host.firstElementChild && !host.textContent?.trim());
   }, [html]);
 
   return (
     <div className={className}>
       <style ref={styleRef} />
       <div ref={hostRef} className="gt-live" />
+      {empty ? <Skeleton label={loadingLabel} /> : null}
     </div>
   );
 }
