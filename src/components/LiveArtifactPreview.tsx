@@ -69,22 +69,26 @@ function bodyClasses(html: string): string {
 // placeholder; se quita solo con el primer nodo real del artefacto.
 export function ArtifactSkeleton({ label }: { label: string }) {
   return (
-    <div className="absolute inset-0 grid place-items-center bg-surface-2">
-      <div className="w-full max-w-md px-8">
-        <div className="mb-6 flex items-center gap-2 text-sm text-muted">
-          <span className="h-2 w-2 animate-ping rounded-full bg-brand" />
-          {label}
-        </div>
-        <div className="space-y-3">
-          <div className="h-28 w-full animate-pulse rounded-lg bg-white/[0.06]" />
-          <div className="h-3 w-2/3 animate-pulse rounded bg-white/[0.06] [animation-delay:120ms]" />
-          <div className="h-3 w-5/6 animate-pulse rounded bg-white/[0.06] [animation-delay:240ms]" />
-          <div className="grid grid-cols-3 gap-3 pt-2">
-            <div className="h-16 animate-pulse rounded-lg bg-white/[0.06] [animation-delay:300ms]" />
-            <div className="h-16 animate-pulse rounded-lg bg-white/[0.06] [animation-delay:400ms]" />
-            <div className="h-16 animate-pulse rounded-lg bg-white/[0.06] [animation-delay:500ms]" />
-          </div>
-        </div>
+    // OCUPA TODO el panel (no una tarjetita centrada): el hueco vacío es justo lo que se
+    // leía como "colgado", así que el esqueleto lo llena de borde a borde y respira.
+    <div className="absolute inset-0 flex flex-col gap-4 bg-surface-2 p-6 sm:p-8">
+      <div className="flex items-center gap-2 text-sm text-muted">
+        <span className="h-2 w-2 animate-ping rounded-full bg-brand" />
+        {label}
+      </div>
+      <div className="h-8 w-1/2 animate-pulse rounded-lg bg-white/[0.07]" />
+      <div className="h-4 w-2/3 animate-pulse rounded bg-white/[0.05] [animation-delay:120ms]" />
+      {/* Hero grande + rejilla: el bloque crece con el panel (flex-1), así el esqueleto
+          llena la altura completa en vez de dejar medio panel en negro. */}
+      <div className="min-h-[120px] flex-[2] animate-pulse rounded-xl bg-white/[0.07] [animation-delay:200ms]" />
+      <div className="grid flex-[3] grid-cols-1 gap-4 sm:grid-cols-3">
+        <div className="min-h-[80px] animate-pulse rounded-xl bg-white/[0.06] [animation-delay:300ms]" />
+        <div className="min-h-[80px] animate-pulse rounded-xl bg-white/[0.06] [animation-delay:420ms]" />
+        <div className="min-h-[80px] animate-pulse rounded-xl bg-white/[0.06] [animation-delay:540ms]" />
+      </div>
+      <div className="grid flex-[2] grid-cols-1 gap-4 sm:grid-cols-2">
+        <div className="min-h-[70px] animate-pulse rounded-xl bg-white/[0.05] [animation-delay:660ms]" />
+        <div className="min-h-[70px] animate-pulse rounded-xl bg-white/[0.05] [animation-delay:780ms]" />
       </div>
     </div>
   );
@@ -115,9 +119,12 @@ export function LiveArtifactPreview({
     // innerHTML directo: barato y sin parser de documento que reiniciar. El navegador
     // repinta en el mismo frame, así que la página se ve CRECER.
     host.innerHTML = body;
-    // Vacío = todavía NADA pintado (solo head/style/espacios) → decide el esqueleto. Se mide
-    // sobre el DOM, no sobre html.length (que ya crece con el <head> sin nada visible).
-    setEmpty(!host.firstElementChild && !host.textContent?.trim());
+    // Vacío = todavía no hay nada VISIBLE. Se mide sobre el DOM (no sobre html.length, que ya
+    // crece con el <head>) y por ALTURA REAL, no por "¿hay algún nodo?": los primeros nodos
+    // del agente suelen ser contenedores sin contenido todavía (un <div> de 0px cuenta como
+    // nodo pero no se ve), y con el criterio de nodos el esqueleto se quitaba dejando el
+    // panel en negro otra vez.
+    setEmpty(host.scrollHeight < 60 && !host.textContent?.trim());
   }, [html]);
 
   return (
