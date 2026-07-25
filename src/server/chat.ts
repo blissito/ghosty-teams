@@ -722,7 +722,7 @@ export const askAgent = createServerFn({ method: "POST" })
     // (Slice 3 del contrato: reemplazar este scraping por eventos artifact del SSE.)
     try {
       const { detectArtifact, mintCollabEmbed, resolveFileKind } = await import("./easybits-documents.server");
-      const { extractEbDoc, draftTitle, bubbleWithoutEbDoc, extractAskUser, stripAskUser, extractEbAudio, stripEbAudio } = await import("../lib/ebdoc");
+      const { extractEbDoc, extractEbPatches, draftTitle, bubbleWithoutEbDoc, extractAskUser, stripAskUser, extractEbAudio, stripEbAudio } = await import("../lib/ebdoc");
       const { randomUUID } = await import("node:crypto");
 
       // Nota de voz: el agente emitió ```eb-audio``` (voice.mjs sintetizó + publicó el
@@ -760,6 +760,47 @@ export const askAgent = createServerFn({ method: "POST" })
       // verdad (columna gc_artifacts.md). El documentId se conserva si el hilo ya tenía uno
       // (misma identidad = nueva versión) o se acuña uno nuevo (v1). Sin EasyBits: el panel
       // renderiza el contenido local y el próximo "modifícalo" re-inyecta esta versión.
+      // EDICIÓN QUIRÚRGICA: el turno trae uno o más ```eb-patch``` en vez del artefacto
+      // entero. Se aplican por DOM sobre la versión actual (el resto del documento —
+      // scripts, estilos, estructura — sobrevive intacto) y se publica una versión nueva.
+      // Fallo VISIBLE por diseño: lo que no aplica se loguea con su nodeId y su motivo, y
+      // si NO aplica nada no se crea versión (el artefacto anterior sigue en pie) — una
+      // capa de contención muda escondería que el modo patch está roto.
+      const patches = extractEbPatches(reply);
+      if (patches.length && patches.every((p) => p.closed) && currentDoc?.kind === "artifact" && currentDocId) {
+        const { applyPatches } = await import("../lib/artifact-patch");
+        const { serverParseOpts } = await import("./artifact-dom.server");
+        const t0 = performance.now();
+        const res = applyPatches(currentDoc.md, patches, await serverParseOpts());
+        console.log(
+          `[gt-patch] msg=${id} pedidos=${patches.length} aplicados=${res.applied.length} ` +
+            `fallidos=${res.failed.length} ${Math.round(performance.now() - t0)}ms` +
+            (res.failed.length ? ` → ${res.failed.map((f) => `${f.nodeId}:${f.reason}`).join(",")}` : "")
+        );
+        const cleaned = bubbleWithoutEbDoc(reply);
+        await db.setMessageBody(id, cleaned);
+        bus.publish(bus.ch.room(ns, channel.id), { t: "message:body", id, body: cleaned });
+        if (res.applied.length) {
+          const { publishArtifactVersion } = await import("./artifacts");
+          await publishArtifactVersion({
+            messageId: id,
+            documentId: currentDocId,
+            kind: "artifact",
+            title: draftTitle(res.html, "artifact"),
+            md: res.html,
+            channelId: channel.id,
+            parentId: data.parentId ?? null,
+          });
+          return { ok: true as const };
+        }
+        // Ningún patch aplicó → no se toca el artefacto. El usuario ve el anterior intacto
+        // y el aviso en el bubble; el log de arriba dice exactamente por qué falló.
+        const aviso = `${cleaned}\n\n⚠️ No pude aplicar el ajuste (${res.failed.map((f) => `${f.nodeId}: ${f.reason}`).join(", ")}). Pídemelo otra vez y regenero el artefacto completo.`;
+        await db.setMessageBody(id, aviso);
+        bus.publish(bus.ch.room(ns, channel.id), { t: "message:body", id, body: aviso });
+        return { ok: true as const };
+      }
+
       const ebdoc = extractEbDoc(reply);
       if (ebdoc?.closed && ebdoc.md.trim()) {
         const cleaned = bubbleWithoutEbDoc(reply);

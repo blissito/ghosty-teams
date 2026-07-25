@@ -1,0 +1,87 @@
+// APLICACIÓN de patches quirúrgicos sobre el HTML del artefacto.
+//
+// Se parchea por DOM sobre el documento ACTUAL (`querySelector('[data-id=…]')` +
+// `outerHTML = …`), NO reconstruyendo con htmlToDoc→docToHtml del canvas-editor: ese camino
+// regenera el documento entero (emite su propio <head>, normaliza el <style> y envuelve el
+// body en un artboard) y se lleva por delante los <script> del artefacto — una calculadora o
+// un juego dejarían de funcionar. Aquí todo lo que está fuera del subárbol parcheado
+// sobrevive: scripts, estilos, comentarios y estructura.
+//
+// Es la AUTORIDAD del patch: el cliente aplica en vivo para que se vea, pero lo que se
+// persiste es lo que decide esta función, y lo que no aplica se reporta (nunca en silencio).
+import type { EbPatch } from "./ebdoc";
+import { type ParseOpts, stampIds } from "./artifact-ids";
+
+export type PatchFailure = {
+  nodeId: string;
+  reason: "missing" | "unparseable" | "root" | "empty";
+};
+
+export type PatchResult = {
+  html: string; // el documento resultante (= entrada si no aplicó ninguno)
+  applied: string[]; // nodeIds aplicados
+  failed: PatchFailure[]; // los que no, con el motivo
+};
+
+function getParser(opts?: ParseOpts): { parseFromString(s: string, t: string): Document } {
+  if (opts?.parser) return opts.parser;
+  if (typeof DOMParser !== "undefined") return new DOMParser();
+  throw new Error("applyPatches: sin DOMParser — pasa opts.parser (jsdom) en el server");
+}
+
+export function applyPatches(html: string, patches: EbPatch[], opts?: ParseOpts): PatchResult {
+  const applied: string[] = [];
+  const failed: PatchFailure[] = [];
+  const usable = patches.filter((p) => p.closed && p.nodeId && p.html.trim());
+  if (!html?.trim() || !usable.length) {
+    return { html, applied, failed: patches.filter((p) => !p.closed).map((p) => ({ nodeId: p.nodeId, reason: "empty" as const })) };
+  }
+
+  const parser = getParser(opts);
+  let dom: Document;
+  try {
+    dom = parser.parseFromString(html, "text/html");
+  } catch {
+    return { html, applied, failed: usable.map((p) => ({ nodeId: p.nodeId, reason: "unparseable" as const })) };
+  }
+
+  for (const p of usable) {
+    const el = dom.querySelector(`[data-id="${p.nodeId.replace(/"/g, '\\"')}"]`);
+    if (!el) {
+      failed.push({ nodeId: p.nodeId, reason: "missing" });
+      continue;
+    }
+    // `outerHTML` exige padre: un patch al <body>/<html> no es quirúrgico, es un rediseño
+    // → que se re-emita el artefacto completo.
+    if (!el.parentNode || el === dom.body || el === dom.documentElement) {
+      failed.push({ nodeId: p.nodeId, reason: "root" });
+      continue;
+    }
+    // Verificación de que el fragmento es UN elemento (y no prosa del modelo o markup a
+    // medias): se parsea aparte antes de tocar el documento.
+    let fragEl: Element | null = null;
+    try {
+      const frag = parser.parseFromString(`<body>${p.html}</body>`, "text/html");
+      const kids = Array.from(frag.body?.children ?? []);
+      fragEl = kids.length === 1 ? kids[0] : null;
+    } catch {
+      fragEl = null;
+    }
+    if (!fragEl) {
+      failed.push({ nodeId: p.nodeId, reason: "unparseable" });
+      continue;
+    }
+    // El id de la CABECERA manda aunque el modelo lo haya omitido o cambiado.
+    fragEl.setAttribute("data-id", p.nodeId);
+    el.replaceWith(fragEl);
+    applied.push(p.nodeId);
+  }
+
+  if (!applied.length) return { html, applied, failed };
+
+  const doctype = /^\s*<!doctype[^>]*>/i.exec(html)?.[0] ?? "";
+  const out = (doctype ? `${doctype}\n` : "") + dom.documentElement.outerHTML;
+  // Los nodos NUEVOS que trae el patch no tienen dirección todavía → re-estampar para que
+  // el siguiente turno también pueda parchearlos.
+  return { html: stampIds(out, opts), applied, failed };
+}

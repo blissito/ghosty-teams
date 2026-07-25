@@ -2,6 +2,7 @@
 // wizard (config) + los gc_agents extra (fleet o webhook). Módulo puro server
 // (sin createServerFn) para que lo usen tanto chat.ts como server/agents.ts sin
 // ciclos de import.
+import { hasIds, nodeIndex } from "./lib/artifact-ids";
 
 export type ResolvedAgent = {
   handle: string;
@@ -221,7 +222,9 @@ const EB_DOC_STREAM_GUARDRAIL = [
   "SUBAGENTES: si delegas partes del artefacto (ej. una sección de landing por subagente), COPIA en el prompt de CADA subagente las reglas de TEMA y RESPONSIVO de arriba (tokens `--color-*`, mobile-first, sin colores fijos). Si no, cada uno inventa su paleta y el ensamblado sale incoherente y no responsivo.",
   "Cualquiera de esos bloques se muestra generándose EN VIVO en el panel; la plataforma lo guarda con VERSIONES. Fuera del bloque, solo UNA frase breve de contexto, SIN links.",
   "NO anuncies formatos ni archivos que NO vas a producir en ESTE turno: la frase de contexto describe SOLO el/los bloque(s) que realmente emites. Un bloque = un artefacto. Si solo emites eb-doc, NO digas que también harás una hoja/xlsx (ni viceversa). Si el usuario pide prosa Y tabla, emite AMBOS bloques; no prometas uno que no sale.",
-  "MODIFICAR un artefacto que YA existe (cambia/ajusta/corrige/agrega/añade una introducción/columna/fila, etc.): usa OTRA VEZ el MISMO tipo de bloque (```eb-doc``` para prosa, ```eb-sheet``` para tabla, ```eb-artifact``` para HTML) y RE-EMITE el artefacto COMPLETO ya con el cambio aplicado. Conserva TODO lo demás idéntico; solo integra lo que el usuario pidió. NUNCA mandes solo el fragmento ni un diff: siempre el artefacto entero, para que se re-genere en vivo.",
+  "MODIFICAR un artefacto de PROSA (```eb-doc```) o de TABLA (```eb-sheet```) que YA existe: usa OTRA VEZ el MISMO tipo de bloque y RE-EMITE el artefacto COMPLETO ya con el cambio aplicado. Conserva TODO lo demás idéntico; solo integra lo que el usuario pidió. NUNCA mandes solo el fragmento ni un diff: siempre el artefacto entero, para que se re-genere en vivo.",
+  "MODIFICAR un ARTEFACTO HTML que YA existe → **EDICIÓN QUIRÚRGICA**. El HTML actual que te paso trae un atributo `data-id` en cada elemento: ESA es la dirección del nodo. Si el cambio afecta a una o pocas zonas concretas (quitar/añadir/editar una tarjeta, cambiar un texto, un precio, el color de un bloque, una fila), NO re-emitas el artefacto entero: manda UN bloque por cada nodo que cambia, así:\n```eb-patch a17\n<div data-id=\"a17\" class=\"…\">…</div>\n```\nReglas del patch: (1) el id de la línea de apertura y el `data-id` del elemento raíz del bloque deben ser EL MISMO; (2) el elemento raíz conserva su MISMA etiqueta; (3) devuelve el nodo COMPLETO (su outerHTML, con todos sus hijos), no un fragmento suelto; (4) CONSERVA los `data-id` de los hijos que no cambian — son direcciones, no adorno; (5) el resultado debe ser 90%+ idéntico al original: el cambio más pequeño que cumpla lo pedido, sin 'mejorar' de paso lo que nadie te pidió; (6) NADA de HTML fuera del bloque, ni explicaciones dentro; (7) para BORRAR un nodo, manda su PADRE sin ese hijo (un bloque vacío no se puede distinguir de uno a medio escribir); (8) elige el nodo más PEQUEÑO que contenga todo el cambio, y si tocas varias zonas, un bloque por zona.",
+  "Sigue re-emitiendo el ```eb-artifact``` COMPLETO cuando: es un artefacto NUEVO; te piden un rediseño/cambio de estética o de tema global; el cambio toca el `<head>`, el `<style>` o el `<script>`; el HTML que te pasé NO trae `data-id`; o ningún nodo cubre bien la zona a cambiar. En la duda entre un patch dudoso y el artefacto completo, elige el completo: un patch que no aplica no cambia nada.",
   "EXCEPCIONES (→ usa las skills/tools normales, NO un bloque eb-doc): (a) documentos con membrete de marca fijo; (b) presentaciones (pptx); (c) cuando el usuario pide EXPLÍCITAMENTE un PDF, o un documento 'con diseño'/'vistoso'/'maquetado'/'bonito' → NO lo entregues como eb-doc (eso baja como .docx sin diseño): usa las tools/skills de PDF avanzadas (docs-router / structured_doc / el generador de PDF con diseño de EasyBits) para producir el PDF real y entregar su enlace. La regla 'toda prosa → eb-doc' aplica al documento de prosa por DEFECTO; una petición explícita de PDF/diseño la manda a esas tools. Toda tabla/datos → eb-sheet.",
 ].join(" ");
 
@@ -262,7 +265,7 @@ function selfIdentity(agent: ResolvedAgent | undefined): string {
 // y el system prompt de la sesión persistente se fija al arrancar (un valor variable ahí
 // forzaría cold-restart). El BASE estable (EB_DOC_STREAM_GUARDRAIL) sí va en
 // appendSystemPrompt (idéntico todos los turnos → persistencia-safe). Vacío si no hay artefacto.
-function artifactDocHint(currentDoc?: { kind: "doc" | "sheet" | "artifact"; md: string; src?: string | null } | null): string {
+async function artifactDocHint(currentDoc?: { kind: "doc" | "sheet" | "artifact"; md: string; src?: string | null } | null): Promise<string> {
   const md = currentDoc?.md.trim();
   if (!md) return "";
   const kind = currentDoc!.kind;
@@ -280,6 +283,29 @@ function artifactDocHint(currentDoc?: { kind: "doc" | "sheet" | "artifact"; md: 
       ? `Este artefacto YA está publicado; su enlace compartible es: ${src} . ` +
         `Si el usuario pide el link / que lo publiques / que lo compartas, entrégaselo TAL CUAL (no digas que no puedes ni inventes otra URL). `
       : "";
+  // ARTEFACTO HTML con direcciones (`data-id`) → modo QUIRÚRGICO: se le antepone el ÍNDICE
+  // de nodos (el mapa para elegir el id sin releer 40 KB con atención) y se le pide un
+  // ```eb-patch``` en vez del documento entero. Si el HTML es viejo (sin ids) o el modo está
+  // apagado por env, cae al camino de siempre (re-emisión completa) — un turno de retraso:
+  // al guardar esa re-emisión el server ya la estampa.
+  const patchable = kind === "artifact" && patchModeOn() && hasIds(md);
+  if (patchable) {
+    // Parser del server (jsdom): sin él el índice saldría vacío en silencio, y el índice
+    // es justo lo que permite al modelo elegir el data-id correcto.
+    const { serverParseOpts } = await import("./server/artifact-dom.server");
+    const index = nodeIndex(md, 80, await serverParseOpts());
+    return (
+      `[Contexto del hilo — ARTEFACTO ACTUAL. En esta conversación ya existe ${noun}. ` +
+      linkLine +
+      `Cada elemento lleva su dirección en \`data-id\`. Si el usuario pide un cambio ACOTADO ` +
+      `(una tarjeta, un texto, un color, una fila), responde con uno o más bloques ` +
+      `\`\`\`eb-patch <data-id> con el nodo completo ya corregido — NO re-emitas el artefacto entero. ` +
+      `Si el cambio es un rediseño global, o toca <head>/<style>/<script>, entonces sí re-emite ` +
+      `todo en un bloque \`\`\`eb-artifact.` +
+      (index ? `\n\nNodos direccionables:\n${index}` : "") +
+      `\n\nContenido actual en ${lang}:\n\n\`\`\`\n${md}\n\`\`\`]\n\n`
+    );
+  }
   return (
     `[Contexto del hilo — ARTEFACTO ACTUAL. En esta conversación ya existe ${noun}. ` +
     linkLine +
@@ -287,6 +313,15 @@ function artifactDocHint(currentDoc?: { kind: "doc" | "sheet" | "artifact"; md: 
     `RE-EMITE el artefacto COMPLETO en un bloque \`\`\`${fence} con el cambio ya integrado y todo ` +
     `lo demás idéntico. Este es su contenido actual en ${lang}:\n\n\`\`\`\n${md}\n\`\`\`]\n\n`
   );
+}
+
+/**
+ * Kill-switch del modo quirúrgico: `ARTIFACT_PATCH=off` en el env de la caja vuelve al
+ * comportamiento de siempre (re-emisión completa) sin deploy. Si el modelo resultara ser
+ * malo emitiendo patches, se apaga en segundos.
+ */
+function patchModeOn(): boolean {
+  return (process.env.ARTIFACT_PATCH ?? "on").toLowerCase() !== "off";
 }
 
 // Streaming (first-class): llama al backend y emite la respuesta pedacito a
@@ -338,7 +373,7 @@ export async function callAgentBackendStream(
   }
   // docHint (contexto por-doc del turno) va PRIMERO en el texto; el system prompt
   // queda estable (base) → la sesión persistente del worker no se rompe al cambiar doc.
-  const docHint = artifactDocHint(currentDoc);
+  const docHint = await artifactDocHint(currentDoc);
   // La persona por-agente va en la CAPA SYSTEM (appendSystemPrompt), NUNCA en el texto
   // del usuario. Antes se anteponía como `[Instrucciones para X: …]` dentro del mensaje;
   // el modelo lo leía como instrucciones incrustadas y lo rechazaba como intento de

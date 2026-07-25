@@ -44,6 +44,56 @@ export function extractEbDoc(body: string): EbDoc | null {
   };
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// eb-patch — EDICIÓN QUIRÚRGICA del artefacto HTML. En vez de re-emitir el documento
+// entero para cambiar una tarjeta (40 KB de ida y 40 KB de vuelta, más la deriva de que
+// el modelo "mejore" lo que nadie pidió), el agente manda SOLO el subárbol del nodo:
+//
+//   ```eb-patch a17
+//   <div data-id="a17" class="…">…</div>
+//   ```
+//
+// El id va en la CABECERA, no solo dentro del fragmento: mientras el fence está abierto
+// todavía no llegó el atributo, y el panel necesita saber YA a qué nodo apunta para
+// resaltarlo. Si el fragmento trae otro `data-id`, gana la cabecera (mismo criterio que
+// `htmlToNode(html, keepId)` del canvas-editor).
+export type EbPatch = {
+  nodeId: string; // dirección: el `data-id` del nodo a reemplazar
+  html: string; // subárbol completo (outerHTML) ya con el cambio
+  closed: boolean; // ¿llegó el ``` de cierre? (mientras no, sigue streameando)
+};
+
+const PATCH_OPEN = /(^|\n)```eb-patch[ \t]+([^\n`]+)\n/g;
+
+/**
+ * Extrae TODOS los bloques ```eb-patch``` del body acumulado. Igual que `extractEbDoc`:
+ * idempotente (se re-escanea el body entero en cada chunk; el llamador compara con lo ya
+ * aplicado), tolerante al fence abierto, y el fence SOLO cuenta si abre línea — mencionarlo
+ * en prosa no debe disparar nada (regresión sufrida el 2026-07-25 con eb-artifact).
+ * Un patch sin id o con cuerpo vacío no existe: se descarta aquí y nunca llega a aplicarse.
+ */
+export function extractEbPatches(body: string): EbPatch[] {
+  const out: EbPatch[] = [];
+  PATCH_OPEN.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = PATCH_OPEN.exec(body))) {
+    const nodeId = m[2].trim();
+    const start = m.index + m[0].length;
+    const rest = body.slice(start);
+    const closeIdx = rest.indexOf("\n```");
+    const html = closeIdx === -1 ? rest : rest.slice(0, closeIdx);
+    if (nodeId && html.trim()) out.push({ nodeId, html, closed: closeIdx !== -1 });
+    if (closeIdx === -1) break; // fence abierto → no hay nada más que parsear
+    PATCH_OPEN.lastIndex = start + closeIdx;
+  }
+  return out;
+}
+
+/** Quita los bloques de patch del texto (para el bubble del chat). */
+export function stripEbPatches(body: string): string {
+  return body.replace(/(^|\n)```eb-patch[ \t]+[^\n`]+\n[\s\S]*?(\n```|$)/g, "$1").trim();
+}
+
 // Título del artefacto. Prioriza el título del fence; si no, el primer heading markdown (doc)
 // o la primera celda/columna (sheet); fallback genérico por tipo.
 export function draftTitle(md: string, kind: EbDocKind = "doc", fenceTitle?: string): string {
@@ -211,6 +261,17 @@ export function bubbleWithoutEbDoc(body: string): string {
   // Primero saca el bloque de estado de tools (se pinta como burbuja) y la nota de voz.
   body = stripToolBlock(body);
   body = bubbleWithoutEbAudio(body);
+  // Patches quirúrgicos: fuera del bubble (nunca HTML crudo en el chat) con su propio
+  // marcador. Van antes que eb-doc porque un turno puede traer patches y nada más.
+  const patches = extractEbPatches(body);
+  if (patches.length) {
+    const around = stripEbPatches(body);
+    const done = patches.every((p) => p.closed);
+    const mark = done
+      ? `✅ Artefacto actualizado — ${patches.length} ajuste${patches.length > 1 ? "s" : ""}`
+      : "🩹 Ajustando el artefacto…";
+    return around ? `${around}\n\n${mark}` : mark;
+  }
   const doc = extractEbDoc(body);
   if (!doc) return body;
   const around = [doc.before.trim(), doc.after.trim()].filter(Boolean).join("\n\n");
