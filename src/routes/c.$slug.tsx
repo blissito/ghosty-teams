@@ -1171,6 +1171,7 @@ function ChannelPage() {
         sheet: doc.kind === "sheet",
         artifact: doc.kind === "artifact",
         streaming: !doc.closed,
+        messageId: id, // ancla del stream progresivo (/api/artifact-stream/:id)
       };
     });
   };

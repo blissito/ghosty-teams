@@ -37,6 +37,7 @@ import { Route as ApiDocDocxIdRouteImport } from './routes/api.doc-docx.$id'
 import { Route as ApiDevDriveRouteImport } from './routes/api.dev.drive'
 import { Route as ApiConnectorsToolsRouteImport } from './routes/api.connectors.tools'
 import { Route as ApiAttachmentIdRouteImport } from './routes/api.attachment.$id'
+import { Route as ApiArtifactStreamIdRouteImport } from './routes/api.artifact-stream.$id'
 
 const SetupRoute = SetupRouteImport.update({
   id: '/setup',
@@ -179,6 +180,11 @@ const ApiAttachmentIdRoute = ApiAttachmentIdRouteImport.update({
   path: '/api/attachment/$id',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiArtifactStreamIdRoute = ApiArtifactStreamIdRouteImport.update({
+  id: '/api/artifact-stream/$id',
+  path: '/api/artifact-stream/$id',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -197,6 +203,7 @@ export interface FileRoutesByFullPath {
   '/join/$token': typeof JoinTokenRoute
   '/t3/$': typeof T3SplatRoute
   '/setup/': typeof SetupIndexRoute
+  '/api/artifact-stream/$id': typeof ApiArtifactStreamIdRoute
   '/api/attachment/$id': typeof ApiAttachmentIdRoute
   '/api/connectors/tools': typeof ApiConnectorsToolsRoute
   '/api/dev/drive': typeof ApiDevDriveRoute
@@ -226,6 +233,7 @@ export interface FileRoutesByTo {
   '/join/$token': typeof JoinTokenRoute
   '/t3/$': typeof T3SplatRoute
   '/setup': typeof SetupIndexRoute
+  '/api/artifact-stream/$id': typeof ApiArtifactStreamIdRoute
   '/api/attachment/$id': typeof ApiAttachmentIdRoute
   '/api/connectors/tools': typeof ApiConnectorsToolsRoute
   '/api/dev/drive': typeof ApiDevDriveRoute
@@ -257,6 +265,7 @@ export interface FileRoutesById {
   '/join/$token': typeof JoinTokenRoute
   '/t3/$': typeof T3SplatRoute
   '/setup/': typeof SetupIndexRoute
+  '/api/artifact-stream/$id': typeof ApiArtifactStreamIdRoute
   '/api/attachment/$id': typeof ApiAttachmentIdRoute
   '/api/connectors/tools': typeof ApiConnectorsToolsRoute
   '/api/dev/drive': typeof ApiDevDriveRoute
@@ -289,6 +298,7 @@ export interface FileRouteTypes {
     | '/join/$token'
     | '/t3/$'
     | '/setup/'
+    | '/api/artifact-stream/$id'
     | '/api/attachment/$id'
     | '/api/connectors/tools'
     | '/api/dev/drive'
@@ -318,6 +328,7 @@ export interface FileRouteTypes {
     | '/join/$token'
     | '/t3/$'
     | '/setup'
+    | '/api/artifact-stream/$id'
     | '/api/attachment/$id'
     | '/api/connectors/tools'
     | '/api/dev/drive'
@@ -348,6 +359,7 @@ export interface FileRouteTypes {
     | '/join/$token'
     | '/t3/$'
     | '/setup/'
+    | '/api/artifact-stream/$id'
     | '/api/attachment/$id'
     | '/api/connectors/tools'
     | '/api/dev/drive'
@@ -378,6 +390,7 @@ export interface RootRouteChildren {
   CSlugRoute: typeof CSlugRoute
   JoinTokenRoute: typeof JoinTokenRoute
   T3SplatRoute: typeof T3SplatRoute
+  ApiArtifactStreamIdRoute: typeof ApiArtifactStreamIdRoute
   ApiAttachmentIdRoute: typeof ApiAttachmentIdRoute
   ApiConnectorsToolsRoute: typeof ApiConnectorsToolsRoute
   ApiDevDriveRoute: typeof ApiDevDriveRoute
@@ -586,6 +599,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiAttachmentIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/artifact-stream/$id': {
+      id: '/api/artifact-stream/$id'
+      path: '/api/artifact-stream/$id'
+      fullPath: '/api/artifact-stream/$id'
+      preLoaderRoute: typeof ApiArtifactStreamIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -623,6 +643,7 @@ const rootRouteChildren: RootRouteChildren = {
   CSlugRoute: CSlugRoute,
   JoinTokenRoute: JoinTokenRoute,
   T3SplatRoute: T3SplatRoute,
+  ApiArtifactStreamIdRoute: ApiArtifactStreamIdRoute,
   ApiAttachmentIdRoute: ApiAttachmentIdRoute,
   ApiConnectorsToolsRoute: ApiConnectorsToolsRoute,
   ApiDevDriveRoute: ApiDevDriveRoute,

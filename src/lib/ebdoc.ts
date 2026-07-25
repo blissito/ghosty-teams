@@ -21,10 +21,13 @@ export type EbDoc = {
 // Extrae el bloque ```eb-doc``` o ```eb-sheet``` del texto. Tolera el fence ABIERTO (aún
 // streameando, sin cierre) → toma todo lo que va después de la apertura como el contenido.
 export function extractEbDoc(body: string): EbDoc | null {
-  const open = body.match(/```eb-(doc|sheet|artifact)([^\n]*)\n/);
+  // El fence SOLO cuenta si abre una LÍNEA (^```eb-…) y su resto de línea no trae backtick.
+  // Si no, la MENCIÓN del protocolo en prosa ("lo pongo en un bloque ```eb-artifact`, y la
+  // plataforma lo renderiza…") abría el panel con la charla adentro (reportado 2026-07-25).
+  const open = body.match(/(^|\n)```eb-(doc|sheet|artifact)([^\n`]*)\n/);
   if (!open || open.index == null) return null;
-  const kind = open[1] as EbDocKind;
-  const fenceTitle = open[2]?.trim() || undefined;
+  const kind = open[2] as EbDocKind;
+  const fenceTitle = open[3]?.trim() || undefined;
   const start = open.index + open[0].length;
   const rest = body.slice(start);
   const closeIdx = rest.indexOf("```");

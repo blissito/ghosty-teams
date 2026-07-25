@@ -73,7 +73,55 @@ export function isOnline(ns: string, sub: string): boolean {
 // Publica un evento a todos los clientes suscritos a `channel`. Síncrono, best-effort:
 // un listener que falle (controller ya cerrado) no debe tumbar a los demás. El
 // aislamiento por tenant lo garantiza el prefijo `${ns}|` del nombre del canal.
+// ── Body VIVO de un mensaje en curso (para el render progresivo del artefacto) ──
+// El panel no puede pintar un artefacto "como llega" re-emitiendo srcDoc: cada
+// re-emisión REMONTA el iframe y el <script> de Tailwind (render-blocking) vuelve a
+// empezar → el frame nunca alcanza a pintar y solo se ve el resultado final. La
+// solución es que el iframe apunte UNA vez a una respuesta HTTP que llega en chunks
+// (el navegador la pinta incremental, como cualquier página). Para servir esa
+// respuesta el proceso necesita el body EN CURSO: aquí lo guardamos conforme el
+// agente lo va pintando, y avisamos a quien esté sirviéndolo.
+// In-memory a propósito: es efímero (dura lo que el turno) y este bus ya es in-proceso.
+const liveBodies = new Map<string, string>(); // `${ns}|${msgId}` → body acumulado
+const bodyTaps = new Map<string, Set<(body: string) => void>>();
+const LIVE_TTL_MS = 10 * 60_000;
+
+const liveKey = (ns: string, id: number) => `${ns}|${id}`;
+
+export function liveBody(ns: string, id: number): string | null {
+  return liveBodies.get(liveKey(ns, id)) ?? null;
+}
+
+// Suscribe a las actualizaciones del body de UN mensaje. Devuelve el unsub.
+export function tapBody(ns: string, id: number, fn: (body: string) => void): () => void {
+  const k = liveKey(ns, id);
+  let set = bodyTaps.get(k);
+  if (!set) { set = new Set(); bodyTaps.set(k, set); }
+  set.add(fn);
+  return () => {
+    const s = bodyTaps.get(k);
+    if (!s) return;
+    s.delete(fn);
+    if (!s.size) bodyTaps.delete(k);
+  };
+}
+
+function recordLiveBody(channel: string, ev: RtEvent): void {
+  if (ev.t !== "message:body") return;
+  const ns = channel.split("|")[0];
+  const k = liveKey(ns, ev.id);
+  liveBodies.set(k, ev.body);
+  setTimeout(() => liveBodies.delete(k), LIVE_TTL_MS).unref?.();
+  const taps = bodyTaps.get(k);
+  if (!taps) return;
+  for (const fn of taps) {
+    try { fn(ev.body); } catch { /* stream cerrado en carrera */ }
+  }
+}
+
+// Publica un evento a todos los clientes suscritos a `channel`. Síncrono, best-effort.
 export function publish(channel: string, ev: RtEvent): void {
+  recordLiveBody(channel, ev);
   for (const c of clients) {
     if (!c.channels.has(channel)) continue;
     try {

@@ -56,7 +56,7 @@ export type ArtifactView =
   | { kind: "html"; title: string; embedUrl: string }
   // Redacción EN VIVO (Canvas): prosa (markdown), tabla (csv) o HTML (artifact). `sheet`/`artifact`
   // eligen el render; los tres streamean por el mismo camino de draft.
-  | { kind: "draft"; title: string; content: string; sheet: boolean; streaming?: boolean; artifact?: boolean }
+  | { kind: "draft"; title: string; content: string; sheet: boolean; streaming?: boolean; artifact?: boolean; messageId?: number }
   | { kind: "doc"; title: string; documentId: string; md: string } // documento vivo (markdown local + versiones)
   | { kind: "sheet"; title: string; documentId: string; csv: string } // hoja viva (CSV local + versiones)
   // Artefacto HTML interactivo: `html` = fuente (iframe srcDoc, sandbox aislado); `src` = URL pública S3.
@@ -1036,20 +1036,27 @@ export default function ArtifactPanel({
                           token. Mientras el HTML va en el <head> el render está vacío pero
                           ya toma el fondo del :root del artefacto (se ve "naciendo", no
                           colgado); en cuanto abre el <body> aparece el contenido. */}
-                      <StreamingHtmlFrame
-                        html={draftPreview}
-                        title={artifact.title || "artefacto"}
-                        className="absolute inset-0 h-full w-full border-0 bg-transparent"
-                      />
-                      {/* Ticker del código llegando — solo hasta que hay algo visual que ver.
-                          Franja inferior, no tapa el render. */}
-                      {draftBodyStarted ? null : (
-                        <pre
-                          ref={draftSrcRef}
-                          className="pointer-events-none absolute inset-x-0 bottom-0 max-h-40 overflow-hidden bg-gradient-to-t from-surface-3 to-transparent p-4 font-mono text-[11px] leading-relaxed text-muted"
-                        >
-                          {draftPreview.slice(-600)}
-                        </pre>
+                      {/* ES EL MISMO IFRAME DEL RESULTADO, desde el primer token: apunta UNA
+                          vez a /api/artifact-stream/:id (respuesta HTTP en chunks) y el
+                          navegador lo pinta conforme llega. `key` fijo al mensaje → NO se
+                          remonta mientras el agente escribe (remontarlo era justo lo que
+                          impedía ver la construcción). Sin messageId (cliente viejo / draft
+                          sin ancla) caemos al re-emisor de srcDoc. */}
+                      {artifact.messageId != null ? (
+                        <iframe
+                          key={`stream-${artifact.messageId}`}
+                          title={artifact.title || "artefacto"}
+                          src={`/api/artifact-stream/${artifact.messageId}`}
+                          sandbox="allow-scripts allow-forms allow-popups"
+                          referrerPolicy="no-referrer"
+                          className="absolute inset-0 h-full w-full border-0 bg-transparent"
+                        />
+                      ) : (
+                        <StreamingHtmlFrame
+                          html={draftPreview}
+                          title={artifact.title || "artefacto"}
+                          className="absolute inset-0 h-full w-full border-0 bg-transparent"
+                        />
                       )}
                     </div>
                   </div>
