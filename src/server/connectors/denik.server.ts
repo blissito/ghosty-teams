@@ -19,6 +19,7 @@ type DenikMeta = {
   orgs?: Array<{ id: string; name: string; slug: string; timezone: string; role: string }>;
   scopes?: string[];
   isPlatformAdmin?: boolean;
+  orgsTotalInPlatform?: number;
 };
 
 async function readMeta(sub: string): Promise<DenikMeta | null> {
@@ -118,8 +119,13 @@ export async function ambientContext(sub: string, sender: string, _message: stri
     `Si una tool devuelve error de permiso, pídele que reconecte Deník en Ajustes → Integraciones.`;
 
   if (meta.isPlatformAdmin) {
+    // Sin esto el agente leía "tiene 2 negocios" como "sólo puede ver 2" y se lo
+    // respondía así a un administrador (le pasó a Brenda: 2 con rol, 12 en la
+    // plataforma). Los negocios propios NO son el techo de lo que puede consultar.
+    const total = meta.orgsTotalInPlatform;
     block +=
-      ` ADEMÁS es administrador de la plataforma Deník y tiene tools de SOLO LECTURA sobre TODAS las cuentas: ` +
+      ` IMPORTANTE: es administrador de la plataforma Deník, así que los negocios de arriba son sólo aquellos donde tiene un rol — NO son el límite de lo que puede consultar. Puede ver ${total ? `las ${total} cuentas` : "TODAS las cuentas"} de Deník: lístalas con denik_admin_list_orgs y pasa el orgId que te devuelva a cualquier otra tool (citas, servicios, clientes, resumen). Si pregunta "cuántos negocios hay" o pide ver otra cuenta, NO respondas con los suyos.` +
+      ` Tiene tools de SOLO LECTURA sobre todas las cuentas: ` +
       `denik_admin_list_orgs, denik_admin_platform_stats, denik_admin_events, denik_admin_usage. ` +
       `Úsalas SÓLO si lo pide explícitamente y NUNCA compartas datos de otras cuentas en un canal ` +
       `donde haya alguien más.`;
@@ -139,7 +145,7 @@ const USER_TOOLS: ConnectorTool[] = [
   {
     name: "denik_my_orgs",
     description:
-      "Lista los negocios de Deník del usuario, con su rol y zona horaria, e indica cuál es el activo. Úsala cuando tenga más de uno y necesites saber sobre cuál operar.",
+      "Lista los negocios donde el usuario tiene un ROL, con su zona horaria, e indica cuál es el activo. OJO: si es administrador de plataforma esto NO es todo lo que puede consultar — para las demás cuentas usa denik_admin_list_orgs y pásale el orgId a las otras tools.",
     inputSchema: { type: "object", properties: {} },
     handler: (sub) => api(sub, "/api/agenda/me"),
   },

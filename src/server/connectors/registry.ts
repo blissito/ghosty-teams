@@ -103,6 +103,10 @@ export const CONNECTORS: ConnectorDef[] = [
           orgs: j?.orgs ?? [],
           scopes: j?.scopes ?? [],
           isPlatformAdmin: j?.isPlatformAdmin === true,
+          // Cuántas cuentas hay en toda la plataforma (sólo viene si es admin).
+          // Sirve para que el contexto ambiente le diga al agente que los
+          // negocios propios NO son el techo de lo que puede consultar.
+          orgsTotalInPlatform: j?.orgsTotalInPlatform ?? null,
         },
       }),
     },
