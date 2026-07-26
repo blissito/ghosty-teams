@@ -267,7 +267,11 @@ function selfIdentity(agent: ResolvedAgent | undefined): string {
 // forzaría cold-restart). El BASE estable (EB_DOC_STREAM_GUARDRAIL) sí va en
 // appendSystemPrompt (idéntico todos los turnos → persistencia-safe). Vacío si no hay artefacto.
 async function artifactDocHint(currentDoc?: { kind: "doc" | "sheet" | "artifact"; md: string; src?: string | null } | null): Promise<string> {
-  const md = currentDoc?.md.trim();
+  // El CSS de Tailwind HORNEADO al publicar (marca `gt-baked-tw`) es derivado: se recalcula
+  // solo en la siguiente publicación. Al agente no le sirve de nada y son decenas de KB de
+  // contexto por turno → se lo quitamos. Si re-emite el artefacto sin él, el publish lo
+  // vuelve a hornear.
+  const md = currentDoc?.md.replace(/<style gt-baked-tw>[\s\S]*?<\/style>\s*/gi, "").trim();
   if (!md) return "";
   const kind = currentDoc!.kind;
   const fence = kind === "sheet" ? "eb-sheet" : kind === "artifact" ? "eb-artifact" : "eb-doc";

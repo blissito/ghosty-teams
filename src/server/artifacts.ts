@@ -41,6 +41,14 @@ export async function publishArtifactVersion(args: {
       // en el siguiente turno (artifactDocHint lo detecta y pide re-emisión completa).
       console.error("[artifact] stampIds failed", e);
     }
+    // Hornea el CSS de Tailwind → el artefacto abre YA estilado, sin el frame crudo que
+    // dejaba el CDN al compilar en el navegador. Best-effort: si falla, sale con CDN.
+    try {
+      const { bakeTailwind } = await import("./artifact-css.server");
+      md = await bakeTailwind(md);
+    } catch (e) {
+      console.error("[artifact] bakeTailwind failed", e);
+    }
   }
 
   let src: string | null = null;
