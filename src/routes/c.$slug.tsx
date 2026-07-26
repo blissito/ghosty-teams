@@ -1026,7 +1026,20 @@ function ChannelPage() {
       const r = await fn({ data: target });
       setJoinedCall({ scope, scopeId, conn: { token: r.token, wss: r.wss, room: r.room, name: r.name }, label, target });
     } catch (e) {
+      // Antes esto SOLO iba a la consola: al usuario le fallaba la llamada y no pasaba
+      // absolutamente nada en pantalla (incidente 2026-07-26, con las llaves de huddle
+      // ausentes tras migrar la caja). Un fallo silencioso se lee como "el botón no sirve".
       console.error("[call] no se pudo abrir", e);
+      const raw = String((e as Error)?.message ?? e);
+      pushToast({
+        sender: t("Llamada"),
+        avatar: "",
+        preview: /no disponible/i.test(raw)
+          ? t("Las llamadas no están configuradas en este espacio.")
+          : t("No se pudo abrir la llamada. Intenta de nuevo."),
+        kind: "room",
+        onOpen: () => {},
+      });
     }
   };
   const leaveCall = (alone?: boolean) =>
