@@ -5171,30 +5171,40 @@ function Flow({
   return (
     <section className="relative flex min-w-0 flex-1 flex-col" {...handlers}>
       <DropOverlay show={dragOver} />
-      <header className="flex items-center justify-between gap-3 border-b border-border px-4 py-3 md:px-6">
-        <div className="flex min-w-0 items-center gap-2">
+      {/* @container (NO breakpoints de viewport): al abrir el panel de artefacto esta columna se
+          angosta sin que la ventana cambie, así que `md:`/`lg:` no se enteran. Con container
+          queries la barra cede en el ancho REAL que tiene. */}
+      <header className="@container/hdr flex items-center justify-between gap-2 border-b border-border px-4 py-3 md:px-6">
+        <div className="flex min-w-0 flex-1 items-center gap-2">
           <NavToggle onOpen={onOpenNav} />
           <RoomIcon name={channel.icon} size={18} className="shrink-0 text-muted" />
           <div className="min-w-0">
-            <h2 className="font-semibold leading-tight text-ink">{channel.name}</h2>
+            <h2 className="truncate font-semibold leading-tight text-ink">{channel.name}</h2>
             {channel.description ? (
-              <p className="hidden truncate text-xs text-muted md:block">{channel.description}</p>
+              <p className="hidden truncate text-xs text-muted @md/hdr:block">{channel.description}</p>
             ) : (
-              <p className="hidden truncate text-xs text-muted md:block">
+              <p className="hidden truncate text-xs text-muted @md/hdr:block">
                 {t("Escribe aquí · responde en hilo a cualquier mensaje · tagea")}{" "}
                 <span className="text-brand">@ghosty</span>
               </p>
             )}
           </div>
         </div>
-        <div className="flex shrink-0 items-center gap-3">
+        <div className="flex shrink-0 items-center gap-1 @lg/hdr:gap-2">
           {onlineCount > 0 && (
-            <span className="flex items-center gap-1.5 text-xs text-muted" title={t("Conectados ahora")}>
+            <span
+              className="hidden items-center gap-1.5 text-xs text-muted @xl/hdr:flex"
+              title={t("Conectados ahora")}
+            >
               <span className="inline-block h-2 w-2 rounded-full bg-green-500" />
-              <span className="hidden sm:inline">{t("{n} en línea", { n: onlineCount })}</span>
+              <span>{t("{n} en línea", { n: onlineCount })}</span>
             </span>
           )}
-          <RoomMembersButton slug={channel.slug} />
+          {/* El facepile es lo PRIMERO que se va al angostarse: la lista sigue disponible en
+              el modal de settings del room. */}
+          <span className="hidden @2xl/hdr:flex">
+            <RoomMembersButton slug={channel.slug} />
+          </span>
           {/* Quick-call (quick call) del room — audio/video/pantalla vía la caja LiveKit compartida. */}
           <CallHeaderButton h={call} />
           <DocsButton channelId={channel.id} channelSlug={channel.slug} />
