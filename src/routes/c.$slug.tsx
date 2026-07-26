@@ -136,6 +136,7 @@ import {
   addChannelMemberFn,
   removeChannelMemberFn,
   listWorkspaceUsersFn,
+  listRoomMembersFn,
 } from "../server/channels";
 
 // Cache CLIENTE del shell (rooms + user). Navegar a un room que YA está en el
@@ -4197,6 +4198,73 @@ function DocsButton({ channelId, channelSlug, threadRootId }: { channelId: numbe
   );
 }
 
+// Quién está en el room: facepile + contador en el header, abierto a CUALQUIERA que
+// pueda ver el room (patrón Slack/Discord). Antes la lista solo existía dentro del modal
+// de Ajustes, gateado por canManage → un member no podía ver con quién comparte el canal.
+// Invitar/expulsar SIGUE viviendo en Ajustes (sigue gateado): esto es solo lectura.
+function RoomMembersButton({ slug }: { slug: string }) {
+  const t = useT();
+  const [open, setOpen] = useState(false);
+  const [data, setData] = useState<{
+    derived: boolean;
+    members: { sub: string; name: string; avatar: string }[];
+  } | null>(null);
+
+  useEffect(() => {
+    setData(null);
+    listRoomMembersFn({ data: { slug } })
+      .then(setData)
+      .catch(() => setData({ derived: false, members: [] }));
+  }, [slug]);
+
+  const members = data?.members ?? [];
+  if (!members.length) return null;
+
+  return (
+    <>
+      <button
+        onClick={() => setOpen(true)}
+        title={data?.derived ? t("Personas activas en el canal") : t("Miembros del room")}
+        className="flex shrink-0 items-center gap-1 rounded-lg py-1 pl-1 pr-2 transition hover:bg-surface-2"
+      >
+        <span className="flex -space-x-1.5">
+          {members.slice(0, 3).map((m) => (
+            <Avatar
+              key={m.sub}
+              name={m.name}
+              avatar={m.avatar}
+              className="h-6 w-6 ring-2 ring-surface"
+            />
+          ))}
+        </span>
+        <span className="text-xs text-muted">{members.length}</span>
+      </button>
+      <AnimatePresence>
+        {open && (
+          <Modal onClose={() => setOpen(false)}>
+            <h3 className="mb-1 text-base font-semibold text-ink">{t("Miembros")}</h3>
+            {/* En un room público no hay membresía explícita: la lista sale de quién ha
+                participado. Se rotula distinto para no prometer algo que no existe. */}
+            <p className="mb-3 text-xs text-muted">
+              {data?.derived
+                ? t("Personas que han participado en este canal.")
+                : t("Personas con acceso a este room.")}
+            </p>
+            <ul className="max-h-80 space-y-1 overflow-y-auto thin-scroll">
+              {members.map((m) => (
+                <li key={m.sub} className="flex items-center gap-2.5 rounded-lg px-1 py-1.5">
+                  <Avatar name={m.name} avatar={m.avatar} className="h-8 w-8" />
+                  <span className="truncate text-sm text-ink">{m.name}</span>
+                </li>
+              ))}
+            </ul>
+          </Modal>
+        )}
+      </AnimatePresence>
+    </>
+  );
+}
+
 function SearchButton({ onOpenDm }: { onOpenDm: (id: number) => void }) {
   const t = useT();
   const [open, setOpen] = useState(false);
@@ -5114,6 +5182,7 @@ function Flow({
               <span className="hidden sm:inline">{t("{n} en línea", { n: onlineCount })}</span>
             </span>
           )}
+          <RoomMembersButton slug={channel.slug} />
           {/* Quick-call (quick call) del room — audio/video/pantalla vía la caja LiveKit compartida. */}
           <CallHeaderButton h={call} />
           <DocsButton channelId={channel.id} channelSlug={channel.slug} />

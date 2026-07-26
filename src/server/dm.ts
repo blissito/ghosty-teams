@@ -174,6 +174,10 @@ export const clearDmAgentFn = createServerFn({ method: "POST" })
 
     const groupId = `ghosty-chat-${agent.handle}-dm-${data.id}`; // == askDmAgentFn
     await resetAgentSession(agent, groupId);
+    // El reset rota la sesión del runtime, pero el puntero del artefacto vivo es NUESTRO
+    // (tabla local, se relee fresco cada turno en askDmAgentFn) → si no lo soltamos, tras
+    // "borré la memoria" el siguiente artefacto sale como VERSIÓN del anterior.
+    await db.clearDmArtifact(data.id);
 
     // Burbuja del agente confirmando el reset (queda en el historial del DM).
     const { id } = await db.postDmAgent(

@@ -69,6 +69,29 @@ export const getChannelMembersFn = createServerFn({ method: "GET" })
     return db.listChannelMembersInfo(ch.id);
   });
 
+// Quién está en ESTE room, para cualquiera que pueda VER el room (patrón Slack/Discord:
+// la lista de miembros no es información administrativa). Deliberadamente NO pasa por
+// requireManage — ese gate es para MUTAR (add/remove), y usarlo aquí dejaba a un member
+// sin poder ver con quién comparte el canal. Devuelve solo datos de DISPLAY: nada de
+// email (eso sí es del panel de administración).
+export const listRoomMembersFn = createServerFn({ method: "GET" })
+  .validator((d: { slug: string }) => d)
+  .handler(async ({ data }) => {
+    const user = await sessionUser();
+    if (!user) throw new Error("no autenticado");
+    const db = await import("../db.server");
+    const ch = await db.getChannel(data.slug);
+    if (!ch) throw new Error("room no encontrado");
+    if (!(await db.canSeeChannel(ch, user.sub, user.isOwner))) throw new Error("no autorizado");
+    const roster = await db.listRoomRoster(ch);
+    return {
+      // `derived` = room público: la lista sale de quién ha participado, no de una
+      // membresía real. La UI lo rotula distinto para no mentir.
+      derived: ch.is_private === 0,
+      members: roster.map((m) => ({ sub: m.sub, name: m.name, avatar: m.avatar })),
+    };
+  });
+
 // Usuarios del workspace (para elegir miembro existente al invitar, estilo Slack).
 export const listWorkspaceUsersFn = createServerFn({ method: "GET" }).handler(async () => {
   const user = await sessionUser();

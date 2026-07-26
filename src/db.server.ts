@@ -387,6 +387,15 @@ export async function setDmArtifact(dmId: number, documentId: string): Promise<v
     [`dm:${dmId}`, documentId]
   );
 }
+// Suelta el artefacto vivo del DM. SOLO para el /clear EXPLÍCITO del usuario ("borrar
+// memoria"): sin esto el puntero sobrevive al reset y el siguiente "hazme una landing"
+// edita el documento ANTERIOR (nueva versión de la misma card) en vez de nacer limpio —
+// el usuario cree que empezó de cero y no fue así. OJO: el reciclado AUTOMÁTICO de sesión
+// del worker NO debe llamar esto; ahí el puntero es justo lo que preserva la identidad
+// del artefacto (ver comentario en server/chat.ts sobre documentId).
+export async function clearDmArtifact(dmId: number): Promise<void> {
+  await dbq("DELETE FROM gc_thread_artifact WHERE conv_key = ?", [`dm:${dmId}`]);
+}
 
 // Enriquece un lote con TODO lo de display: reacciones + star/pin + adjuntos + artefacto.
 export async function attachMeta(msgs: Message[], userSub: string): Promise<Message[]> {
@@ -981,6 +990,25 @@ export async function listChannelMembersInfo(channelId: number): Promise<MemberI
        FROM gc_channel_members m JOIN gc_users u ON u.sub = m.user_sub
       WHERE m.channel_id = ?`,
     [channelId]
+  );
+  return rows.map((r) => ({ sub: r.sub!, name: r.name ?? "", email: r.email ?? "", avatar: r.avatar ?? "" }));
+}
+
+// Roster VISIBLE de un room, para que CUALQUIER miembro vea quién está (patrón Slack/
+// Discord: ver es abierto, gestionar sigue gateado). En un room PRIVADO la membresía es
+// explícita (gc_channel_members). En uno PÚBLICO esa tabla está VACÍA por diseño — nadie
+// "se une", todos pueden entrar — así que la derivamos de quién ha participado: personas
+// distintas con mensajes en el canal. La UI etiqueta ese caso como "activos en el canal"
+// para no prometer una membresía que no existe. Se excluyen los mensajes de agentes
+// (agent_handle no nulo): el bot no es un miembro más de la lista.
+export async function listRoomRoster(ch: Channel): Promise<MemberInfo[]> {
+  if (ch.is_private !== 0) return listChannelMembersInfo(ch.id);
+  const rows = await dbq(
+    `SELECT DISTINCT u.sub, u.name, u.email, u.avatar
+       FROM gc_messages m JOIN gc_users u ON u.sub = m.sender_sub
+      WHERE m.channel_id = ? AND m.sender_sub IS NOT NULL AND m.agent_handle IS NULL
+      ORDER BY u.name`,
+    [ch.id]
   );
   return rows.map((r) => ({ sub: r.sub!, name: r.name ?? "", email: r.email ?? "", avatar: r.avatar ?? "" }));
 }
