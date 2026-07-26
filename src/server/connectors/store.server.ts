@@ -10,11 +10,13 @@ export type ConnectorRow = {
   expires_at: number | null;
   external_id: string | null;
   meta: string | null;
+  /** Última relectura del userinfo. NULL = nunca → se trata como vencido. */
+  meta_at: number | null;
 };
 
 export async function getConnectorRow(sub: string, provider: string): Promise<ConnectorRow | null> {
   const rows = await dbq(
-    "SELECT user_sub, provider, access_token, refresh_token, expires_at, external_id, meta FROM gc_user_connectors WHERE user_sub=? AND provider=?",
+    "SELECT user_sub, provider, access_token, refresh_token, expires_at, external_id, meta, meta_at FROM gc_user_connectors WHERE user_sub=? AND provider=?",
     [sub, provider]
   );
   const r = rows[0];
@@ -27,6 +29,7 @@ export async function getConnectorRow(sub: string, provider: string): Promise<Co
     expires_at: r.expires_at == null ? null : Number(r.expires_at),
     external_id: r.external_id,
     meta: r.meta,
+    meta_at: r.meta_at == null ? null : Number(r.meta_at),
   };
 }
 
@@ -61,6 +64,44 @@ export async function setConnectorRow(row: {
       metaStr,
     ]
   );
+}
+
+/**
+ * Reescribe SOLO el meta (y su marca de frescura), sin tocar tokens.
+ *
+ * `setConnectorRow` no sirve para esto: exige `accessToken` y pisa `expires_at`
+ * siempre, así que refrescar el meta con ella arriesgaría la credencial. Aquí el
+ * meta se REEMPLAZA entero (es una foto nueva del userinfo, no un parche).
+ */
+export async function setConnectorMeta(
+  sub: string,
+  provider: string,
+  patch: { meta?: unknown; externalId?: string | null }
+): Promise<void> {
+  const metaStr =
+    patch.meta == null ? null : typeof patch.meta === "string" ? patch.meta : JSON.stringify(patch.meta);
+  await dbq(
+    `UPDATE gc_user_connectors
+        SET meta = COALESCE(?, meta),
+            external_id = COALESCE(?, external_id),
+            meta_at = unixepoch()
+      WHERE user_sub=? AND provider=?`,
+    [metaStr, patch.externalId ?? null, sub, provider]
+  );
+}
+
+/**
+ * Marca que YA se intentó refrescar, sin cambiar el meta.
+ *
+ * Se llama cuando el userinfo falla: sin esto, un proveedor caído provocaría un
+ * reintento en CADA turno del usuario. Mismo criterio anti-martilleo que el
+ * stale-while-error de tenant.server.ts.
+ */
+export async function touchConnectorMeta(sub: string, provider: string): Promise<void> {
+  await dbq("UPDATE gc_user_connectors SET meta_at=unixepoch() WHERE user_sub=? AND provider=?", [
+    sub,
+    provider,
+  ]);
 }
 
 export async function deleteConnectorRow(sub: string, provider: string): Promise<void> {

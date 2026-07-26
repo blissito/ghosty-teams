@@ -28,6 +28,9 @@ export type ConnectorDef = {
     // devuelve una forma distinta; sin esto el parser de UNO quedaba escrito a
     // mano dentro de finishConnectFn y los demás se quedaban sin meta.
     parseUserInfo?: (json: any) => { externalId: string | null; meta: unknown };
+    // Cada cuánto releer el userinfo para refrescar `meta` (default 15 min).
+    // Ver connectors/meta.server.ts.
+    metaTtlS?: number;
     // RFC 7009. Al desconectar, borrar la fila local sólo deja de USAR el token:
     // sigue vivo del lado del proveedor hasta que expire. Con esto se revoca de
     // verdad — indispensable cuando el token concede lectura cross-tenant.

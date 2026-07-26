@@ -16,11 +16,17 @@ export async function buildConnectorContext(sub: string, sender: string, message
     const { listConnectorProviders } = await import("./store.server");
     const connected = await listConnectorProviders(sub);
     if (!connected.size) return "";
+    const { refreshConnectorMetaIfStale } = await import("./meta.server");
     const parts = await Promise.all(
       [...connected].map(async (id) => {
         const load = loaderFor(id);
         if (!load) return null;
         try {
+          // ANTES de pedir el bloque: el `meta` que lo alimenta se capturaba al
+          // conectar y no se refrescaba nunca, así que el agente hablaba de una
+          // realidad vieja (negocios, roles, cuenta activa). Esto es no-op
+          // mientras esté fresco, y sólo espera la PRIMERA vez de cada conexión.
+          await refreshConnectorMetaIfStale(sub, id);
           const mod = await load();
           return (await mod.ambientContext?.(sub, sender, message)) ?? null;
         } catch {

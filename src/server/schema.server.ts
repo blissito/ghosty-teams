@@ -319,6 +319,14 @@ async function migrate(): Promise<void> {
     PRIMARY KEY (user_sub, provider)
   )`);
 
+  // Última vez que se releyó el userinfo del proveedor. `meta` se capturaba UNA vez al
+  // conectar y quedaba congelado para siempre: si el usuario creaba un negocio, cambiaba
+  // de rol o de cuenta activa, el agente seguía viendo la foto del día que autorizó.
+  // `created_at` no servía de marca (sólo se escribe en el INSERT, nunca en el UPDATE).
+  // NULL = nunca refrescado → connectors/meta.server.ts lo trata como vencido, y así las
+  // conexiones hechas antes de esta columna se auto-reparan solas.
+  await addColumn("gc_user_connectors", "meta_at", "INTEGER");
+
   // Flip único: correo por default OFF (opt-in). Las filas existentes heredaron el viejo
   // DEFAULT 1 (opt-out silencioso, nadie lo eligió conscientemente) → las apagamos una sola
   // vez, guardado por flag en gc_config. Reversible: el usuario lo reactiva en el panel.

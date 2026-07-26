@@ -140,6 +140,12 @@ export async function getValidToken(sub: string, provider: string): Promise<stri
       refreshToken: j.refresh_token ?? row.refresh_token,
       expiresAt: j.expires_in ? now + j.expires_in : null,
     });
+    // Si la credencial dio la vuelta, asumimos que el mundo del otro lado pudo
+    // cambiar: marcamos el `meta` como vencido para que se relea. Sin bloquear
+    // — el refresco real ocurre en el próximo turno. Ver connectors/meta.server.ts.
+    import("./meta.server")
+      .then((m) => m.invalidateConnectorMeta(sub, provider))
+      .catch(() => {});
     return j.access_token;
   } catch (e) {
     if (/invalid_grant|invalid_token|\b400\b|\b401\b/.test(String(e))) {
