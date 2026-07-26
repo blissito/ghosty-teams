@@ -42,6 +42,8 @@ import {
   setSoundPref,
   SOUND_CATEGORIES,
   playNotificationSound,
+  previewSound,
+  type SoundCategory,
   type SoundPrefs,
 } from "../utils/notificationSound";
 
@@ -627,9 +629,11 @@ function AppearancePanel() {
 function SoundSettings() {
   const t = useT();
   const [prefs, setPrefs] = useState<SoundPrefs>(() => getSoundPrefs());
-  const set = (key: "all" | (typeof SOUND_CATEGORIES)[number]["key"], on: boolean) => {
+  const set = (key: "all" | SoundCategory, on: boolean) => {
     setPrefs(setSoundPref(key, on));
-    if (on) playNotificationSound(); // muestra al ENCENDER (confirma que suena)
+    // Muestra al ENCENDER (confirma que suena). Por categoría suena LA CATEGORÍA: oír el
+    // genérico al encender "Artefacto terminado" no dice nada de lo que acabas de activar.
+    if (on) (key === "all" ? playNotificationSound : () => previewSound(key))();
   };
   return (
     <div>

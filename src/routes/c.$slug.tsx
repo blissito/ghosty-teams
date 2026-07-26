@@ -120,7 +120,7 @@ import ArtifactPanel, { type ArtifactView, viewFromAttachment } from "../compone
 import { belongsToOpenConversation } from "../lib/conversation-scope";
 import { extractEbDoc, extractEbPatches, draftTitle, bubbleWithoutEbDoc, extractToolState, type ToolState } from "../lib/ebdoc";
 import { ThinkingRing } from "../components/ThinkingRing";
-import { playNotificationSound, playGhostySound, playSelfSound, playMentionSound, playDmSound, playReadySound, playDeleteSound, playArtifactOpen, playArtifactClose, startCallRing, stopCallRing } from "../utils/notificationSound";
+import { playNotificationSound, playGhostySound, playSelfSound, playMentionSound, playDmSound, playReadySound, playDeleteSound, playArtifactOpen, playArtifactClose, playArtifactReady, startCallRing, stopCallRing } from "../utils/notificationSound";
 
 // Menciones que cuentan como "a ti": tu @handle o una grupal (@all/@channel/…).
 const SOUND_GROUP_MENTIONS = new Set(["all", "channel", "everyone", "aqui", "here", "todos"]);
@@ -1153,6 +1153,15 @@ function ChannelPage() {
     const muteKey = m.dm_id != null ? `dm:${m.dm_id}` : `room:${m.channel_id}`;
     if (!mutes.has(muteKey)) playGhostySound();
   };
+  // "Artefacto terminado": suena UNA vez por mensaje, al cerrarse el fence. Necesita
+  // dedupe propio porque los deltas SIGUEN llegando después del cierre (la frase de
+  // contexto que el agente escribe tras el bloque) → sin el Set sonaría en cada delta.
+  const chimedArtifactIds = useRef<Set<number>>(new Set());
+  const maybeChimeArtifactReady = (id: number) => {
+    if (chimedArtifactIds.current.has(id)) return;
+    chimedArtifactIds.current.add(id);
+    playArtifactReady();
+  };
   const draftSeenLenRef = useRef(0);
   const driveDraftFromBody = (id: number, body: string) => {
     const doc = extractEbDoc(body);
@@ -1498,7 +1507,10 @@ function ChannelPage() {
           driveDraftFromBody(ev.id, ev.body);
           // Fence cerrado → el server compila el .docx; swap del draft al doc real.
           const doc = extractEbDoc(ev.body);
-          if (doc?.closed) scheduleDraftSwap(ev.id);
+          if (doc?.closed) {
+            maybeChimeArtifactReady(ev.id); // terminó de generarse → chime
+            scheduleDraftSwap(ev.id);
+          }
           // Patches cerrados → MISMO swap. El preview aplica los patches en vivo sobre su
           // propia copia (para que se vea ocurrir), pero la VERDAD es la versión que
           // publica el server; sin este swap el panel se quedaba con su composición y

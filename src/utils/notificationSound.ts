@@ -27,7 +27,15 @@ function getCtx(): AudioContext | null {
 // El usuario puede apagar TODOS los sonidos o sólo algunas categorías (Ajustes →
 // Apariencia). Se persiste en localStorage; el default es todo encendido. Cada
 // play* consulta su categoría antes de sonar. `all:false` silencia todo de un tiro.
-export type SoundCategory = "message" | "mention" | "dm" | "agent" | "delete" | "system" | "artifact";
+export type SoundCategory =
+  | "message"
+  | "mention"
+  | "dm"
+  | "agent"
+  | "delete"
+  | "system"
+  | "artifact"
+  | "artifactReady";
 export const SOUND_CATEGORIES: { key: SoundCategory; label: string }[] = [
   { key: "message", label: "Mensajes de sala" },
   { key: "mention", label: "Menciones" },
@@ -35,11 +43,12 @@ export const SOUND_CATEGORIES: { key: SoundCategory; label: string }[] = [
   { key: "agent", label: "Respuesta del agente" },
   { key: "delete", label: "Eliminar" },
   { key: "artifact", label: "Abrir artefacto" },
+  { key: "artifactReady", label: "Artefacto terminado" },
   { key: "system", label: "Sistema (envío · listo)" },
 ];
 export type SoundPrefs = { all: boolean } & Record<SoundCategory, boolean>;
 const SOUND_KEY = "gc_sound_prefs";
-const DEFAULT_PREFS: SoundPrefs = { all: true, message: true, mention: true, dm: true, agent: true, delete: true, system: true, artifact: true };
+const DEFAULT_PREFS: SoundPrefs = { all: true, message: true, mention: true, dm: true, agent: true, delete: true, system: true, artifact: true, artifactReady: true };
 let prefsCache: SoundPrefs | null = null;
 
 export function getSoundPrefs(): SoundPrefs {
@@ -187,6 +196,79 @@ export function playArtifactOpen(volume = 0.3): void {
     src.start(t);
     src.stop(t + dur);
     t += 0.02 - 0.011 * p; // el intervalo ACELERA: ~20ms → ~9ms (trinquete)
+  }
+}
+
+/**
+ * Sonido de ARTEFACTO TERMINADO: el HTML acabó de generarse. NO es un chime de arpegio
+ * (eso suena a notificación de banco): es un "cuajado" — cuatro parciales arrancan
+ * DESAFINADOS y en desorden y se DESLIZAN hasta un acorde limpio, como las piezas
+ * cayendo en su sitio; encima, unas chispas agudas que se van asentando (el polvo que
+ * baja). El gesto ES el significado: algo disperso que termina de armarse.
+ *
+ * Deliberadamente distinto del rastrillo de abrir/cerrar: aquel es MOVIMIENTO del panel,
+ * este es un LOGRO. Categoría propia ("artefacto terminado") porque se dispara SOLO, sin
+ * que el usuario haya tocado nada — quien lo encuentre de más lo apaga sin perder los
+ * otros sonidos de artefacto.
+ * @param volume 0–1 (default 0.3).
+ */
+export function playArtifactReady(volume = 0.3): void {
+  if (!soundOn("artifactReady")) return;
+  const audio = getCtx();
+  if (!audio) return;
+  const now = audio.currentTime;
+  const master = audio.createGain();
+  master.gain.value = volume;
+  master.connect(audio.destination);
+
+  // Cada parcial: dónde EMPIEZA (desafinado, disperso) → dónde ATERRIZA (el acorde).
+  // Destino = Do5 · Sol5 · Do6 · Mi6 (quintas y octavas abiertas: suena a "encaje",
+  // no a melodía). Los desfases de entrada hacen que no lleguen todos a la vez.
+  const PARTIALS = [
+    { from: 392.0, to: 523.25, at: 0.0, glide: 0.19, dur: 0.85, vol: 0.5 },
+    { from: 861.0, to: 783.99, at: 0.03, glide: 0.2, dur: 0.8, vol: 0.4 },
+    { from: 1180.0, to: 1046.5, at: 0.06, glide: 0.22, dur: 0.75, vol: 0.3 },
+    { from: 1430.0, to: 1318.5, at: 0.09, glide: 0.24, dur: 0.7, vol: 0.22 },
+  ];
+  for (const p of PARTIALS) {
+    const t0 = now + p.at;
+    const o = audio.createOscillator();
+    const g = audio.createGain();
+    o.type = "triangle";
+    o.frequency.setValueAtTime(p.from, t0);
+    // Glide exponencial: rápido al principio y frenando — se "acomoda" en vez de barrer.
+    o.frequency.exponentialRampToValueAtTime(p.to, t0 + p.glide);
+    g.gain.setValueAtTime(0.0001, t0);
+    g.gain.exponentialRampToValueAtTime(p.vol, t0 + 0.05); // entrada suave, sin golpe
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + p.dur);
+    o.connect(g);
+    g.connect(master);
+    o.start(t0);
+    o.stop(t0 + p.dur + 0.02);
+  }
+
+  // Chispas: clics muy cortos y agudos, cada vez más espaciados y más graves — el polvo
+  // asentándose sobre el acorde ya formado. Empiezan cuando el glide va a la mitad.
+  let t = now + 0.1;
+  for (let i = 0; i < 7; i++) {
+    const p = i / 6;
+    const dur = 0.005;
+    const buf = audio.createBuffer(1, Math.max(1, Math.floor(audio.sampleRate * dur)), audio.sampleRate);
+    const d = buf.getChannelData(0);
+    for (let j = 0; j < d.length; j++) d[j] = (Math.random() * 2 - 1) * (1 - j / d.length);
+    const src = audio.createBufferSource();
+    src.buffer = buf;
+    const hp = audio.createBiquadFilter();
+    hp.type = "highpass";
+    hp.frequency.value = 5200 - p * 2400; // bajan de brillo conforme se posan
+    const g = audio.createGain();
+    g.gain.value = 0.5 * (1 - p) ** 1.6; // y se apagan
+    src.connect(hp);
+    hp.connect(g);
+    g.connect(master);
+    src.start(t);
+    src.stop(t + dur);
+    t += 0.022 + 0.05 * p; // el intervalo SE ABRE: lo contrario del trinquete de abrir
   }
 }
 
@@ -450,4 +532,26 @@ export function startCallRing(volume = 0.5): () => void {
 }
 export function stopCallRing(): void {
   if (callRingTimer) { clearInterval(callRingTimer); callRingTimer = null; }
+}
+
+// Muestra de una categoría, para Ajustes: al ENCENDER un toggle suena LO QUE acabas de
+// encender, no un genérico. Se salta el gate `soundOn` a propósito (el estado ya se
+// guardó en `on`; sin esto la muestra podría quedar muda por una carrera del cache).
+export function previewSound(cat: SoundCategory): void {
+  const prev = prefsCache;
+  prefsCache = { ...getSoundPrefs(), all: true, [cat]: true };
+  try {
+    ({
+      message: () => playNotificationSound(),
+      mention: () => playMentionSound(),
+      dm: () => playDmSound(),
+      agent: () => playGhostySound(),
+      delete: () => playDeleteSound(),
+      system: () => playReadySound(),
+      artifact: () => playArtifactOpen(),
+      artifactReady: () => playArtifactReady(),
+    })[cat]();
+  } finally {
+    prefsCache = prev;
+  }
 }
