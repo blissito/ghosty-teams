@@ -101,21 +101,18 @@ export const finishConnectFn = createServerFn({ method: "POST" })
     const tok = await exchangeCode(def, redirectUri, data.code, verifier ?? undefined);
     const now = Math.floor(Date.now() / 1000);
 
-    // userinfo → external_id (Calendly user URI) + meta (scheduling_url, etc.). Best-effort.
+    // userinfo → external_id + meta, con el parser QUE DECLARA EL CONECTOR: cada proveedor
+    // devuelve una forma distinta, así que traducirla es cosa suya (registry.ts), no de aquí.
+    // Best-effort: si el userinfo falla, la conexión igual queda hecha.
     let externalId: string | null = null;
     let meta: unknown = null;
-    if (def.oauth.userInfoUrl) {
+    if (def.oauth.userInfoUrl && def.oauth.parseUserInfo) {
       try {
         const r = await fetch(def.oauth.userInfoUrl, { headers: { Authorization: `Bearer ${tok.access_token}` } });
         if (r.ok) {
-          const j = (await r.json()) as { resource?: { uri?: string; scheduling_url?: string; name?: string; timezone?: string; current_organization?: string } };
-          externalId = j.resource?.uri ?? null;
-          meta = {
-            scheduling_url: j.resource?.scheduling_url ?? null,
-            name: j.resource?.name ?? null,
-            timezone: j.resource?.timezone ?? null,
-            organization: j.resource?.current_organization ?? null,
-          };
+          const parsed = def.oauth.parseUserInfo(await r.json());
+          externalId = parsed.externalId;
+          meta = parsed.meta;
         }
       } catch {}
     }
@@ -132,13 +129,43 @@ export const finishConnectFn = createServerFn({ method: "POST" })
     return { ok: true as const };
   });
 
-// Desconecta un proveedor del usuario actual (borra su fila). El re-connect es inmediato.
+// Desconecta un proveedor del usuario actual. El re-connect es inmediato.
+//
+// Además de borrar la fila, REVOCA el token contra el proveedor si éste declara
+// `revokeUrl`: sin eso "Desconectar" sólo significa "dejo de usarlo", y el token
+// seguiría siendo válido allá hasta expirar. Con permisos amplios eso no basta.
 export const disconnectConnectorFn = createServerFn({ method: "POST" })
   .validator((d: { provider: string }) => d)
   .handler(async ({ data }) => {
     const me = await sessionUser();
     if (!me) throw new Error("no autenticado");
-    const { deleteConnectorRow } = await import("./connectors/store.server");
+    const { deleteConnectorRow, getConnectorRow } = await import("./connectors/store.server");
+    const { getConnector } = await import("./connectors/registry");
+
+    const def = getConnector(data.provider);
+    const revokeUrl = def?.oauth?.revokeUrl;
+    if (revokeUrl) {
+      // Best-effort y ANTES de borrar (después ya no hay token que mandar). Que
+      // el proveedor esté caído no debe impedir desconectar del lado de Teams.
+      try {
+        const row = await getConnectorRow(me.sub, data.provider);
+        const token = row?.refresh_token || row?.access_token;
+        if (token) {
+          await fetch(revokeUrl, {
+            method: "POST",
+            headers: { "content-type": "application/x-www-form-urlencoded" },
+            body: new URLSearchParams({
+              client_id: process.env[def!.oauth!.clientIdEnv] ?? "",
+              client_secret: process.env[def!.oauth!.clientSecretEnv] ?? "",
+              token,
+            }),
+          });
+        }
+      } catch (e) {
+        console.warn(`[connectors] revoke de ${data.provider} falló:`, e);
+      }
+    }
+
     await deleteConnectorRow(me.sub, data.provider);
     return { ok: true as const };
   });

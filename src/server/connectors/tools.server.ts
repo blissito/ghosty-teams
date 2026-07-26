@@ -6,7 +6,7 @@
 // (listConnectorProviders) → un user no puede invocar la tool de una integración ajena/no
 // conectada. El handler resuelve el token del `sub` internamente (getValidToken).
 
-import { loaderFor } from "./impl";
+import { loaderFor, toolsOf } from "./impl";
 
 // Declaración expuesta al modelo (sin el handler).
 export type ToolDecl = { name: string; description: string; inputSchema: Record<string, unknown> };
@@ -21,7 +21,7 @@ export async function listUserTools(sub: string): Promise<ToolDecl[]> {
     if (!load) continue;
     try {
       const mod = await load();
-      for (const t of mod.tools ?? []) out.push({ name: t.name, description: t.description, inputSchema: t.inputSchema });
+      for (const t of await toolsOf(mod, sub)) out.push({ name: t.name, description: t.description, inputSchema: t.inputSchema });
     } catch {
       // un conector roto no rompe el listado de los demás
     }
@@ -44,7 +44,7 @@ export async function runTool(sub: string, toolName: string, args: Record<string
     } catch {
       continue;
     }
-    const tool = (mod.tools ?? []).find((t) => t.name === toolName);
+    const tool = (await toolsOf(mod, sub)).find((t) => t.name === toolName);
     if (!tool) continue;
     try {
       const result = await tool.handler(sub, args ?? {});

@@ -21,12 +21,23 @@ export type ConnectorModule = {
   // `message` = texto del turno del usuario → el conector decide si enriquece (p.ej. Calendly
   // sólo pega a la API en intención de agenda). La lógica per-conector vive AQUÍ, no en dm.ts.
   ambientContext?: (sub: string, sender: string, message: string) => Promise<string | null>;
-  tools?: ConnectorTool[];
+  // Lista fija, o función del `sub` cuando el set depende de QUIÉN es el usuario. Denik lo
+  // necesita: sus tools de administración de plataforma sólo existen para el equipo de Denik,
+  // y ofrecérselas a los demás llenaría el prompt de acciones que siempre fallarían con 403.
+  tools?: ConnectorTool[] | ((sub: string) => Promise<ConnectorTool[]>);
 };
+
+/** Resuelve `tools` sea lista o función. */
+export async function toolsOf(mod: ConnectorModule, sub: string): Promise<ConnectorTool[]> {
+  const t = mod.tools;
+  if (!t) return [];
+  return typeof t === "function" ? await t(sub) : t;
+}
 
 // Una línea por integración. Lazy → no arrastra miles de módulos por request.
 const LOADERS: Record<string, () => Promise<ConnectorModule>> = {
   calendly: () => import("./calendly.server"),
+  denik: () => import("./denik.server"),
 };
 
 export function loaderFor(id: string): (() => Promise<ConnectorModule>) | undefined {

@@ -97,7 +97,7 @@ export const postDmMessageFn = createServerFn({ method: "POST" })
     const db = await import("../db.server");
     const bus = await import("./bus.server");
     const { currentNamespace } = await import("./tenant.server");
-    const { resolvedAgents, detectMention, quoteExcerpt } = await import("../agents.server");
+    const { resolvedAgents, quoteExcerpt } = await import("../agents.server");
     const me = await sessionUser();
     if (!me || !(await db.isDmMember(data.id, me.sub))) throw new Error("no autorizado");
     const ns = await currentNamespace();
@@ -109,11 +109,11 @@ export const postDmMessageFn = createServerFn({ method: "POST" })
     const quoted = data.quotedId != null ? await db.getMessage(data.quotedId).catch(() => null) : null;
 
     const agents = await resolvedAgents();
-    // DM 1:1 con un agente → cada mensaje enruta a ESE agente (sin @mención). Si no,
-    // se detecta @mención normal. El handle del DM gana.
+    // DM 1:1 con un agente → cada mensaje enruta a ESE agente (sin @mención).
+    // En un DM humano-humano el agente NO participa: aunque alguien escriba @ghosty,
+    // no se invoca (la mención queda como texto). Decisión de producto 2026-07-26.
     const dmAgent = await db.getDmAgentHandle(data.id);
-    const mentioned = (dmAgent && agents.some((a) => a.handle === dmAgent) ? dmAgent : null)
-      ?? detectMention(body, agents.map((a) => a.handle));
+    const mentioned = dmAgent && agents.some((a) => a.handle === dmAgent) ? dmAgent : null;
     const { id } = await db.createDmMessage({
       dmId: data.id,
       sender: me.name,
@@ -221,6 +221,9 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
     const me = await sessionUser();
     if (!me || !(await db.isDmMember(data.id, me.sub))) throw new Error("no autorizado");
     const ns = await currentNamespace();
+    // Sólo DMs humano↔agente: en un DM humano-humano el agente no contesta.
+    const dmAgent = await db.getDmAgentHandle(data.id);
+    if (!dmAgent || dmAgent !== data.handle) return { ok: false as const };
     const agent = (await resolvedAgents()).find((a) => a.handle === data.handle);
     const name = agent?.name ?? "Ghosty";
     const members = await db.getDmMembers(data.id);

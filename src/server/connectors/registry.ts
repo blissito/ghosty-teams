@@ -24,8 +24,20 @@ export type ConnectorDef = {
     clientIdEnv: string;
     clientSecretEnv: string;
     userInfoUrl?: string; // tras conectar: captura external_id + meta
+    // Traduce la respuesta del userInfoUrl a lo que se persiste. Cada proveedor
+    // devuelve una forma distinta; sin esto el parser de UNO quedaba escrito a
+    // mano dentro de finishConnectFn y los demás se quedaban sin meta.
+    parseUserInfo?: (json: any) => { externalId: string | null; meta: unknown };
+    // RFC 7009. Al desconectar, borrar la fila local sólo deja de USAR el token:
+    // sigue vivo del lado del proveedor hasta que expire. Con esto se revoca de
+    // verdad — indispensable cuando el token concede lectura cross-tenant.
+    revokeUrl?: string;
   };
 };
+
+// Base de la API de Deník. Override por env para apuntar a una instancia local
+// (el flujo OAuth completo se puede ejercitar sin dominio público).
+const DENIK_BASE = (process.env.DENIK_BASE_URL ?? "https://www.denik.me").replace(/\/$/, "");
 
 export const CONNECTORS: ConnectorDef[] = [
   {
@@ -48,6 +60,51 @@ export const CONNECTORS: ConnectorDef[] = [
       clientIdEnv: "CALENDLY_CLIENT_ID",
       clientSecretEnv: "CALENDLY_CLIENT_SECRET",
       userInfoUrl: "https://api.calendly.com/users/me",
+      parseUserInfo: (j) => ({
+        externalId: j?.resource?.uri ?? null,
+        meta: {
+          scheduling_url: j?.resource?.scheduling_url ?? null,
+          name: j?.resource?.name ?? null,
+          timezone: j?.resource?.timezone ?? null,
+          organization: j?.resource?.current_organization ?? null,
+        },
+      }),
+    },
+  },
+  {
+    id: "denik",
+    name: "Deník",
+    blurb: "Deja que @ghosty consulte y opere tu agenda de denik.me: citas, disponibilidad y clientes.",
+    icon: "denik",
+    type: "Web",
+    status: "available",
+    oauth: {
+      authUrl: `${DENIK_BASE}/oauth/authorize`,
+      tokenUrl: `${DENIK_BASE}/oauth/token`,
+      revokeUrl: `${DENIK_BASE}/oauth/revoke`,
+      pkce: true, // Deník exige PKCE S256 ADEMÁS del client_secret.
+      // `platform:admin` (lectura cross-tenant) se pide siempre porque este
+      // registro es estático, pero Deník sólo lo concede si el correo del
+      // usuario está en su lista de administradores; a los demás se lo quita en
+      // silencio y les entrega los otros seis. Por eso pedirlo no rompe a nadie.
+      scopes:
+        "agenda:read agenda:write services:read customers:read customers:write org:read platform:admin",
+      clientIdEnv: "DENIK_CLIENT_ID",
+      clientSecretEnv: "DENIK_CLIENT_SECRET",
+      userInfoUrl: `${DENIK_BASE}/api/agenda/me`,
+      // Guardar aquí las orgs y el flag de admin hace que el contexto ambiente
+      // de cada turno se arme LEYENDO LA FILA, sin pegarle a Deník.
+      parseUserInfo: (j) => ({
+        externalId: j?.userId ?? null,
+        meta: {
+          email: j?.email ?? null,
+          displayName: j?.displayName ?? null,
+          activeOrgId: j?.activeOrgId ?? null,
+          orgs: j?.orgs ?? [],
+          scopes: j?.scopes ?? [],
+          isPlatformAdmin: j?.isPlatformAdmin === true,
+        },
+      }),
     },
   },
   // Próximamente (sin oauth aún → el panel los muestra como "Próximamente"):

@@ -23,7 +23,7 @@ import { bumpEmojis } from "../utils/emojis-bus";
 import { bumpUsers } from "../utils/users-bus";
 import type { CustomEmoji } from "../db.server";
 import { useT, useLocale, useSetLocale, type Locale } from "../i18n";
-import { Monitor, Sun, Moon, Check, SlidersHorizontal, Palette, Github, Plug, Users, Calendar, CalendarClock, Link2, RefreshCw } from "lucide-react";
+import { Monitor, Sun, Moon, Check, SlidersHorizontal, Palette, Github, Plug, Users, Calendar, CalendarClock, CalendarCheck, Link2, RefreshCw } from "lucide-react";
 import { listMyConnectorsFn, disconnectConnectorFn } from "../server/connectors";
 import {
   PRESETS,
@@ -341,6 +341,7 @@ type ConnItem = {
 function connIcon(icon: string) {
   switch (icon) {
     case "calendly": return CalendarClock;
+    case "denik": return CalendarCheck;
     case "github": return Github;
     case "hubspot": return Users;
     case "google-calendar": return Calendar;
