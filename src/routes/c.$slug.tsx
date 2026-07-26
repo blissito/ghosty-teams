@@ -859,17 +859,49 @@ function useChatScroll(
     // es lo que el ojo percibe como "no se movió".
     let lastW = el.clientWidth;
     let bottomGap = el.scrollHeight - el.scrollTop - el.clientHeight;
-    const trackGap = () => { bottomGap = el.scrollHeight - el.scrollTop - el.clientHeight; };
+    // Conservar la distancia al fondo NO basta leyendo historial: al angostarse la columna el
+    // contenido crece por ARRIBA y por abajo, así que el hueco inferior se mantiene pero los
+    // mensajes visibles se corren igual. El ojo se ancla a un MENSAJE, no al fondo — así que
+    // eso es lo que seguimos: el primer mensaje visible y su offset dentro del viewport.
+    let anchorEl: HTMLElement | null = null;
+    let anchorTop = 0;
+    // Mientras re-anclamos frame a frame, nuestras propias escrituras de scrollTop disparan
+    // `scroll`: no re-capturamos el ancla en pleno reflow.
+    let holding = false;
+    const trackAnchor = () => {
+      if (holding) return;
+      const box = el.getBoundingClientRect();
+      const hit = document.elementFromPoint(box.left + Math.min(40, box.width / 2), box.top + 8);
+      const msg = hit?.closest?.('[id^="msg-"]') as HTMLElement | null;
+      // Fuera del scroller (panel encima, pestaña oculta) → conserva el ancla anterior.
+      if (msg && el.contains(msg)) {
+        anchorEl = msg;
+        anchorTop = msg.getBoundingClientRect().top - box.top;
+      }
+    };
+    const trackGap = () => {
+      bottomGap = el.scrollHeight - el.scrollTop - el.clientHeight;
+      trackAnchor();
+    };
     el.addEventListener("scroll", trackGap, { passive: true });
+    trackGap();
+    // Reancla a la posición del mensaje guardado. Devuelve false si el ancla ya no sirve.
+    const restoreAnchor = () => {
+      if (!anchorEl || !el.contains(anchorEl)) return false;
+      const delta = anchorEl.getBoundingClientRect().top - el.getBoundingClientRect().top - anchorTop;
+      if (Math.abs(delta) > 0.5) el.scrollTop += delta;
+      return true;
+    };
     // El panel ANIMA su ancho (~340ms): el reflow del chat ocurre en muchos frames, no en
     // uno. Un solo reajuste al detectar el cambio no basta — la vista sigue desplazándose
     // durante el resto de la animación. Mantenemos el anclaje CADA FRAME mientras dura.
     let holdUntil = 0;
-    let holding = false;
     const hold = () => {
       if (performance.now() > holdUntil) { holding = false; return; }
+      // Pegado al fondo el ancla es el fondo; leyendo historial, el mensaje guardado, y sólo
+      // si se perdió (virtualizado, borrado) caemos al hueco inferior de antes.
       if (stick.current) el.scrollTop = el.scrollHeight;
-      else el.scrollTop = Math.max(0, el.scrollHeight - el.clientHeight - bottomGap);
+      else if (!restoreAnchor()) el.scrollTop = Math.max(0, el.scrollHeight - el.clientHeight - bottomGap);
       requestAnimationFrame(hold);
     };
     const ro = new ResizeObserver(() => {
@@ -878,7 +910,7 @@ function useChatScroll(
         holdUntil = performance.now() + 600;
         if (!holding) { holding = true; requestAnimationFrame(hold); }
         if (!stick.current) {
-          el.scrollTop = Math.max(0, el.scrollHeight - el.clientHeight - bottomGap);
+          if (!restoreAnchor()) el.scrollTop = Math.max(0, el.scrollHeight - el.clientHeight - bottomGap);
           return;
         }
       }
