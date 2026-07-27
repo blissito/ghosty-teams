@@ -90,8 +90,12 @@ export const CONNECTORS: ConnectorDef[] = [
       // registro es estático, pero Deník sólo lo concede si el correo del
       // usuario está en su lista de administradores; a los demás se lo quita en
       // silencio y les entrega los otros seis. Por eso pedirlo no rompe a nadie.
+      // `sales:read` va aparte de `agenda:read` porque del lado de Deník ver la
+      // agenda y leer la caja son permisos distintos. Quien conectó ANTES de
+      // que existiera este scope no lo tiene: sus tools de ventas responderán
+      // 403 hasta que reconecte (el handler ya lo dice con esas palabras).
       scopes:
-        "agenda:read agenda:write services:read customers:read customers:write org:read platform:admin",
+        "agenda:read agenda:write services:read customers:read customers:write org:read sales:read platform:admin",
       clientIdEnv: "DENIK_CLIENT_ID",
       clientSecretEnv: "DENIK_CLIENT_SECRET",
       userInfoUrl: `${DENIK_BASE}/api/agenda/me`,

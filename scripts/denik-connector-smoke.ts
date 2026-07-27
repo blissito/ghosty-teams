@@ -4,7 +4,7 @@
  *
  * Verifica el pegamento que NO cubre el smoke de Deník: que `parseUserInfo` del
  * registry traduzca /api/agenda/me al meta que consumen `ambientContext` y
- * `tools`, que las 19 tools estén bien declaradas, y que sus handlers construyan
+ * `tools`, que las 23 tools estén bien declaradas, y que sus handlers construyan
  * URLs que Deník acepta.
  *
  * No toca sqld: el token se inyecta a mano en vez de leerlo de
@@ -38,8 +38,8 @@ async function main() {
   check("exige PKCE", def?.oauth?.pkce === true);
   check("declara revokeUrl", !!def?.oauth?.revokeUrl, def?.oauth?.revokeUrl);
   check(
-    "pide los 7 scopes",
-    def?.oauth?.scopes?.split(" ").length === 7,
+    "pide los 8 scopes",
+    def?.oauth?.scopes?.split(" ").length === 8,
     def?.oauth?.scopes,
   );
   check("apunta a la instancia esperada", def?.oauth?.authUrl?.startsWith(BASE) === true, def?.oauth?.authUrl);
@@ -88,12 +88,12 @@ async function main() {
   const asUser = await mod.tools("x");
   stub.setMeta({ ...meta, isPlatformAdmin: true });
 
-  check(`admin ve ${asAdmin.length} tools`, asAdmin.length === 19, `${asAdmin.length}`);
-  check(`no-admin ve ${asUser.length} tools`, asUser.length === 15, `${asUser.length}`);
+  check(`admin ve ${asAdmin.length} tools`, asAdmin.length === 23, `${asAdmin.length}`);
+  check(`no-admin ve ${asUser.length} tools`, asUser.length === 16, `${asUser.length}`);
   check(
     "las denik_admin_* SOLO para admin",
     asUser.every((t: any) => !t.name.startsWith("denik_admin_")) &&
-      asAdmin.filter((t: any) => t.name.startsWith("denik_admin_")).length === 4,
+      asAdmin.filter((t: any) => t.name.startsWith("denik_admin_")).length === 7,
   );
   check(
     "todos los nombres con prefijo denik_",

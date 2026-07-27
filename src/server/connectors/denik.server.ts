@@ -110,9 +110,12 @@ export async function ambientContext(sub: string, sender: string, _message: stri
     `[INTEGRACIÓN Deník de ${sender} (conectada). Negocios: ${orgList}. ` +
     `TIENES HERRAMIENTAS para su agenda vía el GS Tools SDK: importa /opt/gs-sdk/connectors.mjs y usa ` +
     `list() y run(name, args). Tools: denik_my_orgs, denik_upcoming_appointments, denik_search_appointments, ` +
-    `denik_get_appointment, denik_services, denik_availability, denik_org_summary, denik_create_appointment, ` +
+    `denik_get_appointment, denik_services, denik_availability, denik_org_summary, denik_sales, ` +
+    `denik_create_appointment, ` +
     `denik_reschedule_appointment, denik_cancel_appointment, denik_mark_attendance, denik_send_reminder, ` +
     `denik_find_customer, denik_customer_history, denik_create_customer. ` +
+    `Para preguntas de DINERO (cuánto se cobró, por qué método, qué falta por cobrar) usa denik_sales, ` +
+    `no denik_org_summary. ` +
     `Para CUALQUIER pregunta sobre citas, horarios, disponibilidad o clientes de ${sender}, USA estas tools — ` +
     `NO inventes datos ni digas que no tienes acceso (SÍ lo tienes). Todas aceptan orgId opcional; ` +
     `si se omite se usa el negocio activo. Al MOSTRAR horas usa siempre el campo startLocal, nunca el ISO/UTC. ` +
@@ -126,7 +129,13 @@ export async function ambientContext(sub: string, sender: string, _message: stri
     block +=
       ` IMPORTANTE: es administrador de la plataforma Deník, así que los negocios de arriba son sólo aquellos donde tiene un rol — NO son el límite de lo que puede consultar. Puede ver ${total ? `las ${total} cuentas` : "TODAS las cuentas"} de Deník: lístalas con denik_admin_list_orgs y pasa el orgId que te devuelva a cualquier otra tool (citas, servicios, clientes, resumen). Si pregunta "cuántos negocios hay" o pide ver otra cuenta, NO respondas con los suyos.` +
       ` Tiene tools de SOLO LECTURA sobre todas las cuentas: ` +
-      `denik_admin_list_orgs, denik_admin_platform_stats, denik_admin_events, denik_admin_usage. ` +
+      `denik_admin_list_orgs, denik_admin_platform_stats, denik_admin_events, denik_admin_usage, ` +
+      `denik_admin_sales, denik_admin_sales_detail, denik_admin_overview. ` +
+      `Si pregunta por un negocio en una fecha concreta ("cuántas citas y cuánto entró el martes en X"), ` +
+      `denik_admin_overview lo responde en UNA llamada. ` +
+      `CUIDADO al hablar de dinero: las citas se cuentan por cuándo OCURREN y el dinero por cuándo ENTRÓ, ` +
+      `así que son conjuntos distintos aunque sea el mismo día — cada bloque trae su campo basis; no los ` +
+      `sumes ni los presentes como si fueran lo mismo. ` +
       `Úsalas SÓLO si lo pide explícitamente y NUNCA compartas datos de otras cuentas en un canal ` +
       `donde haya alguien más.`;
   }
@@ -242,6 +251,31 @@ const USER_TOOLS: ConnectorTool[] = [
     handler: (sub, a) => {
       const intent = a.from && a.to ? "stats" : "today";
       return api(sub, `/api/agenda/org${qs({ ...a, intent }, ["intent", "orgId", "from", "to"])}`);
+    },
+  },
+  {
+    name: "denik_sales",
+    description:
+      "La CAJA del negocio: cuánto se cobró, por qué método (efectivo, transferencia, tarjeta, MercadoPago, bono) y por qué servicio, más lo que está por cobrar. Devuelve los mismos números que el dueño ve en su panel de Ventas. Úsala para preguntas de dinero — denik_org_summary es de agenda. Con detail=true lista cobro por cobro (incluye reembolsos) y ahí el rango es obligatorio. El rango es por fecha de COBRO, no de la cita.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        ...orgIdProp,
+        from: str("Desde YYYY-MM-DD. Sin rango, el resumen es histórico completo."),
+        to: str("Hasta YYYY-MM-DD."),
+        detail: {
+          type: "boolean",
+          description: "true = lista de cobros individuales en vez del resumen.",
+        },
+        limit: { type: "number", description: "Sólo con detail. 1-200, default 50." },
+      },
+    },
+    handler: (sub, a) => {
+      const intent = a.detail ? "detail" : "summary";
+      return api(
+        sub,
+        `/api/agenda/sales${qs({ ...a, intent }, ["intent", "orgId", "from", "to", "limit"])}`,
+      );
     },
   },
   {
@@ -363,6 +397,61 @@ const USER_TOOLS: ConnectorTool[] = [
 
 // Sólo para el equipo de Deník. SOLO LECTURA por diseño del lado del servidor.
 const ADMIN_TOOLS: ConnectorTool[] = [
+  {
+    name: "denik_admin_overview",
+    description:
+      "[Admin plataforma] Corte completo de UN negocio en un día o rango: agenda + caja + cobro por cobro. ÚSALA como primera opción cuando pregunten por un negocio en una fecha concreta ('cuántas citas y cuánto entró el martes en X'). Devuelve dos bloques que NO son el mismo conjunto: `agenda` cuenta las citas que OCURREN en el periodo (por start) y `caja` el dinero que ENTRÓ (por createdAt) — no los sumes ni los cruces, cada uno trae su campo `basis`.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        orgId: str("Id del negocio. Obligatorio."),
+        date: str("Un día: YYYY-MM-DD. Alternativa a from/to."),
+        from: str("Inicio del rango YYYY-MM-DD (si no usas date)."),
+        to: str("Fin del rango YYYY-MM-DD (si no usas date)."),
+        limit: { type: "number", description: "Cobros a listar. 1-500, default 200." },
+      },
+      required: ["orgId"],
+    },
+    handler: (sub, a) =>
+      api(sub, `/api/agenda/admin/overview${qs(a, ["orgId", "date", "from", "to", "limit"])}`),
+  },
+  {
+    name: "denik_admin_sales",
+    description:
+      "[Admin plataforma] Ventas en un rango: desglose por método de cobro y por servicio, pagado vs por cobrar, incluyendo la venta de paquetes (bonos). Sin orgId agrega TODA la plataforma y trae el ranking de negocios por ingreso; con orgId, sólo ese negocio. El rango es por fecha de COBRO, no por fecha de la cita. En `byMethod`, `free` significa servicio gratis (no hubo cobro) y `unknown` que de verdad no se sabe — no los confundas.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        from: str("Desde YYYY-MM-DD."),
+        to: str("Hasta YYYY-MM-DD."),
+        orgId: str("Opcional: limita a un negocio."),
+      },
+      required: ["from", "to"],
+    },
+    handler: (sub, a) => api(sub, `/api/agenda/admin/sales${qs(a, ["from", "to", "orgId"])}`),
+  },
+  {
+    name: "denik_admin_sales_detail",
+    description:
+      "[Admin plataforma] Cobros individuales (citas y paquetes) con monto real, método, estado y negocio. Aquí SÍ aparecen los reembolsos. Rango obligatorio y tope de 200; si `truncated` viene true, viste una muestra y no la caja completa — dilo así.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        from: str("Desde YYYY-MM-DD."),
+        to: str("Hasta YYYY-MM-DD."),
+        orgId: str("Limita a un negocio."),
+        status: str("paid | pending | refunded | cancelled."),
+        method: str("mercadopago | stripe | cash | transfer | card | package | free."),
+        limit: { type: "number", description: "1-200, default 50." },
+      },
+      required: ["from", "to"],
+    },
+    handler: (sub, a) =>
+      api(
+        sub,
+        `/api/agenda/admin/sales/detail${qs(a, ["from", "to", "orgId", "status", "method", "limit"])}`,
+      ),
+  },
   {
     name: "denik_admin_list_orgs",
     description:
