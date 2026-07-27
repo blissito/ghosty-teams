@@ -576,7 +576,39 @@ function toolLabel(raw: string): { ing: string; done: string } | null {
   return TOOL_LABELS[raw] || TOOL_LABELS[short] || null;
 }
 
-export async function runAgentTurn(opts: {
+// ── Turnos en vuelo: el VETO de esta caja contra la hibernación ──────────────
+//
+// El daemon (sandbox-host) pregunta GET /busy ANTES de congelar la microVM y solo procede
+// con busy:false. Congelar a mitad de un turno deja al usuario mirando una respuesta que no
+// avanza, y el agente pierde el hilo al despertar.
+//
+// Es un CONTADOR, no una respuesta a "¿estás ocupado ahora?": sube antes de empezar y baja
+// en un finally, así no hay carrera entre preguntar y congelar. Mismo patrón que
+// claude-worker (templates/claude-worker/src/server.ts en sandbox-host).
+//
+// Ojo con lo que NO cuenta: una pestaña abierta con SSE NO es "ocupado". Si lo fuera, esta
+// caja no dormiría jamás — que es exactamente lo que pasaba antes de existir este endpoint
+// (2 GB retenidos para siempre y un reintento cada 30 s en el journal del host). Dormir con
+// pestañas abiertas es seguro: el EventSource reconecta solo y el cliente recupera lo
+// perdido con getMessagesSince (catch-up por cursor, ver bus.server.ts).
+let turnsInflight = 0;
+
+export function agentTurnsInflight(): number {
+  return turnsInflight;
+}
+
+export async function runAgentTurn(
+  opts: Parameters<typeof runAgentTurnInner>[0]
+): Promise<{ id: number; reply: string }> {
+  turnsInflight++;
+  try {
+    return await runAgentTurnInner(opts);
+  } finally {
+    turnsInflight--; // en finally: un turno que revienta no puede dejar la caja despierta para siempre
+  }
+}
+
+async function runAgentTurnInner(opts: {
   agent: ResolvedAgent | undefined;
   handle: string;
   groupId: string;

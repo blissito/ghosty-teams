@@ -14,6 +14,7 @@ import { Route as LoginRouteImport } from './routes/login'
 import { Route as FormsRouteImport } from './routes/forms'
 import { Route as CanvasProbeRouteImport } from './routes/canvas-probe'
 import { Route as CanvasDemoRouteImport } from './routes/canvas-demo'
+import { Route as BusyRouteImport } from './routes/busy'
 import { Route as ArtifactsRouteImport } from './routes/artifacts'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as SetupIndexRouteImport } from './routes/setup.index'
@@ -62,6 +63,11 @@ const CanvasProbeRoute = CanvasProbeRouteImport.update({
 const CanvasDemoRoute = CanvasDemoRouteImport.update({
   id: '/canvas-demo',
   path: '/canvas-demo',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const BusyRoute = BusyRouteImport.update({
+  id: '/busy',
+  path: '/busy',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ArtifactsRoute = ArtifactsRouteImport.update({
@@ -189,6 +195,7 @@ const ApiArtifactStreamIdRoute = ApiArtifactStreamIdRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/artifacts': typeof ArtifactsRoute
+  '/busy': typeof BusyRoute
   '/canvas-demo': typeof CanvasDemoRoute
   '/canvas-probe': typeof CanvasProbeRoute
   '/forms': typeof FormsRoute
@@ -220,6 +227,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/artifacts': typeof ArtifactsRoute
+  '/busy': typeof BusyRoute
   '/canvas-demo': typeof CanvasDemoRoute
   '/canvas-probe': typeof CanvasProbeRoute
   '/forms': typeof FormsRoute
@@ -251,6 +259,7 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/artifacts': typeof ArtifactsRoute
+  '/busy': typeof BusyRoute
   '/canvas-demo': typeof CanvasDemoRoute
   '/canvas-probe': typeof CanvasProbeRoute
   '/forms': typeof FormsRoute
@@ -284,6 +293,7 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/artifacts'
+    | '/busy'
     | '/canvas-demo'
     | '/canvas-probe'
     | '/forms'
@@ -315,6 +325,7 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/artifacts'
+    | '/busy'
     | '/canvas-demo'
     | '/canvas-probe'
     | '/forms'
@@ -345,6 +356,7 @@ export interface FileRouteTypes {
     | '__root__'
     | '/'
     | '/artifacts'
+    | '/busy'
     | '/canvas-demo'
     | '/canvas-probe'
     | '/forms'
@@ -377,6 +389,7 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   ArtifactsRoute: typeof ArtifactsRoute
+  BusyRoute: typeof BusyRoute
   CanvasDemoRoute: typeof CanvasDemoRoute
   CanvasProbeRoute: typeof CanvasProbeRoute
   FormsRoute: typeof FormsRoute
@@ -436,6 +449,13 @@ declare module '@tanstack/react-router' {
       path: '/canvas-demo'
       fullPath: '/canvas-demo'
       preLoaderRoute: typeof CanvasDemoRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/busy': {
+      id: '/busy'
+      path: '/busy'
+      fullPath: '/busy'
+      preLoaderRoute: typeof BusyRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/artifacts': {
@@ -630,6 +650,7 @@ const SetupRouteWithChildren = SetupRoute._addFileChildren(SetupRouteChildren)
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   ArtifactsRoute: ArtifactsRoute,
+  BusyRoute: BusyRoute,
   CanvasDemoRoute: CanvasDemoRoute,
   CanvasProbeRoute: CanvasProbeRoute,
   FormsRoute: FormsRoute,
