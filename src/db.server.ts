@@ -840,15 +840,17 @@ export async function deletePushSub(endpoint: string): Promise<void> {
   await dbq("DELETE FROM gc_push_subs WHERE endpoint = ?", [endpoint]);
 }
 
-export type StoredPushSub = { endpoint: string; p256dh: string; auth: string };
+// `user_sub` viaja de vuelta porque el badge del ícono del PWA es POR PERSONA
+// (su total de no-leídos), no por suscripción — ver deliverWebPush.
+export type StoredPushSub = { endpoint: string; p256dh: string; auth: string; user_sub: string };
 export async function listPushSubsForUsers(subs: string[]): Promise<StoredPushSub[]> {
   if (!subs.length) return [];
   const ph = subs.map(() => "?").join(",");
   const rows = await dbq(
-    `SELECT endpoint, p256dh, auth FROM gc_push_subs WHERE user_sub IN (${ph})`,
+    `SELECT endpoint, p256dh, auth, user_sub FROM gc_push_subs WHERE user_sub IN (${ph})`,
     subs
   );
-  return rows.map((r) => ({ endpoint: r.endpoint!, p256dh: r.p256dh!, auth: r.auth! }));
+  return rows.map((r) => ({ endpoint: r.endpoint!, p256dh: r.p256dh!, auth: r.auth!, user_sub: r.user_sub! }));
 }
 
 // Rooms visibles para el user: públicos, o privados donde es miembro, o todos si owner.

@@ -103,6 +103,9 @@ type ActiveCall = {
   join: JoinDesc;
   ns: string; // para el reaper (fanout del quickcall:ended sin request)
   fanout: (ev: import("./bus.server").RtEvent) => void; // notifica a la audiencia
+  // Subs a los que se les mandó push de "te llaman" (sin el host, sin silenciados) →
+  // los mismos a los que hay que RETIRARSELA al colgar. Ver notifyCall/endCall.
+  pushed: string[];
 };
 const active = new Map<string, ActiveCall>(); // key: `${ns}::${scope}::${id}`
 const keyOf = (ns: string, scope: "room" | "dm", id: number) => `${ns}::${scope}::${id}`;
@@ -173,6 +176,16 @@ async function endCall(
 ): Promise<void> {
   active.delete(k);
   fanout({ t: "quickcall:ended", scope: c.scope, scopeId: c.scopeId, callId: c.callId });
+  // Retira el "te llaman" del sistema: sin esto queda una notificación muerta que al
+  // tocarla no lleva a ninguna llamada (requireInteraction = persiste hasta cerrarla).
+  if (c.pushed.length) {
+    const { notify } = await import("./notify.server");
+    notify(
+      { kind: "call-end", recipients: c.pushed, title: "", body: "", url: "/", tag: `call:${c.callId}` },
+      c.ns
+    ).catch(() => {});
+    c.pushed = [];
+  }
   try {
     const body = cardBody(c, true);
     await db.setMessageBody(c.statusMsgId, body);
@@ -205,6 +218,13 @@ async function resolveTarget(target: Target) {
     // workspace — el card por el canal del room basta; híbrido "room = menos intrusivo").
     const ringSubs =
       ch.is_private === 0 ? [] : (await db.getChannelMemberSubs(ch.id).catch(() => [] as string[]));
+    // Audiencia del PUSH de llamada (distinta de ringSubs, que es el timbre por SSE):
+    // aquí SÍ entra el room público — el evento SSE sólo lo ve quien tiene la pestaña
+    // abierta, y el reporte del 2026-07-27 era justo ese: "si estoy en otra ventana no
+    // veo la llamada". Público = todo el workspace; privado = sus miembros.
+    const audience = ch.is_private === 0
+      ? (await import("../users.server")).listUsers().then((us) => us.map((u) => u.sub))
+      : Promise.resolve(ringSubs);
     return {
       me: person, cfg, ns, db, bus,
       scope: "room" as const,
@@ -213,6 +233,7 @@ async function resolveTarget(target: Target) {
       label: ch.name,
       room,
       ringSubs,
+      audience: await audience,
       join: { scope: "room" as const, slug: ch.slug, scopeId: ch.id, label: ch.name } as JoinDesc,
       fanout: (ev: import("./bus.server").RtEvent) => bus.publish(bus.ch.room(ns, ch.id), ev),
     };
@@ -231,6 +252,7 @@ async function resolveTarget(target: Target) {
     label: "Llamada",
     room,
     ringSubs: [] as string[], // el fanout del DM YA va a los user-channels de los miembros
+    audience: members,
     join: { scope: "dm" as const, dmId: target.dmId, label: "Llamada" } as JoinDesc,
     fanout: (ev: import("./bus.server").RtEvent) => {
       for (const sub of members) bus.publish(bus.ch.user(ns, sub), ev);
@@ -269,6 +291,7 @@ export const startCallFn = createServerFn({ method: "POST" })
         join: t.join,
         ns: t.ns,
         fanout: t.fanout,
+        pushed: [],
       };
       const scopeArg = t.scope === "room" ? { channelId: t.scopeId } : { dmId: t.scopeId };
       const { id } = await t.db.createCallStatus(scopeArg, t.me.name, t.me.avatar, cardBody(c, false));
@@ -294,6 +317,35 @@ export const startCallFn = createServerFn({ method: "POST" })
       for (const sub of t.ringSubs) {
         if (sub !== t.me.sub) t.bus.publish(t.bus.ch.user(t.ns, sub), startedEv);
       }
+      // Notificación de SISTEMA (Web Push). El evento SSE de arriba sólo existe mientras
+      // haya pestaña abierta y mirando; sin esto una llamada no se ve con la app cerrada
+      // ni en segundo plano. TTL corto + urgency alta viven en notify.server.
+      // Best-effort: nunca bloquea ni tumba el inicio de la llamada.
+      void (async () => {
+        try {
+          const targets = await t.db.filterMutedOut(
+            t.audience.filter((s) => s && s !== t.me.sub),
+            t.scope,
+            t.scopeId
+          );
+          if (!targets.length) return;
+          c!.pushed = targets;
+          const { notify } = await import("./notify.server");
+          await notify(
+            {
+              kind: "call",
+              recipients: targets,
+              title: `${t.me.name} está llamando`,
+              body: t.scope === "room" ? `Llamada en #${t.label}` : "Llamada directa",
+              url: t.slug ? `/c/${t.slug}` : "/",
+              tag: `call:${c!.callId}`,
+            },
+            t.ns
+          );
+        } catch {
+          /* la llamada ya está viva; el push es un extra */
+        }
+      })();
     } else if (addPerson(c, t.me)) {
       await refreshCard(t.db, t.fanout, c);
     }

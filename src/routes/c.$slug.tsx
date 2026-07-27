@@ -120,6 +120,7 @@ import ArtifactPanel, { type ArtifactView, viewFromAttachment } from "../compone
 import { belongsToOpenConversation } from "../lib/conversation-scope";
 import { extractEbDoc, extractEbPatches, draftTitle, bubbleWithoutEbDoc, extractToolState, type ToolState } from "../lib/ebdoc";
 import { ThinkingRing } from "../components/ThinkingRing";
+import { showSystemNotification } from "../utils/system-notification";
 import { playNotificationSound, playGhostySound, playSelfSound, playMentionSound, playDmSound, playReadySound, playDeleteSound, playArtifactOpen, playArtifactClose, playArtifactReady, startCallRing, stopCallRing } from "../utils/notificationSound";
 
 // Menciones que cuentan como "a ti": tu @handle o una grupal (@all/@channel/…).
@@ -1460,12 +1461,7 @@ function ChannelPage() {
               }
             };
             pushToast({ sender: ev.msg.sender, avatar: ev.msg.avatar, preview, kind, onOpen });
-            if (!visible && typeof Notification !== "undefined" && Notification.permission === "granted") {
-              try {
-                const n = new Notification(ev.msg.sender, { body: preview, icon: "/ghosty.svg", tag: `gc-${dmId ?? chId}` });
-                n.onclick = () => { window.focus(); onOpen(); n.close(); };
-              } catch { /* algunos browsers exigen SW para notificar */ }
-            }
+            if (!visible) showSystemNotification(ev.msg.sender, preview, dmId != null ? undefined : channelsById.get(chId));
           }
         }
         // DM: parchea el flujo del DM y refresca la lista (orden / nueva conversación).
@@ -1740,6 +1736,42 @@ function ChannelPage() {
         clearUnread("dm", openDmId);
       });
   }, [openDmId]);
+  // VOLVER a la pestaña marca leído el scope abierto. Sin esto, los mensajes que
+  // llegaron con la pestaña oculta entran como no-leídos (bumpUnread en message:new)
+  // y NADA los limpia al regresar: los effects de arriba no re-disparan porque el
+  // scope no cambió. Es lo que hacía que un DM 1:1 activo acumulara burbujas
+  // (reportado 2026-07-27). Slack/Zulip marcan leído al recuperar el foco.
+  useEffect(() => {
+    const markCurrent = () => {
+      if (document.visibilityState !== "visible" || homeOpen) return;
+      if (openDmId != null) {
+        markReadFn({ data: { scope: "dm", scopeId: openDmId } }).catch(() => {});
+        clearUnread("dm", openDmId);
+      } else if (view == null) {
+        markReadFn({ data: { scope: "room", scopeId: channel.id } }).catch(() => {});
+        clearUnread("room", channel.id);
+      }
+    };
+    document.addEventListener("visibilitychange", markCurrent);
+    window.addEventListener("focus", markCurrent);
+    return () => {
+      document.removeEventListener("visibilitychange", markCurrent);
+      window.removeEventListener("focus", markCurrent);
+    };
+  }, [openDmId, view, homeOpen, channel.id]);
+  // Badge del ícono (PWA/dock): total de no-leídos. Sin esto no hay señal con la app
+  // cerrada en el teléfono. El SW lo actualiza también desde el push (ver sw.js).
+  useEffect(() => {
+    const nav = navigator as Navigator & {
+      setAppBadge?: (n?: number) => Promise<void>;
+      clearAppBadge?: () => Promise<void>;
+    };
+    if (!nav.setAppBadge) return;
+    const total =
+      [...unreadRooms.values()].reduce((a, b) => a + b, 0) +
+      [...unreadDms.values()].reduce((a, b) => a + b, 0);
+    (total > 0 ? nav.setAppBadge(total) : nav.clearAppBadge?.() ?? Promise.resolve()).catch(() => {});
+  }, [unreadRooms, unreadDms]);
   // Reconcilia optimistas de flujo (parentId y dmId null) contra el flujo real:
   // quita un optimista SOLO cuando su mensaje real (mismo sender+body) ya llegó —
   // así un evento SSE ajeno (otro autor) NO borra un optimista aún en vuelo.

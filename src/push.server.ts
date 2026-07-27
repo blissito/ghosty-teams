@@ -20,16 +20,31 @@ function ensureConfigured(): boolean {
 }
 
 export type PushSub = { endpoint: string; p256dh: string; auth: string };
-export type PushPayload = { title: string; body: string; url: string };
+// `badge` = total de no-leídos del destinatario (el SW lo pone en el ícono del PWA);
+// `tag` estable + `close` permiten retirar una notificación viva (llamada terminada).
+export type PushPayload = {
+  title: string;
+  body: string;
+  url: string;
+  kind?: string;
+  tag?: string;
+  badge?: number;
+  close?: boolean;
+};
 
 // Envía a una suscripción. Devuelve "gone" si el endpoint ya no existe (404/410)
 // para que el caller la borre.
-export async function sendPush(sub: PushSub, payload: PushPayload): Promise<"ok" | "gone" | "error"> {
+export async function sendPush(
+  sub: PushSub,
+  payload: PushPayload,
+  opts?: { ttl?: number; urgency?: "very-low" | "low" | "normal" | "high" }
+): Promise<"ok" | "gone" | "error"> {
   if (!ensureConfigured()) return "error";
   try {
     await webpush.sendNotification(
       { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } },
-      JSON.stringify(payload)
+      JSON.stringify(payload),
+      { TTL: opts?.ttl ?? 60 * 60 * 24, urgency: opts?.urgency ?? "normal" }
     );
     return "ok";
   } catch (e) {

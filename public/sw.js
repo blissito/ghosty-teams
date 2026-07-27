@@ -20,13 +20,27 @@ self.addEventListener("activate", (event) => {
   );
 });
 
-// Push: notificación cuando te taggean.
+// Push: notificación cuando te taggean, te escriben o te llaman.
 self.addEventListener("push", (event) => {
   let data = {};
   try {
     data = event.data ? event.data.json() : {};
   } catch {
     data = {};
+  }
+  // Badge del ícono (PWA): el server manda el total de no-leídos del usuario. Con la
+  // app CERRADA este es el único camino — la página no corre para llamar setAppBadge.
+  if (typeof data.badge === "number" && navigator.setAppBadge) {
+    if (data.badge > 0) navigator.setAppBadge(data.badge).catch(() => {});
+    else navigator.clearAppBadge?.().catch(() => {});
+  }
+  // Cierre remoto: la llamada terminó / fue contestada → retira su notificación en vez
+  // de dejar un "te llaman" muerto en pantalla. No muestra nada nuevo.
+  if (data.close && data.tag) {
+    event.waitUntil(
+      self.registration.getNotifications({ tag: data.tag }).then((ns) => ns.forEach((n) => n.close()))
+    );
+    return;
   }
   const title = data.title || "Ghosty Teams";
   const options = {
@@ -43,6 +57,11 @@ self.addEventListener("push", (event) => {
     // donde el banner se auto-oculta rápido y con throttling puede perderse).
     requireInteraction: true,
   };
+  // Llamada entrante: patrón de vibración de timbre y botón para entrar directo.
+  if (data.kind === "call") {
+    options.vibrate = [400, 200, 400, 200, 400];
+    options.actions = [{ action: "join", title: "Entrar" }];
+  }
   event.waitUntil(self.registration.showNotification(title, options));
 });
 
