@@ -166,7 +166,10 @@ plataforma):
   wizard. Typeahead lista agentes + usuarios. Routing por `@handle`; los hilos
   continúan con el agente del root. (`src/agents.server.ts`, `src/server/agents.ts`).
 - **Menciones a usuarios + push**: `@handle` de un user → Web Push (VAPID). Subs
-  en `gc_push_subs`; SW handlers en `public/sw.js`.
+  en `gc_push_subs`; SW handlers en `public/sw.js`. Cliente y server se reparten el
+  aviso según presencia, y hay reglas que NO son obvias (nunca `new Notification`,
+  badge del ícono en dos lados, tag de llamada load-bearing) →
+  **`docs/NOTIFICATIONS.md`**.
 - **PWA**: `public/manifest.webmanifest` + `sw.js` + `InstallAppBanner`
   (Chrome/Android/desktop = prompt nativo; iOS = tutorial). Iconos Ghosty.
 - **Rooms CRUD** público/privado + miembros (typeahead de miembros existentes).
