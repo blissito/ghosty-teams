@@ -1,15 +1,50 @@
 # Deploy / Rebake — Ghosty Teams
 
-El app corre en microVMs Firecracker desde un **template inmutable** `ghosty-chat`
-horneado **en el host OVH KS-5** (ARCHITECTURE §6). Los secrets **no** se hornean:
-se inyectan en `/app/secrets.env` al provisionar. El provisioner de Formmy
-(`formmy_rrv7/app/.server/provision.server.ts`) sólo **consume** el template vía
-`POST /api/v2/sandboxes {template:"ghosty-chat"}`; no lo construye.
+> ## ⚠️ LEE ESTO ANTES QUE NADA (actualizado 2026-07-27)
+>
+> Buena parte de lo que sigue quedó obsoleto el 2026-07-27. Los tres cambios que
+> invalidan el runbook histórico:
+>
+> 1. **El template `ghosty-chat` ya no existe** (`sandbox-host@b5762dc`). El canónico y
+>    PERMANENTE es **`ghosty-teams`**, que instala en `/opt/ghosty-teams` con unit
+>    `ghosty-teams`. **`./scripts/rebake.sh` de este repo está MUERTO**: apunta a un template
+>    borrado, aborta en el `docker build` y de paso re-materializa el legacy que se eliminó
+>    justo por causar spawns erróneos. No lo corras.
+> 2. **El ingress de Teams se borró de `formmy_rrv7`** (`acdccc1`); Teams vive en
+>    `ghosty.studio` (`TEAMS_ROOT_DOMAIN=teams.ghosty.studio`, un subdominio por team —
+>    el apex NO tiene certificado, sólo `*.teams…`). **`reviveBox` ya no existe en `main`.**
+>    Por lo tanto **NO destruyas la caja**: hoy no hay quien la reviva. Todo el runbook de
+>    "cutover destruyendo la caja" de más abajo está suspendido hasta que el revive reaparezca
+>    en ghosty.studio.
+> 3. **Ya no todo cambio necesita rebake.** Ver la tabla:
+>
+> | Qué cambió | Herramienta | Efecto |
+> |---|---|---|
+> | Sólo código (`src/`, `packages/`) | `~/sandbox-host/scripts/deploy_ghosty_teams.sh` | **Hot-deploy**: build local → push del `.output` a la caja viva → restart del unit. Segundos, sin recrear nada, sin tocar la DB. |
+> | Deps (`package.json`) o el template | `~/sandbox-host/scripts/rebake_ghosty_teams.sh` | Hornea `ghosty-teams.ext4`. **No** afecta a la caja viva. |
+>
+> **Antes de un hot-deploy**: respalda el bundle DENTRO de la caja
+> (`cp -a /opt/ghosty-teams/.output /opt/ghosty-teams/.output.bak-<ts>`) — el script hace
+> `rm -rf .output` y no deja copia. Ese respaldo es el único rollback.
+>
+> **Antes de un rebake**: respalda el ext4 a mano
+> (`cp -f …/ghosty-teams.ext4 …/ghosty-teams.ext4.bak-$(date +%Y%m%d-%H%M)`). El script
+> `rebake_ghosty_teams.sh` **no lo hace** (se escribió asumiendo el primer bake, cuando el
+> archivo no existía) y `build_template.sh:233` hace `rm -f` del ext4 vivo antes de reconstruir.
+>
+> ### ⏳ PENDIENTE tras el rebake del 2026-07-27
+> El ext4 está al día, pero **`ensureBaseLoop` cachea un loop RO por template en memoria del
+> daemon**. Tras el `rm -f` el loop quedó apuntando al inode viejo (`losetup -a` lo muestra como
+> `(deleted)`) — inofensivo para la caja viva, que sigue corriendo sobre él, pero significa que
+> **una caja NUEVA seguiría forkeando el ext4 viejo**. Refrescarlo exige matar las cajas del
+> template y reiniciar `sandbox-host`, que es justo lo que no se puede hacer sin `reviveBox`.
+> **Hazlo cuando toque recrear la caja deliberadamente**, en el mismo movimiento.
+>
+> Verifica un bake por CONTENIDO, nunca por el "✓ template built" (los bakes silenciosos de
+> 07-14 y 07-21 imprimían éxito): `mount -o loop,ro` del ext4 y busca un símbolo que sólo exista
+> en el código nuevo.
 
-> **Cada cambio de runtime necesita un rebake para llegar a prod.** No hay
-> hot-reload en las VMs: sirven el bundle horneado en `/opt/ghosty-chat`.
-
-## Rebake en un comando
+## Rebake en un comando (LEGACY — `ghosty-chat`, template borrado)
 
 ```bash
 ./scripts/rebake.sh          # HOST=54.38.94.14, KEY=~/.ssh/id_rsa_ovh por defecto
@@ -140,7 +175,11 @@ OK. La DB del team respondía `SELECT 1`. O sea: plataforma + template + DB sano
    PLATAFORMA): `GET {EB}/api/v2/databases` (lista todas), `POST {EB}/api/v2/databases/{dbId}/query`
    `{sql,args}`. dbId del team = su `dbNamespace`.
 
-**Lección / hardening pendiente (formmy_rrv7 server.ts):** `status='provisioning'` debería
-**auto-sanar** — si `Date.now()-updatedAt` supera un umbral (p.ej. 2 min), tratar como caja
-muerta y re-disparar `reviveBox` en vez de mostrar la warming page indefinidamente. Y NO
-redeployar formmy-v2 mientras hay revives de team en vuelo (mata el async de fondo).
+**Lección / hardening — YA IMPLEMENTADO** (`formmy_rrv7@557f513`, 2026-07-06): `status='provisioning'`
+**auto-sana** vía `PROVISIONING_GRACE_MS = 120_000` — pasados 2 min desde `updatedAt` se trata
+como caja muerta y se re-dispara `reviveBox` en vez de mostrar la warming page para siempre.
+Lo que sigue vigente es la regla operativa: NO redeployar formmy-v2 mientras hay revives en
+vuelo (mata el async de fondo); ahora sólo cuesta 2 min de espera en vez de quedar pegado.
+
+> Ojo: ese código se borró de `formmy_rrv7@acdccc1` al mudar Teams a ghosty.studio. Queda aquí
+> como referencia de lo que hay que re-implementar del lado nuevo, no como algo vivo hoy.
