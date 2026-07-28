@@ -25,10 +25,13 @@ export default function ArtifactShareDialog({
   documentId,
   onClose,
   onVisibility,
+  onChange,
 }: {
   documentId: string;
   onClose: () => void;
   onVisibility?: (v: "private" | "link") => void;
+  /** Cambió algo que afecta a lo que se sirve (p.ej. la versión compartida). */
+  onChange?: () => void;
 }) {
   const t = useT();
   const [share, setShare] = useState<Share | null>(null);
@@ -69,11 +72,32 @@ export default function ArtifactShareDialog({
       const { setArtifactShareFn } = await import("../server/artifacts");
       const s = (await setArtifactShareFn({ data: { documentId, ...patch } })) as Share | null;
       setShare(s);
-      if (s) onVisibility?.(s.visibility);
+      if (s) {
+        onVisibility?.(s.visibility);
+        // La página del artefacto sirve la versión elegida desde su loader: sin
+        // avisar, elegir "Versión 2" cambiaba el select y dejaba el documento igual.
+        onChange?.();
+      }
+      return s;
     } catch (e) {
       setError(String((e as Error)?.message ?? e));
+      return null;
     } finally {
       setSaving(false);
+    }
+  };
+
+  // Copiar al portapapeles y avisar. Separado de copyLink() porque tras confirmar
+  // "compartir públicamente" ya tenemos el slug en la mano y volver a pedirlo sería
+  // un viaje de más.
+  const writeLink = async (slug: string) => {
+    const url = `${window.location.origin}/artefacto/${slug}`;
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2400);
+    } catch {
+      window.prompt(t("Copia el enlace:"), url);
     }
   };
 
@@ -89,9 +113,7 @@ export default function ArtifactShareDialog({
       slug = s?.slug ?? null;
     }
     if (!slug) return;
-    await navigator.clipboard.writeText(`${window.location.origin}/artefacto/${slug}`);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1600);
+    await writeLink(slug);
   };
 
   const owner = share?.owner;
@@ -157,6 +179,17 @@ export default function ArtifactShareDialog({
                 </div>
                 <span className="shrink-0 text-xs text-muted">{t("Dueño")}</span>
               </div>
+              {/* Si está público, la lista se contradecía: enseñaba UNA persona bajo el
+                  título "quién tiene acceso" mientras el mundo entero podía entrar. */}
+              {share.visibility === "link" ? (
+                <div className="flex items-center gap-2.5">
+                  <span className="grid size-8 shrink-0 place-items-center rounded-full bg-surface-3 text-muted">
+                    <Globe size={15} />
+                  </span>
+                  <p className="min-w-0 flex-1 truncate text-sm text-ink">{t("Cualquiera con el enlace")}</p>
+                  <span className="shrink-0 text-xs text-muted">{t("Puede ver")}</span>
+                </div>
+              ) : null}
             </section>
 
             <section className="flex flex-col gap-2">
@@ -231,7 +264,11 @@ export default function ArtifactShareDialog({
                 type="button"
                 onClick={async () => {
                   setConfirmPublic(false);
-                  await apply({ visibility: "link" });
+                  // Abrirlo y COPIARLO en un paso: quien confirma esto es porque va a
+                  // pegar el link ahora. Antes había que volver a "Copiar enlace" y el
+                  // botón no daba ninguna señal de que algo hubiera pasado.
+                  const s = await apply({ visibility: "link" });
+                  if (s?.slug) await writeLink(s.slug);
                 }}
                 className="rounded-lg bg-brand px-3 py-1.5 text-sm font-medium text-surface transition hover:opacity-90"
               >

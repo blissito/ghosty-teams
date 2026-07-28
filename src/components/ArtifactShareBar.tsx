@@ -7,7 +7,7 @@ import ArtifactShareDialog from "./ArtifactShareDialog";
  * La barra de un artefacto: identidad (título, autor, versión) + compartir.
  *
  * Es UNA sola para los dos lugares donde se ve un artefacto — el panel dentro de
- * Teams y la página pública /a/<slug> — porque la topbar se rompía en anchos
+ * Teams y la página pública /artefacto/<slug> — porque la topbar se rompía en anchos
  * angostos y arreglarla en dos sitios significaba arreglarla en uno solo.
  *
  * Se colapsa por ANCHO REAL de la barra (ResizeObserver), no por el viewport: el
@@ -30,6 +30,8 @@ export type ArtifactShareBarProps = {
   /** Slot de la izquierda (volver, ícono del agente). */
   leading?: React.ReactNode;
   onReport?: () => void;
+  /** Cambió el estado de compartir → la superficie debe releer lo que sirve. */
+  onShareChange?: () => void;
 };
 
 export default function ArtifactShareBar({
@@ -41,6 +43,7 @@ export default function ArtifactShareBar({
   pinnedActions,
   leading,
   onReport,
+  onShareChange,
 }: ArtifactShareBarProps) {
   const t = useT();
   const barRef = useRef<HTMLElement | null>(null);
@@ -170,6 +173,7 @@ export default function ArtifactShareBar({
             <ArtifactShareDialog
               documentId={documentId}
               onVisibility={(v) => setIsPublic(v === "link")}
+              onChange={onShareChange}
               onClose={() => setShareOpen(false)}
             />
           ) : null}

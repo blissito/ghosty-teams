@@ -1,4 +1,4 @@
-import { createFileRoute, notFound } from "@tanstack/react-router";
+import { createFileRoute, notFound, useRouter } from "@tanstack/react-router";
 import { createServerFn } from "@tanstack/react-start";
 import ArtifactShareBar from "../components/ArtifactShareBar";
 import GhostyMascot, { blinkTiming } from "../components/GhostyMascot";
@@ -94,6 +94,7 @@ export const Route = createFileRoute("/artefacto/$id")({
 
 function SharedArtifact() {
   const t = useT();
+  const router = useRouter();
   const { id } = Route.useParams();
   const d = Route.useLoaderData();
   // El parpadeo se siembra con el slug: estable entre render y render (nada de
@@ -114,6 +115,9 @@ function SharedArtifact() {
         // Compartir sólo lo ve el dueño: a un visitante no le sirve un panel de
         // permisos que no puede tocar.
         documentId={d.isOwner ? d.documentId : null}
+        // Elegir otra versión cambia lo que hay que servir: sin re-correr el loader,
+        // el select cambiaba y el documento se quedaba igual.
+        onShareChange={() => router.invalidate()}
       />
       <iframe
         title={d.title}
