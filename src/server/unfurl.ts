@@ -5,7 +5,7 @@ import { createServerFn } from "@tanstack/react-start";
 // CORS y NO filtrar la IP del viewer. Cache en memoria por URL (TTL) + timeout corto.
 // Solo http(s), sin deps (regex sobre el <head>).
 
-type Unfurl = { url: string; title?: string; description?: string; image?: string; site?: string } | null;
+type Unfurl = { url: string; title?: string; description?: string; image?: string; site?: string; favicon?: string } | null;
 const cache = new Map<string, { at: number; data: Unfurl }>();
 const TTL = 60 * 60 * 1000; // 1h
 
@@ -22,6 +22,25 @@ function metaTag(html: string, keys: string[]): string | undefined {
 function decodeEntities(s: string): string {
   return s.replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&#x27;/gi, "'");
 }
+/**
+ * Favicon del sitio. Sale de ACÁ y no de `google.com/s2/favicons`: ese atajo le
+ * contaría a Google qué está leyendo el equipo en cada mensaje que trae un link.
+ * Si el head no lo declara, se apuesta al /favicon.ico del origen — si tampoco
+ * existe, el chip cae al dominio a secas (no rompe nada).
+ */
+function faviconFrom(head: string, base: string): string | undefined {
+  const m =
+    head.match(/<link[^>]+rel=["'][^"']*\bicon\b[^"']*["'][^>]+href=["']([^"']+)["']/i) ||
+    head.match(/<link[^>]+href=["']([^"']+)["'][^>]+rel=["'][^"']*\bicon\b[^"']*["']/i);
+  const declared = absolutize(m?.[1], base);
+  if (declared) return declared;
+  try {
+    return new URL("/favicon.ico", base).href;
+  } catch {
+    return undefined;
+  }
+}
+
 function absolutize(u: string | undefined, base: string): string | undefined {
   if (!u) return undefined;
   try { return new URL(u, base).href; } catch { return undefined; }
@@ -53,7 +72,10 @@ export const unfurlLinkFn = createServerFn({ method: "GET" })
         const description = metaTag(head, ["og:description", "twitter:description", "description"]);
         const image = absolutize(metaTag(head, ["og:image:secure_url", "og:image", "twitter:image", "twitter:image:src"]), res.url || url);
         const site = metaTag(head, ["og:site_name"]) || new URL(res.url || url).hostname.replace(/^www\./, "");
-        if (title || description || image) data2 = { url, title, description, image, site };
+        const favicon = faviconFrom(head, res.url || url);
+        // Basta con el favicon para que el chip de fuente valga la pena: un link
+        // sin OG igual se pinta con su icono y su dominio.
+        if (title || description || image || favicon) data2 = { url, title, description, image, site, favicon };
       }
     } catch { /* timeout/red/parse → sin preview */ }
     cache.set(url, { at: Date.now(), data: data2 });

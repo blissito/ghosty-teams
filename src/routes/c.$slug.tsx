@@ -4942,7 +4942,7 @@ function firstUnreadId(messages: Message[] | null, newAt: number | null, meName?
 // Divisor "nuevos mensajes" (referencia Zulip: inline, no pill flotante).
 // Preview de link (unfurl) estilo Slack/WhatsApp: tarjeta con imagen OG + título + desc.
 // El fetch + parseo es server-side (unfurlLinkFn), cacheado por URL en el cliente también.
-type LinkData = { url: string; title?: string; description?: string; image?: string; site?: string } | null;
+type LinkData = { url: string; title?: string; description?: string; image?: string; site?: string; favicon?: string } | null;
 const unfurlCache = new Map<string, LinkData>();
 function LinkPreview({ url }: { url: string }) {
   const [data, setData] = useState<LinkData>(unfurlCache.get(url) ?? null);
@@ -4966,9 +4966,107 @@ function LinkPreview({ url }: { url: string }) {
   );
 }
 // Primera URL http(s) del cuerpo (para unfurl). Quita puntuación final pegada.
-function firstUrl(body: string): string | null {
-  const m = body.match(/https?:\/\/[^\s<>()]+/);
-  return m ? m[0].replace(/[.,;:!?)\]]+$/, "") : null;
+/**
+ * Todas las URLs del cuerpo, deduplicadas POR DOMINIO y con tope.
+ *
+ * Por dominio y no por URL: cuando el agente cita cuatro páginas del mismo sitio,
+ * cuatro chips iguales no informan más que uno.
+ */
+function allUrls(body: string, max = 5): string[] {
+  const found = body.match(/https?:\/\/[^\s<>()]+/g) ?? [];
+  const porDominio = new Map<string, string>();
+  for (const raw of found) {
+    const u = raw.replace(/[.,;:!?)\]]+$/, "");
+    try {
+      const host = new URL(u).hostname.replace(/^www\./, "");
+      if (!porDominio.has(host)) porDominio.set(host, u);
+    } catch {
+      /* URL basura → fuera */
+    }
+    if (porDominio.size >= max) break;
+  }
+  return [...porDominio.values()];
+}
+
+function hostOf(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "");
+  } catch {
+    return url;
+  }
+}
+
+/**
+ * Fuentes citadas: fila de chips compactos (favicon + dominio + título corto).
+ *
+ * Cuando el agente responde citando varias páginas, el contenido es SU respuesta y
+ * las fuentes son respaldo — cinco tarjetas grandes se comerían el mensaje. Es lo
+ * que hacen Perplexity/ChatGPT, y distinto de "te comparto este link" (un link
+ * solo), que sigue siendo tarjeta rica.
+ */
+function SourceChip({ url }: { url: string }) {
+  const [data, setData] = useState<LinkData>(unfurlCache.get(url) ?? null);
+  const [sinIcono, setSinIcono] = useState(false);
+  useEffect(() => {
+    if (unfurlCache.has(url)) {
+      setData(unfurlCache.get(url) ?? null);
+      return;
+    }
+    let alive = true;
+    unfurlLinkFn({ data: { url } })
+      .then((d) => {
+        unfurlCache.set(url, d);
+        if (alive) setData(d);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [url]);
+
+  const host = hostOf(url);
+  // Aunque el unfurl falle (timeout, 403, no-HTML) el chip se pinta igual con su
+  // dominio: una fuente que no se pudo leer no debe DESAPARECER de las fuentes.
+  return (
+    <a
+      href={url}
+      target="_blank"
+      rel="noreferrer noopener"
+      title={data?.title || url}
+      className="flex min-w-0 max-w-[15rem] items-center gap-1.5 rounded-full border border-border bg-surface-2 px-2.5 py-1 text-xs transition-colors hover:border-brand/50 hover:bg-surface-3"
+    >
+      {data?.favicon && !sinIcono ? (
+        <img
+          src={data.favicon}
+          alt=""
+          loading="lazy"
+          decoding="async"
+          onError={() => setSinIcono(true)}
+          className="h-3.5 w-3.5 shrink-0 rounded-sm"
+        />
+      ) : (
+        <span className="h-3.5 w-3.5 shrink-0 rounded-sm bg-brand/20" />
+      )}
+      <span className="truncate text-muted">{data?.title || host}</span>
+    </a>
+  );
+}
+
+function SourceChips({ urls }: { urls: string[] }) {
+  return (
+    <div className="mt-1.5 flex flex-wrap gap-1.5">
+      {urls.map((u, i) => (
+        <motion.div
+          key={u}
+          initial={{ opacity: 0, y: 4 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: Math.min(i * 0.04, 0.2), duration: 0.18 }}
+        >
+          <SourceChip url={u} />
+        </motion.div>
+      ))}
+    </div>
+  );
 }
 
 function NewDivider() {
@@ -6636,10 +6734,12 @@ function MessageRow({
             </div>
           ) : null
         )}
-        {/* Link preview (unfurl) de la primera URL — salvo que el link sea el del artefacto. */}
+        {/* UN link = "te comparto esto" → tarjeta rica. VARIOS = "en esto me basé"
+            → fila de chips. Si el mensaje trae artefacto, manda el artefacto. */}
         {!editing && m.body && !m.artifact && (() => {
-          const u = firstUrl(bubbleWithoutEbDoc(m.body));
-          return u ? <LinkPreview url={u} /> : null;
+          const urls = allUrls(bubbleWithoutEbDoc(m.body));
+          if (urls.length === 0) return null;
+          return urls.length === 1 ? <LinkPreview url={urls[0]} /> : <SourceChips urls={urls} />;
         })()}
         {m.attachments && m.attachments.length > 0 && <AttachmentList attachments={m.attachments} />}
         {m.artifact && (
