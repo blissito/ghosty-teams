@@ -683,7 +683,9 @@ export default function ArtifactPanel({
     // ese link se abría sin marco y seguía sirviendo después de poner el artefacto
     // en privado. El HTML de ahí dentro sí lo sirve el CDN.
     if (shareUrl) {
-      window.open(shareUrl, "_blank", "noopener");
+      // `?v=latest` sólo al ABRIR: enseña lo que tienes en pantalla. El enlace que se
+      // COPIA va limpio, porque ahí sí manda la versión que fijaste para quien lo reciba.
+      window.open(`${shareUrl}?v=latest`, "_blank", "noopener");
       return;
     }
     const url = URL.createObjectURL(new Blob([artifactHtml ?? artifact.html], { type: "text/html" }));

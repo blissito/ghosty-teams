@@ -857,6 +857,12 @@ function RefinePanel({ store, node, doc, refineProvider }: { store: EditorStore;
   // Arranca en 'tweak': el modo seguro. Un rediseño no pedido borra trabajo.
   const [mode, setMode] = useState<RefineMode>('tweak')
   const [received, setReceived] = useState(0)
+  const [elapsed, setElapsed] = useState(0)
+  useLayoutEffect(() => {
+    if (!busy) return
+    const t = setInterval(() => setElapsed((s) => s + 1), 1000)
+    return () => clearInterval(t)
+  }, [busy])
   const activeModel = models.find((m) => m.id === modelId)
   // El primero de la lista que sí sirve para rediseñar; la lista ya viene
   // ordenada de más barato a más capaz, así que es la alternativa más barata.
@@ -868,6 +874,7 @@ function RefinePanel({ store, node, doc, refineProvider }: { store: EditorStore;
     setError(null)
     setSummary(null)
     setReceived(0)
+    setElapsed(0)
     const before = node
     const currentHtml = nodeSubtreeToHtml(node)
     let lastPaint = 0
@@ -1044,8 +1051,13 @@ function RefinePanel({ store, node, doc, refineProvider }: { store: EditorStore;
         {busy ? (
           <>
             <span className="ce-spinner" />
-            {mode === 'redesign' ? 'Rediseñando' : 'Refinando'}
-            {received > 0 ? ` ${Math.round(received / 100) / 10}k…` : '…'}
+            {/* Antes del primer token no hay nada que contar: los modelos que
+                razonan (Gemini 2.5 Pro) tardan decenas de segundos en arrancar y
+                un contador clavado en 0 se lee como "se colgó". El reloj corre
+                desde el principio, así que siempre hay señal de vida. */}
+            {received > 0
+              ? `${mode === 'redesign' ? 'Rediseñando' : 'Refinando'} ${Math.round(received / 100) / 10}k…`
+              : `Pensando… ${elapsed}s`}
           </>
         ) : (
           <>

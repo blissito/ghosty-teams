@@ -207,7 +207,14 @@ async function shareStateFor(documentId: string, meSub: string | null): Promise<
  */
 export async function resolveSharedArtifact(
   slug: string,
-  meSub: string | null
+  meSub: string | null,
+  /**
+   * Qué versión MIRAR, si quien abre lo pidió explícitamente: `"latest"` (lo que manda
+   * el panel al abrir en pestaña nueva — "enséñame lo que estoy viendo") o el id de una.
+   * Manda sobre la versión fijada, que es una promesa a quien recibe TU enlace, no una
+   * instrucción sobre lo que tú acabas de pedir ver.
+   */
+  view?: string | null
 ): Promise<{
   root: { id: number; url: string; ownerSub: string | null; visibility: "private" | "link" };
   /** `src` = la URL del CDN (artefacto.ghosty.studio/<key>) de ESA versión. */
@@ -228,7 +235,18 @@ export async function resolveSharedArtifact(
   // La versión ELEGIDA manda, también para el dueño: si no, el selector no hace nada
   // visible y parece descompuesto (que es como se ve forzar "siempre la última").
   // Para ver lo vivo se elige "La más reciente", que es el default.
-  const idx = root.sharedArtifactId ? versions.findIndex((v) => v.id === root.sharedArtifactId) : -1;
+  const wanted =
+    view === "latest"
+      ? versions.length - 1
+      : view && Number.isFinite(Number(view))
+        ? versions.findIndex((v) => v.id === Number(view))
+        : -1;
+  const idx =
+    wanted >= 0
+      ? wanted
+      : root.sharedArtifactId
+        ? versions.findIndex((v) => v.id === root.sharedArtifactId)
+        : -1;
   const chosen = idx >= 0 ? versions[idx] : versions[versions.length - 1];
   const full = await db.getArtifactVersion(chosen.id);
   if (!full) return null;
@@ -238,7 +256,16 @@ export async function resolveSharedArtifact(
     // "fijada" y no sólo el número: el badge a secas se lee como "ésta es la actual", y
     // abrir el enlace y encontrarte una versión vieja de lo que tienes en pantalla parece
     // un bug. Sólo aparece cuando alguien la congeló a propósito.
-    versionLabel: idx >= 0 ? `Versión ${idx + 1} · fijada` : null,
+    // "fijada" sólo cuando lo que se sirve es la versión congelada; si la pidió quien
+    // abre (?v=…), es simplemente la versión que está mirando.
+    versionLabel:
+      idx < 0
+        ? null
+        : wanted >= 0
+          ? idx === versions.length - 1
+            ? null
+            : `Versión ${idx + 1}`
+          : `Versión ${idx + 1} · fijada`,
     isOwner,
   };
 }

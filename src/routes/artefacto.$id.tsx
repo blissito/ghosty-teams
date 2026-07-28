@@ -15,7 +15,7 @@ import { useT } from "../i18n";
 // pinta el marco, y la de raw es la que realmente entrega el contenido.
 
 const loadShared = createServerFn({ method: "GET" })
-  .validator((d: { slug: string }) => d)
+  .validator((d: { slug: string; v?: string | null }) => d)
   .handler(async ({ data }) => {
     const { useSession } = await import("@tanstack/react-start/server");
     const { sessionConfig } = await import("../server/session.server");
@@ -32,7 +32,7 @@ const loadShared = createServerFn({ method: "GET" })
     let found: Awaited<ReturnType<typeof import("../server/artifacts").resolveSharedArtifact>>;
     try {
       const { resolveSharedArtifact } = await import("../server/artifacts");
-      found = await resolveSharedArtifact(data.slug, meSub);
+      found = await resolveSharedArtifact(data.slug, meSub, data.v ?? null);
     } catch (e) {
       console.error("[artifact share] resolve falló", e);
       return null;
@@ -66,6 +66,9 @@ const loadShared = createServerFn({ method: "GET" })
       // Privado va por /raw, que es del mismo origen y sí ve la sesión.
       contentUrl: found.root.visibility === "link" ? found.version.src : null,
       versionId: found.version.id,
+      // El iframe pide la MISMA versión que el marco: si no, el /raw resolvería por su
+      // cuenta y podría entregar otra.
+      viewParam: data.v ? `?v=${encodeURIComponent(data.v)}` : "",
     };
   });
 
@@ -74,8 +77,13 @@ export const Route = createFileRoute("/artefacto/$id")({
   // y servir el loader viejo enseñaba el documento anterior tras cambiarlos.
   staleTime: 0,
   gcTime: 0,
-  loader: async ({ params }) => {
-    const data = await loadShared({ data: { slug: params.id } });
+  // `?v=latest` (o el id de una versión) = "enséñame ésta". El panel lo pone al abrir en
+  // pestaña nueva: lo que se abre debe ser lo que estabas viendo, no lo que esté fijado
+  // para quien reciba el enlace.
+  validateSearch: (search: Record<string, unknown>) => ({ v: typeof search.v === "string" ? search.v : undefined }),
+  loaderDeps: ({ search }) => ({ v: search.v }),
+  loader: async ({ params, deps }) => {
+    const data = await loadShared({ data: { slug: params.id, v: deps.v ?? null } });
     // Sin acceso y no existe se responden IGUAL: un 403 confirmaría que el
     // artefacto existe, que ya es información sobre alguien más.
     if (!data) throw notFound();
@@ -136,7 +144,7 @@ function SharedArtifact() {
         title={d.title}
         // CDN primero (artefacto.ghosty.studio/<key>): el contenido no pasa por la
         // app ni por la DB. El /raw sólo entra para filas viejas sin `src`.
-        src={d.contentUrl || `/artefacto/${encodeURIComponent(id)}/raw`}
+        src={d.contentUrl || `/artefacto/${encodeURIComponent(id)}/raw${d.viewParam}`}
         sandbox="allow-scripts allow-forms allow-popups"
         referrerPolicy="no-referrer"
         // El fondo NO es blanco: al cambiar de versión el iframe se remonta y, mientras

@@ -143,6 +143,87 @@ export function refineContext(doc: Doc, id: NodeId): string {
         .join(', ')}`,
     )
   }
+  const geo = measureContext(id)
+  if (geo) lines.push(geo)
+  return lines.join('\n')
+}
+
+/**
+ * Medidas REALES del nodo y sus hermanos, leídas del lienzo.
+ *
+ * POR QUÉ EXISTE: el modelo sólo ve HTML y clases, y hay defectos que no están
+ * ahí. Dos badges `absolute` que se encabalgan no se deducen del marcado — dependen
+ * del ancho real del texto y de la caja que los contiene. Pedirle "arregla el
+ * solape" a ciegas es pedirle que adivine, y por eso fallaba una y otra vez.
+ *
+ * Con esto recibe el dato ("te solapas 62px con el hermano X") y puede corregir.
+ * Las medidas se dividen por la escala de la cámara para reportar px de layout,
+ * no px de pantalla: `offsetWidth` no lo afecta el `transform` del canvas y
+ * `getBoundingClientRect` sí, así que su cociente ES el zoom.
+ */
+export function measureContext(id: NodeId): string {
+  if (typeof document === 'undefined') return ''
+  const el = document.querySelector<HTMLElement>(`[data-id="${CSS.escape(id)}"]`)
+  if (!el) return ''
+  const scale = el.getBoundingClientRect().width / (el.offsetWidth || 1) || 1
+  const box = (n: HTMLElement) => {
+    const r = n.getBoundingClientRect()
+    return { l: r.left / scale, t: r.top / scale, r: r.right / scale, b: r.bottom / scale }
+  }
+  const me = box(el)
+  const round = (n: number) => Math.round(n)
+  const lines = [
+    `Medidas reales en el lienzo (px): este nodo ${round(me.r - me.l)}×${round(me.b - me.t)}.`,
+  ]
+
+  const overlaps: string[] = []
+  for (const sib of Array.from(el.parentElement?.children ?? [])) {
+    if (sib === el || !(sib instanceof HTMLElement)) continue
+    const sid = sib.getAttribute('data-id')
+    if (!sid) continue
+    const s = box(sib)
+    const dx = Math.min(me.r, s.r) - Math.max(me.l, s.l)
+    const dy = Math.min(me.b, s.b) - Math.max(me.t, s.t)
+    if (dx > 1 && dy > 1) {
+      overlaps.push(`<${sib.tagName.toLowerCase()} data-id="${sid}"> (${round(dx)}px × ${round(dy)}px)`)
+    }
+  }
+  if (overlaps.length) {
+    lines.push(
+      `DEFECTO DETECTADO — este nodo SE SOLAPA con: ${overlaps.join(', ')}. ` +
+        `Corrígelo: separa las cajas, cambia su posición o su tamaño. NO basta con cambiar colores.`,
+    )
+  }
+
+  // Solapes DENTRO del nodo: si el usuario seleccionó el contenedor, el defecto
+  // está entre sus descendientes, no entre sus hermanos. Sólo se miran los
+  // posicionados — el flujo normal no se encabalga, y compararlo todo contra todo
+  // llenaría el contexto de ruido (un texto SIEMPRE se solapa con su div padre).
+  const placed = Array.from(el.querySelectorAll<HTMLElement>('[data-id]')).filter((n) => {
+    const pos = getComputedStyle(n).position
+    return pos === 'absolute' || pos === 'fixed'
+  })
+  const inner: string[] = []
+  for (let i = 0; i < placed.length && inner.length < 4; i++) {
+    for (let j = i + 1; j < placed.length && inner.length < 4; j++) {
+      if (placed[i].contains(placed[j]) || placed[j].contains(placed[i])) continue
+      const a = box(placed[i])
+      const b = box(placed[j])
+      const dx = Math.min(a.r, b.r) - Math.max(a.l, b.l)
+      const dy = Math.min(a.b, b.b) - Math.max(a.t, b.t)
+      if (dx > 1 && dy > 1) {
+        inner.push(
+          `data-id="${placed[i].getAttribute('data-id')}" con data-id="${placed[j].getAttribute('data-id')}" (${round(dx)}px × ${round(dy)}px)`,
+        )
+      }
+    }
+  }
+  if (inner.length) {
+    lines.push(
+      `DEFECTO DETECTADO — dentro de este nodo hay elementos encimados: ${inner.join('; ')}. ` +
+        `Reubícalos para que no se toquen (cambia su anclaje, su offset o apílalos con gap).`,
+    )
+  }
   return lines.join('\n')
 }
 

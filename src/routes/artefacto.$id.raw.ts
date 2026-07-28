@@ -11,7 +11,7 @@ import { createFileRoute } from "@tanstack/react-router";
 export const Route = createFileRoute("/artefacto/$id/raw")({
   server: {
     handlers: {
-      GET: async ({ params }: { params: { id: string } }) => {
+      GET: async ({ params, request }: { params: { id: string }; request: Request }) => {
         const notFound = () => new Response("not found", { status: 404 });
         if (!params.id) return notFound();
 
@@ -33,7 +33,10 @@ export const Route = createFileRoute("/artefacto/$id/raw")({
         let found: Awaited<ReturnType<typeof import("../server/artifacts").resolveSharedArtifact>>;
         try {
           const { resolveSharedArtifact } = await import("../server/artifacts");
-          found = await resolveSharedArtifact(params.id, meSub);
+          // Misma `?v` que el marco (ver artefacto.$id.tsx): el iframe tiene que entregar
+          // exactamente la versión que la página anunció.
+          const v = new URL(request.url).searchParams.get("v");
+          found = await resolveSharedArtifact(params.id, meSub, v);
         } catch (e) {
           console.error("[artifact share] resolve falló", e);
           return notFound();
