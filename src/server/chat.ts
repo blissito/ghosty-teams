@@ -166,9 +166,23 @@ export const stopTurnFn = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     const me = await sessionUser();
     const { stopTurn } = await import("./turns.server");
-    // false = ya había terminado (carrera normal entre el clic y el último token) o no
-    // es suyo. El cliente no necesita distinguirlo: en ambos casos no hay nada que parar.
-    return { ok: stopTurn(data.messageId, me?.sub ?? null) };
+    if (stopTurn(data.messageId, me?.sub ?? null)) return { ok: true as const };
+
+    // No hay turno vivo con ese id. Puede ser una carrera normal (el clic llegó cuando ya
+    // terminaba) o una cáscara HUÉRFANA: el registro vive en memoria, así que un reinicio
+    // del server se lleva sus turnos y deja burbujas en "pensando…" para siempre. Si el
+    // mensaje sigue vacío, cerrarlo es exactamente lo que el usuario está pidiendo.
+    const db = await import("../db.server");
+    const msg = await db.getMessage(data.messageId).catch(() => null);
+    if (!msg || (msg.body ?? "").trim()) return { ok: false as const };
+    const body = "⏹ Detenido.";
+    await db.setMessageBody(data.messageId, body);
+    const bus = await import("./bus.server");
+    const { currentNamespace } = await import("./tenant.server");
+    const ns = await currentNamespace();
+    if (msg.dm_id) bus.publish(bus.ch.dm(ns, msg.dm_id), { t: "message:body", id: data.messageId, body });
+    else if (msg.channel_id) bus.publish(bus.ch.room(ns, msg.channel_id), { t: "message:body", id: data.messageId, body });
+    return { ok: true as const };
   });
 
 export const listUsersFn = createServerFn({ method: "GET" }).handler(async () => {

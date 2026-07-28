@@ -867,6 +867,14 @@ function RefinePanel({ store, node, doc, refineProvider }: { store: EditorStore;
     const before = node
     const currentHtml = nodeSubtreeToHtml(node)
     let lastPaint = 0
+    let painted = false
+    /** Deja el nodo como estaba. Los parciales de un rediseño YA se pintaron: si
+     *  el stream muere a la mitad, sin esto la sección mutilada se queda puesta. */
+    const rollback = () => {
+      if (!painted) return
+      const original = htmlToNode(currentHtml, node.id)
+      if (original) store.mergeNodeSubtree(node.id, original)
+    }
     // Todo el refine (parciales incluidos) es UNA entrada de undo: sin esto ⌘Z
     // deshacía el streaming token por token.
     store.beginTransaction()
@@ -875,7 +883,10 @@ function RefinePanel({ store, node, doc, refineProvider }: { store: EditorStore;
         const parsed = htmlToNode(html, node.id)
         // El merge conserva los data-id de los descendientes aunque el modelo
         // los haya omitido — es lo que evita que cambiar un h2 sacuda la sección.
-        if (parsed) store.mergeNodeSubtree(node.id, parsed)
+        if (parsed) {
+          store.mergeNodeSubtree(node.id, parsed)
+          painted = true
+        }
       }
       const finalHtml = await refineProvider.refineNode(
         {
@@ -914,7 +925,22 @@ function RefinePanel({ store, node, doc, refineProvider }: { store: EditorStore;
       // lanzar. Tratarlo como éxito borraba la instrucción del usuario y no le
       // decía nada: aquí se distingue y se conserva lo que escribió.
       if (normalizeHtml(finalHtml) === normalizeHtml(currentHtml)) {
+        rollback()
         setError('El modelo no devolvió cambios. Prueba con otro modelo o sé más específico.')
+        return
+      }
+      // Última línea de defensa contra una respuesta truncada (visto con un 429
+      // de Anthropic a media generación): un refine JAMÁS vacía un nodo ni pierde
+      // sus imágenes. Antes de aplicar se comprueba, porque el daño ya está hecho
+      // cuando el usuario lo ve en pantalla.
+      const lost = assetsLost(currentHtml, finalHtml)
+      if (normalizeHtml(finalHtml).length < 20 || lost) {
+        rollback()
+        setError(
+          lost
+            ? `Respuesta incompleta: se perdería ${lost}. No se aplicó nada.`
+            : 'El modelo cortó la respuesta. No se aplicó nada.',
+        )
         return
       }
       apply(finalHtml)
@@ -922,6 +948,7 @@ function RefinePanel({ store, node, doc, refineProvider }: { store: EditorStore;
       if (after) setSummary(summarizeChange(before, after))
       setInstruction('')
     } catch (err) {
+      rollback()
       setError(err instanceof Error ? err.message : 'No se pudo refinar')
     } finally {
       store.endTransaction()
@@ -1027,6 +1054,18 @@ function isCompleteElement(html: string): boolean {
   return new RegExp(`</${tag}\\s*>$`, 'i').test(s)
 }
 const VOID_TAGS = new Set(['img', 'br', 'hr', 'input', 'source', 'meta', 'link'])
+
+/**
+ * Devuelve la primera imagen/enlace del original que NO está en el resultado, o
+ * null si están todas. Es la invariante que el prompt de rediseño promete y que
+ * un proveedor caído rompe sin avisar.
+ */
+function assetsLost(before: string, after: string): string | null {
+  for (const m of before.matchAll(/(?:src|href)=["']([^"']+)["']/g)) {
+    if (!after.includes(m[1])) return m[1].length > 48 ? `${m[1].slice(0, 47)}…` : m[1]
+  }
+  return null
+}
 
 /** ~8 repintados por segundo: se lee como construcción, no como parpadeo. */
 const PAINT_MS = 120

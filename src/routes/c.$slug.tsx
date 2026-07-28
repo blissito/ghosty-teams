@@ -105,7 +105,7 @@ import {
   expelMemberFn,
   stopTurnFn,
 } from "../server/chat";
-import { SmilePlus, Pencil, ArrowLeft, RotateCcw, Send, Bold, Italic, Strikethrough, List, ListOrdered, Quote, Code, Type, Reply } from "lucide-react";
+import { SmilePlus, Pencil, ArrowLeft, RotateCcw, Send, Bold, Italic, Strikethrough, List, ListOrdered, Quote, Code, Type, Reply, Square } from "lucide-react";
 import { getDeferredPrompt, onInstallable, clearDeferredPrompt, type BeforeInstallPromptEvent } from "../utils/pwa-install";
 import { useLiveStream } from "../hooks/useLiveStream";
 import type { RtEvent } from "../server/bus.server";
@@ -6756,9 +6756,13 @@ function AgentPending({ id }: { id: number }) {
         <button
           type="button"
           onClick={() => stopTurn(id)}
-          className="rounded border border-border px-1.5 py-0.5 text-[11px] font-medium text-muted transition hover:border-red-400/40 hover:text-red-400"
+          aria-label={t("Detener")}
+          title={t("Detener")}
+          // Cuadrado de reproductor: es el gesto universal de "para esto" y no compite
+          // con el texto de la línea, que es lo que se está leyendo.
+          className="grid size-5 place-items-center rounded-full border border-border text-muted transition hover:border-red-400/50 hover:text-red-400"
         >
-          {t("Detener")}
+          <Square size={9} className="fill-current" />
         </button>
       ) : null}
     </div>
