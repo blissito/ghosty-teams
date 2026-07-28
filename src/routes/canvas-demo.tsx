@@ -38,15 +38,27 @@ function seedDoc(): Doc {
 }
 
 // Mock provider: streams the current HTML back with a tweak, to demo live refine.
+// `models` alimenta el chip selector del panel de refine; en Teams saldría de la
+// configuración real de proveedores (en Denik, de las llaves BYOK de la org).
 const mockRefine: RefineProvider = {
-  async refineNode({ currentHtml, instruction }, handlers) {
+  models: [
+    { id: 'mock-fast', label: 'Mock rápido', provider: 'Demo', hint: 'no llama a ningún modelo' },
+    { id: 'mock-smart', label: 'Mock potente', provider: 'Demo', ownKey: true },
+  ],
+  defaultModelId: 'mock-fast',
+  onModelChange: (id) => console.log('modelo', id),
+  async refineNode({ currentHtml, instruction, context, modelId }, handlers) {
     const bumped = currentHtml.replace(/class="([^"]*)"/, (_m, c) => `class="${c} ring-2 ring-fuchsia-500"`)
     const steps = 4
     for (let i = 1; i <= steps; i++) {
       await new Promise((r) => setTimeout(r, 120))
+      // Los parciales incompletos ya no se pintan: el panel sólo aplica un chunk
+      // cuando el elemento raíz cerró (ver isCompleteElement en Inspector.tsx).
       handlers?.onPartial?.(i < steps ? currentHtml : bumped)
     }
     void instruction
+    void context
+    void modelId
     return bumped
   },
 }

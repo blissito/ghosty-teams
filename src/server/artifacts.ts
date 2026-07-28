@@ -179,7 +179,8 @@ export async function resolveSharedArtifact(
   meSub: string | null
 ): Promise<{
   root: { id: number; url: string; ownerSub: string | null; visibility: "private" | "link" };
-  version: { id: number; title: string | null; md: string | null; createdAt: number };
+  /** `src` = la URL del CDN (artefacto.ghosty.studio/<key>) de ESA versión. */
+  version: { id: number; title: string | null; md: string | null; src: string | null; createdAt: number };
   versionLabel: string | null;
   isOwner: boolean;
 } | null> {
@@ -199,7 +200,7 @@ export async function resolveSharedArtifact(
   if (!full) return null;
   return {
     root: { id: root.id, url: root.url, ownerSub: root.ownerSub, visibility: root.visibility },
-    version: { id: full.id, title: full.title, md: full.md, createdAt: full.createdAt },
+    version: { id: full.id, title: full.title, md: full.md, src: full.src, createdAt: full.createdAt },
     versionLabel: idx >= 0 ? `Versión ${idx + 1}` : null,
     isOwner,
   };

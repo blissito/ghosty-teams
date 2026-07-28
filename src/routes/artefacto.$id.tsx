@@ -4,10 +4,10 @@ import ArtifactShareBar from "../components/ArtifactShareBar";
 import GhostyMascot, { blinkTiming } from "../components/GhostyMascot";
 import { useT } from "../i18n";
 
-// Página PÚBLICA de un artefacto compartido: /a/<slug>.
+// Página PÚBLICA de un artefacto compartido: /artefacto/<slug>.
 //
 // El marco (título, autor, versión, Compartir) vive FUERA del sandbox y el HTML del
-// agente entra en un iframe hacia /a/<slug>/raw. Al revés —inyectando la barra
+// agente entra en un iframe hacia /artefacto/<slug>/raw. Al revés —inyectando la barra
 // dentro del documento— el CSS del agente podría pisarla o esconderla, y además
 // habría que confiar en el HTML para pintar controles nuestros.
 //
@@ -55,10 +55,16 @@ const loadShared = createServerFn({ method: "GET" })
       versionLabel: found.versionLabel,
       isOwner: found.isOwner,
       visibility: found.root.visibility,
+      // El HTML lo sirve el CDN (artefacto.ghosty.studio/<key>), NO la DB: para eso
+      // existe ese subdominio. La DB se toca UNA vez, aquí, para armar el marco;
+      // las visitas al contenido no la tocan.
+      // `src` null = fila vieja publicada antes de que hubiera storage → se cae a
+      // /artefacto/<slug>/raw, que sí lee de la DB. Es el camino de excepción.
+      contentUrl: found.version.src,
     };
   });
 
-export const Route = createFileRoute("/a/$id")({
+export const Route = createFileRoute("/artefacto/$id")({
   loader: async ({ params }) => {
     const data = await loadShared({ data: { slug: params.id } });
     // Sin acceso y no existe se responden IGUAL: un 403 confirmaría que el
@@ -111,7 +117,9 @@ function SharedArtifact() {
       />
       <iframe
         title={d.title}
-        src={`/a/${encodeURIComponent(id)}/raw`}
+        // CDN primero (artefacto.ghosty.studio/<key>): el contenido no pasa por la
+        // app ni por la DB. El /raw sólo entra para filas viejas sin `src`.
+        src={d.contentUrl || `/artefacto/${encodeURIComponent(id)}/raw`}
         sandbox="allow-scripts allow-forms allow-popups"
         referrerPolicy="no-referrer"
         className="min-h-0 flex-1 border-0 bg-white"

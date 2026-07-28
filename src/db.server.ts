@@ -383,6 +383,20 @@ export async function shareRootBySlug(slug: string): Promise<ShareRoot | null> {
   return rows[0] ? toShareRoot(rows[0]) : null;
 }
 
+// El documentId al que pertenece una key de storage (para que el link viejo
+// /t3/<key> pueda mandarse a su página con permisos en vez de servir el HTML
+// crudo). `src` se guardó como "<base>/<key sin el prefijo t3/>", así que el
+// sufijo es lo estable entre las dos formas del link.
+export async function documentIdForStorageKey(key: string): Promise<string | null> {
+  const bare = key.replace(/^(?:t3\/)+/, "");
+  if (!bare) return null;
+  const rows = await dbq(
+    `SELECT url FROM gc_artifacts WHERE kind = 'artifact' AND src LIKE ? ORDER BY id DESC LIMIT 1`,
+    [`%${bare}`]
+  );
+  return rows[0]?.url ?? null;
+}
+
 export async function setShareOnRoot(
   rootId: number,
   patch: { visibility?: "private" | "link"; slug?: string; sharedArtifactId?: number | null }

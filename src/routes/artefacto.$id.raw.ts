@@ -1,14 +1,14 @@
 import { createFileRoute } from "@tanstack/react-router";
 
-// GET /a/<slug>/raw → el HTML del artefacto compartido, para el iframe de /a/<slug>.
+// GET /artefacto/<slug>/raw → el HTML del artefacto compartido, para el iframe de /artefacto/<slug>.
 // Sirve desde gc_artifacts.md (la VERDAD), no desde storage: así respeta la versión
 // congelada y el permiso, cosa que /t3/<key> no puede hacer (una key de storage es
 // pública para quien la tenga y siempre es una versión concreta suelta).
 //
-// El chrome de /a/<slug> vive FUERA de este documento; aquí sólo entra el HTML del
+// El chrome de /artefacto/<slug> vive FUERA de este documento; aquí sólo entra el HTML del
 // agente, aislado igual que en el panel: `sandbox` sin allow-same-origin → origen
 // opaco, sin acceso a las cookies ni al DOM de ghosty.studio.
-export const Route = createFileRoute("/a/$id/raw")({
+export const Route = createFileRoute("/artefacto/$id/raw")({
   server: {
     handlers: {
       GET: async ({ params }: { params: { id: string } }) => {

@@ -243,6 +243,10 @@ export default function ArtifactPanel({
   const [refreshTick, setRefreshTick] = useState(0); // botón "refrescar" del header (re-fetch manual)
   const [downloading, setDownloading] = useState(false); // el export docx es lento → spinner
   const [copied, setCopied] = useState(false); // feedback del botón "Copiar enlace" del artefacto HTML
+  // Link ÚNICO del artefacto: su página /artefacto/<slug>. Se resuelve al abrir un
+  // artefacto (acuña el slug si aún no tenía, sin tocar los permisos) para que
+  // "abrir" y "copiar enlace" nunca vuelvan a repartir el /t3/<key> crudo.
+  const [shareUrl, setShareUrl] = useState<string | null>(null);
   const [editing, setEditing] = useState(false); // artefacto HTML: modo Ver (iframe) vs Editar (Canvas)
   const [confirmClose, setConfirmClose] = useState(false); // ESC en edición → advertencia
   const [fullscreen, setFullscreen] = useState(false); // panel a pantalla completa (cubre el chat)
@@ -619,6 +623,26 @@ export default function ArtifactPanel({
     }
   };
 
+  useEffect(() => {
+    const docId = artifact?.kind === "artifact" ? artifact.documentId : null;
+    setShareUrl(null);
+    if (!docId) return;
+    let alive = true;
+    (async () => {
+      try {
+        const { setArtifactShareFn } = await import("../server/artifacts");
+        const s = await setArtifactShareFn({ data: { documentId: docId } });
+        if (alive && s?.slug) setShareUrl(`${window.location.origin}/artefacto/${s.slug}`);
+      } catch {
+        // No eres el dueño (o es un artefacto de antes): sin link propio. Los
+        // botones caen al blob local, que no depende de nada.
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [artifact?.kind === "artifact" ? artifact.documentId : null]);
+
   // Artefacto HTML (kind:"artifact"): acciones self-contained a partir de la fuente
   // (`artifact.html`), que SIEMPRE está disponible aunque el publish a S3 haya fallado o
   // `src` sea null. Antes el header no mostraba ningún botón para HTML (newTabHref=src → si
@@ -628,8 +652,11 @@ export default function ArtifactPanel({
     `${((artifact?.kind === "artifact" ? artifact.title : "") || "artefacto").replace(/[^\w.\- ]/g, "_")}.html`;
   const openHtmlArtifact = () => {
     if (artifact?.kind !== "artifact") return;
-    if (artifact.src) {
-      window.open(artifact.src, "_blank", "noopener");
+    // La página del artefacto (con su barra y su permiso), NO el /t3/<key> crudo:
+    // ese link se abría sin marco y seguía sirviendo después de poner el artefacto
+    // en privado. El HTML de ahí dentro sí lo sirve el CDN.
+    if (shareUrl) {
+      window.open(shareUrl, "_blank", "noopener");
       return;
     }
     const url = URL.createObjectURL(new Blob([artifactHtml ?? artifact.html], { type: "text/html" }));
@@ -648,13 +675,13 @@ export default function ArtifactPanel({
     setTimeout(() => URL.revokeObjectURL(url), 4000);
   };
   const copyArtifactLink = async () => {
-    if (artifact?.kind !== "artifact" || !artifact.src) return;
+    if (!shareUrl) return;
     try {
-      await navigator.clipboard.writeText(artifact.src);
+      await navigator.clipboard.writeText(shareUrl);
       setCopied(true);
       setTimeout(() => setCopied(false), 1600);
     } catch {
-      window.prompt(t("Copia el enlace:"), artifact.src);
+      window.prompt(t("Copia el enlace:"), shareUrl);
     }
   };
 
@@ -945,7 +972,7 @@ export default function ArtifactPanel({
                 ) : null}
                 {artifact.kind === "artifact" ? (
                   <>
-                    {artifact.src ? (
+                    {shareUrl ? (
                       <button
                         type="button"
                         onClick={copyArtifactLink}
@@ -1454,11 +1481,13 @@ export default function ArtifactPanel({
                         ) : null}
                       </div>
                     )}
-                    {artifact.src ? (
+                    {/* El link que se muestra es la PÁGINA del artefacto, no la key
+                        de storage: es el único que respeta el permiso y trae barra. */}
+                    {shareUrl ? (
                       <div className="flex items-center gap-2 border-t border-border bg-surface px-3 py-2">
-                        <span className="truncate text-xs text-muted">{artifact.src}</span>
+                        <span className="truncate text-xs text-muted">{shareUrl}</span>
                         <a
-                          href={artifact.src}
+                          href={shareUrl}
                           target="_blank"
                           rel="noreferrer"
                           className="ml-auto shrink-0 rounded-md border border-border px-2 py-1 text-xs text-ink transition hover:border-brand"

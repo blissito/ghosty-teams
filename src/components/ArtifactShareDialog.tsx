@@ -89,7 +89,7 @@ export default function ArtifactShareDialog({
       slug = s?.slug ?? null;
     }
     if (!slug) return;
-    await navigator.clipboard.writeText(`${window.location.origin}/a/${slug}`);
+    await navigator.clipboard.writeText(`${window.location.origin}/artefacto/${slug}`);
     setCopied(true);
     setTimeout(() => setCopied(false), 1600);
   };

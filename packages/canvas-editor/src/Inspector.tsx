@@ -5,7 +5,7 @@
 // box. Los controles leen el CSS efectivo del DOM y escriben declaraciones inline
 // (ver cssProps.ts): así ganan sobre las clases y sobre el <style> del artefacto.
 
-import { useLayoutEffect, useState } from 'react'
+import { useLayoutEffect, useRef, useState } from 'react'
 import { FONT_OPTIONS, PALETTE_PRESETS, activeTokens, findNode, type Doc, type Node } from './model'
 import { backgroundUrl, clearBackground, makeFullBleed, makeHeroBackground, parentOf, refineContext, setBackground } from './imageOps'
 import { htmlToNode, nodeSubtreeToHtml } from './serialize'
@@ -76,10 +76,13 @@ export function Inspector({
           {/* Imagen Y fondo: el panel vive con CUALQUIER nodo seleccionado. Antes
               sólo aparecía en <img>, así que un hero cuya foto es el
               background-image de un <div> no se podía cambiar ni quitar. */}
-          <ImagePanel key={node.id} store={store} node={node} doc={state.doc} imageProvider={imageProvider} />
+          {/* El key REMONTA el panel al cambiar de nodo (resetea modo, URL, error).
+              Debe ser único entre hermanos: compartirlo con RefinePanel hacía que
+              React duplicara la sección. */}
+          <ImagePanel key={`img-${node.id}`} store={store} node={node} doc={state.doc} imageProvider={imageProvider} />
           <ClassChips store={store} node={node} />
           <InlineStylePanel store={store} node={node} />
-          {refineProvider && <RefinePanel key={node.id} store={store} node={node} doc={state.doc} refineProvider={refineProvider} />}
+          {refineProvider && <RefinePanel key={`refine-${node.id}`} store={store} node={node} doc={state.doc} refineProvider={refineProvider} />}
         </div>
       )}
       {/* Con un nodo seleccionado el Tema estorba: nace CONTRAÍDO (y se resetea al
@@ -948,27 +951,55 @@ function ModelChip({
   onChange: (id: string) => void
 }) {
   const [open, setOpen] = useState(false)
+  // El menú se ancla con `position: fixed` a partir del rect del botón: el panel
+  // del inspector es un contenedor con `overflow-y: auto`, así que un menú
+  // `absolute` queda RECORTADO y las opciones de abajo son inalcanzables.
+  const [rect, setRect] = useState<DOMRect | null>(null)
+  const btnRef = useRef<HTMLButtonElement>(null)
   const active = models.find((m) => m.id === value) ?? models[0]
   const groups = models.reduce<Record<string, ModelOption[]>>((acc, m) => {
     ;(acc[m.provider] ??= []).push(m)
     return acc
   }, {})
+  const MENU_W = 210
+  const MENU_MAX_H = 260
+  // Si no cabe abajo, abre hacia arriba.
+  const below = rect ? window.innerHeight - rect.bottom : 0
+  const dropUp = rect ? below < MENU_MAX_H && rect.top > below : false
+
+  const toggle = () => {
+    if (disabled) return
+    setRect(btnRef.current?.getBoundingClientRect() ?? null)
+    setOpen((o) => !o)
+  }
+
   return (
-    <div style={{ position: 'relative', display: 'flex', justifyContent: 'flex-end', marginTop: 4 }}>
+    <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 4 }}>
       <button
+        ref={btnRef}
         style={{ ...styles.chip, display: 'inline-flex', alignItems: 'center', gap: 4, opacity: disabled ? 0.5 : 1, cursor: disabled ? 'not-allowed' : 'pointer' }}
         disabled={disabled}
         title="Modelo para este refinamiento"
-        onClick={() => setOpen((o) => !o)}
+        onClick={toggle}
       >
         {active?.label ?? 'modelo'}
         {active?.ownKey && <span style={styles.keyBadge}>tu llave</span>}
         <span style={{ opacity: 0.6 }}>▾</span>
       </button>
-      {open && (
+      {open && rect && (
         <>
           <div style={{ position: 'fixed', inset: 0, zIndex: 19 }} onClick={() => setOpen(false)} />
-          <div style={{ ...styles.menu, top: 26, left: 'auto', width: 210 }}>
+          <div
+            style={{
+              ...styles.menu,
+              position: 'fixed',
+              width: MENU_W,
+              maxHeight: MENU_MAX_H,
+              // Alineado a la derecha del chip, sin salirse de la ventana.
+              left: Math.max(8, Math.min(rect.right - MENU_W, window.innerWidth - MENU_W - 8)),
+              ...(dropUp ? { bottom: window.innerHeight - rect.top + 4, top: 'auto' } : { top: rect.bottom + 4 }),
+            }}
+          >
             {Object.entries(groups).map(([provider, list]) => (
               <div key={provider}>
                 <div style={{ ...styles.sectionTitle, margin: '6px 8px 3px' }}>{provider}</div>

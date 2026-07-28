@@ -21,17 +21,18 @@ import { Route as SetupIndexRouteImport } from './routes/setup.index'
 import { Route as T3SplatRouteImport } from './routes/t3.$'
 import { Route as JoinTokenRouteImport } from './routes/join.$token'
 import { Route as CSlugRouteImport } from './routes/c.$slug'
+import { Route as ArtefactoIdRouteImport } from './routes/artefacto.$id'
 import { Route as ApiWarmRouteImport } from './routes/api.warm'
 import { Route as ApiUploadRouteImport } from './routes/api.upload'
 import { Route as ApiStreamRouteImport } from './routes/api.stream'
 import { Route as ApiManifestRouteImport } from './routes/api.manifest'
 import { Route as ApiAgentAssetRouteImport } from './routes/api.agent-asset'
-import { Route as AIdRouteImport } from './routes/a.$id'
 import { Route as SetupEasybitsConnectRouteImport } from './routes/setup.easybits.connect'
 import { Route as SetupEasybitsCallbackRouteImport } from './routes/setup.easybits.callback'
 import { Route as SetupProviderConnectRouteImport } from './routes/setup.$provider.connect'
 import { Route as SetupProviderCallbackRouteImport } from './routes/setup.$provider.callback'
 import { Route as OauthProviderCallbackRouteImport } from './routes/oauth.$provider.callback'
+import { Route as ArtefactoIdRawRouteImport } from './routes/artefacto.$id.raw'
 import { Route as ApiWebhookEasybitsRouteImport } from './routes/api.webhook.easybits'
 import { Route as ApiInternalAnnouncementsRouteImport } from './routes/api.internal.announcements'
 import { Route as ApiDocXlsxIdRouteImport } from './routes/api.doc-xlsx.$id'
@@ -40,7 +41,6 @@ import { Route as ApiDevDriveRouteImport } from './routes/api.dev.drive'
 import { Route as ApiConnectorsToolsRouteImport } from './routes/api.connectors.tools'
 import { Route as ApiAttachmentIdRouteImport } from './routes/api.attachment.$id'
 import { Route as ApiArtifactStreamIdRouteImport } from './routes/api.artifact-stream.$id'
-import { Route as AIdRawRouteImport } from './routes/a.$id.raw'
 
 const SetupRoute = SetupRouteImport.update({
   id: '/setup',
@@ -102,6 +102,11 @@ const CSlugRoute = CSlugRouteImport.update({
   path: '/c/$slug',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ArtefactoIdRoute = ArtefactoIdRouteImport.update({
+  id: '/artefacto/$id',
+  path: '/artefacto/$id',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiWarmRoute = ApiWarmRouteImport.update({
   id: '/api/warm',
   path: '/api/warm',
@@ -125,11 +130,6 @@ const ApiManifestRoute = ApiManifestRouteImport.update({
 const ApiAgentAssetRoute = ApiAgentAssetRouteImport.update({
   id: '/api/agent-asset',
   path: '/api/agent-asset',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const AIdRoute = AIdRouteImport.update({
-  id: '/a/$id',
-  path: '/a/$id',
   getParentRoute: () => rootRouteImport,
 } as any)
 const SetupEasybitsConnectRoute = SetupEasybitsConnectRouteImport.update({
@@ -156,6 +156,11 @@ const OauthProviderCallbackRoute = OauthProviderCallbackRouteImport.update({
   id: '/oauth/$provider/callback',
   path: '/oauth/$provider/callback',
   getParentRoute: () => rootRouteImport,
+} as any)
+const ArtefactoIdRawRoute = ArtefactoIdRawRouteImport.update({
+  id: '/raw',
+  path: '/raw',
+  getParentRoute: () => ArtefactoIdRoute,
 } as any)
 const ApiWebhookEasybitsRoute = ApiWebhookEasybitsRouteImport.update({
   id: '/api/webhook/easybits',
@@ -198,11 +203,6 @@ const ApiArtifactStreamIdRoute = ApiArtifactStreamIdRouteImport.update({
   path: '/api/artifact-stream/$id',
   getParentRoute: () => rootRouteImport,
 } as any)
-const AIdRawRoute = AIdRawRouteImport.update({
-  id: '/raw',
-  path: '/raw',
-  getParentRoute: () => AIdRoute,
-} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -213,17 +213,16 @@ export interface FileRoutesByFullPath {
   '/forms': typeof FormsRoute
   '/login': typeof LoginRoute
   '/setup': typeof SetupRouteWithChildren
-  '/a/$id': typeof AIdRouteWithChildren
   '/api/agent-asset': typeof ApiAgentAssetRoute
   '/api/manifest': typeof ApiManifestRoute
   '/api/stream': typeof ApiStreamRoute
   '/api/upload': typeof ApiUploadRoute
   '/api/warm': typeof ApiWarmRoute
+  '/artefacto/$id': typeof ArtefactoIdRouteWithChildren
   '/c/$slug': typeof CSlugRoute
   '/join/$token': typeof JoinTokenRoute
   '/t3/$': typeof T3SplatRoute
   '/setup/': typeof SetupIndexRoute
-  '/a/$id/raw': typeof AIdRawRoute
   '/api/artifact-stream/$id': typeof ApiArtifactStreamIdRoute
   '/api/attachment/$id': typeof ApiAttachmentIdRoute
   '/api/connectors/tools': typeof ApiConnectorsToolsRoute
@@ -232,6 +231,7 @@ export interface FileRoutesByFullPath {
   '/api/doc-xlsx/$id': typeof ApiDocXlsxIdRoute
   '/api/internal/announcements': typeof ApiInternalAnnouncementsRoute
   '/api/webhook/easybits': typeof ApiWebhookEasybitsRoute
+  '/artefacto/$id/raw': typeof ArtefactoIdRawRoute
   '/oauth/$provider/callback': typeof OauthProviderCallbackRoute
   '/setup/$provider/callback': typeof SetupProviderCallbackRoute
   '/setup/$provider/connect': typeof SetupProviderConnectRoute
@@ -246,17 +246,16 @@ export interface FileRoutesByTo {
   '/canvas-probe': typeof CanvasProbeRoute
   '/forms': typeof FormsRoute
   '/login': typeof LoginRoute
-  '/a/$id': typeof AIdRouteWithChildren
   '/api/agent-asset': typeof ApiAgentAssetRoute
   '/api/manifest': typeof ApiManifestRoute
   '/api/stream': typeof ApiStreamRoute
   '/api/upload': typeof ApiUploadRoute
   '/api/warm': typeof ApiWarmRoute
+  '/artefacto/$id': typeof ArtefactoIdRouteWithChildren
   '/c/$slug': typeof CSlugRoute
   '/join/$token': typeof JoinTokenRoute
   '/t3/$': typeof T3SplatRoute
   '/setup': typeof SetupIndexRoute
-  '/a/$id/raw': typeof AIdRawRoute
   '/api/artifact-stream/$id': typeof ApiArtifactStreamIdRoute
   '/api/attachment/$id': typeof ApiAttachmentIdRoute
   '/api/connectors/tools': typeof ApiConnectorsToolsRoute
@@ -265,6 +264,7 @@ export interface FileRoutesByTo {
   '/api/doc-xlsx/$id': typeof ApiDocXlsxIdRoute
   '/api/internal/announcements': typeof ApiInternalAnnouncementsRoute
   '/api/webhook/easybits': typeof ApiWebhookEasybitsRoute
+  '/artefacto/$id/raw': typeof ArtefactoIdRawRoute
   '/oauth/$provider/callback': typeof OauthProviderCallbackRoute
   '/setup/$provider/callback': typeof SetupProviderCallbackRoute
   '/setup/$provider/connect': typeof SetupProviderConnectRoute
@@ -281,17 +281,16 @@ export interface FileRoutesById {
   '/forms': typeof FormsRoute
   '/login': typeof LoginRoute
   '/setup': typeof SetupRouteWithChildren
-  '/a/$id': typeof AIdRouteWithChildren
   '/api/agent-asset': typeof ApiAgentAssetRoute
   '/api/manifest': typeof ApiManifestRoute
   '/api/stream': typeof ApiStreamRoute
   '/api/upload': typeof ApiUploadRoute
   '/api/warm': typeof ApiWarmRoute
+  '/artefacto/$id': typeof ArtefactoIdRouteWithChildren
   '/c/$slug': typeof CSlugRoute
   '/join/$token': typeof JoinTokenRoute
   '/t3/$': typeof T3SplatRoute
   '/setup/': typeof SetupIndexRoute
-  '/a/$id/raw': typeof AIdRawRoute
   '/api/artifact-stream/$id': typeof ApiArtifactStreamIdRoute
   '/api/attachment/$id': typeof ApiAttachmentIdRoute
   '/api/connectors/tools': typeof ApiConnectorsToolsRoute
@@ -300,6 +299,7 @@ export interface FileRoutesById {
   '/api/doc-xlsx/$id': typeof ApiDocXlsxIdRoute
   '/api/internal/announcements': typeof ApiInternalAnnouncementsRoute
   '/api/webhook/easybits': typeof ApiWebhookEasybitsRoute
+  '/artefacto/$id/raw': typeof ArtefactoIdRawRoute
   '/oauth/$provider/callback': typeof OauthProviderCallbackRoute
   '/setup/$provider/callback': typeof SetupProviderCallbackRoute
   '/setup/$provider/connect': typeof SetupProviderConnectRoute
@@ -317,17 +317,16 @@ export interface FileRouteTypes {
     | '/forms'
     | '/login'
     | '/setup'
-    | '/a/$id'
     | '/api/agent-asset'
     | '/api/manifest'
     | '/api/stream'
     | '/api/upload'
     | '/api/warm'
+    | '/artefacto/$id'
     | '/c/$slug'
     | '/join/$token'
     | '/t3/$'
     | '/setup/'
-    | '/a/$id/raw'
     | '/api/artifact-stream/$id'
     | '/api/attachment/$id'
     | '/api/connectors/tools'
@@ -336,6 +335,7 @@ export interface FileRouteTypes {
     | '/api/doc-xlsx/$id'
     | '/api/internal/announcements'
     | '/api/webhook/easybits'
+    | '/artefacto/$id/raw'
     | '/oauth/$provider/callback'
     | '/setup/$provider/callback'
     | '/setup/$provider/connect'
@@ -350,17 +350,16 @@ export interface FileRouteTypes {
     | '/canvas-probe'
     | '/forms'
     | '/login'
-    | '/a/$id'
     | '/api/agent-asset'
     | '/api/manifest'
     | '/api/stream'
     | '/api/upload'
     | '/api/warm'
+    | '/artefacto/$id'
     | '/c/$slug'
     | '/join/$token'
     | '/t3/$'
     | '/setup'
-    | '/a/$id/raw'
     | '/api/artifact-stream/$id'
     | '/api/attachment/$id'
     | '/api/connectors/tools'
@@ -369,6 +368,7 @@ export interface FileRouteTypes {
     | '/api/doc-xlsx/$id'
     | '/api/internal/announcements'
     | '/api/webhook/easybits'
+    | '/artefacto/$id/raw'
     | '/oauth/$provider/callback'
     | '/setup/$provider/callback'
     | '/setup/$provider/connect'
@@ -384,17 +384,16 @@ export interface FileRouteTypes {
     | '/forms'
     | '/login'
     | '/setup'
-    | '/a/$id'
     | '/api/agent-asset'
     | '/api/manifest'
     | '/api/stream'
     | '/api/upload'
     | '/api/warm'
+    | '/artefacto/$id'
     | '/c/$slug'
     | '/join/$token'
     | '/t3/$'
     | '/setup/'
-    | '/a/$id/raw'
     | '/api/artifact-stream/$id'
     | '/api/attachment/$id'
     | '/api/connectors/tools'
@@ -403,6 +402,7 @@ export interface FileRouteTypes {
     | '/api/doc-xlsx/$id'
     | '/api/internal/announcements'
     | '/api/webhook/easybits'
+    | '/artefacto/$id/raw'
     | '/oauth/$provider/callback'
     | '/setup/$provider/callback'
     | '/setup/$provider/connect'
@@ -419,12 +419,12 @@ export interface RootRouteChildren {
   FormsRoute: typeof FormsRoute
   LoginRoute: typeof LoginRoute
   SetupRoute: typeof SetupRouteWithChildren
-  AIdRoute: typeof AIdRouteWithChildren
   ApiAgentAssetRoute: typeof ApiAgentAssetRoute
   ApiManifestRoute: typeof ApiManifestRoute
   ApiStreamRoute: typeof ApiStreamRoute
   ApiUploadRoute: typeof ApiUploadRoute
   ApiWarmRoute: typeof ApiWarmRoute
+  ArtefactoIdRoute: typeof ArtefactoIdRouteWithChildren
   CSlugRoute: typeof CSlugRoute
   JoinTokenRoute: typeof JoinTokenRoute
   T3SplatRoute: typeof T3SplatRoute
@@ -525,6 +525,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof CSlugRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/artefacto/$id': {
+      id: '/artefacto/$id'
+      path: '/artefacto/$id'
+      fullPath: '/artefacto/$id'
+      preLoaderRoute: typeof ArtefactoIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/warm': {
       id: '/api/warm'
       path: '/api/warm'
@@ -558,13 +565,6 @@ declare module '@tanstack/react-router' {
       path: '/api/agent-asset'
       fullPath: '/api/agent-asset'
       preLoaderRoute: typeof ApiAgentAssetRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/a/$id': {
-      id: '/a/$id'
-      path: '/a/$id'
-      fullPath: '/a/$id'
-      preLoaderRoute: typeof AIdRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/setup/easybits/connect': {
@@ -601,6 +601,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/oauth/$provider/callback'
       preLoaderRoute: typeof OauthProviderCallbackRouteImport
       parentRoute: typeof rootRouteImport
+    }
+    '/artefacto/$id/raw': {
+      id: '/artefacto/$id/raw'
+      path: '/raw'
+      fullPath: '/artefacto/$id/raw'
+      preLoaderRoute: typeof ArtefactoIdRawRouteImport
+      parentRoute: typeof ArtefactoIdRoute
     }
     '/api/webhook/easybits': {
       id: '/api/webhook/easybits'
@@ -658,13 +665,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiArtifactStreamIdRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/a/$id/raw': {
-      id: '/a/$id/raw'
-      path: '/raw'
-      fullPath: '/a/$id/raw'
-      preLoaderRoute: typeof AIdRawRouteImport
-      parentRoute: typeof AIdRoute
-    }
   }
 }
 
@@ -686,15 +686,17 @@ const SetupRouteChildren: SetupRouteChildren = {
 
 const SetupRouteWithChildren = SetupRoute._addFileChildren(SetupRouteChildren)
 
-interface AIdRouteChildren {
-  AIdRawRoute: typeof AIdRawRoute
+interface ArtefactoIdRouteChildren {
+  ArtefactoIdRawRoute: typeof ArtefactoIdRawRoute
 }
 
-const AIdRouteChildren: AIdRouteChildren = {
-  AIdRawRoute: AIdRawRoute,
+const ArtefactoIdRouteChildren: ArtefactoIdRouteChildren = {
+  ArtefactoIdRawRoute: ArtefactoIdRawRoute,
 }
 
-const AIdRouteWithChildren = AIdRoute._addFileChildren(AIdRouteChildren)
+const ArtefactoIdRouteWithChildren = ArtefactoIdRoute._addFileChildren(
+  ArtefactoIdRouteChildren,
+)
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
@@ -705,12 +707,12 @@ const rootRouteChildren: RootRouteChildren = {
   FormsRoute: FormsRoute,
   LoginRoute: LoginRoute,
   SetupRoute: SetupRouteWithChildren,
-  AIdRoute: AIdRouteWithChildren,
   ApiAgentAssetRoute: ApiAgentAssetRoute,
   ApiManifestRoute: ApiManifestRoute,
   ApiStreamRoute: ApiStreamRoute,
   ApiUploadRoute: ApiUploadRoute,
   ApiWarmRoute: ApiWarmRoute,
+  ArtefactoIdRoute: ArtefactoIdRouteWithChildren,
   CSlugRoute: CSlugRoute,
   JoinTokenRoute: JoinTokenRoute,
   T3SplatRoute: T3SplatRoute,
@@ -727,12 +729,3 @@ const rootRouteChildren: RootRouteChildren = {
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
-
-import type { getRouter } from './router.tsx'
-import type { createStart } from '@tanstack/react-start'
-declare module '@tanstack/react-start' {
-  interface Register {
-    ssr: true
-    router: Awaited<ReturnType<typeof getRouter>>
-  }
-}

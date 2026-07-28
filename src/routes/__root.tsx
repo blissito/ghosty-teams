@@ -31,11 +31,11 @@ export const Route = createRootRoute({
       if (_ms > 200) console.log(`[ssr tenantStatus ${Math.round(_ms)}ms]`)
       if (!st.ok) throw redirect({ href: `${st.portal}/app` })
     }
-    // Artefacto compartido (/a/<slug>): público por diseño — lo abre gente sin cuenta.
+    // Artefacto compartido (/artefacto/<slug>): público por diseño — lo abre gente sin cuenta.
     // El permiso lo resuelve la propia ruta (resolveSharedArtifact), que responde 404
     // si no es "cualquiera con el enlace" y no eres el dueño. Mandar aquí a /login
     // convertiría cada link compartido en una invitación a registrarse.
-    const isSharedArtifact = location.pathname.startsWith('/a/')
+    const isSharedArtifact = location.pathname.startsWith('/artefacto/')
     if (
       isOAuthRelay ||
       isCanvasDemo ||
