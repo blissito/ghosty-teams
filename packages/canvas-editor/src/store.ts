@@ -318,6 +318,10 @@ export class EditorStore {
   setNodeText(id: NodeId, text: string) {
     this.updateNode(id, { text })
   }
+  /** Hoja de texto rico (frase con inline dentro): se edita su HTML tal cual. */
+  setNodeRichText(id: NodeId, richText: string) {
+    this.updateNode(id, { richText })
+  }
   toggleHidden(id: NodeId) {
     const n = this.findNodePublic(id)
     if (n) this.updateNode(id, { hidden: !n.hidden })

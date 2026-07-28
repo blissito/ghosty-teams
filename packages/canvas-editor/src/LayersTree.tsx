@@ -136,7 +136,10 @@ function NodeRow({
   useEffect(() => {
     if (selected) rowRef.current?.scrollIntoView?.({ block: 'nearest' })
   }, [selected])
-  const label = node.text ? `${node.tag} · ${node.text.slice(0, 18)}` : node.tag
+  // Una hoja de texto rico no tiene `text`: su etiqueta sale del HTML sin marcas,
+  // o la fila se quedaba con el puro nombre de la etiqueta.
+  const preview = node.text ?? node.richText?.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim()
+  const label = preview ? `${node.tag} · ${preview.slice(0, 18)}` : node.tag
   const isDrop = drop?.id === node.id
   return (
     <>

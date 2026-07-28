@@ -229,6 +229,17 @@ function NodePanel({ store, node }: { store: EditorStore; node: Node }) {
           <textarea style={{ ...styles.input, minHeight: 40, resize: 'vertical' }} value={node.text} onChange={(e) => store.setNodeText(node.id, e.target.value)} />
         </Row>
       )}
+      {node.richText != null && (
+        <Row label="Texto">
+          {/* Esta hoja lleva inline dentro (negritas, enlaces). Se edita su HTML
+              porque quitárselo para mostrar texto plano lo perdería al guardar. */}
+          <textarea
+            style={{ ...styles.input, minHeight: 56, resize: 'vertical', fontFamily: 'ui-monospace, monospace' }}
+            value={node.richText}
+            onChange={(e) => store.setNodeRichText(node.id, e.target.value)}
+          />
+        </Row>
+      )}
       {node.children.length > 0 && (
         <button style={{ ...styles.ghost, width: '100%', marginTop: 4 }} onClick={() => store.ungroupNode(node.id)}>
           ⤢ Desagrupar (⌘⇧G)
@@ -884,6 +895,13 @@ function RefinePanel({ store, node, doc, refineProvider }: { store: EditorStore;
         // a medias desarma la sección en pantalla en cada chunk.
         { onPartial: (p) => { if (isCompleteElement(p)) apply(p) } },
       )
+      // Un proveedor que falla a media respuesta devuelve el HTML original sin
+      // lanzar. Tratarlo como éxito borraba la instrucción del usuario y no le
+      // decía nada: aquí se distingue y se conserva lo que escribió.
+      if (normalizeHtml(finalHtml) === normalizeHtml(currentHtml)) {
+        setError('El modelo no devolvió cambios. Prueba con otro modelo o sé más específico.')
+        return
+      }
       apply(finalHtml)
       const after = store.findNodePublic(node.id)
       if (after) setSummary(summarizeChange(before, after))
@@ -933,7 +951,7 @@ function RefinePanel({ store, node, doc, refineProvider }: { store: EditorStore;
           </>
         ) : (
           <>
-            {IconSparkle} Aplicar a este nodo
+            {IconSparkle} Refinar selección
           </>
         )}
       </button>
@@ -968,6 +986,10 @@ function isCompleteElement(html: string): boolean {
 }
 const VOID_TAGS = new Set(['img', 'br', 'hr', 'input', 'source', 'meta', 'link'])
 
+/** Espacios colapsados: el ida y vuelta por el modelo reformatea sin cambiar nada. */
+function normalizeHtml(html: string): string {
+  return html.replace(/\s+/g, ' ').trim()
+}
 interface ChangeSummary {
   lines: string[]
 }
