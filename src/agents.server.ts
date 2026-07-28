@@ -80,14 +80,16 @@ export async function resolvedAgents(): Promise<ResolvedAgent[]> {
     if (!a.enabled) continue;
     if (a.kind === "webhook" && a.webhook_url) {
       out.push({ handle: a.handle, name: a.name, avatar: a.avatar || "", systemPrompt: a.system_prompt, backend: { kind: "webhook", url: a.webhook_url } });
-    } else if (a.fleet_id && a.fleet_token) {
+      // El token sólo es credencial en EasyBits. Un agente nativo se opera por HMAC
+      // y no guarda ninguna — exigirlo acá lo dejaba fuera del chat sin decir por qué.
+    } else if (a.fleet_id && (a.fleet_token || a.runtime === "gs-native")) {
       out.push({
         handle: a.handle,
         name: a.name,
         avatar: a.avatar || "",
         systemPrompt: a.system_prompt,
         groupNs: !!a.group_ns,
-        backend: { kind: "fleet", id: a.fleet_id, token: a.fleet_token, runtime: a.runtime, runtimeUrl: a.runtime_url },
+        backend: { kind: "fleet", id: a.fleet_id, token: a.fleet_token ?? "", runtime: a.runtime, runtimeUrl: a.runtime_url },
       });
     }
   }

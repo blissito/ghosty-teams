@@ -1,5 +1,6 @@
 import { Link } from "@tanstack/react-router"; // Link: CTA "conecta EasyBits" / setup
 import { useEffect, useRef, useState } from "react";
+import { AnimatePresence, motion } from "motion/react";
 import { Bot, Plus, Trash2, X, Bell, Smile, Loader2, Pencil, Mail, ExternalLink } from "lucide-react";
 import { FleetAgentControls } from "./FleetAgentControls";
 import { currentPushState, enablePush, disablePush } from "../utils/push-subscribe";
@@ -10,7 +11,8 @@ import { createInvite, getInvite, refreshInvite, revokeInvite } from "../server/
 import {
   listManagedAgentsFn,
   createAgentFn,
-  createManagedAgentFn,
+  listStudioAgentsFn,
+  activateStudioAgentFn,
   updateAgentFn,
   deleteAgentFn,
   agentAccessFn,
@@ -1206,9 +1208,22 @@ function AddAgentForm({ onClose, onCreated }: { onClose: () => void; onCreated: 
   const [name, setName] = useState("");
   const [handle, setHandle] = useState("");
   const [webhookUrl, setWebhookUrl] = useState("");
-  const [engine] = useState<"claude">("claude"); // hoy solo Claude; el alta real vive en Studio
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  // Agentes que el owner ya tiene en Studio, para ACTIVARLOS aquí. El alta sigue
+  // viviendo allá (persona, motor, modelo); acá sólo se les da @handle.
+  const [studio, setStudio] = useState<{
+    native: boolean;
+    agents: { id: string; name: string; engine: string | null; model: string | null; activatedAs: string | null }[];
+  } | null>(null);
+  const [picked, setPicked] = useState<string>("");
+
+  useEffect(() => {
+    if (tab !== "create") return;
+    listStudioAgentsFn()
+      .then((r) => setStudio(r as typeof studio))
+      .catch(() => setStudio({ native: false, agents: [] }));
+  }, [tab]);
 
   async function create() {
     if (busy) return;
@@ -1216,7 +1231,8 @@ function AddAgentForm({ onClose, onCreated }: { onClose: () => void; onCreated: 
     setErr(null);
     try {
       if (tab === "create") {
-        await createManagedAgentFn({ data: { handle: handle.trim(), name: name.trim(), engine } });
+        if (!picked) throw new Error(t("elige un agente de Studio"));
+        await activateStudioAgentFn({ data: { studioAgentId: picked, handle: handle.trim() } });
       } else {
         await createAgentFn({
           data: { handle: handle.trim(), name: name.trim(), kind: "webhook", webhookUrl: webhookUrl.trim() },
@@ -1229,25 +1245,46 @@ function AddAgentForm({ onClose, onCreated }: { onClose: () => void; onCreated: 
     }
   }
 
+  // null = no mostrar el pie (aún cargando, o no hay agentes que activar): un botón
+  // deshabilitado sobre un estado vacío sólo confunde sobre qué falta hacer.
+  const puedeEnviar =
+    tab === "create"
+      ? studio === null || studio.agents.length === 0
+        ? null
+        : !!picked && !!handle.trim()
+      : !!handle.trim() && !!webhookUrl.trim();
+
   const input = "w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm outline-none focus:border-brand";
   return (
     <div className="mt-3 rounded-lg border border-border bg-surface p-3">
       <div className="mb-2 flex items-center justify-between">
-        <p className="text-xs font-semibold text-muted">{t("Nuevo agente")}</p>
+        <p className="text-xs font-semibold text-muted">{t("Agregar agente")}</p>
         <button onClick={onClose} className="text-muted hover:text-ink">
           <X size={16} />
         </button>
       </div>
-      <div className="mb-2 flex gap-1">
+      <div className="mb-2.5 flex gap-1">
         {(["create", "webhook"] as const).map((k) => (
           <button
             key={k}
             onClick={() => setTab(k)}
-            className={`flex-1 rounded-lg px-2 py-1.5 text-xs font-medium ${
-              tab === k ? "bg-brand text-brand-fg" : "bg-surface-2 text-muted hover:text-ink"
+            aria-selected={tab === k}
+            className={`relative flex-1 rounded-lg px-2 py-1.5 text-xs font-medium transition-colors ${
+              tab === k ? "text-brand-fg" : "bg-surface-2 text-muted hover:text-ink"
             }`}
           >
-            {k === "create" ? t("Crear agente") : t("Webhook externo")}
+            {/* El fondo activo es una capa aparte que se DESLIZA entre tabs
+                (layoutId), en vez de prender y apagar dos fondos distintos. */}
+            {tab === k && (
+              <motion.span
+                layoutId="agent-tab"
+                transition={{ type: "spring", stiffness: 380, damping: 30 }}
+                className="absolute inset-0 -z-10 rounded-lg bg-brand"
+              />
+            )}
+            {/* "Activar", no "Crear": el agente ya existe en Studio y aquí sólo se
+                le da un @handle. Decir "crear" prometía algo que no pasa. */}
+            {k === "create" ? t("De Studio") : t("Webhook externo")}
           </button>
         ))}
         {/* Importar desde Formmy — próximamente (deshabilitado). */}
@@ -1263,18 +1300,146 @@ function AddAgentForm({ onClose, onCreated }: { onClose: () => void; onCreated: 
         {tab === "create" ? (
           /* Los agentes gestionados se CREAN y configuran (prompt, modelo, canales) en
              Studio (gs), no inline en Teams. Redirige al panel de flota. */
-          <div className="rounded-lg border border-border bg-surface-2 p-4 text-center">
-            <p className="mb-3 text-xs text-muted">
-              {t("Crea y configura agentes gestionados (prompt, modelo, canales) en Studio. Aparecen aquí automáticamente para @taguearlos.")}
-            </p>
-            <a
-              href={STUDIO_AGENTS_URL}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-1.5 rounded-lg bg-brand px-4 py-1.5 text-sm font-semibold text-brand-fg"
-            >
-              {t("Crear en Studio")} <ExternalLink size={14} />
-            </a>
+          <div className="space-y-2.5">
+            {studio === null ? (
+              /* Skeleton en vez de spinner: el listado va a Studio y puede tardar;
+                 mostrar la FORMA de lo que viene se siente instantáneo. */
+              <div className="space-y-1.5" aria-busy="true">
+                {[0, 1].map((i) => (
+                  <div
+                    key={i}
+                    className="flex items-center gap-2.5 rounded-xl border border-border bg-surface px-3 py-2.5"
+                    style={{ animation: `gc-shimmer 1.4s ease-in-out ${i * 0.15}s infinite` }}
+                  >
+                    <div className="h-8 w-8 shrink-0 rounded-lg bg-surface-3" />
+                    <div className="min-w-0 flex-1 space-y-1.5">
+                      <div className="h-2.5 w-24 rounded bg-surface-3" />
+                      <div className="h-2 w-16 rounded bg-surface-3" />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : studio.agents.length === 0 ? (
+              <motion.div
+                initial={{ opacity: 0, y: 4 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="rounded-xl border border-dashed border-border bg-surface-2 px-4 py-6 text-center"
+              >
+                <div className="mx-auto mb-2.5 grid h-10 w-10 place-items-center rounded-xl bg-brand/10 text-brand">
+                  <Bot size={20} />
+                </div>
+                <p className="text-sm font-medium">{t("Aún no tienes agentes")}</p>
+                <p className="mx-auto mt-1 mb-3 max-w-[34ch] text-xs text-muted">
+                  {t("Se crean y configuran en Studio — persona, modelo y canales. Vuelve aquí para darles un @handle.")}
+                </p>
+                <a
+                  href={STUDIO_AGENTS_URL}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-brand px-4 py-1.5 text-sm font-semibold text-brand-fg transition-transform hover:scale-[1.02] active:scale-[0.98]"
+                >
+                  {t("Crear en Studio")} <ExternalLink size={14} />
+                </a>
+              </motion.div>
+            ) : (
+              <>
+                <p className="px-0.5 text-xs text-muted">
+                  {t("Elige un agente y dale su @handle en este workspace.")}
+                </p>
+
+                <div className="max-h-52 space-y-1.5 overflow-y-auto pr-0.5">
+                  {studio.agents.map((a, i) => {
+                    const taken = !!a.activatedAs;
+                    const on = picked === a.id;
+                    return (
+                      <motion.button
+                        key={a.id}
+                        type="button"
+                        disabled={taken}
+                        onClick={() => setPicked(a.id)}
+                        initial={{ opacity: 0, y: 6 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ delay: Math.min(i * 0.04, 0.24), duration: 0.18 }}
+                        whileTap={taken ? undefined : { scale: 0.985 }}
+                        aria-pressed={on}
+                        className={`flex w-full items-center gap-2.5 rounded-xl border px-3 py-2.5 text-left transition-colors ${
+                          taken
+                            ? "cursor-not-allowed border-border bg-surface-2 opacity-60"
+                            : on
+                              ? "border-brand bg-brand/5"
+                              : "border-border bg-surface hover:border-brand/50 hover:bg-surface-3"
+                        }`}
+                      >
+                        <div
+                          className={`grid h-8 w-8 shrink-0 place-items-center rounded-lg transition-colors ${
+                            on ? "bg-brand text-brand-fg" : "bg-brand/15 text-brand"
+                          }`}
+                        >
+                          <Bot size={17} />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-sm font-medium">{a.name}</p>
+                          <p className="truncate text-xs text-muted">
+                            {taken ? (
+                              <>
+                                {t("ya activo como")} <span className="font-medium">@{a.activatedAs}</span>
+                              </>
+                            ) : (
+                              a.model || a.engine || t("agente gestionado")
+                            )}
+                          </p>
+                        </div>
+                        {/* La palomita ocupa su lugar SIEMPRE (invisible si no) para que
+                            elegir no mueva el texto de la fila. */}
+                        <Check
+                          size={16}
+                          className={`shrink-0 transition-opacity ${on ? "text-brand opacity-100" : "opacity-0"}`}
+                        />
+                      </motion.button>
+                    );
+                  })}
+                </div>
+
+                <AnimatePresence initial={false}>
+                  {picked && (
+                    <motion.div
+                      initial={{ opacity: 0, height: 0 }}
+                      animate={{ opacity: 1, height: "auto" }}
+                      exit={{ opacity: 0, height: 0 }}
+                      transition={{ duration: 0.2 }}
+                      className="overflow-hidden"
+                    >
+                      <div className="space-y-1.5 pt-0.5">
+                        <div className="flex items-center rounded-lg border border-border bg-surface pl-3 text-sm transition-colors focus-within:border-brand">
+                          <span className="select-none text-muted">@</span>
+                          <input
+                            autoFocus
+                            value={handle}
+                            onChange={(e) => setHandle(e.target.value.replace(/[^a-zA-Z0-9]/g, "").toLowerCase())}
+                            placeholder={t("handle (ej. soporte)")}
+                            className="w-full min-w-0 bg-transparent py-2 pr-3 pl-1 outline-none"
+                          />
+                        </div>
+                        <p className="px-1 text-xs text-muted">
+                          {handle
+                            ? <>{t("Lo llamarás")} <span className="font-medium text-fg">@{handle}</span> {t("en este workspace.")}</>
+                            : t("Así lo mencionarás en los canales.")}
+                        </p>
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+
+                <a
+                  href={STUDIO_AGENTS_URL}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1 px-0.5 text-xs text-muted transition-colors hover:text-fg"
+                >
+                  {t("Crear otro en Studio")} <ExternalLink size={12} />
+                </a>
+              </>
+            )}
           </div>
         ) : (
           <>
@@ -1301,20 +1466,45 @@ function AddAgentForm({ onClose, onCreated }: { onClose: () => void; onCreated: 
                 className={`${input} flex-1 min-w-0`}
               />
             </div>
-            {err && <p className="text-sm text-red-400">{err}</p>}
-            <div className="flex justify-end gap-2">
-              <button onClick={onClose} className="rounded-lg px-3 py-1.5 text-sm text-muted hover:text-ink">
-                {t("Cancelar")}
-              </button>
-              <button
-                onClick={create}
-                disabled={busy || !handle.trim() || !webhookUrl.trim()}
-                className="rounded-lg bg-brand px-4 py-1.5 text-sm font-semibold text-brand-fg disabled:opacity-50"
-              >
-                {busy ? t("Agregando…") : t("Agregar")}
-              </button>
-            </div>
           </>
+        )}
+
+        {/* Pie COMPARTIDO por los dos tabs. Antes vivía dentro del de webhook, así
+            que el otro no tenía con qué enviar. */}
+        <AnimatePresence initial={false}>
+          {err && (
+            <motion.p
+              initial={{ opacity: 0, y: -4 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -4 }}
+              role="alert"
+              className="rounded-lg bg-red-500/10 px-3 py-2 text-sm text-red-400"
+            >
+              {err}
+            </motion.p>
+          )}
+        </AnimatePresence>
+
+        {puedeEnviar !== null && (
+          <div className="flex justify-end gap-2 pt-0.5">
+            <button onClick={onClose} className="rounded-lg px-3 py-1.5 text-sm text-muted hover:text-ink">
+              {t("Cancelar")}
+            </button>
+            <button
+              onClick={create}
+              disabled={busy || !puedeEnviar}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-brand px-4 py-1.5 text-sm font-semibold text-brand-fg transition-transform disabled:opacity-50 enabled:hover:scale-[1.02] enabled:active:scale-[0.98]"
+            >
+              {busy && <Loader2 size={14} className="animate-spin" />}
+              {busy
+                ? tab === "create"
+                  ? t("Activando…")
+                  : t("Agregando…")
+                : tab === "create"
+                  ? t("Activar aquí")
+                  : t("Agregar")}
+            </button>
+          </div>
         )}
       </div>
     </div>

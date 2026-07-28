@@ -187,7 +187,9 @@ export const selectFleetAgent = createServerFn({ method: "POST" })
     const { nativeRuntimeBase } = await import("./ghosty-runtime.server");
     const native = await nativeRuntimeBase();
 
-    let agent: { id: string; token: string; assistantName?: string } | undefined;
+    // `token` opcional: el runtime nativo se opera con la firma de partner, así que
+    // Studio dejó de mandarlo. En EasyBits sí viene y sí hace falta.
+    let agent: { id: string; token?: string; assistantName?: string } | undefined;
     if (native) {
       const { sessionUser } = await import("./chat");
       const sub = (await sessionUser())?.sub;
@@ -204,7 +206,7 @@ export const selectFleetAgent = createServerFn({ method: "POST" })
     }
     if (!agent) throw new Error("Agente no encontrado");
     await setConfig("fleet_agent_id", agent.id);
-    await setConfig("fleet_token", agent.token);
+    await setConfig("fleet_token", agent.token ?? "");
     // Nombre visible = "Ghosty" (marca), NO el nombre crudo del pool (ej. "Ghosty-teams-
     // onix-yy4"). assistantName suele ser "Ghosty"; si no, fallback a "Ghosty". El owner
     // puede renombrarlo en Ajustes → Agentes.

@@ -27,8 +27,10 @@ export async function setConfig(k: string, v: string): Promise<void> {
 // ¿La instancia ya tiene un agente Ghosty conectado? (gating de @ghosty)
 export async function getGhostyFleet(): Promise<{ id: string; token: string } | null> {
   const c = await getConfigMany(["fleet_agent_id", "fleet_token"]);
-  if (c.fleet_agent_id && c.fleet_token) {
-    return { id: c.fleet_agent_id, token: c.fleet_token };
+  // El token dejó de ser obligatorio: un agente del runtime nativo se opera con la
+  // firma de partner y no tiene uno. Exigirlo lo hacía desaparecer del chat.
+  if (c.fleet_agent_id) {
+    return { id: c.fleet_agent_id, token: c.fleet_token ?? "" };
   }
   return null;
 }

@@ -141,6 +141,92 @@ export const listFleetAgentsFn = createServerFn({ method: "GET" }).handler(async
   return (await fleetAgentsWithRefresh()).map((a) => ({ id: a.id, name: a.name || a.assistantName || a.id }));
 });
 
+// ── Agentes de Studio: listar y ACTIVAR en este workspace ─────────────────────
+//
+// Un agente se crea y se configura en Studio (persona, motor, modelo, canales).
+// Activarlo aquí es darle un @handle y una fila local — NO se crea nada allá, y
+// desactivarlo tampoco lo borra. Esa separación es la que permite que el mismo
+// agente esté en varios workspaces, y que quitarlo de uno no afecte a los otros.
+//
+// El listado sale del runtime nativo, que scopea por el workspace que FIRMA: no
+// se manda "de quién" son los agentes, lo resuelve Studio. Por eso esto no puede
+// usarse para espiar la flota de otro.
+export const listStudioAgentsFn = createServerFn({ method: "GET" }).handler(async () => {
+  await requireOwner();
+  const { nativeRuntimeBase } = await import("./ghosty-runtime.server");
+  const base = await nativeRuntimeBase();
+  if (!base) return { native: false as const, agents: [] };
+
+  const { listNativeFleetAgents } = await import("./fleet-native.server");
+  const db = await import("../db.server");
+  const [pools, locales] = await Promise.all([
+    listNativeFleetAgents(base, "").catch(() => []),
+    db.listAgents(),
+  ]);
+  // Ya activado = hay fila local con ese fleet_id. Se marca en vez de esconderse:
+  // saber que un agente YA está y con qué @handle es justo lo que evita duplicarlo.
+  const porFleetId = new Map(locales.filter((a) => a.fleet_id).map((a) => [a.fleet_id!, a]));
+  return {
+    native: true as const,
+    agents: pools.map((p) => {
+      const local = porFleetId.get(p.id);
+      return {
+        id: p.id,
+        name: p.name || p.assistantName || p.id,
+        engine: p.engine ?? null,
+        model: p.model ?? null,
+        activatedAs: local ? local.handle : null,
+      };
+    }),
+  };
+});
+
+export const activateStudioAgentFn = createServerFn({ method: "POST" })
+  .validator((d: { studioAgentId: string; handle: string }) => d)
+  .handler(async ({ data }) => {
+    const user = await requireOwner();
+    const db = await import("../db.server");
+
+    const handle = data.handle.trim().toLowerCase().replace(/[^a-z0-9]/g, "");
+    if (!handle) throw new Error("handle requerido");
+    if (handle === db.GHOSTY_HANDLE) throw new Error("@ghosty está reservado");
+    if (await db.getAgentByHandle(handle)) throw new Error(`@${handle} ya existe`);
+
+    const { nativeRuntimeBase } = await import("./ghosty-runtime.server");
+    const base = await nativeRuntimeBase();
+    if (!base) throw new Error("este workspace no tiene runtime nativo configurado");
+
+    // Se confirma contra Studio que el agente EXISTE y es de este workspace. El
+    // listado ya viene scopeado por la firma, así que si no está en él, no es suyo
+    // — y no se acepta un id escrito a mano.
+    const { listNativeFleetAgents } = await import("./fleet-native.server");
+    const pools = await listNativeFleetAgents(base, "");
+    const found = pools.find((p) => p.id === data.studioAgentId);
+    if (!found) throw new Error("ese agente no existe en Studio o no es de este workspace");
+
+    const ya = (await db.listAgents()).find((a) => a.fleet_id === found.id);
+    if (ya) throw new Error(`ese agente ya está activo como @${ya.handle}`);
+
+    const ag = await db.createAgent({
+      handle,
+      name: found.name || found.assistantName || handle,
+      kind: "fleet",
+      fleetId: found.id,
+      // Sin token a propósito: el runtime nativo se opera con la firma de partner.
+      // Guardar una credencial que no se usa sólo agranda lo que se pierde.
+      fleetToken: null,
+      runtime: "gs-native",
+      // Clave de conversación con el namespace del workspace: este agente PUEDE
+      // estar activo en varios, y sin esto compartirían memoria (ver agentGroupId).
+      groupNs: true,
+      createdBy: user.sub,
+    });
+
+    const { connectTeamsChannel } = await import("./agent-config");
+    await connectTeamsChannel(found.id, "", "gs-native").catch(() => {});
+    return { ok: true as const, handle: ag.handle };
+  });
+
 export const createAgentFn = createServerFn({ method: "POST" })
   .validator(
     (d: {

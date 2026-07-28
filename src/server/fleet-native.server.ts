@@ -10,8 +10,11 @@ export type FleetPool = {
   id: string;
   name: string;
   assistantName?: string;
-  token: string;
+  /** Studio dejó de mandarlo: un agente nativo se opera por HMAC, no por token. */
+  token?: string;
   workerTemplate?: string;
+  engine?: string;
+  model?: string;
 };
 
 /** Lista los FleetAgent del owner en Studio. GET firma HMAC sobre body vacío. */

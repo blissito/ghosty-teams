@@ -251,3 +251,10 @@ body {
   color: var(--color-brand);
   white-space: nowrap;
 }
+
+/* Skeleton del listado de agentes de Studio: latido suave mientras llega la
+   respuesta del runtime. Sólo opacidad → no reflowea ni compite con el contenido. */
+@keyframes gc-shimmer {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
