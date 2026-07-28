@@ -114,6 +114,10 @@ function SharedArtifact() {
   const router = useRouter();
   const { id } = Route.useParams();
   const d = Route.useLoaderData();
+  // La versión pedida se lee del NAVEGADOR, no de lo que el loader haya resuelto: es el
+  // dato que el usuario tiene en la barra de direcciones, y es el que el iframe debe
+  // pedirle a /raw para que marco y contenido no puedan discrepar.
+  const search = Route.useSearch();
   // El parpadeo se siembra con el slug: estable entre render y render (nada de
   // Math.random, que rompería la hidratación) y distinto por artefacto.
   const blink = blinkTiming(id);
@@ -140,11 +144,15 @@ function SharedArtifact() {
         // REMONTAR al cambiar de versión: cambiarle el src a un iframe vivo no
         // siempre lo recarga (queda el documento anterior). Con `key` React lo tira
         // y lo crea de nuevo, que es lo único que garantiza ver la otra versión.
-        key={d.versionId}
+        key={search.v ?? d.versionId}
         title={d.title}
         // CDN primero (artefacto.ghosty.studio/<key>): el contenido no pasa por la
         // app ni por la DB. El /raw sólo entra para filas viejas sin `src`.
-        src={d.contentUrl || `/artefacto/${encodeURIComponent(id)}/raw${d.viewParam}`}
+        src={
+          search.v
+            ? `/artefacto/${encodeURIComponent(id)}/raw?v=${encodeURIComponent(search.v)}`
+            : d.contentUrl || `/artefacto/${encodeURIComponent(id)}/raw`
+        }
         sandbox="allow-scripts allow-forms allow-popups"
         referrerPolicy="no-referrer"
         // El fondo NO es blanco: al cambiar de versión el iframe se remonta y, mientras
