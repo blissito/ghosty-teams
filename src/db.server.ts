@@ -1152,6 +1152,20 @@ export async function getUserSubByEmail(email: string): Promise<string | null> {
   return rows[0]?.sub ?? null;
 }
 
+/**
+ * Resuelve a quién señala lo que se escribió en el campo de invitar: correo o
+ * `@handle`. La gente teclea el handle porque es lo que ve en el chat, y antes eso
+ * fallaba con un error que hablaba de otra cosa ("aún no ha entrado a Ghosty Teams").
+ */
+export async function getUserSubByEmailOrHandle(input: string): Promise<string | null> {
+  const raw = input.trim();
+  if (!raw) return null;
+  if (raw.includes("@") && !raw.startsWith("@")) return getUserSubByEmail(raw);
+  const handle = raw.replace(/^@/, "").toLowerCase();
+  const rows = await dbq("SELECT sub FROM gc_users WHERE lower(handle) = ?", [handle]);
+  return rows[0]?.sub ?? null;
+}
+
 // Emails de una lista de subs (para notificar por correo). Omite banned, sin email, y
 // quienes desactivaron el correo (email_notifs=0, opt-out en Ajustes → Notificaciones).
 export async function emailsForSubs(subs: string[]): Promise<{ sub: string; email: string; name: string }[]> {

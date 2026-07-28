@@ -104,8 +104,24 @@ export const addChannelMemberFn = createServerFn({ method: "POST" })
   .validator((d: { slug: string; email: string }) => d)
   .handler(async ({ data }) => {
     const { db, ch } = await requireManage(data.slug);
-    const sub = await db.getUserSubByEmail(data.email);
-    if (!sub) throw new Error("ese usuario aún no ha entrado a Ghosty Teams");
+    // 1) Lo que ya conocemos del workspace: correo o @handle.
+    let sub = await db.getUserSubByEmailOrHandle(data.email);
+    if (!sub) {
+      // 2) El padrón de verdad está en gs. `gc_users` solo tiene a quien YA entró a
+      //    Teams, así que un miembro nuevo —o uno que vive en Ghosty Tasks— era
+      //    invisible aquí y el error culpaba a la persona equivocada.
+      const { workspaceRoster } = await import("./roster.server");
+      const target = data.email.trim().toLowerCase();
+      const hit = (await workspaceRoster()).find((m) => m.email === target);
+      if (hit) sub = hit.sub;
+    }
+    if (!sub) {
+      throw new Error(
+        data.email.trim().startsWith("@")
+          ? "no encuentro ese @usuario en este workspace"
+          : "esa persona no es miembro del workspace todavía: invítala en Ajustes → Invitar miembros"
+      );
+    }
     await db.addChannelMember(ch.id, sub);
     return { ok: true as const };
   });

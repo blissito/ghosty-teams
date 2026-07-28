@@ -93,8 +93,16 @@ export const addAgentCollaboratorFn = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     await requireOwner(); // solo el owner suma/quita colaboradores
     const db = await import("../db.server");
-    const sub = await db.getUserSubByEmail(data.email);
-    if (!sub) throw new Error("ese usuario aún no ha entrado a Ghosty Teams");
+    // Mismo criterio que al invitar a un room: correo o @handle, y si no está en la
+    // proyección local se pregunta por el padrón real (gs).
+    let sub = await db.getUserSubByEmailOrHandle(data.email);
+    if (!sub) {
+      const { workspaceRoster } = await import("./roster.server");
+      const target = data.email.trim().toLowerCase();
+      const hit = (await workspaceRoster()).find((m) => m.email === target);
+      if (hit) sub = hit.sub;
+    }
+    if (!sub) throw new Error("esa persona no es miembro del workspace todavía");
     await db.addAgentCollaborator(data.id, sub);
     return { ok: true as const };
   });
