@@ -5499,7 +5499,7 @@ function Flow({
         slug={channel.slug}
         parentId={null}
         onSend={(p) => { onSend(p); scrollToBottom(); }}
-        placeholder={t("Mensaje a #{room}…", { room: channel.name })}
+        placeholder={t("Escribe un mensaje…")}
       />
     </section>
   );
@@ -5793,7 +5793,7 @@ function DmView({
           onSend(p);
           scrollToBottom();
         }}
-        placeholder={t("Mensaje a {name}…", { name: title })}
+        placeholder={t("Escribe un mensaje…")}
       />
     </section>
   );

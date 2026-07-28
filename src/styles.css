@@ -241,6 +241,13 @@ body {
   float: left;
   height: 0;
   pointer-events: none;
+  /* Con el panel del artefacto abierto el composer se estrecha y el placeholder se
+     partía en dos líneas, quedando cortado a la mitad por el alto de una sola fila
+     (el editor vacío no crece). Una línea con puntos suspensivos. */
+  max-width: 100%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 /* Pill de mención — igual que highlightMentions en Markdown.tsx. */
 .ProseMirror .mention {
