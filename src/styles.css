@@ -244,7 +244,10 @@ body {
   /* Con el panel del artefacto abierto el composer se estrecha y el placeholder se
      partía en dos líneas, quedando cortado a la mitad por el alto de una sola fila
      (el editor vacío no crece). Una línea con puntos suspensivos. */
-  max-width: 100%;
+  /* `width:100%` es lo que hace posible el ellipsis: el ::before es un float y sin un
+     ancho definido se encoge a su contenido — con overflow:hidden encima, a NADA (el
+     placeholder desaparecía). */
+  width: 100%;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;

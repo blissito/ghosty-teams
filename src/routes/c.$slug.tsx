@@ -404,6 +404,36 @@ type SendPayload = {
 };
 
 // Contexto de chat (usuario + slug activo) para que MessageRow acceda sin prop-drilling.
+/**
+ * Frases del composer. Rotan para que el cuadro no se vuelva mobiliario invisible, y
+ * casi todas enseñan algo que se puede pedir — es el único sitio donde alguien que
+ * acaba de entrar descubre qué sabe hacer el agente.
+ *
+ * La elección es DETERMINISTA (hash del scope + la hora): el server y el cliente
+ * calculan la misma, así que no hay parpadeo al hidratar, y aun así cambia sola a lo
+ * largo del día y es distinta en cada room.
+ */
+const COMPOSER_HINTS = [
+  "Pídele a Ghosty",
+  "Pídele un documento",
+  "Pídele una hoja de cálculo",
+  "Pídele que investigue algo",
+  "Pídele una app de una sola página",
+  "Pídele que resuma el hilo",
+  "Pídele una imagen",
+  "Pídele que lo pase a PDF",
+  "Pídele que te lo cuente en audio",
+  "Pídele que revise ese enlace",
+  "Escríbele a tu equipo",
+];
+
+function composerHint(scope: string): string {
+  const seed = `${scope}·${Math.floor(Date.now() / 3_600_000)}`;
+  let h = 0;
+  for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) >>> 0;
+  return COMPOSER_HINTS[h % COMPOSER_HINTS.length];
+}
+
 const ChatCtx = createContext<{
   me: SessionUser | null;
   slug: string;
@@ -5499,7 +5529,7 @@ function Flow({
         slug={channel.slug}
         parentId={null}
         onSend={(p) => { onSend(p); scrollToBottom(); }}
-        placeholder={t("Escribe un mensaje…")}
+        placeholder={t(composerHint(channel.slug))}
       />
     </section>
   );
@@ -5793,7 +5823,7 @@ function DmView({
           onSend(p);
           scrollToBottom();
         }}
-        placeholder={t("Escribe un mensaje…")}
+        placeholder={t(composerHint(`dm-${dmId}`))}
       />
     </section>
   );
