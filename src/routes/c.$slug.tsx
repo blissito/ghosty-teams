@@ -43,6 +43,13 @@ import {
   Menu,
   Paperclip,
   FileText,
+  FileType2,
+  FileImage,
+  FileVideo,
+  FileAudio,
+  FileSpreadsheet,
+  FileArchive,
+  FileCode,
   FolderOpen,
   Download,
   Loader2,
@@ -5939,6 +5946,33 @@ function VoiceNote({ src, waveform, durationMs }: { src: string; waveform?: stri
 }
 
 // Todo pasa por el proxy autenticado /api/attachment/:fileId (re-firma readUrl).
+/**
+ * Ícono y color por TIPO de archivo. Un `FileText` genérico para todo hacía que un
+ * PDF, una hoja de cálculo y un zip se vieran idénticos — el ícono es lo primero
+ * que se mira en una tarjeta de archivo, así que debe decir QUÉ es.
+ *
+ * El color también informa: rojo=PDF y verde=hoja son convenciones que la gente ya
+ * trae aprendidas de su escritorio.
+ */
+function fileGlyph(mime: string | null | undefined, name: string | null | undefined) {
+  const m = (mime ?? "").toLowerCase();
+  const n = (name ?? "").toLowerCase();
+  const es = (...exts: string[]) => exts.some((e) => n.endsWith(e));
+
+  if (m === "application/pdf" || es(".pdf")) return { Icon: FileType2, cls: "text-red-400" };
+  if (m.startsWith("image/") || es(".png", ".jpg", ".jpeg", ".webp", ".gif", ".svg"))
+    return { Icon: FileImage, cls: "text-violet-400" };
+  if (m.startsWith("video/") || es(".mp4", ".mov", ".webm")) return { Icon: FileVideo, cls: "text-blue-400" };
+  if (m.startsWith("audio/") || es(".ogg", ".mp3", ".wav", ".m4a")) return { Icon: FileAudio, cls: "text-amber-400" };
+  if (es(".csv", ".xlsx", ".xls", ".numbers") || m.includes("spreadsheet"))
+    return { Icon: FileSpreadsheet, cls: "text-emerald-400" };
+  if (es(".zip", ".tar", ".gz", ".rar") || m.includes("zip") || m.includes("compressed"))
+    return { Icon: FileArchive, cls: "text-zinc-400" };
+  if (es(".json", ".ts", ".tsx", ".js", ".py", ".go", ".sh", ".html", ".css") || m.includes("json"))
+    return { Icon: FileCode, cls: "text-sky-400" };
+  return { Icon: FileText, cls: "text-brand" };
+}
+
 function AttachmentList({ attachments }: { attachments: Attachment[] }) {
   const t = useT();
   const { onOpenArtifact } = useContext(ChatCtx);
@@ -5974,7 +6008,10 @@ function AttachmentList({ attachments }: { attachments: Attachment[] }) {
               className="group flex max-w-xs items-center gap-2.5 rounded-lg border border-border bg-surface-2 px-3 py-2 text-left transition hover:border-brand"
               title={t("Abrir en panel")}
             >
-              <FileText size={20} className="shrink-0 text-brand" />
+              {(() => {
+                const { Icon, cls } = fileGlyph(a.mime, a.name);
+                return <Icon size={20} className={`shrink-0 ${cls}`} />;
+              })()}
               <span className="min-w-0 flex-1">
                 <span className="block truncate text-sm text-ink">{a.name ?? t("Archivo")}</span>
                 <span className="block text-[11px] text-muted">{fmtBytes(a.size)}</span>
@@ -5996,7 +6033,10 @@ function AttachmentList({ attachments }: { attachments: Attachment[] }) {
             download={a.name ?? undefined}
             className="group flex max-w-xs items-center gap-2.5 rounded-lg border border-border bg-surface-2 px-3 py-2 transition hover:border-brand"
           >
-            <FileText size={20} className="shrink-0 text-brand" />
+            {(() => {
+              const { Icon, cls } = fileGlyph(a.mime, a.name);
+              return <Icon size={20} className={`shrink-0 ${cls}`} />;
+            })()}
             <span className="min-w-0 flex-1">
               <span className="block truncate text-sm text-ink">{a.name ?? t("Archivo")}</span>
               <span className="block text-[11px] text-muted">{fmtBytes(a.size)}</span>
