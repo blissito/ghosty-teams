@@ -921,6 +921,19 @@ export default function ArtifactPanel({
                 }
                 pinnedActions={
                   <>
+                    {/* Ver/Editar: la acción principal del artefacto, así que va con
+                        etiqueta y no se esconde en el ⋯ al compactar. */}
+                    {artifact.kind === "artifact" ? (
+                      <button
+                        type="button"
+                        onClick={() => setEditing((v) => !v)}
+                        title={editing ? t("Ver") : t("Editar")}
+                        className="mr-0.5 inline-flex shrink-0 items-center gap-1.5 rounded-md px-2 py-1 text-xs text-muted transition hover:bg-surface-3 hover:text-brand"
+                      >
+                        {editing ? <Eye size={14} /> : <Pencil size={14} />}
+                        {editing ? t("Ver") : t("Editar")}
+                      </button>
+                    ) : null}
                     <button
                       type="button"
                       onClick={toggleFullscreen}
@@ -1374,16 +1387,9 @@ export default function ArtifactPanel({
                         </div>
                       </div>
                     ) : null}
-                    <div className="flex items-center gap-2 border-b border-border bg-surface px-3 py-1.5">
-                      <button
-                        onClick={() => setEditing((v) => !v)}
-                        className="flex items-center gap-1.5 rounded-md border border-border px-2 py-1 text-xs text-ink transition hover:border-brand"
-                        title={editing ? t("Ver") : t("Editar")}
-                      >
-                        {editing ? <Eye size={13} /> : <Pencil size={13} />}
-                        {editing ? t("Ver") : t("Editar")}
-                      </button>
-                    </div>
+                    {/* Ver/Editar vive en la topbar (ArtifactShareBar), no en una barra
+                        propia: una segunda fila para UN botón robaba alto al artefacto y
+                        partía el marco en dos. */}
                     {editing && editorDoc ? (
                       <div className="min-h-0 flex-1">
                         <CanvasEditor

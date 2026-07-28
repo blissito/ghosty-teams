@@ -7,7 +7,7 @@
 
 import { useLayoutEffect, useRef, useState } from 'react'
 import { FONT_OPTIONS, PALETTE_PRESETS, activeTokens, findNode, type Doc, type Node } from './model'
-import { backgroundUrl, clearBackground, makeFullBleed, makeHeroBackground, parentOf, refineContext, setBackground } from './imageOps'
+import { backgroundUrl, clearBackground, makeFullBleed, makeHeroBackground, nearestBackgroundAncestor, refineContext, setBackground } from './imageOps'
 import { htmlToNode, nodeSubtreeToHtml } from './serialize'
 import { addClass, autocomplete, classList, removeClass, toggleClass } from './tailwindClasses'
 import {
@@ -584,18 +584,28 @@ function ImagePanel({ store, node, doc, imageProvider }: { store: EditorStore; n
   const [busy, setBusy] = useState<'gen' | 'search' | 'upload' | null>(null)
   const [results, setResults] = useState<string[]>([])
   const [error, setError] = useState<string | null>(null)
-  const [url, setUrl] = useState('')
   const [dragging, setDragging] = useState(false)
-  // Un nodo que no es <img> no puede estar en modo "Imagen": al cambiar de
-  // selección el modo se recalcula (el key del panel fuerza el remount).
   const bgUrl = backgroundUrl(node)
   const current = isImg ? (node.src ?? '') : (bgUrl ?? '')
-  const parent = parentOf(doc, node.id)
+  // Dónde está la imagen si no está aquí (ver el aviso "Ir ahí").
+  const bgAncestor = current ? null : nearestBackgroundAncestor(doc, node.id)
+
+  // El campo de URL muestra la URL REAL como valor editable. Antes la enseñaba
+  // de placeholder: se veía lleno estando vacío, así que la palomita salía
+  // deshabilitada y parecía rota.
+  const [url, setUrl] = useState(current)
+  useLayoutEffect(() => setUrl(current), [current])
 
   const apply = (src: string) => {
     setError(null)
     if (isImg) store.updateNode(node.id, { src })
     else setBackground(store, node.id, src)
+  }
+  /** Aplica lo escrito en el campo, si es una URL válida y distinta de la actual. */
+  const applyUrl = () => {
+    const v = url.trim()
+    if (!v || v === current || !/^https?:\/\//.test(v)) return
+    apply(v)
   }
 
   async function generate() {
@@ -638,16 +648,24 @@ function ImagePanel({ store, node, doc, imageProvider }: { store: EditorStore; n
   }
 
   return (
-    <Section
-      title="Imagen y fondo"
-      action={
-        parent ? (
-          <button title={`Seleccionar el contenedor <${parent.tag}>`} style={{ ...styles.iconBtn, width: 'auto', padding: '0 5px', fontFamily: 'monospace', fontSize: 10 }} onClick={() => store.select(parent.id)}>
-            ↑ {parent.tag}
+    <Section title="Imagen y fondo">
+      {/*
+        Aviso de "la imagen está en otro lado". Sustituye al botón "↑ div", que
+        subía UN nivel a ciegas: no decía a dónde ibas ni cuántas veces pulsar,
+        así que el usuario terminaba escalando el árbol sin saber por qué. Esto
+        sólo aparece cuando hace falta y lleva de un salto al elemento correcto.
+      */}
+      {!current && bgAncestor && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6, padding: '6px 8px', background: '#0d0f14', border: '1px solid #262b36', borderRadius: 6 }}>
+          <span style={{ flex: 1, fontSize: 10, color: '#9ca3af', lineHeight: 1.4 }}>
+            Este elemento no tiene imagen. La de esta zona la carga{' '}
+            <code style={{ color: '#c4b5fd' }}>{`<${bgAncestor.tag}>`}</code>.
+          </span>
+          <button style={{ ...styles.chip, flexShrink: 0, color: '#c4b5fd' }} onClick={() => store.select(bgAncestor.id)}>
+            Ir ahí
           </button>
-        ) : undefined
-      }
-    >
+        </div>
+      )}
       {/*
         Zona de imagen: preview y subida son EL MISMO objeto. Un botón "subir"
         separado del preview obliga a mirar dos sitios para entender el estado;
@@ -720,21 +738,16 @@ function ImagePanel({ store, node, doc, imageProvider }: { store: EditorStore; n
             placeholder={current || 'https://…'}
             value={url}
             onChange={(e) => setUrl(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && /^https?:\/\//.test(url.trim())) { apply(url.trim()); setUrl('') }
-            }}
+            // Pegar una URL se aplica con ↵ o al salir del campo. El botón de
+            // al lado COPIA — que es lo que uno quiere hacer con una URL que ya
+            // está puesta; "confirmar" un valor que ya se ve no aporta nada.
+            onKeyDown={(e) => { if (e.key === 'Enter') applyUrl() }}
+            onBlur={applyUrl}
           />
-          <button
-            style={{ ...styles.iconBtn, opacity: /^https?:\/\//.test(url.trim()) ? 1 : 0.4 }}
-            disabled={!/^https?:\/\//.test(url.trim())}
-            title={isImg ? 'Usar esta URL' : 'Usar como fondo'}
-            onClick={() => { apply(url.trim()); setUrl('') }}
-          >
-            {IconCheck}
-          </button>
+          <CopyButton value={url} />
         </div>
       </Row>
-      {url.trim() && !/^https?:\/\//.test(url.trim()) && (
+      {url.trim() && url.trim() !== current && !/^https?:\/\//.test(url.trim()) && (
         <div style={{ fontSize: 10, color: '#f59e0b', marginBottom: 4 }}>La URL debe empezar con http:// o https://</div>
       )}
       {error && <div style={{ fontSize: 10, color: '#f87171', marginBottom: 4 }}>{error}</div>}
@@ -791,6 +804,46 @@ function ImagePanel({ store, node, doc, imageProvider }: { store: EditorStore; n
         </div>
       </details>
     </Section>
+  )
+}
+
+/**
+ * Copiar al portapapeles con confirmación visible. La animación no es adorno:
+ * copiar no cambia nada en pantalla, así que sin acuse el usuario no sabe si
+ * funcionó y vuelve a pulsar.
+ */
+function CopyButton({ value }: { value: string }) {
+  const [copied, setCopied] = useState(false)
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useLayoutEffect(() => () => { if (timer.current) clearTimeout(timer.current) }, [])
+  const canCopy = !!value.trim()
+  return (
+    <button
+      style={{
+        ...styles.iconBtn,
+        flexShrink: 0,
+        opacity: canCopy ? 1 : 0.35,
+        cursor: canCopy ? 'pointer' : 'not-allowed',
+        color: copied ? '#6ee7b7' : '#a78bfa',
+        borderColor: copied ? 'rgba(110,231,183,.4)' : '#262b36',
+        transform: copied ? 'scale(1.12)' : 'scale(1)',
+        transition: 'transform .16s cubic-bezier(.34,1.56,.64,1), color .16s, border-color .16s',
+      }}
+      disabled={!canCopy}
+      title={copied ? '¡Copiada!' : 'Copiar la URL'}
+      onClick={() => {
+        navigator.clipboard?.writeText(value.trim()).then(
+          () => {
+            setCopied(true)
+            if (timer.current) clearTimeout(timer.current)
+            timer.current = setTimeout(() => setCopied(false), 1400)
+          },
+          () => {/* portapapeles bloqueado: sin acuse, pero sin romper nada */},
+        )
+      }}
+    >
+      {copied ? IconCheck : IconCopy}
+    </button>
   )
 }
 
@@ -1229,6 +1282,7 @@ const CHECKERBOARD = 'repeating-conic-gradient(#1a1d24 0% 25%, #0d0f14 0% 50%) 5
 const IconUpload = svg(<><path d="M12 16V4" /><path d="m7 9 5-5 5 5" /><path d="M4 20h16" /></>)
 const IconSearch = svg(<><circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" /></>)
 const IconCheck = svg(<polyline points="20 6 9 17 4 12" />)
+const IconCopy = svg(<><rect x="9" y="9" width="12" height="12" rx="2" /><path d="M5 15V5a2 2 0 0 1 2-2h10" /></>)
 
 // Refine: chispa. Sustituye al emoji ✦ para que los controles nuevos usen el
 // mismo set SVG 14px que el resto de iconos del panel.

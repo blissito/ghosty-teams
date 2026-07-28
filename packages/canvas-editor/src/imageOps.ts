@@ -107,6 +107,21 @@ function findIn(doc: Doc, id: NodeId): Node | null {
 }
 
 /**
+ * El ancestro más cercano que SÍ tiene imagen de fondo, o null.
+ *
+ * En un hero generado la foto casi nunca está en el elemento que uno clica: el
+ * clic cae en el overlay o en el texto, y el `background-image` lo carga un
+ * `div` más arriba. Esto permite ofrecer un salto DIRECTO a ese elemento en vez
+ * de un "subir un nivel" a ciegas, que obliga a adivinar cuántas veces pulsar.
+ */
+export function nearestBackgroundAncestor(doc: Doc, id: NodeId): Node | null {
+  for (const a of ancestorsOf(doc, id)) {
+    if (backgroundUrl(a)) return a
+  }
+  return null
+}
+
+/**
  * Contexto de SOLO LECTURA para un refine por-nodo: dónde vive el nodo y qué
  * tiene al lado, sin darle al modelo el HTML de los vecinos (ver
  * `RefineNodeInput.context`).
