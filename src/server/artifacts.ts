@@ -97,6 +97,26 @@ export async function publishArtifactVersion(args: {
     src,
     ownerSub: args.ownerSub ?? null,
   });
+  // Poda las versiones viejas (fila + objeto). Best-effort y DESPUÉS del INSERT: si
+  // falla, sólo queda basura, nunca se pierde la versión que acabamos de publicar.
+  try {
+    const gone = await db.pruneArtifactVersions(args.documentId);
+    if (gone.length) {
+      const storage = await import("./storage.server");
+      for (const src of gone) {
+        const key = storageKeyFromSrc(src);
+        if (!key) continue;
+        // Se intenta en los dos buckets porque `visibility` es del turno que la
+        // publicó, no del que poda: un DM publicó público y un room, privado.
+        await storage.del(key, "private").catch(() => false);
+        await storage.del(key, "public").catch(() => false);
+      }
+      console.log(`[artifact prune] ${args.documentId} -${gone.length} versiones`);
+    }
+  } catch (e) {
+    console.error("[artifact] prune failed", e);
+  }
+
   try {
     await args.setPointer?.(args.documentId);
   } catch {
@@ -111,6 +131,17 @@ export async function publishArtifactVersion(args: {
     `[artifact publish] kind=${args.kind} ${Math.round(performance.now() - t0)}ms html=${md.length}b src=${src ? "sí" : "no"}`
   );
   return { md, src };
+}
+
+/**
+ * La key del bucket a partir del `src` guardado. Hay DOS formas de link vivas —el
+ * branded `<base>/<uuid>-name.html` (sin el prefijo interno) y la URL firmada con
+ * `t3/` y query— así que lo estable es el último segmento del path.
+ */
+function storageKeyFromSrc(src: string): string | null {
+  const path = src.split("?")[0];
+  const name = path.split("/").filter(Boolean).pop();
+  return name && /\.html$/i.test(name) ? `t3/${name}` : null;
 }
 
 // ── Compartir ───────────────────────────────────────────────────────────────────

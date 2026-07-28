@@ -431,6 +431,48 @@ export async function listArtifactVersions(documentId: string): Promise<Artifact
   return rows.map((r: any) => ({ id: num(r.id), title: r.title ?? null, createdAt: num(r.created_at) }));
 }
 
+/**
+ * RETENCIÓN. Cada publicación deja una fila con el HTML completo MÁS un objeto en
+ * el bucket, y el agente republica el artefacto entero en cada corrección — un
+ * documento trabajado un rato deja decenas de copias que nadie va a abrir.
+ *
+ * Conserva las `keep` versiones más nuevas y devuelve el `src` de las que se
+ * borraron para que el llamador tire también su objeto.
+ *
+ * Tres filas NUNCA se borran, y cada una por su razón:
+ * - la RAÍZ (la más vieja), porque ahí viven las columnas de compartir;
+ * - la CONGELADA (`shared_artifact_id`), porque es exactamente lo que el link
+ *   compartido promete entregar;
+ * - la ÚLTIMA, que es el documento vivo.
+ */
+export async function pruneArtifactVersions(
+  documentId: string,
+  keep = 20
+): Promise<string[]> {
+  const rows = await dbq(
+    `SELECT id, src FROM gc_artifacts WHERE url = ? ORDER BY id ASC`,
+    [documentId]
+  );
+  if (rows.length <= keep) return [];
+  const root = await shareRootFor(documentId);
+  const protectedIds = new Set<number>([
+    num(rows[0].id),
+    num(rows[rows.length - 1].id),
+    ...(root?.sharedArtifactId ? [root.sharedArtifactId] : []),
+  ]);
+  // Las candidatas son las más VIEJAS por encima del cupo; las protegidas se saltan
+  // sin consumir cupo (no vaya a ser que proteger la raíz borre una versión útil).
+  const doomed = rows
+    .filter((r: any) => !protectedIds.has(num(r.id)))
+    .slice(0, Math.max(0, rows.length - keep));
+  if (!doomed.length) return [];
+  await dbq(
+    `DELETE FROM gc_artifacts WHERE id IN (${doomed.map(() => "?").join(",")})`,
+    doomed.map((r: any) => num(r.id))
+  );
+  return doomed.map((r: any) => r.src).filter((s: any): s is string => !!s);
+}
+
 // Una versión concreta (para servir la congelada en el link público).
 export async function getArtifactVersion(
   id: number
