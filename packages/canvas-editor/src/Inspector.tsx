@@ -575,8 +575,11 @@ function SidesRow({ label, props, node, store, dep }: { label: string; props: st
  * fondo") y el salto al contenedor padre.
  */
 function ImagePanel({ store, node, doc, imageProvider }: { store: EditorStore; node: Node; doc: Doc; imageProvider?: ImageProvider }) {
+  // No hay selector de modo: lo decide el NODO. Un <img> edita su `src`;
+  // cualquier otro elemento edita su `background-image`. El toggle anterior
+  // (Imagen | Fondo) tenía la opción "Imagen" permanentemente deshabilitada en
+  // todo lo que no fuera una <img> — o sea, casi siempre.
   const isImg = node.tag === 'img'
-  const [mode, setMode] = useState<'img' | 'bg'>(isImg ? 'img' : 'bg')
   const [prompt, setPrompt] = useState('')
   const [busy, setBusy] = useState<'gen' | 'search' | 'upload' | null>(null)
   const [results, setResults] = useState<string[]>([])
@@ -585,14 +588,13 @@ function ImagePanel({ store, node, doc, imageProvider }: { store: EditorStore; n
   const [dragging, setDragging] = useState(false)
   // Un nodo que no es <img> no puede estar en modo "Imagen": al cambiar de
   // selección el modo se recalcula (el key del panel fuerza el remount).
-  const effMode = isImg ? mode : 'bg'
   const bgUrl = backgroundUrl(node)
-  const current = effMode === 'img' ? (node.src ?? '') : (bgUrl ?? '')
+  const current = isImg ? (node.src ?? '') : (bgUrl ?? '')
   const parent = parentOf(doc, node.id)
 
   const apply = (src: string) => {
     setError(null)
-    if (effMode === 'img') store.updateNode(node.id, { src })
+    if (isImg) store.updateNode(node.id, { src })
     else setBackground(store, node.id, src)
   }
 
@@ -646,20 +648,6 @@ function ImagePanel({ store, node, doc, imageProvider }: { store: EditorStore; n
         ) : undefined
       }
     >
-      <div style={{ ...styles.segmented, marginBottom: 6 }}>
-        {([['img', 'Imagen'], ['bg', 'Fondo']] as const).map(([id, label]) => (
-          <button
-            key={id}
-            disabled={id === 'img' && !isImg}
-            title={id === 'img' && !isImg ? 'Este nodo no es una <img>' : undefined}
-            style={{ ...styles.seg, cursor: id === 'img' && !isImg ? 'not-allowed' : 'pointer', opacity: id === 'img' && !isImg ? 0.4 : 1, ...(effMode === id ? styles.segActive : null) }}
-            onClick={() => setMode(id)}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
-
       {/*
         Zona de imagen: preview y subida son EL MISMO objeto. Un botón "subir"
         separado del preview obliga a mirar dos sitios para entender el estado;
@@ -696,7 +684,7 @@ function ImagePanel({ store, node, doc, imageProvider }: { store: EditorStore; n
             ) : dragging ? (
               'Suelta la imagen'
             ) : (
-              <>{IconUpload} {current ? 'Reemplazar' : effMode === 'bg' ? 'Subir imagen de fondo' : 'Subir imagen'}</>
+              <>{IconUpload} {current ? 'Reemplazar' : isImg ? 'Subir imagen' : 'Subir imagen de fondo'}</>
             )}
           </span>
           <input type="file" accept="image/*" style={{ display: 'none' }} disabled={!!busy} onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; upload(f) }} />
@@ -706,26 +694,21 @@ function ImagePanel({ store, node, doc, imageProvider }: { store: EditorStore; n
       )}
 
       {/*
-        Escapes a la directiva de layout del generador, que encierra todo en
-        `max-w-7xl mx-auto px-4` + grid. Se nombran por LO QUE HACEN: los
-        títulos anteriores ("Ancho completo", "Foto de fondo") describían un
-        resultado abstracto que nadie relacionaba con su problema.
+        Pie de contexto: qué se está editando + la acción destructiva, en texto
+        pequeño. Antes "Quitar el fondo" era un botón de ancho completo que
+        competía con "Reemplazar" siendo la acción que uno casi nunca quiere.
       */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4 }}>
-        <button style={styles.ghost} title="Quita el ancho máximo y el padding lateral de este elemento y de sus contenedores, para que la imagen llegue a los bordes" onClick={() => { setError(null); makeFullBleed(store, doc, node.id) }}>
-          Quitar márgenes
-        </button>
-        <button
-          style={{ ...styles.ghost, opacity: isImg ? 1 : 0.4, cursor: isImg ? 'pointer' : 'not-allowed' }}
-          disabled={!isImg}
-          title="Manda esta foto al fondo de su sección y le pone un degradado para que el texto siga legible. La imagen original queda oculta: la recuperas desde el ojito de la capa"
-          onClick={() => setError(makeHeroBackground(store, doc, node.id))}
-        >
-          Mandar al fondo
-        </button>
-        {effMode === 'bg' && bgUrl && (
-          <button style={{ ...styles.ghost, gridColumn: '1 / -1' }} onClick={() => { setError(null); clearBackground(store, node) }}>
-            Quitar el fondo
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6, marginTop: 2, minHeight: 18 }}>
+        <span style={{ fontSize: 10, color: '#6b7280' }}>
+          {isImg ? 'imagen del elemento' : `fondo del <${node.tag}>`}
+        </span>
+        {current && (
+          <button
+            style={{ fontSize: 10, color: '#9ca3af', background: 'transparent', border: 'none', padding: 0, cursor: 'pointer', textDecoration: 'underline' }}
+            title={isImg ? 'Deja la imagen sin origen' : 'Quita la imagen de fondo de este elemento'}
+            onClick={() => { setError(null); if (isImg) store.updateNode(node.id, { src: '' }); else clearBackground(store, node) }}
+          >
+            Quitar
           </button>
         )}
       </div>
@@ -744,7 +727,7 @@ function ImagePanel({ store, node, doc, imageProvider }: { store: EditorStore; n
           <button
             style={{ ...styles.iconBtn, opacity: /^https?:\/\//.test(url.trim()) ? 1 : 0.4 }}
             disabled={!/^https?:\/\//.test(url.trim())}
-            title={effMode === 'bg' ? 'Usar como fondo' : 'Usar esta URL'}
+            title={isImg ? 'Usar esta URL' : 'Usar como fondo'}
             onClick={() => { apply(url.trim()); setUrl('') }}
           >
             {IconCheck}
@@ -780,6 +763,33 @@ function ImagePanel({ store, node, doc, imageProvider }: { store: EditorStore; n
           ))}
         </div>
       )}
+
+      {/*
+        Escapes a la directiva de layout del generador (que encierra todo en
+        `max-w-7xl mx-auto px-4` + grid). Van PLEGADOS: se usan una vez cada
+        muchas ediciones y al estar siempre visibles competían con la acción
+        principal. "Mandar al fondo" se OCULTA si el nodo no es una <img>, en vez
+        de mostrarse gris — un botón deshabilitado permanente sólo es ruido.
+      */}
+      <details style={{ marginTop: 8 }}>
+        <summary style={{ ...styles.sectionTitle, marginBottom: 0, cursor: 'pointer', listStyle: 'none' }}>
+          Encuadre
+        </summary>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginTop: 6 }}>
+          <button style={styles.ghost} title="Quita el ancho máximo y el padding lateral de este elemento y de sus contenedores, para que la imagen llegue a los bordes" onClick={() => { setError(null); makeFullBleed(store, doc, node.id) }}>
+            Quitar márgenes
+          </button>
+          {isImg && (
+            <button
+              style={styles.ghost}
+              title="Manda esta foto al fondo de su sección y le pone un degradado para que el texto siga legible. La imagen original queda oculta: la recuperas desde el ojito de la capa"
+              onClick={() => setError(makeHeroBackground(store, doc, node.id))}
+            >
+              Mandar al fondo de la sección
+            </button>
+          )}
+        </div>
+      </details>
     </Section>
   )
 }

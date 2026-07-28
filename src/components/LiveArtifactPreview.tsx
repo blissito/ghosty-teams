@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import GhostyMascot from "./GhostyMascot";
 
 // PREVIEW EN VIVO **SIN IFRAME**: el HTML parcial del agente se pinta como DOM REAL
 // dentro del panel, igual que hace el editor con el artefacto.
@@ -86,26 +87,53 @@ function bodyClasses(html: string): string {
 // placeholder; se quita solo con el primer nodo real del artefacto.
 export function ArtifactSkeleton({ label }: { label: string }) {
   return (
-    // OCUPA TODO el panel (no una tarjetita centrada): el hueco vacío es justo lo que se
-    // leía como "colgado", así que el esqueleto lo llena de borde a borde y respira.
-    <div className="absolute inset-0 flex flex-col gap-4 bg-surface-2 p-6 sm:p-8">
+    // OCUPA TODO el panel: el hueco vacío era justo lo que se leía como "colgado".
+    //
+    // Antes esto eran barras `bg-white/[0.07]` — invisibles sobre el fondo claro, así
+    // que en tema claro el panel se veía literalmente en blanco con una línea de texto.
+    // Ahora los bloques van en el color de MARCA a baja opacidad (se ven en los dos
+    // temas) y el fantasmita preside la escena: mientras no hay nada que enseñar, lo
+    // que se enseña es quién lo está haciendo.
+    <div className="absolute inset-0 flex flex-col items-stretch gap-4 overflow-hidden bg-surface-2 p-6 sm:p-8">
       <div className="flex items-center gap-2 text-sm text-muted">
         <span className="h-2 w-2 animate-ping rounded-full bg-brand" />
         {label}
       </div>
-      <div className="h-8 w-1/2 animate-pulse rounded-lg bg-white/[0.07]" />
-      <div className="h-4 w-2/3 animate-pulse rounded bg-white/[0.05] [animation-delay:120ms]" />
-      {/* Hero grande + rejilla: el bloque crece con el panel (flex-1), así el esqueleto
-          llena la altura completa en vez de dejar medio panel en negro. */}
-      <div className="min-h-[120px] flex-[2] animate-pulse rounded-xl bg-white/[0.07] [animation-delay:200ms]" />
-      <div className="grid flex-[3] grid-cols-1 gap-4 sm:grid-cols-3">
-        <div className="min-h-[80px] animate-pulse rounded-xl bg-white/[0.06] [animation-delay:300ms]" />
-        <div className="min-h-[80px] animate-pulse rounded-xl bg-white/[0.06] [animation-delay:420ms]" />
-        <div className="min-h-[80px] animate-pulse rounded-xl bg-white/[0.06] [animation-delay:540ms]" />
-      </div>
-      <div className="grid flex-[2] grid-cols-1 gap-4 sm:grid-cols-2">
-        <div className="min-h-[70px] animate-pulse rounded-xl bg-white/[0.05] [animation-delay:660ms]" />
-        <div className="min-h-[70px] animate-pulse rounded-xl bg-white/[0.05] [animation-delay:780ms]" />
+
+      {/* La escena crece con el panel; el fantasma se escala con vmin para que ni
+          desaparezca en un panel angosto ni domine en pantalla completa. */}
+      <div className="relative flex min-h-0 flex-1 items-center justify-center">
+        {/* Wireframe de fondo: la página que se está armando, insinuada. */}
+        <div
+          aria-hidden
+          className="absolute inset-0 flex flex-col gap-3 opacity-60 motion-safe:animate-pulse"
+        >
+          <div className="h-7 w-1/2 rounded-lg bg-brand/15" />
+          <div className="h-3.5 w-2/3 rounded bg-brand/10 [animation-delay:120ms]" />
+          <div className="min-h-[90px] flex-[2] rounded-xl bg-brand/15 [animation-delay:200ms]" />
+          <div className="grid flex-[3] grid-cols-1 gap-3 sm:grid-cols-3">
+            <div className="min-h-[60px] rounded-xl bg-brand/10 [animation-delay:300ms]" />
+            <div className="min-h-[60px] rounded-xl bg-brand/10 [animation-delay:420ms]" />
+            <div className="min-h-[60px] rounded-xl bg-brand/10 [animation-delay:540ms]" />
+          </div>
+          <div className="grid flex-[2] grid-cols-1 gap-3 sm:grid-cols-2">
+            <div className="min-h-[54px] rounded-xl bg-brand/[0.08] [animation-delay:660ms]" />
+            <div className="min-h-[54px] rounded-xl bg-brand/[0.08] [animation-delay:780ms]" />
+          </div>
+        </div>
+
+        {/* Velo que separa al fantasma del wireframe sin taparlo del todo. */}
+        <div aria-hidden className="absolute inset-0 bg-surface-2/70" />
+
+        <div className="relative flex flex-col items-center gap-4">
+          {/* Halo que respira: da el latido sin animar al fantasma (que ya parpadea). */}
+          <span
+            aria-hidden
+            className="absolute left-1/2 top-[38%] -z-10 aspect-square w-[26vmin] max-w-[180px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-brand/20 blur-2xl motion-safe:animate-pulse"
+          />
+          <GhostyMascot className="h-[22vmin] max-h-40 min-h-16 w-auto drop-shadow-sm" />
+          <span className="text-xs text-muted">{label}</span>
+        </div>
       </div>
     </div>
   );

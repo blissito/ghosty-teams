@@ -54,6 +54,7 @@ import {
   ChevronRight,
   Layers,
   Table2,
+  AppWindow,
   Image as ImageIcon,
   ImagePlus,
   Home as HomeIcon,
@@ -6186,6 +6187,9 @@ const ARTIFACT_KIND_META: Record<string, { embed?: boolean; labelKey: string }> 
   doc: { labelKey: "Documento" },
   sheet: { labelKey: "Hoja de cálculo" },
   html: { embed: true, labelKey: "Vista previa" },
+  // Un artefacto HTML no se descarga: se ABRE y corre. Sin esta entrada caía al
+  // default y la card decía "Descargar", que es lo único que no hace.
+  artifact: { labelKey: "Artefacto interactivo" },
   office: { labelKey: "Vista previa · Descargar" },
   pdf: { labelKey: "Vista previa" },
   image: { labelKey: "Vista previa" },
@@ -6484,6 +6488,9 @@ function ArtifactCard({ artifact, ownerMsg }: { artifact: Artifact; ownerMsg: Me
               <Table2 size={20} />
             ) : view.kind === "video" ? (
               <ImageIcon size={20} />
+            ) : view.kind === "artifact" || view.kind === "html" ? (
+              // Ventana, no hoja: lo que hay detrás es algo que CORRE, no un archivo.
+              <AppWindow size={20} />
             ) : (
               <FileText size={20} />
             )}
