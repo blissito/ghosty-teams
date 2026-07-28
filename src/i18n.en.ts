@@ -450,7 +450,6 @@ export const en: Record<string, string> = {
   "paquete npm (stdio) o URL https (http)": "npm package (stdio) or https URL (http)",
   "pensando…": "thinking…",
   "Pídele a Ghosty": "Ask Ghosty",
-  "Tú siempre ves la más reciente; el enlace entrega la que elijas.": "You always see the newest one; the link serves whichever you pick.",
   "Pídele un documento": "Ask for a document",
   "Pídele una hoja": "Ask for a spreadsheet",
   "Pídele que investigue": "Ask it to research",

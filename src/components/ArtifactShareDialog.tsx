@@ -249,9 +249,6 @@ export default function ArtifactShareDialog({
                   </option>
                 ))}
               </select>
-              <p className="mt-1.5 text-[11px] text-muted">
-                {t("Tú siempre ves la más reciente; el enlace entrega la que elijas.")}
-              </p>
             </section>
           </>
         )}
