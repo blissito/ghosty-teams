@@ -176,7 +176,7 @@ export const createAgentFn = createServerFn({ method: "POST" })
       // Marca el canal Teams como conectado → el agente aparece "Activo · Conectado" de
       // una (sin esperar el primer mensaje que estamparía connectedAt). Best-effort.
       const { connectTeamsChannel } = await import("./agent-config");
-      await connectTeamsChannel(fleetId, fleetToken);
+      await connectTeamsChannel(fleetId, fleetToken, "easybits"); // este camino adopta uno de EasyBits
     } else {
       if (!data.webhookUrl?.trim()) throw new Error("URL del webhook requerida");
       try {
@@ -257,7 +257,7 @@ export const createManagedAgentFn = createServerFn({ method: "POST" })
 
     // Marca el canal Teams como conectado (best-effort) → aparece "Activo" de una.
     const { connectTeamsChannel } = await import("./agent-config");
-    await connectTeamsChannel(fleetId, fleetToken).catch(() => {});
+    await connectTeamsChannel(fleetId, fleetToken, runtime).catch(() => {});
     const ag = await db.createAgent({
       handle,
       name,

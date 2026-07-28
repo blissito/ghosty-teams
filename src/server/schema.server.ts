@@ -244,6 +244,13 @@ async function migrate(): Promise<void> {
   await addColumn("gc_agents", "runtime", "TEXT");
   await addColumn("gc_agents", "runtime_url", "TEXT");
 
+  // group_ns=1 → la clave de conversación lleva el namespace del workspace (ver
+  // agentGroupId). Las filas viejas quedan NULL y conservan el formato de
+  // siempre: cambiárselo les borraría la memoria a todas las conversaciones
+  // vivas. Sólo hace falta para agentes COMPARTIDOS entre workspaces, que son
+  // los que nacen de aquí en adelante.
+  await addColumn("gc_agents", "group_ns", "INTEGER");
+
   // Backfill por la forma del id, que delata el origen sin ambigüedad: los de
   // EasyBits son ObjectId de Mongo (24 hex), los de Studio cuid. Se hace por regla
   // y NO consultando a Studio: una migración no puede depender de que otro sistema

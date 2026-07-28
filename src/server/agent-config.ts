@@ -22,15 +22,34 @@ export async function resolveFleetAgent(agentId: number): Promise<{ id: string; 
 }
 
 // Marca el canal "Ghosty Teams" del fleet agent como conectado (action connect-teams).
-// Best-effort: NO debe tumbar el flujo de agregar/conectar agente. Auth = fleetToken.
-export async function connectTeamsChannel(fleetId: string, fleetToken: string): Promise<void> {
+// Best-effort: NO debe tumbar el flujo de agregar/conectar agente.
+//
+// Va al runtime DEL AGENTE. Antes iba fijo a EasyBits con `Bearer fleetToken`,
+// así que para un agente nativo mandaba una credencial que ese runtime no acepta,
+// a un host que no es el suyo — y como el catch está vacío, fallaba en absoluto
+// silencio: el canal quedaba sin marcar y nadie se enteraba.
+export async function connectTeamsChannel(
+  fleetId: string,
+  fleetToken: string,
+  runtime?: string | null,
+): Promise<void> {
   try {
-    await fetch(`${EB}/api/v2/fleet-agents/${fleetId}/capabilities`, {
+    const { runtimeFor } = await import("./agent-runtime.server");
+    const rt = await runtimeFor({ runtime });
+    const body = JSON.stringify({ action: "connect-teams" });
+    const res = await fetch(`${rt.base}/api/v2/fleet-agents/${fleetId}/capabilities`, {
       method: "POST",
-      headers: { Authorization: `Bearer ${fleetToken}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "connect-teams" }),
+      headers: rt.headers(body, fleetToken),
+      body,
     });
-  } catch {}
+    // Se dice, aunque no se lance: el canal apagado se manifiesta después como
+    // "el agente no responde", y sin esta línea no hay por dónde empezar.
+    if (!res.ok) {
+      console.error(`[connect-teams] ${fleetId} (${rt.kind}) → ${res.status}`);
+    }
+  } catch (e) {
+    console.error(`[connect-teams] ${fleetId} falló:`, e instanceof Error ? e.message : e);
+  }
 }
 
 // ── Toggle simple del canal Teams (runtime NATIVO) ────────────────────────────

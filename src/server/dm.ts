@@ -164,7 +164,7 @@ export const clearDmAgentFn = createServerFn({ method: "POST" })
     const db = await import("../db.server");
     const bus = await import("./bus.server");
     const { currentNamespace } = await import("./tenant.server");
-    const { resolvedAgents, resetAgentSession } = await import("../agents.server");
+    const { resolvedAgents, resetAgentSession, agentGroupId } = await import("../agents.server");
     const me = await sessionUser();
     if (!me || !(await db.isDmMember(data.id, me.sub))) throw new Error("no autorizado");
     const ns = await currentNamespace();
@@ -172,7 +172,7 @@ export const clearDmAgentFn = createServerFn({ method: "POST" })
     const agent = handle ? (await resolvedAgents()).find((a) => a.handle === handle) : null;
     if (!agent) return { ok: false as const };
 
-    const groupId = `ghosty-chat-${agent.handle}-dm-${data.id}`; // == askDmAgentFn
+    const groupId = await agentGroupId(agent, `dm-${data.id}`); // == askDmAgentFn
     await resetAgentSession(agent, groupId);
     // El reset rota la sesión del runtime, pero el puntero del artefacto vivo es NUESTRO
     // (tabla local, se relee fresco cada turno en askDmAgentFn) → si no lo soltamos, tras
@@ -217,7 +217,7 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
     const db = await import("../db.server");
     const bus = await import("./bus.server");
     const { currentNamespace } = await import("./tenant.server");
-    const { resolvedAgents, runAgentTurn, buildMediaParts, quotedContextPrefix, clampQuote, historyContext } = await import("../agents.server");
+    const { resolvedAgents, runAgentTurn, buildMediaParts, quotedContextPrefix, clampQuote, historyContext, agentGroupId } = await import("../agents.server");
     const me = await sessionUser();
     if (!me || !(await db.isDmMember(data.id, me.sub))) throw new Error("no autorizado");
     const ns = await currentNamespace();
@@ -232,7 +232,7 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
     };
 
     const parts = await buildMediaParts(data.attachments ?? []);
-    const groupId = `ghosty-chat-${data.handle}-dm-${data.id}`; // memoria por-agente
+    const groupId = await agentGroupId(agent ?? { handle: data.handle }, `dm-${data.id}`); // memoria por-agente
     // Quote-reply: embebe la cita en el texto (superficie WABA → el agente siempre la ve).
     // Si tenemos el id del citado, mandamos su cuerpo COMPLETO (no el excerpt de 220 chars)
     // → "dame tips sobre ESTO" tiene el contenido real. Fallback al excerpt.

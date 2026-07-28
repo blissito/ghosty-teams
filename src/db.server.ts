@@ -674,6 +674,8 @@ export type Agent = {
   // Ver src/server/agent-runtime.server.ts.
   runtime: string | null;
   runtime_url: string | null;
+  /** 1 → su groupId lleva el namespace del workspace. NULL = formato legacy. */
+  group_ns: number | null;
 };
 
 function toAgent(r: Row): Agent {
@@ -691,6 +693,7 @@ function toAgent(r: Row): Agent {
     created_by: r.created_by,
     runtime: r.runtime ?? null,
     runtime_url: r.runtime_url ?? null,
+    group_ns: r.group_ns == null ? null : num(r.group_ns),
   };
 }
 
@@ -748,11 +751,13 @@ export async function createAgent(input: {
   /** Dónde va a correr. Lo estampa el camino de alta que lo creó. */
   runtime?: string | null;
   runtimeUrl?: string | null;
+  /** Los agentes nuevos nacen con la clave namespaceada; ver agentGroupId. */
+  groupNs?: boolean;
 }): Promise<Agent> {
   const handle = slugify(input.handle).replace(/-/g, "");
   const rows = await dbq(
-    `INSERT INTO gc_agents (handle, name, kind, fleet_id, fleet_token, webhook_url, avatar, system_prompt, created_by, runtime, runtime_url)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *`,
+    `INSERT INTO gc_agents (handle, name, kind, fleet_id, fleet_token, webhook_url, avatar, system_prompt, created_by, runtime, runtime_url, group_ns)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *`,
     [
       handle,
       input.name.slice(0, 40),
@@ -765,6 +770,7 @@ export async function createAgent(input: {
       input.createdBy,
       input.runtime ?? null,
       input.runtimeUrl ?? null,
+      input.groupNs ? 1 : null,
     ]
   );
   return toAgent(rows[0]);

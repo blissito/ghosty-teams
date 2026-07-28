@@ -9,6 +9,8 @@ export type ResolvedAgent = {
   name: string;
   avatar: string;
   systemPrompt: string | null; // persona por-agente (se envía/antepone al backend)
+  /** true → su groupId lleva el namespace del workspace (ver agentGroupId). */
+  groupNs?: boolean;
   backend:
     // `kind` es el PROTOCOLO (fleet = nuestro contrato de agentes; webhook = un
     // POST a una URL cualquiera). `runtime`/`runtimeUrl` es DÓNDE corre ese
@@ -17,6 +19,37 @@ export type ResolvedAgent = {
     | { kind: "fleet"; id: string; token: string; runtime?: string | null; runtimeUrl?: string | null }
     | { kind: "webhook"; url: string };
 };
+
+// ── Clave de conversación (groupId) ───────────────────────────────────────────
+//
+// El runtime keya la memoria por (fleetAgentId, groupId). El groupId se armaba en
+// tres plantillas sueltas —canal, DM ask, DM clear— y NINGUNA llevaba el
+// workspace:
+//
+//     ghosty-chat-<handle>-<slug>-<thread>     ghosty-chat-<handle>-dm-<id>
+//
+// Mientras cada workspace tuvo su propio agente eso no chocó por accidente: el
+// par era único porque el fleetAgentId difería. En el momento en que dos
+// workspaces comparten UN agente de Studio —justo lo que habilita "activar aquí
+// un agente de gs"— dos `#general` producen el MISMO string, y los `dm-4` de
+// ambos también: comparten sesión y memoria, y un /clear borra la del otro.
+//
+// Ahora la clave lleva el namespace del tenant… pero sólo para las filas que
+// nacen con `group_ns`. Las viejas conservan el formato de siempre, porque
+// cambiárselo les borraría la memoria a todas las conversaciones vivas. Un
+// agente compartido nunca choca con uno viejo: sus claves ni se parecen.
+//
+// Vive acá y no en cada llamador para que el clear y el turno no puedan
+// discrepar — si difieren, "borré la memoria" borra la de otra conversación.
+export async function agentGroupId(
+  agent: { handle: string; groupNs?: boolean },
+  suffix: string,
+): Promise<string> {
+  const base = `ghosty-chat-${agent.handle}-${suffix}`;
+  if (!agent.groupNs) return base;
+  const { currentNamespace } = await import("./server/tenant.server");
+  return `ws-${await currentNamespace()}-${base}`;
+}
 
 // Agentes habilitados de la instancia: primero el del wizard, luego gc_agents.
 export async function resolvedAgents(): Promise<ResolvedAgent[]> {
@@ -53,6 +86,7 @@ export async function resolvedAgents(): Promise<ResolvedAgent[]> {
         name: a.name,
         avatar: a.avatar || "",
         systemPrompt: a.system_prompt,
+        groupNs: !!a.group_ns,
         backend: { kind: "fleet", id: a.fleet_id, token: a.fleet_token, runtime: a.runtime, runtimeUrl: a.runtime_url },
       });
     }

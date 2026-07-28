@@ -606,7 +606,7 @@ export const askAgent = createServerFn({ method: "POST" })
   )
   .handler(async ({ data }) => {
     const db = await import("../db.server");
-    const { resolvedAgents, runAgentTurn, buildMediaParts, quotedContextPrefix, clampQuote, historyContext } = await import("../agents.server");
+    const { resolvedAgents, runAgentTurn, buildMediaParts, quotedContextPrefix, clampQuote, historyContext, agentGroupId } = await import("../agents.server");
     const bus = await import("./bus.server");
     const { currentNamespace } = await import("./tenant.server");
     const channel = await db.getChannel(data.slug);
@@ -674,7 +674,7 @@ export const askAgent = createServerFn({ method: "POST" })
     // compartido del canal; reply-en-hilo → su root. Fallback al comportamiento viejo
     // (parentId) si un cliente sin actualizar no manda fleetThread.
     const fleetThread = data.fleetThread ?? (data.parentId != null ? String(data.parentId) : "flow");
-    const groupId = `ghosty-chat-${data.handle}-${channel.slug}-${fleetThread}`;
+    const groupId = await agentGroupId(agent ?? { handle: data.handle }, `${channel.slug}-${fleetThread}`);
     // Identidad conversacional durable: el documentId (local) del artefacto ACTUAL de este
     // hilo + su contenido fuente (doc=markdown | sheet=csv). El contenido se re-inyecta al
     // turno → al modificar, el agente re-emite el artefacto COMPLETO (misma vía de streaming
