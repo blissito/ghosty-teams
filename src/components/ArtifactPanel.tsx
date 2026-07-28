@@ -927,11 +927,13 @@ export default function ArtifactPanel({
                       <button
                         type="button"
                         onClick={() => setEditing((v) => !v)}
-                        title={editing ? t("Ver") : t("Editar")}
+                        title={editing ? t("Preview") : t("Editar")}
                         className="mr-0.5 inline-flex shrink-0 items-center gap-1.5 rounded-md px-2 py-1 text-xs text-muted transition hover:bg-surface-3 hover:text-brand"
                       >
                         {editing ? <Eye size={14} /> : <Pencil size={14} />}
-                        {editing ? t("Ver") : t("Editar")}
+                        {/* "Ver" no decía nada estando ya viéndolo: lo que hace es
+                            salir del editor y enseñar el artefacto corriendo. */}
+                        {editing ? t("Preview") : t("Editar")}
                       </button>
                     ) : null}
                     <button

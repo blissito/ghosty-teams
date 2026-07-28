@@ -1084,9 +1084,16 @@ function ModelChip({
                 ))}
               </div>
             ))}
+            {/* Pestaña nueva a propósito: navegar en la misma pierde el trabajo
+                sin guardar del editor. */}
             {manageKeysHref && (
-              <a href={manageKeysHref} style={{ ...styles.menuItem, display: 'block', color: '#a78bfa', borderTop: '1px solid #262b36', marginTop: 4, paddingTop: 7, textDecoration: 'none' }}>
-                Gestionar llaves →
+              <a
+                href={manageKeysHref}
+                target="_blank"
+                rel="noreferrer"
+                style={{ ...styles.menuItem, display: 'block', color: '#a78bfa', borderTop: '1px solid #262b36', marginTop: 4, paddingTop: 7, textDecoration: 'none' }}
+              >
+                Gestionar llaves ↗
               </a>
             )}
           </div>

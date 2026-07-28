@@ -123,6 +123,8 @@ function SharedArtifact() {
         // Elegir otra versión cambia lo que hay que servir: sin re-correr el loader,
         // el select cambiaba y el documento se quedaba igual.
         onShareChange={() => router.invalidate()}
+        // Aquí SÍ: en la página se ve cambiar el documento al elegir otra versión.
+        showVersions
       />
       <iframe
         // REMONTAR al cambiar de versión: cambiarle el src a un iframe vivo no

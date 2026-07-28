@@ -32,6 +32,8 @@ export type ArtifactShareBarProps = {
   onReport?: () => void;
   /** Cambió el estado de compartir → la superficie debe releer lo que sirve. */
   onShareChange?: () => void;
+  /** Ver el selector de versión compartida (sólo donde se ve actuar: la página). */
+  showVersions?: boolean;
 };
 
 export default function ArtifactShareBar({
@@ -44,6 +46,7 @@ export default function ArtifactShareBar({
   leading,
   onReport,
   onShareChange,
+  showVersions = false,
 }: ArtifactShareBarProps) {
   const t = useT();
   const barRef = useRef<HTMLElement | null>(null);
@@ -178,6 +181,7 @@ export default function ArtifactShareBar({
               documentId={documentId}
               onVisibility={(v) => setIsPublic(v === "link")}
               onChange={onShareChange}
+              showVersions={showVersions}
               onClose={() => setShareOpen(false)}
             />
           ) : null}
