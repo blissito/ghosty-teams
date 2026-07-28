@@ -48,9 +48,29 @@ export async function attachPublished(messageId: number, a: PublishedAttachment)
     // La miniatura es OPCIONAL: si falla, el adjunto se crea igual y la tarjeta
     // cae al ícono. No vale perder el archivo por no tener su preview.
     let thumbFileId: string | null = null;
-    if (a.thumbUrl) {
+    // Si es un PDF y nadie mandó miniatura, se pide. NO se depende de que el
+    // agente haya usado `publishPdf` en vez de `pdf()` + su propia publicación:
+    // en cuanto improvisa, el PDF llega sin portada. Generarla acá lo saca de la
+    // ecuación — cualquier PDF que llegue tiene su miniatura.
+    let thumbUrl = a.thumbUrl ?? null;
+    let thumbBytes: Buffer | null = null;
+    if (!thumbUrl && (a.mime === "application/pdf" || /\.pdf$/i.test(a.fileName))) {
+      thumbBytes = await pdfThumb(a.url);
+    }
+    if (thumbBytes) {
       try {
-        const tr = await fetch(a.thumbUrl);
+        const tup = await uploadToEasyBits({
+          blob: new Blob([new Uint8Array(thumbBytes)], { type: "image/png" }),
+          contentType: "image/png",
+          fileName: a.fileName.replace(/\.[a-z0-9]+$/i, "") + "-thumb.png",
+        });
+        thumbFileId = tup.fileId;
+      } catch (e) {
+        console.error(`[attach] subir miniatura de ${a.fileName} falló:`, e instanceof Error ? e.message : e);
+      }
+    } else if (thumbUrl) {
+      try {
+        const tr = await fetch(thumbUrl);
         if (tr.ok) {
           const tb = Buffer.from(await tr.arrayBuffer());
           const tup = await uploadToEasyBits({
@@ -86,4 +106,33 @@ export async function attachPublished(messageId: number, a: PublishedAttachment)
 export function safeFileName(name: string | undefined, fallback: string): string {
   const base = (name ?? "").trim().replace(/[/\\?%*:|"<>]/g, "-").slice(0, 80);
   return base || fallback;
+}
+
+/**
+ * Portada de la página 1 de un PDF, vía Studio (que es quien sabe dónde vive la
+ * caja de render). Devuelve null ante cualquier fallo: un PDF sin miniatura llega
+ * igual y la tarjeta cae al ícono.
+ */
+async function pdfThumb(url: string): Promise<Buffer | null> {
+  try {
+    const { nativeRuntimeBase, partnerHeaders } = await import("./ghosty-runtime.server");
+    const base = await nativeRuntimeBase();
+    if (!base) return null; // sin runtime nativo no hay caja de render que pedir
+    const { currentNamespace } = await import("./tenant.server");
+    const body = JSON.stringify({ url });
+    const res = await fetch(`${base}/api/v2/render/pdf-thumb`, {
+      method: "POST",
+      headers: partnerHeaders(body, await currentNamespace()),
+      body,
+      signal: AbortSignal.timeout(45_000),
+    });
+    if (!res.ok) {
+      console.error(`[attach] miniatura: studio devolvió ${res.status}`);
+      return null;
+    }
+    return Buffer.from(await res.arrayBuffer());
+  } catch (e) {
+    console.error("[attach] miniatura falló:", e instanceof Error ? e.message : e);
+    return null;
+  }
 }

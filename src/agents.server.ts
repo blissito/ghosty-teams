@@ -617,10 +617,51 @@ const TOOL_LABELS: Record<string, { ing: string; done: string }> = {
   fast_quotation: { ing: "Preparando la cotización", done: "Preparé la cotización" },
 };
 
-function toolLabel(raw: string): { ing: string; done: string } | null {
+/**
+ * Nombre legible de una tool que NO está en el mapa de etiquetas.
+ *
+ * `mcp__easybits__generate_image` → "generate image"; `WebFetch` → "web fetch";
+ * `Bash` → "bash". Sin diccionario: se quita el prefijo MCP, se separa el
+ * camelCase y los guiones, y se baja a minúsculas.
+ *
+ * (Enfoque tomado de BuilderIO/agent-native, `humanizeToolName` en
+ * `packages/core/src/client/tool-display.ts`.)
+ */
+function humanizeToolName(raw: string): string {
+  let name = raw.trim();
+  if (name.startsWith("mcp__")) {
+    const parts = name.split("__").filter(Boolean);
+    name = parts[parts.length - 1] ?? name;
+  }
+  name = name
+    .replace(/^_+/, "")
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/[-_]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+  return name || "herramienta";
+}
+
+/**
+ * Etiqueta de una tool. NUNCA devuelve null: una tool sin etiqueta bonita se
+ * muestra igual con su nombre humanizado.
+ *
+ * Antes esto era una whitelist y lo que no estaba se DESCARTABA en silencio con
+ * el argumento de que era "ruido". El efecto real es que la lista mentía: el
+ * agente corría ocho herramientas y el checklist enseñaba tres, siempre las
+ * mismas. La telemetría llegaba completa; el filtro la recortaba.
+ *
+ * Es lo que hace agent-native: nombre desconocido → se formatea, jamás se
+ * esconde. Un checklist incompleto es peor que uno con nombres feos, porque el
+ * usuario no tiene forma de saber que le falta algo.
+ */
+function toolLabel(raw: string): { ing: string; done: string } {
   const short = raw.replace(/^mcp__[^_]+__/, "").replace(/^mcp__/, "");
-  // Solo whitelist: si no tiene label semántico, es ruido → no se muestra.
-  return TOOL_LABELS[raw] || TOOL_LABELS[short] || null;
+  const conocida = TOOL_LABELS[raw] || TOOL_LABELS[short];
+  if (conocida) return conocida;
+  const humano = humanizeToolName(raw);
+  return { ing: humano, done: humano };
 }
 
 // ── Turnos en vuelo: el VETO de esta caja contra la hibernación ──────────────
@@ -806,7 +847,7 @@ async function runAgentTurnInner(opts: {
     // "…docx." + [Bash] + "El NDA…" quedaba pegado "docx.El".)
     brokeByTool = true;
     const label = toolLabel(ev.name ?? "");
-    if (label) {
+    {
       // Dedup por acción (varias tools con el mismo label → una línea; sus ids agregan estado).
       let entry = tools.find((t) => t.done === label.done);
       if (!entry) {
