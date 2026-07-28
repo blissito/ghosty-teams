@@ -6279,7 +6279,7 @@ function artifactToView(a: Artifact): ArtifactView {
   const title = a.title ?? "";
   if (a.kind === "doc") return { kind: "doc", title, documentId: a.url, md: a.md ?? "" };
   if (a.kind === "sheet") return { kind: "sheet", title, documentId: a.url, csv: a.md ?? "" };
-  if (a.kind === "artifact") return { kind: "artifact", title, documentId: a.url, html: a.md ?? "", src: a.src ?? "", messageId: a.messageId };
+  if (a.kind === "artifact") return { kind: "artifact", title, documentId: a.url, html: a.md ?? "", src: a.src ?? "", messageId: a.messageId, versionId: a.id };
   if (a.kind === "ask-user") {
     let options: string[] = [];
     try { const p = JSON.parse(a.md ?? "[]"); if (Array.isArray(p)) options = p.map(String); } catch {}

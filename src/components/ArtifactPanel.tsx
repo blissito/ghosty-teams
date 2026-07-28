@@ -88,7 +88,9 @@ export type ArtifactView =
   | { kind: "sheet"; title: string; documentId: string; csv: string } // hoja viva (CSV local + versiones)
   // Artefacto HTML interactivo: `html` = fuente (iframe srcDoc, sandbox aislado); `src` = URL pública S3.
   // `messageId` = mensaje ancla en gc_artifacts → guardado de ediciones del Canvas (nueva versión).
-  | { kind: "artifact"; title: string; documentId: string; html: string; src: string; messageId: number }
+  // `versionId` = la FILA de gc_artifacts que se está viendo. El panel NO siempre enseña
+  // la última: enseña la del mensaje que abriste, así que el enlace tiene que decir cuál.
+  | { kind: "artifact"; title: string; documentId: string; html: string; src: string; messageId: number; versionId?: number }
   // ask-user: pregunta con opciones clicables. Se pinta INLINE en el bubble (AskUserCard);
   // esta variante solo cubre el fallback read-only si se abriera en el panel.
   | { kind: "ask-user"; title: string; question: string; options: string[] }
@@ -659,11 +661,12 @@ export default function ArtifactPanel({
       try {
         const { setArtifactShareFn } = await import("../server/artifacts");
         const s = await setArtifactShareFn({ data: { documentId: docId } });
-        // `?v=latest` en TODO lo que sale del panel —abrir, copiar, la barra de abajo—:
-        // aquí siempre estás viendo la versión viva, así que el enlace que te llevas es
-        // el de eso. El enlace "limpio" (el que respeta la versión fijada para quien lo
-        // recibe) se copia desde el diálogo Compartir de la propia página.
-        if (alive && s?.slug) setShareUrl(`${window.location.origin}/artefacto/${s.slug}?v=latest`);
+        // El enlace lleva la versión que ESTÁS VIENDO. `latest` sólo como respaldo
+        // (artefacto recién creado, todavía sin fila conocida). El enlace "limpio" —el
+        // que respeta la versión fijada para quien lo recibe— se copia desde el diálogo
+        // Compartir de la propia página.
+        const v = artifact?.kind === "artifact" ? artifact.versionId : null;
+        if (alive && s?.slug) setShareUrl(`${window.location.origin}/artefacto/${s.slug}?v=${v ?? "latest"}`);
       } catch {
         // No eres el dueño (o es un artefacto de antes): sin link propio. Los
         // botones caen al blob local, que no depende de nada.
@@ -672,7 +675,7 @@ export default function ArtifactPanel({
     return () => {
       alive = false;
     };
-  }, [artifact?.kind === "artifact" ? artifact.documentId : null]);
+  }, [artifact?.kind === "artifact" ? artifact.documentId : null, artifact?.kind === "artifact" ? artifact.versionId : null]);
 
   // Artefacto HTML (kind:"artifact"): acciones self-contained a partir de la fuente
   // (`artifact.html`), que SIEMPRE está disponible aunque el publish a S3 haya fallado o

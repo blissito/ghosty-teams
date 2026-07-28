@@ -599,31 +599,128 @@ function CssColorRow({ label, prop, node, store, dep }: { label: string; prop: s
   )
 }
 
-/** Cuatro lados (padding/margin/inset) en px, con el valor efectivo de placeholder. */
+/**
+ * Cuatro lados (padding/margin/inset).
+ *
+ * Eran cuatro cajas anónimas que forzaban un número: no se distinguía cuál era
+ * cuál (el placeholder T/R/B/L NUNCA se veía, porque el campo siempre tenía un
+ * valor), no se podía vaciar un lado para devolverlo a lo que dicta su clase
+ * Tailwind (escribir "" lo ponía en 0, que NO es lo mismo), y no había forma de
+ * saber si el 0 que veías era tuyo o el heredado.
+ *
+ * Ahora: la letra del lado va DENTRO del campo (patrón Builder/Figma), vacío
+ * significa "sin anular" y muestra el valor real en gris, el que sí anulas se
+ * marca en violeta, ↑↓ suben y bajan (con Shift, de 10 en 10) y el candado
+ * escribe los cuatro lados a la vez.
+ */
+const SIDE_LABELS = ['T', 'D', 'B', 'I'] // top, derecha, bottom, izquierda
+
 function SidesRow({ label, props, node, store, dep }: { label: string; props: string[]; node: Node; store: EditorStore; dep: unknown }) {
   const c = useComputed(node.id, props, dep)
+  const [linked, setLinked] = useState(false)
+  const set = (prop: string, value: string | null) => {
+    if (!linked) return store.setNodeStyleProp(node.id, prop, value)
+    for (const p of props) store.setNodeStyleProp(node.id, p, value)
+  }
   return (
-    <Row label={label}>
+    <Row
+      label={
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+          {label}
+          <button
+            title={linked ? 'Editar cada lado por separado' : 'Aplicar a los cuatro lados'}
+            onClick={() => setLinked((v) => !v)}
+            style={{
+              background: 'transparent', border: 'none', cursor: 'pointer', padding: 0,
+              fontSize: 10, color: linked ? '#a78bfa' : '#4b5563',
+            }}
+          >
+            {/* Un solo glifo: el estado lo dice el color, no un símbolo tachado
+                que en muchas fuentes se renderiza como un cuadro vacío. */}
+            ⛓
+          </button>
+        </span>
+      }
+    >
       <div style={{ display: 'flex', gap: 4 }}>
-        {props.map((p, i) => {
-          const inline = inlineValue(node.style, p)
-          const eff = (inline ?? c[p] ?? '').replace('px', '')
-          return (
-            <input
-              key={p}
-              title={p}
-              style={{ ...styles.input, padding: '5px 4px', textAlign: 'center' }}
-              placeholder={['T', 'R', 'B', 'L'][i]}
-              value={eff === 'auto' ? 'auto' : Math.round(parseFloat(eff) || 0)}
-              onChange={(e) => {
-                const raw = e.target.value.trim()
-                store.setNodeStyleProp(node.id, p, raw === '' ? null : raw === 'auto' ? 'auto' : `${parseFloat(raw) || 0}px`)
-              }}
-            />
-          )
-        })}
+        {props.map((p, i) => (
+          <SideInput
+            key={p}
+            prop={p}
+            side={SIDE_LABELS[i]}
+            inline={inlineValue(node.style, p)}
+            computed={c[p]}
+            onSet={(v) => set(p, v)}
+          />
+        ))}
       </div>
     </Row>
+  )
+}
+
+function SideInput({
+  prop, side, inline, computed, onSet,
+}: {
+  prop: string
+  side: string
+  inline: string | null | undefined
+  computed: string | undefined
+  onSet: (value: string | null) => void
+}) {
+  // Un borrador local mientras se escribe: sin él, teclear "12" pasaba por "1" y
+  // el valor se normalizaba a cada pulsación (imposible borrar para reescribir).
+  const [draft, setDraft] = useState<string | null>(null)
+  const overridden = inline != null && inline !== ''
+  const shown = draft ?? (overridden ? String(Math.round(parseFloat(inline) || 0)) : '')
+  const ghost = String(Math.round(parseFloat(computed ?? '') || 0))
+
+  const commit = (raw: string) => {
+    const t = raw.trim()
+    setDraft(null)
+    // Vaciar = QUITAR la anulación y volver a lo que diga la clase. Es distinto
+    // de escribir 0, y sin esto no había manera de deshacer un ajuste.
+    if (t === '') return onSet(null)
+    if (t === 'auto') return onSet('auto')
+    const n = parseFloat(t)
+    onSet(Number.isFinite(n) ? `${n}px` : null)
+  }
+
+  return (
+    <div style={{ position: 'relative', flex: 1 }}>
+      <span
+        style={{
+          position: 'absolute', left: 5, top: '50%', transform: 'translateY(-50%)',
+          fontSize: 9, fontFamily: 'monospace', color: overridden ? '#a78bfa' : '#4b5563',
+          pointerEvents: 'none',
+        }}
+      >
+        {side}
+      </span>
+      <input
+        title={`${prop} — vacío = lo que dicte la clase (${ghost}px). ↑↓ ajusta, Shift ×10.`}
+        style={{
+          ...styles.input, padding: '5px 4px 5px 16px', textAlign: 'center', width: '100%',
+          color: overridden ? '#e5e7eb' : '#6b7280',
+          borderColor: overridden ? '#4c1d95' : undefined,
+        }}
+        placeholder={ghost}
+        value={shown}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={(e) => commit(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') return commit((e.target as HTMLInputElement).value)
+          if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return
+          e.preventDefault() // el cursor se iría al extremo del texto
+          const step = (e.shiftKey ? 10 : 1) * (e.key === 'ArrowUp' ? 1 : -1)
+          // Partir del efectivo (no de 0) hace que la primera flecha ajuste lo
+          // que se está viendo, en vez de saltar al 1.
+          const base = parseFloat(shown === '' ? ghost : shown) || 0
+          const next = Math.max(0, base + step)
+          setDraft(String(next))
+          onSet(`${next}px`)
+        }}
+      />
+    </div>
   )
 }
 
@@ -1490,7 +1587,7 @@ function Section({ title, children, action, collapsible, defaultOpen = true }: {
     </div>
   )
 }
-function Row({ label, children }: { label: string; children: React.ReactNode }) {
+function Row({ label, children }: { label: React.ReactNode; children: React.ReactNode }) {
   return (
     <div style={styles.row}>
       <span style={styles.rowLabel}>{label}</span>

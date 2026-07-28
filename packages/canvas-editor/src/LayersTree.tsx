@@ -23,6 +23,42 @@ export function LayersTree({
 }) {
   const [dragId, setDragId] = useState<string | null>(null)
   const [drop, setDrop] = useState<DropTarget | null>(null)
+  // Plegado por contenedor. Un artefacto real anida svg > g > path y el árbol se
+  // vuelve ilegible; plegar es lo que lo hace navegable.
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
+  const toggleCollapse = (id: string) =>
+    setCollapsed((prev) => {
+      const next = new Set(prev)
+      next.has(id) ? next.delete(id) : next.add(id)
+      return next
+    })
+
+  // Seleccionar en el LIENZO un nodo que vive dentro de una rama plegada tiene
+  // que abrir esa rama: si no, la fila no existe y el scroll no la puede traer.
+  const sel = state.selection?.[0]
+  useEffect(() => {
+    if (!sel) return
+    const chain: string[] = []
+    for (const ab of state.doc.artboards) {
+      const dig = (nodes: Node[], path: string[]): boolean =>
+        nodes.some((n) => {
+          if (n.id === sel) {
+            chain.push(...path)
+            return true
+          }
+          return dig(n.children, [...path, n.id])
+        })
+      if (dig(ab.nodes, [])) break
+    }
+    if (chain.length) {
+      setCollapsed((prev) => {
+        if (!chain.some((id) => prev.has(id))) return prev
+        const next = new Set(prev)
+        for (const id of chain) next.delete(id)
+        return next
+      })
+    }
+  }, [sel, state.doc])
 
   function centerOnNode(id: string, additive: boolean) {
     if (additive) {
@@ -91,6 +127,8 @@ export function LayersTree({
                 onDragStartRow={setDragId}
                 onDragOverRow={setDrop}
                 onDropRow={performDrop}
+                collapsed={collapsed}
+                onToggleCollapse={toggleCollapse}
                 onDragEndRow={() => {
                   setDragId(null)
                   setDrop(null)
@@ -116,6 +154,8 @@ function NodeRow({
   onDragOverRow,
   onDropRow,
   onDragEndRow,
+  collapsed,
+  onToggleCollapse,
 }: {
   node: Node
   depth: number
@@ -128,16 +168,23 @@ function NodeRow({
   onDragOverRow: (t: DropTarget) => void
   onDropRow: () => void
   onDragEndRow: () => void
+  collapsed: Set<string>
+  onToggleCollapse: (id: string) => void
 }) {
   const selected = selection.includes(node.id)
   // Con un artefacto grande el nodo seleccionado en el lienzo caía fuera de vista
   // en el árbol. Al seleccionarlo, la fila se trae a la vista (sin saltos: 'nearest').
   const rowRef = useRef<HTMLDivElement | null>(null)
   useEffect(() => {
-    if (selected) rowRef.current?.scrollIntoView?.({ block: 'nearest' })
+    // 'center' y no 'nearest': con 'nearest' la fila quedaba pegada al borde
+    // inferior del panel — visible, pero con sus hijos fuera de cuadro, que es
+    // justo lo que uno quiere ver al seleccionar un contenedor.
+    if (selected) rowRef.current?.scrollIntoView?.({ block: 'center', inline: 'nearest' })
   }, [selected])
   const label = node.text ? `${node.tag} · ${node.text.slice(0, 18)}` : node.tag
   const isDrop = drop?.id === node.id
+  const hasKids = node.children.length > 0
+  const isCollapsed = collapsed.has(node.id)
   return (
     <>
       <div
@@ -168,9 +215,26 @@ function NodeRow({
             isDrop && drop?.pos === 'before' ? 'inset 0 2px 0 #8b5cf6' : isDrop && drop?.pos === 'after' ? 'inset 0 -2px 0 #8b5cf6' : undefined,
         }}
       >
+        {/* La sangría vive aquí, no en el botón: así el chevron de cada nivel
+            queda alineado con su columna y la pirámide se lee. */}
+        <span style={{ paddingLeft: 4 + depth * 12, flexShrink: 0 }}>
+          <button
+            title={hasKids ? (isCollapsed ? 'Desplegar' : 'Plegar') : undefined}
+            onClick={() => hasKids && onToggleCollapse(node.id)}
+            style={{
+              ...styles.caret,
+              // Sin hijos no hay chevron, pero el hueco se conserva para que las
+              // etiquetas no bailen de una fila a otra.
+              visibility: hasKids ? 'visible' : 'hidden',
+              transform: isCollapsed ? 'rotate(-90deg)' : 'none',
+            }}
+          >
+            ▾
+          </button>
+        </span>
         <button
           onClick={(e) => onPick(node.id, e.metaKey || e.ctrlKey || e.shiftKey)}
-          style={{ ...styles.nodeRow, paddingLeft: 8 + depth * 14, color: selected ? '#fff' : '#cbd5e1' }}
+          style={{ ...styles.nodeRow, color: selected ? '#fff' : '#cbd5e1' }}
         >
           <span style={styles.tag}>{glyph(node.tag)}</span>
           {label}
@@ -182,7 +246,7 @@ function NodeRow({
           {node.locked ? '🔒' : '🔓'}
         </button>
       </div>
-      {node.children.map((c) => (
+      {!isCollapsed && node.children.map((c) => (
         <NodeRow
           key={c.id}
           node={c}
@@ -196,6 +260,8 @@ function NodeRow({
           onDragOverRow={onDragOverRow}
           onDropRow={onDropRow}
           onDragEndRow={onDragEndRow}
+          collapsed={collapsed}
+          onToggleCollapse={onToggleCollapse}
         />
       ))}
     </>
@@ -222,5 +288,6 @@ const styles = {
   rowWrap: { display: 'flex', alignItems: 'center' },
   nodeRow: { display: 'flex', alignItems: 'center', gap: 6, flex: 1, minWidth: 0, textAlign: 'left', padding: '4px 8px', border: 'none', background: 'transparent', fontSize: 12, cursor: 'pointer', overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' },
   rowIcon: { flexShrink: 0, width: 22, padding: '2px 0', fontSize: 10, background: 'transparent', border: 'none', cursor: 'pointer', opacity: 0.7 },
+  caret: { width: 14, height: 14, lineHeight: '14px', padding: 0, fontSize: 9, color: '#6b7280', background: 'transparent', border: 'none', cursor: 'pointer', transition: 'transform .12s' },
   tag: { display: 'inline-flex', width: 14, justifyContent: 'center', fontFamily: 'monospace', fontSize: 10, color: '#8b5cf6' },
 } as const
