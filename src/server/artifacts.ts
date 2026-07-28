@@ -225,7 +225,11 @@ export async function resolveSharedArtifact(
   if (!versions.length) return null;
   // Versión CONGELADA si la hay: editar después no cambia lo que el otro ya vio.
   // Si la congelada se borró, se cae a la última en vez de romper el link.
-  const idx = root.sharedArtifactId ? versions.findIndex((v) => v.id === root.sharedArtifactId) : -1;
+  // El DUEÑO siempre ve la más reciente. Congelar una versión es una promesa a QUIEN
+  // ABRE TU ENLACE ("Versión compartida"), no una forma de esconderte tu propio trabajo:
+  // abrir el link desde el panel y encontrarte una versión vieja de lo que tienes en
+  // pantalla se lee como un bug, no como una función.
+  const idx = root.sharedArtifactId && !isOwner ? versions.findIndex((v) => v.id === root.sharedArtifactId) : -1;
   const chosen = idx >= 0 ? versions[idx] : versions[versions.length - 1];
   const full = await db.getArtifactVersion(chosen.id);
   if (!full) return null;

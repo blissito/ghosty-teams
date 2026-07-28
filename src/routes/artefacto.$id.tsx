@@ -139,7 +139,10 @@ function SharedArtifact() {
         src={d.contentUrl || `/artefacto/${encodeURIComponent(id)}/raw`}
         sandbox="allow-scripts allow-forms allow-popups"
         referrerPolicy="no-referrer"
-        className="min-h-0 flex-1 border-0 bg-white"
+        // El fondo NO es blanco: al cambiar de versión el iframe se remonta y, mientras
+        // carga, ese blanco era un flashazo entre dos documentos oscuros. El color del
+        // marco no destella contra nada.
+        className="min-h-0 flex-1 border-0 bg-surface"
       />
     </div>
   );
