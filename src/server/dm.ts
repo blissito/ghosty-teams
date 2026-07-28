@@ -300,7 +300,7 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
     // de la burbuja y lo commiteamos LOCAL (misma verdad markdown/csv que en el room). En DM
     // no cableamos identidad por-hilo → cada artefacto es una card nueva (co-edición diferida).
     try {
-      const { extractEbDoc, extractEbPatches, draftTitle, bubbleWithoutEbDoc, extractAskUser, stripAskUser, extractEbAudio, stripEbAudio } = await import("../lib/ebdoc");
+      const { extractEbDoc, extractEbPatches, draftTitle, bubbleWithoutEbDoc, extractAskUser, stripAskUser, extractEbAudio, stripEbAudio, extractEbFile, stripEbFile } = await import("../lib/ebdoc");
       const { randomUUID } = await import("node:crypto");
 
       // Nota de voz en DM: mismo protocolo que el room (```eb-audio``` → adjunto audio).
@@ -309,24 +309,33 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
         const cleaned = stripEbAudio(reply);
         await db.setMessageBody(id, cleaned);
         fanout({ t: "message:body", id, body: cleaned });
-        try {
-          const { uploadToEasyBits } = await import("./easybits-files.server");
-          const r = await fetch(ebAudio.url);
-          if (!r.ok) throw new Error(`fetch audio ${r.status}`);
-          const bytes = Buffer.from(await r.arrayBuffer());
-          const up = await uploadToEasyBits({
-            blob: new Blob([bytes], { type: ebAudio.mime || "audio/ogg" }),
-            contentType: ebAudio.mime || "audio/ogg",
-            fileName: "voz.ogg",
-          });
-          await db.createAttachments(id, [{
-            fileId: up.fileId, mime: up.mime || "audio/ogg", size: up.size ?? bytes.length,
-            name: "Nota de voz", waveform: ebAudio.waveform ?? null, durationMs: ebAudio.durationMs ?? null,
-          }]);
-          fanout({ t: "refresh", channelId: null, parentId: null, dmId: data.id });
-        } catch (e) {
-          console.error("[voice][dm] attach failed", e);
-        }
+        const { attachPublished } = await import("./published-attach.server");
+        const ok = await attachPublished(id, {
+          url: ebAudio.url,
+          name: "Nota de voz",
+          fileName: "voz.ogg",
+          mime: ebAudio.mime || "audio/ogg",
+          waveform: ebAudio.waveform,
+          durationMs: ebAudio.durationMs,
+        });
+        if (ok) fanout({ t: "refresh", channelId: null, parentId: null, dmId: data.id });
+        return { ok: true as const };
+      }
+
+      // Archivo generado en DM: mismo protocolo que el room (```eb-file``` → adjunto).
+      const ebFile = extractEbFile(reply);
+      if (ebFile) {
+        const cleaned = stripEbFile(reply);
+        await db.setMessageBody(id, cleaned);
+        fanout({ t: "message:body", id, body: cleaned });
+        const { attachPublished, safeFileName } = await import("./published-attach.server");
+        const ok = await attachPublished(id, {
+          url: ebFile.url,
+          name: ebFile.name || "Archivo",
+          fileName: safeFileName(ebFile.name, "archivo"),
+          mime: ebFile.mime || "application/octet-stream",
+        });
+        if (ok) fanout({ t: "refresh", channelId: null, parentId: null, dmId: data.id });
         return { ok: true as const };
       }
       // EDICIÓN QUIRÚRGICA (mismo contrato que el room): el turno trae ```eb-patch``` en

@@ -722,7 +722,7 @@ export const askAgent = createServerFn({ method: "POST" })
     // (Slice 3 del contrato: reemplazar este scraping por eventos artifact del SSE.)
     try {
       const { detectArtifact, mintCollabEmbed, resolveFileKind } = await import("./easybits-documents.server");
-      const { extractEbDoc, extractEbPatches, draftTitle, bubbleWithoutEbDoc, extractAskUser, stripAskUser, extractEbAudio, stripEbAudio } = await import("../lib/ebdoc");
+      const { extractEbDoc, extractEbPatches, draftTitle, bubbleWithoutEbDoc, extractAskUser, stripAskUser, extractEbAudio, stripEbAudio, extractEbFile, stripEbFile } = await import("../lib/ebdoc");
       const { randomUUID } = await import("node:crypto");
 
       // Nota de voz: el agente emitió ```eb-audio``` (voice.mjs sintetizó + publicó el
@@ -733,24 +733,34 @@ export const askAgent = createServerFn({ method: "POST" })
         const cleaned = stripEbAudio(reply);
         await db.setMessageBody(id, cleaned);
         bus.publish(bus.ch.room(ns, channel.id), { t: "message:body", id, body: cleaned });
-        try {
-          const { uploadToEasyBits } = await import("./easybits-files.server");
-          const r = await fetch(ebAudio.url);
-          if (!r.ok) throw new Error(`fetch audio ${r.status}`);
-          const bytes = Buffer.from(await r.arrayBuffer());
-          const up = await uploadToEasyBits({
-            blob: new Blob([bytes], { type: ebAudio.mime || "audio/ogg" }),
-            contentType: ebAudio.mime || "audio/ogg",
-            fileName: "voz.ogg",
-          });
-          await db.createAttachments(id, [{
-            fileId: up.fileId, mime: up.mime || "audio/ogg", size: up.size ?? bytes.length,
-            name: "Nota de voz", waveform: ebAudio.waveform ?? null, durationMs: ebAudio.durationMs ?? null,
-          }]);
-          bus.publish(bus.ch.room(ns, channel.id), { t: "refresh", channelId: channel.id, parentId: data.parentId });
-        } catch (e) {
-          console.error("[voice] attach failed", e);
-        }
+        const { attachPublished } = await import("./published-attach.server");
+        const ok = await attachPublished(id, {
+          url: ebAudio.url,
+          name: "Nota de voz",
+          fileName: "voz.ogg",
+          mime: ebAudio.mime || "audio/ogg",
+          waveform: ebAudio.waveform,
+          durationMs: ebAudio.durationMs,
+        });
+        if (ok) bus.publish(bus.ch.room(ns, channel.id), { t: "refresh", channelId: channel.id, parentId: data.parentId });
+        return { ok: true as const };
+      }
+
+      // Archivo generado (PDF, PNG, …): mismo camino que la nota de voz. Sin este
+      // bloque al agente sólo le quedaba escribir un link en markdown.
+      const ebFile = extractEbFile(reply);
+      if (ebFile) {
+        const cleaned = stripEbFile(reply);
+        await db.setMessageBody(id, cleaned);
+        bus.publish(bus.ch.room(ns, channel.id), { t: "message:body", id, body: cleaned });
+        const { attachPublished, safeFileName } = await import("./published-attach.server");
+        const ok = await attachPublished(id, {
+          url: ebFile.url,
+          name: ebFile.name || "Archivo",
+          fileName: safeFileName(ebFile.name, "archivo"),
+          mime: ebFile.mime || "application/octet-stream",
+        });
+        if (ok) bus.publish(bus.ch.room(ns, channel.id), { t: "refresh", channelId: channel.id, parentId: data.parentId });
         return { ok: true as const };
       }
 

@@ -232,9 +232,70 @@ export function stripEbAudio(body: string): string {
   return [before.trim(), after.trim()].filter(Boolean).join("\n\n");
 }
 
+// ── Archivo generado (PDF, PNG, lo que sea) ───────────────────────────────────
+// El SDK del box produce un archivo (render.mjs → PDF/PNG), lo publica y emite
+//   ```eb-file\n{"url","name","mime","size"}\n```
+// Mismo camino que eb-audio: el server lo descarga, lo re-sube a NUESTRO storage
+// y lo adjunta → tarjeta de archivo con descarga.
+//
+// Existe porque un archivo ya generado no tenía bloque: al agente sólo le
+// quedaba escribir un link en markdown, y `eb-doc` —lo único que daba tarjeta—
+// exporta .docx, así que pedir "un PDF" devolvía Word.
+//
+// Que se vuelva adjunto no es sólo cosmético: deja de depender de que la URL
+// publicada siga viva, y queda buscable y reenviable como cualquier otro archivo.
+export type EbFile = { url: string; name?: string; mime?: string; size?: number };
+
+export function extractEbFile(body: string): EbFile | null {
+  const open = body.match(/```eb-file[^\n]*\n/);
+  if (!open || open.index == null) return null;
+  const rest = body.slice(open.index + open[0].length);
+  const closeIdx = rest.indexOf("```");
+  if (closeIdx === -1) return null; // sólo al cerrar (el JSON debe estar completo)
+  try {
+    const obj = JSON.parse(rest.slice(0, closeIdx).trim()) as EbFile;
+    if (!obj?.url || typeof obj.url !== "string") return null;
+    return obj;
+  } catch {
+    return null;
+  }
+}
+
+/** Quita el bloque ```eb-file``` de la burbuja (el archivo se muestra como adjunto). */
+export function stripEbFile(body: string): string {
+  const open = body.match(/```eb-file[^\n]*\n/);
+  if (!open || open.index == null) return body;
+  const before = body.slice(0, open.index);
+  const rest = body.slice(open.index + open[0].length);
+  const closeIdx = rest.indexOf("```");
+  const after = closeIdx === -1 ? "" : rest.slice(closeIdx + 3);
+  return [before.trim(), after.trim()].filter(Boolean).join("\n\n");
+}
+
 // Versión para RENDER (cliente): mientras el bloque ```eb-audio``` aún streamea (sin
 // cierre), en vez de mostrar el JSON crudo pinta un placeholder; ya cerrado lo quita
 // (el reproductor entra como adjunto). Tolera el fence a medio abrir (```eb-au…).
+
+/**
+ * Oculta un fence de apertura INCOMPLETO al final del cuerpo.
+ *
+ * Mientras el modelo escribe ```` ```eb-audio ```` el texto pasa por ```` ``` ````,
+ * ```` ```e ````, ```` ```eb ````… y en esos instantes Markdown ve un bloque de
+ * código ABIERTO y lo pinta como tal: un recuadro vacío que aparece y desaparece.
+ * Los helpers por tipo (`bubbleWithoutEbAudio`, …) sólo cubren desde que el nombre
+ * es reconocible, así que ese parpadeo se colaba igual.
+ *
+ * Esto es genérico a propósito: vale para eb-doc, eb-artifact, eb-file y para
+ * cualquier bloque que se invente después. Sólo actúa sobre el fence FINAL sin
+ * cerrar — un bloque de código legítimo del agente (ya cerrado) no se toca.
+ */
+export function hideDanglingFence(body: string): string {
+  // Fence al final SIN newline todavía: aún se está escribiendo su nombre.
+  const dangling = body.match(/\n?```[a-zA-Z0-9-]*$/);
+  if (dangling && dangling.index != null) return body.slice(0, dangling.index).trimEnd();
+  return body;
+}
+
 export function bubbleWithoutEbAudio(body: string): string {
   const open = body.match(/```eb-audio[^\n]*(\n|$)/);
   if (!open || open.index == null) {
@@ -293,10 +354,31 @@ export function stripToolBlock(body: string): string {
 
 // Texto de la burbuja del chat SIN el bloque (narración alrededor). Mientras streamea (no
 // cerrado) deja un marcador para que el chat no muestre el markdown/csv crudo.
+
+/**
+ * Igual que `bubbleWithoutEbAudio` pero para archivos: mientras el bloque
+ * ```eb-file``` streamea, en vez del JSON crudo deja un marcador; ya cerrado lo
+ * quita (el archivo entra como adjunto).
+ */
+export function bubbleWithoutEbFile(body: string): string {
+  const open = body.match(/```eb-file[^\n]*(\n|$)/);
+  if (!open || open.index == null) return body;
+  const before = body.slice(0, open.index).trim();
+  const rest = body.slice(open.index + open[0].length);
+  const closeIdx = rest.indexOf("```");
+  if (closeIdx === -1) return [before, "📎 Preparando el archivo…"].filter(Boolean).join("\n\n");
+  const after = rest.slice(closeIdx + 3).trim();
+  return [before, after].filter(Boolean).join("\n\n");
+}
+
 export function bubbleWithoutEbDoc(body: string, patchOutcome?: { applied: number; failed: string[] }): string {
   // Primero saca el bloque de estado de tools (se pinta como burbuja) y la nota de voz.
   body = stripToolBlock(body);
   body = bubbleWithoutEbAudio(body);
+  body = bubbleWithoutEbFile(body);
+  // Al final de todo: si quedó un fence a medio abrir (el modelo aún escribe el
+  // nombre del bloque), fuera — si no, Markdown lo pinta como recuadro vacío.
+  body = hideDanglingFence(body);
   // Patches quirúrgicos: fuera del bubble (nunca HTML crudo en el chat) con su propio
   // marcador. Van antes que eb-doc porque un turno puede traer patches y nada más.
   const patches = extractEbPatches(body);
