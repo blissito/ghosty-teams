@@ -659,7 +659,11 @@ export default function ArtifactPanel({
       try {
         const { setArtifactShareFn } = await import("../server/artifacts");
         const s = await setArtifactShareFn({ data: { documentId: docId } });
-        if (alive && s?.slug) setShareUrl(`${window.location.origin}/artefacto/${s.slug}`);
+        // `?v=latest` en TODO lo que sale del panel —abrir, copiar, la barra de abajo—:
+        // aquí siempre estás viendo la versión viva, así que el enlace que te llevas es
+        // el de eso. El enlace "limpio" (el que respeta la versión fijada para quien lo
+        // recibe) se copia desde el diálogo Compartir de la propia página.
+        if (alive && s?.slug) setShareUrl(`${window.location.origin}/artefacto/${s.slug}?v=latest`);
       } catch {
         // No eres el dueño (o es un artefacto de antes): sin link propio. Los
         // botones caen al blob local, que no depende de nada.
@@ -683,9 +687,7 @@ export default function ArtifactPanel({
     // ese link se abría sin marco y seguía sirviendo después de poner el artefacto
     // en privado. El HTML de ahí dentro sí lo sirve el CDN.
     if (shareUrl) {
-      // `?v=latest` sólo al ABRIR: enseña lo que tienes en pantalla. El enlace que se
-      // COPIA va limpio, porque ahí sí manda la versión que fijaste para quien lo reciba.
-      window.open(`${shareUrl}?v=latest`, "_blank", "noopener");
+      window.open(shareUrl, "_blank", "noopener");
       return;
     }
     const url = URL.createObjectURL(new Blob([artifactHtml ?? artifact.html], { type: "text/html" }));
@@ -1545,9 +1547,7 @@ export default function ArtifactPanel({
                       <div className="flex items-center gap-2 border-t border-border bg-surface px-3 py-2">
                         <span className="truncate text-xs text-muted">{shareUrl}</span>
                         <a
-                          // Igual que el botón de la barra: abrir enseña LO QUE ESTÁS
-                          // VIENDO (`?v=latest`), no la versión fijada para terceros.
-                          href={`${shareUrl}?v=latest`}
+                          href={shareUrl}
                           target="_blank"
                           rel="noreferrer"
                           className="ml-auto shrink-0 rounded-md border border-border px-2 py-1 text-xs text-ink transition hover:border-brand"
