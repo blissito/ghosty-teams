@@ -61,10 +61,15 @@ const loadShared = createServerFn({ method: "GET" })
       // `src` null = fila vieja publicada antes de que hubiera storage → se cae a
       // /artefacto/<slug>/raw, que sí lee de la DB. Es el camino de excepción.
       contentUrl: found.version.src,
+      versionId: found.version.id,
     };
   });
 
 export const Route = createFileRoute("/artefacto/$id")({
+  // Sin caché: el permiso y la versión compartida cambian desde el propio diálogo,
+  // y servir el loader viejo enseñaba el documento anterior tras cambiarlos.
+  staleTime: 0,
+  gcTime: 0,
   loader: async ({ params }) => {
     const data = await loadShared({ data: { slug: params.id } });
     // Sin acceso y no existe se responden IGUAL: un 403 confirmaría que el
@@ -120,6 +125,10 @@ function SharedArtifact() {
         onShareChange={() => router.invalidate()}
       />
       <iframe
+        // REMONTAR al cambiar de versión: cambiarle el src a un iframe vivo no
+        // siempre lo recarga (queda el documento anterior). Con `key` React lo tira
+        // y lo crea de nuevo, que es lo único que garantiza ver la otra versión.
+        key={d.versionId}
         title={d.title}
         // CDN primero (artefacto.ghosty.studio/<key>): el contenido no pasa por la
         // app ni por la DB. El /raw sólo entra para filas viejas sin `src`.

@@ -240,13 +240,15 @@ export default function ArtifactShareDialog({
 
       {/* Hacerlo público es la acción irreversible del diálogo (el link puede haberse
           reenviado ya), así que se confirma con lo que implica escrito. */}
+      {/* Se ancla DEBAJO del propio panel de compartir, no en el centro de la
+          pantalla: la decisión es sobre lo que estás mirando aquí, y mandar la
+          mirada a la esquina opuesta para confirmar es un salto gratis. */}
       {confirmPublic ? (
-        <div className="fixed inset-0 z-[60] grid place-items-center bg-black/50 p-4" onClick={() => setConfirmPublic(false)}>
+        <div className="absolute right-2 top-11 z-[60] w-[min(26rem,calc(100vw-1rem))]" onClick={(e) => e.stopPropagation()}>
           <div
             role="alertdialog"
             aria-modal="true"
-            className="flex w-[min(28rem,100%)] flex-col gap-3 rounded-xl border border-border bg-surface-2 p-5 shadow-2xl"
-            onClick={(e) => e.stopPropagation()}
+            className="flex flex-col gap-3 rounded-xl border border-border bg-surface-2 p-5 shadow-2xl"
           >
             <h2 className="text-lg font-semibold text-ink">{t("¿Compartir con cualquiera que tenga el enlace?")}</h2>
             <p className="text-sm text-muted">
