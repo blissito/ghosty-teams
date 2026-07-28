@@ -1274,17 +1274,22 @@ function AddAgentForm({ onClose, onCreated }: { onClose: () => void; onCreated: 
             }`}
           >
             {/* El fondo activo es una capa aparte que se DESLIZA entre tabs
-                (layoutId), en vez de prender y apagar dos fondos distintos. */}
+                (layoutId), en vez de prender y apagar dos fondos distintos.
+                SIN z negativo: `-z-10` lo mandaba detrás del panel y el label
+                (text-brand-fg, claro) quedaba blanco sobre blanco — el tab activo
+                se veía vacío. El fondo va al fondo del BOTÓN y el texto encima. */}
             {tab === k && (
               <motion.span
                 layoutId="agent-tab"
                 transition={{ type: "spring", stiffness: 380, damping: 30 }}
-                className="absolute inset-0 -z-10 rounded-lg bg-brand"
+                className="absolute inset-0 rounded-lg bg-brand"
               />
             )}
-            {/* "Activar", no "Crear": el agente ya existe en Studio y aquí sólo se
-                le da un @handle. Decir "crear" prometía algo que no pasa. */}
-            {k === "create" ? t("De Studio") : t("Webhook externo")}
+            {/* "De Studio", no "Crear agente": el agente ya existe allá y aquí sólo
+                se le da un @handle. Decir "crear" prometía algo que no pasa. */}
+            <span className="relative z-10">
+              {k === "create" ? t("De Studio") : t("Webhook externo")}
+            </span>
           </button>
         ))}
         {/* Importar desde Formmy — próximamente (deshabilitado). */}
@@ -1422,7 +1427,7 @@ function AddAgentForm({ onClose, onCreated }: { onClose: () => void; onCreated: 
                         </div>
                         <p className="px-1 text-xs text-muted">
                           {handle
-                            ? <>{t("Lo llamarás")} <span className="font-medium text-fg">@{handle}</span> {t("en este workspace.")}</>
+                            ? <>{t("Lo llamarás")} <span className="font-medium text-ink">@{handle}</span> {t("en este workspace.")}</>
                             : t("Así lo mencionarás en los canales.")}
                         </p>
                       </div>
@@ -1434,7 +1439,7 @@ function AddAgentForm({ onClose, onCreated }: { onClose: () => void; onCreated: 
                   href={STUDIO_AGENTS_URL}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1 px-0.5 text-xs text-muted transition-colors hover:text-fg"
+                  className="inline-flex items-center gap-1 px-0.5 text-xs text-muted transition-colors hover:text-ink"
                 >
                   {t("Crear otro en Studio")} <ExternalLink size={12} />
                 </a>
