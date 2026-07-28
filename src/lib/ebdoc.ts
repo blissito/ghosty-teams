@@ -85,8 +85,13 @@ export function isSameDocument(
   if (ebdoc.kind !== "artifact") return true;
   const ids = (s: string) => new Set(Array.from(s.matchAll(/\bdata-id="([^"]+)"/g), (m) => m[1]));
   const cur = ids(current.md);
-  if (cur.size === 0) return true;
-  for (const id of ids(ebdoc.md)) if (cur.has(id)) return true;
+  const next = ids(ebdoc.md);
+  // Hace falta que los DOS lados tengan ids para poder comparar. El agente escribe HTML
+  // limpio y los `data-id` se los estampa el server AL PUBLICAR, así que una re-emisión
+  // completa suele llegar sin uno solo: tomar eso por "documento distinto" partía el
+  // artefacto en dos en cada edición grande y dejaba el enlace apuntando al primero.
+  if (cur.size === 0 || next.size === 0) return true;
+  for (const id of next) if (cur.has(id)) return true;
   return false;
 }
 

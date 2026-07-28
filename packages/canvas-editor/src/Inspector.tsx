@@ -857,6 +857,10 @@ function RefinePanel({ store, node, doc, refineProvider }: { store: EditorStore;
   // Arranca en 'tweak': el modo seguro. Un rediseño no pedido borra trabajo.
   const [mode, setMode] = useState<RefineMode>('tweak')
   const [received, setReceived] = useState(0)
+  const activeModel = models.find((m) => m.id === modelId)
+  // El primero de la lista que sí sirve para rediseñar; la lista ya viene
+  // ordenada de más barato a más capaz, así que es la alternativa más barata.
+  const betterModel = models.find((m) => m.goodForRedesign)
 
   async function run() {
     if (!instruction.trim() || busy) return
@@ -934,12 +938,15 @@ function RefinePanel({ store, node, doc, refineProvider }: { store: EditorStore;
       // sus imágenes. Antes de aplicar se comprueba, porque el daño ya está hecho
       // cuando el usuario lo ve en pantalla.
       const lost = assetsLost(currentHtml, finalHtml)
-      if (normalizeHtml(finalHtml).length < 20 || lost) {
+      const priceLost = pricesLost(currentHtml, finalHtml)
+      if (normalizeHtml(finalHtml).length < 20 || lost || priceLost) {
         rollback()
         setError(
-          lost
-            ? `Respuesta incompleta: se perdería ${lost}. No se aplicó nada.`
-            : 'El modelo cortó la respuesta. No se aplicó nada.',
+          priceLost
+            ? `El modelo alteró un precio (${priceLost}). No se aplicó nada — los datos de tus servicios no se tocan.`
+            : lost
+              ? `Respuesta incompleta: se perdería ${lost}. No se aplicó nada.`
+              : 'El modelo cortó la respuesta. No se aplicó nada.',
         )
         return
       }
@@ -1005,6 +1012,28 @@ function RefinePanel({ store, node, doc, refineProvider }: { store: EditorStore;
           }}
         />
       )}
+      {/* Un tier rápido en modo rediseño devuelve la misma sección reescrita:
+          30s y una llamada entera para nada. Se avisa antes, con el cambio a un
+          clic — no se bloquea, porque a veces el usuario sólo quiere probar. */}
+      {mode === 'redesign' && activeModel && activeModel.goodForRedesign === false && (
+        <div style={{ fontSize: 10, color: '#d4a24c', marginTop: 6, lineHeight: 1.5 }}>
+          {activeModel.label} suele devolver la misma composición al rediseñar.
+          {betterModel && (
+            <>
+              {' '}
+              <button
+                style={{ ...styles.chip, padding: '1px 6px', color: '#c4b5fd' }}
+                onClick={() => {
+                  setModelId(betterModel.id)
+                  refineProvider.onModelChange?.(betterModel.id)
+                }}
+              >
+                Usar {betterModel.label}
+              </button>
+            </>
+          )}
+        </div>
+      )}
       <button
         className={busy ? 'ce-refining' : undefined}
         style={{ ...styles.primary, cursor: busy ? 'progress' : 'pointer', opacity: busy ? 0.85 : 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
@@ -1063,6 +1092,23 @@ const VOID_TAGS = new Set(['img', 'br', 'hr', 'input', 'source', 'meta', 'link']
 function assetsLost(before: string, after: string): string | null {
   for (const m of before.matchAll(/(?:src|href)=["']([^"']+)["']/g)) {
     if (!after.includes(m[1])) return m[1].length > 48 ? `${m[1].slice(0, 47)}…` : m[1]
+  }
+  return null
+}
+
+/**
+ * Un precio que cambia en un rediseño no es una variación de diseño: es un dato
+ * falso publicado. El prompt lo prohíbe, pero un prompt no es garantía y estas
+ * secciones listan servicios reales con precios reales.
+ */
+function pricesLost(before: string, after: string): string | null {
+  const strip = (h: string) => h.replace(/<[^>]+>/g, ' ').replace(/\s/g, '')
+  const afterText = strip(after)
+  const seen = new Set<string>()
+  for (const m of strip(before).matchAll(/\$\d[\d.,]*/g)) {
+    if (seen.has(m[0])) continue
+    seen.add(m[0])
+    if (!afterText.includes(m[0])) return m[0]
   }
   return null
 }

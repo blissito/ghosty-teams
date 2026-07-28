@@ -47,6 +47,12 @@ export interface ModelOption {
   ownKey?: boolean
   /** Nota corta bajo el label ("rápido y barato", "el mejor para rediseñar"). */
   hint?: string
+  /**
+   * false = tier rápido: sirve para ajustar, pero ante "rediséñalo" devuelve la
+   * misma composición reescrita. El panel lo avisa ANTES de gastar la llamada, en
+   * vez de dejar que el usuario lo descubra tras 30s y 6 KB de salida idéntica.
+   */
+  goodForRedesign?: boolean
 }
 
 export interface GenerateArtboardInput {

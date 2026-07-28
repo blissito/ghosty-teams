@@ -17,4 +17,8 @@ describe('documento nuevo vs versión', () => {
     const d = extractEbDoc('```eb-artifact\n<div data-id="z9">otra cosa</div>\n```')!
     expect(isSameDocument(d, cur)).toBe(false)
   })
+  it('re-emisión SIN ids (el server los estampa al publicar) sigue siendo el mismo', () => {
+    const d = extractEbDoc('```eb-artifact\n<div>rehecho entero</div>\n```')!
+    expect(isSameDocument(d, cur)).toBe(true)
+  })
 })
