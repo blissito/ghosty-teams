@@ -6,7 +6,8 @@
 // (ver cssProps.ts): así ganan sobre las clases y sobre el <style> del artefacto.
 
 import { useLayoutEffect, useState } from 'react'
-import { FONT_OPTIONS, PALETTE_PRESETS, activeTokens, findNode, type Node } from './model'
+import { FONT_OPTIONS, PALETTE_PRESETS, activeTokens, findNode, type Doc, type Node } from './model'
+import { backgroundUrl, clearBackground, makeFullBleed, makeHeroBackground, parentOf, refineContext, setBackground } from './imageOps'
 import { htmlToNode, nodeSubtreeToHtml } from './serialize'
 import { addClass, autocomplete, classList, removeClass, toggleClass } from './tailwindClasses'
 import {
@@ -24,7 +25,7 @@ import {
   type Sizing,
 } from './cssProps'
 import type { EditorState, EditorStore } from './store'
-import type { AgentAction, ImageProvider, RefineProvider } from './refine'
+import type { AgentAction, ImageProvider, ModelOption, RefineProvider } from './refine'
 
 const TEXT_TAGS = new Set(['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'p', 'span', 'a', 'button', 'li', 'label'])
 const TAG_OPTIONS = ['div', 'section', 'h1', 'h2', 'h3', 'h4', 'p', 'span', 'a', 'button', 'ul', 'li', 'img']
@@ -72,10 +73,13 @@ export function Inspector({
           <SizeSpacingPanel store={store} node={node} dep={state.doc} />
           <ColorsPanel store={store} node={node} dep={state.doc} />
           <EffectsPanel store={store} node={node} dep={state.doc} />
-          {node.tag === 'img' && <ImagePanel store={store} node={node} imageProvider={imageProvider} />}
+          {/* Imagen Y fondo: el panel vive con CUALQUIER nodo seleccionado. Antes
+              sólo aparecía en <img>, así que un hero cuya foto es el
+              background-image de un <div> no se podía cambiar ni quitar. */}
+          <ImagePanel key={node.id} store={store} node={node} doc={state.doc} imageProvider={imageProvider} />
           <ClassChips store={store} node={node} />
           <InlineStylePanel store={store} node={node} />
-          {refineProvider && <RefinePanel store={store} node={node} refineProvider={refineProvider} />}
+          {refineProvider && <RefinePanel key={node.id} store={store} node={node} doc={state.doc} refineProvider={refineProvider} />}
         </div>
       )}
       {/* Con un nodo seleccionado el Tema estorba: nace CONTRAÍDO (y se resetea al
@@ -557,17 +561,45 @@ function SidesRow({ label, props, node, store, dep }: { label: string; props: st
   )
 }
 
-function ImagePanel({ store, node, imageProvider }: { store: EditorStore; node: Node; imageProvider?: ImageProvider }) {
+/**
+ * Imagen y fondo. Dos modos sobre el MISMO panel:
+ * - "Imagen" edita `<img>.src` (sólo disponible si el nodo es un <img>).
+ * - "Fondo" edita el `background-image` de cualquier nodo — el caso del hero
+ *   generado por la IA, que es un <div> con la foto de fondo.
+ *
+ * Portado del editor clásico de Denik (`EditorRightSidebar`), incluidos los dos
+ * escapes a la directiva de layout del generador ("Ancho completo" / "Foto de
+ * fondo") y el salto al contenedor padre.
+ */
+function ImagePanel({ store, node, doc, imageProvider }: { store: EditorStore; node: Node; doc: Doc; imageProvider?: ImageProvider }) {
+  const isImg = node.tag === 'img'
+  const [mode, setMode] = useState<'img' | 'bg'>(isImg ? 'img' : 'bg')
   const [prompt, setPrompt] = useState('')
-  const [busy, setBusy] = useState<'gen' | 'search' | null>(null)
+  const [busy, setBusy] = useState<'gen' | 'search' | 'upload' | null>(null)
   const [results, setResults] = useState<string[]>([])
-  const setSrc = (src: string) => store.updateNode(node.id, { src })
+  const [error, setError] = useState<string | null>(null)
+  const [url, setUrl] = useState('')
+  const [dragging, setDragging] = useState(false)
+  // Un nodo que no es <img> no puede estar en modo "Imagen": al cambiar de
+  // selección el modo se recalcula (el key del panel fuerza el remount).
+  const effMode = isImg ? mode : 'bg'
+  const bgUrl = backgroundUrl(node)
+  const current = effMode === 'img' ? (node.src ?? '') : (bgUrl ?? '')
+  const parent = parentOf(doc, node.id)
+
+  const apply = (src: string) => {
+    setError(null)
+    if (effMode === 'img') store.updateNode(node.id, { src })
+    else setBackground(store, node.id, src)
+  }
 
   async function generate() {
     if (!imageProvider?.generate || !prompt.trim() || busy) return
     setBusy('gen')
     try {
-      setSrc(await imageProvider.generate(prompt.trim()))
+      apply(await imageProvider.generate(prompt.trim()))
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'No se pudo generar la imagen')
     } finally {
       setBusy(null)
     }
@@ -577,34 +609,162 @@ function ImagePanel({ store, node, imageProvider }: { store: EditorStore; node: 
     setBusy('search')
     try {
       setResults(await imageProvider.search(prompt.trim()))
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'No se pudo buscar')
     } finally {
       setBusy(null)
     }
   }
-  async function onFile(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0]
-    if (!file || !imageProvider?.upload) return
-    setSrc(await imageProvider.upload(file))
+  async function upload(file: File | undefined | null) {
+    if (!file || !imageProvider?.upload || busy) return
+    if (!file.type.startsWith('image/')) {
+      setError('Ese archivo no es una imagen.')
+      return
+    }
+    setBusy('upload')
+    setError(null)
+    try {
+      apply(await imageProvider.upload(file))
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No se pudo subir la imagen')
+    } finally {
+      setBusy(null)
+    }
   }
 
   return (
-    <Section title="Imagen">
-      <Row label="src">
-        <input style={styles.input} value={node.src ?? ''} onChange={(e) => setSrc(e.target.value)} />
+    <Section
+      title="Imagen y fondo"
+      action={
+        parent ? (
+          <button title={`Seleccionar el contenedor <${parent.tag}>`} style={{ ...styles.iconBtn, width: 'auto', padding: '0 5px', fontFamily: 'monospace', fontSize: 10 }} onClick={() => store.select(parent.id)}>
+            ↑ {parent.tag}
+          </button>
+        ) : undefined
+      }
+    >
+      <div style={{ ...styles.segmented, marginBottom: 6 }}>
+        {([['img', 'Imagen'], ['bg', 'Fondo']] as const).map(([id, label]) => (
+          <button
+            key={id}
+            disabled={id === 'img' && !isImg}
+            title={id === 'img' && !isImg ? 'Este nodo no es una <img>' : undefined}
+            style={{ ...styles.seg, cursor: id === 'img' && !isImg ? 'not-allowed' : 'pointer', opacity: id === 'img' && !isImg ? 0.4 : 1, ...(effMode === id ? styles.segActive : null) }}
+            onClick={() => setMode(id)}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {/*
+        Zona de imagen: preview y subida son EL MISMO objeto. Un botón "subir"
+        separado del preview obliga a mirar dos sitios para entender el estado;
+        aquí la caja muestra lo que hay y acepta que le sueltes un archivo
+        encima. Relación 16:9 fija para que el panel no salte al cambiar de
+        imagen, sobre damero para distinguir "transparente" de "vacío".
+      */}
+      {imageProvider?.upload ? (
+        <label
+          style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            position: 'relative', aspectRatio: '16 / 9', marginBottom: 6,
+            borderRadius: 8, overflow: 'hidden', cursor: busy ? 'progress' : 'pointer',
+            border: `1px ${dragging ? 'solid' : 'dashed'} ${dragging ? '#8b5cf6' : '#2a2f3a'}`,
+            background: dragging ? 'rgba(139,92,246,.08)' : CHECKERBOARD,
+            transition: 'border-color .12s, background .12s',
+          }}
+          onDragOver={(e) => { e.preventDefault(); setDragging(true) }}
+          onDragLeave={() => setDragging(false)}
+          onDrop={(e) => { e.preventDefault(); setDragging(false); upload(e.dataTransfer.files?.[0]) }}
+        >
+          {current && !dragging && (
+            <img src={current} alt="" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} onError={() => setError('No se pudo cargar esa imagen.')} />
+          )}
+          <span style={{
+            position: 'relative', display: 'flex', alignItems: 'center', gap: 5,
+            fontSize: 11, fontWeight: 600, color: '#e5e7eb',
+            // Sobre una foto el texto necesita su propio fondo para leerse.
+            background: current && !dragging ? 'rgba(13,15,20,.78)' : 'transparent',
+            padding: current && !dragging ? '4px 8px' : 0, borderRadius: 6,
+          }}>
+            {busy === 'upload' ? (
+              <><span className="ce-spinner" /> Subiendo…</>
+            ) : dragging ? (
+              'Suelta la imagen'
+            ) : (
+              <>{IconUpload} {current ? 'Reemplazar' : effMode === 'bg' ? 'Subir imagen de fondo' : 'Subir imagen'}</>
+            )}
+          </span>
+          <input type="file" accept="image/*" style={{ display: 'none' }} disabled={!!busy} onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; upload(f) }} />
+        </label>
+      ) : (
+        current && <img src={current} alt="" style={{ width: '100%', aspectRatio: '16 / 9', objectFit: 'cover', borderRadius: 8, marginBottom: 6, background: CHECKERBOARD }} />
+      )}
+
+      {/*
+        Escapes a la directiva de layout del generador, que encierra todo en
+        `max-w-7xl mx-auto px-4` + grid. Se nombran por LO QUE HACEN: los
+        títulos anteriores ("Ancho completo", "Foto de fondo") describían un
+        resultado abstracto que nadie relacionaba con su problema.
+      */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4 }}>
+        <button style={styles.ghost} title="Quita el ancho máximo y el padding lateral de este elemento y de sus contenedores, para que la imagen llegue a los bordes" onClick={() => { setError(null); makeFullBleed(store, doc, node.id) }}>
+          Quitar márgenes
+        </button>
+        <button
+          style={{ ...styles.ghost, opacity: isImg ? 1 : 0.4, cursor: isImg ? 'pointer' : 'not-allowed' }}
+          disabled={!isImg}
+          title="Manda esta foto al fondo de su sección y le pone un degradado para que el texto siga legible. La imagen original queda oculta: la recuperas desde el ojito de la capa"
+          onClick={() => setError(makeHeroBackground(store, doc, node.id))}
+        >
+          Mandar al fondo
+        </button>
+        {effMode === 'bg' && bgUrl && (
+          <button style={{ ...styles.ghost, gridColumn: '1 / -1' }} onClick={() => { setError(null); clearBackground(store, node) }}>
+            Quitar el fondo
+          </button>
+        )}
+      </div>
+
+      <Row label="URL">
+        <div style={{ display: 'flex', gap: 4 }}>
+          <input
+            style={{ ...styles.input, flex: 1, minWidth: 0 }}
+            placeholder={current || 'https://…'}
+            value={url}
+            onChange={(e) => setUrl(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && /^https?:\/\//.test(url.trim())) { apply(url.trim()); setUrl('') }
+            }}
+          />
+          <button
+            style={{ ...styles.iconBtn, opacity: /^https?:\/\//.test(url.trim()) ? 1 : 0.4 }}
+            disabled={!/^https?:\/\//.test(url.trim())}
+            title={effMode === 'bg' ? 'Usar como fondo' : 'Usar esta URL'}
+            onClick={() => { apply(url.trim()); setUrl('') }}
+          >
+            {IconCheck}
+          </button>
+        </div>
       </Row>
-      {node.src && <img src={node.src} alt="" style={{ width: '100%', borderRadius: 6, marginBottom: 6, maxHeight: 120, objectFit: 'cover' }} />}
+      {url.trim() && !/^https?:\/\//.test(url.trim()) && (
+        <div style={{ fontSize: 10, color: '#f59e0b', marginBottom: 4 }}>La URL debe empezar con http:// o https://</div>
+      )}
+      {error && <div style={{ fontSize: 10, color: '#f87171', marginBottom: 4 }}>{error}</div>}
+
       {imageProvider && (imageProvider.generate || imageProvider.search) && (
         <>
           <textarea style={{ ...styles.input, minHeight: 40, resize: 'vertical' }} placeholder="describe la imagen…" value={prompt} onChange={(e) => setPrompt(e.target.value)} />
           <div style={{ display: 'flex', gap: 6, marginTop: 4 }}>
             {imageProvider.generate && (
-              <button style={{ ...styles.primary, marginTop: 0, flex: 1 }} disabled={!!busy} onClick={generate}>
-                {busy === 'gen' ? <><span className="ce-spinner" /> Generando…</> : '✦ Generar'}
+              <button style={{ ...styles.primary, marginTop: 0, flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5 }} disabled={!!busy} onClick={generate}>
+                {busy === 'gen' ? <><span className="ce-spinner" /> Generando…</> : <>{IconSparkle} Generar</>}
               </button>
             )}
             {imageProvider.search && (
-              <button style={{ ...styles.ghost, flex: 1 }} disabled={!!busy} onClick={search}>
-                {busy === 'search' ? 'Buscando…' : '🔍 Buscar'}
+              <button style={{ ...styles.ghost, flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5 }} disabled={!!busy} onClick={search}>
+                {busy === 'search' ? 'Buscando…' : <>{IconSearch} Buscar</>}
               </button>
             )}
           </div>
@@ -612,47 +772,93 @@ function ImagePanel({ store, node, imageProvider }: { store: EditorStore; node: 
       )}
       {results.length > 0 && (
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 4, marginTop: 6 }}>
-          {results.map((url) => (
-            <img key={url} src={url} alt="" onClick={() => setSrc(url)} style={{ width: '100%', height: 48, objectFit: 'cover', borderRadius: 4, cursor: 'pointer', border: node.src === url ? '2px solid #8b5cf6' : '1px solid #262b36' }} />
+          {results.map((r) => (
+            <img key={r} src={r} alt="" onClick={() => apply(r)} style={{ width: '100%', height: 48, objectFit: 'cover', borderRadius: 4, cursor: 'pointer', border: current === r ? '2px solid #8b5cf6' : '1px solid #262b36' }} />
           ))}
         </div>
-      )}
-      {imageProvider?.upload && (
-        <label style={{ ...styles.ghost, display: 'block', textAlign: 'center', marginTop: 6, cursor: 'pointer' }}>
-          ⬆ Subir imagen
-          <input type="file" accept="image/*" style={{ display: 'none' }} onChange={onFile} />
-        </label>
       )}
     </Section>
   )
 }
 
-function RefinePanel({ store, node, refineProvider }: { store: EditorStore; node: Node; refineProvider: RefineProvider }) {
+function RefinePanel({ store, node, doc, refineProvider }: { store: EditorStore; node: Node; doc: Doc; refineProvider: RefineProvider }) {
   const [instruction, setInstruction] = useState('')
   const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [summary, setSummary] = useState<ChangeSummary | null>(null)
+  const models = refineProvider.models ?? []
+  const [modelId, setModelId] = useState(refineProvider.defaultModelId ?? models[0]?.id)
+
   async function run() {
     if (!instruction.trim() || busy) return
     setBusy(true)
+    setError(null)
+    setSummary(null)
+    const before = node
     const currentHtml = nodeSubtreeToHtml(node)
+    // Todo el refine (parciales incluidos) es UNA entrada de undo: sin esto ⌘Z
+    // deshacía el streaming token por token.
+    store.beginTransaction()
     try {
+      const apply = (html: string) => {
+        const parsed = htmlToNode(html, node.id)
+        // El merge conserva los data-id de los descendientes aunque el modelo
+        // los haya omitido — es lo que evita que cambiar un h2 sacuda la sección.
+        if (parsed) store.mergeNodeSubtree(node.id, parsed)
+      }
       const finalHtml = await refineProvider.refineNode(
-        { nodeId: node.id, instruction: instruction.trim(), currentHtml },
-        { onPartial: (p) => { const parsed = htmlToNode(p, node.id); if (parsed) store.replaceNodeSubtree(node.id, parsed) } },
+        {
+          nodeId: node.id,
+          instruction: instruction.trim(),
+          currentHtml,
+          context: refineContext(doc, node.id),
+          modelId,
+        },
+        // Sólo se pinta un parcial cuando el elemento raíz ya cerró: aplicar HTML
+        // a medias desarma la sección en pantalla en cada chunk.
+        { onPartial: (p) => { if (isCompleteElement(p)) apply(p) } },
       )
-      const parsed = htmlToNode(finalHtml, node.id)
-      if (parsed) store.replaceNodeSubtree(node.id, parsed)
+      apply(finalHtml)
+      const after = store.findNodePublic(node.id)
+      if (after) setSummary(summarizeChange(before, after))
       setInstruction('')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No se pudo refinar')
     } finally {
+      store.endTransaction()
       setBusy(false)
     }
   }
+
   return (
-    <Section title="✦ Refinar con IA">
-      <textarea style={{ ...styles.input, minHeight: 52, resize: 'vertical' }} placeholder="haz el título más grande, fondo oscuro…" value={instruction} onChange={(e) => setInstruction(e.target.value)} disabled={busy} />
+    <Section title="Refinar con IA">
+      <textarea
+        style={{ ...styles.input, minHeight: 52, resize: 'vertical' }}
+        placeholder="haz el título más grande, fondo oscuro…"
+        value={instruction}
+        onChange={(e) => setInstruction(e.target.value)}
+        disabled={busy}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) run()
+        }}
+      />
+      {models.length > 0 && (
+        <ModelChip
+          models={models}
+          value={modelId}
+          disabled={busy}
+          manageKeysHref={refineProvider.manageKeysHref}
+          onChange={(id) => {
+            setModelId(id)
+            refineProvider.onModelChange?.(id)
+          }}
+        />
+      )}
       <button
         className={busy ? 'ce-refining' : undefined}
-        style={{ ...styles.primary, cursor: busy ? 'progress' : 'pointer', opacity: busy ? 0.85 : 1 }}
+        style={{ ...styles.primary, cursor: busy ? 'progress' : 'pointer', opacity: busy ? 0.85 : 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
         disabled={busy}
+        title="⌘↵"
         onClick={run}
       >
         {busy ? (
@@ -660,10 +866,139 @@ function RefinePanel({ store, node, refineProvider }: { store: EditorStore; node
             <span className="ce-spinner" /> Refinando…
           </>
         ) : (
-          '✦ Aplicar a este nodo'
+          <>
+            {IconSparkle} Aplicar a este nodo
+          </>
         )}
       </button>
+      {error && <div style={{ fontSize: 10, color: '#f87171', marginTop: 6 }}>{error}</div>}
+      {summary && (
+        <div style={{ marginTop: 8, padding: '7px 8px', background: '#0d0f14', border: '1px solid #262b36', borderRadius: 6 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6, marginBottom: summary.lines.length ? 5 : 0 }}>
+            <span style={{ fontSize: 11, color: '#6ee7b7' }}>Listo</span>
+            <button style={{ ...styles.chip, color: '#c4b5fd' }} onClick={() => { store.undo(); setSummary(null) }}>
+              Deshacer
+            </button>
+          </div>
+          {summary.lines.map((l) => (
+            <div key={l} style={{ fontSize: 10, color: '#9ca3af', fontFamily: 'monospace', lineHeight: 1.5, overflowWrap: 'anywhere' }}>
+              {l}
+            </div>
+          ))}
+        </div>
+      )}
     </Section>
+  )
+}
+
+/** ¿El HTML acumulado ya cierra su elemento raíz? Evita pintar tags a medias. */
+function isCompleteElement(html: string): boolean {
+  const s = html.trim()
+  const m = /^<([a-zA-Z][\w-]*)/.exec(s)
+  if (!m) return false
+  const tag = m[1].toLowerCase()
+  if (VOID_TAGS.has(tag)) return /\/?>\s*$/.test(s)
+  return new RegExp(`</${tag}\\s*>$`, 'i').test(s)
+}
+const VOID_TAGS = new Set(['img', 'br', 'hr', 'input', 'source', 'meta', 'link'])
+
+interface ChangeSummary {
+  lines: string[]
+}
+/** Resumen legible de lo que cambió, para que el refine no sea una caja negra. */
+function summarizeChange(before: Node, after: Node): ChangeSummary {
+  const lines: string[] = []
+  const b = new Set(classList(before.cls))
+  const a = new Set(classList(after.cls))
+  const added = [...a].filter((c) => !b.has(c))
+  const removed = [...b].filter((c) => !a.has(c))
+  if (added.length) lines.push(`+ ${added.join(' ')}`)
+  if (removed.length) lines.push(`− ${removed.join(' ')}`)
+  if (before.text !== after.text && after.text) lines.push(`texto: “${truncate(after.text, 40)}”`)
+  if (before.src !== after.src) lines.push(after.src ? `imagen: ${truncate(after.src, 40)}` : 'imagen quitada')
+  const nBefore = countNodes(before)
+  const nAfter = countNodes(after)
+  if (nBefore !== nAfter) lines.push(`${nAfter > nBefore ? '+' : '−'}${Math.abs(nAfter - nBefore)} elementos`)
+  if (!lines.length) lines.push('sin cambios visibles')
+  return { lines }
+}
+function countNodes(n: Node): number {
+  return 1 + n.children.reduce((acc, c) => acc + countNodes(c), 0)
+}
+function truncate(s: string, n: number): string {
+  return s.length > n ? `${s.slice(0, n - 1)}…` : s
+}
+
+/**
+ * Chip compacto de modelo al pie del textarea. Deliberadamente NO es un `<select>`
+ * de ancho completo: la elección de modelo es secundaria frente a la instrucción,
+ * y un control grande la haría parecer un paso obligatorio.
+ */
+function ModelChip({
+  models,
+  value,
+  disabled,
+  manageKeysHref,
+  onChange,
+}: {
+  models: ModelOption[]
+  value?: string
+  disabled?: boolean
+  manageKeysHref?: string
+  onChange: (id: string) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const active = models.find((m) => m.id === value) ?? models[0]
+  const groups = models.reduce<Record<string, ModelOption[]>>((acc, m) => {
+    ;(acc[m.provider] ??= []).push(m)
+    return acc
+  }, {})
+  return (
+    <div style={{ position: 'relative', display: 'flex', justifyContent: 'flex-end', marginTop: 4 }}>
+      <button
+        style={{ ...styles.chip, display: 'inline-flex', alignItems: 'center', gap: 4, opacity: disabled ? 0.5 : 1, cursor: disabled ? 'not-allowed' : 'pointer' }}
+        disabled={disabled}
+        title="Modelo para este refinamiento"
+        onClick={() => setOpen((o) => !o)}
+      >
+        {active?.label ?? 'modelo'}
+        {active?.ownKey && <span style={styles.keyBadge}>tu llave</span>}
+        <span style={{ opacity: 0.6 }}>▾</span>
+      </button>
+      {open && (
+        <>
+          <div style={{ position: 'fixed', inset: 0, zIndex: 19 }} onClick={() => setOpen(false)} />
+          <div style={{ ...styles.menu, top: 26, left: 'auto', width: 210 }}>
+            {Object.entries(groups).map(([provider, list]) => (
+              <div key={provider}>
+                <div style={{ ...styles.sectionTitle, margin: '6px 8px 3px' }}>{provider}</div>
+                {list.map((m) => (
+                  <button
+                    key={m.id}
+                    style={{ ...styles.menuItem, background: m.id === active?.id ? '#3730a3' : 'transparent' }}
+                    onClick={() => {
+                      onChange(m.id)
+                      setOpen(false)
+                    }}
+                  >
+                    <span style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                      {m.label}
+                      {m.ownKey && <span style={styles.keyBadge}>tu llave</span>}
+                    </span>
+                    {m.hint && <span style={{ display: 'block', fontSize: 9, color: '#6b7280' }}>{m.hint}</span>}
+                  </button>
+                ))}
+              </div>
+            ))}
+            {manageKeysHref && (
+              <a href={manageKeysHref} style={{ ...styles.menuItem, display: 'block', color: '#a78bfa', borderTop: '1px solid #262b36', marginTop: 4, paddingTop: 7, textDecoration: 'none' }}>
+                Gestionar llaves →
+              </a>
+            )}
+          </div>
+        </>
+      )}
+    </div>
   )
 }
 
@@ -847,6 +1182,20 @@ const IconBlock = svg(<><rect x="4" y="6" width="16" height="4" rx="1" /><rect x
 const IconRow = svg(<><rect x="3" y="6" width="7" height="12" rx="1" /><rect x="14" y="6" width="7" height="12" rx="1" /></>)
 const IconCol = svg(<><rect x="6" y="3" width="12" height="7" rx="1" /><rect x="6" y="14" width="12" height="7" rx="1" /></>)
 const IconGrid = svg(<><rect x="4" y="4" width="7" height="7" rx="1" /><rect x="13" y="4" width="7" height="7" rx="1" /><rect x="4" y="13" width="7" height="7" rx="1" /><rect x="13" y="13" width="7" height="7" rx="1" /></>)
+/** Damero: distingue "imagen transparente" de "no hay imagen". */
+const CHECKERBOARD = 'repeating-conic-gradient(#1a1d24 0% 25%, #0d0f14 0% 50%) 50%/12px 12px'
+
+const IconUpload = svg(<><path d="M12 16V4" /><path d="m7 9 5-5 5 5" /><path d="M4 20h16" /></>)
+const IconSearch = svg(<><circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" /></>)
+const IconCheck = svg(<polyline points="20 6 9 17 4 12" />)
+
+// Refine: chispa. Sustituye al emoji ✦ para que los controles nuevos usen el
+// mismo set SVG 14px que el resto de iconos del panel.
+const IconSparkle = (
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M12 3v4M12 17v4M3 12h4M17 12h4M6.3 6.3l2.8 2.8M14.9 14.9l2.8 2.8M17.7 6.3l-2.8 2.8M9.1 14.9l-2.8 2.8" />
+  </svg>
+)
 const IconHidden = svg(<><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z" opacity="0.4" /><line x1="3" y1="3" x2="21" y2="21" /></>)
 
 const styles = {
@@ -869,6 +1218,7 @@ const styles = {
   robot: { width: '100%', padding: '8px', fontSize: 12, fontWeight: 600, color: '#fff', background: 'linear-gradient(90deg,#6d28d9,#4f46e5)', border: 'none', borderRadius: 6, cursor: 'pointer' },
   chips: { display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 6 },
   chip: { fontSize: 11, color: '#cbd5e1', background: '#1a1d24', border: '1px solid #262b36', borderRadius: 6, padding: '2px 6px', cursor: 'pointer' },
+  keyBadge: { fontSize: 9, lineHeight: 1.4, color: '#6ee7b7', background: 'rgba(110,231,183,.12)', border: '1px solid rgba(110,231,183,.25)', borderRadius: 4, padding: '0 4px' },
   menu: { position: 'absolute', top: 34, left: 0, right: 0, zIndex: 20, padding: 4, background: '#161922', border: '1px solid #2a2f3a', borderRadius: 8, boxShadow: '0 12px 40px rgba(0,0,0,.5)', maxHeight: 200, overflowY: 'auto' },
   menuItem: { display: 'block', width: '100%', textAlign: 'left', padding: '6px 8px', fontSize: 12, color: '#e5e7eb', background: 'transparent', border: 'none', borderRadius: 4, cursor: 'pointer' },
 } as const

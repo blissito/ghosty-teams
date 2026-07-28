@@ -27,8 +27,17 @@ export const Route = createFileRoute("/a/$id/raw")({
           /* sin sesión → visitante anónimo */
         }
 
-        const { resolveSharedArtifact } = await import("../server/artifacts");
-        const found = await resolveSharedArtifact(params.id, meSub);
+        // Un fallo al resolver (workspace inexistente, DB caída) sale como 404 y no
+        // como un 500 crudo: esta ruta la abre gente de fuera, y en un host donde el
+        // artefacto no puede existir la respuesta honesta es "no está".
+        let found: Awaited<ReturnType<typeof import("../server/artifacts").resolveSharedArtifact>>;
+        try {
+          const { resolveSharedArtifact } = await import("../server/artifacts");
+          found = await resolveSharedArtifact(params.id, meSub);
+        } catch (e) {
+          console.error("[artifact share] resolve falló", e);
+          return notFound();
+        }
         if (!found?.version.md) return notFound();
 
         return new Response(found.version.md, {

@@ -11,6 +11,29 @@ export interface RefineNodeInput {
   instruction: string
   /** Current HTML of the target node's subtree (data-id preserved). */
   currentHtml: string
+  /**
+   * Contexto de SOLO LECTURA: dónde vive el nodo (breadcrumb de ancestros con
+   * tag + clases) y qué hay a su lado (tags + clases de los hermanos), NUNCA su
+   * HTML. Sin esto, un `<h2>` llega al modelo desnudo — no sabe si el fondo
+   * detrás es oscuro ni qué tipografía usan sus vecinos, así que inventa un
+   * diseño nuevo. Con esto tiene el contexto para acertar, pero sigue sin poder
+   * reescribir a los vecinos porque no los recibe.
+   */
+  context?: string
+  /** Modelo elegido para ESTA operación (chip del panel). El host lo resuelve. */
+  modelId?: string
+}
+
+/** Una opción del selector de modelo. La lista la inyecta el host. */
+export interface ModelOption {
+  id: string
+  label: string
+  /** Agrupador en el menú: "Anthropic", "Google", "OpenAI"… */
+  provider: string
+  /** true si corre con la llave del propio usuario/org (BYOK) en vez de la del host. */
+  ownKey?: boolean
+  /** Nota corta bajo el label ("rápido y barato", "el mejor para rediseñar"). */
+  hint?: string
 }
 
 export interface GenerateArtboardInput {
@@ -41,6 +64,14 @@ export interface RefineProvider {
    * If `handlers.onPartial` is provided, stream partial HTML for live preview.
    */
   refineNode(input: RefineNodeInput, handlers?: RefineStreamHandlers): Promise<string>
+  /** Modelos ofrecidos en el chip del panel de refine. Sin esto el chip no sale. */
+  models?: ModelOption[]
+  /** Modelo preseleccionado (el default de la org). */
+  defaultModelId?: string
+  /** Se llama al cambiar de modelo, para que el host persista el nuevo default. */
+  onModelChange?(modelId: string): void
+  /** Destino del enlace "gestionar llaves" del menú de modelos. */
+  manageKeysHref?: string
   /** Generate a fresh frame's node list from a prompt (optional, may stream per section). */
   generateArtboard?(
     input: GenerateArtboardInput,

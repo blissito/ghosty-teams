@@ -27,8 +27,16 @@ const loadShared = createServerFn({ method: "GET" })
       /* visitante anónimo */
     }
 
-    const { resolveSharedArtifact } = await import("../server/artifacts");
-    const found = await resolveSharedArtifact(data.slug, meSub);
+    // Igual que en /raw: un fallo al resolver se trata como "no existe" (el loader
+    // lo convierte en 404) en vez de reventar con un 500 sin explicación.
+    let found: Awaited<ReturnType<typeof import("../server/artifacts").resolveSharedArtifact>>;
+    try {
+      const { resolveSharedArtifact } = await import("../server/artifacts");
+      found = await resolveSharedArtifact(data.slug, meSub);
+    } catch (e) {
+      console.error("[artifact share] resolve falló", e);
+      return null;
+    }
     if (!found) return null;
 
     // Nombre del dueño para el "Artefacto de …". No se manda el correo: esta

@@ -32,4 +32,5 @@ export {
   buildRefinePrompt,
 } from './refine'
 export { BLOCKS, BLOCKS_BY_CATEGORY, type BlockDef } from './blocks'
+export { backgroundUrl, clearBackground, makeFullBleed, makeHeroBackground, parentOf, ancestorsOf, setBackground, urlFromCssValue } from './imageOps'
 export * from './tailwindClasses'

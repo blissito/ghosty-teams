@@ -4,7 +4,8 @@
 
 import { useSyncExternalStore } from 'react'
 import type { Artboard, Doc, MoveTarget, Node, NodeId } from './model'
-import { cloneNode, genId, insertNode, mapArtboard, mapNode, moveNode, replaceNode, walk } from './model'
+import { cloneNode, findNode, genId, insertNode, mapArtboard, mapNode, moveNode, replaceNode, walk } from './model'
+import { mergeSubtree } from './mergeSubtree'
 import { stripStyleProps } from './tailwindClasses'
 
 export interface Camera {
@@ -42,6 +43,9 @@ export class EditorStore {
   private listeners = new Set<Listener>()
   private history: Doc[] = []
   private future: Doc[] = []
+  /** Profundidad de transacción (ver beginTransaction) y doc previo a la 1ª. */
+  private txDepth = 0
+  private txBase: Doc | null = null
   private vp = { w: 1200, h: 800 }
   onChange?: (doc: Doc) => void
   /** Fires when selection changes — the host forwards this to the chat agent so it
@@ -84,12 +88,40 @@ export class EditorStore {
 
   // --- doc mutation core (records history, notifies host) ---
   private commit(next: Doc) {
-    this.history.push(this.state.doc)
-    if (this.history.length > 100) this.history.shift()
+    // Dentro de una transacción NO se apila historial: la entrada única la pone
+    // endTransaction() con el doc previo al arranque.
+    if (this.txDepth === 0) {
+      this.history.push(this.state.doc)
+      if (this.history.length > 100) this.history.shift()
+    }
     this.future = []
     this.state = { ...this.state, doc: next, dirty: true }
     this.emit()
     this.onChange?.(next)
+  }
+
+  /**
+   * Agrupa N mutaciones en UNA entrada de undo. Existe por el refine en
+   * streaming: cada chunk del modelo commitea para que el usuario vea el cambio
+   * en vivo, y sin esto un solo refine dejaba 30 entradas de historial — ⌘Z
+   * deshacía el refine token por token en vez de completo.
+   *
+   * Reentrante (cuenta profundidad) y seguro ante errores: llama a
+   * `endTransaction()` desde un `finally`.
+   */
+  beginTransaction() {
+    if (this.txDepth++ === 0) this.txBase = this.state.doc
+  }
+  endTransaction() {
+    if (this.txDepth === 0) return
+    if (--this.txDepth > 0) return
+    const base = this.txBase
+    this.txBase = null
+    // Si nada cambió, no ensuciamos el historial con una entrada vacía.
+    if (!base || base === this.state.doc) return
+    this.history.push(base)
+    if (this.history.length > 100) this.history.shift()
+    this.future = []
   }
 
   /** Host calls this once a save has persisted the current doc. */
@@ -312,6 +344,16 @@ export class EditorStore {
   /** Replace a node's entire subtree — the target of targeted refine. */
   replaceNodeSubtree(id: NodeId, replacement: Node) {
     this.commit(replaceNode(this.state.doc, id, replacement))
+  }
+  /**
+   * Como `replaceNodeSubtree`, pero reconciliando contra lo que había: los
+   * descendientes conservan su `data-id` (y su `hidden`/`locked`) aunque el
+   * modelo los haya devuelto sin id. Es la vía correcta para aplicar un refine
+   * — ver `mergeSubtree.ts`.
+   */
+  mergeNodeSubtree(id: NodeId, replacement: Node) {
+    const prev = findNode(this.state.doc, id)
+    this.commit(replaceNode(this.state.doc, id, prev ? mergeSubtree(prev, replacement) : replacement))
   }
   deleteNode(id: NodeId) {
     const strip = (nodes: Node[]): Node[] =>
