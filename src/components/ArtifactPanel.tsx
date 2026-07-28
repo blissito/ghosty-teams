@@ -904,7 +904,10 @@ export default function ArtifactPanel({
               <ArtifactShareBar
                 title={artifact.title || t("Documento")}
                 subtitle={docBadge}
-                documentId={artifact.kind === "artifact" ? (artifact.documentId ?? null) : null}
+                // Sin Compartir aquí: en el panel se trabaja el artefacto (editar,
+                // copiar, abrir). Los permisos y la versión que se publica se manejan
+                // en SU página — abrirla es el ícono de la pestaña nueva.
+                documentId={null}
                 leading={
                   detail ? (
                     <button
