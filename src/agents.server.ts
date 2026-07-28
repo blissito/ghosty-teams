@@ -594,6 +594,16 @@ const TOOL_LABELS: Record<string, { ing: string; done: string }> = {
   gs_archive: { ing: "Descomprimiendo los archivos", done: "Descomprimí los archivos" },
   // Subagentes por la tool nativa (además del camino por SDK, gs_subagent_spawn).
   Task: { ing: "Repartiendo el trabajo", done: "Repartí el trabajo" },
+  // Trabajo de code-mode: el agente escribe scripts y los corre. No es plumbing,
+  // es COMO trabaja — y el `detail` dice sobre qué archivo.
+  Bash: { ing: "Ejecutando un comando", done: "Ejecuté un comando" },
+  Write: { ing: "Escribiendo un archivo", done: "Escribí un archivo" },
+  Edit: { ing: "Editando un archivo", done: "Edité un archivo" },
+  MultiEdit: { ing: "Editando archivos", done: "Edité archivos" },
+  NotebookEdit: { ing: "Editando el notebook", done: "Edité el notebook" },
+  Glob: { ing: "Buscando archivos", done: "Busqué archivos" },
+  Grep: { ing: "Buscando en los archivos", done: "Busqué en los archivos" },
+  BashOutput: { ing: "Revisando la salida", done: "Revisé la salida" },
   // MCP de WhatsApp (`mcp__wa__*`).
   send_poll: { ing: "Mandando la encuesta", done: "Mandé la encuesta" },
   send_location: { ing: "Mandando la ubicación", done: "Mandé la ubicación" },
@@ -672,15 +682,6 @@ function humanizeToolName(raw: string): string {
  * esconde. Un checklist incompleto es peor que uno con nombres feos, porque el
  * usuario no tiene forma de saber que le falta algo.
  */
-/**
- * Plumbing puro: pasos que no son una acción del agente sino cómo la ejecuta.
- *
- * Es una lista CORTA y explícita, no una whitelist invertida: lo que no está acá
- * se muestra. En code-mode el agente escribe un `.mjs` y lo corre, así que Write
- * y Bash aparecen en CADA turno — enseñarlos es enseñar "usó la computadora".
- * El significado lo pone `semanticToolName` en el worker, que traduce ese Bash a
- * la acción real (gs_render, gs_image_generate…) mirando qué importa el script.
- */
 /** Nombre presentable de un servidor MCP (el id es un slug: `wa`, `denik`). */
 const MARCAS_MCP: Record<string, string> = {
   wa: "WhatsApp",
@@ -689,12 +690,24 @@ const MARCAS_MCP: Record<string, string> = {
   render: "Render",
 };
 
+/**
+ * Ruido de verdad: pasos que no son trabajo sino contabilidad del propio agente.
+ *
+ * La lista es CORTA a propósito. Antes escondía también Bash y Write con el
+ * argumento de que eran "plumbing" — pero en code-mode el agente trabaja
+ * escribiendo scripts y corriéndolos, así que eso ES el trabajo. Ocultarlo dejaba
+ * la caja con un "Trabajando…" perpetuo durante casi todo el turno: el usuario
+ * veía menos que antes, no más.
+ *
+ * La regla nueva: se muestra todo, y lo que no tiene nombre bonito sale con el
+ * suyo humanizado más su detalle (el archivo, el patrón). Un nombre feo se lee;
+ * un placeholder genérico no dice nada.
+ */
 const TOOLS_OCULTAS = new Set([
-  "Bash", "BashOutput", "KillShell", "Write", "Edit", "MultiEdit", "NotebookEdit",
-  "Glob", "Grep", "LS", "TodoWrite", "ExitPlanMode",
-  // Buscar el esquema de una tool antes de usarla, y el plumbing del pool de
-  // grupos de WhatsApp: pasos previos a la acción, no la acción.
-  "ToolSearch", "pool_list_groups", "pool_set_group_key",
+  "TodoWrite",      // la lista de pendientes interna del agente
+  "ToolSearch",     // buscar el esquema de una tool ANTES de usarla
+  "ExitPlanMode",
+  "pool_list_groups", "pool_set_group_key", // plumbing del pool de grupos de WhatsApp
 ]);
 
 function toolLabel(raw: string): { ing: string; done: string } | null {
