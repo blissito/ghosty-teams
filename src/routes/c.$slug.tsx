@@ -118,7 +118,7 @@ import { unfurlLinkFn } from "../server/unfurl";
 import { registerModalEsc } from "../utils/modal-esc";
 import ArtifactPanel, { type ArtifactView, viewFromAttachment } from "../components/ArtifactPanel";
 import { belongsToOpenConversation } from "../lib/conversation-scope";
-import { extractEbDoc, extractEbPatches, draftTitle, bubbleWithoutEbDoc, extractToolState, type ToolState } from "../lib/ebdoc";
+import { extractEbDoc, extractEbPatches, draftTitle, bubbleWithoutEbDoc, extractToolState, extractSteps, type ToolState } from "../lib/ebdoc";
 import { ThinkingRing } from "../components/ThinkingRing";
 import { showSystemNotification } from "../utils/system-notification";
 import { playNotificationSound, playGhostySound, playSelfSound, playMentionSound, playDmSound, playReadySound, playDeleteSound, playArtifactOpen, playArtifactClose, playArtifactReady, startCallRing, stopCallRing } from "../utils/notificationSound";
@@ -6891,6 +6891,10 @@ function MessageRow({
                 const ts = extractToolState(m.body);
                 return ts ? <ToolGroup tools={ts} /> : null;
               })()}
+              {(() => {
+                const st = extractSteps(m.body);
+                return st ? <StepList steps={st} emojis={emojis} /> : null;
+              })()}
               {bubbleWithoutEbDoc(m.body).trim() ? (
               <Markdown
                 body={bubbleWithoutEbDoc(m.body)}
@@ -6961,6 +6965,40 @@ function MessageRow({
 // Burbuja de herramientas estilo Claude Code: tarjeta colapsable con el estado real de
 // cada tool del turno (⏳/✓/✕). Los subagentes concurrentes (mismo label, n>1) muestran
 // su conteo. Abierta mientras trabaja, se colapsa sola al terminar (salvo toggle manual).
+/**
+ * Los pasos que el agente narró mientras trabajaba.
+ *
+ * Va con palomita en vez de viñeta: una viñeta es "un elemento de una lista", y
+ * esto es "esto ya lo hice". El ícono se dibuja aparte del texto (no como
+ * carácter dentro de la línea) para que quede alineado con la primera renglón
+ * aunque el paso ocupe varias líneas.
+ */
+function StepList({ steps, emojis }: { steps: string[]; emojis?: { name: string; file_id: string }[] }) {
+  return (
+    <ul className="mb-2 space-y-1.5">
+      {steps.map((s, i) => (
+        <li key={i} className="flex gap-2 text-muted">
+          <span className="mt-[3px] shrink-0 text-brand" aria-hidden>
+            <svg width="14" height="14" viewBox="0 0 20 20" fill="none">
+              <circle cx="10" cy="10" r="9" className="fill-brand/10" />
+              <path
+                d="M6 10.4l2.6 2.6L14 7.6"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </span>
+          <span className="min-w-0 flex-1 [&_p]:m-0">
+            <Markdown body={s} emojis={emojis} />
+          </span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 function ToolGroup({ tools }: { tools: ToolState[] }) {
   const anyRunning = tools.some((t) => t.status === "running");
   const anyError = tools.some((t) => t.status === "error");

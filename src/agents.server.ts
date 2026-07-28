@@ -569,8 +569,8 @@ const TOOL_LABELS: Record<string, { ing: string; done: string }> = {
   edit_image: { ing: "Editando una imagen", done: "Edité una imagen" },
   upload_file: { ing: "Subiendo el documento", done: "Subí el documento" },
   create_share_link: { ing: "Generando el link", done: "Generé un link para compartir" },
-  render_url: { ing: "Renderizando a PDF", done: "Generé el PDF" },
-  render_html: { ing: "Renderizando a PDF", done: "Generé el PDF" },
+  render_url: { ing: "Capturando la página", done: "Capturé la página" },
+  render_html: { ing: "Maquetando el PDF", done: "Maqueté el PDF" },
   office_to_pdf: { ing: "Convirtiendo a PDF", done: "Convertí a PDF" },
   deploy_document: { ing: "Publicando el documento", done: "Publiqué el documento" },
   create_website: { ing: "Creando el sitio", done: "Creé el sitio" },
@@ -589,6 +589,21 @@ const TOOL_LABELS: Record<string, { ing: string; done: string }> = {
   gs_render_png: { ing: "Generando la imagen", done: "Generé la imagen" },
   gs_doc: { ing: "Armando el documento Word", done: "Armé el documento Word" },
   gs_doc_xlsx: { ing: "Armando la hoja de cálculo", done: "Armé la hoja de cálculo" },
+  gs_doc_read: { ing: "Leyendo el documento", done: "Leí el documento" },
+  gs_media: { ing: "Procesando el audio", done: "Procesé el audio" },
+  gs_archive: { ing: "Descomprimiendo los archivos", done: "Descomprimí los archivos" },
+  // Subagentes por la tool nativa (además del camino por SDK, gs_subagent_spawn).
+  Task: { ing: "Repartiendo el trabajo", done: "Repartí el trabajo" },
+  // MCP de WhatsApp (`mcp__wa__*`).
+  send_poll: { ing: "Mandando la encuesta", done: "Mandé la encuesta" },
+  send_location: { ing: "Mandando la ubicación", done: "Mandé la ubicación" },
+  react_message: { ing: "Reaccionando al mensaje", done: "Reaccioné al mensaje" },
+  get_invite_link: { ing: "Sacando el link de invitación", done: "Saqué el link de invitación" },
+  // MCP de EasyBits.
+  generate_image: { ing: "Generando la imagen", done: "Generé la imagen" },
+  image_generate: { ing: "Generando la imagen", done: "Generé la imagen" },
+  agent_create: { ing: "Creando el agente", done: "Creé el agente" },
+  agent_record: { ing: "Grabando la sesión", done: "Grabé la sesión" },
   gs_db_query: { ing: "Consultando los datos", done: "Consulté los datos" },
   gs_db_write: { ing: "Guardando los datos", done: "Guardé los datos" },
   gs_subagent_spawn: { ing: "Repartiendo el trabajo", done: "Repartí el trabajo" },
@@ -666,9 +681,20 @@ function humanizeToolName(raw: string): string {
  * El significado lo pone `semanticToolName` en el worker, que traduce ese Bash a
  * la acción real (gs_render, gs_image_generate…) mirando qué importa el script.
  */
+/** Nombre presentable de un servidor MCP (el id es un slug: `wa`, `denik`). */
+const MARCAS_MCP: Record<string, string> = {
+  wa: "WhatsApp",
+  denik: "Deník",
+  easybits: "EasyBits",
+  render: "Render",
+};
+
 const TOOLS_OCULTAS = new Set([
   "Bash", "BashOutput", "KillShell", "Write", "Edit", "MultiEdit", "NotebookEdit",
   "Glob", "Grep", "LS", "TodoWrite", "ExitPlanMode",
+  // Buscar el esquema de una tool antes de usarla, y el plumbing del pool de
+  // grupos de WhatsApp: pasos previos a la acción, no la acción.
+  "ToolSearch", "pool_list_groups", "pool_set_group_key",
 ]);
 
 function toolLabel(raw: string): { ing: string; done: string } | null {
@@ -678,6 +704,15 @@ function toolLabel(raw: string): { ing: string; done: string } | null {
   // Conector per-usuario: el worker manda `gs_connector:denik_list_appointments`.
   // El proveedor va al frente porque es lo que el usuario reconoce ("su" Deník),
   // y el resto de la acción se humaniza igual que cualquier otra.
+  // Cualquier tool de un MCP que no tenga etiqueta propia: "Proveedor: acción".
+  // Es la red que hace innecesario enumerar — un servidor MCP nuevo (o una tool
+  // nueva de uno existente) se ve decente sin tocar este archivo.
+  const mcp = raw.match(/^mcp__([a-z0-9-]+)__(.+)$/i);
+  if (mcp) {
+    const marca = MARCAS_MCP[mcp[1].toLowerCase()] ?? mcp[1].charAt(0).toUpperCase() + mcp[1].slice(1);
+    const acc = humanizeToolName(mcp[2]);
+    return { ing: `${marca}: ${acc}`, done: `${marca}: ${acc}` };
+  }
   if (raw.startsWith("gs_connector:")) {
     const full = raw.slice("gs_connector:".length);
     const [prov, ...resto] = full.split("_");
@@ -816,14 +851,14 @@ async function runAgentTurnInner(opts: {
    *   rompe el fence — se perdería el artefacto por un adorno.
    */
   const narration = (): string => {
-    // Los bloques de artefacto (eb-file, eb-audio, eb-doc…) se extraen de la
-    // burbuja antes de pintarla, así que no cuentan para decidir: si contaran,
-    // cualquier turno que entregue un PDF perdería la lista.
-    const sinArtefactos = acc.replace(/```eb-[a-z]+[\s\S]*?```/g, "");
-    const partes = [...segs, acc.slice(segStart)].map((x) => x.trim()).filter(Boolean);
-    if (partes.length < 2 || sinArtefactos.includes("```")) return acc;
-    // Un segmento multi-línea se indenta para quedar DENTRO de su ítem.
-    return partes.map((x) => "- " + x.replace(/\n/g, "\n  ")).join("\n");
+    const ultimo = acc.slice(segStart);
+    // Sólo los segmentos PREVIOS son pasos. El último es la respuesta y se queda
+    // como prosa: metida en la lista, la respuesta final quedaría disfrazada de
+    // paso — que es como se veía antes, media respuesta con viñeta y media sin.
+    const pasos = segs.map((x) => x.trim()).filter(Boolean);
+    // Un paso con bloque cercado no es un paso, es contenido: se deja en prosa.
+    if (!pasos.length || pasos.some((x) => x.includes("```"))) return acc;
+    return "```gt-steps\n" + JSON.stringify({ steps: pasos }) + "\n```\n\n" + ultimo.trim();
   };
   const renderBody = (allDone: boolean): string => renderToolBlock(allDone) + narration();
   const paint = async (allDone = false) => {

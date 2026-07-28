@@ -341,6 +341,40 @@ export function extractToolState(body: string): ToolState[] | null {
   }
 }
 
+// ── Pasos de la narración ────────────────────────────────────────────────────────
+// Lo que el agente va contando ENTRE tools ("saco el brandkit", "ya tengo la
+// paleta") son pasos del trabajo, no la respuesta. Concatenados se leían como un
+// párrafo corrido donde nada se distingue; el server los manda aparte en
+// ```gt-steps\n{"steps":["…"]}\n``` y el chat los pinta con palomita.
+//
+// El ÚLTIMO segmento NO va acá: ése es la respuesta y se queda como prosa. Si
+// entrara a la lista, la respuesta final quedaría disfrazada de paso.
+export function extractSteps(body: string): string[] | null {
+  const open = body.match(/```gt-steps[^\n]*\n/);
+  if (!open || open.index == null) return null;
+  const rest = body.slice(open.index + open[0].length);
+  const closeIdx = rest.indexOf("```");
+  if (closeIdx === -1) return null; // a medio streamear
+  try {
+    const obj = JSON.parse(rest.slice(0, closeIdx).trim()) as { steps?: unknown };
+    if (!Array.isArray(obj.steps)) return null;
+    const steps = (obj.steps as string[]).filter((x) => typeof x === "string" && x.trim());
+    return steps.length ? steps : null;
+  } catch {
+    return null;
+  }
+}
+
+export function stripStepsBlock(body: string): string {
+  const open = body.match(/```gt-steps[^\n]*\n/);
+  if (!open || open.index == null) return body;
+  const before = body.slice(0, open.index);
+  const rest = body.slice(open.index + open[0].length);
+  const closeIdx = rest.indexOf("```");
+  const after = closeIdx === -1 ? "" : rest.slice(closeIdx + 3);
+  return (before + after).replace(/^\s+/, "");
+}
+
 // Quita el bloque ```gt-tools``` del body (el estado se muestra como burbuja, no como texto).
 export function stripToolBlock(body: string): string {
   const open = body.match(/```gt-tools[^\n]*\n/);
@@ -374,6 +408,7 @@ export function bubbleWithoutEbFile(body: string): string {
 export function bubbleWithoutEbDoc(body: string, patchOutcome?: { applied: number; failed: string[] }): string {
   // Primero saca el bloque de estado de tools (se pinta como burbuja) y la nota de voz.
   body = stripToolBlock(body);
+  body = stripStepsBlock(body);
   body = bubbleWithoutEbAudio(body);
   body = bubbleWithoutEbFile(body);
   // Al final de todo: si quedó un fence a medio abrir (el modelo aún escribe el
