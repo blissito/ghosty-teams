@@ -300,7 +300,7 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
     // de la burbuja y lo commiteamos LOCAL (misma verdad markdown/csv que en el room). En DM
     // no cableamos identidad por-hilo → cada artefacto es una card nueva (co-edición diferida).
     try {
-      const { extractEbDoc, extractEbPatches, draftTitle, bubbleWithoutEbDoc, extractAskUser, stripAskUser, extractEbAudio, stripEbAudio, extractEbFile, stripEbFile } = await import("../lib/ebdoc");
+      const { extractEbDoc, extractEbPatches, isSameDocument, draftTitle, bubbleWithoutEbDoc, extractAskUser, stripAskUser, extractEbAudio, stripEbAudio, extractEbFile, stripEbFile } = await import("../lib/ebdoc");
       const { randomUUID } = await import("node:crypto");
 
       // Nota de voz en DM: mismo protocolo que el room (```eb-audio``` → adjunto audio).
@@ -384,7 +384,13 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
         fanout({ t: "message:body", id, body: cleaned });
         // Reusa el documentId existente del DM (misma identidad = nueva versión, MISMA card)
         // o acuña uno v1 → sin duplicados. Parea con el room (chat.ts).
-        const documentId = currentDocId ?? `${ebdoc.kind}_${randomUUID()}`;
+        // ¿Versión del artefacto del hilo, o documento nuevo? Ver isSameDocument: antes
+        // se reusaba el puntero SIEMPRE, así que todo lo que se pidiera después caía
+        // como versión de lo anterior.
+        const documentId =
+          currentDocId && isSameDocument(ebdoc, currentDoc)
+            ? currentDocId
+            : `${ebdoc.kind}_${randomUUID()}`;
         const title = draftTitle(ebdoc.md, ebdoc.kind, ebdoc.fenceTitle);
         // MISMO camino que el room y que el editor humano: estampa los data-id (dirección
         // para el próximo patch), publica a storage, INSERTa la versión y avisa.

@@ -16,6 +16,16 @@ export type EbDoc = {
   after: string; // texto después del bloque (vacío mientras streamea)
   closed: boolean; // ¿ya llegó el ``` de cierre?
   fenceTitle?: string; // título opcional en la línea de apertura (```eb-sheet Nombre)
+  /**
+   * El agente declaró que esto es un documento NUEVO (```eb-artifact nuevo Título```),
+   * no una versión del que ya hay en el hilo.
+   *
+   * Existe porque el default es lo contrario: re-emitir el fence completo es cómo se
+   * edita un artefacto, así que sin esta marca todo lo que pidiera después caía como
+   * versión del anterior — una propuesta comercial entró como "Versión 4" de una
+   * comparativa de TTS y su enlace abría el documento equivocado.
+   */
+  isNew?: boolean;
 };
 
 // Extrae el bloque ```eb-doc``` o ```eb-sheet``` del texto. Tolera el fence ABIERTO (aún
@@ -27,12 +37,16 @@ export function extractEbDoc(body: string): EbDoc | null {
   const open = body.match(/(^|\n)```eb-(doc|sheet|artifact)([^\n`]*)\n/);
   if (!open || open.index == null) return null;
   const kind = open[2] as EbDocKind;
-  const fenceTitle = open[3]?.trim() || undefined;
+  // `nuevo` / `new` como PRIMERA palabra de la cabecera es una marca, no el título.
+  const header = (open[3] ?? "").trim();
+  const newMark = /^(nuevo|new)\b[:\s-]*/i.exec(header);
+  const isNew = !!newMark;
+  const fenceTitle = (newMark ? header.slice(newMark[0].length).trim() : header) || undefined;
   const start = open.index + open[0].length;
   const rest = body.slice(start);
   const closeIdx = rest.indexOf("```");
   if (closeIdx === -1) {
-    return { kind, before: body.slice(0, open.index), md: rest, after: "", closed: false, fenceTitle };
+    return { kind, before: body.slice(0, open.index), md: rest, after: "", closed: false, fenceTitle, isNew };
   }
   return {
     kind,
@@ -41,7 +55,39 @@ export function extractEbDoc(body: string): EbDoc | null {
     after: rest.slice(closeIdx + 3),
     closed: true,
     fenceTitle,
+    isNew,
   };
+}
+
+/**
+ * ¿Este fence continúa el artefacto del hilo, o empieza otro?
+ *
+ * Re-emitir el fence completo es a la vez "edítalo" y "hazme otro", así que el server
+ * tenía que adivinar y siempre adivinaba lo mismo: versión del anterior. Por eso una
+ * propuesta comercial nueva aterrizó como "Versión 4" de una comparativa de TTS, y su
+ * enlace compartido abría el documento equivocado.
+ *
+ * Tres señales, de la más fuerte a la más débil:
+ * 1. el agente lo declaró (`nuevo` en la cabecera);
+ * 2. cambió el TIPO (una hoja no es una versión de un HTML);
+ * 3. para artefactos HTML, no comparte NI UN `data-id` con el actual. Una edición
+ *    re-emite el mismo árbol —el agente recibió el documento ya estampado— así que
+ *    cero coincidencias significa que esto es otro documento. Sólo se aplica cuando
+ *    el actual tiene ids; si no los tiene, no hay señal y se conserva el default.
+ */
+export function isSameDocument(
+  ebdoc: Pick<EbDoc, "kind" | "md" | "isNew">,
+  current: { kind: EbDocKind; md: string } | null | undefined
+): boolean {
+  if (!current) return false;
+  if (ebdoc.isNew) return false;
+  if (ebdoc.kind !== current.kind) return false;
+  if (ebdoc.kind !== "artifact") return true;
+  const ids = (s: string) => new Set(Array.from(s.matchAll(/\bdata-id="([^"]+)"/g), (m) => m[1]));
+  const cur = ids(current.md);
+  if (cur.size === 0) return true;
+  for (const id of ids(ebdoc.md)) if (cur.has(id)) return true;
+  return false;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

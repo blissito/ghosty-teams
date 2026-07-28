@@ -358,6 +358,7 @@ async function artifactDocHint(currentDoc?: { kind: "doc" | "sheet" | "artifact"
       `\`\`\`eb-patch <data-id> con el nodo completo ya corregido — NO re-emitas el artefacto entero. ` +
       `Si el cambio es un rediseño global, o toca <head>/<style>/<script>, entonces sí re-emite ` +
       `todo en un bloque \`\`\`eb-artifact.` +
+      NEW_DOC_RULE(fence) +
       (index ? `\n\nNodos direccionables:\n${index}` : "") +
       `\n\nContenido actual en ${lang}:\n\n\`\`\`\n${md}\n\`\`\`]\n\n`
     );
@@ -367,9 +368,21 @@ async function artifactDocHint(currentDoc?: { kind: "doc" | "sheet" | "artifact"
     linkLine +
     `Si el usuario pide modificarlo (cambiar, ajustar, corregir, agregar/añadir algo), ` +
     `RE-EMITE el artefacto COMPLETO en un bloque \`\`\`${fence} con el cambio ya integrado y todo ` +
-    `lo demás idéntico. Este es su contenido actual en ${lang}:\n\n\`\`\`\n${md}\n\`\`\`]\n\n`
+    `lo demás idéntico.` +
+    NEW_DOC_RULE(fence) +
+    ` Este es su contenido actual en ${lang}:\n\n\`\`\`\n${md}\n\`\`\`]\n\n`
   );
 }
+
+/**
+ * Cómo pedir un documento NUEVO en vez de otra versión del de arriba. Sin esta regla el
+ * agente no tenía forma de decirlo —re-emitir el fence significa "edita esto"— y todo lo
+ * que se pidiera después se apilaba como versión del primero.
+ */
+const NEW_DOC_RULE = (fence: string) =>
+  ` Si en cambio el usuario pide algo DISTINTO (otro documento, no una modificación de éste), ` +
+  `abre el bloque con la marca \`nuevo\`: \`\`\`${fence} nuevo Título del documento — así se ` +
+  `crea un documento aparte en vez de una versión de éste.`;
 
 /**
  * Kill-switch del modo quirúrgico: `ARTIFACT_PATCH=off` en el env de la caja vuelve al

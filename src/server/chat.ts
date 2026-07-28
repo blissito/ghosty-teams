@@ -722,7 +722,7 @@ export const askAgent = createServerFn({ method: "POST" })
     // (Slice 3 del contrato: reemplazar este scraping por eventos artifact del SSE.)
     try {
       const { detectArtifact, mintCollabEmbed, resolveFileKind } = await import("./easybits-documents.server");
-      const { extractEbDoc, extractEbPatches, draftTitle, bubbleWithoutEbDoc, extractAskUser, stripAskUser, extractEbAudio, stripEbAudio, extractEbFile, stripEbFile } = await import("../lib/ebdoc");
+      const { extractEbDoc, extractEbPatches, isSameDocument, draftTitle, bubbleWithoutEbDoc, extractAskUser, stripAskUser, extractEbAudio, stripEbAudio, extractEbFile, stripEbFile } = await import("../lib/ebdoc");
       const { randomUUID } = await import("node:crypto");
 
       // Nota de voz: el agente emitió ```eb-audio``` (voice.mjs sintetizó + publicó el
@@ -819,7 +819,13 @@ export const askAgent = createServerFn({ method: "POST" })
         const cleaned = bubbleWithoutEbDoc(reply);
         await db.setMessageBody(id, cleaned);
         bus.publish(bus.ch.room(ns, channel.id), { t: "message:body", id, body: cleaned });
-        const documentId = currentDocId ?? `${ebdoc.kind}_${randomUUID()}`;
+        // ¿Versión del artefacto del hilo, o documento nuevo? Ver isSameDocument: antes
+        // se reusaba el puntero SIEMPRE, así que todo lo que se pidiera después caía
+        // como versión de lo anterior.
+        const documentId =
+          currentDocId && isSameDocument(ebdoc, currentDoc)
+            ? currentDocId
+            : `${ebdoc.kind}_${randomUUID()}`;
         const title = draftTitle(ebdoc.md, ebdoc.kind, ebdoc.fenceTitle);
         // Publicación por el camino ÚNICO (mismo que la edición humana del Canvas): siembra
         // los `data-id` del artefacto (dirección para el próximo ```eb-patch```), sube el HTML
