@@ -416,14 +416,14 @@ type SendPayload = {
 const COMPOSER_HINTS = [
   "Pídele a Ghosty",
   "Pídele un documento",
-  "Pídele una hoja de cálculo",
-  "Pídele que investigue algo",
-  "Pídele una app de una sola página",
-  "Pídele que resuma el hilo",
+  "Pídele una hoja",
+  "Pídele que investigue",
+  "Pídele una app",
+  "Pídele un resumen",
   "Pídele una imagen",
-  "Pídele que lo pase a PDF",
-  "Pídele que te lo cuente en audio",
-  "Pídele que revise ese enlace",
+  "Pídele un PDF",
+  "Pídele que lo narre",
+  "Pídele que abra un enlace",
   "Escríbele a tu equipo",
 ];
 

@@ -234,23 +234,15 @@ body {
   color: var(--color-brand);
   text-decoration: underline;
 }
-/* Placeholder (extension-placeholder) — solo en editor vacío. */
+/* Placeholder (extension-placeholder) — solo en editor vacío. Nada de recortarlo:
+   el ::before es un float de alto 0, así que cualquier `overflow:hidden` lo esconde
+   entero. Que no se parta en dos líneas es trabajo de la FRASE, que se mantiene corta. */
 .ProseMirror p.is-editor-empty:first-child::before {
   content: attr(data-placeholder);
   color: var(--color-muted);
   float: left;
   height: 0;
   pointer-events: none;
-  /* Con el panel del artefacto abierto el composer se estrecha y el placeholder se
-     partía en dos líneas, quedando cortado a la mitad por el alto de una sola fila
-     (el editor vacío no crece). Una línea con puntos suspensivos. */
-  /* `width:100%` es lo que hace posible el ellipsis: el ::before es un float y sin un
-     ancho definido se encoge a su contenido — con overflow:hidden encima, a NADA (el
-     placeholder desaparecía). */
-  width: 100%;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
 }
 /* Pill de mención — igual que highlightMentions en Markdown.tsx. */
 .ProseMirror .mention {
