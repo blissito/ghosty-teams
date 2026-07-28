@@ -258,9 +258,20 @@ export default function ArtifactPanel({
   // ¿La animación en curso es un toggle de pantalla completa? (vs abrir/cerrar el panel)
   // → elige la curva: tween suave para el fullscreen, spring para abrir/cerrar.
   const fullscreenAnim = useRef(false);
+  // ¿El panel está montado como CAPA (fixed, fuera del flujo)? En pantalla completa
+  // siempre; al SALIR se mantiene hasta que el ancho termina de animar.
+  //
+  // Antes se derivaba de `fullscreen` a secas y ése era el defecto de la salida: al
+  // primer frame el panel volvía al flujo y el espaciador desaparecía, así que el
+  // chat de atrás reflowaba de golpe mientras el ancho seguía animando — el panel
+  // "saltaba" a su sitio y el resto se acomodaba a tirones detrás.
+  const [overlay, setOverlay] = useState(false);
   const toggleFullscreen = () => {
     fullscreenAnim.current = true;
-    setFullscreen((v) => !v);
+    setFullscreen((v) => {
+      if (!v) setOverlay(true); // entrar: capa YA, antes de crecer
+      return !v;
+    });
   };
 
   // ESC cierra el panel, igual que el visor de docs (Modal). Solo activo cuando hay
@@ -832,10 +843,10 @@ export default function ArtifactPanel({
           {/* Espaciador: en fullscreen el aside sale del flujo (fixed). Sin este hueco del
               ancho que tenía, el chat de atrás reflowaba de golpe al entrar/salir → el
               movimiento se veía tosco (saltaba el layout mientras el ancho animaba). */}
-          {fullscreen ? <div className="hidden shrink-0 lg:block" style={{ width }} /> : null}
+          {overlay ? <div className="hidden shrink-0 lg:block" style={{ width }} /> : null}
           <motion.aside
             className={
-              fullscreen
+              overlay
                 // Anclado a la derecha (no inset-0): así crece/decrece SOLO por el borde
                 // izquierdo, que es el mismo eje del panel normal → una única animación
                 // continua de ancho, sin reposicionar nada a media transición.
@@ -857,6 +868,9 @@ export default function ArtifactPanel({
             }
             onAnimationComplete={() => {
               fullscreenAnim.current = false;
+              // Ya llegó a su ancho normal → devolver el panel al flujo. Hacerlo aquí
+              // y no al hacer clic es lo que hace que la salida no dé el tirón.
+              if (!fullscreen) setOverlay(false);
             }}
           >
             {artifact ? (
@@ -891,11 +905,24 @@ export default function ArtifactPanel({
 
             {/* Ancho fijo = target: mientras el aside anima su width, este contenido
                 mantiene su tamaño y el overflow-hidden lo recorta → efecto slide/reveal
-                (no se aplasta). */}
-            {/* Contenido: cambio INSTANTÁNEO al alternar de artefacto estando el panel ya
-                abierto (sin fade ni re-animación → no se siente como "abrir de nuevo"). El
-                deslizamiento vive solo en el motion.aside (abrir/cerrar). */}
-            <div className="flex min-w-0 shrink-0 flex-col" style={{ width: effectiveW }}>
+                (no se aplasta) al ABRIR y CERRAR.
+                Pero en el toggle de pantalla completa eso mismo era el defecto: el
+                contenido saltaba a su ancho final en un frame mientras el contenedor
+                animaba, así que el artefacto se re-maquetaba de golpe y sólo después
+                terminaba de descubrirse. En ese caso el ancho se anima IGUAL que el
+                aside, con la misma curva, y todo se mueve junto.
+                Contenido: cambio INSTANTÁNEO al alternar de artefacto estando el panel
+                ya abierto (sin fade ni re-animación → no se siente como "abrir de
+                nuevo"). El deslizamiento vive solo en el motion.aside. */}
+            <motion.div
+              className="flex min-w-0 shrink-0 flex-col"
+              animate={{ width: effectiveW }}
+              transition={
+                isDragging || !fullscreenAnim.current
+                  ? { duration: 0 }
+                  : { duration: 0.34, ease: [0.32, 0.72, 0, 1] }
+              }
+            >
               {/* La barra es la MISMA que la de la página pública /a/<slug>
                   (ArtifactShareBar): se colapsa sola por ancho real, así que los
                   botones dejaron de pelear con el título al angostar el panel. Las
@@ -1545,7 +1572,7 @@ export default function ArtifactPanel({
                   />
                 )}
               </div>
-            </div>
+            </motion.div>
 
             {/* Catcher: durante el arrastre cubre todo (incluido el iframe) para que el
                 pointer no se pierda dentro del visor. */}
