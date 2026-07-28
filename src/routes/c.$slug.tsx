@@ -2073,6 +2073,23 @@ function ChannelPage() {
   // Abrimos Ajustes en Integraciones (que VEA el estado), toast + confetti al éxito, y
   // limpiamos el query (replace) para no re-disparar en cada render.
   const [connToast, setConnToast] = useState<{ ok: boolean; provider: string } | null>(null);
+
+  // Deep-link a Ajustes: `?ajustes=agentes` abre el panel en esa pestaña. Ajustes
+  // es un modal dentro del canal, así que sin esto no hay forma de mandarle a
+  // alguien "míralo aquí" — sólo describirle el camino de clics.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const sp = new URLSearchParams(window.location.search);
+    const tab = sp.get("ajustes");
+    if (!tab) return;
+    if (tab === "general" || tab === "agentes" || tab === "emojis" || tab === "integraciones") {
+      setPrefsTab(tab);
+    }
+    sp.delete("ajustes");
+    const qs = sp.toString();
+    window.history.replaceState({}, "", window.location.pathname + (qs ? `?${qs}` : ""));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   useEffect(() => {
     if (typeof window === "undefined") return;
     const sp = new URLSearchParams(window.location.search);
