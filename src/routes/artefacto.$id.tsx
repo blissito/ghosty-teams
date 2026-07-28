@@ -60,7 +60,11 @@ const loadShared = createServerFn({ method: "GET" })
       // las visitas al contenido no la tocan.
       // `src` null = fila vieja publicada antes de que hubiera storage → se cae a
       // /artefacto/<slug>/raw, que sí lee de la DB. Es el camino de excepción.
-      contentUrl: found.version.src,
+      // …pero SÓLO cuando es público. El iframe pide el CDN como recurso cross-site y con
+      // `no-referrer`: no viaja ninguna cookie, así que ahí nadie es el dueño y el guard de
+      // permisos de /t3 responde 404 — hasta al propio dueño mirando su artefacto privado.
+      // Privado va por /raw, que es del mismo origen y sí ve la sesión.
+      contentUrl: found.root.visibility === "link" ? found.version.src : null,
       versionId: found.version.id,
     };
   });
