@@ -384,8 +384,6 @@ export const en: Record<string, string> = {
   "Tagéalo con @{handle} en cualquier mensaje para que responda.": "Tag it with @{handle} in any message to get a reply.",
   "Tamaño de texto": "Text size",
   "Tareas": "Tasks",
-  "Tareas de equipo": "Team tasks",
-  "Tareas, epics y responsables junto a la conversación — @ghosty podrá crearlas y cerrarlas desde el chat.": "Tasks, epics and assignees next to the conversation — @ghosty can create and close them from the chat.",
   "Te invitaron a este chat. Entra para unirte.": "You've been invited to this chat. Sign in to join.",
   "Todo el room": "Entire room",
   "Todos entran como miembro": "Everyone joins as a member",

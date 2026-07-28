@@ -1028,14 +1028,14 @@ function ImagePanel({ store, node, doc, imageProvider }: { store: EditorStore; n
           Encuadre
         </summary>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginTop: 6 }}>
-          <button style={styles.ghost} title="Quita el ancho máximo y el padding lateral de este elemento y de sus contenedores, para que la imagen llegue a los bordes" onClick={() => { setError(null); makeFullBleed(store, doc, node.id) }}>
+          <button style={styles.ghost} title="Quita el ancho máximo y el padding lateral de este elemento y de sus contenedores, para que la imagen llegue a los bordes" onClick={() => { setError(null); makeFullBleed(store, doc, target.id) }}>
             Quitar márgenes
           </button>
           {isImg && (
             <button
               style={styles.ghost}
               title="Manda esta foto al fondo de su sección y le pone un degradado para que el texto siga legible. La imagen original queda oculta: la recuperas desde el ojito de la capa"
-              onClick={() => setError(makeHeroBackground(store, doc, node.id))}
+              onClick={() => setError(makeHeroBackground(store, doc, target.id))}
             >
               Mandar al fondo de la sección
             </button>

@@ -57,6 +57,11 @@ const SCOPED_PREFLIGHT = `
 .ce-artboard button,.ce-artboard input,.ce-artboard select,.ce-artboard textarea { font: inherit; color: inherit; margin: 0; padding: 0; }
 .ce-artboard button,.ce-artboard [role="button"] { cursor: pointer; background: transparent; }
 .ce-artboard table { border-collapse: collapse; }
+/* Contenedor de sección. Lo emite el HTML publicado (buildDeployHtml) y lo tenía
+   el lienzo del editor clásico, pero no éste: sin él CADA sección se veía a otro
+   ancho y con otro padding horizontal que en el sitio real. */
+.ce-artboard section { width: 100%; }
+.ce-artboard section > * { max-width: 80rem; margin-left: auto; margin-right: auto; padding-left: 1rem; padding-right: 1rem; }
 `
 
 // Load the Tailwind Play CDN ONCE, configured so every utility is scoped as a
@@ -64,16 +69,30 @@ const SCOPED_PREFLIGHT = `
 // styles ONLY the canvas content and never leaks into the host (Teams) UI. Used by
 // hosts whose artifacts are authored in real Tailwind (vs the semantic-token system).
 let twPlayStarted = false
-function ensureTailwindPlay(): void {
-  if (twPlayStarted || typeof document === 'undefined') return
+/**
+ * `theme` es la MISMA extensión de tema que use el host al publicar (colores
+ * mapeados a `var(--color-…)`, fuentes, etc.). Sin ella, el lienzo no conoce los
+ * colores del sitio y Play no puede generar `text-on-surface/60` ni ninguna otra
+ * opacidad arbitraria: esa clase quedaba sin regla y el texto heredaba el color
+ * del contenedor — negro sobre negro en una tarjeta oscura, visible sólo en el
+ * sitio publicado. Es el arreglo de raíz de la divergencia lienzo↔publicado.
+ */
+function ensureTailwindPlay(theme?: Record<string, unknown>): void {
+  if (typeof document === 'undefined') return
+  const config = { important: '.ce-artboard', corePlugins: { preflight: false }, ...(theme ? { theme } : {}) }
+  const w = window as unknown as { tailwind?: { config?: unknown } }
+  // El script se carga una vez, pero la config puede llegar antes (aún cargando)
+  // o después (tema cambiado en caliente). Se aplica en ambos momentos.
+  if (w.tailwind) w.tailwind.config = config
+  if (twPlayStarted) return
   twPlayStarted = true
   const s = document.createElement('script')
   s.src = 'https://cdn.tailwindcss.com'
   s.async = false
   s.onload = () => {
     try {
-      const w = window as unknown as { tailwind?: { config?: unknown } }
-      if (w.tailwind) w.tailwind.config = { important: '.ce-artboard', corePlugins: { preflight: false } }
+      const ww = window as unknown as { tailwind?: { config?: unknown } }
+      if (ww.tailwind) ww.tailwind.config = config
     } catch {
       /* noop */
     }
@@ -107,9 +126,14 @@ export interface CanvasEditorProps {
   /** Load the Tailwind Play CDN (scoped to .ce-artboard, preflight off) so artifacts
    *  authored in real Tailwind render faithfully in the edit surface. Teams passes this. */
   tailwindPlay?: boolean
+  /** Extensión de tema para ese Tailwind Play — la MISMA que el host usa al publicar
+   *  (`{ extend: { colors: { 'on-surface': 'var(--color-on-surface)', … } } }`).
+   *  Sin ella el lienzo no resuelve las utilidades de color del host ni sus
+   *  modificadores de opacidad (`text-on-surface/60`), y el publicado sí. */
+  tailwindPlayTheme?: Record<string, unknown>
 }
 
-export function CanvasEditor({ doc, onChange, refineProvider, imageProvider, onAgentAction, onSelectionChange, onSave, store: externalStore, extraCss, suppressThemeCss, renderPreview, tailwindPlay }: CanvasEditorProps) {
+export function CanvasEditor({ doc, onChange, refineProvider, imageProvider, onAgentAction, onSelectionChange, onSave, store: externalStore, extraCss, suppressThemeCss, renderPreview, tailwindPlay, tailwindPlayTheme }: CanvasEditorProps) {
   const store = useMemo(() => externalStore ?? new EditorStore(doc, onChange), [externalStore])
   const state = useEditor(store)
   const viewportRef = useRef<HTMLDivElement | null>(null)
@@ -122,8 +146,8 @@ export function CanvasEditor({ doc, onChange, refineProvider, imageProvider, onA
 
   // real-Tailwind hosts (Teams artifacts): load Play CDN scoped to the canvas
   useEffect(() => {
-    if (tailwindPlay) ensureTailwindPlay()
-  }, [tailwindPlay])
+    if (tailwindPlay) ensureTailwindPlay(tailwindPlayTheme)
+  }, [tailwindPlay, tailwindPlayTheme])
 
   // publish selection changes to the host (→ chat agent context)
   useEffect(() => {
@@ -587,7 +611,10 @@ export function CanvasEditor({ doc, onChange, refineProvider, imageProvider, onA
   }, [store, state.selection, onAgentAction])
 
   const themeStyle = suppressThemeCss ? '' : themeToCss(state.doc.theme, { scope: '.ce-artboard' })
-  const jitStyle = arbitraryUtilityCss(state.doc, '.ce-artboard')
+  // El mini-JIT es el SUSTITUTO de Tailwind, no un complemento: con Play cargado
+  // el CDN ya emite las clases arbitrarias (mejor y completas), y las nuestras
+  // sólo competirían por especificidad.
+  const jitStyle = tailwindPlay ? '' : arbitraryUtilityCss(state.doc, '.ce-artboard')
 
   if (state.mode === 'preview') {
     return (

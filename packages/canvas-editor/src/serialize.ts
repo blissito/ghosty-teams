@@ -7,6 +7,12 @@ import type { Artboard, Doc, Node, Theme } from './model'
 import { DEFAULT_THEME, activeTokens, genId, googleFontsHref, walk } from './model'
 
 const VOID_TAGS = new Set(['img', 'br', 'hr', 'input', 'meta', 'link'])
+/**
+ * Elementos cuyo contenido es texto CRUDO, no markup. Escaparlo los rompe: un
+ * selector `.a > .b` volvía como `.a &gt; .b` y el CSS del usuario se degradaba
+ * un poco más en cada ida y vuelta por el editor.
+ */
+const RAW_TEXT_TAGS = new Set(['style', 'script'])
 /** Los que el `Node` ya tipa: el resto viaja en `node.attrs`. */
 const MODELED_ATTRS = new Set(['data-id', 'class', 'src', 'href', 'style', 'hidden'])
 
@@ -37,11 +43,12 @@ function nodeToHtml(node: Node, indent: string): string {
 
   const hasChildren = node.children.length > 0
   const hasText = node.text != null && node.text !== ''
+  const escText = RAW_TEXT_TAGS.has(node.tag) ? (s: string) => s : esc
   if (!hasChildren && !hasText) return `${indent}${open}</${node.tag}>`
-  if (!hasChildren && hasText) return `${indent}${open}${esc(node.text!)}</${node.tag}>`
+  if (!hasChildren && hasText) return `${indent}${open}${escText(node.text!)}</${node.tag}>`
 
   const inner = node.children.map((c) => nodeToHtml(c, indent + '  ')).join('\n')
-  const textPart = hasText ? `${indent}  ${esc(node.text!)}\n` : ''
+  const textPart = hasText ? `${indent}  ${escText(node.text!)}\n` : ''
   return `${indent}${open}\n${textPart}${inner}\n${indent}</${node.tag}>`
 }
 
@@ -174,12 +181,21 @@ function elToNode(el: Element): Node {
 
   const children: Node[] = []
   let text: string | undefined
-  for (const child of Array.from(el.childNodes)) {
-    if (child.nodeType === 3) {
-      const t = (child.textContent || '').trim()
-      if (t) text = text ? `${text} ${t}` : t
-    } else if (child.nodeType === 1) {
-      children.push(elToNode(child as Element))
+  // <style>/<script>: el contenido se toma VERBATIM. El aplanado de abajo une
+  // los text-nodes con espacios y hace trim — sobre una hoja de estilos eso
+  // colapsa los saltos de línea y la deja irreconocible.
+  if (RAW_TEXT_TAGS.has(tag)) {
+    // Sin recorrer hijos, y sin salir de la función: abajo se recogen
+    // src/style/attrs/hidden, que un <script src> o un <style media> necesitan.
+    text = el.textContent || undefined
+  } else {
+    for (const child of Array.from(el.childNodes)) {
+      if (child.nodeType === 3) {
+        const t = (child.textContent || '').trim()
+        if (t) text = text ? `${text} ${t}` : t
+      } else if (child.nodeType === 1) {
+        children.push(elToNode(child as Element))
+      }
     }
   }
 
@@ -292,6 +308,10 @@ const ARBITRARY_PROP: Record<string, string | string[]> = {
   mt: 'margin-top', mr: 'margin-right', mb: 'margin-bottom', ml: 'margin-left',
   gap: 'gap', top: 'top', left: 'left', right: 'right', bottom: 'bottom', rounded: 'border-radius',
   bg: 'background-color', border: 'border-color',
+  // Faltaban y eran no-op: una clase sin regla se ve distinta aquí que publicada.
+  aspect: 'aspect-ratio', leading: 'line-height', tracking: 'letter-spacing', z: 'z-index',
+  'grid-cols': 'grid-template-columns', 'grid-rows': 'grid-template-rows',
+  shadow: 'box-shadow', opacity: 'opacity', 'border-w': 'border-width', basis: 'flex-basis',
 }
 
 function cssEscapeClass(cls: string): string {
@@ -308,13 +328,29 @@ export function arbitraryUtilityCss(doc: Doc, scope = ''): string {
       const m = raw.match(/^([a-z-]+)-\[(.+)\]$/)
       if (!m) continue
       const prefix = m[1]
-      const value = m[2].replace(/_/g, ' ')
+      const rawValue = m[2]
+      const isUrl = /^url\(/i.test(rawValue)
+      // El guion bajo es el escape de Tailwind para el espacio… salvo dentro de
+      // una url(): ahí un `_` es parte del nombre del archivo y sustituirlo
+      // rompía la imagen — pero SÓLO en el lienzo, nunca en el sitio publicado.
+      const value = isUrl ? rawValue : rawValue.replace(/_/g, ' ')
       // `text-[…]` es color o tamaño según el valor. Antes solo `#hex` contaba como color:
       // `text-[var(--color-foreground)]` (lo que emiten los artefactos con tokens) caía en
       // font-size → el texto perdía su color Y heredaba un font-size inválido.
       const isColor = /^(#|rgb|hsl|oklch|color\()/i.test(value) || /^var\(\s*--color-/i.test(value)
-      const key = prefix === 'text' ? (isColor ? 'text-color' : 'text-size') : prefix
-      const prop = key === 'text-color' ? 'color' : key === 'text-size' ? 'font-size' : ARBITRARY_PROP[key]
+      const key =
+        prefix === 'text'
+          ? isColor ? 'text-color' : 'text-size'
+          : // `bg-[url(…)]` es una IMAGEN, no un color. Se emitía
+            // `background-color:url(…)` — declaración inválida que el navegador
+            // descarta, así que la foto de fondo desaparecía del lienzo y sólo
+            // se veía en el sitio publicado.
+            prefix === 'bg' && isUrl ? 'bg-image' : prefix
+      const prop =
+        key === 'text-color' ? 'color'
+        : key === 'text-size' ? 'font-size'
+        : key === 'bg-image' ? 'background-image'
+        : ARBITRARY_PROP[key]
       if (!prop) continue
       seen.add(raw)
       const decls = Array.isArray(prop) ? prop.map((pp) => `${pp}:${value}`).join(';') : `${prop}:${value}`
@@ -336,12 +372,32 @@ export function nodeSubtreeToHtml(node: Node): string {
  * stable even if the model dropped/changed the data-id. Returns null if the
  * fragment has no element (e.g. mid-stream partial that isn't yet parseable).
  */
-export function htmlToNode(html: string, keepId?: string, opts?: ParseOpts): Node | null {
+export function htmlToNode(
+  html: string,
+  keepId?: string,
+  opts?: ParseOpts & {
+    /**
+     * Qué hacer si el fragmento trae VARIOS elementos de nivel superior.
+     * Por defecto se toma el primero, que es lo correcto para un refine: ahí el
+     * modelo debe devolver UN elemento y envolver su respuesta cambiaría el tag
+     * del nodo (un `<section>` volvería como `<div>`).
+     *
+     * `wrapMultiple` es para cargar contenido persistido, donde perder los
+     * hermanos es pérdida de datos: una sección guardada como dos `<section>`
+     * hermanas, o como `<style>…</style><section>…</section>`, entraba al editor
+     * mutilada y se volvía a publicar así.
+     */
+    wrapMultiple?: boolean
+  },
+): Node | null {
   const parser = getParser(opts)
   const dom = parser.parseFromString(`<body>${html}</body>`, 'text/html')
-  const el = dom.body?.firstElementChild
-  if (!el) return null
-  const node = elToNode(el)
+  const els = Array.from(dom.body?.children ?? [])
+  if (!els.length) return null
+  const node =
+    els.length === 1 || !opts?.wrapMultiple
+      ? elToNode(els[0])
+      : { id: genId('n'), tag: 'div', cls: '', children: els.map((e) => elToNode(e)) }
   if (keepId) node.id = keepId
   return node
 }

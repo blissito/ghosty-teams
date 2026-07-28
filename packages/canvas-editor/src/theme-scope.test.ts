@@ -88,6 +88,16 @@ describe('utilidades arbitrarias con tokens', () => {
     const doc = htmlToDoc(ARTIFACT)
     expect(arbitraryUtilityCss(doc, '.ce-artboard')).toMatch(/background-color:var\(--color-primary\)/)
   })
+
+  // Regresión: emitía `background-color:url(…)` — inválido, el navegador lo tira,
+  // y la foto de fondo se veía en el sitio publicado pero no en el lienzo.
+  it('bg-[url(…)] genera background-image y respeta los guiones bajos de la URL', async () => {
+    const { arbitraryUtilityCss, htmlToDoc: h } = await import('./serialize')
+    const doc = h('<div data-artboard-name="A"><div class="bg-[url(/img/hero_bg.jpg)]"></div></div>')
+    const css = arbitraryUtilityCss(doc, '.ce-artboard')
+    expect(css).toMatch(/background-image:url\(\/img\/hero_bg\.jpg\)/)
+    expect(css).not.toMatch(/background-color:url/)
+  })
 })
 
 describe('HTML exportado', () => {

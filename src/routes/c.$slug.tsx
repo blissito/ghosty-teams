@@ -3003,7 +3003,6 @@ function Sidebar({
   const router = useRouter();
   const { openPrefs } = useContext(ChatCtx); // Ajustes in-panel (modal a nivel shell)
   const [wsOpen, setWsOpen] = useState(false); // dropdown del switcher de workspace
-  const [tasksOpen, setTasksOpen] = useState(false); // modal "Tareas (próximamente)"
   // Multi-workspace: la lista de workspaces del user (verdad en gs). Se resuelve al
   // montar (barato) para poder etiquetar el workspace actual y ofrecer el salto.
   const [ws, setWs] = useState<{
@@ -3019,6 +3018,14 @@ function Sidebar({
   // Nombre a mostrar del workspace actual (slug capitalizado; fallback "Ghosty Teams").
   const wsLabel = ws?.current ? ws.current.charAt(0).toUpperCase() + ws.current.slice(1) : "Ghosty Teams";
   const portal = ws?.portal || "https://www.ghosty.studio";
+  // Ghosty Tasks del MISMO workspace: mismo subdominio, otro producto. Se deriva del
+  // host (acme.teams.ghosty.studio → acme.tasks.ghosty.studio) para no depender de
+  // que el switcher ya haya cargado; en el apex cae al selector de Tasks.
+  const tasksUrl = ws?.current
+    ? `https://${ws.current}.tasks.ghosty.studio`
+    : typeof window !== "undefined"
+      ? `https://${window.location.host.replace(".teams.", ".tasks.")}`
+      : "https://tasks.ghosty.studio";
   // Dark sidebar: si está activo y el modo es claro, forzamos la paleta OSCURA del
   // preset SOLO en este subárbol (vars inline). Es una preferencia de CLIENTE
   // (localStorage) → se aplica POST-montaje vía ref (NO en el render), para no meter
@@ -3155,14 +3162,17 @@ function Sidebar({
         >
           <HomeIcon size={16} className="shrink-0" /> {t("Inicio")}
         </button>
-        {/* Tareas de equipo (próximamente). */}
-        <button
-          onClick={() => setTasksOpen(true)}
+        {/* Tareas del equipo: Ghosty Tasks, mismo workspace y misma DB. El subdominio
+            es el mismo cambiando el producto (acme.teams… → acme.tasks…); el slug del
+            workspace vive en el host, no en la ruta ($slug aquí es el canal). */}
+        <a
+          href={tasksUrl}
+          target="_blank"
+          rel="noreferrer"
           className="mb-1 flex w-full items-center gap-2 rounded-lg px-2 py-2.5 text-sm text-muted transition hover:bg-surface-3 hover:text-ink md:py-1.5"
         >
           <CheckCircle2 size={16} className="shrink-0" /> {t("Tareas")}
-          <span className="ml-auto rounded-full border border-border px-1.5 text-[10px] text-muted">{t("pronto")}</span>
-        </button>
+        </a>
         {/* Vistas (Zulip): recientes / menciones / destacados, enfocadas en el centro. */}
         <div className="mb-1 space-y-0.5">
           {([
@@ -3482,22 +3492,6 @@ function Sidebar({
             user={user}
             onClose={() => setAllThreadsOpen(false)}
           />
-        )}
-        {tasksOpen && (
-          <Modal onClose={() => setTasksOpen(false)} wide>
-            <div className="flex flex-col items-center px-2 py-4 text-center">
-              <div className="mb-3 grid h-16 w-16 place-items-center rounded-2xl bg-brand/15 text-brand">
-                <CheckCircle2 size={30} />
-              </div>
-              <h2 className="text-base font-semibold">{t("Tareas de equipo")}</h2>
-              <p className="mt-1 max-w-xs text-sm text-muted">
-                {t("Tareas, epics y responsables junto a la conversación — @ghosty podrá crearlas y cerrarlas desde el chat.")}
-              </p>
-              <span className="mt-4 rounded-full border border-border px-3 py-1 text-xs font-medium text-muted">
-                {t("Próximamente")}
-              </span>
-            </div>
-          </Modal>
         )}
       </AnimatePresence>
     </aside>

@@ -104,6 +104,25 @@ describe('serialize round-trip', () => {
     expect(out).toContain('alt="Logo"')
   })
 
+  // El refine devuelve UN elemento. Si el modelo se pasa y manda dos, envolverlos
+  // cambiaría el tag del nodo (un <section> volvería como <div>) y con él su
+  // layout: por eso el default sigue siendo quedarse con el primero, y envolver
+  // es opt-in de quien carga contenido persistido.
+  it('htmlToNode se queda con el primer elemento salvo wrapMultiple', () => {
+    const html = '<section class="a">Uno</section><section class="b">Dos</section>'
+    expect(htmlToNode(html, 'id')!.tag).toBe('section')
+    const wrapped = htmlToNode(html, 'id', { wrapMultiple: true })!
+    expect(wrapped.tag).toBe('div')
+    expect(wrapped.children).toHaveLength(2)
+  })
+
+  it('<style> conserva su CSS y sus atributos al ir y volver', () => {
+    const node = htmlToNode('<style media="print">.a > .b{color:red}</style>', 'id')!
+    expect(node.text).toBe('.a > .b{color:red}')
+    expect(node.attrs?.media).toBe('print')
+    expect(nodeSubtreeToHtml(node)).toContain('.a > .b{color:red}')
+  })
+
   it('nodeSubtreeToHtml emits a single node with data-id (for refine payloads)', () => {
     const node: Node = { id: 'n_x', tag: 'p', cls: 'text-sm', text: 'hola', children: [] }
     const html = nodeSubtreeToHtml(node)
