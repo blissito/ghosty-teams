@@ -10,7 +10,11 @@ export type ResolvedAgent = {
   avatar: string;
   systemPrompt: string | null; // persona por-agente (se envía/antepone al backend)
   backend:
-    | { kind: "fleet"; id: string; token: string }
+    // `kind` es el PROTOCOLO (fleet = nuestro contrato de agentes; webhook = un
+    // POST a una URL cualquiera). `runtime`/`runtimeUrl` es DÓNDE corre ese
+    // agente-fleet — hay más de un runtime que habla el mismo contrato, y la
+    // elección es de cada agente, no del workspace. Ver agent-runtime.server.ts.
+    | { kind: "fleet"; id: string; token: string; runtime?: string | null; runtimeUrl?: string | null }
     | { kind: "webhook"; url: string };
 };
 
@@ -44,7 +48,13 @@ export async function resolvedAgents(): Promise<ResolvedAgent[]> {
     if (a.kind === "webhook" && a.webhook_url) {
       out.push({ handle: a.handle, name: a.name, avatar: a.avatar || "", systemPrompt: a.system_prompt, backend: { kind: "webhook", url: a.webhook_url } });
     } else if (a.fleet_id && a.fleet_token) {
-      out.push({ handle: a.handle, name: a.name, avatar: a.avatar || "", systemPrompt: a.system_prompt, backend: { kind: "fleet", id: a.fleet_id, token: a.fleet_token } });
+      out.push({
+        handle: a.handle,
+        name: a.name,
+        avatar: a.avatar || "",
+        systemPrompt: a.system_prompt,
+        backend: { kind: "fleet", id: a.fleet_id, token: a.fleet_token, runtime: a.runtime, runtimeUrl: a.runtime_url },
+      });
     }
   }
   return out;
@@ -82,8 +92,12 @@ export async function warmAgent(handle: string): Promise<void> {
   try {
     const agent = (await resolvedAgents()).find((a) => a.handle === handle);
     if (!agent || agent.backend.kind !== "fleet") return;
-    const base = process.env.EASYBITS_BASE_URL ?? "https://www.easybits.cloud";
-    await fetch(base, { method: "HEAD" }).catch(() => {}); // calienta la conexión
+    // La base la da el runtime DEL AGENTE. Antes iba fija a easybits.cloud, así que
+    // para un agente nativo esto calentaba la conexión al host equivocado — el
+    // trabajo se hacía, pero no servía de nada.
+    const { runtimeFor } = await import("./server/agent-runtime.server");
+    const rt = await runtimeFor(agent.backend);
+    await fetch(rt.base, { method: "HEAD" }).catch(() => {}); // calienta la conexión
   } catch {
     // best-effort: el warm nunca debe afectar el flujo del usuario
   }
@@ -357,12 +371,13 @@ export async function callAgentBackendStream(
     return full;
   }
   const persona = agent.systemPrompt?.trim() || null;
-  // Cutover: si GHOSTY_RUNTIME_URL está seteada → runtime nativo de Studio (HMAC,
-  // co-locado, sin refresh de token); si no → EasyBits (fallback). Ver
-  // server/ghosty-runtime.server.ts.
-  const { nativeRuntimeBase, partnerHeaders } = await import("./server/ghosty-runtime.server");
-  const native = await nativeRuntimeBase();
-  const base = native ?? process.env.EASYBITS_BASE_URL ?? "https://www.easybits.cloud";
+  // DÓNDE corre este agente. Lo dice el agente (gc_agents.runtime), no el
+  // workspace: un mismo workspace puede tener uno nacido en EasyBits y otro creado
+  // en Studio, y los dos son válidos. Ver server/agent-runtime.server.ts.
+  const { runtimeFor } = await import("./server/agent-runtime.server");
+  const rt = await runtimeFor(agent.backend);
+  const native = rt.kind === "gs-native";
+  const base = rt.base;
   // Tools de conectores per-invocador (solo runtime nativo): mintamos un token-capacidad
   // firmado con el `sub` del que escribe + la URL de ESTE tenant (Teams conoce su origin).
   // El box los recibe por turnEnv y llama de vuelta a /api/connectors/tools. Best-effort.
@@ -415,18 +430,12 @@ export async function callAgentBackendStream(
     });
     const url = `${base}/api/v2/fleet-agents/${(agent.backend as { id: string }).id}/message-stream`;
     const doStream = (tok: string) =>
-      fetch(url, {
-        method: "POST",
-        headers: native
-          ? partnerHeaders(streamBody) // nativo: firma HMAC del body
-          : { "Content-Type": "application/json", Authorization: `Bearer ${tok}` },
-        body: streamBody,
-      });
-    // SELF-HEAL (solo EasyBits): el fleet_token (pool) CADUCA. Ante 401 refrescamos el
-    // OAuth + re-obtenemos el token fresco y reintentamos UNA vez (incidente 2026-07-14).
-    // En el runtime nativo NO aplica: la HMAC no caduca por turno.
+      fetch(url, { method: "POST", headers: rt.headers(streamBody, tok), body: streamBody });
+    // SELF-HEAL: el fleet_token de EasyBits (pool) CADUCA. Ante 401 refrescamos el
+    // OAuth + re-obtenemos el token fresco y reintentamos UNA vez (incidente
+    // 2026-07-14). El runtime lo declara — la HMAC del nativo no caduca por turno.
     let res = await doStream(agent.backend.token);
-    if (!native && res.status === 401) {
+    if (rt.refreshesOn401 && res.status === 401) {
       const fresh = await refreshFleetToken((agent.backend as { id: string }).id);
       if (fresh) res = await doStream(fresh);
     }
@@ -481,14 +490,16 @@ export async function callAgentBackendStream(
 // no-op silencioso. Best-effort: devuelve true si el runtime confirmó.
 export async function resetAgentSession(agent: ResolvedAgent, groupId: string): Promise<boolean> {
   if (agent.backend.kind !== "fleet") return false;
-  const { nativeRuntimeBase, partnerHeaders } = await import("./server/ghosty-runtime.server");
-  const base = await nativeRuntimeBase();
-  if (!base) return false; // EasyBits: sin reset por sesión
+  const { runtimeFor } = await import("./server/agent-runtime.server");
   const body = JSON.stringify({ groupId });
   try {
-    const res = await fetch(`${base}/api/v2/fleet-agents/${(agent.backend as { id: string }).id}/session/reset`, {
+    const rt = await runtimeFor(agent.backend);
+    // No todos los runtimes saben borrar memoria. Se pregunta por CAPACIDAD en vez
+    // de asumir "si no es el nativo, no puede": mañana habrá otros que sí.
+    if (!rt.supports.sessionReset) return false;
+    const res = await fetch(`${rt.base}/api/v2/fleet-agents/${agent.backend.id}/session/reset`, {
       method: "POST",
-      headers: partnerHeaders(body),
+      headers: rt.headers(body, agent.backend.token),
       body,
     });
     return res.ok;
@@ -824,9 +835,11 @@ export async function callAgentBackend(
   // fleet: la persona por-agente va en la CAPA SYSTEM (appendSystemPrompt), NO en el
   // texto. Meterla en el texto (`[Instrucciones para X: …]`) hacía que el modelo la
   // leyera como inyección de prompt y la rechazara. El texto solo lleva el turno.
-  const { nativeRuntimeBase, partnerHeaders } = await import("./server/ghosty-runtime.server");
-  const native = await nativeRuntimeBase();
-  const base = native ?? process.env.EASYBITS_BASE_URL ?? "https://www.easybits.cloud";
+  // Mismo resolvedor que el camino de streaming: el runtime lo dice el AGENTE.
+  const { runtimeFor } = await import("./server/agent-runtime.server");
+  const rt = await runtimeFor(agent.backend);
+  const native = rt.kind === "gs-native";
+  const base = rt.base;
   try {
     // configGroupId "teams" = unidad de config estable del canal (ver message-stream).
     const msgBody = JSON.stringify({
@@ -852,14 +865,12 @@ export async function callAgentBackend(
     const doMsg = (tok: string) =>
       fetch(url, {
         method: "POST",
-        headers: native
-          ? partnerHeaders(msgBody)
-          : { "Content-Type": "application/json", Authorization: `Bearer ${tok}` },
+        headers: rt.headers(msgBody, tok),
         body: msgBody,
       });
-    // Self-heal en 401 solo EasyBits (la HMAC nativa no caduca).
+    // Self-heal en 401: lo declara el runtime (la HMAC nativa no caduca).
     let res = await doMsg(agent.backend.token);
-    if (!native && res.status === 401) {
+    if (rt.refreshesOn401 && res.status === 401) {
       const fresh = await refreshFleetToken((agent.backend as { id: string }).id);
       if (fresh) res = await doMsg(fresh);
     }

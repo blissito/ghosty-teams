@@ -670,6 +670,10 @@ export type Agent = {
   system_prompt: string | null;
   enabled: number;
   created_by: string | null;
+  // Dónde corre este agente. NULL = filas viejas → cae al default del tenant.
+  // Ver src/server/agent-runtime.server.ts.
+  runtime: string | null;
+  runtime_url: string | null;
 };
 
 function toAgent(r: Row): Agent {
@@ -685,6 +689,8 @@ function toAgent(r: Row): Agent {
     system_prompt: r.system_prompt ?? null,
     enabled: num(r.enabled),
     created_by: r.created_by,
+    runtime: r.runtime ?? null,
+    runtime_url: r.runtime_url ?? null,
   };
 }
 
@@ -739,11 +745,14 @@ export async function createAgent(input: {
   avatar?: string | null;
   systemPrompt?: string | null;
   createdBy: string;
+  /** Dónde va a correr. Lo estampa el camino de alta que lo creó. */
+  runtime?: string | null;
+  runtimeUrl?: string | null;
 }): Promise<Agent> {
   const handle = slugify(input.handle).replace(/-/g, "");
   const rows = await dbq(
-    `INSERT INTO gc_agents (handle, name, kind, fleet_id, fleet_token, webhook_url, avatar, system_prompt, created_by)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *`,
+    `INSERT INTO gc_agents (handle, name, kind, fleet_id, fleet_token, webhook_url, avatar, system_prompt, created_by, runtime, runtime_url)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *`,
     [
       handle,
       input.name.slice(0, 40),
@@ -754,6 +763,8 @@ export async function createAgent(input: {
       input.avatar ?? null,
       input.systemPrompt ?? null,
       input.createdBy,
+      input.runtime ?? null,
+      input.runtimeUrl ?? null,
     ]
   );
   return toAgent(rows[0]);

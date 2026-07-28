@@ -225,6 +225,35 @@ async function migrate(): Promise<void> {
   // que cada agente hable distinto). gc_agents la crea el provisioner; aquí sumamos.
   await addColumn("gc_agents", "system_prompt", "TEXT");
 
+  // DÓNDE CORRE CADA AGENTE. Antes se elegía por TENANT (gc_config.agent_runtime_url),
+  // o sea que todos los agentes de un workspace iban al mismo runtime — y un
+  // workspace puede tener legítimamente los dos: uno nacido en EasyBits y otro
+  // creado en Ghosty Studio. Con el switch por tenant, prenderlo mandaba también
+  // al de EasyBits a un runtime donde su id no existe, y no prenderlo condenaba al
+  // de Studio a uno que no le inyecta GS_TTS_URL. Ninguno de los dos es un error:
+  // son runtimes distintos, y pronto habrá más (otra nube, local).
+  //
+  //   runtime      = CÓMO se autentica ("gs-native" | "easybits" | …)
+  //   runtime_url  = A DÓNDE ir. Sólo para runtimes externos; en "gs-native" se
+  //                  IGNORA (ver runtimeFor en agents.server.ts: firmamos con el
+  //                  secreto de partner y no se le mandan firmas a un host que no
+  //                  sea el nuestro).
+  //
+  // NULL = comportamiento viejo (la cadena por tenant), para no cambiarle la
+  // conducta a ninguna fila existente.
+  await addColumn("gc_agents", "runtime", "TEXT");
+  await addColumn("gc_agents", "runtime_url", "TEXT");
+
+  // Backfill por la forma del id, que delata el origen sin ambigüedad: los de
+  // EasyBits son ObjectId de Mongo (24 hex), los de Studio cuid. Se hace por regla
+  // y NO consultando a Studio: una migración no puede depender de que otro sistema
+  // esté vivo. Los `webhook` no tienen fleet_id y se quedan en NULL, que es lo
+  // correcto — un webhook ya es "corre en otro lado" por definición.
+  await exec(`UPDATE gc_agents SET runtime =
+    CASE WHEN fleet_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'
+              THEN 'easybits' ELSE 'gs-native' END
+    WHERE runtime IS NULL AND fleet_id IS NOT NULL AND fleet_id <> ''`);
+
   // Agentes slice 4: colaboradores de un agente (pueden EDITAR su config, no verlo
   // el secret ni borrar/crear). Espejo de gc_channel_members para rooms privados.
   await exec(`CREATE TABLE IF NOT EXISTS gc_agent_collaborators (

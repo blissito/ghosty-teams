@@ -32,15 +32,33 @@ export async function nativeRuntimeBase(): Promise<string | null> {
   return env ? env.replace(/\/+$/, "") : null;
 }
 
-/** Headers de partner firmados sobre `rawBody` (x-ghosty-ts + x-ghosty-sig). */
-export function partnerHeaders(rawBody: string): Record<string, string> {
+/**
+ * Headers de partner firmados sobre `rawBody`, con el WORKSPACE dentro del
+ * canonical (`${ts}.${workspaceNs}.${rawBody}`).
+ *
+ * El workspace va firmado porque el secreto es uno solo para toda la plataforma:
+ * sin él, una firma válida sólo probaba "alguien tiene el secreto", y Studio
+ * tenía que creerle al `ownerUserId` que le mandáramos en el body. Ahora Studio
+ * resuelve el dueño desde su propia tabla de workspaces. El namespace no es
+ * secreto; lo que lo hace confiable es ir dentro de la firma.
+ *
+ * Es síncrona a propósito: el namespace se resuelve una vez arriba (es una
+ * lectura async del tenant) y se pasa, para que esto pueda usarse dentro de un
+ * `headers()` sin contagiar de async a toda la cadena.
+ */
+export function partnerHeaders(rawBody: string, workspaceNs: string): Record<string, string> {
   const secret = process.env.GHOSTY_PARTNER_SECRET;
   if (!secret) throw new Error("GHOSTY_PARTNER_SECRET no configurado");
+  if (!workspaceNs) throw new Error("partnerHeaders: falta el namespace del workspace");
   const ts = Math.floor(Date.now() / 1000).toString();
-  const sig = crypto.createHmac("sha256", secret).update(`${ts}.${rawBody}`).digest("hex");
+  const sig = crypto
+    .createHmac("sha256", secret)
+    .update(`${ts}.${workspaceNs}.${rawBody}`)
+    .digest("hex");
   return {
     "Content-Type": "application/json",
     "x-ghosty-ts": ts,
+    "x-ghosty-ws": workspaceNs,
     "x-ghosty-sig": sig,
   };
 }

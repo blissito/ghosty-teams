@@ -16,7 +16,10 @@ export type FleetPool = {
 
 /** Lista los FleetAgent del owner en Studio. GET firma HMAC sobre body vacío. */
 export async function listNativeFleetAgents(base: string, ownerUserId: string): Promise<FleetPool[]> {
-  const headers = partnerHeaders(""); // canonical `${ts}.` (body vacío)
+  const { currentNamespace } = await import("./tenant.server");
+  const headers = partnerHeaders("", await currentNamespace()); // canonical `${ts}.${ws}.`
+  // `ownerUserId` va por compat: Studio lo ignora y resuelve el dueño desde el
+  // workspace que firmó. Se manda para que una punta vieja siga funcionando.
   const url = `${base}/api/v2/fleet-agents?ownerUserId=${encodeURIComponent(ownerUserId)}`;
   const res = await fetch(url, { headers });
   if (!res.ok) throw new Error(`fleet-agents(native) ${res.status}: ${await res.text()}`);
@@ -36,9 +39,10 @@ export async function createNativeFleetAgent(
     name,
     persona: { name },
   });
+  const { currentNamespace } = await import("./tenant.server");
   const res = await fetch(`${base}/api/v2/fleet-agents`, {
     method: "POST",
-    headers: partnerHeaders(body),
+    headers: partnerHeaders(body, await currentNamespace()),
     body,
   });
   if (!res.ok) throw new Error(`fleet-agents(native) create ${res.status}: ${await res.text()}`);

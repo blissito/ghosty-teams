@@ -198,6 +198,10 @@ export const createAgentFn = createServerFn({ method: "POST" })
       avatar: data.avatar?.trim() || null,
       systemPrompt: data.systemPrompt?.trim() || null,
       createdBy: user.sub,
+      // Este camino ADOPTA un agente que ya existe en la flota de EasyBits
+      // (`fleetAgentsWithRefresh`), así que ahí corre. Un webhook no tiene runtime:
+      // la URL ya dice todo.
+      runtime: data.kind === "fleet" ? "easybits" : null,
     });
     return { ok: true as const, handle: ag.handle };
   });
@@ -227,9 +231,14 @@ export const createManagedAgentFn = createServerFn({ method: "POST" })
     // actual, sin cambio). ADITIVO: no flipea a nadie que hoy esté en EasyBits.
     const { nativeRuntimeBase, partnerHeaders } = await import("./ghosty-runtime.server");
     const base = await nativeRuntimeBase();
+    // El agente queda MARCADO con el runtime donde nació. Antes no se guardaba y
+    // había que adivinarlo después por la config del workspace — que es de todos
+    // los agentes, no de éste.
+    const { kindForNewAgent } = await import("./agent-runtime.server");
+    const runtime = kindForNewAgent(base);
     if (base) {
       const payload = JSON.stringify({ ownerUserId: user.sub, engine: data.engine, name, persona: { name } });
-      const res = await fetch(`${base}/api/v2/fleet-agents`, { method: "POST", headers: partnerHeaders(payload), body: payload });
+      const res = await fetch(`${base}/api/v2/fleet-agents`, { method: "POST", headers: partnerHeaders(payload, await (await import("./tenant.server")).currentNamespace()), body: payload });
       if (!res.ok) throw new Error(`alta nativa ${res.status}: ${(await res.text()).slice(0, 200)}`);
       const j = (await res.json()) as { id: string; token: string };
       fleetId = j.id;
@@ -256,6 +265,7 @@ export const createManagedAgentFn = createServerFn({ method: "POST" })
       fleetId,
       fleetToken,
       createdBy: user.sub,
+      runtime,
     });
     return { ok: true as const, handle: ag.handle };
   });

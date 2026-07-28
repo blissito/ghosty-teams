@@ -43,11 +43,12 @@ export const fleetChannelStateFn = createServerFn({ method: "GET" })
     const be = await resolveFleetAgent(data.id);
     if (!be) return { native: false as const, fleet: false as const };
     const { nativeRuntimeBase, partnerHeaders } = await import("./ghosty-runtime.server");
+    const { currentNamespace } = await import("./tenant.server");
     const base = await nativeRuntimeBase();
     if (!base) return { native: false as const, fleet: true as const };
     try {
       const res = await fetch(`${base}/api/v2/fleet-agents/${be.id}/capabilities`, {
-        headers: partnerHeaders(""),
+        headers: partnerHeaders("", await currentNamespace()),
       });
       if (!res.ok) return { native: true as const, fleet: true as const, teams: true, fleetId: be.id };
       const j = (await res.json()) as { channels?: { teams?: boolean }; name?: string };
@@ -69,12 +70,13 @@ export const setFleetChannelFn = createServerFn({ method: "POST" })
     const be = await resolveFleetAgent(data.id);
     if (!be) throw new Error("este agente no es de flota");
     const { nativeRuntimeBase, partnerHeaders } = await import("./ghosty-runtime.server");
+    const { currentNamespace } = await import("./tenant.server");
     const base = await nativeRuntimeBase();
     if (!base) throw new Error("runtime no nativo");
     const body = JSON.stringify({ action: "set-channel", channel: "teams", on: data.on });
     const res = await fetch(`${base}/api/v2/fleet-agents/${be.id}/capabilities`, {
       method: "POST",
-      headers: partnerHeaders(body),
+      headers: partnerHeaders(body, await currentNamespace()),
       body,
     });
     if (!res.ok) throw new Error(`set-channel ${res.status}: ${await res.text().catch(() => "")}`);
