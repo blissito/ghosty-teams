@@ -190,7 +190,12 @@ export function SettingsContent({
     // al cambiar de pestaña. El cuerpo derecho scrollea por dentro.
     <div className="flex h-[85dvh] max-h-[620px] text-ink">
       {/* Rail de navegación (fijo) */}
-      <div className="flex w-16 shrink-0 flex-col gap-1 border-r border-border bg-surface p-2 sm:w-52 sm:p-3">
+      {/* El rail va en la superficie RECESIVA y el contenido en la elevada — Slack,
+          Linear, Notion y macOS lo hacen así, y es lo que hace que la navegación
+          se lea "al fondo" y el panel "al frente". Estaba al revés (rail en
+          `surface`, cuerpo del modal en `surface-2`) y se sentía invertido.
+          Reportado por Brendi. */}
+      <div className="flex w-16 shrink-0 flex-col gap-1 border-r border-border bg-surface-2 p-2 sm:w-52 sm:p-3">
         <p className="hidden px-2 pb-2 pt-1 text-sm font-semibold sm:block">{t("Preferencias")}</p>
         {tabs.map((tb) => {
           const Icon = tb.icon;
@@ -211,7 +216,7 @@ export function SettingsContent({
       </div>
 
       {/* Panel derecho */}
-      <div className="flex min-w-0 flex-1 flex-col">
+      <div className="flex min-w-0 flex-1 flex-col bg-surface">
         <div className="flex shrink-0 items-center justify-between px-6 pb-3 pt-5">
           <h2 className="text-lg font-semibold">{activeLabel}</h2>
           {onClose && (
