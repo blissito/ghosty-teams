@@ -7000,6 +7000,14 @@ function StepList({ steps, emojis }: { steps: string[]; emojis?: { name: string;
 }
 
 function ToolGroup({ tools }: { tools: ToolState[] }) {
+  // Las etiquetas las arma el SERVER en español y viajan dentro del cuerpo del
+  // mensaje. Como el i18n de Teams usa el texto fuente COMO clave, pasarlas por
+  // t() basta para que se traduzcan igual que el resto de la UI — sin cambiar el
+  // formato del bloque ni tocar los mensajes ya guardados.
+  //
+  // Una tool sin traducción (las humanizadas: "generate image") sale tal cual, que
+  // es lo correcto: es el nombre real de la herramienta, no una frase nuestra.
+  const tr = useT();
   const anyRunning = tools.some((t) => t.status === "running");
   const anyError = tools.some((t) => t.status === "error");
   const overall: ToolState["status"] = anyError ? "error" : anyRunning ? "running" : "done";
@@ -7023,7 +7031,7 @@ function ToolGroup({ tools }: { tools: ToolState[] }) {
       <div className="mb-1.5 flex max-w-md items-center gap-2 rounded-lg border border-border bg-surface-2/50 px-2.5 py-1.5 text-xs">
         <Wrench size={12} className="shrink-0 text-muted" />
         {icon(t.status, 12)}
-        <span className={`truncate ${t.status === "error" ? "text-red-500" : "text-ink"}`}>{t.label}</span>
+        <span className={`truncate ${t.status === "error" ? "text-red-500" : "text-ink"}`}>{tr(t.label)}</span>
         {t.detail ? <span className="truncate font-mono text-[10px] text-muted/70">· {t.detail}</span> : null}
         {t.n && t.n > 1 ? <span className="shrink-0 text-[10px] text-muted/70">×{t.n}</span> : null}
       </div>
@@ -7046,7 +7054,7 @@ function ToolGroup({ tools }: { tools: ToolState[] }) {
           {tools.map((t, i) => (
             <div key={i} className="flex items-center gap-2 py-0.5 text-xs">
               {icon(t.status)}
-              <span className={t.status === "error" ? "text-red-500" : "text-muted"}>{t.label}</span>
+              <span className={t.status === "error" ? "text-red-500" : "text-muted"}>{tr(t.label)}</span>
               {t.detail ? <span className="truncate font-mono text-[10px] text-muted/70">· {t.detail}</span> : null}
               {t.n && t.n > 1 ? <span className="text-[10px] text-muted/70">×{t.n}</span> : null}
             </div>
