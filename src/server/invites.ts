@@ -14,6 +14,20 @@ export async function isKnownUser(sub: string): Promise<boolean> {
   return !!rows[0];
 }
 
+/**
+ * ¿El workspace todavía no tiene NINGÚN usuario? Entonces el que entra es su
+ * dueño (mismo criterio que usa upsertUser para poner `is_owner`).
+ *
+ * Se pregunta ANTES de crear la fila. El chequeo de acceso se hacía después del
+ * upsert y preguntaba `isKnownUser`, que encontraba el registro recién insertado:
+ * la puerta nunca se cerraba y cualquiera con identidad válida entraba a
+ * cualquier workspace sabiendo el subdominio.
+ */
+export async function isEmptyWorkspace(): Promise<boolean> {
+  const { rows } = await dbq("SELECT COUNT(*) AS n FROM gc_users");
+  return Number(rows[0]?.[0] ?? 0) === 0;
+}
+
 // El invite es un LINK PERMANENTE del equipo: el mismo link sirve para todos. NO se
 // "gasta" — nunca marcamos `used_by` (esa columna queda para tokens legacy). "Activo"
 // = fila con `used_by IS NULL`. Cancelar = borrar; refrescar = borrar + emitir otro.

@@ -111,6 +111,17 @@ export const completeGhostyLogin = createServerFn({ method: "POST" })
     const { isBanned } = await import("../users.server");
     if (await isBanned(id.sub)) throw new Error("sin acceso a este workspace");
 
+    // ── Puerta de acceso al workspace ────────────────────────────────────────
+    // ANTES de crear nada. Estaba DESPUÉS del upsert y preguntaba `isKnownUser`,
+    // que encontraba la fila recién insertada → la condición nunca se cumplía y
+    // cualquiera con una identidad válida entraba a cualquier workspace sabiendo
+    // el subdominio. Se entra sólo si: ya eras de la casa, traes invitación, o el
+    // workspace está vacío (primer login = su dueño).
+    const { isKnownUser, isEmptyWorkspace } = await import("./invites");
+    if (!invited && !(await isKnownUser(id.sub)) && !(await isEmptyWorkspace())) {
+      throw new Error("necesitas una invitación");
+    }
+
     const { upsertUser } = await import("../users.server");
     const user = await upsertUser({ sub: id.sub, email: id.email, name: id.name, avatar: id.avatar });
 
@@ -124,12 +135,6 @@ export const completeGhostyLogin = createServerFn({ method: "POST" })
       } catch (e) {
         console.warn("[auth] registerMembership falló (best-effort):", (e as Error)?.message);
       }
-    }
-
-    // Un no-owner sin invitación no puede entrar (solo el owner y los invitados).
-    if (!user.isOwner && !invited) {
-      const { isKnownUser } = await import("./invites");
-      if (!(await isKnownUser(id.sub))) throw new Error("necesitas una invitación");
     }
 
     const s = await session();
