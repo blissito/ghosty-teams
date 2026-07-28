@@ -816,8 +816,12 @@ async function runAgentTurnInner(opts: {
    *   rompe el fence — se perdería el artefacto por un adorno.
    */
   const narration = (): string => {
+    // Los bloques de artefacto (eb-file, eb-audio, eb-doc…) se extraen de la
+    // burbuja antes de pintarla, así que no cuentan para decidir: si contaran,
+    // cualquier turno que entregue un PDF perdería la lista.
+    const sinArtefactos = acc.replace(/```eb-[a-z]+[\s\S]*?```/g, "");
     const partes = [...segs, acc.slice(segStart)].map((x) => x.trim()).filter(Boolean);
-    if (partes.length < 2 || acc.includes("```")) return acc;
+    if (partes.length < 2 || sinArtefactos.includes("```")) return acc;
     // Un segmento multi-línea se indenta para quedar DENTRO de su ítem.
     return partes.map((x) => "- " + x.replace(/\n/g, "\n  ")).join("\n");
   };
