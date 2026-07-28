@@ -5998,6 +5998,30 @@ function FileGlyph({ mime, name }: { mime: string | null | undefined; name: stri
   );
 }
 
+/**
+ * Portada del adjunto: la MINIATURA si existe, el glifo si no.
+ *
+ * Enseñar la primera página resuelve lo que ningún ícono resolvió — se probó con
+ * glifo, con etiqueta de texto y con SVG, y siempre quedaba la duda de qué
+ * documento era. Con la portada no hay nada que interpretar.
+ */
+function FilePreview({ a }: { a: Attachment }) {
+  const [rota, setRota] = useState(false);
+  if (!a.thumb_file_id || rota) return <FileGlyph mime={a.mime} name={a.name} />;
+  return (
+    <img
+      src={`/api/attachment/${encodeURIComponent(a.thumb_file_id)}`}
+      alt=""
+      loading="lazy"
+      decoding="async"
+      onError={() => setRota(true)}
+      // Proporción de hoja y altura FIJA: la burbuja no debe brincar cuando la
+      // imagen aterriza. Si la miniatura no carga, cae al glifo.
+      className="h-12 w-9 shrink-0 rounded border border-border bg-surface object-cover object-top"
+    />
+  );
+}
+
 function AttachmentList({ attachments }: { attachments: Attachment[] }) {
   const t = useT();
   const { onOpenArtifact } = useContext(ChatCtx);
@@ -6033,7 +6057,7 @@ function AttachmentList({ attachments }: { attachments: Attachment[] }) {
               className="group flex max-w-xs items-center gap-2.5 rounded-lg border border-border bg-surface-2 px-3 py-2 text-left transition hover:border-brand"
               title={t("Abrir en panel")}
             >
-              <FileGlyph mime={a.mime} name={a.name} />
+              <FilePreview a={a} />
               <span className="min-w-0 flex-1">
                 <span className="block truncate text-sm text-ink">{a.name ?? t("Archivo")}</span>
                 <span className="block text-[11px] text-muted">{fmtBytes(a.size)}</span>

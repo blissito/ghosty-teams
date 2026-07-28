@@ -22,6 +22,10 @@ export type PublishedAttachment = {
   /** Sólo audio: onda y duración para la burbuja tipo PTT. */
   waveform?: string | null;
   durationMs?: number | null;
+  /** Miniatura ya publicada (p.ej. la página 1 de un PDF). Se re-sube igual que
+   *  el archivo: la URL publicada caduca a los 7 días y la miniatura debe durar
+   *  lo que dure el mensaje. */
+  thumbUrl?: string | null;
 };
 
 /**
@@ -41,9 +45,29 @@ export async function attachPublished(messageId: number, a: PublishedAttachment)
       contentType: a.mime,
       fileName: a.fileName,
     });
+    // La miniatura es OPCIONAL: si falla, el adjunto se crea igual y la tarjeta
+    // cae al ícono. No vale perder el archivo por no tener su preview.
+    let thumbFileId: string | null = null;
+    if (a.thumbUrl) {
+      try {
+        const tr = await fetch(a.thumbUrl);
+        if (tr.ok) {
+          const tb = Buffer.from(await tr.arrayBuffer());
+          const tup = await uploadToEasyBits({
+            blob: new Blob([tb], { type: "image/png" }),
+            contentType: "image/png",
+            fileName: a.fileName.replace(/\.[a-z0-9]+$/i, "") + "-thumb.png",
+          });
+          thumbFileId = tup.fileId;
+        }
+      } catch (e) {
+        console.error(`[attach] miniatura de ${a.fileName} falló:`, e instanceof Error ? e.message : e);
+      }
+    }
     await db.createAttachments(messageId, [
       {
         fileId: up.fileId,
+        thumbFileId,
         mime: up.mime || a.mime,
         size: up.size ?? bytes.length,
         name: a.name,

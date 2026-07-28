@@ -244,7 +244,7 @@ export function stripEbAudio(body: string): string {
 //
 // Que se vuelva adjunto no es sólo cosmético: deja de depender de que la URL
 // publicada siga viva, y queda buscable y reenviable como cualquier otro archivo.
-export type EbFile = { url: string; name?: string; mime?: string; size?: number };
+export type EbFile = { url: string; name?: string; mime?: string; size?: number; thumb?: string };
 
 export function extractEbFile(body: string): EbFile | null {
   const open = body.match(/```eb-file[^\n]*\n/);

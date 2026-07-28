@@ -334,6 +334,7 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
           name: ebFile.name || "Archivo",
           fileName: safeFileName(ebFile.name, "archivo"),
           mime: ebFile.mime || "application/octet-stream",
+          thumbUrl: ebFile.thumb,
         });
         if (ok) fanout({ t: "refresh", channelId: null, parentId: null, dmId: data.id });
         return { ok: true as const };

@@ -759,6 +759,7 @@ export const askAgent = createServerFn({ method: "POST" })
           name: ebFile.name || "Archivo",
           fileName: safeFileName(ebFile.name, "archivo"),
           mime: ebFile.mime || "application/octet-stream",
+          thumbUrl: ebFile.thumb,
         });
         if (ok) bus.publish(bus.ch.room(ns, channel.id), { t: "refresh", channelId: channel.id, parentId: data.parentId });
         return { ok: true as const };
