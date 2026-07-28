@@ -59,6 +59,7 @@ async function deliverWebPush(ev: NotifyEvent, ns: string): Promise<void> {
       })
     );
   }
+  const tally = { ok: 0, gone: 0, error: 0 };
   await Promise.all(
     stored.map(async (s) => {
       const payload = {
@@ -77,9 +78,13 @@ async function deliverWebPush(ev: NotifyEvent, ns: string): Promise<void> {
         payload,
         isCall ? { ttl: 45, urgency: "high" as const } : undefined
       );
+      tally[r]++;
       if (r === "gone") await db.deletePushSub(s.endpoint);
     })
   );
+  // Traza del fan-out: `error` sistemático = el canal está roto (VAPID ausente, VAPID
+  // mal pareado con las subs, red). Antes se descartaba y no había cómo notarlo.
+  console.log(`[push ${ev.kind}] subs=${stored.length} ok=${tally.ok} gone=${tally.gone} error=${tally.error}`);
 }
 
 // Canal: Email (AWS SES). Estilo Slack/Zulip: SOLO se envía correo a quien está

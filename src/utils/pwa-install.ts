@@ -52,6 +52,11 @@ export function registerSW() {
   const doRegister = () =>
     navigator.serviceWorker
       .register("/sw.js", { scope: "/", updateViaCache: "none" })
+      // Tras registrar, repara una suscripción firmada con un VAPID ya rotado: si no,
+      // el panel dice "activado" y no llega nada hasta que alguien lo re-active a mano.
+      .then(() =>
+        import("./push-subscribe").then((m) => m.reconcilePushSubscription()).catch(() => {})
+      )
       .catch(() => {});
   if (typeof document !== "undefined" && document.readyState === "complete") {
     doRegister();

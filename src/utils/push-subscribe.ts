@@ -26,6 +26,30 @@ export async function currentPushState(): Promise<"unsupported" | "denied" | "on
   return sub ? "on" : "off";
 }
 
+// Reconciliación tras una ROTACIÓN de VAPID. Una suscripción firmada con la llave
+// vieja sigue existiendo en el browser —`currentPushState()` dice "on"— pero el
+// server ya no puede enviarle nada: el panel miente y no llega nada. Aquí se
+// compara la applicationServerKey de la sub contra la vigente y, si difieren, se
+// re-suscribe sola. El permiso ya está concedido → no hay prompt.
+// Best-effort y silencioso: es una reparación de fondo, no una acción del usuario.
+export async function reconcilePushSubscription(): Promise<void> {
+  if (!pushSupported() || Notification.permission !== "granted") return;
+  try {
+    const reg = await navigator.serviceWorker.getRegistration();
+    const sub = await reg?.pushManager.getSubscription();
+    if (!sub) return; // sin sub no hay nada que reconciliar (activar es decisión del usuario)
+    const { key } = await getVapidKeyFn();
+    const current = sub.options?.applicationServerKey;
+    if (!current) return; // el browser no lo expone → no podemos comparar, no tocamos nada
+    const a = new Uint8Array(current);
+    const b = urlBase64ToUint8Array(key);
+    if (a.length === b.length && a.every((v, i) => v === b[i])) return; // al día
+    await enablePush(); // desuscribe la vieja y suscribe con la llave vigente
+  } catch {
+    /* SW muriendo / server caído → se reintenta en la próxima carga */
+  }
+}
+
 // Pide permiso, suscribe y guarda en el server. Devuelve el nuevo estado.
 export async function enablePush(): Promise<"on" | "denied" | "unsupported"> {
   if (!pushSupported()) return "unsupported";

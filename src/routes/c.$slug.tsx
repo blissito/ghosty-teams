@@ -1621,6 +1621,16 @@ function ChannelPage() {
           });
           // DM 1:1 = ring en loop (el effect de abajo lo gestiona). Room = un chime.
           if (ev.scope === "room") playNotificationSound();
+          // Con la pestaña en otra ventana, el banner in-app no se ve y el timbre puede
+          // pasar por "un sonido cualquiera" (reporte del 2026-07-27). Segundo camino,
+          // independiente del Web Push: notificación del SO desde la propia página.
+          if (document.hidden) {
+            showSystemNotification(
+              `${ev.host.name} está llamando`,
+              ev.scope === "room" ? `Llamada en #${ev.label}` : "Llamada directa",
+              ev.slug
+            );
+          }
           // Auto-descarta a los 30s (llamada no contestada) si sigue viva.
           clearIncomingTimer(k);
           incomingTimers.current.set(k, setTimeout(() => { clearIncomingTimer(k); dismissIncoming(k); }, 30000));

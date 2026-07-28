@@ -77,6 +77,17 @@ concedido no hay badge en ningún navegador.
 - `src/push.server.ts` — VAPID, `sendPush`, shape del payload.
 - `public/sw.js` — `push` / `notificationclick`; badge y cierre remoto.
 - `src/utils/system-notification.ts` — aviso del SO disparado por la página.
-- `src/utils/push-subscribe.ts` — permiso + suscripción (tolera rotación de VAPID).
+- `src/utils/push-subscribe.ts` — permiso + suscripción. `reconcilePushSubscription()`
+  corre al registrar el SW (`pwa-install.ts`) y re-suscribe solo si la sub del browser
+  quedó firmada con un VAPID ya rotado: sin eso el panel dice "activado" y no llega nada.
+
+## Rotar VAPID
+
+Cambiar `VAPID_PUBLIC_KEY` (`src/push.server.ts`) **invalida todas las subs**. Receta:
+`npx web-push generate-vapid-keys` → pública a la constante, privada a
+`/app/secrets.env` de la caja (con `read -s`, nunca por argv) → restart → borrar las
+filas de `gc_push_subs` (quedan huérfanas). Los clientes se reconcilian solos al cargar.
+⚠️ Guarda la privada: la del par 2026-07-22 se perdió al migrar la caja y por eso hubo
+que rotar el 2026-07-27. Ver el checklist de secretos en `DEPLOY.md`.
 - `src/server/reads.ts` + `db.markRead/unreadBy*` — no-leídos.
 - `src/server/quick-calls.ts` — llamadas.

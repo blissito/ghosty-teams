@@ -32,6 +32,32 @@
 > `rebake_ghosty_teams.sh` **no lo hace** (se escribió asumiendo el primer bake, cuando el
 > archivo no existía) y `build_template.sh:233` hace `rm -f` del ext4 vivo antes de reconstruir.
 >
+> ### 🔑 Secretos que hay que verificar tras RECREAR la caja
+>
+> `/app/secrets.env` **no se versiona ni se sincroniza**: se mantiene a mano en la caja.
+> Recrear/migrar la caja lo deja incompleto y **el faltante es silencioso**. Ya mordió dos
+> veces: `HUDDLE_*`/`LK_*` ("llamadas no disponibles") y **`VAPID_PRIVATE_KEY`** en la
+> migración del 2026-07-26 — sin ella `sendPush` devolvía `"error"` para TODO y Web Push
+> quedó apagado ~24h sin una línea de log (llamadas, menciones y DMs). La private del par
+> anterior no estaba guardada en ningún lado, así que hubo que **rotar el par VAPID**
+> (2026-07-27) y los usuarios re-suscribieron.
+>
+> Checklist mínimo en la caja nueva:
+>
+> ```sh
+> for k in VAPID_PRIVATE_KEY SESSION_SECRET SQLD_AUTH_TOKEN HUDDLE_ADMIN_TOKEN \
+>          LK_API_SECRET SES_KEY TIGRIS_SECRET_ACCESS_KEY GHOSTY_PARTNER_SECRET; do
+>   grep -q "^$k=" /app/secrets.env || echo "FALTA $k"
+> done
+> ```
+>
+> Y en el proceso vivo (el archivo puede estar bien y el unit no haberlo releído):
+> `tr '\0' '\n' < /proc/$(pidof -s node)/environ | grep -c VAPID_PRIVATE_KEY`.
+>
+> Señal en journal desde 2026-07-27: `[push] DESACTIVADO: falta VAPID_PRIVATE_KEY` al
+> primer intento, y una línea `[push <kind>] subs=N ok=… gone=… error=…` por fan-out.
+> `error` sistemático = canal roto.
+>
 > ### ⏳ PENDIENTE tras el rebake del 2026-07-27
 > El ext4 está al día, pero **`ensureBaseLoop` cachea un loop RO por template en memoria del
 > daemon**. Tras el `rm -f` el loop quedó apuntando al inode viejo (`losetup -a` lo muestra como
