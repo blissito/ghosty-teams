@@ -96,8 +96,26 @@ export function Inspector({
 function ClassChips({ store, node }: { store: EditorStore; node: Node }) {
   const [q, setQ] = useState('')
   const [raw, setRaw] = useState(false)
+  // Índice del resaltado. −1 = ninguno: Enter inserta EXACTAMENTE lo escrito, que
+  // es lo que hace falta para las clases que el autocompletado no conoce
+  // (arbitrarias, `group-hover:…`). Sólo al bajar con ↓ se toma una sugerencia.
+  const [hi, setHi] = useState(-1)
   const suggestions = autocomplete(q)
+  const listRef = useRef<HTMLDivElement>(null)
   const chips = classList(node.cls)
+  const setQuery = (v: string) => {
+    setQ(v)
+    setHi(-1)
+  }
+  const commit = (cls: string) => {
+    store.setNodeClasses(node.id, addClass(node.cls, cls))
+    setQuery('')
+  }
+  // Mantiene visible el resaltado al recorrer la lista con el teclado.
+  useLayoutEffect(() => {
+    if (hi < 0) return
+    listRef.current?.children[hi]?.scrollIntoView({ block: 'nearest' })
+  }, [hi])
   return (
     <Section
       title="Clases"
@@ -129,18 +147,63 @@ function ClassChips({ store, node }: { store: EditorStore; node: Node }) {
               placeholder="añadir clase…"
               value={q}
               spellCheck={false}
-              onChange={(e) => setQ(e.target.value)}
+              autoComplete="off"
+              role="combobox"
+              aria-expanded={suggestions.length > 0}
+              aria-activedescendant={hi >= 0 ? `ce-sug-${hi}` : undefined}
+              onChange={(e) => setQuery(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === 'Enter' && q.trim()) {
-                  store.setNodeClasses(node.id, toggleClass(node.cls, q.trim()))
-                  setQ('')
+                if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+                  if (!suggestions.length) return
+                  e.preventDefault() // si no, el cursor salta al inicio/fin del input
+                  const d = e.key === 'ArrowDown' ? 1 : -1
+                  // Envuelve por los dos lados, con −1 ("lo que escribí") como una
+                  // parada más del ciclo: se puede volver al texto crudo sin ratón.
+                  setHi((i) => {
+                    const n = suggestions.length
+                    return i + d < -1 ? n - 1 : i + d >= n ? -1 : i + d
+                  })
+                  return
+                }
+                if (e.key === 'Escape' && hi >= 0) {
+                  e.preventDefault()
+                  setHi(-1)
+                  return
+                }
+                // Tab acepta el resaltado sin cerrar el flujo: el patrón de un
+                // autocompletado de editor.
+                if (e.key === 'Tab' && hi >= 0) {
+                  e.preventDefault()
+                  commit(suggestions[hi])
+                  return
+                }
+                if (e.key === 'Enter') {
+                  if (hi >= 0) {
+                    e.preventDefault()
+                    commit(suggestions[hi])
+                  } else if (q.trim()) {
+                    store.setNodeClasses(node.id, toggleClass(node.cls, q.trim()))
+                    setQuery('')
+                  }
                 }
               }}
             />
             {suggestions.length > 0 && (
-              <div style={styles.menu}>
-                {suggestions.map((s) => (
-                  <button key={s} style={{ ...styles.menuItem, fontFamily: 'monospace' }} onClick={() => { store.setNodeClasses(node.id, addClass(node.cls, s)); setQ('') }}>
+              <div style={styles.menu} ref={listRef}>
+                {suggestions.map((s, i) => (
+                  <button
+                    key={s}
+                    id={`ce-sug-${i}`}
+                    style={{
+                      ...styles.menuItem,
+                      fontFamily: 'monospace',
+                      background: i === hi ? '#3730a3' : 'transparent',
+                    }}
+                    // `mouseDown` y no `mouseEnter`: mover el ratón por encima no
+                    // debe robarle el resaltado a quien está usando el teclado.
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => commit(s)}
+                  >
                     {s}
                   </button>
                 ))}

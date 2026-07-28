@@ -1545,7 +1545,9 @@ export default function ArtifactPanel({
                       <div className="flex items-center gap-2 border-t border-border bg-surface px-3 py-2">
                         <span className="truncate text-xs text-muted">{shareUrl}</span>
                         <a
-                          href={shareUrl}
+                          // Igual que el botón de la barra: abrir enseña LO QUE ESTÁS
+                          // VIENDO (`?v=latest`), no la versión fijada para terceros.
+                          href={`${shareUrl}?v=latest`}
                           target="_blank"
                           rel="noreferrer"
                           className="ml-auto shrink-0 rounded-md border border-border px-2 py-1 text-xs text-ink transition hover:border-brand"

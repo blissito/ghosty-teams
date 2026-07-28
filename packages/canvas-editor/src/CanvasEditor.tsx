@@ -322,6 +322,9 @@ export function CanvasEditor({ doc, onChange, refineProvider, imageProvider, onA
         if (!spaceDown.current) {
           spaceDown.current = true
           setSpacePan(true)
+          // `user-select: none` impide seleccionar NUEVO texto, pero lo que ya
+          // estaba resaltado se queda pintado de azul sobre el artefacto.
+          window.getSelection()?.removeAllRanges()
         }
       }
     }
@@ -610,7 +613,15 @@ export function CanvasEditor({ doc, onChange, refineProvider, imageProvider, onA
         <div
           ref={viewportRef}
           className={'ce-viewport' + (state.xray ? ' ce-xray' : '')}
-          style={{ cursor: spacePan || state.tool === 'hand' ? 'grab' : 'default' }}
+          style={{
+            cursor: spacePan || state.tool === 'hand' ? 'grab' : 'default',
+            // Arrastrar para desplazar el lienzo NO debe seleccionar texto: el
+            // navegador interpreta el barrido como una selección y el artefacto
+            // se llena de resaltado azul. Se apaga sólo mientras se panea, para
+            // no perder el poder copiar texto del artefacto el resto del tiempo.
+            userSelect: spacePan || state.tool === 'hand' ? 'none' : undefined,
+            WebkitUserSelect: spacePan || state.tool === 'hand' ? 'none' : undefined,
+          }}
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}
           onPointerUp={onPointerUp}

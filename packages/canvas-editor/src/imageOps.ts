@@ -199,10 +199,12 @@ export function measureContext(id: NodeId): string {
   // está entre sus descendientes, no entre sus hermanos. Sólo se miran los
   // posicionados — el flujo normal no se encabalga, y compararlo todo contra todo
   // llenaría el contexto de ruido (un texto SIEMPRE se solapa con su div padre).
-  const placed = Array.from(el.querySelectorAll<HTMLElement>('[data-id]')).filter((n) => {
-    const pos = getComputedStyle(n).position
-    return pos === 'absolute' || pos === 'fixed'
-  })
+  // Se miran TODOS los descendientes, no sólo los `absolute`: un solape también
+  // sale de un margen negativo, un `transform` o una caja que desborda, y filtrar
+  // por posición dejaba fuera el caso real (dos badges encimados que el modelo
+  // "reparó" sin separar, porque nadie le dijo que seguían encimados).
+  // Los pares anidados se excluyen abajo — un texto SIEMPRE cae dentro de su div.
+  const placed = Array.from(el.querySelectorAll<HTMLElement>('[data-id]'))
   const inner: string[] = []
   for (let i = 0; i < placed.length && inner.length < 4; i++) {
     for (let j = i + 1; j < placed.length && inner.length < 4; j++) {
