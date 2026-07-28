@@ -6606,7 +6606,40 @@ function MessageRow({
   // Mientras un popover de la barra (reaccionar/⋯) esté abierto, la barra NO debe
   // desaparecer al perder el hover del row (si no, el popover se vuelve inclicable).
   const [menuOpen, setMenuOpen] = useState(false);
-  const barVisible = menuOpen || pickerFor === m.id; // ⋯ propio o picker global de esta fila
+  // TÁCTIL: la barra se abre con PULSACIÓN LARGA, no siempre visible.
+  //
+  // Antes en móvil estaba `opacity-100` fija, así que TODOS los mensajes llevaban
+  // su barra encima y la pantalla se llenaba de íconos repetidos — imposible leer
+  // la conversación. Es lo que se ve en cuanto abres el chat en el teléfono.
+  //
+  // La convención en táctil es la pulsación larga (WhatsApp, Telegram, Slack,
+  // Discord): sin hover no hay forma de "acercarse" a un mensaje, así que la
+  // intención se declara manteniendo el dedo.
+  const [pressed, setPressed] = useState(false);
+  const pressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const cancelPress = () => {
+    if (pressTimer.current) clearTimeout(pressTimer.current);
+    pressTimer.current = null;
+  };
+  const onTouchStart = () => {
+    cancelPress();
+    // 450ms: por debajo se dispara al hacer scroll; por encima se siente lento.
+    pressTimer.current = setTimeout(() => setPressed(true), 450);
+  };
+  const barVisible = menuOpen || pressed || pickerFor === m.id; // ⋯, pulsación larga o picker de esta fila
+
+  // Cerrar al tocar fuera. Sin esto la barra abierta por pulsación larga se queda
+  // pegada y volvemos al problema original, sólo que en una fila en vez de todas.
+  useEffect(() => {
+    if (!pressed) return;
+    const fuera = (e: Event) => {
+      const row = document.getElementById(`msg-${m.id}`);
+      if (row && !row.contains(e.target as Node)) setPressed(false);
+    };
+    // `capture` para enterarnos aunque el destino detenga la propagación.
+    document.addEventListener("touchstart", fuera, true);
+    return () => document.removeEventListener("touchstart", fuera, true);
+  }, [pressed, m.id]);
   // OJO: agent_handle también se setea en el mensaje HUMANO que TAGEA a un agente
   // (createMessage guarda mentions_ghosty=1). El reply DEL agente lo hace postAgent
   // con mentions_ghosty=0. Así, "es del agente" = tiene handle Y no es una mención.
@@ -6665,7 +6698,17 @@ function MessageRow({
   }
 
   return (
-    <div id={`msg-${m.id}`} className={`group relative flex items-start gap-3 rounded-lg px-2 transition-colors hover:bg-surface-2 ${grouped ? "py-px" : "mt-2 py-0.5"}`}>
+    <div
+      id={`msg-${m.id}`}
+      // Táctil: mantener el dedo abre la barra; soltar, mover (scroll) o tocar
+      // fuera la cierra. En puntero no interviene — ahí manda el hover de siempre.
+      onTouchStart={onTouchStart}
+      onTouchEnd={cancelPress}
+      onTouchMove={cancelPress}
+      onTouchCancel={cancelPress}
+      onPointerDown={(e) => { if (e.pointerType !== "touch") setPressed(false); }}
+      className={`group relative flex items-start gap-3 rounded-lg px-2 transition-colors hover:bg-surface-2 ${grouped ? "py-px" : "mt-2 py-0.5"} ${pressed ? "bg-surface-2" : ""}`}
+    >
       {grouped ? (
         // Agrupado: sin avatar. Gutter angosto que muestra la hora SOLO al hover (Slack).
         // suppressHydrationWarning: la hora se formatea en la ZONA HORARIA del que
@@ -6702,7 +6745,7 @@ function MessageRow({
       {m.kind === "msg" && !editing && (
         <div
           className={`absolute right-2 top-0 z-20 flex -translate-y-1/2 items-center gap-0.5 rounded-lg border border-border bg-surface-2 px-0.5 shadow-sm transition ${
-            barVisible ? "opacity-100" : "opacity-100 md:opacity-0 md:group-hover:opacity-100"
+            barVisible ? "opacity-100" : "pointer-events-none opacity-0 md:pointer-events-auto md:group-hover:opacity-100"
           }`}
         >
           {/* Orden: emoji → hilo → flechas (responder, reenviar) → editar (propio) → ⋯.
