@@ -6022,6 +6022,52 @@ function FilePreview({ a }: { a: Attachment }) {
   );
 }
 
+/**
+ * Tarjeta de un documento CON portada. Formato vertical, la página arriba y el
+ * nombre en una franja abajo — como Drive o Slack.
+ *
+ * La primera versión metía la portada en el hueco del ícono (36×48px). Ahí la
+ * miniatura no sirve para nada: a ese tamaño no se distingue de un glifo, que
+ * era justo el problema que veníamos a resolver. Una portada tiene que leerse.
+ *
+ * Sin portada se conserva la fila compacta de siempre (`FileRow`): una tarjeta
+ * grande con un ícono en el centro sería puro aire.
+ */
+function FileCard({ a, onOpen, title }: { a: Attachment; onOpen: () => void; title: string }) {
+  const [rota, setRota] = useState(false);
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      className="group w-44 overflow-hidden rounded-xl border border-border bg-surface-2 text-left transition hover:border-brand"
+      title={title}
+    >
+      {/* Altura fija y `object-top`: se ve el encabezado del documento (que es lo
+          que lo identifica) y la burbuja no brinca al aterrizar la imagen. */}
+      <span className="block h-32 w-full overflow-hidden border-b border-border bg-surface">
+        {rota ? (
+          <span className="flex h-full items-center justify-center">
+            <FileGlyph mime={a.mime} name={a.name} />
+          </span>
+        ) : (
+          <img
+            src={`/api/attachment/${encodeURIComponent(a.thumb_file_id!)}`}
+            alt=""
+            loading="lazy"
+            decoding="async"
+            onError={() => setRota(true)}
+            className="h-full w-full object-cover object-top transition group-hover:scale-[1.02]"
+          />
+        )}
+      </span>
+      <span className="block px-2.5 py-2">
+        <span className="block truncate text-sm text-ink">{a.name ?? "Archivo"}</span>
+        <span className="block text-[11px] text-muted">{fmtBytes(a.size)}</span>
+      </span>
+    </button>
+  );
+}
+
 function AttachmentList({ attachments }: { attachments: Attachment[] }) {
   const t = useT();
   const { onOpenArtifact } = useContext(ChatCtx);
@@ -6049,6 +6095,18 @@ function AttachmentList({ attachments }: { attachments: Attachment[] }) {
         // PDF y Office (docx/xlsx/pptx) → card que abre el VISOR en el panel lateral
         // (preview mammoth / tabla xlsx), no descarga. La descarga vive en el header del panel.
         if (view?.kind === "pdf" || view?.kind === "office") {
+          // Con portada → tarjeta grande (se ve el documento). Sin portada →
+          // fila compacta con glifo, que es todo lo que hay que enseñar.
+          if (a.thumb_file_id) {
+            return (
+              <FileCard
+                key={a.id}
+                a={a}
+                onOpen={() => onOpenArtifact(view)}
+                title={t("Abrir en panel")}
+              />
+            );
+          }
           return (
             <button
               key={a.id}

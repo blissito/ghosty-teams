@@ -656,10 +656,35 @@ function humanizeToolName(raw: string): string {
  * esconde. Un checklist incompleto es peor que uno con nombres feos, porque el
  * usuario no tiene forma de saber que le falta algo.
  */
-function toolLabel(raw: string): { ing: string; done: string } {
+/**
+ * Plumbing puro: pasos que no son una acción del agente sino cómo la ejecuta.
+ *
+ * Es una lista CORTA y explícita, no una whitelist invertida: lo que no está acá
+ * se muestra. En code-mode el agente escribe un `.mjs` y lo corre, así que Write
+ * y Bash aparecen en CADA turno — enseñarlos es enseñar "usó la computadora".
+ * El significado lo pone `semanticToolName` en el worker, que traduce ese Bash a
+ * la acción real (gs_render, gs_image_generate…) mirando qué importa el script.
+ */
+const TOOLS_OCULTAS = new Set([
+  "Bash", "BashOutput", "KillShell", "Write", "Edit", "MultiEdit", "NotebookEdit",
+  "Glob", "Grep", "LS", "TodoWrite", "ExitPlanMode",
+]);
+
+function toolLabel(raw: string): { ing: string; done: string } | null {
   const short = raw.replace(/^mcp__[^_]+__/, "").replace(/^mcp__/, "");
   const conocida = TOOL_LABELS[raw] || TOOL_LABELS[short];
   if (conocida) return conocida;
+  // Conector per-usuario: el worker manda `gs_connector:denik_list_appointments`.
+  // El proveedor va al frente porque es lo que el usuario reconoce ("su" Deník),
+  // y el resto de la acción se humaniza igual que cualquier otra.
+  if (raw.startsWith("gs_connector:")) {
+    const full = raw.slice("gs_connector:".length);
+    const [prov, ...resto] = full.split("_");
+    const acc = humanizeToolName(resto.join("_") || full);
+    const marca = prov.charAt(0).toUpperCase() + prov.slice(1);
+    return { ing: `${marca}: ${acc}`, done: `${marca}: ${acc}` };
+  }
+  if (TOOLS_OCULTAS.has(raw) || TOOLS_OCULTAS.has(short)) return null;
   const humano = humanizeToolName(raw);
   return { ing: humano, done: humano };
 }
@@ -729,7 +754,13 @@ async function runAgentTurnInner(opts: {
   type ToolEntry = { ing: string; done: string; started: Set<string>; ended: Set<string>; failed: boolean; detail?: string };
   const tools: ToolEntry[] = [];
   const idToEntry = new Map<string, ToolEntry>(); // id de tool_use → su entrada (para el 'end')
+  // Segmentos de narración: cada corte lo produce una tool. El agente dice "voy a
+  // sacar el brandkit", corre algo, dice "listo, ahora la paleta"… Son PASOS, y
+  // como párrafos seguidos se leían como un muro donde nada se distingue.
+  // Se guardan aparte para poder pintarlos como lista (ver `narration`).
+  const segs: string[] = [];
   let acc = "";
+  let segStart = 0; // inicio del segmento en curso dentro de `acc`
   let brokeByTool = false; // corrió una tool desde el último texto → el próximo es segmento nuevo
   let anyActivity = false;  // corrió CUALQUIER tool (aunque oculta) → hay trabajo en curso
   let ebDocSeen = false;    // el reply abrió un bloque ```eb-doc``` (redacción en vivo, sin tools)
@@ -770,7 +801,26 @@ async function runAgentTurnInner(opts: {
     }
     return anyActivity && !allDone ? emit([{ label: "Trabajando…", status: "running" }]) : "";
   };
-  const renderBody = (allDone: boolean): string => renderToolBlock(allDone) + acc;
+  /**
+   * La narración como LISTA cuando son varios pasos.
+   *
+   * Concatenados, los segmentos se leían como un párrafo corrido: "Voy a sacar el
+   * brandkit… Logo formmy-logo.png… Paleta clara: morado…". Son tres momentos
+   * distintos del trabajo y merecen verse como tres.
+   *
+   * Se abstiene en dos casos, a propósito:
+   * - **Un solo segmento**: una respuesta normal no es una lista de un elemento.
+   * - **Hay un bloque cercado** (```eb-doc, ```eb-artifact, código): meter esas
+   *   líneas dentro de un ítem obliga a indentar, y una indentación mal puesta
+   *   rompe el fence — se perdería el artefacto por un adorno.
+   */
+  const narration = (): string => {
+    const partes = [...segs, acc.slice(segStart)].map((x) => x.trim()).filter(Boolean);
+    if (partes.length < 2 || acc.includes("```")) return acc;
+    // Un segmento multi-línea se indenta para quedar DENTRO de su ítem.
+    return partes.map((x) => "- " + x.replace(/\n/g, "\n  ")).join("\n");
+  };
+  const renderBody = (allDone: boolean): string => renderToolBlock(allDone) + narration();
   const paint = async (allDone = false) => {
     const bodyId = await ensure();
     if (opts.emitBody) opts.emitBody(bodyId, renderBody(allDone));
@@ -786,7 +836,11 @@ async function runAgentTurnInner(opts: {
     if (!chunk) return;
     if (opts.emitBody) {
       // Separa un segmento de texto nuevo (tras una tool) con doble salto → párrafos, no muro.
-      if (brokeByTool && acc.trim() && chunk.trim()) acc += "\n\n";
+      if (brokeByTool && acc.trim() && chunk.trim()) {
+        segs.push(acc.slice(segStart));
+        segStart = acc.length + 2;
+        acc += "\n\n";
+      }
       if (chunk.trim()) brokeByTool = false;
       acc += chunk;
       // eb-doc/eb-sheet no llaman tools → sin esto el checklist quedaría vacío. Sintetiza una
@@ -847,7 +901,7 @@ async function runAgentTurnInner(opts: {
     // "…docx." + [Bash] + "El NDA…" quedaba pegado "docx.El".)
     brokeByTool = true;
     const label = toolLabel(ev.name ?? "");
-    {
+    if (label) {
       // Dedup por acción (varias tools con el mismo label → una línea; sus ids agregan estado).
       let entry = tools.find((t) => t.done === label.done);
       if (!entry) {
@@ -872,7 +926,7 @@ async function runAgentTurnInner(opts: {
     reply = await callAgentBackendStream(opts.agent, opts.groupId, opts.sender, opts.text, onChunk, opts.parts ?? [], onTool, opts.currentDoc, opts.invokerSub);
   }
   // `acc` (con separadores) es el texto bonito; reply es la acumulación cruda del stream.
-  const finalText = acc.trim() || reply || "(sin respuesta)";
+  const finalText = narration().trim() || reply || "(sin respuesta)";
   // Body final autoritativo: bloque gt-tools TODO ✅ + texto separado. El caller lo persiste.
   return { id: await ensure(), reply: renderToolBlock(true) + finalText };
 }
