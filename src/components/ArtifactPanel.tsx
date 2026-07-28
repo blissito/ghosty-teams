@@ -572,15 +572,31 @@ export default function ArtifactPanel({
   // No basta con quitarlo en `onLoad`: el artefacto carga Tailwind por CDN y sus estilos se
   // aplican DESPUÉS del load, así que destapar justo ahí deja ver un instante el HTML crudo
   // — el mismo parpadeo, disfrazado. Se espera un poco y se desvanece.
-  const [calque, setCalque] = useState<"on" | "fading" | "off">("on");
+  //
+  // ⚠️ Y por eso mismo el calco YA CASI NUNCA hace falta: desde que el CSS se hornea
+  // al publicar (bakeTailwind en artifacts.ts), el artefacto abre estilado en el
+  // primer frame. Ponerlo igual era el defecto que se veía al abrir — el calco es el
+  // MISMO HTML pero pintado con el Tailwind del app (scoped a .gt-live, sin
+  // preflight y sin las fuentes del artefacto), así que sus medidas NO coinciden:
+  // se veía una versión "de otro tamaño" y al desvanecerse, el flash. Sólo se pone
+  // cuando el HTML depende del CDN, que es el caso que el calco vino a tapar.
+  const [calque, setCalque] = useState<"on" | "fading" | "off">("off");
   const frameKey = artifact?.kind === "artifact" ? String(artifact.messageId ?? artifact.documentId) : null;
+  const needsCalque =
+    artifact?.kind === "artifact" &&
+    /cdn\.tailwindcss\.com/i.test(artifactHtml ?? artifact.html ?? "") &&
+    !/<style[^>]*>/i.test(artifactHtml ?? artifact.html ?? "");
   useEffect(() => {
     if (!frameKey) return;
+    if (!needsCalque) {
+      setCalque("off");
+      return;
+    }
     setCalque("on");
     // Red de seguridad: si `onLoad` no llega (un subrecurso colgado), el calco se va igual.
     const id = setTimeout(() => setCalque("fading"), 6000);
     return () => clearTimeout(id);
-  }, [frameKey]);
+  }, [frameKey, needsCalque]);
   // Desvanecido en dos tiempos, para que el iframe alcance a aplicar sus estilos.
   useEffect(() => {
     if (calque !== "fading") return;
