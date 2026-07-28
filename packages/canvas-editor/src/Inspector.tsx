@@ -7,7 +7,7 @@
 
 import { useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { FONT_OPTIONS, PALETTE_PRESETS, activeTokens, findNode, type Doc, type Node } from './model'
-import { backgroundUrl, clearBackground, makeFullBleed, makeHeroBackground, nearestBackgroundAncestor, refineContext, setBackground } from './imageOps'
+import { backgroundUrl, clearBackground, makeFullBleed, makeHeroBackground, nearestBackgroundAncestor, refineContext, setBackground, soleImageDescendant } from './imageOps'
 import { htmlToNode, nodeSubtreeToHtml } from './serialize'
 import { addClass, autocomplete, classList, removeClass, toggleClass } from './tailwindClasses'
 import {
@@ -796,14 +796,21 @@ function ImagePanel({ store, node, doc, imageProvider }: { store: EditorStore; n
   // cualquier otro elemento edita su `background-image`. El toggle anterior
   // (Imagen | Fondo) tenía la opción "Imagen" permanentemente deshabilitada en
   // todo lo que no fuera una <img> — o sea, casi siempre.
-  const isImg = node.tag === 'img'
+  // …salvo un caso: un contenedor SIN fondo propio que envuelve una sola <img>.
+  // Ahí la imagen que el usuario ve y cree estar tocando es esa <img>; ponerle
+  // un `background-image` al contenedor no reemplaza nada — deja la foto vieja
+  // dibujada encima del fondo nuevo (fallo reportado: se veía bien en el panel y
+  // al hacer scroll aparecía la original abajo).
+  const inner = node.tag === 'img' ? null : backgroundUrl(node) ? null : soleImageDescendant(node)
+  const target = inner ?? node
+  const isImg = target.tag === 'img'
   const [prompt, setPrompt] = useState('')
   const [busy, setBusy] = useState<'gen' | 'search' | 'upload' | null>(null)
   const [results, setResults] = useState<string[]>([])
   const [error, setError] = useState<string | null>(null)
   const [dragging, setDragging] = useState(false)
-  const bgUrl = backgroundUrl(node)
-  const current = isImg ? (node.src ?? '') : (bgUrl ?? '')
+  const bgUrl = backgroundUrl(target)
+  const current = isImg ? (target.src ?? '') : (bgUrl ?? '')
   // Dónde está la imagen si no está aquí (ver el aviso "Ir ahí").
   const bgAncestor = current ? null : nearestBackgroundAncestor(doc, node.id)
 
@@ -815,8 +822,8 @@ function ImagePanel({ store, node, doc, imageProvider }: { store: EditorStore; n
 
   const apply = (src: string) => {
     setError(null)
-    if (isImg) store.updateNode(node.id, { src })
-    else setBackground(store, node.id, src)
+    if (isImg) store.updateNode(target.id, { src })
+    else setBackground(store, target.id, src)
   }
   /** Aplica lo escrito en el campo, si es una URL válida y distinta de la actual. */
   const applyUrl = () => {
@@ -935,13 +942,28 @@ function ImagePanel({ store, node, doc, imageProvider }: { store: EditorStore; n
       */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6, marginTop: 2, minHeight: 18 }}>
         <span style={{ fontSize: 10, color: '#6b7280' }}>
-          {isImg ? 'imagen del elemento' : `fondo del <${node.tag}>`}
+          {inner ? (
+            <>
+              {'la <img> de dentro · '}
+              <button
+                style={{ fontSize: 10, color: '#c4b5fd', background: 'transparent', border: 'none', padding: 0, cursor: 'pointer', textDecoration: 'underline' }}
+                title="Selecciona la imagen para editarla por separado"
+                onClick={() => store.select(inner.id)}
+              >
+                seleccionarla
+              </button>
+            </>
+          ) : isImg ? (
+            'imagen del elemento'
+          ) : (
+            `fondo del <${node.tag}>`
+          )}
         </span>
         {current && (
           <button
             style={{ fontSize: 10, color: '#9ca3af', background: 'transparent', border: 'none', padding: 0, cursor: 'pointer', textDecoration: 'underline' }}
             title={isImg ? 'Deja la imagen sin origen' : 'Quita la imagen de fondo de este elemento'}
-            onClick={() => { setError(null); if (isImg) store.updateNode(node.id, { src: '' }); else clearBackground(store, node) }}
+            onClick={() => { setError(null); if (isImg) store.updateNode(target.id, { src: '' }); else clearBackground(store, target) }}
           >
             Quitar
           </button>
@@ -1088,6 +1110,10 @@ function RefinePanel({ store, node, doc, refineProvider }: { store: EditorStore;
   }, [busy])
   const elapsed = active ? Math.round((Date.now() - active.startedAt) / 1000) : 0
   const activeModel = models.find((m) => m.id === modelId)
+  const quota = refineProvider.quota
+  const ownKey = !!activeModel?.ownKey
+  const quotaLeft = quota ? Math.max(0, quota.limit - quota.used) : Infinity
+  const outOfQuota = !!quota && !ownKey && quotaLeft <= 0
   // El primero de la lista que sí sirve para rediseñar; la lista ya viene
   // ordenada de más barato a más capaz, así que es la alternativa más barata.
   const betterModel = models.find((m) => m.goodForRedesign)
@@ -1249,6 +1275,20 @@ function RefinePanel({ store, node, doc, refineProvider }: { store: EditorStore;
           }}
         />
       )}
+      {/* Cuota: sólo cuenta la que paga el host. Con llave propia el refine no
+          consume nada, y decirlo aquí es lo que hace evidente para qué sirve
+          poner la llave. */}
+      {quota && (
+        <div style={{ fontSize: 10, marginTop: 6, color: ownKey ? '#6ee7b7' : quotaLeft <= 0 ? '#f87171' : '#7c8598' }}>
+          {ownKey ? (
+            <>Con tu llave: refinamientos ilimitados.</>
+          ) : quotaLeft <= 0 ? (
+            <>Se acabaron los {quota.limit} refinamientos del mes. Pon tu llave para seguir sin límite.</>
+          ) : (
+            <>{quotaLeft}/{quota.limit} refinamientos incluidos este mes.</>
+          )}
+        </div>
+      )}
       {/* Un tier rápido en modo rediseño devuelve la misma sección reescrita:
           30s y una llamada entera para nada. Se avisa antes, con el cambio a un
           clic — no se bloquea, porque a veces el usuario sólo quiere probar. */}
@@ -1273,9 +1313,9 @@ function RefinePanel({ store, node, doc, refineProvider }: { store: EditorStore;
       )}
       <button
         className={busy ? 'ce-refining' : undefined}
-        style={{ ...styles.primary, cursor: busy ? 'progress' : 'pointer', opacity: busy ? 0.85 : 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
-        disabled={busy}
-        title="⌘↵"
+        style={{ ...styles.primary, cursor: busy ? 'progress' : outOfQuota ? 'not-allowed' : 'pointer', opacity: busy ? 0.85 : outOfQuota ? 0.5 : 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
+        disabled={busy || outOfQuota}
+        title={outOfQuota ? 'Sin refinamientos este mes' : '⌘↵'}
         onClick={run}
       >
         {busy ? (

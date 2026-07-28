@@ -33,7 +33,7 @@ export type ArtifactShareBarProps = {
   leading?: React.ReactNode;
   onReport?: () => void;
   /** Cambió el estado de compartir → la superficie debe releer lo que sirve. */
-  onShareChange?: () => void;
+  onShareChange?: (s: { sharedArtifactId: number | null }) => void;
 };
 
 export default function ArtifactShareBar({
@@ -123,7 +123,7 @@ export default function ArtifactShareBar({
               onClick={async () => {
                 const { setArtifactShareFn } = await import("../server/artifacts");
                 await setArtifactShareFn({ data: { documentId, sharedArtifactId: null } }).catch(() => null);
-                onShareChange?.();
+                onShareChange?.({ sharedArtifactId: null });
               }}
               className="shrink-0 rounded-full bg-surface-3 px-1.5 py-0.5 text-[11px] font-medium text-muted transition hover:bg-border hover:text-ink"
             >

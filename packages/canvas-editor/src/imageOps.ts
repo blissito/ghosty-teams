@@ -122,6 +122,32 @@ export function nearestBackgroundAncestor(doc: Doc, id: NodeId): Node | null {
 }
 
 /**
+ * La `<img>` que este contenedor está mostrando, si hay exactamente una en su
+ * subárbol.
+ *
+ * Existe por un fallo real: seleccionar la tarjeta (un `div` con una `<img>`
+ * dentro), pulsar "Reemplazar" y ponerle un `background-image` NO reemplaza
+ * nada — la `<img>` original sigue ahí, dibujada encima o debajo del nuevo
+ * fondo. En la vista previa parecía correcto y al hacer scroll aparecía la foto
+ * vieja abajo. Con esto, "reemplazar" sobre ese contenedor edita el `src` de la
+ * `<img>` que ya existe, que es lo que el usuario está viendo y creyó tocar.
+ *
+ * Sólo una: con dos o más (una galería) no hay "la imagen" que reemplazar, y
+ * elegir por él sería adivinar.
+ */
+export function soleImageDescendant(node: Node): Node | null {
+  const found: Node[] = []
+  const dig = (n: Node) => {
+    for (const c of n.children) {
+      if (c.tag === 'img') found.push(c)
+      dig(c)
+    }
+  }
+  dig(node)
+  return found.length === 1 ? found[0] : null
+}
+
+/**
  * Contexto de SOLO LECTURA para un refine por-nodo: dónde vive el nodo y qué
  * tiene al lado, sin darle al modelo el HTML de los vecinos (ver
  * `RefineNodeInput.context`).

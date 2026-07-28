@@ -38,7 +38,6 @@ const loadShared = createServerFn({ method: "GET" })
       return null;
     }
     if (!found) return null;
-    console.log(`[artifact page] slug=${data.slug} v=${data.v ?? "-"} → versión ${found.version.id} (${found.versionLabel ?? "viva"})`);
 
     // Nombre del dueño para el "Artefacto de …". No se manda el correo: esta
     // página la puede abrir cualquiera con el link.
@@ -123,6 +122,7 @@ export const Route = createFileRoute("/artefacto/$id")({
 function SharedArtifact() {
   const t = useT();
   const router = useRouter();
+  const navigate = Route.useNavigate();
   const { id } = Route.useParams();
   const d = Route.useLoaderData();
   // La versión pedida se lee del NAVEGADOR, no de lo que el loader haya resuelto: es el
@@ -147,9 +147,13 @@ function SharedArtifact() {
         // Compartir sólo lo ve el dueño: a un visitante no le sirve un panel de
         // permisos que no puede tocar.
         documentId={d.isOwner ? d.documentId : null}
-        // Elegir otra versión cambia lo que hay que servir: sin re-correr el loader,
-        // el select cambiaba y el documento se quedaba igual.
-        onShareChange={() => router.invalidate()}
+        // Elegir otra versión se refleja en la URL — el `?v` es quien decide qué se ve,
+        // así que navegar es lo que hace que la página cambie de verdad (y deja el
+        // enlace de la barra listo para copiar tal cual).
+        onShareChange={(s) => {
+          navigate({ search: { v: s.sharedArtifactId ?? undefined }, replace: true });
+          router.invalidate();
+        }}
       />
       <iframe
         // REMONTAR al cambiar de versión: cambiarle el src a un iframe vivo no

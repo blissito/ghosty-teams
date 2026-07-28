@@ -91,6 +91,12 @@ export interface RefineProvider {
   onModelChange?(modelId: string): void
   /** Destino del enlace "gestionar llaves" del menú de modelos. */
   manageKeysHref?: string
+  /**
+   * Cuota mensual de refinamientos INCLUIDA (la que paga el host). No aplica
+   * cuando el modelo elegido corre con la llave del usuario (`ModelOption.ownKey`):
+   * ahí no hay gasto del host que racionar, y el panel lo dice en vez de restar.
+   */
+  quota?: { used: number; limit: number }
   /** Generate a fresh frame's node list from a prompt (optional, may stream per section). */
   generateArtboard?(
     input: GenerateArtboardInput,

@@ -43,7 +43,9 @@ export default function ArtifactShareDialog({
   onClose: () => void;
   onVisibility?: (v: "private" | "link") => void;
   /** Cambió algo que afecta a lo que se sirve (p.ej. la versión compartida). */
-  onChange?: () => void;
+  /** Cambió el estado de compartir. `sharedArtifactId` = la versión elegida (null = la
+   *  más reciente): la página la refleja en su `?v`, que es lo que decide qué se ve. */
+  onChange?: (s: { sharedArtifactId: number | null }) => void;
 }) {
   const t = useT();
   const [share, setShare] = useState<Share | null>(() => cachedShare(documentId));
@@ -88,9 +90,9 @@ export default function ArtifactShareDialog({
       putCachedShare(documentId, s);
       if (s) {
         onVisibility?.(s.visibility);
-        // La página del artefacto sirve la versión elegida desde su loader: sin
-        // avisar, elegir "Versión 2" cambiaba el select y dejaba el documento igual.
-        onChange?.();
+        // La página muestra lo que diga su `?v`: sin avisar, elegir "Versión 2" cambiaba
+        // el select y dejaba el documento igual.
+        onChange?.({ sharedArtifactId: s.sharedArtifactId });
       }
       return s;
     } catch (e) {
