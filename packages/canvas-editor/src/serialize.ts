@@ -7,6 +7,8 @@ import type { Artboard, Doc, Node, Theme } from './model'
 import { DEFAULT_THEME, activeTokens, genId, googleFontsHref, walk } from './model'
 
 const VOID_TAGS = new Set(['img', 'br', 'hr', 'input', 'meta', 'link'])
+/** Los que el `Node` ya tipa: el resto viaja en `node.attrs`. */
+const MODELED_ATTRS = new Set(['data-id', 'class', 'src', 'href', 'style', 'hidden'])
 
 function esc(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -25,6 +27,9 @@ function nodeToHtml(node: Node, indent: string): string {
   if (node.src != null) attrs.push(`src="${escAttr(node.src)}"`)
   if (node.href != null) attrs.push(`href="${escAttr(node.href)}"`)
   if (node.style != null && node.style !== '') attrs.push(`style="${escAttr(node.style)}"`)
+  for (const [k, v] of Object.entries(node.attrs ?? {})) {
+    attrs.push(v === '' ? k : `${k}="${escAttr(v)}"`)
+  }
   if (node.hidden) attrs.push('hidden')
   const open = `<${node.tag} ${attrs.join(' ')}>`
 
@@ -184,6 +189,14 @@ function elToNode(el: Element): Node {
   if (href != null) node.href = href
   const styleAttr = el.getAttribute('style')
   if (styleAttr) node.style = styleAttr
+  // Todo lo que el modelo NO tipa se guarda tal cual: sin esto un <svg> vuelve
+  // sin `viewBox` y sus <path> sin `d`, o sea un cuadro vacío. Ver Node.attrs.
+  const rest: Record<string, string> = {}
+  for (const a of Array.from(el.attributes)) {
+    if (MODELED_ATTRS.has(a.name)) continue
+    rest[a.name] = a.value
+  }
+  if (Object.keys(rest).length) node.attrs = rest
   if (el.hasAttribute('hidden')) node.hidden = true
   return node
 }

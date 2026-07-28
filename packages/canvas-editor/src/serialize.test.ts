@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from 'vitest'
-import { docToHtml, htmlToDoc, nodeSubtreeToHtml } from './serialize'
+import { docToHtml, htmlToDoc, htmlToNode, nodeSubtreeToHtml } from './serialize'
 import { makeArtboard, type Doc, type Node } from './model'
 
 function sampleDoc(): Doc {
@@ -80,6 +80,28 @@ describe('serialize round-trip', () => {
     expect(doc.artboards).toHaveLength(1)
     expect(doc.artboards[0].nodes[0].tag).toBe('div')
     expect(doc.artboards[0].nodes[0].children[0].text).toBe('Hi')
+  })
+
+  // El bug real: un rediseño devolvió iconos SVG y salieron como cuadros vacíos
+  // porque `viewBox` y `d` no sobrevivían el parseo.
+  it('preserva los atributos que el modelo no tipa (SVG, alt, target)', () => {
+    const html =
+      '<div class="flex"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M4 12h16" stroke-width="2"/></svg><img src="/a.png" alt="Logo"><a href="/x" target="_blank" rel="noreferrer">ir</a></div>'
+    const node = htmlToNode(html, 'n_root')!
+    const svg = node.children[0]
+    expect(svg.attrs?.viewBox).toBe('0 0 24 24')
+    expect(svg.attrs?.['aria-hidden']).toBe('true')
+    expect(svg.children[0].attrs?.d).toBe('M4 12h16')
+    expect(svg.children[0].attrs?.['stroke-width']).toBe('2')
+    expect(node.children[1].attrs?.alt).toBe('Logo')
+    expect(node.children[2].attrs?.target).toBe('_blank')
+
+    // …y vuelven a salir al serializar: si sólo se guardan, el refine los pierde
+    // igual en el siguiente viaje de ida.
+    const out = nodeSubtreeToHtml(node)
+    expect(out).toContain('viewBox="0 0 24 24"')
+    expect(out).toContain('d="M4 12h16"')
+    expect(out).toContain('alt="Logo"')
   })
 
   it('nodeSubtreeToHtml emits a single node with data-id (for refine payloads)', () => {

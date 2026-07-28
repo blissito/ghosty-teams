@@ -7,6 +7,28 @@ import type { Node } from './model'
 
 const VOID_TAGS = new Set(['img', 'br', 'hr', 'input', 'meta', 'link'])
 
+/**
+ * Atributos de SVG que React sólo aplica en camelCase: pasados en kebab-case los
+ * ignora en silencio y el icono sale sin trazo. Los que ya son de una palabra
+ * (`d`, `fill`, `cx`, `r`…) no necesitan traducción.
+ */
+const SVG_ATTR_CASE: Record<string, string> = {
+  viewbox: 'viewBox',
+  viewBox: 'viewBox',
+  'stroke-width': 'strokeWidth',
+  'stroke-linecap': 'strokeLinecap',
+  'stroke-linejoin': 'strokeLinejoin',
+  'stroke-dasharray': 'strokeDasharray',
+  'fill-rule': 'fillRule',
+  'clip-rule': 'clipRule',
+  'stop-color': 'stopColor',
+  'stop-opacity': 'stopOpacity',
+  'fill-opacity': 'fillOpacity',
+  'stroke-opacity': 'strokeOpacity',
+  preserveaspectratio: 'preserveAspectRatio',
+  gradientunits: 'gradientUnits',
+}
+
 // Parse a raw inline `style` attribute string into a React style object so we can
 // preserve it verbatim (Teams artifacts / SDK sections often use inline styles).
 function parseStyle(s: string): CSSProperties {
@@ -44,6 +66,13 @@ export function NodeView({
     className: node.cls + (selected ? ' ce-selected' : ''),
     'data-id': node.id,
     'data-tag': node.tag,
+  }
+  // Los atributos no tipados (viewBox y d de un SVG, alt, target, aria-*) van
+  // ANTES de los nuestros para que ninguno pueda pisar className/data-id.
+  // React acepta atributos desconocidos en minúsculas tal cual; los de SVG que
+  // sí conoce necesitan su nombre camelCase, de ahí SVG_ATTR_CASE.
+  for (const [k, v] of Object.entries(node.attrs ?? {})) {
+    props[SVG_ATTR_CASE[k] ?? k] = v
   }
   if (node.src != null) props.src = node.src
   if (node.href != null) props.href = node.href

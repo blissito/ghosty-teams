@@ -13,6 +13,16 @@ export interface Node {
   src?: string // for <img>
   href?: string // for <a>
   style?: string // raw inline style attribute (preserved verbatim for fidelity)
+  /**
+   * Cualquier otro atributo del elemento, verbatim.
+   *
+   * POR QUÉ EXISTE: el modelo sólo tipaba `src`/`href`/`style`, así que TODO lo
+   * demás se perdía en el ida y vuelta HTML → Doc → HTML. El síntoma visible fue
+   * un rediseño que devolvió iconos SVG y aparecieron como cuadros vacíos: el
+   * `viewBox` del `<svg>` y la `d` de cada `<path>` se tiraban al parsear. Igual
+   * de invisible se perdían `alt`, `target`, `aria-*`, `type` o `colspan`.
+   */
+  attrs?: Record<string, string>
   hidden?: boolean // display:none (layer eye toggle)
   locked?: boolean // not selectable/draggable on canvas (layer lock toggle)
   children: Node[]

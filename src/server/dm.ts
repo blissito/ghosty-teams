@@ -275,18 +275,18 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
     turns.interruptOwnTurns(groupId, me.sub);
     const controller = new AbortController();
     let registeredId: number | null = null;
+    // Registrar YA si la cáscara existe (postMessage la crea eager). Registrarlo hasta el
+    // primer token dejaba sin botón ni reloj justo la ventana en la que hacen falta: la
+    // del "pensando…" antes de que llegue nada.
+    const register = (mid: number) => {
+      if (registeredId === mid) return;
+      registeredId = mid;
+      turns.registerTurn({ messageId: mid, groupId, invokerSub: me.sub, controller, announce: (st) => fanout({ t: "turn", ...st }) });
+    };
+    if (data.shellId != null) register(data.shellId);
     const { id, reply } = await runAgentTurn({
       signal: controller.signal,
-      onShell: (mid) => {
-        registeredId = mid;
-        turns.registerTurn({
-          messageId: mid,
-          groupId,
-          invokerSub: me.sub,
-          controller,
-          announce: (st) => fanout({ t: "turn", ...st }),
-        });
-      },
+      onShell: register,
       agent,
       handle: data.handle,
       groupId,

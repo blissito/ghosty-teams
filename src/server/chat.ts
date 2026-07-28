@@ -712,14 +712,20 @@ export const askAgent = createServerFn({ method: "POST" })
     const announce = (st: { id: number; state: "running" | "queued" | "stopped"; position: number; startedAt: number }) =>
       bus.publish(bus.ch.room(ns, channel.id), { t: "turn", ...st });
     let registeredId: number | null = null;
+    // Registrar YA si la cáscara existe (postMessage la crea eager). Registrarlo hasta el
+    // primer token dejaba sin botón ni reloj justo la ventana en la que hacen falta: la
+    // del "pensando…" antes de que llegue nada.
+    const register = (mid: number) => {
+      if (registeredId === mid) return;
+      registeredId = mid;
+      turns.registerTurn({ messageId: mid, groupId, invokerSub: poster?.sub ?? null, controller, announce });
+    };
+    if (data.shellId != null) register(data.shellId);
     // finally: un turno que revienta no puede quedarse registrado como vivo — tendría a
     // los siguientes eternamente "en espera" detrás de un fantasma.
     const turnResult = await runAgentTurn({
       signal: controller.signal,
-      onShell: (mid) => {
-        registeredId = mid;
-        turns.registerTurn({ messageId: mid, groupId, invokerSub: poster?.sub ?? null, controller, announce });
-      },
+      onShell: register,
       agent,
       handle: data.handle,
       groupId,
