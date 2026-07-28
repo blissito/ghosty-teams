@@ -5,7 +5,7 @@
 // box. Los controles leen el CSS efectivo del DOM y escriben declaraciones inline
 // (ver cssProps.ts): así ganan sobre las clases y sobre el <style> del artefacto.
 
-import { useLayoutEffect, useRef, useState } from 'react'
+import { useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { FONT_OPTIONS, PALETTE_PRESETS, activeTokens, findNode, type Doc, type Node } from './model'
 import { backgroundUrl, clearBackground, makeFullBleed, makeHeroBackground, nearestBackgroundAncestor, refineContext, setBackground } from './imageOps'
 import { htmlToNode, nodeSubtreeToHtml } from './serialize'
@@ -613,48 +613,71 @@ function CssColorRow({ label, prop, node, store, dep }: { label: string; prop: s
  * marca en violeta, ↑↓ suben y bajan (con Shift, de 10 en 10) y el candado
  * escribe los cuatro lados a la vez.
  */
-const SIDE_LABELS = ['T', 'D', 'B', 'I'] // top, derecha, bottom, izquierda
+// Flechas y no iniciales: T/D/B/I obliga a saber en qué idioma están pensadas
+// (¿"B" es bottom o abajo? ¿"D" derecha o down?) y se rompen al traducir. La
+// dirección es universal y se lee sin aprenderla.
+const SIDE_LABELS = ['↑', '→', '↓', '←']
 
 function SidesRow({ label, props, node, store, dep }: { label: string; props: string[]; node: Node; store: EditorStore; dep: unknown }) {
   const c = useComputed(node.id, props, dep)
   const [linked, setLinked] = useState(false)
+  const display = useComputed(node.id, ['display'], dep).display
+  const verticalNoOp = props[0].startsWith('margin') && display === 'inline'
   const set = (prop: string, value: string | null) => {
     if (!linked) return store.setNodeStyleProp(node.id, prop, value)
     for (const p of props) store.setNodeStyleProp(node.id, p, value)
   }
   return (
-    <Row
-      label={
-        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-          {label}
+    <>
+      <Row
+        label={
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+            {label}
+            <button
+              title={linked ? 'Editar cada lado por separado' : 'Aplicar a los cuatro lados'}
+              onClick={() => setLinked((v) => !v)}
+              style={{
+                background: 'transparent', border: 'none', cursor: 'pointer', padding: 0,
+                fontSize: 10, color: linked ? '#a78bfa' : '#4b5563',
+              }}
+            >
+              {/* Un solo glifo: el estado lo dice el color, no un símbolo tachado
+                  que en muchas fuentes se renderiza como un cuadro vacío. */}
+              ⛓
+            </button>
+          </span>
+        }
+      >
+        <div style={{ display: 'flex', gap: 4 }}>
+          {props.map((p, i) => (
+            <SideInput
+              key={p}
+              prop={p}
+              side={SIDE_LABELS[i]}
+              inline={inlineValue(node.style, p)}
+              computed={c[p]}
+              onSet={(v) => set(p, v)}
+            />
+          ))}
+        </div>
+      </Row>
+      {/* FUERA de la Row, a lo ancho: dentro descuadraba la rejilla de la fila
+          (los campos se quedaban sin su etiqueta a la izquierda).
+          El caso que parece "el control está roto": en un elemento INLINE (un
+          <span>) el CSS ignora los márgenes verticales. El valor se escribe, el
+          navegador no lo aplica y no hay ningún error. */}
+      {verticalNoOp && (
+        <div style={{ fontSize: 10, color: '#d4a24c', padding: '0 12px 6px', lineHeight: 1.5 }}>
+          Es un elemento inline: el navegador ignora sus márgenes de arriba y abajo.
           <button
-            title={linked ? 'Editar cada lado por separado' : 'Aplicar a los cuatro lados'}
-            onClick={() => setLinked((v) => !v)}
-            style={{
-              background: 'transparent', border: 'none', cursor: 'pointer', padding: 0,
-              fontSize: 10, color: linked ? '#a78bfa' : '#4b5563',
-            }}
+            style={{ ...styles.chip, padding: '1px 6px', marginLeft: 4, color: '#c4b5fd' }}
+            onClick={() => store.setNodeClasses(node.id, addClass(node.cls, 'inline-block'))}
           >
-            {/* Un solo glifo: el estado lo dice el color, no un símbolo tachado
-                que en muchas fuentes se renderiza como un cuadro vacío. */}
-            ⛓
+            Hacerlo inline-block
           </button>
-        </span>
-      }
-    >
-      <div style={{ display: 'flex', gap: 4 }}>
-        {props.map((p, i) => (
-          <SideInput
-            key={p}
-            prop={p}
-            side={SIDE_LABELS[i]}
-            inline={inlineValue(node.style, p)}
-            computed={c[p]}
-            onSet={(v) => set(p, v)}
-          />
-        ))}
-      </div>
-    </Row>
+        </div>
+      )}
+    </>
   )
 }
 
@@ -685,13 +708,47 @@ function SideInput({
     onSet(Number.isFinite(n) ? `${n}px` : null)
   }
 
+  // Arrastre lateral sobre la etiqueta (scrubbing) — el gesto de Figma/Blender:
+  // es más rápido que teclear para tantear un valor, y no obliga a soltar el ratón.
+  const scrub = (e: React.PointerEvent<HTMLSpanElement>) => {
+    e.preventDefault()
+    const el = e.currentTarget
+    el.setPointerCapture(e.pointerId)
+    let value = parseFloat(shown === '' ? ghost : shown) || 0
+    let acc = 0
+    const move = (ev: PointerEvent) => {
+      // Se acumula el sub-píxel: con 4px por unidad, un movimiento lento seguiría
+      // dando 0 en cada evento y la barra no respondería.
+      acc += ev.movementX * (ev.shiftKey ? 1 : 0.25)
+      const delta = Math.trunc(acc)
+      if (!delta) return
+      acc -= delta
+      value = Math.max(0, value + delta)
+      setDraft(String(value))
+      onSet(`${value}px`)
+    }
+    const up = () => {
+      el.releasePointerCapture(e.pointerId)
+      el.removeEventListener('pointermove', move)
+      el.removeEventListener('pointerup', up)
+      setDraft(null)
+    }
+    el.addEventListener('pointermove', move)
+    el.addEventListener('pointerup', up)
+  }
+
   return (
     <div style={{ position: 'relative', flex: 1 }}>
       <span
+        onPointerDown={scrub}
+        // El tooltip nombra el lado en palabras: la flecha da la dirección de un
+        // vistazo, pero al dudar hay que poder confirmarlo.
+        title={`${prop} — arrastra para ajustar (Shift = ×4)`}
         style={{
-          position: 'absolute', left: 5, top: '50%', transform: 'translateY(-50%)',
+          position: 'absolute', left: 0, top: 0, bottom: 0, width: 14,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
           fontSize: 9, fontFamily: 'monospace', color: overridden ? '#a78bfa' : '#4b5563',
-          pointerEvents: 'none',
+          cursor: 'ew-resize', userSelect: 'none', touchAction: 'none',
         }}
       >
         {side}
@@ -1009,20 +1066,27 @@ function CopyButton({ value }: { value: string }) {
 
 function RefinePanel({ store, node, doc, refineProvider }: { store: EditorStore; node: Node; doc: Doc; refineProvider: RefineProvider }) {
   const [instruction, setInstruction] = useState('')
-  const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [summary, setSummary] = useState<ChangeSummary | null>(null)
   const models = refineProvider.models ?? []
   const [modelId, setModelId] = useState(refineProvider.defaultModelId ?? models[0]?.id)
   // Arranca en 'tweak': el modo seguro. Un rediseño no pedido borra trabajo.
   const [mode, setMode] = useState<RefineMode>('tweak')
-  const [received, setReceived] = useState(0)
-  const [elapsed, setElapsed] = useState(0)
+  // El progreso vive en el registro global, no aquí: cambiar de nodo desmonta
+  // este panel y antes se perdía el indicador de un refine que seguía corriendo.
+  const active = useActiveRefines().find((r) => r.nodeId === node.id)
+  const busy = !!active
+  const received = active?.received ?? 0
+  // El reloj se DERIVA de `startedAt` (que vive en el registro global), no se
+  // cuenta aquí: al cambiar de nodo el panel se remonta y un contador local
+  // volvía a 0 — parecía que el refine acababa de empezar.
+  const [, tick] = useState(0)
   useLayoutEffect(() => {
     if (!busy) return
-    const t = setInterval(() => setElapsed((s) => s + 1), 1000)
+    const t = setInterval(() => tick((n) => n + 1), 1000)
     return () => clearInterval(t)
   }, [busy])
+  const elapsed = active ? Math.round((Date.now() - active.startedAt) / 1000) : 0
   const activeModel = models.find((m) => m.id === modelId)
   // El primero de la lista que sí sirve para rediseñar; la lista ya viene
   // ordenada de más barato a más capaz, así que es la alternativa más barata.
@@ -1030,11 +1094,15 @@ function RefinePanel({ store, node, doc, refineProvider }: { store: EditorStore;
 
   async function run() {
     if (!instruction.trim() || busy) return
-    setBusy(true)
     setError(null)
     setSummary(null)
-    setReceived(0)
-    setElapsed(0)
+    startRefine({
+      nodeId: node.id,
+      instruction: instruction.trim(),
+      mode,
+      startedAt: Date.now(),
+      received: 0,
+    })
     const before = node
     const currentHtml = nodeSubtreeToHtml(node)
     let lastPaint = 0
@@ -1072,7 +1140,7 @@ function RefinePanel({ store, node, doc, refineProvider }: { store: EditorStore;
         // a medias desarma la sección en pantalla en cada chunk.
         {
           onPartial: (p) => {
-            setReceived(p.length)
+            updateRefine(node.id, p.length)
             if (mode !== 'redesign') {
               // En 'tweak' el elemento es chico y cierra pronto: esperar a que
               // cierre evita un parpadeo por nada.
@@ -1126,7 +1194,7 @@ function RefinePanel({ store, node, doc, refineProvider }: { store: EditorStore;
       setError(err instanceof Error ? err.message : 'No se pudo refinar')
     } finally {
       store.endTransaction()
-      setBusy(false)
+      endRefine(node.id)
     }
   }
 
@@ -1135,7 +1203,9 @@ function RefinePanel({ store, node, doc, refineProvider }: { store: EditorStore;
       <textarea
         style={{ ...styles.input, minHeight: 52, resize: 'vertical' }}
         placeholder="haz el título más grande, fondo oscuro…"
-        value={instruction}
+        // Al volver a un nodo que sigue refinándose, se recupera la instrucción
+        // del registro: el textarea local se fue con el desmontaje del panel.
+        value={busy && active ? active.instruction : instruction}
         onChange={(e) => setInstruction(e.target.value)}
         disabled={busy}
         onKeyDown={(e) => {
@@ -1287,6 +1357,64 @@ function pricesLost(before: string, after: string): string | null {
 
 /** ~8 repintados por segundo: se lee como construcción, no como parpadeo. */
 const PAINT_MS = 120
+
+/**
+ * Refinamientos en vuelo, FUERA del ciclo de vida del panel.
+ *
+ * POR QUÉ: el Inspector monta `RefinePanel` con `key` del nodo, así que cambiar de
+ * selección lo desmonta y se lleva el `busy`, el contador y el reloj. La petición
+ * seguía viva en su closure y aplicaba bien al terminar — pero el usuario veía el
+ * indicador desaparecer y el cambio caer de la nada minuto y medio después.
+ *
+ * Aquí vive el estado de cada refine por nodo, así que al volver al nodo el panel
+ * lo recupera, y el toolbar puede indicar que algo sigue corriendo aunque estés
+ * mirando otra cosa.
+ */
+export interface RefineProgress {
+  nodeId: string
+  instruction: string
+  mode: RefineMode
+  startedAt: number
+  received: number
+}
+const inFlight = new Map<string, RefineProgress>()
+const refineSubs = new Set<() => void>()
+const emitRefine = () => refineSubs.forEach((fn) => fn())
+function subscribeRefines(fn: () => void): () => void {
+  refineSubs.add(fn)
+  return () => refineSubs.delete(fn)
+}
+// El snapshot debe ser estable entre notificaciones o `useSyncExternalStore`
+// entra en bucle: se cachea y sólo se recalcula cuando algo cambia de verdad.
+let refineSnapshot: RefineProgress[] = []
+const refreshSnapshot = () => {
+  refineSnapshot = [...inFlight.values()]
+}
+function startRefine(p: RefineProgress) {
+  inFlight.set(p.nodeId, p)
+  refreshSnapshot()
+  emitRefine()
+}
+function updateRefine(nodeId: string, received: number) {
+  const cur = inFlight.get(nodeId)
+  if (!cur) return
+  inFlight.set(nodeId, { ...cur, received })
+  refreshSnapshot()
+  emitRefine()
+}
+function endRefine(nodeId: string) {
+  if (!inFlight.delete(nodeId)) return
+  refreshSnapshot()
+  emitRefine()
+}
+/** Los refinamientos vivos ahora mismo. Vacío = nada corriendo. */
+export function useActiveRefines(): RefineProgress[] {
+  return useSyncExternalStore(
+    subscribeRefines,
+    () => refineSnapshot,
+    () => refineSnapshot,
+  )
+}
 
 /** Espacios colapsados: el ida y vuelta por el modelo reformatea sin cambiar nada. */
 function normalizeHtml(html: string): string {

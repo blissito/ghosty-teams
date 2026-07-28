@@ -4,6 +4,7 @@
 
 import { useEffect, useRef, useState, type RefObject } from 'react'
 import { findNode, locateNode, type Artboard, type Node } from './model'
+import { useActiveRefines } from './Inspector'
 import type { EditorState, EditorStore } from './store'
 
 type DropPos = 'before' | 'after' | 'inside'
@@ -26,6 +27,10 @@ export function LayersTree({
   // Plegado por contenedor. Un artefacto real anida svg > g > path y el árbol se
   // vuelve ilegible; plegar es lo que lo hace navegable.
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
+  // Qué nodos están refinándose ahora: el árbol es el único sitio donde se ve
+  // TODO el artefacto, así que es donde tiene sentido señalarlo — y de paso da
+  // un clic para volver al nodo que se está trabajando.
+  const refining = new Set(useActiveRefines().map((r) => r.nodeId))
   const toggleCollapse = (id: string) =>
     setCollapsed((prev) => {
       const next = new Set(prev)
@@ -129,6 +134,7 @@ export function LayersTree({
                 onDropRow={performDrop}
                 collapsed={collapsed}
                 onToggleCollapse={toggleCollapse}
+                refining={refining}
                 onDragEndRow={() => {
                   setDragId(null)
                   setDrop(null)
@@ -156,6 +162,7 @@ function NodeRow({
   onDragEndRow,
   collapsed,
   onToggleCollapse,
+  refining,
 }: {
   node: Node
   depth: number
@@ -170,6 +177,7 @@ function NodeRow({
   onDragEndRow: () => void
   collapsed: Set<string>
   onToggleCollapse: (id: string) => void
+  refining: Set<string>
 }) {
   const selected = selection.includes(node.id)
   // Con un artefacto grande el nodo seleccionado en el lienzo caía fuera de vista
@@ -236,7 +244,7 @@ function NodeRow({
           onClick={(e) => onPick(node.id, e.metaKey || e.ctrlKey || e.shiftKey)}
           style={{ ...styles.nodeRow, color: selected ? '#fff' : '#cbd5e1' }}
         >
-          <span style={styles.tag}>{glyph(node.tag)}</span>
+          <span style={styles.tag}>{refining.has(node.id) ? <span className="ce-spinner" /> : glyph(node.tag)}</span>
           {label}
         </button>
         <button title={node.hidden ? 'Mostrar' : 'Ocultar'} style={styles.rowIcon} onClick={() => store.toggleHidden(node.id)}>
@@ -262,6 +270,7 @@ function NodeRow({
           onDragEndRow={onDragEndRow}
           collapsed={collapsed}
           onToggleCollapse={onToggleCollapse}
+          refining={refining}
         />
       ))}
     </>

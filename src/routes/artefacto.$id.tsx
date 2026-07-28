@@ -38,6 +38,7 @@ const loadShared = createServerFn({ method: "GET" })
       return null;
     }
     if (!found) return null;
+    console.log(`[artifact page] slug=${data.slug} v=${data.v ?? "-"} → versión ${found.version.id} (${found.versionLabel ?? "viva"})`);
 
     // Nombre del dueño para el "Artefacto de …". No se manda el correo: esta
     // página la puede abrir cualquiera con el link.
@@ -80,10 +81,20 @@ export const Route = createFileRoute("/artefacto/$id")({
   // `?v=latest` (o el id de una versión) = "enséñame ésta". El panel lo pone al abrir en
   // pestaña nueva: lo que se abre debe ser lo que estabas viendo, no lo que esté fijado
   // para quien reciba el enlace.
-  validateSearch: (search: Record<string, unknown>) => ({ v: typeof search.v === "string" ? search.v : undefined }),
+  // OJO: el router parsea los search params como JSON, así que `?v=113` llega como
+  // NÚMERO. Exigir string hacía que el validador lo descartara y el router redirigiera
+  // (307) a la URL "canónica" SIN el parámetro — por eso `?v=latest` funcionaba y el id
+  // de una versión no. Se normaliza a texto y ya.
+  // El router parsea los search params como JSON (`?v=113` llega como NÚMERO) y
+  // REESCRIBE la URL si el validador devuelve algo distinto de lo que entró: exigir
+  // string tiraba el parámetro (307 a la URL sin `?v`) y normalizarlo a texto lo dejaba
+  // como `?v="113"`. Se pasa tal cual y se convierte a texto donde se usa.
+  validateSearch: (search: Record<string, unknown>) => ({
+    v: search.v as string | number | undefined,
+  }),
   loaderDeps: ({ search }) => ({ v: search.v }),
   loader: async ({ params, deps }) => {
-    const data = await loadShared({ data: { slug: params.id, v: deps.v ?? null } });
+    const data = await loadShared({ data: { slug: params.id, v: deps.v == null ? null : String(deps.v) } });
     // Sin acceso y no existe se responden IGUAL: un 403 confirmaría que el
     // artefacto existe, que ya es información sobre alguien más.
     if (!data) throw notFound();
@@ -149,8 +160,8 @@ function SharedArtifact() {
         // CDN primero (artefacto.ghosty.studio/<key>): el contenido no pasa por la
         // app ni por la DB. El /raw sólo entra para filas viejas sin `src`.
         src={
-          search.v
-            ? `/artefacto/${encodeURIComponent(id)}/raw?v=${encodeURIComponent(search.v)}`
+          search.v != null
+            ? `/artefacto/${encodeURIComponent(id)}/raw?v=${encodeURIComponent(String(search.v))}`
             : d.contentUrl || `/artefacto/${encodeURIComponent(id)}/raw`
         }
         sandbox="allow-scripts allow-forms allow-popups"
