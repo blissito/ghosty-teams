@@ -103,6 +103,7 @@ import {
   searchUsersFn,
   updateMyProfileFn,
   expelMemberFn,
+  stopTurnFn,
 } from "../server/chat";
 import { SmilePlus, Pencil, ArrowLeft, RotateCcw, Send, Bold, Italic, Strikethrough, List, ListOrdered, Quote, Code, Type, Reply } from "lucide-react";
 import { getDeferredPrompt, onInstallable, clearDeferredPrompt, type BeforeInstallPromptEvent } from "../utils/pwa-install";
@@ -422,6 +423,10 @@ const ChatCtx = createContext<{
   // Uno solo a la vez (referencia Slack/Zulip): abrir otro cierra el anterior.
   pickerFor: number | null;
   setPickerFor: (id: number | null) => void;
+  // Turnos de agente en vuelo (id → estado) + cómo cortarlos. La burbuja necesita los
+  // dos: sin el estado, un turno en cola se ve igual que uno trabajando.
+  turns: Map<number, { state: "running" | "queued"; position: number; startedAt: number }>;
+  stopTurn: (messageId: number) => void;
   // Abre un artefacto (pdf/imagen/doc) en el panel lateral del room.
   onOpenArtifact: (a: ArtifactView) => void;
   // Envía `body` como respuesta del usuario en el MISMO hilo/DM que `ownerMsg`
@@ -440,6 +445,8 @@ const ChatCtx = createContext<{
   slug: "",
   emojis: [],
   users: new Map(),
+  turns: new Map(),
+  stopTurn: () => {},
   react: () => {},
   star: () => {},
   pin: () => {},
@@ -1141,9 +1148,26 @@ function ChannelPage() {
   const [boundary, setBoundary] = useState<{ key: string; at: number } | null>(null);
   // Un ÚNICO picker de reacciones abierto a la vez (Slack/Zulip): id del mensaje.
   const [pickerFor, setPickerFor] = useState<number | null>(null);
+  // Turnos de agente EN VUELO (id → estado). Lo alimenta el evento `turn` del bus; se
+  // vacía solo al llegar el body final. Es lo que distingue "está trabajando" de "espera
+  // su turno" y lo que da dónde colgar el botón de Detener.
+  const [turns, setTurns] = useState<Map<number, { state: "running" | "queued"; position: number; startedAt: number }>>(new Map());
   const typingTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const channelsById = useMemo(() => new Map(channels.map((c) => [c.id, c.slug])), [channels]);
   const router = useRouter();
+
+  // Detener un turno. Optimista: la burbuja deja de ofrecer "Detener" al instante, y el
+  // server confirma con el body final ("⏹ Detenido") — que es lo que de verdad cierra el
+  // turno. Si el clic llegó tarde (ya terminaba), no pasa nada: no hay qué parar.
+  const stopTurnLocal = (messageId: number) => {
+    setTurns((prev) => {
+      if (!prev.has(messageId)) return prev;
+      const next = new Map(prev);
+      next.delete(messageId);
+      return next;
+    });
+    void stopTurnFn({ data: { messageId } }).catch(() => {});
+  };
 
   // Parchea un mensaje (por id) en el flujo activo y en cualquier hilo cacheado (inmutable).
   const patchMessage = (id: number, fn: (m: Message) => Message) => {
@@ -1524,6 +1548,18 @@ function ChannelPage() {
       case "message:edited":
         patchMessage(ev.id, (m) => ({ ...m, body: ev.body, edited_at: ev.edited_at }));
         break;
+      case "turn": {
+        // Estado del turno de agente: corriendo o esperando su lugar en la cola. Vive en
+        // memoria (no en el mensaje): es de la sesión, no del historial — al recargar, un
+        // turno que ya terminó no debe seguir diciendo "en espera".
+        setTurns((prev) => {
+          const next = new Map(prev);
+          if (ev.state === "stopped") next.delete(ev.id);
+          else next.set(ev.id, { state: ev.state, position: ev.position, startedAt: ev.startedAt });
+          return next;
+        });
+        break;
+      }
       case "message:delta": {
         // Streaming del reply de un agente, pedacito a pedacito: appendea el chunk
         // al body del mensaje-cáscara ya visible.
@@ -1543,6 +1579,14 @@ function ChannelPage() {
         // DESAPARECER una respuesta ya renderizada. Conserva lo visible si el autoritativo
         // viene vacío.
         const blank = !(ev.body ?? "").trim();
+        // El body autoritativo cierra el turno: si quedara en el mapa, la burbuja
+        // seguiría ofreciendo "Detener" algo que ya respondió.
+        setTurns((prev) => {
+          if (!prev.has(ev.id)) return prev;
+          const next = new Map(prev);
+          next.delete(ev.id);
+          return next;
+        });
         patchMessage(ev.id, (m) => (blank && (m.body ?? "").trim() ? m : { ...m, body: ev.body }));
         if (!blank) {
           maybeChimeAgent(ev.id); // primer contenido del reply → sonido del agente
@@ -2118,7 +2162,7 @@ function ChannelPage() {
 
   return (
     <ChatCtx.Provider
-      value={{ me: user, slug: channel.slug, emojis, users, react, star, pin, remove, editMsg, retrySend, discardSend, replyTo, setReplyTo, pickerFor, setPickerFor, onOpenArtifact: openArtifactWithSound, sendQuickReply, openPrefs, openProfile, joinCall: joinCallFromCard, myCallKey }}
+      value={{ me: user, slug: channel.slug, emojis, users, react, star, pin, remove, editMsg, retrySend, discardSend, replyTo, setReplyTo, pickerFor, setPickerFor, turns, stopTurn: stopTurnLocal, onOpenArtifact: openArtifactWithSound, sendQuickReply, openPrefs, openProfile, joinCall: joinCallFromCard, myCallKey }}
     >
     {/* pt safe-area: en PWA standalone (viewport-fit=cover + status-bar black-translucent)
         el contenido va DEBAJO de la hora/notch → el header y su botón de menú quedaban
@@ -6676,6 +6720,51 @@ function CallCard({ data }: { data: CallCardData }) {
   );
 }
 
+/**
+ * La cáscara de un turno de agente: pensando, o esperando su lugar en la cola.
+ *
+ * Antes eran N burbujas de "pensando…" idénticas — mandar tres mensajes seguidos parecía
+ * levantar tres agentes cuando en realidad es UNO con tres turnos serializados. Y no había
+ * forma de cortar ninguno: un turno largo sólo se podía esperar.
+ *
+ * El reloj corre en el cliente: un turno que escribe un artefacto pasa minutos sin emitir
+ * un solo evento, y sin ver el tiempo eso es indistinguible de un cuelgue (nos pasó hoy).
+ */
+function AgentPending({ id }: { id: number }) {
+  const t = useT();
+  const { turns, stopTurn } = useContext(ChatCtx);
+  const info = turns.get(id);
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!info) return;
+    const iv = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(iv);
+  }, [info?.startedAt]);
+  const secs = info ? Math.max(0, Math.round((now - info.startedAt) / 1000)) : 0;
+  const elapsed = secs < 60 ? `${secs}s` : `${Math.floor(secs / 60)}m ${secs % 60}s`;
+  const queued = info?.state === "queued";
+  return (
+    <div className="flex items-center gap-2 py-0.5 text-xs text-muted">
+      <ThinkingRing size={16} />
+      <span className="italic">
+        {queued
+          ? t("en espera · {n}º de la fila").replace("{n}", String(info!.position))
+          : t("pensando…")}
+      </span>
+      {info ? <span className="tabular-nums opacity-60">{elapsed}</span> : null}
+      {info ? (
+        <button
+          type="button"
+          onClick={() => stopTurn(id)}
+          className="rounded border border-border px-1.5 py-0.5 text-[11px] font-medium text-muted transition hover:border-red-400/40 hover:text-red-400"
+        >
+          {t("Detener")}
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
 function MessageRow({
   m,
   prev,
@@ -6923,10 +7012,7 @@ function MessageRow({
             // con avatar+nombre ya está arriba y PERMANECE). Se reemplaza al primer token.
             // Con adjunto/artefacto (p.ej. nota de voz SIN texto) NO es "pensando": el body
             // queda vacío a propósito y el contenido baja como adjunto → mostrar solo eso.
-            <div className="flex items-center gap-2 py-0.5 text-xs text-muted">
-              <ThinkingRing size={16} />
-              <span className="italic">{t("pensando…")}</span>
-            </div>
+            <AgentPending id={m.id} />
           ) : null
         )}
         {/* UN link = "te comparto esto" → tarjeta rica. VARIOS = "en esto me basé"

@@ -449,6 +449,8 @@ export const en: Record<string, string> = {
   "pantalla de inicio": "home screen",
   "paquete npm (stdio) o URL https (http)": "npm package (stdio) or https URL (http)",
   "pensando…": "thinking…",
+  "en espera · {n}º de la fila": "queued · {n} in line",
+  "Detener": "Stop",
   "pronto": "soon",
   "sacar": "remove",
   "secret opcional (ej. STRIPE_API_KEY)": "optional secret (e.g. STRIPE_API_KEY)",

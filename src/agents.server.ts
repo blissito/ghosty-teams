@@ -411,7 +411,9 @@ export async function callAgentBackendStream(
   parts: MediaPart[] = [],
   onTool?: (ev: ToolEvent) => void | Promise<void>,
   currentDoc?: { kind: "doc" | "sheet" | "artifact"; md: string; src?: string | null } | null,
-  invokerSub?: string
+  invokerSub?: string,
+  /** Detener el turno = colgarle al worker. El worker cierra su generador al notarlo. */
+  signal?: AbortSignal
 ): Promise<string> {
   if (agent.backend.kind !== "fleet") {
     // Sin SSE todavía: colecta el reply completo y lo emite de un tirón (el cliente
@@ -484,7 +486,7 @@ export async function callAgentBackendStream(
     });
     const url = `${base}/api/v2/fleet-agents/${(agent.backend as { id: string }).id}/message-stream`;
     const doStream = (tok: string) =>
-      fetch(url, { method: "POST", headers: rt.headers(streamBody, tok), body: streamBody });
+      fetch(url, { method: "POST", headers: rt.headers(streamBody, tok), body: streamBody, signal });
     // SELF-HEAL: el fleet_token de EasyBits (pool) CADUCA. Ante 401 refrescamos el
     // OAuth + re-obtenemos el token fresco y reintentamos UNA vez (incidente
     // 2026-07-14). El runtime lo declara — la HMAC del nativo no caduca por turno.
@@ -805,10 +807,17 @@ async function runAgentTurnInner(opts: {
   currentDoc?: { kind: "doc" | "sheet" | "artifact"; md: string; src?: string | null } | null;
   // `sub` del que escribe → tools de conectores per-invocador (token-capacidad al box).
   invokerSub?: string;
+  /** Cortar este turno (botón Detener / interrupción del propio invocador). */
+  signal?: AbortSignal;
+  /** La cáscara ya existe con este id — para registrarlo como turno vivo y poder pararlo. */
+  onShell?: (id: number) => void;
 }): Promise<{ id: number; reply: string }> {
   let id: number | null = null;
   const ensure = async (): Promise<number> => {
-    if (id == null) id = await opts.createShell();
+    if (id == null) {
+      id = await opts.createShell();
+      opts.onShell?.(id);
+    }
     return id;
   };
   // Estado del turno. El BODY visible = checklist + texto acumulado, SIEMPRE re-pintado
@@ -994,7 +1003,18 @@ async function runAgentTurnInner(opts: {
     reply = `👾 @${opts.handle} no está conectado. El owner lo configura en Ajustes → Agentes.`;
     await onChunk(reply);
   } else {
-    reply = await callAgentBackendStream(opts.agent, opts.groupId, opts.sender, opts.text, onChunk, opts.parts ?? [], onTool, opts.currentDoc, opts.invokerSub);
+    try {
+      reply = await callAgentBackendStream(opts.agent, opts.groupId, opts.sender, opts.text, onChunk, opts.parts ?? [], onTool, opts.currentDoc, opts.invokerSub, opts.signal);
+    } catch (e) {
+      // Detenido: NO es un error del agente. Se conserva lo que alcanzó a escribir y se
+      // dice que se detuvo — borrarlo tiraría trabajo que el usuario ya estaba leyendo.
+      if (opts.signal?.aborted) reply = "";
+      else throw e;
+    }
+  }
+  if (opts.signal?.aborted) {
+    const partial = narration().trim();
+    return { id: await ensure(), reply: renderToolBlock(true) + (partial ? `${partial}\n\n⏹ Detenido.` : "⏹ Detenido.") };
   }
   // `acc` (con separadores) es el texto bonito; reply es la acumulación cruda del stream.
   const finalText = narration().trim() || reply || "(sin respuesta)";

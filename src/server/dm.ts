@@ -268,7 +268,25 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
     // para MODIFICARLO (re-emitir la misma versión), no recrearlo desde cero ni duplicar la card.
     const currentDocId = await db.getDmArtifact(data.id).catch(() => null);
     const currentDoc = currentDocId ? await db.getDoc(currentDocId).catch(() => null) : null;
+    // Igual que en el room: lo mío se interrumpe, lo ajeno se encola (ver turns.server).
+    // En un DM 1:1 el invocador siempre es la misma persona, así que aquí la interrupción
+    // es la regla y no la excepción.
+    const turns = await import("./turns.server");
+    turns.interruptOwnTurns(groupId, me.sub);
+    const controller = new AbortController();
+    let registeredId: number | null = null;
     const { id, reply } = await runAgentTurn({
+      signal: controller.signal,
+      onShell: (mid) => {
+        registeredId = mid;
+        turns.registerTurn({
+          messageId: mid,
+          groupId,
+          invokerSub: me.sub,
+          controller,
+          announce: (st) => fanout({ t: "turn", ...st }),
+        });
+      },
       agent,
       handle: data.handle,
       groupId,
@@ -288,6 +306,8 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
       },
       emitDelta: (mid, chunk) => fanout({ t: "message:delta", id: mid, chunk, channelId: null, parentId: null, dmId: data.id }),
       emitBody: (mid, body) => fanout({ t: "message:body", id: mid, body }),
+    }).finally(() => {
+      if (registeredId != null) turns.finishTurn(registeredId);
     });
 
     // Nunca persistas un body VACÍO (deepseek cierra el turno en blanco a veces) → el

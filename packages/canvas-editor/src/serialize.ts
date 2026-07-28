@@ -30,10 +30,6 @@ function nodeToHtml(node: Node, indent: string): string {
 
   if (VOID_TAGS.has(node.tag)) return `${indent}<${node.tag} ${attrs.join(' ')}>`
 
-  // Contenido mixto: sale tal cual entró. Ya está escapado (viene del DOM) y el
-  // orden entre texto e inline es justamente lo que hay que conservar.
-  if (node.richText != null) return `${indent}${open}${node.richText}</${node.tag}>`
-
   const hasChildren = node.children.length > 0
   const hasText = node.text != null && node.text !== ''
   if (!hasChildren && !hasText) return `${indent}${open}</${node.tag}>`
@@ -164,13 +160,6 @@ function getParser(opts?: ParseOpts): { parseFromString(s: string, t: string): D
   throw new Error('htmlToDoc: no DOMParser available — pass opts.parser (jsdom) on the server')
 }
 
-// Etiquetas que viven DENTRO de una frase. Si una de éstas aparece junto a texto
-// suelto, el orden entre ambos es parte del significado y el árbol no lo guarda.
-const INLINE_TAGS = new Set([
-  'a', 'abbr', 'b', 'br', 'cite', 'code', 'del', 'em', 'i', 'ins', 'kbd', 'mark',
-  'q', 's', 'samp', 'small', 'span', 'strong', 'sub', 'sup', 'time', 'u', 'var',
-])
-
 function elToNode(el: Element): Node {
   const id = el.getAttribute('data-id') || genId('n')
   const tag = el.tagName.toLowerCase()
@@ -180,37 +169,17 @@ function elToNode(el: Element): Node {
 
   const children: Node[] = []
   let text: string | undefined
-  let looseText = false
-  let inlineOnly = true
   for (const child of Array.from(el.childNodes)) {
     if (child.nodeType === 3) {
       const t = (child.textContent || '').trim()
-      if (t) {
-        text = text ? `${text} ${t}` : t
-        looseText = true
-      }
+      if (t) text = text ? `${text} ${t}` : t
     } else if (child.nodeType === 1) {
-      const childEl = child as Element
-      if (!INLINE_TAGS.has(childEl.tagName.toLowerCase())) inlineOnly = false
-      children.push(elToNode(childEl))
+      children.push(elToNode(child as Element))
     }
   }
 
   const node: Node = { id, tag, cls, children }
-  // Contenido MIXTO (texto suelto + sólo inline) → hoja de texto rico: se guarda el
-  // innerHTML tal cual y no se desciende. Descomponerlo perdía el orden y el
-  // serializador escupía la frase primero y el <strong> al final.
-  if (looseText && inlineOnly && children.length > 0) {
-    node.children = []
-    node.richText = el.innerHTML
-    return withAttrs(node, el, src, href)
-  }
   if (text) node.text = text
-  return withAttrs(node, el, src, href)
-}
-
-/** Atributos comunes a las dos salidas de elToNode (hoja rica y nodo normal). */
-function withAttrs(node: Node, el: Element, src: string | null, href: string | null): Node {
   if (src != null) node.src = src
   if (href != null) node.href = href
   const styleAttr = el.getAttribute('style')
@@ -238,15 +207,6 @@ function elToArtboard(el: Element): Artboard {
   }
 }
 
-/** ¿Este fondo es oscuro? Sólo entiende hex; cualquier otra notación → no opina. */
-function isDarkHex(color?: string): boolean {
-  const m = /^#([0-9a-f]{6})$/i.exec((color || '').trim())
-  if (!m) return false
-  const n = parseInt(m[1], 16)
-  const lum = 0.2126 * ((n >> 16) & 255) + 0.7152 * ((n >> 8) & 255) + 0.0722 * (n & 255)
-  return lum / 255 < 0.4
-}
-
 function parseTheme(docEl: Document): Theme {
   const theme: Theme = {
     ...DEFAULT_THEME,
@@ -258,15 +218,8 @@ function parseTheme(docEl: Document): Theme {
   const mode = html?.getAttribute('data-theme')
   if (mode === 'dark' || mode === 'light') theme.mode = mode
   const parsed: Record<string, string> = {}
-  // TODOS los <style>, no sólo el primero: desde que el CSS de Tailwind se hornea al
-  // publicar, el bloque horneado suele ir delante y la paleta del artefacto quedaba
-  // sin leer — el editor abría con el tema por defecto (claro) un artefacto oscuro.
-  // Gana el ÚLTIMO `:root`, que es el que gana en la cascada.
-  const styleText = Array.from(docEl.querySelectorAll('style'))
-    .map((s) => s.textContent || '')
-    .join('\n')
-  const rootBlocks = styleText.match(/:root\s*{([^}]*)}/g) || []
-  const rootMatch = rootBlocks.length ? rootBlocks[rootBlocks.length - 1].match(/:root\s*{([^}]*)}/) : null
+  const styleText = docEl.querySelector('style')?.textContent || ''
+  const rootMatch = styleText.match(/:root\s*{([^}]*)}/)
   if (rootMatch) {
     for (const decl of rootMatch[1].split(';')) {
       const m = decl.match(/--color-([\w-]+)\s*:\s*([^;]+)/)
@@ -284,10 +237,6 @@ function parseTheme(docEl: Document): Theme {
   // The emitted CSS carries only the active mode's palette; parse it back into that
   // mode (idempotent round-trip); the other mode keeps defaults.
   if (Object.keys(parsed).length > 0) {
-    // Un artefacto ajeno rara vez trae `data-theme`: si no lo dice, el modo se
-    // deduce de su propio fondo. Sin esto, una paleta oscura entraba como tema
-    // CLARO y el editor la pintaba sobre blanco.
-    if (!mode && isDarkHex(parsed.background)) theme.mode = 'dark'
     if (theme.mode === 'dark') theme.dark = parsed
     else theme.light = parsed
   }

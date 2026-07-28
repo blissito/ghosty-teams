@@ -154,6 +154,23 @@ export const updateMyProfileFn = createServerFn({ method: "POST" })
 
 // Directorio de miembros (mapa vivo sub→perfil): resuelve avatars en TODOS lados
 // (mensajes viejos, sidebar) y alimenta el drawer de perfil. GET, cualquier member.
+/**
+ * Detener un turno de agente en vuelo. Corta la conexión con el worker, que al notarlo
+ * cierra su generador y SUELTA el lock de la sesión → el siguiente de la cola arranca.
+ *
+ * Sólo lo detiene quien lo pidió: en un canal todos ven la burbuja, pero cortar el
+ * trabajo que otro encargó es una acción sobre esa persona.
+ */
+export const stopTurnFn = createServerFn({ method: "POST" })
+  .validator((d: { messageId: number }) => d)
+  .handler(async ({ data }) => {
+    const me = await sessionUser();
+    const { stopTurn } = await import("./turns.server");
+    // false = ya había terminado (carrera normal entre el clic y el último token) o no
+    // es suyo. El cliente no necesita distinguirlo: en ambos casos no hay nada que parar.
+    return { ok: stopTurn(data.messageId, me?.sub ?? null) };
+  });
+
 export const listUsersFn = createServerFn({ method: "GET" }).handler(async () => {
   const me = await sessionUser();
   if (!me) throw new Error("no autenticado");
@@ -683,7 +700,26 @@ export const askAgent = createServerFn({ method: "POST" })
     const currentDocId = await db.getThreadArtifact(channel.id, data.parentId).catch(() => null);
     const currentDoc = currentDocId ? await db.getDoc(currentDocId).catch(() => null) : null;
     const poster = await sessionUser(); // el que postea/mencionó este turno = invocador
-    const { id, reply } = await runAgentTurn({
+
+    // INTERRUMPIR lo mío, encolar lo ajeno. Si el que escribe es el mismo que tiene un
+    // turno corriendo en este flow, casi siempre está corrigiendo ("mejor en html") y
+    // dejarlo en cola convierte la corrección en una respuesta tardía. El turno de otra
+    // persona no se toca: el canal es compartido, ese trabajo no es suyo.
+    const turns = await import("./turns.server");
+    turns.interruptOwnTurns(groupId, poster?.sub);
+
+    const controller = new AbortController();
+    const announce = (st: { id: number; state: "running" | "queued" | "stopped"; position: number; startedAt: number }) =>
+      bus.publish(bus.ch.room(ns, channel.id), { t: "turn", ...st });
+    let registeredId: number | null = null;
+    // finally: un turno que revienta no puede quedarse registrado como vivo — tendría a
+    // los siguientes eternamente "en espera" detrás de un fantasma.
+    const turnResult = await runAgentTurn({
+      signal: controller.signal,
+      onShell: (mid) => {
+        registeredId = mid;
+        turns.registerTurn({ messageId: mid, groupId, invokerSub: poster?.sub ?? null, controller, announce });
+      },
       agent,
       handle: data.handle,
       groupId,
@@ -706,12 +742,15 @@ export const askAgent = createServerFn({ method: "POST" })
       // Checklist incremental: reemplaza el body con la lista re-pintada (previas ✓, actual ⚡).
       emitBody: (mid, body) =>
         bus.publish(bus.ch.room(ns, channel.id), { t: "message:body", id: mid, body }),
+    }).finally(() => {
+      if (registeredId != null) turns.finishTurn(registeredId);
     });
 
     // Persiste el body final (autoritativo, sin marcar "editado") y reconcilia por si
     // se perdió algún delta (el bus es best-effort). NUNCA persistas un body VACÍO:
     // deepseek/ghosty-gc a veces cierra el turno en blanco → se guardaba "" en la DB y
     // el mensaje quedaba vacío (y reaparecía vacío al refetch, borrando lo streameado).
+    const { id, reply } = turnResult;
     const finalBody = reply.trim() ? reply : "(sin respuesta)";
     await db.setMessageBody(id, finalBody);
     bus.publish(bus.ch.room(ns, channel.id), { t: "message:body", id, body: finalBody });

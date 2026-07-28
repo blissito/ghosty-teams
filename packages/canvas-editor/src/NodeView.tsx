@@ -62,12 +62,6 @@ export function NodeView({
     return createElement(node.tag, props)
   }
 
-  // Hoja de texto rico: se pinta su HTML tal cual, igual que el preview. Es el
-  // MISMO markup que ya estaba en el artefacto (no entra nada de fuera).
-  if (node.richText != null) {
-    return createElement(node.tag, { ...props, dangerouslySetInnerHTML: { __html: node.richText } })
-  }
-
   const children: ReactNode[] = []
   if (node.text != null && node.text !== '') children.push(node.text)
   for (const c of node.children) {

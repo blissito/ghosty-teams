@@ -34,6 +34,10 @@ export type RtEvent =
   // Body autoritativo al terminar el stream (reconcilia por si se perdió un delta;
   // NO es una edición → no marca edited_at).
   | { t: "message:body"; id: number; body: string }
+  // Estado de un turno de agente EN VUELO: corriendo o esperando su lugar en la cola,
+  // y cuándo empezó. Sin esto, N turnos encolados se pintaban como N "pensando…"
+  // idénticos y no había dónde colgar el botón de Detener.
+  | { t: "turn"; id: number; state: "running" | "queued" | "stopped"; position: number; startedAt: number }
   | { t: "reaction"; messageId: number; emoji: string; userSub: string; op: "add" | "remove"; count: number }
   | { t: "pin"; channelId: number; messageId: number; pinned: boolean } // fijado/desfijado (room-wide)
   | { t: "star"; messageId: number; starred: boolean } // marcado personal (a ch.user, cross-device)

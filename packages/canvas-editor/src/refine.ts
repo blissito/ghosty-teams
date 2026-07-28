@@ -22,7 +22,20 @@ export interface RefineNodeInput {
   context?: string
   /** Modelo elegido para ESTA operación (chip del panel). El host lo resuelve. */
   modelId?: string
+  /**
+   * Cuánta libertad tiene el modelo. `tweak` (default) hace el cambio mínimo:
+   * es lo correcto para "sube el título", y es lo que mantiene intactos a los
+   * hermanos. `redesign` deja recomponer el nodo entero — necesario porque con
+   * `tweak` un "refactoriza esto" devuelve un `rotate-2` y nada más: el sistema
+   * le ordena cambio mínimo y obedece al sistema, no a la instrucción.
+   *
+   * Lo elige el usuario a propósito: deducirlo de la redacción falla en ambos
+   * sentidos, y equivocarse hacia `redesign` destruye trabajo.
+   */
+  mode?: RefineMode
 }
+
+export type RefineMode = 'tweak' | 'redesign'
 
 /** Una opción del selector de modelo. La lista la inyecta el host. */
 export interface ModelOption {

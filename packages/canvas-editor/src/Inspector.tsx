@@ -25,7 +25,7 @@ import {
   type Sizing,
 } from './cssProps'
 import type { EditorState, EditorStore } from './store'
-import type { AgentAction, ImageProvider, ModelOption, RefineProvider } from './refine'
+import type { AgentAction, ImageProvider, ModelOption, RefineMode, RefineProvider } from './refine'
 
 const TEXT_TAGS = new Set(['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'p', 'span', 'a', 'button', 'li', 'label'])
 const TAG_OPTIONS = ['div', 'section', 'h1', 'h2', 'h3', 'h4', 'p', 'span', 'a', 'button', 'ul', 'li', 'img']
@@ -227,17 +227,6 @@ function NodePanel({ store, node }: { store: EditorStore; node: Node }) {
       {node.text != null && (
         <Row label="Texto">
           <textarea style={{ ...styles.input, minHeight: 40, resize: 'vertical' }} value={node.text} onChange={(e) => store.setNodeText(node.id, e.target.value)} />
-        </Row>
-      )}
-      {node.richText != null && (
-        <Row label="Texto">
-          {/* Esta hoja lleva inline dentro (negritas, enlaces). Se edita su HTML
-              porque quitárselo para mostrar texto plano lo perdería al guardar. */}
-          <textarea
-            style={{ ...styles.input, minHeight: 56, resize: 'vertical', fontFamily: 'ui-monospace, monospace' }}
-            value={node.richText}
-            onChange={(e) => store.setNodeRichText(node.id, e.target.value)}
-          />
         </Row>
       )}
       {node.children.length > 0 && (
@@ -865,14 +854,19 @@ function RefinePanel({ store, node, doc, refineProvider }: { store: EditorStore;
   const [summary, setSummary] = useState<ChangeSummary | null>(null)
   const models = refineProvider.models ?? []
   const [modelId, setModelId] = useState(refineProvider.defaultModelId ?? models[0]?.id)
+  // Arranca en 'tweak': el modo seguro. Un rediseño no pedido borra trabajo.
+  const [mode, setMode] = useState<RefineMode>('tweak')
+  const [received, setReceived] = useState(0)
 
   async function run() {
     if (!instruction.trim() || busy) return
     setBusy(true)
     setError(null)
     setSummary(null)
+    setReceived(0)
     const before = node
     const currentHtml = nodeSubtreeToHtml(node)
+    let lastPaint = 0
     // Todo el refine (parciales incluidos) es UNA entrada de undo: sin esto ⌘Z
     // deshacía el streaming token por token.
     store.beginTransaction()
@@ -890,10 +884,31 @@ function RefinePanel({ store, node, doc, refineProvider }: { store: EditorStore;
           currentHtml,
           context: refineContext(doc, node.id),
           modelId,
+          mode,
         },
         // Sólo se pinta un parcial cuando el elemento raíz ya cerró: aplicar HTML
         // a medias desarma la sección en pantalla en cada chunk.
-        { onPartial: (p) => { if (isCompleteElement(p)) apply(p) } },
+        {
+          onPartial: (p) => {
+            setReceived(p.length)
+            if (mode !== 'redesign') {
+              // En 'tweak' el elemento es chico y cierra pronto: esperar a que
+              // cierre evita un parpadeo por nada.
+              if (isCompleteElement(p)) apply(p)
+              return
+            }
+            // En 'redesign' el <section> no cierra hasta el ÚLTIMO token, así que
+            // ese gate no se cumple nunca: el usuario esperaba 40s en blanco y
+            // todo aparecía de golpe al final. Aquí se pinta el parcial tal cual
+            // — el parser cierra solo los tags abiertos — y se ve construirse.
+            // Con throttle porque llegan ~2300 chunks: repintar en cada uno
+            // ahoga el canvas sin que el ojo lo aproveche.
+            const now = Date.now()
+            if (now - lastPaint < PAINT_MS) return
+            lastPaint = now
+            apply(p)
+          },
+        },
       )
       // Un proveedor que falla a media respuesta devuelve el HTML original sin
       // lanzar. Tratarlo como éxito borraba la instrucción del usuario y no le
@@ -926,6 +941,31 @@ function RefinePanel({ store, node, doc, refineProvider }: { store: EditorStore;
           if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) run()
         }}
       />
+      <div style={{ display: 'flex', gap: 4, marginTop: 6 }}>
+        {(
+          [
+            ['tweak', 'Ajustar', 'Cambia sólo lo que pediste'],
+            ['redesign', 'Rediseñar', 'Recompone el bloque; conserva imágenes y enlaces'],
+          ] as const
+        ).map(([m, label, hint]) => (
+          <button
+            key={m}
+            title={hint}
+            disabled={busy}
+            onClick={() => setMode(m)}
+            style={{
+              ...styles.chip,
+              flex: 1,
+              cursor: busy ? 'progress' : 'pointer',
+              background: mode === m ? '#262b36' : 'transparent',
+              color: mode === m ? '#e5e7eb' : '#7c8598',
+              borderColor: mode === m ? '#3b4252' : '#262b36',
+            }}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
       {models.length > 0 && (
         <ModelChip
           models={models}
@@ -947,7 +987,9 @@ function RefinePanel({ store, node, doc, refineProvider }: { store: EditorStore;
       >
         {busy ? (
           <>
-            <span className="ce-spinner" /> Refinando…
+            <span className="ce-spinner" />
+            {mode === 'redesign' ? 'Rediseñando' : 'Refinando'}
+            {received > 0 ? ` ${Math.round(received / 100) / 10}k…` : '…'}
           </>
         ) : (
           <>
@@ -985,6 +1027,9 @@ function isCompleteElement(html: string): boolean {
   return new RegExp(`</${tag}\\s*>$`, 'i').test(s)
 }
 const VOID_TAGS = new Set(['img', 'br', 'hr', 'input', 'source', 'meta', 'link'])
+
+/** ~8 repintados por segundo: se lee como construcción, no como parpadeo. */
+const PAINT_MS = 120
 
 /** Espacios colapsados: el ida y vuelta por el modelo reformatea sin cambiar nada. */
 function normalizeHtml(html: string): string {
@@ -1041,7 +1086,13 @@ function ModelChip({
   // `absolute` queda RECORTADO y las opciones de abajo son inalcanzables.
   const [rect, setRect] = useState<DOMRect | null>(null)
   const btnRef = useRef<HTMLButtonElement>(null)
+  const selectedRef = useRef<HTMLButtonElement>(null)
   const active = models.find((m) => m.id === value) ?? models[0]
+  // `block: 'nearest'` para que sólo desplace el menú si hace falta, y sin tocar
+  // el scroll del inspector que hay detrás.
+  useLayoutEffect(() => {
+    if (open) selectedRef.current?.scrollIntoView({ block: 'nearest' })
+  }, [open])
   const groups = models.reduce<Record<string, ModelOption[]>>((acc, m) => {
     ;(acc[m.provider] ??= []).push(m)
     return acc
@@ -1091,6 +1142,10 @@ function ModelChip({
                 {list.map((m) => (
                   <button
                     key={m.id}
+                    // El menú es más alto que su `maxHeight`: si el elegido queda
+                    // fuera de vista, al abrir parece que no hay nada elegido y
+                    // hay que buscarlo a scroll.
+                    ref={m.id === active?.id ? selectedRef : undefined}
                     style={{ ...styles.menuItem, background: m.id === active?.id ? '#3730a3' : 'transparent' }}
                     onClick={() => {
                       onChange(m.id)

@@ -10,20 +10,6 @@ export interface Node {
   tag: string // h1..h6, p, div, section, button, a, img, span, ul, li ...
   cls: string // Tailwind utility classes — the source of truth for styling
   text?: string // text content for leaf text nodes
-  /**
-   * Inner HTML preserved VERBATIM, for elements whose content mixes text with
-   * inline markup (`<p>Hola <strong>mundo</strong>, qué tal</p>`).
-   *
-   * The tree can't hold that shape: `text` collects every text node and `children`
-   * every element, so the interleaving is lost and the serializer emits all the
-   * text and then all the elements — the bold word jumped to the end of the
-   * sentence, which is what "the editor doesn't match the preview" looked like.
-   *
-   * When set, `text` and `children` are empty and the node is edited as one rich
-   * leaf. The inline tags inside carry no `data-id`, so an `eb-patch` can't
-   * address them; the element holding them still can.
-   */
-  richText?: string
   src?: string // for <img>
   href?: string // for <a>
   style?: string // raw inline style attribute (preserved verbatim for fidelity)

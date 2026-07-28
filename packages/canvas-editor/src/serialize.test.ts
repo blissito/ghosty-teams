@@ -82,30 +82,6 @@ describe('serialize round-trip', () => {
     expect(doc.artboards[0].nodes[0].children[0].text).toBe('Hi')
   })
 
-  it('keeps inline markup in place inside a sentence', () => {
-    const foreign =
-      '<html><body><p class="t">Hola <strong>mundo</strong>, ¿qué tal?</p></body></html>'
-    const doc = htmlToDoc(foreign, 'doc_inline')
-    const p = doc.artboards[0].nodes[0]
-    // Hoja rica: no se descompone, así que el orden se conserva al re-emitir. Antes
-    // salía "Hola , ¿qué tal? mundo" — la negrita al final de la frase.
-    expect(p.children).toHaveLength(0)
-    expect(p.richText).toBe('Hola <strong>mundo</strong>, ¿qué tal?')
-    expect(docToHtml(doc)).toContain('Hola <strong>mundo</strong>, ¿qué tal?')
-  })
-
-  it('reads the palette from any <style>, and infers dark mode from the background', () => {
-    const foreign = `<html><head>
-      <style>.p-4{padding:1rem}</style>
-      <style>:root{--color-background:#0a0a0a;--color-foreground:#fafafa}</style>
-      </head><body><p>x</p></body></html>`
-    const doc = htmlToDoc(foreign, 'doc_dark')
-    // El bloque horneado de Tailwind va primero; leer sólo el primer <style> dejaba
-    // el artefacto oscuro abriéndose con el tema claro por defecto.
-    expect(doc.theme.mode).toBe('dark')
-    expect(doc.theme.dark.background).toBe('#0a0a0a')
-  })
-
   it('nodeSubtreeToHtml emits a single node with data-id (for refine payloads)', () => {
     const node: Node = { id: 'n_x', tag: 'p', cls: 'text-sm', text: 'hola', children: [] }
     const html = nodeSubtreeToHtml(node)
