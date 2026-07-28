@@ -38,16 +38,8 @@ export default function ArtifactShareDialog({
   onClose,
   onVisibility,
   onChange,
-  showVersions = true,
 }: {
   documentId: string;
-  /**
-   * Selector de versión. En la PÁGINA del artefacto sí (se ve cambiar el
-   * documento); en el panel de Teams no, porque ahí siempre se muestra la versión
-   * VIVA —es la que se edita— y el selector parecía descompuesto. En el panel se
-   * enseña como una línea de sólo lectura.
-   */
-  showVersions?: boolean;
   onClose: () => void;
   onVisibility?: (v: "private" | "link") => void;
   /** Cambió algo que afecta a lo que se sirve (p.ej. la versión compartida). */
@@ -240,33 +232,23 @@ export default function ArtifactShareDialog({
                   <Info size={13} />
                 </span>
               </h3>
-              {showVersions ? (
-                <select
-                  disabled={!share.isOwner || saving}
-                  value={share.sharedArtifactId ?? ""}
-                  onChange={(e) => apply({ sharedArtifactId: e.target.value ? Number(e.target.value) : null })}
-                  className={`${row} disabled:cursor-default disabled:opacity-70`}
-                >
-                  <option value="">{t("La más reciente")}</option>
-                  {share.versions.map((v) => (
-                    <option key={v.id} value={v.id}>
-                      {v.label} · {fmt(v.createdAt)}
-                    </option>
-                  ))}
-                </select>
-              ) : (
-                // En el panel es SÓLO informativo: aquí siempre se ve la versión viva,
-                // así que un selector que no mueve nada de lo que tienes enfrente se
-                // lee como un control roto. Se cambia desde la página del artefacto.
-                <p className={`${row} text-muted`}>
-                  {(() => {
-                    const i = share.versions.findIndex((v) => v.id === share.sharedArtifactId);
-                    return i >= 0
-                      ? `${share.versions[i].label} · ${fmt(share.versions[i].createdAt)}`
-                      : t("La más reciente");
-                  })()}
-                </p>
-              )}
+              {/* Siempre editable: el diálogo sólo se abre desde la PÁGINA del
+                  artefacto, donde elegir versión sí cambia el documento. La variante
+                  de sólo lectura se quitó — venía de cuando esto también vivía en el
+                  panel, y ahí enseñaba una versión que no era la que estabas viendo. */}
+              <select
+                disabled={!share.isOwner || saving}
+                value={share.sharedArtifactId ?? ""}
+                onChange={(e) => apply({ sharedArtifactId: e.target.value ? Number(e.target.value) : null })}
+                className={`${row} disabled:cursor-default disabled:opacity-70`}
+              >
+                <option value="">{t("La más reciente")}</option>
+                {share.versions.map((v) => (
+                  <option key={v.id} value={v.id}>
+                    {v.label} · {fmt(v.createdAt)}
+                  </option>
+                ))}
+              </select>
             </section>
           </>
         )}
