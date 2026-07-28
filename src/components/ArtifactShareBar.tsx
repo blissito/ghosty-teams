@@ -68,7 +68,11 @@ export default function ArtifactShareBar({
     (async () => {
       try {
         const { getArtifactShareFn } = await import("../server/artifacts");
+        const { putCachedShare } = await import("./ArtifactShareDialog");
         const s = await getArtifactShareFn({ data: { documentId } });
+        // Esta consulta ya trae TODO lo que el diálogo necesita: guardarla evita
+        // que abrir "Compartir" enseñe un "Cargando…" por algo que ya sabemos.
+        putCachedShare(documentId, s as any);
         if (alive && s) setIsPublic(s.visibility === "link");
       } catch {
         /* sin permiso o artefacto viejo → se queda en privado, que es el default seguro */

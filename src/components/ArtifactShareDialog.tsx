@@ -2,7 +2,19 @@ import { useEffect, useState } from "react";
 import { Check, Globe, Link as LinkIcon, Lock, Loader2, X, Info } from "lucide-react";
 import { useT } from "../i18n";
 
-type Share = {
+// Caché por documento, a nivel de módulo: el estado de compartir sólo cambia desde
+// este diálogo, así que reabrirlo no tiene por qué volver a mostrar "Cargando…".
+// Se pinta lo cacheado de inmediato y se revalida callado por detrás.
+const shareCache = new Map<string, Share>();
+export function cachedShare(documentId: string): Share | null {
+  return shareCache.get(documentId) ?? null;
+}
+export function putCachedShare(documentId: string, s: Share | null): void {
+  if (s) shareCache.set(documentId, s);
+  else shareCache.delete(documentId);
+}
+
+export type Share = {
   slug: string | null;
   visibility: "private" | "link";
   sharedArtifactId: number | null;
@@ -34,8 +46,8 @@ export default function ArtifactShareDialog({
   onChange?: () => void;
 }) {
   const t = useT();
-  const [share, setShare] = useState<Share | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [share, setShare] = useState<Share | null>(() => cachedShare(documentId));
+  const [loading, setLoading] = useState(() => !cachedShare(documentId));
   const [saving, setSaving] = useState(false);
   const [copied, setCopied] = useState(false);
   const [confirmPublic, setConfirmPublic] = useState(false);
@@ -46,8 +58,9 @@ export default function ArtifactShareDialog({
     (async () => {
       try {
         const { getArtifactShareFn } = await import("../server/artifacts");
-        const s = await getArtifactShareFn({ data: { documentId } });
-        if (alive) setShare(s as Share | null);
+        const s = (await getArtifactShareFn({ data: { documentId } })) as Share | null;
+        putCachedShare(documentId, s);
+        if (alive) setShare(s);
       } catch (e) {
         if (alive) setError(String((e as Error)?.message ?? e));
       } finally {
@@ -72,6 +85,7 @@ export default function ArtifactShareDialog({
       const { setArtifactShareFn } = await import("../server/artifacts");
       const s = (await setArtifactShareFn({ data: { documentId, ...patch } })) as Share | null;
       setShare(s);
+      putCachedShare(documentId, s);
       if (s) {
         onVisibility?.(s.visibility);
         // La página del artefacto sirve la versión elegida desde su loader: sin
