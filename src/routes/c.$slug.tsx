@@ -43,13 +43,6 @@ import {
   Menu,
   Paperclip,
   FileText,
-  FileType2,
-  FileImage,
-  FileVideo,
-  FileAudio,
-  FileSpreadsheet,
-  FileArchive,
-  FileCode,
   FolderOpen,
   Download,
   Loader2,
@@ -5947,30 +5940,44 @@ function VoiceNote({ src, waveform, durationMs }: { src: string; waveform?: stri
 
 // Todo pasa por el proxy autenticado /api/attachment/:fileId (re-firma readUrl).
 /**
- * Ícono y color por TIPO de archivo. Un `FileText` genérico para todo hacía que un
- * PDF, una hoja de cálculo y un zip se vieran idénticos — el ícono es lo primero
- * que se mira en una tarjeta de archivo, así que debe decir QUÉ es.
+ * Distintivo de tipo: la EXTENSIÓN escrita, en su color.
  *
- * El color también informa: rojo=PDF y verde=hoja son convenciones que la gente ya
- * trae aprendidas de su escritorio.
+ * Se probó con íconos y ninguno es inequívoco — lucide no tiene glifo de PDF, y el
+ * más cercano (`FileType2`) dibuja una "T" que se lee como archivo de fuente
+ * tipográfica. Las letras no se prestan a interpretación: "PDF" es PDF.
+ *
+ * El color es la segunda señal, con las convenciones que la gente ya trae del
+ * escritorio (rojo = PDF, verde = hoja), así que no hay que explicarlas.
  */
-function fileGlyph(mime: string | null | undefined, name: string | null | undefined) {
+function fileBadge(mime: string | null | undefined, name: string | null | undefined) {
   const m = (mime ?? "").toLowerCase();
   const n = (name ?? "").toLowerCase();
-  const es = (...exts: string[]) => exts.some((e) => n.endsWith(e));
+  const ext = (n.match(/\.([a-z0-9]{1,5})$/)?.[1] ?? "").toUpperCase();
+  const es = (...exts: string[]) => exts.includes(ext.toLowerCase());
 
-  if (m === "application/pdf" || es(".pdf")) return { Icon: FileType2, cls: "text-red-400" };
-  if (m.startsWith("image/") || es(".png", ".jpg", ".jpeg", ".webp", ".gif", ".svg"))
-    return { Icon: FileImage, cls: "text-violet-400" };
-  if (m.startsWith("video/") || es(".mp4", ".mov", ".webm")) return { Icon: FileVideo, cls: "text-blue-400" };
-  if (m.startsWith("audio/") || es(".ogg", ".mp3", ".wav", ".m4a")) return { Icon: FileAudio, cls: "text-amber-400" };
-  if (es(".csv", ".xlsx", ".xls", ".numbers") || m.includes("spreadsheet"))
-    return { Icon: FileSpreadsheet, cls: "text-emerald-400" };
-  if (es(".zip", ".tar", ".gz", ".rar") || m.includes("zip") || m.includes("compressed"))
-    return { Icon: FileArchive, cls: "text-zinc-400" };
-  if (es(".json", ".ts", ".tsx", ".js", ".py", ".go", ".sh", ".html", ".css") || m.includes("json"))
-    return { Icon: FileCode, cls: "text-sky-400" };
-  return { Icon: FileText, cls: "text-brand" };
+  if (m === "application/pdf" || es("pdf")) return { label: "PDF", cls: "bg-red-500/15 text-red-400" };
+  if (m.startsWith("image/") || es("png", "jpg", "jpeg", "webp", "gif", "svg"))
+    return { label: ext || "IMG", cls: "bg-violet-500/15 text-violet-400" };
+  if (m.startsWith("video/") || es("mp4", "mov", "webm")) return { label: ext || "VID", cls: "bg-blue-500/15 text-blue-400" };
+  if (m.startsWith("audio/") || es("ogg", "mp3", "wav", "m4a")) return { label: ext || "AUD", cls: "bg-amber-500/15 text-amber-400" };
+  if (m.includes("spreadsheet") || es("csv", "xlsx", "xls"))
+    return { label: ext || "CSV", cls: "bg-emerald-500/15 text-emerald-400" };
+  if (m.includes("word") || es("docx", "doc")) return { label: ext || "DOC", cls: "bg-sky-500/15 text-sky-400" };
+  if (m.includes("zip") || m.includes("compressed") || es("zip", "tar", "gz", "rar"))
+    return { label: ext || "ZIP", cls: "bg-zinc-500/20 text-zinc-400" };
+  return { label: ext || "FILE", cls: "bg-brand/15 text-brand" };
+}
+
+function FileBadge({ mime, name }: { mime: string | null | undefined; name: string | null | undefined }) {
+  const { label, cls } = fileBadge(mime, name);
+  return (
+    <span
+      aria-hidden
+      className={`grid h-9 w-9 shrink-0 place-items-center rounded-lg text-[10px] font-bold tracking-tight ${cls}`}
+    >
+      {label.slice(0, 4)}
+    </span>
+  );
 }
 
 function AttachmentList({ attachments }: { attachments: Attachment[] }) {
@@ -6008,10 +6015,7 @@ function AttachmentList({ attachments }: { attachments: Attachment[] }) {
               className="group flex max-w-xs items-center gap-2.5 rounded-lg border border-border bg-surface-2 px-3 py-2 text-left transition hover:border-brand"
               title={t("Abrir en panel")}
             >
-              {(() => {
-                const { Icon, cls } = fileGlyph(a.mime, a.name);
-                return <Icon size={20} className={`shrink-0 ${cls}`} />;
-              })()}
+              <FileBadge mime={a.mime} name={a.name} />
               <span className="min-w-0 flex-1">
                 <span className="block truncate text-sm text-ink">{a.name ?? t("Archivo")}</span>
                 <span className="block text-[11px] text-muted">{fmtBytes(a.size)}</span>
@@ -6033,10 +6037,7 @@ function AttachmentList({ attachments }: { attachments: Attachment[] }) {
             download={a.name ?? undefined}
             className="group flex max-w-xs items-center gap-2.5 rounded-lg border border-border bg-surface-2 px-3 py-2 transition hover:border-brand"
           >
-            {(() => {
-              const { Icon, cls } = fileGlyph(a.mime, a.name);
-              return <Icon size={20} className={`shrink-0 ${cls}`} />;
-            })()}
+            <FileBadge mime={a.mime} name={a.name} />
             <span className="min-w-0 flex-1">
               <span className="block truncate text-sm text-ink">{a.name ?? t("Archivo")}</span>
               <span className="block text-[11px] text-muted">{fmtBytes(a.size)}</span>
