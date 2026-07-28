@@ -5940,43 +5940,61 @@ function VoiceNote({ src, waveform, durationMs }: { src: string; waveform?: stri
 
 // Todo pasa por el proxy autenticado /api/attachment/:fileId (re-firma readUrl).
 /**
- * Distintivo de tipo: la EXTENSIÓN escrita, en su color.
+ * Ícono de archivo: hoja con la esquina doblada y el tipo escrito dentro.
  *
- * Se probó con íconos y ninguno es inequívoco — lucide no tiene glifo de PDF, y el
- * más cercano (`FileType2`) dibuja una "T" que se lee como archivo de fuente
- * tipográfica. Las letras no se prestan a interpretación: "PDF" es PDF.
+ * Es el ícono universal de documento (Drive, Slack, macOS) y resuelve el problema
+ * que tienen los sets de íconos: lucide no trae glifo de PDF, y el más cercano
+ * (`FileType2`) dibuja una "T" que se lee como archivo de fuente tipográfica.
+ * La forma dice "archivo" y las letras dicen CUÁL — sin adivinar.
  *
- * El color es la segunda señal, con las convenciones que la gente ya trae del
- * escritorio (rojo = PDF, verde = hoja), así que no hay que explicarlas.
+ * El color es la tercera señal, con las convenciones del escritorio (rojo = PDF,
+ * verde = hoja), así que no hay que explicarlas.
  */
-function fileBadge(mime: string | null | undefined, name: string | null | undefined) {
+function fileKind(mime: string | null | undefined, name: string | null | undefined) {
   const m = (mime ?? "").toLowerCase();
   const n = (name ?? "").toLowerCase();
   const ext = (n.match(/\.([a-z0-9]{1,5})$/)?.[1] ?? "").toUpperCase();
   const es = (...exts: string[]) => exts.includes(ext.toLowerCase());
 
-  if (m === "application/pdf" || es("pdf")) return { label: "PDF", cls: "bg-red-500/15 text-red-400" };
+  if (m === "application/pdf" || es("pdf")) return { label: "PDF", cls: "text-red-400" };
   if (m.startsWith("image/") || es("png", "jpg", "jpeg", "webp", "gif", "svg"))
-    return { label: ext || "IMG", cls: "bg-violet-500/15 text-violet-400" };
-  if (m.startsWith("video/") || es("mp4", "mov", "webm")) return { label: ext || "VID", cls: "bg-blue-500/15 text-blue-400" };
-  if (m.startsWith("audio/") || es("ogg", "mp3", "wav", "m4a")) return { label: ext || "AUD", cls: "bg-amber-500/15 text-amber-400" };
-  if (m.includes("spreadsheet") || es("csv", "xlsx", "xls"))
-    return { label: ext || "CSV", cls: "bg-emerald-500/15 text-emerald-400" };
-  if (m.includes("word") || es("docx", "doc")) return { label: ext || "DOC", cls: "bg-sky-500/15 text-sky-400" };
+    return { label: ext || "IMG", cls: "text-violet-400" };
+  if (m.startsWith("video/") || es("mp4", "mov", "webm")) return { label: ext || "VID", cls: "text-blue-400" };
+  if (m.startsWith("audio/") || es("ogg", "mp3", "wav", "m4a")) return { label: ext || "AUD", cls: "text-amber-400" };
+  if (m.includes("spreadsheet") || es("csv", "xlsx", "xls")) return { label: ext || "CSV", cls: "text-emerald-400" };
+  if (m.includes("word") || es("docx", "doc")) return { label: ext || "DOC", cls: "text-sky-400" };
   if (m.includes("zip") || m.includes("compressed") || es("zip", "tar", "gz", "rar"))
-    return { label: ext || "ZIP", cls: "bg-zinc-500/20 text-zinc-400" };
-  return { label: ext || "FILE", cls: "bg-brand/15 text-brand" };
+    return { label: ext || "ZIP", cls: "text-zinc-400" };
+  return { label: ext || "", cls: "text-brand" };
 }
 
-function FileBadge({ mime, name }: { mime: string | null | undefined; name: string | null | undefined }) {
-  const { label, cls } = fileBadge(mime, name);
+function FileGlyph({ mime, name }: { mime: string | null | undefined; name: string | null | undefined }) {
+  const { label, cls } = fileKind(mime, name);
   return (
-    <span
-      aria-hidden
-      className={`grid h-9 w-9 shrink-0 place-items-center rounded-lg text-[10px] font-bold tracking-tight ${cls}`}
-    >
-      {label.slice(0, 4)}
-    </span>
+    <svg viewBox="0 0 32 40" className={`h-9 w-[1.8rem] shrink-0 ${cls}`} aria-hidden focusable="false">
+      {/* Hoja con la esquina doblada: el contorno va en currentColor y el relleno
+          translúcido, así el mismo dibujo sirve en tema claro y oscuro. */}
+      <path
+        d="M4 3.5h15L28 12v24.5a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5.5a2 2 0 0 1 2-2Z"
+        fill="currentColor"
+        fillOpacity="0.12"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinejoin="round"
+      />
+      <path d="M19 3.5V10a2 2 0 0 0 2 2h7" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" />
+      {label ? (
+        <text
+          x="16"
+          y="29"
+          textAnchor="middle"
+          fill="currentColor"
+          style={{ font: "700 9px ui-sans-serif, system-ui, sans-serif", letterSpacing: "-0.02em" }}
+        >
+          {label.slice(0, 4)}
+        </text>
+      ) : null}
+    </svg>
   );
 }
 
@@ -6015,7 +6033,7 @@ function AttachmentList({ attachments }: { attachments: Attachment[] }) {
               className="group flex max-w-xs items-center gap-2.5 rounded-lg border border-border bg-surface-2 px-3 py-2 text-left transition hover:border-brand"
               title={t("Abrir en panel")}
             >
-              <FileBadge mime={a.mime} name={a.name} />
+              <FileGlyph mime={a.mime} name={a.name} />
               <span className="min-w-0 flex-1">
                 <span className="block truncate text-sm text-ink">{a.name ?? t("Archivo")}</span>
                 <span className="block text-[11px] text-muted">{fmtBytes(a.size)}</span>
@@ -6037,7 +6055,7 @@ function AttachmentList({ attachments }: { attachments: Attachment[] }) {
             download={a.name ?? undefined}
             className="group flex max-w-xs items-center gap-2.5 rounded-lg border border-border bg-surface-2 px-3 py-2 transition hover:border-brand"
           >
-            <FileBadge mime={a.mime} name={a.name} />
+            <FileGlyph mime={a.mime} name={a.name} />
             <span className="min-w-0 flex-1">
               <span className="block truncate text-sm text-ink">{a.name ?? t("Archivo")}</span>
               <span className="block text-[11px] text-muted">{fmtBytes(a.size)}</span>
