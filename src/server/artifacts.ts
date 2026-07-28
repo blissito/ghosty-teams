@@ -235,7 +235,10 @@ export async function resolveSharedArtifact(
   return {
     root: { id: root.id, url: root.url, ownerSub: root.ownerSub, visibility: root.visibility },
     version: { id: full.id, title: full.title, md: full.md, src: full.src, createdAt: full.createdAt },
-    versionLabel: idx >= 0 ? `Versión ${idx + 1}` : null,
+    // "fijada" y no sólo el número: el badge a secas se lee como "ésta es la actual", y
+    // abrir el enlace y encontrarte una versión vieja de lo que tienes en pantalla parece
+    // un bug. Sólo aparece cuando alguien la congeló a propósito.
+    versionLabel: idx >= 0 ? `Versión ${idx + 1} · fijada` : null,
     isOwner,
   };
 }
