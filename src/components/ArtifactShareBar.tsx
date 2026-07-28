@@ -113,9 +113,27 @@ export default function ArtifactShareBar({
       <div className="flex min-w-0 flex-1 items-baseline gap-2">
         <span className="min-w-0 truncate text-sm font-medium text-ink">{title}</span>
         {versionLabel ? (
-          <span className="shrink-0 rounded-full bg-surface-3 px-1.5 py-0.5 text-[11px] font-medium text-muted">
-            {versionLabel}
-          </span>
+          // Fijada = el enlace entrega una versión anterior a la viva. El badge es el
+          // único sitio donde eso se nota, así que es también donde se deshace: un clic
+          // vuelve a "la más reciente". Para quien no es dueño, es sólo una etiqueta.
+          documentId ? (
+            <button
+              type="button"
+              title={t("Ver la más reciente")}
+              onClick={async () => {
+                const { setArtifactShareFn } = await import("../server/artifacts");
+                await setArtifactShareFn({ data: { documentId, sharedArtifactId: null } }).catch(() => null);
+                onShareChange?.();
+              }}
+              className="shrink-0 rounded-full bg-surface-3 px-1.5 py-0.5 text-[11px] font-medium text-muted transition hover:bg-border hover:text-ink"
+            >
+              {versionLabel}
+            </button>
+          ) : (
+            <span className="shrink-0 rounded-full bg-surface-3 px-1.5 py-0.5 text-[11px] font-medium text-muted">
+              {versionLabel}
+            </span>
+          )
         ) : null}
         {subtitle && !compact ? (
           <span className="truncate text-xs text-muted">{subtitle}</span>
