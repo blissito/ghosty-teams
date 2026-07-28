@@ -25,7 +25,9 @@ export type ArtifactShareBarProps = {
   documentId?: string | null;
   /** Acciones propias de la superficie (descargar, abrir, cerrar…). */
   actions?: React.ReactNode;
-  /** Acciones que SIEMPRE quedan visibles (cerrar, pantalla completa). */
+  /** Acción principal, a la izquierda del grupo y nunca colapsada (Editar). */
+  primaryAction?: React.ReactNode;
+  /** Acciones de ventana: van AL FINAL porque cerrar es lo último de la fila. */
   pinnedActions?: React.ReactNode;
   /** Slot de la izquierda (volver, ícono del agente). */
   leading?: React.ReactNode;
@@ -40,6 +42,7 @@ export default function ArtifactShareBar({
   versionLabel,
   documentId,
   actions,
+  primaryAction,
   pinnedActions,
   leading,
   onReport,
@@ -119,7 +122,7 @@ export default function ArtifactShareBar({
         ) : null}
       </div>
 
-      {pinnedActions}
+      {primaryAction}
 
       {/* Al compactar, las acciones secundarias se esconden en ⋯ en vez de
           empujar al título hasta desaparecer. */}
@@ -183,6 +186,10 @@ export default function ArtifactShareBar({
           ) : null}
         </>
       ) : null}
+
+      {/* Ventana al FINAL: cerrar es lo último de la fila, no algo en medio de las
+          acciones del documento. */}
+      {pinnedActions}
     </header>
   );
 }

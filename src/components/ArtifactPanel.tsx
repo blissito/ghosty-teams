@@ -922,11 +922,10 @@ export default function ArtifactPanel({
                     <FileText size={16} className="mr-1 shrink-0 text-muted" />
                   )
                 }
-                pinnedActions={
-                  <>
-                    {/* Ver/Editar: la acción principal del artefacto, así que va con
-                        etiqueta y no se esconde en el ⋯ al compactar. */}
-                    {artifact.kind === "artifact" ? (
+                primaryAction={
+                  // Ver/Editar: la acción principal del artefacto — con etiqueta, a la
+                  // izquierda del grupo, y nunca escondida en el ⋯.
+                  artifact.kind === "artifact" ? (
                       <button
                         type="button"
                         onClick={() => setEditing((v) => !v)}
@@ -938,7 +937,10 @@ export default function ArtifactPanel({
                             salir del editor y enseñar el artefacto corriendo. */}
                         {editing ? t("Preview") : t("Editar")}
                       </button>
-                    ) : null}
+                  ) : null
+                }
+                pinnedActions={
+                  <>
                     <button
                       type="button"
                       onClick={toggleFullscreen}
