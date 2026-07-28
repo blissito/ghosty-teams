@@ -802,6 +802,7 @@ export const askAgent = createServerFn({ method: "POST" })
             kind: "artifact",
             title: draftTitle(res.html, "artifact"),
             md: res.html,
+            ownerSub: poster?.sub ?? null,
             setPointer: (docId) => db.setThreadArtifact(channel.id, data.parentId, docId),
             notify: () =>
               bus.publish(bus.ch.room(ns, channel.id), { t: "refresh", channelId: channel.id, parentId: data.parentId }),
@@ -830,6 +831,7 @@ export const askAgent = createServerFn({ method: "POST" })
           kind: ebdoc.kind, // "doc" | "sheet" | "artifact"
           title,
           md: ebdoc.md,
+          ownerSub: poster?.sub ?? null,
           setPointer: (docId) => db.setThreadArtifact(channel.id, data.parentId, docId),
           notify: () =>
             bus.publish(bus.ch.room(ns, channel.id), { t: "refresh", channelId: channel.id, parentId: data.parentId }),

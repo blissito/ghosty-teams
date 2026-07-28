@@ -9,6 +9,7 @@ import { listTeamDocumentsFn, type TeamDocument } from "../server/documents";
 import { updateArtifactHtmlFn } from "../server/artifacts";
 import { CanvasEditor, EditorStore, htmlToDoc, htmlToNode, docToHtml, type Node as CeNode } from "@ghosty/canvas-editor";
 import { Markdown } from "./Markdown";
+import ArtifactShareBar from "./ArtifactShareBar";
 
 // Un documento del team (generado o subido) → vista del panel. Null si no es
 // previsualizable. Reusado por el índice Cowork (kind:"docindex").
@@ -868,23 +869,52 @@ export default function ArtifactPanel({
                 abierto (sin fade ni re-animación → no se siente como "abrir de nuevo"). El
                 deslizamiento vive solo en el motion.aside (abrir/cerrar). */}
             <div className="flex min-w-0 shrink-0 flex-col" style={{ width: effectiveW }}>
-              <header className="flex flex-shrink-0 items-center gap-1 border-b border-border bg-surface-2 px-3 py-2">
-                {detail ? (
-                  <button
-                    type="button"
-                    onClick={() => setDetail(null)}
-                    title={t("Volver a Documentos")}
-                    className="mr-0.5 inline-flex shrink-0 items-center gap-0.5 rounded-md py-1 pl-1 pr-1.5 text-xs font-medium text-muted transition hover:bg-surface-3 hover:text-ink"
-                  >
-                    <ChevronLeft size={16} /> {t("Documentos")}
-                  </button>
-                ) : (
-                  <FileText size={16} className="mr-1 shrink-0 text-muted" />
-                )}
-                <span className="min-w-0 flex-1 truncate text-sm font-medium text-ink">
-                  {artifact.title || t("Documento")}
-                  {docBadge ? <span className="ml-1.5 text-xs font-normal text-muted">· {docBadge}</span> : null}
-                </span>
+              {/* La barra es la MISMA que la de la página pública /a/<slug>
+                  (ArtifactShareBar): se colapsa sola por ancho real, así que los
+                  botones dejaron de pelear con el título al angostar el panel. Las
+                  acciones de aquí abajo son las propias de esta superficie y viajan
+                  como slot; al compactar se van al ⋯. */}
+              <ArtifactShareBar
+                title={artifact.title || t("Documento")}
+                subtitle={docBadge}
+                documentId={artifact.kind === "artifact" ? (artifact.documentId ?? null) : null}
+                leading={
+                  detail ? (
+                    <button
+                      type="button"
+                      onClick={() => setDetail(null)}
+                      title={t("Volver a Documentos")}
+                      className="mr-0.5 inline-flex shrink-0 items-center gap-0.5 rounded-md py-1 pl-1 pr-1.5 text-xs font-medium text-muted transition hover:bg-surface-3 hover:text-ink"
+                    >
+                      <ChevronLeft size={16} /> {t("Documentos")}
+                    </button>
+                  ) : (
+                    <FileText size={16} className="mr-1 shrink-0 text-muted" />
+                  )
+                }
+                pinnedActions={
+                  <>
+                    <button
+                      type="button"
+                      onClick={toggleFullscreen}
+                      className="grid size-7 shrink-0 place-items-center rounded-md text-muted transition hover:bg-surface-3 hover:text-brand"
+                      title={fullscreen ? t("Salir de pantalla completa") : t("Expandir por completo")}
+                      aria-label={fullscreen ? t("Salir de pantalla completa") : t("Expandir por completo")}
+                    >
+                      {fullscreen ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={onClose}
+                      className="grid size-7 shrink-0 place-items-center rounded-md text-muted transition hover:bg-surface-3 hover:text-ink"
+                      title={t("Cerrar")}
+                    >
+                      <X size={16} />
+                    </button>
+                  </>
+                }
+                actions={
+                  <>
                 {/* Acciones estilo claude.ai: iconos en el header (no barra abajo). La EDICIÓN
                     de un doc/hoja del agente se hace CHATEANDO (se re-redacta en vivo) — sin
                     editor embebido. Aquí solo Descargar y, para un .docx adjunto, Actualizar. */}
@@ -965,24 +995,9 @@ export default function ArtifactPanel({
                     <ExternalLink size={15} />
                   </a>
                 ) : null}
-                <button
-                  type="button"
-                  onClick={toggleFullscreen}
-                  className="grid size-7 place-items-center rounded-md text-muted transition hover:bg-surface-3 hover:text-brand"
-                  title={fullscreen ? t("Salir de pantalla completa") : t("Expandir por completo")}
-                  aria-label={fullscreen ? t("Salir de pantalla completa") : t("Expandir por completo")}
-                >
-                  {fullscreen ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
-                </button>
-                <button
-                  type="button"
-                  onClick={onClose}
-                  className="grid size-7 place-items-center rounded-md text-muted transition hover:bg-surface-3 hover:text-ink"
-                  title={t("Cerrar")}
-                >
-                  <X size={16} />
-                </button>
-              </header>
+                  </>
+                }
+              />
 
               <div className="relative min-h-0 flex-1 overflow-auto bg-surface-3">
                 {artifact.kind === "docindex" ? (

@@ -26,6 +26,7 @@ import { Route as ApiUploadRouteImport } from './routes/api.upload'
 import { Route as ApiStreamRouteImport } from './routes/api.stream'
 import { Route as ApiManifestRouteImport } from './routes/api.manifest'
 import { Route as ApiAgentAssetRouteImport } from './routes/api.agent-asset'
+import { Route as AIdRouteImport } from './routes/a.$id'
 import { Route as SetupEasybitsConnectRouteImport } from './routes/setup.easybits.connect'
 import { Route as SetupEasybitsCallbackRouteImport } from './routes/setup.easybits.callback'
 import { Route as SetupProviderConnectRouteImport } from './routes/setup.$provider.connect'
@@ -39,6 +40,7 @@ import { Route as ApiDevDriveRouteImport } from './routes/api.dev.drive'
 import { Route as ApiConnectorsToolsRouteImport } from './routes/api.connectors.tools'
 import { Route as ApiAttachmentIdRouteImport } from './routes/api.attachment.$id'
 import { Route as ApiArtifactStreamIdRouteImport } from './routes/api.artifact-stream.$id'
+import { Route as AIdRawRouteImport } from './routes/a.$id.raw'
 
 const SetupRoute = SetupRouteImport.update({
   id: '/setup',
@@ -125,6 +127,11 @@ const ApiAgentAssetRoute = ApiAgentAssetRouteImport.update({
   path: '/api/agent-asset',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AIdRoute = AIdRouteImport.update({
+  id: '/a/$id',
+  path: '/a/$id',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const SetupEasybitsConnectRoute = SetupEasybitsConnectRouteImport.update({
   id: '/easybits/connect',
   path: '/easybits/connect',
@@ -191,6 +198,11 @@ const ApiArtifactStreamIdRoute = ApiArtifactStreamIdRouteImport.update({
   path: '/api/artifact-stream/$id',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AIdRawRoute = AIdRawRouteImport.update({
+  id: '/raw',
+  path: '/raw',
+  getParentRoute: () => AIdRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -201,6 +213,7 @@ export interface FileRoutesByFullPath {
   '/forms': typeof FormsRoute
   '/login': typeof LoginRoute
   '/setup': typeof SetupRouteWithChildren
+  '/a/$id': typeof AIdRouteWithChildren
   '/api/agent-asset': typeof ApiAgentAssetRoute
   '/api/manifest': typeof ApiManifestRoute
   '/api/stream': typeof ApiStreamRoute
@@ -210,6 +223,7 @@ export interface FileRoutesByFullPath {
   '/join/$token': typeof JoinTokenRoute
   '/t3/$': typeof T3SplatRoute
   '/setup/': typeof SetupIndexRoute
+  '/a/$id/raw': typeof AIdRawRoute
   '/api/artifact-stream/$id': typeof ApiArtifactStreamIdRoute
   '/api/attachment/$id': typeof ApiAttachmentIdRoute
   '/api/connectors/tools': typeof ApiConnectorsToolsRoute
@@ -232,6 +246,7 @@ export interface FileRoutesByTo {
   '/canvas-probe': typeof CanvasProbeRoute
   '/forms': typeof FormsRoute
   '/login': typeof LoginRoute
+  '/a/$id': typeof AIdRouteWithChildren
   '/api/agent-asset': typeof ApiAgentAssetRoute
   '/api/manifest': typeof ApiManifestRoute
   '/api/stream': typeof ApiStreamRoute
@@ -241,6 +256,7 @@ export interface FileRoutesByTo {
   '/join/$token': typeof JoinTokenRoute
   '/t3/$': typeof T3SplatRoute
   '/setup': typeof SetupIndexRoute
+  '/a/$id/raw': typeof AIdRawRoute
   '/api/artifact-stream/$id': typeof ApiArtifactStreamIdRoute
   '/api/attachment/$id': typeof ApiAttachmentIdRoute
   '/api/connectors/tools': typeof ApiConnectorsToolsRoute
@@ -265,6 +281,7 @@ export interface FileRoutesById {
   '/forms': typeof FormsRoute
   '/login': typeof LoginRoute
   '/setup': typeof SetupRouteWithChildren
+  '/a/$id': typeof AIdRouteWithChildren
   '/api/agent-asset': typeof ApiAgentAssetRoute
   '/api/manifest': typeof ApiManifestRoute
   '/api/stream': typeof ApiStreamRoute
@@ -274,6 +291,7 @@ export interface FileRoutesById {
   '/join/$token': typeof JoinTokenRoute
   '/t3/$': typeof T3SplatRoute
   '/setup/': typeof SetupIndexRoute
+  '/a/$id/raw': typeof AIdRawRoute
   '/api/artifact-stream/$id': typeof ApiArtifactStreamIdRoute
   '/api/attachment/$id': typeof ApiAttachmentIdRoute
   '/api/connectors/tools': typeof ApiConnectorsToolsRoute
@@ -299,6 +317,7 @@ export interface FileRouteTypes {
     | '/forms'
     | '/login'
     | '/setup'
+    | '/a/$id'
     | '/api/agent-asset'
     | '/api/manifest'
     | '/api/stream'
@@ -308,6 +327,7 @@ export interface FileRouteTypes {
     | '/join/$token'
     | '/t3/$'
     | '/setup/'
+    | '/a/$id/raw'
     | '/api/artifact-stream/$id'
     | '/api/attachment/$id'
     | '/api/connectors/tools'
@@ -330,6 +350,7 @@ export interface FileRouteTypes {
     | '/canvas-probe'
     | '/forms'
     | '/login'
+    | '/a/$id'
     | '/api/agent-asset'
     | '/api/manifest'
     | '/api/stream'
@@ -339,6 +360,7 @@ export interface FileRouteTypes {
     | '/join/$token'
     | '/t3/$'
     | '/setup'
+    | '/a/$id/raw'
     | '/api/artifact-stream/$id'
     | '/api/attachment/$id'
     | '/api/connectors/tools'
@@ -362,6 +384,7 @@ export interface FileRouteTypes {
     | '/forms'
     | '/login'
     | '/setup'
+    | '/a/$id'
     | '/api/agent-asset'
     | '/api/manifest'
     | '/api/stream'
@@ -371,6 +394,7 @@ export interface FileRouteTypes {
     | '/join/$token'
     | '/t3/$'
     | '/setup/'
+    | '/a/$id/raw'
     | '/api/artifact-stream/$id'
     | '/api/attachment/$id'
     | '/api/connectors/tools'
@@ -395,6 +419,7 @@ export interface RootRouteChildren {
   FormsRoute: typeof FormsRoute
   LoginRoute: typeof LoginRoute
   SetupRoute: typeof SetupRouteWithChildren
+  AIdRoute: typeof AIdRouteWithChildren
   ApiAgentAssetRoute: typeof ApiAgentAssetRoute
   ApiManifestRoute: typeof ApiManifestRoute
   ApiStreamRoute: typeof ApiStreamRoute
@@ -535,6 +560,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiAgentAssetRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/a/$id': {
+      id: '/a/$id'
+      path: '/a/$id'
+      fullPath: '/a/$id'
+      preLoaderRoute: typeof AIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/setup/easybits/connect': {
       id: '/setup/easybits/connect'
       path: '/easybits/connect'
@@ -626,6 +658,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiArtifactStreamIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/a/$id/raw': {
+      id: '/a/$id/raw'
+      path: '/raw'
+      fullPath: '/a/$id/raw'
+      preLoaderRoute: typeof AIdRawRouteImport
+      parentRoute: typeof AIdRoute
+    }
   }
 }
 
@@ -647,6 +686,16 @@ const SetupRouteChildren: SetupRouteChildren = {
 
 const SetupRouteWithChildren = SetupRoute._addFileChildren(SetupRouteChildren)
 
+interface AIdRouteChildren {
+  AIdRawRoute: typeof AIdRawRoute
+}
+
+const AIdRouteChildren: AIdRouteChildren = {
+  AIdRawRoute: AIdRawRoute,
+}
+
+const AIdRouteWithChildren = AIdRoute._addFileChildren(AIdRouteChildren)
+
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   ArtifactsRoute: ArtifactsRoute,
@@ -656,6 +705,7 @@ const rootRouteChildren: RootRouteChildren = {
   FormsRoute: FormsRoute,
   LoginRoute: LoginRoute,
   SetupRoute: SetupRouteWithChildren,
+  AIdRoute: AIdRouteWithChildren,
   ApiAgentAssetRoute: ApiAgentAssetRoute,
   ApiManifestRoute: ApiManifestRoute,
   ApiStreamRoute: ApiStreamRoute,

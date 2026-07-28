@@ -369,6 +369,7 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
             title: draftTitle(res.html, "artifact"),
             md: res.html,
             visibility: "public",
+            ownerSub: me.sub,
             setPointer: (docId) => db.setDmArtifact(data.id, docId),
             notify: () => fanout({ t: "refresh", channelId: null, parentId: null, dmId: data.id }),
           });
@@ -395,6 +396,7 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
           title,
           md: ebdoc.md,
           visibility: "public",
+          ownerSub: me.sub,
           setPointer: (docId) => db.setDmArtifact(data.id, docId),
           notify: () => fanout({ t: "refresh", channelId: null, parentId: null, dmId: data.id }),
         });

@@ -318,12 +318,124 @@ export async function attachArtifacts(msgs: Message[]): Promise<Message[]> {
 // Inserta el artefacto de un mensaje del agente.
 export async function createArtifact(
   messageId: number,
-  a: { kind: string; url: string; title?: string | null; md?: string | null; src?: string | null }
+  a: {
+    kind: string;
+    url: string;
+    title?: string | null;
+    md?: string | null;
+    src?: string | null;
+    ownerSub?: string | null;
+  }
 ): Promise<void> {
   await dbq(
-    `INSERT INTO gc_artifacts (message_id, kind, url, title, md, src) VALUES (?, ?, ?, ?, ?, ?)`,
-    [messageId, a.kind, a.url, a.title ?? null, a.md ?? null, a.src ?? null]
+    `INSERT INTO gc_artifacts (message_id, kind, url, title, md, src, owner_sub)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    [messageId, a.kind, a.url, a.title ?? null, a.md ?? null, a.src ?? null, a.ownerSub ?? null]
   );
+}
+
+// ── Compartir: la RAÍZ del documento ────────────────────────────────────────────
+// Cada publicación es una fila nueva con el mismo `url`, así que las columnas de
+// compartir viven en la más VIEJA — es la única que sobrevive a las versiones.
+// Espejo de getDoc(), que toma la más nueva.
+export type ShareRoot = {
+  id: number;
+  url: string;
+  title: string | null;
+  ownerSub: string | null;
+  visibility: "private" | "link";
+  slug: string | null;
+  sharedArtifactId: number | null;
+};
+
+function toShareRoot(r: any): ShareRoot {
+  return {
+    id: num(r.id),
+    url: r.url ?? "",
+    title: r.title ?? null,
+    ownerSub: r.owner_sub ?? r.msg_sender_sub ?? null,
+    visibility: r.share_visibility === "link" ? "link" : "private",
+    slug: r.share_slug ?? null,
+    sharedArtifactId: r.shared_artifact_id != null ? num(r.shared_artifact_id) : null,
+  };
+}
+
+const SHARE_ROOT_COLS = `a.id, a.url, a.title, a.owner_sub, a.share_visibility,
+    a.share_slug, a.shared_artifact_id, m.sender_sub AS msg_sender_sub`;
+
+export async function shareRootFor(documentId: string): Promise<ShareRoot | null> {
+  const rows = await dbq(
+    `SELECT ${SHARE_ROOT_COLS} FROM gc_artifacts a
+      LEFT JOIN gc_messages m ON m.id = a.message_id
+      WHERE a.url = ? ORDER BY a.id ASC LIMIT 1`,
+    [documentId]
+  );
+  return rows[0] ? toShareRoot(rows[0]) : null;
+}
+
+export async function shareRootBySlug(slug: string): Promise<ShareRoot | null> {
+  const rows = await dbq(
+    `SELECT ${SHARE_ROOT_COLS} FROM gc_artifacts a
+      LEFT JOIN gc_messages m ON m.id = a.message_id
+      WHERE a.share_slug = ? LIMIT 1`,
+    [slug]
+  );
+  return rows[0] ? toShareRoot(rows[0]) : null;
+}
+
+export async function setShareOnRoot(
+  rootId: number,
+  patch: { visibility?: "private" | "link"; slug?: string; sharedArtifactId?: number | null }
+): Promise<void> {
+  const sets: string[] = [];
+  const args: any[] = [];
+  if (patch.visibility !== undefined) {
+    sets.push("share_visibility = ?");
+    args.push(patch.visibility);
+  }
+  if (patch.slug !== undefined) {
+    sets.push("share_slug = ?");
+    args.push(patch.slug);
+  }
+  if (patch.sharedArtifactId !== undefined) {
+    sets.push("shared_artifact_id = ?");
+    args.push(patch.sharedArtifactId);
+  }
+  if (!sets.length) return;
+  args.push(rootId);
+  await dbq(`UPDATE gc_artifacts SET ${sets.join(", ")} WHERE id = ?`, args);
+}
+
+// Versiones de un documento, de la más vieja a la más nueva (Version 1 = la primera).
+export type ArtifactVersion = { id: number; title: string | null; createdAt: number };
+export async function listArtifactVersions(documentId: string): Promise<ArtifactVersion[]> {
+  const rows = await dbq(
+    `SELECT id, title, created_at FROM gc_artifacts
+      WHERE url = ? AND md IS NOT NULL ORDER BY id ASC`,
+    [documentId]
+  );
+  return rows.map((r: any) => ({ id: num(r.id), title: r.title ?? null, createdAt: num(r.created_at) }));
+}
+
+// Una versión concreta (para servir la congelada en el link público).
+export async function getArtifactVersion(
+  id: number
+): Promise<{ id: number; url: string; title: string | null; md: string | null; src: string | null; createdAt: number } | null> {
+  const rows = await dbq(
+    `SELECT id, url, title, md, src, created_at FROM gc_artifacts WHERE id = ? LIMIT 1`,
+    [id]
+  );
+  const r = rows[0];
+  return r
+    ? {
+        id: num(r.id),
+        url: r.url ?? "",
+        title: r.title ?? null,
+        md: r.md ?? null,
+        src: r.src ?? null,
+        createdAt: num(r.created_at),
+      }
+    : null;
 }
 
 // Artefacto vivo ACTUAL (doc = markdown | sheet = csv) por su documentId local. Última

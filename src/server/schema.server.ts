@@ -300,6 +300,24 @@ async function migrate(): Promise<void> {
   // `src` = URL pública del objeto en S3 (kind:"artifact" → HTML publicado, enlace compartible).
   // El render in-Teams usa `md` (HTML fuente) vía iframe srcDoc; `src` es la puerta pública.
   await addColumn("gc_artifacts", "src", "TEXT");
+  // Compartir (link público con permisos y versión congelada). OJO: estas cuatro
+  // columnas viven SÓLO en la fila MÁS VIEJA de cada `url` — la raíz del documento —
+  // porque cada publicación es un INSERT nuevo (nunca UPDATE) y el compartir es del
+  // documento, no de la versión. Resolverlas con `shareRootFor()`, no con `getDoc()`,
+  // que devuelve la última.
+  //   share_visibility  null|'private' = sólo el dueño · 'link' = cualquiera con el link
+  //   share_slug        uuid de la URL pública /a/<slug>; se genera al primer share
+  //   shared_artifact_id id de la versión CONGELADA que ve quien tiene el link;
+  //                     null = Latest (editar después sí cambia lo que el otro ve)
+  //   owner_sub         dueño; las filas previas a esto lo tienen null y se cae al
+  //                     join message_id → gc_messages.sender_sub
+  await addColumn("gc_artifacts", "share_visibility", "TEXT");
+  await addColumn("gc_artifacts", "share_slug", "TEXT");
+  await addColumn("gc_artifacts", "shared_artifact_id", "INTEGER");
+  await addColumn("gc_artifacts", "owner_sub", "TEXT");
+  await exec(
+    `CREATE UNIQUE INDEX IF NOT EXISTS gc_artifacts_share ON gc_artifacts(share_slug)`,
+  );
 
   // Identidad conversacional del artefacto "vivo" (Fase 1 edit-in-place): mapea una
   // conversación (channel + thread) al documentId del artefacto ACTUAL, para que

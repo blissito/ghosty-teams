@@ -26,6 +26,13 @@ export async function publishArtifactVersion(args: {
   notify?: () => void;
   /** El DM publica el objeto como público; el room, privado firmado. */
   visibility?: "public" | "private";
+  /**
+   * Dueño del artefacto = quien lo pidió (el invocador del turno), NO el agente.
+   * Es a quien pertenece el link compartible y el único que puede cambiar sus
+   * permisos. Sólo pesa en la fila raíz; las versiones siguientes lo llevan por
+   * consistencia. Si falta, el lector cae al join por gc_messages.sender_sub.
+   */
+  ownerSub?: string | null;
 }): Promise<{ md: string; src: string | null }> {
   const db = await import("../db.server");
   const t0 = performance.now();
@@ -88,6 +95,7 @@ export async function publishArtifactVersion(args: {
     title: args.title,
     md,
     src,
+    ownerSub: args.ownerSub ?? null,
   });
   try {
     await args.setPointer?.(args.documentId);
@@ -104,6 +112,139 @@ export async function publishArtifactVersion(args: {
   );
   return { md, src };
 }
+
+// ── Compartir ───────────────────────────────────────────────────────────────────
+// El estado de compartir es del DOCUMENTO, no de la versión: vive en la fila RAÍZ
+// (la más vieja del mismo documentId) porque cada publicación inserta una fila nueva.
+// Dos estados nada más: "private" (sólo el dueño) y "link" (cualquiera con el link).
+
+export type ArtifactShare = {
+  slug: string | null;
+  visibility: "private" | "link";
+  /** id de la versión congelada; null = Latest (sigue lo último que se publique). */
+  sharedArtifactId: number | null;
+  versions: { id: number; label: string; createdAt: number }[];
+  owner: { sub: string | null; name: string | null; email: string | null; avatar: string | null };
+  isOwner: boolean;
+};
+
+// El dueño manda: sólo él ve y cambia los permisos. Si la raíz no trae owner_sub
+// (artefactos anteriores a esta feature) se cae al autor del mensaje ancla, que es
+// lo que ya usaba el scope de lectura de documents.ts.
+async function requireShareOwner(documentId: string) {
+  const { sessionUser } = await import("./chat");
+  const me = await sessionUser();
+  if (!me) throw new Error("no autenticado");
+  const db = await import("../db.server");
+  const root = await db.shareRootFor(documentId);
+  if (!root) throw new Error("artefacto no encontrado");
+  if (root.ownerSub && root.ownerSub !== me.sub) throw new Error("no eres el dueño de este artefacto");
+  return { me, root, db };
+}
+
+async function shareStateFor(documentId: string, meSub: string | null): Promise<ArtifactShare | null> {
+  const db = await import("../db.server");
+  const root = await db.shareRootFor(documentId);
+  if (!root) return null;
+  const versions = await db.listArtifactVersions(documentId);
+  let owner = { sub: root.ownerSub, name: null as string | null, email: null as string | null, avatar: null as string | null };
+  if (root.ownerSub) {
+    const { dbq } = await import("../dbq.server");
+    const rows = await dbq(`SELECT name, email, avatar FROM gc_users WHERE sub = ? LIMIT 1`, [root.ownerSub]);
+    if (rows[0]) owner = { sub: root.ownerSub, name: rows[0].name ?? null, email: rows[0].email ?? null, avatar: rows[0].avatar ?? null };
+  }
+  return {
+    slug: root.slug,
+    visibility: root.visibility,
+    sharedArtifactId: root.sharedArtifactId,
+    versions: versions.map((v, i) => ({ id: v.id, label: `Versión ${i + 1}`, createdAt: v.createdAt })),
+    owner,
+    // Sin owner_sub (artefacto viejo) cualquiera del workspace que lo vea puede
+    // adoptarlo: es preferible a dejarlo sin dueño y por tanto incompartible.
+    isOwner: !root.ownerSub || root.ownerSub === meSub,
+  };
+}
+
+/**
+ * Resuelve un link público /a/<slug> → la versión que hay que servir, aplicando el
+ * permiso. Lo usan la página (chrome) y /a/$id/raw (el HTML dentro del iframe), y
+ * es a propósito el MISMO camino: si se separaran, uno podría filtrar lo que el
+ * otro bloquea.
+ *
+ * Devuelve null tanto si no existe como si no se tiene acceso — el llamador
+ * responde 404 en los dos casos. Un 403 confirmaría que el artefacto existe.
+ */
+export async function resolveSharedArtifact(
+  slug: string,
+  meSub: string | null
+): Promise<{
+  root: { id: number; url: string; ownerSub: string | null; visibility: "private" | "link" };
+  version: { id: number; title: string | null; md: string | null; createdAt: number };
+  versionLabel: string | null;
+  isOwner: boolean;
+} | null> {
+  const db = await import("../db.server");
+  const root = await db.shareRootBySlug(slug);
+  if (!root) return null;
+  const isOwner = !!meSub && (!root.ownerSub || root.ownerSub === meSub);
+  if (root.visibility !== "link" && !isOwner) return null;
+
+  const versions = await db.listArtifactVersions(root.url);
+  if (!versions.length) return null;
+  // Versión CONGELADA si la hay: editar después no cambia lo que el otro ya vio.
+  // Si la congelada se borró, se cae a la última en vez de romper el link.
+  const idx = root.sharedArtifactId ? versions.findIndex((v) => v.id === root.sharedArtifactId) : -1;
+  const chosen = idx >= 0 ? versions[idx] : versions[versions.length - 1];
+  const full = await db.getArtifactVersion(chosen.id);
+  if (!full) return null;
+  return {
+    root: { id: root.id, url: root.url, ownerSub: root.ownerSub, visibility: root.visibility },
+    version: { id: full.id, title: full.title, md: full.md, createdAt: full.createdAt },
+    versionLabel: idx >= 0 ? `Versión ${idx + 1}` : null,
+    isOwner,
+  };
+}
+
+export const getArtifactShareFn = createServerFn({ method: "POST" })
+  .validator((d: { documentId: string }) => d)
+  .handler(async ({ data }) => {
+    const { sessionUser } = await import("./chat");
+    const me = await sessionUser();
+    if (!me) throw new Error("no autenticado");
+    return await shareStateFor(data.documentId, me.sub);
+  });
+
+export const setArtifactShareFn = createServerFn({ method: "POST" })
+  .validator(
+    (d: { documentId: string; visibility?: "private" | "link"; sharedArtifactId?: number | null }) => d
+  )
+  .handler(async ({ data }) => {
+    const { me, root, db } = await requireShareOwner(data.documentId);
+
+    // El slug se acuña la PRIMERA vez que se comparte y ya no cambia: si rotara,
+    // los links que la gente ya pegó en otro lado morirían en silencio. Revocar es
+    // volver a "private", no cambiar de dirección.
+    const slug = root.slug ?? crypto.randomUUID();
+
+    // Adopción del artefacto viejo sin dueño (ver isOwner): el primero que lo
+    // comparte queda como dueño, si no nadie podría volver a cerrarlo.
+    const patch: Parameters<typeof db.setShareOnRoot>[1] = { slug };
+    if (data.visibility !== undefined) patch.visibility = data.visibility;
+    if (data.sharedArtifactId !== undefined) {
+      // Sólo se puede congelar una versión de ESTE documento.
+      if (data.sharedArtifactId !== null) {
+        const v = await db.getArtifactVersion(data.sharedArtifactId);
+        if (!v || v.url !== data.documentId) throw new Error("esa versión no es de este artefacto");
+      }
+      patch.sharedArtifactId = data.sharedArtifactId;
+    }
+    await db.setShareOnRoot(root.id, patch);
+    if (!root.ownerSub) {
+      const { dbq } = await import("../dbq.server");
+      await dbq(`UPDATE gc_artifacts SET owner_sub = ? WHERE url = ?`, [me.sub, data.documentId]);
+    }
+    return await shareStateFor(data.documentId, me.sub);
+  });
 
 // Guardado de artefactos HTML editados desde el Canvas (editor @ghosty/canvas-editor)
 // en el ArtifactPanel. Camino GEMELO al que usa el agente en chat.ts al cerrar un
@@ -147,6 +288,7 @@ export const updateArtifactHtmlFn = createServerFn({ method: "POST" })
       kind: "artifact",
       title: data.title ?? "Artefacto",
       md: data.html,
+      ownerSub: me.sub,
       setPointer: async (docId) => {
         const db = await import("../db.server");
         await db.setThreadArtifact(channelId, parentId, docId);

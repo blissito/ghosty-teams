@@ -3,6 +3,7 @@
 // (sin createServerFn) para que lo usen tanto chat.ts como server/agents.ts sin
 // ciclos de import.
 import { hasIds, nodeIndex } from "./lib/artifact-ids";
+import { ARTIFACT_DESIGN_GUIDE } from "./server/prompts/artifact-design";
 
 export type ResolvedAgent = {
   handle: string;
@@ -458,6 +459,10 @@ export async function callAgentBackendStream(
         TEAMS_PRODUCT_CONTEXT,
         selfIdentity(agent),
         EB_DOC_STREAM_GUARDRAIL,
+        // Guía de DISEÑO del artefacto. Va pegada al guardrail porque comparte su
+        // condición: sólo cuenta en el canal Teams/web, que es donde el agente puede
+        // emitir un eb-artifact.
+        ARTIFACT_DESIGN_GUIDE,
       ]
         .filter(Boolean)
         .join("\n\n"),
@@ -1041,6 +1046,10 @@ export async function callAgentBackend(
         TEAMS_PRODUCT_CONTEXT,
         selfIdentity(agent),
         EB_DOC_STREAM_GUARDRAIL,
+        // Guía de DISEÑO del artefacto. Va pegada al guardrail porque comparte su
+        // condición: sólo cuenta en el canal Teams/web, que es donde el agente puede
+        // emitir un eb-artifact.
+        ARTIFACT_DESIGN_GUIDE,
       ]
         .filter(Boolean)
         .join("\n\n"),
