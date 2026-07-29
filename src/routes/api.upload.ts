@@ -14,7 +14,31 @@ export const Route = createFileRoute("/api/upload")({
         const { useSession } = await import("@tanstack/react-start/server");
         const { sessionConfig } = await import("../server/session.server");
         const s = await useSession<{ user?: { sub: string } }>(sessionConfig());
-        if (!s.data.user) return new Response("unauthorized", { status: 401 });
+        // Segunda puerta: un producto hermano del ecosistema (Ghosty Tasks) firmando con
+        // GHOSTY_PARTNER_SECRET. Su cookie no cruza subdominios, y sin esto tendría que
+        // montar su propio bucket o mandarle la imagen al agente en base64 —
+        // duplicando storage o inflando el contexto del turno.
+        //
+        // Se firma `ts.upload` (el cuerpo es multipart y no se puede canonicalizar
+        // barato) con ventana de 300s: es permiso para subir UN archivo, ahora.
+        if (!s.data.user) {
+          const secret = process.env.GHOSTY_PARTNER_SECRET;
+          const url = new URL(request.url);
+          const ts = url.searchParams.get("ts") ?? "";
+          const sig = url.searchParams.get("sig") ?? "";
+          let ok = false;
+          if (secret && ts && sig) {
+            const crypto = await import("node:crypto");
+            const expected = crypto.createHmac("sha256", secret).update(`${ts}.upload`).digest("hex");
+            const a = Buffer.from(sig);
+            const b = Buffer.from(expected);
+            ok =
+              a.length === b.length &&
+              crypto.timingSafeEqual(a, b) &&
+              Math.abs(Math.floor(Date.now() / 1000) - Number(ts)) <= 300;
+          }
+          if (!ok) return new Response("unauthorized", { status: 401 });
+        }
 
         let form: FormData;
         try {
