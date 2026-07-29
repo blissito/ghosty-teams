@@ -939,8 +939,15 @@ async function runAgentTurnInner(opts: {
   // (si no, "…contrato." + "Contrato generado" se pegan → muro amontonado).
   // Cada entrada = una acción visible (dedup por label). `started`/`ended` = ids de tool_use
   // que la componen (varias concurrentes con el mismo label colapsan a una línea, pero su
-  // estado agrega correctamente). `failed` = alguna terminó en error → ❌ real, no ✅ posicional.
-  type ToolEntry = { ing: string; done: string; started: Set<string>; ended: Set<string>; failed: boolean; detail?: string };
+  // estado agrega correctamente).
+  //
+  // `fallos`/`exitos` cuentan cómo cerró cada id, en vez de una bandera `failed` pegajosa.
+  // Con la bandera, UNA llamada fallida marcaba en rojo TODO el grupo para siempre, aunque
+  // el reintento siguiente funcionara y el trabajo quedara hecho — un agente que se
+  // equivoca y se corrige es lo normal, y pintarlo como fallo es mentir. Pasó de verdad
+  // (2026-07-29): "Ajustando el recordatorio ×2" salió en rojo con los dos recordatorios
+  // correctamente actualizados en la base. Una ✗ que miente entrena a ignorar las de verdad.
+  type ToolEntry = { ing: string; done: string; started: Set<string>; ended: Set<string>; fallos: number; exitos: number; detail?: string };
   const tools: ToolEntry[] = [];
   const idToEntry = new Map<string, ToolEntry>(); // id de tool_use → su entrada (para el 'end')
   // Segmentos de narración: cada corte lo produce una tool. El agente dice "voy a
@@ -961,7 +968,9 @@ async function runAgentTurnInner(opts: {
   // cerraron (o el turno acabó); si no, running. Entradas legacy sin ids (start sin id) solo
   // pasan a done al cerrar el turno (allDone) — compat con workers viejos.
   const statusOf = (t: ToolEntry, allDone: boolean): "running" | "done" | "error" => {
-    if (t.failed) return "error";
+    // Error sólo si NADA de este grupo funcionó. Si hubo al menos un éxito, la acción
+    // salió adelante (con reintento) y el rojo sobra.
+    if (t.fallos > 0 && t.exitos === 0) return "error";
     if (allDone) return "done";
     if (t.started.size > 0 && t.ended.size >= t.started.size) return "done";
     return "running";
@@ -1047,7 +1056,7 @@ async function runAgentTurnInner(opts: {
             ? { ing: "Construyendo el artefacto", done: "Construí el artefacto" }
             : { ing: "Redactando el documento", done: "Redacté el documento" };
         if (!tools.some((t) => t.done === label.done))
-          tools.push({ ing: label.ing, done: label.done, started: new Set(), ended: new Set(), failed: false });
+          tools.push({ ing: label.ing, done: label.done, started: new Set(), ended: new Set(), fallos: 0, exitos: 0 });
       }
       chunkN++;
       if (artifactOpenAt < 0 && /```eb-artifact/.test(acc)) {
@@ -1074,7 +1083,8 @@ async function runAgentTurnInner(opts: {
       const entry = ev.id ? idToEntry.get(ev.id) : undefined;
       if (entry) {
         if (ev.id) entry.ended.add(ev.id);
-        if (ev.ok === false) entry.failed = true;
+        if (ev.ok === false) entry.fallos++;
+        else entry.exitos++;
         if (isChild && ev.detail) entry.detail = ev.detail; // duración
         if (opts.emitBody) await paint();
       }
@@ -1082,7 +1092,7 @@ async function runAgentTurnInner(opts: {
     }
     if (isChild) {
       const task = ev.detail || "Subagente";
-      const entry: ToolEntry = { ing: task, done: task, started: new Set(), ended: new Set(), failed: false };
+      const entry: ToolEntry = { ing: task, done: task, started: new Set(), ended: new Set(), fallos: 0, exitos: 0 };
       if (ev.id) { entry.started.add(ev.id); idToEntry.set(ev.id, entry); }
       tools.push(entry);
       brokeByTool = true;
@@ -1098,7 +1108,7 @@ async function runAgentTurnInner(opts: {
       // Dedup por acción (varias tools con el mismo label → una línea; sus ids agregan estado).
       let entry = tools.find((t) => t.done === label.done);
       if (!entry) {
-        entry = { ing: label.ing, done: label.done, started: new Set(), ended: new Set(), failed: false, detail: ev.detail };
+        entry = { ing: label.ing, done: label.done, started: new Set(), ended: new Set(), fallos: 0, exitos: 0, detail: ev.detail };
         tools.push(entry);
       }
       if (ev.id) {
