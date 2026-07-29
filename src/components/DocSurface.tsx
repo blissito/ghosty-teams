@@ -135,16 +135,21 @@ export default function DocSurface({
   // corren una vez.
   const marcar = envelope?.changedIds?.length && documentId ? envelope.changedIds : undefined;
 
-  // TRAZA temporal (2026-07-29): el resaltado no sale y hay que ver dónde muere.
+  // TRAZA temporal (2026-07-29). Sólo cuando CAMBIA algo: se repetía en cada render y
+  // tapaba en la consola los logs del marcado, que son los que hacen falta.
+  const trazaPrev = useRef("");
   if (typeof window !== "undefined") {
-    console.log("[doc:surface]", {
-      sobre: !!envelope,
-      bloques: envelope?.blocks.length,
-      changedIds: envelope?.changedIds,
-      documentId,
-      marcar,
-      streaming,
-    });
+    const t = `${!!envelope}|${envelope?.blocks.length}|${(envelope?.changedIds ?? []).join(",")}|${streaming}`;
+    if (t !== trazaPrev.current) {
+      trazaPrev.current = t;
+      console.log("[doc:surface]", {
+        sobre: !!envelope,
+        bloques: envelope?.blocks.length,
+        changedIds: envelope?.changedIds,
+        documentId,
+        streaming,
+      });
+    }
   }
 
   const source = envelope ? { blocks: envelope.blocks } : { markdown: slowMd };

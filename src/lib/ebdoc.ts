@@ -186,10 +186,15 @@ export function extractEbPatches(body: string): EbPatch[] {
  */
 const HUERFANO = /(^|\n)(eb-(?:patch|insert|remove))[ \t]+([^\n`]+)\n([\s\S]*?)(\n```|$)/g;
 
+/** Se avisa UNA vez por sesión: durante el streaming esto se llama por cada tick y el
+ *  aviso repetido tapaba en la consola justo los logs que hacen falta para depurar. */
+let avisadoHuerfano = false;
+
 export function stripOrphanPatch(body: string): string {
   if (!/(^|\n)eb-(patch|insert|remove)[ \t]/.test(body)) return body;
   const out = body.replace(HUERFANO, "$1");
-  if (out !== body) {
+  if (out !== body && !avisadoHuerfano) {
+    avisadoHuerfano = true;
     // El cuerpo EXACTO que lo dispara. Se derivó siete veces a mano sin acertar: el
     // aviso se dispara en el CLIENTE, durante el streaming, y ahí el cuerpo llega a
     // trozos — los casos de test eran todos cuerpos completos.
