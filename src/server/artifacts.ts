@@ -41,6 +41,8 @@ export async function publishArtifactVersion(args: {
   blocks?: import("../lib/doc-blocks").DocBlock[];
   /** Marca el sobre: desde aquí `sourceMd` ya no es la verdad del documento. */
   humanEdited?: boolean;
+  /** Bloques que cambiaron en ESTA versión → el editor los señala al abrirse. */
+  changedIds?: string[];
 }): Promise<{ md: string; src: string | null }> {
   const db = await import("../db.server");
   const t0 = performance.now();
@@ -58,7 +60,7 @@ export async function publishArtifactVersion(args: {
     const { docEnvelopeFromMd } = await import("./doc-blocks.server");
     const { serializeDocEnvelope } = await import("../lib/doc-blocks");
     md = args.blocks?.length
-      ? serializeDocEnvelope({ blocks: args.blocks, humanEdited: args.humanEdited })
+      ? serializeDocEnvelope({ blocks: args.blocks, humanEdited: args.humanEdited, changedIds: args.changedIds })
       : await docEnvelopeFromMd(args.md);
   }
 

@@ -36,6 +36,15 @@ export interface BlockPatchResult {
   blocks: DocBlock[];
   applied: string[];
   failed: BlockPatchFail[];
+  /**
+   * uuid de los bloques que quedaron NUEVOS o modificados. Es lo que permite señalar el
+   * cambio en el editor cuando el panel se abre DESPUÉS — que es el caso normal: la
+   * persona pide el ajuste, lee la respuesta, y recién entonces abre el documento. Sin
+   * esto el resaltado sólo funcionaría si ya lo tenía abierto, o sea casi nunca.
+   *
+   * Un `remove` no aporta nada aquí: el bloque ya no existe, no hay a qué apuntar.
+   */
+  changedIds: string[];
 }
 
 /** Lo que `extractEbPatches` produce, en la forma que aquí importa. */
@@ -102,6 +111,7 @@ export async function applyBlockPatches(
   const out = clone(blocks);
   const applied: string[] = [];
   const failed: BlockPatchFail[] = [];
+  const changedIds: string[] = [];
 
   // Tabla de alias FIJA, calculada sobre el documento de ENTRADA y una sola vez.
   //
@@ -163,6 +173,7 @@ export async function applyBlockPatches(
     if (op === "replace") {
       at.list.splice(at.index, 1, ...fresh);
       applied.push(ref);
+      changedIds.push(...fresh.map((b) => b.id).filter((i): i is string => !!i));
       continue;
     }
 
@@ -178,7 +189,8 @@ export async function applyBlockPatches(
       else target.children.push(...fresh);
     }
     applied.push(ref);
+    changedIds.push(...fresh.map((b) => b.id).filter((i): i is string => !!i));
   }
 
-  return { blocks: out, applied, failed };
+  return { blocks: out, applied, failed, changedIds };
 }

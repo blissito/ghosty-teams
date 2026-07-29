@@ -51,6 +51,15 @@ export interface DocEnvelope {
   /** Cierto en cuanto una persona edita: desde ahí `sourceMd` ya no es la verdad. */
   humanEdited?: boolean;
   yUpdate?: string;
+  /**
+   * uuid de los bloques que cambiaron EN ESTA VERSIÓN (los aplica un `eb-patch`).
+   *
+   * Es metadato de la versión, no contenido: no entra al .docx ni al markdown que ve el
+   * agente. Vive aquí porque así viaja CON la versión — el resaltado del cambio funciona
+   * aunque el panel se abra después del turno (el caso normal: pides el ajuste, lees la
+   * respuesta y recién entonces abres el documento) y sobrevive a una recarga.
+   */
+  changedIds?: string[];
 }
 
 /**
@@ -86,6 +95,7 @@ export function serializeDocEnvelope(e: {
   sourceMd?: string;
   humanEdited?: boolean;
   yUpdate?: string;
+  changedIds?: string[];
 }): string {
   const out: DocEnvelope = { v: DOC_ENVELOPE_VERSION, blocks: e.blocks };
   // Sólo lo que aporta: un sobre con `"humanEdited":false` y `"sourceMd":""` en
@@ -93,6 +103,7 @@ export function serializeDocEnvelope(e: {
   if (e.sourceMd) out.sourceMd = e.sourceMd;
   if (e.humanEdited) out.humanEdited = true;
   if (e.yUpdate) out.yUpdate = e.yUpdate;
+  if (e.changedIds?.length) out.changedIds = e.changedIds;
   return JSON.stringify(out);
 }
 

@@ -76,7 +76,7 @@ export function nativeTools(dest: ToolDest | null): ConnectorTool[] {
         const list = await rem.listReminders(sub);
         return {
           ok: true,
-          reminders: list.map((r) => ({ id: r.id, text: r.text, when: rem.humanDate(r.dueAt, r.tz), repeat: r.repeat, email: r.email })),
+          reminders: list.map((r) => ({ id: r.id, text: r.text, when: rem.humanDate(r.dueAt, r.tz), repeat: r.repeat, email: r.email, emailCc: r.emailCc })),
         };
       },
     },
