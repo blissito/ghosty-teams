@@ -563,6 +563,12 @@ export async function callAgentBackendStream(
     }
     return authoritative || streamed || "(sin respuesta)";
   } catch (e) {
+    // DETENER no es una falla de red. El abort explota aquí igual que un backend caído, y
+    // se pintaba "⚠️ No pude contactar a @ghosty: This operation was aborted" — pegado a
+    // media palabra del texto que iba escribiendo, o sea con toda la cara de un error que
+    // el usuario no provocó… cuando lo provocó él (visto en prod 2026-07-29). Se relanza:
+    // runAgentTurn ya sabe cerrar el turno con "⏹ Detenido" conservando lo escrito.
+    if (signal?.aborted || (e instanceof Error && e.name === "AbortError")) throw e;
     const msg = `⚠️ No pude contactar a @${agent.handle}: ${e instanceof Error ? e.message : e}`;
     await onChunk(msg);
     return msg;
