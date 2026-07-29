@@ -199,6 +199,26 @@ body {
   background: color-mix(in srgb, var(--color-brand) 60%, transparent);
 }
 
+/* ── El "zoom misterioso" de iOS ──────────────────────────────────────────────
+   Safari en iPhone hace zoom al ENFOCAR cualquier campo editable cuyo font-size
+   sea < 16px, y NO vuelve al salir: el resto de la sesión queda con el viewport
+   visual más chico que el layout. Eso es lo que cortaba el botón Enviar por la
+   derecha y recortaba los avatares por la izquierda — no era overflow del layout.
+   Fijar 16px en móvil lo evita de raíz. La alternativa (maximum-scale=1) también
+   le prohíbe al usuario hacer zoom a mano, así que no se usa.
+   `!important` es necesario: las utilidades de Tailwind (.text-sm) ganan por
+   especificidad a un selector de elemento. */
+@media (max-width: 767px) {
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+  textarea:not(.ce-text-edit),
+  select,
+  [contenteditable="true"],
+  .ProseMirror {
+    font-size: 16px !important;
+    line-height: 1.4 !important;
+  }
+}
+
 /* ── Composer WYSIWYG (TipTap / ProseMirror) ────────────────────────────────
    El editor debe verse como un input de chat: sin outline, párrafos pegados,
    negrita/itálica visibles. La mención sale como pill (mismo look que el

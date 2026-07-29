@@ -690,6 +690,10 @@ export function CanvasEditor({ doc, onChange, refineProvider, imageProvider, onA
           {editingId && editBox && (
             <textarea
               autoFocus
+              // ce-text-edit: marca de escape. La app fuerza 16px a todo campo editable
+              // en móvil (para que iOS no haga zoom al enfocar); este overlay DEBE
+              // conservar el tamaño del nodo que edita o el texto salta al escribir.
+              className="ce-text-edit"
               value={editText}
               onChange={(e) => setEditText(e.target.value)}
               onFocus={(e) => e.currentTarget.select()}

@@ -8560,10 +8560,13 @@ const Composer = forwardRef<ComposerHandle, {
           type="submit"
           disabled={uploading}
           title={uploading ? t("Subiendo adjunto…") : undefined}
-          className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-lg bg-brand px-3.5 text-sm font-semibold text-brand-fg transition hover:brightness-110 disabled:opacity-50"
+          aria-label={t("Enviar")}
+          className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-lg bg-brand px-3 text-sm font-semibold text-brand-fg transition hover:brightness-110 disabled:opacity-50 sm:px-3.5"
         >
           <Send size={15} />
-          {t("Enviar")}
+          {/* En un teléfono el label se come el ancho del editor (queda ~180px con los
+              dos botones de la izquierda): ahí el botón va sólo con el ícono. */}
+          <span className="hidden sm:inline">{t("Enviar")}</span>
         </button>
         </div>
       </div>
