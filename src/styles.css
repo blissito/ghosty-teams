@@ -318,6 +318,74 @@ body {
   content: none;
 }
 
+/* ── Marcatextos del cambio quirúrgico ──────────────────────────────────────
+   Un ajuste de una cláusula en un documento de 74 KB es invisible: el aviso decía
+   "1 ajuste" y la persona se quedaba buscándolo a mano. Esto lo señala como con un
+   marcatextos y se desvanece.
+
+   Es una CLASE en el DOM, nunca una propiedad del bloque. Por eso no puede colarse
+   en la verdad que se persiste ni aparecer en el .docx descargado: efímero por
+   construcción, no porque alguien se acuerde de limpiarlo.
+
+   El `box-shadow` con el mismo color ensancha la marca más allá de la caja del
+   texto — es lo que le da el trazo de plumón en vez de un rectángulo pegado. */
+@keyframes gt-marca {
+  0%   { background-color: #fde68a; box-shadow: 0 0 0 5px #fde68a; }
+  65%  { background-color: #fef3c7; box-shadow: 0 0 0 5px #fef3c7; }
+  100% { background-color: transparent; box-shadow: 0 0 0 5px transparent; }
+}
+.gt-doc .gt-cambio {
+  border-radius: 3px;
+  animation: gt-marca 3s ease-out forwards;
+}
+/* Sin animación: la marca igual aparece y se va, sólo que sin transición. Quitarla
+   del todo dejaría a quien pide menos movimiento sin saber qué cambió. */
+@media (prefers-reduced-motion: reduce) {
+  .gt-doc .gt-cambio { animation: gt-marca 3s step-end forwards; }
+}
+
+/* ── Imprimir un documento ──────────────────────────────────────────────────
+   Con esto el botón Imprimir cubre TAMBIÉN "Guardar como PDF": el diálogo del
+   navegador ya ofrece las dos cosas, así que un solo botón resuelve ambas y no hace
+   falta un endpoint de PDF en el servidor.
+
+   Se oculta TODO con `visibility` y se reexpone sólo la hoja, que luego se saca del
+   flujo con `position:absolute`. Es el patrón que no depende de la profundidad del DOM
+   — y aquí eso importa: el documento vive dentro de un panel con overflow, a varios
+   niveles del body. `display:none` en los ancestros no serviría (se llevaría al hijo
+   también), y ocultar por lista (sidebar, topbar, composer…) se rompe en cuanto
+   alguien agrega un elemento nuevo a la interfaz. */
+@media print {
+  body * { visibility: hidden !important; }
+  .gt-doc, .gt-doc * { visibility: visible !important; }
+  .gt-doc {
+    position: absolute !important;
+    left: 0 !important;
+    top: 0 !important;
+    width: 100% !important;
+    height: auto !important;
+    max-height: none !important;
+    overflow: visible !important;
+    padding: 0 !important;
+    background: #fff !important;
+  }
+  /* La "hoja" en pantalla lleva sombra, ancho fijo y esquinas; en papel eso estorba —
+     el papel YA es la hoja. */
+  .gt-doc article {
+    box-shadow: none !important;
+    border-radius: 0 !important;
+    min-height: 0 !important;
+    padding: 0 !important;
+    max-width: none !important;
+  }
+  .gt-doc .gt-cambio { animation: none !important; background: transparent !important; box-shadow: none !important; }
+  /* Los adornos del editor (drag handles, botón de +, menús) no son el documento. */
+  .gt-doc .bn-side-menu,
+  .gt-doc .bn-formatting-toolbar,
+  .gt-doc .bn-slash-menu { display: none !important; }
+  @page { margin: 2cm; }
+}
+
 /* Skeleton del listado de agentes de Studio: latido suave mientras llega la
    respuesta del runtime. Sólo opacidad → no reflowea ni compite con el contenido. */
 @keyframes gc-shimmer {

@@ -90,6 +90,48 @@ export default function DocEditor({
     setAlFondo((prev) => (prev === v ? prev : v));
   }, []);
 
+  /**
+   * Lleva a la vista el primer bloque que cambió y los marca a todos como con
+   * marcatextos, unos segundos.
+   *
+   * Sin esto la edición quirúrgica es invisible: el agente cambia una cláusula en un
+   * documento de 74 KB y no hay forma de saber cuál. El aviso decía "1 ajuste" y la
+   * persona se quedaba buscando a mano.
+   *
+   * **El resaltado NO puede vivir en el documento.** Es una clase en el DOM, no una
+   * propiedad del bloque: así no entra en la verdad que se persiste ni puede aparecer en
+   * el .docx que se descarga. Efímero por construcción, no por acordarse de limpiarlo.
+   */
+  const marcarCambios = useCallback((ids: string[]) => {
+    const cont = scroller.current;
+    if (!cont || !ids.length) return;
+    const nodos = ids
+      .map((id) => cont.querySelector<HTMLElement>(`[data-id="${CSS.escape(id)}"]`))
+      .filter((n): n is HTMLElement => !!n);
+    if (!nodos.length) return;
+
+    // Al primero se va la vista; centrado, que en un documento largo es lo único que
+    // deja ver el cambio EN SU CONTEXTO (con `nearest` queda pegado a un borde).
+    nodos[0].scrollIntoView({
+      behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
+      block: "center",
+    });
+    // Tras mover la vista a mitad del documento ya no estamos abajo: si no se apunta,
+    // el siguiente tick del autoscroll arrastraría de vuelta al final.
+    pegado.current = false;
+    setAlFondo(false);
+
+    for (const n of nodos) {
+      // Re-arrancar la animación si el mismo bloque cambia dos veces seguidas: sin
+      // quitar y volver a poner la clase, el navegador la ignora.
+      n.classList.remove("gt-cambio");
+      void n.offsetWidth;
+      n.classList.add("gt-cambio");
+    }
+    const t = setTimeout(() => nodos.forEach((n) => n.classList.remove("gt-cambio")), 3000);
+    return () => clearTimeout(t);
+  }, []);
+
   const irAlFondo = useCallback(() => {
     const el = scroller.current;
     if (!el) return;
@@ -125,7 +167,14 @@ export default function DocEditor({
     // turno se re-emite COMPLETO por tick, no sólo cuando el documento cambia.
     const sig = next.map(blockSignature).join(" ");
     if (sig === seen.current) return;
+    // ¿Es una ACTUALIZACIÓN o la primera pintada? En la primera todo es "nuevo" y
+    // resaltar el documento entero no dice nada.
+    const esActualizacion = seen.current !== "";
     seen.current = sig;
+    // Ids de ANTES, para saber después qué bloques son nuevos. Se mira el documento del
+    // editor y no lo que devuelve `reconcile`, porque así da igual qué haga BlockNote con
+    // los ids que le pasamos: lo que se resalta es lo que de verdad quedó en pantalla.
+    const antes = new Set(((editor.document ?? []) as DocBlock[]).map((b) => b.id));
     applying.current = true;
     try {
       reconcile(editor as never, next);
@@ -139,6 +188,17 @@ export default function DocEditor({
         // todavía es el de antes y el salto se quedaría corto.
         const el = scroller.current;
         if (streaming && pegado.current && el) el.scrollTop = el.scrollHeight;
+
+        // Un cambio QUIRÚRGICO ya aplicado: llévame a él y márcalo. No mientras streamea
+        // (ahí el texto crece por la cola en cada tick y el autoscroll ya lo sigue), ni en
+        // la primera pintada. El tope evita convertir una reescritura completa en un
+        // documento entero subrayado, que no señala nada.
+        if (!streaming && esActualizacion) {
+          const nuevos = ((editor.document ?? []) as DocBlock[])
+            .map((b) => b.id)
+            .filter((id): id is string => !!id && !antes.has(id));
+          if (nuevos.length && nuevos.length <= 8) marcarCambios(nuevos);
+        }
       });
     }
   }, [editor, blocks, markdown, streaming]);

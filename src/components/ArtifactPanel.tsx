@@ -2,7 +2,7 @@ import { AnimatePresence, motion } from "motion/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ARTIFACT_CHROME_CSS } from "../lib/artifact-stream-doc";
 import { LiveArtifactPreview, ArtifactSkeleton, ArtifactCalque } from "./LiveArtifactPreview";
-import { X, ExternalLink, FileText, Download, Loader2, ChevronRight, ChevronLeft, RotateCw, Upload, Link as LinkIcon, Check, Pencil, Eye, Maximize2, Minimize2 } from "lucide-react";
+import { X, ExternalLink, FileText, Download, Loader2, ChevronRight, ChevronLeft, RotateCw, Upload, Link as LinkIcon, Check, Pencil, Eye, Maximize2, Minimize2, Printer } from "lucide-react";
 import { useT } from "../i18n";
 import { officeToHtmlFn, xlsxToCsvFn, postMessage } from "../server/chat";
 import { listTeamDocumentsFn, type TeamDocument } from "../server/documents";
@@ -1029,6 +1029,21 @@ export default function ArtifactPanel({
                         className="grid size-7 place-items-center rounded-md text-muted transition hover:bg-surface-3 hover:text-brand disabled:opacity-60"
                       >
                         {downloading ? <Loader2 size={15} className="animate-spin" /> : <Download size={15} />}
+                      </button>
+                    ) : null}
+                    {/* Imprimir. UN botón, no dos: el diálogo del navegador ofrece también
+                        "Guardar como PDF", así que esto cubre imprimir Y exportar a PDF sin
+                        un endpoint de render en el servidor. Sólo para el documento de
+                        prosa: una hoja de cálculo o un .docx adjunto no tienen la hoja en
+                        flujo que el `@media print` sabe paginar. */}
+                    {artifact.kind === "doc" ? (
+                      <button
+                        type="button"
+                        onClick={() => window.print()}
+                        title={t("Imprimir o guardar como PDF")}
+                        className="grid size-7 place-items-center rounded-md text-muted transition hover:bg-surface-3 hover:text-brand"
+                      >
+                        <Printer size={15} />
                       </button>
                     ) : null}
                     {artifact.kind === "office" ? (
