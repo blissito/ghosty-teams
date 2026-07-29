@@ -372,7 +372,13 @@ async function artifactDocHint(currentDoc?: { kind: "doc" | "sheet" | "artifact"
   // entero ni volcar la fuente al contexto.
   if (kind === "doc" && patchModeOn() && docBlocks.length) {
     const { blockIndex } = await import("./lib/doc-blocks");
-    const index = blockIndex(docBlocks, 80);
+    // 250, no 80. El tope de 80 dejaba FUERA 22 bloques de un escrito de 102, y el
+    // agente lo dijo tal cual: "ese bloque no me queda direccionable, cae dentro de los
+    // 22 bloques más". Un bloque que no aparece en el índice no se puede parchear, así
+    // que el tope no es una optimización: es el techo de lo que se puede editar.
+    // Un bloque son ~70 chars de índice (alias + tipo + 60 de texto), así que 250 son
+    // ~17 KB en el peor caso — barato al lado de re-emitir el documento entero.
+    const index = blockIndex(docBlocks, 250);
     return (
       `[Contexto del hilo — DOCUMENTO ACTUAL. En esta conversación ya existe ${noun}. ` +
       `Está hecho de BLOQUES y cada uno tiene su dirección (n1, n2, …). Si el usuario pide ` +
