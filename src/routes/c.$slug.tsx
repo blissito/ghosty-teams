@@ -345,13 +345,30 @@ function isValidDmEntry(v: unknown): boolean {
   return Array.isArray(v) && v.every(isRenderableMessage); // ← el crash de DmView (flow.find/.map)
 }
 
-if (typeof window !== "undefined") {
+/**
+ * Restaura las caches de sessionStorage. **Se llama DESPUÉS de hidratar**, nunca al
+ * cargar el módulo.
+ *
+ * Antes corría en module-load, y ahí está el origen del `React error #418` que salía en
+ * cada carga: el servidor no tiene sessionStorage, así que renderizaba sin esos datos y
+ * el primer render del cliente los tenía. Mismatch garantizado — y con cada deploy el
+ * cache es de otra versión del app, así que el purge-on-error de `router.tsx` sólo
+ * limpiaba el destrozo en vez de evitarlo.
+ *
+ * No es cosmético: un fallo de hidratación hace que React REGENERE el árbol, y un árbol
+ * regenerado se monta oculto un instante. Eso se llevaba por delante cosas que se pintan
+ * sobre el DOM ya montado.
+ *
+ * Se pierde poco: el valor de estas caches está en cambiar de canal rápido, no en el
+ * primer pintado (que viene del loader SSR de todos modos).
+ */
+let cachesRestauradas = false;
+function restaurarCaches(): void {
+  if (cachesRestauradas || typeof window === "undefined") return;
+  cachesRestauradas = true;
   try {
-    // v3: descarta v1/v2 envenenados. Un cache de hilo serializado por una versión del
-    // app y re-renderizado por otra tras un deploy → mismatch de hidratación → crash
-    // (incidente 2026-07-09: el usuario tuvo que borrar datos del sitio a mano). Bumpear
-    // ESTA versión al cambiar la forma de Message/thread invalida los viejos ANTES de
-    // que rompan; el purge-on-error de router.tsx cubre los que se escapen.
+    // v3: descarta v1/v2 envenenados. Bumpear ESTA versión al cambiar la forma de
+    // Message/thread invalida los viejos antes de que rompan.
     sessionStorage.removeItem("gc-caches-v1");
     sessionStorage.removeItem("gc-caches-v2");
     const saved = JSON.parse(sessionStorage.getItem("gc-caches-v3") || "{}");
@@ -366,6 +383,9 @@ if (typeof window !== "undefined") {
   } catch {
     /* ausente/corrupto → arranca vacío */
   }
+}
+
+if (typeof window !== "undefined") {
   window.addEventListener("pagehide", persistCaches);
   // pagehide no siempre dispara (algunos móviles) → respaldo al ocultar la pestaña.
   document.addEventListener("visibilitychange", () => {
@@ -971,8 +991,11 @@ function ChannelPage() {
   const { channels, channel, user, initialFlow, initialThreads } = Route.useLoaderData();
   // Marca la hidratación como completa → el loader deja de prefetchear en las
   // navegaciones siguientes (solo lo hacía para igualar el SSR en el primer render).
+  // Y AQUÍ se restauran las caches de sessionStorage: en module-load el servidor no las
+  // tiene y el cliente sí, que es el mismatch de hidratación que salía en cada carga.
   useEffect(() => {
     hydrated = true;
+    restaurarCaches();
   }, []);
   // Hilo / DM abierto = ESTADO CLIENTE (no URL) → abre instantáneo, sin revalidar el
   // router. Igual que los hilos, un DM se enfoca en el CENTRO (referencia Zulip).
