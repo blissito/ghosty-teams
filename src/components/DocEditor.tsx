@@ -168,16 +168,24 @@ export default function DocEditor({
     // `bn-block`). Se marca el de CONTENIDO cuando existe: el de fuera es un
     // envoltorio de layout y sus hijos le pintan su propio fondo encima, así que el
     // color se quedaba debajo, invisible.
+    // Se busca en el DOCUMENTO VIVO, no dentro de `scroller.current`.
+    //
+    // Ese ref puede apuntar a un div ya DESPRENDIDO (de un montaje anterior del panel), y
+    // un `querySelector` sobre un nodo desprendido devuelve descendientes que también lo
+    // están: `offsetParent === null`, rect en ceros, invisibles por definición. Es lo que
+    // pasaba — la traza decía `visible:false` una y otra vez con la clase bien puesta,
+    // porque se ponía sobre DOM que ya no estaba en la página.
     const nodos = ids
       .map((id) => {
-        const outer = cont.querySelector<HTMLElement>(`[data-id="${CSS.escape(id)}"]`);
+        const outer = document.querySelector<HTMLElement>(`.gt-doc [data-id="${CSS.escape(id)}"]`);
         return outer?.querySelector<HTMLElement>(".bn-block-content") ?? outer;
       })
-      .filter((n): n is HTMLElement => !!n);
+      .filter((n): n is HTMLElement => !!n && document.contains(n) && n.offsetParent !== null);
     if (!nodos.length) return false;
 
     // El que scrollea puede NO ser nuestro div (ver contenedorQueScrollea).
     const box = contenedorQueScrollea(nodos[0]) ?? cont;
+    void cont; // `cont` ya sólo es el fallback: la verdad la da el nodo vivo.
     const rect = nodos[0].getBoundingClientRect();
     const base = box.getBoundingClientRect();
     const destino = box.scrollTop + (rect.top - base.top) - box.clientHeight / 2 + rect.height / 2;
@@ -375,10 +383,10 @@ export default function DocEditor({
     const probar = () => {
       const ids = resolverIds();
       const primero = ids.length
-        ? scroller.current?.querySelector<HTMLElement>(`[data-id="${CSS.escape(ids[0])}"]`) ?? null
+        ? document.querySelector<HTMLElement>(`.gt-doc [data-id="${CSS.escape(ids[0])}"]`)
         : null;
       const nodo = primero?.querySelector<HTMLElement>(".bn-block-content") ?? primero;
-      if (!asentado(nodo)) {
+      if (!asentado(nodo) || !nodo || !document.contains(nodo)) {
         // Ventana larga (~6s): entre que el panel abre, BlockNote pinta 102 bloques y
         // React descubre el árbol suspendido, puede pasar bastante rato.
         if (++intentos < 120) t = setTimeout(probar, 50);
@@ -401,8 +409,8 @@ export default function DocEditor({
         const repasar = () => {
           if (++repasos > 3) return;
           const vivos = ids
-            .map((id) => scroller.current?.querySelector<HTMLElement>(`[data-id="${CSS.escape(id)}"]`))
-            .filter((n): n is HTMLElement => !!n && n.offsetParent !== null);
+            .map((id) => document.querySelector<HTMLElement>(`.gt-doc [data-id="${CSS.escape(id)}"]`))
+            .filter((n): n is HTMLElement => !!n && document.contains(n) && n.offsetParent !== null);
           if (vivos.length && !vivos.some((n) => n.querySelector(".gt-cambio") || n.classList.contains("gt-cambio"))) {
             marcarCambios(ids);
           }
