@@ -191,9 +191,7 @@ export default function DocEditor({
     setAlFondo(false);
 
     for (const n of nodos) {
-      // Re-arrancar la animación si el mismo bloque cambia dos veces seguidas: sin
-      // quitar y volver a poner la clase, el navegador la ignora.
-      n.classList.remove("gt-cambio");
+      n.classList.remove("gt-cambio", "gt-cambio-fin");
       void n.offsetWidth;
       n.classList.add("gt-cambio");
     }
@@ -205,7 +203,13 @@ export default function DocEditor({
       clientHeight: box.clientHeight,
       scrollHeight: box.scrollHeight,
     });
-    setTimeout(() => nodos.forEach((n) => n.classList.remove("gt-cambio")), 3000);
+    // Dos tiempos: a los 3s se pide el desvanecido (una transición, no una animación
+    // — las animaciones están prohibidas globalmente cuando hay "reducir movimiento",
+    // y por eso la marca no se veía nunca) y medio segundo después se limpia del todo.
+    setTimeout(() => {
+      nodos.forEach((n) => n.classList.add("gt-cambio-fin"));
+      setTimeout(() => nodos.forEach((n) => n.classList.remove("gt-cambio", "gt-cambio-fin")), 500);
+    }, 3000);
     return true;
   }, []);
 
