@@ -25,11 +25,12 @@ const STREAM_COALESCE_MS = 120;
 /** Se guarda cuando dejas de escribir. */
 const SAVE_IDLE_MS = 2500;
 /**
- * Y como MUCHO una versión por minuto. Cada guardado es un INSERT y
- * `pruneArtifactVersions` conserva 20 versiones por documento: sin este techo, un minuto
- * de tecleo se comería todas las versiones del agente.
+ * Techo entre guardados. Bajó de 60s a 8s cuando los guardados humanos CONSECUTIVOS
+ * pasaron a escribirse encima de la misma versión (`updateDocBlocksFn`): ya no insertan
+ * fila, así que dejaron de comerse las 20 versiones que guarda el documento. Con 60s la
+ * persona podía estar escribiendo un minuto entero sin ver una sola señal de guardado.
  */
-const SAVE_MIN_INTERVAL_MS = 60_000;
+const SAVE_MIN_INTERVAL_MS = 8_000;
 
 function Sheet({ children }: { children: React.ReactNode }) {
   return (
@@ -93,7 +94,7 @@ export default function DocSurface({
   // Estado del guardado, para que se VEA. Escribir en un documento y no recibir ninguna
   // señal deja la duda de si se guardó — y la respuesta "se guarda solo" hay que
   // demostrarla, no prometerla.
-  const [guardado, setGuardado] = useState<"guardando" | "ok" | "error" | null>(null);
+  const [guardado, setGuardado] = useState<"pendiente" | "guardando" | "ok" | "error" | null>(null);
 
   const flush = useCallback(() => {
     const blocks = pending.current;
@@ -118,6 +119,9 @@ export default function DocSurface({
     (blocks: DocBlock[]) => {
       if (!documentId) return;
       pending.current = blocks;
+      // Señal INMEDIATA: el cambio ya está registrado aunque el guardado espere al
+      // debounce. Sin esto la persona escribe y no pasa nada visible durante segundos.
+      setGuardado((g) => (g === "guardando" ? g : "pendiente"));
       if (saveTimer.current) clearTimeout(saveTimer.current);
       // Espera a que pares de escribir, pero nunca antes de que se cumpla el minuto
       // desde el último guardado.

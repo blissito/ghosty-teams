@@ -1,7 +1,7 @@
 import "@blocknote/core/fonts/inter.css";
 import "@blocknote/mantine/style.css";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ArrowDown, Check, Loader2, TriangleAlert } from "lucide-react";
+import { ArrowDown, Check, Loader2, Pencil, TriangleAlert } from "lucide-react";
 import { BlockNoteView } from "@blocknote/mantine";
 import { useT } from "../i18n";
 import { useCreateBlockNote } from "@blocknote/react";
@@ -140,7 +140,7 @@ export default function DocEditor({
    */
   patchRefs?: string[];
   /** Estado del autoguardado, para mostrarlo. */
-  guardado?: "guardando" | "ok" | "error" | null;
+  guardado?: "pendiente" | "guardando" | "ok" | "error" | null;
 }) {
   const t = useT();
   const editor = useCreateBlockNote({
@@ -490,7 +490,12 @@ export default function DocEditor({
               : "border-border bg-surface/95 text-muted"
           }`}
         >
-          {guardado === "guardando" ? (
+          {guardado === "pendiente" ? (
+            <>
+              <Pencil size={12} />
+              {t("Sin guardar")}
+            </>
+          ) : guardado === "guardando" ? (
             <>
               <Loader2 size={12} className="animate-spin" />
               {t("Guardando…")}

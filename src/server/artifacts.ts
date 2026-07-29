@@ -386,6 +386,23 @@ export const updateDocBlocksFn = createServerFn({ method: "POST" })
     const { blocksToMd } = await import("./doc-blocks.server");
     const md = await blocksToMd(blocks).catch(() => "");
 
+    // Guardados humanos CONSECUTIVOS se escriben encima de la misma versión. Sin esto,
+    // cada autoguardado inserta una fila y `pruneArtifactVersions` (20) se comía las
+    // versiones del agente en un minuto de tecleo — que es la razón por la que el
+    // autosave tenía un techo de una por minuto y la persona podía estar escribiendo
+    // 60s sin ver ninguna señal de guardado. La primera edición tras un turno del agente
+    // SÍ crea versión: así el trabajo del agente queda como punto al que volver.
+    const db = await import("../db.server");
+    const ultima = await db.latestDocVersion(data.documentId).catch(() => null);
+    if (ultima?.humanEdited) {
+      const { serializeDocEnvelope } = await import("../lib/doc-blocks");
+      await db.overwriteArtifactMd(ultima.id, serializeDocEnvelope({ blocks, humanEdited: true }));
+      const bus = await import("./bus.server");
+      const { currentNamespace } = await import("./tenant.server");
+      bus.publish(bus.ch.room(await currentNamespace(), channelId), { t: "refresh", channelId, parentId });
+      return { ok: true as const };
+    }
+
     await publishArtifactVersion({
       messageId,
       documentId: data.documentId,

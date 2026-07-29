@@ -316,6 +316,32 @@ export async function attachArtifacts(msgs: Message[]): Promise<Message[]> {
 }
 
 // Inserta el artefacto de un mensaje del agente.
+/**
+ * La versión MÁS RECIENTE de un documento: su fila y si ya era una edición humana.
+ *
+ * Existe para que los guardados humanos consecutivos se escriban ENCIMA en vez de
+ * insertar una fila cada vez. `pruneArtifactVersions` conserva 20 versiones por
+ * documento, así que un autoguardado cada 2.5s se comía en un minuto todas las
+ * versiones del agente — y por eso el autosave tenía un techo de una por minuto, que
+ * dejaba a la persona escribiendo hasta 60s sin ninguna señal de guardado.
+ */
+export async function latestDocVersion(
+  documentId: string
+): Promise<{ id: number; humanEdited: boolean } | null> {
+  const rows = await dbq(
+    `SELECT id, md FROM gc_artifacts WHERE url = ? AND kind = 'doc' ORDER BY id DESC LIMIT 1`,
+    [documentId]
+  );
+  if (!rows[0]) return null;
+  const md = (rows[0].md as string | null) ?? "";
+  return { id: num(rows[0].id), humanEdited: /"humanEdited"\s*:\s*true/.test(md) };
+}
+
+/** Reescribe el contenido de UNA versión (guardado humano sobre la suya). */
+export async function overwriteArtifactMd(id: number, md: string): Promise<void> {
+  await dbq(`UPDATE gc_artifacts SET md = ? WHERE id = ?`, [md, id]);
+}
+
 export async function createArtifact(
   messageId: number,
   a: {
