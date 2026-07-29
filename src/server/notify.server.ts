@@ -111,9 +111,14 @@ async function deliverEmail(ev: NotifyEvent, ns: string): Promise<void> {
   // global — que es una preferencia por default, no una negativa expresa.
   const people = ev.forceEmail ? await db.emailsForSubsAny(offline) : await db.emailsForSubs(offline);
   if (!people.length) return;
-  const html = emailHtml(ev);
+  const mascot = mascotInline();
+  const html = emailHtml(ev, !!mascot);
   // Un envío por persona (To individual → no filtra los emails entre destinatarios).
-  const out = await Promise.allSettled(people.map((p) => sendSesEmail({ to: p.email, subject: ev.title, html })));
+  const out = await Promise.allSettled(
+    people.map((p) =>
+      sendSesEmail({ to: p.email, subject: ev.title, html, text: emailText(ev), inline: mascot ? [mascot] : undefined })
+    )
+  );
   // Traza, igual que el fan-out de push: notify() envuelve todo en allSettled, así que sin
   // esto un correo que no sale es INDISTINGUIBLE de uno que sí — que es exactamente donde
   // nos atoramos el 2026-07-29 (SES aceptaba los envíos directos y los de la app no
@@ -130,7 +135,33 @@ async function deliverEmail(ev: NotifyEvent, ns: string): Promise<void> {
  * Tabla y estilos EN LÍNEA a propósito — Gmail borra el `<style>` del head y Outlook no
  * entiende flex; una tabla centrada es lo único que se ve igual en los dos.
  */
-export function emailHtml(ev: NotifyEvent): string {
+/**
+ * El mascot como imagen INCRUSTADA (cid:), leído del disco una sola vez.
+ *
+ * Enlazarlo costaba una petición al abrir el correo —500ms medidos, casi todo handshake
+ * TLS contra OVH— para traer 1.5KB. Incrustado no hay red, funciona sin conexión y no
+ * depende de que el destinatario acepte "mostrar imágenes de este remitente".
+ * Si el archivo no está (build sin public), se cae al enlace de siempre.
+ */
+let mascotCache: { cid: string; bytes: Buffer; mime: string; fileName: string } | null | undefined;
+function mascotInline() {
+  if (mascotCache !== undefined) return mascotCache;
+  mascotCache = null;
+  try {
+    const fs = require("node:fs") as typeof import("node:fs");
+    const path = require("node:path") as typeof import("node:path");
+    for (const dir of [".output/public", "public", "build/client"]) {
+      const p = path.resolve(process.cwd(), dir, "mascot-mail.png");
+      if (fs.existsSync(p)) {
+        mascotCache = { cid: "mascot", bytes: fs.readFileSync(p), mime: "image/png", fileName: "mascot.png" };
+        break;
+      }
+    }
+  } catch { /* sin disco → enlace remoto */ }
+  return mascotCache;
+}
+
+export function emailHtml(ev: NotifyEvent, inlineMascot = false): string {
   // `TEAMS_ROOT_DOMAIN` es un dominio PELADO ("teams.ghosty.studio"): concatenarlo daba
   // `teams.ghosty.studio/ghosty-192.png`, que el cliente de correo lee como relativa → el
   // mascot salía roto y el botón apuntaba a ningún lado.
@@ -159,7 +190,7 @@ export function emailHtml(ev: NotifyEvent): string {
     <tr><td style="padding:16px 24px 0">
       <table role="presentation" cellpadding="0" cellspacing="0" width="100%"><tr>
         <td width="64" valign="top" style="padding-right:2px">
-          <img src="${asset}/mascot-mail.png" width="56" height="66" alt="Ghosty" style="display:block;border:0">
+          <img src="${inlineMascot ? "cid:mascot" : `${asset}/mascot-mail.png`}" width="56" height="66" alt="Ghosty" style="display:block;border:0">
         </td>
         <td valign="top" style="padding-top:6px">
           <table role="presentation" cellpadding="0" cellspacing="0"><tr>
@@ -189,6 +220,13 @@ export function emailHtml(ev: NotifyEvent): string {
     </td></tr>
   </table>
 </body></html>`;
+}
+
+/** La misma información sin adornos, para el text/plain. */
+function emailText(ev: NotifyEvent): string {
+  const base = (process.env.PUBLIC_BASE_URL || process.env.TEAMS_ROOT_DOMAIN || "teams.ghosty.studio").replace(/\/$/, "");
+  const link = ev.url.startsWith("http") ? ev.url : `https://${base.replace(/^https?:\/\//, "")}${ev.url}`;
+  return `${ev.title}\n\n${ev.body}\n\n${link}\n\n—\nGhosty Studio · puedes apagar estos correos en Ajustes → Notificaciones.`;
 }
 
 /** "Título — detalle" o "Título\ndetalle" → sus dos partes. Sin corte natural, todo es título. */

@@ -1,4 +1,4 @@
-import { SESClient, SendEmailCommand } from "@aws-sdk/client-ses";
+import { SESClient, SendEmailCommand, SendRawEmailCommand } from "@aws-sdk/client-ses";
 
 // ── Correo transaccional/notificaciones vía AWS SES ──────────────────────────
 // Misma receta que easybits/fixter2025 (SDK v1 SendEmailCommand). Dominio
@@ -19,19 +19,108 @@ export function sesConfigured(): boolean {
   return !!(KEY && SECRET);
 }
 
+/**
+ * Imagen INCRUSTADA en el correo (cid:), no enlazada.
+ *
+ * Una imagen remota cuesta una petición que el destinatario paga al abrir: medido el
+ * 2026-07-29, 500ms contra el origen (330 de handshake TLS a Europa) y encima Gmail
+ * revalidaba en cada apertura porque el asset iba con `max-age=0`. Incrustada no hay red:
+ * el mascot pesa 1.5KB, menos que los headers de esa petición.
+ */
+export type InlineImage = { cid: string; bytes: Buffer; mime: string; fileName: string };
+
+/** Cabecera MIME con acentos/emoji → RFC 2047. Sin esto el asunto llega como mojibake. */
+function mimeWord(s: string): string {
+  return /^[\x20-\x7e]*$/.test(s) ? s : `=?UTF-8?B?${Buffer.from(s, "utf8").toString("base64")}?=`;
+}
+
+const wrap = (b64: string) => (b64.match(/.{1,76}/g) ?? []).join("\r\n");
+
 export async function sendSesEmail(opts: {
   to: string | string[];
   subject: string;
   html: string;
   from?: string;
   replyTo?: string;
+  /** Si vienen, el correo se manda como multipart/related y el HTML las cita con cid:. */
+  inline?: InlineImage[];
+  /** Versión en texto plano. Un correo SÓLO-html es una de las señales que Gmail lee
+   *  como publicidad (y hay clientes que ni siquiera muestran html). */
+  text?: string;
 }): Promise<boolean> {
   const c = ses();
   if (!c) return false; // sin creds → no-op (correo apagado)
   const toList = Array.isArray(opts.to) ? opts.to : [opts.to];
+  const from = opts.from || FROM;
+  if (opts.inline?.length) {
+    // multipart/related: el HTML primero, las imágenes después, referidas por Content-ID.
+    const b = `gt_${Date.now().toString(36)}`;
+    const head = [
+      `From: ${from}`,
+      `To: ${toList.join(", ")}`,
+      opts.replyTo ? `Reply-To: ${opts.replyTo}` : null,
+      `Subject: ${mimeWord(opts.subject)}`,
+      "MIME-Version: 1.0",
+      // Correo GENERADO, no una campaña: se lo decimos explícitamente a los filtros, y de
+      // paso evitamos respuestas automáticas (fuera-de-oficina) contra noreply@.
+      "Auto-Submitted: auto-generated",
+      "X-Auto-Response-Suppress: All",
+      `Content-Type: multipart/related; boundary="${b}"`,
+    ].filter(Boolean).join("\r\n");
+    // Estructura: related( alternative( text/plain, text/html ), imágenes ). El plano va
+    // PRIMERO por el contrato de multipart/alternative: el cliente elige la ÚLTIMA parte
+    // que sepa mostrar, así que el html es el que gana donde se puede.
+    const ab = `alt_${b}`;
+    const alt = opts.text
+      ? [
+          `--${b}`,
+          `Content-Type: multipart/alternative; boundary="${ab}"`,
+          "",
+          `--${ab}`,
+          "Content-Type: text/plain; charset=UTF-8",
+          "Content-Transfer-Encoding: base64",
+          "",
+          wrap(Buffer.from(opts.text, "utf8").toString("base64")),
+          `--${ab}`,
+          "Content-Type: text/html; charset=UTF-8",
+          "Content-Transfer-Encoding: base64",
+          "",
+          wrap(Buffer.from(opts.html, "utf8").toString("base64")),
+          `--${ab}--`,
+        ]
+      : [
+          `--${b}`,
+          "Content-Type: text/html; charset=UTF-8",
+          "Content-Transfer-Encoding: base64",
+          "",
+          wrap(Buffer.from(opts.html, "utf8").toString("base64")),
+        ];
+    const parts = [
+      ...alt,
+      ...opts.inline.flatMap((img) => [
+        `--${b}`,
+        `Content-Type: ${img.mime}`,
+        "Content-Transfer-Encoding: base64",
+        `Content-ID: <${img.cid}>`,
+        `Content-Disposition: inline; filename="${img.fileName}"`,
+        "",
+        wrap(img.bytes.toString("base64")),
+      ]),
+      `--${b}--`,
+      "",
+    ].join("\r\n");
+    try {
+      const r = await c.send(new SendRawEmailCommand({ RawMessage: { Data: Buffer.from(`${head}\r\n\r\n${parts}`, "utf8") } }));
+      console.log(`[ses] ok ${r.MessageId} → ${toList.join(",")} · inline=${opts.inline.length} · ${opts.subject.slice(0, 60)}`);
+      return true;
+    } catch (e) {
+      console.warn("[ses] raw send falló:", (e as Error)?.message);
+      return false;
+    }
+  }
   try {
     const r = await c.send(new SendEmailCommand({
-      Source: opts.from || FROM,
+      Source: from,
       Destination: { ToAddresses: toList },
       ReplyToAddresses: opts.replyTo ? [opts.replyTo] : undefined,
       Message: {
