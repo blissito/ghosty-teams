@@ -317,7 +317,7 @@ export default function DocEditor({
     // headless sí lo hace, el de React no lo he comprobado— y si los re-acuña, buscar
     // por el id de origen no encuentra nada y el resaltado falla mudo (que es justo lo
     // que pasaba). Por POSICIÓN es correcto en los dos casos.
-    const resolver = (): string[] => {
+    const resolverIds = (): string[] => {
       const suyos = (editor.document ?? []) as DocBlock[];
       const propios = new Set(suyos.map((b) => b.id).filter(Boolean) as string[]);
       // Camino normal: el editor conservó los ids.
@@ -343,8 +343,27 @@ export default function DocEditor({
     // altura del contenedor se repita en dos frames seguidos.
     let alturaPrevia = -1;
     let estables = 0;
-    const asentado = (): boolean => {
-      const h = (contenedorQueScrollea(scroller.current) ?? scroller.current)?.clientHeight ?? 0;
+    // "Asentado" = el nodo SE VE y su caja dejó de moverse.
+    //
+    // Lo de "se ve" no es paranoia: la traza mostró `visible:false, enPantalla:false`
+    // con la clase ya puesta. React no desmonta un árbol que vuelve a suspender — lo
+    // OCULTA con `display:none` —, y DocEditor se carga lazy, así que el efecto corría
+    // sobre un árbol todavía oculto. Se marcaba y se scrolleaba algo que nadie veía,
+    // que desde fuera es idéntico a no hacer nada.
+    //
+    // Se comprueba el NODO, no el contenedor: es la única condición que no depende de
+    // saber QUÉ ancestro lo esconde ni de cómo esté implementada la apertura del panel.
+    const asentado = (nodo: HTMLElement | null): boolean => {
+      if (!nodo || nodo.offsetParent === null) {
+        estables = 0;
+        return false;
+      }
+      const r = nodo.getBoundingClientRect();
+      if (r.width < 1 || r.height < 1) {
+        estables = 0;
+        return false;
+      }
+      const h = (contenedorQueScrollea(nodo) ?? scroller.current)?.clientHeight ?? 0;
       if (h > 0 && h === alturaPrevia) estables++;
       else estables = 0;
       alturaPrevia = h;
@@ -354,11 +373,18 @@ export default function DocEditor({
     let intentos = 0;
     let t: ReturnType<typeof setTimeout>;
     const probar = () => {
-      if (!asentado()) {
-        if (++intentos < 40) t = setTimeout(probar, 50);
+      const ids = resolverIds();
+      const primero = ids.length
+        ? scroller.current?.querySelector<HTMLElement>(`[data-id="${CSS.escape(ids[0])}"]`) ?? null
+        : null;
+      const nodo = primero?.querySelector<HTMLElement>(".bn-block-content") ?? primero;
+      if (!asentado(nodo)) {
+        // Ventana larga (~6s): entre que el panel abre, BlockNote pinta 102 bloques y
+        // React descubre el árbol suspendido, puede pasar bastante rato.
+        if (++intentos < 120) t = setTimeout(probar, 50);
+        else console.warn("[doc] el bloque nunca se hizo visible", { ids, nodo: !!nodo });
         return;
       }
-      const ids = resolver();
       if (intentos === 0)
         console.log("[doc:marca] resueltos", {
           ids,
