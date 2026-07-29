@@ -181,10 +181,9 @@ export default function DocEditor({
     const rect = nodos[0].getBoundingClientRect();
     const base = box.getBoundingClientRect();
     const destino = box.scrollTop + (rect.top - base.top) - box.clientHeight / 2 + rect.height / 2;
-    box.scrollTo({
-      top: Math.max(0, destino),
-      behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
-    });
+    // Siempre suave: el viaje hasta el bloque es parte de la señal ("está por aquí"),
+    // no un adorno. Saltar de golpe no dice dónde estaba.
+    box.scrollTo({ top: Math.max(0, destino), behavior: "smooth" });
     // Tras mover la vista a mitad del documento ya no estamos abajo: si no se apunta,
     // el siguiente tick del autoscroll arrastraría de vuelta al final.
     pegado.current = false;
@@ -206,10 +205,11 @@ export default function DocEditor({
     // Dos tiempos: a los 3s se pide el desvanecido (una transición, no una animación
     // — las animaciones están prohibidas globalmente cuando hay "reducir movimiento",
     // y por eso la marca no se veía nunca) y medio segundo después se limpia del todo.
+    // Se queda puesto un rato: hay que poder mirarlo, no cazarlo.
     setTimeout(() => {
       nodos.forEach((n) => n.classList.add("gt-cambio-fin"));
-      setTimeout(() => nodos.forEach((n) => n.classList.remove("gt-cambio", "gt-cambio-fin")), 500);
-    }, 3000);
+      setTimeout(() => nodos.forEach((n) => n.classList.remove("gt-cambio", "gt-cambio-fin")), 600);
+    }, 4000);
     return true;
   }, []);
 

@@ -61,7 +61,7 @@
 
 /* Movimiento reducido: lo fuerza el usuario (data-reduce-motion) o el sistema
    (@media). Anula animaciones/transiciones no esenciales. */
-:root[data-reduce-motion="1"] *,
+:root[data-reduce-motion="1"] *:not(.gt-cambio),
 :root[data-reduce-motion="1"] *::before,
 :root[data-reduce-motion="1"] *::after {
   animation-duration: 0.001ms !important;
@@ -70,7 +70,10 @@
   scroll-behavior: auto !important;
 }
 @media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after {
+  /* `.gt-cambio` queda EXENTO. No es decoración: es lo único que dice QUÉ cambió en
+     un documento de 100 bloques, y sin ella el ajuste quirúrgico es invisible. Esta
+     regla global la mataba (duration 0.001ms) y por eso la marca no se veía nunca. */
+  *:not(.gt-cambio), *::before, *::after {
     animation-duration: 0.001ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.001ms !important;
@@ -319,34 +322,43 @@ body {
 }
 
 /* ── Marcatextos del cambio quirúrgico ──────────────────────────────────────
-   Un ajuste de una cláusula en un documento de 74 KB es invisible: el aviso decía
-   "1 ajuste" y la persona se quedaba buscándolo a mano. Esto lo señala y el JS le
-   quita la clase a los 3 segundos.
+   Un ajuste de una cláusula en un documento de 100 bloques es invisible: el aviso
+   decía "1 ajuste" y la persona se quedaba buscándolo a mano.
 
-   ⚠️ **Sin animación, a propósito.** Antes esto era un `@keyframes` de 3s y NO SE
-   VEÍA NUNCA. Arriba en este mismo archivo hay una regla global —para
-   `prefers-reduced-motion` y para el ajuste `data-reduce-motion` de la app— que
-   fuerza `animation-duration: 0.001ms !important` a TODO. La marca se pintaba y
-   desaparecía en un microsegundo. Un color estático que quita el JS no depende de
-   que las animaciones estén permitidas.
+   El plumón se PINTA de izquierda a derecha, late dos veces y se va. Que se note es
+   el punto: en un documento largo hay que llevar el ojo hasta ahí.
+
+   ⚠️ `.gt-cambio` está EXENTO de las reglas de reduce-motion de arriba, a propósito.
+   Aquella regla global fuerza `animation-duration: 0.001ms !important` a todo, y con
+   eso la marca se pintaba y desaparecía en un microsegundo — no se veía NUNCA.
 
    Es una CLASE en el DOM, nunca una propiedad del bloque: no puede colarse en la
-   verdad que se persiste ni aparecer en el .docx. Efímero por construcción.
-
-   `!important` porque se pone sobre nodos que BlockNote estila con sus reglas, y el
-   `box-shadow` ensancha la marca más allá de la caja del texto — es lo que le da
-   trazo de plumón en vez de un rectángulo pegado. */
+   verdad que se persiste ni salir en el .docx. Efímero por construcción. */
+@keyframes gt-marca {
+  0%   { background-size: 0% 100%; box-shadow: 0 0 0 0 rgba(245, 158, 11, 0); }
+  20%  { background-size: 100% 100%; box-shadow: 0 0 0 7px rgba(245, 158, 11, 0.45); }
+  36%  { box-shadow: 0 0 0 12px rgba(245, 158, 11, 0); }
+  52%  { box-shadow: 0 0 0 7px rgba(245, 158, 11, 0.4); }
+  68%  { box-shadow: 0 0 0 12px rgba(245, 158, 11, 0); }
+  100% { background-size: 100% 100%; box-shadow: 0 0 0 4px rgba(253, 230, 138, 1); }
+}
 .gt-cambio {
   border-radius: 3px !important;
-  background-color: #fde68a !important;
-  box-shadow: 0 0 0 5px #fde68a !important;
-  transition: background-color 0.4s ease-out, box-shadow 0.4s ease-out;
+  /* Gradiente + background-size animable = el trazo de plumón entrando. Un
+     `background-color` no se puede "pintar" progresivamente. */
+  background-image: linear-gradient(180deg, #fde68a 0%, #fcd34d 100%) !important;
+  background-repeat: no-repeat !important;
+  background-size: 0% 100% !important;
+  box-shadow: 0 0 0 4px #fde68a;
+  animation: gt-marca 1.6s cubic-bezier(0.22, 1, 0.36, 1) forwards !important;
 }
-/* Se pone justo antes de quitar la clase → el amarillo se va suave si las
-   transiciones están permitidas, y de golpe si no. En los dos casos se ve. */
+/* Salida: la pone el JS antes de quitar la clase. Transición, no animación, para que
+   el desvanecido sobreviva aunque alguien vuelva a tocar las reglas globales. */
 .gt-cambio.gt-cambio-fin {
-  background-color: transparent !important;
-  box-shadow: 0 0 0 5px transparent !important;
+  transition: background-size 0.45s ease-out, box-shadow 0.45s ease-out !important;
+  animation: none !important;
+  background-size: 0% 100% !important;
+  box-shadow: 0 0 0 4px rgba(253, 230, 138, 0) !important;
 }
 
 /* ── Imprimir un documento ──────────────────────────────────────────────────
