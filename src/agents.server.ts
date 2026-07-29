@@ -666,9 +666,12 @@ const TOOL_LABELS: Record<string, { ing: string; done: string }> = {
   gs_db_query: { ing: "Consultando los datos", done: "Consulté los datos" },
   gs_db_write: { ing: "Guardando los datos", done: "Guardé los datos" },
   gs_subagent_spawn: { ing: "Repartiendo el trabajo", done: "Repartí el trabajo" },
-  // El agente redacta docs invocando un Skill (oficio/xlsx/pptx/doc-remix) → la acción
-  // visible = "Redacté el documento" (antes solo se veía "Subió", el paso final).
-  Skill: { ing: "Redactando el documento", done: "Redacté el documento" },
+  // `Skill` a secas = cualquier habilidad que el agente cargue, no necesariamente una de
+  // documentos. Decía "Redacté el documento" SIEMPRE, así que un turno que sólo consultó
+  // una guía anunciaba un documento que nunca existió (visto en prod 2026-07-29). La
+  // redacción real ya la etiquetan artifact_create y la detección del bloque eb-doc; aquí
+  // sólo cabe lo honesto. Cuando el worker manda cuál fue (gs_skill:<nombre>), se nombra.
+  Skill: { ing: "Consultando una habilidad", done: "Consulté una habilidad" },
   artifact_create: { ing: "Redactando el documento", done: "Redacté el documento" },
   artifact_update: { ing: "Actualizando el documento", done: "Actualicé el documento" },
   // Feedback de acciones significativas (visibilidad estilo Quick): lecturas de datos,
@@ -774,6 +777,12 @@ function toolLabel(raw: string): { ing: string; done: string } | null {
     const marca = MARCAS_MCP[mcp[1].toLowerCase()] ?? mcp[1].charAt(0).toUpperCase() + mcp[1].slice(1);
     const acc = humanizeToolName(mcp[2]);
     return { ing: `${marca}: ${acc}`, done: `${marca}: ${acc}` };
+  }
+  // `gs_skill:oficio` → "Habilidad: oficio". Igual que la red de los MCP: una habilidad
+  // nueva se ve decente sin tocar este archivo.
+  if (raw.startsWith("gs_skill:")) {
+    const acc = humanizeToolName(raw.slice("gs_skill:".length));
+    return { ing: `Habilidad: ${acc}`, done: `Habilidad: ${acc}` };
   }
   if (raw.startsWith("gs_connector:")) {
     const full = raw.slice("gs_connector:".length);
