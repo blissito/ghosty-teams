@@ -6874,15 +6874,17 @@ function CallCard({ data }: { data: CallCardData }) {
  */
 
 /**
- * Lo que Ghosty dice mientras trabaja, rotando cada 3s.
+ * Lo que Ghosty dice mientras trabaja, rotando cada 8s.
  *
  * Un "pensando…" fijo durante dos minutos se lee como un cuelgue, y en un turno que sólo
  * edita no corre ninguna tool, así que no hay checklist que mirar: la línea es todo lo que
  * hay. Las frases DICEN algo (leer, ordenar, revisar) en vez de ser palabras sueltas de
  * relleno, porque el objetivo es que la espera se entienda, no que sea graciosa.
  *
- * Y cambian según cuánto lleva: pasado el medio minuto, lo que tranquiliza no es otra
- * frase bonita sino que te diga que sigue ahí.
+ * Y cambian por UMBRALES de tiempo, que es lo que recomienda la práctica de UX para esperas
+ * largas: no rotar más rápido, sino reaccionar a que la persona lleva rato esperando. Un
+ * indicador sin texto aguanta bien por debajo de 10s; de ahí en adelante hay que decir algo,
+ * y pasado el minuto y medio lo único que tranquiliza es reconocer la espera.
  */
 const FRASES_TRABAJANDO = [
   "leyendo con calma…",
@@ -6905,10 +6907,25 @@ const FRASES_LARGAS = [
   "prefiero tardar y que salga bien…",
 ];
 
-/** Frase estable para (mensaje, segundos): sin timers propios y sin dos burbujas al unísono. */
+/** Pasados dos minutos, reconocer la espera abiertamente y decir que se puede cortar. */
+const FRASES_MUY_LARGAS = [
+  "esto es de los trabajos grandes; sigo…",
+  "va largo, pero avanza — puedes detenerme si quieres…",
+  "sigo trabajando; no se ha perdido nada…",
+  "un escrito así toma su tiempo; aquí estoy…",
+];
+
+/**
+ * Frase estable para (mensaje, segundos): sin timers propios y sin dos burbujas al unísono.
+ *
+ * 6s por frase, no 3: a 3 se lee como un parpadeo nervioso y no da tiempo a leerla, que es
+ * justo lo contrario de lo que buscamos (que la espera se entienda).
+ */
+const ROTACION_S = 8;
+
 function fraseTrabajando(id: number, secs: number): string {
-  const lista = secs >= 35 ? FRASES_LARGAS : FRASES_TRABAJANDO;
-  return lista[(id + Math.floor(secs / 3)) % lista.length];
+  const lista = secs >= 120 ? FRASES_MUY_LARGAS : secs >= 35 ? FRASES_LARGAS : FRASES_TRABAJANDO;
+  return lista[(id + Math.floor(secs / ROTACION_S)) % lista.length];
 }
 function AgentPending({ id }: { id: number }) {
   const t = useT();

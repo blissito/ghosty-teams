@@ -1,4 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { alApagar } from "../server/shutdown.server";
 import type { RtEvent } from "../server/bus.server";
 
 // ── Endpoint SSE (realtime in-VM) ───────────────────────────────────────────
@@ -44,6 +45,9 @@ export const Route = createFileRoute("/api/stream")({
         const enc = new TextEncoder();
         let unsub = () => {};
         let heartbeat: ReturnType<typeof setInterval> | undefined;
+        // Baja del registro de apagado. Un SSE abierto retiene el proceso: sin esto el
+        // deploy esperaba 90s y acababa en SIGKILL, con el servicio caído todo ese rato.
+        let desregistrar = () => {};
 
         const stream = new ReadableStream<Uint8Array>({
           start(controller) {
@@ -59,6 +63,17 @@ export const Route = createFileRoute("/api/stream")({
                 /* controller cerrado — cancel() limpia */
               }
             });
+            // Al apagar, esta conexión se cierra sola: el cliente reconecta con backoff
+            // (useLiveStream), así que cerrarla no le cuesta nada y libera el proceso.
+            desregistrar = alApagar(() => {
+              if (heartbeat) clearInterval(heartbeat);
+              unsub();
+              try {
+                controller.close();
+              } catch {
+                /* ya cerrado */
+              }
+            });
             // Heartbeat (comentario SSE) para mantener viva la conexión a través del proxy.
             heartbeat = setInterval(() => {
               try {
@@ -71,6 +86,7 @@ export const Route = createFileRoute("/api/stream")({
           cancel() {
             if (heartbeat) clearInterval(heartbeat);
             unsub();
+            desregistrar();
           },
         });
 
