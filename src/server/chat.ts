@@ -750,6 +750,8 @@ export const askAgent = createServerFn({ method: "POST" })
       parts,
       currentDoc,
       invokerSub: poster?.sub, // sus tools de conectores (per-invocador, no del owner)
+      // Destino de las tools nativas: este canal, este topic, este agente.
+      dest: { channelId: channel.id, topic: topic ?? "general", handle: data.handle, name, avatar: agent?.avatar ?? "" },
       createShell: async () => {
         // Caja caliente: la cáscara ya fue creada EAGER por postMessage → reutiliza su id
         // (cero borrar/recrear, cero parpadeo). Fallback (cliente sin shellId): créala aquí.

@@ -9,7 +9,7 @@ import type { RtEvent } from "../server/bus.server";
 export const Route = createFileRoute("/api/stream")({
   server: {
     handlers: {
-      GET: async () => {
+      GET: async ({ request }: { request: Request }) => {
         const { useSession } = await import("@tanstack/react-start/server");
         const { sessionConfig } = await import("../server/session.server");
         const s = await useSession<{
@@ -24,6 +24,16 @@ export const Route = createFileRoute("/api/stream")({
         // Tenant del que sale esta conexión: TODOS los canales van namespaced por
         // `ns` para no cruzar realtime entre workspaces (caja multitenant).
         const ns = await currentNamespace();
+        // Zona horaria del navegador (ver useLiveStream). Se escribe SOLO si cambió —
+        // este endpoint se abre en cada pestaña y no vale un UPDATE por reconexión.
+        try {
+          const tz = new URL(request.url).searchParams.get("tz") ?? "";
+          if (tz && /^[A-Za-z_+-]+\/[A-Za-z_+\-\/0-9]+$/.test(tz)) {
+            const { dbq } = await import("../dbq.server");
+            await dbq("UPDATE gc_users SET tz=? WHERE sub=? AND COALESCE(tz,'') <> ?", [tz, user.sub, tz]);
+          }
+        } catch { /* la columna puede no existir en un tenant sin migrar aún */ }
+
         const channels = await db.listChannels(user.sub, !!user.isOwner);
         const subChannels = [
           ...channels.map((c) => bus.ch.room(ns, c.id)),

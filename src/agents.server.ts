@@ -293,6 +293,8 @@ const TEAMS_PRODUCT_CONTEXT = [
   "ARTEFACTO COMPARTIDO POR LINK — cada artefacto se edita DESDE LA CONVERSACIÓN DONDE NACIÓ. En cada turno la plataforma te inyecta el contenido del artefacto ACTUAL de este hilo (si lo hay); ese es el único que puedes modificar. Si alguien te PEGA UN LINK a un artefacto (una URL de artefacto/`/t3/…`) y te pide cambiarlo, ese documento NO está cargado aquí: el link es una copia publicada, no te da acceso a editarlo. NUNCA respondas «no puedo editarlo» a secas ni lo presentes como un error o una falla tuya — EXPLICA con calma el porqué (los artefactos se editan en su propia conversación) y ofrece SIEMPRE las dos salidas: (a) que te lo pidan en el hilo/DM donde se creó, donde sí lo tienes a la mano; o (b) que te peguen aquí el contenido y creas una versión NUEVA en esta conversación.",
   "VOZ / NOTA DE VOZ: SÍ puedes responder con VOZ (mandar una nota de voz de audio). Cuando te pidan 'respóndeme con voz', 'en audio', 'mándame un audio' o similar, en code-mode usa el módulo `/opt/gs-sdk/voice.mjs` (función `speak(texto)`): sintetiza el audio, lo publica e IMPRIME un bloque que abre con ```eb-audio y cierra con ```. DEBES incluir ese bloque TAL CUAL en tu respuesta para que aparezca la burbuja de nota de voz reproducible. Puedes acompañarlo de una frase corta. La voz por DEFAULT es masculina (santa); si te piden otra voz (p.ej. femenina), pásala como `speak(texto, { voice: \"ef_dora\" })` — voces: em_santa (M, default), ef_dora (F), em_alex (M). NUNCA digas que solo te comunicas por texto ni que no puedes responder con voz — SÍ puedes. (Esto es distinto de las LLAMADAS en vivo, que aún no puedes iniciar.)",
   "USA LA VOZ PROACTIVAMENTE, seguido: además de cuando te lo pidan, responde con nota de voz por tu cuenta CON FRECUENCIA — saludos, respuestas cortas con personalidad, confirmaciones, explicaciones breves. No en CADA turno (ni para bloques de código, tablas, docs o respuestas largas/técnicas donde el texto es mejor), pero sí de forma habitual para darle calidez y presencia. Cuando la respuesta sea breve y conversacional, prefiere la voz. Regla práctica: si dudas y el mensaje es corto y humano, mándalo como nota de voz.",
+  "RECORDATORIOS: SÍ puedes programar recordatorios — es una capacidad REAL de Ghosty Teams. Usa la tool `reminder_create` (y `reminder_list` / `reminder_cancel`) cuando te pidan recordar, avisar o programar algo. El recordatorio lo publicarás TÚ en esta misma conversación a la hora pedida, y admite repetición diaria/semanal/mensual. Resuelve la fecha con el `[Ahora: …]` que recibes al inicio del turno y CONFIRMA al usuario el día y la hora que quedaron.",
+  "NUNCA atribuyas una falla tuya a un servicio externo que no forma parte de este producto. No existe ninguna conexión con claude.ai, ni con cuentas, paneles o comandos de otros productos: no los menciones ni los inventes como causa ni como solución. Si algo no te sale, di en una frase qué pasó y ofrece lo que sí puedes hacer.",
   "No inventes funciones ni pantallas que no existen. Si no estás seguro de un detalle de la interfaz, describe la vía de la @mención (universal) y ofrece ayudar con lo que intentaban lograr.",
 ].join(" ");
 
@@ -393,6 +395,27 @@ function patchModeOn(): boolean {
   return (process.env.ARTIFACT_PATCH ?? "on").toLowerCase() !== "off";
 }
 
+/** `[Ahora: …]` en la zona horaria del invocador (capturada del navegador). */
+async function clockHint(invokerSub?: string): Promise<string> {
+  try {
+    const { DEFAULT_TZ, isValidTz } = await import("./server/reminders.server");
+    let tz = DEFAULT_TZ;
+    if (invokerSub) {
+      const { dbq } = await import("./dbq.server");
+      const rows = await dbq("SELECT tz FROM gc_users WHERE sub=?", [invokerSub]);
+      const t = rows[0]?.tz;
+      if (t && isValidTz(t)) tz = t;
+    }
+    const now = new Intl.DateTimeFormat("es-MX", {
+      timeZone: tz, weekday: "long", year: "numeric", month: "long", day: "numeric",
+      hour: "2-digit", minute: "2-digit", hour12: false,
+    }).format(new Date());
+    return `[Ahora: ${now} (${tz})]\n`;
+  } catch {
+    return ""; // sin fecha es peor, pero no puede tumbar el turno
+  }
+}
+
 // Streaming (first-class): llama al backend y emite la respuesta pedacito a
 // pedacito por `onChunk`, devolviendo el texto final (autoritativo). Hoy solo el
 // backend fleet expone SSE (EasyBits /message-stream: `chunk`/`done`/`error`); el
@@ -413,7 +436,9 @@ export async function callAgentBackendStream(
   currentDoc?: { kind: "doc" | "sheet" | "artifact"; md: string; src?: string | null } | null,
   invokerSub?: string,
   /** Detener el turno = colgarle al worker. El worker cierra su generador al notarlo. */
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  /** Canal/DM de ESTE turno → viaja firmado en el toolToken (tools nativas). */
+  dest?: import("./server/connectors/tool-token.server").ToolDest | null
 ): Promise<string> {
   if (agent.backend.kind !== "fleet") {
     // Sin SSE todavía: colecta el reply completo y lo emite de un tirón (el cliente
@@ -439,18 +464,22 @@ export async function callAgentBackendStream(
     try {
       const { mintToolToken } = await import("./server/connectors/tool-token.server");
       const { reqOrigin } = await import("./origin.server");
-      toolToken = mintToolToken(invokerSub);
+      toolToken = mintToolToken(invokerSub, dest ?? null);
       toolsUrl = `${await reqOrigin()}/api/connectors/tools`;
     } catch { /* sin secret/origin → sin tools este turno, no rompe */ }
   }
   // docHint (contexto por-doc del turno) va PRIMERO en el texto; el system prompt
   // queda estable (base) → la sesión persistente del worker no se rompe al cambiar doc.
   const docHint = await artifactDocHint(currentDoc);
+  // AHORA, en el reloj del que escribe. Sin esto el modelo no puede convertir "el 1 de
+  // agosto" o "mañana a las 9" en una fecha concreta para reminder_create — adivinaba el
+  // año o daba por hecho UTC. Va por-TURNO (dato variable), nunca en el system prompt.
+  const nowHint = await clockHint(invokerSub);
   // La persona por-agente va en la CAPA SYSTEM (appendSystemPrompt), NUNCA en el texto
   // del usuario. Antes se anteponía como `[Instrucciones para X: …]` dentro del mensaje;
   // el modelo lo leía como instrucciones incrustadas y lo rechazaba como intento de
   // inyección de prompt (incidente 2026-07-12 en Teams). El texto solo lleva el turno.
-  const outText = docHint + text;
+  const outText = nowHint + docHint + text;
   try {
     // `parts` = FileParts A2A (media); EasyBits los normaliza por MIME (Slice E1).
     // configGroupId "teams" = unidad de config ESTABLE de este canal en EasyBits
@@ -807,6 +836,9 @@ async function runAgentTurnInner(opts: {
   currentDoc?: { kind: "doc" | "sheet" | "artifact"; md: string; src?: string | null } | null;
   // `sub` del que escribe → tools de conectores per-invocador (token-capacidad al box).
   invokerSub?: string;
+  // Dónde ocurre el turno. Lo necesitan las tools nativas que dejan algo EN la
+  // conversación (recordatorios): el destino va firmado, no en los args del agente.
+  dest?: import("./server/connectors/tool-token.server").ToolDest | null;
   /** Cortar este turno (botón Detener / interrupción del propio invocador). */
   signal?: AbortSignal;
   /** La cáscara ya existe con este id — para registrarlo como turno vivo y poder pararlo. */
@@ -1004,7 +1036,7 @@ async function runAgentTurnInner(opts: {
     await onChunk(reply);
   } else {
     try {
-      reply = await callAgentBackendStream(opts.agent, opts.groupId, opts.sender, opts.text, onChunk, opts.parts ?? [], onTool, opts.currentDoc, opts.invokerSub, opts.signal);
+      reply = await callAgentBackendStream(opts.agent, opts.groupId, opts.sender, opts.text, onChunk, opts.parts ?? [], onTool, opts.currentDoc, opts.invokerSub, opts.signal, opts.dest);
     } catch (e) {
       // Detenido: NO es un error del agente. Se conserva lo que alcanzó a escribir y se
       // dice que se detuvo — borrarlo tiraría trabajo que el usuario ya estaba leyendo.

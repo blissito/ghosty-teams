@@ -24,10 +24,20 @@ export async function ensureSchema(): Promise<void> {
   const ns = await currentNamespace();
   let p = done.get(ns);
   if (!p) {
-    p = migrate().catch((e) => {
-      done.delete(ns); // no cachear el fallo → reintenta en el próximo request
-      throw e;
-    });
+    p = migrate()
+      .then(async () => {
+        // El tick de recordatorios se arma LAZY, como el reaper de quick-calls: aquí es
+        // donde sabemos que este tenant existe y ya tiene su tabla. Import dinámico para
+        // no crear un ciclo (reminders → db.server → schema).
+        try {
+          const { armReminders } = await import("./reminders.server");
+          armReminders(ns);
+        } catch { /* el tick es best-effort: no puede tumbar las migraciones */ }
+      })
+      .catch((e) => {
+        done.delete(ns); // no cachear el fallo → reintenta en el próximo request
+        throw e;
+      });
     done.set(ns, p);
   }
   return p;
@@ -380,6 +390,41 @@ async function migrate(): Promise<void> {
   // NULL = nunca refrescado → connectors/meta.server.ts lo trata como vencido, y así las
   // conexiones hechas antes de esta columna se auto-reparan solas.
   await addColumn("gc_user_connectors", "meta_at", "INTEGER");
+
+  // Recordatorios programados. El agente los crea con una tool nativa y un tick del
+  // proceso (server/reminders.server.ts) los dispara: cola en DB + poll, el patrón de
+  // pg-boss/solid_queue. La verdad NUNCA vive en memoria — un reinicio del server no
+  // puede perder un recordatorio, a lo sumo entregarlo tarde.
+  //
+  // `ns` en la fila porque el tick no tiene request del cual deducir el tenant, y una
+  // caja sirve a varios workspaces (ver withNamespace en tenant.server.ts).
+  // `channel_id` XOR `dm_id`: se entrega donde se pidió.
+  await exec(`CREATE TABLE IF NOT EXISTS gc_reminders (
+    id           TEXT PRIMARY KEY,
+    ns           TEXT NOT NULL,
+    owner_sub    TEXT NOT NULL,
+    channel_id   INTEGER,
+    dm_id        INTEGER,
+    topic        TEXT NOT NULL DEFAULT 'general',
+    agent_handle TEXT NOT NULL,
+    agent_name   TEXT NOT NULL DEFAULT 'Ghosty',
+    agent_avatar TEXT NOT NULL DEFAULT '',
+    text         TEXT NOT NULL,
+    due_at       INTEGER NOT NULL,
+    repeat       TEXT,
+    tz           TEXT NOT NULL,
+    created_at   INTEGER NOT NULL DEFAULT (unixepoch()),
+    fired_at     INTEGER,
+    canceled_at  INTEGER
+  )`);
+  // El índice que usa el tick: "lo pendiente que ya venció".
+  await exec(`CREATE INDEX IF NOT EXISTS gc_reminders_due ON gc_reminders(fired_at, due_at)`);
+  await exec(`CREATE INDEX IF NOT EXISTS gc_reminders_owner ON gc_reminders(owner_sub, due_at)`);
+
+  // Zona horaria del usuario, capturada del navegador. Sin esto "mañana a las 9" es
+  // ambiguo: todo el tiempo se guarda en epoch UTC y el server no sabe en qué reloj
+  // vive quien pide el recordatorio.
+  await addColumn("gc_users", "tz", "TEXT");
 
   // Flip único: correo por default OFF (opt-in). Las filas existentes heredaron el viejo
   // DEFAULT 1 (opt-out silencioso, nadie lo eligió conscientemente) → las apagamos una sola

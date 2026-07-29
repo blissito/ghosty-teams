@@ -7,15 +7,20 @@
 // conectada. El handler resuelve el token del `sub` internamente (getValidToken).
 
 import { loaderFor, toolsOf } from "./impl";
+import { nativeTools, type ToolDest } from "./native.server";
 
 // Declaración expuesta al modelo (sin el handler).
 export type ToolDecl = { name: string; description: string; inputSchema: Record<string, unknown> };
 
-/** Tools disponibles para el usuario = unión de las de sus conectores CONECTADOS. */
-export async function listUserTools(sub: string): Promise<ToolDecl[]> {
+/**
+ * Tools disponibles para el usuario = las NATIVAS (siempre) + las de sus conectores
+ * CONECTADOS. Las nativas van incondicionalmente: no dependen de que nadie autorice
+ * nada, y sin ellas un usuario sin integraciones veía cero tools.
+ */
+export async function listUserTools(sub: string, dest: ToolDest | null = null): Promise<ToolDecl[]> {
   const { listConnectorProviders } = await import("./store.server");
   const connected = await listConnectorProviders(sub);
-  const out: ToolDecl[] = [];
+  const out: ToolDecl[] = nativeTools(dest).map((t) => ({ name: t.name, description: t.description, inputSchema: t.inputSchema }));
   for (const id of connected) {
     const load = loaderFor(id);
     if (!load) continue;
@@ -32,7 +37,16 @@ export async function listUserTools(sub: string): Promise<ToolDecl[]> {
 export type RunResult = { ok: true; result: unknown } | { ok: false; error: string };
 
 /** Ejecuta una tool por nombre, SOLO si pertenece a un conector conectado del usuario. */
-export async function runTool(sub: string, toolName: string, args: Record<string, unknown>): Promise<RunResult> {
+export async function runTool(sub: string, toolName: string, args: Record<string, unknown>, dest: ToolDest | null = null): Promise<RunResult> {
+  // Las nativas primero: no requieren conector y su nombre está reservado.
+  const nat = nativeTools(dest).find((t) => t.name === toolName);
+  if (nat) {
+    try {
+      return { ok: true, result: await nat.handler(sub, args ?? {}) };
+    } catch (e) {
+      return { ok: false, error: e instanceof Error ? e.message : String(e) };
+    }
+  }
   const { listConnectorProviders } = await import("./store.server");
   const connected = await listConnectorProviders(sub);
   for (const id of connected) {

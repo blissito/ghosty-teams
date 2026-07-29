@@ -13,7 +13,12 @@ export function useLiveStream(handlers: {
   ref.current = handlers;
 
   useEffect(() => {
-    const es = new EventSource("/api/stream");
+    // La ZONA HORARIA del navegador viaja en el connect: es el único lugar donde se
+    // sabe en qué reloj vive esta persona, y los recordatorios ("mañana a las 9") no
+    // significan nada sin ella. Va aquí y no en un endpoint aparte porque este stream
+    // se abre al montar la app, siempre.
+    const tz = (() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone || ""; } catch { return ""; } })();
+    const es = new EventSource(`/api/stream${tz ? `?tz=${encodeURIComponent(tz)}` : ""}`);
     es.addEventListener("open", () => ref.current.onReconnect());
     es.onmessage = (e) => {
       try {

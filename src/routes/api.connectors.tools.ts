@@ -27,6 +27,9 @@ export const Route = createFileRoute("/api/connectors/tools")({
         const claims = verifyToolToken(token);
         if (!claims) return json({ error: "token inválido o expirado" }, 401);
         const sub = claims.sub;
+        // El destino (canal/DM del turno) sale del token FIRMADO, nunca del body: es lo
+        // que ata las tools nativas a esta conversación y a esta persona.
+        const dest = claims.dest;
 
         let body: { action?: string; name?: string; args?: Record<string, unknown> };
         try {
@@ -36,10 +39,10 @@ export const Route = createFileRoute("/api/connectors/tools")({
         }
 
         const { listUserTools, runTool } = await import("../server/connectors/tools.server");
-        if (body.action === "list") return json({ tools: await listUserTools(sub) });
+        if (body.action === "list") return json({ tools: await listUserTools(sub, dest) });
         if (body.action === "run") {
           if (!body.name) return json({ error: "falta name" }, 400);
-          return json(await runTool(sub, body.name, body.args ?? {}));
+          return json(await runTool(sub, body.name, body.args ?? {}, dest));
         }
         return json({ error: "action debe ser 'list' o 'run'" }, 400);
       },

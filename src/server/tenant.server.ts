@@ -77,8 +77,24 @@ async function resolveNamespace(slug: string): Promise<string> {
   }
 }
 
+// Namespace EXPLÍCITO para el código que corre FUERA de un request: un timer
+// (recordatorios, reapers) no tiene host que mirar y `currentNamespace()` lanzaría
+// "sin tenant". En vez de duplicar `dbq` con un parámetro de namespace por todo el
+// árbol de llamadas, se ata al contexto async: dentro de `withNamespace(ns, fn)`
+// TODA query de `fn` habla con ese tenant. Es el mismo truco con el que TanStack
+// mantiene el contexto de request.
+import { AsyncLocalStorage } from "node:async_hooks";
+const nsStore = new AsyncLocalStorage<string>();
+
+export function withNamespace<T>(ns: string, fn: () => Promise<T>): Promise<T> {
+  return nsStore.run(ns, fn);
+}
+
 /** Namespace sqld del tenant de este request (por subdominio; fallback a env). */
 export async function currentNamespace(): Promise<string> {
+  // El explícito gana: si estamos dentro de withNamespace, no hay request que mirar.
+  const forced = nsStore.getStore();
+  if (forced) return forced;
   const slug = slugFromHost(await currentHost());
   if (!slug) {
     const env = envNamespace();
