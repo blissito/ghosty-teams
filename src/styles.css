@@ -335,35 +335,31 @@ body {
    Es una CLASE en el DOM, nunca una propiedad del bloque: no puede colarse en la
    verdad que se persiste ni salir en el .docx. Efímero por construcción. */
 @keyframes gt-marca {
-  0%   { background-size: 0% 100%; box-shadow: 0 0 0 0 rgba(245, 158, 11, 0); }
-  20%  { background-size: 100% 100%; box-shadow: 0 0 0 7px rgba(245, 158, 11, 0.45); }
-  36%  { box-shadow: 0 0 0 12px rgba(245, 158, 11, 0); }
-  52%  { box-shadow: 0 0 0 7px rgba(245, 158, 11, 0.4); }
-  68%  { box-shadow: 0 0 0 12px rgba(245, 158, 11, 0); }
-  100% { background-size: 100% 100%; box-shadow: 0 0 0 4px rgba(253, 230, 138, 1); }
+  0%   { outline-color: #f59e0b; outline-offset: 10px; background-color: #fde68a; }
+  25%  { outline-color: #f59e0b; outline-offset: 2px;  background-color: #fde68a; }
+  45%  { outline-color: #fbbf24; outline-offset: 6px;  background-color: #fef3c7; }
+  65%  { outline-color: #f59e0b; outline-offset: 2px;  background-color: #fde68a; }
+  100% { outline-color: #f59e0b; outline-offset: 2px;  background-color: #fef3c7; }
 }
+/* El marcador es un OUTLINE, no un fondo.
+   Un `background-color` en el bloque no basta: sus hijos (`bn-inline-content` y demás
+   markup de BlockNote) pintan el suyo encima y el color se queda debajo, invisible —
+   se perdieron horas con eso. El outline se dibuja FUERA de la caja, por encima de lo
+   que haya alrededor, y ningún hijo puede taparlo.
+   El fondo se deja igual, como refuerzo cuando sí se ve. */
 .gt-cambio {
-  border-radius: 3px !important;
-  /* Gradiente + background-size animable = el trazo de plumón entrando. Un
-     `background-color` no se puede "pintar" progresivamente. */
-  background-image: linear-gradient(180deg, #fde68a 0%, #fcd34d 100%) !important;
-  background-repeat: no-repeat !important;
-  /* ⚠️ SIN `!important` en background-size, y esto era el bug final: una declaración
-     `!important` le GANA a una animación, así que con `background-size: 0% 100%
-     !important` el keyframe no podía crecerlo y el gradiente se pintaba con ancho
-     CERO. Todo funcionaba —la clase puesta, el nodo visible, el scroll— y la marca
-     medía nada. El valor inicial lo pone el keyframe (0% en su 0%). */
-  background-size: 100% 100%;
-  box-shadow: 0 0 0 4px #fde68a;
-  animation: gt-marca 1.6s cubic-bezier(0.22, 1, 0.36, 1) forwards !important;
+  outline: 3px solid #f59e0b;
+  outline-offset: 2px;
+  border-radius: 3px;
+  background-color: #fef3c7;
+  animation: gt-marca 1.4s ease-out forwards;
 }
-/* Salida: la pone el JS antes de quitar la clase. Transición, no animación, para que
-   el desvanecido sobreviva aunque alguien vuelva a tocar las reglas globales. */
+/* Salida suave; la pone el JS antes de quitar la clase. */
 .gt-cambio.gt-cambio-fin {
-  transition: background-size 0.45s ease-out, box-shadow 0.45s ease-out !important;
-  animation: none !important;
-  background-size: 0% 100%;
-  box-shadow: 0 0 0 4px rgba(253, 230, 138, 0) !important;
+  animation: none;
+  transition: outline-color 0.5s ease-out, background-color 0.5s ease-out;
+  outline-color: transparent;
+  background-color: transparent;
 }
 
 /* ── Imprimir un documento ──────────────────────────────────────────────────
@@ -400,7 +396,7 @@ body {
     padding: 0 !important;
     max-width: none !important;
   }
-  .gt-cambio { background: transparent !important; box-shadow: none !important; }
+  .gt-cambio { outline: none; background: transparent; }
   /* Los adornos del editor (drag handles, botón de +, menús) no son el documento. */
   .gt-doc .bn-side-menu,
   .gt-doc .bn-formatting-toolbar,
