@@ -42,6 +42,30 @@ import { reconcile } from "../lib/doc-reconcile";
  */
 const yaSenalado = new Set<string>();
 
+/**
+ * El elemento que DE VERDAD scrollea, buscándolo desde el nodo hacia arriba.
+ *
+ * No se puede asumir cuál es. El panel de artefactos monta el contenido dentro de un
+ * bloque con `overflow-auto` que NO es flex container, así que un `h-full`/`flex-1` en
+ * el hijo no lo acota: el div del editor crece hasta el alto de todo el documento
+ * (~14.800px en uno de 102 bloques) y su propio `overflow-auto` nunca entra en juego.
+ * Calcular el scroll contra él daba destinos absurdos —`destino: -7381` con
+ * `scrollTop: 0`— y el `Math.max(0, …)` lo dejaba clavado arriba.
+ *
+ * El mismo comentario ya está en ArtifactPanel para la rama del artefacto HTML. Es una
+ * trampa que muerde dos veces, así que aquí se resuelve mirando el DOM en vez de creer
+ * en las clases.
+ */
+function contenedorQueScrollea(desde: HTMLElement | null): HTMLElement | null {
+  let el: HTMLElement | null = desde;
+  while (el && el !== document.body) {
+    const ov = getComputedStyle(el).overflowY;
+    if ((ov === "auto" || ov === "scroll") && el.scrollHeight > el.clientHeight + 4) return el;
+    el = el.parentElement;
+  }
+  return null;
+}
+
 const schema = withMultiColumn(BlockNoteSchema.create());
 const dictionary = { ...blockNoteEn, multi_column: multiColumnLocales.en };
 
@@ -101,13 +125,28 @@ export default function DocEditor({
 
   const alFinal = (el: HTMLElement) => el.scrollHeight - el.scrollTop - el.clientHeight < 120;
 
-  const onScroll = useCallback(() => {
-    const el = scroller.current;
+  /** El contenedor real. Se resuelve cada vez: el panel puede remontarse. */
+  const caja = useCallback(
+    () => contenedorQueScrollea(scroller.current) ?? scroller.current,
+    [],
+  );
+
+  // El listener va en el contenedor REAL, no en nuestro div: como nuestro div no
+  // scrollea (no está acotado), su evento `scroll` no se disparaba nunca y `alFondo`
+  // se quedaba en true para siempre — de ahí que el botón de "ir al final" tampoco
+  // apareciera jamás.
+  useEffect(() => {
+    const el = caja();
     if (!el) return;
-    const v = alFinal(el);
-    pegado.current = v;
-    setAlFondo((prev) => (prev === v ? prev : v));
-  }, []);
+    const on = () => {
+      const v = alFinal(el);
+      pegado.current = v;
+      setAlFondo((prev) => (prev === v ? prev : v));
+    };
+    el.addEventListener("scroll", on, { passive: true });
+    on();
+    return () => el.removeEventListener("scroll", on);
+  }, [caja, editor]);
 
   /**
    * Lleva a la vista el primer bloque que cambió y los marca a todos como con
@@ -137,13 +176,12 @@ export default function DocEditor({
       .filter((n): n is HTMLElement => !!n);
     if (!nodos.length) return false;
 
-    // Scroll a mano en vez de `scrollIntoView`. El editor vive dentro de un panel con
-    // varios contenedores anidados, y scrollIntoView elige el ancestro scrollable que
-    // quiere — movía otro y aquí no pasaba nada. Sabemos cuál es el nuestro.
+    // El que scrollea puede NO ser nuestro div (ver contenedorQueScrollea).
+    const box = contenedorQueScrollea(nodos[0]) ?? cont;
     const rect = nodos[0].getBoundingClientRect();
-    const base = cont.getBoundingClientRect();
-    const destino = cont.scrollTop + (rect.top - base.top) - cont.clientHeight / 2 + rect.height / 2;
-    cont.scrollTo({
+    const base = box.getBoundingClientRect();
+    const destino = box.scrollTop + (rect.top - base.top) - box.clientHeight / 2 + rect.height / 2;
+    box.scrollTo({
       top: Math.max(0, destino),
       behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
     });
@@ -161,25 +199,25 @@ export default function DocEditor({
     }
     console.log("[doc:marca] pintado", {
       n: nodos.length,
-      clase: nodos[0].className,
-      alto: Math.round(rect.height),
+      caja: box === cont ? "propio" : box.className.slice(0, 40),
       destino: Math.round(destino),
-      scrollTop: Math.round(cont.scrollTop),
-      scrollHeight: cont.scrollHeight,
+      scrollTop: Math.round(box.scrollTop),
+      clientHeight: box.clientHeight,
+      scrollHeight: box.scrollHeight,
     });
     setTimeout(() => nodos.forEach((n) => n.classList.remove("gt-cambio")), 3000);
     return true;
   }, []);
 
   const irAlFondo = useCallback(() => {
-    const el = scroller.current;
+    const el = caja();
     if (!el) return;
     el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
     // Se vuelve a "pegar" ya: si no, un tick que llegue durante el scroll suave lo
     // cancelaría y el botón se quedaría puesto.
     pegado.current = true;
     setAlFondo(true);
-  }, []);
+  }, [caja]);
 
   useEffect(() => {
     if (!editor) return;
@@ -225,7 +263,7 @@ export default function DocEditor({
         // Tras el repintado del bloque nuevo, seguir al texto. Va DENTRO del microtask
         // porque antes de que ProseMirror aplique la transacción el `scrollHeight`
         // todavía es el de antes y el salto se quedaría corto.
-        const el = scroller.current;
+        const el = caja();
         if (streaming && pegado.current && el) el.scrollTop = el.scrollHeight;
 
         // Un cambio QUIRÚRGICO ya aplicado: llévame a él y márcalo. No mientras streamea
@@ -240,7 +278,7 @@ export default function DocEditor({
         }
       });
     }
-  }, [editor, blocks, markdown, streaming]);
+  }, [editor, blocks, markdown, streaming, caja]);
 
   // Señalar lo que cambió al ABRIR. El editor monta con su documento ya puesto, así que
   // no hay diff que hacer: los ids vienen dados.
@@ -287,7 +325,7 @@ export default function DocEditor({
     let alturaPrevia = -1;
     let estables = 0;
     const asentado = (): boolean => {
-      const h = scroller.current?.clientHeight ?? 0;
+      const h = (contenedorQueScrollea(scroller.current) ?? scroller.current)?.clientHeight ?? 0;
       if (h > 0 && h === alturaPrevia) estables++;
       else estables = 0;
       alturaPrevia = h;
@@ -343,7 +381,6 @@ export default function DocEditor({
           vive en tema oscuro. Todo lo del editor queda dentro de esta clase. */}
       <div
         ref={scroller}
-        onScroll={onScroll}
         className="gt-doc h-full overflow-auto bg-surface-3 p-4 thin-scroll sm:p-6"
       >
         <div className="mx-auto max-w-[8.5in]">
