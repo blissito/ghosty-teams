@@ -194,13 +194,28 @@ export default function DocEditor({
       void n.offsetWidth;
       n.classList.add("gt-cambio");
     }
-    console.log("[doc:marca] pintado", {
-      n: nodos.length,
-      caja: box === cont ? "propio" : box.className.slice(0, 40),
-      destino: Math.round(destino),
-      scrollTop: Math.round(box.scrollTop),
-      clientHeight: box.clientHeight,
-      scrollHeight: box.scrollHeight,
+    // TRAZA: ¿este editor es el que se VE? Puede haber más de una instancia montada
+    // (panel del room y del hilo); marcar la oculta se ve exactamente igual que no
+    // marcar nada.
+    requestAnimationFrame(() => {
+      const n0 = nodos[0];
+      const r = n0.getBoundingClientRect();
+      const cs = getComputedStyle(n0);
+      console.log("[doc:marca] pintado", {
+        n: nodos.length,
+        clase: n0.className,
+        visible: n0.offsetParent !== null,
+        enPantalla: r.top < window.innerHeight && r.bottom > 0 && r.width > 0,
+        rect: { top: Math.round(r.top), alto: Math.round(r.height), ancho: Math.round(r.width) },
+        bgImage: cs.backgroundImage.slice(0, 42),
+        bgSize: cs.backgroundSize,
+        animName: cs.animationName,
+        animDur: cs.animationDuration,
+        boxShadow: cs.boxShadow.slice(0, 40),
+        opacity: cs.opacity,
+        destino: Math.round(destino),
+        scrollTop: Math.round(box.scrollTop),
+      });
     });
     // Dos tiempos: a los 3s se pide el desvanecido (una transición, no una animación
     // — las animaciones están prohibidas globalmente cuando hay "reducir movimiento",
