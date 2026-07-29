@@ -26,8 +26,12 @@ export async function notify(ev: NotifyEvent, ns: string): Promise<void> {
   // "call-end" sólo retira la notificación de llamada que ya está en pantalla: ni
   // email ni banner nuevo.
   if (ev.kind === "call-end") return void (await deliverWebPush(ev, ns).catch(() => {}));
-  // Best-effort y en paralelo: un canal que falle no tumba a los demás.
-  await Promise.allSettled([deliverWebPush(ev, ns), deliverEmail(ev, ns)]);
+  // Best-effort y en paralelo: un canal que falle no tumba a los demás. Los rechazos se
+  // LOGUEAN: `allSettled` los descarta, y un canal roto en silencio no se nota nunca.
+  const r = await Promise.allSettled([deliverWebPush(ev, ns), deliverEmail(ev, ns)]);
+  r.forEach((x, i) => {
+    if (x.status === "rejected") console.warn(`[notify ${ev.kind}] canal ${i === 0 ? "push" : "email"} falló:`, String(x.reason).slice(0, 200));
+  });
 }
 
 // Canal: Web Push (PWA). Ya operativo (VAPID + gc_push_subs).
@@ -109,7 +113,14 @@ async function deliverEmail(ev: NotifyEvent, ns: string): Promise<void> {
   if (!people.length) return;
   const html = emailHtml(ev);
   // Un envío por persona (To individual → no filtra los emails entre destinatarios).
-  await Promise.allSettled(people.map((p) => sendSesEmail({ to: p.email, subject: ev.title, html })));
+  const out = await Promise.allSettled(people.map((p) => sendSesEmail({ to: p.email, subject: ev.title, html })));
+  // Traza, igual que el fan-out de push: notify() envuelve todo en allSettled, así que sin
+  // esto un correo que no sale es INDISTINGUIBLE de uno que sí — que es exactamente donde
+  // nos atoramos el 2026-07-29 (SES aceptaba los envíos directos y los de la app no
+  // aparecían por ningún lado).
+  const ok = out.filter((r) => r.status === "fulfilled" && r.value === true).length;
+  const err = out.find((r) => r.status === "rejected") as PromiseRejectedResult | undefined;
+  console.log(`[email ${ev.kind}] to=${people.length} ok=${ok}${err ? ` err=${String(err.reason).slice(0, 120)}` : ""}`);
 }
 
 /**

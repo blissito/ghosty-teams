@@ -324,7 +324,23 @@ async function artifactDocHint(currentDoc?: { kind: "doc" | "sheet" | "artifact"
   // solo en la siguiente publicación. Al agente no le sirve de nada y son decenas de KB de
   // contexto por turno → se lo quitamos. Si re-emite el artefacto sin él, el publish lo
   // vuelve a hornear.
-  const md = currentDoc?.md.replace(/<style gt-baked-tw>[\s\S]*?<\/style>\s*/gi, "").trim();
+  // Un DOC se persiste como sobre con el árbol de bloques, no como markdown. Al agente
+  // se le devuelve MARKDOWN (es lo que escribe y lo que entiende), y aparte el índice de
+  // bloques direccionables. `docMarkdown` prefiere el `sourceMd` que él mismo escribió
+  // mientras nadie lo haya editado a mano: derivarlo de los bloques en cada turno serían
+  // dos saltos lossy por turno, con deriva acumulada.
+  let docBlocks: import("./lib/doc-blocks").DocBlock[] = [];
+  let raw = currentDoc?.md ?? "";
+  if (currentDoc?.kind === "doc" && raw) {
+    const { parseDocEnvelope } = await import("./lib/doc-blocks");
+    const env = parseDocEnvelope(raw);
+    if (env) {
+      docBlocks = env.blocks;
+      const { docMarkdown } = await import("./server/doc-blocks.server");
+      raw = await docMarkdown(currentDoc.md);
+    }
+  }
+  const md = raw.replace(/<style gt-baked-tw>[\s\S]*?<\/style>\s*/gi, "").trim();
   if (!md) return "";
   const kind = currentDoc!.kind;
   const fence = kind === "sheet" ? "eb-sheet" : kind === "artifact" ? "eb-artifact" : "eb-doc";
@@ -346,6 +362,32 @@ async function artifactDocHint(currentDoc?: { kind: "doc" | "sheet" | "artifact"
   // ```eb-patch``` en vez del documento entero. Si el HTML es viejo (sin ids) o el modo está
   // apagado por env, cae al camino de siempre (re-emisión completa) — un turno de retraso:
   // al guardar esa re-emisión el server ya la estampa.
+  // DOCUMENTO con bloques direccionables → mismo modo QUIRÚRGICO que el HTML, pero las
+  // direcciones son BLOQUES, no nodos del DOM. Es la pieza que hace posible "usa las
+  // cláusulas de este archivo para nuestro documento": el agente abre la fuente, extrae
+  // sólo el fragmento que necesita y lo coloca en un bloque — sin re-emitir el documento
+  // entero ni volcar la fuente al contexto.
+  if (kind === "doc" && patchModeOn() && docBlocks.length) {
+    const { blockIndex } = await import("./lib/doc-blocks");
+    const index = blockIndex(docBlocks, 80);
+    return (
+      `[Contexto del hilo — DOCUMENTO ACTUAL. En esta conversación ya existe ${noun}. ` +
+      `Está hecho de BLOQUES y cada uno tiene su dirección (n1, n2, …). Si el usuario pide ` +
+      `un cambio ACOTADO (una cláusula, un dato, un párrafo, una fila), responde con uno o ` +
+      `más bloques \`\`\`eb-patch <dirección> con ESE bloque completo ya corregido, en ` +
+      `Markdown — NO re-emitas el documento entero. Para quitar un bloque, ` +
+      `\`\`\`eb-remove <dirección>; para agregar, \`\`\`eb-insert <dirección> before|after. ` +
+      `Si el cambio es una reescritura de arriba abajo, entonces sí re-emite todo en un ` +
+      `bloque \`\`\`eb-doc.` +
+      NEW_DOC_RULE(fence) +
+      `\n\nSi estás tomando contenido de un documento ADJUNTO (cláusulas, datos, cifras): ` +
+      `ábrelo con su herramienta, extrae SÓLO lo que necesitas y colócalo con eb-patch. ` +
+      `No transcribas el documento fuente en tu respuesta.` +
+      (index ? `\n\nBloques direccionables:\n${index}` : "") +
+      `\n\nContenido actual en ${lang}:\n\n\`\`\`\n${md}\n\`\`\`]\n\n`
+    );
+  }
+
   const patchable = kind === "artifact" && patchModeOn() && hasIds(md);
   if (patchable) {
     // Parser del server (jsdom): sin él el índice saldría vacío en silencio, y el índice

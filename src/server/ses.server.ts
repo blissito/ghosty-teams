@@ -30,7 +30,7 @@ export async function sendSesEmail(opts: {
   if (!c) return false; // sin creds → no-op (correo apagado)
   const toList = Array.isArray(opts.to) ? opts.to : [opts.to];
   try {
-    await c.send(new SendEmailCommand({
+    const r = await c.send(new SendEmailCommand({
       Source: opts.from || FROM,
       Destination: { ToAddresses: toList },
       ReplyToAddresses: opts.replyTo ? [opts.replyTo] : undefined,
@@ -39,6 +39,9 @@ export async function sendSesEmail(opts: {
         Body: { Html: { Data: opts.html, Charset: "UTF-8" } },
       },
     }));
+    // MessageId al journal: sin él, "SES lo aceptó" es una afirmación que no se puede
+    // comprobar contra AWS, y un correo que no llega no se distingue de uno que sí salió.
+    console.log(`[ses] ok ${r.MessageId} → ${toList.join(",")} · from=${opts.from || FROM} · ${opts.subject.slice(0, 60)}`);
     return true;
   } catch (e) {
     console.warn("[ses] send falló:", (e as Error)?.message);

@@ -855,6 +855,57 @@ export const askAgent = createServerFn({ method: "POST" })
       // si NO aplica nada no se crea versión (el artefacto anterior sigue en pie) — una
       // capa de contención muda escondería que el modo patch está roto.
       const patches = extractEbPatches(reply);
+
+      // DOCUMENTO parcheado por BLOQUES. Mismo protocolo (```eb-patch``` por dirección) y
+      // misma disciplina que el artefacto HTML, pero se aplica por splice sobre el árbol
+      // de bloques: el full-HTML de BlockNote repite el mismo data-id en dos divs
+      // anidados, así que el camino por DOM (applyPatches/stampIds) lo corrompería.
+      if (patches.length && patches.every((p) => p.closed) && currentDoc?.kind === "doc" && currentDocId) {
+        const { parseDocEnvelope } = await import("../lib/doc-blocks");
+        const env = parseDocEnvelope(currentDoc.md);
+        if (env) {
+          const { applyBlockPatches } = await import("../lib/doc-patch");
+          const { mdToBlocks, blocksToMd } = await import("./doc-blocks.server");
+          const t0 = performance.now();
+          const res = await applyBlockPatches(env.blocks, patches, { parse: mdToBlocks });
+          console.log(
+            `[gt-patch] doc msg=${id} pedidos=${patches.length} aplicados=${res.applied.length} ` +
+              `fallidos=${res.failed.length} ${Math.round(performance.now() - t0)}ms` +
+              (res.failed.length ? ` → ${res.failed.map((f) => `${f.ref}:${f.reason}`).join(",")}` : "")
+          );
+          const cleaned = bubbleWithoutEbDoc(reply, {
+            applied: res.applied.length,
+            failed: res.failed.map((f) => `${f.ref}: ${f.reason}`),
+          });
+          await db.setMessageBody(id, cleaned);
+          bus.publish(bus.ch.room(ns, channel.id), { t: "message:body", id, body: cleaned });
+          if (res.applied.length) {
+            // El `sourceMd` del agente ya no describe el documento tras el patch, así que
+            // se re-deriva de los bloques: es el único momento en que se paga ese salto.
+            const nuevoMd = await blocksToMd(res.blocks).catch(() => env.sourceMd ?? "");
+            const { publishArtifactVersion } = await import("./artifacts");
+            await publishArtifactVersion({
+              messageId: id,
+              documentId: currentDocId,
+              kind: "doc",
+              title: draftTitle(nuevoMd, "doc"),
+              md: nuevoMd,
+              blocks: res.blocks,
+              ownerSub: poster?.sub ?? null,
+              setPointer: (docId) => db.setThreadArtifact(channel.id, data.parentId, docId),
+              notify: () =>
+                bus.publish(bus.ch.room(ns, channel.id), { t: "refresh", channelId: channel.id, parentId: data.parentId }),
+            });
+            return { ok: true as const };
+          }
+          // Nada aplicó → el documento anterior queda intacto y el bubble ya lo dice.
+          return { ok: true as const };
+        }
+        // Fila legacy (markdown, sin bloques): no hay direcciones que resolver. Cae al
+        // camino de siempre — el agente re-emite completo y ESA versión ya nace con
+        // bloques, así que el siguiente turno sí puede ser quirúrgico.
+      }
+
       if (patches.length && patches.every((p) => p.closed) && currentDoc?.kind === "artifact" && currentDocId) {
         const { applyPatches } = await import("../lib/artifact-patch");
         const { serverParseOpts } = await import("./artifact-dom.server");

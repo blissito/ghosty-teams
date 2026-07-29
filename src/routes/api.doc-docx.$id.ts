@@ -15,7 +15,13 @@ export const Route = createFileRoute("/api/doc-docx/$id")({
 
         const name = new URL(request.url).searchParams.get("name") || "documento";
         const db = await import("../db.server");
-        const md = await db.getDocMarkdown(params.id).catch(() => null);
+        // `gc_artifacts.md` de un doc es un SOBRE con el árbol de bloques, no markdown.
+        // `docMarkdown` devuelve el `sourceMd` del agente cuando nadie lo ha editado, y
+        // sólo lo deriva de los bloques cuando ya hay edición humana — así el .docx no
+        // paga la pérdida del round-trip sin necesidad. Las filas legacy pasan tal cual.
+        const { docMarkdown } = await import("../server/doc-blocks.server");
+        const raw = await db.getDocMarkdown(params.id).catch(() => null);
+        const md = raw ? await docMarkdown(raw) : null;
         if (!md) return new Response("not found", { status: 404 });
 
         const { mdToDocx } = await import("../server/easybits-documents.server");

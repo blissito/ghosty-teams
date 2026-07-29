@@ -377,6 +377,54 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
       // VISIBLE: lo que no aplica se loguea con su nodeId y, si no aplica nada, no se
       // crea versión y el bubble lo dice.
       const patches = extractEbPatches(reply);
+
+      // DOCUMENTO parcheado por BLOQUES (gemelo de la rama del room en chat.ts). El
+      // artefacto HTML se parchea por DOM; un documento, por splice sobre el árbol de
+      // bloques — el full-HTML de BlockNote repite el mismo data-id en dos divs
+      // anidados y el camino por DOM lo corrompería.
+      if (patches.length && patches.every((p) => p.closed) && currentDoc?.kind === "doc" && currentDocId) {
+        const { parseDocEnvelope } = await import("../lib/doc-blocks");
+        const env = parseDocEnvelope(currentDoc.md);
+        if (env) {
+          const { applyBlockPatches } = await import("../lib/doc-patch");
+          const { mdToBlocks, blocksToMd } = await import("./doc-blocks.server");
+          const t0 = performance.now();
+          const res = await applyBlockPatches(env.blocks, patches, { parse: mdToBlocks });
+          console.log(
+            `[gt-patch][dm] doc msg=${id} pedidos=${patches.length} aplicados=${res.applied.length} ` +
+              `fallidos=${res.failed.length} ${Math.round(performance.now() - t0)}ms` +
+              (res.failed.length ? ` → ${res.failed.map((f) => `${f.ref}:${f.reason}`).join(",")}` : "")
+          );
+          const cleaned = bubbleWithoutEbDoc(reply, {
+            applied: res.applied.length,
+            failed: res.failed.map((f) => `${f.ref}: ${f.reason}`),
+          });
+          await db.setMessageBody(id, cleaned);
+          fanout({ t: "message:body", id, body: cleaned });
+          if (res.applied.length) {
+            // Tras el patch el `sourceMd` del agente ya no describe el documento: se
+            // re-deriva de los bloques. Es el único momento en que se paga ese salto.
+            const nuevoMd = await blocksToMd(res.blocks).catch(() => env.sourceMd ?? "");
+            const { publishArtifactVersion } = await import("./artifacts");
+            await publishArtifactVersion({
+              messageId: id,
+              documentId: currentDocId,
+              kind: "doc",
+              title: draftTitle(nuevoMd, "doc"),
+              md: nuevoMd,
+              blocks: res.blocks,
+              visibility: "public",
+              ownerSub: me.sub,
+              setPointer: (docId) => db.setDmArtifact(data.id, docId),
+              notify: () => fanout({ t: "refresh", channelId: null, parentId: null, dmId: data.id }),
+            });
+          }
+          return { ok: true as const };
+        }
+        // Fila legacy (markdown, sin bloques): sin direcciones que resolver. Cae al camino
+        // de siempre; esa re-emisión ya nace con bloques y el turno siguiente sí es quirúrgico.
+      }
+
       if (patches.length && patches.every((p) => p.closed) && currentDoc?.kind === "artifact" && currentDocId) {
         const { applyPatches } = await import("../lib/artifact-patch");
         const { serverParseOpts } = await import("./artifact-dom.server");

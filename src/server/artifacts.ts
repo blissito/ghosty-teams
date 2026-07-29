@@ -33,12 +33,36 @@ export async function publishArtifactVersion(args: {
    * consistencia. Si falta, el lector cae al join por gc_messages.sender_sub.
    */
   ownerSub?: string | null;
+  /**
+   * Sólo para `kind:"doc"` en la edición HUMANA: los bloques que ya tiene el editor.
+   * Sin esto habría que re-derivarlos del markdown, y eso les cambia el uuid a todos
+   * (los alias del turno anterior dejarían de resolver).
+   */
+  blocks?: import("../lib/doc-blocks").DocBlock[];
+  /** Marca el sobre: desde aquí `sourceMd` ya no es la verdad del documento. */
+  humanEdited?: boolean;
 }): Promise<{ md: string; src: string | null }> {
   const db = await import("../db.server");
   const t0 = performance.now();
 
-  // Solo el HTML tiene nodos que direccionar; doc/sheet son markdown/CSV.
   let md = args.md;
+
+  // Un DOC se persiste como ÁRBOL DE BLOQUES (sobre `v:1`), no como markdown: los uuid
+  // de los bloques son lo que hace direccionable el documento para el próximo
+  // ```eb-patch```. Es el equivalente de `stampIds` del HTML, pero los ids no se
+  // estampan — vienen de BlockNote al parsear (los propios se ignoran).
+  //
+  // `blocks` llega cuando la edición es HUMANA: el editor ya tiene los bloques, y
+  // re-derivarlos del markdown les cambiaría los uuid a todos.
+  if (args.kind === "doc") {
+    const { docEnvelopeFromMd } = await import("./doc-blocks.server");
+    const { serializeDocEnvelope } = await import("../lib/doc-blocks");
+    md = args.blocks?.length
+      ? serializeDocEnvelope({ blocks: args.blocks, humanEdited: args.humanEdited })
+      : await docEnvelopeFromMd(args.md);
+  }
+
+  // Solo el HTML tiene nodos que direccionar por DOM; sheet es CSV.
   if (args.kind === "artifact") {
     try {
       const { serverParseOpts } = await import("./artifact-dom.server");
