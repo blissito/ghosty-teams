@@ -136,6 +136,28 @@ async function deliverEmail(ev: NotifyEvent, ns: string): Promise<void> {
  * entiende flex; una tabla centrada es lo único que se ve igual en los dos.
  */
 /**
+ * El mismo correo a direcciones SUELTAS (no miembros del workspace). Lo usan los
+ * recordatorios con copia: "recuérdame facturar y mándaselo también a brenda@…".
+ *
+ * No pasa por preferencias ni por el filtro de conectados: son direcciones que el dueño
+ * del recordatorio escribió a mano, una por una. Devuelve cuántas salieron.
+ */
+export async function sendEmailTo(addresses: string[], ev: NotifyEvent): Promise<number> {
+  const { sesConfigured, sendSesEmail } = await import("./ses.server");
+  if (!sesConfigured() || !addresses.length) return 0;
+  const mascot = mascotInline();
+  const html = emailHtml(ev, !!mascot);
+  const out = await Promise.allSettled(
+    addresses.map((to) =>
+      sendSesEmail({ to, subject: ev.title, html, text: emailText(ev), inline: mascot ? [mascot] : undefined })
+    )
+  );
+  const ok = out.filter((r) => r.status === "fulfilled" && r.value === true).length;
+  console.log(`[email ${ev.kind}·copia] to=${addresses.length} ok=${ok}`);
+  return ok;
+}
+
+/**
  * El mascot como imagen INCRUSTADA (cid:), leído del disco una sola vez.
  *
  * Enlazarlo costaba una petición al abrir el correo —500ms medidos, casi todo handshake

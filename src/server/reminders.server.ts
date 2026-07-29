@@ -29,6 +29,8 @@ export type Reminder = {
   tz: string;
   /** El usuario pidió que ADEMÁS le llegue por correo (se pregunta al programar). */
   email: boolean;
+  /** Copia a direcciones sueltas (no miembros del workspace). */
+  emailCc: string[];
 };
 
 export const DEFAULT_TZ = "America/Mexico_City";
@@ -120,9 +122,9 @@ const rid = () => `rm_${Date.now().toString(36)}${Math.random().toString(36).sli
 export async function createReminder(r: Omit<Reminder, "id">): Promise<Reminder> {
   const id = rid();
   await dbq(
-    `INSERT INTO gc_reminders (id, ns, owner_sub, channel_id, dm_id, topic, agent_handle, agent_name, agent_avatar, text, due_at, repeat, tz, email)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-    [id, await nsOf(), r.ownerSub, r.channelId, r.dmId, r.topic, r.agentHandle, r.agentName, r.agentAvatar, r.text, r.dueAt, r.repeat, r.tz, r.email ? 1 : 0]
+    `INSERT INTO gc_reminders (id, ns, owner_sub, channel_id, dm_id, topic, agent_handle, agent_name, agent_avatar, text, due_at, repeat, tz, email, email_cc)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+    [id, await nsOf(), r.ownerSub, r.channelId, r.dmId, r.topic, r.agentHandle, r.agentName, r.agentAvatar, r.text, r.dueAt, r.repeat, r.tz, r.email ? 1 : 0, r.emailCc.length ? JSON.stringify(r.emailCc) : null]
   );
   return { ...r, id };
 }
@@ -159,7 +161,7 @@ export async function cancelReminder(ownerSub: string, id: string): Promise<bool
 export async function updateReminder(
   ownerSub: string,
   id: string,
-  patch: { text?: string; dueAt?: number; repeat?: Repeat | null; email?: boolean }
+  patch: { text?: string; dueAt?: number; repeat?: Repeat | null; email?: boolean; emailCc?: string[] }
 ): Promise<Reminder | null> {
   const sets: string[] = [];
   const vals: (string | number | null)[] = [];
@@ -167,6 +169,7 @@ export async function updateReminder(
   if (patch.dueAt !== undefined) { sets.push("due_at=?"); vals.push(patch.dueAt); }
   if (patch.repeat !== undefined) { sets.push("repeat=?"); vals.push(patch.repeat); }
   if (patch.email !== undefined) { sets.push("email=?"); vals.push(patch.email ? 1 : 0); }
+  if (patch.emailCc !== undefined) { sets.push("email_cc=?"); vals.push(patch.emailCc.length ? JSON.stringify(patch.emailCc) : null); }
   if (!sets.length) return null;
   vals.push(id, ownerSub);
   const rows = await dbq(
@@ -192,7 +195,18 @@ function toReminder(r: Record<string, string | null>): Reminder {
     repeat: (r.repeat as Repeat | null) ?? null,
     tz: r.tz || DEFAULT_TZ,
     email: r.email === "1",
+    emailCc: parseCc(r.email_cc),
   };
+}
+
+function parseCc(raw: string | null | undefined): string[] {
+  if (!raw) return [];
+  try {
+    const v = JSON.parse(raw);
+    return Array.isArray(v) ? v.filter((x) => typeof x === "string") : [];
+  } catch {
+    return [];
+  }
 }
 
 // ── Tick ────────────────────────────────────────────────────────────────────
@@ -273,6 +287,15 @@ async function deliver(ns: string, r: Reminder): Promise<void> {
 
   // Push/email: el recordatorio sirve justamente cuando NO tienes la pestaña abierta.
   const { notify } = await import("./notify.server");
+  // Copia a direcciones sueltas. Va aparte de notify() porque notify habla de USUARIOS
+  // (subs, preferencias, quién está conectado) y esto son direcciones a secas.
+  if (r.emailCc.length) {
+    const { sendEmailTo } = await import("./notify.server");
+    await sendEmailTo(r.emailCc, {
+      kind: "reminder", recipients: [], title: `⏰ ${r.text.length > 60 ? r.text.slice(0, 57) + "…" : r.text}`,
+      body: r.text, url: "/",
+    }).catch(() => {});
+  }
   await notify({
     kind: "reminder",
     recipients: [r.ownerSub],

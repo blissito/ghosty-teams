@@ -425,6 +425,10 @@ async function migrate(): Promise<void> {
   // querer un correo por el pago de la tarjeta no significa quererlo por todo.
   await addColumn("gc_reminders", "email", "INTEGER NOT NULL DEFAULT 0");
 
+  // Copia del correo a direcciones sueltas (JSON array). Un recordatorio suele ser para
+  // más de uno: "factura a Acali" también le sirve a quien la revisa.
+  await addColumn("gc_reminders", "email_cc", "TEXT");
+
   // Zona horaria del usuario, capturada del navegador. Sin esto "mañana a las 9" es
   // ambiguo: todo el tiempo se guarda en epoch UTC y el server no sabe en qué reloj
   // vive quien pide el recordatorio.

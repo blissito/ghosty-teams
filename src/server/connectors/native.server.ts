@@ -31,6 +31,7 @@ export function nativeTools(dest: ToolDest | null): ConnectorTool[] {
           when: { type: "string", description: "Fecha y hora local: YYYY-MM-DDTHH:mm (sin hora → 09:00)" },
           repeat: { type: "string", enum: [...REPEATS], description: "Repetición; omítelo si es una sola vez" },
           email: { type: "boolean", description: "true si además quiere el aviso por correo. PREGÚNTASELO antes de programar; si no contesta, false" },
+          emailCc: { type: "array", items: { type: "string" }, description: "copia del correo a otras direcciones (máx 5). Sólo si te las dictan explícitamente" },
         },
         required: ["text", "when"],
       },
@@ -61,8 +62,9 @@ export function nativeTools(dest: ToolDest | null): ConnectorTool[] {
           repeat,
           tz,
           email: args.email === true,
+          emailCc: cleanCc(args.emailCc),
         });
-        return { ok: true, id: r.id, when: rem.humanDate(dueAt, tz), tz, repeat, email: args.email === true };
+        return { ok: true, id: r.id, when: rem.humanDate(dueAt, tz), tz, repeat, email: r.email, emailCc: r.emailCc };
       },
     },
     {
@@ -88,6 +90,7 @@ export function nativeTools(dest: ToolDest | null): ConnectorTool[] {
         properties: {
           id: { type: "string", description: "id del recordatorio" },
           text: { type: "string", description: "nuevo texto" },
+          emailCc: { type: "array", items: { type: "string" }, description: "reemplaza la lista de copias; [] la vacía" },
           when: { type: "string", description: "nueva fecha y hora local YYYY-MM-DDTHH:mm" },
           repeat: { type: "string", enum: [...REPEATS, "none"], description: "'none' quita la repetición" },
           email: { type: "boolean", description: "true = además por correo; false = sólo en el chat" },
@@ -97,7 +100,7 @@ export function nativeTools(dest: ToolDest | null): ConnectorTool[] {
       handler: async (sub, args) => {
         const rem = await import("../reminders.server");
         const tz = await tzOf(sub);
-        const patch: { text?: string; dueAt?: number; repeat?: (typeof REPEATS)[number] | null; email?: boolean } = {};
+        const patch: { text?: string; dueAt?: number; repeat?: (typeof REPEATS)[number] | null; email?: boolean; emailCc?: string[] } = {};
         if (typeof args.text === "string" && args.text.trim()) patch.text = args.text.trim();
         if (typeof args.when === "string" && args.when) {
           const due = rem.parseLocal(args.when, tz);
@@ -108,9 +111,10 @@ export function nativeTools(dest: ToolDest | null): ConnectorTool[] {
         if (args.repeat === "none") patch.repeat = null;
         else if (REPEATS.includes(args.repeat as never)) patch.repeat = args.repeat as (typeof REPEATS)[number];
         if (typeof args.email === "boolean") patch.email = args.email;
+        if (Array.isArray(args.emailCc)) patch.emailCc = cleanCc(args.emailCc);
         const r = await rem.updateReminder(sub, String(args.id ?? ""), patch);
         if (!r) return { ok: false, error: "no existe, ya disparó, no es tuyo, o no mandaste ningún cambio" };
-        return { ok: true, id: r.id, text: r.text, when: rem.humanDate(r.dueAt, r.tz), repeat: r.repeat, email: r.email };
+        return { ok: true, id: r.id, text: r.text, when: rem.humanDate(r.dueAt, r.tz), repeat: r.repeat, email: r.email, emailCc: r.emailCc };
       },
     },
     {
@@ -128,6 +132,20 @@ export function nativeTools(dest: ToolDest | null): ConnectorTool[] {
       },
     },
   ];
+}
+
+/**
+ * Direcciones de copia. El tope de 5 y el filtro no son burocracia: este correo sale del
+ * dominio del producto con texto que escribió un usuario, así que es un canal de envío a
+ * terceros y no debe poder convertirse en una lista de difusión.
+ */
+function cleanCc(v: unknown): string[] {
+  if (!Array.isArray(v)) return [];
+  const ok = v
+    .filter((x): x is string => typeof x === "string")
+    .map((x) => x.trim().toLowerCase())
+    .filter((x) => /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(x));
+  return Array.from(new Set(ok)).slice(0, 5);
 }
 
 /** Zona horaria del usuario (capturada del navegador). Sin ella, la del negocio. */

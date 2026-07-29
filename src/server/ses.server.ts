@@ -65,7 +65,10 @@ export async function sendSesEmail(opts: {
       // paso evitamos respuestas automáticas (fuera-de-oficina) contra noreply@.
       "Auto-Submitted: auto-generated",
       "X-Auto-Response-Suppress: All",
-      `Content-Type: multipart/related; boundary="${b}"`,
+      // `type` = qué es la parte RAÍZ del related. Sin él, al anidar el multipart/alternative
+      // (para el texto plano) Gmail dejó de resolver los cid: y volvió a pedir la imagen por
+      // red — la mejora del texto plano se comió la de la imagen incrustada.
+      `Content-Type: multipart/related; boundary="${b}"${opts.text ? '; type="multipart/alternative"' : '; type="text/html"'}`,
     ].filter(Boolean).join("\r\n");
     // Estructura: related( alternative( text/plain, text/html ), imágenes ). El plano va
     // PRIMERO por el contrato de multipart/alternative: el cliente elige la ÚLTIMA parte
