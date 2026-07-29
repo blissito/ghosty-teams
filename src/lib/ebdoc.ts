@@ -173,6 +173,26 @@ export function extractEbPatches(body: string): EbPatch[] {
   return out;
 }
 
+/**
+ * Cabecera de patch HUÉRFANA: quedó el `eb-patch <id>` pero se perdió el ``` que lo
+ * abría, así que `stripEbPatches` ya no lo reconoce y su contenido se va tal cual al
+ * chat. Visto en producción (msg 1093, 2026-07-29): la burbuja mostró
+ * "eb-patch n3 **FELIPE CERON MARTINEZ**, personalidad que acredito…".
+ *
+ * No se sabe todavía QUÉ come el fence de apertura —los casos reproducidos en test
+ * pasan limpios—, así que esto es contención, no arreglo: lo que no puede pasar es que
+ * el usuario vea las tripas del protocolo en su conversación. Cuando aparezca la causa,
+ * este barrido debería dejar de encontrar nada (por eso avisa al log).
+ */
+const HUERFANO = /(^|\n)(eb-(?:patch|insert|remove))[ \t]+([^\n`]+)\n([\s\S]*?)(\n```|$)/g;
+
+export function stripOrphanPatch(body: string): string {
+  if (!/(^|\n)eb-(patch|insert|remove)[ \t]/.test(body)) return body;
+  const out = body.replace(HUERFANO, "$1");
+  if (out !== body) console.warn("[ebdoc] cabecera de patch huérfana en el bubble — el fence de apertura se perdió");
+  return out;
+}
+
 /** Quita los bloques de patch del texto (para el bubble del chat). */
 export function stripEbPatches(body: string): string {
   return body
@@ -495,10 +515,11 @@ export function bubbleWithoutEbDoc(body: string, patchOutcome?: { applied: numbe
         `✅ Artefacto actualizado — ${patchOutcome.applied} de ${patchOutcome.applied + patchOutcome.failed.length} ajustes` +
         ` (no aplicó: ${patchOutcome.failed.join(", ")})`;
     else mark = `✅ Artefacto actualizado — ${patchOutcome.applied} ajuste${patchOutcome.applied > 1 ? "s" : ""}`;
-    return around ? `${around}\n\n${mark}` : mark;
+    const limpio = stripOrphanPatch(around);
+    return limpio ? `${limpio}\n\n${mark}` : mark;
   }
   const doc = extractEbDoc(body);
-  if (!doc) return body;
+  if (!doc) return stripOrphanPatch(body);
   const around = [doc.before.trim(), doc.after.trim()].filter(Boolean).join("\n\n");
   if (doc.closed) {
     const ready = doc.kind === "sheet" ? "📊 Hoja lista" : doc.kind === "artifact" ? "🎨 Artefacto listo" : "📄 Documento listo";
