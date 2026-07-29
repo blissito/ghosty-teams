@@ -166,6 +166,16 @@ export default function DocEditor({
   // porque leer el state dentro del efecto lo ataría a su closure.
   const pegado = useRef(true);
   const [alFondo, setAlFondo] = useState(true);
+  /**
+   * Posición del botón "ir al final", en coordenadas de pantalla.
+   *
+   * No puede ser `absolute` respecto al div del editor: ese div NO está acotado (el
+   * contenedor del panel tiene overflow-auto pero no es flex container, así que `flex-1`
+   * y `h-full` no lo limitan), así que mide el alto de TODO el documento —unos 14.800px
+   * con 100 bloques— y un `bottom-5` cae 14.800px hacia abajo, fuera de la pantalla. El
+   * botón existía y no se veía. Es la tercera vez que esta trampa muerde en este archivo.
+   */
+  const [posBoton, setPosBoton] = useState<{ left: number; right: number; top: number } | null>(null);
 
   const alFinal = (el: HTMLElement) => el.scrollHeight - el.scrollTop - el.clientHeight < 120;
 
@@ -200,15 +210,25 @@ export default function DocEditor({
         const v = alFinal(box);
         pegado.current = v;
         setAlFondo((prev) => (prev === v ? prev : v));
+        // El botón se ancla a la esquina del contenedor VISIBLE, no del documento.
+        const r = box.getBoundingClientRect();
+        const p = { left: Math.round(r.left + 16), right: Math.round(r.right - 150), top: Math.round(r.bottom - 52) };
+        setPosBoton((prev) =>
+          prev && prev.left === p.left && prev.right === p.right && prev.top === p.top ? prev : p,
+        );
       };
       box.addEventListener("scroll", on, { passive: true });
+      window.addEventListener("resize", on);
       on();
     };
     enganchar();
 
     return () => {
       clearTimeout(t);
-      if (el && on) el.removeEventListener("scroll", on);
+      if (el && on) {
+        el.removeEventListener("scroll", on);
+        window.removeEventListener("resize", on);
+      }
     };
   }, [caja, editor, blocks, markdown]);
 
@@ -484,7 +504,8 @@ export default function DocEditor({
           lo peor que puede pasarle a un documento. */}
       {guardado ? (
         <div
-          className={`pointer-events-none absolute bottom-5 left-5 z-10 inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium shadow-sm backdrop-blur transition ${
+          style={posBoton ? { position: "fixed", left: posBoton.left, top: posBoton.top } : undefined}
+          className={`pointer-events-none z-40 inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium shadow-sm backdrop-blur transition ${
             guardado === "error"
               ? "border-red-500/40 bg-red-500/15 text-red-300"
               : "border-border bg-surface/95 text-muted"
@@ -517,13 +538,14 @@ export default function DocEditor({
       {/* Ir al final. Sólo cuando NO estás abajo — si no, es un botón que no hace nada
           tapando el documento. Mientras el agente escribe además avisa de que sigue
           llegando texto más abajo. */}
-      {!alFondo ? (
+      {!alFondo && posBoton ? (
         <button
           type="button"
           onClick={irAlFondo}
           aria-label={t("Ir al final")}
           title={t("Ir al final")}
-          className="absolute bottom-5 right-5 z-10 inline-flex items-center gap-1.5 rounded-full border border-border bg-surface/95 px-3 py-2 text-xs font-medium text-ink shadow-lg backdrop-blur transition hover:border-brand hover:text-brand"
+          style={{ position: "fixed", left: posBoton.right, top: posBoton.top }}
+          className="z-40 inline-flex items-center gap-1.5 rounded-full border border-border bg-surface/95 px-3 py-2 text-xs font-medium text-ink shadow-lg backdrop-blur transition hover:border-brand hover:text-brand"
         >
           <ArrowDown size={14} />
           {streaming ? t("Sigue escribiendo") : t("Ir al final")}

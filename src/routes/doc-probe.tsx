@@ -34,7 +34,10 @@ function Probe() {
         </button>
         <span className="text-xs text-muted">refs: {JSON.stringify(refs)}</span>
       </div>
-      <div className="relative flex min-h-0 flex-1 overflow-auto">
+      {/* Réplica del contenedor REAL del panel: un BLOQUE con overflow-auto que NO es
+          flex container. Mi prueba anterior usaba un flex y por eso no reproducía el bug
+          del botón: en un flex el hijo sí queda acotado. Aquí no, como en la app. */}
+      <div className="relative block min-h-0 flex-1 overflow-auto">
         <DocSurface md={md} documentId="doc_probe" messageId={1} title="Probe" patchRefs={refs} />
       </div>
     </div>
