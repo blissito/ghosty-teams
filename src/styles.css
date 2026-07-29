@@ -335,11 +335,11 @@ body {
    Es una CLASE en el DOM, nunca una propiedad del bloque: no puede colarse en la
    verdad que se persiste ni salir en el .docx. Efímero por construcción. */
 @keyframes gt-marca {
-  0%   { outline-color: #f59e0b; outline-offset: 10px; background-color: #fde68a; }
-  25%  { outline-color: #f59e0b; outline-offset: 2px;  background-color: #fde68a; }
-  45%  { outline-color: #fbbf24; outline-offset: 6px;  background-color: #fef3c7; }
-  65%  { outline-color: #f59e0b; outline-offset: 2px;  background-color: #fde68a; }
-  100% { outline-color: #f59e0b; outline-offset: 2px;  background-color: #fef3c7; }
+  0%   { transform: scale(1.035); background-color: rgba(252, 211, 77, 0.62); box-shadow: 0 0 0 10px rgba(245, 158, 11, 0); }
+  35%  { transform: scale(1);     background-color: rgba(252, 211, 77, 0.5);  box-shadow: 0 0 0 4px rgba(245, 158, 11, 0.35); }
+  55%  { background-color: rgba(253, 230, 138, 0.3); box-shadow: 0 0 0 10px rgba(245, 158, 11, 0); }
+  75%  { background-color: rgba(252, 211, 77, 0.5);  box-shadow: 0 0 0 4px rgba(245, 158, 11, 0.35); }
+  100% { background-color: rgba(253, 230, 138, 0.38); box-shadow: 0 0 0 4px rgba(245, 158, 11, 0.18); }
 }
 /* El marcador es un OUTLINE, no un fondo.
    Un `background-color` en el bloque no basta: sus hijos (`bn-inline-content` y demás
@@ -348,18 +348,21 @@ body {
    que haya alrededor, y ningún hijo puede taparlo.
    El fondo se deja igual, como refuerzo cuando sí se ve. */
 .gt-cambio {
-  outline: 3px solid #f59e0b;
-  outline-offset: 2px;
-  border-radius: 3px;
-  background-color: #fef3c7;
+  /* Es una CAJA PROPIA dibujada encima del bloque, no el bloque. React es dueño del
+     className de los nodos de BlockNote (los pinta con node views) y en su siguiente
+     render sobrescribía la clase: el observador veía el `add` y un instante después no
+     quedaba nada, sin una sola mutación de borrado. Aquí nadie más manda. */
+  border-radius: 4px;
+  border: 2px solid #f59e0b;
+  background-color: rgba(253, 230, 138, 0.38);
+  box-shadow: 0 0 0 4px rgba(245, 158, 11, 0.18);
   animation: gt-marca 1.4s ease-out forwards;
 }
 /* Salida suave; la pone el JS antes de quitar la clase. */
 .gt-cambio.gt-cambio-fin {
   animation: none;
-  transition: outline-color 0.5s ease-out, background-color 0.5s ease-out;
-  outline-color: transparent;
-  background-color: transparent;
+  transition: opacity 0.6s ease-out;
+  opacity: 0;
 }
 
 /* ── Imprimir un documento ──────────────────────────────────────────────────

@@ -1311,6 +1311,12 @@ function ChannelPage() {
       // server). Se espera la versión nueva y se abre el panel en ella.
       const enDoc = !openArtifact || openArtifact.kind === "doc" || (openArtifact.kind === "draft" && !openArtifact.artifact);
       if (enDoc && patches.every((p) => p.closed)) {
+        // Si el documento YA está abierto, se le pasan los alias del patch para que marque
+        // AHORA: el editor tiene el documento que el agente vio, así que los alias casan y
+        // los nodos están montados. Esperar la republicación era el orden equivocado.
+        setOpenArtifact((cur) =>
+          cur?.kind === "doc" ? { ...cur, patchRefs: patches.map((p) => p.nodeId) } : cur,
+        );
         scheduleDocOpen(id);
         return;
       }

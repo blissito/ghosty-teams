@@ -87,7 +87,11 @@ export type ArtifactView =
   // Documento vivo (fuente local + versiones). `messageId` es el mensaje ancla, y aquí
   // pesa por una razón concreta: es el `key` del editor. Tiene que ser EL MISMO que usa
   // la rama `draft` para que al cerrarse el fence el editor no se remonte (si no, flash).
-  | { kind: "doc"; title: string; documentId: string; md: string; messageId?: number }
+  // `patchRefs` = alias (`n3`) que el agente está tocando en ESTE turno, tal como llegan
+  // del stream. Es lo que permite marcar el cambio EN EL MOMENTO en que ocurre, en vez de
+  // reconstruirlo después de que el server publique y el panel se reabra — ese orden se
+  // estorbaba a sí mismo: cada paso remontaba el editor y tiraba la marca.
+  | { kind: "doc"; title: string; documentId: string; md: string; messageId?: number; patchRefs?: string[] }
   | { kind: "sheet"; title: string; documentId: string; csv: string } // hoja viva (CSV local + versiones)
   // Artefacto HTML interactivo: `html` = fuente (iframe srcDoc, sandbox aislado); `src` = URL pública S3.
   // `messageId` = mensaje ancla en gc_artifacts → guardado de ediciones del Canvas (nueva versión).
@@ -1433,6 +1437,7 @@ export default function ArtifactPanel({
                     documentId={artifact.documentId}
                     messageId={artifact.messageId}
                     title={artifact.title}
+                    patchRefs={artifact.patchRefs}
                   />
                 ) : artifact.kind === "artifact" ? (
                   // Artefacto HTML interactivo. Modo Ver: iframe AISLADO (sandbox sin

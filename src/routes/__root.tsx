@@ -18,7 +18,13 @@ export const Route = createRootRoute({
     // de AMBOS guards, si no rebota a portal/login antes de poder rebotar al subdominio.
     const isOAuthRelay = location.pathname.startsWith('/oauth/')
     // Ruta demo del editor de lienzo (@ghosty/canvas-editor) — pública, sin tenant/sesión.
-    const isCanvasDemo = location.pathname.startsWith('/canvas-demo') || location.pathname.startsWith('/canvas-probe')
+    // Bancos de pruebas de editores: sin sesión y sin tenant, porque su razón de ser es
+    // depurar el editor con datos sintéticos. `/doc-probe` se sumó el 2026-07-29 para dejar
+    // de depurar el marcado del cambio quirúrgico a base de deploys a producción.
+    const isCanvasDemo =
+      location.pathname.startsWith('/canvas-demo') ||
+      location.pathname.startsWith('/canvas-probe') ||
+      location.pathname.startsWith('/doc-probe')
     // Guard de tenant (solo SSR → barato, sin round-trips en cada nav de cliente):
     // si caes en el subdominio de un workspace que ya no existe (borrado) o del que
     // el resolver no sabe, te mandamos al PORTAL en vez de un shell roto / label

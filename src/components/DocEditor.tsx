@@ -12,7 +12,7 @@ import {
   multiColumnDropCursor,
   locales as multiColumnLocales,
 } from "@blocknote/xl-multi-column";
-import { blockSignature, type DocBlock } from "../lib/doc-blocks";
+import { aliasTable, blockSignature, type DocBlock } from "../lib/doc-blocks";
 import { reconcile } from "../lib/doc-reconcile";
 
 // ── El editor de documentos de texto ──────────────────────────────────────────
@@ -76,6 +76,7 @@ export default function DocEditor({
   streaming,
   onChange,
   highlightIds,
+  patchRefs,
 }: {
   /** La verdad, ya en bloques (documento publicado con sobre `v:1`). */
   blocks?: DocBlock[];
@@ -97,6 +98,12 @@ export default function DocEditor({
    * La detección por diff de abajo sólo cubre el caso raro de tenerlo ya abierto.
    */
   highlightIds?: string[];
+  /**
+   * Alias (`n3`) de los bloques que el agente está tocando EN ESTE TURNO. Llegan del
+   * stream, antes de que el server publique nada: es lo que permite marcar en el momento
+   * de la edición en vez de reconstruirlo después.
+   */
+  patchRefs?: string[];
 }) {
   const t = useT();
   const editor = useCreateBlockNote({
@@ -149,92 +156,88 @@ export default function DocEditor({
   }, [caja, editor]);
 
   /**
-   * Lleva a la vista el primer bloque que cambió y los marca a todos como con
-   * marcatextos, unos segundos.
+   * Marca bloques por POSICIÓN, dibujando la señal ENCIMA con elementos propios.
    *
-   * Sin esto la edición quirúrgica es invisible: el agente cambia una cláusula en un
-   * documento de 74 KB y no hay forma de saber cuál. El aviso decía "1 ajuste" y la
-   * persona se quedaba buscando a mano.
+   * No se le pone una clase al bloque, y esto costó descubrirlo: BlockNote pinta el
+   * contenido con node views de REACT, así que React es dueño del `className` de
+   * `.bn-block-content` y en su siguiente render lo reescribe — borrando la clase. El
+   * observador de mutaciones veía el `add` y `querySelectorAll(".gt-cambio")` devolvía
+   * cero un instante después, sin una sola mutación de borrado: React no la quitaba, la
+   * sobrescribía.
    *
-   * **El resaltado NO puede vivir en el documento.** Es una clase en el DOM, no una
-   * propiedad del bloque: así no entra en la verdad que se persiste ni puede aparecer en
-   * el .docx que se descarga. Efímero por construcción, no por acordarse de limpiarlo.
+   * Así que la marca es un overlay `position:fixed` sobre el rect del bloque, en un
+   * contenedor que React no gestiona. Nadie más lo toca. Sigue al bloque con rAF mientras
+   * dura (el documento puede scrollear debajo) y se borra solo.
+   *
+   * Por POSICIÓN y no por id porque el reconciliador reemplaza el bloque y le cambia el
+   * uuid; el índice sobrevive a un `replace`.
    */
-  const marcarCambios = useCallback((ids: string[]): boolean => {
-    const cont = scroller.current;
-    if (!cont || !ids.length) return false;
+  const capa = useRef<HTMLDivElement | null>(null);
+  const raf = useRef<number>(0);
 
-    // `data-id` aparece en DOS divs anidados de BlockNote (`bn-block-outer` y
-    // `bn-block`). Se marca el de CONTENIDO cuando existe: el de fuera es un
-    // envoltorio de layout y sus hijos le pintan su propio fondo encima, así que el
-    // color se quedaba debajo, invisible.
-    // Se busca en el DOCUMENTO VIVO, no dentro de `scroller.current`.
-    //
-    // Ese ref puede apuntar a un div ya DESPRENDIDO (de un montaje anterior del panel), y
-    // un `querySelector` sobre un nodo desprendido devuelve descendientes que también lo
-    // están: `offsetParent === null`, rect en ceros, invisibles por definición. Es lo que
-    // pasaba — la traza decía `visible:false` una y otra vez con la clase bien puesta,
-    // porque se ponía sobre DOM que ya no estaba en la página.
-    const nodos = ids
-      .map((id) => {
-        const outer = document.querySelector<HTMLElement>(`.gt-doc [data-id="${CSS.escape(id)}"]`);
-        return outer?.querySelector<HTMLElement>(".bn-block-content") ?? outer;
-      })
-      .filter((n): n is HTMLElement => !!n && document.contains(n) && n.offsetParent !== null);
-    if (!nodos.length) return false;
-
-    // El que scrollea puede NO ser nuestro div (ver contenedorQueScrollea).
-    const box = contenedorQueScrollea(nodos[0]) ?? cont;
-    void cont; // `cont` ya sólo es el fallback: la verdad la da el nodo vivo.
-    const rect = nodos[0].getBoundingClientRect();
-    const base = box.getBoundingClientRect();
-    const destino = box.scrollTop + (rect.top - base.top) - box.clientHeight / 2 + rect.height / 2;
-    // Siempre suave: el viaje hasta el bloque es parte de la señal ("está por aquí"),
-    // no un adorno. Saltar de golpe no dice dónde estaba.
-    box.scrollTo({ top: Math.max(0, destino), behavior: "smooth" });
-    // Tras mover la vista a mitad del documento ya no estamos abajo: si no se apunta,
-    // el siguiente tick del autoscroll arrastraría de vuelta al final.
-    pegado.current = false;
-    setAlFondo(false);
-
-    for (const n of nodos) {
-      n.classList.remove("gt-cambio", "gt-cambio-fin");
-      void n.offsetWidth;
-      n.classList.add("gt-cambio");
-    }
-    // TRAZA: ¿este editor es el que se VE? Puede haber más de una instancia montada
-    // (panel del room y del hilo); marcar la oculta se ve exactamente igual que no
-    // marcar nada.
-    requestAnimationFrame(() => {
-      const n0 = nodos[0];
-      const r = n0.getBoundingClientRect();
-      const cs = getComputedStyle(n0);
-      console.log("[doc:marca] pintado", {
-        n: nodos.length,
-        clase: n0.className,
-        visible: n0.offsetParent !== null,
-        enPantalla: r.top < window.innerHeight && r.bottom > 0 && r.width > 0,
-        rect: { top: Math.round(r.top), alto: Math.round(r.height), ancho: Math.round(r.width) },
-        bgImage: cs.backgroundImage.slice(0, 42),
-        bgSize: cs.backgroundSize,
-        animName: cs.animationName,
-        animDur: cs.animationDuration,
-        boxShadow: cs.boxShadow.slice(0, 40),
-        opacity: cs.opacity,
-        destino: Math.round(destino),
-        scrollTop: Math.round(box.scrollTop),
-      });
-    });
-    // Dos tiempos: a los 3s se pide el desvanecido (una transición, no una animación
-    // — las animaciones están prohibidas globalmente cuando hay "reducir movimiento",
-    // y por eso la marca no se veía nunca) y medio segundo después se limpia del todo.
-    // Se queda puesto un rato: hay que poder mirarlo, no cazarlo.
-    setTimeout(() => {
-      nodos.forEach((n) => n.classList.add("gt-cambio-fin"));
-      setTimeout(() => nodos.forEach((n) => n.classList.remove("gt-cambio", "gt-cambio-fin")), 600);
-    }, 4000);
-    return true;
+  const limpiarMarca = useCallback(() => {
+    cancelAnimationFrame(raf.current);
+    capa.current?.remove();
+    capa.current = null;
   }, []);
+
+  const marcarIndices = useCallback(
+    (indices: number[], irAhi: boolean): boolean => {
+      if (!editor || !indices.length) return false;
+      const docu = (editor.document ?? []) as DocBlock[];
+      const nodos = indices
+        .map((i) => docu[i]?.id)
+        .filter((id): id is string => !!id)
+        .map((id) => document.querySelector<HTMLElement>(`.gt-doc [data-id="${CSS.escape(id)}"]`))
+        .filter((n): n is HTMLElement => !!n && document.contains(n) && n.offsetParent !== null);
+      if (!nodos.length) return false;
+
+      limpiarMarca();
+      const capaEl = document.createElement("div");
+      capaEl.dataset.gtMarca = "1";
+      capaEl.style.cssText = "position:fixed;inset:0;pointer-events:none;z-index:60";
+      const cajas = nodos.map(() => {
+        const d = document.createElement("div");
+        d.className = "gt-cambio";
+        d.style.position = "fixed";
+        capaEl.appendChild(d);
+        return d;
+      });
+      document.body.appendChild(capaEl);
+      capa.current = capaEl;
+
+      // Sigue al bloque: el documento puede scrollear (nuestro propio scroll, el del
+      // usuario, o un reflow de BlockNote) y una caja quieta se despegaría del texto.
+      const seguir = () => {
+        for (let i = 0; i < nodos.length; i++) {
+          const r = nodos[i].getBoundingClientRect();
+          const d = cajas[i];
+          d.style.top = `${r.top - 3}px`;
+          d.style.left = `${r.left - 4}px`;
+          d.style.width = `${r.width + 8}px`;
+          d.style.height = `${r.height + 6}px`;
+        }
+        raf.current = requestAnimationFrame(seguir);
+      };
+      seguir();
+
+      if (irAhi) {
+        const box = contenedorQueScrollea(nodos[0]);
+        if (box) {
+          const r = nodos[0].getBoundingClientRect();
+          const base = box.getBoundingClientRect();
+          const destino = box.scrollTop + (r.top - base.top) - box.clientHeight / 2 + r.height / 2;
+          box.scrollTo({ top: Math.max(0, destino), behavior: "smooth" });
+          pegado.current = false;
+          setAlFondo(false);
+        }
+      }
+      return true;
+    },
+    [editor, limpiarMarca],
+  );
+
+  useEffect(() => limpiarMarca, [limpiarMarca]);
 
   const irAlFondo = useCallback(() => {
     const el = caja();
@@ -271,14 +274,7 @@ export default function DocEditor({
     // turno se re-emite COMPLETO por tick, no sólo cuando el documento cambia.
     const sig = next.map(blockSignature).join(" ");
     if (sig === seen.current) return;
-    // ¿Es una ACTUALIZACIÓN o la primera pintada? En la primera todo es "nuevo" y
-    // resaltar el documento entero no dice nada.
-    const esActualizacion = seen.current !== "";
     seen.current = sig;
-    // Ids de ANTES, para saber después qué bloques son nuevos. Se mira el documento del
-    // editor y no lo que devuelve `reconcile`, porque así da igual qué haga BlockNote con
-    // los ids que le pasamos: lo que se resalta es lo que de verdad quedó en pantalla.
-    const antes = new Set(((editor.document ?? []) as DocBlock[]).map((b) => b.id));
     applying.current = true;
     try {
       reconcile(editor as never, next);
@@ -292,143 +288,76 @@ export default function DocEditor({
         // todavía es el de antes y el salto se quedaría corto.
         const el = caja();
         if (streaming && pegado.current && el) el.scrollTop = el.scrollHeight;
+        // El reconciliador acaba de reemplazar nodos: si hay una marca viva, se vuelve a
+        // poner sobre los nuevos. Sin esto, la primera republicación del server la borraba
+        // y parecía que nunca se había pintado.
+        const m = marca.current;
+        if (m && Date.now() < m.hasta) marcarIndices(m.indices, false);
 
-        // Un cambio QUIRÚRGICO ya aplicado: llévame a él y márcalo. No mientras streamea
-        // (ahí el texto crece por la cola en cada tick y el autoscroll ya lo sigue), ni en
-        // la primera pintada. El tope evita convertir una reescritura completa en un
-        // documento entero subrayado, que no señala nada.
-        if (!streaming && esActualizacion) {
-          const nuevos = ((editor.document ?? []) as DocBlock[])
-            .map((b) => b.id)
-            .filter((id): id is string => !!id && !antes.has(id));
-          if (nuevos.length && nuevos.length <= 8) marcarCambios(nuevos);
-        }
       });
     }
-  }, [editor, blocks, markdown, streaming, caja]);
+  }, [editor, blocks, markdown, streaming, caja, marcarIndices]);
 
-  // Señalar lo que cambió al ABRIR. El editor monta con su documento ya puesto, así que
-  // no hay diff que hacer: los ids vienen dados.
-  //
-  // Se REINTENTA en vez de esperar un plazo fijo: BlockNote pinta sus nodos cuando puede,
-  // y en un documento de 75 KB eso tarda más que cualquier número que uno elija. Sin
-  // reintento el querySelector no encontraba nada y fallaba en silencio.
+  /**
+   * Marca VIVA: qué posiciones están señaladas y hasta cuándo.
+   *
+   * Vive en un ref porque el reconciliador la vuelve a aplicar en cada actualización del
+   * documento: sin eso, la primera republicación del server borraba la marca (el bloque se
+   * reemplaza y la clase se va con el nodo viejo) y desde fuera parecía que nunca se
+   * había pintado.
+   */
+  const marca = useRef<{ indices: number[]; hasta: number } | null>(null);
+
+  const señalar = useCallback(
+    (indices: number[], ms = 9000) => {
+      if (!indices.length) return;
+      marca.current = { indices, hasta: Date.now() + ms };
+      // Reintenta hasta que los nodos estén pintados: BlockNote tarda lo que tarda con
+      // 100 bloques, y un plazo fijo es una apuesta.
+      let n = 0;
+      const probar = () => {
+        if (marcarIndices(indices, n === 0) || ++n > 40) return;
+        setTimeout(probar, 60);
+      };
+      probar();
+      setTimeout(() => {
+        if (!marca.current || marca.current.indices !== indices) return;
+        marca.current = null;
+        // Desvanecido y fuera. La capa es nuestra, así que basta con marcarla.
+        capa.current?.querySelectorAll(".gt-cambio").forEach((d) => d.classList.add("gt-cambio-fin"));
+        setTimeout(limpiarMarca, 700);
+      }, ms);
+    },
+    [marcarIndices, limpiarMarca],
+  );
+
+  // Los bloques que el agente acaba de tocar, resueltos de sus ALIAS contra el documento
+  // que este editor tiene AHORA — que es exactamente el que el agente vio, así que los
+  // alias casan. Marca en el momento del patch, sin esperar a que el server publique ni a
+  // que el panel se reabra: ése era el orden que se estorbaba a sí mismo.
   useEffect(() => {
-    // TRAZA temporal (2026-07-29).
-    console.log("[doc:marca] efecto", { editor: !!editor, highlightIds, yaVisto: highlightIds ? yaSenalado.has(highlightIds.join(",")) : null });
+    if (!editor || !patchRefs?.length) return;
+    const docu = (editor.document ?? []) as DocBlock[];
+    const table = aliasTable(docu);
+    const indices = patchRefs
+      .map((ref) => table.get(ref) ?? (docu.some((b) => b.id === ref) ? ref : null))
+      .filter((id): id is string => !!id)
+      .map((id) => docu.findIndex((b) => b.id === id))
+      .filter((i) => i >= 0);
+    if (indices.length) señalar(indices);
+  }, [editor, patchRefs, señalar]);
+
+  // Fallback: el panel se abrió DESPUÉS del turno (no había editor montado cuando llegó el
+  // patch). Ahí los ids persistidos del sobre son lo único que dice qué cambió.
+  useEffect(() => {
     if (!editor || !highlightIds?.length) return;
     const clave = highlightIds.join(",");
     if (yaSenalado.has(clave)) return;
-
-    // Los ids se resuelven contra el documento que el EDITOR dice tener, no contra los
-    // que le pasamos. Que `initialContent` conserve los ids no está garantizado —el
-    // headless sí lo hace, el de React no lo he comprobado— y si los re-acuña, buscar
-    // por el id de origen no encuentra nada y el resaltado falla mudo (que es justo lo
-    // que pasaba). Por POSICIÓN es correcto en los dos casos.
-    const resolverIds = (): string[] => {
-      const suyos = (editor.document ?? []) as DocBlock[];
-      const propios = new Set(suyos.map((b) => b.id).filter(Boolean) as string[]);
-      // Camino normal: el editor conservó los ids.
-      const directos = highlightIds.filter((id) => propios.has(id));
-      if (directos.length) return directos;
-      // Los re-acuñó: se traducen por índice contra los bloques que le dimos.
-      const dados = blocks ?? [];
-      return highlightIds
-        .map((id) => dados.findIndex((b) => b.id === id))
-        .filter((i) => i >= 0 && i < suyos.length)
-        .map((i) => suyos[i].id)
-        .filter((id): id is string => !!id);
-    };
-
-    // Esperar a que el panel TERMINE de abrirse. Se abre con animación, y medir a
-    // mitad da un contenedor que todavía cambia de tamaño: el scroll se calcula contra
-    // una altura que no es la final y aterriza en cualquier lado. Y como el bloque
-    // marcado suele estar lejos (índice 75 de 102), sin scroll el amarillo se pinta
-    // FUERA DE PANTALLA — se aplica y no se ve. Un solo fallo explicaba los dos
-    // síntomas.
-    //
-    // No se espera un plazo fijo (la animación dura lo que dura): se espera a que la
-    // altura del contenedor se repita en dos frames seguidos.
-    let alturaPrevia = -1;
-    let estables = 0;
-    // "Asentado" = el nodo SE VE y su caja dejó de moverse.
-    //
-    // Lo de "se ve" no es paranoia: la traza mostró `visible:false, enPantalla:false`
-    // con la clase ya puesta. React no desmonta un árbol que vuelve a suspender — lo
-    // OCULTA con `display:none` —, y DocEditor se carga lazy, así que el efecto corría
-    // sobre un árbol todavía oculto. Se marcaba y se scrolleaba algo que nadie veía,
-    // que desde fuera es idéntico a no hacer nada.
-    //
-    // Se comprueba el NODO, no el contenedor: es la única condición que no depende de
-    // saber QUÉ ancestro lo esconde ni de cómo esté implementada la apertura del panel.
-    const asentado = (nodo: HTMLElement | null): boolean => {
-      if (!nodo || nodo.offsetParent === null) {
-        estables = 0;
-        return false;
-      }
-      const r = nodo.getBoundingClientRect();
-      if (r.width < 1 || r.height < 1) {
-        estables = 0;
-        return false;
-      }
-      const h = (contenedorQueScrollea(nodo) ?? scroller.current)?.clientHeight ?? 0;
-      if (h > 0 && h === alturaPrevia) estables++;
-      else estables = 0;
-      alturaPrevia = h;
-      return estables >= 2;
-    };
-
-    let intentos = 0;
-    let t: ReturnType<typeof setTimeout>;
-    const probar = () => {
-      const ids = resolverIds();
-      const primero = ids.length
-        ? document.querySelector<HTMLElement>(`.gt-doc [data-id="${CSS.escape(ids[0])}"]`)
-        : null;
-      const nodo = primero?.querySelector<HTMLElement>(".bn-block-content") ?? primero;
-      if (!asentado(nodo) || !nodo || !document.contains(nodo)) {
-        // Ventana larga (~6s): entre que el panel abre, BlockNote pinta 102 bloques y
-        // React descubre el árbol suspendido, puede pasar bastante rato.
-        if (++intentos < 120) t = setTimeout(probar, 50);
-        else console.warn("[doc] el bloque nunca se hizo visible", { ids, nodo: !!nodo });
-        return;
-      }
-      if (intentos === 0)
-        console.log("[doc:marca] resueltos", {
-          ids,
-          docLen: ((editor.document ?? []) as DocBlock[]).length,
-          primeros: ((editor.document ?? []) as DocBlock[]).slice(0, 3).map((b) => b.id),
-          enDom: ids.map((i) => !!scroller.current?.querySelector(`[data-id="${CSS.escape(i)}"]`)),
-        });
-      if (ids.length && marcarCambios(ids)) {
-        yaSenalado.add(clave); // sólo cuando de verdad se pintó
-        // Red: si el árbol se reemplaza justo después (React reemplazando un subárbol
-        // deja el viejo oculto un instante), la marca se va con él. Se vuelve a poner
-        // un par de veces sobre lo que haya en pantalla.
-        let repasos = 0;
-        const repasar = () => {
-          if (++repasos > 3) return;
-          const vivos = ids
-            .map((id) => document.querySelector<HTMLElement>(`.gt-doc [data-id="${CSS.escape(id)}"]`))
-            .filter((n): n is HTMLElement => !!n && document.contains(n) && n.offsetParent !== null);
-          if (vivos.length && !vivos.some((n) => n.querySelector(".gt-cambio") || n.classList.contains("gt-cambio"))) {
-            marcarCambios(ids);
-          }
-          setTimeout(repasar, 400);
-        };
-        setTimeout(repasar, 400);
-        return;
-      }
-      if (++intentos < 20) {
-        t = setTimeout(probar, 100); // hasta ~2s: BlockNote pinta cuando puede
-      } else {
-        // Que no se vaya en silencio otra vez: si no se pudo señalar, que quede dicho.
-        console.warn("[doc] no pude señalar el cambio", { highlightIds, resueltos: ids });
-      }
-    };
-    t = setTimeout(probar, 60);
-    return () => clearTimeout(t);
-  }, [editor, highlightIds, marcarCambios, blocks]);
+    yaSenalado.add(clave);
+    const docu = (editor.document ?? []) as DocBlock[];
+    const indices = highlightIds.map((id) => docu.findIndex((b) => b.id === id)).filter((i) => i >= 0);
+    if (indices.length) señalar(indices);
+  }, [editor, highlightIds, señalar]);
 
   const notify = useCallback(() => {
     if (!onChange) return;

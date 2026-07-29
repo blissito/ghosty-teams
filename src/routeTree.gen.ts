@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as SetupRouteImport } from './routes/setup'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as FormsRouteImport } from './routes/forms'
+import { Route as DocProbeRouteImport } from './routes/doc-probe'
 import { Route as CanvasProbeRouteImport } from './routes/canvas-probe'
 import { Route as CanvasDemoRouteImport } from './routes/canvas-demo'
 import { Route as BusyRouteImport } from './routes/busy'
@@ -55,6 +56,11 @@ const LoginRoute = LoginRouteImport.update({
 const FormsRoute = FormsRouteImport.update({
   id: '/forms',
   path: '/forms',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DocProbeRoute = DocProbeRouteImport.update({
+  id: '/doc-probe',
+  path: '/doc-probe',
   getParentRoute: () => rootRouteImport,
 } as any)
 const CanvasProbeRoute = CanvasProbeRouteImport.update({
@@ -210,6 +216,7 @@ export interface FileRoutesByFullPath {
   '/busy': typeof BusyRoute
   '/canvas-demo': typeof CanvasDemoRoute
   '/canvas-probe': typeof CanvasProbeRoute
+  '/doc-probe': typeof DocProbeRoute
   '/forms': typeof FormsRoute
   '/login': typeof LoginRoute
   '/setup': typeof SetupRouteWithChildren
@@ -244,6 +251,7 @@ export interface FileRoutesByTo {
   '/busy': typeof BusyRoute
   '/canvas-demo': typeof CanvasDemoRoute
   '/canvas-probe': typeof CanvasProbeRoute
+  '/doc-probe': typeof DocProbeRoute
   '/forms': typeof FormsRoute
   '/login': typeof LoginRoute
   '/api/agent-asset': typeof ApiAgentAssetRoute
@@ -278,6 +286,7 @@ export interface FileRoutesById {
   '/busy': typeof BusyRoute
   '/canvas-demo': typeof CanvasDemoRoute
   '/canvas-probe': typeof CanvasProbeRoute
+  '/doc-probe': typeof DocProbeRoute
   '/forms': typeof FormsRoute
   '/login': typeof LoginRoute
   '/setup': typeof SetupRouteWithChildren
@@ -314,6 +323,7 @@ export interface FileRouteTypes {
     | '/busy'
     | '/canvas-demo'
     | '/canvas-probe'
+    | '/doc-probe'
     | '/forms'
     | '/login'
     | '/setup'
@@ -348,6 +358,7 @@ export interface FileRouteTypes {
     | '/busy'
     | '/canvas-demo'
     | '/canvas-probe'
+    | '/doc-probe'
     | '/forms'
     | '/login'
     | '/api/agent-asset'
@@ -381,6 +392,7 @@ export interface FileRouteTypes {
     | '/busy'
     | '/canvas-demo'
     | '/canvas-probe'
+    | '/doc-probe'
     | '/forms'
     | '/login'
     | '/setup'
@@ -416,6 +428,7 @@ export interface RootRouteChildren {
   BusyRoute: typeof BusyRoute
   CanvasDemoRoute: typeof CanvasDemoRoute
   CanvasProbeRoute: typeof CanvasProbeRoute
+  DocProbeRoute: typeof DocProbeRoute
   FormsRoute: typeof FormsRoute
   LoginRoute: typeof LoginRoute
   SetupRoute: typeof SetupRouteWithChildren
@@ -460,6 +473,13 @@ declare module '@tanstack/react-router' {
       path: '/forms'
       fullPath: '/forms'
       preLoaderRoute: typeof FormsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/doc-probe': {
+      id: '/doc-probe'
+      path: '/doc-probe'
+      fullPath: '/doc-probe'
+      preLoaderRoute: typeof DocProbeRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/canvas-probe': {
@@ -704,6 +724,7 @@ const rootRouteChildren: RootRouteChildren = {
   BusyRoute: BusyRoute,
   CanvasDemoRoute: CanvasDemoRoute,
   CanvasProbeRoute: CanvasProbeRoute,
+  DocProbeRoute: DocProbeRoute,
   FormsRoute: FormsRoute,
   LoginRoute: LoginRoute,
   SetupRoute: SetupRouteWithChildren,
