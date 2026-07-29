@@ -431,7 +431,20 @@ export default function DocEditor({
   }, [editor, highlightIds, marcarCambios, blocks]);
 
   const notify = useCallback(() => {
-    if (applying.current || !onChange) return;
+    if (!onChange) return;
+    // La bandera `applying` NO basta, y esto costó caro: se libera en un microtask, pero
+    // ProseMirror notifica sus cambios DESPUÉS. Resultado: las escrituras del propio
+    // reconciliador se contaban como edición humana → autosave → versión nueva →
+    // refresh → el reconciliador vuelve a escribir → reemplaza los nodos del documento…
+    // en bucle. Se veía como que el resaltado se marcaba sobre nodos que se desprendían
+    // un frame después (`visible:false` una y otra vez), y además llenaba el historial
+    // de versiones que nadie pidió.
+    //
+    // La comparación de FIRMAS es determinista: si el documento del editor es idéntico a
+    // lo último que aplicamos, esto es nuestro propio eco, no una edición.
+    const actual = (editor.document as DocBlock[]).map(blockSignature).join(" ");
+    if (applying.current || actual === seen.current) return;
+    seen.current = actual; // lo escribió una persona: pasa a ser la referencia
     onChange(editor.document as DocBlock[]);
   }, [editor, onChange]);
 
