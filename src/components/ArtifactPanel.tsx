@@ -8,8 +8,8 @@ import { officeToHtmlFn, xlsxToCsvFn, postMessage } from "../server/chat";
 import { listTeamDocumentsFn, type TeamDocument } from "../server/documents";
 import { updateArtifactHtmlFn } from "../server/artifacts";
 import { CanvasEditor, EditorStore, htmlToDoc, htmlToNode, docToHtml, type Node as CeNode } from "@ghosty/canvas-editor";
-import { Markdown } from "./Markdown";
 import ArtifactShareBar from "./ArtifactShareBar";
+import DocSurface from "./DocSurface";
 
 // Un documento del team (generado o subido) → vista del panel. Null si no es
 // previsualizable. Reusado por el índice Cowork (kind:"docindex").
@@ -84,7 +84,10 @@ export type ArtifactView =
         remove?: boolean;
       }[];
     }
-  | { kind: "doc"; title: string; documentId: string; md: string } // documento vivo (markdown local + versiones)
+  // Documento vivo (fuente local + versiones). `messageId` es el mensaje ancla, y aquí
+  // pesa por una razón concreta: es el `key` del editor. Tiene que ser EL MISMO que usa
+  // la rama `draft` para que al cerrarse el fence el editor no se remonte (si no, flash).
+  | { kind: "doc"; title: string; documentId: string; md: string; messageId?: number }
   | { kind: "sheet"; title: string; documentId: string; csv: string } // hoja viva (CSV local + versiones)
   // Artefacto HTML interactivo: `html` = fuente (iframe srcDoc, sandbox aislado); `src` = URL pública S3.
   // `messageId` = mensaje ancla en gc_artifacts → guardado de ediciones del Canvas (nueva versión).
@@ -1297,26 +1300,25 @@ export default function ArtifactPanel({
                       />
                     </div>
                   </div>
-                ) : artifact.kind === "draft" ? (
-                  // Redacción EN VIVO (Canvas): prosa (markdown) o tabla (csv) streamea a la
-                  // hoja mientras el agente escribe; al cerrar el fence pasa a doc/sheet real.
+                ) : artifact.kind === "draft" && artifact.sheet ? (
+                  // Hoja EN VIVO: el csv streamea a la tabla mientras el agente escribe;
+                  // al cerrar el fence pasa a `kind:"sheet"` real.
                   <div ref={scrollRef} className="min-h-0 flex-1 overflow-auto bg-surface-3 p-4 sm:p-6">
-                    {artifact.sheet ? (
-                      <>
-                        <CsvTable csv={artifact.content} />
-                        {artifact.streaming ? (
-                          <span className="mt-2 inline-block h-4 w-[3px] animate-pulse bg-brand" />
-                        ) : null}
-                      </>
-                    ) : (
-                      <article className="mx-auto max-w-[8.5in] rounded-sm bg-white p-10 shadow-md sm:p-14">
-                        <Markdown body={artifact.content} light />
-                        {artifact.streaming ? (
-                          <span className="mt-1 inline-block h-4 w-[3px] animate-pulse bg-brand align-text-bottom" />
-                        ) : null}
-                      </article>
-                    )}
+                    <CsvTable csv={artifact.content} />
+                    {artifact.streaming ? (
+                      <span className="mt-2 inline-block h-4 w-[3px] animate-pulse bg-brand" />
+                    ) : null}
                   </div>
+                ) : artifact.kind === "draft" ? (
+                  // Prosa EN VIVO: el documento se redacta DENTRO del editor real
+                  // (BlockNote), no en una hoja de markdown renderizado. Mismo montaje
+                  // y mismo `key` que la rama `kind:"doc"` de abajo → al cerrarse el
+                  // fence el editor NO se remonta: sólo le cambia el `md`.
+                  <DocSurface
+                    key={artifact.messageId ? `msg:${artifact.messageId}` : "draft"}
+                    md={artifact.content}
+                    streaming={!!artifact.streaming}
+                  />
                 ) : artifact.kind === "image" ? (
                   <div className="grid min-h-full place-items-center p-4">
                     {/* Vista activa del artefacto → eager (no lazy); solo decoding async. */}
@@ -1399,19 +1401,15 @@ export default function ArtifactPanel({
                     )}
                   </div>
                 ) : artifact.kind === "doc" ? (
-                  // Documento VIVO: el markdown FUENTE (local) se renderiza en una "hoja" tipo
-                  // Word. Es el MISMO render que el draft en vivo → al modificarlo (chateando),
-                  // el draft streamea encima y al cerrarse vuelve aquí con la nueva versión.
-                  // Editar = chatear con el agente (re-redacta completo). Descargar Word arriba.
-                  <div className="min-h-0 flex-1 overflow-auto bg-surface-3 p-4 sm:p-6">
-                    <article className="mx-auto max-w-[8.5in] rounded-sm bg-white p-10 text-black shadow-md sm:p-14">
-                      {(artifact.md ?? "").trim() ? (
-                        <Markdown body={artifact.md} light />
-                      ) : (
-                        <div className="grid h-full place-items-center text-sm text-neutral-400">{t("Sin contenido")}</div>
-                      )}
-                    </article>
-                  </div>
+                  // Documento VIVO en el editor real. Es el MISMO montaje que el borrador
+                  // de arriba y con el MISMO `key`: al cerrarse el fence, el editor no se
+                  // remonta — sólo le cambia el `md` — y el reconciliador diffea eso a
+                  // casi nada. De ahí que el swap borrador→doc no dé ni un parpadeo.
+                  // Descargar Word arriba.
+                  <DocSurface
+                    key={artifact.messageId ? `msg:${artifact.messageId}` : "doc"}
+                    md={artifact.md ?? ""}
+                  />
                 ) : artifact.kind === "artifact" ? (
                   // Artefacto HTML interactivo. Modo Ver: iframe AISLADO (sandbox sin
                   // allow-same-origin → no lee cookies/DOM del app), render desde el HTML

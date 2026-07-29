@@ -129,7 +129,7 @@ export function emailHtml(ev: NotifyEvent): string {
   // Las IMÁGENES no pueden colgar del dominio del tenant: `teams.ghosty.studio` a secas no
   // resuelve (sólo los subdominios de workspace), así que el mascot llegaba roto. Van al
   // control-plane, que sí es un host público estable.
-  const asset = (process.env.PUBLIC_ASSET_BASE || "https://ghosty.studio").replace(/\/$/, "");
+  const asset = (process.env.PUBLIC_ASSET_BASE || "https://www.ghosty.studio").replace(/\/$/, "");
   const cta = ev.kind === "reminder" ? "Abrir la conversación" : "Abrir en Ghosty Studio";
   // TÍTULO propio, en su renglón. En un recordatorio el asunto genérico ("⏰ Recordatorio")
   // no dice nada: lo que el usuario reconoce es SU texto. Se parte por el guión largo o el
@@ -141,14 +141,14 @@ export function emailHtml(ev: NotifyEvent): string {
     <tr><td style="padding:22px 24px 0;font:600 13px/1 system-ui,-apple-system,Segoe UI,sans-serif;color:#8a8a94;letter-spacing:.02em">Ghosty Studio</td></tr>
 
     <!-- Ghosty HABLANDO: mascot + globo de cómic. Dos celdas de tabla (no flex: Outlook no
-         lo entiende). El mascot es ghosty-mail.png y NO los íconos del PWA: ésos traen
+         lo entiende). El mascot oficial es ghosty.studio/mascot.png y NO los íconos del PWA: ésos traen
          el fondo oscuro horneado y sobre la tarjeta clara se veían como un cuadro negro.
          La colita del globo va con el truco de bordes — si algún cliente la
          descarta, queda un globo sin colita, que se ve bien igual. -->
     <tr><td style="padding:16px 24px 0">
       <table role="presentation" cellpadding="0" cellspacing="0" width="100%"><tr>
         <td width="64" valign="top" style="padding-right:2px">
-          <img src="${asset}/ghosty-mail.png" width="56" height="66" alt="Ghosty" style="display:block;border:0">
+          <img src="${asset}/mascot.png" width="56" height="66" alt="Ghosty" style="display:block;border:0">
         </td>
         <td valign="top" style="padding-top:6px">
           <table role="presentation" cellpadding="0" cellspacing="0"><tr>

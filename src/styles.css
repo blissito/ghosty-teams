@@ -274,6 +274,50 @@ body {
   white-space: nowrap;
 }
 
+/* ── Editor de documentos (BlockNote) — `.gt-doc` ───────────────────────────
+   BlockNote también es ProseMirror, así que TODO el bloque de arriba (que está
+   escrito para el composer del chat) le cae encima. En un documento eso es
+   equivocado: `p { margin: 0 }` y el `> * + *` de 0.35rem aplastan la prosa hasta
+   dejarla ilegible, con las cláusulas pegadas entre sí.
+
+   Se revierte aquí en vez de acotar las reglas del composer: el composer no tiene
+   clase contenedora propia y tocar sus selectores arriesga el chat, que es el
+   camino caliente. `.gt-doc .ProseMirror x` (0,2,1) le gana a `.ProseMirror x`
+   (0,1,1) por especificidad, así que basta con nombrar lo que hay que devolver.
+
+   Lo que BlockNote trae por su cuenta (bn-*, menús, drag handle) NO se toca: son
+   sus estilos y ya vienen bien. */
+.gt-doc .ProseMirror p {
+  margin: revert;
+}
+.gt-doc .ProseMirror > * + * {
+  margin-top: revert;
+}
+.gt-doc .ProseMirror ul,
+.gt-doc .ProseMirror ol {
+  padding-left: revert;
+  margin: revert;
+}
+.gt-doc .ProseMirror blockquote {
+  border-left: 3px solid #d4d4d4;
+  padding-left: 1rem;
+  color: #525252;
+}
+/* El documento es una hoja blanca: los tokens del tema (que es oscuro) dejarían
+   el código y los enlaces ilegibles sobre blanco. */
+.gt-doc .ProseMirror code {
+  background: #f4f4f5;
+  color: #18181b;
+}
+.gt-doc .ProseMirror a {
+  color: #1d4ed8;
+}
+/* El placeholder del composer se engancha a `p.is-editor-empty:first-child`, que en
+   un documento vacío pinta el `data-placeholder` de OTRO editor. */
+.gt-doc .ProseMirror p.is-editor-empty:first-child::before {
+  content: none;
+}
+
 /* Skeleton del listado de agentes de Studio: latido suave mientras llega la
    respuesta del runtime. Sólo opacidad → no reflowea ni compite con el contenido. */
 @keyframes gc-shimmer {

@@ -6326,7 +6326,10 @@ const ARTIFACT_KIND_META: Record<string, { embed?: boolean; labelKey: string }> 
 // card Y el link inline del reply). Kind desconocido → `file` (descarga segura).
 function artifactToView(a: Artifact): ArtifactView {
   const title = a.title ?? "";
-  if (a.kind === "doc") return { kind: "doc", title, documentId: a.url, md: a.md ?? "" };
+  // `messageId` no es decorativo en un doc: es el `key` del editor en el panel, y
+  // tiene que coincidir con el que usa el borrador para que al cerrarse el fence el
+  // editor NO se remonte. Sin él, el swap borrador→doc se vería como un parpadeo.
+  if (a.kind === "doc") return { kind: "doc", title, documentId: a.url, md: a.md ?? "", messageId: a.messageId };
   if (a.kind === "sheet") return { kind: "sheet", title, documentId: a.url, csv: a.md ?? "" };
   if (a.kind === "artifact") return { kind: "artifact", title, documentId: a.url, html: a.md ?? "", src: a.src ?? "", messageId: a.messageId, versionId: a.id };
   if (a.kind === "ask-user") {
