@@ -1284,6 +1284,13 @@ function ChannelPage() {
       const patches = extractEbPatches(body);
       if (!patches.length) return;
       if (!belongsToOpenConversation(findMessageInCaches(id), openDmId, channel.id)) return;
+      // DOCUMENTO: no hay preview cliente que aplicar (los bloques los parchea el
+      // server). Se espera la versión nueva y se abre el panel en ella.
+      const enDoc = !openArtifact || openArtifact.kind === "doc" || (openArtifact.kind === "draft" && !openArtifact.artifact);
+      if (enDoc && patches.every((p) => p.closed)) {
+        scheduleDocOpen(id);
+        return;
+      }
       setOpenArtifact((cur) => {
         const base =
           cur?.kind === "artifact" ? cur.html : cur?.kind === "draft" && cur.artifact ? cur.content : null;
@@ -1351,6 +1358,30 @@ function ChannelPage() {
   };
   // Al cerrarse el fence, el server produce el .docx (refresh → refetch cuelga el
   // artifact). Poll acotado sobre las caches → swap del draft al doc real.
+  /**
+   * Un `eb-patch` sobre un DOCUMENTO no tiene borrador que streamear: el cambio lo aplica
+   * el server y llega como versión nueva con el `refresh`. Sin esto el panel se quedaba
+   * cerrado y la persona sólo veía la tarjeta — pidió un cambio y no se lo enseñábamos.
+   *
+   * Espera a que el artefacto cuelgue del mensaje (igual que scheduleDraftSwap: publicar
+   * tarda) y entonces lo abre. NO le roba el panel a un pdf/imagen que estés mirando, y
+   * el editor se encarga de llevarte al bloque y marcarlo (ver `changedIds`).
+   */
+  const scheduleDocOpen = (id: number) => {
+    let tries = 0;
+    const tick = () => {
+      const m = findMessageInCaches(id);
+      if (m?.artifact?.kind === "doc") {
+        setOpenArtifact((cur) =>
+          !cur || cur.kind === "draft" || cur.kind === "doc" ? artifactToView(m.artifact!) : cur,
+        );
+        return;
+      }
+      if (++tries < 60) setTimeout(tick, 500);
+    };
+    setTimeout(tick, 500);
+  };
+
   const scheduleDraftSwap = (id: number) => {
     let tries = 0;
     const tick = () => {
