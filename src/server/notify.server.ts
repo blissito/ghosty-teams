@@ -152,14 +152,14 @@ export function emailHtml(ev: NotifyEvent): string {
     <tr><td style="padding:22px 24px 0;font:600 13px/1 system-ui,-apple-system,Segoe UI,sans-serif;color:#8a8a94;letter-spacing:.02em">Ghosty Studio</td></tr>
 
     <!-- Ghosty HABLANDO: mascot + globo de cómic. Dos celdas de tabla (no flex: Outlook no
-         lo entiende). El mascot oficial es ghosty.studio/mascot.png y NO los íconos del PWA: ésos traen
+         lo entiende). Se usa mascot-mail.png (112×132, el doble del tamaño en que se pinta) y NO mascot.png ni los íconos del PWA: ésos traen
          el fondo oscuro horneado y sobre la tarjeta clara se veían como un cuadro negro.
          La colita del globo va con el truco de bordes — si algún cliente la
          descarta, queda un globo sin colita, que se ve bien igual. -->
     <tr><td style="padding:16px 24px 0">
       <table role="presentation" cellpadding="0" cellspacing="0" width="100%"><tr>
         <td width="64" valign="top" style="padding-right:2px">
-          <img src="${asset}/mascot.png" width="56" height="66" alt="Ghosty" style="display:block;border:0">
+          <img src="${asset}/mascot-mail.png" width="56" height="66" alt="Ghosty" style="display:block;border:0">
         </td>
         <td valign="top" style="padding-top:6px">
           <table role="presentation" cellpadding="0" cellspacing="0"><tr>
