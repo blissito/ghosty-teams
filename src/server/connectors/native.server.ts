@@ -131,6 +131,75 @@ export function nativeTools(dest: ToolDest | null): ConnectorTool[] {
         return ok ? { ok: true } : { ok: false, error: "no existe, ya disparó, o no es tuyo" };
       },
     },
+    // ── Memoria de la conversación ────────────────────────────────────────────
+    // No hay `memory_read` a propósito: las notas se inyectan en el texto de cada turno
+    // (memoryHint en agents.server.ts), así que el agente ya las tiene delante. Una tool de
+    // lectura sería un viaje de red para traer algo que ya está en su contexto.
+    {
+      name: "memory_write",
+      description:
+        "Guarda una CONVENCIÓN de esta conversación, para que siga vigente en turnos futuros y en " +
+        "otros hilos del mismo room. Úsalo cuando te digan 'de ahora en adelante', 'siempre', " +
+        "'recuérdalo' o 'anótalo': formato de los documentos, cómo se llaman las partes, cómo firma " +
+        "el despacho, tratamientos. NO guardes aquí el contenido de los documentos (para eso están " +
+        "los artefactos y sus versiones), ni datos sensibles que nadie pidió guardar, ni el estado de " +
+        "una tarea en curso. Si ya existe una nota parecida, actualízala con `replaces` en vez de " +
+        "añadir otra: dos notas que se contradicen es peor que ninguna.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          note: { type: "string", description: "La convención, en una frase corta y accionable" },
+          replaces: { type: "number", description: "id de la nota que sustituye (el que ves en la memoria del turno)" },
+        },
+        required: ["note"],
+      },
+      handler: async (sub, args) => {
+        if (!dest) return { ok: false, error: "no puedo guardar memoria fuera de una conversación" };
+        const db = await import("../../db.server");
+        const scope = db.memoryScopeKey(dest);
+        const handle = dest.handle;
+        if (!scope || !handle) return { ok: false, error: "no pude identificar la conversación" };
+
+        const note = String(args.note ?? "").trim().replace(/\s+/g, " ");
+        if (!note) return { ok: false, error: "la nota viene vacía" };
+        if (note.length > db.MEMORY_MAX_CHARS)
+          return { ok: false, error: `demasiado larga (máx ${db.MEMORY_MAX_CHARS} caracteres); resúmela` };
+
+        if (args.replaces != null) {
+          const ok = await db.updateAgentMemory(Number(args.replaces), scope, handle, note);
+          return ok ? { ok: true, id: Number(args.replaces) } : { ok: false, error: "esa nota no existe en esta conversación" };
+        }
+        const actuales = await db.listAgentMemory(scope, handle);
+        if (actuales.length >= db.MEMORY_MAX_NOTES)
+          return {
+            ok: false,
+            // Falla en vez de podar: perder una convención sin avisar es peor que negarse.
+            error: `la memoria está llena (${db.MEMORY_MAX_NOTES} notas). Borra alguna con memory_forget o sustituye una con \`replaces\``,
+          };
+        const id = await db.addAgentMemory(scope, handle, note, sub);
+        return { ok: true, id };
+      },
+    },
+    {
+      name: "memory_forget",
+      description:
+        "Borra una nota de la memoria de esta conversación por su id (el que ves en el bloque de " +
+        "memoria del turno). Úsalo cuando una convención deje de aplicar o te digan que la olvides.",
+      inputSchema: {
+        type: "object",
+        properties: { id: { type: "number", description: "id de la nota" } },
+        required: ["id"],
+      },
+      handler: async (_sub, args) => {
+        if (!dest) return { ok: false, error: "no puedo borrar memoria fuera de una conversación" };
+        const db = await import("../../db.server");
+        const scope = db.memoryScopeKey(dest);
+        const handle = dest.handle;
+        if (!scope || !handle) return { ok: false, error: "no pude identificar la conversación" };
+        const ok = await db.deleteAgentMemory(Number(args.id ?? 0), scope, handle);
+        return ok ? { ok: true } : { ok: false, error: "esa nota no existe en esta conversación" };
+      },
+    },
   ];
 }
 

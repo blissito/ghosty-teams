@@ -374,6 +374,37 @@ async function migrate(): Promise<void> {
     PRIMARY KEY (user_sub, announcement_id)
   )`);
 
+  // MEMORIA del agente por conversación: las convenciones que la gente le dicta ("de ahora
+  // en adelante los títulos en ##", "el ofendido se llama X", "así firma el despacho").
+  //
+  // Vive AQUÍ y no en un CLAUDE.md dentro de la caja por dos razones. El workspace del worker
+  // es de la SESIÓN, así que un `/clear` rota el sessionUuid y se llevaría las notas — y una
+  // convención del despacho no debe morir con la conversación. Y un archivo dentro de una VM
+  // no se puede inspeccionar: nadie podría ver qué recuerda el agente ni corregir una nota
+  // equivocada, que en un flujo legal acaba saliendo dentro de un escrito.
+  //
+  // `scope_key` = 'ch:<channelId>' | 'dm:<dmId>'. Por ROOM, NO por hilo: la sesión del agente
+  // sí es por hilo (`slug-flow` vs `slug-<parentId>`, ver agentGroupId), así que una memoria
+  // por hilo se perdería al abrir el siguiente — justo lo contrario de lo que se pidió. Ojo:
+  // esa granularidad NO coincide con la del groupId, y es deliberado.
+  //
+  // Por AGENTE (dos agentes en un room tienen trabajos distintos) y COMPARTIDA entre las
+  // personas del room: son convenciones del espacio, no preferencias de cada quien; si fuera
+  // por persona habría que dictarlas una vez por miembro y dos podrían contradecirse sin
+  // saberlo. Sin columna `ns`: la DB ya es por workspace.
+  await exec(`CREATE TABLE IF NOT EXISTS gt_agent_memory (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    scope_key    TEXT NOT NULL,
+    agent_handle TEXT NOT NULL,
+    note         TEXT NOT NULL,
+    created_by   TEXT,
+    created_at   INTEGER NOT NULL DEFAULT (unixepoch()),
+    updated_at   INTEGER NOT NULL DEFAULT (unixepoch())
+  )`);
+  await exec(
+    `CREATE INDEX IF NOT EXISTS gt_agent_memory_scope ON gt_agent_memory(scope_key, agent_handle)`
+  );
+
   // Conectores OAuth PER-USER (Calendly y futuros GitHub/Slack/GCal). Modelo Cowork:
   // cada usuario conecta SU cuenta; @ghosty agenda/actúa con el token del que lo invoca.
   // Una fila por (usuario, proveedor). Tokens en la DB del tenant (no en compute), patrón

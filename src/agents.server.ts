@@ -175,6 +175,45 @@ export async function buildMediaParts(
   return parts;
 }
 
+/**
+ * Bloque de MEMORIA de la conversación para el turno.
+ *
+ * Va en el TEXTO y no en `appendSystemPrompt` por la misma razón que `artifactDocHint`: el
+ * system prompt de la sesión persistente se fija al arrancar, y un valor variable ahí
+ * forzaría cold-restart en cada turno.
+ *
+ * Se saca del `dest` firmado en el tool-token, que ya trae room/DM y el handle del agente —
+ * el mismo dato con el que las tools de memoria escriben, así que leer y escribir no pueden
+ * discrepar de alcance.
+ *
+ * Los ids van VISIBLES (`#3:`) porque son la dirección que el agente necesita para
+ * `memory_forget` o para el `replaces` de `memory_write`. Sin ellos podría añadir una nota
+ * que contradice a otra sin forma de retirar la vieja.
+ *
+ * Devuelve "" si no hay notas: un bloque vacío es ruido en cada turno y le enseña al modelo
+ * a ignorar la sección.
+ */
+async function memoryHint(dest: import("./server/connectors/tool-token.server").ToolDest | null): Promise<string> {
+  if (!dest) return "";
+  try {
+    const db = await import("./db.server");
+    const scope = db.memoryScopeKey(dest);
+    if (!scope || !dest.handle) return "";
+    const notas = await db.listAgentMemory(scope, dest.handle);
+    if (!notas.length) return "";
+    const lista = notas.map((n) => `#${n.id}: ${n.note}`).join("\n");
+    return (
+      `[Memoria de esta conversación — convenciones YA ACORDADAS aquí. Respétalas sin volver ` +
+      `a preguntar. Si una deja de aplicar, retírala con memory_forget usando su #id; si ` +
+      `cambia, usa memory_write con \`replaces\`.\n${lista}]\n\n`
+    );
+  } catch {
+    // La memoria es una comodidad: si la tabla aún no existe en este tenant o falla la
+    // consulta, el turno sigue sin ella.
+    return "";
+  }
+}
+
 // ── Quote-reply (cita) ──────────────────────────────────────────────────────
 // Extracto plano del mensaje citado para el SNAPSHOT (denormalizado en el mensaje).
 // Quita bloques eb-doc/eb-sheet (ruido enorme) y colapsa espacios; ~220 chars.
@@ -297,6 +336,7 @@ const TEAMS_PRODUCT_CONTEXT = [
   "ARTEFACTO COMPARTIDO POR LINK — cada artefacto se edita DESDE LA CONVERSACIÓN DONDE NACIÓ. En cada turno la plataforma te inyecta el contenido del artefacto ACTUAL de este hilo (si lo hay); ese es el único que puedes modificar. Si alguien te PEGA UN LINK a un artefacto (una URL de artefacto/`/t3/…`) y te pide cambiarlo, ese documento NO está cargado aquí: el link es una copia publicada, no te da acceso a editarlo. NUNCA respondas «no puedo editarlo» a secas ni lo presentes como un error o una falla tuya — EXPLICA con calma el porqué (los artefactos se editan en su propia conversación) y ofrece SIEMPRE las dos salidas: (a) que te lo pidan en el hilo/DM donde se creó, donde sí lo tienes a la mano; o (b) que te peguen aquí el contenido y creas una versión NUEVA en esta conversación.",
   "VOZ / NOTA DE VOZ: sí puedes responder con una nota de voz. En code-mode usa `/opt/gs-sdk/voice.mjs` (`speak(texto)`): sintetiza el audio, lo publica e imprime un bloque ```eb-audio que **debes incluir tal cual** en tu respuesta para que aparezca la burbuja reproducible; puedes acompañarlo de una frase corta. Voz por default masculina: `em_santa`; si piden otra, `speak(texto, { voice: \"ef_dora\" })` — em_santa (M), ef_dora (F), em_alex (M). Nunca digas que solo te comunicas por texto. (Distinto de las LLAMADAS en vivo, que aún no puedes iniciar.)",
   "CUÁNDO USAR LA VOZ por tu cuenta, sin que te la pidan: saludos, confirmaciones y respuestas cortas con personalidad — le da calidez y presencia. No en cada turno, y nunca para código, tablas, documentos ni respuestas técnicas o largas, donde el texto se lee mejor. Si la respuesta es corta pero es un DATO que van a querer releer (una hora, una cifra, un nombre, un link), va en texto.",
+  "MEMORIA DE LA CONVERSACIÓN: tienes memoria propia de este room (o DM) y es REAL. Al inicio de cada turno recibes un bloque `[Memoria de esta conversación]` con las convenciones ya acordadas y su `#id`; respétalas sin volver a preguntar. Para guardar una: en code-mode, `const { run } = await import('/opt/gs-sdk/connectors.mjs')` y `await run('memory_write', { note: 'los títulos van en ##, los subtítulos en ###' })`. Para retirarla, `run('memory_forget', { id })`; si cambia, `run('memory_write', { note: '…', replaces: <id> })` en vez de añadir otra — dos notas que se contradicen es peor que ninguna. NO existe `memory_read`: ya las tienes en el turno, no las pidas. QUÉ GUARDAR: lo que alguien te dice con 'de ahora en adelante', 'siempre', 'recuérdalo' o 'anótalo' — formato de los documentos, cómo se llaman las partes, cómo firma el despacho, tratamientos, criterios de redacción. QUÉ NO: el contenido de los documentos (para eso están los artefactos y sus versiones), datos personales o sensibles que nadie te pidió guardar, ni el estado de una tarea en curso. Es del ROOM y COMPARTIDA: aplica también cuando escriba otra persona del equipo, y sigue viva en otros hilos del mismo room y después de un /clear (borra la conversación, no las convenciones). Si guardas algo, dilo en una frase — que quede claro qué vas a recordar.",
   "RECORDATORIOS: SÍ puedes programar recordatorios — es una capacidad REAL de Ghosty Teams, no depende de ningún servicio externo ni de que el usuario conecte nada. CÓMO: en code-mode, `const { run } = await import('/opt/gs-sdk/connectors.mjs')` y luego `await run('reminder_create', { text: 'pagar la tarjeta', when: '2026-08-01T09:00', repeat: 'daily'|'weekly'|'monthly' /* omítelo si es una sola vez */ })`. `when` va en hora LOCAL del usuario (YYYY-MM-DDTHH:mm): resuelve 'mañana', 'el 1 de agosto' o 'en 2 horas' con el `[Ahora: …]` que recibes al inicio del turno. Si te dictan direcciones a las que mandar copia del correo, pásalas en `emailCc: ['a@b.com']` (máx 5). También tienes `run('reminder_list')`, `run('reminder_update', { id, ...sólo lo que cambia })` — para cambiarle la hora, el texto o encenderle el correo a uno YA agendado, sin cancelarlo — y `run('reminder_cancel', { id })`. NO hace falta llamar a `list()` antes: estas tres existen SIEMPRE. A la hora pedida el recordatorio lo publicas TÚ en esta misma conversación. Al programarlo, CONFIRMA el día y la hora que devolvió la tool. CORREO: por default el aviso llega SOLO al chat; si además lo quiere por correo, pásale `email: true` — pregúntaselo en la misma frase en que confirmas ('¿te lo mando también por correo?') y no lo des por hecho.",
   "NUNCA atribuyas una falla tuya a un servicio externo que no forma parte de este producto. No existe ninguna conexión con claude.ai, ni con cuentas, paneles o comandos de otros productos: no los menciones ni los inventes como causa ni como solución. Si algo no te sale, di en una frase qué pasó y ofrece lo que sí puedes hacer.",
   "No inventes funciones ni pantallas que no existen. Si no estás seguro de un detalle de la interfaz, describe la vía de la @mención (universal) y ofrece ayudar con lo que intentaban lograr.",
@@ -569,11 +609,13 @@ export async function callAgentBackendStream(
   // agosto" o "mañana a las 9" en una fecha concreta para reminder_create — adivinaba el
   // año o daba por hecho UTC. Va por-TURNO (dato variable), nunca en el system prompt.
   const nowHint = await clockHint(invokerSub);
+  // Memoria de la conversación: convenciones que ya se acordaron y siguen vigentes.
+  const memHint = await memoryHint(dest ?? null);
   // La persona por-agente va en la CAPA SYSTEM (appendSystemPrompt), NUNCA en el texto
   // del usuario. Antes se anteponía como `[Instrucciones para X: …]` dentro del mensaje;
   // el modelo lo leía como instrucciones incrustadas y lo rechazaba como intento de
   // inyección de prompt (incidente 2026-07-12 en Teams). El texto solo lleva el turno.
-  const outText = nowHint + docHint + text;
+  const outText = nowHint + memHint + docHint + text;
   try {
     // `parts` = FileParts A2A (media); EasyBits los normaliza por MIME (Slice E1).
     // configGroupId "teams" = unidad de config ESTABLE de este canal en EasyBits

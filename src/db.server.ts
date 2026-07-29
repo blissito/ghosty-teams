@@ -316,6 +316,78 @@ export async function attachArtifacts(msgs: Message[]): Promise<Message[]> {
 }
 
 // Inserta el artefacto de un mensaje del agente.
+// ── Memoria del agente por conversación ─────────────────────────────────────────
+// Ver el comentario de `gt_agent_memory` en schema.server.ts para el porqué del alcance.
+
+export type AgentNote = { id: number; note: string; createdBy: string | null; updatedAt: number };
+
+/** Clave de alcance. Por ROOM o DM, nunca por hilo. */
+export function memoryScopeKey(d: { channelId?: number | null; dmId?: number | null }): string | null {
+  if (d.dmId != null) return `dm:${d.dmId}`;
+  if (d.channelId != null) return `ch:${d.channelId}`;
+  return null;
+}
+
+/**
+ * Topes de la memoria. Existen porque las notas se inyectan en el texto de CADA turno: sin
+ * techo, la memoria se convierte con el tiempo en un impuesto de contexto que nadie ve.
+ * Al llegar al límite se FALLA con un mensaje útil en vez de podar en silencio — perder una
+ * convención sin avisar es peor que negarse a guardar la siguiente.
+ */
+export const MEMORY_MAX_NOTES = 40;
+export const MEMORY_MAX_CHARS = 240;
+
+export async function listAgentMemory(scopeKey: string, handle: string): Promise<AgentNote[]> {
+  const rows = await dbq(
+    `SELECT id, note, created_by, updated_at FROM gt_agent_memory
+       WHERE scope_key = ? AND agent_handle = ? ORDER BY id ASC`,
+    [scopeKey, handle]
+  );
+  return rows.map((r) => ({
+    id: num(r.id),
+    note: String(r.note ?? ""),
+    createdBy: (r.created_by as string | null) ?? null,
+    updatedAt: num(r.updated_at),
+  }));
+}
+
+export async function addAgentMemory(
+  scopeKey: string,
+  handle: string,
+  note: string,
+  createdBy: string | null
+): Promise<number> {
+  const rows = await dbq(
+    `INSERT INTO gt_agent_memory (scope_key, agent_handle, note, created_by)
+       VALUES (?, ?, ?, ?) RETURNING id`,
+    [scopeKey, handle, note, createdBy]
+  );
+  return num(rows[0]?.id);
+}
+
+/** El scope va en el WHERE: un id no debe poder editar la nota de otra conversación. */
+export async function updateAgentMemory(
+  id: number,
+  scopeKey: string,
+  handle: string,
+  note: string
+): Promise<boolean> {
+  const rows = await dbq(
+    `UPDATE gt_agent_memory SET note = ?, updated_at = unixepoch()
+       WHERE id = ? AND scope_key = ? AND agent_handle = ? RETURNING id`,
+    [note, id, scopeKey, handle]
+  );
+  return rows.length > 0;
+}
+
+export async function deleteAgentMemory(id: number, scopeKey: string, handle: string): Promise<boolean> {
+  const rows = await dbq(
+    `DELETE FROM gt_agent_memory WHERE id = ? AND scope_key = ? AND agent_handle = ? RETURNING id`,
+    [id, scopeKey, handle]
+  );
+  return rows.length > 0;
+}
+
 /**
  * La versión MÁS RECIENTE de un documento: su fila y si ya era una edición humana.
  *
