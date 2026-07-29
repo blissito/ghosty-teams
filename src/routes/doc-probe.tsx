@@ -17,6 +17,13 @@ const bloques: DocBlock[] = Array.from({ length: 102 }, (_, i) => ({
 export const Route = createFileRoute("/doc-probe")({ component: Probe, ssr: false });
 
 function Probe() {
+  // Doble cerrojo: además de la exención de sesión (que ya es sólo en dev), la página no
+  // se pinta en producción. Un banco de pruebas no tiene por qué existir ahí.
+  if (!import.meta.env.DEV) return null;
+  return <ProbeReal />;
+}
+
+function ProbeReal() {
   const [refs, setRefs] = useState<string[] | undefined>();
   const md = serializeDocEnvelope({ blocks: bloques, sourceMd: "# x" });
   return (
