@@ -126,6 +126,10 @@ export function emailHtml(ev: NotifyEvent): string {
   const raw = process.env.PUBLIC_BASE_URL || process.env.TEAMS_ROOT_DOMAIN || "teams.ghosty.studio";
   const base = /^https?:\/\//.test(raw) ? raw.replace(/\/$/, "") : `https://${raw.replace(/\/$/, "")}`;
   const link = ev.url.startsWith("http") ? ev.url : `${base}${ev.url}`;
+  // Las IMÁGENES no pueden colgar del dominio del tenant: `teams.ghosty.studio` a secas no
+  // resuelve (sólo los subdominios de workspace), así que el mascot llegaba roto. Van al
+  // control-plane, que sí es un host público estable.
+  const asset = (process.env.PUBLIC_ASSET_BASE || "https://ghosty.studio").replace(/\/$/, "");
   const cta = ev.kind === "reminder" ? "Abrir la conversación" : "Abrir en Ghosty Studio";
   // TÍTULO propio, en su renglón. En un recordatorio el asunto genérico ("⏰ Recordatorio")
   // no dice nada: lo que el usuario reconoce es SU texto. Se parte por el guión largo o el
@@ -144,7 +148,7 @@ export function emailHtml(ev: NotifyEvent): string {
     <tr><td style="padding:16px 24px 0">
       <table role="presentation" cellpadding="0" cellspacing="0" width="100%"><tr>
         <td width="64" valign="top" style="padding-right:2px">
-          <img src="${base}/ghosty-mail.png" width="56" height="66" alt="Ghosty" style="display:block;border:0">
+          <img src="${asset}/ghosty-mail.png" width="56" height="66" alt="Ghosty" style="display:block;border:0">
         </td>
         <td valign="top" style="padding-top:6px">
           <table role="presentation" cellpadding="0" cellspacing="0"><tr>
