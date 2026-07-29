@@ -425,6 +425,13 @@ async function clockHint(invokerSub?: string): Promise<string> {
 // El `id` (tool_use del SDK) correlaciona ambos → estado real ✅/❌ por tool, no posicional.
 export type ToolEvent = { name?: string; id?: string; phase?: "start" | "end"; ok?: boolean; detail?: string };
 
+/**
+ * STEER: el turno no se abrió — el mensaje entró al que ya corría y su respuesta sale por
+ * AQUELLA burbuja. Se propaga como valor de retorno (no como excepción) porque no es un
+ * fallo: es el camino feliz de escribir mientras el agente trabaja.
+ */
+export const INJECTED = "\u0000injected";
+
 export async function callAgentBackendStream(
   agent: ResolvedAgent,
   groupId: string,
@@ -438,7 +445,9 @@ export async function callAgentBackendStream(
   /** Detener el turno = colgarle al worker. El worker cierra su generador al notarlo. */
   signal?: AbortSignal,
   /** Canal/DM de ESTE turno → viaja firmado en el toolToken (tools nativas). */
-  dest?: import("./server/connectors/tool-token.server").ToolDest | null
+  dest?: import("./server/connectors/tool-token.server").ToolDest | null,
+  /** STEER: meterlo al turno vivo de esta conversación en vez de abrir otro. */
+  inject?: boolean
 ): Promise<string> {
   if (agent.backend.kind !== "fleet") {
     // Sin SSE todavía: colecta el reply completo y lo emite de un tirón (el cliente
@@ -512,6 +521,7 @@ export async function callAgentBackendStream(
         .join("\n\n"),
       // Solo runtime nativo + hay invocador → tools de conectores per-user (opaco a Studio).
       ...(toolToken && toolsUrl ? { toolToken, toolsUrl } : {}),
+      ...(inject ? { inject: true } : {}),
     });
     const url = `${base}/api/v2/fleet-agents/${(agent.backend as { id: string }).id}/message-stream`;
     const doStream = (tok: string) =>
@@ -547,6 +557,9 @@ export async function callAgentBackendStream(
           ev = JSON.parse(line.slice(5).trim());
         } catch {
           continue;
+        }
+        if (ev.type === "injected") {
+          return INJECTED; // el trabajo sigue en la burbuja de allá; ésta no existe
         }
         if (ev.type === "chunk" && ev.value) {
           streamed += ev.value;
@@ -863,6 +876,8 @@ async function runAgentTurnInner(opts: {
   // Dónde ocurre el turno. Lo necesitan las tools nativas que dejan algo EN la
   // conversación (recordatorios): el destino va firmado, no en los args del agente.
   dest?: import("./server/connectors/tool-token.server").ToolDest | null;
+  /** STEER: escribí mientras mi turno anterior seguía vivo → esto va a ESE turno. */
+  inject?: boolean;
   /** Cortar este turno (botón Detener / interrupción del propio invocador). */
   signal?: AbortSignal;
   /** La cáscara ya existe con este id — para registrarlo como turno vivo y poder pararlo. */
@@ -1060,7 +1075,7 @@ async function runAgentTurnInner(opts: {
     await onChunk(reply);
   } else {
     try {
-      reply = await callAgentBackendStream(opts.agent, opts.groupId, opts.sender, opts.text, onChunk, opts.parts ?? [], onTool, opts.currentDoc, opts.invokerSub, opts.signal, opts.dest);
+      reply = await callAgentBackendStream(opts.agent, opts.groupId, opts.sender, opts.text, onChunk, opts.parts ?? [], onTool, opts.currentDoc, opts.invokerSub, opts.signal, opts.dest, opts.inject);
     } catch (e) {
       // Detenido: NO es un error del agente. Se conserva lo que alcanzó a escribir y se
       // dice que se detuvo — borrarlo tiraría trabajo que el usuario ya estaba leyendo.
@@ -1068,6 +1083,10 @@ async function runAgentTurnInner(opts: {
       else throw e;
     }
   }
+  // STEER: no hay turno que cerrar acá. `id` sale 0 y el llamador borra la cáscara que
+  // había creado eager — dos burbujas para un mensaje que se contesta en una sola sería
+  // peor que el problema que veníamos a resolver.
+  if (reply === INJECTED) return { id: 0, reply: INJECTED };
   if (opts.signal?.aborted) {
     const partial = narration().trim();
     return { id: await ensure(), reply: renderToolBlock(true) + (partial ? `${partial}\n\n⏹ Detenido.` : "⏹ Detenido.") };

@@ -100,6 +100,17 @@ export function stopTurn(messageId: number, bySub?: string | null): boolean {
 }
 
 /**
+ * ¿Tengo YO un turno corriendo en este flow? Es la condición del STEER: mi mensaje nuevo
+ * se mete al turno vivo (el worker lo empuja a la misma sesión del SDK) en vez de matarlo.
+ * El de otra persona no cuenta: el canal es compartido, ese trabajo no es mío.
+ */
+export function hasOwnInflight(groupId: string, invokerSub?: string | null): boolean {
+  if (!invokerSub) return false;
+  for (const t of siblings(groupId)) if (t.invokerSub === invokerSub && !t.stopped) return true;
+  return false;
+}
+
+/**
  * Interrupción: el MISMO invocador vuelve a escribir en el mismo flow mientras su turno
  * corre. Casi siempre es una corrección ("mejor en html", "brandeado con fixtergeek") y
  * dejarla en cola la vuelve una respuesta tardía a algo que ya nadie quería.

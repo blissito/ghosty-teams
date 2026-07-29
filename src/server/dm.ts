@@ -217,7 +217,7 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
     const db = await import("../db.server");
     const bus = await import("./bus.server");
     const { currentNamespace } = await import("./tenant.server");
-    const { resolvedAgents, runAgentTurn, buildMediaParts, quotedContextPrefix, clampQuote, historyContext, agentGroupId } = await import("../agents.server");
+    const { resolvedAgents, runAgentTurn, buildMediaParts, quotedContextPrefix, clampQuote, historyContext, agentGroupId, INJECTED } = await import("../agents.server");
     const me = await sessionUser();
     if (!me || !(await db.isDmMember(data.id, me.sub))) throw new Error("no autorizado");
     const ns = await currentNamespace();
@@ -271,8 +271,10 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
     // Igual que en el room: lo mío se interrumpe, lo ajeno se encola (ver turns.server).
     // En un DM 1:1 el invocador siempre es la misma persona, así que aquí la interrupción
     // es la regla y no la excepción.
+    // STEER: mi mensaje entra al turno que ya corre (ver chat.ts). En un DM 1:1 es la
+    // norma, no la excepción: siempre soy yo el que estaba esperando.
     const turns = await import("./turns.server");
-    turns.interruptOwnTurns(groupId, me.sub);
+    const steer = turns.hasOwnInflight(groupId, me.sub);
     const controller = new AbortController();
     let registeredId: number | null = null;
     // Registrar YA si la cáscara existe (postMessage la crea eager). Registrarlo hasta el
@@ -295,6 +297,7 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
       parts,
       currentDoc,
       invokerSub: me.sub, // DM 1:1: el humano del DM es el invocador → sus tools de conectores
+      inject: steer,
       dest: { dmId: data.id, handle: data.handle, name, avatar: agent?.avatar ?? "" },
       createShell: async () => {
         // Caja caliente: la cáscara ya fue creada EAGER por postDmMessageFn → reutiliza su
@@ -311,6 +314,15 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
       if (registeredId != null) turns.finishTurn(registeredId);
     });
 
+    // Entró a un turno vivo (steer): la respuesta sale por aquella burbuja. Se borra la
+    // cáscara eager para no dejar una vacía. Mismo criterio que el room.
+    if (reply === INJECTED) {
+      if (data.shellId != null) {
+        await db.deleteMessage(data.shellId).catch(() => {});
+        fanout({ t: "message:deleted", id: data.shellId, channelId: null, parentId: null, dmId: data.id });
+      }
+      return { ok: true, steered: true };
+    }
     // Nunca persistas un body VACÍO (deepseek cierra el turno en blanco a veces) → el
     // mensaje quedaba vacío. Mismo guard que el room (chat.ts).
     const finalBody = reply.trim() ? reply : "(sin respuesta)";

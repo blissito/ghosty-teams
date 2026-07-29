@@ -637,7 +637,7 @@ export const askAgent = createServerFn({ method: "POST" })
   )
   .handler(async ({ data }) => {
     const db = await import("../db.server");
-    const { resolvedAgents, runAgentTurn, buildMediaParts, quotedContextPrefix, clampQuote, historyContext, agentGroupId } = await import("../agents.server");
+    const { resolvedAgents, runAgentTurn, buildMediaParts, quotedContextPrefix, clampQuote, historyContext, agentGroupId, INJECTED } = await import("../agents.server");
     const bus = await import("./bus.server");
     const { currentNamespace } = await import("./tenant.server");
     const channel = await db.getChannel(data.slug);
@@ -721,8 +721,12 @@ export const askAgent = createServerFn({ method: "POST" })
     // turno corriendo en este flow, casi siempre está corrigiendo ("mejor en html") y
     // dejarlo en cola convierte la corrección en una respuesta tardía. El turno de otra
     // persona no se toca: el canal es compartido, ese trabajo no es suyo.
+    // STEER en vez de interrumpir: si mi turno anterior sigue vivo, este mensaje se mete
+    // AHÍ (el worker lo empuja a la misma sesión del SDK) y la respuesta sale por la
+    // burbuja que ya estoy mirando. Antes se mataba el turno: la corrección llegaba, pero
+    // tirando a la basura todo lo que el agente llevaba hecho.
     const turns = await import("./turns.server");
-    turns.interruptOwnTurns(groupId, poster?.sub);
+    const steer = turns.hasOwnInflight(groupId, poster?.sub);
 
     const controller = new AbortController();
     const announce = (st: { id: number; state: "running" | "queued" | "stopped"; position: number; startedAt: number }) =>
@@ -750,6 +754,7 @@ export const askAgent = createServerFn({ method: "POST" })
       parts,
       currentDoc,
       invokerSub: poster?.sub, // sus tools de conectores (per-invocador, no del owner)
+      inject: steer,
       // Destino de las tools nativas: este canal, este topic, este agente.
       dest: { channelId: channel.id, topic: topic ?? "general", handle: data.handle, name, avatar: agent?.avatar ?? "" },
       createShell: async () => {
@@ -775,6 +780,15 @@ export const askAgent = createServerFn({ method: "POST" })
     // deepseek/ghosty-gc a veces cierra el turno en blanco → se guardaba "" en la DB y
     // el mensaje quedaba vacío (y reaparecía vacío al refetch, borrando lo streameado).
     const { id, reply } = turnResult;
+    // El mensaje entró a un turno vivo: acá no hay nada que escribir. La cáscara que
+    // postMessage creó eager se borra, o quedarían dos burbujas para una sola respuesta.
+    if (reply === INJECTED) {
+      if (data.shellId != null) {
+        await db.deleteMessage(data.shellId).catch(() => {});
+        bus.publish(bus.ch.room(ns, channel.id), { t: "message:deleted", id: data.shellId, channelId: channel.id, parentId: data.parentId ?? null });
+      }
+      return { ok: true, steered: true };
+    }
     const finalBody = reply.trim() ? reply : "(sin respuesta)";
     await db.setMessageBody(id, finalBody);
     bus.publish(bus.ch.room(ns, channel.id), { t: "message:body", id, body: finalBody });
