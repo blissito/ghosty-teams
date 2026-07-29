@@ -1422,7 +1422,13 @@ export default function ArtifactPanel({
                   // casi nada. De ahí que el swap borrador→doc no dé ni un parpadeo.
                   // Descargar Word arriba.
                   <DocSurface
-                    key={artifact.messageId ? `msg:${artifact.messageId}` : "doc"}
+                    // La identidad es el DOCUMENTO, no el mensaje. Con `msg:<id>` el
+                    // editor se remontaba entero en CADA ajuste quirúrgico —cada patch
+                    // crea un mensaje nuevo—, lo que anula el reconciliador (102 bloques
+                    // reconstruidos para cambiar una fecha) y deja el árbol oculto un
+                    // instante mientras React lo reemplaza. Ahí se perdía el resaltado:
+                    // se pintaba sobre el árbol que estaba siendo desechado.
+                    key={`doc:${artifact.documentId}`}
                     md={artifact.md ?? ""}
                     documentId={artifact.documentId}
                     messageId={artifact.messageId}

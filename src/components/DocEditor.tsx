@@ -394,6 +394,21 @@ export default function DocEditor({
         });
       if (ids.length && marcarCambios(ids)) {
         yaSenalado.add(clave); // sólo cuando de verdad se pintó
+        // Red: si el árbol se reemplaza justo después (React reemplazando un subárbol
+        // deja el viejo oculto un instante), la marca se va con él. Se vuelve a poner
+        // un par de veces sobre lo que haya en pantalla.
+        let repasos = 0;
+        const repasar = () => {
+          if (++repasos > 3) return;
+          const vivos = ids
+            .map((id) => scroller.current?.querySelector<HTMLElement>(`[data-id="${CSS.escape(id)}"]`))
+            .filter((n): n is HTMLElement => !!n && n.offsetParent !== null);
+          if (vivos.length && !vivos.some((n) => n.querySelector(".gt-cambio") || n.classList.contains("gt-cambio"))) {
+            marcarCambios(ids);
+          }
+          setTimeout(repasar, 400);
+        };
+        setTimeout(repasar, 400);
         return;
       }
       if (++intentos < 20) {
