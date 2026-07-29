@@ -39,6 +39,7 @@ export default function DocEditor({
   editable,
   streaming,
   onChange,
+  highlightIds,
 }: {
   /** La verdad, ya en bloques (documento publicado con sobre `v:1`). */
   blocks?: DocBlock[];
@@ -54,6 +55,12 @@ export default function DocEditor({
   streaming: boolean;
   /** Cambios hechos por una PERSONA (no los del reconciliador). */
   onChange?: (blocks: DocBlock[]) => void;
+  /**
+   * uuid de los bloques que cambiaron en esta versión (vienen del sobre). Se señalan al
+   * montar: es el caso NORMAL, porque el panel se abre DESPUÉS de que el agente contestó.
+   * La detección por diff de abajo sólo cubre el caso raro de tenerlo ya abierto.
+   */
+  highlightIds?: string[];
 }) {
   const t = useT();
   const editor = useCreateBlockNote({
@@ -202,6 +209,15 @@ export default function DocEditor({
       });
     }
   }, [editor, blocks, markdown, streaming]);
+
+  // Señalar lo que cambió al ABRIR. El editor monta con su documento ya puesto, así que
+  // no hay diff que hacer: los ids vienen dados. Se espera un frame a que BlockNote pinte
+  // sus nodos — antes de eso el `querySelector` por data-id no encuentra nada.
+  useEffect(() => {
+    if (!editor || !highlightIds?.length) return;
+    const t = setTimeout(() => marcarCambios(highlightIds), 80);
+    return () => clearTimeout(t);
+  }, [editor, highlightIds, marcarCambios]);
 
   const notify = useCallback(() => {
     if (applying.current || !onChange) return;

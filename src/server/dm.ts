@@ -413,6 +413,7 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
               title: draftTitle(nuevoMd, "doc"),
               md: nuevoMd,
               blocks: res.blocks,
+              changedIds: res.changedIds,
               visibility: "public",
               ownerSub: me.sub,
               setPointer: (docId) => db.setDmArtifact(data.id, docId),

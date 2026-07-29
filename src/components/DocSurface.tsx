@@ -31,6 +31,15 @@ const SAVE_IDLE_MS = 2500;
  */
 const SAVE_MIN_INTERVAL_MS = 60_000;
 
+/**
+ * Versiones cuyo cambio YA se señaló en esta pestaña.
+ *
+ * `changedIds` viaja persistido en el sobre, así que sin esto el documento se
+ * resaltaría cada vez que lo abres — incluso una semana después. La marca es para
+ * decir "esto acaba de cambiar", no para dejarla puesta.
+ */
+const yaSenalado = new Set<string>();
+
 function Sheet({ children }: { children: React.ReactNode }) {
   return (
     <div className="min-h-0 flex-1 overflow-auto bg-surface-3 p-4 sm:p-6">
@@ -124,6 +133,17 @@ export default function DocSurface({
     };
   }, [flush]);
 
+  // Bloques que cambiaron en esta versión: se señalan UNA vez y sólo si el documento
+  // tiene identidad (un borrador todavía no es una versión de nada).
+  const marcar = useMemo(() => {
+    const ids = envelope?.changedIds;
+    if (!ids?.length || !documentId) return undefined;
+    const clave = `${documentId}:${ids.join(",")}`;
+    if (yaSenalado.has(clave)) return undefined;
+    yaSenalado.add(clave);
+    return ids;
+  }, [envelope, documentId]);
+
   const source = envelope ? { blocks: envelope.blocks } : { markdown: slowMd };
   const vacio = envelope ? !envelope.blocks.length : !slowMd.trim();
 
@@ -148,6 +168,7 @@ export default function DocSurface({
         editable={!!documentId && !streaming}
         streaming={streaming}
         onChange={onChange}
+        highlightIds={marcar}
       />
     </Suspense>
   );

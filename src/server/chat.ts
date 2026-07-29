@@ -891,6 +891,7 @@ export const askAgent = createServerFn({ method: "POST" })
               title: draftTitle(nuevoMd, "doc"),
               md: nuevoMd,
               blocks: res.blocks,
+              changedIds: res.changedIds,
               ownerSub: poster?.sub ?? null,
               setPointer: (docId) => db.setThreadArtifact(channel.id, data.parentId, docId),
               notify: () =>
