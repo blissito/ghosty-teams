@@ -189,7 +189,18 @@ const HUERFANO = /(^|\n)(eb-(?:patch|insert|remove))[ \t]+([^\n`]+)\n([\s\S]*?)(
 export function stripOrphanPatch(body: string): string {
   if (!/(^|\n)eb-(patch|insert|remove)[ \t]/.test(body)) return body;
   const out = body.replace(HUERFANO, "$1");
-  if (out !== body) console.warn("[ebdoc] cabecera de patch huérfana en el bubble — el fence de apertura se perdió");
+  if (out !== body) {
+    // El cuerpo EXACTO que lo dispara. Se derivó siete veces a mano sin acertar: el
+    // aviso se dispara en el CLIENTE, durante el streaming, y ahí el cuerpo llega a
+    // trozos — los casos de test eran todos cuerpos completos.
+    const i = body.search(/(^|\n)eb-(patch|insert|remove)[ \t]/);
+    console.warn(
+      "[ebdoc] cabecera huérfana. contexto:",
+      JSON.stringify(body.slice(Math.max(0, i - 120), i + 60)),
+      "| inicio del body:",
+      JSON.stringify(body.slice(0, 60)),
+    );
+  }
   return out;
 }
 
