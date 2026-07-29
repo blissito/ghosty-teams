@@ -233,18 +233,45 @@ export default function DocEditor({
     if (!editor || !highlightIds?.length) return;
     const clave = highlightIds.join(",");
     if (yaSenalado.has(clave)) return;
+
+    // Los ids se resuelven contra el documento que el EDITOR dice tener, no contra los
+    // que le pasamos. Que `initialContent` conserve los ids no está garantizado —el
+    // headless sí lo hace, el de React no lo he comprobado— y si los re-acuña, buscar
+    // por el id de origen no encuentra nada y el resaltado falla mudo (que es justo lo
+    // que pasaba). Por POSICIÓN es correcto en los dos casos.
+    const resolver = (): string[] => {
+      const suyos = (editor.document ?? []) as DocBlock[];
+      const propios = new Set(suyos.map((b) => b.id).filter(Boolean) as string[]);
+      // Camino normal: el editor conservó los ids.
+      const directos = highlightIds.filter((id) => propios.has(id));
+      if (directos.length) return directos;
+      // Los re-acuñó: se traducen por índice contra los bloques que le dimos.
+      const dados = blocks ?? [];
+      return highlightIds
+        .map((id) => dados.findIndex((b) => b.id === id))
+        .filter((i) => i >= 0 && i < suyos.length)
+        .map((i) => suyos[i].id)
+        .filter((id): id is string => !!id);
+    };
+
     let intentos = 0;
     let t: ReturnType<typeof setTimeout>;
     const probar = () => {
-      if (marcarCambios(highlightIds)) {
+      const ids = resolver();
+      if (ids.length && marcarCambios(ids)) {
         yaSenalado.add(clave); // sólo cuando de verdad se pintó
         return;
       }
-      if (++intentos < 20) t = setTimeout(probar, 100); // hasta ~2s
+      if (++intentos < 20) {
+        t = setTimeout(probar, 100); // hasta ~2s: BlockNote pinta cuando puede
+      } else {
+        // Que no se vaya en silencio otra vez: si no se pudo señalar, que quede dicho.
+        console.warn("[doc] no pude señalar el cambio", { highlightIds, resueltos: ids });
+      }
     };
     t = setTimeout(probar, 60);
     return () => clearTimeout(t);
-  }, [editor, highlightIds, marcarCambios]);
+  }, [editor, highlightIds, marcarCambios, blocks]);
 
   const notify = useCallback(() => {
     if (applying.current || !onChange) return;
