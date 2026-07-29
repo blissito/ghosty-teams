@@ -275,9 +275,32 @@ export default function DocEditor({
         .filter((id): id is string => !!id);
     };
 
+    // Esperar a que el panel TERMINE de abrirse. Se abre con animación, y medir a
+    // mitad da un contenedor que todavía cambia de tamaño: el scroll se calcula contra
+    // una altura que no es la final y aterriza en cualquier lado. Y como el bloque
+    // marcado suele estar lejos (índice 75 de 102), sin scroll el amarillo se pinta
+    // FUERA DE PANTALLA — se aplica y no se ve. Un solo fallo explicaba los dos
+    // síntomas.
+    //
+    // No se espera un plazo fijo (la animación dura lo que dura): se espera a que la
+    // altura del contenedor se repita en dos frames seguidos.
+    let alturaPrevia = -1;
+    let estables = 0;
+    const asentado = (): boolean => {
+      const h = scroller.current?.clientHeight ?? 0;
+      if (h > 0 && h === alturaPrevia) estables++;
+      else estables = 0;
+      alturaPrevia = h;
+      return estables >= 2;
+    };
+
     let intentos = 0;
     let t: ReturnType<typeof setTimeout>;
     const probar = () => {
+      if (!asentado()) {
+        if (++intentos < 40) t = setTimeout(probar, 50);
+        return;
+      }
       const ids = resolver();
       if (intentos === 0)
         console.log("[doc:marca] resueltos", {
