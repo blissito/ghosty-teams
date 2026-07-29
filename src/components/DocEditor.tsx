@@ -1,7 +1,9 @@
 import "@blocknote/core/fonts/inter.css";
 import "@blocknote/mantine/style.css";
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { ArrowDown } from "lucide-react";
 import { BlockNoteView } from "@blocknote/mantine";
+import { useT } from "../i18n";
 import { useCreateBlockNote } from "@blocknote/react";
 import { BlockNoteSchema } from "@blocknote/core";
 import { en as blockNoteEn } from "@blocknote/core/locales";
@@ -53,6 +55,7 @@ export default function DocEditor({
   /** Cambios hechos por una PERSONA (no los del reconciliador). */
   onChange?: (blocks: DocBlock[]) => void;
 }) {
+  const t = useT();
   const editor = useCreateBlockNote({
     schema,
     dropCursor: multiColumnDropCursor,
@@ -66,6 +69,36 @@ export default function DocEditor({
   // `humanEdited` en true sin que nadie haya tocado nada.
   const applying = useRef(false);
   const seen = useRef<string>("");
+
+  // ── Autoscroll mientras el agente escribe ───────────────────────────────────
+  // Sigue al texto conforme aparece, pero SÓLO si estás abajo. Si subiste a leer una
+  // cláusula anterior, arrastrarte al final en cada tick haría el documento
+  // ilegible justo mientras se escribe — que es cuando más se quiere leer.
+  const scroller = useRef<HTMLDivElement>(null);
+  // El ref lo lee el efecto (sin re-render por tick); el state pinta el botón. Los dos,
+  // porque leer el state dentro del efecto lo ataría a su closure.
+  const pegado = useRef(true);
+  const [alFondo, setAlFondo] = useState(true);
+
+  const alFinal = (el: HTMLElement) => el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+
+  const onScroll = useCallback(() => {
+    const el = scroller.current;
+    if (!el) return;
+    const v = alFinal(el);
+    pegado.current = v;
+    setAlFondo((prev) => (prev === v ? prev : v));
+  }, []);
+
+  const irAlFondo = useCallback(() => {
+    const el = scroller.current;
+    if (!el) return;
+    el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+    // Se vuelve a "pegar" ya: si no, un tick que llegue durante el scroll suave lo
+    // cancelaría y el botón se quedaría puesto.
+    pegado.current = true;
+    setAlFondo(true);
+  }, []);
 
   useEffect(() => {
     if (!editor) return;
@@ -101,9 +134,14 @@ export default function DocEditor({
       // sincrónicamente, pero el editor puede encolar pasos derivados.
       queueMicrotask(() => {
         applying.current = false;
+        // Tras el repintado del bloque nuevo, seguir al texto. Va DENTRO del microtask
+        // porque antes de que ProseMirror aplique la transacción el `scrollHeight`
+        // todavía es el de antes y el salto se quedaría corto.
+        const el = scroller.current;
+        if (streaming && pegado.current && el) el.scrollTop = el.scrollHeight;
       });
     }
-  }, [editor, blocks, markdown]);
+  }, [editor, blocks, markdown, streaming]);
 
   const notify = useCallback(() => {
     if (applying.current || !onChange) return;
@@ -118,25 +156,48 @@ export default function DocEditor({
   const live = editable && !streaming;
 
   return (
-    // `gt-doc` acota el CSS de Mantine: BlockNote trae estilos globales y el panel
-    // vive en tema oscuro. Todo lo del editor queda dentro de esta clase.
-    <div className="gt-doc min-h-0 flex-1 overflow-auto bg-surface-3 p-4 thin-scroll sm:p-6">
-      <div className="mx-auto max-w-[8.5in]">
-        <article className="min-h-[60vh] rounded-sm bg-white py-10 text-black shadow-md sm:py-14">
-          <BlockNoteView
-            editor={editor}
-            editable={live}
-            theme="light"
-            // El menú de formato y el de slash sólo estorban mientras el agente
-            // escribe (y ahí el documento no es editable de todos modos).
-            formattingToolbar={live}
-            slashMenu={live}
-          />
-          {streaming ? (
-            <span className="ml-14 inline-block h-4 w-[3px] animate-pulse bg-brand align-text-bottom" />
-          ) : null}
-        </article>
+    // `relative` para el botón flotante; el que scrollea es el hijo, no este.
+    <div className="relative min-h-0 flex-1">
+      {/* `gt-doc` acota el CSS de Mantine: BlockNote trae estilos globales y el panel
+          vive en tema oscuro. Todo lo del editor queda dentro de esta clase. */}
+      <div
+        ref={scroller}
+        onScroll={onScroll}
+        className="gt-doc h-full overflow-auto bg-surface-3 p-4 thin-scroll sm:p-6"
+      >
+        <div className="mx-auto max-w-[8.5in]">
+          <article className="min-h-[60vh] rounded-sm bg-white py-10 text-black shadow-md sm:py-14">
+            <BlockNoteView
+              editor={editor}
+              editable={live}
+              theme="light"
+              // El menú de formato y el de slash sólo estorban mientras el agente
+              // escribe (y ahí el documento no es editable de todos modos).
+              formattingToolbar={live}
+              slashMenu={live}
+            />
+            {streaming ? (
+              <span className="ml-14 inline-block h-4 w-[3px] animate-pulse bg-brand align-text-bottom" />
+            ) : null}
+          </article>
+        </div>
       </div>
+
+      {/* Ir al final. Sólo cuando NO estás abajo — si no, es un botón que no hace nada
+          tapando el documento. Mientras el agente escribe además avisa de que sigue
+          llegando texto más abajo. */}
+      {!alFondo ? (
+        <button
+          type="button"
+          onClick={irAlFondo}
+          aria-label={t("Ir al final")}
+          title={t("Ir al final")}
+          className="absolute bottom-5 right-5 z-10 inline-flex items-center gap-1.5 rounded-full border border-border bg-surface/95 px-3 py-2 text-xs font-medium text-ink shadow-lg backdrop-blur transition hover:border-brand hover:text-brand"
+        >
+          <ArrowDown size={14} />
+          {streaming ? t("Sigue escribiendo") : t("Ir al final")}
+        </button>
+      ) : null}
     </div>
   );
 }
