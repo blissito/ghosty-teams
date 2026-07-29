@@ -276,7 +276,7 @@ async function deliver(ns: string, r: Reminder): Promise<void> {
   await notify({
     kind: "reminder",
     recipients: [r.ownerSub],
-    title: "⏰ Recordatorio",
+    title: `⏰ ${r.text.length > 60 ? r.text.slice(0, 57) + "…" : r.text}`,
     body: r.text,
     url: "/",
     // Correo sólo si lo pidió para ESTE recordatorio; si no, manda su preferencia global.

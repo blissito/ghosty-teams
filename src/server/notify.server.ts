@@ -120,33 +120,67 @@ async function deliverEmail(ev: NotifyEvent, ns: string): Promise<void> {
  * entiende flex; una tabla centrada es lo único que se ve igual en los dos.
  */
 export function emailHtml(ev: NotifyEvent): string {
-  const base = process.env.PUBLIC_BASE_URL || process.env.TEAMS_ROOT_DOMAIN || "https://teams.ghosty.studio";
+  // `TEAMS_ROOT_DOMAIN` es un dominio PELADO ("teams.ghosty.studio"): concatenarlo daba
+  // `teams.ghosty.studio/ghosty-192.png`, que el cliente de correo lee como relativa → el
+  // mascot salía roto y el botón apuntaba a ningún lado.
+  const raw = process.env.PUBLIC_BASE_URL || process.env.TEAMS_ROOT_DOMAIN || "teams.ghosty.studio";
+  const base = /^https?:\/\//.test(raw) ? raw.replace(/\/$/, "") : `https://${raw.replace(/\/$/, "")}`;
   const link = ev.url.startsWith("http") ? ev.url : `${base}${ev.url}`;
-  const cta = ev.kind === "reminder" ? "Abrir la conversación" : "Abrir en Ghosty Teams";
-  return `<!doctype html><html><body style="margin:0;padding:24px 12px;background:#f5f5f7">
-  <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="max-width:520px;margin:0 auto;background:#fff;border:1px solid #e6e6ea;border-radius:14px">
-    <tr><td style="padding:22px 26px 0">
-      <table role="presentation" cellpadding="0" cellspacing="0"><tr>
-        <td style="padding-right:9px"><img src="${base}/ghosty-192.png" width="26" height="26" alt="" style="display:block;border:0;border-radius:7px"></td>
-        <td style="font:600 13px/1 system-ui,-apple-system,Segoe UI,sans-serif;color:#6b6b76;letter-spacing:.02em">Ghosty Teams</td>
+  const cta = ev.kind === "reminder" ? "Abrir la conversación" : "Abrir en Ghosty Studio";
+  // TÍTULO propio, en su renglón. En un recordatorio el asunto genérico ("⏰ Recordatorio")
+  // no dice nada: lo que el usuario reconoce es SU texto. Se parte por el guión largo o el
+  // primer salto de línea —así es como la gente escribe "Título — detalle"— y si no hay
+  // corte natural, el texto entero es el título.
+  const { head, rest } = ev.kind === "reminder" ? splitHead(ev.body) : { head: ev.title, rest: ev.body };
+  return `<!doctype html><html><body style="margin:0;padding:28px 12px;background:#f5f5f7">
+  <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="max-width:540px;margin:0 auto;background:#f4f4f7;border:1px solid #e6e6ea;border-radius:16px">
+    <tr><td style="padding:22px 24px 0;font:600 13px/1 system-ui,-apple-system,Segoe UI,sans-serif;color:#8a8a94;letter-spacing:.02em">Ghosty Studio</td></tr>
+
+    <!-- Ghosty HABLANDO: mascot + globo de cómic. Dos celdas de tabla (no flex: Outlook no
+         lo entiende). El mascot es ghosty-mail.png y NO los íconos del PWA: ésos traen
+         el fondo oscuro horneado y sobre la tarjeta clara se veían como un cuadro negro.
+         La colita del globo va con el truco de bordes — si algún cliente la
+         descarta, queda un globo sin colita, que se ve bien igual. -->
+    <tr><td style="padding:16px 24px 0">
+      <table role="presentation" cellpadding="0" cellspacing="0" width="100%"><tr>
+        <td width="64" valign="top" style="padding-right:2px">
+          <img src="${base}/ghosty-mail.png" width="56" height="66" alt="Ghosty" style="display:block;border:0">
+        </td>
+        <td valign="top" style="padding-top:6px">
+          <table role="presentation" cellpadding="0" cellspacing="0"><tr>
+            <td valign="top" style="padding-top:14px">
+              <div style="width:0;height:0;border-top:7px solid transparent;border-bottom:7px solid transparent;border-right:10px solid #ffffff;font-size:0;line-height:0">&nbsp;</div>
+            </td>
+            <td>
+              <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="background:#ffffff;border-radius:16px">
+                <tr><td style="padding:14px 18px">
+                  <div style="font:700 20px/1.3 system-ui,-apple-system,Segoe UI,sans-serif;color:#16161a">${escapeHtml(head)}</div>${rest ? `
+                  <div style="margin-top:6px;font:400 15px/1.6 system-ui,-apple-system,Segoe UI,sans-serif;color:#3f3f46;white-space:pre-wrap">${escapeHtml(rest)}</div>` : ""}
+                </td></tr>
+              </table>
+            </td>
+          </tr></table>
+        </td>
       </tr></table>
     </td></tr>
-    <tr><td style="padding:12px 26px 0">
-      <div style="font:600 19px/1.35 system-ui,-apple-system,Segoe UI,sans-serif;color:#16161a">${escapeHtml(ev.title)}</div>
-    </td></tr>
-    <tr><td style="padding:10px 26px 0">
-      <div style="font:400 15px/1.6 system-ui,-apple-system,Segoe UI,sans-serif;color:#3f3f46;white-space:pre-wrap">${escapeHtml(ev.body)}</div>
-    </td></tr>
-    <tr><td style="padding:22px 26px 26px">
+
+    <tr><td style="padding:20px 24px 26px 90px">
       <a href="${link}" style="display:inline-block;background:#16161a;color:#fff;font:600 14px/1 system-ui,-apple-system,Segoe UI,sans-serif;padding:12px 18px;border-radius:9px;text-decoration:none">${cta}</a>
     </td></tr>
-    <tr><td style="padding:0 26px 22px">
-      <div style="border-top:1px solid #eeeef2;padding-top:14px;font:400 12px/1.5 system-ui,-apple-system,Segoe UI,sans-serif;color:#8a8a94">
-        Recibes este correo porque lo activaste en Ghosty Teams. Puedes apagarlo en Ajustes → Notificaciones.
+    <tr><td style="padding:0 24px 22px">
+      <div style="border-top:1px solid #e2e2e8;padding-top:14px;font:400 12px/1.5 system-ui,-apple-system,Segoe UI,sans-serif;color:#8a8a94">
+        Recibes este correo porque lo activaste en Ghosty Studio. Puedes apagarlo en Ajustes → Notificaciones.
       </div>
     </td></tr>
   </table>
 </body></html>`;
+}
+
+/** "Título — detalle" o "Título\ndetalle" → sus dos partes. Sin corte natural, todo es título. */
+function splitHead(text: string): { head: string; rest: string } {
+  const t = (text || "").trim();
+  const m = /^(.{3,70}?)\s+—\s+([\s\S]+)$/.exec(t) || /^(.{3,70})\n+([\s\S]+)$/.exec(t);
+  return m ? { head: m[1].trim(), rest: m[2].trim() } : { head: t, rest: "" };
 }
 
 function escapeHtml(s: string): string {
