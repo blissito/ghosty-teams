@@ -449,6 +449,10 @@ export const en: Record<string, string> = {
   "pantalla de inicio": "home screen",
   "paquete npm (stdio) o URL https (http)": "npm package (stdio) or https URL (http)",
   "pensando…": "thinking…",
+  "Anotando en la memoria": "Noting it down",
+  "Lo anoté en la memoria": "Noted it down",
+  "Borrando de la memoria": "Removing from memory",
+  "Lo borré de la memoria": "Removed from memory",
   "Ir al principio": "Back to top",
   // Lo que Ghosty dice mientras trabaja (rotan cada 3s). Se traducen por SENTIDO, no
   // literal: la gracia es que la espera se entienda, no calcar la frase.

@@ -825,6 +825,10 @@ const TOOL_LABELS: Record<string, { ing: string; done: string }> = {
   reminder_list: { ing: "Revisando tus recordatorios", done: "Revisé tus recordatorios" },
   reminder_update: { ing: "Ajustando el recordatorio", done: "Ajusté el recordatorio" },
   reminder_cancel: { ing: "Cancelando el recordatorio", done: "Cancelé el recordatorio" },
+  // Memoria de la conversación. Sin etiqueta propia salía como "Memory: write" (el
+  // humanizado genérico de cualquier MCP), que no dice qué pasó ni suena a esta app.
+  memory_write: { ing: "Anotando en la memoria", done: "Lo anoté en la memoria" },
+  memory_forget: { ing: "Borrando de la memoria", done: "Lo borré de la memoria" },
   artifact_create: { ing: "Redactando el documento", done: "Redacté el documento" },
   artifact_update: { ing: "Actualizando el documento", done: "Actualicé el documento" },
   // Feedback de acciones significativas (visibilidad estilo Quick): lecturas de datos,
