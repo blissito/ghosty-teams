@@ -343,8 +343,20 @@ export function stripEbFile(body: string): string {
 export function hideDanglingFence(body: string): string {
   // Fence al final SIN newline todavía: aún se está escribiendo su nombre.
   const dangling = body.match(/\n?```[a-zA-Z0-9-]*$/);
-  if (dangling && dangling.index != null) return body.slice(0, dangling.index).trimEnd();
-  return body;
+  if (!dangling || dangling.index == null) return body;
+  // ¿Éste ABRE un bloque a medio escribir, o CIERRA uno ya completo? Al final del
+  // texto los dos se ven igual, y lo decide la PARIDAD de fences: impar → éste abre y
+  // no tiene cierre (se oculta); par → éste ES el cierre, y quitarlo deja el bloque
+  // abierto para siempre.
+  //
+  // Sin esta comprobación, un reply que termina exactamente en el fence de cierre
+  // (sin salto final — el caso normal) perdía ese cierre, así que `extractEbPatches`
+  // lo leía como abierto y el bubble se quedaba en "🩹 Ajustando el artefacto…" para
+  // siempre. Lo grave no es el marcador optimista: es que un patch FALLIDO nunca
+  // llegaba a anunciarse, que es justo la disciplina de fallo VISIBLE.
+  const fences = (body.match(/(^|\n)```/g) ?? []).length;
+  if (fences % 2 === 0) return body;
+  return body.slice(0, dangling.index).trimEnd();
 }
 
 export function bubbleWithoutEbAudio(body: string): string {

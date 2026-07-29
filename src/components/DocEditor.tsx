@@ -11,6 +11,7 @@ import {
   locales as multiColumnLocales,
 } from "@blocknote/xl-multi-column";
 import { blockSignature, type DocBlock } from "../lib/doc-blocks";
+import { reconcile } from "../lib/doc-reconcile";
 
 // ── El editor de documentos de texto ──────────────────────────────────────────
 //
@@ -29,63 +30,6 @@ import { blockSignature, type DocBlock } from "../lib/doc-blocks";
 
 const schema = withMultiColumn(BlockNoteSchema.create());
 const dictionary = { ...blockNoteEn, multi_column: multiColumnLocales.en };
-
-/**
- * Deja intacto el prefijo que no cambió y reemplaza sólo la cola.
- *
- * Es el corazón anti-parpadeo. Durante el streaming el markdown se re-parsea en cada
- * tick, y `tryParseMarkdownToBlocks` acuña uuids NUEVOS cada vez: si se reemplazara
- * el documento completo, cada tick remontaría todos los bloques y el resultado es
- * parpadeo, scroll al principio y (cuando sea editable) cursor perdido. Comparando
- * por CONTENIDO — `blockSignature`, que ignora el id a propósito — el prefijo estable
- * se reconoce y se conserva, y con él sus ids.
- *
- * El markdown en streaming crece por la cola, así que en la práctica esto toca un
- * solo bloque por tick.
- */
-function reconcile(
-  editor: {
-    document: unknown;
-    replaceBlocks: (a: unknown, b: unknown) => void;
-    insertBlocks: (a: unknown, b: unknown, c: string) => void;
-    removeBlocks: (a: unknown) => void;
-  },
-  next: DocBlock[],
-): void {
-  const cur = (editor.document ?? []) as DocBlock[];
-  if (!next.length) return; // nunca vaciamos el documento por un tick raro
-
-  let i = 0;
-  const min = Math.min(cur.length, next.length);
-  while (i < min && blockSignature(cur[i]) === blockSignature(next[i])) i++;
-
-  // Idéntico: no tocar el editor. Sin esta salida, un tick sin cambios (el agente
-  // escribiendo dentro del mismo bloque, o un repaint del body) haría trabajo de DOM
-  // y movería el cursor por nada.
-  if (i === cur.length && i === next.length) return;
-
-  const tail = cur.slice(i);
-  const newTail = next.slice(i);
-  try {
-    if (!tail.length) {
-      // Sólo creció: insertar después del último bloque que sí coincidió.
-      editor.insertBlocks(newTail, cur[i - 1], "after");
-    } else if (!newTail.length) {
-      editor.removeBlocks(tail);
-    } else {
-      editor.replaceBlocks(tail, newTail);
-    }
-  } catch {
-    // Un splice inválido (bloque que ya no está, esquema inesperado) no puede dejar
-    // el documento a medias: se reemplaza todo. Cuesta un remonte, que es justo lo
-    // que este reconciliador evita en el camino normal.
-    try {
-      editor.replaceBlocks(cur, next);
-    } catch {
-      /* el editor se está desmontando */
-    }
-  }
-}
 
 export default function DocEditor({
   blocks,
