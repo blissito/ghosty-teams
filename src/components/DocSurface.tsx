@@ -135,6 +135,18 @@ export default function DocSurface({
   // corren una vez.
   const marcar = envelope?.changedIds?.length && documentId ? envelope.changedIds : undefined;
 
+  // TRAZA temporal (2026-07-29): el resaltado no sale y hay que ver dónde muere.
+  if (typeof window !== "undefined") {
+    console.log("[doc:surface]", {
+      sobre: !!envelope,
+      bloques: envelope?.blocks.length,
+      changedIds: envelope?.changedIds,
+      documentId,
+      marcar,
+      streaming,
+    });
+  }
+
   const source = envelope ? { blocks: envelope.blocks } : { markdown: slowMd };
   const vacio = envelope ? !envelope.blocks.length : !slowMd.trim();
 

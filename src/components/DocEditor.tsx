@@ -230,6 +230,8 @@ export default function DocEditor({
   // y en un documento de 75 KB eso tarda más que cualquier número que uno elija. Sin
   // reintento el querySelector no encontraba nada y fallaba en silencio.
   useEffect(() => {
+    // TRAZA temporal (2026-07-29).
+    console.log("[doc:marca] efecto", { editor: !!editor, highlightIds, yaVisto: highlightIds ? yaSenalado.has(highlightIds.join(",")) : null });
     if (!editor || !highlightIds?.length) return;
     const clave = highlightIds.join(",");
     if (yaSenalado.has(clave)) return;
@@ -258,6 +260,13 @@ export default function DocEditor({
     let t: ReturnType<typeof setTimeout>;
     const probar = () => {
       const ids = resolver();
+      if (intentos === 0)
+        console.log("[doc:marca] resueltos", {
+          ids,
+          docLen: ((editor.document ?? []) as DocBlock[]).length,
+          primeros: ((editor.document ?? []) as DocBlock[]).slice(0, 3).map((b) => b.id),
+          enDom: ids.map((i) => !!scroller.current?.querySelector(`[data-id="${CSS.escape(i)}"]`)),
+        });
       if (ids.length && marcarCambios(ids)) {
         yaSenalado.add(clave); // sólo cuando de verdad se pintó
         return;
