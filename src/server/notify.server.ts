@@ -8,7 +8,7 @@
 // (típicamente "solo si estás offline/idle"). Ese gating vivirá aquí (un solo
 // lugar), no disperso por cada feature.
 
-export type NotifyKind = "mention" | "dm" | "call" | "call-end";
+export type NotifyKind = "mention" | "dm" | "call" | "call-end" | "reminder";
 export type NotifyEvent = {
   kind: NotifyKind;
   recipients: string[]; // user subs a notificar (el emisor ya viene excluido)
@@ -17,6 +17,8 @@ export type NotifyEvent = {
   url: string;
   // Tag estable (hoy: `call:<callId>`) para poder REEMPLAZAR o RETIRAR la notificación.
   tag?: string;
+  /** El destinatario pidió correo para ESTE aviso → ignora el toggle global. */
+  forceEmail?: boolean;
 };
 
 export async function notify(ev: NotifyEvent, ns: string): Promise<void> {
@@ -94,20 +96,54 @@ async function deliverEmail(ev: NotifyEvent, ns: string): Promise<void> {
   const { sesConfigured, sendSesEmail } = await import("./ses.server");
   if (!sesConfigured()) return;
   const { isOnline } = await import("./bus.server");
-  const offline = ev.recipients.filter((sub) => !isOnline(ns, sub));
+  // Regla normal (Slack/Zulip): correo SOLO a quien está offline — si tienes la pestaña
+  // abierta ya te avisó el toast. Un correo PEDIDO se manda igual: lo pediste tú, y que
+  // llegue o no según dónde tengas el foco sería impredecible.
+  const offline = ev.forceEmail ? ev.recipients : ev.recipients.filter((sub) => !isOnline(ns, sub));
   if (!offline.length) return;
   const db = await import("../db.server");
-  const people = await db.emailsForSubs(offline);
+  // `forceEmail`: el usuario dijo QUE SÍ para ESTE aviso en concreto (p.ej. al programar
+  // un recordatorio). Es consentimiento explícito y puntual, así que se salta el toggle
+  // global — que es una preferencia por default, no una negativa expresa.
+  const people = ev.forceEmail ? await db.emailsForSubsAny(offline) : await db.emailsForSubs(offline);
   if (!people.length) return;
-  const base = process.env.PUBLIC_BASE_URL || process.env.TEAMS_ROOT_DOMAIN || "https://teams.ghosty.studio";
-  const link = ev.url.startsWith("http") ? ev.url : `${base}${ev.url}`;
-  const html = `<div style="font-family:system-ui,sans-serif;max-width:480px">
-    <h2 style="margin:0 0 8px">${escapeHtml(ev.title)}</h2>
-    <p style="color:#444;white-space:pre-wrap">${escapeHtml(ev.body)}</p>
-    <p style="margin-top:16px"><a href="${link}" style="background:#111;color:#fff;padding:10px 16px;border-radius:8px;text-decoration:none">Abrir en Ghosty Teams</a></p>
-  </div>`;
+  const html = emailHtml(ev);
   // Un envío por persona (To individual → no filtra los emails entre destinatarios).
   await Promise.allSettled(people.map((p) => sendSesEmail({ to: p.email, subject: ev.title, html })));
+}
+
+/**
+ * Plantilla de correo de Ghosty Teams. UNA sola, para menciones, DMs y recordatorios:
+ * dos correos del mismo producto que se ven distinto se leen como dos productos.
+ *
+ * Tabla y estilos EN LÍNEA a propósito — Gmail borra el `<style>` del head y Outlook no
+ * entiende flex; una tabla centrada es lo único que se ve igual en los dos.
+ */
+export function emailHtml(ev: NotifyEvent): string {
+  const base = process.env.PUBLIC_BASE_URL || process.env.TEAMS_ROOT_DOMAIN || "https://teams.ghosty.studio";
+  const link = ev.url.startsWith("http") ? ev.url : `${base}${ev.url}`;
+  const cta = ev.kind === "reminder" ? "Abrir la conversación" : "Abrir en Ghosty Teams";
+  return `<!doctype html><html><body style="margin:0;padding:24px 12px;background:#f5f5f7">
+  <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="max-width:520px;margin:0 auto;background:#fff;border:1px solid #e6e6ea;border-radius:14px">
+    <tr><td style="padding:22px 26px 0">
+      <div style="font:600 13px/1 system-ui,-apple-system,Segoe UI,sans-serif;color:#6b6b76;letter-spacing:.02em">Ghosty Teams</div>
+    </td></tr>
+    <tr><td style="padding:12px 26px 0">
+      <div style="font:600 19px/1.35 system-ui,-apple-system,Segoe UI,sans-serif;color:#16161a">${escapeHtml(ev.title)}</div>
+    </td></tr>
+    <tr><td style="padding:10px 26px 0">
+      <div style="font:400 15px/1.6 system-ui,-apple-system,Segoe UI,sans-serif;color:#3f3f46;white-space:pre-wrap">${escapeHtml(ev.body)}</div>
+    </td></tr>
+    <tr><td style="padding:22px 26px 26px">
+      <a href="${link}" style="display:inline-block;background:#16161a;color:#fff;font:600 14px/1 system-ui,-apple-system,Segoe UI,sans-serif;padding:12px 18px;border-radius:9px;text-decoration:none">${cta}</a>
+    </td></tr>
+    <tr><td style="padding:0 26px 22px">
+      <div style="border-top:1px solid #eeeef2;padding-top:14px;font:400 12px/1.5 system-ui,-apple-system,Segoe UI,sans-serif;color:#8a8a94">
+        Recibes este correo porque lo activaste en Ghosty Teams. Puedes apagarlo en Ajustes → Notificaciones.
+      </div>
+    </td></tr>
+  </table>
+</body></html>`;
 }
 
 function escapeHtml(s: string): string {

@@ -27,6 +27,8 @@ export type Reminder = {
   dueAt: number;
   repeat: Repeat | null;
   tz: string;
+  /** El usuario pidió que ADEMÁS le llegue por correo (se pregunta al programar). */
+  email: boolean;
 };
 
 export const DEFAULT_TZ = "America/Mexico_City";
@@ -118,9 +120,9 @@ const rid = () => `rm_${Date.now().toString(36)}${Math.random().toString(36).sli
 export async function createReminder(r: Omit<Reminder, "id">): Promise<Reminder> {
   const id = rid();
   await dbq(
-    `INSERT INTO gc_reminders (id, ns, owner_sub, channel_id, dm_id, topic, agent_handle, agent_name, agent_avatar, text, due_at, repeat, tz)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-    [id, await nsOf(), r.ownerSub, r.channelId, r.dmId, r.topic, r.agentHandle, r.agentName, r.agentAvatar, r.text, r.dueAt, r.repeat, r.tz]
+    `INSERT INTO gc_reminders (id, ns, owner_sub, channel_id, dm_id, topic, agent_handle, agent_name, agent_avatar, text, due_at, repeat, tz, email)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+    [id, await nsOf(), r.ownerSub, r.channelId, r.dmId, r.topic, r.agentHandle, r.agentName, r.agentAvatar, r.text, r.dueAt, r.repeat, r.tz, r.email ? 1 : 0]
   );
   return { ...r, id };
 }
@@ -163,6 +165,7 @@ function toReminder(r: Record<string, string | null>): Reminder {
     dueAt: Number(r.due_at),
     repeat: (r.repeat as Repeat | null) ?? null,
     tz: r.tz || DEFAULT_TZ,
+    email: r.email === "1",
   };
 }
 
@@ -245,10 +248,12 @@ async function deliver(ns: string, r: Reminder): Promise<void> {
   // Push/email: el recordatorio sirve justamente cuando NO tienes la pestaña abierta.
   const { notify } = await import("./notify.server");
   await notify({
-    kind: "mention",
+    kind: "reminder",
     recipients: [r.ownerSub],
     title: "⏰ Recordatorio",
-    body: r.text.length > 120 ? r.text.slice(0, 117) + "…" : r.text,
+    body: r.text,
     url: "/",
+    // Correo sólo si lo pidió para ESTE recordatorio; si no, manda su preferencia global.
+    forceEmail: r.email,
   }, ns).catch(() => {});
 }

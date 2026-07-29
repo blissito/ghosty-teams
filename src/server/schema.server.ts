@@ -421,6 +421,10 @@ async function migrate(): Promise<void> {
   await exec(`CREATE INDEX IF NOT EXISTS gc_reminders_due ON gc_reminders(fired_at, due_at)`);
   await exec(`CREATE INDEX IF NOT EXISTS gc_reminders_owner ON gc_reminders(owner_sub, due_at)`);
 
+  // ¿Además del mensaje, correo? Se pregunta AL PROGRAMAR y se guarda por recordatorio:
+  // querer un correo por el pago de la tarjeta no significa quererlo por todo.
+  await addColumn("gc_reminders", "email", "INTEGER NOT NULL DEFAULT 0");
+
   // Zona horaria del usuario, capturada del navegador. Sin esto "mañana a las 9" es
   // ambiguo: todo el tiempo se guarda en epoch UTC y el server no sabe en qué reloj
   // vive quien pide el recordatorio.

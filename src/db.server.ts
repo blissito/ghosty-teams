@@ -1204,6 +1204,19 @@ export async function emailsForSubs(subs: string[]): Promise<{ sub: string; emai
   return rows.map((r) => ({ sub: r.sub!, email: r.email!, name: r.name ?? "" })).filter((r) => r.email.includes("@"));
 }
 
+/**
+ * Correos SIN mirar el toggle global — para avisos que el usuario pidió explícitamente
+ * (un recordatorio con "sí, mándamelo también por correo"). El toggle es una preferencia
+ * por default; un "sí" puntual es más específico que ella. Lo que NO se salta: baneados
+ * ni filas sin correo.
+ */
+export async function emailsForSubsAny(subs: string[]): Promise<{ sub: string; email: string; name: string }[]> {
+  if (!subs.length) return [];
+  const ph = subs.map(() => "?").join(",");
+  const rows = await dbq(`SELECT sub, email, name FROM gc_users WHERE sub IN (${ph}) AND email IS NOT NULL AND COALESCE(banned,0)=0`, subs);
+  return rows.map((r) => ({ sub: r.sub!, email: r.email!, name: r.name ?? "" })).filter((r) => r.email.includes("@"));
+}
+
 // Preferencia de correo del usuario (para el toggle). Default OFF (opt-in).
 export async function getEmailNotifs(sub: string): Promise<boolean> {
   const rows = await dbq("SELECT COALESCE(email_notifs,0) AS en FROM gc_users WHERE sub=?", [sub]);

@@ -30,6 +30,7 @@ export function nativeTools(dest: ToolDest | null): ConnectorTool[] {
           text: { type: "string", description: "Qué recordar, en las palabras del usuario" },
           when: { type: "string", description: "Fecha y hora local: YYYY-MM-DDTHH:mm (sin hora → 09:00)" },
           repeat: { type: "string", enum: [...REPEATS], description: "Repetición; omítelo si es una sola vez" },
+          email: { type: "boolean", description: "true si además quiere el aviso por correo. PREGÚNTASELO antes de programar; si no contesta, false" },
         },
         required: ["text", "when"],
       },
@@ -59,8 +60,9 @@ export function nativeTools(dest: ToolDest | null): ConnectorTool[] {
           dueAt,
           repeat,
           tz,
+          email: args.email === true,
         });
-        return { ok: true, id: r.id, when: rem.humanDate(dueAt, tz), tz, repeat };
+        return { ok: true, id: r.id, when: rem.humanDate(dueAt, tz), tz, repeat, email: args.email === true };
       },
     },
     {
@@ -72,7 +74,7 @@ export function nativeTools(dest: ToolDest | null): ConnectorTool[] {
         const list = await rem.listReminders(sub);
         return {
           ok: true,
-          reminders: list.map((r) => ({ id: r.id, text: r.text, when: rem.humanDate(r.dueAt, r.tz), repeat: r.repeat })),
+          reminders: list.map((r) => ({ id: r.id, text: r.text, when: rem.humanDate(r.dueAt, r.tz), repeat: r.repeat, email: r.email })),
         };
       },
     },
