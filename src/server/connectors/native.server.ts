@@ -79,6 +79,41 @@ export function nativeTools(dest: ToolDest | null): ConnectorTool[] {
       },
     },
     {
+      name: "reminder_update",
+      description:
+        "Edita un recordatorio pendiente (sácale el id con reminder_list). Manda SÓLO lo que cambia: " +
+        "activarle el correo no debe moverle la fecha. Úsalo en vez de cancelar y recrear.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          id: { type: "string", description: "id del recordatorio" },
+          text: { type: "string", description: "nuevo texto" },
+          when: { type: "string", description: "nueva fecha y hora local YYYY-MM-DDTHH:mm" },
+          repeat: { type: "string", enum: [...REPEATS, "none"], description: "'none' quita la repetición" },
+          email: { type: "boolean", description: "true = además por correo; false = sólo en el chat" },
+        },
+        required: ["id"],
+      },
+      handler: async (sub, args) => {
+        const rem = await import("../reminders.server");
+        const tz = await tzOf(sub);
+        const patch: { text?: string; dueAt?: number; repeat?: (typeof REPEATS)[number] | null; email?: boolean } = {};
+        if (typeof args.text === "string" && args.text.trim()) patch.text = args.text.trim();
+        if (typeof args.when === "string" && args.when) {
+          const due = rem.parseLocal(args.when, tz);
+          if (!due) return { ok: false, error: "fecha no entendida; usa YYYY-MM-DDTHH:mm" };
+          if (due * 1000 < Date.now() - 60_000) return { ok: false, error: `esa fecha ya pasó (${rem.humanDate(due, tz)})` };
+          patch.dueAt = due;
+        }
+        if (args.repeat === "none") patch.repeat = null;
+        else if (REPEATS.includes(args.repeat as never)) patch.repeat = args.repeat as (typeof REPEATS)[number];
+        if (typeof args.email === "boolean") patch.email = args.email;
+        const r = await rem.updateReminder(sub, String(args.id ?? ""), patch);
+        if (!r) return { ok: false, error: "no existe, ya disparó, no es tuyo, o no mandaste ningún cambio" };
+        return { ok: true, id: r.id, text: r.text, when: rem.humanDate(r.dueAt, r.tz), repeat: r.repeat, email: r.email };
+      },
+    },
+    {
       name: "reminder_cancel",
       description: "Cancela un recordatorio pendiente por su id (sácalo de reminder_list).",
       inputSchema: {

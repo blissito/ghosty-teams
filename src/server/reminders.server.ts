@@ -151,6 +151,32 @@ export async function cancelReminder(ownerSub: string, id: string): Promise<bool
   return rows.length > 0;
 }
 
+/**
+ * Edita un recordatorio pendiente. Sólo los campos que llegan — pedir "que además me
+ * llegue por correo" no puede moverle la fecha de rebote.
+ * El owner_sub en el WHERE es el control de acceso, igual que en cancelReminder.
+ */
+export async function updateReminder(
+  ownerSub: string,
+  id: string,
+  patch: { text?: string; dueAt?: number; repeat?: Repeat | null; email?: boolean }
+): Promise<Reminder | null> {
+  const sets: string[] = [];
+  const vals: (string | number | null)[] = [];
+  if (patch.text !== undefined) { sets.push("text=?"); vals.push(patch.text); }
+  if (patch.dueAt !== undefined) { sets.push("due_at=?"); vals.push(patch.dueAt); }
+  if (patch.repeat !== undefined) { sets.push("repeat=?"); vals.push(patch.repeat); }
+  if (patch.email !== undefined) { sets.push("email=?"); vals.push(patch.email ? 1 : 0); }
+  if (!sets.length) return null;
+  vals.push(id, ownerSub);
+  const rows = await dbq(
+    `UPDATE gc_reminders SET ${sets.join(", ")}
+     WHERE id=? AND owner_sub=? AND fired_at IS NULL AND canceled_at IS NULL RETURNING *`,
+    vals
+  );
+  return rows.length ? toReminder(rows[0]) : null;
+}
+
 function toReminder(r: Record<string, string | null>): Reminder {
   return {
     id: r.id!,

@@ -126,7 +126,10 @@ export function emailHtml(ev: NotifyEvent): string {
   return `<!doctype html><html><body style="margin:0;padding:24px 12px;background:#f5f5f7">
   <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="max-width:520px;margin:0 auto;background:#fff;border:1px solid #e6e6ea;border-radius:14px">
     <tr><td style="padding:22px 26px 0">
-      <div style="font:600 13px/1 system-ui,-apple-system,Segoe UI,sans-serif;color:#6b6b76;letter-spacing:.02em">Ghosty Teams</div>
+      <table role="presentation" cellpadding="0" cellspacing="0"><tr>
+        <td style="padding-right:9px"><img src="${base}/ghosty-192.png" width="26" height="26" alt="" style="display:block;border:0;border-radius:7px"></td>
+        <td style="font:600 13px/1 system-ui,-apple-system,Segoe UI,sans-serif;color:#6b6b76;letter-spacing:.02em">Ghosty Teams</td>
+      </tr></table>
     </td></tr>
     <tr><td style="padding:12px 26px 0">
       <div style="font:600 19px/1.35 system-ui,-apple-system,Segoe UI,sans-serif;color:#16161a">${escapeHtml(ev.title)}</div>
