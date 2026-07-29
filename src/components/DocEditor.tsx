@@ -30,6 +30,18 @@ import { reconcile } from "../lib/doc-reconcile";
 // Se carga LAZY desde DocSurface: BlockNote + Mantine son pesados y no deben entrar
 // al bundle inicial del chat.
 
+/**
+ * Versiones cuyo cambio YA se señaló en esta pestaña.
+ *
+ * `changedIds` viaja persistido en el sobre, así que sin esto el documento se resaltaría
+ * cada vez que lo abres, incluso una semana después. La marca dice "esto acaba de
+ * cambiar", no se queda puesta.
+ *
+ * Vive en el módulo y se consulta DENTRO del efecto, nunca en el render: un render se
+ * puede descartar (Suspense) y repetir, y marcar ahí se come el resaltado.
+ */
+const yaSenalado = new Set<string>();
+
 const schema = withMultiColumn(BlockNoteSchema.create());
 const dictionary = { ...blockNoteEn, multi_column: multiColumnLocales.en };
 
@@ -109,13 +121,14 @@ export default function DocEditor({
    * propiedad del bloque: así no entra en la verdad que se persiste ni puede aparecer en
    * el .docx que se descarga. Efímero por construcción, no por acordarse de limpiarlo.
    */
-  const marcarCambios = useCallback((ids: string[]) => {
+  const marcarCambios = useCallback((ids: string[]): boolean => {
     const cont = scroller.current;
-    if (!cont || !ids.length) return;
+    if (!cont || !ids.length) return false;
     const nodos = ids
       .map((id) => cont.querySelector<HTMLElement>(`[data-id="${CSS.escape(id)}"]`))
       .filter((n): n is HTMLElement => !!n);
-    if (!nodos.length) return;
+    // Todavía no están pintados: el llamador reintenta.
+    if (!nodos.length) return false;
 
     // Al primero se va la vista; centrado, que en un documento largo es lo único que
     // deja ver el cambio EN SU CONTEXTO (con `nearest` queda pegado a un borde).
@@ -135,8 +148,8 @@ export default function DocEditor({
       void n.offsetWidth;
       n.classList.add("gt-cambio");
     }
-    const t = setTimeout(() => nodos.forEach((n) => n.classList.remove("gt-cambio")), 3000);
-    return () => clearTimeout(t);
+    setTimeout(() => nodos.forEach((n) => n.classList.remove("gt-cambio")), 3000);
+    return true;
   }, []);
 
   const irAlFondo = useCallback(() => {
@@ -211,11 +224,25 @@ export default function DocEditor({
   }, [editor, blocks, markdown, streaming]);
 
   // Señalar lo que cambió al ABRIR. El editor monta con su documento ya puesto, así que
-  // no hay diff que hacer: los ids vienen dados. Se espera un frame a que BlockNote pinte
-  // sus nodos — antes de eso el `querySelector` por data-id no encuentra nada.
+  // no hay diff que hacer: los ids vienen dados.
+  //
+  // Se REINTENTA en vez de esperar un plazo fijo: BlockNote pinta sus nodos cuando puede,
+  // y en un documento de 75 KB eso tarda más que cualquier número que uno elija. Sin
+  // reintento el querySelector no encontraba nada y fallaba en silencio.
   useEffect(() => {
     if (!editor || !highlightIds?.length) return;
-    const t = setTimeout(() => marcarCambios(highlightIds), 80);
+    const clave = highlightIds.join(",");
+    if (yaSenalado.has(clave)) return;
+    let intentos = 0;
+    let t: ReturnType<typeof setTimeout>;
+    const probar = () => {
+      if (marcarCambios(highlightIds)) {
+        yaSenalado.add(clave); // sólo cuando de verdad se pintó
+        return;
+      }
+      if (++intentos < 20) t = setTimeout(probar, 100); // hasta ~2s
+    };
+    t = setTimeout(probar, 60);
     return () => clearTimeout(t);
   }, [editor, highlightIds, marcarCambios]);
 
