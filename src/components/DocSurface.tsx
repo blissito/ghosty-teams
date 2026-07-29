@@ -90,14 +90,28 @@ export default function DocSurface({
   const lastSaved = useRef(0);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Estado del guardado, para que se VEA. Escribir en un documento y no recibir ninguna
+  // señal deja la duda de si se guardó — y la respuesta "se guarda solo" hay que
+  // demostrarla, no prometerla.
+  const [guardado, setGuardado] = useState<"guardando" | "ok" | "error" | null>(null);
+
   const flush = useCallback(() => {
     const blocks = pending.current;
     if (!blocks || !documentId) return;
     pending.current = null;
     lastSaved.current = Date.now();
-    updateDocBlocksFn({ data: { documentId, blocks, messageId, title } }).catch((e) =>
-      console.error("[doc] no se pudo guardar", e),
-    );
+    setGuardado("guardando");
+    updateDocBlocksFn({ data: { documentId, blocks, messageId, title } })
+      .then(() => {
+        setGuardado("ok");
+        // Se va solo: un "Guardado" permanente deja de comunicar a los diez segundos.
+        setTimeout(() => setGuardado((s) => (s === "ok" ? null : s)), 2600);
+      })
+      .catch((e) => {
+        console.error("[doc] no se pudo guardar", e);
+        // El error NO se desvanece: perder texto en silencio es lo peor que puede pasar.
+        setGuardado("error");
+      });
   }, [documentId, messageId, title]);
 
   const onChange = useCallback(
@@ -164,6 +178,7 @@ export default function DocSurface({
         onChange={onChange}
         highlightIds={marcar}
         patchRefs={patchRefs}
+        guardado={guardado}
       />
     </Suspense>
   );

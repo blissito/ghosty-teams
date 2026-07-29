@@ -1,7 +1,7 @@
 import "@blocknote/core/fonts/inter.css";
 import "@blocknote/mantine/style.css";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ArrowDown } from "lucide-react";
+import { ArrowDown, Check, Loader2, TriangleAlert } from "lucide-react";
 import { BlockNoteView } from "@blocknote/mantine";
 import { useT } from "../i18n";
 import { useCreateBlockNote } from "@blocknote/react";
@@ -66,6 +66,40 @@ function contenedorQueScrollea(desde: HTMLElement | null): HTMLElement | null {
   return null;
 }
 
+/**
+ * Ejecuta `fn` cuando la persona esté MIRANDO: pestaña visible y ventana enfocada.
+ *
+ * Sin esto la animación se gasta en el vacío. El turno del agente tarda, y lo normal es
+ * irse a otra cosa mientras trabaja: al volver, el marcatextos ya se desvaneció y el
+ * cambio quedó igual de invisible que si no lo hubiéramos señalado. Y es justo cuando más
+ * falta hace, porque vuelves sin saber qué tocó.
+ *
+ * `hasFocus()` además de `visibilityState`: una ventana puede estar visible en un segundo
+ * monitor con el foco en otra app. Devuelve una función para dejar de esperar (el editor
+ * puede desmontarse antes de que vuelvas).
+ */
+function cuandoMire(fn: () => void): () => void {
+  const mirando = () => document.visibilityState === "visible" && document.hasFocus();
+  if (mirando()) {
+    fn();
+    return () => {};
+  }
+  const quitar = () => {
+    document.removeEventListener("visibilitychange", alVolver);
+    window.removeEventListener("focus", alVolver);
+  };
+  function alVolver() {
+    if (!mirando()) return;
+    quitar();
+    // Un frame de gracia: al volver de otra app el compositor todavía está pintando, y una
+    // animación que arranca en ese momento se ve a tirones.
+    requestAnimationFrame(() => requestAnimationFrame(fn));
+  }
+  document.addEventListener("visibilitychange", alVolver);
+  window.addEventListener("focus", alVolver);
+  return quitar;
+}
+
 const schema = withMultiColumn(BlockNoteSchema.create());
 const dictionary = { ...blockNoteEn, multi_column: multiColumnLocales.en };
 
@@ -77,6 +111,7 @@ export default function DocEditor({
   onChange,
   highlightIds,
   patchRefs,
+  guardado,
 }: {
   /** La verdad, ya en bloques (documento publicado con sobre `v:1`). */
   blocks?: DocBlock[];
@@ -104,6 +139,8 @@ export default function DocEditor({
    * de la edición en vez de reconstruirlo después.
    */
   patchRefs?: string[];
+  /** Estado del autoguardado, para mostrarlo. */
+  guardado?: "guardando" | "ok" | "error" | null;
 }) {
   const t = useT();
   const editor = useCreateBlockNote({
@@ -143,17 +180,37 @@ export default function DocEditor({
   // se quedaba en true para siempre — de ahí que el botón de "ir al final" tampoco
   // apareciera jamás.
   useEffect(() => {
-    const el = caja();
-    if (!el) return;
-    const on = () => {
-      const v = alFinal(el);
-      pegado.current = v;
-      setAlFondo((prev) => (prev === v ? prev : v));
+    let el: HTMLElement | null = null;
+    let on: (() => void) | null = null;
+    let t: ReturnType<typeof setTimeout>;
+    let intentos = 0;
+
+    // Se REINTENTA porque al montar el documento todavía no está pintado: sin contenido no
+    // hay desbordamiento, `contenedorQueScrollea` devuelve null y el listener acababa en
+    // nuestro div — que nunca scrollea, así que `alFondo` se quedaba en true para siempre y
+    // el botón de "ir al final" no aparecía nunca. Con 100 bloques eso tarda.
+    const enganchar = () => {
+      const box = contenedorQueScrollea(scroller.current);
+      if (!box) {
+        if (++intentos < 60) t = setTimeout(enganchar, 100); // ~6s
+        return;
+      }
+      el = box;
+      on = () => {
+        const v = alFinal(box);
+        pegado.current = v;
+        setAlFondo((prev) => (prev === v ? prev : v));
+      };
+      box.addEventListener("scroll", on, { passive: true });
+      on();
     };
-    el.addEventListener("scroll", on, { passive: true });
-    on();
-    return () => el.removeEventListener("scroll", on);
-  }, [caja, editor]);
+    enganchar();
+
+    return () => {
+      clearTimeout(t);
+      if (el && on) el.removeEventListener("scroll", on);
+    };
+  }, [caja, editor, blocks, markdown]);
 
   /**
    * Marca bloques por POSICIÓN, dibujando la señal ENCIMA con elementos propios.
@@ -237,7 +294,7 @@ export default function DocEditor({
     [editor, limpiarMarca],
   );
 
-  useEffect(() => limpiarMarca, [limpiarMarca]);
+  useEffect(() => () => { esperando.current?.(); limpiarMarca(); }, [limpiarMarca]);
 
   const irAlFondo = useCallback(() => {
     const el = caja();
@@ -308,25 +365,36 @@ export default function DocEditor({
    */
   const marca = useRef<{ indices: number[]; hasta: number } | null>(null);
 
+  /** Cancela una espera de visibilidad pendiente (si el editor se desmonta antes). */
+  const esperando = useRef<(() => void) | null>(null);
+
   const señalar = useCallback(
     (indices: number[], ms = 9000) => {
       if (!indices.length) return;
-      marca.current = { indices, hasta: Date.now() + ms };
-      // Reintenta hasta que los nodos estén pintados: BlockNote tarda lo que tarda con
-      // 100 bloques, y un plazo fijo es una apuesta.
-      let n = 0;
-      const probar = () => {
-        if (marcarIndices(indices, n === 0) || ++n > 40) return;
-        setTimeout(probar, 60);
-      };
-      probar();
-      setTimeout(() => {
-        if (!marca.current || marca.current.indices !== indices) return;
-        marca.current = null;
-        // Desvanecido y fuera. La capa es nuestra, así que basta con marcarla.
-        capa.current?.querySelectorAll(".gt-cambio").forEach((d) => d.classList.add("gt-cambio-fin"));
-        setTimeout(limpiarMarca, 700);
-      }, ms);
+      marca.current = { indices, hasta: Number.POSITIVE_INFINITY };
+      esperando.current?.();
+
+      // La marca se pinta y el reloj del desvanecido arranca cuando la persona MIRA, no
+      // cuando el patch llega. Si está en otra app, esto queda esperando su vuelta.
+      esperando.current = cuandoMire(() => {
+        esperando.current = null;
+        marca.current = { indices, hasta: Date.now() + ms };
+        // Reintenta hasta que los nodos estén pintados: BlockNote tarda lo que tarda con
+        // 100 bloques, y un plazo fijo es una apuesta.
+        let n = 0;
+        const probar = () => {
+          if (marcarIndices(indices, n === 0) || ++n > 40) return;
+          setTimeout(probar, 60);
+        };
+        probar();
+        setTimeout(() => {
+          if (!marca.current || marca.current.indices !== indices) return;
+          marca.current = null;
+          // Desvanecido y fuera. La capa es nuestra, así que basta con marcarla.
+          capa.current?.querySelectorAll(".gt-cambio").forEach((d) => d.classList.add("gt-cambio-fin"));
+          setTimeout(limpiarMarca, 700);
+        }, ms);
+      });
     },
     [marcarIndices, limpiarMarca],
   );
@@ -410,6 +478,36 @@ export default function DocEditor({
           </article>
         </div>
       </div>
+
+      {/* Autoguardado, abajo a la izquierda: discreto pero presente. El error NO se
+          desvanece (lo quita el siguiente guardado bueno) — perder texto en silencio es
+          lo peor que puede pasarle a un documento. */}
+      {guardado ? (
+        <div
+          className={`pointer-events-none absolute bottom-5 left-5 z-10 inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium shadow-sm backdrop-blur transition ${
+            guardado === "error"
+              ? "border-red-500/40 bg-red-500/15 text-red-300"
+              : "border-border bg-surface/95 text-muted"
+          }`}
+        >
+          {guardado === "guardando" ? (
+            <>
+              <Loader2 size={12} className="animate-spin" />
+              {t("Guardando…")}
+            </>
+          ) : guardado === "ok" ? (
+            <>
+              <Check size={12} className="text-emerald-500" />
+              {t("Guardado")}
+            </>
+          ) : (
+            <>
+              <TriangleAlert size={12} />
+              {t("No se pudo guardar")}
+            </>
+          )}
+        </div>
+      ) : null}
 
       {/* Ir al final. Sólo cuando NO estás abajo — si no, es un botón que no hace nada
           tapando el documento. Mientras el agente escribe además avisa de que sigue

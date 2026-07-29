@@ -1043,7 +1043,10 @@ export default function ArtifactPanel({
                     {artifact.kind === "doc" ? (
                       <button
                         type="button"
-                        onClick={() => window.print()}
+                        onClick={async () => {
+                          const { imprimirDocumento } = await import("../lib/doc-print");
+                          imprimirDocumento();
+                        }}
                         title={t("Imprimir o guardar como PDF")}
                         className="grid size-7 place-items-center rounded-md text-muted transition hover:bg-surface-3 hover:text-brand"
                       >

@@ -366,44 +366,32 @@ body {
 }
 
 /* ── Imprimir un documento ──────────────────────────────────────────────────
-   Con esto el botón Imprimir cubre TAMBIÉN "Guardar como PDF": el diálogo del
-   navegador ya ofrece las dos cosas, así que un solo botón resuelve ambas y no hace
-   falta un endpoint de PDF en el servidor.
+   El botón mete una COPIA de la hoja en `#gt-print-root`, colgada del <body> (ver
+   `lib/doc-print.ts`), y aquí sólo se decide qué se imprime.
 
-   Se oculta TODO con `visibility` y se reexpone sólo la hoja, que luego se saca del
-   flujo con `position:absolute`. Es el patrón que no depende de la profundidad del DOM
-   — y aquí eso importa: el documento vive dentro de un panel con overflow, a varios
-   niveles del body. `display:none` en los ancestros no serviría (se llevaría al hijo
-   también), y ocultar por lista (sidebar, topbar, composer…) se rompe en cuanto
-   alguien agrega un elemento nuevo a la interfaz. */
+   Por qué una copia y no el nodo real: el documento vive dentro del panel, entre
+   contenedores con `overflow` y anchos fijos. Sacarlo con `position:absolute` no
+   funciona —un elemento absoluto NO PAGINA, sólo sale la primera hoja y el texto se
+   corta— y esconder lo demás con `visibility` lo deja igual de recortado dentro de
+   sus ancestros. Colgando de <body> no hereda ancho ni recorte, y al ser estático
+   pagina solo. */
 @media print {
-  body * { visibility: hidden !important; }
-  .gt-doc, .gt-doc * { visibility: visible !important; }
-  .gt-doc {
-    position: absolute !important;
-    left: 0 !important;
-    top: 0 !important;
-    width: 100% !important;
-    height: auto !important;
-    max-height: none !important;
-    overflow: visible !important;
-    padding: 0 !important;
-    background: #fff !important;
+  body > *:not(#gt-print-root) { display: none !important; }
+  #gt-print-root { display: block; }
+  #gt-print-root article {
+    /* En papel la "hoja" de pantalla estorba: el papel YA es la hoja. */
+    box-shadow: none;
+    border-radius: 0;
+    background: #fff;
+    color: #000;
+    max-width: none;
+    min-height: 0;
+    margin: 0;
+    padding: 0;
   }
-  /* La "hoja" en pantalla lleva sombra, ancho fijo y esquinas; en papel eso estorba —
-     el papel YA es la hoja. */
-  .gt-doc article {
-    box-shadow: none !important;
-    border-radius: 0 !important;
-    min-height: 0 !important;
-    padding: 0 !important;
-    max-width: none !important;
-  }
-  .gt-cambio { outline: none; background: transparent; }
-  /* Los adornos del editor (drag handles, botón de +, menús) no son el documento. */
-  .gt-doc .bn-side-menu,
-  .gt-doc .bn-formatting-toolbar,
-  .gt-doc .bn-slash-menu { display: none !important; }
+  /* Que una cláusula no se parta entre dos hojas si se puede evitar. */
+  #gt-print-root h1, #gt-print-root h2, #gt-print-root h3 { break-after: avoid; }
+  #gt-print-root p, #gt-print-root li, #gt-print-root tr { break-inside: avoid; }
   @page { margin: 2cm; }
 }
 
