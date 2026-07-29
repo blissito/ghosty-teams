@@ -33,6 +33,13 @@ export async function ensureSchema(): Promise<void> {
           const { armReminders } = await import("./reminders.server");
           armReminders(ns);
         } catch { /* el tick es best-effort: no puede tumbar las migraciones */ }
+        // Barrido de cáscaras huérfanas: un reinicio se lleva los turnos en vuelo (el
+        // registro es en memoria) y deja sus burbujas en "pensando…" para siempre. Aquí
+        // es el "arranque" de este tenant, así que aquí se limpian.
+        try {
+          const { sweepOrphans } = await import("./turns.server");
+          await sweepOrphans();
+        } catch { /* limpieza best-effort */ }
       })
       .catch((e) => {
         done.delete(ns); // no cachear el fallo → reintenta en el próximo request

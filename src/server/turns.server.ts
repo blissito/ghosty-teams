@@ -128,3 +128,42 @@ export function interruptOwnTurns(groupId: string, invokerSub?: string | null): 
   }
   return n;
 }
+
+/**
+ * Cierra las cáscaras HUÉRFANAS de este namespace. Se llama una vez por tenant al
+ * levantar el proceso (desde `ensureSchema`, que es donde sabemos que su tabla existe).
+ *
+ * El registro de turnos vive en memoria a propósito, así que un reinicio del server se
+ * lleva sus turnos y deja sus burbujas en "pensando…" **para siempre**: el cliente espera
+ * un `message:body` que ya nunca va a llegar. Detener una a mano ya funcionaba
+ * (`stopTurnFn` cierra una cáscara vacía sin turno vivo), pero eso obliga a la persona a
+ * limpiar el desorden de un deploy — y a adivinar que hay que hacerlo, porque la burbuja
+ * se ve igual que un turno que sí está trabajando.
+ *
+ * Un turno no sobrevive al proceso, así que al arrancar NADA está en vuelo y toda cáscara
+ * vacía es basura. El margen de 60s es contra la carrera del arranque: si alguien postea
+ * justo mientras esto corre, su turno legítimo no se toca.
+ */
+export async function sweepOrphans(): Promise<number> {
+  try {
+    const { dbq } = await import("../dbq.server");
+    // `agent_handle IS NOT NULL` = la cáscara la creó un turno de agente. Un mensaje de
+    // persona con body vacío no existe (postMessage lo rechaza), pero acotarlo igual
+    // evita tocar cualquier otra fila que algún día nazca vacía.
+    const rows = await dbq(
+      `UPDATE gc_messages SET body = ?
+         WHERE agent_handle IS NOT NULL
+           AND (body IS NULL OR trim(body) = '')
+           AND created_at < unixepoch() - 60
+       RETURNING id`,
+      ["⏹ Detenido (el servidor se reinició)."],
+    );
+    const n = rows.length;
+    if (n) console.log(`[turns] barrido de arranque: ${n} cáscara(s) huérfana(s) cerrada(s)`);
+    return n;
+  } catch (e) {
+    // Best-effort: esto es limpieza, no puede tumbar el arranque de un tenant.
+    console.error("[turns] sweepOrphans falló", e);
+    return 0;
+  }
+}
