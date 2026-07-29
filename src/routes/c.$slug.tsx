@@ -6872,6 +6872,44 @@ function CallCard({ data }: { data: CallCardData }) {
  * El reloj corre en el cliente: un turno que escribe un artefacto pasa minutos sin emitir
  * un solo evento, y sin ver el tiempo eso es indistinguible de un cuelgue (nos pasó hoy).
  */
+
+/**
+ * Lo que Ghosty dice mientras trabaja, rotando cada 3s.
+ *
+ * Un "pensando…" fijo durante dos minutos se lee como un cuelgue, y en un turno que sólo
+ * edita no corre ninguna tool, así que no hay checklist que mirar: la línea es todo lo que
+ * hay. Las frases DICEN algo (leer, ordenar, revisar) en vez de ser palabras sueltas de
+ * relleno, porque el objetivo es que la espera se entienda, no que sea graciosa.
+ *
+ * Y cambian según cuánto lleva: pasado el medio minuto, lo que tranquiliza no es otra
+ * frase bonita sino que te diga que sigue ahí.
+ */
+const FRASES_TRABAJANDO = [
+  "leyendo con calma…",
+  "atando cabos…",
+  "ordenando las ideas…",
+  "buscando la palabra justa…",
+  "hilando el argumento…",
+  "midiendo cada palabra…",
+  "revisando dos veces…",
+  "poniendo cada cosa en su sitio…",
+  "consultando mis notas…",
+  "afinando la redacción…",
+];
+
+const FRASES_LARGAS = [
+  "sigo aquí, esto lleva su rato…",
+  "no lo dejo a medias, dame un momento…",
+  "es un documento largo; voy con cuidado…",
+  "casi, no quiero equivocarme…",
+  "prefiero tardar y que salga bien…",
+];
+
+/** Frase estable para (mensaje, segundos): sin timers propios y sin dos burbujas al unísono. */
+function fraseTrabajando(id: number, secs: number): string {
+  const lista = secs >= 35 ? FRASES_LARGAS : FRASES_TRABAJANDO;
+  return lista[(id + Math.floor(secs / 3)) % lista.length];
+}
 function AgentPending({ id }: { id: number }) {
   const t = useT();
   const { turns, stopTurn } = useContext(ChatCtx);
@@ -6891,7 +6929,7 @@ function AgentPending({ id }: { id: number }) {
       <span className="italic">
         {queued
           ? t("en espera · {n}º de la fila").replace("{n}", String(info!.position))
-          : t("pensando…")}
+          : t(fraseTrabajando(id, secs))}
       </span>
       {info ? <span className="tabular-nums opacity-60">{elapsed}</span> : null}
       {info ? (
