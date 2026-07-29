@@ -330,13 +330,17 @@ body {
    El `box-shadow` con el mismo color ensancha la marca más allá de la caja del
    texto — es lo que le da el trazo de plumón en vez de un rectángulo pegado. */
 @keyframes gt-marca {
-  0%   { background-color: #fde68a; box-shadow: 0 0 0 5px #fde68a; }
-  65%  { background-color: #fef3c7; box-shadow: 0 0 0 5px #fef3c7; }
-  100% { background-color: transparent; box-shadow: 0 0 0 5px transparent; }
+  0%   { background-color: #fde68a; box-shadow: 0 0 0 5px #fde68a, inset 0 0 0 9999px #fde68a; }
+  65%  { background-color: #fef3c7; box-shadow: 0 0 0 5px #fef3c7, inset 0 0 0 9999px #fef3c7; }
+  100% { background-color: transparent; box-shadow: 0 0 0 5px transparent, inset 0 0 0 9999px transparent; }
 }
-.gt-doc .gt-cambio {
-  border-radius: 3px;
-  animation: gt-marca 3s ease-out forwards;
+/* Sin `.gt-doc` delante y con `!important`: la clase se pone sobre nodos que BlockNote
+   estila con sus propias reglas, y una pelea de especificidad aquí sale cara en tiempo
+   de depuración. El `inset` gigante pinta por DENTRO — un hijo con fondo propio tapaba
+   el `background-color` del contenedor y el amarillo se quedaba debajo, invisible. */
+.gt-cambio {
+  border-radius: 3px !important;
+  animation: gt-marca 3s ease-out forwards !important;
 }
 /* Sin animación: la marca igual aparece y se va, sólo que sin transición. Quitarla
    del todo dejaría a quien pide menos movimiento sin saber qué cambió. */

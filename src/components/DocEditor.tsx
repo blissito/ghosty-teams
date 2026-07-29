@@ -124,17 +124,28 @@ export default function DocEditor({
   const marcarCambios = useCallback((ids: string[]): boolean => {
     const cont = scroller.current;
     if (!cont || !ids.length) return false;
+
+    // `data-id` aparece en DOS divs anidados de BlockNote (`bn-block-outer` y
+    // `bn-block`). Se marca el de CONTENIDO cuando existe: el de fuera es un
+    // envoltorio de layout y sus hijos le pintan su propio fondo encima, así que el
+    // color se quedaba debajo, invisible.
     const nodos = ids
-      .map((id) => cont.querySelector<HTMLElement>(`[data-id="${CSS.escape(id)}"]`))
+      .map((id) => {
+        const outer = cont.querySelector<HTMLElement>(`[data-id="${CSS.escape(id)}"]`);
+        return outer?.querySelector<HTMLElement>(".bn-block-content") ?? outer;
+      })
       .filter((n): n is HTMLElement => !!n);
-    // Todavía no están pintados: el llamador reintenta.
     if (!nodos.length) return false;
 
-    // Al primero se va la vista; centrado, que en un documento largo es lo único que
-    // deja ver el cambio EN SU CONTEXTO (con `nearest` queda pegado a un borde).
-    nodos[0].scrollIntoView({
+    // Scroll a mano en vez de `scrollIntoView`. El editor vive dentro de un panel con
+    // varios contenedores anidados, y scrollIntoView elige el ancestro scrollable que
+    // quiere — movía otro y aquí no pasaba nada. Sabemos cuál es el nuestro.
+    const rect = nodos[0].getBoundingClientRect();
+    const base = cont.getBoundingClientRect();
+    const destino = cont.scrollTop + (rect.top - base.top) - cont.clientHeight / 2 + rect.height / 2;
+    cont.scrollTo({
+      top: Math.max(0, destino),
       behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
-      block: "center",
     });
     // Tras mover la vista a mitad del documento ya no estamos abajo: si no se apunta,
     // el siguiente tick del autoscroll arrastraría de vuelta al final.
@@ -148,6 +159,14 @@ export default function DocEditor({
       void n.offsetWidth;
       n.classList.add("gt-cambio");
     }
+    console.log("[doc:marca] pintado", {
+      n: nodos.length,
+      clase: nodos[0].className,
+      alto: Math.round(rect.height),
+      destino: Math.round(destino),
+      scrollTop: Math.round(cont.scrollTop),
+      scrollHeight: cont.scrollHeight,
+    });
     setTimeout(() => nodos.forEach((n) => n.classList.remove("gt-cambio")), 3000);
     return true;
   }, []);
