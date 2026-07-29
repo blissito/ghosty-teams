@@ -1,7 +1,7 @@
 import "@blocknote/core/fonts/inter.css";
 import "@blocknote/mantine/style.css";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ArrowDown, Check, Loader2, Pencil, TriangleAlert } from "lucide-react";
+import { ArrowDown, ArrowUp, Check, Loader2, Pencil, TriangleAlert } from "lucide-react";
 import { BlockNoteView } from "@blocknote/mantine";
 import { useT } from "../i18n";
 import { useCreateBlockNote } from "@blocknote/react";
@@ -166,6 +166,7 @@ export default function DocEditor({
   // porque leer el state dentro del efecto lo ataría a su closure.
   const pegado = useRef(true);
   const [alFondo, setAlFondo] = useState(true);
+  const [alTope, setAlTope] = useState(true);
   /**
    * Posición del botón "ir al final", en coordenadas de pantalla.
    *
@@ -178,6 +179,7 @@ export default function DocEditor({
   const [posBoton, setPosBoton] = useState<{ left: number; right: number; top: number } | null>(null);
 
   const alFinal = (el: HTMLElement) => el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+  const alPrincipio = (el: HTMLElement) => el.scrollTop < 120;
 
   /** El contenedor real. Se resuelve cada vez: el panel puede remontarse. */
   const caja = useCallback(
@@ -210,6 +212,8 @@ export default function DocEditor({
         const v = alFinal(box);
         pegado.current = v;
         setAlFondo((prev) => (prev === v ? prev : v));
+        const arriba = alPrincipio(box);
+        setAlTope((prev) => (prev === arriba ? prev : arriba));
         // El botón se ancla a la esquina del contenedor VISIBLE, no del documento.
         const r = box.getBoundingClientRect();
         const p = { left: Math.round(r.left + 16), right: Math.round(r.right - 150), top: Math.round(r.bottom - 52) };
@@ -315,6 +319,15 @@ export default function DocEditor({
   );
 
   useEffect(() => () => { esperando.current?.(); limpiarMarca(); }, [limpiarMarca]);
+
+  const irAlPrincipio = useCallback(() => {
+    const el = caja();
+    if (!el) return;
+    el.scrollTo({ top: 0, behavior: "smooth" });
+    // Ir arriba es soltarse del final: si no, el siguiente tick del autoscroll te devuelve.
+    pegado.current = false;
+    setAlFondo(false);
+  }, [caja]);
 
   const irAlFondo = useCallback(() => {
     const el = caja();
@@ -538,6 +551,23 @@ export default function DocEditor({
       {/* Ir al final. Sólo cuando NO estás abajo — si no, es un botón que no hace nada
           tapando el documento. Mientras el agente escribe además avisa de que sigue
           llegando texto más abajo. */}
+      {/* Ir al principio. En un escrito de 100 bloques, volver a la comparecencia o al
+          proemio es tan frecuente como bajar al final — y arrastrar la barra 15 pantallas
+          no es una respuesta. Sólo aparece si NO estás arriba. */}
+      {!alTope && posBoton ? (
+        <button
+          type="button"
+          onClick={irAlPrincipio}
+          aria-label={t("Ir al principio")}
+          title={t("Ir al principio")}
+          style={{ position: "fixed", left: posBoton.right, top: posBoton.top - 42 }}
+          className="z-40 inline-flex items-center gap-1.5 rounded-full border border-border bg-surface/95 px-3 py-2 text-xs font-medium text-ink shadow-lg backdrop-blur transition hover:border-brand hover:text-brand"
+        >
+          <ArrowUp size={14} />
+          {t("Ir al principio")}
+        </button>
+      ) : null}
+
       {!alFondo && posBoton ? (
         <button
           type="button"

@@ -5,13 +5,12 @@
 // descarga o un turno que caiga en esa ventana falla con un error genérico y sin rastro en
 // el log — le pasó al usuario el 2026-07-29 con un .docx.
 //
-// Node no sale mientras algo retenga su event loop, y aquí había dos cosas:
+// Node no sale mientras algo retenga su event loop, y aquí lo que lo retenía eran las
+// conexiones SSE de `/api/stream`: una por pestaña abierta, sin registrar en ningún sitio,
+// así que nadie podía cerrarlas. Mientras alguien tenga Teams abierto, el proceso no muere.
 //
-//   1. Las conexiones SSE de `/api/stream`: una por pestaña abierta, sin registrar en
-//      ningún sitio, así que nadie podía cerrarlas.
-//   2. Dos `setInterval` eternos (tick de recordatorios, reaper de quick-calls) sin
-//      `unref()`. Ésta es la que garantizaba los 90s SIEMPRE: un interval sin unref
-//      mantiene vivo el proceso por sí solo, aunque no hubiera ni una pestaña abierta.
+// (Los `setInterval` largos —tick de recordatorios, reaper de quick-calls— NO son el
+// problema: los dos ya hacen `unref?.()`. Se comprobó porque parecían candidatos.)
 //
 // Cerrar los SSE de golpe habría sido inaceptable antes de hoy —dejaba a todos sin
 // actualizaciones hasta refrescar a mano— pero el cliente ya reconecta solo con backoff

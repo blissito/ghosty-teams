@@ -1033,9 +1033,14 @@ async function runAgentTurnInner(opts: {
           return {
             label: st === "done" ? tl.done : tl.ing,
             status: st,
-            // detalle (archivo/URL) solo si la entrada es UNA tool; si son varias (×n) el
-            // conteo reemplaza al detalle (no hay un solo arg representativo).
-            ...(many ? { n: tl.started.size } : tl.detail ? { detail: tl.detail } : {}),
+            // El detalle va SIEMPRE que exista, también con ×n. Antes el conteo lo
+            // reemplazaba —"no hay un solo arg representativo"— y el resultado era
+            // "Ejecuté un comando ×10" sin decir NADA de qué se estaba ejecutando, que en
+            // code-mode es casi todo el trabajo y en una espera larga es lo único
+            // informativo que hay. Con ×n el detalle es el de la llamada MÁS RECIENTE: no
+            // resume las diez, pero dice qué está pasando AHORA, que es lo que se mira.
+            ...(many ? { n: tl.started.size } : {}),
+            ...(tl.detail ? { detail: tl.detail } : {}),
           };
         })
       );
@@ -1150,6 +1155,9 @@ async function runAgentTurnInner(opts: {
     if (label) {
       // Dedup por acción (varias tools con el mismo label → una línea; sus ids agregan estado).
       let entry = tools.find((t) => t.done === label.done);
+      // El más reciente gana: en un grupo de N llamadas, el detalle útil es el de la que
+      // acaba de empezar, no el de la primera de hace dos minutos.
+      if (entry && ev.detail) entry.detail = ev.detail;
       if (!entry) {
         entry = { ing: label.ing, done: label.done, started: new Set(), ended: new Set(), fallos: 0, exitos: 0, detail: ev.detail };
         tools.push(entry);
