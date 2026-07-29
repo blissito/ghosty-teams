@@ -340,6 +340,72 @@ export const setArtifactShareFn = createServerFn({ method: "POST" })
 // eb-doc kind:"artifact": publica el HTML a storage (link compartible) y escribe una
 // NUEVA versión en gc_artifacts (INSERT = versión nueva; getDoc toma la última). No
 // pasa por el agente — es una edición humana directa sobre el mismo documentId.
+/**
+ * Guarda la edición HUMANA de un documento: publica una versión nueva desde los BLOQUES
+ * que ya tiene el editor. Hermano de `updateArtifactHtmlFn` (mismo fallback de messageId,
+ * mismo lookup de canal/hilo, mismo `publishArtifactVersion`).
+ *
+ * Se pasan los bloques, no markdown: re-derivarlos les cambiaría el uuid a TODOS y los
+ * alias que el agente vio en el turno anterior dejarían de resolver. Y se marca
+ * `humanEdited` — desde aquí el `sourceMd` del agente ya no describe el documento.
+ *
+ * La CADENCIA la controla el cliente (debounce + techo por minuto), no este handler:
+ * cada llamada es un INSERT y `pruneArtifactVersions` sólo guarda 20 versiones, así que
+ * un autosave por pulsación se comería las versiones del agente en un minuto de tecleo.
+ */
+export const updateDocBlocksFn = createServerFn({ method: "POST" })
+  .validator((d: { documentId: string; blocks: unknown[]; messageId?: number; title?: string }) => d)
+  .handler(async ({ data }) => {
+    const { sessionUser } = await import("./chat");
+    const me = await sessionUser();
+    if (!me) throw new Error("no autenticado");
+    if (!Array.isArray(data.blocks) || !data.blocks.length) throw new Error("documento vacío");
+
+    const { dbq, num } = await import("../dbq.server");
+
+    let messageId = data.messageId;
+    if (!messageId || messageId <= 0) {
+      const rows = await dbq(
+        `SELECT message_id FROM gc_artifacts WHERE url = ? ORDER BY id DESC LIMIT 1`,
+        [data.documentId]
+      );
+      messageId = num(rows[0]?.message_id);
+    }
+    if (!messageId) throw new Error("no se encontró el mensaje del documento");
+
+    const rows = await dbq(`SELECT channel_id, parent_id FROM gc_messages WHERE id = ?`, [messageId]);
+    const channelId = num(rows[0]?.channel_id);
+    const parentId = rows[0]?.parent_id != null ? num(rows[0].parent_id) : null;
+    if (!channelId) throw new Error("no se encontró el canal del documento");
+
+    // El markdown del `md` es para el export y para lo que el agente lee después; la
+    // verdad son los `blocks` que van aparte.
+    const blocks = data.blocks as import("../lib/doc-blocks").DocBlock[];
+    const { blocksToMd } = await import("./doc-blocks.server");
+    const md = await blocksToMd(blocks).catch(() => "");
+
+    await publishArtifactVersion({
+      messageId,
+      documentId: data.documentId,
+      kind: "doc",
+      title: data.title ?? "Documento",
+      md,
+      blocks,
+      humanEdited: true,
+      ownerSub: me.sub,
+      setPointer: async (docId) => {
+        const db = await import("../db.server");
+        await db.setThreadArtifact(channelId, parentId, docId);
+      },
+      notify: async () => {
+        const bus = await import("./bus.server");
+        const { currentNamespace } = await import("./tenant.server");
+        bus.publish(bus.ch.room(await currentNamespace(), channelId), { t: "refresh", channelId, parentId });
+      },
+    });
+    return { ok: true as const };
+  });
+
 export const updateArtifactHtmlFn = createServerFn({ method: "POST" })
   .validator((d: { documentId: string; html: string; messageId: number; title?: string }) => d)
   .handler(async ({ data }) => {

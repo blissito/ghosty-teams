@@ -1,8 +1,9 @@
-import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { parseDocEnvelope, type DocBlock } from "../lib/doc-blocks";
+import { updateDocBlocksFn } from "../server/artifacts";
 
-// Frontera entre el panel y el editor. Hace tres cosas y ninguna más:
+// Frontera entre el panel y el editor. Hace cuatro cosas y ninguna más:
 //
 //  1. LAZY: BlockNote + Mantine son pesados. Se descargan al abrir un documento, no
 //     al cargar el room.
@@ -10,6 +11,7 @@ import { parseDocEnvelope, type DocBlock } from "../lib/doc-blocks";
 //     legacy anteriores al sobre).
 //  3. Amortigua el stream: el body del turno se re-emite completo en cada tick, y
 //     re-parsear markdown en cada uno es trabajo tirado.
+//  4. Guarda la edición humana con una cadencia que no se coma las versiones.
 //
 // El montaje es el MISMO para el borrador en vivo y para el documento publicado, con
 // el mismo `key` en las dos ramas de ArtifactPanel: así el swap borrador→doc no
@@ -20,6 +22,14 @@ const DocEditor = lazy(() => import("./DocEditor"));
 
 /** Coalescencia del stream. Suficiente para que se vea fluido sin re-parsear de más. */
 const STREAM_COALESCE_MS = 120;
+/** Se guarda cuando dejas de escribir. */
+const SAVE_IDLE_MS = 2500;
+/**
+ * Y como MUCHO una versión por minuto. Cada guardado es un INSERT y
+ * `pruneArtifactVersions` conserva 20 versiones por documento: sin este techo, un minuto
+ * de tecleo se comería todas las versiones del agente.
+ */
+const SAVE_MIN_INTERVAL_MS = 60_000;
 
 function Sheet({ children }: { children: React.ReactNode }) {
   return (
@@ -36,16 +46,19 @@ function Sheet({ children }: { children: React.ReactNode }) {
 export default function DocSurface({
   md,
   streaming = false,
-  editable = false,
-  onChange,
+  documentId,
+  messageId,
+  title,
 }: {
   /** Crudo de `gc_artifacts.md` o del fence: sobre JSON o markdown. */
   md: string;
   streaming?: boolean;
-  editable?: boolean;
-  onChange?: (blocks: DocBlock[]) => void;
+  /** Sin `documentId` el documento es de sólo lectura (es el caso del borrador). */
+  documentId?: string;
+  messageId?: number;
+  title?: string;
 }) {
-  // El sobre se parsea en cada render pero es sólo un JSON.parse del string que ya
+  // El sobre se parsea en cada render, pero es sólo un JSON.parse del string que ya
   // tenemos, y `md` cambia poco cuando NO se está streameando.
   const envelope = useMemo(() => parseDocEnvelope(md), [md]);
 
@@ -69,6 +82,48 @@ export default function DocSurface({
     };
   }, [md, streaming, envelope]);
 
+  // ── Guardado de la edición humana ───────────────────────────────────────────
+  const pending = useRef<DocBlock[] | null>(null);
+  const lastSaved = useRef(0);
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const flush = useCallback(() => {
+    const blocks = pending.current;
+    if (!blocks || !documentId) return;
+    pending.current = null;
+    lastSaved.current = Date.now();
+    updateDocBlocksFn({ data: { documentId, blocks, messageId, title } }).catch((e) =>
+      console.error("[doc] no se pudo guardar", e),
+    );
+  }, [documentId, messageId, title]);
+
+  const onChange = useCallback(
+    (blocks: DocBlock[]) => {
+      if (!documentId) return;
+      pending.current = blocks;
+      if (saveTimer.current) clearTimeout(saveTimer.current);
+      // Espera a que pares de escribir, pero nunca antes de que se cumpla el minuto
+      // desde el último guardado.
+      const since = Date.now() - lastSaved.current;
+      saveTimer.current = setTimeout(flush, Math.max(SAVE_IDLE_MS, SAVE_MIN_INTERVAL_MS - since));
+    },
+    [documentId, flush],
+  );
+
+  // Cerrar el panel, cambiar de pestaña o recargar NO puede perder lo escrito: ahí se
+  // guarda ya, sin esperar el debounce.
+  useEffect(() => {
+    const onHide = () => {
+      if (document.visibilityState === "hidden") flush();
+    };
+    document.addEventListener("visibilitychange", onHide);
+    return () => {
+      document.removeEventListener("visibilitychange", onHide);
+      if (saveTimer.current) clearTimeout(saveTimer.current);
+      flush();
+    };
+  }, [flush]);
+
   const source = envelope ? { blocks: envelope.blocks } : { markdown: slowMd };
   const vacio = envelope ? !envelope.blocks.length : !slowMd.trim();
 
@@ -86,7 +141,14 @@ export default function DocSurface({
         </Sheet>
       }
     >
-      <DocEditor {...source} editable={editable} streaming={streaming} onChange={onChange} />
+      <DocEditor
+        {...source}
+        // Editable en cuanto el agente suelta el turno. Un borrador (sin documentId)
+        // todavía no existe como fila, así que no hay dónde guardar.
+        editable={!!documentId && !streaming}
+        streaming={streaming}
+        onChange={onChange}
+      />
     </Suspense>
   );
 }

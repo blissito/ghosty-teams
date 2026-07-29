@@ -1409,6 +1409,9 @@ export default function ArtifactPanel({
                   <DocSurface
                     key={artifact.messageId ? `msg:${artifact.messageId}` : "doc"}
                     md={artifact.md ?? ""}
+                    documentId={artifact.documentId}
+                    messageId={artifact.messageId}
+                    title={artifact.title}
                   />
                 ) : artifact.kind === "artifact" ? (
                   // Artefacto HTML interactivo. Modo Ver: iframe AISLADO (sandbox sin
