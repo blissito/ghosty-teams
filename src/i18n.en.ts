@@ -383,6 +383,8 @@ export const en: Record<string, string> = {
   "Tachado": "Strikethrough",
   "Tagéalo con @{handle} en cualquier mensaje para que responda.": "Tag it with @{handle} in any message to get a reply.",
   "Tamaño de texto": "Text size",
+  "Armando": "Building",
+  "Ver": "Open",
   "Tareas": "Tasks",
   "Te invitaron a este chat. Entra para unirte.": "You've been invited to this chat. Sign in to join.",
   "Todo el room": "Entire room",

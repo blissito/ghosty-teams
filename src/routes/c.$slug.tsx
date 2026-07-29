@@ -1225,6 +1225,16 @@ function ChannelPage() {
   // deltas del mensaje; lo streameamos al panel (kind:"draft") y, al cerrarse, el
   // server compila el .docx y lo cuelga del mensaje → swap del draft al doc real.
   const draftMsgIdRef = useRef<number | null>(null);
+  // Si CIERRAS el panel mientras el agente escribe el artefacto, no se te vuelve a abrir
+  // por ese mensaje. El auto-abrir sigue (ver el bloque de abajo: verlo armarse es lo que
+  // se pidió), pero cada token reabría el panel y cerrarlo no servía de nada hasta que el
+  // agente terminaba.
+  const draftDismissedRef = useRef<number | null>(null);
+  // Lo que se está armando ahora mismo con el panel CERRADO. Es el mango para volver:
+  // sin esto, cerrar durante la construcción te dejaba sin manera de mirar hasta que el
+  // agente publicara la card. (Claude/ChatGPT usan la card del mensaje como mango; aquí
+  // la card sólo existe al terminar, así que esta píldora cubre justo esa ventana.)
+  const [hiddenDraft, setHiddenDraft] = useState<ArtifactView | null>(null);
   // Sonido del agente al PRIMER token (no al crear la cáscara vacía): ids ya sonados
   // para no repetir en cada re-pintado del stream. Ver message:body/message:delta.
   const chimedAgentIds = useRef<Set<number>>(new Set());
@@ -1306,6 +1316,21 @@ function ChannelPage() {
       console.log(`[gt-draft] +${doc.md.length - prev}b total=${doc.md.length}b closed=${doc.closed} t=${Math.round(performance.now())}ms`);
     }
     draftMsgIdRef.current = id;
+    const draftView = (): ArtifactView => ({
+      kind: "draft",
+      title: draftTitle(doc.md, doc.kind, doc.fenceTitle),
+      content: doc.md,
+      sheet: doc.kind === "sheet",
+      artifact: doc.kind === "artifact",
+      streaming: !doc.closed,
+      messageId: id,
+    });
+    // Lo cerraste a propósito: no se reabre solo (cada token lo reabría y cerrarlo no
+    // servía de nada). Se guarda para poder volver cuando tú quieras.
+    if (draftDismissedRef.current === id) {
+      setHiddenDraft(doc.closed ? null : draftView());
+      return;
+    }
     setOpenArtifact((cur) => {
       // Auto-abre si no hay panel, si ya estamos en el draft, o si está abierto el doc/hoja
       // que se está editando (para ver la edición EN VIVO). NO pisa otro artefacto (pdf/imagen…).
@@ -1939,7 +1964,7 @@ function ChannelPage() {
         // Editando un artefacto, ESC es del editor (y el panel pide confirmación
         // para cerrar): este atajo global NO debe tirar el panel con cambios vivos.
         if (document.body.dataset.artifactEditing) return;
-        if (openArtifactRef.current) { playArtifactClose(); setOpenArtifact(null); return; }
+        if (openArtifactRef.current) { draftDismissedRef.current = draftMsgIdRef.current; playArtifactClose(); setOpenArtifact(null); return; }
         if (openThreadId != null) { setOpenThreadId(null); return; }
       }
     };
@@ -2190,6 +2215,18 @@ function ChannelPage() {
     setOpenArtifact(v);
   }, []);
 
+  // Volver a lo que se está armando: se limpia el descarte para que siga en vivo.
+  const reopenHiddenDraft = useCallback(() => {
+    setHiddenDraft((d) => {
+      if (d) {
+        draftDismissedRef.current = null;
+        playArtifactOpen();
+        setOpenArtifact(d);
+      }
+      return null;
+    });
+  }, []);
+
   return (
     <ChatCtx.Provider
       value={{ me: user, slug: channel.slug, emojis, users, react, star, pin, remove, editMsg, retrySend, discardSend, replyTo, setReplyTo, pickerFor, setPickerFor, turns, stopTurn: stopTurnLocal, onOpenArtifact: openArtifactWithSound, sendQuickReply, openPrefs, openProfile, joinCall: joinCallFromCard, myCallKey }}
@@ -2387,8 +2424,26 @@ function ChannelPage() {
           boundary SIN remontar). El drill-down lista↔detalle es estado INTERNO del panel
           (`detail`), no cambia `openArtifact`. Ver plan gteams-vertical-legal-y-documentos-cowork.md + memoria
           project_gteams_legal_vertical_live (GOTCHA de oro). */}
+      {/* Mango para volver a lo que se está armando si cerraste el panel. Claude/ChatGPT
+          usan la card del mensaje para esto; aquí la card sólo aparece al publicar, así
+          que esta píldora cubre la ventana en la que el agente todavía escribe. */}
+      <AnimatePresence>
+        {hiddenDraft && !openArtifact && (
+          <motion.button
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 8 }}
+            onClick={reopenHiddenDraft}
+            className="fixed bottom-24 right-6 z-30 flex items-center gap-2 rounded-full border border-border bg-surface-2 px-4 py-2 text-sm text-ink shadow-lg transition hover:bg-surface-3"
+          >
+            <span className="h-2 w-2 animate-pulse rounded-full bg-brand" />
+            {t("Armando")} · {hiddenDraft.title}
+            <span className="text-muted">{t("Ver")}</span>
+          </motion.button>
+        )}
+      </AnimatePresence>
       <ArtifactBoundary resetKey={openArtifact?.title ?? "none"}>
-        <ArtifactPanel artifact={openArtifact} onClose={() => { playArtifactClose(); setOpenArtifact(null); }} onOpen={setOpenArtifact} />
+        <ArtifactPanel artifact={openArtifact} onClose={() => { draftDismissedRef.current = draftMsgIdRef.current; playArtifactClose(); setOpenArtifact(null); }} onOpen={setOpenArtifact} />
       </ArtifactBoundary>
       <AnimatePresence>
         {paletteOpen && (

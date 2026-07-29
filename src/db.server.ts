@@ -529,6 +529,35 @@ export async function getThreadArtifact(
   ]);
   return (rows[0]?.document_id as string) ?? null;
 }
+/**
+ * El artefacto que el agente debe considerar "el de esta conversación", resolviendo el
+ * caso que rompía la edición: el artefacto nace en un mensaje del ROOM (conv_key
+ * `<canal>:root`) y la charla sigue en el HILO de ese mensaje (`<canal>:<id>`), que no
+ * tiene puntero. El agente se quedaba sin el HTML y pedía que se lo pegaran a mano —
+ * justo lo que la edición quirúrgica vino a evitar.
+ *
+ * El puntero explícito manda. Si no hay, se busca el artefacto anclado al mensaje RAÍZ
+ * del hilo o a cualquier mensaje dentro de él: eso es exacto (`gc_artifacts.message_id`),
+ * no una adivinanza sobre el room entero.
+ */
+export async function resolveThreadArtifact(
+  channelId: number,
+  parentId?: number | null
+): Promise<string | null> {
+  const pointer = await getThreadArtifact(channelId, parentId);
+  if (pointer) return pointer;
+  if (parentId == null) return null;
+  const rows = await dbq(
+    `SELECT a.url FROM gc_artifacts a
+       JOIN gc_messages m ON m.id = a.message_id
+      WHERE (a.message_id = ? OR m.parent_id = ?)
+        AND a.kind IN ('doc','sheet','artifact') AND a.md IS NOT NULL
+      ORDER BY a.id DESC LIMIT 1`,
+    [parentId, parentId]
+  );
+  return (rows[0]?.url as string) ?? null;
+}
+
 export async function setThreadArtifact(
   channelId: number,
   parentId: number | null | undefined,

@@ -711,7 +711,9 @@ export const askAgent = createServerFn({ method: "POST" })
     // turno → al modificar, el agente re-emite el artefacto COMPLETO (misma vía de streaming
     // que al crear); el documentId preserva la identidad (nueva versión, no card nueva)
     // aunque el worker recicle su sesión.
-    const currentDocId = await db.getThreadArtifact(channel.id, data.parentId).catch(() => null);
+    // resolve* y no get*: el artefacto suele nacer en el ROOM y la conversación seguir en
+    // el HILO de ese mensaje, que no tiene puntero propio (ver resolveThreadArtifact).
+    const currentDocId = await db.resolveThreadArtifact(channel.id, data.parentId).catch(() => null);
     const currentDoc = currentDocId ? await db.getDoc(currentDocId).catch(() => null) : null;
     const poster = await sessionUser(); // el que postea/mencionó este turno = invocador
 
