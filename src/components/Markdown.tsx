@@ -203,6 +203,11 @@ export const Markdown = memo(function Markdown({
     // contraste correcto en claro Y oscuro para body, títulos, código, blockquotes y bordes.
     : "prose prose-sm max-w-none break-words leading-relaxed " +
       "[--tw-prose-body:var(--color-ink)] [--tw-prose-headings:var(--color-ink)] [--tw-prose-bold:var(--color-ink)] [--tw-prose-links:var(--color-brand)] [--tw-prose-code:var(--color-ink)] [--tw-prose-quotes:var(--color-muted)] [--tw-prose-quote-borders:var(--color-border)] [--tw-prose-bullets:var(--color-muted)] [--tw-prose-counters:var(--color-muted)] [--tw-prose-hr:var(--color-border)] [--tw-prose-captions:var(--color-muted)] [--tw-prose-th-borders:var(--color-border)] [--tw-prose-td-borders:var(--color-border)] " +
+      // `pre` es el caso que se escapaba: `prose` asume que un bloque de código va sobre
+      // fondo OSCURO, así que pinta su texto en gris claro. Nosotros le damos fondo claro
+      // (`prose-pre:bg-surface-3`) → gris claro sobre claro, o sea invisible: un bloque de
+      // código en el chat se leía como un rectángulo vacío. Las dos vars van juntas.
+      "[--tw-prose-pre-code:var(--color-ink)] [--tw-prose-pre-bg:var(--color-surface-3)] " +
       "prose-p:my-0.5 prose-p:leading-relaxed prose-headings:mb-1 prose-headings:mt-3 prose-headings:font-semibold prose-pre:my-2 prose-pre:bg-surface-3 prose-code:rounded prose-code:bg-surface-3 prose-code:px-1 prose-code:before:content-none prose-code:after:content-none prose-ul:my-2 prose-ol:my-2 prose-li:my-1 prose-li:leading-relaxed prose-hr:my-3";
   return (
     <div className={cls}>

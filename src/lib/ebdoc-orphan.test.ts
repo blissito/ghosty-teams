@@ -36,3 +36,28 @@ describe("cabecera de patch huérfana", () => {
     expect(out.trim()).toBe("");
   });
 });
+
+describe("varios fences en UN mensaje", () => {
+  it("no deja crudo el segundo artefacto (el agente se corrige y re-emite)", () => {
+    const body = "Aquí va.\n\n```eb-artifact\n<h1>uno</h1>\n```\n\nMejor así:\n\n```eb-artifact\n<h1>dos</h1>\n```\n\nListo.";
+    const out = bubbleWithoutEbDoc(body);
+    expect(out).not.toContain("```");
+    expect(out).not.toContain("eb-artifact");
+    expect(out).not.toContain("<h1>");
+    expect(out).toContain("Mejor así");
+  });
+
+  it("mientras el SEGUNDO streamea, la burbuja dice el estado una sola vez", () => {
+    const body = "Aquí va.\n\n```eb-artifact\n<h1>uno</h1>\n```\n\nMejor así:\n\n```eb-artifact\n<!DOCTYPE html>\n<style>\nbody{color:red}\n";
+    const out = bubbleWithoutEbDoc(body);
+    expect(out).not.toContain("DOCTYPE");
+    expect(out.match(/Generando el artefacto/g)?.length).toBe(1);
+  });
+
+  it("mezcla doc + hoja en el mismo mensaje: ninguno se cuela", () => {
+    const body = "Te dejo los dos:\n\n```eb-doc\n# Contrato\n```\n\ny la hoja:\n\n```eb-sheet\na,b\n1,2\n```";
+    const out = bubbleWithoutEbDoc(body);
+    expect(out).not.toContain("```");
+    expect(out).toContain("y la hoja");
+  });
+});

@@ -104,26 +104,31 @@ export function ArtifactSkeleton({ label }: { label: string }) {
           desaparezca en un panel angosto ni domine en pantalla completa. */}
       <div className="relative flex min-h-0 flex-1 items-center justify-center">
         {/* Wireframe de fondo: la página que se está armando, insinuada. */}
-        <div
-          aria-hidden
-          className="absolute inset-0 flex flex-col gap-3 opacity-60 motion-safe:animate-pulse"
-        >
-          <div className="h-7 w-1/2 rounded-lg bg-brand/15" />
-          <div className="h-3.5 w-2/3 rounded bg-brand/10 [animation-delay:120ms]" />
-          <div className="min-h-[90px] flex-[2] rounded-xl bg-brand/15 [animation-delay:200ms]" />
+        {/* Sin `opacity` en el contenedor: eran TRES capas restándose (bloques al 10%, este
+            contenedor al 60% y el velo al 70% encima) → ~3% de tinta en pantalla, o sea
+            invisible. La transparencia se decide UNA vez, en el color de cada bloque. */}
+        <div aria-hidden className="absolute inset-0 flex flex-col gap-3 motion-safe:animate-pulse">
+          <div className="h-7 w-1/2 rounded-lg bg-brand/35" />
+          <div className="h-3.5 w-2/3 rounded bg-brand/25 [animation-delay:120ms]" />
+          <div className="min-h-[90px] flex-[2] rounded-xl bg-brand/30 [animation-delay:200ms]" />
           <div className="grid flex-[3] grid-cols-1 gap-3 sm:grid-cols-3">
-            <div className="min-h-[60px] rounded-xl bg-brand/10 [animation-delay:300ms]" />
-            <div className="min-h-[60px] rounded-xl bg-brand/10 [animation-delay:420ms]" />
-            <div className="min-h-[60px] rounded-xl bg-brand/10 [animation-delay:540ms]" />
+            <div className="min-h-[60px] rounded-xl bg-brand/25 [animation-delay:300ms]" />
+            <div className="min-h-[60px] rounded-xl bg-brand/25 [animation-delay:420ms]" />
+            <div className="min-h-[60px] rounded-xl bg-brand/25 [animation-delay:540ms]" />
           </div>
           <div className="grid flex-[2] grid-cols-1 gap-3 sm:grid-cols-2">
-            <div className="min-h-[54px] rounded-xl bg-brand/[0.08] [animation-delay:660ms]" />
-            <div className="min-h-[54px] rounded-xl bg-brand/[0.08] [animation-delay:780ms]" />
+            <div className="min-h-[54px] rounded-xl bg-brand/20 [animation-delay:660ms]" />
+            <div className="min-h-[54px] rounded-xl bg-brand/20 [animation-delay:780ms]" />
           </div>
         </div>
 
-        {/* Velo que separa al fantasma del wireframe sin taparlo del todo. */}
-        <div aria-hidden className="absolute inset-0 bg-surface-2/70" />
+        {/* Velo SÓLO detrás del fantasma (radial), no una sábana sobre todo el wireframe:
+            así el fantasma se lee sin apagar los bloques, que son lo que da la sensación de
+            que algo se está armando. */}
+        <div
+          aria-hidden
+          className="absolute inset-0 bg-[radial-gradient(circle_at_center,var(--color-surface-2)_28%,transparent_62%)]"
+        />
 
         <div className="relative flex flex-col items-center gap-4">
           {/* Halo que respira: da el latido sin animar al fantasma (que ya parpadea). */}

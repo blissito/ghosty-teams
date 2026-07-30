@@ -534,9 +534,26 @@ export function bubbleWithoutEbDoc(body: string, patchOutcome?: { applied: numbe
     const limpio = stripOrphanPatch(around);
     return limpio ? `${limpio}\n\n${mark}` : mark;
   }
-  const doc = extractEbDoc(body);
+  // TODOS los fences, no sólo el primero. `extractEbDoc` devuelve el primero y deja el
+  // resto en `after`, así que un mensaje con DOS artefactos (el agente se corrige y
+  // re-emite: pasa seguido) dejaba el segundo crudo en el chat — un cuadro de código
+  // gigante con el nombre del protocolo por cabecera, justo lo que nunca debe verse.
+  // Desaparecía al terminar el turno, porque el body que se PERSISTE ya viene limpio: o
+  // sea que se veía sólo mientras el agente escribía, que es cuando la gente está mirando.
+  //
+  // El marcador lo pone el ÚLTIMO fence: es el que sigue en vuelo, y dos "Generando el
+  // artefacto…" en la misma burbuja se leen como dos trabajos.
+  let resto = body;
+  let doc: EbDoc | null = null;
+  for (let d = extractEbDoc(resto); d; d = extractEbDoc(resto)) {
+    doc = d;
+    const siguiente = [d.before.trim(), d.after.trim()].filter(Boolean).join("\n\n");
+    // Red contra un bucle infinito: si no encogió, se corta aquí.
+    if (siguiente.length >= resto.length) break;
+    resto = siguiente;
+  }
   if (!doc) return stripOrphanPatch(body);
-  const around = [doc.before.trim(), doc.after.trim()].filter(Boolean).join("\n\n");
+  const around = resto.trim();
   if (doc.closed) {
     const ready = doc.kind === "sheet" ? "📊 Hoja lista" : doc.kind === "artifact" ? "🎨 Artefacto listo" : "📄 Documento listo";
     return around || `${ready} — ábrelo en el panel.`;
