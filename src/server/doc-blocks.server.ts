@@ -18,16 +18,34 @@ import {
 // el editor del cliente el método del mismo nombre es sincrónico.
 
 let cached: Promise<unknown> | null = null;
+let cachedSchema: Promise<unknown> | null = null;
+
+/**
+ * El schema del editor, para quien necesite MAPEAR bloques fuera de aquí (hoy: el
+ * exportador a .docx en `doc-export.server.ts`).
+ *
+ * Se expone en vez de que el otro módulo lo arme por su cuenta: si divergieran, un bloque
+ * perfectamente válido en pantalla se caería al exportar. Es la misma razón por la que el
+ * cliente y el broker de colaboración usan esta misma línea.
+ */
+export async function docSchema(): Promise<unknown> {
+  if (!cachedSchema) {
+    cachedSchema = (async () => {
+      const { BlockNoteSchema } = await import("@blocknote/core");
+      const { withMultiColumn } = await import("@blocknote/xl-multi-column");
+      return withMultiColumn(BlockNoteSchema.create());
+    })();
+  }
+  return cachedSchema;
+}
 
 async function server() {
   if (!cached) {
     cached = (async () => {
-      const { BlockNoteSchema } = await import("@blocknote/core");
-      const { withMultiColumn } = await import("@blocknote/xl-multi-column");
       const { ServerBlockNoteEditor } = await import("@blocknote/server-util");
       // El MISMO schema que el editor del cliente (`DocEditor.tsx`). Si divergen, un
       // bloque válido de un lado se cae del otro al parsear.
-      const schema = withMultiColumn(BlockNoteSchema.create());
+      const schema = await docSchema();
       return ServerBlockNoteEditor.create({ schema } as never);
     })();
   }

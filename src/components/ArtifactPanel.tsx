@@ -432,14 +432,22 @@ export default function ArtifactPanel({
         : artifact?.kind === "office"
           ? extBadge(artifact.title) ?? "DOCX"
           : null;
+  // La descarga lleva la VERSIÓN que el panel está enseñando, igual que el enlace
+  // compartible: el panel no siempre muestra la última, y bajar otra cosa de la que se ve
+  // en pantalla se lee como un bug.
+  const verParam = artifact?.kind === "artifact" && artifact.versionId ? `&v=${artifact.versionId}` : "";
   const downloadHref =
     artifact?.kind === "doc"
-      ? `/api/doc-docx/${encodeURIComponent(artifact.documentId)}?name=${encodeURIComponent(artifact.title || "documento")}`
+      ? `/api/doc-docx/${encodeURIComponent(artifact.documentId)}?name=${encodeURIComponent(artifact.title || "documento")}${verParam}`
       : artifact?.kind === "sheet"
-        ? `/api/doc-xlsx/${encodeURIComponent(artifact.documentId)}?name=${encodeURIComponent(artifact.title || "hoja")}`
+        ? `/api/doc-xlsx/${encodeURIComponent(artifact.documentId)}?name=${encodeURIComponent(artifact.title || "hoja")}${verParam}`
         : artifact?.kind === "office"
           ? artifact.src
           : null;
+  const pdfHref =
+    artifact?.kind === "doc"
+      ? `/api/doc-pdf/${encodeURIComponent(artifact.documentId)}?name=${encodeURIComponent(artifact.title || "documento")}${verParam}`
+      : null;
   const artifactId = !artifact
     ? null
     : artifact.kind === "office"
@@ -627,21 +635,23 @@ export default function ArtifactPanel({
     const el = draftSrcRef.current;
     if (el) el.scrollTop = el.scrollHeight;
   }, [draftPreview]);
-  // Descarga con FEEDBACK: doc→.docx (compila en EasyBits) y sheet→.xlsx (convierte el CSV
-  // fuente con SheetJS en /api/doc-xlsx) tardan un poco; fetch same-origin → blob → download,
-  // con spinner. Office = URL pública externa → navegación directa (evita CORS del blob).
-  const doDownload = async () => {
+  // Descarga con FEEDBACK: doc→.docx (se genera aquí desde los bloques), sheet→.xlsx (CSV
+  // con SheetJS) y doc→.pdf (Chromium en render-svc, que puede estar despertando) tardan un
+  // poco; fetch same-origin → blob → download, con spinner. Office = URL pública externa →
+  // navegación directa (evita CORS del blob).
+  const doDownload = async (formato: "docx" | "xlsx" | "pdf" = artifact?.kind === "sheet" ? "xlsx" : "docx") => {
     if (downloading) return;
-    if (!downloadHref) return;
+    const href = formato === "pdf" ? pdfHref : downloadHref;
+    if (!href) return;
     if (artifact?.kind === "office") {
-      window.open(downloadHref, "_blank", "noopener");
+      window.open(href, "_blank", "noopener");
       return;
     }
-    const ext = artifact?.kind === "sheet" ? "xlsx" : "docx";
+    const ext = formato;
     const fallbackName = artifact?.kind === "sheet" ? "hoja" : "documento";
     setDownloading(true);
     try {
-      const r = await fetch(downloadHref);
+      const r = await fetch(href);
       if (!r.ok) throw new Error(String(r.status));
       const blob = await r.blob();
       const url = URL.createObjectURL(blob);
@@ -1027,7 +1037,7 @@ export default function ArtifactPanel({
                     {downloadHref ? (
                       <button
                         type="button"
-                        onClick={doDownload}
+                        onClick={() => doDownload()}
                         disabled={downloading}
                         title={downloading ? t("Descargando…") : artifact.kind === "sheet" ? t("Descargar Excel") : artifact.kind === "office" ? t("Descargar") : t("Descargar Word")}
                         className="grid size-7 place-items-center rounded-md text-muted transition hover:bg-surface-3 hover:text-brand disabled:opacity-60"
@@ -1035,11 +1045,25 @@ export default function ArtifactPanel({
                         {downloading ? <Loader2 size={15} className="animate-spin" /> : <Download size={15} />}
                       </button>
                     ) : null}
-                    {/* Imprimir. UN botón, no dos: el diálogo del navegador ofrece también
-                        "Guardar como PDF", así que esto cubre imprimir Y exportar a PDF sin
-                        un endpoint de render en el servidor. Sólo para el documento de
-                        prosa: una hoja de cálculo o un .docx adjunto no tienen la hoja en
-                        flujo que el `@media print` sabe paginar. */}
+                    {/* Descargar PDF: archivo de verdad, hecho con el MISMO Chromium de la
+                        flota (render-svc) a partir de los bloques del documento. Sólo para
+                        el documento de prosa; una hoja baja en .xlsx y un .docx adjunto ya
+                        es un archivo. */}
+                    {pdfHref ? (
+                      <button
+                        type="button"
+                        onClick={() => doDownload("pdf")}
+                        disabled={downloading}
+                        title={downloading ? t("Descargando…") : t("Descargar PDF")}
+                        className="grid size-7 place-items-center rounded-md text-muted transition hover:bg-surface-3 hover:text-brand disabled:opacity-60"
+                      >
+                        <FileText size={15} />
+                      </button>
+                    ) : null}
+                    {/* Imprimir se queda, y NO es redundante con el PDF de arriba: éste sale
+                        del navegador con lo que hay EN PANTALLA (útil para una copia rápida o
+                        para elegir páginas en el diálogo), y el otro es el documento
+                        maquetado en papel del lado del servidor. */}
                     {artifact.kind === "doc" ? (
                       <button
                         type="button"

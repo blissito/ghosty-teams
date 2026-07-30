@@ -30,25 +30,6 @@ export async function mintCollabEmbed(
   }
 }
 
-// "Editar" un artefacto office (.docx): EasyBits lo convierte a Documento editable
-// (mammoth docx→html → Landing v4) y minteamos el editor colab embebible. Devuelve el
-// embedUrl (que el panel abre como editor) o null si falla (ej. xlsx/pptx no soportados).
-export async function officeToEditable(url: string, name?: string): Promise<CollabEmbed | null> {
-  try {
-    const res = await ebFetch(`/api/v2/documents/from-office`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ url, name }),
-    });
-    if (!res.ok) return null;
-    const j = (await res.json()) as { ok?: boolean; documentId?: string };
-    if (!j.ok || !j.documentId) return null;
-    return mintCollabEmbed({ documentId: j.documentId });
-  } catch {
-    return null;
-  }
-}
-
 // Preview privado de un .docx → HTML (mammoth server-side en EasyBits). Devuelve el
 // HTML crudo o null (ej. xlsx/pptx no soportados). El panel lo renderiza inline.
 export async function officeToHtml(url: string): Promise<string | null> {
@@ -66,94 +47,10 @@ export async function officeToHtml(url: string): Promise<string | null> {
   }
 }
 
-// Commit del fence eb-doc → artefacto DOC con identidad + versiones. Si el hilo YA tiene
-// un documentId → PATCH /artifacts/:id (edit-in-place, nueva versión); si no → POST
-// /artifacts (crea v1). Preserva el streaming en vivo (el fence) + da edit-in-place.
-export async function createOrUpdateDoc(opts: {
-  documentId?: string | null;
-  markdown: string;
-  title?: string;
-}): Promise<{ documentId: string; version: number; title: string; url: string } | null> {
-  try {
-    const res = opts.documentId
-      ? await ebFetch(`/api/v2/artifacts/${opts.documentId}`, {
-          method: "PATCH",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ markdown: opts.markdown }),
-        })
-      : await ebFetch(`/api/v2/artifacts`, {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ kind: "doc", title: opts.title, markdown: opts.markdown }),
-        });
-    if (!res.ok) return null;
-    const j = (await res.json()) as {
-      ok?: boolean;
-      artifactId?: string;
-      version?: number;
-      title?: string;
-      url?: string;
-    };
-    if (!j.ok || !j.artifactId) return null;
-    return {
-      documentId: j.artifactId,
-      version: j.version ?? 1,
-      title: j.title ?? opts.title ?? "Documento",
-      url: j.url ?? "",
-    };
-  } catch {
-    return null;
-  }
-}
-
-// HTML renderizado del documento (secciones ACTUALES de un Landing v4) para el preview
-// del panel. Trae el doc por id y une las secciones (filtra el pseudo __grapes_css__).
-// Se re-llama en cada auto-refresh → el panel siempre muestra la última versión.
-export async function docToHtml(documentId: string): Promise<{ html: string; title: string } | null> {
-  try {
-    const res = await ebFetch(`/api/v2/documents/${documentId}`, { method: "GET" });
-    if (!res.ok) return null;
-    const j = (await res.json()) as {
-      name?: string;
-      sections?: Array<{ id?: string; html?: string }>;
-      landing?: { name?: string; sections?: Array<{ id?: string; html?: string }> };
-    };
-    const doc = j.landing ?? j;
-    const secs = doc.sections ?? [];
-    const html = secs
-      .filter((s) => s && s.id !== "__grapes_css__" && s.html)
-      // Quita el wrapper <section class="bg-surface text-on-surface …"> (clases de tema de
-      // EasyBits que en GTeams salen oscuras) → deja el contenido limpio (h1/p/ol…) que la
-      // hoja `prose` estiliza en negro sobre blanco.
-      .map((s) => (s.html ?? "").replace(/<section\b[^>]*>/gi, "").replace(/<\/section>/gi, ""))
-      .join("\n")
-      .trim();
-    if (!html) return null;
-    return { html, title: doc.name ?? "Documento" };
-  } catch {
-    return null;
-  }
-}
-
-// Compila el markdown de un ```eb-doc``` a un .docx (endpoint md-to-docx de EasyBits) y
-// devuelve {fileUrl,title} o null. Es el "commit" del streaming en vivo del artefacto.
-export async function mdToDocx(
-  markdown: string,
-  title?: string
-): Promise<{ fileUrl: string; title: string } | null> {
-  try {
-    const res = await ebFetch(`/api/v2/documents/md-to-docx`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ markdown, title }),
-    });
-    if (!res.ok) return null;
-    const j = (await res.json()) as { ok?: boolean; fileUrl?: string; title?: string };
-    return j.ok && j.fileUrl ? { fileUrl: j.fileUrl, title: j.title ?? title ?? "Documento" } : null;
-  } catch {
-    return null;
-  }
-}
+// Ya NO hay `mdToDocx`: el .docx se genera EN CASA desde los bloques con el exportador
+// oficial de BlockNote (`doc-export.server.ts`). El camino viejo compilaba markdown allá y
+// devolvía una URL para bajarla en un segundo salto — y por pasar por markdown perdía lo
+// único que hacía falta: una tabla sin bordes para las firmas.
 
 // Detecta un artefacto en el texto del reply del agente. Dos formas:
 //   - DOC EasyBits (easybits.cloud/s/<slug> o <slug>.easybits.cloud) → co-edición

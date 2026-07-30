@@ -39,6 +39,7 @@ import { Route as ApiFormTokenRouteImport } from './routes/api.form.$token'
 import { Route as ApiFormUploadTokenRouteImport } from './routes/api.form-upload.$token'
 import { Route as ApiFormFileIdRouteImport } from './routes/api.form-file.$id'
 import { Route as ApiDocXlsxIdRouteImport } from './routes/api.doc-xlsx.$id'
+import { Route as ApiDocPdfIdRouteImport } from './routes/api.doc-pdf.$id'
 import { Route as ApiDocDocxIdRouteImport } from './routes/api.doc-docx.$id'
 import { Route as ApiDevDriveRouteImport } from './routes/api.dev.drive'
 import { Route as ApiConnectorsToolsRouteImport } from './routes/api.connectors.tools'
@@ -196,6 +197,11 @@ const ApiDocXlsxIdRoute = ApiDocXlsxIdRouteImport.update({
   path: '/api/doc-xlsx/$id',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiDocPdfIdRoute = ApiDocPdfIdRouteImport.update({
+  id: '/api/doc-pdf/$id',
+  path: '/api/doc-pdf/$id',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiDocDocxIdRoute = ApiDocDocxIdRouteImport.update({
   id: '/api/doc-docx/$id',
   path: '/api/doc-docx/$id',
@@ -247,6 +253,7 @@ export interface FileRoutesByFullPath {
   '/api/connectors/tools': typeof ApiConnectorsToolsRoute
   '/api/dev/drive': typeof ApiDevDriveRoute
   '/api/doc-docx/$id': typeof ApiDocDocxIdRoute
+  '/api/doc-pdf/$id': typeof ApiDocPdfIdRoute
   '/api/doc-xlsx/$id': typeof ApiDocXlsxIdRoute
   '/api/form-file/$id': typeof ApiFormFileIdRoute
   '/api/form-upload/$token': typeof ApiFormUploadTokenRoute
@@ -283,6 +290,7 @@ export interface FileRoutesByTo {
   '/api/connectors/tools': typeof ApiConnectorsToolsRoute
   '/api/dev/drive': typeof ApiDevDriveRoute
   '/api/doc-docx/$id': typeof ApiDocDocxIdRoute
+  '/api/doc-pdf/$id': typeof ApiDocPdfIdRoute
   '/api/doc-xlsx/$id': typeof ApiDocXlsxIdRoute
   '/api/form-file/$id': typeof ApiFormFileIdRoute
   '/api/form-upload/$token': typeof ApiFormUploadTokenRoute
@@ -321,6 +329,7 @@ export interface FileRoutesById {
   '/api/connectors/tools': typeof ApiConnectorsToolsRoute
   '/api/dev/drive': typeof ApiDevDriveRoute
   '/api/doc-docx/$id': typeof ApiDocDocxIdRoute
+  '/api/doc-pdf/$id': typeof ApiDocPdfIdRoute
   '/api/doc-xlsx/$id': typeof ApiDocXlsxIdRoute
   '/api/form-file/$id': typeof ApiFormFileIdRoute
   '/api/form-upload/$token': typeof ApiFormUploadTokenRoute
@@ -360,6 +369,7 @@ export interface FileRouteTypes {
     | '/api/connectors/tools'
     | '/api/dev/drive'
     | '/api/doc-docx/$id'
+    | '/api/doc-pdf/$id'
     | '/api/doc-xlsx/$id'
     | '/api/form-file/$id'
     | '/api/form-upload/$token'
@@ -396,6 +406,7 @@ export interface FileRouteTypes {
     | '/api/connectors/tools'
     | '/api/dev/drive'
     | '/api/doc-docx/$id'
+    | '/api/doc-pdf/$id'
     | '/api/doc-xlsx/$id'
     | '/api/form-file/$id'
     | '/api/form-upload/$token'
@@ -433,6 +444,7 @@ export interface FileRouteTypes {
     | '/api/connectors/tools'
     | '/api/dev/drive'
     | '/api/doc-docx/$id'
+    | '/api/doc-pdf/$id'
     | '/api/doc-xlsx/$id'
     | '/api/form-file/$id'
     | '/api/form-upload/$token'
@@ -470,6 +482,7 @@ export interface RootRouteChildren {
   ApiConnectorsToolsRoute: typeof ApiConnectorsToolsRoute
   ApiDevDriveRoute: typeof ApiDevDriveRoute
   ApiDocDocxIdRoute: typeof ApiDocDocxIdRoute
+  ApiDocPdfIdRoute: typeof ApiDocPdfIdRoute
   ApiDocXlsxIdRoute: typeof ApiDocXlsxIdRoute
   ApiFormFileIdRoute: typeof ApiFormFileIdRoute
   ApiFormUploadTokenRoute: typeof ApiFormUploadTokenRoute
@@ -690,6 +703,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiDocXlsxIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/doc-pdf/$id': {
+      id: '/api/doc-pdf/$id'
+      path: '/api/doc-pdf/$id'
+      fullPath: '/api/doc-pdf/$id'
+      preLoaderRoute: typeof ApiDocPdfIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/doc-docx/$id': {
       id: '/api/doc-docx/$id'
       path: '/api/doc-docx/$id'
@@ -782,6 +802,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiConnectorsToolsRoute: ApiConnectorsToolsRoute,
   ApiDevDriveRoute: ApiDevDriveRoute,
   ApiDocDocxIdRoute: ApiDocDocxIdRoute,
+  ApiDocPdfIdRoute: ApiDocPdfIdRoute,
   ApiDocXlsxIdRoute: ApiDocXlsxIdRoute,
   ApiFormFileIdRoute: ApiFormFileIdRoute,
   ApiFormUploadTokenRoute: ApiFormUploadTokenRoute,

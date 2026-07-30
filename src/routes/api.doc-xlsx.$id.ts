@@ -1,22 +1,25 @@
 import { createFileRoute } from "@tanstack/react-router";
 
-// GET /api/doc-xlsx/:id → descarga el .xlsx de un artefacto SHEET. `id` = documentId LOCAL.
-// El CSV FUENTE vive en gc_artifacts.md (la verdad; ver getDocMarkdown). Lo convertimos a
-// .xlsx con SheetJS EN EL SERVER (ya es dependencia, sin round-trip a EasyBits — a diferencia
-// del docx que compila md→docx allá). Autentica con gc_session (solo miembros).
+// GET /api/doc-xlsx/:id?v=<versionId> → descarga el .xlsx de un artefacto SHEET.
+// `id` = documentId LOCAL. El CSV FUENTE vive en gc_artifacts.md (la verdad). Lo convertimos
+// a .xlsx con SheetJS EN EL SERVER (ya es dependencia, sin round-trip a nadie).
+//
+// `?v` y el permiso van por `resolveExportDoc`, igual que el .docx y el PDF: antes bajaba
+// siempre la última versión y bastaba tener sesión — o sea que un miembro del workspace
+// podía bajarse la hoja de un room privado al que no pertenece sabiendo el documentId.
 export const Route = createFileRoute("/api/doc-xlsx/$id")({
   server: {
     handlers: {
       GET: async ({ params, request }: { params: { id: string }; request: Request }) => {
-        const { useSession } = await import("@tanstack/react-start/server");
-        const { sessionConfig } = await import("../server/session.server");
-        const s = await useSession<{ user?: { sub: string } }>(sessionConfig());
-        if (!s.data.user) return new Response("unauthorized", { status: 401 });
+        const url = new URL(request.url);
+        const name = url.searchParams.get("name") || "hoja";
 
-        const name = new URL(request.url).searchParams.get("name") || "hoja";
-        const db = await import("../db.server");
-        const csv = await db.getDocMarkdown(params.id).catch(() => null);
-        if (csv == null) return new Response("not found", { status: 404 });
+        const { sessionUser } = await import("../server/chat");
+        const me = await sessionUser();
+        const { resolveExportDoc } = await import("../server/doc-access.server");
+        const doc = await resolveExportDoc(params.id, url.searchParams.get("v"), me);
+        if (!doc) return new Response("not found", { status: 404 });
+        const csv = doc.md;
 
         const XLSX = await import("xlsx");
         // SheetJS parsea el CSV (autodetección) → workbook → bytes .xlsx, envueltos en Blob
