@@ -848,6 +848,12 @@ const TOOL_LABELS: Record<string, { ing: string; done: string }> = {
   send_email: { ing: "Enviando el correo", done: "Envié el correo" },
   send_broadcast: { ing: "Enviando el broadcast", done: "Envié el broadcast" },
   create_form: { ing: "Creando el formulario", done: "Creé el formulario" },
+  // Formularios NATIVOS (connectors/native.server.ts). `create_form` de arriba es el de
+  // EasyBits y se queda sólo por los mensajes ya guardados que lo nombran.
+  form_create: { ing: "Creando el formulario", done: "Creé el formulario" },
+  form_update: { ing: "Actualizando el formulario", done: "Actualicé el formulario" },
+  form_list: { ing: "Consultando los formularios", done: "Consulté los formularios" },
+  form_submissions: { ing: "Leyendo las respuestas", done: "Leí las respuestas" },
   create_payment_link: { ing: "Generando el link de pago", done: "Generé el link de pago" },
   create_quotation: { ing: "Preparando la cotización", done: "Preparé la cotización" },
   fast_quotation: { ing: "Preparando la cotización", done: "Preparé la cotización" },

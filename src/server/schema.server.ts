@@ -472,6 +472,89 @@ async function migrate(): Promise<void> {
   // vive quien pide el recordatorio.
   await addColumn("gc_users", "tz", "TEXT");
 
+  // ── Formularios NATIVOS de intake ────────────────────────────────────────────
+  // Sustituyen el puente a EasyBits Forms (`gc_expediente_forms` + el webhook firmado),
+  // que nunca funcionó: nadie insertaba el mapeo form→canal, así que todo submit salía
+  // "unmapped" y /forms siempre estaba vacío.
+  //
+  // El formulario público ES un artefacto (`kind:"artifact"`, share "link"): el HTML vive en
+  // `gc_artifacts.md` y la liga que se reparte es /artefacto/<slug>. Esta tabla NO duplica
+  // eso — guarda a QUÉ conversación pertenece, su schema de campos y sus contadores.
+  //
+  // `ns` es la única columna redundante con "la DB ya es por workspace", y es imprescindible:
+  // el formulario se responde desde el host de artefactos y desde un iframe de origen opaco,
+  // donde el subdominio NO identifica al tenant. Va firmada en el token del formulario y el
+  // endpoint entra con `withNamespace(ns, …)`.
+  await exec(`CREATE TABLE IF NOT EXISTS gt_forms (
+    id                TEXT PRIMARY KEY,
+    ns                TEXT NOT NULL,
+    channel_id        INTEGER NOT NULL,
+    topic             TEXT NOT NULL DEFAULT 'general',
+    anchor_message_id INTEGER,
+    title             TEXT NOT NULL,
+    schema_json       TEXT NOT NULL,
+    intro             TEXT,
+    thanks            TEXT,
+    owner_sub         TEXT,
+    agent_handle      TEXT,
+    agent_name        TEXT,
+    agent_avatar      TEXT,
+    document_id       TEXT,
+    share_slug        TEXT,
+    origin            TEXT,
+    status            TEXT NOT NULL DEFAULT 'open',
+    submission_count  INTEGER NOT NULL DEFAULT 0,
+    last_submitted_at INTEGER,
+    created_at        INTEGER NOT NULL DEFAULT (unixepoch()),
+    updated_at        INTEGER NOT NULL DEFAULT (unixepoch())
+  )`);
+  await exec(`CREATE INDEX IF NOT EXISTS gt_forms_chan ON gt_forms(channel_id)`);
+
+  // Las respuestas. `data_json` = sólo los campos VISIBLES (un campo oculto por showIf no
+  // tiene respuesta que registrar). La IP se guarda HASHEADA: sirve para el rate limit y
+  // para investigar abuso, no para identificar a quien contesta.
+  await exec(`CREATE TABLE IF NOT EXISTS gt_form_submissions (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    form_id           TEXT NOT NULL,
+    created_at        INTEGER NOT NULL DEFAULT (unixepoch()),
+    ip_hash           TEXT,
+    data_json         TEXT NOT NULL,
+    files_json        TEXT,
+    message_id        INTEGER,
+    ficha_document_id TEXT,
+    idem_key          TEXT
+  )`);
+  await exec(`CREATE INDEX IF NOT EXISTS gt_form_subs_form ON gt_form_submissions(form_id, id DESC)`);
+  // La idempotencia REAL: el cliente manda la misma `_idem` en cada reintento, así que un
+  // doble clic o un retry de red no pueden crear dos respuestas ni dos fichas.
+  await exec(`CREATE UNIQUE INDEX IF NOT EXISTS gt_form_subs_idem ON gt_form_submissions(idem_key)`);
+
+  // Archivos que sube quien responde. La respuesta guarda sólo el `file_id` (la key del
+  // bucket PRIVADO); aquí vive su metadata, que es lo único en lo que confiamos para
+  // nombrar el archivo en la ficha — el nombre lo manda un tercero y acaba impreso en un
+  // expediente. También es la tabla que AUTORIZA la descarga: sin una fila que ate el
+  // archivo a un formulario, nadie puede pedirlo.
+  await exec(`CREATE TABLE IF NOT EXISTS gt_form_files (
+    file_id    TEXT PRIMARY KEY,
+    form_id    TEXT NOT NULL,
+    field      TEXT NOT NULL,
+    name       TEXT,
+    mime       TEXT,
+    size       INTEGER,
+    created_at INTEGER NOT NULL DEFAULT (unixepoch())
+  )`);
+
+  // Rate limit en la DB, no en memoria del proceso: un límite in-process no sobrevive un
+  // deploy ni sirve con más de un proceso, y era justo el agujero del original (que además
+  // se SALTABA el límite cuando no podía leer la IP).
+  await exec(`CREATE TABLE IF NOT EXISTS gt_form_rate (
+    form_id      TEXT NOT NULL,
+    bucket       TEXT NOT NULL,
+    window_start INTEGER NOT NULL,
+    count        INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (form_id, bucket, window_start)
+  )`);
+
   // Flip único: correo por default OFF (opt-in). Las filas existentes heredaron el viejo
   // DEFAULT 1 (opt-out silencioso, nadie lo eligió conscientemente) → las apagamos una sola
   // vez, guardado por flag en gc_config. Reversible: el usuario lo reactiva en el panel.

@@ -34,8 +34,10 @@ import { Route as SetupProviderConnectRouteImport } from './routes/setup.$provid
 import { Route as SetupProviderCallbackRouteImport } from './routes/setup.$provider.callback'
 import { Route as OauthProviderCallbackRouteImport } from './routes/oauth.$provider.callback'
 import { Route as ArtefactoIdRawRouteImport } from './routes/artefacto.$id.raw'
-import { Route as ApiWebhookEasybitsRouteImport } from './routes/api.webhook.easybits'
 import { Route as ApiInternalAnnouncementsRouteImport } from './routes/api.internal.announcements'
+import { Route as ApiFormTokenRouteImport } from './routes/api.form.$token'
+import { Route as ApiFormUploadTokenRouteImport } from './routes/api.form-upload.$token'
+import { Route as ApiFormFileIdRouteImport } from './routes/api.form-file.$id'
 import { Route as ApiDocXlsxIdRouteImport } from './routes/api.doc-xlsx.$id'
 import { Route as ApiDocDocxIdRouteImport } from './routes/api.doc-docx.$id'
 import { Route as ApiDevDriveRouteImport } from './routes/api.dev.drive'
@@ -168,17 +170,27 @@ const ArtefactoIdRawRoute = ArtefactoIdRawRouteImport.update({
   path: '/raw',
   getParentRoute: () => ArtefactoIdRoute,
 } as any)
-const ApiWebhookEasybitsRoute = ApiWebhookEasybitsRouteImport.update({
-  id: '/api/webhook/easybits',
-  path: '/api/webhook/easybits',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const ApiInternalAnnouncementsRoute =
   ApiInternalAnnouncementsRouteImport.update({
     id: '/api/internal/announcements',
     path: '/api/internal/announcements',
     getParentRoute: () => rootRouteImport,
   } as any)
+const ApiFormTokenRoute = ApiFormTokenRouteImport.update({
+  id: '/api/form/$token',
+  path: '/api/form/$token',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiFormUploadTokenRoute = ApiFormUploadTokenRouteImport.update({
+  id: '/api/form-upload/$token',
+  path: '/api/form-upload/$token',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiFormFileIdRoute = ApiFormFileIdRouteImport.update({
+  id: '/api/form-file/$id',
+  path: '/api/form-file/$id',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiDocXlsxIdRoute = ApiDocXlsxIdRouteImport.update({
   id: '/api/doc-xlsx/$id',
   path: '/api/doc-xlsx/$id',
@@ -236,8 +248,10 @@ export interface FileRoutesByFullPath {
   '/api/dev/drive': typeof ApiDevDriveRoute
   '/api/doc-docx/$id': typeof ApiDocDocxIdRoute
   '/api/doc-xlsx/$id': typeof ApiDocXlsxIdRoute
+  '/api/form-file/$id': typeof ApiFormFileIdRoute
+  '/api/form-upload/$token': typeof ApiFormUploadTokenRoute
+  '/api/form/$token': typeof ApiFormTokenRoute
   '/api/internal/announcements': typeof ApiInternalAnnouncementsRoute
-  '/api/webhook/easybits': typeof ApiWebhookEasybitsRoute
   '/artefacto/$id/raw': typeof ArtefactoIdRawRoute
   '/oauth/$provider/callback': typeof OauthProviderCallbackRoute
   '/setup/$provider/callback': typeof SetupProviderCallbackRoute
@@ -270,8 +284,10 @@ export interface FileRoutesByTo {
   '/api/dev/drive': typeof ApiDevDriveRoute
   '/api/doc-docx/$id': typeof ApiDocDocxIdRoute
   '/api/doc-xlsx/$id': typeof ApiDocXlsxIdRoute
+  '/api/form-file/$id': typeof ApiFormFileIdRoute
+  '/api/form-upload/$token': typeof ApiFormUploadTokenRoute
+  '/api/form/$token': typeof ApiFormTokenRoute
   '/api/internal/announcements': typeof ApiInternalAnnouncementsRoute
-  '/api/webhook/easybits': typeof ApiWebhookEasybitsRoute
   '/artefacto/$id/raw': typeof ArtefactoIdRawRoute
   '/oauth/$provider/callback': typeof OauthProviderCallbackRoute
   '/setup/$provider/callback': typeof SetupProviderCallbackRoute
@@ -306,8 +322,10 @@ export interface FileRoutesById {
   '/api/dev/drive': typeof ApiDevDriveRoute
   '/api/doc-docx/$id': typeof ApiDocDocxIdRoute
   '/api/doc-xlsx/$id': typeof ApiDocXlsxIdRoute
+  '/api/form-file/$id': typeof ApiFormFileIdRoute
+  '/api/form-upload/$token': typeof ApiFormUploadTokenRoute
+  '/api/form/$token': typeof ApiFormTokenRoute
   '/api/internal/announcements': typeof ApiInternalAnnouncementsRoute
-  '/api/webhook/easybits': typeof ApiWebhookEasybitsRoute
   '/artefacto/$id/raw': typeof ArtefactoIdRawRoute
   '/oauth/$provider/callback': typeof OauthProviderCallbackRoute
   '/setup/$provider/callback': typeof SetupProviderCallbackRoute
@@ -343,8 +361,10 @@ export interface FileRouteTypes {
     | '/api/dev/drive'
     | '/api/doc-docx/$id'
     | '/api/doc-xlsx/$id'
+    | '/api/form-file/$id'
+    | '/api/form-upload/$token'
+    | '/api/form/$token'
     | '/api/internal/announcements'
-    | '/api/webhook/easybits'
     | '/artefacto/$id/raw'
     | '/oauth/$provider/callback'
     | '/setup/$provider/callback'
@@ -377,8 +397,10 @@ export interface FileRouteTypes {
     | '/api/dev/drive'
     | '/api/doc-docx/$id'
     | '/api/doc-xlsx/$id'
+    | '/api/form-file/$id'
+    | '/api/form-upload/$token'
+    | '/api/form/$token'
     | '/api/internal/announcements'
-    | '/api/webhook/easybits'
     | '/artefacto/$id/raw'
     | '/oauth/$provider/callback'
     | '/setup/$provider/callback'
@@ -412,8 +434,10 @@ export interface FileRouteTypes {
     | '/api/dev/drive'
     | '/api/doc-docx/$id'
     | '/api/doc-xlsx/$id'
+    | '/api/form-file/$id'
+    | '/api/form-upload/$token'
+    | '/api/form/$token'
     | '/api/internal/announcements'
-    | '/api/webhook/easybits'
     | '/artefacto/$id/raw'
     | '/oauth/$provider/callback'
     | '/setup/$provider/callback'
@@ -447,8 +471,10 @@ export interface RootRouteChildren {
   ApiDevDriveRoute: typeof ApiDevDriveRoute
   ApiDocDocxIdRoute: typeof ApiDocDocxIdRoute
   ApiDocXlsxIdRoute: typeof ApiDocXlsxIdRoute
+  ApiFormFileIdRoute: typeof ApiFormFileIdRoute
+  ApiFormUploadTokenRoute: typeof ApiFormUploadTokenRoute
+  ApiFormTokenRoute: typeof ApiFormTokenRoute
   ApiInternalAnnouncementsRoute: typeof ApiInternalAnnouncementsRoute
-  ApiWebhookEasybitsRoute: typeof ApiWebhookEasybitsRoute
   OauthProviderCallbackRoute: typeof OauthProviderCallbackRoute
 }
 
@@ -629,18 +655,32 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ArtefactoIdRawRouteImport
       parentRoute: typeof ArtefactoIdRoute
     }
-    '/api/webhook/easybits': {
-      id: '/api/webhook/easybits'
-      path: '/api/webhook/easybits'
-      fullPath: '/api/webhook/easybits'
-      preLoaderRoute: typeof ApiWebhookEasybitsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/api/internal/announcements': {
       id: '/api/internal/announcements'
       path: '/api/internal/announcements'
       fullPath: '/api/internal/announcements'
       preLoaderRoute: typeof ApiInternalAnnouncementsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/form/$token': {
+      id: '/api/form/$token'
+      path: '/api/form/$token'
+      fullPath: '/api/form/$token'
+      preLoaderRoute: typeof ApiFormTokenRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/form-upload/$token': {
+      id: '/api/form-upload/$token'
+      path: '/api/form-upload/$token'
+      fullPath: '/api/form-upload/$token'
+      preLoaderRoute: typeof ApiFormUploadTokenRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/form-file/$id': {
+      id: '/api/form-file/$id'
+      path: '/api/form-file/$id'
+      fullPath: '/api/form-file/$id'
+      preLoaderRoute: typeof ApiFormFileIdRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/doc-xlsx/$id': {
@@ -743,8 +783,10 @@ const rootRouteChildren: RootRouteChildren = {
   ApiDevDriveRoute: ApiDevDriveRoute,
   ApiDocDocxIdRoute: ApiDocDocxIdRoute,
   ApiDocXlsxIdRoute: ApiDocXlsxIdRoute,
+  ApiFormFileIdRoute: ApiFormFileIdRoute,
+  ApiFormUploadTokenRoute: ApiFormUploadTokenRoute,
+  ApiFormTokenRoute: ApiFormTokenRoute,
   ApiInternalAnnouncementsRoute: ApiInternalAnnouncementsRoute,
-  ApiWebhookEasybitsRoute: ApiWebhookEasybitsRoute,
   OauthProviderCallbackRoute: OauthProviderCallbackRoute,
 }
 export const routeTree = rootRouteImport

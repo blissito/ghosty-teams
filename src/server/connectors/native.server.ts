@@ -131,6 +131,150 @@ export function nativeTools(dest: ToolDest | null): ConnectorTool[] {
         return ok ? { ok: true } : { ok: false, error: "no existe, ya disparó, o no es tuyo" };
       },
     },
+    // ── Formularios de intake ─────────────────────────────────────────────────
+    // El agente dicta el SCHEMA (título y campos); el HTML lo renderiza el servidor.
+    // El formulario se publica como artefacto y su liga es /artefacto/<slug>.
+    {
+      name: "form_create",
+      description:
+        "Crea un formulario de intake con liga pública para mandarle a un cliente. Las respuestas " +
+        "llegan a ESTA conversación como una ficha (documento descargable), una por respuesta. " +
+        "Úsalo cuando pidan un cuestionario, un formato de alta, un diagnóstico o recabar datos de " +
+        "un tercero que no tiene cuenta aquí. Tú defines los campos; el diseño y la validación los " +
+        "pone el sistema — no escribas HTML. Agrupa los campos con `section` (los consecutivos con " +
+        "la misma sección forman un paso) y usa `showIf` para preguntas que sólo aplican según una " +
+        "respuesta anterior. Devuelve la liga: pásasela al usuario tal cual.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          title: { type: "string", description: "Nombre del formulario, como lo verá quien responde" },
+          intro: { type: "string", description: "Una línea de contexto arriba del formulario" },
+          thanks: { type: "string", description: "Mensaje al terminar de responder" },
+          fields: {
+            type: "array",
+            description: "Los campos, en el orden en que se preguntan",
+            items: {
+              type: "object",
+              properties: {
+                name: { type: "string", description: "Clave interna: minúsculas, números y _ (ej. razon_social)" },
+                type: {
+                  type: "string",
+                  enum: ["text", "email", "tel", "textarea", "select", "date", "number", "checkbox", "radio", "file", "matrix"],
+                  description:
+                    "checkbox=consentimiento; radio=opción única (options, o Sí/No); select=lista; file=archivo; " +
+                    "matrix=rejilla (columnas en options, filas en rows, una respuesta por fila)",
+                },
+                label: { type: "string", description: "La pregunta, como se le muestra a la persona" },
+                required: { type: "boolean" },
+                placeholder: { type: "string", description: "Pista dentro del campo (en checkbox, la frase de consentimiento)" },
+                options: { type: "array", items: { type: "string" }, description: "Opciones de select/radio, o las COLUMNAS de una matrix" },
+                rows: { type: "array", items: { type: "string" }, description: "Sólo matrix: las filas" },
+                accept: { type: "string", description: "Sólo file: tipos aceptados, ej. '.pdf,.jpg'" },
+                showIf: {
+                  type: "object",
+                  description: "Muestra este campo sólo si otro campo ANTERIOR vale exactamente esto",
+                  properties: { field: { type: "string" }, equals: { type: "string" } },
+                },
+                section: { type: "string", description: "Nombre del paso al que pertenece" },
+              },
+              required: ["name", "type", "label"],
+            },
+          },
+        },
+        required: ["title", "fields"],
+      },
+      handler: async (sub, args) => {
+        if (!dest?.channelId) return { ok: false, error: "los formularios sólo se pueden crear dentro de un canal" };
+        const { createForm } = await import("../forms/publish.server");
+        const r = await createForm({
+          channelId: dest.channelId,
+          topic: dest.topic || "general",
+          title: String(args.title ?? ""),
+          fields: args.fields,
+          intro: typeof args.intro === "string" ? args.intro : null,
+          thanks: typeof args.thanks === "string" ? args.thanks : null,
+          ownerSub: sub,
+          agentHandle: dest.handle,
+          agentName: dest.name,
+          agentAvatar: dest.avatar,
+        });
+        if (!r.ok) return r;
+        return { ok: true, formId: r.form.id, url: r.url, fields: r.form.fields.length };
+      },
+    },
+    {
+      name: "form_update",
+      description:
+        "Cambia un formulario que ya existe (saca el id con form_list): título, campos, o ciérralo " +
+        "con status:'closed' para que deje de recibir respuestas. **La liga NO cambia** — usa esto " +
+        "en vez de crear otro formulario, o repartirás dos ligas para lo mismo. `fields` REEMPLAZA " +
+        "la lista completa: manda todos los campos, no sólo el nuevo.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          formId: { type: "string" },
+          title: { type: "string" },
+          intro: { type: "string" },
+          thanks: { type: "string" },
+          fields: { type: "array", items: { type: "object" }, description: "La lista COMPLETA de campos (mismo formato que form_create)" },
+          status: { type: "string", enum: ["open", "closed"] },
+        },
+        required: ["formId"],
+      },
+      handler: async (_sub, args) => {
+        const { updateForm } = await import("../forms/publish.server");
+        const patch: Record<string, unknown> = {};
+        for (const k of ["title", "intro", "thanks", "status"]) if (args[k] !== undefined) patch[k] = args[k];
+        if (args.fields !== undefined) patch.fields = args.fields;
+        const r = await updateForm(String(args.formId ?? ""), patch as never);
+        if (!r.ok) return r;
+        return { ok: true, formId: r.form.id, url: r.url, status: r.form.status, fields: r.form.fields.length };
+      },
+    },
+    {
+      name: "form_list",
+      description: "Lista los formularios de intake de este workspace con su liga, su estado y cuántas respuestas han recibido.",
+      inputSchema: { type: "object", properties: {} },
+      handler: async () => {
+        const { listForms, formUrl } = await import("../forms/publish.server");
+        const list = await listForms();
+        return {
+          ok: true,
+          forms: list.map((f) => ({
+            formId: f.id,
+            title: f.title,
+            url: formUrl(f),
+            status: f.status,
+            submissions: f.submissionCount,
+            lastSubmittedAt: f.lastSubmittedAt,
+            thisConversation: dest?.channelId ? f.channelId === dest.channelId : undefined,
+          })),
+        };
+      },
+    },
+    {
+      name: "form_submissions",
+      description:
+        "Lee las respuestas de un formulario (id de form_list). Úsalo para contestar '¿qué llegó?', " +
+        "resumir lo recibido o cruzarlo con un documento. Devuelve los datos por campo.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          formId: { type: "string" },
+          limit: { type: "number", description: "Cuántas traer, de la más reciente (default 20, máx 100)" },
+          since: { type: "string", description: "Sólo desde esta fecha, YYYY-MM-DD" },
+        },
+        required: ["formId"],
+      },
+      handler: async (_sub, args) => {
+        const { listSubmissions } = await import("../forms/submissions.server");
+        return listSubmissions({
+          formId: String(args.formId ?? ""),
+          limit: typeof args.limit === "number" ? args.limit : undefined,
+          since: typeof args.since === "string" ? args.since : undefined,
+        });
+      },
+    },
     // ── Memoria de la conversación ────────────────────────────────────────────
     // No hay `memory_read` a propósito: las notas se inyectan en el texto de cada turno
     // (memoryHint en agents.server.ts), así que el agente ya las tiene delante. Una tool de

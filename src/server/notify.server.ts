@@ -8,7 +8,10 @@
 // (típicamente "solo si estás offline/idle"). Ese gating vivirá aquí (un solo
 // lugar), no disperso por cada feature.
 
-export type NotifyKind = "mention" | "dm" | "call" | "call-end" | "reminder";
+// "form" = alguien de FUERA respondió un formulario de intake. Es el único aviso que no
+// nace de una persona del workspace, y por eso importa que llegue sin tener la pestaña
+// abierta: nadie está esperando ese mensaje.
+export type NotifyKind = "mention" | "dm" | "call" | "call-end" | "reminder" | "form";
 export type NotifyEvent = {
   kind: NotifyKind;
   recipients: string[]; // user subs a notificar (el emisor ya viene excluido)

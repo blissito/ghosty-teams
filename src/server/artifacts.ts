@@ -43,6 +43,14 @@ export async function publishArtifactVersion(args: {
   humanEdited?: boolean;
   /** Bloques que cambiaron en ESTA versión → el editor los señala al abrirse. */
   changedIds?: string[];
+  /**
+   * `false` publica el HTML TAL CUAL: sin sembrar `data-id` y sin hornear Tailwind.
+   * Lo usan los artefactos que NO escribió el agente y que por lo tanto no se editan
+   * por `eb-patch` — hoy, los formularios nativos (`forms/publish.server.ts`), cuyo
+   * HTML es determinista, trae su propio CSS y cuyo JS no debe pasar por un
+   * transformador de DOM. Por defecto `true`: el camino del agente no cambia.
+   */
+  stamp?: boolean;
 }): Promise<{ md: string; src: string | null }> {
   const db = await import("../db.server");
   const t0 = performance.now();
@@ -65,7 +73,7 @@ export async function publishArtifactVersion(args: {
   }
 
   // Solo el HTML tiene nodos que direccionar por DOM; sheet es CSV.
-  if (args.kind === "artifact") {
+  if (args.kind === "artifact" && args.stamp !== false) {
     try {
       const { serverParseOpts } = await import("./artifact-dom.server");
       md = stampIds(args.md, await serverParseOpts());
