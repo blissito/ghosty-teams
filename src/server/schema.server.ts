@@ -502,13 +502,6 @@ async function migrate(): Promise<void> {
     document_id       TEXT,
     share_slug        TEXT,
     origin            TEXT,
-    -- La HOJA de respuestas: UN artefacto por formulario que crece con cada respuesta, en
-    -- vez de un documento por respuesta (a las 100 nadie abre 100 archivos). Su contenido
-    -- se REconstruye entero desde gt_form_submissions en cada envío: la verdad es la tabla
-    -- y la hoja es una proyección, así que dos respuestas simultáneas no se pisan y podar
-    -- versiones viejas no pierde filas (cada versión trae todas).
-    sheet_document_id TEXT,
-    sheet_message_id  INTEGER,
     status            TEXT NOT NULL DEFAULT 'open',
     submission_count  INTEGER NOT NULL DEFAULT 0,
     last_submitted_at INTEGER,
@@ -516,6 +509,17 @@ async function migrate(): Promise<void> {
     updated_at        INTEGER NOT NULL DEFAULT (unixepoch())
   )`);
   await exec(`CREATE INDEX IF NOT EXISTS gt_forms_chan ON gt_forms(channel_id)`);
+
+  // La HOJA de respuestas: UN artefacto por formulario que crece con cada respuesta, en vez
+  // de un documento por respuesta (a las 100 nadie abre 100 archivos). Se REconstruye entera
+  // desde gt_form_submissions en cada envío: la verdad es la tabla y la hoja una proyección.
+  //
+  // ⚠️ Va por `addColumn` y NO dentro del CREATE de arriba: `CREATE TABLE IF NOT EXISTS` no
+  // toca una tabla que YA existe, así que en cualquier tenant con formularios ya creados las
+  // columnas nunca habrían aparecido — y el SELECT las pide, o sea que TODO submit
+  // respondía 500. Pasó en producción el 2026-07-29, con el formulario ya repartido.
+  await addColumn("gt_forms", "sheet_document_id", "TEXT");
+  await addColumn("gt_forms", "sheet_message_id", "INTEGER");
 
   // Las respuestas. `data_json` = sólo los campos VISIBLES (un campo oculto por showIf no
   // tiene respuesta que registrar). La IP se guarda HASHEADA: sirve para el rate limit y
