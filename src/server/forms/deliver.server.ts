@@ -138,6 +138,15 @@ async function actualizarHoja(form: FormRow, quien: string): Promise<number> {
     // `setMessageBody` y no `editMessage`: esto no es una edición de su autor, así que no
     // debe salir marcado como "(editado)".
     await db.setMessageBody(messageId, cuerpo);
+    // Y SUBE al final del hilo. Sin esto el modelo de "un solo mensaje" tenía un defecto
+    // grande: llegaba una respuesta y en pantalla no pasaba NADA — el texto cambiaba
+    // arriba, donde nadie está mirando. Moverlo al final lo hace comportarse como lo que
+    // es (algo que acaba de llegar) sin volver a llenar el hilo de tarjetas, y de paso
+    // entra en el no-leído, que se calcula con created_at.
+    //
+    // Sí, el mensaje cambia de lugar en la historia. Es deliberado: no es una
+    // conversación, es un tablero — su valor es el estado ACTUAL, no cuándo se creó.
+    await dbq(`UPDATE gc_messages SET created_at = unixepoch() WHERE id = ?`, [messageId]);
   }
 
   await publishArtifactVersion({
