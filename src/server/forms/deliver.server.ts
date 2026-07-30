@@ -111,8 +111,9 @@ async function actualizarHoja(form: FormRow, quien: string): Promise<number> {
   // mensaje: es lo que evita el hilo lleno de tarjetas.
   let messageId = form.sheetMessageId;
   let documentId = form.sheetDocumentId;
+  const esNuevo = !messageId || !documentId;
   const cuerpo = cuerpoHoja(form, quien);
-  if (!messageId || !documentId) {
+  if (esNuevo) {
     const { id } = await db.postAgent(
       form.channelId,
       form.anchorMessageId,
@@ -130,7 +131,10 @@ async function actualizarHoja(form: FormRow, quien: string): Promise<number> {
       documentId,
       form.id,
     ]);
-  } else {
+  }
+  // El compilador no puede saber que la rama de arriba las dejó puestas.
+  if (messageId == null || documentId == null) throw new Error("hoja sin ancla");
+  if (!esNuevo) {
     // `setMessageBody` y no `editMessage`: esto no es una edición de su autor, así que no
     // debe salir marcado como "(editado)".
     await db.setMessageBody(messageId, cuerpo);
@@ -149,10 +153,22 @@ async function actualizarHoja(form: FormRow, quien: string): Promise<number> {
     const msg = await db.getMessage(messageId);
     if (msg) {
       const [withMeta] = await db.attachArtifacts([msg]);
-      // `message:new` sirve para las dos veces: si ya estaba, el cliente lo reconcilia por
-      // id (no duplica) y se queda con el body y el artefacto nuevos.
-      bus.publish(bus.ch.room(form.ns, form.channelId), { t: "message:new", msg: withMeta });
-      bus.publish(bus.ch.room(form.ns, form.channelId), { t: "message:body", id: messageId, body: cuerpo });
+      // La PRIMERA vez, `message:new` (el mensaje no existe en el cliente todavía).
+      // Después NO sirve: su handler descarta por id lo que ya conoce —para no duplicar—
+      // y se quedaba con el artefacto VIEJO, o sea la hoja sin las filas nuevas. Por eso
+      // de la segunda en adelante va un `refresh`, que hace refetch del contexto y trae
+      // el mensaje con su última versión. (`message:body` sólo repinta el TEXTO; el
+      // artefacto no viaja en ese evento.)
+      if (esNuevo) {
+        bus.publish(bus.ch.room(form.ns, form.channelId), { t: "message:new", msg: withMeta });
+      } else {
+        bus.publish(bus.ch.room(form.ns, form.channelId), { t: "message:body", id: messageId, body: cuerpo });
+        bus.publish(bus.ch.room(form.ns, form.channelId), {
+          t: "refresh",
+          channelId: form.channelId,
+          parentId: form.anchorMessageId,
+        });
+      }
     }
   } catch (e) {
     console.error("[form deliver] fanout de la hoja falló", e);
