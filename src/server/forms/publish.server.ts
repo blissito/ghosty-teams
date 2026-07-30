@@ -276,11 +276,18 @@ export async function publishForm(
   );
 
   // La burbuja ancla ya con su artefacto colgado, en el room, sin recargar.
+  const esNuevo = !form.documentId;
   try {
     const msg = await db.getMessage(anchorId);
     if (msg) {
       const [withMeta] = await db.attachArtifacts([msg]);
       bus.publish(bus.ch.room(form.ns, form.channelId), { t: "message:new", msg: withMeta });
+    }
+    // Y se abre en el panel para QUIEN lo pidió. Sólo al crearlo: al editarlo, abrirlo de
+    // golpe le quitaría de la pantalla lo que esté mirando. Al canal personal, nunca al
+    // room — el panel de los demás es su pantalla, no la nuestra.
+    if (esNuevo && form.ownerSub) {
+      bus.publish(bus.ch.user(form.ns, form.ownerSub), { t: "artifact:open", messageId: anchorId });
     }
   } catch (e) {
     console.error("[form publish] fanout falló", e);

@@ -41,6 +41,10 @@ export type RtEvent =
   | { t: "reaction"; messageId: number; emoji: string; userSub: string; op: "add" | "remove"; count: number }
   | { t: "pin"; channelId: number; messageId: number; pinned: boolean } // fijado/desfijado (room-wide)
   | { t: "star"; messageId: number; starred: boolean } // marcado personal (a ch.user, cross-device)
+  // "ábreme esto en el panel". Va SIEMPRE a ch.user: abrir el panel es una acción sobre la
+  // pantalla de alguien, y hacerlo a todo el room le robaría lo que esté mirando. Hoy lo
+  // usa el formulario recién creado: se pidió verlo aparecer, no tener que buscar la tarjeta.
+  | { t: "artifact:open"; messageId: number }
   | { t: "refresh"; channelId: number | null; parentId: number | null; dmId?: number | null } // churn de agente/status
   | { t: "unread"; scope: "room" | "dm"; scopeId: number } // hay algo nuevo en un scope no-activo → badge
   | { t: "presence"; sub: string; name: string; status: "online" | "offline" }

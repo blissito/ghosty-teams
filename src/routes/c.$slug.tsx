@@ -1396,13 +1396,17 @@ function ChannelPage() {
    * tarda) y entonces lo abre. NO le roba el panel a un pdf/imagen que estés mirando, y
    * el editor se encarga de llevarte al bloque y marcarlo (ver `changedIds`).
    */
-  const scheduleDocOpen = (id: number) => {
+  const scheduleDocOpen = (id: number, kind: "doc" | "artifact" = "doc") => {
     let tries = 0;
     const tick = () => {
       const m = findMessageInCaches(id);
-      if (m?.artifact?.kind === "doc") {
+      if (m?.artifact?.kind === kind) {
+        // No le roba el panel a un pdf/imagen que estés mirando; sí releva a un borrador
+        // o a otro documento, que es lo que acabas de dejar atrás.
         setOpenArtifact((cur) =>
-          !cur || cur.kind === "draft" || cur.kind === "doc" ? artifactToView(m.artifact!) : cur,
+          !cur || cur.kind === "draft" || cur.kind === "doc" || cur.kind === "artifact"
+            ? artifactToView(m.artifact!)
+            : cur,
         );
         return;
       }
@@ -1741,6 +1745,12 @@ function ChannelPage() {
       case "star":
         // Marcado personal → sincroniza el flag en mis otras pestañas.
         patchMessage(ev.messageId, (m) => ({ ...m, starred: ev.starred }));
+        break;
+      // "ábreme esto": hoy lo manda el formulario recién creado. Llega sólo a quien lo pidió
+      // (canal personal), así que abrir el panel no le quita la pantalla a nadie más. Espera
+      // a que el artefacto cuelgue del mensaje, igual que el documento.
+      case "artifact:open":
+        scheduleDocOpen(ev.messageId, "artifact");
         break;
       case "presence:init":
         setOnline(new Set(ev.online));
