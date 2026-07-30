@@ -1,12 +1,16 @@
-// Del submit al room: una card con el resumen + LA HOJA de respuestas.
+// Del submit al room: UN solo mensaje por formulario, que crece.
 //
-// El entregable es UNA hoja por formulario que crece (artefacto `kind:"sheet"`), no un
-// documento por respuesta: con 100 respuestas nadie abre 100 archivos, y lo que se revisa,
-// se filtra y se le pasa a alguien más es una tabla. Se descarga en Excel por el camino
-// nativo que ya existía.
+// El entregable es una hoja (artefacto `kind:"sheet"`) con una fila por respuesta: con 100
+// respuestas nadie abre 100 archivos, y lo que se revisa, se filtra y se le pasa a alguien
+// más es una tabla. Se descarga en Excel por el camino nativo que ya existía.
 //
-// Las cards cuelgan como HILO del mensaje del formulario, para que un intake con volumen no
-// inunde el topic.
+// Y hay UN mensaje, no uno por respuesta. Hubo card-por-respuesta y estaba mal por dos
+// razones que se vieron en cuanto llegaron cinco: el hilo se convierte en una lista de
+// tarjetas que nadie abre, y la tarjeta de la hoja —lo único que de verdad se quiere abrir—
+// queda enterrada entre ellas. Ahora ese mensaje se REESCRIBE en cada respuesta (cuántas
+// van, quién fue la última) y lleva la hoja colgada, así que lo último siempre está a un
+// clic. El aviso por correo/push sigue siendo por respuesta: enterarse es otra cosa que
+// revisar.
 import type { FormField } from "../../lib/form-fields";
 import type { FormRow } from "./publish.server";
 
@@ -18,54 +22,29 @@ export type DeliverArgs = {
 };
 
 export async function deliverSubmission(a: DeliverArgs): Promise<{ messageId: number } | null> {
-  const db = await import("../../db.server");
   const { dbq } = await import("../../dbq.server");
-  const bus = await import("../bus.server");
-
   const { form, data } = a;
   const quien = identidad(form.fields, data);
 
-  const card =
-    `📋 **Nueva respuesta — ${form.title}**` +
-    (quien ? ` · **${quien}**` : "") +
-    `\n${resumen(form.fields, data)}\nÁbrela en la hoja de respuestas.`;
-
-  const { id: messageId } = await db.postAgent(
-    form.channelId,
-    // En el hilo del formulario: agrupa las respuestas bajo su origen y deja el topic limpio.
-    form.anchorMessageId,
-    card,
-    "msg",
-    form.agentHandle || "ghosty",
-    form.agentName || "Ghosty",
-    form.topic,
-    form.agentAvatar || ""
-  );
-
-  await dbq(`UPDATE gt_form_submissions SET message_id = ? WHERE id = ?`, [messageId, a.submissionId]);
-
-  // El entregable es UNA hoja que crece, no un documento por respuesta: a las 100 nadie
-  // abre 100 archivos, y lo que se revisa, se filtra y se le pasa a alguien más es una
-  // tabla. (Hubo un documento por respuesta y se quitó a propósito: duplicaba el trabajo
-  // y ensuciaba el hilo. Si alguna respuesta merece su propio escrito, el agente lo redacta
-  // a partir de la hoja, que para eso la puede leer.)
-  await actualizarHoja(form).catch((e) => console.error("[form deliver] hoja falló", e));
+  // El contador va ANTES de pintar el mensaje: su texto lo dice ("van N"), y leerlo de la
+  // fila vieja mostraría uno menos justo en la respuesta que lo provoca.
   await dbq(
     `UPDATE gt_forms SET submission_count = submission_count + 1, last_submitted_at = unixepoch() WHERE id = ?`,
     [form.id]
   );
 
-  try {
-    const msg = await db.getMessage(messageId);
-    if (msg) {
-      const [withMeta] = await db.attachArtifacts([msg]);
-      bus.publish(bus.ch.room(form.ns, form.channelId), { t: "message:new", msg: withMeta });
+  const messageId = await actualizarHoja({ ...form, submissionCount: form.submissionCount + 1 }, quien).catch(
+    (e) => {
+      console.error("[form deliver] hoja falló", e);
+      return null;
     }
-  } catch (e) {
-    console.error("[form deliver] fanout falló", e);
+  );
+  if (messageId) {
+    await dbq(`UPDATE gt_form_submissions SET message_id = ? WHERE id = ?`, [messageId, a.submissionId]);
   }
 
-  // La gracia de un intake es enterarse sin tener la pestaña abierta.
+  // La gracia de un intake es enterarse sin tener la pestaña abierta. Esto SÍ es por
+  // respuesta: el mensaje del room se reescribe, pero el aviso es de una que acaba de llegar.
   if (form.ownerSub) {
     try {
       const rows = await dbq("SELECT slug FROM gc_channels WHERE id = ?", [form.channelId]);
@@ -85,7 +64,17 @@ export async function deliverSubmission(a: DeliverArgs): Promise<{ messageId: nu
     }
   }
 
-  return { messageId };
+  return messageId ? { messageId } : null;
+}
+
+/** El texto del mensaje único: cuántas van y quién fue la última. */
+function cuerpoHoja(form: FormRow, quien: string): string {
+  const n = form.submissionCount;
+  return (
+    `📊 **Respuestas — ${form.title}** · ${n} ${n === 1 ? "respuesta" : "respuestas"}` +
+    (quien ? ` · última: **${quien}**` : "") +
+    `\nÁbrela para verlas todas o descárgala en Excel.`
+  );
 }
 
 /**
@@ -97,7 +86,7 @@ export async function deliverSubmission(a: DeliverArgs): Promise<{ messageId: nu
  * tabla, y como CADA versión trae todas las filas, la poda de versiones viejas no pierde
  * nada — la verdad es la tabla y la hoja es una proyección.
  */
-async function actualizarHoja(form: FormRow): Promise<void> {
+async function actualizarHoja(form: FormRow, quien: string): Promise<number> {
   const { randomUUID } = await import("node:crypto");
   const db = await import("../../db.server");
   const { dbq, num } = await import("../../dbq.server");
@@ -109,7 +98,6 @@ async function actualizarHoja(form: FormRow): Promise<void> {
     `SELECT created_at, data_json, files_json FROM gt_form_submissions WHERE form_id = ? ORDER BY id ASC`,
     [form.id]
   );
-  if (!rows.length) return;
 
   const csv = hojaCsv(form, rows.map((r) => ({
     at: num(r.created_at),
@@ -117,16 +105,18 @@ async function actualizarHoja(form: FormRow): Promise<void> {
     files: safeJson<Record<string, { name?: string }>>(r.files_json, {}),
   })));
 
-  // Primera respuesta: nace su propia burbuja. NO puede colgar del mensaje del formulario:
+  // Primera respuesta: nace su burbuja. NO puede colgar del mensaje del formulario:
   // `attachArtifacts` se queda con UN artefacto por mensaje, así que la hoja taparía al
-  // formulario en su propia tarjeta.
+  // formulario en su propia tarjeta. De la segunda en adelante se REESCRIBE ese mismo
+  // mensaje: es lo que evita el hilo lleno de tarjetas.
   let messageId = form.sheetMessageId;
   let documentId = form.sheetDocumentId;
+  const cuerpo = cuerpoHoja(form, quien);
   if (!messageId || !documentId) {
     const { id } = await db.postAgent(
       form.channelId,
       form.anchorMessageId,
-      `📊 **Respuestas — ${form.title}** · se actualiza con cada respuesta nueva. Ábrela para verlas todas o descárgala en Excel.`,
+      cuerpo,
       "msg",
       form.agentHandle || "ghosty",
       form.agentName || "Ghosty",
@@ -140,6 +130,10 @@ async function actualizarHoja(form: FormRow): Promise<void> {
       documentId,
       form.id,
     ]);
+  } else {
+    // `setMessageBody` y no `editMessage`: esto no es una edición de su autor, así que no
+    // debe salir marcado como "(editado)".
+    await db.setMessageBody(messageId, cuerpo);
   }
 
   await publishArtifactVersion({
@@ -155,11 +149,15 @@ async function actualizarHoja(form: FormRow): Promise<void> {
     const msg = await db.getMessage(messageId);
     if (msg) {
       const [withMeta] = await db.attachArtifacts([msg]);
+      // `message:new` sirve para las dos veces: si ya estaba, el cliente lo reconcilia por
+      // id (no duplica) y se queda con el body y el artefacto nuevos.
       bus.publish(bus.ch.room(form.ns, form.channelId), { t: "message:new", msg: withMeta });
+      bus.publish(bus.ch.room(form.ns, form.channelId), { t: "message:body", id: messageId, body: cuerpo });
     }
   } catch (e) {
     console.error("[form deliver] fanout de la hoja falló", e);
   }
+  return messageId;
 }
 
 /** CSV con encabezados legibles (las etiquetas del formulario, no las claves internas). */
@@ -219,22 +217,4 @@ function identidad(fields: FormField[], data: Record<string, string>): string {
   return primero ? data[primero.name].slice(0, 70) : "";
 }
 
-/** Dos o tres campos para la burbuja; el resto vive en la hoja. */
-function resumen(fields: FormField[], data: Record<string, string>): string {
-  const cortos = fields.filter(
-    (f) => data[f.name] && f.type !== "matrix" && f.type !== "textarea" && f.type !== "file"
-  );
-  return cortos
-    .slice(0, 3)
-    // El texto lo escribió un tercero y va dentro de un mensaje que se renderiza como
-    // markdown: los caracteres de formato se neutralizan.
-    .map((f) => `• ${f.label}: ${escapeMd(data[f.name]).slice(0, 60)}`)
-    .join("\n");
-}
 
-/** El texto lo escribió un tercero: los caracteres de markdown se neutralizan. */
-function escapeMd(s: string): string {
-  return String(s)
-    .replace(/([*_`[\]|#>])/g, "\\$1")
-    .replace(/\r?\n/g, " ");
-}
