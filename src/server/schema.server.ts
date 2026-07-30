@@ -502,6 +502,13 @@ async function migrate(): Promise<void> {
     document_id       TEXT,
     share_slug        TEXT,
     origin            TEXT,
+    -- La HOJA de respuestas: UN artefacto por formulario que crece con cada respuesta, en
+    -- vez de un documento por respuesta (a las 100 nadie abre 100 archivos). Su contenido
+    -- se REconstruye entero desde gt_form_submissions en cada envío: la verdad es la tabla
+    -- y la hoja es una proyección, así que dos respuestas simultáneas no se pisan y podar
+    -- versiones viejas no pierde filas (cada versión trae todas).
+    sheet_document_id TEXT,
+    sheet_message_id  INTEGER,
     status            TEXT NOT NULL DEFAULT 'open',
     submission_count  INTEGER NOT NULL DEFAULT 0,
     last_submitted_at INTEGER,

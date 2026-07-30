@@ -124,3 +124,50 @@ describe("ficha", () => {
     expect(md).toContain("\\*\\*Acme\\*\\*");
   });
 });
+
+describe("hoja de respuestas (una fila por respuesta)", () => {
+  it("encabeza con las ETIQUETAS y aplana la matriz en una celda", async () => {
+    const { hojaCsv } = await import("../server/forms/deliver.server");
+    const csv = hojaCsv({ fields: FIELDS }, [
+      {
+        at: 1785000000,
+        data: {
+          razon_social: "Acme, SA de CV",
+          tipo: "Moral",
+          rfc: "ACM123",
+          email: "a@b.com",
+          riesgos: JSON.stringify({ Litigio: "Sí", Auditoría: "No" }),
+          acepta: "true",
+        },
+        files: {},
+      },
+    ]);
+    const [cab, fila] = csv.split("\n");
+    expect(cab).toContain("Razón social");
+    expect(cab).not.toContain("razon_social"); // la clave interna no sale nunca
+    expect(fila).toContain('"Acme, SA de CV"'); // la coma obliga comillas
+    expect(fila).toContain("Litigio: Sí; Auditoría: No");
+    expect(fila.endsWith("Sí")).toBe(true); // checkbox
+  });
+
+  it("un campo que el flujo no preguntó queda VACÍO, no con guión", async () => {
+    const { hojaCsv } = await import("../server/forms/deliver.server");
+    const csv = hojaCsv({ fields: FIELDS }, [
+      { at: 1785000000, data: { razon_social: "X", tipo: "Física", email: "a@b.com", acepta: "true" }, files: {} },
+    ]);
+    // 7 columnas (Fecha + 6 campos) → 6 comas mínimo, y sin "—" en ninguna celda
+    expect(csv).not.toContain("—");
+    expect(csv.split("\n")[1].split(",").length).toBeGreaterThanOrEqual(7);
+  });
+
+  it("dos respuestas = dos filas, en orden", async () => {
+    const { hojaCsv } = await import("../server/forms/deliver.server");
+    const una = { at: 1785000000, data: { razon_social: "Uno", tipo: "Física", email: "a@b.com", acepta: "true" }, files: {} };
+    const dos = { at: 1785000600, data: { razon_social: "Dos", tipo: "Física", email: "c@d.com", acepta: "true" }, files: {} };
+    const csv = hojaCsv({ fields: FIELDS }, [una, dos]);
+    const lineas = csv.split("\n");
+    expect(lineas.length).toBe(3);
+    expect(lineas[1]).toContain("Uno");
+    expect(lineas[2]).toContain("Dos");
+  });
+});

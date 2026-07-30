@@ -63,6 +63,11 @@ export async function deliverSubmission(a: DeliverArgs): Promise<{ messageId: nu
     documentId,
     a.submissionId,
   ]);
+
+  // Y la HOJA de respuestas: UN artefacto por formulario que crece. Con 100 respuestas
+  // nadie abre 100 fichas — lo que se revisa y se filtra es una tabla. La ficha individual
+  // se queda para cuando UNA respuesta importa (el expediente de ese cliente).
+  await actualizarHoja(form).catch((e) => console.error("[form deliver] hoja falló", e));
   await dbq(
     `UPDATE gt_forms SET submission_count = submission_count + 1, last_submitted_at = unixepoch() WHERE id = ?`,
     [form.id]
@@ -99,6 +104,128 @@ export async function deliverSubmission(a: DeliverArgs): Promise<{ messageId: nu
   }
 
   return { messageId, documentId };
+}
+
+/**
+ * La hoja de respuestas del formulario: una fila por respuesta, una columna por campo.
+ *
+ * Se RECONSTRUYE entera desde `gt_form_submissions` en cada envío, no se le añade una fila
+ * al final. Tres cosas salen gratis de eso: dos respuestas simultáneas no se pisan (no hay
+ * leer-modificar-escribir sobre el artefacto), un cambio de campos se refleja en toda la
+ * tabla, y como CADA versión trae todas las filas, la poda de versiones viejas no pierde
+ * nada — la verdad es la tabla y la hoja es una proyección.
+ */
+async function actualizarHoja(form: FormRow): Promise<void> {
+  const { randomUUID } = await import("node:crypto");
+  const db = await import("../../db.server");
+  const { dbq, num } = await import("../../dbq.server");
+  const bus = await import("../bus.server");
+  const { publishArtifactVersion } = await import("../artifacts");
+  const { safeJson } = await import("./submissions.server");
+
+  const rows = await dbq(
+    `SELECT created_at, data_json, files_json FROM gt_form_submissions WHERE form_id = ? ORDER BY id ASC`,
+    [form.id]
+  );
+  if (!rows.length) return;
+
+  const csv = hojaCsv(form, rows.map((r) => ({
+    at: num(r.created_at),
+    data: safeJson<Record<string, string>>(r.data_json, {}),
+    files: safeJson<Record<string, { name?: string }>>(r.files_json, {}),
+  })));
+
+  // Primera respuesta: nace su propia burbuja. NO puede colgar del mensaje del formulario:
+  // `attachArtifacts` se queda con UN artefacto por mensaje, así que la hoja taparía al
+  // formulario en su propia tarjeta.
+  let messageId = form.sheetMessageId;
+  let documentId = form.sheetDocumentId;
+  if (!messageId || !documentId) {
+    const { id } = await db.postAgent(
+      form.channelId,
+      form.anchorMessageId,
+      `📊 **Respuestas — ${form.title}** · se actualiza con cada respuesta nueva. Ábrela para verlas todas o descárgala en Excel.`,
+      "msg",
+      form.agentHandle || "ghosty",
+      form.agentName || "Ghosty",
+      form.topic,
+      form.agentAvatar || ""
+    );
+    messageId = id;
+    documentId = `sheet_${randomUUID()}`;
+    await dbq(`UPDATE gt_forms SET sheet_message_id = ?, sheet_document_id = ? WHERE id = ?`, [
+      messageId,
+      documentId,
+      form.id,
+    ]);
+  }
+
+  await publishArtifactVersion({
+    messageId,
+    documentId,
+    kind: "sheet",
+    title: `Respuestas — ${form.title}`,
+    md: csv,
+    ownerSub: form.ownerSub,
+  });
+
+  try {
+    const msg = await db.getMessage(messageId);
+    if (msg) {
+      const [withMeta] = await db.attachArtifacts([msg]);
+      bus.publish(bus.ch.room(form.ns, form.channelId), { t: "message:new", msg: withMeta });
+    }
+  } catch (e) {
+    console.error("[form deliver] fanout de la hoja falló", e);
+  }
+}
+
+/** CSV con encabezados legibles (las etiquetas del formulario, no las claves internas). */
+export function hojaCsv(
+  form: Pick<FormRow, "fields">,
+  filas: { at: number; data: Record<string, string>; files: Record<string, { name?: string }> }[]
+): string {
+  const cols = form.fields;
+  const cab = ["Fecha", ...cols.map((f) => f.label)];
+  const lineas = [cab.map(csvCell).join(",")];
+  for (const fila of filas) {
+    const celdas = [
+      new Date(fila.at * 1000).toLocaleString("es-MX", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" }),
+      ...cols.map((f) => valorPlano(f, fila.data, fila.files)),
+    ];
+    lineas.push(celdas.map(csvCell).join(","));
+  }
+  return lineas.join("\n");
+}
+
+/** Un valor por celda: la matriz se aplana a "fila: respuesta; fila: respuesta". */
+function valorPlano(
+  f: FormField,
+  data: Record<string, string>,
+  files: Record<string, { name?: string }>
+): string {
+  // Ausente = el flujo no lo preguntó (showIf). Vacío, no "—": una celda con guión en una
+  // hoja se filtra y se cuenta como dato.
+  if (!(f.name in data)) return "";
+  const v = data[f.name] ?? "";
+  if (f.type === "checkbox") return v === "true" ? "Sí" : "";
+  if (f.type === "file") return files[f.name]?.name ?? (v ? "archivo" : "");
+  if (f.type === "matrix") {
+    let sel: Record<string, string> = {};
+    try {
+      sel = v ? (JSON.parse(v) as Record<string, string>) : {};
+    } catch {
+      return v;
+    }
+    return (f.rows ?? []).filter((r) => sel[r]).map((r) => `${r}: ${sel[r]}`).join("; ");
+  }
+  return v;
+}
+
+/** Comillas sólo cuando hacen falta, y las internas duplicadas (RFC-4180). */
+function csvCell(s: string): string {
+  const t = String(s ?? "");
+  return /[",\n]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t;
 }
 
 /** Quién respondió, para el título de la ficha y la card. */

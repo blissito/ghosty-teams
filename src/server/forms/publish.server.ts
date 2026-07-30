@@ -28,6 +28,9 @@ export type FormRow = {
   documentId: string | null;
   shareSlug: string | null;
   origin: string | null;
+  /** Artefacto de la HOJA de respuestas (uno por formulario, crece con cada envío). */
+  sheetDocumentId: string | null;
+  sheetMessageId: number | null;
   status: "open" | "closed";
   submissionCount: number;
   lastSubmittedAt: number | null;
@@ -35,7 +38,7 @@ export type FormRow = {
 
 const COLS = `id, ns, channel_id, topic, anchor_message_id, title, schema_json, intro, thanks,
   owner_sub, agent_handle, agent_name, agent_avatar, document_id, share_slug, origin,
-  status, submission_count, last_submitted_at`;
+  sheet_document_id, sheet_message_id, status, submission_count, last_submitted_at`;
 
 function toRow(r: Record<string, string | null>): FormRow {
   const n = (v: string | null) => Number(v ?? 0);
@@ -62,6 +65,8 @@ function toRow(r: Record<string, string | null>): FormRow {
     documentId: r.document_id ?? null,
     shareSlug: r.share_slug ?? null,
     origin: r.origin ?? null,
+    sheetDocumentId: r.sheet_document_id ?? null,
+    sheetMessageId: r.sheet_message_id != null ? n(r.sheet_message_id) : null,
     status: r.status === "closed" ? "closed" : "open",
     submissionCount: n(r.submission_count),
     lastSubmittedAt: r.last_submitted_at != null ? n(r.last_submitted_at) : null,
