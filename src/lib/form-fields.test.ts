@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import { formSteps, isFieldVisible, validateSchema, validateSubmission, type FormField } from "./form-fields";
-import { fichaMarkdown } from "../server/forms/deliver.server";
 
 const FIELDS: FormField[] = [
   { name: "razon_social", type: "text", label: "Razón social", required: true, section: "Datos" },
@@ -91,37 +90,6 @@ describe("pasos", () => {
   it("sin secciones, parte en trozos fijos", () => {
     const flat: FormField[] = Array.from({ length: 12 }, (_, i) => ({ name: `c${i}`, type: "text", label: `C${i}` }));
     expect(formSteps(flat).length).toBe(3);
-  });
-});
-
-describe("ficha", () => {
-  const form = {
-    title: "Diagnóstico",
-    fields: FIELDS,
-  } as unknown as Parameters<typeof fichaMarkdown>[0];
-
-  it("imprime una tabla POR matriz, nunca anidada, y sin anchos", () => {
-    const md = fichaMarkdown(
-      form,
-      { razon_social: "Acme", tipo: "Física", email: "a@b.com", riesgos: JSON.stringify({ Litigio: "Sí", Auditoría: "No" }), acepta: "true" },
-      {}
-    );
-    expect(md).toContain("### Riesgos");
-    expect(md).toContain("| Litigio | Sí |");
-    expect(md).not.toContain("width");
-    // Una sola tabla: dos encabezados de tabla significarían anidamiento o duplicado.
-    expect(md.match(/\| --- \| --- \|/g)?.length).toBe(1);
-  });
-
-  it("un campo que el flujo no mostró no aparece como vacío", () => {
-    const md = fichaMarkdown(form, { razon_social: "Acme", tipo: "Física", email: "a@b.com", acepta: "true" }, {});
-    expect(md).not.toContain("RFC");
-  });
-
-  it("neutraliza el markdown que escribió un tercero", () => {
-    const md = fichaMarkdown(form, { razon_social: "**Acme** # [x](y)", tipo: "Física", email: "a@b.com", acepta: "true" }, {});
-    expect(md).not.toContain("**Acme**");
-    expect(md).toContain("\\*\\*Acme\\*\\*");
   });
 });
 

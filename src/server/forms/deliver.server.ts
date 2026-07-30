@@ -1,13 +1,12 @@
-// Del submit al room: card + FICHA como artefacto-documento NATIVO.
+// Del submit al room: una card con el resumen + LA HOJA de respuestas.
 //
-// La ficha se arma en MARKDOWN y `publishArtifactVersion({kind:"doc"})` lo convierte a
-// bloques `v:1` con `docEnvelopeFromMd`. Markdown y no HTML porque `mdToBlocks` es el único
-// traductor bendecido del repo, y de paso las dos restricciones duras del editor se cumplen
-// gratis: no hay forma de anidar una tabla ni de ponerle un ancho en porcentaje.
+// El entregable es UNA hoja por formulario que crece (artefacto `kind:"sheet"`), no un
+// documento por respuesta: con 100 respuestas nadie abre 100 archivos, y lo que se revisa,
+// se filtra y se le pasa a alguien más es una tabla. Se descarga en Excel por el camino
+// nativo que ya existía.
 //
-// Cada respuesta es un DOCUMENTO NUEVO (no una versión del anterior): son registros
-// distintos, no borradores del mismo. Y cuelga como HILO del mensaje del formulario, para
-// que un intake con volumen no inunde el topic.
+// Las cards cuelgan como HILO del mensaje del formulario, para que un intake con volumen no
+// inunde el topic.
 import type { FormField } from "../../lib/form-fields";
 import type { FormRow } from "./publish.server";
 
@@ -18,20 +17,18 @@ export type DeliverArgs = {
   files: Record<string, { fileId: string; name?: string; mime?: string; size?: number }>;
 };
 
-export async function deliverSubmission(a: DeliverArgs): Promise<{ messageId: number; documentId: string } | null> {
-  const { randomUUID } = await import("node:crypto");
+export async function deliverSubmission(a: DeliverArgs): Promise<{ messageId: number } | null> {
   const db = await import("../../db.server");
   const { dbq } = await import("../../dbq.server");
   const bus = await import("../bus.server");
-  const { publishArtifactVersion } = await import("../artifacts");
 
-  const { form, data, files } = a;
+  const { form, data } = a;
   const quien = identidad(form.fields, data);
 
   const card =
     `📋 **Nueva respuesta — ${form.title}**` +
     (quien ? ` · **${quien}**` : "") +
-    `\n${resumen(form.fields, data)}\nAbre la ficha para verla completa.`;
+    `\n${resumen(form.fields, data)}\nÁbrela en la hoja de respuestas.`;
 
   const { id: messageId } = await db.postAgent(
     form.channelId,
@@ -45,28 +42,13 @@ export async function deliverSubmission(a: DeliverArgs): Promise<{ messageId: nu
     form.agentAvatar || ""
   );
 
-  const documentId = `doc_${randomUUID()}`;
-  await publishArtifactVersion({
-    messageId,
-    documentId,
-    kind: "doc",
-    title: `Respuesta — ${form.title}${quien ? ` · ${quien}` : ""}`,
-    md: fichaMarkdown(form, data, files),
-    // El dueño es quien creó el formulario, no quien respondió (que no tiene cuenta):
-    // es el único que puede compartir la ficha y cambiarle los permisos.
-    ownerSub: form.ownerSub,
-    // Sin `setPointer`: la ficha no debe secuestrar el artefacto vivo del hilo.
-  });
+  await dbq(`UPDATE gt_form_submissions SET message_id = ? WHERE id = ?`, [messageId, a.submissionId]);
 
-  await dbq(`UPDATE gt_form_submissions SET message_id = ?, ficha_document_id = ? WHERE id = ?`, [
-    messageId,
-    documentId,
-    a.submissionId,
-  ]);
-
-  // Y la HOJA de respuestas: UN artefacto por formulario que crece. Con 100 respuestas
-  // nadie abre 100 fichas — lo que se revisa y se filtra es una tabla. La ficha individual
-  // se queda para cuando UNA respuesta importa (el expediente de ese cliente).
+  // El entregable es UNA hoja que crece, no un documento por respuesta: a las 100 nadie
+  // abre 100 archivos, y lo que se revisa, se filtra y se le pasa a alguien más es una
+  // tabla. (Hubo un documento por respuesta y se quitó a propósito: duplicaba el trabajo
+  // y ensuciaba el hilo. Si alguna respuesta merece su propio escrito, el agente lo redacta
+  // a partir de la hoja, que para eso la puede leer.)
   await actualizarHoja(form).catch((e) => console.error("[form deliver] hoja falló", e));
   await dbq(
     `UPDATE gt_forms SET submission_count = submission_count + 1, last_submitted_at = unixepoch() WHERE id = ?`,
@@ -93,7 +75,7 @@ export async function deliverSubmission(a: DeliverArgs): Promise<{ messageId: nu
           kind: "form",
           recipients: [form.ownerSub],
           title: `📋 Nueva respuesta — ${form.title}`,
-          body: quien ? `De ${quien}` : "Ya está la ficha en el expediente.",
+          body: quien ? `De ${quien}` : "Ya está en la hoja de respuestas.",
           url: rows[0]?.slug ? `/c/${rows[0].slug}` : "/",
         },
         form.ns
@@ -103,7 +85,7 @@ export async function deliverSubmission(a: DeliverArgs): Promise<{ messageId: nu
     }
   }
 
-  return { messageId, documentId };
+  return { messageId };
 }
 
 /**
@@ -237,88 +219,22 @@ function identidad(fields: FormField[], data: Record<string, string>): string {
   return primero ? data[primero.name].slice(0, 70) : "";
 }
 
-/** Dos o tres campos para la burbuja; el resto vive en la ficha. */
+/** Dos o tres campos para la burbuja; el resto vive en la hoja. */
 function resumen(fields: FormField[], data: Record<string, string>): string {
   const cortos = fields.filter(
     (f) => data[f.name] && f.type !== "matrix" && f.type !== "textarea" && f.type !== "file"
   );
   return cortos
     .slice(0, 3)
+    // El texto lo escribió un tercero y va dentro de un mensaje que se renderiza como
+    // markdown: los caracteres de formato se neutralizan.
     .map((f) => `• ${f.label}: ${escapeMd(data[f.name]).slice(0, 60)}`)
     .join("\n");
 }
 
-/**
- * La ficha en markdown. Una tabla POR matriz, nunca anidada, y sin anchos: es lo que el
- * editor de bloques puede representar y lo que el export a Word puede reproducir.
- */
-export function fichaMarkdown(
-  form: FormRow,
-  data: Record<string, string>,
-  files: Record<string, { fileId: string; name?: string }>
-): string {
-  const out: string[] = [`# ${form.title}`, "", `_Respondido el ${fecha()}_`, ""];
-  let seccion: string | null = null;
-
-  for (const f of form.fields) {
-    // Un campo que no está en los datos es un campo que el flujo NO mostró: no se
-    // imprime como "vacío", porque nunca se preguntó.
-    if (!(f.name in data)) continue;
-
-    if (f.section && f.section !== seccion) {
-      seccion = f.section;
-      out.push(`## ${f.section}`, "");
-    }
-
-    const v = data[f.name] ?? "";
-
-    if (f.type === "matrix") {
-      out.push(`### ${f.label}`, "", ...matrixTable(f, v), "");
-      continue;
-    }
-    if (f.type === "file") {
-      const meta = files[f.name];
-      out.push(`**${f.label}:** ${meta?.name ? `📎 ${escapeMd(meta.name)}` : "—"}`, "");
-      continue;
-    }
-    if (f.type === "checkbox") {
-      out.push(`**${f.label}:** ${v === "true" ? "Sí" : "—"}`, "");
-      continue;
-    }
-    if (f.type === "textarea") {
-      out.push(`**${f.label}:**`, "", v ? escapeMd(v) : "—", "");
-      continue;
-    }
-    out.push(`**${f.label}:** ${v ? escapeMd(v) : "—"}`, "");
-  }
-
-  return out.join("\n");
-}
-
-function matrixTable(f: FormField, value: string): string[] {
-  let sel: Record<string, string> = {};
-  try {
-    sel = value ? (JSON.parse(value) as Record<string, string>) : {};
-  } catch {
-    /* respuesta corrupta: la tabla sale con guiones */
-  }
-  const rows = f.rows ?? [];
-  const lines = ["| | Respuesta |", "| --- | --- |"];
-  for (const r of rows) lines.push(`| ${escapeMd(r)} | ${sel[r] ? escapeMd(sel[r]) : "—"} |`);
-  return lines;
-}
-
-function fecha(): string {
-  return new Date().toLocaleString("es-MX", {
-    day: "numeric",
-    month: "long",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
-
 /** El texto lo escribió un tercero: los caracteres de markdown se neutralizan. */
 function escapeMd(s: string): string {
-  return String(s).replace(/([*_`[\]|#>])/g, "\\$1").replace(/\r?\n/g, " ");
+  return String(s)
+    .replace(/([*_`[\]|#>])/g, "\\$1")
+    .replace(/\r?\n/g, " ");
 }
