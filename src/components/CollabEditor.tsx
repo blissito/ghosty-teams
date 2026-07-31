@@ -1,16 +1,9 @@
 import "@blocknote/core/fonts/inter.css";
 import "@blocknote/mantine/style.css";
 import { useEffect, useMemo, useRef, useState } from "react";
-import {
-  BlockNoteView,
-  components as mantineComponents,
-} from "@blocknote/mantine";
-import {
-  useCreateBlockNote,
-  BlockNoteContext,
-  ComponentsContext,
-  ThreadsSidebar,
-} from "@blocknote/react";
+import { createPortal } from "react-dom";
+import { BlockNoteView } from "@blocknote/mantine";
+import { useCreateBlockNote, ThreadsSidebar } from "@blocknote/react";
 import { BlockNoteSchema } from "@blocknote/core";
 import {
   CommentsExtension,
@@ -151,6 +144,7 @@ export default function CollabEditor({
   agentMd,
   role,
   user,
+  onAjustarAncho,
 }: {
   wsUrl: string;
   room: string;
@@ -169,6 +163,11 @@ export default function CollabEditor({
    * `comment` NO lo escribe pero sí abre y responde hilos; `view` sólo mira.
    */
   role: DocRole;
+  /**
+   * Pide más (o menos) ancho a quien contiene el editor, en px. Lo implementa el panel
+   * del artefacto; en las páginas de invitado no hay a quién pedirle nada.
+   */
+  onAjustarAncho?: (delta: number) => void;
 }) {
   const [status, setStatus] = useState<
     "connecting" | "connected" | "disconnected"
@@ -422,104 +421,105 @@ export default function CollabEditor({
     return threadStore.subscribe(contar as never);
   }, [threadStore]);
 
-  // El panel de hilos sólo cabe cuando el artefacto está ancho. Se mide el contenedor
-  // (no la ventana): esto vive dentro de un drawer redimensionable, así que el viewport
-  // no dice nada útil. Angosto → el hilo flotante junto al texto ya resuelve.
-  const caja = useRef<HTMLDivElement>(null);
-  const [ancho, setAncho] = useState(false);
-  useEffect(() => {
-    const el = caja.current;
-    if (!el || typeof ResizeObserver === "undefined") return;
-    const ro = new ResizeObserver(([e]) =>
-      setAncho(e.contentRect.width >= 1000),
-    );
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
+  // Los hilos arrancan CERRADOS: el documento es lo que se viene a leer, y un panel
+  // abierto de entrada le roba ancho a cambio de nada cuando no hay comentarios.
+  //
+  // Al abrirlo, el artefacto CRECE en vez de estrujar el documento — por eso se le pide
+  // el ancho al panel que lo contiene (`onAjustarAncho`) en lugar de repartir el que ya
+  // hay. En las páginas de invitado no hay panel: ahí simplemente no se pide nada.
+  const [verHilos, setVerHilos] = useState(false);
+  const sidebar = verHilos;
+  const ANCHO_HILOS = 340;
 
-  const [verHilos, setVerHilos] = useState(true);
-  const sidebar = ancho && verHilos;
+  const alternarHilos = () => {
+    setVerHilos((v) => {
+      onAjustarAncho?.(v ? -ANCHO_HILOS : ANCHO_HILOS);
+      return !v;
+    });
+  };
+
+  // El panel de hilos se pinta DENTRO de <BlockNoteView> pero aterriza en el <aside> de
+  // acá al lado, vía portal. No es rebuscado: los hilos son componentes de Mantine y su
+  // provider (más el de componentes) sólo existe para los hijos de BlockNoteView.
+  // Montarlo fuera y replicar los providers a mano dejaba el panel EN BLANCO — el
+  // comentario existía, sólo que nada lo dibujaba. React propaga contexto a través del
+  // portal, así que esto es lo mismo que estar dentro, pero en el lugar correcto.
+  const [asideEl, setAsideEl] = useState<HTMLElement | null>(null);
 
   return (
-    // Los dos contextos van FUERA del editor porque el panel de hilos vive al lado, no
-    // dentro: `ThreadsSidebar` pide el editor (BlockNoteContext) y los componentes de
-    // Mantine (ComponentsContext), y ambos los provee `BlockNoteView` sólo para sus hijos.
-    // Sin esto el panel revienta al montar.
-    <BlockNoteContext.Provider value={{ editor: editor as never }}>
-      <ComponentsContext.Provider value={mantineComponents as never}>
-        <div ref={caja} className="flex h-full flex-col bg-[#f3f3f5]">
-          <header className="sticky top-0 z-10 flex items-center gap-2 border-b border-neutral-200 bg-white/90 px-4 py-2 backdrop-blur">
-            <span
-              className={`inline-block size-2 rounded-full ${
-                status === "connected"
-                  ? "bg-green-500"
-                  : status === "connecting"
-                    ? "bg-amber-400"
-                    : "bg-red-500"
-              }`}
-            />
-            <span className="text-xs font-medium text-neutral-500">
-              {status === "connected"
-                ? "Co-edición en vivo"
-                : status === "connecting"
-                  ? "Conectando…"
-                  : "Desconectado"}
-              {role === "comment" && " · puedes comentar"}
-              {role === "view" && " · solo lectura"}
-            </span>
-            <div className="ml-auto flex items-center gap-1">
-              {ancho && (
-                <button
-                  type="button"
-                  onClick={() => setVerHilos((v) => !v)}
-                  aria-pressed={sidebar}
-                  title={
-                    sidebar ? "Ocultar comentarios" : "Mostrar comentarios"
-                  }
-                  className={`flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium transition ${
-                    sidebar
-                      ? "bg-neutral-900 text-white"
-                      : "text-neutral-500 hover:bg-neutral-100 hover:text-neutral-800"
-                  }`}
-                >
-                  <MessageSquare size={14} />
-                  {abiertos > 0 && <span>{abiertos}</span>}
-                </button>
-              )}
-              <PresenceRail peers={peers} />
+    <div className="flex h-full flex-col bg-[#f3f3f5]">
+      <header className="sticky top-0 z-10 flex items-center gap-2 border-b border-neutral-200 bg-white/90 px-4 py-2 backdrop-blur">
+        <span
+          className={`inline-block size-2 rounded-full ${
+            status === "connected"
+              ? "bg-green-500"
+              : status === "connecting"
+                ? "bg-amber-400"
+                : "bg-red-500"
+          }`}
+        />
+        <span className="text-xs font-medium text-neutral-500">
+          {status === "connected"
+            ? "Co-edición en vivo"
+            : status === "connecting"
+              ? "Conectando…"
+              : "Desconectado"}
+          {role === "comment" && " · puedes comentar"}
+          {role === "view" && " · solo lectura"}
+        </span>
+        <div className="ml-auto flex items-center gap-1">
+          <button
+            type="button"
+            onClick={alternarHilos}
+            aria-pressed={sidebar}
+            title={sidebar ? "Ocultar comentarios" : "Mostrar comentarios"}
+            className={`flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium transition ${
+              sidebar
+                ? "bg-neutral-900 text-white"
+                : "text-neutral-500 hover:bg-neutral-100 hover:text-neutral-800"
+            }`}
+          >
+            <MessageSquare size={14} />
+            {abiertos > 0 && <span>{abiertos}</span>}
+          </button>
+          <PresenceRail peers={peers} />
+        </div>
+      </header>
+      <div className="flex min-h-0 flex-1">
+        <div className="thin-scroll flex-1 overflow-auto px-4 py-8">
+          {/* El ancho del documento NO depende del panel de hilos: abrirlos ensancha
+                  el artefacto, nunca estruja la lectura. */}
+          <div className="mx-auto max-w-[820px]">
+            {/* `data-gt-hoja`: lo que Imprimir clona al body para paginar (ver
+                    lib/doc-print). Sin esta marca el botón no encontraba nada que
+                    imprimir en modo co-edición. */}
+            <div
+              data-gt-hoja
+              className="min-h-[600px] rounded-md bg-white px-6 py-12 shadow-[0_1px_2px_rgba(0,0,0,0.06),0_12px_32px_-12px_rgba(0,0,0,0.18)] ring-1 ring-neutral-200/70 sm:px-14"
+            >
+              <BlockNoteView editor={editor} editable={editable} theme="light">
+                {sidebar && asideEl
+                  ? createPortal(<ThreadsSidebar sort="position" />, asideEl)
+                  : null}
+              </BlockNoteView>
             </div>
-          </header>
-          <div className="flex min-h-0 flex-1">
-            <div className="flex-1 overflow-auto px-4 py-8">
-              <div
-                className={`mx-auto ${sidebar ? "max-w-[720px]" : "max-w-[820px]"}`}
-              >
-                <div className="min-h-[600px] rounded-md bg-white px-6 py-12 shadow-[0_1px_2px_rgba(0,0,0,0.06),0_12px_32px_-12px_rgba(0,0,0,0.18)] ring-1 ring-neutral-200/70 sm:px-14">
-                  <BlockNoteView
-                    editor={editor}
-                    editable={editable}
-                    theme="light"
-                  />
-                </div>
-              </div>
-            </div>
-            {sidebar && (
-              <aside className="w-[320px] shrink-0 overflow-auto border-l border-neutral-200 bg-white px-3 py-4">
-                <p className="px-1 pb-2 text-xs font-semibold uppercase tracking-wide text-neutral-400">
-                  Comentarios
-                </p>
-                {abiertos === 0 && (
-                  <p className="px-1 text-xs leading-relaxed text-neutral-400">
-                    Selecciona texto y usa el botón de comentario para abrir un
-                    hilo.
-                  </p>
-                )}
-                <ThreadsSidebar sort="position" />
-              </aside>
-            )}
           </div>
         </div>
-      </ComponentsContext.Provider>
-    </BlockNoteContext.Provider>
+        {sidebar && (
+          <aside className="thin-scroll w-[320px] shrink-0 overflow-auto border-l border-neutral-200 bg-white px-3 py-4">
+            <p className="px-1 pb-2 text-xs font-semibold uppercase tracking-wide text-neutral-400">
+              Comentarios
+            </p>
+            {abiertos === 0 && (
+              <p className="px-1 text-xs leading-relaxed text-neutral-400">
+                Selecciona texto y usa el botón de comentario para abrir un
+                hilo.
+              </p>
+            )}
+            <div ref={setAsideEl} />
+          </aside>
+        )}
+      </div>
+    </div>
   );
 }

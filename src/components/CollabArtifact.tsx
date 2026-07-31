@@ -21,10 +21,13 @@ function Spinner({ label }: { label: string }) {
 export default function CollabArtifact({
   documentId,
   md,
+  onAjustarAncho,
 }: {
   documentId: string;
   /** Sobre del documento en la DB; cambia cuando el AGENTE publica una versión. */
   md?: string;
+  /** El editor pide ancho al panel (abrir comentarios ensancha el artefacto). */
+  onAjustarAncho?: (delta: number) => void;
 }) {
   const [conn, setConn] = useState<CollabConn | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -71,6 +74,7 @@ export default function CollabArtifact({
         // El permiso lo decide el SERVIDOR (`resolveDocRole`), no el que monta el
         // componente: antes esto entraba `editable` por prop con default `true`.
         role={conn.role}
+        onAjustarAncho={onAjustarAncho}
       />
     </Suspense>
   );

@@ -17,7 +17,12 @@
 const ID = "gt-print-root";
 
 export function imprimirDocumento(): boolean {
-  const hoja = document.querySelector<HTMLElement>(".gt-doc article");
+  // Dos editores pintan documentos: el de siempre (`.gt-doc article`) y el colaborativo,
+  // que marca su hoja con `data-gt-hoja`. Buscar sólo el primero hacía que Imprimir no
+  // hiciera NADA con la co-edición abierta: no fallaba, es que no encontraba la hoja.
+  const hoja = document.querySelector<HTMLElement>(
+    ".gt-doc article, [data-gt-hoja]",
+  );
   if (!hoja) return false;
 
   document.getElementById(ID)?.remove();
