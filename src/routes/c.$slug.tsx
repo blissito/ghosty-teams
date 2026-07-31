@@ -1075,10 +1075,19 @@ function ChannelPage() {
         onOpen: () => {},
       })
     );
+  // Título de la llamada = dónde/con quién es. El dock flota sobre toda la app, así que
+  // "Llamada" a secas no dice nada: hay que poder saber de qué hilo salió sin volver a él.
+  // El label que manda el server para un DM es genérico ("Llamada") porque el nombre a
+  // mostrar depende de QUIÉN mira, así que se resuelve aquí.
+  const dmCallLabel = (id: number) => {
+    const d = dms.find((x) => x.id === id);
+    const name = d ? d.title || d.members.map((m) => m.name).join(", ") : "";
+    return name || t("Mensaje directo");
+  };
   // Unirse a una call desde una tarjeta del timeline (CallCard).
   const joinCallFromCard = (join: CallJoin) => {
-    if (join.scope === "room") openCall(joinCallFn, "room", join.scopeId, { scope: "room", slug: join.slug }, join.label);
-    else openCall(joinCallFn, "dm", join.dmId, { scope: "dm", dmId: join.dmId }, join.label);
+    if (join.scope === "room") openCall(joinCallFn, "room", join.scopeId, { scope: "room", slug: join.slug }, `#${join.label}`);
+    else openCall(joinCallFn, "dm", join.dmId, { scope: "dm", dmId: join.dmId }, dmCallLabel(join.dmId));
   };
   // Semilla del call activo del canal actual (por si arrancó antes de que yo entrara).
   useEffect(() => {
@@ -2378,8 +2387,8 @@ function ChannelPage() {
           call={{
             active: activeCalls.get(`dm:${openDmId}`) ?? null,
             joined: myCallKey === `dm:${openDmId}`,
-            onStart: () => openCall(startCallFn, "dm", openDmId, { scope: "dm", dmId: openDmId }, "Llamada"),
-            onJoin: () => openCall(joinCallFn, "dm", openDmId, { scope: "dm", dmId: openDmId }, "Llamada"),
+            onStart: () => openCall(startCallFn, "dm", openDmId, { scope: "dm", dmId: openDmId }, dmCallLabel(openDmId)),
+            onJoin: () => openCall(joinCallFn, "dm", openDmId, { scope: "dm", dmId: openDmId }, dmCallLabel(openDmId)),
             onLeave: leaveCall,
           }}
         />
@@ -2413,8 +2422,8 @@ function ChannelPage() {
           call={{
             active: activeCalls.get(`room:${channel.id}`) ?? null,
             joined: myCallKey === `room:${channel.id}`,
-            onStart: () => openCall(startCallFn, "room", channel.id, { scope: "room", slug: channel.slug }, channel.name),
-            onJoin: () => openCall(joinCallFn, "room", channel.id, { scope: "room", slug: channel.slug }, channel.name),
+            onStart: () => openCall(startCallFn, "room", channel.id, { scope: "room", slug: channel.slug }, `#${channel.name}`),
+            onJoin: () => openCall(joinCallFn, "room", channel.id, { scope: "room", slug: channel.slug }, `#${channel.name}`),
             onLeave: leaveCall,
           }}
         />

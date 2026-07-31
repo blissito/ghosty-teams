@@ -51,13 +51,16 @@ function CallRuntime({ sub }: { sub: string }) {
       {joined && <QuickCallDock room={joined.room} label={joined.label} />}
       <IncomingCallStack
         calls={incoming}
+        anchor={joined ? "bottom-3" : "top-3"}
         onJoin={(c: Incoming) =>
           openCall(
             joinCallFn,
             c.scope,
             c.scopeId,
             c.scope === "room" ? { scope: "room", slug: c.slug ?? "" } : { scope: "dm", dmId: c.scopeId },
-            c.label
+            // Título útil para el dock: el canal o quién llama. El `label` que manda el
+            // server para un DM es genérico ("Llamada") porque depende de quién mira.
+            c.scope === "room" ? `#${c.label}` : c.host.name
           )
         }
         onDismiss={(c: Incoming) => dismissIncoming(`${c.scope}:${c.scopeId}`)}

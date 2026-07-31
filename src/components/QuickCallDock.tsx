@@ -9,11 +9,11 @@ const QuickCall = lazy(() => import("./QuickCall").then((m) => ({ default: m.Qui
 
 // Dock flotante nativo: renderiza <QuickCall> (livekit-client) con los tokens de
 // Teams → hereda light/dark. Header = título + expandir; salir vive en QuickCall.
-// Nace ARRIBA-IZQUIERDA y se monta en la raíz, así que sobrevive a la navegación.
+// Nace ARRIBA-DERECHA y se monta en la raíz, así que sobrevive a la navegación.
 export function QuickCallDock({ room, label }: { room: Room; label: string }) {
   const t = useT();
   const [expanded, setExpanded] = useState(false);
-  const [pos, setPos] = useState<{ x: number; y: number } | null>(null); // null = anclado arriba-izquierda
+  const [pos, setPos] = useState<{ x: number; y: number } | null>(null); // null = anclado arriba-derecha
   const [size, setSize] = useState<{ w: number; h: number } | null>(null); // null = tamaño default
   const [hasVideo, setHasVideo] = useState(false); // solo-audio → dock compacto (mínimo)
   const dockRef = useRef<HTMLDivElement>(null);
@@ -93,8 +93,8 @@ export function QuickCallDock({ room, label }: { room: Room; label: string }) {
         (expanded
           ? "fixed inset-3 md:inset-6"
           : compact
-            ? "fixed h-64 w-[min(340px,92vw)]" + (positioned ? "" : " left-4 top-4")
-            : "fixed h-[min(80vh,720px)] w-[min(960px,94vw)]" + (positioned || sized ? "" : " left-4 top-4")) +
+            ? "fixed h-64 w-[min(340px,92vw)]" + (positioned ? "" : " right-4 top-4")
+            : "fixed h-[min(80vh,720px)] w-[min(960px,94vw)]" + (positioned || sized ? "" : " right-4 top-4")) +
         // bg-surface-2 (como el sidebar) + borde brand → NO se funde con el chat (bg-surface)
         // en claro NI oscuro; antes era bg-surface con borde ink tenue y se perdía.
         " z-50 flex flex-col overflow-hidden rounded-xl border-2 border-brand/40 bg-surface-2 shadow-2xl ring-1 ring-black/10"
@@ -106,7 +106,11 @@ export function QuickCallDock({ room, label }: { room: Room; label: string }) {
       >
         <div className="flex min-w-0 items-center gap-2">
           <Headphones size={15} className="shrink-0 text-brand" />
-          <span className="truncate text-sm font-semibold text-ink">{t("Llamada")} · {label}</span>
+          {/* El título dice DÓNDE es la llamada (#canal o con quién), no la palabra
+              "Llamada": el dock flota sobre toda la app y ése es el único dato que no se
+              puede deducir mirándolo. Que es una llamada ya lo dicen el ícono y los
+              controles. */}
+          <span className="truncate text-sm font-semibold text-ink" title={t("Llamada")}>{label}</span>
         </div>
         <button
           onClick={() => setExpanded((e) => !e)}

@@ -9,15 +9,19 @@ export function IncomingCallStack({
   calls,
   onJoin,
   onDismiss,
+  anchor = "top-3",
 }: {
   calls: Incoming[];
   onJoin: (c: Incoming) => void;
   onDismiss: (c: Incoming) => void;
+  /** El dock de la llamada también nace arriba-derecha: cuando está abierto, este aviso
+   *  baja para no quedar encima de él. */
+  anchor?: "top-3" | "bottom-3";
 }) {
   const t = useT();
   if (!calls.length) return null;
   return (
-    <div className="fixed right-3 top-3 z-[60] flex w-[min(92vw,20rem)] flex-col gap-2">
+    <div className={`fixed right-3 ${anchor} z-[60] flex w-[min(92vw,20rem)] flex-col gap-2`}>
       {calls.map((c) => (
         <div
           key={`${c.scope}:${c.scopeId}`}
