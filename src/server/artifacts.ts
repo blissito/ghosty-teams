@@ -205,11 +205,23 @@ async function requireShareOwner(documentId: string) {
   const db = await import("../db.server");
   const root = await db.shareRootFor(documentId);
   if (!root) throw new Error("artefacto no encontrado");
-  if (root.ownerSub && root.ownerSub !== me.sub) throw new Error("no eres el dueño de este artefacto");
+  // El dueño del workspace también manda: administra el equipo, así que un documento del
+  // equipo no puede quedarse incompartible porque su autor se fue.
+  if (root.ownerSub && root.ownerSub !== me.sub && !me.isOwner)
+    throw new Error("no eres el dueño de este artefacto");
   return { me, root, db };
 }
 
-async function shareStateFor(documentId: string, meSub: string | null): Promise<ArtifactShare | null> {
+async function shareStateFor(
+  documentId: string,
+  meSub: string | null,
+  /**
+   * Dueño del WORKSPACE. Manda sobre el dueño del artefacto: quien administra el equipo
+   * tiene que poder abrir o cerrar un documento del equipo sin perseguir a quien lo creó
+   * (o sin quedarse trabado si esa persona ya no está).
+   */
+  meIsWorkspaceOwner = false
+): Promise<ArtifactShare | null> {
   const db = await import("../db.server");
   const root = await db.shareRootFor(documentId);
   if (!root) return null;
@@ -229,7 +241,7 @@ async function shareStateFor(documentId: string, meSub: string | null): Promise<
     owner,
     // Sin owner_sub (artefacto viejo) cualquiera del workspace que lo vea puede
     // adoptarlo: es preferible a dejarlo sin dueño y por tanto incompartible.
-    isOwner: !root.ownerSub || root.ownerSub === meSub,
+    isOwner: !root.ownerSub || root.ownerSub === meSub || meIsWorkspaceOwner,
   };
 }
 
@@ -313,7 +325,7 @@ export const getArtifactShareFn = createServerFn({ method: "POST" })
     const { sessionUser } = await import("./chat");
     const me = await sessionUser();
     if (!me) throw new Error("no autenticado");
-    return await shareStateFor(data.documentId, me.sub);
+    return await shareStateFor(data.documentId, me.sub, me.isOwner);
   });
 
 export const setArtifactShareFn = createServerFn({ method: "POST" })
@@ -352,7 +364,7 @@ export const setArtifactShareFn = createServerFn({ method: "POST" })
       const { dbq } = await import("../dbq.server");
       await dbq(`UPDATE gc_artifacts SET owner_sub = ? WHERE url = ?`, [me.sub, data.documentId]);
     }
-    return await shareStateFor(data.documentId, me.sub);
+    return await shareStateFor(data.documentId, me.sub, me.isOwner);
   });
 
 // Guardado de artefactos HTML editados desde el Canvas (editor @ghosty/canvas-editor)

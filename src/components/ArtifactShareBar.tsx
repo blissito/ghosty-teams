@@ -54,6 +54,9 @@ export default function ArtifactShareBar({
   const [menuOpen, setMenuOpen] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
   const [isPublic, setIsPublic] = useState(false);
+  // Compartir es del dueño (del artefacto o del workspace). A los demás no se les
+  // enseña el botón: abrir un diálogo con TODO deshabilitado no informa, frustra.
+  const [puedeCompartir, setPuedeCompartir] = useState(false);
 
   useEffect(() => {
     const el = barRef.current;
@@ -76,7 +79,10 @@ export default function ArtifactShareBar({
         // Esta consulta ya trae TODO lo que el diálogo necesita: guardarla evita
         // que abrir "Compartir" enseñe un "Cargando…" por algo que ya sabemos.
         putCachedShare(documentId, s as any);
-        if (alive && s) setIsPublic(s.visibility === "link");
+        if (alive && s) {
+          setIsPublic(s.visibility === "link");
+          setPuedeCompartir(s.isOwner);
+        }
       } catch {
         /* sin permiso o artefacto viejo → se queda en privado, que es el default seguro */
       }
@@ -181,7 +187,7 @@ export default function ArtifactShareBar({
         </button>
       ) : null}
 
-      {documentId ? (
+      {documentId && puedeCompartir ? (
         <>
           <button
             type="button"

@@ -499,7 +499,13 @@ export default function CollabEditor({
             >
               <BlockNoteView editor={editor} editable={editable} theme="light">
                 {sidebar && asideEl
-                  ? createPortal(<ThreadsSidebar sort="position" />, asideEl)
+                  ? // `filter` va EXPLÍCITO: BlockNote documenta default "all" pero NO lo
+                    // aplica — sin él su bucle no empuja ni los resueltos ni los abiertos,
+                    // y el panel sale vacío aunque el hilo exista (visto en prod).
+                    createPortal(
+                      <ThreadsSidebar filter="all" sort="position" />,
+                      asideEl,
+                    )
                   : null}
               </BlockNoteView>
             </div>
