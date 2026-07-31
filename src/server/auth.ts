@@ -134,16 +134,17 @@ export const completeGhostyLogin = createServerFn({ method: "POST" })
     const { upsertUser } = await import("../users.server");
     const user = await upsertUser({ sub: id.sub, email: id.email, name: id.name, avatar: id.avatar });
 
-    // Forward-compat: si se unió por invite, registra `Membership(MEMBER)` en gs
-    // (fuente única de verdad de membership+rol). Así el switcher multi-workspace
-    // muestra el ws al invitado y la futura UI de roles solo hace UPDATE. Best-effort:
-    // no bloquea el login si gs falla (se reconcilia luego).
-    if (invited) {
-      try {
-        await registerMembership(id.sub);
-      } catch (e) {
-        console.warn("[auth] registerMembership falló (best-effort):", (e as Error)?.message);
-      }
+    // Registra `Membership(MEMBER)` en gs (fuente única de verdad de membership+rol).
+    // Corre para TODO el que cruzó la puerta, no sólo para el invitado: quien entra a un
+    // workspace vacío o como dueño declarado también es miembro, y sin la fila el
+    // switcher multi-workspace NO se lo muestra — el workspace le queda invisible aunque
+    // esté dentro. `internal.memberships` hace upsert con `update:{}`, así que repetirlo
+    // en cada login no pisa un rol ya asignado.
+    // Best-effort: no bloquea el login si gs falla (el siguiente login lo reconcilia).
+    try {
+      await registerMembership(id.sub);
+    } catch (e) {
+      console.warn("[auth] registerMembership falló (best-effort):", (e as Error)?.message);
     }
 
     const s = await session();

@@ -19,8 +19,19 @@ export const Route = createFileRoute("/api/collab/$docId/session-end")({
         if (request.headers.get("authorization") !== `Bearer ${secret}`) {
           return new Response("unauthorized", { status: 401 });
         }
+        // El sidecar manda a quiénes autenticó en esta sesión. Es opcional a propósito:
+        // un sidecar viejo (o un cuerpo vacío) sigue cortando versión, sólo que sin firmar.
+        let participantes: string[] = [];
+        try {
+          const body = (await request.json()) as { participants?: unknown };
+          if (Array.isArray(body?.participants)) {
+            participantes = body.participants.filter((x): x is string => typeof x === "string");
+          }
+        } catch {
+          /* sin cuerpo */
+        }
         const { cerrarSesionDeCoedicion } = await import("../server/collab-state.server");
-        const r = await cerrarSesionDeCoedicion(params.docId);
+        const r = await cerrarSesionDeCoedicion(params.docId, participantes);
         return new Response(JSON.stringify(r), {
           status: 200,
           headers: { "content-type": "application/json" },

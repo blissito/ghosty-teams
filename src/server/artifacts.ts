@@ -43,6 +43,8 @@ export async function publishArtifactVersion(args: {
   humanEdited?: boolean;
   /** Bloques que cambiaron en ESTA versión → el editor los señala al abrirse. */
   changedIds?: string[];
+  /** Quiénes co-editaron en la sesión que dejó esta versión (`sub`). Sólo la co-edición. */
+  authors?: string[];
   /**
    * `false` publica el HTML TAL CUAL: sin sembrar `data-id` y sin hornear Tailwind.
    * Lo usan los artefactos que NO escribió el agente y que por lo tanto no se editan
@@ -130,6 +132,7 @@ export async function publishArtifactVersion(args: {
     md,
     src,
     ownerSub: args.ownerSub ?? null,
+    authors: args.authors ?? null,
   });
   // Poda las versiones viejas (fila + objeto). Best-effort y DESPUÉS del INSERT: si
   // falla, sólo queda basura, nunca se pierde la versión que acabamos de publicar.
@@ -232,12 +235,33 @@ async function shareStateFor(
     const rows = await dbq(`SELECT name, email, avatar FROM gc_users WHERE sub = ? LIMIT 1`, [root.ownerSub]);
     if (rows[0]) owner = { sub: root.ownerSub, name: rows[0].name ?? null, email: rows[0].email ?? null, avatar: rows[0].avatar ?? null };
   }
+  // Un solo viaje para todos los autores del historial: son pocos y repetidos.
+  const nombres = new Map<string, string>();
+  const subsAutores = [...new Set(versions.flatMap((v) => v.authors))];
+  if (subsAutores.length) {
+    const { dbq } = await import("../dbq.server");
+    const rows = await dbq(
+      `SELECT sub, name, email FROM gc_users WHERE sub IN (${subsAutores.map(() => "?").join(",")})`,
+      subsAutores
+    ).catch(() => [] as Awaited<ReturnType<typeof import("../dbq.server").dbq>>);
+    for (const r of rows) {
+      if (r.sub) nombres.set(r.sub, r.name || r.email || "Alguien");
+    }
+  }
+
   return {
     slug: root.slug,
     visibility: root.visibility,
     role: root.role,
     sharedArtifactId: root.sharedArtifactId,
-    versions: versions.map((v, i) => ({ id: v.id, label: `Versión ${i + 1}`, createdAt: v.createdAt })),
+    versions: versions.map((v, i) => ({
+      id: v.id,
+      label: `Versión ${i + 1}`,
+      createdAt: v.createdAt,
+      // Nombres, no `sub`: el historial lo lee gente. Una versión del agente no trae
+      // autores y se queda sin firma, que es lo correcto — no es de nadie del equipo.
+      authors: v.authors.map((sub) => nombres.get(sub) ?? "Alguien"),
+    })),
     owner,
     // Sin owner_sub (artefacto viejo) cualquiera del workspace que lo vea puede
     // adoptarlo: es preferible a dejarlo sin dueño y por tanto incompartible.

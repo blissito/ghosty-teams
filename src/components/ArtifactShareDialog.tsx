@@ -21,7 +21,7 @@ export type Share = {
   /** Qué puede hacer quien llega por el link. */
   role: "view" | "comment" | "edit";
   sharedArtifactId: number | null;
-  versions: { id: number; label: string; createdAt: number }[];
+  versions: { id: number; label: string; createdAt: number; authors: string[] }[];
   owner: { sub: string | null; name: string | null; email: string | null; avatar: string | null };
   isOwner: boolean;
 };
@@ -439,6 +439,10 @@ export default function ArtifactShareDialog({
                 {share.versions.map((v) => (
                   <option key={v.id} value={v.id}>
                     {v.label} · {fmt(v.createdAt)}
+                    {/* Quién co-editó esa sesión. Atribución por SESIÓN: es lo que sí
+                        podemos afirmar hoy (el "quién escribió esta línea" llega con
+                        Yjs 14). Las versiones del agente no traen autores. */}
+                    {v.authors.length ? ` · ${v.authors.join(", ")}` : ""}
                   </option>
                 ))}
               </select>
