@@ -39,6 +39,31 @@ async function requireEditor(documentId: string) {
   return me;
 }
 
+/**
+ * Origen del enlace de invitación. Tiene que llevar el SUBDOMINIO DEL EQUIPO
+ * (`business.teams.ghosty.studio`), no el genérico: el tenant se resuelve por subdominio
+ * (`tenant.server.ts`), así que un enlace a `teams.ghosty.studio` cae en otro namespace y
+ * la invitación "no existe". Pasó en producción con una invitación real.
+ *
+ * Por eso se toma del HOST DE ESTA PETICIÓN —que ya viene con el subdominio correcto— y
+ * `GTEAMS_PUBLIC_ORIGIN` queda sólo como último recurso.
+ */
+async function origenDelEquipo(): Promise<string> {
+  try {
+    const { getRequestHeader, getRequestHost, getRequestProtocol } = await import(
+      "@tanstack/react-start/server"
+    );
+    const host = getRequestHeader("x-forwarded-host") || getRequestHost();
+    if (host) {
+      const proto = getRequestHeader("x-forwarded-proto") || getRequestProtocol() || "https";
+      return `${proto}://${host}`.replace(/\/$/, "");
+    }
+  } catch {
+    /* fuera de una petición (cron, script) → al env */
+  }
+  return (process.env.GTEAMS_PUBLIC_ORIGIN ?? "").replace(/\/$/, "");
+}
+
 function normalizarCorreo(v: string): string {
   return v.trim().toLowerCase();
 }
@@ -71,63 +96,96 @@ export const listDocInvitesFn = createServerFn({ method: "POST" })
     }));
   });
 
+/**
+ * NÚCLEO de invitar — sin sesión y sin request, para poder llamarlo desde donde no hay
+ * ninguna de las dos.
+ *
+ * Lo usan el serverFn de la UI (con la sesión) y la tool `doc_share` del agente (con el `sub`
+ * del tool-token). El permiso se comprueba IGUAL en los dos caminos —`resolveDocRole` debe
+ * dar `edit`—, que es exactamente lo que hacía `requireEditor`: invitar es repartir acceso, y
+ * eso no se relaja porque el llamador sea un agente.
+ */
+export async function invitarADoc(o: {
+  documentId: string;
+  email: string;
+  role: DocRole;
+  porSub: string;
+  porNombre: string;
+  porIsOwner?: boolean;
+  /** Copy de quien invita ("revisa las cláusulas de plazo antes del viernes"). Se escapa. */
+  mensaje?: string;
+}): Promise<{ ok: true; invite: DocInvite; enviado: boolean; url: string } | { ok: false; error: string }> {
+  await (await import("./schema.server")).ensureSchema().catch(() => {});
+
+  const { resolveDocRole } = await import("./doc-access.server");
+  const mio = await resolveDocRole(o.documentId, { sub: o.porSub, isOwner: !!o.porIsOwner });
+  if (mio !== "edit") return { ok: false, error: "no puedes invitar a este documento" };
+
+  const email = normalizarCorreo(o.email);
+  if (!correoValido(email)) return { ok: false, error: "ese correo no se ve bien" };
+  const role: DocRole = o.role ?? "edit";
+
+  const { dbq, num } = await import("../dbq.server");
+  // Re-invitar al mismo correo REEMPLAZA la invitación anterior en vez de acumular
+  // ligas vivas: cada token que sigue funcionando es una puerta más que vigilar.
+  await dbq(
+    `UPDATE gc_doc_invites SET revoked_at = unixepoch()
+      WHERE document_id = ? AND email = ? AND revoked_at IS NULL`,
+    [o.documentId, email]
+  );
+
+  const token = crypto.randomUUID().replace(/-/g, "") + crypto.randomUUID().replace(/-/g, "");
+  await dbq(
+    `INSERT INTO gc_doc_invites (document_id, email, role, token, invited_by)
+     VALUES (?, ?, ?, ?, ?)`,
+    [o.documentId, email, role, token, o.porSub]
+  );
+  const rows = await dbq(`SELECT id, created_at FROM gc_doc_invites WHERE token = ?`, [token]);
+
+  const url = `${await origenDelEquipo()}/coeditar/invitacion/${token}`;
+
+  // El título se lee del documento, no lo manda el cliente: menos superficie y
+  // siempre coincide con lo que la persona va a abrir.
+  const root = await (await import("../db.server")).shareRootFor(o.documentId);
+
+  const enviado = await mandarCorreo({
+    para: email,
+    deQuien: o.porNombre || "Alguien",
+    titulo: root?.title || "un documento",
+    role,
+    url,
+    mensaje: o.mensaje,
+  });
+
+  return {
+    ok: true,
+    enviado,
+    url,
+    invite: {
+      id: num(rows[0]?.id ?? null),
+      email,
+      name: null,
+      role,
+      createdAt: num(rows[0]?.created_at ?? null),
+      usedAt: null,
+      revoked: false,
+    },
+  };
+}
+
 export const inviteToDocFn = createServerFn({ method: "POST" })
   .validator((d: { documentId: string; email: string; role?: DocRole }) => d)
   .handler(
     async ({ data }): Promise<{ ok: true; invite: DocInvite; enviado: boolean; url: string } | { ok: false; error: string }> => {
-      await (await import("./schema.server")).ensureSchema().catch(() => {});
-      const me = await requireEditor(data.documentId);
-
-      const email = normalizarCorreo(data.email);
-      if (!correoValido(email)) return { ok: false, error: "ese correo no se ve bien" };
-      const role: DocRole = data.role ?? "edit";
-
-      const { dbq, num } = await import("../dbq.server");
-      // Re-invitar al mismo correo REEMPLAZA la invitación anterior en vez de acumular
-      // ligas vivas: cada token que sigue funcionando es una puerta más que vigilar.
-      await dbq(
-        `UPDATE gc_doc_invites SET revoked_at = unixepoch()
-          WHERE document_id = ? AND email = ? AND revoked_at IS NULL`,
-        [data.documentId, email]
-      );
-
-      const token = crypto.randomUUID().replace(/-/g, "") + crypto.randomUUID().replace(/-/g, "");
-      await dbq(
-        `INSERT INTO gc_doc_invites (document_id, email, role, token, invited_by)
-         VALUES (?, ?, ?, ?, ?)`,
-        [data.documentId, email, role, token, me.sub]
-      );
-      const rows = await dbq(`SELECT id, created_at FROM gc_doc_invites WHERE token = ?`, [token]);
-
-      const origen = (process.env.GTEAMS_PUBLIC_ORIGIN ?? "").replace(/\/$/, "");
-      const url = `${origen}/coeditar/invitacion/${token}`;
-
-      // El título se lee del documento, no lo manda el cliente: menos superficie y
-      // siempre coincide con lo que la persona va a abrir.
-      const root = await (await import("../db.server")).shareRootFor(data.documentId);
-
-      const enviado = await mandarCorreo({
-        para: email,
-        deQuien: me.name || me.email || "Alguien",
-        titulo: root?.title || "un documento",
-        role,
-        url,
+      const me = await meOrThrow();
+      return invitarADoc({
+        documentId: data.documentId,
+        email: data.email,
+        role: data.role ?? "edit",
+        porSub: me.sub,
+        porNombre: me.name || me.email || "Alguien",
+        porIsOwner: me.isOwner,
       });
-
-      return {
-        ok: true,
-        enviado,
-        url,
-        invite: {
-          id: num(rows[0]?.id ?? null),
-          email,
-          name: null,
-          role,
-          createdAt: num(rows[0]?.created_at ?? null),
-          usedAt: null,
-          revoked: false,
-        },
-      };
     }
   );
 
@@ -193,32 +251,39 @@ async function mandarCorreo(o: {
   titulo: string;
   role: DocRole;
   url: string;
+  /** Lo que quien invita quiere decirle. Va como prosa ESCAPADA por la plantilla. */
+  mensaje?: string;
 }): Promise<boolean> {
   try {
     const { sendSesEmail, sesConfigured } = await import("./ses.server");
     if (!sesConfigured()) return false;
     const accion = VERBO[o.role];
-    const html = `
-<div style="font-family:system-ui,-apple-system,Segoe UI,sans-serif;max-width:520px;margin:0 auto;padding:32px 24px;color:#171717">
-  <p style="font-size:15px;line-height:1.6;margin:0 0 20px">
-    <strong>${escapar(o.deQuien)}</strong> te invitó a ${accion} el documento
-    <strong>${escapar(o.titulo)}</strong>.
-  </p>
-  <p style="margin:0 0 24px">
-    <a href="${o.url}" style="display:inline-block;background:#171717;color:#fff;text-decoration:none;padding:11px 20px;border-radius:8px;font-size:14px;font-weight:500">
-      Abrir el documento
-    </a>
-  </p>
-  <p style="font-size:13px;line-height:1.6;color:#737373;margin:0">
-    No necesitas crear una cuenta: este enlace es tuyo y te identifica.
-    No se lo reenvíes a nadie.
-  </p>
-</div>`;
+
+    // La plantilla COMÚN de Ghosty (globo, mascota incrustada, pie). Antes esto armaba su
+    // propio HTML a mano y llegaba un correo pelón, sin el personaje ni el pie: distinto
+    // de todo lo demás que manda el producto justo en el correo que abre alguien de FUERA.
+    const { ghostyEmail } = await import("./email-template.server");
+    const { html, text, inline } = ghostyEmail({
+      head: `${o.deQuien} te invitó a ${accion} un documento`,
+      // El mensaje de quien invita va PRIMERO: "revisa las cláusulas de plazo antes del
+      // viernes" es lo que hace que el correo se lea y se atienda. El aviso del enlace va
+      // al final, que es letra chica.
+      body: [o.titulo, o.mensaje?.trim(), "No necesitas crear una cuenta: este enlace es tuyo y te identifica. No se lo reenvíes a nadie."]
+        .filter(Boolean)
+        .join("\n\n"),
+      cta: { label: "Abrir el documento", url: o.url },
+      // Va a gente de FUERA del workspace: su pie dice quién escribe y no promete unos
+      // ajustes de notificaciones que esa persona no tiene.
+      footer: "externo",
+      deQuien: o.deQuien,
+    });
+
     return await sendSesEmail({
       to: o.para,
       subject: `${o.deQuien} te invitó a ${accion} "${o.titulo}"`,
       html,
-      text: `${o.deQuien} te invitó a ${accion} el documento "${o.titulo}".\n\nÁbrelo aquí: ${o.url}\n\nNo necesitas cuenta: este enlace es tuyo y te identifica. No lo reenvíes.`,
+      text,
+      inline,
     });
   } catch (e) {
     // Que el correo falle no debe perder la invitación: el enlace ya existe y quien
@@ -226,8 +291,4 @@ async function mandarCorreo(o: {
     console.error("[invite] correo falló:", (e as Error).message);
     return false;
   }
-}
-
-function escapar(v: string): string {
-  return v.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }

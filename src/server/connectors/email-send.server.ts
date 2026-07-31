@@ -32,61 +32,32 @@ function direcciones(v: unknown): string[] {
   return Array.from(new Set(ok)).slice(0, MAX_DEST);
 }
 
-function escapeHtml(s: string): string {
-  return s.replace(/[&<>"']/g, (c) =>
-    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!
-  );
-}
-
-/**
- * Cuerpo → HTML. Deliberadamente TONTO: párrafos y saltos de línea, nada más.
- *
- * No se pasa por un renderer de markdown y menos por HTML del modelo. El texto lo escribe un
- * LLM y sale del producto con nuestro dominio en el `From`: si pudiera emitir etiquetas,
- * `email_send` sería un inyector de HTML arbitrario firmado por nosotros. Un correo de
- * trabajo se lee igual de bien en párrafos.
- */
-function cuerpoHtml(texto: string, firma: string): string {
-  const parrafos = texto
-    .split(/\n{2,}/)
-    .map((p) => `<p style="margin:0 0 14px">${escapeHtml(p).replace(/\n/g, "<br>")}</p>`)
-    .join("");
-  return `<!doctype html><html><body style="margin:0;padding:28px 12px;background:#f5f5f7">
-  <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="max-width:540px;margin:0 auto;background:#fff;border:1px solid #e6e6ea;border-radius:16px">
-    <tr><td style="padding:24px 26px;font:400 15px/1.6 system-ui,-apple-system,Segoe UI,sans-serif;color:#1c1c1f">${parrafos}</td></tr>
-    <tr><td style="padding:0 26px 22px;font:400 12px/1.5 system-ui,-apple-system,Segoe UI,sans-serif;color:#8a8a94;border-top:1px solid #f0f0f3;padding-top:14px">
-      ${escapeHtml(firma)}
-    </td></tr>
-  </table>
-</body></html>`;
-}
-
 /**
  * Rate limit en la DB del tenant, reusando `gt_form_rate` (que es genérica por
  * `form_id`/`bucket`). En memoria no serviría: no sobrevive un deploy ni vale con dos
  * procesos — el mismo razonamiento que en el submit de formularios.
  */
-async function dentroDelLimite(sub: string): Promise<boolean> {
+export async function dentroDelLimite(sub: string, tool = "tool:email_send"): Promise<boolean> {
   const windowStart = Math.floor(Date.now() / 1000 / WINDOW_S) * WINDOW_S;
   try {
     const { dbq, num } = await import("../../dbq.server");
     const rows = await dbq(
-      `INSERT INTO gt_form_rate (form_id, bucket, window_start, count) VALUES ('tool:email_send',?,?,1)
+      `INSERT INTO gt_form_rate (form_id, bucket, window_start, count) VALUES (?,?,?,1)
        ON CONFLICT(form_id, bucket, window_start) DO UPDATE SET count = count + 1
        RETURNING count`,
-      [sub, windowStart]
+      [tool, sub, windowStart]
     );
     return num(rows[0]?.count) <= MAX_POR_HORA;
   } catch (e) {
     // Aquí NO se deja pasar, al revés que en el formulario público: allá el coste de fallar
     // cerrado es perder el intake de un cliente; aquí es que el agente reintente.
-    console.error("[email_send] rate check falló", e);
+    console.error(`[${tool}] rate check falló`, e);
     return false;
   }
 }
 
 /** Bitácora append-only. Un envío saliente sin rastro es indefendible ante un reporte de abuso. */
-async function bitacora(row: {
+export async function bitacora(row: {
   sub: string;
   to: string[];
   subject: string;
@@ -117,12 +88,8 @@ async function adjuntoDelTurno(
   sub: string,
   formato: "docx" | "pdf"
 ): Promise<{ bytes: Buffer; fileName: string; mime: string } | { error: string }> {
-  const db = await import("../../db.server");
-  const documentId = dest?.dmId
-    ? await db.getDmArtifact(dest.dmId)
-    : dest?.channelId
-      ? await db.getThreadArtifact(dest.channelId, null)
-      : null;
+  const { documentoDelTurno } = await import("./conv-doc.server");
+  const documentId = await documentoDelTurno(dest);
   if (!documentId) return { error: "no hay ningún documento en esta conversación para adjuntar" };
 
   const { resolveExportDoc, docBlocks } = await import("../doc-access.server");
@@ -166,10 +133,21 @@ export async function enviarCorreo(sub: string, args: EmailArgs, dest: ToolDest 
     return { ok: false, error: `tope de ${MAX_POR_HORA} correos por hora alcanzado; inténtalo más tarde` };
   }
 
-  const formato = args.attachDoc === "docx" || args.attachDoc === "pdf" ? args.attachDoc : null;
+  const modo = args.attachDoc === "docx" || args.attachDoc === "pdf" || args.attachDoc === "link" ? args.attachDoc : null;
   let adjunto: { bytes: Buffer; fileName: string; mime: string } | null = null;
-  if (formato) {
-    const r = await adjuntoDelTurno(dest, sub, formato);
+  let liga: { url: string; titulo: string; publicado: boolean } | null = null;
+  if (modo === "link") {
+    // La LIGA en vez del archivo. Mejor cuando el documento pesa (SES topa en 10MB) y cuando
+    // el documento sigue vivo: quien la abre ve la versión de hoy, no una copia congelada en
+    // la bandeja de entrada de alguien.
+    const { documentoDelTurno, ligaDelDocumento } = await import("./conv-doc.server");
+    const documentId = await documentoDelTurno(dest);
+    if (!documentId) return { ok: false, error: "no hay ningún documento en esta conversación" };
+    const r = await ligaDelDocumento(documentId, sub);
+    if ("error" in r) return { ok: false, error: r.error };
+    liga = r;
+  } else if (modo) {
+    const r = await adjuntoDelTurno(dest, sub, modo);
     if ("error" in r) return { ok: false, error: r.error };
     adjunto = r;
   }
@@ -179,19 +157,29 @@ export async function enviarCorreo(sub: string, args: EmailArgs, dest: ToolDest 
   // del destinatario cae en noreply@ y se pierde — en un trámite legal eso es el trabajo.
   const db = await import("../../db.server");
   const [yo] = await db.emailsForSubsAny([sub]);
-  const firma = yo?.name
-    ? `Enviado por ${yo.name} desde Ghosty Teams.`
-    : "Enviado desde Ghosty Teams.";
+
+  // La plantilla OFICIAL (mascot + globo de cómic), igual que las notificaciones: Ghosty suena
+  // igual escriba por donde escriba. Pie `externo` porque el destinatario casi nunca tiene
+  // cuenta — prometerle "Ajustes → Notificaciones" sería falso.
+  const { ghostyEmail } = await import("../email-template.server");
+  const { html, text, inline } = ghostyEmail({
+    head: subject,
+    body,
+    cta: liga ? { label: "Abrir el documento", url: liga.url } : undefined,
+    footer: "externo",
+    deQuien: yo?.name || undefined,
+  });
 
   const ok = await sendSesEmail({
     to,
     subject,
-    html: cuerpoHtml(body, firma),
-    text: `${body}\n\n—\n${firma}`,
+    html,
+    text,
+    inline,
     replyTo: yo?.email,
     attachments: adjunto ? [{ fileName: adjunto.fileName, bytes: adjunto.bytes, mime: adjunto.mime }] : undefined,
   });
-  await bitacora({ sub, to, subject, attached: adjunto?.fileName ?? null, ok });
+  await bitacora({ sub, to, subject, attached: adjunto?.fileName ?? liga?.url ?? null, ok });
   if (!ok) {
     return {
       ok: false,
@@ -200,5 +188,14 @@ export async function enviarCorreo(sub: string, args: EmailArgs, dest: ToolDest 
         : "no se pudo enviar el correo",
     };
   }
-  return { ok: true, to, subject, attached: adjunto?.fileName ?? null };
+  return {
+    ok: true,
+    to,
+    subject,
+    attached: adjunto?.fileName ?? null,
+    link: liga?.url ?? null,
+    // Que el agente lo sepa y lo diga: el documento pasó a ser visible para cualquiera que
+    // tenga la liga, y eso el usuario tiene derecho a oírlo.
+    publicado: liga?.publicado ?? false,
+  };
 }

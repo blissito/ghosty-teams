@@ -362,13 +362,47 @@ export function nativeTools(dest: ToolDest | null): ConnectorTool[] {
           to: { type: "array", items: { type: "string" }, description: "destinatarios (máx 5). Sólo direcciones que te hayan dictado" },
           subject: { type: "string", description: "asunto" },
           body: { type: "string", description: "cuerpo en texto. Se manda como párrafos: no uses HTML ni markdown, no se interpretan" },
-          attachDoc: { type: "string", enum: ["docx", "pdf"], description: "adjunta el documento de esta conversación en ese formato; omítelo si no va adjunto" },
+          attachDoc: {
+            type: "string",
+            enum: ["docx", "pdf", "link"],
+            description:
+              "qué va del documento de esta conversación: `docx`/`pdf` lo adjunta; `link` manda la liga (mejor si pesa —el tope es 10MB— y así ve siempre la versión viva). " +
+              "⚠️ `link` PUBLICA el documento: queda visible para cualquiera que tenga la liga. Avísalo. Omítelo si no va nada del documento.",
+          },
         },
         required: ["to", "subject", "body"],
       },
       handler: async (sub, args) => {
         const { enviarCorreo } = await import("./email-send.server");
         return enviarCorreo(sub, args, dest);
+      },
+    },
+
+    // ── Compartir el documento (acceso real, no una copia) ──────────────────────
+    // Distinta de `email_send`: aquí no viaja información, se reparte una LLAVE.
+    {
+      name: "doc_share",
+      description:
+        "Da acceso al documento de esta conversación a otras personas por correo, con nivel de lectura, comentario o edición. " +
+        "PREFIÉRELA sobre adjuntar un archivo cuando quieran que alguien REVISE o APRUEBE algo: la persona ve siempre la versión viva, " +
+        "puede comentar sobre el texto y lo que diga vuelve al documento, en vez de perderse en un adjunto. Funciona con gente de fuera: no necesitan cuenta. " +
+        "⚠️ Dar acceso NO se deshace solo y no caduca: CONFIRMA antes con quien te lo pide a quién, con qué nivel y de qué documento, en un solo mensaje.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          to: { type: "array", items: { type: "string" }, description: "correos (máx 5). Sólo direcciones que te hayan dictado" },
+          role: {
+            type: "string",
+            enum: ["view", "comment", "edit"],
+            description: "`view` sólo lee · `comment` lee y comenta (lo normal para una revisión) · `edit` puede cambiar el texto. Default: comment",
+          },
+          message: { type: "string", description: "qué esperas de esa persona, en las palabras del usuario ('revisa las cláusulas de plazo antes del viernes')" },
+        },
+        required: ["to"],
+      },
+      handler: async (sub, args) => {
+        const { compartirDoc } = await import("./doc-share.server");
+        return compartirDoc(sub, args, dest);
       },
     },
 
