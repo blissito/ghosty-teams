@@ -24,6 +24,7 @@ import {
   Minimize2,
   Printer,
   Users,
+  History,
 } from "lucide-react";
 import { useT } from "../i18n";
 import { officeToHtmlFn, xlsxToCsvFn, postMessage } from "../server/chat";
@@ -38,6 +39,7 @@ import {
   type Node as CeNode,
 } from "@ghosty/canvas-editor";
 import ArtifactShareBar from "./ArtifactShareBar";
+import ArtifactHistoryPanel from "./ArtifactHistoryPanel";
 import DocSurface from "./DocSurface";
 import CollabArtifact from "./CollabArtifact";
 
@@ -333,6 +335,9 @@ export default function ArtifactPanel({
   // siempre, que sigue siendo el default). Se resetea al cambiar de documento — el modo
   // es del que estás viendo, no del panel.
   const [collabMode, setCollabMode] = useState(false);
+  // Historial: quién co-editó cada versión y cuándo. Aquí es informativo — el panel
+  // muestra el documento VIVO; navegar a una versión concreta es cosa de su página.
+  const [historyOpen, setHistoryOpen] = useState(false);
   const [officeState, setOfficeState] = useState<"idle" | "loading" | "error">(
     "idle",
   );
@@ -425,6 +430,7 @@ export default function ArtifactPanel({
   const docIdActual = artifact?.kind === "doc" ? artifact.documentId : null;
   useEffect(() => {
     setCollabMode(false);
+    setHistoryOpen(false);
   }, [docIdActual]);
   // Artefacto HTML → Doc del Canvas. Se re-parsea SOLO al cambiar de artefacto (documentId),
   // no en cada guardado (el editor es dueño de su estado interno mientras edita).
@@ -1332,6 +1338,31 @@ export default function ArtifactPanel({
                               >
                                 <Users size={15} />
                               </button>
+                            ) : null}
+                            {artifact.kind === "doc" ? (
+                              // `relative` propio: el panel se ancla a ESTE botón, igual
+                              // que el diálogo de compartir se ancla al suyo.
+                              <span className="relative shrink-0">
+                                <button
+                                  type="button"
+                                  onClick={() => setHistoryOpen((v) => !v)}
+                                  title={t("Historial de versiones")}
+                                  aria-pressed={historyOpen}
+                                  className={`grid size-7 place-items-center rounded-md transition ${
+                                    historyOpen
+                                      ? "bg-brand/10 text-brand"
+                                      : "text-muted hover:bg-surface-3 hover:text-brand"
+                                  }`}
+                                >
+                                  <History size={15} />
+                                </button>
+                                {historyOpen ? (
+                                  <ArtifactHistoryPanel
+                                    documentId={artifact.documentId}
+                                    onClose={() => setHistoryOpen(false)}
+                                  />
+                                ) : null}
+                              </span>
                             ) : null}
                             {artifact.kind === "doc" ? (
                               <button

@@ -1,6 +1,9 @@
 import { createFileRoute, notFound, useRouter } from "@tanstack/react-router";
+import { useState } from "react";
+import { History } from "lucide-react";
 import { createServerFn } from "@tanstack/react-start";
 import ArtifactShareBar from "../components/ArtifactShareBar";
+import ArtifactHistoryPanel from "../components/ArtifactHistoryPanel";
 import GhostyMascot, { blinkTiming } from "../components/GhostyMascot";
 import { useT } from "../i18n";
 
@@ -132,6 +135,7 @@ function SharedArtifact() {
   // El parpadeo se siembra con el slug: estable entre render y render (nada de
   // Math.random, que rompería la hidratación) y distinto por artefacto.
   const blink = blinkTiming(id);
+  const [historial, setHistorial] = useState(false);
 
   return (
     <div className="flex h-[100dvh] flex-col bg-surface">
@@ -154,6 +158,37 @@ function SharedArtifact() {
           navigate({ search: { v: s.sharedArtifactId ?? undefined }, replace: true });
           router.invalidate();
         }}
+        // Historial: aquí SÍ navega, porque el `?v` es lo que decide qué se ve. En el
+        // panel de Teams el mismo componente es informativo (ahí se ve el documento vivo).
+        actions={
+          <span className="relative shrink-0">
+            <button
+              type="button"
+              onClick={() => setHistorial((v) => !v)}
+              title={t("Historial de versiones")}
+              aria-pressed={historial}
+              className={`grid size-7 place-items-center rounded-md transition ${
+                historial ? "bg-brand/10 text-brand" : "text-muted hover:bg-surface-3 hover:text-brand"
+              }`}
+            >
+              <History size={15} />
+            </button>
+            {historial ? (
+              <ArtifactHistoryPanel
+                documentId={d.documentId}
+                // `?v` puede llegar como número o como texto (el router lo parsea como
+                // JSON y aquí se pasa tal cual); el panel compara contra ids numéricos.
+                actual={search.v == null ? null : Number(search.v)}
+                onClose={() => setHistorial(false)}
+                onSelect={(versionId) => {
+                  setHistorial(false);
+                  navigate({ search: { v: versionId ?? undefined }, replace: true });
+                  router.invalidate();
+                }}
+              />
+            ) : null}
+          </span>
+        }
       />
       <iframe
         // REMONTAR al cambiar de versión: cambiarle el src a un iframe vivo no

@@ -193,7 +193,8 @@ export type ArtifactShare = {
   role: import("../db.server").DocRole;
   /** id de la versión congelada; null = Latest (sigue lo último que se publique). */
   sharedArtifactId: number | null;
-  versions: { id: number; label: string; createdAt: number }[];
+  /** `authors` = nombres de quienes co-editaron esa sesión; vacío = versión del agente. */
+  versions: { id: number; label: string; createdAt: number; authors: string[] }[];
   owner: { sub: string | null; name: string | null; email: string | null; avatar: string | null };
   isOwner: boolean;
 };
