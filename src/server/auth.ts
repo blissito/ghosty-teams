@@ -117,8 +117,17 @@ export const completeGhostyLogin = createServerFn({ method: "POST" })
     // cualquiera con una identidad válida entraba a cualquier workspace sabiendo
     // el subdominio. Se entra sólo si: ya eras de la casa, traes invitación, o el
     // workspace está vacío (primer login = su dueño).
+    // El dueño DECLARADO (workspace montado por nosotros para un cliente) entra
+    // siempre: preparar su espacio antes de que llegue lo dejaba fuera del suyo, que
+    // es justo el caso para el que se creó la clave.
     const { isKnownUser, isEmptyWorkspace } = await import("./invites");
-    if (!invited && !(await isKnownUser(id.sub)) && !(await isEmptyWorkspace())) {
+    const { isIntendedOwner } = await import("../users.server");
+    if (
+      !invited &&
+      !(await isKnownUser(id.sub)) &&
+      !(await isEmptyWorkspace()) &&
+      !(await isIntendedOwner(id.email))
+    ) {
       throw new Error("necesitas una invitación");
     }
 

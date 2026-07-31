@@ -33,6 +33,43 @@ async function ensureUniqueHandle(base: string, ownSub: string): Promise<string>
   }
 }
 
+/** ¿El usuario que acaba de entrar queda como owner del workspace?
+ *
+ *  Regla por defecto: el PRIMERO que entra a un workspace vacío. Sirve cuando alguien
+ *  crea su propio espacio, porque necesariamente es el primero.
+ *
+ *  No sirve cuando le montamos el workspace a un cliente: ahí el orden de llegada es
+ *  un accidente, y basta que nosotros lo abramos antes que él para quedarnos de dueños
+ *  de su espacio. Para ese caso gs siembra `gc_config.intended_owner_email` al crear
+ *  (ver `createWorkspace` en ghosty-studio/app/lib/workspaces.server.ts): con esa clave
+ *  presente, SÓLO ese correo puede volverse owner y el orden deja de importar.
+ *
+ *  Sin la clave el comportamiento es el de siempre, así que los workspaces anteriores
+ *  a esto no cambian. */
+async function resolveIsOwner(email: string): Promise<0 | 1> {
+  if (await isIntendedOwner(email)) return 1;
+
+  const intended = await intendedOwnerEmail();
+  // Con dueño declarado, NADIE más se vuelve owner por llegar primero.
+  if (intended) return 0;
+
+  const { rows } = await dbq("SELECT COUNT(*) FROM gc_users");
+  return Number(rows[0][0]) === 0 ? 1 : 0;
+}
+
+async function intendedOwnerEmail(): Promise<string | null> {
+  const cfg = await dbq("SELECT v FROM gc_config WHERE k = 'intended_owner_email'");
+  return (cfg.rows[0]?.[0] as string | null)?.trim().toLowerCase() || null;
+}
+
+/** El dueño declarado de un workspace montado por nosotros. Cruza la puerta de acceso
+ *  aunque no traiga invitación y aunque el workspace ya no esté vacío — si no, montarle
+ *  el espacio y entrar a prepararlo lo dejaría fuera de su propio workspace. */
+export async function isIntendedOwner(email: string): Promise<boolean> {
+  const intended = await intendedOwnerEmail();
+  return !!intended && email.trim().toLowerCase() === intended;
+}
+
 export async function upsertUser(id: {
   sub: string;
   email: string;
@@ -57,9 +94,7 @@ export async function upsertUser(id: {
     const avatar = (row[3] as string) || id.avatar;
     return { sub: id.sub, email: id.email, name, avatar, isOwner: Number(row[0]) === 1, handle };
   }
-  // Primer usuario de la instancia → owner.
-  const { rows } = await dbq("SELECT COUNT(*) FROM gc_users");
-  const isOwner = Number(rows[0][0]) === 0 ? 1 : 0;
+  const isOwner = await resolveIsOwner(id.email);
   const handle = await ensureUniqueHandle(base, id.sub);
   await dbq(
     "INSERT INTO gc_users (sub, email, name, avatar, is_owner, handle) VALUES (?, ?, ?, ?, ?, ?)",
