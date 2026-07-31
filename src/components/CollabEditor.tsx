@@ -345,8 +345,11 @@ export default function CollabEditor({
           isAgent: Boolean(u.isAgent),
           isSelf: clientId === awareness.clientID,
         };
-        // Sin `sub` (cliente viejo) se cae al clientId: peor duplicar que esconder.
-        const clave = u.sub || `c:${clientId}`;
+        // La llave NO puede ser sólo `sub`: y-prosemirror sobrescribe el awareness con su
+        // objeto pelado de caret (`{name, color}`), así que el `sub` de los OTROS casi
+        // nunca llega — sólo el propio, que se re-afirma arriba. Se cae a nombre+color,
+        // que el servidor ya deriva del `sub` y por tanto es estable por persona.
+        const clave = u.sub || `${u.name}|${u.color ?? ""}`;
         const previo = porSub.get(clave);
         if (!previo || peer.isSelf) porSub.set(clave, peer);
       });
