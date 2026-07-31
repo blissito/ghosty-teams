@@ -266,6 +266,20 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
 
     // Identidad del artefacto del DM → el agente recibe el artefacto ACTUAL (artifactDocHint)
     // para MODIFICARLO (re-emitir la misma versión), no recrearlo desde cero ni duplicar la card.
+    // RETOMAR UN ARTEFACTO (ver el comentario largo en chat.ts). En un DM no hay canal con
+    // el que comparar "nació aquí", así que sólo aplican las reglas de pertenencia: ser el
+    // dueño del artefacto, o el del workspace.
+    const slugPegado = db.slugDeArtefactoEn(data.body ?? "");
+    if (slugPegado) {
+      const adoptado = await db
+        .adoptableArtifact(slugPegado, {
+          requesterSub: me?.sub ?? null,
+          isWorkspaceOwner: !!me?.isOwner,
+        })
+        .catch(() => null);
+      if (adoptado) await db.setDmArtifact(data.id, adoptado).catch(() => {});
+    }
+
     const currentDocId = await db.getDmArtifact(data.id).catch(() => null);
     const currentDoc = currentDocId ? await db.getDoc(currentDocId).catch(() => null) : null;
     // Igual que en el room: lo mío se interrumpe, lo ajeno se encola (ver turns.server).

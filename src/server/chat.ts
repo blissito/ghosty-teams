@@ -713,9 +713,38 @@ export const askAgent = createServerFn({ method: "POST" })
     // aunque el worker recicle su sesión.
     // resolve* y no get*: el artefacto suele nacer en el ROOM y la conversación seguir en
     // el HILO de ese mensaje, que no tiene puntero propio (ver resolveThreadArtifact).
+    const poster = await sessionUser(); // el que postea/mencionó este turno = invocador
+
+    // RETOMAR UN ARTEFACTO DE OTRA CONVERSACIÓN. Si el mensaje trae el link de un
+    // artefacto, se ADOPTA en este hilo antes de resolver el puntero. Sin esto, pegar el
+    // link no servía de nada: el agente intentaba leer la URL pública SIN sesión, y un
+    // documento privado le contestaba 404 ("ese link no me da acceso"), así que pedía que
+    // le pegaran el HTML a mano.
+    //
+    // Adoptar = mover el puntero del hilo. De ahí en adelante todo el camino de abajo ya
+    // existía: resolveThreadArtifact lo encuentra, getDoc trae el contenido y se re-inyecta
+    // al turno, de modo que "modifícalo" produce una nueva VERSIÓN del mismo documento en
+    // vez de una tarjeta nueva.
+    //
+    // La autorización vive en db.adoptableArtifact: dueño, o nacido en este room. Un link
+    // que no cumpla se ignora en silencio — el agente sigue con el artefacto que ya tuviera
+    // el hilo, que es mejor que abortar el turno por un link que quizá era sólo una cita.
+    const slugPegado = db.slugDeArtefactoEn(data.body ?? "");
+    if (slugPegado) {
+      const adoptado = await db
+        .adoptableArtifact(slugPegado, {
+          requesterSub: poster?.sub ?? null,
+          channelId: channel.id,
+          isWorkspaceOwner: !!poster?.isOwner,
+        })
+        .catch(() => null);
+      if (adoptado) {
+        await db.setThreadArtifact(channel.id, data.parentId, adoptado).catch(() => {});
+      }
+    }
+
     const currentDocId = await db.resolveThreadArtifact(channel.id, data.parentId).catch(() => null);
     const currentDoc = currentDocId ? await db.getDoc(currentDocId).catch(() => null) : null;
-    const poster = await sessionUser(); // el que postea/mencionó este turno = invocador
 
     // INTERRUMPIR lo mío, encolar lo ajeno. Si el que escribe es el mismo que tiene un
     // turno corriendo en este flow, casi siempre está corrigiendo ("mejor en html") y

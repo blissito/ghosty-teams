@@ -530,6 +530,72 @@ export async function shareRootBySlug(slug: string): Promise<ShareRoot | null> {
   return rows[0] ? toShareRoot(rows[0]) : null;
 }
 
+/**
+ * ¿Puede ESTA conversación adoptar el artefacto de ese slug? Devuelve su documentId, o
+ * null si no.
+ *
+ * Existe porque un artefacto sólo se podía editar en el hilo donde nació: pegar su link en
+ * otra conversación no servía de nada. El agente lee la URL pública SIN sesión, así que
+ * `resolveSharedArtifact` lo trata como visitante anónimo y un documento privado le
+ * contesta 404 — correcto para "compartir hacia afuera", inútil para "sigue trabajando en
+ * esto". Adoptarlo mueve el puntero del hilo (`setThreadArtifact`), y de ahí en adelante el
+ * camino que ya existe re-inyecta el contenido al turno.
+ *
+ * DELIBERADAMENTE NO mira `share_visibility`: esa propiedad gobierna el enlace público, que
+ * es otro problema. Acá la pregunta es de pertenencia, no de difusión.
+ *
+ * Permite en tres casos:
+ *   · Quien pide es el DUEÑO del artefacto (`owner_sub`) — puede llevárselo donde quiera.
+ *   · El artefacto NACIÓ EN ESTE ROOM (incluidos sus hilos, porque `gc_messages.channel_id`
+ *     es el mismo). Quien postea en el room ya ve ese artefacto en el historial.
+ *   · Quien pide es el DUEÑO DEL WORKSPACE. No es una excepción que abramos acá: en este
+ *     producto el owner YA ve todos los rooms, incluidos los privados — ver `canSeeChannel`
+ *     y `listChannels`, que hacen `is_private = 0 OR isOwner`. Omitirlo lo dejaría con
+ *     menos acceso del que el resto de la app ya le concede.
+ *
+ * O sea que ninguna de las tres otorga un privilegio nuevo: sólo dejan adoptar lo que el
+ * solicitante ya podía ver. Todo lo demás se niega — en particular un artefacto nacido en
+ * un room privado ajeno pedido por alguien que no es dueño de nada.
+ *
+ * El aislamiento CROSS-TENANT no se comprueba acá porque es estructural: hay una base por
+ * workspace (namespace por subdominio, ver dbq.server.ts), así que un slug de otro tenant
+ * sencillamente no existe en esta consulta.
+ */
+export async function adoptableArtifact(
+  slug: string,
+  opts: { requesterSub: string | null; channelId?: number | null; isWorkspaceOwner?: boolean }
+): Promise<string | null> {
+  if (!slug) return null;
+  const rows = await dbq(
+    `SELECT a.url, a.owner_sub, m.channel_id FROM gc_artifacts a
+       LEFT JOIN gc_messages m ON m.id = a.message_id
+      WHERE a.share_slug = ? LIMIT 1`,
+    [slug]
+  );
+  const r = rows[0];
+  if (!r?.url) return null;
+
+  if (opts.isWorkspaceOwner) return r.url;
+  const esDueño = !!opts.requesterSub && r.owner_sub === opts.requesterSub;
+  const nacióAquí =
+    opts.channelId != null && r.channel_id != null && num(r.channel_id) === opts.channelId;
+
+  return esDueño || nacióAquí ? r.url : null;
+}
+
+/**
+ * Saca el slug de artefacto que venga en un mensaje: URL completa (con `?v=`), la ruta
+ * `/artefacto/<slug>` suelta, o el slug pelado si el usuario copió sólo eso.
+ *
+ * Si hay varios, gana el ÚLTIMO: es el que la persona acaba de pegar, no el que quedó
+ * arriba de una conversación larga.
+ */
+export function slugDeArtefactoEn(texto: string): string | null {
+  if (!texto) return null;
+  const encontrados = [...texto.matchAll(/\/artefacto\/([A-Za-z0-9_-]{6,})/g)].map((m) => m[1]);
+  return encontrados.length ? encontrados[encontrados.length - 1]! : null;
+}
+
 // El documentId al que pertenece una key de storage (para que el link viejo
 // /t3/<key> pueda mandarse a su página con permisos en vez de servir el HTML
 // crudo). `src` se guardó como "<base>/<key sin el prefijo t3/>", así que el
