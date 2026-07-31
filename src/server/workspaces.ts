@@ -62,3 +62,42 @@ export const listMyWorkspacesFn = createServerFn({ method: "GET" }).handler(asyn
     return empty;
   }
 });
+
+// Consumo de tokens del workspace en el mes en curso, para el tab "Uso" de Ajustes.
+// La verdad vive en el control-plane (ghosty.studio), igual que el plan: gs es quien
+// recibe los reportes del worker y quien sabe cuántos tokens incluye el paquete. Aquí
+// no se guarda nada ni se calcula ningún tope — duplicarlo sería tener dos cifras que
+// se contradicen.
+//
+// Devuelve null si algo falla o si el workspace no tiene consumo medible: el tab
+// prefiere no pintar barra a pintar un cero que parece un bug.
+export const workspaceUsageFn = createServerFn({ method: "GET" }).handler(async () => {
+  const IDP = process.env.GHOSTY_IDENTITY_URL ?? "https://www.ghosty.studio";
+  const { currentSlug } = await import("./tenant.server");
+  const slug = await currentSlug();
+  if (!slug) return null;
+
+  try {
+    const crypto = await import("node:crypto");
+    const ts = Math.floor(Date.now() / 1000);
+    const sig = crypto
+      .createHmac("sha256", process.env.GHOSTY_PARTNER_SECRET!)
+      .update(`${ts}.${slug}`)
+      .digest("hex");
+    const res = await fetch(`${IDP}/internal/workspace-usage/${encodeURIComponent(slug)}?ts=${ts}&sig=${sig}`);
+    if (!res.ok) return null;
+    return (await res.json()) as {
+      plan: string;
+      combo: string;
+      paidUntil: string | null;
+      resetsAt: string;
+      used: number;
+      included: number;
+      turns: number;
+      messagesUsed: number;
+      messagesIncluded: number;
+    };
+  } catch {
+    return null;
+  }
+});

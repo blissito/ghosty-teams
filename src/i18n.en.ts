@@ -1,5 +1,15 @@
 // Auto-generated ES→EN dictionary for dictionaries.en — 421 keys
 export const en: Record<string, string> = {
+  // Uso (tab de Ajustes) — saldo de tokens del workspace
+  "Uso": "Usage",
+  "Tokens de este mes": "Tokens this month",
+  "de": "of",
+  "mensajes": "messages",
+  "se reinicia el": "resets on",
+  "pagado hasta el": "paid through",
+  "turnos del agente este mes": "agent turns this month",
+  "No pudimos consultar el consumo en este momento.": "We couldn't load usage right now.",
+
   // Llamadas (quick calls) — ES "Llamada", EN "Quick call" (nunca "huddle" en UI)
   "Llamada": "Quick call",
   "Iniciar llamada": "Start quick call",

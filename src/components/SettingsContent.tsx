@@ -25,7 +25,8 @@ import { bumpEmojis } from "../utils/emojis-bus";
 import { bumpUsers } from "../utils/users-bus";
 import type { CustomEmoji } from "../db.server";
 import { useT, useLocale, useSetLocale, type Locale } from "../i18n";
-import { Monitor, Sun, Moon, Check, SlidersHorizontal, Palette, Github, Plug, Users, Calendar, CalendarClock, CalendarCheck, Link2, RefreshCw } from "lucide-react";
+import { Monitor, Sun, Moon, Check, SlidersHorizontal, Palette, Github, Plug, Users, Calendar, CalendarClock, CalendarCheck, Link2, RefreshCw, Gauge } from "lucide-react";
+import { workspaceUsageFn } from "../server/workspaces";
 import { listMyConnectorsFn, disconnectConnectorFn } from "../server/connectors";
 import {
   PRESETS,
@@ -94,7 +95,7 @@ function seedSettingsData(): SettingsData | null {
  * @param initial datos precargados por el loader de la ruta (evita flash en SSR).
  * @param onClose si viene → modo modal (header con X). Si no → modo ruta (link "volver").
  */
-type TabId = "general" | "notifications" | "appearance" | "integraciones" | "agentes" | "emojis";
+type TabId = "general" | "notifications" | "appearance" | "integraciones" | "agentes" | "emojis" | "uso";
 
 export function SettingsContent({
   initialTab,
@@ -160,6 +161,7 @@ export function SettingsContent({
     { id: "notifications", label: t("Notificaciones"), icon: Bell },
     { id: "appearance", label: t("Apariencia"), icon: Palette },
     { id: "integraciones", label: t("Integraciones"), icon: Plug },
+    { id: "uso", label: t("Uso"), icon: Gauge },
     ...(canManageAgents ? [{ id: "agentes" as const, label: t("Agentes"), icon: Bot }] : []),
     // Emojis: visible para TODOS los members (Slack default — cualquiera agrega; borrar
     // queda restringido al owner o al creador, gateado en EmojiManager).
@@ -329,6 +331,8 @@ export function SettingsContent({
             <AgentsManager isOwner={isOwner} hasAgent={!!data?.setup?.hasAgent} />
           )}
 
+          {tab === "uso" && <UsagePanel />}
+
           {tab === "emojis" && <EmojiManager isOwner={isOwner} mySub={user?.sub ?? null} />}
         </div>
       </div>
@@ -476,6 +480,98 @@ function IntegrationsPanel() {
    fuente + reducir movimiento. Todo instantáneo y persistente (theme.ts). ── */
 function useThemeStore() {
   return useSyncExternalStore(subscribeTheme, getTheme, getTheme);
+}
+
+/* ── Uso: el saldo de tokens del workspace en el mes en curso ─────────────────
+   UN SOLO EJE, a propósito. Anthropic pinta tres barras (sesión, semana, modelos)
+   porque tiene tres límites; aquí hay un saldo y ya. Y NADA de créditos, excedente
+   ni topes: no hay cobro en el repo, y prometerlo en pantalla sería mentir.
+
+   La cifra la calcula gs (control-plane): es quien recibe los reportes del worker y
+   quien sabe cuántos tokens trae el paquete. Aquí no se recalcula nada. */
+function UsagePanel() {
+  const t = useT();
+  const [data, setData] = useState<Awaited<ReturnType<typeof workspaceUsageFn>> | null>(null);
+  const [state, setState] = useState<"loading" | "ready" | "error">("loading");
+
+  useEffect(() => {
+    let alive = true;
+    workspaceUsageFn()
+      .then((r) => {
+        if (!alive) return;
+        setData(r);
+        setState(r ? "ready" : "error");
+      })
+      .catch(() => alive && setState("error"));
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  if (state === "loading") {
+    return <div className="text-sm text-gray-500 dark:text-gray-400">{t("Cargando…")}</div>;
+  }
+  // Sin dato preferimos decirlo a pintar un cero, que se lee como "no has usado nada"
+  // cuando en realidad es "no pudimos consultarlo".
+  if (state === "error" || !data) {
+    return (
+      <div className="text-sm text-gray-500 dark:text-gray-400">
+        {t("No pudimos consultar el consumo en este momento.")}
+      </div>
+    );
+  }
+
+  const pct = data.included > 0 ? Math.min(100, (data.used / data.included) * 100) : 0;
+  const fmtM = (n: number) => `${(n / 1_000_000).toFixed(n >= 10_000_000 ? 0 : 1)}M`;
+  const fecha = (iso: string) =>
+    new Date(iso).toLocaleDateString("es-MX", { day: "numeric", month: "long" });
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <div className="flex items-baseline justify-between mb-2">
+          <h3 className="text-sm font-medium">{t("Tokens de este mes")}</h3>
+          <span className="text-sm tabular-nums text-gray-600 dark:text-gray-300">
+            {fmtM(data.used)} {t("de")} {fmtM(data.included)}
+          </span>
+        </div>
+        <div className="h-2 w-full rounded-full bg-gray-200 dark:bg-gray-700 overflow-hidden">
+          {/* El color de la marca es una VARIABLE CSS (--color-brand), no una escala de
+              Tailwind: `bg-brand-500` no existe y saldría transparente. */}
+          <div
+            className="h-full rounded-full transition-[width] duration-500"
+            style={{
+              width: `${Math.max(pct, data.used > 0 ? 1.5 : 0)}%`,
+              background:
+                pct >= 90 ? "#ef4444" : pct >= 75 ? "#f59e0b" : "var(--color-brand)",
+            }}
+          />
+        </div>
+        <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
+          {/* La equivalencia en mensajes es lo que la gente entiende: nadie razona en
+              millones de tokens. El divisor lo fija gs, no esta pantalla. */}
+          ≈ {data.messagesUsed.toLocaleString("es-MX")} {t("de")}{" "}
+          {data.messagesIncluded.toLocaleString("es-MX")} {t("mensajes")} ·{" "}
+          {t("se reinicia el")} {fecha(data.resetsAt)}
+        </p>
+      </div>
+
+      <div className="text-xs text-gray-500 dark:text-gray-400 space-y-1">
+        <div>
+          {t("Plan")}: <span className="text-gray-700 dark:text-gray-200">{data.plan}</span>
+          {data.paidUntil && (
+            <>
+              {" · "}
+              {t("pagado hasta el")} {fecha(data.paidUntil)}
+            </>
+          )}
+        </div>
+        <div>
+          {data.turns.toLocaleString("es-MX")} {t("turnos del agente este mes")}
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function AppearancePanel() {
