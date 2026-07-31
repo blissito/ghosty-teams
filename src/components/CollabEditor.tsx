@@ -178,7 +178,19 @@ export default function CollabEditor({
   const ydoc = useMemo(() => new Y.Doc(), []);
   const provider = useMemo(
     () =>
-      new HocuspocusProvider({ url: wsUrl, name: room, token, document: ydoc }),
+      new HocuspocusProvider({
+        url: wsUrl,
+        name: room,
+        token,
+        document: ydoc,
+        // ⚠️ NO quitar. Hocuspocus trae `preserveConnection: true` por defecto, y con eso
+        // `provider.destroy()` NUNCA cierra el WebSocket: sólo se desengancha del
+        // documento y deja el socket vivo, que además se auto-reconecta solo cada 3s.
+        // Resultado en prod: cada apertura del editor dejaba un socket colgado, la sala
+        // nunca llegaba a cero clientes y por tanto NO se cortaba versión ni se firmaba la
+        // autoría. Se veía como gente en el rail de presencia que ya no estaba.
+        preserveConnection: false,
+      }),
     [wsUrl, room, token, ydoc],
   );
   const [peers, setPeers] = useState<Peer[]>([]);
@@ -438,7 +450,10 @@ export default function CollabEditor({
   // hay. En las páginas de invitado no hay panel: ahí simplemente no se pide nada.
   const [verHilos, setVerHilos] = useState(false);
   const sidebar = verHilos;
-  const ANCHO_HILOS = 340;
+  // Lo que el panel de hilos OCUPA y por tanto lo que le pide al artefacto. Debe coincidir
+  // con el ancho del <aside> de abajo: si se piden 340 y se ocupan 380, el documento pierde
+  // 40px cada vez que se abren los comentarios.
+  const ANCHO_HILOS = 380;
 
   const alternarHilos = () => {
     setVerHilos((v) => {
@@ -521,7 +536,7 @@ export default function CollabEditor({
           </div>
         </div>
         {sidebar && (
-          <aside className="thin-scroll w-[320px] shrink-0 overflow-auto border-l border-neutral-200 bg-white px-3 py-4">
+          <aside className="thin-scroll w-[380px] shrink-0 overflow-y-auto overflow-x-hidden border-l border-neutral-200 bg-white px-3 py-4">
             <p className="px-1 pb-2 text-xs font-semibold uppercase tracking-wide text-neutral-400">
               Comentarios
             </p>

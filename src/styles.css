@@ -202,6 +202,20 @@ body {
   background: color-mix(in srgb, var(--color-brand) 60%, transparent);
 }
 
+/* ── Panel de comentarios de la co-edición ────────────────────────────────────
+   BlockNote fija `.bn-thread { min-width: 350px }` pensando en el hilo FLOTANTE
+   junto al texto. En nuestro panel lateral eso no cabe y aparecía una barra de
+   scroll horizontal. El hilo tiene que adaptarse al ancho del panel, no al revés. */
+.bn-threads-sidebar .bn-thread {
+  min-width: 0;
+  max-width: 100%;
+}
+.bn-threads-sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
 /* ── El "zoom misterioso" de iOS ──────────────────────────────────────────────
    Safari en iPhone hace zoom al ENFOCAR cualquier campo editable cuyo font-size
    sea < 16px, y NO vuelve al salir: el resto de la sesión queda con el viewport

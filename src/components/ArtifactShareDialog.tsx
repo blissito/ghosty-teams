@@ -61,6 +61,8 @@ export default function ArtifactShareDialog({
   // una vez al abrir; el padrón de un equipo no cambia a media sesión.
   const [gente, setGente] = useState<Invitable[]>([]);
   const [verGente, setVerGente] = useState(false);
+  /** Opción marcada por teclado (índice dentro de `filtrada`). */
+  const [marcada, setMarcada] = useState(0);
   const [nivelInvitacion, setNivelInvitacion] = useState<"view" | "comment" | "edit">("edit");
   const [invitando, setInvitando] = useState(false);
   const [avisoInvitacion, setAvisoInvitacion] = useState<string | null>(null);
@@ -182,6 +184,7 @@ export default function ArtifactShareDialog({
     const q = correo.trim().toLowerCase();
     return !q || g.email.includes(q) || g.name.toLowerCase().includes(q);
   });
+  const abierta = verGente && filtrada.length > 0;
 
   const row =
     "w-full rounded-lg border border-border bg-surface-3 px-3 py-2.5 text-left text-sm text-ink transition hover:bg-border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand";
@@ -264,27 +267,80 @@ export default function ArtifactShareDialog({
               <section className="flex flex-col gap-2">
                 <h3 className="text-xs font-medium text-muted">{t("Invitar por correo")}</h3>
                 <div className="flex gap-1.5">
+                  {/* Combobox con el patrón ARIA estándar. Dos cosas lo tenían roto:
+                      el fondo salía TRANSPARENTE (usaba `bg-surface-1`, un token que no
+                      existe — los tokens son surface / surface-2 / surface-3), y con
+                      `type="email"` Chrome montaba su propio autocompletado de correos
+                      ENCIMA de la lista. */}
                   <div className="relative min-w-0 flex-1">
                     <input
-                      type="email"
+                      // `text` + inputMode, NO `email`: es lo que evita el autofill nativo
+                      // de Chrome. El correo se valida en el servidor de todos modos.
+                      type="text"
+                      inputMode="email"
+                      autoComplete="off"
+                      name="invitar-a"
+                      role="combobox"
+                      aria-expanded={abierta}
+                      aria-controls="lista-invitables"
+                      aria-autocomplete="list"
+                      aria-activedescendant={
+                        abierta && filtrada[marcada] ? `invitable-${marcada}` : undefined
+                      }
                       value={correo}
                       onChange={(e) => {
                         setCorreo(e.target.value);
                         setVerGente(true);
+                        setMarcada(0);
                       }}
                       onFocus={() => setVerGente(true)}
                       // Se cierra en el siguiente tick: cerrar en el `blur` inmediato
                       // mata el clic sobre la propia lista.
                       onBlur={() => setTimeout(() => setVerGente(false), 150)}
+                      onKeyDown={(e) => {
+                        if (!abierta) {
+                          if (e.key === "ArrowDown") {
+                            setVerGente(true);
+                            e.preventDefault();
+                          }
+                          return;
+                        }
+                        if (e.key === "ArrowDown") {
+                          e.preventDefault();
+                          setMarcada((i) => (i + 1) % filtrada.length);
+                        } else if (e.key === "ArrowUp") {
+                          e.preventDefault();
+                          setMarcada((i) => (i - 1 + filtrada.length) % filtrada.length);
+                        } else if (e.key === "Enter") {
+                          const g = filtrada[marcada];
+                          if (g) {
+                            e.preventDefault();
+                            setCorreo(g.email);
+                            setVerGente(false);
+                          }
+                        } else if (e.key === "Escape") {
+                          // Cierra la lista SIN cerrar el diálogo: `stopPropagation` frena
+                          // al listener de Escape que cierra Compartir.
+                          e.stopPropagation();
+                          setVerGente(false);
+                        }
+                      }}
                       placeholder={t("correo@ejemplo.com")}
-                      className="w-full rounded-lg border border-border bg-surface-1 px-2.5 py-1.5 text-sm text-ink outline-none focus:ring-2 focus:ring-brand/40"
+                      className="w-full rounded-lg border border-border bg-surface px-2.5 py-1.5 text-sm text-ink outline-none focus:ring-2 focus:ring-brand/40"
                     />
-                    {verGente && filtrada.length ? (
-                      <ul className="absolute z-10 mt-1 max-h-56 w-full overflow-auto rounded-lg border border-border bg-surface-1 py-1 shadow-lg">
-                        {filtrada.map((g) => (
+                    {abierta ? (
+                      <ul
+                        id="lista-invitables"
+                        role="listbox"
+                        className="absolute z-[60] mt-1 max-h-56 w-full overflow-auto rounded-lg border border-border bg-surface py-1 shadow-lg"
+                      >
+                        {filtrada.map((g, i) => (
                           <li key={g.email}>
                             <button
                               type="button"
+                              id={`invitable-${i}`}
+                              role="option"
+                              aria-selected={i === marcada}
                               // `onMouseDown`: el `blur` del input llega antes que el
                               // click y la lista ya no estaría para recibirlo.
                               onMouseDown={(e) => {
@@ -292,7 +348,10 @@ export default function ArtifactShareDialog({
                                 setCorreo(g.email);
                                 setVerGente(false);
                               }}
-                              className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm text-ink transition hover:bg-surface-3"
+                              onMouseEnter={() => setMarcada(i)}
+                              className={`flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm text-ink transition ${
+                                i === marcada ? "bg-surface-3" : ""
+                              }`}
                             >
                               {g.avatar ? (
                                 <img src={g.avatar} alt="" className="size-6 shrink-0 rounded-full object-cover" referrerPolicy="no-referrer" />
@@ -317,7 +376,7 @@ export default function ArtifactShareDialog({
                   <select
                     value={nivelInvitacion}
                     onChange={(e) => setNivelInvitacion(e.target.value as typeof nivelInvitacion)}
-                    className="rounded-lg border border-border bg-surface-1 px-2 py-1.5 text-xs text-ink outline-none"
+                    className="rounded-lg border border-border bg-surface px-2 py-1.5 text-xs text-ink outline-none"
                   >
                     <option value="edit">{t("Editar")}</option>
                     <option value="comment">{t("Comentar")}</option>
@@ -407,7 +466,7 @@ export default function ArtifactShareDialog({
                       onClick={() => apply({ role: valor })}
                       className={`flex-1 rounded-md px-2 py-1.5 text-xs font-medium transition disabled:cursor-default ${
                         share.role === valor
-                          ? "bg-surface-1 text-ink shadow-sm"
+                          ? "bg-surface text-ink shadow-sm"
                           : "text-muted hover:text-ink disabled:opacity-60"
                       }`}
                     >
