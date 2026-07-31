@@ -65,6 +65,12 @@ export const docCollabConnFn = createServerFn({ method: "POST" })
     const me = await requireUser();
     const documentId = data.documentId;
 
+    // El esquema de ESTE namespace, por si el tenant todavía no lo tiene: `share_role` es
+    // columna nueva y `shareRootFor` la pide. Sin esto, abrir un documento antes de
+    // cualquier actividad de chat en un team recién migrado reventaba la consulta.
+    // Idempotente y barato — mismo patrón que chat.ts/dm.ts.
+    await (await import("./schema.server")).ensureSchema().catch(() => {});
+
     // 1) Permiso. `null` = ni verlo; se responde lo mismo que si no existiera.
     const { resolveDocRole } = await import("./doc-access.server");
     const role = await resolveDocRole(documentId, { sub: me.sub, isOwner: me.isOwner });
