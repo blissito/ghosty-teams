@@ -40,7 +40,9 @@ function Puerta({ onEntrar }: { onEntrar: (nombre: string) => void }) {
           onChange={(e) => setNombre(e.target.value)}
           maxLength={40}
           placeholder="Tu nombre"
-          className="mt-4 w-full rounded-md border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-400 focus:ring-2 focus:ring-[#9870ED]/40"
+          // El color va EXPLÍCITO: sin él lo tecleado heredaba un gris tenue y se leía
+          // igual que el placeholder — parecía que no habías escrito nada.
+          className="mt-4 w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm text-neutral-900 caret-neutral-900 outline-none placeholder:text-neutral-400 focus:border-neutral-400 focus:ring-2 focus:ring-[#9870ED]/40"
         />
         <button
           type="submit"

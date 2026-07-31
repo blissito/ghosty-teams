@@ -47,10 +47,17 @@ export const Route = createRootRoute({
     // si no es "cualquiera con el enlace" y no eres el dueño. Mandar aquí a /login
     // convertiría cada link compartido en una invitación a registrarse.
     const isSharedArtifact = location.pathname.startsWith('/artefacto/')
+    // Co-edición para gente de FUERA (/coeditar/<slug> y /coeditar/invitacion/<token>):
+    // igual de pública que el artefacto compartido, y por la misma razón — mandarla a
+    // /login convierte cada invitación en una invitación a registrarse. El permiso lo
+    // resuelve la propia ruta (el `share_role` del enlace o el token de la invitación) y
+    // el nivel viaja FIRMADO en el ticket, así que abrir la puerta aquí no la afloja.
+    const isCoedit = location.pathname.startsWith('/coeditar/')
     if (
       isOAuthRelay ||
       isCanvasDemo ||
       isSharedArtifact ||
+      isCoedit ||
       location.pathname === '/login' ||
       location.pathname.startsWith('/join')
     ) {
