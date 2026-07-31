@@ -286,21 +286,57 @@ export function stripAskUser(body: string): string {
   return [before.trim(), after.trim()].filter(Boolean).join("\n\n");
 }
 
-// ── Nota de voz ────────────────────────────────────────────────────────────────
-// El SDK del box (voice.mjs) sintetiza el audio, lo publica y emite un bloque
-//   ```eb-audio\n{"url","waveform","durationMs","mime"}\n```
-// que el agente incluye en su respuesta. El server lo parsea → re-sube el ogg a
-// nuestro storage → adjunto audio (gc_attachments) → burbuja de nota de voz.
-export type EbAudio = { url: string; waveform?: string; durationMs?: number; mime?: string };
+// ── Escaneo de fences: TODAS las ocurrencias, no sólo la primera ───────────────
+//
+// Durante mucho tiempo `eb-audio` y `eb-file` se leían con un `match` sin flag `g`, o sea
+// el PRIMER bloque y nada más. Un turno con dos notas de voz dejaba la segunda **cruda en
+// el chat**: el fence sobrevivía en `gc_messages.body`, Markdown lo pintaba como bloque de
+// código y el usuario veía la URL firmada del .ogg (incidente 2026-07-31). `eb-doc` ya
+// había pasado por esto y lo resolvió con un bucle propio; esto generaliza aquel arreglo
+// para que el siguiente tipo de bloque nazca correcto.
+type Fence = { start: number; end: number; raw: string; closed: boolean };
 
-export function extractEbAudio(body: string): EbAudio | null {
-  const open = body.match(/```eb-audio[^\n]*\n/);
-  if (!open || open.index == null) return null;
-  const rest = body.slice(open.index + open[0].length);
-  const closeIdx = rest.indexOf("```");
-  if (closeIdx === -1) return null; // sólo al cerrar (el JSON debe estar completo)
+/**
+ * Todos los bloques ```<name>``` del cuerpo, en orden.
+ *
+ * Un bloque SIN cerrar (el modelo sigue escribiendo) se reporta con `closed:false` y corta
+ * el escaneo: lo que venga después está dentro de él, no es un bloque hermano.
+ */
+function scanFences(body: string, name: string): Fence[] {
+  const re = new RegExp("```" + name + "[^\\n]*(\\n|$)", "g");
+  const out: Fence[] = [];
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(body))) {
+    const contentStart = m.index + m[0].length;
+    const closeIdx = body.indexOf("```", contentStart);
+    if (closeIdx === -1) {
+      out.push({ start: m.index, end: body.length, raw: body.slice(contentStart), closed: false });
+      break;
+    }
+    out.push({ start: m.index, end: closeIdx + 3, raw: body.slice(contentStart, closeIdx), closed: true });
+    re.lastIndex = closeIdx + 3; // saltar el bloque entero: su contenido no se re-escanea
+  }
+  return out;
+}
+
+/** Recorta del cuerpo los tramos indicados y pega lo que queda con una línea en blanco. */
+function cutFences(body: string, fences: Fence[]): string {
+  if (!fences.length) return body;
+  const parts: string[] = [];
+  let prev = 0;
+  for (const f of fences) {
+    parts.push(body.slice(prev, f.start));
+    prev = f.end;
+  }
+  parts.push(body.slice(prev));
+  return parts.map((p) => p.trim()).filter(Boolean).join("\n\n");
+}
+
+/** JSON de un fence cerrado, o null si no parsea / no trae `url`. */
+function fenceJson<T extends { url?: unknown }>(f: Fence): T | null {
+  if (!f.closed) return null;
   try {
-    const obj = JSON.parse(rest.slice(0, closeIdx).trim()) as EbAudio;
+    const obj = JSON.parse(f.raw.trim()) as T;
     if (!obj?.url || typeof obj.url !== "string") return null;
     return obj;
   } catch {
@@ -308,15 +344,28 @@ export function extractEbAudio(body: string): EbAudio | null {
   }
 }
 
-// Quita el bloque ```eb-audio``` de la burbuja (el audio se muestra como adjunto).
+// ── Nota de voz ────────────────────────────────────────────────────────────────
+// El SDK del box (voice.mjs) sintetiza el audio, lo publica y emite un bloque
+//   ```eb-audio\n{"url","waveform","durationMs","mime"}\n```
+// que el agente incluye en su respuesta. El server lo parsea → re-sube el ogg a
+// nuestro storage → adjunto audio (gc_attachments) → burbuja de nota de voz.
+export type EbAudio = { url: string; waveform?: string; durationMs?: number; mime?: string };
+
+/** TODAS las notas de voz del cuerpo, en orden. Un turno puede traer varias. */
+export function extractAllEbAudio(body: string): EbAudio[] {
+  return scanFences(body, "eb-audio")
+    .map((f) => fenceJson<EbAudio>(f))
+    .filter((a): a is EbAudio => a != null);
+}
+
+/** La primera nota de voz, o null. Conveniencia sobre `extractAllEbAudio`. */
+export function extractEbAudio(body: string): EbAudio | null {
+  return extractAllEbAudio(body)[0] ?? null;
+}
+
+// Quita TODOS los bloques ```eb-audio``` de la burbuja (los audios van como adjuntos).
 export function stripEbAudio(body: string): string {
-  const open = body.match(/```eb-audio[^\n]*\n/);
-  if (!open || open.index == null) return body;
-  const before = body.slice(0, open.index);
-  const rest = body.slice(open.index + open[0].length);
-  const closeIdx = rest.indexOf("```");
-  const after = closeIdx === -1 ? "" : rest.slice(closeIdx + 3);
-  return [before.trim(), after.trim()].filter(Boolean).join("\n\n");
+  return cutFences(body, scanFences(body, "eb-audio").filter((f) => f.closed));
 }
 
 // ── Archivo generado (PDF, PNG, lo que sea) ───────────────────────────────────
@@ -333,30 +382,21 @@ export function stripEbAudio(body: string): string {
 // publicada siga viva, y queda buscable y reenviable como cualquier otro archivo.
 export type EbFile = { url: string; name?: string; mime?: string; size?: number; thumb?: string };
 
-export function extractEbFile(body: string): EbFile | null {
-  const open = body.match(/```eb-file[^\n]*\n/);
-  if (!open || open.index == null) return null;
-  const rest = body.slice(open.index + open[0].length);
-  const closeIdx = rest.indexOf("```");
-  if (closeIdx === -1) return null; // sólo al cerrar (el JSON debe estar completo)
-  try {
-    const obj = JSON.parse(rest.slice(0, closeIdx).trim()) as EbFile;
-    if (!obj?.url || typeof obj.url !== "string") return null;
-    return obj;
-  } catch {
-    return null;
-  }
+/** TODOS los archivos generados del cuerpo, en orden. Un turno puede producir varios. */
+export function extractAllEbFile(body: string): EbFile[] {
+  return scanFences(body, "eb-file")
+    .map((f) => fenceJson<EbFile>(f))
+    .filter((a): a is EbFile => a != null);
 }
 
-/** Quita el bloque ```eb-file``` de la burbuja (el archivo se muestra como adjunto). */
+/** El primer archivo, o null. Conveniencia sobre `extractAllEbFile`. */
+export function extractEbFile(body: string): EbFile | null {
+  return extractAllEbFile(body)[0] ?? null;
+}
+
+/** Quita TODOS los bloques ```eb-file``` de la burbuja (los archivos van como adjuntos). */
 export function stripEbFile(body: string): string {
-  const open = body.match(/```eb-file[^\n]*\n/);
-  if (!open || open.index == null) return body;
-  const before = body.slice(0, open.index);
-  const rest = body.slice(open.index + open[0].length);
-  const closeIdx = rest.indexOf("```");
-  const after = closeIdx === -1 ? "" : rest.slice(closeIdx + 3);
-  return [before.trim(), after.trim()].filter(Boolean).join("\n\n");
+  return cutFences(body, scanFences(body, "eb-file").filter((f) => f.closed));
 }
 
 // Versión para RENDER (cliente): mientras el bloque ```eb-audio``` aún streamea (sin
@@ -396,8 +436,8 @@ export function hideDanglingFence(body: string): string {
 }
 
 export function bubbleWithoutEbAudio(body: string): string {
-  const open = body.match(/```eb-audio[^\n]*(\n|$)/);
-  if (!open || open.index == null) {
+  const fences = scanFences(body, "eb-audio");
+  if (!fences.length) {
     // ¿fence a medio escribir mientras streamea? (```eb-a … sin newline aún)
     const partial = body.match(/```eb-a[a-z-]*$/);
     if (partial && partial.index != null) {
@@ -406,14 +446,15 @@ export function bubbleWithoutEbAudio(body: string): string {
     }
     return body;
   }
-  const before = body.slice(0, open.index).trim();
-  const rest = body.slice(open.index + open[0].length);
-  const closeIdx = rest.indexOf("```");
-  if (closeIdx === -1) {
-    return [before, "🎙️ Grabando la nota de voz…"].filter(Boolean).join("\n\n");
-  }
-  const after = rest.slice(closeIdx + 3).trim();
-  return [before, after].filter(Boolean).join("\n\n");
+  // El último puede estar ABIERTO (aún grabando): los cerrados se quitan —su audio ya es
+  // un adjunto— y el abierto se sustituye por el placeholder. Como el abierto se come todo
+  // hasta el final del cuerpo, no queda ningún fence suelto que descuadre la paridad que
+  // mira `hideDanglingFence`.
+  const last = fences[fences.length - 1];
+  const cerrados = fences.filter((f) => f.closed);
+  if (last.closed) return cutFences(body, cerrados);
+  const before = cutFences(body.slice(0, last.start), cerrados).trim();
+  return [before, "🎙️ Grabando la nota de voz…"].filter(Boolean).join("\n\n");
 }
 
 // ── Estado de tools (checklist estilo Claude Code) ───────────────────────────────
@@ -494,14 +535,15 @@ export function stripToolBlock(body: string): string {
  * quita (el archivo entra como adjunto).
  */
 export function bubbleWithoutEbFile(body: string): string {
-  const open = body.match(/```eb-file[^\n]*(\n|$)/);
-  if (!open || open.index == null) return body;
-  const before = body.slice(0, open.index).trim();
-  const rest = body.slice(open.index + open[0].length);
-  const closeIdx = rest.indexOf("```");
-  if (closeIdx === -1) return [before, "📎 Preparando el archivo…"].filter(Boolean).join("\n\n");
-  const after = rest.slice(closeIdx + 3).trim();
-  return [before, after].filter(Boolean).join("\n\n");
+  // Mismo criterio que `bubbleWithoutEbAudio`: TODOS los cerrados fuera (ya son adjuntos),
+  // y el último —si sigue abierto— sustituido por su placeholder.
+  const fences = scanFences(body, "eb-file");
+  if (!fences.length) return body;
+  const last = fences[fences.length - 1];
+  const cerrados = fences.filter((f) => f.closed);
+  if (last.closed) return cutFences(body, cerrados);
+  const before = cutFences(body.slice(0, last.start), cerrados).trim();
+  return [before, "📎 Preparando el archivo…"].filter(Boolean).join("\n\n");
 }
 
 export function bubbleWithoutEbDoc(body: string, patchOutcome?: { applied: number; failed: string[] }): string {

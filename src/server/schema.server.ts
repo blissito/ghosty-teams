@@ -339,6 +339,9 @@ async function migrate(): Promise<void> {
   //               fila RAÍZ, resuelta con shareRootFor(). null = 'view' (las filas previas
   //               a esta columna se compartieron para leer, no para editar).
   await addColumn("gc_artifacts", "share_role", "TEXT");
+  // Quiénes co-editaron en la sesión que produjo esta versión (JSON de `sub`). Es el
+  // primer escalón de "¿quién escribió qué?": atribución por SESIÓN, no por párrafo.
+  await addColumn("gc_artifacts", "authors", "TEXT");
 
   // Invitación NOMINAL a co-editar un documento: el segundo nivel de compartir.
   //
@@ -598,6 +601,21 @@ async function migrate(): Promise<void> {
     count        INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (form_id, bucket, window_start)
   )`);
+
+  // Bitácora de los correos que manda el AGENTE (tool `email_send`). Append-only y aparte
+  // del log de SES: un envío saliente a terceros, con nuestro dominio en el From y texto
+  // escrito por un modelo, tiene que poder reconstruirse ante un reporte de abuso — quién lo
+  // pidió, a quién fue y si llevaba adjunto. `console.log` no es una respuesta a eso.
+  await exec(`CREATE TABLE IF NOT EXISTS gt_email_log (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    sub        TEXT NOT NULL,
+    to_addrs   TEXT NOT NULL,
+    subject    TEXT NOT NULL,
+    attached   TEXT,
+    ok         INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL
+  )`);
+  await exec(`CREATE INDEX IF NOT EXISTS idx_email_log_sub ON gt_email_log (sub, created_at)`);
 
   // Flip único: correo por default OFF (opt-in). Las filas existentes heredaron el viejo
   // DEFAULT 1 (opt-out silencioso, nadie lo eligió conscientemente) → las apagamos una sola

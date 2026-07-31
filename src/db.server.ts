@@ -210,16 +210,33 @@ function likeArg(q: string): string {
 }
 
 export type RoomHit = Message & { slug: string; roomName: string };
-export async function searchRoomMessages(channelIds: number[], q: string): Promise<RoomHit[]> {
+/**
+ * Busca en los rooms visibles. Con `threadRootId`, sólo dentro de ESE hilo.
+ *
+ * ⚠️ Antes esto filtraba `AND m.parent_id IS NULL` "para que el resultado exista en el
+ * flujo" — o sea que TODA respuesta dentro de un hilo era invisible al buscador. Justo
+ * donde vive el trabajo largo (un contrato revisado a lo largo de 20 mensajes) no se podía
+ * buscar nada. Se quitó el 2026-07-31; los hits de hilo se abren en su hilo.
+ *
+ * Un hilo NO tiene columna propia: es `parent_id = <id del mensaje raíz>`, y la raíz misma
+ * se incluye por `id` (índice `gc_messages(parent_id)`).
+ */
+export async function searchRoomMessages(
+  channelIds: number[],
+  q: string,
+  opts?: { threadRootId?: number }
+): Promise<RoomHit[]> {
   if (!channelIds.length || !q.trim()) return [];
   const ph = channelIds.map(() => "?").join(",");
+  const root = opts?.threadRootId;
   const rows = await dbq(
     `SELECT m.*, ch.slug AS _slug, ch.name AS _rname
        FROM gc_messages m JOIN gc_channels ch ON ch.id = m.channel_id
-      WHERE m.kind = 'msg' AND m.dm_id IS NULL AND m.parent_id IS NULL
+      WHERE m.kind = 'msg' AND m.dm_id IS NULL
         AND m.channel_id IN (${ph}) AND m.body LIKE ? ESCAPE '\\'
+        ${root ? "AND (m.parent_id = ? OR m.id = ?)" : ""}
       ORDER BY m.created_at DESC LIMIT 40`,
-    [...channelIds, likeArg(q)]
+    root ? [...channelIds, likeArg(q), root, root] : [...channelIds, likeArg(q)]
   );
   return rows.map((r) => ({ ...toMessage(r), slug: r._slug!, roomName: r._rname! }));
 }
@@ -430,12 +447,27 @@ export async function createArtifact(
     md?: string | null;
     src?: string | null;
     ownerSub?: string | null;
+    /**
+     * Quién tocó el documento en la sesión que produjo ESTA versión (`sub` de cada uno).
+     * Sólo lo llena la co-edición: una versión del agente tiene un autor obvio, una
+     * sesión de sala no — y "¿quién escribió esto?" empieza por aquí.
+     */
+    authors?: string[] | null;
   }
 ): Promise<void> {
   await dbq(
-    `INSERT INTO gc_artifacts (message_id, kind, url, title, md, src, owner_sub)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    [messageId, a.kind, a.url, a.title ?? null, a.md ?? null, a.src ?? null, a.ownerSub ?? null]
+    `INSERT INTO gc_artifacts (message_id, kind, url, title, md, src, owner_sub, authors)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      messageId,
+      a.kind,
+      a.url,
+      a.title ?? null,
+      a.md ?? null,
+      a.src ?? null,
+      a.ownerSub ?? null,
+      a.authors?.length ? JSON.stringify(a.authors) : null,
+    ]
   );
 }
 
@@ -546,14 +578,36 @@ export async function setShareOnRoot(
 }
 
 // Versiones de un documento, de la más vieja a la más nueva (Version 1 = la primera).
-export type ArtifactVersion = { id: number; title: string | null; createdAt: number };
+export type ArtifactVersion = {
+  id: number;
+  title: string | null;
+  createdAt: number;
+  /** `sub` de quienes co-editaron en la sesión que dejó esta versión. Vacío = versión del agente. */
+  authors: string[];
+};
+/** `authors` es JSON en una columna nueva: una fila vieja (o corrupta) no debe romper el historial. */
+function leerAutores(v: unknown): string[] {
+  if (typeof v !== "string" || !v) return [];
+  try {
+    const a = JSON.parse(v);
+    return Array.isArray(a) ? a.filter((x) => typeof x === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
 export async function listArtifactVersions(documentId: string): Promise<ArtifactVersion[]> {
   const rows = await dbq(
-    `SELECT id, title, created_at FROM gc_artifacts
+    `SELECT id, title, created_at, authors FROM gc_artifacts
       WHERE url = ? AND md IS NOT NULL ORDER BY id ASC`,
     [documentId]
   );
-  return rows.map((r: any) => ({ id: num(r.id), title: r.title ?? null, createdAt: num(r.created_at) }));
+  return rows.map((r: any) => ({
+    id: num(r.id),
+    title: r.title ?? null,
+    createdAt: num(r.created_at),
+    authors: leerAutores(r.authors),
+  }));
 }
 
 /**

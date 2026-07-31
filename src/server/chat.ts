@@ -799,46 +799,49 @@ export const askAgent = createServerFn({ method: "POST" })
     // (Slice 3 del contrato: reemplazar este scraping por eventos artifact del SSE.)
     try {
       const { detectArtifact, mintCollabEmbed, resolveFileKind } = await import("./easybits-documents.server");
-      const { extractEbDoc, extractEbPatches, isSameDocument, draftTitle, bubbleWithoutEbDoc, extractAskUser, stripAskUser, extractEbAudio, stripEbAudio, extractEbFile, stripEbFile } = await import("../lib/ebdoc");
+      const { extractEbDoc, extractEbPatches, isSameDocument, draftTitle, bubbleWithoutEbDoc, extractAskUser, stripAskUser, extractAllEbAudio, stripEbAudio, extractAllEbFile, stripEbFile } = await import("../lib/ebdoc");
       const { randomUUID } = await import("node:crypto");
 
       // Nota de voz: el agente emitió ```eb-audio``` (voice.mjs sintetizó + publicó el
       // ogg). Re-subimos el audio a nuestro storage y lo colgamos como adjunto → burbuja
       // de nota de voz con onda. Best-effort: si el fetch/upload falla, queda el texto.
-      const ebAudio = extractEbAudio(reply);
-      if (ebAudio) {
-        const cleaned = stripEbAudio(reply);
-        await db.setMessageBody(id, cleaned);
-        bus.publish(bus.ch.room(ns, channel.id), { t: "message:body", id, body: cleaned });
-        const { attachPublished } = await import("./published-attach.server");
-        const ok = await attachPublished(id, {
-          url: ebAudio.url,
-          name: "Nota de voz",
-          fileName: "voz.ogg",
-          mime: ebAudio.mime || "audio/ogg",
-          waveform: ebAudio.waveform,
-          durationMs: ebAudio.durationMs,
-        });
-        if (ok) bus.publish(bus.ch.room(ns, channel.id), { t: "refresh", channelId: channel.id, parentId: data.parentId });
-        return { ok: true as const };
-      }
-
-      // Archivo generado (PDF, PNG, …): mismo camino que la nota de voz. Sin este
-      // bloque al agente sólo le quedaba escribir un link en markdown.
-      const ebFile = extractEbFile(reply);
-      if (ebFile) {
-        const cleaned = stripEbFile(reply);
+      // ⚠️ TODOS los bloques, y los dos tipos en la MISMA pasada. Antes se tomaba sólo el
+      // primer audio y se hacía `return` — un turno con dos notas de voz publicaba una y
+      // dejaba la otra CRUDA en el chat (el fence sobrevivía en el body y Markdown lo
+      // pintaba como bloque de código con la URL firmada del .ogg). Y como el bloque de
+      // archivos venía después de ese `return`, un turno con audio + PDF perdía el PDF.
+      const ebAudios = extractAllEbAudio(reply);
+      const ebFiles = extractAllEbFile(reply);
+      if (ebAudios.length || ebFiles.length) {
+        const cleaned = stripEbFile(stripEbAudio(reply));
         await db.setMessageBody(id, cleaned);
         bus.publish(bus.ch.room(ns, channel.id), { t: "message:body", id, body: cleaned });
         const { attachPublished, safeFileName } = await import("./published-attach.server");
-        const ok = await attachPublished(id, {
-          url: ebFile.url,
-          name: ebFile.name || "Archivo",
-          fileName: safeFileName(ebFile.name, "archivo"),
-          mime: ebFile.mime || "application/octet-stream",
-          thumbUrl: ebFile.thumb,
-        });
-        if (ok) bus.publish(bus.ch.room(ns, channel.id), { t: "refresh", channelId: channel.id, parentId: data.parentId });
+        let algo = false;
+        // En serie y no en paralelo: el orden de los adjuntos es el orden en que el agente
+        // los emitió, y es el que el usuario leyó en la prosa ("primero el encabezado…").
+        for (const a of ebAudios) {
+          const ok = await attachPublished(id, {
+            url: a.url,
+            name: "Nota de voz",
+            fileName: "voz.ogg",
+            mime: a.mime || "audio/ogg",
+            waveform: a.waveform,
+            durationMs: a.durationMs,
+          });
+          algo ||= ok;
+        }
+        for (const f of ebFiles) {
+          const ok = await attachPublished(id, {
+            url: f.url,
+            name: f.name || "Archivo",
+            fileName: safeFileName(f.name, "archivo"),
+            mime: f.mime || "application/octet-stream",
+            thumbUrl: f.thumb,
+          });
+          algo ||= ok;
+        }
+        if (algo) bus.publish(bus.ch.room(ns, channel.id), { t: "refresh", channelId: channel.id, parentId: data.parentId });
         return { ok: true as const };
       }
 

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { createRouter as createTanStackRouter } from '@tanstack/react-router'
 import { routeTree } from './routeTree.gen'
+import { escucharChunksStale, puedeAutoRecargar } from './utils/reload-guard'
 
 // Purga los caches de sessionStorage (`gc-caches-*`). Un cache envenenado —datos de
 // hilo serializados por una versión del app y re-renderizados por otra tras un
@@ -19,41 +20,9 @@ function purgePoisonedCaches() {
   }
 }
 
-// Guard anti-loop COMPARTIDO: devuelve true si todavía se puede auto-recargar (máx 3
-// intentos en 30s) y consume un intento. Lo usan el AppError y el listener de chunks
-// stale — si cada uno llevara su propio contador, dos fallos encadenados darían 6
-// recargas.
-export function puedeAutoRecargar(): boolean {
-  const now = Date.now()
-  let n = 0, t = 0
-  try {
-    const p = JSON.parse(sessionStorage.getItem('gc-resume') || '{}')
-    n = p.n || 0; t = p.t || 0
-  } catch { /* sessionStorage inaccesible */ }
-  if (t && now - t > 30_000) { n = 0; t = 0 } // ventana expiró (>30s sin error) → reset
-  if (n >= 3) return false
-  try { sessionStorage.setItem('gc-resume', JSON.stringify({ n: n + 1, t: t || now })) } catch {}
-  return true
-}
-
-// Chunk stale tras un deploy: la pestaña lleva el HTML del build ANTERIOR y sus hashes ya
-// no existen en el servidor, así que el primer `import()` perezoso que toque (p.ej. el
-// resaltado de código al abrir un hilo con un bloque) falla. No es un bug de datos y no se
-// cura navegando: sólo recargando, que trae el HTML nuevo con los hashes nuevos.
-// Vite emite este evento por nosotros; sin escucharlo el fallo caía en un boundary de
-// render y se quedaba en "Algo en esta vista se atoró" para siempre (2026-07-31).
-if (typeof window !== 'undefined') {
-  window.addEventListener('vite:preloadError', (e) => {
-    e.preventDefault() // si no, Vite deja que el error siga y tumbe el árbol antes de recargar
-    if (puedeAutoRecargar()) window.location.reload()
-  })
-}
-
-/** ¿El error es un chunk que ya no existe (deploy nuevo), no un fallo de datos? */
-export function esChunkStale(err: unknown): boolean {
-  const m = err instanceof Error ? err.message : String(err ?? '')
-  return /dynamically imported module|Importing a module script failed|error loading dynamically imported/i.test(m)
-}
+// Un chunk stale tras un deploy no llega necesariamente al AppError: Vite lo anuncia por
+// su cuenta. Se engancha aquí (module-scope, antes de crear el router) para no perderlo.
+escucharChunksStale()
 
 // Error component amigable (reemplaza el "Something went wrong!" default de TanStack).
 // Estilos inline por robustez: si el fallo fue de render/CSS, no dependemos de Tailwind.

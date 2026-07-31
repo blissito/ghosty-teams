@@ -333,43 +333,42 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
     // de la burbuja y lo commiteamos LOCAL (misma verdad markdown/csv que en el room). En DM
     // no cableamos identidad por-hilo → cada artefacto es una card nueva (co-edición diferida).
     try {
-      const { extractEbDoc, extractEbPatches, isSameDocument, draftTitle, bubbleWithoutEbDoc, extractAskUser, stripAskUser, extractEbAudio, stripEbAudio, extractEbFile, stripEbFile } = await import("../lib/ebdoc");
+      const { extractEbDoc, extractEbPatches, isSameDocument, draftTitle, bubbleWithoutEbDoc, extractAskUser, stripAskUser, extractAllEbAudio, stripEbAudio, extractAllEbFile, stripEbFile } = await import("../lib/ebdoc");
       const { randomUUID } = await import("node:crypto");
 
-      // Nota de voz en DM: mismo protocolo que el room (```eb-audio``` → adjunto audio).
-      const ebAudio = extractEbAudio(reply);
-      if (ebAudio) {
-        const cleaned = stripEbAudio(reply);
-        await db.setMessageBody(id, cleaned);
-        fanout({ t: "message:body", id, body: cleaned });
-        const { attachPublished } = await import("./published-attach.server");
-        const ok = await attachPublished(id, {
-          url: ebAudio.url,
-          name: "Nota de voz",
-          fileName: "voz.ogg",
-          mime: ebAudio.mime || "audio/ogg",
-          waveform: ebAudio.waveform,
-          durationMs: ebAudio.durationMs,
-        });
-        if (ok) fanout({ t: "refresh", channelId: null, parentId: null, dmId: data.id });
-        return { ok: true as const };
-      }
-
-      // Archivo generado en DM: mismo protocolo que el room (```eb-file``` → adjunto).
-      const ebFile = extractEbFile(reply);
-      if (ebFile) {
-        const cleaned = stripEbFile(reply);
+      // Notas de voz y archivos en DM: mismo protocolo y mismas trampas que el room
+      // (ver el comentario largo en chat.ts) — TODOS los bloques, los dos tipos en una
+      // sola pasada, o el segundo audio se queda crudo en el chat.
+      const ebAudios = extractAllEbAudio(reply);
+      const ebFiles = extractAllEbFile(reply);
+      if (ebAudios.length || ebFiles.length) {
+        const cleaned = stripEbFile(stripEbAudio(reply));
         await db.setMessageBody(id, cleaned);
         fanout({ t: "message:body", id, body: cleaned });
         const { attachPublished, safeFileName } = await import("./published-attach.server");
-        const ok = await attachPublished(id, {
-          url: ebFile.url,
-          name: ebFile.name || "Archivo",
-          fileName: safeFileName(ebFile.name, "archivo"),
-          mime: ebFile.mime || "application/octet-stream",
-          thumbUrl: ebFile.thumb,
-        });
-        if (ok) fanout({ t: "refresh", channelId: null, parentId: null, dmId: data.id });
+        let algo = false;
+        for (const a of ebAudios) {
+          const ok = await attachPublished(id, {
+            url: a.url,
+            name: "Nota de voz",
+            fileName: "voz.ogg",
+            mime: a.mime || "audio/ogg",
+            waveform: a.waveform,
+            durationMs: a.durationMs,
+          });
+          algo ||= ok;
+        }
+        for (const f of ebFiles) {
+          const ok = await attachPublished(id, {
+            url: f.url,
+            name: f.name || "Archivo",
+            fileName: safeFileName(f.name, "archivo"),
+            mime: f.mime || "application/octet-stream",
+            thumbUrl: f.thumb,
+          });
+          algo ||= ok;
+        }
+        if (algo) fanout({ t: "refresh", channelId: null, parentId: null, dmId: data.id });
         return { ok: true as const };
       }
       // EDICIÓN QUIRÚRGICA (mismo contrato que el room): el turno trae ```eb-patch``` en

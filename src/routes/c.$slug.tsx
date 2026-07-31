@@ -6,7 +6,7 @@ import Placeholder from "@tiptap/extension-placeholder";
 import Mention from "@tiptap/extension-mention";
 import { Markdown as MarkdownExt } from "tiptap-markdown";
 import { motion, AnimatePresence } from "motion/react";
-import { esChunkStale, puedeAutoRecargar } from "../router";
+import { esChunkStale, puedeAutoRecargar } from "../utils/reload-guard";
 import {
   Hash,
   Lock,
@@ -4576,26 +4576,59 @@ function RoomMembersButton({ slug }: { slug: string }) {
   );
 }
 
-function SearchButton({ onOpenDm }: { onOpenDm: (id: number) => void }) {
+// `threadRootId` acota la búsqueda a UN hilo: es el mismo botón, montado también en el
+// header del hilo. Sin él, buscar dentro de una conversación larga obligaba a salir al room
+// y filtrar a ojo entre los resultados de todos los hilos.
+function SearchButton({
+  onOpenDm,
+  onOpenThread,
+  threadRootId,
+  currentSlug,
+}: {
+  onOpenDm: (id: number) => void;
+  onOpenThread?: (id: number) => void;
+  threadRootId?: number;
+  currentSlug?: string;
+}) {
   const t = useT();
   const [open, setOpen] = useState(false);
   return (
     <>
       <button
         onClick={() => setOpen(true)}
-        title={t("Buscar mensajes")}
+        title={threadRootId ? t("Buscar en este hilo") : t("Buscar mensajes")}
         className="rounded-lg p-1.5 text-muted transition hover:bg-surface-2 hover:text-ink"
       >
         <Search size={17} />
       </button>
       <AnimatePresence>
-        {open && <SearchModal onClose={() => setOpen(false)} onOpenDm={onOpenDm} />}
+        {open && (
+          <SearchModal
+            onClose={() => setOpen(false)}
+            onOpenDm={onOpenDm}
+            onOpenThread={onOpenThread}
+            threadRootId={threadRootId}
+            currentSlug={currentSlug}
+          />
+        )}
       </AnimatePresence>
     </>
   );
 }
 
-function SearchModal({ onClose, onOpenDm }: { onClose: () => void; onOpenDm: (id: number) => void }) {
+function SearchModal({
+  onClose,
+  onOpenDm,
+  onOpenThread,
+  threadRootId,
+  currentSlug,
+}: {
+  onClose: () => void;
+  onOpenDm: (id: number) => void;
+  onOpenThread?: (id: number) => void;
+  threadRootId?: number;
+  currentSlug?: string;
+}) {
   const t = useT();
   const router = useRouter();
   const [q, setQ] = useState("");
@@ -4608,23 +4641,34 @@ function SearchModal({ onClose, onOpenDm }: { onClose: () => void; onOpenDm: (id
       return;
     }
     const h = setTimeout(() => {
-      searchMessagesFn({ data: { q: term } })
+      searchMessagesFn({ data: { q: term, threadRootId } })
         .then((r) => setResults(r ?? { rooms: [], dms: [] }))
         .catch(() => setResults({ rooms: [], dms: [] }));
     }, 250);
     return () => clearTimeout(h);
-  }, [q]);
+  }, [q, threadRootId]);
 
-  const goRoom = (slug: string, id: number) => {
-    onClose();
-    router.navigate({ to: "/c/$slug", params: { slug } });
-    // Salta al mensaje una vez montado el flujo del room (con destello).
+  const destello = (id: number) => {
     setTimeout(() => {
       const el = document.getElementById(`msg-${id}`);
       el?.scrollIntoView({ behavior: "smooth", block: "center" });
       el?.classList.add("flash-highlight");
       setTimeout(() => el?.classList.remove("flash-highlight"), 1200);
     }, 500);
+  };
+  const goRoom = (m: RoomHit) => {
+    onClose();
+    // Una respuesta DENTRO de un hilo no existe en el flujo del room: navegar ahí y buscar
+    // su `msg-<id>` no encontraría nada (fallo mudo). Desde que la búsqueda dejó de excluir
+    // los hilos, hay que ABRIRLO — y sólo si ya estamos en su room, porque `onOpenThread`
+    // es estado de esta pantalla.
+    if (m.parent_id && onOpenThread && m.slug === currentSlug) {
+      onOpenThread(m.parent_id);
+      destello(m.id);
+      return;
+    }
+    router.navigate({ to: "/c/$slug", params: { slug: m.slug } });
+    destello(m.id);
   };
   const goDm = (dmId: number) => {
     onClose();
@@ -4658,7 +4702,7 @@ function SearchModal({ onClose, onOpenDm }: { onClose: () => void; onOpenDm: (id
             value={q}
             onChange={(e) => setQ(e.target.value)}
             onKeyDown={(e) => e.key === "Escape" && onClose()}
-            placeholder={t("Buscar en rooms y DMs…")}
+            placeholder={threadRootId ? t("Buscar en este hilo…") : t("Buscar en rooms y DMs…")}
             className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-muted"
           />
           <button onClick={onClose} className="shrink-0 rounded p-1 text-muted hover:text-ink">
@@ -4677,12 +4721,15 @@ function SearchModal({ onClose, onOpenDm }: { onClose: () => void; onOpenDm: (id
               {results!.rooms.length > 0 && (
                 <div className="mb-1">
                   <p className="px-3 pb-1 pt-2 text-[11px] font-semibold uppercase tracking-wider text-muted">
-                    {t("Rooms")}
+                    {threadRootId ? t("En este hilo") : t("Rooms")}
                   </p>
                   {results!.rooms.map((m) => (
-                    <button key={`r-${m.id}`} onClick={() => goRoom(m.slug, m.id)} className={hitRow}>
+                    <button key={`r-${m.id}`} onClick={() => goRoom(m)} className={hitRow}>
                       <span className="text-[11px] text-muted">
                         #{m.roomName} · {m.sender === "ghosty" ? "Ghosty" : m.sender}
+                        {/* Marca los hits de hilo: antes ni siquiera aparecían, así que sin
+                            esto un resultado que abre otra vista se lee como un salto raro. */}
+                        {!threadRootId && m.parent_id ? ` · ${t("en un hilo")}` : ""}
                       </span>
                       <span className="line-clamp-2 text-sm text-ink">{m.body}</span>
                     </button>
@@ -5605,7 +5652,7 @@ function Flow({
           {/* Quick-call (quick call) del room — audio/video/pantalla vía la caja LiveKit compartida. */}
           <CallHeaderButton h={call} />
           <DocsButton channelId={channel.id} channelSlug={channel.slug} />
-          <SearchButton onOpenDm={onOpenDm} />
+          <SearchButton onOpenDm={onOpenDm} onOpenThread={onOpenThread} currentSlug={channel.slug} />
         </div>
       </header>
       <CallBanner h={call} />
@@ -5721,7 +5768,11 @@ function ThreadView({
             {channel.name}
           </button>
         </div>
-        <div className="ml-auto shrink-0">
+        <div className="ml-auto flex shrink-0 items-center">
+          {/* Buscar DENTRO del hilo. Una conversación larga (un contrato revisado a lo largo
+              de 20 mensajes) no se recorre a scroll, y hasta hoy el buscador ni siquiera
+              existía aquí — ni la búsqueda global miraba dentro de los hilos. */}
+          <SearchButton onOpenDm={() => {}} threadRootId={threadId} />
           <DocsButton channelId={channel.id} channelSlug={channel.slug} threadRootId={threadId} />
         </div>
       </header>

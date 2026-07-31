@@ -345,6 +345,33 @@ export function nativeTools(dest: ToolDest | null): ConnectorTool[] {
       },
     },
 
+    // ── Correo saliente ─────────────────────────────────────────────────────────
+    // La única tool nativa con efectos IRREVERSIBLES fuera del producto. Su contención
+    // (validación de direcciones, tope por hora, bitácora, adjunto no elegible por id)
+    // vive entera en `email-send.server.ts`.
+    {
+      name: "email_send",
+      description:
+        "Envía un correo. Úsalo cuando te pidan mandar algo por correo — es una capacidad REAL de Ghosty Teams. " +
+        "Con `attachDoc` adjunta el documento DE ESTA conversación (docx o pdf); no puedes adjuntar otros archivos ni otros documentos. " +
+        "⚠️ Un correo enviado NO se puede deshacer: CONFIRMA con quien te lo pide el destinatario, el asunto y si va el documento, " +
+        "y hazlo en un solo mensaje antes de llamar a esta herramienta. Nunca mandes correo por iniciativa propia.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          to: { type: "array", items: { type: "string" }, description: "destinatarios (máx 5). Sólo direcciones que te hayan dictado" },
+          subject: { type: "string", description: "asunto" },
+          body: { type: "string", description: "cuerpo en texto. Se manda como párrafos: no uses HTML ni markdown, no se interpretan" },
+          attachDoc: { type: "string", enum: ["docx", "pdf"], description: "adjunta el documento de esta conversación en ese formato; omítelo si no va adjunto" },
+        },
+        required: ["to", "subject", "body"],
+      },
+      handler: async (sub, args) => {
+        const { enviarCorreo } = await import("./email-send.server");
+        return enviarCorreo(sub, args, dest);
+      },
+    },
+
     // ── Comentarios del documento de esta conversación ──────────────────────────
     // Los hilos se abren desde el editor (el ancla es una marca sobre el texto, y eso
     // pide un editor montado). Ghosty los LEE, responde y cierra: que la gente comente el

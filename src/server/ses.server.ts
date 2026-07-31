@@ -29,10 +29,27 @@ export function sesConfigured(): boolean {
  */
 export type InlineImage = { cid: string; bytes: Buffer; mime: string; fileName: string };
 
+/** Archivo ADJUNTO (descargable), a diferencia de `InlineImage`, que es parte del HTML. */
+export type Attachment = { fileName: string; bytes: Buffer; mime: string };
+
 /** Cabecera MIME con acentos/emoji → RFC 2047. Sin esto el asunto llega como mojibake. */
 function mimeWord(s: string): string {
   return /^[\x20-\x7e]*$/.test(s) ? s : `=?UTF-8?B?${Buffer.from(s, "utf8").toString("base64")}?=`;
 }
+
+/**
+ * Nombre de archivo apto para una cabecera MIME.
+ *
+ * Una comilla o un CRLF en el nombre no "se ve raro": PARTE la cabecera y deja inyectar
+ * headers arbitrarios en el correo. Y el nombre no siempre lo ponemos nosotros — puede venir
+ * del título de un documento que escribió cualquiera.
+ */
+function headerFileName(s: string): string {
+  return mimeWord(s.replace(/[\r\n"\\]/g, " ").trim().slice(0, 120) || "archivo");
+}
+
+/** Tope duro de SES para un mensaje raw. base64 infla ~1.37×, así que se mide DESPUÉS. */
+const SES_RAW_MAX = 10 * 1024 * 1024;
 
 const wrap = (b64: string) => (b64.match(/.{1,76}/g) ?? []).join("\r\n");
 
@@ -47,14 +64,22 @@ export async function sendSesEmail(opts: {
   /** Versión en texto plano. Un correo SÓLO-html es una de las señales que Gmail lee
    *  como publicidad (y hay clientes que ni siquiera muestran html). */
   text?: string;
+  /** Archivos descargables. Fuerzan el camino raw y envuelven todo en multipart/mixed. */
+  attachments?: Attachment[];
 }): Promise<boolean> {
   const c = ses();
   if (!c) return false; // sin creds → no-op (correo apagado)
   const toList = Array.isArray(opts.to) ? opts.to : [opts.to];
   const from = opts.from || FROM;
-  if (opts.inline?.length) {
+  if (opts.inline?.length || opts.attachments?.length) {
     // multipart/related: el HTML primero, las imágenes después, referidas por Content-ID.
     const b = `gt_${Date.now().toString(36)}`;
+    const adjuntos = opts.attachments ?? [];
+    // Con adjuntos hay un nivel MÁS: mixed( related( alternative(…), imágenes ), archivos ).
+    // Meter un archivo dentro del `related` sería decirle al cliente que es un recurso del
+    // HTML: Gmail y Outlook no lo ofrecen para descargar y el adjunto "desaparece".
+    const mb = adjuntos.length ? `mix_${b}` : null;
+    const relType = `multipart/related; boundary="${b}"${opts.text ? '; type="multipart/alternative"' : '; type="text/html"'}`;
     const head = [
       `From: ${from}`,
       `To: ${toList.join(", ")}`,
@@ -68,7 +93,7 @@ export async function sendSesEmail(opts: {
       // `type` = qué es la parte RAÍZ del related. Sin él, al anidar el multipart/alternative
       // (para el texto plano) Gmail dejó de resolver los cid: y volvió a pedir la imagen por
       // red — la mejora del texto plano se comió la de la imagen incrustada.
-      `Content-Type: multipart/related; boundary="${b}"${opts.text ? '; type="multipart/alternative"' : '; type="text/html"'}`,
+      mb ? `Content-Type: multipart/mixed; boundary="${mb}"` : `Content-Type: ${relType}`,
     ].filter(Boolean).join("\r\n");
     // Estructura: related( alternative( text/plain, text/html ), imágenes ). El plano va
     // PRIMERO por el contrato de multipart/alternative: el cliente elige la ÚLTIMA parte
@@ -98,23 +123,52 @@ export async function sendSesEmail(opts: {
           "",
           wrap(Buffer.from(opts.html, "utf8").toString("base64")),
         ];
-    const parts = [
+    const related = [
       ...alt,
-      ...opts.inline.flatMap((img) => [
+      ...(opts.inline ?? []).flatMap((img) => [
         `--${b}`,
         `Content-Type: ${img.mime}`,
         "Content-Transfer-Encoding: base64",
         `Content-ID: <${img.cid}>`,
-        `Content-Disposition: inline; filename="${img.fileName}"`,
+        `Content-Disposition: inline; filename="${headerFileName(img.fileName)}"`,
         "",
         wrap(img.bytes.toString("base64")),
       ]),
       `--${b}--`,
-      "",
-    ].join("\r\n");
+    ];
+    const parts = (
+      mb
+        ? [
+            `--${mb}`,
+            `Content-Type: ${relType}`,
+            "",
+            ...related,
+            ...adjuntos.flatMap((a) => [
+              `--${mb}`,
+              `Content-Type: ${a.mime}; name="${headerFileName(a.fileName)}"`,
+              "Content-Transfer-Encoding: base64",
+              `Content-Disposition: attachment; filename="${headerFileName(a.fileName)}"`,
+              "",
+              wrap(a.bytes.toString("base64")),
+            ]),
+            `--${mb}--`,
+            "",
+          ]
+        : [...related, ""]
+    ).join("\r\n");
+    const raw = Buffer.from(`${head}\r\n\r\n${parts}`, "utf8");
+    // El tope se mide sobre el mensaje YA codificado: 7MB de .docx pasan de 10MB en base64,
+    // y SES lo rechazaría con un error opaco después de haber hecho todo el trabajo.
+    if (raw.length > SES_RAW_MAX) {
+      console.warn(`[ses] mensaje de ${Math.round(raw.length / 1024)}KB supera el tope de SES (10MB)`);
+      return false;
+    }
     try {
-      const r = await c.send(new SendRawEmailCommand({ RawMessage: { Data: Buffer.from(`${head}\r\n\r\n${parts}`, "utf8") } }));
-      console.log(`[ses] ok ${r.MessageId} → ${toList.join(",")} · inline=${opts.inline.length} · ${opts.subject.slice(0, 60)}`);
+      const r = await c.send(new SendRawEmailCommand({ RawMessage: { Data: raw } }));
+      console.log(
+        `[ses] ok ${r.MessageId} → ${toList.join(",")} · inline=${opts.inline?.length ?? 0}` +
+          ` · adjuntos=${adjuntos.length} · ${opts.subject.slice(0, 60)}`
+      );
       return true;
     } catch (e) {
       console.warn("[ses] raw send falló:", (e as Error)?.message);
