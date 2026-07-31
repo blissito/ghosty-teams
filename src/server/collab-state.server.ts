@@ -29,7 +29,13 @@ export async function loadYState(documentId: string): Promise<Uint8Array | null>
 export async function saveYState(documentId: string, state: Uint8Array): Promise<void> {
   const db = await import("../db.server");
   const version = await db.latestDocVersion(documentId);
-  if (!version) return;
+  if (!version) {
+    // Un documento real SIEMPRE tiene versión: si no la hay, alguien abrió una sala que no
+    // corresponde a ningún documento. Se ignora (no hay dónde guardar), pero se dice —
+    // callarlo hacía que "no persiste" pareciera un fallo del sidecar.
+    console.warn(`[collab] sala sin documento, no se guarda estado: ${documentId}`);
+    return;
+  }
 
   const md = await db.getDocMarkdown(documentId);
   const env = parseDocEnvelope(md);
