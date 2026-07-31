@@ -68,6 +68,8 @@ export default function ArtifactShareDialog({
   /** Opción marcada por teclado (índice dentro de `filtrada`). */
   const [marcada, setMarcada] = useState(0);
   const [nivelInvitacion, setNivelInvitacion] = useState<"view" | "comment" | "edit">("edit");
+  // Caducidad del acceso, en YYYY-MM-DD (lo que da <input type="date">). Vacío = sin fecha.
+  const [hasta, setHasta] = useState("");
   const [invitando, setInvitando] = useState(false);
   const [avisoInvitacion, setAvisoInvitacion] = useState<string | null>(null);
   const [confirmPublic, setConfirmPublic] = useState(false);
@@ -277,6 +279,9 @@ export default function ArtifactShareDialog({
                       {inv.usedAt ? t("Ya entró") : t("Invitación enviada")}
                       {" · "}
                       {inv.role === "edit" ? t("Puede editar") : inv.role === "comment" ? t("Puede comentar") : t("Puede ver")}
+                      {inv.expiresAt
+                        ? ` · ${t("hasta el")} ${new Date(inv.expiresAt * 1000).toLocaleDateString(undefined, { day: "numeric", month: "short" })}`
+                        : ""}
                     </p>
                   </div>
                   {share.isOwner ? (
@@ -429,11 +434,21 @@ export default function ArtifactShareDialog({
                       try {
                         const { inviteToDocFn } = await import("../server/doc-invites");
                         const r = await inviteToDocFn({
-                          data: { documentId, email: correo, role: nivelInvitacion },
+                          data: {
+                            documentId,
+                            email: correo,
+                            role: nivelInvitacion,
+                            // Fin del día elegido, en la zona de quien invita: "hasta el
+                            // 15" quiere decir que el 15 todavía puede entrar.
+                            expiresAt: hasta
+                              ? Math.floor(new Date(`${hasta}T23:59:59`).getTime() / 1000)
+                              : null,
+                          },
                         });
                         if (!r.ok) setAvisoInvitacion(r.error);
                         else {
                           setCorreo("");
+                          setHasta("");
                           // La lista de arriba tiene que reflejarlo YA: es la única señal
                           // de que la invitación existe de verdad.
                           setInvitaciones((prev) => [
@@ -457,6 +472,29 @@ export default function ArtifactShareDialog({
                     {invitando ? <Loader2 size={14} className="animate-spin" /> : t("Invitar")}
                   </button>
                 </div>
+                <label className="flex items-center gap-2 text-xs text-muted">
+                  {t("Con acceso hasta")}
+                  <input
+                    type="date"
+                    value={hasta}
+                    onChange={(e) => setHasta(e.target.value)}
+                    // Hoy no: una invitación que vence hoy a las 23:59 es válida, pero
+                    // ayer ya no tiene sentido ofrecerlo.
+                    min={new Date().toISOString().slice(0, 10)}
+                    className="rounded-lg border border-border bg-surface px-2 py-1 text-xs text-ink outline-none focus:ring-2 focus:ring-brand/40"
+                  />
+                  {hasta ? (
+                    <button
+                      type="button"
+                      onClick={() => setHasta("")}
+                      className="text-brand transition hover:opacity-80"
+                    >
+                      {t("sin fecha")}
+                    </button>
+                  ) : (
+                    <span className="text-muted/70">{t("(opcional)")}</span>
+                  )}
+                </label>
                 {avisoInvitacion ? (
                   <p className="break-all text-xs text-muted">{avisoInvitacion}</p>
                 ) : null}

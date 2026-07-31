@@ -342,6 +342,10 @@ async function migrate(): Promise<void> {
   // Quiénes co-editaron en la sesión que produjo esta versión (JSON de `sub`). Es el
   // primer escalón de "¿quién escribió qué?": atribución por SESIÓN, no por párrafo.
   await addColumn("gc_artifacts", "authors", "TEXT");
+  // Caducidad de una invitación nominal (unix, NULL = sin fecha). "Puede comentar hasta
+  // el 15" es lo que pide el trabajo con clientes: el acceso se da para algo concreto y
+  // debería apagarse solo cuando eso termina.
+  await addColumn("gc_doc_invites", "expires_at", "INTEGER");
 
   // Invitación NOMINAL a co-editar un documento: el segundo nivel de compartir.
   //

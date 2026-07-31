@@ -20,6 +20,8 @@ export type DocInvite = {
   createdAt: number;
   usedAt: number | null;
   revoked: boolean;
+  /** Unix. `null` = sin caducidad. Al vencer, el acceso se pierde con aviso. */
+  expiresAt: number | null;
 };
 
 async function meOrThrow() {
@@ -81,7 +83,7 @@ export const listDocInvitesFn = createServerFn({ method: "POST" })
     await requireEditor(data.documentId);
     const { dbq, num } = await import("../dbq.server");
     const rows = await dbq(
-      `SELECT id, email, name, role, created_at, used_at, revoked_at
+      `SELECT id, email, name, role, created_at, used_at, revoked_at, expires_at
          FROM gc_doc_invites WHERE document_id = ? ORDER BY id DESC`,
       [data.documentId]
     );
@@ -93,6 +95,7 @@ export const listDocInvitesFn = createServerFn({ method: "POST" })
       createdAt: num(r.created_at),
       usedAt: r.used_at ? num(r.used_at) : null,
       revoked: !!r.revoked_at,
+      expiresAt: r.expires_at ? num(r.expires_at) : null,
     }));
   });
 
@@ -114,6 +117,8 @@ export async function invitarADoc(o: {
   porIsOwner?: boolean;
   /** Copy de quien invita ("revisa las cláusulas de plazo antes del viernes"). Se escapa. */
   mensaje?: string;
+  /** Unix. El acceso se apaga solo al llegar la fecha; `null`/ausente = sin caducidad. */
+  expiresAt?: number | null;
 }): Promise<{ ok: true; invite: DocInvite; enviado: boolean; url: string } | { ok: false; error: string }> {
   await (await import("./schema.server")).ensureSchema().catch(() => {});
 
@@ -134,11 +139,18 @@ export async function invitarADoc(o: {
     [o.documentId, email]
   );
 
+  // Una fecha ya pasada casi siempre es un dedazo: crear una invitación nacida muerta
+  // sería peor que decirlo.
+  const expiresAt = o.expiresAt ?? null;
+  if (expiresAt != null && expiresAt <= Math.floor(Date.now() / 1000)) {
+    return { ok: false, error: "esa fecha ya pasó" };
+  }
+
   const token = crypto.randomUUID().replace(/-/g, "") + crypto.randomUUID().replace(/-/g, "");
   await dbq(
-    `INSERT INTO gc_doc_invites (document_id, email, role, token, invited_by)
-     VALUES (?, ?, ?, ?, ?)`,
-    [o.documentId, email, role, token, o.porSub]
+    `INSERT INTO gc_doc_invites (document_id, email, role, token, invited_by, expires_at)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+    [o.documentId, email, role, token, o.porSub, expiresAt]
   );
   const rows = await dbq(`SELECT id, created_at FROM gc_doc_invites WHERE token = ?`, [token]);
 
@@ -169,12 +181,15 @@ export async function invitarADoc(o: {
       createdAt: num(rows[0]?.created_at ?? null),
       usedAt: null,
       revoked: false,
+      expiresAt,
     },
   };
 }
 
 export const inviteToDocFn = createServerFn({ method: "POST" })
-  .validator((d: { documentId: string; email: string; role?: DocRole }) => d)
+  .validator(
+    (d: { documentId: string; email: string; role?: DocRole; expiresAt?: number | null }) => d
+  )
   .handler(
     async ({ data }): Promise<{ ok: true; invite: DocInvite; enviado: boolean; url: string } | { ok: false; error: string }> => {
       const me = await meOrThrow();
@@ -185,6 +200,7 @@ export const inviteToDocFn = createServerFn({ method: "POST" })
         porSub: me.sub,
         porNombre: me.name || me.email || "Alguien",
         porIsOwner: me.isOwner,
+        expiresAt: data.expiresAt ?? null,
       });
     }
   );
@@ -203,28 +219,45 @@ export const revokeDocInviteFn = createServerFn({ method: "POST" })
     return { ok: true };
   });
 
-/** Invitación viva por su token, o `null` si no existe, fue revocada o el doc ya no está. */
-export async function resolverInvitacion(token: string): Promise<{
+export type Invitacion = {
   documentId: string;
   email: string;
   name: string | null;
   role: DocRole;
   id: number;
-} | null> {
+  expiresAt: number | null;
+};
+
+/**
+ * Invitación por su token.
+ *
+ * VENCIDA se distingue de INEXISTENTE a propósito: quien recibió una invitación real y
+ * llegó tarde merece saber que llegó tarde, para pedir otra. Revocada e inexistente sí se
+ * ven igual — ahí el silencio es deliberado.
+ */
+export async function resolverInvitacion(
+  token: string
+): Promise<{ estado: "ok"; inv: Invitacion } | { estado: "vencida" } | { estado: "no" }> {
   const { dbq, num } = await import("../dbq.server");
   const rows = await dbq(
-    `SELECT id, document_id, email, name, role FROM gc_doc_invites
+    `SELECT id, document_id, email, name, role, expires_at FROM gc_doc_invites
       WHERE token = ? AND revoked_at IS NULL LIMIT 1`,
     [token]
   );
   const r = rows[0];
-  if (!r) return null;
+  if (!r) return { estado: "no" };
+  const expiresAt = r.expires_at ? num(r.expires_at) : null;
+  if (expiresAt != null && expiresAt <= Math.floor(Date.now() / 1000)) return { estado: "vencida" };
   return {
-    id: num(r.id),
-    documentId: r.document_id ?? "",
-    email: r.email ?? "",
-    name: r.name ?? null,
-    role: (r.role as DocRole) ?? "edit",
+    estado: "ok",
+    inv: {
+      id: num(r.id),
+      documentId: r.document_id ?? "",
+      email: r.email ?? "",
+      name: r.name ?? null,
+      role: (r.role as DocRole) ?? "edit",
+      expiresAt,
+    },
   };
 }
 

@@ -24,9 +24,17 @@ export const inviteCollabConnFn = createServerFn({ method: "POST" })
       await (await import("./schema.server")).ensureSchema().catch(() => {});
 
       const { resolverInvitacion, marcarInvitacionUsada } = await import("./doc-invites");
-      const inv = await resolverInvitacion(data.token);
-      // Mismo silencio de siempre: caducada, revocada o inexistente se ven igual.
-      if (!inv) return { ok: false, error: "esta invitación ya no está disponible" };
+      const r = await resolverInvitacion(data.token);
+      // Vencida se DICE (quien llegó tarde puede pedir otra); revocada e inexistente se
+      // ven igual, que ahí el silencio sí es deliberado.
+      if (r.estado === "vencida") {
+        return {
+          ok: false,
+          error: "este acceso venció. Pídele a quien te invitó que te mande uno nuevo.",
+        };
+      }
+      if (r.estado === "no") return { ok: false, error: "esta invitación ya no está disponible" };
+      const inv = r.inv;
 
       const wsUrl = process.env.COLLAB_SIDECAR_WS_URL?.replace(/\/$/, "");
       if (!wsUrl) return { ok: false, error: "co-edición no configurada" };
@@ -42,14 +50,23 @@ export const inviteCollabConnFn = createServerFn({ method: "POST" })
       let token: string;
       try {
         const { mintCollabTicket } = await import("./collab-ticket.server");
-        token = mintCollabTicket({
-          doc: inv.documentId,
-          sub,
-          name: nombre,
-          avatar: "",
-          color: colorFor(sub),
-          role: inv.role,
-        });
+        // El ticket NO puede durar más que la invitación: si vence a las 6, a las 7 no
+        // debe seguir dentro de la sala con un ticket firmado de 12 horas.
+        const restante =
+          inv.expiresAt != null
+            ? Math.max(60, inv.expiresAt - Math.floor(Date.now() / 1000))
+            : undefined;
+        token = mintCollabTicket(
+          {
+            doc: inv.documentId,
+            sub,
+            name: nombre,
+            avatar: "",
+            color: colorFor(sub),
+            role: inv.role,
+          },
+          restante
+        );
       } catch (e) {
         return { ok: false, error: (e as Error).message };
       }
