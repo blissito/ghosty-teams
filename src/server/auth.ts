@@ -12,7 +12,28 @@ async function session() {
 
 export const me = createServerFn({ method: "GET" }).handler(async () => {
   const s = await session();
-  return s.data.user ?? null;
+  const user = s.data.user;
+  if (!user) return null;
+
+  // El rol se RELEE de la DB, no se cree lo que trae la cookie. `isOwner` se selló al
+  // hacer login y una cookie dura 30 días: un traspaso de dueño (o un cambio de rol)
+  // no se veía hasta que la persona volviera a entrar — la UI seguía diciendo
+  // "Miembro" con la DB diciendo lo contrario. Verificado en vivo el 2026-07-31.
+  //
+  // Es una query por render de identidad; barata y por índice (gc_users.sub es UNIQUE).
+  // Si falla, se devuelve lo de la sesión: un hipo de DB no puede tirar el login.
+  try {
+    const { dbqRaw } = await import("../dbq.server");
+    const { rows } = await dbqRaw("SELECT is_owner FROM gc_users WHERE sub = ?", [user.sub]);
+    if (!rows[0]) return user;
+    const isOwner = Number(rows[0][0]) === 1;
+    if (isOwner === user.isOwner) return user;
+    const fresh = { ...user, isOwner };
+    await s.update({ user: fresh }); // que la cookie deje de mentir
+    return fresh;
+  } catch {
+    return user;
+  }
 });
 
 // Identidad cacheada para el CLIENTE. `me()` es un server fn (round-trip a la
