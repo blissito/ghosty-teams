@@ -6,6 +6,7 @@ import Placeholder from "@tiptap/extension-placeholder";
 import Mention from "@tiptap/extension-mention";
 import { Markdown as MarkdownExt } from "tiptap-markdown";
 import { motion, AnimatePresence } from "motion/react";
+import { esChunkStale, puedeAutoRecargar } from "../router";
 import {
   Hash,
   Lock,
@@ -6438,6 +6439,15 @@ class ArtifactBoundary extends Component<
   componentDidCatch(err: unknown, info: unknown) {
     // Log fuerte para diagnóstico (el fallback ya evitó tumbar la ruta).
     console.error("[gt boundary] render failed:", err, info);
+    // Un chunk que ya no existe (deploy nuevo) NO es un fallo de datos: el cache no tiene
+    // la culpa y "Volver al room" no lo cura — al reabrir vuelve a pedir el mismo hash
+    // muerto. Lo único que sirve es recargar, que trae el HTML nuevo. Normalmente lo
+    // atrapa antes el listener de `vite:preloadError`; esto cubre el import perezoso que
+    // revienta ya DENTRO del render (React.lazy), donde el evento no llega a tiempo.
+    if (esChunkStale(err)) {
+      if (puedeAutoRecargar()) window.location.reload();
+      return;
+    }
     // Deja que el padre limpie el cache envenenado del contexto que crasheó (ver
     // el onCatch del boundary central) → reabrir re-fetchea limpio en vez de re-crashear.
     this.props.onCatch?.();

@@ -17,6 +17,19 @@ export const Route = createRootRoute({
     // sin tenant ni sesión propios (la cookie es por-subdominio del workspace). Exímelo
     // de AMBOS guards, si no rebota a portal/login antes de poder rebotar al subdominio.
     const isOAuthRelay = location.pathname.startsWith('/oauth/')
+    // Estáticos: NUNCA son navegación, así que no pasan por ningún guard.
+    //
+    // Nitro hornea el manifiesto de estáticos en el bundle: un hash que no está ahí (una
+    // pestaña abierta ANTES del deploy pidiendo un chunk del build anterior — el deploy
+    // reemplaza `.output` entero) no matchea el handler estático y cae al handler SSR, o
+    // sea aquí. Sin esta salida temprana el navegador recibía `307 → /login` y HTML donde
+    // esperaba JS: `Failed to fetch dynamically imported module`, un error que no se parece
+    // en nada a su causa (incidente 2026-07-31, un hilo entero "se atoró" por esto).
+    // Con la exención cae al 404 de Nitro, que es lo que el listener de `vite:preloadError`
+    // en `router.tsx` sabe interpretar → recarga y se auto-cura.
+    if (/^\/(assets\/|_build\/|sw\.js$|favicon\.ico$|manifest\.webmanifest$)/.test(location.pathname)) {
+      return { user: null }
+    }
     // Ruta demo del editor de lienzo (@ghosty/canvas-editor) — pública, sin tenant/sesión.
     // Bancos de pruebas de editores: sin sesión y sin tenant, porque su razón de ser es
     // depurar con datos sintéticos.

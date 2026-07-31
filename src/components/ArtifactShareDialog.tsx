@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { Check, Globe, Link as LinkIcon, Lock, Loader2, X, Info } from "lucide-react";
+import { Check, ChevronDown, Globe, Link as LinkIcon, Lock, Loader2, X, Info } from "lucide-react";
+import type { Invitable } from "../server/doc-invite-suggest";
 import { useT } from "../i18n";
 
 // Caché por documento, a nivel de módulo: el estado de compartir sólo cambia desde
@@ -56,6 +57,10 @@ export default function ArtifactShareDialog({
   const [copied, setCopied] = useState(false);
   // Invitación nominal por correo (ver la sección "Invitar por correo" más abajo).
   const [correo, setCorreo] = useState("");
+  // Gente del workspace, para no teclear de memoria el correo de un compañero. Se pide
+  // una vez al abrir; el padrón de un equipo no cambia a media sesión.
+  const [gente, setGente] = useState<Invitable[]>([]);
+  const [verGente, setVerGente] = useState(false);
   const [nivelInvitacion, setNivelInvitacion] = useState<"view" | "comment" | "edit">("edit");
   const [invitando, setInvitando] = useState(false);
   const [avisoInvitacion, setAvisoInvitacion] = useState<string | null>(null);
@@ -156,6 +161,28 @@ export default function ArtifactShareDialog({
   const fmt = (ts: number) =>
     new Date(ts * 1000).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
 
+  useEffect(() => {
+    if (!documentId) return;
+    let vivo = true;
+    (async () => {
+      try {
+        const { suggestInviteesFn } = await import("../server/doc-invite-suggest");
+        const r = await suggestInviteesFn({ data: { documentId } });
+        if (vivo) setGente(r);
+      } catch {
+        /* sin padrón se puede invitar igual tecleando el correo */
+      }
+    })();
+    return () => {
+      vivo = false;
+    };
+  }, [documentId]);
+
+  const filtrada = gente.filter((g) => {
+    const q = correo.trim().toLowerCase();
+    return !q || g.email.includes(q) || g.name.toLowerCase().includes(q);
+  });
+
   const row =
     "w-full rounded-lg border border-border bg-surface-3 px-3 py-2.5 text-left text-sm text-ink transition hover:bg-border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand";
 
@@ -237,13 +264,56 @@ export default function ArtifactShareDialog({
               <section className="flex flex-col gap-2">
                 <h3 className="text-xs font-medium text-muted">{t("Invitar por correo")}</h3>
                 <div className="flex gap-1.5">
-                  <input
-                    type="email"
-                    value={correo}
-                    onChange={(e) => setCorreo(e.target.value)}
-                    placeholder={t("correo@ejemplo.com")}
-                    className="min-w-0 flex-1 rounded-lg border border-border bg-surface-1 px-2.5 py-1.5 text-sm text-ink outline-none focus:ring-2 focus:ring-brand/40"
-                  />
+                  <div className="relative min-w-0 flex-1">
+                    <input
+                      type="email"
+                      value={correo}
+                      onChange={(e) => {
+                        setCorreo(e.target.value);
+                        setVerGente(true);
+                      }}
+                      onFocus={() => setVerGente(true)}
+                      // Se cierra en el siguiente tick: cerrar en el `blur` inmediato
+                      // mata el clic sobre la propia lista.
+                      onBlur={() => setTimeout(() => setVerGente(false), 150)}
+                      placeholder={t("correo@ejemplo.com")}
+                      className="w-full rounded-lg border border-border bg-surface-1 px-2.5 py-1.5 text-sm text-ink outline-none focus:ring-2 focus:ring-brand/40"
+                    />
+                    {verGente && filtrada.length ? (
+                      <ul className="absolute z-10 mt-1 max-h-56 w-full overflow-auto rounded-lg border border-border bg-surface-1 py-1 shadow-lg">
+                        {filtrada.map((g) => (
+                          <li key={g.email}>
+                            <button
+                              type="button"
+                              // `onMouseDown`: el `blur` del input llega antes que el
+                              // click y la lista ya no estaría para recibirlo.
+                              onMouseDown={(e) => {
+                                e.preventDefault();
+                                setCorreo(g.email);
+                                setVerGente(false);
+                              }}
+                              className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm text-ink transition hover:bg-surface-3"
+                            >
+                              {g.avatar ? (
+                                <img src={g.avatar} alt="" className="size-6 shrink-0 rounded-full object-cover" referrerPolicy="no-referrer" />
+                              ) : (
+                                <span className="grid size-6 shrink-0 place-items-center rounded-full bg-surface-3 text-[10px] font-semibold text-muted">
+                                  {(g.name[0] ?? "?").toUpperCase()}
+                                </span>
+                              )}
+                              <span className="min-w-0 flex-1">
+                                <span className="block truncate">{g.name}</span>
+                                <span className="block truncate text-xs text-muted">{g.email}</span>
+                              </span>
+                              {g.invitado ? (
+                                <span className="shrink-0 text-[10px] font-medium uppercase text-muted">{t("Invitado")}</span>
+                              ) : null}
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : null}
+                  </div>
                   <select
                     value={nivelInvitacion}
                     onChange={(e) => setNivelInvitacion(e.target.value as typeof nivelInvitacion)}
@@ -306,7 +376,18 @@ export default function ArtifactShareDialog({
                   {share.visibility === "link" ? t("Cualquiera con el enlace") : t("Sólo yo")}
                 </span>
                 {saving ? <Loader2 size={14} className="animate-spin text-muted" /> : null}
+                {/* El chevron NO es adorno: sin él esta fila se lee igual que el <select>
+                    de abajo y parece un campo muerto — "¿esto es pura lectura?" fue lo
+                    primero que preguntó quien lo usó. */}
+                {share.isOwner && !saving ? (
+                  <ChevronDown size={14} className="text-muted" />
+                ) : null}
               </button>
+              <p className="px-0.5 text-xs text-muted">
+                {share.visibility === "link"
+                  ? t("Cualquiera con el enlace entra sin cuenta, con el nivel de abajo.")
+                  : t("Nadie más puede abrirlo. Toca para publicar un enlace.")}
+              </p>
 
               {/* Nivel del enlace. Sólo aparece con el enlace abierto: elegir "puede
                   editar" sobre un documento privado no significa nada y confunde.
