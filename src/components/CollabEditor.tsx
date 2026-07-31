@@ -137,7 +137,10 @@ export default function CollabEditor({
         fragment: ydoc.getXmlFragment("document-store"),
         user: cursorUser,
         provider: { awareness: provider.awareness ?? undefined },
-        showCursorLabels: "activity",
+        // "always": la etiqueta con el nombre se queda junto al caret ajeno en vez de
+        // aparecer al teclear y desvanecerse. Saber QUIÉN está parado en tu párrafo es
+        // media sensación de co-edición.
+        showCursorLabels: "always",
       },
     },
     [provider],
