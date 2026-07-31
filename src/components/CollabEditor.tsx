@@ -316,20 +316,29 @@ export default function CollabEditor({
       // Re-afirma si y-prosemirror sobrescribió con el objeto pelado del caret.
       if (local?.sub !== user.sub) awareness.setLocalStateField("user", me);
 
-      const next: Peer[] = [];
+      // Una PERSONA, un avatar. Cada pestaña abre su propia conexión y publica su propio
+      // estado de awareness, así que alguien con el documento abierto dos veces salía
+      // duplicado en el rail — parecía que había gente que no estaba. Se agrupa por `sub`
+      // y gana la entrada propia si la hay.
+      const porSub = new Map<string, Peer>();
       awareness.getStates().forEach((state, clientId) => {
-        const u = (state as { user?: Partial<Peer> & { avatar?: string } })
+        const u = (state as { user?: Partial<Peer> & { avatar?: string; sub?: string } })
           .user;
         if (!u?.name) return;
-        next.push({
+        const peer: Peer = {
           clientId,
           name: u.name,
           color: u.color || "#737373",
           avatar: u.avatar || undefined,
           isAgent: Boolean(u.isAgent),
           isSelf: clientId === awareness.clientID,
-        });
+        };
+        // Sin `sub` (cliente viejo) se cae al clientId: peor duplicar que esconder.
+        const clave = u.sub || `c:${clientId}`;
+        const previo = porSub.get(clave);
+        if (!previo || peer.isSelf) porSub.set(clave, peer);
       });
+      const next: Peer[] = [...porSub.values()];
       // Orden estable: yo primero, luego el agente, luego el resto por clientId.
       next.sort(
         (a, b) =>
