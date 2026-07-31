@@ -34,6 +34,7 @@ import { Route as SetupEasybitsCallbackRouteImport } from './routes/setup.easybi
 import { Route as SetupProviderConnectRouteImport } from './routes/setup.$provider.connect'
 import { Route as SetupProviderCallbackRouteImport } from './routes/setup.$provider.callback'
 import { Route as OauthProviderCallbackRouteImport } from './routes/oauth.$provider.callback'
+import { Route as CoeditarInvitacionTokenRouteImport } from './routes/coeditar.invitacion.$token'
 import { Route as ArtefactoIdRawRouteImport } from './routes/artefacto.$id.raw'
 import { Route as ApiInternalAnnouncementsRouteImport } from './routes/api.internal.announcements'
 import { Route as ApiFormTokenRouteImport } from './routes/api.form.$token'
@@ -174,6 +175,11 @@ const OauthProviderCallbackRoute = OauthProviderCallbackRouteImport.update({
   path: '/oauth/$provider/callback',
   getParentRoute: () => rootRouteImport,
 } as any)
+const CoeditarInvitacionTokenRoute = CoeditarInvitacionTokenRouteImport.update({
+  id: '/coeditar/invitacion/$token',
+  path: '/coeditar/invitacion/$token',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ArtefactoIdRawRoute = ArtefactoIdRawRouteImport.update({
   id: '/raw',
   path: '/raw',
@@ -280,6 +286,7 @@ export interface FileRoutesByFullPath {
   '/api/form/$token': typeof ApiFormTokenRoute
   '/api/internal/announcements': typeof ApiInternalAnnouncementsRoute
   '/artefacto/$id/raw': typeof ArtefactoIdRawRoute
+  '/coeditar/invitacion/$token': typeof CoeditarInvitacionTokenRoute
   '/oauth/$provider/callback': typeof OauthProviderCallbackRoute
   '/setup/$provider/callback': typeof SetupProviderCallbackRoute
   '/setup/$provider/connect': typeof SetupProviderConnectRoute
@@ -320,6 +327,7 @@ export interface FileRoutesByTo {
   '/api/form/$token': typeof ApiFormTokenRoute
   '/api/internal/announcements': typeof ApiInternalAnnouncementsRoute
   '/artefacto/$id/raw': typeof ArtefactoIdRawRoute
+  '/coeditar/invitacion/$token': typeof CoeditarInvitacionTokenRoute
   '/oauth/$provider/callback': typeof OauthProviderCallbackRoute
   '/setup/$provider/callback': typeof SetupProviderCallbackRoute
   '/setup/$provider/connect': typeof SetupProviderConnectRoute
@@ -362,6 +370,7 @@ export interface FileRoutesById {
   '/api/form/$token': typeof ApiFormTokenRoute
   '/api/internal/announcements': typeof ApiInternalAnnouncementsRoute
   '/artefacto/$id/raw': typeof ArtefactoIdRawRoute
+  '/coeditar/invitacion/$token': typeof CoeditarInvitacionTokenRoute
   '/oauth/$provider/callback': typeof OauthProviderCallbackRoute
   '/setup/$provider/callback': typeof SetupProviderCallbackRoute
   '/setup/$provider/connect': typeof SetupProviderConnectRoute
@@ -405,6 +414,7 @@ export interface FileRouteTypes {
     | '/api/form/$token'
     | '/api/internal/announcements'
     | '/artefacto/$id/raw'
+    | '/coeditar/invitacion/$token'
     | '/oauth/$provider/callback'
     | '/setup/$provider/callback'
     | '/setup/$provider/connect'
@@ -445,6 +455,7 @@ export interface FileRouteTypes {
     | '/api/form/$token'
     | '/api/internal/announcements'
     | '/artefacto/$id/raw'
+    | '/coeditar/invitacion/$token'
     | '/oauth/$provider/callback'
     | '/setup/$provider/callback'
     | '/setup/$provider/connect'
@@ -486,6 +497,7 @@ export interface FileRouteTypes {
     | '/api/form/$token'
     | '/api/internal/announcements'
     | '/artefacto/$id/raw'
+    | '/coeditar/invitacion/$token'
     | '/oauth/$provider/callback'
     | '/setup/$provider/callback'
     | '/setup/$provider/connect'
@@ -526,6 +538,7 @@ export interface RootRouteChildren {
   ApiFormUploadTokenRoute: typeof ApiFormUploadTokenRoute
   ApiFormTokenRoute: typeof ApiFormTokenRoute
   ApiInternalAnnouncementsRoute: typeof ApiInternalAnnouncementsRoute
+  CoeditarInvitacionTokenRoute: typeof CoeditarInvitacionTokenRoute
   OauthProviderCallbackRoute: typeof OauthProviderCallbackRoute
   ApiCollabDocIdSessionEndRoute: typeof ApiCollabDocIdSessionEndRoute
   ApiCollabDocIdStateRoute: typeof ApiCollabDocIdStateRoute
@@ -708,6 +721,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof OauthProviderCallbackRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/coeditar/invitacion/$token': {
+      id: '/coeditar/invitacion/$token'
+      path: '/coeditar/invitacion/$token'
+      fullPath: '/coeditar/invitacion/$token'
+      preLoaderRoute: typeof CoeditarInvitacionTokenRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/artefacto/$id/raw': {
       id: '/artefacto/$id/raw'
       path: '/raw'
@@ -870,6 +890,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiFormUploadTokenRoute: ApiFormUploadTokenRoute,
   ApiFormTokenRoute: ApiFormTokenRoute,
   ApiInternalAnnouncementsRoute: ApiInternalAnnouncementsRoute,
+  CoeditarInvitacionTokenRoute: CoeditarInvitacionTokenRoute,
   OauthProviderCallbackRoute: OauthProviderCallbackRoute,
   ApiCollabDocIdSessionEndRoute: ApiCollabDocIdSessionEndRoute,
   ApiCollabDocIdStateRoute: ApiCollabDocIdStateRoute,

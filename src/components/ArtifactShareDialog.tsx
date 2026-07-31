@@ -54,6 +54,11 @@ export default function ArtifactShareDialog({
   const [loading, setLoading] = useState(() => !cachedShare(documentId));
   const [saving, setSaving] = useState(false);
   const [copied, setCopied] = useState(false);
+  // Invitación nominal por correo (ver la sección "Invitar por correo" más abajo).
+  const [correo, setCorreo] = useState("");
+  const [nivelInvitacion, setNivelInvitacion] = useState<"view" | "comment" | "edit">("edit");
+  const [invitando, setInvitando] = useState(false);
+  const [avisoInvitacion, setAvisoInvitacion] = useState<string | null>(null);
   const [confirmPublic, setConfirmPublic] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -223,6 +228,67 @@ export default function ArtifactShareDialog({
                 </div>
               ) : null}
             </section>
+
+            {/* Invitar por CORREO. Es el nivel de identidad que el enlace abierto no
+                puede dar: el token va a una dirección concreta, así que quien entra ES
+                esa persona y su edición queda atribuible — sin obligarla a crear cuenta.
+                Mismo patrón que el visitor sharing de Google y los guests de Figma. */}
+            {share.isOwner && documentId ? (
+              <section className="flex flex-col gap-2">
+                <h3 className="text-xs font-medium text-muted">{t("Invitar por correo")}</h3>
+                <div className="flex gap-1.5">
+                  <input
+                    type="email"
+                    value={correo}
+                    onChange={(e) => setCorreo(e.target.value)}
+                    placeholder={t("correo@ejemplo.com")}
+                    className="min-w-0 flex-1 rounded-lg border border-border bg-surface-1 px-2.5 py-1.5 text-sm text-ink outline-none focus:ring-2 focus:ring-brand/40"
+                  />
+                  <select
+                    value={nivelInvitacion}
+                    onChange={(e) => setNivelInvitacion(e.target.value as typeof nivelInvitacion)}
+                    className="rounded-lg border border-border bg-surface-1 px-2 py-1.5 text-xs text-ink outline-none"
+                  >
+                    <option value="edit">{t("Editar")}</option>
+                    <option value="comment">{t("Comentar")}</option>
+                    <option value="view">{t("Ver")}</option>
+                  </select>
+                  <button
+                    type="button"
+                    disabled={!correo.trim() || invitando}
+                    onClick={async () => {
+                      setInvitando(true);
+                      setAvisoInvitacion(null);
+                      try {
+                        const { inviteToDocFn } = await import("../server/doc-invites");
+                        const r = await inviteToDocFn({
+                          data: { documentId, email: correo, role: nivelInvitacion },
+                        });
+                        if (!r.ok) setAvisoInvitacion(r.error);
+                        else {
+                          setCorreo("");
+                          // Si el correo no salió (SES apagado), el enlace igual existe:
+                          // se ofrece a mano en vez de fingir que se envió.
+                          setAvisoInvitacion(
+                            r.enviado ? t("Invitación enviada") : `${t("No se pudo enviar el correo. Copia el enlace:")} ${r.url}`
+                          );
+                        }
+                      } catch (e) {
+                        setAvisoInvitacion((e as Error).message);
+                      } finally {
+                        setInvitando(false);
+                      }
+                    }}
+                    className="shrink-0 rounded-lg bg-brand px-3 py-1.5 text-sm font-medium text-surface transition hover:opacity-90 disabled:opacity-40"
+                  >
+                    {invitando ? <Loader2 size={14} className="animate-spin" /> : t("Invitar")}
+                  </button>
+                </div>
+                {avisoInvitacion ? (
+                  <p className="break-all text-xs text-muted">{avisoInvitacion}</p>
+                ) : null}
+              </section>
+            ) : null}
 
             <section className="flex flex-col gap-2">
               <h3 className="text-xs font-medium text-muted">{t("Acceso general")}</h3>

@@ -339,6 +339,32 @@ async function migrate(): Promise<void> {
   //               fila RAÍZ, resuelta con shareRootFor(). null = 'view' (las filas previas
   //               a esta columna se compartieron para leer, no para editar).
   await addColumn("gc_artifacts", "share_role", "TEXT");
+
+  // Invitación NOMINAL a co-editar un documento: el segundo nivel de compartir.
+  //
+  // El enlace abierto (`share_role`) da acceso pero NO identidad: quien entra escribe el
+  // nombre que quiera. Aquí el token viaja a UN correo concreto, así que quien lo abre ES
+  // esa persona — atribuible sin obligarla a crearse cuenta. Es el patrón de Google
+  // (visitor sharing con PIN al correo) y de Figma (guests por correo).
+  //
+  //   token      secreto de la liga; único, es la credencial
+  //   role       nivel de ESTA invitación (puede diferir del enlace abierto)
+  //   revoked_at retirar el acceso sin borrar el rastro de que se invitó
+  //   used_at    primera vez que se abrió (para "invitada, aún no entra")
+  await exec(`CREATE TABLE IF NOT EXISTS gc_doc_invites (
+    id          INTEGER PRIMARY KEY,
+    document_id TEXT NOT NULL,
+    email       TEXT NOT NULL,
+    name        TEXT,
+    role        TEXT NOT NULL DEFAULT 'edit',
+    token       TEXT NOT NULL,
+    invited_by  TEXT,
+    created_at  INTEGER NOT NULL DEFAULT (unixepoch()),
+    used_at     INTEGER,
+    revoked_at  INTEGER
+  )`);
+  await exec(`CREATE UNIQUE INDEX IF NOT EXISTS gc_doc_invites_token ON gc_doc_invites(token)`);
+  await exec(`CREATE INDEX IF NOT EXISTS gc_doc_invites_doc ON gc_doc_invites(document_id)`);
   await exec(
     `CREATE UNIQUE INDEX IF NOT EXISTS gc_artifacts_share ON gc_artifacts(share_slug)`,
   );
