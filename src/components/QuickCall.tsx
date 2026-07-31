@@ -1,42 +1,19 @@
-import { useEffect, useReducer, useRef, useState } from "react";
-import { Room, RoomEvent, Track, type Participant } from "livekit-client";
+import { useEffect, useRef } from "react";
+import { Room, Track, type Participant } from "livekit-client";
 import { Mic, MicOff, Video, VideoOff, ScreenShare, PhoneOff, Loader2 } from "lucide-react";
 import { useT } from "../i18n";
+import { leaveCall, useCall, type CallConn } from "../lib/call-store";
 
 // UI NATIVA de quick-call (corre en el browser del miembro). livekit-client → SFU
 // (box livekit-svc) con el token/wss que acuña el server (quick-calls.ts). Estilada
 // con tokens de Teams → hereda light/dark. Sin green-room: entra directo (mic on,
 // cámara off). Layout estilo Meet/Zoom/Slack: al compartir pantalla, la pantalla va
 // GRANDE + cámaras en filmstrip; si no, grid parejo (galería).
-export type CallConn = { token: string; wss: string; room: string; name: string };
-
-// ── Sonidos (WebAudio, sin assets) — entrar/salir, como Meet/Slack ──
-function blip(notes: [number, number][], type: OscillatorType = "sine", peak = 0.2) {
-  try {
-    const AC = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-    const ctx = new AC();
-    let tn = ctx.currentTime;
-    for (const [f, d] of notes) {
-      const o = ctx.createOscillator();
-      const g = ctx.createGain();
-      o.type = type;
-      o.frequency.value = f;
-      g.gain.setValueAtTime(0.0001, tn);
-      g.gain.exponentialRampToValueAtTime(peak, tn + 0.01);
-      g.gain.exponentialRampToValueAtTime(0.0001, tn + d);
-      o.connect(g);
-      g.connect(ctx.destination);
-      o.start(tn);
-      o.stop(tn + d);
-      tn += d;
-    }
-    setTimeout(() => ctx.close().catch(() => {}), (tn - ctx.currentTime + 0.1) * 1000);
-  } catch {
-    /* sin audio disponible → silencio */
-  }
-}
-const joinSound = () => blip([[523, 0.1], [784, 0.12]]);
-const byeSound = () => blip([[392, 0.12], [262, 0.2]], "triangle", 0.28);
+//
+// ⚠️ Este componente es SÓLO pintura. La sala, la conexión, los sonidos y el sink de
+// audio son de `lib/call-store` — si el Room viviera aquí, desmontar el componente
+// (navegar) colgaría la llamada, que es exactamente el bug que esto arregla.
+export type { CallConn };
 
 // Un tile = UNA fuente (cámara O pantalla). La pantalla es su propio tile, así tu
 // cámara SIEMPRE se ve (self-view) aunque estés compartiendo.
@@ -99,52 +76,12 @@ function Tile({ p, source, local }: { p: Participant; source: Track.Source; loca
   );
 }
 
-export function QuickCall({ conn, onLeft, onVideoChange }: { conn: CallConn; onLeft: (alone?: boolean) => void; onVideoChange?: (hasVideo: boolean) => void }) {
+export function QuickCall({ room, onVideoChange }: { room: Room; onVideoChange?: (hasVideo: boolean) => void }) {
   const t = useT();
-  const [room] = useState(() => new Room({ adaptiveStream: true, dynacast: true }));
-  const [status, setStatus] = useState<"connecting" | "live" | "error">("connecting");
-  const [, tick] = useReducer((n) => n + 1, 0); // re-render en cada evento de sala
-  const audioRef = useRef<HTMLDivElement>(null);
+  // El store sube `version` en cada evento de la sala → esto re-renderiza.
+  const { status } = useCall();
 
-  useEffect(() => {
-    let alive = true;
-    const onAudio = (track: { kind: Track.Kind; attach: () => HTMLMediaElement }) => {
-      if (track.kind !== Track.Kind.Audio || !audioRef.current) return;
-      audioRef.current.appendChild(track.attach());
-    };
-    room
-      .on(RoomEvent.ParticipantConnected, () => (joinSound(), tick()))
-      .on(RoomEvent.ParticipantDisconnected, tick)
-      .on(RoomEvent.TrackSubscribed, (track) => (onAudio(track as never), tick()))
-      .on(RoomEvent.TrackUnsubscribed, (track) => ((track as { detach: () => void }).detach(), tick()))
-      .on(RoomEvent.LocalTrackPublished, tick)
-      .on(RoomEvent.LocalTrackUnpublished, tick)
-      .on(RoomEvent.TrackMuted, tick)
-      .on(RoomEvent.TrackUnmuted, tick)
-      .on(RoomEvent.Disconnected, () => onLeft(room.remoteParticipants.size === 0));
-    (async () => {
-      try {
-        await room.connect(conn.wss, conn.token);
-        await room.localParticipant.setMicrophoneEnabled(true); // mic on, cámara off por default
-        if (alive) {
-          setStatus("live");
-          joinSound();
-        }
-      } catch {
-        if (alive) setStatus("error");
-      }
-    })();
-    return () => {
-      alive = false;
-      room.disconnect();
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  const leave = () => {
-    byeSound();
-    onLeft(room.remoteParticipants.size === 0); // el cliente sabe si quedó solo → cierre confiable
-  };
+  const leave = () => leaveCall();
 
   const lp = room.localParticipant;
   const micOn = !!lp?.isMicrophoneEnabled;
@@ -181,7 +118,6 @@ export function QuickCall({ conn, onLeft, onVideoChange }: { conn: CallConn; onL
 
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-surface">
-      <div ref={audioRef} className="hidden" />
       {status !== "live" ? (
         <div className="flex flex-1 flex-col items-center justify-center gap-2 text-sm text-muted">
           {status === "connecting" ? (

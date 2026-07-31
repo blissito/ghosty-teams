@@ -7,6 +7,7 @@ import { cachedMe } from '../server/auth'
 // perder el evento — lo consume InstallAppBanner.
 import { registerSW } from '../utils/pwa-install'
 import { InstallAppBanner } from '../components/InstallAppBanner'
+import { CallLayer } from '../components/CallLayer'
 import { LocaleProvider, DEFAULT_LOCALE } from '../i18n'
 import { THEME_BOOT, watchSystemScheme } from '../utils/theme'
 
@@ -163,6 +164,9 @@ function RootDocument({ children }: { children: React.ReactNode }) {
         <LocaleProvider locale={DEFAULT_LOCALE}>
           {children}
           <InstallAppBanner />
+          {/* Llamada + avisos de entrante, GLOBALES: RootDocument no se desmonta al
+              navegar, así que ir a /forms o a un documento ya no cuelga la llamada. */}
+          <CallLayer />
         </LocaleProvider>
         <Scripts />
       </body>

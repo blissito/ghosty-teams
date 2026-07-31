@@ -1,4 +1,4 @@
-import { Component, createContext, forwardRef, Fragment, lazy, type ReactNode, Suspense, useCallback, useContext, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useReducer, useRef, useState } from "react";
+import { Component, createContext, forwardRef, Fragment, type ReactNode, useCallback, useContext, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useReducer, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useEditor, EditorContent } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
@@ -61,8 +61,6 @@ import {
   Home as HomeIcon,
   Hash as HashIcon,
   Sparkles,
-  Maximize2,
-  Minimize2,
   Phone,
   PhoneOff,
   Play,
@@ -75,11 +73,10 @@ import { listEmojisFn } from "../server/emojis";
 import { recentViewFn, mentionsViewFn, starredViewFn } from "../server/views";
 import { openDmFn, listDmsFn, getDmFlowFn, postDmMessageFn, askDmAgentFn, clearDmAgentFn } from "../server/dm";
 import { forwardTargetsFn, forwardMessageFn } from "../server/forward";
-import { startCallFn, joinCallFn, leaveCallFn, getActiveCallFn } from "../server/quick-calls";
-import type { CallConn } from "../components/QuickCall";
-// Lazy: livekit-client toca APIs del browser al importar → solo cargar en cliente
-// cuando se abre una llamada (evita romper el SSR de la ruta).
-const QuickCall = lazy(() => import("../components/QuickCall").then((m) => ({ default: m.QuickCall })));
+import { startCallFn, joinCallFn, getActiveCallFn } from "../server/quick-calls";
+// La llamada (dock, Room de LiveKit y avisos de entrante) vive en el store GLOBAL y se
+// pinta desde la raíz: esta ruta ya no la posee, sólo la opera. Ver lib/call-store.ts.
+import { openCall as openCallGlobal, leaveCall, refreshCallMutes, useMyCallKey, type CallTarget } from "../lib/call-store";
 // Descriptor para unirse a una call desde una tarjeta del timeline.
 type CallJoin = { scope: "room"; slug: string; scopeId: number; label: string } | { scope: "dm"; dmId: number; label: string };
 import { listAgentsFn } from "../server/agents";
@@ -108,9 +105,10 @@ import {
 } from "../server/chat";
 import { SmilePlus, Pencil, ArrowLeft, RotateCcw, Send, Bold, Italic, Strikethrough, List, ListOrdered, Quote, Code, Type, Reply, Square } from "lucide-react";
 import { getDeferredPrompt, onInstallable, clearDeferredPrompt, type BeforeInstallPromptEvent } from "../utils/pwa-install";
-import { useLiveStream } from "../hooks/useLiveStream";
+import { useRtSubscribe } from "../utils/rt-bus";
 import type { RtEvent } from "../server/bus.server";
 import { Markdown } from "../components/Markdown";
+import { Avatar } from "../components/Avatar";
 import { SettingsContent, loadSettingsData } from "../components/SettingsContent";
 import { getTheme, subscribeTheme, resolveDark, presetById, paletteVars } from "../utils/theme";
 import { subscribeMentions } from "../utils/mentions-bus";
@@ -124,7 +122,7 @@ import { belongsToOpenConversation } from "../lib/conversation-scope";
 import { extractEbDoc, extractEbPatches, draftTitle, bubbleWithoutEbDoc, extractToolState, extractSteps, type ToolState } from "../lib/ebdoc";
 import { ThinkingRing } from "../components/ThinkingRing";
 import { showSystemNotification } from "../utils/system-notification";
-import { playNotificationSound, playGhostySound, playSelfSound, playMentionSound, playDmSound, playReadySound, playDeleteSound, playArtifactOpen, playArtifactClose, playArtifactReady, startCallRing, stopCallRing } from "../utils/notificationSound";
+import { playNotificationSound, playGhostySound, playSelfSound, playMentionSound, playDmSound, playReadySound, playDeleteSound, playArtifactOpen, playArtifactClose, playArtifactReady } from "../utils/notificationSound";
 
 // Menciones que cuentan como "a ti": tu @handle o una grupal (@all/@channel/…).
 const SOUND_GROUP_MENTIONS = new Set(["all", "channel", "everyone", "aqui", "here", "todos"]);
@@ -1049,51 +1047,24 @@ function ChannelPage() {
   const [online, setOnline] = useState<Set<string>>(new Set());
   // ── Quick-calls ────────────────────────────────────────────────────────────
   // Una call activa por scope (canal/DM), sembrada por el bus (quickcall:started/ended)
-  // y por getActiveCallFn al entrar. `joinedCall` = la llamada nativa (dock) que tengo abierta.
+  // y por getActiveCallFn al entrar. Alimenta las tarjetas y el header; la llamada en la
+  // que ESTOY es del store global (lib/call-store), no de esta ruta.
   const [activeCalls, setActiveCalls] = useState<
     Map<string, { callId: string; host: { sub: string; name: string; avatar: string }; label: string; startedAt: number }>
   >(new Map());
-  const [joinedCall, setJoinedCall] = useState<
-    { scope: "room" | "dm"; scopeId: number; conn: CallConn; label: string; target: CallTarget } | null
-  >(null);
-  // ── Llamada entrante (aviso GLOBAL estés donde estés) ────────────────────────
-  // `incomingCalls` = llamadas que arrancó OTRO en un scope del que soy miembro y al que
-  // aún NO me uní. Se pinta un overlay fijo (Unirse/Descartar) fuera del scope activo, y
-  // suena ring (DM 1:1, loop tipo teléfono) o un chime (room). Timeout 30s → auto-descarta.
-  type Incoming = { callId: string; host: { sub: string; name: string; avatar: string }; label: string; startedAt: number; scope: "room" | "dm"; scopeId: number; slug?: string };
-  const [incomingCalls, setIncomingCalls] = useState<Map<string, Incoming>>(new Map());
-  const incomingTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
-  const dismissIncoming = (key: string) =>
-    setIncomingCalls((prev) => {
-      if (!prev.has(key)) return prev;
-      const n = new Map(prev);
-      n.delete(key);
-      return n;
-    });
-  const clearIncomingTimer = (key: string) => {
-    const tm = incomingTimers.current.get(key);
-    if (tm) { clearTimeout(tm); incomingTimers.current.delete(key); }
-  };
-  const openCall = async (
-    fn: (o: { data: CallTarget }) => Promise<CallConn>,
+  // La llamada en la que estoy la posee el store global (sobrevive a la navegación); aquí
+  // sólo se lee para pintar los headers y las tarjetas.
+  const myCallKey = useMyCallKey();
+  const openCall = (
+    fn: (o: { data: CallTarget }) => Promise<{ token: string; wss: string; room: string; name: string }>,
     scope: "room" | "dm",
     scopeId: number,
     target: CallTarget,
     label: string
-  ) => {
-    // Al unirme (o iniciar) ese scope deja de ser "entrante" → quita el aviso + su ring.
-    const k = `${scope}:${scopeId}`;
-    clearIncomingTimer(k);
-    dismissIncoming(k);
-    try {
-      const r = await fn({ data: target });
-      setJoinedCall({ scope, scopeId, conn: { token: r.token, wss: r.wss, room: r.room, name: r.name }, label, target });
-    } catch (e) {
-      // Antes esto SOLO iba a la consola: al usuario le fallaba la llamada y no pasaba
-      // absolutamente nada en pantalla (incidente 2026-07-26, con las llaves de huddle
-      // ausentes tras migrar la caja). Un fallo silencioso se lee como "el botón no sirve".
-      console.error("[call] no se pudo abrir", e);
-      const raw = String((e as Error)?.message ?? e);
+  ) =>
+    // El toast de error se queda en la ruta: las llamadas sólo se inician desde aquí, y un
+    // fallo silencioso se lee como "el botón no sirve" (incidente 2026-07-26).
+    openCallGlobal(fn, scope, scopeId, target, label, (raw) =>
       pushToast({
         sender: t("Llamada"),
         avatar: "",
@@ -1102,28 +1073,13 @@ function ChannelPage() {
           : t("No se pudo abrir la llamada. Intenta de nuevo."),
         kind: "room",
         onOpen: () => {},
-      });
-    }
-  };
-  const leaveCall = (alone?: boolean) =>
-    setJoinedCall((j) => {
-      if (j) leaveCallFn({ data: { ...j.target, alone } }).catch(() => {});
-      return null;
-    });
+      })
+    );
   // Unirse a una call desde una tarjeta del timeline (CallCard).
   const joinCallFromCard = (join: CallJoin) => {
     if (join.scope === "room") openCall(joinCallFn, "room", join.scopeId, { scope: "room", slug: join.slug }, join.label);
     else openCall(joinCallFn, "dm", join.dmId, { scope: "dm", dmId: join.dmId }, join.label);
   };
-  const myCallKey = joinedCall ? `${joinedCall.scope}:${joinedCall.scopeId}` : null;
-  // Ring en loop mientras haya alguna llamada entrante de DM sin contestar (estilo teléfono).
-  // Room usa un chime puntual (no loop). Al vaciarse las entrantes DM → para el ring.
-  const hasIncomingDm = Array.from(incomingCalls.values()).some((c) => c.scope === "dm");
-  useEffect(() => {
-    if (hasIncomingDm) startCallRing();
-    else stopCallRing();
-    return () => stopCallRing();
-  }, [hasIncomingDm]);
   // Semilla del call activo del canal actual (por si arrancó antes de que yo entrara).
   useEffect(() => {
     let alive = true;
@@ -1191,7 +1147,10 @@ function ChannelPage() {
       return n;
     });
     toggleMuteFn({ data: { scope, scopeId: id } })
-      .then(() => refreshUnread())
+      .then(() => {
+        refreshUnread();
+        refreshCallMutes(); // el store tiene su propia copia: sin esto un scope recién silenciado seguiría timbrando
+      })
       .catch(() => refreshMutes());
   };
   const [typing, setTyping] = useState<
@@ -1778,34 +1737,12 @@ function ChannelPage() {
           typingTimer.current = setTimeout(() => setTyping(null), 3500);
         }
         break;
+      // El aviso de ENTRANTE, el ring y mi propio dock los maneja el store global
+      // (lib/call-store): tienen que funcionar también fuera de esta ruta. Aquí sólo se
+      // mantiene el Map de calls activas, que es lo que pintan las tarjetas y los headers.
       case "quickcall:started": {
         const k = `${ev.scope}:${ev.scopeId}`;
         setActiveCalls((prev) => new Map(prev).set(k, { callId: ev.callId, host: ev.host, label: ev.label, startedAt: ev.startedAt }));
-        // Aviso GLOBAL de llamada entrante: si la arrancó otro, no estoy ya unido a ESE
-        // call, no lo tengo silenciado, y no lo estoy mostrando ya como entrante.
-        const iStarted = ev.host.sub === user?.sub;
-        const alreadyJoined = joinedCall?.scope === ev.scope && joinedCall?.scopeId === ev.scopeId;
-        if (!iStarted && !alreadyJoined && !mutes.has(k)) {
-          setIncomingCalls((prev) => {
-            if (prev.has(k) && prev.get(k)!.callId === ev.callId) return prev;
-            return new Map(prev).set(k, { callId: ev.callId, host: ev.host, label: ev.label, startedAt: ev.startedAt, scope: ev.scope, scopeId: ev.scopeId, slug: ev.slug });
-          });
-          // DM 1:1 = ring en loop (el effect de abajo lo gestiona). Room = un chime.
-          if (ev.scope === "room") playNotificationSound();
-          // Con la pestaña en otra ventana, el banner in-app no se ve y el timbre puede
-          // pasar por "un sonido cualquiera" (reporte del 2026-07-27). Segundo camino,
-          // independiente del Web Push: notificación del SO desde la propia página.
-          if (document.hidden) {
-            showSystemNotification(
-              `${ev.host.name} está llamando`,
-              ev.scope === "room" ? `Llamada en #${ev.label}` : "Llamada directa",
-              ev.slug
-            );
-          }
-          // Auto-descarta a los 30s (llamada no contestada) si sigue viva.
-          clearIncomingTimer(k);
-          incomingTimers.current.set(k, setTimeout(() => { clearIncomingTimer(k); dismissIncoming(k); }, 30000));
-        }
         break;
       }
       case "quickcall:ended": {
@@ -1816,17 +1753,14 @@ function ChannelPage() {
           n.delete(k);
           return n;
         });
-        clearIncomingTimer(k);
-        dismissIncoming(k); // ya no timbra: la llamada terminó
-        // Si estaba en ESE call, cierra mi dock.
-        setJoinedCall((j) => (j && j.scope === ev.scope && j.scopeId === ev.scopeId ? null : j));
         break;
       }
     }
   };
   // Al (re)conectar o volver a la pestaña: catch-up (refetch de lo montado) → lossless.
   // Reconcilia también los no-leídos (pudo llegar algo con la pestaña dormida).
-  useLiveStream({
+  // El EventSource lo abre la RAÍZ (CallLayer): aquí sólo nos suscribimos al fan-out.
+  useRtSubscribe({
     onEvent,
     onReconnect: () => {
       revalidate();
@@ -2443,7 +2377,7 @@ function ChannelPage() {
           onBack={() => setOpenDmId(null)}
           call={{
             active: activeCalls.get(`dm:${openDmId}`) ?? null,
-            joined: joinedCall?.scope === "dm" && joinedCall.scopeId === openDmId,
+            joined: myCallKey === `dm:${openDmId}`,
             onStart: () => openCall(startCallFn, "dm", openDmId, { scope: "dm", dmId: openDmId }, "Llamada"),
             onJoin: () => openCall(joinCallFn, "dm", openDmId, { scope: "dm", dmId: openDmId }, "Llamada"),
             onLeave: leaveCall,
@@ -2478,7 +2412,7 @@ function ChannelPage() {
           onOpenNav={() => setNavOpen(true)}
           call={{
             active: activeCalls.get(`room:${channel.id}`) ?? null,
-            joined: joinedCall?.scope === "room" && joinedCall.scopeId === channel.id,
+            joined: myCallKey === `room:${channel.id}`,
             onStart: () => openCall(startCallFn, "room", channel.id, { scope: "room", slug: channel.slug }, channel.name),
             onJoin: () => openCall(joinCallFn, "room", channel.id, { scope: "room", slug: channel.slug }, channel.name),
             onLeave: leaveCall,
@@ -2549,14 +2483,8 @@ function ChannelPage() {
           />
         )}
       </AnimatePresence>
-      {joinedCall && (
-        <QuickCallDock conn={joinedCall.conn} label={joinedCall.label} onClose={leaveCall} />
-      )}
-      <IncomingCallStack
-        calls={Array.from(incomingCalls.values())}
-        onJoin={(c) => joinCallFromCard(c.scope === "room" ? { scope: "room", slug: c.slug ?? "", scopeId: c.scopeId, label: c.label } : { scope: "dm", dmId: c.scopeId, label: c.label })}
-        onDismiss={(c) => { clearIncomingTimer(`${c.scope}:${c.scopeId}`); dismissIncoming(`${c.scope}:${c.scopeId}`); }}
-      />
+      {/* El dock de la llamada y el aviso de entrante se pintan desde la RAÍZ
+          (components/CallLayer), para que sobrevivan a salir de esta ruta. */}
       <ToastStack toasts={toasts} onDismiss={dismissToast} />
       <NovedadesModal />
     </div>
@@ -5366,7 +5294,7 @@ function TypingLine({ typing }: { typing: { name: string } | null }) {
 // ── Quick-calls (quick calls) — botón de header, banner de "unirse" y dock (iframe) ──
 // El target distingue canal (por slug) de DM (por id); el server (quick-calls.ts) verifica
 // membresía y acuña un token scoped a la sala HMAC del scope. Cero cruce de llamadas.
-type CallTarget = { scope: "room"; slug: string } | { scope: "dm"; dmId: number };
+// (`CallTarget` vive en lib/call-store, que es quien opera la llamada.)
 type CallActiveInfo = { callId: string; host: { sub: string; name: string; avatar: string }; label: string; startedAt: number };
 type CallWiring = {
   active: CallActiveInfo | null; // hay un call en curso en este scope
@@ -5426,132 +5354,6 @@ function CallBanner({ h }: { h: CallWiring }) {
       >
         {t("Unirse")}
       </button>
-    </div>
-  );
-}
-
-// Dock flotante nativo: renderiza <QuickCall> (livekit-client) con los tokens de
-// Teams → hereda light/dark. Header = título + expandir; salir vive en QuickCall.
-function QuickCallDock({ conn, label, onClose }: { conn: CallConn; label: string; onClose: (alone?: boolean) => void }) {
-  const t = useT();
-  const [expanded, setExpanded] = useState(false);
-  const [pos, setPos] = useState<{ x: number; y: number } | null>(null); // null = anclado abajo-derecha
-  const [size, setSize] = useState<{ w: number; h: number } | null>(null); // null = tamaño default
-  const [hasVideo, setHasVideo] = useState(false); // solo-audio → dock compacto (mínimo)
-  const dockRef = useRef<HTMLDivElement>(null);
-  const positioned = !!pos && !expanded;
-  const sized = !!size && !expanded;
-  // Solo-audio y sin tamaño manual ni expandido → ventana mínima (avatares + controles).
-  const compact = !hasVideo && !expanded && !sized;
-
-  // Al CRECER (compact→grande cuando alguien comparte/prende cámara) el dock arrastrado
-  // conservaba su top-left → se salía del viewport. Tras cada cambio de tamaño (compact/
-  // hasVideo/expanded), re-clampa la posición guardada para que la ventana quepa completa.
-  useLayoutEffect(() => {
-    if (!pos || expanded) return;
-    const el = dockRef.current;
-    if (!el) return;
-    const r = el.getBoundingClientRect();
-    const x = Math.max(4, Math.min(pos.x, window.innerWidth - r.width - 4));
-    const y = Math.max(4, Math.min(pos.y, window.innerHeight - r.height - 4));
-    if (x !== pos.x || y !== pos.y) setPos({ x, y });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [compact, hasVideo, expanded]);
-
-  // Arrastra el dock por su barra (solo acoplado). Se clampa al viewport.
-  const startDrag = (e: React.PointerEvent) => {
-    if (expanded || (e.target as HTMLElement).closest("button")) return;
-    const el = dockRef.current;
-    if (!el) return;
-    const r = el.getBoundingClientRect();
-    const dx = e.clientX - r.left;
-    const dy = e.clientY - r.top;
-    const move = (ev: PointerEvent) => {
-      const x = Math.max(4, Math.min(window.innerWidth - r.width - 4, ev.clientX - dx));
-      const y = Math.max(4, Math.min(window.innerHeight - r.height - 4, ev.clientY - dy));
-      setPos({ x, y });
-    };
-    const up = () => {
-      window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", up);
-    };
-    window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", up);
-  };
-
-  // Redimensiona por la esquina inf-derecha. Ancla arriba-izquierda (fija pos) para
-  // crecer hacia abajo-derecha con el cursor; clampado al viewport.
-  const startResize = (e: React.PointerEvent) => {
-    if (expanded) return;
-    e.stopPropagation();
-    const el = dockRef.current;
-    if (!el) return;
-    const r = el.getBoundingClientRect();
-    setPos({ x: r.left, y: r.top });
-    const sx = e.clientX, sy = e.clientY, sw = r.width, sh = r.height, left = r.left, top = r.top;
-    const move = (ev: PointerEvent) => {
-      const w = Math.max(320, Math.min(window.innerWidth - left - 4, sw + (ev.clientX - sx)));
-      const h = Math.max(240, Math.min(window.innerHeight - top - 4, sh + (ev.clientY - sy)));
-      setSize({ w, h });
-    };
-    const up = () => {
-      window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", up);
-    };
-    window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", up);
-  };
-
-  const style =
-    !expanded && (positioned || sized)
-      ? { ...(positioned ? { left: pos!.x, top: pos!.y } : {}), ...(sized ? { width: size!.w, height: size!.h } : {}) }
-      : undefined;
-
-  return (
-    <div
-      ref={dockRef}
-      style={style}
-      className={
-        (expanded
-          ? "fixed inset-3 md:inset-6"
-          : compact
-            ? "fixed h-64 w-[min(340px,92vw)]" + (positioned ? "" : " bottom-4 right-4")
-            : "fixed h-[min(80vh,720px)] w-[min(960px,94vw)]" + (positioned || sized ? "" : " bottom-4 right-4")) +
-        // bg-surface-2 (como el sidebar) + borde brand → NO se funde con el chat (bg-surface)
-        // en claro NI oscuro; antes era bg-surface con borde ink tenue y se perdía.
-        " z-50 flex flex-col overflow-hidden rounded-xl border-2 border-brand/40 bg-surface-2 shadow-2xl ring-1 ring-black/10"
-      }
-    >
-      <div
-        onPointerDown={startDrag}
-        className={"flex items-center justify-between gap-2 border-b border-border bg-surface-2 px-3 py-2" + (expanded ? "" : " cursor-move select-none")}
-      >
-        <div className="flex min-w-0 items-center gap-2">
-          <Headphones size={15} className="shrink-0 text-brand" />
-          <span className="truncate text-sm font-semibold text-ink">{t("Llamada")} · {label}</span>
-        </div>
-        <button
-          onClick={() => setExpanded((e) => !e)}
-          title={expanded ? t("Restaurar") : t("Expandir")}
-          className="grid h-7 w-7 shrink-0 place-items-center rounded-md text-muted transition hover:bg-surface-3 hover:text-ink"
-        >
-          {expanded ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
-        </button>
-      </div>
-      <Suspense fallback={<div className="flex flex-1 items-center justify-center text-sm text-muted">{t("Conectando…")}</div>}>
-        <QuickCall conn={conn} onLeft={onClose} onVideoChange={setHasVideo} />
-      </Suspense>
-      {!expanded && (
-        <div
-          onPointerDown={startResize}
-          title={t("Arrastra para redimensionar")}
-          className="absolute bottom-0 right-0 z-20 grid size-6 cursor-nwse-resize place-items-center rounded-tl-md text-ink/60 transition hover:bg-surface-3 hover:text-brand"
-        >
-          <svg width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round">
-            <path d="M12 4 L4 12 M12 8.5 L8.5 12" />
-          </svg>
-        </div>
-      )}
     </div>
   );
 }
@@ -6034,15 +5836,6 @@ function DmListSkeleton() {
           <div className="h-3 flex-1 animate-pulse rounded bg-surface-3" style={{ maxWidth: `${70 - i * 12}%` }} />
         </motion.div>
       ))}
-    </div>
-  );
-}
-
-function Avatar({ name, avatar, className }: { name?: string; avatar?: string; className?: string }) {
-  if (avatar) return <img src={avatar} alt="" loading="lazy" decoding="async" className={`shrink-0 rounded-full ${className}`} />;
-  return (
-    <div className={`grid shrink-0 place-items-center rounded-full bg-surface-3 text-xs font-semibold text-ink ${className}`}>
-      {(name || "?").slice(0, 2).toUpperCase()}
     </div>
   );
 }
@@ -6831,55 +6624,6 @@ function parseCallCard(body: string | null | undefined): CallCardData | null {
     return null;
   }
 }
-// Aviso GLOBAL de llamada entrante (fijo, arriba a la derecha) — se ve estés en el room/DM
-// que sea. Una tarjeta por llamada: quién llama + Unirse / Descartar. El ring (DM) lo maneja
-// el shell; aquí solo la UI. Estilo teléfono: avatar con halo que pulsa.
-type IncomingCallItem = { callId: string; host: { sub: string; name: string; avatar: string }; label: string; startedAt: number; scope: "room" | "dm"; scopeId: number; slug?: string };
-function IncomingCallStack({ calls, onJoin, onDismiss }: { calls: IncomingCallItem[]; onJoin: (c: IncomingCallItem) => void; onDismiss: (c: IncomingCallItem) => void }) {
-  const t = useT();
-  if (!calls.length) return null;
-  return (
-    <div className="fixed right-3 top-3 z-[60] flex w-[min(92vw,20rem)] flex-col gap-2">
-      {calls.map((c) => (
-        <div
-          key={`${c.scope}:${c.scopeId}`}
-          className="flex items-center gap-3 rounded-2xl border border-brand/40 bg-surface-2 p-3 shadow-2xl ring-1 ring-black/5"
-        >
-          <span className="relative grid shrink-0 place-items-center">
-            <span className="absolute inline-flex size-11 animate-ping rounded-full bg-brand/30" />
-            <Avatar name={c.host.name} avatar={c.host.avatar} className="relative h-10 w-10" />
-          </span>
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-1.5">
-              <Phone size={13} className="shrink-0 text-brand" />
-              <span className="truncate text-sm font-semibold text-ink">
-                {c.scope === "dm" ? t("{name} te está llamando", { name: c.host.name }) : t("{name} inició una llamada", { name: c.host.name })}
-              </span>
-            </div>
-            {c.scope === "room" && <span className="mt-0.5 block truncate text-xs text-muted">{c.label}</span>}
-          </div>
-          <div className="flex shrink-0 items-center gap-1.5">
-            <button
-              onClick={() => onDismiss(c)}
-              title={t("Descartar")}
-              aria-label={t("Descartar")}
-              className="grid size-9 place-items-center rounded-full border border-border text-muted transition hover:bg-surface-3 hover:text-ink"
-            >
-              <PhoneOff size={16} />
-            </button>
-            <button
-              onClick={() => onJoin(c)}
-              className="flex h-9 items-center gap-1.5 rounded-full bg-brand px-3.5 text-xs font-semibold text-brand-fg shadow-sm transition hover:opacity-90 active:scale-95"
-            >
-              <Phone size={15} /> {t("Unirse")}
-            </button>
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
 function CallCard({ data }: { data: CallCardData }) {
   const t = useT();
   const { joinCall, myCallKey } = useContext(ChatCtx);

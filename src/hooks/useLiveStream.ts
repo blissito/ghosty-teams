@@ -1,4 +1,5 @@
-import { useEffect, useRef } from "react";
+import { useEffect } from "react";
+import { emitRtConnected, emitRtEvent, markRtDisconnected } from "../utils/rt-bus";
 import type { RtEvent } from "../server/bus.server";
 
 // Cliente realtime: UNA conexión SSE por pestaña. En cada (re)apertura y al volver a la
@@ -17,13 +18,9 @@ import type { RtEvent } from "../server/bus.server";
 //
 // Por eso la reconexión se maneja aquí: `onerror` con la conexión cerrada = reabrir, con
 // backoff para no martillear un server que todavía está levantando.
-export function useLiveStream(handlers: {
-  onEvent: (ev: RtEvent) => void;
-  onReconnect: () => void;
-}) {
-  const ref = useRef(handlers);
-  ref.current = handlers;
-
+// Lo monta SÓLO la raíz (CallLayer), una vez y con sesión. Los consumidores no lo llaman:
+// se suscriben al fan-out (`useRtSubscribe` / `subscribeRt` en utils/rt-bus).
+export function useLiveStream() {
   useEffect(() => {
     // La ZONA HORARIA del navegador viaja en el connect: es el único lugar donde se
     // sabe en qué reloj vive esta persona, y los recordatorios ("mañana a las 9") no
@@ -43,18 +40,19 @@ export function useLiveStream(handlers: {
 
       es.addEventListener("open", () => {
         intentos = 0; // reconectó: el backoff vuelve a empezar desde abajo
-        ref.current.onReconnect();
+        emitRtConnected();
       });
 
       es.onmessage = (e) => {
         try {
-          ref.current.onEvent(JSON.parse(e.data) as RtEvent);
+          emitRtEvent(JSON.parse(e.data) as RtEvent);
         } catch {
           /* heartbeat u otra línea no-JSON */
         }
       };
 
       es.onerror = () => {
+        markRtDisconnected();
         // `CONNECTING` = el navegador ya está reintentando por su cuenta; no tocar
         // (reabrir aquí duplicaría conexiones). `CLOSED` = se rindió, y ahí entramos.
         if (cerrado || es?.readyState !== EventSource.CLOSED) return;
@@ -78,12 +76,13 @@ export function useLiveStream(handlers: {
         intentos = 0;
         abrir();
       }
-      ref.current.onReconnect();
+      emitRtConnected();
     };
     document.addEventListener("visibilitychange", onVis);
 
     return () => {
       cerrado = true;
+      markRtDisconnected();
       if (retry) clearTimeout(retry);
       es?.close();
       document.removeEventListener("visibilitychange", onVis);
