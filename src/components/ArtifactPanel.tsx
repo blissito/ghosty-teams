@@ -2,7 +2,7 @@ import { AnimatePresence, motion } from "motion/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ARTIFACT_CHROME_CSS } from "../lib/artifact-stream-doc";
 import { LiveArtifactPreview, ArtifactSkeleton, ArtifactCalque } from "./LiveArtifactPreview";
-import { X, ExternalLink, FileText, Download, Loader2, ChevronRight, ChevronLeft, RotateCw, Upload, Link as LinkIcon, Check, Pencil, Eye, Maximize2, Minimize2, Printer } from "lucide-react";
+import { X, ExternalLink, FileText, Download, Loader2, ChevronRight, ChevronLeft, RotateCw, Upload, Link as LinkIcon, Check, Pencil, Eye, Maximize2, Minimize2, Printer, Users } from "lucide-react";
 import { useT } from "../i18n";
 import { officeToHtmlFn, xlsxToCsvFn, postMessage } from "../server/chat";
 import { listTeamDocumentsFn, type TeamDocument } from "../server/documents";
@@ -10,6 +10,7 @@ import { updateArtifactHtmlFn } from "../server/artifacts";
 import { CanvasEditor, EditorStore, htmlToDoc, htmlToNode, docToHtml, type Node as CeNode } from "@ghosty/canvas-editor";
 import ArtifactShareBar from "./ArtifactShareBar";
 import DocSurface from "./DocSurface";
+import CollabArtifact from "./CollabArtifact";
 
 // Un documento del team (generado o subido) → vista del panel. Null si no es
 // previsualizable. Reusado por el índice Cowork (kind:"docindex").
@@ -241,6 +242,10 @@ export default function ArtifactPanel({
   // (mammoth) y lo renderizamos inline. "loading" | HTML sanitizado | "error" (xlsx/pptx no
   // soportados → descarga). Los docs que REDACTA el agente NO pasan por aquí: son `md` local.
   const [officeHtml, setOfficeHtml] = useState<string | null>(null);
+  // Co-edición en vivo: OPT-IN mientras se compara contra DocSurface (el editor de
+  // siempre, que sigue siendo el default). Se resetea al cambiar de documento — el modo
+  // es del que estás viendo, no del panel.
+  const [collabMode, setCollabMode] = useState(false);
   const [officeState, setOfficeState] = useState<"idle" | "loading" | "error">("idle");
   const [sheetCsv, setSheetCsv] = useState<string | null>(null); // xlsx → CSV (SheetJS, lazy)
   const [sheetState, setSheetState] = useState<"idle" | "loading" | "error">("idle");
@@ -318,6 +323,12 @@ export default function ArtifactPanel({
   // xlsx no lo cubre mammoth (docx-only) → lo previsualizamos con SheetJS (§effect abajo).
   const isXlsx = artifact?.kind === "office" && /\.xlsx?$/i.test(artifact.title ?? "");
   const isDocLike = artifact?.kind === "doc" || artifact?.kind === "office" || artifact?.kind === "sheet";
+  // El modo co-edición es del DOCUMENTO que estás viendo: al abrir otro se vuelve al
+  // editor de siempre, en vez de heredar el modo del anterior.
+  const docIdActual = artifact?.kind === "doc" ? artifact.documentId : null;
+  useEffect(() => {
+    setCollabMode(false);
+  }, [docIdActual]);
   // Artefacto HTML → Doc del Canvas. Se re-parsea SOLO al cambiar de artefacto (documentId),
   // no en cada guardado (el editor es dueño de su estado interno mientras edita).
   // HTML del artefacto. Tras GUARDAR desde el Canvas, la vista `artifact` que llega por
@@ -1064,6 +1075,23 @@ export default function ArtifactPanel({
                         del navegador con lo que hay EN PANTALLA (útil para una copia rápida o
                         para elegir páginas en el diálogo), y el otro es el documento
                         maquetado en papel del lado del servidor. */}
+                    {/* Co-edición: OPT-IN por documento, se apaga con el mismo botón. No es
+                        el default mientras se compara contra el editor de siempre. */}
+                    {artifact.kind === "doc" ? (
+                      <button
+                        type="button"
+                        onClick={() => setCollabMode((v) => !v)}
+                        title={collabMode ? t("Volver al editor simple") : t("Editor avanzado y colaborativo")}
+                        aria-pressed={collabMode}
+                        className={`grid size-7 place-items-center rounded-md transition ${
+                          collabMode
+                            ? "bg-brand/10 text-brand"
+                            : "text-muted hover:bg-surface-3 hover:text-brand"
+                        }`}
+                      >
+                        <Users size={15} />
+                      </button>
+                    ) : null}
                     {artifact.kind === "doc" ? (
                       <button
                         type="button"
@@ -1446,6 +1474,12 @@ export default function ArtifactPanel({
                       <div className="grid h-full place-items-center text-sm text-neutral-400">{t("Sin contenido")}</div>
                     )}
                   </div>
+                ) : artifact.kind === "doc" && collabMode ? (
+                  // Modo co-edición (OPT-IN, ver `collabMode`): el MISMO documento sobre
+                  // Yjs — varias personas a la vez, con cursores y avatares. Es un montaje
+                  // APARTE de DocSurface a propósito: mientras se evalúa, el editor de
+                  // siempre no se toca. Fusionarlos es una decisión posterior.
+                  <CollabArtifact key={`collab:${artifact.documentId}`} documentId={artifact.documentId} />
                 ) : artifact.kind === "doc" ? (
                   // Documento VIVO en el editor real. Es el MISMO montaje que el borrador
                   // de arriba y con el MISMO `key`: al cerrarse el fence, el editor no se
