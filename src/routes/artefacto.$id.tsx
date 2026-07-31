@@ -137,6 +137,13 @@ function SharedArtifact() {
   const blink = blinkTiming(id);
   const [historial, setHistorial] = useState(false);
 
+  // ⚠️ PENDIENTE — EN MÓVIL LA BARRA CHOCA CON LA DEL SISTEMA (2026-07-31).
+  // Visto en iPhone: el título de ArtifactShareBar queda DEBAJO del reloj y los íconos de
+  // batería/wifi, ilegible. Falta respetar el safe-area: esta página abre a pantalla
+  // completa (`h-[100dvh]`) sin ningún `padding-top` que reserve la muesca.
+  // Arreglo: `pt-[env(safe-area-inset-top)]` en este contenedor (y revisar el inset de
+  // abajo por el home indicator). Es la página que se comparte hacia afuera, así que la
+  // abre gente en el teléfono más que en escritorio.
   return (
     <div className="flex h-[100dvh] flex-col bg-surface">
       <ArtifactShareBar
