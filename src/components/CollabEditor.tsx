@@ -1,8 +1,16 @@
 import "@blocknote/core/fonts/inter.css";
 import "@blocknote/mantine/style.css";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { BlockNoteView } from "@blocknote/mantine";
-import { useCreateBlockNote, BlockNoteContext, ThreadsSidebar } from "@blocknote/react";
+import {
+  BlockNoteView,
+  components as mantineComponents,
+} from "@blocknote/mantine";
+import {
+  useCreateBlockNote,
+  BlockNoteContext,
+  ComponentsContext,
+  ThreadsSidebar,
+} from "@blocknote/react";
 import { BlockNoteSchema } from "@blocknote/core";
 import {
   CommentsExtension,
@@ -12,7 +20,11 @@ import {
 } from "@blocknote/core/comments";
 import { MessageSquare } from "lucide-react";
 import { en as blockNoteEn } from "@blocknote/core/locales";
-import { withMultiColumn, multiColumnDropCursor, locales as multiColumnLocales } from "@blocknote/xl-multi-column";
+import {
+  withMultiColumn,
+  multiColumnDropCursor,
+  locales as multiColumnLocales,
+} from "@blocknote/xl-multi-column";
 import { HocuspocusProvider } from "@hocuspocus/provider";
 import * as Y from "yjs";
 import type { CollabUser } from "../server/collab";
@@ -25,15 +37,33 @@ import { reconcile, type ReconcilableEditor } from "../lib/doc-reconcile";
 // entra `readOnly` en el sidecar, así que cualquier escritura se descartaría en silencio
 // y la UI le mentiría ofreciéndole botones que no hacen nada.
 class SoloLecturaAuth extends ThreadStoreAuth {
-  canCreateThread() { return false; }
-  canAddComment() { return false; }
-  canUpdateComment() { return false; }
-  canDeleteComment() { return false; }
-  canDeleteThread() { return false; }
-  canResolveThread() { return false; }
-  canUnresolveThread() { return false; }
-  canAddReaction() { return false; }
-  canDeleteReaction() { return false; }
+  canCreateThread() {
+    return false;
+  }
+  canAddComment() {
+    return false;
+  }
+  canUpdateComment() {
+    return false;
+  }
+  canDeleteComment() {
+    return false;
+  }
+  canDeleteThread() {
+    return false;
+  }
+  canResolveThread() {
+    return false;
+  }
+  canUnresolveThread() {
+    return false;
+  }
+  canAddReaction() {
+    return false;
+  }
+  canDeleteReaction() {
+    return false;
+  }
 }
 
 // Presencia: un participante vivo en la sala (derivado del awareness de Hocuspocus).
@@ -92,7 +122,10 @@ function PresenceRail({ peers }: { peers: Peer[] }) {
       ))}
       {rest > 0 && (
         <div
-          title={peers.slice(MAX).map((p) => p.name).join(", ")}
+          title={peers
+            .slice(MAX)
+            .map((p) => p.name)
+            .join(", ")}
           className="-ml-2 grid size-7 shrink-0 place-items-center rounded-full bg-neutral-200 text-[11px] font-semibold text-neutral-600 ring-2 ring-white"
         >
           +{rest}
@@ -137,13 +170,16 @@ export default function CollabEditor({
    */
   role: DocRole;
 }) {
-  const [status, setStatus] = useState<"connecting" | "connected" | "disconnected">("connecting");
+  const [status, setStatus] = useState<
+    "connecting" | "connected" | "disconnected"
+  >("connecting");
   const seeded = useRef(false);
   const editable = role === "edit";
 
   const ydoc = useMemo(() => new Y.Doc(), []);
   const provider = useMemo(
-    () => new HocuspocusProvider({ url: wsUrl, name: room, token, document: ydoc }),
+    () =>
+      new HocuspocusProvider({ url: wsUrl, name: room, token, document: ydoc }),
     [wsUrl, room, token, ydoc],
   );
   const [peers, setPeers] = useState<Peer[]>([]);
@@ -171,7 +207,10 @@ export default function CollabEditor({
         ydoc.getMap("threads"),
         role === "view"
           ? new SoloLecturaAuth()
-          : new DefaultThreadStoreAuth(user.sub, role === "edit" ? "editor" : "comment"),
+          : new DefaultThreadStoreAuth(
+              user.sub,
+              role === "edit" ? "editor" : "comment",
+            ),
       ),
     [ydoc, user.sub, role],
   );
@@ -188,23 +227,40 @@ export default function CollabEditor({
         if (cacheUsuarios.current.has(id)) continue;
         let vivo: DocUser | null = null;
         provider.awareness?.getStates().forEach((state) => {
-          const u = (state as { user?: { sub?: string; name?: string; avatar?: string } }).user;
-          if (u?.sub === id && u.name) vivo = { id, username: u.name, avatarUrl: u.avatar || "" };
+          const u = (
+            state as { user?: { sub?: string; name?: string; avatar?: string } }
+          ).user;
+          if (u?.sub === id && u.name)
+            vivo = { id, username: u.name, avatarUrl: u.avatar || "" };
         });
         if (vivo) cacheUsuarios.current.set(id, vivo);
         else faltan.push(id);
       }
       if (faltan.length) {
         try {
-          const res = await resolveDocUsersFn({ data: { documentId: room, ids: faltan } });
+          const res = await resolveDocUsersFn({
+            data: { documentId: room, ids: faltan },
+          });
           for (const u of res) cacheUsuarios.current.set(u.id, u);
         } catch {
           // Que falle la resolución no debe tumbar el panel de comentarios: se muestran
           // como invitados y el texto del hilo —que es lo que importa— sigue ahí.
-          for (const id of faltan) cacheUsuarios.current.set(id, { id, username: "Invitado", avatarUrl: "" });
+          for (const id of faltan)
+            cacheUsuarios.current.set(id, {
+              id,
+              username: "Invitado",
+              avatarUrl: "",
+            });
         }
       }
-      return userIds.map((id) => cacheUsuarios.current.get(id) ?? { id, username: "Invitado", avatarUrl: "" });
+      return userIds.map(
+        (id) =>
+          cacheUsuarios.current.get(id) ?? {
+            id,
+            username: "Invitado",
+            avatarUrl: "",
+          },
+      );
     },
     [provider, room],
   );
@@ -230,7 +286,13 @@ export default function CollabEditor({
 
   useEffect(() => {
     const onStatus = (e: { status: string }) =>
-      setStatus(e.status === "connected" ? "connected" : e.status === "connecting" ? "connecting" : "disconnected");
+      setStatus(
+        e.status === "connected"
+          ? "connected"
+          : e.status === "connecting"
+            ? "connecting"
+            : "disconnected",
+      );
     provider.on("status", onStatus);
     return () => {
       provider.off("status", onStatus);
@@ -242,16 +304,23 @@ export default function CollabEditor({
   useEffect(() => {
     const awareness = provider.awareness;
     if (!awareness) return;
-    const me = { name: user.name, color: user.color, avatar: user.avatar, sub: user.sub };
+    const me = {
+      name: user.name,
+      color: user.color,
+      avatar: user.avatar,
+      sub: user.sub,
+    };
 
     const sync = () => {
-      const local = awareness.getLocalState()?.user as { sub?: string } | undefined;
+      const local = awareness.getLocalState()?.user as
+        { sub?: string } | undefined;
       // Re-afirma si y-prosemirror sobrescribió con el objeto pelado del caret.
       if (local?.sub !== user.sub) awareness.setLocalStateField("user", me);
 
       const next: Peer[] = [];
       awareness.getStates().forEach((state, clientId) => {
-        const u = (state as { user?: Partial<Peer> & { avatar?: string } }).user;
+        const u = (state as { user?: Partial<Peer> & { avatar?: string } })
+          .user;
         if (!u?.name) return;
         next.push({
           clientId,
@@ -263,8 +332,11 @@ export default function CollabEditor({
         });
       });
       // Orden estable: yo primero, luego el agente, luego el resto por clientId.
-      next.sort((a, b) =>
-        Number(b.isSelf) - Number(a.isSelf) || Number(b.isAgent) - Number(a.isAgent) || a.clientId - b.clientId,
+      next.sort(
+        (a, b) =>
+          Number(b.isSelf) - Number(a.isSelf) ||
+          Number(b.isAgent) - Number(a.isAgent) ||
+          a.clientId - b.clientId,
       );
       setPeers(next);
     };
@@ -283,7 +355,8 @@ export default function CollabEditor({
       if (seeded.current) return;
       const doc = editor.document;
       const isEmpty =
-        doc.length <= 1 && (!doc[0] || (doc[0] as { content?: unknown[] }).content?.length === 0);
+        doc.length <= 1 &&
+        (!doc[0] || (doc[0] as { content?: unknown[] }).content?.length === 0);
       if (isEmpty && initialHtml.trim()) {
         seeded.current = true;
         const blocks = await editor.tryParseHTMLToBlocks(initialHtml);
@@ -336,7 +409,9 @@ export default function CollabEditor({
   // editor, para no depender de que el panel esté montado.
   const [abiertos, setAbiertos] = useState(0);
   useEffect(() => {
-    const contar = (hilos: Map<string, { resolved: boolean; deletedAt?: Date }>) => {
+    const contar = (
+      hilos: Map<string, { resolved: boolean; deletedAt?: Date }>,
+    ) => {
       let n = 0;
       hilos.forEach((h) => {
         if (!h.resolved && !h.deletedAt) n++;
@@ -355,7 +430,9 @@ export default function CollabEditor({
   useEffect(() => {
     const el = caja.current;
     if (!el || typeof ResizeObserver === "undefined") return;
-    const ro = new ResizeObserver(([e]) => setAncho(e.contentRect.width >= 1000));
+    const ro = new ResizeObserver(([e]) =>
+      setAncho(e.contentRect.width >= 1000),
+    );
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
@@ -364,62 +441,85 @@ export default function CollabEditor({
   const sidebar = ancho && verHilos;
 
   return (
+    // Los dos contextos van FUERA del editor porque el panel de hilos vive al lado, no
+    // dentro: `ThreadsSidebar` pide el editor (BlockNoteContext) y los componentes de
+    // Mantine (ComponentsContext), y ambos los provee `BlockNoteView` sólo para sus hijos.
+    // Sin esto el panel revienta al montar.
     <BlockNoteContext.Provider value={{ editor: editor as never }}>
-      <div ref={caja} className="flex h-full flex-col bg-[#f3f3f5]">
-        <header className="sticky top-0 z-10 flex items-center gap-2 border-b border-neutral-200 bg-white/90 px-4 py-2 backdrop-blur">
-          <span
-            className={`inline-block size-2 rounded-full ${
-              status === "connected" ? "bg-green-500" : status === "connecting" ? "bg-amber-400" : "bg-red-500"
-            }`}
-          />
-          <span className="text-xs font-medium text-neutral-500">
-            {status === "connected" ? "Co-edición en vivo" : status === "connecting" ? "Conectando…" : "Desconectado"}
-            {role === "comment" && " · puedes comentar"}
-            {role === "view" && " · solo lectura"}
-          </span>
-          <div className="ml-auto flex items-center gap-1">
-            {ancho && (
-              <button
-                type="button"
-                onClick={() => setVerHilos((v) => !v)}
-                aria-pressed={sidebar}
-                title={sidebar ? "Ocultar comentarios" : "Mostrar comentarios"}
-                className={`flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium transition ${
-                  sidebar
-                    ? "bg-neutral-900 text-white"
-                    : "text-neutral-500 hover:bg-neutral-100 hover:text-neutral-800"
-                }`}
+      <ComponentsContext.Provider value={mantineComponents as never}>
+        <div ref={caja} className="flex h-full flex-col bg-[#f3f3f5]">
+          <header className="sticky top-0 z-10 flex items-center gap-2 border-b border-neutral-200 bg-white/90 px-4 py-2 backdrop-blur">
+            <span
+              className={`inline-block size-2 rounded-full ${
+                status === "connected"
+                  ? "bg-green-500"
+                  : status === "connecting"
+                    ? "bg-amber-400"
+                    : "bg-red-500"
+              }`}
+            />
+            <span className="text-xs font-medium text-neutral-500">
+              {status === "connected"
+                ? "Co-edición en vivo"
+                : status === "connecting"
+                  ? "Conectando…"
+                  : "Desconectado"}
+              {role === "comment" && " · puedes comentar"}
+              {role === "view" && " · solo lectura"}
+            </span>
+            <div className="ml-auto flex items-center gap-1">
+              {ancho && (
+                <button
+                  type="button"
+                  onClick={() => setVerHilos((v) => !v)}
+                  aria-pressed={sidebar}
+                  title={
+                    sidebar ? "Ocultar comentarios" : "Mostrar comentarios"
+                  }
+                  className={`flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium transition ${
+                    sidebar
+                      ? "bg-neutral-900 text-white"
+                      : "text-neutral-500 hover:bg-neutral-100 hover:text-neutral-800"
+                  }`}
+                >
+                  <MessageSquare size={14} />
+                  {abiertos > 0 && <span>{abiertos}</span>}
+                </button>
+              )}
+              <PresenceRail peers={peers} />
+            </div>
+          </header>
+          <div className="flex min-h-0 flex-1">
+            <div className="flex-1 overflow-auto px-4 py-8">
+              <div
+                className={`mx-auto ${sidebar ? "max-w-[720px]" : "max-w-[820px]"}`}
               >
-                <MessageSquare size={14} />
-                {abiertos > 0 && <span>{abiertos}</span>}
-              </button>
-            )}
-            <PresenceRail peers={peers} />
-          </div>
-        </header>
-        <div className="flex min-h-0 flex-1">
-          <div className="flex-1 overflow-auto px-4 py-8">
-            <div className={`mx-auto ${sidebar ? "max-w-[720px]" : "max-w-[820px]"}`}>
-              <div className="min-h-[600px] rounded-md bg-white px-6 py-12 shadow-[0_1px_2px_rgba(0,0,0,0.06),0_12px_32px_-12px_rgba(0,0,0,0.18)] ring-1 ring-neutral-200/70 sm:px-14">
-                <BlockNoteView editor={editor} editable={editable} theme="light" />
+                <div className="min-h-[600px] rounded-md bg-white px-6 py-12 shadow-[0_1px_2px_rgba(0,0,0,0.06),0_12px_32px_-12px_rgba(0,0,0,0.18)] ring-1 ring-neutral-200/70 sm:px-14">
+                  <BlockNoteView
+                    editor={editor}
+                    editable={editable}
+                    theme="light"
+                  />
+                </div>
               </div>
             </div>
-          </div>
-          {sidebar && (
-            <aside className="w-[320px] shrink-0 overflow-auto border-l border-neutral-200 bg-white px-3 py-4">
-              <p className="px-1 pb-2 text-xs font-semibold uppercase tracking-wide text-neutral-400">
-                Comentarios
-              </p>
-              {abiertos === 0 && (
-                <p className="px-1 text-xs leading-relaxed text-neutral-400">
-                  Selecciona texto y usa el botón de comentario para abrir un hilo.
+            {sidebar && (
+              <aside className="w-[320px] shrink-0 overflow-auto border-l border-neutral-200 bg-white px-3 py-4">
+                <p className="px-1 pb-2 text-xs font-semibold uppercase tracking-wide text-neutral-400">
+                  Comentarios
                 </p>
-              )}
-              <ThreadsSidebar sort="position" />
-            </aside>
-          )}
+                {abiertos === 0 && (
+                  <p className="px-1 text-xs leading-relaxed text-neutral-400">
+                    Selecciona texto y usa el botón de comentario para abrir un
+                    hilo.
+                  </p>
+                )}
+                <ThreadsSidebar sort="position" />
+              </aside>
+            )}
+          </div>
         </div>
-      </div>
+      </ComponentsContext.Provider>
     </BlockNoteContext.Provider>
   );
 }
