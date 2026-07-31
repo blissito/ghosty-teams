@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Check, ChevronDown, Globe, Link as LinkIcon, Lock, Loader2, X, Info } from "lucide-react";
 import type { Invitable } from "../server/doc-invite-suggest";
+import type { DocInvite } from "../server/doc-invites";
 import { useT } from "../i18n";
 
 // Caché por documento, a nivel de módulo: el estado de compartir sólo cambia desde
@@ -60,6 +61,9 @@ export default function ArtifactShareDialog({
   // Gente del workspace, para no teclear de memoria el correo de un compañero. Se pide
   // una vez al abrir; el padrón de un equipo no cambia a media sesión.
   const [gente, setGente] = useState<Invitable[]>([]);
+  // Invitaciones vivas de ESTE documento. Sin esto, invitar era un acto de fe: el correo
+  // salía y "Quién tiene acceso" seguía enseñando sólo al dueño.
+  const [invitaciones, setInvitaciones] = useState<DocInvite[]>([]);
   const [verGente, setVerGente] = useState(false);
   /** Opción marcada por teclado (índice dentro de `filtrada`). */
   const [marcada, setMarcada] = useState(0);
@@ -171,6 +175,9 @@ export default function ArtifactShareDialog({
         const { suggestInviteesFn } = await import("../server/doc-invite-suggest");
         const r = await suggestInviteesFn({ data: { documentId } });
         if (vivo) setGente(r);
+        const { listDocInvitesFn } = await import("../server/doc-invites");
+        const inv = await listDocInvitesFn({ data: { documentId } });
+        if (vivo) setInvitaciones(inv.filter((i) => !i.revoked));
       } catch {
         /* sin padrón se puede invitar igual tecleando el correo */
       }
@@ -257,6 +264,37 @@ export default function ArtifactShareDialog({
                   </span>
                 </div>
               ) : null}
+              {/* Invitados por correo. `usedAt` distingue "le mandé el correo" de "ya
+                  entró": sin esa diferencia no se sabe si hay que reenviarlo. */}
+              {invitaciones.map((inv) => (
+                <div key={inv.id} className="flex items-center gap-2.5">
+                  <span className="grid size-8 shrink-0 place-items-center rounded-full bg-surface-3 text-[11px] font-semibold text-muted">
+                    {(inv.name || inv.email || "?").trim().slice(0, 1).toUpperCase()}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm text-ink">{inv.name || inv.email}</p>
+                    <p className="truncate text-xs text-muted">
+                      {inv.usedAt ? t("Ya entró") : t("Invitación enviada")}
+                      {" · "}
+                      {inv.role === "edit" ? t("Puede editar") : inv.role === "comment" ? t("Puede comentar") : t("Puede ver")}
+                    </p>
+                  </div>
+                  {share.isOwner ? (
+                    <button
+                      type="button"
+                      title={t("Quitar el acceso")}
+                      onClick={async () => {
+                        setInvitaciones((prev) => prev.filter((i) => i.id !== inv.id));
+                        const { revokeDocInviteFn } = await import("../server/doc-invites");
+                        await revokeDocInviteFn({ data: { documentId, inviteId: inv.id } }).catch(() => null);
+                      }}
+                      className="grid size-7 shrink-0 place-items-center rounded-md text-muted transition hover:bg-surface-3 hover:text-ink"
+                    >
+                      <X size={14} />
+                    </button>
+                  ) : null}
+                </div>
+              ))}
             </section>
 
             {/* Invitar por CORREO. Es el nivel de identidad que el enlace abierto no
@@ -396,6 +434,12 @@ export default function ArtifactShareDialog({
                         if (!r.ok) setAvisoInvitacion(r.error);
                         else {
                           setCorreo("");
+                          // La lista de arriba tiene que reflejarlo YA: es la única señal
+                          // de que la invitación existe de verdad.
+                          setInvitaciones((prev) => [
+                            r.invite,
+                            ...prev.filter((i) => i.email !== r.invite.email),
+                          ]);
                           // Si el correo no salió (SES apagado), el enlace igual existe:
                           // se ofrece a mano en vez de fingir que se envió.
                           setAvisoInvitacion(
