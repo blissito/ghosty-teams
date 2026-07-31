@@ -1,26 +1,45 @@
 import { createServerFn } from "@tanstack/react-start";
+import type { DocRole } from "../db.server";
 
-// Puente colab del artefacto nativo de GTeams. Resuelve la conexión Yjs de un doc y
-// persiste su snapshot — todo server-to-server contra EasyBits (evita CORS del browser
-// cross-origin). El WS (browser → sync server) sí va directo; sólo el HTTP pasa por aquí.
+// Puente de co-edición del artefacto nativo de GTeams. Resuelve TODO en casa:
 //
-// Hoy el sync server = box `collab-svc` de EasyBits (vía /api/v2/collab/:token/room).
-// Al mover a sidecar del team VM, sólo cambia la resolución del wsUrl (misma interfaz).
+//   permiso  → resolveDocRole (el mismo criterio que el panel y la descarga)
+//   ticket   → mintCollabTicket (firmado; el sidecar lo verifica sin llamar a nadie)
+//   semilla  → los bloques del sobre local (`gc_artifacts.md`)
+//   estado   → el sidecar contra /api/collab/:docId/state
+//
+// Antes esto colgaba de EasyBits (mint del share token, sections del Landing, snapshot
+// desde el browser). GTeams corre en su propia micro-nube: de EasyBits sólo se consumen
+// tools públicas, así que el camino de co-edición se cortó el 2026-07-31.
+//
+// El WS (browser → sidecar) va directo; aquí sólo se prepara la conexión.
 
-const GTEAMS_ORIGIN = process.env.GTEAMS_PUBLIC_ORIGIN ?? "https://teams.formmy.app";
+// Identidad REAL del participante en la sala (nombre/avatar de la sesión + color
+// ESTABLE derivado del sub). Antes el editor inventaba `{name:"Editor", color:random}`
+// en el cliente: todos los cursores se llamaban igual y cambiaban de color en cada
+// montaje, así que la presencia no significaba nada. El color se deriva en el servidor
+// para que el MISMO usuario se vea igual en todas las pestañas y sesiones.
+export type CollabUser = {
+  sub: string;
+  name: string;
+  avatar: string;
+  color: string;
+};
 
-// El token de edición vive en la URL del embed/collab que mintea EasyBits.
-function extractToken(url?: string): string | null {
-  if (!url) return null;
-  const m = url.match(/\/(?:collab\/)?document\/([^/?#]+)/);
-  return m ? m[1] : null;
+// Paleta de cursores (contraste suficiente sobre la hoja blanca del editor).
+const CURSOR_COLORS = ["#e11d48", "#7c3aed", "#0891b2", "#16a34a", "#ea580c", "#db2777"];
+
+function colorFor(sub: string): string {
+  let h = 0;
+  for (let i = 0; i < sub.length; i++) h = (h * 31 + sub.charCodeAt(i)) >>> 0;
+  return CURSOR_COLORS[h % CURSOR_COLORS.length];
 }
 
 // Sesión → sólo miembros del team pueden abrir el editor.
 async function requireUser() {
   const { useSession } = await import("@tanstack/react-start/server");
   const { sessionConfig } = await import("./session.server");
-  const s = await useSession<{ user?: { sub: string } }>(sessionConfig());
+  const s = await useSession<{ user?: import("../users.server").SessionUser }>(sessionConfig());
   if (!s.data.user) throw new Error("no autorizado");
   return s.data.user;
 }
@@ -28,82 +47,115 @@ async function requireUser() {
 export type CollabConn = {
   wsUrl: string;
   room: string;
+  /** Ticket firmado (identidad + rol + documento). No es un share token de EasyBits. */
   token: string;
   title: string;
   initialHtml: string;
   persistSectionId: string;
+  /** Quién es el que se conecta — alimenta el caret y el rail de avatares. */
+  user: CollabUser;
+  /** Qué puede hacer. `view` se aplica ADEMÁS en el servidor: el cliente no manda. */
+  role: DocRole;
 };
 
-// Resuelve {wsUrl, room, token, initialHtml} para montar el editor nativo.
+// Resuelve {wsUrl, room, token, initialHtml, role} para montar el editor nativo.
 export const docCollabConnFn = createServerFn({ method: "POST" })
   .validator((d: { documentId: string }) => d)
   .handler(async ({ data }): Promise<{ ok: true; conn: CollabConn } | { ok: false; error: string }> => {
-    await requireUser();
-    const { ebFetch } = await import("./easybits-files.server");
+    const me = await requireUser();
+    const documentId = data.documentId;
 
-    // 1) Mint del link de edición embebible (token de share con perm=edit).
-    const embedRes = await ebFetch(`/api/v2/documents/collab-embed-link`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ documentId: data.documentId, origin: GTEAMS_ORIGIN }),
-    });
-    if (!embedRes.ok) return { ok: false, error: `collab-embed-link ${embedRes.status}` };
-    const embed = (await embedRes.json()) as {
-      ok?: boolean; title?: string; embedUrl?: string; collabUrl?: string;
-    };
-    const token = extractToken(embed.collabUrl || embed.embedUrl);
-    if (!embed.ok || !token) return { ok: false, error: "sin token de colaboración" };
+    // 1) Permiso. `null` = ni verlo; se responde lo mismo que si no existiera.
+    const { resolveDocRole } = await import("./doc-access.server");
+    const role = await resolveDocRole(documentId, { sub: me.sub, isOwner: me.isOwner });
+    if (!role) return { ok: false, error: "sin acceso a este documento" };
 
-    // 2) Resuelve el wsUrl del sync server. Preferimos el SIDECAR co-locado en este team
-    // VM (`COLLAB_SIDECAR_WS_URL` inyectado al provisionar, = wss://sb-<uuid>-9400…): el
-    // sidecar corre collab-svc verbatim, así que room = documentName = landingId y auth =
-    // el mismo share token. Sin el env (antes del rollout) caemos al box collab-svc de
-    // EasyBits (/room) — mismo contrato, degrada elegante.
-    let wsUrl: string;
-    let room: string;
-    const sidecar = process.env.COLLAB_SIDECAR_WS_URL?.replace(/\/$/, "");
-    if (sidecar) {
-      wsUrl = sidecar;
-      room = data.documentId;
-    } else {
-      const roomRes = await ebFetch(`/api/v2/collab/${encodeURIComponent(token)}/room`, { method: "GET" });
-      if (!roomRes.ok) return { ok: false, error: `collab/room ${roomRes.status}` };
-      const r = (await roomRes.json()) as { wsUrl?: string; room?: string };
-      if (!r.wsUrl || !r.room) return { ok: false, error: "sin wsUrl" };
-      wsUrl = r.wsUrl;
-      room = r.room;
+    // 2) Sidecar co-locado en este team VM (`COLLAB_SIDECAR_WS_URL` = wss://sb-<uuid>-9400…).
+    // Sin él no hay co-edición: ya no existe el fallback al box de EasyBits.
+    const wsUrl = process.env.COLLAB_SIDECAR_WS_URL?.replace(/\/$/, "");
+    if (!wsUrl) return { ok: false, error: "co-edición no configurada (COLLAB_SIDECAR_WS_URL)" };
+
+    // 3) Ticket firmado: el sidecar verifica identidad y rol sin preguntarle a nadie.
+    let token: string;
+    try {
+      const { mintCollabTicket } = await import("./collab-ticket.server");
+      token = mintCollabTicket({
+        doc: documentId,
+        sub: me.sub,
+        name: me.name || me.email || "Alguien",
+        avatar: me.avatar || "",
+        color: colorFor(me.sub),
+        role,
+      });
+    } catch (e) {
+      return { ok: false, error: (e as Error).message };
     }
 
-    // 3) initialHtml (secciones actuales) para sembrar un doc nuevo.
-    let initialHtml = "<p></p>";
-    let persistSectionId = "page-1";
-    const docRes = await ebFetch(`/api/v2/documents/${encodeURIComponent(data.documentId)}`, { method: "GET" });
-    if (docRes.ok) {
-      const j = (await docRes.json()) as {
-        sections?: Array<{ id?: string; html?: string }>;
-        landing?: { sections?: Array<{ id?: string; html?: string }> };
-      };
-      const secs = ((j.landing ?? j).sections ?? []).filter((s) => s && s.id !== "__grapes_css__" && s.html);
-      initialHtml = secs.map((s) => s.html).join("\n") || "<p></p>";
-      persistSectionId = secs[0]?.id ?? "page-1";
-    }
+    // 4) Semilla: los bloques del documento vivo, renderizados a HTML. Sólo se usan si
+    // el Y.Doc está vacío (documento que nunca se co-editó).
+    const db = await import("../db.server");
+    const doc = await db.getDoc(documentId);
+    const { title, initialHtml } = await seedFrom(doc?.md ?? null);
 
     return {
       ok: true,
-      conn: { wsUrl, room, token, title: embed.title ?? "Documento", initialHtml, persistSectionId },
+      conn: {
+        wsUrl,
+        room: documentId,
+        token,
+        title: title ?? "Documento",
+        initialHtml,
+        persistSectionId: "page-1",
+        user: {
+          sub: me.sub,
+          name: me.name || me.email || "Alguien",
+          avatar: me.avatar || "",
+          color: colorFor(me.sub),
+        },
+        role,
+      },
     };
   });
 
-// Persiste el snapshot HTML del editor a Landing.sections (auth por el share token en la URL).
+/**
+ * Sobre local → HTML de arranque. Se hace en el SERVIDOR (ServerBlockNoteEditor maneja
+ * su propio DOM) para no volver a pasar por markdown, que es lossy en los dos sentidos.
+ * Un fallo aquí no debe tumbar la conexión: peor caso, el editor abre vacío y el Y.Doc
+ * manda.
+ */
+async function seedFrom(md: string | null): Promise<{ title: string | null; initialHtml: string }> {
+  if (!md) return { title: null, initialHtml: "<p></p>" };
+  try {
+    const { parseDocEnvelope } = await import("../lib/doc-blocks");
+    const env = parseDocEnvelope(md);
+    const blocks = env?.blocks ?? [];
+    if (!blocks.length) return { title: null, initialHtml: "<p></p>" };
+
+    const { ServerBlockNoteEditor } = await import("@blocknote/server-util");
+    const { BlockNoteSchema } = await import("@blocknote/core");
+    const { withMultiColumn } = await import("@blocknote/xl-multi-column");
+    const server = ServerBlockNoteEditor.create({
+      schema: withMultiColumn(BlockNoteSchema.create()),
+    } as never);
+    const html = await server.blocksToFullHTML(blocks as never);
+    return { title: null, initialHtml: html || "<p></p>" };
+  } catch (e) {
+    console.error("[collab] seed falló:", (e as Error).message);
+    return { title: null, initialHtml: "<p></p>" };
+  }
+}
+
+/**
+ * OBSOLETO — la persistencia ya no sale del browser.
+ *
+ * Cada cliente hacía su propio snapshot HTML debounced y lo escribía con
+ * `replaceAll:true` sobre la primera sección: dos editores competían por la misma fila y
+ * un documento de varias páginas se colapsaba a una. Ahora el estado lo guarda el sidecar
+ * (`PUT /api/collab/:docId/state`), que es el único que ve el documento entero.
+ *
+ * Se conserva como no-op mientras quede alguna vista vieja llamándola; borrar en cuanto
+ * el editor deje de referenciarla.
+ */
 export const persistDocSectionFn = createServerFn({ method: "POST" })
   .validator((d: { token: string; sectionId: string; html: string; replaceAll?: boolean }) => d)
-  .handler(async ({ data }) => {
-    await requireUser();
-    const { ebFetch } = await import("./easybits-files.server");
-    const res = await ebFetch(`/api/v2/share/documents/${encodeURIComponent(data.token)}/section`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ sectionId: data.sectionId, html: data.html, replaceAll: data.replaceAll ?? true }),
-    });
-    return { ok: res.ok };
-  });
+  .handler(async () => ({ ok: true, noop: true }));

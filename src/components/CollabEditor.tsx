@@ -8,6 +8,73 @@ import { en as blockNoteEn } from "@blocknote/core/locales";
 import { withMultiColumn, multiColumnDropCursor, locales as multiColumnLocales } from "@blocknote/xl-multi-column";
 import { HocuspocusProvider } from "@hocuspocus/provider";
 import * as Y from "yjs";
+import type { CollabUser } from "../server/collab";
+
+// Presencia: un participante vivo en la sala (derivado del awareness de Hocuspocus).
+type Peer = {
+  clientId: number;
+  name: string;
+  color: string;
+  avatar?: string;
+  isAgent?: boolean;
+  isSelf: boolean;
+};
+
+function initial(name: string): string {
+  return (name.trim()[0] ?? "?").toUpperCase();
+}
+
+// Avatar de un participante: imagen si la hay, si no la inicial sobre su color.
+function PeerAvatar({ peer }: { peer: Peer }) {
+  return (
+    <div
+      title={`${peer.name}${peer.isSelf ? " (tú)" : ""}`}
+      className="relative -ml-2 size-7 shrink-0 rounded-full ring-2 ring-white transition-transform duration-200 ease-out first:ml-0 hover:z-10 hover:-translate-y-0.5"
+      style={{ backgroundColor: peer.color }}
+    >
+      {peer.avatar ? (
+        <img
+          src={peer.avatar}
+          alt={peer.name}
+          className="size-full rounded-full object-cover"
+          referrerPolicy="no-referrer"
+        />
+      ) : (
+        <span className="grid size-full place-items-center text-[11px] font-semibold text-white">
+          {initial(peer.name)}
+        </span>
+      )}
+      {/* Punto de estado: el agente se distingue por su anillo oscuro. */}
+      <span
+        className={`absolute -bottom-0.5 -right-0.5 size-2.5 rounded-full ring-2 ring-white ${
+          peer.isAgent ? "bg-neutral-900" : "bg-green-500"
+        }`}
+      />
+    </div>
+  );
+}
+
+// Fila de avatares apilados (estilo Tiptap Collaboration): overlap + "+N" al desbordar.
+function PresenceRail({ peers }: { peers: Peer[] }) {
+  const MAX = 5;
+  const shown = peers.slice(0, MAX);
+  const rest = peers.length - shown.length;
+  return (
+    <div className="flex items-center pl-2">
+      {shown.map((p) => (
+        <PeerAvatar key={p.clientId} peer={p} />
+      ))}
+      {rest > 0 && (
+        <div
+          title={peers.slice(MAX).map((p) => p.name).join(", ")}
+          className="-ml-2 grid size-7 shrink-0 place-items-center rounded-full bg-neutral-200 text-[11px] font-semibold text-neutral-600 ring-2 ring-white"
+        >
+          +{rest}
+        </div>
+      )}
+    </div>
+  );
+}
 
 // Editor colaborativo NATIVO del artefacto de GTeams (antes: iframe servido por
 // EasyBits). BlockNote (block-based estilo Notion sobre ProseMirror) + colaboración
@@ -16,8 +83,6 @@ import * as Y from "yjs";
 // CollabBlockNoteEditor.tsx pero: clases Tailwind neutrales (sin tokens de EasyBits) y
 // persistencia del snapshot HTML vía `persistUrl` (una ruta proxy de GTeams → EasyBits,
 // server-to-server, para no chocar con CORS al escribir Landing.sections cross-origin).
-
-const COLORS = ["#e11d48", "#7c3aed", "#0891b2", "#16a34a", "#ea580c", "#db2777"];
 
 // Envuelve el HTML del editor en un <section> de página para que el pipeline de
 // PDF/export lo trate como documento en flujo (como Word), no prosa pelada. Mismo
@@ -33,11 +98,14 @@ export default function CollabEditor({
   initialHtml,
   onSnapshot,
   editable,
+  user,
 }: {
   wsUrl: string;
   room: string;
   token: string;
   initialHtml: string;
+  /** Identidad REAL del que edita (server-side, color estable por `sub`). */
+  user: CollabUser;
   /** Snapshot HTML (envuelto en <section>) → el padre lo persiste a EasyBits vía server fn. */
   onSnapshot: (html: string) => void;
   editable: boolean;
@@ -51,9 +119,13 @@ export default function CollabEditor({
     () => new HocuspocusProvider({ url: wsUrl, name: room, token, document: ydoc }),
     [wsUrl, room, token, ydoc],
   );
-  const user = useMemo(
-    () => ({ name: "Editor", color: COLORS[Math.floor(Math.random() * COLORS.length)] }),
-    [],
+  const [peers, setPeers] = useState<Peer[]>([]);
+
+  // BlockNote sólo consume {name, color} para el caret; el resto viaja en el awareness
+  // (lo lee el rail). Memo por identidad para no re-crear el editor en cada render.
+  const cursorUser = useMemo(
+    () => ({ name: user.name, color: user.color }),
+    [user.name, user.color],
   );
 
   const editor = useCreateBlockNote(
@@ -63,7 +135,7 @@ export default function CollabEditor({
       dictionary: { ...blockNoteEn, multi_column: multiColumnLocales.en },
       collaboration: {
         fragment: ydoc.getXmlFragment("document-store"),
-        user,
+        user: cursorUser,
         provider: { awareness: provider.awareness ?? undefined },
         showCursorLabels: "activity",
       },
@@ -88,6 +160,45 @@ export default function CollabEditor({
       provider.off("status", onStatus);
     };
   }, [provider]);
+
+  // Presencia: publica la identidad completa (BlockNote sólo pone {name,color}) y
+  // escucha el awareness para pintar el rail de avatares.
+  useEffect(() => {
+    const awareness = provider.awareness;
+    if (!awareness) return;
+    const me = { name: user.name, color: user.color, avatar: user.avatar, sub: user.sub };
+
+    const sync = () => {
+      const local = awareness.getLocalState()?.user as { sub?: string } | undefined;
+      // Re-afirma si y-prosemirror sobrescribió con el objeto pelado del caret.
+      if (local?.sub !== user.sub) awareness.setLocalStateField("user", me);
+
+      const next: Peer[] = [];
+      awareness.getStates().forEach((state, clientId) => {
+        const u = (state as { user?: Partial<Peer> & { avatar?: string } }).user;
+        if (!u?.name) return;
+        next.push({
+          clientId,
+          name: u.name,
+          color: u.color || "#737373",
+          avatar: u.avatar || undefined,
+          isAgent: Boolean(u.isAgent),
+          isSelf: clientId === awareness.clientID,
+        });
+      });
+      // Orden estable: yo primero, luego el agente, luego el resto por clientId.
+      next.sort((a, b) =>
+        Number(b.isSelf) - Number(a.isSelf) || Number(b.isAgent) - Number(a.isAgent) || a.clientId - b.clientId,
+      );
+      setPeers(next);
+    };
+
+    sync();
+    awareness.on("change", sync);
+    return () => {
+      awareness.off("change", sync);
+    };
+  }, [provider, user.name, user.color, user.avatar, user.sub]);
 
   // Siembra desde el HTML inicial una sola vez si el Y.Doc está vacío (primer editor).
   useEffect(() => {
@@ -138,6 +249,9 @@ export default function CollabEditor({
           {status === "connected" ? "Co-edición en vivo" : status === "connecting" ? "Conectando…" : "Desconectado"}
           {!editable && " · solo lectura"}
         </span>
+        <div className="ml-auto">
+          <PresenceRail peers={peers} />
+        </div>
       </header>
       <div className="flex-1 overflow-auto px-4 py-8">
         <div className="mx-auto max-w-[820px]">

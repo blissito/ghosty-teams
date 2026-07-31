@@ -73,6 +73,7 @@ export default function CollabArtifact({
         room={conn.room}
         token={conn.token}
         initialHtml={conn.initialHtml}
+        user={conn.user}
         editable={editable}
         onSnapshot={(html) =>
           persistDocSectionFn({

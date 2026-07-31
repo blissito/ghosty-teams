@@ -57,6 +57,63 @@ export async function resolveExportDoc(
   return { documentId, versionId: full.id, title: full.title, kind, md: full.md };
 }
 
+/**
+ * QUÉ puede hacer alguien con un documento: `view` | `comment` | `edit`, o `null` si ni
+ * siquiera puede verlo. Es la fuente única del permiso de co-edición — la usa el
+ * endpoint que autentica al sync server (Yjs), donde el solo-lectura tiene que aplicarse
+ * en el SERVIDOR: el cliente siempre puede intentar escribir.
+ *
+ * El criterio reusa `puedeVer` (mismo que el panel y la descarga) y sólo decide el NIVEL:
+ * el dueño y el superusuario editan; un miembro que puede ver el room edita, porque el
+ * documento es del equipo; quien llega por liga recibe lo que dice `share_role`, que por
+ * omisión es `view` (las ligas previas a esta columna se compartieron para leer).
+ */
+export async function resolveDocRole(
+  documentId: string,
+  me: { sub: string; isOwner: boolean } | null
+): Promise<import("../db.server").DocRole | null> {
+  const db = await import("../db.server");
+  const root = await db.shareRootFor(documentId);
+  if (!root) return null;
+
+  if (me) {
+    if (root.ownerSub && root.ownerSub === me.sub) return "edit";
+    if (me.isOwner) return "edit";
+    // Miembro del room donde vive el documento → es del equipo, edita.
+    if (await esDelRoom(documentId, me)) return "edit";
+  }
+  // Lo único que queda es la liga. OJO: tener sesión NO basta — un miembro del
+  // workspace ajeno al room llega aquí y debe quedarse con lo que da el enlace, no
+  // con `edit`.
+  return root.visibility === "link" ? root.role : null;
+}
+
+/** ¿Puede ver el room donde vive el mensaje del artefacto? (sin contar la liga) */
+async function esDelRoom(
+  documentId: string,
+  me: { sub: string; isOwner: boolean }
+): Promise<boolean> {
+  const db = await import("../db.server");
+  const { dbq, num } = await import("../dbq.server");
+  const rows = await dbq(
+    `SELECT c.id, c.is_private FROM gc_artifacts a
+       JOIN gc_messages m ON m.id = a.message_id
+       JOIN gc_channels c ON c.id = m.channel_id
+      WHERE a.url = ? ORDER BY a.id ASC LIMIT 1`,
+    [documentId]
+  );
+  const ch = rows[0];
+  // Sin room resoluble (un DM, o filas viejas sin ancla) se cae a la misma regla
+  // permisiva que `puedeVer`: tener sesión. Endurecerlo aquí rompería documentos que
+  // hoy se editan.
+  if (!ch) return true;
+  return db.canSeeChannel(
+    { id: num(ch.id), is_private: num(ch.is_private) } as never,
+    me.sub,
+    me.isOwner
+  );
+}
+
 async function puedeVer(
   documentId: string,
   me: { sub: string; isOwner: boolean } | null

@@ -16,6 +16,9 @@ import { ServerBlockNoteEditor } from "@blocknote/server-util";
 // Markdown falsa). Co-edición concurrente + quirúrgico con marks = Stage 3.
 
 const FRAGMENT = "document-store";
+// Color del agente: FUERA de la paleta humana (`CURSOR_COLORS` en collab.ts) para que
+// se distinga de un vistazo quién escribe.
+const AGENT_COLOR = "#111827";
 const schema = withMultiColumn(BlockNoteSchema.create());
 
 export type DocBroker = {
@@ -31,6 +34,8 @@ export async function openDocBroker(opts: {
   room: string;
   token: string;
   timeoutMs?: number;
+  /** Identidad del agente en la sala (caret con etiqueta + rail de avatares). */
+  agent?: { name?: string; color?: string; avatar?: string };
 }): Promise<DocBroker> {
   const ydoc = new Y.Doc();
   const socket = new HocuspocusProviderWebsocket({ url: opts.wsUrl, WebSocketPolyfill: WebSocket });
@@ -50,6 +55,16 @@ export async function openDocBroker(opts: {
     };
     if (provider.isSynced) done();
     else provider.on("synced", done);
+  });
+
+  // Sin esto el broker es un peer invisible: escribe en el doc pero no está "en la sala",
+  // así que el texto le brota de la nada al usuario.
+  provider.awareness?.setLocalStateField("user", {
+    sub: "agent:ghosty",
+    name: opts.agent?.name ?? "Ghosty",
+    color: opts.agent?.color ?? AGENT_COLOR,
+    avatar: opts.agent?.avatar ?? "",
+    isAgent: true,
   });
 
   const frag = () => ydoc.getXmlFragment(FRAGMENT);

@@ -442,9 +442,18 @@ export type ShareRoot = {
   title: string | null;
   ownerSub: string | null;
   visibility: "private" | "link";
+  /** Qué puede hacer quien llega por el link. null histórico = "view". */
+  role: DocRole;
   slug: string | null;
   sharedArtifactId: number | null;
 };
+
+/** Los tres niveles de acceso a un documento. Ordenados de menor a mayor. */
+export type DocRole = "view" | "comment" | "edit";
+
+export function toDocRole(v: unknown): DocRole {
+  return v === "edit" || v === "comment" ? v : "view";
+}
 
 function toShareRoot(r: any): ShareRoot {
   return {
@@ -453,12 +462,13 @@ function toShareRoot(r: any): ShareRoot {
     title: r.title ?? null,
     ownerSub: r.owner_sub ?? r.msg_sender_sub ?? null,
     visibility: r.share_visibility === "link" ? "link" : "private",
+    role: toDocRole(r.share_role),
     slug: r.share_slug ?? null,
     sharedArtifactId: r.shared_artifact_id != null ? num(r.shared_artifact_id) : null,
   };
 }
 
-const SHARE_ROOT_COLS = `a.id, a.url, a.title, a.owner_sub, a.share_visibility,
+const SHARE_ROOT_COLS = `a.id, a.url, a.title, a.owner_sub, a.share_visibility, a.share_role,
     a.share_slug, a.shared_artifact_id, m.sender_sub AS msg_sender_sub`;
 
 export async function shareRootFor(documentId: string): Promise<ShareRoot | null> {

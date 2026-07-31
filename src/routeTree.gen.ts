@@ -45,6 +45,7 @@ import { Route as ApiDevDriveRouteImport } from './routes/api.dev.drive'
 import { Route as ApiConnectorsToolsRouteImport } from './routes/api.connectors.tools'
 import { Route as ApiAttachmentIdRouteImport } from './routes/api.attachment.$id'
 import { Route as ApiArtifactStreamIdRouteImport } from './routes/api.artifact-stream.$id'
+import { Route as ApiCollabDocIdStateRouteImport } from './routes/api.collab.$docId.state'
 
 const SetupRoute = SetupRouteImport.update({
   id: '/setup',
@@ -227,6 +228,11 @@ const ApiArtifactStreamIdRoute = ApiArtifactStreamIdRouteImport.update({
   path: '/api/artifact-stream/$id',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiCollabDocIdStateRoute = ApiCollabDocIdStateRouteImport.update({
+  id: '/api/collab/$docId/state',
+  path: '/api/collab/$docId/state',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -265,6 +271,7 @@ export interface FileRoutesByFullPath {
   '/setup/$provider/connect': typeof SetupProviderConnectRoute
   '/setup/easybits/callback': typeof SetupEasybitsCallbackRoute
   '/setup/easybits/connect': typeof SetupEasybitsConnectRoute
+  '/api/collab/$docId/state': typeof ApiCollabDocIdStateRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -302,6 +309,7 @@ export interface FileRoutesByTo {
   '/setup/$provider/connect': typeof SetupProviderConnectRoute
   '/setup/easybits/callback': typeof SetupEasybitsCallbackRoute
   '/setup/easybits/connect': typeof SetupEasybitsConnectRoute
+  '/api/collab/$docId/state': typeof ApiCollabDocIdStateRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -341,6 +349,7 @@ export interface FileRoutesById {
   '/setup/$provider/connect': typeof SetupProviderConnectRoute
   '/setup/easybits/callback': typeof SetupEasybitsCallbackRoute
   '/setup/easybits/connect': typeof SetupEasybitsConnectRoute
+  '/api/collab/$docId/state': typeof ApiCollabDocIdStateRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -381,6 +390,7 @@ export interface FileRouteTypes {
     | '/setup/$provider/connect'
     | '/setup/easybits/callback'
     | '/setup/easybits/connect'
+    | '/api/collab/$docId/state'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -418,6 +428,7 @@ export interface FileRouteTypes {
     | '/setup/$provider/connect'
     | '/setup/easybits/callback'
     | '/setup/easybits/connect'
+    | '/api/collab/$docId/state'
   id:
     | '__root__'
     | '/'
@@ -456,6 +467,7 @@ export interface FileRouteTypes {
     | '/setup/$provider/connect'
     | '/setup/easybits/callback'
     | '/setup/easybits/connect'
+    | '/api/collab/$docId/state'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -489,6 +501,7 @@ export interface RootRouteChildren {
   ApiFormTokenRoute: typeof ApiFormTokenRoute
   ApiInternalAnnouncementsRoute: typeof ApiInternalAnnouncementsRoute
   OauthProviderCallbackRoute: typeof OauthProviderCallbackRoute
+  ApiCollabDocIdStateRoute: typeof ApiCollabDocIdStateRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -745,6 +758,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiArtifactStreamIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/collab/$docId/state': {
+      id: '/api/collab/$docId/state'
+      path: '/api/collab/$docId/state'
+      fullPath: '/api/collab/$docId/state'
+      preLoaderRoute: typeof ApiCollabDocIdStateRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -809,6 +829,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiFormTokenRoute: ApiFormTokenRoute,
   ApiInternalAnnouncementsRoute: ApiInternalAnnouncementsRoute,
   OauthProviderCallbackRoute: OauthProviderCallbackRoute,
+  ApiCollabDocIdStateRoute: ApiCollabDocIdStateRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

@@ -332,6 +332,13 @@ async function migrate(): Promise<void> {
   await addColumn("gc_artifacts", "share_slug", "TEXT");
   await addColumn("gc_artifacts", "shared_artifact_id", "INTEGER");
   await addColumn("gc_artifacts", "owner_sub", "TEXT");
+  //   share_role  QUÉ puede hacer quien llega por el link: 'view' (default) | 'comment' |
+  //               'edit'. Antes el acceso era binario —ver el documento— y la co-edición
+  //               colgaba de un token de EDICIÓN aparte, así que compartir una liga era
+  //               todo-o-nada. Vive junto a las otras tres columnas de compartir: en la
+  //               fila RAÍZ, resuelta con shareRootFor(). null = 'view' (las filas previas
+  //               a esta columna se compartieron para leer, no para editar).
+  await addColumn("gc_artifacts", "share_role", "TEXT");
   await exec(
     `CREATE UNIQUE INDEX IF NOT EXISTS gc_artifacts_share ON gc_artifacts(share_slug)`,
   );
