@@ -1,6 +1,6 @@
 import "@blocknote/core/fonts/inter.css";
 import "@blocknote/mantine/style.css";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { BlockNoteView } from "@blocknote/mantine";
 import { useCreateBlockNote } from "@blocknote/react";
 import { BlockNoteSchema } from "@blocknote/core";
@@ -9,6 +9,8 @@ import { withMultiColumn, multiColumnDropCursor, locales as multiColumnLocales }
 import { HocuspocusProvider } from "@hocuspocus/provider";
 import * as Y from "yjs";
 import type { CollabUser } from "../server/collab";
+import { parseDocEnvelope } from "../lib/doc-blocks";
+import { reconcile, type ReconcilableEditor } from "../lib/doc-reconcile";
 
 // Presencia: un participante vivo en la sala (derivado del awareness de Hocuspocus).
 type Peer = {
@@ -84,19 +86,12 @@ function PresenceRail({ peers }: { peers: Peer[] }) {
 // persistencia del snapshot HTML vía `persistUrl` (una ruta proxy de GTeams → EasyBits,
 // server-to-server, para no chocar con CORS al escribir Landing.sections cross-origin).
 
-// Envuelve el HTML del editor en un <section> de página para que el pipeline de
-// PDF/export lo trate como documento en flujo (como Word), no prosa pelada. Mismo
-// marcador `data-doc-flow` que usa EasyBits.
-function wrapAsPage(innerHtml: string): string {
-  return `<section data-doc-flow="1" class="w-[8.5in] min-h-[11in] p-16 leading-relaxed">${innerHtml}</section>`;
-}
-
 export default function CollabEditor({
   wsUrl,
   room,
   token,
   initialHtml,
-  onSnapshot,
+  agentMd,
   editable,
   user,
 }: {
@@ -104,15 +99,18 @@ export default function CollabEditor({
   room: string;
   token: string;
   initialHtml: string;
+  /**
+   * Sobre del documento tal como está en la DB. El panel lo actualiza cuando el AGENTE
+   * publica una versión nueva; al cambiar, sus bloques se reconcilian contra la sala
+   * (ver el efecto de abajo). Es el cable que mete a Ghosty en el documento abierto.
+   */
+  agentMd?: string;
   /** Identidad REAL del que edita (server-side, color estable por `sub`). */
   user: CollabUser;
-  /** Snapshot HTML (envuelto en <section>) → el padre lo persiste a EasyBits vía server fn. */
-  onSnapshot: (html: string) => void;
   editable: boolean;
 }) {
   const [status, setStatus] = useState<"connecting" | "connected" | "disconnected">("connecting");
   const seeded = useRef(false);
-  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const ydoc = useMemo(() => new Y.Doc(), []);
   const provider = useMemo(
@@ -144,15 +142,6 @@ export default function CollabEditor({
       },
     },
     [provider],
-  );
-
-  // Snapshot HTML → Landing.sections (debounced). El padre lo manda a EasyBits (server fn).
-  const persist = useCallback(
-    (innerHtml: string) => {
-      if (saveTimer.current) clearTimeout(saveTimer.current);
-      saveTimer.current = setTimeout(() => onSnapshot(wrapAsPage(innerHtml)), 800);
-    },
-    [onSnapshot],
   );
 
   useEffect(() => {
@@ -223,14 +212,33 @@ export default function CollabEditor({
     };
   }, [provider, editor, initialHtml, editable]);
 
-  // Persiste en cada cambio.
+  // GHOSTY EN LA SALA. Cuando el agente publica una versión, el panel nos pasa el sobre
+  // nuevo: sus bloques se reconcilian contra lo que hay en la sala, y Yjs propaga el diff
+  // a todos los que estén dentro.
+  //
+  // Por qué en el CLIENTE y no en el servidor: `ServerBlockNoteEditor` NO queda ligado al
+  // Y.Doc (el plugin de y-prosemirror necesita un editor montado; en Node no hay vista —
+  // comprobado: el fragment quedaba en 0 hijos). Aquí sí hay editor montado, así que se
+  // reusa el MISMO `reconcile` del editor simple: conserva el prefijo intacto y toca sólo
+  // lo que cambió, en vez de reemplazar el documento entero y pisar lo que estás
+  // escribiendo.
+  const ultimoMd = useRef<string | null>(null);
   useEffect(() => {
-    if (!editor || !editable) return;
-    return editor.onChange(async () => {
-      const html = await editor.blocksToFullHTML(editor.document);
-      persist(html);
-    });
-  }, [editor, editable, persist]);
+    if (!editor || !editable || !agentMd) return;
+    // La PRIMERA vez sólo se toma nota: ese contenido ya está en la sala (o lo acaba de
+    // sembrar el efecto de arriba). Reconciliar aquí sería pelearse con la semilla.
+    if (ultimoMd.current === null) {
+      ultimoMd.current = agentMd;
+      return;
+    }
+    if (ultimoMd.current === agentMd) return;
+    ultimoMd.current = agentMd;
+
+    const env = parseDocEnvelope(agentMd);
+    const blocks = env?.blocks ?? [];
+    if (!blocks.length) return;
+    reconcile(editor as unknown as ReconcilableEditor, blocks);
+  }, [editor, editable, agentMd]);
 
   useEffect(
     () => () => {

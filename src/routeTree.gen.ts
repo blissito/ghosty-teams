@@ -46,6 +46,7 @@ import { Route as ApiConnectorsToolsRouteImport } from './routes/api.connectors.
 import { Route as ApiAttachmentIdRouteImport } from './routes/api.attachment.$id'
 import { Route as ApiArtifactStreamIdRouteImport } from './routes/api.artifact-stream.$id'
 import { Route as ApiCollabDocIdStateRouteImport } from './routes/api.collab.$docId.state'
+import { Route as ApiCollabDocIdSessionEndRouteImport } from './routes/api.collab.$docId.session-end'
 
 const SetupRoute = SetupRouteImport.update({
   id: '/setup',
@@ -233,6 +234,12 @@ const ApiCollabDocIdStateRoute = ApiCollabDocIdStateRouteImport.update({
   path: '/api/collab/$docId/state',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiCollabDocIdSessionEndRoute =
+  ApiCollabDocIdSessionEndRouteImport.update({
+    id: '/api/collab/$docId/session-end',
+    path: '/api/collab/$docId/session-end',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -271,6 +278,7 @@ export interface FileRoutesByFullPath {
   '/setup/$provider/connect': typeof SetupProviderConnectRoute
   '/setup/easybits/callback': typeof SetupEasybitsCallbackRoute
   '/setup/easybits/connect': typeof SetupEasybitsConnectRoute
+  '/api/collab/$docId/session-end': typeof ApiCollabDocIdSessionEndRoute
   '/api/collab/$docId/state': typeof ApiCollabDocIdStateRoute
 }
 export interface FileRoutesByTo {
@@ -309,6 +317,7 @@ export interface FileRoutesByTo {
   '/setup/$provider/connect': typeof SetupProviderConnectRoute
   '/setup/easybits/callback': typeof SetupEasybitsCallbackRoute
   '/setup/easybits/connect': typeof SetupEasybitsConnectRoute
+  '/api/collab/$docId/session-end': typeof ApiCollabDocIdSessionEndRoute
   '/api/collab/$docId/state': typeof ApiCollabDocIdStateRoute
 }
 export interface FileRoutesById {
@@ -349,6 +358,7 @@ export interface FileRoutesById {
   '/setup/$provider/connect': typeof SetupProviderConnectRoute
   '/setup/easybits/callback': typeof SetupEasybitsCallbackRoute
   '/setup/easybits/connect': typeof SetupEasybitsConnectRoute
+  '/api/collab/$docId/session-end': typeof ApiCollabDocIdSessionEndRoute
   '/api/collab/$docId/state': typeof ApiCollabDocIdStateRoute
 }
 export interface FileRouteTypes {
@@ -390,6 +400,7 @@ export interface FileRouteTypes {
     | '/setup/$provider/connect'
     | '/setup/easybits/callback'
     | '/setup/easybits/connect'
+    | '/api/collab/$docId/session-end'
     | '/api/collab/$docId/state'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -428,6 +439,7 @@ export interface FileRouteTypes {
     | '/setup/$provider/connect'
     | '/setup/easybits/callback'
     | '/setup/easybits/connect'
+    | '/api/collab/$docId/session-end'
     | '/api/collab/$docId/state'
   id:
     | '__root__'
@@ -467,6 +479,7 @@ export interface FileRouteTypes {
     | '/setup/$provider/connect'
     | '/setup/easybits/callback'
     | '/setup/easybits/connect'
+    | '/api/collab/$docId/session-end'
     | '/api/collab/$docId/state'
   fileRoutesById: FileRoutesById
 }
@@ -501,6 +514,7 @@ export interface RootRouteChildren {
   ApiFormTokenRoute: typeof ApiFormTokenRoute
   ApiInternalAnnouncementsRoute: typeof ApiInternalAnnouncementsRoute
   OauthProviderCallbackRoute: typeof OauthProviderCallbackRoute
+  ApiCollabDocIdSessionEndRoute: typeof ApiCollabDocIdSessionEndRoute
   ApiCollabDocIdStateRoute: typeof ApiCollabDocIdStateRoute
 }
 
@@ -765,6 +779,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiCollabDocIdStateRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/collab/$docId/session-end': {
+      id: '/api/collab/$docId/session-end'
+      path: '/api/collab/$docId/session-end'
+      fullPath: '/api/collab/$docId/session-end'
+      preLoaderRoute: typeof ApiCollabDocIdSessionEndRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -829,6 +850,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiFormTokenRoute: ApiFormTokenRoute,
   ApiInternalAnnouncementsRoute: ApiInternalAnnouncementsRoute,
   OauthProviderCallbackRoute: OauthProviderCallbackRoute,
+  ApiCollabDocIdSessionEndRoute: ApiCollabDocIdSessionEndRoute,
   ApiCollabDocIdStateRoute: ApiCollabDocIdStateRoute,
 }
 export const routeTree = rootRouteImport

@@ -1,6 +1,6 @@
-import { lazy, Suspense, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import { Loader2 } from "lucide-react";
-import { docCollabConnFn, persistDocSectionFn, type CollabConn } from "../server/collab";
+import { docCollabConnFn, type CollabConn } from "../server/collab";
 
 // Outer del editor colaborativo nativo: resuelve la conexión (server fn, server-to-server
 // a EasyBits) y LAZY-carga el editor BlockNote pesado sólo al abrir un doc. Espejo del
@@ -20,9 +20,12 @@ function Spinner({ label }: { label: string }) {
 
 export default function CollabArtifact({
   documentId,
+  md,
   editable = true,
 }: {
   documentId: string;
+  /** Sobre del documento en la DB; cambia cuando el AGENTE publica una versión. */
+  md?: string;
   editable?: boolean;
 }) {
   const [conn, setConn] = useState<CollabConn | null>(null);
@@ -47,14 +50,6 @@ export default function CollabArtifact({
     };
   }, [documentId]);
 
-  // Token + sectionId estables para el callback de persistencia (no re-crear el editor).
-  const tokenRef = useRef("");
-  const sectionRef = useRef("page-1");
-  if (conn) {
-    tokenRef.current = conn.token;
-    sectionRef.current = conn.persistSectionId;
-  }
-
   if (error) {
     return (
       <div className="grid h-full place-items-center bg-[#f3f3f5] p-6 text-center text-sm text-neutral-500">
@@ -73,13 +68,9 @@ export default function CollabArtifact({
         room={conn.room}
         token={conn.token}
         initialHtml={conn.initialHtml}
+        agentMd={md}
         user={conn.user}
         editable={editable}
-        onSnapshot={(html) =>
-          persistDocSectionFn({
-            data: { token: tokenRef.current, sectionId: sectionRef.current, html },
-          }).catch((e) => console.error("[collab] persist failed", e))
-        }
       />
     </Suspense>
   );

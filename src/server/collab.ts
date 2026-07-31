@@ -51,7 +51,6 @@ export type CollabConn = {
   token: string;
   title: string;
   initialHtml: string;
-  persistSectionId: string;
   /** Quién es el que se conecta — alimenta el caret y el rail de avatares. */
   user: CollabUser;
   /** Qué puede hacer. `view` se aplica ADEMÁS en el servidor: el cliente no manda. */
@@ -111,7 +110,6 @@ export const docCollabConnFn = createServerFn({ method: "POST" })
         token,
         title: title ?? "Documento",
         initialHtml,
-        persistSectionId: "page-1",
         user: {
           sub: me.sub,
           name: me.name || me.email || "Alguien",
@@ -151,17 +149,3 @@ async function seedFrom(md: string | null): Promise<{ title: string | null; init
   }
 }
 
-/**
- * OBSOLETO — la persistencia ya no sale del browser.
- *
- * Cada cliente hacía su propio snapshot HTML debounced y lo escribía con
- * `replaceAll:true` sobre la primera sección: dos editores competían por la misma fila y
- * un documento de varias páginas se colapsaba a una. Ahora el estado lo guarda el sidecar
- * (`PUT /api/collab/:docId/state`), que es el único que ve el documento entero.
- *
- * Se conserva como no-op mientras quede alguna vista vieja llamándola; borrar en cuanto
- * el editor deje de referenciarla.
- */
-export const persistDocSectionFn = createServerFn({ method: "POST" })
-  .validator((d: { token: string; sectionId: string; html: string; replaceAll?: boolean }) => d)
-  .handler(async () => ({ ok: true, noop: true }));

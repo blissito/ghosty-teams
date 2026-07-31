@@ -1479,7 +1479,13 @@ export default function ArtifactPanel({
                   // Yjs — varias personas a la vez, con cursores y avatares. Es un montaje
                   // APARTE de DocSurface a propósito: mientras se evalúa, el editor de
                   // siempre no se toca. Fusionarlos es una decisión posterior.
-                  <CollabArtifact key={`collab:${artifact.documentId}`} documentId={artifact.documentId} />
+                  <CollabArtifact
+                    key={`collab:${artifact.documentId}`}
+                    documentId={artifact.documentId}
+                    // El `md` viaja para que las versiones que publica el AGENTE entren a
+                    // la sala en vivo (mismo canal que alimenta al editor simple).
+                    md={artifact.md ?? ""}
+                  />
                 ) : artifact.kind === "doc" ? (
                   // Documento VIVO en el editor real. Es el MISMO montaje que el borrador
                   // de arriba y con el MISMO `key`: al cerrarse el fence, el editor no se

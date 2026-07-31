@@ -399,14 +399,21 @@ export async function deleteAgentMemory(id: number, scopeKey: string, handle: st
  */
 export async function latestDocVersion(
   documentId: string
-): Promise<{ id: number; humanEdited: boolean } | null> {
+): Promise<{ id: number; messageId: number; title: string | null; humanEdited: boolean } | null> {
   const rows = await dbq(
-    `SELECT id, md FROM gc_artifacts WHERE url = ? AND kind = 'doc' ORDER BY id DESC LIMIT 1`,
+    `SELECT id, md, message_id, title FROM gc_artifacts WHERE url = ? AND kind = 'doc' ORDER BY id DESC LIMIT 1`,
     [documentId]
   );
   if (!rows[0]) return null;
   const md = (rows[0].md as string | null) ?? "";
-  return { id: num(rows[0].id), humanEdited: /"humanEdited"\s*:\s*true/.test(md) };
+  // `messageId`/`title` los necesita el cierre de sesión de co-edición: publicar la
+  // versión exige colgarla del MISMO mensaje, o el artefacto se desancla del hilo.
+  return {
+    id: num(rows[0].id),
+    messageId: num(rows[0].message_id),
+    title: (rows[0].title as string | null) ?? null,
+    humanEdited: /"humanEdited"\s*:\s*true/.test(md),
+  };
 }
 
 /** Reescribe el contenido de UNA versión (guardado humano sobre la suya). */
