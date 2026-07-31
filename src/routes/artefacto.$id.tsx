@@ -137,15 +137,15 @@ function SharedArtifact() {
   const blink = blinkTiming(id);
   const [historial, setHistorial] = useState(false);
 
-  // ⚠️ PENDIENTE — EN MÓVIL LA BARRA CHOCA CON LA DEL SISTEMA (2026-07-31).
-  // Visto en iPhone: el título de ArtifactShareBar queda DEBAJO del reloj y los íconos de
-  // batería/wifi, ilegible. Falta respetar el safe-area: esta página abre a pantalla
-  // completa (`h-[100dvh]`) sin ningún `padding-top` que reserve la muesca.
-  // Arreglo: `pt-[env(safe-area-inset-top)]` en este contenedor (y revisar el inset de
-  // abajo por el home indicator). Es la página que se comparte hacia afuera, así que la
-  // abre gente en el teléfono más que en escritorio.
+  // SAFE-AREA. El root declara `viewport-fit=cover`, así que en un teléfono con muesca la
+  // página ocupa TODA la pantalla — y sin este padding el título de la barra quedaba
+  // debajo del reloj y de los íconos de batería/wifi, ilegible.
+  // `md:pt-0` porque en escritorio el inset es 0 y el padding sólo estorbaría; mismo
+  // patrón que el shell de rooms (c.$slug.tsx).
+  // El inset de ABAJO va en el contenedor del iframe, no acá: este flex es `h-[100dvh]` y
+  // meterle padding inferior le quitaría altura útil al artefacto en vez de correrlo.
   return (
-    <div className="flex h-[100dvh] flex-col bg-surface">
+    <div className="flex h-[100dvh] flex-col bg-surface pt-[env(safe-area-inset-top)] md:pt-0">
       <ArtifactShareBar
         // La marca de la página es el fantasmita, no un ícono de archivo: esta
         // página la abre gente que quizá no conoce Ghosty.
@@ -215,7 +215,10 @@ function SharedArtifact() {
         // El fondo NO es blanco: al cambiar de versión el iframe se remonta y, mientras
         // carga, ese blanco era un flashazo entre dos documentos oscuros. El color del
         // marco no destella contra nada.
-        className="min-h-0 flex-1 border-0 bg-surface"
+        // El inset de ABAJO va aquí y no en el flex de fuera: el contenedor es `h-[100dvh]`
+        // y un padding suyo le quitaría altura al artefacto en vez de despegarlo del home
+        // indicator del teléfono.
+        className="min-h-0 flex-1 border-0 bg-surface pb-[env(safe-area-inset-bottom)] md:pb-0"
       />
     </div>
   );
