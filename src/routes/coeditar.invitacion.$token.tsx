@@ -105,7 +105,7 @@ function Invitacion() {
           token={conn.token}
           initialHtml={conn.initialHtml}
           user={conn.user}
-          editable={conn.role === "edit"}
+          role={conn.role}
         />
       </Suspense>
     </div>

@@ -344,7 +344,108 @@ export function nativeTools(dest: ToolDest | null): ConnectorTool[] {
         return ok ? { ok: true } : { ok: false, error: "esa nota no existe en esta conversación" };
       },
     },
+
+    // ── Comentarios del documento de esta conversación ──────────────────────────
+    // Los hilos se abren desde el editor (el ancla es una marca sobre el texto, y eso
+    // pide un editor montado). Ghosty los LEE, responde y cierra: que la gente comente el
+    // documento y el agente no pudiera ni enterarse era dejarlo fuera de la conversación
+    // que ocurre sobre su propio trabajo.
+    {
+      name: "doc_comments",
+      description:
+        "Lee los comentarios del documento de esta conversación: quién comentó qué, y si el hilo sigue abierto. " +
+        "Úsalo cuando te pidan atender, revisar o resumir los comentarios de un documento.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          only_open: { type: "boolean", description: "true = sólo los hilos sin resolver" },
+        },
+      },
+      handler: async (sub) => {
+        const documentId = await docDelTurno(dest);
+        if (!documentId) return { ok: false, error: "no hay un documento en esta conversación" };
+        try {
+          const { listarHilos } = await import("../doc-threads.server");
+          const hilos = await listarHilos(documentId, sub);
+          return { ok: true, threads: hilos };
+        } catch (e) {
+          return { ok: false, error: (e as Error).message };
+        }
+      },
+    },
+    {
+      name: "doc_comment_reply",
+      description:
+        "Responde a un hilo de comentarios del documento de esta conversación. " +
+        "El `thread_id` sale de doc_comments. Si además hay que cambiar el documento, edítalo aparte: " +
+        "responder el hilo NO modifica el texto.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          thread_id: { type: "string", description: "Id del hilo (de doc_comments)" },
+          text: { type: "string", description: "Tu respuesta, en el idioma del hilo" },
+          resolve: { type: "boolean", description: "true para además marcar el hilo como resuelto" },
+        },
+        required: ["thread_id", "text"],
+      },
+      handler: async (sub, args) => {
+        const documentId = await docDelTurno(dest);
+        if (!documentId) return { ok: false, error: "no hay un documento en esta conversación" };
+        const threadId = String(args.thread_id ?? "").trim();
+        const text = String(args.text ?? "").trim();
+        if (!threadId || !text) return { ok: false, error: "faltan thread_id o text" };
+        try {
+          const t = await import("../doc-threads.server");
+          await t.responderHilo(documentId, sub, threadId, text);
+          if (args.resolve === true) await t.resolverHilo(documentId, sub, threadId, true);
+          return { ok: true, resolved: args.resolve === true };
+        } catch (e) {
+          return { ok: false, error: (e as Error).message };
+        }
+      },
+    },
+    {
+      name: "doc_comment_resolve",
+      description:
+        "Marca un hilo de comentarios como resuelto (o lo reabre con `reopen: true`). " +
+        "Resuelve sólo cuando el comentario YA quedó atendido.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          thread_id: { type: "string", description: "Id del hilo (de doc_comments)" },
+          reopen: { type: "boolean", description: "true para reabrirlo en vez de resolverlo" },
+        },
+        required: ["thread_id"],
+      },
+      handler: async (sub, args) => {
+        const documentId = await docDelTurno(dest);
+        if (!documentId) return { ok: false, error: "no hay un documento en esta conversación" };
+        const threadId = String(args.thread_id ?? "").trim();
+        if (!threadId) return { ok: false, error: "falta thread_id" };
+        try {
+          const { resolverHilo } = await import("../doc-threads.server");
+          await resolverHilo(documentId, sub, threadId, args.reopen !== true);
+          return { ok: true, resolved: args.reopen !== true };
+        } catch (e) {
+          return { ok: false, error: (e as Error).message };
+        }
+      },
+    },
   ];
+}
+
+/**
+ * El documento sobre el que actúan las tools de comentarios. NO viene en los argumentos,
+ * igual que el destino de un recordatorio: el agente actúa sobre el artefacto de ESTA
+ * conversación, y así no puede alcanzar el documento de otra pidiendo un id que se
+ * inventó.
+ */
+async function docDelTurno(dest: ToolDest | null): Promise<string | null> {
+  if (!dest) return null;
+  const db = await import("../../db.server");
+  if (dest.dmId) return db.getDmArtifact(dest.dmId);
+  if (dest.channelId) return db.getThreadArtifact(dest.channelId, null);
+  return null;
 }
 
 /**

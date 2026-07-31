@@ -112,9 +112,7 @@ function Coeditar() {
           token={conn.token}
           initialHtml={conn.initialHtml}
           user={conn.user}
-          // `comment` todavía no tiene UI de hilos: mientras tanto entra como lectura,
-          // que es lo honesto. El servidor ya lo trata distinto de `edit`.
-          editable={conn.role === "edit"}
+          role={conn.role}
         />
       </Suspense>
     </div>

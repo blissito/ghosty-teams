@@ -21,12 +21,10 @@ function Spinner({ label }: { label: string }) {
 export default function CollabArtifact({
   documentId,
   md,
-  editable = true,
 }: {
   documentId: string;
   /** Sobre del documento en la DB; cambia cuando el AGENTE publica una versión. */
   md?: string;
-  editable?: boolean;
 }) {
   const [conn, setConn] = useState<CollabConn | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -70,7 +68,9 @@ export default function CollabArtifact({
         initialHtml={conn.initialHtml}
         agentMd={md}
         user={conn.user}
-        editable={editable}
+        // El permiso lo decide el SERVIDOR (`resolveDocRole`), no el que monta el
+        // componente: antes esto entraba `editable` por prop con default `true`.
+        role={conn.role}
       />
     </Suspense>
   );

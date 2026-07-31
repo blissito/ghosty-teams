@@ -830,6 +830,10 @@ const TOOL_LABELS: Record<string, { ing: string; done: string }> = {
   reminder_cancel: { ing: "Cancelando el recordatorio", done: "Cancelé el recordatorio" },
   // Memoria de la conversación. Sin etiqueta propia salía como "Memory: write" (el
   // humanizado genérico de cualquier MCP), que no dice qué pasó ni suena a esta app.
+  // Comentarios del documento. `doc_comments` es lectura → sin etiqueta, como el resto
+  // de las lecturas.
+  doc_comment_reply: { ing: "Respondiendo el comentario", done: "Respondí el comentario" },
+  doc_comment_resolve: { ing: "Cerrando el comentario", done: "Cerré el comentario" },
   memory_write: { ing: "Anotando en la memoria", done: "Lo anoté en la memoria" },
   memory_forget: { ing: "Borrando de la memoria", done: "Lo borré de la memoria" },
   artifact_create: { ing: "Redactando el documento", done: "Redacté el documento" },
