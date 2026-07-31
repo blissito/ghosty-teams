@@ -62,7 +62,7 @@ export async function blocksToPrintHtml(blocks: DocBlock[], title: string): Prom
 
   return `<!doctype html>
 <html lang="es"><head><meta charset="utf-8"><title>${escapeHtml(title)}</title>
-<style>${PRINT_CSS}</style>
+<style>${fuentesEmbebidas()}\n${PRINT_CSS}</style>
 </head><body><article class="gt-print">${inner}</article></body></html>`;
 }
 
@@ -163,13 +163,57 @@ function escapeHtml(s: string): string {
 // CSS de PAPEL. Deliberadamente no importa `styles.css`: eso trae los adornos del editor
 // (`.bn-*`), depende del ancho del panel y arrastraría Tailwind entero. Lo que se conserva
 // es la tipografía y el ritmo del documento, que es lo que la gente reconoce.
+/**
+ * Inter INCRUSTADA en el HTML de impresión.
+ *
+ * El PDF lo hace el Chromium de una caja de la flota, que sólo tiene las fuentes del
+ * sistema: pedir "Inter" a secas caía en la serif de respaldo y el PDF salía con otra
+ * tipografía que el editor. (Antes el CSS pedía `Iowan Old Style`, que es de macOS y en la
+ * caja tampoco existe — de ahí la Georgia que se veía.)
+ *
+ * Son ~52KB en tres pesos, leídos del disco UNA vez por proceso. Se paga en el PDF, que ya
+ * tarda segundos porque despierta la caja.
+ */
+let fuentesCache: string | undefined;
+function fuentesEmbebidas(): string {
+  if (fuentesCache !== undefined) return fuentesCache;
+  fuentesCache = "";
+  try {
+    const fs = require("node:fs") as typeof import("node:fs");
+    const path = require("node:path") as typeof import("node:path");
+    const pesos: Array<[string, number]> = [
+      ["inter-v12-latin-regular.woff2", 400],
+      ["inter-v12-latin-600.woff2", 600],
+      ["inter-v12-latin-700.woff2", 700],
+    ];
+    const caras: string[] = [];
+    for (const [archivo, peso] of pesos) {
+      // Mismo orden que `mascotInline`: el build servido primero, el repo después.
+      for (const dir of [".output/public", "public", "build/client"]) {
+        const p = path.resolve(process.cwd(), dir, "fonts", archivo);
+        if (!fs.existsSync(p)) continue;
+        const b64 = fs.readFileSync(p).toString("base64");
+        caras.push(
+          `@font-face{font-family:"Inter";font-style:normal;font-weight:${peso};font-display:block;src:url(data:font/woff2;base64,${b64}) format("woff2")}`
+        );
+        break;
+      }
+    }
+    fuentesCache = caras.join("\n");
+    if (!caras.length) console.warn("[doc export] sin Inter en disco: el PDF saldrá con la fuente del sistema");
+  } catch (e) {
+    console.warn("[doc export] no pude incrustar Inter:", (e as Error).message);
+  }
+  return fuentesCache;
+}
+
 const PRINT_CSS = `
 @page { size: Letter; margin: 2.2cm 2cm; }
 *{ box-sizing:border-box }
-body{ margin:0; color:#16161a; font:12pt/1.6 "Iowan Old Style", Georgia, serif; }
+body{ margin:0; color:#16161a; font:11pt/1.6 "Inter", ui-sans-serif, system-ui, sans-serif; }
 .gt-print{ max-width:none }
-h1,h2,h3,h4{ font-family:"Iowan Old Style",Georgia,serif; line-height:1.25; margin:1.4em 0 .5em; page-break-after:avoid }
-h1{ font-size:20pt; font-weight:700 } h2{ font-size:15pt } h3{ font-size:13pt } h4{ font-size:12pt }
+h1,h2,h3,h4{ font-family:"Inter",ui-sans-serif,system-ui,sans-serif; line-height:1.25; margin:1.4em 0 .5em; page-break-after:avoid }
+h1{ font-size:19pt; font-weight:700 } h2{ font-size:14pt } h3{ font-size:12pt } h4{ font-size:11pt }
 p{ margin:0 0 .7em; orphans:3; widows:3 }
 ul,ol{ margin:0 0 .7em 1.4em; padding:0 }
 li{ margin:.15em 0 }
