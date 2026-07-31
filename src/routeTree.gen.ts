@@ -21,6 +21,7 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as SetupIndexRouteImport } from './routes/setup.index'
 import { Route as T3SplatRouteImport } from './routes/t3.$'
 import { Route as JoinTokenRouteImport } from './routes/join.$token'
+import { Route as CoeditarSlugRouteImport } from './routes/coeditar.$slug'
 import { Route as CSlugRouteImport } from './routes/c.$slug'
 import { Route as ArtefactoIdRouteImport } from './routes/artefacto.$id'
 import { Route as ApiWarmRouteImport } from './routes/api.warm'
@@ -106,6 +107,11 @@ const T3SplatRoute = T3SplatRouteImport.update({
 const JoinTokenRoute = JoinTokenRouteImport.update({
   id: '/join/$token',
   path: '/join/$token',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const CoeditarSlugRoute = CoeditarSlugRouteImport.update({
+  id: '/coeditar/$slug',
+  path: '/coeditar/$slug',
   getParentRoute: () => rootRouteImport,
 } as any)
 const CSlugRoute = CSlugRouteImport.update({
@@ -258,6 +264,7 @@ export interface FileRoutesByFullPath {
   '/api/warm': typeof ApiWarmRoute
   '/artefacto/$id': typeof ArtefactoIdRouteWithChildren
   '/c/$slug': typeof CSlugRoute
+  '/coeditar/$slug': typeof CoeditarSlugRoute
   '/join/$token': typeof JoinTokenRoute
   '/t3/$': typeof T3SplatRoute
   '/setup/': typeof SetupIndexRoute
@@ -297,6 +304,7 @@ export interface FileRoutesByTo {
   '/api/warm': typeof ApiWarmRoute
   '/artefacto/$id': typeof ArtefactoIdRouteWithChildren
   '/c/$slug': typeof CSlugRoute
+  '/coeditar/$slug': typeof CoeditarSlugRoute
   '/join/$token': typeof JoinTokenRoute
   '/t3/$': typeof T3SplatRoute
   '/setup': typeof SetupIndexRoute
@@ -338,6 +346,7 @@ export interface FileRoutesById {
   '/api/warm': typeof ApiWarmRoute
   '/artefacto/$id': typeof ArtefactoIdRouteWithChildren
   '/c/$slug': typeof CSlugRoute
+  '/coeditar/$slug': typeof CoeditarSlugRoute
   '/join/$token': typeof JoinTokenRoute
   '/t3/$': typeof T3SplatRoute
   '/setup/': typeof SetupIndexRoute
@@ -380,6 +389,7 @@ export interface FileRouteTypes {
     | '/api/warm'
     | '/artefacto/$id'
     | '/c/$slug'
+    | '/coeditar/$slug'
     | '/join/$token'
     | '/t3/$'
     | '/setup/'
@@ -419,6 +429,7 @@ export interface FileRouteTypes {
     | '/api/warm'
     | '/artefacto/$id'
     | '/c/$slug'
+    | '/coeditar/$slug'
     | '/join/$token'
     | '/t3/$'
     | '/setup'
@@ -459,6 +470,7 @@ export interface FileRouteTypes {
     | '/api/warm'
     | '/artefacto/$id'
     | '/c/$slug'
+    | '/coeditar/$slug'
     | '/join/$token'
     | '/t3/$'
     | '/setup/'
@@ -500,6 +512,7 @@ export interface RootRouteChildren {
   ApiWarmRoute: typeof ApiWarmRoute
   ArtefactoIdRoute: typeof ArtefactoIdRouteWithChildren
   CSlugRoute: typeof CSlugRoute
+  CoeditarSlugRoute: typeof CoeditarSlugRoute
   JoinTokenRoute: typeof JoinTokenRoute
   T3SplatRoute: typeof T3SplatRoute
   ApiArtifactStreamIdRoute: typeof ApiArtifactStreamIdRoute
@@ -602,6 +615,13 @@ declare module '@tanstack/react-router' {
       path: '/join/$token'
       fullPath: '/join/$token'
       preLoaderRoute: typeof JoinTokenRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/coeditar/$slug': {
+      id: '/coeditar/$slug'
+      path: '/coeditar/$slug'
+      fullPath: '/coeditar/$slug'
+      preLoaderRoute: typeof CoeditarSlugRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/c/$slug': {
@@ -836,6 +856,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiWarmRoute: ApiWarmRoute,
   ArtefactoIdRoute: ArtefactoIdRouteWithChildren,
   CSlugRoute: CSlugRoute,
+  CoeditarSlugRoute: CoeditarSlugRoute,
   JoinTokenRoute: JoinTokenRoute,
   T3SplatRoute: T3SplatRoute,
   ApiArtifactStreamIdRoute: ApiArtifactStreamIdRoute,

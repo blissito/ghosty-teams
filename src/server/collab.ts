@@ -127,6 +127,10 @@ export const docCollabConnFn = createServerFn({ method: "POST" })
  * Un fallo aquí no debe tumbar la conexión: peor caso, el editor abre vacío y el Y.Doc
  * manda.
  */
+export async function seedHtmlFor(md: string | null): Promise<string> {
+  return (await seedFrom(md)).initialHtml;
+}
+
 async function seedFrom(md: string | null): Promise<{ title: string | null; initialHtml: string }> {
   if (!md) return { title: null, initialHtml: "<p></p>" };
   try {

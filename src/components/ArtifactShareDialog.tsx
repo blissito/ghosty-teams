@@ -17,6 +17,8 @@ export function putCachedShare(documentId: string, s: Share | null): void {
 export type Share = {
   slug: string | null;
   visibility: "private" | "link";
+  /** Qué puede hacer quien llega por el link. */
+  role: "view" | "comment" | "edit";
   sharedArtifactId: number | null;
   versions: { id: number; label: string; createdAt: number }[];
   owner: { sub: string | null; name: string | null; email: string | null; avatar: string | null };
@@ -80,7 +82,11 @@ export default function ArtifactShareDialog({
     return () => document.removeEventListener("keydown", onKey);
   }, [onClose]);
 
-  const apply = async (patch: { visibility?: "private" | "link"; sharedArtifactId?: number | null }) => {
+  const apply = async (patch: {
+    visibility?: "private" | "link";
+    sharedArtifactId?: number | null;
+    role?: "view" | "comment" | "edit";
+  }) => {
     setSaving(true);
     setError(null);
     try {
@@ -106,8 +112,15 @@ export default function ArtifactShareDialog({
   // Copiar al portapapeles y avisar. Separado de copyLink() porque tras confirmar
   // "compartir públicamente" ya tenemos el slug en la mano y volver a pedirlo sería
   // un viaje de más.
-  const writeLink = async (slug: string) => {
-    const url = `${window.location.origin}/artefacto/${slug}`;
+  const writeLink = async (slug: string, role?: "view" | "comment" | "edit") => {
+    // El destino depende del NIVEL: con permiso de editar, el enlace lleva a la sala de
+    // co-edición; si no, a la página de lectura. Mandar a todos a /artefacto y que ahí
+    // hubiera un botón "editar" sería un paso de más para el caso que sí importa.
+    const nivel = role ?? share?.role ?? "view";
+    const url =
+      nivel === "edit"
+        ? `${window.location.origin}/coeditar/${slug}`
+        : `${window.location.origin}/artefacto/${slug}`;
     try {
       await navigator.clipboard.writeText(url);
       setCopied(true);
@@ -127,6 +140,7 @@ export default function ArtifactShareDialog({
       const s = (await setArtifactShareFn({ data: { documentId } })) as Share | null;
       setShare(s);
       slug = s?.slug ?? null;
+      if (slug) return await writeLink(slug, s?.role);
     }
     if (!slug) return;
     await writeLink(slug);
@@ -203,7 +217,9 @@ export default function ArtifactShareDialog({
                     <Globe size={15} />
                   </span>
                   <p className="min-w-0 flex-1 truncate text-sm text-ink">{t("Cualquiera con el enlace")}</p>
-                  <span className="shrink-0 text-xs text-muted">{t("Puede ver")}</span>
+                  <span className="shrink-0 text-xs text-muted">
+                    {share.role === "edit" ? t("Puede editar") : share.role === "comment" ? t("Puede comentar") : t("Puede ver")}
+                  </span>
                 </div>
               ) : null}
             </section>
@@ -225,6 +241,34 @@ export default function ArtifactShareDialog({
                 </span>
                 {saving ? <Loader2 size={14} className="animate-spin text-muted" /> : null}
               </button>
+
+              {/* Nivel del enlace. Sólo aparece con el enlace abierto: elegir "puede
+                  editar" sobre un documento privado no significa nada y confunde.
+                  `edit` manda a quien reciba el link a la sala de co-edición
+                  (/coeditar/<slug>), no a la página de lectura. */}
+              {share.visibility === "link" ? (
+                <div className="flex gap-1 rounded-lg bg-surface-3 p-1">
+                  {([
+                    ["view", t("Puede ver")],
+                    ["comment", t("Puede comentar")],
+                    ["edit", t("Puede editar")],
+                  ] as const).map(([valor, etiqueta]) => (
+                    <button
+                      key={valor}
+                      type="button"
+                      disabled={!share.isOwner || saving}
+                      onClick={() => apply({ role: valor })}
+                      className={`flex-1 rounded-md px-2 py-1.5 text-xs font-medium transition disabled:cursor-default ${
+                        share.role === valor
+                          ? "bg-surface-1 text-ink shadow-sm"
+                          : "text-muted hover:text-ink disabled:opacity-60"
+                      }`}
+                    >
+                      {etiqueta}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
             </section>
 
             <section className="flex flex-col gap-2">
@@ -290,7 +334,9 @@ export default function ArtifactShareDialog({
                   // pegar el link ahora. Antes había que volver a "Copiar enlace" y el
                   // botón no daba ninguna señal de que algo hubiera pasado.
                   const s = await apply({ visibility: "link" });
-                  if (s?.slug) await writeLink(s.slug);
+                  // El rol va explícito: `share` en este closure todavía es el estado
+                  // previo y el enlace saldría al destino equivocado.
+                  if (s?.slug) await writeLink(s.slug, s.role);
                 }}
                 className="rounded-lg bg-brand px-3 py-1.5 text-sm font-medium text-surface transition hover:opacity-90"
               >

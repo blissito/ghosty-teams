@@ -514,13 +514,23 @@ export async function documentIdForStorageKey(key: string): Promise<string | nul
 
 export async function setShareOnRoot(
   rootId: number,
-  patch: { visibility?: "private" | "link"; slug?: string; sharedArtifactId?: number | null }
+  patch: {
+    visibility?: "private" | "link";
+    slug?: string;
+    sharedArtifactId?: number | null;
+    /** Qué puede HACER quien llega por el link: ver, comentar o editar. */
+    role?: DocRole;
+  }
 ): Promise<void> {
   const sets: string[] = [];
   const args: any[] = [];
   if (patch.visibility !== undefined) {
     sets.push("share_visibility = ?");
     args.push(patch.visibility);
+  }
+  if (patch.role !== undefined) {
+    sets.push("share_role = ?");
+    args.push(patch.role);
   }
   if (patch.slug !== undefined) {
     sets.push("share_slug = ?");

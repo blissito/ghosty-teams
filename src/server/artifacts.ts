@@ -186,6 +186,8 @@ function storageKeyFromSrc(src: string): string | null {
 export type ArtifactShare = {
   slug: string | null;
   visibility: "private" | "link";
+  /** Qué puede hacer quien llega por el link: ver · comentar · editar. */
+  role: import("../db.server").DocRole;
   /** id de la versión congelada; null = Latest (sigue lo último que se publique). */
   sharedArtifactId: number | null;
   versions: { id: number; label: string; createdAt: number }[];
@@ -221,6 +223,7 @@ async function shareStateFor(documentId: string, meSub: string | null): Promise<
   return {
     slug: root.slug,
     visibility: root.visibility,
+    role: root.role,
     sharedArtifactId: root.sharedArtifactId,
     versions: versions.map((v, i) => ({ id: v.id, label: `Versión ${i + 1}`, createdAt: v.createdAt })),
     owner,
@@ -315,7 +318,13 @@ export const getArtifactShareFn = createServerFn({ method: "POST" })
 
 export const setArtifactShareFn = createServerFn({ method: "POST" })
   .validator(
-    (d: { documentId: string; visibility?: "private" | "link"; sharedArtifactId?: number | null }) => d
+    (d: {
+      documentId: string;
+      visibility?: "private" | "link";
+      sharedArtifactId?: number | null;
+      /** Nivel del enlace: ver (default) · comentar · editar (entra a la sala de co-edición). */
+      role?: import("../db.server").DocRole;
+    }) => d
   )
   .handler(async ({ data }) => {
     const { me, root, db } = await requireShareOwner(data.documentId);
@@ -329,6 +338,7 @@ export const setArtifactShareFn = createServerFn({ method: "POST" })
     // comparte queda como dueño, si no nadie podría volver a cerrarlo.
     const patch: Parameters<typeof db.setShareOnRoot>[1] = { slug };
     if (data.visibility !== undefined) patch.visibility = data.visibility;
+    if (data.role !== undefined) patch.role = data.role;
     if (data.sharedArtifactId !== undefined) {
       // Sólo se puede congelar una versión de ESTE documento.
       if (data.sharedArtifactId !== null) {
