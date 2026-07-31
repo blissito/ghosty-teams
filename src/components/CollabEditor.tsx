@@ -522,7 +522,16 @@ export default function CollabEditor({
                 hilo.
               </p>
             )}
-            <div ref={setAsideEl} />
+            {/* Las clases NO son decorativas: TODO el CSS de los hilos que trae BlockNote
+                está scopeado bajo `.bn-mantine`, y sus variables de color bajo
+                `.bn-container`. El portal mete el React donde toca, pero el DOM aterriza
+                aquí — sin estas clases los hilos salen en crudo: nombre y fecha pegados,
+                sin tarjeta y sin espaciado. */}
+            <div
+              ref={setAsideEl}
+              className="bn-root bn-container bn-mantine light"
+              data-color-scheme="light"
+            />
           </aside>
         )}
       </div>
