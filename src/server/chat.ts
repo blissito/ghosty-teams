@@ -637,7 +637,7 @@ export const askAgent = createServerFn({ method: "POST" })
   )
   .handler(async ({ data }) => {
     const db = await import("../db.server");
-    const { resolvedAgents, runAgentTurn, buildMediaParts, quotedContextPrefix, clampQuote, historyContext, agentGroupId, INJECTED } = await import("../agents.server");
+    const { resolvedAgents, runAgentTurn, buildMediaParts, quotedContextPrefix, clampQuote, historyContext, gapDesdeUltimaRespuesta, agentGroupId, INJECTED } = await import("../agents.server");
     const bus = await import("./bus.server");
     const { currentNamespace } = await import("./tenant.server");
     const channel = await db.getChannel(data.slug);
@@ -688,9 +688,8 @@ export const askAgent = createServerFn({ method: "POST" })
         ? { channelId: channel.id, parentId: data.parentId }
         : { channelId: channel.id };
       const recent = await db.recentContext(scope, 25).catch(() => []);
-      let lastAgentIdx = -1;
-      recent.forEach((m, i) => { if (m.agent_handle && (m.body ?? "").trim()) lastAgentIdx = i; });
-      const history = historyContext(recent.slice(lastAgentIdx + 1), data.body);
+      const { esRecordatorio } = await import("./reminders.server");
+      const history = historyContext(gapDesdeUltimaRespuesta(recent, esRecordatorio), data.body);
       if (history) text = history + text;
     }
 

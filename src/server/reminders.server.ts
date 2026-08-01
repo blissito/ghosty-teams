@@ -260,6 +260,25 @@ async function sweepTenant(ns: string): Promise<void> {
   }
 }
 
+/**
+ * Con qué abre el cuerpo de un recordatorio entregado. Es la ÚNICA fuente del marcador:
+ * `esRecordatorio` lo usa para reconocerlo y `deliver` para escribirlo.
+ */
+export const REMINDER_MARK = "⏰ **Recordatorio**";
+
+/**
+ * Un recordatorio lo publica la PLATAFORMA con la cara del agente — el agente no lo
+ * escribió y no está en su transcript. Distinguirlo importa porque el catch-up del
+ * canal corta en "el último mensaje del agente" dando por hecho que todo lo anterior
+ * ya lo vio, y eso de un recordatorio es falso: quedaba fuera del contexto por los dos
+ * lados a la vez. Al responderle ("ya la pagué") el agente no tenía ni idea de qué
+ * recordatorio se hablaba —tenía que ir a buscarlo— y, sin nada nuevo a lo que
+ * agarrarse, retomaba el trabajo viejo que sí recordaba.
+ */
+export function esRecordatorio(body: string | null | undefined): boolean {
+  return (body ?? "").trimStart().startsWith(REMINDER_MARK);
+}
+
 async function deliver(ns: string, r: Reminder): Promise<void> {
   const db = await import("../db.server");
   const bus = await import("./bus.server");
@@ -269,7 +288,7 @@ async function deliver(ns: string, r: Reminder): Promise<void> {
   const all = await users.listUsers().catch(() => []);
   const owner = all.find((u) => u.sub === r.ownerSub);
   const who = owner?.handle ? `@${owner.handle}` : "";
-  const body = `⏰ **Recordatorio**${who ? ` — ${who}` : ""}\n\n${r.text}`;
+  const body = `${REMINDER_MARK}${who ? ` — ${who}` : ""}\n\n${r.text}`;
 
   if (r.dmId != null) {
     const { id } = await db.postDmAgent(r.dmId, body, "msg", r.agentHandle, r.agentName, r.agentAvatar);

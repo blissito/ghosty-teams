@@ -217,7 +217,7 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
     const db = await import("../db.server");
     const bus = await import("./bus.server");
     const { currentNamespace } = await import("./tenant.server");
-    const { resolvedAgents, runAgentTurn, buildMediaParts, quotedContextPrefix, clampQuote, historyContext, agentGroupId, INJECTED } = await import("../agents.server");
+    const { resolvedAgents, runAgentTurn, buildMediaParts, quotedContextPrefix, clampQuote, historyContext, gapDesdeUltimaRespuesta, agentGroupId, INJECTED } = await import("../agents.server");
     const me = await sessionUser();
     if (!me || !(await db.isDmMember(data.id, me.sub))) throw new Error("no autorizado");
     const ns = await currentNamespace();
@@ -250,9 +250,8 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
     // lo filtra → sin inyección (eficiente). Si acumuló mensajes sin verlos (o sesión fresca),
     // el gap los trae. La cita completa SÍ va por-turno.
     const recent = await db.recentContext({ dmId: data.id }, 25).catch(() => []);
-    let lastAgentIdx = -1;
-    recent.forEach((m, i) => { if (m.agent_handle && (m.body ?? "").trim()) lastAgentIdx = i; });
-    const history = historyContext(recent.slice(lastAgentIdx + 1), data.body);
+    const { esRecordatorio } = await import("./reminders.server");
+    const history = historyContext(gapDesdeUltimaRespuesta(recent, esRecordatorio), data.body);
     // Conectores per-user (DM 1:1): el DM tiene UN solo humano (`me`), identidad inequívoca.
     // GENÉRICO y escalable — dm.ts NO sabe de Calendly ni de ningún conector: el builder
     // itera los conectados del usuario y concatena su `ambientContext` (contrato uniforme).

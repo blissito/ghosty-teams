@@ -248,6 +248,27 @@ export function clampQuote(body: string, max = 2000): string {
 // Bloque de HISTORIAL reciente para el turno del agente: resuelve referencias ("otra vez",
 // "esto", "lo de antes") aunque la memoria del worker esté fría o un turno haya fallado.
 // Va en el TEXTO (cambia por turno). Omite el mensaje ACTUAL (ya va aparte) y los vacíos.
+/**
+ * El "gap": los mensajes que el agente probablemente NO vio. Se corta en su última
+ * respuesta propia, dando por hecho que todo lo anterior ya está en su sesión.
+ *
+ * ⚠️ Un RECORDATORIO no cuenta como respuesta suya. Lo publica la plataforma con su
+ * cara y nunca pasó por un turno, así que no está en su transcript — y al contarlo como
+ * corte quedaba fuera del contexto por los dos lados a la vez: ni en la sesión, ni en el
+ * catch-up. Por eso, al responderle "ya la pagué", el agente no sabía de qué recordatorio
+ * se hablaba y tenía que ir a buscarlo; y sin nada nuevo a lo que agarrarse, retomaba el
+ * trabajo viejo que sí recordaba.
+ */
+export function gapDesdeUltimaRespuesta<
+  T extends { agent_handle: string | null; body: string | null },
+>(recientes: T[], esRecordatorio: (b: string | null) => boolean): T[] {
+  let ultima = -1;
+  recientes.forEach((m, i) => {
+    if (m.agent_handle && (m.body ?? "").trim() && !esRecordatorio(m.body)) ultima = i;
+  });
+  return recientes.slice(ultima + 1);
+}
+
 export function historyContext(
   messages: { sender: string; agent_handle: string | null; body: string }[],
   currentBody: string
