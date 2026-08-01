@@ -1681,6 +1681,11 @@ export default function ArtifactPanel({
                             onPatchFail={onPatchFail}
                             loadingLabel={t("Construyendo el artefacto…")}
                             className="absolute inset-0 overflow-auto thin-scroll"
+                            // Sigue el final mientras se escribe, igual que el documento y
+                            // la hoja. Sólo en el HTML que STREAMEA: en un turno de patches
+                            // el destello ya dice dónde mirar, y saltar al final sería
+                            // llevarse al usuario lejos del cambio.
+                            follow={!!artifact.streaming && !artifact.patches?.length}
                           />
                         </div>
                       </div>

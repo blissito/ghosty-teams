@@ -178,12 +178,22 @@ export function LiveArtifactPreview({
   loadingLabel = "Construyendo el artefacto…",
   onPatchFail,
   skeleton = true,
+  follow = false,
 }: {
   html: string;
   patches?: LivePatch[];
   className?: string;
   loadingLabel?: string;
   onPatchFail?: (nodeId: string) => void;
+  /**
+   * Sigue el final del artefacto mientras el agente lo escribe — el equivalente de lo que
+   * ya hacen el documento y la hoja: se ve construirse en vez de quedarse mirando el
+   * encabezado mientras el contenido crece fuera de cuadro.
+   *
+   * Sólo tiene sentido durante el streaming. Como calco de un artefacto ya completo esto
+   * iría al final de una página que el usuario no pidió ver.
+   */
+  follow?: boolean;
   /** El esqueleto solo tiene sentido mientras se CONSTRUYE. Cuando este preview se usa como
    *  calco de un documento ya completo (tapar el arranque del iframe), mostrarlo produciría
    *  justo el parpadeo que se quiere evitar: gris un frame y luego el contenido. */
@@ -192,6 +202,15 @@ export function LiveArtifactPreview({
   const hostRef = useRef<HTMLDivElement | null>(null);
   const styleRef = useRef<HTMLStyleElement | null>(null);
   const lastCss = useRef("");
+  // El que scrollea es la raíz (el panel le pone `overflow-auto`), no el host: el host
+  // crece con el contenido y no tiene barra propia.
+  const scrollerRef = useRef<HTMLDivElement | null>(null);
+  // Seguir el final es el DEFECTO, no una atadura: en cuanto el usuario sube a releer algo
+  // dejamos de arrastrarlo, y volvemos a seguirlo si él mismo baja al final. Sin esto, un
+  // artefacto largo es imposible de mirar mientras se construye.
+  const pegadoRef = useRef(true);
+  const alFinal = (el: HTMLDivElement) =>
+    el.scrollHeight - el.scrollTop - el.clientHeight < 80;
   // Arranca "no vacío" cuando el HTML ya trae cuerpo: así el primer frame no es el
   // esqueleto (el efecto de pintado corre justo después y ya hay contenido real).
   const [empty, setEmpty] = useState(() => !/<body[^>]*>[\s\S]*\S/i.test(html));
@@ -277,10 +296,30 @@ export function LiveArtifactPreview({
     // nodo pero no se ve), y con el criterio de nodos el esqueleto se quitaba dejando el
     // panel en negro otra vez.
     setEmpty(host.scrollHeight < 60 && !host.textContent?.trim());
-  }, [html]);
+    // Al final del MISMO efecto que repinta: si se hiciera en uno aparte, correría con el
+    // scrollHeight del chunk anterior y siempre iría un pedazo atrás.
+    const sc = scrollerRef.current;
+    if (follow && pegadoRef.current && sc) sc.scrollTop = sc.scrollHeight;
+  }, [html, follow]);
+
+  // Al dejar de streamear el artefacto se queda donde está: nadie devuelve el scroll
+  // arriba de golpe, y el siguiente turno vuelve a engancharse solo.
+  useEffect(() => {
+    if (follow) pegadoRef.current = true;
+  }, [follow]);
 
   return (
-    <div className={className}>
+    <div
+      className={className}
+      ref={scrollerRef}
+      onScroll={
+        follow
+          ? (e) => {
+              pegadoRef.current = alFinal(e.currentTarget);
+            }
+          : undefined
+      }
+    >
       <style ref={styleRef} />
       <div ref={hostRef} className="gt-live" />
       {skeleton && empty ? <ArtifactSkeleton label={loadingLabel} /> : null}
