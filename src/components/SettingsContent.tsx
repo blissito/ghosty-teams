@@ -522,6 +522,15 @@ function UsagePanel() {
   }
 
   const pct = data.included > 0 ? Math.min(100, (data.used / data.included) * 100) : 0;
+
+  // Cuántos turnos MÁS caben, al ritmo real de este workspace. Se calcula con su propio
+  // promedio (`used / turns`) y no con un divisor fijo, que es lo que hacía que la
+  // estimación mintiera. Null si todavía no hay turnos: sin ritmo no hay proyección, y
+  // pintar un número inventado el primer día es peor que no pintar nada.
+  const turnosRestantes =
+    data.turns > 0 && data.used > 0 && data.included > data.used
+      ? Math.round((data.included - data.used) / (data.used / data.turns))
+      : null;
   const fmtM = (n: number) => `${(n / 1_000_000).toFixed(n >= 10_000_000 ? 0 : 1)}M`;
   const fecha = (iso: string) =>
     new Date(iso).toLocaleDateString("es-MX", { day: "numeric", month: "long" });
@@ -531,7 +540,9 @@ function UsagePanel() {
       <div>
         <div className="flex items-baseline justify-between mb-2">
           <h3 className="text-sm font-medium">{t("Tokens de este mes")}</h3>
-          <span className="text-sm tabular-nums text-gray-600 dark:text-gray-300">
+          {/* Era `text-gray-600` y es EL dato de la pantalla: el más importante iba
+              más claro que su propia etiqueta. */}
+          <span className="text-sm font-medium tabular-nums text-gray-900 dark:text-gray-100">
             {fmtM(data.used)} {t("de")} {fmtM(data.included)}
           </span>
         </div>
@@ -547,18 +558,31 @@ function UsagePanel() {
             }}
           />
         </div>
-        <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
-          {/* La equivalencia en mensajes es lo que la gente entiende: nadie razona en
-              millones de tokens. El divisor lo fija gs, no esta pantalla. */}
-          ≈ {data.messagesUsed.toLocaleString("es-MX")} {t("de")}{" "}
-          {data.messagesIncluded.toLocaleString("es-MX")} {t("mensajes")} ·{" "}
+        <p className="mt-2 text-xs text-gray-600 dark:text-gray-400">
+          {/* Se dice en TURNOS y al RITMO DE ESTE WORKSPACE, no en la equivalencia de
+              "mensajes" que manda gs.
+
+              Dos razones. (1) Esa equivalencia y el contador de turnos convivían en
+              esta misma pantalla —"≈540 de 4,670 mensajes" encima de "90 turnos"— y se
+              leía como si nos hubiéramos cobrado 540 por 90: son la misma cosa en dos
+              unidades, y una es inventada. (2) Su divisor (6,850 tokens) salió de un
+              turno de chat sencillo, y los turnos reales llevan herramientas y
+              documentos: medido aquí, ~41k por turno, o sea 6× — la estimación
+              prometía seis veces más de lo que rinde.
+
+              El ritmo propio no puede equivocarse así: sale de lo que ESTE workspace
+              gastó de verdad. `messagesUsed`/`messagesIncluded` siguen llegando del
+              server; simplemente ya no se pintan. */}
+          {turnosRestantes !== null
+            ? `${t("Te quedan ~")}${turnosRestantes.toLocaleString("es-MX")} ${t("turnos a este ritmo")} · `
+            : ""}
           {t("se reinicia el")} {fecha(data.resetsAt)}
         </p>
       </div>
 
-      <div className="text-xs text-gray-500 dark:text-gray-400 space-y-1">
+      <div className="text-xs text-gray-600 dark:text-gray-400 space-y-1">
         <div>
-          {t("Plan")}: <span className="text-gray-700 dark:text-gray-200">{data.plan}</span>
+          {t("Plan")}: <span className="font-medium text-gray-900 dark:text-gray-100">{data.plan}</span>
           {data.paidUntil && (
             <>
               {" · "}

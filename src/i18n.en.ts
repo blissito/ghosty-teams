@@ -6,6 +6,11 @@ export const en: Record<string, string> = {
   "de": "of",
   "mensajes": "messages",
   "se reinicia el": "resets on",
+  // La proyección va en TURNOS y al ritmo propio del workspace. Sustituyó a la
+  // equivalencia en "mensajes" (que se sigue traduciendo arriba porque el server la
+  // manda, aunque esta pantalla ya no la pinte).
+  "Te quedan ~": "~",
+  "turnos a este ritmo": "turns left at this pace",
   "pagado hasta el": "paid through",
   "turnos del agente este mes": "agent turns this month",
   "No pudimos consultar el consumo en este momento.": "We couldn't load usage right now.",
