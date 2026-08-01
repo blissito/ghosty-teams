@@ -824,6 +824,10 @@ const TOOL_LABELS: Record<string, { ing: string; done: string }> = {
   gs_image_describe: { ing: "Analizando la imagen", done: "Analicé la imagen" },
   gs_voice_speak: { ing: "Grabando la nota de voz", done: "Grabé una nota de voz" },
   gs_web_search: { ing: "Buscando en la web", done: "Busqué en la web" },
+  // La búsqueda del PROPIO motor, que se cobra aparte. Etiqueta distinta a propósito:
+  // con el mismo texto que la de casa no había forma de ver cuál corrió.
+  openai_web_search: { ing: "Buscando en la web (OpenAI)", done: "Busqué en la web (OpenAI)" },
+  gs_stt_transcribe: { ing: "Transcribiendo el audio", done: "Transcribí el audio" },
   gs_web_scrape: { ing: "Leyendo la página", done: "Leí la página" },
   gs_render: { ing: "Maquetando el PDF", done: "Maqueté el PDF" },
   gs_render_png: { ing: "Generando la imagen", done: "Generé la imagen" },

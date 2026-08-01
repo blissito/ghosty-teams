@@ -8,8 +8,20 @@ import { sessionUser } from "./chat";
 export const EB = process.env.EASYBITS_BASE_URL ?? "https://www.easybits.cloud";
 
 // Puede gestionar este agente: owner o colaborador. Devuelve el fleet backend
-// (id + token) o null si no es de flota (webhook → sin capacidades EasyBits).
-export async function resolveFleetAgent(agentId: number): Promise<{ id: string; token: string } | null> {
+// (id + token + binding de runtime) o null si no es de flota (webhook → sin
+// capacidades EasyBits).
+//
+// ⚠️ El `token` es NULLABLE y eso es lo normal en el runtime nativo: un agente de gs
+// NO guarda token, se opera por HMAC de partner. Esto exigía `fleet_token` y devolvía
+// null para todos ellos, así que el panel de Ajustes los daba por "no nativos" y caía
+// al editor de EasyBits, que pedía capabilities con un token inexistente: de ahí que
+// el modal saliera COMPLETAMENTE VACÍO. Quien necesite el token lo comprueba él.
+export async function resolveFleetAgent(agentId: number): Promise<{
+  id: string;
+  token: string | null;
+  runtime: string | null;
+  runtimeUrl: string | null;
+} | null> {
   const user = await sessionUser();
   if (!user) throw new Error("no autenticado");
   const db = await import("../db.server");
@@ -17,8 +29,15 @@ export async function resolveFleetAgent(agentId: number): Promise<{ id: string; 
     throw new Error("no autorizado para este agente");
   const a = await db.getAgentById(agentId);
   if (!a) throw new Error("agente no encontrado");
-  if (a.kind !== "fleet" || !a.fleet_id || !a.fleet_token) return null;
-  return { id: a.fleet_id, token: a.fleet_token };
+  if (a.kind !== "fleet" || !a.fleet_id) return null;
+  return { id: a.fleet_id, token: a.fleet_token, runtime: a.runtime, runtimeUrl: a.runtime_url };
+}
+
+/** El fleet_token de EasyBits, o un error legible. Los caminos de EasyBits lo exigen;
+ *  los nativos no (firman con HMAC). */
+function requireToken(be: { id: string; token: string | null }): string {
+  if (!be.token) throw new Error("este agente no tiene token de EasyBits (corre en el runtime nativo)");
+  return be.token;
 }
 
 // Marca el canal "Ghosty Teams" del fleet agent como conectado (action connect-teams).
@@ -56,18 +75,29 @@ export async function connectTeamsChannel(
 // Para el settings de Teams reducido a "encender/apagar". Lee/escribe channels.teams
 // del FleetAgent contra las capabilities nativas de Studio (HMAC de partner). Si el
 // tenant NO es nativo, devuelve { native:false } → el settings cae al editor viejo.
+// Runtime NATIVO del agente, o null si corre en EasyBits / no está configurado.
+// Decide por el BINDING DEL AGENTE (`runtimeFor`), no por el default del tenant: un
+// workspace puede tener uno de cada tipo, que era justo el bug de elegir por tenant.
+async function nativeRuntime(be: { runtime: string | null; runtimeUrl: string | null }) {
+  const { runtimeFor } = await import("./agent-runtime.server");
+  try {
+    const rt = await runtimeFor({ runtime: be.runtime, runtimeUrl: be.runtimeUrl });
+    return rt.kind === "gs-native" ? rt : null;
+  } catch {
+    return null;
+  }
+}
+
 export const fleetChannelStateFn = createServerFn({ method: "GET" })
   .validator((d: { id: number }) => d)
   .handler(async ({ data }) => {
     const be = await resolveFleetAgent(data.id);
     if (!be) return { native: false as const, fleet: false as const };
-    const { nativeRuntimeBase, partnerHeaders } = await import("./ghosty-runtime.server");
-    const { currentNamespace } = await import("./tenant.server");
-    const base = await nativeRuntimeBase();
-    if (!base) return { native: false as const, fleet: true as const };
+    const rt = await nativeRuntime(be);
+    if (!rt) return { native: false as const, fleet: true as const };
     try {
-      const res = await fetch(`${base}/api/v2/fleet-agents/${be.id}/capabilities`, {
-        headers: partnerHeaders("", await currentNamespace()),
+      const res = await fetch(`${rt.base}/api/v2/fleet-agents/${be.id}/capabilities`, {
+        headers: rt.headers("", ""),
       });
       if (!res.ok) return { native: true as const, fleet: true as const, teams: true, fleetId: be.id };
       const j = (await res.json()) as { channels?: { teams?: boolean }; name?: string };
@@ -88,18 +118,64 @@ export const setFleetChannelFn = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     const be = await resolveFleetAgent(data.id);
     if (!be) throw new Error("este agente no es de flota");
-    const { nativeRuntimeBase, partnerHeaders } = await import("./ghosty-runtime.server");
-    const { currentNamespace } = await import("./tenant.server");
-    const base = await nativeRuntimeBase();
-    if (!base) throw new Error("runtime no nativo");
+    const rt = await nativeRuntime(be);
+    if (!rt) throw new Error("runtime no nativo");
     const body = JSON.stringify({ action: "set-channel", channel: "teams", on: data.on });
-    const res = await fetch(`${base}/api/v2/fleet-agents/${be.id}/capabilities`, {
+    const res = await fetch(`${rt.base}/api/v2/fleet-agents/${be.id}/capabilities`, {
       method: "POST",
-      headers: partnerHeaders(body, await currentNamespace()),
+      headers: rt.headers(body, ""),
       body,
     });
     if (!res.ok) throw new Error(`set-channel ${res.status}: ${await res.text().catch(() => "")}`);
     return { ok: true as const, on: data.on };
+  });
+
+// ── Config del agente en el runtime NATIVO (modelo + prompt base) ─────────────
+// Studio es la fuente única; Teams sólo proxea con la firma de partner. Es el
+// gemelo nativo de agentFleetConfigFn/setAgentFleetConfigFn, que van a EasyBits.
+
+export type NativeAgentConfig = {
+  name: string;
+  engine: string;
+  engineLabel: string;
+  model: string | null;
+  prompt: string;
+  models: Array<{ id: string; label: string; ready?: boolean }>;
+};
+
+export const nativeAgentConfigFn = createServerFn({ method: "GET" })
+  .validator((d: { id: number }) => d)
+  .handler(async ({ data }): Promise<{ native: false } | ({ native: true } & NativeAgentConfig)> => {
+    const be = await resolveFleetAgent(data.id);
+    if (!be) return { native: false };
+    const rt = await nativeRuntime(be);
+    if (!rt) return { native: false };
+    const res = await fetch(`${rt.base}/api/v2/fleet-agents/${be.id}/capabilities`, {
+      headers: rt.headers("", ""),
+    });
+    if (!res.ok) throw new Error(`capabilities ${res.status}: ${await res.text().catch(() => "")}`);
+    return { native: true, ...((await res.json()) as NativeAgentConfig) };
+  });
+
+export const setNativeAgentConfigFn = createServerFn({ method: "POST" })
+  .validator((d: { id: number; body: Record<string, unknown> }) => d)
+  .handler(async ({ data }) => {
+    const be = await resolveFleetAgent(data.id);
+    if (!be) throw new Error("este agente no es de flota");
+    const rt = await nativeRuntime(be);
+    if (!rt) throw new Error("runtime no nativo");
+    const body = JSON.stringify(data.body);
+    const res = await fetch(`${rt.base}/api/v2/fleet-agents/${be.id}/capabilities`, {
+      method: "POST",
+      headers: rt.headers(body, ""),
+      body,
+    });
+    const j = (await res.json().catch(() => ({}))) as { error?: string };
+    // El mensaje de Studio se propaga TAL CUAL: el 402 del gate de plan ("ese modelo
+    // es de Empresarial: gasta 2× del saldo…") está escrito para que lo lea una
+    // persona. Sustituirlo por un genérico convierte una explicación en un misterio.
+    if (!res.ok) throw new Error(j.error || `capabilities ${res.status}`);
+    return { ok: true as const };
   });
 
 // GET: catálogo + estado de config del agente (builtins, capacidades, secrets,
@@ -114,7 +190,7 @@ export const agentFleetConfigFn = createServerFn({ method: "GET" })
     if (data.q) url.searchParams.set("q", data.q);
     const get = (tok: string) => fetch(url, { headers: { Authorization: `Bearer ${tok}` } });
     // Self-heal en 401 (el fleet_token caduca): refresca y reintenta una vez.
-    let res = await get(be.token);
+    let res = await get(requireToken(be));
     if (res.status === 401) {
       const { refreshFleetToken } = await import("../agents.server");
       const fresh = await refreshFleetToken(be.id);
@@ -135,7 +211,7 @@ export const setAgentFleetConfigFn = createServerFn({ method: "POST" })
     if (!be) throw new Error("este agente no es de flota");
     const res = await fetch(`${EB}/api/v2/fleet-agents/${be.id}/capabilities`, {
       method: "POST",
-      headers: { Authorization: `Bearer ${be.token}`, "Content-Type": "application/json" },
+      headers: { Authorization: `Bearer ${requireToken(be)}`, "Content-Type": "application/json" },
       body: JSON.stringify(data.body),
     });
     const j = await res.json().catch(() => ({}));

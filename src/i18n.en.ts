@@ -1,5 +1,14 @@
 // Auto-generated ES→EN dictionary for dictionaries.en — 421 keys
 export const en: Record<string, string> = {
+  // Config del agente nativo (Ajustes → Agentes → Configurar). Modelo/Motor/Prompt
+  // base ya están más abajo: los comparte el editor de EasyBits.
+  "(próximamente)": "(coming soon)",
+  "Al cambiar de modelo, la conversación arranca de nuevo.": "Changing the model restarts the conversation.",
+  "Es la identidad del agente en todos los espacios. Se aplica al siguiente turno.":
+    "This is the agent's identity everywhere. It applies from the next turn.",
+  "Motor, llaves y canales en Ghosty Studio": "Engine, keys and channels in Ghosty Studio",
+  "Guardado.": "Saved.",
+
   // Uso (tab de Ajustes) — saldo de tokens del workspace
   "Uso": "Usage",
   "Tokens de este mes": "Tokens this month",

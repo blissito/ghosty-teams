@@ -25,9 +25,12 @@ export const Route = createFileRoute("/api/agent-asset")({
         if (file.size > MAX_BYTES) return new Response("file too large", { status: 413 });
 
         const { resolveFleetAgent, EB } = await import("../server/agent-config");
-        let be: { id: string; token: string } | null;
+        let be: { id: string; token: string | null } | null;
         try { be = await resolveFleetAgent(agentId); } catch (e) { return new Response((e as Error).message, { status: 403 }); }
         if (!be) return new Response("agent is not a fleet agent", { status: 400 });
+        // Camino de EasyBits: sin fleet_token no hay con qué autenticar. Un agente
+        // nativo no lo tiene (usa HMAC) y todavía no hay entregables en ese runtime.
+        if (!be.token) return new Response("agent runs on the native runtime (no assets yet)", { status: 400 });
 
         const fd = new FormData();
         fd.set("action", "upload-asset");

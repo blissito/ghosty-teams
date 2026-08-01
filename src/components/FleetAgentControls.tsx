@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { fleetChannelStateFn, setFleetChannelFn } from "../server/agent-config";
 import { FleetCapabilities } from "./FleetCapabilities";
+import { NativeAgentConfig } from "./NativeAgentConfig";
 import { useT } from "../i18n";
 
 const STUDIO = "https://www.ghosty.studio";
@@ -18,9 +19,13 @@ function Switch({ on, onChange, disabled }: { on: boolean; onChange: (v: boolean
 }
 
 /**
- * Controles del agente de flota en Ajustes. En tenant NATIVO: sólo encender/apagar
- * (la config —identidad/modelo— vive en Ghosty Studio). En tenant EasyBits: cae al
- * editor completo de siempre (FleetCapabilities). Más adelante metemos más aquí.
+ * Controles del agente de flota en Ajustes. Si el agente corre en el native gs
+ * runtime: encender/apagar + modelo y prompt base (`NativeAgentConfig`, que habla con
+ * las capabilities de Studio). Si corre en EasyBits: el editor de siempre
+ * (`FleetCapabilities`).
+ *
+ * ⚠️ Lo decide el BINDING DEL AGENTE, no el tenant (ver `nativeRuntime` en
+ * agent-config): un workspace puede tener uno de cada tipo.
  */
 export function FleetAgentControls({ agentId }: { agentId: number }) {
   const t = useT();
@@ -81,13 +86,15 @@ export function FleetAgentControls({ agentId }: { agentId: number }) {
         <Switch on={state.teams} onChange={toggle} disabled={busy} />
       </div>
 
+      <NativeAgentConfig agentId={agentId} />
+
       <a
         href={`${STUDIO}/app/fleet/${state.fleetId}`}
         target="_blank"
         rel="noreferrer"
-        className="rounded-xl border border-dashed border-border p-4 text-center text-xs text-muted transition-colors hover:border-brand hover:text-ink"
+        className="rounded-xl border border-dashed border-border p-3 text-center text-xs text-muted transition-colors hover:border-brand hover:text-ink"
       >
-        {t("Configura la identidad, el modelo y más en Ghosty Studio")} ↗
+        {t("Motor, llaves y canales en Ghosty Studio")} ↗
       </a>
     </div>
   );
