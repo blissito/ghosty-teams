@@ -744,7 +744,15 @@ export async function getArtifactVersion(
 // artefacto completo con el cambio.
 export async function getDoc(
   documentId: string
-): Promise<{ kind: "doc" | "sheet" | "artifact"; md: string; src?: string | null } | null> {
+): Promise<{
+  kind: "doc" | "sheet" | "artifact";
+  md: string;
+  src?: string | null;
+  // Se devuelve porque quien recibe este objeto suele necesitar volver a nombrar el
+  // documento (p.ej. para acuñar su enlace `/artefacto/<slug>`) y hasta hoy tenía que
+  // arrastrar el id por separado desde el call site.
+  documentId?: string;
+} | null> {
   const rows = await dbq(
     `SELECT kind, md, src FROM gc_artifacts
       WHERE url = ? AND kind IN ('doc','sheet','artifact') AND md IS NOT NULL
@@ -752,7 +760,9 @@ export async function getDoc(
     [documentId]
   );
   const r = rows[0];
-  return r?.md ? { kind: r.kind as "doc" | "sheet" | "artifact", md: r.md, src: r.src ?? null } : null;
+  return r?.md
+    ? { kind: r.kind as "doc" | "sheet" | "artifact", md: r.md, src: r.src ?? null, documentId }
+    : null;
 }
 
 // Solo el contenido (para el export .docx del route). Delega en getDoc.

@@ -186,6 +186,48 @@ function storageKeyFromSrc(src: string): string | null {
 // (la más vieja del mismo documentId) porque cada publicación inserta una fila nueva.
 // Dos estados nada más: "private" (sólo el dueño) y "link" (cualquiera con el link).
 
+/**
+ * El enlace que se le entrega a una PERSONA para un artefacto: `/artefacto/<slug>`.
+ *
+ * NO se reparte `gc_artifacts.src` (la URL branded `artefacto.ghosty.studio/<key>`, que
+ * sirve la ruta `/t3/$`). Ese host es OTRO origen —a propósito, para aislar el HTML del
+ * agente— y la cookie `gc_session` es host-only (`session.server.ts`), así que allá la
+ * sesión SIEMPRE es anónima: desde que `/t3` aplica el permiso, un artefacto que no esté
+ * compartido por liga responde 404 hasta a su propio dueño. `/artefacto/<slug>` corre en
+ * el host del equipo, donde la sesión sí existe, y aplica el mismo criterio.
+ *
+ * El slug se acuña aquí si falta — es sólo una dirección, NO abre nada: la visibilidad se
+ * queda como estaba, y `resolveSharedArtifact` sigue devolviendo null a quien no tenga
+ * permiso. Es lo mismo que hace el panel al abrirse (`setArtifactShareFn`), y no rota
+ * nunca: si rotara, los links ya pegados morirían en silencio.
+ *
+ * El host sale de la petición en curso porque el tenant se resuelve por SUBDOMINIO: un
+ * enlace al apex cae en otro namespace y el artefacto "no existe". Fuera de una petición
+ * no hay a qué equipo apuntar → null, y quien llame se queda sin línea de enlace.
+ */
+export async function shareLinkFor(documentId: string): Promise<string | null> {
+  try {
+    const db = await import("../db.server");
+    const root = await db.shareRootFor(documentId);
+    if (!root) return null;
+    let slug = root.slug;
+    if (!slug) {
+      slug = crypto.randomUUID();
+      await db.setShareOnRoot(root.id, { slug });
+    }
+    const { getRequestHeader, getRequestHost, getRequestProtocol } = await import(
+      "@tanstack/react-start/server"
+    );
+    const host = getRequestHeader("x-forwarded-host") || getRequestHost();
+    if (!host) return null;
+    const proto = getRequestHeader("x-forwarded-proto") || getRequestProtocol() || "https";
+    return `${proto}://${host}/artefacto/${slug}`;
+  } catch (e) {
+    console.error("[artifact] shareLinkFor falló", e);
+    return null;
+  }
+}
+
 export type ArtifactShare = {
   slug: string | null;
   visibility: "private" | "link";

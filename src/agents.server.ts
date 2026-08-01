@@ -367,7 +367,18 @@ function selfIdentity(agent: ResolvedAgent | undefined): string {
 // y el system prompt de la sesión persistente se fija al arrancar (un valor variable ahí
 // forzaría cold-restart). El BASE estable (EB_DOC_STREAM_GUARDRAIL) sí va en
 // appendSystemPrompt (idéntico todos los turnos → persistencia-safe). Vacío si no hay artefacto.
-async function artifactDocHint(currentDoc?: { kind: "doc" | "sheet" | "artifact"; md: string; src?: string | null } | null): Promise<string> {
+/**
+ * El artefacto VIVO del hilo, tal como lo devuelve `db.getDoc`. `documentId` viaja con él
+ * porque el enlace `/artefacto/<slug>` se acuña a partir del id, no del contenido.
+ */
+type CurrentDoc = {
+  kind: "doc" | "sheet" | "artifact";
+  md: string;
+  src?: string | null;
+  documentId?: string;
+};
+
+async function artifactDocHint(currentDoc?: CurrentDoc | null): Promise<string> {
   // El CSS de Tailwind HORNEADO al publicar (marca `gt-baked-tw`) es derivado: se recalcula
   // solo en la siguiente publicación. Al agente no le sirve de nada y son decenas de KB de
   // contexto por turno → se lo quitamos. Si re-emite el artefacto sin él, el publish lo
@@ -395,16 +406,25 @@ async function artifactDocHint(currentDoc?: { kind: "doc" | "sheet" | "artifact"
   const noun =
     kind === "sheet" ? "esta hoja de cálculo (CSV)" : kind === "artifact" ? "este artefacto (HTML autocontenido)" : "este documento";
   const lang = kind === "sheet" ? "CSV" : kind === "artifact" ? "HTML" : "Markdown";
-  // Enlace público YA emitido por la plataforma al publicar el artefacto (columna
-  // gc_artifacts.src). Se lo damos al agente para que, si el usuario pide "el link"/
-  // "publícalo"/"compártelo", lo entregue TAL CUAL en vez de decir que no puede (antes
-  // se disculpaba e inventaba que "no tengo tool para crear URLs" — incidente 2026-07-23).
-  const src = currentDoc!.src?.trim();
-  const linkLine =
-    kind === "artifact" && src
-      ? `Este artefacto YA está publicado; su enlace compartible es: ${src} . ` +
-        `Si el usuario pide el link / que lo publiques / que lo compartas, entrégaselo TAL CUAL (no digas que no puedes ni inventes otra URL). `
-      : "";
+  // Enlace del artefacto para la PERSONA. Se lo damos al agente para que, si le piden
+  // "el link"/"publícalo"/"compártelo", lo entregue TAL CUAL en vez de decir que no puede
+  // (antes se disculpaba e inventaba que "no tengo tool para crear URLs" — incidente
+  // 2026-07-23).
+  //
+  // Es `/artefacto/<slug>`, NO el `src` de storage: ver `shareLinkFor`. El `src` vive en
+  // otro host, donde la sesión siempre es anónima, y desde que /t3 aplica el permiso
+  // respondía 404 hasta al dueño — el agente estaba repartiendo un enlace roto.
+  const docId = currentDoc!.documentId;
+  const link =
+    kind === "artifact" && docId
+      ? await (await import("./server/artifacts")).shareLinkFor(docId)
+      : null;
+  const linkLine = link
+    ? `Este artefacto ya tiene enlace propio: ${link} . ` +
+      `Si el usuario pide el link / que lo publiques / que lo compartas, entrégaselo TAL CUAL (no digas que no puedes ni inventes otra URL). ` +
+      `Nace PRIVADO —sólo lo abre su dueño—; para que lo vea alguien más hay que darle permiso desde el botón Compartir del panel del artefacto. ` +
+      `Dilo sólo si viene al caso (te piden mandárselo a alguien), no en cada entrega. `
+    : "";
   // ARTEFACTO HTML con direcciones (`data-id`) → modo QUIRÚRGICO: se le antepone el ÍNDICE
   // de nodos (el mapa para elegir el id sin releer 40 KB con atención) y se le pide un
   // ```eb-patch``` en vez del documento entero. Si el HTML es viejo (sin ids) o el modo está
@@ -569,7 +589,7 @@ export async function callAgentBackendStream(
   onChunk: (chunk: string) => void | Promise<void>,
   parts: MediaPart[] = [],
   onTool?: (ev: ToolEvent) => void | Promise<void>,
-  currentDoc?: { kind: "doc" | "sheet" | "artifact"; md: string; src?: string | null } | null,
+  currentDoc?: CurrentDoc | null,
   invokerSub?: string,
   /** Detener el turno = colgarle al worker. El worker cierra su generador al notarlo. */
   signal?: AbortSignal,
@@ -1015,7 +1035,7 @@ async function runAgentTurnInner(opts: {
   emitBody?: (id: number, body: string) => void;
   // Artefacto ACTUAL del hilo (doc/sheet + contenido) → se inyecta al turno para re-emisión
   // completa al editar.
-  currentDoc?: { kind: "doc" | "sheet" | "artifact"; md: string; src?: string | null } | null;
+  currentDoc?: CurrentDoc | null;
   // `sub` del que escribe → tools de conectores per-invocador (token-capacidad al box).
   invokerSub?: string;
   // Dónde ocurre el turno. Lo necesitan las tools nativas que dejan algo EN la
