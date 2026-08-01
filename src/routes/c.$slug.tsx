@@ -6751,9 +6751,9 @@ function fraseTrabajando(id: number, secs: number): string {
   const lista = secs >= 120 ? FRASES_MUY_LARGAS : secs >= 35 ? FRASES_LARGAS : FRASES_TRABAJANDO;
   return lista[(id + Math.floor(secs / ROTACION_S)) % lista.length];
 }
-function AgentPending({ id }: { id: number }) {
-  const t = useT();
-  const { turns, stopTurn } = useContext(ChatCtx);
+/** Reloj vivo del turno. Devuelve `null` mientras no haya turno registrado. */
+function useTurnElapsed(id: number) {
+  const { turns } = useContext(ChatCtx);
   const info = turns.get(id);
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
@@ -6761,8 +6761,70 @@ function AgentPending({ id }: { id: number }) {
     const iv = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(iv);
   }, [info?.startedAt]);
-  const secs = info ? Math.max(0, Math.round((now - info.startedAt) / 1000)) : 0;
-  const elapsed = secs < 60 ? `${secs}s` : `${Math.floor(secs / 60)}m ${secs % 60}s`;
+  if (!info) return null;
+  const secs = Math.max(0, Math.round((now - info.startedAt) / 1000));
+  return {
+    info,
+    secs,
+    elapsed: secs < 60 ? `${secs}s` : `${Math.floor(secs / 60)}m ${secs % 60}s`,
+  };
+}
+
+/** Cuadrado de reproductor: el gesto universal de "para esto". */
+function StopTurnButton({ id, className = "" }: { id: number; className?: string }) {
+  const t = useT();
+  const { stopTurn } = useContext(ChatCtx);
+  return (
+    <button
+      type="button"
+      onClick={() => stopTurn(id)}
+      aria-label={t("Detener")}
+      title={t("Detener")}
+      className={`grid size-5 place-items-center rounded-full border border-border text-muted transition hover:border-red-400/50 hover:text-red-400 ${className}`}
+    >
+      <Square size={9} className="fill-current" />
+    </button>
+  );
+}
+
+/**
+ * Detener un turno que YA ESCRIBIÓ algo.
+ *
+ * `AgentPending` —que es donde vivía el único botón de Detener— sólo se pinta mientras la
+ * cáscara está vacía: al primer token desaparece, y con él la única salida. Justo el turno
+ * que se cuelga a media respuesta (narró un paso y se quedó ahí) era el que no se podía
+ * parar. Se veía como que la app se trabó sin razón, porque el trabajo ya empezado no
+ * ofrecía ninguna manija.
+ *
+ * Se pinta sólo mientras el turno sigue registrado en vuelo; al llegar el body final el
+ * mapa `turns` se vacía y esta línea se va sola.
+ */
+function TurnLiveFooter({ id }: { id: number }) {
+  const t = useT();
+  const e = useTurnElapsed(id);
+  if (!e || e.info.state === "queued") return null;
+  return (
+    <div className="mt-1 flex items-center gap-2 text-xs text-muted">
+      <ThinkingRing size={12} />
+      <span className="tabular-nums opacity-60">{e.elapsed}</span>
+      <StopTurnButton id={id} />
+      {/* A los 2 minutos el silencio deja de leerse como "está pensando" y empieza a
+          leerse como "se trabó": se dice qué hacer en vez de dejar a la persona
+          adivinando si esperar. */}
+      {e.secs >= 120 ? (
+        <span className="italic opacity-70">{t("¿Se tardó de más? Puedes detenerlo.")}</span>
+      ) : null}
+    </div>
+  );
+}
+
+function AgentPending({ id }: { id: number }) {
+  const t = useT();
+  const { turns } = useContext(ChatCtx);
+  const info = turns.get(id);
+  const e = useTurnElapsed(id);
+  const secs = e?.secs ?? 0;
+  const elapsed = e?.elapsed ?? "";
   const queued = info?.state === "queued";
   return (
     <div className="flex items-center gap-2 py-0.5 text-xs text-muted">
@@ -6773,19 +6835,7 @@ function AgentPending({ id }: { id: number }) {
           : t(fraseTrabajando(id, secs))}
       </span>
       {info ? <span className="tabular-nums opacity-60">{elapsed}</span> : null}
-      {info ? (
-        <button
-          type="button"
-          onClick={() => stopTurn(id)}
-          aria-label={t("Detener")}
-          title={t("Detener")}
-          // Cuadrado de reproductor: es el gesto universal de "para esto" y no compite
-          // con el texto de la línea, que es lo que se está leyendo.
-          className="grid size-5 place-items-center rounded-full border border-border text-muted transition hover:border-red-400/50 hover:text-red-400"
-        >
-          <Square size={9} className="fill-current" />
-        </button>
-      ) : null}
+      {info ? <StopTurnButton id={id} /> : null}
     </div>
   );
 }
@@ -7031,6 +7081,9 @@ function MessageRow({
                 }}
               />
               ) : null}
+              {/* El turno sigue vivo aunque ya haya texto: la salida tiene que seguir
+                  a la vista (ver TurnLiveFooter). */}
+              {isAgent ? <TurnLiveFooter id={m.id} /> : null}
             </div>
           ) : isAgent && !m.attachments?.length && !m.artifact ? (
             // Caja caliente: cáscara del agente aún sin texto → indicador inline (la fila
