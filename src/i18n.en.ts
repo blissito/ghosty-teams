@@ -500,6 +500,7 @@ export const en: Record<string, string> = {
   Ignorar: "Ignore",
   "Ignorar esta palabra en todo el documento": "Ignore this word throughout the document",
   "Sin sugerencias": "All clear",
+  "Revisar de nuevo": "Check again",
   "La revisión quedó incompleta": "The review was incomplete",
   "No se pudo revisar el documento": "Couldn't check the document",
   // Lo que Ghosty dice mientras trabaja (rotan cada 3s). Se traducen por SENTIDO, no

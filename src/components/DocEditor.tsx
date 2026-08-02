@@ -602,6 +602,22 @@ export default function DocEditor({
   // mientras dure la revisión en vez de desvanecerse. Mezclarlas en `marcarIndices` habría
   // significado tocar dos cosas que ya funcionan.
   const revision = useDocReview({ documentId, version, bloques: bloquesActuales });
+
+  /**
+   * Revisar guarda primero, por lo mismo que la lectura en voz alta: el corrector mira el
+   * documento GUARDADO —que es lo que hace que el permiso y la versión sean los del
+   * documento y no los que declare el cliente—, así que con una edición esperando el
+   * debounce se revisaba el texto anterior. Metías una falta, revisabas, y no aparecía.
+   */
+  const revisarDoc = useCallback(async () => {
+    try {
+      await guardarYa?.();
+    } catch {
+      // Si el guardado falla ya se ve en su indicador; revisar lo que hay en la base es
+      // lo mejor que se puede hacer con eso.
+    }
+    await revision.revisar();
+  }, [guardarYa, revision]);
   const capaRev = useRef<HTMLDivElement | null>(null);
   const rafRev = useRef(0);
 
@@ -1140,7 +1156,7 @@ export default function DocEditor({
           {!revision.revisando ? (
             <button
               type="button"
-              onClick={() => revision.revisar()}
+              onClick={() => void revisarDoc()}
               disabled={revision.estado === "revisando"}
               aria-label={t("Revisar ortografía")}
               title={t("Revisar ortografía")}
@@ -1185,9 +1201,23 @@ export default function DocEditor({
                 <ChevronRight size={14} />
               </button>
               {revision.total === 0 && revision.estado === "listo" ? (
-                <span className="px-1 text-[11px] font-medium text-emerald-500">
-                  {t("Sin sugerencias")}
-                </span>
+                <>
+                  <span className="px-1 text-[11px] font-medium text-emerald-500">
+                    {t("Sin sugerencias")}
+                  </span>
+                  {/* Sin esto, terminar la revisión dejaba la barra en 0/0 y la única
+                      salida era la X: escribías algo nuevo y no había forma de volver a
+                      revisar sin salir y entrar. */}
+                  <button
+                    type="button"
+                    onClick={() => void revisarDoc()}
+                    aria-label={t("Revisar de nuevo")}
+                    title={t("Revisar de nuevo")}
+                    className="rounded-full p-1 text-ink transition hover:text-brand"
+                  >
+                    <SpellCheck size={14} />
+                  </button>
+                </>
               ) : null}
               <button
                 type="button"
