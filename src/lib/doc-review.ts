@@ -58,6 +58,37 @@ export function esSegura(h: Hallazgo): boolean {
   return h.tipo === "misspelling" && h.sugerencias.length > 0;
 }
 
+/**
+ * El diccionario personal, persistido en el navegador.
+ *
+ * Vivía sólo en memoria y se perdía al refrescar: cada vez que abrías el documento
+ * volvían las mismas cinco palabras que ya habías dado por buenas, y un corrector que te
+ * pregunta lo mismo cada mañana se apaga a la segunda.
+ *
+ * Es GLOBAL, no por documento: "Perdix" no deja de ser un nombre propio al abrir otro
+ * expediente. Y vive en el navegador porque es una preferencia de quien escribe; el sitio
+ * natural cuando haga falta compartirlo con el equipo es una tabla del workspace, y
+ * entonces esta función es el único punto que hay que cambiar.
+ */
+const DICCIONARIO = "gt-ignoradas";
+
+function cargarIgnoradas(): Set<string> {
+  try {
+    const raw = localStorage.getItem(DICCIONARIO);
+    return new Set<string>(raw ? (JSON.parse(raw) as string[]) : []);
+  } catch {
+    return new Set<string>();
+  }
+}
+
+function guardarIgnoradas(s: Set<string>) {
+  try {
+    localStorage.setItem(DICCIONARIO, JSON.stringify([...s]));
+  } catch {
+    /* modo privado o cuota llena: se queda en memoria, que es como estaba antes */
+  }
+}
+
 export function useDocReview({ documentId, version, bloques }: Opts) {
   const [hallazgos, setHallazgos] = useState<Hallazgo[]>([]);
   const [actual, setActual] = useState(0);
@@ -80,8 +111,12 @@ export function useDocReview({ documentId, version, bloques }: Opts) {
    * texto. Un diccionario permanente por workspace sería lo siguiente, y ya tendría
    * dónde guardarse.
    */
-  const ignoradas = useRef(new Set<string>());
+  const ignoradas = useRef<Set<string>>(cargarIgnoradas());
   const llave = (h: Hallazgo) => `${h.palabra.toLowerCase()}|${h.ruleId}`;
+  const recordarIgnorada = (k: string) => {
+    ignoradas.current.add(k);
+    guardarIgnoradas(ignoradas.current);
+  };
 
   /**
    * Lanza la revisión. `silenciosa` la deja en segundo plano: cuenta hallazgos pero no
@@ -191,7 +226,7 @@ export function useDocReview({ documentId, version, bloques }: Opts) {
    */
   const resolver = useCallback(
     (h: Hallazgo, delta: number, tambienLasIguales = false) => {
-      if (tambienLasIguales) ignoradas.current.add(llave(h));
+      if (tambienLasIguales) recordarIgnorada(llave(h));
       setHallazgos((prev) => {
         const mapa = textos(bloques());
         const nuevoHash = firmaTexto(mapa.get(h.blockId) ?? "");
@@ -212,6 +247,17 @@ export function useDocReview({ documentId, version, bloques }: Opts) {
       });
     },
     [bloques],
+  );
+
+  /**
+   * Los hallazgos que son la MISMA palabra por la MISMA regla, incluido él.
+   *
+   * Es lo que sostiene "cambiar todas" e "ignorar todas": la unidad de esas dos acciones
+   * no es el hallazgo sino la palabra.
+   */
+  const iguales = useCallback(
+    (h: Hallazgo) => hallazgos.filter((x) => llave(x) === llave(h)),
+    [hallazgos],
   );
 
   const ir = useCallback(
@@ -240,6 +286,7 @@ export function useDocReview({ documentId, version, bloques }: Opts) {
     revisar,
     caducar,
     resolver,
+    iguales,
     ir,
     setActual,
   };

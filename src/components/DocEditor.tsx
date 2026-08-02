@@ -634,6 +634,8 @@ export default function DocEditor({
     }
     await revision.revisar();
   }, [guardarYa, revision]);
+  /** Lo que escribes tú en la tarjeta cuando ninguna sugerencia sirve. */
+  const [propia, setPropia] = useState("");
   const capaRev = useRef<HTMLDivElement | null>(null);
   const rafRev = useRef(0);
 
@@ -646,7 +648,11 @@ export default function DocEditor({
 
   /** Repinta todos los hallazgos. Se llama al entrar, al cambiar la lista y al scrollear. */
   const pintarRevision = useCallback(() => {
-    if (!editor || !revision.revisando || !revision.hallazgos.length) return limpiarRevision();
+    // El subrayado NO depende del modo revisión: Word y Docs marcan las faltas siempre, y
+    // el modo revisión es sólo el recorrido. Verlas es lo que hace que el corrector sirva
+    // mientras escribes; lo que la gente apaga de Grammarly son las reescrituras de
+    // estilo, no que le señalen una falta de ortografía.
+    if (!editor || !revision.hallazgos.length) return limpiarRevision();
     let capaEl = capaRev.current;
     if (!capaEl) {
       capaEl = document.createElement("div");
@@ -679,7 +685,7 @@ export default function DocEditor({
   // recalcular sus rangos 60 veces por segundo se come el scroll.
   useEffect(() => {
     pintarRevision();
-    if (!revision.revisando) return;
+    if (!revision.hallazgos.length) return;
     const box = caja();
     let pendiente = false;
     const alMover = () => {
@@ -696,9 +702,48 @@ export default function DocEditor({
       box?.removeEventListener("scroll", alMover);
       window.removeEventListener("resize", alMover);
     };
-  }, [pintarRevision, revision.revisando, caja]);
+  }, [pintarRevision, revision.hallazgos.length, caja]);
 
   useEffect(() => () => limpiarRevision(), [limpiarRevision]);
+
+  /**
+   * Clic en una palabra subrayada → su tarjeta.
+   *
+   * Es EL gesto de Word y Docs: la gente corrige así casi siempre, y el panel queda para
+   * la pasada final. Va delegado en el documento y no en la capa porque la capa es
+   * `pointer-events:none` a propósito — si capturara el cursor, no podrías poner el
+   * cursor de texto sobre una palabra marcada.
+   *
+   * Se resuelve por COORDENADAS contra los rangos de los hallazgos de ese bloque: es lo
+   * único fiable cuando la palabra puede estar partida en dos líneas.
+   */
+  useEffect(() => {
+    const raiz = scroller.current;
+    if (!raiz || !revision.hallazgos.length) return;
+    const alClic = (e: MouseEvent) => {
+      const nodo = (e.target as Element | null)?.closest?.(".gt-doc [data-id]") as HTMLElement | null;
+      const id = nodo?.getAttribute("data-id");
+      if (!id) return;
+      const candidatos = revision.hallazgos.filter((h) => h.blockId === id);
+      if (!candidatos.length) return;
+      for (const h of candidatos) {
+        const rango = rangoEnBloque(nodo!, h.offset, h.length);
+        if (!rango) continue;
+        const dentro = Array.from(rango.getClientRects()).some(
+          (r) => e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom,
+        );
+        if (!dentro) continue;
+        const i = revision.hallazgos.findIndex((x) => x.id === h.id);
+        if (i >= 0) {
+          revision.setActual(i);
+          revision.entrar();
+        }
+        return;
+      }
+    };
+    raiz.addEventListener("click", alClic);
+    return () => raiz.removeEventListener("click", alClic);
+  }, [revision]);
 
   /**
    * Lleva la vista al hallazgo actual.
@@ -712,6 +757,7 @@ export default function DocEditor({
    * render y el efecto se dispararía sin parar.
    */
   const idActual = revision.actual?.id;
+  useEffect(() => setPropia(""), [idActual]);
   useEffect(() => {
     const h = revision.actual;
     if (!h || !revision.revisando) return;
@@ -762,6 +808,24 @@ export default function DocEditor({
     [editor, revision],
   );
 
+  /**
+   * Aplica la misma corrección a TODAS las apariciones de esa palabra.
+   *
+   * Se recorre de atrás hacia delante dentro de cada bloque: corregir desplaza los offsets
+   * de lo que viene después, y empezando por el final ese desplazamiento no llega a
+   * importar. (`resolver` ya recoloca los que quedan, pero aquí se aplican varias seguidas
+   * sobre el mismo texto y el orden es lo que lo hace fiable.)
+   */
+  const cambiarTodas = useCallback(
+    (h: Hallazgo, sugerencia: string) => {
+      const todos = [...revision.iguales(h)].sort(
+        (a, b) => (a.blockId === b.blockId ? b.offset - a.offset : 0),
+      );
+      for (const x of todos) aplicarSugerencia(x, sugerencia);
+    },
+    [revision, aplicarSugerencia],
+  );
+
   // ── De un NODO a su índice de bloque ────────────────────────────────────────
   //
   // `marcarIndices` hace el camino de ida (índice → id → nodo). Esto es la vuelta, y es lo
@@ -777,6 +841,17 @@ export default function DocEditor({
     },
     [editor],
   );
+
+  // Al abrir el documento se revisa en segundo plano: las faltas aparecen subrayadas sin
+  // que haya que pedirlo, como en cualquier procesador de textos. `revisar(true)` cuenta y
+  // subraya, pero NO enciende el modo revisión — ése sigue siendo un gesto explícito.
+  const yaRevisado = useRef(false);
+  useEffect(() => {
+    if (!documentId || streaming || yaRevisado.current) return;
+    yaRevisado.current = true;
+    void revision.revisar(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [documentId, streaming]);
 
   // Precalentado: la caja de voz hiberna a los 900 s y el primer play pagaría el resume
   // encima de la síntesis. Se despierta al abrir el documento; la guarda de los 5 minutos
@@ -1270,7 +1345,7 @@ export default function DocEditor({
           <p className="mt-1.5 text-sm text-ink">
             <span className="rounded bg-amber-500/20 px-1 font-medium">{revision.actual.palabra}</span>
           </p>
-          <div className="mt-2 flex flex-wrap gap-1.5">
+          <div className="mt-2 flex flex-wrap items-center gap-1.5">
             {revision.actual.sugerencias.length ? (
               revision.actual.sugerencias.map((s) => (
                 <button
@@ -1289,15 +1364,74 @@ export default function DocEditor({
             )}
             <button
               type="button"
-              // Ignora ESTA y todas las iguales del documento: un nombre propio sale
-              // cinco veces y preguntarlo cinco veces no aporta nada.
-              onClick={() => revision.resolver(revision.actual!, 0, true)}
+              // Ignorar es SÓLO ésta, que es lo que la palabra promete. "Todas" está
+              // justo al lado, en segundo plano, para que no se pulse sin querer.
+              onClick={() => revision.resolver(revision.actual!, 0)}
               className="rounded-md px-2 py-0.5 text-xs text-muted transition hover:text-ink"
-              title={t("Ignorar esta palabra en todo el documento")}
+              title={t("Ignorar sólo esta vez")}
             >
               {t("Ignorar")}
             </button>
           </div>
+
+          {/* Tu propia corrección. Word lo tiene en su panel y ahorra el viaje "cierro la
+              tarjeta, busco la palabra en el documento, la edito a mano" — que además te
+              hace perder el sitio en un escrito largo. */}
+          <form
+            className="mt-2 flex items-center gap-1.5"
+            onSubmit={(e) => {
+              e.preventDefault();
+              const v = propia.trim();
+              if (!v || !revision.actual) return;
+              aplicarSugerencia(revision.actual, v);
+              setPropia("");
+            }}
+          >
+            <input
+              value={propia}
+              onChange={(e) => setPropia(e.target.value)}
+              placeholder={t("Escribir otra…")}
+              className="min-w-0 flex-1 rounded-md border border-border bg-surface-3 px-2 py-1 text-xs text-ink outline-none focus:border-brand"
+            />
+            <button
+              type="submit"
+              disabled={!propia.trim()}
+              className="rounded-md bg-ink px-2 py-1 text-xs font-semibold text-surface transition hover:opacity-90 disabled:opacity-40"
+            >
+              {t("Aplicar")}
+            </button>
+          </form>
+
+          {/* Las acciones "para todas" van abajo y en tono menor: son las que más ahorran
+              y las que peor se sienten si se disparan por accidente. Sólo aparecen cuando
+              la palabra sale más de una vez, que es cuando significan algo. */}
+          {revision.iguales(revision.actual).length > 1 ? (
+            <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-border pt-2 text-[11px] text-muted">
+              <span>
+                {t("{n} veces en el documento").replace(
+                  "{n}",
+                  String(revision.iguales(revision.actual).length),
+                )}
+              </span>
+              {revision.actual.sugerencias[0] ? (
+                <button
+                  type="button"
+                  onClick={() => cambiarTodas(revision.actual!, revision.actual!.sugerencias[0])}
+                  className="font-semibold text-brand transition hover:underline"
+                >
+                  {t("Cambiar todas")}
+                </button>
+              ) : null}
+              <button
+                type="button"
+                onClick={() => revision.resolver(revision.actual!, 0, true)}
+                className="transition hover:text-ink"
+                title={t("Ignorar esta palabra en todo el documento")}
+              >
+                {t("Ignorar todas")}
+              </button>
+            </div>
+          ) : null}
         </div>
       ) : null}
 
