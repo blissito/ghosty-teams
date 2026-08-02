@@ -545,27 +545,46 @@ export default function DocEditor({
   // Va por delegación sobre el contenedor y NO por el side menu de BlockNote: ése se apaga
   // con `editable=false`, y leer en voz alta un documento que sólo puedes VER (una versión
   // vieja, un documento compartido) es justo uno de los casos que se pidieron.
+  //
+  // Va al margen DERECHO del párrafo: el izquierdo ya es de BlockNote (el `+` y el asa de
+  // arrastre), y ahí la bocina se les encimaba.
   const [bocina, setBocina] = useState<{ i: number; top: number; left: number } | null>(null);
+  const bocinaOff = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Ir hacia la bocina obliga a salir del párrafo, y el botón vive FUERA del contenedor
+  // (es `fixed`), así que ocultarla en cuanto el cursor deja el texto la volvía imposible
+  // de pulsar: desaparecía justo al ir a por ella. Se apaga con retardo, y entrar en el
+  // botón cancela el retardo.
+  const cancelarOcultar = useCallback(() => {
+    if (bocinaOff.current) clearTimeout(bocinaOff.current);
+    bocinaOff.current = null;
+  }, []);
   useEffect(() => {
     const raiz = scroller.current;
     if (!raiz || !documentId || streaming) return;
     const sobre = (e: MouseEvent) => {
       const el = (e.target as Element | null)?.closest?.(".gt-doc [data-id]") as HTMLElement | null;
       const i = el ? indiceDeNodo(el) : null;
-      if (i == null || !el) return setBocina(null);
+      if (i == null || !el) {
+        if (!bocinaOff.current) bocinaOff.current = setTimeout(() => setBocina(null), 400);
+        return;
+      }
+      cancelarOcultar();
       const r = el.getBoundingClientRect();
       setBocina((prev) =>
-        prev && prev.i === i ? prev : { i, top: Math.round(r.top + 1), left: Math.round(r.left - 30) },
+        prev && prev.i === i ? prev : { i, top: Math.round(r.top + 1), left: Math.round(r.right + 10) },
       );
     };
-    const fuera = () => setBocina(null);
+    const fuera = () => {
+      if (!bocinaOff.current) bocinaOff.current = setTimeout(() => setBocina(null), 400);
+    };
     raiz.addEventListener("mousemove", sobre, { passive: true });
     raiz.addEventListener("mouseleave", fuera);
     return () => {
       raiz.removeEventListener("mousemove", sobre);
       raiz.removeEventListener("mouseleave", fuera);
+      cancelarOcultar();
     };
-  }, [documentId, streaming, indiceDeNodo]);
+  }, [documentId, streaming, indiceDeNodo, cancelarOcultar]);
 
   // Al scrollear, el rect guardado deja de valer. Se esconde y vuelve al primer movimiento
   // del ratón: recalcularlo en cada scroll sería pintar una bocina que persigue al dedo.
@@ -809,7 +828,11 @@ export default function DocEditor({
           type="button"
           style={{ position: "fixed", top: bocina.top, left: bocina.left }}
           onClick={() => voz.empezarEn(bocina.i)}
-          onPointerEnter={voz.cebar}
+          onPointerEnter={() => {
+            cancelarOcultar();
+            voz.cebar();
+          }}
+          onPointerLeave={() => setBocina(null)}
           aria-label={t("Leer desde este párrafo")}
           title={t("Leer desde este párrafo")}
           className="z-[70] rounded-full border border-border bg-surface/95 p-1 text-muted shadow-sm backdrop-blur transition hover:text-brand"
