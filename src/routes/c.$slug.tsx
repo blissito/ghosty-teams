@@ -7925,6 +7925,16 @@ function EditBox({ m, onDone }: { m: Message; onDone: () => void }) {
   const t = useT();
   const { editMsg } = useContext(ChatCtx);
   const [val, setVal] = useState(m.body);
+  // `autoFocus` enfoca pero deja el caret en 0, así que al editar el cursor aparecía
+  // ANTES de la primera letra y escribir metía el texto al revés. Se coloca a mano al
+  // final, que es donde lo pone cualquier chat cuando editas.
+  const caja = useRef<HTMLTextAreaElement>(null);
+  useEffect(() => {
+    const el = caja.current;
+    if (!el) return;
+    el.focus();
+    el.setSelectionRange(el.value.length, el.value.length);
+  }, []);
   function save() {
     if (!val.trim()) return;
     editMsg(m, val.trim()); // optimista: patch local + server en bg, cierra al instante
@@ -7933,7 +7943,7 @@ function EditBox({ m, onDone }: { m: Message; onDone: () => void }) {
   return (
     <div className="mt-1">
       <textarea
-        autoFocus
+        ref={caja}
         value={val}
         onChange={(e) => setVal(e.target.value)}
         onKeyDown={(e) => {
