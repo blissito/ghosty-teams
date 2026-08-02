@@ -248,6 +248,8 @@ export const en: Record<string, string> = {
   "Grande": "Large",
   "Guardado": "Saved",
   "Guardando…": "Saving…",
+  "Sin guardar": "Unsaved",
+  "No se pudo guardar": "Couldn't save",
   "Guardar": "Save",
   "Guardar cambios": "Save changes",
   "Guardar prompt": "Save prompt",

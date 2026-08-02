@@ -355,6 +355,9 @@ export default function ArtifactPanel({
   const [refreshTick, setRefreshTick] = useState(0); // botón "refrescar" del header (re-fetch manual)
   const [downloading, setDownloading] = useState(false); // el export docx es lento → spinner
   const [copied, setCopied] = useState(false); // feedback del botón "Copiar enlace" del artefacto HTML
+  // Estado del autoguardado del documento, para pintarlo EN LA BARRA — junto a los iconos,
+  // que es donde lo ponen Google Docs y Word y donde la gente lo busca. Lo sube DocSurface.
+  const [guardadoDoc, setGuardadoDoc] = useState<"pendiente" | "guardando" | "ok" | "error" | null>(null);
   // Link ÚNICO del artefacto: su página /artefacto/<slug>. Se resuelve al abrir un
   // artefacto (acuña el slug si aún no tenía, sin tocar los permisos) para que
   // "abrir" y "copiar enlace" nunca vuelvan a repartir el /t3/<key> crudo.
@@ -1272,6 +1275,26 @@ export default function ArtifactPanel({
                         {/* Acciones estilo claude.ai: iconos en el header (no barra abajo). La EDICIÓN
                     de un doc/hoja del agente se hace CHATEANDO (se re-redacta en vivo) — sin
                     editor embebido. Aquí solo Descargar y, para un .docx adjunto, Actualizar. */}
+                        {/* El autoguardado, EN TEXTO y junto a los iconos. Escribir en un
+                            documento y no recibir ninguna señal deja la duda de si se
+                            guardó, y "se guarda solo" hay que demostrarlo. El error NO se
+                            desvanece —lo quita el siguiente guardado bueno—: perder texto
+                            en silencio es lo peor que puede pasarle a un documento. */}
+                        {guardadoDoc ? (
+                          <span
+                            className={`mr-1 whitespace-nowrap text-xs ${
+                              guardadoDoc === "error" ? "text-red-400" : "text-muted"
+                            }`}
+                          >
+                            {guardadoDoc === "pendiente"
+                              ? t("Sin guardar")
+                              : guardadoDoc === "guardando"
+                                ? t("Guardando…")
+                                : guardadoDoc === "ok"
+                                  ? t("Guardado")
+                                  : t("No se pudo guardar")}
+                          </span>
+                        ) : null}
                         {isDocLike ? (
                           <>
                             {downloadHref ? (
@@ -1861,6 +1884,7 @@ export default function ArtifactPanel({
                         title={artifact.title}
                         patchRefs={artifact.patchRefs}
                         version={artifact.versionId}
+                        onGuardado={setGuardadoDoc}
                       />
                     ) : artifact.kind === "artifact" ? (
                       // Artefacto HTML interactivo. Modo Ver: iframe AISLADO (sandbox sin

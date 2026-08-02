@@ -995,9 +995,10 @@ export default function DocEditor({
         </button>
       ) : null}
 
-      {/* Autoguardado, abajo a la izquierda: discreto pero presente. El error NO se
-          desvanece (lo quita el siguiente guardado bueno) — perder texto en silencio es
-          lo peor que puede pasarle a un documento. */}
+      {/* Autoguardado. Vive en la BARRA del panel, junto a los iconos (lo sube DocSurface
+          por `onGuardado`), que es donde lo ponen Google Docs y Word y donde la gente lo
+          busca. Esta copia flotante de abajo a la izquierda se queda sólo para cuando el
+          editor se monta fuera del panel — ahí no hay barra donde pintarlo. */}
       {guardado ? (
         <div
           style={posBoton ? { position: "fixed", left: posBoton.left, top: posBoton.top } : undefined}

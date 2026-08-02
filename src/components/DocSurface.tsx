@@ -52,6 +52,7 @@ export default function DocSurface({
   title,
   patchRefs,
   version,
+  onGuardado,
 }: {
   /** Crudo de `gc_artifacts.md` o del fence: sobre JSON o markdown. */
   md: string;
@@ -107,6 +108,11 @@ export default function DocSurface({
   // señal deja la duda de si se guardó — y la respuesta "se guarda solo" hay que
   // demostrarla, no prometerla.
   const [guardado, setGuardado] = useState<"pendiente" | "guardando" | "ok" | "error" | null>(null);
+
+  // Hacia la barra del panel, que es donde la gente lo busca (ver `onGuardado`).
+  useEffect(() => {
+    onGuardado?.(guardado);
+  }, [guardado, onGuardado]);
 
   // Devuelve la promesa del guardado: el "leer en voz alta" la espera. El audio lo
   // sintetiza el SERVIDOR desde el documento guardado, así que darle a la bocina con una
@@ -198,7 +204,9 @@ export default function DocSurface({
         onChange={onChange}
         highlightIds={marcar}
         patchRefs={patchRefs}
-        guardado={guardado}
+        // Si hay barra que lo pinte (`onGuardado`), el editor no repite el indicador
+        // flotante: dos avisos del mismo hecho en la misma pantalla es ruido.
+        guardado={onGuardado ? null : guardado}
         // Antes de leer en voz alta hay que guardar: si no, se escucha el texto anterior.
         guardarYa={flush}
         // Para el "leer en voz alta": el audio lo sintetiza el servidor desde ESTE
