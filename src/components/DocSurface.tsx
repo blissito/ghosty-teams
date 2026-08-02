@@ -75,9 +75,36 @@ export default function DocSurface({
    */
   onGuardado?: (estado: "pendiente" | "guardando" | "ok" | "error" | null) => void;
 }) {
+  // ── Mientras una persona escribe, el servidor NO manda ──────────────────────
+  //
+  // Cada guardado publica un `refresh` al room o al DM, el room recarga sus mensajes y
+  // este `md` cambia. Si eso entra mientras alguien teclea, el reconciliador aplica el
+  // documento del SERVIDOR encima de lo que se está escribiendo: se pierden las teclas
+  // posteriores al guardado y, peor, se rompe la COMPOSICIÓN — que es como se escribe un
+  // acento (tecla muerta + vocal). Se veía como "no puedo poner acentos".
+  //
+  // Es un estrago que sólo apareció al arreglar el guardado en DMs: sin guardados no había
+  // eco que volviera. Mientras haya una edición humana en vuelo se congela lo que entra;
+  // en cuanto el guardado termina, el valor nuevo pasa. El streaming del agente sí entra
+  // siempre: ahí el documento no es editable y lo que llega es el trabajo que se espera.
+  const [mdVisto, setMdVisto] = useState(md);
+  const escribiendo = useRef(false);
+  const ultimoMd = useRef(md);
+  useEffect(() => {
+    ultimoMd.current = md;
+    if (escribiendo.current && !streaming) return;
+    setMdVisto(md);
+  }, [md, streaming]);
+
+  /** Congela lo que entra; `false` lo descongela con lo último que haya llegado. */
+  const congelar = useCallback((v: boolean) => {
+    escribiendo.current = v;
+    if (!v) setMdVisto(ultimoMd.current);
+  }, []);
+
   // El sobre se parsea en cada render, pero es sólo un JSON.parse del string que ya
   // tenemos, y `md` cambia poco cuando NO se está streameando.
-  const envelope = useMemo(() => parseDocEnvelope(md), [md]);
+  const envelope = useMemo(() => parseDocEnvelope(mdVisto), [mdVisto]);
 
   // Markdown amortiguado: sólo se usa cuando no hay sobre. Durante el stream llegan
   // muchos ticks por segundo y cada uno costaría un parseo a bloques.
@@ -127,6 +154,10 @@ export default function DocSurface({
     return updateDocBlocksFn({ data: { documentId, blocks, messageId, title } })
       .then(() => {
         setGuardado("ok");
+        // El eco del bus llega poco DESPUÉS del guardado, así que la congelación tiene que
+        // sobrevivirle un momento: soltarla al terminar dejaría entrar justo el `refresh`
+        // que este guardado provocó.
+        setTimeout(() => congelar(false), 1500);
         // Se va solo: un "Guardado" permanente deja de comunicar a los diez segundos.
         setTimeout(() => setGuardado((s) => (s === "ok" ? null : s)), 2600);
       })
@@ -134,13 +165,16 @@ export default function DocSurface({
         console.error("[doc] no se pudo guardar", e);
         // El error NO se desvanece: perder texto en silencio es lo peor que puede pasar.
         setGuardado("error");
+        // Y NO se descongela: si el guardado falló, lo del servidor es más viejo que lo que
+        // hay en pantalla. Dejarlo entrar borraría el texto que no se pudo guardar.
       });
-  }, [documentId, messageId, title]);
+  }, [documentId, messageId, title, congelar]);
 
   const onChange = useCallback(
     (blocks: DocBlock[]) => {
       if (!documentId) return;
       pending.current = blocks;
+      congelar(true);
       // Señal INMEDIATA: el cambio ya está registrado aunque el guardado espere al
       // debounce. Sin esto la persona escribe y no pasa nada visible durante segundos.
       setGuardado((g) => (g === "guardando" ? g : "pendiente"));
@@ -150,7 +184,7 @@ export default function DocSurface({
       const since = Date.now() - lastSaved.current;
       saveTimer.current = setTimeout(flush, Math.max(SAVE_IDLE_MS, SAVE_MIN_INTERVAL_MS - since));
     },
-    [documentId, flush],
+    [documentId, flush, congelar],
   );
 
   // Cerrar el panel, cambiar de pestaña o recargar NO puede perder lo escrito: ahí se
