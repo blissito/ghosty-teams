@@ -329,7 +329,10 @@ export default function DocEditor({
       limpiarMarca();
       const capaEl = document.createElement("div");
       capaEl.dataset.gtMarca = "1";
-      capaEl.style.cssText = "position:fixed;inset:0;pointer-events:none;z-index:60";
+      // ⚠️ Por ENCIMA del panel expandido, que es `z-[100]` (ArtifactPanel). La capa vive en
+      // `document.body`, o sea que compite con él: con z-index 60 el resaltado quedaba
+      // literalmente debajo y desaparecía al ampliar — que es cuando más se quiere ver.
+      capaEl.style.cssText = "position:fixed;inset:0;pointer-events:none;z-index:120";
       const cajas = nodos.map(() => {
         const d = document.createElement("div");
         d.className = "gt-cambio";
