@@ -643,11 +643,22 @@ export default function DocEditor({
     }
     capaEl.textContent = "";
     const actualId = revision.actual?.id;
+    // Traza temporal: el subrayado no aparecía y desde la pantalla no hay forma de saber
+    // en cuál de los tres pasos muere (bloque no encontrado / rango nulo / rects vacíos).
+    let sinNodo = 0;
+    let sinRango = 0;
+    let cajas = 0;
     for (const h of revision.hallazgos) {
       const nodo = document.querySelector<HTMLElement>(`.gt-doc [data-id="${CSS.escape(h.blockId)}"]`);
-      if (!nodo || !document.contains(nodo)) continue;
+      if (!nodo || !document.contains(nodo)) {
+        sinNodo++;
+        continue;
+      }
       const rango = rangoEnBloque(nodo, h.offset, h.length);
-      if (!rango) continue;
+      if (!rango) {
+        sinRango++;
+        continue;
+      }
       // Un rect por línea: una palabra partida al final del renglón son dos.
       for (const r of Array.from(rango.getClientRects())) {
         if (!r.width) continue;
@@ -655,8 +666,12 @@ export default function DocEditor({
         d.className = h.id === actualId ? "gt-ortografia gt-ortografia-actual" : "gt-ortografia";
         d.style.cssText = `position:fixed;left:${r.left}px;top:${r.top}px;width:${r.width}px;height:${r.height}px`;
         capaEl.appendChild(d);
+        cajas++;
       }
     }
+    console.debug(
+      `[revision] ${revision.hallazgos.length} hallazgos → ${cajas} cajas · sin nodo: ${sinNodo} · sin rango: ${sinRango}`,
+    );
   }, [editor, revision.revisando, revision.hallazgos, revision.actual, limpiarRevision]);
 
   // Se repinta en scroll y resize, NO en un rAF continuo: con decenas de hallazgos,
