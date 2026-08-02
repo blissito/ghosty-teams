@@ -58,6 +58,20 @@ describe("rangoEnBloque", () => {
     expect(rangoEnBloque(b, 4, 3)?.toString()).toBe("dos");
   });
 
+  it("funciona con el `data-id` repetido en dos niveles del MISMO bloque", () => {
+    // Éste es el caso que rompía en producción: comparando identidad de elemento, el
+    // `closest` de los nodos de texto devolvía el interno y no el que buscó el
+    // querySelector, así que se rechazaban TODOS y no se pintaba una sola marca.
+    const b = montar(
+      `<div class="bn-block-outer" data-id="b1">
+         <div class="bn-block" data-id="b1">
+           <div class="bn-block-content"><p class="bn-inline-content">una prueva aqui</p></div>
+         </div>
+       </div>`,
+    );
+    expect(rangoEnBloque(b, 4, 6)?.toString()).toBe("prueva");
+  });
+
   it("un offset fuera de rango devuelve null en vez de señalar cualquier cosa", () => {
     const b = montar(parrafo("corto"));
     expect(rangoEnBloque(b, 10, 3)).toBeNull();

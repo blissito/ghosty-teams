@@ -18,11 +18,18 @@
  */
 function nodosDeTexto(bloque: HTMLElement): Text[] {
   const out: Text[] = [];
+  // ⚠️ Se compara el VALOR del `data-id`, no la identidad del elemento. BlockNote repite
+  // el atributo en más de un nivel del mismo bloque (el contenedor y el que lleva el
+  // contenido), así que exigir `closest(...) === bloque` rechazaba TODOS los nodos de
+  // texto: cero posiciones, ningún rango, ni un subrayado. Y desde fuera se veía igual
+  // que si el cálculo estuviera mal.
+  const mio = bloque.getAttribute("data-id");
   const walker = document.createTreeWalker(bloque, NodeFilter.SHOW_TEXT, {
     acceptNode(n) {
-      // ¿Pertenece a un bloque anidado? Entonces no es nuestro.
+      // ¿Pertenece a un bloque ANIDADO (otro id)? Entonces no es nuestro.
       const dueño = n.parentElement?.closest("[data-id]");
-      return dueño === bloque ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
+      const id = dueño?.getAttribute("data-id");
+      return !id || id === mio ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
     },
   });
   for (let n = walker.nextNode(); n; n = walker.nextNode()) out.push(n as Text);

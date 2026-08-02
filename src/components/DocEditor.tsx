@@ -636,6 +636,10 @@ export default function DocEditor({
   }, [guardarYa, revision]);
   const capaRev = useRef<HTMLDivElement | null>(null);
   const rafRev = useRef(0);
+  // Diagnóstico TEMPORAL del subrayado, en pantalla y no en consola: los tres motivos por
+  // los que puede no pintarse se ven igual desde fuera (no pasa nada), y pedir la consola
+  // en cada intento es un ida y vuelta por bug.
+  const [diag, setDiag] = useState("");
 
   const limpiarRevision = useCallback(() => {
     if (rafRev.current) cancelAnimationFrame(rafRev.current);
@@ -685,9 +689,9 @@ export default function DocEditor({
         cajas++;
       }
     }
-    console.debug(
-      `[revision] ${revision.hallazgos.length} hallazgos → ${cajas} cajas · sin nodo: ${sinNodo} · sin rango: ${sinRango}`,
-    );
+    const resumen = `${revision.hallazgos.length}h·${cajas}c·${sinNodo}sn·${sinRango}sr`;
+    console.debug(`[revision] ${resumen}`);
+    setDiag(resumen);
   }, [editor, revision.revisando, revision.hallazgos, revision.actual, limpiarRevision]);
 
   // Se repinta en scroll y resize, NO en un rAF continuo: con decenas de hallazgos,
@@ -1264,6 +1268,9 @@ export default function DocEditor({
           {revision.error ? (
             <span className="px-1.5 text-[11px] text-red-400">{t(revision.error)}</span>
           ) : null}
+          {/* TEMPORAL: hallazgos·cajas pintadas·sin nodo·sin rango. Se quita en cuanto el
+              subrayado esté. */}
+          {diag ? <span className="px-1 text-[10px] tabular-nums text-muted/70">{diag}</span> : null}
         </div>
       ) : null}
 
