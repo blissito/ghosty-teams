@@ -483,6 +483,11 @@ export default function DocEditor({
   // manda es el audio — mientras suena el párrafo, el párrafo está marcado.
   /** El párrafo que suena ahora mismo, para que su bocina sea un stop y no un play. */
   const [leyendoI, setLeyendoI] = useState<number | null>(null);
+  // El párrafo que se acaba de PEDIR. Entre el clic y el primer sonido puede haber un par
+  // de segundos de síntesis, y sin esto la bocina se queda igual: parece que no registró
+  // el clic y la gente vuelve a pulsar. `leyendoI` no sirve aquí — se fija cuando el audio
+  // YA empezó, o sea justo cuando el spinner deja de hacer falta.
+  const [pedidoI, setPedidoI] = useState<number | null>(null);
 
   const marcarLectura = useCallback(
     (i: number) => {
@@ -504,6 +509,7 @@ export default function DocEditor({
 
   const finLectura = useCallback(() => {
     setLeyendoI(null);
+    setPedidoI(null);
     marca.current = null;
     limpiarMarca();
   }, [limpiarMarca]);
@@ -734,6 +740,9 @@ export default function DocEditor({
   const live = editable && !streaming;
   /** ¿El párrafo que la bocina señala es justo el que se está leyendo? */
   const sonando = !!bocina && leyendoI === bocina.i && voz.leyendo;
+  /** Se pidió este párrafo y su voz todavía viene en camino. */
+  const cargandoAqui =
+    !!bocina && voz.estado === "cargando" && (pedidoI === bocina.i || leyendoI === bocina.i);
 
   return (
     // `relative` para el botón flotante; el que scrollea es el hijo, no este.
@@ -895,7 +904,11 @@ export default function DocEditor({
           // `onPointerDown` y no `onClick`: entre el down y el up puede llegar un scroll
           // automático de la lectura en curso, y un botón que se recoloca a media pulsación
           // no llega a emitir el click. Así la orden sale en cuanto se aprieta.
-          onPointerDown={() => (sonando ? voz.parar() : voz.empezarEn(bocina.i))}
+          onPointerDown={() => {
+            if (sonando) return voz.parar();
+            setPedidoI(bocina.i);
+            voz.empezarEn(bocina.i);
+          }}
           onPointerEnter={() => {
             sobreBocina.current = true;
             cancelarOcultar();
@@ -911,7 +924,13 @@ export default function DocEditor({
           // icono en el margen, apuntarle era un ejercicio de puntería.
           className="z-[70] rounded-full border border-border bg-surface/95 p-1.5 text-muted shadow-sm backdrop-blur transition before:absolute before:-inset-3 before:content-[''] hover:text-brand"
         >
-          {sonando ? <Square size={12} strokeWidth={0} className="fill-current" /> : <Volume2 size={14} />}
+          {cargandoAqui ? (
+            <Loader2 size={14} className="animate-spin" />
+          ) : sonando ? (
+            <Square size={12} strokeWidth={0} className="fill-current" />
+          ) : (
+            <Volume2 size={14} />
+          )}
         </button>
       ) : null}
 
