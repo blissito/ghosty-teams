@@ -481,8 +481,12 @@ export default function DocEditor({
   // Reusa la MISMA capa de resaltado que el cambio quirúrgico, con una diferencia que
   // importa: aquí la marca NO se desvanece sola ni espera a que la persona mire. Lo que
   // manda es el audio — mientras suena el párrafo, el párrafo está marcado.
+  /** El párrafo que suena ahora mismo, para que su bocina sea un stop y no un play. */
+  const [leyendoI, setLeyendoI] = useState<number | null>(null);
+
   const marcarLectura = useCallback(
     (i: number) => {
+      setLeyendoI(i);
       // `hasta: Infinity` para que el reconciliador la vuelva a poner si el documento se
       // repinta a media lectura (un autoguardado, una republicación del agente).
       marca.current = { indices: [i], hasta: Number.POSITIVE_INFINITY };
@@ -499,6 +503,7 @@ export default function DocEditor({
   );
 
   const finLectura = useCallback(() => {
+    setLeyendoI(null);
     marca.current = null;
     limpiarMarca();
   }, [limpiarMarca]);
@@ -556,9 +561,26 @@ export default function DocEditor({
   // (es `fixed`), así que ocultarla en cuanto el cursor deja el texto la volvía imposible
   // de pulsar: desaparecía justo al ir a por ella. Se apaga con retardo, y entrar en el
   // botón cancela el retardo.
+  //
+  // ⚠️ El flag `sobreBocina` no es redundante con cancelar el temporizador. Al ir del
+  // texto al botón se disparan DOS eventos —`pointerenter` del botón y `mouseleave` del
+  // contenedor— y el segundo llega después: cancelar en el `enter` no servía de nada,
+  // porque el `leave` volvía a programar el apagado y ya no quedaba nadie para cancelarlo.
+  // La bocina se desvanecía justo con el cursor encima.
+  const sobreBocina = useRef(false);
   const cancelarOcultar = useCallback(() => {
     if (bocinaOff.current) clearTimeout(bocinaOff.current);
     bocinaOff.current = null;
+  }, []);
+  const ocultarLuego = useCallback(() => {
+    if (bocinaOff.current) return;
+    bocinaOff.current = setTimeout(() => {
+      bocinaOff.current = null;
+      if (!sobreBocina.current) setBocina(null);
+      // Un segundo entero: el recorrido del texto al botón pasa por zona muerta, y que se
+      // apague a medio camino es lo que hacía imposible pulsarla. Sobra tiempo antes de que
+      // estorbe — se va sola en cuanto el cursor toca otro párrafo.
+    }, 1000);
   }, []);
   useEffect(() => {
     const raiz = scroller.current;
@@ -579,7 +601,7 @@ export default function DocEditor({
       }
       const i = el ? indiceDeNodo(el) : null;
       if (i == null || !el) {
-        if (!bocinaOff.current) bocinaOff.current = setTimeout(() => setBocina(null), 400);
+        ocultarLuego();
         return;
       }
       cancelarOcultar();
@@ -590,7 +612,7 @@ export default function DocEditor({
       );
     };
     const fuera = () => {
-      if (!bocinaOff.current) bocinaOff.current = setTimeout(() => setBocina(null), 400);
+      ocultarLuego();
     };
     raiz.addEventListener("mousemove", sobre, { passive: true });
     raiz.addEventListener("mouseleave", fuera);
@@ -710,6 +732,8 @@ export default function DocEditor({
   }, [editor, editable, notify]);
 
   const live = editable && !streaming;
+  /** ¿El párrafo que la bocina señala es justo el que se está leyendo? */
+  const sonando = !!bocina && leyendoI === bocina.i && voz.leyendo;
 
   return (
     // `relative` para el botón flotante; el que scrollea es el hijo, no este.
@@ -861,6 +885,9 @@ export default function DocEditor({
       {/* La bocina del párrafo bajo el cursor: empieza a leer AHÍ. Sin esto, la única
           lectura posible era desde el principio del documento, que en un escrito de 100
           bloques equivale a no poder elegir. */}
+      {/* Si el párrafo señalado es el que SUENA, la bocina es un stop: ahí el gesto obvio
+          es callar lo que estás oyendo, no volver a empezarlo. En cualquier otro párrafo
+          sigue siendo un play, que además salta la lectura a ese punto. */}
       {bocina && !streaming ? (
         <button
           type="button"
@@ -868,21 +895,23 @@ export default function DocEditor({
           // `onPointerDown` y no `onClick`: entre el down y el up puede llegar un scroll
           // automático de la lectura en curso, y un botón que se recoloca a media pulsación
           // no llega a emitir el click. Así la orden sale en cuanto se aprieta.
-          onPointerDown={() => voz.empezarEn(bocina.i)}
+          onPointerDown={() => (sonando ? voz.parar() : voz.empezarEn(bocina.i))}
           onPointerEnter={() => {
+            sobreBocina.current = true;
             cancelarOcultar();
             voz.cebar();
           }}
           onPointerLeave={() => {
-            if (!bocinaOff.current) bocinaOff.current = setTimeout(() => setBocina(null), 400);
+            sobreBocina.current = false;
+            ocultarLuego();
           }}
-          aria-label={t("Leer desde este párrafo")}
-          title={t("Leer desde este párrafo")}
+          aria-label={sonando ? t("Detener la lectura") : t("Leer desde este párrafo")}
+          title={sonando ? t("Detener la lectura") : t("Leer desde este párrafo")}
           // El blanco real es más grande que el círculo (`before:-inset-3`): con 20px de
           // icono en el margen, apuntarle era un ejercicio de puntería.
           className="z-[70] rounded-full border border-border bg-surface/95 p-1.5 text-muted shadow-sm backdrop-blur transition before:absolute before:-inset-3 before:content-[''] hover:text-brand"
         >
-          <Volume2 size={14} />
+          {sonando ? <Square size={12} strokeWidth={0} className="fill-current" /> : <Volume2 size={14} />}
         </button>
       ) : null}
 

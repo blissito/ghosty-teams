@@ -42,11 +42,15 @@ type Pieza = { url: string; n: number };
 
 /** Segmentos por delante que se piden. Ver la nota de arriba: no subir. */
 const VENTANA = 2;
-// Cuántos audios ya traídos se conservan en la pestaña. Una frase pesa decenas de KB, así
-// que 60 son unos pocos MB y cubren de sobra el gesto que importa: volver atrás a
-// re-escuchar un párrafo. Con una ventana corta, retroceder sonaba a espera aunque el
-// servidor tuviera el audio cacheado — el viaje seguía estando.
-const BLOBS_VIVOS = 60;
+// Cuánto audio se conserva en la pestaña. Se cuenta en BYTES y no en número de piezas
+// porque una frase de 8 s pesa 378 KB (wav de 24 kHz, PCM16, medido) y una de 2 s pesa la
+// cuarta parte: un tope "de 60 piezas" tanto puede ser 5 MB como 25.
+//
+// El presupuesto es generoso a propósito. Volver atrás a re-escuchar un párrafo ES el
+// gesto de revisar un documento, y con una ventana corta eso costaba otro viaje al
+// servidor aunque allí el audio estuviera cacheado. Con 120 MB, un documento de tamaño
+// normal se queda entero en la pestaña tras la primera pasada.
+const PRESUPUESTO_BYTES = 120 * 1024 * 1024;
 
 type Opts = {
   documentId?: string;
@@ -93,7 +97,7 @@ export function useReadAloud({ documentId, version, bloques, alBloque, alTermina
   const prefetch = useRef(new Map<string, Promise<Pieza | null>>());
   // Las URLs de blob se revocan al parar y, las ya oídas, sobre la marcha; si no, un
   // documento largo deja decenas de megas colgando en la pestaña.
-  const urls = useRef<{ k: string; url: string }[]>([]);
+  const urls = useRef<{ k: string; url: string; bytes: number }[]>([]);
   const vivo = useRef(true);
   const cadena = useRef<Promise<unknown>>(Promise.resolve());
 
@@ -148,8 +152,9 @@ export function useReadAloud({ documentId, version, bloques, alBloque, alTermina
             return null;
           }
           if (!r.ok) throw new Error(`tts ${r.status}`);
-          const u = URL.createObjectURL(await r.blob());
-          urls.current.push({ k, url: u });
+          const b = await r.blob();
+          const u = URL.createObjectURL(b);
+          urls.current.push({ k, url: u, bytes: b.size });
           reconciliar(g.b, n);
           return { url: u, n };
         })
@@ -202,19 +207,17 @@ export function useReadAloud({ documentId, version, bloques, alBloque, alTermina
    * es EL gesto de revisar, y sin blob hay que ir otra vez al servidor.
    */
   const podar = useCallback(() => {
-    const sobran = urls.current.length - BLOBS_VIVOS;
-    if (sobran <= 0) return;
-    const actual = cola.current[pos.current];
+    let total = urls.current.reduce((s, u) => s + u.bytes, 0);
+    if (total <= PRESUPUESTO_BYTES) return;
     const proteger = new Set(
       cola.current.slice(Math.max(0, pos.current - 2), pos.current + VENTANA + 2).map(clave),
     );
-    if (actual) proteger.add(clave(actual));
-    let quitados = 0;
+    // Se sueltan los más viejos primero, saltando lo que suena ahora y lo que viene.
     urls.current = urls.current.filter((u) => {
-      if (quitados >= sobran || proteger.has(u.k)) return true;
+      if (total <= PRESUPUESTO_BYTES || proteger.has(u.k)) return true;
       URL.revokeObjectURL(u.url);
       prefetch.current.delete(u.k);
-      quitados++;
+      total -= u.bytes;
       return false;
     });
   }, []);
