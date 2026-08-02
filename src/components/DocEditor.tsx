@@ -636,10 +636,6 @@ export default function DocEditor({
   }, [guardarYa, revision]);
   const capaRev = useRef<HTMLDivElement | null>(null);
   const rafRev = useRef(0);
-  // Diagnóstico TEMPORAL del subrayado, en pantalla y no en consola: los tres motivos por
-  // los que puede no pintarse se ven igual desde fuera (no pasa nada), y pedir la consola
-  // en cada intento es un ida y vuelta por bug.
-  const [diag, setDiag] = useState("");
 
   const limpiarRevision = useCallback(() => {
     if (rafRev.current) cancelAnimationFrame(rafRev.current);
@@ -663,22 +659,11 @@ export default function DocEditor({
     }
     capaEl.textContent = "";
     const actualId = revision.actual?.id;
-    // Traza temporal: el subrayado no aparecía y desde la pantalla no hay forma de saber
-    // en cuál de los tres pasos muere (bloque no encontrado / rango nulo / rects vacíos).
-    let sinNodo = 0;
-    let sinRango = 0;
-    let cajas = 0;
     for (const h of revision.hallazgos) {
       const nodo = document.querySelector<HTMLElement>(`.gt-doc [data-id="${CSS.escape(h.blockId)}"]`);
-      if (!nodo || !document.contains(nodo)) {
-        sinNodo++;
-        continue;
-      }
+      if (!nodo || !document.contains(nodo)) continue;
       const rango = rangoEnBloque(nodo, h.offset, h.length);
-      if (!rango) {
-        sinRango++;
-        continue;
-      }
+      if (!rango) continue;
       // Un rect por línea: una palabra partida al final del renglón son dos.
       for (const r of Array.from(rango.getClientRects())) {
         if (!r.width) continue;
@@ -686,12 +671,8 @@ export default function DocEditor({
         d.className = h.id === actualId ? "gt-ortografia gt-ortografia-actual" : "gt-ortografia";
         d.style.cssText = `position:fixed;left:${r.left}px;top:${r.top}px;width:${r.width}px;height:${r.height}px`;
         capaEl.appendChild(d);
-        cajas++;
       }
     }
-    const resumen = `${revision.hallazgos.length}h·${cajas}c·${sinNodo}sn·${sinRango}sr`;
-    console.debug(`[revision] ${resumen}`);
-    setDiag(resumen);
   }, [editor, revision.revisando, revision.hallazgos, revision.actual, limpiarRevision]);
 
   // Se repinta en scroll y resize, NO en un rAF continuo: con decenas de hallazgos,
@@ -1268,9 +1249,6 @@ export default function DocEditor({
           {revision.error ? (
             <span className="px-1.5 text-[11px] text-red-400">{t(revision.error)}</span>
           ) : null}
-          {/* TEMPORAL: hallazgos·cajas pintadas·sin nodo·sin rango. Se quita en cuanto el
-              subrayado esté. */}
-          {diag ? <span className="px-1 text-[10px] tabular-nums text-muted/70">{diag}</span> : null}
         </div>
       ) : null}
 
