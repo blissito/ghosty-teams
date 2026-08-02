@@ -116,28 +116,129 @@ export function serializeDocEnvelope(e: {
  * reconciliador la cree igual a cualquier otra.
  */
 export function blockText(b: DocBlock): string {
+  return blockTextMapped(b).texto;
+}
+
+/**
+ * El texto de un bloque MÁS de dónde salió cada carácter.
+ *
+ * Existe porque el corrector ortográfico devuelve offsets sobre este texto y hay que poder
+ * volver: resaltar la palabra en pantalla y, si aceptas la sugerencia, reemplazarla sin
+ * tocar el resto. `blockText` concatena runs y colapsa espacios, así que un offset suyo no
+ * sirve ni para el DOM ni para el inline content — hace falta el rastro.
+ *
+ * ⚠️ **`blockText` ES esta función**, no una copia parecida. Si fueran dos, el día que
+ * alguien toque una las dos dejarían de coincidir y los offsets apuntarían a otra cosa —
+ * en silencio, y corrompiendo texto sólo al aplicar una corrección.
+ *
+ * - `texto`: lo mismo que devolvía siempre `blockText`.
+ * - `origen[i]`: índice, en el texto CRUDO (sin colapsar ni recortar), del carácter `i`.
+ *   Vale `-1` para los separadores que inventa el recorrido (los de celdas de tabla), que
+ *   no existen en el documento y por eso no se pueden señalar ni reemplazar.
+ * - `runs`: cada nodo de texto visitado con su tramo en el crudo, para saber si un rango
+ *   cae dentro de un solo run (aplicable sin tocar formato) o cruza varios.
+ */
+export interface TextoMapeado {
+  texto: string;
+  origen: number[];
+  runs: { ini: number; fin: number }[];
+}
+
+export function blockTextMapped(b: DocBlock): TextoMapeado {
   // El inline content de UNA celda/párrafo se concatena sin separador: los runs
   // ("El " + "arrendatario" + " pagará") son un texto partido por marcas, y meterle
   // espacios lo deformaría. Celdas y filas de una tabla sí se separan — pegarlas
   // daba "ConceptoMontoRenta5000", donde se pierde el límite entre celdas y dos
   // tablas distintas pueden firmar igual.
-  const walk = (node: unknown, sep = ""): string => {
-    if (node == null) return "";
-    if (typeof node === "string") return node;
-    if (Array.isArray(node)) return node.map((n) => walk(n, sep)).join(sep);
+  let crudo = "";
+  const runs: { ini: number; fin: number }[] = [];
+  /** Posiciones del crudo que NO existen en el documento (separadores inventados). */
+  const inventados = new Set<number>();
+
+  const escribir = (s: string, real: boolean) => {
+    if (!real) for (let i = 0; i < s.length; i++) inventados.add(crudo.length + i);
+    else runs.push({ ini: crudo.length, fin: crudo.length + s.length });
+    crudo += s;
+  };
+
+  const walk = (node: unknown, sep = ""): void => {
+    if (node == null) return;
+    if (typeof node === "string") return escribir(node, true);
+    if (Array.isArray(node)) {
+      node.forEach((n, i) => {
+        if (i > 0 && sep) escribir(sep, false);
+        walk(n, sep);
+      });
+      return;
+    }
     if (typeof node === "object") {
       const o = node as Record<string, unknown>;
-      if (typeof o.text === "string") return o.text;
+      if (typeof o.text === "string") return escribir(o.text, true);
       // Tabla: {type:"tableContent", rows:[{cells:[[inline…], …]}]}
-      if (Array.isArray(o.rows)) return o.rows.map((r) => walk(r, " ")).join(" ");
-      if (Array.isArray(o.cells)) return o.cells.map((c) => walk(c)).join(" ");
+      if (Array.isArray(o.rows)) return walk(o.rows, " ");
+      if (Array.isArray(o.cells)) return walk(o.cells, " ");
       if (o.content != null) return walk(o.content, sep);
       // Link: {type:"link", href, content:[…]} — ya cubierto por o.content.
-      return "";
+      return;
     }
-    return "";
   };
-  return walk(b.content).replace(/\s+/g, " ").trim();
+  walk(b.content);
+
+  // Normalización con rastro: el mismo `\s+ → " "` y `trim` de siempre, pero anotando de
+  // qué posición del crudo sale cada carácter que se emite.
+  let texto = "";
+  const origen: number[] = [];
+  let i = 0;
+  while (i < crudo.length) {
+    if (/\s/.test(crudo[i])) {
+      const ini = i;
+      while (i < crudo.length && /\s/.test(crudo[i])) i++;
+      // El espacio colapsado apunta al PRIMERO del run: es el único que existe seguro.
+      texto += " ";
+      origen.push(inventados.has(ini) ? -1 : ini);
+      continue;
+    }
+    texto += crudo[i];
+    origen.push(inventados.has(i) ? -1 : i);
+    i++;
+  }
+  // trim, arrastrando el mapa.
+  let a = 0;
+  let z = texto.length;
+  while (a < z && texto[a] === " ") a++;
+  while (z > a && texto[z - 1] === " ") z--;
+  return { texto: texto.slice(a, z), origen: origen.slice(a, z), runs };
+}
+
+/**
+ * Traduce un rango del texto de `blockTextMapped` al texto CRUDO del bloque.
+ *
+ * Devuelve `null` cuando el rango no es direccionable, y esos casos importan porque son
+ * justo los que corromperían el documento si se aplicara una corrección a ciegas:
+ *
+ * - toca un separador inventado (un match que cruza dos celdas de una tabla);
+ * - cae sobre espacios colapsados, así que su longitud en el crudo no es la que dice el
+ *   corrector;
+ * - cruza dos runs con formato distinto ("arren**da**tario"): reemplazarlo colapsaría el
+ *   formato a uno solo.
+ *
+ * En todos ellos el hallazgo se puede SEÑALAR, pero no aplicar de un clic.
+ */
+export function rangoCrudo(
+  mapa: TextoMapeado,
+  offset: number,
+  length: number,
+): { desde: number; hasta: number; unSoloRun: boolean } | null {
+  if (offset < 0 || length <= 0 || offset + length > mapa.origen.length) return null;
+  const desde = mapa.origen[offset];
+  const ultimo = mapa.origen[offset + length - 1];
+  if (desde < 0 || ultimo < 0) return null;
+  const hasta = ultimo + 1;
+  // Longitud distinta = por el medio hubo espacios colapsados o algo inventado.
+  if (hasta - desde !== length) return null;
+  for (let i = offset; i < offset + length; i++) if (mapa.origen[i] < 0) return null;
+  const run = mapa.runs.find((r) => desde >= r.ini && hasta <= r.fin);
+  return { desde, hasta, unSoloRun: !!run };
 }
 
 /**

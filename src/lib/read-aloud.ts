@@ -21,6 +21,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { blockText, type DocBlock } from "./doc-blocks";
 import { partirEnFrases } from "./tts-split";
+import { firmaTexto as firma } from "./doc-firma";
 
 export type EstadoLectura = "parado" | "cargando" | "leyendo" | "pausa";
 
@@ -45,12 +46,7 @@ export function bloquesLegibles(blocks: DocBlock[]): number[] {
 type Seg = { b: number; s: number; h: string };
 const clave = (g: Seg) => `${g.b}:${g.s}:${g.h}`;
 
-/** Firma corta y estable de un texto (djb2). Sólo tiene que distinguir, no ser segura. */
-function firma(texto: string): string {
-  let h = 5381;
-  for (let i = 0; i < texto.length; i++) h = ((h << 5) + h + texto.charCodeAt(i)) | 0;
-  return (h >>> 0).toString(36);
-}
+
 
 /** Lo que devuelve el servidor de un segmento: su audio y cuántos tiene ese bloque. */
 type Pieza = { url: string; n: number };

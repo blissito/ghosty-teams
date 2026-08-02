@@ -45,6 +45,7 @@ import { Route as ApiDocXlsxIdRouteImport } from './routes/api.doc-xlsx.$id'
 import { Route as ApiDocTtsIdRouteImport } from './routes/api.doc-tts.$id'
 import { Route as ApiDocPdfIdRouteImport } from './routes/api.doc-pdf.$id'
 import { Route as ApiDocDocxIdRouteImport } from './routes/api.doc-docx.$id'
+import { Route as ApiDocCheckIdRouteImport } from './routes/api.doc-check.$id'
 import { Route as ApiDevDriveRouteImport } from './routes/api.dev.drive'
 import { Route as ApiConnectorsToolsRouteImport } from './routes/api.connectors.tools'
 import { Route as ApiAttachmentIdRouteImport } from './routes/api.attachment.$id'
@@ -233,6 +234,11 @@ const ApiDocDocxIdRoute = ApiDocDocxIdRouteImport.update({
   path: '/api/doc-docx/$id',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiDocCheckIdRoute = ApiDocCheckIdRouteImport.update({
+  id: '/api/doc-check/$id',
+  path: '/api/doc-check/$id',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiDevDriveRoute = ApiDevDriveRouteImport.update({
   id: '/api/dev/drive',
   path: '/api/dev/drive',
@@ -291,6 +297,7 @@ export interface FileRoutesByFullPath {
   '/api/attachment/$id': typeof ApiAttachmentIdRoute
   '/api/connectors/tools': typeof ApiConnectorsToolsRoute
   '/api/dev/drive': typeof ApiDevDriveRoute
+  '/api/doc-check/$id': typeof ApiDocCheckIdRoute
   '/api/doc-docx/$id': typeof ApiDocDocxIdRoute
   '/api/doc-pdf/$id': typeof ApiDocPdfIdRoute
   '/api/doc-tts/$id': typeof ApiDocTtsIdRoute
@@ -334,6 +341,7 @@ export interface FileRoutesByTo {
   '/api/attachment/$id': typeof ApiAttachmentIdRoute
   '/api/connectors/tools': typeof ApiConnectorsToolsRoute
   '/api/dev/drive': typeof ApiDevDriveRoute
+  '/api/doc-check/$id': typeof ApiDocCheckIdRoute
   '/api/doc-docx/$id': typeof ApiDocDocxIdRoute
   '/api/doc-pdf/$id': typeof ApiDocPdfIdRoute
   '/api/doc-tts/$id': typeof ApiDocTtsIdRoute
@@ -379,6 +387,7 @@ export interface FileRoutesById {
   '/api/attachment/$id': typeof ApiAttachmentIdRoute
   '/api/connectors/tools': typeof ApiConnectorsToolsRoute
   '/api/dev/drive': typeof ApiDevDriveRoute
+  '/api/doc-check/$id': typeof ApiDocCheckIdRoute
   '/api/doc-docx/$id': typeof ApiDocDocxIdRoute
   '/api/doc-pdf/$id': typeof ApiDocPdfIdRoute
   '/api/doc-tts/$id': typeof ApiDocTtsIdRoute
@@ -425,6 +434,7 @@ export interface FileRouteTypes {
     | '/api/attachment/$id'
     | '/api/connectors/tools'
     | '/api/dev/drive'
+    | '/api/doc-check/$id'
     | '/api/doc-docx/$id'
     | '/api/doc-pdf/$id'
     | '/api/doc-tts/$id'
@@ -468,6 +478,7 @@ export interface FileRouteTypes {
     | '/api/attachment/$id'
     | '/api/connectors/tools'
     | '/api/dev/drive'
+    | '/api/doc-check/$id'
     | '/api/doc-docx/$id'
     | '/api/doc-pdf/$id'
     | '/api/doc-tts/$id'
@@ -512,6 +523,7 @@ export interface FileRouteTypes {
     | '/api/attachment/$id'
     | '/api/connectors/tools'
     | '/api/dev/drive'
+    | '/api/doc-check/$id'
     | '/api/doc-docx/$id'
     | '/api/doc-pdf/$id'
     | '/api/doc-tts/$id'
@@ -556,6 +568,7 @@ export interface RootRouteChildren {
   ApiAttachmentIdRoute: typeof ApiAttachmentIdRoute
   ApiConnectorsToolsRoute: typeof ApiConnectorsToolsRoute
   ApiDevDriveRoute: typeof ApiDevDriveRoute
+  ApiDocCheckIdRoute: typeof ApiDocCheckIdRoute
   ApiDocDocxIdRoute: typeof ApiDocDocxIdRoute
   ApiDocPdfIdRoute: typeof ApiDocPdfIdRoute
   ApiDocTtsIdRoute: typeof ApiDocTtsIdRoute
@@ -824,6 +837,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiDocDocxIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/doc-check/$id': {
+      id: '/api/doc-check/$id'
+      path: '/api/doc-check/$id'
+      fullPath: '/api/doc-check/$id'
+      preLoaderRoute: typeof ApiDocCheckIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/dev/drive': {
       id: '/api/dev/drive'
       path: '/api/dev/drive'
@@ -924,6 +944,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiAttachmentIdRoute: ApiAttachmentIdRoute,
   ApiConnectorsToolsRoute: ApiConnectorsToolsRoute,
   ApiDevDriveRoute: ApiDevDriveRoute,
+  ApiDocCheckIdRoute: ApiDocCheckIdRoute,
   ApiDocDocxIdRoute: ApiDocDocxIdRoute,
   ApiDocPdfIdRoute: ApiDocPdfIdRoute,
   ApiDocTtsIdRoute: ApiDocTtsIdRoute,
