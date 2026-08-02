@@ -1282,8 +1282,18 @@ export default function ArtifactPanel({
                             en silencio es lo peor que puede pasarle a un documento. */}
                         {guardadoDoc ? (
                           <span
+                            // Color sólo donde dice algo: ámbar mientras hay texto sin
+                            // guardar, verde cuando ya está a salvo, rojo si falló.
+                            // "Guardando…" se queda en gris — es un tránsito, no un estado
+                            // del que haya que enterarse.
                             className={`mr-1 whitespace-nowrap text-xs ${
-                              guardadoDoc === "error" ? "text-red-400" : "text-muted"
+                              guardadoDoc === "error"
+                                ? "text-red-400"
+                                : guardadoDoc === "pendiente"
+                                  ? "text-amber-500/90"
+                                  : guardadoDoc === "ok"
+                                    ? "text-emerald-500/90"
+                                    : "text-muted"
                             }`}
                           >
                             {guardadoDoc === "pendiente"
