@@ -11,9 +11,11 @@ import {
   Pause,
   Pencil,
   Play,
+  SpellCheck,
   Square,
   TriangleAlert,
   Volume2,
+  X,
 } from "lucide-react";
 import { BlockNoteView } from "@blocknote/mantine";
 import { useT } from "../i18n";
@@ -25,9 +27,18 @@ import {
   multiColumnDropCursor,
   locales as multiColumnLocales,
 } from "@blocknote/xl-multi-column";
-import { aliasTable, blockSignature, type DocBlock } from "../lib/doc-blocks";
+import {
+  aliasTable,
+  blockSignature,
+  blockTextMapped,
+  rangoCrudo,
+  reemplazarEnBloque,
+  type DocBlock,
+} from "../lib/doc-blocks";
 import { reconcile } from "../lib/doc-reconcile";
 import { useReadAloud } from "../lib/read-aloud";
+import { useDocReview, type Hallazgo } from "../lib/doc-review";
+import { rangoEnBloque } from "../lib/doc-dom-range";
 
 // ── El editor de documentos de texto ──────────────────────────────────────────
 //
@@ -577,6 +588,125 @@ export default function DocEditor({
     [guardarYa, voz],
   );
 
+  // ── Revisión ortográfica ────────────────────────────────────────────────────
+  //
+  // Capa PROPIA, separada de la del cambio quirúrgico y la lectura: pinta muchas marcas a
+  // la vez (un documento largo trae decenas), son de PALABRA y no de bloque, y viven
+  // mientras dure la revisión en vez de desvanecerse. Mezclarlas en `marcarIndices` habría
+  // significado tocar dos cosas que ya funcionan.
+  const revision = useDocReview({ documentId, version, bloques: bloquesActuales });
+  const capaRev = useRef<HTMLDivElement | null>(null);
+  const rafRev = useRef(0);
+
+  const limpiarRevision = useCallback(() => {
+    if (rafRev.current) cancelAnimationFrame(rafRev.current);
+    rafRev.current = 0;
+    capaRev.current?.remove();
+    capaRev.current = null;
+  }, []);
+
+  /** Repinta todos los hallazgos. Se llama al entrar, al cambiar la lista y al scrollear. */
+  const pintarRevision = useCallback(() => {
+    if (!editor || !revision.revisando || !revision.hallazgos.length) return limpiarRevision();
+    let capaEl = capaRev.current;
+    if (!capaEl) {
+      capaEl = document.createElement("div");
+      capaEl.dataset.gtRevision = "1";
+      // Mismo z-index que la marca de lectura y por la misma razón: el panel expandido es
+      // z-[100] y esta capa vive en `document.body`, así que compite con él.
+      capaEl.style.cssText = "position:fixed;inset:0;pointer-events:none;z-index:120";
+      document.body.appendChild(capaEl);
+      capaRev.current = capaEl;
+    }
+    capaEl.textContent = "";
+    const actualId = revision.actual?.id;
+    for (const h of revision.hallazgos) {
+      const nodo = document.querySelector<HTMLElement>(`.gt-doc [data-id="${CSS.escape(h.blockId)}"]`);
+      if (!nodo || !document.contains(nodo)) continue;
+      const rango = rangoEnBloque(nodo, h.offset, h.length);
+      if (!rango) continue;
+      // Un rect por línea: una palabra partida al final del renglón son dos.
+      for (const r of Array.from(rango.getClientRects())) {
+        if (!r.width || r.bottom < 0 || r.top > window.innerHeight) continue;
+        const d = document.createElement("div");
+        d.className = h.id === actualId ? "gt-ortografia gt-ortografia-actual" : "gt-ortografia";
+        d.style.cssText = `position:fixed;left:${r.left}px;top:${r.top}px;width:${r.width}px;height:${r.height}px`;
+        capaEl.appendChild(d);
+      }
+    }
+  }, [editor, revision.revisando, revision.hallazgos, revision.actual, limpiarRevision]);
+
+  // Se repinta en scroll y resize, NO en un rAF continuo: con decenas de hallazgos,
+  // recalcular sus rangos 60 veces por segundo se come el scroll.
+  useEffect(() => {
+    pintarRevision();
+    if (!revision.revisando) return;
+    const box = caja();
+    let pendiente = false;
+    const alMover = () => {
+      if (pendiente) return;
+      pendiente = true;
+      requestAnimationFrame(() => {
+        pendiente = false;
+        pintarRevision();
+      });
+    };
+    box?.addEventListener("scroll", alMover, { passive: true });
+    window.addEventListener("resize", alMover);
+    return () => {
+      box?.removeEventListener("scroll", alMover);
+      window.removeEventListener("resize", alMover);
+    };
+  }, [pintarRevision, revision.revisando, caja]);
+
+  useEffect(() => () => limpiarRevision(), [limpiarRevision]);
+
+  /** Lleva la vista al hallazgo actual. */
+  useEffect(() => {
+    const h = revision.actual;
+    if (!h || !revision.revisando) return;
+    const nodo = document.querySelector<HTMLElement>(`.gt-doc [data-id="${CSS.escape(h.blockId)}"]`);
+    const box = nodo && contenedorQueScrollea(nodo);
+    if (!nodo || !box) return;
+    const r = nodo.getBoundingClientRect();
+    const base = box.getBoundingClientRect();
+    const destino = box.scrollTop + (r.top - base.top) - box.clientHeight / 2 + r.height / 2;
+    box.scrollTo({ top: Math.max(0, destino), behavior: "smooth" });
+  }, [revision.actual, revision.revisando]);
+
+  /**
+   * Aplica una sugerencia al documento.
+   *
+   * Reconstruye el inline content del bloque con el tramo sustituido, así que el uuid y el
+   * formato del resto sobreviven. Antes comprueba que el texto sigue siendo el que el
+   * corrector vio: si el documento cambió por debajo, se descarta el hallazgo en vez de
+   * escribir sobre lo que ahora haya ahí.
+   */
+  const aplicarSugerencia = useCallback(
+    (h: Hallazgo, sugerencia: string) => {
+      if (!editor) return;
+      const docu = (editor.document ?? []) as DocBlock[];
+      const buscar = (list: DocBlock[]): DocBlock | null => {
+        for (const b of list) {
+          if (b.id === h.blockId) return b;
+          const hijo = b.children?.length ? buscar(b.children) : null;
+          if (hijo) return hijo;
+        }
+        return null;
+      };
+      const bloque = buscar(docu);
+      if (!bloque) return;
+      const mapa = blockTextMapped(bloque);
+      if (mapa.texto.slice(h.offset, h.offset + h.length) !== h.palabra) return; // ya no es lo que era
+      const r = rangoCrudo(mapa, h.offset, h.length);
+      if (!r || !r.unSoloRun) return;
+      const nuevo = reemplazarEnBloque(bloque, r.desde, r.hasta, sugerencia);
+      editor.updateBlock(h.blockId as never, { content: nuevo.content as never });
+      revision.resolver(h, sugerencia.length - h.length);
+    },
+    [editor, revision],
+  );
+
   // ── De un NODO a su índice de bloque ────────────────────────────────────────
   //
   // `marcarIndices` hace el camino de ida (índice → id → nodo). Esto es la vuelta, y es lo
@@ -782,8 +912,12 @@ export default function DocEditor({
     const actual = (editor.document as DocBlock[]).map(blockSignature).join(" ");
     if (applying.current || actual === seen.current) return;
     seen.current = actual; // lo escribió una persona: pasa a ser la referencia
+    // Un hallazgo sobre un párrafo que la persona acaba de reescribir ya no vale: señalar
+    // una falta en un texto que ya no existe es peor que no señalar nada. La invalidación
+    // es por CONTENIDO, así que basta con avisar.
+    revision.caducar();
     onChange(editor.document as DocBlock[]);
-  }, [editor, onChange]);
+  }, [editor, onChange, revision]);
 
   // ⚠️ Aquí hubo un listener de `input` que llamaba a `notify` como "segundo canal" de
   // guardado, puesto mientras se buscaba por qué no se guardaba. **Era una hipótesis falsa
@@ -826,6 +960,13 @@ export default function DocEditor({
               editor={editor}
               editable={live}
               theme="light"
+              // El corrector del NAVEGADOR se apaga: marca nombres propios como faltas
+              // (Perdix, Nüwa, Areópago), no ve gramática, no propone la corrección donde
+              // la lees y su diccionario depende de qué idioma tenga instalada cada
+              // máquina — el mismo documento se subraya distinto en cada equipo. La
+              // revisión la hace LanguageTool, que sí es igual para todos. Es lo que hacen
+              // Word y Google Docs con el suyo.
+              spellCheck={false}
               // El menú de formato y el de slash sólo estorban mientras el agente
               // escribe (y ahí el documento no es editable de todos modos).
               formattingToolbar={live}
@@ -955,6 +1096,117 @@ export default function DocEditor({
           {voz.error ? (
             <span className="px-1.5 text-[11px] text-red-400">{t(voz.error)}</span>
           ) : null}
+        </div>
+      ) : null}
+
+      {/* ── Revisión ortográfica ──────────────────────────────────────────────
+          Debajo de la de lectura y con la misma ancla: son los dos controles del
+          documento y tienen que vivir juntos.
+
+          Fuera del modo revisión es sólo un contador — el documento se lee LIMPIO y tú
+          decides cuándo mirar las sugerencias. Ése es el punto entero del diseño: lo que
+          la gente apaga de los correctores es el subrayado que interrumpe. */}
+      {documentId && !streaming && posBoton ? (
+        <div
+          style={{ position: "fixed", top: posBoton.arriba + 44, right: posBoton.derecha }}
+          className="z-[70] flex items-center gap-1 rounded-full border border-border bg-surface/95 px-1.5 py-1 shadow-lg backdrop-blur"
+        >
+          {!revision.revisando ? (
+            <button
+              type="button"
+              onClick={() => revision.revisar()}
+              disabled={revision.estado === "revisando"}
+              aria-label={t("Revisar ortografía")}
+              title={t("Revisar ortografía")}
+              className="inline-flex items-center gap-1.5 rounded-full px-2 py-1 text-xs font-medium text-ink transition hover:text-brand disabled:opacity-60"
+            >
+              {revision.estado === "revisando" ? (
+                <Loader2 size={14} className="animate-spin" />
+              ) : (
+                <SpellCheck size={14} />
+              )}
+              {revision.total > 0 && revision.estado === "listo"
+                ? t("{n} sugerencias").replace("{n}", String(revision.total))
+                : t("Revisar ortografía")}
+            </button>
+          ) : (
+            <>
+              <button
+                type="button"
+                onClick={() => revision.ir(-1)}
+                disabled={revision.indice <= 0}
+                aria-label={t("Anterior")}
+                title={t("Anterior")}
+                className="rounded-full p-1 text-ink transition hover:text-brand disabled:opacity-40"
+              >
+                <ChevronLeft size={14} />
+              </button>
+              <span className="px-0.5 text-[11px] font-semibold tabular-nums text-muted">
+                {revision.total ? revision.indice + 1 : 0}/{revision.total}
+              </span>
+              <button
+                type="button"
+                onClick={() => revision.ir(1)}
+                disabled={revision.indice >= revision.total - 1}
+                aria-label={t("Siguiente")}
+                title={t("Siguiente")}
+                className="rounded-full p-1 text-ink transition hover:text-brand disabled:opacity-40"
+              >
+                <ChevronRight size={14} />
+              </button>
+              <button
+                type="button"
+                onClick={revision.salir}
+                aria-label={t("Salir de la revisión")}
+                title={t("Salir de la revisión")}
+                className="rounded-full p-1 text-ink transition hover:text-brand"
+              >
+                <X size={14} />
+              </button>
+            </>
+          )}
+          {revision.error ? (
+            <span className="px-1.5 text-[11px] text-red-400">{t(revision.error)}</span>
+          ) : null}
+        </div>
+      ) : null}
+
+      {/* La tarjeta del hallazgo. Va anclada al panel y no flotando junto a la palabra:
+          una tarjeta pegada al texto tapa justo lo que tienes que leer para decidir. */}
+      {revision.revisando && revision.actual && posBoton ? (
+        <div
+          style={{ position: "fixed", top: posBoton.arriba + 88, right: posBoton.derecha, maxWidth: 320 }}
+          className="z-[70] rounded-xl border border-border bg-surface/98 p-3 shadow-xl backdrop-blur"
+        >
+          <p className="text-xs text-muted">{revision.actual.mensaje}</p>
+          <p className="mt-1.5 text-sm text-ink">
+            <span className="rounded bg-amber-500/20 px-1 font-medium">{revision.actual.palabra}</span>
+          </p>
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {revision.actual.sugerencias.length ? (
+              revision.actual.sugerencias.map((s) => (
+                <button
+                  key={s}
+                  type="button"
+                  onClick={() => aplicarSugerencia(revision.actual!, s)}
+                  className="rounded-md bg-ink px-2 py-0.5 text-xs font-semibold text-surface transition hover:opacity-90"
+                >
+                  {s}
+                </button>
+              ))
+            ) : (
+              // Hay reglas que señalan sin proponer (una frase demasiado larga, por
+              // ejemplo). Decirlo es más honesto que ofrecer un botón que no hace nada.
+              <span className="text-xs text-muted">{t("Sin sugerencia automática")}</span>
+            )}
+            <button
+              type="button"
+              onClick={() => revision.resolver(revision.actual!, 0)}
+              className="rounded-md px-2 py-0.5 text-xs text-muted transition hover:text-ink"
+            >
+              {t("Ignorar")}
+            </button>
+          </div>
         </div>
       ) : null}
 

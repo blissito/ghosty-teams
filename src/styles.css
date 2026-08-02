@@ -415,3 +415,19 @@ body {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.55; }
 }
+
+/* ── Revisión ortográfica ─────────────────────────────────────────────────────
+   Subrayado ondulado, no caja: una caja por palabra sobre un párrafo con cinco
+   faltas se lee como un tachón. La capa vive en `document.body` y no pinta fondo,
+   así que no tapa el texto que señala. */
+.gt-ortografia {
+  pointer-events: none;
+  border-bottom: 2px solid rgba(239, 68, 68, 0.75);
+  border-radius: 1px;
+}
+/* El hallazgo que estás mirando: mismo subrayado, con un lavado detrás para
+   encontrarlo de un vistazo al saltar con las flechas. */
+.gt-ortografia-actual {
+  background: rgba(245, 158, 11, 0.22);
+  border-bottom-color: rgba(245, 158, 11, 0.95);
+}

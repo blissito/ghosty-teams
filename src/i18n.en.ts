@@ -492,6 +492,14 @@ export const en: Record<string, string> = {
   "Leer desde aquí": "Read from here",
   "Leer desde este párrafo": "Read from this paragraph",
   "No se pudo generar la voz": "Couldn't generate the audio",
+  // Revisión ortográfica (LanguageTool).
+  "Revisar ortografía": "Check spelling",
+  "{n} sugerencias": "{n} suggestions",
+  "Salir de la revisión": "Exit review",
+  "Sin sugerencia automática": "No automatic fix",
+  Ignorar: "Ignore",
+  "La revisión quedó incompleta": "The review was incomplete",
+  "No se pudo revisar el documento": "Couldn't check the document",
   // Lo que Ghosty dice mientras trabaja (rotan cada 3s). Se traducen por SENTIDO, no
   // literal: la gracia es que la espera se entienda, no calcar la frase.
   "leyendo con calma…": "reading it through…",

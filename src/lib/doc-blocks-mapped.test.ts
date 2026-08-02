@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { blockText, blockTextMapped, rangoCrudo, type DocBlock } from "./doc-blocks";
+import { blockText, blockTextMapped, rangoCrudo, reemplazarEnBloque, type DocBlock } from "./doc-blocks";
 
 // El mapa es lo que permite señalar una falta y sustituirla sin tocar el resto del párrafo.
 // Si se desincroniza, el fallo NO se ve al resaltar: se ve al aplicar, corrompiendo texto
@@ -111,5 +111,57 @@ describe("blockTextMapped", () => {
     const mapa = blockTextMapped({ id: "v", type: "paragraph", content: [] });
     expect(mapa.texto).toBe("");
     expect(rangoCrudo(mapa, 0, 1)).toBeNull();
+  });
+});
+
+describe("reemplazarEnBloque", () => {
+  it("corrige la palabra y conserva el formato del resto", () => {
+    const b = parrafo([
+      { text: "El " },
+      { text: "artifice", styles: { bold: true } },
+      { text: " fabrica una prision" },
+    ]);
+    const { mapa, offset, length } = buscar(b, "artifice");
+    const r = rangoCrudo(mapa, offset, length)!;
+    const nuevo = reemplazarEnBloque(b, r.desde, r.hasta, "artífice");
+    expect(blockText(nuevo)).toBe("El artífice fabrica una prision");
+    // El run corregido conserva su negrita; los demás, intactos.
+    const runs = nuevo.content as { text: string; styles: Record<string, boolean> }[];
+    expect(runs[1]).toEqual({ type: "text", text: "artífice", styles: { bold: true } });
+    expect(runs[0].text).toBe("El ");
+    expect(runs[2].text).toBe(" fabrica una prision");
+  });
+
+  it("no cambia el id del bloque", () => {
+    const b = parrafo([{ text: "una prueva" }]);
+    const { mapa, offset, length } = buscar(b, "prueva");
+    const r = rangoCrudo(mapa, offset, length)!;
+    expect(reemplazarEnBloque(b, r.desde, r.hasta, "prueba").id).toBe(b.id);
+  });
+
+  it("corrige dentro de un link sin romperlo", () => {
+    const b: DocBlock = {
+      id: "l1",
+      type: "paragraph",
+      content: [
+        { type: "text", text: "Ver ", styles: {} },
+        { type: "link", href: "https://x.mx", content: [{ type: "text", text: "el acuerdo firmadooo", styles: {} }] },
+      ] as never,
+    };
+    const { mapa, offset, length } = buscar(b, "firmadooo");
+    const r = rangoCrudo(mapa, offset, length)!;
+    const nuevo = reemplazarEnBloque(b, r.desde, r.hasta, "firmado");
+    expect(blockText(nuevo)).toBe("Ver el acuerdo firmado");
+    const link = (nuevo.content as { type: string; href?: string }[])[1];
+    expect(link.type).toBe("link");
+    expect(link.href).toBe("https://x.mx");
+  });
+
+  it("una corrección más larga o más corta no descoloca el resto", () => {
+    const b = parrafo([{ text: "esto es aver si funciona bien" }]);
+    const { mapa, offset, length } = buscar(b, "aver");
+    const r = rangoCrudo(mapa, offset, length)!;
+    expect(blockText(reemplazarEnBloque(b, r.desde, r.hasta, "a ver"))).toBe("esto es a ver si funciona bien");
+    expect(blockText(reemplazarEnBloque(b, r.desde, r.hasta, "x"))).toBe("esto es x si funciona bien");
   });
 });

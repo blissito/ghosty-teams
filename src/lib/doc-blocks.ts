@@ -242,6 +242,61 @@ export function rangoCrudo(
 }
 
 /**
+ * Devuelve el `content` del bloque con el tramo `[desde, hasta)` del texto CRUDO sustituido
+ * por `reemplazo`.
+ *
+ * Se reconstruye el árbol de inline content en vez de reserializar el bloque: así el nodo
+ * que se toca conserva sus `styles` y los demás quedan idénticos —negritas, links y todo—,
+ * y el uuid del bloque no se mueve, que es lo que mantiene vivos los alias del agente.
+ *
+ * Sólo debe llamarse con un rango que `rangoCrudo` haya dado por bueno y contenido en UN
+ * run; con un rango que cruce dos formatos, el resultado colapsaría el formato y por eso
+ * ese caso se señala pero no se aplica.
+ */
+export function reemplazarEnBloque(
+  b: DocBlock,
+  desde: number,
+  hasta: number,
+  reemplazo: string,
+): DocBlock {
+  let pos = 0;
+  let hecho = false;
+
+  const walk = (node: unknown, sep = ""): unknown => {
+    if (node == null) return node;
+    if (typeof node === "string") {
+      const ini = pos;
+      pos += node.length;
+      if (hecho || hasta <= ini || desde >= pos) return node;
+      return node.slice(0, desde - ini) + reemplazo + node.slice(hasta - ini);
+    }
+    if (Array.isArray(node)) {
+      return node.map((n, i) => {
+        if (i > 0 && sep) pos += sep.length; // separadores que inventa el recorrido
+        return walk(n, sep);
+      });
+    }
+    if (typeof node === "object") {
+      const o = node as Record<string, unknown>;
+      if (typeof o.text === "string") {
+        const ini = pos;
+        pos += o.text.length;
+        if (hecho || hasta <= ini || desde >= pos) return o;
+        hecho = true;
+        return { ...o, text: o.text.slice(0, desde - ini) + reemplazo + o.text.slice(hasta - ini) };
+      }
+      if (Array.isArray(o.rows)) return { ...o, rows: walk(o.rows, " ") };
+      if (Array.isArray(o.cells)) return { ...o, cells: walk(o.cells, " ") };
+      if (o.content != null) return { ...o, content: walk(o.content, sep) };
+      return o;
+    }
+    return node;
+  };
+
+  return { ...b, content: walk(b.content) as DocBlock["content"] };
+}
+
+/**
  * Firma de un bloque para comparar dos versiones. **No incluye el id a propósito.**
  *
  * `tryParseMarkdownToBlocks` acuña UUIDs NUEVOS en cada llamada: durante el
