@@ -342,7 +342,19 @@ export default function DocEditor({
 
       // Sigue al bloque: el documento puede scrollear (nuestro propio scroll, el del
       // usuario, o un reflow de BlockNote) y una caja quieta se despegaría del texto.
+      //
+      // ⚠️ Y si el NODO se fue, la marca se vuelve a resolver por id. Expandir el panel
+      // remonta el editor entero: los nodos que teníamos quedan huérfanos, sus rects se
+      // congelan en 0 y el resaltado desaparecía justo al ampliar — que es cuando más se
+      // quiere ver. Lo mismo vale para cualquier reemplazo de nodos que no venga del
+      // reconciliador (ése ya reaplica por su cuenta).
       const seguir = () => {
+        if (nodos.some((n) => !document.contains(n))) {
+          const m = marca.current;
+          raf.current = 0;
+          if (m) requestAnimationFrame(() => marcarIndicesRef.current?.(m.indices, false));
+          return;
+        }
         for (let i = 0; i < nodos.length; i++) {
           const r = nodos[i].getBoundingClientRect();
           const d = cajas[i];
@@ -370,6 +382,10 @@ export default function DocEditor({
     },
     [editor, limpiarMarca],
   );
+
+  // La marca se re-resuelve a sí misma desde su propio rAF; el ref rompe el ciclo.
+  const marcarIndicesRef = useRef<typeof marcarIndices | null>(null);
+  marcarIndicesRef.current = marcarIndices;
 
   useEffect(() => () => { esperando.current?.(); limpiarMarca(); }, [limpiarMarca]);
 
