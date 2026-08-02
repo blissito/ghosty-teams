@@ -785,20 +785,13 @@ export default function DocEditor({
     onChange(editor.document as DocBlock[]);
   }, [editor, onChange]);
 
-  // Red de seguridad del guardado. `editor.onChange` es el canal bueno, pero es UN canal:
-  // si no llega a registrarse (el editor se monta tarde, o BlockNote cambia de API en una
-  // subida de versión), lo que se pierde es el texto de una persona, que es lo más caro
-  // que puede pasar aquí. Un `input` del DOM no puede fallar por eso, y `notify` ya es
-  // idempotente —compara firmas y no hace nada si el documento no cambió— así que el
-  // camino duplicado no cuesta ni una escritura de más.
-  useEffect(() => {
-    const raiz = scroller.current;
-    if (!raiz || !editable) return;
-    const alEscribir = () => notify();
-    raiz.addEventListener("input", alEscribir);
-    return () => raiz.removeEventListener("input", alEscribir);
-  }, [editable, notify]);
-
+  // ⚠️ Aquí hubo un listener de `input` que llamaba a `notify` como "segundo canal" de
+  // guardado, puesto mientras se buscaba por qué no se guardaba. **Era una hipótesis falsa
+  // y salía caro**: `notify` recorre el documento entero calculando firmas, así que teclear
+  // costaba dos pasadas O(documento) por pulsación y en un documento largo el editor se
+  // atragantaba y perdía caracteres. El fallo real estaba en el servidor (un documento de
+  // un DM no tenía canal y `updateDocBlocks` lanzaba antes de escribir). `editor.onChange`
+  // siempre funcionó; no le hace falta compañía.
   useEffect(() => {
     if (!editor || !editable) return;
     return editor.onChange(notify);
@@ -971,7 +964,10 @@ export default function DocEditor({
       {/* Si el párrafo señalado es el que SUENA, la bocina es un stop: ahí el gesto obvio
           es callar lo que estás oyendo, no volver a empezarlo. En cualquier otro párrafo
           sigue siendo un play, que además salta la lectura a ese punto. */}
-      {bocina && !streaming ? (
+      {/* Con texto seleccionado NO se pinta: ahí sale la barra de formato de BlockNote y las
+          dos se disputan el mismo hueco (y el mismo apilamiento). Además, con una selección
+          viva el gesto ya está en la barra de lectura, que ofrece leerla. */}
+      {bocina && !streaming && !sel ? (
         <button
           type="button"
           style={{ position: "fixed", top: bocina.top, left: bocina.left }}
@@ -1000,7 +996,9 @@ export default function DocEditor({
           }
           // El blanco real es más grande que el círculo (`before:-inset-3`): con 20px de
           // icono en el margen, apuntarle era un ejercicio de puntería.
-          className="z-[70] rounded-full border border-border bg-surface/95 p-1.5 text-muted shadow-sm backdrop-blur transition before:absolute before:-inset-3 before:content-[''] hover:text-brand"
+          // z-40: por encima del documento pero POR DEBAJO de los menús de BlockNote, que
+          // se montan en su propio portal. La bocina es un atajo; un menú abierto manda.
+          className="z-40 rounded-full border border-border bg-surface/95 p-1.5 text-muted shadow-sm backdrop-blur transition before:absolute before:-inset-3 before:content-[''] hover:text-brand"
         >
           {cargandoAqui ? (
             <Loader2 size={14} className="animate-spin" />
