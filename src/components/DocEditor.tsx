@@ -1364,11 +1364,15 @@ export default function DocEditor({
             )}
             <button
               type="button"
-              // Ignorar es SÓLO ésta, que es lo que la palabra promete. "Todas" está
-              // justo al lado, en segundo plano, para que no se pulse sin querer.
-              onClick={() => revision.resolver(revision.actual!, 0)}
+              // ⚠️ Ignorar es PARA SIEMPRE: quita todas las apariciones y manda la palabra
+              // al diccionario. Hubo un "ignorar sólo esta vez" separado, copiado de Word,
+              // y en uso real no tenía sentido: allí el documento es local y la sesión dura
+              // horas; aquí se refresca cada poco, y lo que uno quiere decir SIEMPRE es
+              // "esto no es una falta, no me lo vuelvas a preguntar". Con la versión
+              // efímera, cada recarga devolvía las mismas palabras.
+              onClick={() => revision.resolver(revision.actual!, 0, true)}
               className="rounded-md px-2 py-0.5 text-xs text-muted transition hover:text-ink"
-              title={t("Ignorar sólo esta vez")}
+              title={t("Ignorar esta palabra en todo el documento")}
             >
               {t("Ignorar")}
             </button>
@@ -1409,17 +1413,17 @@ export default function DocEditor({
               la acción que uno busca ante un nombre propio, y además lo manda al
               diccionario para que no vuelva a preguntarlo mañana. "Cambiar todas" sí
               depende de que haya más de una, porque si no es lo mismo que "Cambiar". */}
-          <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-border pt-2 text-[11px] text-muted">
-            {revision.iguales(revision.actual).length > 1 ? (
+          {/* Sólo cuando la palabra se repite: con una sola aparición, "Cambiar todas" es
+              idéntico a "Cambiar" y la fila quedaría siendo un borde vacío. */}
+          {revision.iguales(revision.actual).length > 1 ? (
+            <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-border pt-2 text-[11px] text-muted">
               <span>
                 {t("{n} veces en el documento").replace(
                   "{n}",
                   String(revision.iguales(revision.actual).length),
                 )}
               </span>
-            ) : null}
-            {revision.iguales(revision.actual).length > 1 ? (
-              revision.actual.sugerencias[0] ? (
+              {revision.actual.sugerencias[0] ? (
                 <button
                   type="button"
                   onClick={() => cambiarTodas(revision.actual!, revision.actual!.sugerencias[0])}
@@ -1427,17 +1431,9 @@ export default function DocEditor({
                 >
                   {t("Cambiar todas")}
                 </button>
-              ) : null
-            ) : null}
-            <button
-              type="button"
-              onClick={() => revision.resolver(revision.actual!, 0, true)}
-              className="transition hover:text-ink"
-              title={t("Ignorar esta palabra en todo el documento")}
-            >
-              {t("Ignorar todas")}
-            </button>
-          </div>
+              ) : null}
+            </div>
+          ) : null}
         </div>
       ) : null}
 
