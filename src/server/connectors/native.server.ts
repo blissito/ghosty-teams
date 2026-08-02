@@ -492,7 +492,112 @@ export function nativeTools(dest: ToolDest | null): ConnectorTool[] {
         }
       },
     },
+    // ── Historial de la conversación ──────────────────────────────────────────
+    // El agente NO tiene el historial entero. Tiene su sesión (que se pierde con /clear o
+    // al reciclarse la caja) y un catch-up corto inyectado en el turno. Sin estas dos
+    // tools no puede mirar hacia atrás y, peor, contesta que no existe lo que no alcanza
+    // a ver.
+    //
+    // Es la capa "recall" del patrón que ya converge en la comunidad (Letta
+    // `conversation_search`, Slack `conversations.history` + `search.messages`): el
+    // contexto lleva lo inmediato y lo viejo se PIDE.
+    //
+    // El scope va FIRMADO en el token, como todo lo demás aquí: se lee la conversación
+    // donde te invocaron y ninguna otra. Por eso no hay parámetro de canal.
+    {
+      name: "chat_search",
+      description:
+        "Busca por palabras en el historial de ESTA conversación (todo lo que se dijo aquí, " +
+        "también antes de que tú llegaras). Úsalo ANTES de decir que algo no existe o que no lo " +
+        "recuerdas: tu contexto sólo trae los mensajes recientes. Cada resultado trae su `id`; " +
+        "con ese id puedes leer lo que había alrededor usando chat_history({before: id}).",
+      inputSchema: {
+        type: "object",
+        properties: {
+          query: { type: "string", description: "Palabras a buscar, tal cual aparecerían escritas" },
+          limit: { type: "number", description: "Máximo de resultados (tope 20, default 20)" },
+        },
+        required: ["query"],
+      },
+      handler: async (_sub, args) => {
+        const scope = scopeDelTurno(dest);
+        if (!scope) return { ok: false, error: "no hay conversación en este turno" };
+        const q = String(args.query ?? "").trim();
+        if (!q) return { ok: false, error: "falta query" };
+        const db = await import("../../db.server");
+        const msgs = await db.searchInScope(scope, q, Number(args.limit) || 20);
+        return { ok: true, query: q, count: msgs.length, messages: msgs.map(paraElModelo) };
+      },
+    },
+    {
+      name: "chat_history",
+      description:
+        "Lee hacia atrás el historial de ESTA conversación, en orden cronológico. Sin `before` " +
+        "devuelve lo más reciente. Para seguir subiendo, vuelve a llamar con `before` = el " +
+        "`oldestId` de la respuesta anterior. Úsalo cuando te pidan algo de 'antes' o necesites " +
+        "el hilo de una decisión; si sabes qué palabras buscar, chat_search es más directo.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          before: { type: "number", description: "Id de mensaje: devuelve los ANTERIORES a ése (el `oldestId` de la llamada previa)" },
+          limit: { type: "number", description: "Cuántos mensajes (tope 50, default 25)" },
+        },
+      },
+      handler: async (_sub, args) => {
+        const scope = scopeDelTurno(dest);
+        if (!scope) return { ok: false, error: "no hay conversación en este turno" };
+        const db = await import("../../db.server");
+        const pedidos = Math.max(1, Math.min(Number(args.limit) || 25, 50));
+        const msgs = await db.historyBefore(scope, Number(args.before) || null, pedidos);
+        return {
+          ok: true,
+          count: msgs.length,
+          messages: msgs.map(paraElModelo),
+          // El cursor de la siguiente página. `hasMore` es una pista, no una promesa: si
+          // vino la página llena, lo normal es que haya más.
+          oldestId: msgs.length ? msgs[0].id : null,
+          hasMore: msgs.length === pedidos,
+        };
+      },
+    },
   ];
+}
+
+/**
+ * El scope de lectura del turno, sacado del destino FIRMADO. Un turno dentro de un hilo se
+ * queda en el hilo: es la conversación donde te invocaron.
+ */
+function scopeDelTurno(
+  dest: ToolDest | null
+): { dmId: number } | { channelId: number; parentId?: number | null } | null {
+  if (!dest) return null;
+  if (dest.dmId) return { dmId: dest.dmId };
+  if (dest.channelId) return { channelId: dest.channelId, parentId: dest.parentId ?? null };
+  return null;
+}
+
+/**
+ * Un mensaje como lo ve el modelo. Se recorta el cuerpo: 50 mensajes completos pueden ser
+ * un documento entero pegado, y lo que se busca aquí es el hilo de la conversación.
+ *
+ * Incluye los mensajes del PROPIO agente (`@handle`). Es la lección documentada de Slack:
+ * su `search.messages` no devuelve mensajes de bot, así que el agente no encuentra lo que
+ * él mismo escribió — justo lo que se le suele preguntar.
+ */
+function paraElModelo(m: {
+  id: number;
+  sender: string;
+  agent_handle: string | null;
+  body: string;
+  created_at: number;
+}) {
+  const body = (m.body || "").trim();
+  return {
+    id: m.id,
+    who: m.agent_handle ? `@${m.agent_handle}` : m.sender || "usuario",
+    at: new Date(m.created_at).toISOString(),
+    text: body.length > 800 ? body.slice(0, 800) + "…" : body,
+  };
 }
 
 /**

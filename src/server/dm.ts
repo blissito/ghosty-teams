@@ -249,7 +249,7 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
     // En un DM 1:1 normalmente responde a todo → el gap = solo el turno actual → historyContext
     // lo filtra → sin inyección (eficiente). Si acumuló mensajes sin verlos (o sesión fresca),
     // el gap los trae. La cita completa SÍ va por-turno.
-    const recent = await db.recentContext({ dmId: data.id }, 25).catch(() => []);
+    const recent = await db.recentContext({ dmId: data.id }, 8).catch(() => []);
     const { esRecordatorio } = await import("./reminders.server");
     const history = historyContext(gapDesdeUltimaRespuesta(recent, esRecordatorio), data.body);
     // Conectores per-user (DM 1:1): el DM tiene UN solo humano (`me`), identidad inequívoca.

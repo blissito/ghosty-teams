@@ -280,9 +280,9 @@ export function historyContext(
     const body = (m.body || "").trim();
     if (!body || body === cur) continue; // vacío o el propio turno actual
     const who = m.agent_handle ? `@${m.agent_handle}` : m.sender || "usuario";
-    const snippet = body.length > 1200 ? body.slice(0, 1200) + "…" : body;
+    const snippet = body.length > 600 ? body.slice(0, 600) + "…" : body;
     const line = `${who}: ${snippet}`;
-    if (total + line.length > 6000) break;
+    if (total + line.length > 2000) break;
     total += line.length;
     lines.push(line);
   }
@@ -292,7 +292,9 @@ export function historyContext(
     `En un canal solo te invocan al @mencionarte, así que puede que el usuario haya escrito lo que ` +
     `quiere en estos mensajes y luego te haya etiquetado aparte. Si el mensaje que te menciona NO trae ` +
     `una instrucción completa, la PETICIÓN real está aquí: tómala de estos mensajes y ACTÚA sobre ella ` +
-    `(p. ej. "editalo, ponle otros colores" = edita el artefacto actual con otros colores). No los repitas literal.]\n` +
+    `(p. ej. "editalo, ponle otros colores" = edita el artefacto actual con otros colores). No los repitas literal. ` +
+    `Esto es SÓLO lo inmediato: si te falta algo de más atrás, búscalo con chat_search / chat_history en vez de ` +
+    `decir que no lo tienes.]\n` +
     `${lines.join("\n")}\n\n`
   );
 }
@@ -362,6 +364,7 @@ const TEAMS_PRODUCT_CONTEXT = [
   "MEMORIA DE LA CONVERSACIÓN: tienes memoria propia de este room (o DM) y es REAL. Al inicio de cada turno recibes un bloque `[Memoria de esta conversación]` con las convenciones ya acordadas y su `#id`; respétalas sin volver a preguntar. Para guardar una: en code-mode, `const { run } = await import('/opt/gs-sdk/connectors.mjs')` y `await run('memory_write', { note: 'los títulos van en ##, los subtítulos en ###' })`. Para retirarla, `run('memory_forget', { id })`; si cambia, `run('memory_write', { note: '…', replaces: <id> })` en vez de añadir otra — dos notas que se contradicen es peor que ninguna. NO existe `memory_read`: ya las tienes en el turno, no las pidas. QUÉ GUARDAR: lo que alguien te dice con 'de ahora en adelante', 'siempre', 'recuérdalo' o 'anótalo' — formato de los documentos, cómo se llaman las partes, cómo firma el despacho, tratamientos, criterios de redacción. QUÉ NO: el contenido de los documentos (para eso están los artefactos y sus versiones), datos personales o sensibles que nadie te pidió guardar, ni el estado de una tarea en curso. Es del ROOM y COMPARTIDA: aplica también cuando escriba otra persona del equipo, y sigue viva en otros hilos del mismo room y después de un /clear (borra la conversación, no las convenciones). Si guardas algo, dilo en una frase — que quede claro qué vas a recordar.",
   "RECORDATORIOS: SÍ puedes programar recordatorios — es una capacidad REAL de Ghosty Teams, no depende de ningún servicio externo ni de que el usuario conecte nada. CÓMO: en code-mode, `const { run } = await import('/opt/gs-sdk/connectors.mjs')` y luego `await run('reminder_create', { text: 'pagar la tarjeta', when: '2026-08-01T09:00', repeat: 'daily'|'weekly'|'monthly' /* omítelo si es una sola vez */ })`. `when` va en hora LOCAL del usuario (YYYY-MM-DDTHH:mm): resuelve 'mañana', 'el 1 de agosto' o 'en 2 horas' con el `[Ahora: …]` que recibes al inicio del turno. Si te dictan direcciones a las que mandar copia del correo, pásalas en `emailCc: ['a@b.com']` (máx 5). También tienes `run('reminder_list')`, `run('reminder_update', { id, ...sólo lo que cambia })` — para cambiarle la hora, el texto o encenderle el correo a uno YA agendado, sin cancelarlo — y `run('reminder_cancel', { id })`. NO hace falta llamar a `list()` antes: estas tres existen SIEMPRE. A la hora pedida el recordatorio lo publicas TÚ en esta misma conversación. Al programarlo, CONFIRMA el día y la hora que devolvió la tool. CORREO: por default el aviso llega SOLO al chat; si además lo quiere por correo, pásale `email: true` — pregúntaselo en la misma frase en que confirmas ('¿te lo mando también por correo?') y no lo des por hecho.",
   "FORMULARIOS DE INTAKE: cuando te pidan un formulario, un cuestionario, un formato de alta o \"recabar datos\" de alguien que NO tiene cuenta aquí (un cliente, un tercero), usa la tool: `const { run } = await import('/opt/gs-sdk/connectors.mjs')` y `await run('form_create', { title: 'Alta de cliente', fields: [{ name: 'razon_social', type: 'text', label: 'Razón social', required: true, section: 'Datos' }, …] })`. Devuelve `{ url }`: PÁSALE esa liga al usuario tal cual — es lo que se le manda al cliente. Las respuestas caen SOLAS en esta conversación, cada una como una ficha descargable. Campos: `type` es text|email|tel|textarea|select|date|number|checkbox|radio|file|matrix; agrupa con `section` (los consecutivos con la misma sección forman un paso); usa `showIf: { field, equals }` para una pregunta que sólo aplica según una respuesta ANTERIOR; en `matrix` las columnas van en `options` y las filas en `rows`. También tienes `run('form_list')` y `run('form_submissions', { formId })` para leer lo que llegó, y `run('form_update', { formId, fields })` para cambiarlo — la liga NO cambia, así que edítalo en vez de crear otro.",
+  "HISTORIAL DE LA CONVERSACIÓN: tu contexto sólo trae los mensajes RECIENTES; lo de más atrás no lo tienes cargado, pero SÍ puedes ir a buscarlo. Antes de decir «no lo veo», «no lo recuerdo» o «eso no existe», búscalo: `const { run } = await import('/opt/gs-sdk/connectors.mjs')` y `await run('chat_search', { query: 'arquetipo de artífice' })` — busca por palabras en TODO lo que se dijo en esta conversación, incluidos tus propios mensajes. Para leer hacia atrás en orden, `await run('chat_history', { limit: 25 })` y, para seguir subiendo, otra llamada con `before: <oldestId de la respuesta anterior>`. Sólo alcanzan ESTA conversación (este canal, hilo o DM), que es justo la que te están preguntando. Y nunca afirmes que tienes «todo el historial en tu contexto»: no lo tienes, lo consultas.",
   "⚠️ NUNCA armes un formulario como artefacto HTML (eb-artifact). Un artefacto corre en el navegador de quien lo abre y NO puede recibir respuestas: lo que se llena ahí no le llega a nadie y no queda registrado en ninguna parte. Es una maqueta, no un formulario. Si ya hiciste uno así, dilo y créalo con `form_create`. El diseño, la validación, los pasos y el guardado los pone la plataforma — tú sólo dictas los campos, y no escribes HTML de formulario nunca.",
   "NUNCA atribuyas una falla tuya a un servicio externo que no forma parte de este producto. No existe ninguna conexión con claude.ai, ni con cuentas, paneles o comandos de otros productos: no los menciones ni los inventes como causa ni como solución. Si algo no te sale, di en una frase qué pasó y ofrece lo que sí puedes hacer.",
   "No inventes funciones ni pantallas que no existen. Si no estás seguro de un detalle de la interfaz, describe la vía de la @mención (universal) y ofrece ayudar con lo que intentaban lograr.",
@@ -905,6 +908,10 @@ const TOOL_LABELS: Record<string, { ing: string; done: string }> = {
   form_update: { ing: "Actualizando el formulario", done: "Actualicé el formulario" },
   form_list: { ing: "Consultando los formularios", done: "Consulté los formularios" },
   form_submissions: { ing: "Leyendo las respuestas", done: "Leí las respuestas" },
+  // Historial. VISIBLES a propósito, aunque la convención esconda las lecturas: que el
+  // agente fue a revisar la conversación antes de contestar es justo la señal que faltaba.
+  chat_search: { ing: "Buscando en la conversación", done: "Busqué en la conversación" },
+  chat_history: { ing: "Revisando la conversación", done: "Revisé la conversación" },
   create_payment_link: { ing: "Generando el link de pago", done: "Generé el link de pago" },
   create_quotation: { ing: "Preparando la cotización", done: "Preparé la cotización" },
   fast_quotation: { ing: "Preparando la cotización", done: "Preparé la cotización" },

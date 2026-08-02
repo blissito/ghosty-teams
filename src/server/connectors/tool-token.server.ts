@@ -19,7 +19,9 @@ const DEFAULT_TTL_S = 900; // 15 min: cubre turnos largos con tools encadenadas.
 // DÓNDE ocurre el turno (canal o DM + identidad del agente). Va DENTRO del token, no en
 // los argumentos de la tool: si el agente pudiera elegir destino, podría dejarle un
 // recordatorio a otra persona en otro canal. Firmado = no lo puede cambiar.
-export type ToolDest = { channelId?: number; dmId?: number; topic?: string; handle?: string; name?: string; avatar?: string };
+// `parentId` = el turno ocurre dentro de un HILO. Lo usa la lectura de historial para no
+// salirse de él: si te invocan en un hilo, lo que se puede leer es ese hilo.
+export type ToolDest = { channelId?: number; dmId?: number; parentId?: number; topic?: string; handle?: string; name?: string; avatar?: string };
 
 export function mintToolToken(sub: string, dest?: ToolDest | null, ttlSec: number = DEFAULT_TTL_S): string {
   const payload = Buffer.from(JSON.stringify({ sub, dest: dest ?? undefined, exp: Math.floor(Date.now() / 1000) + ttlSec })).toString("base64url");

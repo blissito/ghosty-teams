@@ -1863,6 +1863,90 @@ export async function recentContext(
   return rows.map(toMessage).reverse();
 }
 
+/**
+ * Historial hacia ATRÁS de un scope, paginado. Es lo que consume la tool `chat_history`
+ * del agente — el equivalente de `conversations.history` de Slack.
+ *
+ * `recentContext` de arriba mira la cola y nada más; esto es lo que permite RECORRER. El
+ * cursor es el `id` del mensaje más viejo devuelto: la siguiente página es ese `id` como
+ * `beforeId`. Se pagina por `id` y no por `created_at` porque dos mensajes del mismo
+ * segundo dejarían un hueco o repetirían.
+ *
+ * Devuelve en orden cronológico, igual que `recentContext`, para que el agente lea de
+ * arriba abajo.
+ */
+export async function historyBefore(
+  scope: { dmId: number } | { channelId: number; parentId?: number | null },
+  beforeId: number | null,
+  limit = 25
+): Promise<Message[]> {
+  const cur = beforeId && beforeId > 0 ? beforeId : null;
+  const tope = Math.max(1, Math.min(limit, 50));
+  let rows;
+  if ("dmId" in scope) {
+    rows = await dbq(
+      `SELECT * FROM gc_messages WHERE dm_id = ? AND kind = 'msg' ${cur ? "AND id < ?" : ""}
+        ORDER BY created_at DESC, id DESC LIMIT ?`,
+      cur ? [scope.dmId, cur, tope] : [scope.dmId, tope]
+    );
+  } else if (scope.parentId != null) {
+    // Un hilo son sus respuestas MÁS su raíz: sin el `OR id = ?` se pierde justo el
+    // mensaje que lo abrió, que suele ser el que trae la petición.
+    rows = await dbq(
+      `SELECT * FROM gc_messages WHERE (parent_id = ? OR id = ?) AND kind = 'msg' ${cur ? "AND id < ?" : ""}
+        ORDER BY created_at DESC, id DESC LIMIT ?`,
+      cur ? [scope.parentId, scope.parentId, cur, tope] : [scope.parentId, scope.parentId, tope]
+    );
+  } else {
+    rows = await dbq(
+      `SELECT * FROM gc_messages WHERE channel_id = ? AND parent_id IS NULL AND kind = 'msg' ${cur ? "AND id < ?" : ""}
+        ORDER BY created_at DESC, id DESC LIMIT ?`,
+      cur ? [scope.channelId, cur, tope] : [scope.channelId, tope]
+    );
+  }
+  return rows.map(toMessage).reverse();
+}
+
+/**
+ * Busca texto DENTRO de un scope (la tool `chat_search`).
+ *
+ * `searchRoomMessages` no sirve aquí: barre todos los rooms visibles, y `searchDmMessages`
+ * barre TODOS los DMs de la persona. La tool sólo puede ver la conversación donde
+ * invocaron al agente, así que la consulta se acota al scope firmado del token.
+ */
+export async function searchInScope(
+  scope: { dmId: number } | { channelId: number; parentId?: number | null },
+  q: string,
+  limit = 20
+): Promise<Message[]> {
+  if (!q.trim()) return [];
+  const tope = Math.max(1, Math.min(limit, 20));
+  const like = likeArg(q);
+  let rows;
+  if ("dmId" in scope) {
+    rows = await dbq(
+      `SELECT * FROM gc_messages WHERE dm_id = ? AND kind = 'msg' AND body LIKE ? ESCAPE '\\'
+        ORDER BY created_at DESC LIMIT ?`,
+      [scope.dmId, like, tope]
+    );
+  } else if (scope.parentId != null) {
+    rows = await dbq(
+      `SELECT * FROM gc_messages WHERE (parent_id = ? OR id = ?) AND kind = 'msg' AND body LIKE ? ESCAPE '\\'
+        ORDER BY created_at DESC LIMIT ?`,
+      [scope.parentId, scope.parentId, like, tope]
+    );
+  } else {
+    // En un canal se busca TAMBIÉN dentro de los hilos: ahí es donde vive el trabajo largo
+    // (la misma corrección que se le hizo al buscador humano el 2026-07-31).
+    rows = await dbq(
+      `SELECT * FROM gc_messages WHERE channel_id = ? AND dm_id IS NULL AND kind = 'msg'
+         AND body LIKE ? ESCAPE '\\' ORDER BY created_at DESC LIMIT ?`,
+      [scope.channelId, like, tope]
+    );
+  }
+  return rows.map(toMessage).reverse();
+}
+
 export async function createDmMessage(input: {
   dmId: number;
   sender: string;
