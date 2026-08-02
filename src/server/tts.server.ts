@@ -34,7 +34,9 @@ export type Audio = { bytes: Buffer; durMs: number; contentType: string };
 // KB, el LRU cubre la sesión de lectura —que es cuando duele— y un caché persistente
 // exige decidir dónde vive, quién lo borra y qué pasa con un documento privado. Si un
 // documento largo se lee entero a diario, ése es el momento de subirlo a storage.
-const MAX_ENTRADAS = 400;
+// Desde que se sintetiza por FRASE y no por bloque hay ~5 entradas donde había una, así
+// que el mismo número de entradas cubriría cinco veces menos documento.
+const MAX_ENTRADAS = 1200;
 const cache = new Map<string, Audio>();
 
 function recordar(k: string, a: Audio) {
@@ -58,6 +60,28 @@ export function claveAudio(texto: string, voz: Voz): string {
  * distinta en cada máquina y "a veces lee con otra voz" es peor que "ahora no se pudo"
  * (ver la decisión de descartar `SpeechSynthesis` en CLAUDE.md).
  */
+// ── Precalentado ─────────────────────────────────────────────────────────────
+//
+// La caja de voz hiberna a los 900 s, así que el primer play tras un rato paga el resume
+// ADEMÁS de la síntesis. Un texto mínimo la despierta mientras el usuario todavía está
+// leyendo el documento, que es cuando no cuesta nada.
+//
+// La guarda es por módulo y no por usuario a propósito: la caja es UNA para todos, y dos
+// personas con un documento abierto no necesitan despertarla dos veces.
+let ultimoWarm = 0;
+let warmEnVuelo: Promise<unknown> | null = null;
+const WARM_CADA_MS = 5 * 60_000;
+
+export async function precalentarVoz(voz: Voz = VOZ_DEFAULT): Promise<void> {
+  if (warmEnVuelo) return;
+  if (Date.now() - ultimoWarm < WARM_CADA_MS) return;
+  ultimoWarm = Date.now();
+  warmEnVuelo = hablar("Sí.", voz).finally(() => {
+    warmEnVuelo = null;
+  });
+  await warmEnVuelo;
+}
+
 export async function hablar(texto: string, voz: Voz = VOZ_DEFAULT): Promise<Audio | null> {
   const limpio = texto.trim();
   if (!limpio) return null;

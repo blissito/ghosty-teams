@@ -199,7 +199,15 @@ export default function DocEditor({
    * con 100 bloques— y un `bottom-5` cae 14.800px hacia abajo, fuera de la pantalla. El
    * botón existía y no se veía. Es la tercera vez que esta trampa muerde en este archivo.
    */
-  const [posBoton, setPosBoton] = useState<{ left: number; right: number; top: number } | null>(null);
+  const [posBoton, setPosBoton] = useState<{
+    left: number;
+    right: number;
+    top: number;
+    /** Esquina superior del contenedor VISIBLE: ahí vive la barra de lectura. */
+    arriba: number;
+    /** Su separación del borde derecho, ya en unidades de `right` de CSS. */
+    derecha: number;
+  } | null>(null);
 
   const alFinal = (el: HTMLElement) => el.scrollHeight - el.scrollTop - el.clientHeight < 120;
   const alPrincipio = (el: HTMLElement) => el.scrollTop < 120;
@@ -239,9 +247,22 @@ export default function DocEditor({
         setAlTope((prev) => (prev === arriba ? prev : arriba));
         // El botón se ancla a la esquina del contenedor VISIBLE, no del documento.
         const r = box.getBoundingClientRect();
-        const p = { left: Math.round(r.left + 16), right: Math.round(r.right - 150), top: Math.round(r.bottom - 52) };
+        const p = {
+          left: Math.round(r.left + 16),
+          right: Math.round(r.right - 150),
+          top: Math.round(r.bottom - 52),
+          arriba: Math.round(r.top + 12),
+          derecha: Math.round(window.innerWidth - r.right + 12),
+        };
         setPosBoton((prev) =>
-          prev && prev.left === p.left && prev.right === p.right && prev.top === p.top ? prev : p,
+          prev &&
+          prev.left === p.left &&
+          prev.right === p.right &&
+          prev.top === p.top &&
+          prev.arriba === p.arriba &&
+          prev.derecha === p.derecha
+            ? prev
+            : p,
         );
       };
       box.addEventListener("scroll", on, { passive: true });
@@ -495,6 +516,93 @@ export default function DocEditor({
     alTerminar: finLectura,
   });
 
+  // ── De un NODO a su índice de bloque ────────────────────────────────────────
+  //
+  // `marcarIndices` hace el camino de ida (índice → id → nodo). Esto es la vuelta, y es lo
+  // que permite empezar a leer POR DONDE EL USUARIO SEÑALA en vez de siempre desde arriba.
+  const indiceDeNodo = useCallback(
+    (n: Node | null): number | null => {
+      if (!n || !editor) return null;
+      const el = (n.nodeType === 1 ? (n as Element) : n.parentElement)?.closest("[data-id]");
+      const id = el?.getAttribute("data-id");
+      if (!id) return null;
+      const i = ((editor.document ?? []) as DocBlock[]).findIndex((b) => b.id === id);
+      return i >= 0 ? i : null;
+    },
+    [editor],
+  );
+
+  // Precalentado: la caja de voz hiberna a los 900 s y el primer play pagaría el resume
+  // encima de la síntesis. Se despierta al abrir el documento; la guarda de los 5 minutos
+  // vive en el servidor, así que esto no puede convertirse en una tormenta de peticiones.
+  useEffect(() => {
+    if (!documentId || streaming) return;
+    void fetch("/api/tts-warm", { method: "POST" }).catch(() => {});
+  }, [documentId, streaming]);
+
+  // ── Bocina por párrafo, al pasar el ratón ───────────────────────────────────
+  //
+  // Va por delegación sobre el contenedor y NO por el side menu de BlockNote: ése se apaga
+  // con `editable=false`, y leer en voz alta un documento que sólo puedes VER (una versión
+  // vieja, un documento compartido) es justo uno de los casos que se pidieron.
+  const [bocina, setBocina] = useState<{ i: number; top: number; left: number } | null>(null);
+  useEffect(() => {
+    const raiz = scroller.current;
+    if (!raiz || !documentId || streaming) return;
+    const sobre = (e: MouseEvent) => {
+      const el = (e.target as Element | null)?.closest?.(".gt-doc [data-id]") as HTMLElement | null;
+      const i = el ? indiceDeNodo(el) : null;
+      if (i == null || !el) return setBocina(null);
+      const r = el.getBoundingClientRect();
+      setBocina((prev) =>
+        prev && prev.i === i ? prev : { i, top: Math.round(r.top + 1), left: Math.round(r.left - 30) },
+      );
+    };
+    const fuera = () => setBocina(null);
+    raiz.addEventListener("mousemove", sobre, { passive: true });
+    raiz.addEventListener("mouseleave", fuera);
+    return () => {
+      raiz.removeEventListener("mousemove", sobre);
+      raiz.removeEventListener("mouseleave", fuera);
+    };
+  }, [documentId, streaming, indiceDeNodo]);
+
+  // Al scrollear, el rect guardado deja de valer. Se esconde y vuelve al primer movimiento
+  // del ratón: recalcularlo en cada scroll sería pintar una bocina que persigue al dedo.
+  useEffect(() => {
+    if (!bocina) return;
+    const box = caja();
+    if (!box) return;
+    const off = () => setBocina(null);
+    box.addEventListener("scroll", off, { passive: true, once: true });
+    return () => box.removeEventListener("scroll", off);
+  }, [bocina, caja]);
+
+  // ── Qué hay seleccionado ────────────────────────────────────────────────────
+  //
+  // Se lee de la selección del NAVEGADOR y no de `editor.getSelection()` por lo mismo que
+  // la bocina: en sólo-lectura no hay selección de editor, pero el usuario sí puede
+  // seleccionar texto con el ratón.
+  const [sel, setSel] = useState<{ desde: number; hasta: number } | null>(null);
+  useEffect(() => {
+    if (!documentId || streaming) return;
+    const mirar = () => {
+      const s = window.getSelection();
+      if (!s || s.isCollapsed || s.rangeCount === 0) return setSel(null);
+      const dentro = scroller.current?.contains(s.anchorNode ?? null);
+      if (!dentro) return setSel(null);
+      const a = indiceDeNodo(s.anchorNode);
+      const b = indiceDeNodo(s.focusNode);
+      if (a == null || b == null) return setSel(null);
+      const desde = Math.min(a, b);
+      const hasta = Math.max(a, b);
+      setSel((prev) => (prev && prev.desde === desde && prev.hasta === hasta ? prev : { desde, hasta }));
+    };
+    document.addEventListener("selectionchange", mirar);
+    mirar();
+    return () => document.removeEventListener("selectionchange", mirar);
+  }, [documentId, streaming, indiceDeNodo]);
+
   // Los bloques que el agente acaba de tocar, resueltos de sus ALIAS contra el documento
   // que este editor tiene AHORA — que es exactamente el que el agente vio, así que los
   // alias casan. Marca en el momento del patch, sin esperar a que el server publique ni a
@@ -577,20 +685,59 @@ export default function DocEditor({
 
       {/* Leer en voz alta. Arriba a la derecha del documento y NO en el chat: lo que se
           está leyendo es el documento, y el control tiene que estar donde está el texto
-          que va resaltándose (es el pedido literal del demo: "como en Word"). */}
-      {documentId && !streaming ? (
-        <div className="absolute right-3 top-3 z-40 flex items-center gap-1 rounded-full border border-border bg-surface/95 px-1.5 py-1 shadow-lg backdrop-blur">
+          que va resaltándose (es el pedido literal del demo: "como en Word").
+
+          ⚠️ `fixed` anclado al rect del contenedor VISIBLE, igual que el resto de flotantes
+          de este archivo, y por la misma razón de siempre: este div no está acotado, así
+          que mide el alto del documento entero y un `absolute top-3` se va con el scroll.
+          Se veía como que la barra "no era superior": para detener la lectura había que
+          volver hasta arriba del documento. */}
+      {documentId && !streaming && posBoton ? (
+        <div
+          style={{ position: "fixed", top: posBoton.arriba, right: posBoton.derecha }}
+          className="z-[70] flex items-center gap-1 rounded-full border border-border bg-surface/95 px-1.5 py-1 shadow-lg backdrop-blur"
+        >
           {!voz.leyendo && voz.estado !== "pausa" ? (
-            <button
-              type="button"
-              onClick={voz.empezar}
-              aria-label={t("Leer en voz alta")}
-              title={t("Leer en voz alta")}
-              className="inline-flex items-center gap-1.5 rounded-full px-2 py-1 text-xs font-medium text-ink transition hover:text-brand"
-            >
-              <Volume2 size={14} />
-              {t("Leer en voz alta")}
-            </button>
+            sel ? (
+              // Con texto seleccionado son DOS lecturas distintas y las dos se piden:
+              // revisar el párrafo que marcaste, o retomar la lectura desde ahí.
+              <>
+                <button
+                  type="button"
+                  onClick={() => voz.empezarEn(sel.desde, sel.hasta)}
+                  aria-label={t("Leer la selección")}
+                  title={t("Leer la selección")}
+                  className="inline-flex items-center gap-1.5 rounded-full px-2 py-1 text-xs font-medium text-ink transition hover:text-brand"
+                >
+                  <Volume2 size={14} />
+                  {t("Leer la selección")}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => voz.empezarEn(sel.desde)}
+                  aria-label={t("Leer desde aquí")}
+                  title={t("Leer desde aquí")}
+                  className="rounded-full p-1 text-muted transition hover:text-brand"
+                >
+                  <ArrowDown size={14} />
+                </button>
+              </>
+            ) : (
+              <button
+                type="button"
+                onClick={voz.empezar}
+                // El cebo: al llegar el cursor al botón se pide ya la primera frase, que
+                // es ~1.6 s de síntesis. Para cuando el dedo hace clic, el audio está.
+                onPointerEnter={voz.cebar}
+                onFocus={voz.cebar}
+                aria-label={t("Leer en voz alta")}
+                title={t("Leer en voz alta")}
+                className="inline-flex items-center gap-1.5 rounded-full px-2 py-1 text-xs font-medium text-ink transition hover:text-brand"
+              >
+                <Volume2 size={14} />
+                {t("Leer en voz alta")}
+              </button>
+            )
           ) : (
             <>
               <button
@@ -652,6 +799,23 @@ export default function DocEditor({
             <span className="px-1.5 text-[11px] text-red-400">{t(voz.error)}</span>
           ) : null}
         </div>
+      ) : null}
+
+      {/* La bocina del párrafo bajo el cursor: empieza a leer AHÍ. Sin esto, la única
+          lectura posible era desde el principio del documento, que en un escrito de 100
+          bloques equivale a no poder elegir. */}
+      {bocina && !streaming ? (
+        <button
+          type="button"
+          style={{ position: "fixed", top: bocina.top, left: bocina.left }}
+          onClick={() => voz.empezarEn(bocina.i)}
+          onPointerEnter={voz.cebar}
+          aria-label={t("Leer desde este párrafo")}
+          title={t("Leer desde este párrafo")}
+          className="z-[70] rounded-full border border-border bg-surface/95 p-1 text-muted shadow-sm backdrop-blur transition hover:text-brand"
+        >
+          <Volume2 size={12} />
+        </button>
       ) : null}
 
       {/* Autoguardado, abajo a la izquierda: discreto pero presente. El error NO se

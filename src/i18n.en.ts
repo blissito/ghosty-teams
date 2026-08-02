@@ -486,6 +486,9 @@ export const en: Record<string, string> = {
   Reanudar: "Resume",
   Velocidad: "Speed",
   "Detener la lectura": "Stop reading",
+  "Leer la selección": "Read selection",
+  "Leer desde aquí": "Read from here",
+  "Leer desde este párrafo": "Read from this paragraph",
   "No se pudo generar la voz": "Couldn't generate the audio",
   // Lo que Ghosty dice mientras trabaja (rotan cada 3s). Se traducen por SENTIDO, no
   // literal: la gracia es que la espera se entienda, no calcar la frase.

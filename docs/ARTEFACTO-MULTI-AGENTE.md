@@ -85,6 +85,27 @@ hacen falta anclas relativas y resolución semántica, y el resultado suele sali
 4. **Token de sala para el subagente**: `collab.ts` ya emite tokens con rol — hay que acuñar
    uno de escritura acotado a la celda, o al menos de escritura al documento.
 
+## Pendiente aparte: generar el HTML con Sonnet 5
+
+Anotado el 2026-07-31. **El agente podrá usar `claude-sonnet-5` para generar el HTML del
+artefacto aunque el turno esté corriendo con Opus** — el modelo del turno y el que redacta el
+documento no tienen por qué ser el mismo.
+
+Por qué tiene sentido: escribir el HTML es la parte cara del turno en tokens de salida (cada
+versión re-escribe el documento completo, ver arriba) y es donde menos hace falta el
+razonamiento de Opus. Opus se queda con lo que sí es difícil: decidir qué construir,
+coordinar subagentes, resolver el conflicto semántico.
+
+Dos cosas a cuidar cuando se implemente:
+
+- **Cambiar de modelo a media conversación invalida el caché de prompt** (los cachés son por
+  modelo). Por eso esto NO es "cambiarle el modelo al turno": es delegar la redacción a una
+  llamada aparte —subagente o llamada directa— y que el turno principal siga en Opus.
+- El bloque ` ```eb-artifact ` sigue teniendo que salir en la respuesta del agente padre: es
+  lo único que el panel pinta. Lo que se delega es *producir el HTML*, no *entregarlo*.
+
+Encaja bien con la rejilla: cada celda la puede redactar Sonnet 5 mientras Opus orquesta.
+
 ## Antes de empezar
 
 - Ver `docs/ARTIFACT-PATCH.md` y `docs/ARTIFACTS-STUDIO.md`: puede que parte del contrato de

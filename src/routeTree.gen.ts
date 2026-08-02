@@ -26,6 +26,7 @@ import { Route as CSlugRouteImport } from './routes/c.$slug'
 import { Route as ArtefactoIdRouteImport } from './routes/artefacto.$id'
 import { Route as ApiWarmRouteImport } from './routes/api.warm'
 import { Route as ApiUploadRouteImport } from './routes/api.upload'
+import { Route as ApiTtsWarmRouteImport } from './routes/api.tts-warm'
 import { Route as ApiStreamRouteImport } from './routes/api.stream'
 import { Route as ApiManifestRouteImport } from './routes/api.manifest'
 import { Route as ApiAgentAssetRouteImport } from './routes/api.agent-asset'
@@ -134,6 +135,11 @@ const ApiWarmRoute = ApiWarmRouteImport.update({
 const ApiUploadRoute = ApiUploadRouteImport.update({
   id: '/api/upload',
   path: '/api/upload',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiTtsWarmRoute = ApiTtsWarmRouteImport.update({
+  id: '/api/tts-warm',
+  path: '/api/tts-warm',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiStreamRoute = ApiStreamRouteImport.update({
@@ -272,6 +278,7 @@ export interface FileRoutesByFullPath {
   '/api/agent-asset': typeof ApiAgentAssetRoute
   '/api/manifest': typeof ApiManifestRoute
   '/api/stream': typeof ApiStreamRoute
+  '/api/tts-warm': typeof ApiTtsWarmRoute
   '/api/upload': typeof ApiUploadRoute
   '/api/warm': typeof ApiWarmRoute
   '/artefacto/$id': typeof ArtefactoIdRouteWithChildren
@@ -314,6 +321,7 @@ export interface FileRoutesByTo {
   '/api/agent-asset': typeof ApiAgentAssetRoute
   '/api/manifest': typeof ApiManifestRoute
   '/api/stream': typeof ApiStreamRoute
+  '/api/tts-warm': typeof ApiTtsWarmRoute
   '/api/upload': typeof ApiUploadRoute
   '/api/warm': typeof ApiWarmRoute
   '/artefacto/$id': typeof ArtefactoIdRouteWithChildren
@@ -358,6 +366,7 @@ export interface FileRoutesById {
   '/api/agent-asset': typeof ApiAgentAssetRoute
   '/api/manifest': typeof ApiManifestRoute
   '/api/stream': typeof ApiStreamRoute
+  '/api/tts-warm': typeof ApiTtsWarmRoute
   '/api/upload': typeof ApiUploadRoute
   '/api/warm': typeof ApiWarmRoute
   '/artefacto/$id': typeof ArtefactoIdRouteWithChildren
@@ -403,6 +412,7 @@ export interface FileRouteTypes {
     | '/api/agent-asset'
     | '/api/manifest'
     | '/api/stream'
+    | '/api/tts-warm'
     | '/api/upload'
     | '/api/warm'
     | '/artefacto/$id'
@@ -445,6 +455,7 @@ export interface FileRouteTypes {
     | '/api/agent-asset'
     | '/api/manifest'
     | '/api/stream'
+    | '/api/tts-warm'
     | '/api/upload'
     | '/api/warm'
     | '/artefacto/$id'
@@ -488,6 +499,7 @@ export interface FileRouteTypes {
     | '/api/agent-asset'
     | '/api/manifest'
     | '/api/stream'
+    | '/api/tts-warm'
     | '/api/upload'
     | '/api/warm'
     | '/artefacto/$id'
@@ -532,6 +544,7 @@ export interface RootRouteChildren {
   ApiAgentAssetRoute: typeof ApiAgentAssetRoute
   ApiManifestRoute: typeof ApiManifestRoute
   ApiStreamRoute: typeof ApiStreamRoute
+  ApiTtsWarmRoute: typeof ApiTtsWarmRoute
   ApiUploadRoute: typeof ApiUploadRoute
   ApiWarmRoute: typeof ApiWarmRoute
   ArtefactoIdRoute: typeof ArtefactoIdRouteWithChildren
@@ -676,6 +689,13 @@ declare module '@tanstack/react-router' {
       path: '/api/upload'
       fullPath: '/api/upload'
       preLoaderRoute: typeof ApiUploadRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/tts-warm': {
+      id: '/api/tts-warm'
+      path: '/api/tts-warm'
+      fullPath: '/api/tts-warm'
+      preLoaderRoute: typeof ApiTtsWarmRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/stream': {
@@ -892,6 +912,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiAgentAssetRoute: ApiAgentAssetRoute,
   ApiManifestRoute: ApiManifestRoute,
   ApiStreamRoute: ApiStreamRoute,
+  ApiTtsWarmRoute: ApiTtsWarmRoute,
   ApiUploadRoute: ApiUploadRoute,
   ApiWarmRoute: ApiWarmRoute,
   ArtefactoIdRoute: ArtefactoIdRouteWithChildren,
