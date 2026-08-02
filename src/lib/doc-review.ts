@@ -112,7 +112,12 @@ export function useDocReview({ documentId, version, bloques }: Opts) {
    * dónde guardarse.
    */
   const ignoradas = useRef<Set<string>>(cargarIgnoradas());
-  const llave = (h: Hallazgo) => `${h.palabra.toLowerCase()}|${h.ruleId}`;
+  // ⚠️ La llave es SÓLO la palabra, sin el id de la regla. Con la regla dentro, "Perdix"
+  // en un título y "Perdix" en un párrafo eran cosas distintas —LanguageTool los marca con
+  // reglas distintas— así que ignorarlo en uno no lo callaba en el otro y ni siquiera se
+  // reconocían como repetidos. Para quien escribe es la MISMA palabra, y eso es lo que
+  // manda aquí.
+  const llave = (h: Hallazgo) => h.palabra.toLowerCase();
   const recordarIgnorada = (k: string) => {
     ignoradas.current.add(k);
     guardarIgnoradas(ignoradas.current);
@@ -169,7 +174,7 @@ export function useDocReview({ documentId, version, bloques }: Opts) {
             const texto = mapa.get(fila.id) ?? "";
             for (const m of fila.matches) {
               const palabra = texto.slice(m.offset, m.offset + m.length);
-              if (ignoradas.current.has(`${palabra.toLowerCase()}|${m.ruleId}`)) continue;
+                      if (ignoradas.current.has(palabra.toLowerCase())) continue;
               encontrados.push({
                 id: `${fila.id}:${m.offset}:${m.ruleId}`,
                 blockId: fila.id,

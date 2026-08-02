@@ -1405,15 +1405,21 @@ export default function DocEditor({
           {/* Las acciones "para todas" van abajo y en tono menor: son las que más ahorran
               y las que peor se sienten si se disparan por accidente. Sólo aparecen cuando
               la palabra sale más de una vez, que es cuando significan algo. */}
-          {revision.iguales(revision.actual).length > 1 ? (
-            <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-border pt-2 text-[11px] text-muted">
+          {/* "Ignorar todas" está SIEMPRE, aunque el contador vea una sola aparición: es
+              la acción que uno busca ante un nombre propio, y además lo manda al
+              diccionario para que no vuelva a preguntarlo mañana. "Cambiar todas" sí
+              depende de que haya más de una, porque si no es lo mismo que "Cambiar". */}
+          <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-border pt-2 text-[11px] text-muted">
+            {revision.iguales(revision.actual).length > 1 ? (
               <span>
                 {t("{n} veces en el documento").replace(
                   "{n}",
                   String(revision.iguales(revision.actual).length),
                 )}
               </span>
-              {revision.actual.sugerencias[0] ? (
+            ) : null}
+            {revision.iguales(revision.actual).length > 1 ? (
+              revision.actual.sugerencias[0] ? (
                 <button
                   type="button"
                   onClick={() => cambiarTodas(revision.actual!, revision.actual!.sugerencias[0])}
@@ -1421,17 +1427,17 @@ export default function DocEditor({
                 >
                   {t("Cambiar todas")}
                 </button>
-              ) : null}
-              <button
-                type="button"
-                onClick={() => revision.resolver(revision.actual!, 0, true)}
-                className="transition hover:text-ink"
-                title={t("Ignorar esta palabra en todo el documento")}
-              >
-                {t("Ignorar todas")}
-              </button>
-            </div>
-          ) : null}
+              ) : null
+            ) : null}
+            <button
+              type="button"
+              onClick={() => revision.resolver(revision.actual!, 0, true)}
+              className="transition hover:text-ink"
+              title={t("Ignorar esta palabra en todo el documento")}
+            >
+              {t("Ignorar todas")}
+            </button>
+          </div>
         </div>
       ) : null}
 
