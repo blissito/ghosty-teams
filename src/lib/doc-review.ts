@@ -118,6 +118,19 @@ export function useDocReview({ documentId, version, bloques }: Opts) {
   // reconocían como repetidos. Para quien escribe es la MISMA palabra, y eso es lo que
   // manda aquí.
   const llave = (h: Hallazgo) => h.palabra.toLowerCase();
+  /**
+   * Hallazgos que ya resolviste EN ESTA SESIÓN (por su id).
+   *
+   * "Ignorar" (sólo ésta) no manda la palabra al diccionario —es una decisión sobre ese
+   * sitio concreto, no sobre la palabra—, así que al salir de la revisión y volver a
+   * entrar el servidor la devolvía otra vez: revisabas dos veces lo mismo. Se recuerda
+   * mientras la pestaña viva, que es lo que dura una revisión.
+   *
+   * Por `id` (bloque + posición + regla) y no por palabra: si el párrafo cambia, el id
+   * cambia con él y la falta vuelve a preguntarse, que es lo correcto.
+   */
+  const resueltos = useRef(new Set<string>());
+
   const recordarIgnorada = (k: string) => {
     ignoradas.current.add(k);
     guardarIgnoradas(ignoradas.current);
@@ -175,6 +188,7 @@ export function useDocReview({ documentId, version, bloques }: Opts) {
             for (const m of fila.matches) {
               const palabra = texto.slice(m.offset, m.offset + m.length);
                       if (ignoradas.current.has(palabra.toLowerCase())) continue;
+              if (resueltos.current.has(`${fila.id}:${m.offset}:${m.ruleId}`)) continue;
               encontrados.push({
                 id: `${fila.id}:${m.offset}:${m.ruleId}`,
                 blockId: fila.id,
@@ -232,6 +246,7 @@ export function useDocReview({ documentId, version, bloques }: Opts) {
   const resolver = useCallback(
     (h: Hallazgo, delta: number, tambienLasIguales = false) => {
       if (tambienLasIguales) recordarIgnorada(llave(h));
+      resueltos.current.add(h.id);
       setHallazgos((prev) => {
         const mapa = textos(bloques());
         const nuevoHash = firmaTexto(mapa.get(h.blockId) ?? "");
