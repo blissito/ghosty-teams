@@ -478,6 +478,15 @@ export const en: Record<string, string> = {
   "Borrando de la memoria": "Removing from memory",
   "Lo borré de la memoria": "Removed from memory",
   "Ir al principio": "Back to top",
+  // Lectura en voz alta del documento (el "Read Aloud" de Word).
+  "Leer en voz alta": "Read aloud",
+  "Párrafo anterior": "Previous paragraph",
+  "Párrafo siguiente": "Next paragraph",
+  Pausar: "Pause",
+  Reanudar: "Resume",
+  Velocidad: "Speed",
+  "Detener la lectura": "Stop reading",
+  "No se pudo generar la voz": "Couldn't generate the audio",
   // Lo que Ghosty dice mientras trabaja (rotan cada 3s). Se traducen por SENTIDO, no
   // literal: la gracia es que la espera se entienda, no calcar la frase.
   "leyendo con calma…": "reading it through…",

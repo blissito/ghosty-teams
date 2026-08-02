@@ -6253,7 +6253,10 @@ function artifactToView(a: Artifact): ArtifactView {
   // `messageId` no es decorativo en un doc: es el `key` del editor en el panel, y
   // tiene que coincidir con el que usa el borrador para que al cerrarse el fence el
   // editor NO se remonte. Sin él, el swap borrador→doc se vería como un parpadeo.
-  if (a.kind === "doc") return { kind: "doc", title, documentId: a.url, md: a.md ?? "", messageId: a.messageId };
+  // `versionId` (la FILA de gc_artifacts): el panel enseña la versión del MENSAJE que
+  // abriste, no la última. La lectura en voz alta la sintetiza el servidor, así que sin
+  // esto leería la viva mientras en pantalla hay otra.
+  if (a.kind === "doc") return { kind: "doc", title, documentId: a.url, md: a.md ?? "", messageId: a.messageId, versionId: a.id };
   if (a.kind === "sheet") return { kind: "sheet", title, documentId: a.url, csv: a.md ?? "" };
   if (a.kind === "artifact") return { kind: "artifact", title, documentId: a.url, html: a.md ?? "", src: a.src ?? "", messageId: a.messageId, versionId: a.id };
   if (a.kind === "ask-user") {

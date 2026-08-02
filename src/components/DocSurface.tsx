@@ -51,6 +51,7 @@ export default function DocSurface({
   messageId,
   title,
   patchRefs,
+  version,
 }: {
   /** Crudo de `gc_artifacts.md` o del fence: sobre JSON o markdown. */
   md: string;
@@ -61,6 +62,8 @@ export default function DocSurface({
   title?: string;
   /** Alias del patch en curso → el editor marca ya, sin esperar la republicación. */
   patchRefs?: string[];
+  /** La versión que enseña el panel (`?v`). Sin ella se lee la viva, que es lo que se ve. */
+  version?: string | number | null;
 }) {
   // El sobre se parsea en cada render, pero es sólo un JSON.parse del string que ya
   // tenemos, y `md` cambia poco cuando NO se está streameando.
@@ -183,6 +186,10 @@ export default function DocSurface({
         highlightIds={marcar}
         patchRefs={patchRefs}
         guardado={guardado}
+        // Para el "leer en voz alta": el audio lo sintetiza el servidor desde ESTE
+        // documento y ESTA versión, no desde el texto que tenga el cliente.
+        documentId={documentId}
+        version={version}
       />
     </Suspense>
   );

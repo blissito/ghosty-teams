@@ -1,7 +1,20 @@
 import "@blocknote/core/fonts/inter.css";
 import "@blocknote/mantine/style.css";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ArrowDown, ArrowUp, Check, Loader2, Pencil, TriangleAlert } from "lucide-react";
+import {
+  ArrowDown,
+  ArrowUp,
+  Check,
+  ChevronLeft,
+  ChevronRight,
+  Loader2,
+  Pause,
+  Pencil,
+  Play,
+  Square,
+  TriangleAlert,
+  Volume2,
+} from "lucide-react";
 import { BlockNoteView } from "@blocknote/mantine";
 import { useT } from "../i18n";
 import { useCreateBlockNote } from "@blocknote/react";
@@ -14,6 +27,7 @@ import {
 } from "@blocknote/xl-multi-column";
 import { aliasTable, blockSignature, type DocBlock } from "../lib/doc-blocks";
 import { reconcile } from "../lib/doc-reconcile";
+import { useReadAloud } from "../lib/read-aloud";
 
 // ── El editor de documentos de texto ──────────────────────────────────────────
 //
@@ -112,6 +126,8 @@ export default function DocEditor({
   highlightIds,
   patchRefs,
   guardado,
+  documentId,
+  version,
 }: {
   /** La verdad, ya en bloques (documento publicado con sobre `v:1`). */
   blocks?: DocBlock[];
@@ -141,6 +157,13 @@ export default function DocEditor({
   patchRefs?: string[];
   /** Estado del autoguardado, para mostrarlo. */
   guardado?: "pendiente" | "guardando" | "ok" | "error" | null;
+  /**
+   * El documento, para pedirle su voz al servidor. Sin él no hay "leer en voz alta": un
+   * borrador en vivo todavía no es una fila, así que no hay de dónde sacar el audio.
+   */
+  documentId?: string;
+  /** La versión que se está MIRANDO (`?v`): se lee lo mismo que se ve. */
+  version?: string | number | null;
 }) {
   const t = useT();
   const editor = useCreateBlockNote({
@@ -432,6 +455,46 @@ export default function DocEditor({
     [marcarIndices, limpiarMarca],
   );
 
+  // ── Leer en voz alta ────────────────────────────────────────────────────────
+  //
+  // Reusa la MISMA capa de resaltado que el cambio quirúrgico, con una diferencia que
+  // importa: aquí la marca NO se desvanece sola ni espera a que la persona mire. Lo que
+  // manda es el audio — mientras suena el párrafo, el párrafo está marcado.
+  const marcarLectura = useCallback(
+    (i: number) => {
+      // `hasta: Infinity` para que el reconciliador la vuelva a poner si el documento se
+      // repinta a media lectura (un autoguardado, una republicación del agente).
+      marca.current = { indices: [i], hasta: Number.POSITIVE_INFINITY };
+      // Reintenta: con 100 bloques, BlockNote puede no tener pintado todavía el nodo al
+      // que acabamos de saltar.
+      let n = 0;
+      const probar = () => {
+        if (marcarIndices([i], n === 0) || ++n > 20) return;
+        setTimeout(probar, 60);
+      };
+      probar();
+    },
+    [marcarIndices],
+  );
+
+  const finLectura = useCallback(() => {
+    marca.current = null;
+    limpiarMarca();
+  }, [limpiarMarca]);
+
+  const bloquesActuales = useCallback(
+    () => ((editor?.document ?? []) as DocBlock[]),
+    [editor],
+  );
+
+  const voz = useReadAloud({
+    documentId,
+    version,
+    bloques: bloquesActuales,
+    alBloque: marcarLectura,
+    alTerminar: finLectura,
+  });
+
   // Los bloques que el agente acaba de tocar, resueltos de sus ALIAS contra el documento
   // que este editor tiene AHORA — que es exactamente el que el agente vio, así que los
   // alias casan. Marca en el momento del patch, sin esperar a que el server publique ni a
@@ -511,6 +574,85 @@ export default function DocEditor({
           </article>
         </div>
       </div>
+
+      {/* Leer en voz alta. Arriba a la derecha del documento y NO en el chat: lo que se
+          está leyendo es el documento, y el control tiene que estar donde está el texto
+          que va resaltándose (es el pedido literal del demo: "como en Word"). */}
+      {documentId && !streaming ? (
+        <div className="absolute right-3 top-3 z-40 flex items-center gap-1 rounded-full border border-border bg-surface/95 px-1.5 py-1 shadow-lg backdrop-blur">
+          {!voz.leyendo && voz.estado !== "pausa" ? (
+            <button
+              type="button"
+              onClick={voz.empezar}
+              aria-label={t("Leer en voz alta")}
+              title={t("Leer en voz alta")}
+              className="inline-flex items-center gap-1.5 rounded-full px-2 py-1 text-xs font-medium text-ink transition hover:text-brand"
+            >
+              <Volume2 size={14} />
+              {t("Leer en voz alta")}
+            </button>
+          ) : (
+            <>
+              <button
+                type="button"
+                onClick={() => voz.saltar(-1)}
+                aria-label={t("Párrafo anterior")}
+                title={t("Párrafo anterior")}
+                className="rounded-full p-1 text-ink transition hover:text-brand"
+              >
+                <ChevronLeft size={14} />
+              </button>
+              <button
+                type="button"
+                onClick={voz.estado === "pausa" ? voz.reanudar : voz.pausar}
+                aria-label={voz.estado === "pausa" ? t("Reanudar") : t("Pausar")}
+                title={voz.estado === "pausa" ? t("Reanudar") : t("Pausar")}
+                className="rounded-full p-1 text-ink transition hover:text-brand"
+              >
+                {voz.estado === "cargando" ? (
+                  <Loader2 size={14} className="animate-spin" />
+                ) : voz.estado === "pausa" ? (
+                  <Play size={14} />
+                ) : (
+                  <Pause size={14} />
+                )}
+              </button>
+              <button
+                type="button"
+                onClick={() => voz.saltar(1)}
+                aria-label={t("Párrafo siguiente")}
+                title={t("Párrafo siguiente")}
+                className="rounded-full p-1 text-ink transition hover:text-brand"
+              >
+                <ChevronRight size={14} />
+              </button>
+              {/* La velocidad cicla en vez de abrir un menú: son tres valores y el control
+                  vive encima del documento, donde un desplegable estorba. */}
+              <button
+                type="button"
+                onClick={() => voz.setVelocidad((v) => (v >= 1.5 ? 0.75 : v >= 1.25 ? 1.5 : v >= 1 ? 1.25 : 1))}
+                aria-label={t("Velocidad")}
+                title={t("Velocidad")}
+                className="rounded-full px-1.5 py-1 text-[11px] font-semibold tabular-nums text-muted transition hover:text-brand"
+              >
+                {voz.velocidad}×
+              </button>
+              <button
+                type="button"
+                onClick={voz.parar}
+                aria-label={t("Detener la lectura")}
+                title={t("Detener la lectura")}
+                className="rounded-full p-1 text-ink transition hover:text-brand"
+              >
+                <Square size={13} />
+              </button>
+            </>
+          )}
+          {voz.error ? (
+            <span className="px-1.5 text-[11px] text-red-400">{t(voz.error)}</span>
+          ) : null}
+        </div>
+      ) : null}
 
       {/* Autoguardado, abajo a la izquierda: discreto pero presente. El error NO se
           desvanece (lo quita el siguiente guardado bueno) — perder texto en silencio es

@@ -145,6 +145,8 @@ export type ArtifactView =
       md: string;
       messageId?: number;
       patchRefs?: string[];
+      /** La FILA de gc_artifacts que se está viendo (el panel no siempre enseña la última). */
+      versionId?: number;
     }
   | { kind: "sheet"; title: string; documentId: string; csv: string } // hoja viva (CSV local + versiones)
   // Artefacto HTML interactivo: `html` = fuente (iframe srcDoc, sandbox aislado); `src` = URL pública S3.
@@ -1858,6 +1860,7 @@ export default function ArtifactPanel({
                         messageId={artifact.messageId}
                         title={artifact.title}
                         patchRefs={artifact.patchRefs}
+                        version={artifact.versionId}
                       />
                     ) : artifact.kind === "artifact" ? (
                       // Artefacto HTML interactivo. Modo Ver: iframe AISLADO (sandbox sin
