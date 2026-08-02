@@ -574,6 +574,8 @@ export default function DocEditor({
   // porque el `leave` volvía a programar el apagado y ya no quedaba nadie para cancelarlo.
   // La bocina se desvanecía justo con el cursor encima.
   const sobreBocina = useRef(false);
+  /** Cierto cuando la bocina visible es la del párrafo activo: ésa no se autooculta. */
+  const bocinaPegada = useRef(false);
   const cancelarOcultar = useCallback(() => {
     if (bocinaOff.current) clearTimeout(bocinaOff.current);
     bocinaOff.current = null;
@@ -582,7 +584,8 @@ export default function DocEditor({
     if (bocinaOff.current) return;
     bocinaOff.current = setTimeout(() => {
       bocinaOff.current = null;
-      if (!sobreBocina.current) setBocina(null);
+      // La del párrafo activo NO se va: mientras algo suena, es el stop que tienes a mano.
+      if (!sobreBocina.current && !bocinaPegada.current) setBocina(null);
       // Un segundo entero: el recorrido del texto al botón pasa por zona muerta, y que se
       // apague a medio camino es lo que hacía imposible pulsarla. Sobra tiempo antes de que
       // estorbe — se va sola en cuanto el cursor toca otro párrafo.
@@ -739,10 +742,17 @@ export default function DocEditor({
 
   const live = editable && !streaming;
   /** ¿El párrafo que la bocina señala es justo el que se está leyendo? */
-  const sonando = !!bocina && leyendoI === bocina.i && voz.leyendo;
-  /** Se pidió este párrafo y su voz todavía viene en camino. */
-  const cargandoAqui =
-    !!bocina && voz.estado === "cargando" && (pedidoI === bocina.i || leyendoI === bocina.i);
+  // ── La bocina es el control principal de la lectura ─────────────────────────
+  //
+  // La barra de arriba sigue ahí, pero el gesto natural es actuar sobre el párrafo que
+  // estás mirando. Así que en el párrafo ACTIVO la bocina refleja el estado real y hace lo
+  // que toca: si viene en camino, spinner; si suena, stop; si está en pausa, reanudar.
+  // En cualquier otro párrafo es siempre un play que salta la lectura ahí.
+  const bocinaActiva = !!bocina && (leyendoI === bocina.i || pedidoI === bocina.i);
+  const cargandoAqui = bocinaActiva && voz.estado === "cargando";
+  const sonando = bocinaActiva && voz.estado === "leyendo";
+  const pausadoAqui = bocinaActiva && voz.estado === "pausa";
+  bocinaPegada.current = bocinaActiva && voz.estado !== "parado";
 
   return (
     // `relative` para el botón flotante; el que scrollea es el hijo, no este.
@@ -906,6 +916,7 @@ export default function DocEditor({
           // no llega a emitir el click. Así la orden sale en cuanto se aprieta.
           onPointerDown={() => {
             if (sonando) return voz.parar();
+            if (pausadoAqui) return voz.reanudar();
             setPedidoI(bocina.i);
             voz.empezarEn(bocina.i);
           }}
@@ -918,8 +929,12 @@ export default function DocEditor({
             sobreBocina.current = false;
             ocultarLuego();
           }}
-          aria-label={sonando ? t("Detener la lectura") : t("Leer desde este párrafo")}
-          title={sonando ? t("Detener la lectura") : t("Leer desde este párrafo")}
+          aria-label={
+            sonando ? t("Detener la lectura") : pausadoAqui ? t("Reanudar") : t("Leer desde este párrafo")
+          }
+          title={
+            sonando ? t("Detener la lectura") : pausadoAqui ? t("Reanudar") : t("Leer desde este párrafo")
+          }
           // El blanco real es más grande que el círculo (`before:-inset-3`): con 20px de
           // icono en el margen, apuntarle era un ejercicio de puntería.
           className="z-[70] rounded-full border border-border bg-surface/95 p-1.5 text-muted shadow-sm backdrop-blur transition before:absolute before:-inset-3 before:content-[''] hover:text-brand"
@@ -928,6 +943,8 @@ export default function DocEditor({
             <Loader2 size={14} className="animate-spin" />
           ) : sonando ? (
             <Square size={12} strokeWidth={0} className="fill-current" />
+          ) : pausadoAqui ? (
+            <Play size={14} className="fill-current" />
           ) : (
             <Volume2 size={14} />
           )}
