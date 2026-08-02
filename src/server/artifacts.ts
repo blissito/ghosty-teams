@@ -477,10 +477,34 @@ export const updateDocBlocksFn = createServerFn({ method: "POST" })
     }
     if (!messageId) throw new Error("no se encontró el mensaje del documento");
 
-    const rows = await dbq(`SELECT channel_id, parent_id FROM gc_messages WHERE id = ?`, [messageId]);
+    // ⚠️ Un documento puede vivir en un ROOM o en un DM, y hasta el 2026-08-02 esto sólo
+    // sabía de rooms: exigía `channel_id` y en un DM (donde vale 0) lanzaba "no se
+    // encontró el canal" ANTES de escribir nada. Resultado: editar un documento nacido en
+    // un DM no guardaba, y el fallo era mudo —el throw viaja al cliente, no al log—, así
+    // que desde fuera se veía como un caché que se negaba a soltar el texto viejo.
+    const rows = await dbq(`SELECT channel_id, parent_id, dm_id FROM gc_messages WHERE id = ?`, [messageId]);
+    if (!rows.length) throw new Error("no se encontró el mensaje del documento");
     const channelId = num(rows[0]?.channel_id);
     const parentId = rows[0]?.parent_id != null ? num(rows[0].parent_id) : null;
-    if (!channelId) throw new Error("no se encontró el canal del documento");
+    const dmId = rows[0]?.dm_id != null ? num(rows[0].dm_id) : 0;
+    if (!channelId && !dmId) throw new Error("no se encontró el canal del documento");
+
+    // Avisar de la versión nueva: cada superficie tiene su propio fanout. El room publica
+    // al canal; el DM, a cada miembro por su bus de usuario (no hay canal al que publicar).
+    const avisar = async () => {
+      const bus = await import("./bus.server");
+      const { currentNamespace } = await import("./tenant.server");
+      const ns = await currentNamespace();
+      if (dmId) {
+        const db = await import("../db.server");
+        const miembros = await db.getDmMembers(dmId).catch(() => [] as string[]);
+        for (const sub of miembros.length ? miembros : [me.sub]) {
+          bus.publish(bus.ch.user(ns, sub), { t: "refresh", channelId: null, parentId: null, dmId });
+        }
+        return;
+      }
+      bus.publish(bus.ch.room(ns, channelId), { t: "refresh", channelId, parentId });
+    };
 
     // El markdown del `md` es para el export y para lo que el agente lee después; la
     // verdad son los `blocks` que van aparte.
@@ -496,12 +520,15 @@ export const updateDocBlocksFn = createServerFn({ method: "POST" })
     // SÍ crea versión: así el trabajo del agente queda como punto al que volver.
     const db = await import("../db.server");
     const ultima = await db.latestDocVersion(data.documentId).catch(() => null);
+    console.log(
+      `[fn updateDocBlocks] md=${md.length}c ultima=${ultima?.id ?? "ninguna"} humanEdited=${
+        ultima?.humanEdited ?? "?"
+      } rama=${ultima?.humanEdited ? "overwrite" : "publish"} ini=${JSON.stringify(md.slice(0, 90))}`,
+    );
     if (ultima?.humanEdited) {
       const { serializeDocEnvelope } = await import("../lib/doc-blocks");
       await db.overwriteArtifactMd(ultima.id, serializeDocEnvelope({ blocks, humanEdited: true }));
-      const bus = await import("./bus.server");
-      const { currentNamespace } = await import("./tenant.server");
-      bus.publish(bus.ch.room(await currentNamespace(), channelId), { t: "refresh", channelId, parentId });
+      await avisar();
       return { ok: true as const };
     }
 
@@ -516,13 +543,12 @@ export const updateDocBlocksFn = createServerFn({ method: "POST" })
       ownerSub: me.sub,
       setPointer: async (docId) => {
         const db = await import("../db.server");
-        await db.setThreadArtifact(channelId, parentId, docId);
+        // El puntero también es de la superficie: en un DM la conversación apunta al
+        // documento por `setDmArtifact`, y `setThreadArtifact` no tiene canal al que ir.
+        if (dmId) await db.setDmArtifact(dmId, docId);
+        else await db.setThreadArtifact(channelId, parentId, docId);
       },
-      notify: async () => {
-        const bus = await import("./bus.server");
-        const { currentNamespace } = await import("./tenant.server");
-        bus.publish(bus.ch.room(await currentNamespace(), channelId), { t: "refresh", channelId, parentId });
-      },
+      notify: () => void avisar(),
     });
     return { ok: true as const };
   });
@@ -549,11 +575,28 @@ export const updateArtifactHtmlFn = createServerFn({ method: "POST" })
     }
     if (!messageId) throw new Error("no se encontró el mensaje del artefacto");
 
-    // Canal/hilo del mensaje ancla (para el puntero del hilo y el refresh del room).
-    const rows = await dbq(`SELECT channel_id, parent_id FROM gc_messages WHERE id = ?`, [messageId]);
+    // Canal/hilo del mensaje ancla (para el puntero y el refresh). Mismo caso que el
+    // documento: un artefacto puede haber nacido en un DM, donde `channel_id` vale 0.
+    const rows = await dbq(`SELECT channel_id, parent_id, dm_id FROM gc_messages WHERE id = ?`, [messageId]);
     const channelId = num(rows[0]?.channel_id);
     const parentId = rows[0]?.parent_id != null ? num(rows[0].parent_id) : null;
-    if (!channelId) throw new Error("no se encontró el canal del artefacto");
+    const dmId = rows[0]?.dm_id != null ? num(rows[0].dm_id) : 0;
+    if (!channelId && !dmId) throw new Error("no se encontró el canal del artefacto");
+
+    const avisar = async () => {
+      const bus = await import("./bus.server");
+      const { currentNamespace } = await import("./tenant.server");
+      const ns = await currentNamespace();
+      if (dmId) {
+        const db = await import("../db.server");
+        const miembros = await db.getDmMembers(dmId).catch(() => [] as string[]);
+        for (const sub of miembros.length ? miembros : [me.sub]) {
+          bus.publish(bus.ch.user(ns, sub), { t: "refresh", channelId: null, parentId: null, dmId });
+        }
+        return;
+      }
+      bus.publish(bus.ch.room(ns, channelId), { t: "refresh", channelId, parentId });
+    };
 
     // MISMO camino que el agente (publishArtifactVersion): estampa data-id, publica a
     // storage, INSERT de versión, puntero del hilo y refresh. Antes esto era una copia
@@ -567,13 +610,10 @@ export const updateArtifactHtmlFn = createServerFn({ method: "POST" })
       ownerSub: me.sub,
       setPointer: async (docId) => {
         const db = await import("../db.server");
-        await db.setThreadArtifact(channelId, parentId, docId);
+        if (dmId) await db.setDmArtifact(dmId, docId);
+        else await db.setThreadArtifact(channelId, parentId, docId);
       },
-      notify: async () => {
-        const bus = await import("./bus.server");
-        const { currentNamespace } = await import("./tenant.server");
-        bus.publish(bus.ch.room(await currentNamespace(), channelId), { t: "refresh", channelId, parentId });
-      },
+      notify: () => void avisar(),
     });
     return { ok: true as const, src };
   });

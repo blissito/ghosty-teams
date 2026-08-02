@@ -64,6 +64,15 @@ export default function DocSurface({
   patchRefs?: string[];
   /** La versión que enseña el panel (`?v`). Sin ella se lee la viva, que es lo que se ve. */
   version?: string | number | null;
+  /**
+   * El estado del guardado, hacia arriba, para que el panel lo pinte EN SU BARRA.
+   *
+   * Es donde lo pone todo el mundo (Google Docs y Word lo ponen junto al título) y donde
+   * la gente lo busca. El indicador flotante de abajo a la izquierda seguía existiendo y
+   * nadie lo veía: escribir en un documento sin recibir señal deja la duda de si se
+   * guardó, y "se guarda solo" hay que demostrarlo.
+   */
+  onGuardado?: (estado: "pendiente" | "guardando" | "ok" | "error" | null) => void;
 }) {
   // El sobre se parsea en cada render, pero es sólo un JSON.parse del string que ya
   // tenemos, y `md` cambia poco cuando NO se está streameando.
