@@ -227,6 +227,8 @@ export default function DocEditor({
     arriba: number;
     /** Su separación del borde derecho, ya en unidades de `right` de CSS. */
     derecha: number;
+    /** Ancho VISIBLE del contenedor: los flotantes no pueden pasarse de ahí. */
+    ancho: number;
   } | null>(null);
 
   const alFinal = (el: HTMLElement) => el.scrollHeight - el.scrollTop - el.clientHeight < 120;
@@ -272,7 +274,11 @@ export default function DocEditor({
           right: Math.round(r.right - 150),
           top: Math.round(r.bottom - 52),
           arriba: Math.round(r.top + 12),
-          derecha: Math.round(window.innerWidth - r.right + 12),
+          // Nunca menos de 12px del borde de la VENTANA: con el panel pegado a la derecha
+          // (o con la barra de scroll de por medio) el cálculo salía negativo y los
+          // controles se cortaban por fuera de la pantalla.
+          derecha: Math.max(12, Math.round(window.innerWidth - r.right + 12)),
+          ancho: Math.round(r.width),
         };
         setPosBoton((prev) =>
           prev &&
@@ -280,7 +286,8 @@ export default function DocEditor({
           prev.right === p.right &&
           prev.top === p.top &&
           prev.arriba === p.arriba &&
-          prev.derecha === p.derecha
+          prev.derecha === p.derecha &&
+          prev.ancho === p.ancho
             ? prev
             : p,
         );
@@ -627,7 +634,7 @@ export default function DocEditor({
       if (!rango) continue;
       // Un rect por línea: una palabra partida al final del renglón son dos.
       for (const r of Array.from(rango.getClientRects())) {
-        if (!r.width || r.bottom < 0 || r.top > window.innerHeight) continue;
+        if (!r.width) continue;
         const d = document.createElement("div");
         d.className = h.id === actualId ? "gt-ortografia gt-ortografia-actual" : "gt-ortografia";
         d.style.cssText = `position:fixed;left:${r.left}px;top:${r.top}px;width:${r.width}px;height:${r.height}px`;
@@ -661,18 +668,34 @@ export default function DocEditor({
 
   useEffect(() => () => limpiarRevision(), [limpiarRevision]);
 
-  /** Lleva la vista al hallazgo actual. */
+  /**
+   * Lleva la vista al hallazgo actual.
+   *
+   * El contenedor sale de `caja()`, que es el resolutor que ya usa el resto del archivo:
+   * este div NO scrollea (no está acotado), así que preguntarle a él deja el scroll en
+   * nada — y entonces el párrafo se queda fuera de la pantalla y su subrayado tampoco se
+   * pinta. Los dos síntomas, una sola causa.
+   *
+   * Depende del `id` y no del objeto: `hallazgos[actual]` es una referencia nueva en cada
+   * render y el efecto se dispararía sin parar.
+   */
+  const idActual = revision.actual?.id;
   useEffect(() => {
     const h = revision.actual;
     if (!h || !revision.revisando) return;
     const nodo = document.querySelector<HTMLElement>(`.gt-doc [data-id="${CSS.escape(h.blockId)}"]`);
-    const box = nodo && contenedorQueScrollea(nodo);
+    const box = caja();
     if (!nodo || !box) return;
     const r = nodo.getBoundingClientRect();
     const base = box.getBoundingClientRect();
     const destino = box.scrollTop + (r.top - base.top) - box.clientHeight / 2 + r.height / 2;
     box.scrollTo({ top: Math.max(0, destino), behavior: "smooth" });
-  }, [revision.actual, revision.revisando]);
+    // El scroll suave tarda; el listener repinta durante el viaje, pero se refuerza al
+    // final por si el destino ya estaba a la vista y no hubo evento de scroll.
+    const t = setTimeout(() => pintarRevision(), 400);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [idActual, revision.revisando, caja]);
 
   /**
    * Aplica una sugerencia al documento.
@@ -941,6 +964,9 @@ export default function DocEditor({
   // En cualquier otro párrafo es siempre un play que salta la lectura ahí.
   const bocinaActiva = !!bocina && (leyendoI === bocina.i || pedidoI === bocina.i);
   const cargandoAqui = bocinaActiva && voz.estado === "cargando";
+  // Con el panel estrecho los botones enseñan sólo su icono: el texto no cabe y se salía
+  // del panel, cortado a media palabra. El `title` sigue diciendo qué hace cada uno.
+  const estrecho = (posBoton?.ancho ?? 999) < 560;
   const sonando = bocinaActiva && voz.estado === "leyendo";
   const pausadoAqui = bocinaActiva && voz.estado === "pausa";
   bocinaPegada.current = bocinaActiva && voz.estado !== "parado";
@@ -1006,7 +1032,7 @@ export default function DocEditor({
                   className="inline-flex items-center gap-1.5 rounded-full px-2 py-1 text-xs font-medium text-ink transition hover:text-brand"
                 >
                   <Volume2 size={14} />
-                  {t("Leer la selección")}
+                  {estrecho ? null : t("Leer la selección")}
                 </button>
                 <button
                   type="button"
@@ -1031,7 +1057,7 @@ export default function DocEditor({
                 className="inline-flex items-center gap-1.5 rounded-full px-2 py-1 text-xs font-medium text-ink transition hover:text-brand"
               >
                 <Volume2 size={14} />
-                {t("Leer en voz alta")}
+                {estrecho ? null : t("Leer en voz alta")}
               </button>
             )
           ) : (
@@ -1126,8 +1152,12 @@ export default function DocEditor({
                 <SpellCheck size={14} />
               )}
               {revision.total > 0 && revision.estado === "listo"
-                ? t("{n} sugerencias").replace("{n}", String(revision.total))
-                : t("Revisar ortografía")}
+                ? estrecho
+                  ? String(revision.total)
+                  : t("{n} sugerencias").replace("{n}", String(revision.total))
+                : estrecho
+                  ? null
+                  : t("Revisar ortografía")}
             </button>
           ) : (
             <>
@@ -1154,6 +1184,11 @@ export default function DocEditor({
               >
                 <ChevronRight size={14} />
               </button>
+              {revision.total === 0 && revision.estado === "listo" ? (
+                <span className="px-1 text-[11px] font-medium text-emerald-500">
+                  {t("Sin sugerencias")}
+                </span>
+              ) : null}
               <button
                 type="button"
                 onClick={revision.salir}
@@ -1175,7 +1210,14 @@ export default function DocEditor({
           una tarjeta pegada al texto tapa justo lo que tienes que leer para decidir. */}
       {revision.revisando && revision.actual && posBoton ? (
         <div
-          style={{ position: "fixed", top: posBoton.arriba + 88, right: posBoton.derecha, maxWidth: 320 }}
+          style={{
+            position: "fixed",
+            top: posBoton.arriba + 88,
+            right: posBoton.derecha,
+            // Un panel estrecho manda sobre el ancho de la tarjeta: si no, se sale por el
+            // lado y la sugerencia queda fuera de la pantalla.
+            maxWidth: Math.max(200, Math.min(320, posBoton.ancho - 24)),
+          }}
           className="z-[70] rounded-xl border border-border bg-surface/98 p-3 shadow-xl backdrop-blur"
         >
           <p className="text-xs text-muted">{revision.actual.mensaje}</p>
@@ -1201,8 +1243,11 @@ export default function DocEditor({
             )}
             <button
               type="button"
-              onClick={() => revision.resolver(revision.actual!, 0)}
+              // Ignora ESTA y todas las iguales del documento: un nombre propio sale
+              // cinco veces y preguntarlo cinco veces no aporta nada.
+              onClick={() => revision.resolver(revision.actual!, 0, true)}
               className="rounded-md px-2 py-0.5 text-xs text-muted transition hover:text-ink"
+              title={t("Ignorar esta palabra en todo el documento")}
             >
               {t("Ignorar")}
             </button>

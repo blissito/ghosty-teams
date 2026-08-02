@@ -68,6 +68,22 @@ export function useDocReview({ documentId, version, bloques }: Opts) {
   const gen = useRef(0);
 
   /**
+   * Palabras que el usuario dio por buenas en esta sesión (`palabra|regla`).
+   *
+   * Sin esto, un nombre propio que aparece cinco veces —"Nüwa", "Perdix"— se pregunta
+   * cinco veces, y decir "ignorar" en el primero no calla a los demás: parece que el
+   * botón no hace nada y que la lista nunca avanza. Es el "Omitir todas" de Word, sólo
+   * que aquí es el comportamiento por defecto porque preguntar dos veces lo mismo no
+   * aporta nada.
+   *
+   * Vive en la sesión y no en el documento: es una decisión de quien revisa, no del
+   * texto. Un diccionario permanente por workspace sería lo siguiente, y ya tendría
+   * dónde guardarse.
+   */
+  const ignoradas = useRef(new Set<string>());
+  const llave = (h: Hallazgo) => `${h.palabra.toLowerCase()}|${h.ruleId}`;
+
+  /**
    * Lanza la revisión. `silenciosa` la deja en segundo plano: cuenta hallazgos pero no
    * enciende el modo revisión — es la "insinuación" al abrir el documento.
    */
@@ -117,13 +133,15 @@ export function useDocReview({ documentId, version, bloques }: Opts) {
             if (!fila.id || !fila.matches?.length) continue;
             const texto = mapa.get(fila.id) ?? "";
             for (const m of fila.matches) {
+              const palabra = texto.slice(m.offset, m.offset + m.length);
+              if (ignoradas.current.has(`${palabra.toLowerCase()}|${m.ruleId}`)) continue;
               encontrados.push({
                 id: `${fila.id}:${m.offset}:${m.ruleId}`,
                 blockId: fila.id,
                 hash: fila.hash ?? firmaTexto(texto),
                 offset: m.offset,
                 length: m.length,
-                palabra: texto.slice(m.offset, m.offset + m.length),
+                palabra,
                 mensaje: m.mensaje,
                 sugerencias: m.sugerencias,
                 tipo: m.tipo,
@@ -172,21 +190,28 @@ export function useDocReview({ documentId, version, bloques }: Opts) {
    * delante todas las demás de ese párrafo.
    */
   const resolver = useCallback(
-    (h: Hallazgo, delta: number) => {
+    (h: Hallazgo, delta: number, tambienLasIguales = false) => {
+      if (tambienLasIguales) ignoradas.current.add(llave(h));
       setHallazgos((prev) => {
         const mapa = textos(bloques());
         const nuevoHash = firmaTexto(mapa.get(h.blockId) ?? "");
-        return prev
-          .filter((x) => x.id !== h.id)
-          .map((x) => {
-            if (x.blockId !== h.blockId) return x;
-            const off = x.offset > h.offset ? x.offset + delta : x.offset;
-            return { ...x, offset: off, hash: nuevoHash, id: `${x.blockId}:${off}:${x.ruleId}` };
-          });
+        const quedan = prev.filter((x) =>
+          tambienLasIguales ? llave(x) !== llave(h) : x.id !== h.id,
+        );
+        const ajustados = quedan.map((x) => {
+          if (x.blockId !== h.blockId || !delta) return x;
+          const off = x.offset > h.offset ? x.offset + delta : x.offset;
+          return { ...x, offset: off, hash: nuevoHash, id: `${x.blockId}:${off}:${x.ruleId}` };
+        });
+        // El índice se queda DONDE ESTÁ: al quitar el actual, su hueco lo ocupa el
+        // siguiente, así que resolver uno tras otro avanza sin tocar nada. Sólo se
+        // retrocede si el que se fue era el último, o el contador daría la vuelta al
+        // principio y la revisión no terminaría nunca.
+        setActual((i) => Math.min(i, Math.max(0, ajustados.length - 1)));
+        return ajustados;
       });
-      setActual((i) => Math.max(0, Math.min(i, hallazgos.length - 2)));
     },
-    [bloques, hallazgos.length],
+    [bloques],
   );
 
   const ir = useCallback(
