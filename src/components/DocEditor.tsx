@@ -247,6 +247,7 @@ export default function DocEditor({
   useEffect(() => {
     let el: HTMLElement | null = null;
     let on: (() => void) | null = null;
+    let ro: ResizeObserver | null = null;
     let t: ReturnType<typeof setTimeout>;
     let intentos = 0;
 
@@ -294,12 +295,20 @@ export default function DocEditor({
       };
       box.addEventListener("scroll", on, { passive: true });
       window.addEventListener("resize", on);
+      // ⚠️ Y al TAMAÑO del contenedor, no sólo a `resize` de la ventana. El panel se
+      // cierra animando su ancho, y durante esa animación no hay scroll ni resize: los
+      // controles flotantes —que van `fixed` sobre el rect del panel— se quedaban clavados
+      // en su sitio mientras el documento se iba por debajo. Un desfase de medio segundo
+      // que se ve fatal justo en el gesto de cerrar.
+      ro = new ResizeObserver(on);
+      ro.observe(box);
       on();
     };
     enganchar();
 
     return () => {
       clearTimeout(t);
+      ro?.disconnect();
       if (el && on) {
         el.removeEventListener("scroll", on);
         window.removeEventListener("resize", on);
@@ -1074,6 +1083,14 @@ export default function DocEditor({
   // Con el panel estrecho los botones enseñan sólo su icono: el texto no cabe y se salía
   // del panel, cortado a media palabra. El `title` sigue diciendo qué hace cada uno.
   const estrecho = (posBoton?.ancho ?? 999) < 560;
+  /**
+   * ¿Hay panel donde pintar los controles flotantes?
+   *
+   * Mientras el panel se cierra, su ancho se anima hasta cero. Por debajo de 200px no cabe
+   * ni una barra, y dejarlas ahí las amontona contra el borde justo cuando el documento ya
+   * se está yendo: se retiran y el cierre queda limpio.
+   */
+  const hayPanel = !!posBoton && posBoton.ancho > 200;
   const sonando = bocinaActiva && voz.estado === "leyendo";
   const pausadoAqui = bocinaActiva && voz.estado === "pausa";
   bocinaPegada.current = bocinaActiva && voz.estado !== "parado";
@@ -1121,7 +1138,7 @@ export default function DocEditor({
           que mide el alto del documento entero y un `absolute top-3` se va con el scroll.
           Se veía como que la barra "no era superior": para detener la lectura había que
           volver hasta arriba del documento. */}
-      {documentId && !streaming && posBoton ? (
+      {documentId && !streaming && hayPanel ? (
         <div
           style={{ position: "fixed", top: posBoton.arriba, right: posBoton.derecha }}
           className="z-[70] flex items-center gap-1 rounded-full border border-border bg-surface/95 px-1.5 py-1 shadow-lg backdrop-blur"
@@ -1239,7 +1256,7 @@ export default function DocEditor({
           Fuera del modo revisión es sólo un contador — el documento se lee LIMPIO y tú
           decides cuándo mirar las sugerencias. Ése es el punto entero del diseño: lo que
           la gente apaga de los correctores es el subrayado que interrumpe. */}
-      {documentId && !streaming && posBoton ? (
+      {documentId && !streaming && hayPanel ? (
         <div
           style={{ position: "fixed", top: posBoton.arriba + 44, right: posBoton.derecha }}
           className="z-[70] flex items-center gap-1 rounded-full border border-border bg-surface/95 px-1.5 py-1 shadow-lg backdrop-blur"
@@ -1329,7 +1346,7 @@ export default function DocEditor({
 
       {/* La tarjeta del hallazgo. Va anclada al panel y no flotando junto a la palabra:
           una tarjeta pegada al texto tapa justo lo que tienes que leer para decidir. */}
-      {revision.revisando && revision.actual && posBoton ? (
+      {revision.revisando && revision.actual && hayPanel ? (
         <div
           style={{
             position: "fixed",
