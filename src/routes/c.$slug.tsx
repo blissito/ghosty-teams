@@ -122,6 +122,7 @@ import { belongsToOpenConversation } from "../lib/conversation-scope";
 import { extractEbDoc, extractEbPatches, draftTitle, bubbleWithoutEbDoc, extractToolState, extractSteps, type ToolState } from "../lib/ebdoc";
 import { ThinkingRing } from "../components/ThinkingRing";
 import { showSystemNotification } from "../utils/system-notification";
+import { marcarCierre, limpiarCierre } from "../lib/panel-cerrando";
 import { playNotificationSound, playGhostySound, playSelfSound, playMentionSound, playDmSound, playReadySound, playDeleteSound, playArtifactOpen, playArtifactClose, playArtifactReady } from "../utils/notificationSound";
 
 // Menciones que cuentan como "a ti": tu @handle o una grupal (@all/@channel/…).
@@ -1002,7 +1003,16 @@ function ChannelPage() {
   const [openDmId, setOpenDmId] = useState<number | null>(null);
   // Artefacto abierto en el panel lateral (pdf/imagen; doc en Fase 3). Estado
   // cliente puro, como openThreadId — abre instantáneo sin tocar el router.
-  const [openArtifact, setOpenArtifact] = useState<ArtifactView | null>(null);
+  const [openArtifact, setOpenArtifactRaw] = useState<ArtifactView | null>(null);
+  /**
+   * Abrir SIEMPRE limpia la marca de cierre (`lib/panel-cerrando`): abrir un artefacto es
+   * exactamente lo contrario de cerrarlo, y si la marca quedara puesta el documento nuevo
+   * nacería con sus controles flotantes escondidos.
+   */
+  const setOpenArtifact = useCallback((a: ArtifactView | null | ((p: ArtifactView | null) => ArtifactView | null)) => {
+    if (a !== null) limpiarCierre();
+    setOpenArtifactRaw(a as never);
+  }, []);
   const openArtifactRef = useRef<ArtifactView | null>(null);
   openArtifactRef.current = openArtifact;
   // El índice de Documentos (📂) SIGUE el room/hilo actual: al navegar (cambia el channel o
@@ -1978,7 +1988,7 @@ function ChannelPage() {
         // Editando un artefacto, ESC es del editor (y el panel pide confirmación
         // para cerrar): este atajo global NO debe tirar el panel con cambios vivos.
         if (document.body.dataset.artifactEditing) return;
-        if (openArtifactRef.current) { draftDismissedRef.current = draftMsgIdRef.current; playArtifactClose(); setOpenArtifact(null); return; }
+        if (openArtifactRef.current) { draftDismissedRef.current = draftMsgIdRef.current; marcarCierre(); playArtifactClose(); setOpenArtifact(null); return; }
         if (openThreadId != null) { setOpenThreadId(null); return; }
       }
     };
@@ -2457,7 +2467,7 @@ function ChannelPage() {
         )}
       </AnimatePresence>
       <ArtifactBoundary resetKey={openArtifact?.title ?? "none"}>
-        <ArtifactPanel artifact={openArtifact} onClose={() => { draftDismissedRef.current = draftMsgIdRef.current; playArtifactClose(); setOpenArtifact(null); }} onOpen={setOpenArtifact} />
+        <ArtifactPanel artifact={openArtifact} onClose={() => { draftDismissedRef.current = draftMsgIdRef.current; marcarCierre(); playArtifactClose(); setOpenArtifact(null); }} onOpen={(a) => { limpiarCierre(); setOpenArtifact(a); }} />
       </ArtifactBoundary>
       <AnimatePresence>
         {paletteOpen && (

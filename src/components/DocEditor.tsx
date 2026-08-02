@@ -39,6 +39,7 @@ import { reconcile } from "../lib/doc-reconcile";
 import { useReadAloud } from "../lib/read-aloud";
 import { useDocReview, type Hallazgo } from "../lib/doc-review";
 import { rangoEnBloque } from "../lib/doc-dom-range";
+import { estaCerrando, observarCierre } from "../lib/panel-cerrando";
 
 // ── El editor de documentos de texto ──────────────────────────────────────────
 //
@@ -652,6 +653,15 @@ export default function DocEditor({
     }
     await revision.revisar();
   }, [guardarYa, revision]);
+  // El panel se está cerrando. Se lee del DOM y no de un prop porque, durante la
+  // animación de salida, React congela este subárbol y ningún prop nuevo llega (ver
+  // `lib/panel-cerrando`).
+  const [seCierra, setSeCierra] = useState(false);
+  useEffect(() => {
+    setSeCierra(estaCerrando());
+    return observarCierre(setSeCierra);
+  }, []);
+
   /** Lo que escribes tú en la tarjeta cuando ninguna sugerencia sirve. */
   const [propia, setPropia] = useState("");
   const capaRev = useRef<HTMLDivElement | null>(null);
@@ -1099,7 +1109,7 @@ export default function DocEditor({
    * ni una barra, y dejarlas ahí las amontona contra el borde justo cuando el documento ya
    * se está yendo: se retiran y el cierre queda limpio.
    */
-  const hayPanel = !cerrando && !!posBoton && posBoton.ancho > 200;
+  const hayPanel = !cerrando && !seCierra && !!posBoton && posBoton.ancho > 200;
   const sonando = bocinaActiva && voz.estado === "leyendo";
   const pausadoAqui = bocinaActiva && voz.estado === "pausa";
   bocinaPegada.current = bocinaActiva && voz.estado !== "parado";
