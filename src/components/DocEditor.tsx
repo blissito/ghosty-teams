@@ -550,6 +550,8 @@ export default function DocEditor({
   // arrastre), y ahí la bocina se les encimaba.
   const [bocina, setBocina] = useState<{ i: number; top: number; left: number } | null>(null);
   const bocinaOff = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** El nodo del párrafo al que apunta, para recolocarla cuando el documento scrollea. */
+  const bocinaNodo = useRef<HTMLElement | null>(null);
   // Ir hacia la bocina obliga a salir del párrafo, y el botón vive FUERA del contenedor
   // (es `fixed`), así que ocultarla en cuanto el cursor deja el texto la volvía imposible
   // de pulsar: desaparecía justo al ir a por ella. Se apaga con retardo, y entrar en el
@@ -562,13 +564,26 @@ export default function DocEditor({
     const raiz = scroller.current;
     if (!raiz || !documentId || streaming) return;
     const sobre = (e: MouseEvent) => {
-      const el = (e.target as Element | null)?.closest?.(".gt-doc [data-id]") as HTMLElement | null;
+      let el = (e.target as Element | null)?.closest?.(".gt-doc [data-id]") as HTMLElement | null;
+      // El hover es de la FILA, no de las letras. Un párrafo de dos palabras deja media
+      // hoja "vacía" a su derecha, y ahí el cursor está claramente sobre ese párrafo: se
+      // resuelve el bloque por la ALTURA del cursor, mirando el centro de la columna de
+      // texto. Sin esto, la bocina parpadeaba al mover el ratón por los márgenes.
+      if (!el) {
+        const art = raiz.querySelector("article");
+        if (art) {
+          const r = art.getBoundingClientRect();
+          const bajo = document.elementFromPoint(Math.round(r.left + r.width / 2), e.clientY);
+          el = (bajo?.closest?.(".gt-doc [data-id]") as HTMLElement | null) ?? null;
+        }
+      }
       const i = el ? indiceDeNodo(el) : null;
       if (i == null || !el) {
         if (!bocinaOff.current) bocinaOff.current = setTimeout(() => setBocina(null), 400);
         return;
       }
       cancelarOcultar();
+      bocinaNodo.current = el;
       const r = el.getBoundingClientRect();
       setBocina((prev) =>
         prev && prev.i === i ? prev : { i, top: Math.round(r.top + 1), left: Math.round(r.right + 10) },
@@ -586,15 +601,36 @@ export default function DocEditor({
     };
   }, [documentId, streaming, indiceDeNodo, cancelarOcultar]);
 
-  // Al scrollear, el rect guardado deja de valer. Se esconde y vuelve al primer movimiento
-  // del ratón: recalcularlo en cada scroll sería pintar una bocina que persigue al dedo.
+  // Al scrollear, el rect guardado deja de valer, así que la bocina se RECOLOCA sobre su
+  // párrafo. Antes se escondía, y eso la hacía inservible durante la lectura: cada cambio
+  // de párrafo scrollea solo, así que la bocina que ibas a pulsar desaparecía bajo el dedo
+  // y el clic caía al vacío. Sólo se esconde si su párrafo se fue de la pantalla.
   useEffect(() => {
     if (!bocina) return;
     const box = caja();
     if (!box) return;
-    const off = () => setBocina(null);
-    box.addEventListener("scroll", off, { passive: true, once: true });
-    return () => box.removeEventListener("scroll", off);
+    let pendiente = false;
+    const recolocar = () => {
+      if (pendiente) return;
+      pendiente = true;
+      requestAnimationFrame(() => {
+        pendiente = false;
+        const el = bocinaNodo.current;
+        if (!el || !document.contains(el)) return setBocina(null);
+        const r = el.getBoundingClientRect();
+        const caj = box.getBoundingClientRect();
+        if (r.bottom < caj.top || r.top > caj.bottom) return setBocina(null);
+        const top = Math.round(r.top + 1);
+        const left = Math.round(r.right + 10);
+        setBocina((prev) => (prev && prev.top === top && prev.left === left ? prev : prev && { ...prev, top, left }));
+      });
+    };
+    box.addEventListener("scroll", recolocar, { passive: true });
+    window.addEventListener("resize", recolocar);
+    return () => {
+      box.removeEventListener("scroll", recolocar);
+      window.removeEventListener("resize", recolocar);
+    };
   }, [bocina, caja]);
 
   // ── Qué hay seleccionado ────────────────────────────────────────────────────
@@ -810,7 +846,9 @@ export default function DocEditor({
                 title={t("Detener la lectura")}
                 className="rounded-full p-1 text-ink transition hover:text-brand"
               >
-                <Square size={13} />
+                {/* Sólido y no de contorno: un cuadrito hueco de 13px se lee como una
+                    casilla vacía, no como el stop de un reproductor. */}
+                <Square size={12} strokeWidth={0} className="fill-current" />
               </button>
             </>
           )}
@@ -827,17 +865,24 @@ export default function DocEditor({
         <button
           type="button"
           style={{ position: "fixed", top: bocina.top, left: bocina.left }}
-          onClick={() => voz.empezarEn(bocina.i)}
+          // `onPointerDown` y no `onClick`: entre el down y el up puede llegar un scroll
+          // automático de la lectura en curso, y un botón que se recoloca a media pulsación
+          // no llega a emitir el click. Así la orden sale en cuanto se aprieta.
+          onPointerDown={() => voz.empezarEn(bocina.i)}
           onPointerEnter={() => {
             cancelarOcultar();
             voz.cebar();
           }}
-          onPointerLeave={() => setBocina(null)}
+          onPointerLeave={() => {
+            if (!bocinaOff.current) bocinaOff.current = setTimeout(() => setBocina(null), 400);
+          }}
           aria-label={t("Leer desde este párrafo")}
           title={t("Leer desde este párrafo")}
-          className="z-[70] rounded-full border border-border bg-surface/95 p-1 text-muted shadow-sm backdrop-blur transition hover:text-brand"
+          // El blanco real es más grande que el círculo (`before:-inset-3`): con 20px de
+          // icono en el margen, apuntarle era un ejercicio de puntería.
+          className="z-[70] rounded-full border border-border bg-surface/95 p-1.5 text-muted shadow-sm backdrop-blur transition before:absolute before:-inset-3 before:content-[''] hover:text-brand"
         >
-          <Volume2 size={12} />
+          <Volume2 size={14} />
         </button>
       ) : null}
 

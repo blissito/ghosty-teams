@@ -42,8 +42,11 @@ type Pieza = { url: string; n: number };
 
 /** Segmentos por delante que se piden. Ver la nota de arriba: no subir. */
 const VENTANA = 2;
-/** Cuántos segmentos ya oídos conservan su blob antes de que se revoque. */
-const COLA_ATRAS = 8;
+// Cuántos audios ya traídos se conservan en la pestaña. Una frase pesa decenas de KB, así
+// que 60 son unos pocos MB y cubren de sobra el gesto que importa: volver atrás a
+// re-escuchar un párrafo. Con una ventana corta, retroceder sonaba a espera aunque el
+// servidor tuviera el audio cacheado — el viaje seguía estando.
+const BLOBS_VIVOS = 60;
 
 type Opts = {
   documentId?: string;
@@ -193,13 +196,25 @@ export function useReadAloud({ documentId, version, bloques, alBloque, alTermina
     alTerminar();
   }, [limpiar, alTerminar]);
 
-  /** Revoca los blobs de lo que quedó muy atrás. Un documento largo son decenas de MB. */
+  /**
+   * Revoca los blobs más viejos cuando ya hay demasiados. Un documento largo son decenas
+   * de MB si no se suelta nada, pero soltar rápido es peor: volver a un párrafo anterior
+   * es EL gesto de revisar, y sin blob hay que ir otra vez al servidor.
+   */
   const podar = useCallback(() => {
-    const vigentes = new Set(cola.current.slice(Math.max(0, pos.current - COLA_ATRAS)).map(clave));
+    const sobran = urls.current.length - BLOBS_VIVOS;
+    if (sobran <= 0) return;
+    const actual = cola.current[pos.current];
+    const proteger = new Set(
+      cola.current.slice(Math.max(0, pos.current - 2), pos.current + VENTANA + 2).map(clave),
+    );
+    if (actual) proteger.add(clave(actual));
+    let quitados = 0;
     urls.current = urls.current.filter((u) => {
-      if (vigentes.has(u.k)) return true;
+      if (quitados >= sobran || proteger.has(u.k)) return true;
       URL.revokeObjectURL(u.url);
       prefetch.current.delete(u.k);
+      quitados++;
       return false;
     });
   }, []);
