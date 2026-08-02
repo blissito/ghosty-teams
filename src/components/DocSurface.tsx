@@ -99,13 +99,17 @@ export default function DocSurface({
   // demostrarla, no prometerla.
   const [guardado, setGuardado] = useState<"pendiente" | "guardando" | "ok" | "error" | null>(null);
 
-  const flush = useCallback(() => {
+  // Devuelve la promesa del guardado: el "leer en voz alta" la espera. El audio lo
+  // sintetiza el SERVIDOR desde el documento guardado, así que darle a la bocina con una
+  // edición aún en el debounce leía en voz alta el texto anterior — el usuario cambiaba
+  // una frase, la escuchaba, y oía la vieja.
+  const flush = useCallback((): Promise<void> => {
     const blocks = pending.current;
-    if (!blocks || !documentId) return;
+    if (!blocks || !documentId) return Promise.resolve();
     pending.current = null;
     lastSaved.current = Date.now();
     setGuardado("guardando");
-    updateDocBlocksFn({ data: { documentId, blocks, messageId, title } })
+    return updateDocBlocksFn({ data: { documentId, blocks, messageId, title } })
       .then(() => {
         setGuardado("ok");
         // Se va solo: un "Guardado" permanente deja de comunicar a los diez segundos.
@@ -186,6 +190,8 @@ export default function DocSurface({
         highlightIds={marcar}
         patchRefs={patchRefs}
         guardado={guardado}
+        // Antes de leer en voz alta hay que guardar: si no, se escucha el texto anterior.
+        guardarYa={flush}
         // Para el "leer en voz alta": el audio lo sintetiza el servidor desde ESTE
         // documento y ESTA versión, no desde el texto que tenga el cliente.
         documentId={documentId}

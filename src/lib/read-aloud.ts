@@ -33,9 +33,24 @@ export function bloquesLegibles(blocks: DocBlock[]): number[] {
   return out;
 }
 
-/** Un trozo que se sintetiza: la frase `s` del bloque `b`. */
-type Seg = { b: number; s: number };
-const clave = (g: Seg) => `${g.b}:${g.s}`;
+/**
+ * Un trozo que se sintetiza: la frase `s` del bloque `b`, del texto con firma `h`.
+ *
+ * ⚠️ **`h` es lo que impide oír un párrafo que ya no existe.** Sin él la clave del audio
+ * era la POSICIÓN, así que un bloque editado —o uno cuyo audio se pidió mientras el agente
+ * todavía lo estaba escribiendo— conservaba para siempre su audio viejo: sonaba la frase
+ * anterior, o el párrafo se cortaba a media idea, una y otra vez. Con la firma del texto,
+ * editar invalida su audio sin una sola línea de invalidación.
+ */
+type Seg = { b: number; s: number; h: string };
+const clave = (g: Seg) => `${g.b}:${g.s}:${g.h}`;
+
+/** Firma corta y estable de un texto (djb2). Sólo tiene que distinguir, no ser segura. */
+function firma(texto: string): string {
+  let h = 5381;
+  for (let i = 0; i < texto.length; i++) h = ((h << 5) + h + texto.charCodeAt(i)) | 0;
+  return (h >>> 0).toString(36);
+}
 
 /** Lo que devuelve el servidor de un segmento: su audio y cuántos tiene ese bloque. */
 type Pieza = { url: string; n: number };
@@ -103,7 +118,11 @@ export function useReadAloud({ documentId, version, bloques, alBloque, alTermina
 
   const url = useCallback(
     (g: Seg) => {
-      const q = new URLSearchParams({ i: String(g.b), s: String(g.s) });
+      // `h` no lo lee el servidor: está para que la URL CAMBIE cuando cambia el texto. La
+      // respuesta lleva `max-age=300`, así que sin esto el navegador servía de su propio
+      // caché el audio del párrafo anterior durante cinco minutos, y editar una frase no
+      // se notaba al escucharla.
+      const q = new URLSearchParams({ i: String(g.b), s: String(g.s), h: g.h });
       if (version != null && version !== "") q.set("v", String(version));
       return `/api/doc-tts/${documentId}?${q}`;
     },
@@ -130,7 +149,7 @@ export function useReadAloud({ documentId, version, bloques, alBloque, alTermina
     // puede desplazar la posición actual a otro párrafo.
     if (n < actuales && pos.current > desde + n - 1) return;
     const nuevos: Seg[] = [];
-    for (let s = 0; s < n; s++) nuevos.push({ b, s });
+    for (let s = 0; s < n; s++) nuevos.push({ b, s, h: c[desde].h });
     c.splice(desde, actuales, ...nuevos);
     if (pos.current > desde) pos.current += n - actuales;
   }, []);
@@ -245,8 +264,10 @@ export function useReadAloud({ documentId, version, bloques, alBloque, alTermina
     const docu = bloques();
     const out: Seg[] = [];
     for (const i of bloquesLegibles(docu)) {
-      const n = Math.max(1, partirEnFrases(blockText(docu[i]).trim()).length);
-      for (let s = 0; s < n; s++) out.push({ b: i, s });
+      const texto = blockText(docu[i]).trim();
+      const h = firma(texto);
+      const n = Math.max(1, partirEnFrases(texto).length);
+      for (let s = 0; s < n; s++) out.push({ b: i, s, h });
     }
     return out;
   }, [bloques]);
@@ -381,7 +402,7 @@ export function useReadAloud({ documentId, version, bloques, alBloque, alTermina
     const docu = bloques();
     const primero = bloquesLegibles(docu)[0];
     if (primero === undefined) return;
-    traer({ b: primero, s: 0 }).catch(() => {});
+    traer({ b: primero, s: 0, h: firma(blockText(docu[primero]).trim()) }).catch(() => {});
   }, [documentId, estado, bloques, traer]);
 
   const pausar = useCallback(() => {

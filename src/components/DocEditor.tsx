@@ -126,6 +126,7 @@ export default function DocEditor({
   highlightIds,
   patchRefs,
   guardado,
+  guardarYa,
   documentId,
   version,
 }: {
@@ -157,6 +158,14 @@ export default function DocEditor({
   patchRefs?: string[];
   /** Estado del autoguardado, para mostrarlo. */
   guardado?: "pendiente" | "guardando" | "ok" | "error" | null;
+  /**
+   * Fuerza el guardado y resuelve cuando terminó.
+   *
+   * La voz la sintetiza el SERVIDOR desde el documento guardado. Sin esperar aquí, editar
+   * un párrafo y darle a la bocina reproduce el texto ANTERIOR —el que todavía está en la
+   * base— y desde fuera parece un caché que no se invalida.
+   */
+  guardarYa?: () => Promise<void>;
   /**
    * El documento, para pedirle su voz al servidor. Sin él no hay "leer en voz alta": un
    * borrador en vivo todavía no es una fila, así que no hay de dónde sacar el audio.
@@ -527,6 +536,28 @@ export default function DocEditor({
     alTerminar: finLectura,
   });
 
+  /**
+   * Único punto de arranque de la lectura: guarda primero, lee después.
+   *
+   * El audio no sale del texto que tiene el editor sino del documento GUARDADO, que es lo
+   * que hace que el permiso y la versión sean los del documento y no los que diga el
+   * cliente. La contrapartida es ésta: si hay una edición esperando el debounce, hay que
+   * vaciarla antes o se escucha la versión anterior de la frase.
+   */
+  const leerDesde = useCallback(
+    async (bloque?: number, hasta?: number) => {
+      if (bloque != null) setPedidoI(bloque);
+      try {
+        await guardarYa?.();
+      } catch {
+        // Si el guardado falla ya se ve en su propio indicador; leer el texto de la base
+        // es lo mejor que se puede hacer con lo que hay.
+      }
+      voz.empezarEn(bloque, hasta);
+    },
+    [guardarYa, voz],
+  );
+
   // ── De un NODO a su índice de bloque ────────────────────────────────────────
   //
   // `marcarIndices` hace el camino de ida (índice → id → nodo). Esto es la vuelta, y es lo
@@ -802,7 +833,7 @@ export default function DocEditor({
               <>
                 <button
                   type="button"
-                  onClick={() => voz.empezarEn(sel.desde, sel.hasta)}
+                  onClick={() => void leerDesde(sel.desde, sel.hasta)}
                   aria-label={t("Leer la selección")}
                   title={t("Leer la selección")}
                   className="inline-flex items-center gap-1.5 rounded-full px-2 py-1 text-xs font-medium text-ink transition hover:text-brand"
@@ -812,7 +843,7 @@ export default function DocEditor({
                 </button>
                 <button
                   type="button"
-                  onClick={() => voz.empezarEn(sel.desde)}
+                  onClick={() => void leerDesde(sel.desde)}
                   aria-label={t("Leer desde aquí")}
                   title={t("Leer desde aquí")}
                   className="rounded-full p-1 text-muted transition hover:text-brand"
@@ -823,7 +854,7 @@ export default function DocEditor({
             ) : (
               <button
                 type="button"
-                onClick={voz.empezar}
+                onClick={() => void leerDesde()}
                 // El cebo: al llegar el cursor al botón se pide ya la primera frase, que
                 // es ~1.6 s de síntesis. Para cuando el dedo hace clic, el audio está.
                 onPointerEnter={voz.cebar}
@@ -917,8 +948,7 @@ export default function DocEditor({
           onPointerDown={() => {
             if (sonando) return voz.parar();
             if (pausadoAqui) return voz.reanudar();
-            setPedidoI(bocina.i);
-            voz.empezarEn(bocina.i);
+            void leerDesde(bocina.i);
           }}
           onPointerEnter={() => {
             sobreBocina.current = true;
