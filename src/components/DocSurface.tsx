@@ -53,6 +53,7 @@ export default function DocSurface({
   patchRefs,
   version,
   onGuardado,
+  cerrando,
 }: {
   /** Crudo de `gc_artifacts.md` o del fence: sobre JSON o markdown. */
   md: string;
@@ -74,6 +75,8 @@ export default function DocSurface({
    * guardó, y "se guarda solo" hay que demostrarlo.
    */
   onGuardado?: (estado: "pendiente" | "guardando" | "ok" | "error" | null) => void;
+  /** El panel se está cerrando: el editor retira sus controles flotantes en el acto. */
+  cerrando?: boolean;
 }) {
   // ── Mientras una persona escribe, el servidor NO manda ──────────────────────
   //
@@ -241,6 +244,7 @@ export default function DocSurface({
         // Si hay barra que lo pinte (`onGuardado`), el editor no repite el indicador
         // flotante: dos avisos del mismo hecho en la misma pantalla es ruido.
         guardado={onGuardado ? null : guardado}
+        cerrando={cerrando}
         // Antes de leer en voz alta hay que guardar: si no, se escucha el texto anterior.
         guardarYa={flush}
         // Para el "leer en voz alta": el audio lo sintetiza el servidor desde ESTE

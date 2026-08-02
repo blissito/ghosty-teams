@@ -140,6 +140,7 @@ export default function DocEditor({
   guardarYa,
   documentId,
   version,
+  cerrando,
 }: {
   /** La verdad, ya en bloques (documento publicado con sobre `v:1`). */
   blocks?: DocBlock[];
@@ -184,6 +185,14 @@ export default function DocEditor({
   documentId?: string;
   /** La versión que se está MIRANDO (`?v`): se lee lo mismo que se ve. */
   version?: string | number | null;
+  /**
+   * El panel se está cerrando.
+   *
+   * Los controles flotantes van `fixed` sobre el rect del panel, y mientras su ancho se
+   * anima hasta cero se quedaban clavados con el documento yéndose por debajo. El tamaño
+   * no basta para detectarlo a tiempo; el panel lo sabe y lo dice.
+   */
+  cerrando?: boolean;
 }) {
   const t = useT();
   const editor = useCreateBlockNote({
@@ -1090,7 +1099,7 @@ export default function DocEditor({
    * ni una barra, y dejarlas ahí las amontona contra el borde justo cuando el documento ya
    * se está yendo: se retiran y el cierre queda limpio.
    */
-  const hayPanel = !!posBoton && posBoton.ancho > 200;
+  const hayPanel = !cerrando && !!posBoton && posBoton.ancho > 200;
   const sonando = bocinaActiva && voz.estado === "leyendo";
   const pausadoAqui = bocinaActiva && voz.estado === "pausa";
   bocinaPegada.current = bocinaActiva && voz.estado !== "parado";

@@ -318,6 +318,25 @@ export default function ArtifactPanel({
   // `open` = único disparador del slide (abrir/cerrar). Ver análisis en el plan.
   const [detail, setDetail] = useState<ArtifactView | null>(null);
   const artifact = detail ?? rootArtifact;
+
+  /**
+   * El panel se está yendo (animación de salida en curso).
+   *
+   * Los controles flotantes del documento —lectura en voz alta, ortografía— van `fixed`
+   * sobre el rect del panel, así que mientras el ancho se anima hasta cero se quedaban
+   * clavados en su sitio con el documento yéndose por debajo. Inferirlo del tamaño no
+   * bastó (el ResizeObserver llega tarde para lo que el ojo nota); el panel SÍ sabe
+   * cuándo se cierra, así que lo dice y el editor los retira en el acto.
+   */
+  const [cerrando, setCerrando] = useState(false);
+  const cerrar = useCallback(() => {
+    setCerrando(true);
+    onClose();
+  }, [onClose]);
+  // Al abrir otro artefacto se limpia: la marca es de ESTE cierre, no un estado pegajoso.
+  useEffect(() => {
+    if (rootArtifact) setCerrando(false);
+  }, [rootArtifact]);
   const t = useT();
   const [width, setWidth] = useState<number>(() => {
     if (typeof window === "undefined") return DEFAULT_W;
@@ -415,11 +434,11 @@ export default function ArtifactPanel({
       }
       if (fullscreen) toggleFullscreen();
       else if (detail) setDetail(null);
-      else onClose();
+      else cerrar();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [rootArtifact, detail, onClose, fullscreen, editing]);
+  }, [rootArtifact, detail, cerrar, fullscreen, editing]);
   // Identidad ESTABLE del artefacto → el effect de fetch office NO se re-dispara al reabrir
   // el MISMO artefacto. El draft usa id constante para que su streaming NO resetee.
   const officeSrc = artifact?.kind === "office" ? artifact.src : null;
@@ -1097,7 +1116,7 @@ export default function ArtifactPanel({
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            onClick={onClose}
+            onClick={cerrar}
           />
           {/* Espaciador: en fullscreen el aside sale del flujo (fixed). Sin este hueco del
               ancho que tenía, el chat de atrás reflowaba de golpe al entrar/salir → el
@@ -1158,7 +1177,7 @@ export default function ArtifactPanel({
                 la derecha". */}
                 <button
                   type="button"
-                  onClick={onClose}
+                  onClick={cerrar}
                   title={t("Cerrar panel")}
                   aria-label={t("Cerrar panel")}
                   className="absolute left-2 top-1/2 z-20 grid size-7 -translate-y-1/2 place-items-center rounded-full bg-ink text-surface shadow-md ring-1 ring-black/10 transition hover:scale-105 hover:bg-brand active:scale-95"
@@ -1262,7 +1281,7 @@ export default function ArtifactPanel({
                         </button>
                         <button
                           type="button"
-                          onClick={onClose}
+                          onClick={cerrar}
                           className="grid size-7 shrink-0 place-items-center rounded-md text-muted transition hover:bg-surface-3 hover:text-ink"
                           title={t("Cerrar")}
                         >
@@ -1895,6 +1914,7 @@ export default function ArtifactPanel({
                         patchRefs={artifact.patchRefs}
                         version={artifact.versionId}
                         onGuardado={setGuardadoDoc}
+                        cerrando={cerrando}
                       />
                     ) : artifact.kind === "artifact" ? (
                       // Artefacto HTML interactivo. Modo Ver: iframe AISLADO (sandbox sin
@@ -1922,7 +1942,7 @@ export default function ArtifactPanel({
                                   onClick={() => {
                                     setConfirmClose(false);
                                     setEditing(false);
-                                    onClose();
+                                    cerrar();
                                   }}
                                   className="rounded-md bg-ink px-2.5 py-1 text-xs text-surface transition hover:bg-brand"
                                 >
