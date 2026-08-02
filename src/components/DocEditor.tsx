@@ -766,6 +766,20 @@ export default function DocEditor({
     onChange(editor.document as DocBlock[]);
   }, [editor, onChange]);
 
+  // Red de seguridad del guardado. `editor.onChange` es el canal bueno, pero es UN canal:
+  // si no llega a registrarse (el editor se monta tarde, o BlockNote cambia de API en una
+  // subida de versión), lo que se pierde es el texto de una persona, que es lo más caro
+  // que puede pasar aquí. Un `input` del DOM no puede fallar por eso, y `notify` ya es
+  // idempotente —compara firmas y no hace nada si el documento no cambió— así que el
+  // camino duplicado no cuesta ni una escritura de más.
+  useEffect(() => {
+    const raiz = scroller.current;
+    if (!raiz || !editable) return;
+    const alEscribir = () => notify();
+    raiz.addEventListener("input", alEscribir);
+    return () => raiz.removeEventListener("input", alEscribir);
+  }, [editable, notify]);
+
   useEffect(() => {
     if (!editor || !editable) return;
     return editor.onChange(notify);

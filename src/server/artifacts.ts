@@ -457,6 +457,11 @@ export const updateDocBlocksFn = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     const { sessionUser } = await import("./chat");
     const me = await sessionUser();
+    console.log(
+      `[fn updateDocBlocks] doc=${data.documentId} msg=${data.messageId ?? "?"} bloques=${
+        Array.isArray(data.blocks) ? data.blocks.length : "?"
+      } user=${me?.sub ?? "anon"}`,
+    );
     if (!me) throw new Error("no autenticado");
     if (!Array.isArray(data.blocks) || !data.blocks.length) throw new Error("documento vacío");
 
