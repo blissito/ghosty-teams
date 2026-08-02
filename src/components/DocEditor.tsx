@@ -565,9 +565,25 @@ export default function DocEditor({
     [editor],
   );
 
+  /**
+   * ⚠️ La versión que se revisa (y que se lee en voz alta) NO puede ser la del mensaje
+   * cuando el documento es editable.
+   *
+   * `version` es la fila que abriste; en cuanto guardas una edición, el documento vivo es
+   * OTRA fila — y sus bloques llevan uuid distintos. Pidiendo la vieja, el servidor
+   * devolvía hallazgos con `blockId` que en el editor no existen: no se encontraba el
+   * nodo, así que ni se subrayaba ni se saltaba al párrafo. Se veía como "no destaca",
+   * que es justo lo que no deja adivinar la causa.
+   *
+   * Editando se mira SIEMPRE la viva (que es lo que el editor tiene, y lo que
+   * `guardarYa` acaba de dejar escrito). La versión fijada sólo manda en sólo-lectura,
+   * que es cuando de verdad estás viendo una versión antigua.
+   */
+  const versionVigente = editable ? null : version;
+
   const voz = useReadAloud({
     documentId,
-    version,
+    version: versionVigente,
     bloques: bloquesActuales,
     alBloque: marcarLectura,
     alTerminar: finLectura,
@@ -601,7 +617,7 @@ export default function DocEditor({
   // la vez (un documento largo trae decenas), son de PALABRA y no de bloque, y viven
   // mientras dure la revisión en vez de desvanecerse. Mezclarlas en `marcarIndices` habría
   // significado tocar dos cosas que ya funcionan.
-  const revision = useDocReview({ documentId, version, bloques: bloquesActuales });
+  const revision = useDocReview({ documentId, version: versionVigente, bloques: bloquesActuales });
 
   /**
    * Revisar guarda primero, por lo mismo que la lectura en voz alta: el corrector mira el
