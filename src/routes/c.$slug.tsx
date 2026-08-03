@@ -1200,6 +1200,30 @@ function ChannelPage() {
   // vacía solo al llegar el body final. Es lo que distingue "está trabajando" de "espera
   // su turno" y lo que da dónde colgar el botón de Detener.
   const [turns, setTurns] = useState<Map<number, { state: "running" | "queued"; position: number; startedAt: number }>>(new Map());
+  // Turnos vivos ENRIQUECIDOS (agente, room, hilo) para el panel "Trabajando ahora" del
+  // sidebar. `turns` sólo trae ids: no alcanza para decir QUIÉN trabaja ni DÓNDE, que es
+  // justo lo que se pedía — con tres agentes en paralelo no había forma de verlos ni de
+  // pararlos si no estabas parado en su hilo.
+  const [liveTurns, setLiveTurns] = useState<Array<{
+    id: number; state: "running" | "queued" | "stopped"; position: number; startedAt: number;
+    agent: string; avatar: string; channelId: number | null; parentId: number | null; topic: string;
+  }>>([]);
+  const refreshLiveTurns = useCallback(() => {
+    getLiveTurnsFn()
+      .then((r) => setLiveTurns((r ?? []) as never))
+      .catch(() => {});
+  }, []);
+  // Se refresca al montar, cada vez que cambia el mapa de turnos (o sea con cada evento SSE
+  // de turno) y con un latido lento por si se pierde un evento.
+  useEffect(() => {
+    refreshLiveTurns();
+  }, [refreshLiveTurns, turns.size]);
+  useEffect(() => {
+    if (!turns.size) return;
+    const h = setInterval(refreshLiveTurns, 15000);
+    return () => clearInterval(h);
+  }, [refreshLiveTurns, turns.size]);
+
   // Siembra los turnos EN VUELO al montar. El estado de un turno llega por SSE (`t:"turn"`)
   // y un evento no se puede volver a escuchar: quien recargaba a media respuesta se quedaba
   // sin cronómetro, sin Detener y sin ninguna señal de que el agente seguía trabajando —
@@ -2388,6 +2412,8 @@ function ChannelPage() {
         />
       )}
       <Sidebar
+        liveTurns={liveTurns}
+        onStopTurn={stopTurnLocal}
         mobileOpen={navOpen}
         onCloseNav={() => setNavOpen(false)}
         channels={channels}
@@ -2945,6 +2971,7 @@ function ThreadRow({
   onDelete,
   canDelete,
   variant,
+  working,
 }: {
   thr: Message;
   active: boolean;
@@ -2952,6 +2979,8 @@ function ThreadRow({
   onDelete: (id: number) => void;
   canDelete: boolean;
   variant: "sidebar" | "modal";
+  /** Hay un turno de agente EN VUELO en este hilo → punto latiendo. */
+  working?: boolean;
 }) {
   const t = useT();
   const [deleting, setDeleting] = useState(false);
@@ -2995,6 +3024,13 @@ function ThreadRow({
           <MessageSquare size={compact ? 12 : 14} className="shrink-0" />
         )}
         <span className="min-w-0 flex-1 truncate">{threadTitle(thr) || t("Hilo")}</span>
+        {/* Dónde se está trabajando ahora mismo, sin abrir el hilo. */}
+        {working ? (
+          <span className="relative flex h-1.5 w-1.5 shrink-0" title={t("Un agente está trabajando aquí")}>
+            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-brand opacity-70" />
+            <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-brand" />
+          </span>
+        ) : null}
         <span className={`shrink-0 tabular-nums text-muted ${compact ? "text-[10px]" : "text-xs"}`}>
           {thr.reply_count ?? 0}
         </span>
@@ -3128,7 +3164,94 @@ function NavToggle({ onOpen }: { onOpen: () => void }) {
   );
 }
 
+type LiveTurnRow = {
+  id: number; state: "running" | "queued" | "stopped"; position: number; startedAt: number;
+  agent: string; avatar: string; channelId: number | null; parentId: number | null; topic: string;
+};
+
+/**
+ * "Trabajando ahora" — los turnos de agente EN VUELO de TODO el workspace.
+ *
+ * Con varios agentes a la vez no había forma de saber quién estaba trabajando ni de pararlo
+ * si no estabas parado justo en su hilo (2026-08-03). Es el mismo patrón que Cursor resuelve
+ * con su panel de background agents y Claude Code con `/tasks`: el estado sale del hilo.
+ *
+ * No se pinta cuando no hay nada corriendo — un bloque permanente en cero se vuelve invisible.
+ */
+function LiveTurnsPanel({
+  turns, channels, onOpen, onStop,
+}: {
+  turns: LiveTurnRow[];
+  channels: Channel[];
+  onOpen: (t: LiveTurnRow) => void;
+  onStop: (id: number) => void;
+}) {
+  const t = useT();
+  if (!turns.length) return null;
+  const nombreDe = (id: number | null) => channels.find((c) => c.id === id)?.name ?? "";
+  return (
+    <div className="mb-2 rounded-lg border border-border bg-surface-3/40 p-1.5">
+      <div className="flex items-center gap-1.5 px-1 pb-1 text-[11px] font-semibold uppercase tracking-wide text-muted">
+        <span className="relative flex h-2 w-2">
+          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-brand opacity-60" />
+          <span className="relative inline-flex h-2 w-2 rounded-full bg-brand" />
+        </span>
+        {t("Trabajando ahora")} · {turns.length}
+      </div>
+      {turns.map((x) => (
+        <div key={x.id} className="group flex items-center gap-1.5 rounded-md px-1 py-1 hover:bg-surface-3">
+          <button
+            type="button"
+            onClick={() => onOpen(x)}
+            className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
+            title={t("Ir a la conversación")}
+          >
+            {x.avatar ? (
+              <img src={x.avatar} alt="" className="h-4 w-4 shrink-0 rounded-full object-cover" />
+            ) : null}
+            <span className="min-w-0 flex-1 truncate text-xs text-ink">
+              {x.agent || t("Agente")}
+              {nombreDe(x.channelId) ? <span className="text-muted"> · {nombreDe(x.channelId)}</span> : null}
+            </span>
+            <TurnClock startedAt={x.startedAt} />
+          </button>
+          {/* Detener sólo si de verdad corre: encolado no hay nada que parar todavía. */}
+          {x.state === "running" ? (
+            <button
+              type="button"
+              onClick={() => onStop(x.id)}
+              className="shrink-0 rounded px-1 text-[10px] text-muted opacity-0 transition hover:text-ink group-hover:opacity-100"
+              title={t("Detener")}
+            >
+              ⏹
+            </button>
+          ) : (
+            <span className="shrink-0 text-[10px] text-muted">{x.position}º</span>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** Cronómetro del turno. Vive aquí para no re-renderizar el sidebar entero cada segundo. */
+function TurnClock({ startedAt }: { startedAt: number }) {
+  const [ahora, setAhora] = useState(() => Date.now());
+  useEffect(() => {
+    const h = setInterval(() => setAhora(Date.now()), 1000);
+    return () => clearInterval(h);
+  }, []);
+  const s = Math.max(0, Math.floor((ahora - startedAt) / 1000));
+  return (
+    <span className="shrink-0 tabular-nums text-[10px] text-muted">
+      {s < 60 ? `${s}s` : `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`}
+    </span>
+  );
+}
+
 function Sidebar({
+  liveTurns,
+  onStopTurn,
   mobileOpen,
   onCloseNav,
   channels,
@@ -3178,6 +3301,8 @@ function Sidebar({
   onOpenView: (v: "recent" | "mentions" | "starred") => void;
   homeActive: boolean;
   onOpenHome: () => void;
+  liveTurns: LiveTurnRow[];
+  onStopTurn: (id: number) => void;
 }) {
   const t = useT();
   const router = useRouter();
@@ -3336,6 +3461,18 @@ function Sidebar({
           documento de atrás. Sin esto, en móvil se scrolleaba el chat por debajo del cajón
           abierto y la nav se sentía "pegada" (reportado por Brendi, 2026-08-03). */}
       <div className="flex-1 overflow-y-auto overscroll-contain p-2 thin-scroll">
+        <LiveTurnsPanel
+          turns={liveTurns}
+          channels={channels}
+          onStop={onStopTurn}
+          onOpen={(x) => {
+            const slug = channels.find((c) => c.id === x.channelId)?.slug;
+            if (!slug) return;
+            onCloseNav();
+            // Al hilo si lo tiene; si no, al room. `router.navigate` mantiene el SPA.
+            window.location.href = x.parentId ? `/c/${slug}?thread=${x.parentId}` : `/c/${slug}`;
+          }}
+        />
         {/* Home: dashboard de inicio con el personaje Ghosty. */}
         <button
           onClick={onOpenHome}
@@ -3487,6 +3624,7 @@ function Sidebar({
                         onDelete={onDeleteThread}
                         canDelete={!!(user?.isOwner || thr.sender === user?.name)}
                         variant="sidebar"
+                        working={liveTurns.some((x) => x.parentId === thr.id)}
                       />
                     ))}
                   </AnimatePresence>

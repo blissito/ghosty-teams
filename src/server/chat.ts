@@ -300,7 +300,26 @@ export const getChannelFlow = createServerFn({ method: "GET" })
  */
 export const getLiveTurnsFn = createServerFn({ method: "GET" }).handler(async () => {
   const turns = await import("./turns.server");
-  return turns.allLiveTurnStates();
+  const db = await import("../db.server");
+  const live = turns.allLiveTurnStates();
+  if (!live.length) return [];
+  // Enriquecido con QUIÉN y DÓNDE: una lista de ids no sirve para nada. El coste es una
+  // lectura por turno vivo, y los turnos vivos se cuentan con los dedos de una mano.
+  return Promise.all(
+    live.map(async (t) => {
+      const m = await db.getMessage(t.id).catch(() => null);
+      // El room se resuelve en el CLIENTE, que ya tiene la lista con id→slug/nombre: aquí
+      // costaría una query más por turno para un dato que allá es un Map.
+      return {
+        ...t,
+        agent: m?.sender ?? "",
+        avatar: m?.avatar ?? "",
+        channelId: m?.channel_id ?? null,
+        parentId: m?.parent_id ?? null,
+        topic: m?.topic ?? "",
+      };
+    }),
+  );
 });
 
 // Topics del room (submenús del sidebar) — distintos topics con conteo/actividad.
