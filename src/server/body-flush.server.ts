@@ -24,9 +24,16 @@ export function makeBodyFlusher(intervalMs = 2000) {
   const pending = new Map<number, string>();
   const lastAt = new Map<number, number>();
   const written = new Map<number, string>();
-  let inflight = false;
+  const cerrados = new Set<number>();
+  // ⚠️ Las escrituras van EN CADENA, nunca sueltas. Con `void write(...)` una escritura podía
+  // quedar en vuelo al cerrar el turno y aterrizar DESPUÉS del cuerpo final: resucitaba un
+  // body con el fence del documento todavía ABIERTO, y el cliente —que decide por el fence—
+  // volvía a abrir el panel y a "reescribir" un documento ya entregado. Visto en vivo el
+  // 2026-08-03, y es un bug que sólo existe desde que persistimos a media escritura.
+  let chain: Promise<void> = Promise.resolve();
 
   const write = async (id: number) => {
+    if (cerrados.has(id)) return;
     const body = pending.get(id);
     // NUNCA persistir un body vacío: deepseek/ghosty-gc a veces cierra el turno en blanco y
     // guardarlo borraría lo ya streameado. Es la misma red que ya protege el body final.
@@ -38,22 +45,30 @@ export function makeBodyFlusher(intervalMs = 2000) {
     await db.setMessageBody(id, body).catch(() => {});
   };
 
+  const encolar = (id: number) => {
+    chain = chain.then(() => write(id)).catch(() => {});
+    return chain;
+  };
+
   return {
     /** Cada re-pintado del turno pasa por aquí. Escribe como mucho una vez por intervalo. */
     offer(id: number, body: string) {
+      if (cerrados.has(id)) return;
       pending.set(id, body);
-      if (inflight) return;
       if (Date.now() - (lastAt.get(id) ?? 0) < intervalMs) return;
-      inflight = true;
-      void write(id).finally(() => {
-        inflight = false;
-      });
+      void encolar(id);
     },
-    /** Cierre del turno: guarda lo último pintado aunque no haya pasado el intervalo. */
+    /**
+     * Cierre del turno: guarda lo último pintado y **deja de escribir para siempre** en ese
+     * mensaje. Espera a la cadena, así que al volver no queda ninguna escritura en vuelo que
+     * pueda pisar el cuerpo final que chat.ts está a punto de escribir.
+     */
     async flush(id: number) {
-      await write(id);
+      await encolar(id);
+      cerrados.add(id);
+      await chain.catch(() => {});
     },
-    /** Fin del turno — que el Map no crezca con los mensajes ya cerrados. */
+    /** Fin del turno — que los Map no crezcan con los mensajes ya cerrados. */
     done(id: number) {
       pending.delete(id);
       lastAt.delete(id);
