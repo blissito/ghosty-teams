@@ -1229,14 +1229,42 @@ function ChannelPage() {
   // justo lo que se pedía — con tres agentes en paralelo no había forma de verlos ni de
   // pararlos si no estabas parado en su hilo.
   const [liveTurns, setLiveTurns] = useState<Array<{
-    id: number; state: "running" | "queued" | "stopped"; position: number; startedAt: number;
+    id: number; state: "running" | "queued" | "stopped" | "done"; position: number; startedAt: number;
     agent: string; avatar: string; channelId: number | null; parentId: number | null; topic: string;
   }>>([]);
   const refreshLiveTurns = useCallback(() => {
     getLiveTurnsFn()
-      .then((r) => setLiveTurns((r ?? []) as never))
+      .then((r) => {
+        const next = (r ?? []) as never as typeof liveTurns;
+        // Un turno que TERMINA no se esfuma: se queda unos segundos como "terminó". Si
+        // desaparece de golpe, no hay forma de saber si acabó o si se cayó — y quien estaba
+        // mirando esa fila se queda sin respuesta.
+        setLiveTurns((prev) => {
+          const vivos = new Set(next.map((x) => x.id));
+          const recienTerminados = prev.filter((x) => !vivos.has(x.id) && x.state !== "done");
+          if (recienTerminados.length) {
+            setDoneTurns((d) => [
+              ...d.filter((x) => !recienTerminados.some((y) => y.id === x.id)),
+              ...recienTerminados.map((x) => ({ ...x, state: "done" as const, doneAt: Date.now() })),
+            ]);
+          }
+          return next;
+        });
+      })
       .catch(() => {});
   }, []);
+  // Los que acaban de terminar, con su marca de tiempo para retirarlos solos.
+  const [doneTurns, setDoneTurns] = useState<Array<(typeof liveTurns)[number] & { doneAt: number }>>([]);
+  useEffect(() => {
+    if (!doneTurns.length) return;
+    const h = setInterval(() => {
+      // Minutos, no segundos: el aviso está para que te enteres de que terminó, y quien no
+      // tenía la pestaña delante en ese instante también tiene que poder verlo. Se retira
+      // solo, y al abrirlo desaparece — ya lo viste.
+      setDoneTurns((d) => d.filter((x) => Date.now() - x.doneAt < 5 * 60 * 1000));
+    }, 1000);
+    return () => clearInterval(h);
+  }, [doneTurns.length]);
   // Se refresca al montar, cada vez que cambia el mapa de turnos (o sea con cada evento SSE
   // de turno) y con un latido lento por si se pierde un evento.
   useEffect(() => {
@@ -2475,6 +2503,8 @@ function ChannelPage() {
       )}
       <Sidebar
         liveTurns={liveTurns}
+        doneTurns={doneTurns}
+        onDismissTurn={(id) => setDoneTurns((d) => d.filter((x) => x.id !== id))}
         onStopTurn={stopTurnLocal}
         mobileOpen={navOpen}
         onCloseNav={() => setNavOpen(false)}
@@ -3227,7 +3257,7 @@ function NavToggle({ onOpen }: { onOpen: () => void }) {
 }
 
 type LiveTurnRow = {
-  id: number; state: "running" | "queued" | "stopped"; position: number; startedAt: number;
+  id: number; state: "running" | "queued" | "stopped" | "done"; position: number; startedAt: number;
   agent: string; avatar: string; channelId: number | null; parentId: number | null; topic: string;
 };
 
@@ -3241,15 +3271,18 @@ type LiveTurnRow = {
  * No se pinta cuando no hay nada corriendo — un bloque permanente en cero se vuelve invisible.
  */
 function LiveTurnsPanel({
-  turns, channels, onOpen, onStop,
+  turns, done, channels, onOpen, onStop, onDismiss,
 }: {
   turns: LiveTurnRow[];
+  done: LiveTurnRow[];
   channels: Channel[];
   onOpen: (t: LiveTurnRow) => void;
   onStop: (id: number) => void;
+  onDismiss: (id: number) => void;
 }) {
   const t = useT();
-  if (!turns.length) return null;
+  const filas = [...turns, ...done];
+  if (!filas.length) return null;
   const nombreDe = (id: number | null) => channels.find((c) => c.id === id)?.name ?? "";
   return (
     <div className="mb-2 rounded-lg border border-border bg-surface-3/40 p-1.5">
@@ -3258,9 +3291,9 @@ function LiveTurnsPanel({
           <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-brand opacity-60" />
           <span className="relative inline-flex h-2 w-2 rounded-full bg-brand" />
         </span>
-        {t("Trabajando ahora")} · {turns.length}
+        {turns.length ? `${t("Trabajando ahora")} · ${turns.length}` : t("Listo")}
       </div>
-      {turns.map((x) => (
+      {filas.map((x) => (
         <div key={x.id} className="group flex items-center gap-1.5 rounded-md px-1 py-1 hover:bg-surface-3">
           <button
             type="button"
@@ -3271,14 +3304,31 @@ function LiveTurnsPanel({
             {x.avatar ? (
               <img src={x.avatar} alt="" className="h-4 w-4 shrink-0 rounded-full object-cover" />
             ) : null}
-            <span className="min-w-0 flex-1 truncate text-xs text-ink">
+            <span className={`min-w-0 flex-1 truncate text-xs ${x.state === "done" ? "text-muted" : "text-ink"}`}>
               {x.agent || t("Agente")}
               {nombreDe(x.channelId) ? <span className="text-muted"> · {nombreDe(x.channelId)}</span> : null}
             </span>
-            <TurnClock startedAt={x.startedAt} />
+            {x.state === "done" ? (
+              <span className="flex shrink-0 items-center gap-1 text-[10px] text-muted">
+                <Check size={11} className="text-green-500" />
+                {t("terminó")}
+              </span>
+            ) : (
+              <TurnClock startedAt={x.startedAt} />
+            )}
           </button>
           {/* Detener sólo si de verdad corre: encolado no hay nada que parar todavía. */}
-          {x.state === "running" ? (
+          {x.state === "done" ? (
+            <button
+              type="button"
+              onClick={() => onDismiss(x.id)}
+              className="grid h-5 w-5 shrink-0 place-items-center rounded text-muted transition hover:bg-surface-3 hover:text-ink"
+              title={t("Quitar")}
+              aria-label={t("Quitar")}
+            >
+              <X size={12} />
+            </button>
+          ) : x.state === "running" ? (
             <button
               type="button"
               onClick={() => onStop(x.id)}
@@ -3316,7 +3366,9 @@ function TurnClock({ startedAt }: { startedAt: number }) {
 
 function Sidebar({
   liveTurns,
+  doneTurns,
   onStopTurn,
+  onDismissTurn,
   mobileOpen,
   onCloseNav,
   channels,
@@ -3367,7 +3419,9 @@ function Sidebar({
   homeActive: boolean;
   onOpenHome: () => void;
   liveTurns: LiveTurnRow[];
+  doneTurns: LiveTurnRow[];
   onStopTurn: (id: number) => void;
+  onDismissTurn: (id: number) => void;
 }) {
   const t = useT();
   const router = useRouter();
@@ -3567,13 +3621,17 @@ function Sidebar({
       <div className="flex-1 overflow-y-auto overscroll-contain p-2 thin-scroll">
         <LiveTurnsPanel
           turns={liveTurns}
+          done={doneTurns}
           channels={channels}
           onStop={onStopTurn}
+          onDismiss={onDismissTurn}
           onOpen={(x) => {
             const slug = channels.find((c) => c.id === x.channelId)?.slug;
             if (!slug) return;
             onCloseNav();
             // Mismo room → abrir el hilo en el acto, sin recargar.
+            // Abrirlo cuenta como haberlo visto: un terminado se descarta al entrar.
+            if (x.state === "done") onDismissTurn(x.id);
             if (slug === active) {
               if (x.parentId != null) onOpenThread(x.parentId);
               else onBackToRoom();
