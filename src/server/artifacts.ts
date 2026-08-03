@@ -69,9 +69,20 @@ export async function publishArtifactVersion(args: {
   if (args.kind === "doc") {
     const { docEnvelopeFromMd } = await import("./doc-blocks.server");
     const { serializeDocEnvelope } = await import("../lib/doc-blocks");
-    md = args.blocks?.length
-      ? serializeDocEnvelope({ blocks: args.blocks, humanEdited: args.humanEdited, changedIds: args.changedIds })
-      : await docEnvelopeFromMd(args.md);
+    if (args.blocks?.length) {
+      md = serializeDocEnvelope({ blocks: args.blocks, humanEdited: args.humanEdited, changedIds: args.changedIds });
+    } else {
+      // Las imágenes que trae el agente apuntan a una presignada del box (7 días).
+      // Se re-hospedan ANTES de volverse bloques, para que el documento nazca
+      // apuntando a nuestro storage: si no, se ve completo hoy y sale con huecos
+      // el mes que viene. Es el mismo criterio que `eb-file` aplica a los archivos.
+      const { rehostMarkdownImages } = await import("./published-attach.server");
+      const conImagenes = await rehostMarkdownImages(args.md).catch((e) => {
+        console.error("[artifact] re-hospedar imágenes falló", e);
+        return args.md;
+      });
+      md = await docEnvelopeFromMd(conImagenes);
+    }
   }
 
   // Solo el HTML tiene nodos que direccionar por DOM; sheet es CSV.

@@ -136,3 +136,52 @@ async function pdfThumb(url: string): Promise<Buffer | null> {
     return null;
   }
 }
+
+/**
+ * Re-hospeda las imágenes de un markdown: baja cada `![alto](url)` externa, la
+ * re-sube a NUESTRO storage y reescribe la url a `/api/attachment/<fileId>`.
+ *
+ * Misma razón que `attachPublished`, aplicada al contenido de un documento en vez
+ * de a un adjunto: la url que emite el box es una presignada a 7 días. Un dictamen
+ * pericial que hoy se ve completo saldría con huecos el mes que viene, y nadie lo
+ * revisa a tiempo. La url publicada es un transporte, no un hogar.
+ *
+ * También desbloquea el PDF: `blocksToPrintHtml` incrusta las imágenes leyéndolas
+ * de nuestro storage, y no puede hacerlo con una url ajena.
+ *
+ * Best-effort por imagen: la que falle se queda con su url original en vez de
+ * tumbar la publicación entera del documento.
+ */
+export async function rehostMarkdownImages(md: string): Promise<string> {
+  const IMG = /!\[([^\]]*)\]\(([^)\s]+)(\s+"[^"]*")?\)/g;
+  const encontradas = [...md.matchAll(IMG)];
+  if (!encontradas.length) return md;
+
+  const { uploadToEasyBits } = await import("./easybits-files.server");
+  const nuevo = new Map<string, string>();
+
+  for (const m of encontradas) {
+    const url = m[2];
+    // Ya es nuestra (o es un data: URI): nada que hacer.
+    if (nuevo.has(url) || url.startsWith("/api/attachment/") || url.startsWith("data:")) continue;
+    try {
+      const r = await fetch(url, { signal: AbortSignal.timeout(20_000) });
+      if (!r.ok) throw new Error(`fetch ${r.status}`);
+      const mime = r.headers.get("content-type")?.split(";")[0] || "image/png";
+      if (!mime.startsWith("image/")) throw new Error(`no es imagen: ${mime}`);
+      const bytes = Buffer.from(await r.arrayBuffer());
+      const up = await uploadToEasyBits({
+        blob: new Blob([new Uint8Array(bytes)], { type: mime }),
+        contentType: mime,
+        fileName: safeFileName(url.split("/").pop()?.split("?")[0], "imagen"),
+      });
+      nuevo.set(url, `/api/attachment/${up.fileId}`);
+    } catch (e) {
+      console.error(`[doc] re-hospedar imagen falló (${url.slice(0, 100)}):`, e instanceof Error ? e.message : e);
+    }
+  }
+  if (!nuevo.size) return md;
+  return md.replace(IMG, (todo, alt, url, titulo) =>
+    nuevo.has(url) ? `![${alt}](${nuevo.get(url)}${titulo ?? ""})` : todo
+  );
+}

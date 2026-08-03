@@ -58,12 +58,68 @@ export async function blocksToPrintHtml(blocks: DocBlock[], title: string): Prom
   const editor = ServerBlockNoteEditor.create({ schema: await docSchema() } as never) as unknown as {
     blocksToFullHTML(blocks: unknown[]): Promise<string>;
   };
-  const inner = await editor.blocksToFullHTML(blocks as unknown[]);
+  const inner = await inlineImages(await editor.blocksToFullHTML(blocks as unknown[]));
 
   return `<!doctype html>
 <html lang="es"><head><meta charset="utf-8"><title>${escapeHtml(title)}</title>
 <style>${fuentesEmbebidas()}\n${PRINT_CSS}</style>
 </head><body><article class="gt-print">${inner}</article></body></html>`;
+}
+
+/**
+ * Sustituye cada `src` de imagen por un `data:` URI.
+ *
+ * El HTML de impresión lo renderiza Chromium DENTRO de `render-svc`, otro servicio
+ * de la flota: un `/api/attachment/<id>` es same-origin y además autenticado, así
+ * que desde ahí no se alcanza. Sin esto el .docx saldría con las fotos y el PDF con
+ * huecos — que es peor que fallar, porque el hueco no avisa.
+ *
+ * Reusa `ourFiles`, el mismo resolvedor del export a .docx (storage propio, con
+ * fetch como respaldo para urls ajenas), así que las dos salidas ven exactamente
+ * las mismas imágenes.
+ */
+async function inlineImages(html: string): Promise<string> {
+  const SRC = /(<img\b[^>]*?\ssrc=")([^"]+)(")/gi;
+  const urls = [...new Set([...html.matchAll(SRC)].map((m) => m[2]))].filter(
+    (u) => !u.startsWith("data:")
+  );
+  if (!urls.length) return html;
+
+  const dataUri = new Map<string, string>();
+  await Promise.all(
+    urls.map(async (u) => {
+      try {
+        const blob = await ourFiles(u);
+        const buf = Buffer.from(await blob.arrayBuffer());
+        // ourFiles devuelve el pixel vacío cuando no pudo traerla: incrustarlo
+        // borraría la imagen sin dejar rastro. Mejor dejar el src original y que
+        // el hueco quede a la vista.
+        if (buf.length <= EMPTY_PNG.length) return;
+        const mime = blob.type || mimeDeUrl(u);
+        dataUri.set(u, `data:${mime};base64,${buf.toString("base64")}`);
+      } catch (e) {
+        console.error("[doc print] incrustar imagen falló", e);
+      }
+    })
+  );
+  if (!dataUri.size) return html;
+  return html.replace(SRC, (todo, pre, url, post) =>
+    dataUri.has(url) ? `${pre}${dataUri.get(url)}${post}` : todo
+  );
+}
+
+/** El `Blob` de nuestro storage llega sin `type`; la extensión es lo que queda. */
+function mimeDeUrl(url: string): string {
+  const ext = url.split("?")[0].match(/\.([a-z0-9]+)$/i)?.[1]?.toLowerCase();
+  return ext === "jpg" || ext === "jpeg"
+    ? "image/jpeg"
+    : ext === "webp"
+      ? "image/webp"
+      : ext === "gif"
+        ? "image/gif"
+        : ext === "svg"
+          ? "image/svg+xml"
+          : "image/png";
 }
 
 /**
