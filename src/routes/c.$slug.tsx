@@ -1037,6 +1037,19 @@ function ChannelPage() {
   const [replyTo, setReplyTo] = useState<ReplyTarget | null>(null);
   // Drawer del sidebar en móvil (off-canvas). En ≥md el sidebar es fijo y esto se ignora.
   const [navOpen, setNavOpen] = useState(false);
+  // Con el cajón abierto, el fondo NO se mueve. Es la otra mitad del arreglo: `overscroll`
+  // evita que el gesto se propague al llegar al tope de la lista, pero un arrastre que
+  // empieza fuera del área scrolleable seguiría moviendo el documento.
+  // Se restaura el valor ANTERIOR, no se pone "": otro overlay (modal, panel) puede tener
+  // el suyo puesto y dejarlo en blanco le devolvería el scroll a destiempo.
+  useEffect(() => {
+    if (!navOpen) return;
+    const previo = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previo;
+    };
+  }, [navOpen]);
   // Command palette (⌘K): salto rápido a room/DM/vista.
   const [paletteOpen, setPaletteOpen] = useState(false);
   const emojis = useEmojis();
@@ -2335,10 +2348,12 @@ function ChannelPage() {
             : `⚠️ ${t("No se pudo conectar")} ${connToast.provider[0].toUpperCase()}${connToast.provider.slice(1)}`}
         </div>
       )}
-      {/* Backdrop del drawer (solo móvil): tap fuera cierra el sidebar. */}
+      {/* Backdrop del drawer (solo móvil): tap fuera cierra el sidebar.
+          `overscroll-none` + `touch-none`: arrastrar sobre el velo no debe mover nada de
+          atrás — un backdrop que scrollea el contenido se siente roto. */}
       {navOpen && (
         <div
-          className="fixed inset-0 z-30 bg-black/50 md:hidden"
+          className="fixed inset-0 z-30 touch-none overscroll-none bg-black/50 md:hidden"
           onClick={() => setNavOpen(false)}
           aria-hidden
         />
@@ -3288,7 +3303,10 @@ function Sidebar({
           </>
         )}
       </div>
-      <div className="flex-1 overflow-y-auto p-2 thin-scroll">
+      {/* `overscroll-contain`: al llegar al tope de la lista, el gesto NO se le pasa al
+          documento de atrás. Sin esto, en móvil se scrolleaba el chat por debajo del cajón
+          abierto y la nav se sentía "pegada" (reportado por Brendi, 2026-08-03). */}
+      <div className="flex-1 overflow-y-auto overscroll-contain p-2 thin-scroll">
         {/* Home: dashboard de inicio con el personaje Ghosty. */}
         <button
           onClick={onOpenHome}
