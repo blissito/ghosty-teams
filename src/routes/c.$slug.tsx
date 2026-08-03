@@ -3385,6 +3385,27 @@ function Sidebar({
   // Qué rooms tienen la lista de hilos plegada. PERSISTE: cerrar un room y encontrarlo
   // abierto otra vez al refrescar convierte el plegado en un gesto inútil — quien lo cierra
   // es porque no quiere verlo, y esa intención dura más que la sesión.
+  // DMs CERRADOS (no borrados). Es el "close conversation" de Slack: se quitan de la lista y
+  // vuelven solos en cuanto te escriben — nadie se pierde un mensaje por haber ordenado su
+  // barra. Silenciar no servía para esto: silenciado sigue ocupando sitio.
+  const [closedDms, setClosedDms] = useState<Set<number>>(() => {
+    if (typeof window === "undefined") return new Set();
+    try {
+      const raw = window.localStorage.getItem("gt:closedDms");
+      return new Set<number>(raw ? (JSON.parse(raw) as number[]) : []);
+    } catch {
+      return new Set();
+    }
+  });
+  useEffect(() => {
+    try {
+      window.localStorage.setItem("gt:closedDms", JSON.stringify([...closedDms]));
+    } catch {
+      /* modo privado: no cerrar no rompe nada */
+    }
+  }, [closedDms]);
+  const cerrarDm = (id: number) => setClosedDms((prev) => new Set(prev).add(id));
+
   const [collapsedThreads, setCollapsedThreads] = useState<Set<string>>(() => {
     if (typeof window === "undefined") return new Set();
     try {
@@ -3735,7 +3756,10 @@ function Sidebar({
           </motion.p>
         ) : (
           <AnimatePresence initial={false}>
-            {dms.map((dm, i) => {
+            {dms
+              // Un DM cerrado reaparece si tiene algo sin leer, o si es el que estás viendo.
+              .filter((d) => !closedDms.has(d.id) || (unreadDms.get(d.id) ?? 0) > 0 || activeDmId === d.id)
+              .map((dm, i) => {
               const isOnline = dm.members.some((m) => online.has(m.sub));
               const first = dm.members[0];
               const muted = mutes.has(`dm:${dm.id}`);
@@ -3783,6 +3807,14 @@ function Sidebar({
                     className="p-1 text-muted opacity-100 transition hover:text-ink md:opacity-0 md:group-hover:opacity-100"
                   >
                     {muted ? <BellOff size={15} /> : <Bell size={15} />}
+                  </button>
+                  <button
+                    onClick={() => cerrarDm(dm.id)}
+                    title={t("Quitar de la lista (vuelve si te escriben)")}
+                    aria-label={t("Quitar de la lista")}
+                    className="p-1 text-muted opacity-100 transition hover:text-ink md:opacity-0 md:group-hover:opacity-100"
+                  >
+                    <X size={15} />
                   </button>
                 </motion.div>
               );
