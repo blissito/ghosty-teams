@@ -1267,12 +1267,17 @@ function ChannelPage() {
   }, [doneTurns.length]);
   // Se refresca al montar, cada vez que cambia el mapa de turnos (o sea con cada evento SSE
   // de turno) y con un latido lento por si se pierde un evento.
+  // ⚠️ La dependencia es el CONTENIDO del mapa, no su tamaño: si un turno termina justo
+  // cuando otro empieza, `size` no cambia y el efecto no vuelve a correr — la lista se
+  // quedaba enseñando al que acabó e ignorando al que arrancó (visto 2026-08-03 con blue
+  // terminando y gaspar arrancando a la vez).
+  const clavePorTurnos = [...turns.keys()].sort((a, b) => a - b).join(",");
   useEffect(() => {
     refreshLiveTurns();
-  }, [refreshLiveTurns, turns.size]);
+  }, [refreshLiveTurns, clavePorTurnos]);
   useEffect(() => {
     if (!turns.size) return;
-    const h = setInterval(refreshLiveTurns, 15000);
+    const h = setInterval(refreshLiveTurns, 10000);
     return () => clearInterval(h);
   }, [refreshLiveTurns, turns.size]);
 
