@@ -771,9 +771,24 @@ export async function getDocMarkdown(documentId: string): Promise<string | null>
 }
 
 // ── Identidad conversacional del artefacto vivo (Fase 1 edit-in-place) ──────────
-// conv_key = `${channelId}:${parentId ?? "root"}` → documentId del artefacto ACTUAL.
-function convKey(channelId: number, parentId?: number | null): string {
-  return `${channelId}:${parentId ?? "root"}`;
+// conv_key → documentId del artefacto ACTUAL de la conversación.
+//
+// ⚠️ EN UN CANAL LA CLAVE ES DEL ROOM, y el `parentId` se IGNORA a propósito
+// (2026-08-03, modelo Zulip). Antes era `${channelId}:${parentId ?? "root"}`, cuando las
+// respuestas del agente vivían en el flujo y sólo algunas conversaciones bajaban a un
+// hilo. Desde que TODA respuesta nace en un hilo, esa clave daría un puntero distinto por
+// hilo: pedir "modifícalo" en el hilo de al lado crearía una tarjeta NUEVA en vez de una
+// versión del mismo documento, y el trabajo de edición quirúrgica se pierde sin error.
+//
+// Va alineado con `FLEET_THREAD` en server/chat.ts: el room es UNA conversación, así que
+// su memoria y su documento actual tienen que vivir en el mismo ámbito. Si algún día se
+// vuelve a partir por hilo, hay que partir las dos cosas a la vez o vuelven a divergir.
+//
+// Se mantiene el parámetro —en vez de borrarlo de las ~8 llamadas— porque
+// `resolveThreadArtifact` SÍ lo usa para su búsqueda de respaldo por `message_id`, que es
+// exacta y sigue valiendo.
+function convKey(channelId: number, _parentId?: number | null): string {
+  return `${channelId}:root`;
 }
 export async function getThreadArtifact(
   channelId: number,

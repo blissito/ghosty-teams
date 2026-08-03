@@ -17,6 +17,22 @@ export async function sessionUser() {
 // del room (miembros si es privado; todo el workspace si es público).
 const GROUP_MENTIONS = new Set(["all", "channel", "everyone", "aqui", "here", "todos"]);
 
+/**
+ * Clave de conversación de la FLOTA para un canal. **Una por room, siempre.**
+ *
+ * El room es UNA conversación y los hilos son presentación: el agente responde dentro de
+ * un hilo (ver `postMessage`), pero su memoria no se parte por hilo.
+ *
+ * ⚠️ Vive aquí, en un solo sitio, porque estaba repetida en cuatro —tres ramas de
+ * `postMessage` y el fallback de `askAgent`— y ésa es exactamente la forma en que dos
+ * caminos empiezan a discrepar. Mismo criterio que `agentGroupId` en agents.server.ts.
+ *
+ * ⚠️ El valor literal NO se toca: cambiarlo le borra la memoria a todas las conversaciones
+ * vivas, porque el runtime keya por `(fleetAgentId, groupId)` y no hay migración posible
+ * desde esta app — el estado está del otro lado.
+ */
+const FLEET_THREAD = "flow";
+
 // Push a los usuarios cuyos @handle aparecen en el mensaje (excluye al autor).
 // Soporta menciones grupales (@all/@channel) que abarcan a toda la audiencia.
 async function notifyMentions(
@@ -573,20 +589,44 @@ export const postMessage = createServerFn({ method: "POST" })
     // Push a los usuarios @tagged (fire-and-forget resiliente).
     await notifyMentions(ns, channel.slug, channel.id, channel.name, body, name, me?.sub ?? "", channel.is_private === 1).catch(() => {});
     // ¿Qué agentes responden y dónde? (multi-mención: cada @tagged responde)
-    // - @handles en el flujo → responden INLINE en el flujo (parent = null), como una
-    //   persona más. NO se abre un hilo (decisión UX: el agente conversa en el room).
-    // - @handles dentro de un hilo → mismo hilo (parent = parentId).
-    // - mensaje en un hilo de un agente (root.agent_handle) → auto, sin re-tag.
-    // fleetThread = clave de conversación de la FLOTA (memoria + worker pegajoso),
-    // DESACOPLADA del hilo de UI: los top-level comparten "flow" del canal → UN worker +
-    // memoria continua; un hilo abierto a propósito conserva su propia conversación.
+    //
+    // MODELO ZULIP (2026-08-03): la respuesta del agente NACE SIEMPRE EN UN HILO, colgada
+    // del mensaje que la pidió. En el flujo queda tu mensaje con "1 respuesta"; el hilo se
+    // abre solo y ahí aterriza el streaming.
+    //
+    // Son DOS perillas y van en direcciones OPUESTAS — confundirlas es de donde salió el
+    // bug de hoy:
+    //
+    //   · `parent`      = DÓNDE SE PINTA. Ahora `data.parentId ?? id` → nace en hilo.
+    //   · `fleetThread` = CLAVE DE MEMORIA de la flota. Ahora **siempre "flow"**.
+    //
+    // Antes `fleetThread` valía `String(parentId)` dentro de un hilo, así que seguir la
+    // conversación en el hilo abría una sesión NUEVA del agente: workspace distinto, sin
+    // los adjuntos y sin memoria del turno anterior. Comprobado en vivo el 2026-08-03 —
+    // le pasaron 5 .docx en el room, contestó bien, y en el hilo respondió que no
+    // encontraba los datos. No los perdió: nunca los tuvo.
+    //
+    // El room es UNA conversación y los hilos son presentación. Por eso la clave no
+    // depende del hilo: así no hay dos claves que puedan divergir, no se paga un agente
+    // por mensaje ni arranque en frío por turno (que es lo que "flow" vino a evitar), y
+    // los rooms existentes conservan su memoria sin migración.
+    //
+    // Contrapartida asumida: dos hilos del mismo room comparten memoria.
+    //
+    // Referencia: Slack keya por `thread_ts ?? ts` (la raíz del intercambio) y sus bots
+    // responden siempre en hilo; Zulip mete todo mensaje en un topic y el problema no
+    // puede ocurrir. Nosotros teníamos flujo-continuo + hilos-aislados sin regla que los
+    // uniera, que es la peor de las tres.
+    //
+    // "Nacer en hilo" ya existió y se quitó en b3f9530 por UX ("el agente conversa en el
+    // room"). Aquel commit movió `parentFor` y dejó `fleetThread` quieto; éste mueve las
+    // dos, que es lo que permite la UX sin pagar la sesión por mensaje.
     const respondents: { handle: string; parent: number | null; fleetThread: string; shellId: number }[] = [];
     if (mentionedList.length) {
-      const parentFor = data.parentId; // top-level → inline (null); en hilo → mismo hilo
-      const fleetThread = data.parentId === null ? "flow" : String(data.parentId);
-      for (const h of mentionedList) respondents.push({ handle: h, parent: parentFor, fleetThread, shellId: 0 });
+      const parentFor = data.parentId ?? id; // top-level → abre hilo bajo TU mensaje
+      for (const h of mentionedList) respondents.push({ handle: h, parent: parentFor, fleetThread: FLEET_THREAD, shellId: 0 });
     } else if (data.parentId !== null && parent?.agent_handle && agents.some((a) => a.handle === parent.agent_handle)) {
-      respondents.push({ handle: parent.agent_handle, parent: data.parentId, fleetThread: String(data.parentId), shellId: 0 });
+      respondents.push({ handle: parent.agent_handle, parent: data.parentId, fleetThread: FLEET_THREAD, shellId: 0 });
     } else if (quoted?.agent_handle && quoted.sender_sub == null && agents.some((a) => a.handle === quoted.agent_handle)) {
       // Citar el mensaje ESCRITO POR un agente (sin re-@mención) = responderle → ese agente
       // contesta en el MISMO contexto. `sender_sub == null` distingue un mensaje AUTORADO por
@@ -594,9 +634,8 @@ export const postMessage = createServerFn({ method: "POST" })
       // (ese lleva agent_handle + sender_sub del humano): citar ese último NO debe disparar al
       // agente (como Slack/Discord: el bot sólo responde si lo @mencionas en el mensaje NUEVO).
       // La cita ya viaja al agente por askAgent (superficie WABA).
-      const parentFor = data.parentId;
-      const fleetThread = data.parentId === null ? "flow" : String(data.parentId);
-      respondents.push({ handle: quoted.agent_handle, parent: parentFor, fleetThread, shellId: 0 });
+      const parentFor = data.parentId ?? id;
+      respondents.push({ handle: quoted.agent_handle, parent: parentFor, fleetThread: FLEET_THREAD, shellId: 0 });
     }
     // Caja caliente: la cáscara del agente se crea EAGER (kind:"msg" VACÍA, con avatar+nombre)
     // aquí mismo → aparece al instante y PERMANECE; el turno (askAgent) streamea sobre este
@@ -651,13 +690,25 @@ export const askAgent = createServerFn({ method: "POST" })
     // El reply es una respuesta de hilo (parentId no-null); hereda el topic del root.
     const topic = data.topic ?? (data.parentId != null ? root?.topic ?? "general" : undefined);
 
-    // Continuidad de contexto en hilos: un hilo abierto sobre la respuesta de un agente
-    // arranca con groupId nuevo (fleetThread=parentId) → memoria del worker VACÍA. En el
-    // PRIMER turno de agente del hilo sembramos el mensaje RAÍZ como contexto para que
-    // referencias como "esa db" tengan referente (modelo Slack: el hilo muestra su root).
-    // La cáscara VACÍA recién creada no cuenta como turno previo (body sin texto).
+    // Continuidad de contexto en hilos: sembramos el mensaje RAÍZ en el PRIMER turno de
+    // agente del hilo, para que referencias como "esa db" tengan referente.
+    //
+    // ⚠️ Ya NO es la red que era. Se escribió porque un hilo abría groupId nuevo y el
+    // worker arrancaba con memoria VACÍA; desde que la clave es una por room (FLEET_THREAD)
+    // eso no pasa. Se conserva porque sigue sirviendo cuando el hilo cuelga de un mensaje
+    // viejo que quedó fuera del contexto del worker.
+    //
+    // ⚠️ Y el guard del root PROPIO es nuevo y necesario: con el modelo Zulip el agente
+    // nace colgado del mensaje que lo invocó, así que en su primer turno el root ES este
+    // mismo mensaje — sembrarlo duplicaría el texto ("[Contexto del hilo…]" seguido del
+    // mismo cuerpo).
+    //
+    // Se detecta comparando el CUERPO porque `askAgent` no recibe el id del mensaje que
+    // disparó el turno, sólo el del padre. Es una comparación, no una heurística fina: si
+    // dos mensajes distintos del mismo hilo tuvieran cuerpo idéntico, lo único que pasa es
+    // que se omite la siembra — que es el lado seguro del error.
     let text = data.body;
-    if (data.parentId != null && root) {
+    if (data.parentId != null && root && (root.body ?? "").trim() !== data.body.trim()) {
       const replies = await db.listThread(data.parentId).catch(() => []);
       const priorAgentTurn = replies.some((m) => m.agent_handle && m.kind === "msg" && (m.body ?? "").trim());
       const rootBody = (root.body ?? "").trim();
@@ -684,9 +735,12 @@ export const askAgent = createServerFn({ method: "POST" })
     // fresca), el gap = lo reciente = seed inicial. Corre cada turno pero está acotado al gap
     // → eficiente cuando está al día (gap = solo el turno actual → historyContext lo filtra).
     {
-      const scope = data.parentId != null
-        ? { channelId: channel.id, parentId: data.parentId }
-        : { channelId: channel.id };
+      // ⚠️ Scope del ROOM, no del hilo. Con el modelo Zulip toda respuesta del agente vive
+      // en un hilo, así que acotar el gap a `parentId` lo calcularía sobre un hilo casi
+      // vacío y el agente perdería lo que se dijo en el room entre menciones — que es
+      // justo lo que este bloque existe para recuperar. La memoria es una por room
+      // (FLEET_THREAD), así que el gap tiene que mirar lo mismo.
+      const scope = { channelId: channel.id };
       const recent = await db.recentContext(scope, 8).catch(() => []);
       const { esRecordatorio } = await import("./reminders.server");
       const history = historyContext(gapDesdeUltimaRespuesta(recent, esRecordatorio), data.body);
@@ -724,10 +778,13 @@ export const askAgent = createServerFn({ method: "POST" })
     // "pensando…" se mantiene durante la latencia del agente. Contrato §1.2.
     // groupId incluye el HANDLE → memoria por-agente (sin esto dos agentes en el mismo
     // hilo comparten conversación y se contaminan).
-    // Clave de flota DESACOPLADA del hilo de UI (ver postMessage): top-level → "flow"
-    // compartido del canal; reply-en-hilo → su root. Fallback al comportamiento viejo
-    // (parentId) si un cliente sin actualizar no manda fleetThread.
-    const fleetThread = data.fleetThread ?? (data.parentId != null ? String(data.parentId) : "flow");
+    // Clave de flota DESACOPLADA del hilo de UI (ver postMessage): una por room.
+    //
+    // ⚠️ El fallback ya NO deriva del parentId. Derivarlo era el bug: un cliente que no
+    // mandara `fleetThread` abría una sesión por hilo, sin adjuntos ni memoria. Ante la
+    // duda, la clave del room es la respuesta correcta — como mucho comparte contexto de
+    // más; la otra rama perdía el contexto entero en silencio.
+    const fleetThread = data.fleetThread ?? FLEET_THREAD;
     const groupId = await agentGroupId(agent ?? { handle: data.handle }, `${channel.slug}-${fleetThread}`);
     // Identidad conversacional durable: el documentId (local) del artefacto ACTUAL de este
     // hilo + su contenido fuente (doc=markdown | sheet=csv). El contenido se re-inyecta al

@@ -2070,9 +2070,33 @@ function ChannelPage() {
         revalidate();
         const respondents = r?.respondents ?? [];
         if (respondents.length) {
-          // El agente responde INLINE (en el flujo o en el mismo hilo) — NO abrimos un
-          // hilo nuevo. Cada agente mencionado responde en paralelo y limpia su propio
-          // "pensando…"; el streaming (message:delta) aterriza en el flujo por su id.
+          // MODELO ZULIP: el agente responde SIEMPRE dentro de un hilo colgado del mensaje
+          // que lo invocó. Si lo mandaste desde el flujo, hay que ABRIR ese hilo — el
+          // flujo sólo pinta top-level (`listChannelFlow`) y el filtro de realtime sólo
+          // acepta lo que cuelga del hilo ABIERTO, así que sin esto el streaming aterriza
+          // en una vista que no estás mirando y la respuesta parece no llegar nunca.
+          //
+          // Se siembra el root optimista en `threadCache` desde el mensaje que acabamos de
+          // enviar (`o`, que todavía no está en flowCache) → el hilo abre mostrando TU
+          // mensaje al instante, sin skeleton.
+          //
+          // Recuperado de b3f9530, que lo borró al pasar a respuestas inline. Hoy sale más
+          // simple: la cáscara ya existe (`ag.shellId`) y llega por SSE.
+          if (o.parentId === null) {
+            const pid = respondents[0].parent;
+            if (pid != null && !threadCache.get(pid)) {
+              const root = {
+                id: pid, channel_id: channel.id, parent_id: null, dm_id: null,
+                sender: o.sender, avatar: o.avatar, body: o.body, kind: "msg",
+                agent_handle: null, mentions_ghosty: 0,
+                created_at: Math.floor(Date.now() / 1000), edited_at: null,
+                reply_count: 0, reactions: [], pinned: false, starred: false, topic: null,
+              } as unknown as Message;
+              threadCache.set(pid, { root, replies: [], pending: true });
+            }
+            if (pid != null) openThread(pid);
+          }
+          // Cada agente mencionado responde en paralelo y limpia su propio "pensando…".
           for (const ag of respondents) {
             askAgent({ data: { slug: o.slug, parentId: ag.parent, fleetThread: ag.fleetThread, body: o.body, sender: "", handle: ag.handle, shellId: ag.shellId, quotedAuthor: o.quotedAuthor ?? null, quotedExcerpt: o.quotedExcerpt ?? null, quotedId: o.quotedId ?? null, attachments: o.attachments } })
               .then(() => revalidate())
