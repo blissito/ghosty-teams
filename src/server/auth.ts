@@ -152,6 +152,19 @@ export const completeGhostyLogin = createServerFn({ method: "POST" })
       throw new Error("necesitas una invitación");
     }
 
+    // ── Tope de asientos ─────────────────────────────────────────────────────
+    // ANTES de `upsertUser`: si se comprobara después, la persona ya estaría en el roster
+    // local (`gc_users`) cuando nos enteramos de que no cabía — dentro a medias, que es
+    // peor que fuera. gs es quien sabe el plan; aquí sólo se pregunta.
+    // Quien YA es miembro pasa siempre: el tope frena altas, nunca logins. Si gs no
+    // contesta se deja entrar (el POST de `registerMembership` es la compuerta dura).
+    const asiento = await seatCheck(id.sub);
+    if (!asiento.allowed) {
+      throw new Error(
+        "Este espacio llegó a su tope de asientos. Pídele a la persona dueña que amplíe el plan.",
+      );
+    }
+
     const { upsertUser } = await import("../users.server");
     const user = await upsertUser({ sub: id.sub, email: id.email, name: id.name, avatar: id.avatar });
 
@@ -177,18 +190,52 @@ export const completeGhostyLogin = createServerFn({ method: "POST" })
 // `ts.sub.slug`. El slug sale del subdominio del request (tenant.server). En apex/dev
 // sin subdominio no hay workspace que registrar → no-op.
 async function registerMembership(sub: string): Promise<void> {
+  const q = await membershipQuery(sub);
+  if (!q) return;
+  const res = await fetch(`${IDP}/internal/memberships?${q}`, { method: "POST" });
+  // 409 = asientos llenos. No debería llegar aquí (la puerta ya preguntó), pero si llega
+  // es la compuerta dura de gs y hay que dejar constancia: significa que alguien entró por
+  // un camino que no consultó `seatCheck`.
+  if (res.status === 409) throw new Error("gs 409 asientos llenos");
+  if (!res.ok) throw new Error(`gs ${res.status}`);
+}
+
+/** ¿Cabe este sub en el workspace? Se lo pregunta a gs, que es quien conoce el plan.
+ *
+ *  Fail-OPEN a propósito: si gs no contesta se deja entrar. Un fail-closed dejaría a un
+ *  equipo entero fuera de su espacio por un timeout del control-plane, y el POST de
+ *  `registerMembership` sigue siendo la compuerta dura del otro lado. */
+async function seatCheck(sub: string): Promise<{ allowed: boolean }> {
+  try {
+    const q = await membershipQuery(sub);
+    if (!q) return { allowed: true }; // apex/dev sin subdominio: no hay workspace que topar
+    const res = await fetch(`${IDP}/internal/memberships?${q}`);
+    if (!res.ok) return { allowed: true };
+    const j = (await res.json()) as {
+      member?: boolean;
+      seats?: { full?: boolean };
+    };
+    if (j.member) return { allowed: true };
+    return { allowed: !j.seats?.full };
+  } catch (e) {
+    console.warn("[auth] seatCheck falló, se deja entrar:", (e as Error)?.message);
+    return { allowed: true };
+  }
+}
+
+/** Query firmada (`ts.sub.slug`) que comparten el GET y el POST de `/internal/memberships`.
+ *  `null` en apex/dev, donde no hay subdominio del que sacar el slug. */
+async function membershipQuery(sub: string): Promise<string | null> {
   const { currentSlug } = await import("./tenant.server");
   const slug = await currentSlug();
-  if (!slug) return;
+  if (!slug) return null;
   const crypto = await import("node:crypto");
   const ts = Math.floor(Date.now() / 1000);
   const sig = crypto
     .createHmac("sha256", process.env.GHOSTY_PARTNER_SECRET!)
     .update(`${ts}.${sub}.${slug}`)
     .digest("hex");
-  const p = new URLSearchParams({ sub, slug, ts: String(ts), sig });
-  const res = await fetch(`${IDP}/internal/memberships?${p}`, { method: "POST" });
-  if (!res.ok) throw new Error(`gs ${res.status}`);
+  return new URLSearchParams({ sub, slug, ts: String(ts), sig }).toString();
 }
 
 export const logout = createServerFn({ method: "POST" }).handler(async () => {
