@@ -291,6 +291,18 @@ export const getChannelFlow = createServerFn({ method: "GET" })
     return out;
   });
 
+/**
+ * Turnos de agente EN VUELO. El cliente lo pide al montar para sembrar su mapa `turns`.
+ *
+ * El estado de un turno llega por SSE (`t:"turn"`), pero un evento no se puede volver a
+ * escuchar: quien recarga a media respuesta se queda sin cronómetro, sin botón Detener y
+ * sin ninguna señal de que el agente sigue trabajando.
+ */
+export const getLiveTurnsFn = createServerFn({ method: "GET" }).handler(async () => {
+  const turns = await import("./turns.server");
+  return turns.allLiveTurnStates();
+});
+
 // Topics del room (submenús del sidebar) — distintos topics con conteo/actividad.
 export const getTopicsFn = createServerFn({ method: "GET" })
   .validator((d: { slug: string }) => d)
@@ -838,6 +850,7 @@ export const askAgent = createServerFn({ method: "POST" })
     const steer = turns.hasOwnInflight(groupId, poster?.sub);
 
     const controller = new AbortController();
+    const flusher = (await import("./body-flush.server")).makeBodyFlusher();
     const announce = (st: { id: number; state: "running" | "queued" | "stopped"; position: number; startedAt: number }) =>
       bus.publish(bus.ch.room(ns, channel.id), { t: "turn", ...st });
     let registeredId: number | null = null;
@@ -878,10 +891,20 @@ export const askAgent = createServerFn({ method: "POST" })
       emitDelta: (mid, chunk) =>
         bus.publish(bus.ch.room(ns, channel.id), { t: "message:delta", id: mid, chunk, channelId: channel.id, parentId: data.parentId }),
       // Checklist incremental: reemplaza el body con la lista re-pintada (previas ✓, actual ⚡).
-      emitBody: (mid, body) =>
-        bus.publish(bus.ch.room(ns, channel.id), { t: "message:body", id: mid, body }),
-    }).finally(() => {
-      if (registeredId != null) turns.finishTurn(registeredId);
+      // Además PERSISTE con throttle: sin esto, un refresh a media respuesta deja una cáscara
+      // muda aunque el worker siga trabajando (el bus no tiene buffer).
+      emitBody: (mid, body) => {
+        bus.publish(bus.ch.room(ns, channel.id), { t: "message:body", id: mid, body });
+        flusher.offer(mid, body);
+      },
+    }).finally(async () => {
+      if (registeredId != null) {
+        // Lo último pintado queda en DB pase lo que pase: si el proceso muere aquí, el
+        // mensaje conserva lo que el usuario ya había visto en vez de volver a la cáscara.
+        await flusher.flush(registeredId);
+        flusher.done(registeredId);
+        turns.finishTurn(registeredId);
+      }
     });
 
     // Persiste el body final (autoritativo, sin marcar "editado") y reconcilia por si
@@ -988,7 +1011,7 @@ export const askAgent = createServerFn({ method: "POST" })
           const cleaned = bubbleWithoutEbDoc(reply, {
             applied: res.applied.length,
             failed: res.failed.map((f) => `${f.ref}: ${f.reason}`),
-          });
+          }, { keepStatus: true });
           await db.setMessageBody(id, cleaned);
           bus.publish(bus.ch.room(ns, channel.id), { t: "message:body", id, body: cleaned });
           if (res.applied.length) {
@@ -1032,7 +1055,7 @@ export const askAgent = createServerFn({ method: "POST" })
         const cleaned = bubbleWithoutEbDoc(reply, {
           applied: res.applied.length,
           failed: res.failed.map((f) => `${f.nodeId}: ${f.reason}`),
-        });
+        }, { keepStatus: true });
         await db.setMessageBody(id, cleaned);
         bus.publish(bus.ch.room(ns, channel.id), { t: "message:body", id, body: cleaned });
         if (res.applied.length) {
@@ -1057,7 +1080,7 @@ export const askAgent = createServerFn({ method: "POST" })
 
       const ebdoc = extractEbDoc(reply);
       if (ebdoc?.closed && ebdoc.md.trim()) {
-        const cleaned = bubbleWithoutEbDoc(reply);
+        const cleaned = bubbleWithoutEbDoc(reply, undefined, { keepStatus: true });
         await db.setMessageBody(id, cleaned);
         bus.publish(bus.ch.room(ns, channel.id), { t: "message:body", id, body: cleaned });
         // ¿Versión del artefacto del hilo, o documento nuevo? Ver isSameDocument: antes

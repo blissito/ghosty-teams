@@ -241,11 +241,36 @@ export function draftTitle(md: string, kind: EbDocKind = "doc", fenceTitle?: str
   // recurso, para un markdown que no siga la convención.
   const h2 = md.match(/^##\s+(.+)$/m);
   if (h2) return h2[1].trim().slice(0, 80);
-  const h = md.match(/^#{1,6}\s+(.+)$/m);
-  if (h) return h[1].trim().slice(0, 80);
+  // ⚠️ El último recurso NO puede ser "el primer encabezado que aparezca". Medido el
+  // 2026-08-03: 2 de 3 motores entregan el escrito entero en `###`, así que ese fallback
+  // devolvía sistemáticamente la primera SECCIÓN — salieron «I. OBJETO DEL DICTAMEN» e
+  // «ÍNDICE» como nombre del documento. Se descartan los encabezados que son claramente
+  // numeración o rótulo de sección y se sigue buscando uno que parezca un nombre.
+  const encabezados = [...md.matchAll(/^#{1,6}\s+(.+)$/gm)].map((m) => m[1].trim());
+  const bueno = encabezados.find((x) => !esRotuloDeSeccion(x));
+  if (bueno) return bueno.slice(0, 80);
   const first = md.trim().split("\n").find((l) => l.trim());
   const clean = first?.replace(/^[#>\-*\s]+/, "").trim();
-  return (clean && clean.slice(0, 80)) || "Documento";
+  if (clean && !esRotuloDeSeccion(clean)) return clean.slice(0, 80);
+  // Un nombre genérico es mejor que uno que MIENTE: «Documento» se corrige de un vistazo;
+  // «ÍNDICE» se queda ahí meses pareciendo un título de verdad.
+  return "Documento";
+}
+
+/**
+ * ¿Este encabezado es el rótulo de una sección en vez del nombre del documento?
+ *
+ * Se usa sólo en el ÚLTIMO recurso de `draftTitle`: cuando el agente no tituló el fence y el
+ * markdown no trae ningún `##`. La lista sale de escritos jurídicos reales; ante la duda
+ * NO se descarta (un falso positivo deja el documento como «Documento», que es peor que un
+ * título raro pero específico).
+ */
+function esRotuloDeSeccion(s: string): boolean {
+  const x = s.trim().replace(/[.:]+$/, "");
+  // Numeración romana o arábiga al inicio: «I. OBJETO DEL DICTAMEN», «1. Antecedentes».
+  if (/^(?:[IVXLCDM]+|\d+)\s*[.)-]/i.test(x)) return true;
+  // Rótulos que nombran una parte del escrito, nunca el escrito entero.
+  return /^(índice|indice|contenido|antecedentes|hechos|considerandos|resultandos|fundamentos?(\s+de\s+derecho)?|derecho|pruebas?|petitorios?|puntos?\s+petitorios?|conclusiones?|introducci[óo]n|objeto|objetivo|alcance|glosario|anexos?|firmas?|proemio|suplico|resuelve|transitorios?)$/i.test(x);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -557,10 +582,33 @@ export function bubbleWithoutEbFile(body: string): string {
   return [before, "📎 Preparando el archivo…"].filter(Boolean).join("\n\n");
 }
 
-export function bubbleWithoutEbDoc(body: string, patchOutcome?: { applied: number; failed: string[] }): string {
+/**
+ * ⚠️ `keepStatus` existe porque esta función hace DOS trabajos que no son el mismo.
+ *
+ * Nació el 2026-07-24 con la burbuja `ToolGroup`, y su cometido era de RENDER: que los
+ * fences de estado no se pinten como texto crudo dentro del markdown, porque justo arriba
+ * `extractToolState`/`extractSteps` ya los pintaron como burbuja.
+ *
+ * Pero el server la usa también para PERSISTIR (chat.ts y dm.ts, camino de
+ * documento/artefacto/patch), y ahí quitar los fences es pérdida de datos: el cliente saca
+ * la lista de herramientas del PROPIO body con `extractToolState` — no hay canal lateral ni
+ * columna aparte—, así que un mensaje que entrega documento se guardaba SIN su cuadro y ya
+ * no había de dónde recuperarlo. Uno que entrega archivo sí lo conservaba, porque su rama
+ * persiste con `stripEbFile(stripEbAudio(reply))` y nunca pasa por aquí. Esa asimetría se
+ * midió el 2026-08-03 comparando dos agentes del mismo turno.
+ *
+ * Regla: para PINTAR, sin `keepStatus`. Para GUARDAR, con `keepStatus: true`.
+ */
+export function bubbleWithoutEbDoc(
+  body: string,
+  patchOutcome?: { applied: number; failed: string[] },
+  opts?: { keepStatus?: boolean },
+): string {
   // Primero saca el bloque de estado de tools (se pinta como burbuja) y la nota de voz.
-  body = stripToolBlock(body);
-  body = stripStepsBlock(body);
+  if (!opts?.keepStatus) {
+    body = stripToolBlock(body);
+    body = stripStepsBlock(body);
+  }
   body = bubbleWithoutEbAudio(body);
   body = bubbleWithoutEbFile(body);
   // Al final de todo: si quedó un fence a medio abrir (el modelo aún escribe el

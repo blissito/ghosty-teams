@@ -89,6 +89,7 @@ import { listMyWorkspacesFn } from "../server/workspaces";
 import {
   getChannelView,
   getChannelFlow,
+  getLiveTurnsFn,
   getThread,
   getChannelThreads,
   postMessage,
@@ -1186,6 +1187,29 @@ function ChannelPage() {
   // vacía solo al llegar el body final. Es lo que distingue "está trabajando" de "espera
   // su turno" y lo que da dónde colgar el botón de Detener.
   const [turns, setTurns] = useState<Map<number, { state: "running" | "queued"; position: number; startedAt: number }>>(new Map());
+  // Siembra los turnos EN VUELO al montar. El estado de un turno llega por SSE (`t:"turn"`)
+  // y un evento no se puede volver a escuchar: quien recargaba a media respuesta se quedaba
+  // sin cronómetro, sin Detener y sin ninguna señal de que el agente seguía trabajando —
+  // el mensaje se veía idéntico a uno terminado.
+  useEffect(() => {
+    let vivo = true;
+    getLiveTurnsFn()
+      .then((states) => {
+        if (!vivo || !states?.length) return;
+        setTurns((prev) => {
+          const next = new Map(prev);
+          for (const s of states) {
+            if (s.state === "stopped") continue;
+            next.set(s.id, { state: s.state, position: s.position, startedAt: s.startedAt });
+          }
+          return next;
+        });
+      })
+      .catch(() => {});
+    return () => {
+      vivo = false;
+    };
+  }, []);
   const typingTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const channelsById = useMemo(() => new Map(channels.map((c) => [c.id, c.slug])), [channels]);
   const router = useRouter();
@@ -1234,6 +1258,9 @@ function ChannelPage() {
   // se pidió), pero cada token reabría el panel y cerrarlo no servía de nada hasta que el
   // agente terminaba.
   const draftDismissedRef = useRef<number | null>(null);
+  // El hilo (parent_id) del borrador en curso, para no pintar su píldora en los hilos ajenos.
+  const draftParentRef = useRef<number | null>(null);
+  const [hiddenDraftParent, setHiddenDraftParent] = useState<number | null>(null);
   // Lo que se está armando ahora mismo con el panel CERRADO. Es el mango para volver:
   // sin esto, cerrar durante la construcción te dejaba sin manera de mirar hasta que el
   // agente publicara la card. (Claude/ChatGPT usan la card del mensaje como mango; aquí
@@ -1333,6 +1360,11 @@ function ChannelPage() {
       console.log(`[gt-draft] +${doc.md.length - prev}b total=${doc.md.length}b closed=${doc.closed} t=${Math.round(performance.now())}ms`);
     }
     draftMsgIdRef.current = id;
+    // De qué HILO salió este borrador. La píldora "Armando · <doc>" es `fixed` y global a la
+    // ruta: con tres agentes escribiendo a la vez, el último se la quedaba y aparecía en los
+    // hilos de los otros — se veía como si escribieran el mismo documento (2026-08-03).
+    // `findMessageInCaches` ya se llamó arriba para el filtro de conversación.
+    draftParentRef.current = findMessageInCaches(id)?.parent_id ?? null;
     const draftView = (): ArtifactView => ({
       kind: "draft",
       title: draftTitle(doc.md, doc.kind, doc.fenceTitle),
@@ -1346,6 +1378,7 @@ function ChannelPage() {
     // servía de nada). Se guarda para poder volver cuando tú quieras.
     if (draftDismissedRef.current === id) {
       setHiddenDraft(doc.closed ? null : draftView());
+      setHiddenDraftParent(doc.closed ? null : draftParentRef.current);
       return;
     }
     setOpenArtifact((cur) => {
@@ -2275,6 +2308,7 @@ function ChannelPage() {
       }
       return null;
     });
+    setHiddenDraftParent(null);
   }, []);
 
   return (
@@ -2477,8 +2511,11 @@ function ChannelPage() {
       {/* Mango para volver a lo que se está armando si cerraste el panel. Claude/ChatGPT
           usan la card del mensaje para esto; aquí la card sólo aparece al publicar, así
           que esta píldora cubre la ventana en la que el agente todavía escribe. */}
+      {/* ⚠️ Y sólo en SU hilo: la píldora es `fixed`, o sea global a la ruta. Con varios
+          agentes redactando a la vez, el último se la quedaba y se veía en los hilos de los
+          otros — parecía que escribían el mismo documento. */}
       <AnimatePresence>
-        {hiddenDraft && !openArtifact && (
+        {hiddenDraft && !openArtifact && (hiddenDraftParent ?? null) === openThreadId && (
           <motion.button
             initial={{ opacity: 0, y: 8 }}
             animate={{ opacity: 1, y: 0 }}
@@ -6476,6 +6513,15 @@ function ArtifactCard({ artifact, ownerMsg }: { artifact: Artifact; ownerMsg: Me
   const isOffice = view.kind === "office";
   const isSheet = view.kind === "sheet";
   const isPdf = view.kind === "pdf";
+  // ¿El agente TODAVÍA lo está escribiendo? La tarjeta aparece al ABRIRSE el documento, no
+  // al cerrarse, así que con un escrito largo se quedaba minutos ofreciendo "Descargar" algo
+  // a medias — y un botón así se lee como *entregado*. La señal es el fence del mensaje que
+  // la produjo: mientras siga abierto, sigue escribiendo. Al terminar, el body persistido ya
+  // no trae fence (`bubbleWithoutEbDoc` los corta) → vuelve a ser una tarjeta normal.
+  const escribiendo = (() => {
+    const d = extractEbDoc(ownerMsg.body ?? "");
+    return !!d && !d.closed;
+  })();
   // Subtítulo tipo "Documento · PDF" / "Hoja de cálculo · XLSX" / "Hoja · CSV" (estilo claude.ai).
   // Office = badge + tipo REALES derivados de la extensión del nombre — no hardcodear DOCX
   // para todo (xlsx/pptx/docx colapsan en kind "office"). Ver ArtifactPanel.extBadge.
@@ -6558,7 +6604,12 @@ function ArtifactCard({ artifact, ownerMsg }: { artifact: Artifact; ownerMsg: Me
           <span className="block text-[11px] text-muted">{subtitle}</span>
         </span>
       </button>
-      {isSheet ? (
+      {escribiendo ? (
+        <span className="flex shrink-0 items-center gap-1.5 px-2 text-xs italic text-muted">
+          <Loader2 size={12} className="animate-spin" />
+          {t("escribiendo…")}
+        </span>
+      ) : isSheet ? (
         <button
           type="button"
           onClick={(e) => {
@@ -6832,6 +6883,10 @@ function TurnLiveFooter({ id }: { id: number }) {
   return (
     <div className="mt-1 flex items-center gap-2 text-xs text-muted">
       <ThinkingRing size={12} />
+      {/* La frase, no sólo el anillo: en cuanto llega el primer paso, lo último en pantalla
+          es prosa idéntica a una respuesta final y un cronómetro sin texto no se lee como
+          estado. Con motores lentos el turno parecía terminado durante minutos. */}
+      <span className="italic">{t(fraseTrabajando(id, e.secs))}</span>
       <span className="tabular-nums opacity-60">{e.elapsed}</span>
       <StopTurnButton id={id} />
       {/* A los 2 minutos el silencio deja de leerse como "está pensando" y empieza a

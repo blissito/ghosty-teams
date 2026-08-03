@@ -435,7 +435,7 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
           const cleaned = bubbleWithoutEbDoc(reply, {
             applied: res.applied.length,
             failed: res.failed.map((f) => `${f.ref}: ${f.reason}`),
-          });
+          }, { keepStatus: true });
           await db.setMessageBody(id, cleaned);
           fanout({ t: "message:body", id, body: cleaned });
           if (res.applied.length) {
@@ -476,7 +476,7 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
         const cleaned = bubbleWithoutEbDoc(reply, {
           applied: res.applied.length,
           failed: res.failed.map((f) => `${f.nodeId}: ${f.reason}`),
-        });
+        }, { keepStatus: true });
         await db.setMessageBody(id, cleaned);
         fanout({ t: "message:body", id, body: cleaned });
         if (res.applied.length) {
@@ -498,7 +498,7 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
 
       const ebdoc = extractEbDoc(reply);
       if (ebdoc?.closed && ebdoc.md.trim()) {
-        const cleaned = bubbleWithoutEbDoc(reply);
+        const cleaned = bubbleWithoutEbDoc(reply, undefined, { keepStatus: true });
         await db.setMessageBody(id, cleaned);
         fanout({ t: "message:body", id, body: cleaned });
         // Reusa el documentId existente del DM (misma identidad = nueva versión, MISMA card)

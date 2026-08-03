@@ -79,6 +79,22 @@ export function liveTurnStates(messageIds: number[]): TurnState[] {
 }
 
 /**
+ * TODOS los turnos vivos del proceso. Para sembrar el cliente al montar.
+ *
+ * Sin esto, el mapa `turns` del cliente se alimenta ÚNICAMENTE del evento SSE `turn`, así
+ * que tras un refresh queda vacío: el cronómetro y el botón Detener desaparecen y un turno
+ * que sigue corriendo se ve idéntico a uno terminado. Es lo que hizo leer "ya acabó" y
+ * "está atorado" sobre turnos que iban perfectamente (2026-08-03).
+ *
+ * No filtra por canal a propósito: el cliente sólo mira los ids que tiene en pantalla, y
+ * filtrar aquí exigiría pasear la lista de mensajes para algo que cabe en un puñado de
+ * entradas.
+ */
+export function allLiveTurnStates(): TurnState[] {
+  return [...live.keys()].map((id) => turnState(id)).filter((s): s is TurnState => !!s);
+}
+
+/**
  * Detiene un turno. Cortar el fetch cuelga la conexión con el worker, y el worker
  * (desde 2026-07-28) cierra su generador al detectarlo: suelta el lock de la sesión y
  * el siguiente de la cola arranca. Sin ese cambio del worker, esto sólo dejaría de
