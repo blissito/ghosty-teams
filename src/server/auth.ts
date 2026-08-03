@@ -26,14 +26,14 @@ export const me = createServerFn({ method: "GET" }).handler(async () => {
     const { dbqRaw } = await import("../dbq.server");
     const { rows } = await dbqRaw("SELECT is_owner FROM gc_users WHERE sub = ?", [user.sub]);
     if (!rows[0]) return user;
-    // ⚠️ `permisosDe` y NO `Number(...) === 1` a secas: el STAFF tiene poder de owner con
-    // `is_owner=0` en la DB, así que leer la columna cruda le quitaría el permiso en el
-    // primer render — otorgado al entrar y perdido acto seguido, sin error ni rastro.
-    // Es la MISMA función que usa `upsertUser`, para que no puedan divergir.
-    const { permisosDe } = await import("../users.server");
-    const fresco = await permisosDe(user.email, Number(rows[0][0]) === 1);
-    if (fresco.isOwner === user.isOwner && fresco.isStaff === user.isStaff) return user;
-    const fresh = { ...user, ...fresco };
+    // ⚠️ `resolvePermissions` y NO `Number(...) === 1` a secas: el STAFF tiene poder de
+    // owner con `is_owner=0` en la DB, así que leer la columna cruda le quitaría el
+    // permiso en el primer render — otorgado al entrar y perdido acto seguido, sin error
+    // ni rastro. Es la MISMA función que usa `upsertUser`, para que no puedan divergir.
+    const { resolvePermissions } = await import("../users.server");
+    const perms = await resolvePermissions(user.email, Number(rows[0][0]) === 1);
+    if (perms.isOwner === user.isOwner && perms.isStaff === user.isStaff) return user;
+    const fresh = { ...user, ...perms };
     await s.update({ user: fresh }); // que la cookie deje de mentir
     return fresh;
   } catch {

@@ -62,7 +62,7 @@ async function resolveIsOwner(email: string): Promise<0 | 1> {
   // El STAFF nunca se queda de dueño DE VERDAD, ni entrando primero a un espacio vacío.
   // Es justo el accidente que `intended_owner_email` vino a evitar —preparamos el
   // workspace del cliente, lo abrimos antes que él, y su espacio queda a nuestro nombre—
-  // reintroducido por otra puerta. Su poder viene de `permisosDe`, no de esta columna.
+  // reintroducido por otra puerta. Su poder viene de `resolvePermissions`, no de aquí.
   if (await isStaffEmail(email)) return 0;
 
   if (await isIntendedOwner(email)) return 1;
@@ -133,7 +133,7 @@ export async function isStaffEmail(email: string): Promise<boolean> {
  *  para que un traspaso de dueño se note sin volver a entrar)—. Si `me()` calculara esto
  *  por su cuenta y olvidara el staff, el poder se otorgaría al entrar y se perdería al
  *  primer render: sin error, sin rastro, imposible de leer desde fuera. */
-export async function permisosDe(
+export async function resolvePermissions(
   email: string,
   isOwnerEnDb: boolean,
 ): Promise<{ isOwner: boolean; isStaff: boolean }> {
@@ -204,8 +204,8 @@ export async function upsertUser(id: {
     await dbq("UPDATE gc_users SET email=? WHERE sub=?", [id.email, id.sub]);
     const name = (row[2] as string) || id.name;
     const avatar = (row[3] as string) || id.avatar;
-    const permisos = await permisosDe(id.email, Number(row[0]) === 1);
-    return { sub: id.sub, email: id.email, name, avatar, handle, ...permisos };
+    const perms = await resolvePermissions(id.email, Number(row[0]) === 1);
+    return { sub: id.sub, email: id.email, name, avatar, handle, ...perms };
   }
   const isOwner = await resolveIsOwner(id.email);
   const handle = await ensureUniqueHandle(base, id.sub);
@@ -213,7 +213,7 @@ export async function upsertUser(id: {
     "INSERT INTO gc_users (sub, email, name, avatar, is_owner, handle) VALUES (?, ?, ?, ?, ?, ?)",
     [id.sub, id.email, id.name, id.avatar, isOwner, handle]
   );
-  return { ...id, handle, ...(await permisosDe(id.email, isOwner === 1)) };
+  return { ...id, handle, ...(await resolvePermissions(id.email, isOwner === 1)) };
 }
 
 // Perfil editable por el dueño de la cuenta (Ajustes → perfil): nombre visible y
