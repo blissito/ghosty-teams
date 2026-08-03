@@ -32,8 +32,8 @@ export function makeBodyFlusher(intervalMs = 2000) {
   // 2026-08-03, y es un bug que sólo existe desde que persistimos a media escritura.
   let chain: Promise<void> = Promise.resolve();
 
-  const write = async (id: number) => {
-    if (cerrados.has(id)) return;
+  const write = async (id: number, final = false) => {
+    if (cerrados.has(id) && !final) return;
     const body = pending.get(id);
     // NUNCA persistir un body vacío: deepseek/ghosty-gc a veces cierra el turno en blanco y
     // guardarlo borraría lo ya streameado. Es la misma red que ya protege el body final.
@@ -42,11 +42,14 @@ export function makeBodyFlusher(intervalMs = 2000) {
     written.set(id, body);
     lastAt.set(id, Date.now());
     // Best-effort de verdad: una escritura fallida no puede tumbar el turno del agente.
-    await db.setMessageBodyStreaming(id, body).catch(() => {});
+    // El flush del cierre escribe AUTORITATIVO (streaming = 0). Si no, un turno abortado o
+    // inyectado —donde no viene ninguna escritura final detrás— se quedaba marcado como en
+    // vuelo: spinner en las herramientas y "escribiendo…" en la tarjeta, para siempre.
+    await (final ? db.setMessageBody(id, body) : db.setMessageBodyStreaming(id, body)).catch(() => {});
   };
 
-  const encolar = (id: number) => {
-    chain = chain.then(() => write(id)).catch(() => {});
+  const encolar = (id: number, final = false) => {
+    chain = chain.then(() => write(id, final)).catch(() => {});
     return chain;
   };
 
@@ -64,7 +67,7 @@ export function makeBodyFlusher(intervalMs = 2000) {
      * pueda pisar el cuerpo final que chat.ts está a punto de escribir.
      */
     async flush(id: number) {
-      await encolar(id);
+      await encolar(id, true);
       cerrados.add(id);
       await chain.catch(() => {});
     },
