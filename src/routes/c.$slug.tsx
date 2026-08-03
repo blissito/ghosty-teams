@@ -1892,6 +1892,26 @@ function ChannelPage() {
   useEffect(() => {
     if (!didRestoreFocus.current) {
       didRestoreFocus.current = true;
+      // La URL MANDA. `?thread=N` / `?dm=N` son enlaces de verdad: se comparten, se guardan
+      // y funcionan con el botón atrás. sessionStorage queda sólo como respaldo del refresh,
+      // que es lo único para lo que sirve.
+      // ⚠️ El router parsea los search params como JSON, así que `?thread=123` llega como
+      // NÚMERO — se lee de `location.search` con URLSearchParams y se convierte a mano.
+      try {
+        const qs = new URLSearchParams(window.location.search);
+        const thread = Number(qs.get("thread"));
+        const dm = Number(qs.get("dm"));
+        if (Number.isFinite(thread) && thread > 0) {
+          setOpenThreadId(thread);
+          return;
+        }
+        if (Number.isFinite(dm) && dm > 0) {
+          setOpenDmId(dm);
+          return;
+        }
+      } catch {
+        /* sin URL utilizable: se cae al foco guardado */
+      }
       try {
         const raw = sessionStorage.getItem(`focus:${channel.slug}`);
         if (raw) {
@@ -3490,8 +3510,14 @@ function Sidebar({
             const slug = channels.find((c) => c.id === x.channelId)?.slug;
             if (!slug) return;
             onCloseNav();
-            // Al hilo si lo tiene; si no, al room. `router.navigate` mantiene el SPA.
-            window.location.href = x.parentId ? `/c/${slug}?thread=${x.parentId}` : `/c/${slug}`;
+            // Mismo room → abrir el hilo en el acto, sin recargar.
+            if (slug === active) {
+              if (x.parentId != null) onOpenThread(x.parentId);
+              else onBackToRoom();
+              return;
+            }
+            // Otro room → por URL, que es un enlace compartible de verdad.
+            window.location.href = x.parentId != null ? `/c/${slug}?thread=${x.parentId}` : `/c/${slug}`;
           }}
         />
         {/* Home: dashboard de inicio con el personaje Ghosty. */}
