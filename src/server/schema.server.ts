@@ -361,7 +361,12 @@ async function migrate(): Promise<void> {
   await addColumn("gc_artifacts", "archived_at", "INTEGER");
   await addColumn("gc_artifacts", "purge_at", "INTEGER");
   // Índice para el barrido de purga: busca por fecha, no por documento.
-  await dbq("CREATE INDEX IF NOT EXISTS gc_artifacts_purge ON gc_artifacts(purge_at)");
+  //
+  // ⚠️ `exec`, NO `dbq` directo. Las sentencias se ACUMULAN en `pending` y sólo salen en
+  // el `flush`; un `dbq` se salta la cola y corre ANTES que los ALTER de arriba, así que
+  // el índice se creaba sobre una columna que todavía no existía y el arranque reportaba
+  // "1 fallos" sin decir cuál.
+  await exec("CREATE INDEX IF NOT EXISTS gc_artifacts_purge ON gc_artifacts(purge_at)");
   // Caducidad de una invitación nominal (unix, NULL = sin fecha). "Puede comentar hasta
   // el 15" es lo que pide el trabajo con clientes: el acceso se da para algo concreto y
   // debería apagarse solo cuando eso termina.
