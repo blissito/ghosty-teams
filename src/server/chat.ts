@@ -311,6 +311,17 @@ export const getLiveTurnsFn = createServerFn({ method: "POST" }).handler(async (
   return Promise.all(
     live.map(async (t) => {
       const m = await db.getMessage(t.id).catch(() => null);
+      // QUÉ se está haciendo, no sólo quién y dónde. Cursor nombra cada fila con la tarea
+      // ("Live stock ticker") en vez del agente; aquí la tarea es lo que la persona pidió,
+      // así que se toma del mensaje padre y se recorta a algo legible.
+      let tarea = "";
+      try {
+        const padre = m?.parent_id != null ? await db.getMessage(m.parent_id).catch(() => null) : null;
+        const crudo = (padre?.body ?? "").replace(/```[\s\S]*?```/g, " ").replace(/\s+/g, " ").trim();
+        if (crudo) tarea = crudo.length > 60 ? `${crudo.slice(0, 57)}…` : crudo;
+      } catch {
+        /* sin tarea: la fila cae al nombre del room */
+      }
       // El PASO en el que va, que es lo que Cursor enseña en cada fila de su panel: un
       // cronómetro sin contexto no dice si avanza o se atoró. Ya viaja en el cuerpo.
       let paso = "";
@@ -330,6 +341,7 @@ export const getLiveTurnsFn = createServerFn({ method: "POST" }).handler(async (
         channelId: m?.channel_id ?? null,
         parentId: m?.parent_id ?? null,
         topic: m?.topic ?? "",
+        tarea,
         paso,
       };
     }),

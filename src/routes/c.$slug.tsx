@@ -1230,7 +1230,7 @@ function ChannelPage() {
   // pararlos si no estabas parado en su hilo.
   const [liveTurns, setLiveTurns] = useState<Array<{
     id: number; state: "running" | "queued" | "stopped" | "done"; position: number; startedAt: number;
-    agent: string; avatar: string; channelId: number | null; parentId: number | null; topic: string; paso?: string;
+    agent: string; avatar: string; channelId: number | null; parentId: number | null; topic: string; tarea?: string; paso?: string;
   }>>([]);
   // ⚠️ El diff se calcula FUERA del actualizador de estado. Estaba dentro de
   // `setLiveTurns(prev => …)` llamando a `setDoneTurns` desde ahí, y React no garantiza ese
@@ -3270,6 +3270,8 @@ function NavToggle({ onOpen }: { onOpen: () => void }) {
 type LiveTurnRow = {
   id: number; state: "running" | "queued" | "stopped" | "done"; position: number; startedAt: number;
   agent: string; avatar: string; channelId: number | null; parentId: number | null; topic: string;
+  /** Lo que la persona pidió, recortado: nombra la FILA, como hace Cursor con sus tareas. */
+  tarea?: string;
   /** Último paso narrado por el agente — el "en qué va", como la fila de Cursor. */
   paso?: string;
 };
@@ -3328,7 +3330,7 @@ function LiveTurnsPanel({
             <span className="min-w-0 flex-1">
               <span className={`block truncate text-xs ${x.state === "done" ? "text-muted" : "text-ink"}`}>
                 {x.agent || t("Agente")}
-                {nombreDe(x.channelId) ? <span className="text-muted"> · {nombreDe(x.channelId)}</span> : null}
+                <span className="text-muted"> · {x.tarea || nombreDe(x.channelId)}</span>
               </span>
               {/* EN QUÉ VA, que es lo que hace útil la fila de Cursor: un cronómetro sin
                   contexto no distingue "avanzando" de "atorado". */}
@@ -3660,8 +3662,8 @@ function Sidebar({
             if (!slug) return;
             onCloseNav();
             // Mismo room → abrir el hilo en el acto, sin recargar.
-            // Abrirlo cuenta como haberlo visto: un terminado se descarta al entrar.
-            if (x.state === "done") onDismissTurn(x.id);
+            // Abrir NO lo descarta: quieres poder ir al resultado, volver y seguir viendo la
+            // lista de lo que acabó. Se va con la ✕ o solo al envejecer.
             if (slug === active) {
               if (x.parentId != null) onOpenThread(x.parentId);
               else onBackToRoom();
