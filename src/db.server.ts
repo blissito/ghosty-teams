@@ -1123,6 +1123,18 @@ export async function editMessage(id: number, body: string): Promise<void> {
 // Persiste el body final de una respuesta de agente que llegó por streaming. NO
 // toca edited_at (no es una edición del autor, es el reply que terminó de fluir) →
 // no muestra "(editado)". El body autoritativo permite el catch-up por cursor.
+/** Qué produjo un turno: su artefacto (si lo hay) y cuántos archivos colgó. Una consulta cada uno. */
+export async function turnOutcomeCounts(messageId: number): Promise<{ documentId: string | null; versions: number; files: number }> {
+  const [art] = await dbq("SELECT url FROM gc_artifacts WHERE message_id = ? AND md IS NOT NULL ORDER BY id DESC LIMIT 1", [messageId]);
+  const documentId = (art?.url as string | undefined) ?? null;
+  // Las versiones de un documento son las filas que comparten `url` (identidad del documento).
+  const versions = documentId
+    ? Number((await dbq("SELECT COUNT(*) AS n FROM gc_artifacts WHERE url = ? AND md IS NOT NULL", [documentId]))[0]?.n ?? 1)
+    : 0;
+  const files = Number((await dbq("SELECT COUNT(*) AS n FROM gc_attachments WHERE message_id = ?", [messageId]))[0]?.n ?? 0);
+  return { documentId, versions, files };
+}
+
 export async function setMessageBody(id: number, body: string): Promise<void> {
   // Escritura AUTORITATIVA → el mensaje deja de estar en streaming. Es lo que distingue un
   // turno terminado de uno que el proceso dejó a medias al reiniciarse.

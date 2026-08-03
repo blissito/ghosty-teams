@@ -37,7 +37,15 @@ export type RtEvent =
   // Estado de un turno de agente EN VUELO: corriendo o esperando su lugar en la cola,
   // y cuándo empezó. Sin esto, N turnos encolados se pintaban como N "pensando…"
   // idénticos y no había dónde colgar el botón de Detener.
-  | { t: "turn"; id: number; state: "running" | "queued" | "stopped"; position: number; startedAt: number }
+  // Lleva el CONTEXTO completo (agente, tarea, paso) a propósito: con sólo id+estado el
+  // cliente tenía que preguntar por el resto cada 8 s —2 consultas por turno vivo y por
+  // pestaña abierta— para pintar la barra. Yendo completo, el sondeo sobra.
+  | {
+      t: "turn"; id: number; state: "running" | "queued" | "stopped" | "done";
+      position: number; startedAt: number;
+      agent?: string; avatar?: string; channelId?: number | null; parentId?: number | null;
+      tarea?: string; paso?: string; outcome?: string;
+    }
   | { t: "reaction"; messageId: number; emoji: string; userSub: string; op: "add" | "remove"; count: number }
   | { t: "pin"; channelId: number; messageId: number; pinned: boolean } // fijado/desfijado (room-wide)
   | { t: "star"; messageId: number; starred: boolean } // marcado personal (a ch.user, cross-device)

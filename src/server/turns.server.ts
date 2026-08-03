@@ -20,14 +20,33 @@ export type LiveTurn = {
   /** Para avisar a los clientes al cambiar de estado, sin acoplar este módulo al bus. */
   announce?: (state: TurnState) => void;
   stopped?: boolean;
+  // Contexto para pintar la barra sin volver a consultar la base en cada refresco.
+  channelId?: number | null;
+  parentId?: number | null;
+  agent?: string;
+  avatar?: string;
+  /** Lo que pidió la persona, recortado: nombra la fila. */
+  tarea?: string;
+  /** Último paso narrado por el agente. */
+  paso?: string;
 };
 
 export type TurnState = {
   id: number;
-  state: "running" | "queued" | "stopped";
+  state: "running" | "queued" | "stopped" | "done";
   /** Posición en la cola (1 = el que corre). Deja de ser N burbujas indistinguibles. */
   position: number;
   startedAt: number;
+  // El evento llevaba sólo id/estado/posición, y por eso el cliente TENÍA que preguntar por
+  // el resto cada pocos segundos (2 consultas por turno vivo y por pestaña). Yendo completo,
+  // la barra se pinta con lo que llega y el sondeo sobra.
+  agent?: string;
+  avatar?: string;
+  channelId?: number | null;
+  parentId?: number | null;
+  tarea?: string;
+  paso?: string;
+  outcome?: string;
 };
 
 const live = new Map<number, LiveTurn>();
@@ -46,6 +65,12 @@ function stateOf(t: LiveTurn): TurnState {
     state: t.stopped ? "stopped" : pos <= 1 ? "running" : "queued",
     position: Math.max(1, pos),
     startedAt: t.startedAt,
+    agent: t.agent,
+    avatar: t.avatar,
+    channelId: t.channelId ?? null,
+    parentId: t.parentId ?? null,
+    tarea: t.tarea,
+    paso: t.paso,
   };
 }
 
@@ -54,17 +79,58 @@ function announceGroup(groupId: string): void {
   for (const t of siblings(groupId)) t.announce?.(stateOf(t));
 }
 
+/**
+ * Persistencia del turno. Es best-effort A PROPÓSITO: la fila sirve para SABER (sobrevivir a
+ * un deploy, cerrar huérfanos, pintar la barra), pero un fallo escribiéndola no puede impedir
+ * que el agente trabaje. El mapa en memoria sigue siendo la verdad operativa.
+ */
+async function persistir(sql: string, args: unknown[]): Promise<void> {
+  try {
+    const { dbq } = await import("../dbq.server");
+    await dbq(sql, args as never[]);
+  } catch {
+    /* la barra puede mentir un rato; el turno no se cae por esto */
+  }
+}
+
 export function registerTurn(t: Omit<LiveTurn, "startedAt"> & { startedAt?: number }): LiveTurn {
   const entry: LiveTurn = { ...t, startedAt: t.startedAt ?? Date.now() };
   live.set(entry.messageId, entry);
+  void persistir(
+    `INSERT INTO gt_turns (message_id, group_id, invoker_sub, channel_id, parent_id, agent, avatar, tarea, state, started_at)
+     VALUES (?,?,?,?,?,?,?,?,'running',?)
+     ON CONFLICT(message_id) DO UPDATE SET state='running', started_at=excluded.started_at, ended_at=NULL, outcome=NULL`,
+    [entry.messageId, entry.groupId, entry.invokerSub ?? null, entry.channelId ?? null,
+     entry.parentId ?? null, entry.agent ?? null, entry.avatar ?? null, entry.tarea ?? null, entry.startedAt],
+  );
   announceGroup(entry.groupId);
   return entry;
+}
+
+/** Lo que el turno acabó produciendo, para la fila de "terminó". Se calcula UNA vez. */
+export function setTurnOutcome(messageId: number, outcome: string): void {
+  void persistir("UPDATE gt_turns SET outcome = ? WHERE message_id = ?", [outcome, messageId]);
+}
+
+/** El paso en curso, para que la barra diga en qué va sin preguntar por el cuerpo. */
+export function setTurnStep(messageId: number, paso: string): void {
+  const t = live.get(messageId);
+  if (!t || t.paso === paso) return;
+  t.paso = paso;
+  void persistir("UPDATE gt_turns SET paso = ? WHERE message_id = ?", [paso, messageId]);
+  t.announce?.(stateOf(t));
 }
 
 export function finishTurn(messageId: number): void {
   const t = live.get(messageId);
   if (!t) return;
   live.delete(messageId);
+  void persistir("UPDATE gt_turns SET state = ?, ended_at = ? WHERE message_id = ?", [
+    t.stopped ? "stopped" : "done",
+    Date.now(),
+    messageId,
+  ]);
+  t.announce?.({ ...stateOf(t), state: "done" });
   announceGroup(t.groupId);
 }
 
@@ -180,6 +246,14 @@ export async function sweepOrphans(): Promise<number> {
     // `agent_handle IS NOT NULL` = la cáscara la creó un turno de agente. Un mensaje de
     // persona con body vacío no existe (postMessage lo rechaza), pero acotarlo igual
     // evita tocar cualquier otra fila que algún día nazca vacía.
+    // Los turnos que otro proceso dejó `running` son huérfanos POR DEFINICIÓN: un turno no
+    // sobrevive al proceso que lo atiende, así que al arrancar nada está realmente en vuelo.
+    // Esto convierte el barrido de heurística en hecho — antes tenía que adivinar por
+    // "cuerpo vacío y más de 60s", y desde la persistencia incremental esa adivinanza ya
+    // fallaba (un turno cortado a media respuesta tiene texto, no vacío).
+    await dbq("UPDATE gt_turns SET state = 'interrupted', ended_at = ? WHERE state = 'running'", [
+      Date.now(),
+    ]).catch(() => {});
     // ⚠️ DOS formas de quedar huérfano, y la segunda nació el 2026-08-03 con la
     // persistencia incremental: antes una cáscara abandonada estaba VACÍA, y desde que el
     // cuerpo se guarda mientras el agente escribe, un turno cortado a media respuesta tiene

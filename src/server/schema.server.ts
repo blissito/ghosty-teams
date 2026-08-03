@@ -638,6 +638,36 @@ async function migrate(): Promise<void> {
   // Rate limit en la DB, no en memoria del proceso: un límite in-process no sobrevive un
   // deploy ni sirve con más de un proceso, y era justo el agujero del original (que además
   // se SALTABA el límite cuando no podía leer la IP).
+  /**
+   * Turnos de agente. El registro que hasta el 2026-08-03 vivía SÓLO en memoria del proceso.
+   *
+   * Cada hot-deploy —y hubo una docena en un día— se llevaba los turnos vivos: el worker
+   * seguía trabajando, la burbuja se quedaba esperando y el resultado se perdía sin que nadie
+   * se enterara. De ahí salieron un documento terminado que nunca se publicó y dos turnos en
+   * los que el agente juraba haber entregado algo inexistente.
+   *
+   * ⚠️ La tabla NO reemplaza al mapa en memoria: el `AbortController` es del proceso, así que
+   * el mapa sigue siendo quien puede CORTAR un turno y la tabla es quien SABE que existe. Al
+   * arrancar, todo lo que quedó `running` de otro proceso es huérfano por definición.
+   */
+  await exec(`CREATE TABLE IF NOT EXISTS gt_turns (
+    message_id  INTEGER PRIMARY KEY,
+    group_id    TEXT NOT NULL,
+    invoker_sub TEXT,
+    channel_id  INTEGER,
+    parent_id   INTEGER,
+    agent       TEXT,
+    avatar      TEXT,
+    tarea       TEXT,
+    paso        TEXT,
+    state       TEXT NOT NULL DEFAULT 'running',
+    started_at  INTEGER NOT NULL,
+    ended_at    INTEGER,
+    outcome     TEXT
+  )`);
+  // Para el barrido de huérfanos al arrancar y para listar lo vivo sin recorrer la tabla.
+  await exec("CREATE INDEX IF NOT EXISTS gt_turns_state ON gt_turns(state, started_at)");
+
   await exec(`CREATE TABLE IF NOT EXISTS gt_form_rate (
     form_id      TEXT NOT NULL,
     bucket       TEXT NOT NULL,

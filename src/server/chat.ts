@@ -303,49 +303,10 @@ export const getChannelFlow = createServerFn({ method: "GET" })
 // escondería uno que acaba de arrancar. No es idempotencia lo que se busca aquí, es frescura.
 export const getLiveTurnsFn = createServerFn({ method: "POST" }).handler(async () => {
   const turns = await import("./turns.server");
-  const db = await import("../db.server");
-  const live = turns.allLiveTurnStates();
-  if (!live.length) return [];
-  // Enriquecido con QUIÉN y DÓNDE: una lista de ids no sirve para nada. El coste es una
-  // lectura por turno vivo, y los turnos vivos se cuentan con los dedos de una mano.
-  return Promise.all(
-    live.map(async (t) => {
-      const m = await db.getMessage(t.id).catch(() => null);
-      // QUÉ se está haciendo, no sólo quién y dónde. Cursor nombra cada fila con la tarea
-      // ("Live stock ticker") en vez del agente; aquí la tarea es lo que la persona pidió,
-      // así que se toma del mensaje padre y se recorta a algo legible.
-      let tarea = "";
-      try {
-        const padre = m?.parent_id != null ? await db.getMessage(m.parent_id).catch(() => null) : null;
-        const crudo = (padre?.body ?? "").replace(/```[\s\S]*?```/g, " ").replace(/\s+/g, " ").trim();
-        if (crudo) tarea = crudo.length > 60 ? `${crudo.slice(0, 57)}…` : crudo;
-      } catch {
-        /* sin tarea: la fila cae al nombre del room */
-      }
-      // El PASO en el que va, que es lo que Cursor enseña en cada fila de su panel: un
-      // cronómetro sin contexto no dice si avanza o se atoró. Ya viaja en el cuerpo.
-      let paso = "";
-      try {
-        const { extractSteps } = await import("../lib/ebdoc");
-        const pasos = extractSteps(m?.body ?? "");
-        if (pasos?.length) paso = pasos[pasos.length - 1];
-      } catch {
-        /* sin paso: la fila se pinta igual */
-      }
-      // El room se resuelve en el CLIENTE, que ya tiene la lista con id→slug/nombre: aquí
-      // costaría una query más por turno para un dato que allá es un Map.
-      return {
-        ...t,
-        agent: m?.sender ?? "",
-        avatar: m?.avatar ?? "",
-        channelId: m?.channel_id ?? null,
-        parentId: m?.parent_id ?? null,
-        topic: m?.topic ?? "",
-        tarea,
-        paso,
-      };
-    }),
-  );
+  // Ya no consulta NADA: el estado del turno lleva su propio contexto (agente, tarea, paso)
+  // desde que se registra. Antes hacía 2 consultas por turno vivo —el mensaje y su padre— y
+  // el cliente lo llamaba cada 8s por pestaña abierta. Hoy esto es sólo el reconcile.
+  return turns.allLiveTurnStates();
 });
 
 // Topics del room (submenús del sidebar) — distintos topics con conteo/actividad.
@@ -896,16 +857,42 @@ export const askAgent = createServerFn({ method: "POST" })
 
     const controller = new AbortController();
     const flusher = (await import("./body-flush.server")).makeBodyFlusher();
-    const announce = (st: { id: number; state: "running" | "queued" | "stopped"; position: number; startedAt: number }) =>
+    const announce = (st: import("./turns.server").TurnState) =>
       bus.publish(bus.ch.room(ns, channel.id), { t: "turn", ...st });
     let registeredId: number | null = null;
+    // Último paso narrado por el agente, sacado del bloque ```gt-steps``` que él mismo emite.
+    const pasoDe = (body: string): string => {
+      const m = /```gt-steps[^\n]*\n([\s\S]*?)\n```/.exec(body);
+      if (!m) return "";
+      try {
+        const pasos = (JSON.parse(m[1]) as { steps?: string[] }).steps ?? [];
+        return pasos.length ? String(pasos[pasos.length - 1]).slice(0, 120) : "";
+      } catch {
+        return "";
+      }
+    };
+    // Cómo se LLAMA la tarea: lo que pidió la persona, recortado. Cursor nombra así cada fila
+    // de su panel ("Live stock ticker") en vez de con el nombre del agente, y es lo que hace
+    // que una lista de tres agentes se pueda leer de un vistazo.
+    const tareaDelTurno = (() => {
+      const crudo = (text ?? "").replace(/```[\s\S]*?```/g, " ").replace(/\s+/g, " ").trim();
+      if (!crudo) return "";
+      return crudo.length > 60 ? `${crudo.slice(0, 57)}…` : crudo;
+    })();
     // Registrar YA si la cáscara existe (postMessage la crea eager). Registrarlo hasta el
     // primer token dejaba sin botón ni reloj justo la ventana en la que hacen falta: la
     // del "pensando…" antes de que llegue nada.
     const register = (mid: number) => {
       if (registeredId === mid) return;
       registeredId = mid;
-      turns.registerTurn({ messageId: mid, groupId, invokerSub: poster?.sub ?? null, controller, announce });
+      // El contexto viaja CON el turno: así el evento `turn` basta para pintar la barra y el
+      // cliente no tiene que preguntar por el mensaje y su padre cada pocos segundos.
+      turns.registerTurn({
+        messageId: mid, groupId, invokerSub: poster?.sub ?? null, controller, announce,
+        channelId: channel.id, parentId: data.parentId ?? null,
+        agent: name, avatar: agent?.avatar ?? "",
+        tarea: tareaDelTurno,
+      });
     };
     if (data.shellId != null) register(data.shellId);
     // finally: un turno que revienta no puede quedarse registrado como vivo — tendría a
@@ -941,6 +928,10 @@ export const askAgent = createServerFn({ method: "POST" })
       emitBody: (mid, body) => {
         bus.publish(bus.ch.room(ns, channel.id), { t: "message:body", id: mid, body });
         flusher.offer(mid, body);
+        // El PASO en curso viaja con el estado del turno. Antes el cliente lo sacaba del
+        // cuerpo preguntando cada pocos segundos; aquí ya lo tenemos delante y es gratis.
+        const p = pasoDe(body);
+        if (p) turns.setTurnStep(mid, p);
       },
     }).finally(async () => {
       if (registeredId != null) {
@@ -1192,9 +1183,79 @@ export const askAgent = createServerFn({ method: "POST" })
       if (found) bus.publish(bus.ch.room(ns, channel.id), { t: "refresh", channelId: channel.id, parentId: data.parentId });
     } catch (e) {
       console.error("[artifact] detect/mint failed", e);
+    } finally {
+      // ⚠️ UN SOLO punto de enganche. El bloque de arriba tiene SIETE ramas y cada una hace
+      // su propio `return`: colgar esto rama por rama garantiza que alguna se quede sin
+      // aviso. El `finally` es el único sitio por el que pasan todas.
+      await avisarFinDeTurno({
+        ns, messageId: id, channelId: channel.id, channelSlug: channel.slug,
+        parentId: data.parentId ?? null, invokerSub: poster?.sub ?? null,
+        agente: name, tarea: tareaDelTurno,
+      }).catch(() => {});
     }
     return { ok: true as const };
   });
+
+/**
+ * Fin de turno: calcula QUÉ se entregó y avisa a quien lo pidió.
+ *
+ * El resumen ("1 documento · 3 versiones") se calcula **una vez, aquí**, no en cada refresco
+ * de la barra — es el equivalente al "Files added/changed" que Cursor enseña al terminar.
+ *
+ * El aviso va **sólo al invocador**: el turno es suyo. Avisar al room entero convertiría cada
+ * documento en spam para todos. Y respeta el silencio del room, igual que menciones y DMs.
+ *
+ * ⚠️ `notify()` ya salta el push a quien está ONLINE, así que esto no necesita saber si la
+ * persona está mirando: si está dentro, no le llega push (y ve el toast); si se fue, sí.
+ */
+async function avisarFinDeTurno(a: {
+  ns: string; messageId: number; channelId: number; channelSlug: string;
+  parentId: number | null; invokerSub: string | null; agente: string; tarea: string;
+}): Promise<void> {
+  const db = await import("../db.server");
+  const turns = await import("./turns.server");
+
+  // Qué produjo: artefacto del mensaje (+ sus versiones) y/o archivos adjuntos.
+  let resumen = "";
+  try {
+    const { documentId, versions, files } = await db.turnOutcomeCounts(a.messageId);
+    const partes: string[] = [];
+    if (documentId) partes.push(versions > 1 ? `1 documento · ${versions} versiones` : "1 documento");
+    if (files) partes.push(files === 1 ? "1 archivo" : `${files} archivos`);
+    resumen = partes.join(" · ");
+  } catch {
+    /* sin resumen: la fila dice "terminó" y ya */
+  }
+  if (resumen) {
+    turns.setTurnOutcome(a.messageId, resumen);
+    // ⚠️ El "terminó" ya se anunció antes (el `finally` del turno corre ANTES que el bloque
+    // de artefactos), así que el resumen llega tarde por definición: se re-emite el estado
+    // con él para que la fila lo recoja. Sin esto, la barra diría "terminó" a secas siempre.
+    const bus = await import("./bus.server");
+    bus.publish(bus.ch.room(a.ns, a.channelId), {
+      t: "turn", id: a.messageId, state: "done", position: 1, startedAt: Date.now(), outcome: resumen,
+    });
+  }
+
+  if (!a.invokerSub) return;
+  // El silencio del room manda, igual que en menciones/DMs/llamadas.
+  const destinos = await db.filterMutedOut([a.invokerSub], "room", a.channelId).catch(() => []);
+  if (!destinos.length) return;
+  const { notify } = await import("./notify.server");
+  await notify(
+    {
+      kind: "turn",
+      recipients: destinos,
+      title: `${a.agente} terminó`,
+      body: [a.tarea, resumen].filter(Boolean).join(" — ") || "Tu agente terminó de trabajar.",
+      url: a.parentId != null ? `/c/${a.channelSlug}?thread=${a.parentId}` : `/c/${a.channelSlug}`,
+      // Tag estable por mensaje: si el mismo turno avisara dos veces, se reemplaza en vez
+      // de apilarse en la bandeja.
+      tag: `turn:${a.messageId}`,
+    },
+    a.ns,
+  );
+}
 
 // Warm seam: el cliente lo dispara fire-and-forget al ELEGIR un @agente en el composer,
 // antes de enviar → pre-calienta el turno (resolución del agente + conexión a la flota).

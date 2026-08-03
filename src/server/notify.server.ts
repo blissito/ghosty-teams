@@ -11,7 +11,9 @@
 // "form" = alguien de FUERA respondió un formulario de intake. Es el único aviso que no
 // nace de una persona del workspace, y por eso importa que llegue sin tener la pestaña
 // abierta: nadie está esperando ese mensaje.
-export type NotifyKind = "mention" | "dm" | "call" | "call-end" | "reminder" | "form";
+// "turn" = tu agente terminó. Va sólo a quien lo pidió; `notify` ya salta el push si esa
+// persona está online, así que llega justo cuando hace falta: cuando te fuiste.
+export type NotifyKind = "mention" | "dm" | "call" | "call-end" | "reminder" | "form" | "turn";
 export type NotifyEvent = {
   kind: NotifyKind;
   recipients: string[]; // user subs a notificar (el emisor ya viene excluido)

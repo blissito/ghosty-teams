@@ -1230,7 +1230,7 @@ function ChannelPage() {
   // pararlos si no estabas parado en su hilo.
   const [liveTurns, setLiveTurns] = useState<Array<{
     id: number; state: "running" | "queued" | "stopped" | "done"; position: number; startedAt: number;
-    agent: string; avatar: string; channelId: number | null; parentId: number | null; topic: string; tarea?: string; paso?: string;
+    agent: string; avatar: string; channelId: number | null; parentId: number | null; topic: string; tarea?: string; paso?: string; outcome?: string;
   }>>([]);
   // ⚠️ El diff se calcula FUERA del actualizador de estado. Estaba dentro de
   // `setLiveTurns(prev => …)` llamando a `setDoneTurns` desde ahí, y React no garantiza ese
@@ -1283,7 +1283,11 @@ function ChannelPage() {
     // fila se congela para siempre enseñando un agente que ya terminó — visto con gaspar a
     // los 2:37 (2026-08-03).
     if (!turns.size && !liveTurns.length && !doneTurns.length) return;
-    const h = setInterval(refreshLiveTurns, liveTurns.length || turns.size ? 8000 : 30000);
+    // RECONCILE, no sondeo. La barra se pinta con el evento `turn` del SSE, que llega con
+    // todo el contexto; esto es sólo la red por si se pierde un evento. Antes eran 8s, o sea
+    // 2 consultas por turno vivo cada 8s POR PESTAÑA — con tres agentes y tres pestañas,
+    // ~135 consultas por minuto para pintar seis renglones.
+    const h = setInterval(refreshLiveTurns, 60000);
     return () => clearInterval(h);
   }, [refreshLiveTurns, turns.size, liveTurns.length, doneTurns.length]);
 
@@ -1299,7 +1303,8 @@ function ChannelPage() {
         setTurns((prev) => {
           const next = new Map(prev);
           for (const s of states) {
-            if (s.state === "stopped") continue;
+            // `stopped`/`done` no son turnos en vuelo: la burbuja no debe ofrecer Detener.
+            if (s.state === "stopped" || s.state === "done") continue;
             next.set(s.id, { state: s.state, position: s.position, startedAt: s.startedAt });
           }
           return next;
@@ -1808,10 +1813,42 @@ function ChannelPage() {
         // turno que ya terminó no debe seguir diciendo "en espera".
         setTurns((prev) => {
           const next = new Map(prev);
-          if (ev.state === "stopped") next.delete(ev.id);
+          if (ev.state === "stopped" || ev.state === "done") next.delete(ev.id);
           else next.set(ev.id, { state: ev.state, position: ev.position, startedAt: ev.startedAt });
           return next;
         });
+        // …y la barra "Trabajando ahora" se pinta con ESTE evento, sin preguntar. Antes el
+        // cliente sondeaba cada 8 s (2 consultas por turno vivo y por pestaña) y comparaba
+        // dos fuentes de verdad: de esa comparación salieron tres bugs en una tarde.
+        if (ev.state === "stopped" || ev.state === "done") {
+          const fila = liveTurnsRef.current.find((x) => x.id === ev.id);
+          liveTurnsRef.current = liveTurnsRef.current.filter((x) => x.id !== ev.id);
+          setLiveTurns(liveTurnsRef.current);
+          // Terminado ≠ detenido: sólo lo que ACABÓ deja constancia en la lista.
+          if (ev.state === "done") {
+            setDoneTurns((d) => {
+              const yaEsta = d.find((x) => x.id === ev.id);
+              // Puede llegar DOS veces: el "terminó" y, un instante después, el mismo estado
+              // con el resumen (que se calcula tras publicar el artefacto). La segunda sólo
+              // enriquece a la primera; si llegara sola, no hay fila que enriquecer.
+              const base = fila ?? yaEsta;
+              if (!base) return d;
+              return [
+                ...d.filter((x) => x.id !== ev.id),
+                { ...base, state: "done" as const, outcome: ev.outcome ?? yaEsta?.outcome, doneAt: yaEsta?.doneAt ?? Date.now() },
+              ];
+            });
+          }
+        } else {
+          const fila = {
+            id: ev.id, state: ev.state, position: ev.position, startedAt: ev.startedAt,
+            agent: ev.agent ?? "", avatar: ev.avatar ?? "", channelId: ev.channelId ?? null,
+            parentId: ev.parentId ?? null, topic: "", tarea: ev.tarea, paso: ev.paso,
+          };
+          const resto = liveTurnsRef.current.filter((x) => x.id !== ev.id);
+          liveTurnsRef.current = [...resto, fila];
+          setLiveTurns(liveTurnsRef.current);
+        }
         break;
       }
       case "message:delta": {
@@ -3280,6 +3317,8 @@ type LiveTurnRow = {
   tarea?: string;
   /** Último paso narrado por el agente — el "en qué va", como la fila de Cursor. */
   paso?: string;
+  /** Qué produjo el turno ("1 documento · 3 versiones"). Se calcula al cerrar, una vez. */
+  outcome?: string;
 };
 
 /**
@@ -3349,7 +3388,8 @@ function LiveTurnsPanel({
             ) : x.state === "done" ? (
               <span className="flex shrink-0 items-center gap-1 text-[10px] text-muted">
                 <Check size={11} className="text-green-500" />
-                {t("terminó")}
+                {/* QUÉ entregó, no sólo que acabó: es el "Files added/changed" de Cursor. */}
+                {x.outcome || t("terminó")}
               </span>
             ) : (
               <TurnClock startedAt={x.startedAt} />
