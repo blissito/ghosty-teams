@@ -773,22 +773,25 @@ export async function getDocMarkdown(documentId: string): Promise<string | null>
 // ── Identidad conversacional del artefacto vivo (Fase 1 edit-in-place) ──────────
 // conv_key → documentId del artefacto ACTUAL de la conversación.
 //
-// ⚠️ EN UN CANAL LA CLAVE ES DEL ROOM, y el `parentId` se IGNORA a propósito
-// (2026-08-03, modelo Zulip). Antes era `${channelId}:${parentId ?? "root"}`, cuando las
-// respuestas del agente vivían en el flujo y sólo algunas conversaciones bajaban a un
-// hilo. Desde que TODA respuesta nace en un hilo, esa clave daría un puntero distinto por
-// hilo: pedir "modifícalo" en el hilo de al lado crearía una tarjeta NUEVA en vez de una
-// versión del mismo documento, y el trabajo de edición quirúrgica se pierde sin error.
+// conv_key = `${channelId}:${parentId ?? "root"}` → documentId del artefacto ACTUAL.
 //
-// Va alineado con `FLEET_THREAD` en server/chat.ts: el room es UNA conversación, así que
-// su memoria y su documento actual tienen que vivir en el mismo ámbito. Si algún día se
-// vuelve a partir por hilo, hay que partir las dos cosas a la vez o vuelven a divergir.
+// ⚠️ ES POR HILO, y NO se comparte con el room. Estuvo unas horas siendo `:root` fijo el
+// 2026-08-03 y fue un error: al pasar al modelo Zulip se hizo del room la MEMORIA (bien:
+// evita una sesión por mensaje) y de paso el DOCUMENTO (mal). Son cosas distintas — la
+// memoria es lo que el agente recuerda; el documento es cuál artefacto se está editando,
+// y ése pertenece a la conversación, no al canal.
 //
-// Se mantiene el parámetro —en vez de borrarlo de las ~8 llamadas— porque
-// `resolveThreadArtifact` SÍ lo usa para su búsqueda de respaldo por `message_id`, que es
-// exacta y sigue valiendo.
-function convKey(channelId: number, _parentId?: number | null): string {
-  return `${channelId}:root`;
+// El daño fue inmediato y silencioso: un hilo NUEVO heredaba el documento de cualquier
+// conversación anterior del room, así que el agente contestaba sobre un documento que
+// nadie le había dado. Visto en vivo: le pidieron agregar un hecho a una denuncia recién
+// subida y respondió que "ya está incorporado (bloques n18-n24)" — de otro documento.
+//
+// Con el modelo Zulip esto además ya no hace falta: el artefacto nace DENTRO del hilo
+// (el mensaje del agente cuelga de la raíz), así que los turnos siguientes de ese hilo
+// comparten `parentId` y encuentran su puntero. Y si no lo encontraran, el respaldo por
+// `message_id` de `resolveThreadArtifact` los cubre.
+function convKey(channelId: number, parentId?: number | null): string {
+  return `${channelId}:${parentId ?? "root"}`;
 }
 export async function getThreadArtifact(
   channelId: number,
