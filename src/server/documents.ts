@@ -89,7 +89,7 @@ export const listTeamDocumentsFn = createServerFn({ method: "GET" }).handler(asy
        FROM gc_attachments att
        JOIN gc_messages m ON m.id = att.message_id
        LEFT JOIN gc_channels c ON c.id = m.channel_id
-      WHERE m.channel_id IN (${ph})
+      WHERE att.archived_at IS NULL AND m.channel_id IN (${ph})
       ORDER BY m.created_at DESC`,
     chanIds
   ).catch(() => []);
@@ -322,3 +322,53 @@ export async function purgeExpiredDocuments(): Promise<{ purgados: number }> {
   }
   return { purgados };
 }
+
+/**
+ * Archiva un ARCHIVO SUBIDO (gc_attachments). Gemelo de archiveDocumentFn.
+ *
+ * ⚠️ Va aparte y no unificado con el de artefactos porque son cosas distintas: un subido
+ * no tiene versiones, ni liga compartible, ni puntero de conversación. Meterlos en una
+ * sola función obligaría a ramificar por tipo en cada paso y a fingir un `documentId` que
+ * no existe.
+ *
+ * Autorización: quien subió el archivo (el autor del mensaje) o el dueño del workspace —
+ * el mismo criterio de `deleteMessageFn`, que es la vía por la que hoy se quitan.
+ */
+export const archiveUploadFn = createServerFn({ method: "POST" })
+  .validator((d: { attachmentId: number }) => d)
+  .handler(async ({ data }) => {
+    const { sessionUser } = await import("./chat");
+    const me = await sessionUser();
+    if (!me) throw new Error("no autenticado");
+    const { dbq, num } = await import("../dbq.server");
+    const rows = await dbq(
+      `SELECT att.id, m.sender_sub, m.sender FROM gc_attachments att
+         LEFT JOIN gc_messages m ON m.id = att.message_id
+        WHERE att.id = ?`,
+      [data.attachmentId],
+    );
+    if (!rows.length) throw new Error("archivo no encontrado");
+    const r = rows[0] as any;
+    // Mismo fallback que deleteMessageFn: los mensajes viejos no tienen sender_sub y se
+    // compara por nombre. Sin el fallback, nadie podría quitar un archivo de esa época.
+    const suyo = r.sender_sub ? r.sender_sub === me.sub : r.sender === me.name;
+    if (!suyo && !me.isOwner) throw new Error("no puedes archivar este archivo");
+    const ahora = Math.floor(Date.now() / 1000);
+    await dbq(`UPDATE gc_attachments SET archived_at = ?, purge_at = ? WHERE id = ?`, [
+      ahora, ahora + RETENCION_DIAS * 86400, num(r.id),
+    ]);
+    return { ok: true as const };
+  });
+
+export const restoreUploadFn = createServerFn({ method: "POST" })
+  .validator((d: { attachmentId: number }) => d)
+  .handler(async ({ data }) => {
+    const { sessionUser } = await import("./chat");
+    const me = await sessionUser();
+    if (!me) throw new Error("no autenticado");
+    const { dbq } = await import("../dbq.server");
+    await dbq(`UPDATE gc_attachments SET archived_at = NULL, purge_at = NULL WHERE id = ?`, [
+      data.attachmentId,
+    ]);
+    return { ok: true as const };
+  });

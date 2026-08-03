@@ -374,14 +374,17 @@ export default function ArtifactPanel({
   const [uploadingDoc, setUploadingDoc] = useState(false); // subir archivo al caso desde el índice
   // Documento en espera de confirmación para archivar. Se guarda el título además del id
   // para poder NOMBRARLO en el diálogo: "¿Archivar este documento?" no deja claro cuál.
-  const [porArchivar, setPorArchivar] = useState<{ documentId: string; title: string } | null>(null);
+  const [porArchivar, setPorArchivar] = useState<{ documentId?: string; attachmentId?: number; title: string } | null>(null);
 
   // Archivar de verdad: llama al servidor, invalida la caché del índice y refresca. La
   // caché es de MÓDULO (docsIndexCache), así que sin limpiarla el documento archivado
   // reaparecería al reabrir el panel.
-  const archivarDoc = async (documentId: string) => {
-    const { archiveDocumentFn } = await import("../server/documents");
-    await archiveDocumentFn({ data: { documentId } });
+  const archivarDoc = async (sel: { documentId?: string; attachmentId?: number }) => {
+    const docs = await import("../server/documents");
+    // Redactado y subido viven en tablas distintas (gc_artifacts / gc_attachments) y no
+    // comparten identidad: uno se archiva por documentId y el otro por id de adjunto.
+    if (sel.documentId) await docs.archiveDocumentFn({ data: { documentId: sel.documentId } });
+    else if (sel.attachmentId != null) await docs.archiveUploadFn({ data: { attachmentId: sel.attachmentId } });
     docsIndexCache = null;
     setPorArchivar(null);
     setRefreshTick((n) => n + 1);
@@ -1652,7 +1655,7 @@ export default function ArtifactPanel({
                                       // remonta (sin re-slide). "← Documentos" vuelve con setDetail(null).
                                       setDetail(v);
                                     }}
-                                    className={`flex items-start gap-3 rounded-xl border border-border bg-surface p-3 text-left transition hover:border-brand ${v ? "cursor-pointer" : "cursor-default opacity-70"}`}
+                                    className={`flex w-full items-start gap-3 rounded-xl border border-border bg-surface p-3 pr-10 text-left transition hover:border-brand ${v ? "cursor-pointer" : "cursor-default opacity-70"}`}
                                   >
                                     {d.kind === "image" && d.fileId ? (
                                       // Thumbnail real de la imagen subida (el tile ya no muestra ícono genérico).
@@ -1693,14 +1696,18 @@ export default function ArtifactPanel({
                                   {/* Archivar. Sólo para documentos REDACTADOS: un subido vive en
                                       gc_attachments y su ciclo de vida es el del mensaje, no el de
                                       la papelera — ofrecerlo aquí prometería algo que no hace. */}
-                                  {d.source === "generated" && d.documentId ? (
+                                  {(d.source === "generated" ? !!d.documentId : true) ? (
                                     <button
                                       type="button"
                                       title={t("Archivar")}
                                       aria-label={t("Archivar")}
                                       onClick={(e) => {
                                         e.stopPropagation(); // no abrir el documento al archivarlo
-                                        setPorArchivar({ documentId: d.documentId!, title: d.title });
+                                        setPorArchivar(
+                                          d.source === "generated"
+                                            ? { documentId: d.documentId!, title: d.title }
+                                            : { attachmentId: Number(d.key.slice(1)), title: d.title },
+                                        );
                                       }}
                                       className="absolute right-2 top-2 rounded-lg p-1.5 text-muted opacity-0 transition hover:bg-surface-3 hover:text-ink focus:opacity-100 group-hover:opacity-100"
                                     >
@@ -2205,7 +2212,7 @@ export default function ArtifactPanel({
           confirmLabel={t("Archivar")}
           danger
           onCancel={() => setPorArchivar(null)}
-          onConfirm={() => archivarDoc(porArchivar.documentId)}
+          onConfirm={() => archivarDoc(porArchivar)}
         />
       ) : null}
     </AnimatePresence>

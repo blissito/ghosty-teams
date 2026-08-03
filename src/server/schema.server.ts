@@ -233,6 +233,15 @@ async function migrate(): Promise<void> {
   // sin que las imágenes empujen). NULL en adjuntos viejos / no-imagen → fallback min-h.
   await addColumn("gc_attachments", "width", "INTEGER");
   await addColumn("gc_attachments", "height", "INTEGER");
+  // Papelera para los SUBIDOS (2026-08-03). Misma semántica que en gc_artifacts.
+  //
+  // Al principio la papelera era sólo para lo REDACTADO por el agente, con el argumento de
+  // que un archivo subido "vive con su mensaje". Se probó y no se sostiene: en un caso
+  // real la mitad del panel son los .docx que subió la persona, y no poder quitarlos deja
+  // el expediente lleno de ruido — que fue justo lo que se reportó.
+  await addColumn("gc_attachments", "archived_at", "INTEGER");
+  await addColumn("gc_attachments", "purge_at", "INTEGER");
+  await exec("CREATE INDEX IF NOT EXISTS gc_attachments_purge ON gc_attachments(purge_at)");
   // Nota de voz (adjunto audio): onda de amplitud (64 bytes 0..100, base64) que dibuja
   // la burbuja tipo PTT + duración en ms para el "0:12". NULL en adjuntos no-audio.
   await addColumn("gc_attachments", "waveform", "TEXT");
