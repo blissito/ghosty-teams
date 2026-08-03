@@ -44,10 +44,20 @@ export const Route = createFileRoute("/api/internal/members")({
         // workspace que nunca la corrió el SELECT reventaría con "no such column".
         await (await import("../server/schema.server")).ensureSchema().catch(() => {});
         const { listAllMembers, preapprovedEmails } = await import("../users.server");
-        return Response.json({
-          members: await listAllMembers(),
-          preapproved: await preapprovedEmails(),
-        });
+        try {
+          return Response.json({
+            members: await listAllMembers(),
+            preapproved: await preapprovedEmails(),
+          });
+        } catch (e) {
+          // Un slug que no resuelve a ningún namespace tira desde `dbq` y salía como un 500
+          // sin cuerpo — desde gs era indistinguible de "Teams está caído". Se responde el
+          // motivo, que es lo que el panel pinta.
+          return Response.json(
+            { error: (e as Error)?.message ?? "no se pudo leer el padrón" },
+            { status: 502 },
+          );
+        }
       },
 
       POST: async ({ request }) => {
