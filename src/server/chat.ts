@@ -694,7 +694,31 @@ export const askAgent = createServerFn({ method: "POST" })
     }
 
     // Media de entrada: los adjuntos del usuario → FileParts (uri firmada / bytes).
-    const parts = await buildMediaParts(data.attachments ?? []);
+    //
+    // RE-ENTREGA en hilos: arriba se re-siembra con cuidado todo el contexto de TEXTO
+    // (cuerpo del root, cita, gap del scope) pero la media no entraba en esa
+    // reconstrucción. Un "continua" llega sin adjuntos → el agente respondía "no hay
+    // archivos adjuntos disponibles en este turno" con el expediente completo visible
+    // ahí arriba en la UI, y cualquier trabajo de varios turnos sobre documentos
+    // quedaba ciego a partir del segundo. Cuando el turno no trae archivos propios,
+    // reponemos los del mensaje raíz del hilo, siempre por uri firmada.
+    let mediaAtts: { fileId: string; mime: string | null; size: number | null; name: string | null }[] =
+      data.attachments ?? [];
+    let reentrega = false;
+    if (!mediaAtts.length && data.parentId != null && root) {
+      const [rootFull] = await db.attachAttachments([root]).catch(() => [root]);
+      const prev = (rootFull?.attachments ?? []).map((a) => ({
+        fileId: a.file_id, mime: a.mime, size: a.size, name: a.name,
+      }));
+      if (prev.length) { mediaAtts = prev; reentrega = true; }
+    }
+    // El manifiesto va en el texto para que sepa QUÉ tiene sin abrir todo: con un
+    // expediente grande, enumerar es más barato que descubrir.
+    if (reentrega) {
+      const lista = mediaAtts.map((a) => `- ${a.name ?? "(sin nombre)"} (${a.mime ?? "?"}, ${a.size ?? "?"} B)`).join("\n");
+      text = `[Adjuntos del hilo, disponibles en este turno]\n${lista}\n\n` + text;
+    }
+    const parts = await buildMediaParts(mediaAtts, { forceUri: reentrega });
 
     // Streaming first-class: la cáscara (body vacío) se crea al primer token → el
     // "pensando…" se mantiene durante la latencia del agente. Contrato §1.2.

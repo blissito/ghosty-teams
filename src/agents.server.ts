@@ -152,7 +152,11 @@ export type MediaPart = {
 const MEDIA_INLINE_MAX_BYTES = 256 * 1024; // < 256KB → bytes inline; ≥ → uri firmada
 
 export async function buildMediaParts(
-  attachments: { fileId: string; mime: string | null; size: number | null; name: string | null }[]
+  attachments: { fileId: string; mime: string | null; size: number | null; name: string | null }[],
+  // forceUri: en la RE-entrega de adjuntos del hilo (ver chat.ts) nunca inline. Si no,
+  // cada "continua" volvería a subir en bytes todo lo que pese menos de 256KB — en un
+  // expediente de 7 documentos son varios megas por turno para nada.
+  opts?: { forceUri?: boolean }
 ): Promise<MediaPart[]> {
   if (!attachments.length) return [];
   const { mintReadUrl, mintFileBytes } = await import("./server/easybits-files.server");
@@ -160,7 +164,7 @@ export async function buildMediaParts(
   for (const a of attachments) {
     const mimeType = a.mime || "application/octet-stream";
     const name = a.name || undefined;
-    const small = a.size != null && a.size < MEDIA_INLINE_MAX_BYTES;
+    const small = !opts?.forceUri && a.size != null && a.size < MEDIA_INLINE_MAX_BYTES;
     if (small) {
       const bytes = await mintFileBytes(a.fileId);
       if (bytes) {

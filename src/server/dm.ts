@@ -231,7 +231,6 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
       for (const sub of members) bus.publish(bus.ch.user(ns, sub), ev);
     };
 
-    const parts = await buildMediaParts(data.attachments ?? []);
     const groupId = await agentGroupId(agent ?? { handle: data.handle }, `dm-${data.id}`); // memoria por-agente
     // Quote-reply: embebe la cita en el texto (superficie WABA → el agente siempre la ve).
     // Si tenemos el id del citado, mandamos su cuerpo COMPLETO (no el excerpt de 220 chars)
@@ -261,7 +260,33 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
       const { buildConnectorContext } = await import("./connectors/context.server");
       calHint = await buildConnectorContext(me.sub, data.sender || "el usuario", data.body || "");
     } catch {}
-    const text = history + calHint + quoted;
+    // Media de entrada + RE-ENTREGA. Mismo problema que en canales (ver chat.ts): un
+    // turno sin archivos propios dejaba al agente ciego a lo ya adjuntado, aunque
+    // siguiera visible en la conversación. En un DM no hay hilo del que colgarse, así
+    // que la fuente es el último mensaje humano del scope que traía adjuntos.
+    let mediaAtts: { fileId: string; mime: string | null; size: number | null; name: string | null }[] =
+      data.attachments ?? [];
+    let reentrega = false;
+    if (!mediaAtts.length && recent.length) {
+      const conAdj = await db.attachAttachments([...recent]).catch(() => []);
+      for (let i = conAdj.length - 1; i >= 0; i--) {
+        const m = conAdj[i];
+        if (m.agent_handle || !m.attachments?.length) continue;
+        mediaAtts = m.attachments.map((a) => ({
+          fileId: a.file_id, mime: a.mime, size: a.size, name: a.name,
+        }));
+        reentrega = true;
+        break;
+      }
+    }
+    let manifiesto = "";
+    if (reentrega) {
+      const lista = mediaAtts.map((a) => `- ${a.name ?? "(sin nombre)"} (${a.mime ?? "?"}, ${a.size ?? "?"} B)`).join("\n");
+      manifiesto = `[Adjuntos de esta conversación, disponibles en este turno]\n${lista}\n\n`;
+    }
+    const parts = await buildMediaParts(mediaAtts, { forceUri: reentrega });
+
+    const text = history + calHint + manifiesto + quoted;
 
     // Identidad del artefacto del DM → el agente recibe el artefacto ACTUAL (artifactDocHint)
     // para MODIFICARLO (re-emitir la misma versión), no recrearlo desde cero ni duplicar la card.
