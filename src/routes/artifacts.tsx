@@ -1,8 +1,9 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
-import { ArrowLeft, Layers, FileText, FileSpreadsheet, Sparkles, Upload, Hash } from "lucide-react";
+import { ArrowLeft, Layers, Sparkles, Upload, Hash } from "lucide-react";
 import { me } from "../server/auth";
 import { listTeamDocumentsFn, type TeamDocument } from "../server/documents";
+import { FileGlyph, glyphNameFor } from "../components/FileGlyph";
 import ArtifactPanel, { type ArtifactView } from "../components/ArtifactPanel";
 
 // Estudio de artefactos / Documentos del team (Cowork): todos los documentos del
@@ -42,12 +43,6 @@ function toView(d: TeamDocument): ArtifactView | null {
   return null;
 }
 
-function DocIcon({ kind }: { kind: TeamDocument["kind"] }) {
-  const cls = "text-brand";
-  if (kind === "sheet") return <FileSpreadsheet size={22} className={cls} />;
-  return <FileText size={22} className={cls} />;
-}
-
 function DocTile({ d, onOpen }: { d: TeamDocument; onOpen: (v: ArtifactView) => void }) {
   const view = toView(d);
   return (
@@ -57,7 +52,7 @@ function DocTile({ d, onOpen }: { d: TeamDocument; onOpen: (v: ArtifactView) => 
       className={`group flex items-start gap-3 rounded-2xl border border-border bg-surface-2 p-4 text-left transition hover:border-brand/60 hover:bg-surface-3 ${view ? "cursor-pointer" : "cursor-default"}`}
     >
       <div className="grid size-11 shrink-0 place-items-center rounded-xl bg-surface-3">
-        <DocIcon kind={d.kind} />
+        <FileGlyph className="h-7 w-[1.4rem]" mime={d.mime} name={glyphNameFor(d.title, d.kind)} />
       </div>
       <div className="min-w-0 flex-1">
         <div className="truncate text-[15px] font-semibold text-ink">{d.title}</div>

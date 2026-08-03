@@ -29,6 +29,7 @@ import {
 import { useT } from "../i18n";
 import { officeToHtmlFn, xlsxToCsvFn, postMessage } from "../server/chat";
 import { listTeamDocumentsFn, type TeamDocument } from "../server/documents";
+import { FileGlyph, glyphNameFor } from "./FileGlyph";
 import { updateArtifactHtmlFn } from "../server/artifacts";
 import {
   CanvasEditor,
@@ -1645,9 +1646,10 @@ export default function ArtifactPanel({
                                       />
                                     ) : (
                                       <div className="grid size-9 shrink-0 place-items-center rounded-lg bg-surface-3">
-                                        <FileText
-                                          size={18}
-                                          className="text-brand"
+                                        <FileGlyph
+                                          className="h-6 w-[1.2rem]"
+                                          mime={d.mime}
+                                          name={glyphNameFor(d.title, d.kind)}
                                         />
                                       </div>
                                     )}
