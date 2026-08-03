@@ -1277,12 +1277,15 @@ function ChannelPage() {
     refreshLiveTurns();
   }, [refreshLiveTurns, clavePorTurnos]);
   useEffect(() => {
-    // Late un rato MÁS de lo que dura el último turno: el evento SSE que cierra el último
-    // puede perderse, y sin latido nadie se enteraría de que terminó.
-    if (!turns.size && !doneTurns.length) return;
-    const h = setInterval(refreshLiveTurns, turns.size ? 10000 : 30000);
+    // ⚠️ Late mientras haya algo QUE PINTAR, no mientras el mapa `turns` tenga entradas.
+    // El panel se dibuja con `liveTurns` (lo que dice el servidor) y `turns` viene del SSE:
+    // si el evento de cierre no llega, el mapa queda vacío, el latido nunca arranca y la
+    // fila se congela para siempre enseñando un agente que ya terminó — visto con gaspar a
+    // los 2:37 (2026-08-03).
+    if (!turns.size && !liveTurns.length && !doneTurns.length) return;
+    const h = setInterval(refreshLiveTurns, liveTurns.length || turns.size ? 8000 : 30000);
     return () => clearInterval(h);
-  }, [refreshLiveTurns, turns.size, doneTurns.length]);
+  }, [refreshLiveTurns, turns.size, liveTurns.length, doneTurns.length]);
 
   // Siembra los turnos EN VUELO al montar. El estado de un turno llega por SSE (`t:"turn"`)
   // y un evento no se puede volver a escuchar: quien recargaba a media respuesta se quedaba
