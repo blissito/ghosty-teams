@@ -3220,10 +3220,13 @@ function LiveTurnsPanel({
             <button
               type="button"
               onClick={() => onStop(x.id)}
-              className="shrink-0 rounded px-1 text-[10px] text-muted opacity-0 transition hover:text-ink group-hover:opacity-100"
+              className="grid h-5 w-5 shrink-0 place-items-center rounded text-muted transition hover:bg-surface-3 hover:text-ink"
               title={t("Detener")}
+              aria-label={t("Detener")}
             >
-              ⏹
+              {/* El mismo `Square` relleno del botón de la burbuja: detener es el mismo gesto
+                  en los dos sitios y no debe verse como dos cosas distintas. */}
+              <Square size={9} className="fill-current" />
             </button>
           ) : (
             <span className="shrink-0 text-[10px] text-muted">{x.position}º</span>
