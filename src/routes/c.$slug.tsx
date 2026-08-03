@@ -1270,7 +1270,11 @@ function ChannelPage() {
   // por ese mensaje. El auto-abrir sigue (ver el bloque de abajo: verlo armarse es lo que
   // se pidió), pero cada token reabría el panel y cerrarlo no servía de nada hasta que el
   // agente terminaba.
-  const draftDismissedRef = useRef<number | null>(null);
+  // ⚠️ Un CONJUNTO, no un id suelto. Guardando uno solo, cerrar el panel silenciaba a ese
+  // mensaje y el siguiente chunk de OTRO agente lo reabría al instante: con varios
+  // redactando a la vez, cerrar el artefacto era imposible (reportado varias veces, medido
+  // el 2026-08-03). Cada documento que cierras se queda cerrado.
+  const draftDismissedRef = useRef<Set<number>>(new Set());
   // El hilo (parent_id) del borrador en curso, para no pintar su píldora en los hilos ajenos.
   const draftParentRef = useRef<number | null>(null);
   const [hiddenDraftParent, setHiddenDraftParent] = useState<number | null>(null);
@@ -1325,6 +1329,11 @@ function ChannelPage() {
     // aplica si el panel muestra ese artefacto; si no hay nada abierto, el `refresh` del
     // final traerá la versión nueva (no abrimos un panel a media edición).
     if (!doc) {
+      // ⚠️ El cuerpo ya no trae fence. Casi siempre significa que el turno TERMINÓ: el server
+      // persiste el body sin el bloque (`bubbleWithoutEbDoc` lo corta), así que el momento
+      // `doc.closed` —que era el único que limpiaba la píldora— NUNCA llega y "Armando ·
+      // <doc>" se quedaba colgada para siempre después de entregar (2026-08-03).
+      setHiddenDraft((d) => (d && "messageId" in d && d.messageId === id ? null : d));
       const patches = extractEbPatches(body);
       if (!patches.length) return;
       if (!belongsToOpenConversation(findMessageInCaches(id), openDmId, channel.id)) return;
@@ -1389,7 +1398,7 @@ function ChannelPage() {
     });
     // Lo cerraste a propósito: no se reabre solo (cada token lo reabría y cerrarlo no
     // servía de nada). Se guarda para poder volver cuando tú quieras.
-    if (draftDismissedRef.current === id) {
+    if (draftDismissedRef.current.has(id)) {
       setHiddenDraft(doc.closed ? null : draftView());
       setHiddenDraftParent(doc.closed ? null : draftParentRef.current);
       return;
@@ -1400,6 +1409,12 @@ function ChannelPage() {
       // HTML en construcción: SIEMPRE toma el panel — el usuario quiere ver armarse el
       // artefacto cada vez que el agente escribe HTML (pedido explícito 2026-07-25). Para
       // doc/hoja seguimos siendo respetuosos: no pisamos un pdf/imagen ya abierto.
+      // ⚠️ EL PANEL ES DE QUIEN LLEGÓ PRIMERO, hasta que cierre. Antes bastaba con que el
+      // panel tuviera un borrador para pisarlo, sin mirar de QUÉ mensaje era: con dos o tres
+      // agentes redactando a la vez, cada chunk de cada uno se llevaba el panel y se veían
+      // "flashes" alternando entre documentos distintos (2026-08-03). Cuando el dueño cierra
+      // su fence, el panel pasa a `doc` y el siguiente puede tomarlo en su próximo chunk.
+      if (cur?.kind === "draft" && cur.messageId != null && cur.messageId !== id) return cur;
       if (doc.kind !== "artifact" && cur && cur.kind !== "draft" && cur.kind !== "doc" && cur.kind !== "sheet" && cur.kind !== "artifact") return cur;
       return {
         kind: "draft",
@@ -2036,7 +2051,7 @@ function ChannelPage() {
         // Editando un artefacto, ESC es del editor (y el panel pide confirmación
         // para cerrar): este atajo global NO debe tirar el panel con cambios vivos.
         if (document.body.dataset.artifactEditing) return;
-        if (openArtifactRef.current) { draftDismissedRef.current = draftMsgIdRef.current; marcarCierre(); playArtifactClose(); setOpenArtifact(null); return; }
+        if (openArtifactRef.current) { descartarPanel(); marcarCierre(); playArtifactClose(); setOpenArtifact(null); return; }
         if (openThreadId != null) { setOpenThreadId(null); return; }
       }
     };
@@ -2312,10 +2327,24 @@ function ChannelPage() {
   }, []);
 
   // Volver a lo que se está armando: se limpia el descarte para que siga en vivo.
+  /**
+   * Marca como descartado el documento que SE ESTÁ VIENDO en el panel.
+   *
+   * ⚠️ Antes se marcaba `draftMsgIdRef`, o sea el último mensaje que escribió un chunk — que
+   * con varios agentes redactando NO es el que tienes delante. Cerrabas el panel y silenciabas
+   * al equivocado: el tuyo volvía a abrirse y el otro quedaba mudo.
+   */
+  const descartarPanel = useCallback(() => {
+    const v = openArtifactRef.current;
+    // `ArtifactView` es una unión y sólo algunas variantes llevan `messageId` (un pdf o una
+    // imagen no cuelgan de un borrador), de ahí el `in`.
+    const id = (v && "messageId" in v ? v.messageId : null) ?? draftMsgIdRef.current;
+    if (id != null) draftDismissedRef.current.add(id);
+  }, []);
   const reopenHiddenDraft = useCallback(() => {
     setHiddenDraft((d) => {
       if (d) {
-        draftDismissedRef.current = null;
+        if ("messageId" in d && d.messageId != null) draftDismissedRef.current.delete(d.messageId);
         playArtifactOpen();
         setOpenArtifact(d);
       }
@@ -2545,7 +2574,7 @@ function ChannelPage() {
         )}
       </AnimatePresence>
       <ArtifactBoundary resetKey={openArtifact?.title ?? "none"}>
-        <ArtifactPanel artifact={openArtifact} onClose={() => { draftDismissedRef.current = draftMsgIdRef.current; marcarCierre(); playArtifactClose(); setOpenArtifact(null); }} onOpen={(a) => { limpiarCierre(); setOpenArtifact(a); }} />
+        <ArtifactPanel artifact={openArtifact} onClose={() => { descartarPanel(); marcarCierre(); playArtifactClose(); setOpenArtifact(null); }} onOpen={(a) => { limpiarCierre(); setOpenArtifact(a); }} />
       </ArtifactBoundary>
       <AnimatePresence>
         {paletteOpen && (
