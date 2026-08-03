@@ -298,7 +298,10 @@ export const getChannelFlow = createServerFn({ method: "GET" })
  * escuchar: quien recarga a media respuesta se queda sin cronómetro, sin botón Detener y
  * sin ninguna señal de que el agente sigue trabajando.
  */
-export const getLiveTurnsFn = createServerFn({ method: "GET" }).handler(async () => {
+// ⚠️ POST y no GET: un GET lo puede cachear el navegador o un proxy, y esta lista cambia
+// cada pocos segundos — servir una respuesta vieja enseñaría un agente que ya terminó, o
+// escondería uno que acaba de arrancar. No es idempotencia lo que se busca aquí, es frescura.
+export const getLiveTurnsFn = createServerFn({ method: "POST" }).handler(async () => {
   const turns = await import("./turns.server");
   const db = await import("../db.server");
   const live = turns.allLiveTurnStates();
