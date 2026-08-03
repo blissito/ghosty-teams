@@ -124,13 +124,10 @@ export async function setPreapprovedEmail(email: string, allowed: boolean): Prom
   const siguiente = allowed
     ? [...new Set([...actuales, yo])]
     : actuales.filter((e) => e !== yo);
-  const v = siguiente.join(",");
-  // UPSERT explícito: `gc_config` no tiene default para esta clave, así que un UPDATE a
+  // `setConfig` y no SQL propio: hace el UPSERT y mantiene `updated_at`. Un UPDATE a
   // secas no escribiría nada la primera vez y el correo se perdería en silencio.
-  await dbq(
-    "INSERT INTO gc_config (k, v) VALUES ('member_emails', ?) ON CONFLICT(k) DO UPDATE SET v=excluded.v",
-    [v],
-  );
+  const { setConfig } = await import("./config.server");
+  await setConfig("member_emails", siguiente.join(","));
   return siguiente;
 }
 
