@@ -1892,25 +1892,16 @@ function ChannelPage() {
   useEffect(() => {
     if (!didRestoreFocus.current) {
       didRestoreFocus.current = true;
-      // La URL MANDA. `?thread=N` / `?dm=N` son enlaces de verdad: se comparten, se guardan
-      // y funcionan con el botón atrás. sessionStorage queda sólo como respaldo del refresh,
-      // que es lo único para lo que sirve.
-      // ⚠️ El router parsea los search params como JSON, así que `?thread=123` llega como
-      // NÚMERO — se lee de `location.search` con URLSearchParams y se convierte a mano.
-      try {
-        const qs = new URLSearchParams(window.location.search);
-        const thread = Number(qs.get("thread"));
-        const dm = Number(qs.get("dm"));
-        if (Number.isFinite(thread) && thread > 0) {
-          setOpenThreadId(thread);
-          return;
-        }
-        if (Number.isFinite(dm) && dm > 0) {
-          setOpenDmId(dm);
-          return;
-        }
-      } catch {
-        /* sin URL utilizable: se cae al foco guardado */
+      // La URL MANDA (ver `focoDeLaUrl`). sessionStorage queda sólo como respaldo del
+      // refresh, que es lo único para lo que sirve.
+      const foco = focoDeLaUrl();
+      if (foco.thread != null) {
+        setOpenThreadId(foco.thread);
+        return;
+      }
+      if (foco.dm != null) {
+        setOpenDmId(foco.dm);
+        return;
       }
       try {
         const raw = sessionStorage.getItem(`focus:${channel.slug}`);
@@ -1928,6 +1919,24 @@ function ChannelPage() {
       } catch {
         /* sessionStorage/JSON inválido → arranca en el flujo */
       }
+      return;
+    }
+    // Cambio de room DENTRO de la SPA. Si la URL trae foco (`?thread=`/`?dm=`), manda ella:
+    // el efecto de mount ya no vuelve a correr, así que sin esto un deep-link entre rooms
+    // aterrizaba en el flujo del room y parecía que el enlace no hacía nada.
+    const foco = focoDeLaUrl();
+    if (foco.thread != null) {
+      setOpenThreadId(foco.thread);
+      setOpenDmId(null);
+      setView(null);
+      setHomeOpen(false);
+      return;
+    }
+    if (foco.dm != null) {
+      setOpenDmId(foco.dm);
+      setOpenThreadId(null);
+      setView(null);
+      setHomeOpen(false);
       return;
     }
     setOpenThreadId(null);
@@ -3161,6 +3170,31 @@ function AllThreadsModal({
 
 /* ── Sidebar: Rooms + hilos como submenús + identidad ── */
 // Badge de no-leídos (Fase 1.5): píldora compacta; 99+ como tope.
+/**
+ * Foco del centro pedido por la URL: `?thread=N` o `?dm=N`.
+ *
+ * La URL manda sobre `sessionStorage` porque un enlace se comparte, se guarda y funciona con
+ * el botón atrás; el storage no hace nada de eso y sólo sirve para sobrevivir un refresh.
+ *
+ * ⚠️ Se lee con `URLSearchParams` y no con el search del router: éste parsea los parámetros
+ * como JSON, así que `?thread=123` llega como NÚMERO y un validador que espere string lo
+ * descarta redirigiendo a la URL sin el parámetro (el mismo tropiezo que costó el `?v=` de
+ * los artefactos).
+ */
+function focoDeLaUrl(): { thread?: number; dm?: number } {
+  if (typeof window === "undefined") return {};
+  try {
+    const qs = new URLSearchParams(window.location.search);
+    const thread = Number(qs.get("thread"));
+    if (Number.isFinite(thread) && thread > 0) return { thread };
+    const dm = Number(qs.get("dm"));
+    if (Number.isFinite(dm) && dm > 0) return { dm };
+  } catch {
+    /* URL rara: sin foco */
+  }
+  return {};
+}
+
 function UnreadBadge({ n }: { n: number }) {
   if (n <= 0) return null;
   return (
@@ -3537,8 +3571,14 @@ function Sidebar({
               else onBackToRoom();
               return;
             }
-            // Otro room → por URL, que es un enlace compartible de verdad.
-            window.location.href = x.parentId != null ? `/c/${slug}?thread=${x.parentId}` : `/c/${slug}`;
+            // Otro room → navegación SPA (nada de `location.href`, que recargaba el sitio
+            // entero con sidebar incluido). El foco viaja en la URL, así que sigue siendo un
+            // enlace compartible; lo recoge el efecto de cambio de room.
+            router.navigate(
+              x.parentId != null
+                ? { to: "/c/$slug", params: { slug }, search: { thread: x.parentId } }
+                : { to: "/c/$slug", params: { slug } },
+            );
           }}
         />
         {/* Home: dashboard de inicio con el personaje Ghosty. */}
