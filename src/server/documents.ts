@@ -60,15 +60,26 @@ export const listTeamDocumentsFn = createServerFn({ method: "GET" }).handler(asy
   const ph = chanIds.map(() => "?").join(",");
 
   // Generados por el agente (eb-doc/eb-sheet/office/html committed a gc_artifacts).
+  // ⚠️ `archived_at IS NULL`: la papelera no se lista aquí (ver listArchivedDocumentsFn).
+  //
+  // ⚠️ Y el JOIN a gc_messages es LEFT, no INNER. Con INNER, un documento cuyo mensaje se
+  // borró desaparecía del panel **mientras sus filas seguían vivas y su liga pública
+  // seguía sirviendo** — o sea, invisible pero accesible, que es lo peor de los dos
+  // mundos. Con LEFT sigue listado y se puede archivar de verdad.
+  //
+  // ⚠️ Pero un huérfano NO puede listársele a cualquiera: sin mensaje no hay canal, y sin
+  // canal el muro ético de arriba no aplica. Se acota a SU DUEÑO — así el documento sigue
+  // siendo recuperable por quien lo hizo sin exponer casos ajenos a los demás.
   const generated = await dbq(
     `SELECT a.id, a.kind, a.url, a.title, a.md, a.message_id, m.channel_id, m.parent_id,
-            m.created_at, c.name AS room_name, c.slug AS room_slug
+            COALESCE(m.created_at, a.created_at) AS created_at, c.name AS room_name, c.slug AS room_slug
        FROM gc_artifacts a
-       JOIN gc_messages m ON m.id = a.message_id
+       LEFT JOIN gc_messages m ON m.id = a.message_id
        LEFT JOIN gc_channels c ON c.id = m.channel_id
-      WHERE m.channel_id IN (${ph})
-      ORDER BY m.created_at DESC`,
-    chanIds
+      WHERE a.archived_at IS NULL
+        AND (m.channel_id IN (${ph}) OR (m.channel_id IS NULL AND a.owner_sub = ?))
+      ORDER BY created_at DESC`,
+    [...chanIds, me.sub]
   ).catch(() => []);
 
   // Subidos por el usuario (arrojados al chat → EasyBits privado).
@@ -146,3 +157,168 @@ export const listTeamDocumentsFn = createServerFn({ method: "GET" }).handler(asy
   docs.sort((a, b) => b.createdAt - a.createdAt);
   return docs;
 });
+
+// ── Papelera de documentos (2026-08-03) ──────────────────────────────────────
+//
+// Archivar, no borrar. Un documento es el ENTREGABLE —tiene liga compartible, versiones,
+// export y edición colaborativa— y hasta hoy no había forma de quitarlo: la única vía era
+// borrar el mensaje que lo produjo, y eso lo destruía en duro, sin retención y sin aviso.
+//
+// ⚠️ Se archiva el DOCUMENTO, no una fila. Un documento son N filas con el mismo `url`
+// (cada publicación es un INSERT, ver createArtifact). Todo va `WHERE url = ?`.
+
+/** Cuánto vive un documento en la papelera antes de borrarse de verdad. */
+const RETENCION_DIAS = 30;
+
+/**
+ * Lo que hace que "archivar" signifique algo, y no sólo esconder la tarjeta.
+ *
+ * Tres efectos, y los tres hacen falta:
+ *  1. sella `archived_at`/`purge_at` en TODAS las filas del documento;
+ *  2. **corta el acceso público** — sin esto la liga `/artefacto/<slug>` seguiría
+ *     sirviendo y el usuario creería que lo quitó (es el agujero que ya tenía el borrado
+ *     por mensaje: el documento desaparecía del panel y su liga seguía viva);
+ *  3. **suelta el puntero de conversación** — si no, el agente sigue creyendo que ése es
+ *     "el documento de esta conversación" y un "modifícalo" apunta a la nada
+ *     (`resolveThreadArtifact` devuelve el puntero explícito sin comprobar que exista).
+ *
+ * ⚠️ El `share_slug` NO se borra: se conserva para poder devolver el acceso al restaurar.
+ * Sólo se marca privado, que es reversible.
+ */
+export const archiveDocumentFn = createServerFn({ method: "POST" })
+  .validator((d: { documentId: string }) => d)
+  .handler(async ({ data }) => {
+    const { requireShareOwner } = await import("./artifacts");
+    const { dbq } = await import("../dbq.server");
+    const { root } = await requireShareOwner(data.documentId); // authz: dueño o workspace owner
+    const ahora = Math.floor(Date.now() / 1000);
+    const purgeAt = ahora + RETENCION_DIAS * 86400;
+    await dbq(`UPDATE gc_artifacts SET archived_at = ?, purge_at = ? WHERE url = ?`, [
+      ahora, purgeAt, data.documentId,
+    ]);
+    // Corta el acceso público. Se guarda la visibilidad previa en la raíz para poder
+    // devolverla tal cual al restaurar — degradar a privado y luego "restaurar a público"
+    // a ciegas sería peor que no restaurar nada.
+    await dbq(
+      `UPDATE gc_artifacts SET share_visibility = 'archived:' || COALESCE(share_visibility, 'private') WHERE id = ?`,
+      [root.id],
+    );
+    await dbq(`DELETE FROM gc_thread_artifact WHERE document_id = ?`, [data.documentId]);
+    return { ok: true as const, purgeAt };
+  });
+
+/** Devuelve el documento al panel y le restituye la visibilidad que tenía. */
+export const restoreDocumentFn = createServerFn({ method: "POST" })
+  .validator((d: { documentId: string }) => d)
+  .handler(async ({ data }) => {
+    const { requireShareOwner } = await import("./artifacts");
+    const { dbq } = await import("../dbq.server");
+    const { root } = await requireShareOwner(data.documentId);
+    await dbq(`UPDATE gc_artifacts SET archived_at = NULL, purge_at = NULL WHERE url = ?`, [
+      data.documentId,
+    ]);
+    // Deshace el prefijo `archived:`. Si la fila no lo trae (archivada por una versión
+    // anterior de este código, o tocada a mano) se queda como está: mejor dejarla privada
+    // que adivinar y volver público algo que quizá no lo era.
+    const prev = String(root.visibility ?? "");
+    if (prev.startsWith("archived:")) {
+      const restaurada = prev.slice("archived:".length);
+      await dbq(`UPDATE gc_artifacts SET share_visibility = ? WHERE id = ?`, [
+        restaurada === "private" ? null : restaurada, root.id,
+      ]);
+    }
+    return { ok: true as const };
+  });
+
+/** La papelera: qué hay y cuánto le queda. Mismo muro ético que el panel. */
+export const listArchivedDocumentsFn = createServerFn({ method: "GET" }).handler(async () => {
+  const { sessionUser } = await import("./chat");
+  const me = await sessionUser();
+  if (!me) return [] as ArchivedDocument[];
+  const { dbq, num } = await import("../dbq.server");
+  const db = await import("../db.server");
+  const channels = await db.listChannels(me.sub, !!me.isOwner).catch(() => []);
+  const chanIds = channels.map((c) => c.id);
+  const ph = chanIds.length ? chanIds.map(() => "?").join(",") : "NULL";
+  // Una fila por DOCUMENTO (MIN(id) = la raíz), no una por versión: si no, la papelera
+  // mostraría el mismo documento veinte veces.
+  const rows = await dbq(
+    `SELECT MIN(a.id) AS id, a.url, MAX(a.title) AS title, MAX(a.kind) AS kind,
+            MAX(a.archived_at) AS archived_at, MAX(a.purge_at) AS purge_at,
+            MAX(c.name) AS room_name, MAX(c.slug) AS room_slug
+       FROM gc_artifacts a
+       LEFT JOIN gc_messages m ON m.id = a.message_id
+       LEFT JOIN gc_channels c ON c.id = m.channel_id
+      WHERE a.archived_at IS NOT NULL
+        AND (m.channel_id IN (${ph}) OR (m.channel_id IS NULL AND a.owner_sub = ?))
+      GROUP BY a.url
+      ORDER BY MAX(a.archived_at) DESC`,
+    [...chanIds, me.sub]
+  ).catch(() => []);
+  const ahora = Math.floor(Date.now() / 1000);
+  return rows.map((r: any) => ({
+    documentId: String(r.url),
+    title: r.title ?? "Documento",
+    kind: String(r.kind ?? "doc"),
+    roomName: r.room_name ?? null,
+    roomSlug: r.room_slug ?? null,
+    archivedAt: num(r.archived_at),
+    purgeAt: num(r.purge_at),
+    // Lo que la persona necesita para decidir. Se calcula aquí y no en el cliente para
+    // que la tool del agente y la UI digan exactamente el mismo número.
+    diasRestantes: Math.max(0, Math.ceil((num(r.purge_at) - ahora) / 86400)),
+  })) as ArchivedDocument[];
+});
+
+export type ArchivedDocument = {
+  documentId: string;
+  title: string;
+  kind: string;
+  roomName: string | null;
+  roomSlug: string | null;
+  archivedAt: number;
+  purgeAt: number;
+  diasRestantes: number;
+};
+
+/**
+ * Borra DE VERDAD lo que pasó de `purge_at`. Idempotente: si no corre un día, al
+ * siguiente barre lo vencido igual.
+ *
+ * ⚠️ Se lleva lo que quedaba colgando desde ANTES de esta feature — ninguna de estas
+ * tablas tiene FK ni cascada, apuntan por TEXT libre: el puntero de conversación, las
+ * invitaciones nominales, y los objetos S3 de cada versión (`src`). Un purgado que sólo
+ * borre `gc_artifacts` deja invitaciones vivas a un documento que ya no existe.
+ */
+export async function purgeExpiredDocuments(): Promise<{ purgados: number }> {
+  const { dbq } = await import("../dbq.server");
+  const ahora = Math.floor(Date.now() / 1000);
+  const vencidos = await dbq(
+    `SELECT DISTINCT url FROM gc_artifacts WHERE purge_at IS NOT NULL AND purge_at <= ?`,
+    [ahora],
+  ).catch(() => []);
+  let purgados = 0;
+  for (const row of vencidos) {
+    const documentId = String((row as any).url);
+    // Los objetos S3 primero: si el borrado de la fila fallara, un huérfano en storage es
+    // más barato de barrer que una fila que apunta a bytes que ya no están.
+    const srcs = await dbq(`SELECT src FROM gc_artifacts WHERE url = ? AND src IS NOT NULL`, [documentId]).catch(() => []);
+    if (srcs.length) {
+      const storage = await import("./storage.server");
+      const { storageKeyFromSrc } = await import("./artifacts");
+      for (const s of srcs) {
+        const key = storageKeyFromSrc(String((s as any).src ?? ""));
+        if (!key) continue;
+        // Los dos buckets, mismo criterio que la poda de versiones: la visibilidad es del
+        // turno que publicó, no del que borra — un DM publicó público y un room, privado.
+        await storage.del(key, "private").catch(() => false);
+        await storage.del(key, "public").catch(() => false);
+      }
+    }
+    await dbq(`DELETE FROM gc_doc_invites WHERE document_id = ?`, [documentId]).catch(() => {});
+    await dbq(`DELETE FROM gc_thread_artifact WHERE document_id = ?`, [documentId]).catch(() => {});
+    await dbq(`DELETE FROM gc_artifacts WHERE url = ?`, [documentId]).catch(() => {});
+    purgados++;
+  }
+  return { purgados };
+}

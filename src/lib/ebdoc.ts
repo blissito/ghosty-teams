@@ -230,6 +230,17 @@ export function draftTitle(md: string, kind: EbDocKind = "doc", fenceTitle?: str
     const cell = first?.split(",")[0]?.replace(/^"|"$/g, "").trim();
     return (cell && cell.slice(0, 80)) || "Hoja de cálculo";
   }
+  // Sin fence titulado, el título sale del markdown. Se prefiere el primer `##` porque es
+  // la convención que el guardrail ya le EXIGE al agente ("el título del documento va en
+  // `##`, las secciones en `###`"), así que es el encabezado que de verdad nombra el
+  // documento.
+  //
+  // ⚠️ Antes se tomaba el primer encabezado de CUALQUIER nivel, y por eso una querella
+  // acababa titulada «I. OBJETO DEL DICTAMEN»: en un escrito jurídico el primer encabezado
+  // es su primera sección, no su nombre. Se conserva ese comportamiento como último
+  // recurso, para un markdown que no siga la convención.
+  const h2 = md.match(/^##\s+(.+)$/m);
+  if (h2) return h2[1].trim().slice(0, 80);
   const h = md.match(/^#{1,6}\s+(.+)$/m);
   if (h) return h[1].trim().slice(0, 80);
   const first = md.trim().split("\n").find((l) => l.trim());

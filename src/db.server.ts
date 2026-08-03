@@ -1621,9 +1621,27 @@ export async function deleteMessage(id: number): Promise<void> {
   // el subquery), luego los mensajes. Cubre attachments, reacciones, stars, pins y
   // artefactos del root y de cada respuesta.
   const scope = "message_id = ? OR message_id IN (SELECT id FROM gc_messages WHERE parent_id = ?)";
-  for (const table of ["gc_attachments", "gc_reactions", "gc_stars", "gc_pins", "gc_artifacts"]) {
+  for (const table of ["gc_attachments", "gc_reactions", "gc_stars", "gc_pins"]) {
     await dbq(`DELETE FROM ${table} WHERE ${scope}`, [id, id]);
   }
+  // ⚠️ Los ARTEFACTOS no se borran: se ARCHIVAN (2026-08-03).
+  //
+  // Antes estaban en la lista de arriba, así que borrar un mensaje del chat DESTRUÍA el
+  // documento que había producido — sin retención, sin aviso y sin forma de recuperarlo.
+  // Un documento es el entregable (liga compartible, versiones, export, co-edición); no
+  // puede morir porque alguien limpie la conversación.
+  //
+  // Van a la papelera con los mismos 30 días que si los archivaras a mano, así que la
+  // recuperación es la de siempre. Y se archiva por DOCUMENTO (`url`), no por fila: si se
+  // marcara sólo la fila anclada a este mensaje, las otras versiones del mismo documento
+  // quedarían vivas y el documento seguiría medio visible.
+  const RETENCION_DIAS = 30;
+  const ahora = Math.floor(Date.now() / 1000);
+  await dbq(
+    `UPDATE gc_artifacts SET archived_at = ?, purge_at = ?
+      WHERE archived_at IS NULL AND url IN (SELECT url FROM gc_artifacts WHERE ${scope})`,
+    [ahora, ahora + RETENCION_DIAS * 86400, id, id],
+  );
   await dbq("DELETE FROM gc_messages WHERE id = ? OR parent_id = ?", [id, id]);
 }
 

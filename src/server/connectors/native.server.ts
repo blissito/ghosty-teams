@@ -560,6 +560,59 @@ export function nativeTools(dest: ToolDest | null): ConnectorTool[] {
         };
       },
     },
+    // ── Papelera de documentos ────────────────────────────────────────────────
+    //
+    // ⚠️ Hay `doc_archived_list` y `doc_restore`, pero NO `doc_archive`, y es deliberado:
+    // archivar es destructivo a plazo (30 días y se borra). El agente no debería poder
+    // tirar un expediente por interpretar de más una frase como "ya no necesito esto".
+    // Listar y restaurar son reversibles; archivar lo pide una persona, desde el panel.
+    {
+      name: "doc_archived_list",
+      description:
+        "Lista los documentos que están en la PAPELERA de este espacio, con los días que le quedan a cada uno " +
+        "antes de borrarse para siempre. Úsalo cuando pregunten por un documento que 'ya no aparece', que " +
+        "'se borró' o que quieren recuperar. Devuelve el `documentId` que necesita `doc_restore`.",
+      inputSchema: { type: "object", properties: {} },
+      handler: async () => {
+        const { listArchivedDocumentsFn } = await import("../documents");
+        const docs = await listArchivedDocumentsFn();
+        if (!docs.length) return { ok: true, documentos: [], nota: "la papelera está vacía" };
+        return {
+          ok: true,
+          documentos: docs.map((d) => ({
+            documentId: d.documentId,
+            titulo: d.title,
+            room: d.roomName,
+            diasRestantes: d.diasRestantes,
+          })),
+        };
+      },
+    },
+    {
+      name: "doc_restore",
+      description:
+        "Saca un documento de la papelera y lo devuelve al espacio, con el acceso que tenía antes. " +
+        "El `documentId` sale de `doc_archived_list`. Sólo funciona si aún no se ha borrado definitivamente.",
+      inputSchema: {
+        type: "object",
+        properties: { documentId: { type: "string", description: "El documentId que devolvió doc_archived_list" } },
+        required: ["documentId"],
+      },
+      handler: async (_sub, args) => {
+        const documentId = typeof args?.documentId === "string" ? args.documentId : "";
+        if (!documentId) return { ok: false, error: "falta documentId" };
+        const { restoreDocumentFn } = await import("../documents");
+        // El error de autorización se devuelve TAL CUAL en vez de tragárselo: si el agente
+        // no puede restaurarlo porque no es suyo, la persona necesita saber eso y no un
+        // "no pude" genérico que la deja adivinando.
+        try {
+          await restoreDocumentFn({ data: { documentId } });
+          return { ok: true, mensaje: "documento restaurado; ya vuelve a aparecer en el espacio" };
+        } catch (e) {
+          return { ok: false, error: e instanceof Error ? e.message : String(e) };
+        }
+      },
+    },
   ];
 }
 

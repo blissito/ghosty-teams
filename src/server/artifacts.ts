@@ -186,7 +186,7 @@ export async function publishArtifactVersion(args: {
  * branded `<base>/<uuid>-name.html` (sin el prefijo interno) y la URL firmada con
  * `t3/` y query— así que lo estable es el último segmento del path.
  */
-function storageKeyFromSrc(src: string): string | null {
+export function storageKeyFromSrc(src: string): string | null {
   const path = src.split("?")[0];
   const name = path.split("/").filter(Boolean).pop();
   return name && /\.html$/i.test(name) ? `t3/${name}` : null;
@@ -255,7 +255,7 @@ export type ArtifactShare = {
 // El dueño manda: sólo él ve y cambia los permisos. Si la raíz no trae owner_sub
 // (artefactos anteriores a esta feature) se cae al autor del mensaje ancla, que es
 // lo que ya usaba el scope de lectura de documents.ts.
-async function requireShareOwner(documentId: string) {
+export async function requireShareOwner(documentId: string) {
   const { sessionUser } = await import("./chat");
   const me = await sessionUser();
   if (!me) throw new Error("no autenticado");

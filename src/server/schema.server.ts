@@ -342,6 +342,26 @@ async function migrate(): Promise<void> {
   // Quiénes co-editaron en la sesión que produjo esta versión (JSON de `sub`). Es el
   // primer escalón de "¿quién escribió qué?": atribución por SESIÓN, no por párrafo.
   await addColumn("gc_artifacts", "authors", "TEXT");
+  // ── Papelera (2026-08-03) ────────────────────────────────────────────────────
+  //   archived_at  unix; NULL = vivo. El documento sale del panel y su liga pública
+  //                deja de servir, pero se puede restaurar.
+  //   purge_at     unix; cuándo se borra DE VERDAD. Se sella al archivar.
+  //
+  // Antes no había forma de quitar un documento: la única vía era borrar el mensaje que
+  // lo produjo, y eso lo destruía en duro, sin retención y sin aviso. Un documento es el
+  // entregable —con liga, versiones y export—, así que merece una papelera propia y no
+  // colgar de un mensaje de chat.
+  //
+  // ⚠️ Van en TODAS las filas del documento, no sólo en una: un documento son N filas con
+  // el mismo `url` (cada publicación es un INSERT). Las consultas van `WHERE url = ?`.
+  //
+  // ⚠️ La fila RAÍZ (la más vieja) sigue siendo especial: ahí viven share_slug/
+  // share_visibility/share_role. Archivar la marca como privada pero NO la borra ni le
+  // quita el slug — sin el slug no se podría restaurar el acceso al recuperarla.
+  await addColumn("gc_artifacts", "archived_at", "INTEGER");
+  await addColumn("gc_artifacts", "purge_at", "INTEGER");
+  // Índice para el barrido de purga: busca por fecha, no por documento.
+  await dbq("CREATE INDEX IF NOT EXISTS gc_artifacts_purge ON gc_artifacts(purge_at)");
   // Caducidad de una invitación nominal (unix, NULL = sin fecha). "Puede comentar hasta
   // el 15" es lo que pide el trabajo con clientes: el acceso se da para algo concreto y
   // debería apagarse solo cuando eso termina.

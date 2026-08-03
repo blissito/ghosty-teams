@@ -25,8 +25,10 @@ import {
   Printer,
   Users,
   History,
+  Archive,
 } from "lucide-react";
 import { useT } from "../i18n";
+import ConfirmModal from "./ConfirmModal";
 import { officeToHtmlFn, xlsxToCsvFn, postMessage } from "../server/chat";
 import { listTeamDocumentsFn, type TeamDocument } from "../server/documents";
 import { FileGlyph, glyphNameFor } from "./FileGlyph";
@@ -370,6 +372,20 @@ export default function ArtifactPanel({
   const [idxDocs, setIdxDocs] = useState<TeamDocument[] | null>(null); // docindex: docs del room (Cowork)
   const [idxScope, setIdxScope] = useState<"thread" | "case">("case"); // alcance del índice
   const [uploadingDoc, setUploadingDoc] = useState(false); // subir archivo al caso desde el índice
+  // Documento en espera de confirmación para archivar. Se guarda el título además del id
+  // para poder NOMBRARLO en el diálogo: "¿Archivar este documento?" no deja claro cuál.
+  const [porArchivar, setPorArchivar] = useState<{ documentId: string; title: string } | null>(null);
+
+  // Archivar de verdad: llama al servidor, invalida la caché del índice y refresca. La
+  // caché es de MÓDULO (docsIndexCache), así que sin limpiarla el documento archivado
+  // reaparecería al reabrir el panel.
+  const archivarDoc = async (documentId: string) => {
+    const { archiveDocumentFn } = await import("../server/documents");
+    await archiveDocumentFn({ data: { documentId } });
+    docsIndexCache = null;
+    setPorArchivar(null);
+    setRefreshTick((n) => n + 1);
+  };
   const [dropActive, setDropActive] = useState(false); // arrastrar-y-soltar sobre el índice
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [refreshTick, setRefreshTick] = useState(0); // botón "refrescar" del header (re-fetch manual)
@@ -1624,8 +1640,11 @@ export default function ArtifactPanel({
                               {shownDocs.map((d) => {
                                 const v = docToView(d);
                                 return (
+                                  // La fila es un CONTENEDOR, no un botón: el botón de archivar
+                                  // vive dentro y un <button> no puede anidar otro. `group` para
+                                  // que aparezca al pasar el cursor, como el resto del producto.
+                                  <div key={d.key} className="group relative">
                                   <button
-                                    key={d.key}
                                     type="button"
                                     onClick={() => {
                                       if (!v) return;
@@ -1671,6 +1690,24 @@ export default function ArtifactPanel({
                                       </div>
                                     </div>
                                   </button>
+                                  {/* Archivar. Sólo para documentos REDACTADOS: un subido vive en
+                                      gc_attachments y su ciclo de vida es el del mensaje, no el de
+                                      la papelera — ofrecerlo aquí prometería algo que no hace. */}
+                                  {d.source === "generated" && d.documentId ? (
+                                    <button
+                                      type="button"
+                                      title={t("Archivar")}
+                                      aria-label={t("Archivar")}
+                                      onClick={(e) => {
+                                        e.stopPropagation(); // no abrir el documento al archivarlo
+                                        setPorArchivar({ documentId: d.documentId!, title: d.title });
+                                      }}
+                                      className="absolute right-2 top-2 rounded-lg p-1.5 text-muted opacity-0 transition hover:bg-surface-3 hover:text-ink focus:opacity-100 group-hover:opacity-100"
+                                    >
+                                      <Archive size={15} />
+                                    </button>
+                                  ) : null}
+                                  </div>
                                 );
                               })}
                             </div>
@@ -2148,6 +2185,28 @@ export default function ArtifactPanel({
             ) : null}
           </motion.aside>
         </>
+      ) : null}
+      {/* Confirmación de archivar. El cuerpo dice la FECHA CONCRETA, no "esto no se puede
+          deshacer": aquí SÍ se puede durante 30 días, y ocultarlo empeora la decisión —
+          la gente cancela por miedo o borra creyendo que es definitivo. */}
+      {porArchivar ? (
+        <ConfirmModal
+          title={t("¿Archivar este documento?")}
+          body={t(
+            "«{title}» sale del espacio y deja de compartirse. Puedes recuperarlo hasta el {fecha}; después se elimina.",
+            {
+              title: porArchivar.title,
+              fecha: new Date(Date.now() + 30 * 86400_000).toLocaleDateString("es-MX", {
+                day: "numeric",
+                month: "long",
+              }),
+            },
+          )}
+          confirmLabel={t("Archivar")}
+          danger
+          onCancel={() => setPorArchivar(null)}
+          onConfirm={() => archivarDoc(porArchivar.documentId)}
+        />
       ) : null}
     </AnimatePresence>
   );
