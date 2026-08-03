@@ -311,6 +311,16 @@ export const getLiveTurnsFn = createServerFn({ method: "POST" }).handler(async (
   return Promise.all(
     live.map(async (t) => {
       const m = await db.getMessage(t.id).catch(() => null);
+      // El PASO en el que va, que es lo que Cursor enseña en cada fila de su panel: un
+      // cronómetro sin contexto no dice si avanza o se atoró. Ya viaja en el cuerpo.
+      let paso = "";
+      try {
+        const { extractSteps } = await import("../lib/ebdoc");
+        const pasos = extractSteps(m?.body ?? "");
+        if (pasos?.length) paso = pasos[pasos.length - 1];
+      } catch {
+        /* sin paso: la fila se pinta igual */
+      }
       // El room se resuelve en el CLIENTE, que ya tiene la lista con id→slug/nombre: aquí
       // costaría una query más por turno para un dato que allá es un Map.
       return {
@@ -320,6 +330,7 @@ export const getLiveTurnsFn = createServerFn({ method: "POST" }).handler(async (
         channelId: m?.channel_id ?? null,
         parentId: m?.parent_id ?? null,
         topic: m?.topic ?? "",
+        paso,
       };
     }),
   );

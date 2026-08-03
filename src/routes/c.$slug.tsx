@@ -1230,26 +1230,27 @@ function ChannelPage() {
   // pararlos si no estabas parado en su hilo.
   const [liveTurns, setLiveTurns] = useState<Array<{
     id: number; state: "running" | "queued" | "stopped" | "done"; position: number; startedAt: number;
-    agent: string; avatar: string; channelId: number | null; parentId: number | null; topic: string;
+    agent: string; avatar: string; channelId: number | null; parentId: number | null; topic: string; paso?: string;
   }>>([]);
+  // ⚠️ El diff se calcula FUERA del actualizador de estado. Estaba dentro de
+  // `setLiveTurns(prev => …)` llamando a `setDoneTurns` desde ahí, y React no garantiza ese
+  // efecto secundario (puede re-ejecutar el updater): los terminados no llegaban a
+  // registrarse y la fila simplemente desaparecía cuando ya no había tráfico.
+  const liveTurnsRef = useRef<typeof liveTurns>([]);
   const refreshLiveTurns = useCallback(() => {
     getLiveTurnsFn()
       .then((r) => {
         const next = (r ?? []) as never as typeof liveTurns;
-        // Un turno que TERMINA no se esfuma: se queda unos segundos como "terminó". Si
-        // desaparece de golpe, no hay forma de saber si acabó o si se cayó — y quien estaba
-        // mirando esa fila se queda sin respuesta.
-        setLiveTurns((prev) => {
-          const vivos = new Set(next.map((x) => x.id));
-          const recienTerminados = prev.filter((x) => !vivos.has(x.id) && x.state !== "done");
-          if (recienTerminados.length) {
-            setDoneTurns((d) => [
-              ...d.filter((x) => !recienTerminados.some((y) => y.id === x.id)),
-              ...recienTerminados.map((x) => ({ ...x, state: "done" as const, doneAt: Date.now() })),
-            ]);
-          }
-          return next;
-        });
+        const vivos = new Set(next.map((x) => x.id));
+        const recienTerminados = liveTurnsRef.current.filter((x) => !vivos.has(x.id));
+        liveTurnsRef.current = next;
+        setLiveTurns(next);
+        if (recienTerminados.length) {
+          setDoneTurns((d) => [
+            ...d.filter((x) => !recienTerminados.some((y) => y.id === x.id)),
+            ...recienTerminados.map((x) => ({ ...x, state: "done" as const, doneAt: Date.now() })),
+          ]);
+        }
       })
       .catch(() => {});
   }, []);
@@ -1276,10 +1277,12 @@ function ChannelPage() {
     refreshLiveTurns();
   }, [refreshLiveTurns, clavePorTurnos]);
   useEffect(() => {
-    if (!turns.size) return;
-    const h = setInterval(refreshLiveTurns, 10000);
+    // Late un rato MÁS de lo que dura el último turno: el evento SSE que cierra el último
+    // puede perderse, y sin latido nadie se enteraría de que terminó.
+    if (!turns.size && !doneTurns.length) return;
+    const h = setInterval(refreshLiveTurns, turns.size ? 10000 : 30000);
     return () => clearInterval(h);
-  }, [refreshLiveTurns, turns.size]);
+  }, [refreshLiveTurns, turns.size, doneTurns.length]);
 
   // Siembra los turnos EN VUELO al montar. El estado de un turno llega por SSE (`t:"turn"`)
   // y un evento no se puede volver a escuchar: quien recargaba a media respuesta se quedaba
@@ -3264,6 +3267,8 @@ function NavToggle({ onOpen }: { onOpen: () => void }) {
 type LiveTurnRow = {
   id: number; state: "running" | "queued" | "stopped" | "done"; position: number; startedAt: number;
   agent: string; avatar: string; channelId: number | null; parentId: number | null; topic: string;
+  /** Último paso narrado por el agente — el "en qué va", como la fila de Cursor. */
+  paso?: string;
 };
 
 /**
@@ -3296,7 +3301,15 @@ function LiveTurnsPanel({
           <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-brand opacity-60" />
           <span className="relative inline-flex h-2 w-2 rounded-full bg-brand" />
         </span>
-        {turns.length ? `${t("Trabajando ahora")} · ${turns.length}` : t("Listo")}
+        {(() => {
+          // Corriendo y EN COLA por separado. Los turnos del mismo agente se serializan en su
+          // worker, así que "3" sin más engaña: puede ser uno trabajando y dos esperando. El
+          // dato ya venía del servidor (`state`/`position`) y no se estaba enseñando.
+          const corriendo = turns.filter((x) => x.state === "running").length;
+          const enCola = turns.filter((x) => x.state === "queued").length;
+          if (!corriendo && !enCola) return t("Listo");
+          return `${t("Trabajando ahora")} · ${corriendo}${enCola ? ` · ${enCola} ${t("en cola")}` : ""}`;
+        })()}
       </div>
       {filas.map((x) => (
         <div key={x.id} className="group flex items-center gap-1.5 rounded-md px-1 py-1 hover:bg-surface-3">
@@ -3309,11 +3322,20 @@ function LiveTurnsPanel({
             {x.avatar ? (
               <img src={x.avatar} alt="" className="h-4 w-4 shrink-0 rounded-full object-cover" />
             ) : null}
-            <span className={`min-w-0 flex-1 truncate text-xs ${x.state === "done" ? "text-muted" : "text-ink"}`}>
-              {x.agent || t("Agente")}
-              {nombreDe(x.channelId) ? <span className="text-muted"> · {nombreDe(x.channelId)}</span> : null}
+            <span className="min-w-0 flex-1">
+              <span className={`block truncate text-xs ${x.state === "done" ? "text-muted" : "text-ink"}`}>
+                {x.agent || t("Agente")}
+                {nombreDe(x.channelId) ? <span className="text-muted"> · {nombreDe(x.channelId)}</span> : null}
+              </span>
+              {/* EN QUÉ VA, que es lo que hace útil la fila de Cursor: un cronómetro sin
+                  contexto no distingue "avanzando" de "atorado". */}
+              {x.paso && x.state === "running" ? (
+                <span className="block truncate text-[10px] italic text-muted">{x.paso}</span>
+              ) : null}
             </span>
-            {x.state === "done" ? (
+            {x.state === "queued" ? (
+              <span className="shrink-0 text-[10px] text-muted">{t("en cola")} · {x.position}º</span>
+            ) : x.state === "done" ? (
               <span className="flex shrink-0 items-center gap-1 text-[10px] text-muted">
                 <Check size={11} className="text-green-500" />
                 {t("terminó")}
