@@ -204,6 +204,7 @@ export const en: Record<string, string> = {
   "Eliminar": "Delete",
   "Eliminar hilo": "Delete thread",
   "Eliminar mensaje": "Delete message",
+  "Eliminar registro de llamada": "Delete call record",
   "Emojis": "Emojis",
   "Emojis custom": "Custom emojis",
   "Empaqueta un SKILL.md + script(s) → una capacidad determinista que el agente usa on-demand.": "Package a SKILL.md + script(s) → a deterministic capability the agent uses on-demand.",

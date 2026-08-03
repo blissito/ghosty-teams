@@ -6601,18 +6601,24 @@ function parseCallCard(body: string | null | undefined): CallCardData | null {
     return null;
   }
 }
-function CallCard({ data }: { data: CallCardData }) {
+function CallCard({ data, msg }: { data: CallCardData; msg: Message }) {
   const t = useT();
-  const { joinCall, myCallKey } = useContext(ChatCtx);
+  const { joinCall, myCallKey, me, remove } = useContext(ChatCtx);
+  const [confirmDel, setConfirmDel] = useState(false);
   const live = data.state === "active";
+  // Una llamada TERMINADA es rastro y se puede borrar como cualquier mensaje. Authz igual
+  // que en el menú del mensaje: dueño del room o quien la inició (el status nace con
+  // sender_sub NULL, así que el chequeo del server cae al nombre — mismo criterio).
+  const canDelete = !live && !!me && (me.isOwner || msg.sender === me.name);
   const key = data.join.scope === "room" ? `room:${data.join.scopeId}` : `dm:${data.join.dmId}`;
   const mine = myCallKey === key;
   const n = data.people.length;
   const dur = data.durationSec != null ? (data.durationSec < 60 ? `${data.durationSec}s` : `${Math.round(data.durationSec / 60)} min`) : null;
   return (
+    <>
     <div
       className={
-        "my-1.5 ml-11 flex max-w-md items-center gap-3 rounded-2xl border px-3.5 py-3 shadow-sm " +
+        "group my-1.5 ml-11 flex max-w-md items-center gap-3 rounded-2xl border px-3.5 py-3 shadow-sm " +
         (live ? "border-brand/30 bg-gradient-to-br from-brand/10 to-transparent" : "border-border bg-surface-2")
       }
     >
@@ -6650,7 +6656,29 @@ function CallCard({ data }: { data: CallCardData }) {
             {t("Unirse")}
           </button>
         ))}
+      {canDelete && (
+        <button
+          type="button"
+          title={t("Eliminar")}
+          aria-label={t("Eliminar")}
+          onClick={() => setConfirmDel(true)}
+          className="shrink-0 rounded-lg p-1.5 text-muted opacity-100 transition hover:bg-red-500/10 hover:text-red-500 focus-visible:opacity-100 sm:opacity-0 sm:group-hover:opacity-100"
+        >
+          <Trash2 size={14} />
+        </button>
+      )}
     </div>
+    {confirmDel && (
+      <ConfirmModal
+        title={t("Eliminar registro de llamada")}
+        body={t("Esto no se puede deshacer.")}
+        confirmLabel={t("Eliminar")}
+        danger
+        onCancel={() => setConfirmDel(false)}
+        onConfirm={() => remove(msg)}
+      />
+    )}
+    </>
   );
 }
 
@@ -6898,7 +6926,7 @@ function MessageRow({
   if (m.kind === "status") {
     // Tarjeta de quick-call (body = JSON) → tarjeta rica estilo Slack.
     const card = parseCallCard(m.body);
-    if (card) return <CallCard data={card} />;
+    if (card) return <CallCard data={card} msg={m} />;
     // Rastro viejo (texto "📞 …") — compat con mensajes previos a la tarjeta.
     if (m.body?.startsWith("📞")) {
       const ended = m.body.includes("terminada");
