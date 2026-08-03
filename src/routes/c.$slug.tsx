@@ -5501,9 +5501,14 @@ function Flow({
         {messages === null ? (
           <ThreadSkeleton />
         ) : messages.length === 0 && optimistic.length === 0 ? (
-          <p className="mt-10 text-center text-sm text-muted">
-            {t("Sé el primero en escribir en {room}.", { room: channel.name })}
-          </p>
+          // Room vacío: la mascota en vez de una línea de texto sola. El SVG es el de
+          // fondo transparente (los PNG del PWA traen cuadro oscuro horneado).
+          <div className="mt-16 flex flex-col items-center gap-4 text-center">
+            <img src="/ghosty.svg" alt="" aria-hidden className="h-24 w-24 opacity-90 drop-shadow-sm" />
+            <p className="text-sm text-muted">
+              {t("Sé el primero en escribir en {room}.", { room: channel.name })}
+            </p>
+          </div>
         ) : (
           messages.map((m, i) => {
             // El divisor de no-leídos rompe el grupo (el primer no-leído siempre con header).
