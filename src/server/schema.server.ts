@@ -113,6 +113,12 @@ async function migrate(): Promise<void> {
   // esto — NO en `sender` (display name, ahora editable en Ajustes → perfil, que sería
   // suplantable). Mensajes viejos sin sender_sub caen al chequeo por nombre (legacy).
   await addColumn("gc_messages", "sender_sub", "TEXT");
+  // 1 mientras el agente ESCRIBE. La pone el escritor con throttle del streaming y la quita
+  // cualquier escritura autoritativa del cuerpo. Sin esto, tras el cambio a persistencia
+  // incremental un turno huérfano (deploy a media respuesta) ya no queda con el cuerpo
+  // VACÍO, así que `sweepOrphans` dejaba de reconocerlo y la burbuja se quedaba
+  // "trabajando" para siempre.
+  await addColumn("gc_messages", "streaming", "INTEGER NOT NULL DEFAULT 0");
   // Quote-reply (estilo WhatsApp/WABA): un mensaje puede CITAR a otro. Guardamos el id
   // del citado + un SNAPSHOT denormalizado (autor + extracto) — como el contextInfo.
   // quotedMessage de Baileys: la cita viaja EN el mensaje, así el render y el agente la

@@ -32,6 +32,32 @@ export function alApagar(fn: Cierre): () => void {
   return () => cierres.delete(fn);
 }
 
+/**
+ * Una PESTAÑA VIEJA no puede tumbar el servidor.
+ *
+ * Tras un hot-deploy, un cliente que sigue abierto pide chunks del build ANTERIOR
+ * (`/_ssr/documents-BkVeZfQk.mjs`). Ese archivo ya no existe → el `import()` dinámico
+ * rechaza con `ERR_MODULE_NOT_FOUND`, y como la promesa viaja fuera de cualquier `try`,
+ * llega a `unhandledRejection` y **mata el proceso**: systemd lo reinicia y de paso se
+ * lleva por delante los turnos en vuelo de TODO el workspace. Medido el 2026-08-03: una
+ * sola pestaña sin refrescar reinició Teams y huerfanó el trabajo de tres agentes.
+ *
+ * Se filtra SÓLO ese caso —módulo del build viejo no encontrado— y se re-lanza cualquier
+ * otro: tragarse todas las promesas rechazadas escondería bugs de verdad.
+ */
+function blindarContraChunksViejos(): void {
+  process.on("unhandledRejection", (razon) => {
+    const e = razon as { code?: string; url?: string } | undefined;
+    const esChunkViejo =
+      e?.code === "ERR_MODULE_NOT_FOUND" && typeof e.url === "string" && e.url.includes("/.output/server/");
+    if (esChunkViejo) {
+      console.warn(`[stale-client] chunk de un build anterior: ${e.url} — el cliente debe recargar`);
+      return;
+    }
+    throw razon;
+  });
+}
+
 /** ¿Se está apagando? Los caminos que abren recursos nuevos deben rendirse. */
 export function seEstaApagando(): boolean {
   return apagando;
@@ -40,6 +66,7 @@ export function seEstaApagando(): boolean {
 function armar(): void {
   if (armado || typeof process === "undefined") return;
   armado = true;
+  blindarContraChunksViejos();
   for (const señal of ["SIGTERM", "SIGINT"] as const) {
     process.once(señal, () => {
       if (apagando) return;

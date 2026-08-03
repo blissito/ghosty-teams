@@ -1124,7 +1124,14 @@ export async function editMessage(id: number, body: string): Promise<void> {
 // toca edited_at (no es una edición del autor, es el reply que terminó de fluir) →
 // no muestra "(editado)". El body autoritativo permite el catch-up por cursor.
 export async function setMessageBody(id: number, body: string): Promise<void> {
-  await dbq("UPDATE gc_messages SET body = ? WHERE id = ?", [body, id]);
+  // Escritura AUTORITATIVA → el mensaje deja de estar en streaming. Es lo que distingue un
+  // turno terminado de uno que el proceso dejó a medias al reiniciarse.
+  await dbq("UPDATE gc_messages SET body = ?, streaming = 0 WHERE id = ?", [body, id]);
+}
+
+/** Escritura PARCIAL del streaming (ver body-flush.server.ts). Marca el mensaje en vuelo. */
+export async function setMessageBodyStreaming(id: number, body: string): Promise<void> {
+  await dbq("UPDATE gc_messages SET body = ?, streaming = 1 WHERE id = ?", [body, id]);
 }
 
 // ── Agentes (multi-agente): el "ghosty" implícito del wizard + estos extra ──

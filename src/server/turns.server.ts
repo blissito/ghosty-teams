@@ -166,6 +166,20 @@ export async function sweepOrphans(): Promise<number> {
     // `agent_handle IS NOT NULL` = la cáscara la creó un turno de agente. Un mensaje de
     // persona con body vacío no existe (postMessage lo rechaza), pero acotarlo igual
     // evita tocar cualquier otra fila que algún día nazca vacía.
+    // ⚠️ DOS formas de quedar huérfano, y la segunda nació el 2026-08-03 con la
+    // persistencia incremental: antes una cáscara abandonada estaba VACÍA, y desde que el
+    // cuerpo se guarda mientras el agente escribe, un turno cortado a media respuesta tiene
+    // TEXTO — así que este barrido dejaba de reconocerlo y la burbuja se quedaba
+    // "trabajando" para siempre. El flag `streaming` es lo que las distingue.
+    //
+    // Y al huérfano CON texto no se le borra lo escrito: se le añade el aviso. Lo que el
+    // agente alcanzó a redactar suele ser la mitad de un documento — tirarlo sería el
+    // peor de los dos males.
+    await dbq(
+      `UPDATE gc_messages SET body = body || ?, streaming = 0
+         WHERE streaming = 1 AND created_at < unixepoch() - 60`,
+      ["\n\n⏹ _Interrumpido: el servidor se reinició mientras el agente escribía._"],
+    ).catch(() => {});
     const rows = await dbq(
       `UPDATE gc_messages SET body = ?
          WHERE agent_handle IS NOT NULL

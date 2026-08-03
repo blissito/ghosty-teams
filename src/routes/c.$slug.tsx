@@ -3359,7 +3359,25 @@ function Sidebar({
   useEffect(() => setAllThreadsOpen(false), [active]);
   // Acordeón: hilos del room colapsados (por slug). Colapsar evita que el sidebar
   // crezca sin fin cuando un room tiene muchos hilos.
-  const [collapsedThreads, setCollapsedThreads] = useState<Set<string>>(new Set());
+  // Qué rooms tienen la lista de hilos plegada. PERSISTE: cerrar un room y encontrarlo
+  // abierto otra vez al refrescar convierte el plegado en un gesto inútil — quien lo cierra
+  // es porque no quiere verlo, y esa intención dura más que la sesión.
+  const [collapsedThreads, setCollapsedThreads] = useState<Set<string>>(() => {
+    if (typeof window === "undefined") return new Set();
+    try {
+      const raw = window.localStorage.getItem("gt:collapsedThreads");
+      return new Set<string>(raw ? (JSON.parse(raw) as string[]) : []);
+    } catch {
+      return new Set();
+    }
+  });
+  useEffect(() => {
+    try {
+      window.localStorage.setItem("gt:collapsedThreads", JSON.stringify([...collapsedThreads]));
+    } catch {
+      /* modo privado / cuota llena: que no plegar no rompa el sidebar */
+    }
+  }, [collapsedThreads]);
   const toggleThreads = (slug: string) =>
     setCollapsedThreads((prev) => {
       const n = new Set(prev);

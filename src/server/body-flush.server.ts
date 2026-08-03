@@ -42,7 +42,7 @@ export function makeBodyFlusher(intervalMs = 2000) {
     written.set(id, body);
     lastAt.set(id, Date.now());
     // Best-effort de verdad: una escritura fallida no puede tumbar el turno del agente.
-    await db.setMessageBody(id, body).catch(() => {});
+    await db.setMessageBodyStreaming(id, body).catch(() => {});
   };
 
   const encolar = (id: number) => {
