@@ -152,6 +152,28 @@ import {
 let shellCache: { channels: Channel[]; user: Awaited<ReturnType<typeof me>> } | null = null;
 
 export const Route = createFileRoute("/c/$slug")({
+  /**
+   * Foco del centro en la URL: `/c/<room>?thread=123` o `?dm=45`.
+   *
+   * Va aquí y no leyendo `location.search` a mano porque es lo que da tipos, validación y
+   * `useSearch()` reactivo — el router ya resuelve el problema entero.
+   *
+   * ⚠️ El search llega PARSEADO como JSON, así que un `?thread=123` es NÚMERO y un
+   * `?thread=abc` es string: por eso se normaliza con `Number()` y se descarta lo que no sea
+   * un id positivo, en vez de exigir un tipo concreto. Un validador estricto tiraría el
+   * parámetro y el router redirigiría a la URL sin él — el mismo tropiezo que costó el `?v=`
+   * de los artefactos.
+   */
+  validateSearch: (search: Record<string, unknown>): { thread?: number; dm?: number } => {
+    const id = (v: unknown) => {
+      const n = Number(v);
+      return Number.isFinite(n) && n > 0 ? n : undefined;
+    };
+    const thread = id(search.thread);
+    const dm = id(search.dm);
+    // Mutuamente excluyentes: el centro enseña una cosa a la vez.
+    return thread != null ? { thread } : dm != null ? { dm } : {};
+  },
   // El hilo y el flujo NO van en el loader (se cargan client-side con cache +
   // skeleton → abrir es instantáneo). El loader solo trae rooms + meta + user.
   loader: async ({ params }) => {
@@ -992,6 +1014,8 @@ function useChatScroll(
 
 function ChannelPage() {
   const { channels, channel, user, initialFlow, initialThreads } = Route.useLoaderData();
+  // Foco pedido por la URL (`?thread=` / `?dm=`), tipado y reactivo por el router.
+  const search = Route.useSearch();
   // Marca la hidratación como completa → el loader deja de prefetchear en las
   // navegaciones siguientes (solo lo hacía para igualar el SSR en el primer render).
   // Y AQUÍ se restauran las caches de sessionStorage: en module-load el servidor no las
@@ -1892,17 +1916,9 @@ function ChannelPage() {
   useEffect(() => {
     if (!didRestoreFocus.current) {
       didRestoreFocus.current = true;
-      // La URL MANDA (ver `focoDeLaUrl`). sessionStorage queda sólo como respaldo del
-      // refresh, que es lo único para lo que sirve.
-      const foco = focoDeLaUrl();
-      if (foco.thread != null) {
-        setOpenThreadId(foco.thread);
-        return;
-      }
-      if (foco.dm != null) {
-        setOpenDmId(foco.dm);
-        return;
-      }
+      // La URL manda, y la aplica el efecto de `search` de abajo. Aquí sólo se sale para no
+      // pisarla con el foco guardado.
+      if (search.thread != null || search.dm != null) return;
       try {
         const raw = sessionStorage.getItem(`focus:${channel.slug}`);
         if (raw) {
@@ -1921,29 +1937,46 @@ function ChannelPage() {
       }
       return;
     }
-    // Cambio de room DENTRO de la SPA. Si la URL trae foco (`?thread=`/`?dm=`), manda ella:
-    // el efecto de mount ya no vuelve a correr, así que sin esto un deep-link entre rooms
-    // aterrizaba en el flujo del room y parecía que el enlace no hacía nada.
-    const foco = focoDeLaUrl();
-    if (foco.thread != null) {
-      setOpenThreadId(foco.thread);
-      setOpenDmId(null);
-      setView(null);
-      setHomeOpen(false);
-      return;
-    }
-    if (foco.dm != null) {
-      setOpenDmId(foco.dm);
-      setOpenThreadId(null);
-      setView(null);
-      setHomeOpen(false);
-      return;
-    }
+    // Cambio de room DENTRO de la SPA. Si la URL trae foco, lo aplica el efecto de `search`;
+    // aquí sólo se evita el reset que lo pisaría.
+    if (search.thread != null || search.dm != null) return;
     setOpenThreadId(null);
     setOpenDmId(null);
     setView(null);
     setHomeOpen(false);
   }, [channel.slug]);
+  /**
+   * El foco que pide la URL. Reactivo: `useSearch()` re-corre esto en cada navegación, así
+   * que un deep-link funciona igual entrando en frío, cambiando de room dentro de la SPA o
+   * con el botón atrás — sin leer `location` a mano ni duplicar la lógica en dos efectos.
+   */
+  useEffect(() => {
+    if (search.thread != null) {
+      setOpenThreadId(search.thread);
+      setOpenDmId(null);
+      setView(null);
+      setHomeOpen(false);
+    } else if (search.dm != null) {
+      setOpenDmId(search.dm);
+      setOpenThreadId(null);
+      setView(null);
+      setHomeOpen(false);
+    }
+  }, [search.thread, search.dm]);
+  /**
+   * …y al revés: abrir un hilo o un DM DESDE la app escribe la URL. Así el enlace siempre
+   * dice la verdad y el botón atrás recorre lo que la persona hizo.
+   *
+   * `replace` para no llenar el historial con cada clic, y la comparación de igualdad es la
+   * guarda contra el bucle con el efecto de arriba: sin ella, uno escribiría el search y el
+   * otro el estado, en redondo.
+   */
+  useEffect(() => {
+    const quiere = openThreadId != null ? { thread: openThreadId } : openDmId != null ? { dm: openDmId } : {};
+    const tiene = search.thread != null ? { thread: search.thread } : search.dm != null ? { dm: search.dm } : {};
+    if (quiere.thread === tiene.thread && quiere.dm === tiene.dm) return;
+    router.navigate({ to: "/c/$slug", params: { slug: channel.slug }, search: quiere, replace: true });
+  }, [openThreadId, openDmId, search.thread, search.dm, channel.slug]);
   // Persiste el foco actual (mutuamente excluyente) para sobrevivir un reload.
   useEffect(() => {
     // Siempre persiste algo (incluido `{room}` = canal plano) para que un reload en un
@@ -3170,31 +3203,6 @@ function AllThreadsModal({
 
 /* ── Sidebar: Rooms + hilos como submenús + identidad ── */
 // Badge de no-leídos (Fase 1.5): píldora compacta; 99+ como tope.
-/**
- * Foco del centro pedido por la URL: `?thread=N` o `?dm=N`.
- *
- * La URL manda sobre `sessionStorage` porque un enlace se comparte, se guarda y funciona con
- * el botón atrás; el storage no hace nada de eso y sólo sirve para sobrevivir un refresh.
- *
- * ⚠️ Se lee con `URLSearchParams` y no con el search del router: éste parsea los parámetros
- * como JSON, así que `?thread=123` llega como NÚMERO y un validador que espere string lo
- * descarta redirigiendo a la URL sin el parámetro (el mismo tropiezo que costó el `?v=` de
- * los artefactos).
- */
-function focoDeLaUrl(): { thread?: number; dm?: number } {
-  if (typeof window === "undefined") return {};
-  try {
-    const qs = new URLSearchParams(window.location.search);
-    const thread = Number(qs.get("thread"));
-    if (Number.isFinite(thread) && thread > 0) return { thread };
-    const dm = Number(qs.get("dm"));
-    if (Number.isFinite(dm) && dm > 0) return { dm };
-  } catch {
-    /* URL rara: sin foco */
-  }
-  return {};
-}
-
 function UnreadBadge({ n }: { n: number }) {
   if (n <= 0) return null;
   return (
