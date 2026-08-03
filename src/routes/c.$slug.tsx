@@ -6975,7 +6975,16 @@ function ArtifactCard({ artifact, ownerMsg }: { artifact: Artifact; ownerMsg: Me
           </span>
         )}
         <span className="min-w-0 flex-1">
-          <span className="block truncate text-sm font-medium text-ink">{displayTitle}</span>
+          {/* DOS líneas, no `truncate`: lo que distingue un documento de otro suele estar al
+              FINAL del nombre («… — Predio NAYARIT»), así que cortar a una línea dejaba dos
+              dictámenes distintos viéndose idénticos y daba miedo pensar que era el mismo
+              archivo reescrito (2026-08-03). El `title` deja el nombre completo al pasar. */}
+          <span
+            className="block text-sm font-medium text-ink [display:-webkit-box] [-webkit-box-orient:vertical] [-webkit-line-clamp:2] overflow-hidden"
+            title={displayTitle}
+          >
+            {displayTitle}
+          </span>
           <span className="block text-[11px] text-muted">{subtitle}</span>
         </span>
       </button>
