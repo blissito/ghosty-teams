@@ -70,6 +70,70 @@ export async function isIntendedOwner(email: string): Promise<boolean> {
   return !!intended && email.trim().toLowerCase() === intended;
 }
 
+/** Nosotros (soporte) dentro del espacio de un cliente. La lista la escribe ghosty-studio
+ *  —al montar el workspace o desde `/admin/tenants`— y se quita desde ahí mismo.
+ *
+ *  Vive en `gc_config` y no en una lista global de correos por env: el acceso es POR
+ *  workspace y revocable, y así queda escrito en la DB del tenant en vez de ser una llave
+ *  maestra que no aparece en ninguna pantalla.
+ *
+ *  ⚠️ El `Membership(STAFF)` que gs escribe en paralelo NO sirve para esto: esta puerta
+ *  no consulta a gs. Es esta clave la que deja entrar. */
+export async function isStaffEmail(email: string): Promise<boolean> {
+  const cfg = await dbq("SELECT v FROM gc_config WHERE k = 'staff_emails'");
+  const raw = (cfg.rows[0]?.[0] as string | null) ?? "";
+  const yo = email.trim().toLowerCase();
+  return raw
+    .split(",")
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean)
+    .includes(yo);
+}
+
+/** Correos que pueden entrar SIN invitación, porque alguien los dio de alta a mano desde
+ *  `/admin/tenants` (gs). Es la quinta puerta y la que hace que "agregar a quien sea" no
+ *  tenga fricción: se escribe el correo aquí y la persona entra con su login de siempre —
+ *  sin liga que mandar, sin token que caduque, sin que nadie tenga que estar presente.
+ *
+ *  Misma mecánica que `staff_emails` y a propósito: por workspace, revocable, y escrito en
+ *  la DB del tenant en vez de en una lista global que no aparece en ninguna pantalla. La
+ *  diferencia es que estos SÍ ocupan asiento — son gente del cliente, no nosotros. */
+export async function isPreapprovedEmail(email: string): Promise<boolean> {
+  return (await preapprovedEmails()).includes(email.trim().toLowerCase());
+}
+
+export async function preapprovedEmails(): Promise<string[]> {
+  try {
+    const cfg = await dbq("SELECT v FROM gc_config WHERE k = 'member_emails'");
+    return ((cfg.rows[0]?.[0] as string | null) ?? "")
+      .split(",")
+      .map((s) => s.trim().toLowerCase())
+      .filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+/** Añade o quita un correo de la lista de preaprobados. Devuelve la lista resultante.
+ *  Idempotente en los dos sentidos: agregar dos veces no duplica y quitar lo que no está
+ *  no falla — este endpoint lo llama un panel donde se hace doble clic. */
+export async function setPreapprovedEmail(email: string, allowed: boolean): Promise<string[]> {
+  const yo = email.trim().toLowerCase();
+  if (!yo) return preapprovedEmails();
+  const actuales = await preapprovedEmails();
+  const siguiente = allowed
+    ? [...new Set([...actuales, yo])]
+    : actuales.filter((e) => e !== yo);
+  const v = siguiente.join(",");
+  // UPSERT explícito: `gc_config` no tiene default para esta clave, así que un UPDATE a
+  // secas no escribiría nada la primera vez y el correo se perdería en silencio.
+  await dbq(
+    "INSERT INTO gc_config (k, v) VALUES ('member_emails', ?) ON CONFLICT(k) DO UPDATE SET v=excluded.v",
+    [v],
+  );
+  return siguiente;
+}
+
 export async function upsertUser(id: {
   sub: string;
   email: string;
@@ -209,6 +273,40 @@ export async function isBanned(sub: string): Promise<boolean> {
 // su fila + mensajes; el login lo rebota). No se puede expulsar al owner.
 export async function expelMember(sub: string): Promise<void> {
   await dbq("UPDATE gc_users SET banned=1 WHERE sub=? AND COALESCE(is_owner,0)=0", [sub]);
+}
+
+/** Lo contrario: vuelve a dejar entrar. Es lo que hace que quitar a alguien no sea una
+ *  puerta de un solo sentido — y como el ban CONSERVA la fila de `gc_users`, al levantarlo
+ *  la persona vuelve con su handle, su perfil y sus mensajes intactos, sin invitación
+ *  nueva. Ésa es toda la gracia de banear en vez de borrar. */
+export async function restoreMember(sub: string): Promise<void> {
+  await dbq("UPDATE gc_users SET banned=0 WHERE sub=?", [sub]);
+}
+
+/** Padrón COMPLETO del tenant, incluidos los expulsados y los que aún no tienen handle.
+ *  `listWorkspaceUsers` no sirve para administrar: filtra justo a los que hay que ver
+ *  (`banned=0` y `handle IS NOT NULL`), que son los que quieres poder devolver. */
+export type AdminMember = {
+  sub: string;
+  email: string;
+  name: string;
+  avatar: string;
+  isOwner: boolean;
+  banned: boolean;
+};
+export async function listAllMembers(): Promise<AdminMember[]> {
+  const { rows, cols } = await dbq(
+    "SELECT sub, email, name, avatar, is_owner, COALESCE(banned,0) AS banned FROM gc_users ORDER BY COALESCE(banned,0), name",
+  );
+  const i = (c: string) => cols.indexOf(c);
+  return rows.map((r) => ({
+    sub: r[i("sub")] as string,
+    email: (r[i("email")] as string) ?? "",
+    name: (r[i("name")] as string) ?? "",
+    avatar: (r[i("avatar")] as string) ?? "",
+    isOwner: Number(r[i("is_owner")]) === 1,
+    banned: Number(r[i("banned")]) === 1,
+  }));
 }
 
 export type MentionUser = { sub: string; handle: string; name: string; email: string; avatar: string };

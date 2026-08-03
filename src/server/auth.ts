@@ -141,13 +141,23 @@ export const completeGhostyLogin = createServerFn({ method: "POST" })
     // El dueño DECLARADO (workspace montado por nosotros para un cliente) entra
     // siempre: preparar su espacio antes de que llegue lo dejaba fuera del suyo, que
     // es justo el caso para el que se creó la clave.
+    // Cuarta forma legítima de entrar: staff. Es el espacio que le montamos al cliente y
+    // que vamos a estar probando con él; pedirle una invitación para entrar a lo que
+    // nosotros preparamos es una vuelta absurda. Se da y se quita por workspace desde
+    // `/admin/tenants` (gs), y no ocupa uno de sus asientos.
+    // Quinta: dado de alta A MANO por correo desde `/admin/tenants`. Es lo que hace que
+    // meter a alguien no cueste una liga que mandar ni un token que caduque: se escribe su
+    // correo y entra con el login que ya usa. A diferencia del staff, éstos SÍ ocupan
+    // asiento — son gente del cliente.
     const { isKnownUser, isEmptyWorkspace } = await import("./invites");
-    const { isIntendedOwner } = await import("../users.server");
+    const { isIntendedOwner, isStaffEmail, isPreapprovedEmail } = await import("../users.server");
     if (
       !invited &&
       !(await isKnownUser(id.sub)) &&
       !(await isEmptyWorkspace()) &&
-      !(await isIntendedOwner(id.email))
+      !(await isIntendedOwner(id.email)) &&
+      !(await isStaffEmail(id.email)) &&
+      !(await isPreapprovedEmail(id.email))
     ) {
       throw new Error("necesitas una invitación");
     }
