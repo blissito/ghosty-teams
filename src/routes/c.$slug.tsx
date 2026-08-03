@@ -7148,8 +7148,24 @@ function ToolGroup({ tools }: { tools: ToolState[] }) {
   // es lo correcto: es el nombre real de la herramienta, no una frase nuestra.
   const tr = useT();
   const anyRunning = tools.some((t) => t.status === "running");
-  const anyError = tools.some((t) => t.status === "error");
-  const overall: ToolState["status"] = anyError ? "error" : anyRunning ? "running" : "done";
+  const fallidas = tools.filter((t) => t.status === "error").length;
+  // ⚠️ El orden importa y estaba al revés: `anyError` ganaba sobre `anyRunning`, así que
+  // en cuanto UNA herramienta fallaba el header se quedaba con el ✗ para siempre —
+  // incluso con el agente trabajando. Dos daños:
+  //
+  //   - Se perdía el ÚNICO indicador permanente de "sigue trabajando" que hay durante un
+  //     turno largo. El usuario veía un tache quieto y lo leía como "ya terminó, y mal".
+  //   - Un fallo de quince decía que los quince fallaron. Visto el 2026-08-03: 14 tools
+  //     bien y un `fetch_url`, y el grupo entero en rojo.
+  //
+  // Trabajar es un estado, fallar es un resultado: mientras haya algo corriendo, manda el
+  // estado. Y sólo se pinta ✗ si fallaron TODAS; si fallaron algunas, va la palomita con
+  // la cuenta al lado, que es lo que de verdad pasó.
+  const overall: ToolState["status"] = anyRunning
+    ? "running"
+    : fallidas === tools.length && fallidas > 0
+      ? "error"
+      : "done";
   // Abierta por default (el usuario quiere ver las tools sin tener que expandir cada vez).
   // Se queda como la deje: si la colapsa, respeta su elección para ese mensaje.
   const [open, setOpen] = useState(true);
@@ -7186,6 +7202,14 @@ function ToolGroup({ tools }: { tools: ToolState[] }) {
         <Wrench size={12} className="shrink-0 text-muted" />
         <span className="truncate font-medium text-ink">{summary}</span>
         {icon(overall, 12)}
+        {/* Los fallos no se esconden, pero tampoco secuestran el header: van como cuenta
+            al lado del estado. Sin esto, cambiar el ✗ por la palomita habría TAPADO que
+            algo salió mal, que es peor que exagerarlo. */}
+        {fallidas > 0 && fallidas < tools.length ? (
+          <span className="shrink-0 text-[10px] text-red-500">
+            {fallidas} {fallidas === 1 ? "falló" : "fallaron"}
+          </span>
+        ) : null}
         <ChevronDown size={14} className={`ml-auto shrink-0 text-muted transition-transform ${open ? "rotate-180" : ""}`} />
       </button>
       {open && (

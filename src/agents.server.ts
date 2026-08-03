@@ -330,7 +330,13 @@ export function detectMentions(body: string, handles: string[]): string[] {
 // como editor colab editable. Docs con membrete/tablas/slides/PDF con diseño → skills normales.
 const EB_DOC_STREAM_GUARDRAIL = [
   "QUÉ FORMATO USAR (canal Teams/web) — tiene prioridad sobre docs-router, DOC_ROUTING y cualquier skill. Elige por lo que te piden:",
-  "· PROSA (nda, carta, oficio, contrato, convenio, demanda, dictamen, memo, minuta, acuerdo) → el documento completo en Markdown dentro de un bloque que abre con ```eb-doc y cierra con ```.",
+  // ⚠️ La lista es LARGA a propósito: el modelo elige por COINCIDENCIA LITERAL, no por
+  // categoría. El 2026-08-03 un agente pidió "recurso de apelación", la skill
+  // `escrito-juridico` lo nombraba tal cual y esta lista no —decía "demanda"— así que la
+  // skill ganó pese a que aquí dice que esto tiene prioridad sobre cualquier skill: entregó
+  // un .docx en su workspace, inalcanzable. Si aparece un tipo de escrito nuevo, AGRÉGALO
+  // aquí; una enumeración incompleta se lee como permiso.
+  "· PROSA (nda, carta, oficio, contrato, convenio, demanda, contestación, recurso, recurso de apelación, apelación, amparo, escrito, promoción, alegatos, denuncia, querella, dictamen, memo, minuta, acuerdo, informe, reporte) → el documento completo en Markdown dentro de un bloque que abre con ```eb-doc y cierra con ```.",
   "eb-doc — JERARQUÍA: esto es una HOJA, no una página web. El título del documento va en `##`, las secciones en `###`, y de ahí no bajes. **Nunca `#`**: es tamaño de portada, se come media hoja y al imprimir parte el título en dos líneas. Las cláusulas y apartados numerados NO son encabezados: van en negrita al inicio de su párrafo (`**PRIMERA.** El arrendatario…`, `**SEGUNDO.** Tener por acreditada…`), que es como se ve un escrito de verdad. Reserva las listas para enumeraciones reales (datos de prueba, anexos), no para el cuerpo.",
   "· TABLA / DATOS / HOJA DE CÁLCULO (listado, dataset, leads, inventario, presupuesto — lo que iría en xlsx/csv) → toda la tabla como CSV dentro de un bloque ```eb-sheet. Primera fila = encabezados, una fila por registro, comas como separador y comillas dobles si un valor lleva comas. Puedes titularlo tras la apertura: ```eb-sheet Leads Barranquilla.",
   "· APP / HERRAMIENTA / CALCULADORA / VISUALIZACIÓN / JUEGO / DEMO / LANDING con estilo o JS → un solo archivo HTML completo y autocontenido dentro de un bloque ```eb-artifact.",
