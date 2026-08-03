@@ -155,6 +155,7 @@ export function SettingsContent({
 
   const user = data?.user ?? null;
   const isOwner = !!user?.isOwner;
+  const isStaff = !!user?.isStaff;
   const canManageAgents = !!data?.agentAccess?.canManage;
   const tabs: { id: TabId; label: string; icon: typeof Bell }[] = [
     { id: "general", label: t("General"), icon: SlidersHorizontal },
@@ -241,7 +242,7 @@ export function SettingsContent({
           {tab === "general" && user && (
             <>
               {/* Identidad (editable: nombre + avatar) */}
-              <ProfileCard user={user} isOwner={isOwner} />
+              <ProfileCard user={user} isOwner={isOwner} isStaff={isStaff} />
 
               {/* Invitar: Slack default → cualquier member puede invitar (link propio). */}
               {user && (
@@ -833,9 +834,14 @@ function Toggle({ on, onChange }: { on: boolean; onChange: (v: boolean) => void 
 function ProfileCard({
   user,
   isOwner,
+  isStaff,
 }: {
   user: { sub: string; name: string; avatar: string; email: string };
   isOwner: boolean;
+  /** Va ANTES que `isOwner` al etiquetar: el staff tiene `isOwner` en true (así hereda
+   *  los permisos sin tocar 25 sitios) pero NO es el dueño, y decir "Owner" sería
+   *  exactamente la confusión que este rol existe para evitar. */
+  isStaff: boolean;
 }) {
   const t = useT();
   const [name, setName] = useState(user.name ?? "");
@@ -929,7 +935,7 @@ function ProfileCard({
           <p className="mt-1 truncate px-1 text-xs text-muted">{user.email}</p>
         </div>
         <span className="self-start rounded-full bg-brand/15 px-2 py-0.5 text-xs font-medium text-brand">
-          {isOwner ? t("Owner") : t("Miembro")}
+          {isStaff ? t("Staff") : isOwner ? t("Owner") : t("Miembro")}
         </span>
       </div>
       {err && <p className="mt-2 text-xs text-red-400">{err}</p>}

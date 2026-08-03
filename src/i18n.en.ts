@@ -295,6 +295,7 @@ export const en: Record<string, string> = {
   "Mensajes de sala": "Room messages",
   "Mensajes directos": "Direct messages",
   "Miembro": "Member",
+  "Staff": "Staff",
   "Miembros (rooms privados)": "Members (private rooms)",
   "Modelo": "Model",
   "Modo": "Mode",

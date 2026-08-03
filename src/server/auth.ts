@@ -26,9 +26,14 @@ export const me = createServerFn({ method: "GET" }).handler(async () => {
     const { dbqRaw } = await import("../dbq.server");
     const { rows } = await dbqRaw("SELECT is_owner FROM gc_users WHERE sub = ?", [user.sub]);
     if (!rows[0]) return user;
-    const isOwner = Number(rows[0][0]) === 1;
-    if (isOwner === user.isOwner) return user;
-    const fresh = { ...user, isOwner };
+    // ⚠️ `permisosDe` y NO `Number(...) === 1` a secas: el STAFF tiene poder de owner con
+    // `is_owner=0` en la DB, así que leer la columna cruda le quitaría el permiso en el
+    // primer render — otorgado al entrar y perdido acto seguido, sin error ni rastro.
+    // Es la MISMA función que usa `upsertUser`, para que no puedan divergir.
+    const { permisosDe } = await import("../users.server");
+    const fresco = await permisosDe(user.email, Number(rows[0][0]) === 1);
+    if (fresco.isOwner === user.isOwner && fresco.isStaff === user.isStaff) return user;
+    const fresh = { ...user, ...fresco };
     await s.update({ user: fresh }); // que la cookie deje de mentir
     return fresh;
   } catch {
@@ -129,8 +134,13 @@ export const completeGhostyLogin = createServerFn({ method: "POST" })
 
     // Expulsado del workspace → rebota (aunque tenga identidad IdP válida). Antes del
     // upsert para no re-crearlo/tocarlo.
-    const { isBanned } = await import("../users.server");
-    if (await isBanned(id.sub)) throw new Error("sin acceso a este workspace");
+    // El STAFF pasa el ban. `expelMember` ya se niega a banearlo, pero esto cubre las
+    // filas baneadas de antes y cualquier camino que escriba la columna a mano: como el
+    // ban se comprueba ANTES de la puerta, una sola fila mal puesta dejaría al creador
+    // fuera de un workspace para siempre, sin forma de arreglarlo desde dentro.
+    const { isBanned, isStaffEmail } = await import("../users.server");
+    if ((await isBanned(id.sub)) && !(await isStaffEmail(id.email)))
+      throw new Error("sin acceso a este workspace");
 
     // ── Puerta de acceso al workspace ────────────────────────────────────────
     // ANTES de crear nada. Estaba DESPUÉS del upsert y preguntaba `isKnownUser`,
@@ -150,7 +160,7 @@ export const completeGhostyLogin = createServerFn({ method: "POST" })
     // correo y entra con el login que ya usa. A diferencia del staff, éstos SÍ ocupan
     // asiento — son gente del cliente.
     const { isKnownUser, isEmptyWorkspace } = await import("./invites");
-    const { isIntendedOwner, isStaffEmail, isPreapprovedEmail } = await import("../users.server");
+    const { isIntendedOwner, isPreapprovedEmail } = await import("../users.server");
     if (
       !invited &&
       !(await isKnownUser(id.sub)) &&

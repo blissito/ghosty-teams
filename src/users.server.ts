@@ -7,7 +7,19 @@ export type SessionUser = {
   email: string;
   name: string;
   avatar: string;
+  /** ⚠️ LEE "puede todo", NO "es el dueño del workspace".
+   *
+   *  Vale `true` también para el STAFF (nosotros), que tiene poder de owner sin serlo —
+   *  su `gc_users.is_owner` sigue en 0. Se hizo así porque los ~25 sitios que preguntan
+   *  por permisos leen este campo: otorgar el poder en UN punto los cubre a todos sin
+   *  tocarlos.
+   *
+   *  Para saber QUIÉN es el dueño no sirve: usa `gc_users.is_owner` de la DB
+   *  (`listWorkspaceUsers` lo devuelve tal cual). Para etiquetar, `isStaff`. */
   isOwner: boolean;
+  /** Nosotros dentro del espacio de un cliente. Existe SÓLO para que la etiqueta no
+   *  mienta: sin él la UI diría "Owner", que es exactamente lo que no queremos ser. */
+  isStaff: boolean;
   handle: string;
 };
 
@@ -47,6 +59,12 @@ async function ensureUniqueHandle(base: string, ownSub: string): Promise<string>
  *  Sin la clave el comportamiento es el de siempre, así que los workspaces anteriores
  *  a esto no cambian. */
 async function resolveIsOwner(email: string): Promise<0 | 1> {
+  // El STAFF nunca se queda de dueño DE VERDAD, ni entrando primero a un espacio vacío.
+  // Es justo el accidente que `intended_owner_email` vino a evitar —preparamos el
+  // workspace del cliente, lo abrimos antes que él, y su espacio queda a nuestro nombre—
+  // reintroducido por otra puerta. Su poder viene de `permisosDe`, no de esta columna.
+  if (await isStaffEmail(email)) return 0;
+
   if (await isIntendedOwner(email)) return 1;
 
   const intended = await intendedOwnerEmail();
@@ -80,14 +98,47 @@ export async function isIntendedOwner(email: string): Promise<boolean> {
  *  ⚠️ El `Membership(STAFF)` que gs escribe en paralelo NO sirve para esto: esta puerta
  *  no consulta a gs. Es esta clave la que deja entrar. */
 export async function isStaffEmail(email: string): Promise<boolean> {
-  const cfg = await dbq("SELECT v FROM gc_config WHERE k = 'staff_emails'");
-  const raw = (cfg.rows[0]?.[0] as string | null) ?? "";
   const yo = email.trim().toLowerCase();
-  return raw
+  if (!yo) return false;
+
+  // 1) Env GLOBAL: nosotros, en cualquier workspace y sin darnos acceso a mano. Sin el
+  //    env todo el mecanismo queda apagado y el comportamiento es el de siempre — es el
+  //    modo de falla correcto para algo que reparte permisos.
+  const global = (process.env.STAFF_EMAILS ?? "")
     .split(",")
     .map((s) => s.trim().toLowerCase())
-    .filter(Boolean)
-    .includes(yo);
+    .filter(Boolean);
+  if (global.includes(yo)) return true;
+
+  // 2) Lista POR WORKSPACE: para dar acceso puntual a alguien que no está en el env.
+  //    La escribe gs desde /admin/tenants.
+  try {
+    const cfg = await dbq("SELECT v FROM gc_config WHERE k = 'staff_emails'");
+    return ((cfg.rows[0]?.[0] as string | null) ?? "")
+      .split(",")
+      .map((s) => s.trim().toLowerCase())
+      .filter(Boolean)
+      .includes(yo);
+  } catch {
+    // Un workspace sin schema todavía (recién montado) no es una negativa: es "no sé".
+    // Se cae al env, que ya se comprobó arriba.
+    return false;
+  }
+}
+
+/** Los DOS campos de permiso de la sesión, calculados juntos.
+ *
+ *  ⚠️ Existe para que no puedan divergir. Se calculan en dos momentos —al hacer login
+ *  (`upsertUser`) y en CADA render (`me()` en server/auth.ts, que relee el rol de la DB
+ *  para que un traspaso de dueño se note sin volver a entrar)—. Si `me()` calculara esto
+ *  por su cuenta y olvidara el staff, el poder se otorgaría al entrar y se perdería al
+ *  primer render: sin error, sin rastro, imposible de leer desde fuera. */
+export async function permisosDe(
+  email: string,
+  isOwnerEnDb: boolean,
+): Promise<{ isOwner: boolean; isStaff: boolean }> {
+  const isStaff = await isStaffEmail(email);
+  return { isOwner: isOwnerEnDb || isStaff, isStaff };
 }
 
 /** Correos que pueden entrar SIN invitación, porque alguien los dio de alta a mano desde
@@ -153,7 +204,8 @@ export async function upsertUser(id: {
     await dbq("UPDATE gc_users SET email=? WHERE sub=?", [id.email, id.sub]);
     const name = (row[2] as string) || id.name;
     const avatar = (row[3] as string) || id.avatar;
-    return { sub: id.sub, email: id.email, name, avatar, isOwner: Number(row[0]) === 1, handle };
+    const permisos = await permisosDe(id.email, Number(row[0]) === 1);
+    return { sub: id.sub, email: id.email, name, avatar, handle, ...permisos };
   }
   const isOwner = await resolveIsOwner(id.email);
   const handle = await ensureUniqueHandle(base, id.sub);
@@ -161,7 +213,7 @@ export async function upsertUser(id: {
     "INSERT INTO gc_users (sub, email, name, avatar, is_owner, handle) VALUES (?, ?, ?, ?, ?, ?)",
     [id.sub, id.email, id.name, id.avatar, isOwner, handle]
   );
-  return { ...id, isOwner: isOwner === 1, handle };
+  return { ...id, handle, ...(await permisosDe(id.email, isOwner === 1)) };
 }
 
 // Perfil editable por el dueño de la cuenta (Ajustes → perfil): nombre visible y
@@ -218,19 +270,31 @@ export async function updateProfile(
 // que se actualizan en todos lados + el drawer de perfil estilo Slack).
 export type WorkspaceUser = {
   sub: string; name: string; avatar: string; handle: string; isOwner: boolean;
+  /** Nosotros. Aquí `isOwner` SÍ es el dueño de verdad (sale de la columna), así que los
+   *  dos campos son independientes y el staff aparece como lo que es. */
+  isStaff: boolean;
   statusEmoji: string | null; statusText: string | null; title: string | null; pronouns: string | null; bio: string | null;
 };
 export async function listWorkspaceUsers(): Promise<WorkspaceUser[]> {
+  // ⚠️ `email` se SELECCIONA para detectar al staff pero NO se devuelve: este roster lo
+  // recibe cualquier miembro, y hoy no expone correos. Meterlos filtraría los de todo el
+  // equipo del cliente a todo el equipo del cliente.
   const { rows, cols } = await dbq(
-    "SELECT sub, name, avatar, handle, is_owner, status_emoji, status_text, title, pronouns, bio FROM gc_users WHERE handle IS NOT NULL AND COALESCE(banned,0)=0 ORDER BY name"
+    "SELECT sub, name, avatar, handle, is_owner, email, status_emoji, status_text, title, pronouns, bio FROM gc_users WHERE handle IS NOT NULL AND COALESCE(banned,0)=0 ORDER BY name"
   );
   const i = (c: string) => cols.indexOf(c);
+  const staff = new Set<string>();
+  for (const r of rows) {
+    const e = (r[i("email")] as string) ?? "";
+    if (e && (await isStaffEmail(e))) staff.add(e.toLowerCase());
+  }
   return rows.map((r) => ({
     sub: r[i("sub")] as string,
     name: (r[i("name")] as string) ?? "",
     avatar: (r[i("avatar")] as string) ?? "",
     handle: (r[i("handle")] as string) ?? "",
     isOwner: Number(r[i("is_owner")]) === 1,
+    isStaff: staff.has(((r[i("email")] as string) ?? "").toLowerCase()),
     statusEmoji: (r[i("status_emoji")] as string) ?? null,
     statusText: (r[i("status_text")] as string) ?? null,
     title: (r[i("title")] as string) ?? null,
@@ -269,6 +333,14 @@ export async function isBanned(sub: string): Promise<boolean> {
 // Expulsa a un member (owner-only, validado en el server fn). Marca banned=1 (conserva
 // su fila + mensajes; el login lo rebota). No se puede expulsar al owner.
 export async function expelMember(sub: string): Promise<void> {
+  // Al STAFF tampoco se le expulsa, espejo del guard que ya protege al dueño. El motivo
+  // no es simetría: `isBanned` se comprueba ANTES de la puerta en `completeGhostyLogin`,
+  // así que banear al creador lo dejaría fuera para siempre y sin forma de volver desde
+  // dentro. Se resuelve aquí y no en el llamador porque la regla vive con la query.
+  const { rows } = await dbq("SELECT email FROM gc_users WHERE sub=?", [sub]);
+  const email = (rows[0]?.[0] as string | null) ?? "";
+  if (email && (await isStaffEmail(email))) return;
+
   await dbq("UPDATE gc_users SET banned=1 WHERE sub=? AND COALESCE(is_owner,0)=0", [sub]);
 }
 

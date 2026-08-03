@@ -210,7 +210,7 @@ export const Route = createFileRoute("/c/$slug")({
   component: ChannelPage,
 });
 
-type SessionUser = { sub: string; name: string; email: string; avatar: string; isOwner: boolean; handle: string };
+type SessionUser = { sub: string; name: string; email: string; avatar: string; isOwner: boolean; isStaff: boolean; handle: string };
 type Attach = { fileId: string; mime: string; size: number; name: string; thumbFileId?: string | null; width?: number | null; height?: number | null };
 // El optimista guarda su propio payload de envío → se puede reintentar tal cual.
 type Optimistic = {
@@ -718,7 +718,7 @@ function useMentions(): Mention[] {
 // (mensajes viejos incluidos) → al editar tu avatar se ve al instante, como Slack. Cache
 // módulo, refrescado por bus (edición propia) + al reenfocar (cross-cliente).
 export type WsUser = {
-  sub: string; name: string; avatar: string; handle: string; isOwner: boolean;
+  sub: string; name: string; avatar: string; handle: string; isOwner: boolean; isStaff: boolean;
   statusEmoji: string | null; statusText: string | null; title: string | null; pronouns: string | null; bio: string | null;
 };
 let usersCache: Map<string, WsUser> | null = null;
@@ -3515,7 +3515,11 @@ function Sidebar({
         <Avatar name={user?.name} avatar={user?.avatar} className="h-8 w-8" />
         <div className="min-w-0 flex-1">
           <p className="truncate text-sm font-medium text-ink">{user?.name ?? "—"}</p>
-          <p className="truncate text-xs text-muted">{user?.isOwner ? t("Owner") : t("Miembro")}</p>
+          {/* `isStaff` primero: el staff lleva `isOwner` en true para heredar permisos,
+              pero no es el dueño. Ver `SessionUser` en users.server.ts. */}
+          <p className="truncate text-xs text-muted">
+            {user?.isStaff ? t("Staff") : user?.isOwner ? t("Owner") : t("Miembro")}
+          </p>
         </div>
         <Settings size={16} className="text-muted" />
       </button>
@@ -3759,8 +3763,17 @@ function ProfileDrawer({
           {!editing && (dir?.statusText || dir?.statusEmoji) && (
             <p className="mt-0.5 text-sm text-ink">{dir?.statusEmoji} {dir?.statusText}</p>
           )}
+          {/* Decía "Miembro" para todo el mundo, dueño incluido. Ahora dice el tipo real:
+              es la ÚNICA señal de que hay alguien de fuera del equipo con acceso al
+              espacio, y por eso el staff se nombra aquí en vez de esconderse. */}
           <p className="mt-0.5 text-sm text-muted">
-            {target.isAgent ? t("Agente") : t("Miembro")}
+            {target.isAgent
+              ? t("Agente")
+              : dir?.isStaff
+                ? t("Staff")
+                : dir?.isOwner
+                  ? t("Owner")
+                  : t("Miembro")}
             {handle ? ` · @${handle}` : ""}
             {dir?.pronouns ? ` · ${dir.pronouns}` : ""}
           </p>
