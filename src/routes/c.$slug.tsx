@@ -1324,7 +1324,13 @@ function ChannelPage() {
       next.delete(messageId);
       return next;
     });
-    void stopTurnFn({ data: { messageId } }).catch(() => {});
+    // El panel se pinta con `liveTurns` (servidor), no con este mapa: sin quitarlo aquí
+    // también, "Detener" no movía nada en la barra hasta el siguiente latido y parecía roto.
+    setLiveTurns((prev) => prev.filter((x) => x.id !== messageId));
+    liveTurnsRef.current = liveTurnsRef.current.filter((x) => x.id !== messageId);
+    void stopTurnFn({ data: { messageId } })
+      .catch(() => {})
+      .finally(() => refreshLiveTurns());
   };
 
   // Parchea un mensaje (por id) en el flujo activo y en cualquier hilo cacheado (inmutable).

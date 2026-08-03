@@ -112,6 +112,20 @@ export function stopTurn(messageId: number, bySub?: string | null): boolean {
   t.stopped = true;
   t.controller.abort();
   t.announce?.(stateOf(t));
+  // ⚠️ Red contra ZOMBIS. `abort()` corta el fetch, y normalmente el `.finally()` del turno
+  // llama a `finishTurn` y la entrada se va. Pero si la conexión con el worker está colgada
+  // —el caso en el que más falta hace Detener— ese finally puede no llegar nunca, y entonces
+  // el turno se queda registrado para siempre: "Detener" parece no hacer nada y la fila no
+  // desaparece (2026-08-03). A los 5s se retira a la fuerza.
+  const id = t.messageId;
+  const grupo = t.groupId;
+  setTimeout(() => {
+    const sigue = live.get(id);
+    if (sigue && sigue.stopped) {
+      live.delete(id);
+      announceGroup(grupo);
+    }
+  }, 5000).unref?.();
   return true;
 }
 
