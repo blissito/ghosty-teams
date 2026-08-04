@@ -251,6 +251,14 @@ export function nativeTools(dest: ToolDest | null): ConnectorTool[] {
           thanks: { type: "string" },
           fields: { type: "array", items: { type: "object" }, description: "La lista COMPLETA de campos (mismo formato que form_create)" },
           locale: { type: "string", enum: ["es", "en"], description: "Idioma del formulario" },
+          fichaMode: {
+            type: "string",
+            enum: ["off", "auto"],
+            description:
+              "'auto' publica la ficha de CADA respuesta al llegar; 'off' (default) sólo cuando la " +
+              "pidan con form_ficha. Prende 'auto' sólo si te lo piden: con volumen, un documento " +
+              "por respuesta llena el hilo y la hoja ya trae todo junto.",
+          },
           status: { type: "string", enum: ["open", "closed"] },
         },
         required: ["formId"],
@@ -258,7 +266,7 @@ export function nativeTools(dest: ToolDest | null): ConnectorTool[] {
       handler: async (_sub, args) => {
         const { updateForm } = await import("../forms/publish.server");
         const patch: Record<string, unknown> = {};
-        for (const k of ["title", "intro", "thanks", "locale", "status"]) if (args[k] !== undefined) patch[k] = args[k];
+        for (const k of ["title", "intro", "thanks", "locale", "fichaMode", "status"]) if (args[k] !== undefined) patch[k] = args[k];
         if (args.fields !== undefined) patch.fields = args.fields;
         const r = await updateForm(String(args.formId ?? ""), patch as never);
         if (!r.ok) return r;
@@ -306,6 +314,31 @@ export function nativeTools(dest: ToolDest | null): ConnectorTool[] {
           formId: String(args.formId ?? ""),
           limit: typeof args.limit === "number" ? args.limit : undefined,
           since: typeof args.since === "string" ? args.since : undefined,
+        });
+      },
+    },
+    {
+      name: "form_ficha",
+      description:
+        "Publica la FICHA de UNA respuesta: un documento con lo que contestó esa persona, colgado " +
+        "del hilo del formulario. Úsalo cuando pidan 'el expediente de Fulano', 'pásame lo que " +
+        "llenó', 'necesito su ficha en documento' o cuando vayas a trabajar sobre una respuesta " +
+        "concreta. El `submissionId` es el `id` que devuelve form_submissions. Es idempotente: si " +
+        "esa respuesta ya tiene ficha, te devuelve la que hay en vez de crear otra. Para las que " +
+        "llegan de aquí en adelante, form_update con fichaMode:'auto'.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          formId: { type: "string" },
+          submissionId: { type: "number", description: "El `id` de la respuesta (de form_submissions)" },
+        },
+        required: ["formId", "submissionId"],
+      },
+      handler: async (_sub, args) => {
+        const { ensureFicha } = await import("../forms/ficha.server");
+        return ensureFicha({
+          formId: String(args.formId ?? ""),
+          submissionId: Math.floor(Number(args.submissionId ?? 0)),
         });
       },
     },

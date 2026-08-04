@@ -34,6 +34,8 @@ export type FormRow = {
   sheetMessageId: number | null;
   /** Idioma del formulario público. Se hornea en su HTML al publicar. */
   locale: FormLocale;
+  /** `auto` publica la ficha de cada respuesta al llegar; `off` (default) sólo bajo demanda. */
+  fichaMode: "off" | "auto";
   status: "open" | "closed";
   submissionCount: number;
   lastSubmittedAt: number | null;
@@ -41,7 +43,7 @@ export type FormRow = {
 
 const COLS = `id, ns, channel_id, topic, anchor_message_id, title, schema_json, intro, thanks,
   owner_sub, agent_handle, agent_name, agent_avatar, document_id, share_slug, origin,
-  sheet_document_id, sheet_message_id, locale, status, submission_count, last_submitted_at`;
+  sheet_document_id, sheet_message_id, locale, ficha_mode, status, submission_count, last_submitted_at`;
 
 function toRow(r: Record<string, string | null>): FormRow {
   const n = (v: string | null) => Number(v ?? 0);
@@ -72,6 +74,7 @@ function toRow(r: Record<string, string | null>): FormRow {
     sheetMessageId: r.sheet_message_id != null ? n(r.sheet_message_id) : null,
     // Defensivo como el resto: una fila anterior a la columna trae null y cae a español.
     locale: toFormLocale(r.locale),
+    fichaMode: r.ficha_mode === "auto" ? "auto" : "off",
     status: r.status === "closed" ? "closed" : "open",
     submissionCount: n(r.submission_count),
     lastSubmittedAt: r.last_submitted_at != null ? n(r.last_submitted_at) : null,
@@ -111,6 +114,7 @@ export type CreateFormArgs = {
   agentName?: string | null;
   agentAvatar?: string | null;
   locale?: FormLocale;
+  fichaMode?: "off" | "auto";
   /**
    * Partir de un formulario que ya existe. Lo que no venga en `a` se hereda de él: campos,
    * intro, gracias e idioma. Un formulario que ya funcionó es el mejor punto de partida
@@ -149,8 +153,8 @@ export async function createForm(
   const id = `form_${randomUUID()}`;
   await dbq(
     `INSERT INTO gt_forms (id, ns, channel_id, topic, title, schema_json, intro, thanks,
-       owner_sub, agent_handle, agent_name, agent_avatar, origin, locale)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+       owner_sub, agent_handle, agent_name, agent_avatar, origin, locale, ficha_mode)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     [
       id,
       ns,
@@ -166,6 +170,7 @@ export async function createForm(
       a.agentAvatar || null,
       origin || null,
       toFormLocale(a.locale ?? base?.locale),
+      (a.fichaMode ?? base?.fichaMode) === "auto" ? "auto" : "off",
     ]
   );
 
@@ -180,6 +185,7 @@ export type UpdateFormArgs = {
   intro?: string | null;
   thanks?: string | null;
   locale?: FormLocale;
+  fichaMode?: "off" | "auto";
   status?: "open" | "closed";
 };
 
@@ -215,6 +221,10 @@ export async function updateForm(
   if (patch.locale !== undefined) {
     sets.push("locale = ?");
     args.push(toFormLocale(patch.locale));
+  }
+  if (patch.fichaMode !== undefined) {
+    sets.push("ficha_mode = ?");
+    args.push(patch.fichaMode === "auto" ? "auto" : "off");
   }
   if (patch.status !== undefined) {
     sets.push("status = ?");

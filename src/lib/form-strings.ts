@@ -70,6 +70,16 @@ export type FormStrings = {
   anchorMessage: string;
   /** Encabezado de la primera columna de la hoja de respuestas. */
   dateColumn: string;
+  // ── La ficha de UNA respuesta ──
+  /** Cómo se le llama al documento de una respuesta. */
+  fichaLabel: string;
+  /** Pie del encabezado de la ficha. */
+  fichaAnsweredOn: string;
+  /** Encabezado de la columna de respuestas de una matrix dentro de la ficha. */
+  fichaAnswerColumn: string;
+  /** El mensaje que la anuncia en el hilo. */
+  fichaMessage: string;
+  fichaMessageAnon: string;
 };
 
 export const FORM_STRINGS: Record<FormLocale, FormStrings> = {
@@ -108,6 +118,11 @@ export const FORM_STRINGS: Record<FormLocale, FormStrings> = {
     anchorMessage:
       "📋 **{title}** — formulario de intake. Comparte la liga; las respuestas llegan a este hilo.",
     dateColumn: "Fecha",
+    fichaLabel: "Ficha",
+    fichaAnsweredOn: "_Respondido el {date}_",
+    fichaAnswerColumn: "Respuesta",
+    fichaMessage: "📄 **Ficha** — {who}",
+    fichaMessageAnon: "📄 **Ficha de una respuesta**",
   },
   en: {
     thanksDefault: "Thank you! We've received your answers.",
@@ -144,6 +159,11 @@ export const FORM_STRINGS: Record<FormLocale, FormStrings> = {
     anchorMessage:
       "📋 **{title}** — intake form. Share the link; responses land in this thread.",
     dateColumn: "Date",
+    fichaLabel: "Response",
+    fichaAnsweredOn: "_Submitted on {date}_",
+    fichaAnswerColumn: "Answer",
+    fichaMessage: "📄 **Response** — {who}",
+    fichaMessageAnon: "📄 **A response came in**",
   },
 };
 

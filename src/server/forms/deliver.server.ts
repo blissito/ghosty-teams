@@ -44,6 +44,17 @@ export async function deliverSubmission(a: DeliverArgs): Promise<{ messageId: nu
     await dbq(`UPDATE gt_form_submissions SET message_id = ? WHERE id = ?`, [messageId, a.submissionId]);
   }
 
+  // La ficha va DESPUÉS de la hoja y en su propio try/catch: la hoja es el entregable y no
+  // puede caerse porque un documento falle. Y sólo en 'auto' — el default es pedirla.
+  if (form.fichaMode === "auto") {
+    try {
+      const { ensureFicha } = await import("./ficha.server");
+      await ensureFicha({ formId: form.id, submissionId: a.submissionId });
+    } catch (e) {
+      console.error("[form deliver] ficha falló", e);
+    }
+  }
+
   // La gracia de un intake es enterarse sin tener la pestaña abierta. Esto SÍ es por
   // respuesta: el mensaje del room se reescribe, pero el aviso es de una que acaba de llegar.
   if (form.ownerSub) {
@@ -296,7 +307,7 @@ function csvCell(s: string): string {
 }
 
 /** Quién respondió, para el título de la ficha y la card. */
-function identidad(fields: FormField[], data: Record<string, string>): string {
+export function identidad(fields: FormField[], data: Record<string, string>): string {
   for (const k of ["razon_social", "empresa", "nombre", "contacto", "nombre_completo"]) {
     if (data[k]) return data[k].slice(0, 70);
   }

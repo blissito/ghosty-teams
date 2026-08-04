@@ -4,7 +4,7 @@ import { FileText, ExternalLink, Copy, Check, ArrowLeft, MessageSquare } from "l
 import { useLocale, useT } from "../i18n";
 import { intlLocale } from "../i18n.core";
 import { me } from "../server/auth";
-import { listTeamFormsFn } from "../server/forms";
+import { listTeamFormsFn, setFormFichaModeFn } from "../server/forms";
 
 // Cache a nivel de módulo: re-entrar a /forms es instantáneo (sin skeleton si ya se vio).
 type FormRow = Awaited<ReturnType<typeof listTeamFormsFn>>[number];
@@ -35,6 +35,22 @@ function FormsPage() {
     return () => { alive = false; };
   }, []);
 
+  // Optimista y sin recargar la lista: es un interruptor, y esperar medio segundo a que
+  // vuelva el servidor para que se mueva se siente roto. Si falla, se regresa solo.
+  const toggleFicha = (f: FormRow) => {
+    const mode = f.fichaMode === "auto" ? "off" : "auto";
+    const pintar = (m: "off" | "auto") =>
+      setForms((prev) => {
+        const next = (prev ?? []).map((x) => (x.formId === f.formId ? { ...x, fichaMode: m } : x));
+        formsCache = next;
+        return next;
+      });
+    pintar(mode);
+    setFormFichaModeFn({ data: { formId: f.formId, mode } })
+      .then((r) => { if (!r.ok) pintar(f.fichaMode); })
+      .catch(() => pintar(f.fichaMode));
+  };
+
   const copy = (url: string, id: string) => {
     navigator.clipboard?.writeText(url).then(() => {
       setCopied(id);
@@ -51,7 +67,7 @@ function FormsPage() {
         <header className="mb-6">
           <h1 className="text-2xl font-bold flex items-center gap-2"><FileText size={22} className="text-brand" /> {t("Formularios")}</h1>
           <p className="text-muted text-sm mt-1">
-            {t("Formularios de intake de tus expedientes. Las respuestas caen en el room del cliente como ficha descargable.")}
+            {t("Formularios de intake de tus expedientes. Las respuestas caen en el room del cliente, en una hoja que crece con cada envío.")}
           </p>
         </header>
 
@@ -120,6 +136,18 @@ function FormsPage() {
                 ) : (
                   <span className="text-xs text-faint italic">{t("sin liga")}</span>
                 )}
+                <label
+                  title={t("Publica el documento de cada respuesta en el hilo del formulario. Sólo de aquí en adelante.")}
+                  className="w-full flex items-center gap-2 text-xs text-muted cursor-pointer select-none pt-1"
+                >
+                  <input
+                    type="checkbox"
+                    checked={f.fichaMode === "auto"}
+                    onChange={() => toggleFicha(f)}
+                    className="accent-brand"
+                  />
+                  {t("Una ficha por respuesta")}
+                </label>
               </li>
             ))}
           </ul>

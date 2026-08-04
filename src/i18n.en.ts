@@ -877,8 +877,11 @@ export const en: Record<string, string> = {
   "Copiado": "Copied",
   "Copiar liga": "Copy link",
   "El asistente se tomó una pausa": "The assistant took a break",
-  "Formularios de intake de tus expedientes. Las respuestas caen en el room del cliente como ficha descargable.":
-    "Intake forms for your matters. Responses land in the client's room as a downloadable record.",
+  "Formularios de intake de tus expedientes. Las respuestas caen en el room del cliente, en una hoja que crece con cada envío.":
+    "Intake forms for your matters. Responses land in the client's room, in a sheet that grows with every submission.",
+  "Una ficha por respuesta": "One record per response",
+  "Publica el documento de cada respuesta en el hilo del formulario. Sólo de aquí en adelante.":
+    "Publishes each response as its own document in the form's thread. Going forward only.",
   "No se pudo conectar a la co-edición.": "Couldn't connect to co-editing.",
   "No se pudo mostrar el artefacto.": "Couldn't display the artifact.",
   "Pídele a": "Ask",

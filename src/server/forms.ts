@@ -38,6 +38,31 @@ export const listTeamFormsFn = createServerFn({ method: "GET" }).handler(async (
       submissions: f.submissionCount,
       lastSubmittedAt: f.lastSubmittedAt,
       status: f.status,
+      fichaMode: f.fichaMode,
     };
   });
 });
+
+/**
+ * Prende o apaga la ficha por respuesta.
+ *
+ * ⚠️ Sólo hacia ADELANTE: no hay backfill al prenderla. Publicar de golpe las fichas de 80
+ * respuestas viejas llenaría el hilo justo con lo que este diseño evita, y la ficha de una
+ * respuesta concreta se pide con `form_ficha`. `listForms` ya está acotado al namespace del
+ * tenant, así que un formId de otro workspace no resuelve.
+ */
+export const setFormFichaModeFn = createServerFn({ method: "POST" })
+  .validator((d: { formId: string; mode: "off" | "auto" }) => d)
+  .handler(async ({ data }) => {
+    const me = await sessionUser();
+    if (!me) return { ok: false as const, error: "sin sesión" };
+    const { dbq } = await import("../dbq.server");
+    const { getForm } = await import("./forms/publish.server");
+    const form = await getForm(String(data.formId ?? ""));
+    if (!form) return { ok: false as const, error: "ese formulario no existe" };
+    const mode = data.mode === "auto" ? "auto" : "off";
+    // UPDATE directo y NO `updateForm`: esto no cambia el formulario público, así que no
+    // tiene por qué publicar una versión nueva de su artefacto.
+    await dbq(`UPDATE gt_forms SET ficha_mode = ?, updated_at = unixepoch() WHERE id = ?`, [mode, form.id]);
+    return { ok: true as const, fichaMode: mode };
+  });

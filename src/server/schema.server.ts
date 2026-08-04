@@ -604,6 +604,13 @@ async function migrate(): Promise<void> {
   // y quien responde lo abre sin cookie ni sesión (iframe de origen opaco): no hay nada que
   // mirar en tiempo de lectura. Default 'es' → los formularios que ya existen no cambian.
   await addColumn("gt_forms", "locale", "TEXT NOT NULL DEFAULT 'es'");
+  // La FICHA por respuesta: un documento con lo que contestó UNA persona. 'off' | 'auto'.
+  //
+  // Nace apagada a propósito. Existió automática (3242eca) y se quitó (9b06121) porque
+  // duplicaba en cada envío el trabajo que ya hace la hoja y llenaba el hilo de tarjetas
+  // que nadie abría. Vuelve porque para un expediente sí se quiere el documento de UNA
+  // respuesta — pero bajo demanda, y colgado del hilo de la hoja en vez de al lado de ella.
+  await addColumn("gt_forms", "ficha_mode", "TEXT NOT NULL DEFAULT 'off'");
 
   // Las respuestas. `data_json` = sólo los campos VISIBLES (un campo oculto por showIf no
   // tiene respuesta que registrar). La IP se guarda HASHEADA: sirve para el rate limit y
@@ -620,6 +627,9 @@ async function migrate(): Promise<void> {
     idem_key          TEXT
   )`);
   await exec(`CREATE INDEX IF NOT EXISTS gt_form_subs_form ON gt_form_submissions(form_id, id DESC)`);
+  // El mensaje donde vive la ficha. `ficha_document_id` ya existía (es de 3242eca); éste
+  // hacía falta para poder abrirla sin recorrer el hilo.
+  await addColumn("gt_form_submissions", "ficha_message_id", "INTEGER");
   // La idempotencia REAL: el cliente manda la misma `_idem` en cada reintento, así que un
   // doble clic o un retry de red no pueden crear dos respuestas ni dos fichas.
   await exec(`CREATE UNIQUE INDEX IF NOT EXISTS gt_form_subs_idem ON gt_form_submissions(idem_key)`);
