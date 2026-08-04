@@ -148,6 +148,14 @@ export function nativeTools(dest: ToolDest | null): ConnectorTool[] {
         type: "object",
         properties: {
           title: { type: "string", description: "Nombre del formulario, como lo verá quien responde" },
+          fromFormId: {
+            type: "string",
+            description:
+              "Parte de un formulario que YA existe (saca el id con form_list): hereda campos, intro, " +
+              "gracias e idioma, y lo que mandes aquí los pisa. Es un formulario NUEVO con liga nueva, " +
+              "no la misma. Úsalo para repetir en otro cliente algo que ya funcionó, o para adaptar una " +
+              "plantilla en vez de dictar 40 campos otra vez",
+          },
           intro: { type: "string", description: "Una línea de contexto arriba del formulario" },
           thanks: { type: "string", description: "Mensaje al terminar de responder" },
           locale: {
@@ -202,7 +210,9 @@ export function nativeTools(dest: ToolDest | null): ConnectorTool[] {
             },
           },
         },
-        required: ["title", "fields"],
+        // `fields` no va en required: clonando se heredan del original. Si no hay ni uno
+        // ni otro, `createForm` lo dice con su propio mensaje.
+        required: ["title"],
       },
       handler: async (sub, args) => {
         if (!dest?.channelId) return { ok: false, error: "los formularios sólo se pueden crear dentro de un canal" };
@@ -212,6 +222,7 @@ export function nativeTools(dest: ToolDest | null): ConnectorTool[] {
           topic: dest.topic || "general",
           title: String(args.title ?? ""),
           fields: args.fields,
+          fromFormId: typeof args.fromFormId === "string" ? args.fromFormId : undefined,
           intro: typeof args.intro === "string" ? args.intro : null,
           thanks: typeof args.thanks === "string" ? args.thanks : null,
           locale: args.locale === "en" ? "en" : "es",

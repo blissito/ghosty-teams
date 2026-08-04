@@ -111,14 +111,30 @@ export type CreateFormArgs = {
   agentName?: string | null;
   agentAvatar?: string | null;
   locale?: FormLocale;
+  /**
+   * Partir de un formulario que ya existe. Lo que no venga en `a` se hereda de él: campos,
+   * intro, gracias e idioma. Un formulario que ya funcionó es el mejor punto de partida
+   * para el siguiente, y es lo que hace que una vertical se arme una vez y se reuse.
+   */
+  fromFormId?: string;
 };
 
 export async function createForm(
   a: CreateFormArgs
 ): Promise<{ ok: true; form: FormRow; url: string | null } | { ok: false; error: string }> {
-  const v = validateSchema(a.fields);
+  // Clonar: `getForm` está acotado al namespace del tenant, así que no se puede partir del
+  // formulario de otro workspace ni sabiendo su id. Lo que NUNCA se copia es la identidad
+  // del original —share_slug, document_id, el contador y las respuestas—: es un formulario
+  // nuevo con la misma forma, no la misma liga.
+  let base: FormRow | null = null;
+  if (a.fromFormId) {
+    base = await getForm(String(a.fromFormId));
+    if (!base) return { ok: false, error: "ese formulario no existe (revisa el id con form_list)" };
+  }
+
+  const v = validateSchema(a.fields ?? base?.fields);
   if (!v.ok) return { ok: false, error: v.error };
-  const title = String(a.title ?? "").trim();
+  const title = String(a.title ?? base?.title ?? "").trim();
   if (!title) return { ok: false, error: "falta el título del formulario" };
 
   const { dbq } = await import("../../dbq.server");
@@ -142,14 +158,14 @@ export async function createForm(
       a.topic || "general",
       title,
       JSON.stringify(v.fields),
-      a.intro?.trim() || null,
-      a.thanks?.trim() || null,
+      a.intro?.trim() || base?.intro || null,
+      a.thanks?.trim() || base?.thanks || null,
       a.ownerSub,
       a.agentHandle || null,
       a.agentName || null,
       a.agentAvatar || null,
       origin || null,
-      toFormLocale(a.locale),
+      toFormLocale(a.locale ?? base?.locale),
     ]
   );
 
