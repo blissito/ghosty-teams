@@ -355,6 +355,8 @@ type ConnItem = {
   holders: { sub: string; name: string; avatar: string }[];
   /** La conexión DEL EQUIPO, si alguien la compartió. */
   shared: { sub: string; name: string; avatar: string; mine: boolean } | null;
+  /** ¿Está compartida LA MÍA? No es lo mismo que `shared`, que puede ser la de otro. */
+  mineShared: boolean;
   canShareOthers: boolean;
 };
 
@@ -518,16 +520,19 @@ function IntegrationsPanel() {
                       </span>
                       {/* Compartir la MÍA. Es un solo acto, reversible, y no toca el
                           token: dejar de compartir y desconectar son cosas distintas. */}
+                      {/* Se mira `mineShared`, NO `shared`: con la de otra persona
+                          compartida, `shared.mine` es false y el botón decía "Compartir",
+                          creando una SEGUNDA conexión compartida del mismo proveedor. */}
                       <button
-                        onClick={() => share(c.id, "", !c.shared?.mine)}
+                        onClick={() => share(c.id, "", !c.mineShared)}
                         disabled={busy === c.id}
                         className={`rounded-lg border px-2.5 py-1 text-xs disabled:opacity-50 ${
-                          c.shared?.mine
+                          c.mineShared
                             ? "border-emerald-500/40 text-emerald-500"
                             : "border-border text-muted hover:text-ink"
                         }`}
                       >
-                        {c.shared?.mine ? t("Compartida") : t("Compartir")}
+                        {c.mineShared ? t("Compartida") : t("Compartir")}
                       </button>
                       {/* Conectar no siempre es suficiente: GitHub además exige
                           elegir a qué repos llega la app, y eso se cambia luego

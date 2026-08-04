@@ -45,6 +45,9 @@ export const listMyConnectorsFn = createServerFn({ method: "GET" }).handler(asyn
       const u = gente.get(dueño);
       return { sub: dueño, name: u?.name ?? "", avatar: u?.avatar ?? "", mine: dueño === me.sub };
     })(),
+    /** ¿Está compartida LA MÍA? Distinto de `shared`, que puede ser la de otra persona —
+     *  confundirlos hacía que el botón dijera "Compartir" y creara una SEGUNDA compartida. */
+    mineShared: compartidas.get(c.id) === me.sub,
     /** ¿Puedo compartir la conexión de otro? Staff y owner sí. */
     canShareOthers: !!me.isOwner,
     // Sin mí (ya salgo como "Conectado") y sin correo. Un sub sin fila en el padrón —

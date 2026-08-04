@@ -26,6 +26,20 @@ export const Route = createFileRoute("/api/connectors/tools")({
         const { verifyToolToken } = await import("../server/connectors/tool-token.server");
         const claims = verifyToolToken(token);
         if (!claims) return json({ error: "token inválido o expirado" }, 401);
+        // ⚠️ El token tiene que ser de ESTE workspace. Antes bastaba con el `sub`: en otro
+        // tenant esa persona no tenía filas y el dispatch se quedaba sin nada que ejecutar.
+        // Las conexiones COMPARTIDAS rompieron esa contención —la consulta pasó a ser
+        // `(user_sub=? OR shared=1)`— así que un token del workspace A mandado al host de B
+        // resolvería la conexión compartida de B y correría con SU token. El box ejecuta
+        // código escrito por el modelo y puede leer su propio tool-token.
+        //
+        // Los tokens sin `ns` son de antes de este cambio y caducan solos en 15 minutos; se
+        // aceptan sólo durante esa ventana para no romper los turnos en vuelo del deploy.
+        if (claims.ns) {
+          const { currentNamespace } = await import("../server/tenant.server");
+          const aqui = await currentNamespace().catch(() => null);
+          if (!aqui || aqui !== claims.ns) return json({ error: "token de otro workspace" }, 403);
+        }
         const sub = claims.sub;
         // El destino (canal/DM del turno) sale del token FIRMADO, nunca del body: es lo
         // que ata las tools nativas a esta conversación y a esta persona.

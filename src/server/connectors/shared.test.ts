@@ -28,16 +28,21 @@ describe("resolveConnectorOwner", () => {
     expect(await resolveConnectorOwner("ana", "sentry")).toBeNull();
   });
 
-  it("la PROPIA gana a la compartida", async () => {
-    // Es la garantía de que el agente actúa con MIS permisos cuando los tengo: si la
-    // compartida ganara, un miembro haría en Sentry cosas que su cuenta no puede.
-    // El desempate es del ORDER BY, así que se comprueba que la consulta lo lleve.
+  it("la PROPIA gana, el desempate es estable y los expulsados quedan fuera", async () => {
+    // Tres garantías que viven en el SQL y por eso se comprueban ahí:
+    //  · la propia gana → el agente actúa con MIS permisos cuando los tengo;
+    //  · `user_sub ASC` → con dos compartidas la elegida no cambia entre llamadas, o el
+    //    panel nombraría a una persona y el agente usaría la conexión de otra;
+    //  · el LEFT JOIN con banned → expulsar a alguien deja de prestar su token (expulsar
+    //    sólo pone banned=1 y no toca gc_user_connectors).
     dbq.mockResolvedValueOnce([{ user_sub: "ana", shared: "0" }]);
     await resolveConnectorOwner("ana", "sentry");
     const sql = String(dbq.mock.calls[0][0]).replace(/\s+/g, " ");
-    expect(sql).toContain("ORDER BY (user_sub=?) DESC");
+    expect(sql).toContain("ORDER BY (c.user_sub=?) DESC, c.user_sub ASC");
     expect(sql).toContain("access_token IS NOT NULL");
-    // Y que el sub viaje tanto para el filtro como para el desempate.
+    expect(sql).toContain("COALESCE(u.banned,0)=0");
+    // La propia NO se filtra por banned: si estás baneado no llegas hasta aquí.
+    expect(sql).toContain("c.user_sub=? OR (c.shared=1");
     expect(dbq.mock.calls[0][1]).toEqual(["sentry", "ana", "ana"]);
   });
 });
@@ -48,7 +53,8 @@ describe("listAvailableProviders", () => {
     const out = await listAvailableProviders("ana");
     expect([...out].sort()).toEqual(["denik", "sentry"]);
     const sql = String(dbq.mock.calls[0][0]).replace(/\s+/g, " ");
-    expect(sql).toContain("user_sub=? OR shared=1");
+    expect(sql).toContain("c.user_sub=? OR (c.shared=1");
+    expect(sql).toContain("COALESCE(u.banned,0)=0");
   });
 });
 

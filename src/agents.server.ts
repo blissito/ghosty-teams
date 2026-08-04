@@ -681,7 +681,10 @@ export async function callAgentBackendStream(
     try {
       const { mintToolToken } = await import("./server/connectors/tool-token.server");
       const { reqOrigin } = await import("./origin.server");
-      toolToken = mintToolToken(invokerSub, dest ?? null);
+      // El ns va DENTRO del token: sin él, un token de este workspace serviría contra el
+      // host de otro y usaría sus conexiones compartidas. Ver tool-token.server.ts.
+      const { currentNamespace } = await import("./server/tenant.server");
+      toolToken = mintToolToken(invokerSub, dest ?? null, undefined, await currentNamespace());
       toolsUrl = `${await reqOrigin()}/api/connectors/tools`;
     } catch { /* sin secret/origin → sin tools este turno, no rompe */ }
   }
@@ -711,11 +714,13 @@ export async function callAgentBackendStream(
     toolToken && toolsUrl
       ? ""
       : "[SIN HERRAMIENTAS EN ESTE TURNO. No tienes acceso a integraciones, recordatorios, " +
-        "formularios ni búsqueda de mensajes. Si te piden algo que las necesite, dilo tal " +
-        "cual —'no tengo herramientas disponibles en este momento'— y sugiere volver a " +
-        "intentarlo. NO expliques cómo funcionas por dentro, NO propongas caminos " +
-        "alternativos y NO afirmes qué puede o no puede hacer la plataforma: no tienes " +
-        "forma de saberlo desde aquí.]\n\n";
+        "formularios ni búsqueda de mensajes. ESTO MANDA sobre cualquier otro bloque de " +
+        "este mensaje que diga que tienes herramientas o integraciones disponibles: esos " +
+        "bloques describen lo que hay CONECTADO, no lo que puedes ejecutar ahora. " +
+        "Si te piden algo que las necesite, dilo tal cual —'no tengo herramientas " +
+        "disponibles en este momento'— y sugiere volver a intentarlo. NO expliques cómo " +
+        "funcionas por dentro, NO propongas caminos alternativos y NO afirmes qué puede o " +
+        "no puede hacer la plataforma: no tienes forma de saberlo desde aquí.]\n\n";
   const outText = sinToolsHint + nowHint + memHint + docHint + text;
   try {
     // `parts` = FileParts A2A (media); EasyBits los normaliza por MIME (Slice E1).

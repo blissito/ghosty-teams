@@ -155,10 +155,21 @@ export async function resolveConnectorOwner(
   sub: string,
   provider: string
 ): Promise<{ ownerSub: string; shared: boolean } | null> {
+  // ⚠️ El LEFT JOIN con gc_users deja fuera a los EXPULSADOS. Expulsar sólo pone
+  // `banned=1` y no toca `gc_user_connectors`, así que sin esto el equipo seguiría
+  // actuando con el token de alguien a quien acaban de sacar — y encima sin nombre, porque
+  // `listWorkspaceUsers` filtra a los baneados y la atribución se perdería justo en el
+  // caso donde más importa. La propia NUNCA se filtra: si estás baneado no llegas aquí.
+  //
+  // El último criterio es el DESEMPATE: con dos personas compartiendo el mismo proveedor,
+  // la fila elegida sería arbitraria y podría cambiar entre llamadas — el panel nombraría
+  // a una y el agente usaría la de la otra. Alfabético es arbitrario pero ESTABLE.
   const rows = await dbq(
-    `SELECT user_sub, shared FROM gc_user_connectors
-      WHERE provider=? AND access_token IS NOT NULL AND (user_sub=? OR shared=1)
-      ORDER BY (user_sub=?) DESC LIMIT 1`,
+    `SELECT c.user_sub, c.shared FROM gc_user_connectors c
+       LEFT JOIN gc_users u ON u.sub = c.user_sub
+      WHERE c.provider=? AND c.access_token IS NOT NULL
+        AND (c.user_sub=? OR (c.shared=1 AND COALESCE(u.banned,0)=0))
+      ORDER BY (c.user_sub=?) DESC, c.user_sub ASC LIMIT 1`,
     [provider, sub, sub]
   );
   const r = rows[0];
@@ -168,9 +179,13 @@ export async function resolveConnectorOwner(
 
 /** Proveedores que este usuario puede usar: los suyos + los compartidos del workspace. */
 export async function listAvailableProviders(sub: string): Promise<Set<string>> {
+  // Mismo filtro de expulsados que `resolveConnectorOwner`, o se anunciarían tools que
+  // luego no se pueden ejecutar.
   const rows = await dbq(
-    `SELECT DISTINCT provider FROM gc_user_connectors
-      WHERE access_token IS NOT NULL AND (user_sub=? OR shared=1)`,
+    `SELECT DISTINCT c.provider FROM gc_user_connectors c
+       LEFT JOIN gc_users u ON u.sub = c.user_sub
+      WHERE c.access_token IS NOT NULL
+        AND (c.user_sub=? OR (c.shared=1 AND COALESCE(u.banned,0)=0))`,
     [sub]
   );
   return new Set(rows.map((r) => r.provider!).filter(Boolean));
@@ -191,11 +206,14 @@ export async function setConnectorShared(
 
 /** Las compartidas del workspace → provider → sub del dueño. Para el panel. */
 export async function listSharedConnectors(): Promise<Map<string, string>> {
+  // Mismo desempate que `resolveConnectorOwner`, o el panel nombraría a una persona y el
+  // agente usaría la conexión de otra.
   const rows = await dbq(
-    "SELECT user_sub, provider FROM gc_user_connectors WHERE shared=1 AND access_token IS NOT NULL"
+    `SELECT user_sub, provider FROM gc_user_connectors
+      WHERE shared=1 AND access_token IS NOT NULL ORDER BY user_sub ASC`
   );
   const out = new Map<string, string>();
-  for (const r of rows) if (r.provider && r.user_sub) out.set(r.provider, r.user_sub);
+  for (const r of rows) if (r.provider && r.user_sub && !out.has(r.provider)) out.set(r.provider, r.user_sub);
   return out;
 }
 

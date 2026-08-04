@@ -9,6 +9,7 @@ import { getValidToken } from "./oauth.server";
 import { getConnectorRow } from "./store.server";
 import type { ConnectorTool } from "./impl";
 import type { ToolDest } from "./tool-token.server";
+import { verifyHookToken } from "../hooks/token.server";
 
 const BASE = (process.env.SENTRY_BASE_URL ?? "https://sentry.io").replace(/\/$/, "");
 
@@ -426,6 +427,19 @@ async function hookUrl(token: string): Promise<string> {
   return `${base}/api/hooks/sentry/${token}`;
 }
 
+/**
+ * ¿Esta URL de webhook entrega en ESTE canal?
+ *
+ * Se resuelve leyendo el token firmado que lleva la propia URL, no comparando cadenas: el
+ * token cambia cada vez que se reconfigura, y el prefijo es el mismo para todos los canales
+ * del workspace. Una URL de otro workspace, o manipulada, no verifica y cuenta como ajena —
+ * que es el lado seguro: se conserva.
+ */
+function esDeEsteCanal(url: string, channelId: number): boolean {
+  const token = url.split("/api/hooks/sentry/")[1];
+  return !!token && verifyHookToken(token)?.channelId === channelId;
+}
+
 const SOLO_EN_CANAL = {
   error: "Las alertas de Sentry sólo se pueden configurar dentro de un canal, no en un DM.",
 };
@@ -477,10 +491,11 @@ function alertTools(dest: ToolDest | null): ConnectorTool[] {
         // con el mismo token— sino que a esa conexión le falta `project:write`, porque se
         // hizo antes de que el scope entrara en la lista. El mensaje genérico mandaba a
         // buscar el problema al lado equivocado.
-        // Se compara por el prefijo del endpoint y no por la URL completa, porque el token
-        // cambia si se reconfigura y quedarían dos entregas al mismo canal.
-        const prefijo = await hookUrl("");
-        const otras = urls.filter((u) => typeof u === "string" && !u.startsWith(prefijo));
+        // ⚠️ Se filtra por CANAL, no por prefijo del workspace. Comparar sólo el prefijo
+        // borraba las URLs de TODOS los canales del workspace: activar las alertas de un
+        // proyecto en #b dejaba a #a sin las suyas, en silencio y sin error. El canal va
+        // firmado dentro del token de cada URL, así que se lee de ahí.
+        const otras = urls.filter((u) => typeof u === "string" && !esDeEsteCanal(u, channelId));
         const puesto = await api(sub, `/projects/${p}/legacy-webhooks/`, {
           method: "POST",
           body: JSON.stringify({ urls: [...otras, url], enabled: true }),
@@ -548,12 +563,13 @@ function alertTools(dest: ToolDest | null): ConnectorTool[] {
         const org = await orgOf(sub, a);
         if (!org) return NO_ORG;
         const p = `${encodeURIComponent(org)}/${encodeURIComponent(String(a.project))}`;
-        const prefijo = await hookUrl("");
 
         const actual = await api(sub, `/projects/${p}/legacy-webhooks/`);
         if (actual?.error) return actual;
         const urls: string[] = Array.isArray(actual?.urls) ? actual.urls : [];
-        const otras = urls.filter((u) => typeof u === "string" && !u.startsWith(prefijo));
+        // Sólo la de ESTE canal. Filtrar por prefijo apagaba también las alertas de los
+        // demás canales del workspace sin decir nada.
+        const otras = urls.filter((u) => typeof u === "string" && !esDeEsteCanal(u, channelId));
         // Si no queda ninguna URL se apaga el webhook entero. Dejarlo `enabled` con la
         // lista vacía no rompe nada, pero deja basura visible en los ajustes del cliente.
         const quitado = await api(sub, `/projects/${p}/legacy-webhooks/`, {
@@ -562,17 +578,31 @@ function alertTools(dest: ToolDest | null): ConnectorTool[] {
         });
         if (quitado?.error) return quitado;
 
-        // La regla sólo se borra si es NUESTRA. Otra regla del cliente que también use
-        // webhooks legacy no es asunto nuestro.
-        const reglas = await api(sub, `/projects/${p}/rules/`);
+        // ⚠️ La regla es del PROYECTO y no sabe de canales: dispara los webhooks legacy,
+        // todos. Así que sólo se puede borrar cuando ya no queda NINGUNA URL nuestra —
+        // borrarla mientras otro canal sigue suscrito lo dejaría mudo sin ningún aviso.
+        // Por eso se cuentan las que quedan en vez de mirar sólo la etiqueta.
+        const quedanNuestras = otras.some((u) => u.includes("/api/hooks/sentry/"));
         let borradas = 0;
-        if (Array.isArray(reglas)) {
-          for (const r of reglas.filter((x: any) => x?.label === RULE_LABEL)) {
-            const d = await api(sub, `/projects/${p}/rules/${r.id}/`, { method: "DELETE" });
-            if (!d?.error) borradas++;
+        if (!quedanNuestras) {
+          const reglas = await api(sub, `/projects/${p}/rules/`);
+          if (Array.isArray(reglas)) {
+            // Sólo las NUESTRAS por etiqueta: otra regla del cliente que también use
+            // webhooks legacy no es asunto nuestro.
+            for (const r of reglas.filter((x: any) => x?.label === RULE_LABEL)) {
+              const d = await api(sub, `/projects/${p}/rules/${r.id}/`, { method: "DELETE" });
+              if (!d?.error) borradas++;
+            }
           }
         }
-        return { ok: true, urlsRestantes: otras.length, reglasBorradas: borradas };
+        return {
+          ok: true,
+          urlsRestantes: otras.length,
+          reglasBorradas: borradas,
+          mensaje: quedanNuestras
+            ? "Quité las alertas de este canal. Otros canales siguen recibiéndolas, así que la regla en Sentry se queda."
+            : "Quité las alertas y la regla en Sentry: este proyecto ya no avisa a ningún canal.",
+        };
       },
     },
   ];
