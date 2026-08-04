@@ -400,8 +400,29 @@ const READ_TOOLS: ConnectorTool[] = [
 const RULE_LABEL = "Ghosty Teams";
 const NOTIFY_ACTION = "sentry.rules.actions.notify_event.NotifyEventAction";
 
-function hookUrl(token: string): string {
-  const base = (process.env.GTEAMS_PUBLIC_ORIGIN ?? "https://teams.ghosty.studio").replace(/\/$/, "");
+/**
+ * La URL a la que Sentry va a postear.
+ *
+ * ⚠️ TIENE que ser el SUBDOMINIO del workspace, no el apex. `teams.ghosty.studio`
+ * (que es lo que vale `GTEAMS_PUBLIC_ORIGIN`) responde **301 a www.ghosty.studio/planes**,
+ * y el cliente de webhooks legacy de Sentry va con `allow_redirects=False`: la entrega se
+ * perdería en silencio y no habría forma de notarlo desde aquí. `<slug>.teams.ghosty.studio`
+ * sí sirve la app.
+ *
+ * El namespace viaja firmado dentro del token, así que el host sólo tiene que llevar la
+ * petición hasta la app — no es él quien decide el tenant.
+ */
+async function hookUrl(token: string): Promise<string> {
+  const { reqOrigin } = await import("../../origin.server");
+  let base = (await reqOrigin()).replace(/\/$/, "");
+  // Red de seguridad: si el origin del request no resolviera, se arma desde el slug. El
+  // apex NO sirve como fallback — ver arriba.
+  if (!base || /^https?:\/\/teams\./.test(base)) {
+    const { currentSlug } = await import("../tenant.server");
+    const slug = await currentSlug().catch(() => null);
+    const root = process.env.TEAMS_ROOT_DOMAIN ?? "teams.ghosty.studio";
+    base = slug ? `https://${slug}.${root}` : base;
+  }
   return `${base}/api/hooks/sentry/${token}`;
 }
 
@@ -432,7 +453,7 @@ function alertTools(dest: ToolDest | null): ConnectorTool[] {
 
         const { mintHookToken } = await import("../hooks/token.server");
         const { currentNamespace } = await import("../tenant.server");
-        const url = hookUrl(
+        const url = await hookUrl(
           mintHookToken({
             ns: await currentNamespace(),
             channelId,
@@ -458,7 +479,7 @@ function alertTools(dest: ToolDest | null): ConnectorTool[] {
         // buscar el problema al lado equivocado.
         // Se compara por el prefijo del endpoint y no por la URL completa, porque el token
         // cambia si se reconfigura y quedarían dos entregas al mismo canal.
-        const prefijo = hookUrl("");
+        const prefijo = await hookUrl("");
         const otras = urls.filter((u) => typeof u === "string" && !u.startsWith(prefijo));
         const puesto = await api(sub, `/projects/${p}/legacy-webhooks/`, {
           method: "POST",
@@ -527,7 +548,7 @@ function alertTools(dest: ToolDest | null): ConnectorTool[] {
         const org = await orgOf(sub, a);
         if (!org) return NO_ORG;
         const p = `${encodeURIComponent(org)}/${encodeURIComponent(String(a.project))}`;
-        const prefijo = hookUrl("");
+        const prefijo = await hookUrl("");
 
         const actual = await api(sub, `/projects/${p}/legacy-webhooks/`);
         if (actual?.error) return actual;
