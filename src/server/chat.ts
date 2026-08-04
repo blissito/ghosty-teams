@@ -182,7 +182,9 @@ export const stopTurnFn = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     const me = await sessionUser();
     const { stopTurn } = await import("./turns.server");
-    if (stopTurn(data.messageId, me?.sub ?? null)) return { ok: true as const };
+    const { currentNamespace } = await import("./tenant.server");
+    const ns = await currentNamespace();
+    if (stopTurn(ns, data.messageId, me?.sub ?? null)) return { ok: true as const };
 
     // No hay turno vivo con ese id. Puede ser una carrera normal (el clic llegó cuando ya
     // terminaba) o una cáscara HUÉRFANA: el registro vive en memoria, así que un reinicio
@@ -194,8 +196,6 @@ export const stopTurnFn = createServerFn({ method: "POST" })
     const body = "⏹ Detenido.";
     await db.setMessageBody(data.messageId, body);
     const bus = await import("./bus.server");
-    const { currentNamespace } = await import("./tenant.server");
-    const ns = await currentNamespace();
     if (msg.dm_id) bus.publish(bus.ch.dm(ns, msg.dm_id), { t: "message:body", id: data.messageId, body });
     else if (msg.channel_id) bus.publish(bus.ch.room(ns, msg.channel_id), { t: "message:body", id: data.messageId, body });
     return { ok: true as const };
@@ -306,7 +306,9 @@ export const getLiveTurnsFn = createServerFn({ method: "POST" }).handler(async (
   // Ya no consulta NADA: el estado del turno lleva su propio contexto (agente, tarea, paso)
   // desde que se registra. Antes hacía 2 consultas por turno vivo —el mensaje y su padre— y
   // el cliente lo llamaba cada 8s por pestaña abierta. Hoy esto es sólo el reconcile.
-  return turns.allLiveTurnStates();
+  // Sólo los de ESTE workspace: `tarea` lleva el texto literal de lo que pidió la persona.
+  const { currentNamespace } = await import("./tenant.server");
+  return turns.allLiveTurnStates(await currentNamespace());
 });
 
 // Topics del room (submenús del sidebar) — distintos topics con conteo/actividad.
@@ -897,7 +899,7 @@ export const askAgent = createServerFn({ method: "POST" })
       // El contexto viaja CON el turno: así el evento `turn` basta para pintar la barra y el
       // cliente no tiene que preguntar por el mensaje y su padre cada pocos segundos.
       turns.registerTurn({
-        messageId: mid, groupId, invokerSub: poster?.sub ?? null, controller, announce,
+        ns, messageId: mid, groupId, invokerSub: poster?.sub ?? null, controller, announce,
         channelId: channel.id, parentId: data.parentId ?? null,
         agent: name, avatar: agent?.avatar ?? "",
         tarea: tareaDelTurno,
@@ -940,7 +942,7 @@ export const askAgent = createServerFn({ method: "POST" })
         // El PASO en curso viaja con el estado del turno. Antes el cliente lo sacaba del
         // cuerpo preguntando cada pocos segundos; aquí ya lo tenemos delante y es gratis.
         const p = pasoDe(body);
-        if (p) turns.setTurnStep(mid, p);
+        if (p) turns.setTurnStep(ns, mid, p);
       },
     }).finally(async () => {
       if (registeredId != null) {
@@ -948,7 +950,7 @@ export const askAgent = createServerFn({ method: "POST" })
         // mensaje conserva lo que el usuario ya había visto en vez de volver a la cáscara.
         await flusher.flush(registeredId);
         flusher.done(registeredId);
-        turns.finishTurn(registeredId);
+        turns.finishTurn(ns, registeredId);
       }
     });
 
@@ -1207,6 +1209,9 @@ export const askAgent = createServerFn({ method: "POST" })
         ns, messageId: id, channelId: channel.id, channelSlug: channel.slug,
         parentId: data.parentId ?? null, invokerSub: poster?.sub ?? null,
         agente: name, tarea: tareaDelTurno,
+        // ⚠️ Un turno DETENIDO no "terminó". Sin esto, cancelar salía en la barra con
+        // palomita verde y su resumen, como si hubiera entregado — y encima con aviso push.
+        cancelado: controller.signal.aborted,
       }).catch(() => {});
     }
     return { ok: true as const };
@@ -1227,9 +1232,20 @@ export const askAgent = createServerFn({ method: "POST" })
 async function avisarFinDeTurno(a: {
   ns: string; messageId: number; channelId: number; channelSlug: string;
   parentId: number | null; invokerSub: string | null; agente: string; tarea: string;
+  cancelado?: boolean;
 }): Promise<void> {
   const db = await import("../db.server");
   const turns = await import("./turns.server");
+  const bus0 = await import("./bus.server");
+
+  // Cancelado: se cierra la fila y punto. Ni resumen, ni palomita, ni aviso — nadie quiere
+  // una notificación de algo que acaba de cancelar a mano.
+  if (a.cancelado) {
+    bus0.publish(bus0.ch.room(a.ns, a.channelId), {
+      t: "turn", id: a.messageId, state: "stopped", position: 1, startedAt: Date.now(),
+    });
+    return;
+  }
 
   // Qué produjo: artefacto del mensaje (+ sus versiones) y/o archivos adjuntos.
   let resumen = "";
@@ -1242,7 +1258,7 @@ async function avisarFinDeTurno(a: {
   } catch {
     /* sin resumen: la fila dice "terminó" y ya */
   }
-  if (resumen) turns.setTurnOutcome(a.messageId, resumen);
+  if (resumen) turns.setTurnOutcome(a.ns, a.messageId, resumen);
   // El "terminó" se anuncia AQUÍ y sólo aquí: cuando el artefacto ya está publicado. Si se
   // anunciara en el `finally` del turno (que corre antes), la barra diría que acabó mientras
   // el documento se seguía creando — que es justo lo que se vio.

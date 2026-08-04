@@ -321,7 +321,7 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
     const register = (mid: number) => {
       if (registeredId === mid) return;
       registeredId = mid;
-      turns.registerTurn({ messageId: mid, groupId, invokerSub: me.sub, controller, announce: (st) => fanout({ t: "turn", ...st }) });
+      turns.registerTurn({ ns, messageId: mid, groupId, invokerSub: me.sub, controller, announce: (st) => fanout({ t: "turn", ...st }) });
     };
     if (data.shellId != null) register(data.shellId);
     const { id, reply } = await runAgentTurn({
@@ -349,7 +349,7 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
       emitDelta: (mid, chunk) => fanout({ t: "message:delta", id: mid, chunk, channelId: null, parentId: null, dmId: data.id }),
       emitBody: (mid, body) => fanout({ t: "message:body", id: mid, body }),
     }).finally(() => {
-      if (registeredId != null) turns.finishTurn(registeredId);
+      if (registeredId != null) turns.finishTurn(ns, registeredId);
     });
 
     // Entró a un turno vivo (steer): la respuesta sale por aquella burbuja. Se borra la

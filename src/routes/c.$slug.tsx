@@ -1240,7 +1240,13 @@ function ChannelPage() {
   const refreshLiveTurns = useCallback(() => {
     getLiveTurnsFn()
       .then((r) => {
-        const next = (r ?? []) as never as typeof liveTurns;
+        // ⚠️ Se filtran los DETENIDOS, igual que en la siembra del montaje. `stopTurn` deja
+        // la entrada 5s más como red anti-zombi, así que el reconcile la volvía a traer: la
+        // fila reaparecía tras pulsar Detener —ahora sin botón— y al minuto se marcaba como
+        // "terminó ✓". O sea: Detener parecía no funcionar y encima acabar bien.
+        const next = ((r ?? []) as never as typeof liveTurns).filter(
+          (x) => x.state !== "stopped" && x.state !== "done",
+        );
         const vivos = new Set(next.map((x) => x.id));
         const recienTerminados = liveTurnsRef.current.filter((x) => !vivos.has(x.id));
         liveTurnsRef.current = next;
@@ -2035,6 +2041,10 @@ function ChannelPage() {
     setOpenDmId(null);
     setView(null);
     setHomeOpen(false);
+    // ⚠️ Y se libera la reserva del panel. Si no, abrir un artefacto a mano en un room y
+    // cambiarte a otro SIN cerrarlo dejaba la reserva puesta el resto de la sesión: ningún
+    // borrador volvía a auto-abrirse nunca más.
+    panelManualRef.current = false;
   }, [channel.slug]);
   /**
    * El foco que pide la URL. Reactivo: `useSearch()` re-corre esto en cada navegación, así

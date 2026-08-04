@@ -9,6 +9,8 @@
 // pasaba; lo que este registro añade es poder cerrarlas (ver `sweepOrphans`).
 
 export type LiveTurn = {
+  /** Workspace al que pertenece. Sin esto, dos tenants comparten espacio de ids. */
+  ns: string;
   messageId: number;
   /** Sesión del worker. Los turnos de un mismo groupId se serializan allá: son LA cola. */
   groupId: string;
@@ -49,7 +51,23 @@ export type TurnState = {
   outcome?: string;
 };
 
-const live = new Map<number, LiveTurn>();
+/**
+ * ⚠️ CLAVE COMPUESTA `ns:messageId`, no `messageId` a secas.
+ *
+ * Un mismo proceso sirve N workspaces y los `message_id` son autoincrementales **por
+ * tenant**, así que colisionan entre workspaces. Con la clave pelada pasaban tres cosas, y
+ * la primera es de privacidad:
+ *
+ * 1. `allLiveTurnStates()` devolvía los turnos de TODOS los tenants — y `tarea` es el texto
+ *    literal que escribió la persona. La barra de un workspace enseñaba lo que estaba
+ *    pidiendo alguien de otro.
+ * 2. Registrar el mensaje 42 del tenant B **pisaba** el turno 42 del tenant A: su
+ *    `AbortController` se perdía (Detener dejaba de cortar) y el `finishTurn` de A borraba
+ *    el turno de B.
+ * 3. `stopTurn(42, …)` podía abortar el turno de otro workspace.
+ */
+const live = new Map<string, LiveTurn>();
+const claveDe = (ns: string, messageId: number) => `${ns}:${messageId}`;
 
 /** Los del mismo groupId, del más viejo al más nuevo: el orden REAL en que se atienden. */
 function siblings(groupId: string): LiveTurn[] {
@@ -95,7 +113,7 @@ async function persistir(sql: string, args: unknown[]): Promise<void> {
 
 export function registerTurn(t: Omit<LiveTurn, "startedAt"> & { startedAt?: number }): LiveTurn {
   const entry: LiveTurn = { ...t, startedAt: t.startedAt ?? Date.now() };
-  live.set(entry.messageId, entry);
+  live.set(claveDe(entry.ns, entry.messageId), entry);
   void persistir(
     `INSERT INTO gt_turns (message_id, group_id, invoker_sub, channel_id, parent_id, agent, avatar, tarea, state, started_at)
      VALUES (?,?,?,?,?,?,?,?,'running',?)
@@ -108,23 +126,23 @@ export function registerTurn(t: Omit<LiveTurn, "startedAt"> & { startedAt?: numb
 }
 
 /** Lo que el turno acabó produciendo, para la fila de "terminó". Se calcula UNA vez. */
-export function setTurnOutcome(messageId: number, outcome: string): void {
+export function setTurnOutcome(_ns: string, messageId: number, outcome: string): void {
   void persistir("UPDATE gt_turns SET outcome = ? WHERE message_id = ?", [outcome, messageId]);
 }
 
 /** El paso en curso, para que la barra diga en qué va sin preguntar por el cuerpo. */
-export function setTurnStep(messageId: number, paso: string): void {
-  const t = live.get(messageId);
+export function setTurnStep(ns: string, messageId: number, paso: string): void {
+  const t = live.get(claveDe(ns, messageId));
   if (!t || t.paso === paso) return;
   t.paso = paso;
   void persistir("UPDATE gt_turns SET paso = ? WHERE message_id = ?", [paso, messageId]);
   t.announce?.(stateOf(t));
 }
 
-export function finishTurn(messageId: number): void {
-  const t = live.get(messageId);
+export function finishTurn(ns: string, messageId: number): void {
+  const t = live.get(claveDe(ns, messageId));
   if (!t) return;
-  live.delete(messageId);
+  live.delete(claveDe(ns, messageId));
   void persistir("UPDATE gt_turns SET state = ?, ended_at = ? WHERE message_id = ?", [
     t.stopped ? "stopped" : "done",
     Date.now(),
@@ -138,14 +156,14 @@ export function finishTurn(messageId: number): void {
   announceGroup(t.groupId);
 }
 
-export function turnState(messageId: number): TurnState | null {
-  const t = live.get(messageId);
+export function turnState(ns: string, messageId: number): TurnState | null {
+  const t = live.get(claveDe(ns, messageId));
   return t ? stateOf(t) : null;
 }
 
 /** Estado de todos los turnos vivos de un canal/DM — para sembrar al cargar la vista. */
-export function liveTurnStates(messageIds: number[]): TurnState[] {
-  return messageIds.map((id) => turnState(id)).filter((s): s is TurnState => !!s);
+export function liveTurnStates(ns: string, messageIds: number[]): TurnState[] {
+  return messageIds.map((id) => turnState(ns, id)).filter((s): s is TurnState => !!s);
 }
 
 /**
@@ -160,8 +178,8 @@ export function liveTurnStates(messageIds: number[]): TurnState[] {
  * filtrar aquí exigiría pasear la lista de mensajes para algo que cabe en un puñado de
  * entradas.
  */
-export function allLiveTurnStates(): TurnState[] {
-  return [...live.keys()].map((id) => turnState(id)).filter((s): s is TurnState => !!s);
+export function allLiveTurnStates(ns: string): TurnState[] {
+  return [...live.values()].filter((t) => t.ns === ns).map(stateOf);
 }
 
 /**
@@ -173,8 +191,8 @@ export function allLiveTurnStates(): TurnState[] {
  * Devuelve false si el turno ya no existe — detener algo que acaba de terminar no es
  * un error, es una carrera normal entre el clic y el último token.
  */
-export function stopTurn(messageId: number, bySub?: string | null): boolean {
-  const t = live.get(messageId);
+export function stopTurn(ns: string, messageId: number, bySub?: string | null): boolean {
+  const t = live.get(claveDe(ns, messageId));
   if (!t) return false;
   // Sólo quien lo pidió lo detiene. En un canal cualquiera ve la burbuja, y cortar el
   // trabajo que otro pidió es una acción sobre esa persona, no sobre el agente.
@@ -187,12 +205,12 @@ export function stopTurn(messageId: number, bySub?: string | null): boolean {
   // —el caso en el que más falta hace Detener— ese finally puede no llegar nunca, y entonces
   // el turno se queda registrado para siempre: "Detener" parece no hacer nada y la fila no
   // desaparece (2026-08-03). A los 5s se retira a la fuerza.
-  const id = t.messageId;
+  const clave = claveDe(ns, t.messageId);
   const grupo = t.groupId;
   setTimeout(() => {
-    const sigue = live.get(id);
+    const sigue = live.get(clave);
     if (sigue && sigue.stopped) {
-      live.delete(id);
+      live.delete(clave);
       announceGroup(grupo);
     }
   }, 5000).unref?.();
@@ -222,7 +240,7 @@ export function interruptOwnTurns(groupId: string, invokerSub?: string | null): 
   let n = 0;
   for (const t of siblings(groupId)) {
     if (t.invokerSub === invokerSub && !t.stopped) {
-      stopTurn(t.messageId, invokerSub);
+      stopTurn(t.ns, t.messageId, invokerSub);
       n++;
     }
   }
