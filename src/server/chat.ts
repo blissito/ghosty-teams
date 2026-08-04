@@ -316,7 +316,29 @@ export const getLiveTurnsFn = createServerFn({ method: "POST" }).handler(async (
     turns.recentDoneTurns(ns),
   ]);
   const ids = new Set(vivos.map((v) => v.id));
-  return [...vivos, ...hechos.filter((h) => !ids.has(h.id))];
+  const todos = [...vivos, ...hechos.filter((h) => !ids.has(h.id))];
+
+  /**
+   * ⚠️ VISIBILIDAD. Estar en el mismo workspace no da derecho a ver lo que se cocina en un
+   * room privado del que no eres miembro — y la fila lleva `tarea`, que es el texto literal
+   * de lo que pidió esa persona. Se filtra con la MISMA lista de rooms que el sidebar
+   * (`listChannels` ya aplica membresía y el bypass de owner), así que no hay dos criterios
+   * de permiso que puedan divergir.
+   */
+  const me = await sessionUser();
+  const db = await import("../db.server");
+  const visibles = new Set(
+    (await db.listChannels(me?.sub ?? "", !!me?.isOwner).catch(() => [])).map((c) => c.id),
+  );
+  return todos
+    .filter((t) => {
+      // Turno de DM: sólo el suyo. En un DM el invocador es el humano de la conversación.
+      if (t.dmId != null) return !!me?.sub && t.invokerSub === me.sub;
+      if (t.channelId == null) return false;
+      return visibles.has(t.channelId);
+    })
+    // `invokerSub` es de uso interno (filtrar): no viaja al cliente.
+    .map(({ invokerSub: _omit, ...resto }) => resto);
 });
 
 // Topics del room (submenús del sidebar) — distintos topics con conteo/actividad.

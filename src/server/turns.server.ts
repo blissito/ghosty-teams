@@ -49,6 +49,8 @@ export type TurnState = {
   channelId?: number | null;
   parentId?: number | null;
   dmId?: number | null;
+  /** Sólo para FILTRAR en el servidor. Se quita antes de mandarlo al cliente. */
+  invokerSub?: string | null;
   tarea?: string;
   paso?: string;
   outcome?: string;
@@ -91,6 +93,7 @@ function stateOf(t: LiveTurn): TurnState {
     channelId: t.channelId ?? null,
     parentId: t.parentId ?? null,
     dmId: t.dmId ?? null,
+    invokerSub: t.invokerSub ?? null,
     tarea: t.tarea,
     paso: t.paso,
   };
@@ -198,7 +201,7 @@ export async function recentDoneTurns(ns: string, desdeMs = 10 * 60 * 1000): Pro
   try {
     const { dbq } = await import("../dbq.server");
     const filas = await dbq(
-      `SELECT message_id, agent, avatar, channel_id, parent_id, tarea, outcome, started_at
+      `SELECT message_id, agent, avatar, channel_id, parent_id, invoker_sub, tarea, outcome, started_at
          FROM gt_turns
         WHERE state = 'done' AND ended_at IS NOT NULL AND ended_at > ?
         ORDER BY ended_at DESC LIMIT 20`,
@@ -217,6 +220,8 @@ export async function recentDoneTurns(ns: string, desdeMs = 10 * 60 * 1000): Pro
       avatar: (f.avatar as string) ?? "",
       channelId: f.channel_id != null ? Number(f.channel_id) : null,
       parentId: f.parent_id != null ? Number(f.parent_id) : null,
+      dmId: null,
+      invokerSub: (f.invoker_sub as string) ?? null,
       tarea: (f.tarea as string) ?? undefined,
       outcome: (f.outcome as string) ?? undefined,
     }));
