@@ -29,7 +29,7 @@ import { useT, useLocale, useSetLocale, type Locale } from "../i18n";
 import { intlLocale } from "../i18n.core";
 import { Monitor, Sun, Moon, Check, SlidersHorizontal, Palette, Github, Plug, Users, Calendar, CalendarClock, CalendarCheck, Link2, RefreshCw, Gauge, Bug } from "lucide-react";
 import { workspaceUsageFn } from "../server/workspaces";
-import { listMyConnectorsFn, disconnectConnectorFn } from "../server/connectors";
+import { listMyConnectorsFn, disconnectConnectorFn, shareConnectorFn } from "../server/connectors";
 import {
   PRESETS,
   getTheme,
@@ -353,6 +353,9 @@ type ConnItem = {
   manage: { url: string; label: string } | null;
   /** Quién MÁS del workspace lo tiene conectado (sin mí). */
   holders: { sub: string; name: string; avatar: string }[];
+  /** La conexión DEL EQUIPO, si alguien la compartió. */
+  shared: { sub: string; name: string; avatar: string; mine: boolean } | null;
+  canShareOthers: boolean;
 };
 
 function connIcon(icon: string) {
@@ -385,9 +388,19 @@ function IntegrationsPanel() {
     finally { load(); setBusy(null); }
   }
 
-  const list = (items ?? []).filter((c) =>
-    filter === "all" ? true : filter === "connected" ? c.connected : !c.connected
-  );
+  async function share(id: string, ownerSub: string, shared: boolean) {
+    setBusy(id);
+    try { await shareConnectorFn({ data: { provider: id, ownerSub, shared } }); }
+    catch (e) { console.error("[connectors] share failed", e); }
+    finally { load(); setBusy(null); }
+  }
+
+  // Una compartida cuenta como conectada para el filtro: puedo usarla, que es lo que la
+  // persona quiere saber cuando filtra por "Conectado".
+  const list = (items ?? []).filter((c) => {
+    const usable = c.connected || !!c.shared;
+    return filter === "all" ? true : filter === "connected" ? usable : !usable;
+  });
 
   return (
     <div className="space-y-4">
@@ -431,6 +444,11 @@ function IntegrationsPanel() {
                   <div className="min-w-0">
                     <div className="flex items-center gap-2">
                       <p className="truncate text-sm font-semibold">{c.name}</p>{/* nombre propio, no se traduce */}
+                      {c.shared && (
+                        <span className="rounded border border-emerald-500/40 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-500">
+                          {t("Del equipo")}
+                        </span>
+                      )}
                       {c.custom && (
                         <span className="rounded border border-border px-1.5 py-0.5 text-[10px] font-medium text-muted">
                           {t("Personalizado")}
@@ -443,7 +461,16 @@ function IntegrationsPanel() {
                         que nadie ha tocado, y de ahí salió el "David dice que la hizo
                         pero yo no la veo" del 2026-08-04. El nombre importa más que los
                         avatares — es lo que dice a quién pedírselo. */}
-                    {c.holders.length > 0 && (
+                    {c.shared ? (
+                      <div className="mt-1 flex items-center gap-1.5">
+                        <Avatar name={c.shared.name} avatar={c.shared.avatar} className="h-4 w-4" />
+                        <span className="truncate text-[11px] text-muted">
+                          {c.shared.mine
+                            ? t("La compartiste con el equipo")
+                            : `${t("Conexión de")} ${c.shared.name} · ${t("todo el equipo puede usarla")}`}
+                        </span>
+                      </div>
+                    ) : c.holders.length > 0 ? (
                       <div className="mt-1 flex items-center gap-1.5">
                         <div className="flex -space-x-1.5">
                           {c.holders.slice(0, 4).map((h) => (
@@ -457,13 +484,25 @@ function IntegrationsPanel() {
                         </div>
                         <span className="truncate text-[11px] text-muted">
                           {c.connected
-                            ? `+ ${c.holders.length} ${c.holders.length === 1 ? t("más del equipo") : t("más del equipo")}`
+                            ? `+ ${c.holders.length} ${t("más del equipo")}`
                             : c.holders.length === 1
                               ? `${c.holders[0].name} ${t("lo tiene conectado")}`
                               : `${c.holders[0].name} ${t("y")} ${c.holders.length - 1} ${t("más lo tienen conectado")}`}
                         </span>
+                        {/* Staff y owner pueden compartir la conexión de otro. Es lo que
+                            destraba a un equipo cuando quien conectó no está — y por eso
+                            el dueño recibe aviso y queda en bitácora. */}
+                        {c.canShareOthers && !c.connected && (
+                          <button
+                            onClick={() => share(c.id, c.holders[0].sub, true)}
+                            disabled={busy === c.id}
+                            className="shrink-0 rounded border border-border px-1.5 py-0.5 text-[10px] text-muted hover:text-ink disabled:opacity-50"
+                          >
+                            {t("Compartir con el equipo")}
+                          </button>
+                        )}
                       </div>
-                    )}
+                    ) : null}
                   </div>
                 </div>
                 <span className="text-xs text-muted">{c.type}</span>
@@ -477,6 +516,19 @@ function IntegrationsPanel() {
                       <span className="inline-flex items-center gap-1 text-xs font-medium text-emerald-500">
                         <Check size={14} />{t("Conectado")}
                       </span>
+                      {/* Compartir la MÍA. Es un solo acto, reversible, y no toca el
+                          token: dejar de compartir y desconectar son cosas distintas. */}
+                      <button
+                        onClick={() => share(c.id, "", !c.shared?.mine)}
+                        disabled={busy === c.id}
+                        className={`rounded-lg border px-2.5 py-1 text-xs disabled:opacity-50 ${
+                          c.shared?.mine
+                            ? "border-emerald-500/40 text-emerald-500"
+                            : "border-border text-muted hover:text-ink"
+                        }`}
+                      >
+                        {c.shared?.mine ? t("Compartida") : t("Compartir")}
+                      </button>
                       {/* Conectar no siempre es suficiente: GitHub además exige
                           elegir a qué repos llega la app, y eso se cambia luego
                           sin reconectar. Va a una pestaña nueva a propósito —
@@ -511,7 +563,7 @@ function IntegrationsPanel() {
                         busy === c.id ? "pointer-events-none opacity-60" : ""
                       }`}
                     >
-                      {busy === c.id ? t("Conectando…") : t("Conectar")}
+                      {busy === c.id ? t("Conectando…") : c.shared ? t("Conectar la mía") : t("Conectar")}
                     </a>
                   )}
                 </div>

@@ -13,8 +13,14 @@ export const listMyConnectorsFn = createServerFn({ method: "GET" }).handler(asyn
   // ⚠️ Antes esto degradaba sin sesión (todo `connected:false`). Ya no puede: con
   // `holders` dentro, un anónimo se llevaría el padrón del workspace.
   if (!me) throw new Error("no autenticado");
-  const { listConnectorProviders, listConnectorHolders } = await import("./connectors/store.server");
-  const [connected, holders] = await Promise.all([listConnectorProviders(me.sub), listConnectorHolders()]);
+  const { listConnectorProviders, listConnectorHolders, listSharedConnectors } = await import(
+    "./connectors/store.server"
+  );
+  const [connected, holders, compartidas] = await Promise.all([
+    listConnectorProviders(me.sub),
+    listConnectorHolders(),
+    listSharedConnectors(),
+  ]);
 
   // Quién MÁS del equipo tiene cada conector. Se resuelve aquí y no en el cliente porque
   // `listWorkspaceUsers` ya filtra a los baneados y no expone correos.
@@ -31,6 +37,16 @@ export const listMyConnectorsFn = createServerFn({ method: "GET" }).handler(asyn
     status: c.status,
     manage: c.manage ?? null,
     connected: connected.has(c.id),
+    // La conexión del EQUIPO, si la hay: quién la puso y si soy yo. `mine` es lo que
+    // decide si el switch se pinta como "compartir la mía" o como "es de fulano".
+    shared: (() => {
+      const dueño = compartidas.get(c.id);
+      if (!dueño) return null;
+      const u = gente.get(dueño);
+      return { sub: dueño, name: u?.name ?? "", avatar: u?.avatar ?? "", mine: dueño === me.sub };
+    })(),
+    /** ¿Puedo compartir la conexión de otro? Staff y owner sí. */
+    canShareOthers: !!me.isOwner,
     // Sin mí (ya salgo como "Conectado") y sin correo. Un sub sin fila en el padrón —
     // baneado, o alguien que nunca abrió Teams— se descarta en vez de pintarse vacío.
     holders: (holders.get(c.id) ?? [])
@@ -147,6 +163,66 @@ export const finishConnectFn = createServerFn({ method: "POST" })
 //
 // Además de borrar la fila, REVOCA el token contra el proveedor si éste declara
 // `revokeUrl`: sin eso "Desconectar" sólo significa "dejo de usarlo", y el token
+/**
+ * Prende o apaga "esta conexión es del equipo".
+ *
+ * Puede hacerlo el dueño, y también **staff u owner** sobre la conexión de otro: es lo que
+ * destraba el caso de alguien ausente —un cliente conectó su Sentry y se fue— sin pedirle
+ * que reconecte. La contrapartida es que el dueño se ENTERA: aviso + bitácora. Una cuenta
+ * ajena usándose por el equipo no puede quedar sin rastro de quién lo autorizó y cuándo.
+ *
+ * NO toca el token ni ninguna otra columna: es un UPDATE de `shared`. Dejar de compartir y
+ * desconectar son cosas distintas y ésta nunca borra nada.
+ */
+export const shareConnectorFn = createServerFn({ method: "POST" })
+  .validator((d: { provider: string; ownerSub?: string; shared: boolean }) => d)
+  .handler(async ({ data }) => {
+    const me = await sessionUser();
+    if (!me) throw new Error("no autenticado");
+    const ownerSub = data.ownerSub || me.sub;
+    const ajena = ownerSub !== me.sub;
+    if (ajena && !me.isOwner) throw new Error("solo staff u owner puede compartir la conexión de otro");
+
+    const { getConnectorRow, setConnectorShared } = await import("./connectors/store.server");
+    const row = await getConnectorRow(ownerSub, data.provider);
+    if (!row?.access_token) throw new Error("esa persona no tiene ese conector conectado");
+
+    await setConnectorShared(ownerSub, data.provider, data.shared);
+
+    const { dbq } = await import("../dbq.server");
+    await dbq(
+      `INSERT INTO gt_connector_shares (at, actor_sub, owner_sub, provider, shared)
+       VALUES (unixepoch(), ?, ?, ?, ?)`,
+      [me.sub, ownerSub, data.provider, data.shared ? 1 : 0]
+    ).catch((e) => console.warn("[connectors] bitácora de compartir falló:", e));
+
+    // Sólo si lo hizo alguien más: enterarse de tu propia acción es ruido. Un único
+    // destinatario, nunca el roster.
+    if (ajena) {
+      try {
+        const { getConnector } = await import("./connectors/registry");
+        const { notify } = await import("./notify.server");
+        const { currentNamespace } = await import("./tenant.server");
+        const nombre = getConnector(data.provider)?.name ?? data.provider;
+        await notify(
+          {
+            kind: "mention",
+            recipients: [ownerSub],
+            title: data.shared ? `Tu conexión de ${nombre} ahora es del equipo` : `Tu conexión de ${nombre} ya no es del equipo`,
+            body: data.shared
+              ? `${me.name} la compartió con el workspace: el resto del equipo puede usarla desde el agente.`
+              : `${me.name} dejó de compartirla.`,
+            url: "/",
+          },
+          await currentNamespace()
+        );
+      } catch (e) {
+        console.warn("[connectors] aviso de compartir falló:", e);
+      }
+    }
+    return { ok: true, shared: data.shared };
+  });
+
 // seguiría siendo válido allá hasta expirar. Con permisos amplios eso no basta.
 export const disconnectConnectorFn = createServerFn({ method: "POST" })
   .validator((d: { provider: string }) => d)

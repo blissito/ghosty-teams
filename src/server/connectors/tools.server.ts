@@ -18,8 +18,11 @@ export type ToolDecl = { name: string; description: string; inputSchema: Record<
  * nada, y sin ellas un usuario sin integraciones veía cero tools.
  */
 export async function listUserTools(sub: string, dest: ToolDest | null = null): Promise<ToolDecl[]> {
-  const { listConnectorProviders } = await import("./store.server");
-  const connected = await listConnectorProviders(sub);
+  // Los suyos + los COMPARTIDOS del workspace. Éste es el cambio que hace funcionar las
+  // conexiones de equipo: sin él las tools ni se le anuncian al modelo, y el agente diría
+  // "no tengo Sentry" teniendo una compartida delante.
+  const { listAvailableProviders } = await import("./store.server");
+  const connected = await listAvailableProviders(sub);
   const out: ToolDecl[] = nativeTools(dest).map((t) => ({ name: t.name, description: t.description, inputSchema: t.inputSchema }));
   for (const id of connected) {
     const load = loaderFor(id);
@@ -34,7 +37,19 @@ export async function listUserTools(sub: string, dest: ToolDest | null = null): 
   return out;
 }
 
-export type RunResult = { ok: true; result: unknown } | { ok: false; error: string };
+export type RunResult =
+  | { ok: true; result: unknown; usedSharedConnection?: string }
+  | { ok: false; error: string };
+
+/** Nombre visible de un sub, para decir con qué cuenta se actuó. Best-effort. */
+async function nombreDe(sub: string): Promise<string | null> {
+  try {
+    const { listWorkspaceUsers } = await import("../../users.server");
+    return (await listWorkspaceUsers()).find((u) => u.sub === sub)?.name ?? null;
+  } catch {
+    return null;
+  }
+}
 
 /** Ejecuta una tool por nombre, SOLO si pertenece a un conector conectado del usuario. */
 export async function runTool(sub: string, toolName: string, args: Record<string, unknown>, dest: ToolDest | null = null): Promise<RunResult> {
@@ -47,8 +62,8 @@ export async function runTool(sub: string, toolName: string, args: Record<string
       return { ok: false, error: e instanceof Error ? e.message : String(e) };
     }
   }
-  const { listConnectorProviders } = await import("./store.server");
-  const connected = await listConnectorProviders(sub);
+  const { listAvailableProviders, resolveConnectorOwner } = await import("./store.server");
+  const connected = await listAvailableProviders(sub);
   for (const id of connected) {
     const load = loaderFor(id);
     if (!load) continue;
@@ -60,9 +75,24 @@ export async function runTool(sub: string, toolName: string, args: Record<string
     }
     const tool = (await toolsOf(mod, sub, dest)).find((t) => t.name === toolName);
     if (!tool) continue;
+    // Con QUÉ cuenta se ejecuta. La propia gana; si no hay, la compartida del workspace.
+    // Al handler se le pasa el sub DUEÑO del token y por eso ninguno de ellos cambia.
+    const dueño = await resolveConnectorOwner(sub, id);
+    if (!dueño) continue;
     try {
-      const result = await tool.handler(sub, args ?? {});
-      return { ok: true, result };
+      const result = await tool.handler(dueño.ownerSub, args ?? {});
+      if (!dueño.shared) return { ok: true, result };
+      // Con una conexión ajena, el resultado DICE de quién es. Que el equipo vea con qué
+      // cuenta se actuó es parte del control, no un adorno — y evita que el agente hable
+      // como si los datos fueran del que pregunta.
+      const quien = await nombreDe(dueño.ownerSub);
+      return {
+        ok: true,
+        result,
+        usedSharedConnection: quien
+          ? `Se usó la conexión de ${id} de ${quien}, compartida con el equipo. Dilo al reportar el resultado.`
+          : `Se usó una conexión de ${id} compartida con el equipo. Dilo al reportar el resultado.`,
+      } as RunResult;
     } catch (e) {
       return { ok: false, error: e instanceof Error ? e.message : String(e) };
     }

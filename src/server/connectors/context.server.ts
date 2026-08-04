@@ -13,22 +13,41 @@ import { loaderFor } from "./impl";
 /** Contexto ambiente de TODOS los conectores conectados del usuario, listo para el prompt. */
 export async function buildConnectorContext(sub: string, sender: string, message: string): Promise<string> {
   try {
-    const { listConnectorProviders } = await import("./store.server");
-    const connected = await listConnectorProviders(sub);
+    // Los suyos + los COMPARTIDOS del workspace: una conexión del equipo tiene que dar el
+    // mismo contexto ambiente que una propia, o el agente diría "no tengo Sentry" teniendo
+    // una compartida delante.
+    const { listAvailableProviders } = await import("./store.server");
+    const connected = await listAvailableProviders(sub);
     if (!connected.size) return "";
     const { refreshConnectorMetaIfStale } = await import("./meta.server");
+    const { resolveConnectorOwner } = await import("./store.server");
     const parts = await Promise.all(
       [...connected].map(async (id) => {
         const load = loaderFor(id);
         if (!load) return null;
         try {
+          // ⚠️ El `ambientContext` de cada conector lee la fila de ESE sub
+          // (`getConnectorRow`), así que con una conexión compartida hay que pasarle la
+          // del DUEÑO o devolvería null y el bloque desaparecería justo cuando más falta
+          // hace. La resolución es la misma que usa el dispatch: la propia gana.
+          const dueño = await resolveConnectorOwner(sub, id);
+          if (!dueño) return null;
           // ANTES de pedir el bloque: el `meta` que lo alimenta se capturaba al
           // conectar y no se refrescaba nunca, así que el agente hablaba de una
           // realidad vieja (negocios, roles, cuenta activa). Esto es no-op
           // mientras esté fresco, y sólo espera la PRIMERA vez de cada conexión.
-          await refreshConnectorMetaIfStale(sub, id);
+          await refreshConnectorMetaIfStale(dueño.ownerSub, id);
           const mod = await load();
-          return (await mod.ambientContext?.(sub, sender, message)) ?? null;
+          const bloque = (await mod.ambientContext?.(dueño.ownerSub, sender, message)) ?? null;
+          if (!bloque || !dueño.shared) return bloque;
+          // Es de otra persona: hay que decirlo, o el agente hablaría de "tus" errores y
+          // "tu" organización cuando son de alguien más.
+          const quien = (await nombreDe(dueño.ownerSub)) ?? "otra persona del equipo";
+          return (
+            `${bloque}\n[OJO: esa conexión NO es de ${sender}. Es la de ${quien}, ` +
+            `COMPARTIDA con el equipo. Puedes usarla, pero al reportar resultados di de ` +
+            `quién es la cuenta y no hables de ellos como si fueran datos de ${sender}.]`
+          );
         } catch {
           return null; // un conector roto nunca tumba el turno ni a los demás
         }
@@ -74,9 +93,12 @@ export async function buildConnectorContext(sub: string, sender: string, message
  */
 async function contextoDeConectoresDelEquipo(sub: string): Promise<string | null> {
   try {
-    const { listConnectorHolders, listConnectorProviders } = await import("./store.server");
-    const [holders, mios] = await Promise.all([listConnectorHolders(), listConnectorProviders(sub)]);
-    const ajenos = [...holders.entries()].filter(([id, subs]) => !mios.has(id) && subs.some((s) => s !== sub));
+    const { listConnectorHolders, listAvailableProviders } = await import("./store.server");
+    // `listAvailableProviders` y no `listConnectorProviders`: las compartidas ya se
+    // anunciaron arriba con su bloque completo, así que aquí sólo quedan las PERSONALES
+    // de otros — las que hay que pedir prestadas, no las que ya se pueden usar.
+    const [holders, usables] = await Promise.all([listConnectorHolders(), listAvailableProviders(sub)]);
+    const ajenos = [...holders.entries()].filter(([id, subs]) => !usables.has(id) && subs.some((s) => s !== sub));
     if (!ajenos.length) return null;
 
     const { CONNECTORS } = await import("./registry");
@@ -95,12 +117,22 @@ async function contextoDeConectoresDelEquipo(sub: string): Promise<string | null
     if (!lineas.length) return null;
 
     return (
-      `[INTEGRACIONES DEL EQUIPO que TÚ NO tienes con quien te escribe: ${lineas.join("; ")}. ` +
-      `Las integraciones son POR PERSONA: sólo puedes usar las de quien te está hablando. ` +
-      `Si te piden algo que necesita una de éstas, NO inventes alternativas ni digas que no ` +
-      `se puede: dile que la conecte él en Ajustes → Integraciones, o que se lo pida a la ` +
-      `persona de la lista, que ya la tiene.]`
+      `[INTEGRACIONES QUE TIENE EL EQUIPO y tú NO puedes usar con quien te escribe: ` +
+      `${lineas.join("; ")}. Son conexiones PERSONALES de esas personas y no están ` +
+      `compartidas. Si te piden algo que necesita una de éstas, NO inventes alternativas ni ` +
+      `digas que no se puede: dile que la conecte él en Ajustes → Integraciones, que se lo ` +
+      `pida a la persona de la lista, o que la compartan con el equipo desde ese mismo panel.]`
     );
+  } catch {
+    return null;
+  }
+}
+
+/** Nombre visible de un sub. Best-effort: sin fila en el padrón, se omite. */
+async function nombreDe(sub: string): Promise<string | null> {
+  try {
+    const { listWorkspaceUsers } = await import("../../users.server");
+    return (await listWorkspaceUsers()).find((u) => u.sub === sub)?.name ?? null;
   } catch {
     return null;
   }

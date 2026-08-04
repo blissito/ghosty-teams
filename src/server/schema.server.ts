@@ -515,6 +515,24 @@ async function migrate(): Promise<void> {
   // NULL = nunca refrescado → connectors/meta.server.ts lo trata como vencido, y así las
   // conexiones hechas antes de esta columna se auto-reparan solas.
   await addColumn("gc_user_connectors", "meta_at", "INTEGER");
+  // Conexión DEL EQUIPO: la conectó una persona pero la usa todo el workspace. Es el
+  // modelo "workspace connection" de ClickUp/Notion/Linear, y lo que hace que un cliente
+  // conecte su Sentry UNA vez y podamos ayudarle sin que nos dé cuenta en su Sentry.
+  // `0` = personal, o sea el comportamiento de siempre: nada cambia para quien no la use.
+  await addColumn("gc_user_connectors", "shared", "INTEGER NOT NULL DEFAULT 0");
+
+  // Bitácora de compartir/dejar de compartir. Existe porque staff y owner pueden compartir
+  // la conexión de OTRO —es lo que destraba el caso de alguien ausente— y una cuenta ajena
+  // usándose por el equipo no puede quedar sin rastro de quién lo autorizó y cuándo.
+  await exec(`CREATE TABLE IF NOT EXISTS gt_connector_shares (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    at         INTEGER NOT NULL,
+    actor_sub  TEXT NOT NULL,
+    owner_sub  TEXT NOT NULL,
+    provider   TEXT NOT NULL,
+    shared     INTEGER NOT NULL
+  )`);
+  await exec("CREATE INDEX IF NOT EXISTS gt_connector_shares_at ON gt_connector_shares(at)");
 
   // Recordatorios programados. El agente los crea con una tool nativa y un tick del
   // proceso (server/reminders.server.ts) los dispara: cola en DB + poll, el patrón de

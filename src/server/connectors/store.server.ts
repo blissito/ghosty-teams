@@ -131,6 +131,74 @@ export async function listConnectorProviders(sub: string): Promise<Set<string>> 
  * La tabla tiene una fila por persona y proveedor, así que el scan es trivial y no pide
  * índice nuevo (la PK es `(user_sub, provider)`).
  */
+// ── Conexiones DEL EQUIPO ────────────────────────────────────────────────────
+//
+// Una conexión compartida es una conexión personal con `shared=1`: la conectó una persona
+// y la usa todo el workspace. Es el "workspace connection" de ClickUp/Notion/Linear, y
+// resuelve el modelo de agencia — el cliente conecta su Sentry UNA vez y podemos ayudarle
+// sin que nos dé cuenta en su Sentry.
+//
+// No hay tabla aparte a propósito: así compartir la conexión de alguien que ya no está es
+// un UPDATE, sin pedirle que reconecte ni tocar su token.
+
+/**
+ * Con QUÉ conexión se ejecuta una tool de este proveedor para este usuario.
+ *
+ * Prioridad: **la propia gana siempre**, y sólo si no hay se cae a la compartida del
+ * workspace. Importa porque el agente debe actuar con MIS permisos cuando los tengo — si
+ * la compartida ganara, un miembro haría cosas que su propia cuenta no puede.
+ *
+ * Devuelve el `sub` DUEÑO del token; quien llama se lo pasa tal cual a `getValidToken`,
+ * que no cambia de firma (por eso ninguno de los handlers de conector se toca).
+ */
+export async function resolveConnectorOwner(
+  sub: string,
+  provider: string
+): Promise<{ ownerSub: string; shared: boolean } | null> {
+  const rows = await dbq(
+    `SELECT user_sub, shared FROM gc_user_connectors
+      WHERE provider=? AND access_token IS NOT NULL AND (user_sub=? OR shared=1)
+      ORDER BY (user_sub=?) DESC LIMIT 1`,
+    [provider, sub, sub]
+  );
+  const r = rows[0];
+  if (!r?.user_sub) return null;
+  return { ownerSub: r.user_sub, shared: r.user_sub !== sub };
+}
+
+/** Proveedores que este usuario puede usar: los suyos + los compartidos del workspace. */
+export async function listAvailableProviders(sub: string): Promise<Set<string>> {
+  const rows = await dbq(
+    `SELECT DISTINCT provider FROM gc_user_connectors
+      WHERE access_token IS NOT NULL AND (user_sub=? OR shared=1)`,
+    [sub]
+  );
+  return new Set(rows.map((r) => r.provider!).filter(Boolean));
+}
+
+/** Prende o apaga el "es del equipo". NO toca el token ni ninguna otra columna. */
+export async function setConnectorShared(
+  ownerSub: string,
+  provider: string,
+  shared: boolean
+): Promise<void> {
+  await dbq("UPDATE gc_user_connectors SET shared=? WHERE user_sub=? AND provider=?", [
+    shared ? 1 : 0,
+    ownerSub,
+    provider,
+  ]);
+}
+
+/** Las compartidas del workspace → provider → sub del dueño. Para el panel. */
+export async function listSharedConnectors(): Promise<Map<string, string>> {
+  const rows = await dbq(
+    "SELECT user_sub, provider FROM gc_user_connectors WHERE shared=1 AND access_token IS NOT NULL"
+  );
+  const out = new Map<string, string>();
+  for (const r of rows) if (r.provider && r.user_sub) out.set(r.provider, r.user_sub);
+  return out;
+}
+
 export async function listConnectorHolders(): Promise<Map<string, string[]>> {
   const rows = await dbq(
     "SELECT user_sub, provider FROM gc_user_connectors WHERE access_token IS NOT NULL"
