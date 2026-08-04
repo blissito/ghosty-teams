@@ -1501,6 +1501,15 @@ function ChannelPage() {
       setHiddenDraftParent(doc.closed ? null : draftParentRef.current);
       return;
     }
+    // Lo que abriste TÚ manda: mientras lo tengas abierto, ningún borrador te lo quita.
+    if (panelManualRef.current && openArtifactRef.current) {
+      // Pero que no se pierda: queda como píldora para volver cuando quieras.
+      if (!doc.closed) {
+        setHiddenDraft(draftView());
+        setHiddenDraftParent(draftParentRef.current);
+      }
+      return;
+    }
     setOpenArtifact((cur) => {
       // Auto-abre si no hay panel, si ya estamos en el draft, o si está abierto el doc/hoja
       // que se está editando (para ver la edición EN VIVO). NO pisa otro artefacto (pdf/imagen…).
@@ -2489,8 +2498,18 @@ function ChannelPage() {
   const openProfile = useCallback((p: ProfileTarget) => setProfile(p), []);
   // Abrir artefacto CON sonido de rastrillo — SOLO en la transición cerrado→abierto (no al
   // cambiar de un artefacto a otro con el panel ya abierto). Gate en la categoría "artifact".
+  /**
+   * El panel abierto A MANO. Mientras vale, ningún borrador en vivo puede robarlo.
+   *
+   * Sin esto: con un agente escribiendo, abrías el resultado YA TERMINADO de otro, se veía un
+   * instante y el siguiente chunk del que sigue trabajando te lo cambiaba por su borrador —
+   * imposible leer nada (2026-08-03). Una acción explícita de la persona pesa más que
+   * cualquier automatismo; se libera al cerrar el panel.
+   */
+  const panelManualRef = useRef(false);
   const openArtifactWithSound = useCallback((v: ArtifactView) => {
     if (!openArtifactRef.current) playArtifactOpen();
+    panelManualRef.current = true;
     setOpenArtifact(v);
   }, []);
 
@@ -2503,6 +2522,8 @@ function ChannelPage() {
    * al equivocado: el tuyo volvía a abrirse y el otro quedaba mudo.
    */
   const descartarPanel = useCallback(() => {
+    // Cerrar libera el panel: a partir de aquí un borrador en vivo puede volver a tomarlo.
+    panelManualRef.current = false;
     const v = openArtifactRef.current;
     // `ArtifactView` es una unión y sólo algunas variantes llevan `messageId` (un pdf o una
     // imagen no cuelgan de un borrador), de ahí el `in`.
