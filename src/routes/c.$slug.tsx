@@ -1230,7 +1230,7 @@ function ChannelPage() {
   // pararlos si no estabas parado en su hilo.
   const [liveTurns, setLiveTurns] = useState<Array<{
     id: number; state: "running" | "queued" | "stopped" | "done"; position: number; startedAt: number;
-    agent: string; avatar: string; channelId: number | null; parentId: number | null; topic: string; tarea?: string; paso?: string; outcome?: string;
+    agent: string; avatar: string; channelId: number | null; parentId: number | null; topic: string; dmId?: number | null; tarea?: string; paso?: string; outcome?: string;
   }>>([]);
   // ⚠️ El diff se calcula FUERA del actualizador de estado. Estaba dentro de
   // `setLiveTurns(prev => …)` llamando a `setDoneTurns` desde ahí, y React no garantiza ese
@@ -1244,9 +1244,21 @@ function ChannelPage() {
         // la entrada 5s más como red anti-zombi, así que el reconcile la volvía a traer: la
         // fila reaparecía tras pulsar Detener —ahora sin botón— y al minuto se marcaba como
         // "terminó ✓". O sea: Detener parecía no funcionar y encima acabar bien.
-        const next = ((r ?? []) as never as typeof liveTurns).filter(
-          (x) => x.state !== "stopped" && x.state !== "done",
-        );
+        const todo = (r ?? []) as never as typeof liveTurns;
+        // El servidor devuelve vivos + los que acabaron hace poco (leídos de gt_turns). Los
+        // detenidos se descartan: `stopTurn` deja la entrada 5s más como red anti-zombi, y
+        // sin este filtro la fila reaparecía tras pulsar Detener y acababa marcada como
+        // "terminó ✓".
+        const next = todo.filter((x) => x.state !== "stopped" && x.state !== "done");
+        const yaHechos = todo.filter((x) => x.state === "done");
+        if (yaHechos.length) {
+          setDoneTurns((d) => {
+            const nuevos = yaHechos.filter((h) => !d.some((x) => x.id === h.id));
+            return nuevos.length
+              ? [...d, ...nuevos.map((h) => ({ ...h, state: "done" as const, doneAt: Date.now() }))]
+              : d;
+          });
+        }
         const vivos = new Set(next.map((x) => x.id));
         const recienTerminados = liveTurnsRef.current.filter((x) => !vivos.has(x.id));
         liveTurnsRef.current = next;
@@ -1858,7 +1870,7 @@ function ChannelPage() {
           const fila = {
             id: ev.id, state: ev.state, position: ev.position, startedAt: ev.startedAt,
             agent: ev.agent ?? "", avatar: ev.avatar ?? "", channelId: ev.channelId ?? null,
-            parentId: ev.parentId ?? null, topic: "", tarea: ev.tarea, paso: ev.paso,
+            parentId: ev.parentId ?? null, dmId: ev.dmId ?? null, topic: "", tarea: ev.tarea, paso: ev.paso,
           };
           const resto = liveTurnsRef.current.filter((x) => x.id !== ev.id);
           liveTurnsRef.current = [...resto, fila];
@@ -3344,6 +3356,8 @@ function NavToggle({ onOpen }: { onOpen: () => void }) {
 type LiveTurnRow = {
   id: number; state: "running" | "queued" | "stopped" | "done"; position: number; startedAt: number;
   agent: string; avatar: string; channelId: number | null; parentId: number | null; topic: string;
+  /** DM al que pertenece (los turnos de DM no tienen room). */
+  dmId?: number | null;
   /** Lo que la persona pidió, recortado: nombra la FILA, como hace Cursor con sus tareas. */
   tarea?: string;
   /** Último paso narrado por el agente — el "en qué va", como la fila de Cursor. */
@@ -3735,9 +3749,14 @@ function Sidebar({
           onStop={onStopTurn}
           onDismiss={onDismissTurn}
           onOpen={(x) => {
+            onCloseNav();
+            // Un turno de DM no tiene room: se abre por su conversación.
+            if (x.dmId != null) {
+              onOpenDm(x.dmId);
+              return;
+            }
             const slug = channels.find((c) => c.id === x.channelId)?.slug;
             if (!slug) return;
-            onCloseNav();
             // Mismo room → abrir el hilo en el acto, sin recargar.
             // Abrir NO lo descarta: quieres poder ir al resultado, volver y seguir viendo la
             // lista de lo que acabó. Se va con la ✕ o solo al envejecer.

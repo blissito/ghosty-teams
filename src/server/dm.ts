@@ -314,14 +314,42 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
     const turns = await import("./turns.server");
     const steer = turns.hasOwnInflight(groupId, me.sub);
     const controller = new AbortController();
+    const flusher = (await import("./body-flush.server")).makeBodyFlusher();
     let registeredId: number | null = null;
+    // Cómo se llama la tarea (lo que pidió la persona, recortado) — igual que en rooms; sin
+    // esto la fila del panel salía como "Agente · " y encima no se podía abrir.
+    const tareaDelTurno = (() => {
+      let crudo = text ?? "";
+      if (crudo.startsWith("[Adjuntos")) {
+        const corte = crudo.indexOf("\n\n");
+        crudo = corte === -1 ? "" : crudo.slice(corte + 2);
+      }
+      crudo = crudo.replace(/```[\s\S]*?```/g, " ").replace(/\s+/g, " ").trim();
+      return crudo.length > 60 ? `${crudo.slice(0, 57)}…` : crudo;
+    })();
+    const pasoDe = (body: string): string => {
+      const m = /```gt-steps[^\n]*\n([\s\S]*?)\n```/.exec(body);
+      if (!m) return "";
+      try {
+        const pasos = (JSON.parse(m[1]) as { steps?: string[] }).steps ?? [];
+        return pasos.length ? String(pasos[pasos.length - 1]).slice(0, 120) : "";
+      } catch {
+        return "";
+      }
+    };
     // Registrar YA si la cáscara existe (postMessage la crea eager). Registrarlo hasta el
     // primer token dejaba sin botón ni reloj justo la ventana en la que hacen falta: la
     // del "pensando…" antes de que llegue nada.
     const register = (mid: number) => {
       if (registeredId === mid) return;
       registeredId = mid;
-      turns.registerTurn({ ns, messageId: mid, groupId, invokerSub: me.sub, controller, announce: (st) => fanout({ t: "turn", ...st }) });
+      turns.registerTurn({
+        ns, messageId: mid, groupId, invokerSub: me.sub, controller,
+        announce: (st) => fanout({ t: "turn", ...st }),
+        // El DM no tiene channelId: la fila se abre por `dmId` (ver el panel).
+        channelId: null, parentId: null, dmId: data.id,
+        agent: name, avatar: agent?.avatar ?? "", tarea: tareaDelTurno,
+      });
     };
     if (data.shellId != null) register(data.shellId);
     const { id, reply } = await runAgentTurn({
@@ -347,14 +375,31 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
         return id;
       },
       emitDelta: (mid, chunk) => fanout({ t: "message:delta", id: mid, chunk, channelId: null, parentId: null, dmId: data.id }),
-      emitBody: (mid, body) => fanout({ t: "message:body", id: mid, body }),
-    }).finally(() => {
-      if (registeredId != null) turns.finishTurn(ns, registeredId);
+      // Mismo tratamiento que en rooms: persistir mientras escribe (si no, un refresh a
+      // media respuesta deja la cáscara muda) y anunciar el paso en curso.
+      emitBody: (mid, body) => {
+        fanout({ t: "message:body", id: mid, body });
+        flusher.offer(mid, body);
+        const p = pasoDe(body);
+        if (p) turns.setTurnStep(ns, mid, p);
+      },
+    }).finally(async () => {
+      if (registeredId != null) {
+        await flusher.flush(registeredId);
+        flusher.done(registeredId);
+        turns.finishTurn(ns, registeredId);
+      }
     });
 
     // Entró a un turno vivo (steer): la respuesta sale por aquella burbuja. Se borra la
     // cáscara eager para no dejar una vacía. Mismo criterio que el room.
     if (reply === INJECTED) {
+      // Steer: la cáscara se borra, así que su fila del panel también tiene que irse. En un
+      // DM 1:1 el steer es la NORMA, así que sin esto quedaba una fila fantasma por cada
+      // corrección que escribes.
+      if (registeredId != null) {
+        fanout({ t: "turn", id: registeredId, state: "stopped", position: 1, startedAt: Date.now() });
+      }
       if (data.shellId != null) {
         await db.deleteMessage(data.shellId).catch(() => {});
         fanout({ t: "message:deleted", id: data.shellId, channelId: null, parentId: null, dmId: data.id });
@@ -543,6 +588,17 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
       }
     } catch (e) {
       console.error("[dm artifact] commit failed", e);
+    } finally {
+      // Cierre del turno, igual que en rooms y por el mismo motivo: es el único punto por el
+      // que pasan todas las ramas del bloque de artefactos. Sin esto la fila del DM se
+      // quedaba con el cronómetro corriendo hasta el reconcile del minuto.
+      if (registeredId != null) {
+        fanout({
+          t: "turn", id: registeredId,
+          state: controller.signal.aborted ? "stopped" : "done",
+          position: 1, startedAt: Date.now(),
+        });
+      }
     }
     return { ok: true as const };
   });

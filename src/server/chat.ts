@@ -308,7 +308,15 @@ export const getLiveTurnsFn = createServerFn({ method: "POST" }).handler(async (
   // el cliente lo llamaba cada 8s por pestaña abierta. Hoy esto es sólo el reconcile.
   // Sólo los de ESTE workspace: `tarea` lleva el texto literal de lo que pidió la persona.
   const { currentNamespace } = await import("./tenant.server");
-  return turns.allLiveTurnStates(await currentNamespace());
+  const ns = await currentNamespace();
+  // Vivos (memoria) + los que acabaron hace poco (tabla): así el historial de entregas
+  // sobrevive a una recarga y a un reinicio del server, que era el objetivo de persistirlos.
+  const [vivos, hechos] = await Promise.all([
+    Promise.resolve(turns.allLiveTurnStates(ns)),
+    turns.recentDoneTurns(ns),
+  ]);
+  const ids = new Set(vivos.map((v) => v.id));
+  return [...vivos, ...hechos.filter((h) => !ids.has(h.id))];
 });
 
 // Topics del room (submenús del sidebar) — distintos topics con conteo/actividad.
@@ -944,6 +952,16 @@ export const askAgent = createServerFn({ method: "POST" })
         const p = pasoDe(body);
         if (p) turns.setTurnStep(ns, mid, p);
       },
+    }).catch((e) => {
+      // ⚠️ Si el turno REVIENTA, nadie emitía el cierre: la burbuja se quedaba con el anillo
+      // girando, el botón Detener no hacía nada (el body ya no está vacío) y al minuto el
+      // reconcile lo clasificaba como "terminó ✓" — un fallo anunciado como entrega.
+      if (registeredId != null) {
+        bus.publish(bus.ch.room(ns, channel.id), {
+          t: "turn", id: registeredId, state: "stopped", position: 1, startedAt: Date.now(),
+        });
+      }
+      throw e;
     }).finally(async () => {
       if (registeredId != null) {
         // Lo último pintado queda en DB pase lo que pase: si el proceso muere aquí, el

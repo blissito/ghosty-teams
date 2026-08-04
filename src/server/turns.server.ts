@@ -25,6 +25,8 @@ export type LiveTurn = {
   // Contexto para pintar la barra sin volver a consultar la base en cada refresco.
   channelId?: number | null;
   parentId?: number | null;
+  /** DM al que pertenece el turno (los DMs no tienen channelId). */
+  dmId?: number | null;
   agent?: string;
   avatar?: string;
   /** Lo que pidió la persona, recortado: nombra la fila. */
@@ -46,6 +48,7 @@ export type TurnState = {
   avatar?: string;
   channelId?: number | null;
   parentId?: number | null;
+  dmId?: number | null;
   tarea?: string;
   paso?: string;
   outcome?: string;
@@ -87,6 +90,7 @@ function stateOf(t: LiveTurn): TurnState {
     avatar: t.avatar,
     channelId: t.channelId ?? null,
     parentId: t.parentId ?? null,
+    dmId: t.dmId ?? null,
     tarea: t.tarea,
     paso: t.paso,
   };
@@ -183,6 +187,45 @@ export function allLiveTurnStates(ns: string): TurnState[] {
 }
 
 /**
+ * Lo que ACABÓ hace poco, leído de `gt_turns`. Es lo que hace que la tabla sirva para algo:
+ * sin esto era de sólo escritura, y la barra perdía el historial de entregas en cada
+ * recarga o reinicio — justo lo que la persistencia venía a resolver.
+ *
+ * Sólo `done`: un turno detenido o interrumpido no es una entrega y no merece una fila con
+ * palomita.
+ */
+export async function recentDoneTurns(ns: string, desdeMs = 10 * 60 * 1000): Promise<TurnState[]> {
+  try {
+    const { dbq } = await import("../dbq.server");
+    const filas = await dbq(
+      `SELECT message_id, agent, avatar, channel_id, parent_id, tarea, outcome, started_at
+         FROM gt_turns
+        WHERE state = 'done' AND ended_at IS NOT NULL AND ended_at > ?
+        ORDER BY ended_at DESC LIMIT 20`,
+      [Date.now() - desdeMs],
+    );
+    // ⚠️ La tabla es del TENANT (cada workspace tiene su base), así que no hace falta
+    // filtrar por `ns` aquí — pero el parámetro se queda porque el llamador sí lo tiene y
+    // deja explícito de quién es lo que se devuelve.
+    void ns;
+    return filas.map((f) => ({
+      id: Number(f.message_id),
+      state: "done" as const,
+      position: 1,
+      startedAt: Number(f.started_at ?? 0),
+      agent: (f.agent as string) ?? "",
+      avatar: (f.avatar as string) ?? "",
+      channelId: f.channel_id != null ? Number(f.channel_id) : null,
+      parentId: f.parent_id != null ? Number(f.parent_id) : null,
+      tarea: (f.tarea as string) ?? undefined,
+      outcome: (f.outcome as string) ?? undefined,
+    }));
+  } catch {
+    return [];
+  }
+}
+
+/**
  * Detiene un turno. Cortar el fetch cuelga la conexión con el worker, y el worker
  * (desde 2026-07-28) cierra su generador al detectarlo: suelta el lock de la sesión y
  * el siguiente de la cola arranca. Sin ese cambio del worker, esto sólo dejaría de
@@ -273,7 +316,14 @@ export async function sweepOrphans(): Promise<number> {
     // Esto convierte el barrido de heurística en hecho — antes tenía que adivinar por
     // "cuerpo vacío y más de 60s", y desde la persistencia incremental esa adivinanza ya
     // fallaba (un turno cortado a media respuesta tiene texto, no vacío).
-    await dbq("UPDATE gt_turns SET state = 'interrupted', ended_at = ? WHERE state = 'running'", [
+    // ⚠️ Se EXCLUYE lo que este proceso tiene vivo ahora mismo. `sweepOrphans` corre la
+    // primera vez que ESTE proceso toca ESE tenant —que puede ser horas después del arranque,
+    // o durante un despliegue solapado— así que "todo lo running es huérfano" era falso: le
+    // clavaba el aviso de interrupción a un documento que se estaba escribiendo en ese
+    // instante.
+    const vivosAhora = [...live.values()].map((t) => t.messageId);
+    const excluir = vivosAhora.length ? ` AND message_id NOT IN (${vivosAhora.join(",")})` : "";
+    await dbq(`UPDATE gt_turns SET state = 'interrupted', ended_at = ? WHERE state = 'running'${excluir}`, [
       Date.now(),
     ]).catch(() => {});
     // ⚠️ DOS formas de quedar huérfano, y la segunda nació el 2026-08-03 con la
@@ -287,14 +337,18 @@ export async function sweepOrphans(): Promise<number> {
     // peor de los dos males.
     await dbq(
       `UPDATE gc_messages SET body = body || ?, streaming = 0
-         WHERE streaming = 1 AND created_at < unixepoch() - 60`,
+         WHERE streaming = 1 AND created_at < unixepoch() - 60${excluir ? excluir.replace("message_id", "id") : ""}`,
       ["\n\n⏹ _Interrumpido: el servidor se reinició mientras el agente escribía._"],
     ).catch(() => {});
+    // ⚠️ 60s NO basta: un motor lento tarda más que eso en emitir el primer token (el propio
+    // cliente tiene frases para turnos de más de 120s). Con el margen corto, un turno
+    // legítimo que coincidiera con el primer request del tenant en un proceso nuevo se
+    // llevaba un "Detenido" encima. 10 minutos deja fuera cualquier turno real.
     const rows = await dbq(
       `UPDATE gc_messages SET body = ?
          WHERE agent_handle IS NOT NULL
            AND (body IS NULL OR trim(body) = '')
-           AND created_at < unixepoch() - 60
+           AND created_at < unixepoch() - 600${excluir ? excluir.replace("message_id", "id") : ""}
        RETURNING id`,
       ["⏹ Detenido (el servidor se reinició)."],
     );

@@ -43,7 +43,7 @@ export type RtEvent =
   | {
       t: "turn"; id: number; state: "running" | "queued" | "stopped" | "done";
       position: number; startedAt: number;
-      agent?: string; avatar?: string; channelId?: number | null; parentId?: number | null;
+      agent?: string; avatar?: string; channelId?: number | null; parentId?: number | null; dmId?: number | null;
       tarea?: string; paso?: string; outcome?: string;
     }
   | { t: "reaction"; messageId: number; emoji: string; userSub: string; op: "add" | "remove"; count: number }
