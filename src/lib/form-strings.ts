@@ -80,6 +80,14 @@ export type FormStrings = {
   /** El mensaje que la anuncia en el hilo. */
   fichaMessage: string;
   fichaMessageAnon: string;
+  // ── Guardar y continuar ──
+  draftSaving: string;
+  draftSaved: string;
+  draftTitle: string;
+  draftHelp: string;
+  draftCopy: string;
+  draftCopied: string;
+  draftResumed: string;
 };
 
 export const FORM_STRINGS: Record<FormLocale, FormStrings> = {
@@ -123,6 +131,14 @@ export const FORM_STRINGS: Record<FormLocale, FormStrings> = {
     fichaAnswerColumn: "Respuesta",
     fichaMessage: "📄 **Ficha** — {who}",
     fichaMessageAnon: "📄 **Ficha de una respuesta**",
+    draftSaving: "Guardando…",
+    draftSaved: "Guardado",
+    draftTitle: "¿Lo terminas después?",
+    draftHelp:
+      "Guarda este enlace y ábrelo para seguir donde te quedaste. Caduca en {n} días. Ojo: cualquiera que lo tenga verá lo que llevas escrito.",
+    draftCopy: "Copiar enlace",
+    draftCopied: "Copiado",
+    draftResumed: "Retomamos donde te quedaste.",
   },
   en: {
     thanksDefault: "Thank you! We've received your answers.",
@@ -164,6 +180,14 @@ export const FORM_STRINGS: Record<FormLocale, FormStrings> = {
     fichaAnswerColumn: "Answer",
     fichaMessage: "📄 **Response** — {who}",
     fichaMessageAnon: "📄 **A response came in**",
+    draftSaving: "Saving…",
+    draftSaved: "Saved",
+    draftTitle: "Finishing this later?",
+    draftHelp:
+      "Save this link and open it to pick up where you left off. It expires in {n} days. Heads up: anyone with it can see what you've filled in.",
+    draftCopy: "Copy link",
+    draftCopied: "Copied",
+    draftResumed: "Picked up where you left off.",
   },
 };
 

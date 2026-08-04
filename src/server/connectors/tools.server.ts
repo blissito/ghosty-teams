@@ -26,7 +26,7 @@ export async function listUserTools(sub: string, dest: ToolDest | null = null): 
     if (!load) continue;
     try {
       const mod = await load();
-      for (const t of await toolsOf(mod, sub)) out.push({ name: t.name, description: t.description, inputSchema: t.inputSchema });
+      for (const t of await toolsOf(mod, sub, dest)) out.push({ name: t.name, description: t.description, inputSchema: t.inputSchema });
     } catch {
       // un conector roto no rompe el listado de los demás
     }
@@ -58,7 +58,7 @@ export async function runTool(sub: string, toolName: string, args: Record<string
     } catch {
       continue;
     }
-    const tool = (await toolsOf(mod, sub)).find((t) => t.name === toolName);
+    const tool = (await toolsOf(mod, sub, dest)).find((t) => t.name === toolName);
     if (!tool) continue;
     try {
       const result = await tool.handler(sub, args ?? {});

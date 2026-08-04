@@ -42,6 +42,7 @@ import { Route as ApiInternalAnnouncementsRouteImport } from './routes/api.inter
 import { Route as ApiFormTokenRouteImport } from './routes/api.form.$token'
 import { Route as ApiFormUploadTokenRouteImport } from './routes/api.form-upload.$token'
 import { Route as ApiFormFileIdRouteImport } from './routes/api.form-file.$id'
+import { Route as ApiFormDraftTokenRouteImport } from './routes/api.form-draft.$token'
 import { Route as ApiDocXlsxIdRouteImport } from './routes/api.doc-xlsx.$id'
 import { Route as ApiDocTtsIdRouteImport } from './routes/api.doc-tts.$id'
 import { Route as ApiDocPdfIdRouteImport } from './routes/api.doc-pdf.$id'
@@ -51,6 +52,7 @@ import { Route as ApiDevDriveRouteImport } from './routes/api.dev.drive'
 import { Route as ApiConnectorsToolsRouteImport } from './routes/api.connectors.tools'
 import { Route as ApiAttachmentIdRouteImport } from './routes/api.attachment.$id'
 import { Route as ApiArtifactStreamIdRouteImport } from './routes/api.artifact-stream.$id'
+import { Route as ApiHooksSentryTokenRouteImport } from './routes/api.hooks.sentry.$token'
 import { Route as ApiCollabDocIdStateRouteImport } from './routes/api.collab.$docId.state'
 import { Route as ApiCollabDocIdSessionEndRouteImport } from './routes/api.collab.$docId.session-end'
 
@@ -220,6 +222,11 @@ const ApiFormFileIdRoute = ApiFormFileIdRouteImport.update({
   path: '/api/form-file/$id',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiFormDraftTokenRoute = ApiFormDraftTokenRouteImport.update({
+  id: '/api/form-draft/$token',
+  path: '/api/form-draft/$token',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiDocXlsxIdRoute = ApiDocXlsxIdRouteImport.update({
   id: '/api/doc-xlsx/$id',
   path: '/api/doc-xlsx/$id',
@@ -265,6 +272,11 @@ const ApiArtifactStreamIdRoute = ApiArtifactStreamIdRouteImport.update({
   path: '/api/artifact-stream/$id',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiHooksSentryTokenRoute = ApiHooksSentryTokenRouteImport.update({
+  id: '/api/hooks/sentry/$token',
+  path: '/api/hooks/sentry/$token',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiCollabDocIdStateRoute = ApiCollabDocIdStateRouteImport.update({
   id: '/api/collab/$docId/state',
   path: '/api/collab/$docId/state',
@@ -308,6 +320,7 @@ export interface FileRoutesByFullPath {
   '/api/doc-pdf/$id': typeof ApiDocPdfIdRoute
   '/api/doc-tts/$id': typeof ApiDocTtsIdRoute
   '/api/doc-xlsx/$id': typeof ApiDocXlsxIdRoute
+  '/api/form-draft/$token': typeof ApiFormDraftTokenRoute
   '/api/form-file/$id': typeof ApiFormFileIdRoute
   '/api/form-upload/$token': typeof ApiFormUploadTokenRoute
   '/api/form/$token': typeof ApiFormTokenRoute
@@ -322,6 +335,7 @@ export interface FileRoutesByFullPath {
   '/setup/easybits/connect': typeof SetupEasybitsConnectRoute
   '/api/collab/$docId/session-end': typeof ApiCollabDocIdSessionEndRoute
   '/api/collab/$docId/state': typeof ApiCollabDocIdStateRoute
+  '/api/hooks/sentry/$token': typeof ApiHooksSentryTokenRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -353,6 +367,7 @@ export interface FileRoutesByTo {
   '/api/doc-pdf/$id': typeof ApiDocPdfIdRoute
   '/api/doc-tts/$id': typeof ApiDocTtsIdRoute
   '/api/doc-xlsx/$id': typeof ApiDocXlsxIdRoute
+  '/api/form-draft/$token': typeof ApiFormDraftTokenRoute
   '/api/form-file/$id': typeof ApiFormFileIdRoute
   '/api/form-upload/$token': typeof ApiFormUploadTokenRoute
   '/api/form/$token': typeof ApiFormTokenRoute
@@ -367,6 +382,7 @@ export interface FileRoutesByTo {
   '/setup/easybits/connect': typeof SetupEasybitsConnectRoute
   '/api/collab/$docId/session-end': typeof ApiCollabDocIdSessionEndRoute
   '/api/collab/$docId/state': typeof ApiCollabDocIdStateRoute
+  '/api/hooks/sentry/$token': typeof ApiHooksSentryTokenRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -400,6 +416,7 @@ export interface FileRoutesById {
   '/api/doc-pdf/$id': typeof ApiDocPdfIdRoute
   '/api/doc-tts/$id': typeof ApiDocTtsIdRoute
   '/api/doc-xlsx/$id': typeof ApiDocXlsxIdRoute
+  '/api/form-draft/$token': typeof ApiFormDraftTokenRoute
   '/api/form-file/$id': typeof ApiFormFileIdRoute
   '/api/form-upload/$token': typeof ApiFormUploadTokenRoute
   '/api/form/$token': typeof ApiFormTokenRoute
@@ -414,6 +431,7 @@ export interface FileRoutesById {
   '/setup/easybits/connect': typeof SetupEasybitsConnectRoute
   '/api/collab/$docId/session-end': typeof ApiCollabDocIdSessionEndRoute
   '/api/collab/$docId/state': typeof ApiCollabDocIdStateRoute
+  '/api/hooks/sentry/$token': typeof ApiHooksSentryTokenRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -448,6 +466,7 @@ export interface FileRouteTypes {
     | '/api/doc-pdf/$id'
     | '/api/doc-tts/$id'
     | '/api/doc-xlsx/$id'
+    | '/api/form-draft/$token'
     | '/api/form-file/$id'
     | '/api/form-upload/$token'
     | '/api/form/$token'
@@ -462,6 +481,7 @@ export interface FileRouteTypes {
     | '/setup/easybits/connect'
     | '/api/collab/$docId/session-end'
     | '/api/collab/$docId/state'
+    | '/api/hooks/sentry/$token'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -493,6 +513,7 @@ export interface FileRouteTypes {
     | '/api/doc-pdf/$id'
     | '/api/doc-tts/$id'
     | '/api/doc-xlsx/$id'
+    | '/api/form-draft/$token'
     | '/api/form-file/$id'
     | '/api/form-upload/$token'
     | '/api/form/$token'
@@ -507,6 +528,7 @@ export interface FileRouteTypes {
     | '/setup/easybits/connect'
     | '/api/collab/$docId/session-end'
     | '/api/collab/$docId/state'
+    | '/api/hooks/sentry/$token'
   id:
     | '__root__'
     | '/'
@@ -539,6 +561,7 @@ export interface FileRouteTypes {
     | '/api/doc-pdf/$id'
     | '/api/doc-tts/$id'
     | '/api/doc-xlsx/$id'
+    | '/api/form-draft/$token'
     | '/api/form-file/$id'
     | '/api/form-upload/$token'
     | '/api/form/$token'
@@ -553,6 +576,7 @@ export interface FileRouteTypes {
     | '/setup/easybits/connect'
     | '/api/collab/$docId/session-end'
     | '/api/collab/$docId/state'
+    | '/api/hooks/sentry/$token'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -585,6 +609,7 @@ export interface RootRouteChildren {
   ApiDocPdfIdRoute: typeof ApiDocPdfIdRoute
   ApiDocTtsIdRoute: typeof ApiDocTtsIdRoute
   ApiDocXlsxIdRoute: typeof ApiDocXlsxIdRoute
+  ApiFormDraftTokenRoute: typeof ApiFormDraftTokenRoute
   ApiFormFileIdRoute: typeof ApiFormFileIdRoute
   ApiFormUploadTokenRoute: typeof ApiFormUploadTokenRoute
   ApiFormTokenRoute: typeof ApiFormTokenRoute
@@ -594,6 +619,7 @@ export interface RootRouteChildren {
   OauthProviderCallbackRoute: typeof OauthProviderCallbackRoute
   ApiCollabDocIdSessionEndRoute: typeof ApiCollabDocIdSessionEndRoute
   ApiCollabDocIdStateRoute: typeof ApiCollabDocIdStateRoute
+  ApiHooksSentryTokenRoute: typeof ApiHooksSentryTokenRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -829,6 +855,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiFormFileIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/form-draft/$token': {
+      id: '/api/form-draft/$token'
+      path: '/api/form-draft/$token'
+      fullPath: '/api/form-draft/$token'
+      preLoaderRoute: typeof ApiFormDraftTokenRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/doc-xlsx/$id': {
       id: '/api/doc-xlsx/$id'
       path: '/api/doc-xlsx/$id'
@@ -890,6 +923,13 @@ declare module '@tanstack/react-router' {
       path: '/api/artifact-stream/$id'
       fullPath: '/api/artifact-stream/$id'
       preLoaderRoute: typeof ApiArtifactStreamIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/hooks/sentry/$token': {
+      id: '/api/hooks/sentry/$token'
+      path: '/api/hooks/sentry/$token'
+      fullPath: '/api/hooks/sentry/$token'
+      preLoaderRoute: typeof ApiHooksSentryTokenRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/collab/$docId/state': {
@@ -969,6 +1009,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiDocPdfIdRoute: ApiDocPdfIdRoute,
   ApiDocTtsIdRoute: ApiDocTtsIdRoute,
   ApiDocXlsxIdRoute: ApiDocXlsxIdRoute,
+  ApiFormDraftTokenRoute: ApiFormDraftTokenRoute,
   ApiFormFileIdRoute: ApiFormFileIdRoute,
   ApiFormUploadTokenRoute: ApiFormUploadTokenRoute,
   ApiFormTokenRoute: ApiFormTokenRoute,
@@ -978,6 +1019,7 @@ const rootRouteChildren: RootRouteChildren = {
   OauthProviderCallbackRoute: OauthProviderCallbackRoute,
   ApiCollabDocIdSessionEndRoute: ApiCollabDocIdSessionEndRoute,
   ApiCollabDocIdStateRoute: ApiCollabDocIdStateRoute,
+  ApiHooksSentryTokenRoute: ApiHooksSentryTokenRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

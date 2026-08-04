@@ -26,12 +26,6 @@ const CORS = {
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { ...CORS, "Content-Type": "application/json" } });
 
-// Ventana de 60s. Dos cubetas: con IP y sin IP. El original se SALTABA el límite cuando no
-// podía leer la IP, o sea que bastaba un proxy mal configurado para no tener límite.
-const WINDOW_S = 60;
-const MAX_WITH_IP = 10;
-const MAX_NO_IP = 5;
-
 export const Route = createFileRoute("/api/form/$token")({
   server: {
     handlers: {
@@ -44,7 +38,7 @@ export const Route = createFileRoute("/api/form/$token")({
         // formulario existe a quien está probando tokens.
         if (!ref) return json({ ok: false, error: "no encontrado" }, 404);
 
-        let payload: { _idem?: string; _hp?: string; data?: Record<string, unknown> };
+        let payload: { _idem?: string; _hp?: string; _draft?: string; data?: Record<string, unknown> };
         try {
           payload = (await request.json()) as typeof payload;
         } catch {
@@ -74,6 +68,7 @@ export const Route = createFileRoute("/api/form/$token")({
             return json({ ok: false, errors: { _form: s.formClosed } }, 200);
           }
 
+          const { clientIp, rateCheck } = await import("../server/forms/rate.server");
           const ip = clientIp(request);
           const { ipHash, allowed } = await rateCheck(form.id, ip);
           if (!allowed) {
@@ -102,6 +97,23 @@ export const Route = createFileRoute("/api/form/$token")({
             [form.id, ipHash, JSON.stringify(v.cleanData), JSON.stringify(files), idemKey]
           );
 
+          // El borrador se borra en cuanto la respuesta está guardada, y también en el
+          // camino del duplicado: si el primer intento entró y el segundo llega por un
+          // reintento de red, dejarlo vivo mantendría un enlace que enseña el intake de esa
+          // persona. Falla en silencio a propósito — es limpieza, no parte del envío.
+          if (payload._draft) {
+            try {
+              const { verifyDraftToken } = await import("../server/forms/token.server");
+              const d = verifyDraftToken(payload._draft);
+              if (d && d.formId === form.id && d.ns === ref.ns) {
+                const { dbq: q } = await import("../dbq.server");
+                await q(`DELETE FROM gt_form_drafts WHERE draft_id = ? AND form_id = ?`, [d.draftId, form.id]);
+              }
+            } catch (e) {
+              console.error("[form submit] borrar el borrador falló", e);
+            }
+          }
+
           // Sin fila = ya existía esa misma respuesta (doble clic, reintento de red). Se
           // contesta bien y NO se vuelve a postear: una respuesta, una ficha.
           if (!inserted[0]) return json({ ok: true, duplicate: true });
@@ -123,46 +135,6 @@ export const Route = createFileRoute("/api/form/$token")({
     },
   },
 });
-
-function clientIp(request: Request): string | null {
-  const xff = request.headers.get("x-forwarded-for");
-  const first = xff?.split(",")[0]?.trim();
-  return first || request.headers.get("cf-connecting-ip") || null;
-}
-
-/**
- * Rate limit en la DB del tenant: un contador in-process no sobrevive un deploy ni sirve con
- * más de un proceso. Cuesta un round-trip por submit, aceptable para un intake.
- */
-async function rateCheck(formId: string, ip: string | null): Promise<{ ipHash: string | null; allowed: boolean }> {
-  const crypto = await import("node:crypto");
-  const salt = process.env.GHOSTY_PARTNER_SECRET ?? "";
-  // Hasheada, nunca en claro: sirve para el límite y para investigar abuso, no para
-  // identificar a quien contesta.
-  const ipHash = ip ? crypto.createHash("sha256").update(`${salt}:${ip}`).digest("hex").slice(0, 32) : null;
-  const bucket = ipHash ?? "unknown";
-  const max = ipHash ? MAX_WITH_IP : MAX_NO_IP;
-  const windowStart = Math.floor(Date.now() / 1000 / WINDOW_S) * WINDOW_S;
-
-  try {
-    const { dbq, num } = await import("../dbq.server");
-    const rows = await dbq(
-      `INSERT INTO gt_form_rate (form_id, bucket, window_start, count) VALUES (?,?,?,1)
-       ON CONFLICT(form_id, bucket, window_start) DO UPDATE SET count = count + 1
-       RETURNING count`,
-      [formId, bucket, windowStart]
-    );
-    // Limpieza oportunista de ventanas viejas: sin cron, sin tabla que crezca sola.
-    if (num(rows[0]?.count) === 1) {
-      await dbq(`DELETE FROM gt_form_rate WHERE window_start < ?`, [windowStart - WINDOW_S * 10]).catch(() => []);
-    }
-    return { ipHash, allowed: num(rows[0]?.count) <= max };
-  } catch (e) {
-    // Un fallo del contador no debe tirar el formulario: se deja pasar y se loguea.
-    console.error("[form submit] rate check falló", e);
-    return { ipHash, allowed: true };
-  }
-}
 
 /** fileId → metadata guardada al subir, para poder nombrar el archivo en la ficha. */
 async function resolveFiles(

@@ -36,6 +36,8 @@ export type FormRow = {
   locale: FormLocale;
   /** `auto` publica la ficha de cada respuesta al llegar; `off` (default) sólo bajo demanda. */
   fichaMode: "off" | "auto";
+  /** Días que vive un borrador de "guardar y continuar". 0 = apagado (default). */
+  draftTtlDays: number;
   status: "open" | "closed";
   submissionCount: number;
   lastSubmittedAt: number | null;
@@ -43,7 +45,7 @@ export type FormRow = {
 
 const COLS = `id, ns, channel_id, topic, anchor_message_id, title, schema_json, intro, thanks,
   owner_sub, agent_handle, agent_name, agent_avatar, document_id, share_slug, origin,
-  sheet_document_id, sheet_message_id, locale, ficha_mode, status, submission_count, last_submitted_at`;
+  sheet_document_id, sheet_message_id, locale, ficha_mode, draft_ttl_days, status, submission_count, last_submitted_at`;
 
 function toRow(r: Record<string, string | null>): FormRow {
   const n = (v: string | null) => Number(v ?? 0);
@@ -75,6 +77,9 @@ function toRow(r: Record<string, string | null>): FormRow {
     // Defensivo como el resto: una fila anterior a la columna trae null y cae a español.
     locale: toFormLocale(r.locale),
     fichaMode: r.ficha_mode === "auto" ? "auto" : "off",
+    // Acotado aquí y no sólo en la escritura: una fila con basura no debe dar un borrador
+    // que viva para siempre.
+    draftTtlDays: Math.max(0, Math.min(90, n(r.draft_ttl_days))),
     status: r.status === "closed" ? "closed" : "open",
     submissionCount: n(r.submission_count),
     lastSubmittedAt: r.last_submitted_at != null ? n(r.last_submitted_at) : null,
@@ -115,6 +120,7 @@ export type CreateFormArgs = {
   agentAvatar?: string | null;
   locale?: FormLocale;
   fichaMode?: "off" | "auto";
+  draftTtlDays?: number;
   /**
    * Partir de un formulario que ya existe. Lo que no venga en `a` se hereda de él: campos,
    * intro, gracias e idioma. Un formulario que ya funcionó es el mejor punto de partida
@@ -153,8 +159,9 @@ export async function createForm(
   const id = `form_${randomUUID()}`;
   await dbq(
     `INSERT INTO gt_forms (id, ns, channel_id, topic, title, schema_json, intro, thanks,
-       owner_sub, agent_handle, agent_name, agent_avatar, origin, locale, ficha_mode)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+       owner_sub, agent_handle, agent_name, agent_avatar, origin, locale, ficha_mode, draft_ttl_days,
+       share_slug)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     [
       id,
       ns,
@@ -171,12 +178,24 @@ export async function createForm(
       origin || null,
       toFormLocale(a.locale ?? base?.locale),
       (a.fichaMode ?? base?.fichaMode) === "auto" ? "auto" : "off",
+      clampTtl(a.draftTtlDays ?? base?.draftTtlDays),
+      // El slug se RESERVA aquí, no al publicar. El HTML se hornea antes de que exista la
+      // fila del share, así que un slug asignado después dejaría al primer HTML publicado
+      // sin la liga pública — y sobre ella se arma el enlace de reanudación. Es un uuid: no
+      // colisiona, y `publishForm` respeta el que ya haya.
+      randomUUID(),
     ]
   );
 
   const form = await getForm(id);
   if (!form) return { ok: false, error: "no se pudo guardar el formulario" };
   return publishForm(form);
+}
+
+/** 0 = apagado. El tope de 90 días es para que un intake olvidado no viva un año. */
+function clampTtl(v: unknown): number {
+  const n = Math.floor(Number(v ?? 0));
+  return Number.isFinite(n) ? Math.max(0, Math.min(90, n)) : 0;
 }
 
 export type UpdateFormArgs = {
@@ -186,6 +205,7 @@ export type UpdateFormArgs = {
   thanks?: string | null;
   locale?: FormLocale;
   fichaMode?: "off" | "auto";
+  draftTtlDays?: number;
   status?: "open" | "closed";
 };
 
@@ -225,6 +245,10 @@ export async function updateForm(
   if (patch.fichaMode !== undefined) {
     sets.push("ficha_mode = ?");
     args.push(patch.fichaMode === "auto" ? "auto" : "off");
+  }
+  if (patch.draftTtlDays !== undefined) {
+    sets.push("draft_ttl_days = ?");
+    args.push(clampTtl(patch.draftTtlDays));
   }
   if (patch.status !== undefined) {
     sets.push("status = ?");
@@ -268,6 +292,13 @@ export async function publishForm(
     locale: form.locale,
     submitUrl: `${base}/api/form/${token}`,
     uploadUrl: `${base}/api/form-upload/${token}`,
+    draftUrl: form.draftTtlDays > 0 ? `${base}/api/form-draft/${token}` : null,
+    // La liga PÚBLICA, sobre la que se arma el enlace de reanudación. Desde dentro del
+    // iframe no se puede conocer (origen opaco), así que va horneada — y por eso el
+    // `share_slug` se reserva al CREAR el formulario y no aquí: si se asignara después de
+    // renderizar, el primer HTML publicado saldría sin ella.
+    publicUrl: formUrl(form),
+    draftTtlDays: form.draftTtlDays,
   });
 
   const documentId = form.documentId ?? `form_doc_${randomUUID()}`;
@@ -308,9 +339,11 @@ export async function publishForm(
   // El share vive en la fila RAÍZ del documento (cada versión es una fila nueva). El slug
   // NO se rota al republicar: rotarlo mataría en silencio las ligas ya repartidas.
   const root = await db.shareRootFor(documentId);
-  let slug = root?.slug ?? null;
+  let slug = root?.slug ?? form.shareSlug ?? null;
   if (root && (!root.slug || root.visibility !== "link")) {
-    slug = root.slug ?? randomUUID();
+    // El de la fila del share manda (es lo que ya se repartió); si no hay, el reservado al
+    // crear el formulario, que es el que se horneó en su HTML.
+    slug = root.slug ?? form.shareSlug ?? randomUUID();
     await db.setShareOnRoot(root.id, { slug, visibility: "link" });
   }
 

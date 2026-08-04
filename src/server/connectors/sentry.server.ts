@@ -8,6 +8,7 @@
 import { getValidToken } from "./oauth.server";
 import { getConnectorRow } from "./store.server";
 import type { ConnectorTool } from "./impl";
+import type { ToolDest } from "./tool-token.server";
 
 const BASE = (process.env.SENTRY_BASE_URL ?? "https://sentry.io").replace(/\/$/, "");
 
@@ -32,7 +33,7 @@ async function readMeta(sub: string): Promise<SentryMeta | null> {
  * excusas, mientras que "está en otra organización" lo lleva a decirle al
  * usuario exactamente qué pasó.
  */
-async function api(sub: string, path: string, init?: RequestInit): Promise<unknown> {
+async function api(sub: string, path: string, init?: RequestInit): Promise<any> {
   const token = await getValidToken(sub, "sentry");
   if (!token) {
     return { error: "La cuenta de Sentry no está conectada. Conéctala en Ajustes → Integraciones." };
@@ -190,6 +191,9 @@ export async function ambientContext(sub: string, sender: string, _message: stri
     `TIENES HERRAMIENTAS para sus errores vía el GS Tools SDK: importa /opt/gs-sdk/connectors.mjs y usa ` +
     `list() y run(name, args). Tools: sentry_list_projects, sentry_list_issues, sentry_get_issue, ` +
     `sentry_issue_latest_event, sentry_update_issue, sentry_list_releases, sentry_project_stats. ` +
+    `Si te piden que los errores AVISEN o LLEGUEN SOLOS a este canal, eso SÍ se puede: es ` +
+    `sentry_alerts_enable (la configura del lado de Sentry, el usuario no entra a Sentry a nada) ` +
+    `y sentry_alerts_disable para quitarla. Sólo funcionan dentro de un canal. ` +
     `Para CUALQUIER pregunta sobre errores, excepciones, crashes o releases de ${sender}, USA estas tools — ` +
     `NO inventes datos ni digas que no tienes acceso (SÍ lo tienes). El slug del proyecto sale de ` +
     `sentry_list_projects. Para diagnosticar de verdad un error necesitas el STACKTRACE: ` +
@@ -207,7 +211,7 @@ const orgProp = {
   org: str("Slug de la organización. Omítelo para usar la de la conexión."),
 };
 
-export const tools: ConnectorTool[] = [
+const READ_TOOLS: ConnectorTool[] = [
   {
     name: "sentry_list_projects",
     description:
@@ -376,3 +380,172 @@ export const tools: ConnectorTool[] = [
     },
   },
 ];
+
+// ── Alertas entrantes ────────────────────────────────────────────────────────
+//
+// Estas dos tools dejan a Sentry APUNTANDO a este canal, así que sólo existen cuando el
+// turno ocurre dentro de uno. El canal viene del `dest` FIRMADO en el tool-token, jamás de
+// los argumentos: si el agente pudiera elegirlo, podría mandar las alertas de un proyecto
+// al canal privado de otro equipo.
+//
+// El mecanismo del lado de Sentry es el "webhook legacy": sobrevivió a la eliminación del
+// sistema de plugins (2026-06-29, commit 3d20b99) y hoy tiene endpoints REST propios. Es lo
+// que permite que esto NO exija construir una Sentry App ni que el cliente configure nada
+// allá — nos basta `project:write`, que ya pedimos al conectar.
+//
+// ⚠️ Sus endpoints están marcados PRIVATE y Sentry lleva desde mayo de 2026 midiendo su uso
+// (`legacy_webhook.plugin.send`), que suele preceder una deprecación. Si un día devuelven
+// 404, el reemplazo es una Sentry App — y por eso nada más del conector depende de esto.
+
+const RULE_LABEL = "Ghosty Teams";
+const NOTIFY_ACTION = "sentry.rules.actions.notify_event.NotifyEventAction";
+
+function hookUrl(token: string): string {
+  const base = (process.env.GTEAMS_PUBLIC_ORIGIN ?? "https://teams.ghosty.studio").replace(/\/$/, "");
+  return `${base}/api/hooks/sentry/${token}`;
+}
+
+const SOLO_EN_CANAL = {
+  error: "Las alertas de Sentry sólo se pueden configurar dentro de un canal, no en un DM.",
+};
+
+function alertTools(dest: ToolDest | null): ConnectorTool[] {
+  if (!dest?.channelId) return [];
+  const channelId = dest.channelId;
+  return [
+    {
+      name: "sentry_alerts_enable",
+      description:
+        "Hace que los errores de un proyecto de Sentry aparezcan AUTOMÁTICAMENTE en este canal. " +
+        "Configura el webhook y la regla de alerta del lado de Sentry: el usuario no tiene que " +
+        "entrar a Sentry a hacer nada. MODIFICA su cuenta de Sentry, así que confírmalo con él antes.",
+      inputSchema: {
+        type: "object",
+        properties: { ...orgProp, project: str("Slug del proyecto (de sentry_list_projects).") },
+        required: ["project"],
+      },
+      handler: async (sub, a) => {
+        if (!dest?.channelId) return SOLO_EN_CANAL;
+        const org = await orgOf(sub, a);
+        if (!org) return NO_ORG;
+        const p = `${encodeURIComponent(org)}/${encodeURIComponent(String(a.project))}`;
+
+        const { mintHookToken } = await import("../hooks/token.server");
+        const { currentNamespace } = await import("../tenant.server");
+        const url = hookUrl(
+          mintHookToken({
+            ns: await currentNamespace(),
+            channelId,
+            topic: dest.topic || "general",
+            handle: dest.handle || "ghosty",
+            name: dest.name || "Ghosty",
+            avatar: dest.avatar || "",
+            ownerSub: sub,
+          }),
+        );
+
+        // 1) El webhook PRIMERO. ⚠️ El orden no es cosmético: `migration_helpers/
+        //    rule_action.py` descarta la acción EN SILENCIO si el proyecto no tiene ya
+        //    `webhooks:enabled`. Al revés queda una regla sin acción que no dispara nunca
+        //    y no hay nada que lo delate.
+        const actual = await api(sub, `/projects/${p}/legacy-webhooks/`);
+        if (actual?.error) return actual;
+        const urls: string[] = Array.isArray(actual?.urls) ? actual.urls : [];
+        // Idempotente a mano: el POST hace merge parcial, así que hay que leer y añadir.
+        // Se compara por el prefijo del endpoint y no por la URL completa, porque el token
+        // cambia si se reconfigura y quedarían dos entregas al mismo canal.
+        const prefijo = hookUrl("");
+        const otras = urls.filter((u) => typeof u === "string" && !u.startsWith(prefijo));
+        const puesto = await api(sub, `/projects/${p}/legacy-webhooks/`, {
+          method: "POST",
+          body: JSON.stringify({ urls: [...otras, url], enabled: true }),
+        });
+        if (puesto?.error) return puesto;
+
+        // 2) La regla. Si ya hay una nuestra, no se duplica.
+        const reglas = await api(sub, `/projects/${p}/rules/`);
+        if (reglas?.error) return reglas;
+        const yaEsta =
+          Array.isArray(reglas) &&
+          reglas.some(
+            (r: any) =>
+              r?.label === RULE_LABEL &&
+              (r?.actions ?? []).some((ac: any) => ac?.id === NOTIFY_ACTION),
+          );
+        if (!yaEsta) {
+          const creada = await api(sub, `/projects/${p}/rules/`, {
+            method: "POST",
+            body: JSON.stringify({
+              name: RULE_LABEL,
+              // Sólo la primera vez que se ve un issue. `EveryEventCondition` mandaría un
+              // mensaje por CADA ocurrencia y un error en bucle enterraría el canal.
+              conditions: [{ id: "sentry.rules.conditions.first_seen_event.FirstSeenEventCondition" }],
+              filters: [],
+              actionMatch: "any",
+              frequency: 30, // minutos antes de repetir la misma alerta
+              // ⚠️ NO usar NotifyEventServiceAction con service:"webhooks": sus opciones
+              // salen de las Sentry Apps alertables y la validación lo rebota.
+              actions: [{ id: NOTIFY_ACTION }],
+            }),
+          });
+          if (creada?.error) return creada;
+        }
+
+        return {
+          ok: true,
+          mensaje:
+            `Listo: los errores nuevos de ${a.project} van a aparecer en este canal. ` +
+            `${yaEsta ? "La regla ya existía y se reusó." : "Creé la regla en Sentry."} ` +
+            `Sólo avisa la PRIMERA vez que ve un error, no en cada repetición.`,
+        };
+      },
+    },
+    {
+      name: "sentry_alerts_disable",
+      description:
+        "Deja de traer los errores de un proyecto a este canal. Quita el webhook y la regla del lado de Sentry. Confírmalo con el usuario antes.",
+      inputSchema: {
+        type: "object",
+        properties: { ...orgProp, project: str("Slug del proyecto.") },
+        required: ["project"],
+      },
+      handler: async (sub, a) => {
+        const org = await orgOf(sub, a);
+        if (!org) return NO_ORG;
+        const p = `${encodeURIComponent(org)}/${encodeURIComponent(String(a.project))}`;
+        const prefijo = hookUrl("");
+
+        const actual = await api(sub, `/projects/${p}/legacy-webhooks/`);
+        if (actual?.error) return actual;
+        const urls: string[] = Array.isArray(actual?.urls) ? actual.urls : [];
+        const otras = urls.filter((u) => typeof u === "string" && !u.startsWith(prefijo));
+        // Si no queda ninguna URL se apaga el webhook entero. Dejarlo `enabled` con la
+        // lista vacía no rompe nada, pero deja basura visible en los ajustes del cliente.
+        const quitado = await api(sub, `/projects/${p}/legacy-webhooks/`, {
+          method: "POST",
+          body: JSON.stringify({ urls: otras, enabled: otras.length > 0 }),
+        });
+        if (quitado?.error) return quitado;
+
+        // La regla sólo se borra si es NUESTRA. Otra regla del cliente que también use
+        // webhooks legacy no es asunto nuestro.
+        const reglas = await api(sub, `/projects/${p}/rules/`);
+        let borradas = 0;
+        if (Array.isArray(reglas)) {
+          for (const r of reglas.filter((x: any) => x?.label === RULE_LABEL)) {
+            const d = await api(sub, `/projects/${p}/rules/${r.id}/`, { method: "DELETE" });
+            if (!d?.error) borradas++;
+          }
+        }
+        return { ok: true, urlsRestantes: otras.length, reglasBorradas: borradas };
+      },
+    },
+  ];
+}
+
+export async function tools(_sub: string, dest: ToolDest | null): Promise<ConnectorTool[]> {
+  // Las de alertas sólo aparecen dentro de un canal: en un DM no hay dónde entregar, y
+  // anunciarle al modelo una acción que siempre va a fallar sólo gasta contexto e invita a
+  // intentos inútiles. Mismo criterio que las `denik_admin_*`.
+  return [...READ_TOOLS, ...alertTools(dest)];
+}

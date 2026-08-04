@@ -259,6 +259,14 @@ export function nativeTools(dest: ToolDest | null): ConnectorTool[] {
               "pidan con form_ficha. Prende 'auto' sólo si te lo piden: con volumen, un documento " +
               "por respuesta llena el hilo y la hoja ya trae todo junto.",
           },
+          draftTtlDays: {
+            type: "number",
+            description:
+              "Días que vive un borrador de 'guardar y continuar'. 0 = apagado (default). Ofrécelo " +
+              "cuando el formulario sea largo (30+ campos) o pida documentos que hay que ir a buscar. " +
+              "⚠️ Adviértelo: el enlace de reanudación deja ver lo que esa persona lleva escrito a " +
+              "cualquiera que lo tenga, así que en un intake sensible puede no convenir.",
+          },
           status: { type: "string", enum: ["open", "closed"] },
         },
         required: ["formId"],
@@ -266,7 +274,7 @@ export function nativeTools(dest: ToolDest | null): ConnectorTool[] {
       handler: async (_sub, args) => {
         const { updateForm } = await import("../forms/publish.server");
         const patch: Record<string, unknown> = {};
-        for (const k of ["title", "intro", "thanks", "locale", "fichaMode", "status"]) if (args[k] !== undefined) patch[k] = args[k];
+        for (const k of ["title", "intro", "thanks", "locale", "fichaMode", "draftTtlDays", "status"]) if (args[k] !== undefined) patch[k] = args[k];
         if (args.fields !== undefined) patch.fields = args.fields;
         const r = await updateForm(String(args.formId ?? ""), patch as never);
         if (!r.ok) return r;

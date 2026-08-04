@@ -27,6 +27,17 @@ export type RenderFormArgs = {
   uploadUrl: string;
   /** Idioma del formulario. Se hornea aquí: al abrirlo no hay cookie ni sesión que mirar. */
   locale?: FormLocale;
+  /**
+   * Guardar y continuar. Las tres van juntas o ninguna: sin ellas el formulario no trae una
+   * línea del autosave ni el recuadro del enlace.
+   *
+   * `publicUrl` es la liga que ve la persona (`/artefacto/<slug>`), NO la del iframe: el
+   * enlace de reanudación se arma sobre ella y desde dentro del iframe no se puede conocer
+   * —origen opaco—, así que viaja horneada.
+   */
+  draftUrl?: string | null;
+  publicUrl?: string | null;
+  draftTtlDays?: number;
 };
 
 export function renderFormHtml(a: RenderFormArgs): string {
@@ -35,6 +46,7 @@ export function renderFormHtml(a: RenderFormArgs): string {
   const steps = formSteps(a.fields);
   const multi = steps.length > 1;
   const thanks = a.thanks?.trim() || s.thanksDefault;
+  const drafts = !!(a.draftUrl && a.publicUrl && (a.draftTtlDays ?? 0) > 0);
 
   const stepsHtml = steps
     .map(
@@ -66,6 +78,19 @@ export function renderFormHtml(a: RenderFormArgs): string {
     <!-- Trampa para bots: la esconde el CSS, no un atributo hidden (un bot lee el atributo). -->
     <div class="gf-hp"><label>${escapeHtml(s.honeypot)}<input type="text" name="_hp" tabindex="-1" autocomplete="off"></label></div>
     <p class="gf-formerr" id="gf-formerr" hidden=""></p>
+    ${
+      drafts
+        ? `<div class="gf-draft" id="gf-draft" hidden="">
+      <p class="gf-draft-t">${escapeHtml(s.draftTitle)}</p>
+      <div class="gf-draft-row">
+        <input type="text" class="gf-input" id="gf-draft-url" readonly onfocus="this.select()">
+        <button type="button" class="gf-btn gf-ghost" id="gf-draft-copy">${escapeHtml(s.draftCopy)}</button>
+      </div>
+      <p class="gf-draft-h">${escapeHtml(fill(s.draftHelp, { n: a.draftTtlDays ?? 0 }))}</p>
+    </div>
+    <p class="gf-draft-state" id="gf-draft-state" aria-live="polite"></p>`
+        : ""
+    }
     <div class="gf-nav">
       <button type="button" class="gf-btn gf-ghost" id="gf-prev" hidden="">${escapeHtml(s.back)}</button>
       <button type="button" class="gf-btn" id="gf-next"${multi ? "" : ' hidden=""'}>${escapeHtml(s.next)}</button>
@@ -249,7 +274,16 @@ function clientScript(a: RenderFormArgs, s: FormStrings): string {
   // Los textos viajan por el MISMO canal (`CFG.s`) en vez de interpolarse uno a uno al
   // construir el string: un solo punto de entrada, y nada que escapar dos veces.
   const cfgLiteral = JSON.stringify(
-    JSON.stringify({ fields: a.fields, submitUrl: a.submitUrl, uploadUrl: a.uploadUrl, s }).replace(/</g, "\\u003c")
+    JSON.stringify({
+      fields: a.fields,
+      submitUrl: a.submitUrl,
+      uploadUrl: a.uploadUrl,
+      // `null` cuando los borradores están apagados: es la única bandera que mira el
+      // cliente, así que apagarlos deja el código muerto y sin una sola petición.
+      draftUrl: a.draftUrl && a.publicUrl && (a.draftTtlDays ?? 0) > 0 ? a.draftUrl : null,
+      publicUrl: a.publicUrl ?? null,
+      s,
+    }).replace(/</g, "\\u003c")
   );
 
   return `(function(){
@@ -308,6 +342,70 @@ function readOne(f, key){
 }
 
 function readAll(){ var d = {}; for (var i=0;i<F.length;i++) d[F[i].name] = readOne(F[i]); return d; }
+
+// ── Escribir: el gemelo de readOne, para repoblar un borrador ────────────────────
+// Tiene que existir por separado porque leer un control y escribirlo NO son simétricos:
+// un radio se lee del que está marcado y se escribe buscando el que coincide de VALOR (un
+// selector por atributo con texto de terceros habría que escaparlo), y un archivo no se
+// puede "escribir" — se repone su fileId, que es lo que viaja en los datos.
+function writeOne(f, key, v){
+  var n = el(key); if (!n || v == null) return;
+  if (f.type === "checkbox"){ n.checked = (v === "true"); return; }
+  if (f.type === "radio"){ marcar(n.querySelectorAll("input"), v); return; }
+  if (f.type === "matrix"){
+    var sel = {}; try { sel = JSON.parse(v || "{}") || {}; } catch (e) {}
+    var rows = n.querySelectorAll("tbody tr");
+    for (var i=0;i<rows.length;i++){
+      var want = sel[rows[i].getAttribute("data-row")];
+      if (want) marcar(rows[i].querySelectorAll("input"), want);
+    }
+    return;
+  }
+  if (f.type === "file"){
+    // El archivo YA está subido: sólo se repone su id y la nota. Nada se vuelve a subir, y
+    // el <input type=file> se queda vacío porque un navegador no deja rellenarlo.
+    if (!v) return;
+    files[f.name] = v;
+    var note = form.querySelector('[data-filenote="' + key + '"]');
+    if (note) note.textContent = S.fileReady;
+    return;
+  }
+  n.value = v;
+}
+
+function marcar(inputs, v){ for (var i=0;i<inputs.length;i++) if (inputs[i].value === v) inputs[i].checked = true; }
+
+function writeGroup(f, raw){
+  var items = []; try { var p = JSON.parse(raw || "[]"); if (p && p.length !== undefined) items = p; } catch (e) {}
+  var wrap = form.querySelector('[data-items="' + f.name + '"]');
+  if (!wrap) return;
+  while (wrap.children.length > items.length && wrap.children.length > 0) wrap.removeChild(wrap.lastChild);
+  // Contado y con salida: addItem se niega al llegar al máximo, y un while que dependiera
+  // de que crezca se quedaría girando si el borrador trae más elementos de los que caben.
+  var falta = items.length - wrap.children.length;
+  for (var k=0;k<falta;k++){
+    var antes = wrap.children.length;
+    addItem(f.name);
+    if (wrap.children.length === antes) break;
+  }
+  reindex(f.name);
+  var subs = f.fields || [];
+  for (var i=0;i<wrap.children.length;i++){
+    for (var j=0;j<subs.length;j++){
+      var sub = subs[j];
+      writeOne(sub, f.name + "." + i + "." + sub.name, (items[i] || {})[sub.name]);
+    }
+  }
+}
+
+function writeAll(d){
+  for (var i=0;i<F.length;i++){
+    var f = F[i];
+    if (f.type === "group"){ writeGroup(f, d[f.name]); continue; }
+    writeOne(f, f.name, d[f.name]);
+  }
+  applyVisibility();
+}
 
 // ── Listas repetibles: clonar, quitar y renumerar ────────────────────────────────
 // Todo pasa por reindex(): agregar y quitar sólo tocan el DOM y llaman aquí. Una sola
@@ -484,14 +582,107 @@ function goto(i){
   window.scrollTo(0, 0);
 }
 
-form.addEventListener("input", applyVisibility);
+// ── Guardar y continuar ─────────────────────────────────────────────────────────
+// Del lado del servidor. No localStorage: el iframe es sandbox sin allow-same-origin,
+// o sea origen OPACO — el storage está bloqueado. Y aunque no lo estuviera, no cruzaría del
+// teléfono a la laptop, que es la mitad de las veces que alguien deja un intake a medias.
+//
+// El token de reanudación viaja en el FRAGMENTO, que no llega al servidor. Desde aquí NO se
+// puede reescribir la barra de direcciones (la de arriba es de otro origen), así que el
+// enlace se pinta para copiar en vez de aparecer solo. Sale mejor: se copia a propósito.
+var DTOKEN = null, dTimer = null, dGuardando = false, dPendiente = false;
+
+function draftDelHash(){
+  var m = (location.hash || "").match(/[#&]d=([^&]*)/);
+  try { return m ? decodeURIComponent(m[1]) : null; } catch (e) { return m ? m[1] : null; }
+}
+
+function dEstado(txt){ var n = document.getElementById("gf-draft-state"); if (n) n.textContent = txt || ""; }
+
+function pintarEnlace(){
+  var box = document.getElementById("gf-draft"), inp = document.getElementById("gf-draft-url");
+  if (!box || !inp || !DTOKEN) return;
+  inp.value = CFG.publicUrl + "#d=" + encodeURIComponent(DTOKEN);
+  box.hidden = false;
+}
+
+function guardarBorrador(){
+  if (!CFG.draftUrl) return;
+  if (dGuardando){ dPendiente = true; return; }
+  dGuardando = true; dEstado(S.draftSaving);
+  fetch(CFG.draftUrl, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ op: "save", draft: DTOKEN, data: readAll(), step: cur })
+  })
+  .then(function(r){ return r.json(); })
+  .then(function(j){
+    dGuardando = false;
+    if (j && j.ok){
+      if (j.draft && j.draft !== DTOKEN){ DTOKEN = j.draft; pintarEnlace(); }
+      dEstado(S.draftSaved);
+    } else { dEstado(""); }
+    if (dPendiente){ dPendiente = false; guardarBorrador(); }
+  })
+  // Falla en SILENCIO: es una red de seguridad, y un error rojo por no poder guardar un
+  // borrador espantaría a quien está a medio llenar un formulario que sí puede enviar.
+  .catch(function(){ dGuardando = false; dPendiente = false; dEstado(""); });
+}
+
+function guardarPronto(){
+  if (!CFG.draftUrl) return;
+  if (dTimer) clearTimeout(dTimer);
+  dTimer = setTimeout(guardarBorrador, 2500);
+}
+
+function cargarBorrador(){
+  var t = draftDelHash();
+  if (!CFG.draftUrl || !t) return;
+  fetch(CFG.draftUrl, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ op: "load", draft: t })
+  })
+  .then(function(r){ return r.json(); })
+  .then(function(j){
+    // Vencido o borrado responde 404 y aquí se ignora: la persona ve el formulario en
+    // blanco, que es lo que hay. Decirle "tu borrador caducó" no le devuelve nada.
+    if (!j || !j.ok) return;
+    DTOKEN = t;
+    writeAll(j.data || {});
+    goto(j.step || 0);
+    pintarEnlace();
+    dEstado(S.draftResumed);
+  })
+  .catch(function(){});
+}
+
+var dCopy = document.getElementById("gf-draft-copy");
+if (dCopy) dCopy.addEventListener("click", function(){
+  var inp = document.getElementById("gf-draft-url");
+  if (!inp) return;
+  inp.select();
+  var ok = false;
+  try { ok = document.execCommand("copy"); } catch (e) {}
+  // navigator.clipboard necesita un contexto seguro Y permiso; en un iframe sandbox puede
+  // no estar. execCommand es el que funciona en todas partes, y si tampoco, queda el
+  // texto seleccionado para copiar a mano.
+  if (!ok && navigator.clipboard) navigator.clipboard.writeText(inp.value).catch(function(){});
+  dCopy.textContent = S.draftCopied;
+  setTimeout(function(){ dCopy.textContent = S.draftCopy; }, 1500);
+});
+
+form.addEventListener("input", function(){ applyVisibility(); guardarPronto(); });
 form.addEventListener("change", function(ev){
   applyVisibility();
   var t = ev.target;
   if (t && t.type === "file" && t.files && t.files[0]) upload(t);
+  else guardarPronto();
 });
 
-document.getElementById("gf-next").addEventListener("click", function(){ if (stepOk()) goto(cur + 1); });
+// Cambiar de paso es el mejor punto de guardado que hay: es cuando la persona da por
+// terminado un bloque, y es justo antes del momento en que suele irse. Sin debounce.
+document.getElementById("gf-next").addEventListener("click", function(){ if (stepOk()){ goto(cur + 1); guardarBorrador(); } });
 document.getElementById("gf-prev").addEventListener("click", function(){ goto(cur - 1); });
 
 function upload(input){
@@ -504,7 +695,7 @@ function upload(input){
   fetch(CFG.uploadUrl, { method: "POST", body: fd })
     .then(function(r){ return r.json(); })
     .then(function(j){
-      if (j && j.ok && j.fileId){ files[name] = j.fileId; if (note) note.textContent = j.name || S.fileReady; }
+      if (j && j.ok && j.fileId){ files[name] = j.fileId; if (note) note.textContent = j.name || S.fileReady; guardarPronto(); }
       else { if (note) note.textContent = ""; showError(name, (j && j.error) || S.uploadFailed); }
     })
     .catch(function(){ if (note) note.textContent = ""; showError(name, S.uploadFailed); });
@@ -519,7 +710,7 @@ form.addEventListener("submit", function(ev){
   fetch(CFG.submitUrl, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ _idem: IDEM, _hp: hp ? hp.value : "", data: readAll() })
+    body: JSON.stringify({ _idem: IDEM, _hp: hp ? hp.value : "", _draft: DTOKEN, data: readAll() })
   })
   .then(function(r){ return r.json(); })
   .then(function(j){
@@ -562,6 +753,9 @@ for (var gi=0; gi<F.length; gi++){
 }
 
 goto(0);
+// Al final del todo: los bloques mínimos ya están sembrados, así que writeGroup sólo tiene
+// que ajustar la cuenta en vez de pelearse con un DOM a medio construir.
+cargarBorrador();
 })();`;
 }
 
@@ -606,6 +800,14 @@ textarea.gf-input{resize:vertical;min-height:96px}
 .gf-add{margin-top:12px;font-size:14px;padding:8px 16px}
 .gf-add[hidden]{display:none}
 .gf-filenote{display:block;margin-top:6px;font-size:13px;color:var(--ok)}
+.gf-draft{border:1px dashed var(--line);border-radius:10px;padding:14px;background:var(--paper);margin-top:20px}
+.gf-draft[hidden]{display:none}
+.gf-draft-t{margin:0 0 8px;font-size:14px;font-weight:600}
+.gf-draft-row{display:flex;gap:8px}
+.gf-draft-row .gf-input{font-size:13px;padding:8px 10px}
+.gf-draft-row .gf-btn{white-space:nowrap;font-size:13px;padding:8px 14px}
+.gf-draft-h{margin:8px 0 0;font-size:12px;color:var(--muted);line-height:1.45}
+.gf-draft-state{margin:8px 0 0;font-size:12px;color:var(--muted);text-align:right;min-height:1em}
 .gf-err{margin:6px 0 0;font-size:13px;color:var(--req)}
 .gf-formerr{margin:0 0 12px;font-size:14px;color:var(--req)}
 .gf-hp{position:absolute;left:-9999px;top:-9999px;width:1px;height:1px;overflow:hidden}

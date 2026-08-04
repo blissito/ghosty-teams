@@ -611,6 +611,10 @@ async function migrate(): Promise<void> {
   // que nadie abría. Vuelve porque para un expediente sí se quiere el documento de UNA
   // respuesta — pero bajo demanda, y colgado del hilo de la hoja en vez de al lado de ella.
   await addColumn("gt_forms", "ficha_mode", "TEXT NOT NULL DEFAULT 'off'");
+  // Días que vive un borrador de "guardar y continuar". 0 = APAGADO, y es el default: un
+  // enlace de reanudación es un bearer sobre un intake a medio llenar, así que un formulario
+  // sensible simplemente no tiene esa superficie a menos que se pida.
+  await addColumn("gt_forms", "draft_ttl_days", "INTEGER NOT NULL DEFAULT 0");
 
   // Las respuestas. `data_json` = sólo los campos VISIBLES (un campo oculto por showIf no
   // tiene respuesta que registrar). La IP se guarda HASHEADA: sirve para el rate limit y
@@ -682,12 +686,55 @@ async function migrate(): Promise<void> {
   // Para el barrido de huérfanos al arrancar y para listar lo vivo sin recorrer la tabla.
   await exec("CREATE INDEX IF NOT EXISTS gt_turns_state ON gt_turns(state, started_at)");
 
+  // Borradores de "guardar y continuar". Un intake patrimonial son 60+ preguntas y hoy quien
+  // lo abandona pierde todo.
+  //
+  // ⚠️ La fila NO se puede leer con el `draft_id` a secas: se entra con un token FIRMADO que
+  // viaja en el fragmento de la URL. Enumerar la tabla no da lectura, y el fragmento no llega
+  // al servidor (ni a los logs de acceso, ni al `Referer`). `expires_at` es obligatorio: un
+  // intake a medio llenar no puede quedarse ahí para siempre.
+  await exec(`CREATE TABLE IF NOT EXISTS gt_form_drafts (
+    draft_id   TEXT PRIMARY KEY,
+    form_id    TEXT NOT NULL,
+    ip_hash    TEXT,
+    data_json  TEXT NOT NULL,
+    step       INTEGER NOT NULL DEFAULT 0,
+    writes     INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+    updated_at INTEGER NOT NULL DEFAULT (unixepoch()),
+    expires_at INTEGER NOT NULL
+  )`);
+  await exec("CREATE INDEX IF NOT EXISTS gt_form_drafts_exp ON gt_form_drafts(expires_at)");
+  // Para el tope de borradores vivos por IP, que es lo que impide llenar la tabla.
+  await exec("CREATE INDEX IF NOT EXISTS gt_form_drafts_ip ON gt_form_drafts(form_id, ip_hash)");
+
   await exec(`CREATE TABLE IF NOT EXISTS gt_form_rate (
     form_id      TEXT NOT NULL,
     bucket       TEXT NOT NULL,
     window_start INTEGER NOT NULL,
     count        INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (form_id, bucket, window_start)
+  )`);
+
+  // Webhooks ENTRANTES (hoy: alertas de Sentry). Dos tablas chicas con un trabajo cada una.
+  //
+  // Idempotencia: Sentry reintenta las entregas y una alerta repetida en un canal es ruido
+  // que se nota de inmediato. La clave es el id del evento del proveedor, no un hash del
+  // cuerpo — el mismo evento puede llegar con metadatos distintos.
+  await exec(`CREATE TABLE IF NOT EXISTS gt_hook_seen (
+    event_id TEXT PRIMARY KEY,
+    at       INTEGER NOT NULL
+  )`);
+  await exec("CREATE INDEX IF NOT EXISTS gt_hook_seen_at ON gt_hook_seen(at)");
+
+  // Tope de escritura. Un despliegue roto genera miles de eventos en minutos y sin esto el
+  // canal queda enterrado. Es por CANAL, no por proveedor: lo que hay que proteger es la
+  // conversación de la gente.
+  await exec(`CREATE TABLE IF NOT EXISTS gt_hook_rate (
+    channel_id   INTEGER NOT NULL,
+    window_start INTEGER NOT NULL,
+    count        INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (channel_id, window_start)
   )`);
 
   // Bitácora de los correos que manda el AGENTE (tool `email_send`). Append-only y aparte

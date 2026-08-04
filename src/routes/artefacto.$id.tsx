@@ -137,6 +137,14 @@ function SharedArtifact() {
   const blink = blinkTiming(id);
   const [historial, setHistorial] = useState(false);
 
+  // El FRAGMENTO se le pasa al artefacto. Es suyo: nunca viaja al servidor, y de todo lo
+  // que hay en la URL es lo único que el contenido no puede averiguar por su cuenta —el
+  // iframe corre en un origen opaco y no puede leer la barra de direcciones de esta página.
+  // Lo estrena "guardar y continuar" de los formularios (`#d=<token>`), pero es genérico.
+  // Se captura UNA vez, al montar: el `key` del iframe lo remonta con cada cambio de src, y
+  // no queremos que un cambio de hash tire el documento que la persona está llenando.
+  const [hash] = useState(() => (typeof window === "undefined" ? "" : window.location.hash));
+
   // SAFE-AREA. El root declara `viewport-fit=cover`, así que en un teléfono con muesca la
   // página ocupa TODA la pantalla — y sin este padding el título de la barra quedaba
   // debajo del reloj y de los íconos de batería/wifi, ilegible.
@@ -206,9 +214,9 @@ function SharedArtifact() {
         // CDN primero (artefacto.ghosty.studio/<key>): el contenido no pasa por la
         // app ni por la DB. El /raw sólo entra para filas viejas sin `src`.
         src={
-          search.v != null
+          (search.v != null
             ? `/artefacto/${encodeURIComponent(id)}/raw?v=${encodeURIComponent(String(search.v))}`
-            : d.contentUrl || `/artefacto/${encodeURIComponent(id)}/raw`
+            : d.contentUrl || `/artefacto/${encodeURIComponent(id)}/raw`) + hash
         }
         sandbox="allow-scripts allow-forms allow-popups"
         referrerPolicy="no-referrer"
