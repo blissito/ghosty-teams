@@ -698,7 +698,25 @@ export async function callAgentBackendStream(
   // del usuario. Antes se anteponía como `[Instrucciones para X: …]` dentro del mensaje;
   // el modelo lo leía como instrucciones incrustadas y lo rechazaba como intento de
   // inyección de prompt (incidente 2026-07-12 en Teams). El texto solo lleva el turno.
-  const outText = nowHint + memHint + docHint + text;
+  // Sin tool-token no hay NINGUNA tool este turno: ni conectores, ni recordatorios, ni
+  // formularios. Pasa cuando el agente no es nativo, cuando no hay invocador… y hoy
+  // también con los motores codex y deepseek, donde el token no llega hasta el shell del
+  // agente (ver todo_conectores_no_llegan_a_codex_y_deepseek).
+  //
+  // ⚠️ Sin este aviso el modelo NO se calla: INVENTA. El 2026-08-04 uno respondió "no
+  // funciono por webhooks entrantes, hay dos caminos reales…" — falso desde hacía media
+  // hora, y dicho con toda seguridad. Un cliente se lo cree. Decir "no puedo" es una
+  // respuesta correcta; describir capacidades imaginarias no lo es.
+  const sinToolsHint =
+    toolToken && toolsUrl
+      ? ""
+      : "[SIN HERRAMIENTAS EN ESTE TURNO. No tienes acceso a integraciones, recordatorios, " +
+        "formularios ni búsqueda de mensajes. Si te piden algo que las necesite, dilo tal " +
+        "cual —'no tengo herramientas disponibles en este momento'— y sugiere volver a " +
+        "intentarlo. NO expliques cómo funcionas por dentro, NO propongas caminos " +
+        "alternativos y NO afirmes qué puede o no puede hacer la plataforma: no tienes " +
+        "forma de saberlo desde aquí.]\n\n";
+  const outText = sinToolsHint + nowHint + memHint + docHint + text;
   try {
     // `parts` = FileParts A2A (media); EasyBits los normaliza por MIME (Slice E1).
     // configGroupId "teams" = unidad de config ESTABLE de este canal en EasyBits

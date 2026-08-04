@@ -116,3 +116,33 @@ export async function listConnectorProviders(sub: string): Promise<Set<string>> 
   );
   return new Set(rows.map((r) => r.provider!).filter(Boolean));
 }
+
+/**
+ * Quién MÁS del workspace tiene cada conector → provider → [subs].
+ *
+ * Es la gemela sin `user_sub` de la de arriba, y existe porque el panel mentía por
+ * omisión: mirando sólo tu fila, un conector que medio equipo usa se ve idéntico a uno
+ * que nadie ha tocado. El 2026-08-04 eso produjo un "David dice que la hizo pero yo no la
+ * veo" con los dos teniendo razón.
+ *
+ * Devuelve `sub`s pelados a propósito: quién es cada uno lo resuelve la capa de arriba con
+ * el padrón, que ya sabe filtrar a los baneados. Aquí no se lee ni un token.
+ *
+ * La tabla tiene una fila por persona y proveedor, así que el scan es trivial y no pide
+ * índice nuevo (la PK es `(user_sub, provider)`).
+ */
+export async function listConnectorHolders(): Promise<Map<string, string[]>> {
+  const rows = await dbq(
+    "SELECT user_sub, provider FROM gc_user_connectors WHERE access_token IS NOT NULL"
+  );
+  const out = new Map<string, string[]>();
+  for (const r of rows) {
+    const provider = r.provider;
+    const sub = r.user_sub;
+    if (!provider || !sub) continue;
+    const lista = out.get(provider);
+    if (lista) lista.push(sub);
+    else out.set(provider, [sub]);
+  }
+  return out;
+}

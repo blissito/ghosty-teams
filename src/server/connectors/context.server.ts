@@ -35,8 +35,60 @@ export async function buildConnectorContext(sub: string, sender: string, message
       })
     );
     const blocks = parts.filter((p): p is string => !!p);
+    const ajenos = await contextoDeConectoresDelEquipo(sub);
+    if (ajenos) blocks.push(ajenos);
     return blocks.length ? blocks.join("\n\n") + "\n\n" : "";
   } catch {
     return "";
+  }
+}
+
+/**
+ * Los conectores que tiene ALGUIEN MÁS del workspace y el invocador no.
+ *
+ * ⚠️ Esto NO puede vivir en el `ambientContext` de cada conector: ese camino sólo se
+ * recorre para los que el usuario YA tiene conectados (`listConnectorProviders(sub)`), o
+ * sea justo el caso contrario al que hace falta. El módulo de Sentry ni se carga para
+ * quien no lo tiene.
+ *
+ * Por qué existe: el 2026-08-04, en el workspace "Soporte", el agente respondió "no tengo
+ * integración con Sentry conectada" y se inventó dos caminos alternativos. David SÍ la
+ * tenía. El agente no podía saberlo y la conversación murió ahí. Decirle a quién pedírselo
+ * es la diferencia entre un callejón y un siguiente paso.
+ *
+ * Sólo nombres — ni correos, ni tokens, ni nada de la cuenta remota. Es la misma
+ * información que el panel de Integraciones ya enseña a cualquier miembro.
+ */
+async function contextoDeConectoresDelEquipo(sub: string): Promise<string | null> {
+  try {
+    const { listConnectorHolders, listConnectorProviders } = await import("./store.server");
+    const [holders, mios] = await Promise.all([listConnectorHolders(), listConnectorProviders(sub)]);
+    const ajenos = [...holders.entries()].filter(([id, subs]) => !mios.has(id) && subs.some((s) => s !== sub));
+    if (!ajenos.length) return null;
+
+    const { CONNECTORS } = await import("./registry");
+    const { listWorkspaceUsers } = await import("../../users.server");
+    const gente = new Map((await listWorkspaceUsers()).map((u) => [u.sub, u.name]));
+
+    const lineas = ajenos
+      .map(([id, subs]) => {
+        const nombre = CONNECTORS.find((c) => c.id === id)?.name ?? id;
+        // Los baneados y quien nunca entró a Teams no tienen fila: se descartan en vez de
+        // pintarse como un hueco.
+        const quienes = subs.filter((s) => s !== sub).map((s) => gente.get(s)).filter(Boolean);
+        return quienes.length ? `${nombre} (${quienes.join(", ")})` : null;
+      })
+      .filter(Boolean);
+    if (!lineas.length) return null;
+
+    return (
+      `[INTEGRACIONES DEL EQUIPO que TÚ NO tienes con quien te escribe: ${lineas.join("; ")}. ` +
+      `Las integraciones son POR PERSONA: sólo puedes usar las de quien te está hablando. ` +
+      `Si te piden algo que necesita una de éstas, NO inventes alternativas ni digas que no ` +
+      `se puede: dile que la conecte él en Ajustes → Integraciones, o que se lo pida a la ` +
+      `persona de la lista, que ya la tiene.]`
+    );
+  } catch {
+    return null;
   }
 }

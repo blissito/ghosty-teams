@@ -10,11 +10,17 @@ import { sessionUser } from "./chat";
 export const listMyConnectorsFn = createServerFn({ method: "GET" }).handler(async () => {
   const me = await sessionUser();
   const { CONNECTORS } = await import("./connectors/registry");
-  let connected = new Set<string>();
-  if (me) {
-    const { listConnectorProviders } = await import("./connectors/store.server");
-    connected = await listConnectorProviders(me.sub);
-  }
+  // ⚠️ Antes esto degradaba sin sesión (todo `connected:false`). Ya no puede: con
+  // `holders` dentro, un anónimo se llevaría el padrón del workspace.
+  if (!me) throw new Error("no autenticado");
+  const { listConnectorProviders, listConnectorHolders } = await import("./connectors/store.server");
+  const [connected, holders] = await Promise.all([listConnectorProviders(me.sub), listConnectorHolders()]);
+
+  // Quién MÁS del equipo tiene cada conector. Se resuelve aquí y no en el cliente porque
+  // `listWorkspaceUsers` ya filtra a los baneados y no expone correos.
+  const { listWorkspaceUsers } = await import("../users.server");
+  const gente = new Map((await listWorkspaceUsers()).map((u) => [u.sub, u]));
+
   return CONNECTORS.map((c) => ({
     id: c.id,
     name: c.name,
@@ -25,6 +31,13 @@ export const listMyConnectorsFn = createServerFn({ method: "GET" }).handler(asyn
     status: c.status,
     manage: c.manage ?? null,
     connected: connected.has(c.id),
+    // Sin mí (ya salgo como "Conectado") y sin correo. Un sub sin fila en el padrón —
+    // baneado, o alguien que nunca abrió Teams— se descarta en vez de pintarse vacío.
+    holders: (holders.get(c.id) ?? [])
+      .filter((s) => s !== me.sub)
+      .map((s) => gente.get(s))
+      .filter((u): u is NonNullable<typeof u> => !!u)
+      .map((u) => ({ sub: u.sub, name: u.name, avatar: u.avatar })),
   }));
 });
 

@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { Bot, Plus, Trash2, X, Bell, Smile, Loader2, Pencil, Mail, ExternalLink } from "lucide-react";
 import { FleetAgentControls } from "./FleetAgentControls";
+import { Avatar } from "./Avatar";
 import { currentPushState, enablePush, disablePush } from "../utils/push-subscribe";
 import { me, cachedMe, peekMe, logout, clearMeCache } from "../server/auth";
 import { getSetup } from "../server/setup";
@@ -350,6 +351,8 @@ type ConnItem = {
   id: string; name: string; blurb: string; icon: string; type: string;
   custom: boolean; status: "available" | "soon"; connected: boolean;
   manage: { url: string; label: string } | null;
+  /** Quién MÁS del workspace lo tiene conectado (sin mí). */
+  holders: { sub: string; name: string; avatar: string }[];
 };
 
 function connIcon(icon: string) {
@@ -435,6 +438,32 @@ function IntegrationsPanel() {
                       )}
                     </div>
                     <p className="truncate text-xs text-muted">{t(c.blurb)}</p>
+                    {/* Quién más del equipo lo tiene. Sin esto el panel MIENTE por
+                        omisión: un conector que medio equipo usa se veía idéntico a uno
+                        que nadie ha tocado, y de ahí salió el "David dice que la hizo
+                        pero yo no la veo" del 2026-08-04. El nombre importa más que los
+                        avatares — es lo que dice a quién pedírselo. */}
+                    {c.holders.length > 0 && (
+                      <div className="mt-1 flex items-center gap-1.5">
+                        <div className="flex -space-x-1.5">
+                          {c.holders.slice(0, 4).map((h) => (
+                            <Avatar
+                              key={h.sub}
+                              name={h.name}
+                              avatar={h.avatar}
+                              className="h-4 w-4 ring-2 ring-surface-1"
+                            />
+                          ))}
+                        </div>
+                        <span className="truncate text-[11px] text-muted">
+                          {c.connected
+                            ? `+ ${c.holders.length} ${c.holders.length === 1 ? t("más del equipo") : t("más del equipo")}`
+                            : c.holders.length === 1
+                              ? `${c.holders[0].name} ${t("lo tiene conectado")}`
+                              : `${c.holders[0].name} ${t("y")} ${c.holders.length - 1} ${t("más lo tienen conectado")}`}
+                        </span>
+                      </div>
+                    )}
                   </div>
                 </div>
                 <span className="text-xs text-muted">{c.type}</span>
