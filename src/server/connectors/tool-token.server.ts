@@ -31,11 +31,19 @@ const DEFAULT_TTL_S = 900; // 15 min: cubre turnos largos con tools encadenadas.
 // salirse de él: si te invocan en un hilo, lo que se puede leer es ese hilo.
 export type ToolDest = { channelId?: number; dmId?: number; parentId?: number; topic?: string; handle?: string; name?: string; avatar?: string };
 
+/**
+ * ⚠️ `ns` es OBLIGATORIO y va SEGUNDO, no al final.
+ *
+ * Nació opcional y último, y eso era una trampa: el endpoint sólo comprueba el tenant
+ * `if (claims.ns)`, así que un call-site nuevo que lo omitiera —lo más fácil del mundo con
+ * un parámetro opcional al final— produciría tokens que se saltan la comprobación **por
+ * diseño de la firma**. Que el compilador lo exija es lo único que lo impide.
+ */
 export function mintToolToken(
   sub: string,
+  ns: string,
   dest?: ToolDest | null,
-  ttlSec: number = DEFAULT_TTL_S,
-  ns?: string | null
+  ttlSec: number = DEFAULT_TTL_S
 ): string {
   const payload = Buffer.from(
     JSON.stringify({ sub, ns: ns ?? undefined, dest: dest ?? undefined, exp: Math.floor(Date.now() / 1000) + ttlSec })

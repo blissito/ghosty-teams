@@ -73,8 +73,10 @@ export const guestCollabConnFn = createServerFn({ method: "POST" })
     let token: string;
     try {
       const { mintCollabTicket } = await import("./collab-ticket.server");
+      const { currentNamespace } = await import("./tenant.server");
       token = mintCollabTicket({
         doc: root.url,
+        ns: await currentNamespace(),
         sub,
         name: nombre,
         avatar: "",

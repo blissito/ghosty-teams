@@ -18,6 +18,21 @@ import type { DocRole } from "../db.server";
 export type CollabTicket = {
   /** documentId — el room. */
   doc: string;
+  /**
+   * Namespace del tenant. ⚠️ Añadido el 2026-08-04 para cerrar una fuga ACTIVA.
+   *
+   * El sidecar llama de vuelta a Teams por `http://127.0.0.1:3000` (`server.js:36`, sin
+   * `GTEAMS_BASE_URL` puesta), y sin subdominio `currentNamespace()` no resuelve nada y
+   * cae a `SQLD_NAMESPACE` — que en producción es el namespace de un workspace REAL. O
+   * sea que el estado Yjs de TODOS los workspaces se estaba leyendo y escribiendo contra
+   * la base de ese cliente.
+   *
+   * Arreglar la URL no habría bastado: `COLLAB_SECRET` es un secreto GLOBAL, así que sin
+   * el tenant dentro del ticket ese endpoint no tiene forma de distinguir un workspace de
+   * otro. La credencial tiene que decir de quién es — misma defensa que ya llevan el
+   * tool-token y el token de webhooks.
+   */
+  ns: string;
   sub: string;
   name: string;
   avatar: string;

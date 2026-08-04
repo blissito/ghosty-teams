@@ -84,8 +84,12 @@ export const docCollabConnFn = createServerFn({ method: "POST" })
     let token: string;
     try {
       const { mintCollabTicket } = await import("./collab-ticket.server");
+      const { currentNamespace } = await import("./tenant.server");
       token = mintCollabTicket({
         doc: documentId,
+        // El tenant se captura AQUÍ, donde el request todavía lo sabe: el sidecar llama
+        // de vuelta por loopback y allá ya no hay host que mirar.
+        ns: await currentNamespace(),
         sub: me.sub,
         name: me.name || me.email || "Alguien",
         avatar: me.avatar || "",

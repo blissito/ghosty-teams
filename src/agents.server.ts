@@ -684,7 +684,7 @@ export async function callAgentBackendStream(
       // El ns va DENTRO del token: sin él, un token de este workspace serviría contra el
       // host de otro y usaría sus conexiones compartidas. Ver tool-token.server.ts.
       const { currentNamespace } = await import("./server/tenant.server");
-      toolToken = mintToolToken(invokerSub, dest ?? null, undefined, await currentNamespace());
+      toolToken = mintToolToken(invokerSub, await currentNamespace(), dest ?? null);
       toolsUrl = `${await reqOrigin()}/api/connectors/tools`;
     } catch { /* sin secret/origin → sin tools este turno, no rompe */ }
   }

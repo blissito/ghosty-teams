@@ -151,7 +151,16 @@ async function fetchUpcoming(token: string, userUri: string, tz: string | null):
 
 // Bloque de contexto rico para el turno. Devuelve null si no hay conexión.
 export async function getSchedulingDigest(sub: string, senderLabel: string): Promise<string | null> {
-  const hit = digestCache.get(sub);
+  // ⚠️ La clave lleva el NAMESPACE. El `sub` es global del IdP, pero lo que se cachea sale
+  // de tablas per-tenant (`getConnectorRow`, y con conexiones compartidas la consulta es
+  // `user_sub=? OR shared=1`) y se INYECTA AL PROMPT del agente: link de agendamiento,
+  // disponibilidad y próximas citas. Con la clave sin ns, la misma persona en dos
+  // workspaces recibía la agenda del otro durante 5 minutos — y el negativo también se
+  // envenenaba: un tenant sin conexión cacheaba `null` para el otro.
+  const { currentNamespace } = await import("../tenant.server");
+  const ns = await currentNamespace().catch(() => "?");
+  const clave = `${ns}::${sub}`;
+  const hit = digestCache.get(clave);
   if (hit && hit.exp > Date.now()) return hit.text;
   const [ctx, token, row] = await Promise.all([
     getSchedulingContext(sub),
@@ -159,7 +168,7 @@ export async function getSchedulingDigest(sub: string, senderLabel: string): Pro
     getConnectorRow(sub, "calendly"),
   ]);
   if (!ctx || !token || !row?.external_id) {
-    digestCache.set(sub, { text: null, exp: Date.now() + DIGEST_TTL_MS });
+    digestCache.set(clave, { text: null, exp: Date.now() + DIGEST_TTL_MS });
     return null;
   }
   const uri = row.external_id;
@@ -176,7 +185,7 @@ export async function getSchedulingDigest(sub: string, senderLabel: string): Pro
     `Usa ESTO para responder sobre disponibilidad/agenda del que pregunta. Para reservar, comparte el link (aún no puedes crear la cita tú mismo).]`
   );
   const text = lines.join("\n");
-  digestCache.set(sub, { text, exp: Date.now() + DIGEST_TTL_MS });
+  digestCache.set(clave, { text, exp: Date.now() + DIGEST_TTL_MS });
   return text;
 }
 

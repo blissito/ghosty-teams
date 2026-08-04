@@ -1,6 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import crypto from "node:crypto";
 import { sessionUser } from "./chat";
+import { withNamespace } from "./tenant.server";
 
 // ── Quick-calls ──────────────────────────────────────────────────────────────
 // Llamadas en vivo (audio + video + pantalla), servidas por UNA caja `livekit-svc`
@@ -128,7 +129,15 @@ function ensureReaper(): void {
       if (Date.now() - c.startedAt < 15000) continue;
       try {
         const names = await participantNames(cfg, c.room);
-        if (names !== null && names.length === 0) await endCall(db, c.fanout, c, k);
+        // ⚠️ `withNamespace` obligatorio: esto corre en un setInterval, FUERA de todo
+        // request, y `endCall` escribe en la DB (`setMessageBody`). Sin atarlo,
+        // `currentNamespace()` no tiene host que mirar y cae a `SQLD_NAMESPACE` — un
+        // workspace real. Los messageId son autoincrementales POR TENANT, así que eso
+        // sobrescribía el cuerpo de un mensaje ajeno. El `c.ns` correcto estaba aquí
+        // mismo, ya usado para el push, y no se estaba usando para la DB.
+        if (names !== null && names.length === 0) {
+          await withNamespace(c.ns, () => endCall(db, c.fanout, c, k));
+        }
       } catch { /* red flaky → reintenta en el próximo barrido */ }
     }
   }, 20000);

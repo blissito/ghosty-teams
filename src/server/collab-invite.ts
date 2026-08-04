@@ -56,9 +56,11 @@ export const inviteCollabConnFn = createServerFn({ method: "POST" })
           inv.expiresAt != null
             ? Math.max(60, inv.expiresAt - Math.floor(Date.now() / 1000))
             : undefined;
+        const { currentNamespace } = await import("./tenant.server");
         token = mintCollabTicket(
           {
             doc: inv.documentId,
+            ns: await currentNamespace(),
             sub,
             name: nombre,
             avatar: "",

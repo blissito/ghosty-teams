@@ -33,12 +33,14 @@ export const Route = createFileRoute("/api/connectors/tools")({
         // resolvería la conexión compartida de B y correría con SU token. El box ejecuta
         // código escrito por el modelo y puede leer su propio tool-token.
         //
-        // Los tokens sin `ns` son de antes de este cambio y caducan solos en 15 minutos; se
-        // aceptan sólo durante esa ventana para no romper los turnos en vuelo del deploy.
-        if (claims.ns) {
-          const { currentNamespace } = await import("../server/tenant.server");
-          const aqui = await currentNamespace().catch(() => null);
-          if (!aqui || aqui !== claims.ns) return json({ error: "token de otro workspace" }, 403);
+        // Un token SIN `ns` se RECHAZA. La versión anterior de este chequeo los dejaba
+        // pasar —ventana de 15 min para los turnos en vuelo de aquel deploy— y eso convertía
+        // el candado en opcional: cualquier emisor que omitiera el ns lo esquivaba. La
+        // ventana ya pasó; `mintToolToken` lo exige en el tipo y sólo hay un emisor.
+        const { currentNamespace } = await import("../server/tenant.server");
+        const aqui = await currentNamespace().catch(() => null);
+        if (!claims.ns || !aqui || aqui !== claims.ns) {
+          return json({ error: "token de otro workspace" }, 403);
         }
         const sub = claims.sub;
         // El destino (canal/DM del turno) sale del token FIRMADO, nunca del body: es lo

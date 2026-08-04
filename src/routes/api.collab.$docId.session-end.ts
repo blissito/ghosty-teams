@@ -30,11 +30,23 @@ export const Route = createFileRoute("/api/collab/$docId/session-end")({
         } catch {
           /* sin cuerpo */
         }
-        const { cerrarSesionDeCoedicion } = await import("../server/collab-state.server");
-        const r = await cerrarSesionDeCoedicion(params.docId, participantes);
-        return new Response(JSON.stringify(r), {
-          status: 200,
-          headers: { "content-type": "application/json" },
+        // ⚠️ El tenant TIENE que venir en el header: el sidecar llama por loopback, aquí
+        // no hay subdominio, y `currentNamespace()` caería a `SQLD_NAMESPACE` — el
+        // namespace de un workspace real. Esto PUBLICA UNA VERSIÓN del documento, así que
+        // adivinar mal significa escribir el trabajo de un cliente en la base de otro.
+        // El Bearer no distingue nada: `COLLAB_SECRET` es global. Ver sidecar/server.js.
+        const ns = request.headers.get("x-gt-ns");
+        if (!ns) return new Response("falta x-gt-ns", { status: 400 });
+        const { withNamespace } = await import("../server/tenant.server");
+        return withNamespace(ns, async () => {
+          const { ensureSchema } = await import("../server/schema.server");
+          await ensureSchema();
+          const { cerrarSesionDeCoedicion } = await import("../server/collab-state.server");
+          const r = await cerrarSesionDeCoedicion(params.docId, participantes);
+          return new Response(JSON.stringify(r), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
         });
       },
     },
