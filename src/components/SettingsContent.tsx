@@ -358,6 +358,8 @@ type ConnItem = {
   /** ¿Está compartida LA MÍA? No es lo mismo que `shared`, que puede ser la de otro. */
   mineShared: boolean;
   canShareOthers: boolean;
+  /** Lo que dejamos configurado en la cuenta del proveedor (alertas hacia un canal). */
+  hooks: { project: string; channelId: number }[];
 };
 
 function connIcon(icon: string) {
@@ -472,7 +474,15 @@ function IntegrationsPanel() {
                             : `${t("Conexión de")} ${c.shared.name} · ${t("todo el equipo puede usarla")}`}
                         </span>
                       </div>
-                    ) : c.holders.length > 0 ? (
+                    ) : null}
+                    {/* Alertas activas. Se configuran desde el chat, así que sin esto
+                        nadie sabe qué está encendido — ni cómo apagarlo. */}
+                    {c.hooks.length > 0 && (
+                      <p className="mt-1 truncate text-[11px] text-muted">
+                        {t("Alertas activas")}: {c.hooks.map((h) => h.project).join(", ")}
+                      </p>
+                    )}
+                    {!c.shared && c.holders.length > 0 ? (
                       <div className="mt-1 flex items-center gap-1.5">
                         <div className="flex -space-x-1.5">
                           {c.holders.slice(0, 4).map((h) => (

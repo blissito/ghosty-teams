@@ -721,7 +721,27 @@ export async function callAgentBackendStream(
         "disponibles en este momento'— y sugiere volver a intentarlo. NO expliques cómo " +
         "funcionas por dentro, NO propongas caminos alternativos y NO afirmes qué puede o " +
         "no puede hacer la plataforma: no tienes forma de saberlo desde aquí.]\n\n";
-  const outText = sinToolsHint + nowHint + memHint + docHint + text;
+  // Integraciones del invocador (y las compartidas del workspace).
+  //
+  // ⚠️ Esto vivía SÓLO en dm.ts, y los dos incidentes que motivaron ese código pasaron en
+  // CANALES: el "no tengo Sentry conectado" con un compañero que sí lo tenía, y el agente
+  // que repitió esa conclusión sin llamar a ninguna tool. El arreglo estaba escrito y
+  // desconectado del camino donde ocurría. Nació DM-only cuando el único conector era
+  // Calendly y al generalizarse no se movió el call-site.
+  //
+  // Va en el TEXTO, como los demás hints: el system prompt entra por VALOR en el
+  // `configSig` del worker, así que un bloque que cambia al conectar o desconectar algo
+  // reciclaría la sesión persistente y cada turno correría en frío.
+  let connHint = "";
+  try {
+    if (invokerSub) {
+      const { buildConnectorContext } = await import("./server/connectors/context.server");
+      connHint = await buildConnectorContext(invokerSub, sender || "el usuario", text, dest ?? null);
+    }
+  } catch { /* un conector roto nunca tumba el turno */ }
+  // `sinToolsHint` va PRIMERO a propósito: dice que manda sobre cualquier bloque que
+  // afirme tener integraciones, y este es exactamente ese bloque.
+  const outText = sinToolsHint + connHint + nowHint + memHint + docHint + text;
   try {
     // `parts` = FileParts A2A (media); EasyBits los normaliza por MIME (Slice E1).
     // configGroupId "teams" = unidad de config ESTABLE de este canal en EasyBits

@@ -153,6 +153,7 @@ export const en: Record<string, string> = {
   "Conexión de": "Connection from",
   "todo el equipo puede usarla": "the whole team can use it",
   "Conectar la mía": "Connect mine",
+  "Alertas activas": "Active alerts",
   "más lo tienen conectado": "more have it connected",
   "más del equipo": "more on the team",
   "conectado": "connected",

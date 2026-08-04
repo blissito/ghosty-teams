@@ -37,7 +37,15 @@ export type HookRef = {
   handle: string;
   name: string;
   avatar: string;
-  /** Quién lo pidió. No se usa para autorizar; sirve para saber a quién preguntarle. */
+  /**
+   * De quién es la conexión que sostiene este webhook.
+   *
+   * NO autoriza —el token sigue siendo la única credencial— pero sí es una condición de
+   * VIDA: el endpoint comprueba que esa conexión siga existiendo y descarta la entrega si
+   * ya no. Sin eso, un webhook cuya conexión se desconectó publicaría para siempre, porque
+   * el token no caduca. Vacío en los tokens anteriores a este campo → no verificable, se
+   * deja pasar.
+   */
   ownerSub: string;
 };
 

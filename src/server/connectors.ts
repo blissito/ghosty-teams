@@ -26,6 +26,8 @@ export const listMyConnectorsFn = createServerFn({ method: "GET" }).handler(asyn
   // `listWorkspaceUsers` ya filtra a los baneados y no expone correos.
   const { listWorkspaceUsers } = await import("../users.server");
   const gente = new Map((await listWorkspaceUsers()).map((u) => [u.sub, u]));
+  const { listHooks } = await import("./hooks/registry.server");
+  const hooks = await listHooks().catch(() => []);
 
   return CONNECTORS.map((c) => ({
     id: c.id,
@@ -50,6 +52,11 @@ export const listMyConnectorsFn = createServerFn({ method: "GET" }).handler(asyn
     mineShared: compartidas.get(c.id) === me.sub,
     /** ¿Puedo compartir la conexión de otro? Staff y owner sí. */
     canShareOthers: !!me.isOwner,
+    // Qué dejamos configurado en la cuenta del proveedor. Sin enseñarlo, nadie sabe qué
+    // alertas están activas: se configuran desde el chat y desaparecen de la vista.
+    hooks: hooks
+      .filter((h) => h.provider === c.id)
+      .map((h) => ({ project: `${h.org}/${h.project}`, channelId: h.channelId })),
     // Sin mí (ya salgo como "Conectado") y sin correo. Un sub sin fila en el padrón —
     // baneado, o alguien que nunca abrió Teams— se descarta en vez de pintarse vacío.
     holders: (holders.get(c.id) ?? [])
@@ -235,6 +242,29 @@ export const disconnectConnectorFn = createServerFn({ method: "POST" })
     const { deleteConnectorRow, getConnectorRow } = await import("./connectors/store.server");
     const { getConnector } = await import("./connectors/registry");
 
+    // ── Limpiar lo que dejamos en la cuenta del proveedor, ANTES de revocar ──────
+    // El orden es lo que hace esto posible: al revocar el token se pierde la única forma
+    // de quitar los webhooks, y quedarían vivos en el Sentry del cliente publicando en un
+    // canal para siempre. Lo que no se pueda limpiar se REPORTA, para que el usuario sepa
+    // que le queda algo suelto en vez de descubrirlo semanas después.
+    const sueltos: string[] = [];
+    try {
+      const { hooksOfOwner, forgetHook } = await import("./hooks/registry.server");
+      const hooks = await hooksOfOwner(me.sub, data.provider);
+      if (hooks.length && data.provider === "sentry") {
+        const { desregistrarAlerta } = await import("./connectors/sentry.server");
+        for (const h of hooks) {
+          const r = await desregistrarAlerta(me.sub, h.org, h.project, h.channelId).catch(
+            (e: unknown) => ({ error: String(e) })
+          );
+          if ((r as any)?.error) sueltos.push(`${h.org}/${h.project}`);
+          else await forgetHook(h.provider, h.channelId, h.org, h.project).catch(() => {});
+        }
+      }
+    } catch (e) {
+      console.warn(`[connectors] limpieza de webhooks de ${data.provider} falló:`, e);
+    }
+
     const def = getConnector(data.provider);
     const revokeUrl = def?.oauth?.revokeUrl;
     if (revokeUrl) {
@@ -260,5 +290,10 @@ export const disconnectConnectorFn = createServerFn({ method: "POST" })
     }
 
     await deleteConnectorRow(me.sub, data.provider);
-    return { ok: true as const };
+    return {
+      ok: true as const,
+      // Proyectos cuyas alertas NO se pudieron apagar: el usuario tiene que quitarlas a
+      // mano en su Sentry, porque desde aquí ya no hay token con qué hacerlo.
+      pendientesDeLimpiar: sueltos,
+    };
   });

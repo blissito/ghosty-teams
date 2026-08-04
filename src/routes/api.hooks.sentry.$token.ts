@@ -52,6 +52,26 @@ export const Route = createFileRoute("/api/hooks/sentry/$token")({
           await ensureSchema();
           const { dbq } = await import("../dbq.server");
 
+          // ── ¿Sigue viva la conexión que lo sostiene? ───────────────────────
+          // Red de seguridad para los huérfanos: el token del hook NO caduca (la URL vive
+          // del lado de Sentry y tiene que seguir sirviendo meses después), así que si
+          // alguien desconectó y la limpieza falló, esto seguiría publicando para siempre.
+          //
+          // Tres reglas que impone el resto del archivo:
+          //  · `ownerSub` vacío = token de antes de que existiera el campo → DEJAR PASAR.
+          //  · si la consulta revienta, se ENTREGA: perder una alerta es peor que duplicarla.
+          //  · esto es una condición de VIDA, no autorización — el token sigue siendo la
+          //    credencial; aquí sólo se comprueba que la conexión no se haya ido.
+          if (ref.ownerSub) {
+            try {
+              const { listAvailableProviders } = await import("../server/connectors/store.server");
+              const vivos = await listAvailableProviders(ref.ownerSub);
+              if (!vivos.has("sentry")) return json({ ok: true, orphaned: true });
+            } catch {
+              /* fail-open a propósito */
+            }
+          }
+
           // ── Idempotencia ──────────────────────────────────────────────────
           // Sentry reintenta. El `event_id` es del proveedor; si no viniera, se cae al id
           // del grupo, que al menos evita repetir la MISMA alerta dos veces seguidas.

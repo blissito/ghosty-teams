@@ -534,6 +534,32 @@ async function migrate(): Promise<void> {
   )`);
   await exec("CREATE INDEX IF NOT EXISTS gt_connector_shares_at ON gt_connector_shares(at)");
 
+  // Webhooks ENTRANTES que hemos dado de alta en la cuenta de un proveedor (hoy: alertas
+  // de Sentry hacia un canal). Es el gemelo de `gt_form_hooks`, y existe por la misma
+  // razón: un recurso que vive FUERA necesita fila propia o no se puede deshacer.
+  //
+  // ⚠️ Sin esto, desconectar el conector dejaba el webhook vivo en el Sentry del cliente
+  // para siempre: se revoca el token y con él se pierde la única forma de quitarlo. Se
+  // guardan `org` y `project` porque son exactamente lo que hace falta para desregistrarlo,
+  // y `owner_sub` porque es la cuenta que lo sostiene (que puede no ser quien lo pidió,
+  // cuando se usó una conexión compartida).
+  await exec(`CREATE TABLE IF NOT EXISTS gt_connector_hooks (
+    id         TEXT PRIMARY KEY,
+    provider   TEXT NOT NULL,
+    owner_sub  TEXT NOT NULL,
+    channel_id INTEGER NOT NULL,
+    org        TEXT NOT NULL,
+    project    TEXT NOT NULL,
+    created_by TEXT NOT NULL,
+    created_at INTEGER NOT NULL DEFAULT (unixepoch())
+  )`);
+  await exec(
+    "CREATE INDEX IF NOT EXISTS gt_connector_hooks_owner ON gt_connector_hooks(owner_sub, provider)"
+  );
+  await exec(
+    "CREATE UNIQUE INDEX IF NOT EXISTS gt_connector_hooks_uniq ON gt_connector_hooks(provider, channel_id, org, project)"
+  );
+
   // Recordatorios programados. El agente los crea con una tool nativa y un tick del
   // proceso (server/reminders.server.ts) los dispara: cola en DB + poll, el patrón de
   // pg-boss/solid_queue. La verdad NUNCA vive en memoria — un reinicio del server no

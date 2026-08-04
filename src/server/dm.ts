@@ -251,15 +251,10 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
     const recent = await db.recentContext({ dmId: data.id }, 8).catch(() => []);
     const { esRecordatorio } = await import("./reminders.server");
     const history = historyContext(gapDesdeUltimaRespuesta(recent, esRecordatorio), data.body);
-    // Conectores per-user (DM 1:1): el DM tiene UN solo humano (`me`), identidad inequívoca.
-    // GENÉRICO y escalable — dm.ts NO sabe de Calendly ni de ningún conector: el builder
-    // itera los conectados del usuario y concatena su `ambientContext` (contrato uniforme).
-    // Va en el TEXTO del turno (variable por-turno, patrón quote/artifactDocHint), best-effort.
-    let calHint = "";
-    try {
-      const { buildConnectorContext } = await import("./connectors/context.server");
-      calHint = await buildConnectorContext(me.sub, data.sender || "el usuario", data.body || "");
-    } catch {}
+    // El contexto de conectores ya NO se arma aquí: vive en `runAgentTurn`
+    // (agents.server.ts), que lo hace para DMs y canales por igual a partir del
+    // `invokerSub` que este mismo archivo le pasa. Estaba sólo en este camino, y los
+    // incidentes que lo motivaron ocurrían en canales, donde nunca corría.
     // Media de entrada + RE-ENTREGA. Mismo problema que en canales (ver chat.ts): un
     // turno sin archivos propios dejaba al agente ciego a lo ya adjuntado, aunque
     // siguiera visible en la conversación. En un DM no hay hilo del que colgarse, así
@@ -286,7 +281,7 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
     }
     const parts = await buildMediaParts(mediaAtts, { forceUri: reentrega });
 
-    const text = history + calHint + manifiesto + quoted;
+    const text = history + manifiesto + quoted;
 
     // Identidad del artefacto del DM → el agente recibe el artefacto ACTUAL (artifactDocHint)
     // para MODIFICARLO (re-emitir la misma versión), no recrearlo desde cero ni duplicar la card.

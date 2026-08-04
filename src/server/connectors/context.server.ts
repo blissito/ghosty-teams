@@ -9,9 +9,15 @@
 // no se inyectan miles de conectores en cada mensaje). Ese surface es el siguiente paso.
 
 import { loaderFor } from "./impl";
+import type { ToolDest } from "./tool-token.server";
 
 /** Contexto ambiente de TODOS los conectores conectados del usuario, listo para el prompt. */
-export async function buildConnectorContext(sub: string, sender: string, message: string): Promise<string> {
+export async function buildConnectorContext(
+  sub: string,
+  sender: string,
+  message: string,
+  dest: ToolDest | null = null
+): Promise<string> {
   try {
     // Los suyos + los COMPARTIDOS del workspace: una conexión del equipo tiene que dar el
     // mismo contexto ambiente que una propia, o el agente diría "no tengo Sentry" teniendo
@@ -38,7 +44,7 @@ export async function buildConnectorContext(sub: string, sender: string, message
           // mientras esté fresco, y sólo espera la PRIMERA vez de cada conexión.
           await refreshConnectorMetaIfStale(dueño.ownerSub, id);
           const mod = await load();
-          const bloque = (await mod.ambientContext?.(dueño.ownerSub, sender, message)) ?? null;
+          const bloque = (await mod.ambientContext?.(dueño.ownerSub, sender, message, dest)) ?? null;
           if (!bloque || !dueño.shared) return bloque;
           // Es de otra persona: hay que decirlo, o el agente hablaría de "tus" errores y
           // "tu" organización cuando son de alguien más.

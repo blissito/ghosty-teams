@@ -22,7 +22,15 @@ export type ConnectorTool = {
 export type ConnectorModule = {
   // `message` = texto del turno del usuario → el conector decide si enriquece (p.ej. Calendly
   // sólo pega a la API en intención de agenda). La lógica per-conector vive AQUÍ, no en dm.ts.
-  ambientContext?: (sub: string, sender: string, message: string) => Promise<string | null>;
+  // El `dest` es por el mismo motivo que en `tools`: hay conectores cuyo set de tools
+  // depende de DÓNDE ocurre el turno (las alertas de Sentry sólo existen dentro de un
+  // canal), y sin él el bloque le anunciaba al modelo tools que en un DM no existen.
+  ambientContext?: (
+    sub: string,
+    sender: string,
+    message: string,
+    dest: ToolDest | null
+  ) => Promise<string | null>;
   // Lista fija, o función cuando el set depende de QUIÉN es el usuario o de DÓNDE ocurre el
   // turno. Denik usa el `sub`: sus tools de administración de plataforma sólo existen para
   // el equipo de Denik, y ofrecérselas a los demás llenaría el prompt de acciones que

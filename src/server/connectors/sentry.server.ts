@@ -178,7 +178,12 @@ function trimIssue(i: any): unknown {
 
 // ── Contexto ambiente ────────────────────────────────────────────────────────
 
-export async function ambientContext(sub: string, sender: string, _message: string): Promise<string | null> {
+export async function ambientContext(
+  sub: string,
+  sender: string,
+  _message: string,
+  dest: ToolDest | null = null
+): Promise<string | null> {
   const meta = await readMeta(sub);
   if (!meta) return null;
 
@@ -192,9 +197,14 @@ export async function ambientContext(sub: string, sender: string, _message: stri
     `TIENES HERRAMIENTAS para sus errores vía el GS Tools SDK: importa /opt/gs-sdk/connectors.mjs y usa ` +
     `list() y run(name, args). Tools: sentry_list_projects, sentry_list_issues, sentry_get_issue, ` +
     `sentry_issue_latest_event, sentry_update_issue, sentry_list_releases, sentry_project_stats. ` +
-    `Si te piden que los errores AVISEN o LLEGUEN SOLOS a este canal, eso SÍ se puede: es ` +
-    `sentry_alerts_enable (la configura del lado de Sentry, el usuario no entra a Sentry a nada) ` +
-    `y sentry_alerts_disable para quitarla. Sólo funcionan dentro de un canal. ` +
+    // Las tools de alertas SÓLO existen dentro de un canal (`alertTools(dest)`), así que
+    // anunciarlas en un DM era prometerle al modelo algo que no puede ejecutar.
+    (dest?.channelId
+      ? `Si te piden que los errores AVISEN o LLEGUEN SOLOS a este canal, eso SÍ se puede: es ` +
+        `sentry_alerts_enable (la configura del lado de Sentry, el usuario no entra a Sentry a nada) ` +
+        `y sentry_alerts_disable para quitarla. `
+      : `Las alertas automáticas a un canal SÍ existen, pero sólo se configuran DENTRO de un canal: ` +
+        `si te lo piden aquí, dile que te lo pida en el canal donde quiere recibirlas. `) +
     `Para CUALQUIER pregunta sobre errores, excepciones, crashes o releases de ${sender}, USA estas tools — ` +
     `NO inventes datos ni digas que no tienes acceso (SÍ lo tienes). El slug del proyecto sale de ` +
     `sentry_list_projects. Para diagnosticar de verdad un error necesitas el STACKTRACE: ` +
@@ -440,6 +450,68 @@ function esDeEsteCanal(url: string, channelId: number): boolean {
   return !!token && verifyHookToken(token)?.channelId === channelId;
 }
 
+/**
+ * Quita las alertas de un proyecto hacia un canal concreto.
+ *
+ * Está fuera de la tool y exportada porque la llama también `disconnectConnectorFn`:
+ * desconectar tiene que limpiar lo que dejamos en la cuenta del cliente **antes** de
+ * revocar el token, o el webhook queda vivo allá para siempre.
+ */
+export async function desregistrarAlerta(
+  sub: string,
+  org: string,
+  project: string,
+  channelId: number
+): Promise<any> {
+  const p = `${encodeURIComponent(org)}/${encodeURIComponent(project)}`;
+
+  const actual = await api(sub, `/projects/${p}/legacy-webhooks/`);
+  if (actual?.error) return actual;
+  const urls: string[] = Array.isArray(actual?.urls) ? actual.urls : [];
+  // Sólo la de ESTE canal. Filtrar por prefijo apagaba también las alertas de los demás
+  // canales del workspace sin decir nada.
+  const otras = urls.filter((u) => typeof u === "string" && !esDeEsteCanal(u, channelId));
+  // Si no queda ninguna URL se apaga el webhook entero. Dejarlo `enabled` con la lista
+  // vacía no rompe nada, pero deja basura visible en los ajustes del cliente.
+  const quitado = await api(sub, `/projects/${p}/legacy-webhooks/`, {
+    method: "POST",
+    body: JSON.stringify({ urls: otras, enabled: otras.length > 0 }),
+  });
+  if (quitado?.error) return quitado;
+
+  // ⚠️ La regla es del PROYECTO y no sabe de canales: dispara los webhooks legacy, todos.
+  // Así que sólo se puede borrar cuando ya no queda NINGUNA URL nuestra — borrarla
+  // mientras otro canal sigue suscrito lo dejaría mudo sin ningún aviso.
+  const quedanNuestras = otras.some((u) => u.includes("/api/hooks/sentry/"));
+  let borradas = 0;
+  if (!quedanNuestras) {
+    const reglas = await api(sub, `/projects/${p}/rules/`);
+    if (Array.isArray(reglas)) {
+      // Sólo las NUESTRAS por etiqueta: otra regla del cliente que también use webhooks
+      // legacy no es asunto nuestro.
+      for (const r of reglas.filter((x: any) => x?.label === RULE_LABEL)) {
+        const d = await api(sub, `/projects/${p}/rules/${r.id}/`, { method: "DELETE" });
+        if (!d?.error) borradas++;
+      }
+    }
+  }
+  try {
+    const { forgetHook } = await import("../hooks/registry.server");
+    await forgetHook("sentry", channelId, org, project);
+  } catch (e) {
+    console.warn("[sentry] no pude borrar el registro del hook:", e);
+  }
+
+  return {
+    ok: true,
+    urlsRestantes: otras.length,
+    reglasBorradas: borradas,
+    mensaje: quedanNuestras
+      ? "Quité las alertas de este canal. Otros canales siguen recibiéndolas, así que la regla en Sentry se queda."
+      : "Quité las alertas y la regla en Sentry: este proyecto ya no avisa a ningún canal.",
+  };
+}
+
 const SOLO_EN_CANAL = {
   error: "Las alertas de Sentry sólo se pueden configurar dentro de un canal, no en un DM.",
 };
@@ -541,6 +613,22 @@ function alertTools(dest: ToolDest | null): ConnectorTool[] {
           if (creada?.error) return creada;
         }
 
+        // Constancia de lo que acabamos de dejar en la cuenta del cliente. Sin esto, al
+        // desconectar el conector se revoca el token y ya no hay forma de quitarlo.
+        try {
+          const { recordHook } = await import("../hooks/registry.server");
+          await recordHook({
+            provider: "sentry",
+            ownerSub: sub, // la cuenta que lo sostiene, que puede ser una compartida
+            channelId,
+            org,
+            project: String(a.project),
+            createdBy: sub,
+          });
+        } catch (e) {
+          console.warn("[sentry] no pude registrar el hook:", e);
+        }
+
         return {
           ok: true,
           mensaje:
@@ -562,47 +650,7 @@ function alertTools(dest: ToolDest | null): ConnectorTool[] {
       handler: async (sub, a) => {
         const org = await orgOf(sub, a);
         if (!org) return NO_ORG;
-        const p = `${encodeURIComponent(org)}/${encodeURIComponent(String(a.project))}`;
-
-        const actual = await api(sub, `/projects/${p}/legacy-webhooks/`);
-        if (actual?.error) return actual;
-        const urls: string[] = Array.isArray(actual?.urls) ? actual.urls : [];
-        // Sólo la de ESTE canal. Filtrar por prefijo apagaba también las alertas de los
-        // demás canales del workspace sin decir nada.
-        const otras = urls.filter((u) => typeof u === "string" && !esDeEsteCanal(u, channelId));
-        // Si no queda ninguna URL se apaga el webhook entero. Dejarlo `enabled` con la
-        // lista vacía no rompe nada, pero deja basura visible en los ajustes del cliente.
-        const quitado = await api(sub, `/projects/${p}/legacy-webhooks/`, {
-          method: "POST",
-          body: JSON.stringify({ urls: otras, enabled: otras.length > 0 }),
-        });
-        if (quitado?.error) return quitado;
-
-        // ⚠️ La regla es del PROYECTO y no sabe de canales: dispara los webhooks legacy,
-        // todos. Así que sólo se puede borrar cuando ya no queda NINGUNA URL nuestra —
-        // borrarla mientras otro canal sigue suscrito lo dejaría mudo sin ningún aviso.
-        // Por eso se cuentan las que quedan en vez de mirar sólo la etiqueta.
-        const quedanNuestras = otras.some((u) => u.includes("/api/hooks/sentry/"));
-        let borradas = 0;
-        if (!quedanNuestras) {
-          const reglas = await api(sub, `/projects/${p}/rules/`);
-          if (Array.isArray(reglas)) {
-            // Sólo las NUESTRAS por etiqueta: otra regla del cliente que también use
-            // webhooks legacy no es asunto nuestro.
-            for (const r of reglas.filter((x: any) => x?.label === RULE_LABEL)) {
-              const d = await api(sub, `/projects/${p}/rules/${r.id}/`, { method: "DELETE" });
-              if (!d?.error) borradas++;
-            }
-          }
-        }
-        return {
-          ok: true,
-          urlsRestantes: otras.length,
-          reglasBorradas: borradas,
-          mensaje: quedanNuestras
-            ? "Quité las alertas de este canal. Otros canales siguen recibiéndolas, así que la regla en Sentry se queda."
-            : "Quité las alertas y la regla en Sentry: este proyecto ya no avisa a ningún canal.",
-        };
+        return desregistrarAlerta(sub, org, String(a.project), channelId);
       },
     },
   ];
