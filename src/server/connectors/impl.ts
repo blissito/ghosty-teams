@@ -38,6 +38,7 @@ export async function toolsOf(mod: ConnectorModule, sub: string): Promise<Connec
 const LOADERS: Record<string, () => Promise<ConnectorModule>> = {
   calendly: () => import("./calendly.server"),
   denik: () => import("./denik.server"),
+  sentry: () => import("./sentry.server"),
 };
 
 export function loaderFor(id: string): (() => Promise<ConnectorModule>) | undefined {

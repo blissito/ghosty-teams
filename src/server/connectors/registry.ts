@@ -42,6 +42,9 @@ export type ConnectorDef = {
 // (el flujo OAuth completo se puede ejercitar sin dominio público).
 const DENIK_BASE = (process.env.DENIK_BASE_URL ?? "https://www.denik.me").replace(/\/$/, "");
 
+// Base de Sentry. Override por env para self-hosted o la región EU (https://de.sentry.io).
+const SENTRY_BASE = (process.env.SENTRY_BASE_URL ?? "https://sentry.io").replace(/\/$/, "");
+
 export const CONNECTORS: ConnectorDef[] = [
   {
     id: "calendly",
@@ -116,6 +119,60 @@ export const CONNECTORS: ConnectorDef[] = [
           orgsTotalInPlatform: j?.orgsTotalInPlatform ?? null,
         },
       }),
+    },
+  },
+  {
+    id: "sentry",
+    name: "Sentry",
+    blurb:
+      "Deja que @ghosty revise los errores de tus proyectos en Sentry: issues, stacktraces, releases y a quién le toca.",
+    icon: "sentry",
+    type: "Web",
+    status: "available",
+    oauth: {
+      // OAuth2 ESTÁNDAR (authorization code + PKCE S256), anunciado por Sentry en
+      // /.well-known/oauth-authorization-server. Token de 30 días, respuesta
+      // snake_case: encaja tal cual en el cliente genérico, cero adaptadores.
+      //
+      // ⚠️ NO confundir con las "Sentry Apps" / integration platform
+      // (/sentry-apps/<slug>/external-install/ + /api/0/sentry-app-installations/
+      // {id}/authorizations/). Ése PARECE OAuth y no lo es: token endpoint por
+      // instalación, body JSON, campos camelCase (token/refreshToken/expiresAt),
+      // token de 8 horas, sin PKCE y sin devolver el `state` — o sea que habría
+      // roto el relay multi-tenant, que saca el workspace justo de ahí. Sólo vale
+      // la pena si algún día queremos webhooks de Sentry o salir en su directorio.
+      authUrl: `${SENTRY_BASE}/oauth/authorize/`,
+      tokenUrl: `${SENTRY_BASE}/oauth/token/`,
+      pkce: true,
+      // Lectura completa + event:write, que es lo ÚNICO de escritura y es lo que
+      // permite resolver / ignorar / asignar un issue. Cambiar esta lista después
+      // obliga a RECONECTAR a todos (no hay upgrade in-place), así que conviene
+      // cerrarla de una vez.
+      scopes: "org:read project:read project:releases team:read member:read event:write",
+      clientIdEnv: "SENTRY_CLIENT_ID",
+      clientSecretEnv: "SENTRY_CLIENT_SECRET",
+      // Sentry SÍ tiene /oauth/userinfo/, pero devuelve 403 sin el scope `openid`
+      // y sólo trae identidad. Lo que de verdad hace falta para el contexto
+      // ambiente es QUÉ organización alcanza este token — ver la nota de abajo.
+      userInfoUrl: `${SENTRY_BASE}/api/0/organizations/`,
+      // ⚠️ Un token de OAuth Application queda scopeado a UNA organización: la que
+      // el usuario eligió en la pantalla de consentimiento. Por eso este array
+      // trae normalmente un solo elemento, y por eso el ambientContext la NOMBRA:
+      // sin decirlo, el modelo lee "no existe ese proyecto" cuando la verdad es
+      // "está en otra org". Conectar una segunda exige re-autorizar.
+      parseUserInfo: (j) => {
+        const orgs = Array.isArray(j) ? j : [];
+        return {
+          externalId: orgs[0]?.id ? String(orgs[0].id) : null,
+          meta: {
+            orgs: orgs.map((o: any) => ({ id: o?.id ?? null, slug: o?.slug ?? null, name: o?.name ?? null })),
+          },
+        };
+      },
+      metaTtlS: 900,
+      // Sin `revokeUrl`: Sentry no expone un endpoint RFC 7009. Desconectar borra
+      // la fila local; la autorización sigue viva en la cuenta del usuario hasta
+      // que la quite en Settings → Account → Authorized Applications.
     },
   },
   // Próximamente (sin oauth aún → el panel los muestra como "Próximamente"):

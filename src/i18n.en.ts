@@ -139,6 +139,8 @@ export const en: Record<string, string> = {
   "Compartir": "Share",
   "Conecta herramientas externas para que @ghosty trabaje con tu contexto.": "Connect external tools so @ghosty works with your context.",
   "Deja que @ghosty consulte tu disponibilidad y comparta tu link de agendamiento.": "Let @ghosty check your availability and share your scheduling link.",
+  "Deja que @ghosty revise los errores de tus proyectos en Sentry: issues, stacktraces, releases y a quién le toca.":
+    "Let @ghosty review your projects' errors in Sentry: issues, stack traces, releases, and who's on the hook.",
   "Trae contactos y negocios de tu CRM; @ghosty responde con ese contexto.": "Bring contacts and deals from your CRM; @ghosty replies with that context.",
   "conectado": "connected",
   "No se pudo conectar": "Couldn't connect",
