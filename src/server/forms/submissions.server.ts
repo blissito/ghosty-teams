@@ -37,6 +37,7 @@ export async function listSubmissions(a: { formId: string; limit?: number; since
   // Etiquetas en vez de claves internas: el agente lee esto y lo repite al usuario, y
   // "razon_social" en una respuesta se lee como una fuga del esquema interno.
   const labels = new Map(form.fields.map((f) => [f.name, f.label]));
+  const grupos = new Map(form.fields.filter((f) => f.type === "group").map((f) => [f.name, f]));
 
   return {
     ok: true,
@@ -50,7 +51,7 @@ export async function listSubmissions(a: { formId: string; limit?: number; since
         at: new Date(num(r.created_at) * 1000).toISOString(),
         fichaDocumentId: r.ficha_document_id ?? null,
         respuestas: Object.fromEntries(
-          Object.entries(data).map(([k, v]) => [labels.get(k) ?? k, v])
+          Object.entries(data).map(([k, v]) => [labels.get(k) ?? k, valorLegible(k, v, grupos)])
         ),
       };
       const files = safeJson<Record<string, unknown>>(r.files_json, {});
@@ -58,6 +59,28 @@ export async function listSubmissions(a: { formId: string; limit?: number; since
       return out;
     }),
   };
+}
+
+/**
+ * Una lista repetible se guarda como JSON dentro de un string (para no cambiar el tipo de
+ * `data_json`), pero al agente se le entrega ya RE-HIDRATADA y con etiquetas: si le llega el
+ * string crudo lo repite tal cual al usuario, o peor, se pone a parsearlo él.
+ *
+ * Es re-hidratación en LECTURA: no toca ninguna fila guardada y se puede quitar.
+ */
+function valorLegible(
+  key: string,
+  raw: string,
+  grupos: Map<string, import("../../lib/form-fields").FormField>
+): unknown {
+  const g = grupos.get(key);
+  if (!g) return raw;
+  const items = safeJson<Record<string, string>[]>(raw, []);
+  if (!Array.isArray(items)) return raw;
+  const subs = new Map((g.fields ?? []).map((f) => [f.name, f.label]));
+  return items.map((it) =>
+    Object.fromEntries(Object.entries(it ?? {}).map(([k, v]) => [subs.get(k) ?? k, v]))
+  );
 }
 
 export function safeJson<T>(raw: string | null | undefined, fallback: T): T {

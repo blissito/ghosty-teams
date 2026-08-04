@@ -166,10 +166,14 @@ export function nativeTools(dest: ToolDest | null): ConnectorTool[] {
                 name: { type: "string", description: "Clave interna: minúsculas, números y _ (ej. razon_social)" },
                 type: {
                   type: "string",
-                  enum: ["text", "email", "tel", "textarea", "select", "date", "number", "checkbox", "radio", "file", "matrix"],
+                  enum: ["text", "email", "tel", "textarea", "select", "date", "number", "checkbox", "radio", "file", "matrix", "group"],
                   description:
                     "checkbox=consentimiento; radio=opción única (options, o Sí/No); select=lista; file=archivo; " +
-                    "matrix=rejilla (columnas en options, filas en rows, una respuesta por fila)",
+                    "matrix=rejilla (columnas en options, filas en rows, una respuesta por fila); " +
+                    "group=LISTA REPETIBLE: N elementos con los mismos subcampos (herederos, dependientes, " +
+                    "inmuebles, hijos). Sus subcampos van en `fields`, y `itemLabel` es cómo se llama UNO " +
+                    "('Heredero'). Úsalo siempre que la cantidad la decida quien responde, en vez de inventar " +
+                    "heredero_1, heredero_2, heredero_3",
                 },
                 label: { type: "string", description: "La pregunta, como se le muestra a la persona" },
                 required: { type: "boolean" },
@@ -183,6 +187,16 @@ export function nativeTools(dest: ToolDest | null): ConnectorTool[] {
                   properties: { field: { type: "string" }, equals: { type: "string" } },
                 },
                 section: { type: "string", description: "Nombre del paso al que pertenece" },
+                fields: {
+                  type: "array",
+                  items: { type: "object" },
+                  description:
+                    "Sólo group: los subcampos que se repiten, mismo formato que un campo. NO pueden ser " +
+                    "group, file ni matrix, ni llevar section. Su showIf sólo puede apuntar a otro subcampo suyo",
+                },
+                itemLabel: { type: "string", description: "Sólo group: cómo se llama UN elemento ('Heredero')" },
+                min: { type: "number", description: "Sólo group: mínimo de elementos (con required)" },
+                max: { type: "number", description: "Sólo group: máximo de elementos (default 10, tope 20)" },
               },
               required: ["name", "type", "label"],
             },

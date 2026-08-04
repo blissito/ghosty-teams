@@ -194,29 +194,88 @@ export function hojaCsv(
 ): string {
   const cols = form.fields;
   const s = formStrings(form.locale);
-  const cab = [s.dateColumn, ...cols.map((f) => f.label)];
+  const cab = [s.dateColumn, ...cols.flatMap((f) => encabezados(f))];
   const lineas = [cab.map(csvCell).join(",")];
   for (const fila of filas) {
-    const celdas = [
+    const fila_ = [
       new Date(fila.at * 1000).toLocaleString(form.locale === "en" ? "en-US" : "es-MX", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" }),
-      ...cols.map((f) => valorPlano(f, fila.data, fila.files)),
+      ...cols.flatMap((f) => celdas(f, fila.data, fila.files, s)),
     ];
-    lineas.push(celdas.map(csvCell).join(","));
+    lineas.push(fila_.map(csvCell).join(","));
   }
   return lineas.join("\n");
+}
+
+/**
+ * Cuántas columnas ocupa un campo, y con qué encabezado.
+ *
+ * Una lista repetible corta se abre en columnas ("Herederos 1 · Nombre") porque eso es lo
+ * que deja FILTRAR y CONTAR en Excel, que es para lo que la gente abre la hoja. Una larga
+ * se aplana a una celda: 20 elementos × 5 subcampos son 100 columnas que nadie lee.
+ *
+ * ⚠️ El ancho sale de `max`, que está en el SCHEMA — nunca del máximo visto en los datos.
+ * `actualizarHoja` reconstruye la hoja entera en cada envío: un ancho derivado de las
+ * respuestas cambiaría de columnas al llegar una más larga, y rompería los filtros y las
+ * fórmulas de quien ya está usando la tabla.
+ */
+function encabezados(f: FormField): string[] {
+  if (f.type !== "group") return [f.label];
+  const subs = f.fields ?? [];
+  const max = f.max ?? 10;
+  if (!abreEnColumnas(f)) return [f.label];
+  const out: string[] = [];
+  for (let i = 1; i <= max; i++) for (const sub of subs) out.push(`${f.label} ${i} · ${sub.label}`);
+  return out;
+}
+
+function abreEnColumnas(f: FormField): boolean {
+  const subs = f.fields ?? [];
+  return subs.length > 0 && (f.max ?? 10) * subs.length <= 15;
+}
+
+function celdas(
+  f: FormField,
+  data: Record<string, string>,
+  files: Record<string, { name?: string }>,
+  s: ReturnType<typeof formStrings>
+): string[] {
+  if (f.type !== "group") return [valorPlano(f, data, files, s)];
+  const subs = f.fields ?? [];
+  const max = f.max ?? 10;
+  let items: Record<string, string>[] = [];
+  try {
+    const parsed = JSON.parse(data[f.name] ?? "[]");
+    if (Array.isArray(parsed)) items = parsed as Record<string, string>[];
+  } catch {
+    /* dato corrupto: mejor una celda vacía que tirar la hoja entera */
+  }
+  if (!abreEnColumnas(f)) {
+    // "1) Nombre: Ana | Parentesco: hija ⁋ 2) …" en una sola celda.
+    return [
+      items
+        .map((it, i) => `${i + 1}) ` + subs.map((sub) => `${sub.label}: ${it[sub.name] ?? ""}`).join(" | "))
+        .join("\n"),
+    ];
+  }
+  const out: string[] = [];
+  for (let i = 0; i < max; i++) {
+    for (const sub of subs) out.push(sub.type === "checkbox" ? (items[i]?.[sub.name] === "true" ? s.yes : "") : (items[i]?.[sub.name] ?? ""));
+  }
+  return out;
 }
 
 /** Un valor por celda: la matriz se aplana a "fila: respuesta; fila: respuesta". */
 function valorPlano(
   f: FormField,
   data: Record<string, string>,
-  files: Record<string, { name?: string }>
+  files: Record<string, { name?: string }>,
+  s: ReturnType<typeof formStrings>
 ): string {
   // Ausente = el flujo no lo preguntó (showIf). Vacío, no "—": una celda con guión en una
   // hoja se filtra y se cuenta como dato.
   if (!(f.name in data)) return "";
   const v = data[f.name] ?? "";
-  if (f.type === "checkbox") return v === "true" ? "Sí" : "";
+  if (f.type === "checkbox") return v === "true" ? s.yes : "";
   if (f.type === "file") return files[f.name]?.name ?? (v ? "archivo" : "");
   if (f.type === "matrix") {
     let sel: Record<string, string> = {};
