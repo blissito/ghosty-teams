@@ -11,7 +11,8 @@
     "build": "NITRO_PRESET=node-server vite build",
     "start": "node .output/server/index.mjs",
     "preview": "vite preview",
-    "test": "vitest run"
+    "test": "vitest run",
+    "check:i18n": "node scripts/check-i18n.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-ses": "^3.1093.0",
