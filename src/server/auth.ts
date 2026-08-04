@@ -104,7 +104,19 @@ export const startGhostyLogin = createServerFn({ method: "GET" })
       .update(`${ts}.${origin}`)
       .digest("hex");
     const p = new URLSearchParams({ ts: String(ts), sig, o: origin });
-    return { url: `${IDP}/identity/connect?${p}`, idpOrigin: IDP, inviteToken: data.inviteToken };
+    // `crawler`: el llamante es un bot de vista previa de liga. El loader lo usa para NO
+    // rebotar al IdP y dejar que se renderice la tarjeta con las og:* — un crawler no
+    // sigue un redirect cross-domain y sin esto la preview sale pelona. Ver
+    // `crawler.server.ts`. Va aquí, y no en el loader de la ruta, porque `login.tsx` lo
+    // alcanza el cliente y el plugin de protección de TanStack le prohíbe —estática o
+    // dinámicamente— importar un módulo `.server`.
+    const { isLinkPreviewCrawler } = await import("../crawler.server");
+    return {
+      url: `${IDP}/identity/connect?${p}`,
+      idpOrigin: IDP,
+      inviteToken: data.inviteToken,
+      crawler: await isLinkPreviewCrawler(),
+    };
   });
 
 // Recibe la identidad firmada por ghosty.studio (firma IdP→box), crea sesión.

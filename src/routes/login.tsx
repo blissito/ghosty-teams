@@ -52,7 +52,11 @@ export async function runLoginLoader(search: LoginSearch, inviteToken?: string) 
   }
   // Primer intento: rebote server-side al IdP. `return` lleva ?attempted=1 para que una
   // vuelta-sin-identidad caiga al fallback manual en vez de re-rebotar en bucle.
-  const { url } = await startGhostyLogin({ data: { inviteToken } });
+  const { url, crawler } = await startGhostyLogin({ data: { inviteToken } });
+  // Un crawler de vista previa de liga se queda con la tarjeta: el rebote va a OTRO
+  // dominio y ninguno lo sigue, así que sin esto la preview sale con el host como título
+  // y sin imagen.
+  if (crawler) return { error: null as string | null };
   // `attempted=true` (no `=1`): TanStack coacciona `1`→boolean y re-serializa a `true`,
   // metiendo un redirect de canonicalización extra. Generándolo ya como `true`, el
   // valor round-trip es estable y no hay hop intermedio.
