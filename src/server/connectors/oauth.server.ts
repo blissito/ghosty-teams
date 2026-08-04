@@ -67,9 +67,9 @@ export function buildAuthorizeUrl(def: ConnectorDef, redirectUri: string, state:
   const p = new URLSearchParams({
     response_type: "code",
     client_id: envOrThrow(o.clientIdEnv),
-    redirect_uri: redirectUri,
     state,
   });
+  if (!o.noRedirectUri) p.set("redirect_uri", redirectUri);
   if (o.scopes) p.set("scope", o.scopes);
   if (o.pkce && challenge) {
     p.set("code_challenge", challenge);
@@ -113,10 +113,10 @@ export async function exchangeCode(
   const body = new URLSearchParams({
     grant_type: "authorization_code",
     code,
-    redirect_uri: redirectUri,
     client_id: envOrThrow(o.clientIdEnv),
     client_secret: envOrThrow(o.clientSecretEnv),
   });
+  if (!o.noRedirectUri) body.set("redirect_uri", redirectUri);
   if (o.pkce && verifier) body.set("code_verifier", verifier);
   const res = await fetch(o.tokenUrl, {
     method: "POST",

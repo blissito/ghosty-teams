@@ -16,6 +16,11 @@ export type ConnectorDef = {
   type: string; // columna "Tipo" estilo claude.ai (hoy siempre "Web")
   custom?: boolean; // badge "Personalizado"
   status: ConnectorStatus;
+  // Enlace externo que se ofrece CUANDO YA está conectado, para administrar el
+  // alcance del lado del proveedor. Existe por GitHub: conectar no basta, hay
+  // que elegir a qué repositorios llega la app, y eso se cambia después sin
+  // reconectar. Sin este botón el usuario no tiene forma de descubrirlo.
+  manage?: { url: string; label: string };
   oauth?: {
     authUrl: string;
     tokenUrl: string;
@@ -27,6 +32,12 @@ export type ConnectorDef = {
     // `Accept: application/json` responde form-encoded y el `res.json()` del
     // cliente genérico revienta. Nadie más lo usa.
     tokenHeaders?: Record<string, string>;
+    // No mandar `redirect_uri` — ni al autorizar ni al canjear. GitHub lo exige
+    // así en el flujo de instalación: `/apps/<slug>/installations/new` NO acepta
+    // el parámetro, así que el `code` queda ligado a la Callback URL registrada
+    // y mandarlo después en el exchange da `redirect_uri_mismatch`. La regla de
+    // GitHub es simétrica: si no fue en el authorize, no va en el exchange.
+    noRedirectUri?: boolean;
     userInfoUrl?: string; // tras conectar: captura external_id + meta
     // Traduce la respuesta del userInfoUrl a lo que se persiste. Cada proveedor
     // devuelve una forma distinta; sin esto el parser de UNO quedaba escrito a
@@ -187,13 +198,35 @@ export const CONNECTORS: ConnectorDef[] = [
     icon: "github",
     type: "Web",
     status: "available",
+    // La MISMA liga sirve para instalar y para agregar repos: GitHub reconoce
+    // el estado de la cuenta y muestra la pantalla que toca.
+    manage: {
+      url: `https://github.com/apps/${process.env.GITHUB_APP_SLUG ?? "ghosty-studio"}/installations/new`,
+      label: "Elegir repos",
+    },
     oauth: {
       // Es una GitHub APP en flujo user-to-server, no una OAuth App. La
       // diferencia que importa: el usuario elige QUÉ REPOS al instalar, en vez
       // de entregar todos sus repos privados de golpe (que es lo único que
       // sabe hacer el scope `repo` de una OAuth App).
-      authUrl: "https://github.com/login/oauth/authorize",
+      // ⚠️ Apunta a la URL de INSTALACIÓN, no a /login/oauth/authorize. Con
+      // "Request user authorization (OAuth) during installation" activo en la
+      // app, esta URL hace los DOS pasos en una pantalla ("Install & Authorize")
+      // y vuelve al callback con `code` + `installation_id` + `state`. Es el
+      // patrón que usan CodeRabbit y compañía, y el único que le pregunta al
+      // usuario QUÉ REPOS.
+      //
+      // Con /login/oauth/authorize el usuario queda autorizado pero SIN app
+      // instalada, y todas las tools fallan con un 404 que parece "no existe".
+      // Instalación y autorización son independientes en GitHub: ése es el
+      // origen de toda la confusión.
+      //
+      // De las URLs de instalación, `/installations/new` es la ÚNICA que
+      // propaga `state` — y el state lleva el workspace, así que sin él el
+      // relay del apex no sabría a qué subdominio volver.
+      authUrl: `https://github.com/apps/${process.env.GITHUB_APP_SLUG ?? "ghosty-studio"}/installations/new`,
       tokenUrl: "https://github.com/login/oauth/access_token",
+      noRedirectUri: true,
       // ⚠️ Sin esto GitHub responde form-encoded y el res.json() del cliente
       // genérico revienta. Es el único proveedor que lo necesita.
       tokenHeaders: { Accept: "application/json" },

@@ -144,6 +144,7 @@ export const en: Record<string, string> = {
   "Trae contactos y negocios de tu CRM; @ghosty responde con ese contexto.": "Bring contacts and deals from your CRM; @ghosty replies with that context.",
   "Deja que @ghosty trabaje en tus repos: lee issues y PRs, revisa código, escribe en una rama y abre pull requests.":
     "Let @ghosty work in your repos: read issues and PRs, review code, write to a branch, and open pull requests.",
+  "Elegir repos": "Choose repos",
   "conectado": "connected",
   "No se pudo conectar": "Couldn't connect",
   "Conecta tu EasyBits": "Connect your EasyBits",

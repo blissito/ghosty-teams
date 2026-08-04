@@ -12,6 +12,11 @@ import { getConnectorRow } from "./store.server";
 import type { ConnectorTool } from "./impl";
 
 const API = "https://api.github.com";
+const APP_SLUG = process.env.GITHUB_APP_SLUG ?? "ghosty-studio";
+/** Instalar la app / agregar repos. La misma liga sirve para las dos cosas. */
+const INSTALL_URL = `https://github.com/apps/${APP_SLUG}/installations/new`;
+/** Cambiar los repos de una instalación que ya existe. */
+const MANAGE_URL = "https://github.com/settings/installations";
 
 type GithubMeta = { login?: string | null; name?: string | null; avatarUrl?: string | null };
 
@@ -77,9 +82,10 @@ async function api(sub: string, path: string, init?: RequestInit): Promise<any> 
     // así que la causa más probable NO es que no exista.
     return {
       error:
-        "No lo encuentro en GitHub. Lo más probable es que ese repositorio no esté incluido en la " +
-        "instalación: se agrega en github.com/settings/installations → Ghosty Studio → Configure. " +
-        "También puede ser un nombre mal escrito.",
+        "GitHub SÍ está conectado, pero no encuentro eso. Lo más probable es que ese repositorio no " +
+        `esté entre los que se eligieron al instalar. Se agregan aquí: ${INSTALL_URL} — ` +
+        "dale ese enlace al usuario. También puede ser un nombre mal escrito.",
+      installUrl: INSTALL_URL,
     };
   }
   if (res.status === 409) return { error: "Conflicto en GitHub (¿la rama ya existe o el archivo cambió?)." };
@@ -151,6 +157,7 @@ export async function ambientContext(sub: string, sender: string, _message: stri
     `github_list_prs, github_get_pr, github_pr_files, github_read_file, github_search_code, ` +
     `github_workflow_runs. Escritura: github_comment, github_update_issue, github_create_issue, ` +
     `github_create_branch, github_write_file, github_create_pr. ` +
+    `Si te piden "conecta mi repo" o "agrega este repo", contesta con github_install_link. ` +
     `Para CUALQUIER pregunta sobre repos, issues, pull requests o CI de ${sender}, USA estas tools — ` +
     `NO inventes datos ni digas que no tienes acceso (SÍ lo tienes). El repo va como "dueño/repo". ` +
     `Antes de opinar de un PR lee su DIFF con github_pr_files, no sólo el título. ` +
@@ -175,25 +182,59 @@ export const tools: ConnectorTool[] = [
     handler: async (sub) => {
       const r = await api(sub, "/user/installations");
       if (r?.error) return r;
-      const inst = r?.installations?.[0];
-      if (!inst) {
+      const installs: any[] = r?.installations ?? [];
+      if (!installs.length) {
+        // ⚠️ Redacción deliberada. La versión anterior decía "no está instalada"
+        // y el modelo la parafraseaba como "no tienes GitHub conectado", que es
+        // FALSO y contradecía lo que él mismo acababa de decir. En GitHub
+        // conectar e instalar son cosas independientes, así que el mensaje
+        // afirma primero lo que sí es cierto.
         return {
+          connected: true,
+          installed: false,
+          installUrl: INSTALL_URL,
           error:
-            "La app de Ghosty no está instalada en ninguna cuenta. Se instala en " +
-            "github.com/apps/ghosty-studio → Install.",
+            "GitHub está CONECTADO correctamente — no le digas al usuario lo contrario. Lo que falta es " +
+            `instalar la app de Ghosty en su cuenta y elegir a qué repositorios darle acceso: ${INSTALL_URL}. ` +
+            "Dale ese enlace tal cual y dile que ahí escoge los repos.",
         };
       }
-      const repos = await api(sub, `/user/installations/${inst.id}/repositories?per_page=100`);
-      if (repos?.error) return repos;
-      return (repos?.repositories ?? []).map((x: any) => ({
-        repo: x?.full_name,
-        private: x?.private,
-        defaultBranch: x?.default_branch,
-        language: x?.language,
-        description: x?.description,
-        pushedAt: x?.pushed_at,
-      }));
+      // Un usuario puede tener la app instalada en su cuenta personal Y en
+      // varias organizaciones. Tomar sólo la primera dejaba invisibles los repos
+      // del trabajo, que suelen ser los que importan.
+      const perInstall = await Promise.all(
+        installs.map(async (inst) => {
+          const repos = await api(sub, `/user/installations/${inst.id}/repositories?per_page=100`);
+          return (repos?.repositories ?? []).map((x: any) => ({
+            repo: x?.full_name,
+            owner: inst?.account?.login ?? null,
+            private: x?.private,
+            defaultBranch: x?.default_branch,
+            language: x?.language,
+            description: x?.description,
+            pushedAt: x?.pushed_at,
+          }));
+        }),
+      );
+      return {
+        repos: perInstall.flat(),
+        accounts: installs.map((i) => i?.account?.login).filter(Boolean),
+        addMoreUrl: INSTALL_URL,
+      };
     },
+  },
+  {
+    name: "github_install_link",
+    description:
+      "Devuelve los enlaces para instalar la app de Ghosty en una cuenta de GitHub, o para cambiar a qué repositorios tiene acceso. Úsala cuando pidan 'conecta mi repo', 'agrega este repo' o cuando otra tool falle porque el repo no está en la instalación.",
+    inputSchema: { type: "object", properties: {} },
+    handler: async () => ({
+      // Es la misma liga para instalar y para agregar repos a una cuenta donde
+      // ya está instalada: GitHub reconoce el estado y muestra la pantalla que
+      // toca. Por eso no hay que decidir cuál mandar.
+      instalarOAgregarRepos: INSTALL_URL,
+      administrarInstalaciones: MANAGE_URL,
+    }),
   },
   {
     name: "github_list_issues",

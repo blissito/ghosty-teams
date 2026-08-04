@@ -349,6 +349,7 @@ export function SettingsContent({
 type ConnItem = {
   id: string; name: string; blurb: string; icon: string; type: string;
   custom: boolean; status: "available" | "soon"; connected: boolean;
+  manage: { url: string; label: string } | null;
 };
 
 function connIcon(icon: string) {
@@ -447,6 +448,21 @@ function IntegrationsPanel() {
                       <span className="inline-flex items-center gap-1 text-xs font-medium text-emerald-500">
                         <Check size={14} />{t("Conectado")}
                       </span>
+                      {/* Conectar no siempre es suficiente: GitHub además exige
+                          elegir a qué repos llega la app, y eso se cambia luego
+                          sin reconectar. Va a una pestaña nueva a propósito —
+                          la persona vuelve aquí y el estado no se pierde. */}
+                      {c.manage && (
+                        <a
+                          href={c.manage.url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-flex items-center gap-1 rounded-lg border border-border px-2.5 py-1 text-xs text-muted hover:text-ink"
+                        >
+                          {t(c.manage.label)}
+                          <ExternalLink size={11} />
+                        </a>
+                      )}
                       <button
                         onClick={() => disconnect(c.id)}
                         disabled={busy === c.id}

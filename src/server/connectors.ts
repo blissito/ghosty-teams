@@ -23,6 +23,7 @@ export const listMyConnectorsFn = createServerFn({ method: "GET" }).handler(asyn
     type: c.type,
     custom: !!c.custom,
     status: c.status,
+    manage: c.manage ?? null,
     connected: connected.has(c.id),
   }));
 });
