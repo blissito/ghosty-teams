@@ -37,7 +37,20 @@ export async function buildConnectorContext(sub: string, sender: string, message
     const blocks = parts.filter((p): p is string => !!p);
     const ajenos = await contextoDeConectoresDelEquipo(sub);
     if (ajenos) blocks.push(ajenos);
-    return blocks.length ? blocks.join("\n\n") + "\n\n" : "";
+    if (!blocks.length) return "";
+    // ⚠️ La sesión del worker es PERSISTENTE, así que el agente arrastra lo que concluyó
+    // en turnos anteriores. El 2026-08-04 uno dijo "no tengo Sentry conectado" a las 11:07
+    // —cierto en ese momento—, el usuario lo conectó a las 11:08, y a las 11:28 repitió lo
+    // mismo SIN LLAMAR A NINGUNA TOOL: se creyó a sí mismo en vez de mirar. Este
+    // encabezado existe para que la lista de ahora le gane a su propia memoria.
+    return (
+      `[ESTADO ACTUAL de las integraciones, recalculado en ESTE turno. Es la verdad de ahora ` +
+      `y PISA cualquier cosa que hayas dicho o concluido antes en esta conversación: si en un ` +
+      `turno anterior dijiste que no tenías una integración y aquí aparece, es que ya la ` +
+      `conectaron. Compruébalo usando la tool, no tu memoria.]\n\n` +
+      blocks.join("\n\n") +
+      "\n\n"
+    );
   } catch {
     return "";
   }
