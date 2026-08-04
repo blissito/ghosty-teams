@@ -116,7 +116,7 @@ async function deliverEmail(ev: NotifyEvent, ns: string): Promise<void> {
   // global — que es una preferencia por default, no una negativa expresa.
   const people = ev.forceEmail ? await db.emailsForSubsAny(offline) : await db.emailsForSubs(offline);
   if (!people.length) return;
-  const { html, text, inline } = armar(ev);
+  const { html, text, inline } = await armar(ev);
   // Un envío por persona (To individual → no filtra los emails entre destinatarios).
   const out = await Promise.allSettled(
     people.map((p) =>
@@ -149,7 +149,7 @@ async function deliverEmail(ev: NotifyEvent, ns: string): Promise<void> {
 export async function sendEmailTo(addresses: string[], ev: NotifyEvent): Promise<number> {
   const { sesConfigured, sendSesEmail } = await import("./ses.server");
   if (!sesConfigured() || !addresses.length) return 0;
-  const { html, text, inline } = armar(ev);
+  const { html, text, inline } = await armar(ev);
   const out = await Promise.allSettled(
     addresses.map((to) =>
       sendSesEmail({ to, subject: ev.title, html, text, inline })
@@ -170,26 +170,34 @@ import { ghostyEmail, mascotInline, publicBase, splitHead } from "./email-templa
  * El `inlineMascot` que se pasaba antes desapareció: la plantilla devuelve el `inline` junto
  * al html, que es lo que evita el fallo silencioso de mandar uno sin el otro.
  */
-export function emailHtml(ev: NotifyEvent): string {
-  return armar(ev).html;
+export async function emailHtml(ev: NotifyEvent): Promise<string> {
+  return (await armar(ev)).html;
 }
 
-function armar(ev: NotifyEvent) {
+async function armar(ev: NotifyEvent) {
   // TÍTULO propio, en su renglón. En un recordatorio el asunto genérico ("⏰ Recordatorio")
   // no dice nada: lo que el usuario reconoce es SU texto. Se parte por el guión largo o el
   // primer salto de línea —así es como la gente escribe "Título — detalle"— y si no hay
   // corte natural, el texto entero es el título.
   const { head, rest } = ev.kind === "reminder" ? splitHead(ev.body) : { head: ev.title, rest: ev.body };
+  // ⚠️ Éste es el idioma de QUIEN DISPARÓ el aviso, no el de quien lo recibe: no guardamos
+  // una preferencia de idioma por usuario (el locale vive en una cookie de su navegador).
+  // En un workspace que trabaja en un idioma coinciden; en uno mixto, no. Para arreglarlo
+  // de verdad hace falta una columna en gc_users, y entonces se lee del destinatario.
+  const { currentLocale } = await import("./locale.server");
+  const { translate } = await import("../i18n.core");
+  const locale = await currentLocale();
   return ghostyEmail({
     head,
     body: rest,
     cta: {
-      label: ev.kind === "reminder" ? "Abrir la conversación" : "Abrir en Ghosty Studio",
+      label: translate(locale, ev.kind === "reminder" ? "Abrir la conversación" : "Abrir en Ghosty Studio"),
       url: ev.url,
     },
     // Siempre a gente del workspace: estos avisos nacen de su propia actividad, y su pie
     // lleva la ruta para apagarlos.
     footer: "workspace",
+    locale,
   });
 }
 

@@ -905,4 +905,24 @@ export const en: Record<string, string> = {
   "última:": "last:",
   "“crea un formulario de diagnóstico” en el room del cliente.":
     "for “create an intake questionnaire” in the client’s room.",
+
+  // Correos. Su idioma lo decide QUIEN LOS MANDA: el destinatario puede no tener cuenta.
+  // `ver`/`comentar`/`editar` se interpolan dentro de las dos frases de invitación, así que
+  // las cuatro piezas tienen que existir o el correo sale mitad y mitad.
+  "Abrir el documento": "Open the document",
+  "Abrir la conversación": "Open the conversation",
+  "Abrir en Ghosty Studio": "Open in Ghosty Studio",
+  "Enviado desde Ghosty Teams. Si no esperabas este correo, puedes ignorarlo.":
+    "Sent from Ghosty Teams. If you weren’t expecting this email, you can ignore it.",
+  "No necesitas crear una cuenta: este enlace es tuyo y te identifica. No se lo reenvíes a nadie.":
+    "You don’t need an account: this link is yours and identifies you. Don’t forward it to anyone.",
+  "Recibes este correo porque lo activaste en Ghosty Studio. Puedes apagarlo en Ajustes → Notificaciones.":
+    "You’re getting this email because you turned it on in Ghosty Studio. You can turn it off in Settings → Notifications.",
+  "Te escribe {deQuien} desde Ghosty Teams. Si no esperabas este correo, puedes ignorarlo.":
+    "{deQuien} is writing to you from Ghosty Teams. If you weren’t expecting this email, you can ignore it.",
+  "{deQuien} te invitó a {accion} \"{titulo}\"": "{deQuien} invited you to {accion} \"{titulo}\"",
+  "{deQuien} te invitó a {accion} un documento": "{deQuien} invited you to {accion} a document",
+  "ver": "view",
+  "comentar": "comment on",
+  "editar": "edit",
 };

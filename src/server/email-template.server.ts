@@ -15,6 +15,7 @@
 // - **El mascot va por `cid:`**, no enlazado. Enlazarlo costaba una petición al abrir el
 //   correo (500ms medidos, casi todo handshake TLS contra OVH) para traer 1.5KB, y dependía
 //   de que el destinatario aceptara "mostrar imágenes de este remitente".
+import { DEFAULT_LOCALE, translate, type Locale } from "../i18n.core";
 import type { InlineImage } from "./ses.server";
 
 /**
@@ -36,6 +37,12 @@ export type GhostyEmail = {
   /** Botón. Opcional — un correo de sólo texto no necesita uno, y hasta hoy era obligatorio. */
   cta?: { label: string; url: string };
   footer?: EmailFooter;
+  /**
+   * Idioma del correo. Lo decide QUIEN LO MANDA, no quien lo recibe: un invitado externo
+   * no tiene cuenta ni preferencia que consultar, así que lo razonable es el idioma de
+   * quien lo invitó. Sin él, español.
+   */
+  locale?: Locale;
   /** "Brendi" → el pie externo dice quién escribe. Sin esto, sólo el producto. */
   deQuien?: string;
 };
@@ -80,16 +87,17 @@ export function publicBase(): string {
   return /^https?:\/\//.test(raw) ? raw.replace(/\/$/, "") : `https://${raw.replace(/\/$/, "")}`;
 }
 
-function pieTexto(f: EmailFooter, deQuien?: string): string {
+function pieTexto(f: EmailFooter, deQuien: string | undefined, locale: Locale): string {
+  const t = (k: string, p?: Record<string, string>) => translate(locale, k, p);
   if (typeof f === "object") return f.text;
   if (f === "externo") {
     // Ni opt-out ni ajustes: esta persona no tiene cuenta. Lo único honesto que se le puede
     // decir es quién le escribe y desde dónde.
     return deQuien
-      ? `Te escribe ${deQuien} desde Ghosty Teams. Si no esperabas este correo, puedes ignorarlo.`
-      : "Enviado desde Ghosty Teams. Si no esperabas este correo, puedes ignorarlo.";
+      ? t("Te escribe {deQuien} desde Ghosty Teams. Si no esperabas este correo, puedes ignorarlo.", { deQuien })
+      : t("Enviado desde Ghosty Teams. Si no esperabas este correo, puedes ignorarlo.");
   }
-  return "Recibes este correo porque lo activaste en Ghosty Studio. Puedes apagarlo en Ajustes → Notificaciones.";
+  return t("Recibes este correo porque lo activaste en Ghosty Studio. Puedes apagarlo en Ajustes → Notificaciones.");
 }
 
 /**
@@ -106,7 +114,7 @@ export function ghostyEmail(e: GhostyEmail): { html: string; text: string; inlin
   const cta = e.cta
     ? { label: e.cta.label, url: e.cta.url.startsWith("http") ? e.cta.url : `${base}${e.cta.url}` }
     : null;
-  const pie = pieTexto(e.footer ?? "workspace", e.deQuien);
+  const pie = pieTexto(e.footer ?? "workspace", e.deQuien, e.locale ?? DEFAULT_LOCALE);
 
   const html = `<!doctype html><html><body style="margin:0;padding:28px 12px;background:#f5f5f7">
   <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="max-width:540px;margin:0 auto;background:#f4f4f7;border:1px solid #e6e6ea;border-radius:16px">

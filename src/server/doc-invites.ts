@@ -272,6 +272,9 @@ export async function marcarInvitacionUsada(id: number, nombre: string): Promise
   );
 }
 
+// El verbo va como CLAVE del diccionario, no como texto suelto: se interpola en el asunto
+// y en el encabezado, así que las tres frases completas tienen que existir en los dos
+// idiomas o el correo saldría mitad y mitad.
 const VERBO: Record<DocRole, string> = {
   view: "ver",
   comment: "comentar",
@@ -291,29 +294,36 @@ async function mandarCorreo(o: {
     const { sendSesEmail, sesConfigured } = await import("./ses.server");
     if (!sesConfigured()) return false;
     const accion = VERBO[o.role];
+    // Idioma de QUIEN INVITA: el destinatario no tiene cuenta, así que no hay preferencia
+    // suya que consultar. Se resuelve aquí, dentro del request de la invitación.
+    const { currentLocale } = await import("./locale.server");
+    const { translate } = await import("../i18n.core");
+    const locale = await currentLocale();
+    const tr = (k: string, p?: Record<string, string>) => translate(locale, k, p);
 
     // La plantilla COMÚN de Ghosty (globo, mascota incrustada, pie). Antes esto armaba su
     // propio HTML a mano y llegaba un correo pelón, sin el personaje ni el pie: distinto
     // de todo lo demás que manda el producto justo en el correo que abre alguien de FUERA.
     const { ghostyEmail } = await import("./email-template.server");
     const { html, text, inline } = ghostyEmail({
-      head: `${o.deQuien} te invitó a ${accion} un documento`,
+      head: tr("{deQuien} te invitó a {accion} un documento", { deQuien: o.deQuien, accion: tr(accion) }),
       // El mensaje de quien invita va PRIMERO: "revisa las cláusulas de plazo antes del
       // viernes" es lo que hace que el correo se lea y se atienda. El aviso del enlace va
       // al final, que es letra chica.
-      body: [o.titulo, o.mensaje?.trim(), "No necesitas crear una cuenta: este enlace es tuyo y te identifica. No se lo reenvíes a nadie."]
+      body: [o.titulo, o.mensaje?.trim(), tr("No necesitas crear una cuenta: este enlace es tuyo y te identifica. No se lo reenvíes a nadie.")]
         .filter(Boolean)
         .join("\n\n"),
-      cta: { label: "Abrir el documento", url: o.url },
+      cta: { label: tr("Abrir el documento"), url: o.url },
       // Va a gente de FUERA del workspace: su pie dice quién escribe y no promete unos
       // ajustes de notificaciones que esa persona no tiene.
       footer: "externo",
+      locale,
       deQuien: o.deQuien,
     });
 
     return await sendSesEmail({
       to: o.para,
-      subject: `${o.deQuien} te invitó a ${accion} "${o.titulo}"`,
+      subject: tr('{deQuien} te invitó a {accion} "{titulo}"', { deQuien: o.deQuien, accion: tr(accion), titulo: o.titulo }),
       html,
       text,
       inline,
