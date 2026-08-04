@@ -6,8 +6,10 @@
 // duplicada a mano en la ruta pública y en el core), y de ahí salían las divergencias:
 // el cliente escondía un campo que el servidor seguía exigiendo, o al revés.
 //
-// Sin imports: cualquier dependencia lo ataría a un entorno y dejaría de poder viajar
-// dentro del HTML publicado.
+// Sin imports salvo su diccionario hermano (`form-strings.ts`), que tampoco tiene ninguno:
+// cualquier otra dependencia lo ataría a un entorno y dejaría de poder viajar dentro del
+// HTML publicado.
+import { fill, formStrings, type FormLocale } from "./form-strings";
 
 export type FormFieldType =
   | "text"
@@ -76,8 +78,15 @@ export type ValidationResult = {
  * Valida la respuesta contra el schema. Mismo resultado en el navegador y en el servidor:
  * el cliente lo usa para no dejar avanzar de paso, el servidor porque el cliente es
  * opcional (nada impide un POST a mano).
+ *
+ * `locale` es opcional y cae a español: así ningún llamador viejo cambia de comportamiento.
  */
-export function validateSubmission(fields: FormField[], raw: Record<string, unknown>): ValidationResult {
+export function validateSubmission(
+  fields: FormField[],
+  raw: Record<string, unknown>,
+  locale?: FormLocale
+): ValidationResult {
+  const s = formStrings(locale);
   const errors: Record<string, string> = {};
   const cleanData: Record<string, string> = {};
   // Los `showIf` se resuelven contra los valores YA limpios: un campo sólo puede depender
@@ -92,12 +101,12 @@ export function validateSubmission(fields: FormField[], raw: Record<string, unkn
     seen[field.name] = value;
 
     if (field.required && !value) {
-      errors[field.name] = `${field.label} es requerido`;
+      errors[field.name] = fill(s.required, { label: field.label });
       continue;
     }
 
     if (value) {
-      const bad = validateValue(field, value);
+      const bad = validateValue(field, value, locale);
       if (bad) {
         errors[field.name] = bad;
         continue;
@@ -110,32 +119,36 @@ export function validateSubmission(fields: FormField[], raw: Record<string, unkn
   return { ok: Object.keys(errors).length === 0, errors, cleanData };
 }
 
-function validateValue(field: FormField, value: string): string | null {
+function validateValue(field: FormField, value: string, locale?: FormLocale): string | null {
+  const s = formStrings(locale);
   switch (field.type) {
     case "email":
-      return RE.email.test(value) ? null : "Correo inválido";
+      return RE.email.test(value) ? null : s.invalidEmail;
     case "tel":
-      return RE.tel.test(value) ? null : "Teléfono inválido";
+      return RE.tel.test(value) ? null : s.invalidTel;
     case "number":
-      return RE.number.test(value) ? null : "Debe ser un número";
+      return RE.number.test(value) ? null : s.invalidNumber;
     case "date":
-      return RE.date.test(value) ? null : "Fecha inválida (YYYY-MM-DD)";
+      return RE.date.test(value) ? null : s.invalidDate;
     case "select":
     case "radio": {
-      const opts = field.options?.length ? field.options : ["Sí", "No"];
-      return opts.includes(value) ? null : "Opción inválida";
+      // El default Sí/No de un radio sin opciones se hornea en el HTML con el idioma del
+      // formulario: aquí hay que comparar contra ESAS mismas etiquetas o nada valida.
+      const opts = field.options?.length ? field.options : [s.yes, s.no];
+      return opts.includes(value) ? null : s.invalidOption;
     }
     case "matrix": {
       let sel: Record<string, string>;
       try {
         sel = JSON.parse(value) as Record<string, string>;
       } catch {
-        return "Respuesta inválida";
+        return s.invalidAnswer;
       }
-      if (!sel || typeof sel !== "object" || Array.isArray(sel)) return "Respuesta inválida";
+      if (!sel || typeof sel !== "object" || Array.isArray(sel)) return s.invalidAnswer;
       const cols = field.options ?? [];
-      if (cols.length && Object.values(sel).some((c) => !cols.includes(c as string))) return "Opción inválida";
-      if (field.required && (field.rows ?? []).some((r) => !sel[r])) return `${field.label}: responde todas las filas`;
+      if (cols.length && Object.values(sel).some((c) => !cols.includes(c as string))) return s.invalidOption;
+      if (field.required && (field.rows ?? []).some((r) => !sel[r]))
+        return fill(s.matrixIncomplete, { label: field.label });
       return null;
     }
     default:

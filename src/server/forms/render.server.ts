@@ -14,6 +14,7 @@
 //   · las URLs de submit y upload son ABSOLUTAS (una relativa apuntaría al host del iframe);
 //   · el fetch va sin credenciales y el endpoint responde CORS `*` (ver api.form.$token.ts).
 import { escapeHtml, formSteps, type FormField } from "../../lib/form-fields";
+import { formStrings, toFormLocale, type FormLocale, type FormStrings } from "../../lib/form-strings";
 
 export type RenderFormArgs = {
   title: string;
@@ -24,24 +25,28 @@ export type RenderFormArgs = {
   submitUrl: string;
   /** Absoluta: POST multipart de los campos `file`. */
   uploadUrl: string;
+  /** Idioma del formulario. Se hornea aquí: al abrirlo no hay cookie ni sesión que mirar. */
+  locale?: FormLocale;
 };
 
 export function renderFormHtml(a: RenderFormArgs): string {
+  const locale = toFormLocale(a.locale);
+  const s = formStrings(locale);
   const steps = formSteps(a.fields);
   const multi = steps.length > 1;
-  const thanks = a.thanks?.trim() || "¡Gracias! Ya recibimos tus respuestas.";
+  const thanks = a.thanks?.trim() || s.thanksDefault;
 
   const stepsHtml = steps
     .map(
-      (s, i) => `<section class="gf-step" data-step="${i}"${i === 0 ? "" : ' hidden=""'}>
-      ${s.title ? `<h2 class="gf-sec">${escapeHtml(s.title)}</h2>` : ""}
-      ${s.fields.map(fieldHtml).join("\n")}
+      (st, i) => `<section class="gf-step" data-step="${i}"${i === 0 ? "" : ' hidden=""'}>
+      ${st.title ? `<h2 class="gf-sec">${escapeHtml(st.title)}</h2>` : ""}
+      ${st.fields.map((f) => fieldHtml(f, s)).join("\n")}
     </section>`
     )
     .join("\n");
 
   return `<!doctype html>
-<html lang="es">
+<html lang="${locale}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -59,12 +64,12 @@ export function renderFormHtml(a: RenderFormArgs): string {
   <form id="gf-form" novalidate>
     ${stepsHtml}
     <!-- Trampa para bots: la esconde el CSS, no un atributo hidden (un bot lee el atributo). -->
-    <div class="gf-hp"><label>No llenar<input type="text" name="_hp" tabindex="-1" autocomplete="off"></label></div>
+    <div class="gf-hp"><label>${escapeHtml(s.honeypot)}<input type="text" name="_hp" tabindex="-1" autocomplete="off"></label></div>
     <p class="gf-formerr" id="gf-formerr" hidden=""></p>
     <div class="gf-nav">
-      <button type="button" class="gf-btn gf-ghost" id="gf-prev" hidden="">Atrás</button>
-      <button type="button" class="gf-btn" id="gf-next"${multi ? "" : ' hidden=""'}>Siguiente</button>
-      <button type="submit" class="gf-btn" id="gf-send"${multi ? ' hidden=""' : ""}>Enviar</button>
+      <button type="button" class="gf-btn gf-ghost" id="gf-prev" hidden="">${escapeHtml(s.back)}</button>
+      <button type="button" class="gf-btn" id="gf-next"${multi ? "" : ' hidden=""'}>${escapeHtml(s.next)}</button>
+      <button type="submit" class="gf-btn" id="gf-send"${multi ? ' hidden=""' : ""}>${escapeHtml(s.send)}</button>
     </div>
   </form>
 
@@ -74,7 +79,7 @@ export function renderFormHtml(a: RenderFormArgs): string {
   </div>
 </main>
 <script>
-${clientScript(a)}
+${clientScript(a, s)}
 </script>
 </body>
 </html>`;
@@ -85,7 +90,7 @@ ${clientScript(a)}
 // nunca por posición en el DOM. Así el formulario sobrevive a cualquier paso que reordene
 // o envuelva nodos (por ejemplo el sembrado de ids de los artefactos).
 
-function fieldHtml(f: FormField): string {
+function fieldHtml(f: FormField, s: FormStrings): string {
   const req = f.required ? `<span class="gf-req" aria-hidden="true">*</span>` : "";
   const showIf = f.showIf
     ? ` data-showif="${escapeHtml(f.showIf.field)}" data-showif-eq="${escapeHtml(f.showIf.equals)}"`
@@ -95,12 +100,12 @@ function fieldHtml(f: FormField): string {
 
   return `<div class="gf-field" data-for="${f.name}"${showIf}>
       ${f.type === "checkbox" ? "" : label}
-      ${controlHtml(f)}
+      ${controlHtml(f, s)}
       ${err}
     </div>`;
 }
 
-function controlHtml(f: FormField): string {
+function controlHtml(f: FormField, s: FormStrings): string {
   const id = `gf-${f.name}`;
   const base = `id="${id}" data-field="${f.name}"`;
   const ph = f.placeholder ? ` placeholder="${escapeHtml(f.placeholder)}"` : "";
@@ -110,7 +115,7 @@ function controlHtml(f: FormField): string {
       return `<textarea ${base} class="gf-input" rows="4"${ph}></textarea>`;
     case "select":
       return `<select ${base} class="gf-input">
-        <option value="">Selecciona…</option>
+        <option value="">${escapeHtml(s.selectPlaceholder)}</option>
         ${(f.options ?? []).map((o) => `<option value="${escapeHtml(o)}">${escapeHtml(o)}</option>`).join("")}
       </select>`;
     case "checkbox":
@@ -118,7 +123,9 @@ function controlHtml(f: FormField): string {
         f.placeholder || f.label
       )}${f.required ? ' <span class="gf-req">*</span>' : ""}</span></label>`;
     case "radio": {
-      const opts = f.options?.length ? f.options : ["Sí", "No"];
+      // Ojo: `validateValue` compara contra estas MISMAS etiquetas, así que las dos salen
+      // del diccionario o un Sí/No en inglés no valida.
+      const opts = f.options?.length ? f.options : [s.yes, s.no];
       return `<div class="gf-opts" ${base} data-kind="radio">
         ${opts
           .map(
@@ -177,17 +184,22 @@ function controlHtml(f: FormField): string {
 // Los formatos (correo, teléfono, matriz completa) los valida el servidor y sus mensajes se
 // pintan por campo desde `{ok:false,errors}` — una sola verdad, la de arriba.
 
-function clientScript(a: RenderFormArgs): string {
+function clientScript(a: RenderFormArgs, s: FormStrings): string {
   // El schema viaja como TEXTO JSON dentro de un literal de JS, no como objeto inlineado:
   // así ningún valor puede escapar a código. Los `<` se van como < porque un
   // `</script>` dentro de una etiqueta cerraría el bloque antes de tiempo.
+  //
+  // Los textos viajan por el MISMO canal (`CFG.s`) en vez de interpolarse uno a uno al
+  // construir el string: un solo punto de entrada, y nada que escapar dos veces.
   const cfgLiteral = JSON.stringify(
-    JSON.stringify({ fields: a.fields, submitUrl: a.submitUrl, uploadUrl: a.uploadUrl }).replace(/</g, "\\u003c")
+    JSON.stringify({ fields: a.fields, submitUrl: a.submitUrl, uploadUrl: a.uploadUrl, s }).replace(/</g, "\\u003c")
   );
 
   return `(function(){
 var CFG = JSON.parse(${cfgLiteral});
-var F = CFG.fields, form = document.getElementById("gf-form");
+var F = CFG.fields, S = CFG.s, form = document.getElementById("gf-form");
+// Gemela de fill() en form-strings.ts: los textos con {placeholders} se resuelven aquí.
+function fill(t, p){ for (var k in p) t = t.split("{" + k + "}").join(String(p[k])); return t; }
 // Clave de idempotencia: se genera UNA vez al cargar y se reenvía en cada intento, así un
 // doble clic o un reintento de red no crean dos respuestas ni dos fichas.
 var IDEM = (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random());
@@ -232,7 +244,7 @@ function progress(d){
   var done = req.filter(function(f){ return d[f.name]; }).length;
   var pct = req.length ? Math.round(done * 100 / req.length) : 0;
   bar.style.width = pct + "%";
-  document.getElementById("gf-count").textContent = "Paso " + (cur+1) + " de " + steps.length;
+  document.getElementById("gf-count").textContent = fill(S.stepOf, { n: cur+1, total: steps.length });
 }
 
 function clearErrors(){
@@ -257,7 +269,7 @@ function stepOk(){
     var f = F[i];
     if (names.indexOf(f.name) < 0) continue;
     if (!visible(f, d)) continue;
-    if (f.required && !d[f.name]){ showError(f.name, f.label + " es requerido"); ok = false; }
+    if (f.required && !d[f.name]){ showError(f.name, fill(S.required, { label: f.label })); ok = false; }
   }
   return ok;
 }
@@ -289,21 +301,21 @@ function upload(input){
   var fd = new FormData();
   fd.append("field", name);
   fd.append("file", input.files[0]);
-  if (note) note.textContent = "subiendo…";
+  if (note) note.textContent = S.uploading;
   fetch(CFG.uploadUrl, { method: "POST", body: fd })
     .then(function(r){ return r.json(); })
     .then(function(j){
-      if (j && j.ok && j.fileId){ files[name] = j.fileId; if (note) note.textContent = j.name || "archivo listo"; }
-      else { if (note) note.textContent = ""; showError(name, (j && j.error) || "no se pudo subir el archivo"); }
+      if (j && j.ok && j.fileId){ files[name] = j.fileId; if (note) note.textContent = j.name || S.fileReady; }
+      else { if (note) note.textContent = ""; showError(name, (j && j.error) || S.uploadFailed); }
     })
-    .catch(function(){ if (note) note.textContent = ""; showError(name, "no se pudo subir el archivo"); });
+    .catch(function(){ if (note) note.textContent = ""; showError(name, S.uploadFailed); });
 }
 
 form.addEventListener("submit", function(ev){
   ev.preventDefault();
   if (!stepOk()) return;
   var send = document.getElementById("gf-send");
-  send.disabled = true; send.textContent = "Enviando…";
+  send.disabled = true; send.textContent = S.sending;
   var hp = form.querySelector('[name="_hp"]');
   fetch(CFG.submitUrl, {
     method: "POST",
@@ -312,7 +324,7 @@ form.addEventListener("submit", function(ev){
   })
   .then(function(r){ return r.json(); })
   .then(function(j){
-    send.disabled = false; send.textContent = "Enviar";
+    send.disabled = false; send.textContent = S.send;
     if (j && j.ok){
       form.hidden = true;
       var h = document.querySelector(".gf-head"); if (h) h.hidden = true;
@@ -324,7 +336,7 @@ form.addEventListener("submit", function(ev){
     var errs = (j && j.errors) || {};
     var keys = Object.keys(errs), first = null;
     for (var i=0;i<keys.length;i++){ showError(keys[i], errs[keys[i]]); if (!first) first = keys[i]; }
-    if (!keys.length) showError("_form", "No se pudo enviar. Inténtalo de nuevo.");
+    if (!keys.length) showError("_form", S.submitFailed);
     // El error puede estar en un paso anterior: llevar a la persona ahí, no dejarla
     // mirando un botón que no hace nada.
     if (first){
@@ -334,8 +346,8 @@ form.addEventListener("submit", function(ev){
     }
   })
   .catch(function(){
-    send.disabled = false; send.textContent = "Enviar";
-    showError("_form", "Sin conexión. Inténtalo de nuevo.");
+    send.disabled = false; send.textContent = S.send;
+    showError("_form", S.offline);
   });
 });
 

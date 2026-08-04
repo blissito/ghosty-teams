@@ -150,6 +150,13 @@ export function nativeTools(dest: ToolDest | null): ConnectorTool[] {
           title: { type: "string", description: "Nombre del formulario, como lo verá quien responde" },
           intro: { type: "string", description: "Una línea de contexto arriba del formulario" },
           thanks: { type: "string", description: "Mensaje al terminar de responder" },
+          locale: {
+            type: "string",
+            enum: ["es", "en"],
+            description:
+              "Idioma de los botones, avisos y errores del formulario ('Siguiente' vs 'Next'). Ponlo " +
+              "en el idioma de quien va a RESPONDER, que suele ser el de la conversación. Por default es.",
+          },
           fields: {
             type: "array",
             description: "Los campos, en el orden en que se preguntan",
@@ -193,6 +200,7 @@ export function nativeTools(dest: ToolDest | null): ConnectorTool[] {
           fields: args.fields,
           intro: typeof args.intro === "string" ? args.intro : null,
           thanks: typeof args.thanks === "string" ? args.thanks : null,
+          locale: args.locale === "en" ? "en" : "es",
           ownerSub: sub,
           agentHandle: dest.handle,
           agentName: dest.name,
@@ -217,6 +225,7 @@ export function nativeTools(dest: ToolDest | null): ConnectorTool[] {
           intro: { type: "string" },
           thanks: { type: "string" },
           fields: { type: "array", items: { type: "object" }, description: "La lista COMPLETA de campos (mismo formato que form_create)" },
+          locale: { type: "string", enum: ["es", "en"], description: "Idioma del formulario" },
           status: { type: "string", enum: ["open", "closed"] },
         },
         required: ["formId"],
@@ -224,7 +233,7 @@ export function nativeTools(dest: ToolDest | null): ConnectorTool[] {
       handler: async (_sub, args) => {
         const { updateForm } = await import("../forms/publish.server");
         const patch: Record<string, unknown> = {};
-        for (const k of ["title", "intro", "thanks", "status"]) if (args[k] !== undefined) patch[k] = args[k];
+        for (const k of ["title", "intro", "thanks", "locale", "status"]) if (args[k] !== undefined) patch[k] = args[k];
         if (args.fields !== undefined) patch.fields = args.fields;
         const r = await updateForm(String(args.formId ?? ""), patch as never);
         if (!r.ok) return r;

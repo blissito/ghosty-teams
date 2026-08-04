@@ -600,6 +600,10 @@ async function migrate(): Promise<void> {
   // respondía 500. Pasó en producción el 2026-07-29, con el formulario ya repartido.
   await addColumn("gt_forms", "sheet_document_id", "TEXT");
   await addColumn("gt_forms", "sheet_message_id", "INTEGER");
+  // Idioma del formulario público. Se fija al crearlo porque su HTML se HORNEA al publicar
+  // y quien responde lo abre sin cookie ni sesión (iframe de origen opaco): no hay nada que
+  // mirar en tiempo de lectura. Default 'es' → los formularios que ya existen no cambian.
+  await addColumn("gt_forms", "locale", "TEXT NOT NULL DEFAULT 'es'");
 
   // Las respuestas. `data_json` = sólo los campos VISIBLES (un campo oculto por showIf no
   // tiene respuesta que registrar). La IP se guarda HASHEADA: sirve para el rate limit y

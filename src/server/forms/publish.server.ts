@@ -9,6 +9,7 @@
 // `document_id`: mismo slug, misma URL. Las ligas ya repartidas siguen sirviendo.
 import { randomUUID } from "node:crypto";
 import { validateSchema, type FormField } from "../../lib/form-fields";
+import { fill, formStrings, toFormLocale, type FormLocale } from "../../lib/form-strings";
 import { mintFormToken } from "./token.server";
 
 export type FormRow = {
@@ -31,6 +32,8 @@ export type FormRow = {
   /** Artefacto de la HOJA de respuestas (uno por formulario, crece con cada envío). */
   sheetDocumentId: string | null;
   sheetMessageId: number | null;
+  /** Idioma del formulario público. Se hornea en su HTML al publicar. */
+  locale: FormLocale;
   status: "open" | "closed";
   submissionCount: number;
   lastSubmittedAt: number | null;
@@ -38,7 +41,7 @@ export type FormRow = {
 
 const COLS = `id, ns, channel_id, topic, anchor_message_id, title, schema_json, intro, thanks,
   owner_sub, agent_handle, agent_name, agent_avatar, document_id, share_slug, origin,
-  sheet_document_id, sheet_message_id, status, submission_count, last_submitted_at`;
+  sheet_document_id, sheet_message_id, locale, status, submission_count, last_submitted_at`;
 
 function toRow(r: Record<string, string | null>): FormRow {
   const n = (v: string | null) => Number(v ?? 0);
@@ -67,6 +70,8 @@ function toRow(r: Record<string, string | null>): FormRow {
     origin: r.origin ?? null,
     sheetDocumentId: r.sheet_document_id ?? null,
     sheetMessageId: r.sheet_message_id != null ? n(r.sheet_message_id) : null,
+    // Defensivo como el resto: una fila anterior a la columna trae null y cae a español.
+    locale: toFormLocale(r.locale),
     status: r.status === "closed" ? "closed" : "open",
     submissionCount: n(r.submission_count),
     lastSubmittedAt: r.last_submitted_at != null ? n(r.last_submitted_at) : null,
@@ -105,6 +110,7 @@ export type CreateFormArgs = {
   agentHandle?: string | null;
   agentName?: string | null;
   agentAvatar?: string | null;
+  locale?: FormLocale;
 };
 
 export async function createForm(
@@ -127,8 +133,8 @@ export async function createForm(
   const id = `form_${randomUUID()}`;
   await dbq(
     `INSERT INTO gt_forms (id, ns, channel_id, topic, title, schema_json, intro, thanks,
-       owner_sub, agent_handle, agent_name, agent_avatar, origin)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+       owner_sub, agent_handle, agent_name, agent_avatar, origin, locale)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     [
       id,
       ns,
@@ -143,6 +149,7 @@ export async function createForm(
       a.agentName || null,
       a.agentAvatar || null,
       origin || null,
+      toFormLocale(a.locale),
     ]
   );
 
@@ -156,6 +163,7 @@ export type UpdateFormArgs = {
   fields?: unknown;
   intro?: string | null;
   thanks?: string | null;
+  locale?: FormLocale;
   status?: "open" | "closed";
 };
 
@@ -187,6 +195,10 @@ export async function updateForm(
   if (patch.thanks !== undefined) {
     sets.push("thanks = ?");
     args.push(patch.thanks?.trim() || null);
+  }
+  if (patch.locale !== undefined) {
+    sets.push("locale = ?");
+    args.push(toFormLocale(patch.locale));
   }
   if (patch.status !== undefined) {
     sets.push("status = ?");
@@ -227,6 +239,7 @@ export async function publishForm(
     fields: form.fields,
     intro: form.intro,
     thanks: form.thanks,
+    locale: form.locale,
     submitUrl: `${base}/api/form/${token}`,
     uploadUrl: `${base}/api/form-upload/${token}`,
   });
@@ -238,7 +251,7 @@ export async function publishForm(
     const { id } = await db.postAgent(
       form.channelId,
       null,
-      `📋 **${form.title}** — formulario de intake. Comparte la liga; las respuestas llegan a este hilo.`,
+      fill(formStrings(form.locale).anchorMessage, { title: form.title }),
       "msg",
       form.agentHandle || "ghosty",
       form.agentName || "Ghosty",

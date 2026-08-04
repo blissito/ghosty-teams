@@ -65,18 +65,23 @@ export const Route = createFileRoute("/api/form/$token")({
           // `ns` del token contra `ns` de la fila: defensa en profundidad si un formulario
           // se moviera de tenant alguna vez.
           if (!form || form.ns !== ref.ns) return json({ ok: false, error: "no encontrado" }, 404);
+          // El idioma sale de la FILA, no del request: quien responde llega sin cookie y
+          // desde un origen opaco. Es el mismo que se horneó en el HTML que está viendo.
+          const { formStrings } = await import("../lib/form-strings");
+          const s = formStrings(form.locale);
+
           if (form.status === "closed") {
-            return json({ ok: false, errors: { _form: "Este formulario ya no recibe respuestas." } }, 200);
+            return json({ ok: false, errors: { _form: s.formClosed } }, 200);
           }
 
           const ip = clientIp(request);
           const { ipHash, allowed } = await rateCheck(form.id, ip);
           if (!allowed) {
-            return json({ ok: false, errors: { _form: "Demasiados envíos. Espera un momento." } }, 429);
+            return json({ ok: false, errors: { _form: s.rateLimited } }, 429);
           }
 
           const { validateSubmission } = await import("../lib/form-fields");
-          const v = validateSubmission(form.fields, payload.data ?? {});
+          const v = validateSubmission(form.fields, payload.data ?? {}, form.locale);
           if (!v.ok) return json({ ok: false, errors: v.errors }, 400);
 
           // Los archivos se subieron antes (api.form-upload); en los datos sólo viaja el
