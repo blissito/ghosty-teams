@@ -83,11 +83,24 @@ export async function refreshConnectorMetaIfStale(sub: string, provider: string)
     const ttl = def.oauth.metaTtlS ?? DEFAULT_TTL_S;
     if (!isStale(row.meta_at, ttl)) return;
 
-    const key = `${sub}::${provider}`;
+    // ⚠️ El namespace se captura AHORA y el refresco se ata a él explícitamente.
+    //
+    // El camino fire-and-forget sobrevive al request que lo lanzó, y `currentNamespace()`
+    // sin `withNamespace` resuelve por HOST — con el request ya cerrado eso puede caer a
+    // `SQLD_NAMESPACE`, o sea escribir el meta de una persona en el tenant EQUIVOCADO.
+    // Que el contexto async sobreviva o no depende de internals de TanStack; atarlo aquí
+    // lo hace determinista y cuesta una línea.
+    const { currentNamespace, withNamespace } = await import("../tenant.server");
+    const ns = await currentNamespace().catch(() => null);
+
+    // La clave del dedupe lleva el ns: la misma persona en dos workspaces tiene dos filas
+    // distintas, y sin él el refresco de uno cancelaba el del otro en silencio.
+    const key = `${ns ?? "?"}::${sub}::${provider}`;
     if (inFlight.has(key)) return;
     inFlight.add(key);
 
-    const run = doRefresh(sub, provider).finally(() => inFlight.delete(key));
+    const tarea = () => doRefresh(sub, provider);
+    const run = (ns ? withNamespace(ns, tarea) : tarea()).finally(() => inFlight.delete(key));
 
     if (row.meta_at == null) {
       await run; // primera vez: vale la pena esperar, es una sola vez
