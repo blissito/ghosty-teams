@@ -877,8 +877,12 @@ export const en: Record<string, string> = {
   "Copiado": "Copied",
   "Copiar liga": "Copy link",
   "El asistente se tomó una pausa": "The assistant took a break",
-  "Formularios de intake de tus expedientes. Las respuestas caen en el room del cliente, en una hoja que crece con cada envío.":
-    "Intake forms for your matters. Responses land in the client's room, in a sheet that grows with every submission.",
+  "Los formularios que reparte tu equipo. Las respuestas caen en su room, en una hoja que crece con cada envío.":
+    "The forms your team hands out. Responses land in their room, in a sheet that grows with every submission.",
+  "Todavía no hay formularios": "No forms yet",
+  "“arma un formulario para dar de alta clientes” en el room donde quieras las respuestas.":
+    "“build me a form to onboard new clients” in the room where you want the responses.",
+  "Ver las respuestas en su room": "See the responses in their room",
   "Una ficha por respuesta": "One record per response",
   "Publica el documento de cada respuesta en el hilo del formulario. Sólo de aquí en adelante.":
     "Publishes each response as its own document in the form's thread. Going forward only.",

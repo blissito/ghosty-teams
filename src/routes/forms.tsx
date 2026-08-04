@@ -67,7 +67,7 @@ function FormsPage() {
         <header className="mb-6">
           <h1 className="text-2xl font-bold flex items-center gap-2"><FileText size={22} className="text-brand" /> {t("Formularios")}</h1>
           <p className="text-muted text-sm mt-1">
-            {t("Formularios de intake de tus expedientes. Las respuestas caen en el room del cliente, en una hoja que crece con cada envío.")}
+            {t("Los formularios que reparte tu equipo. Las respuestas caen en su room, en una hoja que crece con cada envío.")}
           </p>
         </header>
 
@@ -86,8 +86,8 @@ function FormsPage() {
           </ul>
         ) : forms.length === 0 ? (
           <div className="border border-dashed border-border rounded-2xl p-10 text-center text-muted text-sm">
-            <p className="font-semibold text-ink mb-1">{t("Aún no hay formularios en tus expedientes")}</p>
-            <p>{t("Pídele a")} <span className="text-brand">@ghosty</span> {t("“crea un formulario de diagnóstico” en el room del cliente.")}</p>
+            <p className="font-semibold text-ink mb-1">{t("Todavía no hay formularios")}</p>
+            <p>{t("Pídele a")} <span className="text-brand">@ghosty</span> {t("“arma un formulario para dar de alta clientes” en el room donde quieras las respuestas.")}</p>
           </div>
         ) : (
           <ul className="flex flex-col gap-3">
@@ -104,7 +104,7 @@ function FormsPage() {
                   <Link
                     to="/c/$slug"
                     params={{ slug: f.roomSlug }}
-                    title={t("Ver las respuestas en el room del expediente")}
+                    title={t("Ver las respuestas en su room")}
                     className="text-center px-3 py-1 rounded-lg hover:bg-surface-3"
                   >
                     <div className="text-xl font-bold text-brand tabular-nums">{f.submissions}</div>
