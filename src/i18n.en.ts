@@ -884,6 +884,11 @@ export const en: Record<string, string> = {
     "“build me a form to onboard new clients” in the room where you want the responses.",
   "Ver las respuestas en su room": "See the responses in their room",
   "Una ficha por respuesta": "One record per response",
+  "Enviar a otro sistema": "Send to another system",
+  "Cada respuesta se manda como POST firmado. Comprobamos que conteste antes de activarlo.":
+    "Every response is sent as a signed POST. We check that it answers before turning it on.",
+  "No se pudo. Inténtalo otra vez.": "That didn't work. Try again.",
+  "secreto:": "secret:",
   "Publica el documento de cada respuesta en el hilo del formulario. Sólo de aquí en adelante.":
     "Publishes each response as its own document in the form's thread. Going forward only.",
   "No se pudo conectar a la co-edición.": "Couldn't connect to co-editing.",

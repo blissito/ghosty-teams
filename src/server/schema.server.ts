@@ -33,6 +33,13 @@ export async function ensureSchema(): Promise<void> {
           const { armReminders } = await import("./reminders.server");
           armReminders(ns);
         } catch { /* el tick es best-effort: no puede tumbar las migraciones */ }
+        // Mismo patrón, misma razón: fuera de un request no hay host del que deducir el
+        // tenant, así que los namespaces vivos se registran aquí — que es el "arranque" de
+        // este workspace en este proceso.
+        try {
+          const { armFormWebhooks } = await import("./forms/webhooks.server");
+          armFormWebhooks(ns);
+        } catch { /* best-effort */ }
         // Barrido de cáscaras huérfanas: un reinicio se lleva los turnos en vuelo (el
         // registro es en memoria) y deja sus burbujas en "pensando…" para siempre. Aquí
         // es el "arranque" de este tenant, así que aquí se limpian.
@@ -707,6 +714,51 @@ async function migrate(): Promise<void> {
   await exec("CREATE INDEX IF NOT EXISTS gt_form_drafts_exp ON gt_form_drafts(expires_at)");
   // Para el tope de borradores vivos por IP, que es lo que impide llenar la tabla.
   await exec("CREATE INDEX IF NOT EXISTS gt_form_drafts_ip ON gt_form_drafts(form_id, ip_hash)");
+
+  // Salida a otro sistema. Cada vertical tiene su CRM, y es lo que vuelve integrable un
+  // producto multi-vertical sin escribir una línea por cliente.
+  //
+  // ⚠️ `enabled` nace en 0 SIEMPRE y sólo lo prende el dueño autenticado tras un ping
+  // firmado que conteste 2xx. El riesgo real de esto no es técnico: es mandar un intake
+  // médico a la URL equivocada, en automático y para siempre. El agente PROPONE la URL; no
+  // la habilita.
+  //
+  // El secreto es POR HOOK. `GHOSTY_PARTNER_SECRET` no se le entrega a un tercero jamás —
+  // es la raíz de auth del IdP, del token del formulario y del hash de las IPs.
+  await exec(`CREATE TABLE IF NOT EXISTS gt_form_hooks (
+    id              TEXT PRIMARY KEY,
+    form_id         TEXT NOT NULL,
+    url             TEXT NOT NULL,
+    secret          TEXT NOT NULL,
+    enabled         INTEGER NOT NULL DEFAULT 0,
+    include_files   INTEGER NOT NULL DEFAULT 0,
+    disabled_reason TEXT,
+    created_at      INTEGER NOT NULL DEFAULT (unixepoch()),
+    updated_at      INTEGER NOT NULL DEFAULT (unixepoch())
+  )`);
+  await exec("CREATE INDEX IF NOT EXISTS gt_form_hooks_form ON gt_form_hooks(form_id)");
+
+  // Una fila por (hook, respuesta). El UNIQUE ES la idempotencia: un reintento nuestro
+  // nunca puede crear dos entregas, y el tercero puede confiar en el `Delivery` como clave.
+  // Es el `gt_email_log` de esto, pero con estado.
+  await exec(`CREATE TABLE IF NOT EXISTS gt_form_deliveries (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    hook_id       TEXT NOT NULL,
+    submission_id INTEGER NOT NULL,
+    form_id       TEXT NOT NULL,
+    state         TEXT NOT NULL DEFAULT 'pending',
+    attempts      INTEGER NOT NULL DEFAULT 0,
+    next_at       INTEGER NOT NULL DEFAULT (unixepoch()),
+    last_status   INTEGER,
+    last_error    TEXT,
+    created_at    INTEGER NOT NULL DEFAULT (unixepoch()),
+    updated_at    INTEGER NOT NULL DEFAULT (unixepoch())
+  )`);
+  await exec(
+    "CREATE UNIQUE INDEX IF NOT EXISTS gt_form_deliv_once ON gt_form_deliveries(hook_id, submission_id)"
+  );
+  // El barrido pide exactamente esto: lo pendiente que ya toca.
+  await exec("CREATE INDEX IF NOT EXISTS gt_form_deliv_due ON gt_form_deliveries(state, next_at)");
 
   await exec(`CREATE TABLE IF NOT EXISTS gt_form_rate (
     form_id      TEXT NOT NULL,

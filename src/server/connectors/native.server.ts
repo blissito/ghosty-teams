@@ -350,6 +350,44 @@ export function nativeTools(dest: ToolDest | null): ConnectorTool[] {
         });
       },
     },
+    {
+      name: "form_webhook",
+      description:
+        "Propone mandar cada respuesta de un formulario a otro sistema (su CRM, su ERP, un Zapier, " +
+        "un endpoint propio). ⚠️ NO lo activa: queda apagado y el dueño tiene que prenderlo desde " +
+        "/forms, donde además está el secreto para verificar la firma. Dilo así al contestar — que " +
+        "le falta un paso y dónde. Sin `url`, lista los destinos que ya tiene ese formulario.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          formId: { type: "string" },
+          url: { type: "string", description: "https:// obligatorio. Sin esto, sólo lista." },
+          includeFiles: {
+            type: "boolean",
+            description:
+              "Mandar también los archivos adjuntos. Default false; pregúntalo, porque mandarle a " +
+              "un tercero el acta de nacimiento de alguien es una decisión aparte.",
+          },
+        },
+        required: ["formId"],
+      },
+      handler: async (_sub, args) => {
+        const { listHooks, proposeHook } = await import("../forms/webhooks.server");
+        const formId = String(args.formId ?? "");
+        if (!args.url) return { ok: true, hooks: await listHooks(formId) };
+        const r = await proposeHook({
+          formId,
+          url: String(args.url),
+          includeFiles: args.includeFiles === true,
+        });
+        if (!r.ok) return r;
+        return {
+          ok: true,
+          hook: r.hook,
+          pendiente: "queda APAGADO: el dueño lo activa en /forms, y ahí está el secreto de la firma",
+        };
+      },
+    },
     // ── Memoria de la conversación ────────────────────────────────────────────
     // No hay `memory_read` a propósito: las notas se inyectan en el texto de cada turno
     // (memoryHint en agents.server.ts), así que el agente ya las tiene delante. Una tool de

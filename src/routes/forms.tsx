@@ -1,10 +1,10 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
-import { FileText, ExternalLink, Copy, Check, ArrowLeft, MessageSquare } from "lucide-react";
+import { FileText, ExternalLink, Copy, Check, ArrowLeft, MessageSquare, Send } from "lucide-react";
 import { useLocale, useT } from "../i18n";
 import { intlLocale } from "../i18n.core";
 import { me } from "../server/auth";
-import { listTeamFormsFn, setFormFichaModeFn } from "../server/forms";
+import { formHookActionFn, listFormHooksFn, listTeamFormsFn, setFormFichaModeFn } from "../server/forms";
 
 // Cache a nivel de módulo: re-entrar a /forms es instantáneo (sin skeleton si ya se vio).
 type FormRow = Awaited<ReturnType<typeof listTeamFormsFn>>[number];
@@ -136,6 +136,7 @@ function FormsPage() {
                 ) : (
                   <span className="text-xs text-faint italic">{t("sin liga")}</span>
                 )}
+                <Destinos formId={f.formId} />
                 <label
                   title={t("Publica el documento de cada respuesta en el hilo del formulario. Sólo de aquí en adelante.")}
                   className="w-full flex items-center gap-2 text-xs text-muted cursor-pointer select-none pt-1"
@@ -153,6 +154,106 @@ function FormsPage() {
           </ul>
         )}
       </div>
+    </div>
+  );
+}
+
+/**
+ * Los destinos de un formulario: a qué otro sistema van sus respuestas.
+ *
+ * Se pide al ABRIR, no con la página: cada formulario es una consulta más, y casi ningún
+ * workspace tiene destinos. Cerrado no cuesta nada.
+ *
+ * ⚠️ Activar un destino manda un intake a un tercero, así que es un gesto del dueño y no del
+ * agente: la tool `form_webhook` sólo propone la URL y lo deja apagado. El alta desde aquí
+ * hace las dos cosas de un tirón —ya hay sesión y acaba de teclear la URL—, pero pasa por el
+ * mismo ping firmado: una URL con errata se queda apagada con el motivo escrito.
+ */
+function Destinos({ formId }: { formId: string }) {
+  const t = useT();
+  type Hook = Awaited<ReturnType<typeof listFormHooksFn>>[number];
+  const [abierto, setAbierto] = useState(false);
+  const [hooks, setHooks] = useState<Hook[] | null>(null);
+  const [url, setUrl] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [ocupado, setOcupado] = useState(false);
+
+  const recargar = () => listFormHooksFn({ data: { formId } }).then(setHooks).catch(() => setHooks([]));
+  useEffect(() => { if (abierto && hooks === null) void recargar(); }, [abierto]);
+
+  const actuar = (d: Parameters<typeof formHookActionFn>[0]["data"]) => {
+    setOcupado(true);
+    setError(null);
+    formHookActionFn({ data: d })
+      .then((r) => { if (!r.ok) setError(r.error); else setUrl(""); return recargar(); })
+      .catch(() => setError(t("No se pudo. Inténtalo otra vez.")))
+      .finally(() => setOcupado(false));
+  };
+
+  return (
+    <div className="w-full">
+      <button
+        onClick={() => setAbierto((v) => !v)}
+        className="text-xs text-muted hover:text-ink inline-flex items-center gap-1.5"
+      >
+        <Send size={12} /> {t("Enviar a otro sistema")}
+        {hooks?.some((h) => h.enabled) ? <span className="text-brand">•</span> : null}
+      </button>
+      {abierto ? (
+        <div className="mt-2 border border-border rounded-xl p-3 flex flex-col gap-2 bg-surface">
+          {hooks === null ? (
+            <div className="h-4 w-1/2 bg-surface-3 rounded animate-pulse" />
+          ) : (
+            hooks.map((h) => (
+              <div key={h.id} className="text-xs flex flex-wrap items-center gap-2">
+                <span className={h.enabled ? "text-ok" : "text-faint"}>{h.enabled ? "●" : "○"}</span>
+                <span className="font-mono flex-1 min-w-[160px] break-all">{h.url}</span>
+                <button
+                  disabled={ocupado}
+                  onClick={() => actuar({ formId, op: h.enabled ? "disable" : "enable", hookId: h.id })}
+                  className="border border-border rounded px-2 py-1 hover:bg-surface-3"
+                >
+                  {h.enabled ? t("Desconectar") : t("Activar")}
+                </button>
+                <button
+                  disabled={ocupado}
+                  onClick={() => actuar({ formId, op: "delete", hookId: h.id })}
+                  className="text-muted hover:text-red-500 px-1"
+                >
+                  {t("Quitar")}
+                </button>
+                {/* El secreto con el que el otro lado verifica la firma. Se enseña completo
+                    a propósito: es lo único de aquí que hay que copiar a otro sistema. */}
+                <code className="w-full text-[10px] text-muted break-all">
+                  {t("secreto:")} {h.secret}
+                </code>
+                {h.disabledReason && !h.enabled ? (
+                  <p className="w-full text-[11px] text-muted">{h.disabledReason}</p>
+                ) : null}
+              </div>
+            ))
+          )}
+          <div className="flex gap-2">
+            <input
+              value={url}
+              onChange={(e) => setUrl(e.target.value)}
+              placeholder="https://…"
+              className="flex-1 text-xs border border-border rounded-lg px-2 py-1.5 bg-surface-2"
+            />
+            <button
+              disabled={ocupado || !url.trim()}
+              onClick={() => actuar({ formId, op: "add", url: url.trim() })}
+              className="text-xs font-semibold bg-brand text-brand-fg rounded-lg px-3 py-1.5 disabled:opacity-50"
+            >
+              {t("Conectar")}
+            </button>
+          </div>
+          {error ? <p className="text-[11px] text-red-500">{error}</p> : null}
+          <p className="text-[11px] text-muted">
+            {t("Cada respuesta se manda como POST firmado. Comprobamos que conteste antes de activarlo.")}
+          </p>
+        </div>
+      ) : null}
     </div>
   );
 }

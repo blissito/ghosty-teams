@@ -55,6 +55,15 @@ export async function deliverSubmission(a: DeliverArgs): Promise<{ messageId: nu
     }
   }
 
+  // La salida a otro sistema sólo ENCOLA. Un CRM lento no puede hacer esperar a quien acaba
+  // de llenar el formulario, y un CRM caído no puede tumbar la entrega al room.
+  try {
+    const { enqueueDeliveries } = await import("./webhooks.server");
+    await enqueueDeliveries(form.id, a.submissionId);
+  } catch (e) {
+    console.error("[form deliver] encolar la salida falló", e);
+  }
+
   // La gracia de un intake es enterarse sin tener la pestaña abierta. Esto SÍ es por
   // respuesta: el mensaje del room se reescribe, pero el aviso es de una que acaba de llegar.
   if (form.ownerSub) {
