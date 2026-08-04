@@ -99,6 +99,43 @@ if (process.argv.includes("--orphans")) {
   process.exit(0);
 }
 
+// ── Modo --hardcoded ────────────────────────────────────────────────────────────
+// El otro agujero, y el que no se ve: copy en español que NUNCA pasó por t(). El
+// diccionario puede estar al 100% y la app seguir medio en español.
+//
+// Es HEURÍSTICO a propósito y se equivoca hacia el ruido, no hacia el silencio: una lista
+// que se salta cosas da una falsa sensación de terminado. Marca lo que parece una frase en
+// español (acentos, ¿¡, ñ, o palabra funcional) en un sitio donde el usuario la leería.
+if (process.argv.includes("--hardcoded")) {
+  const SPANISH = /[áéíóúñ¿¡Á-Ú]|\b(el|la|los|las|un|una|de|del|para|con|sin|que|este|esta|tu|tus|se|no|hay|más|ya|aún|todavía|cuando|qué|quién|cómo)\b/i;
+  // Atributos que acaban en pantalla (o en un lector de pantalla).
+  const ATTR = /\b(placeholder|title|aria-label|alt|label)\s*=\s*(?:"([^"]{3,})"|\{\s*"([^"]{3,})"\s*\})/g;
+  // Texto entre etiquetas JSX: >texto<
+  const TEXT = />\s*([^<>{}\n][^<>{}]{2,})\s*</g;
+  const hits = [];
+  for (const file of walk(SRC).filter((f) => f.endsWith(".tsx"))) {
+    const code = stripComments(readFileSync(file, "utf8"));
+    const push = (s, line) => {
+      const v = s.trim();
+      if (!v || !SPANISH.test(v)) return;
+      if (used.has(v)) return; // ya pasa por t() en algún lado
+      hits.push({ file: file.slice(ROOT.length), line, v });
+    };
+    const lineOf = (i) => code.slice(0, i).split("\n").length;
+    for (const m of code.matchAll(ATTR)) push(m[2] ?? m[3] ?? "", lineOf(m.index));
+    for (const m of code.matchAll(TEXT)) push(m[1], lineOf(m.index));
+  }
+  const byFile = new Map();
+  for (const h of hits) byFile.set(h.file, [...(byFile.get(h.file) ?? []), h]);
+  console.log(`${hits.length} posibles textos en español sin t(), en ${byFile.size} archivos:\n`);
+  for (const [f, hs] of [...byFile].sort((a, b) => b[1].length - a[1].length)) {
+    console.log(`  ${f}  (${hs.length})`);
+    for (const h of hs.slice(0, 6)) console.log(`    :${h.line}  ${JSON.stringify(h.v)}`);
+    if (hs.length > 6) console.log(`    … y ${hs.length - 6} más`);
+  }
+  process.exit(0);
+}
+
 const pct = used.size ? Math.round(((used.size - missing.length) / used.size) * 100) : 100;
 console.log(`i18n · ${used.size} claves en uso · ${have.size} en el diccionario · ${pct}% traducido`);
 

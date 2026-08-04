@@ -2654,7 +2654,7 @@ function ChannelPage() {
           <section className="flex min-w-0 flex-1 flex-col items-center justify-center gap-3 p-8 text-center">
             <div className="text-3xl">💤</div>
             <p className="max-w-xs text-sm text-muted">
-              Algo en esta vista se atoró. No se perdió nada.
+              {t("Algo en esta vista se atoró. No se perdió nada.")}
             </p>
             <button
               type="button"
@@ -7700,7 +7700,7 @@ function MessageRow({
             key={m.artifact.url}
             fallback={
               <div className="mt-1 rounded-lg border border-border bg-surface px-3 py-2 text-xs text-muted">
-                No se pudo mostrar el artefacto.
+                {t("No se pudo mostrar el artefacto.")}
               </div>
             }
           >

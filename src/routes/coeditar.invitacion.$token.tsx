@@ -3,6 +3,7 @@ import { lazy, Suspense, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { inviteCollabConnFn } from "../server/collab-invite";
 import type { GuestConn } from "../server/collab-guest";
+import { useT } from "../i18n";
 
 // Canje de una invitación nominal: /coeditar/invitacion/<token>.
 //
@@ -20,6 +21,7 @@ function Centro({ children }: { children: React.ReactNode }) {
 }
 
 function Invitacion() {
+  const t = useT();
   const { token } = Route.useParams();
   const [conn, setConn] = useState<GuestConn | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -46,7 +48,7 @@ function Invitacion() {
         <div className="max-w-sm text-center">
           <p className="text-sm text-neutral-600">{error}</p>
           <p className="mt-2 text-xs text-neutral-400">
-            Pídele a quien te invitó que te mande una invitación nueva.
+            {t("Pídele a quien te invitó que te mande una invitación nueva.")}
           </p>
         </div>
       </Centro>
@@ -63,16 +65,16 @@ function Invitacion() {
           }}
           className="w-full max-w-sm rounded-xl bg-white p-8 shadow-[0_1px_2px_rgba(0,0,0,0.06),0_12px_32px_-12px_rgba(0,0,0,0.18)] ring-1 ring-neutral-200/70"
         >
-          <h1 className="text-lg font-semibold text-neutral-800">Te invitaron a un documento</h1>
+          <h1 className="text-lg font-semibold text-neutral-800">{t("Te invitaron a un documento")}</h1>
           <p className="mt-1 text-sm text-neutral-500">
-            ¿Cómo quieres que te vean los demás? Tu identidad ya viene con la invitación.
+            {t("¿Cómo quieres que te vean los demás? Tu identidad ya viene con la invitación.")}
           </p>
           <input
             autoFocus
             value={nombre}
             onChange={(e) => setNombre(e.target.value)}
             maxLength={40}
-            placeholder="Tu nombre"
+            placeholder={t("Tu nombre")}
             // El color va EXPLÍCITO: sin él lo tecleado heredaba un gris tenue y se leía
             // igual que el placeholder — parecía que no habías escrito nada.
             className="mt-4 w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm text-neutral-900 caret-neutral-900 outline-none placeholder:text-neutral-400 focus:border-neutral-400 focus:ring-2 focus:ring-[#9870ED]/40"

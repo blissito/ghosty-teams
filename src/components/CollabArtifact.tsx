@@ -1,5 +1,6 @@
 import { lazy, Suspense, useEffect, useState } from "react";
 import { Loader2 } from "lucide-react";
+import { useT } from "../i18n";
 import { docCollabConnFn, type CollabConn } from "../server/collab";
 
 // Outer del editor colaborativo nativo: resuelve la conexión (server fn, server-to-server
@@ -29,6 +30,7 @@ export default function CollabArtifact({
   /** El editor pide ancho al panel (abrir comentarios ensancha el artefacto). */
   onAjustarAncho?: (delta: number) => void;
 }) {
+  const t = useT();
   const [conn, setConn] = useState<CollabConn | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -54,16 +56,16 @@ export default function CollabArtifact({
   if (error) {
     return (
       <div className="grid h-full place-items-center bg-[#f3f3f5] p-6 text-center text-sm text-neutral-500">
-        No se pudo conectar a la co-edición.
+        {t("No se pudo conectar a la co-edición.")}
         <br />
         <span className="text-xs text-neutral-400">{error}</span>
       </div>
     );
   }
-  if (!conn) return <Spinner label="Conectando a la co-edición…" />;
+  if (!conn) return <Spinner label={t("Conectando a la co-edición…")} />;
 
   return (
-    <Suspense fallback={<Spinner label="Cargando editor…" />}>
+    <Suspense fallback={<Spinner label={t("Cargando editor…")} />}>
       <CollabEditor
         wsUrl={conn.wsUrl}
         room={conn.room}

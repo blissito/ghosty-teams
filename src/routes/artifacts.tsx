@@ -1,6 +1,8 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import { ArrowLeft, Layers, Sparkles, Upload, Hash } from "lucide-react";
+import { useLocale, useT } from "../i18n";
+import { intlLocale } from "../i18n.core";
 import { me } from "../server/auth";
 import { listTeamDocumentsFn, type TeamDocument } from "../server/documents";
 import { FileGlyph, glyphNameFor } from "../components/FileGlyph";
@@ -17,9 +19,9 @@ export const Route = createFileRoute("/artifacts")({
   component: ArtifactsPage,
 });
 
-function fmtDate(ts: number): string {
+function fmtDate(ts: number, locale: string): string {
   if (!ts) return "";
-  return new Date(ts * 1000).toLocaleDateString("es-MX", { day: "numeric", month: "short" });
+  return new Date(ts * 1000).toLocaleDateString(locale, { day: "numeric", month: "short" });
 }
 function fmtSize(bytes?: number): string {
   if (!bytes) return "";
@@ -44,6 +46,8 @@ function toView(d: TeamDocument): ArtifactView | null {
 }
 
 function DocTile({ d, onOpen }: { d: TeamDocument; onOpen: (v: ArtifactView) => void }) {
+  const t = useT();
+  const locale = useLocale();
   const view = toView(d);
   return (
     <button
@@ -58,11 +62,11 @@ function DocTile({ d, onOpen }: { d: TeamDocument; onOpen: (v: ArtifactView) => 
         <div className="truncate text-[15px] font-semibold text-ink">{d.title}</div>
         <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted">
           <span className="inline-flex items-center gap-1">
-            {d.source === "generated" ? <><Sparkles size={11} /> Redactado</> : <><Upload size={11} /> Subido</>}
+            {d.source === "generated" ? <><Sparkles size={11} /> {t("Redactado")}</> : <><Upload size={11} /> {t("Subido")}</>}
           </span>
-          <span className="uppercase tracking-wide">{d.kind === "sheet" ? "hoja" : d.kind}</span>
+          <span className="uppercase tracking-wide">{d.kind === "sheet" ? t("hoja") : d.kind}</span>
           {d.size ? <span>· {fmtSize(d.size)}</span> : null}
-          {d.createdAt ? <span>· {fmtDate(d.createdAt)}</span> : null}
+          {d.createdAt ? <span>· {fmtDate(d.createdAt, intlLocale(locale))}</span> : null}
         </div>
       </div>
     </button>
@@ -72,6 +76,7 @@ function DocTile({ d, onOpen }: { d: TeamDocument; onOpen: (v: ArtifactView) => 
 type DocGroup = { channelId: number; channelName: string | null; channelSlug: string | null; docs: TeamDocument[] };
 
 function ArtifactsPage() {
+  const t = useT();
   const [docs, setDocs] = useState<TeamDocument[] | null>(docsCache);
   const [openArtifact, setOpenArtifact] = useState<ArtifactView | null>(null);
 
@@ -101,12 +106,12 @@ function ArtifactsPage() {
       <div className="min-w-0 flex-1 overflow-auto">
         <div className="mx-auto max-w-4xl px-5 py-8">
           <Link to="/c/$slug" params={{ slug: "general" }} className="mb-4 inline-flex items-center gap-1.5 text-sm text-muted hover:text-ink">
-            <ArrowLeft size={15} /> Volver al chat
+            <ArrowLeft size={15} /> {t("Volver al chat")}
           </Link>
           <header className="mb-6">
-            <h1 className="flex items-center gap-2 text-2xl font-bold"><Layers size={22} className="text-brand" /> Documentos</h1>
+            <h1 className="flex items-center gap-2 text-2xl font-bold"><Layers size={22} className="text-brand" /> {t("Documentos")}</h1>
             <p className="mt-1 text-sm text-muted">
-              Todos los documentos del team: los que redacta @ghosty y los que arrojas al chat. Haz clic para verlos.
+              {t("Todos los documentos del team: los que redacta @ghosty y los que arrojas al chat. Haz clic para verlos.")}
             </p>
           </header>
 
@@ -121,8 +126,8 @@ function ArtifactsPage() {
             </div>
           ) : docs.length === 0 ? (
             <div className="rounded-2xl border border-dashed border-border p-10 text-center text-sm text-muted">
-              <p className="mb-1 font-semibold text-ink">Aún no hay documentos</p>
-              <p>Pídele a <span className="text-brand">@ghosty</span> que redacte algo, o arroja un PDF/Word al chat.</p>
+              <p className="mb-1 font-semibold text-ink">{t("Aún no hay documentos")}</p>
+              <p>{t("Pídele a")} <span className="text-brand">@ghosty</span> {t("que redacte algo, o arroja un PDF/Word al chat.")}</p>
             </div>
           ) : (
             // Matter-centric: agrupado por CASO (room). Cada sección = los docs de un

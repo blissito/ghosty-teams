@@ -862,4 +862,47 @@ export const en: Record<string, string> = {
   "¿Expulsar a {name} del workspace? No podrá volver a entrar.":
     "Remove {name} from the workspace? They won't be able to get back in.",
   "¿Se tardó de más? Puedes detenerlo.": "Taking too long? You can stop it.",
+
+  // Páginas que nunca habían pasado por t(): /forms, /documentos, las dos puertas de
+  // co-edición para invitados y el error boundary del router.
+  "Algo en esta vista se atoró. No se perdió nada.": "Something in this view got stuck. Nothing was lost.",
+  "Aún no hay documentos": "No documents yet",
+  "Aún no hay formularios en tus expedientes": "No forms in your matters yet",
+  "Cargando editor…": "Loading the editor…",
+  "Comentarios": "Comments",
+  "Conectando a la co-edición…": "Connecting to co-editing…",
+  "Copiado": "Copied",
+  "Copiar liga": "Copy link",
+  "El asistente se tomó una pausa": "The assistant took a break",
+  "Formularios de intake de tus expedientes. Las respuestas caen en el room del cliente como ficha descargable.":
+    "Intake forms for your matters. Responses land in the client's room as a downloadable record.",
+  "No se pudo conectar a la co-edición.": "Couldn't connect to co-editing.",
+  "No se pudo mostrar el artefacto.": "Couldn't display the artifact.",
+  "Pídele a": "Ask",
+  "Pídele a quien te compartió el documento que revise el enlace.":
+    "Ask whoever shared the document with you to check the link.",
+  "Pídele a quien te invitó que te mande una invitación nueva.":
+    "Ask whoever invited you to send a new invitation.",
+  "Reanudando justo donde estabas… no se perdió nada.": "Picking up right where you were… nothing was lost.",
+  "Reanudar ahora": "Resume now",
+  "Reintentamos varias veces sin éxito. No se perdió nada — reanuda manualmente.":
+    "We retried several times without luck. Nothing was lost — resume manually.",
+  "Selecciona texto y usa el botón de comentario para abrir un hilo.":
+    "Select some text and use the comment button to start a thread.",
+  "Te invitaron a un documento": "You have been invited to a document",
+  "Todos los documentos del team: los que redacta @ghosty y los que arrojas al chat. Haz clic para verlos.":
+    "Every document in the team: the ones @ghosty writes and the ones you drop into the chat. Click to view them.",
+  "Ver las respuestas en el room del expediente": "See the responses in the matter's room",
+  "Volver al chat": "Back to chat",
+  "hoja": "sheet",
+  "que redacte algo, o arroja un PDF/Word al chat.": "to write something, or drop a PDF/Word into the chat.",
+  "respuestas": "responses",
+  "sin liga": "no link",
+  "¿Cómo quieres que te vean los demás? Tu identidad ya viene con la invitación.":
+    "How do you want others to see you? Your identity already comes with the invitation.",
+  "¿Cómo te llamas? Es lo que verán los demás junto a tu cursor.":
+    "What is your name? It is what others will see next to your cursor.",
+  "última:": "last:",
+  "“crea un formulario de diagnóstico” en el room del cliente.":
+    "for “create an intake questionnaire” in the client’s room.",
 };

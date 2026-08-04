@@ -12,6 +12,7 @@ import {
   YjsThreadStore,
 } from "@blocknote/core/comments";
 import { MessageSquare } from "lucide-react";
+import { useT } from "../i18n";
 import { en as blockNoteEn } from "@blocknote/core/locales";
 import {
   withMultiColumn,
@@ -169,6 +170,7 @@ export default function CollabEditor({
    */
   onAjustarAncho?: (delta: number) => void;
 }) {
+  const t = useT();
   const [status, setStatus] = useState<
     "connecting" | "connected" | "disconnected"
   >("connecting");
@@ -541,12 +543,11 @@ export default function CollabEditor({
         {sidebar && (
           <aside className="thin-scroll w-[380px] shrink-0 overflow-y-auto overflow-x-hidden border-l border-neutral-200 bg-white px-3 py-4">
             <p className="px-1 pb-2 text-xs font-semibold uppercase tracking-wide text-neutral-400">
-              Comentarios
+              {t("Comentarios")}
             </p>
             {abiertos === 0 && (
               <p className="px-1 text-xs leading-relaxed text-neutral-400">
-                Selecciona texto y usa el botón de comentario para abrir un
-                hilo.
+                {t("Selecciona texto y usa el botón de comentario para abrir un hilo.")}
               </p>
             )}
             {/* Las clases NO son decorativas: TODO el CSS de los hilos que trae BlockNote

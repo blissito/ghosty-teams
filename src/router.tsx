@@ -2,6 +2,9 @@ import { useEffect, useState } from 'react'
 import { createRouter as createTanStackRouter } from '@tanstack/react-router'
 import { routeTree } from './routeTree.gen'
 import { escucharChunksStale, puedeAutoRecargar } from './utils/reload-guard'
+// El error boundary del router se monta FUERA del LocaleProvider: useT() daría siempre el
+// idioma por default. Aquí el locale se lee de la cookie, que es la misma fuente.
+import { localeFromCookieString, translate } from './i18n.core'
 
 // Purga los caches de sessionStorage (`gc-caches-*`). Un cache envenenado —datos de
 // hilo serializados por una versión del app y re-renderizados por otra tras un
@@ -34,6 +37,8 @@ function AppError() {
   // anti-loop: si un error PERSISTE (bug real / caja caída), auto-reload sin tope sería
   // un loop infinito → máx 3 intentos en 30s; si persiste, caemos al botón manual.
   const [manual, setManual] = useState(false)
+  const tr = (k: string) =>
+    translate(localeFromCookieString(typeof document !== 'undefined' ? document.cookie : ''), k)
   useEffect(() => {
     purgePoisonedCaches()
     if (!puedeAutoRecargar()) { setManual(true); return } // topó el guard → esperar clic
@@ -57,11 +62,11 @@ function AppError() {
       }}
     >
       <div style={{ fontSize: '44px' }}>💤</div>
-      <h1 style={{ fontSize: '20px', fontWeight: 700, margin: 0 }}>El asistente se tomó una pausa</h1>
+      <h1 style={{ fontSize: '20px', fontWeight: 700, margin: 0 }}>{tr('El asistente se tomó una pausa')}</h1>
       <p style={{ margin: 0, maxWidth: '360px', color: '#a1a1aa', lineHeight: 1.5 }}>
         {manual
-          ? 'Reintentamos varias veces sin éxito. No se perdió nada — reanuda manualmente.'
-          : 'Reanudando justo donde estabas… no se perdió nada.'}
+          ? tr('Reintentamos varias veces sin éxito. No se perdió nada — reanuda manualmente.')
+          : tr('Reanudando justo donde estabas… no se perdió nada.')}
       </p>
       <button
         onClick={() => window.location.reload()}
@@ -77,7 +82,7 @@ function AppError() {
           cursor: 'pointer',
         }}
       >
-        {manual ? 'Reanudar' : 'Reanudar ahora'}
+        {manual ? tr('Reanudar') : tr('Reanudar ahora')}
       </button>
     </div>
   )

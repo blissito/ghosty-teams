@@ -1,6 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { lazy, Suspense, useState } from "react";
 import { Loader2 } from "lucide-react";
+import { useT } from "../i18n";
 import { guestCollabConnFn, type GuestConn } from "../server/collab-guest";
 
 // Página de co-edición para INVITADOS: /coeditar/<slug>.
@@ -20,6 +21,7 @@ function Centro({ children }: { children: React.ReactNode }) {
 }
 
 function Puerta({ onEntrar }: { onEntrar: (nombre: string) => void }) {
+  const t = useT();
   const [nombre, setNombre] = useState("");
   return (
     <Centro>
@@ -30,16 +32,16 @@ function Puerta({ onEntrar }: { onEntrar: (nombre: string) => void }) {
         }}
         className="w-full max-w-sm rounded-xl bg-white p-8 shadow-[0_1px_2px_rgba(0,0,0,0.06),0_12px_32px_-12px_rgba(0,0,0,0.18)] ring-1 ring-neutral-200/70"
       >
-        <h1 className="text-lg font-semibold text-neutral-800">Te invitaron a un documento</h1>
+        <h1 className="text-lg font-semibold text-neutral-800">{t("Te invitaron a un documento")}</h1>
         <p className="mt-1 text-sm text-neutral-500">
-          ¿Cómo te llamas? Es lo que verán los demás junto a tu cursor.
+          {t("¿Cómo te llamas? Es lo que verán los demás junto a tu cursor.")}
         </p>
         <input
           autoFocus
           value={nombre}
           onChange={(e) => setNombre(e.target.value)}
           maxLength={40}
-          placeholder="Tu nombre"
+          placeholder={t("Tu nombre")}
           // El color va EXPLÍCITO: sin él lo tecleado heredaba un gris tenue y se leía
           // igual que el placeholder — parecía que no habías escrito nada.
           className="mt-4 w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm text-neutral-900 caret-neutral-900 outline-none placeholder:text-neutral-400 focus:border-neutral-400 focus:ring-2 focus:ring-[#9870ED]/40"
@@ -57,6 +59,7 @@ function Puerta({ onEntrar }: { onEntrar: (nombre: string) => void }) {
 }
 
 function Coeditar() {
+  const t = useT();
   const { slug } = Route.useParams();
   const [conn, setConn] = useState<GuestConn | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -82,7 +85,7 @@ function Coeditar() {
         <div className="max-w-sm text-center">
           <p className="text-sm text-neutral-600">{error}</p>
           <p className="mt-2 text-xs text-neutral-400">
-            Pídele a quien te compartió el documento que revise el enlace.
+            {t("Pídele a quien te compartió el documento que revise el enlace.")}
           </p>
         </div>
       </Centro>
