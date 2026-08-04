@@ -6966,7 +6966,13 @@ function ArtifactCard({ artifact, ownerMsg }: { artifact: Artifact; ownerMsg: Me
   // a medias — y un botón así se lee como *entregado*. La señal es el fence del mensaje que
   // la produjo: mientras siga abierto, sigue escribiendo. Al terminar, el body persistido ya
   // no trae fence (`bubbleWithoutEbDoc` los corta) → vuelve a ser una tarjeta normal.
+  // ⚠️ DOS condiciones, y hacen falta las dos. El fence abierto dice "va a medias", pero un
+  // turno cortado deja el fence abierto PARA SIEMPRE y la tarjeta se quedaba diciendo
+  // "escribiendo…" sobre algo que ya nadie escribe. La segunda condición es la que manda:
+  // sólo puede estar escribiéndose si hay un turno VIVO para ese mensaje.
+  const { turns: turnosVivos } = useContext(ChatCtx);
   const escribiendo = (() => {
+    if (!turnosVivos.has(ownerMsg.id)) return false;
     const d = extractEbDoc(ownerMsg.body ?? "");
     return !!d && !d.closed;
   })();
@@ -7392,7 +7398,7 @@ function MessageRow({
   canPin?: boolean;
 }) {
   const t = useT();
-  const { me, slug, emojis, users, pickerFor, onOpenArtifact, openProfile } = useContext(ChatCtx);
+  const { me, slug, emojis, users, pickerFor, onOpenArtifact, openProfile, turns } = useContext(ChatCtx);
   const [editing, setEditing] = useState(false);
   // Mientras un popover de la barra (reaccionar/⋯) esté abierto, la barra NO debe
   // desaparecer al perder el hover del row (si no, el popover se vuelve inclicable).
@@ -7598,7 +7604,7 @@ function MessageRow({
             <div className="text-sm text-ink">
               {(() => {
                 const ts = extractToolState(m.body);
-                return ts ? <ToolGroup tools={ts} /> : null;
+                return ts ? <ToolGroup tools={ts} vivo={turns.has(m.id)} /> : null;
               })()}
               {(() => {
                 const st = extractSteps(m.body);
@@ -7708,7 +7714,7 @@ function StepList({ steps, emojis }: { steps: string[]; emojis?: { name: string;
   );
 }
 
-function ToolGroup({ tools }: { tools: ToolState[] }) {
+function ToolGroup({ tools, vivo = true }: { tools: ToolState[]; vivo?: boolean }) {
   // Las etiquetas las arma el SERVER en español y viajan dentro del cuerpo del
   // mensaje. Como el i18n de Teams usa el texto fuente COMO clave, pasarlas por
   // t() basta para que se traduzcan igual que el resto de la UI — sin cambiar el
@@ -7717,7 +7723,11 @@ function ToolGroup({ tools }: { tools: ToolState[] }) {
   // Una tool sin traducción (las humanizadas: "generate image") sale tal cual, que
   // es lo correcto: es el nombre real de la herramienta, no una frase nuestra.
   const tr = useT();
-  const anyRunning = tools.some((t) => t.status === "running");
+  // ⚠️ Sólo puede haber algo CORRIENDO si el turno sigue vivo. El estado se pinta desde el
+  // cuerpo del mensaje, que conserva la foto de mitad del stream: sin esta condición, un
+  // turno que terminó (o que se cortó) dejaba el círculo girando para siempre — la barra
+  // decía "terminó" y la burbuja seguía animando (2026-08-03).
+  const anyRunning = vivo && tools.some((t) => t.status === "running");
   const fallidas = tools.filter((t) => t.status === "error").length;
   // ⚠️ El orden importa y estaba al revés: `anyError` ganaba sobre `anyRunning`, así que
   // en cuanto UNA herramienta fallaba el header se quedaba con el ✗ para siempre —
