@@ -452,6 +452,10 @@ function alertTools(dest: ToolDest | null): ConnectorTool[] {
         if (actual?.error) return actual;
         const urls: string[] = Array.isArray(actual?.urls) ? actual.urls : [];
         // Idempotente a mano: el POST hace merge parcial, así que hay que leer y añadir.
+        // ⚠️ Un 403 AQUÍ casi nunca es "otra organización" —el proyecto se acaba de listar
+        // con el mismo token— sino que a esa conexión le falta `project:write`, porque se
+        // hizo antes de que el scope entrara en la lista. El mensaje genérico mandaba a
+        // buscar el problema al lado equivocado.
         // Se compara por el prefijo del endpoint y no por la URL completa, porque el token
         // cambia si se reconfigura y quedarían dos entregas al mismo canal.
         const prefijo = hookUrl("");
@@ -460,7 +464,17 @@ function alertTools(dest: ToolDest | null): ConnectorTool[] {
           method: "POST",
           body: JSON.stringify({ urls: [...otras, url], enabled: true }),
         });
-        if (puesto?.error) return puesto;
+        if (puesto?.error) {
+          return /permiso|Sin acceso/i.test(String(puesto.error))
+            ? {
+                error:
+                  "Le falta el permiso de escritura sobre proyectos a esa conexión de Sentry — " +
+                  "se hizo antes de que lo pidiéramos. NO es un problema de organización ni del " +
+                  "proyecto: el arreglo es RECONECTAR Sentry en Ajustes → Integraciones (quien sea " +
+                  "el dueño de la conexión), y con eso queda. Todo lo demás sigue funcionando.",
+              }
+            : puesto;
+        }
 
         // 2) La regla. Si ya hay una nuestra, no se duplica.
         const reglas = await api(sub, `/projects/${p}/rules/`);

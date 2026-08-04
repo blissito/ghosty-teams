@@ -147,7 +147,6 @@ export const en: Record<string, string> = {
   "Elegir repos": "Choose repos",
   "lo tiene conectado": "has it connected",
   "Del equipo": "Team",
-  "Compartir": "Share",
   "Compartida": "Shared",
   "Compartir con el equipo": "Share with the team",
   "La compartiste con el equipo": "You shared it with the team",

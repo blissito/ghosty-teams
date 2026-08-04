@@ -163,7 +163,12 @@ export const CONNECTORS: ConnectorDef[] = [
       // permite resolver / ignorar / asignar un issue. Cambiar esta lista después
       // obliga a RECONECTAR a todos (no hay upgrade in-place), así que conviene
       // cerrarla de una vez.
-      scopes: "org:read project:read project:releases team:read member:read event:write",
+      // ⚠️ `project:write` es OBLIGATORIO y se olvidó al principio: el endpoint que
+      // registra el webhook de alertas (`POST /projects/{org}/{proj}/legacy-webhooks/`) lo
+      // exige, y sin él todo funciona —listar proyectos, issues, stacktraces— salvo
+      // justamente activar las alertas, que devuelve un 403 que parece "ese proyecto es de
+      // otra organización". Implica `project:read`, así que lo sustituye.
+      scopes: "org:read project:write project:releases team:read member:read event:write",
       clientIdEnv: "SENTRY_CLIENT_ID",
       clientSecretEnv: "SENTRY_CLIENT_SECRET",
       // Sentry SÍ tiene /oauth/userinfo/, pero devuelve 403 sin el scope `openid`
