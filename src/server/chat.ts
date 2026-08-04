@@ -875,7 +875,16 @@ export const askAgent = createServerFn({ method: "POST" })
     // de su panel ("Live stock ticker") en vez de con el nombre del agente, y es lo que hace
     // que una lista de tres agentes se pueda leer de un vistazo.
     const tareaDelTurno = (() => {
-      const crudo = (text ?? "").replace(/```[\s\S]*?```/g, " ").replace(/\s+/g, " ").trim();
+      // ⚠️ Al texto del turno se le antepone el MANIFIESTO de adjuntos ("[Adjuntos del
+      // hilo…]" + la lista), así que tomarlo tal cual nombraba todas las filas
+      // "[Adjuntos d…" — inútil, y encima idéntico entre agentes. Se salta ese bloque:
+      // llega hasta la primera línea en blanco.
+      let crudo = text ?? "";
+      if (crudo.startsWith("[Adjuntos")) {
+        const corte = crudo.indexOf("\n\n");
+        crudo = corte === -1 ? "" : crudo.slice(corte + 2);
+      }
+      crudo = crudo.replace(/```[\s\S]*?```/g, " ").replace(/\s+/g, " ").trim();
       if (!crudo) return "";
       return crudo.length > 60 ? `${crudo.slice(0, 57)}…` : crudo;
     })();
@@ -951,6 +960,13 @@ export const askAgent = createServerFn({ method: "POST" })
     // El mensaje entró a un turno vivo: acá no hay nada que escribir. La cáscara que
     // postMessage creó eager se borra, o quedarían dos burbujas para una sola respuesta.
     if (reply === INJECTED) {
+      // Steer: la cáscara se borra, así que su fila de la barra también tiene que irse —
+      // este camino no pasa por el bloque de artefactos y no emitiría "done" nunca.
+      if (registeredId != null) {
+        bus.publish(bus.ch.room(ns, channel.id), {
+          t: "turn", id: registeredId, state: "stopped", position: 1, startedAt: Date.now(),
+        });
+      }
       if (data.shellId != null) {
         await db.deleteMessage(data.shellId).catch(() => {});
         bus.publish(bus.ch.room(ns, channel.id), { t: "message:deleted", id: data.shellId, channelId: channel.id, parentId: data.parentId ?? null });
@@ -1226,16 +1242,15 @@ async function avisarFinDeTurno(a: {
   } catch {
     /* sin resumen: la fila dice "terminó" y ya */
   }
-  if (resumen) {
-    turns.setTurnOutcome(a.messageId, resumen);
-    // ⚠️ El "terminó" ya se anunció antes (el `finally` del turno corre ANTES que el bloque
-    // de artefactos), así que el resumen llega tarde por definición: se re-emite el estado
-    // con él para que la fila lo recoja. Sin esto, la barra diría "terminó" a secas siempre.
-    const bus = await import("./bus.server");
-    bus.publish(bus.ch.room(a.ns, a.channelId), {
-      t: "turn", id: a.messageId, state: "done", position: 1, startedAt: Date.now(), outcome: resumen,
-    });
-  }
+  if (resumen) turns.setTurnOutcome(a.messageId, resumen);
+  // El "terminó" se anuncia AQUÍ y sólo aquí: cuando el artefacto ya está publicado. Si se
+  // anunciara en el `finally` del turno (que corre antes), la barra diría que acabó mientras
+  // el documento se seguía creando — que es justo lo que se vio.
+  const bus = await import("./bus.server");
+  bus.publish(bus.ch.room(a.ns, a.channelId), {
+    t: "turn", id: a.messageId, state: "done", position: 1, startedAt: Date.now(),
+    outcome: resumen || undefined,
+  });
 
   if (!a.invokerSub) return;
   // El silencio del room manda, igual que en menciones/DMs/llamadas.

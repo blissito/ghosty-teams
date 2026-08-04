@@ -130,7 +130,11 @@ export function finishTurn(messageId: number): void {
     Date.now(),
     messageId,
   ]);
-  t.announce?.({ ...stateOf(t), state: "done" });
+  // ⚠️ NO se anuncia "done" aquí. Este `finishTurn` corre en el `.finally()` del turno, que
+  // es ANTES de publicar el artefacto: anunciarlo aquí hacía que la barra dijera "terminó"
+  // mientras el documento todavía se estaba creando. Lo que sí pasa ya es liberar la cola —
+  // el lock del worker está libre y el siguiente puede entrar—, así que eso va inmediato.
+  // El "done" lo emite `avisarFinDeTurno` cuando la entrega existe de verdad.
   announceGroup(t.groupId);
 }
 
