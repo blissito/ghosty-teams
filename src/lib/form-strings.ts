@@ -54,6 +54,15 @@ export type FormStrings = {
   invalidOption: string;
   invalidAnswer: string;
   matrixIncomplete: string;
+  minItems: string;
+  maxItems: string;
+  // ── Listas repetibles ──
+  addItem: string;
+  removeItem: string;
+  /** Encabezado de cada bloque: "Heredero 2". */
+  itemHeading: string;
+  /** Nombre por default de un elemento cuando el schema no trae `itemLabel`. */
+  itemDefault: string;
   // ── Estado del formulario (las manda el servidor en `errors._form`) ──
   formClosed: string;
   rateLimited: string;
@@ -88,6 +97,12 @@ export const FORM_STRINGS: Record<FormLocale, FormStrings> = {
     invalidOption: "Opción inválida",
     invalidAnswer: "Respuesta inválida",
     matrixIncomplete: "{label}: responde todas las filas",
+    minItems: "{label}: agrega al menos {n}",
+    maxItems: "{label}: máximo {n}",
+    addItem: "Agregar {item}",
+    removeItem: "Quitar",
+    itemHeading: "{item} {n}",
+    itemDefault: "elemento",
     formClosed: "Este formulario ya no recibe respuestas.",
     rateLimited: "Demasiados envíos. Espera un momento.",
     anchorMessage:
@@ -118,6 +133,12 @@ export const FORM_STRINGS: Record<FormLocale, FormStrings> = {
     invalidOption: "Invalid option",
     invalidAnswer: "Invalid answer",
     matrixIncomplete: "{label}: please answer every row",
+    minItems: "{label}: add at least {n}",
+    maxItems: "{label}: {n} at most",
+    addItem: "Add {item}",
+    removeItem: "Remove",
+    itemHeading: "{item} {n}",
+    itemDefault: "item",
     formClosed: "This form is no longer accepting responses.",
     rateLimited: "Too many submissions. Please wait a moment.",
     anchorMessage:

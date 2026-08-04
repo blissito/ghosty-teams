@@ -39,6 +39,7 @@ const LOADERS: Record<string, () => Promise<ConnectorModule>> = {
   calendly: () => import("./calendly.server"),
   denik: () => import("./denik.server"),
   sentry: () => import("./sentry.server"),
+  github: () => import("./github.server"),
 };
 
 export function loaderFor(id: string): (() => Promise<ConnectorModule>) | undefined {

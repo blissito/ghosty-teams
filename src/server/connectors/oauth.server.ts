@@ -80,6 +80,29 @@ export function buildAuthorizeUrl(def: ConnectorDef, redirectUri: string, state:
 
 type TokenResponse = { access_token: string; refresh_token?: string; expires_in?: number };
 
+/**
+ * Lee la respuesta del token endpoint y falla ruidosamente si trae un error.
+ *
+ * El RFC manda un 4xx, pero GitHub responde **200 con `{error: "..."}`** en el
+ * cuerpo. Mirando sólo `res.ok` se persistía `access_token: undefined` como si
+ * la renovación hubiera salido bien, y la conexión quedaba muerta sin que nada
+ * lo dijera. El texto del throw incluye el código porque `getValidToken` decide
+ * con él si borra la fila.
+ */
+async function readTokenResponse(res: Response, what: string): Promise<TokenResponse> {
+  const text = await res.text();
+  if (!res.ok) throw new Error(`${what} ${res.status}: ${text.slice(0, 300)}`);
+  let j: any;
+  try {
+    j = JSON.parse(text);
+  } catch {
+    throw new Error(`${what}: respuesta no-JSON: ${text.slice(0, 200)}`);
+  }
+  if (j?.error) throw new Error(`${what}: ${j.error}${j.error_description ? ` — ${j.error_description}` : ""}`);
+  if (!j?.access_token) throw new Error(`${what}: sin access_token`);
+  return j as TokenResponse;
+}
+
 export async function exchangeCode(
   def: ConnectorDef,
   redirectUri: string,
@@ -97,18 +120,17 @@ export async function exchangeCode(
   if (o.pkce && verifier) body.set("code_verifier", verifier);
   const res = await fetch(o.tokenUrl, {
     method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    headers: { "Content-Type": "application/x-www-form-urlencoded", ...(o.tokenHeaders ?? {}) },
     body,
   });
-  if (!res.ok) throw new Error(`oauth/token ${res.status}: ${await res.text()}`);
-  return (await res.json()) as TokenResponse;
+  return readTokenResponse(res, "oauth/token");
 }
 
 async function refresh(def: ConnectorDef, refreshToken: string): Promise<TokenResponse> {
   const o = def.oauth!;
   const res = await fetch(o.tokenUrl, {
     method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    headers: { "Content-Type": "application/x-www-form-urlencoded", ...(o.tokenHeaders ?? {}) },
     body: new URLSearchParams({
       grant_type: "refresh_token",
       refresh_token: refreshToken,
@@ -116,8 +138,7 @@ async function refresh(def: ConnectorDef, refreshToken: string): Promise<TokenRe
       client_secret: envOrThrow(o.clientSecretEnv),
     }),
   });
-  if (!res.ok) throw new Error(`oauth/refresh ${res.status}: ${await res.text()}`);
-  return (await res.json()) as TokenResponse;
+  return readTokenResponse(res, "oauth/refresh");
 }
 
 // Access token válido para (sub, provider): usa el cacheado si no venció; si venció y
@@ -148,7 +169,10 @@ export async function getValidToken(sub: string, provider: string): Promise<stri
       .catch(() => {});
     return j.access_token;
   } catch (e) {
-    if (/invalid_grant|invalid_token|\b400\b|\b401\b/.test(String(e))) {
+    // `bad_refresh_token` / `bad_verification_code` son de GitHub, que además
+    // los manda con status 200 (ver readTokenResponse). Sin ellos la fila muerta
+    // se quedaba para siempre y cada turno reintentaba un refresh imposible.
+    if (/invalid_grant|invalid_token|bad_refresh_token|bad_verification_code|\b400\b|\b401\b/.test(String(e))) {
       await deleteConnectorRow(sub, provider);
       return null;
     }

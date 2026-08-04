@@ -23,6 +23,10 @@ export type ConnectorDef = {
     pkce?: boolean;
     clientIdEnv: string;
     clientSecretEnv: string;
+    // Headers extra en el POST al token endpoint. GitHub lo necesita: sin
+    // `Accept: application/json` responde form-encoded y el `res.json()` del
+    // cliente genérico revienta. Nadie más lo usa.
+    tokenHeaders?: Record<string, string>;
     userInfoUrl?: string; // tras conectar: captura external_id + meta
     // Traduce la respuesta del userInfoUrl a lo que se persiste. Cada proveedor
     // devuelve una forma distinta; sin esto el parser de UNO quedaba escrito a
@@ -175,8 +179,42 @@ export const CONNECTORS: ConnectorDef[] = [
       // que la quite en Settings → Account → Authorized Applications.
     },
   },
+  {
+    id: "github",
+    name: "GitHub",
+    blurb:
+      "Deja que @ghosty trabaje en tus repos: lee issues y PRs, revisa código, escribe en una rama y abre pull requests.",
+    icon: "github",
+    type: "Web",
+    status: "available",
+    oauth: {
+      // Es una GitHub APP en flujo user-to-server, no una OAuth App. La
+      // diferencia que importa: el usuario elige QUÉ REPOS al instalar, en vez
+      // de entregar todos sus repos privados de golpe (que es lo único que
+      // sabe hacer el scope `repo` de una OAuth App).
+      authUrl: "https://github.com/login/oauth/authorize",
+      tokenUrl: "https://github.com/login/oauth/access_token",
+      // ⚠️ Sin esto GitHub responde form-encoded y el res.json() del cliente
+      // genérico revienta. Es el único proveedor que lo necesita.
+      tokenHeaders: { Accept: "application/json" },
+      // GitHub Apps no soportan PKCE, y no llevan `scope` en el authorize: los
+      // permisos son los declarados en la app y se conceden al instalarla.
+      pkce: false,
+      clientIdEnv: "GITHUB_CLIENT_ID",
+      clientSecretEnv: "GITHUB_CLIENT_SECRET",
+      userInfoUrl: "https://api.github.com/user",
+      parseUserInfo: (j) => ({
+        externalId: j?.id != null ? String(j.id) : null,
+        meta: { login: j?.login ?? null, name: j?.name ?? null, avatarUrl: j?.avatar_url ?? null },
+      }),
+      metaTtlS: 900,
+      // Sin `revokeUrl`: revocar exige Basic auth con el client secret contra
+      // /applications/{client_id}/grant, que no es RFC 7009 y el cliente
+      // genérico no sabe emitir. Desconectar borra la fila local; el usuario
+      // quita la instalación en github.com/settings/installations.
+    },
+  },
   // Próximamente (sin oauth aún → el panel los muestra como "Próximamente"):
-  { id: "github", name: "GitHub", blurb: "Trae issues y PRs al chat; @ghosty los resume y comenta.", icon: "github", type: "Web", status: "soon" },
   { id: "hubspot", name: "HubSpot", blurb: "Trae contactos y negocios de tu CRM; @ghosty responde con ese contexto.", icon: "hubspot", type: "Web", status: "soon" },
   { id: "google-calendar", name: "Google Calendar", blurb: "Recordatorios y contexto de reuniones dentro del room.", icon: "google-calendar", type: "Web", status: "soon" },
 ];
