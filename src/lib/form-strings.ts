@@ -57,8 +57,10 @@ export type FormStrings = {
   // ── Estado del formulario (las manda el servidor en `errors._form`) ──
   formClosed: string;
   rateLimited: string;
-  // ── Interno: el mensaje ancla del room. Lo lee el equipo, no quien responde ──
+  // ── Interno: lo lee el equipo, no quien responde ──
   anchorMessage: string;
+  /** Encabezado de la primera columna de la hoja de respuestas. */
+  dateColumn: string;
 };
 
 export const FORM_STRINGS: Record<FormLocale, FormStrings> = {
@@ -90,6 +92,7 @@ export const FORM_STRINGS: Record<FormLocale, FormStrings> = {
     rateLimited: "Demasiados envíos. Espera un momento.",
     anchorMessage:
       "📋 **{title}** — formulario de intake. Comparte la liga; las respuestas llegan a este hilo.",
+    dateColumn: "Fecha",
   },
   en: {
     thanksDefault: "Thank you! We've received your answers.",
@@ -119,6 +122,7 @@ export const FORM_STRINGS: Record<FormLocale, FormStrings> = {
     rateLimited: "Too many submissions. Please wait a moment.",
     anchorMessage:
       "📋 **{title}** — intake form. Share the link; responses land in this thread.",
+    dateColumn: "Date",
   },
 };
 

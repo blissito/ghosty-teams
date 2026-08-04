@@ -35,8 +35,12 @@ export async function blocksToDocx(blocks: DocBlock[], title: string): Promise<B
   // documento en español con corrector en inglés sale subrayado de rojo entero.
   // El título va en las propiedades del archivo: es lo que Word enseña al imprimir y en
   // "Información", y un documento de despacho sin título ahí se ve descuidado.
+  // Y sigue el idioma de la app: quien escribe en inglés produce documentos en inglés, y
+  // con "es-MX" clavado Word se los subrayaba enteros.
+  const { currentLocale } = await import("./locale.server");
+  const { intlLocale } = await import("../i18n.core");
   const blob = await exporter.toBlob(blocks as never, {
-    locale: "es-MX",
+    locale: intlLocale(await currentLocale()),
     documentOptions: { title },
   } as never);
   return Buffer.from(await blob.arrayBuffer());

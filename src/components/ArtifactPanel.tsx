@@ -27,7 +27,8 @@ import {
   History,
   Archive,
 } from "lucide-react";
-import { useT } from "../i18n";
+import { useT, useLocale } from "../i18n";
+import { intlLocale } from "../i18n.core";
 import ConfirmModal from "./ConfirmModal";
 import { officeToHtmlFn, xlsxToCsvFn, postMessage } from "../server/chat";
 import { listTeamDocumentsFn, type TeamDocument } from "../server/documents";
@@ -340,6 +341,7 @@ export default function ArtifactPanel({
   useEffect(() => {
     if (rootArtifact) setCerrando(false);
   }, [rootArtifact]);
+  const locale = useLocale();
   const t = useT();
   const [width, setWidth] = useState<number>(() => {
     if (typeof window === "undefined") return DEFAULT_W;
@@ -1685,7 +1687,7 @@ export default function ArtifactPanel({
                                           : t("Subido")}{" "}
                                         · {d.kind === "sheet" ? "hoja" : d.kind}
                                         {d.createdAt
-                                          ? ` · ${new Date(d.createdAt * 1000).toLocaleString("es-MX", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}`
+                                          ? ` · ${new Date(d.createdAt * 1000).toLocaleString(intlLocale(locale), { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}`
                                           : ""}
                                         {d.versions && d.versions > 1
                                           ? ` · ${d.versions} versiones`
@@ -2203,7 +2205,7 @@ export default function ArtifactPanel({
             "«{title}» sale del espacio y deja de compartirse. Puedes recuperarlo hasta el {fecha}; después se elimina.",
             {
               title: porArchivar.title,
-              fecha: new Date(Date.now() + 30 * 86400_000).toLocaleDateString("es-MX", {
+              fecha: new Date(Date.now() + 30 * 86400_000).toLocaleDateString(intlLocale(locale), {
                 day: "numeric",
                 month: "long",
               }),

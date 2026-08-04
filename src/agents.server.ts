@@ -609,7 +609,12 @@ async function clockHint(invokerSub?: string): Promise<string> {
       const t = rows[0]?.tz;
       if (t && isValidTz(t)) tz = t;
     }
-    const now = new Intl.DateTimeFormat("es-MX", {
+    // El reloj sigue el idioma de la app: si no, un documento en inglés acababa fechado
+    // "lunes, 4 de agosto de 2026", que es justo la mezcla que el guardrail de idioma pide
+    // evitar.
+    const { currentLocale } = await import("./server/locale.server");
+    const { intlLocale } = await import("./i18n.core");
+    const now = new Intl.DateTimeFormat(intlLocale(await currentLocale()), {
       timeZone: tz, weekday: "long", year: "numeric", month: "long", day: "numeric",
       hour: "2-digit", minute: "2-digit", hour12: false,
     }).format(new Date());

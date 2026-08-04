@@ -25,6 +25,7 @@ import { bumpEmojis } from "../utils/emojis-bus";
 import { bumpUsers } from "../utils/users-bus";
 import type { CustomEmoji } from "../db.server";
 import { useT, useLocale, useSetLocale, type Locale } from "../i18n";
+import { intlLocale } from "../i18n.core";
 import { Monitor, Sun, Moon, Check, SlidersHorizontal, Palette, Github, Plug, Users, Calendar, CalendarClock, CalendarCheck, Link2, RefreshCw, Gauge, Bug } from "lucide-react";
 import { workspaceUsageFn } from "../server/workspaces";
 import { listMyConnectorsFn, disconnectConnectorFn } from "../server/connectors";
@@ -493,6 +494,7 @@ function useThemeStore() {
    quien sabe cuántos tokens trae el paquete. Aquí no se recalcula nada. */
 function UsagePanel() {
   const t = useT();
+  const locale = useLocale();
   const [data, setData] = useState<Awaited<ReturnType<typeof workspaceUsageFn>> | null>(null);
   const [state, setState] = useState<"loading" | "ready" | "error">("loading");
 
@@ -535,7 +537,7 @@ function UsagePanel() {
       : null;
   const fmtM = (n: number) => `${(n / 1_000_000).toFixed(n >= 10_000_000 ? 0 : 1)}M`;
   const fecha = (iso: string) =>
-    new Date(iso).toLocaleDateString("es-MX", { day: "numeric", month: "long" });
+    new Date(iso).toLocaleDateString(intlLocale(locale), { day: "numeric", month: "long" });
 
   return (
     <div className="space-y-6">
@@ -576,7 +578,7 @@ function UsagePanel() {
               gastó de verdad. `messagesUsed`/`messagesIncluded` siguen llegando del
               server; simplemente ya no se pintan. */}
           {turnosRestantes !== null
-            ? `${t("Te quedan ~")}${turnosRestantes.toLocaleString("es-MX")} ${t("turnos a este ritmo")} · `
+            ? `${t("Te quedan ~")}${turnosRestantes.toLocaleString(intlLocale(locale))} ${t("turnos a este ritmo")} · `
             : ""}
           {t("se reinicia el")} {fecha(data.resetsAt)}
         </p>
@@ -593,7 +595,7 @@ function UsagePanel() {
           )}
         </div>
         <div>
-          {data.turns.toLocaleString("es-MX")} {t("turnos del agente este mes")}
+          {data.turns.toLocaleString(intlLocale(locale))} {t("turnos del agente este mes")}
         </div>
       </div>
     </div>

@@ -12,6 +12,7 @@
 // clic. El aviso por correo/push sigue siendo por respuesta: enterarse es otra cosa que
 // revisar.
 import type { FormField } from "../../lib/form-fields";
+import { formStrings } from "../../lib/form-strings";
 import type { FormRow } from "./publish.server";
 
 export type DeliverArgs = {
@@ -187,15 +188,17 @@ async function actualizarHoja(form: FormRow, quien: string): Promise<number> {
 
 /** CSV con encabezados legibles (las etiquetas del formulario, no las claves internas). */
 export function hojaCsv(
-  form: Pick<FormRow, "fields">,
+  // `locale` opcional: sin él la hoja sale en español, que es lo que hacía siempre.
+  form: Pick<FormRow, "fields"> & { locale?: FormRow["locale"] },
   filas: { at: number; data: Record<string, string>; files: Record<string, { name?: string }> }[]
 ): string {
   const cols = form.fields;
-  const cab = ["Fecha", ...cols.map((f) => f.label)];
+  const s = formStrings(form.locale);
+  const cab = [s.dateColumn, ...cols.map((f) => f.label)];
   const lineas = [cab.map(csvCell).join(",")];
   for (const fila of filas) {
     const celdas = [
-      new Date(fila.at * 1000).toLocaleString("es-MX", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" }),
+      new Date(fila.at * 1000).toLocaleString(form.locale === "en" ? "en-US" : "es-MX", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" }),
       ...cols.map((f) => valorPlano(f, fila.data, fila.files)),
     ];
     lineas.push(celdas.map(csvCell).join(","));
