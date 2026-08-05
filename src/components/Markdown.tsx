@@ -129,12 +129,16 @@ function tableComponents(light?: boolean): Components {
   const line = light ? "border-black/10" : "border-border";
   const head = light ? "bg-black/[0.04]" : "bg-surface-2";
   return {
+    // `not-prose`: la salida oficial de @tailwindcss/typography. Sin ella, `prose` le
+    // mete `margin: 2em 0` al table —franja vacía dentro de nuestro marco— y un `m-0`
+    // NO gana: empatan en especificidad y prose va después en la hoja. Medido.
+    // El precio es que las celdas quedan fuera de prose: el color se hereda igual, pero
+    // los links hay que pintarlos a mano, de ahí el `[&_a]:text-brand`.
+    //
+    // ⚠️ Este comentario va AQUÍ, en JS, y no como `{/* … */}` dentro del `return (`:
+    // ahí es un segundo hijo suelto junto al <div> y rompe la sintaxis (el build de
+    // 1e775cf quedó rojo por eso).
     table: ({ node, children, className, ...props }: { node?: unknown; children?: React.ReactNode; className?: string }) => (
-      {/* `not-prose`: la salida oficial de @tailwindcss/typography. Sin ella, `prose` le
-          mete `margin: 2em 0` al table —franja vacía dentro de nuestro marco— y un `m-0`
-          NO gana: empatan en especificidad y prose va después en la hoja. Medido.
-          El precio es que las celdas quedan fuera de prose: el color se hereda igual, pero
-          los links hay que pintarlos a mano, de ahí el `[&_a]:text-brand`. */}
       <div className={`not-prose my-2 w-full overflow-x-auto rounded-lg border [&_a]:text-brand [&_a]:underline ${line}`}>
         <table className={["w-full border-collapse text-left", className].filter(Boolean).join(" ")} {...props}>
           {children}
