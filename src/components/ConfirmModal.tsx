@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Loader2 } from "lucide-react";
 import { useT } from "../i18n";
@@ -38,8 +38,23 @@ export default function ConfirmModal({
       setBusy(false);
     }
   };
+  // ⚠️ El evento que ABRE el diálogo no puede además contestarlo.
+  //
+  // Un keydown burbujea desde donde se originó hasta `document`. Si el diálogo se abre
+  // desde un handler de teclado —escribir `/clear` y pulsar Enter— React aplica el
+  // cambio de estado de forma síncrona (es un evento discreto), este efecto engancha su
+  // listener en `document`… y el MISMO Enter, que todavía va subiendo, lo encuentra ahí
+  // y ejecuta la acción. El usuario ve el modal aparecer y desaparecer, y la acción
+  // hecha sin que él confirmara nada. En una acción destructiva eso es grave.
+  //
+  // Se descarta por marca de tiempo en vez de con un `setTimeout(0)`: un retraso es una
+  // carrera que a veces se gana, y esto es una regla — los eventos anteriores al montaje
+  // no son respuestas a una pregunta que todavía no existía.
+  const nacidoEn = useRef(0);
+  if (!nacidoEn.current) nacidoEn.current = typeof performance !== "undefined" ? performance.now() : 0;
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (e.timeStamp && e.timeStamp <= nacidoEn.current) return;
       if (e.key === "Escape") onCancel();
       else if (e.key === "Enter") void run();
     };

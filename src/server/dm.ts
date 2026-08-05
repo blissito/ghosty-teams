@@ -214,20 +214,43 @@ export const dmEscalationFn = createServerFn({ method: "POST" })
     return await agentEscalation(agent, groupId);
   });
 
-// Baja esta conversación al modelo de fábrica. Sin burbuja en el chat: bajar no cambia
-// nada que la persona no acabe de pedir con su propio clic, y el ícono ya lo refleja.
+// Baja esta conversación al modelo de fábrica.
+//
+// ⚠️ Deja burbuja igual que al subir. Nació sin ella —"bajar no cambia nada que la
+// persona no acabe de pedir"— pero ese argumento vale idéntico para subir, que sí
+// avisaba: la asimetría se lee como que la bajada no ocurrió. Y en una conversación
+// donde el modelo cambia, el historial es el único sitio donde queda escrito CUÁNDO.
 export const deescalateDmAgentFn = createServerFn({ method: "POST" })
   .validator((d: { id: number }) => d)
   .handler(async ({ data }) => {
     const db = await import("../db.server");
+    const bus = await import("./bus.server");
+    const { currentNamespace } = await import("./tenant.server");
     const { resolvedAgents, deescalateAgentSession, agentGroupId } = await import("../agents.server");
     const me = await sessionUser();
     if (!me || !(await db.isDmMember(data.id, me.sub))) throw new Error("no autorizado");
+    const ns = await currentNamespace();
     const handle = await db.getDmAgentHandle(data.id);
     const agent = handle ? (await resolvedAgents()).find((a) => a.handle === handle) : null;
     if (!agent) return { ok: false as const };
     const groupId = await agentGroupId(agent, `dm-${data.id}`);
-    return await deescalateAgentSession(agent, groupId);
+    const res = await deescalateAgentSession(agent, groupId);
+    if (!res.ok) return { ok: false as const };
+
+    const { id } = await db.postDmAgent(
+      data.id,
+      "💨 Listo, volví al modelo rápido. La memoria se conserva.",
+      "msg",
+      agent.handle,
+      agent.name ?? "Ghosty",
+      agent.avatar ?? ""
+    );
+    const msg = await db.getMessage(id);
+    if (msg) {
+      const members = await db.getDmMembers(data.id);
+      for (const sub of members) bus.publish(bus.ch.user(ns, sub), { t: "message:new", msg });
+    }
+    return { ok: true as const };
   });
 
 // Sube ESTA conversación a un modelo más capaz. Mismo esqueleto que el /clear de
