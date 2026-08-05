@@ -196,6 +196,24 @@ export const clearDmAgentFn = createServerFn({ method: "POST" })
     return { ok: true as const };
   });
 
+// Estado del escalón de este DM, para que el CONTROL sepa qué enseñar antes de que
+// nadie lo toque. Sin esto el botón era optimista: siempre disponible, y sólo al
+// hacer clic te enteraba de que no había nada que hacer — con un alert. Un control
+// que no conoce su propio estado convierte cada clic en una apuesta.
+export const dmEscalationFn = createServerFn({ method: "POST" })
+  .validator((d: { id: number }) => d)
+  .handler(async ({ data }) => {
+    const db = await import("../db.server");
+    const { resolvedAgents, agentEscalation, agentGroupId } = await import("../agents.server");
+    const me = await sessionUser();
+    if (!me || !(await db.isDmMember(data.id, me.sub))) throw new Error("no autorizado");
+    const handle = await db.getDmAgentHandle(data.id);
+    const agent = handle ? (await resolvedAgents()).find((a) => a.handle === handle) : null;
+    if (!agent) return null;
+    const groupId = await agentGroupId(agent, `dm-${data.id}`);
+    return await agentEscalation(agent, groupId);
+  });
+
 // Sube ESTA conversación a un modelo más capaz. Mismo esqueleto que el /clear de
 // arriba: resuelve el agente del DM, su groupId, y confirma con una burbuja en el
 // historial — que el cambio quede escrito importa, porque a partir de aquí el agente

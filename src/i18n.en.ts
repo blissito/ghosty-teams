@@ -107,7 +107,11 @@ export const en: Record<string, string> = {
   "Bloqueadas en el navegador. Actívalas desde los permisos del sitio.": "Blocked in the browser. Enable them from the site permissions.",
   "Borrar memoria de la conversación": "Clear conversation memory",
   "Subir a un modelo más capaz para esta conversación": "Upgrade this conversation to a more capable model",
-  "No se pudo subir de modelo: {reason}": "Couldn't upgrade the model: {reason}",
+  "Esta conversación ya usa el modelo más capaz": "This conversation already uses the more capable model",
+  "Subir a un modelo más capaz": "Upgrade to a more capable model",
+  "Subir": "Upgrade",
+  "{name} responderá con más capacidad en esta conversación, conservando la memoria. El primer mensaje tardará un poco más. No se puede volver al modelo anterior: para eso hay que borrar la memoria.":
+    "{name} will answer with more capability in this conversation, keeping its memory. The first message will take a little longer. There's no going back to the previous model — for that, clear the memory.",
   "Esto borra la memoria de esta conversación. {name} empezará de cero. ¿Continuar?": "This clears this conversation's memory. {name} will start fresh. Continue?",
   "Buscando…": "Searching…",
   "Buscar": "Search",

@@ -74,7 +74,7 @@ import { createFileRoute, notFound, Link, useRouter } from "@tanstack/react-rout
 import type { Channel, Message, DmConversation, RoomHit, ViewHit, Attachment, Artifact, CustomEmoji } from "../db.server";
 import { listEmojisFn } from "../server/emojis";
 import { recentViewFn, mentionsViewFn, starredViewFn } from "../server/views";
-import { openDmFn, listDmsFn, getDmFlowFn, postDmMessageFn, askDmAgentFn, clearDmAgentFn, escalateDmAgentFn } from "../server/dm";
+import { openDmFn, listDmsFn, getDmFlowFn, postDmMessageFn, askDmAgentFn, clearDmAgentFn, escalateDmAgentFn, dmEscalationFn } from "../server/dm";
 import { forwardTargetsFn, forwardMessageFn } from "../server/forward";
 import { startCallFn, joinCallFn, getActiveCallFn } from "../server/quick-calls";
 // La llamada (dock, Room de LiveKit y avisos de entrante) vive en el store GLOBAL y se
@@ -6389,6 +6389,29 @@ function DmView({
   const isAgentDm = dm?.agent_handle != null; // DM 1:1 con un agente → sin llamadas (aún)
   const first = dm?.members[0];
 
+  // Escalón de modelo de ESTA conversación. `null` = no aplica (el agente corre en un
+  // runtime o un motor que no escala) → el control ni se pinta. Se pide al abrir el DM
+  // y se refresca al escalar; no hace falta más, porque nadie más lo cambia.
+  const [esc, setEsc] = useState<{ model: string | null; to: string | null; escalated: boolean } | null>(null);
+  const [pidiendoPro, setPidiendoPro] = useState(false);
+  useEffect(() => {
+    if (!isAgentDm) { setEsc(null); return; }
+    let vivo = true;
+    dmEscalationFn({ data: { id: dmId } })
+      .then((r) => { if (vivo) setEsc(r ?? null); })
+      .catch(() => { if (vivo) setEsc(null); });
+    return () => { vivo = false; };
+  }, [dmId, isAgentDm]);
+
+  // Una sola vía para subir: la usan el botón y el comando /pro. Refresca el estado con
+  // lo que devuelve el servidor en vez de asumir que salió bien — si el servidor dice
+  // que no, el ícono no debe quedarse encendido mintiendo.
+  const subirDeModelo = async () => {
+    const r = await escalateDmAgentFn({ data: { id: dmId } }).catch(() => null);
+    if (r?.ok) setEsc((e) => (e ? { ...e, escalated: true, to: null } : e));
+    else setEsc(await dmEscalationFn({ data: { id: dmId } }).catch(() => null));
+  };
+
   return (
     <section className="relative flex min-w-0 flex-1 flex-col" {...handlers}>
       <DropOverlay show={dragOver} />
@@ -6438,17 +6461,25 @@ function DmView({
             se conserva) → sin advertencia; pero SÍ es de ida y no vuelta, y eso lo dice
             el propio texto en vez de esconderlo. El servidor decide a qué modelo: aquí
             no se nombra ninguno. */}
-        {isAgentDm && (
+        {isAgentDm && esc && (
           <button
-            onClick={() => {
-              escalateDmAgentFn({ data: { id: dmId } })
-                .then((r) => { if (!r.ok && r.reason) alert(t("No se pudo subir de modelo: {reason}", { reason: r.reason })); })
-                .catch(() => {});
-            }}
-            title={t("Subir a un modelo más capaz para esta conversación")}
-            className="grid h-11 w-11 shrink-0 place-items-center rounded-lg text-muted transition hover:bg-surface-3 hover:text-ink md:h-9 md:w-9"
+            onClick={() => { if (!esc.escalated) setPidiendoPro(true); }}
+            disabled={esc.escalated}
+            title={
+              esc.escalated
+                ? t("Esta conversación ya usa el modelo más capaz")
+                : t("Subir a un modelo más capaz para esta conversación")
+            }
+            className={`grid h-11 w-11 shrink-0 place-items-center rounded-lg transition md:h-9 md:w-9 ${
+              esc.escalated
+                ? "cursor-default text-amber-500"
+                : "text-muted hover:bg-surface-3 hover:text-ink"
+            }`}
           >
-            <Zap size={17} />
+            {/* RELLENO = ya está arriba; contorno = se puede subir. El estado se ve sin
+                tocar nada, que es lo que faltaba: antes el control era optimista y sólo
+                al hacer clic te enterabas de que no había nada que hacer. */}
+            <Zap size={17} fill={esc.escalated ? "currentColor" : "none"} />
           </button>
         )}
       </header>
@@ -6498,9 +6529,9 @@ function DmView({
           // agente puede SUGERIRLO en su respuesta, y una sugerencia que se ejecuta
           // escribiendo lo que te dijeron es más directa que buscar un ícono.
           if (isAgentDm && p.body?.trim() === "/pro") {
-            escalateDmAgentFn({ data: { id: dmId } })
-              .then((r) => { if (!r.ok && r.reason) alert(t("No se pudo subir de modelo: {reason}", { reason: r.reason })); })
-              .catch(() => {});
+            // Sin modal: escribir el comando YA es la confirmación. El modal existe para
+            // el botón, donde un clic puede ser un resbalón.
+            if (!esc?.escalated) void subirDeModelo();
             scrollToBottom();
             return;
           }
@@ -6515,6 +6546,18 @@ function DmView({
         }}
         placeholder={t(composerHint(`dm-${dmId}`))}
       />
+      {/* Confirmación del escalón. NO es `danger`: no destruye nada y la memoria se
+          conserva. Lo que sí hay que decir es que es de IDA — es la única parte que
+          el usuario no puede deducir del ícono. */}
+      {pidiendoPro && (
+        <ConfirmModal
+          title={t("Subir a un modelo más capaz")}
+          body={t("{name} responderá con más capacidad en esta conversación, conservando la memoria. El primer mensaje tardará un poco más. No se puede volver al modelo anterior: para eso hay que borrar la memoria.", { name: title })}
+          confirmLabel={t("Subir")}
+          onCancel={() => setPidiendoPro(false)}
+          onConfirm={async () => { await subirDeModelo(); setPidiendoPro(false); }}
+        />
+      )}
     </section>
   );
 }
