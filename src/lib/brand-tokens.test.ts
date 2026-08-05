@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  brandRadiusScale,
   brandShape,
   BRAND_MOODS,
   type BrandKit,
@@ -110,9 +111,10 @@ describe("todos los kits producen tokens legibles", () => {
         expect(contrast(v["--accent"], v["--tint"])).toBeGreaterThanOrEqual(3);
       });
 
-      it("PDF: el papel es blanco y el texto pasa AA", () => {
+      it("PDF: el texto pasa AA sobre el papel blanco", () => {
+        // `--pr-paper` ya no existe: el papel del PDF es blanco LITERAL en PRINT_CSS.
+        // Se emitía y nadie lo leía — era uno de los tokens muertos que destapó T3.
         const v = brandPrintVars(k);
-        expect(v["--pr-paper"]).toBe("#ffffff");
         expect(contrast(v["--pr-ink"], "#ffffff")).toBeGreaterThanOrEqual(4.5);
         expect(contrast(v["--pr-muted"], "#ffffff")).toBeGreaterThanOrEqual(4.5);
         expect(contrast(v["--pr-brand"], v["--pr-tint"])).toBeGreaterThanOrEqual(3);
@@ -121,7 +123,11 @@ describe("todos los kits producen tokens legibles", () => {
       it("todo token de COLOR emitido es un hex válido", () => {
         // Las vars de FORMA (--radius, --edge, --shadow, --caps, --tracking) no son
         // colores; se validan aparte, en el bloque del tono.
-        const forma = new Set(["--radius", "--radius-sm", "--edge", "--shadow", "--caps", "--tracking"]);
+        const forma = new Set([
+          "--radius", "--radius-xs", "--radius-sm", "--radius-md", "--radius-lg",
+          "--radius-xl", "--radius-2xl", "--radius-3xl", "--radius-4xl",
+          "--edge", "--shadow", "--caps", "--tracking",
+        ]);
         const all = { ...brandFormVars(k), ...brandPrintVars(k), ...brandPalette(k).light, ...brandPalette(k).dark };
         for (const [key, val] of Object.entries(all)) {
           if (forma.has(key)) continue;
@@ -148,7 +154,7 @@ describe("el tono cambia la derivación de verdad", () => {
   };
   const shapeOf = (m: string) => {
     const s = brandShape({ ...base, mood: m as never });
-    return `${s.radius}|${s.edge}|${s.shadow}|${s.serif}|${s.caps}`;
+    return `${s.roundness}|${s.edge}|${s.shadow}|${s.serif}|${s.caps}`;
   };
 
   it("cada par de tonos se distingue A LA VISTA, no sólo en el hex", () => {
@@ -170,9 +176,12 @@ describe("el tono cambia la derivación de verdad", () => {
     for (const m of BRAND_MOODS) {
       const k = { ...base, mood: m as never };
       const s = brandShape(k);
-      expect(brandFormVars(k)["--radius"]).toBe(`${s.radius}px`);
+      const scale = brandRadiusScale(k);
+      // ⚠️ Antes esto afirmaba `--radius-brand`, un token que NADIE consumía: el test
+      // certificaba el bug. Ahora se comprueba la rampa, que es lo que Tailwind lee.
+      expect(brandFormVars(k)["--radius-xl"]).toBe(`${scale.xl}px`);
       expect(brandPrintVars(k)["--edge"]).toBe(`${s.edge}px`);
-      expect(brandThemeCss(k)).toContain(`--radius-brand: ${s.radius}px`);
+      expect(brandThemeCss(k)).toContain(`--radius-lg: ${scale.lg}px`);
     }
   });
 

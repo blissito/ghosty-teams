@@ -26,6 +26,15 @@
   --color-border: #e4e2f0;
   --color-ink: #1c1b22;
   --color-muted: #6b6975;
+
+  /* ⚠️ Declarar `--radius` es OBLIGATORIO aunque el valor sea el de fábrica.
+     En Tailwind v4 este token vive en un bloque `@theme default inline reference`: si
+     nadie lo declara, su valor se INCRUSTA (`.rounded { border-radius: 0.25rem }`) y
+     ninguna hoja en runtime puede pisarlo. Con esta línea compila a `var(--radius)` y
+     la marca del workspace (/api/brand-css) alcanza a los ~48 `rounded` pelados.
+     Los `--radius-lg`, `--radius-xl`… ya compilan a `var()` de fábrica y no hacen falta
+     aquí; la hoja de marca los pisa directo. */
+  --radius: 0.25rem;
 }
 
 :root[data-theme="dark"] {

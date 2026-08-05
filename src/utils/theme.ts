@@ -136,9 +136,11 @@ export function applyTheme(s: ThemeState): void {
   } else {
     for (const [k, v] of Object.entries(paletteVars(preset, dark))) r.style.setProperty(k, v);
   }
-  // Fuente: "default" sigue la del estilo; si no, la elegida.
-  const fontKind: FontKind = s.font === "default" ? preset.font : s.font;
-  r.style.setProperty("--font-sans", FONT_STACKS[fontKind]);
+  // Fuente: "default" NO escribe inline, por lo mismo que los colores — un inline le gana
+  // a la hoja de marca (/api/brand-css) y taparía la tipografía del workspace. Sólo una
+  // elección explícita de la persona pisa la marca.
+  if (s.font === "default") r.style.removeProperty("--font-sans");
+  else r.style.setProperty("--font-sans", FONT_STACKS[s.font]);
   // Tamaño: escala TODO (Tailwind usa rem para texto y spacing).
   r.style.fontSize = TEXT_SCALE[s.textSize];
   // Movimiento reducido (forzado por el usuario; el sistema se respeta vía @media).
@@ -205,7 +207,7 @@ r.setAttribute('data-theme',dark?'dark':'light');
 if(id&&id!=='ghosty')r.setAttribute('data-preset',id);else r.removeAttribute('data-preset');
 // Ver applyTheme: "Default" no escribe inline para no taparle la marca del workspace.
 if(id!=='ghosty')for(var k in pal)r.style.setProperty('--color-'+k,pal[k]);
-r.style.setProperty('--font-sans',F[fo==='default'?pr.font:fo]);
+if(fo!=='default')r.style.setProperty('--font-sans',F[fo]);
 r.style.fontSize=T[ts]||T.regular;
 if(rm)r.setAttribute('data-reduce-motion','1');
 }catch(e){}})();`;

@@ -23,17 +23,29 @@ export const Route = createFileRoute("/api/brand-css")({
         let css = "";
         try {
           const { activeBrandKit } = await import("../server/brand.server");
-          const { brandPalette, brandFontStacks } = await import("../lib/brand-tokens");
+          const { brandPalette, brandFaceCss, brandFontStacks, brandRadiusScale, emitCss } = await import(
+            "../lib/brand-tokens"
+          );
           const kit = await activeBrandKit();
           if (kit) {
             const p = brandPalette(kit);
             const f = brandFontStacks(kit);
+            const r = brandRadiusScale(kit);
             const block = (pal: Record<string, string>) =>
               Object.entries(pal)
                 .map(([k, v]) => `--color-${k}:${v}`)
                 .join(";");
+            // Mantine trae su propia escala y NO responde a la de Tailwind: sin esto el
+            // editor de documentos se queda con sus esquinas de fábrica mientras el resto
+            // de la app cambia, y la diferencia se lee como un bug.
+            const mantine = `--mantine-radius-sm:${r.sm}px;--mantine-radius-md:${r.md}px;--mantine-radius-lg:${r.lg}px;--mantine-radius-xl:${r.xl}px`;
+            // Las CARAS primero: sin ellas `--font-sans` nombraría una familia que el
+            // navegador no tiene. Aquí la ruta es relativa a propósito — la app se sirve
+            // desde su propio origen, al revés que el formulario en su iframe opaco.
             css =
-              `:root:root{${block(p.light)};--font-brand-heading:${f.heading}}\n` +
+              `${brandFaceCss(kit)}\n` +
+              `:root:root{${block(p.light)};${emitCss(kit, "app")};${mantine};` +
+              `--font-sans:${f.body};--font-brand-heading:${f.heading}}\n` +
               `:root:root[data-theme="dark"]{${block(p.dark)}}\n`;
           }
         } catch {

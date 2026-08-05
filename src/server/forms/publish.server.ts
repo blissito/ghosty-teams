@@ -305,6 +305,9 @@ export async function publishForm(
     publicUrl: formUrl(form),
     draftTtlDays: form.draftTtlDays,
     brand,
+    // Mismo origen absoluto que el submit: el iframe es de origen opaco y una ruta
+    // relativa a /fonts/ se resolvería contra el host equivocado.
+    assetBase: base,
   });
 
   const documentId = form.documentId ?? `form_doc_${randomUUID()}`;

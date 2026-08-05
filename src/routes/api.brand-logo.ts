@@ -27,11 +27,14 @@ export const Route = createFileRoute("/api/brand-logo")({
         if (file.size === 0) return new Response("empty file", { status: 400 });
 
         try {
-          const { putLogo } = await import("../server/brand.server");
+          const { putLogo, putFont } = await import("../server/brand.server");
           const storage = await import("../server/storage.server");
-          const key = await putLogo(
+          // `kind=font` sube un .woff2 propio del cliente; sin él, un logo.
+          const kind = String(form.get("kind") || "logo");
+          const put = kind === "font" ? putFont : putLogo;
+          const key = await put(
             file,
-            file.name || `logo-${file.size}`,
+            file.name || `${kind}-${file.size}`,
             file.type || "application/octet-stream"
           );
           return Response.json({ key, url: storage.publicUrl(key) });

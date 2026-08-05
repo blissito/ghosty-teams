@@ -10,6 +10,7 @@ import {
   type BrandMood,
   normalizeColors,
 } from "#/lib/brand-tokens";
+import { BRAND_FONTS } from "#/lib/brand-fonts";
 import * as storage from "./storage.server";
 
 export type BrandKitRow = BrandKit & {
@@ -108,18 +109,29 @@ function cleanMood(m: string | null | undefined): BrandMood | null {
   return m && (BRAND_MOODS as readonly string[]).includes(m) ? (m as BrandMood) : null;
 }
 
+/**
+ * ⚠️ `heading`/`body` ya NO son texto libre: son ids del CATÁLOGO. Un id desconocido se
+ * descarta en vez de guardarse, porque una familia que nadie puede cargar acaba siendo
+ * un `font-family` decorativo — exactamente el bug que esto vino a arreglar.
+ *
+ * Las URLs de fuente subida se aceptan sólo si son de NUESTRO storage (`t3/`): acaban
+ * dentro de un `src:url(...)` que ejecuta el navegador de quien abre un formulario.
+ */
 function cleanFonts(f: BrandFonts | null | undefined): BrandFonts | null {
   if (!f) return null;
-  // Sólo el nombre de la familia: acaba dentro de un `font-family` y de una URL de
-  // Google Fonts. Nada de comillas, llaves ni punto y coma.
-  const ok = (v?: string) => {
-    const s = String(v || "").replace(/[^A-Za-z0-9 +-]/g, "").trim().slice(0, 48);
-    return s || undefined;
-  };
   const out: BrandFonts = {};
-  if (ok(f.heading)) out.heading = ok(f.heading);
-  if (ok(f.body)) out.body = ok(f.body);
-  return out.heading || out.body ? out : null;
+  for (const slot of ["heading", "body"] as const) {
+    const id = f[slot];
+    if (id && BRAND_FONTS.some((d) => d.id === id)) out[slot] = id;
+
+    const url = f[`${slot}Url` as const];
+    if (url && /^https?:\/\/[^\s"')]+\/t3\/[^\s"')]+\.woff2$/i.test(url)) {
+      out[`${slot}Url` as const] = url;
+      const nombre = f[`${slot}Name` as const];
+      if (nombre) out[`${slot}Name` as const] = String(nombre).slice(0, 60);
+    }
+  }
+  return Object.keys(out).length ? out : null;
 }
 
 export async function createBrandKit(input: BrandKitInput, createdBy: string, ns?: string): Promise<BrandKitRow> {
@@ -134,7 +146,7 @@ export async function createBrandKit(input: BrandKitInput, createdBy: string, ns
       id,
       String(input.name || "Marca").slice(0, 60),
       JSON.stringify(colors),
-      input.fonts ? JSON.stringify(cleanFonts(input.fonts)) : null,
+      JSON.stringify(cleanFonts(input.fonts)),
       input.logoKey || null,
       input.logoDarkKey || null,
       cleanMood(input.mood),
@@ -210,6 +222,10 @@ export async function deleteBrandKit(id: string, ns?: string): Promise<void> {
 
 const LOGO_TYPES = new Set(["image/png", "image/jpeg", "image/webp", "image/svg+xml", "image/gif"]);
 const LOGO_MAX = 2 * 1024 * 1024;
+// woff2 y nada más: es el único formato que soportan todos los navegadores vigentes, y
+// aceptar ttf/otf multiplicaría por cinco el peso de cada formulario público.
+const FONT_TYPES = new Set(["font/woff2", "application/font-woff2", "application/octet-stream"]);
+const FONT_MAX = 1024 * 1024;
 
 /**
  * Sube un logo al bucket PÚBLICO y devuelve su key. Público a propósito: el logo se
@@ -221,5 +237,22 @@ export async function putLogo(blob: Blob, fileName: string, contentType: string)
   if (!LOGO_TYPES.has(contentType)) throw new Error(`tipo no permitido: ${contentType}`);
   if (blob.size > LOGO_MAX) throw new Error("el logo pasa de 2 MB");
   const put = await storage.put({ blob, contentType, fileName, visibility: "public" });
+  return put.key;
+}
+
+/**
+ * Una fuente propia del cliente. Mismo bucket público y mismas guardas que el logo: la
+ * pide el navegador de quien abre un formulario, sin sesión.
+ *
+ * ⚠️ Se exige la extensión `.woff2` además del content-type porque muchos navegadores
+ * mandan `application/octet-stream` para las fuentes: sin la extensión no hay forma de
+ * distinguir un woff2 de un zip.
+ */
+export async function putFont(blob: Blob, fileName: string, contentType: string): Promise<string> {
+  if (!storage.storageConfigured()) throw new Error("storage no configurado");
+  if (!/\.woff2$/i.test(fileName)) throw new Error("la fuente tiene que ser un archivo .woff2");
+  if (!FONT_TYPES.has(contentType)) throw new Error(`tipo no permitido: ${contentType}`);
+  if (blob.size > FONT_MAX) throw new Error("la fuente pasa de 1 MB");
+  const put = await storage.put({ blob, contentType: "font/woff2", fileName, visibility: "public" });
   return put.key;
 }

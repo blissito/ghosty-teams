@@ -1008,6 +1008,9 @@ export const en: Record<string, string> = {
     "Adjusts tinting, stroke weight and typography. We also pass it to the agent when it designs for you.",
   // Nombres de los tonos. Van por t() con llave DINÁMICA (MOOD_LABEL), así que
   // check:i18n no los ve: si se agrega un tono, su traducción se pone A MANO aquí.
+  "Del sistema": "System",
+  "Fuente propia": "Your own font",
+  "o sube tu .woff2": "or upload your .woff2",
   "Neutro": "Neutral",
   "Sobrio": "Understated",
   "Mínimo": "Minimal",

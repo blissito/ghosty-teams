@@ -820,6 +820,10 @@ export async function callAgentBackendStream(
         // condición: sólo cuenta en el canal Teams/web, que es donde el agente puede
         // emitir un eb-artifact.
         ARTIFACT_DESIGN_GUIDE,
+        // Qué hacer cuando la tarea le queda grande: mandarla al hermano mayor si vive
+        // en este espacio, o proponer subir de modelo si no. Depende del padrón del
+        // workspace, así que se resuelve aquí y no en Studio.
+        await escalationHint(agent),
       ]
         .filter(Boolean)
         .join("\n\n"),
@@ -925,6 +929,84 @@ export async function resetAgentSession(agent: ResolvedAgent, groupId: string): 
   } catch {
     return false;
   }
+}
+
+// ── ¿Hay un HERMANO MAYOR en este workspace? ──────────────────────────────────
+//
+// Antes de ofrecer subir de modelo hay que mirar quién más vive aquí: si el workspace
+// YA tiene activado un agente con un motor más capaz, mandarle la tarea a él es mejor
+// que encarecer a éste. El otro ya existe, ya está pagado y no hay nada que activar.
+//
+// "Más capaz" = motor `claude`, que es el único con el que hoy corre un agente insignia.
+// La lista sale de Studio (`GET /api/v2/fleet-agents` trae `engine` por agente) y se
+// cruza con los que Teams tiene ACTIVADOS — Studio no sabe cuáles están activados en
+// este workspace, y Teams no sabe con qué motor corre cada uno: hace falta el cruce.
+//
+// Cacheado: el padrón de agentes cambia cuando alguien activa uno, no cada turno.
+const ENGINES_TTL_MS = 5 * 60_000;
+let enginesCache: { at: number; byId: Map<string, string> } | null = null;
+
+async function agentEngines(): Promise<Map<string, string>> {
+  if (enginesCache && Date.now() - enginesCache.at < ENGINES_TTL_MS) return enginesCache.byId;
+  const byId = new Map<string, string>();
+  try {
+    const { nativeRuntimeBase } = await import("./server/ghosty-runtime.server");
+    const base = await nativeRuntimeBase();
+    if (base) {
+      const { listNativeFleetAgents } = await import("./server/fleet-native.server");
+      for (const p of await listNativeFleetAgents(base, "")) {
+        if (p.engine) byId.set(p.id, p.engine);
+      }
+    }
+  } catch {
+    // Sin lista no hay hermano mayor: se cae a ofrecer el escalón, que siempre existe.
+  }
+  enginesCache = { at: Date.now(), byId };
+  return byId;
+}
+
+/** El @handle del agente más capaz ACTIVADO en este workspace, distinto de `self`.
+ *  `null` = no hay ninguno → la salida es subir de modelo. */
+export async function capableSibling(self: ResolvedAgent): Promise<string | null> {
+  const selfId = self.backend.kind === "fleet" ? self.backend.id : null;
+  const engines = await agentEngines();
+  for (const a of await resolvedAgents()) {
+    if (a.backend.kind !== "fleet" || a.backend.id === selfId) continue;
+    if (engines.get(a.backend.id) === "claude") return a.handle;
+  }
+  return null;
+}
+
+/**
+ * La línea que le dice al agente qué hacer cuando una tarea le queda grande.
+ *
+ * ⚠️ Vive AQUÍ y no en Studio porque depende de quién está activado en ESTE workspace,
+ * que es un dato del tenant. Studio sólo sabe de qué motor es cada agente.
+ *
+ * ⚠️ Entra en `appendSystemPrompt`, que `configSig` firma por VALOR COMPLETO: si el
+ * padrón de agentes cambia, la sesión persistente se recicla una vez. Es aceptable
+ * porque activar un agente es una acción de administración, no algo de cada turno —
+ * pero por eso mismo el texto NO puede depender de nada que varíe seguido.
+ */
+export async function escalationHint(agent: ResolvedAgent): Promise<string | null> {
+  if (agent.backend.kind !== "fleet") return null;
+  const hermano = await capableSibling(agent);
+  if (hermano) {
+    return (
+      `SI UNA TAREA TE QUEDA GRANDE: en este espacio vive @${hermano}, que corre con un ` +
+      `modelo más capaz. Dilo y sugiere que se la pregunten a él (o que te mencionen ` +
+      `junto a él). Ofrécelo SÓLO cuando de verdad te quedaste corto —no de entrada ni ` +
+      `por costumbre— y sigue con lo que sí puedas mientras tanto. NUNCA lo presentes ` +
+      `como que no puedes ayudar.`
+    );
+  }
+  return (
+    `SI UNA TAREA TE QUEDA GRANDE puedes decirlo y ofrecer subir esta conversación a un ` +
+    `modelo más capaz: quien te escribe lo activa con \`/pro\` (o el ⚡ de la cabecera). ` +
+    `Ofrécelo SÓLO cuando de verdad te quedaste corto —no de entrada ni por costumbre— y ` +
+    `sigue con lo que sí puedas mientras tanto. NUNCA lo presentes como que no puedes ` +
+    `ayudar. La memoria se conserva al subir, y vuelve sola al modelo rápido después.`
+  );
 }
 
 // ── Escalón de modelo de UNA conversación ─────────────────────────────────────
@@ -1609,6 +1691,10 @@ export async function callAgentBackend(
         // condición: sólo cuenta en el canal Teams/web, que es donde el agente puede
         // emitir un eb-artifact.
         ARTIFACT_DESIGN_GUIDE,
+        // Qué hacer cuando la tarea le queda grande: mandarla al hermano mayor si vive
+        // en este espacio, o proponer subir de modelo si no. Depende del padrón del
+        // workspace, así que se resuelve aquí y no en Studio.
+        await escalationHint(agent),
       ]
         .filter(Boolean)
         .join("\n\n"),

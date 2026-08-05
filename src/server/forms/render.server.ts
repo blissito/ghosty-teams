@@ -13,7 +13,7 @@
 // `sandbox` SIN `allow-same-origin` → origen OPACO. De ahí salen dos reglas duras:
 //   · las URLs de submit y upload son ABSOLUTAS (una relativa apuntaría al host del iframe);
 //   · el fetch va sin credenciales y el endpoint responde CORS `*` (ver api.form.$token.ts).
-import { type BrandKit, brandFontStacks, brandFormVars } from "../../lib/brand-tokens";
+import { type BrandKit, brandFaceCss, brandFontStacks, brandFormVars } from "../../lib/brand-tokens";
 import { escapeHtml, formSteps, itemKey, type FormField } from "../../lib/form-fields";
 import { fill, formStrings, toFormLocale, type FormLocale, type FormStrings } from "../../lib/form-strings";
 
@@ -25,13 +25,19 @@ import { fill, formStrings, toFormLocale, type FormLocale, type FormStrings } fr
  * Los valores salen de `brandFormVars`, que garantiza AA contra `--paper`. No se
  * interpola nada que venga del usuario sin pasar por ahí: son hex validados.
  */
-function brandStyle(kit?: BrandKit | null): string {
+function brandStyle(kit: BrandKit | null | undefined, base: string): string {
   if (!kit) return "";
   const vars = Object.entries(brandFormVars(kit))
     .map(([k, v]) => `${k}:${v}`)
     .join(";");
   const f = brandFontStacks(kit);
-  return `<style>:root{${vars}}
+  // ⚠️ Las CARAS van primero. Sin ellas el `font-family` de abajo nombra una familia que
+  // el visitante no tiene instalada y el navegador cae al respaldo sin decir nada — que
+  // es lo que hacía este código hasta hoy. El `src` es una ruta pública nuestra: el
+  // formulario no manda la visita de nadie a Google Fonts.
+  const faces = brandFaceCss(kit, base);
+  return `<style>${faces}
+:root{${vars}}
 .gf-title{font-family:${f.heading}}
 body{font-family:${f.body}}
 .gf-logo{display:block;max-height:44px;max-width:60%;width:auto;margin:0 0 16px;object-fit:contain}</style>`;
@@ -73,6 +79,12 @@ export type RenderFormArgs = {
    * este HTML. Ausente → el formulario sale con la paleta de Ghosty, como hasta hoy.
    */
   brand?: BrandKit | null;
+  /**
+   * Origen absoluto para los archivos de fuente (`https://…`). El formulario vive en un
+   * iframe de origen OPACO: una ruta relativa a `/fonts/` se resolvería contra el host
+   * equivocado. Mismo motivo que `submitUrl`/`uploadUrl`.
+   */
+  assetBase?: string;
 };
 
 export function renderFormHtml(a: RenderFormArgs): string {
@@ -98,8 +110,8 @@ export function renderFormHtml(a: RenderFormArgs): string {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${escapeHtml(a.title)}</title>
-<style>${CSS}</style>
-${brandStyle(a.brand)}
+<style>${FORM_CSS}</style>
+${brandStyle(a.brand, a.assetBase ?? "")}
 </head>
 <body>
 <main class="gf-card">
@@ -796,11 +808,12 @@ cargarBorrador();
 })();`;
 }
 
-const CSS = `
+/** Exportado para que el detector de tokens muertos (brand-registry.test) lo lea. */
+export const FORM_CSS = `
 :root{--accent:#9870ED;--accent-ink:#7c5ce0;--tint:#f4edfd;--ink:#1c1a22;--muted:#6b6575;--line:#e5e1ef;--req:#c2410c;--ok:#15803d;--paper:#faf9fc}
 *{box-sizing:border-box}
 body{margin:0;padding:24px 16px 64px;background:var(--paper);color:var(--ink);font:16px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
-.gf-card{max-width:640px;margin:0 auto;background:#fff;border:var(--edge,1px) solid var(--line);border-radius:var(--radius,12px);box-shadow:var(--shadow,0 1px 2px rgba(28,26,34,.04),0 8px 24px rgba(28,26,34,.05));padding:28px 24px}
+.gf-card{max-width:640px;margin:0 auto;background:#fff;border:var(--edge,1px) solid var(--line);border-radius:var(--radius-xl,12px);box-shadow:var(--shadow,0 1px 2px rgba(28,26,34,.04),0 8px 24px rgba(28,26,34,.05));padding:28px 24px}
 .gf-head{margin-bottom:24px}
 .gf-title{margin:0;font-size:24px;line-height:1.25;font-weight:650;font-family:"Iowan Old Style",Georgia,serif}
 .gf-intro{margin:8px 0 0;color:var(--muted);font-size:15px}
@@ -812,15 +825,15 @@ body{margin:0;padding:24px 16px 64px;background:var(--paper);color:var(--ink);fo
 .gf-field[hidden]{display:none}
 .gf-label{display:block;font-size:14px;font-weight:600;margin-bottom:6px}
 .gf-req{color:var(--req);margin-left:2px}
-.gf-input{width:100%;padding:10px 12px;font:inherit;color:inherit;background:#fff;border:var(--edge,1px) solid var(--line);border-radius:var(--radius-sm,8px);outline:none}
+.gf-input{width:100%;padding:10px 12px;font:inherit;color:inherit;background:#fff;border:var(--edge,1px) solid var(--line);border-radius:var(--radius-md,8px);outline:none}
 .gf-input:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--tint)}
 textarea.gf-input{resize:vertical;min-height:96px}
 .gf-opts{display:flex;flex-direction:column;gap:8px}
-.gf-opt,.gf-check-row{display:flex;align-items:flex-start;gap:8px;font-size:15px;padding:8px 10px;border:var(--edge,1px) solid var(--line);border-radius:var(--radius-sm,8px);cursor:pointer}
+.gf-opt,.gf-check-row{display:flex;align-items:flex-start;gap:8px;font-size:15px;padding:8px 10px;border:var(--edge,1px) solid var(--line);border-radius:var(--radius-md,8px);cursor:pointer}
 .gf-opt:hover,.gf-check-row:hover{background:var(--tint)}
-.gf-matrix-wrap{overflow-x:auto;border:var(--edge,1px) solid var(--line);border-radius:var(--radius-sm,8px)}
+.gf-matrix-wrap{overflow-x:auto;border:var(--edge,1px) solid var(--line);border-radius:var(--radius-md,8px)}
 .gf-matrix{width:100%;border-collapse:collapse;font-size:14px}
-.gf-matrix th,.gf-matrix td{padding:8px 10px;border-bottom:1px solid var(--line);text-align:center}
+.gf-matrix th,.gf-matrix td{padding:8px 10px;border-bottom:var(--edge,1px) solid var(--line);text-align:center}
 .gf-matrix thead th{background:var(--tint);font-size:12px;font-weight:700;color:var(--accent-ink)}
 .gf-matrix tbody th{text-align:left;font-weight:500}
 .gf-matrix tbody tr:last-child th,.gf-matrix tbody tr:last-child td{border-bottom:0}
@@ -828,16 +841,16 @@ textarea.gf-input{resize:vertical;min-height:96px}
 .gf-sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
 .gf-group>.gf-label{margin-bottom:10px}
 .gf-items{display:flex;flex-direction:column;gap:12px}
-.gf-item{border:1px solid var(--line);border-radius:10px;padding:14px 14px 2px;background:var(--paper)}
+.gf-item{border:var(--edge,1px) solid var(--line);border-radius:var(--radius-lg,10px);padding:14px 14px 2px;background:var(--paper)}
 .gf-item-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
 .gf-item-n{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--accent-ink)}
-.gf-rm{font:inherit;font-size:13px;color:var(--muted);background:none;border:0;padding:4px 8px;border-radius:6px;cursor:pointer}
+.gf-rm{font:inherit;font-size:13px;color:var(--muted);background:none;border:0;padding:4px 8px;border-radius:var(--radius-md,6px);cursor:pointer}
 .gf-rm:hover{background:#fff;color:var(--req)}
 .gf-rm[hidden]{display:none}
 .gf-add{margin-top:12px;font-size:14px;padding:8px 16px}
 .gf-add[hidden]{display:none}
 .gf-filenote{display:block;margin-top:6px;font-size:13px;color:var(--ok)}
-.gf-draft{border:1px dashed var(--line);border-radius:10px;padding:14px;background:var(--paper);margin-top:20px}
+.gf-draft{border:var(--edge,1px) dashed var(--line);border-radius:var(--radius-lg,10px);padding:14px;background:var(--paper);margin-top:20px}
 .gf-draft[hidden]{display:none}
 .gf-draft-t{margin:0 0 8px;font-size:14px;font-weight:600}
 .gf-draft-row{display:flex;gap:8px}
@@ -848,11 +861,11 @@ textarea.gf-input{resize:vertical;min-height:96px}
 .gf-err{margin:6px 0 0;font-size:13px;color:var(--req)}
 .gf-formerr{margin:0 0 12px;font-size:14px;color:var(--req)}
 .gf-hp{position:absolute;left:-9999px;top:-9999px;width:1px;height:1px;overflow:hidden}
-.gf-nav{display:flex;gap:10px;justify-content:flex-end;margin-top:24px;padding-top:18px;border-top:1px solid var(--line)}
-.gf-btn{font:inherit;font-weight:600;font-size:15px;padding:10px 20px;border:0;border-radius:var(--radius-sm,8px);background:var(--accent);color:#fff;cursor:pointer;text-transform:var(--caps,none);letter-spacing:var(--tracking,0)}
+.gf-nav{display:flex;gap:10px;justify-content:flex-end;margin-top:24px;padding-top:18px;border-top:var(--edge,1px) solid var(--line)}
+.gf-btn{font:inherit;font-weight:600;font-size:15px;padding:10px 20px;border:0;border-radius:var(--radius-md,8px);background:var(--accent);color:#fff;cursor:pointer;text-transform:var(--caps,none);letter-spacing:var(--tracking,0)}
 .gf-btn:hover{filter:brightness(1.06)}
 .gf-btn:disabled{opacity:.6;cursor:default}
-.gf-ghost{background:transparent;color:var(--muted);border:1px solid var(--line)}
+.gf-ghost{background:transparent;color:var(--muted);border:var(--edge,1px) solid var(--line)}
 .gf-done{text-align:center;padding:32px 8px}
 .gf-check{width:56px;height:56px;margin:0 auto 16px;border-radius:99px;background:var(--tint);color:var(--ok);font-size:28px;line-height:56px;font-weight:700}
 @media (max-width:520px){.gf-card{padding:20px 16px}.gf-title{font-size:21px}}

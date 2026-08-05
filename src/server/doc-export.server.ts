@@ -14,7 +14,7 @@
 // Para PDF NO hay un segundo motor: se arma el HTML del documento y lo imprime
 // `render-svc` (Chromium), que es el servicio de la flota que ya hace esto, on-demand. Así
 // el PDF sale con el CSS real del documento en vez del layout de otra librería.
-import { type BrandKit, brandPrintVars } from "../lib/brand-tokens";
+import { type BrandKit, brandFaces, brandFontStacks, brandPrintVars } from "../lib/brand-tokens";
 import type { DocBlock } from "../lib/doc-blocks";
 
 /**
@@ -109,8 +109,49 @@ export async function blocksToPrintHtml(
 
   return `<!doctype html>
 <html lang="es"><head><meta charset="utf-8"><title>${escapeHtml(title)}</title>
-<style>${fuentesEmbebidas()}\n${PRINT_CSS}\n${brandPrintCss(brand)}</style>
+<style>${fuentesEmbebidas(catalogFaces(brand))}\n${await uploadedFaces(brand)}\n${PRINT_CSS}\n${brandPrintCss(brand)}\n${brandFontCss(brand)}</style>
 </head><body><article class="gt-print">${await brandHeader(brand)}${inner}</article></body></html>`;
+}
+
+/** Las caras del CATÁLOGO que usa este kit, para incrustarlas desde disco. */
+function catalogFaces(kit: BrandKit | null): { family: string; file: string }[] {
+  if (!kit) return [];
+  return brandFaces(kit)
+    .filter((f) => f.diskFile)
+    .map((f) => ({ family: f.family, file: f.diskFile as string }));
+}
+
+/**
+ * Las caras SUBIDAS por el cliente. Van aparte porque no están en disco: se bajan de
+ * storage y se incrustan igual que el logo — Chromium corre dentro de `render-svc` y no
+ * alcanza nuestro bucket, así que una URL saldría como fuente ausente sin avisar.
+ */
+async function uploadedFaces(kit: BrandKit | null): Promise<string> {
+  if (!kit) return "";
+  const subidas = brandFaces(kit).filter((f) => !f.diskFile);
+  if (!subidas.length) return "";
+  const out: string[] = [];
+  for (const f of subidas) {
+    try {
+      const blob = await ourFiles(f.src);
+      const buf = Buffer.from(await blob.arrayBuffer());
+      if (buf.length <= EMPTY_PNG.length) continue;
+      out.push(
+        `@font-face{font-family:"${f.family}";font-style:normal;font-weight:400 700;font-display:block;src:url(data:font/woff2;base64,${buf.toString("base64")}) format("woff2")}`
+      );
+    } catch (e) {
+      // Una fuente que no se pudo traer no puede impedir que salga el documento.
+      console.error("[doc print] fuente de marca:", (e as Error).message);
+    }
+  }
+  return out.join("\n");
+}
+
+/** Las familias del kit aplicadas al papel. Sin kit, cadena vacía. */
+function brandFontCss(kit: BrandKit | null): string {
+  if (!kit) return "";
+  const f = brandFontStacks(kit);
+  return `body{font-family:${f.body}} h1,h2,h3,h4{font-family:${f.heading}}`;
 }
 
 /** El `:root` que pisa los fallbacks de PRINT_CSS. Sin kit, cadena vacía. */
@@ -307,10 +348,19 @@ function escapeHtml(s: string): string {
  * Son ~52KB en tres pesos, leídos del disco UNA vez por proceso. Se paga en el PDF, que ya
  * tarda segundos porque despierta la caja.
  */
-let fuentesCache: string | undefined;
-function fuentesEmbebidas(): string {
-  if (fuentesCache !== undefined) return fuentesCache;
-  fuentesCache = "";
+/**
+ * ⚠️ El caché es un `Map` POR CLAVE, no una global. Cuando era una sola variable de
+ * módulo, incrustar la fuente de un tenant se la habría servido al PDF del SIGUIENTE:
+ * el proceso es compartido entre workspaces. Con fuentes de marca eso deja de ser
+ * hipotético, así que la clave lleva el juego de archivos.
+ */
+const fuentesCache = new Map<string, string>();
+
+function fuentesEmbebidas(extra: { family: string; file: string }[] = []): string {
+  const clave = extra.map((e) => `${e.family}:${e.file}`).sort().join("|");
+  const hit = fuentesCache.get(clave);
+  if (hit !== undefined) return hit;
+  let out = "";
   try {
     const fs = require("node:fs") as typeof import("node:fs");
     const path = require("node:path") as typeof import("node:path");
@@ -332,25 +382,39 @@ function fuentesEmbebidas(): string {
         break;
       }
     }
-    fuentesCache = caras.join("\n");
+    // Las caras de MARCA, del catálogo en disco. Una fuente subida por el cliente no se
+    // incrusta aquí: vive en storage y la resuelve `brandFacesForPdf`.
+    for (const e of extra) {
+      for (const dir of [".output/public", "public", "build/client"]) {
+        const p = path.resolve(process.cwd(), dir, "fonts", e.file);
+        if (!fs.existsSync(p)) continue;
+        const b64 = fs.readFileSync(p).toString("base64");
+        caras.push(
+          `@font-face{font-family:"${e.family}";font-style:normal;font-weight:400 700;font-display:block;src:url(data:font/woff2;base64,${b64}) format("woff2")}`
+        );
+        break;
+      }
+    }
+    out = caras.join("\n");
     if (!caras.length) console.warn("[doc export] sin Inter en disco: el PDF saldrá con la fuente del sistema");
   } catch (e) {
     console.warn("[doc export] no pude incrustar Inter:", (e as Error).message);
   }
-  return fuentesCache;
+  fuentesCache.set(clave, out);
+  return out;
 }
 
 /**
  * Los colores del papel, como variables con FALLBACK al valor de siempre. Sin kit el PDF
  * sale byte a byte como salía; con kit, `brandVars()` emite el `:root` que las pisa.
  *
- * ⚠️ Las FUENTES del kit no entran aquí a propósito. `fuentesEmbebidas()` lee woff2 del
- * disco y cachea en una global POR PROCESO: incrustar la fuente de un tenant en esa
- * cadena se la serviría al PDF del siguiente. Un kit sólo nombra una familia (no sube el
- * archivo), y render-svc no la tiene instalada, así que hoy no hay nada que incrustar —
- * el día que se suban woff2 de marca, el caché tiene que ser `Map<kitId, css>` ANTES.
+ * Las FUENTES del kit SÍ entran, incrustadas en base64 por `fuentesEmbebidas(extra)` (las
+ * del catálogo) y por `uploadedFaces()` (las que sube el cliente). El caché de fuentes es
+ * un `Map` por juego de archivos, no una global: con una global, la fuente de un tenant se
+ * le habría servido al PDF del siguiente.
  */
-const PRINT_CSS = `
+/** Exportado para que el detector de tokens muertos (brand-registry.test) lo lea. */
+export const PRINT_CSS = `
 @page { size: Letter; margin: 2.2cm 2cm; }
 *{ box-sizing:border-box }
 body{ margin:0; color:var(--pr-ink,#16161a); font:11pt/1.6 "Inter", ui-sans-serif, system-ui, sans-serif; }
@@ -362,14 +426,14 @@ h1{ font-size:19pt; font-weight:700 } h2{ font-size:14pt } h3{ font-size:12pt } 
 p{ margin:0 0 .7em; orphans:3; widows:3 }
 ul,ol{ margin:0 0 .7em 1.4em; padding:0 }
 li{ margin:.15em 0 }
-blockquote{ margin:1em 0; padding-left:1em; border-left:3px solid var(--pr-line,#d8d3e4); color:var(--pr-muted,#3f3f46) }
-code{ font:11pt/1.4 "SFMono-Regular",Menlo,monospace; background:#f4f4f7; padding:.1em .3em; border-radius:3px }
-pre{ background:#f4f4f7; padding:.8em 1em; border-radius:var(--radius-sm,6px); overflow:visible; white-space:pre-wrap; page-break-inside:avoid }
+blockquote{ margin:1em 0; padding-left:1em; border-left:calc(var(--edge,1px) * 3) solid var(--pr-line,#d8d3e4); color:var(--pr-muted,#3f3f46) }
+code{ font:11pt/1.4 "SFMono-Regular",Menlo,monospace; background:#f4f4f7; padding:.1em .3em; border-radius:var(--radius-xs,3px) }
+pre{ background:#f4f4f7; padding:.8em 1em; border-radius:var(--radius-md,6px); overflow:visible; white-space:pre-wrap; page-break-inside:avoid }
 table{ border-collapse:collapse; width:100%; margin:1em 0; page-break-inside:avoid }
 th,td{ border:var(--edge,1px) solid var(--pr-line,#c9c4d6); padding:.4em .6em; text-align:left; vertical-align:top }
 th{ background:var(--pr-tint,#f4edfd); font-weight:700 }
 img{ max-width:100%; height:auto }
-hr{ border:0; border-top:1px solid var(--pr-line,#d8d3e4); margin:1.6em 0 }
+hr{ border:0; border-top:var(--edge,1px) solid var(--pr-line,#d8d3e4); margin:1.6em 0 }
 /* Columnas: en papel son la maqueta de las firmas, y NO llevan rejilla — igual que en el
    .docx, donde el exportador oficial ya las saca con los bordes en nil. */
 [data-node-type="columnList"]{ display:flex; gap:1.2cm; page-break-inside:avoid }

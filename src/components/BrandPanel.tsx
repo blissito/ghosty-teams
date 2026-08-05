@@ -5,7 +5,9 @@ import {
   type BrandColors,
   type BrandKit,
   brandFormVars,
+  brandFontStacks,
   brandPalette,
+  brandRadiusScale,
   brandShape,
   isHex,
 } from "../lib/brand-tokens";
@@ -17,6 +19,7 @@ import {
   listBrandKitsFn,
   saveBrandKitFn,
 } from "../server/brand";
+import { BRAND_FONTS } from "../lib/brand-fonts";
 import { useT } from "../i18n";
 
 // ── Ajustes → Marca ─────────────────────────────────────────────────────────
@@ -126,7 +129,7 @@ export function BrandPanel({ isOwner }: { isOwner: boolean }) {
                 )}
               </div>
               <p className="mt-0.5 truncate text-xs text-muted">
-                {k.fonts?.heading || k.fonts?.body || t("Fuentes del sistema")}
+                {fontLabel(k) || t("Fuentes del sistema")}
               </p>
             </div>
             {isOwner && (
@@ -178,6 +181,124 @@ const MOOD_LABEL: Record<string, string> = {
 };
 
 /**
+ * Elegir fuente: catálogo con MUESTRA, o subir la propia.
+ *
+ * ⚠️ Sustituyó a un campo de texto libre donde escribías "Playfair Display" y no pasaba
+ * nada: se guardaba el nombre y NADIE cargaba el archivo, así que el navegador pedía una
+ * familia que el visitante no tiene y caía al respaldo en silencio. Del catálogo servimos
+ * el woff2 nosotros; la subida sube el archivo de verdad.
+ *
+ * Cada opción se pinta EN su propia fuente. Es lo mismo que hacen los tonos: una
+ * tipografía tampoco se puede elegir a ciegas.
+ */
+function FontPicker({
+  label,
+  value,
+  customUrl,
+  customName,
+  onPick,
+  onUpload,
+  onClearCustom,
+}: {
+  label: string;
+  value: string;
+  customUrl: string;
+  customName: string;
+  onPick: (id: string) => void;
+  onUpload: (url: string, name: string) => void;
+  onClearCustom: () => void;
+}) {
+  const t = useT();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const ref = useRef<HTMLInputElement>(null);
+
+  async function subir(file: File) {
+    setBusy(true);
+    setError("");
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      fd.append("kind", "font");
+      const res = await fetch("/api/brand-logo", { method: "POST", body: fd });
+      if (!res.ok) throw new Error(await res.text());
+      const out = (await res.json()) as { url: string };
+      onUpload(out.url, file.name.replace(/\.woff2$/i, ""));
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div>
+      <label className="text-xs font-semibold">{label}</label>
+      {customUrl ? (
+        <div className="mt-1.5 flex items-center gap-2 rounded-lg border border-border px-3 py-2">
+          <span className="min-w-0 flex-1 truncate text-xs">{customName || t("Fuente propia")}</span>
+          <button onClick={onClearCustom} className="text-xs text-muted hover:text-ink">
+            {t("Quitar")}
+          </button>
+        </div>
+      ) : (
+        <div className="mt-1.5 grid grid-cols-3 gap-1.5">
+          <button
+            type="button"
+            onClick={() => onPick("")}
+            aria-pressed={!value}
+            className={`rounded-lg border px-2 py-1.5 text-left text-[11px] ${
+              !value ? "border-brand font-semibold" : "border-border text-muted"
+            }`}
+          >
+            {t("Del sistema")}
+          </button>
+          {BRAND_FONTS.map((f) => (
+            <button
+              key={f.id}
+              type="button"
+              onClick={() => onPick(f.id)}
+              aria-pressed={value === f.id}
+              title={f.family}
+              className={`truncate rounded-lg border px-2 py-1.5 text-left text-[11px] ${
+                value === f.id ? "border-brand font-semibold" : "border-border"
+              }`}
+              // La muestra en su propia familia: el `@font-face` lo sirve /api/brand-css
+              // cuando el kit está activo, y en el panel el navegador la pide a /fonts/.
+              style={{ fontFamily: `"${f.family}", ${f.kind}` }}
+            >
+              {f.family}
+            </button>
+          ))}
+        </div>
+      )}
+      <div className="mt-1 flex items-center gap-2">
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => ref.current?.click()}
+          className="text-xs text-muted underline hover:text-ink disabled:opacity-50"
+        >
+          {busy ? t("Subiendo…") : t("o sube tu .woff2")}
+        </button>
+        {error && <span className="text-xs text-red-500">{error}</span>}
+      </div>
+      <input
+        ref={ref}
+        type="file"
+        accept=".woff2,font/woff2"
+        className="hidden"
+        onChange={(e) => {
+          const f = e.target.files?.[0];
+          if (f) subir(f);
+          e.target.value = "";
+        }}
+      />
+    </div>
+  );
+}
+
+/**
  * Cada tono, pintado con los tokens que ese tono produce: fondo teñido, línea, un botón
  * y la "Aa" en la familia que le toca. Es la única forma de elegir tono sin adivinar.
  */
@@ -197,10 +318,12 @@ function MoodSwatch({
   const k: BrandKit = { id: "m", name: "m", colors, mood: mood as BrandKit["mood"] };
   const p = brandPalette(k).light;
   const s = brandShape(k);
-  // La muestra pinta lo MISMO que produce el tono: su radio, su grosor de línea, su
-  // sombra y su tipografía. Antes sólo variaba el teñido —diferencias de 1 a 7% sobre un
-  // cuadro de 36px— y los siete se veían idénticos.
-  const r = Math.min(s.radius, 14);
+  const scale = brandRadiusScale(k);
+  // ⚠️ Sin clamp propio. El anterior era `Math.min(radius, 14)` y colapsaba warm, vibrant
+  // y playful al MISMO valor —tres de siete muestras idénticas— y encima no coincidía con
+  // el clamp del horneado. La muestra pinta el escalón `xl`, que es el de una tarjeta:
+  // exactamente lo que se va a ver.
+  const r = scale.xl;
   return (
     <button
       type="button"
@@ -232,7 +355,7 @@ function MoodSwatch({
         </span>
         <span
           className="h-2 w-full"
-          style={{ background: p.brand, borderRadius: `${Math.min(s.radius, 99)}px` }}
+          style={{ background: p.brand, borderRadius: `${scale.sm}px` }}
         />
       </div>
       <span
@@ -242,6 +365,14 @@ function MoodSwatch({
       </span>
     </button>
   );
+}
+
+/** Lo que se lee bajo el nombre del kit: familias de verdad, no ids. */
+function fontLabel(k: BrandKit): string {
+  const nombre = (slot: "heading" | "body") =>
+    (slot === "heading" ? k.fonts?.headingName : k.fonts?.bodyName) ||
+    BRAND_FONTS.find((f) => f.id === (slot === "heading" ? k.fonts?.heading : k.fonts?.body))?.family;
+  return [...new Set([nombre("heading"), nombre("body")].filter(Boolean))].join(" · ");
 }
 
 function KitSwatch({ kit }: { kit: BrandKit }) {
@@ -282,6 +413,10 @@ function KitEditor({
   const [colors, setColors] = useState<BrandColors>(kit?.colors ?? BLANK);
   const [heading, setHeading] = useState(kit?.fonts?.heading ?? "");
   const [body, setBody] = useState(kit?.fonts?.body ?? "");
+  const [headingUrl, setHeadingUrl] = useState(kit?.fonts?.headingUrl ?? "");
+  const [bodyUrl, setBodyUrl] = useState(kit?.fonts?.bodyUrl ?? "");
+  const [headingName, setHeadingName] = useState(kit?.fonts?.headingName ?? "");
+  const [bodyName, setBodyName] = useState(kit?.fonts?.bodyName ?? "");
   const [logoUrl, setLogoUrl] = useState(kit?.logoUrl ?? "");
   const [logoKey, setLogoKey] = useState(kit?.logoKey ?? "");
   const [mood, setMood] = useState(kit?.mood ?? "");
@@ -295,7 +430,14 @@ function KitEditor({
     id: "preview",
     name: name || t("Marca"),
     colors,
-    fonts: { heading: heading || undefined, body: body || undefined },
+    fonts: {
+      heading: heading || undefined,
+      body: body || undefined,
+      headingUrl: headingUrl || undefined,
+      bodyUrl: bodyUrl || undefined,
+      headingName: headingName || undefined,
+      bodyName: bodyName || undefined,
+    },
     logoUrl: logoUrl || null,
     // El tono mueve la derivación, así que el preview grande lo necesita o enseñaría
     // otra cosa distinta a la que se guarda.
@@ -334,8 +476,6 @@ function KitEditor({
     try {
       const out = await extractBrandFromUrlFn({ data: { url: url.trim() } });
       setColors(out.colors);
-      if (out.fonts?.heading) setHeading(out.fonts.heading);
-      if (out.fonts?.body) setBody(out.fonts.body);
       if (out.logoKey) {
         setLogoKey(out.logoKey);
         setLogoUrl(out.logoUrl || "");
@@ -358,7 +498,17 @@ function KitEditor({
           id: kit?.id,
           name: name.trim(),
           colors,
-          fonts: heading || body ? { heading: heading || undefined, body: body || undefined } : null,
+          fonts:
+            heading || body || headingUrl || bodyUrl
+              ? {
+                  heading: heading || undefined,
+                  body: body || undefined,
+                  headingUrl: headingUrl || undefined,
+                  bodyUrl: bodyUrl || undefined,
+                  headingName: headingName || undefined,
+                  bodyName: bodyName || undefined,
+                }
+              : null,
           logoKey: logoKey || null,
           mood: mood || null,
         },
@@ -483,25 +633,25 @@ function KitEditor({
             ))}
           </div>
 
-          <div className="grid grid-cols-2 gap-2">
-            <div>
-              <label className="text-xs font-semibold">{t("Fuente de títulos")}</label>
-              <input
-                value={heading}
-                onChange={(e) => setHeading(e.target.value)}
-                placeholder="Playfair Display"
-                className="mt-1 w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm"
-              />
-            </div>
-            <div>
-              <label className="text-xs font-semibold">{t("Fuente de texto")}</label>
-              <input
-                value={body}
-                onChange={(e) => setBody(e.target.value)}
-                placeholder="Inter"
-                className="mt-1 w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm"
-              />
-            </div>
+          <div className="space-y-3">
+            <FontPicker
+              label={t("Fuente de títulos")}
+              value={heading}
+              customUrl={headingUrl}
+              customName={headingName}
+              onPick={(id) => { setHeading(id); setHeadingUrl(""); }}
+              onUpload={(url, name) => { setHeadingUrl(url); setHeadingName(name); }}
+              onClearCustom={() => { setHeadingUrl(""); setHeadingName(""); }}
+            />
+            <FontPicker
+              label={t("Fuente de texto")}
+              value={body}
+              customUrl={bodyUrl}
+              customName={bodyName}
+              onPick={(id) => { setBody(id); setBodyUrl(""); }}
+              onUpload={(url, name) => { setBodyUrl(url); setBodyName(name); }}
+              onClearCustom={() => { setBodyUrl(""); setBodyName(""); }}
+            />
           </div>
 
           <div>
@@ -561,63 +711,101 @@ function BrandPreview({ kit }: { kit: BrandKit }) {
   const t = useT();
   const form = brandFormVars(kit);
   const p = brandPalette(kit);
+  // ⚠️ NADA de `rounded-*` ni `border` de Tailwind aquí. Este preview tenía las clases
+  // fijas y por eso enseñaba sólo el color: cambiabas el tono y no se movía una esquina.
+  // Todo sale de los mismos tokens que hornea el servidor.
+  const r = brandRadiusScale(kit);
+  const s = brandShape(kit);
+  const f = brandFontStacks(kit);
+  const caps = s.caps ? ({ textTransform: "uppercase", letterSpacing: ".08em" } as const) : {};
 
   return (
     <div className="space-y-2">
       <p className="text-xs font-semibold text-muted">{t("Así se va a ver")}</p>
 
       {/* Formulario público */}
-      <div className="rounded-xl p-3" style={{ background: form["--paper"], border: `1px solid ${form["--line"]}` }}>
+      <div
+        className="p-3"
+        style={{
+          background: form["--paper"],
+          border: `${form["--edge"]} solid ${form["--line"]}`,
+          borderRadius: form["--radius-xl"],
+          boxShadow: form["--shadow"],
+        }}
+      >
         {kit.logoUrl && <img src={kit.logoUrl} alt="" className="mb-2 max-h-6 max-w-[50%] object-contain" />}
-        <p className="text-sm font-semibold" style={{ color: form["--ink"] }}>
+        <p className="text-sm font-semibold" style={{ color: form["--ink"], fontFamily: f.heading }}>
           {t("Formulario")}
         </p>
-        <p className="mt-0.5 text-[11px]" style={{ color: form["--muted"] }}>
+        <p className="mt-0.5 text-[11px]" style={{ color: form["--muted"], fontFamily: f.body }}>
           {t("Cuéntanos de tu caso")}
         </p>
         <div className="mt-2 h-1 rounded-full" style={{ background: form["--tint"] }}>
           <div className="h-1 w-1/3 rounded-full" style={{ background: form["--accent"] }} />
         </div>
         <span
-          className="mt-2 inline-block rounded-lg px-2.5 py-1 text-[11px] font-semibold"
-          style={{ background: form["--accent"], color: p.light["brand-fg"] }}
+          className="mt-2 inline-block px-2.5 py-1 text-[11px] font-semibold"
+          style={{
+            background: form["--accent"],
+            color: p.light["brand-fg"],
+            borderRadius: form["--radius-md"],
+            ...caps,
+          }}
         >
           {t("Enviar")}
         </span>
       </div>
 
       {/* Documento en papel */}
-      <div className="rounded-xl border border-border bg-white p-3">
+      <div
+        className="bg-white p-3"
+        style={{
+          border: `${form["--edge"]} solid ${p.light.border}`,
+          borderRadius: r.xl + "px",
+        }}
+      >
         {kit.logoUrl && (
           <img
             src={kit.logoUrl}
             alt=""
             className="mb-1.5 max-h-5 max-w-[40%] object-contain pb-1.5"
-            style={{ borderBottom: `2px solid ${p.light.brand}` }}
+            style={{ borderBottom: `calc(${form["--edge"]} * 2) solid ${p.light.brand}` }}
           />
         )}
-        <p className="text-[11px] font-bold" style={{ color: p.light.ink }}>
+        <p className="text-[11px] font-bold" style={{ color: p.light.ink, fontFamily: f.heading, ...caps }}>
           {t("Documento")}
         </p>
         <div className="mt-1 space-y-1">
-          <div className="h-1 w-full rounded" style={{ background: p.light.border }} />
-          <div className="h-1 w-4/5 rounded" style={{ background: p.light.border }} />
+          <div className="h-1 w-full" style={{ background: p.light.border, borderRadius: r.xs + "px" }} />
+          <div className="h-1 w-4/5" style={{ background: p.light.border, borderRadius: r.xs + "px" }} />
         </div>
       </div>
 
       {/* La app, en oscuro: es donde se nota si la marca aguanta el modo noche. */}
-      <div className="rounded-xl p-3" style={{ background: p.dark.surface, border: `1px solid ${p.dark.border}` }}>
-        <p className="text-[11px] font-semibold" style={{ color: p.dark.ink }}>
+      <div
+        className="p-3"
+        style={{
+          background: p.dark.surface,
+          border: `${form["--edge"]} solid ${p.dark.border}`,
+          borderRadius: r.xl + "px",
+        }}
+      >
+        <p className="text-[11px] font-semibold" style={{ color: p.dark.ink, fontFamily: f.heading }}>
           {t("La app en oscuro")}
         </p>
         <div className="mt-1.5 flex items-center gap-1.5">
           <span
-            className="rounded-md px-2 py-0.5 text-[10px] font-semibold"
-            style={{ background: p.dark.brand, color: p.dark["brand-fg"] }}
+            className="px-2 py-0.5 text-[10px] font-semibold"
+            style={{
+              background: p.dark.brand,
+              color: p.dark["brand-fg"],
+              borderRadius: r.md + "px",
+              ...caps,
+            }}
           >
             {t("Botón")}
           </span>
-          <span className="text-[10px]" style={{ color: p.dark.muted }}>
+          <span className="text-[10px]" style={{ color: p.dark.muted, fontFamily: f.body }}>
             {t("texto secundario")}
           </span>
         </div>
