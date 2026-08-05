@@ -14,7 +14,7 @@ export const Route = createFileRoute("/api/stream")({
         const { useSession } = await import("@tanstack/react-start/server");
         const { sessionConfig } = await import("../server/session.server");
         const s = await useSession<{
-          user?: { sub: string; name: string; isOwner: boolean };
+          user?: { sub: string; name: string; avatar?: string; isOwner: boolean };
         }>(sessionConfig());
         const user = s.data.user;
         if (!user) return new Response("unauthorized", { status: 401 });
@@ -65,7 +65,7 @@ export const Route = createFileRoute("/api/stream")({
               } catch {
                 /* controller cerrado — cancel() limpia */
               }
-            });
+            }, user.avatar || undefined);
             let unsubscribed = false;
             unsub = () => {
               if (unsubscribed) return;

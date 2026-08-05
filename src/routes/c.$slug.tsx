@@ -239,7 +239,7 @@ export const Route = createFileRoute("/c/$slug")({
 type SessionUser = { sub: string; name: string; email: string; avatar: string; isOwner: boolean; isStaff: boolean; handle: string };
 // Presencia del workspace: sub → nombre + última señal REAL (no la última conexión).
 // `lastActiveAt` envejece con la pestaña abierta y quieta; ver IDLE_MS en bus.server.
-type OnlinePeople = Map<string, { name: string; lastActiveAt: number }>;
+type OnlinePeople = Map<string, { name: string; avatar?: string; lastActiveAt: number }>;
 type Attach = { fileId: string; mime: string; size: number; name: string; thumbFileId?: string | null; width?: number | null; height?: number | null };
 // El optimista guarda su propio payload de envío → se puede reintentar tal cual.
 type Optimistic = {
@@ -1959,12 +1959,12 @@ function ChannelPage() {
         scheduleDocOpen(ev.messageId, "artifact");
         break;
       case "presence:init":
-        setOnline(new Map(ev.online.map((p) => [p.sub, { name: p.name, lastActiveAt: p.lastActiveAt }])));
+        setOnline(new Map(ev.online.map((p) => [p.sub, { name: p.name, avatar: p.avatar, lastActiveAt: p.lastActiveAt }])));
         break;
       case "presence":
         setOnline((prev) => {
           const n = new Map(prev);
-          if (ev.status === "online") n.set(ev.sub, { name: ev.name, lastActiveAt: ev.lastActiveAt });
+          if (ev.status === "online") n.set(ev.sub, { name: ev.name, avatar: ev.avatar, lastActiveAt: ev.lastActiveAt });
           else n.delete(ev.sub);
           return n;
         });
@@ -5101,7 +5101,7 @@ function OnlineChip({ online }: { online: OnlinePeople }) {
             <ul className="max-h-80 space-y-1 overflow-y-auto thin-scroll">
               {people.map((p) => (
                 <li key={p.sub} className="flex items-center gap-2.5 rounded-lg px-1 py-1.5">
-                  <Avatar name={p.name} className={`h-8 w-8 ${p.idle ? "opacity-50" : ""}`} />
+                  <Avatar name={p.name} avatar={p.avatar} className={`h-8 w-8 ${p.idle ? "opacity-50" : ""}`} />
                   {/* Relleno vs hueco, no verde vs gris: la diferencia se ve igual sin
                       distinguir color. */}
                   <span
