@@ -6461,25 +6461,25 @@ function DmView({
             se conserva) → sin advertencia; pero SÍ es de ida y no vuelta, y eso lo dice
             el propio texto en vez de esconderlo. El servidor decide a qué modelo: aquí
             no se nombra ninguno. */}
-        {isAgentDm && esc && (
-          <button
-            onClick={() => { if (!esc.escalated) setPidiendoPro(true); }}
-            disabled={esc.escalated}
-            title={
-              esc.escalated
-                ? t("Esta conversación ya usa el modelo más capaz")
-                : t("Subir a un modelo más capaz para esta conversación")
-            }
-            className={`grid h-11 w-11 shrink-0 place-items-center rounded-lg transition md:h-9 md:w-9 ${
-              esc.escalated
-                ? "cursor-default text-amber-500"
-                : "text-muted hover:bg-surface-3 hover:text-ink"
-            }`}
+        {/* RELLENO ámbar = esta conversación ya está arriba; contorno = se puede subir.
+            Ya escalada deja de ser un BOTÓN y pasa a ser un indicador (`span`): un
+            `button disabled` heredaba el `cursor: not-allowed` global de styles.css y
+            parecía que algo estaba prohibido, cuando en realidad ya está hecho. */}
+        {isAgentDm && esc?.escalated && (
+          <span
+            title={t("Esta conversación ya usa el modelo más capaz")}
+            className="grid h-11 w-11 shrink-0 place-items-center rounded-lg text-amber-500 md:h-9 md:w-9"
           >
-            {/* RELLENO = ya está arriba; contorno = se puede subir. El estado se ve sin
-                tocar nada, que es lo que faltaba: antes el control era optimista y sólo
-                al hacer clic te enterabas de que no había nada que hacer. */}
-            <Zap size={17} fill={esc.escalated ? "currentColor" : "none"} />
+            <Zap size={17} fill="currentColor" />
+          </span>
+        )}
+        {isAgentDm && esc && !esc.escalated && (
+          <button
+            onClick={() => setPidiendoPro(true)}
+            title={t("Subir a un modelo más capaz para esta conversación")}
+            className="grid h-11 w-11 shrink-0 place-items-center rounded-lg text-muted transition hover:bg-surface-3 hover:text-ink md:h-9 md:w-9"
+          >
+            <Zap size={17} />
           </button>
         )}
       </header>
