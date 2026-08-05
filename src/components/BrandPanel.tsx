@@ -436,6 +436,8 @@ function KitEditor({
   const [url, setUrl] = useState("");
   const [section, setSection] = useState<SectionId>("basicos");
   const [busy, setBusy] = useState<null | "save" | "url" | "logo">(null);
+  const [dragging, setDragging] = useState(false);
+  const [logoError, setLogoError] = useState(false);
   const [error, setError] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -470,6 +472,7 @@ function KitEditor({
       const out = (await res.json()) as { key: string; url: string };
       setLogoKey(out.key);
       setLogoUrl(out.url);
+      setLogoError(false);
       // Un logo recién subido casi siempre trae la paleta que la persona quiere; se
       // ofrece, no se impone: sólo rellena si todavía está en los valores de fábrica.
       if (colors.primary === BLANK.primary && colors.secondary === BLANK.secondary) {
@@ -603,34 +606,85 @@ function KitEditor({
 
           <div>
             <label className="text-xs font-semibold">{t("Logo")}</label>
-            <div className="mt-1 flex items-center gap-3">
-              <div className="flex h-14 w-24 items-center justify-center rounded-lg border border-border bg-surface-2 p-1.5">
-                {logoUrl ? (
-                  <img src={logoUrl} alt="" className="max-h-full max-w-full object-contain" />
+            {/* La caja ES el control: click o arrastrar. Antes había recuadro + botón
+                "Subir" para una sola acción, y el recuadro no hacía nada — dos cosas
+                donde basta una. */}
+            <div className="mt-1 flex items-start gap-2">
+              <button
+                type="button"
+                disabled={busy !== null}
+                onClick={() => fileRef.current?.click()}
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  setDragging(true);
+                }}
+                onDragLeave={() => setDragging(false)}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  setDragging(false);
+                  const f = e.dataTransfer.files?.[0];
+                  if (f) uploadLogo(f);
+                }}
+                aria-label={t("Subir logo")}
+                className={`flex h-20 w-40 flex-col items-center justify-center gap-1 rounded-xl border border-dashed p-2 text-center transition disabled:opacity-50 ${
+                  dragging ? "border-brand bg-brand/5" : "border-border hover:border-brand/50"
+                }`}
+                // Cuadrícula de fondo: un logo BLANCO sobre transparente es invisible
+                // encima de una superficie clara, y se lee como "no cargó".
+                style={
+                  logoUrl && !logoError
+                    ? {
+                        backgroundImage:
+                          "linear-gradient(45deg,#0000000d 25%,transparent 25%,transparent 75%,#0000000d 75%)," +
+                          "linear-gradient(45deg,#0000000d 25%,transparent 25%,transparent 75%,#0000000d 75%)",
+                        backgroundSize: "12px 12px",
+                        backgroundPosition: "0 0,6px 6px",
+                      }
+                    : undefined
+                }
+              >
+                {busy === "logo" ? (
+                  <Loader2 className="h-4 w-4 animate-spin text-muted" />
+                ) : logoUrl ? (
+                  logoError ? (
+                    // ⚠️ NUNCA una caja vacía. Un `<img>` que falla no se ve, y desde
+                    // fuera eso es idéntico a "no subí nada": es el mismo fallo mudo que
+                    // arrastró esta feature. Si no carga, se dice y se enseña de dónde.
+                    <span className="px-1 text-[10px] leading-tight text-red-500">
+                      {t("No pude cargar la imagen")}
+                      <br />
+                      <span className="text-muted">{logoUrl.replace(/^https?:\/\//, "").slice(0, 34)}…</span>
+                    </span>
+                  ) : (
+                    <img
+                      src={logoUrl}
+                      alt=""
+                      onError={() => setLogoError(true)}
+                      onLoad={() => setLogoError(false)}
+                      className="max-h-full max-w-full object-contain"
+                    />
+                  )
                 ) : (
-                  <ImagePlus className="h-4 w-4 text-muted" />
+                  <>
+                    <ImagePlus className="h-4 w-4 text-muted" />
+                    <span className="text-[11px] leading-tight text-muted">
+                      {t("Arrastra tu logo o haz clic")}
+                    </span>
+                  </>
                 )}
-              </div>
-              <div className="flex flex-col gap-1">
+              </button>
+              {logoUrl && (
                 <button
-                  disabled={busy !== null}
-                  onClick={() => fileRef.current?.click()}
-                  className="rounded-lg bg-surface-3 px-3 py-1.5 text-xs font-semibold disabled:opacity-50"
+                  onClick={() => {
+                    setLogoUrl("");
+                    setLogoKey("");
+                  }}
+                  aria-label={t("Quitar")}
+                  className="rounded-lg p-1.5 text-muted hover:bg-surface-3 hover:text-ink"
                 >
-                  {busy === "logo" ? t("Subiendo…") : t("Subir")}
+                  <Trash2 className="h-3.5 w-3.5" />
                 </button>
-                {logoUrl && (
-                  <button
-                    onClick={() => {
-                      setLogoUrl("");
-                      setLogoKey("");
-                    }}
-                    className="rounded-lg px-3 py-1.5 text-xs text-muted hover:text-ink"
-                  >
-                    {t("Quitar")}
-                  </button>
-                )}
-              </div>
+              )}
             </div>
             <input
               ref={fileRef}
