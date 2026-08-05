@@ -1,7 +1,7 @@
 import { Component, createContext, forwardRef, Fragment, type ReactNode, useCallback, useContext, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useReducer, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { FileGlyph } from "../components/FileGlyph";
-import { useEditor, EditorContent } from "@tiptap/react";
+import { useEditor, EditorContent, type Editor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import Placeholder from "@tiptap/extension-placeholder";
 import Mention from "@tiptap/extension-mention";
@@ -8888,6 +8888,9 @@ const Composer = forwardRef<ComposerHandle, {
   const [pending, setPending] = useState<Pending[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const uploading = pending.some((p) => p.uploading);
+  // El editor se crea más abajo; por ref para que `addFiles` siga con deps vacías —
+  // se expone por `useImperativeHandle` y una identidad que cambie re-crearía el handle.
+  const editorRef = useRef<Editor | null>(null);
 
   // Solo depende de setPending (estable) → estable entre renders; seguro exponerlo por ref.
   const addFiles = useCallback((files: FileList | File[]) => {
@@ -8913,6 +8916,18 @@ const Composer = forwardRef<ComposerHandle, {
         .catch(() =>
           setPending((p) => p.map((x) => (x.localId === localId ? { ...x, uploading: false, error: true } : x)))
         );
+    }
+    // Foco al composer. Soltar un archivo (o elegirlo con el clip) es "voy a escribir
+    // sobre esto": sin esto la miniatura aparecía y el cursor NO, y había que dar un
+    // clic extra en un campo que ya estaba justo debajo. Cubre las dos entradas porque
+    // las dos pasan por aquí.
+    //
+    // Misma guarda de puntero fino que el autofocus al cambiar de room: en táctil
+    // levantaría el teclado tapando la miniatura que la persona acaba de adjuntar.
+    // Va en el frame siguiente — el file picker todavía se está cerrando y el foco
+    // volvería al botón del clip.
+    if (typeof window !== "undefined" && window.matchMedia?.("(pointer: fine)").matches) {
+      requestAnimationFrame(() => editorRef.current?.commands.focus("end"));
     }
   }, []);
   // La zona de drop grande (nivel conversación) empuja los archivos aquí.
@@ -9030,6 +9045,9 @@ const Composer = forwardRef<ComposerHandle, {
       }
     },
   });
+
+  // El ref que `addFiles` usa para devolver el foco tras adjuntar (ver allá arriba).
+  editorRef.current = editor ?? null;
 
   // Recarga el borrador al cambiar de scope sin desmontar (room-switch en Flow). Los
   // paneles keyados (hilo/DM) ya remontan. setContent parsea markdown (tiptap-markdown).
