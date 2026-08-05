@@ -130,7 +130,30 @@ export const Route = createFileRoute("/api/hooks/sentry/$token")({
             issue = await issueForAlert(ref.ownerSub, issueId);
           }
 
-          await publicar(ref, formatAlert(payload, issue, ref.handle));
+          const alertId = await publicar(ref, formatAlert(payload, issue, ref.handle));
+
+          // ── Enriquecimiento automático ────────────────────────────────────
+          // El agente investiga y deja el resumen EN EL HILO de la alerta. Ver
+          // `sentry-enrich.server.ts` para el porqué (y para el umbral, que no es opcional).
+          //
+          // ⚠️ NO se espera: un turno de agente tarda decenas de segundos y Sentry
+          // REINTENTA el webhook si tardamos en contestar. Contestamos ya y el turno sigue
+          // por su cuenta, dentro de su propio `withNamespace` — el contexto del request se
+          // desmonta al responder, así que sin ese envoltorio la investigación escribiría
+          // en el tenant equivocado.
+          const { worthEnriching, enrichAlertInThread } = await import("../server/sentry-enrich.server");
+          if (alertId && ref.ownerSub && worthEnriching(issue)) {
+            void withNamespace(ref.ns, () =>
+              enrichAlertInThread({
+                ns: ref.ns,
+                channelId: ref.channelId,
+                alertMessageId: alertId,
+                handle: ref.handle,
+                ownerSub: ref.ownerSub,
+                issue: issue!,
+              })
+            );
+          }
           return json({ ok: true });
         });
       },
@@ -150,7 +173,7 @@ export const Route = createFileRoute("/api/hooks/sentry/$token")({
 async function publicar(
   ref: { ns: string; channelId: number; topic: string; handle: string; name: string; avatar: string },
   cuerpo: string
-): Promise<void> {
+): Promise<number | null> {
   try {
     const db = await import("../db.server");
     const bus = await import("../server/bus.server");
@@ -169,7 +192,9 @@ async function publicar(
     );
     const msg = await db.getMessage(id);
     if (msg) bus.publish(bus.ch.room(ref.ns, ref.channelId), { t: "message:new", msg });
+    return id;
   } catch (e) {
     console.error("[hook sentry] no pude publicar", e);
+    return null;
   }
 }
