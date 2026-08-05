@@ -3036,7 +3036,7 @@ function NovedadesModal() {
                       initial={{ opacity: 0, y: 8 }}
                       animate={{ opacity: 1, y: 0 }}
                       transition={{ delay: 0.06 }}
-                      className="inline-flex items-center gap-1.5 rounded-full bg-gradient-to-r from-brand/25 to-brand/10 px-3 py-1 text-[11px] font-bold uppercase tracking-wider text-brand ring-1 ring-brand/20"
+                      className="inline-flex items-center gap-1.5 rounded-full bg-brand/15 px-3 py-1 text-[11px] font-bold uppercase tracking-wider text-brand ring-1 ring-brand/20"
                     >
                       <Megaphone size={12} /> {t("Novedad")}
                     </motion.span>
@@ -3091,7 +3091,7 @@ function NovedadesModal() {
                   whileHover={{ scale: 1.04 }}
                   whileTap={{ scale: 0.97 }}
                   onClick={next}
-                  className="rounded-xl bg-gradient-to-br from-brand to-brand-2 px-5 py-2.5 text-sm font-bold text-brand-fg shadow-lg shadow-brand/25 ring-1 ring-white/10 transition"
+                  className="rounded-xl bg-brand px-5 py-2.5 text-sm font-bold text-brand-fg shadow-lg shadow-brand/25 transition hover:bg-brand/90"
                 >
                   {isLast ? t("Entendido") : `${t("Siguiente")} · ${idx + 1}/${total}`}
                 </motion.button>
