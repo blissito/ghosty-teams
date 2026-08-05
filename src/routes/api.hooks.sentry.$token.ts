@@ -1,3 +1,4 @@
+import { formatAlert } from "../lib/sentry-alert";
 import { createFileRoute } from "@tanstack/react-router";
 
 // POST /api/hooks/sentry/<token> → una alerta de Sentry se convierte en un mensaje del canal.
@@ -120,7 +121,16 @@ export const Route = createFileRoute("/api/hooks/sentry/$token")({
             return json({ ok: true, throttled: true });
           }
 
-          await publicar(ref, formatear(payload));
+          // Enriquecer con el issue: el webhook no trae conteos ni shortId. Es opcional a
+          // propósito — `issueForAlert` se traga cualquier fallo y devuelve null.
+          const issueId = String(payload?.id ?? payload?.event?.issue_id ?? payload?.event?.groupID ?? "").slice(0, 100);
+          let issue: Record<string, any> | null = null;
+          if (ref.ownerSub && issueId) {
+            const { issueForAlert } = await import("../server/connectors/sentry.server");
+            issue = await issueForAlert(ref.ownerSub, issueId);
+          }
+
+          await publicar(ref, formatAlert(payload, issue, ref.handle));
           return json({ ok: true });
         });
       },
@@ -128,31 +138,6 @@ export const Route = createFileRoute("/api/hooks/sentry/$token")({
   },
 });
 
-/**
- * El payload del webhook legacy es PRIVADO del lado de Sentry (endpoints marcados
- * `ApiPublishStatus.PRIVATE`), así que puede cambiar sin aviso: todo se lee con
- * fallback y nada se asume presente. Lo peor que puede pasar es un mensaje escueto,
- * nunca una excepción que pierda la alerta.
- */
-function formatear(p: any): string {
-  const nivel = String(p?.level ?? p?.event?.level ?? "error").toLowerCase();
-  const icono = nivel === "warning" ? "⚠️" : nivel === "info" ? "ℹ️" : "🔴";
-  const titulo = String(p?.event?.title ?? p?.message ?? p?.culprit ?? "Error en Sentry").slice(0, 300);
-  const proyecto = String(p?.project_name ?? p?.project ?? "").slice(0, 100);
-  const culprit = String(p?.culprit ?? "").slice(0, 200);
-  const url = typeof p?.url === "string" ? p.url : typeof p?.event?.web_url === "string" ? p.event.web_url : "";
-  const regla = Array.isArray(p?.triggering_rules) ? p.triggering_rules.filter(Boolean).join(", ") : "";
-
-  const lineas = [`${icono} **${titulo}**`];
-  const meta = [proyecto && `proyecto \`${proyecto}\``, nivel && `nivel \`${nivel}\``]
-    .filter(Boolean)
-    .join(" · ");
-  if (meta) lineas.push(meta);
-  if (culprit) lineas.push(`en \`${culprit}\``);
-  if (regla) lineas.push(`_regla: ${regla}_`);
-  if (url) lineas.push(`[Ver en Sentry](${url})`);
-  return lineas.join("\n");
-}
 
 /**
  * Publica en el canal congelado en el token, con la identidad del agente que configuró la

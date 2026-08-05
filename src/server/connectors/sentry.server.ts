@@ -176,6 +176,34 @@ function trimIssue(i: any): unknown {
   };
 }
 
+// ── Enriquecer una alerta entrante ───────────────────────────────────────────
+
+/**
+ * El issue detrás de una alerta del webhook, para la tarjeta del canal.
+ *
+ * El webhook legacy NO trae `count`, `userCount`, `shortId` ni `permalink` — son del
+ * issue, no del evento — y son justo los campos que dicen si el error se atiende ahora.
+ *
+ * ⚠️ Devuelve `null` ante CUALQUIER problema (sin conexión, token vencido, 404, red).
+ * Es enriquecimiento: la alerta tiene que salir igual. Perderla por no poder adornarla
+ * sería el peor intercambio posible.
+ *
+ * ⚠️ Y con timeout corto: Sentry REINTENTA el webhook si tardamos, así que un fetch
+ * colgado aquí no retrasa una alerta, multiplica todas las demás.
+ */
+export async function issueForAlert(sub: string, issueId: string): Promise<Record<string, any> | null> {
+  if (!sub || !issueId) return null;
+  try {
+    const r = await api(sub, `/issues/${encodeURIComponent(issueId)}/`, {
+      signal: AbortSignal.timeout(2500),
+    });
+    if (!r || typeof r !== "object" || "error" in r) return null;
+    return trimIssue(r) as Record<string, any>;
+  } catch {
+    return null;
+  }
+}
+
 // ── Contexto ambiente ────────────────────────────────────────────────────────
 
 export async function ambientContext(

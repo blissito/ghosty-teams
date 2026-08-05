@@ -322,6 +322,85 @@ export function stripAskUser(body: string): string {
   return [before.trim(), after.trim()].filter(Boolean).join("\n\n");
 }
 
+// ── Alertas entrantes (Sentry) ────────────────────────────────────────────────
+//
+// ```gt-alert
+// {"level":"error","title":"…","file":"HomeScreen.tsx","fn":"onPress","count":15,…,
+//  "actions":[{"label":"Proponer el fix","send":"@ghosty revisa el error …"}]}
+// ```
+// Lo emite el webhook (`api.hooks.sentry.$token.ts`), no el modelo — así que el JSON
+// llega siempre completo y de un solo golpe, sin streaming. Aun así se exige el fence
+// CERRADO, por la misma razón que ask-user: es la única forma de no pintar media tarjeta
+// si algún día alguien lo emite por partes.
+
+export type AlertAction = { label: string; send: string };
+export type AlertCardData = {
+  level: string;
+  substatus: string;
+  title: string;
+  project: string;
+  file: string;
+  fn: string;
+  count: number | null;
+  users: number | null;
+  env: string;
+  shortId: string;
+  url: string;
+  actions: AlertAction[];
+};
+
+export function extractAlert(body: string): AlertCardData | null {
+  const open = body.match(/```gt-alert[^\n]*\n/);
+  if (!open || open.index == null) return null;
+  const rest = body.slice(open.index + open[0].length);
+  const closeIdx = rest.indexOf("```");
+  if (closeIdx === -1) return null;
+  try {
+    const p = JSON.parse(rest.slice(0, closeIdx).trim()) as Record<string, unknown>;
+    const title = typeof p.title === "string" ? p.title.trim() : "";
+    if (!title) return null; // sin título no hay tarjeta que pintar
+    const str = (v: unknown) => (typeof v === "string" ? v.trim() : "");
+    const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) && v > 0 ? v : null);
+    const actions = Array.isArray(p.actions)
+      ? (p.actions as unknown[])
+          .map((a) => {
+            const o = a as Record<string, unknown>;
+            return { label: str(o?.label), send: str(o?.send) };
+          })
+          // Un botón sin `send` no haría nada al hacer clic, que es peor que no estar.
+          .filter((a) => a.label && a.send)
+          .slice(0, 4)
+      : [];
+    return {
+      level: str(p.level) || "error",
+      substatus: str(p.substatus),
+      title,
+      project: str(p.project),
+      file: str(p.file),
+      fn: str(p.fn),
+      count: num(p.count),
+      users: num(p.users),
+      env: str(p.env),
+      shortId: str(p.shortId),
+      url: str(p.url),
+      actions,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** El cuerpo sin el fence — queda la línea de texto plano, que es el respaldo legible. */
+export function stripAlert(body: string): string {
+  const open = body.match(/```gt-alert[^\n]*\n/);
+  if (!open || open.index == null) return body;
+  const before = body.slice(0, open.index);
+  const rest = body.slice(open.index + open[0].length);
+  const closeIdx = rest.indexOf("```");
+  const after = closeIdx === -1 ? "" : rest.slice(closeIdx + 3);
+  return [before.trim(), after.trim()].filter(Boolean).join("\n\n");
+}
+
 // ── Escaneo de fences: TODAS las ocurrencias, no sólo la primera ───────────────
 //
 // Durante mucho tiempo `eb-audio` y `eb-file` se leían con un `match` sin flag `g`, o sea
@@ -608,6 +687,9 @@ export function bubbleWithoutEbDoc(
   if (!opts?.keepStatus) {
     body = stripToolBlock(body);
     body = stripStepsBlock(body);
+    // Misma regla que arriba: al PINTAR fuera (la tarjeta ya lo muestra), al GUARDAR
+    // dentro — el cliente saca la alerta del propio body y no hay columna aparte.
+    body = stripAlert(body);
   }
   body = bubbleWithoutEbAudio(body);
   body = bubbleWithoutEbFile(body);

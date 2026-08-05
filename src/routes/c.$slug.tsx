@@ -122,7 +122,7 @@ import { unfurlLinkFn } from "../server/unfurl";
 import { registerModalEsc } from "../utils/modal-esc";
 import ArtifactPanel, { type ArtifactView, viewFromAttachment } from "../components/ArtifactPanel";
 import { belongsToOpenConversation } from "../lib/conversation-scope";
-import { extractEbDoc, extractEbPatches, draftTitle, bubbleWithoutEbDoc, extractToolState, extractSteps, type ToolState } from "../lib/ebdoc";
+import { extractEbDoc, extractEbPatches, draftTitle, bubbleWithoutEbDoc, extractToolState, extractSteps, extractAlert, type ToolState, type AlertCardData } from "../lib/ebdoc";
 import { ThinkingRing } from "../components/ThinkingRing";
 import { showSystemNotification } from "../utils/system-notification";
 import { marcarCierre, limpiarCierre } from "../lib/panel-cerrando";
@@ -6863,6 +6863,102 @@ function writeAuState(id: number, s: { answered?: string; dismissed?: boolean })
   try { localStorage.setItem(`askuser:${id}`, JSON.stringify(s)); } catch {}
 }
 
+// ── Tarjeta de alerta (Sentry) ────────────────────────────────────────────────
+//
+// El clic NO llama a ningún endpoint de acción: manda al canal el texto que el SERVIDOR
+// puso en `action.send`, que lleva la @mención. O sea que el turno del agente nace de un
+// mensaje de una persona, como cualquier otro — la alerta en sí nunca lo despierta.
+//
+// Se recuerda el clic (localStorage, por mensaje) porque un canal con alertas necesita
+// mostrar qué ya se atendió; si no, dos personas piden el mismo fix.
+
+function readAlertState(id: number): { asked?: string } {
+  try { return JSON.parse(localStorage.getItem(`alert:${id}`) || "{}"); } catch { return {}; }
+}
+function writeAlertState(id: number, s: { asked?: string }) {
+  try { localStorage.setItem(`alert:${id}`, JSON.stringify(s)); } catch {}
+}
+
+function AlertCard({ msgId, a, onAct }: { msgId: number; a: AlertCardData; onAct: (send: string) => void }) {
+  const t = useT();
+  const [asked, setAsked] = useState<string | null>(readAlertState(msgId).asked ?? null);
+
+  const grave = a.level === "fatal" || a.level === "error";
+  const franja = a.level === "fatal" ? "bg-red-600" : a.level === "error" ? "bg-red-500" : a.level === "warning" ? "bg-amber-500" : "bg-brand";
+  const nivel = a.level === "fatal" ? t("Fatal") : a.level === "warning" ? t("Aviso") : a.level === "info" ? t("Info") : t("Error");
+  // `substatus` lo afirma Sentry (nuevo / escalando / en curso). Nada inferido aquí.
+  const estado = a.substatus === "new" ? t("Nuevo") : a.substatus === "escalating" ? t("Escalando") : "";
+
+  // Los conteos llevan separador de miles: "12483 eventos" se lee mal y es justo la
+  // queja de formato que la propia gente de Sentry levantó sobre sus notificaciones.
+  const n = (v: number) => v.toLocaleString();
+  const meta = [
+    a.project,
+    a.file && a.fn ? `${a.file} → ${a.fn}` : a.file || a.fn,
+    a.count != null ? (a.count === 1 ? t("1 evento") : t("{n} eventos", { n: n(a.count) })) : "",
+    a.users != null ? (a.users === 1 ? t("1 usuario") : t("{n} usuarios", { n: n(a.users) })) : "",
+    a.env,
+  ].filter(Boolean);
+
+  const act = (send: string) => {
+    setAsked(send);
+    writeAlertState(msgId, { asked: send });
+    onAct(send);
+  };
+
+  return (
+    <div className="mt-0.5 flex max-w-xl overflow-hidden rounded-lg border border-border bg-surface-2">
+      <div className={`w-1 shrink-0 ${franja}`} aria-hidden="true" />
+      <div className="min-w-0 flex-1 p-3">
+        <div className="mb-1 flex flex-wrap items-center gap-1.5">
+          <span className={`rounded px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider ${grave ? "text-red-500" : "text-amber-500"} border border-current`}>
+            {nivel}
+          </span>
+          {estado ? (
+            <span className="rounded border border-border px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-muted">{estado}</span>
+          ) : null}
+          {a.shortId ? <span className="font-mono text-[11px] text-muted">{a.shortId}</span> : null}
+        </div>
+        <p className="text-sm font-semibold leading-snug text-ink">{a.title}</p>
+        {meta.length ? (
+          <p className="mt-1 overflow-x-auto whitespace-nowrap font-mono text-[11.5px] text-muted">{meta.join("  ·  ")}</p>
+        ) : null}
+        <div className="mt-2 flex flex-wrap items-center gap-1.5">
+          {a.actions.map((x, i) => (
+            <button
+              key={i}
+              type="button"
+              disabled={!!asked}
+              onClick={() => act(x.send)}
+              className={`rounded-md border px-2.5 py-1 text-xs font-medium transition ${
+                asked === x.send
+                  ? "border-brand bg-brand/10 text-ink"
+                  : asked
+                    ? "border-border text-muted"
+                    : i === 0
+                      ? "border-brand text-brand hover:bg-brand/10"
+                      : "border-border text-ink hover:bg-surface-3"
+              }`}
+            >
+              {asked === x.send ? `✓ ${x.label}` : x.label}
+            </button>
+          ))}
+          {a.url ? (
+            <a
+              href={a.url}
+              target="_blank"
+              rel="noreferrer"
+              className="rounded-md border border-border px-2.5 py-1 text-xs font-medium text-ink transition hover:bg-surface-3"
+            >
+              {t("Ver en Sentry")}
+            </a>
+          ) : null}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function AskUserCard({
   artifactId,
   question,
@@ -7448,7 +7544,7 @@ function MessageRow({
   canPin?: boolean;
 }) {
   const t = useT();
-  const { me, slug, emojis, users, pickerFor, onOpenArtifact, openProfile, turns } = useContext(ChatCtx);
+  const { me, slug, emojis, users, pickerFor, onOpenArtifact, openProfile, turns, sendQuickReply } = useContext(ChatCtx);
   const [editing, setEditing] = useState(false);
   // Mientras un popover de la barra (reaccionar/⋯) esté abierto, la barra NO debe
   // desaparecer al perder el hover del row (si no, el popover se vuelve inclicable).
@@ -7660,7 +7756,14 @@ function MessageRow({
                 const st = extractSteps(m.body);
                 return st ? <StepList steps={st} emojis={emojis} /> : null;
               })()}
-              {bubbleWithoutEbDoc(m.body).trim() ? (
+              {(() => {
+                const al = extractAlert(m.body);
+                return al ? <AlertCard msgId={m.id} a={al} onAct={(send) => sendQuickReply(send, m)} /> : null;
+              })()}
+              {/* Con tarjeta de alerta el bubble se calla: la línea de texto plano que
+                  acompaña al fence es el RESPALDO (citas, buscador, notificación), y
+                  repetirla debajo de la tarjeta sería decir dos veces lo mismo. */}
+              {!extractAlert(m.body) && bubbleWithoutEbDoc(m.body).trim() ? (
               <Markdown
                 body={bubbleWithoutEbDoc(m.body)}
                 artifactUrl={m.artifact?.url}
