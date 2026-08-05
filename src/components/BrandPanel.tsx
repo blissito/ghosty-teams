@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Check, ImagePlus, Loader2, Plus, Trash2, Wand2, X } from "lucide-react";
+import { Check, ImagePlus, Loader2, Plus, Trash2, Wand2 } from "lucide-react";
 import {
   BRAND_MOODS,
   type BrandColors,
@@ -538,12 +538,9 @@ function KitEditor({
   // había que scrollear para llegar al Tono y el botón Guardar salía CORTADO por abajo.
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="flex shrink-0 items-center justify-between gap-3 pb-3">
-        <h3 className="text-sm font-semibold">{kit ? t("Editar marca") : t("Nueva marca")}</h3>
-        <button onClick={onCancel} aria-label={t("Cerrar")} className="rounded-lg p-1.5 hover:bg-surface-3">
-          <X className="h-4 w-4" />
-        </button>
-      </div>
+      {/* ⚠️ SIN cabecera propia: el modal de Ajustes ya pinta su título y su ✕, y esto
+          añadía un segundo par justo debajo. La identidad del editor la lleva el botón
+          Cancelar del footer, que además dice lo que hace. */}
 
       {/* Secciones: el editor entero no cabe de una vez, y paginarlo en cuatro pasos
           cortos es lo que evita el scroll infinito. El preview NO entra aquí: se queda

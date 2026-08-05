@@ -37,7 +37,7 @@ export const Route = createFileRoute("/api/brand-logo")({
             file.name || `${kind}-${file.size}`,
             file.type || "application/octet-stream"
           );
-          return Response.json({ key, url: storage.publicUrl(key) });
+          return Response.json({ key, url: storage.publicAssetUrl(key) });
         } catch (err) {
           // El mensaje es del validador de putLogo (tipo, tamaño, storage sin configurar):
           // decir "falló la subida" a secas manda a leer logs por un PNG de 3 MB.

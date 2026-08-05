@@ -186,7 +186,7 @@ async function findLogo(html: string, origin: string): Promise<{ key: string | n
       // Un icono de 16px no es un logo utilizable en un membrete.
       if (blob.size < 600) continue;
       const key = await putLogo(blob, c.split("/").pop() || "logo", type);
-      return { key, url: storage.publicUrl(key) };
+      return { key, url: storage.publicAssetUrl(key) };
     } catch {
       // Un candidato que falla no interrumpe la extracción: se prueba el siguiente y,
       // si ninguno sirve, se devuelven los colores igual. Media extracción es útil.

@@ -139,6 +139,23 @@ export function publicUrl(key: string): string {
   return `${ENDPOINT}/${uriEncode(BUCKET_PUBLIC, true)}/${uriEncode(key, true)}`;
 }
 
+/**
+ * La URL con la que un TERCERO puede leer el objeto.
+ *
+ * ⚠️ NO es `publicUrl()`. El bucket "público" de Tigris no está abierto a anónimos:
+ * medido, `https://t3.storage.dev/ghosty-teams-public/<key>` responde **403
+ * AccessDenied**, igual que el privado. Lo que sí sirve es el vhost de Caddy
+ * (`ARTIFACT_PUBLIC_BASE`), que es el camino que ya usaba `publishArtifactVersion` — y
+ * por eso los artefactos funcionaban mientras el logo de una marca salía roto.
+ *
+ * Cualquier cosa que tenga que abrir alguien sin sesión (logo en un formulario, membrete
+ * de un PDF, una fuente propia) va por aquí.
+ */
+export function publicAssetUrl(key: string): string {
+  const base = process.env.ARTIFACT_PUBLIC_BASE?.replace(/\/$/, "");
+  return base ? `${base}/${key}` : publicUrl(key);
+}
+
 // Descarga los bytes (para inline base64 de media chico → el agente).
 export async function getBytes(key: string, visibility: Visibility = "private"): Promise<Buffer | null> {
   try {
