@@ -218,7 +218,8 @@ async function brandContextHint(): Promise<string> {
       .filter(Boolean)
       .join(", ");
     return (
-      `[Marca de este espacio — "${kit.name}". Úsala cuando diseñes algo visual (una gráfica, ` +
+      `[Marca de este espacio — "${kit.name}" (id ${kit.id}, para brand_update). Úsala cuando ` +
+      `diseñes algo visual (una gráfica, ` +
       `una portada, HTML a mano) en vez de escoger colores por tu cuenta. Los documentos, ` +
       `formularios y artefactos YA salen con ella puesta: no la repitas a mano ahí.\n` +
       `principal ${c.primary} · secundario ${c.secondary} · acento ${c.accent} · fondo ${c.surface}` +

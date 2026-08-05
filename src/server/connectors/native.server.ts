@@ -8,12 +8,19 @@
 //
 // El `dest` (canal o DM del turno) viaja en el token-capacidad, no en los argumentos:
 // el agente no puede dejarle un recordatorio a otro ni en otro canal.
+import { BRAND_MOODS } from "#/lib/brand-tokens";
+import { BRAND_FONTS } from "#/lib/brand-fonts";
 import type { ConnectorTool } from "./impl";
 // El destino se define donde se FIRMA (tool-token), que es lo que lo hace confiable.
 export type { ToolDest } from "./tool-token.server";
 import type { ToolDest } from "./tool-token.server";
 
 const REPEATS = ["daily", "weekly", "monthly"] as const;
+
+// Los ids del catálogo, para el `description` de las tools de marca. El modelo tiene que
+// ver la lista EN el schema: si tuviera que adivinar el nombre de la fuente, mandaría
+// "Playfair Display" y el saneador lo tiraría sin decir nada.
+const FONT_IDS = BRAND_FONTS.map((f) => `${f.id} (${f.family})`).join(", ");
 
 export function nativeTools(dest: ToolDest | null): ConnectorTool[] {
   return [
@@ -818,6 +825,151 @@ export function nativeTools(dest: ToolDest | null): ConnectorTool[] {
         if (!(await getBrandKit(id))) return { ok: false, error: "no existe esa marca" };
         await activateBrandKit(id);
         return { ok: true };
+      },
+    },
+    {
+      name: "brand_update",
+      description:
+        "Cambia una marca existente: nombre, colores, fuentes o tono (saca el id con brand_list). " +
+        "Manda SÓLO lo que cambia; lo demás se queda igual. Úsalo cuando te pidan ajustar la " +
+        "identidad ('ponle el azul de la papelería', 'hazla más sobria', 'que los títulos vayan en " +
+        "serif'). Si la marca está activa, el cambio se ve en lo que se publique a partir de ahí; " +
+        "lo ya publicado conserva la marca con la que nació.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          id: { type: "string", description: "Id del kit" },
+          name: { type: "string", description: "Nombre nuevo" },
+          primary: { type: "string", description: "Color principal en hex (#rrggbb)" },
+          secondary: { type: "string", description: "Color secundario en hex" },
+          accent: { type: "string", description: "Color de acento en hex" },
+          surface: { type: "string", description: "Color de fondo/papel en hex" },
+          headingFont: {
+            type: "string",
+            description: `Fuente de títulos. Uno de: ${FONT_IDS}. Cadena vacía = la del sistema`,
+          },
+          bodyFont: {
+            type: "string",
+            description: `Fuente de texto. Uno de: ${FONT_IDS}. Cadena vacía = la del sistema`,
+          },
+          mood: {
+            type: "string",
+            enum: [...BRAND_MOODS],
+            description:
+              "Carácter visual. Mueve de verdad el redondeo, el grosor de línea, la sombra y la " +
+              "tipografía: minimal y elegant son cuadrados y sobrios, playful y vibrant redondos y " +
+              "teñidos, bold lleva línea gruesa y contraste alto",
+          },
+        },
+        required: ["id"],
+      },
+      handler: async (_sub, args) => {
+        const id = String(args.id ?? "").trim();
+        if (!id) return { ok: false, error: "falta el id" };
+        const { getBrandKit, updateBrandKit } = await import("../brand.server");
+        const actual = await getBrandKit(id);
+        if (!actual) return { ok: false, error: "no existe esa marca (revisa el id con brand_list)" };
+
+        // ⚠️ Se valida ANTES de escribir y se devuelve el error con la lista de opciones.
+        // El saneador de fuentes descarta un id desconocido en silencio, así que sin esto el
+        // agente diría "ya le puse Playfair" y no habría pasado nada — el mismo fallo mudo
+        // que tuvo esta feature entera.
+        const { BRAND_FONTS } = await import("#/lib/brand-fonts");
+        for (const campo of ["headingFont", "bodyFont"] as const) {
+          const v = args[campo];
+          if (v === undefined || v === "") continue;
+          if (!BRAND_FONTS.some((f) => f.id === String(v))) {
+            return { ok: false, error: `no existe la fuente "${v}". Opciones: ${FONT_IDS}` };
+          }
+        }
+
+        const patch: Parameters<typeof updateBrandKit>[1] = {};
+        if (args.name !== undefined) patch.name = String(args.name);
+        if (args.mood !== undefined) patch.mood = String(args.mood);
+
+        // Los colores se MEZCLAN con los actuales: cambiar sólo el principal no puede
+        // borrar los otros tres.
+        const cambiaColor = ["primary", "secondary", "accent", "surface"].some((k) => args[k] !== undefined);
+        if (cambiaColor) {
+          patch.colors = {
+            ...actual.colors,
+            ...(args.primary !== undefined ? { primary: String(args.primary) } : {}),
+            ...(args.secondary !== undefined ? { secondary: String(args.secondary) } : {}),
+            ...(args.accent !== undefined ? { accent: String(args.accent) } : {}),
+            ...(args.surface !== undefined ? { surface: String(args.surface) } : {}),
+          };
+        }
+        if (args.headingFont !== undefined || args.bodyFont !== undefined) {
+          patch.fonts = {
+            ...(actual.fonts ?? {}),
+            ...(args.headingFont !== undefined ? { heading: String(args.headingFont) || undefined } : {}),
+            ...(args.bodyFont !== undefined ? { body: String(args.bodyFont) || undefined } : {}),
+          };
+        }
+
+        try {
+          const out = await updateBrandKit(id, patch);
+          // Se devuelve el estado REAL tras guardar, no un "listo": si el saneador tiró
+          // algo, el agente lo ve y puede decirlo.
+          return {
+            ok: true,
+            nombre: out?.name,
+            colores: out?.colors,
+            fuentes: out?.fonts,
+            tono: out?.mood,
+            activa: out?.isActive,
+          };
+        } catch (e) {
+          // normalizeColors lanza ante un hex inválido, y ese mensaje es el útil.
+          return { ok: false, error: e instanceof Error ? e.message : String(e) };
+        }
+      },
+    },
+    {
+      name: "brand_set_logo",
+      description:
+        "Pone el logo de una marca a partir de la URL de una imagen (png, jpg, webp o svg). " +
+        "Úsalo cuando te pasen la liga de un logo o cuando lo encuentres en la web del cliente. " +
+        "Lo descargamos y lo servimos nosotros: la liga original puede caducar.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          id: { type: "string", description: "Id del kit" },
+          url: { type: "string", description: "URL pública de la imagen" },
+        },
+        required: ["id", "url"],
+      },
+      handler: async (_sub, args) => {
+        const id = String(args.id ?? "").trim();
+        const url = String(args.url ?? "").trim();
+        if (!id || !url) return { ok: false, error: "faltan id o url" };
+        // Mismo guard SSRF que la extracción por URL: esto hace fetch desde una caja que
+        // ve el bridge del host y la red interna de la flota.
+        let u: URL;
+        try {
+          u = new URL(/^https?:\/\//i.test(url) ? url : `https://${url}`);
+        } catch {
+          return { ok: false, error: "url inválida" };
+        }
+        if (
+          (u.protocol !== "https:" && u.protocol !== "http:") ||
+          /^(localhost|\[?::1\]?|.*\.local)$/i.test(u.hostname) ||
+          /^(10\.|127\.|0\.|169\.254\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(u.hostname)
+        ) {
+          return { ok: false, error: "esa dirección no es pública" };
+        }
+        const { getBrandKit, updateBrandKit, putLogo } = await import("../brand.server");
+        if (!(await getBrandKit(id))) return { ok: false, error: "no existe esa marca" };
+        try {
+          const res = await fetch(u.toString(), { signal: AbortSignal.timeout(15_000) });
+          if (!res.ok) return { ok: false, error: `no pude bajar la imagen (${res.status})` };
+          const tipo = (res.headers.get("content-type") || "").split(";")[0].trim();
+          const key = await putLogo(await res.blob(), u.pathname.split("/").pop() || "logo", tipo);
+          const out = await updateBrandKit(id, { logoKey: key });
+          return { ok: true, logo: out?.logoUrl };
+        } catch (e) {
+          return { ok: false, error: e instanceof Error ? e.message : String(e) };
+        }
       },
     },
   ];
