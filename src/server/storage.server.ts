@@ -142,18 +142,20 @@ export function publicUrl(key: string): string {
 /**
  * La URL con la que un TERCERO puede leer el objeto.
  *
- * ⚠️ NO es `publicUrl()`. El bucket "público" de Tigris no está abierto a anónimos:
- * medido, `https://t3.storage.dev/ghosty-teams-public/<key>` responde **403
- * AccessDenied**, igual que el privado. Lo que sí sirve es el vhost de Caddy
- * (`ARTIFACT_PUBLIC_BASE`), que es el camino que ya usaba `publishArtifactVersion` — y
- * por eso los artefactos funcionaban mientras el logo de una marca salía roto.
+ * ⚠️ NO existe ninguna URL directa que sirva estos objetos, y las dos que lo parecían
+ * NO sirven — las dos medidas:
+ *   · `publicUrl()` (t3.storage.dev/<bucket público>/<key>) responde **403** a un
+ *     anónimo, igual que el bucket privado;
+ *   · `ARTIFACT_PUBLIC_BASE/<key>` responde **200 pero con `text/html`**: ese vhost sirve
+ *     ARTEFACTOS, no objetos. Un `<img>` apuntando ahí recibe una página y no pinta nada,
+ *     y un 200 hace creer que funciona. Fue justo el logo que no se veía.
  *
- * Cualquier cosa que tenga que abrir alguien sin sesión (logo en un formulario, membrete
- * de un PDF, una fuente propia) va por aquí.
+ * Así que va por `/api/brand-asset/<key>`, que lo servimos nosotros. Devuelve una ruta
+ * RELATIVA: quien la necesite absoluta (el formulario, que vive en un iframe de origen
+ * opaco) pasa su `base`.
  */
-export function publicAssetUrl(key: string): string {
-  const base = process.env.ARTIFACT_PUBLIC_BASE?.replace(/\/$/, "");
-  return base ? `${base}/${key}` : publicUrl(key);
+export function publicAssetUrl(key: string, base = ""): string {
+  return `${base}/api/brand-asset/${key.split("/").map(encodeURIComponent).join("/")}`;
 }
 
 // Descarga los bytes (para inline base64 de media chico → el agente).

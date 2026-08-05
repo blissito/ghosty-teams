@@ -53,6 +53,7 @@ import { Route as ApiDocDocxIdRouteImport } from './routes/api.doc-docx.$id'
 import { Route as ApiDocCheckIdRouteImport } from './routes/api.doc-check.$id'
 import { Route as ApiDevDriveRouteImport } from './routes/api.dev.drive'
 import { Route as ApiConnectorsToolsRouteImport } from './routes/api.connectors.tools'
+import { Route as ApiBrandAssetSplatRouteImport } from './routes/api.brand-asset.$'
 import { Route as ApiAttachmentIdRouteImport } from './routes/api.attachment.$id'
 import { Route as ApiArtifactStreamIdRouteImport } from './routes/api.artifact-stream.$id'
 import { Route as ApiHooksSentryTokenRouteImport } from './routes/api.hooks.sentry.$token'
@@ -280,6 +281,11 @@ const ApiConnectorsToolsRoute = ApiConnectorsToolsRouteImport.update({
   path: '/api/connectors/tools',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiBrandAssetSplatRoute = ApiBrandAssetSplatRouteImport.update({
+  id: '/api/brand-asset/$',
+  path: '/api/brand-asset/$',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiAttachmentIdRoute = ApiAttachmentIdRouteImport.update({
   id: '/api/attachment/$id',
   path: '/api/attachment/$id',
@@ -334,6 +340,7 @@ export interface FileRoutesByFullPath {
   '/setup/': typeof SetupIndexRoute
   '/api/artifact-stream/$id': typeof ApiArtifactStreamIdRoute
   '/api/attachment/$id': typeof ApiAttachmentIdRoute
+  '/api/brand-asset/$': typeof ApiBrandAssetSplatRoute
   '/api/connectors/tools': typeof ApiConnectorsToolsRoute
   '/api/dev/drive': typeof ApiDevDriveRoute
   '/api/doc-check/$id': typeof ApiDocCheckIdRoute
@@ -384,6 +391,7 @@ export interface FileRoutesByTo {
   '/setup': typeof SetupIndexRoute
   '/api/artifact-stream/$id': typeof ApiArtifactStreamIdRoute
   '/api/attachment/$id': typeof ApiAttachmentIdRoute
+  '/api/brand-asset/$': typeof ApiBrandAssetSplatRoute
   '/api/connectors/tools': typeof ApiConnectorsToolsRoute
   '/api/dev/drive': typeof ApiDevDriveRoute
   '/api/doc-check/$id': typeof ApiDocCheckIdRoute
@@ -436,6 +444,7 @@ export interface FileRoutesById {
   '/setup/': typeof SetupIndexRoute
   '/api/artifact-stream/$id': typeof ApiArtifactStreamIdRoute
   '/api/attachment/$id': typeof ApiAttachmentIdRoute
+  '/api/brand-asset/$': typeof ApiBrandAssetSplatRoute
   '/api/connectors/tools': typeof ApiConnectorsToolsRoute
   '/api/dev/drive': typeof ApiDevDriveRoute
   '/api/doc-check/$id': typeof ApiDocCheckIdRoute
@@ -489,6 +498,7 @@ export interface FileRouteTypes {
     | '/setup/'
     | '/api/artifact-stream/$id'
     | '/api/attachment/$id'
+    | '/api/brand-asset/$'
     | '/api/connectors/tools'
     | '/api/dev/drive'
     | '/api/doc-check/$id'
@@ -539,6 +549,7 @@ export interface FileRouteTypes {
     | '/setup'
     | '/api/artifact-stream/$id'
     | '/api/attachment/$id'
+    | '/api/brand-asset/$'
     | '/api/connectors/tools'
     | '/api/dev/drive'
     | '/api/doc-check/$id'
@@ -590,6 +601,7 @@ export interface FileRouteTypes {
     | '/setup/'
     | '/api/artifact-stream/$id'
     | '/api/attachment/$id'
+    | '/api/brand-asset/$'
     | '/api/connectors/tools'
     | '/api/dev/drive'
     | '/api/doc-check/$id'
@@ -641,6 +653,7 @@ export interface RootRouteChildren {
   T3SplatRoute: typeof T3SplatRoute
   ApiArtifactStreamIdRoute: typeof ApiArtifactStreamIdRoute
   ApiAttachmentIdRoute: typeof ApiAttachmentIdRoute
+  ApiBrandAssetSplatRoute: typeof ApiBrandAssetSplatRoute
   ApiConnectorsToolsRoute: typeof ApiConnectorsToolsRoute
   ApiDevDriveRoute: typeof ApiDevDriveRoute
   ApiDocCheckIdRoute: typeof ApiDocCheckIdRoute
@@ -971,6 +984,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiConnectorsToolsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/brand-asset/$': {
+      id: '/api/brand-asset/$'
+      path: '/api/brand-asset/$'
+      fullPath: '/api/brand-asset/$'
+      preLoaderRoute: typeof ApiBrandAssetSplatRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/attachment/$id': {
       id: '/api/attachment/$id'
       path: '/api/attachment/$id'
@@ -1065,6 +1085,7 @@ const rootRouteChildren: RootRouteChildren = {
   T3SplatRoute: T3SplatRoute,
   ApiArtifactStreamIdRoute: ApiArtifactStreamIdRoute,
   ApiAttachmentIdRoute: ApiAttachmentIdRoute,
+  ApiBrandAssetSplatRoute: ApiBrandAssetSplatRoute,
   ApiConnectorsToolsRoute: ApiConnectorsToolsRoute,
   ApiDevDriveRoute: ApiDevDriveRoute,
   ApiDocCheckIdRoute: ApiDocCheckIdRoute,

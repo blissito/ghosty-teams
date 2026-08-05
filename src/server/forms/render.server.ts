@@ -43,11 +43,15 @@ body{font-family:${f.body}}
 .gf-logo{display:block;max-height:44px;max-width:60%;width:auto;margin:0 0 16px;object-fit:contain}</style>`;
 }
 
-function brandLogo(kit?: BrandKit | null): string {
+function brandLogo(kit: BrandKit | null | undefined, base: string): string {
   if (!kit?.logoUrl) return "";
+  // ⚠️ ABSOLUTA. `logoUrl` es una ruta nuestra (`/api/brand-asset/…`) y el formulario vive
+  // en un iframe de origen OPACO: relativa se resolvería contra el host del iframe y la
+  // imagen no cargaría. Mismo motivo que `submitUrl` y las fuentes.
+  const src = kit.logoUrl.startsWith("/") ? `${base}${kit.logoUrl}` : kit.logoUrl;
   // `alt` con el nombre del kit: quien responde un intake por lector de pantalla tiene
   // que saber de quién es el formulario antes de dar sus datos.
-  return `<img class="gf-logo" src="${escapeHtml(kit.logoUrl)}" alt="${escapeHtml(kit.name)}">`;
+  return `<img class="gf-logo" src="${escapeHtml(src)}" alt="${escapeHtml(kit.name)}">`;
 }
 
 export type RenderFormArgs = {
@@ -116,7 +120,7 @@ ${brandStyle(a.brand, a.assetBase ?? "")}
 <body>
 <main class="gf-card">
   <header class="gf-head">
-    ${brandLogo(a.brand)}
+    ${brandLogo(a.brand, a.assetBase ?? "")}
     <h1 class="gf-title">${escapeHtml(a.title)}</h1>
     ${a.intro ? `<p class="gf-intro">${escapeHtml(a.intro)}</p>` : ""}
     ${multi ? `<div class="gf-bar"><i id="gf-bar-fill"></i></div><p class="gf-count" id="gf-count"></p>` : ""}

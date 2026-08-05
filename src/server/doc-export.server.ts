@@ -168,13 +168,17 @@ function brandPrintCss(kit: BrandKit | null): string {
  * imprime Chromium dentro de `render-svc`, que no alcanza nuestro storage — un `<img>`
  * con la URL pública saldría como hueco, y un hueco no avisa.
  */
-async function brandHeader(kit: BrandKit | null): Promise<string> {
+async function brandHeader(kit: (BrandKit & { logoKey?: string | null }) | null): Promise<string> {
   if (!kit?.logoUrl) return "";
   try {
-    const blob = await ourFiles(kit.logoUrl);
-    const buf = Buffer.from(await blob.arrayBuffer());
-    if (buf.length <= EMPTY_PNG.length) return "";
-    const mime = blob.type || mimeDeUrl(kit.logoUrl);
+    // ⚠️ Por KEY, no por URL: Chromium corre dentro de `render-svc` y no alcanza nuestro
+    // origen, así que pedirle `/api/brand-asset/…` daría un hueco. Se leen los bytes del
+    // storage y se incrustan, igual que el resto de las imágenes.
+    const buf = kit.logoKey
+      ? await (await import("./storage.server")).getBytes(kit.logoKey, "public")
+      : Buffer.from(await (await ourFiles(kit.logoUrl)).arrayBuffer());
+    if (!buf || buf.length <= EMPTY_PNG.length) return "";
+    const mime = mimeDeUrl(kit.logoKey || kit.logoUrl);
     const src = `data:${mime};base64,${buf.toString("base64")}`;
     return `<header class="gt-brand"><img src="${src}" alt="${escapeHtml(kit.name)}"></header>`;
   } catch (e) {
