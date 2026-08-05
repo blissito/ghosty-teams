@@ -642,15 +642,16 @@ function UsagePanel() {
     );
   }
 
-  const pct = data.included > 0 ? Math.min(100, (data.used / data.included) * 100) : 0;
-
-  // Cuántos turnos MÁS caben, al ritmo real de este workspace. Se calcula con su propio
+  // Cuántos turnos MÁS caben, al ritmo real de ESE MOTOR. Se calcula con su propio
   // promedio (`used / turns`) y no con un divisor fijo, que es lo que hacía que la
-  // estimación mintiera. Null si todavía no hay turnos: sin ritmo no hay proyección, y
-  // pintar un número inventado el primer día es peor que no pintar nada.
-  const turnosRestantes =
-    data.turns > 0 && data.used > 0 && data.included > data.used
-      ? Math.round((data.included - data.used) / (data.used / data.turns))
+  // estimación mintiera. Null si no hay turnos o no hay tope: sin ritmo no hay
+  // proyección, y pintar un número inventado el primer día es peor que no pintar nada.
+  //
+  // Va por motor y ya no por workspace: al ritmo de Blue caben ~1,000 turnos y al de
+  // Ghosty ~60, así que un solo número era el promedio de dos cosas que no se parecen.
+  const turnosQueQuedan = (e: { used: number; included: number | null; turns: number }) =>
+    e.included !== null && e.turns > 0 && e.used > 0 && e.included > e.used
+      ? Math.round((e.included - e.used) / (e.used / e.turns))
       : null;
   const fmtM = (n: number) => `${(n / 1_000_000).toFixed(n >= 10_000_000 ? 0 : 1)}M`;
   const fecha = (iso: string) =>
@@ -658,50 +659,16 @@ function UsagePanel() {
 
   return (
     <div className="space-y-6">
+      {/* ⚠️ Aquí había UNA barra del workspace entero, y se quitó cuando la bolsa pasó a
+          ser POR MOTOR. Ya no podía decir la verdad: sumaba peras con manzanas —un turno
+          de Ghosty pesa ~15× uno de Blue— y con el filtro de "sólo lo incluido" acababa
+          marcando 0.0M mientras el desglose de abajo enseñaba 0.42M gastados. Dos
+          números contradictorios en la misma pantalla.
+
+          Lo que sobrevivió es lo que sí es del espacio: el plan y sus fechas. */}
       <div>
-        <div className="flex items-baseline justify-between mb-2">
-          <h3 className="text-sm font-medium">{t("Tokens de este mes")}</h3>
-          {/* Era `text-gray-600` y es EL dato de la pantalla: el más importante iba
-              más claro que su propia etiqueta. */}
-          <span className="text-sm font-medium tabular-nums text-gray-900 dark:text-gray-100">
-            {fmtM(data.used)} {t("de")} {fmtM(data.included)}
-          </span>
-        </div>
-        <div className="h-2 w-full rounded-full bg-gray-200 dark:bg-gray-700 overflow-hidden">
-          {/* El color de la marca es una VARIABLE CSS (--color-brand), no una escala de
-              Tailwind: `bg-brand-500` no existe y saldría transparente. */}
-          <div
-            className="h-full rounded-full transition-[width] duration-500"
-            style={{
-              width: `${Math.max(pct, data.used > 0 ? 1.5 : 0)}%`,
-              background:
-                pct >= 90 ? "#ef4444" : pct >= 75 ? "#f59e0b" : "var(--color-brand)",
-            }}
-          />
-        </div>
-        <p className="mt-2 text-xs text-gray-600 dark:text-gray-400">
-          {/* Se dice en TURNOS y al RITMO DE ESTE WORKSPACE, no en la equivalencia de
-              "mensajes" que manda gs.
-
-              Dos razones. (1) Esa equivalencia y el contador de turnos convivían en
-              esta misma pantalla —"≈540 de 4,670 mensajes" encima de "90 turnos"— y se
-              leía como si nos hubiéramos cobrado 540 por 90: son la misma cosa en dos
-              unidades, y una es inventada. (2) Su divisor (6,850 tokens) salió de un
-              turno de chat sencillo, y los turnos reales llevan herramientas y
-              documentos: medido aquí, ~41k por turno, o sea 6× — la estimación
-              prometía seis veces más de lo que rinde.
-
-              El ritmo propio no puede equivocarse así: sale de lo que ESTE workspace
-              gastó de verdad. `messagesUsed`/`messagesIncluded` siguen llegando del
-              server; simplemente ya no se pintan. */}
-          {turnosRestantes !== null
-            ? `${t("Te quedan ~")}${turnosRestantes.toLocaleString(intlLocale(locale))} ${t("turnos a este ritmo")} · `
-            : ""}
-          {t("se reinicia el")} {fecha(data.resetsAt)}
-        </p>
-      </div>
-
-      {/* UNA BARRA POR MOTOR. La bolsa no es del espacio: Blue tiene la suya y Ghosty la
+        <h3 className="text-sm font-medium mb-3">{t("Tokens de este mes")}</h3>
+        {/* UNA BARRA POR MOTOR. La bolsa no es del espacio: Blue tiene la suya y Ghosty la
           suya, así que una sola barra no podía decir la verdad de ninguno de los dos —
           un turno de Ghosty pesa ~15× uno de Blue y se comía la promo de Blue entero.
           Y el que corre con la llave del cliente no tiene tope: se MIDE y se enseña. */}
@@ -734,12 +701,22 @@ function UsagePanel() {
                 )}
                 <p className="mt-1 text-xs text-gray-600 dark:text-gray-400">
                   {e.turns.toLocaleString(intlLocale(locale))} {t("turnos")}
+                  {(() => {
+                    const q = turnosQueQuedan(e);
+                    return q === null
+                      ? ""
+                      : ` · ${t("Te quedan ~")}${q.toLocaleString(intlLocale(locale))} ${t("turnos a este ritmo")}`;
+                  })()}
                 </p>
               </div>
             );
           })}
         </div>
-      )}
+        )}
+        <p className="mt-3 text-xs text-gray-600 dark:text-gray-400">
+          {t("se reinicia el")} {fecha(data.resetsAt)}
+        </p>
+      </div>
 
       <div className="text-xs text-gray-600 dark:text-gray-400 space-y-1">
         <div>
