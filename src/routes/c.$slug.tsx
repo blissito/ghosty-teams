@@ -129,7 +129,7 @@ import { marcarCierre, limpiarCierre } from "../lib/panel-cerrando";
 import { playNotificationSound, playGhostySound, playSelfSound, playMentionSound, playDmSound, playReadySound, playDeleteSound, playArtifactOpen, playArtifactClose, playArtifactReady } from "../utils/notificationSound";
 
 // Menciones que cuentan como "a ti": tu @handle o una grupal (@all/@channel/…).
-const SOUND_GROUP_MENTIONS = new Set(["all", "channel", "everyone", "aqui", "here", "todos"]);
+const SOUND_GROUP_MENTIONS = new Set(["all", "channel", "everyone", "aqui", "aquí", "here", "todos"]);
 import { useT } from "../i18n";
 
 type Mention = { handle: string; name: string; avatar: string; kind: "agent" | "user" | "group"; sub?: string | null };
@@ -9235,7 +9235,9 @@ const Composer = forwardRef<ComposerHandle, {
                   ) : (
                     <Avatar name={a.name} avatar={a.avatar} className="h-5 w-5 text-[9px]" />
                   )}
-                  <span className="font-medium text-ink">{a.name}</span>
+                  {/* Sólo las grupales se traducen: su "nombre" es copy nuestro. El de un
+                      usuario o un agente es un nombre propio y no pasa por t(). */}
+                  <span className="font-medium text-ink">{a.kind === "group" ? t(a.name) : a.name}</span>
                   <span className="text-xs text-muted">@{a.handle}</span>
                 </button>
               </li>

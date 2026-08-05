@@ -20,7 +20,9 @@ function highlightText(children: React.ReactNode, emojiMap: Map<string, string>,
       // EN CÓDIGO que el char previo de una @ no sea palabra/@/. → NO matchea el "@gmail"
       // dentro de un email. Slack usa tokens <@Uxxx>; aquí, en texto plano, el equivalente.
       const out: React.ReactNode[] = [];
-      const re = /@\w+|:[a-z0-9_]+:/g;
+      // Los acentos van EXPLÍCITOS: `\w` no los incluye, así que `@aquí` se pintaba
+      // como `@aqu` + "í" suelto. Mismo alfabeto que el matcher de menciones del server.
+      const re = /@[\wáéíóúñÁÉÍÓÚÑ]+|:[a-z0-9_]+:/g;
       let last = 0;
       let m: RegExpExecArray | null;
       while ((m = re.exec(child)) !== null) {

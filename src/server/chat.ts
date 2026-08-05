@@ -15,7 +15,10 @@ export async function sessionUser() {
 
 // Menciones grupales: @all/@channel/@everyone/@aquí notifican a TODA la audiencia
 // del room (miembros si es privado; todo el workspace si es público).
-const GROUP_MENTIONS = new Set(["all", "channel", "everyone", "aqui", "here", "todos"]);
+// ⚠️ "aquí" va CON acento además de sin él: el token se compara tal cual (sólo se baja a
+// minúsculas), así que sin las dos formas la mención acentuada —la que un hispanohablante
+// escribe— no notificaba a nadie y fallaba en silencio.
+const GROUP_MENTIONS = new Set(["all", "channel", "everyone", "aqui", "aquí", "here", "todos"]);
 
 /**
  * Clave de conversación de la FLOTA para un canal. **Una por room, siempre.**
@@ -104,8 +107,15 @@ export const listMentionsFn = createServerFn({ method: "GET" }).handler(async ()
   const [agents, us] = await Promise.all([resolvedAgents(), users.listUsers()]);
   return [
     // Menciones grupales (notifican a toda la audiencia del room).
+    // Todas hacen LO MISMO (ver GROUP_MENTIONS); son alias para que quien venga de Slack
+    // o escriba en español acierte a la primera. El typeahead filtra por prefijo, así que
+    // la lista larga no estorba: nadie las ve todas a la vez.
     { handle: "all", name: "Notificar a todos", avatar: "", kind: "group" as const },
     { handle: "channel", name: "Notificar al room", avatar: "", kind: "group" as const },
+    { handle: "everyone", name: "Notificar a todos", avatar: "", kind: "group" as const },
+    { handle: "here", name: "Notificar al room", avatar: "", kind: "group" as const },
+    { handle: "todos", name: "Notificar a todos", avatar: "", kind: "group" as const },
+    { handle: "aquí", name: "Notificar al room", avatar: "", kind: "group" as const },
     ...agents.map((a) => ({ handle: a.handle, name: a.name, avatar: a.avatar, kind: "agent" as const })),
     ...us.map((u) => ({ handle: u.handle, name: u.name, avatar: u.avatar, kind: "user" as const, sub: u.sub })),
   ];

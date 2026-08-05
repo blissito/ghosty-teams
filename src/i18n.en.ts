@@ -52,6 +52,8 @@ export const en: Record<string, string> = {
   "personas": "people",
   "No se pudo conectar a la llamada": "Couldn't connect to the call",
   "Silenciar": "Mute",
+  "Notificar a todos": "Notify everyone",
+  "Notificar al room": "Notify the room",
   "Activar micrófono": "Unmute",
   "Apagar cámara": "Turn camera off",
   "Encender cámara": "Turn camera on",
