@@ -162,6 +162,64 @@ export function BrandPanel({ isOwner }: { isOwner: boolean }) {
   );
 }
 
+// Los nombres van en español y pasan por t(): el modelo recibe la LLAVE (professional,
+// bold…), la persona lee una palabra.
+const MOOD_LABEL: Record<string, string> = {
+  professional: "Sobrio",
+  minimal: "Mínimo",
+  elegant: "Elegante",
+  warm: "Cálido",
+  bold: "Contundente",
+  vibrant: "Vibrante",
+  playful: "Desenfadado",
+};
+
+/**
+ * Cada tono, pintado con los tokens que ese tono produce: fondo teñido, línea, un botón
+ * y la "Aa" en la familia que le toca. Es la única forma de elegir tono sin adivinar.
+ */
+function MoodSwatch({
+  mood,
+  colors,
+  label,
+  selected,
+  onPick,
+}: {
+  mood: string;
+  colors: BrandColors;
+  label: string;
+  selected: boolean;
+  onPick: () => void;
+}) {
+  const p = brandPalette({ id: "m", name: "m", colors, mood: (mood || null) as BrandKit["mood"] }).light;
+  const serif = mood === "elegant" || mood === "warm";
+  return (
+    <button
+      type="button"
+      onClick={onPick}
+      aria-pressed={selected}
+      title={label}
+      className={`rounded-lg p-1 text-left transition ${
+        selected ? "outline outline-2 outline-offset-1 outline-brand" : "hover:opacity-80"
+      }`}
+    >
+      <div
+        className="flex h-9 flex-col justify-between rounded-md p-1"
+        style={{ background: p["surface-2"], border: `1px solid ${p.border}` }}
+      >
+        <span
+          className="text-[10px] font-semibold leading-none"
+          style={{ color: p.ink, fontFamily: serif ? "Georgia, serif" : "inherit" }}
+        >
+          Aa
+        </span>
+        <span className="h-1.5 w-full rounded-full" style={{ background: p.brand }} />
+      </div>
+      <span className="mt-1 block truncate text-[10px] text-muted">{label}</span>
+    </button>
+  );
+}
+
 function KitSwatch({ kit }: { kit: BrandKit }) {
   const p = brandPalette(kit).light;
   return (
@@ -215,6 +273,9 @@ function KitEditor({
     colors,
     fonts: { heading: heading || undefined, body: body || undefined },
     logoUrl: logoUrl || null,
+    // El tono mueve la derivación, así que el preview grande lo necesita o enseñaría
+    // otra cosa distinta a la que se guarda.
+    mood: (mood || null) as BrandKit["mood"],
   };
   const valid = FIELDS.every((f) => isHex(colors[f.key] as string)) && name.trim().length > 0;
 
@@ -421,19 +482,24 @@ function KitEditor({
 
           <div>
             <label className="text-xs font-semibold">{t("Tono")}</label>
-            <select
-              value={mood}
-              onChange={(e) => setMood(e.target.value)}
-              className="mt-1 w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm"
-            >
-              <option value="">{t("Sin especificar")}</option>
-              {BRAND_MOODS.map((m) => (
-                <option key={m} value={m}>
-                  {m}
-                </option>
+            {/* Muestras y no un <select>: el tono MUEVE la derivación (cuánto tiñe la
+                marca, qué tan marcada es la línea, si los títulos caen en serif), así que
+                tiene que poder compararse de un vistazo — igual que las fuentes. */}
+            <div className="mt-1.5 grid grid-cols-4 gap-1.5">
+              {([""] as string[]).concat(BRAND_MOODS as readonly string[]).map((m) => (
+                <MoodSwatch
+                  key={m || "none"}
+                  mood={m}
+                  colors={colors}
+                  label={m ? t(MOOD_LABEL[m]) : t("Neutro")}
+                  selected={mood === m}
+                  onPick={() => setMood(m)}
+                />
               ))}
-            </select>
-            <p className="mt-1 text-xs text-muted">{t("Se lo pasamos al agente cuando diseña algo para ti.")}</p>
+            </div>
+            <p className="mt-1.5 text-xs text-muted">
+              {t("Ajusta el teñido, el trazo y la tipografía. También se lo pasamos al agente cuando diseña para ti.")}
+            </p>
           </div>
         </div>
 

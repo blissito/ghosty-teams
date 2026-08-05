@@ -30,6 +30,13 @@ const KITS: BrandKit[] = [
   kit("negro", { primary: "#000000", secondary: "#404040", surface: "#ffffff" }),
   kit("neon-sobre-negro", { primary: "#f0abfc", secondary: "#22d3ee", surface: "#0d0714" }),
   kit("gris", { primary: "#6b7280", secondary: "#9ca3af", accent: "#6b7280", surface: "#f5f5f5" }),
+  // Un kit por tono: el tono mueve teñido, borde, contraste y familia, o sea que puede
+  // romper el contraste igual que un color feo.
+  ...BRAND_MOODS.map((m) => ({ ...kit(`tono-${m}`, {}), mood: m })),
+  ...BRAND_MOODS.map((m) => ({
+    ...kit(`tono-${m}-oscuro`, { primary: "#facc15", surface: "#0d0714" }),
+    mood: m,
+  })),
 ];
 
 describe("hex", () => {
@@ -116,6 +123,38 @@ describe("todos los kits producen tokens legibles", () => {
       });
     });
   }
+});
+
+// El tono NO puede ser una etiqueta inerte: si dos tonos derivan lo mismo, el control
+// vuelve a estar muerto y nadie se entera.
+describe("el tono cambia la derivación de verdad", () => {
+  const base = kit("x", {});
+  const of = (m: string | null) => brandPalette({ ...base, mood: m as never }).light;
+
+  it("cada tono da una paleta distinta a la del vecino", () => {
+    const firmas = BRAND_MOODS.map((m) => JSON.stringify(of(m)));
+    expect(new Set(firmas).size).toBe(BRAND_MOODS.length);
+  });
+
+  it("minimal tiñe menos que vibrant", () => {
+    expect(contrast(of("minimal")["surface-2"], "#ffffff")).toBeLessThan(
+      contrast(of("vibrant")["surface-2"], "#ffffff")
+    );
+  });
+
+  it("bold exige AAA a la marca sobre el fondo", () => {
+    const b = of("bold");
+    expect(contrast(b.brand, b.surface)).toBeGreaterThanOrEqual(7);
+  });
+
+  it("elegant cae en serif y professional en sans", () => {
+    expect(brandPalette({ ...base, mood: "elegant" }).font).toBe("serif");
+    expect(brandPalette({ ...base, mood: "professional" }).font).toBe("sans");
+  });
+
+  it("sin tono se comporta como professional", () => {
+    expect(of(null)).toEqual(of("professional"));
+  });
 });
 
 describe("@theme de artefactos", () => {

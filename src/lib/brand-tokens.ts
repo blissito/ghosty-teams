@@ -138,17 +138,51 @@ export function ensureContrast(fg: string, bg: string, target = 4.5): string {
 
 // ── Derivación ──────────────────────────────────────────────────────────────
 
+/**
+ * El `mood` es una PERILLA DE LA DERIVACIÓN, no una etiqueta.
+ *
+ * En EasyBits es sólo texto que se le pasa al modelo, y desde el panel se siente un
+ * control muerto: lo eliges y no cambia nada. Aquí mueve tres cosas medibles —cuánto tiñe
+ * la marca las superficies, cuánto contrasta contra el fondo, y qué tan marcada queda la
+ * línea— así que la elección se ve en el preview al instante. Y además sigue viajando al
+ * agente, que es donde manda el matiz que un número no captura.
+ *
+ * `tint` es el multiplicador del teñido; `edge`, el de los bordes; `pop`, el contraste
+ * mínimo que se le exige a la marca sobre el fondo.
+ */
+const MOOD_TUNING: Record<BrandMood, { tint: number; edge: number; pop: number; serif: boolean }> = {
+  minimal: { tint: 0.25, edge: 0.7, pop: 4.5, serif: false },
+  professional: { tint: 0.7, edge: 1, pop: 4.5, serif: false },
+  elegant: { tint: 0.55, edge: 0.8, pop: 4.5, serif: true },
+  warm: { tint: 1.3, edge: 1, pop: 4.5, serif: true },
+  bold: { tint: 1.15, edge: 1.5, pop: 7, serif: false },
+  vibrant: { tint: 1.6, edge: 1.2, pop: 4.5, serif: false },
+  playful: { tint: 1.45, edge: 1.3, pop: 4.5, serif: false },
+};
+
+const NEUTRAL_TUNING = MOOD_TUNING.professional;
+
+function tuning(kit: BrandKit) {
+  return (kit.mood && MOOD_TUNING[kit.mood]) || NEUTRAL_TUNING;
+}
+
 type Surfaces = { surface: string; surface2: string; surface3: string; border: string; ink: string; muted: string };
 
 /** Las capas de fondo/línea/texto que salen de un solo color de superficie. */
-function surfacesFrom(surface: string, tint: string, dark: boolean): Surfaces {
+function surfacesFrom(
+  surface: string,
+  tint: string,
+  dark: boolean,
+  tune: (typeof MOOD_TUNING)[BrandMood]
+): Surfaces {
   const step = dark ? NEAR_WHITE : NEAR_BLACK;
   const ink = onColor(surface, tint);
+  const t = tune.tint;
   return {
     surface,
-    surface2: mix(surface, tint, dark ? 0.06 : 0.045),
-    surface3: mix(mix(surface, tint, dark ? 0.1 : 0.08), step, dark ? 0.04 : 0.03),
-    border: mix(surface, step, dark ? 0.14 : 0.11),
+    surface2: mix(surface, tint, (dark ? 0.06 : 0.045) * t),
+    surface3: mix(mix(surface, tint, (dark ? 0.1 : 0.08) * t), step, dark ? 0.04 : 0.03),
+    border: mix(surface, step, (dark ? 0.14 : 0.11) * tune.edge),
     ink,
     // El apagado debe seguir pasando AA para texto grande y secundario.
     muted: ensureContrast(mix(ink, surface, 0.42), surface, 4.5),
@@ -176,18 +210,20 @@ function darkSurface(kit: BrandKit): string {
 export function brandPalette(kit: BrandKit): ThemePreset {
   const primary = normalizeHex(kit.colors.primary);
   const secondary = normalizeHex(kit.colors.secondary);
+  const tune = tuning(kit);
 
-  const ls = surfacesFrom(lightSurface(kit), primary, false);
-  const ds = surfacesFrom(darkSurface(kit), primary, true);
+  const ls = surfacesFrom(lightSurface(kit), primary, false, tune);
+  const ds = surfacesFrom(darkSurface(kit), primary, true, tune);
 
-  // La marca sobre cada fondo, empujada hasta ser legible como texto/borde.
-  const brandLight = ensureContrast(primary, ls.surface, 4.5);
-  const brandDark = ensureContrast(primary, ds.surface, 4.5);
+  // La marca sobre cada fondo, empujada hasta ser legible como texto/borde. El `pop` del
+  // tono sube el listón: "bold" pide 7:1 (AAA), que se ve como un color más plantado.
+  const brandLight = ensureContrast(primary, ls.surface, tune.pop);
+  const brandDark = ensureContrast(primary, ds.surface, tune.pop);
 
   return {
     id: "brand",
     label: kit.name,
-    font: "sans",
+    font: tune.serif ? "serif" : "sans",
     light: {
       brand: brandLight,
       "brand-2": ensureContrast(secondary, ls.surface, 3),
@@ -255,9 +291,13 @@ export function brandPrintVars(kit: BrandKit): Record<string, string> {
 /** Familias con fallback, para CSS. */
 export function brandFontStacks(kit: BrandKit): { heading: string; body: string } {
   const q = (f?: string | null) => (f && f.trim() ? `"${f.trim()}", ` : "");
+  const sans = `-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
+  const serif = `"Iowan Old Style", Georgia, serif`;
+  // Sin fuente elegida, el respaldo de los TÍTULOS lo decide el tono: "elegant" y "warm"
+  // caen en serif, el resto en sans. Es la otra mitad de lo que hace visible al tono.
   return {
-    heading: `${q(kit.fonts?.heading)}"Iowan Old Style", Georgia, serif`,
-    body: `${q(kit.fonts?.body)}-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`,
+    heading: `${q(kit.fonts?.heading)}${tuning(kit).serif ? serif : sans}`,
+    body: `${q(kit.fonts?.body)}${sans}`,
   };
 }
 

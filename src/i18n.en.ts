@@ -998,9 +998,18 @@ export const en: Record<string, string> = {
   "Fuente de títulos": "Heading font",
   "Fuente de texto": "Body font",
   "Tono": "Tone",
-  "Sin especificar": "Not set",
-  "Se lo pasamos al agente cuando diseña algo para ti.":
-    "We pass it to the agent when it designs something for you.",
+  "Ajusta el teñido, el trazo y la tipografía. También se lo pasamos al agente cuando diseña para ti.":
+    "Adjusts tinting, stroke weight and typography. We also pass it to the agent when it designs for you.",
+  // Nombres de los tonos. Van por t() con llave DINÁMICA (MOOD_LABEL), así que
+  // check:i18n no los ve: si se agrega un tono, su traducción se pone A MANO aquí.
+  "Neutro": "Neutral",
+  "Sobrio": "Understated",
+  "Mínimo": "Minimal",
+  "Elegante": "Elegant",
+  "Cálido": "Warm",
+  "Contundente": "Bold",
+  "Vibrante": "Vibrant",
+  "Desenfadado": "Playful",
   "Así se va a ver": "How it will look",
   "Formulario": "Form",
   "Cuéntanos de tu caso": "Tell us about your case",
