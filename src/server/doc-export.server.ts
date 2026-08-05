@@ -354,19 +354,19 @@ const PRINT_CSS = `
 @page { size: Letter; margin: 2.2cm 2cm; }
 *{ box-sizing:border-box }
 body{ margin:0; color:var(--pr-ink,#16161a); font:11pt/1.6 "Inter", ui-sans-serif, system-ui, sans-serif; }
-.gt-brand{ display:flex; align-items:center; margin:0 0 1.6em; padding:0 0 .9em; border-bottom:2px solid var(--pr-brand,#d8d3e4) }
+.gt-brand{ display:flex; align-items:center; margin:0 0 1.6em; padding:0 0 .9em; border-bottom:calc(var(--edge,1px) * 2) solid var(--pr-brand,#d8d3e4) }
 .gt-brand img{ max-height:52px; max-width:46%; width:auto; object-fit:contain }
 .gt-print{ max-width:none }
-h1,h2,h3,h4{ font-family:"Inter",ui-sans-serif,system-ui,sans-serif; line-height:1.25; margin:1.4em 0 .5em; page-break-after:avoid }
+h1,h2,h3,h4{ font-family:"Inter",ui-sans-serif,system-ui,sans-serif; line-height:1.25; margin:1.4em 0 .5em; page-break-after:avoid; letter-spacing:var(--tracking,0) }
 h1{ font-size:19pt; font-weight:700 } h2{ font-size:14pt } h3{ font-size:12pt } h4{ font-size:11pt }
 p{ margin:0 0 .7em; orphans:3; widows:3 }
 ul,ol{ margin:0 0 .7em 1.4em; padding:0 }
 li{ margin:.15em 0 }
 blockquote{ margin:1em 0; padding-left:1em; border-left:3px solid var(--pr-line,#d8d3e4); color:var(--pr-muted,#3f3f46) }
 code{ font:11pt/1.4 "SFMono-Regular",Menlo,monospace; background:#f4f4f7; padding:.1em .3em; border-radius:3px }
-pre{ background:#f4f4f7; padding:.8em 1em; border-radius:6px; overflow:visible; white-space:pre-wrap; page-break-inside:avoid }
+pre{ background:#f4f4f7; padding:.8em 1em; border-radius:var(--radius-sm,6px); overflow:visible; white-space:pre-wrap; page-break-inside:avoid }
 table{ border-collapse:collapse; width:100%; margin:1em 0; page-break-inside:avoid }
-th,td{ border:1px solid var(--pr-line,#c9c4d6); padding:.4em .6em; text-align:left; vertical-align:top }
+th,td{ border:var(--edge,1px) solid var(--pr-line,#c9c4d6); padding:.4em .6em; text-align:left; vertical-align:top }
 th{ background:var(--pr-tint,#f4edfd); font-weight:700 }
 img{ max-width:100%; height:auto }
 hr{ border:0; border-top:1px solid var(--pr-line,#d8d3e4); margin:1.6em 0 }

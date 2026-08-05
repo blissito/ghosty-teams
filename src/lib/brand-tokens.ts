@@ -150,15 +150,37 @@ export function ensureContrast(fg: string, bg: string, target = 4.5): string {
  * `tint` es el multiplicador del teñido; `edge`, el de los bordes; `pop`, el contraste
  * mínimo que se le exige a la marca sobre el fondo.
  */
-const MOOD_TUNING: Record<BrandMood, { tint: number; edge: number; pop: number; serif: boolean }> = {
-  minimal: { tint: 0.25, edge: 0.7, pop: 4.5, serif: false },
-  professional: { tint: 0.7, edge: 1, pop: 4.5, serif: false },
-  elegant: { tint: 0.55, edge: 0.8, pop: 4.5, serif: true },
-  warm: { tint: 1.3, edge: 1, pop: 4.5, serif: true },
-  bold: { tint: 1.15, edge: 1.5, pop: 7, serif: false },
-  vibrant: { tint: 1.6, edge: 1.2, pop: 4.5, serif: false },
-  playful: { tint: 1.45, edge: 1.3, pop: 4.5, serif: false },
+export type MoodTuning = {
+  /** Multiplicador del teñido de las superficies. */
+  tint: number;
+  /** Grosor de línea, en px. */
+  edge: number;
+  /** Radio de las esquinas, en px. 999 = pastilla. */
+  radius: number;
+  /** Contraste mínimo exigido a la marca sobre el fondo. */
+  pop: number;
+  /** Los títulos caen en serif cuando no hay fuente elegida. */
+  serif: boolean;
+  /** Encabezados de sección en versalitas espaciadas. */
+  caps: boolean;
+  /** Sombra: 0 = plano, 1 = suave, 2 = dura y desplazada. */
+  shadow: 0 | 1 | 2;
 };
+
+const MOOD_TUNING: Record<BrandMood, MoodTuning> = {
+  professional: { tint: 0.8, edge: 1, radius: 8, pop: 4.5, serif: false, caps: false, shadow: 1 },
+  minimal: { tint: 0.1, edge: 1, radius: 2, pop: 4.5, serif: false, caps: true, shadow: 0 },
+  elegant: { tint: 0.5, edge: 1, radius: 0, pop: 4.5, serif: true, caps: true, shadow: 0 },
+  warm: { tint: 2.2, edge: 1, radius: 18, pop: 4.5, serif: true, caps: false, shadow: 1 },
+  bold: { tint: 1.4, edge: 3, radius: 4, pop: 7, serif: false, caps: true, shadow: 2 },
+  vibrant: { tint: 3.4, edge: 2, radius: 14, pop: 4.5, serif: false, caps: false, shadow: 1 },
+  playful: { tint: 2.6, edge: 2, radius: 999, pop: 4.5, serif: false, caps: false, shadow: 1 },
+};
+
+/** La forma que impone el tono. La usan el panel y las tres salidas. */
+export function brandShape(kit: BrandKit): MoodTuning {
+  return tuning(kit);
+}
 
 const NEUTRAL_TUNING = MOOD_TUNING.professional;
 
@@ -182,7 +204,9 @@ function surfacesFrom(
     surface,
     surface2: mix(surface, tint, (dark ? 0.06 : 0.045) * t),
     surface3: mix(mix(surface, tint, (dark ? 0.1 : 0.08) * t), step, dark ? 0.04 : 0.03),
-    border: mix(surface, step, (dark ? 0.14 : 0.11) * tune.edge),
+    // La línea se OSCURECE con el grosor: un borde de 3px del mismo gris claro se ve
+    // sucio, no contundente. Es lo que hace que "bold" se lea como bold.
+    border: mix(surface, step, (dark ? 0.14 : 0.11) * (0.7 + tune.edge * 0.45)),
     ink,
     // El apagado debe seguir pasando AA para texto grande y secundario.
     muted: ensureContrast(mix(ink, surface, 0.42), surface, 4.5),
@@ -262,6 +286,7 @@ export function brandFormVars(kit: BrandKit): Record<string, string> {
   // papel. Garantizar el contraste contra surface deja a los dos un pelo cortos.
   const paper = l["surface-2"];
   return {
+    ...shapeVars(kit, l.brand),
     "--accent": l.brand,
     "--accent-ink": ensureContrast(l.brand, paper, 4.5),
     "--tint": mix(paper, l.brand, 0.1),
@@ -274,11 +299,35 @@ export function brandFormVars(kit: BrandKit): Record<string, string> {
   };
 }
 
+/**
+ * La FORMA que impone el tono, como variables. Es la mitad de lo que hace que un tono se
+ * note: el color se puede afinar de a poco, pero el radio, el grosor de línea y la sombra
+ * se ven de inmediato y en cualquier tamaño.
+ */
+function shapeVars(kit: BrandKit, brand: string): Record<string, string> {
+  const s = tuning(kit);
+  const sombra =
+    s.shadow === 0
+      ? "none"
+      : s.shadow === 1
+        ? "0 1px 2px rgba(20,18,26,.05), 0 8px 24px rgba(20,18,26,.06)"
+        : `4px 4px 0 ${brand}`;
+  return {
+    "--radius": `${s.radius}px`,
+    "--radius-sm": `${Math.min(s.radius, 10)}px`,
+    "--edge": `${s.edge}px`,
+    "--shadow": sombra,
+    "--caps": s.caps ? "uppercase" : "none",
+    "--tracking": s.caps ? ".08em" : "0",
+  };
+}
+
 /** Los colores del PDF (doc-export.server.ts, PRINT_CSS). Papel siempre claro. */
 export function brandPrintVars(kit: BrandKit): Record<string, string> {
   const p = brandPalette(kit);
   const l = p.light;
   return {
+    ...shapeVars(kit, l.brand),
     "--pr-ink": l.ink,
     "--pr-muted": l.muted,
     "--pr-line": l.border,
@@ -320,11 +369,14 @@ export function brandThemeCss(kit: BrandKit): string {
   const darkVars = Object.entries(p.dark)
     .map(([k, v]) => `    --color-${k}: ${v};`)
     .join("\n");
+  const s = tuning(kit);
   return `@theme {
 ${vars}
 ${extras}
   --font-heading: ${f.heading};
   --font-body: ${f.body};
+  --radius-brand: ${s.radius}px;
+  --radius-DEFAULT: ${s.radius}px;
 }
 @media (prefers-color-scheme: dark) {
   :root {

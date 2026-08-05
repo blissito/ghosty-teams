@@ -241,20 +241,25 @@ export const escalateDmAgentFn = createServerFn({ method: "POST" })
     const res = await escalateAgentSession(agent, groupId, me.sub);
     if (!res.ok) return { ok: false as const, reason: res.reason };
 
-    const { id } = await db.postDmAgent(
-      data.id,
-      "⚡ Listo, subí a un modelo más capaz para esta conversación. La memoria se conserva.",
-      "msg",
-      agent.handle,
-      agent.name ?? "Ghosty",
-      agent.avatar ?? ""
-    );
-    const msg = await db.getMessage(id);
-    if (msg) {
-      const members = await db.getDmMembers(data.id);
-      for (const sub of members) bus.publish(bus.ch.user(ns, sub), { t: "message:new", msg });
+    // El aviso en el chat va SÓLO al subir, no al renovar: el primero informa de un
+    // cambio real, el décimo es ruido en la conversación. La renovación ya se ve en el
+    // ícono, que es donde vive el contador.
+    if (!res.renewed) {
+      const { id } = await db.postDmAgent(
+        data.id,
+        `⚡ Listo, subí a un modelo más capaz por los próximos ${res.turnsLeft ?? 10} mensajes. La memoria se conserva.`,
+        "msg",
+        agent.handle,
+        agent.name ?? "Ghosty",
+        agent.avatar ?? ""
+      );
+      const msg = await db.getMessage(id);
+      if (msg) {
+        const members = await db.getDmMembers(data.id);
+        for (const sub of members) bus.publish(bus.ch.user(ns, sub), { t: "message:new", msg });
+      }
     }
-    return { ok: true as const };
+    return { ok: true as const, turnsLeft: res.turnsLeft ?? null };
   });
 
 // El agente responde dentro del DM, con streaming first-class (igual que en rooms:

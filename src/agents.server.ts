@@ -935,7 +935,16 @@ export async function resetAgentSession(agent: ResolvedAgent, groupId: string): 
 // ⚠️ No hay "bajar". Cada cambio de modelo cuesta un turno con el prefix-cache en cero
 // (medido), así que alternar borraría la ventaja del modelo barato. Lo que devuelve a
 // fábrica es /clear, que ya significa empezar de cero.
-export type EscalationInfo = { model: string | null; to: string | null; escalated: boolean };
+export type EscalationInfo = {
+  model: string | null;
+  to: string | null;
+  escalated: boolean;
+  /** Turnos que le quedan a la escalada (null si no hay ninguna viva). */
+  turnsLeft: number | null;
+  /** A cuántos vuelve al subir o renovar — el copy sale de aquí, no de un número
+   *  repetido en el cliente que se desincronizaría del servidor. */
+  turnsOnEscalate: number;
+};
 
 async function escalationEndpoint(agent: ResolvedAgent) {
   if (agent.backend.kind !== "fleet") return null;
@@ -971,7 +980,7 @@ export async function escalateAgentSession(
   agent: ResolvedAgent,
   groupId: string,
   by?: string,
-): Promise<{ ok: boolean; model?: string | null; reason?: string }> {
+): Promise<{ ok: boolean; model?: string | null; turnsLeft?: number | null; renewed?: boolean; reason?: string }> {
   try {
     const ep = await escalationEndpoint(agent);
     if (!ep) return { ok: false, reason: "este agente no puede subir de modelo" };
@@ -981,8 +990,10 @@ export async function escalateAgentSession(
       headers: ep.rt.headers(body, agent.backend.kind === "fleet" ? agent.backend.token : ""),
       body,
     });
-    const json = (await res.json().catch(() => ({}))) as { model?: string; reason?: string };
-    return res.ok ? { ok: true, model: json.model } : { ok: false, reason: json.reason };
+    const json = (await res.json().catch(() => ({}))) as { model?: string; turnsLeft?: number; renewed?: boolean; reason?: string };
+    return res.ok
+      ? { ok: true, model: json.model, turnsLeft: json.turnsLeft ?? null, renewed: json.renewed === true }
+      : { ok: false, reason: json.reason };
   } catch (e) {
     return { ok: false, reason: e instanceof Error ? e.message : String(e) };
   }

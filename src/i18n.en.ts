@@ -108,10 +108,11 @@ export const en: Record<string, string> = {
   "Borrar memoria de la conversación": "Clear conversation memory",
   "Subir a un modelo más capaz para esta conversación": "Upgrade this conversation to a more capable model",
   "Esta conversación ya usa el modelo más capaz": "This conversation already uses the more capable model",
+  "Modelo capaz · quedan {n} mensajes. Clic para extender.": "Capable model · {n} messages left. Click to extend.",
   "Subir a un modelo más capaz": "Upgrade to a more capable model",
   "Subir": "Upgrade",
-  "{name} responderá con más capacidad en esta conversación, conservando la memoria. El primer mensaje tardará un poco más. No se puede volver al modelo anterior: para eso hay que borrar la memoria.":
-    "{name} will answer with more capability in this conversation, keeping its memory. The first message will take a little longer. There's no going back to the previous model — for that, clear the memory.",
+  "{name} responderá con más capacidad durante los próximos {n} mensajes de esta conversación, conservando la memoria. El primer mensaje tardará un poco más. Después vuelve solo al modelo rápido; puedes extenderlo cuando quieras.":
+    "{name} will answer with more capability for the next {n} messages of this conversation, keeping its memory. The first message will take a little longer. After that it goes back to the fast model on its own; you can extend it whenever you want.",
   "Esto borra la memoria de esta conversación. {name} empezará de cero. ¿Continuar?": "This clears this conversation's memory. {name} will start fresh. Continue?",
   "Buscando…": "Searching…",
   "Buscar": "Search",

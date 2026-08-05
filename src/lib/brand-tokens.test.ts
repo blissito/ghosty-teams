@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  brandShape,
   BRAND_MOODS,
   type BrandKit,
   brandFormVars,
@@ -117,9 +118,15 @@ describe("todos los kits producen tokens legibles", () => {
         expect(contrast(v["--pr-brand"], v["--pr-tint"])).toBeGreaterThanOrEqual(3);
       });
 
-      it("todo token emitido es un hex válido", () => {
+      it("todo token de COLOR emitido es un hex válido", () => {
+        // Las vars de FORMA (--radius, --edge, --shadow, --caps, --tracking) no son
+        // colores; se validan aparte, en el bloque del tono.
+        const forma = new Set(["--radius", "--radius-sm", "--edge", "--shadow", "--caps", "--tracking"]);
         const all = { ...brandFormVars(k), ...brandPrintVars(k), ...brandPalette(k).light, ...brandPalette(k).dark };
-        for (const [key, val] of Object.entries(all)) expect(isHex(val), `${key}=${val}`).toBe(true);
+        for (const [key, val] of Object.entries(all)) {
+          if (forma.has(key)) continue;
+          expect(isHex(val), `${key}=${val}`).toBe(true);
+        }
       });
     });
   }
@@ -131,9 +138,42 @@ describe("el tono cambia la derivación de verdad", () => {
   const base = kit("x", {});
   const of = (m: string | null) => brandPalette({ ...base, mood: m as never }).light;
 
-  it("cada tono da una paleta distinta a la del vecino", () => {
-    const firmas = BRAND_MOODS.map((m) => JSON.stringify(of(m)));
-    expect(new Set(firmas).size).toBe(BRAND_MOODS.length);
+  // ⚠️ La versión anterior de este test comparaba JSON.stringify de las paletas: pasaba
+  // en verde con diferencias de 1-7% de teñido que en pantalla eran INVISIBLES. "Distinto"
+  // no es "se nota". Ahora se exige o bien distancia de color real, o bien una diferencia
+  // de FORMA (radio, línea, sombra, tipografía), que es lo que de verdad se ve.
+  const dist = (a: string, b: string) => {
+    const px = (h: string, i: number) => parseInt(h.slice(1 + i * 2, 3 + i * 2), 16);
+    return Math.max(...[0, 1, 2].map((i) => Math.abs(px(a, i) - px(b, i))));
+  };
+  const shapeOf = (m: string) => {
+    const s = brandShape({ ...base, mood: m as never });
+    return `${s.radius}|${s.edge}|${s.shadow}|${s.serif}|${s.caps}`;
+  };
+
+  it("cada par de tonos se distingue A LA VISTA, no sólo en el hex", () => {
+    for (const a of BRAND_MOODS) {
+      for (const b of BRAND_MOODS) {
+        if (a >= b) continue;
+        const colorGap = Math.max(dist(of(a)["surface-2"], of(b)["surface-2"]), dist(of(a).border, of(b).border));
+        const shapeGap = shapeOf(a) !== shapeOf(b);
+        expect(shapeGap || colorGap >= 8, `${a} vs ${b}: gap=${colorGap}`).toBe(true);
+      }
+    }
+  });
+
+  it("los siete tonos dan siete formas distintas", () => {
+    expect(new Set(BRAND_MOODS.map(shapeOf)).size).toBe(BRAND_MOODS.length);
+  });
+
+  it("el radio y la línea llegan a las tres salidas", () => {
+    for (const m of BRAND_MOODS) {
+      const k = { ...base, mood: m as never };
+      const s = brandShape(k);
+      expect(brandFormVars(k)["--radius"]).toBe(`${s.radius}px`);
+      expect(brandPrintVars(k)["--edge"]).toBe(`${s.edge}px`);
+      expect(brandThemeCss(k)).toContain(`--radius-brand: ${s.radius}px`);
+    }
   });
 
   it("minimal tiñe menos que vibrant", () => {

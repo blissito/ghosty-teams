@@ -6,6 +6,7 @@ import {
   type BrandKit,
   brandFormVars,
   brandPalette,
+  brandShape,
   isHex,
 } from "../lib/brand-tokens";
 import {
@@ -164,14 +165,16 @@ export function BrandPanel({ isOwner }: { isOwner: boolean }) {
 
 // Los nombres van en español y pasan por t(): el modelo recibe la LLAVE (professional,
 // bold…), la persona lee una palabra.
+// Cortos a propósito: en una rejilla de 4 columnas cualquier palabra larga se corta con
+// puntos suspensivos, y un tono que no puedes leer no lo puedes elegir.
 const MOOD_LABEL: Record<string, string> = {
   professional: "Sobrio",
   minimal: "Mínimo",
   elegant: "Elegante",
   warm: "Cálido",
-  bold: "Contundente",
+  bold: "Fuerte",
   vibrant: "Vibrante",
-  playful: "Desenfadado",
+  playful: "Alegre",
 };
 
 /**
@@ -191,31 +194,52 @@ function MoodSwatch({
   selected: boolean;
   onPick: () => void;
 }) {
-  const p = brandPalette({ id: "m", name: "m", colors, mood: (mood || null) as BrandKit["mood"] }).light;
-  const serif = mood === "elegant" || mood === "warm";
+  const k: BrandKit = { id: "m", name: "m", colors, mood: mood as BrandKit["mood"] };
+  const p = brandPalette(k).light;
+  const s = brandShape(k);
+  // La muestra pinta lo MISMO que produce el tono: su radio, su grosor de línea, su
+  // sombra y su tipografía. Antes sólo variaba el teñido —diferencias de 1 a 7% sobre un
+  // cuadro de 36px— y los siete se veían idénticos.
+  const r = Math.min(s.radius, 14);
   return (
     <button
       type="button"
       onClick={onPick}
       aria-pressed={selected}
       title={label}
-      className={`rounded-lg p-1 text-left transition ${
-        selected ? "outline outline-2 outline-offset-1 outline-brand" : "hover:opacity-80"
-      }`}
+      className={`p-1 text-left transition ${selected ? "" : "opacity-70 hover:opacity-100"}`}
     >
       <div
-        className="flex h-9 flex-col justify-between rounded-md p-1"
-        style={{ background: p["surface-2"], border: `1px solid ${p.border}` }}
+        className="flex h-12 flex-col justify-between p-1.5"
+        style={{
+          background: p["surface-2"],
+          border: `${s.edge}px solid ${selected ? p.brand : p.border}`,
+          borderRadius: `${r}px`,
+          boxShadow: s.shadow === 0 ? "none" : s.shadow === 2 ? `2px 2px 0 ${p.brand}` : "0 2px 6px rgba(0,0,0,.10)",
+        }}
       >
         <span
-          className="text-[10px] font-semibold leading-none"
-          style={{ color: p.ink, fontFamily: serif ? "Georgia, serif" : "inherit" }}
+          className="text-[10px] leading-none"
+          style={{
+            color: p.ink,
+            fontFamily: s.serif ? "Georgia, serif" : "inherit",
+            fontWeight: s.caps ? 700 : 600,
+            textTransform: s.caps ? "uppercase" : "none",
+            letterSpacing: s.caps ? ".08em" : 0,
+          }}
         >
           Aa
         </span>
-        <span className="h-1.5 w-full rounded-full" style={{ background: p.brand }} />
+        <span
+          className="h-2 w-full"
+          style={{ background: p.brand, borderRadius: `${Math.min(s.radius, 99)}px` }}
+        />
       </div>
-      <span className="mt-1 block truncate text-[10px] text-muted">{label}</span>
+      <span
+        className={`mt-1 block truncate text-[10px] ${selected ? "font-semibold text-ink" : "text-muted"}`}
+      >
+        {label}
+      </span>
     </button>
   );
 }
@@ -485,14 +509,17 @@ function KitEditor({
             {/* Muestras y no un <select>: el tono MUEVE la derivación (cuánto tiñe la
                 marca, qué tan marcada es la línea, si los títulos caen en serif), así que
                 tiene que poder compararse de un vistazo — igual que las fuentes. */}
+            {/* Sin chip "Neutro": no elegir tono se comporta EXACTAMENTE como "Sobrio",
+                así que eran dos casillas para un solo estado. Sobrio queda seleccionado
+                por defecto y guardarlo lo hace explícito. */}
             <div className="mt-1.5 grid grid-cols-4 gap-1.5">
-              {([""] as string[]).concat(BRAND_MOODS as readonly string[]).map((m) => (
+              {BRAND_MOODS.map((m) => (
                 <MoodSwatch
-                  key={m || "none"}
+                  key={m}
                   mood={m}
                   colors={colors}
-                  label={m ? t(MOOD_LABEL[m]) : t("Neutro")}
-                  selected={mood === m}
+                  label={t(MOOD_LABEL[m])}
+                  selected={mood === m || (!mood && m === "professional")}
                   onPick={() => setMood(m)}
                 />
               ))}

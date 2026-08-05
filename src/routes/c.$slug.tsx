@@ -6392,7 +6392,10 @@ function DmView({
   // Escalón de modelo de ESTA conversación. `null` = no aplica (el agente corre en un
   // runtime o un motor que no escala) → el control ni se pinta. Se pide al abrir el DM
   // y se refresca al escalar; no hace falta más, porque nadie más lo cambia.
-  const [esc, setEsc] = useState<{ model: string | null; to: string | null; escalated: boolean } | null>(null);
+  const [esc, setEsc] = useState<{
+    model: string | null; to: string | null; escalated: boolean;
+    turnsLeft: number | null; turnsOnEscalate: number;
+  } | null>(null);
   const [pidiendoPro, setPidiendoPro] = useState(false);
   useEffect(() => {
     if (!isAgentDm) { setEsc(null); return; }
@@ -6408,8 +6411,13 @@ function DmView({
   // que no, el ícono no debe quedarse encendido mintiendo.
   const subirDeModelo = async () => {
     const r = await escalateDmAgentFn({ data: { id: dmId } }).catch(() => null);
-    if (r?.ok) setEsc((e) => (e ? { ...e, escalated: true, to: null } : e));
-    else setEsc(await dmEscalationFn({ data: { id: dmId } }).catch(() => null));
+    if (r?.ok) {
+      setEsc((e) => (e ? { ...e, escalated: true, to: null, turnsLeft: r.turnsLeft ?? e.turnsOnEscalate } : e));
+    } else {
+      // Si el servidor dijo que no, se relee: el ícono no puede quedarse encendido
+      // afirmando algo que no pasó.
+      setEsc(await dmEscalationFn({ data: { id: dmId } }).catch(() => null));
+    }
   };
 
   return (
@@ -6461,25 +6469,26 @@ function DmView({
             se conserva) → sin advertencia; pero SÍ es de ida y no vuelta, y eso lo dice
             el propio texto en vez de esconderlo. El servidor decide a qué modelo: aquí
             no se nombra ninguno. */}
-        {/* RELLENO ámbar = esta conversación ya está arriba; contorno = se puede subir.
-            Ya escalada deja de ser un BOTÓN y pasa a ser un indicador (`span`): un
-            `button disabled` heredaba el `cursor: not-allowed` global de styles.css y
-            parecía que algo estaba prohibido, cuando en realidad ya está hecho. */}
-        {isAgentDm && esc?.escalated && (
-          <span
-            title={t("Esta conversación ya usa el modelo más capaz")}
-            className="grid h-11 w-11 shrink-0 place-items-center rounded-lg text-amber-500 md:h-9 md:w-9"
-          >
-            <Zap size={17} fill="currentColor" />
-          </span>
-        )}
-        {isAgentDm && esc && !esc.escalated && (
+        {/* RELLENO ámbar = corriendo en el modelo capaz; contorno = se puede subir.
+            SIEMPRE es un botón: escalado, el clic RENUEVA los turnos, que es lo que pide
+            quien sigue en la misma tarea. Un `button disabled` heredaba el
+            `cursor: not-allowed` global de styles.css y leía como "prohibido" cuando en
+            realidad ya estaba hecho — y encima dejaba sin salida a quien necesitaba más. */}
+        {isAgentDm && esc && (
           <button
-            onClick={() => setPidiendoPro(true)}
-            title={t("Subir a un modelo más capaz para esta conversación")}
-            className="grid h-11 w-11 shrink-0 place-items-center rounded-lg text-muted transition hover:bg-surface-3 hover:text-ink md:h-9 md:w-9"
+            onClick={() => { if (esc.escalated) void subirDeModelo(); else setPidiendoPro(true); }}
+            title={
+              esc.escalated
+                ? t("Modelo capaz · quedan {n} mensajes. Clic para extender.", { n: String(esc.turnsLeft ?? esc.turnsOnEscalate) })
+                : t("Subir a un modelo más capaz para esta conversación")
+            }
+            className={`grid h-11 w-11 shrink-0 place-items-center rounded-lg transition md:h-9 md:w-9 ${
+              esc.escalated
+                ? "text-amber-500 hover:bg-surface-3"
+                : "text-muted hover:bg-surface-3 hover:text-ink"
+            }`}
           >
-            <Zap size={17} />
+            <Zap size={17} fill={esc.escalated ? "currentColor" : "none"} />
           </button>
         )}
       </header>
@@ -6552,7 +6561,7 @@ function DmView({
       {pidiendoPro && (
         <ConfirmModal
           title={t("Subir a un modelo más capaz")}
-          body={t("{name} responderá con más capacidad en esta conversación, conservando la memoria. El primer mensaje tardará un poco más. No se puede volver al modelo anterior: para eso hay que borrar la memoria.", { name: title })}
+          body={t("{name} responderá con más capacidad durante los próximos {n} mensajes de esta conversación, conservando la memoria. El primer mensaje tardará un poco más. Después vuelve solo al modelo rápido; puedes extenderlo cuando quieras.", { name: title, n: String(esc?.turnsOnEscalate ?? 10) })}
           confirmLabel={t("Subir")}
           onCancel={() => setPidiendoPro(false)}
           onConfirm={async () => { await subirDeModelo(); setPidiendoPro(false); }}
