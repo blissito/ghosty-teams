@@ -701,30 +701,43 @@ function UsagePanel() {
         </p>
       </div>
 
-      {/* Desglose por agente. La barra sola miente por omisión: un turno de Ghosty pesa
-          4× uno de Blue, y si corre con la llave propia del cliente no descuenta NADA —
-          sin esto, ver la barra quieta mientras el agente trabaja no tiene explicación.
-          Sólo se pinta cuando hay más de una fuente: con una sola, la barra ya lo dice. */}
-      {(data.breakdown?.length ?? 0) > 1 && (
-        <div className="space-y-1.5">
-          <h4 className="text-xs font-medium text-gray-700 dark:text-gray-300">{t("Por agente")}</h4>
-          {data.breakdown!.map((b, i) => (
-            <div key={i} className="flex items-baseline justify-between gap-3 text-xs">
-              <span className="text-gray-600 dark:text-gray-400 truncate">
-                {motorLabel(b.engine, t)}
-                {!b.counted && (
-                  <span className="ml-1.5 text-gray-500">{t("· con tu llave, no descuenta")}</span>
+      {/* UNA BARRA POR MOTOR. La bolsa no es del espacio: Blue tiene la suya y Ghosty la
+          suya, así que una sola barra no podía decir la verdad de ninguno de los dos —
+          un turno de Ghosty pesa ~15× uno de Blue y se comía la promo de Blue entero.
+          Y el que corre con la llave del cliente no tiene tope: se MIDE y se enseña. */}
+      {(data.engines?.length ?? 0) > 0 && (
+        <div className="space-y-4">
+          {data.engines!.map((e, i) => {
+            const p = e.included && e.included > 0 ? Math.min(100, (e.used / e.included) * 100) : 0;
+            return (
+              <div key={i}>
+                <div className="flex items-baseline justify-between mb-1.5">
+                  <span className="text-sm font-medium">{motorLabel(e.engine, t)}</span>
+                  <span className="text-sm tabular-nums text-gray-900 dark:text-gray-100">
+                    {e.included === null
+                      ? `${fmtM(e.used)} · ${t("con tu llave, sin límite")}`
+                      : `${fmtM(e.used)} ${t("de")} ${fmtM(e.included)}`}
+                  </span>
+                </div>
+                {/* Sin tope no hay barra que llenar: una barra al 100% diría "se acabó" y
+                    una al 0% diría "no has usado nada". Las dos serían falsas. */}
+                {e.included !== null && (
+                  <div className="h-2 w-full rounded-full bg-gray-200 dark:bg-gray-700 overflow-hidden">
+                    <div
+                      className="h-full rounded-full transition-[width] duration-500"
+                      style={{
+                        width: `${Math.max(p, e.used > 0 ? 1.5 : 0)}%`,
+                        background: p >= 90 ? "#ef4444" : p >= 75 ? "#f59e0b" : "var(--color-brand)",
+                      }}
+                    />
+                  </div>
                 )}
-              </span>
-              <span
-                className={`tabular-nums shrink-0 ${
-                  b.counted ? "text-gray-900 dark:text-gray-100" : "text-gray-500"
-                }`}
-              >
-                {fmtM(b.billable)}
-              </span>
-            </div>
-          ))}
+                <p className="mt-1 text-xs text-gray-600 dark:text-gray-400">
+                  {e.turns.toLocaleString(intlLocale(locale))} {t("turnos")}
+                </p>
+              </div>
+            );
+          })}
         </div>
       )}
 

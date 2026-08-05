@@ -19,6 +19,8 @@ export const en: Record<string, string> = {
   "Ghosty": "Ghosty",
   "Codex": "Codex",
   "Por agente": "By agent",
+  "con tu llave, sin límite": "with your key, no limit",
+  "turnos": "turns",
   "· con tu llave, no descuenta": "· with your key, doesn't count",
   "Tokens de este mes": "Tokens this month",
   "de": "of",

@@ -96,9 +96,10 @@ export const workspaceUsageFn = createServerFn({ method: "GET" }).handler(async 
       turns: number;
       messagesUsed: number;
       messagesIncluded: number;
-      /** Consumo partido por motor y por quién paga la llave. `counted:false` = corrió
-       *  con la llave propia del cliente y NO descuenta de la bolsa. */
-      breakdown?: { engine: string; billable: number; turns: number; counted: boolean }[];
+      /** UNA BOLSA POR MOTOR. `included:null` = ilimitado, porque ese agente corre con la
+       *  llave del cliente: es su saldo con el proveedor, no el nuestro. Se mide y se
+       *  enseña; no se corta. */
+      engines?: { engine: string; used: number; included: number | null; turns: number; ownKey: boolean }[];
     };
   } catch {
     return null;
