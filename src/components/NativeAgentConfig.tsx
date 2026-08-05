@@ -91,9 +91,15 @@ export function NativeAgentConfig({ agentId }: { agentId: number }) {
           ))}
         </select>
         {/* Se dice porque es real y se nota: cambiar de modelo recicla la caja del
-            agente, y con ella el hilo de la conversación en curso. */}
+            agente, y con ella el hilo de la conversación en curso.
+            Y se aclara que esto es el modelo BASE: con el escalón (⚡) una conversación
+            puede estar corriendo en otro AHORA MISMO, y ver aquí "Flash" mientras el
+            rayo está encendido se lee como una contradicción. */}
         <p className="mt-1 text-xs text-muted">
           {t("Motor")}: {cfg.engineLabel}. {t("Al cambiar de modelo, la conversación arranca de nuevo.")}
+        </p>
+        <p className="mt-1 text-xs text-muted">
+          {t("Es el modelo base. Una conversación puede subir temporalmente a uno más capaz con el ⚡ de su cabecera, sin cambiar esto.")}
         </p>
       </div>
 

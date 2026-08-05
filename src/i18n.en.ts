@@ -4,6 +4,8 @@ export const en: Record<string, string> = {
   // base ya están más abajo: los comparte el editor de EasyBits.
   "(próximamente)": "(coming soon)",
   "Al cambiar de modelo, la conversación arranca de nuevo.": "Changing the model restarts the conversation.",
+  "Es el modelo base. Una conversación puede subir temporalmente a uno más capaz con el ⚡ de su cabecera, sin cambiar esto.":
+    "This is the base model. A conversation can temporarily move up to a more capable one with the ⚡ in its header, without changing this.",
   "Es la identidad del agente en todos los espacios. Se aplica al siguiente turno.":
     "This is the agent's identity everywhere. It applies from the next turn.",
   "Motor, llaves y canales en Ghosty Studio": "Engine, keys and channels in Ghosty Studio",
