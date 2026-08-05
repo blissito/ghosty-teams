@@ -14,6 +14,7 @@
 // Para PDF NO hay un segundo motor: se arma el HTML del documento y lo imprime
 // `render-svc` (Chromium), que es el servicio de la flota que ya hace esto, on-demand. Así
 // el PDF sale con el CSS real del documento en vez del layout de otra librería.
+import { type BrandKit, brandPrintVars } from "../lib/brand-tokens";
 import type { DocBlock } from "../lib/doc-blocks";
 
 /**
@@ -39,11 +40,39 @@ export async function blocksToDocx(blocks: DocBlock[], title: string): Promise<B
   // con "es-MX" clavado Word se los subrayaba enteros.
   const { currentLocale } = await import("./locale.server");
   const { intlLocale } = await import("../i18n.core");
+  const brand = await import("./brand.server")
+    .then((m) => m.activeBrandKit())
+    .catch(() => null);
   const blob = await exporter.toBlob(blocks as never, {
     locale: intlLocale(await currentLocale()),
-    documentOptions: { title },
+    documentOptions: { title, styles: docxBrandStyles(brand) },
   } as never);
   return Buffer.from(await blob.arrayBuffer());
+}
+
+/**
+ * Los estilos de Word que impone la marca: la familia del cuerpo y la de los títulos.
+ *
+ * Aquí SÓLO van fuentes, no colores. En Word un documento con texto de color se ve como
+ * una presentación, no como un escrito, y lo que sale de aquí se firma. El membrete tampoco
+ * entra: el .docx es el archivo EDITABLE, y quien lo abre suele tener ya su plantilla con
+ * papel membretado — meterle el nuestro lo obliga a borrarlo.
+ *
+ * `undefined` cuando no hay kit → el exportador usa sus defaults de siempre.
+ */
+function docxBrandStyles(kit: BrandKit | null): Record<string, unknown> | undefined {
+  const heading = kit?.fonts?.heading?.trim();
+  const body = kit?.fonts?.body?.trim();
+  if (!heading && !body) return undefined;
+  const titulos = ["Heading1", "Heading2", "Heading3", "Heading4"].map((id) => ({
+    id,
+    name: id,
+    run: { font: heading || body },
+  }));
+  return {
+    default: { document: { run: { font: body || heading } } },
+    paragraphStyles: titulos,
+  };
 }
 
 /**
@@ -56,7 +85,12 @@ export async function blocksToDocx(blocks: DocBlock[], title: string): Promise<B
  * del layout del panel), así que aquí va la versión de PAPEL — las mismas familias,
  * tamaños y espaciados, sin nada de la interfaz.
  */
-export async function blocksToPrintHtml(blocks: DocBlock[], title: string): Promise<string> {
+export async function blocksToPrintHtml(
+  blocks: DocBlock[],
+  title: string,
+  /** Sólo para el preview de Ajustes → Marca. En producción se resuelve el activo. */
+  brandOverride?: BrandKit | null
+): Promise<string> {
   const { ServerBlockNoteEditor } = await import("@blocknote/server-util");
   const { docSchema } = await import("./doc-blocks.server");
   const editor = ServerBlockNoteEditor.create({ schema: await docSchema() } as never) as unknown as {
@@ -64,10 +98,49 @@ export async function blocksToPrintHtml(blocks: DocBlock[], title: string): Prom
   };
   const inner = await inlineImages(await editor.blocksToFullHTML(blocks as unknown[]));
 
+  // El kit se resuelve AQUÍ y no en cada llamador: los dos caminos que producen PDF
+  // (la ruta del botón y el adjunto de `email_send`) tienen que dar el mismo papel.
+  const brand =
+    brandOverride !== undefined
+      ? brandOverride
+      : await import("./brand.server")
+          .then((m) => m.activeBrandKit())
+          .catch(() => null);
+
   return `<!doctype html>
 <html lang="es"><head><meta charset="utf-8"><title>${escapeHtml(title)}</title>
-<style>${fuentesEmbebidas()}\n${PRINT_CSS}</style>
-</head><body><article class="gt-print">${inner}</article></body></html>`;
+<style>${fuentesEmbebidas()}\n${PRINT_CSS}\n${brandPrintCss(brand)}</style>
+</head><body><article class="gt-print">${await brandHeader(brand)}${inner}</article></body></html>`;
+}
+
+/** El `:root` que pisa los fallbacks de PRINT_CSS. Sin kit, cadena vacía. */
+function brandPrintCss(kit: BrandKit | null): string {
+  if (!kit) return "";
+  const vars = Object.entries(brandPrintVars(kit))
+    .map(([k, v]) => `${k}:${v}`)
+    .join(";");
+  return `:root{${vars}}`;
+}
+
+/**
+ * El membrete. Va INCRUSTADO en base64 igual que el resto de las imágenes: el PDF lo
+ * imprime Chromium dentro de `render-svc`, que no alcanza nuestro storage — un `<img>`
+ * con la URL pública saldría como hueco, y un hueco no avisa.
+ */
+async function brandHeader(kit: BrandKit | null): Promise<string> {
+  if (!kit?.logoUrl) return "";
+  try {
+    const blob = await ourFiles(kit.logoUrl);
+    const buf = Buffer.from(await blob.arrayBuffer());
+    if (buf.length <= EMPTY_PNG.length) return "";
+    const mime = blob.type || mimeDeUrl(kit.logoUrl);
+    const src = `data:${mime};base64,${buf.toString("base64")}`;
+    return `<header class="gt-brand"><img src="${src}" alt="${escapeHtml(kit.name)}"></header>`;
+  } catch (e) {
+    // Un logo que no se pudo traer no puede impedir que salga el documento.
+    console.error("[doc print] logo de marca:", (e as Error).message);
+    return "";
+  }
 }
 
 /**
@@ -267,24 +340,36 @@ function fuentesEmbebidas(): string {
   return fuentesCache;
 }
 
+/**
+ * Los colores del papel, como variables con FALLBACK al valor de siempre. Sin kit el PDF
+ * sale byte a byte como salía; con kit, `brandVars()` emite el `:root` que las pisa.
+ *
+ * ⚠️ Las FUENTES del kit no entran aquí a propósito. `fuentesEmbebidas()` lee woff2 del
+ * disco y cachea en una global POR PROCESO: incrustar la fuente de un tenant en esa
+ * cadena se la serviría al PDF del siguiente. Un kit sólo nombra una familia (no sube el
+ * archivo), y render-svc no la tiene instalada, así que hoy no hay nada que incrustar —
+ * el día que se suban woff2 de marca, el caché tiene que ser `Map<kitId, css>` ANTES.
+ */
 const PRINT_CSS = `
 @page { size: Letter; margin: 2.2cm 2cm; }
 *{ box-sizing:border-box }
-body{ margin:0; color:#16161a; font:11pt/1.6 "Inter", ui-sans-serif, system-ui, sans-serif; }
+body{ margin:0; color:var(--pr-ink,#16161a); font:11pt/1.6 "Inter", ui-sans-serif, system-ui, sans-serif; }
+.gt-brand{ display:flex; align-items:center; margin:0 0 1.6em; padding:0 0 .9em; border-bottom:2px solid var(--pr-brand,#d8d3e4) }
+.gt-brand img{ max-height:52px; max-width:46%; width:auto; object-fit:contain }
 .gt-print{ max-width:none }
 h1,h2,h3,h4{ font-family:"Inter",ui-sans-serif,system-ui,sans-serif; line-height:1.25; margin:1.4em 0 .5em; page-break-after:avoid }
 h1{ font-size:19pt; font-weight:700 } h2{ font-size:14pt } h3{ font-size:12pt } h4{ font-size:11pt }
 p{ margin:0 0 .7em; orphans:3; widows:3 }
 ul,ol{ margin:0 0 .7em 1.4em; padding:0 }
 li{ margin:.15em 0 }
-blockquote{ margin:1em 0; padding-left:1em; border-left:3px solid #d8d3e4; color:#3f3f46 }
+blockquote{ margin:1em 0; padding-left:1em; border-left:3px solid var(--pr-line,#d8d3e4); color:var(--pr-muted,#3f3f46) }
 code{ font:11pt/1.4 "SFMono-Regular",Menlo,monospace; background:#f4f4f7; padding:.1em .3em; border-radius:3px }
 pre{ background:#f4f4f7; padding:.8em 1em; border-radius:6px; overflow:visible; white-space:pre-wrap; page-break-inside:avoid }
 table{ border-collapse:collapse; width:100%; margin:1em 0; page-break-inside:avoid }
-th,td{ border:1px solid #c9c4d6; padding:.4em .6em; text-align:left; vertical-align:top }
-th{ background:#f4edfd; font-weight:700 }
+th,td{ border:1px solid var(--pr-line,#c9c4d6); padding:.4em .6em; text-align:left; vertical-align:top }
+th{ background:var(--pr-tint,#f4edfd); font-weight:700 }
 img{ max-width:100%; height:auto }
-hr{ border:0; border-top:1px solid #d8d3e4; margin:1.6em 0 }
+hr{ border:0; border-top:1px solid var(--pr-line,#d8d3e4); margin:1.6em 0 }
 /* Columnas: en papel son la maqueta de las firmas, y NO llevan rejilla — igual que en el
    .docx, donde el exportador oficial ya las saca con los bordes en nil. */
 [data-node-type="columnList"]{ display:flex; gap:1.2cm; page-break-inside:avoid }

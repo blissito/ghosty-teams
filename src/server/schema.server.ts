@@ -848,6 +848,37 @@ async function migrate(): Promise<void> {
   )`);
   await exec(`CREATE INDEX IF NOT EXISTS idx_email_log_sub ON gt_email_log (sub, created_at)`);
 
+  // La MARCA del workspace. Varios kits, uno activo — un despacho lleva un kit por cliente
+  // y quien sólo tiene marca propia nace con uno.
+  //
+  // Se guarda MUY poco a propósito: cuatro colores, dos fuentes y los logos. Todo lo demás
+  // (capas de superficie, bordes, color de TEXTO, modo oscuro) se deriva en
+  // `src/lib/brand-tokens.ts`, que es isomorfo y por eso el panel pinta exactamente lo que
+  // se hornea. Capturar el texto en la fila es justo el bug de EasyBits: su
+  // `brandKitToDirection` lo tiene fijo en "#1a1a1a" y un kit oscuro sale ilegible.
+  //
+  // Del logo se guarda la KEY del bucket público, no la URL: `publicUrl(key)` al leer, así
+  // un cambio de endpoint de storage no deja las filas apuntando a ninguna parte.
+  await exec(`CREATE TABLE IF NOT EXISTS gt_brand_kits (
+    id            TEXT PRIMARY KEY,
+    name          TEXT NOT NULL,
+    colors_json   TEXT NOT NULL,
+    fonts_json    TEXT,
+    logo_key      TEXT,
+    logo_dark_key TEXT,
+    mood          TEXT,
+    is_active     INTEGER,
+    created_by    TEXT,
+    created_at    INTEGER NOT NULL DEFAULT (unixepoch()),
+    updated_at    INTEGER NOT NULL DEFAULT (unixepoch())
+  )`);
+  // ⚠️ El índice parcial hace IMPOSIBLE el estado de dos kits activos. En EasyBits el
+  // `isDefault` se sostiene con dos writes sin transacción (brandKitOperations.ts:53-58) y
+  // dos pestañas activando a la vez dejan la marca indeterminada. Por eso `is_active` admite
+  // NULL en vez de `NOT NULL DEFAULT 0`: en SQLite los NULL no chocan en un UNIQUE, así que
+  // sólo la fila con 1 participa del índice.
+  await exec("CREATE UNIQUE INDEX IF NOT EXISTS gt_brand_active ON gt_brand_kits(is_active) WHERE is_active = 1");
+
   // Flip único: correo por default OFF (opt-in). Las filas existentes heredaron el viejo
   // DEFAULT 1 (opt-out silencioso, nadie lo eligió conscientemente) → las apagamos una sola
   // vez, guardado por flag en gc_config. Reversible: el usuario lo reactiva en el panel.

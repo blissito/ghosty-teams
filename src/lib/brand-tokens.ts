@@ -44,7 +44,9 @@ export type BrandKit = {
 
 const HEX_RE = /^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i;
 
-export function isHex(v: unknown): v is string {
+// Devuelve `boolean` y NO un type predicate a propósito: como predicado, un `else` sobre
+// un valor ya tipado `string` lo estrecha a `never` y rompe el código de al lado.
+export function isHex(v: unknown): boolean {
   return typeof v === "string" && HEX_RE.test(v.trim());
 }
 
@@ -219,17 +221,20 @@ export function brandPalette(kit: BrandKit): ThemePreset {
 export function brandFormVars(kit: BrandKit): Record<string, string> {
   const p = brandPalette(kit);
   const l = p.light;
-  const accent = ensureContrast(normalizeHex(kit.colors.accent), l.surface, 3);
+  // ⚠️ El fondo del formulario es `--paper` (surface-2), NO surface: la tarjeta es
+  // blanca pero el texto secundario y el asterisco de requerido se leen sobre el
+  // papel. Garantizar el contraste contra surface deja a los dos un pelo cortos.
+  const paper = l["surface-2"];
   return {
     "--accent": l.brand,
-    "--accent-ink": ensureContrast(l.brand, l.surface, 4.5),
-    "--tint": mix(l.surface, l.brand, 0.1),
-    "--ink": l.ink,
-    "--muted": l.muted,
+    "--accent-ink": ensureContrast(l.brand, paper, 4.5),
+    "--tint": mix(paper, l.brand, 0.1),
+    "--ink": ensureContrast(l.ink, paper, 4.5),
+    "--muted": ensureContrast(l.muted, paper, 4.5),
     "--line": l.border,
-    "--req": ensureContrast(accent, l.surface, 4.5),
-    "--ok": l["brand-2"],
-    "--paper": l["surface-2"],
+    "--req": ensureContrast(normalizeHex(kit.colors.accent), paper, 4.5),
+    "--ok": ensureContrast(l["brand-2"], paper, 4.5),
+    "--paper": paper,
   };
 }
 

@@ -139,6 +139,13 @@ export const Route = createRootRoute({
         rel: 'manifest',
         href: '/api/manifest', // per-tenant (dinámico) — ver src/routes/api.manifest.ts
       },
+      {
+        // La marca del workspace, per-tenant. Va como <link> y no dentro del boot script
+        // porque una hoja bloquea el render (sin FOUC) y deja que el preset que la
+        // persona eligió le gane por especificidad. Ver src/routes/api.brand-css.ts.
+        rel: 'stylesheet',
+        href: '/api/brand-css',
+      },
     ],
   }),
   shellComponent: RootDocument,

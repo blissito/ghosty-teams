@@ -726,6 +726,100 @@ export function nativeTools(dest: ToolDest | null): ConnectorTool[] {
         }
       },
     },
+    // ── Marca del workspace ───────────────────────────────────────────────────
+    // El agente puede armar la marca en conversación ("saca el brandkit de mi página"),
+    // que es la mitad del valor de la feature: nadie quiere abrir Ajustes y teclear
+    // cuatro hex. Lo que NO puede es activarla sin que se lo pidan — cambiar la marca
+    // repinta lo que se publique después, y eso lo decide una persona.
+    {
+      name: "brand_list",
+      description:
+        "Lista las marcas (brand kits) del espacio: colores, fuentes y logo de cada una, y cuál está " +
+        "activa. La activa es la que se usa al generar documentos, formularios y ligas compartidas.",
+      inputSchema: { type: "object", properties: {} },
+      handler: async () => {
+        const { listBrandKits } = await import("../brand.server");
+        const kits = await listBrandKits();
+        return {
+          ok: true,
+          kits: kits.map((k) => ({
+            id: k.id,
+            nombre: k.name,
+            activa: k.isActive,
+            colores: k.colors,
+            fuentes: k.fonts,
+            logo: k.logoUrl,
+          })),
+        };
+      },
+    },
+    {
+      name: "brand_extract",
+      description:
+        "Saca la marca (colores, fuentes y logo) de una página web y la guarda como un brand kit nuevo. " +
+        "Úsalo cuando te den la URL de un sitio y pidan usar esa identidad. Queda GUARDADA pero NO activa: " +
+        "dile a la persona qué encontraste y pregúntale si la activa. Revisa el resultado antes de " +
+        "presumirlo — si no se encontró logo, dilo.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          url: { type: "string", description: "La página de la que sacar la marca" },
+          name: { type: "string", description: "Nombre para el kit; si lo omites se toma el del sitio" },
+        },
+        required: ["url"],
+      },
+      handler: async (sub, args) => {
+        const raw = String(args.url ?? "").trim();
+        if (!raw) return { ok: false, error: "falta la url" };
+        try {
+          const { extractFromUrl } = await import("../brand-extract.server");
+          const { createBrandKit } = await import("../brand.server");
+          const out = await extractFromUrl(/^https?:\/\//i.test(raw) ? raw : `https://${raw}`);
+          const kit = await createBrandKit(
+            {
+              name: String(args.name ?? "").trim() || out.name || "Marca",
+              colors: out.colors,
+              fonts: out.fonts,
+              logoKey: out.logoKey,
+            },
+            sub
+          );
+          return {
+            ok: true,
+            id: kit.id,
+            nombre: kit.name,
+            colores: kit.colors,
+            fuentes: kit.fonts,
+            logo: kit.logoUrl,
+            activa: kit.isActive,
+            // Que el modelo pueda decir la verdad sobre lo que NO salió, en vez de callarlo.
+            aviso: out.logoKey ? null : "no encontré el logo en esa página; hay que subirlo a mano",
+          };
+        } catch (e) {
+          return { ok: false, error: e instanceof Error ? e.message : String(e) };
+        }
+      },
+    },
+    {
+      name: "brand_activate",
+      description:
+        "Activa una marca ya guardada (saca el id con brand_list). A partir de ese momento los " +
+        "documentos, formularios y ligas que se publiquen salen con ella. PIDE CONFIRMACIÓN antes: " +
+        "cambia la identidad visual de todo el espacio.",
+      inputSchema: {
+        type: "object",
+        properties: { id: { type: "string", description: "Id del kit" } },
+        required: ["id"],
+      },
+      handler: async (_sub, args) => {
+        const id = String(args.id ?? "").trim();
+        if (!id) return { ok: false, error: "falta el id" };
+        const { getBrandKit, activateBrandKit } = await import("../brand.server");
+        if (!(await getBrandKit(id))) return { ok: false, error: "no existe esa marca" };
+        await activateBrandKit(id);
+        return { ok: true };
+      },
+    },
   ];
 }
 

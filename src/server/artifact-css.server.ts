@@ -12,6 +12,7 @@
  * y el CDN los sigue resolviendo en runtime. Lo horneado mata el destello; el CDN, el resto.
  */
 import { compile } from "tailwindcss";
+import { type BrandKit, brandThemeCss } from "../lib/brand-tokens";
 import { TAILWIND_INDEX_CSS as indexCss } from "./tailwind-index-css";
 
 const CDN_RE = /<script[^>]*src=["']https?:\/\/cdn\.tailwindcss\.com[^"']*["'][^>]*>\s*<\/script>/i;
@@ -36,14 +37,23 @@ function candidatesFrom(html: string): string[] {
  * el artefacto con CDN se ve bien igual (solo con el destello), así que esto nunca debe ser
  * capaz de romper una publicación.
  */
-export async function bakeTailwind(input: string): Promise<string> {
+export async function bakeTailwind(input: string, brand?: BrandKit | null): Promise<string> {
   // Un ```eb-patch``` publica el HTML ya horneado + el nodo nuevo: si respetáramos el <style>
   // viejo, las clases que trae el patch se quedarían sin CSS. Se tira y se hornea de cero.
   const html = input.replace(BAKED_RE, "");
   if (!CDN_RE.test(html)) return input;
   try {
     const t0 = performance.now();
-    const compiler = await compile(indexCss, { base: "/" });
+    // El `@theme` de la marca se ANTEPONE al index: así `bg-brand`, `text-ink` o
+    // `font-heading` de un artefacto salen con los colores del workspace, y el kit no
+    // puede pisar utilidades de Tailwind — sólo define tokens.
+    //
+    // ⚠️ Va HORNEADO y no inyectado desde el padre: el iframe se sirve con CSP `sandbox`
+    // sin `allow-same-origin` (artefacto.$id.raw.ts), o sea que nadie puede meterle CSS
+    // después. Y por eso mismo un artefacto ya publicado conserva la marca con la que
+    // nació hasta que se vuelva a publicar.
+    const source = brand ? `${brandThemeCss(brand)}\n${indexCss}` : indexCss;
+    const compiler = await compile(source, { base: "/" });
     const css = compiler.build(candidatesFrom(html));
     if (!css || css.length < 200) return input;
     const style = `<style ${MARK}>\n${css}\n</style>\n`;

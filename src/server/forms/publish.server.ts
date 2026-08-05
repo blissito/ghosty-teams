@@ -284,6 +284,11 @@ export async function publishForm(
 
   const token = mintFormToken({ id: form.id, ns: form.ns });
   const base = (form.origin || "").replace(/\/$/, "");
+  // La marca se hornea en el HTML, así que un formulario ya repartido NO cambia de look
+  // al editar el kit: se re-publica al volver a editarlo. Es lo correcto — reestilar en
+  // caliente un intake que alguien está llenando sería peor.
+  const { activeBrandKit } = await import("../brand.server");
+  const brand = await activeBrandKit(form.ns).catch(() => null);
   const html = renderFormHtml({
     title: form.title,
     fields: form.fields,
@@ -299,6 +304,7 @@ export async function publishForm(
     // renderizar, el primer HTML publicado saldría sin ella.
     publicUrl: formUrl(form),
     draftTtlDays: form.draftTtlDays,
+    brand,
   });
 
   const documentId = form.documentId ?? `form_doc_${randomUUID()}`;

@@ -69,6 +69,12 @@ const loadShared = createServerFn({ method: "GET" })
       // Privado va por /raw, que es del mismo origen y sí ve la sesión.
       contentUrl: found.root.visibility === "link" ? found.version.src : null,
       versionId: found.version.id,
+      // La marca del workspace para el marco. Es lo primero que ve alguien de fuera al
+      // abrir la liga, así que si el workspace tiene logo manda el suyo y no el nuestro.
+      brandLogo: await import("../server/brand.server")
+        .then((m) => m.activeBrandKit())
+        .then((k) => (k ? { url: k.logoUrl, name: k.name } : null))
+        .catch(() => null),
       // El iframe pide la MISMA versión que el marco: si no, el /raw resolvería por su
       // cuenta y podría entregar otra.
       viewParam: data.v ? `?v=${encodeURIComponent(data.v)}` : "",
@@ -156,9 +162,18 @@ function SharedArtifact() {
     <div className="flex h-[100dvh] flex-col bg-surface pt-[env(safe-area-inset-top)] md:pt-0">
       <ArtifactShareBar
         // La marca de la página es el fantasmita, no un ícono de archivo: esta
-        // página la abre gente que quizá no conoce Ghosty.
+        // página la abre gente que quizá no conoce Ghosty. Salvo que el workspace
+        // tenga la suya — entonces manda la del cliente, que es de quien es el documento.
         leading={
-          <GhostyMascot className="mr-1.5 h-6 w-5 shrink-0" offset={blink.offset} period={blink.period} />
+          d.brandLogo?.url ? (
+            <img
+              src={d.brandLogo.url}
+              alt={d.brandLogo.name}
+              className="mr-1.5 h-6 w-auto max-w-24 shrink-0 object-contain"
+            />
+          ) : (
+            <GhostyMascot className="mr-1.5 h-6 w-5 shrink-0" offset={blink.offset} period={blink.period} />
+          )
         }
         title={d.title}
         subtitle={d.ownerName ? t("Artefacto de {name}").replace("{name}", d.ownerName) : null}

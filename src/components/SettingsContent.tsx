@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { Bot, Plus, Trash2, X, Bell, Smile, Loader2, Pencil, Mail, ExternalLink } from "lucide-react";
 import { FleetAgentControls } from "./FleetAgentControls";
+import { BrandPanel } from "./BrandPanel";
 import { Avatar } from "./Avatar";
 import { currentPushState, enablePush, disablePush } from "../utils/push-subscribe";
 import { me, cachedMe, peekMe, logout, clearMeCache } from "../server/auth";
@@ -27,7 +28,7 @@ import { bumpUsers } from "../utils/users-bus";
 import type { CustomEmoji } from "../db.server";
 import { useT, useLocale, useSetLocale, type Locale } from "../i18n";
 import { intlLocale } from "../i18n.core";
-import { Monitor, Sun, Moon, Check, SlidersHorizontal, Palette, Github, Plug, Users, Calendar, CalendarClock, CalendarCheck, Link2, RefreshCw, Gauge, Bug } from "lucide-react";
+import { Monitor, Sun, Moon, Check, SlidersHorizontal, Palette, SwatchBook, Github, Plug, Users, Calendar, CalendarClock, CalendarCheck, Link2, RefreshCw, Gauge, Bug } from "lucide-react";
 import { workspaceUsageFn } from "../server/workspaces";
 import { listMyConnectorsFn, disconnectConnectorFn, shareConnectorFn } from "../server/connectors";
 import {
@@ -97,7 +98,7 @@ function seedSettingsData(): SettingsData | null {
  * @param initial datos precargados por el loader de la ruta (evita flash en SSR).
  * @param onClose si viene → modo modal (header con X). Si no → modo ruta (link "volver").
  */
-type TabId = "general" | "notifications" | "appearance" | "integraciones" | "agentes" | "emojis" | "uso";
+type TabId = "general" | "notifications" | "appearance" | "marca" | "integraciones" | "agentes" | "emojis" | "uso";
 
 export function SettingsContent({
   initialTab,
@@ -163,6 +164,9 @@ export function SettingsContent({
     { id: "general", label: t("General"), icon: SlidersHorizontal },
     { id: "notifications", label: t("Notificaciones"), icon: Bell },
     { id: "appearance", label: t("Apariencia"), icon: Palette },
+    // Marca: es config DEL WORKSPACE, no preferencia personal — por eso va con el mismo
+    // gate que Agentes y no dentro de Apariencia, que es todo per-user.
+    ...(canManageAgents ? [{ id: "marca" as const, label: t("Marca"), icon: SwatchBook }] : []),
     { id: "integraciones", label: t("Integraciones"), icon: Plug },
     { id: "uso", label: t("Uso"), icon: Gauge },
     ...(canManageAgents ? [{ id: "agentes" as const, label: t("Agentes"), icon: Bot }] : []),
@@ -327,6 +331,7 @@ export function SettingsContent({
           {tab === "notifications" && <NotificationsCard />}
 
           {tab === "appearance" && <AppearancePanel />}
+          {tab === "marca" && canManageAgents && <BrandPanel isOwner={isOwner} />}
 
           {tab === "integraciones" && <IntegrationsPanel />}
 

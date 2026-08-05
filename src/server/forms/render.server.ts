@@ -13,8 +13,36 @@
 // `sandbox` SIN `allow-same-origin` → origen OPACO. De ahí salen dos reglas duras:
 //   · las URLs de submit y upload son ABSOLUTAS (una relativa apuntaría al host del iframe);
 //   · el fetch va sin credenciales y el endpoint responde CORS `*` (ver api.form.$token.ts).
+import { type BrandKit, brandFontStacks, brandFormVars } from "../../lib/brand-tokens";
 import { escapeHtml, formSteps, itemKey, type FormField } from "../../lib/form-fields";
 import { fill, formStrings, toFormLocale, type FormLocale, type FormStrings } from "../../lib/form-strings";
+
+/**
+ * La marca como un SEGUNDO `<style>`, después del CSS del formulario: mismas claves que
+ * el `:root` de abajo, valores del kit. Ni una regla del formulario cambia y el kit no
+ * puede romper el layout — sólo puede pintar lo que ya estaba tokenizado.
+ *
+ * Los valores salen de `brandFormVars`, que garantiza AA contra `--paper`. No se
+ * interpola nada que venga del usuario sin pasar por ahí: son hex validados.
+ */
+function brandStyle(kit?: BrandKit | null): string {
+  if (!kit) return "";
+  const vars = Object.entries(brandFormVars(kit))
+    .map(([k, v]) => `${k}:${v}`)
+    .join(";");
+  const f = brandFontStacks(kit);
+  return `<style>:root{${vars}}
+.gf-title{font-family:${f.heading}}
+body{font-family:${f.body}}
+.gf-logo{display:block;max-height:44px;max-width:60%;width:auto;margin:0 0 16px;object-fit:contain}</style>`;
+}
+
+function brandLogo(kit?: BrandKit | null): string {
+  if (!kit?.logoUrl) return "";
+  // `alt` con el nombre del kit: quien responde un intake por lector de pantalla tiene
+  // que saber de quién es el formulario antes de dar sus datos.
+  return `<img class="gf-logo" src="${escapeHtml(kit.logoUrl)}" alt="${escapeHtml(kit.name)}">`;
+}
 
 export type RenderFormArgs = {
   title: string;
@@ -38,6 +66,13 @@ export type RenderFormArgs = {
   draftUrl?: string | null;
   publicUrl?: string | null;
   draftTtlDays?: number;
+  /**
+   * La marca del workspace. Se hornea AQUÍ y no en el publish porque el HTML del
+   * formulario va con `stamp:false` justo para saltarse `stampIds` y `bakeTailwind`
+   * (forms/publish.server.ts:325) — o sea que después del render nadie vuelve a tocar
+   * este HTML. Ausente → el formulario sale con la paleta de Ghosty, como hasta hoy.
+   */
+  brand?: BrandKit | null;
 };
 
 export function renderFormHtml(a: RenderFormArgs): string {
@@ -64,10 +99,12 @@ export function renderFormHtml(a: RenderFormArgs): string {
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${escapeHtml(a.title)}</title>
 <style>${CSS}</style>
+${brandStyle(a.brand)}
 </head>
 <body>
 <main class="gf-card">
   <header class="gf-head">
+    ${brandLogo(a.brand)}
     <h1 class="gf-title">${escapeHtml(a.title)}</h1>
     ${a.intro ? `<p class="gf-intro">${escapeHtml(a.intro)}</p>` : ""}
     ${multi ? `<div class="gf-bar"><i id="gf-bar-fill"></i></div><p class="gf-count" id="gf-count"></p>` : ""}

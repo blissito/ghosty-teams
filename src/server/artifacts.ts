@@ -99,7 +99,10 @@ export async function publishArtifactVersion(args: {
     // dejaba el CDN al compilar en el navegador. Best-effort: si falla, sale con CDN.
     try {
       const { bakeTailwind } = await import("./artifact-css.server");
-      md = await bakeTailwind(md);
+      const brand = await import("./brand.server")
+        .then((m) => m.activeBrandKit())
+        .catch(() => null);
+      md = await bakeTailwind(md, brand);
     } catch (e) {
       console.error("[artifact] bakeTailwind failed", e);
     }

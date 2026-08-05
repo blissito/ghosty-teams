@@ -197,6 +197,41 @@ export async function buildMediaParts(
  * Devuelve "" si no hay notas: un bloque vacío es ruido en cada turno y le enseña al modelo
  * a ignorar la sección.
  */
+/**
+ * La marca del espacio, para que el agente diseñe con ella en vez de inventar colores.
+ *
+ * Sólo se le dan los DATOS, no instrucciones de dónde aplicarlos: los documentos, los
+ * formularios y los artefactos ya salen con la marca horneada por el servidor. Esto es
+ * para lo que el servidor no puede pintar solo — una gráfica, una portada, un HTML a
+ * mano — y para que pueda contestar "¿cuál es mi color principal?".
+ *
+ * "" cuando no hay marca, por la misma razón que memoryHint: un bloque vacío en cada
+ * turno le enseña al modelo a saltarse la sección.
+ */
+async function brandContextHint(): Promise<string> {
+  try {
+    const { activeBrandKit } = await import("./server/brand.server");
+    const kit = await activeBrandKit();
+    if (!kit) return "";
+    const c = kit.colors;
+    const fuentes = [kit.fonts?.heading && `títulos ${kit.fonts.heading}`, kit.fonts?.body && `texto ${kit.fonts.body}`]
+      .filter(Boolean)
+      .join(", ");
+    return (
+      `[Marca de este espacio — "${kit.name}". Úsala cuando diseñes algo visual (una gráfica, ` +
+      `una portada, HTML a mano) en vez de escoger colores por tu cuenta. Los documentos, ` +
+      `formularios y artefactos YA salen con ella puesta: no la repitas a mano ahí.\n` +
+      `principal ${c.primary} · secundario ${c.secondary} · acento ${c.accent} · fondo ${c.surface}` +
+      (fuentes ? `\nfuentes: ${fuentes}` : "") +
+      (kit.mood ? `\ntono: ${kit.mood}` : "") +
+      (kit.logoUrl ? `\nlogo: ${kit.logoUrl}` : "") +
+      `]\n\n`
+    );
+  } catch {
+    return "";
+  }
+}
+
 async function memoryHint(dest: import("./server/connectors/tool-token.server").ToolDest | null): Promise<string> {
   if (!dest) return "";
   try {
@@ -709,6 +744,10 @@ export async function callAgentBackendStream(
   const nowHint = await clockHint(invokerSub);
   // Memoria de la conversación: convenciones que ya se acordaron y siguen vigentes.
   const memHint = await memoryHint(dest ?? null);
+  // La marca del espacio. Va en el TEXTO del turno y no en appendSystemPrompt: el system
+  // prompt entra por VALOR en el `configSig` del worker, así que editar el kit cerraría
+  // la sesión persistente y el siguiente turno correría en frío.
+  const brandHint = await brandContextHint();
   // La persona por-agente va en la CAPA SYSTEM (appendSystemPrompt), NUNCA en el texto
   // del usuario. Antes se anteponía como `[Instrucciones para X: …]` dentro del mensaje;
   // el modelo lo leía como instrucciones incrustadas y lo rechazaba como intento de
@@ -753,7 +792,7 @@ export async function callAgentBackendStream(
   } catch { /* un conector roto nunca tumba el turno */ }
   // `sinToolsHint` va PRIMERO a propósito: dice que manda sobre cualquier bloque que
   // afirme tener integraciones, y este es exactamente ese bloque.
-  const outText = sinToolsHint + connHint + nowHint + memHint + docHint + text;
+  const outText = sinToolsHint + connHint + nowHint + memHint + brandHint + docHint + text;
   try {
     // `parts` = FileParts A2A (media); EasyBits los normaliza por MIME (Slice E1).
     // configGroupId "teams" = unidad de config ESTABLE de este canal en EasyBits

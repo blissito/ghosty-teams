@@ -29,6 +29,8 @@ import { Route as ApiUploadRouteImport } from './routes/api.upload'
 import { Route as ApiTtsWarmRouteImport } from './routes/api.tts-warm'
 import { Route as ApiStreamRouteImport } from './routes/api.stream'
 import { Route as ApiManifestRouteImport } from './routes/api.manifest'
+import { Route as ApiBrandLogoRouteImport } from './routes/api.brand-logo'
+import { Route as ApiBrandCssRouteImport } from './routes/api.brand-css'
 import { Route as ApiAgentAssetRouteImport } from './routes/api.agent-asset'
 import { Route as SetupEasybitsConnectRouteImport } from './routes/setup.easybits.connect'
 import { Route as SetupEasybitsCallbackRouteImport } from './routes/setup.easybits.callback'
@@ -154,6 +156,16 @@ const ApiStreamRoute = ApiStreamRouteImport.update({
 const ApiManifestRoute = ApiManifestRouteImport.update({
   id: '/api/manifest',
   path: '/api/manifest',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiBrandLogoRoute = ApiBrandLogoRouteImport.update({
+  id: '/api/brand-logo',
+  path: '/api/brand-logo',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiBrandCssRoute = ApiBrandCssRouteImport.update({
+  id: '/api/brand-css',
+  path: '/api/brand-css',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiAgentAssetRoute = ApiAgentAssetRouteImport.update({
@@ -300,6 +312,8 @@ export interface FileRoutesByFullPath {
   '/login': typeof LoginRoute
   '/setup': typeof SetupRouteWithChildren
   '/api/agent-asset': typeof ApiAgentAssetRoute
+  '/api/brand-css': typeof ApiBrandCssRoute
+  '/api/brand-logo': typeof ApiBrandLogoRoute
   '/api/manifest': typeof ApiManifestRoute
   '/api/stream': typeof ApiStreamRoute
   '/api/tts-warm': typeof ApiTtsWarmRoute
@@ -347,6 +361,8 @@ export interface FileRoutesByTo {
   '/forms': typeof FormsRoute
   '/login': typeof LoginRoute
   '/api/agent-asset': typeof ApiAgentAssetRoute
+  '/api/brand-css': typeof ApiBrandCssRoute
+  '/api/brand-logo': typeof ApiBrandLogoRoute
   '/api/manifest': typeof ApiManifestRoute
   '/api/stream': typeof ApiStreamRoute
   '/api/tts-warm': typeof ApiTtsWarmRoute
@@ -396,6 +412,8 @@ export interface FileRoutesById {
   '/login': typeof LoginRoute
   '/setup': typeof SetupRouteWithChildren
   '/api/agent-asset': typeof ApiAgentAssetRoute
+  '/api/brand-css': typeof ApiBrandCssRoute
+  '/api/brand-logo': typeof ApiBrandLogoRoute
   '/api/manifest': typeof ApiManifestRoute
   '/api/stream': typeof ApiStreamRoute
   '/api/tts-warm': typeof ApiTtsWarmRoute
@@ -446,6 +464,8 @@ export interface FileRouteTypes {
     | '/login'
     | '/setup'
     | '/api/agent-asset'
+    | '/api/brand-css'
+    | '/api/brand-logo'
     | '/api/manifest'
     | '/api/stream'
     | '/api/tts-warm'
@@ -493,6 +513,8 @@ export interface FileRouteTypes {
     | '/forms'
     | '/login'
     | '/api/agent-asset'
+    | '/api/brand-css'
+    | '/api/brand-logo'
     | '/api/manifest'
     | '/api/stream'
     | '/api/tts-warm'
@@ -541,6 +563,8 @@ export interface FileRouteTypes {
     | '/login'
     | '/setup'
     | '/api/agent-asset'
+    | '/api/brand-css'
+    | '/api/brand-logo'
     | '/api/manifest'
     | '/api/stream'
     | '/api/tts-warm'
@@ -590,6 +614,8 @@ export interface RootRouteChildren {
   LoginRoute: typeof LoginRoute
   SetupRoute: typeof SetupRouteWithChildren
   ApiAgentAssetRoute: typeof ApiAgentAssetRoute
+  ApiBrandCssRoute: typeof ApiBrandCssRoute
+  ApiBrandLogoRoute: typeof ApiBrandLogoRoute
   ApiManifestRoute: typeof ApiManifestRoute
   ApiStreamRoute: typeof ApiStreamRoute
   ApiTtsWarmRoute: typeof ApiTtsWarmRoute
@@ -762,6 +788,20 @@ declare module '@tanstack/react-router' {
       path: '/api/manifest'
       fullPath: '/api/manifest'
       preLoaderRoute: typeof ApiManifestRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/brand-logo': {
+      id: '/api/brand-logo'
+      path: '/api/brand-logo'
+      fullPath: '/api/brand-logo'
+      preLoaderRoute: typeof ApiBrandLogoRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/brand-css': {
+      id: '/api/brand-css'
+      path: '/api/brand-css'
+      fullPath: '/api/brand-css'
+      preLoaderRoute: typeof ApiBrandCssRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/agent-asset': {
@@ -990,6 +1030,8 @@ const rootRouteChildren: RootRouteChildren = {
   LoginRoute: LoginRoute,
   SetupRoute: SetupRouteWithChildren,
   ApiAgentAssetRoute: ApiAgentAssetRoute,
+  ApiBrandCssRoute: ApiBrandCssRoute,
+  ApiBrandLogoRoute: ApiBrandLogoRoute,
   ApiManifestRoute: ApiManifestRoute,
   ApiStreamRoute: ApiStreamRoute,
   ApiTtsWarmRoute: ApiTtsWarmRoute,

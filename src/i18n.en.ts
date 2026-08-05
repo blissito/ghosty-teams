@@ -975,4 +975,39 @@ export const en: Record<string, string> = {
   "ver": "view",
   "comentar": "comment on",
   "editar": "edit",
+
+  // Ajustes → Marca
+  "Marca": "Brand",
+  "Los colores, las fuentes y el logo con los que salen tus documentos, formularios y ligas compartidas.":
+    "The colors, fonts and logo your documents, forms and shared links go out with.",
+  "Nueva marca": "New brand",
+  "Editar marca": "Edit brand",
+  "Todavía no hay ninguna marca.": "No brand yet.",
+  "Puedes sacarla de tu página web o de tu logo, y el agente también puede hacerlo por ti.":
+    "You can pull it from your website or your logo — and the agent can do it for you.",
+  "Activa": "Active",
+  "Usar": "Use",
+  "Fuentes del sistema": "System fonts",
+  "Sácala de una página web": "Pull it from a website",
+  "Extraer": "Extract",
+  "Leemos los colores y el logo de la página. Revísalos antes de guardar.":
+    "We read the page’s colors and logo. Check them before saving.",
+  "No encontré el logo; súbelo tú y revisa los colores.":
+    "I couldn’t find the logo — upload it yourself and check the colors.",
+  "Logo": "Logo",
+  "Fuente de títulos": "Heading font",
+  "Fuente de texto": "Body font",
+  "Tono": "Tone",
+  "Sin especificar": "Not set",
+  "Se lo pasamos al agente cuando diseña algo para ti.":
+    "We pass it to the agent when it designs something for you.",
+  "Así se va a ver": "How it will look",
+  "Formulario": "Form",
+  "Cuéntanos de tu caso": "Tell us about your case",
+  "La app en oscuro": "The app in dark mode",
+  "Botón": "Button",
+  "texto secundario": "secondary text",
+
+  // Preexistente, sin traducir hasta hoy.
+  "y": "and",
 };

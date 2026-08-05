@@ -127,7 +127,15 @@ export function applyTheme(s: ThemeState): void {
   r.setAttribute("data-theme", dark ? "dark" : "light");
   if (preset.id !== "ghosty") r.setAttribute("data-preset", preset.id);
   else r.removeAttribute("data-preset");
-  for (const [k, v] of Object.entries(paletteVars(preset, dark))) r.style.setProperty(k, v);
+  // "Default" NO escribe variables inline: deja que mande el CSS, que es donde entra la
+  // MARCA del workspace (/api/brand-css, servida por tenant). Un estilo inline le gana a
+  // cualquier hoja, así que escribir la paleta de Ghosty aquí haría invisible al kit.
+  // Elegir cualquier otro preset sí pisa la marca — es una preferencia personal explícita.
+  if (preset.id === "ghosty") {
+    for (const k of Object.keys(paletteVars(preset, dark))) r.style.removeProperty(k);
+  } else {
+    for (const [k, v] of Object.entries(paletteVars(preset, dark))) r.style.setProperty(k, v);
+  }
   // Fuente: "default" sigue la del estilo; si no, la elegida.
   const fontKind: FontKind = s.font === "default" ? preset.font : s.font;
   r.style.setProperty("--font-sans", FONT_STACKS[fontKind]);
@@ -195,7 +203,8 @@ var dark=sc==='dark'||(sc==='system'&&window.matchMedia&&matchMedia('(prefers-co
 var pr=P[id]||P.ghosty;var pal=dark?pr.dark:pr.light;var r=document.documentElement;
 r.setAttribute('data-theme',dark?'dark':'light');
 if(id&&id!=='ghosty')r.setAttribute('data-preset',id);else r.removeAttribute('data-preset');
-for(var k in pal)r.style.setProperty('--color-'+k,pal[k]);
+// Ver applyTheme: "Default" no escribe inline para no taparle la marca del workspace.
+if(id!=='ghosty')for(var k in pal)r.style.setProperty('--color-'+k,pal[k]);
 r.style.setProperty('--font-sans',F[fo==='default'?pr.font:fo]);
 r.style.fontSize=T[ts]||T.regular;
 if(rm)r.setAttribute('data-reduce-motion','1');
