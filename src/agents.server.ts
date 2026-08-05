@@ -655,7 +655,17 @@ export async function callAgentBackendStream(
   /** Canal/DM de ESTE turno → viaja firmado en el toolToken (tools nativas). */
   dest?: import("./server/connectors/tool-token.server").ToolDest | null,
   /** STEER: meterlo al turno vivo de esta conversación en vez de abrir otro. */
-  inject?: boolean
+  inject?: boolean,
+  /**
+   * Origin de ESTE tenant, cuando el turno NO corre dentro de un request.
+   *
+   * ⚠️ `reqOrigin()` lee las cabeceras del request vivo. Un turno disparado por un
+   * webhook —que contesta primero y trabaja después— ya no tiene ese contexto, así que
+   * el minteo del tool-token cae al `catch` y el agente corre **sin herramientas**: dice
+   * "no tengo acceso a Sentry" mientras la integración está perfectamente conectada.
+   * Falla en silencio porque ese catch es best-effort a propósito.
+   */
+  originOverride?: string
 ): Promise<string> {
   if (agent.backend.kind !== "fleet") {
     // Sin SSE todavía: colecta el reply completo y lo emite de un tirón (el cliente
@@ -685,7 +695,9 @@ export async function callAgentBackendStream(
       // host de otro y usaría sus conexiones compartidas. Ver tool-token.server.ts.
       const { currentNamespace } = await import("./server/tenant.server");
       toolToken = mintToolToken(invokerSub, await currentNamespace(), dest ?? null);
-      toolsUrl = `${await reqOrigin()}/api/connectors/tools`;
+      const origin = originOverride || (await reqOrigin());
+      if (!origin) throw new Error("sin origin: no puedo decirle al box a dónde llamar");
+      toolsUrl = `${origin}/api/connectors/tools`;
     } catch { /* sin secret/origin → sin tools este turno, no rompe */ }
   }
   // docHint (contexto por-doc del turno) va PRIMERO en el texto; el system prompt
@@ -1157,6 +1169,8 @@ async function runAgentTurnInner(opts: {
   signal?: AbortSignal;
   /** La cáscara ya existe con este id — para registrarlo como turno vivo y poder pararlo. */
   onShell?: (id: number) => void;
+  /** Origin del tenant cuando el turno corre FUERA de un request (webhooks). Ver callAgentBackendStream. */
+  originOverride?: string;
 }): Promise<{ id: number; reply: string }> {
   let id: number | null = null;
   const ensure = async (): Promise<number> => {
@@ -1368,7 +1382,7 @@ async function runAgentTurnInner(opts: {
     await onChunk(reply);
   } else {
     try {
-      reply = await callAgentBackendStream(opts.agent, opts.groupId, opts.sender, opts.text, onChunk, opts.parts ?? [], onTool, opts.currentDoc, opts.invokerSub, opts.signal, opts.dest, opts.inject);
+      reply = await callAgentBackendStream(opts.agent, opts.groupId, opts.sender, opts.text, onChunk, opts.parts ?? [], onTool, opts.currentDoc, opts.invokerSub, opts.signal, opts.dest, opts.inject, opts.originOverride);
     } catch (e) {
       // Detenido: NO es un error del agente. Se conserva lo que alcanzó a escribir y se
       // dice que se detuvo — borrarlo tiraría trabajo que el usuario ya estaba leyendo.

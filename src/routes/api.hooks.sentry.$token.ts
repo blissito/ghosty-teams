@@ -143,6 +143,13 @@ export const Route = createFileRoute("/api/hooks/sentry/$token")({
           // en el tenant equivocado.
           const { worthEnriching, enrichAlertInThread } = await import("../server/sentry-enrich.server");
           if (alertId && ref.ownerSub && worthEnriching(issue)) {
+            // ⚠️ El origin se lee AQUÍ, con el request todavía vivo. `reqOrigin()` sale de
+            // las cabeceras, y el turno corre después de contestar: allá dentro ya no hay
+            // request. Sin él, el minteo del tool-token cae a un catch best-effort y el
+            // agente investiga SIN herramientas — contesta "no tengo acceso a Sentry" con
+            // la integración perfectamente conectada, y sin un solo error en el log.
+            const { reqOrigin } = await import("../origin.server");
+            const origin = await reqOrigin().catch(() => "");
             void withNamespace(ref.ns, () =>
               enrichAlertInThread({
                 ns: ref.ns,
@@ -151,6 +158,7 @@ export const Route = createFileRoute("/api/hooks/sentry/$token")({
                 handle: ref.handle,
                 ownerSub: ref.ownerSub,
                 issue: issue!,
+                origin,
               })
             );
           }

@@ -43,6 +43,8 @@ export async function enrichAlertInThread(opts: {
   handle: string;
   ownerSub: string;
   issue: Record<string, any>;
+  /** Capturado DENTRO del request (ver la llamada): aquí ya no hay cabeceras que leer. */
+  origin: string;
 }): Promise<void> {
   try {
     const db = await import("../db.server");
@@ -89,6 +91,7 @@ export async function enrichAlertInThread(opts: {
       // El invocador es quien conectó Sentry y configuró la alerta — el mismo `ownerSub`
       // con el que el webhook ya comprobó que la conexión sigue viva.
       invokerSub: opts.ownerSub,
+      originOverride: opts.origin,
       dest: { channelId: opts.channelId, parentId: opts.alertMessageId, topic, handle: opts.handle, name, avatar: agent?.avatar ?? "" },
       createShell: async () => {
         const { id } = await db.postAgent(opts.channelId, opts.alertMessageId, "", "msg", opts.handle, name, topic, agent?.avatar ?? "");
