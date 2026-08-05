@@ -86,14 +86,73 @@ function highlightText(children: React.ReactNode, emojiMap: Map<string, string>,
 // Envuelve los contenedores de texto para inyectar el resaltado; highlightText
 // desciende a strong/em/etc. anidados, así que basta con los bloques de nivel alto.
 const TEXT_TAGS = ["p", "li", "td", "th", "h1", "h2", "h3", "h4", "h5", "h6", "blockquote"] as const;
+
+// ⚠️ `td`/`th` están en TEXT_TAGS para poder inyectar emojis y menciones dentro de una
+// celda, y al sustituir el componente de Streamdown se quedaban SIN className: se perdía
+// su padding y su peso, y mandaban los defaults de `prose`. De ahí las celdas desparejas.
+// Se les devuelve la clase aquí, no se sacan de TEXT_TAGS (el motivo por el que están
+// sigue vivo). Ver también TABLE_COMPONENTS abajo.
+// Sin color: la celda HEREDA el del contenedor. Es lo que hace que la misma tabla sirva
+// en el chat (tokens theme-aware) y en la hoja clara del draft del artefacto, que es
+// blanca SIEMPRE — ahí un `text-ink` en tema oscuro saldría casi blanco sobre blanco.
+const CELL_CLS: Partial<Record<(typeof TEXT_TAGS)[number], string>> = {
+  th: "px-3 py-1.5 text-left align-bottom text-xs font-semibold uppercase tracking-wide",
+  td: "px-3 py-1.5 align-top text-sm",
+};
+
 function textComponents(emojiMap: Map<string, string>, onMention?: (handle: string) => void): Components {
   return Object.fromEntries(
     TEXT_TAGS.map((tag) => [
       tag,
-      ({ node, children, ...props }: { node?: unknown; children?: React.ReactNode }) =>
-        createElement(tag, props, highlightText(children, emojiMap, onMention)),
+      ({ node, children, className, ...props }: { node?: unknown; children?: React.ReactNode; className?: string }) =>
+        createElement(
+          tag,
+          { ...props, className: [CELL_CLS[tag], className].filter(Boolean).join(" ") || undefined },
+          highlightText(children, emojiMap, onMention)
+        ),
     ])
   );
+}
+
+// Tablas del chat. Streamdown trae las suyas, pero pintadas con tokens que en este repo
+// significan otra cosa o directamente no existen:
+//   • `thead` con `bg-muted/80`, y aquí `--color-muted` es un gris de TEXTO → la cabecera
+//     salía como una franja gris pizarra a todo lo ancho.
+//   • el wrapper usa `bg-sidebar` y `bg-background`, que NO están en nuestro @theme: las
+//     utilidades ni se generan, así que quedaban dos bordes anidados sin sus fondos.
+// Por eso pintamos nosotros el contenedor en vez de definir sus tokens: `sidebar` y
+// `background` son vocabulario de Streamdown y atarnos a sus nombres internos es peor.
+// El scroll horizontal se CONSERVA (una tabla ancha no debe romper la burbuja).
+// `light` = hoja clara del draft del artefacto: fondo blanco fijo, así que ahí los colores
+// no pueden salir de los tokens theme-aware (en tema oscuro pintarían oscuro sobre blanco).
+function tableComponents(light?: boolean): Components {
+  const line = light ? "border-black/10" : "border-border";
+  const head = light ? "bg-black/[0.04]" : "bg-surface-2";
+  return {
+    table: ({ node, children, className, ...props }: { node?: unknown; children?: React.ReactNode; className?: string }) => (
+      {/* `not-prose`: la salida oficial de @tailwindcss/typography. Sin ella, `prose` le
+          mete `margin: 2em 0` al table —franja vacía dentro de nuestro marco— y un `m-0`
+          NO gana: empatan en especificidad y prose va después en la hoja. Medido.
+          El precio es que las celdas quedan fuera de prose: el color se hereda igual, pero
+          los links hay que pintarlos a mano, de ahí el `[&_a]:text-brand`. */}
+      <div className={`not-prose my-2 w-full overflow-x-auto rounded-lg border [&_a]:text-brand [&_a]:underline ${line}`}>
+        <table className={["w-full border-collapse text-left", className].filter(Boolean).join(" ")} {...props}>
+          {children}
+        </table>
+      </div>
+    ),
+    thead: ({ node, children, ...props }: { node?: unknown; children?: React.ReactNode }) => (
+      <thead className={`border-b ${line} ${head}`} {...props}>
+        {children}
+      </thead>
+    ),
+    tbody: ({ node, children, ...props }: { node?: unknown; children?: React.ReactNode }) => (
+      <tbody className={`divide-y ${light ? "divide-black/10" : "divide-border"}`} {...props}>
+        {children}
+      </tbody>
+    ),
+    tr: ({ node, children, ...props }: { node?: unknown; children?: React.ReactNode }) => <tr {...props}>{children}</tr>,
+  };
 }
 
 const cleanUrl = (u: string) => u.replace(/[.,)]+$/, "");
@@ -150,6 +209,7 @@ export const Markdown = memo(function Markdown({
   }
   const withLinks: Components = {
     ...textComponents(emojiMap, onMention),
+    ...tableComponents(light),
     // Imágenes del agente (memes/gráficas) al tamaño de Slack: alto acotado (~320px),
     // ancho de la columna, sin recorte (object-contain). Clic → abre en el PANEL lateral
     // (onImage), no en pestaña nueva; fallback al link si no hay handler. Sin esto una
