@@ -96,6 +96,9 @@ export const workspaceUsageFn = createServerFn({ method: "GET" }).handler(async 
       turns: number;
       messagesUsed: number;
       messagesIncluded: number;
+      /** Consumo partido por motor y por quién paga la llave. `counted:false` = corrió
+       *  con la llave propia del cliente y NO descuenta de la bolsa. */
+      breakdown?: { engine: string; billable: number; turns: number; counted: boolean }[];
     };
   } catch {
     return null;

@@ -701,6 +701,33 @@ function UsagePanel() {
         </p>
       </div>
 
+      {/* Desglose por agente. La barra sola miente por omisión: un turno de Ghosty pesa
+          4× uno de Blue, y si corre con la llave propia del cliente no descuenta NADA —
+          sin esto, ver la barra quieta mientras el agente trabaja no tiene explicación.
+          Sólo se pinta cuando hay más de una fuente: con una sola, la barra ya lo dice. */}
+      {(data.breakdown?.length ?? 0) > 1 && (
+        <div className="space-y-1.5">
+          <h4 className="text-xs font-medium text-gray-700 dark:text-gray-300">{t("Por agente")}</h4>
+          {data.breakdown!.map((b, i) => (
+            <div key={i} className="flex items-baseline justify-between gap-3 text-xs">
+              <span className="text-gray-600 dark:text-gray-400 truncate">
+                {motorLabel(b.engine, t)}
+                {!b.counted && (
+                  <span className="ml-1.5 text-gray-500">{t("· con tu llave, no descuenta")}</span>
+                )}
+              </span>
+              <span
+                className={`tabular-nums shrink-0 ${
+                  b.counted ? "text-gray-900 dark:text-gray-100" : "text-gray-500"
+                }`}
+              >
+                {fmtM(b.billable)}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+
       <div className="text-xs text-gray-600 dark:text-gray-400 space-y-1">
         <div>
           {t("Plan")}: <span className="font-medium text-gray-900 dark:text-gray-100">{data.plan}</span>
@@ -717,6 +744,16 @@ function UsagePanel() {
       </div>
     </div>
   );
+}
+
+/** Nombre de cara al usuario de cada motor. NUNCA el id del motor ni el del modelo:
+ *  "deepseek-v4-flash" no le dice nada a nadie, y el nombre del proveedor es mecánica
+ *  interna. Un motor que no reconozcamos se enseña crudo antes que desaparecerlo. */
+function motorLabel(engine: string, t: (s: string) => string): string {
+  if (engine === "deepseek") return t("Blue");
+  if (engine === "claude") return t("Ghosty");
+  if (engine === "codex") return t("Codex");
+  return engine;
 }
 
 function AppearancePanel() {

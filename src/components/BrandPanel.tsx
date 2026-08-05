@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Check, ImagePlus, Loader2, Plus, Trash2, Wand2 } from "lucide-react";
+import { Check, ImagePlus, Loader2, Pencil, Plus, Trash2, Wand2 } from "lucide-react";
 import {
   BRAND_MOODS,
   type BrandColors,
@@ -20,6 +20,7 @@ import {
   listBrandKitsFn,
   saveBrandKitFn,
 } from "../server/brand";
+import ConfirmModal from "./ConfirmModal";
 import { BRAND_FONTS } from "../lib/brand-fonts";
 import { useT } from "../i18n";
 
@@ -45,6 +46,7 @@ export function BrandPanel({ isOwner }: { isOwner: boolean }) {
   const [kits, setKits] = useState<Kit[] | null>(null);
   const [editing, setEditing] = useState<Kit | "new" | null>(null);
   const [busy, setBusy] = useState(false);
+  const [borrando, setBorrando] = useState<Kit | null>(null);
 
   async function reload() {
     setKits((await listBrandKitsFn()) as Kit[]);
@@ -90,8 +92,8 @@ export function BrandPanel({ isOwner }: { isOwner: boolean }) {
     <div className="space-y-4">
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0">
-          <h3 className="text-sm font-semibold">{t("Marca")}</h3>
-          <p className="mt-0.5 text-xs text-muted">
+          {/* Sin h3 "Marca": el modal de Ajustes ya pinta ese título justo encima. */}
+          <p className="text-xs text-muted">
             {t("Los colores, las fuentes y el logo con los que salen tus documentos, formularios y ligas compartidas.")}
           </p>
         </div>
@@ -144,17 +146,24 @@ export function BrandPanel({ isOwner }: { isOwner: boolean }) {
                     {t("Usar")}
                   </button>
                 )}
+                {/* Icono, no texto: hace pareja con la papelera de al lado y deja de
+                    competir con "Usar", que es la acción que sí quiere una palabra. */}
                 <button
                   onClick={() => setEditing(k)}
-                  className="rounded-lg px-2.5 py-1.5 text-xs font-semibold hover:bg-surface-3"
+                  aria-label={t("Editar")}
+                  title={t("Editar")}
+                  className="rounded-lg p-1.5 text-muted hover:bg-surface-3 hover:text-ink"
                 >
-                  {t("Editar")}
+                  <Pencil className="h-3.5 w-3.5" />
                 </button>
+                {/* Borrar una marca no tiene deshacer: pasa por confirmación, como el
+                    resto de lo destructivo del producto. */}
                 <button
                   disabled={busy}
-                  onClick={() => remove(k.id)}
+                  onClick={() => setBorrando(k)}
                   aria-label={t("Eliminar")}
-                  className="rounded-lg p-1.5 text-muted hover:bg-surface-3 hover:text-ink"
+                  title={t("Eliminar")}
+                  className="rounded-lg p-1.5 text-muted hover:bg-surface-3 hover:text-red-500"
                 >
                   <Trash2 className="h-3.5 w-3.5" />
                 </button>
@@ -163,6 +172,26 @@ export function BrandPanel({ isOwner }: { isOwner: boolean }) {
           </div>
         ))}
       </div>
+
+      {borrando && (
+        <ConfirmModal
+          title={t("¿Eliminar esta marca?")}
+          // Se dice QUÉ pasa después, no sólo que es irreversible: si era la activa, el
+          // espacio se queda con otra (o sin ninguna) y eso cambia lo que se publique.
+          body={
+            borrando.isActive
+              ? t("Se elimina «{n}», que es la marca activa. Lo que publiques después saldrá con otra marca, o sin ninguna si no queda alguna. Lo ya publicado no cambia.").replace("{n}", borrando.name)
+              : t("Se elimina «{n}». No se puede deshacer; lo ya publicado con ella no cambia.").replace("{n}", borrando.name)
+          }
+          confirmLabel={t("Eliminar")}
+          danger
+          onCancel={() => setBorrando(null)}
+          onConfirm={async () => {
+            await remove(borrando.id);
+            setBorrando(null);
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -376,17 +405,44 @@ function fontLabel(k: BrandKit): string {
   return [...new Set([nombre("heading"), nombre("body")].filter(Boolean))].join(" · ");
 }
 
+/**
+ * La miniatura de la lista. Si el kit tiene LOGO, manda el logo: es lo que identifica
+ * una marca de un vistazo. Los puntos de color son el respaldo para cuando no lo hay.
+ */
 function KitSwatch({ kit }: { kit: BrandKit }) {
   const p = brandPalette(kit).light;
+  const [roto, setRoto] = useState(false);
+  const conLogo = !!kit.logoUrl && !roto;
   return (
     <div
-      className="flex h-11 w-11 shrink-0 flex-col justify-end gap-1 rounded-lg border border-black/10 p-1.5"
-      style={{ background: p.surface }}
+      className="flex h-11 w-11 shrink-0 flex-col justify-end gap-1 overflow-hidden rounded-lg border border-black/10 p-1.5"
+      style={
+        conLogo
+          ? {
+              // Misma cuadrícula que el editor: un logo blanco sobre transparente es
+              // invisible en una caja clara y parece que no cargó.
+              backgroundImage:
+                "linear-gradient(45deg,#0000000d 25%,transparent 25%,transparent 75%,#0000000d 75%)," +
+                "linear-gradient(45deg,#0000000d 25%,transparent 25%,transparent 75%,#0000000d 75%)",
+              backgroundSize: "10px 10px",
+              backgroundPosition: "0 0,5px 5px",
+            }
+          : { background: p.surface }
+      }
     >
-      <div className="flex gap-1">
-        <span className="h-2 w-2 rounded-full" style={{ background: p.brand }} />
-        <span className="h-2 w-2 rounded-full" style={{ background: p["brand-2"] }} />
-      </div>
+      {conLogo ? (
+        <img
+          src={kit.logoUrl as string}
+          alt=""
+          onError={() => setRoto(true)}
+          className="m-auto max-h-full max-w-full object-contain"
+        />
+      ) : (
+        <div className="flex gap-1">
+          <span className="h-2 w-2 rounded-full" style={{ background: p.brand }} />
+          <span className="h-2 w-2 rounded-full" style={{ background: p["brand-2"] }} />
+        </div>
+      )}
     </div>
   );
 }

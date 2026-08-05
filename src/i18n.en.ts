@@ -13,6 +13,13 @@ export const en: Record<string, string> = {
 
   // Uso (tab de Ajustes) — saldo de tokens del workspace
   "Uso": "Usage",
+  // Nombres propios de los agentes: NO se traducen, pero pasan por t() porque el
+  // check de i18n exige que todo el copy tenga entrada.
+  "Blue": "Blue",
+  "Ghosty": "Ghosty",
+  "Codex": "Codex",
+  "Por agente": "By agent",
+  "· con tu llave, no descuenta": "· with your key, doesn't count",
   "Tokens de este mes": "Tokens this month",
   "de": "of",
   "mensajes": "messages",
@@ -1020,6 +1027,11 @@ export const en: Record<string, string> = {
   "Arrastra tu logo o haz clic": "Drop your logo or click",
   "Subir logo": "Upload logo",
   "No pude cargar la imagen": "Couldn't load the image",
+  "¿Eliminar esta marca?": "Delete this brand?",
+  "Se elimina «{n}», que es la marca activa. Lo que publiques después saldrá con otra marca, o sin ninguna si no queda alguna. Lo ya publicado no cambia.":
+    "This deletes “{n}”, your active brand. Anything you publish afterwards will use another brand — or none, if there isn't one left. Already-published items don't change.",
+  "Se elimina «{n}». No se puede deshacer; lo ya publicado con ella no cambia.":
+    "This deletes “{n}”. It can't be undone; already-published items don't change.",
   "Del sistema": "System",
   "Fuente propia": "Your own font",
   "o sube tu .woff2": "or upload your .woff2",
