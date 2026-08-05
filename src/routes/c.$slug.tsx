@@ -1,4 +1,5 @@
 import { Component, createContext, forwardRef, Fragment, type ReactNode, useCallback, useContext, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useReducer, useRef, useState } from "react";
+import { IDLE_MS } from "../lib/presence";
 import { createPortal } from "react-dom";
 import { FileGlyph } from "../components/FileGlyph";
 import { useEditor, EditorContent, type Editor } from "@tiptap/react";
@@ -236,6 +237,9 @@ export const Route = createFileRoute("/c/$slug")({
 });
 
 type SessionUser = { sub: string; name: string; email: string; avatar: string; isOwner: boolean; isStaff: boolean; handle: string };
+// Presencia del workspace: sub → nombre + última señal REAL (no la última conexión).
+// `lastActiveAt` envejece con la pestaña abierta y quieta; ver IDLE_MS en bus.server.
+type OnlinePeople = Map<string, { name: string; lastActiveAt: number }>;
 type Attach = { fileId: string; mime: string; size: number; name: string; thumbFileId?: string | null; width?: number | null; height?: number | null };
 // El optimista guarda su propio payload de envío → se puede reintentar tal cual.
 type Optimistic = {
@@ -1094,9 +1098,10 @@ function ChannelPage() {
   // (con ref nueva) → useCachedQuery re-lee sin red. Separado de `rev` (que sí refetch).
   const [patch, setPatch] = useState(0);
   const applyPatch = () => setPatch((p) => p + 1);
-  // sub -> nombre. Es un Map y no un Set porque el owner puede ver QUIÉNES son, no sólo
-  // cuántos. `.has()`/`.size` se comportan igual, así que el resto de usos no cambia.
-  const [online, setOnline] = useState<Map<string, string>>(new Map());
+  // sub -> {nombre, última señal}. Es un Map y no un Set porque el owner puede ver
+  // QUIÉNES son, no sólo cuántos. `.has()`/`.size` se comportan igual, así que el resto
+  // de usos no cambia.
+  const [online, setOnline] = useState<OnlinePeople>(new Map());
   // ── Quick-calls ────────────────────────────────────────────────────────────
   // Una call activa por scope (canal/DM), sembrada por el bus (quickcall:started/ended)
   // y por getActiveCallFn al entrar. Alimenta las tarjetas y el header; la llamada en la
@@ -1954,12 +1959,12 @@ function ChannelPage() {
         scheduleDocOpen(ev.messageId, "artifact");
         break;
       case "presence:init":
-        setOnline(new Map(ev.online.map((p) => [p.sub, p.name])));
+        setOnline(new Map(ev.online.map((p) => [p.sub, { name: p.name, lastActiveAt: p.lastActiveAt }])));
         break;
       case "presence":
         setOnline((prev) => {
           const n = new Map(prev);
-          if (ev.status === "online") n.set(ev.sub, ev.name);
+          if (ev.status === "online") n.set(ev.sub, { name: ev.name, lastActiveAt: ev.lastActiveAt });
           else n.delete(ev.sub);
           return n;
         });
@@ -3532,7 +3537,7 @@ function Sidebar({
   dms: DmConversation[];
   dmsLoading: boolean;
   activeDmId: number | null;
-  online: Map<string, string>;
+  online: OnlinePeople;
   onOpenDm: (id: number) => void;
   onRevalidate: () => void;
   unreadRooms: Map<number, number>;
@@ -5041,23 +5046,37 @@ function DocsButton({ channelId, channelSlug, threadRootId }: { channelId: numbe
 // una lista de quiénes — cuando el número no cuadra con lo que ve, el nombre es la
 // única forma de saber si sobra una sesión fantasma o hay alguien que no esperaba.
 // Para el resto se queda en el número: quién está conectado no es asunto de todos.
-function OnlineChip({ online }: { online: Map<string, string> }) {
+function OnlineChip({ online }: { online: OnlinePeople }) {
   const t = useT();
   const { me } = useContext(ChatCtx);
   const [open, setOpen] = useState(false);
+  // Reloj propio: `lastActiveAt` envejece sin que llegue ningún evento (nadie emite el
+  // paso a inactivo), así que sin este tick el chip se quedaría contando a alguien que
+  // ya se fue a comer. Un minuto basta para un umbral de diez.
+  const [ahora, setAhora] = useState(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setAhora(Date.now()), 60_000);
+    return () => clearInterval(id);
+  }, []);
   if (online.size === 0) return null;
 
-  const people = [...online.entries()].map(([sub, name]) => ({ sub, name }));
+  const people = [...online.entries()]
+    .map(([sub, p]) => ({ sub, ...p, idle: ahora - p.lastActiveAt > IDLE_MS }))
+    .sort((a, b) => Number(a.idle) - Number(b.idle) || b.lastActiveAt - a.lastActiveAt);
+  // El chip cuenta ACTIVOS. Los conectados-pero-quietos siguen en la lista del owner,
+  // que es donde importa saber que están ahí sin estar.
+  const activos = people.filter((p) => !p.idle).length;
+  if (activos === 0) return null;
   const chip = (
     <>
       <span className="inline-block h-2 w-2 rounded-full bg-green-500" />
-      <span>{t("{n} en línea", { n: online.size })}</span>
+      <span>{t("{n} en línea", { n: activos })}</span>
     </>
   );
 
   if (!me?.isOwner) {
     return (
-      <span className="hidden items-center gap-1.5 text-xs text-muted @xl/hdr:flex" title={t("Conectados al espacio ahora mismo")}>
+      <span className="hidden items-center gap-1.5 text-xs text-muted @xl/hdr:flex" title={t("Personas activas en el espacio ahora mismo")}>
         {chip}
       </span>
     );
@@ -5077,14 +5096,25 @@ function OnlineChip({ online }: { online: Map<string, string> }) {
           <Modal onClose={() => setOpen(false)}>
             <h3 className="mb-1 text-base font-semibold text-ink">{t("Conectados ahora")}</h3>
             <p className="mb-3 text-xs text-muted">
-              {t("Personas con el espacio abierto. Cuenta a cada quien una vez, aunque tenga varias pestañas.")}
+              {t("Cuenta a cada quien una vez, aunque tenga varias pestañas. Sin actividad reciente no quiere decir desconectado: la pestaña sigue abierta.")}
             </p>
             <ul className="max-h-80 space-y-1 overflow-y-auto thin-scroll">
               {people.map((p) => (
                 <li key={p.sub} className="flex items-center gap-2.5 rounded-lg px-1 py-1.5">
-                  <Avatar name={p.name} className="h-8 w-8" />
-                  <span className="truncate text-sm text-ink">{p.name}</span>
+                  <Avatar name={p.name} className={`h-8 w-8 ${p.idle ? "opacity-50" : ""}`} />
+                  {/* Relleno vs hueco, no verde vs gris: la diferencia se ve igual sin
+                      distinguir color. */}
+                  <span
+                    className={`h-2 w-2 shrink-0 rounded-full ${p.idle ? "border border-muted" : "bg-green-500"}`}
+                    aria-hidden
+                  />
+                  <span className={`truncate text-sm ${p.idle ? "text-muted" : "text-ink"}`}>{p.name}</span>
                   {p.sub === me.sub && <span className="text-xs text-muted">{t("tú")}</span>}
+                  {p.idle && (
+                    <span className="ml-auto shrink-0 text-xs text-muted">
+                      {t("hace {n} min", { n: Math.round((ahora - p.lastActiveAt) / 60_000) })}
+                    </span>
+                  )}
                 </li>
               ))}
             </ul>
@@ -5501,7 +5531,7 @@ function HomeDashboard({
   user: SessionUser | null;
   channels: Channel[];
   dms: DmConversation[];
-  online: Map<string, string>;
+  online: OnlinePeople;
   unreadRooms: Map<number, number>;
   unreadDms: Map<number, number>;
   onOpenRoom: (slug: string) => void;
@@ -6033,7 +6063,7 @@ function Flow({
   onOpenThread: (id: number) => void;
   typing: { sub: string; name: string } | null;
   newAt: number | null;
-  online: Map<string, string>;
+  online: OnlinePeople;
   pins: Message[];
   onOpenDm: (id: number) => void;
   onOpenNav: () => void;
@@ -6059,7 +6089,10 @@ function Flow({
     );
   }, [messages?.length]);
   const composerRef = useRef<ComposerHandle>(null);
-  const { dragOver, handlers } = useFileDrop((f) => composerRef.current?.addFiles(f));
+  const { dragOver, handlers } = useFileDrop(
+    (f) => composerRef.current?.addFiles(f),
+    () => composerRef.current?.focus(),
+  );
   // Scroll a un mensaje (clic en un fijado) con destello, estilo "ir al origen".
   const jumpTo = (id: number) => {
     const el = document.getElementById(`msg-${id}`);
@@ -6201,7 +6234,10 @@ function ThreadView({
   // Sigue las respuestas del hilo + el streaming de la respuesta del agente.
   const { onScroll, atBottom, scrollToBottom, contentRef } = useChatScroll(scrollRef, data?.replies ?? null, optimistic.length, null);
   const composerRef = useRef<ComposerHandle>(null);
-  const { dragOver, handlers } = useFileDrop((f) => composerRef.current?.addFiles(f));
+  const { dragOver, handlers } = useFileDrop(
+    (f) => composerRef.current?.addFiles(f),
+    () => composerRef.current?.focus(),
+  );
 
   return (
     <section className="relative flex min-w-0 flex-1 flex-col" {...handlers}>
@@ -6312,7 +6348,7 @@ function DmView({
   dmId: number;
   rev: number;
   patch: number;
-  online: Map<string, string>;
+  online: OnlinePeople;
   optimistic: Optimistic[];
   onSend: (p: SendPayload) => void;
   onReloaded: (loaded: { sender: string; body: string }[]) => void;
@@ -6343,7 +6379,10 @@ function DmView({
   }, [flow]);
   const { onScroll, atBottom, scrollToBottom, contentRef } = useChatScroll(scrollRef, flow, optimistic.length, unreadId);
   const composerRef = useRef<ComposerHandle>(null);
-  const { dragOver, handlers } = useFileDrop((f) => composerRef.current?.addFiles(f));
+  const { dragOver, handlers } = useFileDrop(
+    (f) => composerRef.current?.addFiles(f),
+    () => composerRef.current?.focus(),
+  );
 
   const title = dm ? dmTitle(dm, t("Conversación")) : t("Conversación");
   const isOnline = dm?.members.some((m) => online.has(m.sub)) ?? false;
@@ -8758,7 +8797,7 @@ function OptimisticRow({ o, grouped }: { o: Optimistic; grouped?: boolean }) {
 // Drag-drop de archivos sobre un contenedor GRANDE (toda la conversación, no solo el
 // composer): más fácil de acertar, estilo WhatsApp. `counter` evita el parpadeo por
 // dragenter/leave de los hijos. Solo reacciona a arrastres de ARCHIVOS (no de texto/links).
-function useFileDrop(onFiles: (files: FileList | File[]) => void) {
+function useFileDrop(onFiles: (files: FileList | File[]) => void, onDropped?: () => void) {
   const [dragOver, setDragOver] = useState(false);
   const counter = useRef(0);
   const handlers = {
@@ -8781,7 +8820,13 @@ function useFileDrop(onFiles: (files: FileList | File[]) => void) {
       e.preventDefault();
       counter.current = 0;
       setDragOver(false);
-      if (e.dataTransfer.files?.length) onFiles(e.dataTransfer.files);
+      if (e.dataTransfer.files?.length) {
+        onFiles(e.dataTransfer.files);
+        // El foco se pide TAMBIÉN aquí, dentro del handler del gesto. `addFiles` ya lo
+        // intenta, pero desde el evento el navegador es más permisivo con un `focus()`
+        // programático que desde un callback diferido.
+        onDropped?.();
+      }
     },
   };
   return { dragOver, handlers };
@@ -8805,7 +8850,13 @@ function DropOverlay({ show }: { show: boolean }) {
 
 // Handle imperativo del Composer → la zona de drop grande (nivel conversación) le pasa
 // los archivos soltados.
-type ComposerHandle = { addFiles: (files: FileList | File[]) => void };
+type ComposerHandle = {
+  addFiles: (files: FileList | File[]) => void;
+  /** Devuelve el cursor al campo de texto. Lo llama el drop de la conversación: ahí
+   *  estamos DENTRO del gesto del usuario, que es cuando el navegador deja enfocar sin
+   *  pelear con el final del arrastre. */
+  focus: () => void;
+};
 
 // Botón flotante SUTIL "ir al final" — solo cuando estás scrolleado arriba. Se posa sobre
 // el composer (el contenedor padre es `relative`).
@@ -8892,6 +8943,27 @@ const Composer = forwardRef<ComposerHandle, {
   // se expone por `useImperativeHandle` y una identidad que cambie re-crearía el handle.
   const editorRef = useRef<Editor | null>(null);
 
+  // Foco al campo de texto. Adjuntar un archivo —soltándolo o con el clip— es "voy a
+  // escribir sobre esto": sin esto la miniatura aparecía y el cursor NO, y había que dar
+  // un clic extra en un campo que estaba justo debajo.
+  //
+  // ⚠️ Se INSISTE, y no es paranoia: un solo `requestAnimationFrame` no bastó (probado en
+  // prod). Al soltar, el navegador termina de desmontar el arrastre DESPUÉS del frame y
+  // devuelve el foco al body; con el clip, el diálogo de archivos se está cerrando y el
+  // foco vuelve al botón. Los dos reintentos cubren las dos ventanas y son inocuos: si el
+  // cursor ya está en el editor, `focus()` no hace nada visible.
+  //
+  // Guarda de puntero fino, igual que el autofocus al cambiar de room: en táctil
+  // levantaría el teclado justo encima de la miniatura recién adjuntada.
+  const focusComposer = useCallback(() => {
+    if (typeof window === "undefined") return;
+    if (!window.matchMedia?.("(pointer: fine)").matches) return;
+    const go = () => editorRef.current?.commands.focus("end");
+    go();
+    requestAnimationFrame(go);
+    setTimeout(go, 180);
+  }, []);
+
   // Solo depende de setPending (estable) → estable entre renders; seguro exponerlo por ref.
   const addFiles = useCallback((files: FileList | File[]) => {
     const list = Array.from(files);
@@ -8917,21 +8989,10 @@ const Composer = forwardRef<ComposerHandle, {
           setPending((p) => p.map((x) => (x.localId === localId ? { ...x, uploading: false, error: true } : x)))
         );
     }
-    // Foco al composer. Soltar un archivo (o elegirlo con el clip) es "voy a escribir
-    // sobre esto": sin esto la miniatura aparecía y el cursor NO, y había que dar un
-    // clic extra en un campo que ya estaba justo debajo. Cubre las dos entradas porque
-    // las dos pasan por aquí.
-    //
-    // Misma guarda de puntero fino que el autofocus al cambiar de room: en táctil
-    // levantaría el teclado tapando la miniatura que la persona acaba de adjuntar.
-    // Va en el frame siguiente — el file picker todavía se está cerrando y el foco
-    // volvería al botón del clip.
-    if (typeof window !== "undefined" && window.matchMedia?.("(pointer: fine)").matches) {
-      requestAnimationFrame(() => editorRef.current?.commands.focus("end"));
-    }
-  }, []);
+    focusComposer();
+  }, [focusComposer]);
   // La zona de drop grande (nivel conversación) empuja los archivos aquí.
-  useImperativeHandle(ref, () => ({ addFiles }), [addFiles]);
+  useImperativeHandle(ref, () => ({ addFiles, focus: focusComposer }), [addFiles, focusComposer]);
   const removePending = (localId: string) =>
     setPending((p) => {
       const gone = p.find((x) => x.localId === localId);
