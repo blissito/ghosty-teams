@@ -630,13 +630,13 @@ function UsagePanel() {
   }, []);
 
   if (state === "loading") {
-    return <div className="text-sm text-gray-500 dark:text-gray-400">{t("Cargando…")}</div>;
+    return <div className="text-sm text-muted">{t("Cargando…")}</div>;
   }
   // Sin dato preferimos decirlo a pintar un cero, que se lee como "no has usado nada"
   // cuando en realidad es "no pudimos consultarlo".
   if (state === "error" || !data) {
     return (
-      <div className="text-sm text-gray-500 dark:text-gray-400">
+      <div className="text-sm text-muted">
         {t("No pudimos consultar el consumo en este momento.")}
       </div>
     );
@@ -660,22 +660,25 @@ function UsagePanel() {
   return (
     <div className="space-y-5">
       {/* ⚠️ Aquí había UNA barra del workspace entero, y se quitó cuando la bolsa pasó a
-          ser POR MOTOR. Ya no podía decir la verdad: sumaba peras con manzanas —un turno
-          de Ghosty pesa ~15× uno de Blue— y con el filtro de "sólo lo incluido" acababa
-          marcando 0.0M encima de un desglose que enseñaba 0.42M. Dos números
-          contradictorios en la misma pantalla. */}
-      <div className="flex items-baseline justify-between">
-        <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">
-          {t("Saldo de este mes")}
-        </h3>
-        <span className="text-xs text-gray-500 dark:text-gray-400">
+          ser POR MOTOR: sumaba peras con manzanas —un turno de Ghosty pesa ~15× uno de
+          Blue— y acababa marcando 0.0M encima de un desglose que enseñaba 0.42M.
+
+          ⚠️ Y todo esto va con los TOKENS del tema (`bg-surface-2`, `text-ink`,
+          `text-muted`, `border-border`), NUNCA con la escala `gray-*` de Tailwind. El
+          tema son variables CSS y `dark:` no las gobierna: escrito con grises crudos,
+          este panel salía con tarjetas gris oscuro sobre fondo claro y el texto
+          ilegible. El resto de este archivo ya usaba tokens; sólo esta sección se
+          escribió a mano y por eso desentonaba. */}
+      <div className="flex items-baseline justify-between gap-3">
+        <h3 className="text-sm font-semibold text-ink">{t("Saldo de este mes")}</h3>
+        <span className="text-xs text-muted">
           {t("se reinicia el")} {fecha(data.resetsAt)}
         </span>
       </div>
 
       {/* UNA TARJETA POR AGENTE. La bolsa no es del espacio: Blue tiene la suya y Ghosty
-          la suya, así que una sola barra no podía decir la verdad de ninguno. El que
-          corre con la llave del cliente no lleva barra: no hay tope que dibujar. */}
+          la suya. El que corre con la llave del cliente no lleva barra: no hay tope que
+          dibujar. */}
       <div className="space-y-2.5">
         {(data.engines ?? []).map((e, i) => {
           const p = e.included && e.included > 0 ? Math.min(100, (e.used / e.included) * 100) : 0;
@@ -683,60 +686,48 @@ function UsagePanel() {
           const medio = p >= 75 && !alto;
           const q = turnosQueQuedan(e);
           return (
-            <div
-              key={i}
-              className="rounded-xl border border-gray-200 bg-white p-3.5 dark:border-gray-700 dark:bg-gray-800/40"
-            >
+            <div key={i} className="rounded-xl border border-border bg-surface-2 p-3.5">
               <div className="flex items-center justify-between gap-3">
                 {/* La CARA del agente, no el nombre del motor: la persona conoce a Blue y
-                    a Ghosty, no a "deepseek". Si Studio no pudo resolver quién es, cae a
-                    la etiqueta del motor — feo, pero mejor que esconder un consumo. */}
+                    a Ghosty, no a "deepseek". Sin resolver, cae a la etiqueta del motor —
+                    feo, pero mejor que esconder un consumo real. */}
                 <span className="flex min-w-0 items-center gap-2">
                   {e.avatar ? (
-                    <img
-                      src={e.avatar}
-                      alt=""
-                      className="size-6 shrink-0 rounded-md object-cover"
-                    />
+                    <img src={e.avatar} alt="" className="size-6 shrink-0 rounded-md object-cover" />
                   ) : (
-                    <span className="grid size-6 shrink-0 place-items-center rounded-md bg-gray-200 text-[11px] font-semibold text-gray-600 dark:bg-gray-700 dark:text-gray-300">
+                    <span className="grid size-6 shrink-0 place-items-center rounded-md bg-surface-3 text-[11px] font-semibold text-muted">
                       {(e.name ?? motorLabel(e.engine, t)).slice(0, 1).toUpperCase()}
                     </span>
                   )}
-                  <span className="truncate text-sm font-semibold text-gray-900 dark:text-gray-100">
+                  <span className="truncate text-sm font-semibold text-ink">
                     {e.name ?? motorLabel(e.engine, t)}
                   </span>
                 </span>
+
                 {e.included === null ? (
-                  // Sin tope: el dato es cuánto lleva, y la etiqueta explica por qué no
-                  // hay barra. Sin ella, "0.4M" a secas parece un consumo sin contexto.
-                  <span className="text-sm tabular-nums font-semibold text-gray-900 dark:text-gray-100">
-                    {fmtM(e.used)}
-                    <span className="ml-2 rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-medium text-gray-600 dark:bg-gray-700 dark:text-gray-300">
+                  <span className="flex shrink-0 items-center gap-2">
+                    <span className="text-sm font-semibold tabular-nums text-ink">{fmtM(e.used)}</span>
+                    <span className="rounded-full bg-surface-3 px-2 py-0.5 text-[11px] font-medium text-muted">
                       {t("con tu llave, sin límite")}
                     </span>
                   </span>
                 ) : (
-                  <span className="text-sm tabular-nums text-gray-500 dark:text-gray-400">
-                    {/* El gastado en fuerte y el tope en tenue: son dos cosas distintas y
-                        antes iban del mismo color, así que "0.0M de 6.0M" se leía como un
-                        bloque gris sin jerarquía. */}
-                    <span className="font-semibold text-gray-900 dark:text-gray-100">
-                      {fmtM(e.used)}
-                    </span>{" "}
-                    {t("de")} {fmtM(e.included)}
+                  // El gastado en fuerte y el tope en tenue: son dos cosas distintas, y
+                  // del mismo color "0.0M de 6.0M" se lee como un bloque sin jerarquía.
+                  <span className="shrink-0 text-sm tabular-nums text-muted">
+                    <span className="font-semibold text-ink">{fmtM(e.used)}</span> {t("de")}{" "}
+                    {fmtM(e.included)}
                   </span>
                 )}
               </div>
 
               {e.included !== null && (
-                <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-gray-200 dark:bg-gray-700">
+                <div className="mt-2.5 h-1.5 w-full overflow-hidden rounded-full bg-surface-3">
                   <div
                     className="h-full rounded-full transition-[width] duration-500"
                     style={{
-                      // Mínimo visible: con 6M de bolsa, un consumo real de miles de
-                      // tokens redondea a 0% y la barra desaparecía justo cuando la
-                      // persona acaba de usar el agente y viene a comprobarlo.
+                      // Mínimo visible: con 6M de bolsa un consumo real redondea a 0% y la
+                      // barra desaparecía justo cuando la persona viene a comprobarla.
                       width: `${Math.max(p, e.used > 0 ? 2 : 0)}%`,
                       background: alto ? "#ef4444" : medio ? "#f59e0b" : "var(--color-brand)",
                     }}
@@ -744,9 +735,8 @@ function UsagePanel() {
                 </div>
               )}
 
-              <p className="mt-2 text-xs text-gray-600 dark:text-gray-400">
-                {/* Singular de verdad: "1 turnos" es de las cosas que hacen que una
-                    pantalla se sienta sin terminar. */}
+              <p className="mt-2 text-xs text-muted">
+                {/* "1 turnos" es de las cosas que hacen sentir una pantalla sin terminar. */}
                 {e.turns.toLocaleString(intlLocale(locale))}{" "}
                 {e.turns === 1 ? t("turno") : t("turnos")}
                 {q !== null && (
@@ -765,9 +755,8 @@ function UsagePanel() {
       {/* El total de turnos del espacio se quitó: cada tarjeta ya lleva los suyos, y el
           agregado encima de un desglose sólo invita a sumar y ver que no cuadra (no
           cuadra a propósito — lo que corre con llave del cliente no entra en el saldo). */}
-      <div className="border-t border-gray-200 pt-3 text-xs text-gray-500 dark:border-gray-700 dark:text-gray-400">
-        {t("Plan")}:{" "}
-        <span className="font-medium text-gray-700 dark:text-gray-200">{data.plan}</span>
+      <div className="border-t border-border pt-3 text-xs text-muted">
+        {t("Plan")}: <span className="font-medium text-ink">{data.plan}</span>
         {data.paidUntil && (
           <>
             {" · "}
