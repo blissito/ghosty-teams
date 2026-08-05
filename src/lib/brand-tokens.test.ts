@@ -15,7 +15,9 @@ import {
   normalizeHex,
   onColor,
   slugToken,
+  mix,
 } from "./brand-tokens";
+import { oklabToOklch, rgbToOklab } from "./oklch";
 
 const kit = (name: string, colors: Partial<BrandKit["colors"]>): BrandKit => ({
   id: name,
@@ -255,5 +257,74 @@ describe("normalizeColors", () => {
   it("los moods son una sola lista", () => {
     expect(BRAND_MOODS).toContain("professional");
     expect(new Set(BRAND_MOODS).size).toBe(BRAND_MOODS.length);
+  });
+});
+
+// ── Los colores SEMÁNTICOS no son de la marca ───────────────────────────────
+// Regresión de un bug real: `--req` —el asterisco de obligatorio y los mensajes de
+// error— salía del `accent` del kit, así que una marca con acento verde pintaba sus
+// errores en verde. Un error es una señal; su color no lo negocia la identidad.
+describe("señales vs identidad", () => {
+  const verde = kit("acento-verde", { accent: "#22c55e", primary: "#22c55e", secondary: "#16a34a" });
+  const rojo = kit("acento-rojo", { accent: "#dc2626", primary: "#dc2626", secondary: "#b91c1c" });
+
+  const hue = (hex: string) => {
+    const { h } = oklabToOklch(rgbToOklab({
+      r: parseInt(hex.slice(1, 3), 16),
+      g: parseInt(hex.slice(3, 5), 16),
+      b: parseInt(hex.slice(5, 7), 16),
+    }));
+    return h;
+  };
+
+  it("el error es ROJO aunque la marca entera sea verde", () => {
+    const h = hue(brandFormVars(verde)["--req"]);
+    // Rojo en OKLCh vive cerca de 27°; se acepta el sector cálido.
+    expect(h > 340 || h < 60, `--req salió con tono ${Math.round(h)}°`).toBe(true);
+  });
+
+  it("el éxito es VERDE aunque la marca entera sea roja", () => {
+    const h = hue(brandFormVars(rojo)["--ok"]);
+    expect(h > 110 && h < 190, `--ok salió con tono ${Math.round(h)}°`).toBe(true);
+  });
+
+  it("dos marcas opuestas dan el MISMO error", () => {
+    // El tono es fijo; sólo la luminosidad se adapta al papel. Si difirieran mucho,
+    // es que la marca se estaría colando.
+    expect(Math.abs(hue(brandFormVars(verde)["--req"]) - hue(brandFormVars(rojo)["--req"]))).toBeLessThan(12);
+  });
+
+  it("las señales pasan AA sobre el papel", () => {
+    for (const k of KITS) {
+      const v = brandFormVars(k);
+      expect(contrast(v["--req"], v["--paper"]), `${k.name} --req`).toBeGreaterThanOrEqual(4.5);
+      expect(contrast(v["--ok"], v["--paper"]), `${k.name} --ok`).toBeGreaterThanOrEqual(4.5);
+    }
+  });
+});
+
+describe("rampa de gráficas", () => {
+  it("los cinco se distinguen entre sí", () => {
+    const css = brandThemeCss(kit("g", {}));
+    const cols = [1, 2, 3, 4, 5].map((i) => css.match(new RegExp(`--color-chart-${i}: (#[0-9a-f]{6})`))![1]);
+    expect(new Set(cols).size).toBe(5);
+  });
+});
+
+describe("mezcla perceptual (OKLab)", () => {
+  it("el punto medio entre azul y amarillo NO sale gris apagado", () => {
+    // El caso clásico: en sRGB este punto medio se desatura y se ve sucio.
+    const medio = mix("#0000ff", "#ffff00", 0.5);
+    const { C } = oklabToOklch(rgbToOklab({
+      r: parseInt(medio.slice(1, 3), 16),
+      g: parseInt(medio.slice(3, 5), 16),
+      b: parseInt(medio.slice(5, 7), 16),
+    }));
+    expect(C, `croma del punto medio: ${C.toFixed(3)}`).toBeGreaterThan(0.05);
+  });
+
+  it("los extremos siguen siendo exactos", () => {
+    expect(mix("#7c3aed", "#ffffff", 0)).toBe("#7c3aed");
+    expect(mix("#7c3aed", "#ffffff", 1)).toBe("#ffffff");
   });
 });

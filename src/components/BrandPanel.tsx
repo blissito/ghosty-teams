@@ -9,6 +9,7 @@ import {
   brandPalette,
   brandRadiusScale,
   brandShape,
+  brandThemeCss,
   isHex,
 } from "../lib/brand-tokens";
 import {
@@ -770,6 +771,11 @@ function BrandPreview({ kit }: { kit: BrandKit }) {
   const s = brandShape(kit);
   const f = brandFontStacks(kit);
   const caps = s.caps ? ({ textTransform: "uppercase", letterSpacing: ".08em" } as const) : {};
+  // Los cinco de la serie salen del mismo `@theme` que se hornea en un artefacto.
+  const theme = brandThemeCss(kit);
+  const chartStrip = [1, 2, 3, 4, 5].map(
+    (i) => theme.match(new RegExp(`--color-chart-${i}: (#[0-9a-f]{6})`))?.[1] ?? "#ccc"
+  );
 
   return (
     <div className="space-y-2">
@@ -795,6 +801,16 @@ function BrandPreview({ kit }: { kit: BrandKit }) {
         <div className="mt-2 h-1 rounded-full" style={{ background: form["--tint"] }}>
           <div className="h-1 w-1/3 rounded-full" style={{ background: form["--accent"] }} />
         </div>
+        {/* Los CUATRO colores de entrada visibles, más las señales. Antes el preview sólo
+            pintaba el principal y por eso parecía que los otros tres no hacían nada — y
+            en buena medida era cierto. */}
+        <p className="mt-2 text-[10px] font-semibold" style={{ color: form["--sec"], letterSpacing: ".06em" }}>
+          {t("SECCIÓN")}
+        </p>
+        <p className="mt-0.5 text-[10px]" style={{ color: form["--ink"] }}>
+          {t("Obligatorio")}
+          <span style={{ color: form["--req"] }}> *</span>
+        </p>
         <span
           className="mt-2 inline-block px-2.5 py-1 text-[11px] font-semibold"
           style={{
@@ -806,6 +822,18 @@ function BrandPreview({ kit }: { kit: BrandKit }) {
         >
           {t("Enviar")}
         </span>
+      </div>
+
+      {/* La serie de gráficas: es donde el secundario y el acento hacen trabajo de verdad. */}
+      <div className="flex items-center gap-1">
+        {[0, 1, 2, 3, 4].map((i) => (
+          <span
+            key={i}
+            className="h-3 flex-1"
+            style={{ background: chartStrip[i], borderRadius: r.xs + "px" }}
+          />
+        ))}
+        <span className="ml-1 shrink-0 text-[9px] text-muted">{t("gráficas")}</span>
       </div>
 
       {/* Documento en papel */}

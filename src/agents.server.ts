@@ -223,6 +223,10 @@ async function brandContextHint(): Promise<string> {
       `una portada, HTML a mano) en vez de escoger colores por tu cuenta. Los documentos, ` +
       `formularios y artefactos YA salen con ella puesta: no la repitas a mano ahí.\n` +
       `principal ${c.primary} · secundario ${c.secondary} · acento ${c.accent} · fondo ${c.surface}` +
+      `\nEn un artefacto con Tailwind tienes además las clases \`bg-brand\`, \`bg-brand-2\`, ` +
+      `\`bg-accent\`, \`text-ink\`, \`bg-surface\`, las señales \`text-danger\`/\`bg-success\`/\`text-warn\` ` +
+      `(colores fijos, NO de la marca) y la serie \`bg-chart-1\` … \`bg-chart-5\` para gráficas. ` +
+      `Úsalas en vez de escribir hex a mano: así el artefacto sigue a la marca si cambia.` +
       (fuentes ? `\nfuentes: ${fuentes}` : "") +
       (kit.mood ? `\ntono: ${kit.mood}` : "") +
       (kit.logoUrl ? `\nlogo: ${kit.logoUrl}` : "") +

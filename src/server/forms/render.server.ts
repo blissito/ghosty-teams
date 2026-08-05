@@ -817,10 +817,10 @@ body{margin:0;padding:24px 16px 64px;background:var(--paper);color:var(--ink);fo
 .gf-head{margin-bottom:24px}
 .gf-title{margin:0;font-size:24px;line-height:1.25;font-weight:650;font-family:"Iowan Old Style",Georgia,serif}
 .gf-intro{margin:8px 0 0;color:var(--muted);font-size:15px}
-.gf-bar{height:4px;background:var(--tint);border-radius:99px;margin-top:18px;overflow:hidden}
+.gf-bar{height:4px;background:var(--tint);border-radius:99px;margin-top:18px;overflow:hidden;box-shadow:inset 0 0 0 1px var(--brand-2,transparent)}
 .gf-bar>i{display:block;height:100%;width:0;background:var(--accent);transition:width .25s ease}
 .gf-count{margin:6px 0 0;font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
-.gf-sec{margin:0 0 18px;font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:var(--tracking,.06em);color:var(--accent-ink)}
+.gf-sec{margin:0 0 18px;font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:var(--tracking,.06em);color:var(--sec,var(--accent-ink))}
 .gf-field{margin-bottom:18px}
 .gf-field[hidden]{display:none}
 .gf-label{display:block;font-size:14px;font-weight:600;margin-bottom:6px}

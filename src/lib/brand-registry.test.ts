@@ -38,6 +38,9 @@ async function corpusFor(surface: BrandSurface): Promise<string> {
     "rounded-2xl", "rounded-3xl", "rounded-4xl",
     "bg-brand", "bg-brand-2", "text-brand-fg", "bg-surface", "bg-surface-2", "bg-surface-3",
     "border-border", "text-ink", "text-muted", "font-sans", "font-serif",
+    // Lo que un artefacto del agente usaría: acento, señales y la serie de gráficas.
+    "bg-accent", "text-danger", "bg-success", "text-warn",
+    "bg-chart-1", "bg-chart-2", "bg-chart-3", "bg-chart-4", "bg-chart-5",
   ];
   const c = await compile(`${brandThemeCss(KIT)}\n${TAILWIND_INDEX_CSS}`, { base: "/" });
   return c.build(candidates);

@@ -18,6 +18,7 @@ import {
   faceCss,
   fontById,
 } from "./brand-fonts";
+import { oklabToOklch, oklabToRgb, oklchToOklab, rgbToOklab } from "./oklch";
 import type { ThemePreset } from "#/utils/theme";
 
 export const BRAND_MOODS = [
@@ -114,17 +115,43 @@ export function isDarkColor(hex: string): boolean {
   return luminance(hex) < 0.4;
 }
 
-/** Mezcla lineal: t=0 → a, t=1 → b. */
+/**
+ * Mezcla en OKLab: t=0 → a, t=1 → b.
+ *
+ * ⚠️ En sRGB el punto medio entre dos colores saturados sale gris sucio y los pasos de
+ * luminosidad quedan desiguales. OKLab es perceptual: un 50% se VE a medio camino. Es lo
+ * mismo que hace `color-mix(in oklab, …)` y a donde se movieron Tailwind v4, shadcn y
+ * Radix. `luminance()` sigue en sRGB porque la fórmula de WCAG es normativa.
+ */
 export function mix(a: string, b: string, t: number): string {
-  const x = toRgb(a);
-  const y = toRgb(b);
   const k = Math.min(1, Math.max(0, t));
-  return toHex({
-    r: x.r + (y.r - x.r) * k,
-    g: x.g + (y.g - x.g) * k,
-    b: x.b + (y.b - x.b) * k,
-  });
+  const x = rgbToOklab(toRgb(a));
+  const y = rgbToOklab(toRgb(b));
+  return toHex(
+    oklabToRgb({ L: x.L + (y.L - x.L) * k, a: x.a + (y.a - x.a) * k, b: x.b + (y.b - x.b) * k })
+  );
 }
+
+/**
+ * Un color SEMÁNTICO: tono fijo, adaptado al fondo sobre el que va a leerse.
+ *
+ * ⚠️ Error, éxito y aviso NO pueden salir de la marca. Antes `--req` —el asterisco de
+ * obligatorio y los mensajes de error— tomaba el `accent` del kit, así que una marca con
+ * acento verde pintaba sus errores en verde. Son señales, no identidad: el tono se fija y
+ * lo único que se adapta es la luminosidad, para que se lea sobre el papel de esta marca.
+ */
+function semantic(hue: number, bg: string, target = 4.5): string {
+  const oscuro = !isDarkColor(bg);
+  // Se arranca de una L razonable según el fondo y se empuja hasta cumplir contraste.
+  for (let L = oscuro ? 0.55 : 0.75; oscuro ? L > 0.2 : L < 0.95; L += oscuro ? -0.02 : 0.02) {
+    const hex = toHex(oklabToRgb(oklchToOklab(L, 0.16, hue)));
+    if (contrast(hex, bg) >= target) return hex;
+  }
+  return ensureContrast(toHex(oklabToRgb(oklchToOklab(oscuro ? 0.5 : 0.8, 0.16, hue))), bg, target);
+}
+
+/** Los tres tonos semánticos, en grados OKLCh. Fijos a propósito. */
+const HUE = { danger: 27, success: 150, warn: 75 } as const;
 
 const NEAR_WHITE = "#ffffff";
 const NEAR_BLACK = "#0b0b0f";
@@ -426,8 +453,14 @@ export const BRAND_TOKENS: readonly TokenDef[] = [
   { name: "--ink", surfaces: ["form"], value: (k) => ensureContrast(brandPalette(k).light.ink, paperOf(k), 4.5) },
   { name: "--muted", surfaces: ["form"], value: (k) => ensureContrast(brandPalette(k).light.muted, paperOf(k), 4.5) },
   { name: "--line", surfaces: ["form"], value: (k) => brandPalette(k).light.border },
-  { name: "--req", surfaces: ["form"], value: (k) => ensureContrast(normalizeHex(k.colors.accent), paperOf(k), 4.5) },
-  { name: "--ok", surfaces: ["form"], value: (k) => ensureContrast(brandPalette(k).light["brand-2"], paperOf(k), 4.5) },
+  // ⚠️ Semánticos, NO de la marca. Antes `--req` (asterisco de obligatorio Y mensajes de
+  // error) salía del `accent` del kit: una marca con acento verde pintaba sus errores en
+  // verde. Un error es una señal; su color no es negociable por identidad.
+  { name: "--req", surfaces: ["form"], value: (k) => semantic(HUE.danger, paperOf(k)) },
+  { name: "--ok", surfaces: ["form"], value: (k) => semantic(HUE.success, paperOf(k)) },
+  // El acento SÍ es de la marca, y aquí tiene trabajo: los encabezados de sección.
+  { name: "--sec", surfaces: ["form"], value: (k) => ensureContrast(normalizeHex(k.colors.accent), paperOf(k), 4.5) },
+  { name: "--brand-2", surfaces: ["form"], value: (k) => ensureContrast(brandPalette(k).light["brand-2"], paperOf(k), 3) },
   { name: "--paper", surfaces: ["form"], value: paperOf },
 
   // ── Colores del PDF. El papel del PDF es blanco siempre y va literal en PRINT_CSS:
@@ -437,7 +470,47 @@ export const BRAND_TOKENS: readonly TokenDef[] = [
   { name: "--pr-line", surfaces: ["print"], value: (k) => brandPalette(k).light.border },
   { name: "--pr-tint", surfaces: ["print"], value: (k) => mix("#ffffff", brandPalette(k).light.brand, 0.08) },
   { name: "--pr-brand", surfaces: ["print"], value: (k) => brandPalette(k).light.brand },
+
+  // ── Para lo que el agente diseñe. Los tokens de color de Tailwind (`--color-x`)
+  // generan `bg-x`, `text-x`, `border-x`, así que aquí SÍ tienen consumidor.
+  {
+    name: "--color-accent",
+    surfaces: ["artifact"],
+    value: (k) => ensureContrast(normalizeHex(k.colors.accent), brandPalette(k).light.surface, 3),
+  },
+  { name: "--color-danger", surfaces: ["artifact"], value: (k) => semantic(HUE.danger, brandPalette(k).light.surface) },
+  { name: "--color-success", surfaces: ["artifact"], value: (k) => semantic(HUE.success, brandPalette(k).light.surface) },
+  { name: "--color-warn", surfaces: ["artifact"], value: (k) => semantic(HUE.warn, brandPalette(k).light.surface) },
+  // Rampa de gráficas: el agente hace gráficas y no tenía de dónde sacar cinco colores
+  // que se distinguieran entre sí. Salen de la marca y se separan en TONO (OKLCh), que
+  // es lo que hace que se diferencien de verdad y no sólo en el hex.
+  ...[1, 2, 3, 4, 5].map(
+    (i): TokenDef => ({
+      name: `--color-chart-${i}`,
+      surfaces: ["artifact"],
+      value: (k) => chartColor(k, i - 1),
+    })
+  ),
 ] as const;
+
+/**
+ * El color i de la rampa de gráficas. Los tres primeros son los colores de la marca
+ * (principal, secundario, acento); los dos que faltan se generan rotando el tono del
+ * principal, que es como se consigue una serie categórica distinguible.
+ */
+function chartColor(kit: BrandKit, i: number): string {
+  const surface = brandPalette(kit).light.surface;
+  const base = [kit.colors.primary, kit.colors.secondary, kit.colors.accent].map(normalizeHex);
+  if (i < base.length) return ensureContrast(base[i], surface, 3);
+  const { L, C, h } = oklabToOklch(rgbToOklab(toRgb(base[0])));
+  // 140° y 220° de separación: lo bastante lejos del principal y entre sí.
+  const rot = [140, 220][i - base.length];
+  return ensureContrast(
+    toHex(oklabToRgb(oklchToOklab(L, Math.max(C, 0.1), (h + rot) % 360))),
+    surface,
+    3
+  );
+}
 
 /** Los tokens que le tocan a una superficie, ya resueltos. */
 export function emit(kit: BrandKit, surface: BrandSurface): Record<string, string> {
