@@ -392,6 +392,18 @@ function KitSwatch({ kit }: { kit: BrandKit }) {
 
 // ── Editor ──────────────────────────────────────────────────────────────────
 
+type SectionId = "basicos" | "color" | "letra" | "tono" | "origen";
+
+// Cuatro pasos cortos en vez de una columna de 1200px. El orden es el de una marca real:
+// cómo se llama y su logo → sus colores → su letra → su carácter.
+const SECTIONS: { id: SectionId; label: string }[] = [
+  { id: "basicos", label: "Básicos" },
+  { id: "color", label: "Color" },
+  { id: "letra", label: "Letra" },
+  { id: "tono", label: "Tono" },
+  { id: "origen", label: "Importar" },
+];
+
 const FIELDS: { key: keyof BrandColors; label: string }[] = [
   { key: "primary", label: "Principal" },
   { key: "secondary", label: "Secundario" },
@@ -421,6 +433,7 @@ function KitEditor({
   const [logoKey, setLogoKey] = useState(kit?.logoKey ?? "");
   const [mood, setMood] = useState(kit?.mood ?? "");
   const [url, setUrl] = useState("");
+  const [section, setSection] = useState<SectionId>("basicos");
   const [busy, setBusy] = useState<null | "save" | "url" | "logo">(null);
   const [error, setError] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
@@ -520,16 +533,39 @@ function KitEditor({
     }
   }
 
+  // ⚠️ Tres franjas: cabecera fija, CUERPO que scrollea por dentro y footer anclado. Antes
+  // era una sola columna larguísima dentro del modal (h-[85dvh]) y el resultado era que
+  // había que scrollear para llegar al Tono y el botón Guardar salía CORTADO por abajo.
   return (
-    <div className="space-y-5">
-      <div className="flex items-center justify-between gap-3">
+    <div className="flex h-full min-h-0 flex-col">
+      <div className="flex shrink-0 items-center justify-between gap-3 pb-3">
         <h3 className="text-sm font-semibold">{kit ? t("Editar marca") : t("Nueva marca")}</h3>
         <button onClick={onCancel} aria-label={t("Cerrar")} className="rounded-lg p-1.5 hover:bg-surface-3">
           <X className="h-4 w-4" />
         </button>
       </div>
 
-      {/* Sacarla de una página: es el camino rápido y por eso va arriba del formulario. */}
+      {/* Secciones: el editor entero no cabe de una vez, y paginarlo en cuatro pasos
+          cortos es lo que evita el scroll infinito. El preview NO entra aquí: se queda
+          fijo al lado, porque es lo que hay que estar mirando mientras se toca cualquiera
+          de las cuatro. */}
+      <div className="flex shrink-0 gap-1 border-b border-border pb-2">
+        {SECTIONS.map((sec) => (
+          <button
+            key={sec.id}
+            onClick={() => setSection(sec.id)}
+            className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${
+              section === sec.id ? "bg-brand/10 text-brand" : "text-muted hover:bg-surface-3"
+            }`}
+          >
+            {t(sec.label)}
+          </button>
+        ))}
+      </div>
+
+      <div className="flex min-h-0 flex-1 gap-4 pt-3">
+        <div className="min-w-0 flex-1 overflow-y-auto pr-1">
+      {section === "origen" && (
       <div className="rounded-xl border border-border p-3">
         <label className="text-xs font-semibold">{t("Sácala de una página web")}</label>
         <div className="mt-2 flex gap-2">
@@ -553,7 +589,9 @@ function KitEditor({
         </p>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2">
+      )}
+
+      {section === "basicos" && (
         <div className="space-y-4">
           <div>
             <label className="text-xs font-semibold">{t("Nombre")}</label>
@@ -609,6 +647,11 @@ function KitEditor({
             />
           </div>
 
+        </div>
+      )}
+
+      {section === "color" && (
+        <div className="space-y-4">
           <div className="grid grid-cols-2 gap-2">
             {FIELDS.map((f) => (
               <div key={f.key}>
@@ -633,7 +676,11 @@ function KitEditor({
             ))}
           </div>
 
-          <div className="space-y-3">
+        </div>
+      )}
+
+      {section === "letra" && (
+        <div className="space-y-4">
             <FontPicker
               label={t("Fuente de títulos")}
               value={heading}
@@ -652,10 +699,11 @@ function KitEditor({
               onUpload={(url, name) => { setBodyUrl(url); setBodyName(name); }}
               onClearCustom={() => { setBodyUrl(""); setBodyName(""); }}
             />
-          </div>
+        </div>
+      )}
 
+      {section === "tono" && (
           <div>
-            <label className="text-xs font-semibold">{t("Tono")}</label>
             {/* Muestras y no un <select>: el tono MUEVE la derivación (cuánto tiñe la
                 marca, qué tan marcada es la línea, si los títulos caen en serif), así que
                 tiene que poder compararse de un vistazo — igual que las fuentes. */}
@@ -678,14 +726,21 @@ function KitEditor({
               {t("Ajusta el teñido, el trazo y la tipografía. También se lo pasamos al agente cuando diseña para ti.")}
             </p>
           </div>
+      )}
         </div>
 
-        <BrandPreview kit={preview} />
+        {/* El preview NO scrollea con los controles: se queda fijo al lado. Antes vivía
+            dentro de la columna larga y desaparecía justo cuando tocabas el tono, que es
+            cuando más falta hace mirarlo. */}
+        <div className="hidden w-56 shrink-0 overflow-y-auto md:block">
+          <BrandPreview kit={preview} />
+        </div>
       </div>
 
-      {error && <p className="text-xs text-red-500">{error}</p>}
-
-      <div className="flex justify-end gap-2">
+      {/* Footer ANCLADO. Estaba al final de la columna larga y el modal lo cortaba: el
+          botón Guardar quedaba a medias fuera de la vista. */}
+      <div className="flex shrink-0 items-center justify-end gap-2 border-t border-border pt-3">
+        {error && <p className="mr-auto text-xs text-red-500">{error}</p>}
         <button onClick={onCancel} className="rounded-lg px-3 py-2 text-xs font-semibold hover:bg-surface-3">
           {t("Cancelar")}
         </button>

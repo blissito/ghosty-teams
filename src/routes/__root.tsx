@@ -43,7 +43,11 @@ export const Route = createRootRoute({
     const isCanvasDemo =
       location.pathname.startsWith('/canvas-demo') ||
       location.pathname.startsWith('/canvas-probe') ||
-      (import.meta.env.DEV && location.pathname.startsWith('/doc-probe'))
+      (import.meta.env.DEV && location.pathname.startsWith('/doc-probe')) ||
+      // Banco del panel de Marca, misma razón y mismo candado (sólo DEV): el editor vive
+      // dentro del modal de Ajustes y ajustarle el layout a base de deploys es justo lo
+      // que no queremos volver a hacer.
+      (import.meta.env.DEV && location.pathname.startsWith('/brand-probe'))
     // Guard de tenant (solo SSR → barato, sin round-trips en cada nav de cliente):
     // si caes en el subdominio de un workspace que ya no existe (borrado) o del que
     // el resolver no sabe, te mandamos al PORTAL en vez de un shell roto / label

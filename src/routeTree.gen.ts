@@ -16,6 +16,7 @@ import { Route as DocProbeRouteImport } from './routes/doc-probe'
 import { Route as CanvasProbeRouteImport } from './routes/canvas-probe'
 import { Route as CanvasDemoRouteImport } from './routes/canvas-demo'
 import { Route as BusyRouteImport } from './routes/busy'
+import { Route as BrandProbeRouteImport } from './routes/brand-probe'
 import { Route as ArtifactsRouteImport } from './routes/artifacts'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as SetupIndexRouteImport } from './routes/setup.index'
@@ -91,6 +92,11 @@ const CanvasDemoRoute = CanvasDemoRouteImport.update({
 const BusyRoute = BusyRouteImport.update({
   id: '/busy',
   path: '/busy',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const BrandProbeRoute = BrandProbeRouteImport.update({
+  id: '/brand-probe',
+  path: '/brand-probe',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ArtifactsRoute = ArtifactsRouteImport.update({
@@ -304,6 +310,7 @@ const ApiCollabDocIdSessionEndRoute =
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/artifacts': typeof ArtifactsRoute
+  '/brand-probe': typeof BrandProbeRoute
   '/busy': typeof BusyRoute
   '/canvas-demo': typeof CanvasDemoRoute
   '/canvas-probe': typeof CanvasProbeRoute
@@ -354,6 +361,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/artifacts': typeof ArtifactsRoute
+  '/brand-probe': typeof BrandProbeRoute
   '/busy': typeof BusyRoute
   '/canvas-demo': typeof CanvasDemoRoute
   '/canvas-probe': typeof CanvasProbeRoute
@@ -404,6 +412,7 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/artifacts': typeof ArtifactsRoute
+  '/brand-probe': typeof BrandProbeRoute
   '/busy': typeof BusyRoute
   '/canvas-demo': typeof CanvasDemoRoute
   '/canvas-probe': typeof CanvasProbeRoute
@@ -456,6 +465,7 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/artifacts'
+    | '/brand-probe'
     | '/busy'
     | '/canvas-demo'
     | '/canvas-probe'
@@ -506,6 +516,7 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/artifacts'
+    | '/brand-probe'
     | '/busy'
     | '/canvas-demo'
     | '/canvas-probe'
@@ -555,6 +566,7 @@ export interface FileRouteTypes {
     | '__root__'
     | '/'
     | '/artifacts'
+    | '/brand-probe'
     | '/busy'
     | '/canvas-demo'
     | '/canvas-probe'
@@ -606,6 +618,7 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   ArtifactsRoute: typeof ArtifactsRoute
+  BrandProbeRoute: typeof BrandProbeRoute
   BusyRoute: typeof BusyRoute
   CanvasDemoRoute: typeof CanvasDemoRoute
   CanvasProbeRoute: typeof CanvasProbeRoute
@@ -697,6 +710,13 @@ declare module '@tanstack/react-router' {
       path: '/busy'
       fullPath: '/busy'
       preLoaderRoute: typeof BusyRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/brand-probe': {
+      id: '/brand-probe'
+      path: '/brand-probe'
+      fullPath: '/brand-probe'
+      preLoaderRoute: typeof BrandProbeRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/artifacts': {
@@ -1022,6 +1042,7 @@ const ArtefactoIdRouteWithChildren = ArtefactoIdRoute._addFileChildren(
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   ArtifactsRoute: ArtifactsRoute,
+  BrandProbeRoute: BrandProbeRoute,
   BusyRoute: BusyRoute,
   CanvasDemoRoute: CanvasDemoRoute,
   CanvasProbeRoute: CanvasProbeRoute,
