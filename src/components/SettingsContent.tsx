@@ -658,79 +658,122 @@ function UsagePanel() {
     new Date(iso).toLocaleDateString(intlLocale(locale), { day: "numeric", month: "long" });
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
       {/* ⚠️ Aquí había UNA barra del workspace entero, y se quitó cuando la bolsa pasó a
           ser POR MOTOR. Ya no podía decir la verdad: sumaba peras con manzanas —un turno
           de Ghosty pesa ~15× uno de Blue— y con el filtro de "sólo lo incluido" acababa
-          marcando 0.0M mientras el desglose de abajo enseñaba 0.42M gastados. Dos
-          números contradictorios en la misma pantalla.
-
-          Lo que sobrevivió es lo que sí es del espacio: el plan y sus fechas. */}
-      <div>
-        <h3 className="text-sm font-medium mb-3">{t("Tokens de este mes")}</h3>
-        {/* UNA BARRA POR MOTOR. La bolsa no es del espacio: Blue tiene la suya y Ghosty la
-          suya, así que una sola barra no podía decir la verdad de ninguno de los dos —
-          un turno de Ghosty pesa ~15× uno de Blue y se comía la promo de Blue entero.
-          Y el que corre con la llave del cliente no tiene tope: se MIDE y se enseña. */}
-      {(data.engines?.length ?? 0) > 0 && (
-        <div className="space-y-4">
-          {data.engines!.map((e, i) => {
-            const p = e.included && e.included > 0 ? Math.min(100, (e.used / e.included) * 100) : 0;
-            return (
-              <div key={i}>
-                <div className="flex items-baseline justify-between mb-1.5">
-                  <span className="text-sm font-medium">{motorLabel(e.engine, t)}</span>
-                  <span className="text-sm tabular-nums text-gray-900 dark:text-gray-100">
-                    {e.included === null
-                      ? `${fmtM(e.used)} · ${t("con tu llave, sin límite")}`
-                      : `${fmtM(e.used)} ${t("de")} ${fmtM(e.included)}`}
-                  </span>
-                </div>
-                {/* Sin tope no hay barra que llenar: una barra al 100% diría "se acabó" y
-                    una al 0% diría "no has usado nada". Las dos serían falsas. */}
-                {e.included !== null && (
-                  <div className="h-2 w-full rounded-full bg-gray-200 dark:bg-gray-700 overflow-hidden">
-                    <div
-                      className="h-full rounded-full transition-[width] duration-500"
-                      style={{
-                        width: `${Math.max(p, e.used > 0 ? 1.5 : 0)}%`,
-                        background: p >= 90 ? "#ef4444" : p >= 75 ? "#f59e0b" : "var(--color-brand)",
-                      }}
-                    />
-                  </div>
-                )}
-                <p className="mt-1 text-xs text-gray-600 dark:text-gray-400">
-                  {e.turns.toLocaleString(intlLocale(locale))} {t("turnos")}
-                  {(() => {
-                    const q = turnosQueQuedan(e);
-                    return q === null
-                      ? ""
-                      : ` · ${t("Te quedan ~")}${q.toLocaleString(intlLocale(locale))} ${t("turnos a este ritmo")}`;
-                  })()}
-                </p>
-              </div>
-            );
-          })}
-        </div>
-        )}
-        <p className="mt-3 text-xs text-gray-600 dark:text-gray-400">
+          marcando 0.0M encima de un desglose que enseñaba 0.42M. Dos números
+          contradictorios en la misma pantalla. */}
+      <div className="flex items-baseline justify-between">
+        <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">
+          {t("Saldo de este mes")}
+        </h3>
+        <span className="text-xs text-gray-500 dark:text-gray-400">
           {t("se reinicia el")} {fecha(data.resetsAt)}
-        </p>
+        </span>
       </div>
 
-      <div className="text-xs text-gray-600 dark:text-gray-400 space-y-1">
-        <div>
-          {t("Plan")}: <span className="font-medium text-gray-900 dark:text-gray-100">{data.plan}</span>
-          {data.paidUntil && (
-            <>
-              {" · "}
-              {t("pagado hasta el")} {fecha(data.paidUntil)}
-            </>
-          )}
-        </div>
-        <div>
-          {data.turns.toLocaleString(intlLocale(locale))} {t("turnos del agente este mes")}
-        </div>
+      {/* UNA TARJETA POR AGENTE. La bolsa no es del espacio: Blue tiene la suya y Ghosty
+          la suya, así que una sola barra no podía decir la verdad de ninguno. El que
+          corre con la llave del cliente no lleva barra: no hay tope que dibujar. */}
+      <div className="space-y-2.5">
+        {(data.engines ?? []).map((e, i) => {
+          const p = e.included && e.included > 0 ? Math.min(100, (e.used / e.included) * 100) : 0;
+          const alto = p >= 90;
+          const medio = p >= 75 && !alto;
+          const q = turnosQueQuedan(e);
+          return (
+            <div
+              key={i}
+              className="rounded-xl border border-gray-200 bg-white p-3.5 dark:border-gray-700 dark:bg-gray-800/40"
+            >
+              <div className="flex items-center justify-between gap-3">
+                {/* La CARA del agente, no el nombre del motor: la persona conoce a Blue y
+                    a Ghosty, no a "deepseek". Si Studio no pudo resolver quién es, cae a
+                    la etiqueta del motor — feo, pero mejor que esconder un consumo. */}
+                <span className="flex min-w-0 items-center gap-2">
+                  {e.avatar ? (
+                    <img
+                      src={e.avatar}
+                      alt=""
+                      className="size-6 shrink-0 rounded-md object-cover"
+                    />
+                  ) : (
+                    <span className="grid size-6 shrink-0 place-items-center rounded-md bg-gray-200 text-[11px] font-semibold text-gray-600 dark:bg-gray-700 dark:text-gray-300">
+                      {(e.name ?? motorLabel(e.engine, t)).slice(0, 1).toUpperCase()}
+                    </span>
+                  )}
+                  <span className="truncate text-sm font-semibold text-gray-900 dark:text-gray-100">
+                    {e.name ?? motorLabel(e.engine, t)}
+                  </span>
+                </span>
+                {e.included === null ? (
+                  // Sin tope: el dato es cuánto lleva, y la etiqueta explica por qué no
+                  // hay barra. Sin ella, "0.4M" a secas parece un consumo sin contexto.
+                  <span className="text-sm tabular-nums font-semibold text-gray-900 dark:text-gray-100">
+                    {fmtM(e.used)}
+                    <span className="ml-2 rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-medium text-gray-600 dark:bg-gray-700 dark:text-gray-300">
+                      {t("con tu llave, sin límite")}
+                    </span>
+                  </span>
+                ) : (
+                  <span className="text-sm tabular-nums text-gray-500 dark:text-gray-400">
+                    {/* El gastado en fuerte y el tope en tenue: son dos cosas distintas y
+                        antes iban del mismo color, así que "0.0M de 6.0M" se leía como un
+                        bloque gris sin jerarquía. */}
+                    <span className="font-semibold text-gray-900 dark:text-gray-100">
+                      {fmtM(e.used)}
+                    </span>{" "}
+                    {t("de")} {fmtM(e.included)}
+                  </span>
+                )}
+              </div>
+
+              {e.included !== null && (
+                <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-gray-200 dark:bg-gray-700">
+                  <div
+                    className="h-full rounded-full transition-[width] duration-500"
+                    style={{
+                      // Mínimo visible: con 6M de bolsa, un consumo real de miles de
+                      // tokens redondea a 0% y la barra desaparecía justo cuando la
+                      // persona acaba de usar el agente y viene a comprobarlo.
+                      width: `${Math.max(p, e.used > 0 ? 2 : 0)}%`,
+                      background: alto ? "#ef4444" : medio ? "#f59e0b" : "var(--color-brand)",
+                    }}
+                  />
+                </div>
+              )}
+
+              <p className="mt-2 text-xs text-gray-600 dark:text-gray-400">
+                {/* Singular de verdad: "1 turnos" es de las cosas que hacen que una
+                    pantalla se sienta sin terminar. */}
+                {e.turns.toLocaleString(intlLocale(locale))}{" "}
+                {e.turns === 1 ? t("turno") : t("turnos")}
+                {q !== null && (
+                  <>
+                    {" · "}
+                    {t("quedan ~")}
+                    {q.toLocaleString(intlLocale(locale))} {t("a este ritmo")}
+                  </>
+                )}
+              </p>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* El total de turnos del espacio se quitó: cada tarjeta ya lleva los suyos, y el
+          agregado encima de un desglose sólo invita a sumar y ver que no cuadra (no
+          cuadra a propósito — lo que corre con llave del cliente no entra en el saldo). */}
+      <div className="border-t border-gray-200 pt-3 text-xs text-gray-500 dark:border-gray-700 dark:text-gray-400">
+        {t("Plan")}:{" "}
+        <span className="font-medium text-gray-700 dark:text-gray-200">{data.plan}</span>
+        {data.paidUntil && (
+          <>
+            {" · "}
+            {t("pagado hasta el")} {fecha(data.paidUntil)}
+          </>
+        )}
       </div>
     </div>
   );

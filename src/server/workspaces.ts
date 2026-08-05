@@ -86,7 +86,7 @@ export const workspaceUsageFn = createServerFn({ method: "GET" }).handler(async 
       .digest("hex");
     const res = await fetch(`${IDP}/internal/workspace-usage/${encodeURIComponent(slug)}?ts=${ts}&sig=${sig}`);
     if (!res.ok) return null;
-    return (await res.json()) as {
+    const raw = (await res.json()) as {
       plan: string;
       combo: string;
       paidUntil: string | null;
@@ -99,8 +99,33 @@ export const workspaceUsageFn = createServerFn({ method: "GET" }).handler(async 
       /** UNA BOLSA POR MOTOR. `included:null` = ilimitado, porque ese agente corre con la
        *  llave del cliente: es su saldo con el proveedor, no el nuestro. Se mide y se
        *  enseña; no se corta. */
-      engines?: { engine: string; used: number; included: number | null; turns: number; ownKey: boolean }[];
+      engines?: { engine: string; used: number; included: number | null; turns: number; ownKey: boolean; name?: string; avatar?: string; handle?: string }[];
     };
+
+    // Ponerle CARA a cada renglón. Studio mide por motor —es lo que sabe— pero la
+    // persona no conoce motores: conoce a Blue y a Ghosty, con su avatar y su nombre.
+    // El cruce hace falta porque el dato está partido: sólo Teams sabe qué agente está
+    // activado aquí y cómo se llama; sólo Studio sabe con qué motor corre.
+    //
+    // Un motor sin agente resuelto conserva su etiqueta genérica: enseñar "deepseek" es
+    // feo, pero desaparecer un consumo que existe es peor.
+    if (raw.engines?.length) {
+      try {
+        const { resolvedAgents, engineOfAgent } = await import("../agents.server");
+        const agentes = await resolvedAgents();
+        const conCara = await Promise.all(
+          agentes.map(async (a) => ({ a, engine: await engineOfAgent(a) })),
+        );
+        raw.engines = raw.engines.map((e) => {
+          const m = conCara.find((x) => x.engine === e.engine);
+          return m ? { ...e, name: m.a.name, avatar: m.a.avatar, handle: m.a.handle } : e;
+        });
+      } catch {
+        // Sin nombres se pinta con la etiqueta del motor. El consumo es el dato; la cara
+        // es el adorno, y no vale perder el primero por el segundo.
+      }
+    }
+    return raw;
   } catch {
     return null;
   }

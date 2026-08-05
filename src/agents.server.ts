@@ -970,6 +970,13 @@ async function agentEngines(): Promise<Map<string, string>> {
   return byId;
 }
 
+/** Con qué motor corre este agente, o null si no se puede resolver (webhook, o Studio
+ *  no contesta). Reusa el mismo mapa cacheado que `capableSibling`. */
+export async function engineOfAgent(a: ResolvedAgent): Promise<string | null> {
+  if (a.backend.kind !== "fleet") return null;
+  return (await agentEngines()).get(a.backend.id) ?? null;
+}
+
 /** El @handle del agente más capaz ACTIVADO en este workspace, distinto de `self`.
  *  `null` = no hay ninguno → la salida es subir de modelo. */
 export async function capableSibling(self: ResolvedAgent): Promise<string | null> {
