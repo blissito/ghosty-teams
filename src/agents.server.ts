@@ -888,6 +888,67 @@ export async function resetAgentSession(agent: ResolvedAgent, groupId: string): 
   }
 }
 
+// ── Escalón de modelo de UNA conversación ─────────────────────────────────────
+// El agente corre con un modelo rápido y barato; cuando una conversación se le queda
+// corta, SUBE al capaz y se queda ahí. Studio decide a cuál (`engine.escalatesTo`):
+// aquí no se nombra ningún modelo, para que agregar motores no toque este archivo.
+//
+// ⚠️ No hay "bajar". Cada cambio de modelo cuesta un turno con el prefix-cache en cero
+// (medido), así que alternar borraría la ventaja del modelo barato. Lo que devuelve a
+// fábrica es /clear, que ya significa empezar de cero.
+export type EscalationInfo = { model: string | null; to: string | null; escalated: boolean };
+
+async function escalationEndpoint(agent: ResolvedAgent) {
+  if (agent.backend.kind !== "fleet") return null;
+  const { runtimeFor } = await import("./server/agent-runtime.server");
+  const rt = await runtimeFor(agent.backend);
+  if (!rt.supports.modelEscalation) return null;
+  return { rt, url: `${rt.base}/api/v2/fleet-agents/${agent.backend.id}/escalate` };
+}
+
+/** ¿Se le puede ofrecer el escalón a esta conversación? `null` = no aplica (otro
+ *  runtime, o el motor no escala, o el agente ya corre en el modelo capaz). */
+export async function agentEscalation(
+  agent: ResolvedAgent,
+  groupId: string,
+): Promise<EscalationInfo | null> {
+  try {
+    const ep = await escalationEndpoint(agent);
+    if (!ep) return null;
+    const res = await fetch(`${ep.url}?groupId=${encodeURIComponent(groupId)}`, {
+      // GET: la firma va sobre el body VACÍO, igual que la calcula Studio.
+      headers: ep.rt.headers("", agent.backend.kind === "fleet" ? agent.backend.token : ""),
+    });
+    if (!res.ok) return null;
+    return (await res.json()) as EscalationInfo;
+  } catch {
+    return null;
+  }
+}
+
+/** Sube la conversación. Devuelve el motivo cuando no se pudo, para poder decirlo:
+ *  un botón que no hace nada y no explica es peor que no tenerlo. */
+export async function escalateAgentSession(
+  agent: ResolvedAgent,
+  groupId: string,
+  by?: string,
+): Promise<{ ok: boolean; model?: string | null; reason?: string }> {
+  try {
+    const ep = await escalationEndpoint(agent);
+    if (!ep) return { ok: false, reason: "este agente no puede subir de modelo" };
+    const body = JSON.stringify({ groupId, by });
+    const res = await fetch(ep.url, {
+      method: "POST",
+      headers: ep.rt.headers(body, agent.backend.kind === "fleet" ? agent.backend.token : ""),
+      body,
+    });
+    const json = (await res.json().catch(() => ({}))) as { model?: string; reason?: string };
+    return res.ok ? { ok: true, model: json.model } : { ok: false, reason: json.reason };
+  } catch (e) {
+    return { ok: false, reason: e instanceof Error ? e.message : String(e) };
+  }
+}
+
 // Orquestador común (room + DM) del turno de un agente con streaming first-class.
 // La CÁSCARA del reply se crea PEREZOSAMENTE al primer token (via createShell) → el
 // "pensando…" se mantiene durante la latencia del agente y recién ahí se reemplaza.

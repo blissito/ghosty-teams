@@ -43,11 +43,13 @@ export interface RuntimeSupports {
   connectorTools: boolean;
   /** La persona la aplica el runtime; si no, se la mandamos por appendSystemPrompt. */
   ownsPersona: boolean;
+  /** Una conversación puede subir a un modelo más capaz sin perder su memoria. */
+  modelEscalation: boolean;
 }
 
 const SUPPORTS: Record<RuntimeKind, RuntimeSupports> = {
-  "gs-native": { voiceNote: true, sessionReset: true, connectorTools: true, ownsPersona: true },
-  easybits: { voiceNote: false, sessionReset: false, connectorTools: false, ownsPersona: false },
+  "gs-native": { voiceNote: true, sessionReset: true, connectorTools: true, ownsPersona: true, modelEscalation: true },
+  easybits: { voiceNote: false, sessionReset: false, connectorTools: false, ownsPersona: false, modelEscalation: false },
 };
 
 /** Transporte HTTP: los dos runtimes de hoy. `local` se sumará como otro kind. */

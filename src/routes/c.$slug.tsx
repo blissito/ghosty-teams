@@ -74,7 +74,7 @@ import { createFileRoute, notFound, Link, useRouter } from "@tanstack/react-rout
 import type { Channel, Message, DmConversation, RoomHit, ViewHit, Attachment, Artifact, CustomEmoji } from "../db.server";
 import { listEmojisFn } from "../server/emojis";
 import { recentViewFn, mentionsViewFn, starredViewFn } from "../server/views";
-import { openDmFn, listDmsFn, getDmFlowFn, postDmMessageFn, askDmAgentFn, clearDmAgentFn } from "../server/dm";
+import { openDmFn, listDmsFn, getDmFlowFn, postDmMessageFn, askDmAgentFn, clearDmAgentFn, escalateDmAgentFn } from "../server/dm";
 import { forwardTargetsFn, forwardMessageFn } from "../server/forward";
 import { startCallFn, joinCallFn, getActiveCallFn } from "../server/quick-calls";
 // La llamada (dock, Room de LiveKit y avisos de entrante) vive en el store GLOBAL y se
@@ -107,7 +107,7 @@ import {
   expelMemberFn,
   stopTurnFn,
 } from "../server/chat";
-import { SmilePlus, Pencil, ArrowLeft, RotateCcw, Send, Bold, Italic, Strikethrough, List, ListOrdered, Quote, Code, Type, Reply, Square } from "lucide-react";
+import { SmilePlus, Pencil, ArrowLeft, RotateCcw, Send, Bold, Italic, Strikethrough, List, ListOrdered, Quote, Code, Type, Reply, Square, Zap } from "lucide-react";
 import { getDeferredPrompt, onInstallable, clearDeferredPrompt, type BeforeInstallPromptEvent } from "../utils/pwa-install";
 import { useRtSubscribe } from "../utils/rt-bus";
 import type { RtEvent } from "../server/bus.server";
@@ -6434,6 +6434,23 @@ function DmView({
             <RotateCcw size={17} />
           </button>
         )}
+        {/* Subir esta conversación a un modelo más capaz. NO es destructivo (la memoria
+            se conserva) → sin advertencia; pero SÍ es de ida y no vuelta, y eso lo dice
+            el propio texto en vez de esconderlo. El servidor decide a qué modelo: aquí
+            no se nombra ninguno. */}
+        {isAgentDm && (
+          <button
+            onClick={() => {
+              escalateDmAgentFn({ data: { id: dmId } })
+                .then((r) => { if (!r.ok && r.reason) alert(t("No se pudo subir de modelo: {reason}", { reason: r.reason })); })
+                .catch(() => {});
+            }}
+            title={t("Subir a un modelo más capaz para esta conversación")}
+            className="grid h-11 w-11 shrink-0 place-items-center rounded-lg text-muted transition hover:bg-surface-3 hover:text-ink md:h-9 md:w-9"
+          >
+            <Zap size={17} />
+          </button>
+        )}
       </header>
       {!isAgentDm && <CallBanner h={call} />}
       {/* overflow-anchor:none → desactiva el scroll-anchoring nativo del navegador. Al cargar
@@ -6477,6 +6494,16 @@ function DmView({
         onSend={(p) => {
           // Comando /clear en DM con agente: borra la memoria de la conversación.
           // Acción destructiva → ADVERTENCIA antes de invocar (no se postea el "/clear").
+          // Comando /pro: mismo escalón que el botón del header. Existe porque el
+          // agente puede SUGERIRLO en su respuesta, y una sugerencia que se ejecuta
+          // escribiendo lo que te dijeron es más directa que buscar un ícono.
+          if (isAgentDm && p.body?.trim() === "/pro") {
+            escalateDmAgentFn({ data: { id: dmId } })
+              .then((r) => { if (!r.ok && r.reason) alert(t("No se pudo subir de modelo: {reason}", { reason: r.reason })); })
+              .catch(() => {});
+            scrollToBottom();
+            return;
+          }
           if (isAgentDm && p.body?.trim() === "/clear") {
             if (confirm(t("Esto borra la memoria de esta conversación. {name} empezará de cero. ¿Continuar?", { name: title })))
               clearDmAgentFn({ data: { id: dmId } }).catch(() => {});

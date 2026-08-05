@@ -106,6 +106,8 @@ export const en: Record<string, string> = {
   "Aún no tienes DMs.": "You don't have any DMs yet.",
   "Bloqueadas en el navegador. Actívalas desde los permisos del sitio.": "Blocked in the browser. Enable them from the site permissions.",
   "Borrar memoria de la conversación": "Clear conversation memory",
+  "Subir a un modelo más capaz para esta conversación": "Upgrade this conversation to a more capable model",
+  "No se pudo subir de modelo: {reason}": "Couldn't upgrade the model: {reason}",
   "Esto borra la memoria de esta conversación. {name} empezará de cero. ¿Continuar?": "This clears this conversation's memory. {name} will start fresh. Continue?",
   "Buscando…": "Searching…",
   "Buscar": "Search",

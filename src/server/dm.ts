@@ -196,6 +196,49 @@ export const clearDmAgentFn = createServerFn({ method: "POST" })
     return { ok: true as const };
   });
 
+// Sube ESTA conversación a un modelo más capaz. Mismo esqueleto que el /clear de
+// arriba: resuelve el agente del DM, su groupId, y confirma con una burbuja en el
+// historial — que el cambio quede escrito importa, porque a partir de aquí el agente
+// responde distinto y nadie va a recordar cuándo se pidió.
+//
+// ⚠️ NO es destructivo (la memoria se conserva; el hilo del runtime es el mismo), así
+// que a diferencia de /clear no lleva advertencia previa.
+export const escalateDmAgentFn = createServerFn({ method: "POST" })
+  .validator((d: { id: number }) => d)
+  .handler(async ({ data }) => {
+    const db = await import("../db.server");
+    const bus = await import("./bus.server");
+    const { currentNamespace } = await import("./tenant.server");
+    const { resolvedAgents, escalateAgentSession, agentGroupId } = await import("../agents.server");
+    const me = await sessionUser();
+    if (!me || !(await db.isDmMember(data.id, me.sub))) throw new Error("no autorizado");
+    const ns = await currentNamespace();
+    const handle = await db.getDmAgentHandle(data.id);
+    const agent = handle ? (await resolvedAgents()).find((a) => a.handle === handle) : null;
+    if (!agent) return { ok: false as const, reason: "no encontré el agente de esta conversación" };
+
+    const groupId = await agentGroupId(agent, `dm-${data.id}`); // == askDmAgentFn
+    // `me.sub` viaja para saber QUIÉN escala: es la única señal real de qué
+    // conversaciones se quedan cortas, y de ahí saldrán algún día las reglas.
+    const res = await escalateAgentSession(agent, groupId, me.sub);
+    if (!res.ok) return { ok: false as const, reason: res.reason };
+
+    const { id } = await db.postDmAgent(
+      data.id,
+      "⚡ Listo, subí a un modelo más capaz para esta conversación. La memoria se conserva.",
+      "msg",
+      agent.handle,
+      agent.name ?? "Ghosty",
+      agent.avatar ?? ""
+    );
+    const msg = await db.getMessage(id);
+    if (msg) {
+      const members = await db.getDmMembers(data.id);
+      for (const sub of members) bus.publish(bus.ch.user(ns, sub), { t: "message:new", msg });
+    }
+    return { ok: true as const };
+  });
+
 // El agente responde dentro del DM, con streaming first-class (igual que en rooms:
 // cáscara perezosa al primer token → deltas → body final). Media de entrada = los
 // adjuntos del usuario como FileParts. Contrato: docs/AGENT-MEDIA-CONTRACT.md.
