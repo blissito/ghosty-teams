@@ -1,5 +1,6 @@
-import { describe, it, expect } from "vitest";
-import { addClient, publish, onlineUsers, ch, type RtEvent } from "./bus.server";
+import { describe, it, expect, vi } from "vitest";
+import { addClient, publish, onlineUsers, onlinePeople, touchPresence, ch, type RtEvent } from "./bus.server";
+import { IDLE_MS } from "../lib/presence";
 
 // Namespace de tenant para las pruebas: el bus va particionado por `ns` (ver
 // bus.server). Un ns fijo aísla estas pruebas de cualquier otro tenant.
@@ -48,6 +49,38 @@ describe("bus realtime (fan-out + presencia)", () => {
     expect(ev.some((e) => e.t === "presence" && e.status === "offline")).toBe(true);
     expect(onlineUsers(NS)).not.toContain("u");
 
+    watcher();
+  });
+
+  it("touchPresence sólo anuncia al VOLVER de inactivo (no en cada tecla)", () => {
+    const ev: RtEvent[] = [];
+    const watcher = addClient(NS, "w2", "W2", [ch.presence(NS)], (e) => ev.push(e));
+    const c = addClient(NS, "act", "Act", [], () => {});
+    ev.length = 0;
+
+    // Recién conectado ya está activo: una señal más no le dice nada a nadie.
+    touchPresence(NS, "act");
+    expect(ev.some((e) => e.t === "presence")).toBe(false);
+
+    // El paso a inactivo NO se emite: nadie lo anuncia, el cliente lo deriva del
+    // timestamp. Por eso lo que se comprueba aquí es que la lista lo expone.
+    const t0 = onlinePeople(NS).find((p) => p.sub === "act")!.lastActiveAt;
+    vi.useFakeTimers();
+    vi.setSystemTime(t0 + IDLE_MS + 1_000);
+    expect(ev.some((e) => e.t === "presence")).toBe(false);
+
+    // Y al volver de inactivo SÍ, porque el resto del workspace no tiene forma de
+    // enterarse solo.
+    touchPresence(NS, "act");
+    expect(ev.some((e) => e.t === "presence" && e.status === "online")).toBe(true);
+    vi.useRealTimers();
+
+    // De alguien sin conexión abierta no hay presencia que refrescar (ni evento).
+    ev.length = 0;
+    touchPresence(NS, "fantasma");
+    expect(ev.length).toBe(0);
+
+    c();
     watcher();
   });
 

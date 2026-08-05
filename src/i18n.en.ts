@@ -580,10 +580,11 @@ export const en: Record<string, string> = {
   "secret opcional (ej. STRIPE_API_KEY)": "optional secret (e.g. STRIPE_API_KEY)",
   "{name} está escribiendo…": "{name} is typing…",
   "{n} en línea": "{n} online",
-  "Conectados al espacio ahora mismo": "Connected to the space right now",
+  "Personas activas en el espacio ahora mismo": "People active in the space right now",
   "Ver quién está conectado": "See who's connected",
-  "Personas con el espacio abierto. Cuenta a cada quien una vez, aunque tenga varias pestañas.":
-    "People with the space open. Each person counts once, even with several tabs.",
+  "Cuenta a cada quien una vez, aunque tenga varias pestañas. Sin actividad reciente no quiere decir desconectado: la pestaña sigue abierta.":
+    "Each person counts once, even with several tabs. No recent activity doesn't mean disconnected \u2014 the tab is still open.",
+  "hace {n} min": "{n} min ago",
   "{n} fijados": "{n} pinned",
   "{n} respuestas": "{n} replies",
   "¡Copiado!": "Copied!",

@@ -11,6 +11,7 @@
 // Interfaz swappable: si algún team creciera a miles de conexiones, se cambia SOLO
 // la implementación de publish/addClient por un tier Centrifugo, sin tocar features.
 import type { Message } from "../db.server";
+import { IDLE_MS } from "../lib/presence";
 
 // Canales namespaced POR TENANT: cada nombre lleva el prefijo `${ns}|` para que
 // publish() nunca cruce workspaces (los clients de otro ns no matchean el canal).
@@ -186,10 +187,6 @@ export function addClient(
     }
   };
 }
-
-// Cuánto sin dar señales de vida para dejar de contar como "activo". Se exporta
-// para que el cliente pinte con el MISMO umbral que el servidor usa para avisar.
-export const IDLE_MS = 10 * 60_000;
 
 // "Sigo aquí": lo llama lo que el cliente YA le manda al servidor (escribir, marcar
 // leído, enviar). No hay ping periódico nuevo — una pestaña abierta y quieta deja de

@@ -498,6 +498,8 @@ export const pingTypingFn = createServerFn({ method: "POST" })
     const user = await sessionUser();
     if (!user) return { ok: false as const };
     const ns = await currentNamespace();
+    // Escribir es la señal de actividad más barata que tenemos: ya viaja sola.
+    bus.touchPresence(ns, user.sub);
     if (data.dmId != null) {
       for (const sub of await db.getDmMembers(data.dmId)) {
         if (sub === user.sub) continue;

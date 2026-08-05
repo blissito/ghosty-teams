@@ -29,6 +29,10 @@ export const markReadFn = createServerFn({ method: "POST" })
     if (!me) return { ok: false as const };
     const ns = await currentNamespace();
     await db.markRead(me.sub, data.scope, data.scopeId);
+    // Marcar leído es la señal de "estoy mirando": el cliente ya lo dispara en focus y
+    // en visibilitychange (c.$slug.tsx), así que la presencia activa se refresca sola
+    // sin inventar un ping periódico.
+    bus.touchPresence(ns, me.sub);
     // Señal a las demás conexiones del usuario: relean su mapa de no-leídos.
     bus.publish(bus.ch.user(ns, me.sub), { t: "unread", scope: data.scope, scopeId: data.scopeId });
     return { ok: true as const };
