@@ -974,6 +974,28 @@ export async function agentEscalation(
   }
 }
 
+/** Baja la conversación al modelo de fábrica. El rayo es un control de dos estados y
+ *  alterna; sin esto la única salida era /clear, que además borra la memoria. */
+export async function deescalateAgentSession(
+  agent: ResolvedAgent,
+  groupId: string,
+): Promise<{ ok: boolean; model?: string | null }> {
+  try {
+    const ep = await escalationEndpoint(agent);
+    if (!ep) return { ok: false };
+    const body = JSON.stringify({ groupId });
+    const res = await fetch(ep.url, {
+      method: "DELETE",
+      headers: ep.rt.headers(body, agent.backend.kind === "fleet" ? agent.backend.token : ""),
+      body,
+    });
+    const json = (await res.json().catch(() => ({}))) as { model?: string };
+    return { ok: res.ok, model: json.model ?? null };
+  } catch {
+    return { ok: false };
+  }
+}
+
 /** Sube la conversación. Devuelve el motivo cuando no se pudo, para poder decirlo:
  *  un botón que no hace nada y no explica es peor que no tenerlo. */
 export async function escalateAgentSession(

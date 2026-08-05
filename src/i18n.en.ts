@@ -106,9 +106,12 @@ export const en: Record<string, string> = {
   "Aún no tienes DMs.": "You don't have any DMs yet.",
   "Bloqueadas en el navegador. Actívalas desde los permisos del sitio.": "Blocked in the browser. Enable them from the site permissions.",
   "Borrar memoria de la conversación": "Clear conversation memory",
+  "Borrar memoria": "Clear memory",
+  "{name} empezará de cero: pierde todo el contexto de esta conversación. Los mensajes que ya están escritos se quedan. No se puede deshacer.":
+    "{name} will start fresh: it loses all context from this conversation. Messages already written stay. This can't be undone.",
   "Subir a un modelo más capaz para esta conversación": "Upgrade this conversation to a more capable model",
   "Esta conversación ya usa el modelo más capaz": "This conversation already uses the more capable model",
-  "Modelo capaz · quedan {n} mensajes. Clic para extender.": "Capable model · {n} messages left. Click to extend.",
+  "Modelo capaz · quedan {n} mensajes. Clic para volver al rápido.": "Capable model · {n} messages left. Click to go back to the fast one.",
   "Subir a un modelo más capaz": "Upgrade to a more capable model",
   "Subir": "Upgrade",
   "{name} responderá con más capacidad durante los próximos {n} mensajes de esta conversación, conservando la memoria. El primer mensaje tardará un poco más. Después vuelve solo al modelo rápido; puedes extenderlo cuando quieras.":

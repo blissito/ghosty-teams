@@ -214,6 +214,22 @@ export const dmEscalationFn = createServerFn({ method: "POST" })
     return await agentEscalation(agent, groupId);
   });
 
+// Baja esta conversación al modelo de fábrica. Sin burbuja en el chat: bajar no cambia
+// nada que la persona no acabe de pedir con su propio clic, y el ícono ya lo refleja.
+export const deescalateDmAgentFn = createServerFn({ method: "POST" })
+  .validator((d: { id: number }) => d)
+  .handler(async ({ data }) => {
+    const db = await import("../db.server");
+    const { resolvedAgents, deescalateAgentSession, agentGroupId } = await import("../agents.server");
+    const me = await sessionUser();
+    if (!me || !(await db.isDmMember(data.id, me.sub))) throw new Error("no autorizado");
+    const handle = await db.getDmAgentHandle(data.id);
+    const agent = handle ? (await resolvedAgents()).find((a) => a.handle === handle) : null;
+    if (!agent) return { ok: false as const };
+    const groupId = await agentGroupId(agent, `dm-${data.id}`);
+    return await deescalateAgentSession(agent, groupId);
+  });
+
 // Sube ESTA conversación a un modelo más capaz. Mismo esqueleto que el /clear de
 // arriba: resuelve el agente del DM, su groupId, y confirma con una burbuja en el
 // historial — que el cambio quede escrito importa, porque a partir de aquí el agente

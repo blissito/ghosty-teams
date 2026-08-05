@@ -74,7 +74,7 @@ import { createFileRoute, notFound, Link, useRouter } from "@tanstack/react-rout
 import type { Channel, Message, DmConversation, RoomHit, ViewHit, Attachment, Artifact, CustomEmoji } from "../db.server";
 import { listEmojisFn } from "../server/emojis";
 import { recentViewFn, mentionsViewFn, starredViewFn } from "../server/views";
-import { openDmFn, listDmsFn, getDmFlowFn, postDmMessageFn, askDmAgentFn, clearDmAgentFn, escalateDmAgentFn, dmEscalationFn } from "../server/dm";
+import { openDmFn, listDmsFn, getDmFlowFn, postDmMessageFn, askDmAgentFn, clearDmAgentFn, escalateDmAgentFn, deescalateDmAgentFn, dmEscalationFn } from "../server/dm";
 import { forwardTargetsFn, forwardMessageFn } from "../server/forward";
 import { startCallFn, joinCallFn, getActiveCallFn } from "../server/quick-calls";
 // La llamada (dock, Room de LiveKit y avisos de entrante) vive en el store GLOBAL y se
@@ -6397,6 +6397,11 @@ function DmView({
     turnsLeft: number | null; turnsOnEscalate: number;
   } | null>(null);
   const [pidiendoPro, setPidiendoPro] = useState(false);
+  const [pidiendoClear, setPidiendoClear] = useState(false);
+  // ⚠️ Depende del LARGO del flujo, no sólo del dmId. Pidiéndolo una vez al abrir, el
+  // contador se congelaba: el ícono seguía en ámbar aunque la escalada ya hubiera
+  // caducado, y sólo se enteraba al recargar la página. Cada respuesta del agente hace
+  // crecer el flujo, que es exactamente cuando el contador cambió.
   useEffect(() => {
     if (!isAgentDm) { setEsc(null); return; }
     let vivo = true;
@@ -6404,7 +6409,7 @@ function DmView({
       .then((r) => { if (vivo) setEsc(r ?? null); })
       .catch(() => { if (vivo) setEsc(null); });
     return () => { vivo = false; };
-  }, [dmId, isAgentDm]);
+  }, [dmId, isAgentDm, flow?.length]);
 
   // Una sola vía para subir: la usan el botón y el comando /pro. Refresca el estado con
   // lo que devuelve el servidor en vez de asumir que salió bien — si el servidor dice
@@ -6418,6 +6423,10 @@ function DmView({
       // afirmando algo que no pasó.
       setEsc(await dmEscalationFn({ data: { id: dmId } }).catch(() => null));
     }
+  };
+  const bajarDeModelo = async () => {
+    await deescalateDmAgentFn({ data: { id: dmId } }).catch(() => null);
+    setEsc(await dmEscalationFn({ data: { id: dmId } }).catch(() => null));
   };
 
   return (
@@ -6455,10 +6464,7 @@ function DmView({
             destructiva → ADVERTENCIA antes de invocar. */}
         {isAgentDm && (
           <button
-            onClick={() => {
-              if (confirm(t("Esto borra la memoria de esta conversación. {name} empezará de cero. ¿Continuar?", { name: title })))
-                clearDmAgentFn({ data: { id: dmId } }).catch(() => {});
-            }}
+            onClick={() => setPidiendoClear(true)}
             title={t("Borrar memoria de la conversación")}
             className="grid h-11 w-11 shrink-0 place-items-center rounded-lg text-muted transition hover:bg-surface-3 hover:text-ink md:h-9 md:w-9"
           >
@@ -6476,10 +6482,10 @@ function DmView({
             realidad ya estaba hecho — y encima dejaba sin salida a quien necesitaba más. */}
         {isAgentDm && esc && (
           <button
-            onClick={() => { if (esc.escalated) void subirDeModelo(); else setPidiendoPro(true); }}
+            onClick={() => { if (esc.escalated) void bajarDeModelo(); else setPidiendoPro(true); }}
             title={
               esc.escalated
-                ? t("Modelo capaz · quedan {n} mensajes. Clic para extender.", { n: String(esc.turnsLeft ?? esc.turnsOnEscalate) })
+                ? t("Modelo capaz · quedan {n} mensajes. Clic para volver al rápido.", { n: String(esc.turnsLeft ?? esc.turnsOnEscalate) })
                 : t("Subir a un modelo más capaz para esta conversación")
             }
             className={`grid h-11 w-11 shrink-0 place-items-center rounded-lg transition md:h-9 md:w-9 ${
@@ -6539,14 +6545,13 @@ function DmView({
           // escribiendo lo que te dijeron es más directa que buscar un ícono.
           if (isAgentDm && p.body?.trim() === "/pro") {
             // Sin modal: escribir el comando YA es la confirmación. El modal existe para
-            // el botón, donde un clic puede ser un resbalón.
-            if (!esc?.escalated) void subirDeModelo();
+            // el botón, donde un clic puede ser un resbalón. Alterna, igual que el rayo.
+            void (esc?.escalated ? bajarDeModelo() : subirDeModelo());
             scrollToBottom();
             return;
           }
           if (isAgentDm && p.body?.trim() === "/clear") {
-            if (confirm(t("Esto borra la memoria de esta conversación. {name} empezará de cero. ¿Continuar?", { name: title })))
-              clearDmAgentFn({ data: { id: dmId } }).catch(() => {});
+            setPidiendoClear(true);
             scrollToBottom();
             return;
           }
@@ -6558,6 +6563,19 @@ function DmView({
       {/* Confirmación del escalón. NO es `danger`: no destruye nada y la memoria se
           conserva. Lo que sí hay que decir es que es de IDA — es la única parte que
           el usuario no puede deducir del ícono. */}
+      {/* Borrar memoria. Éste SÍ va como `danger`: es irreversible y el agente pierde
+          todo el contexto de la conversación. Sustituye a `window.confirm`, que no se
+          puede estilar y no distingue lo peligroso de lo rutinario. */}
+      {pidiendoClear && (
+        <ConfirmModal
+          title={t("Borrar memoria de la conversación")}
+          body={t("{name} empezará de cero: pierde todo el contexto de esta conversación. Los mensajes que ya están escritos se quedan. No se puede deshacer.", { name: title })}
+          confirmLabel={t("Borrar memoria")}
+          danger
+          onCancel={() => setPidiendoClear(false)}
+          onConfirm={async () => { await clearDmAgentFn({ data: { id: dmId } }).catch(() => {}); setPidiendoClear(false); }}
+        />
+      )}
       {pidiendoPro && (
         <ConfirmModal
           title={t("Subir a un modelo más capaz")}
