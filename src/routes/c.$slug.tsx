@@ -6920,8 +6920,11 @@ function AlertCard({ msgId, a, onAct }: { msgId: number; a: AlertCardData; onAct
           {a.shortId ? <span className="font-mono text-[11px] text-muted">{a.shortId}</span> : null}
         </div>
         <p className="text-sm font-semibold leading-snug text-ink">{a.title}</p>
+        {/* Se ENVUELVE, no se scrollea: con `overflow-x-auto` el ambiente quedaba
+            escondido a la derecha detrás de una barra, y es justo el campo que dice si
+            el error es de producción o de la máquina de alguien. */}
         {meta.length ? (
-          <p className="mt-1 overflow-x-auto whitespace-nowrap font-mono text-[11.5px] text-muted">{meta.join("  ·  ")}</p>
+          <p className="mt-1 font-mono text-[11.5px] leading-relaxed text-muted">{meta.join("  ·  ")}</p>
         ) : null}
         <div className="mt-2 flex flex-wrap items-center gap-1.5">
           {a.actions.map((x, i) => (
