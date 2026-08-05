@@ -6892,9 +6892,11 @@ function AlertCard({ msgId, a, onAct }: { msgId: number; a: AlertCardData; onAct
   // Los conteos llevan separador de miles: "12483 eventos" se lee mal y es justo la
   // queja de formato que la propia gente de Sentry levantó sobre sus notificaciones.
   const n = (v: number) => v.toLocaleString();
-  const meta = [
-    a.project,
-    a.file && a.fn ? `${a.file} → ${a.fn}` : a.file || a.fn,
+  // Dos líneas por SIGNIFICADO, no por desbordamiento: dónde pasó y cuánto pesa. Una sola
+  // línea larga acaba envolviéndose donde toque y deja huérfano un "· development" con el
+  // separador al frente — el corte lo decide el ancho de la ventana, que no significa nada.
+  const where = [a.project, a.file && a.fn ? `${a.file} → ${a.fn}` : a.file || a.fn].filter(Boolean);
+  const scale = [
     a.count != null ? (a.count === 1 ? t("1 evento") : t("{n} eventos", { n: n(a.count) })) : "",
     a.users != null ? (a.users === 1 ? t("1 usuario") : t("{n} usuarios", { n: n(a.users) })) : "",
     a.env,
@@ -6920,11 +6922,11 @@ function AlertCard({ msgId, a, onAct }: { msgId: number; a: AlertCardData; onAct
           {a.shortId ? <span className="font-mono text-[11px] text-muted">{a.shortId}</span> : null}
         </div>
         <p className="text-sm font-semibold leading-snug text-ink">{a.title}</p>
-        {/* Se ENVUELVE, no se scrollea: con `overflow-x-auto` el ambiente quedaba
-            escondido a la derecha detrás de una barra, y es justo el campo que dice si
-            el error es de producción o de la máquina de alguien. */}
-        {meta.length ? (
-          <p className="mt-1 font-mono text-[11.5px] leading-relaxed text-muted">{meta.join("  ·  ")}</p>
+        {where.length ? (
+          <p className="mt-1 truncate font-mono text-[11.5px] text-muted">{where.join("  ·  ")}</p>
+        ) : null}
+        {scale.length ? (
+          <p className="truncate font-mono text-[11.5px] text-muted">{scale.join("  ·  ")}</p>
         ) : null}
         <div className="mt-2 flex flex-wrap items-center gap-1.5">
           {a.actions.map((x, i) => (
