@@ -1094,7 +1094,9 @@ function ChannelPage() {
   // (con ref nueva) → useCachedQuery re-lee sin red. Separado de `rev` (que sí refetch).
   const [patch, setPatch] = useState(0);
   const applyPatch = () => setPatch((p) => p + 1);
-  const [online, setOnline] = useState<Set<string>>(new Set());
+  // sub -> nombre. Es un Map y no un Set porque el owner puede ver QUIÉNES son, no sólo
+  // cuántos. `.has()`/`.size` se comportan igual, así que el resto de usos no cambia.
+  const [online, setOnline] = useState<Map<string, string>>(new Map());
   // ── Quick-calls ────────────────────────────────────────────────────────────
   // Una call activa por scope (canal/DM), sembrada por el bus (quickcall:started/ended)
   // y por getActiveCallFn al entrar. Alimenta las tarjetas y el header; la llamada en la
@@ -1952,12 +1954,12 @@ function ChannelPage() {
         scheduleDocOpen(ev.messageId, "artifact");
         break;
       case "presence:init":
-        setOnline(new Set(ev.online));
+        setOnline(new Map(ev.online.map((p) => [p.sub, p.name])));
         break;
       case "presence":
         setOnline((prev) => {
-          const n = new Set(prev);
-          if (ev.status === "online") n.add(ev.sub);
+          const n = new Map(prev);
+          if (ev.status === "online") n.set(ev.sub, ev.name);
           else n.delete(ev.sub);
           return n;
         });
@@ -2744,7 +2746,7 @@ function ChannelPage() {
           onOpenThread={openThread}
           typing={typing && typing.dmId == null && typing.parentId == null ? typing : null}
           newAt={boundary?.key === `room:${channel.id}` ? boundary.at : null}
-          onlineCount={online.size}
+          online={online}
           pins={pins}
           onOpenDm={openDm}
           onOpenNav={() => setNavOpen(true)}
@@ -3530,7 +3532,7 @@ function Sidebar({
   dms: DmConversation[];
   dmsLoading: boolean;
   activeDmId: number | null;
-  online: Set<string>;
+  online: Map<string, string>;
   onOpenDm: (id: number) => void;
   onRevalidate: () => void;
   unreadRooms: Map<number, number>;
@@ -5034,6 +5036,65 @@ function DocsButton({ channelId, channelSlug, threadRootId }: { channelId: numbe
 // pueda ver el room (patrón Slack/Discord). Antes la lista solo existía dentro del modal
 // de Ajustes, gateado por canManage → un member no podía ver con quién comparte el canal.
 // Invitar/expulsar SIGUE viviendo en Ajustes (sigue gateado): esto es solo lectura.
+// Chip de "N en línea". El conteo es del WORKSPACE, no del room: son las pestañas
+// abiertas contra este tenant, deduplicadas por persona. Para el OWNER es además
+// una lista de quiénes — cuando el número no cuadra con lo que ve, el nombre es la
+// única forma de saber si sobra una sesión fantasma o hay alguien que no esperaba.
+// Para el resto se queda en el número: quién está conectado no es asunto de todos.
+function OnlineChip({ online }: { online: Map<string, string> }) {
+  const t = useT();
+  const { me } = useContext(ChatCtx);
+  const [open, setOpen] = useState(false);
+  if (online.size === 0) return null;
+
+  const people = [...online.entries()].map(([sub, name]) => ({ sub, name }));
+  const chip = (
+    <>
+      <span className="inline-block h-2 w-2 rounded-full bg-green-500" />
+      <span>{t("{n} en línea", { n: online.size })}</span>
+    </>
+  );
+
+  if (!me?.isOwner) {
+    return (
+      <span className="hidden items-center gap-1.5 text-xs text-muted @xl/hdr:flex" title={t("Conectados al espacio ahora mismo")}>
+        {chip}
+      </span>
+    );
+  }
+
+  return (
+    <>
+      <button
+        onClick={() => setOpen(true)}
+        title={t("Ver quién está conectado")}
+        className="hidden items-center gap-1.5 rounded-lg px-1.5 py-1 text-xs text-muted transition hover:bg-surface-2 @xl/hdr:flex"
+      >
+        {chip}
+      </button>
+      <AnimatePresence>
+        {open && (
+          <Modal onClose={() => setOpen(false)}>
+            <h3 className="mb-1 text-base font-semibold text-ink">{t("Conectados ahora")}</h3>
+            <p className="mb-3 text-xs text-muted">
+              {t("Personas con el espacio abierto. Cuenta a cada quien una vez, aunque tenga varias pestañas.")}
+            </p>
+            <ul className="max-h-80 space-y-1 overflow-y-auto thin-scroll">
+              {people.map((p) => (
+                <li key={p.sub} className="flex items-center gap-2.5 rounded-lg px-1 py-1.5">
+                  <Avatar name={p.name} className="h-8 w-8" />
+                  <span className="truncate text-sm text-ink">{p.name}</span>
+                  {p.sub === me.sub && <span className="text-xs text-muted">{t("tú")}</span>}
+                </li>
+              ))}
+            </ul>
+          </Modal>
+        )}
+      </AnimatePresence>
+    </>
+  );
+}
+
 function RoomMembersButton({ slug }: { slug: string }) {
   const t = useT();
   const [open, setOpen] = useState(false);
@@ -5440,7 +5501,7 @@ function HomeDashboard({
   user: SessionUser | null;
   channels: Channel[];
   dms: DmConversation[];
-  online: Set<string>;
+  online: Map<string, string>;
   unreadRooms: Map<number, number>;
   unreadDms: Map<number, number>;
   onOpenRoom: (slug: string) => void;
@@ -5959,7 +6020,7 @@ function Flow({
   onOpenThread,
   typing,
   newAt,
-  onlineCount,
+  online,
   pins,
   onOpenDm,
   onOpenNav,
@@ -5972,7 +6033,7 @@ function Flow({
   onOpenThread: (id: number) => void;
   typing: { sub: string; name: string } | null;
   newAt: number | null;
-  onlineCount: number;
+  online: Map<string, string>;
   pins: Message[];
   onOpenDm: (id: number) => void;
   onOpenNav: () => void;
@@ -6030,15 +6091,7 @@ function Flow({
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-1 @lg/hdr:gap-2">
-          {onlineCount > 0 && (
-            <span
-              className="hidden items-center gap-1.5 text-xs text-muted @xl/hdr:flex"
-              title={t("Conectados ahora")}
-            >
-              <span className="inline-block h-2 w-2 rounded-full bg-green-500" />
-              <span>{t("{n} en línea", { n: onlineCount })}</span>
-            </span>
-          )}
+          <OnlineChip online={online} />
           {/* El facepile es lo PRIMERO que se va al angostarse: la lista sigue disponible en
               el modal de settings del room. */}
           <span className="hidden @2xl/hdr:flex">
@@ -6259,7 +6312,7 @@ function DmView({
   dmId: number;
   rev: number;
   patch: number;
-  online: Set<string>;
+  online: Map<string, string>;
   optimistic: Optimistic[];
   onSend: (p: SendPayload) => void;
   onReloaded: (loaded: { sender: string; body: string }[]) => void;

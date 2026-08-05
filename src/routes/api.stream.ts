@@ -55,14 +55,23 @@ export const Route = createFileRoute("/api/stream")({
               controller.enqueue(enc.encode(`data: ${JSON.stringify(ev)}\n\n`));
             };
             // Snapshot de presencia para el recién llegado (SOLO de su tenant).
-            send({ t: "presence:init", online: bus.onlineUsers(ns) });
-            unsub = bus.addClient(ns, user.sub, user.name, subChannels, (ev) => {
+            send({ t: "presence:init", online: bus.onlinePeople(ns) });
+            // La baja es de UN SOLO uso: la dispara `cancel()` o el heartbeat muerto, y
+            // llamarla dos veces descontaría dos conexiones de la misma pestaña (presencia
+            // en negativo, o sea alguien conectado que deja de aparecer).
+            const unsubscribeClient = bus.addClient(ns, user.sub, user.name, subChannels, (ev) => {
               try {
                 send(ev);
               } catch {
                 /* controller cerrado — cancel() limpia */
               }
             });
+            let unsubscribed = false;
+            unsub = () => {
+              if (unsubscribed) return;
+              unsubscribed = true;
+              unsubscribeClient();
+            };
             // Al apagar, esta conexión se cierra sola: el cliente reconecta con backoff
             // (useLiveStream), así que cerrarla no le cuesta nada y libera el proceso.
             desregistrar = alApagar(() => {
@@ -75,11 +84,17 @@ export const Route = createFileRoute("/api/stream")({
               }
             });
             // Heartbeat (comentario SSE) para mantener viva la conexión a través del proxy.
+            // ⚠️ Si el enqueue falla, la conexión está MUERTA y `cancel()` ya no va a
+            // llegar (el navegador que se cerró de golpe no lo dispara). Tragarse el
+            // error dejaba al client registrado para siempre: presencia fantasma —
+            // "3 en línea" con una sola persona conectada. Aquí se da de baja a mano.
             heartbeat = setInterval(() => {
               try {
                 controller.enqueue(enc.encode(`: ping\n\n`));
               } catch {
-                /* cerrado */
+                if (heartbeat) clearInterval(heartbeat);
+                unsub();
+                desregistrar();
               }
             }, 25_000);
           },

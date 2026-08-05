@@ -56,7 +56,7 @@ export type RtEvent =
   | { t: "refresh"; channelId: number | null; parentId: number | null; dmId?: number | null } // churn de agente/status
   | { t: "unread"; scope: "room" | "dm"; scopeId: number } // hay algo nuevo en un scope no-activo → badge
   | { t: "presence"; sub: string; name: string; status: "online" | "offline" }
-  | { t: "presence:init"; online: string[] }
+  | { t: "presence:init"; online: { sub: string; name: string }[] }
   | { t: "typing"; sub: string; name: string; channelId: number | null; parentId?: number | null; dmId?: number | null }
   // Quick-call arrancada/terminada en un scope → banner de "unirse" para la audiencia.
   // NO lleva token (cada quien acuña el suyo al unirse, ver quick-calls.ts).
@@ -67,11 +67,15 @@ type Listener = (ev: RtEvent) => void;
 type Client = { ns: string; channels: Set<string>; listener: Listener; sub: string };
 
 const clients = new Set<Client>();
-// Presencia POR TENANT: ns -> (sub -> nº de conexiones abiertas). Nunca global,
+// Presencia POR TENANT: ns -> (sub -> {conexiones abiertas, nombre}). Nunca global,
 // o "quién está online" se filtraría entre workspaces distintos.
-const online = new Map<string, Map<string, number>>();
+// El NOMBRE se guarda aquí porque el snapshot del recién llegado (`presence:init`)
+// tiene que poder decir QUIÉN, no sólo cuántos: los eventos sueltos sí traen nombre,
+// pero de la gente que ya estaba conectada el cliente no tiene ninguna otra fuente.
+type OnlineEntry = { n: number; name: string };
+const online = new Map<string, Map<string, OnlineEntry>>();
 
-function nsOnline(ns: string): Map<string, number> {
+function nsOnline(ns: string): Map<string, OnlineEntry> {
   let m = online.get(ns);
   if (!m) {
     m = new Map();
@@ -83,7 +87,7 @@ function nsOnline(ns: string): Map<string, number> {
 // ¿El usuario tiene alguna pestaña conectada ahora, EN ESTE tenant? (gate de email:
 // solo se notifica por correo a quien está OFFLINE, estilo Slack/Zulip).
 export function isOnline(ns: string, sub: string): boolean {
-  return (online.get(ns)?.get(sub) ?? 0) > 0;
+  return (online.get(ns)?.get(sub)?.n ?? 0) > 0;
 }
 
 // Publica un evento a todos los clientes suscritos a `channel`. Síncrono, best-effort:
@@ -161,24 +165,29 @@ export function addClient(
   const client: Client = { ns, channels: new Set(channels), listener, sub };
   clients.add(client);
   const om = nsOnline(ns);
-  const prev = om.get(sub) ?? 0;
-  om.set(sub, prev + 1);
+  const prev = om.get(sub)?.n ?? 0;
+  om.set(sub, { n: prev + 1, name });
   if (prev === 0) publish(ch.presence(ns), { t: "presence", sub, name, status: "online" });
 
   return () => {
     clients.delete(client);
-    const n = (om.get(sub) ?? 1) - 1;
+    const n = (om.get(sub)?.n ?? 1) - 1;
     if (n <= 0) {
       om.delete(sub);
       if (om.size === 0) online.delete(ns);
       publish(ch.presence(ns), { t: "presence", sub, name, status: "offline" });
     } else {
-      om.set(sub, n);
+      om.set(sub, { n, name });
     }
   };
 }
 
-// Subs online EN ESTE tenant (para presence:init del recién llegado).
+// Subs online EN ESTE tenant.
 export function onlineUsers(ns: string): string[] {
   return [...(online.get(ns)?.keys() ?? [])];
+}
+
+// Quién está online, con nombre (para presence:init del recién llegado).
+export function onlinePeople(ns: string): { sub: string; name: string }[] {
+  return [...(online.get(ns)?.entries() ?? [])].map(([sub, e]) => ({ sub, name: e.name }));
 }

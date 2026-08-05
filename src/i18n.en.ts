@@ -578,6 +578,10 @@ export const en: Record<string, string> = {
   "secret opcional (ej. STRIPE_API_KEY)": "optional secret (e.g. STRIPE_API_KEY)",
   "{name} está escribiendo…": "{name} is typing…",
   "{n} en línea": "{n} online",
+  "Conectados al espacio ahora mismo": "Connected to the space right now",
+  "Ver quién está conectado": "See who's connected",
+  "Personas con el espacio abierto. Cuenta a cada quien una vez, aunque tenga varias pestañas.":
+    "People with the space open. Each person counts once, even with several tabs.",
   "{n} fijados": "{n} pinned",
   "{n} respuestas": "{n} replies",
   "¡Copiado!": "Copied!",
