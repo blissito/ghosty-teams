@@ -151,10 +151,15 @@ export function useDocReview({ documentId, version, bloques }: Opts) {
       const q = new URLSearchParams();
       if (version != null && version !== "") q.set("v", String(version));
       const encontrados: Hallazgo[] = [];
+      // Fuera del try para poder cancelarlo pase lo que pase: al superarse la generación
+      // (el usuario siguió escribiendo) este bucle ROMPE con el NDJSON a medias, y un
+      // stream abandonado se queda con uno de los ~6 sockets por origen del navegador
+      // mientras el servidor sigue revisando bloques que ya no le importan a nadie.
+      let lector: ReadableStreamDefaultReader<Uint8Array> | null = null;
       try {
         const r = await fetch(`/api/doc-check/${documentId}?${q}`);
         if (!r.ok || !r.body) throw new Error(`check ${r.status}`);
-        const lector = r.body.getReader();
+        lector = r.body.getReader();
         const dec = new TextDecoder();
         let resto = "";
         const mapa = textos(bloques());
@@ -210,6 +215,8 @@ export function useDocReview({ documentId, version, bloques }: Opts) {
       } catch (e) {
         console.error("[revision]", e);
         if (gen.current === mi) setError("No se pudo revisar el documento");
+      } finally {
+        await lector?.cancel().catch(() => {});
       }
       if (gen.current !== mi) return;
       setActual(0);

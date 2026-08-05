@@ -1,6 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import type { RtEvent } from "./bus.server";
 import type { SessionUser } from "../users.server";
+import type { Channel } from "../db.server";
 
 // Server functions — modelo Slack. El pool_ token nunca toca el browser.
 
@@ -13,12 +14,17 @@ export async function sessionUser() {
   return s.data.user ?? null;
 }
 
-// Menciones grupales: @all/@channel/@everyone/@aquí notifican a TODA la audiencia
-// del room (miembros si es privado; todo el workspace si es público).
+// Menciones grupales, en DOS niveles. El producto dice "room" (nunca "canal"), así que el
+// vocabulario de las menciones lo sigue: @room es la del room y @all la del workspace.
+//
 // ⚠️ "aquí" va CON acento además de sin él: el token se compara tal cual (sólo se baja a
 // minúsculas), así que sin las dos formas la mención acentuada —la que un hispanohablante
 // escribe— no notificaba a nadie y fallaba en silencio.
-const GROUP_MENTIONS = new Set(["all", "channel", "everyone", "aqui", "aquí", "here", "todos"]);
+const WORKSPACE_MENTIONS = new Set(["all", "everyone", "todos"]);
+// "channel" se acepta para siempre aunque no salga en el typeahead: es el reflejo de quien
+// viene de Slack, y una mención que no notifica a nadie falla en silencio.
+const ROOM_MENTIONS = new Set(["room", "here", "aqui", "aquí", "channel"]);
+const GROUP_MENTIONS = new Set([...WORKSPACE_MENTIONS, ...ROOM_MENTIONS]);
 
 /**
  * Clave de conversación de la FLOTA para un canal. **Una por room, siempre.**
@@ -37,17 +43,16 @@ const GROUP_MENTIONS = new Set(["all", "channel", "everyone", "aqui", "aquí", "
 const FLEET_THREAD = "flow";
 
 // Push a los usuarios cuyos @handle aparecen en el mensaje (excluye al autor).
-// Soporta menciones grupales (@all/@channel) que abarcan a toda la audiencia.
+// Soporta menciones grupales (@all = workspace, @room = este room).
 async function notifyMentions(
   ns: string,
-  slug: string,
-  channelId: number,
-  channelName: string,
+  channel: Channel,
   body: string,
   senderName: string,
-  senderSub: string,
-  isPrivate: boolean
+  senderSub: string
 ): Promise<void> {
+  const { id: channelId, slug, name: channelName } = channel;
+  const isPrivate = channel.is_private === 1;
   const tokens = (body.match(/@([\wáéíóúñ]+)/gi) ?? []).map((t) => t.slice(1).toLowerCase());
   if (!tokens.length) return;
   const users = await import("../users.server");
@@ -55,10 +60,20 @@ async function notifyMentions(
 
   let targets: string[];
   if (tokens.some((t) => GROUP_MENTIONS.has(t))) {
-    // @all/@channel → toda la audiencia del room, menos el autor.
-    const audience = isPrivate
-      ? await db.listChannelMembers(channelId)
-      : (await users.listUsers()).map((u) => u.sub);
+    // El nivel MÁS amplio gana: quien escribe @room @all quiere a todo el workspace.
+    const wantsWorkspace = tokens.some((t) => WORKSPACE_MENTIONS.has(t));
+    let audience: string[];
+    if (wantsWorkspace) {
+      audience = (await users.listUsers()).map((u) => u.sub);
+    } else if (isPrivate) {
+      audience = await db.listChannelMembers(channelId);
+    } else {
+      // ⚠️ Un room PÚBLICO no tiene membresía (gc_channel_members está vacía por diseño:
+      // nadie se une). Lo más cercano a "los de este room" es quien ha participado —
+      // el mismo criterio que el roster que ya se enseña en la UI. Consecuencia asumida:
+      // quien nunca escribió aquí no recibe el @room; para alcanzarlo está @all.
+      audience = (await db.listRoomRoster(channel)).map((m) => m.sub);
+    }
     targets = audience.filter((s) => s && s !== senderSub);
   } else {
     targets = await users.resolveMentionedUserSubs(tokens, senderSub);
@@ -107,15 +122,15 @@ export const listMentionsFn = createServerFn({ method: "GET" }).handler(async ()
   const [agents, us] = await Promise.all([resolvedAgents(), users.listUsers()]);
   return [
     // Menciones grupales (notifican a toda la audiencia del room).
-    // Todas hacen LO MISMO (ver GROUP_MENTIONS); son alias para que quien venga de Slack
-    // o escriba en español acierte a la primera. El typeahead filtra por prefijo, así que
-    // la lista larga no estorba: nadie las ve todas a la vez.
-    { handle: "all", name: "Notificar a todos", avatar: "", kind: "group" as const },
-    { handle: "channel", name: "Notificar al room", avatar: "", kind: "group" as const },
-    { handle: "everyone", name: "Notificar a todos", avatar: "", kind: "group" as const },
-    { handle: "here", name: "Notificar al room", avatar: "", kind: "group" as const },
-    { handle: "todos", name: "Notificar a todos", avatar: "", kind: "group" as const },
-    { handle: "aquí", name: "Notificar al room", avatar: "", kind: "group" as const },
+    // Dos niveles y sus sinónimos (ver WORKSPACE_MENTIONS / ROOM_MENTIONS). El typeahead
+    // filtra por prefijo, así que la lista larga no estorba: nadie las ve todas a la vez.
+    // "channel" NO sale —el producto dice room— pero se sigue aceptando al escribirla.
+    { handle: "all", name: "Notificar a todo el espacio", avatar: "", kind: "group" as const },
+    { handle: "everyone", name: "Notificar a todo el espacio", avatar: "", kind: "group" as const },
+    { handle: "todos", name: "Notificar a todo el espacio", avatar: "", kind: "group" as const },
+    { handle: "room", name: "Notificar a este room", avatar: "", kind: "group" as const },
+    { handle: "here", name: "Notificar a este room", avatar: "", kind: "group" as const },
+    { handle: "aquí", name: "Notificar a este room", avatar: "", kind: "group" as const },
     ...agents.map((a) => ({ handle: a.handle, name: a.name, avatar: a.avatar, kind: "agent" as const })),
     ...us.map((u) => ({ handle: u.handle, name: u.name, avatar: u.avatar, kind: "user" as const, sub: u.sub })),
   ];
@@ -647,7 +662,7 @@ export const postMessage = createServerFn({ method: "POST" })
     if (created && files.length) [created] = await db.attachAttachments([created]);
     if (created) bus.publish(bus.ch.room(ns, channel.id), { t: "message:new", msg: created, nonce: data.nonce });
     // Push a los usuarios @tagged (fire-and-forget resiliente).
-    await notifyMentions(ns, channel.slug, channel.id, channel.name, body, name, me?.sub ?? "", channel.is_private === 1).catch(() => {});
+    await notifyMentions(ns, channel, body, name, me?.sub ?? "").catch(() => {});
     // ¿Qué agentes responden y dónde? (multi-mención: cada @tagged responde)
     //
     // MODELO ZULIP (2026-08-03): la respuesta del agente NACE SIEMPRE EN UN HILO, colgada

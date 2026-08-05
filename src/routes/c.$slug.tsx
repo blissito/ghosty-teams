@@ -129,7 +129,7 @@ import { marcarCierre, limpiarCierre } from "../lib/panel-cerrando";
 import { playNotificationSound, playGhostySound, playSelfSound, playMentionSound, playDmSound, playReadySound, playDeleteSound, playArtifactOpen, playArtifactClose, playArtifactReady } from "../utils/notificationSound";
 
 // Menciones que cuentan como "a ti": tu @handle o una grupal (@all/@channel/…).
-const SOUND_GROUP_MENTIONS = new Set(["all", "channel", "everyone", "aqui", "aquí", "here", "todos"]);
+const SOUND_GROUP_MENTIONS = new Set(["all", "everyone", "todos", "room", "here", "aqui", "aquí", "channel"]);
 import { useT } from "../i18n";
 
 type Mention = { handle: string; name: string; avatar: string; kind: "agent" | "user" | "group"; sub?: string | null };

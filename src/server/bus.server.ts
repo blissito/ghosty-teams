@@ -55,8 +55,11 @@ export type RtEvent =
   | { t: "artifact:open"; messageId: number }
   | { t: "refresh"; channelId: number | null; parentId: number | null; dmId?: number | null } // churn de agente/status
   | { t: "unread"; scope: "room" | "dm"; scopeId: number } // hay algo nuevo en un scope no-activo → badge
-  | { t: "presence"; sub: string; name: string; status: "online" | "offline" }
-  | { t: "presence:init"; online: { sub: string; name: string }[] }
+  // `lastActiveAt` = última señal REAL de la persona (escribir, marcar leído, enviar),
+  // no la última conexión. Con la pestaña abierta y quieta, envejece: es lo que separa
+  // "conectado" de "atento". El paso a inactivo no se emite — se deriva del timestamp.
+  | { t: "presence"; sub: string; name: string; status: "online" | "offline"; lastActiveAt: number }
+  | { t: "presence:init"; online: { sub: string; name: string; lastActiveAt: number }[] }
   | { t: "typing"; sub: string; name: string; channelId: number | null; parentId?: number | null; dmId?: number | null }
   // Quick-call arrancada/terminada en un scope → banner de "unirse" para la audiencia.
   // NO lleva token (cada quien acuña el suyo al unirse, ver quick-calls.ts).
@@ -72,7 +75,7 @@ const clients = new Set<Client>();
 // El NOMBRE se guarda aquí porque el snapshot del recién llegado (`presence:init`)
 // tiene que poder decir QUIÉN, no sólo cuántos: los eventos sueltos sí traen nombre,
 // pero de la gente que ya estaba conectada el cliente no tiene ninguna otra fuente.
-type OnlineEntry = { n: number; name: string };
+type OnlineEntry = { n: number; name: string; lastActiveAt: number };
 const online = new Map<string, Map<string, OnlineEntry>>();
 
 function nsOnline(ns: string): Map<string, OnlineEntry> {
@@ -166,20 +169,42 @@ export function addClient(
   clients.add(client);
   const om = nsOnline(ns);
   const prev = om.get(sub)?.n ?? 0;
-  om.set(sub, { n: prev + 1, name });
-  if (prev === 0) publish(ch.presence(ns), { t: "presence", sub, name, status: "online" });
+  const now = Date.now();
+  om.set(sub, { n: prev + 1, name, lastActiveAt: now });
+  if (prev === 0) publish(ch.presence(ns), { t: "presence", sub, name, status: "online", lastActiveAt: now });
 
   return () => {
     clients.delete(client);
-    const n = (om.get(sub)?.n ?? 1) - 1;
+    const e = om.get(sub);
+    const n = (e?.n ?? 1) - 1;
     if (n <= 0) {
       om.delete(sub);
       if (om.size === 0) online.delete(ns);
-      publish(ch.presence(ns), { t: "presence", sub, name, status: "offline" });
+      publish(ch.presence(ns), { t: "presence", sub, name, status: "offline", lastActiveAt: e?.lastActiveAt ?? now });
     } else {
-      om.set(sub, { n, name });
+      om.set(sub, { n, name, lastActiveAt: e?.lastActiveAt ?? now });
     }
   };
+}
+
+// Cuánto sin dar señales de vida para dejar de contar como "activo". Se exporta
+// para que el cliente pinte con el MISMO umbral que el servidor usa para avisar.
+export const IDLE_MS = 10 * 60_000;
+
+// "Sigo aquí": lo llama lo que el cliente YA le manda al servidor (escribir, marcar
+// leído, enviar). No hay ping periódico nuevo — una pestaña abierta y quieta deja de
+// contar sola, que es justo lo que queremos distinguir.
+//
+// ⚠️ Sólo publica al VOLVER de inactivo. Publicar en cada señal sería un evento por
+// tecla a todo el workspace; el paso a inactivo tampoco se anuncia (nadie lo emite:
+// el cliente lo deriva del timestamp que ya tiene).
+export function touchPresence(ns: string, sub: string): void {
+  const e = online.get(ns)?.get(sub);
+  if (!e) return; // sin conexión abierta no hay presencia que refrescar
+  const now = Date.now();
+  const wasIdle = now - e.lastActiveAt > IDLE_MS;
+  e.lastActiveAt = now;
+  if (wasIdle) publish(ch.presence(ns), { t: "presence", sub, name: e.name, status: "online", lastActiveAt: now });
 }
 
 // Subs online EN ESTE tenant.
@@ -187,7 +212,7 @@ export function onlineUsers(ns: string): string[] {
   return [...(online.get(ns)?.keys() ?? [])];
 }
 
-// Quién está online, con nombre (para presence:init del recién llegado).
-export function onlinePeople(ns: string): { sub: string; name: string }[] {
-  return [...(online.get(ns)?.entries() ?? [])].map(([sub, e]) => ({ sub, name: e.name }));
+// Quién está online, con nombre y última señal (para presence:init del recién llegado).
+export function onlinePeople(ns: string): { sub: string; name: string; lastActiveAt: number }[] {
+  return [...(online.get(ns)?.entries() ?? [])].map(([sub, e]) => ({ sub, name: e.name, lastActiveAt: e.lastActiveAt }));
 }

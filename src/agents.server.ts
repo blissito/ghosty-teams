@@ -796,6 +796,10 @@ export async function callAgentBackendStream(
     // 2026-07-14). El runtime lo declara — la HMAC del nativo no caduca por turno.
     let res = await doStream(agent.backend.token);
     if (rt.refreshesOn401 && res.status === 401) {
+      // El body del 401 se DRENA antes de reasignar `res`: una respuesta sin consumir
+      // retiene su socket hasta que el GC la recoja, y esto corre en cada caducidad
+      // del fleet_token del pool.
+      await res.text().catch(() => "");
       const fresh = await refreshFleetToken((agent.backend as { id: string }).id);
       if (fresh) res = await doStream(fresh);
     }
@@ -807,37 +811,44 @@ export async function callAgentBackendStream(
     let buf = "";
     let streamed = "";
     let authoritative: string | null = null;
-    for (;;) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      buf += dec.decode(value, { stream: true });
-      let nl: number;
-      while ((nl = buf.indexOf("\n\n")) !== -1) {
-        const frame = buf.slice(0, nl);
-        buf = buf.slice(nl + 2);
-        const line = frame.split("\n").find((l) => l.startsWith("data:"));
-        if (!line) continue;
-        let ev: { type?: string; value?: string; message?: string; name?: string; id?: string; phase?: "start" | "end"; ok?: boolean; detail?: string };
-        try {
-          ev = JSON.parse(line.slice(5).trim());
-        } catch {
-          continue;
-        }
-        if (ev.type === "injected") {
-          return INJECTED; // el trabajo sigue en la burbuja de allá; ésta no existe
-        }
-        if (ev.type === "chunk" && ev.value) {
-          streamed += ev.value;
-          await onChunk(ev.value);
-        } else if (ev.type === "tool") {
-          // start trae name+id+detail; end trae id+ok. Correlación por id en runAgentTurn.
-          await onTool?.({ name: ev.name, id: ev.id, phase: ev.phase ?? "start", ok: ev.ok, detail: ev.detail });
-        } else if (ev.type === "done") {
-          authoritative = ev.value ?? streamed;
-        } else if (ev.type === "error") {
-          throw new Error(ev.message || "fleet stream error");
+    // ⚠️ Casi todas las salidas de este bucle dejan el stream a medias: `injected`
+    // retorna, `error` lanza, y Detener aborta desde fuera. Sin cancelar el reader la
+    // respuesta SSE queda sin drenar y el socket retenido de los dos lados.
+    try {
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += dec.decode(value, { stream: true });
+        let nl: number;
+        while ((nl = buf.indexOf("\n\n")) !== -1) {
+          const frame = buf.slice(0, nl);
+          buf = buf.slice(nl + 2);
+          const line = frame.split("\n").find((l) => l.startsWith("data:"));
+          if (!line) continue;
+          let ev: { type?: string; value?: string; message?: string; name?: string; id?: string; phase?: "start" | "end"; ok?: boolean; detail?: string };
+          try {
+            ev = JSON.parse(line.slice(5).trim());
+          } catch {
+            continue;
+          }
+          if (ev.type === "injected") {
+            return INJECTED; // el trabajo sigue en la burbuja de allá; ésta no existe
+          }
+          if (ev.type === "chunk" && ev.value) {
+            streamed += ev.value;
+            await onChunk(ev.value);
+          } else if (ev.type === "tool") {
+            // start trae name+id+detail; end trae id+ok. Correlación por id en runAgentTurn.
+            await onTool?.({ name: ev.name, id: ev.id, phase: ev.phase ?? "start", ok: ev.ok, detail: ev.detail });
+          } else if (ev.type === "done") {
+            authoritative = ev.value ?? streamed;
+          } else if (ev.type === "error") {
+            throw new Error(ev.message || "fleet stream error");
+          }
         }
       }
+    } finally {
+      await reader.cancel().catch(() => {});
     }
     return authoritative || streamed || "(sin respuesta)";
   } catch (e) {
