@@ -3597,7 +3597,10 @@ function Sidebar({
   // estado dependiente de localStorage en SSR/hidratación (evita mismatch → AppError).
   const asideRef = useRef<HTMLElement>(null);
   useEffect(() => {
-    const KEYS = ["brand", "brand-2", "brand-fg", "surface", "surface-2", "surface-3", "border", "ink", "muted"];
+    // `card` va en la lista aunque no sea una clave de la paleta: `paletteVars` lo DERIVA
+    // (ver allí). Sin él, `bg-card` dentro del sidebar oscuro se quedaría con el valor
+    // computado en `:root` — o sea blanco sobre un sidebar oscuro.
+    const KEYS = ["brand", "brand-2", "brand-fg", "surface", "surface-2", "surface-3", "border", "ink", "muted", "card"];
     const apply = () => {
       const el = asideRef.current;
       if (!el) return;
@@ -5826,7 +5829,7 @@ function RepoHomeCard({ onOpenRoom }: { onOpenRoom: (slug: string) => void }) {
   }, []);
 
   return (
-    <section className="rounded-2xl border border-border bg-surface-2 p-4">
+    <section className="gt-card rounded-2xl p-4">
       <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold">
         <Github size={15} className="text-muted" /> {t("Repos")}
       </h2>
@@ -5942,7 +5945,7 @@ function HomeDashboard({
         {/* Tarjetas de resumen */}
         <div className="mb-8 grid grid-cols-2 gap-3">
           {stats.map((s) => (
-            <div key={s.label} className="rounded-2xl border border-border bg-surface-2 p-4">
+            <div key={s.label} className="gt-card rounded-2xl p-4">
               <div className="mb-3 flex items-center justify-between">
                 <span className={`grid h-8 w-8 place-items-center rounded-lg ${s.tint}`}>
                   <Sparkles size={16} />
@@ -5962,7 +5965,7 @@ function HomeDashboard({
               único sitio donde se ve junto lo que cada room declaró por su cuenta. */}
           <RepoHomeCard onOpenRoom={onOpenRoom} />
 
-          <section className="rounded-2xl border border-border bg-surface-2 p-4">
+          <section className="gt-card rounded-2xl p-4">
             <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold">
               <MessageSquare size={15} className="text-muted" /> {t("Conversaciones")}
             </h2>
@@ -5980,7 +5983,7 @@ function HomeDashboard({
         </div>
 
         {/* Personas y agentes */}
-        <section className="mb-8 rounded-2xl border border-border bg-surface-2 p-4">
+        <section className="gt-card mb-8 rounded-2xl p-4">
           <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold">
             <Users size={15} className="text-muted" /> {t("Personas y agentes")}
             <span className="ml-auto text-xs font-normal text-muted">{people.length}</span>
@@ -6013,7 +6016,7 @@ function HomeDashboard({
         </section>
 
         {/* Composer "pregunta lo que sea" → postea al primer room (dispara @ghosty inline). */}
-        <div className="rounded-2xl border border-border bg-surface-2 p-2">
+        <div className="rounded-2xl gt-card p-2">
           <div className="flex items-end gap-2">
             <textarea
               value={ask}
@@ -7066,7 +7069,7 @@ function VoiceNote({ src, waveform, durationMs }: { src: string; waveform?: stri
   };
 
   return (
-    <div className="flex max-w-xs items-center gap-2.5 rounded-2xl border border-border bg-surface-2 px-3 py-2">
+    <div className="flex max-w-xs items-center gap-2.5 rounded-2xl gt-card px-3 py-2">
       <button
         type="button"
         onClick={toggle}
@@ -7150,7 +7153,7 @@ function FileCard({ a, onOpen, title }: { a: Attachment; onOpen: () => void; tit
     <button
       type="button"
       onClick={onOpen}
-      className="group w-44 overflow-hidden rounded-xl border border-border bg-surface-2 text-left transition hover:border-brand"
+      className="group w-44 overflow-hidden rounded-xl gt-card text-left transition hover:border-brand"
       title={title}
     >
       {/* Altura fija y `object-top`: se ve el encabezado del documento (que es lo
@@ -7223,7 +7226,7 @@ function AttachmentList({ attachments }: { attachments: Attachment[] }) {
               key={a.id}
               type="button"
               onClick={() => onOpenArtifact(view)}
-              className="group flex max-w-xs items-center gap-2.5 rounded-lg border border-border bg-surface-2 px-3 py-2 text-left transition hover:border-brand"
+              className="group flex max-w-xs items-center gap-2.5 rounded-lg gt-card px-3 py-2 text-left transition hover:border-brand"
               title={t("Abrir en panel")}
             >
               <FilePreview a={a} />
@@ -7246,7 +7249,7 @@ function AttachmentList({ attachments }: { attachments: Attachment[] }) {
             target="_blank"
             rel="noreferrer"
             download={a.name ?? undefined}
-            className="group flex max-w-xs items-center gap-2.5 rounded-lg border border-border bg-surface-2 px-3 py-2 transition hover:border-brand"
+            className="group flex max-w-xs items-center gap-2.5 rounded-lg gt-card px-3 py-2 transition hover:border-brand"
           >
             <FileGlyph mime={a.mime} name={a.name} />
             <span className="min-w-0 flex-1">
@@ -7442,7 +7445,7 @@ function AlertCard({ msgId, a, onAct }: { msgId: number; a: AlertCardData; onAct
   };
 
   return (
-    <div className="mt-0.5 flex max-w-xl overflow-hidden rounded-lg border border-border bg-surface-2">
+    <div className="mt-0.5 flex max-w-xl overflow-hidden rounded-lg gt-card">
       <div className={`w-1 shrink-0 ${franja}`} aria-hidden="true" />
       <div className="min-w-0 flex-1 p-3">
         <div className="mb-1 flex flex-wrap items-center gap-1.5">
@@ -7609,7 +7612,7 @@ function PrCard({ pr, channelId, parentId, prosa }: { pr: PrCardData; channelId:
   const puedeActuar = st?.connected && st?.actionable;
 
   return (
-    <div className="mt-1.5 max-w-xl overflow-hidden rounded-lg border border-border bg-surface-2">
+    <div className="mt-1.5 max-w-xl overflow-hidden rounded-lg gt-card">
       <div className="flex items-center gap-2 border-b border-border px-3 py-2">
         <span className="font-mono text-[11px] text-muted">{pr.repo}</span>
         <span className="font-mono text-[11px] font-bold text-ink">#{pr.number}</span>
@@ -7775,7 +7778,7 @@ function AskUserCard({
   }
 
   return (
-    <div ref={containerRef} className="mt-1.5 max-w-md rounded-xl border border-border bg-surface-2 p-3">
+    <div ref={containerRef} className="mt-1.5 max-w-md rounded-xl gt-card p-3">
       <div className="mb-2 flex items-start justify-between gap-2">
         <span className="text-sm font-medium text-ink">{question || t("Elige una opción")}</span>
         {active && (
@@ -7906,7 +7909,7 @@ function ArtifactCard({ artifact, ownerMsg }: { artifact: Artifact; ownerMsg: Me
     setTimeout(() => URL.revokeObjectURL(url), 4000);
   };
   return (
-    <div className="group mt-1.5 flex max-w-md items-center gap-3 rounded-xl border border-border bg-surface-2 p-2 pr-2.5 transition hover:border-brand/50">
+    <div className="group mt-1.5 flex max-w-md items-center gap-3 rounded-xl gt-card p-2 pr-2.5 transition hover:border-brand/50">
       <button
         type="button"
         onClick={() => onOpenArtifact(view)}

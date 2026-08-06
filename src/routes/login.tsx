@@ -92,7 +92,7 @@ export function LoginCard({
   const t = useT();
   return (
     <div className="grid min-h-[100dvh] place-items-center bg-surface text-ink pl-[max(1.5rem,env(safe-area-inset-left))] pr-[max(1.5rem,env(safe-area-inset-right))] pt-[max(1.5rem,env(safe-area-inset-top))] pb-[max(1.5rem,env(safe-area-inset-bottom))]">
-      <div className="w-full max-w-sm rounded-2xl border border-border bg-surface-2 p-8 text-center">
+      <div className="w-full max-w-sm rounded-2xl gt-card p-8 text-center">
         <img src="/ghosty.svg" alt="Ghosty" className="mx-auto h-16 w-16" />
         <h1 className="mt-4 text-lg font-semibold">Ghosty Teams</h1>
         <p className="mt-1 text-sm text-muted">{subtitle ?? t("Entra con tu cuenta de Ghosty.")}</p>

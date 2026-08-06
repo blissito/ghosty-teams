@@ -27,6 +27,17 @@
   --color-ink: #1c1b22;
   --color-muted: #6b6975;
 
+  /* ── La superficie de una TARJETA ────────────────────────────────────────────
+     Se declara con `var()` y NO con un literal, a propósito: así sigue sola a las tres
+     capas que pintan el tema (este archivo → /api/brand-css del workspace → los estilos
+     inline del preset que eligió la persona), sin que ninguna tenga que conocerla. Un
+     literal habría obligado a añadir el color a mano en 12 presets × 2 modos y en
+     `brandPalette()`.
+     ⚠️ Sin `inline`: con `inline`, Tailwind sustituiría el valor DENTRO de la utilidad
+     (`background-color: var(--color-surface)`) y el override de abajo no tendría dónde
+     engancharse. Verificado compilando con tailwindcss 4.3.2. */
+  --color-card: var(--color-surface);
+
   /* ⚠️ Declarar `--radius` es OBLIGATORIO aunque el valor sea el de fábrica.
      En Tailwind v4 este token vive en un bloque `@theme default inline reference`: si
      nadie lo declara, su valor se INCRUSTA (`.rounded { border-radius: 0.25rem }`) y
@@ -47,6 +58,9 @@
   --color-border: #302d3f;
   --color-ink: #f2f1f7;
   --color-muted: #9995ad;
+  /* En oscuro la tarjeta SUBE un escalón: la sombra no se lee sobre negro, así que la
+     elevación se hace con luminosidad (tonal elevation). En claro es la página misma. */
+  --color-card: var(--color-surface-2);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -60,6 +74,44 @@
     --color-border: #302d3f;
     --color-ink: #f2f1f7;
     --color-muted: #9995ad;
+    --color-card: var(--color-surface-2);
+  }
+}
+
+/* ⚠️ La variante `dark:` de Tailwind NO estaba configurada, así que hasta hoy significaba
+   `@media (prefers-color-scheme: dark)` — o sea el ajuste del SISTEMA, que en esta app es
+   mentira: la verdad está en `data-theme`, que `applyTheme()` escribe siempre. Un
+   `dark:bg-surface-2` escrito de buena fe se aplicaba sobre una paleta CLARA si la persona
+   había forzado tema claro con el SO en oscuro. No genera ni una clase hoy (no hay un solo
+   uso de `dark:` como utilidad); está aquí para que el día que alguien lo escriba signifique
+   lo correcto. El mecanismo principal de elevación NO es esto, es `--color-card`. */
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
+/* ── El lenguaje de SUPERFICIES ──────────────────────────────────────────────
+   Las cuatro reglas, para no volver a tener 111 tarjetas en 8 variantes:
+
+   1. Una superficie se separa por ESPACIO primero, BORDE después, RELLENO sólo si es
+      interactiva (input, code, celda, track de una barra), y SOMBRA sólo si de verdad
+      flota (popover, menú, modal, toast).
+   2. UN SOLO nivel de relleno gris en todo el sistema.
+   3. La elevación depende del modo: en claro sólo el borde; en oscuro el borde y una
+      superficie un punto más clara. La sombra no se lee sobre negro.
+   4. PAPEL ≠ CROMO. La hoja de un documento es blanca SIEMPRE —no cambia de color porque
+      alguien elija tema oscuro, y se imprime— mientras que todo lo que la rodea sigue al
+      tema. Ver el comentario de CollabEditor.tsx.
+
+   Esto salió de un reporte real ("las cards se ven grises y feas") y coincide con lo que
+   hacen hoy shadcn/ui v4, Radix Themes, Linear y Vercel: la tarjeta de relleno gris se
+   abandonó en favor de superficie plana + borde sutil.
+
+   ⚠️ `@layer components` NO es decorativo: fuera de una capa, esta clase le GANARÍA a las
+   utilidades de Tailwind y un `class="gt-card rounded-2xl"` no podría cambiar el radio.
+   Dentro de la capa, cada sitio sigue pudiendo sobrescribir radio y padding. */
+@layer components {
+  .gt-card {
+    background: var(--color-card);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-xl);
   }
 }
 

@@ -116,6 +116,17 @@ export function paletteVars(preset: ThemePreset, dark: boolean): Record<string, 
   const pal = dark ? preset.dark : preset.light;
   const out: Record<string, string> = {};
   for (const [k, v] of Object.entries(pal)) out[`--color-${k}`] = v;
+  // ⚠️ `card` NO está en la paleta: se deriva. Es la superficie de una tarjeta, y la regla
+  // es que en claro sea la MISMA que la página (la tarjeta se define por su borde, no por
+  // un relleno gris) y en oscuro suba un escalón, porque ahí la elevación es luminosidad y
+  // no sombra.
+  //
+  // En `styles.css` esto se resuelve solo, con `var(--color-surface)` y un override en el
+  // bloque oscuro. Aquí hay que escribirlo a mano por un caso concreto: el SIDEBAR OSCURO
+  // sobre tema claro (`c.$slug.tsx`) aplica estas variables inline a un SUBÁRBOL. Como
+  // `--color-card` se computa en `:root`, sin esta línea seguiría apuntando a la superficie
+  // CLARA y toda tarjeta dentro del sidebar oscuro saldría blanca.
+  out["--color-card"] = dark ? pal["surface-2"] : pal.surface;
   return out;
 }
 

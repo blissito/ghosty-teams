@@ -174,7 +174,7 @@ export function FleetCapabilities({ agentId }: { agentId: number }) {
   const activeBuckets = new Set(cfg.agent?.buckets ?? []);
 
   const label = "mb-1 block text-[11px] font-semibold uppercase tracking-wide text-muted";
-  const box = "rounded-lg border border-border bg-surface-2 p-2.5";
+  const box = "rounded-lg gt-card p-2.5";
   const sel = "rounded-lg border border-border bg-surface px-2 py-1.5 text-xs outline-none focus:border-brand";
   const Spin = ({ k }: { k: string }) => (isSaving(k) ? <Loader2 size={12} className="animate-spin text-brand" /> : null);
 
@@ -302,7 +302,7 @@ export function FleetCapabilities({ agentId }: { agentId: number }) {
                     <summary className="cursor-pointer select-none text-[11px] text-muted">
                       {t("herramientas")} ({activeCount}/{tools.length})
                     </summary>
-                    <div className="mt-1 max-h-40 space-y-1.5 overflow-y-auto rounded-lg border border-border bg-surface-2 p-2">
+                    <div className="mt-1 max-h-40 space-y-1.5 overflow-y-auto rounded-lg gt-card p-2">
                       {tools.map((tn) => (
                         <div key={tn} className="flex items-center gap-2 text-[11px]">
                           <Switch on={!denyList.has(tn)} disabled={isSaving(`deny:${tn}`)} onChange={(v) => toggleTool(tn, v)} />
@@ -314,7 +314,7 @@ export function FleetCapabilities({ agentId }: { agentId: number }) {
                 )}
                 {/* DB: allow-list de QUÉ bases (vacío = todas). */}
                 {isDb && cur !== "off" && (
-                  <div className="mt-1.5 rounded-lg border border-border bg-surface-2 p-2">
+                  <div className="mt-1.5 rounded-lg gt-card p-2">
                     <p className="mb-1.5 flex items-center gap-1 text-[11px] text-muted">{t("¿Qué bases puede tocar?")} <Spin k="dballow" /></p>
                     {ownerDbs.length ? (
                       <>
@@ -589,7 +589,7 @@ function AddMcpForm({ saving, onAdd }: { saving: boolean; onAdd: (body: Record<s
   if (!open) return <button onClick={() => setOpen(true)} className="flex items-center gap-1 text-xs text-muted hover:text-brand"><Plus size={13} /> {t("Añadir MCP avanzado")}</button>;
   const isUrl = /^https?:\/\//.test(pkg.trim());
   return (
-    <div className="space-y-2 rounded-lg border border-border bg-surface-2 p-2.5">
+    <div className="space-y-2 rounded-lg gt-card p-2.5">
       <input value={name} onChange={(e) => setName(e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, ""))} placeholder={t("nombre (ej. stripe)")} className={input} />
       <input value={pkg} onChange={(e) => setPkg(e.target.value)} placeholder={t("paquete npm (stdio) o URL https (http)")} className={input} />
       <input value={secret} onChange={(e) => setSecret(e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, ""))} placeholder={t("secret opcional (ej. STRIPE_API_KEY)")} className={input} />

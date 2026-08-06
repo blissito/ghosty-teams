@@ -74,7 +74,7 @@ function FormsPage() {
         {forms === null ? (
           <ul className="flex flex-col gap-3">
             {[0, 1, 2].map((i) => (
-              <li key={i} className="border border-border bg-surface-2 rounded-2xl p-4 flex items-center gap-4 animate-pulse">
+              <li key={i} className="gt-card rounded-2xl p-4 flex items-center gap-4 animate-pulse">
                 <div className="flex-1">
                   <div className="h-4 w-2/3 bg-surface-3 rounded mb-2" />
                   <div className="h-3 w-1/3 bg-surface-3 rounded" />
@@ -92,7 +92,7 @@ function FormsPage() {
         ) : (
           <ul className="flex flex-col gap-3">
             {forms.map((f) => (
-              <li key={f.formId} className="border border-border bg-surface-2 rounded-2xl p-4 flex flex-wrap items-center gap-x-4 gap-y-2">
+              <li key={f.formId} className="gt-card rounded-2xl p-4 flex flex-wrap items-center gap-x-4 gap-y-2">
                 <div className="flex-1 min-w-[200px]">
                   <div className="font-semibold text-[15px]">{f.name}</div>
                   <div className="text-xs text-muted mt-1 flex items-center gap-3 flex-wrap">

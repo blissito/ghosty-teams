@@ -252,7 +252,7 @@ export function SettingsContent({
 
               {/* Invitar: Slack default → cualquier member puede invitar (link propio). */}
               {user && (
-                <div className="mb-4 rounded-2xl border border-border bg-surface-2 p-5">
+                <div className="mb-4 rounded-2xl gt-card p-5">
                   <h2 className="mb-1 text-sm font-semibold">{t("Invitar miembros")}</h2>
                   <p className="mb-4 text-sm text-muted">
                     {t("Comparte este link con tu equipo. Quien lo abra entra con Ghosty y se une como miembro.")}
@@ -686,7 +686,7 @@ function UsagePanel() {
           const medio = p >= 75 && !alto;
           const q = turnosQueQuedan(e);
           return (
-            <div key={i} className="rounded-xl border border-border bg-surface-2 p-3.5">
+            <div key={i} className="rounded-xl gt-card p-3.5">
               <div className="flex items-center justify-between gap-3">
                 {/* La CARA del agente, no el nombre del motor: la persona conoce a Blue y
                     a Ghosty, no a "deepseek". Sin resolver, cae a la etiqueta del motor —
@@ -1079,7 +1079,7 @@ function ProfileCard({
   }
 
   return (
-    <div className="mb-4 rounded-xl border border-border bg-surface-2 p-4">
+    <div className="mb-4 rounded-xl gt-card p-4">
       <div className="flex items-center gap-3">
         <button
           type="button"
@@ -1175,7 +1175,7 @@ function NotificationsCard() {
 
   return (
     <>
-    <div className="mb-4 rounded-xl border border-border bg-surface-2 p-4">
+    <div className="mb-4 rounded-xl gt-card p-4">
       <div className="flex items-center gap-3">
         <div className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-brand/15 text-brand">
           <Bell size={18} />
@@ -1207,7 +1207,7 @@ function NotificationsCard() {
     </div>
 
     {/* Notificaciones por correo (opt-out). Solo se manda a offline; aquí lo apagas del todo. */}
-    <div className="mb-4 rounded-xl border border-border bg-surface-2 p-4">
+    <div className="mb-4 rounded-xl gt-card p-4">
       <div className="flex items-center gap-3">
         <div className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-brand/15 text-brand">
           <Mail size={18} />
@@ -1295,7 +1295,7 @@ function EmojiManager({ isOwner, mySub }: { isOwner: boolean; mySub: string | nu
   }
 
   return (
-    <div className="mb-4 rounded-xl border border-border bg-surface-2 p-4">
+    <div className="mb-4 rounded-xl gt-card p-4">
       <div className="mb-1 flex items-center gap-2">
         <Smile size={16} className="text-brand" />
         <h2 className="text-sm font-semibold">{t("Emojis custom")}</h2>
@@ -1411,7 +1411,7 @@ function AgentsManager({ isOwner, hasAgent }: { isOwner: boolean; hasAgent: bool
   }
 
   return (
-    <div className="mb-4 rounded-xl border border-border bg-surface-2 p-4">
+    <div className="mb-4 rounded-xl gt-card p-4">
       <div className="mb-2 flex items-center justify-between">
         <h2 className="text-sm font-semibold">{t("Agentes")}</h2>
         {isOwner && !adding && (

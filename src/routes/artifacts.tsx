@@ -53,7 +53,7 @@ function DocTile({ d, onOpen }: { d: TeamDocument; onOpen: (v: ArtifactView) => 
     <button
       type="button"
       onClick={() => (view ? onOpen(view) : undefined)}
-      className={`group flex items-start gap-3 rounded-2xl border border-border bg-surface-2 p-4 text-left transition hover:border-brand/60 hover:bg-surface-3 ${view ? "cursor-pointer" : "cursor-default"}`}
+      className={`group flex items-start gap-3 rounded-2xl gt-card p-4 text-left transition hover:border-brand/60 hover:bg-surface-3 ${view ? "cursor-pointer" : "cursor-default"}`}
     >
       <div className="grid size-11 shrink-0 place-items-center rounded-xl bg-surface-3">
         <FileGlyph className="h-7 w-[1.4rem]" mime={d.mime} name={glyphNameFor(d.title, d.kind)} />
@@ -118,7 +118,7 @@ function ArtifactsPage() {
           {docs === null ? (
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               {[0, 1, 2, 3].map((i) => (
-                <div key={i} className="animate-pulse rounded-2xl border border-border bg-surface-2 p-4">
+                <div key={i} className="animate-pulse rounded-2xl gt-card p-4">
                   <div className="mb-3 h-5 w-2/3 rounded bg-surface-3" />
                   <div className="h-3 w-1/3 rounded bg-surface-3" />
                 </div>
