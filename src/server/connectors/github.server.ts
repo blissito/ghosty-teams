@@ -93,6 +93,53 @@ async function api(sub: string, path: string, init?: RequestInit): Promise<any> 
   return { error: `GitHub respondió ${res.status}: ${body}` };
 }
 
+/**
+ * Igual que `api`, pero para endpoints que devuelven TEXTO PLANO en vez de JSON.
+ *
+ * Hoy sólo lo usa el log de un job de Actions, que responde un 302 hacia una URL
+ * firmada de blob storage. `fetch` sigue el redirect solo y —por spec— **deja
+ * caer el header Authorization al cambiar de origen**, que es justo lo que hace
+ * falta: mandárselo al blob lo haría fallar.
+ */
+async function apiText(sub: string, path: string): Promise<string | { error: string }> {
+  const token = await getValidToken(sub, "github");
+  if (!token) {
+    return { error: "La cuenta de GitHub no está conectada. Conéctala en Ajustes → Integraciones." };
+  }
+  try {
+    const res = await fetch(`${API}${path}`, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+      },
+    });
+    if (!res.ok) return { error: `GitHub respondió ${res.status} al pedir el log.` };
+    return await res.text();
+  } catch (e) {
+    return { error: `No pude bajar el log: ${e instanceof Error ? e.message : String(e)}` };
+  }
+}
+
+/**
+ * El log de un job de CI son megabytes con una marca de tiempo por línea. Lo que
+ * sirve para diagnosticar es el FINAL (donde revienta) más las líneas que se ven
+ * como error, así que se manda eso y no el volcado entero — que además reventaría
+ * el contexto del modelo.
+ */
+function trimLog(raw: string): { errorLines: string[]; tail: string; totalLines: number } {
+  const lines = raw.split("\n");
+  // GitHub prefija cada línea con un ISO-8601. Estorba para leer y para buscar.
+  const clean = lines.map((l) => l.replace(/^\d{4}-\d{2}-\d{2}T[\d:.]+Z\s?/, ""));
+  const RE = /(^|\s)(error|failed|failure|fatal|exception|assertion|✗|✖|not ok)\b|error TS\d+|npm ERR!/i;
+  const errorLines = clean.filter((l) => RE.test(l) && l.trim()).slice(-40);
+  return {
+    errorLines,
+    tail: clean.slice(-120).join("\n").slice(-8000),
+    totalLines: clean.length,
+  };
+}
+
 const qs = (args: Record<string, unknown>, keys: string[]): string => {
   const p = new URLSearchParams();
   for (const k of keys) {
@@ -155,7 +202,7 @@ export async function ambientContext(sub: string, sender: string, _message: stri
     `TIENES HERRAMIENTAS para sus repos vía el GS Tools SDK: importa /opt/gs-sdk/connectors.mjs y usa ` +
     `list() y run(name, args). Lectura: github_list_repos, github_list_issues, github_get_issue, ` +
     `github_list_prs, github_get_pr, github_pr_files, github_read_file, github_search_code, ` +
-    `github_workflow_runs. Escritura: github_comment, github_update_issue, github_create_issue, ` +
+    `github_workflow_runs, github_workflow_run_logs. Escritura: github_comment, github_update_issue, github_create_issue, ` +
     `github_create_branch, github_write_file, github_create_pr. ` +
     `Si te piden "conecta mi repo" o "agrega este repo", contesta con github_install_link. ` +
     `Para CUALQUIER pregunta sobre repos, issues, pull requests o CI de ${sender}, USA estas tools — ` +
@@ -464,6 +511,59 @@ export const tools: ConnectorTool[] = [
   // Todo lo de aquí abajo aparece con el NOMBRE del usuario en GitHub. El
   // ambientContext le dice al modelo que confirme antes de usarlas.
 
+  {
+    name: "github_workflow_run_logs",
+    description:
+      "El LOG de una corrida de GitHub Actions que falló: qué job y qué paso reventaron, y las líneas de error. Es lo que de verdad responde '¿por qué está roja la build?' — github_workflow_runs sólo da el estado. Pásale el `id` que devolvió esa tool. Nunca inventes una línea de log: si esto falla, di que no lo pudiste leer y da la url del run.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        ...repoProp,
+        runId: { type: "number", description: "El `id` del run, tal como lo devolvió github_workflow_runs." },
+        jobs: { type: "number", description: "Cuántos jobs fallidos traer. 1-5, default 2." },
+      },
+      required: ["repo", "runId"],
+    },
+    handler: async (sub, a) => {
+      const p = repoPath(a.repo);
+      if (!p) return BAD_REPO;
+      const r = await api(sub, `/repos/${p}/actions/runs/${Number(a.runId)}/jobs?per_page=50`);
+      if (r?.error) return r;
+
+      const all: any[] = r?.jobs ?? [];
+      const failed = all.filter((j) => j?.conclusion === "failure");
+      if (!failed.length) {
+        // Distinguirlo importa: "no falló" y "falló pero no pude leerlo" llevan a
+        // respuestas opuestas, y el modelo tiende a fundirlas en "hubo un error".
+        return {
+          runId: Number(a.runId),
+          failedJobs: 0,
+          jobs: all.map((j) => ({ name: j?.name, conclusion: j?.conclusion, url: j?.html_url })),
+          note: "Ningún job de este run terminó en failure. Puede seguir corriendo, o la corrida roja ser otra.",
+        };
+      }
+
+      const take = Math.min(Math.max(Number(a.jobs) || 2, 1), 5);
+      const out = await Promise.all(
+        failed.slice(0, take).map(async (j) => {
+          // El paso concreto que reventó suele bastar para el diagnóstico y
+          // siempre viene, aunque el log no se pueda bajar.
+          const step = (j?.steps ?? []).find((s: any) => s?.conclusion === "failure");
+          const raw = await apiText(sub, `/repos/${p}/actions/jobs/${j?.id}/logs`);
+          if (typeof raw !== "string") {
+            return { job: j?.name, failedStep: step?.name ?? null, url: j?.html_url, ...raw };
+          }
+          return { job: j?.name, failedStep: step?.name ?? null, url: j?.html_url, ...trimLog(raw) };
+        }),
+      );
+      return {
+        runId: Number(a.runId),
+        failedJobs: failed.length,
+        shown: out.length,
+        jobs: out,
+      };
+    },
+  },
   {
     name: "github_comment",
     description:
