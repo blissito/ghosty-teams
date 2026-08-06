@@ -1077,7 +1077,7 @@ export const en: Record<string, string> = {
   "Cambios pedidos por {quien}": "Changes requested by {quien}",
   "Conecta tu GitHub en Ajustes para poder aprobar desde aquí.": "Connect your GitHub in Settings to approve from here.",
 
-  "Este PR es tuyo y GitHub no deja aprobar el propio. Que lo apruebe alguien más del equipo.": "This PR is yours and GitHub does not allow approving your own. Ask a teammate to approve it.",
+  "Este PR es tuyo: GitHub no deja aprobar ni pedir cambios en el propio. Que lo revise alguien más del equipo.": "This PR is yours: GitHub allows neither approving nor requesting changes on your own. Ask a teammate to review it.",
 
   // Preexistente, sin traducir hasta hoy.
   "y": "and",

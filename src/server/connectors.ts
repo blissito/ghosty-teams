@@ -367,10 +367,22 @@ export const runCardActionFn = createServerFn({ method: "POST" })
       // GitHub exige cuerpo para REQUEST_CHANGES. El de APPROVE es opcional y se omite:
       // un "LGTM" automático firmado por una persona que quizá no leyó el diff es peor
       // que un approve escueto.
+      // ⚠️ Antes iba un "Pide cambios (desde Ghosty)." fijo y el ANÁLISIS SE PERDÍA — que
+      // es justo lo único que valía del turno. Ahora sube el veredicto de la tarjeta.
       ...(event === "REQUEST_CHANGES" ? { body: body || "Pide cambios (desde Ghosty)." } : {}),
     })) as Record<string, unknown>;
 
-    if (r?.error) return { ok: false as const, error: String(r.error) };
+    if (r?.error) {
+      // El error crudo de GitHub llegaba a la tarjeta como un volcado de JSON.
+      const txt = String(r.error);
+      const propio = /own pull request/i.test(txt);
+      return {
+        ok: false as const,
+        error: propio
+          ? "GitHub no deja aprobar ni pedir cambios en tu propio PR. Que lo revise alguien más del equipo."
+          : txt.replace(/\{.*\}/s, "").trim() || txt,
+      };
+    }
     return { ok: true as const, event, url: typeof r?.url === "string" ? r.url : "" };
   });
 

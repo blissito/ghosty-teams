@@ -700,12 +700,15 @@ export const tools: ConnectorTool[] = [
         }),
       });
       if (r?.error) {
-        // La causa más común de 422 aquí, y la que el mensaje genérico no explica.
-        if (String(r.error).includes("422") && event === "APPROVE") {
+        // ⚠️ GitHub prohíbe las DOS sobre tu propio PR, no sólo aprobar: "Review Can not
+        // request changes on your own pull request" (422). Sólo un review de tipo COMMENT
+        // está permitido sobre lo tuyo.
+        const txt = String(r.error);
+        if (txt.includes("422") && (event === "APPROVE" || event === "REQUEST_CHANGES")) {
           return {
             error:
-              "GitHub rechazó el approve. Lo más probable es que el PR sea del propio usuario: " +
-              "nadie puede aprobar su propio pull request.",
+              `GitHub no deja ${event === "APPROVE" ? "aprobar" : "pedir cambios en"} tu propio pull request. ` +
+              "Que lo haga otra persona del equipo, o deja el análisis como comentario (event: COMMENT).",
           };
         }
         return r;

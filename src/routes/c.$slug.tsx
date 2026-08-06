@@ -7187,7 +7187,7 @@ function PrCard({ pr }: { pr: PrCardData }) {
     setBusy(action);
     setErr("");
     try {
-      const r = await runCardActionFn({ data: { action, repo: pr.repo, number: pr.number } });
+      const r = await runCardActionFn({ data: { action, repo: pr.repo, number: pr.number, body: pr.verdict } });
       if (!r.ok) setErr(r.error);
       // ⚠️ NO se manda un mensaje al chat para anunciarlo. La primera versión lo hacía y
       // DESPERTABA AL AGENTE: un turno entero por un clic, justo lo que la acción directa
@@ -7262,7 +7262,7 @@ function PrCard({ pr }: { pr: PrCardData }) {
           ) : null}
           {puedeActuar && !resumen
             ? botones
-                .filter((b) => !(b.action === "pr_approve" && st?.soyElAutor))
+                .filter((b) => !(st?.soyElAutor && (b.action === "pr_approve" || b.action === "pr_request_changes")))
                 .map((b) => (
                 <button
                   key={b.action}
@@ -7289,7 +7289,7 @@ function PrCard({ pr }: { pr: PrCardData }) {
         ) : null}
         {puedeActuar && !resumen && st?.soyElAutor ? (
           <p className="mt-2 text-[11.5px] text-muted">
-            {t("Este PR es tuyo y GitHub no deja aprobar el propio. Que lo apruebe alguien más del equipo.")}
+            {t("Este PR es tuyo: GitHub no deja aprobar ni pedir cambios en el propio. Que lo revise alguien más del equipo.")}
           </p>
         ) : null}
         {err ? <p className="mt-2 text-[11.5px] leading-snug text-red-500">{err}</p> : null}
