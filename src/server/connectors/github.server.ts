@@ -310,7 +310,24 @@ export async function ambientContext(sub: string, sender: string, _message: stri
     `Para escribir código: crea una rama con github_create_branch, escribe con github_write_file y abre ` +
     `un PR con github_create_pr — NUNCA escribas directo sobre la rama principal. ` +
     `Todo lo que escribas aparece con el nombre de ${sender}, así que confirma con él antes de comentar, ` +
-    `cerrar un issue o abrir un PR.]`
+    `cerrar un issue o abrir un PR. ` +
+    // ⚠️ Esto vive AQUÍ y no sólo en la skill `dev-github` a propósito. El 2026-08-05 el
+    // agente revisó un PR impecablemente —leyó el diff, dio veredicto— y NO emitió la
+    // tarjeta: nunca abrió la skill. Con claude-worker las skills se autodescubren, y
+    // "autodescubrible" no es "leída". El contexto ambiental, en cambio, se inyecta en
+    // CADA turno de GitHub y no depende de que el modelo decida abrir un archivo.
+    `OBLIGATORIO al terminar de revisar un PR, o justo después de abrir uno: cierra tu ` +
+    `respuesta con un bloque \`\`\`gt-pr con este JSON en una línea: ` +
+    `{"repo":"dueño/repo","number":N,"title":"…","author":"…","additions":N,"deletions":N,` +
+    `"files":N,"checks":"success|failure|pending","url":"…","verdict":"tu conclusión en una línea"}. ` +
+    `Le pinta a la persona los botones de Aprobar / Pedir cambios / Rechazar, que se ejecutan ` +
+    `con SU cuenta. Pon SÓLO campos que hayas leído de verdad (los conteos salen de github_get_pr ` +
+    `y github_pr_files; \`checks\` de github_workflow_runs) — si no lo miraste, omite el campo, ` +
+    `nunca lo inventes. La reseña va FUERA del fence, como prosa normal. ` +
+    // Dos veces en la misma respuesta el modelo ofreció "¿lo apruebo con github_create_review?".
+    // Es fontanería: la persona no sabe ni tiene por qué saber cómo se llaman las tools.
+    `Y como la tarjeta YA trae los botones, NO preguntes "¿lo apruebo?" ni menciones el nombre ` +
+    `de ninguna tool en tu respuesta — eso es fontanería nuestra, no algo que la persona deba leer.]`
   );
 }
 
