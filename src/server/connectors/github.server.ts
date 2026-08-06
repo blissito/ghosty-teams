@@ -10,6 +10,13 @@
 import { getValidToken } from "./oauth.server";
 import { getConnectorRow } from "./store.server";
 import type { ConnectorTool } from "./impl";
+import {
+  appJwtOrNull,
+  botIdentityEnabled,
+  coAuthorTrailer,
+  installationToken,
+  pushDenialReason,
+} from "./github-app.server";
 
 const API = "https://api.github.com";
 const APP_SLUG = process.env.GITHUB_APP_SLUG ?? "ghosty-studio";
@@ -138,6 +145,98 @@ function trimLog(raw: string): { errorLines: string[]; tail: string; totalLines:
     tail: clean.slice(-120).join("\n").slice(-8000),
     totalLines: clean.length,
   };
+}
+
+// ── Escritura con la identidad de BOT ────────────────────────────────────────
+//
+// Sólo las tres operaciones que CREAN el pull request (rama, commit, PR) pasan por aquí.
+// Reviews y comentarios se quedan como el usuario a propósito: una aprobación tiene que
+// ser atribuible a una persona, y todo el objetivo del cambio es que un humano apruebe.
+// Las lecturas también, porque respetan su acceso real y el cupo de peticiones es por
+// usuario en vez de un único cubo compartido por los diez.
+//
+// Con la identidad apagada (sin las env de la App) esto devuelve el token del usuario y
+// el comportamiento es idéntico al de siempre.
+
+const instCache = new Map<string, number>();
+
+/** Id de instalación que cubre un repo. Se pregunta con el JWT de la App, no con un token. */
+async function installationIdFor(repoPath: string): Promise<number | null> {
+  if (!botIdentityEnabled()) return null;
+  const hit = instCache.get(repoPath);
+  if (hit) return hit;
+  const r = await appFetch(`/repos/${repoPath}/installation`);
+  const id = typeof r?.id === "number" ? r.id : null;
+  if (id) instCache.set(repoPath, id);
+  return id;
+}
+
+/**
+ * Resuelve con qué token se escribe, y **re-impone el permiso del solicitante**.
+ *
+ * ⚠️ Este chequeo no es opcional. Un installation token tiene el techo de la App, no la
+ * intersección App∩usuario, así que sin él alguien con acceso de sólo lectura podría
+ * hacer que el bot empujara por él. Es la única barrera que reemplaza a la que GitHub
+ * aplicaba sola cuando escribíamos como la persona.
+ */
+async function writeToken(
+  sub: string,
+  repoPath: string,
+): Promise<{ token: string; bot: boolean } | { error: string }> {
+  const userToken = await getValidToken(sub, "github");
+  if (!userToken) return { error: "La cuenta de GitHub no está conectada. Conéctala en Ajustes → Integraciones." };
+  if (!botIdentityEnabled()) return { token: userToken, bot: false };
+
+  const meta = await readMeta(sub);
+  const login = meta?.login ?? "";
+  if (!login) return { token: userToken, bot: false };
+
+  const denial = await pushDenialReason(userToken, repoPath, login);
+  if (denial) return { error: denial };
+
+  const instId = await installationIdFor(repoPath);
+  const botToken = instId ? await installationToken(instId) : null;
+  // Sin bot disponible se sigue como el usuario: preferimos un PR que sí se abre —con la
+  // limitación de que no podrá autoaprobarlo— a un fallo por una App mal configurada.
+  return botToken ? { token: botToken, bot: true } : { token: userToken, bot: false };
+}
+
+/** GET a la API con el JWT de la App (sin instalación). Devuelve `null` si falla. */
+async function appFetch(path: string): Promise<any> {
+  const jwt = appJwtOrNull();
+  if (!jwt) return null;
+  try {
+    const res = await fetch(`${API}${path}`, {
+      headers: {
+        Authorization: `Bearer ${jwt}`,
+        Accept: "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+      },
+    });
+    return res.ok ? await res.json() : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Igual que `api`, pero con un token ya resuelto (el del bot o el del usuario). */
+async function apiWith(token: string, path: string, init?: RequestInit): Promise<any> {
+  try {
+    const res = await fetch(`${API}${path}`, {
+      ...init,
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+        ...(init?.body ? { "content-type": "application/json" } : {}),
+      },
+    });
+    if (res.ok) return res.status === 204 ? { ok: true } : await res.json().catch(() => ({}));
+    const body = (await res.text().catch(() => "")).slice(0, 400);
+    return { error: `GitHub respondió ${res.status}: ${body}` };
+  } catch (e) {
+    return { error: `No pude contactar a GitHub: ${e instanceof Error ? e.message : String(e)}` };
+  }
 }
 
 const qs = (args: Record<string, unknown>, keys: string[]): string => {
@@ -724,11 +823,13 @@ export const tools: ConnectorTool[] = [
       }
       const ref = await api(sub, `/repos/${p}/git/ref/heads/${encodeURIComponent(String(from))}`);
       if (ref?.error) return ref;
-      const r = await api(sub, `/repos/${p}/git/refs`, {
+      const w = await writeToken(sub, p);
+      if ("error" in w) return w;
+      const r = await apiWith(w.token, `/repos/${p}/git/refs`, {
         method: "POST",
         body: JSON.stringify({ ref: `refs/heads/${a.branch}`, sha: ref?.object?.sha }),
       });
-      return r?.error ? r : { ok: true, branch: a.branch, from, sha: ref?.object?.sha };
+      return r?.error ? r : { ok: true, branch: a.branch, from, sha: ref?.object?.sha, asBot: w.bot };
     },
   },
   {
@@ -750,16 +851,22 @@ export const tools: ConnectorTool[] = [
     handler: async (sub, a) => {
       const p = repoPath(a.repo);
       if (!p) return BAD_REPO;
-      const r = await api(sub, `/repos/${p}/contents/${String(a.path)}`, {
+      const w = await writeToken(sub, p);
+      if ("error" in w) return w;
+      // Con el bot como autor, el trailer es lo ÚNICO que conserva a la persona en el
+      // blame y en su gráfico de contribuciones. Sin él el commit no tiene humano.
+      const meta = w.bot ? await readMeta(sub) : null;
+      const message = String(a.message) + (meta?.login ? coAuthorTrailer(meta.login) : "");
+      const r = await apiWith(w.token, `/repos/${p}/contents/${String(a.path)}`, {
         method: "PUT",
         body: JSON.stringify({
-          message: a.message,
+          message,
           content: Buffer.from(String(a.content), "utf8").toString("base64"),
           branch: a.branch,
           ...(a.sha ? { sha: a.sha } : {}),
         }),
       });
-      return r?.error ? r : { ok: true, commit: r?.commit?.sha, url: r?.content?.html_url };
+      return r?.error ? r : { ok: true, commit: r?.commit?.sha, url: r?.content?.html_url, asBot: w.bot };
     },
   },
   {
@@ -786,11 +893,29 @@ export const tools: ConnectorTool[] = [
         if (repo?.error) return repo;
         base = repo?.default_branch;
       }
-      const r = await api(sub, `/repos/${p}/pulls`, {
+      const w = await writeToken(sub, p);
+      if ("error" in w) return w;
+      // El autor del PR pasa a ser el bot, así que "quién pidió esto" deja de leerse en
+      // la cabecera de GitHub y tiene que decirlo el cuerpo.
+      const who = w.bot ? await readMeta(sub) : null;
+      const body = String(a.body ?? "") + (who?.login ? `\n\n---\nAbierto por Ghosty a petición de @${who.login}.` : "");
+      const r = await apiWith(w.token, `/repos/${p}/pulls`, {
         method: "POST",
-        body: JSON.stringify({ title: a.title, head: a.head, base, body: a.body, draft: a.draft === true }),
+        body: JSON.stringify({ title: a.title, head: a.head, base, body, draft: a.draft === true }),
       });
-      return r?.error ? r : { ok: true, number: r?.number, url: r?.html_url };
+      return r?.error
+        ? r
+        : {
+            ok: true,
+            number: r?.number,
+            url: r?.html_url,
+            asBot: w.bot,
+            // Se lo decimos al MODELO para que avise: si el PR salió a nombre del usuario,
+            // esa persona no va a poder aprobarlo.
+            nota: w.bot
+              ? "El PR lo abrió ghosty[bot], así que cualquiera del equipo puede aprobarlo."
+              : "El PR salió a nombre del usuario: GitHub NO le va a dejar aprobar su propio PR. Que lo apruebe otra persona.",
+          };
     },
   },
 ];
