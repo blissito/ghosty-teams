@@ -3,6 +3,7 @@
 // (sin createServerFn) para que lo usen tanto chat.ts como server/agents.ts sin
 // ciclos de import.
 import { hasIds, nodeIndex } from "./lib/artifact-ids";
+import { stripStepsBlock, stripToolBlock } from "./lib/ebdoc";
 import { ARTIFACT_DESIGN_GUIDE } from "./server/prompts/artifact-design";
 
 export type ResolvedAgent = {
@@ -324,7 +325,17 @@ export function historyContext(
     const body = (m.body || "").trim();
     if (!body || body === cur) continue; // vacío o el propio turno actual
     const who = m.agent_handle ? `@${m.agent_handle}` : m.sender || "usuario";
-    const snippet = body.length > 600 ? body.slice(0, 600) + "…" : body;
+    // ⚠️ El presupuesto se gasta en FONTANERÍA si no se limpia: el body guardado abre con
+    // el bloque de herramientas y los pasos, así que 600 caracteres de JSON interno dejaban
+    // fuera del recorte lo que el agente necesita. El 2026-08-06 @ghosty contestó "no hay
+    // ninguna tarea referenciada en esta conversación" con la tarjeta de la tarea DOS
+    // mensajes más arriba: nunca la vio.
+    //
+    // Se quitan `gt-tools` y `gt-steps`; las tarjetas (`gt-task`, `gt-pr`) se QUEDAN: son la
+    // referencia legible por máquina de lo que hizo el turno anterior, y es justo lo que
+    // resuelve un "muévela" o un "apruébalo".
+    const limpio = stripStepsBlock(stripToolBlock(body)).trim() || body;
+    const snippet = limpio.length > 600 ? limpio.slice(0, 600) + "…" : limpio;
     const line = `${who}: ${snippet}`;
     if (total + line.length > 2000) break;
     total += line.length;
