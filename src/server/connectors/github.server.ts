@@ -18,6 +18,7 @@ import {
   coAuthorTrailer,
   installationToken,
   pushDenialReason,
+  agentTrailer,
 } from "./github-app.server";
 
 const API = "https://api.github.com";
@@ -895,7 +896,8 @@ const ALL_TOOLS: ConnectorTool[] = [
       if (!p) return BAD_REPO;
       const r = await api(sub, `/repos/${p}/issues/${Number(a.number)}/comments`, {
         method: "POST",
-        body: JSON.stringify({ body: String(a.body) }),
+        // Sale con la cuenta de la persona, así que lleva constancia de quién lo redactó.
+        body: JSON.stringify({ body: String(a.body) + agentTrailer() }),
       });
       return r?.error ? r : { ok: true, url: r?.html_url };
     },
@@ -919,7 +921,14 @@ const ALL_TOOLS: ConnectorTool[] = [
       if (!p) return BAD_REPO;
       const r = await api(sub, `/repos/${p}/issues`, {
         method: "POST",
-        body: JSON.stringify({ title: a.title, body: a.body, labels: a.labels, assignees: a.assignees }),
+        body: JSON.stringify({
+          title: a.title,
+          // Un issue lo abre el token del USUARIO (el bot sólo autora ramas y PRs), así que
+          // en GitHub es indistinguible de lo que tecleó él. La línea lo deja claro.
+          body: String(a.body ?? "") + agentTrailer(),
+          labels: a.labels,
+          assignees: a.assignees,
+        }),
       });
       return r?.error ? r : { ok: true, number: r?.number, url: r?.html_url };
     },

@@ -2264,6 +2264,22 @@ function ChannelPage() {
     setOpenDmId(id);
     setNavOpen(false);
   };
+  /**
+   * "Volver al room" del encabezado de un hilo: ENFOCA el room, no deshace el último paso.
+   *
+   * ⚠️ Antes era sólo `setOpenThreadId(null)`, que apaga el hilo y deja que mande el foco
+   * que hubiera debajo. Si habías llegado desde Inicio o desde una vista (Recientes,
+   * Menciones, Destacados), ese foco seguía puesto y la flecha te devolvía ahí — se
+   * comportaba como el "atrás" del navegador, no como lo que dice su tooltip. El room al
+   * que pertenece el hilo es el que se está mirando, así que llegar a él no es navegar:
+   * es apagar TODOS los focos que se le superponen.
+   */
+  const backToRoom = () => {
+    setView(null);
+    setHomeOpen(false);
+    setOpenDmId(null);
+    setOpenThreadId(null);
+  };
   const openView = (v: "recent" | "mentions" | "starred") => {
     setOpenThreadId(null);
     setOpenDmId(null);
@@ -2780,7 +2796,7 @@ function ChannelPage() {
           onReloaded={(loaded) => clearOptimistic(openThreadId, loaded)}
           typing={typing && typing.parentId === openThreadId ? typing : null}
           onGoToOrigin={goToOrigin}
-          onBack={() => setOpenThreadId(null)}
+          onBack={backToRoom}
         />
       ) : (
         <Flow

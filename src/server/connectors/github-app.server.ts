@@ -148,3 +148,21 @@ export function coAuthorTrailer(login: string, email?: string | null): string {
   const mail = email && email.includes("@") ? email : `${login}@users.noreply.github.com`;
   return `\n\nCo-authored-by: ${login} <${mail}>`;
 }
+
+/**
+ * Constancia de que un agente REDACTÓ esto, para lo que sale a nombre de la persona.
+ *
+ * Los PRs y las ramas van con `ghosty-studio[bot]`, así que se ven a la legua. Un issue o un
+ * comentario **no**: los escribe el token del usuario y en GitHub aparecen indistinguibles de
+ * lo que tecleó él. Y no es paranoia — a los tres meses ni el propio autor sabe cuál de sus
+ * issues redactó a mano.
+ *
+ * La atribución no cambia y es correcta: la persona pidió el texto y responde por él. Lo que
+ * añade esto es la PROCEDENCIA, que es otra cosa.
+ *
+ * Va en cursiva y al final para que no compita con el contenido. Deliberadamente NO dice qué
+ * modelo ni qué versión: eso envejece mal y no le importa a quien lo lee.
+ */
+export function agentTrailer(): string {
+  return "\n\n<sub><i>Redactado por Ghosty a petición del autor.</i></sub>";
+}
