@@ -95,9 +95,15 @@ const TEXT_TAGS = ["p", "li", "td", "th", "h1", "h2", "h3", "h4", "h5", "h6", "b
 // Sin color: la celda HEREDA el del contenedor. Es lo que hace que la misma tabla sirva
 // en el chat (tokens theme-aware) y en la hoja clara del draft del artefacto, que es
 // blanca SIEMPRE — ahí un `text-ink` en tema oscuro saldría casi blanco sobre blanco.
+// ⚠️ `th` va en SENTENCE CASE y peso 500. Nació en versalitas (`text-xs uppercase
+// tracking-wide font-semibold`) y era lo que hacía que una tabla del chat se leyera como
+// un panel de sistema. De los sistemas de referencia, el único que titula en versalitas es
+// Carbon —justo ese look—; shadcn/ui usa `font-medium` a secas y Tailwind Typography
+// `font-weight:600` sin transformar el texto. Además las mayúsculas sostenidas penalizan a
+// quien lee con dislexia (BOIA), y si se usan hay que compensarlas con tracking (USWDS).
 const CELL_CLS: Partial<Record<(typeof TEXT_TAGS)[number], string>> = {
-  th: "px-3 py-1.5 text-left align-bottom text-xs font-semibold uppercase tracking-wide",
-  td: "px-3 py-1.5 align-top text-sm",
+  th: "px-3 py-2 text-left align-bottom font-medium whitespace-nowrap",
+  td: "px-3 py-2 align-top",
 };
 
 function textComponents(emojiMap: Map<string, string>, onMention?: (handle: string) => void): Components {
@@ -125,9 +131,23 @@ function textComponents(emojiMap: Map<string, string>, onMention?: (handle: stri
 // El scroll horizontal se CONSERVA (una tabla ancha no debe romper la burbuja).
 // `light` = hoja clara del draft del artefacto: fondo blanco fijo, así que ahí los colores
 // no pueden salir de los tokens theme-aware (en tema oscuro pintarían oscuro sobre blanco).
+//
+// ⚠️ Y la cabecera va SIN FONDO. La tenía (`bg-surface-2`) desde que se arregló la franja
+// pizarra, y esa franja gris —más las versalitas— es lo que se reportó como "las cards se
+// ven grises y feas". Los sistemas de referencia coinciden: shadcn/ui v4 define
+// `TableHeader` como `[&_tr]:border-b` y nada más, Tailwind Typography no pone UN solo
+// `background-color` en toda la tabla, y la variante por default de Radix Themes es
+// `ghost`. Lo que separa la cabecera es la LÍNEA, y se distingue de las de las filas por
+// ser más marcada (el mismo truco de Typography: gray-300 arriba, gray-200 entre filas).
+//
+// Tampoco lleva marco exterior ni bordes verticales: la tabla es contenido del mensaje, no
+// una tarjeta. Y sin zebra —sólo paga en tablas largas y con tinte muy bajo; en las cortas
+// del chat, divisores + hover leen mejor.
 function tableComponents(light?: boolean): Components {
-  const line = light ? "border-black/10" : "border-border";
-  const head = light ? "bg-black/[0.04]" : "bg-surface-2";
+  // La regla bajo los encabezados: un punto más marcada que la que separa las filas
+  // (`divide-*`, abajo). Es lo único que distingue la cabecera ahora que no lleva fondo.
+  const rule = light ? "border-black/25" : "border-ink/25";
+  const hover = light ? "hover:bg-black/[0.03]" : "hover:bg-surface-2/50";
   return {
     // `not-prose`: la salida oficial de @tailwindcss/typography. Sin ella, `prose` le
     // mete `margin: 2em 0` al table —franja vacía dentro de nuestro marco— y un `m-0`
@@ -139,14 +159,22 @@ function tableComponents(light?: boolean): Components {
     // ahí es un segundo hijo suelto junto al <div> y rompe la sintaxis (el build de
     // 1e775cf quedó rojo por eso).
     table: ({ node, children, className, ...props }: { node?: unknown; children?: React.ReactNode; className?: string }) => (
-      <div className={`not-prose my-2 w-full overflow-x-auto rounded-lg border [&_a]:text-brand [&_a]:underline ${line}`}>
-        <table className={["w-full border-collapse text-left", className].filter(Boolean).join(" ")} {...props}>
+      <div className="not-prose my-3 w-full overflow-x-auto [&_a]:text-brand [&_a]:underline">
+        {/* `tabular-nums` en la TABLA entera y no por columna: no sabemos cuál trae
+            números, y en las que sí, las cifras quedan alineadas en vertical sin pedirle
+            nada a quien escribe el markdown. */}
+        <table
+          className={["w-full border-collapse text-left text-sm tabular-nums", className]
+            .filter(Boolean)
+            .join(" ")}
+          {...props}
+        >
           {children}
         </table>
       </div>
     ),
     thead: ({ node, children, ...props }: { node?: unknown; children?: React.ReactNode }) => (
-      <thead className={`border-b ${line} ${head}`} {...props}>
+      <thead className={`border-b ${rule}`} {...props}>
         {children}
       </thead>
     ),
@@ -155,7 +183,11 @@ function tableComponents(light?: boolean): Components {
         {children}
       </tbody>
     ),
-    tr: ({ node, children, ...props }: { node?: unknown; children?: React.ReactNode }) => <tr {...props}>{children}</tr>,
+    tr: ({ node, children, ...props }: { node?: unknown; children?: React.ReactNode }) => (
+      <tr className={`transition-colors ${hover}`} {...props}>
+        {children}
+      </tr>
+    ),
   };
 }
 
