@@ -1,13 +1,13 @@
 import type { ConnectorTool } from "./impl";
 import type { ToolDest } from "./tool-token.server";
-import { boardSchemas, callTasks, teamsToolNames, toBoardAction } from "../tasks-bridge.server";
 import {
-  boardUrl,
-  createBoard,
-  listBoards,
-  rememberRoomBoard,
-  resolveBoard,
-} from "../tasks-boards.server";
+  boardSchemas,
+  callTasks,
+  isWorkspaceAction,
+  teamsToolNames,
+  toBoardAction,
+} from "../tasks-bridge.server";
+import { boardUrl, listBoards, rememberRoomBoard, resolveBoard } from "../tasks-boards.server";
 import { currentSlug } from "../tenant.server";
 
 // Las tools `task_*` que el agente ve DESDE el chat. Van aparte de `nativeTools()` porque
@@ -41,89 +41,44 @@ const BOARD_HINT = {
   ),
 };
 
-/** Las dos que no existen del otro lado: sin ellas, "ponlo en el tablero de Marketing"
- *  cuando ese tablero no existe muere en un callejón. */
-function ownTools(dest: ToolDest | null): ConnectorTool[] {
-  return [
-    {
-      name: "task_boards",
-      description:
-        "Lista los tableros de Ghosty Tasks de este espacio. Úsala cuando no sepas en cuál trabajar o te pregunten qué tableros hay.",
-      inputSchema: { type: "object", properties: {} },
-      handler: async () => {
-        const boards = await listBoards();
-        const slug = await currentSlug();
-        const actual = dest?.channelId ? await resolveBoard(dest.channelId) : null;
-        return {
-          boards: boards.map((b) => ({
-            name: b.name,
-            url: slug ? boardUrl(slug, b.slug) : null,
-          })),
-          enEsteRoom: actual?.kind === "board" ? actual.board.name : null,
-        };
-      },
-    },
-    {
-      name: "task_board_create",
-      description:
-        "Crea un tablero nuevo en Ghosty Tasks. Úsala sólo si te piden trabajar en un tablero que no existe — comprueba antes con task_boards.",
-      inputSchema: {
-        type: "object",
-        properties: { name: str("Nombre del tablero.") },
-        required: ["name"],
-      },
-      handler: async (sub, a) => {
-        const board = await createBoard(String(a.name ?? ""), sub);
-        // Queda como el del room: quien acaba de pedir un tablero va a trabajar en él.
-        if (dest?.channelId) await rememberRoomBoard(dest.channelId, board.id, sub);
-        const slug = await currentSlug();
-        return {
-          creado: board.name,
-          url: slug ? boardUrl(slug, board.slug) : null,
-          columnas: ["To Do", "In Progress", "Done"],
-        };
-      },
-    },
-  ];
-}
-
 /**
- * Catálogo completo de `task_*`.
+ * Catálogo completo de `task_*`. **Ninguna se implementa aquí**: todas son la acción de
+ * Tasks, con otro nombre.
  *
- * Los schemas de las 10 acciones se PIDEN a Tasks (`{action:"list"}`) y se cachean: copiarlos
- * a mano garantiza que se desincronicen y que el modelo mande un argumento que ya no existe.
- * Si Tasks no responde, se devuelven sólo las dos propias — es preferible a anunciar acciones
- * cuyos argumentos no conocemos.
+ * Los schemas se PIDEN (`{action:"list"}`) y se cachean: copiarlos a mano garantiza que se
+ * desincronicen y que el modelo mande un argumento que ya no existe. Si Tasks no responde no
+ * se ofrece ninguna, que es preferible a anunciar acciones cuyos argumentos no conocemos.
  */
 export async function taskTools(sub: string, dest: ToolDest | null): Promise<ConnectorTool[]> {
   const slug = await currentSlug().catch(() => null);
   if (!slug) return [];
 
   const pick = await resolveBoard(dest?.channelId ?? null);
-  // Sin ningún tablero en el workspace, sólo se ofrece crear uno. Ofrecer `task_create`
-  // llevaría al agente a intentarlo y fallar, que es peor que no tenerla.
-  if (pick.kind === "none")
-    return ownTools(dest).filter((t) => t.name === "task_board_create");
-
-  // Para pedir los schemas hace falta un projectId cualquiera del workspace: el catálogo de
-  // acciones no depende del tablero, sólo el token sí.
-  const anyBoard = pick.kind === "board" ? pick.board.id : pick.candidates[0].id;
+  // Para PEDIR el catálogo basta cualquier tablero —las acciones no dependen de cuál—, y con
+  // ninguno se usa el token de espacio (`projectId: 0`), que es justo el que deja crear el
+  // primero.
+  const anyBoard = pick.kind === "board" ? pick.board.id : pick.kind === "ask" ? pick.candidates[0].id : 0;
   const schemas = await boardSchemas(slug, sub, anyBoard);
 
-  const proxied: ConnectorTool[] = [];
+  const out: ConnectorTool[] = [];
   for (const teamsName of teamsToolNames()) {
     const inner = toBoardAction(teamsName)!;
     const s = schemas[inner];
     if (!s) continue;
+    // Sin ningún tablero sólo tienen sentido las de espacio: ofrecer `task_create` llevaría
+    // al agente a intentarlo y fallar, que es peor que no tenerla.
+    if (pick.kind === "none" && !isWorkspaceAction(teamsName)) continue;
     const props = ((s.inputSchema as any)?.properties ?? {}) as Record<string, unknown>;
-    proxied.push({
+    out.push({
       name: teamsName,
       description: EXTRA[teamsName] ?? s.description,
-      inputSchema: { ...(s.inputSchema as object), properties: { ...props, ...BOARD_HINT } },
+      inputSchema: isWorkspaceAction(teamsName)
+        ? (s.inputSchema as Record<string, unknown>)
+        : { ...(s.inputSchema as object), properties: { ...props, ...BOARD_HINT } },
       handler: (handlerSub, args) => runProxied(handlerSub, dest, teamsName, args),
     });
   }
-  return [...ownTools(dest), ...proxied];
+  return out;
 }
 
 async function runProxied(
@@ -138,6 +93,21 @@ async function runProxied(
   // `board` es NUESTRO argumento, no de Tasks: se saca antes de reenviar o su validador lo
   // rechazaría por desconocido.
   const { board: hint, ...rest } = (args ?? {}) as { board?: unknown };
+
+  // Las de ESPACIO no van dentro de ningún tablero: token con `projectId: 0`. Resolver uno
+  // antes las haría imposibles justo cuando hacen falta —crear el primero—.
+  if (isWorkspaceAction(teamsName)) {
+    const r = await callTasks(slug, sub, 0, teamsName, rest as Record<string, unknown>);
+    if (!r.ok) return { error: r.error };
+    const res = r.result as Record<string, unknown> | null;
+    // Un tablero recién creado queda como el del room: quien acaba de pedirlo va a trabajar
+    // en él, y obligarle a repetir el nombre en el mensaje siguiente sería absurdo.
+    const nuevo = Number((res as any)?.id);
+    if (dest?.channelId && Number.isFinite(nuevo) && nuevo > 0)
+      await rememberRoomBoard(dest.channelId, nuevo, sub);
+    return res ?? { ok: true };
+  }
+
   const pick = await resolveBoard(dest?.channelId ?? null, hint ? String(hint) : undefined);
 
   if (pick.kind === "none")

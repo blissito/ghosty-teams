@@ -99,16 +99,21 @@ export const workspaceUsageFn = createServerFn({ method: "GET" }).handler(async 
       /** UNA BOLSA POR MOTOR. `included:null` = ilimitado, porque ese agente corre con la
        *  llave del cliente: es su saldo con el proveedor, no el nuestro. Se mide y se
        *  enseña; no se corta. */
-      engines?: { engine: string; used: number; included: number | null; turns: number; ownKey: boolean; name?: string; avatar?: string; handle?: string }[];
+      engines?: { engine: string; used: number; included: number | null; turns: number; ownKey: boolean; agentId?: string | null; agentName?: string | null; name?: string; avatar?: string; handle?: string }[];
     };
 
-    // Ponerle CARA a cada renglón. Studio mide por motor —es lo que sabe— pero la
-    // persona no conoce motores: conoce a Blue y a Ghosty, con su avatar y su nombre.
-    // El cruce hace falta porque el dato está partido: sólo Teams sabe qué agente está
-    // activado aquí y cómo se llama; sólo Studio sabe con qué motor corre.
+    // Ponerle CARA a cada renglón. El cruce hace falta porque el dato está partido: sólo
+    // Teams sabe qué agente está activado aquí y cómo se llama; sólo Studio sabe cuánto
+    // gastó cada uno.
     //
-    // Un motor sin agente resuelto conserva su etiqueta genérica: enseñar "deepseek" es
-    // feo, pero desaparecer un consumo que existe es peor.
+    // ⚠️ Se cruza por `agentId` (el fleetAgentId, que los dos lados conocen) y NO por
+    // motor. Cruzar por motor tomaba el PRIMER agente que lo usara, así que dos agentes
+    // Claude salían los dos rotulados como el primero y el segundo no aparecía nunca.
+    //
+    // Un renglón que no resuelve a ningún agente activado aquí conserva su etiqueta
+    // genérica si tiene consumo —desaparecer un gasto real es peor que enseñar
+    // "deepseek"— pero se DESCARTA si está en cero: es un agente de Studio que este
+    // espacio no tiene activado, y pintarlo era inventar un compañero que no existe.
     if (raw.engines?.length) {
       try {
         const { resolvedAgents, engineOfAgent } = await import("../agents.server");
@@ -116,10 +121,19 @@ export const workspaceUsageFn = createServerFn({ method: "GET" }).handler(async 
         const conCara = await Promise.all(
           agentes.map(async (a) => ({ a, engine: await engineOfAgent(a) })),
         );
-        raw.engines = raw.engines.map((e) => {
-          const m = conCara.find((x) => x.engine === e.engine);
-          return m ? { ...e, name: m.a.name, avatar: m.a.avatar, handle: m.a.handle } : e;
-        });
+        const porId = new Map(
+          conCara.filter((x) => x.a.backend.kind === "fleet").map((x) => [(x.a.backend as { id: string }).id, x.a]),
+        );
+        raw.engines = raw.engines
+          .map((e) => {
+            // Sin `agentId` (filas anteriores a 2026-08-06, agrupadas por motor) queda el
+            // cruce viejo: ambiguo, pero es todo lo que se sabe de ellas.
+            const a = e.agentId ? porId.get(e.agentId) : conCara.find((x) => x.engine === e.engine)?.a;
+            return a
+              ? { ...e, name: a.name, avatar: a.avatar, handle: a.handle }
+              : { ...e, name: e.agentName ?? undefined };
+          })
+          .filter((e) => e.handle || e.used > 0);
       } catch {
         // Sin nombres se pinta con la etiqueta del motor. El consumo es el dato; la cara
         // es el adorno, y no vale perder el primero por el segundo.

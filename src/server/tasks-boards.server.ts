@@ -14,7 +14,14 @@ import { dbq } from "../dbq.server";
 
 export type Board = { id: number; slug: string; name: string };
 
-/** Tableros vivos del workspace. */
+/**
+ * Tableros vivos del workspace.
+ *
+ * Es un SELECT y no una llamada a Tasks a propósito: hay que saber a QUÉ tablero apunta el
+ * turno antes de poder minar el token, así que pedirlo por HTTP sería un viaje de ida y
+ * vuelta en cada turno para decidir. Leer la base compartida vale; lo que no valía era
+ * duplicar la lógica de ESCRITURA, que ya vive sólo en `ops/projects.ops.ts` de Tasks.
+ */
 export async function listBoards(): Promise<Board[]> {
   const rows = await dbq(
     "SELECT id, slug, name FROM task_projects WHERE COALESCE(archived,0) = 0 ORDER BY id"
@@ -96,65 +103,6 @@ export async function resolveBoard(channelId: number | null, hint?: string): Pro
 
   if (boards.length === 1) return { kind: "board", board: boards[0], remembered: false };
   return { kind: "ask", candidates: boards };
-}
-
-/** slug único, calcado de `uniqueSlug` en ghosty-tasks/src/server/projects.ts. */
-function slugify(s: string): string {
-  return (
-    s
-      .toLowerCase()
-      .normalize("NFD")
-      .replace(/[̀-ͯ]/g, "")
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-+|-+$/g, "")
-      .slice(0, 40) || "tablero"
-  );
-}
-
-/**
- * Crea un tablero.
- *
- * ⚠️ **Duplica `createProjectFn` de `ghosty-tasks/src/server/projects.ts`** — es la única
- * duplicación de este puente y está aquí a conciencia: el tool-token de Tasks lleva el
- * `projectId` DENTRO, así que no hay forma de pedirle "créame un tablero" sin tener ya uno.
- * Es escribir en la misma DB que Teams ya escribe, no una API paralela.
- *
- * ⚠️ Las tres columnas y sus NOMBRES tienen que seguir igual que allá: `move_task` habla de
- * "Done" por nombre, y un tablero nacido aquí con otros nombres no se podría cerrar.
- */
-export async function createBoard(name: string, sub: string): Promise<Board> {
-  const clean = name.trim().slice(0, 80);
-  if (!clean) throw new Error("el tablero necesita un nombre");
-  const base = slugify(clean);
-  let slug = base;
-  for (let i = 2; (await dbq("SELECT 1 FROM task_projects WHERE slug = ?", [slug])).length; i++)
-    slug = `${base}-${i}`;
-
-  const rows = await dbq(
-    "INSERT INTO task_projects (slug, name, created_by) VALUES (?, ?, ?) RETURNING id, slug, name",
-    [slug, clean, sub]
-  );
-  const board = { id: Number(rows[0].id), slug: String(rows[0].slug), name: String(rows[0].name) };
-
-  for (const [i, [col, color]] of ([
-    ["To Do", "#6b7280"],
-    ["In Progress", "#3b82f6"],
-    ["Done", "#22c55e"],
-  ] as const).entries())
-    await dbq("INSERT INTO task_columns (project_id, name, position, color) VALUES (?, ?, ?, ?)", [
-      board.id,
-      col,
-      i,
-      color,
-    ]);
-
-  // Sin esta fila, quien lo creó no es miembro y `requireProjectMember` le negaría su propio
-  // tablero en la siguiente petición.
-  await dbq(
-    "INSERT OR IGNORE INTO task_project_members (project_id, user_sub, role) VALUES (?, ?, ?)",
-    [board.id, sub, "owner"]
-  );
-  return board;
 }
 
 /** URL del tablero, y de UNA tarea si se pasa. La liga profunda es `?task=<id>`. */

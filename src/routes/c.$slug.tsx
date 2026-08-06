@@ -688,10 +688,40 @@ const EMOJI_SEARCH: { c: string; k: string }[] = [
   { c: "❄️", k: "snow nieve frio" },
 ];
 
-// Título corto de un hilo = primera línea de su mensaje raíz (para los submenús).
+// Título corto de un hilo = primera línea ÚTIL de su mensaje raíz (para los submenús).
+//
+// ⚠️ "Primera línea" a secas no sirve: un mensaje del agente suele empezar por la
+// apertura de un fence y la lista acababa enseñando ```` ```gt-alert ```` como título —dos
+// veces seguidas, indistinguibles entre sí—. Aquí se salta el andamiaje (fences y sus
+// bloques enteros, encabezados vacíos, citas, viñetas) y se limpia el marcado en línea
+// de la que sí tiene texto. Es sólo para la etiqueta: el `body` no se toca.
 function threadTitle(m: Message): string {
-  const first = (m.body || "").split("\n")[0].trim();
-  return first.length > 40 ? first.slice(0, 39) + "…" : first;
+  const lineas = (m.body || "").split("\n");
+  let dentroDeFence = false;
+  let texto = "";
+  for (const raw of lineas) {
+    const l = raw.trim();
+    // Una cerca abre o cierra; el contenido de en medio es código o un artefacto y nunca
+    // es un buen título.
+    if (/^(`{3,}|~{3,})/.test(l)) {
+      dentroDeFence = !dentroDeFence;
+      continue;
+    }
+    if (dentroDeFence || !l) continue;
+    const limpia = l
+      .replace(/^#{1,6}\s+/, "") // encabezado
+      .replace(/^>\s?/, "") // cita
+      .replace(/^([-*+]|\d+[.)])\s+/, "") // viñeta o lista numerada
+      .replace(/^\[[ xX]\]\s*/, "") // casilla de tarea
+      .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1") // enlace o imagen → su texto
+      .replace(/(\*\*\*|\*\*|\*|___|__|_|~~|`)/g, "") // énfasis y código en línea
+      .trim();
+    if (limpia) {
+      texto = limpia;
+      break;
+    }
+  }
+  return texto.length > 40 ? texto.slice(0, 39) + "…" : texto;
 }
 
 // Sidebar: solo los N hilos más recientes; el resto vive en el modal "Ver todos".

@@ -10,7 +10,9 @@ const fetchSpy = vi.fn();
 vi.stubGlobal("fetch", fetchSpy);
 process.env.GHOSTY_PARTNER_SECRET = "secreto-de-prueba";
 
-const { callTasks, toBoardAction, isBoardAction, teamsToolNames } = await import("./tasks-bridge.server");
+const { callTasks, toBoardAction, isBoardAction, isWorkspaceAction, teamsToolNames } = await import(
+  "./tasks-bridge.server"
+);
 
 beforeEach(() => fetchSpy.mockReset());
 
@@ -42,7 +44,8 @@ describe("la puerta del bucle", () => {
 describe("mapeo de nombres", () => {
   it("cada tool de Teams apunta a una acción real de tablero", () => {
     const names = teamsToolNames();
-    expect(names.length).toBe(10);
+    // 10 de tablero + las 2 de espacio (list_boards / create_board).
+    expect(names.length).toBe(12);
     for (const n of names) {
       const inner = toBoardAction(n);
       expect(inner, n).not.toBeNull();
@@ -101,5 +104,26 @@ describe("la llamada", () => {
     const r = await callTasks("acme", "ana", 1, "task_board_read", {});
     expect(r.ok).toBe(false);
     expect((r as { error: string }).error).toContain("Tasks");
+  });
+});
+
+describe("alcance de espacio", () => {
+  // Existen porque el token lleva el tablero DENTRO: "créame un tablero" no puede traer uno.
+  it("sólo crear y listar tableros son de espacio", () => {
+    expect(isWorkspaceAction("task_boards")).toBe(true);
+    expect(isWorkspaceAction("task_board_create")).toBe(true);
+    for (const n of ["task_create", "task_move", "task_board_read", "task_delete"])
+      expect(isWorkspaceAction(n), n).toBe(false);
+  });
+
+  it("van con projectId 0, que es lo que Tasks acepta para ellas", async () => {
+    fetchSpy.mockResolvedValue({ ok: true, status: 200, json: async () => ({ ok: true, result: {} }) });
+    await callTasks("acme", "ana", 0, "task_board_create", { name: "Marketing" });
+    const auth = fetchSpy.mock.calls[0][1].headers.authorization as string;
+    const payload = JSON.parse(
+      Buffer.from(auth.replace("Bearer ", "").split(".")[0], "base64url").toString()
+    );
+    expect(payload.projectId).toBe(0);
+    expect(JSON.parse(fetchSpy.mock.calls[0][1].body).name).toBe("create_board");
   });
 });

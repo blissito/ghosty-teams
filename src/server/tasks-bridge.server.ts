@@ -59,7 +59,14 @@ const BOARD_ACTIONS = new Set([
   "add_checklist_item",
   "add_member",
   "delete_task",
+  // Alcance de ESPACIO: no trabajan dentro de un tablero, están por encima. Se piden con
+  // `projectId: 0` porque por definición todavía no hay uno.
+  "list_boards",
+  "create_board",
 ]);
+
+/** Las que van con `projectId: 0`. Ver `Action.scope` en ghosty-tasks. */
+const WORKSPACE_ACTIONS = new Set(["list_boards", "create_board"]);
 
 /** ¿Este nombre lo atiende Tasks? Público para que el test del bucle lo compruebe. */
 export function isBoardAction(name: string): boolean {
@@ -76,6 +83,8 @@ export const TASK_TOOL_PREFIX = "task_";
  * split acabaría mandando nombres que no existen.
  */
 const NAME_MAP: Record<string, string> = {
+  task_boards: "list_boards",
+  task_board_create: "create_board",
   task_board_read: "list_board",
   task_find: "find_tasks",
   task_create: "create_task",
@@ -113,6 +122,11 @@ export type TasksCall = { ok: true; result: unknown } | { ok: false; error: stri
  * — y el slug se resuelve del enrutamiento de Teams, **jamás de un argumento del modelo**:
  * si viniera del turno, el agente de un workspace podría apuntar al tablero de otro.
  */
+export function isWorkspaceAction(teamsName: string): boolean {
+  const inner = NAME_MAP[teamsName];
+  return !!inner && WORKSPACE_ACTIONS.has(inner);
+}
+
 export async function callTasks(
   slug: string,
   sub: string,
