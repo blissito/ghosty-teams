@@ -7739,12 +7739,30 @@ function TaskCard({ task, channelId, parentId }: { task: TaskCardData; channelId
               {st.comments}
             </span>
           ) : null}
-          {st?.links ? (
-            <span className="inline-flex items-center gap-1 text-[11.5px] text-muted">
+          {/* El PR con su REFERENCIA y pulsable, no un contador: "⑂ 1" dice que hay algo
+              pero no qué ni lleva a ningún lado. Colores de GitHub — rojo es "cerrado sin
+              mergear", no "error". */}
+          {(st?.links ?? []).map((l: any) => (
+            <a
+              key={l.url}
+              href={l.url}
+              target="_blank"
+              rel="noreferrer"
+              title={l.url}
+              className={`inline-flex items-center gap-1 rounded-md border px-2 py-1 text-[11.5px] font-medium transition hover:bg-surface-3 ${
+                l.state === "merged"
+                  ? "border-violet-500/50 text-violet-500"
+                  : l.state === "closed"
+                    ? "border-red-500/50 text-red-500"
+                    : l.state === "open"
+                      ? "border-emerald-600/50 text-emerald-600"
+                      : "border-border text-muted"
+              }`}
+            >
               <GitPullRequest size={12} />
-              {st.links}
-            </span>
-          ) : null}
+              {l.ref ?? l.url.replace(/^https?:\/\//, "").slice(0, 28)}
+            </a>
+          ))}
         </div>
         {comentando ? (
           <div className="mt-2 flex items-start gap-1.5">

@@ -632,17 +632,29 @@ export const runTaskCardActionFn = createServerFn({ method: "POST" })
 
 
 /** Comentarios y ligas de una tarea. Best-effort: son adorno, no pueden tumbar la tarjeta. */
-async function conteosDeTarea(id: number): Promise<{ comments: number; links: number }> {
+async function conteosDeTarea(
+  id: number
+): Promise<{ comments: number; links: { kind: string; url: string; ref: string | null; state: string | null }[] }> {
   try {
     const { dbq } = await import("../dbq.server");
-    const r = await dbq(
-      `SELECT (SELECT COUNT(*) FROM task_comments WHERE task_id = ?) AS c,
-              (SELECT COUNT(*) FROM task_links WHERE task_id = ?) AS l`,
-      [id, id]
+    const r = await dbq("SELECT COUNT(*) AS c FROM task_comments WHERE task_id = ?", [id]);
+    // Las ligas van con su REFERENCIA, no como número: "⑂ 1" dice que hay algo pero no qué
+    // ni lleva a ningún lado, que es justo la fricción que este trabajo venía a quitar.
+    const l = await dbq(
+      "SELECT kind, url, ref, state FROM task_links WHERE task_id = ? ORDER BY created_at LIMIT 3",
+      [id]
     );
-    return { comments: Number(r[0]?.c ?? 0), links: Number(r[0]?.l ?? 0) };
+    return {
+      comments: Number(r[0]?.c ?? 0),
+      links: l.map((x) => ({
+        kind: String(x.kind ?? "url"),
+        url: String(x.url ?? ""),
+        ref: x.ref ? String(x.ref) : null,
+        state: x.state ? String(x.state) : null,
+      })),
+    };
   } catch {
-    return { comments: 0, links: 0 };
+    return { comments: 0, links: [] };
   }
 }
 
