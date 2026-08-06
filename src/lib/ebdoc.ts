@@ -432,7 +432,15 @@ export type PrCardData = {
   url: string;
   /** Una línea del modelo: su conclusión. Es lo único subjetivo de la tarjeta. */
   verdict: string;
+  /**
+   * Los hallazgos, anclados a una línea del diff. Es lo que convierte una reseña en un
+   * code review de verdad: el comentario aparece JUNTO al código, no en un chat aparte.
+   * `line` es la línea del archivo NUEVO y tiene que caer dentro del diff del PR.
+   */
+  comments: PrComment[];
 };
+
+export type PrComment = { path: string; line: number; body: string };
 
 export function extractPr(body: string): PrCardData | null {
   const open = body.match(/```gt-pr[^\n]*\n/);
@@ -462,6 +470,17 @@ export function extractPr(body: string): PrCardData | null {
       checks: str(p.checks).toLowerCase(),
       url: str(p.url) || `https://github.com/${repo}/pull/${number}`,
       verdict: str(p.verdict),
+      // Un comentario sin los tres campos no se puede anclar, y mandarlo a GitHub tumbaría
+      // el review entero con un 422. Se descarta aquí, igual que las acciones de gt-alert.
+      comments: Array.isArray(p.comments)
+        ? (p.comments as unknown[])
+            .map((c) => {
+              const o = c as Record<string, unknown>;
+              return { path: str(o?.path), line: Number(o?.line), body: str(o?.body) };
+            })
+            .filter((c) => c.path && Number.isFinite(c.line) && c.line > 0 && c.body)
+            .slice(0, 30)
+        : [],
     };
   } catch {
     return null;

@@ -320,10 +320,26 @@ const CARD_ACTIONS: Record<string, { provider: string; tool: string }> = {
   // Rechazar = CERRAR el PR sin mergear. Es reversible (se puede reabrir), por eso no
   // pide confirmación extra. Va por la API de issues, que es la que cierra un PR.
   pr_reject: { provider: "github", tool: "github_update_issue" },
+  // Sobre tu PROPIO PR sólo está permitido un review de tipo COMMENT. Sin esta acción la
+  // tarjeta era un callejón: te decía que no podías aprobar ni pedir cambios y ahí moría.
+  pr_comment: { provider: "github", tool: "github_create_review" },
+  pr_merge: { provider: "github", tool: "github_merge_pr" },
 };
 
 export const runCardActionFn = createServerFn({ method: "POST" })
-  .validator((d: { action: string; repo: string; number: number; body?: string }) => d)
+  .validator(
+    (d: {
+      action: string;
+      repo: string;
+      number: number;
+      body?: string;
+      /** Hallazgos anclados a una línea del diff — lo que hace que esto sea un review. */
+      comments?: { path: string; line: number; body: string }[];
+      /** Para avisar a las demás pestañas sin despertar al agente. */
+      channelId?: number;
+      parentId?: number;
+    }) => d,
+  )
   .handler(async ({ data }) => {
     const me = await sessionUser();
     if (!me) return { ok: false as const, error: "no autenticado" };
@@ -356,11 +372,21 @@ export const runCardActionFn = createServerFn({ method: "POST" })
     if (data.action === "pr_reject") {
       const r = (await tool.handler(me.sub, { repo, number, state: "closed" })) as Record<string, unknown>;
       if (r?.error) return { ok: false as const, error: String(r.error) };
+      await avisaAlCanal(data);
       return { ok: true as const, event: "CLOSED", url: typeof r?.url === "string" ? r.url : "" };
     }
 
-    const event = data.action === "pr_approve" ? "APPROVE" : "REQUEST_CHANGES";
-    const r = (await tool.handler(me.sub, {
+    if (data.action === "pr_merge") {
+      const r = (await tool.handler(me.sub, { repo, number })) as Record<string, unknown>;
+      if (r?.error) return { ok: false as const, error: String(r.error) };
+      await avisaAlCanal(data);
+      return { ok: true as const, event: "MERGED", url: "" };
+    }
+
+    const event =
+      data.action === "pr_approve" ? "APPROVE" : data.action === "pr_comment" ? "COMMENT" : "REQUEST_CHANGES";
+    const comments = Array.isArray(data.comments) ? data.comments : [];
+    const args: Record<string, unknown> = {
       repo,
       number,
       event,
@@ -369,8 +395,25 @@ export const runCardActionFn = createServerFn({ method: "POST" })
       // que un approve escueto.
       // ⚠️ Antes iba un "Pide cambios (desde Ghosty)." fijo y el ANÁLISIS SE PERDÍA — que
       // es justo lo único que valía del turno. Ahora sube el veredicto de la tarjeta.
-      ...(event === "REQUEST_CHANGES" ? { body: body || "Pide cambios (desde Ghosty)." } : {}),
-    })) as Record<string, unknown>;
+      ...(event !== "APPROVE" ? { body: body || "Revisión de Ghosty." } : {}),
+      ...(comments.length ? { comments } : {}),
+    };
+    let r = (await tool.handler(me.sub, args)) as Record<string, unknown>;
+
+    // ⚠️ Red obligatoria. GitHub tumba el review ENTERO con un 422 si UNA sola línea cae
+    // fuera del diff, y el modelo se equivoca de línea con facilidad. Perder el análisis
+    // por eso sería lo peor de los dos mundos: se reintenta sin anclar, con todo en el
+    // cuerpo, y se avisa de que quedó plano.
+    let degradado = false;
+    if (r?.error && comments.length && /422|line|diff/i.test(String(r.error))) {
+      degradado = true;
+      const plano = comments.map((c) => `- \`${c.path}:${c.line}\` — ${c.body}`).join("\n");
+      const { comments: _fuera, ...sinAnclar } = args;
+      r = (await tool.handler(me.sub, {
+        ...sinAnclar,
+        body: [body, plano].filter(Boolean).join("\n\n"),
+      })) as Record<string, unknown>;
+    }
 
     if (r?.error) {
       // El error crudo de GitHub llegaba a la tarjeta como un volcado de JSON.
@@ -383,8 +426,34 @@ export const runCardActionFn = createServerFn({ method: "POST" })
           : txt.replace(/\{.*\}/s, "").trim() || txt,
       };
     }
-    return { ok: true as const, event, url: typeof r?.url === "string" ? r.url : "" };
+    await avisaAlCanal(data);
+    // El usuario tiene derecho a saber que sus comentarios NO quedaron junto al código.
+    return { ok: true as const, event, url: typeof r?.url === "string" ? r.url : "", degradado };
   });
+
+/**
+ * Avisa a las demás pestañas de que este PR cambió, SIN despertar al agente.
+ *
+ * ⚠️ La primera versión lo anunciaba mandando un mensaje al chat, y eso disparaba un turno
+ * entero por un clic. `refresh` sólo lleva ids y el cliente revalida: sin sonido, sin badge
+ * y sin insertar mensaje — la misma regla que documenta `forms/ficha.server.ts`
+ * ("`refresh` y NUNCA `message:new`").
+ */
+async function avisaAlCanal(data: { channelId?: number; parentId?: number }): Promise<void> {
+  if (!data.channelId) return;
+  try {
+    const { publish, ch } = await import("./bus.server");
+    const { currentNamespace } = await import("./tenant.server");
+    publish(ch.room(await currentNamespace(), data.channelId), {
+      t: "refresh",
+      channelId: data.channelId,
+      parentId: data.parentId ?? null,
+      dmId: null,
+    });
+  } catch {
+    // Que el aviso falle no puede tumbar una acción que YA se ejecutó en GitHub.
+  }
+}
 
 /**
  * Estado ACTUAL de un PR para la tarjeta: abierto/cerrado/mergeado y quién lo revisó.

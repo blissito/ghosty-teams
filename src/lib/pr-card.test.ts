@@ -52,6 +52,31 @@ describe("gt-pr", () => {
     expect(stripPr(card("\n\nAvísame."))).toBe("Revisé el PR. Se ve bien.\n\nAvísame.");
   });
 
+  it("los comentarios anclados sobreviven al parseo", () => {
+    const p = extractPr(
+      '```gt-pr\n{"repo":"a/b","number":1,"comments":[{"path":"src/x.ts","line":24,"body":"esto revienta"}]}\n```',
+    )!;
+    expect(p.comments).toEqual([{ path: "src/x.ts", line: 24, body: "esto revienta" }]);
+  });
+
+  it("descarta el comentario incompleto — mandarlo a GitHub tumbaría el review ENTERO con un 422", () => {
+    const p = extractPr(
+      '```gt-pr\n{"repo":"a/b","number":1,"comments":[' +
+        '{"path":"x.ts","line":9,"body":"ok"},' +
+        '{"path":"y.ts","body":"sin linea"},' +
+        '{"line":3,"body":"sin ruta"},' +
+        '{"path":"z.ts","line":0,"body":"linea cero"},' +
+        '{"path":"w.ts","line":5,"body":""}' +
+        ']}\n```',
+    )!;
+    expect(p.comments).toEqual([{ path: "x.ts", line: 9, body: "ok" }]);
+  });
+
+  it("sin comentarios devuelve lista vacía, nunca undefined", () => {
+    expect(extractPr('```gt-pr\n{"repo":"a/b","number":1}\n```')!.comments).toEqual([]);
+    expect(extractPr('```gt-pr\n{"repo":"a/b","number":1,"comments":"muchos"}\n```')!.comments).toEqual([]);
+  });
+
   it("un body sin fence pasa intacto", () => {
     expect(stripPr("hola")).toBe("hola");
     expect(extractPr("hola")).toBeNull();

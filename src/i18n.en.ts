@@ -1079,6 +1079,11 @@ export const en: Record<string, string> = {
 
   "Este PR es tuyo: GitHub no deja aprobar ni pedir cambios en el propio. Que lo revise alguien más del equipo.": "This PR is yours: GitHub allows neither approving nor requesting changes on your own. Ask a teammate to review it.",
 
+  "Mergear": "Merge",
+  "Se publicó, pero GitHub no aceptó las líneas: los comentarios quedaron en un solo bloque.": "Published, but GitHub rejected the line anchors: the comments landed as a single block.",
+  "Lleva 1 comentario anclado a su línea.": "Includes 1 comment anchored to its line.",
+  "Lleva {n} comentarios anclados a su línea.": "Includes {n} comments anchored to their lines.",
+
   // Preexistente, sin traducir hasta hoy.
   "y": "and",
 };

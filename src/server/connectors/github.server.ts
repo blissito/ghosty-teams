@@ -301,7 +301,7 @@ export async function ambientContext(sub: string, sender: string, _message: stri
     `TIENES HERRAMIENTAS para sus repos vía el GS Tools SDK: importa /opt/gs-sdk/connectors.mjs y usa ` +
     `list() y run(name, args). Lectura: github_list_repos, github_list_issues, github_get_issue, ` +
     `github_list_prs, github_get_pr, github_pr_files, github_read_file, github_search_code, ` +
-    `github_workflow_runs, github_workflow_run_logs. Escritura: github_create_review, github_comment, github_update_issue, github_create_issue, ` +
+    `github_workflow_runs, github_workflow_run_logs. Escritura: github_create_review, github_merge_pr, github_comment, github_update_issue, github_create_issue, ` +
     `github_create_branch, github_write_file, github_create_pr. ` +
     `Si te piden "conecta mi repo" o "agrega este repo", contesta con github_install_link. ` +
     `Para CUALQUIER pregunta sobre repos, issues, pull requests o CI de ${sender}, USA estas tools — ` +
@@ -324,7 +324,13 @@ export async function ambientContext(sub: string, sender: string, _message: stri
     `respuesta con un bloque \`\`\`gt-pr con este JSON en una línea: ` +
     `{"repo":"dueño/repo","number":N,"title":"…","author":"…","additions":N,"deletions":N,` +
     `"files":N,"checks":"success|failure|pending","url":"…","verdict":"tu conclusión en una línea"}. ` +
-    `Le pinta a la persona los botones de Aprobar / Pedir cambios / Rechazar, que se ejecutan ` +
+    `Le pinta a la persona los botones de Aprobar / Pedir cambios / Rechazar / Mergear, que se ejecutan ` +
+    // Sin los anclados el análisis acaba en un bloque de texto que alguien tiene que
+    // trasladar a mano. Es la diferencia entre una reseña y un code review.
+    `con SU cuenta. Y METE ADEMÁS un array "comments":[{"path","line","body"}] con cada hallazgo ` +
+    `que puedas situar en una línea: aparecen anclados JUNTO al código en GitHub. La "line" es la ` +
+    `del archivo NUEVO y debe caer dentro del diff; si dudas de una, NO la ancles —GitHub rechaza ` +
+    `el review entero con un 422 si una sola está mal—. `+
     `con SU cuenta. Pon SÓLO campos que hayas leído de verdad (los conteos salen de github_get_pr ` +
     `y github_pr_files; \`checks\` de github_workflow_runs) — si no lo miraste, omite el campo, ` +
     `nunca lo inventes. La reseña va FUERA del fence, como prosa normal. ` +
@@ -714,6 +720,48 @@ export const tools: ConnectorTool[] = [
         return r;
       }
       return { ok: true, event, id: r?.id, url: r?.html_url, state: r?.state };
+    },
+  },
+  {
+    name: "github_merge_pr",
+    description:
+      "Mergea un pull request. ⚠️ Es la acción menos reversible de todas: confírmala SIEMPRE y no la propongas si el PR no está aprobado o si CI está en rojo.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        ...repoProp,
+        number: { type: "number", description: "Número del PR." },
+        method: str("squash | merge | rebase. Por defecto el que el repo permita, prefiriendo squash."),
+      },
+      required: ["repo", "number"],
+    },
+    handler: async (sub, a) => {
+      const p = repoPath(a.repo);
+      if (!p) return BAD_REPO;
+      // El método NO se puede adivinar: pedir uno que el repo tiene deshabilitado devuelve
+      // 405 con un mensaje que no dice cuál sí acepta. Se leen los permitidos y se elige.
+      const info = await api(sub, `/repos/${p}`);
+      if (info?.error) return info;
+      const permitidos = [
+        info.allow_squash_merge ? "squash" : "",
+        info.allow_merge_commit ? "merge" : "",
+        info.allow_rebase_merge ? "rebase" : "",
+      ].filter(Boolean);
+      if (!permitidos.length) return { error: "Ese repositorio no permite mergear desde la API." };
+      const pedido = String(a.method ?? "");
+      const method = permitidos.includes(pedido) ? pedido : permitidos[0];
+      const r = await api(sub, `/repos/${p}/pulls/${Number(a.number)}/merge`, {
+        method: "PUT",
+        body: JSON.stringify({ merge_method: method }),
+      });
+      if (r?.error) {
+        const txt = String(r.error);
+        // Los tres rechazos habituales, que el mensaje genérico deja indescifrables.
+        if (txt.includes("405")) return { error: "GitHub dice que este PR no se puede mergear (¿conflictos, o falta una aprobación requerida?)." };
+        if (txt.includes("409")) return { error: "La rama cambió desde que se leyó. Vuelve a intentarlo." };
+        return r;
+      }
+      return { ok: true, merged: r?.merged === true, method, message: r?.message };
     },
   },
   {

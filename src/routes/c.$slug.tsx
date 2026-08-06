@@ -7167,7 +7167,7 @@ function AlertCard({ msgId, a, onAct }: { msgId: number; a: AlertCardData; onAct
  * —GitHub lo prohíbe— y el botón sólo sirve para OTRA persona del canal. El error se
  * explica tal cual cuando pasa, en vez de dejar un fallo mudo.
  */
-function PrCard({ pr }: { pr: PrCardData }) {
+function PrCard({ pr, channelId, parentId, prosa }: { pr: PrCardData; channelId: number; parentId: number | null; prosa: string }) {
   const t = useT();
   const [busy, setBusy] = useState("");
   const [err, setErr] = useState("");
@@ -7181,14 +7181,33 @@ function PrCard({ pr }: { pr: PrCardData }) {
       .catch(() => {});
   }, [pr.repo, pr.number]);
   useEffect(() => { refresca(); }, [refresca]);
+  useRtSubscribe({
+    onEvent: (ev) => {
+      if (ev.t === "refresh" && ev.channelId === channelId) refresca();
+    },
+  });
 
   const act = async (action: string) => {
     if (busy) return;
     setBusy(action);
     setErr("");
     try {
-      const r = await runCardActionFn({ data: { action, repo: pr.repo, number: pr.number, body: pr.verdict } });
+      const r = await runCardActionFn({
+        data: {
+          action,
+          repo: pr.repo,
+          number: pr.number,
+          body: pr.verdict,
+          comments: pr.comments,
+          channelId,
+          parentId: parentId ?? undefined,
+        },
+      });
       if (!r.ok) setErr(r.error);
+      // Si GitHub rechazó los anclajes, el análisis SÍ se publicó pero como texto plano.
+      // Callarlo dejaría creer que los comentarios quedaron junto al código.
+      else if ("degradado" in r && r.degradado)
+        setErr(t("Se publicó, pero GitHub no aceptó las líneas: los comentarios quedaron en un solo bloque."));
       // ⚠️ NO se manda un mensaje al chat para anunciarlo. La primera versión lo hacía y
       // DESPERTABA AL AGENTE: un turno entero por un clic, justo lo que la acción directa
       // venía a evitar. El estado se relee de GitHub, que es donde vive la verdad.
@@ -7199,6 +7218,14 @@ function PrCard({ pr }: { pr: PrCardData }) {
       setBusy("");
     }
   };
+
+  // ¿La prosa del mensaje ya contiene el veredicto? Se compara un prefijo normalizado:
+  // el modelo lo reformula un poco, así que una igualdad exacta no serviría.
+  const yaDicho = (() => {
+    const norm = (x: string) => x.toLowerCase().replace(/[^a-z0-9áéíóúñ ]+/gi, " ").replace(/\s+/g, " ").trim();
+    const v = norm(pr.verdict);
+    return v.length > 25 && norm(prosa).includes(v.slice(0, 40));
+  })();
 
   const checks =
     pr.checks === "success"
@@ -7222,11 +7249,18 @@ function PrCard({ pr }: { pr: PrCardData }) {
     return null;
   })();
 
-  const botones = [
-    { action: "pr_approve", label: t("Aprobar"), tono: "border-emerald-600 text-emerald-600 hover:bg-emerald-600/10" },
-    { action: "pr_request_changes", label: t("Pedir cambios"), tono: "border-border text-ink hover:bg-surface-3" },
-    { action: "pr_reject", label: t("Rechazar"), tono: "border-border text-red-500 hover:bg-red-500/10" },
-  ];
+  const botones = st?.soyElAutor
+    ? [
+        // GitHub sólo permite un review de tipo COMMENT sobre lo tuyo. Sin esto la tarjeta
+        // era un callejón sin salida en el caso más común del equipo.
+        { action: "pr_comment", label: t("Comentar"), tono: "border-brand text-brand hover:bg-brand/10" },
+        { action: "pr_reject", label: t("Rechazar"), tono: "border-border text-red-500 hover:bg-red-500/10" },
+      ]
+    : [
+        { action: "pr_approve", label: t("Aprobar"), tono: "border-emerald-600 text-emerald-600 hover:bg-emerald-600/10" },
+        { action: "pr_request_changes", label: t("Pedir cambios"), tono: "border-border text-ink hover:bg-surface-3" },
+        { action: "pr_reject", label: t("Rechazar"), tono: "border-border text-red-500 hover:bg-red-500/10" },
+      ];
   // Mientras GitHub no conteste no se pintan botones: ofrecer "Aprobar" en un PR ya
   // cerrado sólo sirve para que el clic falle.
   const puedeActuar = st?.connected && st?.actionable;
@@ -7254,16 +7288,29 @@ function PrCard({ pr }: { pr: PrCardData }) {
             .join("  ·  ")}
           {checks ? <span className={checks.cls}>{"  ·  " + checks.txt}</span> : null}
         </p>
-        {pr.verdict ? <p className="mt-2 text-[13px] leading-snug text-ink">{pr.verdict}</p> : null}
+        {/* El veredicto sólo se pinta si la prosa de arriba NO lo dijo ya. El agente suele
+            repetirlo casi literal, y leerlo dos veces seguidas hace que la tarjeta parezca
+            un eco en vez de un pie accionable. Se compara por el arranque, normalizado. */}
+        {pr.verdict && !yaDicho ? <p className="mt-2 text-[13px] leading-snug text-ink">{pr.verdict}</p> : null}
 
         <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
           {resumen ? (
             <span className={`rounded-md border px-2.5 py-1 text-xs font-medium ${resumen.cls}`}>{resumen.txt}</span>
           ) : null}
+          {/* Mergear sólo cuando YA está aprobado y CI no está en rojo. Sin esa compuerta
+              es un pie de bala: un botón de merge junto a un check en rojo se pulsa solo. */}
+          {puedeActuar && st?.approvers?.length && pr.checks !== "failure" ? (
+            <button
+              type="button"
+              disabled={!!busy}
+              onClick={() => act("pr_merge")}
+              className="rounded-md border border-violet-500 bg-violet-500/10 px-2.5 py-1 text-xs font-medium text-violet-500 transition hover:bg-violet-500/20 disabled:opacity-50"
+            >
+              {busy === "pr_merge" ? "…" : t("Mergear")}
+            </button>
+          ) : null}
           {puedeActuar && !resumen
-            ? botones
-                .filter((b) => !(st?.soyElAutor && (b.action === "pr_approve" || b.action === "pr_request_changes")))
-                .map((b) => (
+            ? botones.map((b) => (
                 <button
                   key={b.action}
                   type="button"
@@ -7290,6 +7337,13 @@ function PrCard({ pr }: { pr: PrCardData }) {
         {puedeActuar && !resumen && st?.soyElAutor ? (
           <p className="mt-2 text-[11.5px] text-muted">
             {t("Este PR es tuyo: GitHub no deja aprobar ni pedir cambios en el propio. Que lo revise alguien más del equipo.")}
+          </p>
+        ) : null}
+        {pr.comments.length ? (
+          <p className="mt-2 text-[11.5px] text-muted">
+            {pr.comments.length === 1
+              ? t("Lleva 1 comentario anclado a su línea.")
+              : t("Lleva {n} comentarios anclados a su línea.", { n: String(pr.comments.length) })}
           </p>
         ) : null}
         {err ? <p className="mt-2 text-[11.5px] leading-snug text-red-500">{err}</p> : null}
@@ -8122,7 +8176,7 @@ function MessageRow({
                 // tarjeta es su pie accionable. Al reves se lee como si el PR fuera el
                 // mensaje y la resena un apendice.
                 const pr = extractPr(m.body);
-                return pr ? <PrCard pr={pr} /> : null;
+                return pr ? <PrCard pr={pr} channelId={m.channel_id ?? 0} parentId={m.parent_id ?? m.id} prosa={bubbleWithoutEbDoc(m.body)} /> : null;
               })()}
               {/* El turno sigue vivo aunque ya haya texto: la salida tiene que seguir
                   a la vista (ver TurnLiveFooter). */}
