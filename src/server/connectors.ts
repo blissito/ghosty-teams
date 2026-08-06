@@ -591,21 +591,23 @@ export const taskCardStateFn = createServerFn({ method: "POST" })
     const r = await callTasks(slug, me.sub, pick.board.id, "task_board_read", {});
     if (!r.ok) return null;
     const board = r.result as any;
-    const cols: any[] = board?.columns ?? [];
-    for (const c of cols) {
-      const t = (c?.tasks ?? []).find((x: any) => Number(x?.id) === id);
-      if (!t) continue;
-      const column = String(c?.name ?? "");
-      return {
-        column,
-        assignee: String(t?.assignee ?? t?.assignee_sub ?? ""),
-        // "Done" por NOMBRE es lo mismo que hace `move_task` del otro lado. Un tablero con
-        // la columna renombrada no se marcaría como cerrado — es la contrapartida conocida
-        // de no tener un flag de "columna final" en el esquema.
-        done: column.toLowerCase() === "done",
-        board: pick.board.name,
-        url: boardUrl(slug, pick.board.slug, id),
-      };
-    }
-    return null;
+    // ⚠️ `list_board` devuelve las tareas PLANAS con `column_id`, NO anidadas dentro de cada
+    // columna. Leerlas como `columns[].tasks[]` no encontraba nunca la tarea, así que la
+    // tarjeta se quedaba sin estado y parecía que los botones no hacían nada — cuando sí
+    // movían la tarea en el tablero. Un solo error de forma, dos síntomas y ninguno apunta
+    // a la causa.
+    const t = (board?.tasks ?? []).find((x: any) => Number(x?.id) === id);
+    if (!t) return null;
+    const col = (board?.columns ?? []).find((c: any) => Number(c?.id) === Number(t?.column_id));
+    const column = String(col?.name ?? t?.column ?? "");
+    return {
+      column,
+      assignee: String(t?.assignee ?? t?.assignee_sub ?? ""),
+      // "Done" por NOMBRE es lo mismo que hace `move_task` del otro lado. Un tablero con la
+      // columna renombrada no se marcaría como cerrado — es la contrapartida conocida de no
+      // tener un flag de "columna final" en el esquema.
+      done: column.toLowerCase() === "done",
+      board: pick.board.name,
+      url: boardUrl(slug, pick.board.slug, id),
+    };
   });

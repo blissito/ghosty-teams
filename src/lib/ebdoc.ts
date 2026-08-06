@@ -791,6 +791,11 @@ export function bubbleWithoutEbDoc(
     // bubble); lo que no puede quedarse es el JSON del fence, que Markdown pintaría
     // como un recuadro de código con el número del PR dentro.
     body = stripPr(body);
+    // ⚠️ Y la de tarea, por lo mismo. Olvidarla dejaba el JSON crudo pintado como un
+    // recuadro de código ENCIMA de la tarjeta —que ya dice lo mismo, bonito—, y de paso
+    // metía la URL de la tarea en el cuerpo, así que el chat le colgaba debajo una vista
+    // previa genérica del sitio. Un fence sin `strip` no es medio bug: son tres.
+    body = stripTask(body);
   }
   body = bubbleWithoutEbAudio(body);
   body = bubbleWithoutEbFile(body);

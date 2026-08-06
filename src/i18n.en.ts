@@ -1102,9 +1102,12 @@ export const en: Record<string, string> = {
 
   // Tarjeta de tarea. "Tasks" es el nombre del producto y no se traduce.
   "Abrir en Tasks": "Open in Tasks",
-  "Marcar hecha": "Mark done",
+  // La columna se llama "Done" en los dos idiomas (así nacen los tableros), y el botón la
+  // NOMBRA en vez de decir "Marcar hecha": la primera prueba en vivo no relacionó una cosa
+  // con la otra hasta ver el tablero.
+  'Mover a "Done"': 'Move to "Done"',
   "Asignarme": "Assign to me",
-  "Hecha": "Done",
+  "En Done": "In Done",
 
   // Preexistente, sin traducir hasta hoy.
   "y": "and",

@@ -7648,7 +7648,7 @@ function TaskCard({ task, channelId, parentId }: { task: TaskCardData; channelId
         <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
           {done ? (
             <span className="rounded-md border border-emerald-600 bg-emerald-600/10 px-2.5 py-1 text-xs font-medium text-emerald-600">
-              {t("Hecha")}
+              {t("En Done")}
             </span>
           ) : (
             <>
@@ -7658,7 +7658,7 @@ function TaskCard({ task, channelId, parentId }: { task: TaskCardData; channelId
                 onClick={() => act("task_done")}
                 className="rounded-md border border-emerald-600 px-2.5 py-1 text-xs font-medium text-emerald-600 transition hover:bg-emerald-600/10 disabled:opacity-50"
               >
-                {busy === "task_done" ? "\u2026" : t("Marcar hecha")}
+                {busy === "task_done" ? "\u2026" : t('Mover a "Done"')}
               </button>
               <button
                 type="button"
