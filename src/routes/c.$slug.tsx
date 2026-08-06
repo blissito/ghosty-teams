@@ -2132,6 +2132,12 @@ function ChannelPage() {
    * otro el estado, en redondo.
    */
   useEffect(() => {
+    // Hay un salto de canal en vuelo: este efecto NO puede escribir la ruta con el slug
+    // viejo. Se suelta en cuanto el canal ya es el destino.
+    if (saltandoA.current) {
+      if (channel.slug === saltandoA.current) saltandoA.current = null;
+      return;
+    }
     const quiere = openThreadId != null ? { thread: openThreadId } : openDmId != null ? { dm: openDmId } : {};
     const tiene = search.thread != null ? { thread: search.thread } : search.dm != null ? { dm: search.dm } : {};
     if (quiere.thread === tiene.thread && quiere.dm === tiene.dm) return;
@@ -2274,6 +2280,8 @@ function ChannelPage() {
    * que pertenece el hilo es el que se está mirando, así que llegar a él no es navegar:
    * es apagar TODOS los focos que se le superponen.
    */
+  /** Canal al que se está saltando, para que el sincronizador de la URL no lo pise. */
+  const saltandoA = useRef<string | null>(null);
   const backToRoom = (roomSlug?: string | null) => {
     setView(null);
     setHomeOpen(false);
@@ -2282,7 +2290,14 @@ function ChannelPage() {
     // ⚠️ Un hilo NO siempre pertenece al room que se está mirando: se abre también desde una
     // búsqueda, una mención o el panel de turnos, y entonces apagar los focos te deja en el
     // canal de la ruta. "Volver al room" tiene que llevar al room del HILO.
-    if (roomSlug && roomSlug !== channel.slug) router.navigate({ to: "/c/$slug", params: { slug: roomSlug } });
+    if (roomSlug && roomSlug !== channel.slug) {
+      // ⚠️ Y hay que avisarle al sincronizador de la URL. `setOpenThreadId(null)` lo dispara
+      // en el MISMO ciclo, con `channel.slug` todavía apuntando al canal viejo, así que
+      // reescribía la ruta y deshacía este salto: se veía el nombre correcto en el
+      // encabezado y aun así aterrizabas en el canal anterior.
+      saltandoA.current = roomSlug;
+      router.navigate({ to: "/c/$slug", params: { slug: roomSlug } });
+    }
   };
   const openView = (v: "recent" | "mentions" | "starred") => {
     setOpenThreadId(null);
