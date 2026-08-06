@@ -532,10 +532,26 @@ export const prCardStateFn = createServerFn({ method: "POST" })
  * corre una acción de tablero con la cuenta de quien hace clic, así que un nombre libre
  * dejaría a cualquiera con sesión ejecutar lo que quisiera sobre el tablero.
  */
-const TASK_CARD_ACTIONS = new Set(["task_done", "task_assign_me"]);
+// ⚠️ Cerrar NO es la acción principal, y tenerla como botón único estaba mal por dos
+// motivos. Uno de producto: una tarea recién creada puede tardar semanas, así que ofrecer
+// "Mover a Done" ahí es ruido — Jira y Linear lideran con COMENTAR y ASIGNAR, y la
+// transición va en un selector con los estados reales. Y uno técnico: "Done" iba cableado
+// por nombre, así que un tablero que renombrara la columna se quedaba sin poder cerrar.
+const TASK_CARD_ACTIONS = new Set(["task_comment", "task_assign_me", "task_move"]);
 
 export const runTaskCardActionFn = createServerFn({ method: "POST" })
-  .validator((d: { action: string; id: number; channelId?: number; parentId?: number }) => d)
+  .validator(
+    (d: {
+      action: string;
+      id: number;
+      /** `task_move`: nombre de la columna destino, de las que devuelve el estado. */
+      column?: string;
+      /** `task_comment`: el texto. */
+      body?: string;
+      channelId?: number;
+      parentId?: number;
+    }) => d
+  )
   .handler(async ({ data }) => {
     const me = await sessionUser();
     if (!me) return { ok: false as const, error: "no autenticado" };
@@ -554,10 +570,18 @@ export const runTaskCardActionFn = createServerFn({ method: "POST" })
     const pick = await resolveBoard(data.channelId ?? null);
     if (pick.kind !== "board") return { ok: false as const, error: "este room no tiene un tablero asignado" };
 
-    const r =
-      data.action === "task_done"
-        ? await callTasks(slug, me.sub, pick.board.id, "task_move", { id, column: "Done" })
-        : await callTasks(slug, me.sub, pick.board.id, "task_update", { id, assignee: "yo" });
+    let r;
+    if (data.action === "task_comment") {
+      const body = String(data.body ?? "").trim();
+      if (!body) return { ok: false as const, error: "el comentario está vacío" };
+      r = await callTasks(slug, me.sub, pick.board.id, "task_comment", { id, body });
+    } else if (data.action === "task_move") {
+      const column = String(data.column ?? "").trim();
+      if (!column) return { ok: false as const, error: "falta la columna" };
+      r = await callTasks(slug, me.sub, pick.board.id, "task_move", { id, column });
+    } else {
+      r = await callTasks(slug, me.sub, pick.board.id, "task_update", { id, assignee: "yo" });
+    }
     if (!r.ok) return { ok: false as const, error: r.error };
     await avisaAlCanal(data);
     return { ok: true as const, action: data.action };
@@ -612,5 +636,8 @@ export const taskCardStateFn = createServerFn({ method: "POST" })
       done: column.toLowerCase() === "done",
       board: pick.board.name,
       url: boardUrl(slug, pick.board.slug, id),
+      // Las columnas REALES del tablero, para el selector de estado. Sin esto habría que
+      // adivinar los nombres, que es justo el error que tenía "Done" cableado.
+      columns: (board?.columns ?? []).map((c: any) => String(c?.name ?? "")).filter(Boolean),
     };
   });

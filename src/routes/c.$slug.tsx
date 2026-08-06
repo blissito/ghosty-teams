@@ -7587,6 +7587,8 @@ function TaskCard({ task, channelId, parentId }: { task: TaskCardData; channelId
   const [busy, setBusy] = useState("");
   const [err, setErr] = useState("");
   const [st, setSt] = useState<any>(null);
+  const [comentando, setComentando] = useState(false);
+  const [texto, setTexto] = useState("");
 
   const refresca = useCallback(() => {
     taskCardStateFn({ data: { id: task.id, channelId } })
@@ -7601,13 +7603,13 @@ function TaskCard({ task, channelId, parentId }: { task: TaskCardData; channelId
     },
   });
 
-  const act = async (action: string) => {
+  const act = async (action: string, extra?: { column?: string; body?: string }) => {
     if (busy) return;
     setBusy(action);
     setErr("");
     try {
       const r = await runTaskCardActionFn({
-        data: { action, id: task.id, channelId, parentId: parentId ?? undefined },
+        data: { action, id: task.id, channelId, parentId: parentId ?? undefined, ...extra },
       });
       if (!r.ok) setErr(r.error);
       else refresca();
@@ -7640,40 +7642,55 @@ function TaskCard({ task, channelId, parentId }: { task: TaskCardData; channelId
         {task.priority ? <span className={`ml-auto font-mono text-[11px] ${prio}`}>{task.priority}</span> : null}
       </div>
       <div className="p-3">
-        <p className="text-sm font-semibold leading-snug text-ink">{task.title}</p>
+        {/* Cerrada = tachada, igual que en el tablero. Es lo único que queda del estado
+            "Done" ahora que cerrar dejó de ser un botón: se ve, no se pregona. */}
+        <p className={`text-sm font-semibold leading-snug ${done ? "text-muted line-through" : "text-ink"}`}>
+          {task.title}
+        </p>
         <p className="mt-1 truncate font-mono text-[11.5px] text-muted">
           {[column, assignee ? `@${assignee}` : "", task.due].filter(Boolean).join("  \u00b7  ")}
         </p>
 
+        {/* Los botones siguen a Jira y a Linear, que lideran con COMENTAR y ASIGNAR: eso es
+            lo que pasa muchas veces durante las semanas que una tarea vive. Cerrar pasa una
+            vez y casi nunca desde el chat, así que va dentro del selector de estado y no
+            como la llamada a la acción de una tarea recién creada. */}
         <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
-          {done ? (
-            <span className="rounded-md border border-emerald-600 bg-emerald-600/10 px-2.5 py-1 text-xs font-medium text-emerald-600">
-              {t("En Done")}
-            </span>
-          ) : (
-            <>
-              <button
-                type="button"
-                disabled={!!busy}
-                onClick={() => act("task_done")}
-                className="rounded-md border border-emerald-600 px-2.5 py-1 text-xs font-medium text-emerald-600 transition hover:bg-emerald-600/10 disabled:opacity-50"
-              >
-                {busy === "task_done" ? "\u2026" : t('Mover a "Done"')}
-              </button>
-              {/* Sólo si NO es tuya ya: ofrecérsela a quien la tiene asignada es ruido, y
-                  la primera prueba en vivo tropezó justo ahí. */}
-              {!st?.mine ? (
-                <button
-                  type="button"
-                  disabled={!!busy}
-                  onClick={() => act("task_assign_me")}
-                  className="rounded-md border border-border px-2.5 py-1 text-xs font-medium text-ink transition hover:bg-surface-3 disabled:opacity-50"
-                >
-                  {busy === "task_assign_me" ? "\u2026" : t("Asignarme")}
-                </button>
-              ) : null}
-            </>
-          )}
+          <button
+            type="button"
+            disabled={!!busy}
+            onClick={() => setComentando((v) => !v)}
+            className={`rounded-md border px-2.5 py-1 text-xs font-medium transition disabled:opacity-50 ${comentando ? "border-brand bg-brand/10 text-brand" : "border-brand text-brand hover:bg-brand/10"}`}
+          >
+            {t("Comentar")}
+          </button>
+          {!st?.mine ? (
+            <button
+              type="button"
+              disabled={!!busy}
+              onClick={() => act("task_assign_me")}
+              className="rounded-md border border-border px-2.5 py-1 text-xs font-medium text-ink transition hover:bg-surface-3 disabled:opacity-50"
+            >
+              {busy === "task_assign_me" ? "\u2026" : t("Asignarme")}
+            </button>
+          ) : null}
+          {/* Las columnas REALES del tablero. Antes iba "Done" cableado por nombre, así que
+              un tablero renombrado se quedaba sin poder cerrar. */}
+          {(st?.columns ?? []).length > 1 ? (
+            <select
+              disabled={!!busy}
+              value={column}
+              onChange={(e) => act("task_move", { column: e.target.value })}
+              className="rounded-md border border-border bg-surface px-2 py-1 text-xs font-medium text-ink transition hover:bg-surface-3 disabled:opacity-50"
+              aria-label={t("Estado")}
+            >
+              {(st.columns as string[]).map((c) => (
+                <option key={c} value={c}>
+                  {c}
+                </option>
+              ))}
+            </select>
+          ) : null}
           {url ? (
             <a
               href={url}
@@ -7685,6 +7702,35 @@ function TaskCard({ task, channelId, parentId }: { task: TaskCardData; channelId
             </a>
           ) : null}
         </div>
+        {comentando ? (
+          <div className="mt-2 flex items-start gap-1.5">
+            <textarea
+              autoFocus
+              rows={2}
+              value={texto}
+              onChange={(e) => setTexto(e.target.value)}
+              onKeyDown={(e) => {
+                // Enter envía; Shift+Enter salta de línea. Es lo que ya hace el composer del
+                // chat, y lo que la gente intenta sin pensarlo.
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  const b = texto.trim();
+                  if (b) act("task_comment", { body: b }).then(() => (setTexto(""), setComentando(false)));
+                }
+              }}
+              placeholder={t("Comentario para la tarea…")}
+              className="min-w-0 flex-1 rounded-md border border-border bg-surface px-2 py-1.5 text-[13px] text-ink outline-none placeholder:text-muted focus:border-brand"
+            />
+            <button
+              type="button"
+              disabled={!!busy || !texto.trim()}
+              onClick={() => act("task_comment", { body: texto.trim() }).then(() => (setTexto(""), setComentando(false)))}
+              className="rounded-md border border-brand px-2.5 py-1.5 text-xs font-medium text-brand transition hover:bg-brand/10 disabled:opacity-40"
+            >
+              {busy === "task_comment" ? "\u2026" : t("Enviar")}
+            </button>
+          </div>
+        ) : null}
         {err ? <p className="mt-2 text-[11.5px] leading-snug text-red-500">{err}</p> : null}
       </div>
     </div>

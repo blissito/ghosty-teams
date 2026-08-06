@@ -162,6 +162,11 @@ export async function tasksContext(dest: ToolDest | null): Promise<string | null
     `Cuando alguien acuerde algo que hay que HACER —con dueño o con fecha— ofrécete a crear la ` +
     `tarea; no lo hagas a sus espaldas. Trabajas con la cuenta de quien te habló, así que la ` +
     `tarea aparece a su nombre. ` +
+    // Sin esto el agente escribe "PR #165" como texto plano y quien abre la tarea semanas
+    // después no tiene cómo llegar. La descripción es Markdown y el panel pinta enlaces.
+    `Si la tarea nace de un PR, un issue, un documento o una conversación, mete su LIGA ` +
+    `completa en la descripción como enlace Markdown ([PR #165](https://…)), no sólo el ` +
+    `número: quien la abra dentro de dos semanas necesita llegar de un clic. ` +
     // Sin esto el agente contesta con un párrafo y la tarea queda invisible en el chat.
     `OBLIGATORIO: después de crear o mover una tarea, cierra tu respuesta con un bloque ` +
     "```gt-task" +

@@ -1105,9 +1105,9 @@ export const en: Record<string, string> = {
   // La columna se llama "Done" en los dos idiomas (así nacen los tableros), y el botón la
   // NOMBRA en vez de decir "Marcar hecha": la primera prueba en vivo no relacionó una cosa
   // con la otra hasta ver el tablero.
-  'Mover a "Done"': 'Move to "Done"',
+
   "Asignarme": "Assign to me",
-  "En Done": "In Done",
+  "Comentario para la tarea…": "Comment on the task…",
 
   // Preexistente, sin traducir hasta hoy.
   "y": "and",
