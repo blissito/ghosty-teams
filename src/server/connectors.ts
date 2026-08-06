@@ -379,8 +379,12 @@ export const runCardActionFn = createServerFn({ method: "POST" })
     if (data.action === "pr_merge") {
       const r = (await tool.handler(me.sub, { repo, number })) as Record<string, unknown>;
       if (r?.error) return { ok: false as const, error: String(r.error) };
+      // Mergear CIERRA la tarea que colgaba de este PR. Es el comportamiento de Linear, y es
+      // lo que hace que el tablero no mienta: si alguien tiene que acordarse de mover la
+      // tarjeta a mano, a la tercera semana el tablero ya no refleja nada.
+      const movida = await cierraTareaDelPr(me.sub, repo, number);
       await avisaAlCanal(data);
-      return { ok: true as const, event: "MERGED", url: "" };
+      return { ok: true as const, event: "MERGED", url: "", tarea: movida };
     }
 
     const event =
@@ -430,6 +434,45 @@ export const runCardActionFn = createServerFn({ method: "POST" })
     // El usuario tiene derecho a saber que sus comentarios NO quedaron junto al código.
     return { ok: true as const, event, url: typeof r?.url === "string" ? r.url : "", degradado };
   });
+
+
+/**
+ * Al mergear un PR, mueve a "Done" la tarea que lo tenía colgado y marca la liga.
+ *
+ * Best-effort a propósito: el PR YA se mergeó cuando esto corre, así que un fallo aquí no
+ * puede convertirse en un error de la acción. Devuelve la referencia de la tarea movida, o
+ * null, para poder decirlo en la interfaz.
+ */
+async function cierraTareaDelPr(sub: string, repo: string, number: number): Promise<string | null> {
+  try {
+    const url = `https://github.com/${repo}/pull/${number}`;
+    const { dbq } = await import("../dbq.server");
+    // Teams y Tasks comparten namespace: la liga se busca con un SELECT. Se compara sin
+    // distinguir mayúsculas porque el repo puede venir con otra caja que la guardada.
+    const rows = await dbq(
+      `SELECT l.task_id AS task_id, t.project_id AS project_id
+         FROM task_links l JOIN task_tasks t ON t.id = l.task_id
+        WHERE LOWER(l.url) = LOWER(?) LIMIT 1`,
+      [url]
+    );
+    const taskId = Number(rows[0]?.task_id);
+    const projectId = Number(rows[0]?.project_id);
+    if (!Number.isFinite(taskId) || !Number.isFinite(projectId)) return null;
+
+    await dbq("UPDATE task_links SET state = 'merged', updated_at = unixepoch() WHERE LOWER(url) = LOWER(?)", [url]);
+
+    const { callTasks } = await import("./tasks-bridge.server");
+    const { currentSlug } = await import("./tenant.server");
+    const slug = await currentSlug();
+    if (!slug) return null;
+    // Va por el puente y NO por un UPDATE directo: mover una tarea publica en el bus, deja
+    // bitácora y comprueba permisos. Un UPDATE a pelo se saltaría las tres cosas.
+    const r = await callTasks(slug, sub, projectId, "task_move", { id: taskId, column: "Done" });
+    return r.ok ? `#${taskId}` : null;
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Avisa a las demás pestañas de que este PR cambió, SIN despertar al agente.

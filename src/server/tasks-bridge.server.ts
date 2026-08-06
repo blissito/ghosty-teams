@@ -59,6 +59,8 @@ const BOARD_ACTIONS = new Set([
   "add_checklist_item",
   "add_member",
   "delete_task",
+  "link_task",
+  "unlink_task",
   // Alcance de ESPACIO: no trabajan dentro de un tablero, están por encima. Se piden con
   // `projectId: 0` porque por definición todavía no hay uno.
   "list_boards",
@@ -95,6 +97,8 @@ const NAME_MAP: Record<string, string> = {
   task_checklist_add: "add_checklist_item",
   task_member_add: "add_member",
   task_delete: "delete_task",
+  task_link: "link_task",
+  task_unlink: "unlink_task",
 };
 
 export function toBoardAction(teamsName: string): string | null {

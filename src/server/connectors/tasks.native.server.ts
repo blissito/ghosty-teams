@@ -30,6 +30,8 @@ const EXTRA: Record<string, string> = {
   task_checklist_add: "Añade un punto a la lista de verificación de una tarea.",
   task_member_add: "Da de alta a alguien en el tablero.",
   task_delete: "Archiva una tarea (reversible). Pide confirm:true.",
+  task_link: "Cuelga un PR, un issue o una liga de una tarea. Aparece como chip en el tablero.",
+  task_unlink: "Quita una liga de una tarea.",
 };
 
 const str = (description: string) => ({ type: "string", description });
@@ -164,9 +166,12 @@ export async function tasksContext(dest: ToolDest | null): Promise<string | null
     `tarea aparece a su nombre. ` +
     // Sin esto el agente escribe "PR #165" como texto plano y quien abre la tarea semanas
     // después no tiene cómo llegar. La descripción es Markdown y el panel pinta enlaces.
-    `Si la tarea nace de un PR, un issue, un documento o una conversación, mete su LIGA ` +
-    `completa en la descripción como enlace Markdown ([PR #165](https://…)), no sólo el ` +
-    `número: quien la abra dentro de dos semanas necesita llegar de un clic. ` +
+    // Un chip se ve desde el tablero y deja que la tarea reaccione al PR; una URL dentro
+    // del texto sólo sirve a quien abra la descripción. Es el "development panel" de Jira.
+    `Si la tarea nace de un PR o un issue, cuélgalo con task_link (url, y state si lo sabes) ` +
+    `en vez de dejar el número suelto en el texto. Para un documento o una conversación, la ` +
+    `liga completa en la descripción como enlace Markdown. En los dos casos: quien abra la ` +
+    `tarea dentro de dos semanas tiene que llegar de un clic. ` +
     // Sin esto el agente contesta con un párrafo y la tarea queda invisible en el chat.
     `OBLIGATORIO: después de crear o mover una tarea, cierra tu respuesta con un bloque ` +
     "```gt-task" +

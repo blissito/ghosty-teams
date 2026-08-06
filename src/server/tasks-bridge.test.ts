@@ -44,8 +44,8 @@ describe("la puerta del bucle", () => {
 describe("mapeo de nombres", () => {
   it("cada tool de Teams apunta a una acción real de tablero", () => {
     const names = teamsToolNames();
-    // 10 de tablero + las 2 de espacio (list_boards / create_board).
-    expect(names.length).toBe(12);
+    // 12 de tablero + las 2 de espacio (list_boards / create_board).
+    expect(names.length).toBe(14);
     for (const n of names) {
       const inner = toBoardAction(n);
       expect(inner, n).not.toBeNull();

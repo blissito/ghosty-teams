@@ -1108,6 +1108,7 @@ export const en: Record<string, string> = {
 
   "Asignarme": "Assign to me",
   "Comentario para la tarea…": "Comment on the task…",
+  "Se mergeó y la tarea {ref} pasó a Done.": "Merged, and task {ref} moved to Done.",
 
   // Preexistente, sin traducir hasta hoy.
   "y": "and",

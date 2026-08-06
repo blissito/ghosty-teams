@@ -7741,6 +7741,7 @@ function PrCard({ pr, channelId, parentId, prosa }: { pr: PrCardData; channelId:
   const t = useT();
   const [busy, setBusy] = useState("");
   const [err, setErr] = useState("");
+  const [nota, setNota] = useState("");
   const [st, setSt] = useState<any>(null);
 
   // El estado se pide a GITHUB, no se guarda aquí. Así lo ve todo el equipo —no sólo quien
@@ -7778,6 +7779,12 @@ function PrCard({ pr, channelId, parentId, prosa }: { pr: PrCardData; channelId:
       // Callarlo dejaría creer que los comentarios quedaron junto al código.
       else if ("degradado" in r && r.degradado)
         setErr(t("Se publicó, pero GitHub no aceptó las líneas: los comentarios quedaron en un solo bloque."));
+      // Mergear cierra la tarea que colgaba del PR. Se DICE: mover algo del tablero sin
+      // avisar es la clase de magia que hace desconfiar de la herramienta.
+      else if ("tarea" in r && r.tarea) {
+        setNota(t("Se mergeó y la tarea {ref} pasó a Done.", { ref: String(r.tarea) }));
+        refresca();
+      }
       // ⚠️ NO se manda un mensaje al chat para anunciarlo. La primera versión lo hacía y
       // DESPERTABA AL AGENTE: un turno entero por un clic, justo lo que la acción directa
       // venía a evitar. El estado se relee de GitHub, que es donde vive la verdad.
@@ -7916,6 +7923,7 @@ function PrCard({ pr, channelId, parentId, prosa }: { pr: PrCardData; channelId:
               : t("Lleva {n} comentarios anclados a su línea.", { n: String(pr.comments.length) })}
           </p>
         ) : null}
+        {nota ? <p className="mt-2 text-[11.5px] leading-snug text-violet-500">{nota}</p> : null}
         {err ? <p className="mt-2 text-[11.5px] leading-snug text-red-500">{err}</p> : null}
       </div>
     </div>
