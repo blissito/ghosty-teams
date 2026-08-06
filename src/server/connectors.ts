@@ -630,6 +630,22 @@ export const runTaskCardActionFn = createServerFn({ method: "POST" })
     return { ok: true as const, action: data.action };
   });
 
+
+/** Comentarios y ligas de una tarea. Best-effort: son adorno, no pueden tumbar la tarjeta. */
+async function conteosDeTarea(id: number): Promise<{ comments: number; links: number }> {
+  try {
+    const { dbq } = await import("../dbq.server");
+    const r = await dbq(
+      `SELECT (SELECT COUNT(*) FROM task_comments WHERE task_id = ?) AS c,
+              (SELECT COUNT(*) FROM task_links WHERE task_id = ?) AS l`,
+      [id, id]
+    );
+    return { comments: Number(r[0]?.c ?? 0), links: Number(r[0]?.l ?? 0) };
+  } catch {
+    return { comments: 0, links: 0 };
+  }
+}
+
 /**
  * Estado ACTUAL de una tarea para la tarjeta.
  *
@@ -682,5 +698,9 @@ export const taskCardStateFn = createServerFn({ method: "POST" })
       // Las columnas REALES del tablero, para el selector de estado. Sin esto habría que
       // adivinar los nombres, que es justo el error que tenía "Done" cableado.
       columns: (board?.columns ?? []).map((c: any) => String(c?.name ?? "")).filter(Boolean),
+      // Contador de comentarios y de ligas. Ni Jira ni Linear enseñan los comentarios DENTRO
+      // de la tarjeta del chat —sería un hilo dentro de otro hilo—: confirman la acción y
+      // muestran cuántos hay. `list_board` no los trae, pero la base es la misma.
+      ...(await conteosDeTarea(id)),
     };
   });

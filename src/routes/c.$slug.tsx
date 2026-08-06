@@ -2274,11 +2274,15 @@ function ChannelPage() {
    * que pertenece el hilo es el que se está mirando, así que llegar a él no es navegar:
    * es apagar TODOS los focos que se le superponen.
    */
-  const backToRoom = () => {
+  const backToRoom = (roomSlug?: string | null) => {
     setView(null);
     setHomeOpen(false);
     setOpenDmId(null);
     setOpenThreadId(null);
+    // ⚠️ Un hilo NO siempre pertenece al room que se está mirando: se abre también desde una
+    // búsqueda, una mención o el panel de turnos, y entonces apagar los focos te deja en el
+    // canal de la ruta. "Volver al room" tiene que llevar al room del HILO.
+    if (roomSlug && roomSlug !== channel.slug) router.navigate({ to: "/c/$slug", params: { slug: roomSlug } });
   };
   const openView = (v: "recent" | "mentions" | "starred") => {
     setOpenThreadId(null);
@@ -2797,6 +2801,7 @@ function ChannelPage() {
           typing={typing && typing.parentId === openThreadId ? typing : null}
           onGoToOrigin={goToOrigin}
           onBack={backToRoom}
+          channels={channels}
         />
       ) : (
         <Flow
@@ -6612,6 +6617,7 @@ function ThreadView({
   typing,
   onGoToOrigin,
   onBack,
+  channels,
 }: {
   channel: Channel;
   threadId: number;
@@ -6622,7 +6628,9 @@ function ThreadView({
   onReloaded: (loaded: { sender: string; body: string }[]) => void;
   typing: { name: string } | null;
   onGoToOrigin: (id: number) => void;
-  onBack: () => void;
+  /** Recibe el room del HILO, que no siempre es el que se está mirando. */
+  onBack: (roomSlug: string | null) => void;
+  channels: Channel[];
 }) {
   const t = useT();
   // Cacheado por threadId → reabrir el mismo hilo es instantáneo (sin skeleton).
@@ -6633,6 +6641,11 @@ function ThreadView({
     rev,
     patch
   );
+  // ⚠️ El room del hilo es el del mensaje RAÍZ, no el de la ruta. Un hilo se abre también
+  // desde una búsqueda, una mención o el panel de turnos, y entonces la ruta sigue en otro
+  // canal: el encabezado decía "#general" y "Volver al room" te dejaba ahí. Mientras el
+  // root no ha cargado se usa el de la ruta, que es lo que ya se veía.
+  const suyo = channels.find((c) => c.id === (data?.root as any)?.channel_id) ?? channel;
   const scrollRef = useRef<HTMLDivElement>(null);
   // `replies` SIEMPRE un array: una entrada de cache producida en vivo (realtime crudo)
   // podría traer `replies` no-array → `.length`/`.map` crasheaban el render. Normalizar
@@ -6656,17 +6669,17 @@ function ThreadView({
       <DropOverlay show={dragOver} />
       <header className="flex items-center gap-2 border-b border-border px-3 py-3 md:gap-3 md:px-6">
         <button
-          onClick={onBack}
+          onClick={() => onBack(suyo.slug)}
           title={t("Volver al room")}
           className="grid h-11 w-11 shrink-0 place-items-center rounded-lg text-muted transition hover:bg-surface-3 hover:text-ink md:h-9 md:w-9"
         >
           <ArrowLeft size={18} />
         </button>
-        <RoomIcon name={channel.icon} size={18} className="shrink-0 text-muted" />
+        <RoomIcon name={suyo.icon} size={18} className="shrink-0 text-muted" />
         <div className="min-w-0">
           <h2 className="font-semibold leading-tight text-ink">{t("Hilo")}</h2>
-          <button onClick={onBack} className="truncate text-xs text-muted transition hover:text-brand">
-            {channel.name}
+          <button onClick={() => onBack(suyo.slug)} className="truncate text-xs text-muted transition hover:text-brand">
+            {suyo.name}
           </button>
         </div>
         <div className="ml-auto flex shrink-0 items-center">
@@ -7589,6 +7602,8 @@ function TaskCard({ task, channelId, parentId }: { task: TaskCardData; channelId
   const [st, setSt] = useState<any>(null);
   const [comentando, setComentando] = useState(false);
   const [texto, setTexto] = useState("");
+  // Confirmar la acción es parte del patrón: sin acuse, quien comenta no sabe si salió.
+  const [notaT, setNotaT] = useState("");
 
   const refresca = useCallback(() => {
     taskCardStateFn({ data: { id: task.id, channelId } })
@@ -7701,6 +7716,20 @@ function TaskCard({ task, channelId, parentId }: { task: TaskCardData; channelId
               {t("Abrir en Tasks")}
             </a>
           ) : null}
+          {/* Ni Jira ni Linear enseñan los comentarios DENTRO de la tarjeta —sería un hilo
+              dentro de otro hilo—: muestran cuántos hay y llevan al sitio donde se leen. */}
+          {st?.comments ? (
+            <span className="inline-flex items-center gap-1 text-[11.5px] text-muted">
+              <MessageSquare size={12} />
+              {st.comments}
+            </span>
+          ) : null}
+          {st?.links ? (
+            <span className="inline-flex items-center gap-1 text-[11.5px] text-muted">
+              <GitPullRequest size={12} />
+              {st.links}
+            </span>
+          ) : null}
         </div>
         {comentando ? (
           <div className="mt-2 flex items-start gap-1.5">
@@ -7715,7 +7744,7 @@ function TaskCard({ task, channelId, parentId }: { task: TaskCardData; channelId
                 if (e.key === "Enter" && !e.shiftKey) {
                   e.preventDefault();
                   const b = texto.trim();
-                  if (b) act("task_comment", { body: b }).then(() => (setTexto(""), setComentando(false)));
+                  if (b) act("task_comment", { body: b }).then(() => (setTexto(""), setComentando(false), setNotaT(t("Comentario añadido."))));
                 }
               }}
               placeholder={t("Comentario para la tarea…")}
@@ -7724,13 +7753,14 @@ function TaskCard({ task, channelId, parentId }: { task: TaskCardData; channelId
             <button
               type="button"
               disabled={!!busy || !texto.trim()}
-              onClick={() => act("task_comment", { body: texto.trim() }).then(() => (setTexto(""), setComentando(false)))}
+              onClick={() => act("task_comment", { body: texto.trim() }).then(() => (setTexto(""), setComentando(false), setNotaT(t("Comentario añadido."))))}
               className="rounded-md border border-brand px-2.5 py-1.5 text-xs font-medium text-brand transition hover:bg-brand/10 disabled:opacity-40"
             >
               {busy === "task_comment" ? "\u2026" : t("Enviar")}
             </button>
           </div>
         ) : null}
+        {notaT ? <p className="mt-2 text-[11.5px] text-muted">{notaT}</p> : null}
         {err ? <p className="mt-2 text-[11.5px] leading-snug text-red-500">{err}</p> : null}
       </div>
     </div>

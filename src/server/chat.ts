@@ -116,6 +116,34 @@ async function publishToAudience(
 }
 
 // Menciones disponibles para el typeahead: agentes + usuarios (miembros).
+
+/** ¿El mensaje etiqueta a alguien? (a cualquiera: humano o agente). */
+function mencionaAAlguienMas(body: string): boolean {
+  return /(?<![\w@.])@[a-z0-9._-]{2,}/i.test(body || "");
+}
+
+/**
+ * Handles de agente que YA hablaron en un hilo. Con más de uno, nadie auto-sigue: hay que
+ * decir a quién le hablas.
+ */
+async function agentesDelHilo(parentId: number): Promise<string[]> {
+  try {
+    const db = await import("../db.server");
+    const msgs = await db.listThread(parentId);
+    const set = new Set<string>();
+    for (const m of msgs as { agent_handle?: string | null; sender_sub?: string | null }[]) {
+      // Sólo los mensajes AUTORADOS por un agente: uno de un humano que lo tagueó lleva
+      // `agent_handle` igual, y contarlo haría que taguear a dos agentes una vez bloqueara
+      // el hilo para siempre.
+      if (m.agent_handle && m.sender_sub == null) set.add(m.agent_handle);
+    }
+    return [...set];
+  } catch {
+    // Sin poder saberlo, el default es el comportamiento de antes: auto-seguir.
+    return [];
+  }
+}
+
 export const listMentionsFn = createServerFn({ method: "GET" }).handler(async () => {
   const { resolvedAgents } = await import("../agents.server");
   const users = await import("../users.server");
@@ -702,7 +730,31 @@ export const postMessage = createServerFn({ method: "POST" })
     if (mentionedList.length) {
       const parentFor = data.parentId ?? id; // top-level → abre hilo bajo TU mensaje
       for (const h of mentionedList) respondents.push({ handle: h, parent: parentFor, fleetThread: FLEET_THREAD, shellId: 0 });
-    } else if (data.parentId !== null && parent?.agent_handle && agents.some((a) => a.handle === parent.agent_handle)) {
+    } else if (
+      data.parentId !== null &&
+      parent?.agent_handle &&
+      agents.some((a) => a.handle === parent.agent_handle) &&
+      !mencionaAAlguienMas(body) &&
+      (await agentesDelHilo(data.parentId)).length <= 1
+    ) {
+      // AUTO-SEGUIR dentro de un hilo, y con DOS candados. La regla sale de mirar qué hace
+      // la comunidad, donde el mismo comportamiento tiene dos issues abiertas en direcciones
+      // contrarias:
+      //
+      //   · openclaw #23064 pide auto-seguir: re-@mencionar al bot en cada mensaje de un
+      //     hilo que él mismo abrió es insoportable, y es lo que la gente espera de Slack.
+      //   · hermes-agent #8019 pide lo contrario: seguir respondiendo por haber participado
+      //     ROMPE los flujos multi-agente. Su frase lo resume — "participar en un hilo no es
+      //     lo mismo que ser interpelado".
+      //
+      // Las dos tienen razón, en escenarios distintos. Así que auto-seguir sólo cuando NO
+      // hay ambigüedad posible:
+      //
+      //   1. El mensaje no menciona a nadie más. Etiquetar a un HUMANO en el hilo de un
+      //      agente despertaba al agente, que gastaba un turno entero en decir "ese mensaje
+      //      no es para mí" — acertaba, y aun así costaba dinero y ruido.
+      //   2. En el hilo ha hablado UN solo agente. Con dos, quién contesta lo decide quien
+      //      escribe, no la casualidad de quién abrió el hilo.
       respondents.push({ handle: parent.agent_handle, parent: data.parentId, fleetThread: FLEET_THREAD, shellId: 0 });
     } else if (quoted?.agent_handle && quoted.sender_sub == null && agents.some((a) => a.handle === quoted.agent_handle)) {
       // Citar el mensaje ESCRITO POR un agente (sin re-@mención) = responderle → ese agente
