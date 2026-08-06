@@ -79,7 +79,7 @@ function PeerAvatar({ peer }: { peer: Peer }) {
   return (
     <div
       title={`${peer.name}${peer.isSelf ? " (tú)" : ""}`}
-      className="relative -ml-2 size-7 shrink-0 rounded-full ring-2 ring-white transition-transform duration-200 ease-out first:ml-0 hover:z-10 hover:-translate-y-0.5"
+      className="relative -ml-2 size-7 shrink-0 rounded-full ring-2 ring-surface transition-transform duration-200 ease-out first:ml-0 hover:z-10 hover:-translate-y-0.5"
       style={{ backgroundColor: peer.color }}
     >
       {peer.avatar ? (
@@ -96,8 +96,8 @@ function PeerAvatar({ peer }: { peer: Peer }) {
       )}
       {/* Punto de estado: el agente se distingue por su anillo oscuro. */}
       <span
-        className={`absolute -bottom-0.5 -right-0.5 size-2.5 rounded-full ring-2 ring-white ${
-          peer.isAgent ? "bg-neutral-900" : "bg-green-500"
+        className={`absolute -bottom-0.5 -right-0.5 size-2.5 rounded-full ring-2 ring-surface ${
+          peer.isAgent ? "bg-ink" : "bg-green-500"
         }`}
       />
     </div>
@@ -120,7 +120,7 @@ function PresenceRail({ peers }: { peers: Peer[] }) {
             .slice(MAX)
             .map((p) => p.name)
             .join(", ")}
-          className="-ml-2 grid size-7 shrink-0 place-items-center rounded-full bg-neutral-200 text-[11px] font-semibold text-neutral-600 ring-2 ring-white"
+          className="-ml-2 grid size-7 shrink-0 place-items-center rounded-full bg-surface-3 text-[11px] font-semibold text-muted ring-2 ring-surface"
         >
           +{rest}
         </div>
@@ -476,8 +476,13 @@ export default function CollabEditor({
   const [asideEl, setAsideEl] = useState<HTMLElement | null>(null);
 
   return (
-    <div className="flex h-full flex-col bg-[#f3f3f5]">
-      <header className="sticky top-0 z-10 flex items-center gap-2 border-b border-neutral-200 bg-white/90 px-4 py-2 backdrop-blur">
+    // ⚠️ PAPEL vs CROMO. Todo lo de este componente va con los tokens del tema
+    // (`bg-surface*`, `text-ink/muted`, `border-border`) — es cromo de la app. Lo ÚNICO
+    // que se queda en blanco fijo es la HOJA de más abajo (`data-gt-hoja`): eso es papel,
+    // y un documento no cambia de color porque alguien elija tema oscuro. Confundir las
+    // dos es lo que dejaba esta pantalla gris de sistema mientras el resto seguía al tema.
+    <div className="flex h-full flex-col bg-surface-2">
+      <header className="sticky top-0 z-10 flex items-center gap-2 border-b border-border bg-surface/90 px-4 py-2 backdrop-blur">
         <span
           className={`inline-block size-2 rounded-full ${
             status === "connected"
@@ -487,7 +492,7 @@ export default function CollabEditor({
                 : "bg-red-500"
           }`}
         />
-        <span className="text-xs font-medium text-neutral-500">
+        <span className="text-xs font-medium text-muted">
           {status === "connected"
             ? "Co-edición en vivo"
             : status === "connecting"
@@ -504,8 +509,8 @@ export default function CollabEditor({
             title={sidebar ? "Ocultar comentarios" : "Mostrar comentarios"}
             className={`flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium transition ${
               sidebar
-                ? "bg-neutral-900 text-white"
-                : "text-neutral-500 hover:bg-neutral-100 hover:text-neutral-800"
+                ? "bg-ink text-surface"
+                : "text-muted hover:bg-surface-3 hover:text-ink"
             }`}
           >
             <MessageSquare size={14} />
@@ -541,12 +546,12 @@ export default function CollabEditor({
           </div>
         </div>
         {sidebar && (
-          <aside className="thin-scroll w-[380px] shrink-0 overflow-y-auto overflow-x-hidden border-l border-neutral-200 bg-white px-3 py-4">
-            <p className="px-1 pb-2 text-xs font-semibold uppercase tracking-wide text-neutral-400">
+          <aside className="thin-scroll w-[380px] shrink-0 overflow-y-auto overflow-x-hidden border-l border-border bg-surface px-3 py-4">
+            <p className="px-1 pb-2 text-xs font-semibold uppercase tracking-wide text-muted">
               {t("Comentarios")}
             </p>
             {abiertos === 0 && (
-              <p className="px-1 text-xs leading-relaxed text-neutral-400">
+              <p className="px-1 text-xs leading-relaxed text-muted">
                 {t("Selecciona texto y usa el botón de comentario para abrir un hilo.")}
               </p>
             )}

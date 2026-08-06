@@ -11,7 +11,7 @@ const CollabEditor = lazy(() => import("./CollabEditor"));
 function Spinner({ label }: { label: string }) {
   return (
     <div className="grid h-full place-items-center bg-[#f3f3f5]">
-      <div className="flex flex-col items-center gap-3 text-neutral-400">
+      <div className="flex flex-col items-center gap-3 text-muted">
         <Loader2 size={22} className="animate-spin" />
         <p className="text-sm">{label}</p>
       </div>
@@ -55,10 +55,10 @@ export default function CollabArtifact({
 
   if (error) {
     return (
-      <div className="grid h-full place-items-center bg-[#f3f3f5] p-6 text-center text-sm text-neutral-500">
+      <div className="grid h-full place-items-center bg-surface-2 p-6 text-center text-sm text-muted">
         {t("No se pudo conectar a la co-edición.")}
         <br />
-        <span className="text-xs text-neutral-400">{error}</span>
+        <span className="text-xs text-muted">{error}</span>
       </div>
     );
   }
