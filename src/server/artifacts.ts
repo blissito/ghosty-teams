@@ -53,7 +53,10 @@ export async function publishArtifactVersion(args: {
    * transformador de DOM. Por defecto `true`: el camino del agente no cambia.
    */
   stamp?: boolean;
-}): Promise<{ md: string; src: string | null }> {
+  // `versionId` es la fila que se acaba de INSERTar. El editor la fija para que leer en
+  // voz alta / revisar la ortografía miren la versión que él tiene pintada y no "la
+  // última" — que en un hilo con dos documentos es el OTRO documento.
+}): Promise<{ md: string; src: string | null; versionId: number }> {
   const db = await import("../db.server");
   const t0 = performance.now();
 
@@ -139,7 +142,7 @@ export async function publishArtifactVersion(args: {
     }
   }
 
-  await db.createArtifact(args.messageId, {
+  const versionId = await db.createArtifact(args.messageId, {
     kind: args.kind,
     url: args.documentId,
     title: args.title,
@@ -181,7 +184,7 @@ export async function publishArtifactVersion(args: {
   console.log(
     `[artifact publish] kind=${args.kind} ${Math.round(performance.now() - t0)}ms html=${md.length}b src=${src ? "sí" : "no"}`
   );
-  return { md, src };
+  return { md, src, versionId };
 }
 
 /**
@@ -543,10 +546,10 @@ export const updateDocBlocksFn = createServerFn({ method: "POST" })
       const { serializeDocEnvelope } = await import("../lib/doc-blocks");
       await db.overwriteArtifactMd(ultima.id, serializeDocEnvelope({ blocks, humanEdited: true }));
       await avisar();
-      return { ok: true as const };
+      return { ok: true as const, versionId: ultima.id };
     }
 
-    await publishArtifactVersion({
+    const { versionId } = await publishArtifactVersion({
       messageId,
       documentId: data.documentId,
       kind: "doc",
@@ -564,7 +567,10 @@ export const updateDocBlocksFn = createServerFn({ method: "POST" })
       },
       notify: () => void avisar(),
     });
-    return { ok: true as const };
+    // El id se toma de lo que devolvió el INSERT, NUNCA de un `latestDocVersion` posterior:
+    // una publicación concurrente devolvería la fila de otro y el editor se fijaría a un
+    // documento que no está mirando — justo el bug que esto viene a cerrar.
+    return { ok: true as const, versionId };
   });
 
 export const updateArtifactHtmlFn = createServerFn({ method: "POST" })

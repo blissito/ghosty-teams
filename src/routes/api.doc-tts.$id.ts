@@ -89,6 +89,10 @@ export const Route = createFileRoute("/api/doc-tts/$id")({
             "X-Duration-Ms": String(audio.durMs),
             "X-Seg-Count": String(segs.length),
             "X-Seg-Index": sRaw === null ? "" : String(Number(sRaw)),
+            // Qué versión sonó DE VERDAD: `resolveExportDoc` cae a la última en silencio
+            // cuando el `?v` pedido no resuelve, y ese silencio es lo que escondió que se
+            // estuviera leyendo el otro documento del hilo.
+            "X-Doc-Version": String(doc.versionId),
             // `private`: un documento puede ser un expediente y esto es su contenido leído
             // en voz alta. El caché de verdad vive en el servidor, llaveado por contenido.
             "Cache-Control": "private, max-age=300",

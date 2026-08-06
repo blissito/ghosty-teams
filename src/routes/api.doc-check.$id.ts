@@ -90,6 +90,10 @@ export const Route = createFileRoute("/api/doc-check/$id")({
           status: 200,
           headers: {
             "Content-Type": "application/x-ndjson; charset=utf-8",
+            // Qué versión se revisó DE VERDAD. `resolveExportDoc` cae a la última en
+            // silencio cuando el `?v` pedido no resuelve, y ese silencio es lo que escondió
+            // durante semanas que se leía y se revisaba el documento equivocado.
+            "X-Doc-Version": String(doc.versionId),
             // El contenido de un documento privado no se cachea en ningún intermediario.
             "Cache-Control": "private, no-store",
           },

@@ -454,10 +454,13 @@ export async function createArtifact(
      */
     authors?: string[] | null;
   }
-): Promise<void> {
-  await dbq(
+  // El id de la fila recién insertada. Es lo que deja al editor FIJAR la versión que
+  // acaba de escribir: sin él, leer en voz alta o revisar la ortografía tenían que pedir
+  // "la última", y en un hilo con dos documentos la última es el OTRO documento.
+): Promise<number> {
+  const rows = await dbq(
     `INSERT INTO gc_artifacts (message_id, kind, url, title, md, src, owner_sub, authors)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
     [
       messageId,
       a.kind,
@@ -469,6 +472,7 @@ export async function createArtifact(
       a.authors?.length ? JSON.stringify(a.authors) : null,
     ]
   );
+  return num(rows[0]?.id);
 }
 
 // ── Compartir: la RAÍZ del documento ────────────────────────────────────────────
@@ -1449,6 +1453,7 @@ export async function updateChannel(
 export async function deleteChannel(id: number): Promise<void> {
   await dbq("DELETE FROM gc_messages WHERE channel_id = ?", [id]);
   await dbq("DELETE FROM gc_channel_members WHERE channel_id = ?", [id]);
+  await dbq("DELETE FROM gt_room_repos WHERE channel_id = ?", [id]);
   await dbq("DELETE FROM gc_channels WHERE id = ?", [id]);
 }
 
@@ -1466,6 +1471,73 @@ export async function addChannelMember(channelId: number, userSub: string): Prom
 
 export async function removeChannelMember(channelId: number, userSub: string): Promise<void> {
   await dbq("DELETE FROM gc_channel_members WHERE channel_id = ? AND user_sub = ?", [channelId, userSub]);
+}
+
+// ── Repos del room ──
+// Los repos que un room declara suyos. Es la frontera del conector de GitHub: el agente
+// sólo ve éstos, y en un room sin ninguno no ve ninguno. Ver gt_room_repos en
+// server/schema.server.ts para el porqué.
+
+export type RoomRepo = { repo: string; connectedBy: string; createdAt: number };
+
+export async function listRoomRepos(channelId: number): Promise<RoomRepo[]> {
+  const rows = await dbq(
+    "SELECT repo, connected_by, created_at FROM gt_room_repos WHERE channel_id = ? ORDER BY created_at",
+    [channelId]
+  );
+  return rows.map((r) => ({
+    repo: String(r.repo),
+    connectedBy: String(r.connected_by),
+    createdAt: Number(r.created_at ?? 0),
+  }));
+}
+
+export async function addRoomRepo(channelId: number, repo: string, sub: string): Promise<void> {
+  await dbq(
+    "INSERT INTO gt_room_repos (channel_id, repo, connected_by) VALUES (?, ?, ?) ON CONFLICT DO NOTHING",
+    [channelId, repo, sub]
+  );
+}
+
+// El match es case-insensitive porque GitHub trata "Blissito/GS" y "blissito/gs" como el
+// mismo repo: guardarlo con la caja que el usuario tecleó y borrarlo exigiéndola sería
+// dejar filas que nadie puede quitar desde la UI.
+export async function removeRoomRepo(channelId: number, repo: string): Promise<void> {
+  await dbq("DELETE FROM gt_room_repos WHERE channel_id = ? AND LOWER(repo) = LOWER(?)", [
+    channelId,
+    repo,
+  ]);
+}
+
+// Para la card del home: un repo por fila con los rooms donde está conectado. Se agrupa por
+// repo en minúsculas (mismo motivo que arriba) pero se enseña la caja original.
+//
+// ⚠️ Mismo filtro de visibilidad que `listChannels`, y no es opcional: el nombre de un repo
+// dice en qué anda un room privado. Sin esto, la card del home lo cuenta a todo el
+// workspace.
+export async function listWorkspaceRoomRepos(
+  userSub: string,
+  isOwner: boolean
+): Promise<{ repo: string; rooms: { id: number; slug: string; name: string }[] }[]> {
+  const rows = await dbq(
+    `SELECT r.repo AS repo, c.id AS id, c.slug AS slug, c.name AS name
+       FROM gt_room_repos r
+       JOIN gc_channels c ON c.id = r.channel_id
+      WHERE COALESCE(c.archived, 0) = 0
+        AND (c.is_private = 0 OR ? = 1
+         OR c.id IN (SELECT channel_id FROM gc_channel_members WHERE user_sub = ?))
+      ORDER BY r.created_at`,
+    [isOwner ? 1 : 0, userSub]
+  );
+  const byRepo = new Map<string, { repo: string; rooms: { id: number; slug: string; name: string }[] }>();
+  for (const r of rows) {
+    const repo = String(r.repo);
+    const key = repo.toLowerCase();
+    let entry = byRepo.get(key);
+    if (!entry) byRepo.set(key, (entry = { repo, rooms: [] }));
+    entry.rooms.push({ id: Number(r.id), slug: String(r.slug), name: String(r.name) });
+  }
+  return [...byRepo.values()];
 }
 
 export async function getUserSubByEmail(email: string): Promise<string | null> {

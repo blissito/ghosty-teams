@@ -399,6 +399,11 @@ export default function ArtifactPanel({
   // Estado del autoguardado del documento, para pintarlo EN LA BARRA — junto a los iconos,
   // que es donde lo ponen Google Docs y Word y donde la gente lo busca. Lo sube DocSurface.
   const [guardadoDoc, setGuardadoDoc] = useState<"pendiente" | "guardando" | "ok" | "error" | null>(null);
+  // La fila que el editor tiene pintada. Empieza siendo la del mensaje que abriste y la
+  // mueve cada guardado (lo sube DocSurface). La descarga la usa para bajar EXACTAMENTE
+  // lo que se ve: sin esto, con dos documentos en el hilo, el .docx del penúltimo era el
+  // último.
+  const [versionDoc, setVersionDoc] = useState<string | number | null>(null);
   // Link ÚNICO del artefacto: su página /artefacto/<slug>. Se resuelve al abrir un
   // artefacto (acuña el slug si aún no tenía, sin tocar los permisos) para que
   // "abrir" y "copiar enlace" nunca vuelvan a repartir el /t3/<key> crudo.
@@ -614,10 +619,13 @@ export default function ArtifactPanel({
   // La descarga lleva la VERSIÓN que el panel está enseñando, igual que el enlace
   // compartible: el panel no siempre muestra la última, y bajar otra cosa de la que se ve
   // en pantalla se lee como un bug.
-  const verParam =
-    artifact?.kind === "artifact" && artifact.versionId
-      ? `&v=${artifact.versionId}`
-      : "";
+  // ⚠️ Esto estaba capado a `kind === "artifact"` y sólo se usa en los hrefs de
+  // doc/sheet/pdf, o sea que SIEMPRE quedaba vacío: la descarga de un documento nunca
+  // llevó versión, en contra de lo que dice el comentario de arriba.
+  const vActual =
+    (artifact?.kind === "doc" ? versionDoc : null) ??
+    (artifact && "versionId" in artifact ? artifact.versionId : null);
+  const verParam = vActual ? `&v=${vActual}` : "";
   const downloadHref =
     artifact?.kind === "doc"
       ? `/api/doc-docx/${encodeURIComponent(artifact.documentId)}?name=${encodeURIComponent(artifact.title || "documento")}${verParam}`
@@ -655,6 +663,10 @@ export default function ArtifactPanel({
     setOfficeState("idle");
     setSheetCsv(null);
     setSheetState("idle");
+    // Y el pin de versión: es de ESE documento. Arrastrarlo al siguiente haría que la
+    // descarga pidiera una fila de otro documento (que caería a "la última", o sea al bug
+    // de vuelta).
+    setVersionDoc(null);
   }, [artifactId]);
   // Al abrir/cerrar un artefacto NUEVO desde afuera (rootArtifact cambia), sal del detalle.
   // Seleccionar en el índice (setDetail) NO cambia rootArtifact → el detalle persiste.
@@ -1962,6 +1974,7 @@ export default function ArtifactPanel({
                         patchRefs={artifact.patchRefs}
                         version={artifact.versionId}
                         onGuardado={setGuardadoDoc}
+                        onVersion={setVersionDoc}
                         cerrando={cerrando}
                       />
                     ) : artifact.kind === "artifact" ? (

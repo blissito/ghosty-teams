@@ -140,7 +140,7 @@ export default function DocEditor({
   guardado,
   guardarYa,
   documentId,
-  version,
+  getVersion,
   cerrando,
 }: {
   /** La verdad, ya en bloques (documento publicado con sobre `v:1`). */
@@ -178,14 +178,19 @@ export default function DocEditor({
    * un párrafo y darle a la bocina reproduce el texto ANTERIOR —el que todavía está en la
    * base— y desde fuera parece un caché que no se invalida.
    */
-  guardarYa?: () => Promise<void>;
+  guardarYa?: () => Promise<number | null>;
   /**
    * El documento, para pedirle su voz al servidor. Sin él no hay "leer en voz alta": un
    * borrador en vivo todavía no es una fila, así que no hay de dónde sacar el audio.
    */
   documentId?: string;
-  /** La versión que se está MIRANDO (`?v`): se lee lo mismo que se ve. */
-  version?: string | number | null;
+  /**
+   * La fila que el editor tiene pintada AHORA. Es un getter, no un valor: `leerDesde`
+   * hace `await guardarYa()` —que puede mover el pin a la fila recién escrita— y pide el
+   * audio en la línea siguiente, sin que haya habido un re-render en medio. Ver el pin en
+   * `DocSurface`.
+   */
+  getVersion?: () => string | number | null;
   /**
    * El panel se está cerrando.
    *
@@ -585,24 +590,22 @@ export default function DocEditor({
   );
 
   /**
-   * ⚠️ La versión que se revisa (y que se lee en voz alta) NO puede ser la del mensaje
-   * cuando el documento es editable.
+   * ⚠️ **Lo que se lee y se revisa es LA FILA QUE ESTE EDITOR TIENE PINTADA**, ni "la
+   * última" ni la del mensaje.
    *
-   * `version` es la fila que abriste; en cuanto guardas una edición, el documento vivo es
-   * OTRA fila — y sus bloques llevan uuid distintos. Pidiendo la vieja, el servidor
-   * devolvía hallazgos con `blockId` que en el editor no existen: no se encontraba el
-   * nodo, así que ni se subrayaba ni se saltaba al párrafo. Se veía como "no destaca",
-   * que es justo lo que no deja adivinar la causa.
+   * Aquí vivía `versionVigente = editable ? null : version`, y `null` significa "la
+   * última" para el servidor. Nació para un problema real —tras guardar, el documento
+   * vivo es OTRA fila con uuid de bloque distintos, y fijar la vieja devolvía hallazgos
+   * con `blockId` que en el editor no existen— pero cambiaba una falla por otra peor: un
+   * segundo ```eb-doc``` del mismo hilo nace como versión del primero, así que "la
+   * última" era el OTRO documento. Abrir el penúltimo y darle play leía el último.
    *
-   * Editando se mira SIEMPRE la viva (que es lo que el editor tiene, y lo que
-   * `guardarYa` acaba de dejar escrito). La versión fijada sólo manda en sólo-lectura,
-   * que es cuando de verdad estás viendo una versión antigua.
+   * Hoy el pin lo mueve `DocSurface` en los dos momentos en que cambia lo pintado (un
+   * guardado, una republicación del agente), así que ya no hay que elegir entre las dos.
    */
-  const versionVigente = editable ? null : version;
-
   const voz = useReadAloud({
     documentId,
-    version: versionVigente,
+    getVersion,
     bloques: bloquesActuales,
     alBloque: marcarLectura,
     alTerminar: finLectura,
@@ -636,7 +639,7 @@ export default function DocEditor({
   // la vez (un documento largo trae decenas), son de PALABRA y no de bloque, y viven
   // mientras dure la revisión en vez de desvanecerse. Mezclarlas en `marcarIndices` habría
   // significado tocar dos cosas que ya funcionan.
-  const revision = useDocReview({ documentId, version: versionVigente, bloques: bloquesActuales });
+  const revision = useDocReview({ documentId, getVersion, bloques: bloquesActuales });
 
   /**
    * Revisar guarda primero, por lo mismo que la lectura en voz alta: el corrector mira el

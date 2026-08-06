@@ -52,6 +52,7 @@ export default function DocSurface({
   title,
   patchRefs,
   version,
+  onVersion,
   onGuardado,
   cerrando,
 }: {
@@ -64,8 +65,16 @@ export default function DocSurface({
   title?: string;
   /** Alias del patch en curso → el editor marca ya, sin esperar la republicación. */
   patchRefs?: string[];
-  /** La versión que enseña el panel (`?v`). Sin ella se lee la viva, que es lo que se ve. */
+  /**
+   * La fila de `gc_artifacts` que enseña el panel — la del MENSAJE que abriste. Es la
+   * semilla del pin: a partir de ahí lo mueve `flush`, no el prop.
+   */
   version?: string | number | null;
+  /**
+   * El pin se movió (un guardado escribió otra fila). Lo necesita el panel para que la
+   * descarga .docx/PDF baje la misma versión que se está leyendo en pantalla.
+   */
+  onVersion?: (id: string | number | null) => void;
   /**
    * El estado del guardado, hacia arriba, para que el panel lo pinte EN SU BARRA.
    *
@@ -144,25 +153,57 @@ export default function DocSurface({
     onGuardado?.(guardado);
   }, [guardado, onGuardado]);
 
+  // ── El PIN de versión ───────────────────────────────────────────────────────
+  //
+  // Qué fila de `gc_artifacts` tiene pintada el editor AHORA MISMO. Lo consultan el
+  // "leer en voz alta" y el corrector, que sintetizan y revisan en el SERVIDOR: sin pin
+  // pedían "la última", y como un segundo ```eb-doc``` del mismo hilo nace como versión
+  // del primero (`isSameDocument`), "la última" es el OTRO documento. Abrías el
+  // penúltimo, dabas play, y sonaba el último.
+  //
+  // Arranca en la fila del mensaje que abriste y se mueve en dos casos, que son los dos
+  // en los que cambia lo que el editor está mostrando:
+  //   · guardas → `flush` lo apunta a la fila que acaba de escribir;
+  //   · el agente republica → el `refresh` del bus trae un `version` nuevo por prop.
+  // Es un ref y no estado porque `leerDesde` pide el audio en la línea siguiente al
+  // `await guardarYa()`, sin commit de React en medio.
+  const versionRef = useRef<string | number | null>(version ?? null);
+  const versionProp = useRef(version);
+  if (version !== versionProp.current) {
+    versionProp.current = version;
+    versionRef.current = version ?? null;
+  }
+  // Estable de por vida: los hooks lo llaman al PEDIR, no al renderizar.
+  const getVersion = useCallback(() => versionRef.current, []);
+
   // Devuelve la promesa del guardado: el "leer en voz alta" la espera. El audio lo
   // sintetiza el SERVIDOR desde el documento guardado, así que darle a la bocina con una
   // edición aún en el debounce leía en voz alta el texto anterior — el usuario cambiaba
   // una frase, la escuchaba, y oía la vieja.
-  const flush = useCallback((): Promise<void> => {
+  const flush = useCallback((): Promise<number | null> => {
     const blocks = pending.current;
-    if (!blocks || !documentId) return Promise.resolve();
+    if (!blocks || !documentId) return Promise.resolve(null);
     pending.current = null;
     lastSaved.current = Date.now();
     setGuardado("guardando");
     return updateDocBlocksFn({ data: { documentId, blocks, messageId, title } })
-      .then(() => {
+      .then((r) => {
         setGuardado("ok");
+        // El pin se mueve a la fila que este guardado dejó escrita. Va a un REF y no a
+        // estado a propósito: `leerDesde` hace `await guardarYa()` y en la línea siguiente
+        // pide el audio, sin que haya habido un commit de React en medio.
+        const v = (r as { versionId?: number } | undefined)?.versionId ?? null;
+        if (v != null) {
+          versionRef.current = v;
+          onVersion?.(v);
+        }
         // El eco del bus llega poco DESPUÉS del guardado, así que la congelación tiene que
         // sobrevivirle un momento: soltarla al terminar dejaría entrar justo el `refresh`
         // que este guardado provocó.
         setTimeout(() => congelar(false), 1500);
         // Se va solo: un "Guardado" permanente deja de comunicar a los diez segundos.
         setTimeout(() => setGuardado((s) => (s === "ok" ? null : s)), 2600);
+        return v;
       })
       .catch((e) => {
         console.error("[doc] no se pudo guardar", e);
@@ -170,8 +211,12 @@ export default function DocSurface({
         setGuardado("error");
         // Y NO se descongela: si el guardado falló, lo del servidor es más viejo que lo que
         // hay en pantalla. Dejarlo entrar borraría el texto que no se pudo guardar.
+        //
+        // Y NO se mueve el pin: un guardado fallido no escribió ninguna fila nueva, así
+        // que la versión que el editor tiene pintada sigue siendo la de antes.
+        return null;
       });
-  }, [documentId, messageId, title, congelar]);
+  }, [documentId, messageId, title, congelar, onVersion]);
 
   const onChange = useCallback(
     (blocks: DocBlock[]) => {
@@ -250,7 +295,7 @@ export default function DocSurface({
         // Para el "leer en voz alta": el audio lo sintetiza el servidor desde ESTE
         // documento y ESTA versión, no desde el texto que tenga el cliente.
         documentId={documentId}
-        version={version}
+        getVersion={getVersion}
       />
     </Suspense>
   );

@@ -14,6 +14,7 @@
 import { useCallback, useRef, useState } from "react";
 import { blockText, type DocBlock } from "./doc-blocks";
 import { firmaTexto } from "./doc-firma";
+import { avisarVersion } from "./doc-version";
 
 export type EstadoRevision = "parado" | "revisando" | "listo";
 
@@ -35,7 +36,12 @@ export type Hallazgo = {
 
 type Opts = {
   documentId?: string;
-  version?: string | number | null;
+  /**
+   * La fila que el editor tiene pintada AHORA. Getter y no valor: se consulta al PEDIR,
+   * porque `guardarYa()` puede haberla movido en la línea de arriba. Sin él, el servidor
+   * resuelve "la última" — que en un hilo con dos documentos es el OTRO documento.
+   */
+  getVersion?: () => string | number | null;
   /** Los bloques del editor, en su árbol completo. */
   bloques: () => DocBlock[];
 };
@@ -89,7 +95,7 @@ function guardarIgnoradas(s: Set<string>) {
   }
 }
 
-export function useDocReview({ documentId, version, bloques }: Opts) {
+export function useDocReview({ documentId, getVersion, bloques }: Opts) {
   const [hallazgos, setHallazgos] = useState<Hallazgo[]>([]);
   const [actual, setActual] = useState(0);
   const [estado, setEstado] = useState<EstadoRevision>("parado");
@@ -149,7 +155,8 @@ export function useDocReview({ documentId, version, bloques }: Opts) {
       if (!silenciosa) setRevisando(true);
 
       const q = new URLSearchParams();
-      if (version != null && version !== "") q.set("v", String(version));
+      const v = getVersion?.();
+      if (v != null && v !== "") q.set("v", String(v));
       const encontrados: Hallazgo[] = [];
       // Fuera del try para poder cancelarlo pase lo que pase: al superarse la generación
       // (el usuario siguió escribiendo) este bucle ROMPE con el NDJSON a medias, y un
@@ -158,6 +165,7 @@ export function useDocReview({ documentId, version, bloques }: Opts) {
       let lector: ReadableStreamDefaultReader<Uint8Array> | null = null;
       try {
         const r = await fetch(`/api/doc-check/${documentId}?${q}`);
+        avisarVersion(r, v);
         if (!r.ok || !r.body) throw new Error(`check ${r.status}`);
         lector = r.body.getReader();
         const dec = new TextDecoder();
@@ -222,7 +230,7 @@ export function useDocReview({ documentId, version, bloques }: Opts) {
       setActual(0);
       setEstado("listo");
     },
-    [documentId, version, bloques],
+    [documentId, getVersion, bloques],
   );
 
   /**

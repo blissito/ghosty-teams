@@ -22,6 +22,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { blockText, type DocBlock } from "./doc-blocks";
 import { partirEnFrases } from "./tts-split";
 import { firmaTexto as firma } from "./doc-firma";
+import { avisarVersion } from "./doc-version";
 
 export type EstadoLectura = "parado" | "cargando" | "leyendo" | "pausa";
 
@@ -65,8 +66,12 @@ const PRESUPUESTO_BYTES = 120 * 1024 * 1024;
 
 type Opts = {
   documentId?: string;
-  /** La versión que se está MIRANDO (`?v`), para leer lo mismo que se ve. */
-  version?: string | number | null;
+  /**
+   * La fila que el editor tiene pintada AHORA. Getter y no valor: se consulta al PEDIR,
+   * porque `guardarYa()` puede haberla movido en la línea de arriba. Sin él, el servidor
+   * resuelve "la última" — que en un hilo con dos documentos es el OTRO documento.
+   */
+  getVersion?: () => string | number | null;
   /** Los bloques del editor, en el mismo orden que indexa el servidor. */
   bloques: () => DocBlock[];
   /** Empieza a sonar el bloque `i`: resáltalo y llévame ahí. */
@@ -75,7 +80,7 @@ type Opts = {
   alTerminar: () => void;
 };
 
-export function useReadAloud({ documentId, version, bloques, alBloque, alTerminar }: Opts) {
+export function useReadAloud({ documentId, getVersion, bloques, alBloque, alTerminar }: Opts) {
   const [estado, setEstado] = useState<EstadoLectura>("parado");
   const [velocidad, setVelocidad] = useState(1);
   const [error, setError] = useState<string | null>(null);
@@ -119,10 +124,11 @@ export function useReadAloud({ documentId, version, bloques, alBloque, alTermina
       // caché el audio del párrafo anterior durante cinco minutos, y editar una frase no
       // se notaba al escucharla.
       const q = new URLSearchParams({ i: String(g.b), s: String(g.s), h: g.h });
-      if (version != null && version !== "") q.set("v", String(version));
+      const v = getVersion?.();
+      if (v != null && v !== "") q.set("v", String(v));
       return `/api/doc-tts/${documentId}?${q}`;
     },
-    [documentId, version],
+    [documentId, getVersion],
   );
 
   /**
@@ -158,6 +164,7 @@ export function useReadAloud({ documentId, version, bloques, alBloque, alTermina
       const p = fetch(url(g))
         .then(async (r) => {
           const n = Number(r.headers.get("X-Seg-Count"));
+          avisarVersion(r, getVersion?.());
           // 204 = el bloque no tenía texto que leer. No es un error: se salta.
           if (r.status === 204) return null;
           // 404 = ese bloque tiene menos frases de las que creíamos. Tampoco es un error:
