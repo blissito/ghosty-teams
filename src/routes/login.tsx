@@ -98,7 +98,7 @@ export function LoginCard({
         <p className="mt-1 text-sm text-muted">{subtitle ?? t("Entra con tu cuenta de Ghosty.")}</p>
         <a
           href={retryTo}
-          className="mt-5 block w-full min-h-[44px] cursor-pointer rounded-lg bg-brand px-4 py-3 text-sm font-semibold text-brand-fg transition hover:brightness-110 hover:shadow-lg hover:shadow-brand/30 active:scale-[0.98]"
+          className="mt-5 block w-full min-h-[44px] cursor-pointer rounded-lg bg-brand px-4 py-3 text-sm font-semibold text-brand-fg transition hover:brightness-110 active:scale-[0.98]"
         >
           {t("Continuar con Ghosty")}
         </a>

@@ -51,7 +51,7 @@ export function IncomingCallStack({
             </button>
             <button
               onClick={() => onJoin(c)}
-              className="flex h-9 items-center gap-1.5 rounded-full bg-brand px-3.5 text-xs font-semibold text-brand-fg shadow-sm transition hover:opacity-90 active:scale-95"
+              className="flex h-9 items-center gap-1.5 rounded-full bg-brand px-3.5 text-xs font-semibold text-brand-fg transition hover:opacity-90 active:scale-95"
             >
               <Phone size={15} /> {t("Unirse")}
             </button>
