@@ -560,6 +560,35 @@ async function migrate(): Promise<void> {
     "CREATE UNIQUE INDEX IF NOT EXISTS gt_connector_hooks_uniq ON gt_connector_hooks(provider, channel_id, org, project)"
   );
 
+  // Los repos que un room declara suyos. Es la FRONTERA del conector de GitHub, no una
+  // comodidad: sin esto, en cualquier room el agente podía leer cualquier repo al que
+  // alcanzara el token de quien preguntó, y volcarlo a gente que en GitHub no tiene ese
+  // acceso. Con la fila, el agente sólo ve estos repos; sin ninguna fila, no ve ninguno.
+  //
+  // Es el modelo de hilos ("the repository linked to that specific channel"), del
+  // /github subscribe de Slack y del default repository de Copilot. Varios por room a
+  // propósito: un equipo chico toca 2-3 repos en el mismo canal y forzar 1:1 crea canales
+  // basura.
+  //
+  // ⚠️ Esto ESTRECHA, nunca amplía: conectar un repo no le da acceso a nadie. Quién puede
+  // tocarlo lo sigue decidiendo GitHub, con el token de cada quien.
+  //
+  // `connected_by` no es bitácora: la lista de repos depende de la INSTALACIÓN de la App de
+  // cada persona, así que dos miembros del mismo room ven conjuntos distintos. Cuando a uno
+  // le sale 404 sobre un repo que otro conectó, es la única forma de decirle de quién es la
+  // instalación en vez de dejarle creer que el repo no existe.
+  await exec(`CREATE TABLE IF NOT EXISTS gt_room_repos (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    channel_id   INTEGER NOT NULL,
+    repo         TEXT NOT NULL,
+    connected_by TEXT NOT NULL,
+    created_at   INTEGER NOT NULL DEFAULT (unixepoch())
+  )`);
+  await exec(
+    "CREATE UNIQUE INDEX IF NOT EXISTS gt_room_repos_uniq ON gt_room_repos(channel_id, repo)"
+  );
+  await exec("CREATE INDEX IF NOT EXISTS gt_room_repos_chan ON gt_room_repos(channel_id)");
+
   // Recordatorios programados. El agente los crea con una tool nativa y un tick del
   // proceso (server/reminders.server.ts) los dispara: cola en DB + poll, el patrón de
   // pg-boss/solid_queue. La verdad NUNCA vive en memoria — un reinicio del server no

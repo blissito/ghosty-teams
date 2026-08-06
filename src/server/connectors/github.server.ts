@@ -10,6 +10,8 @@
 import { getValidToken } from "./oauth.server";
 import { getConnectorRow } from "./store.server";
 import type { ConnectorTool } from "./impl";
+import type { ToolDest } from "./tool-token.server";
+import { listRoomRepos } from "../../db.server";
 import {
   appJwtOrNull,
   botIdentityEnabled,
@@ -258,6 +260,43 @@ function repoPath(repo: unknown): string | null {
 
 const BAD_REPO = { error: 'Falta el repositorio, o está mal escrito. Va como "dueño/repo".' };
 
+/**
+ * "owner/repo" canónico para GUARDAR y COMPARAR — sin percent-encoding, que es lo que
+ * `repoPath` hace para meterlo en una URL. Son dos cosas distintas y confundirlas haría que
+ * un repo con caracteres escapables nunca casara con su propia fila.
+ */
+export function normalizeRepo(repo: unknown): string | null {
+  const s = String(repo ?? "").trim().replace(/^https?:\/\/github\.com\//, "").replace(/\.git$/, "");
+  const m = s.match(/^([^/\s]+)\/([^/\s]+)/);
+  return m ? `${m[1]}/${m[2]}` : null;
+}
+
+/** Repos atados a un room. Lista vacía = el room no declaró ninguno. */
+async function roomRepos(channelId: number) {
+  try {
+    return await listRoomRepos(channelId);
+  } catch {
+    // Un fallo de DB no puede ABRIR la frontera. Se trata como "sin repos".
+    return [];
+  }
+}
+
+/**
+ * ¿A qué repos alcanza este turno? `null` = sin restricción (DM 1:1: es su conexión y su
+ * privacidad). Array = exactamente esos, y vacío significa NINGUNO.
+ */
+export async function allowedRepos(dest: ToolDest | null): Promise<string[] | null> {
+  if (!dest?.channelId) return null;
+  return (await roomRepos(dest.channelId)).map((r) => r.repo);
+}
+
+/**
+ * Tools que NO llevan repo en los argumentos, así que el candado no puede exigírselo.
+ * ⚠️ Se enumeran a mano: dar por hecho que todas llevan `repo` dejaría a estas dos
+ * rechazadas para siempre.
+ */
+export const REPOLESS_TOOLS = new Set(["github_list_repos", "github_install_link"]);
+
 // ── Poda ─────────────────────────────────────────────────────────────────────
 // Un issue o un PR de la API traen ~80 campos, casi todos URLs de la propia API
 // que al modelo no le sirven de nada y que multiplican por diez lo que entra al
@@ -292,12 +331,37 @@ const trimPr = (p: any) => ({
 
 // ── Contexto ambiente ────────────────────────────────────────────────────────
 
-export async function ambientContext(sub: string, sender: string, _message: string): Promise<string | null> {
+export async function ambientContext(
+  sub: string,
+  sender: string,
+  _message: string,
+  dest: ToolDest | null = null
+): Promise<string | null> {
   const meta = await readMeta(sub);
   if (!meta) return null;
 
+  // El alcance del room manda, y se DICE. Un room sin repos no tiene tools de GitHub, y si
+  // el modelo no sabe por qué contesta "no tengo acceso a tu código" — que es falso y es la
+  // queja que mata un trial de devs. Ver `todo_cuando_falta_algo_el_sistema_calla`.
+  const scoped = dest?.channelId ? await roomRepos(dest.channelId) : null;
+  if (scoped && !scoped.length) {
+    return (
+      `[INTEGRACIÓN GitHub de ${sender} (conectada como @${meta.login}), pero ESTE room no tiene ` +
+      `ningún repositorio conectado, así que aquí NO tienes herramientas de GitHub. ` +
+      `No es que falte la integración ni que no puedas: falta atar el repo a este room. ` +
+      `Dile que lo conecte con el botón de GitHub del encabezado del room; y si al abrirlo no ` +
+      `aparece ninguno, que revise la integración en Ajustes → Integraciones. ` +
+      `No intentes leer código por otra vía ni inventes lo que dice.]`
+    );
+  }
+
   return (
     `[INTEGRACIÓN GitHub de ${sender} (conectada como @${meta.login}). ` +
+    (scoped
+      ? `EN ESTE ROOM trabajas sobre ${scoped.map((r) => r.repo).join(", ")} y SÓLO sobre eso: ` +
+        `no consultes ni menciones otros repositorios aunque te los pidan, aquí no existen. ` +
+        `Si no dicen cuál, es ${scoped[0].repo}. `
+      : "") +
     `TIENES HERRAMIENTAS para sus repos vía el GS Tools SDK: importa /opt/gs-sdk/connectors.mjs y usa ` +
     `list() y run(name, args). Lectura: github_list_repos, github_list_issues, github_get_issue, ` +
     `github_list_prs, github_get_pr, github_pr_files, github_read_file, github_search_code, ` +
@@ -346,7 +410,7 @@ export async function ambientContext(sub: string, sender: string, _message: stri
 const str = (description: string) => ({ type: "string", description });
 const repoProp = { repo: str('Repositorio como "dueño/repo".') };
 
-export const tools: ConnectorTool[] = [
+const ALL_TOOLS: ConnectorTool[] = [
   {
     name: "github_list_repos",
     description:
@@ -1006,3 +1070,34 @@ export const tools: ConnectorTool[] = [
     },
   },
 ];
+
+/**
+ * El set de tools depende de DÓNDE ocurre el turno. Mismo criterio que las alertas de Sentry
+ * (`sentry.server.ts`), pero aquí la razón es más fuerte que ahorrar contexto: es la
+ * frontera.
+ *
+ * - **DM 1:1** → todo. Es su conexión, su privacidad, y nadie más lee la respuesta.
+ * - **Room CON repos** → todo, acotado a esos repos por el candado de `runTool`.
+ * - **Room SIN repos** → NADA. Sin vínculo no hay acceso, que es el modelo de hilos y del
+ *   /github subscribe de Slack. `ambientContext` explica por qué y a dónde ir.
+ *
+ * ⚠️ Esto es la capa de UX: filtrar lo que se le OFRECE al modelo. El candado de verdad vive
+ * en `runTool` (tools.server.ts), porque el modelo puede inventar un repo en los argumentos
+ * de una tool que sí se le ofreció.
+ */
+/**
+ * Todas las tools SIN el filtro del room. Es para la UI del picker, que corre con el token
+ * de quien hace clic y no dentro de un turno del agente — ahí la frontera la pone la sesión
+ * de la persona, no el alcance del room (justamente está eligiendo qué atarle).
+ *
+ * ⚠️ No la use nada que corra en nombre del modelo. Para eso está `tools(sub, dest)`.
+ */
+export function allTools(): ConnectorTool[] {
+  return ALL_TOOLS;
+}
+
+export async function tools(_sub: string, dest: ToolDest | null): Promise<ConnectorTool[]> {
+  const allowed = await allowedRepos(dest);
+  if (allowed && !allowed.length) return [];
+  return ALL_TOOLS;
+}

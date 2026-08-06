@@ -51,8 +51,42 @@ async function nombreDe(sub: string): Promise<string | null> {
   }
 }
 
+/**
+ * El CANDADO del alcance por room. Filtrar la lista de tools es UX; esto es la seguridad:
+ * al modelo se le ofreció `github_read_file`, y nada le impide llamarla con un repo que este
+ * room no declaró. Sin esta comprobación, el filtro de `github.server.ts` sería una
+ * sugerencia — la misma lección que `CARD_ACTIONS`: la lista cerrada vive en el servidor.
+ *
+ * Devuelve el motivo cuando hay que abortar, o `null` para dejar pasar.
+ */
+async function repoScopeDenial(
+  toolName: string,
+  args: Record<string, unknown>,
+  dest: ToolDest | null
+): Promise<string | null> {
+  if (!toolName.startsWith("github_")) return null;
+  if (!dest?.channelId) return null; // DM 1:1 → sin restricción de room
+  const { allowedRepos, normalizeRepo, REPOLESS_TOOLS } = await import("./github.server");
+  const allowed = await allowedRepos(dest);
+  if (!allowed) return null;
+  if (!allowed.length)
+    return "Este room no tiene ningún repositorio conectado, así que aquí no puedes consultar GitHub. Pídele a la persona que conecte uno con el botón de GitHub del encabezado del room.";
+  if (REPOLESS_TOOLS.has(toolName)) return null;
+  const asked = normalizeRepo(args?.repo);
+  if (!asked)
+    return `Falta el repositorio. En este room trabajas sobre ${allowed.join(", ")}.`;
+  const ok = allowed.some((r) => r.toLowerCase() === asked.toLowerCase());
+  // El error DICE cuáles sí, porque el modelo lo lee: un "no permitido" a secas lo lleva a
+  // reintentar con otro nombre inventado en vez de usar el que tiene delante.
+  return ok
+    ? null
+    : `El repositorio ${asked} no está conectado a este room. Aquí sólo puedes trabajar sobre ${allowed.join(", ")}. No lo intentes por otra vía: dile a la persona que lo conecte con el botón de GitHub del encabezado si de verdad lo quiere aquí.`;
+}
+
 /** Ejecuta una tool por nombre, SOLO si pertenece a un conector conectado del usuario. */
 export async function runTool(sub: string, toolName: string, args: Record<string, unknown>, dest: ToolDest | null = null): Promise<RunResult> {
+  const denial = await repoScopeDenial(toolName, args ?? {}, dest);
+  if (denial) return { ok: false, error: denial };
   // Las nativas primero: no requieren conector y su nombre está reservado.
   const nat = nativeTools(dest).find((t) => t.name === toolName);
   if (nat) {

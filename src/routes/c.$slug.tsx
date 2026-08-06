@@ -61,14 +61,24 @@ import {
   Image as ImageIcon,
   ImagePlus,
   Home as HomeIcon,
-  Hash as HashIcon,
   Sparkles,
   Phone,
   PhoneOff,
   Play,
   Pause,
+  Github,
+  GitPullRequest,
+  ExternalLink,
 } from "lucide-react";
 import { searchMessagesFn } from "../server/search";
+import {
+  roomReposFn,
+  githubInstallationReposFn,
+  githubOpenPrsFn,
+  addRoomRepoFn,
+  removeRoomRepoFn,
+  workspaceRoomReposFn,
+} from "../server/room-repos";
 import ConfirmModal from "../components/ConfirmModal";
 import { createFileRoute, notFound, Link, useRouter } from "@tanstack/react-router";
 import type { Channel, Message, DmConversation, RoomHit, ViewHit, Attachment, Artifact, CustomEmoji } from "../db.server";
@@ -5038,6 +5048,266 @@ function DocsButton({ channelId, channelSlug, threadRootId }: { channelId: numbe
   );
 }
 
+// ── Repos del room ───────────────────────────────────────────────────────────
+// El room declara sobre qué código habla, y el agente hereda ese alcance en vez de
+// adivinarlo en cada turno. El porqué de la frontera vive junto a la tabla
+// (server/schema.server.ts, gt_room_repos); aquí sólo está la UI.
+//
+// Dos estados y son distintos a propósito:
+//   · sin repo  → "Connect": buscador sobre TU instalación + preview de PRs del candidato
+//                 enfocado, para no atar un fork homónimo.
+//   · con repo  → el chip del repo, y su menú es la lista de PRs abiertos. Ése es el de
+//                 diario: entras al room y ves el estado sin gastar un turno del agente.
+function RepoButton({ channelId }: { channelId: number }) {
+  const t = useT();
+  const [open, setOpen] = useState(false);
+  const [mine, setMine] = useState<{ repo: string; connectedBy: string }[] | null>(null);
+
+  const cargar = useCallback(() => {
+    roomReposFn({ data: { channelId } })
+      .then((r) => setMine(r.map((x) => ({ repo: x.repo, connectedBy: x.connectedBy }))))
+      .catch(() => setMine([]));
+  }, [channelId]);
+
+  useEffect(() => cargar(), [cargar]);
+
+  const atado = mine?.[0]?.repo ?? null;
+  const extra = (mine?.length ?? 0) - 1;
+
+  return (
+    <div className="relative shrink-0">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        title={atado ?? t("Conectar un repositorio")}
+        aria-label={atado ?? t("Conectar un repositorio")}
+        className={`flex h-9 items-center gap-1.5 rounded-lg px-2 text-muted transition hover:bg-surface-3 hover:text-ink ${open ? "bg-surface-3 text-ink" : ""}`}
+      >
+        <Github size={17} className="shrink-0" />
+        {/* El nombre del repo es lo primero que sobra al angostarse: el ícono ya dice de qué
+            es el botón, y en un teléfono el encabezado no da para un "dueño/repo". */}
+        <span className="hidden max-w-[13ch] truncate text-xs @lg/hdr:inline">
+          {atado ? atado.split("/")[1] : t("Conectar")}
+        </span>
+        {extra > 0 && <span className="hidden text-[11px] text-muted @lg/hdr:inline">+{extra}</span>}
+      </button>
+      {open && (
+        <RepoPanel
+          channelId={channelId}
+          mine={mine ?? []}
+          onClose={() => setOpen(false)}
+          onChange={(next) => setMine(next.map((x) => ({ repo: x.repo, connectedBy: x.connectedBy })))}
+        />
+      )}
+    </div>
+  );
+}
+
+function RepoPanel({
+  channelId,
+  mine,
+  onClose,
+  onChange,
+}: {
+  channelId: number;
+  mine: { repo: string; connectedBy: string }[];
+  onClose: () => void;
+  onChange: (next: { repo: string; connectedBy: string }[]) => void;
+}) {
+  const t = useT();
+  const [q, setQ] = useState("");
+  const [disponibles, setDisponibles] = useState<{ repo: string; private?: boolean }[] | null>(null);
+  const [installUrl, setInstallUrl] = useState<string | null>(null);
+  // El repo cuyo preview se está mirando: el atado si lo hay, o el candidato enfocado.
+  const [focus, setFocus] = useState<string | null>(mine[0]?.repo ?? null);
+  const [prs, setPrs] = useState<{ number: number; title: string; url: string | null }[] | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  // La lista se pide al ABRIR, nunca con la página: es una llamada a GitHub por persona, y
+  // el resultado depende de SU instalación (dos miembros del mismo room ven distinto).
+  useEffect(() => {
+    githubInstallationReposFn()
+      .then((r) => {
+        setDisponibles(r.repos.map((x) => ({ repo: x.repo, private: x.private })));
+        setInstallUrl(r.installUrl);
+      })
+      .catch(() => setDisponibles([]));
+  }, []);
+
+  // Un preview por repo enfocado = una llamada a GitHub por fila. Debounce + caché mientras
+  // el panel viva, o teclear en el buscador dispara una ráfaga.
+  const cache = useRef(new Map<string, { number: number; title: string; url: string | null }[]>());
+  useEffect(() => {
+    if (!focus) return setPrs(null);
+    const hit = cache.current.get(focus);
+    if (hit) return setPrs(hit);
+    setPrs(null);
+    const id = setTimeout(() => {
+      githubOpenPrsFn({ data: { repo: focus, limit: 6 } })
+        .then((r) => {
+          cache.current.set(focus, r as any);
+          setPrs(r as any);
+        })
+        .catch(() => setPrs([]));
+    }, 250);
+    return () => clearTimeout(id);
+  }, [focus]);
+
+  const ya = new Set(mine.map((m) => m.repo.toLowerCase()));
+  const candidatos = (disponibles ?? [])
+    .filter((r) => !ya.has(r.repo.toLowerCase()))
+    .filter((r) => !q.trim() || r.repo.toLowerCase().includes(q.trim().toLowerCase()))
+    .slice(0, 8);
+
+  const conectar = async (repo: string) => {
+    setBusy(true);
+    try {
+      const next = await addRoomRepoFn({ data: { channelId, repo } });
+      onChange(next.map((x) => ({ repo: x.repo, connectedBy: x.connectedBy })));
+      setFocus(repo);
+      setQ("");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const quitar = async (repo: string) => {
+    setBusy(true);
+    try {
+      const next = await removeRoomRepoFn({ data: { channelId, repo } });
+      onChange(next.map((x) => ({ repo: x.repo, connectedBy: x.connectedBy })));
+      setFocus(next[0]?.repo ?? null);
+    } catch (e) {
+      alert(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <>
+      <div className="fixed inset-0 z-30" onClick={onClose} />
+      <div className="absolute right-0 z-40 mt-1 w-[22rem] max-w-[calc(100vw-2rem)] overflow-hidden rounded-xl border border-border bg-surface-1 shadow-lg">
+        <div className="flex items-center gap-2 border-b border-border px-3 py-2">
+          <Search size={14} className="shrink-0 text-muted" />
+          <input
+            autoFocus
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder={t("Buscar un repositorio…")}
+            className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-muted"
+          />
+        </div>
+
+        <div className="max-h-[26rem] overflow-y-auto thin-scroll">
+          {mine.length > 0 && (
+            <section className="border-b border-border py-1">
+              <p className="px-3 py-1 text-[11px] uppercase tracking-wide text-muted">
+                {t("Conectados a este room")}
+              </p>
+              {mine.map((m) => (
+                <div
+                  key={m.repo}
+                  onMouseEnter={() => setFocus(m.repo)}
+                  className={`flex items-center gap-2 px-3 py-1.5 text-sm ${focus === m.repo ? "bg-surface-2" : ""}`}
+                >
+                  <Github size={14} className="shrink-0 text-muted" />
+                  <span className="min-w-0 flex-1 truncate">{m.repo}</span>
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => quitar(m.repo)}
+                    className="shrink-0 rounded p-1 text-muted hover:bg-surface-3 hover:text-ink"
+                    aria-label={t("Quitar del room")}
+                  >
+                    <X size={13} />
+                  </button>
+                </div>
+              ))}
+            </section>
+          )}
+
+          <section className="py-1">
+            <p className="px-3 py-1 text-[11px] uppercase tracking-wide text-muted">
+              {t("Conectar un repositorio")}
+            </p>
+            {disponibles === null ? (
+              <p className="px-3 py-2 text-xs text-muted">{t("Buscando tus repositorios…")}</p>
+            ) : !disponibles.length ? (
+              // El vacío correcto NO es un buscador mudo: lo que la persona ve en el picker
+              // son los repos de SU instalación, así que si no hay ninguno lo que falta es
+              // elegirlos en GitHub, no buscar mejor.
+              <div className="px-3 py-2 text-xs text-muted">
+                <p>{t("No hay repositorios en tu instalación de GitHub.")}</p>
+                {installUrl && (
+                  <a
+                    href={installUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="mt-1 inline-flex items-center gap-1 text-brand hover:underline"
+                  >
+                    {t("Elegir repos en GitHub")} <ExternalLink size={11} />
+                  </a>
+                )}
+              </div>
+            ) : !candidatos.length ? (
+              <p className="px-3 py-2 text-xs text-muted">{t("Ningún repositorio coincide.")}</p>
+            ) : (
+              candidatos.map((r) => (
+                <button
+                  key={r.repo}
+                  type="button"
+                  disabled={busy}
+                  onMouseEnter={() => setFocus(r.repo)}
+                  onFocus={() => setFocus(r.repo)}
+                  onClick={() => conectar(r.repo)}
+                  className={`flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-surface-2 ${focus === r.repo ? "bg-surface-2" : ""}`}
+                >
+                  {r.private ? (
+                    <Lock size={13} className="shrink-0 text-muted" />
+                  ) : (
+                    <Github size={13} className="shrink-0 text-muted" />
+                  )}
+                  <span className="min-w-0 flex-1 truncate">{r.repo}</span>
+                </button>
+              ))
+            )}
+          </section>
+
+          {/* El preview sigue al repo enfocado: sirve para confirmar que es el que crees
+              antes de atarlo, y una vez atado es la lista que se abre a diario. */}
+          {focus && (
+            <section className="border-t border-border py-1">
+              <p className="px-3 py-1 text-[11px] uppercase tracking-wide text-muted">
+                {t("PRs abiertos")} · <span className="normal-case">{focus}</span>
+              </p>
+              {prs === null ? (
+                <p className="px-3 py-2 text-xs text-muted">{t("Cargando…")}</p>
+              ) : !prs.length ? (
+                <p className="px-3 py-2 text-xs text-muted">{t("Ninguno abierto.")}</p>
+              ) : (
+                prs.map((p) => (
+                  <a
+                    key={p.number}
+                    href={p.url ?? "#"}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="flex items-center gap-2 px-3 py-1.5 text-sm hover:bg-surface-2"
+                  >
+                    <GitPullRequest size={13} className="shrink-0 text-emerald-600" />
+                    <span className="shrink-0 text-muted">#{p.number}</span>
+                    <span className="min-w-0 flex-1 truncate">{p.title}</span>
+                  </a>
+                ))
+              )}
+            </section>
+          )}
+        </div>
+      </div>
+    </>
+  );
+}
+
 // Quién está en el room: facepile + contador en el header, abierto a CUALQUIERA que
 // pueda ver el room (patrón Slack/Discord). Antes la lista solo existía dentro del modal
 // de Ajustes, gateado por canManage → un member no podía ver con quién comparte el canal.
@@ -5513,6 +5783,77 @@ function CommandPalette({
   );
 }
 
+// En qué código anda el equipo: cada repo con los rooms que lo declararon suyo. Es lo único
+// que junta esa información — cada room la fija por su cuenta, y sin esta card nadie sabe
+// qué se está tocando sin recorrerlos uno por uno.
+//
+// El servidor ya filtra por visibilidad: el nombre de un repo delata en qué anda un room
+// privado.
+function RepoHomeCard({ onOpenRoom }: { onOpenRoom: (slug: string) => void }) {
+  const t = useT();
+  const [repos, setRepos] = useState<
+    { repo: string; rooms: { id: number; slug: string; name: string }[] }[] | null
+  >(null);
+  const [prs, setPrs] = useState<Record<string, number>>({});
+
+  useEffect(() => {
+    let vivo = true;
+    workspaceRoomReposFn()
+      .then((r) => {
+        if (!vivo) return;
+        setRepos(r);
+        // El contador es un extra: si GitHub falla o el repo lo conectó alguien a cuya
+        // instalación no llego, la fila se pinta sin número. Nunca bloquea el home.
+        for (const x of r.slice(0, 6))
+          githubOpenPrsFn({ data: { repo: x.repo, limit: 20 } })
+            .then((list) => vivo && setPrs((p) => ({ ...p, [x.repo]: list.length })))
+            .catch(() => {});
+      })
+      .catch(() => vivo && setRepos([]));
+    return () => {
+      vivo = false;
+    };
+  }, []);
+
+  return (
+    <section className="rounded-2xl border border-border bg-surface-2 p-4">
+      <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold">
+        <Github size={15} className="text-muted" /> {t("Repos")}
+      </h2>
+      <div className="space-y-0.5">
+        {repos === null ? (
+          <p className="px-2 py-1 text-xs text-muted">{t("Cargando…")}</p>
+        ) : !repos.length ? (
+          <p className="px-2 py-1 text-xs text-muted">
+            {t("Ningún room tiene repositorios conectados. Ábrelos y usa el botón de GitHub del encabezado.")}
+          </p>
+        ) : (
+          repos.slice(0, 6).map((r) => (
+            <button
+              key={r.repo}
+              onClick={() => r.rooms[0] && onOpenRoom(r.rooms[0].slug)}
+              className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm hover:bg-surface-3"
+            >
+              <Github size={14} className="shrink-0 text-muted" />
+              <span className="min-w-0 flex-1 truncate">{r.repo}</span>
+              <span className="hidden shrink-0 truncate text-xs text-muted sm:inline">
+                {r.rooms.slice(0, 2).map((c) => `#${c.name}`).join(" ")}
+                {r.rooms.length > 2 ? ` +${r.rooms.length - 2}` : ""}
+              </span>
+              {prs[r.repo] > 0 && (
+                <span className="flex shrink-0 items-center gap-1 text-xs text-muted">
+                  <GitPullRequest size={12} className="text-emerald-600" />
+                  {prs[r.repo]}
+                </span>
+              )}
+            </button>
+          ))
+        )}
+      </div>
+    </section>
+  );
+}
+
 /* ── Home dashboard ─────────────────────────────────────────────────────────
    Pantalla de inicio con el personaje Ghosty: saludo, tarjetas de resumen (datos
    reales del cliente), acceso a rooms/DMs/gente, y un composer "pregunta lo que sea"
@@ -5604,23 +5945,12 @@ function HomeDashboard({
           ))}
         </div>
 
-        {/* Rooms + Conversaciones */}
+        {/* Repos + Conversaciones */}
         <div className="mb-8 grid gap-4 sm:grid-cols-2">
-          <section className="rounded-2xl border border-border bg-surface-2 p-4">
-            <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold">
-              <HashIcon size={15} className="text-muted" /> {t("Rooms")}
-            </h2>
-            <div className="space-y-0.5">
-              {channels.slice(0, 6).map((c) => (
-                <button key={c.slug} onClick={() => onOpenRoom(c.slug)} className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm hover:bg-surface-3">
-                  <HashIcon size={14} className="shrink-0 text-muted" />
-                  <span className="min-w-0 flex-1 truncate">{c.name}</span>
-                  <UnreadBadge n={unreadRooms.get(c.id) ?? 0} />
-                </button>
-              ))}
-              {channels.length === 0 && <p className="px-2 py-1 text-xs text-muted">{t("Aún no hay rooms.")}</p>}
-            </div>
-          </section>
+          {/* La lista de rooms vivía aquí y era redundante: el sidebar ya los tiene y sus
+              nombres no dicen nada. Los repos sí — es en qué código anda el equipo, y el
+              único sitio donde se ve junto lo que cada room declaró por su cuenta. */}
+          <RepoHomeCard onOpenRoom={onOpenRoom} />
 
           <section className="rounded-2xl border border-border bg-surface-2 p-4">
             <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold">
@@ -6134,6 +6464,9 @@ function Flow({
           {/* Quick-call (quick call) del room — audio/video/pantalla vía la caja LiveKit compartida. */}
           <CallHeaderButton h={call} />
           <DocsButton channelId={channel.id} channelSlug={channel.slug} />
+          {/* Sobre qué código habla este room. Es la frontera del conector de GitHub, no un
+              atajo: sin repo atado el agente no tiene tools de GitHub aquí. */}
+          <RepoButton channelId={channel.id} />
           <SearchButton onOpenDm={onOpenDm} onOpenThread={onOpenThread} currentSlug={channel.slug} />
         </div>
       </header>

@@ -1084,6 +1084,22 @@ export const en: Record<string, string> = {
   "Lleva 1 comentario anclado a su línea.": "Includes 1 comment anchored to its line.",
   "Lleva {n} comentarios anclados a su línea.": "Includes {n} comments anchored to their lines.",
 
+  // Repos del room. "room" se queda como está: es el vocabulario del producto en los dos
+  // idiomas, igual que en el resto del diccionario.
+  "Repos": "Repos",
+  "Conectar un repositorio": "Connect a repository",
+  "Conectados a este room": "Connected to this room",
+  "Buscar un repositorio…": "Search a repository…",
+  "Buscando tus repositorios…": "Looking for your repositories…",
+  "Ningún repositorio coincide.": "No repository matches.",
+  "No hay repositorios en tu instalación de GitHub.": "No repositories in your GitHub installation.",
+  "Elegir repos en GitHub": "Pick repos on GitHub",
+  "Quitar del room": "Remove from room",
+  "PRs abiertos": "Open PRs",
+  "Ninguno abierto.": "None open.",
+  "Ningún room tiene repositorios conectados. Ábrelos y usa el botón de GitHub del encabezado.":
+    "No room has repositories connected. Open one and use the GitHub button in the header.",
+
   // Preexistente, sin traducir hasta hoy.
   "y": "and",
 };
