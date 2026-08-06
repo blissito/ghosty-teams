@@ -5081,15 +5081,21 @@ function RepoButton({ channelId }: { channelId: number }) {
         onClick={() => setOpen((v) => !v)}
         title={atado ?? t("Conectar un repositorio")}
         aria-label={atado ?? t("Conectar un repositorio")}
-        className={`flex h-9 items-center gap-1.5 rounded-lg px-2 text-muted transition hover:bg-surface-3 hover:text-ink ${open ? "bg-surface-3 text-ink" : ""}`}
+        className={`flex h-9 shrink-0 items-center gap-1.5 rounded-lg text-muted transition hover:bg-surface-3 hover:text-ink ${atado ? "px-2" : "w-9 justify-center"} ${open ? "bg-surface-3 text-ink" : ""}`}
       >
         <Github size={17} className="shrink-0" />
-        {/* El nombre del repo es lo primero que sobra al angostarse: el ícono ya dice de qué
-            es el botón, y en un teléfono el encabezado no da para un "dueño/repo". */}
-        <span className="hidden max-w-[13ch] truncate text-xs @lg/hdr:inline">
-          {atado ? atado.split("/")[1] : t("Conectar")}
-        </span>
-        {extra > 0 && <span className="hidden text-[11px] text-muted @lg/hdr:inline">+{extra}</span>}
+        {/* Texto SÓLO cuando lleva información. Sin repo decía "Conectar", que es lo mismo
+            que ya dice el pulpo, y con "Llamada" al lado dejaba el encabezado cargado de
+            palabras entre puros íconos. El nombre del repo sí vale el espacio — y aun así
+            es lo primero que se va al angostarse. */}
+        {atado && (
+          <>
+            <span className="hidden max-w-[13ch] truncate text-xs @lg/hdr:inline">
+              {atado.split("/")[1]}
+            </span>
+            {extra > 0 && <span className="hidden text-[11px] text-muted @lg/hdr:inline">+{extra}</span>}
+          </>
+        )}
       </button>
       {open && (
         <RepoPanel
