@@ -293,6 +293,25 @@ export const PIECE: Record<"card" | "control" | "item", RadiusStep> = {
 
 type Surfaces = { surface: string; surface2: string; surface3: string; border: string; ink: string; muted: string };
 
+/**
+ * El TONO de la marca, rehecho a una luminosidad de superficie.
+ *
+ * ⚠️ Aquí estaba el bug que puso la app gris. Las capas se teñían mezclando hacia el
+ * `primary` TAL CUAL, así que una marca oscura no aportaba color sino OSCURIDAD: con el
+ * primary casi negro de Formmy (#191a20) y el mood `warm` (×2.2), `surface-2` salía
+ * #e5e5e6 y `surface-3` #cacbcc — gris de sistema, y encima varios tonos más oscuro que
+ * cualquier preset (#f6f5fb / #ecebf6). Las tarjetas se veían sucias y pesadas.
+ *
+ * Se le toma sólo el tono (y un croma acotado, porque un primary fluorescente teñiría
+ * de más) y se rehace a la luminosidad que le toca a una superficie. Así el TEÑIDO pone
+ * color y el ESCALÓN de luminosidad lo pone `step`, que es constante y no depende de qué
+ * tan oscura sea la marca.
+ */
+function wash(tint: string, dark: boolean): string {
+  const { C, h } = oklabToOklch(rgbToOklab(toRgb(tint)));
+  return toHex(oklabToRgb(oklchToOklab(dark ? 0.3 : 0.9, Math.min(C, 0.1), h)));
+}
+
 /** Las capas de fondo/línea/texto que salen de un solo color de superficie. */
 function surfacesFrom(
   surface: string,
@@ -303,10 +322,15 @@ function surfacesFrom(
   const step = dark ? NEAR_WHITE : NEAR_BLACK;
   const ink = onColor(surface, tint);
   const t = tune.tint;
+  const w = wash(tint, dark);
+  // El escalón de luminosidad: constante, lo pone el blanco/negro. El `t` del mood NO
+  // entra aquí — mueve cuánto COLOR, no cuánto oscurece.
+  const lift = (l: number) => mix(surface, step, l);
+  const tinted = (base: string, k: number) => mix(base, w, Math.min(0.5, k * t));
   return {
     surface,
-    surface2: mix(surface, tint, (dark ? 0.06 : 0.045) * t),
-    surface3: mix(mix(surface, tint, (dark ? 0.1 : 0.08) * t), step, dark ? 0.04 : 0.03),
+    surface2: tinted(lift(dark ? 0.05 : 0.028), 0.1),
+    surface3: tinted(lift(dark ? 0.1 : 0.062), 0.14),
     // La línea se OSCURECE con el grosor: un borde de 3px del mismo gris claro se ve
     // sucio, no contundente. Es lo que hace que "bold" se lea como bold.
     border: mix(surface, step, (dark ? 0.14 : 0.11) * (0.7 + tune.edge * 0.45)),
