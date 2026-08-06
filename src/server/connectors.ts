@@ -373,3 +373,62 @@ export const runCardActionFn = createServerFn({ method: "POST" })
     if (r?.error) return { ok: false as const, error: String(r.error) };
     return { ok: true as const, event, url: typeof r?.url === "string" ? r.url : "" };
   });
+
+/**
+ * Estado ACTUAL de un PR para la tarjeta: abierto/cerrado/mergeado y quién lo revisó.
+ *
+ * ⚠️ Existe porque la primera versión anunciaba la acción **mandando un mensaje al chat**,
+ * y eso tenía dos fallos: despertaba al agente —un turno entero por un clic, justo lo que
+ * la acción directa venía a evitar— y el ✓ del botón sólo lo veía quien hizo clic.
+ *
+ * La verdad de quién aprobó vive en GitHub, no en nuestra base. Preguntársela es correcto
+ * incluso cuando alguien actúa desde github.com sin pasar por la tarjeta, y no necesita
+ * tabla nueva ni sincronización.
+ */
+export const prCardStateFn = createServerFn({ method: "POST" })
+  .validator((d: { repo: string; number: number }) => d)
+  .handler(async ({ data }) => {
+    const me = await sessionUser();
+    if (!me) return null;
+    const repo = String(data.repo ?? "");
+    const number = Number(data.number);
+    if (!repo.includes("/") || !Number.isFinite(number) || number <= 0) return null;
+
+    const { getValidToken } = await import("./connectors/oauth.server");
+    const token = await getValidToken(me.sub, "github");
+    // Sin conexión propia no se pinta estado ni se ofrecen botones: no es un error, es que
+    // esta persona todavía no conectó su GitHub.
+    if (!token) return { connected: false as const };
+
+    const h = {
+      Authorization: `Bearer ${token}`,
+      Accept: "application/vnd.github+json",
+      "X-GitHub-Api-Version": "2022-11-28",
+    };
+    const get = (p: string) =>
+      fetch(`https://api.github.com/repos/${repo}${p}`, { headers: h })
+        .then((r) => (r.ok ? r.json() : null))
+        .catch(() => null);
+
+    const [pr, reviews] = await Promise.all([get(`/pulls/${number}`), get(`/pulls/${number}/reviews`)]);
+    if (!pr) return { connected: true as const, unknown: true as const };
+
+    // El ÚLTIMO veredicto de cada persona: GitHub guarda todos los reviews, y quedarse con
+    // el primero enseñaría "cambios pedidos" de alguien que ya aprobó después.
+    const last = new Map<string, string>();
+    for (const r of Array.isArray(reviews) ? reviews : []) {
+      const st = String(r?.state ?? "");
+      if (st === "APPROVED" || st === "CHANGES_REQUESTED") last.set(String(r?.user?.login ?? ""), st);
+    }
+    const approvers = [...last].filter(([, s]) => s === "APPROVED").map(([u]) => u);
+    const blockers = [...last].filter(([, s]) => s === "CHANGES_REQUESTED").map(([u]) => u);
+
+    return {
+      connected: true as const,
+      state: pr.merged ? "merged" : (String(pr.state) as "open" | "closed"),
+      approvers,
+      blockers,
+      // Sólo con el PR abierto tienen sentido los botones.
+      actionable: !pr.merged && pr.state === "open",
+    };
+  });

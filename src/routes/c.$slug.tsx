@@ -124,7 +124,7 @@ import { registerModalEsc } from "../utils/modal-esc";
 import ArtifactPanel, { type ArtifactView, viewFromAttachment } from "../components/ArtifactPanel";
 import { belongsToOpenConversation } from "../lib/conversation-scope";
 import { extractEbDoc, extractEbPatches, draftTitle, bubbleWithoutEbDoc, extractToolState, extractSteps, extractAlert, extractPr, type ToolState, type AlertCardData, type PrCardData } from "../lib/ebdoc";
-import { runCardActionFn } from "../server/connectors";
+import { prCardStateFn, runCardActionFn } from "../server/connectors";
 import { ThinkingRing } from "../components/ThinkingRing";
 import { showSystemNotification } from "../utils/system-notification";
 import { marcarCierre, limpiarCierre } from "../lib/panel-cerrando";
@@ -7167,27 +7167,32 @@ function AlertCard({ msgId, a, onAct }: { msgId: number; a: AlertCardData; onAct
  * —GitHub lo prohíbe— y el botón sólo sirve para OTRA persona del canal. El error se
  * explica tal cual cuando pasa, en vez de dejar un fallo mudo.
  */
-function PrCard({ pr, onDone }: { pr: PrCardData; onDone: (texto: string) => void }) {
+function PrCard({ pr }: { pr: PrCardData }) {
   const t = useT();
   const [busy, setBusy] = useState("");
-  const [done, setDone] = useState("");
   const [err, setErr] = useState("");
+  const [st, setSt] = useState<any>(null);
 
-  const act = async (action: string, etiqueta: string) => {
-    if (busy || done) return;
+  // El estado se pide a GITHUB, no se guarda aquí. Así lo ve todo el equipo —no sólo quien
+  // hizo clic— y es correcto aunque alguien apruebe desde github.com sin tocar la tarjeta.
+  const refresca = useCallback(() => {
+    prCardStateFn({ data: { repo: pr.repo, number: pr.number } })
+      .then(setSt)
+      .catch(() => {});
+  }, [pr.repo, pr.number]);
+  useEffect(() => { refresca(); }, [refresca]);
+
+  const act = async (action: string) => {
+    if (busy) return;
     setBusy(action);
     setErr("");
     try {
       const r = await runCardActionFn({ data: { action, repo: pr.repo, number: pr.number } });
-      if (!r.ok) {
-        setErr(r.error);
-        return;
-      }
-      setDone(etiqueta);
-      // Se anuncia en el canal a propósito. El estado del botón es local a este
-      // navegador, así que sin esto el resto del equipo no se enteraría de que alguien
-      // ya lo revisó — y dos personas revisarían lo mismo.
-      onDone(t("{quien} en el PR #{n} de {repo}", { quien: etiqueta, n: String(pr.number), repo: pr.repo }));
+      if (!r.ok) setErr(r.error);
+      // ⚠️ NO se manda un mensaje al chat para anunciarlo. La primera versión lo hacía y
+      // DESPERTABA AL AGENTE: un turno entero por un clic, justo lo que la acción directa
+      // venía a evitar. El estado se relee de GitHub, que es donde vive la verdad.
+      else refresca();
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
@@ -7204,11 +7209,27 @@ function PrCard({ pr, onDone }: { pr: PrCardData; onDone: (texto: string) => voi
           ? { txt: t("CI corriendo"), cls: "text-amber-500" }
           : null;
 
-  const botones: Array<{ action: string; label: string; etiqueta: string; tono: string }> = [
-    { action: "pr_approve", label: t("Aprobar"), etiqueta: t("Aprobado"), tono: "border-emerald-600 text-emerald-600 hover:bg-emerald-600/10" },
-    { action: "pr_request_changes", label: t("Pedir cambios"), etiqueta: t("Cambios pedidos"), tono: "border-border text-ink hover:bg-surface-3" },
-    { action: "pr_reject", label: t("Rechazar"), etiqueta: t("Rechazado"), tono: "border-border text-red-500 hover:bg-red-500/10" },
+  // Un cierre NO es un éxito y no puede pintarse del mismo verde que una aprobación: fue
+  // justo lo que se vio mal en la primera prueba ("✓ Rechazado" en verde).
+  const resumen = (() => {
+    if (!st || st.connected === false || st.unknown) return null;
+    if (st.state === "merged") return { txt: t("Mergeado"), cls: "border-violet-500 bg-violet-500/10 text-violet-500" };
+    if (st.state === "closed") return { txt: t("Cerrado sin mergear"), cls: "border-border bg-surface-3 text-muted" };
+    if (st.blockers?.length)
+      return { txt: t("Cambios pedidos por {quien}", { quien: st.blockers.join(", ") }), cls: "border-amber-500 bg-amber-500/10 text-amber-600" };
+    if (st.approvers?.length)
+      return { txt: t("Aprobado por {quien}", { quien: st.approvers.join(", ") }), cls: "border-emerald-600 bg-emerald-600/10 text-emerald-600" };
+    return null;
+  })();
+
+  const botones = [
+    { action: "pr_approve", label: t("Aprobar"), tono: "border-emerald-600 text-emerald-600 hover:bg-emerald-600/10" },
+    { action: "pr_request_changes", label: t("Pedir cambios"), tono: "border-border text-ink hover:bg-surface-3" },
+    { action: "pr_reject", label: t("Rechazar"), tono: "border-border text-red-500 hover:bg-red-500/10" },
   ];
+  // Mientras GitHub no conteste no se pintan botones: ofrecer "Aprobar" en un PR ya
+  // cerrado sólo sirve para que el clic falle.
+  const puedeActuar = st?.connected && st?.actionable;
 
   return (
     <div className="mt-1.5 max-w-xl overflow-hidden rounded-lg border border-border bg-surface-2">
@@ -7231,28 +7252,27 @@ function PrCard({ pr, onDone }: { pr: PrCardData; onDone: (texto: string) => voi
           ]
             .filter(Boolean)
             .join("  ·  ")}
-          {checks ? <span className={`  ${checks.cls}`}>{"  ·  " + checks.txt}</span> : null}
+          {checks ? <span className={checks.cls}>{"  ·  " + checks.txt}</span> : null}
         </p>
         {pr.verdict ? <p className="mt-2 text-[13px] leading-snug text-ink">{pr.verdict}</p> : null}
 
         <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
-          {done ? (
-            <span className="rounded-md border border-emerald-600 bg-emerald-600/10 px-2.5 py-1 text-xs font-medium text-emerald-600">
-              ✓ {done}
-            </span>
-          ) : (
-            botones.map((b) => (
-              <button
-                key={b.action}
-                type="button"
-                disabled={!!busy}
-                onClick={() => act(b.action, b.etiqueta)}
-                className={`rounded-md border px-2.5 py-1 text-xs font-medium transition disabled:opacity-50 ${b.tono}`}
-              >
-                {busy === b.action ? "…" : b.label}
-              </button>
-            ))
-          )}
+          {resumen ? (
+            <span className={`rounded-md border px-2.5 py-1 text-xs font-medium ${resumen.cls}`}>{resumen.txt}</span>
+          ) : null}
+          {puedeActuar && !resumen
+            ? botones.map((b) => (
+                <button
+                  key={b.action}
+                  type="button"
+                  disabled={!!busy}
+                  onClick={() => act(b.action)}
+                  className={`rounded-md border px-2.5 py-1 text-xs font-medium transition disabled:opacity-50 ${b.tono}`}
+                >
+                  {busy === b.action ? "…" : b.label}
+                </button>
+              ))
+            : null}
           <a
             href={pr.url}
             target="_blank"
@@ -7262,6 +7282,9 @@ function PrCard({ pr, onDone }: { pr: PrCardData; onDone: (texto: string) => voi
             {t("Ver en GitHub")}
           </a>
         </div>
+        {st?.connected === false ? (
+          <p className="mt-2 text-[11.5px] text-muted">{t("Conecta tu GitHub en Ajustes para poder aprobar desde aquí.")}</p>
+        ) : null}
         {err ? <p className="mt-2 text-[11.5px] leading-snug text-red-500">{err}</p> : null}
       </div>
     </div>
@@ -8092,7 +8115,7 @@ function MessageRow({
                 // tarjeta es su pie accionable. Al reves se lee como si el PR fuera el
                 // mensaje y la resena un apendice.
                 const pr = extractPr(m.body);
-                return pr ? <PrCard pr={pr} onDone={(txt) => sendQuickReply(txt, m)} /> : null;
+                return pr ? <PrCard pr={pr} /> : null;
               })()}
               {/* El turno sigue vivo aunque ya haya texto: la salida tiene que seguir
                   a la vista (ver TurnLiveFooter). */}

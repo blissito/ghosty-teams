@@ -1071,6 +1071,12 @@ export const en: Record<string, string> = {
   "{n} archivos": "{n} files",
   "{quien} en el PR #{n} de {repo}": "{quien} on PR #{n} in {repo}",
 
+  "Mergeado": "Merged",
+  "Cerrado sin mergear": "Closed without merging",
+  "Aprobado por {quien}": "Approved by {quien}",
+  "Cambios pedidos por {quien}": "Changes requested by {quien}",
+  "Conecta tu GitHub en Ajustes para poder aprobar desde aquí.": "Connect your GitHub in Settings to approve from here.",
+
   // Preexistente, sin traducir hasta hoy.
   "y": "and",
 };
