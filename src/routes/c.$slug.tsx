@@ -7660,14 +7660,18 @@ function TaskCard({ task, channelId, parentId }: { task: TaskCardData; channelId
               >
                 {busy === "task_done" ? "\u2026" : t('Mover a "Done"')}
               </button>
-              <button
-                type="button"
-                disabled={!!busy}
-                onClick={() => act("task_assign_me")}
-                className="rounded-md border border-border px-2.5 py-1 text-xs font-medium text-ink transition hover:bg-surface-3 disabled:opacity-50"
-              >
-                {busy === "task_assign_me" ? "\u2026" : t("Asignarme")}
-              </button>
+              {/* Sólo si NO es tuya ya: ofrecérsela a quien la tiene asignada es ruido, y
+                  la primera prueba en vivo tropezó justo ahí. */}
+              {!st?.mine ? (
+                <button
+                  type="button"
+                  disabled={!!busy}
+                  onClick={() => act("task_assign_me")}
+                  className="rounded-md border border-border px-2.5 py-1 text-xs font-medium text-ink transition hover:bg-surface-3 disabled:opacity-50"
+                >
+                  {busy === "task_assign_me" ? "\u2026" : t("Asignarme")}
+                </button>
+              ) : null}
             </>
           )}
           {url ? (

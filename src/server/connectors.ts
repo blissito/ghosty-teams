@@ -603,6 +603,9 @@ export const taskCardStateFn = createServerFn({ method: "POST" })
     return {
       column,
       assignee: String(t?.assignee ?? t?.assignee_sub ?? ""),
+      // ¿Ya es MÍA? Se compara el sub, no el nombre — dos personas pueden llamarse igual.
+      // Sin esto la tarjeta ofrecía "Asignarme" a quien ya la tenía asignada.
+      mine: String(t?.assignee_sub ?? "") === me.sub,
       // "Done" por NOMBRE es lo mismo que hace `move_task` del otro lado. Un tablero con la
       // columna renombrada no se marcaría como cerrado — es la contrapartida conocida de no
       // tener un flag de "columna final" en el esquema.
