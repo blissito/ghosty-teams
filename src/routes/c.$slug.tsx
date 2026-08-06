@@ -61,7 +61,6 @@ import {
   Image as ImageIcon,
   ImagePlus,
   Home as HomeIcon,
-  Sparkles,
   Phone,
   PhoneOff,
   Play,
@@ -133,8 +132,8 @@ import { unfurlLinkFn } from "../server/unfurl";
 import { registerModalEsc } from "../utils/modal-esc";
 import ArtifactPanel, { type ArtifactView, viewFromAttachment } from "../components/ArtifactPanel";
 import { belongsToOpenConversation } from "../lib/conversation-scope";
-import { extractEbDoc, extractEbPatches, draftTitle, bubbleWithoutEbDoc, extractToolState, extractSteps, extractAlert, extractPr, type ToolState, type AlertCardData, type PrCardData } from "../lib/ebdoc";
-import { prCardStateFn, runCardActionFn } from "../server/connectors";
+import { extractEbDoc, extractEbPatches, draftTitle, bubbleWithoutEbDoc, extractToolState, extractSteps, extractAlert, extractPr, extractTask, type ToolState, type AlertCardData, type PrCardData, type TaskCardData } from "../lib/ebdoc";
+import { prCardStateFn, runCardActionFn, taskCardStateFn, runTaskCardActionFn } from "../server/connectors";
 import { ThinkingRing } from "../components/ThinkingRing";
 import { showSystemNotification } from "../utils/system-notification";
 import { marcarCierre, limpiarCierre } from "../lib/panel-cerrando";
@@ -3102,7 +3101,7 @@ function NovedadesModal() {
                   whileHover={{ scale: 1.04 }}
                   whileTap={{ scale: 0.97 }}
                   onClick={next}
-                  className="rounded-xl bg-brand px-5 py-2.5 text-sm font-bold text-brand-fg shadow-lg shadow-brand/25 transition hover:bg-brand/90"
+                  className="rounded-xl bg-brand px-5 py-2.5 text-sm font-bold text-brand-fg transition hover:bg-brand/90"
                 >
                   {isLast ? t("Entendido") : `${t("Siguiente")} · ${idx + 1}/${total}`}
                 </motion.button>
@@ -5906,11 +5905,15 @@ function HomeDashboard({
   const today = new Date().toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" });
   const dmLabel = (d: DmConversation) => d.title || d.members.map((m) => m.name).join(", ") || t("Conversación");
 
-  const stats: { label: string; value: number; sub: string; tint: string }[] = [
-    { label: t("Sin leer"), value: totalUnread, sub: totalUnread ? t("mensajes te esperan") : t("estás al día"), tint: "bg-rose-500/15 text-rose-500" },
-    { label: t("Rooms"), value: channels.length, sub: t("en el workspace"), tint: "bg-amber-500/15 text-amber-500" },
-    { label: t("Conversaciones"), value: dms.length, sub: t("mensajes directos"), tint: "bg-fuchsia-500/15 text-fuchsia-500" },
-    { label: t("En línea"), value: online.size, sub: t("ahora mismo"), tint: "bg-sky-500/15 text-sky-500" },
+  // ⚠️ Sin `tint` ni icono. Las cuatro fichas llevaban el MISMO icono de destellos en
+  // cuatro tintes distintos: un color que no codifica nada y un icono que no distingue
+  // nada, o sea decoración con el peso visual de un dato. Mientras todo era una tarjeta
+  // gris no se notaba; al aplanar quedó a la vista.
+  const stats: { label: string; value: number; sub: string }[] = [
+    { label: t("Sin leer"), value: totalUnread, sub: totalUnread ? t("mensajes te esperan") : t("estás al día") },
+    { label: t("Rooms"), value: channels.length, sub: t("en el workspace") },
+    { label: t("Conversaciones"), value: dms.length, sub: t("mensajes directos") },
+    { label: t("En línea"), value: online.size, sub: t("ahora mismo") },
   ];
 
   const submitAsk = () => {
@@ -5942,24 +5945,40 @@ function HomeDashboard({
           <img src="/ghosty.svg" alt="Ghosty" className="h-24 w-24 shrink-0 opacity-90 sm:h-28 sm:w-28" />
         </div>
 
-        {/* Tarjetas de resumen */}
-        <div className="mb-8 grid grid-cols-2 gap-3">
-          {stats.map((s) => (
-            <div key={s.label} className="gt-card rounded-2xl p-4">
-              <div className="mb-3 flex items-center justify-between">
-                <span className={`grid h-8 w-8 place-items-center rounded-lg ${s.tint}`}>
-                  <Sparkles size={16} />
-                </span>
-                <span className="text-[11px] font-medium uppercase tracking-wide text-muted">{s.label}</span>
-              </div>
-              <p className="text-3xl font-bold text-ink">{s.value}</p>
-              <p className="mt-0.5 text-xs text-muted">{s.sub}</p>
+        {/* Resumen: UNA tira, no cuatro tarjetas.
+            Cuatro cajas del tamaño de una tarjeta de contenido le daban a «9 mensajes
+            directos» el mismo peso visual que a la lista de repos. Agrupadas en una sola
+            superficie dividida, siguen siendo cuatro datos pero pesan lo que son.
+            Los separadores van explícitos por índice y no con `divide-x`: esa utilidad
+            reparte por orden del DOM, así que en la rejilla de 2 columnas del móvil le
+            pondría raya izquierda a la tercera ficha, que abre renglón. */}
+        <div className="gt-card mb-8 grid grid-cols-2 sm:grid-cols-4">
+          {stats.map((s, i) => (
+            <div
+              key={s.label}
+              className={[
+                "px-4 py-3",
+                i % 2 === 1 ? "border-l border-border" : "",
+                i >= 2 ? "border-t border-border" : "",
+                i > 0 ? "sm:border-l sm:border-border" : "sm:border-l-0",
+                "sm:border-t-0",
+              ]
+                .filter(Boolean)
+                .join(" ")}
+            >
+              <p className="truncate text-xs font-medium text-muted">{s.label}</p>
+              <p className="mt-0.5 text-2xl font-bold leading-tight tabular-nums text-ink">{s.value}</p>
+              <p className="mt-0.5 truncate text-xs text-muted">{s.sub}</p>
             </div>
           ))}
         </div>
 
-        {/* Repos + Conversaciones */}
-        <div className="mb-8 grid gap-4 sm:grid-cols-2">
+        {/* Repos + Conversaciones.
+            `items-start`: sin él la rejilla estira las dos tarjetas a la altura de la más
+            alta, y con un solo repo eso dejaba ~250 px de vacío bajo un renglón. Con el
+            relleno gris el hueco pasaba por "tarjeta grande"; en plano se lee como que
+            algo falta. Cada una mide lo que tiene. */}
+        <div className="mb-8 grid items-start gap-4 sm:grid-cols-2">
           {/* La lista de rooms vivía aquí y era redundante: el sidebar ya los tiene y sus
               nombres no dicen nada. Los repos sí — es en qué código anda el equipo, y el
               único sitio donde se ve junto lo que cada room declaró por su cuenta. */}
@@ -7513,6 +7532,115 @@ function AlertCard({ msgId, a, onAct }: { msgId: number; a: AlertCardData; onAct
  * —GitHub lo prohíbe— y el botón sólo sirve para OTRA persona del canal. El error se
  * explica tal cual cuando pasa, en vez de dejar un fallo mudo.
  */
+// Tarjeta de TAREA. Gemela de PrCard, y con las mismas dos reglas que costaron aprender:
+// el estado se lee de Tasks al pintar (guardarlo en el mensaje lo dejaría diciendo "En curso"
+// para siempre), y los botones llaman a la API con las credenciales de QUIEN HACE CLIC en vez
+// de mandar texto al chat, que despertaría al agente por un clic.
+function TaskCard({ task, channelId, parentId }: { task: TaskCardData; channelId: number; parentId: number | null }) {
+  const t = useT();
+  const [busy, setBusy] = useState("");
+  const [err, setErr] = useState("");
+  const [st, setSt] = useState<any>(null);
+
+  const refresca = useCallback(() => {
+    taskCardStateFn({ data: { id: task.id, channelId } })
+      .then(setSt)
+      .catch(() => {});
+  }, [task.id, channelId]);
+  useEffect(() => { refresca(); }, [refresca]);
+  // Se suscribe ELLA MISMA: revalidar la ruta no basta si el componente no se desmonta.
+  useRtSubscribe({
+    onEvent: (ev) => {
+      if (ev.t === "refresh" && ev.channelId === channelId) refresca();
+    },
+  });
+
+  const act = async (action: string) => {
+    if (busy) return;
+    setBusy(action);
+    setErr("");
+    try {
+      const r = await runTaskCardActionFn({
+        data: { action, id: task.id, channelId, parentId: parentId ?? undefined },
+      });
+      if (!r.ok) setErr(r.error);
+      else refresca();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy("");
+    }
+  };
+
+  // Lo que diga Tasks AHORA gana sobre lo que el modelo escribió en el fence: entre que se
+  // generó el mensaje y se mira, alguien pudo mover la tarea.
+  const column = st?.column || task.column;
+  const done = st?.done ?? column.toLowerCase() === "done";
+  const assignee = st?.assignee || task.assignee;
+  const url = st?.url || task.url;
+  const board = st?.board || task.board;
+
+  const prio =
+    task.priority === "urgent" ? "text-red-500"
+    : task.priority === "high" ? "text-amber-500"
+    : task.priority === "low" ? "text-muted"
+    : "text-ink";
+
+  return (
+    <div className="mt-1.5 max-w-xl overflow-hidden rounded-lg gt-card">
+      <div className="flex items-center gap-2 border-b border-border px-3 py-2">
+        <span className="font-mono text-[11px] text-muted">{board}</span>
+        <span className="font-mono text-[11px] font-bold text-ink">#{task.id}</span>
+        {task.priority ? <span className={`ml-auto font-mono text-[11px] ${prio}`}>{task.priority}</span> : null}
+      </div>
+      <div className="p-3">
+        <p className="text-sm font-semibold leading-snug text-ink">{task.title}</p>
+        <p className="mt-1 truncate font-mono text-[11.5px] text-muted">
+          {[column, assignee ? `@${assignee}` : "", task.due].filter(Boolean).join("  \u00b7  ")}
+        </p>
+
+        <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
+          {done ? (
+            <span className="rounded-md border border-emerald-600 bg-emerald-600/10 px-2.5 py-1 text-xs font-medium text-emerald-600">
+              {t("Hecha")}
+            </span>
+          ) : (
+            <>
+              <button
+                type="button"
+                disabled={!!busy}
+                onClick={() => act("task_done")}
+                className="rounded-md border border-emerald-600 px-2.5 py-1 text-xs font-medium text-emerald-600 transition hover:bg-emerald-600/10 disabled:opacity-50"
+              >
+                {busy === "task_done" ? "\u2026" : t("Marcar hecha")}
+              </button>
+              <button
+                type="button"
+                disabled={!!busy}
+                onClick={() => act("task_assign_me")}
+                className="rounded-md border border-border px-2.5 py-1 text-xs font-medium text-ink transition hover:bg-surface-3 disabled:opacity-50"
+              >
+                {busy === "task_assign_me" ? "\u2026" : t("Asignarme")}
+              </button>
+            </>
+          )}
+          {url ? (
+            <a
+              href={url}
+              target="_blank"
+              rel="noreferrer"
+              className="rounded-md border border-border px-2.5 py-1 text-xs font-medium text-ink transition hover:bg-surface-3"
+            >
+              {t("Abrir en Tasks")}
+            </a>
+          ) : null}
+        </div>
+        {err ? <p className="mt-2 text-[11.5px] leading-snug text-red-500">{err}</p> : null}
+      </div>
+    </div>
+  );
+}
+
 function PrCard({ pr, channelId, parentId, prosa }: { pr: PrCardData; channelId: number; parentId: number | null; prosa: string }) {
   const t = useT();
   const [busy, setBusy] = useState("");
@@ -8047,7 +8175,7 @@ function CallCard({ data, msg }: { data: CallCardData; msg: Message }) {
     <>
     <div
       className={
-        "group my-1.5 ml-11 flex max-w-md items-center gap-3 rounded-2xl border px-3.5 py-3 shadow-sm " +
+        "group my-1.5 ml-11 flex max-w-md items-center gap-3 rounded-2xl border px-3.5 py-3 " +
         (live ? "border-brand/30 bg-gradient-to-br from-brand/10 to-transparent" : "border-border bg-surface-2")
       }
     >
@@ -8080,7 +8208,7 @@ function CallCard({ data, msg }: { data: CallCardData; msg: Message }) {
         ) : (
           <button
             onClick={() => joinCall(data.join)}
-            className="shrink-0 rounded-full bg-brand px-4 py-1.5 text-xs font-semibold text-brand-fg shadow-sm transition hover:opacity-90 active:scale-95"
+            className="shrink-0 rounded-full bg-brand px-4 py-1.5 text-xs font-semibold text-brand-fg transition hover:opacity-90 active:scale-95"
           >
             {t("Unirse")}
           </button>
@@ -8523,6 +8651,10 @@ function MessageRow({
                 // mensaje y la resena un apendice.
                 const pr = extractPr(m.body);
                 return pr ? <PrCard pr={pr} channelId={m.channel_id ?? 0} parentId={m.parent_id ?? m.id} prosa={bubbleWithoutEbDoc(m.body)} /> : null;
+              })()}
+              {(() => {
+                const tk = extractTask(m.body);
+                return tk ? <TaskCard task={tk} channelId={m.channel_id ?? 0} parentId={m.parent_id ?? m.id} /> : null;
               })()}
               {/* El turno sigue vivo aunque ya haya texto: la salida tiene que seguir
                   a la vista (ver TurnLiveFooter). */}

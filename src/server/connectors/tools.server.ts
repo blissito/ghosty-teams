@@ -8,6 +8,7 @@
 
 import { loaderFor, toolsOf } from "./impl";
 import { nativeTools, type ToolDest } from "./native.server";
+import { taskTools } from "./tasks.native.server";
 
 // Declaración expuesta al modelo (sin el handler).
 export type ToolDecl = { name: string; description: string; inputSchema: Record<string, unknown> };
@@ -24,6 +25,10 @@ export async function listUserTools(sub: string, dest: ToolDest | null = null): 
   const { listAvailableProviders } = await import("./store.server");
   const connected = await listAvailableProviders(sub);
   const out: ToolDecl[] = nativeTools(dest).map((t) => ({ name: t.name, description: t.description, inputSchema: t.inputSchema }));
+  // Las de Ghosty Tasks van aparte de `nativeTools` porque ésa es síncrona y éstas piden sus
+  // schemas al tablero. Un Tasks caído no puede dejar al usuario sin el resto de sus tools.
+  for (const t of await taskTools(sub, dest).catch(() => []))
+    out.push({ name: t.name, description: t.description, inputSchema: t.inputSchema });
   for (const id of connected) {
     const load = loaderFor(id);
     if (!load) continue;
@@ -87,6 +92,16 @@ async function repoScopeDenial(
 export async function runTool(sub: string, toolName: string, args: Record<string, unknown>, dest: ToolDest | null = null): Promise<RunResult> {
   const denial = await repoScopeDenial(toolName, args ?? {}, dest);
   if (denial) return { ok: false, error: denial };
+  // Las de Tasks antes que nada: su nombre está reservado y no dependen de ningún conector.
+  if (toolName.startsWith("task_")) {
+    const tt = (await taskTools(sub, dest)).find((t) => t.name === toolName);
+    if (!tt) return { ok: false, error: `tool de tablero no disponible: ${toolName}` };
+    try {
+      return { ok: true, result: await tt.handler(sub, args ?? {}) };
+    } catch (e) {
+      return { ok: false, error: e instanceof Error ? e.message : String(e) };
+    }
+  }
   // Las nativas primero: no requieren conector y su nombre está reservado.
   const nat = nativeTools(dest).find((t) => t.name === toolName);
   if (nat) {

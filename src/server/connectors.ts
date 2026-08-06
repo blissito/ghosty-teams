@@ -524,3 +524,88 @@ export const prCardStateFn = createServerFn({ method: "POST" })
       soyElAutor,
     };
   });
+
+/* ── Tarjeta de TAREA ─────────────────────────────────────────────────────── */
+
+/**
+ * Acciones de la tarjeta de tarea. Gemela de `CARD_ACTIONS`, y **igual de cerrada**: esto
+ * corre una acción de tablero con la cuenta de quien hace clic, así que un nombre libre
+ * dejaría a cualquiera con sesión ejecutar lo que quisiera sobre el tablero.
+ */
+const TASK_CARD_ACTIONS = new Set(["task_done", "task_assign_me"]);
+
+export const runTaskCardActionFn = createServerFn({ method: "POST" })
+  .validator((d: { action: string; id: number; channelId?: number; parentId?: number }) => d)
+  .handler(async ({ data }) => {
+    const me = await sessionUser();
+    if (!me) return { ok: false as const, error: "no autenticado" };
+    if (!TASK_CARD_ACTIONS.has(data.action)) return { ok: false as const, error: "acción no permitida" };
+    const id = Number(data.id);
+    if (!Number.isFinite(id) || id <= 0) return { ok: false as const, error: "tarea inválida" };
+
+    const { resolveBoard } = await import("./tasks-boards.server");
+    const { callTasks } = await import("./tasks-bridge.server");
+    const { currentSlug } = await import("./tenant.server");
+    const slug = await currentSlug();
+    if (!slug) return { ok: false as const, error: "no pude resolver el espacio de trabajo" };
+
+    // El tablero sale del ROOM, nunca del cliente: si viniera en el body, cualquiera con
+    // sesión podría dirigir la acción al tablero de otro equipo.
+    const pick = await resolveBoard(data.channelId ?? null);
+    if (pick.kind !== "board") return { ok: false as const, error: "este room no tiene un tablero asignado" };
+
+    const r =
+      data.action === "task_done"
+        ? await callTasks(slug, me.sub, pick.board.id, "task_move", { id, column: "Done" })
+        : await callTasks(slug, me.sub, pick.board.id, "task_update", { id, assignee: "yo" });
+    if (!r.ok) return { ok: false as const, error: r.error };
+    await avisaAlCanal(data);
+    return { ok: true as const, action: data.action };
+  });
+
+/**
+ * Estado ACTUAL de una tarea para la tarjeta.
+ *
+ * ⚠️ No se guarda en el mensaje: si alguien la mueve desde el tablero, una tarjeta que
+ * recordara su columna seguiría diciendo "En curso" para siempre. Es la misma lección que
+ * el `localStorage` de la primera versión de la tarjeta de PR.
+ */
+export const taskCardStateFn = createServerFn({ method: "POST" })
+  .validator((d: { id: number; channelId?: number }) => d)
+  .handler(async ({ data }) => {
+    const me = await sessionUser();
+    if (!me) return null;
+    const id = Number(data.id);
+    if (!Number.isFinite(id) || id <= 0) return null;
+
+    const { resolveBoard, boardUrl } = await import("./tasks-boards.server");
+    const { callTasks } = await import("./tasks-bridge.server");
+    const { currentSlug } = await import("./tenant.server");
+    const slug = await currentSlug();
+    if (!slug) return null;
+    const pick = await resolveBoard(data.channelId ?? null);
+    if (pick.kind !== "board") return null;
+
+    // No hay un `get_task`: se busca en el tablero, que es una sola llamada y además trae
+    // el nombre de la columna ya resuelto.
+    const r = await callTasks(slug, me.sub, pick.board.id, "task_board_read", {});
+    if (!r.ok) return null;
+    const board = r.result as any;
+    const cols: any[] = board?.columns ?? [];
+    for (const c of cols) {
+      const t = (c?.tasks ?? []).find((x: any) => Number(x?.id) === id);
+      if (!t) continue;
+      const column = String(c?.name ?? "");
+      return {
+        column,
+        assignee: String(t?.assignee ?? t?.assignee_sub ?? ""),
+        // "Done" por NOMBRE es lo mismo que hace `move_task` del otro lado. Un tablero con
+        // la columna renombrada no se marcaría como cerrado — es la contrapartida conocida
+        // de no tener un flag de "columna final" en el esquema.
+        done: column.toLowerCase() === "done",
+        board: pick.board.name,
+        url: boardUrl(slug, pick.board.slug, id),
+      };
+    }
+    return null;
+  });

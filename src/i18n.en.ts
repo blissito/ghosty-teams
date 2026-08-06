@@ -1100,6 +1100,12 @@ export const en: Record<string, string> = {
   "Ningún room tiene repositorios conectados. Ábrelos y usa el botón de GitHub del encabezado.":
     "No room has repositories connected. Open one and use the GitHub button in the header.",
 
+  // Tarjeta de tarea. "Tasks" es el nombre del producto y no se traduce.
+  "Abrir en Tasks": "Open in Tasks",
+  "Marcar hecha": "Mark done",
+  "Asignarme": "Assign to me",
+  "Hecha": "Done",
+
   // Preexistente, sin traducir hasta hoy.
   "y": "and",
 };

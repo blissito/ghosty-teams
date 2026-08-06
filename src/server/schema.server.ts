@@ -589,6 +589,26 @@ async function migrate(): Promise<void> {
   );
   await exec("CREATE INDEX IF NOT EXISTS gt_room_repos_chan ON gt_room_repos(channel_id)");
 
+  // El tablero de Ghosty Tasks que este room viene usando. Se escribe SOLA la primera vez
+  // que una petición resuelve uno ahí: no hay nada que configurar antes de que sirva.
+  //
+  // ⚠️ Es un DEFAULT recordado, **no una frontera** — al revés que `gt_room_repos`, que sí lo
+  // es. Aquí se quiere que varios rooms miren tableros distintos sin cerrarle la puerta a
+  // ninguno: nombrar otro en el turno lo pisa. Lo que evita el abuso es que Tasks aplica
+  // `requireProjectMember` con el `sub` de quien invocó, así que el room puede nombrar un
+  // tablero y aun así no enseñárselo a quien no es miembro.
+  //
+  // `project_id` apunta a `task_projects`, que vive en ESTA MISMA base: Teams y Tasks
+  // comparten namespace. Sin FK a propósito — el esquema de Tasks lo crea su propio
+  // `ensureSchema()`, que puede no haber corrido todavía en un workspace que nunca abrió el
+  // tablero, y una FK a una tabla inexistente rompería la migración de Teams.
+  await exec(`CREATE TABLE IF NOT EXISTS gt_room_board (
+    channel_id INTEGER PRIMARY KEY,
+    project_id INTEGER NOT NULL,
+    set_by     TEXT NOT NULL,
+    at         INTEGER NOT NULL DEFAULT (unixepoch())
+  )`);
+
   // Recordatorios programados. El agente los crea con una tool nativa y un tick del
   // proceso (server/reminders.server.ts) los dispara: cola en DB + poll, el patrón de
   // pg-boss/solid_queue. La verdad NUNCA vive en memoria — un reinicio del server no

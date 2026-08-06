@@ -1454,6 +1454,7 @@ export async function deleteChannel(id: number): Promise<void> {
   await dbq("DELETE FROM gc_messages WHERE channel_id = ?", [id]);
   await dbq("DELETE FROM gc_channel_members WHERE channel_id = ?", [id]);
   await dbq("DELETE FROM gt_room_repos WHERE channel_id = ?", [id]);
+  await dbq("DELETE FROM gt_room_board WHERE channel_id = ?", [id]);
   await dbq("DELETE FROM gc_channels WHERE id = ?", [id]);
 }
 

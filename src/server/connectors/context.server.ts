@@ -60,6 +60,12 @@ export async function buildConnectorContext(
       })
     );
     const blocks = parts.filter((p): p is string => !!p);
+    // Tasks no es un conector —no hay nada que autorizar, los dos productos comparten
+    // secreto y namespace—, así que su bloque no sale del bucle de arriba. Va aquí, y no en
+    // una skill: `gotcha_skill_autodescubrible_no_es_leida`.
+    const { tasksContext } = await import("./tasks.native.server");
+    const tareas = await tasksContext(dest).catch(() => null);
+    if (tareas) blocks.push(tareas);
     const ajenos = await contextoDeConectoresDelEquipo(sub);
     if (ajenos) blocks.push(ajenos);
     if (!blocks.length) return "";

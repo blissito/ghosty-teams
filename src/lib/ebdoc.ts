@@ -846,3 +846,58 @@ export function bubbleWithoutEbDoc(
     doc.kind === "sheet" ? "📊 Generando la hoja…" : doc.kind === "artifact" ? "🎨 Generando el artefacto…" : "✍️ Redactando el documento…";
   return around ? `${around}\n\n${writing}` : writing;
 }
+
+/* ── Tarjeta de TAREA (```gt-task```) ─────────────────────────────────────── */
+// Gemela de gt-pr. Misma división de trabajo: el MODELO emite datos, la PLATAFORMA pone los
+// botones. Si el modelo pudiera declararlos inventaría un "Cerrar sprint" que no existe.
+
+export type TaskCardData = {
+  id: number;
+  title: string;
+  board: string;
+  column: string;
+  assignee: string;
+  priority: string;
+  due: string;
+  url: string;
+};
+
+export function extractTask(body: string): TaskCardData | null {
+  const open = body.match(/```gt-task[^\n]*\n/);
+  if (!open || open.index == null) return null;
+  const rest = body.slice(open.index + open[0].length);
+  const closeIdx = rest.indexOf("```");
+  if (closeIdx === -1) return null; // fence a medio streamear: no se pinta media tarjeta
+  try {
+    const p = JSON.parse(rest.slice(0, closeIdx).trim()) as Record<string, unknown>;
+    const str = (v: unknown) => (typeof v === "string" ? v.trim() : "");
+    const id = typeof p.id === "number" && p.id > 0 ? p.id : 0;
+    const title = str(p.title);
+    // Sin id no hay acciones posibles, y sin título no hay nada que enseñar: una tarjeta a
+    // medias es peor que la frase que sustituye.
+    if (!id || !title) return null;
+    return {
+      id,
+      title,
+      board: str(p.board),
+      column: str(p.column),
+      assignee: str(p.assignee),
+      priority: str(p.priority).toLowerCase(),
+      due: str(p.due),
+      url: str(p.url),
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** El cuerpo sin el fence. Lo de alrededor es la respuesta y se conserva entera. */
+export function stripTask(body: string): string {
+  const open = body.match(/```gt-task[^\n]*\n/);
+  if (!open || open.index == null) return body;
+  const before = body.slice(0, open.index);
+  const rest = body.slice(open.index + open[0].length);
+  const closeIdx = rest.indexOf("```");
+  const after = closeIdx === -1 ? "" : rest.slice(closeIdx + 3);
+  return [before.trim(), after.trim()].filter(Boolean).join("\n\n");
+}
