@@ -729,7 +729,14 @@ function UsagePanel() {
                       // Mínimo visible: con 6M de bolsa un consumo real redondea a 0% y la
                       // barra desaparecía justo cuando la persona viene a comprobarla.
                       width: `${Math.max(p, e.used > 0 ? 2 : 0)}%`,
-                      background: alto ? "#ef4444" : medio ? "#f59e0b" : "var(--color-brand)",
+                      // ⚠️ Estos dos hex están elegidos por MEDICIÓN contra la pista
+                      // (`surface-3`) en los DOS temas, no por gusto. Los de antes
+                      // —#ef4444 y #f59e0b— daban 3.08:1 y 1.76:1 en claro: el ámbar se
+                      // veía como una franja gris justo cuando el saldo se acaba, que es
+                      // el único momento en que esta barra importa. Éstos dan 3.95/3.24 y
+                      // 4.11/3.11 (claro/oscuro), o sea ≥3:1 —el mínimo de WCAG para un
+                      // elemento gráfico— en ambos. Al cambiarlos, vuelve a medir.
+                      background: alto ? "#dc2626" : medio ? "#b45309" : "var(--color-brand)",
                     }}
                   />
                 </div>
