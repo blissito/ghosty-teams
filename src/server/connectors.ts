@@ -297,3 +297,79 @@ export const disconnectConnectorFn = createServerFn({ method: "POST" })
       pendientesDeLimpiar: sueltos,
     };
   });
+
+// ── Acciones directas desde una tarjeta del chat ──────────────────────────────
+//
+// La tarjeta de PR (`gt-pr`) no manda texto al chat como la de Sentry: llama aquí. Dos
+// razones, y las dos importan:
+//
+//  1. Aprobar es binario e inmediato. Pasarlo por el agente cuesta un turno entero
+//     (~15 s y tokens) para algo que es una llamada HTTP, y mete al modelo a decidir
+//     si de verdad aprueba.
+//  2. El review queda a nombre de QUIEN HACE CLIC, no de quien pidió la revisión. Eso
+//     sale gratis aquí porque el `sub` viene de la SESIÓN; por el chat dependería de
+//     quién resultara ser el invocador del turno.
+//
+// ⚠️ La lista de acciones es CERRADA. Es una server function que corre una tool de
+// conector con el token del usuario: si aceptara un nombre libre, cualquiera con sesión
+// podría invocar cualquier tool de cualquier conector suyo con los argumentos que
+// quisiera. Sólo se permite lo que un botón de tarjeta puede disparar.
+const CARD_ACTIONS: Record<string, { provider: string; tool: string }> = {
+  pr_approve: { provider: "github", tool: "github_create_review" },
+  pr_request_changes: { provider: "github", tool: "github_create_review" },
+  // Rechazar = CERRAR el PR sin mergear. Es reversible (se puede reabrir), por eso no
+  // pide confirmación extra. Va por la API de issues, que es la que cierra un PR.
+  pr_reject: { provider: "github", tool: "github_update_issue" },
+};
+
+export const runCardActionFn = createServerFn({ method: "POST" })
+  .validator((d: { action: string; repo: string; number: number; body?: string }) => d)
+  .handler(async ({ data }) => {
+    const me = await sessionUser();
+    if (!me) return { ok: false as const, error: "no autenticado" };
+
+    const spec = CARD_ACTIONS[data.action];
+    if (!spec) return { ok: false as const, error: "acción no permitida" };
+
+    const repo = String(data.repo ?? "");
+    const number = Number(data.number);
+    if (!repo.includes("/") || !Number.isFinite(number) || number <= 0) {
+      return { ok: false as const, error: "PR inválido" };
+    }
+
+    const { getConnectorRow } = await import("./connectors/store.server");
+    const row = await getConnectorRow(me.sub, spec.provider);
+    if (!row?.access_token) {
+      // Es el caso normal en un canal: la reseña la pidió otra persona y quien mira la
+      // tarjeta todavía no conectó su GitHub. Tiene que decirlo, no fallar en genérico.
+      return { ok: false as const, error: "Conecta tu GitHub en Ajustes → Integraciones para poder hacer esto." };
+    }
+
+    const { loaderFor, toolsOf } = await import("./connectors/impl");
+    const loader = loaderFor(spec.provider);
+    if (!loader) return { ok: false as const, error: "conector no disponible" };
+    const tool = (await toolsOf(await loader(), me.sub, null)).find((t) => t.name === spec.tool);
+    if (!tool) return { ok: false as const, error: "acción no disponible" };
+
+    const body = String(data.body ?? "").trim();
+
+    if (data.action === "pr_reject") {
+      const r = (await tool.handler(me.sub, { repo, number, state: "closed" })) as Record<string, unknown>;
+      if (r?.error) return { ok: false as const, error: String(r.error) };
+      return { ok: true as const, event: "CLOSED", url: typeof r?.url === "string" ? r.url : "" };
+    }
+
+    const event = data.action === "pr_approve" ? "APPROVE" : "REQUEST_CHANGES";
+    const r = (await tool.handler(me.sub, {
+      repo,
+      number,
+      event,
+      // GitHub exige cuerpo para REQUEST_CHANGES. El de APPROVE es opcional y se omite:
+      // un "LGTM" automático firmado por una persona que quizá no leyó el diff es peor
+      // que un approve escueto.
+      ...(event === "REQUEST_CHANGES" ? { body: body || "Pide cambios (desde Ghosty)." } : {}),
+    })) as Record<string, unknown>;
+
+    if (r?.error) return { ok: false as const, error: String(r.error) };
+    return { ok: true as const, event, url: typeof r?.url === "string" ? r.url : "" };
+  });

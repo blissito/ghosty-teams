@@ -123,7 +123,8 @@ import { unfurlLinkFn } from "../server/unfurl";
 import { registerModalEsc } from "../utils/modal-esc";
 import ArtifactPanel, { type ArtifactView, viewFromAttachment } from "../components/ArtifactPanel";
 import { belongsToOpenConversation } from "../lib/conversation-scope";
-import { extractEbDoc, extractEbPatches, draftTitle, bubbleWithoutEbDoc, extractToolState, extractSteps, extractAlert, type ToolState, type AlertCardData } from "../lib/ebdoc";
+import { extractEbDoc, extractEbPatches, draftTitle, bubbleWithoutEbDoc, extractToolState, extractSteps, extractAlert, extractPr, type ToolState, type AlertCardData, type PrCardData } from "../lib/ebdoc";
+import { runCardActionFn } from "../server/connectors";
 import { ThinkingRing } from "../components/ThinkingRing";
 import { showSystemNotification } from "../utils/system-notification";
 import { marcarCierre, limpiarCierre } from "../lib/panel-cerrando";
@@ -7153,6 +7154,120 @@ function AlertCard({ msgId, a, onAct }: { msgId: number; a: AlertCardData; onAct
   );
 }
 
+/**
+ * Tarjeta de pull request: el pie accionable de una reseña.
+ *
+ * ⚠️ Sus botones NO mandan texto al chat como los de `AlertCard` — llaman a la API de
+ * GitHub con las credenciales de QUIEN HACE CLIC (`runCardActionFn`). Aprobar por la vía
+ * del chat costaría un turno entero del agente para una llamada HTTP, y metería al modelo
+ * a decidir si de verdad aprueba.
+ *
+ * ⚠️ Nuestro agente abre los PRs **como el usuario** (token user-to-server), no con una
+ * identidad de bot propia. O sea que quien pidió el cambio NO puede aprobar su propio PR
+ * —GitHub lo prohíbe— y el botón sólo sirve para OTRA persona del canal. El error se
+ * explica tal cual cuando pasa, en vez de dejar un fallo mudo.
+ */
+function PrCard({ pr, onDone }: { pr: PrCardData; onDone: (texto: string) => void }) {
+  const t = useT();
+  const [busy, setBusy] = useState("");
+  const [done, setDone] = useState("");
+  const [err, setErr] = useState("");
+
+  const act = async (action: string, etiqueta: string) => {
+    if (busy || done) return;
+    setBusy(action);
+    setErr("");
+    try {
+      const r = await runCardActionFn({ data: { action, repo: pr.repo, number: pr.number } });
+      if (!r.ok) {
+        setErr(r.error);
+        return;
+      }
+      setDone(etiqueta);
+      // Se anuncia en el canal a propósito. El estado del botón es local a este
+      // navegador, así que sin esto el resto del equipo no se enteraría de que alguien
+      // ya lo revisó — y dos personas revisarían lo mismo.
+      onDone(t("{quien} en el PR #{n} de {repo}", { quien: etiqueta, n: String(pr.number), repo: pr.repo }));
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy("");
+    }
+  };
+
+  const checks =
+    pr.checks === "success"
+      ? { txt: t("CI en verde"), cls: "text-emerald-500" }
+      : pr.checks === "failure"
+        ? { txt: t("CI en rojo"), cls: "text-red-500" }
+        : pr.checks === "pending"
+          ? { txt: t("CI corriendo"), cls: "text-amber-500" }
+          : null;
+
+  const botones: Array<{ action: string; label: string; etiqueta: string; tono: string }> = [
+    { action: "pr_approve", label: t("Aprobar"), etiqueta: t("Aprobado"), tono: "border-emerald-600 text-emerald-600 hover:bg-emerald-600/10" },
+    { action: "pr_request_changes", label: t("Pedir cambios"), etiqueta: t("Cambios pedidos"), tono: "border-border text-ink hover:bg-surface-3" },
+    { action: "pr_reject", label: t("Rechazar"), etiqueta: t("Rechazado"), tono: "border-border text-red-500 hover:bg-red-500/10" },
+  ];
+
+  return (
+    <div className="mt-1.5 max-w-xl overflow-hidden rounded-lg border border-border bg-surface-2">
+      <div className="flex items-center gap-2 border-b border-border px-3 py-2">
+        <span className="font-mono text-[11px] text-muted">{pr.repo}</span>
+        <span className="font-mono text-[11px] font-bold text-ink">#{pr.number}</span>
+        {pr.additions != null || pr.deletions != null ? (
+          <span className="ml-auto font-mono text-[11px]">
+            {pr.additions != null ? <span className="text-emerald-500">+{pr.additions}</span> : null}{" "}
+            {pr.deletions != null ? <span className="text-red-500">−{pr.deletions}</span> : null}
+          </span>
+        ) : null}
+      </div>
+      <div className="p-3">
+        {pr.title ? <p className="text-sm font-semibold leading-snug text-ink">{pr.title}</p> : null}
+        <p className="mt-1 truncate font-mono text-[11.5px] text-muted">
+          {[
+            pr.author ? `@${pr.author}` : "",
+            pr.files != null ? (pr.files === 1 ? t("1 archivo") : t("{n} archivos", { n: String(pr.files) })) : "",
+          ]
+            .filter(Boolean)
+            .join("  ·  ")}
+          {checks ? <span className={`  ${checks.cls}`}>{"  ·  " + checks.txt}</span> : null}
+        </p>
+        {pr.verdict ? <p className="mt-2 text-[13px] leading-snug text-ink">{pr.verdict}</p> : null}
+
+        <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
+          {done ? (
+            <span className="rounded-md border border-emerald-600 bg-emerald-600/10 px-2.5 py-1 text-xs font-medium text-emerald-600">
+              ✓ {done}
+            </span>
+          ) : (
+            botones.map((b) => (
+              <button
+                key={b.action}
+                type="button"
+                disabled={!!busy}
+                onClick={() => act(b.action, b.etiqueta)}
+                className={`rounded-md border px-2.5 py-1 text-xs font-medium transition disabled:opacity-50 ${b.tono}`}
+              >
+                {busy === b.action ? "…" : b.label}
+              </button>
+            ))
+          )}
+          <a
+            href={pr.url}
+            target="_blank"
+            rel="noreferrer"
+            className="rounded-md border border-border px-2.5 py-1 text-xs font-medium text-ink transition hover:bg-surface-3"
+          >
+            {t("Ver en GitHub")}
+          </a>
+        </div>
+        {err ? <p className="mt-2 text-[11.5px] leading-snug text-red-500">{err}</p> : null}
+      </div>
+    </div>
+  );
+}
+
 function AskUserCard({
   artifactId,
   question,
@@ -7972,6 +8087,13 @@ function MessageRow({
                 }}
               />
               ) : null}
+              {(() => {
+                // Va DESPUES de la prosa, no antes: la resena es el contenido y la
+                // tarjeta es su pie accionable. Al reves se lee como si el PR fuera el
+                // mensaje y la resena un apendice.
+                const pr = extractPr(m.body);
+                return pr ? <PrCard pr={pr} onDone={(txt) => sendQuickReply(txt, m)} /> : null;
+              })()}
               {/* El turno sigue vivo aunque ya haya texto: la salida tiene que seguir
                   a la vista (ver TurnLiveFooter). */}
               {isAgent ? <TurnLiveFooter id={m.id} /> : null}

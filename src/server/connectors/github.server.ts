@@ -202,7 +202,7 @@ export async function ambientContext(sub: string, sender: string, _message: stri
     `TIENES HERRAMIENTAS para sus repos vía el GS Tools SDK: importa /opt/gs-sdk/connectors.mjs y usa ` +
     `list() y run(name, args). Lectura: github_list_repos, github_list_issues, github_get_issue, ` +
     `github_list_prs, github_get_pr, github_pr_files, github_read_file, github_search_code, ` +
-    `github_workflow_runs, github_workflow_run_logs. Escritura: github_comment, github_update_issue, github_create_issue, ` +
+    `github_workflow_runs, github_workflow_run_logs. Escritura: github_create_review, github_comment, github_update_issue, github_create_issue, ` +
     `github_create_branch, github_write_file, github_create_pr. ` +
     `Si te piden "conecta mi repo" o "agrega este repo", contesta con github_install_link. ` +
     `Para CUALQUIER pregunta sobre repos, issues, pull requests o CI de ${sender}, USA estas tools — ` +
@@ -511,6 +511,73 @@ export const tools: ConnectorTool[] = [
   // Todo lo de aquí abajo aparece con el NOMBRE del usuario en GitHub. El
   // ambientContext le dice al modelo que confirme antes de usarlas.
 
+  {
+    name: "github_create_review",
+    description:
+      "Aprueba un pull request, pide cambios, o deja un review con comentarios anclados a líneas concretas del diff. Es distinto de github_comment, que sólo deja un comentario suelto en la conversación. ⚠️ Confírmalo SIEMPRE con el usuario: queda a su nombre y un approve puede desbloquear un merge. GitHub no deja aprobar tu propio PR.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        ...repoProp,
+        number: { type: "number", description: "Número del PR." },
+        event: str("APPROVE | REQUEST_CHANGES | COMMENT. Default COMMENT."),
+        body: str("El texto del review. Obligatorio para REQUEST_CHANGES y COMMENT."),
+        comments: {
+          type: "array",
+          description:
+            "Comentarios anclados. Cada uno: {path, line, body}. `line` es el número de línea en el archivo YA modificado, y tiene que estar dentro del diff del PR o GitHub lo rechaza.",
+          items: {
+            type: "object",
+            properties: {
+              path: str("Ruta del archivo, tal como sale en github_pr_files."),
+              line: { type: "number", description: "Línea en la versión nueva del archivo." },
+              body: str("El comentario."),
+            },
+            required: ["path", "line", "body"],
+          },
+        },
+      },
+      required: ["repo", "number"],
+    },
+    handler: async (sub, a) => {
+      const p = repoPath(a.repo);
+      if (!p) return BAD_REPO;
+      const event = String(a.event ?? "COMMENT").toUpperCase();
+      if (!["APPROVE", "REQUEST_CHANGES", "COMMENT"].includes(event)) {
+        return { error: `event inválido: ${event}. Usa APPROVE, REQUEST_CHANGES o COMMENT.` };
+      }
+      // GitHub responde 422 con un texto poco claro si falta el cuerpo en estos dos.
+      // Vale más decirlo aquí que devolverle al modelo un error que no sabe interpretar.
+      if (event !== "APPROVE" && !String(a.body ?? "").trim()) {
+        return { error: `Un review de tipo ${event} necesita \`body\`.` };
+      }
+      const comments = Array.isArray(a.comments)
+        ? (a.comments as any[])
+            .map((c) => ({ path: String(c?.path ?? ""), line: Number(c?.line), body: String(c?.body ?? "") }))
+            .filter((c) => c.path && Number.isFinite(c.line) && c.body)
+        : [];
+      const r = await api(sub, `/repos/${p}/pulls/${Number(a.number)}/reviews`, {
+        method: "POST",
+        body: JSON.stringify({
+          event,
+          ...(a.body ? { body: String(a.body) } : {}),
+          ...(comments.length ? { comments } : {}),
+        }),
+      });
+      if (r?.error) {
+        // La causa más común de 422 aquí, y la que el mensaje genérico no explica.
+        if (String(r.error).includes("422") && event === "APPROVE") {
+          return {
+            error:
+              "GitHub rechazó el approve. Lo más probable es que el PR sea del propio usuario: " +
+              "nadie puede aprobar su propio pull request.",
+          };
+        }
+        return r;
+      }
+      return { ok: true, event, id: r?.id, url: r?.html_url, state: r?.state };
+    },
+  },
   {
     name: "github_workflow_run_logs",
     description:

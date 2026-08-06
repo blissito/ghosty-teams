@@ -401,6 +401,84 @@ export function stripAlert(body: string): string {
   return [before.trim(), after.trim()].filter(Boolean).join("\n\n");
 }
 
+// ── Tarjeta de pull request ───────────────────────────────────────────────────
+//
+// ```gt-pr
+// {"repo":"acme/api","number":412,"title":"…","author":"lupita","additions":31,
+//  "deletions":4,"files":3,"checks":"failure","url":"https://github.com/…","verdict":"…"}
+// ```
+//
+// A diferencia de `gt-alert`, ésta la emite el MODELO al cerrar una revisión — es su
+// resumen, no un evento entrante. Por eso el JSON trae SÓLO datos verificables del PR y
+// **ningún botón**: las acciones las pone la plataforma (`PrCard`), que sabe cuáles
+// existen de verdad. Si el modelo pudiera declararlas, acabaría inventando un "Mergear"
+// que no hay o un "Aprobar" en un PR que no puede aprobar.
+//
+// ⚠️ Y a diferencia de todo lo demás que emite el modelo, sus botones NO mandan texto al
+// chat: llaman a la API con las credenciales de QUIEN HACE CLIC. Aprobar por la vía del
+// chat costaría un turno entero del agente para una acción binaria, y dejaría que el
+// modelo decida si de verdad aprueba.
+
+export type PrCardData = {
+  repo: string;
+  number: number;
+  title: string;
+  author: string;
+  additions: number | null;
+  deletions: number | null;
+  files: number | null;
+  /** success | failure | pending | "" — tal cual lo reportó GitHub, nunca inferido. */
+  checks: string;
+  url: string;
+  /** Una línea del modelo: su conclusión. Es lo único subjetivo de la tarjeta. */
+  verdict: string;
+};
+
+export function extractPr(body: string): PrCardData | null {
+  const open = body.match(/```gt-pr[^\n]*\n/);
+  if (!open || open.index == null) return null;
+  const rest = body.slice(open.index + open[0].length);
+  const closeIdx = rest.indexOf("```");
+  if (closeIdx === -1) return null; // fence a medio streamear: no se pinta media tarjeta
+  try {
+    const p = JSON.parse(rest.slice(0, closeIdx).trim()) as Record<string, unknown>;
+    const str = (v: unknown) => (typeof v === "string" ? v.trim() : "");
+    // 0 es un valor legítimo aquí (un PR que sólo borra tiene additions 0), así que
+    // esto NO puede usar el `num` de las alertas, que descarta el cero.
+    const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : null);
+    const repo = str(p.repo);
+    const number = typeof p.number === "number" && p.number > 0 ? p.number : 0;
+    // Sin repo y número no hay acciones posibles, y una tarjeta sin acciones es peor
+    // que el texto que sustituye.
+    if (!repo || !number) return null;
+    return {
+      repo,
+      number,
+      title: str(p.title),
+      author: str(p.author),
+      additions: num(p.additions),
+      deletions: num(p.deletions),
+      files: num(p.files),
+      checks: str(p.checks).toLowerCase(),
+      url: str(p.url) || `https://github.com/${repo}/pull/${number}`,
+      verdict: str(p.verdict),
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** El cuerpo sin el fence. Lo de alrededor es la reseña y se conserva entera. */
+export function stripPr(body: string): string {
+  const open = body.match(/```gt-pr[^\n]*\n/);
+  if (!open || open.index == null) return body;
+  const before = body.slice(0, open.index);
+  const rest = body.slice(open.index + open[0].length);
+  const closeIdx = rest.indexOf("```");
+  const after = closeIdx === -1 ? "" : rest.slice(closeIdx + 3);
+  return [before.trim(), after.trim()].filter(Boolean).join("\n\n");
+}
+
 // ── Escaneo de fences: TODAS las ocurrencias, no sólo la primera ───────────────
 //
 // Durante mucho tiempo `eb-audio` y `eb-file` se leían con un `match` sin flag `g`, o sea
@@ -690,6 +768,10 @@ export function bubbleWithoutEbDoc(
     // Misma regla que arriba: al PINTAR fuera (la tarjeta ya lo muestra), al GUARDAR
     // dentro — el cliente saca la alerta del propio body y no hay columna aparte.
     body = stripAlert(body);
+    // La tarjeta de PR sí convive con su prosa (la reseña ES el valor y se queda en el
+    // bubble); lo que no puede quedarse es el JSON del fence, que Markdown pintaría
+    // como un recuadro de código con el número del PR dentro.
+    body = stripPr(body);
   }
   body = bubbleWithoutEbAudio(body);
   body = bubbleWithoutEbFile(body);

@@ -1056,6 +1056,21 @@ export const en: Record<string, string> = {
   "Botón": "Button",
   "texto secundario": "secondary text",
 
+  // Tarjeta de pull request (gt-pr).
+  "Aprobar": "Approve",
+  "Aprobado": "Approved",
+  "Pedir cambios": "Request changes",
+  "Cambios pedidos": "Changes requested",
+  "Rechazar": "Reject",
+  "Rechazado": "Rejected",
+  "Ver en GitHub": "View on GitHub",
+  "CI en verde": "CI passing",
+  "CI en rojo": "CI failing",
+  "CI corriendo": "CI running",
+  "1 archivo": "1 file",
+  "{n} archivos": "{n} files",
+  "{quien} en el PR #{n} de {repo}": "{quien} on PR #{n} in {repo}",
+
   // Preexistente, sin traducir hasta hoy.
   "y": "and",
 };
