@@ -21,25 +21,50 @@ import { createSign } from "node:crypto";
 
 const API = "https://api.github.com";
 
+/**
+ * La llave privada como PEM utilizable, o null.
+ *
+ * ⚠️ **Preferir SIEMPRE `GITHUB_APP_PRIVATE_KEY_B64`.** Un PEM en una sola línea con `\n`
+ * escapados atraviesa demasiadas capas que tratan la barra invertida como suya, y basta
+ * que UNA la interprete para romperlo. Pasó en producción el 2026-08-06: **systemd se comió
+ * las barras** al parsear el `EnvironmentFile`, así que el archivo tenía la llave correcta
+ * —28 líneas, firmaba bien— y `process.env` recibía `-----BEGIN RSA PRIVATE KEY-----nMIIE…`.
+ *
+ * Y no se puede reparar en código: una `n` suelta es indistinguible de una `n` legítima del
+ * base64. Por eso la salida no es un `replace` más listo, es no meter barras nunca.
+ *
+ * El camino con `\n` se conserva sólo para no romper un despliegue que ya lo tenga puesto.
+ */
+function privateKeyPem(): string | null {
+  const b64 = process.env.GITHUB_APP_PRIVATE_KEY_B64;
+  if (b64) {
+    const pem = Buffer.from(b64, "base64").toString("utf8");
+    if (pem.includes("-----BEGIN")) return pem;
+  }
+  const raw = process.env.GITHUB_APP_PRIVATE_KEY;
+  if (!raw) return null;
+  const pem = raw.replace(/\\n/g, "\n");
+  // Sin cabecera en su propia línea, `createSign` sólo sabe decir "DECODER
+  // routines::unsupported", que no menciona ni la llave ni el escapado y manda a
+  // diagnosticar el OAuth del usuario. Aquí se descarta antes y se dice qué pasa.
+  return pem.includes("-----BEGIN") && pem.includes("\n") ? pem : null;
+}
+
 /** ¿Está configurada la identidad de bot? Si no, el conector opera como el usuario. */
 export function botIdentityEnabled(): boolean {
-  return !!(process.env.GITHUB_APP_ID && process.env.GITHUB_APP_PRIVATE_KEY);
+  return !!(process.env.GITHUB_APP_ID && privateKeyPem());
 }
 
 /**
  * JWT RS256 firmado con la llave privada de la App. Vale 10 min como máximo (GitHub lo
  * rechaza si pides más) y sólo sirve para pedir installation tokens.
- *
- * La llave viaja en un env, así que los saltos de línea vienen escapados: un `.pem` con
- * `\n` literales no lo acepta `createSign` y el error que da —"error:1E08010C"— no dice
- * nada de eso.
  */
 export function appJwtOrNull(): string | null {
   return botIdentityEnabled() ? appJwt() : null;
 }
 
 function appJwt(): string {
-  const pem = String(process.env.GITHUB_APP_PRIVATE_KEY).replace(/\\n/g, "\n");
+  const pem = privateKeyPem()!;
   const now = Math.floor(Date.now() / 1000);
   const b64 = (o: unknown) => Buffer.from(JSON.stringify(o)).toString("base64url");
   // `iat` 60s en el pasado: GitHub rechaza el token si el reloj de la máquina va
