@@ -94,7 +94,8 @@ async function runProxied(
 
   // `board` es NUESTRO argumento, no de Tasks: se saca antes de reenviar o su validador lo
   // rechazaría por desconocido.
-  const { board: hint, ...rest } = (args ?? {}) as { board?: unknown };
+  const { board: hint, ...resto } = (args ?? {}) as { board?: unknown };
+  const rest = resto as Record<string, unknown>;
 
   // Las de ESPACIO no van dentro de ningún tablero: token con `projectId: 0`. Resolver uno
   // antes las haría imposibles justo cuando hacen falta —crear el primero—.
@@ -109,6 +110,13 @@ async function runProxied(
       await rememberRoomBoard(dest.channelId, nuevo, sub);
     return res ?? { ok: true };
   }
+
+  // ⚠️ El estado de un PR se LEE de GitHub, no se le pregunta al modelo. Al vincular el
+  // #165 escribió "rejected" —una paráfrasis de la acción, no un estado— y el chip acabó
+  // pintado como si todo fuera bien. GitHub ya lo dice (`state`, `merged`, `draft`), así que
+  // se pisa lo que venga en los argumentos. Mismo criterio que el `checks` de la tarjeta de
+  // PR: si el dato existe, dictarlo es una invitación a que sea falso.
+  if (teamsName === "task_link") rest.state = (await estadoRealDelPr(sub, rest.url)) ?? rest.state;
 
   const pick = await resolveBoard(dest?.channelId ?? null, hint ? String(hint) : undefined);
 
@@ -140,6 +148,30 @@ async function runProxied(
   };
 }
 
+
+/**
+ * Estado REAL de un PR de GitHub, o null si la url no es un PR o no se pudo leer.
+ *
+ * Best-effort: vincular tiene que funcionar aunque GitHub no conteste — un chip sin estado
+ * es correcto, y el color neutro ya lo refleja del otro lado.
+ */
+async function estadoRealDelPr(sub: string, url: unknown): Promise<string | null> {
+  const m = String(url ?? "").match(/^https?:\/\/github\.com\/([^/]+\/[^/]+)\/pull\/(\d+)/i);
+  if (!m) return null;
+  try {
+    const { allTools } = await import("./github.server");
+    const tool = allTools().find((t) => t.name === "github_get_pr");
+    if (!tool) return null;
+    const pr = (await tool.handler(sub, { repo: m[1], number: Number(m[2]) })) as any;
+    if (!pr || pr.error) return null;
+    if (pr.merged) return "merged";
+    if (pr.draft) return "draft";
+    return String(pr.state ?? "").toLowerCase() === "closed" ? "closed" : "open";
+  } catch {
+    return null;
+  }
+}
+
 /**
  * El bloque de contexto de Tasks. Va aquí y no en una skill:
  * `gotcha_skill_autodescubrible_no_es_leida` — lo que tiene que pasar siempre no puede
@@ -168,7 +200,7 @@ export async function tasksContext(dest: ToolDest | null): Promise<string | null
     // después no tiene cómo llegar. La descripción es Markdown y el panel pinta enlaces.
     // Un chip se ve desde el tablero y deja que la tarea reaccione al PR; una URL dentro
     // del texto sólo sirve a quien abra la descripción. Es el "development panel" de Jira.
-    `Si la tarea nace de un PR o un issue, cuélgalo con task_link (url, y state si lo sabes) ` +
+    `Si la tarea nace de un PR o un issue, cuélgalo con task_link (basta la url — el estado lo leemos nosotros de GitHub, no lo pongas) ` +
     `en vez de dejar el número suelto en el texto. Para un documento o una conversación, la ` +
     `liga completa en la descripción como enlace Markdown. En los dos casos: quien abra la ` +
     `tarea dentro de dos semanas tiene que llegar de un clic. ` +
