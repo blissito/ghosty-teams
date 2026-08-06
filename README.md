@@ -25,14 +25,25 @@ estado aislado.
 - 🤖 **`@ghosty` + multi-agente** — agentes de tu flota o bots por webhook, cada
   uno por su `@handle`, con feed de actividad.
 - 🔔 **Menciones + Web Push** · 📱 **PWA** instalable · ⚡ optimista y animado.
+- 📄 **Documentos vivos** — editor, versiones, corrector de ortografía propio y
+  export a `.docx` / PDF / `.xlsx`.
+- 🔌 **Integraciones per-user** (OAuth2) — GitHub, Sentry, Deník, Calendly. Las tools
+  corren con **tus** credenciales, nunca con las de otro.
+- 🐙 **Revisión de PRs desde el chat** — el agente lee el diff y el log de CI, deja
+  comentarios anclados a la línea, y cierra con una tarjeta de
+  **Aprobar · Pedir cambios · Rechazar · Mergear** que se ejecuta con la cuenta de
+  quien hace clic. Los PRs que abre salen a nombre de `ghosty-studio[bot]`, así que
+  cualquiera del equipo puede aprobarlos.
 
 ## Cómo funciona
 
-- **[Formmy](https://formmy.app)** → identidad + enruta a tu equipo desde el
-  dominio estable `teams.formmy.app` (ingress **gateado por membresía**: solo
-  entras a la caja de un team del que eres miembro).
-- **[EasyBits](https://easybits.cloud)** → cada equipo levanta su microVM
-  (Firecracker) + su DB aislada; `@ghosty` es un agente de tu flota (OAuth2).
+- **Identidad** → login de Ghosty; cada workspace vive en su subdominio
+  (`<slug>.teams.ghosty.studio`) y el ingress está **gateado por membresía**.
+- **Un solo proceso, muchos tenants.** No hay una microVM por equipo: la app corre en
+  una caja multitenant y el aislamiento es por **namespace de sqld**, resuelto desde
+  el host de cada request (`currentNamespace()`). Lo que sí es por tenant es la DB.
+- **Los agentes** → `@ghosty` y compañía corren en la flota de Ghosty Studio, con su
+  propio runtime; Teams les habla por HMAC de partner.
 - **La app** → [TanStack Start](https://tanstack.com/start) (React 19 SSR) +
   Tailwind. Compute stateless, historial durable.
 
