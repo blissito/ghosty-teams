@@ -5192,8 +5192,12 @@ function RepoPanel({
 
   return (
     <>
-      <div className="fixed inset-0 z-30" onClick={onClose} />
-      <div className="absolute right-0 z-40 mt-1 w-[22rem] max-w-[calc(100vw-2rem)] overflow-hidden rounded-xl border border-border bg-surface-1 shadow-lg">
+      <div className="fixed inset-0 z-40" onClick={onClose} />
+      {/* ⚠️ `bg-surface`, NO `bg-surface-1`: ese token NO existe (styles.css define surface,
+          surface-2 y surface-3). Tailwind no falla con una clase inventada — simplemente no
+          pinta nada, así que el panel salía transparente y se leía como un bug de z-index.
+          Y z-50, el mismo de los otros popovers del archivo. */}
+      <div className="absolute right-0 z-50 mt-1 w-[22rem] max-w-[calc(100vw-2rem)] overflow-hidden rounded-xl border border-border bg-surface shadow-lg">
         <div className="flex items-center gap-2 border-b border-border px-3 py-2">
           <Search size={14} className="shrink-0 text-muted" />
           <input
