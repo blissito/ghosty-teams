@@ -102,38 +102,74 @@ export const workspaceUsageFn = createServerFn({ method: "GET" }).handler(async 
       engines?: { engine: string; used: number; included: number | null; turns: number; ownKey: boolean; agentId?: string | null; agentName?: string | null; name?: string; avatar?: string; handle?: string }[];
     };
 
-    // Ponerle CARA a cada renglón. El cruce hace falta porque el dato está partido: sólo
-    // Teams sabe qué agente está activado aquí y cómo se llama; sólo Studio sabe cuánto
-    // gastó cada uno.
+    // ⚠️ UNA TARJETA POR AGENTE USABLE, y ninguna más. La lista de este tab tiene que
+    // coincidir con la pestaña Agentes: si aquí sale uno que allá no está, la persona no
+    // tiene forma de saber qué es ni de apagarlo.
     //
-    // ⚠️ Se cruza por `agentId` (el fleetAgentId, que los dos lados conocen) y NO por
-    // motor. Cruzar por motor tomaba el PRIMER agente que lo usara, así que dos agentes
-    // Claude salían los dos rotulados como el primero y el segundo no aparecía nunca.
+    // Por eso se parte de `resolvedAgents()` —la MISMA fuente que pinta Agentes— y los
+    // renglones de Studio se pliegan encima. Al revés (partir de los renglones y
+    // ponerles cara) es lo que producía las cinco tarjetas de la captura: Studio manda
+    // filas partidas por (motor, llave) y por agente, y cada corte inventaba una.
     //
-    // Un renglón que no resuelve a ningún agente activado aquí conserva su etiqueta
-    // genérica si tiene consumo —desaparecer un gasto real es peor que enseñar
-    // "deepseek"— pero se DESCARTA si está en cero: es un agente de Studio que este
-    // espacio no tiene activado, y pintarlo era inventar un compañero que no existe.
+    // Cómo se pliega cada renglón:
+    //   · con `agentId` → a ese agente, sin ambigüedad;
+    //   · sin él (filas anteriores a 2026-08-06) → al primer agente de su motor. Es lo
+    //     único que se sabe de ellas, y perder el gasto sería peor que atribuirlo así.
+    //   · a nadie → se descarta. Es consumo de un agente de Studio que este espacio no
+    //     tiene activado: no es suyo y no puede hacer nada al respecto.
+    //
+    // Y se SUMA, no se apila: el mismo agente puede traer filas con nuestra llave y con
+    // la prestada, y partirlo por ahí era lo que pintaba dos "Ghosty" con saldos que se
+    // contradicen. `ownKey` sólo sobrevive si TODAS sus filas lo son — un solo turno con
+    // llave nuestra ya significa que hay bolsa que dibujar.
     if (raw.engines?.length) {
       try {
         const { resolvedAgents, engineOfAgent } = await import("../agents.server");
         const agentes = await resolvedAgents();
         const conCara = await Promise.all(
-          agentes.map(async (a) => ({ a, engine: await engineOfAgent(a) })),
+          agentes.map(async (a) => ({
+            a,
+            engine: await engineOfAgent(a),
+            fleetId: a.backend.kind === "fleet" ? a.backend.id : null,
+          })),
         );
-        const porId = new Map(
-          conCara.filter((x) => x.a.backend.kind === "fleet").map((x) => [(x.a.backend as { id: string }).id, x.a]),
-        );
-        raw.engines = raw.engines
-          .map((e) => {
-            // Sin `agentId` (filas anteriores a 2026-08-06, agrupadas por motor) queda el
-            // cruce viejo: ambiguo, pero es todo lo que se sabe de ellas.
-            const a = e.agentId ? porId.get(e.agentId) : conCara.find((x) => x.engine === e.engine)?.a;
-            return a
-              ? { ...e, name: a.name, avatar: a.avatar, handle: a.handle }
-              : { ...e, name: e.agentName ?? undefined };
+        const filas = raw.engines;
+        raw.engines = conCara
+          .map(({ a, engine, fleetId }) => {
+            const suyas = filas.filter((e) =>
+              e.agentId
+                ? e.agentId === fleetId
+                : // Sólo el PRIMER agente de ese motor adopta las filas huérfanas; si no,
+                  // dos agentes Claude enseñarían el mismo gasto cada uno. Un agente cuyo
+                  // motor no se pudo resolver no adopta nada: sin motor no hay cruce.
+                  !!engine && conCara.find((x) => x.engine === e.engine)?.a === a,
+            );
+            const used = suyas.reduce((t, e) => t + e.used, 0);
+            const turns = suyas.reduce((t, e) => t + e.turns, 0);
+            const ownKey = suyas.length > 0 && suyas.every((e) => e.ownKey);
+            // La bolsa es la del plan; sólo desaparece si TODO su consumo es con llave
+            // propia. Una llave PRESTADA por nosotros no es propia: descuenta y lleva
+            // barra, que es justo el caso de @ghosty aquí.
+            const included = ownKey
+              ? null
+              : (suyas.find((e) => e.included !== null)?.included ??
+                raw.included ??
+                null);
+            return {
+              // Sólo se usa de respaldo para la etiqueta cuando falta el nombre; aquí
+              // siempre hay nombre, así que el "" nunca llega a verse.
+              engine: engine ?? suyas[0]?.engine ?? "",
+              used,
+              included,
+              turns,
+              ownKey,
+              agentId: fleetId,
+              name: a.name,
+              avatar: a.avatar,
+              handle: a.handle,
+            };
           })
-          .filter((e) => e.handle || e.used > 0);
+          .sort((x, y) => y.used - x.used);
       } catch {
         // Sin nombres se pinta con la etiqueta del motor. El consumo es el dato; la cara
         // es el adorno, y no vale perder el primero por el segundo.
