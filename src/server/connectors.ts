@@ -413,6 +413,16 @@ export const prCardStateFn = createServerFn({ method: "POST" })
     const [pr, reviews] = await Promise.all([get(`/pulls/${number}`), get(`/pulls/${number}/reviews`)]);
     if (!pr) return { connected: true as const, unknown: true as const };
 
+    // ⚠️ GitHub no deja aprobar tu PROPIO pull request, y no hay ajuste que lo cambie.
+    // Ofrecer el botón a quien lo abrió sólo sirve para que el clic falle: se oculta y se
+    // dice por qué. Pasa cuando el PR se abrió antes de encender la identidad de bot, o
+    // cuando lo abrió la persona a mano.
+    const { getConnectorRow } = await import("./connectors/store.server");
+    const row = await getConnectorRow(me.sub, "github");
+    let miLogin = "";
+    try { miLogin = JSON.parse(row?.meta ?? "{}")?.login ?? ""; } catch { /* meta corrupto: se trata como si no fuera el autor */ }
+    const soyElAutor = !!miLogin && miLogin === String(pr.user?.login ?? "");
+
     // El ÚLTIMO veredicto de cada persona: GitHub guarda todos los reviews, y quedarse con
     // el primero enseñaría "cambios pedidos" de alguien que ya aprobó después.
     const last = new Map<string, string>();
@@ -430,5 +440,6 @@ export const prCardStateFn = createServerFn({ method: "POST" })
       blockers,
       // Sólo con el PR abierto tienen sentido los botones.
       actionable: !pr.merged && pr.state === "open",
+      soyElAutor,
     };
   });

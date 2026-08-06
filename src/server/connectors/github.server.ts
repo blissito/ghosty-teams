@@ -307,6 +307,10 @@ export async function ambientContext(sub: string, sender: string, _message: stri
     `Para CUALQUIER pregunta sobre repos, issues, pull requests o CI de ${sender}, USA estas tools — ` +
     `NO inventes datos ni digas que no tienes acceso (SÍ lo tienes). El repo va como "dueño/repo". ` +
     `Antes de opinar de un PR lee su DIFF con github_pr_files, no sólo el título. ` +
+    // Blue se salió a raw.githubusercontent.com al toparse con un archivo truncado.
+    // Funciona en un repo público y da 404 en uno privado — los del cliente.
+    `Para leer un archivo usa SIEMPRE github_read_file, nunca raw.githubusercontent.com ni un fetch ` +
+    `directo: en un repo privado eso falla. Si viene truncated, sigue con el nextOffset que te da. ` +
     `Para escribir código: crea una rama con github_create_branch, escribe con github_write_file y abre ` +
     `un PR con github_create_pr — NUNCA escribas directo sobre la rama principal. ` +
     `Todo lo que escribas aparece con el nombre de ${sender}, así que confirma con él antes de comentar, ` +
@@ -540,13 +544,18 @@ export const tools: ConnectorTool[] = [
   },
   {
     name: "github_read_file",
-    description: "Contenido de un archivo del repo. Sirve para entender el código antes de cambiarlo.",
+    description:
+      "Contenido de un archivo del repo. Sirve para entender el código antes de cambiarlo. Si viene `truncated: true`, pide el resto con `offset` — NUNCA te salgas a raw.githubusercontent.com: en un repo privado eso da 404.",
     inputSchema: {
       type: "object",
       properties: {
         ...repoProp,
         path: str("Ruta del archivo dentro del repo."),
         ref: str("Rama, tag o SHA. Default: la rama principal."),
+        offset: {
+          type: "number",
+          description: "Carácter desde el que empezar. Para seguir leyendo un archivo que vino truncado: usa el `nextOffset` que te devolvió.",
+        },
       },
       required: ["repo", "path"],
     },
@@ -557,14 +566,24 @@ export const tools: ConnectorTool[] = [
       if (r?.error) return r;
       if (Array.isArray(r)) return { directory: r.map((x: any) => ({ name: x?.name, type: x?.type })) };
       if (r?.encoding !== "base64") return { error: "Ese archivo no es texto." };
-      const content = Buffer.from(r.content, "base64").toString("utf8");
+      const full = Buffer.from(r.content, "base64").toString("utf8");
+      // ⚠️ Sin `offset`, un archivo de más de 60k dejaba al modelo sin salida dentro de la
+      // tool y se iba a raw.githubusercontent.com — que funciona en un repo público y da
+      // 404 en uno privado, que son justo los del cliente. Visto en vivo el 2026-08-05.
+      const from = Math.max(0, Number(a.offset) || 0);
+      const LIMIT = 60_000;
+      const content = full.slice(from, from + LIMIT);
+      const end = from + content.length;
       return {
         path: r.path,
         // El `sha` es OBLIGATORIO para sobrescribir después con github_write_file.
         sha: r.sha,
         size: r.size,
-        truncated: content.length > 60_000,
-        content: content.slice(0, 60_000),
+        chars: full.length,
+        from,
+        truncated: end < full.length,
+        ...(end < full.length ? { nextOffset: end, comoSeguir: `Vuelve a llamar con offset: ${end}` } : {}),
+        content,
       };
     },
   },

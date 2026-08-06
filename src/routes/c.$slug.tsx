@@ -7261,7 +7261,9 @@ function PrCard({ pr }: { pr: PrCardData }) {
             <span className={`rounded-md border px-2.5 py-1 text-xs font-medium ${resumen.cls}`}>{resumen.txt}</span>
           ) : null}
           {puedeActuar && !resumen
-            ? botones.map((b) => (
+            ? botones
+                .filter((b) => !(b.action === "pr_approve" && st?.soyElAutor))
+                .map((b) => (
                 <button
                   key={b.action}
                   type="button"
@@ -7284,6 +7286,11 @@ function PrCard({ pr }: { pr: PrCardData }) {
         </div>
         {st?.connected === false ? (
           <p className="mt-2 text-[11.5px] text-muted">{t("Conecta tu GitHub en Ajustes para poder aprobar desde aquí.")}</p>
+        ) : null}
+        {puedeActuar && !resumen && st?.soyElAutor ? (
+          <p className="mt-2 text-[11.5px] text-muted">
+            {t("Este PR es tuyo y GitHub no deja aprobar el propio. Que lo apruebe alguien más del equipo.")}
+          </p>
         ) : null}
         {err ? <p className="mt-2 text-[11.5px] leading-snug text-red-500">{err}</p> : null}
       </div>
