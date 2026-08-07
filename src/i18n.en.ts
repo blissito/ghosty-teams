@@ -1092,6 +1092,8 @@ export const en: Record<string, string> = {
   "Buscar un repositorio…": "Search a repository…",
   "Buscando tus repositorios…": "Looking for your repositories…",
   "Ningún repositorio coincide.": "No repository matches.",
+  "Ya conectaste todos los repositorios de tu instalación.":
+    "You have already connected every repository from your installation.",
   "No hay repositorios en tu instalación de GitHub.": "No repositories in your GitHub installation.",
   "Elegir repos en GitHub": "Pick repos on GitHub",
   "Quitar del room": "Remove from room",

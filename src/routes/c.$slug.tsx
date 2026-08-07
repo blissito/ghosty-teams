@@ -5260,12 +5260,20 @@ function RepoPanel({
 
   return (
     <>
-      <div className="fixed inset-0 z-40" onClick={onClose} />
+      {/* En pantalla chica el panel tapa los mensajes y el borde de 1px no basta para
+          separarlo: el velo hace de fondo. En desktop se queda invisible (sólo cierra al
+          clic), que es lo que espera un popover de encabezado. */}
+      <div className="fixed inset-0 z-40 bg-black/40 sm:bg-transparent" onClick={onClose} />
       {/* ⚠️ `bg-surface`, NO `bg-surface-1`: ese token NO existe (styles.css define surface,
           surface-2 y surface-3). Tailwind no falla con una clase inventada — simplemente no
           pinta nada, así que el panel salía transparente y se leía como un bug de z-index.
           Y z-50, el mismo de los otros popovers del archivo. */}
-      <div className="absolute right-0 z-50 mt-1 w-[22rem] max-w-[calc(100vw-2rem)] overflow-hidden rounded-xl border border-border bg-surface shadow-lg">
+      {/* En móvil es una hoja anclada bajo el encabezado y a lo ancho: `absolute right-0`
+          con 22rem se salía del contenedor y el `max-w` lo dejaba pegado al borde. En
+          `sm:` vuelve a ser el popover de siempre.
+          El `ring` va además del borde: sobre el chat —blanco sobre blanco— un borde de
+          #e4e2f0 es casi invisible y el panel se lee como transparente. */}
+      <div className="fixed inset-x-2 top-14 z-50 max-w-[calc(100vw-1rem)] overflow-hidden rounded-xl border border-border bg-surface shadow-2xl ring-1 ring-black/10 sm:absolute sm:inset-x-auto sm:right-0 sm:top-auto sm:mt-1 sm:w-[22rem] dark:ring-white/10">
         <div className="flex items-center gap-2 border-b border-border px-3 py-2">
           <Search size={14} className="shrink-0 text-muted" />
           <input
@@ -5277,7 +5285,9 @@ function RepoPanel({
           />
         </div>
 
-        <div className="max-h-[26rem] overflow-y-auto thin-scroll">
+        {/* dvh, no rem: en un teléfono con el teclado abierto 26rem no cabe y la lista
+            quedaba cortada sin poder llegar al final. */}
+        <div className="max-h-[min(26rem,65dvh)] overflow-y-auto thin-scroll">
           {mine.length > 0 && (
             <section className="border-b border-border py-1">
               <p className="px-3 py-1 text-[11px] uppercase tracking-wide text-muted">
@@ -5329,7 +5339,28 @@ function RepoPanel({
                 )}
               </div>
             ) : !candidatos.length ? (
-              <p className="px-3 py-2 text-xs text-muted">{t("Ningún repositorio coincide.")}</p>
+              // Sin búsqueda escrita, la lista vacía NO es "no coincide": es que todos los
+              // repos de tu instalación ya están en este room. Decir "ninguno coincide"
+              // manda a buscar algo que no existe en vez de a GitHub por más repos.
+              <div className="px-3 py-2 text-xs text-muted">
+                {q.trim() ? (
+                  <p>{t("Ningún repositorio coincide.")}</p>
+                ) : (
+                  <>
+                    <p>{t("Ya conectaste todos los repositorios de tu instalación.")}</p>
+                    {installUrl && (
+                      <a
+                        href={installUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="mt-1 inline-flex items-center gap-1 text-brand hover:underline"
+                      >
+                        {t("Elegir repos en GitHub")} <ExternalLink size={11} />
+                      </a>
+                    )}
+                  </>
+                )}
+              </div>
             ) : (
               candidatos.map((r) => (
                 <button
