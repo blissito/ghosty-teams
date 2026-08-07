@@ -130,6 +130,7 @@ import { subscribeUsers, bumpUsers } from "../utils/users-bus";
 import { clearMeCache } from "../server/auth";
 import { unfurlLinkFn } from "../server/unfurl";
 import { registerModalEsc } from "../utils/modal-esc";
+import { useScrollLock } from "../utils/scroll-lock";
 import ArtifactPanel, { type ArtifactView, viewFromAttachment } from "../components/ArtifactPanel";
 import { belongsToOpenConversation } from "../lib/conversation-scope";
 import { extractEbDoc, extractEbPatches, draftTitle, bubbleWithoutEbDoc, extractToolState, extractSteps, extractAlert, extractPr, extractTask, type ToolState, type AlertCardData, type PrCardData, type TaskCardData } from "../lib/ebdoc";
@@ -4568,6 +4569,8 @@ function Modal({
   // Esc cierra SOLO el modal superior (stack compartido) → un modal anidado no cierra
   // también el de abajo. Ver utils/modal-esc.
   useEffect(() => registerModalEsc(onClose), [onClose]);
+  // El scroll de atrás se congela: sin esto el gesto dentro del modal movía el chat.
+  useScrollLock();
   if (typeof document === "undefined") return null; // SSR-safe (portal necesita document)
   // PORTAL a document.body: varios modales se renderizan DENTRO del <aside> (sidebar),
   // que tiene `transform` → un `fixed inset-0` se anclaría a la sidebar (modal "atrapado
@@ -4588,7 +4591,7 @@ function Modal({
         transition={{ type: "spring", stiffness: 500, damping: 40 }}
         onClick={(e) => e.stopPropagation()}
         className={`max-h-[85dvh] w-full overflow-x-hidden rounded-2xl border border-border bg-surface-2 text-ink ${maxW} ${
-          flush ? "overflow-y-hidden" : "thin-scroll overflow-y-auto p-5"
+          flush ? "overflow-y-hidden" : "thin-scroll overflow-y-auto overscroll-contain p-5"
         }`}
       >
         {children}

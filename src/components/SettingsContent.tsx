@@ -235,7 +235,7 @@ export function SettingsContent({
           )}
         </div>
 
-        <div className="thin-scroll flex-1 overflow-y-auto px-6 pb-6">
+        <div className="thin-scroll flex-1 overflow-y-auto overscroll-contain px-6 pb-6">
           {/* Solo mostramos "Cargando…" en frío REAL (identidad aún sin resolver, sin
               cache ni `peekMe`). Con la identidad ya caliente, la General pinta al
               instante — el badge Owner/Miembro es correcto desde el arranque, y el link
@@ -1946,7 +1946,7 @@ function EditAgentForm({
 
         {/* Cuerpo: izq (1/3) = identidad + persona local + colaboradores; der (2/3) =
             capacidades de flota. Full-width para aprovechar la pantalla. */}
-        <div className="thin-scroll grid flex-1 grid-cols-1 gap-6 overflow-y-auto p-5 sm:p-6 lg:grid-cols-3">
+        <div className="thin-scroll grid flex-1 grid-cols-1 gap-6 overflow-y-auto overscroll-contain p-5 sm:p-6 lg:grid-cols-3">
           {/* ── Columna izquierda: identidad + persona local + colaboradores ── */}
           <div className="space-y-4 lg:col-span-1">
             <div className="flex items-center gap-3">
