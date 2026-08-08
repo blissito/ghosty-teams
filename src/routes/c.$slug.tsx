@@ -8126,6 +8126,18 @@ function PrCard({ pr, channelId, parentId, prosa }: { pr: PrCardData; channelId:
           >
             {t("Ver en GitHub")}
           </a>
+          {/* El staging de ESTE PR, si el agente levantó uno. La liga va completa (lleva
+              su llave de acceso): recortarla la dejaría inservible. */}
+          {pr.preview ? (
+            <a
+              href={pr.preview}
+              target="_blank"
+              rel="noreferrer"
+              className="rounded-md border border-brand px-2.5 py-1 text-xs font-medium text-brand transition hover:bg-brand/10"
+            >
+              {t("Ver la preview")}
+            </a>
+          ) : null}
         </div>
         {st?.connected === false ? (
           <p className="mt-2 text-[11.5px] text-muted">{t("Conecta tu GitHub en Ajustes para poder aprobar desde aquí.")}</p>

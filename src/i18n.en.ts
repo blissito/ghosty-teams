@@ -701,6 +701,7 @@ export const en: Record<string, string> = {
   "Leí el documento": "Read the document",
   "Leyendo la página": "Reading the page",
   "Leí la página": "Read the page",
+  "Ver la preview": "Open the preview",
   "Descargando el repo": "Downloading the repo",
   "Descargué el repo": "Downloaded the repo",
   "Levantando una caja de trabajo": "Spinning up a work box",

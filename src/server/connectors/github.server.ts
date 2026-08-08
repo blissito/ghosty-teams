@@ -434,6 +434,8 @@ export async function ambientContext(
     `respuesta con un bloque \`\`\`gt-pr con este JSON en una línea: ` +
     `{"repo":"dueño/repo","number":N,"title":"…","author":"…","additions":N,"deletions":N,` +
     `"files":N,"checks":"success|failure|pending","url":"…","verdict":"tu conclusión en una línea"}. ` +
+    `Si levantaste un staging de ese PR, añade "preview":"<la liga COMPLETA, con su ?k=>" y la ` +
+    `tarjeta le pone el botón para abrirlo. ` +
     `Le pinta a la persona los botones de Aprobar / Pedir cambios / Rechazar / Mergear, que se ejecutan ` +
     // Sin los anclados el análisis acaba en un bloque de texto que alguien tiene que
     // trasladar a mano. Es la diferencia entre una reseña y un code review.

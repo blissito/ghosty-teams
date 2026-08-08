@@ -438,6 +438,9 @@ export type PrCardData = {
    * `line` es la línea del archivo NUEVO y tiene que caer dentro del diff del PR.
    */
   comments: PrComment[];
+  /** Liga del STAGING de este PR, si el agente levantó uno. Va COMPLETA (lleva la llave
+   *  de la preview): recortarla la deja inservible. */
+  preview: string;
 };
 
 export type PrComment = { path: string; line: number; body: string };
@@ -470,6 +473,9 @@ export function extractPr(body: string): PrCardData | null {
       checks: str(p.checks).toLowerCase(),
       url: str(p.url) || `https://github.com/${repo}/pull/${number}`,
       verdict: str(p.verdict),
+      // Sólo https: el modelo emite este campo y una tarjeta no es sitio para un
+      // javascript: ni para una ruta relativa.
+      preview: /^https:\/\//.test(str(p.preview)) ? str(p.preview) : "",
       // Un comentario sin los tres campos no se puede anclar, y mandarlo a GitHub tumbaría
       // el review entero con un 422. Se descarta aquí, igual que las acciones de gt-alert.
       comments: Array.isArray(p.comments)

@@ -52,6 +52,14 @@ describe("gt-pr", () => {
     expect(stripPr(card("\n\nAvísame."))).toBe("Revisé el PR. Se ve bien.\n\nAvísame.");
   });
 
+  it("la liga del staging sólo se acepta si es https", () => {
+    const ok = extractPr('```gt-pr\n{"repo":"a/b","number":1,"preview":"https://sb-x-5173.sandboxes.easybits.cloud/?k=abc"}\n```')!;
+    expect(ok.preview).toContain("?k=abc");
+    // Una tarjeta no es sitio para un javascript: ni para una ruta relativa.
+    expect(extractPr('```gt-pr\n{"repo":"a/b","number":1,"preview":"javascript:alert(1)"}\n```')!.preview).toBe("");
+    expect(extractPr('```gt-pr\n{"repo":"a/b","number":1}\n```')!.preview).toBe("");
+  });
+
   it("los comentarios anclados sobreviven al parseo", () => {
     const p = extractPr(
       '```gt-pr\n{"repo":"a/b","number":1,"comments":[{"path":"src/x.ts","line":24,"body":"esto revienta"}]}\n```',
