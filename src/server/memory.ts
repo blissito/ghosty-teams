@@ -39,7 +39,9 @@ function distillInstruction(docId: number): string {
     `Lee el documento adjunto y guarda lo importante en la memoria del workspace: ` +
     `memory_write con scope "workspace", un título corto por nota y source_doc: ${docId}. ` +
     `Destila hechos operativos (datos, formatos, reglas, contactos), no copies el texto. ` +
-    `Si trae logos o lineamientos de marca (colores, tipografías), considera actualizar el brand kit con las tools brand_*.`
+    `Si el documento es un manual de identidad o trae lineamientos de marca, además CREA la ` +
+    `marca con brand_create (nace sin activarse, no pisa la marca activa del workspace) — ` +
+    `NUNCA modifiques la marca activa por un manual ajeno.`
   );
 }
 

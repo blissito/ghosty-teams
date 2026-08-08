@@ -914,6 +914,82 @@ export function nativeTools(dest: ToolDest | null): ConnectorTool[] {
       },
     },
     {
+      name: "brand_create",
+      description:
+        "Crea una marca NUEVA desde colores que ya conoces (un manual de identidad, un documento, " +
+        "instrucciones de la persona) — para sacarla de una página web usa brand_extract. NO se " +
+        "activa sola: nace disponible en el selector y la persona (o brand_activate, si te lo " +
+        "piden) decide cuándo usarla. Típico: destilaste el manual de marca de un CLIENTE y quieres " +
+        "dejarla lista para las piezas de ese cliente sin pisar la marca del workspace.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          name: { type: "string", description: "Nombre de la marca (ej. 'Gobierno de Hidalgo')" },
+          primary: { type: "string", description: "Color principal en hex (#rrggbb)" },
+          secondary: { type: "string", description: "Color secundario en hex" },
+          accent: { type: "string", description: "Color de acento en hex" },
+          surface: { type: "string", description: "Color de fondo/papel en hex" },
+          headingFont: {
+            type: "string",
+            description: `Fuente de títulos. Uno de: ${FONT_IDS}. Omite = la del sistema`,
+          },
+          bodyFont: {
+            type: "string",
+            description: `Fuente de texto. Uno de: ${FONT_IDS}. Omite = la del sistema`,
+          },
+          mood: { type: "string", enum: [...BRAND_MOODS], description: "Carácter visual" },
+        },
+        required: ["name", "primary"],
+      },
+      handler: async (sub, args) => {
+        const { createBrandKit } = await import("../brand.server");
+        // Fuentes: validar ANTES (el saneador descarta ids desconocidos en silencio —
+        // mismo fallo mudo que ya mordió a brand_update).
+        const { BRAND_FONTS } = await import("#/lib/brand-fonts");
+        for (const field of ["headingFont", "bodyFont"] as const) {
+          const v = args[field];
+          if (v === undefined || v === "") continue;
+          if (!BRAND_FONTS.some((f) => f.id === String(v))) {
+            return { ok: false, error: `no existe la fuente "${v}". Opciones: ${FONT_IDS}` };
+          }
+        }
+        try {
+          // BrandColors exige los cuatro; lo omitido cae a defaults razonables
+          // (secondary/accent = el principal, papel blanco) en vez de reventar.
+          const primary = String(args.primary ?? "");
+          const kit = await createBrandKit(
+            {
+              name: String(args.name ?? "Marca"),
+              colors: {
+                primary,
+                secondary: args.secondary !== undefined ? String(args.secondary) : primary,
+                accent: args.accent !== undefined ? String(args.accent) : primary,
+                surface: args.surface !== undefined ? String(args.surface) : "#ffffff",
+              },
+              fonts:
+                args.headingFont || args.bodyFont
+                  ? { heading: String(args.headingFont ?? ""), body: String(args.bodyFont ?? "") }
+                  : null,
+              mood: args.mood !== undefined ? String(args.mood) : null,
+            },
+            sub
+          );
+          return {
+            ok: true,
+            id: kit.id,
+            name: kit.name,
+            active: !!kit.isActive,
+            nota: kit.isActive
+              ? "era la primera marca del workspace, quedó activa"
+              : "creada SIN activar: se elige en el selector de Marca o con brand_activate",
+          };
+        } catch (e) {
+          // normalizeColors lanza ante un hex inválido — devolver el motivo, no tragarlo.
+          return { ok: false, error: (e as Error).message };
+        }
+      },
+    },
+    {
       name: "brand_update",
       description:
         "Cambia una marca existente: nombre, colores, fuentes o tono (saca el id con brand_list). " +
