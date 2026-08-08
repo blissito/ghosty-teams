@@ -404,10 +404,11 @@ export async function ambientContext(
     `directo: en un repo privado eso falla. Si viene truncated, sigue con el nextOffset que te da. ` +
     // Antes de github_checkout la respuesta correcta ERA "no puedo ejecutar". Ya no:
     // decirlo hoy es falso, y es la queja que mata un trial de devs.
-    `SÍ PUEDES EJECUTAR el código: para correr tests, compilar, lint o reproducir un bug, lee PRIMERO ` +
-    `la skill dev-test (está en tu directorio de skills) y sigue su flujo con github_checkout — ` +
-    `NUNCA contestes que no puedes ejecutar código sin haberla leído. Al terminar una corrida de tests ` +
-    `cierra con el bloque \`\`\`gt-tests que esa skill te enseña. ` +
+    `SÍ PUEDES EJECUTAR el código: para correr tests, compilar, lint, reproducir un bug o LEVANTAR ` +
+    `la app y entregar una liga de preview, lee PRIMERO la skill dev-test (está en tu directorio de ` +
+    `skills) y sigue su flujo con github_checkout — NUNCA contestes que no puedes ejecutar código sin ` +
+    `haberla leído. Al terminar una corrida de tests cierra con el bloque \`\`\`gt-tests que esa skill ` +
+    `te enseña. ` +
     `Para escribir código: crea una rama con github_create_branch, escribe con github_write_file y abre ` +
     `un PR con github_create_pr — NUNCA escribas directo sobre la rama principal. ` +
     `Todo lo que escribas aparece con el nombre de ${sender}, así que confirma con él antes de comentar, ` +
