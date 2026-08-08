@@ -61,7 +61,11 @@ export const Route = createFileRoute("/api/brand-css")({
             "Content-Type": "text/css; charset=utf-8",
             // Corto y revalidable: cambiar la marca tiene que verse al recargar, y la
             // hoja pesa unos cientos de bytes.
-            "Cache-Control": "public, max-age=30, must-revalidate",
+            // ⚠️ `private`, no `public`: la ruta es la MISMA para todos los tenants y lo
+            // que devuelve depende del host. Un intermediario que no haga `Vary` por host
+            // le serviría la marca de una empresa a otra.
+            "Cache-Control": "private, max-age=30, must-revalidate",
+            Vary: "Host",
           },
         });
       },

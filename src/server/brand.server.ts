@@ -25,9 +25,34 @@ export type BrandKitRow = BrandKit & {
 const CACHE_MS = 20_000;
 const activeCache = new Map<string, { at: number; kit: BrandKitRow | null }>();
 
+/**
+ * ⚠️ La llave de la caché es el namespace RESUELTO, nunca el argumento.
+ *
+ * Casi nadie pasa `ns`: la query no lo necesita porque `dbq` resuelve el tenant por
+ * subdominio. Pero la caché sí, y con `ns || ""` los SIETE llamadores sin argumento
+ * compartían UNA sola entrada en un proceso que sirve a todos los workspaces. Es decir:
+ * el kit del primer tenant que pidiera la hoja se le servía a los demás durante 20s, y
+ * cambiar de kit "no se aplicaba" porque cualquier otro tenant volvía a llenar la entrada
+ * un instante después. Un workspace se veía con la marca de otro.
+ *
+ * Si el namespace no se puede resolver (fuera de un request) se devuelve null y quien
+ * llama se salta la caché: preferible una query de más que servirle a alguien la marca
+ * de otra empresa.
+ */
+async function cacheKey(ns?: string): Promise<string | null> {
+  if (ns) return ns;
+  try {
+    const { currentNamespace } = await import("./tenant.server");
+    return (await currentNamespace()) || null;
+  } catch {
+    return null;
+  }
+}
+
 /** Invalida el activo de un namespace. Se llama en cada escritura. */
 export function invalidateBrand(ns: string): void {
-  activeCache.delete(ns);
+  if (ns) activeCache.delete(ns);
+  else activeCache.clear(); // sin ns no se sabe cuál: se tira todo, es barato y correcto
 }
 
 function safeJson<T>(raw: string | null | undefined, fallback: T): T {
@@ -82,8 +107,8 @@ export async function getBrandKit(id: string): Promise<BrandKitRow | null> {
  * marca es decoración; el documento es el trabajo de alguien.
  */
 export async function activeBrandKit(ns?: string): Promise<BrandKitRow | null> {
-  const key = ns || "";
-  const hit = activeCache.get(key);
+  const key = await cacheKey(ns);
+  const hit = key ? activeCache.get(key) : undefined;
   if (hit && Date.now() - hit.at < CACHE_MS) return hit.kit;
   let kit: BrandKitRow | null = null;
   try {
@@ -92,7 +117,7 @@ export async function activeBrandKit(ns?: string): Promise<BrandKitRow | null> {
   } catch {
     return hit?.kit ?? null; // stale-while-error, como resolveNamespace
   }
-  activeCache.set(key, { at: Date.now(), kit });
+  if (key) activeCache.set(key, { at: Date.now(), kit });
   return kit;
 }
 
