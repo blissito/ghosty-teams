@@ -22,9 +22,13 @@ export async function buildConnectorContext(
     // Los suyos + los COMPARTIDOS del workspace: una conexión del equipo tiene que dar el
     // mismo contexto ambiente que una propia, o el agente diría "no tengo Sentry" teniendo
     // una compartida delante.
+    //
+    // ⚠️ Con CERO conectores NO se corta aquí: Tasks y la lista de conexiones del equipo no
+    // son conectores del invocador y van más abajo. Un `return ""` temprano dejó al agente
+    // de coregrid sin enterarse de que su tablero existía (2026-08-07) — y le negaba la
+    // lista de "pídeselo a David" justo a quien más la necesita: el que no tiene ninguna.
     const { listAvailableProviders } = await import("./store.server");
     const connected = await listAvailableProviders(sub);
-    if (!connected.size) return "";
     const { refreshConnectorMetaIfStale } = await import("./meta.server");
     const { resolveConnectorOwner } = await import("./store.server");
     const parts = await Promise.all(
