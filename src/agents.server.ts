@@ -1225,6 +1225,12 @@ const TOOL_LABELS: Record<string, { ing: string; done: string }> = {
   gs_web_scrape: { ing: "Leyendo la página", done: "Leí la página" },
   // Bajar el repo del cliente (github_checkout / git clone) NO es leer una página.
   gs_repo_checkout: { ing: "Descargando el repo", done: "Descargué el repo" },
+  // Cajas de TRABAJO (sdk/sandbox.mjs). Se distinguen a propósito: levantar una máquina
+  // consume capacidad del workspace y el usuario debe VERLO; correr algo dentro, no.
+  gs_box_create: { ing: "Levantando una caja de trabajo", done: "Levanté una caja de trabajo" },
+  gs_box_exec: { ing: "Trabajando en la caja", done: "Trabajé en la caja" },
+  gs_box_expose: { ing: "Publicando la app", done: "Publiqué la app" },
+  gs_box_destroy: { ing: "Soltando la caja", done: "Solté la caja" },
   gs_render: { ing: "Maquetando el PDF", done: "Maqueté el PDF" },
   gs_render_png: { ing: "Generando la imagen", done: "Generé la imagen" },
   gs_doc: { ing: "Armando el documento Word", done: "Armé el documento Word" },
