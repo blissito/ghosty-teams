@@ -927,7 +927,9 @@ export type TestsCardData = {
   failures: TestFailure[];
 };
 
-export type TestFailure = { test: string; message: string };
+/** `path`/`line` anclan el fallo al código: la tarjeta lo liga a GitHub, como las
+ *  anotaciones de Actions. Opcionales — un fallo sin ubicación sigue valiendo. */
+export type TestFailure = { test: string; message: string; path: string; line: number | null };
 
 export function extractTests(body: string): TestsCardData | null {
   const open = body.match(/```gt-tests[^\n]*\n/);
@@ -958,7 +960,12 @@ export function extractTests(body: string): TestsCardData | null {
         ? (p.failures as unknown[])
             .map((f) => {
               const o = f as Record<string, unknown>;
-              return { test: str(o?.test), message: str(o?.message).slice(0, 500) };
+              return {
+                test: str(o?.test),
+                message: str(o?.message).slice(0, 500),
+                path: str(o?.path),
+                line: typeof o?.line === "number" && Number.isFinite(o.line) && o.line > 0 ? o.line : null,
+              };
             })
             .filter((f) => f.test)
             .slice(0, 30)

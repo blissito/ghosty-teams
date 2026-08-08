@@ -7864,10 +7864,23 @@ function TestsCard({ data }: { data: TestsCardData }) {
     <div className="mt-1.5 max-w-xl overflow-hidden rounded-lg gt-card">
       <div className="flex items-center gap-2 border-b border-border px-3 py-2">
         <span className={`text-[13px] font-bold ${ok ? "text-emerald-600" : "text-red-500"}`}>{ok ? "✓" : "✗"}</span>
-        <span className="truncate font-mono text-[11px] text-muted">
-          {data.repo}
-          {data.ref ? `@${data.ref}` : ""}
-        </span>
+        {/* El sha liga al commit EXACTO que se probó — es el dato verificable de la corrida. */}
+        {data.sha ? (
+          <a
+            href={`https://github.com/${data.repo}/commit/${data.sha}`}
+            target="_blank"
+            rel="noreferrer"
+            className="truncate font-mono text-[11px] text-muted hover:text-brand hover:underline"
+          >
+            {data.repo}
+            {data.ref ? `@${data.ref}` : ""}
+          </a>
+        ) : (
+          <span className="truncate font-mono text-[11px] text-muted">
+            {data.repo}
+            {data.ref ? `@${data.ref}` : ""}
+          </span>
+        )}
         {data.duration != null ? <span className="ml-auto shrink-0 font-mono text-[11px] text-muted">{data.duration}s</span> : null}
       </div>
       <div className="p-3">
@@ -7889,6 +7902,19 @@ function TestsCard({ data }: { data: TestsCardData }) {
                 {data.failures.map((f, i) => (
                   <li key={i} className="rounded-md border border-border bg-surface px-2 py-1.5">
                     <p className="break-words font-mono text-[11.5px] font-semibold text-ink">{f.test}</p>
+                    {/* Anclado al código, como las anotaciones de Actions: el fallo se abre
+                        JUNTO a la línea que lo provoca, no en un log aparte. */}
+                    {f.path ? (
+                      <a
+                        href={`https://github.com/${data.repo}/blob/${data.sha || data.ref || "main"}/${f.path}${f.line ? `#L${f.line}` : ""}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="mt-0.5 block truncate font-mono text-[11px] text-brand hover:underline"
+                      >
+                        {f.path}
+                        {f.line ? `:${f.line}` : ""}
+                      </a>
+                    ) : null}
                     {f.message ? (
                       <p className="mt-0.5 whitespace-pre-wrap break-words font-mono text-[11px] text-muted">{f.message}</p>
                     ) : null}

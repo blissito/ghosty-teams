@@ -36,7 +36,15 @@ describe("gt-tests", () => {
     const t = extractTests(
       '```gt-tests\n{"repo":"a/b","failed":1,"failures":[{"message":"solo mensaje"},{"test":"x","message":"ok"}]}\n```',
     )!;
-    expect(t.failures).toEqual([{ test: "x", message: "ok" }]);
+    expect(t.failures).toEqual([{ test: "x", message: "ok", path: "", line: null }]);
+  });
+
+  it("un fallo anclado conserva path y line; una line inválida cae a null", () => {
+    const t = extractTests(
+      '```gt-tests\n{"repo":"a/b","failed":2,"failures":[{"test":"x","message":"m","path":"src/mailer.ts","line":24},{"test":"y","message":"m","path":"src/api.ts","line":-3}]}\n```',
+    )!;
+    expect(t.failures[0]).toEqual({ test: "x", message: "m", path: "src/mailer.ts", line: 24 });
+    expect(t.failures[1].line).toBeNull();
   });
 
   it("el JSON no llega al bubble, pero el diagnóstico SÍ se queda", () => {
