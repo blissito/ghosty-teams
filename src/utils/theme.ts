@@ -220,8 +220,6 @@ export function applyTheme(s: ThemeState): void {
   if (s.font !== "default") r.style.setProperty("--font-sans", FONT_STACKS[s.font]);
   else if (isBrand) r.style.removeProperty("--font-sans");
   else r.style.setProperty("--font-sans", FONT_STACKS[preset.font]);
-  if (isBrand) r.style.removeProperty("--font-brand-heading");
-  else r.style.setProperty("--font-brand-heading", FONT_STACKS[s.font === "default" ? preset.font : s.font]);
   // Tamaño: escala TODO (Tailwind usa rem para texto y spacing).
   r.style.fontSize = TEXT_SCALE[s.textSize];
   // Movimiento reducido (forzado por el usuario; el sistema se respeta vía @media).
@@ -292,7 +290,7 @@ if(!br)r.setAttribute('data-preset',id);else r.removeAttribute('data-preset');
 // Ver applyTheme: SÓLO "Marca del workspace" no escribe inline, para no taparle el kit.
 if(!br){var pal=dark?pr.dark:pr.light;for(var k in pal)r.style.setProperty('--color-'+k,pal[k]);
 r.style.setProperty('--color-card',dark?pal['surface-2']:pal.surface);
-var ff=F[fo!=='default'?fo:pr.font];r.style.setProperty('--font-sans',ff);r.style.setProperty('--font-brand-heading',ff);}
+r.style.setProperty('--font-sans',F[fo!=='default'?fo:pr.font]);}
 else if(fo!=='default')r.style.setProperty('--font-sans',F[fo]);
 r.style.fontSize=T[ts]||T.regular;
 if(rm)r.setAttribute('data-reduce-motion','1');
