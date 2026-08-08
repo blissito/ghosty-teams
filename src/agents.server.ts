@@ -238,19 +238,58 @@ async function brandContextHint(): Promise<string> {
   }
 }
 
+// Techo del índice workspace dentro del hint. Al turno sólo viaja título + arranque de
+// cada nota; el agente trae la completa con memory_read. Sin techo, 200 notas serían un
+// impuesto de contexto en CADA turno del workspace.
+const WS_MEMORY_HINT_MAX_CHARS = 1500;
+
 async function memoryHint(dest: import("./server/connectors/tool-token.server").ToolDest | null): Promise<string> {
   if (!dest) return "";
   try {
     const db = await import("./db.server");
+
+    // UNA memoria, dos niveles (unificado 2026-08-08): índice del workspace + notas del
+    // room. Un solo bloque para que el agente no razone sobre "cuál memoria".
+    let wsSection = "";
+    const wsNotes = await db.listWorkspaceMemory();
+    if (wsNotes.length) {
+      // Más recientes primero: si el techo recorta, se cae lo viejo, no lo nuevo.
+      const lines: string[] = [];
+      let used = 0;
+      let shown = 0;
+      for (const n of [...wsNotes].reverse()) {
+        const hook = n.note.length > 80 ? n.note.slice(0, 80) + "…" : n.note;
+        const line = `ws:${n.id} ${n.title} — ${hook}`;
+        if (used + line.length > WS_MEMORY_HINT_MAX_CHARS) break;
+        lines.push(line);
+        used += line.length + 1;
+        shown++;
+      }
+      const rest = wsNotes.length - shown;
+      wsSection =
+        `Del workspace (hechos de la empresa; es un ÍNDICE — lee la nota completa con memory_read antes de aplicarla):\n` +
+        lines.join("\n") +
+        (rest > 0 ? `\n…y ${rest} más (las ve el equipo en /memory)` : "") +
+        `\n`;
+    }
+
+    let roomSection = "";
     const scope = db.memoryScopeKey(dest);
-    if (!scope || !dest.handle) return "";
-    const notas = await db.listAgentMemory(scope, dest.handle);
-    if (!notas.length) return "";
-    const lista = notas.map((n) => `#${n.id}: ${n.note}`).join("\n");
+    if (scope && dest.handle) {
+      const notas = await db.listAgentMemory(scope, dest.handle);
+      if (notas.length) {
+        roomSection =
+          `De esta conversación (convenciones YA ACORDADAS aquí — respétalas sin volver a preguntar):\n` +
+          notas.map((n) => `#${n.id}: ${n.note}`).join("\n") +
+          `\n`;
+      }
+    }
+
+    if (!wsSection && !roomSection) return "";
     return (
-      `[Memoria de esta conversación — convenciones YA ACORDADAS aquí. Respétalas sin volver ` +
-      `a preguntar. Si una deja de aplicar, retírala con memory_forget usando su #id; si ` +
-      `cambia, usa memory_write con \`replaces\`.\n${lista}]\n\n`
+      `[Memoria — si algo deja de aplicar, retíralo con memory_forget (#id o ws:N); si cambia, ` +
+      `memory_write con \`replaces\`. Los hechos que valgan para toda la empresa guárdalos con ` +
+      `scope "workspace".\n${wsSection}${roomSection}]\n\n`
     );
   } catch {
     // La memoria es una comodidad: si la tabla aún no existe en este tenant o falla la

@@ -1115,4 +1115,21 @@ export const en: Record<string, string> = {
 
   // Preexistente, sin traducir hasta hoy.
   "y": "and",
+
+  // Memoria del workspace (/memory)
+  "Memoria": "Memory",
+  "Memoria del workspace": "Workspace memory",
+  "Lo que tus agentes saben de la empresa: clientes, procesos, formatos. Lo usan en cualquier conversación — corrige o borra lo que ya no aplique.":
+    "What your agents know about the business: clients, processes, formats. They use it in every conversation — fix or delete anything that no longer applies.",
+  "Nueva nota": "New note",
+  "Editar nota": "Edit note",
+  "Título — ej. Cliente ACME, facturación": "Title — e.g. ACME client, billing",
+  "El hecho, corto y accionable": "The fact, short and actionable",
+  "Todavía no hay memoria": "No memory yet",
+  "Pídele a un agente “recuerda para todo el workspace que…”, o sube un documento al chat y dile “guarda lo importante en la memoria del workspace”.":
+    "Ask an agent to “remember for the whole workspace that…”, or upload a document to the chat and tell it to “save the important parts to the workspace memory”.",
+  "Por conversación": "Per conversation",
+  "Convenciones que cada agente guarda por room o DM. También se pueden podar desde aquí.":
+    "Conventions each agent keeps per room or DM. They can be pruned from here too.",
+  "Borrar": "Delete",
 };

@@ -405,6 +405,125 @@ export async function deleteAgentMemory(id: number, scopeKey: string, handle: st
   return rows.length > 0;
 }
 
+// ── Memoria del WORKSPACE ───────────────────────────────────────────────────────
+// Misma tabla, alcance 'ws': hechos de la empresa compartidos entre rooms y agentes
+// (agent_handle=''). Con título porque al turno sólo viaja el ÍNDICE (título + hook)
+// y el agente lee la nota completa con memory_read — patrón MEMORY.md/DESCTI.
+
+export const WS_MEMORY_SCOPE = "ws";
+export const WS_MEMORY_MAX_NOTES = 200;
+export const WS_MEMORY_MAX_CHARS = 600;
+export const WS_MEMORY_TITLE_MAX = 80;
+
+export type WorkspaceNote = {
+  id: number;
+  title: string;
+  note: string;
+  createdBy: string | null;
+  sourceRef: string | null;
+  updatedAt: number;
+};
+
+function rowToWorkspaceNote(r: Row): WorkspaceNote {
+  return {
+    id: num(r.id),
+    title: String(r.title ?? ""),
+    note: String(r.note ?? ""),
+    createdBy: (r.created_by as string | null) ?? null,
+    sourceRef: (r.source_ref as string | null) ?? null,
+    updatedAt: num(r.updated_at),
+  };
+}
+
+export async function listWorkspaceMemory(): Promise<WorkspaceNote[]> {
+  const rows = await dbq(
+    `SELECT id, title, note, created_by, source_ref, updated_at FROM gt_agent_memory
+       WHERE scope_key = ? ORDER BY id ASC`,
+    [WS_MEMORY_SCOPE]
+  );
+  return rows.map(rowToWorkspaceNote);
+}
+
+export async function getWorkspaceMemory(id: number): Promise<WorkspaceNote | null> {
+  const rows = await dbq(
+    `SELECT id, title, note, created_by, source_ref, updated_at FROM gt_agent_memory
+       WHERE id = ? AND scope_key = ?`,
+    [id, WS_MEMORY_SCOPE]
+  );
+  return rows.length ? rowToWorkspaceNote(rows[0]) : null;
+}
+
+export async function addWorkspaceMemory(
+  title: string,
+  note: string,
+  createdBy: string | null,
+  sourceRef: string | null = null
+): Promise<number> {
+  const rows = await dbq(
+    `INSERT INTO gt_agent_memory (scope_key, agent_handle, title, note, created_by, source_ref)
+       VALUES (?, '', ?, ?, ?, ?) RETURNING id`,
+    [WS_MEMORY_SCOPE, title, note, createdBy, sourceRef]
+  );
+  return num(rows[0]?.id);
+}
+
+export async function updateWorkspaceMemory(
+  id: number,
+  fields: { title?: string; note?: string }
+): Promise<boolean> {
+  const sets: string[] = ["updated_at = unixepoch()"];
+  const args: unknown[] = [];
+  if (fields.title !== undefined) {
+    sets.push("title = ?");
+    args.push(fields.title);
+  }
+  if (fields.note !== undefined) {
+    sets.push("note = ?");
+    args.push(fields.note);
+  }
+  const rows = await dbq(
+    `UPDATE gt_agent_memory SET ${sets.join(", ")} WHERE id = ? AND scope_key = ? RETURNING id`,
+    [...args, id, WS_MEMORY_SCOPE]
+  );
+  return rows.length > 0;
+}
+
+export async function deleteWorkspaceMemory(id: number): Promise<boolean> {
+  const rows = await dbq(
+    `DELETE FROM gt_agent_memory WHERE id = ? AND scope_key = ? RETURNING id`,
+    [id, WS_MEMORY_SCOPE]
+  );
+  return rows.length > 0;
+}
+
+/** Todas las notas de room/DM con la etiqueta de su conversación, para la curaduría en /memory. */
+export type RoomNoteRow = {
+  id: number;
+  note: string;
+  agentHandle: string;
+  scopeKey: string;
+  label: string;
+  updatedAt: number;
+};
+
+export async function listAllRoomMemory(): Promise<RoomNoteRow[]> {
+  const rows = await dbq(
+    `SELECT m.id, m.note, m.agent_handle, m.scope_key, m.updated_at, c.slug AS channel_slug
+       FROM gt_agent_memory m
+       LEFT JOIN gc_channels c ON m.scope_key = 'ch:' || c.id
+      WHERE m.scope_key != ? ORDER BY m.scope_key, m.id`,
+    [WS_MEMORY_SCOPE]
+  );
+  return rows.map((r) => ({
+    id: num(r.id),
+    note: String(r.note ?? ""),
+    agentHandle: String(r.agent_handle ?? ""),
+    scopeKey: String(r.scope_key ?? ""),
+    label: r.channel_slug ? `#${r.channel_slug}` : "DM",
+    updatedAt: num(r.updated_at),
+  }));
+}
+
 /**
  * La versión MÁS RECIENTE de un documento: su fila y si ya era una edición humana.
  *

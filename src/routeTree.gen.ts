@@ -10,6 +10,7 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as SetupRouteImport } from './routes/setup'
+import { Route as MemoryRouteImport } from './routes/memory'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as FormsRouteImport } from './routes/forms'
 import { Route as DocProbeRouteImport } from './routes/doc-probe'
@@ -63,6 +64,11 @@ import { Route as ApiCollabDocIdSessionEndRouteImport } from './routes/api.colla
 const SetupRoute = SetupRouteImport.update({
   id: '/setup',
   path: '/setup',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const MemoryRoute = MemoryRouteImport.update({
+  id: '/memory',
+  path: '/memory',
   getParentRoute: () => rootRouteImport,
 } as any)
 const LoginRoute = LoginRouteImport.update({
@@ -323,6 +329,7 @@ export interface FileRoutesByFullPath {
   '/doc-probe': typeof DocProbeRoute
   '/forms': typeof FormsRoute
   '/login': typeof LoginRoute
+  '/memory': typeof MemoryRoute
   '/setup': typeof SetupRouteWithChildren
   '/api/agent-asset': typeof ApiAgentAssetRoute
   '/api/brand-css': typeof ApiBrandCssRoute
@@ -375,6 +382,7 @@ export interface FileRoutesByTo {
   '/doc-probe': typeof DocProbeRoute
   '/forms': typeof FormsRoute
   '/login': typeof LoginRoute
+  '/memory': typeof MemoryRoute
   '/api/agent-asset': typeof ApiAgentAssetRoute
   '/api/brand-css': typeof ApiBrandCssRoute
   '/api/brand-logo': typeof ApiBrandLogoRoute
@@ -427,6 +435,7 @@ export interface FileRoutesById {
   '/doc-probe': typeof DocProbeRoute
   '/forms': typeof FormsRoute
   '/login': typeof LoginRoute
+  '/memory': typeof MemoryRoute
   '/setup': typeof SetupRouteWithChildren
   '/api/agent-asset': typeof ApiAgentAssetRoute
   '/api/brand-css': typeof ApiBrandCssRoute
@@ -481,6 +490,7 @@ export interface FileRouteTypes {
     | '/doc-probe'
     | '/forms'
     | '/login'
+    | '/memory'
     | '/setup'
     | '/api/agent-asset'
     | '/api/brand-css'
@@ -533,6 +543,7 @@ export interface FileRouteTypes {
     | '/doc-probe'
     | '/forms'
     | '/login'
+    | '/memory'
     | '/api/agent-asset'
     | '/api/brand-css'
     | '/api/brand-logo'
@@ -584,6 +595,7 @@ export interface FileRouteTypes {
     | '/doc-probe'
     | '/forms'
     | '/login'
+    | '/memory'
     | '/setup'
     | '/api/agent-asset'
     | '/api/brand-css'
@@ -637,6 +649,7 @@ export interface RootRouteChildren {
   DocProbeRoute: typeof DocProbeRoute
   FormsRoute: typeof FormsRoute
   LoginRoute: typeof LoginRoute
+  MemoryRoute: typeof MemoryRoute
   SetupRoute: typeof SetupRouteWithChildren
   ApiAgentAssetRoute: typeof ApiAgentAssetRoute
   ApiBrandCssRoute: typeof ApiBrandCssRoute
@@ -681,6 +694,13 @@ declare module '@tanstack/react-router' {
       path: '/setup'
       fullPath: '/setup'
       preLoaderRoute: typeof SetupRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/memory': {
+      id: '/memory'
+      path: '/memory'
+      fullPath: '/memory'
+      preLoaderRoute: typeof MemoryRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/login': {
@@ -1069,6 +1089,7 @@ const rootRouteChildren: RootRouteChildren = {
   DocProbeRoute: DocProbeRoute,
   FormsRoute: FormsRoute,
   LoginRoute: LoginRoute,
+  MemoryRoute: MemoryRoute,
   SetupRoute: SetupRouteWithChildren,
   ApiAgentAssetRoute: ApiAgentAssetRoute,
   ApiBrandCssRoute: ApiBrandCssRoute,

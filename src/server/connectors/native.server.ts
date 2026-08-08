@@ -395,37 +395,81 @@ export function nativeTools(dest: ToolDest | null): ConnectorTool[] {
         };
       },
     },
-    // ── Memoria de la conversación ────────────────────────────────────────────
-    // No hay `memory_read` a propósito: las notas se inyectan en el texto de cada turno
-    // (memoryHint en agents.server.ts), así que el agente ya las tiene delante. Una tool de
-    // lectura sería un viaje de red para traer algo que ya está en su contexto.
+    // ── Memoria ───────────────────────────────────────────────────────────────
+    // UNA memoria con dos alcances (misma tabla, mismas tools — decidido 2026-08-08 para
+    // no confundir al agente con dos sistemas):
+    //  · room/DM — convenciones de ESA conversación, por agente. Se inyectan COMPLETAS
+    //    en cada turno (memoryHint), por eso no necesitan lectura.
+    //  · workspace — hechos de la empresa, compartidos entre rooms y agentes. Al turno
+    //    sólo viaja el ÍNDICE (título + hook); `memory_read` trae la nota completa.
     {
       name: "memory_write",
       description:
-        "Guarda una CONVENCIÓN de esta conversación, para que siga vigente en turnos futuros y en " +
-        "otros hilos del mismo room. Úsalo cuando te digan 'de ahora en adelante', 'siempre', " +
-        "'recuérdalo' o 'anótalo': formato de los documentos, cómo se llaman las partes, cómo firma " +
-        "el despacho, tratamientos. NO guardes aquí el contenido de los documentos (para eso están " +
-        "los artefactos y sus versiones), ni datos sensibles que nadie pidió guardar, ni el estado de " +
-        "una tarea en curso. Si ya existe una nota parecida, actualízala con `replaces` en vez de " +
-        "añadir otra: dos notas que se contradicen es peor que ninguna.",
+        "Guarda algo en la memoria, para que siga vigente en turnos futuros. Dos alcances: " +
+        "`room` (default) = convención de ESTA conversación (formato de los documentos, cómo se " +
+        "llaman las partes, tratamientos); `workspace` = hecho de la EMPRESA que vale en cualquier " +
+        "conversación (datos de un cliente, un proceso, un manual de marca destilado, cómo firma el " +
+        "despacho). Úsalo cuando te digan 'de ahora en adelante', 'siempre', 'recuérdalo', 'anótalo' " +
+        "o 'guárdalo en la memoria del workspace'. NO guardes el contenido de los documentos (para " +
+        "eso están los artefactos), ni datos sensibles que nadie pidió guardar, ni el estado de una " +
+        "tarea en curso. Si ya existe una nota parecida, actualízala con `replaces` en vez de añadir " +
+        "otra: dos notas que se contradicen es peor que ninguna.",
       inputSchema: {
         type: "object",
         properties: {
-          note: { type: "string", description: "La convención, en una frase corta y accionable" },
-          replaces: { type: "number", description: "id de la nota que sustituye (el que ves en la memoria del turno)" },
+          note: { type: "string", description: "el contenido, corto y accionable" },
+          scope: {
+            type: "string",
+            enum: ["room", "workspace"],
+            description: "room = esta conversación (default) · workspace = toda la empresa",
+          },
+          title: {
+            type: "string",
+            description: "sólo workspace: título corto para el índice (ej. 'Cliente ACME — facturación')",
+          },
+          replaces: {
+            type: "number",
+            description: "id de la nota que sustituye (el que ves en la memoria del turno; para workspace usa el número del id ws:N)",
+          },
         },
         required: ["note"],
       },
       handler: async (sub, args) => {
-        if (!dest) return { ok: false, error: "no puedo guardar memoria fuera de una conversación" };
         const db = await import("../../db.server");
+        const note = String(args.note ?? "").trim().replace(/\s+/g, " ");
+        if (!note) return { ok: false, error: "la nota viene vacía" };
+
+        if (args.scope === "workspace") {
+          if (note.length > db.WS_MEMORY_MAX_CHARS)
+            return { ok: false, error: `demasiado larga (máx ${db.WS_MEMORY_MAX_CHARS} caracteres); destílala — guarda lo operativo, no el documento` };
+          if (args.replaces != null) {
+            const id = Number(args.replaces);
+            const ok = await db.updateWorkspaceMemory(id, {
+              note,
+              ...(args.title ? { title: String(args.title).slice(0, db.WS_MEMORY_TITLE_MAX) } : {}),
+            });
+            return ok ? { ok: true, id: `ws:${id}` } : { ok: false, error: "esa nota no existe en la memoria del workspace" };
+          }
+          const title = String(args.title ?? "").trim().slice(0, db.WS_MEMORY_TITLE_MAX);
+          if (!title) return { ok: false, error: "una nota de workspace necesita `title` (es lo que sale en el índice)" };
+          const existing = await db.listWorkspaceMemory();
+          if (existing.length >= db.WS_MEMORY_MAX_NOTES)
+            return {
+              ok: false,
+              error: `la memoria del workspace está llena (${db.WS_MEMORY_MAX_NOTES} notas). Borra o sustituye alguna (memory_forget / replaces)`,
+            };
+          // Autoría: el agente escribe, pero quien lo pidió queda como origen junto al
+          // handle — en la UI de /memory se ve quién y desde dónde nació cada hecho.
+          const sourceRef = dest?.channelId != null ? `ch:${dest.channelId}` : dest?.dmId != null ? `dm:${dest.dmId}` : null;
+          const author = dest?.handle ? `@${dest.handle}` : sub;
+          const id = await db.addWorkspaceMemory(title, note, author, sourceRef);
+          return { ok: true, id: `ws:${id}` };
+        }
+
+        if (!dest) return { ok: false, error: "no puedo guardar memoria de room fuera de una conversación" };
         const scope = db.memoryScopeKey(dest);
         const handle = dest.handle;
         if (!scope || !handle) return { ok: false, error: "no pude identificar la conversación" };
-
-        const note = String(args.note ?? "").trim().replace(/\s+/g, " ");
-        if (!note) return { ok: false, error: "la nota viene vacía" };
         if (note.length > db.MEMORY_MAX_CHARS)
           return { ok: false, error: `demasiado larga (máx ${db.MEMORY_MAX_CHARS} caracteres); resúmela` };
 
@@ -445,22 +489,48 @@ export function nativeTools(dest: ToolDest | null): ConnectorTool[] {
       },
     },
     {
-      name: "memory_forget",
+      name: "memory_read",
       description:
-        "Borra una nota de la memoria de esta conversación por su id (el que ves en el bloque de " +
-        "memoria del turno). Úsalo cuando una convención deje de aplicar o te digan que la olvides.",
+        "Lee una nota completa de la memoria del workspace por su id del índice (`ws:N`). El índice " +
+        "del turno sólo trae título y arranque; usa esto ANTES de aplicar un hecho del workspace " +
+        "(formato, datos de un cliente, reglas de marca) para trabajar con la nota entera.",
       inputSchema: {
         type: "object",
-        properties: { id: { type: "number", description: "id de la nota" } },
+        properties: { id: { type: "string", description: "id del índice, ej. 'ws:12' (o el número solo)" } },
         required: ["id"],
       },
       handler: async (_sub, args) => {
-        if (!dest) return { ok: false, error: "no puedo borrar memoria fuera de una conversación" };
         const db = await import("../../db.server");
+        const id = Number(String(args.id ?? "").replace(/^ws:/, ""));
+        if (!Number.isFinite(id) || id <= 0) return { ok: false, error: "id inválido; usa el ws:N del índice" };
+        const note = await db.getWorkspaceMemory(id);
+        return note
+          ? { ok: true, id: `ws:${note.id}`, title: note.title, note: note.note, author: note.createdBy }
+          : { ok: false, error: "esa nota no existe (¿la borraron desde /memory?)" };
+      },
+    },
+    {
+      name: "memory_forget",
+      description:
+        "Borra una nota de la memoria por su id: un número = nota de esta conversación; `ws:N` = " +
+        "nota del workspace. Úsalo cuando algo deje de aplicar o te digan que lo olvides.",
+      inputSchema: {
+        type: "object",
+        properties: { id: { type: "string", description: "id de la nota (número o 'ws:N')" } },
+        required: ["id"],
+      },
+      handler: async (_sub, args) => {
+        const db = await import("../../db.server");
+        const raw = String(args.id ?? "").trim();
+        if (/^ws:\d+$/.test(raw)) {
+          const ok = await db.deleteWorkspaceMemory(Number(raw.slice(3)));
+          return ok ? { ok: true } : { ok: false, error: "esa nota no existe en la memoria del workspace" };
+        }
+        if (!dest) return { ok: false, error: "no puedo borrar memoria de room fuera de una conversación" };
         const scope = db.memoryScopeKey(dest);
         const handle = dest.handle;
         if (!scope || !handle) return { ok: false, error: "no pude identificar la conversación" };
-        const ok = await db.deleteAgentMemory(Number(args.id ?? 0), scope, handle);
+        const ok = await db.deleteAgentMemory(Number(raw), scope, handle);
         return ok ? { ok: true } : { ok: false, error: "esa nota no existe en esta conversación" };
       },
     },

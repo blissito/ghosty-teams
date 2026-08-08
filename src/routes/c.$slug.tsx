@@ -68,6 +68,7 @@ import {
   Github,
   GitPullRequest,
   ExternalLink,
+  Brain,
 } from "lucide-react";
 import { searchMessagesFn } from "../server/search";
 import {
@@ -3918,6 +3919,14 @@ function Sidebar({
           >
             <Layers size={16} className="shrink-0" />
             <span className="truncate">{t("Documentos")}</span>
+          </Link>
+          {/* Memoria del workspace: lo que los agentes saben de la empresa. Curaduría. */}
+          <Link
+            to="/memory"
+            className="flex w-full items-center gap-2 rounded-lg px-2 py-2.5 text-sm md:py-1.5 text-muted hover:bg-surface-3 hover:text-ink"
+          >
+            <Brain size={16} className="shrink-0" />
+            <span className="truncate">{t("Memoria")}</span>
           </Link>
         </div>
         <div className="flex items-center justify-between px-2 pb-1 pt-2">

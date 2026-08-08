@@ -491,6 +491,13 @@ async function migrate(): Promise<void> {
   await exec(
     `CREATE INDEX IF NOT EXISTS gt_agent_memory_scope ON gt_agent_memory(scope_key, agent_handle)`
   );
+  // Alcance WORKSPACE (2026-08-08): la misma tabla guarda la memoria del workspace —
+  // hechos de la empresa compartidos entre rooms y agentes. scope_key='ws' (imposible
+  // en el formato 'ch:'/'dm:', no colisiona) y agent_handle='' (compartida). Con título
+  // estilo índice MEMORY.md; source_ref apunta al origen (mensaje/adjunto destilado).
+  // UNA memoria con dos niveles, no dos sistemas: mismas tools, mismo bloque en el turno.
+  await addColumn("gt_agent_memory", "title", "TEXT");
+  await addColumn("gt_agent_memory", "source_ref", "TEXT");
 
   // Conectores OAuth PER-USER (Calendly y futuros GitHub/Slack/GCal). Modelo Cowork:
   // cada usuario conecta SU cuenta; @ghosty agenda/actúa con el token del que lo invoca.
