@@ -1223,6 +1223,8 @@ const TOOL_LABELS: Record<string, { ing: string; done: string }> = {
   openai_web_search: { ing: "Buscando en la web (OpenAI)", done: "Busqué en la web (OpenAI)" },
   gs_stt_transcribe: { ing: "Transcribiendo el audio", done: "Transcribí el audio" },
   gs_web_scrape: { ing: "Leyendo la página", done: "Leí la página" },
+  // Bajar el repo del cliente (github_checkout / git clone) NO es leer una página.
+  gs_repo_checkout: { ing: "Descargando el repo", done: "Descargué el repo" },
   gs_render: { ing: "Maquetando el PDF", done: "Maqueté el PDF" },
   gs_render_png: { ing: "Generando la imagen", done: "Generé la imagen" },
   gs_doc: { ing: "Armando el documento Word", done: "Armé el documento Word" },
