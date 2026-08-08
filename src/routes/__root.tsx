@@ -9,7 +9,7 @@ import { registerSW } from '../utils/pwa-install'
 import { InstallAppBanner } from '../components/InstallAppBanner'
 import { CallLayer } from '../components/CallLayer'
 import { LocaleProvider, DEFAULT_LOCALE } from '../i18n'
-import { THEME_BOOT, watchSystemScheme } from '../utils/theme'
+import { THEME_BOOT, watchSystemScheme, loadBrandPalette } from '../utils/theme'
 
 export const Route = createRootRoute({
   // Guard: todo requiere sesión, salvo el login y las invitaciones.
@@ -162,6 +162,8 @@ function RootDocument({ children }: { children: React.ReactNode }) {
   }, [])
   // Cuando el scheme es "system", sigue en vivo el cambio de preferencia del SO.
   useEffect(() => watchSystemScheme(), [])
+  // La marca del workspace para los dos sitios que aplican paleta a mano (ver theme.ts).
+  useEffect(() => loadBrandPalette(), [])
   return (
     <html lang={DEFAULT_LOCALE} suppressHydrationWarning>
       <head>

@@ -137,9 +137,43 @@ export function resolveDark(scheme: ThemeScheme): boolean {
     : false;
 }
 
+// ── La marca del workspace, del lado del cliente ────────────────────────────
+// La app NO necesita el kit para pintarse: la hoja `/api/brand-css` ya lo hace, antes del
+// primer paint y sin JS. Hace falta para los dos sitios que aplican una paleta a MANO,
+// donde la cascada no llega: la muestra de la tarjeta "Workspace" en Ajustes y el SIDEBAR
+// OSCURO sobre tema claro (vars inline en un subárbol). Sin esto los dos usaban una paleta
+// de relleno, así que un workspace con marca verde enseñaba una muestra violeta y un
+// sidebar violeta — se leía como que el tema no había cambiado.
+//
+// Se lee de la MISMA hoja, no de un endpoint nuevo: una sola fuente de la marca.
+let brandPalette: ThemePreset | null = null;
+
+export function loadBrandPalette(): void {
+  if (brandPalette || typeof fetch === "undefined") return;
+  const vars = (block: string) => {
+    const out: Record<string, string> = {};
+    for (const m of block.matchAll(/--color-([a-z0-9-]+)\s*:\s*([^;}]+)/g)) out[m[1]] = m[2].trim();
+    return out;
+  };
+  fetch("/api/brand-css")
+    .then((r) => r.text())
+    .then((css) => {
+      const light = css.match(/:root:root\{([^}]*)\}/)?.[1];
+      if (!light) return; // workspace sin kit: la paleta de relleno ES la de Ghosty
+      const dark = css.match(/:root:root\[data-theme="dark"\]\{([^}]*)\}/)?.[1] ?? light;
+      brandPalette = {
+        ...BRAND_PRESET,
+        light: { ...BRAND_PRESET.light, ...vars(light) } as Palette,
+        dark: { ...BRAND_PRESET.dark, ...vars(dark) } as Palette,
+      };
+      listeners.forEach((l) => l()); // repinta la muestra y el sidebar sin recargar
+    })
+    .catch(() => {});
+}
+
 export function presetById(id: string): ThemePreset {
-  if (id === BRAND_PRESET_ID) return BRAND_PRESET;
-  return PRESETS.find((p) => p.id === id) ?? BRAND_PRESET;
+  if (id === BRAND_PRESET_ID) return brandPalette ?? BRAND_PRESET;
+  return PRESETS.find((p) => p.id === id) ?? brandPalette ?? BRAND_PRESET;
 }
 
 // Variables inline de una paleta (para aplicar a <html> o a un subárbol, ej. sidebar).

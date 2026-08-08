@@ -33,7 +33,8 @@ import { workspaceUsageFn } from "../server/workspaces";
 import { listMyConnectorsFn, disconnectConnectorFn, shareConnectorFn } from "../server/connectors";
 import {
   PRESETS,
-  BRAND_PRESET,
+  BRAND_PRESET_ID,
+  presetById,
   getTheme,
   setThemePartial,
   subscribeTheme,
@@ -861,7 +862,7 @@ function AppearancePanel() {
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
           {/* La marca del workspace es UNA opción más, la primera. Elegir cualquier otra
               es una preferencia PERSONAL y le gana al kit del dueño. */}
-          {[BRAND_PRESET, ...PRESETS].map((p) => (
+          {[presetById(BRAND_PRESET_ID), ...PRESETS].map((p) => (
             <button
               key={p.id}
               onClick={() => setThemePartial({ preset: p.id })}
