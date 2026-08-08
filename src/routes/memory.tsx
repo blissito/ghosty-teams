@@ -17,7 +17,7 @@ import {
 import { useLocale, useT } from "../i18n";
 import { intlLocale } from "../i18n.core";
 import { me } from "../server/auth";
-import { postDmMessageFn } from "../server/dm";
+import { askDmAgentFn, postDmMessageFn } from "../server/dm";
 import {
   deleteMemoryDocFn,
   deleteRoomMemoryFn,
@@ -48,6 +48,7 @@ function MemoryPage() {
   const t = useT();
   const locale = useLocale();
   const navigate = useNavigate();
+  const { user } = Route.useLoaderData();
   const [data, setData] = useState<MemoryData | null>(memoryCache);
   const [editing, setEditing] = useState<{ id?: number; title: string; note: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -115,15 +116,25 @@ function MemoryPage() {
         data: { fileId: meta.fileId, name: file.name, mime: meta.mime ?? file.type, size: meta.size ?? file.size },
       });
       if (!r.ok) throw new Error(r.error);
-      await postDmMessageFn({
-        data: {
-          id: r.dmId,
-          body: r.body,
-          attachments: [
-            { fileId: meta.fileId, mime: meta.mime ?? file.type, size: meta.size ?? file.size, name: file.name },
-          ],
-        },
-      });
+      const attachments = [
+        { fileId: meta.fileId, mime: meta.mime ?? file.type, size: meta.size ?? file.size, name: file.name },
+      ];
+      const posted = await postDmMessageFn({ data: { id: r.dmId, body: r.body, attachments } });
+      // ⚠️ postDmMessageFn sólo deja el mensaje y la cáscara del agente: el TURNO lo
+      // dispara el cliente con askDmAgentFn (igual que el composer del chat). Sin esta
+      // llamada la cáscara se queda en "pensando…" para siempre.
+      if (posted.ok && posted.needsAgent && posted.agentHandle) {
+        void askDmAgentFn({
+          data: {
+            id: r.dmId,
+            body: r.body,
+            sender: user?.name ?? "",
+            handle: posted.agentHandle,
+            shellId: posted.shellId ?? undefined,
+            attachments,
+          },
+        }).catch(() => {});
+      }
       await reload();
       // Al DM: ahí se ve al agente destilando en vivo.
       void navigate({ to: "/c/$slug", params: { slug: "general" }, search: { dm: r.dmId } as never });
