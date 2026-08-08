@@ -21,6 +21,7 @@ import {
   saveBrandKitFn,
 } from "../server/brand";
 import ConfirmModal from "./ConfirmModal";
+import { reloadBrandPalette } from "../utils/theme";
 import { BRAND_FONTS } from "../lib/brand-fonts";
 import { useT } from "../i18n";
 
@@ -51,6 +52,21 @@ export function BrandPanel({ isOwner }: { isOwner: boolean }) {
   async function reload() {
     setKits((await listBrandKitsFn()) as Kit[]);
   }
+
+  /**
+   * La app entera se pinta con `/api/brand-css`, una hoja que el navegador cargó UNA vez
+   * al abrir la pestaña. Cambiar el kit activo escribe en la DB y refresca esta lista,
+   * pero el `<link>` sigue sirviendo la marca anterior: se veía como que activar un kit
+   * no hacía nada, y la única forma de enterarse era recargar a mano. Se vuelve a pedir
+   * con un parámetro distinto (la hoja se sirve con `max-age=30`, así que sin él el
+   * navegador contestaría con la copia vieja).
+   */
+  function refreshBrandSheet() {
+    const link = document.querySelector<HTMLLinkElement>('link[rel="stylesheet"][href^="/api/brand-css"]');
+    if (link) link.href = `/api/brand-css?r=${Date.now()}`;
+    // La muestra del selector de temas lee la misma hoja (ver utils/theme.ts).
+    reloadBrandPalette();
+  }
   useEffect(() => {
     reload().catch(() => setKits([]));
   }, []);
@@ -60,6 +76,7 @@ export function BrandPanel({ isOwner }: { isOwner: boolean }) {
     try {
       await activateBrandKitFn({ data: { id } });
       await reload();
+      refreshBrandSheet();
     } finally {
       setBusy(false);
     }
@@ -70,6 +87,7 @@ export function BrandPanel({ isOwner }: { isOwner: boolean }) {
     try {
       await deleteBrandKitFn({ data: { id } });
       await reload();
+      refreshBrandSheet();
     } finally {
       setBusy(false);
     }
@@ -83,6 +101,7 @@ export function BrandPanel({ isOwner }: { isOwner: boolean }) {
         onSaved={async () => {
           setEditing(null);
           await reload();
+          refreshBrandSheet();
         }}
       />
     );

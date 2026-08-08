@@ -148,14 +148,14 @@ export function resolveDark(scheme: ThemeScheme): boolean {
 // Se lee de la MISMA hoja, no de un endpoint nuevo: una sola fuente de la marca.
 let brandPalette: ThemePreset | null = null;
 
-export function loadBrandPalette(): void {
-  if (brandPalette || typeof fetch === "undefined") return;
+export function loadBrandPalette(bust = false): void {
+  if ((brandPalette && !bust) || typeof fetch === "undefined") return;
   const vars = (block: string) => {
     const out: Record<string, string> = {};
     for (const m of block.matchAll(/--color-([a-z0-9-]+)\s*:\s*([^;}]+)/g)) out[m[1]] = m[2].trim();
     return out;
   };
-  fetch("/api/brand-css")
+  fetch(bust ? `/api/brand-css?r=${Date.now()}` : "/api/brand-css")
     .then((r) => r.text())
     .then((css) => {
       const light = css.match(/:root:root\{([^}]*)\}/)?.[1];
@@ -169,6 +169,12 @@ export function loadBrandPalette(): void {
       listeners.forEach((l) => l()); // repinta la muestra y el sidebar sin recargar
     })
     .catch(() => {});
+}
+
+/** Tras cambiar el kit activo: la muestra y el sidebar tienen que dejar de mentir. */
+export function reloadBrandPalette(): void {
+  brandPalette = null;
+  loadBrandPalette(true);
 }
 
 export function presetById(id: string): ThemePreset {
