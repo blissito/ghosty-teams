@@ -412,8 +412,10 @@ export function nativeTools(dest: ToolDest | null): ConnectorTool[] {
         "despacho). Úsalo cuando te digan 'de ahora en adelante', 'siempre', 'recuérdalo', 'anótalo' " +
         "o 'guárdalo en la memoria del workspace'. NO guardes el contenido de los documentos (para " +
         "eso están los artefactos), ni datos sensibles que nadie pidió guardar, ni el estado de una " +
-        "tarea en curso. Si ya existe una nota parecida, actualízala con `replaces` en vez de añadir " +
-        "otra: dos notas que se contradicen es peor que ninguna.",
+        "tarea en curso. La marca del PROPIO workspace (sus colores, logo, fuentes) vive en el brand " +
+        "kit (tools brand_*), no aquí — en memoria van marcas de CLIENTES y reglas de uso. Si ya " +
+        "existe una nota parecida, actualízala con `replaces` en vez de añadir otra: dos notas que " +
+        "se contradicen es peor que ninguna.",
       inputSchema: {
         type: "object",
         properties: {

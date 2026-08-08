@@ -266,8 +266,13 @@ async function memoryHint(dest: import("./server/connectors/tool-token.server").
         shown++;
       }
       const rest = wsNotes.length - shown;
+      // Precedencia contra el brand kit: sin esta línea, unas notas con colores de un
+      // CLIENTE (p.ej. un manual de identidad ajeno) compiten con la marca activa del
+      // workspace y el agente puede pintarle el color equivocado a un documento propio.
       wsSection =
-        `Del workspace (hechos de la empresa; es un ÍNDICE — lee la nota completa con memory_read antes de aplicarla):\n` +
+        `Del workspace (hechos de la empresa; es un ÍNDICE — lee la nota completa con memory_read antes de aplicarla). ` +
+        `Si una nota trae colores/tipografías de un cliente o tercero, aplícalos SOLO cuando la tarea sea para ese cliente; ` +
+        `para todo lo demás manda la marca activa del workspace:\n` +
         lines.join("\n") +
         (rest > 0 ? `\n…y ${rest} más (las ve el equipo en /memory)` : "") +
         `\n`;
