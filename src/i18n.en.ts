@@ -1132,4 +1132,12 @@ export const en: Record<string, string> = {
   "Convenciones que cada agente guarda por room o DM. También se pueden podar desde aquí.":
     "Conventions each agent keeps per room or DM. They can be pruned from here too.",
   "Borrar": "Delete",
+  "Suelta un documento (o haz clic): el agente lo lee y lo destila a notas de memoria.":
+    "Drop a document (or click): the agent reads it and distills it into memory notes.",
+  "Subiendo": "Uploading",
+  "El archivo pasa de 25MB. Comprímelo o divídelo.": "The file is over 25MB. Compress or split it.",
+  "destilando…": "distilling…",
+  "notas": "notes",
+  "Ver la conversación donde se destiló": "See the conversation where it was distilled",
+  "Quitar de la lista (las notas destiladas se quedan)": "Remove from the list (distilled notes stay)",
 };

@@ -427,6 +427,10 @@ export function nativeTools(dest: ToolDest | null): ConnectorTool[] {
             type: "string",
             description: "sólo workspace: título corto para el índice (ej. 'Cliente ACME — facturación')",
           },
+          source_doc: {
+            type: "number",
+            description: "sólo workspace: id del documento fuente si estás destilando uno (te lo dan en la instrucción)",
+          },
           replaces: {
             type: "number",
             description: "id de la nota que sustituye (el que ves en la memoria del turno; para workspace usa el número del id ws:N)",
@@ -460,7 +464,17 @@ export function nativeTools(dest: ToolDest | null): ConnectorTool[] {
             };
           // Autoría: el agente escribe, pero quien lo pidió queda como origen junto al
           // handle — en la UI de /memory se ve quién y desde dónde nació cada hecho.
-          const sourceRef = dest?.channelId != null ? `ch:${dest.channelId}` : dest?.dmId != null ? `dm:${dest.dmId}` : null;
+          // Si viene de destilar un documento registrado, la nota queda LIGADA a él
+          // ('doc:N') y /memory enseña cuántas notas salieron de cada documento.
+          const srcDoc = Number(args.source_doc);
+          const sourceRef =
+            Number.isFinite(srcDoc) && srcDoc > 0
+              ? `doc:${srcDoc}`
+              : dest?.channelId != null
+                ? `ch:${dest.channelId}`
+                : dest?.dmId != null
+                  ? `dm:${dest.dmId}`
+                  : null;
           const author = dest?.handle ? `@${dest.handle}` : sub;
           const id = await db.addWorkspaceMemory(title, note, author, sourceRef);
           return { ok: true, id: `ws:${id}` };

@@ -1,12 +1,28 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
-import { ArrowLeft, Brain, ChevronDown, ChevronRight, Pencil, Plus, Trash2, X } from "lucide-react";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { useEffect, useRef, useState } from "react";
+import {
+  ArrowLeft,
+  Brain,
+  ChevronDown,
+  ChevronRight,
+  FileText,
+  Loader2,
+  MessageSquare,
+  Pencil,
+  Plus,
+  Trash2,
+  Upload,
+  X,
+} from "lucide-react";
 import { useLocale, useT } from "../i18n";
 import { intlLocale } from "../i18n.core";
 import { me } from "../server/auth";
+import { postDmMessageFn } from "../server/dm";
 import {
+  deleteMemoryDocFn,
   deleteRoomMemoryFn,
   deleteWorkspaceMemoryFn,
+  ingestMemoryDocFn,
   listWorkspaceMemoryFn,
   saveWorkspaceMemoryFn,
 } from "../server/memory";
@@ -31,11 +47,16 @@ function fmtDate(ts: number, locale: string): string {
 function MemoryPage() {
   const t = useT();
   const locale = useLocale();
+  const navigate = useNavigate();
   const [data, setData] = useState<MemoryData | null>(memoryCache);
   const [editing, setEditing] = useState<{ id?: number; title: string; note: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [roomsOpen, setRoomsOpen] = useState(false);
+  const [dragging, setDragging] = useState(false);
+  const [ingesting, setIngesting] = useState<string | null>(null); // nombre del archivo en vuelo
+  const [ingestError, setIngestError] = useState<string | null>(null);
+  const fileInput = useRef<HTMLInputElement>(null);
 
   const reload = () =>
     listWorkspaceMemoryFn()
@@ -74,11 +95,69 @@ function MemoryPage() {
       .catch(reload);
   };
 
+  // Documento soltado → subir → registrar (abre el DM con el agente) → postear la
+  // instrucción con el adjunto. El turno corre por el camino normal del chat; aquí
+  // sólo se le da play y se enlaza la conversación.
+  const ingestFile = async (file: File) => {
+    setIngestError(null);
+    setIngesting(file.name);
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      const up = await fetch("/api/upload", { method: "POST", body: form });
+      if (!up.ok) {
+        throw new Error(
+          up.status === 413 ? t("El archivo pasa de 25MB. Comprímelo o divídelo.") : `upload ${up.status}`
+        );
+      }
+      const meta = (await up.json()) as { fileId: string; mime?: string; size?: number };
+      const r = await ingestMemoryDocFn({
+        data: { fileId: meta.fileId, name: file.name, mime: meta.mime ?? file.type, size: meta.size ?? file.size },
+      });
+      if (!r.ok) throw new Error(r.error);
+      await postDmMessageFn({
+        data: {
+          id: r.dmId,
+          body: r.body,
+          attachments: [
+            { fileId: meta.fileId, mime: meta.mime ?? file.type, size: meta.size ?? file.size, name: file.name },
+          ],
+        },
+      });
+      await reload();
+      // Al DM: ahí se ve al agente destilando en vivo.
+      void navigate({ to: "/c/$slug", params: { slug: "general" }, search: { dm: r.dmId } as never });
+    } catch (e) {
+      setIngestError((e as Error).message || t("No se pudo. Inténtalo otra vez."));
+    } finally {
+      setIngesting(null);
+    }
+  };
+
   const ws = data?.workspace ?? null;
   const limits = data?.limits;
+  const docs = data?.docs ?? [];
+  const docNames = new Map(docs.map((d) => [`doc:${d.id}`, d.name]));
 
   return (
-    <div className="min-h-screen bg-bg text-ink">
+    <div
+      className="min-h-screen bg-bg text-ink"
+      onDragOver={(e) => {
+        if (e.dataTransfer.types.includes("Files")) {
+          e.preventDefault();
+          setDragging(true);
+        }
+      }}
+      onDragLeave={(e) => {
+        if (e.currentTarget === e.target) setDragging(false);
+      }}
+      onDrop={(e) => {
+        e.preventDefault();
+        setDragging(false);
+        const file = e.dataTransfer.files?.[0];
+        if (file) void ingestFile(file);
+      }}
+    >
       <div className="max-w-3xl mx-auto px-5 py-8">
         <Link
           to="/c/$slug"
@@ -185,15 +264,96 @@ function MemoryPage() {
                     </button>
                   </div>
                 </div>
-                <div className="text-[11px] text-faint mt-2 flex items-center gap-2">
+                <div className="text-[11px] text-faint mt-2 flex items-center gap-2 flex-wrap">
                   <span className="font-mono">ws:{n.id}</span>
                   {n.createdBy ? <span>· {n.createdBy}</span> : null}
                   <span>· {fmtDate(n.updatedAt, intlLocale(locale))}</span>
+                  {n.sourceRef && docNames.has(n.sourceRef) ? (
+                    <span className="inline-flex items-center gap-1 text-muted">
+                      · <FileText size={11} /> {docNames.get(n.sourceRef)}
+                    </span>
+                  ) : null}
                 </div>
               </li>
             ))}
           </ul>
         )}
+
+        {/* Documentos fuente: se sueltan aquí, el agente los destila a notas en su DM. */}
+        <section className="mt-8">
+          <h2 className="text-sm font-semibold text-muted mb-3">{t("Documentos")}</h2>
+          <button
+            onClick={() => fileInput.current?.click()}
+            disabled={ingesting !== null}
+            className={`w-full border-2 border-dashed rounded-2xl p-6 text-center text-sm transition ${
+              dragging ? "border-brand bg-brand/5 text-ink" : "border-border text-muted hover:border-brand/50"
+            }`}
+          >
+            {ingesting ? (
+              <span className="inline-flex items-center gap-2">
+                <Loader2 size={16} className="animate-spin" /> {t("Subiendo")} {ingesting}…
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-2">
+                <Upload size={16} />
+                {t("Suelta un documento (o haz clic): el agente lo lee y lo destila a notas de memoria.")}
+              </span>
+            )}
+          </button>
+          <input
+            ref={fileInput}
+            type="file"
+            className="hidden"
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              e.target.value = "";
+              if (file) void ingestFile(file);
+            }}
+          />
+          {ingestError ? <p className="text-[11px] text-red-500 mt-2">{ingestError}</p> : null}
+          {docs.length > 0 ? (
+            <ul className="mt-3 flex flex-col gap-2">
+              {docs.map((d) => (
+                <li key={d.id} className="text-sm flex items-center gap-3 border border-border rounded-xl px-3 py-2">
+                  <FileText size={16} className="text-brand shrink-0" />
+                  <div className="flex-1 min-w-0">
+                    <div className="font-medium truncate">{d.name}</div>
+                    <div className="text-[11px] text-faint">
+                      {fmtDate(d.createdAt, intlLocale(locale))}
+                      {d.size ? ` · ${(d.size / (1024 * 1024)).toFixed(1)}MB` : ""}
+                    </div>
+                  </div>
+                  <span
+                    className={`text-xs tabular-nums shrink-0 ${d.noteCount > 0 ? "text-brand font-semibold" : "text-faint italic"}`}
+                  >
+                    {d.noteCount > 0 ? `${d.noteCount} ${t("notas")}` : t("destilando…")}
+                  </span>
+                  {d.dmId != null ? (
+                    <Link
+                      to="/c/$slug"
+                      params={{ slug: "general" }}
+                      search={{ dm: d.dmId } as never}
+                      title={t("Ver la conversación donde se destiló")}
+                      className="p-1.5 rounded-lg text-muted hover:text-ink hover:bg-surface-3 shrink-0"
+                    >
+                      <MessageSquare size={14} />
+                    </Link>
+                  ) : null}
+                  <button
+                    onClick={() => {
+                      setData((prev) => (prev ? { ...prev, docs: prev.docs.filter((x) => x.id !== d.id) } : prev));
+                      deleteMemoryDocFn({ data: { id: d.id } }).then(reload).catch(reload);
+                    }}
+                    title={t("Quitar de la lista (las notas destiladas se quedan)")}
+                    className="p-1.5 rounded-lg text-muted hover:text-red-500 shrink-0"
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </section>
 
         {data && data.rooms.length > 0 ? (
           <section className="mt-8">

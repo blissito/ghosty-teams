@@ -499,6 +499,21 @@ async function migrate(): Promise<void> {
   await addColumn("gt_agent_memory", "title", "TEXT");
   await addColumn("gt_agent_memory", "source_ref", "TEXT");
 
+  // Documentos fuente de la memoria (patrón DESCTI): un manual/PDF soltado en /memory se
+  // registra aquí, viaja al DM del agente para destilarse, y las notas que salen llevan
+  // source_ref='doc:<id>'. El archivo vive en storage como cualquier adjunto (file_id);
+  // borrar la fila NO borra las notas — el conocimiento destilado sobrevive a su fuente.
+  await exec(`CREATE TABLE IF NOT EXISTS gt_memory_docs (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    file_id     TEXT NOT NULL,
+    name        TEXT NOT NULL,
+    mime        TEXT,
+    size        INTEGER,
+    dm_id       INTEGER,
+    uploaded_by TEXT,
+    created_at  INTEGER NOT NULL DEFAULT (unixepoch())
+  )`);
+
   // Conectores OAuth PER-USER (Calendly y futuros GitHub/Slack/GCal). Modelo Cowork:
   // cada usuario conecta SU cuenta; @ghosty agenda/actúa con el token del que lo invoca.
   // Una fila por (usuario, proveedor). Tokens en la DB del tenant (no en compute), patrón

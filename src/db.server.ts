@@ -496,6 +496,61 @@ export async function deleteWorkspaceMemory(id: number): Promise<boolean> {
   return rows.length > 0;
 }
 
+// ── Documentos fuente de la memoria (gt_memory_docs) ────────────────────────────
+
+export type MemoryDoc = {
+  id: number;
+  fileId: string;
+  name: string;
+  mime: string | null;
+  size: number | null;
+  dmId: number | null;
+  uploadedBy: string | null;
+  createdAt: number;
+  noteCount: number;
+};
+
+export async function listMemoryDocs(): Promise<MemoryDoc[]> {
+  const rows = await dbq(
+    `SELECT d.id, d.file_id, d.name, d.mime, d.size, d.dm_id, d.uploaded_by, d.created_at,
+            (SELECT COUNT(*) FROM gt_agent_memory m
+              WHERE m.scope_key = '${WS_MEMORY_SCOPE}' AND m.source_ref = 'doc:' || d.id) AS note_count
+       FROM gt_memory_docs d ORDER BY d.id DESC`
+  );
+  return rows.map((r) => ({
+    id: num(r.id),
+    fileId: String(r.file_id ?? ""),
+    name: String(r.name ?? ""),
+    mime: (r.mime as string | null) ?? null,
+    size: r.size != null ? num(r.size) : null,
+    dmId: r.dm_id != null ? num(r.dm_id) : null,
+    uploadedBy: (r.uploaded_by as string | null) ?? null,
+    createdAt: num(r.created_at),
+    noteCount: num(r.note_count),
+  }));
+}
+
+export async function addMemoryDoc(d: {
+  fileId: string;
+  name: string;
+  mime: string | null;
+  size: number | null;
+  dmId: number | null;
+  uploadedBy: string | null;
+}): Promise<number> {
+  const rows = await dbq(
+    `INSERT INTO gt_memory_docs (file_id, name, mime, size, dm_id, uploaded_by)
+       VALUES (?, ?, ?, ?, ?, ?) RETURNING id`,
+    [d.fileId, d.name, d.mime, d.size, d.dmId, d.uploadedBy]
+  );
+  return num(rows[0]?.id);
+}
+
+export async function deleteMemoryDoc(id: number): Promise<boolean> {
+  const rows = await dbq(`DELETE FROM gt_memory_docs WHERE id = ? RETURNING id`, [id]);
+  return rows.length > 0;
+}
+
 /** Todas las notas de room/DM con la etiqueta de su conversación, para la curaduría en /memory. */
 export type RoomNoteRow = {
   id: number;
