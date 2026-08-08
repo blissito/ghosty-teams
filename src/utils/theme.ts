@@ -35,7 +35,7 @@ export const BRAND_PRESET_ID = "brand";
 
 // Sólo para la tarjeta del selector: la marca real la sirve la hoja, no esta paleta.
 export const BRAND_PRESET: ThemePreset = {
-  id: BRAND_PRESET_ID, label: "Marca del workspace", font: "sans",
+  id: BRAND_PRESET_ID, label: "Workspace", font: "sans",
   light: { brand: "#7c3aed", "brand-2": "#a78bfa", "brand-fg": "#ffffff", surface: "#ffffff", "surface-2": "#f6f5fb", "surface-3": "#ecebf6", border: "#e4e2f0", ink: "#1c1b22", muted: "#6b6975" },
   dark: { brand: "#a78bfa", "brand-2": "#7c3aed", "brand-fg": "#14121a", surface: "#14121a", "surface-2": "#1c1a25", "surface-3": "#272536", border: "#302d3f", ink: "#f2f1f7", muted: "#9995ad" },
 };
@@ -101,9 +101,24 @@ const KEYS = {
   font: "gc.font", reduceMotion: "gc.reduceMotion", darkSidebar: "gc.darkSidebar",
 };
 
+// ── Migración, una sola vez ─────────────────────────────────────────────────
+// `setThemePartial` escribe TODAS las llaves, así que quien tocó cualquier ajuste tiene
+// `gc.preset:"ghosty"` guardado sin haber elegido nunca un estilo. Con la semántica nueva
+// eso significaría "quiero la paleta de Ghosty" y le quitaría la marca a medio workspace.
+// Un `ghosty` heredado se reinterpreta como `brand`, que es lo que de hecho veía.
+const MIGRATED = "gc.preset.v2";
+function migratePreset(): void {
+  try {
+    if (localStorage.getItem(MIGRATED)) return;
+    localStorage.setItem(MIGRATED, "1");
+    if (localStorage.getItem(KEYS.preset) === "ghosty") localStorage.setItem(KEYS.preset, BRAND_PRESET_ID);
+  } catch {}
+}
+
 export function readTheme(): ThemeState {
   if (typeof localStorage === "undefined")
     return { preset: BRAND_PRESET_ID, scheme: "system", textSize: "regular", font: "default", reduceMotion: false, darkSidebar: false };
+  migratePreset(); // red por si el boot no corrió (p.ej. hidratación sin el shell)
   return {
     preset: localStorage.getItem(KEYS.preset) || BRAND_PRESET_ID,
     scheme: (localStorage.getItem(KEYS.scheme) as ThemeScheme) || "system",
@@ -123,7 +138,8 @@ export function resolveDark(scheme: ThemeScheme): boolean {
 }
 
 export function presetById(id: string): ThemePreset {
-  return PRESETS.find((p) => p.id === id) ?? PRESETS[0];
+  if (id === BRAND_PRESET_ID) return BRAND_PRESET;
+  return PRESETS.find((p) => p.id === id) ?? BRAND_PRESET;
 }
 
 // Variables inline de una paleta (para aplicar a <html> o a un subárbol, ej. sidebar).
@@ -151,22 +167,27 @@ export function applyTheme(s: ThemeState): void {
   const dark = resolveDark(s.scheme);
   const r = document.documentElement;
   r.setAttribute("data-theme", dark ? "dark" : "light");
-  if (preset.id !== "ghosty") r.setAttribute("data-preset", preset.id);
+  const isBrand = preset.id === BRAND_PRESET_ID;
+  if (!isBrand) r.setAttribute("data-preset", preset.id);
   else r.removeAttribute("data-preset");
-  // "Default" NO escribe variables inline: deja que mande el CSS, que es donde entra la
-  // MARCA del workspace (/api/brand-css, servida por tenant). Un estilo inline le gana a
-  // cualquier hoja, así que escribir la paleta de Ghosty aquí haría invisible al kit.
-  // Elegir cualquier otro preset sí pisa la marca — es una preferencia personal explícita.
-  if (preset.id === "ghosty") {
+  // SÓLO "Marca del workspace" cede: no escribe inline y deja que mande el CSS, que es
+  // donde entra la marca (/api/brand-css, servida por tenant). Un estilo inline le gana a
+  // cualquier hoja, así que escribir una paleta aquí haría invisible al kit.
+  // Cualquier otro preset —Ghosty incluido— SÍ pisa la marca: es una preferencia PERSONAL
+  // y tiene que ganarle a lo que el dueño del workspace haya configurado.
+  if (isBrand) {
     for (const k of Object.keys(paletteVars(preset, dark))) r.style.removeProperty(k);
   } else {
     for (const [k, v] of Object.entries(paletteVars(preset, dark))) r.style.setProperty(k, v);
   }
-  // Fuente: "default" NO escribe inline, por lo mismo que los colores — un inline le gana
-  // a la hoja de marca (/api/brand-css) y taparía la tipografía del workspace. Sólo una
-  // elección explícita de la persona pisa la marca.
-  if (s.font === "default") r.style.removeProperty("--font-sans");
-  else r.style.setProperty("--font-sans", FONT_STACKS[s.font]);
+  // Fuente: con la marca activa no se escribe inline (taparía su tipografía). Con un preset
+  // personal, "default" significa la fuente DEL PRESET — si no, la familia de la marca se
+  // colaba en un tema que la persona eligió justamente para no verla.
+  if (s.font !== "default") r.style.setProperty("--font-sans", FONT_STACKS[s.font]);
+  else if (isBrand) r.style.removeProperty("--font-sans");
+  else r.style.setProperty("--font-sans", FONT_STACKS[preset.font]);
+  if (isBrand) r.style.removeProperty("--font-brand-heading");
+  else r.style.setProperty("--font-brand-heading", FONT_STACKS[s.font === "default" ? preset.font : s.font]);
   // Tamaño: escala TODO (Tailwind usa rem para texto y spacing).
   r.style.fontSize = TEXT_SCALE[s.textSize];
   // Movimiento reducido (forzado por el usuario; el sistema se respeta vía @media).
@@ -224,16 +245,21 @@ var P=${JSON.stringify(Object.fromEntries(PRESETS.map((p) => [p.id, { light: p.l
 var F=${JSON.stringify(FONT_STACKS)};
 var T=${JSON.stringify(TEXT_SCALE)};
 var g=function(k,d){return localStorage.getItem(k)||d};
-var id=g('${KEYS.preset}','ghosty');var sc=g('${KEYS.scheme}','system');
+// Migración v2 (ver migratePreset): un 'ghosty' heredado significaba "la marca".
+if(!localStorage.getItem('${MIGRATED}')){localStorage.setItem('${MIGRATED}','1');
+if(localStorage.getItem('${KEYS.preset}')==='ghosty')localStorage.setItem('${KEYS.preset}','${BRAND_PRESET_ID}');}
+var id=g('${KEYS.preset}','${BRAND_PRESET_ID}');var sc=g('${KEYS.scheme}','system');
 var ts=g('${KEYS.textSize}','regular');var fo=g('${KEYS.font}','default');
 var rm=localStorage.getItem('${KEYS.reduceMotion}')==='1';
 var dark=sc==='dark'||(sc==='system'&&window.matchMedia&&matchMedia('(prefers-color-scheme: dark)').matches);
-var pr=P[id]||P.ghosty;var pal=dark?pr.dark:pr.light;var r=document.documentElement;
+var pr=P[id];var br=!pr;var r=document.documentElement;
 r.setAttribute('data-theme',dark?'dark':'light');
-if(id&&id!=='ghosty')r.setAttribute('data-preset',id);else r.removeAttribute('data-preset');
-// Ver applyTheme: "Default" no escribe inline para no taparle la marca del workspace.
-if(id!=='ghosty')for(var k in pal)r.style.setProperty('--color-'+k,pal[k]);
-if(fo!=='default')r.style.setProperty('--font-sans',F[fo]);
+if(!br)r.setAttribute('data-preset',id);else r.removeAttribute('data-preset');
+// Ver applyTheme: SÓLO "Marca del workspace" no escribe inline, para no taparle el kit.
+if(!br){var pal=dark?pr.dark:pr.light;for(var k in pal)r.style.setProperty('--color-'+k,pal[k]);
+r.style.setProperty('--color-card',dark?pal['surface-2']:pal.surface);
+var ff=F[fo!=='default'?fo:pr.font];r.style.setProperty('--font-sans',ff);r.style.setProperty('--font-brand-heading',ff);}
+else if(fo!=='default')r.style.setProperty('--font-sans',F[fo]);
 r.style.fontSize=T[ts]||T.regular;
 if(rm)r.setAttribute('data-reduce-motion','1');
 }catch(e){}})();`;
