@@ -1153,4 +1153,13 @@ export const en: Record<string, string> = {
   "Volver a pedir la destilación al agente": "Ask the agent to distill it again",
   "Ver la conversación donde se destiló": "See the conversation where it was distilled",
   "Quitar de la lista (las notas destiladas se quedan)": "Remove from the list (distilled notes stay)",
+  "¿Borrar esta nota?": "Delete this note?",
+  "«{title}» — los agentes dejarán de saberlo. No se puede deshacer.":
+    "“{title}” — your agents will forget it. This can't be undone.",
+  "El agente dejará de saberlo en esa conversación. No se puede deshacer.":
+    "The agent will forget it in that conversation. This can't be undone.",
+  "¿Quitar este documento?": "Remove this document?",
+  "«{name}» sale de la lista; las notas ya destiladas se quedan.":
+    "“{name}” leaves the list; already-distilled notes stay.",
+  "Adjuntar archivo o imagen": "Attach a file or image",
 };

@@ -106,7 +106,14 @@ export const deleteMemoryDocFn = createServerFn({ method: "POST" })
     return { ok: await db.deleteMemoryDoc(data.id) };
   });
 
-export type SaveWorkspaceNoteInput = { id?: number; title: string; note: string };
+export type SaveWorkspaceNoteInput = {
+  id?: number;
+  title: string;
+  note: string;
+  // Archivo/imagen ya subido a /api/upload que la nota liga como fuente. Se registra en
+  // gt_memory_docs SIN dm (no hay destilación: la nota la escribió la persona).
+  attachment?: { fileId: string; name: string; mime?: string | null; size?: number | null } | null;
+};
 
 export const saveWorkspaceMemoryFn = createServerFn({ method: "POST" })
   .validator((d: SaveWorkspaceNoteInput) => d)
@@ -118,14 +125,29 @@ export const saveWorkspaceMemoryFn = createServerFn({ method: "POST" })
     if (!title || !note) return { ok: false as const, error: "faltan título o contenido" };
     if (note.length > db.WS_MEMORY_MAX_CHARS)
       return { ok: false as const, error: `máximo ${db.WS_MEMORY_MAX_CHARS} caracteres` };
+    if (!data.id) {
+      const existing = await db.listWorkspaceMemory();
+      if (existing.length >= db.WS_MEMORY_MAX_NOTES)
+        return { ok: false as const, error: `la memoria está llena (${db.WS_MEMORY_MAX_NOTES} notas)` };
+    }
+    // El doc se crea después de validar: un fallo de validación no debe dejar un doc huérfano.
+    let sourceRef: string | undefined;
+    if (data.attachment) {
+      const docId = await db.addMemoryDoc({
+        fileId: data.attachment.fileId,
+        name: data.attachment.name,
+        mime: data.attachment.mime ?? null,
+        size: data.attachment.size ?? null,
+        dmId: null,
+        uploadedBy: user.sub,
+      });
+      sourceRef = `doc:${docId}`;
+    }
     if (data.id) {
-      const ok = await db.updateWorkspaceMemory(data.id, { title, note });
+      const ok = await db.updateWorkspaceMemory(data.id, { title, note, sourceRef });
       return ok ? { ok: true as const, id: data.id } : { ok: false as const, error: "esa nota ya no existe" };
     }
-    const existing = await db.listWorkspaceMemory();
-    if (existing.length >= db.WS_MEMORY_MAX_NOTES)
-      return { ok: false as const, error: `la memoria está llena (${db.WS_MEMORY_MAX_NOTES} notas)` };
-    const id = await db.addWorkspaceMemory(title, note, user.sub, null);
+    const id = await db.addWorkspaceMemory(title, note, user.sub, sourceRef ?? null);
     return { ok: true as const, id };
   });
 

@@ -469,7 +469,7 @@ export async function addWorkspaceMemory(
 
 export async function updateWorkspaceMemory(
   id: number,
-  fields: { title?: string; note?: string }
+  fields: { title?: string; note?: string; sourceRef?: string }
 ): Promise<boolean> {
   const sets: string[] = ["updated_at = unixepoch()"];
   const args: unknown[] = [];
@@ -480,6 +480,10 @@ export async function updateWorkspaceMemory(
   if (fields.note !== undefined) {
     sets.push("note = ?");
     args.push(fields.note);
+  }
+  if (fields.sourceRef !== undefined) {
+    sets.push("source_ref = ?");
+    args.push(fields.sourceRef);
   }
   const rows = await dbq(
     `UPDATE gt_agent_memory SET ${sets.join(", ")} WHERE id = ? AND scope_key = ? RETURNING id`,

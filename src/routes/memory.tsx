@@ -8,6 +8,7 @@ import {
   FileText,
   Loader2,
   MessageSquare,
+  Paperclip,
   Pencil,
   Plus,
   RefreshCw,
@@ -15,6 +16,7 @@ import {
   Upload,
   X,
 } from "lucide-react";
+import ConfirmModal from "../components/ConfirmModal";
 import { useLocale, useT } from "../i18n";
 import { intlLocale } from "../i18n.core";
 import { me } from "../server/auth";
@@ -52,7 +54,20 @@ function MemoryPage() {
   const navigate = useNavigate();
   const { user } = Route.useLoaderData();
   const [data, setData] = useState<MemoryData | null>(memoryCache);
-  const [editing, setEditing] = useState<{ id?: number; title: string; note: string } | null>(null);
+  const [editing, setEditing] = useState<{
+    id?: number;
+    title: string;
+    note: string;
+    attachment?: { fileId: string; name: string; mime: string; size: number } | null;
+  } | null>(null);
+  const [attaching, setAttaching] = useState(false);
+  // Confirmación destructiva con el modal de la casa, no el confirm() nativo.
+  const [confirming, setConfirming] = useState<{
+    title: string;
+    body: string;
+    confirmLabel: string;
+    action: () => void;
+  } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [roomsOpen, setRoomsOpen] = useState(false);
@@ -60,6 +75,42 @@ function MemoryPage() {
   const [ingesting, setIngesting] = useState<string | null>(null); // nombre del archivo en vuelo
   const [ingestError, setIngestError] = useState<string | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
+  const noteFileInput = useRef<HTMLInputElement>(null);
+
+  // Adjunto de una nota: sube el archivo y lo deja en el borrador; al guardar se
+  // registra como documento fuente (sin destilación) y la nota lo liga por source_ref.
+  const attachToNote = async (file: File) => {
+    setAttaching(true);
+    setError(null);
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      const up = await fetch("/api/upload", { method: "POST", body: form });
+      if (!up.ok) {
+        throw new Error(
+          up.status === 413 ? t("El archivo pasa de 25MB. Comprímelo o divídelo.") : `upload ${up.status}`
+        );
+      }
+      const meta = (await up.json()) as { fileId: string; mime?: string; size?: number };
+      setEditing((prev) =>
+        prev
+          ? {
+              ...prev,
+              attachment: {
+                fileId: meta.fileId,
+                name: file.name,
+                mime: meta.mime ?? file.type,
+                size: meta.size ?? file.size,
+              },
+            }
+          : prev
+      );
+    } catch (e) {
+      setError((e as Error).message || t("No se pudo. Inténtalo otra vez."));
+    } finally {
+      setAttaching(false);
+    }
+  };
 
   const reload = () =>
     listWorkspaceMemoryFn()
@@ -86,16 +137,42 @@ function MemoryPage() {
       .finally(() => setBusy(false));
   };
 
-  const removeWs = (id: number) => {
-    setData((prev) => (prev ? { ...prev, workspace: prev.workspace.filter((n) => n.id !== id) } : prev));
-    deleteWorkspaceMemoryFn({ data: { id } }).then(reload).catch(reload);
+  const removeWs = (n: { id: number; title: string }) => {
+    setConfirming({
+      title: t("¿Borrar esta nota?"),
+      body: t("«{title}» — los agentes dejarán de saberlo. No se puede deshacer.", { title: n.title }),
+      confirmLabel: t("Borrar"),
+      action: () => {
+        setData((prev) => (prev ? { ...prev, workspace: prev.workspace.filter((x) => x.id !== n.id) } : prev));
+        deleteWorkspaceMemoryFn({ data: { id: n.id } }).then(reload).catch(reload);
+      },
+    });
   };
 
   const removeRoom = (n: { id: number; scopeKey: string; agentHandle: string }) => {
-    setData((prev) => (prev ? { ...prev, rooms: prev.rooms.filter((r) => r.id !== n.id) } : prev));
-    deleteRoomMemoryFn({ data: { id: n.id, scopeKey: n.scopeKey, agentHandle: n.agentHandle } })
-      .then(reload)
-      .catch(reload);
+    setConfirming({
+      title: t("¿Borrar esta nota?"),
+      body: t("El agente dejará de saberlo en esa conversación. No se puede deshacer."),
+      confirmLabel: t("Borrar"),
+      action: () => {
+        setData((prev) => (prev ? { ...prev, rooms: prev.rooms.filter((r) => r.id !== n.id) } : prev));
+        deleteRoomMemoryFn({ data: { id: n.id, scopeKey: n.scopeKey, agentHandle: n.agentHandle } })
+          .then(reload)
+          .catch(reload);
+      },
+    });
+  };
+
+  const removeDoc = (d: { id: number; name: string }) => {
+    setConfirming({
+      title: t("¿Quitar este documento?"),
+      body: t("«{name}» sale de la lista; las notas ya destiladas se quedan.", { name: d.name }),
+      confirmLabel: t("Quitar"),
+      action: () => {
+        setData((prev) => (prev ? { ...prev, docs: prev.docs.filter((x) => x.id !== d.id) } : prev));
+        deleteMemoryDocFn({ data: { id: d.id } }).then(reload).catch(reload);
+      },
+    });
   };
 
   // Documento soltado → subir → registrar (abre el DM con el agente) → postear la
@@ -175,7 +252,7 @@ function MemoryPage() {
   const ws = data?.workspace ?? null;
   const limits = data?.limits;
   const docs = data?.docs ?? [];
-  const docNames = new Map(docs.map((d) => [`doc:${d.id}`, d.name]));
+  const docsByRef = new Map(docs.map((d) => [`doc:${d.id}`, d]));
 
   return (
     <div
@@ -244,18 +321,59 @@ function MemoryPage() {
               rows={4}
               className="text-sm border border-border rounded-lg px-3 py-2 bg-surface-2 resize-y"
             />
+            {editing.attachment ? (
+              <div className="flex items-center gap-2 text-xs border border-border rounded-lg px-2.5 py-1.5 self-start max-w-full">
+                {editing.attachment.mime.startsWith("image/") ? (
+                  <img
+                    src={`/api/attachment/${editing.attachment.fileId}`}
+                    alt=""
+                    className="h-8 w-8 rounded object-cover shrink-0"
+                  />
+                ) : (
+                  <FileText size={14} className="text-brand shrink-0" />
+                )}
+                <span className="truncate">{editing.attachment.name}</span>
+                <button
+                  onClick={() => setEditing({ ...editing, attachment: null })}
+                  title={t("Quitar adjunto")}
+                  className="text-muted hover:text-ink shrink-0"
+                >
+                  <X size={13} />
+                </button>
+              </div>
+            ) : null}
             <div className="flex items-center justify-between">
-              <span className="text-[11px] text-faint">
-                {editing.note.length}/{limits?.maxChars ?? 600}
-              </span>
+              <div className="flex items-center gap-2">
+                <span className="text-[11px] text-faint">
+                  {editing.note.length}/{limits?.maxChars ?? 600}
+                </span>
+                <button
+                  onClick={() => noteFileInput.current?.click()}
+                  disabled={attaching}
+                  title={t("Adjuntar archivo o imagen")}
+                  className="p-1.5 rounded-lg text-muted hover:text-ink hover:bg-surface-3 disabled:opacity-50"
+                >
+                  {attaching ? <Loader2 size={14} className="animate-spin" /> : <Paperclip size={14} />}
+                </button>
+              </div>
               <button
-                disabled={busy || !editing.title.trim() || !editing.note.trim()}
+                disabled={busy || attaching || !editing.title.trim() || !editing.note.trim()}
                 onClick={save}
                 className="text-xs font-semibold bg-brand text-brand-fg rounded-lg px-4 py-2 disabled:opacity-50"
               >
                 {t("Guardar")}
               </button>
             </div>
+            <input
+              ref={noteFileInput}
+              type="file"
+              className="hidden"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                e.target.value = "";
+                if (file) void attachToNote(file);
+              }}
+            />
             {error ? <p className="text-[11px] text-red-500">{error}</p> : null}
           </div>
         ) : null}
@@ -294,7 +412,7 @@ function MemoryPage() {
                       <Pencil size={14} />
                     </button>
                     <button
-                      onClick={() => removeWs(n.id)}
+                      onClick={() => removeWs(n)}
                       title={t("Borrar")}
                       className="p-1.5 rounded-lg text-muted hover:text-red-500 hover:bg-surface-3"
                     >
@@ -302,16 +420,37 @@ function MemoryPage() {
                     </button>
                   </div>
                 </div>
-                <div className="text-[11px] text-faint mt-2 flex items-center gap-2 flex-wrap">
-                  <span className="font-mono">ws:{n.id}</span>
-                  {n.createdBy ? <span>· {n.createdBy}</span> : null}
-                  <span>· {fmtDate(n.updatedAt, intlLocale(locale))}</span>
-                  {n.sourceRef && docNames.has(n.sourceRef) ? (
-                    <span className="inline-flex items-center gap-1 text-muted">
-                      · <FileText size={11} /> {docNames.get(n.sourceRef)}
-                    </span>
-                  ) : null}
-                </div>
+                {(() => {
+                  const doc = n.sourceRef ? docsByRef.get(n.sourceRef) : undefined;
+                  return (
+                    <>
+                      {doc?.mime?.startsWith("image/") ? (
+                        <a href={`/api/attachment/${doc.fileId}`} target="_blank" rel="noreferrer">
+                          <img
+                            src={`/api/attachment/${doc.fileId}`}
+                            alt={doc.name}
+                            className="mt-2 h-24 rounded-lg object-cover border border-border"
+                          />
+                        </a>
+                      ) : null}
+                      <div className="text-[11px] text-faint mt-2 flex items-center gap-2 flex-wrap">
+                        <span className="font-mono">ws:{n.id}</span>
+                        {n.createdBy ? <span>· {n.createdBy}</span> : null}
+                        <span>· {fmtDate(n.updatedAt, intlLocale(locale))}</span>
+                        {doc ? (
+                          <a
+                            href={`/api/attachment/${doc.fileId}`}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="inline-flex items-center gap-1 text-muted hover:text-ink"
+                          >
+                            · <FileText size={11} /> {doc.name}
+                          </a>
+                        ) : null}
+                      </div>
+                    </>
+                  );
+                })()}
               </li>
             ))}
           </ul>
@@ -392,10 +531,7 @@ function MemoryPage() {
                     </Link>
                   ) : null}
                   <button
-                    onClick={() => {
-                      setData((prev) => (prev ? { ...prev, docs: prev.docs.filter((x) => x.id !== d.id) } : prev));
-                      deleteMemoryDocFn({ data: { id: d.id } }).then(reload).catch(reload);
-                    }}
+                    onClick={() => removeDoc(d)}
                     title={t("Quitar de la lista (las notas destiladas se quedan)")}
                     className="p-1.5 rounded-lg text-muted hover:text-red-500 shrink-0"
                   >
@@ -442,6 +578,19 @@ function MemoryPage() {
           </section>
         ) : null}
       </div>
+      {confirming ? (
+        <ConfirmModal
+          title={confirming.title}
+          body={confirming.body}
+          confirmLabel={confirming.confirmLabel}
+          danger
+          onCancel={() => setConfirming(null)}
+          onConfirm={() => {
+            confirming.action();
+            setConfirming(null);
+          }}
+        />
+      ) : null}
     </div>
   );
 }
