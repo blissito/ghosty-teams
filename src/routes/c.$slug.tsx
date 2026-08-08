@@ -134,7 +134,7 @@ import { registerModalEsc } from "../utils/modal-esc";
 import { useScrollLock } from "../utils/scroll-lock";
 import ArtifactPanel, { type ArtifactView, viewFromAttachment } from "../components/ArtifactPanel";
 import { belongsToOpenConversation } from "../lib/conversation-scope";
-import { extractEbDoc, extractEbPatches, draftTitle, bubbleWithoutEbDoc, extractToolState, extractSteps, extractAlert, extractPr, extractTask, type ToolState, type AlertCardData, type PrCardData, type TaskCardData } from "../lib/ebdoc";
+import { extractEbDoc, extractEbPatches, draftTitle, bubbleWithoutEbDoc, extractToolState, extractSteps, extractAlert, extractPr, extractTask, extractTests, type ToolState, type AlertCardData, type PrCardData, type TaskCardData, type TestsCardData } from "../lib/ebdoc";
 import { prCardStateFn, runCardActionFn, taskCardStateFn, runTaskCardActionFn } from "../server/connectors";
 import { ThinkingRing } from "../components/ThinkingRing";
 import { showSystemNotification } from "../utils/system-notification";
@@ -7843,6 +7843,66 @@ function TaskCard({ task, channelId, parentId }: { task: TaskCardData; channelId
   );
 }
 
+/**
+ * Resultado de una corrida de tests (```gt-tests```). La única del molde SIN botones:
+ * un resultado no se acciona, se lee — el diagnóstico del agente va en la prosa de
+ * arriba y aquí quedan los números verificables (comando, conteos, fallos).
+ */
+function TestsCard({ data }: { data: TestsCardData }) {
+  const t = useT();
+  const [open, setOpen] = useState(false);
+  const failed = data.failed ?? 0;
+  const ok = failed === 0;
+  const counts = [
+    data.passed != null ? `${data.passed} ${t("pasaron")}` : "",
+    failed ? `${failed} ${t("fallaron")}` : "",
+    data.skipped ? `${data.skipped} ${t("saltados")}` : "",
+  ]
+    .filter(Boolean)
+    .join("  ·  ");
+  return (
+    <div className="mt-1.5 max-w-xl overflow-hidden rounded-lg gt-card">
+      <div className="flex items-center gap-2 border-b border-border px-3 py-2">
+        <span className={`text-[13px] font-bold ${ok ? "text-emerald-600" : "text-red-500"}`}>{ok ? "✓" : "✗"}</span>
+        <span className="truncate font-mono text-[11px] text-muted">
+          {data.repo}
+          {data.ref ? `@${data.ref}` : ""}
+        </span>
+        {data.duration != null ? <span className="ml-auto shrink-0 font-mono text-[11px] text-muted">{data.duration}s</span> : null}
+      </div>
+      <div className="p-3">
+        <p className={`text-sm font-semibold leading-snug ${ok ? "text-ink" : "text-red-500"}`}>
+          {counts || (ok ? t("Suite en verde") : t("Suite en rojo"))}
+        </p>
+        {data.command ? <p className="mt-1 truncate font-mono text-[11.5px] text-muted">$ {data.command}</p> : null}
+        {data.failures.length ? (
+          <div className="mt-2">
+            <button
+              type="button"
+              onClick={() => setOpen((v) => !v)}
+              className="text-xs font-medium text-brand hover:underline"
+            >
+              {open ? t("Ocultar fallos") : `${t("Ver fallos")} (${data.failures.length})`}
+            </button>
+            {open ? (
+              <ul className="mt-1.5 space-y-1.5">
+                {data.failures.map((f, i) => (
+                  <li key={i} className="rounded-md border border-border bg-surface px-2 py-1.5">
+                    <p className="break-words font-mono text-[11.5px] font-semibold text-ink">{f.test}</p>
+                    {f.message ? (
+                      <p className="mt-0.5 whitespace-pre-wrap break-words font-mono text-[11px] text-muted">{f.message}</p>
+                    ) : null}
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
 function PrCard({ pr, channelId, parentId, prosa }: { pr: PrCardData; channelId: number; parentId: number | null; prosa: string }) {
   const t = useT();
   const [busy, setBusy] = useState("");
@@ -8865,6 +8925,10 @@ function MessageRow({
               {(() => {
                 const tk = extractTask(m.body);
                 return tk ? <TaskCard task={tk} channelId={m.channel_id ?? 0} parentId={m.parent_id ?? m.id} /> : null;
+              })()}
+              {(() => {
+                const ts = extractTests(m.body);
+                return ts ? <TestsCard data={ts} /> : null;
               })()}
               {/* El turno sigue vivo aunque ya haya texto: la salida tiene que seguir
                   a la vista (ver TurnLiveFooter). */}

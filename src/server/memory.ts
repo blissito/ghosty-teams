@@ -34,35 +34,66 @@ export const listWorkspaceMemoryFn = createServerFn({ method: "GET" }).handler(a
   };
 });
 
+function distillInstruction(docId: number): string {
+  return (
+    `Lee el documento adjunto y guarda lo importante en la memoria del workspace: ` +
+    `memory_write con scope "workspace", un título corto por nota y source_doc: ${docId}. ` +
+    `Destila hechos operativos (datos, formatos, reglas, contactos), no copies el texto. ` +
+    `Si trae logos o lineamientos de marca (colores, tipografías), considera actualizar el brand kit con las tools brand_*.`
+  );
+}
+
+async function pickAgentDm(userSub: string) {
+  const db = await ready();
+  const { resolvedAgents } = await import("../agents.server");
+  const agent = (await resolvedAgents())[0];
+  if (!agent) return null;
+  const dmId = await db.openAgentDm(agent.handle, userSub);
+  return { agent, dmId };
+}
+
 // Registra un documento soltado en /memory y abre el DM con el agente que lo va a
-// destilar. El POSTEO del mensaje lo hace el CLIENTE con postDmMessageFn — así el turno
-// del agente corre por el camino de siempre (bus, streaming, panel de turnos) sin
-// duplicar nada aquí. Devuelve el cuerpo de la instrucción ya armado para que el flujo
-// sea idéntico al de "lo pediste tú en el chat".
+// destilar. El POSTEO del mensaje y el DISPARO del turno los hace el CLIENTE
+// (postDmMessageFn + askDmAgentFn) — así el turno corre por el camino de siempre
+// (bus, streaming, panel de turnos) sin duplicar nada aquí.
 export const ingestMemoryDocFn = createServerFn({ method: "POST" })
   .validator((d: { fileId: string; name: string; mime?: string | null; size?: number | null }) => d)
   .handler(async ({ data }) => {
     const user = await requireMember();
     const db = await ready();
-    const { resolvedAgents } = await import("../agents.server");
-    const agents = await resolvedAgents();
-    const agent = agents[0];
-    if (!agent) return { ok: false as const, error: "este workspace no tiene ningún agente activo" };
-    const dmId = await db.openAgentDm(agent.handle, user.sub);
+    const picked = await pickAgentDm(user.sub);
+    if (!picked) return { ok: false as const, error: "este workspace no tiene ningún agente activo" };
     const docId = await db.addMemoryDoc({
       fileId: data.fileId,
       name: data.name,
       mime: data.mime ?? null,
       size: data.size ?? null,
-      dmId,
+      dmId: picked.dmId,
       uploadedBy: user.sub,
     });
-    const body =
-      `Lee el documento adjunto y guarda lo importante en la memoria del workspace: ` +
-      `memory_write con scope "workspace", un título corto por nota y source_doc: ${docId}. ` +
-      `Destila hechos operativos (datos, formatos, reglas, contactos), no copies el texto. ` +
-      `Si trae logos o lineamientos de marca (colores, tipografías), considera actualizar el brand kit con las tools brand_*.`;
-    return { ok: true as const, docId, dmId, agentHandle: agent.handle, body };
+    return { ok: true as const, docId, dmId: picked.dmId, agentHandle: picked.agent.handle, body: distillInstruction(docId) };
+  });
+
+// Reintentar la destilación de un doc que quedó sin notas (turno interrumpido, agente
+// que no entendió, etc.). Devuelve lo mismo que la ingesta para que el cliente re-postee
+// la instrucción con el MISMO adjunto y dispare el turno.
+export const retryMemoryDocFn = createServerFn({ method: "POST" })
+  .validator((d: { id: number }) => d)
+  .handler(async ({ data }) => {
+    const user = await requireMember();
+    const db = await ready();
+    const doc = await db.getMemoryDoc(data.id);
+    if (!doc) return { ok: false as const, error: "ese documento ya no está en la lista" };
+    const picked = await pickAgentDm(user.sub);
+    if (!picked) return { ok: false as const, error: "este workspace no tiene ningún agente activo" };
+    return {
+      ok: true as const,
+      docId: doc.id,
+      dmId: picked.dmId,
+      agentHandle: picked.agent.handle,
+      body: distillInstruction(doc.id),
+      attachment: { fileId: doc.fileId, mime: doc.mime ?? "application/octet-stream", size: doc.size ?? 0, name: doc.name },
+    };
   });
 
 export const deleteMemoryDocFn = createServerFn({ method: "POST" })

@@ -551,6 +551,11 @@ export async function deleteMemoryDoc(id: number): Promise<boolean> {
   return rows.length > 0;
 }
 
+export async function getMemoryDoc(id: number): Promise<MemoryDoc | null> {
+  const all = await listMemoryDocs();
+  return all.find((d) => d.id === id) ?? null;
+}
+
 /** Todas las notas de room/DM con la etiqueta de su conversación, para la curaduría en /memory. */
 export type RoomNoteRow = {
   id: number;

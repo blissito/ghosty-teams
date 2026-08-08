@@ -10,6 +10,7 @@ import {
   MessageSquare,
   Pencil,
   Plus,
+  RefreshCw,
   Trash2,
   Upload,
   X,
@@ -24,6 +25,7 @@ import {
   deleteWorkspaceMemoryFn,
   ingestMemoryDocFn,
   listWorkspaceMemoryFn,
+  retryMemoryDocFn,
   saveWorkspaceMemoryFn,
 } from "../server/memory";
 
@@ -116,28 +118,53 @@ function MemoryPage() {
         data: { fileId: meta.fileId, name: file.name, mime: meta.mime ?? file.type, size: meta.size ?? file.size },
       });
       if (!r.ok) throw new Error(r.error);
-      const attachments = [
-        { fileId: meta.fileId, mime: meta.mime ?? file.type, size: meta.size ?? file.size, name: file.name },
-      ];
-      const posted = await postDmMessageFn({ data: { id: r.dmId, body: r.body, attachments } });
-      // ⚠️ postDmMessageFn sólo deja el mensaje y la cáscara del agente: el TURNO lo
-      // dispara el cliente con askDmAgentFn (igual que el composer del chat). Sin esta
-      // llamada la cáscara se queda en "pensando…" para siempre.
-      if (posted.ok && posted.needsAgent && posted.agentHandle) {
-        void askDmAgentFn({
-          data: {
-            id: r.dmId,
-            body: r.body,
-            sender: user?.name ?? "",
-            handle: posted.agentHandle,
-            shellId: posted.shellId ?? undefined,
-            attachments,
-          },
-        }).catch(() => {});
-      }
-      await reload();
-      // Al DM: ahí se ve al agente destilando en vivo.
-      void navigate({ to: "/c/$slug", params: { slug: "general" }, search: { dm: r.dmId } as never });
+      await sendToAgent(r.dmId, r.body, {
+        fileId: meta.fileId,
+        mime: meta.mime ?? file.type,
+        size: meta.size ?? file.size,
+        name: file.name,
+      });
+    } catch (e) {
+      setIngestError((e as Error).message || t("No se pudo. Inténtalo otra vez."));
+    } finally {
+      setIngesting(null);
+    }
+  };
+
+  // Postea la instrucción con el adjunto Y dispara el turno.
+  // ⚠️ postDmMessageFn sólo deja el mensaje y la cáscara del agente: el TURNO lo
+  // dispara el cliente con askDmAgentFn (igual que el composer del chat). Sin esa
+  // llamada la cáscara se queda en "pensando…" para siempre.
+  const sendToAgent = async (
+    dmId: number,
+    body: string,
+    attachment: { fileId: string; mime: string; size: number; name: string }
+  ) => {
+    const posted = await postDmMessageFn({ data: { id: dmId, body, attachments: [attachment] } });
+    if (posted.ok && posted.needsAgent && posted.agentHandle) {
+      void askDmAgentFn({
+        data: {
+          id: dmId,
+          body,
+          sender: user?.name ?? "",
+          handle: posted.agentHandle,
+          shellId: posted.shellId ?? undefined,
+          attachments: [attachment],
+        },
+      }).catch(() => {});
+    }
+    await reload();
+    // Al DM: ahí se ve al agente destilando en vivo.
+    void navigate({ to: "/c/$slug", params: { slug: "general" }, search: { dm: dmId } as never });
+  };
+
+  const retryDoc = async (id: number) => {
+    setIngestError(null);
+    setIngesting(t("reintento"));
+    try {
+      const r = await retryMemoryDocFn({ data: { id } });
+      if (!r.ok) throw new Error(r.error);
+      await sendToAgent(r.dmId, r.body, r.attachment);
     } catch (e) {
       setIngestError((e as Error).message || t("No se pudo. Inténtalo otra vez."));
     } finally {
@@ -334,11 +361,25 @@ function MemoryPage() {
                       {d.size ? ` · ${(d.size / (1024 * 1024)).toFixed(1)}MB` : ""}
                     </div>
                   </div>
-                  <span
-                    className={`text-xs tabular-nums shrink-0 ${d.noteCount > 0 ? "text-brand font-semibold" : "text-faint italic"}`}
-                  >
-                    {d.noteCount > 0 ? `${d.noteCount} ${t("notas")}` : t("destilando…")}
-                  </span>
+                  {/* Estado HONESTO: el conteo real de notas ligadas, no un "destilando…"
+                      derivado que miente cuando el turno falló o nunca corrió. */}
+                  {d.noteCount > 0 ? (
+                    <span className="text-xs tabular-nums shrink-0 text-brand font-semibold">
+                      {d.noteCount} {t("notas")}
+                    </span>
+                  ) : (
+                    <span className="flex items-center gap-2 shrink-0">
+                      <span className="text-xs text-faint italic">{t("sin notas aún")}</span>
+                      <button
+                        onClick={() => void retryDoc(d.id)}
+                        disabled={ingesting !== null}
+                        title={t("Volver a pedir la destilación al agente")}
+                        className="inline-flex items-center gap-1 text-xs border border-border rounded-lg px-2 py-1 hover:bg-surface-3 disabled:opacity-50"
+                      >
+                        <RefreshCw size={12} /> {t("Reintentar")}
+                      </button>
+                    </span>
+                  )}
                   {d.dmId != null ? (
                     <Link
                       to="/c/$slug"

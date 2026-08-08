@@ -796,6 +796,7 @@ export function bubbleWithoutEbDoc(
     // metía la URL de la tarea en el cuerpo, así que el chat le colgaba debajo una vista
     // previa genérica del sitio. Un fence sin `strip` no es medio bug: son tres.
     body = stripTask(body);
+    body = stripTests(body);
   }
   body = bubbleWithoutEbAudio(body);
   body = bubbleWithoutEbFile(body);
@@ -899,6 +900,78 @@ export function extractTask(body: string): TaskCardData | null {
 /** El cuerpo sin el fence. Lo de alrededor es la respuesta y se conserva entera. */
 export function stripTask(body: string): string {
   const open = body.match(/```gt-task[^\n]*\n/);
+  if (!open || open.index == null) return body;
+  const before = body.slice(0, open.index);
+  const rest = body.slice(open.index + open[0].length);
+  const closeIdx = rest.indexOf("```");
+  const after = closeIdx === -1 ? "" : rest.slice(closeIdx + 3);
+  return [before.trim(), after.trim()].filter(Boolean).join("\n\n");
+}
+
+/* ── Tarjeta de RESULTADO DE TESTS (```gt-tests```) ───────────────────────── */
+// Tercera del molde gt-pr / gt-task, y la más simple: SIN botones — un resultado de
+// tests no se acciona, se lee. El modelo emite sólo números que corrió de verdad; la
+// prosa de alrededor (su diagnóstico) se conserva entera, igual que la reseña del PR.
+
+export type TestsCardData = {
+  repo: string;
+  ref: string;
+  sha: string;
+  /** El comando que corrió tal cual (`npm test`, `npx vitest run`…). Es el dato verificable. */
+  command: string;
+  passed: number | null;
+  failed: number | null;
+  skipped: number | null;
+  /** Segundos, tal como los reportó el runner. */
+  duration: number | null;
+  failures: TestFailure[];
+};
+
+export type TestFailure = { test: string; message: string };
+
+export function extractTests(body: string): TestsCardData | null {
+  const open = body.match(/```gt-tests[^\n]*\n/);
+  if (!open || open.index == null) return null;
+  const rest = body.slice(open.index + open[0].length);
+  const closeIdx = rest.indexOf("```");
+  if (closeIdx === -1) return null; // fence a medio streamear: no se pinta media tarjeta
+  try {
+    const p = JSON.parse(rest.slice(0, closeIdx).trim()) as Record<string, unknown>;
+    const str = (v: unknown) => (typeof v === "string" ? v.trim() : "");
+    // 0 es legítimo (una suite donde todo falla tiene passed 0), igual que en gt-pr.
+    const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : null);
+    const repo = str(p.repo);
+    const passed = num(p.passed);
+    const failed = num(p.failed);
+    // Sin repo no se sabe de qué habla, y sin UN conteo no hay resultado que enseñar.
+    if (!repo || (passed == null && failed == null)) return null;
+    return {
+      repo,
+      ref: str(p.ref),
+      sha: str(p.sha).slice(0, 12),
+      command: str(p.command),
+      passed,
+      failed,
+      skipped: num(p.skipped),
+      duration: num(p.duration),
+      failures: Array.isArray(p.failures)
+        ? (p.failures as unknown[])
+            .map((f) => {
+              const o = f as Record<string, unknown>;
+              return { test: str(o?.test), message: str(o?.message).slice(0, 500) };
+            })
+            .filter((f) => f.test)
+            .slice(0, 30)
+        : [],
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** El cuerpo sin el fence. El diagnóstico de alrededor se conserva entero. */
+export function stripTests(body: string): string {
+  const open = body.match(/```gt-tests[^\n]*\n/);
   if (!open || open.index == null) return body;
   const before = body.slice(0, open.index);
   const rest = body.slice(open.index + open[0].length);

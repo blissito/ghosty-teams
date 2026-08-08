@@ -76,15 +76,36 @@ function appJwt(): string {
   return `${head}.${body}.${signer.sign(pem, "base64url")}`;
 }
 
-// Los installation tokens duran 1 h. Se cachean por instalación con margen de 5 min.
-const cache = new Map<number, { token: string; exp: number }>();
+// Los installation tokens duran 1 h. Se cachean con margen de 5 min.
+// ⚠️ La clave del caché DEBE llevar el scope completo (repo + permisos): un token
+// recortado a un repo servido desde la entrada genérica —o al revés— le daría a un
+// repo el alcance de otro.
+const cache = new Map<string, { token: string; exp: number }>();
+
+type InstallationTokenOpts = {
+  /** Recorta el token a UN repo (nombre sin dueño). Sin esto alcanza toda la instalación. */
+  onlyRepo?: string;
+  /** Baja `contents` a sólo lectura. Para tokens que salen hacia la caja del agente. */
+  readOnly?: boolean;
+};
 
 /** Token del bot para una instalación concreta. `null` si la identidad no está encendida. */
-export async function installationToken(installationId: number): Promise<string | null> {
+export async function installationToken(
+  installationId: number,
+  opts?: InstallationTokenOpts,
+): Promise<string | null> {
   if (!botIdentityEnabled() || !Number.isFinite(installationId)) return null;
-  const hit = cache.get(installationId);
+  const key = `${installationId}:${opts?.onlyRepo ?? "*"}:${opts?.readOnly ? "ro" : "rw"}`;
+  const hit = cache.get(key);
   const now = Date.now();
   if (hit && hit.exp - now > 300_000) return hit.token;
+  const body =
+    opts?.onlyRepo || opts?.readOnly
+      ? JSON.stringify({
+          ...(opts.onlyRepo ? { repositories: [opts.onlyRepo] } : {}),
+          ...(opts.readOnly ? { permissions: { contents: "read" } } : {}),
+        })
+      : undefined;
   try {
     const res = await fetch(`${API}/app/installations/${installationId}/access_tokens`, {
       method: "POST",
@@ -92,7 +113,9 @@ export async function installationToken(installationId: number): Promise<string 
         Authorization: `Bearer ${appJwt()}`,
         Accept: "application/vnd.github+json",
         "X-GitHub-Api-Version": "2022-11-28",
+        ...(body ? { "content-type": "application/json" } : {}),
       },
+      ...(body ? { body } : {}),
     });
     if (!res.ok) {
       console.warn(`[github-app] no pude minar installation token: ${res.status}`);
@@ -100,7 +123,7 @@ export async function installationToken(installationId: number): Promise<string 
     }
     const j = (await res.json()) as { token?: string; expires_at?: string };
     if (!j.token) return null;
-    cache.set(installationId, { token: j.token, exp: Date.parse(j.expires_at ?? "") || now + 3_600_000 });
+    cache.set(key, { token: j.token, exp: Date.parse(j.expires_at ?? "") || now + 3_600_000 });
     return j.token;
   } catch (e) {
     console.warn("[github-app] fallo minando installation token:", e);

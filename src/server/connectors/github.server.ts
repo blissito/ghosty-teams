@@ -222,6 +222,32 @@ async function appFetch(path: string): Promise<any> {
   }
 }
 
+/**
+ * URL firmada de codeload para el tarball de un repo.
+ *
+ * GitHub responde 302, y un `fetch` normal seguiría el redirect bajando el archivo
+ * completo al proceso de Teams. Aquí lo que se quiere es la URL misma —efímera, de un
+ * solo archivo y sin credencial— para dársela a la caja del agente, así que el
+ * redirect se lee a mano. La credencial nunca viaja: codeload no la necesita.
+ */
+async function tarballUrl(token: string, p: string, ref: string): Promise<string | { error: string }> {
+  try {
+    const res = await fetch(`${API}/repos/${p}/tarball/${encodeURIComponent(ref)}`, {
+      redirect: "manual",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+      },
+    });
+    const loc = res.headers.get("location");
+    if (loc && res.status >= 300 && res.status < 400) return loc;
+    return { error: `GitHub respondió ${res.status} al pedir el tarball.` };
+  } catch (e) {
+    return { error: `No pude contactar a GitHub: ${e instanceof Error ? e.message : String(e)}` };
+  }
+}
+
 /** Igual que `api`, pero con un token ya resuelto (el del bot o el del usuario). */
 async function apiWith(token: string, path: string, init?: RequestInit): Promise<any> {
   try {
@@ -366,7 +392,7 @@ export async function ambientContext(
     `TIENES HERRAMIENTAS para sus repos vía el GS Tools SDK: importa /opt/gs-sdk/connectors.mjs y usa ` +
     `list() y run(name, args). Lectura: github_list_repos, github_list_issues, github_get_issue, ` +
     `github_list_prs, github_get_pr, github_pr_files, github_read_file, github_search_code, ` +
-    `github_workflow_runs, github_workflow_run_logs. Escritura: github_create_review, github_merge_pr, github_comment, github_update_issue, github_create_issue, ` +
+    `github_checkout, github_workflow_runs, github_workflow_run_logs. Escritura: github_create_review, github_merge_pr, github_comment, github_update_issue, github_create_issue, ` +
     `github_create_branch, github_write_file, github_create_pr. ` +
     `Si te piden "conecta mi repo" o "agrega este repo", contesta con github_install_link. ` +
     `Para CUALQUIER pregunta sobre repos, issues, pull requests o CI de ${sender}, USA estas tools — ` +
@@ -376,6 +402,12 @@ export async function ambientContext(
     // Funciona en un repo público y da 404 en uno privado — los del cliente.
     `Para leer un archivo usa SIEMPRE github_read_file, nunca raw.githubusercontent.com ni un fetch ` +
     `directo: en un repo privado eso falla. Si viene truncated, sigue con el nextOffset que te da. ` +
+    // Antes de github_checkout la respuesta correcta ERA "no puedo ejecutar". Ya no:
+    // decirlo hoy es falso, y es la queja que mata un trial de devs.
+    `SÍ PUEDES EJECUTAR el código: para correr tests, compilar, lint o reproducir un bug, lee PRIMERO ` +
+    `la skill dev-test (está en tu directorio de skills) y sigue su flujo con github_checkout — ` +
+    `NUNCA contestes que no puedes ejecutar código sin haberla leído. Al terminar una corrida de tests ` +
+    `cierra con el bloque \`\`\`gt-tests que esa skill te enseña. ` +
     `Para escribir código: crea una rama con github_create_branch, escribe con github_write_file y abre ` +
     `un PR con github_create_pr — NUNCA escribas directo sobre la rama principal. ` +
     `Todo lo que escribas aparece con el nombre de ${sender}, así que confirma con él antes de comentar, ` +
@@ -655,6 +687,92 @@ const ALL_TOOLS: ConnectorTool[] = [
         truncated: end < full.length,
         ...(end < full.length ? { nextOffset: end, comoSeguir: `Vuelve a llamar con offset: ${end}` } : {}),
         content,
+      };
+    },
+  },
+  {
+    name: "github_checkout",
+    description:
+      'Copia de trabajo del repo para EJECUTAR su código: correr tests, compilar, lint, reproducir un bug. ' +
+      'Default: devuelve una URL efímera de descarga del tarball (bájala YA con curl -L | tar xz; no trae .git). ' +
+      'Con mode:"git" devuelve un clone real con historia (token de 1 h, sólo lectura). ' +
+      "Para LEER un archivo suelto sigue siendo github_read_file — esto es para ejecutar.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        ...repoProp,
+        ref: str("Rama, tag o SHA. Default: la rama principal."),
+        mode: {
+          type: "string",
+          enum: ["tarball", "git"],
+          description:
+            'Default "tarball": URL de descarga sin credencial. "git": clone con historia (git log, blame, diff local).',
+        },
+      },
+      required: ["repo"],
+    },
+    handler: async (sub, a) => {
+      const p = repoPath(a.repo);
+      if (!p) return BAD_REPO;
+      // Con el token del USUARIO a propósito: si el solicitante no puede leer el repo,
+      // esto falla y ahí se acaba — ningún token del bot debe cubrir lo que GitHub no
+      // le deja leer a la persona (el installation token tiene el techo de la App, no
+      // la intersección con ella).
+      const info = await api(sub, `/repos/${p}`);
+      if (info?.error) return info;
+      const ref = String(a.ref || info?.default_branch || "main");
+      const commit = await api(sub, `/repos/${p}/commits/${encodeURIComponent(ref)}`);
+      const sha = typeof commit?.sha === "string" ? commit.sha : null;
+      const repo = normalizeRepo(a.repo);
+
+      if (a.mode === "git") {
+        const instId = await installationIdFor(p);
+        const repoName = repo?.split("/")[1] ?? null;
+        // Recortado a UN repo y con contents en sólo lectura: este token SÍ sale hacia
+        // la caja del agente. Escribir sigue siendo del bot vía API (writeToken), que
+        // es donde se re-impone el permiso real del solicitante.
+        const token =
+          instId && repoName ? await installationToken(instId, { onlyRepo: repoName, readOnly: true }) : null;
+        if (!token) {
+          return {
+            error:
+              "El modo git necesita la GitHub App instalada en ese repositorio " +
+              `(se instala aquí: ${INSTALL_URL}). Mientras tanto usa el modo tarball, que funciona con la conexión del usuario.`,
+          };
+        }
+        return {
+          mode: "git",
+          repo,
+          ref,
+          sha,
+          cloneUrl: `https://x-access-token:${token}@github.com/${repo}.git`,
+          expiresInMinutes: 60,
+          rules:
+            "Clona AHORA y limpia la credencial en cuanto termine: " +
+            `git clone --branch ${ref} <cloneUrl> repo && git -C repo remote set-url origin https://github.com/${repo}.git — ` +
+            "el token NO debe quedar en .git/config, en remotes ni escrito en ningún archivo. Es de sólo lectura: no intentes push con él.",
+        };
+      }
+
+      const instId = await installationIdFor(p);
+      const botToken = instId ? await installationToken(instId) : null;
+      const userToken = botToken ? null : await getValidToken(sub, "github");
+      const token = botToken ?? userToken;
+      if (!token) {
+        return { error: "La cuenta de GitHub no está conectada. Conéctala en Ajustes → Integraciones." };
+      }
+      const url = await tarballUrl(token, p, ref);
+      if (typeof url !== "string") return url;
+      return {
+        mode: "tarball",
+        repo,
+        ref,
+        sha,
+        url,
+        sizeKb: typeof info?.size === "number" ? info.size : null,
+        note:
+          "La URL caduca en pocos minutos: descárgala YA (curl -L <url> | tar xz --strip-components=1 -C repo/). " +
+          "Es un snapshot sin .git — para historia o diffs locales pide mode:\"git\".",
       };
     },
   },

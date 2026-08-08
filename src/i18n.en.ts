@@ -1113,6 +1113,15 @@ export const en: Record<string, string> = {
   "Comentario añadido.": "Comment added.",
   "Se mergeó y la tarea {ref} pasó a Done.": "Merged, and task {ref} moved to Done.",
 
+  // Tarjeta de resultado de tests (gt-tests).
+  "pasaron": "passed",
+  "fallaron": "failed",
+  "saltados": "skipped",
+  "Suite en verde": "Suite is green",
+  "Suite en rojo": "Suite is red",
+  "Ver fallos": "Show failures",
+  "Ocultar fallos": "Hide failures",
+
   // Preexistente, sin traducir hasta hoy.
   "y": "and",
 
@@ -1136,8 +1145,10 @@ export const en: Record<string, string> = {
     "Drop a document (or click): the agent reads it and distills it into memory notes.",
   "Subiendo": "Uploading",
   "El archivo pasa de 25MB. Comprímelo o divídelo.": "The file is over 25MB. Compress or split it.",
-  "destilando…": "distilling…",
   "notas": "notes",
+  "sin notas aún": "no notes yet",
+  "reintento": "retry",
+  "Volver a pedir la destilación al agente": "Ask the agent to distill it again",
   "Ver la conversación donde se destiló": "See the conversation where it was distilled",
   "Quitar de la lista (las notas destiladas se quedan)": "Remove from the list (distilled notes stay)",
 };
