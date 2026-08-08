@@ -45,7 +45,11 @@ export const Route = createFileRoute("/api/brand-css")({
             css =
               `${brandFaceCss(kit)}\n` +
               `:root:root{${block(p.light)};${emitCss(kit, "app")};${mantine};` +
-              `--font-sans:${f.body};--font-brand-heading:${f.heading}}\n` +
+              // ⚠️ `--font-brand-heading` se emitía aquí y NO lo consumía nadie (0 usos en
+              // todo el repo). Escapaba al cruce emit↔consume de `brand-registry.test`
+              // porque este bloque se arma a mano, fuera de BRAND_TOKENS. Si algún día los
+              // títulos deben llevar la fuente de la marca, va como token del registro.
+              `--font-sans:${f.body}}\n` +
               `:root:root[data-theme="dark"]{${block(p.dark)}}\n`;
           }
         } catch {
