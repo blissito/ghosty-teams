@@ -405,8 +405,13 @@ export async function ambientContext(
     // Antes de github_checkout la respuesta correcta ERA "no puedo ejecutar". Ya no:
     // decirlo hoy es falso, y es la queja que mata un trial de devs.
     `SÍ PUEDES EJECUTAR el código: para correr tests, compilar, lint, reproducir un bug o LEVANTAR ` +
-    `la app y entregar una liga de preview, lee PRIMERO la skill dev-test (está en tu directorio de ` +
+    `UNA PREVIEW DE UN PR (staging), lee PRIMERO la skill dev-test (está en tu directorio de ` +
     `skills) y sigue su flujo — NUNCA contestes que no puedes ejecutar código sin haberla leído. ` +
+    `Para la preview de un PR: github_checkout con \`pr: N\` (trae su HEAD) y la caja con la ` +
+    `etiqueta que te devuelve en \`boxLabel\`. La liga sale PRIVADA y con llave: entrégala ` +
+    `COMPLETA y comenta también en el PR para que la vea el equipo. Si la app pide variables que ` +
+    `no están, dilo y para: se guardan en Ajustes → Credenciales de gs — NUNCA pidas que te peguen ` +
+    `secretos en el chat. ` +
     // ⚠️ Esto vive AQUÍ y no sólo en la skill porque el 2026-08-08 el agente, teniendo la
     // skill correcta en su caja, NO llamó a github_checkout: se puso a averiguar si el repo
     // era público para bajarlo por una URL abierta. Funcionó de casualidad (ese repo lo era)
@@ -710,6 +715,11 @@ const ALL_TOOLS: ConnectorTool[] = [
       properties: {
         ...repoProp,
         ref: str("Rama, tag o SHA. Default: la rama principal."),
+        pr: {
+          type: "number",
+          description:
+            "Número de PR. Trae el código TAL COMO QUEDA en ese pull request (su head), que es lo que hay que levantar para una preview. Gana sobre `ref`.",
+        },
         mode: {
           type: "string",
           enum: ["tarball", "git"],
@@ -728,7 +738,22 @@ const ALL_TOOLS: ConnectorTool[] = [
       // la intersección con ella).
       const info = await api(sub, `/repos/${p}`);
       if (info?.error) return info;
-      const ref = String(a.ref || info?.default_branch || "main");
+
+      // Con `pr` se baja el HEAD del pull request, que es lo que se levanta en una
+      // preview: la rama base no tiene los cambios que se están revisando.
+      let ref = String(a.ref || info?.default_branch || "main");
+      let prNumber: number | null = null;
+      if (a.pr !== undefined && a.pr !== null) {
+        const n = Number(a.pr);
+        if (!Number.isInteger(n) || n <= 0) return { error: "El número de PR no es válido." };
+        const pr = await api(sub, `/repos/${p}/pulls/${n}`);
+        if (pr?.error) return pr;
+        const head = pr?.head?.sha ?? pr?.head?.ref;
+        if (!head) return { error: `No pude resolver el head del PR ${n}.` };
+        ref = String(head);
+        prNumber = n;
+      }
+
       const commit = await api(sub, `/repos/${p}/commits/${encodeURIComponent(ref)}`);
       const sha = typeof commit?.sha === "string" ? commit.sha : null;
       const repo = normalizeRepo(a.repo);
@@ -753,6 +778,7 @@ const ALL_TOOLS: ConnectorTool[] = [
           repo,
           ref,
           sha,
+          ...(prNumber ? { pr: prNumber, boxLabel: `${repo}#${prNumber}` } : {}),
           cloneUrl: `https://x-access-token:${token}@github.com/${repo}.git`,
           expiresInMinutes: 60,
           rules:
@@ -776,6 +802,9 @@ const ALL_TOOLS: ConnectorTool[] = [
         repo,
         ref,
         sha,
+        // La etiqueta con la que se pide la caja: de ella salen el reuso entre turnos y
+        // los secretos del repo. Se devuelve ya armada para que el modelo no la invente.
+        ...(prNumber ? { pr: prNumber, boxLabel: `${repo}#${prNumber}` } : { boxLabel: repo }),
         url,
         sizeKb: typeof info?.size === "number" ? info.size : null,
         note:
