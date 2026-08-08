@@ -25,8 +25,23 @@ export type ThemePreset = {
   dark: Palette;
 };
 
+// El preset que CEDE ante la marca del workspace (/api/brand-css). Es el default de
+// fábrica —un workspace con kit se ve como su marca sin que nadie configure nada— pero
+// es UNA OPCIÓN MÁS: elegir cualquier otra (incluida "Ghosty") gana, y esa elección es
+// PERSONAL. Antes este papel lo hacía `ghosty`, así que "Default" no significaba la
+// paleta de Ghosty sino "lo que el dueño haya puesto": mutaba cuando el dueño tocaba el
+// kit, y todo el que no hubiera elegido preset veía la marca del dueño en vez de la suya.
+export const BRAND_PRESET_ID = "brand";
+
+// Sólo para la tarjeta del selector: la marca real la sirve la hoja, no esta paleta.
+export const BRAND_PRESET: ThemePreset = {
+  id: BRAND_PRESET_ID, label: "Marca del workspace", font: "sans",
+  light: { brand: "#7c3aed", "brand-2": "#a78bfa", "brand-fg": "#ffffff", surface: "#ffffff", "surface-2": "#f6f5fb", "surface-3": "#ecebf6", border: "#e4e2f0", ink: "#1c1b22", muted: "#6b6975" },
+  dark: { brand: "#a78bfa", "brand-2": "#7c3aed", "brand-fg": "#14121a", surface: "#14121a", "surface-2": "#1c1a25", "surface-3": "#272536", border: "#302d3f", ink: "#f2f1f7", muted: "#9995ad" },
+};
+
 export const PRESETS: ThemePreset[] = [
-  { id: "ghosty", label: "Default", font: "sans",
+  { id: "ghosty", label: "Ghosty", font: "sans",
     light: { brand: "#7c3aed", "brand-2": "#a78bfa", "brand-fg": "#ffffff", surface: "#ffffff", "surface-2": "#f6f5fb", "surface-3": "#ecebf6", border: "#e4e2f0", ink: "#1c1b22", muted: "#6b6975" },
     dark: { brand: "#a78bfa", "brand-2": "#7c3aed", "brand-fg": "#14121a", surface: "#14121a", "surface-2": "#1c1a25", "surface-3": "#272536", border: "#302d3f", ink: "#f2f1f7", muted: "#9995ad" } },
   { id: "slate", label: "Slate", font: "sans",
@@ -88,9 +103,9 @@ const KEYS = {
 
 export function readTheme(): ThemeState {
   if (typeof localStorage === "undefined")
-    return { preset: "ghosty", scheme: "system", textSize: "regular", font: "default", reduceMotion: false, darkSidebar: false };
+    return { preset: BRAND_PRESET_ID, scheme: "system", textSize: "regular", font: "default", reduceMotion: false, darkSidebar: false };
   return {
-    preset: localStorage.getItem(KEYS.preset) || "ghosty",
+    preset: localStorage.getItem(KEYS.preset) || BRAND_PRESET_ID,
     scheme: (localStorage.getItem(KEYS.scheme) as ThemeScheme) || "system",
     textSize: (localStorage.getItem(KEYS.textSize) as TextSize) || "regular",
     font: (localStorage.getItem(KEYS.font) as FontChoice) || "default",

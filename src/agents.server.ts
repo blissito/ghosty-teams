@@ -209,11 +209,24 @@ export async function buildMediaParts(
  * "" cuando no hay marca, por la misma razón que memoryHint: un bloque vacío en cada
  * turno le enseña al modelo a saltarse la sección.
  */
-async function brandContextHint(): Promise<string> {
+async function brandContextHint(origin?: string): Promise<string> {
   try {
     const { activeBrandKit } = await import("./server/brand.server");
     const kit = await activeBrandKit();
     if (!kit) return "";
+    // ⚠️ `kit.logoUrl` es RELATIVO (`/api/brand-asset/…`, ver storage.publicAssetUrl con
+    // base ""). Sirve en el navegador sobre el origen de Teams —un formulario, un
+    // artefacto— pero un PDF se arma en `render-svc`: Chromium recibe un HTML
+    // autocontenido SIN base, así que un src relativo no resuelve y el logo no aparece,
+    // sin un solo error. Es lo que falló en la prueba en vivo del 2026-08-08: el color de
+    // marca entró y el logo no. Al agente se le da la ABSOLUTA o no se le da ninguna.
+    const logoAbs = kit.logoUrl
+      ? /^https?:\/\//.test(kit.logoUrl)
+        ? kit.logoUrl
+        : origin
+          ? `${origin.replace(/\/$/, "")}${kit.logoUrl}`
+          : null
+      : null;
     const c = kit.colors;
     const fuentes = [kit.fonts?.heading && `títulos ${kit.fonts.heading}`, kit.fonts?.body && `texto ${kit.fonts.body}`]
       .filter(Boolean)
@@ -231,7 +244,11 @@ async function brandContextHint(): Promise<string> {
       // siempre: el agente falla por obedecer, y la corrección va donde está la orden.
       `⚠️ EXCEPCIÓN — un PDF de \`pdf-doc\`: ahí la marca NO va horneada. Pásala SIEMPRE en ` +
       `los datos: \`brand: "${c.primary}"\`` +
-      (kit.logoUrl ? ` y \`logo: "${kit.logoUrl}"\`` : ` (este espacio no tiene logo cargado)`) +
+      (logoAbs
+        ? ` y \`logo: "${logoAbs}"\``
+        : kit.logoUrl
+          ? ` (hay logo pero no pude resolver su URL absoluta este turno: omite \`logo\`)`
+          : ` (este espacio no tiene logo cargado)`) +
       `.\n` +
       `principal ${c.primary} · secundario ${c.secondary} · acento ${c.accent} · fondo ${c.surface}` +
       `\nEn un artefacto con Tailwind tienes además las clases \`bg-brand\`, \`bg-brand-2\`, ` +
@@ -240,7 +257,7 @@ async function brandContextHint(): Promise<string> {
       `Úsalas en vez de escribir hex a mano: así el artefacto sigue a la marca si cambia.` +
       (fuentes ? `\nfuentes: ${fuentes}` : "") +
       (kit.mood ? `\ntono: ${kit.mood}` : "") +
-      (kit.logoUrl ? `\nlogo: ${kit.logoUrl}` : "") +
+      (logoAbs ? `\nlogo: ${logoAbs}` : "") +
       `]\n\n`
     );
   } catch {
@@ -824,17 +841,28 @@ export async function callAgentBackendStream(
   // El box los recibe por turnEnv y llama de vuelta a /api/connectors/tools. Best-effort.
   let toolToken: string | undefined;
   let toolsUrl: string | undefined;
+  // El origin de ESTE tenant, resuelto UNA vez: lo necesitan el tool-token (a dónde llama
+  // el box) y el hint de marca (la URL absoluta del logo, que un PDF armado en render-svc
+  // no puede resolver si es relativa). Se calcula fuera del `if` porque el hint de marca
+  // se emite también cuando no hay conectores.
+  let turnOrigin: string | null = originOverride ?? null;
+  if (!turnOrigin) {
+    try {
+      const { reqOrigin } = await import("./origin.server");
+      turnOrigin = (await reqOrigin()) || null;
+    } catch {
+      turnOrigin = null; // turno fuera de un request: se degrada, no se rompe
+    }
+  }
   if (native && invokerSub) {
     try {
       const { mintToolToken } = await import("./server/connectors/tool-token.server");
-      const { reqOrigin } = await import("./origin.server");
       // El ns va DENTRO del token: sin él, un token de este workspace serviría contra el
       // host de otro y usaría sus conexiones compartidas. Ver tool-token.server.ts.
       const { currentNamespace } = await import("./server/tenant.server");
       toolToken = mintToolToken(invokerSub, await currentNamespace(), dest ?? null);
-      const origin = originOverride || (await reqOrigin());
-      if (!origin) throw new Error("sin origin: no puedo decirle al box a dónde llamar");
-      toolsUrl = `${origin}/api/connectors/tools`;
+      if (!turnOrigin) throw new Error("sin origin: no puedo decirle al box a dónde llamar");
+      toolsUrl = `${turnOrigin}/api/connectors/tools`;
     } catch { /* sin secret/origin → sin tools este turno, no rompe */ }
   }
   // docHint (contexto por-doc del turno) va PRIMERO en el texto; el system prompt
@@ -849,7 +877,7 @@ export async function callAgentBackendStream(
   // La marca del espacio. Va en el TEXTO del turno y no en appendSystemPrompt: el system
   // prompt entra por VALOR en el `configSig` del worker, así que editar el kit cerraría
   // la sesión persistente y el siguiente turno correría en frío.
-  const brandHint = await brandContextHint();
+  const brandHint = await brandContextHint(turnOrigin ?? undefined);
   // La persona por-agente va en la CAPA SYSTEM (appendSystemPrompt), NUNCA en el texto
   // del usuario. Antes se anteponía como `[Instrucciones para X: …]` dentro del mensaje;
   // el modelo lo leía como instrucciones incrustadas y lo rechazaba como intento de
