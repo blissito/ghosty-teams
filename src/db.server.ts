@@ -939,16 +939,24 @@ export async function getDoc(
   // documento (p.ej. para acuñar su enlace `/artefacto/<slug>`) y hasta hoy tenía que
   // arrastrar el id por separado desde el call site.
   documentId?: string;
+  // Cuándo se publicó esta versión. Se devuelve para poder compararla contra la última
+  // entrega de ARCHIVO del hilo (`gt_thread_delivery`): si el archivo es más nuevo, el
+  // hint del turno no debe presentar este artefacto como "lo último que entregaste".
+  at?: number;
+  // Lo llena el CALL SITE (chat.ts / dm.ts) cuando esa comparación sale a favor del
+  // archivo; `getDoc` nunca lo escribe. Vive en este tipo para que el objeto viaje entero
+  // hasta `artifactDocHint` sin una firma extra en cuatro capas.
+  lastFile?: { name: string; mime: string | null } | null;
 } | null> {
   const rows = await dbq(
-    `SELECT kind, md, src FROM gc_artifacts
+    `SELECT kind, md, src, created_at FROM gc_artifacts
       WHERE url = ? AND kind IN ('doc','sheet','artifact') AND md IS NOT NULL
       ORDER BY id DESC LIMIT 1`,
     [documentId]
   );
   const r = rows[0];
   return r?.md
-    ? { kind: r.kind as "doc" | "sheet" | "artifact", md: r.md, src: r.src ?? null, documentId }
+    ? { kind: r.kind as "doc" | "sheet" | "artifact", md: r.md, src: r.src ?? null, documentId, at: Number(r.created_at) }
     : null;
 }
 
@@ -1027,6 +1035,45 @@ export async function setThreadArtifact(
     `INSERT INTO gc_thread_artifact (conv_key, document_id, updated_at) VALUES (?, ?, unixepoch())
      ON CONFLICT(conv_key) DO UPDATE SET document_id = excluded.document_id, updated_at = excluded.updated_at`,
     [convKey(channelId, parentId), documentId]
+  );
+}
+
+// ── Última entrega de ARCHIVO de la conversación ──────────────────────────────
+// Un `eb-file` (PDF, .docx, .xlsx) NO es un artefacto y por eso no mueve
+// `gc_thread_artifact`. Se registra aparte para que el hint del turno siguiente sepa que
+// lo ÚLTIMO que se entregó fue un archivo y no el artefacto HTML viejo del hilo.
+export type ThreadDelivery = { name: string; mime: string | null; at: number };
+
+export async function getThreadDelivery(
+  channelId: number,
+  parentId?: number | null
+): Promise<ThreadDelivery | null> {
+  return deliveryByKey(convKey(channelId, parentId));
+}
+export async function setThreadDelivery(
+  channelId: number,
+  parentId: number | null | undefined,
+  file: { name: string; mime?: string | null }
+): Promise<void> {
+  await setDeliveryByKey(convKey(channelId, parentId), file);
+}
+export async function getDmDelivery(dmId: number): Promise<ThreadDelivery | null> {
+  return deliveryByKey(`dm:${dmId}`);
+}
+export async function setDmDelivery(dmId: number, file: { name: string; mime?: string | null }): Promise<void> {
+  await setDeliveryByKey(`dm:${dmId}`, file);
+}
+
+async function deliveryByKey(key: string): Promise<ThreadDelivery | null> {
+  const rows = await dbq("SELECT name, mime, updated_at FROM gt_thread_delivery WHERE conv_key = ?", [key]);
+  const r = rows[0];
+  return r ? { name: r.name as string, mime: (r.mime as string) ?? null, at: Number(r.updated_at) } : null;
+}
+async function setDeliveryByKey(key: string, file: { name: string; mime?: string | null }): Promise<void> {
+  await dbq(
+    `INSERT INTO gt_thread_delivery (conv_key, name, mime, updated_at) VALUES (?, ?, ?, unixepoch())
+     ON CONFLICT(conv_key) DO UPDATE SET name = excluded.name, mime = excluded.mime, updated_at = excluded.updated_at`,
+    [key, file.name, file.mime ?? null]
   );
 }
 

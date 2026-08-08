@@ -406,6 +406,14 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
 
     const currentDocId = await db.getDmArtifact(data.id).catch(() => null);
     const currentDoc = currentDocId ? await db.getDoc(currentDocId).catch(() => null) : null;
+    // Gemelo de chat.ts: si la última entrega fue un ARCHIVO posterior al artefacto, el
+    // antecedente de "modifícalo" es el archivo.
+    if (currentDoc) {
+      const entrega = await db.getDmDelivery(data.id).catch(() => null);
+      if (entrega && entrega.at >= (currentDoc.at ?? 0)) {
+        currentDoc.lastFile = { name: entrega.name, mime: entrega.mime };
+      }
+    }
     // Igual que en el room: lo mío se interrumpe, lo ajeno se encola (ver turns.server).
     // En un DM 1:1 el invocador siempre es la misma persona, así que aquí la interrupción
     // es la regla y no la excepción.
@@ -550,6 +558,13 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
             thumbUrl: f.thumb,
           });
           algo ||= ok;
+        }
+        // Gemelo de chat.ts: sella la última entrega de archivo del DM. Ver gt_thread_delivery.
+        if (ebFiles.length) {
+          const ultimo = ebFiles[ebFiles.length - 1];
+          await db
+            .setDmDelivery(data.id, { name: ultimo.name || "Archivo", mime: ultimo.mime ?? null })
+            .catch(() => {});
         }
         if (algo) fanout({ t: "refresh", channelId: null, parentId: null, dmId: data.id });
         return { ok: true as const };

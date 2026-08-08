@@ -4171,7 +4171,11 @@ function Sidebar({
               : t("Tus agentes están aquí")}
           </p>
           <p className="mt-0.5 text-xs text-muted">
-            {agentes.slice(0, 3).map((a, i) => (
+            {/* Sin `.slice(0, 3)`: el cap silencioso dejaba fuera al CUARTO agente y la
+                tarjeta se leía como si no existiera (pasó con @deep el 2026-08-08). Aquí no
+                sobra espacio para inventar un "+N": son los handles con los que se invoca al
+                agente, y un handle que no se ve es un agente que nadie menciona. */}
+            {agentes.map((a, i) => (
               <span key={a.handle}>
                 {i > 0 ? " · " : ""}
                 <span className="text-brand">@{a.handle}</span>

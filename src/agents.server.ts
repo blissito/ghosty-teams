@@ -223,6 +223,16 @@ async function brandContextHint(): Promise<string> {
       `diseñes algo visual (una gráfica, ` +
       `una portada, HTML a mano) en vez de escoger colores por tu cuenta. Los documentos, ` +
       `formularios y artefactos YA salen con ella puesta: no la repitas a mano ahí.\n` +
+      // ⚠️ EXCEPCIÓN, y era un fallo silencioso: un PDF de la skill `pdf-doc` NO lleva la
+      // marca horneada — sus plantillas la esperan en los campos `brand` y `logo`, y
+      // `renderDoc` no la pone por su cuenta. La línea de arriba ("los documentos YA salen
+      // con ella") se lee como que un PDF también, así que el agente OBEDECÍA y entregaba
+      // PDFs con un color inventado y sin logo (medido el 2026-08-08). Es el patrón de
+      // siempre: el agente falla por obedecer, y la corrección va donde está la orden.
+      `⚠️ EXCEPCIÓN — un PDF de \`pdf-doc\`: ahí la marca NO va horneada. Pásala SIEMPRE en ` +
+      `los datos: \`brand: "${c.primary}"\`` +
+      (kit.logoUrl ? ` y \`logo: "${kit.logoUrl}"\`` : ` (este espacio no tiene logo cargado)`) +
+      `.\n` +
       `principal ${c.primary} · secundario ${c.secondary} · acento ${c.accent} · fondo ${c.surface}` +
       `\nEn un artefacto con Tailwind tienes además las clases \`bg-brand\`, \`bg-brand-2\`, ` +
       `\`bg-accent\`, \`text-ink\`, \`bg-surface\`, las señales \`text-danger\`/\`bg-success\`/\`text-warn\` ` +
@@ -533,6 +543,11 @@ type CurrentDoc = {
   md: string;
   src?: string | null;
   documentId?: string;
+  at?: number;
+  /** Última entrega de ARCHIVO del hilo, si es MÁS NUEVA que este artefacto. Viaja aquí y
+   *  no como parámetro aparte para no atravesar cuatro firmas con un dato que sólo consume
+   *  `artifactDocHint`. Ver `gt_thread_delivery`. */
+  lastFile?: { name: string; mime: string | null } | null;
 };
 
 async function artifactDocHint(currentDoc?: CurrentDoc | null): Promise<string> {
@@ -557,6 +572,23 @@ async function artifactDocHint(currentDoc?: CurrentDoc | null): Promise<string> 
     }
   }
   const md = raw.replace(/<style gt-baked-tw>[\s\S]*?<\/style>\s*/gi, "").trim();
+  // ⚠️ Lo ÚLTIMO que se entregó fue un ARCHIVO, no este artefacto.
+  //
+  // El caso real (2026-08-08): el agente entregó un PDF y a la persona le faltó la marca;
+  // escribió "brandeado con el brandkit activo" y el agente parcheó una landing page HTML
+  // de diez minutos antes, porque el puntero del hilo sólo conoce doc/sheet/artifact y este
+  // hint le presentaba ese artefacto como el objeto de la conversación. Obedeció.
+  //
+  // No se SUPRIME el bloque del artefacto —sigue siendo válido pedir cambios sobre él— pero
+  // se dice cuál fue la última entrega y a qué se refiere un "modifícalo" sin antecedente.
+  const lastFileRule = currentDoc?.lastFile
+    ? `\n\n⚠️ OJO CON EL ANTECEDENTE: lo ÚLTIMO que entregaste en esta conversación NO fue este ` +
+      `artefacto, fue el ARCHIVO «${currentDoc.lastFile.name}». Si te piden modificarlo ` +
+      `("cámbiale…", "ponle…", "brandéalo", "corrígelo") sin nombrar el artefacto, se refieren a ` +
+      `ESE ARCHIVO: regenéralo con la skill que lo produjo (para un PDF: \`reopen()\` + ` +
+      `\`renderDoc()\` de \`pdf-doc\`, MISMO nombre) y entrega un \`\`\`eb-file nuevo. Toca el ` +
+      `artefacto de abajo SÓLO si lo mencionan explícitamente.`
+    : "";
   if (!md) return "";
   const kind = currentDoc!.kind;
   const fence = kind === "sheet" ? "eb-sheet" : kind === "artifact" ? "eb-artifact" : "eb-doc";
@@ -635,6 +667,7 @@ async function artifactDocHint(currentDoc?: CurrentDoc | null): Promise<string> 
       `todo en un bloque \`\`\`eb-artifact.` +
       PATCH_RULES("artifact") +
       NEW_DOC_RULE(fence) +
+      lastFileRule +
       (index ? `\n\nNodos direccionables:\n${index}` : "") +
       `\n\nContenido actual en ${lang}:\n\n\`\`\`\n${md}\n\`\`\`]\n\n`
     );
@@ -646,6 +679,7 @@ async function artifactDocHint(currentDoc?: CurrentDoc | null): Promise<string> 
     `RE-EMITE el artefacto COMPLETO en un bloque \`\`\`${fence} con el cambio ya integrado y todo ` +
     `lo demás idéntico.` +
     NEW_DOC_RULE(fence) +
+    lastFileRule +
     ` Este es su contenido actual en ${lang}:\n\n\`\`\`\n${md}\n\`\`\`]\n\n`
   );
 }

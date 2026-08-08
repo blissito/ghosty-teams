@@ -928,6 +928,16 @@ export const askAgent = createServerFn({ method: "POST" })
 
     const currentDocId = await db.resolveThreadArtifact(channel.id, data.parentId).catch(() => null);
     const currentDoc = currentDocId ? await db.getDoc(currentDocId).catch(() => null) : null;
+    // ¿La última entrega del hilo fue un ARCHIVO posterior a este artefacto? Entonces el
+    // antecedente de "modifícalo" es el archivo, no el artefacto — se lo decimos al agente
+    // en el hint. Comparación por fecha y no "existe un archivo": tras editar el artefacto,
+    // el artefacto vuelve a ser lo último y la regla debe apagarse sola.
+    if (currentDoc) {
+      const entrega = await db.getThreadDelivery(channel.id, data.parentId).catch(() => null);
+      if (entrega && entrega.at >= (currentDoc.at ?? 0)) {
+        currentDoc.lastFile = { name: entrega.name, mime: entrega.mime };
+      }
+    }
 
     // INTERRUMPIR lo mío, encolar lo ajeno. Si el que escribe es el mismo que tiene un
     // turno corriendo en este flow, casi siempre está corrigiendo ("mejor en html") y
@@ -1119,6 +1129,19 @@ export const askAgent = createServerFn({ method: "POST" })
             thumbUrl: f.thumb,
           });
           algo ||= ok;
+        }
+        // Sella la ÚLTIMA ENTREGA del hilo. Sin esto el puntero de artefacto queda como la
+        // única noción de "el documento de esta conversación", y un archivo no lo mueve: el
+        // turno siguiente creía que lo último entregado era el artefacto HTML anterior y
+        // parcheaba ése (medido el 2026-08-08 con un PDF y una landing de 10 min antes).
+        if (ebFiles.length) {
+          const ultimo = ebFiles[ebFiles.length - 1];
+          await db
+            .setThreadDelivery(channel.id, data.parentId, {
+              name: ultimo.name || "Archivo",
+              mime: ultimo.mime ?? null,
+            })
+            .catch(() => {});
         }
         if (algo) bus.publish(bus.ch.room(ns, channel.id), { t: "refresh", channelId: channel.id, parentId: data.parentId });
         return { ok: true as const };

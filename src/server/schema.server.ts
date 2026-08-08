@@ -433,6 +433,24 @@ async function migrate(): Promise<void> {
     updated_at  INTEGER NOT NULL DEFAULT (unixepoch())
   )`);
 
+  // Última entrega de ARCHIVO del agente en una conversación (un PDF de `pdf-doc`, un
+  // .docx, un .xlsx — todo lo que llega por ```eb-file```).
+  //
+  // Existe porque `gc_thread_artifact` sólo conoce doc/sheet/artifact: un archivo no mueve
+  // ese puntero, así que tras entregar un PDF el hilo seguía "apuntando" al último
+  // artefacto HTML. Un "brandéalo" a continuación parcheaba ESE artefacto —una landing de
+  // diez minutos antes— en vez de regenerar el PDF (medido el 2026-08-08). Con esto,
+  // `artifactDocHint` puede comparar fechas y decirle al agente qué entregó de último.
+  //
+  // Misma `conv_key` que gc_thread_artifact (`<canal>:<hilo>` o `dm:<id>`) a propósito: es
+  // la misma identidad conversacional y así las dos se leen juntas sin traducir claves.
+  await exec(`CREATE TABLE IF NOT EXISTS gt_thread_delivery (
+    conv_key   TEXT PRIMARY KEY,
+    name       TEXT NOT NULL,
+    mime       TEXT,
+    updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+  )`);
+
   // Puente EasyBits Forms → room: mapea un form hospedado (form_id de EasyBits) al
   // canal/expediente donde caen sus respuestas. Poblado al crear el intake desde el
   // room; el webhook inbound (/api/webhook/easybits) resuelve form_id → channel_id.
