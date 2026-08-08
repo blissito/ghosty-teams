@@ -181,7 +181,15 @@ export async function tasksContext(dest: ToolDest | null): Promise<string | null
   const slug = await currentSlug().catch(() => null);
   if (!slug) return null;
   const boards = await listBoards().catch(() => []);
-  if (!boards.length) return null;
+  // Sin ningún tablero el bloque completo sobra, pero callarse del todo dejaba al agente de
+  // un workspace nuevo sin saber que Tasks existe — y `taskTools` sí le ofrece crear el
+  // primero. Una línea corta: quien no usa Tasks paga poco, quien lo pide lo encuentra.
+  if (!boards.length)
+    return (
+      `[GHOSTY TASKS disponible (tableros de tareas del equipo). Aún no hay ninguno: si ` +
+      `alguien quiere organizar trabajo en tareas, ofrécete a crear el tablero (tool ` +
+      `task_board_create) y de ahí las tareas. No menciones nombres de tools: son fontanería.]`
+    );
   const pick = await resolveBoard(dest?.channelId ?? null);
   const donde =
     pick.kind === "board"

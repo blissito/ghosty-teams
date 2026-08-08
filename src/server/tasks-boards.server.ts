@@ -23,9 +23,21 @@ export type Board = { id: number; slug: string; name: string };
  * duplicar la lógica de ESCRITURA, que ya vive sólo en `ops/projects.ops.ts` de Tasks.
  */
 export async function listBoards(): Promise<Board[]> {
-  const rows = await dbq(
-    "SELECT id, slug, name FROM task_projects WHERE COALESCE(archived,0) = 0 ORDER BY id"
-  );
+  let rows: Awaited<ReturnType<typeof dbq>>;
+  try {
+    rows = await dbq(
+      "SELECT id, slug, name FROM task_projects WHERE COALESCE(archived,0) = 0 ORDER BY id"
+    );
+  } catch (e) {
+    // El schema de Tasks lo crea TASKS (`ensureSchema` en su `/api/agent/tools`), no Teams:
+    // en un tenant que nunca ha abierto tasks.ghosty.studio la tabla no existe todavía.
+    // Eso es "cero tableros", no un error — tronar aquí dejaba a `taskTools` sin llegar a
+    // `boardSchemas` (que es justo la llamada que crea el schema del otro lado) y el agente
+    // de un workspace nuevo nacía sin ni siquiera `task_board_create`. Cualquier otro error
+    // (sqld caído) sí sube: convertirlo en "no hay tableros" mentiría.
+    if (/no such table/i.test(String((e as Error)?.message))) return [];
+    throw e;
+  }
   return rows.map((r) => ({ id: Number(r.id), slug: String(r.slug), name: String(r.name) }));
 }
 
