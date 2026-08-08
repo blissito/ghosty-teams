@@ -406,9 +406,16 @@ export async function ambientContext(
     // decirlo hoy es falso, y es la queja que mata un trial de devs.
     `SÍ PUEDES EJECUTAR el código: para correr tests, compilar, lint, reproducir un bug o LEVANTAR ` +
     `la app y entregar una liga de preview, lee PRIMERO la skill dev-test (está en tu directorio de ` +
-    `skills) y sigue su flujo con github_checkout — NUNCA contestes que no puedes ejecutar código sin ` +
-    `haberla leído. Al terminar una corrida de tests cierra con el bloque \`\`\`gt-tests que esa skill ` +
-    `te enseña. ` +
+    `skills) y sigue su flujo — NUNCA contestes que no puedes ejecutar código sin haberla leído. ` +
+    // ⚠️ Esto vive AQUÍ y no sólo en la skill porque el 2026-08-08 el agente, teniendo la
+    // skill correcta en su caja, NO llamó a github_checkout: se puso a averiguar si el repo
+    // era público para bajarlo por una URL abierta. Funcionó de casualidad (ese repo lo era)
+    // y con un repo de cliente —privados todos— habría fallado diciendo que no puede.
+    `CÓMO ENTRA EL CÓDIGO A LA CAJA DE TRABAJO, sin excepciones: llama a github_checkout, que te ` +
+    `devuelve una URL de descarga, y haz \`curl\` de ESA URL DENTRO de la caja. Funciona igual con ` +
+    `repos PRIVADOS —la URL va firmada y no necesita credencial—, así que está PROHIBIDO ponerte a ` +
+    `averiguar si el repo es público, buscarlo por otra vía, o pasar el código con write(). ` +
+    `Al terminar una corrida de tests cierra con el bloque \`\`\`gt-tests que esa skill te enseña. ` +
     `Para escribir código: crea una rama con github_create_branch, escribe con github_write_file y abre ` +
     `un PR con github_create_pr — NUNCA escribas directo sobre la rama principal. ` +
     `Todo lo que escribas aparece con el nombre de ${sender}, así que confirma con él antes de comentar, ` +
