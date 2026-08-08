@@ -3683,6 +3683,9 @@ function Sidebar({
   const [createOpen, setCreateOpen] = useState(false);
   const [settingsSlug, setSettingsSlug] = useState<string | null>(null);
   const [newDmOpen, setNewDmOpen] = useState(false);
+  // Mismo directorio vivo que alimenta el picker de menciones (cacheado en módulo y
+  // refrescado por el bus): así el aviso de abajo nombra a los agentes que EXISTEN.
+  const agentes = useMentions().filter((m) => m.kind === "agent");
   // Modal "Ver todos los hilos" del room activo (abierto desde el botón "+N más").
   const [allThreadsOpen, setAllThreadsOpen] = useState(false);
   // Cambiar de room cierra el modal (sus hilos ya no corresponden).
@@ -4153,14 +4156,34 @@ function Sidebar({
         )}
       </div>
 
-      <div className="mx-2 mb-2 rounded-xl border border-border bg-surface p-3">
-        <p className="flex items-center gap-1.5 text-sm font-medium text-ink">
-          <img src="/ghosty.svg" alt="" className="h-4 w-4" /> {t("Ghosty está aquí")}
-        </p>
-        <p className="mt-0.5 text-xs text-muted">
-          {t("Escribe")} <span className="text-brand">@ghosty</span> {t("en cualquier mensaje.")}
-        </p>
-      </div>
+      {/* Los agentes REALES de este workspace, no "Ghosty" cableado: el agente puede
+          llamarse @blue o @gaspar, y un workspace sin agentes no debe anunciar ninguno. */}
+      {agentes.length > 0 && (
+        <div className="mx-2 mb-2 rounded-xl border border-border bg-surface p-3">
+          <p className="flex items-center gap-1.5 text-sm font-medium text-ink">
+            {agentes.length === 1 && agentes[0].avatar ? (
+              <Avatar name={agentes[0].name} avatar={agentes[0].avatar} className="h-4 w-4" />
+            ) : (
+              <img src="/ghosty.svg" alt="" className="h-4 w-4" />
+            )}
+            {agentes.length === 1
+              ? t("{name} está aquí", { name: agentes[0].name })
+              : t("Tus agentes están aquí")}
+          </p>
+          <p className="mt-0.5 text-xs text-muted">
+            {agentes.slice(0, 3).map((a, i) => (
+              <span key={a.handle}>
+                {i > 0 ? " · " : ""}
+                <span className="text-brand">@{a.handle}</span>
+              </span>
+            ))}
+            <br />
+            {agentes.length === 1
+              ? t("Menciónalo en un room o hilo y responde ahí mismo.")
+              : t("Menciónalos en un room o hilo y responden ahí mismo.")}
+          </p>
+        </div>
+      )}
 
       <InstallAppButton />
 
