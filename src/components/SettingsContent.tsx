@@ -1,4 +1,3 @@
-import { Link } from "@tanstack/react-router"; // Link: CTA "conecta EasyBits" / setup
 import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { Bot, Plus, Trash2, X, Bell, Smile, Loader2, Pencil, Mail, ExternalLink } from "lucide-react";
@@ -7,7 +6,6 @@ import { BrandPanel } from "./BrandPanel";
 import { Avatar } from "./Avatar";
 import { currentPushState, enablePush, disablePush } from "../utils/push-subscribe";
 import { me, cachedMe, peekMe, logout, clearMeCache } from "../server/auth";
-import { getSetup } from "../server/setup";
 import { updateMyProfileFn, getNotifyPrefsFn, setEmailNotifsFn } from "../server/chat";
 import { createInvite, getInvite, refreshInvite, revokeInvite } from "../server/invites";
 import {
@@ -59,21 +57,23 @@ import {
 // Los agentes NO se crean inline en Teams; se dan de alta aquí y aparecen solos.
 const STUDIO_AGENTS_URL = "https://ghosty.studio/app/agents";
 
-// Datos que Ajustes necesita (identidad + setup + acceso a agentes). Se cargan una vez
+// Datos que Ajustes necesita (identidad + acceso a agentes). Se cargan una vez
 // y se cachean a nivel módulo → reabrir Preferencias (modal) pinta al instante y revalida
 // en background (mismo patrón stale-while-revalidate que agentsCache/emojiCache).
 export type SettingsData = {
   user: Awaited<ReturnType<typeof me>>;
-  setup: Awaited<ReturnType<typeof getSetup>> | null;
   agentAccess: { canManage: boolean };
 };
 let settingsDataCache: SettingsData | null = null;
 
 export async function loadSettingsData(): Promise<SettingsData> {
   const user = await cachedMe(); // reusa la identidad ya caliente en el cliente
-  const setup = user?.isOwner ? await getSetup() : null;
+  // Aquí se llamaba a `getSetup()` en CADA carga de Ajustes, y su único consumidor era
+  // el CTA del wizard de /setup (borrado el 2026-08-09). No era gratis: para el owner
+  // salía a la flota a listar sus agentes sólo para alimentar un picker que ya no
+  // existe. La lista real la trae `AgentsManager` con `listManagedAgentsFn`.
   const agentAccess = user ? await agentAccessFn() : { canManage: false };
-  const data = { user, setup, agentAccess };
+  const data = { user, agentAccess };
   settingsDataCache = data;
   return data;
 }
@@ -90,7 +90,7 @@ function seedSettingsData(): SettingsData | null {
   if (settingsDataCache) return settingsDataCache;
   const peeked = peekMe();
   if (peeked === undefined) return null;
-  return { user: peeked, setup: null, agentAccess: { canManage: false } };
+  return { user: peeked, agentAccess: { canManage: false } };
 }
 
 /**
@@ -338,7 +338,7 @@ export function SettingsContent({
           {tab === "integraciones" && <IntegrationsPanel />}
 
           {tab === "agentes" && canManageAgents && (
-            <AgentsManager isOwner={isOwner} hasAgent={!!data?.setup?.hasAgent} />
+            <AgentsManager isOwner={isOwner} />
           )}
 
           {tab === "uso" && <UsagePanel />}
@@ -1389,7 +1389,7 @@ type ManagedAgent = {
 // Cache de módulo → reabrir la pestaña Agentes pinta al instante y revalida en background.
 let agentsCache: ManagedAgent[] | null = null;
 
-function AgentsManager({ isOwner, hasAgent }: { isOwner: boolean; hasAgent: boolean }) {
+function AgentsManager({ isOwner }: { isOwner: boolean }) {
   const t = useT();
   const [agents, setAgents] = useState<ManagedAgent[] | null>(agentsCache);
   const [adding, setAdding] = useState(false);
@@ -1435,17 +1435,11 @@ function AgentsManager({ isOwner, hasAgent }: { isOwner: boolean; hasAgent: bool
 
       <div className="space-y-1">
         {/* @ghosty se migró a fila gc_agents (listManagedAgentsFn) → se renderiza en el
-            mismo map con el MISMO card + panel que el resto. Aquí solo queda el CTA de
-            conectar EasyBits cuando aún no hay agente del wizard. */}
-        {isOwner && !hasAgent && (
-          <Link
-            to="/setup"
-            className="flex items-center gap-2 rounded-lg border border-dashed border-border px-2 py-3 text-sm text-muted hover:border-brand hover:text-ink"
-          >
-            <Bot size={17} className="shrink-0" /> {t("Conecta tu cuenta para tener a @ghosty")}
-          </Link>
-        )}
-
+            mismo map con el MISMO card + panel que el resto. Aquí había un CTA a /setup
+            ("Conecta tu cuenta para tener a @ghosty") que era el ÚNICO enlace al wizard
+            en todo el repo; se fue con él el 2026-08-09. Un espacio sin agente ya no
+            existe —`seedTrialAgent` siembra uno al crear el workspace— y si hiciera
+            falta otro, el camino es "Agregar" aquí mismo. */}
         {agents === null ? (
           <p className="px-2 py-1 text-sm text-muted">{t("Cargando…")}</p>
         ) : (

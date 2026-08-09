@@ -13,71 +13,16 @@ export function resolveFleetAuth(c: {
   return c.eb_access_token ?? null;
 }
 
-// Estado del wizard (para el loader de /setup).
-export const getSetup = createServerFn({ method: "GET" }).handler(async () => {
-  const { getConfigMany } = await import("../config.server");
-  const c = await getConfigMany(["eb_connected", "eb_access_token", "eb_owner_key", "fleet_agent_id", "fleet_name"]);
-  const { nativeRuntimeBase } = await import("./ghosty-runtime.server");
-  const native = await nativeRuntimeBase();
-  // NATIVO: la flota vive en Studio (HMAC + ownerUserId=sub); el tenant NO necesita
-  // conectar EasyBits para tener agente → connected=true, saltamos el paso 1 al select.
-  const connected = native ? true : c.eb_connected === "1";
-  const hasAgent = !!c.fleet_agent_id;
-  const fleetAuth = resolveFleetAuth(c);
-  // Traemos los agentes SIEMPRE que haya conexión (no solo en paso 2): así "← Cambiar
-  // agente" puede volver al paso 2 con la lista ya cargada, sin recargar la página.
-  let agents: Array<{ id: string; name: string; assistantName?: string; workerTemplate?: string }> = [];
-  if (native) {
-    // Lista nativa por owner (session sub). Degrada a [] si falla (no tumba el loader de /).
-    try {
-      const { sessionUser } = await import("./chat");
-      const sub = (await sessionUser())?.sub;
-      if (sub) {
-        const { listNativeFleetAgents } = await import("./fleet-native.server");
-        agents = (await listNativeFleetAgents(native, sub)).map((a) => ({
-          id: a.id,
-          name: a.name,
-          assistantName: a.assistantName,
-          workerTemplate: a.workerTemplate,
-        }));
-      }
-    } catch (e) {
-      console.error("[getSetup] listNativeFleetAgents falló (degradando a []):", e instanceof Error ? e.message : e);
-    }
-  } else if (connected && fleetAuth) {
-    // La lista de agentes de la flota es SOLO para el picker del wizard; `hasAgent` ya
-    // viene de la DB (fleet_agent_id). Si la API de flota falla (token OAuth expirado →
-    // 401, red, etc.) NO debe tumbar la app: el loader de `/` llama a getSetup en cada
-    // carga fresca (box recién revivido) y un throw aquí caía SIEMPRE en el AppError.
-    // Degradamos a lista vacía; el chat carga igual (el wizard solo se ve si !hasAgent).
-    try {
-      const { listFleetAgents } = await import("./easybits-oauth.server");
-      const fetchAgents = async (tok: string) =>
-        (await listFleetAgents(tok)).map((a) => ({
-          id: a.id,
-          name: a.name,
-          assistantName: a.assistantName,
-          workerTemplate: a.workerTemplate,
-        }));
-      try {
-        agents = await fetchAgents(fleetAuth);
-      } catch (e) {
-        // 401 → el access token caducó: refrescamos con el refresh_token y reintentamos
-        // (así el wizard/dropdown reaparecen sin re-conectar a mano). Requiere connect
-        // completo previo (client creds + refresh_token en config).
-        if (!String(e).includes("401")) throw e;
-        const { refreshOwnerToken } = await import("./easybits-files.server");
-        const fresh = await refreshOwnerToken();
-        if (fresh) agents = await fetchAgents(fresh);
-      }
-    } catch (e) {
-      console.error("[getSetup] listFleetAgents falló (degradando a []):", e instanceof Error ? e.message : e);
-    }
-  }
-  return { connected, hasAgent, fleetName: c.fleet_name, agents };
-});
-
-// Paso 1: inicia OAuth con EasyBits (PKCE), setea cookies y devuelve el authorize URL.
+// ── Vincular una cuenta de EasyBits ──────────────────────────────────────────
+//
+// Lo único que sobrevive del wizard de /setup (borrado el 2026-08-09, ver
+// `routes/setup.index.tsx`). NO es alcanzable desde ninguna pantalla hoy: era el paso 1
+// de ese wizard. Se conserva porque es el ÚNICO camino para re-vincular una cuenta de
+// EasyBits, y hay un agente vivo que corre ahí (`baloo`, workspace `fit-and-geek`,
+// `runtime = easybits`). Si algún día no queda ninguno, esto y `setup.easybits.*` se van
+// juntos.
+//
+// Inicia OAuth con EasyBits (PKCE), setea cookies y devuelve el authorize URL.
 export const startEasybitsConnect = createServerFn({ method: "GET" }).handler(async () => {
   const { setCookie } = await import("@tanstack/react-start/server");
   const { pkce, randomState, buildAuthorizeUrl } = await import("./easybits-oauth.server");
@@ -126,90 +71,3 @@ async function adoptTeamResources(accessToken: string): Promise<void> {
     body: JSON.stringify({ targetUserToken: accessToken, dbId, sandboxId }),
   });
 }
-
-// Paso 2 (alterno): crear un @ghosty nuevo desde el wizard. engine "deepseek"
-// (default, rápido) o "claude". El motor se puede cambiar después recreando el
-// agente; el MODELO dentro del motor se ajusta en /dash/flota (set-model).
-export const createFleetAgent = createServerFn({ method: "POST" })
-  .validator((d: { engine?: "deepseek" | "claude" }) => d)
-  .handler(async ({ data }) => {
-    const { setConfig } = await import("../config.server");
-    const { nativeRuntimeBase } = await import("./ghosty-runtime.server");
-    const native = await nativeRuntimeBase();
-
-    let id: string, token: string, name: string;
-    if (native) {
-      // NATIVO: nace en la DB de Studio (aparece también en /app/fleet). owner=sub de sesión.
-      // Hoy solo "claude" es creable nativo (deepseek sin modelo listo → 422); forzamos claude.
-      const { sessionUser } = await import("./chat");
-      const sub = (await sessionUser())?.sub;
-      if (!sub) throw new Error("sesión sin owner");
-      const { createNativeFleetAgent } = await import("./fleet-native.server");
-      const agent = await createNativeFleetAgent(native, { ownerUserId: sub, engine: "claude", name: "Ghosty" });
-      id = agent.id; token = agent.token; name = agent.assistantName || "Ghosty";
-    } else {
-      const { getConfigMany } = await import("../config.server");
-      const c = await getConfigMany(["eb_access_token", "eb_owner_key"]);
-      const auth = resolveFleetAuth(c);
-      if (!auth) throw new Error("EasyBits no conectado");
-      const { createFleetAgent: create } = await import("./easybits-oauth.server");
-      const agent = await create(auth, { engine: data.engine ?? "deepseek" });
-      id = agent.id; token = agent.token; name = agent.assistantName || "Ghosty";
-    }
-    // Nombre visible = "Ghosty" (marca). El owner puede renombrarlo en gs /app/fleet.
-    await setConfig("fleet_agent_id", id);
-    await setConfig("fleet_token", token);
-    await setConfig("fleet_name", name);
-    return { ok: true as const, name };
-  });
-
-// Volver: desconectar el agente (paso 3 → paso 2) o EasyBits entero (→ paso 1).
-// Limpia las llaves del wizard en gc_config poniéndolas en "" (getSetup gatea por
-// verdad/no-vacío). NO borra el FleetAgent ni la cuenta — solo "olvida" el wiring;
-// el agente sigue en /dash/flota, reusable. `scope` = "agent" | "easybits".
-export const disconnectSetup = createServerFn({ method: "POST" })
-  .validator((d: { scope?: "agent" | "easybits" }) => d)
-  .handler(async ({ data }) => {
-    const { setConfig } = await import("../config.server");
-    const keys =
-      data.scope === "easybits"
-        ? ["fleet_agent_id", "fleet_token", "fleet_name", "eb_connected", "eb_access_token", "eb_refresh_token"]
-        : ["fleet_agent_id", "fleet_token", "fleet_name"];
-    for (const k of keys) await setConfig(k, "");
-    return { ok: true as const };
-  });
-
-// Paso 2: el owner elige su agente Ghosty → guardamos id + pool token.
-export const selectFleetAgent = createServerFn({ method: "POST" })
-  .validator((d: { id: string }) => d)
-  .handler(async ({ data }) => {
-    const { setConfig } = await import("../config.server");
-    const { nativeRuntimeBase } = await import("./ghosty-runtime.server");
-    const native = await nativeRuntimeBase();
-
-    // `token` opcional: el runtime nativo se opera con la firma de partner, así que
-    // Studio dejó de mandarlo. En EasyBits sí viene y sí hace falta.
-    let agent: { id: string; token?: string; assistantName?: string } | undefined;
-    if (native) {
-      const { sessionUser } = await import("./chat");
-      const sub = (await sessionUser())?.sub;
-      if (!sub) throw new Error("sesión sin owner");
-      const { listNativeFleetAgents } = await import("./fleet-native.server");
-      agent = (await listNativeFleetAgents(native, sub)).find((a) => a.id === data.id);
-    } else {
-      const { getConfigMany } = await import("../config.server");
-      const c = await getConfigMany(["eb_access_token", "eb_owner_key"]);
-      const auth = resolveFleetAuth(c);
-      if (!auth) throw new Error("EasyBits no conectado");
-      const { listFleetAgents } = await import("./easybits-oauth.server");
-      agent = (await listFleetAgents(auth)).find((a) => a.id === data.id);
-    }
-    if (!agent) throw new Error("Agente no encontrado");
-    await setConfig("fleet_agent_id", agent.id);
-    await setConfig("fleet_token", agent.token ?? "");
-    // Nombre visible = "Ghosty" (marca), NO el nombre crudo del pool (ej. "Ghosty-teams-
-    // onix-yy4"). assistantName suele ser "Ghosty"; si no, fallback a "Ghosty". El owner
-    // puede renombrarlo en Ajustes → Agentes.
-    await setConfig("fleet_name", agent.assistantName || "Ghosty");
-    return { ok: true as const };
-  });
