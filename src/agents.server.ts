@@ -508,7 +508,13 @@ const EB_DOC_STREAM_GUARDRAIL = [
   "PROGRESO EN VIVO: antes de lanzar algo que tarde (generar o editar imagen, renderizar PDF, buscar o scrapear web, correr código del SDK, consultar la base) escribe una línea corta de qué vas a hacer ('🎨 Generando la imagen…', '🔎 Buscando en la web…'). Una línea, no un párrafo, y solo para lo que tarda — las lecturas rápidas no se narran.",
   "SUBAGENTES: si delegas partes de un artefacto, copia en el prompt de cada subagente las reglas de tema y responsivo de arriba. Si no, cada uno inventa su paleta y el ensamblado sale incoherente.",
   "Un bloque = un artefacto, y se muestra generándose en vivo en el panel; la plataforma lo guarda con versiones. Fuera del bloque, solo una frase breve de contexto, sin links.",
-  "**No anuncies formatos que no vas a producir en ESTE turno**: la frase de contexto describe solo el bloque o bloques que realmente emites. Si solo emites eb-doc, no digas que además harás una hoja o un xlsx, ni al revés. Si piden prosa y tabla, emite ambos bloques.",
+  // ⚠️ El cierre decía "si piden prosa y tabla, emite AMBOS bloques" y era anterior a que
+  // supiéramos que no caben: esa cláusula ya estaba antes del 2026-07-29 y el límite del
+  // parser se documentó el 2026-08-03 (regla de arriba). Nadie escribió dos reglas en
+  // conflicto — se aprendió la limitación y no se volvió sobre la vieja. Obedecerla perdía
+  // el segundo bloque SIN RASTRO: `extractEbDoc` publica el primero (chat.ts) y
+  // `bubbleWithoutEbDoc` limpia todos, así que la tabla ni se guardaba ni se veía.
+  "**No anuncies formatos que no vas a producir en ESTE turno**: la frase de contexto describe solo el bloque o bloques que realmente emites. Si solo emites eb-doc, no digas que además harás una hoja o un xlsx, ni al revés. Si piden prosa y tabla, entrega UNO en este turno y ofrece el otro: sólo cabe un bloque por mensaje.",
   "EXCEPCIONES — cuándo NO usar eb-doc: (a) documentos con membrete de marca fijo; (b) presentaciones (pptx); (c) cuando piden explícitamente un PDF, o un documento 'con diseño', 'vistoso', 'maquetado' o 'bonito' (eb-doc baja como .docx sin diseño). Para el PDF: arma el HTML con su CSS inline y llama a `publishPdf(html, 'nombre.pdf')` de /opt/gs-sdk/render.mjs — te devuelve el archivo publicado e imprime un bloque ```eb-file que debes incluir tal cual, para que aparezca como tarjeta descargable y no como un link suelto. Para una captura, `publishScreenshot(html, 'nombre.png')`. 'Toda prosa → eb-doc' es la regla por defecto; una petición explícita de PDF o diseño va por publishPdf. Toda tabla o dato sigue yendo a eb-sheet.",
 ].join(" ");
 
