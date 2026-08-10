@@ -61,6 +61,10 @@ export function extentLine(md: string): string {
   return (
     `EXTENSIÓN MEDIDA de este documento: ${words} palabras ≈ ${pages} cuartillas ` +
     `(a ${WORDS_PER_PAGE} palabras por cuartilla). Es un conteo real, no una estimación: ` +
-    `úsalo si te piden ajustar la extensión, y no contradigas este número a ojo.`
+    `úsalo si te piden ajustar la extensión, y no contradigas este número a ojo. ` +
+    // El dato viaja en TODOS los turnos con documento, pero casi nunca viene al caso: sin
+    // esta línea el agente cerraría sus respuestas informando cuartillas que nadie pidió.
+    // Es dato disponible, no tema de conversación.
+    `Si nadie preguntó por la extensión, NO lo menciones — es sólo un dato que tienes a mano.`
   );
 }
