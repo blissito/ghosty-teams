@@ -491,6 +491,15 @@ const EB_DOC_STREAM_GUARDRAIL = [
   // En el turno siguiente contesta "ya te lo entregué, míralo en el panel" y manda a la
   // persona a buscar algo que no existe. Visto dos veces el 2026-08-03 con el mismo escrito.
   "ENTREGAR ES EMITIR EL BLOQUE EN **ESTE** MENSAJE. Tu recuerdo de haberlo escrito antes no cuenta: un turno se pudo cortar sin publicar nada. Si vas a decir que entregas algo —o que «ya está entregado», o que «lo ves en el panel»— el bloque ```eb-doc completo va EN ESTE MISMO MENSAJE. Nunca remitas a un mensaje anterior, nunca digas «revisa el panel» en lugar de emitirlo, y si te piden verlo otra vez, vuelve a escribirlo ÍNTEGRO aunque estés seguro de que ya lo mandaste. Repetirlo cuesta un turno; no repetirlo deja a la persona sin el documento y buscando un fantasma.",
+  // ⚠️ Medido el 2026-08-10 (hilo de @ghosty, msgs 1819-1824): pidieron "máximo 4
+  // cuartillas", el agente contestó "ronda las 4", luego "unas 6", y al pedirle volver a 4
+  // recortó a la MITAD — la versión final quedó más corta que la primera y al imprimir
+  // daban 4 páginas incompletas. No midió ninguna de las tres veces, y no podía: eb-doc no
+  // pagina, así que la extensión es justo el tipo de dato que el modelo no observa. Va aquí
+  // y no en una skill porque la extensión la puede pedir cualquiera —un escrito, un oficio,
+  // un trabajo académico, un pitch— y una regla repartida en cinco skills es una regla que
+  // sólo aplica cuando alguna se abre.
+  "SI TE PIDEN UNA EXTENSIÓN (N cuartillas, N páginas, N palabras, «máximo/mínimo…»), CUÉNTALA — no la estimes. Una cuartilla son ~250 palabras (letra 12, márgenes de 2.5 cm, interlineado 1.5). Antes de entregar, cuenta las palabras de tu borrador (en code-mode: escríbelo a un archivo y `wc -w`) y ajusta hasta que cuadre. Sólo entonces di la cifra, y di la que contaste. Dos cosas que salieron mal por no hacerlo: anunciar una extensión que el documento no tiene, y —cuando te piden «ajústalo a N»— recortar a ojo tanto que queda por DEBAJO de lo pedido. Ajustar a N significa acercarse a N por abajo, no reducir a la mitad. Si el hilo ya tiene documento, la plataforma te da su EXTENSIÓN MEDIDA en el contexto del turno: ése es el número bueno, no lo contradigas de memoria. Y si te piden N PÁGINAS del PDF maquetado, eso es otra unidad: dilo y ofrece renderizarlo.",
   "CUENTA LO QUE ENTREGASTE ANTES DE RESUMIR. No anuncies N documentos si emitiste menos de N bloques, y no pintes una tabla de N filas cuando mandaste uno. Si sólo te dio para uno, entrega ese uno y dilo tal cual («va el primero; dime y sigo con los otros tres»). Prometer cuatro y entregar uno es peor que entregar uno: la persona se queda creyendo que los tiene.",
   "eb-artifact — estilo: incluye `<script src=\"https://cdn.tailwindcss.com\"></script>` en el <head> y estiliza con clases de Tailwind (bg-*, text-*, flex, grid, gap-*, p-*, rounded-*). El editor visual del panel edita clases, así que el layout no va en `style=\"…\"` inline ni en un `<style>` gigante; reserva `<style>` para lo que Tailwind no cubre (keyframes). Tu lógica va en un `<script>` inline; para React, Babel-standalone por CDN. Pon `<title>`.",
   "eb-artifact — tema: **define la paleta en un solo `:root{}`** con estos tokens: `--color-background`, `--color-foreground`, `--color-primary`, `--color-primary-foreground`, `--color-secondary`, `--color-secondary-foreground`, `--color-muted`, `--color-muted-foreground`, `--color-accent`, `--color-accent-foreground`, `--color-border`, más `--radius`, `--font-heading` y `--font-body`. Todo color sale de ahí vía clases arbitrarias (`bg-[var(--color-primary)]`, `text-[var(--color-foreground)]`, `border-[var(--color-border)]`). Nada de colores regados por el markup (`bg-purple-600`, `#7c3aed`, `text-white`, gradientes hardcodeados): eso rompe el recoloreado del panel y la vista pública.",
@@ -589,6 +598,13 @@ async function artifactDocHint(currentDoc?: CurrentDoc | null): Promise<string> 
     }
   }
   const md = raw.replace(/<style gt-baked-tw>[\s\S]*?<\/style>\s*/gi, "").trim();
+  // EXTENSIÓN medida por el SERVIDOR, sólo para prosa. El agente no puede observar cuántas
+  // cuartillas escribió —eb-doc no pagina— así que hasta hoy la afirmaba a ojo y fallaba:
+  // ver la cabecera de `doc-extent.ts`. Contarlo aquí no depende de que el modelo se
+  // acuerde de medir, igual que `changedIds` o el índice de bloques.
+  const extent =
+    currentDoc?.kind === "doc" ? (await import("./lib/doc-extent")).extentLine(md) : "";
+  const extentRule = extent ? `\n\n${extent}` : "";
   // ⚠️ Lo ÚLTIMO que se entregó fue un ARCHIVO, no este artefacto.
   //
   // El caso real (2026-08-08): el agente entregó un PDF y a la persona le faltó la marca;
@@ -663,6 +679,7 @@ async function artifactDocHint(currentDoc?: CurrentDoc | null): Promise<string> 
       `\n\nSi estás tomando contenido de un documento ADJUNTO (cláusulas, datos, cifras): ` +
       `ábrelo con su herramienta, extrae SÓLO lo que necesitas y colócalo con eb-patch. ` +
       `No transcribas el documento fuente en tu respuesta.` +
+      extentRule +
       (index ? `\n\nBloques direccionables:\n${index}` : "") +
       `\n\nContenido actual en ${lang}:\n\n\`\`\`\n${md}\n\`\`\`]\n\n`
     );
@@ -697,6 +714,7 @@ async function artifactDocHint(currentDoc?: CurrentDoc | null): Promise<string> 
     `lo demás idéntico.` +
     NEW_DOC_RULE(fence) +
     lastFileRule +
+    extentRule +
     ` Este es su contenido actual en ${lang}:\n\n\`\`\`\n${md}\n\`\`\`]\n\n`
   );
 }
