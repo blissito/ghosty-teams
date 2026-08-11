@@ -1164,8 +1164,11 @@ export default function ArtifactPanel({
                 ? // Anclado a la derecha (no inset-0): así crece/decrece SOLO por el borde
                   // izquierdo, que es el mismo eje del panel normal → una única animación
                   // continua de ancho, sin reposicionar nada a media transición.
-                  "fixed inset-y-0 right-0 z-[100] flex max-w-none overflow-hidden bg-surface"
-                : "fixed right-0 top-0 z-50 flex h-full max-w-full overflow-hidden border-l border-border bg-surface shadow-2xl lg:relative lg:z-auto lg:h-auto lg:max-w-[75vw] lg:shrink-0 lg:shadow-none lg:self-stretch"
+                  // pt safe-area: el aside es `fixed`, así que NO hereda el padding del
+                  // root de la página → en PWA con muesca la barra del artefacto se
+                  // encimaba con el reloj y la batería.
+                  "fixed inset-y-0 right-0 z-[100] flex max-w-none overflow-hidden bg-surface pt-[env(safe-area-inset-top)] lg:pt-0"
+                : "fixed right-0 top-0 z-50 flex h-full max-w-full overflow-hidden border-l border-border bg-surface shadow-2xl pt-[env(safe-area-inset-top)] lg:pt-0 lg:relative lg:z-auto lg:h-auto lg:max-w-[75vw] lg:shrink-0 lg:shadow-none lg:self-stretch"
             }
             initial={{ width: 0 }}
             animate={{ width: effectiveW }}
