@@ -394,12 +394,18 @@ function WhatsAppPanel() {
   const [rooms, setRooms] = useState<{ slug: string; name: string }[]>([]);
   const [room, setRoom] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
+  const [connecting, setConnecting] = useState(false);
   const load = () => { listWaChannelsFn().then(setState).catch(() => setState({ channels: [], canManage: false })); };
   useEffect(() => {
     load();
     forwardTargetsFn()
       .then((r) => setRooms(r.channels.map((c) => ({ slug: c.slug, name: c.name }))))
       .catch(() => setRooms([]));
+    // Volver con Atrás desde el wizard: Safari sirve la página del caché sin re-montar
+    // React, así que el botón se quedaría girando para siempre. `pageshow` sí dispara ahí.
+    const wake = () => setConnecting(false);
+    window.addEventListener("pageshow", wake);
+    return () => window.removeEventListener("pageshow", wake);
   }, []);
 
   // Sólo el owner: conectar un número gasta en el WABA del cliente.
@@ -459,13 +465,21 @@ function WhatsAppPanel() {
           ))}
         </select>
         {/* Navegación de página completa a propósito: el flujo sigue por REDIRECT hasta Meta
-            y de vuelta, que es el único camino confiable en móvil. */}
+            y de vuelta, que es el único camino confiable en móvil.
+            El estado de carga NO se apaga solo: entre el clic y el primer pixel de Formmy
+            hay una sesión de pairing que se abre server-side, y en ese hueco la página sigue
+            siendo ésta. Sin el spinner parece que el botón no hizo nada e invita a un segundo
+            clic, que abre una sesión de pairing de más. Lo apaga la navegación al descargar
+            la página; si el server falla, `pageshow` (que también cubre volver con Atrás,
+            donde Safari sirve la página del caché sin re-montar React) lo devuelve a normal. */}
         <a
           href={room ? `/api/whatsapp/connect/start?room=${encodeURIComponent(room)}` : undefined}
-          aria-disabled={!room}
-          className={`rounded-lg px-3 py-1.5 text-sm font-medium ${room ? "bg-surface-3 text-ink hover:bg-surface" : "pointer-events-none bg-surface-3 text-muted opacity-50"}`}
+          aria-disabled={!room || connecting}
+          onClick={() => { if (room) setConnecting(true); }}
+          className={`inline-flex items-center gap-2 rounded-lg px-3 py-1.5 text-sm font-medium ${room && !connecting ? "bg-surface-3 text-ink hover:bg-surface" : "pointer-events-none bg-surface-3 text-muted opacity-50"}`}
         >
-          {t("Conectar número")}
+          {connecting && <Loader2 className="size-4 animate-spin" />}
+          {connecting ? t("Abriendo WhatsApp…") : t("Conectar número")}
         </a>
       </div>
       <p className="mt-2 text-xs text-muted">

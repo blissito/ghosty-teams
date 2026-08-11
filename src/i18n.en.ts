@@ -1184,6 +1184,7 @@ export const en: Record<string, string> = {
   "room no disponible": "room unavailable",
   "Elige el room destino…": "Pick the destination room…",
   "Conectar número": "Connect number",
+  "Abriendo WhatsApp…": "Opening WhatsApp…",
   "Un número recién conectado RECIBE pero todavía no contesta.":
     "A newly connected number RECEIVES but doesn't reply yet.",
 };
