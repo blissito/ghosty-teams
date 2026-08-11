@@ -431,14 +431,23 @@ function WhatsAppPanel() {
       {state.channels.length > 0 && (
         <ul className="mt-3 space-y-2">
           {state.channels.map((c) => (
-            <li key={c.integrationId} className="flex items-center justify-between gap-3 rounded-lg bg-surface-3 px-3 py-2 text-sm">
-              <span className="min-w-0">
-                <span className="font-medium">+{c.phone}</span>
-                <span className="text-muted">
-                  {" → "}
-                  {/* Sin room = se archivó o se borró desde que se conectó. Se dice, en vez de
-                      enseñar un destino que ya no existe. */}
-                  {c.roomName ? `#${c.roomName}` : t("room no disponible")}
+            // Verde SUTIL y el MISMO que usa "Conectado" en los conectores de esta misma
+            // pestaña (`text-emerald-500` sobre `bg-emerald-500/10`): dos indicadores de lo
+            // mismo, a diez píxeles uno del otro, con verdes distintos se leen como estados
+            // distintos.
+            <li key={c.integrationId} className="flex items-center justify-between gap-3 rounded-lg border border-emerald-500/25 bg-emerald-500/5 px-3 py-2 text-sm">
+              <span className="flex min-w-0 items-center gap-2">
+                {/* El punto lleva `title`: el color solo no es información accesible, y aquí
+                    es el único indicativo de que la conexión está viva. */}
+                <span className="size-1.5 shrink-0 rounded-full bg-emerald-500" title={t("Conectado")} />
+                <span className="truncate">
+                  <span className="font-medium">+{c.phone}</span>
+                  <span className="text-muted">
+                    {" → "}
+                    {/* Sin room = se archivó o se borró desde que se conectó. Se dice, en vez de
+                        enseñar un destino que ya no existe. */}
+                    {c.roomName ? `#${c.roomName}` : t("room no disponible")}
+                  </span>
                 </span>
               </span>
               <button
@@ -479,12 +488,23 @@ function WhatsAppPanel() {
           className={`inline-flex items-center gap-2 rounded-lg px-3 py-1.5 text-sm font-medium ${room && !connecting ? "bg-surface-3 text-ink hover:bg-surface" : "pointer-events-none bg-surface-3 text-muted opacity-50"}`}
         >
           {connecting && <Loader2 className="size-4 animate-spin" />}
-          {connecting ? t("Abriendo WhatsApp…") : t("Conectar número")}
+          {/* "otro" cuando ya hay alguno: con un número arriba, "Conectar número" se lee
+              como si fuera el botón del que ya está —o como si hubiera que reconectarlo—
+              y esconde que se pueden tener varios. */}
+          {connecting
+            ? t("Abriendo WhatsApp…")
+            : state.channels.length > 0
+              ? t("Conectar otro número")
+              : t("Conectar número")}
         </a>
       </div>
-      <p className="mt-2 text-xs text-muted">
-        {t("Un número recién conectado RECIBE pero todavía no contesta.")}
-      </p>
+      {/* El aviso es sobre lo que ACABAS de conectar, así que sólo tiene sentido cuando no
+          hay ninguno todavía; con uno arriba y funcionando, se lee como un defecto. */}
+      {state.channels.length === 0 && (
+        <p className="mt-2 text-xs text-muted">
+          {t("Un número recién conectado RECIBE pero todavía no contesta.")}
+        </p>
+      )}
     </div>
   );
 }
