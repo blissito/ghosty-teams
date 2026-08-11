@@ -54,6 +54,67 @@ export const updateChannelFn = createServerFn({ method: "POST" })
     return { ok: true as const };
   });
 
+// ── Salas de evento ──────────────────────────────────────────────────────────
+// Convierte un room en la puerta de un evento abierto: webinar (la gente entra a
+// escuchar) o taller (entra con voz). Sólo el creador o el owner.
+//
+// ⚠️ Encender esto abre el room a INTERNET, que es una frontera distinta de la
+// que ya conocía el producto (`is_private = 0` = "todo el workspace"). Por eso es
+// una acción aparte y explícita, y no una casilla más del formulario de room.
+
+const EVENT_SLUG_RE = /^[a-z0-9][a-z0-9-]{2,48}$/;
+
+export const setChannelEventFn = createServerFn({ method: "POST" })
+  .validator(
+    (d: {
+      slug: string;
+      mode?: "webinar" | "taller" | null;
+      shareSlug?: string | null;
+      title?: string | null;
+      livekitUrl?: string | null;
+      publicAccess?: boolean;
+      agentEnabled?: boolean;
+    }) => d
+  )
+  .handler(async ({ data }) => {
+    const { db, ch } = await requireManage(data.slug);
+
+    let shareSlug = data.shareSlug === undefined ? undefined : (data.shareSlug?.trim().toLowerCase() || null);
+    if (shareSlug && !EVENT_SLUG_RE.test(shareSlug)) {
+      throw new Error("La liga sólo admite minúsculas, números y guiones (3-49)");
+    }
+    // Encender el acceso público sin liga dejaría un room "abierto" al que no se
+    // puede llegar: se genera una a partir del nombre para que nunca pase.
+    if (data.publicAccess && !shareSlug && !ch.call_share_slug) {
+      shareSlug = ch.slug;
+    }
+
+    try {
+      await db.setChannelEvent(ch.id, {
+        mode: data.mode,
+        shareSlug,
+        title: data.title === undefined ? undefined : data.title?.trim() || null,
+        livekitUrl: data.livekitUrl === undefined ? undefined : data.livekitUrl?.trim() || null,
+        publicAccess: data.publicAccess,
+        agentEnabled: data.agentEnabled,
+      });
+    } catch (e) {
+      // El índice único de `call_share_slug` es lo que impide que dos eventos
+      // compartan liga; sin este mensaje el error sale como un fallo de SQL.
+      if (String(e).includes("UNIQUE")) throw new Error("Esa liga ya está en uso por otro room");
+      throw e;
+    }
+    const fresh = await db.getChannel(data.slug);
+    return { ok: true as const, channel: fresh };
+  });
+
+export const listEventRegistrationsFn = createServerFn({ method: "GET" })
+  .validator((d: { slug: string }) => d)
+  .handler(async ({ data }) => {
+    const { db, ch } = await requireManage(data.slug);
+    return { registrations: await db.listEventRegistrations(ch.id) };
+  });
+
 export const deleteChannelFn = createServerFn({ method: "POST" })
   .validator((d: { slug: string }) => d)
   .handler(async ({ data }) => {

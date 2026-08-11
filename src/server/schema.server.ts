@@ -1031,6 +1031,46 @@ async function migrate(): Promise<void> {
   // sólo la fila con 1 participa del índice.
   await exec("CREATE UNIQUE INDEX IF NOT EXISTS gt_brand_active ON gt_brand_kits(is_active) WHERE is_active = 1");
 
+  // ── Salas de evento (webinar y taller) ─────────────────────────────────────
+  // Un room del workspace puede ser la puerta de un evento abierto: la comunidad
+  // entra por liga, sin cuenta y sin ocupar asiento.
+  //
+  // ⚠️ `public_access` NO es `is_private = 0`. Ese cero significa hoy "lo ve todo
+  // el WORKSPACE", que es una frontera distinta y mucho más estrecha que "lo ve
+  // internet". Son tres estados y sobrecargar la columna vieja abriría canales
+  // internos al mundo por accidente.
+  await addColumn("gc_channels", "call_mode", "TEXT");          // webinar | taller | NULL (room normal)
+  await addColumn("gc_channels", "call_share_slug", "TEXT");    // la liga pública
+  await addColumn("gc_channels", "call_livekit_url", "TEXT");   // a qué caja va; NULL = la de siempre
+  await addColumn("gc_channels", "call_title", "TEXT");         // el nombre del evento, no el del room
+  await addColumn("gc_channels", "public_access", "INTEGER NOT NULL DEFAULT 0");
+  await addColumn("gc_channels", "agent_enabled", "INTEGER NOT NULL DEFAULT 0");
+  await exec(
+    "CREATE UNIQUE INDEX IF NOT EXISTS gc_channels_share ON gc_channels(call_share_slug) WHERE call_share_slug IS NOT NULL"
+  );
+
+  // Quién se registró. Es la lista del evento (y la que se pasa al CRM), y de paso
+  // la única forma de cortarle el paso a alguien: el baneo es por correo.
+  await exec(`CREATE TABLE IF NOT EXISTS gt_event_registrations (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    channel_id  INTEGER NOT NULL,
+    name        TEXT NOT NULL,
+    email       TEXT NOT NULL,
+    guest_sub   TEXT,
+    created_at  INTEGER NOT NULL DEFAULT (unixepoch()),
+    last_seen_at INTEGER,
+    ip_hash     TEXT,
+    banned      INTEGER NOT NULL DEFAULT 0
+  )`);
+  // Una persona, una fila por evento: si vuelve a registrarse se actualiza, no se
+  // duplica — un registro duplicado inflaría la lista y rompería el baneo.
+  await exec(
+    "CREATE UNIQUE INDEX IF NOT EXISTS gt_event_reg_uniq ON gt_event_registrations(channel_id, email)"
+  );
+  await exec(
+    "CREATE INDEX IF NOT EXISTS gt_event_reg_ch ON gt_event_registrations(channel_id, id DESC)"
+  );
+
   // Flip único: correo por default OFF (opt-in). Las filas existentes heredaron el viejo
   // DEFAULT 1 (opt-out silencioso, nadie lo eligió conscientemente) → las apagamos una sola
   // vez, guardado por flag en gc_config. Reversible: el usuario lo reactiva en el panel.

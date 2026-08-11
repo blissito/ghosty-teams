@@ -11,6 +11,15 @@ export type Channel = {
   description?: string | null;
   archived?: number;
   created_by?: string | null;
+  // Evento abierto: la comunidad entra por liga sin cuenta ni asiento. Ver
+  // "salas de evento" en schema.server.ts. `public_access` NO es `is_private=0`:
+  // ese cero es "todo el workspace", esto es "internet".
+  call_mode?: "webinar" | "taller" | null;
+  call_share_slug?: string | null;
+  call_livekit_url?: string | null;
+  call_title?: string | null;
+  public_access?: number;
+  agent_enabled?: number;
   threads?: Message[]; // hilos raíz (adjuntados por getChannelView para el sidebar)
 };
 
@@ -24,6 +33,12 @@ function toChannel(r: Row): Channel {
     description: r.description ?? null,
     archived: num(r.archived),
     created_by: r.created_by,
+    call_mode: (r.call_mode as Channel["call_mode"]) ?? null,
+    call_share_slug: r.call_share_slug ?? null,
+    call_livekit_url: r.call_livekit_url ?? null,
+    call_title: r.call_title ?? null,
+    public_access: num(r.public_access),
+    agent_enabled: num(r.agent_enabled),
   };
 }
 
@@ -1620,7 +1635,103 @@ export async function getChannel(slug: string): Promise<Channel | null> {
   return rows[0] ? toChannel(rows[0]) : null;
 }
 
+// ── Salas de evento ──────────────────────────────────────────────────────────
+
+/** El room detrás de una liga pública. `null` si el slug no existe o ya no es público. */
+export async function channelByShareSlug(slug: string): Promise<Channel | null> {
+  if (!slug) return null;
+  const rows = await dbq(
+    "SELECT * FROM gc_channels WHERE call_share_slug = ? AND public_access = 1 AND COALESCE(archived,0) = 0",
+    [slug]
+  );
+  return rows[0] ? toChannel(rows[0]) : null;
+}
+
+export async function setChannelEvent(
+  channelId: number,
+  patch: {
+    mode?: "webinar" | "taller" | null;
+    shareSlug?: string | null;
+    livekitUrl?: string | null;
+    title?: string | null;
+    publicAccess?: boolean;
+    agentEnabled?: boolean;
+  }
+): Promise<void> {
+  const sets: string[] = [];
+  const args: unknown[] = [];
+  const put = (col: string, val: unknown) => { sets.push(`${col} = ?`); args.push(val); };
+  if (patch.mode !== undefined) put("call_mode", patch.mode);
+  if (patch.shareSlug !== undefined) put("call_share_slug", patch.shareSlug);
+  if (patch.livekitUrl !== undefined) put("call_livekit_url", patch.livekitUrl);
+  if (patch.title !== undefined) put("call_title", patch.title);
+  if (patch.publicAccess !== undefined) put("public_access", patch.publicAccess ? 1 : 0);
+  if (patch.agentEnabled !== undefined) put("agent_enabled", patch.agentEnabled ? 1 : 0);
+  if (!sets.length) return;
+  args.push(channelId);
+  await dbq(`UPDATE gc_channels SET ${sets.join(", ")} WHERE id = ?`, args);
+}
+
+export type EventRegistration = {
+  id: number;
+  name: string;
+  email: string;
+  created_at: number;
+  banned: number;
+};
+
+/**
+ * Registra (o actualiza) a quien entra por la liga. Devuelve `null` si esa persona
+ * está baneada — el baneo es por CORREO porque es lo único estable entre visitas:
+ * la cookie se borra y la IP cambia.
+ */
+export async function registerForEvent(input: {
+  channelId: number;
+  name: string;
+  email: string;
+  guestSub: string;
+  ipHash: string | null;
+}): Promise<{ banned: boolean }> {
+  const email = input.email.trim().toLowerCase();
+  const rows = await dbq(
+    `INSERT INTO gt_event_registrations (channel_id, name, email, guest_sub, ip_hash, last_seen_at)
+     VALUES (?,?,?,?,?, unixepoch())
+     ON CONFLICT(channel_id, email) DO UPDATE SET
+       name = excluded.name, guest_sub = excluded.guest_sub, last_seen_at = unixepoch()
+     RETURNING banned`,
+    [input.channelId, input.name.trim().slice(0, 60), email, input.guestSub, input.ipHash]
+  );
+  return { banned: num(rows[0]?.banned) === 1 };
+}
+
+export async function listEventRegistrations(channelId: number): Promise<EventRegistration[]> {
+  const rows = await dbq(
+    "SELECT id, name, email, created_at, banned FROM gt_event_registrations WHERE channel_id = ? ORDER BY id DESC LIMIT 500",
+    [channelId]
+  );
+  return rows.map((r) => ({
+    id: num(r.id),
+    name: r.name!,
+    email: r.email!,
+    created_at: num(r.created_at),
+    banned: num(r.banned),
+  }));
+}
+
 export async function canSeeChannel(ch: Channel, userSub: string, isOwner: boolean): Promise<boolean> {
+  // ⚠️ Un invitado (`guest:*`) alcanza EXACTAMENTE el room en el que se registró.
+  // No basta con que el room sea público: eso le abriría todos los eventos del
+  // cliente a la vez, y "público" tampoco puede heredar del is_private=0, que
+  // significa "lo ve todo el WORKSPACE" — otra frontera, mucho más estrecha.
+  // El permiso sale de SU fila de registro, y un baneo lo cierra de inmediato.
+  if (userSub.startsWith("guest:")) {
+    if (ch.public_access !== 1) return false;
+    const { rows } = await dbqRaw(
+      "SELECT 1 FROM gt_event_registrations WHERE channel_id = ? AND guest_sub = ? AND banned = 0",
+      [ch.id, userSub]
+    );
+    return rows.length > 0;
+  }
   if (ch.is_private === 0 || isOwner) return true;
   const { rows } = await dbqRaw(
     "SELECT 1 FROM gc_channel_members WHERE channel_id = ? AND user_sub = ?",

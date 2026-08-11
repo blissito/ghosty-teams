@@ -23,6 +23,7 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as SetupIndexRouteImport } from './routes/setup.index'
 import { Route as T3SplatRouteImport } from './routes/t3.$'
 import { Route as JoinTokenRouteImport } from './routes/join.$token'
+import { Route as EnVivoSlugRouteImport } from './routes/en-vivo.$slug'
 import { Route as CoeditarSlugRouteImport } from './routes/coeditar.$slug'
 import { Route as CSlugRouteImport } from './routes/c.$slug'
 import { Route as ArtefactoIdRouteImport } from './routes/artefacto.$id'
@@ -132,6 +133,11 @@ const T3SplatRoute = T3SplatRouteImport.update({
 const JoinTokenRoute = JoinTokenRouteImport.update({
   id: '/join/$token',
   path: '/join/$token',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const EnVivoSlugRoute = EnVivoSlugRouteImport.update({
+  id: '/en-vivo/$slug',
+  path: '/en-vivo/$slug',
   getParentRoute: () => rootRouteImport,
 } as any)
 const CoeditarSlugRoute = CoeditarSlugRouteImport.update({
@@ -362,6 +368,7 @@ export interface FileRoutesByFullPath {
   '/artefacto/$id': typeof ArtefactoIdRouteWithChildren
   '/c/$slug': typeof CSlugRoute
   '/coeditar/$slug': typeof CoeditarSlugRoute
+  '/en-vivo/$slug': typeof EnVivoSlugRoute
   '/join/$token': typeof JoinTokenRoute
   '/t3/$': typeof T3SplatRoute
   '/setup/': typeof SetupIndexRoute
@@ -417,6 +424,7 @@ export interface FileRoutesByTo {
   '/artefacto/$id': typeof ArtefactoIdRouteWithChildren
   '/c/$slug': typeof CSlugRoute
   '/coeditar/$slug': typeof CoeditarSlugRoute
+  '/en-vivo/$slug': typeof EnVivoSlugRoute
   '/join/$token': typeof JoinTokenRoute
   '/t3/$': typeof T3SplatRoute
   '/setup': typeof SetupIndexRoute
@@ -474,6 +482,7 @@ export interface FileRoutesById {
   '/artefacto/$id': typeof ArtefactoIdRouteWithChildren
   '/c/$slug': typeof CSlugRoute
   '/coeditar/$slug': typeof CoeditarSlugRoute
+  '/en-vivo/$slug': typeof EnVivoSlugRoute
   '/join/$token': typeof JoinTokenRoute
   '/t3/$': typeof T3SplatRoute
   '/setup/': typeof SetupIndexRoute
@@ -532,6 +541,7 @@ export interface FileRouteTypes {
     | '/artefacto/$id'
     | '/c/$slug'
     | '/coeditar/$slug'
+    | '/en-vivo/$slug'
     | '/join/$token'
     | '/t3/$'
     | '/setup/'
@@ -587,6 +597,7 @@ export interface FileRouteTypes {
     | '/artefacto/$id'
     | '/c/$slug'
     | '/coeditar/$slug'
+    | '/en-vivo/$slug'
     | '/join/$token'
     | '/t3/$'
     | '/setup'
@@ -643,6 +654,7 @@ export interface FileRouteTypes {
     | '/artefacto/$id'
     | '/c/$slug'
     | '/coeditar/$slug'
+    | '/en-vivo/$slug'
     | '/join/$token'
     | '/t3/$'
     | '/setup/'
@@ -700,6 +712,7 @@ export interface RootRouteChildren {
   ArtefactoIdRoute: typeof ArtefactoIdRouteWithChildren
   CSlugRoute: typeof CSlugRoute
   CoeditarSlugRoute: typeof CoeditarSlugRoute
+  EnVivoSlugRoute: typeof EnVivoSlugRoute
   JoinTokenRoute: typeof JoinTokenRoute
   T3SplatRoute: typeof T3SplatRoute
   ApiArtifactStreamIdRoute: typeof ApiArtifactStreamIdRoute
@@ -826,6 +839,13 @@ declare module '@tanstack/react-router' {
       path: '/join/$token'
       fullPath: '/join/$token'
       preLoaderRoute: typeof JoinTokenRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/en-vivo/$slug': {
+      id: '/en-vivo/$slug'
+      path: '/en-vivo/$slug'
+      fullPath: '/en-vivo/$slug'
+      preLoaderRoute: typeof EnVivoSlugRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/coeditar/$slug': {
@@ -1164,6 +1184,7 @@ const rootRouteChildren: RootRouteChildren = {
   ArtefactoIdRoute: ArtefactoIdRouteWithChildren,
   CSlugRoute: CSlugRoute,
   CoeditarSlugRoute: CoeditarSlugRoute,
+  EnVivoSlugRoute: EnVivoSlugRoute,
   JoinTokenRoute: JoinTokenRoute,
   T3SplatRoute: T3SplatRoute,
   ApiArtifactStreamIdRoute: ApiArtifactStreamIdRoute,
@@ -1194,12 +1215,3 @@ const rootRouteChildren: RootRouteChildren = {
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
-
-import type { getRouter } from './router.tsx'
-import type { createStart } from '@tanstack/react-start'
-declare module '@tanstack/react-start' {
-  interface Register {
-    ssr: true
-    router: Awaited<ReturnType<typeof getRouter>>
-  }
-}
