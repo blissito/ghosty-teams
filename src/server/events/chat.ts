@@ -12,6 +12,12 @@ import { createServerFn } from "@tanstack/react-start";
 // room. Así el equipo los ve en su Teams de siempre, quedan en el historial, y
 // el agente los lee sin nada especial.
 
+// ⚠️ Este archivo NO puede llamarse `chat.server.ts` aunque todo lo que hace sea
+// de servidor: el plugin de import-protection prohíbe que un `.server.ts` entre en
+// el bundle del cliente, y la página de la sala importa estas server functions por
+// nombre para llamarlas por RPC. Es la misma razón por la que `server/channels.ts`
+// tampoco lleva el sufijo. Los módulos que sí lo llevan (access, ticket, guest)
+// sólo se importan DINÁMICAMENTE dentro de los handlers, así que nunca cruzan.
 const MAX_LEN = 1000;
 
 async function resolve(slug: string) {

@@ -1,7 +1,7 @@
 import { createFileRoute, notFound, redirect } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import { createServerFn } from "@tanstack/react-start";
-import { eventFlowFn, eventPostFn } from "../server/events/chat.server";
+import { eventFlowFn, eventPostFn } from "../server/events/chat";
 
 // La sala del evento: el video de la caja de LiveKit embebido, y el chat al lado.
 //

@@ -71,11 +71,19 @@ export const Route = createRootRoute({
     // resuelve la propia ruta (el `share_role` del enlace o el token de la invitación) y
     // el nivel viaja FIRMADO en el ticket, así que abrir la puerta aquí no la afloja.
     const isCoedit = location.pathname.startsWith('/coeditar/')
+    // Sala de un evento abierto (/en-vivo/<slug>): la abre la comunidad, que por
+    // definición no tiene cuenta — mandarla a /login sería pedirle registrarse en
+    // el workspace de otro para poder ver un webinar. El permiso lo resuelve la
+    // propia ruta: el registro (nombre y correo) acuña una cookie de invitado, y
+    // `eventViewerFor` exige una fila para ESE room. Abrir la puerta aquí no
+    // afloja nada, igual que con /artefacto y /coeditar.
+    const isLiveEvent = location.pathname.startsWith('/en-vivo/')
     if (
       isOAuthRelay ||
       isCanvasDemo ||
       isSharedArtifact ||
       isCoedit ||
+      isLiveEvent ||
       location.pathname === '/login' ||
       location.pathname.startsWith('/join')
     ) {
