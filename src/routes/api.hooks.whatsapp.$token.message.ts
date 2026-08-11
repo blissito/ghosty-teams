@@ -66,9 +66,12 @@ export const Route = createFileRoute("/api/hooks/whatsapp/$token/message")({
         const b = Buffer.from(ref.channelSecret);
         if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return json({ ok: false }, 401);
 
+        // El cuerpo CRUDO se guarda para la cadena: al destino anterior se le reenvía
+        // byte a byte, no un objeto re-serializado por nosotros.
+        const raw = await request.text();
         let payload: WaForward;
         try {
-          payload = (await request.json()) as WaForward;
+          payload = JSON.parse(raw) as WaForward;
         } catch {
           return json({ ok: false, error: "cuerpo inválido" }, 400);
         }
@@ -109,6 +112,22 @@ export const Route = createFileRoute("/api/hooks/whatsapp/$token/message")({
           // Sin fila = número que ya no está conectado de nuestro lado. Ack para que no
           // reintente, y no se escribe nada.
           if (!chan) return json({ ok: true, orphaned: true });
+
+          // ── Cadena ──────────────────────────────────────────────────────────────
+          // Va AQUÍ arriba, y AWAITEADA, por dos razones:
+          //   - Arriba, porque el destino anterior tiene que ver TODO lo que ve Formmy,
+          //     incluido lo que nosotros descartamos más abajo por "sin contenido".
+          //   - Awaiteada, porque el orden lo garantiza el propio Formmy: no manda el
+          //     mensaje 2 hasta que contestamos el 1. Soltarlo fire-and-forget dejaría
+          //     dos reenvíos compitiendo y el cliente vería las respuestas al revés.
+          // Cuesta un round-trip dentro del webhook de Meta; por eso el timeout es corto.
+          if (chan.chainUrl) {
+            await forwardToChain(chan.chainUrl, chan.chainSecret, raw).catch((e) =>
+              // Un fallo de la cadena NO tumba la entrega: el mensaje ya es nuestro y
+              // devolver != 200 haría que Formmy lo reintente y lo duplique en el room.
+              console.error("[wa] chain forward failed", String(e).slice(0, 200)),
+            );
+          }
 
           // ⚠️ El room manda el TOKEN, no la fila: el token es lo que Formmy tiene y lo que
           // firmamos. Si discrepan (se reconectó a otro room), gana el de la fila, que es lo
@@ -179,6 +198,27 @@ export const Route = createFileRoute("/api/hooks/whatsapp/$token/message")({
     },
   },
 });
+
+/**
+ * Reenvía el forward TAL CUAL al destino anterior del número (ver `setWaChain`).
+ *
+ * El body va verbatim: el de allá espera exactamente el shape de Formmy, y volver a
+ * serializar nuestro objeto perdería cualquier campo que no esté en `WaForward`.
+ */
+async function forwardToChain(url: string, secret: string | null, raw: string): Promise<void> {
+  const res = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(secret ? { Authorization: `Bearer ${secret}` } : {}),
+    },
+    body: raw,
+    // Presupuesto duro: esto corre dentro del webhook de Meta. Si el destino no ack'ea
+    // en 6s, se pierde ESE mensaje allá — mejor que arriesgar el webhook entero.
+    signal: AbortSignal.timeout(6000),
+  });
+  if (!res.ok) throw new Error(`chain ${res.status}`);
+}
 
 /** Baja el adjunto del proxy de Formmy a nuestro storage y lo cuelga del mensaje. */
 async function ingestMedia(a: {

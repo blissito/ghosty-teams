@@ -941,6 +941,17 @@ async function migrate(): Promise<void> {
     created_at     INTEGER NOT NULL
   )`);
 
+  // ── CADENA (migración de un número que ya tenía dueño) ───────────────────────
+  // `Integration.externalAgentUrl` de Formmy es UNO por integración: apuntarlo aquí deja
+  // mudo a quien contestaba antes. Con estas dos columnas el hook publica en el room Y
+  // reenvía el body VERBATIM al destino anterior con SU secreto, así nadie se queda mudo
+  // durante la convivencia. Vacío = sin cadena, que es el caso normal.
+  //
+  // ⚠️ Columnas nuevas por addColumn, NUNCA dentro del CREATE TABLE de arriba: una tabla
+  // que ya existe no se re-crea y el campo no aparecería jamás.
+  await addColumn("gt_wa_channels", "chain_url", "TEXT");
+  await addColumn("gt_wa_channels", "chain_secret", "TEXT");
+
   // Un HILO por contacto. `thread_id` es el mensaje raíz (la cabecera del contacto);
   // cada mensaje que llega cuelga de él como respuesta.
   //

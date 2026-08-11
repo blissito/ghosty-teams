@@ -18,6 +18,9 @@ export type WaChannel = {
   roomId: number;
   agentHandle: string | null;
   actingSub: string | null;
+  /** Destino anterior del número, mientras convive con nosotros. Ver `setWaChain`. */
+  chainUrl: string | null;
+  chainSecret: string | null;
 };
 
 function rowToChannel(r: Record<string, string | null>): WaChannel {
@@ -28,6 +31,8 @@ function rowToChannel(r: Record<string, string | null>): WaChannel {
     roomId: num(r.room_id),
     agentHandle: r.agent_handle,
     actingSub: r.acting_sub,
+    chainUrl: r.chain_url || null,
+    chainSecret: r.chain_secret || null,
   };
 }
 
@@ -36,7 +41,11 @@ function rowToChannel(r: Record<string, string | null>): WaChannel {
  * misma clave con la que Formmy deduplica su lado: reconectar el mismo número reusa la
  * fila en vez de dejar dos que apuntan a rooms distintos.
  */
-export async function saveWaChannel(c: WaChannel): Promise<void> {
+export async function saveWaChannel(
+  // La cadena NO entra aquí a propósito: reconectar el número no debe borrarla en
+  // silencio, y quien conecta no sabe nada de ella. Se toca sólo por `setWaChain`.
+  c: Omit<WaChannel, "chainUrl" | "chainSecret">,
+): Promise<void> {
   await dbq(
     `INSERT INTO gt_wa_channels (integration_id, phone, channel_secret, room_id, agent_handle, acting_sub, created_at)
      VALUES (?, ?, ?, ?, ?, ?, unixepoch())
@@ -53,6 +62,29 @@ export async function saveWaChannel(c: WaChannel): Promise<void> {
 export async function getWaChannel(integrationId: string): Promise<WaChannel | null> {
   const rows = await dbq(`SELECT * FROM gt_wa_channels WHERE integration_id = ?`, [integrationId]);
   return rows[0] ? rowToChannel(rows[0]) : null;
+}
+
+/**
+ * Prende (o apaga, con `url` vacía) la CADENA de un número.
+ *
+ * Existe para migrar un número que ya tenía dueño: `Integration.externalAgentUrl` de
+ * Formmy es uno solo, así que en cuanto apunta a Teams, quien contestaba antes deja de
+ * recibir. Con la cadena puesta el hook le reenvía el body tal cual y sigue contestando
+ * mientras dure la convivencia.
+ *
+ * El secreto es el del DESTINO (su `channelSecret`, no el nuestro): son dos credenciales
+ * distintas y confundirlas da un 401 mudo en cada mensaje.
+ */
+export async function setWaChain(
+  integrationId: string,
+  url: string | null,
+  secret: string | null,
+): Promise<void> {
+  await dbq(`UPDATE gt_wa_channels SET chain_url = ?, chain_secret = ? WHERE integration_id = ?`, [
+    url || null,
+    secret || null,
+    integrationId,
+  ]);
 }
 
 export async function listWaChannels(): Promise<WaChannel[]> {
