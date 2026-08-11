@@ -40,6 +40,7 @@ import { Route as SetupEasybitsCallbackRouteImport } from './routes/setup.easybi
 import { Route as SetupProviderConnectRouteImport } from './routes/setup.$provider.connect'
 import { Route as SetupProviderCallbackRouteImport } from './routes/setup.$provider.callback'
 import { Route as OauthProviderCallbackRouteImport } from './routes/oauth.$provider.callback'
+import { Route as EnVivoSlugSalaRouteImport } from './routes/en-vivo.$slug.sala'
 import { Route as CoeditarInvitacionTokenRouteImport } from './routes/coeditar.invitacion.$token'
 import { Route as ArtefactoIdRawRouteImport } from './routes/artefacto.$id.raw'
 import { Route as ApiInternalMembersRouteImport } from './routes/api.internal.members'
@@ -220,6 +221,11 @@ const OauthProviderCallbackRoute = OauthProviderCallbackRouteImport.update({
   path: '/oauth/$provider/callback',
   getParentRoute: () => rootRouteImport,
 } as any)
+const EnVivoSlugSalaRoute = EnVivoSlugSalaRouteImport.update({
+  id: '/sala',
+  path: '/sala',
+  getParentRoute: () => EnVivoSlugRoute,
+} as any)
 const CoeditarInvitacionTokenRoute = CoeditarInvitacionTokenRouteImport.update({
   id: '/coeditar/invitacion/$token',
   path: '/coeditar/invitacion/$token',
@@ -368,7 +374,7 @@ export interface FileRoutesByFullPath {
   '/artefacto/$id': typeof ArtefactoIdRouteWithChildren
   '/c/$slug': typeof CSlugRoute
   '/coeditar/$slug': typeof CoeditarSlugRoute
-  '/en-vivo/$slug': typeof EnVivoSlugRoute
+  '/en-vivo/$slug': typeof EnVivoSlugRouteWithChildren
   '/join/$token': typeof JoinTokenRoute
   '/t3/$': typeof T3SplatRoute
   '/setup/': typeof SetupIndexRoute
@@ -390,6 +396,7 @@ export interface FileRoutesByFullPath {
   '/api/internal/members': typeof ApiInternalMembersRoute
   '/artefacto/$id/raw': typeof ArtefactoIdRawRoute
   '/coeditar/invitacion/$token': typeof CoeditarInvitacionTokenRoute
+  '/en-vivo/$slug/sala': typeof EnVivoSlugSalaRoute
   '/oauth/$provider/callback': typeof OauthProviderCallbackRoute
   '/setup/$provider/callback': typeof SetupProviderCallbackRoute
   '/setup/$provider/connect': typeof SetupProviderConnectRoute
@@ -424,7 +431,7 @@ export interface FileRoutesByTo {
   '/artefacto/$id': typeof ArtefactoIdRouteWithChildren
   '/c/$slug': typeof CSlugRoute
   '/coeditar/$slug': typeof CoeditarSlugRoute
-  '/en-vivo/$slug': typeof EnVivoSlugRoute
+  '/en-vivo/$slug': typeof EnVivoSlugRouteWithChildren
   '/join/$token': typeof JoinTokenRoute
   '/t3/$': typeof T3SplatRoute
   '/setup': typeof SetupIndexRoute
@@ -446,6 +453,7 @@ export interface FileRoutesByTo {
   '/api/internal/members': typeof ApiInternalMembersRoute
   '/artefacto/$id/raw': typeof ArtefactoIdRawRoute
   '/coeditar/invitacion/$token': typeof CoeditarInvitacionTokenRoute
+  '/en-vivo/$slug/sala': typeof EnVivoSlugSalaRoute
   '/oauth/$provider/callback': typeof OauthProviderCallbackRoute
   '/setup/$provider/callback': typeof SetupProviderCallbackRoute
   '/setup/$provider/connect': typeof SetupProviderConnectRoute
@@ -482,7 +490,7 @@ export interface FileRoutesById {
   '/artefacto/$id': typeof ArtefactoIdRouteWithChildren
   '/c/$slug': typeof CSlugRoute
   '/coeditar/$slug': typeof CoeditarSlugRoute
-  '/en-vivo/$slug': typeof EnVivoSlugRoute
+  '/en-vivo/$slug': typeof EnVivoSlugRouteWithChildren
   '/join/$token': typeof JoinTokenRoute
   '/t3/$': typeof T3SplatRoute
   '/setup/': typeof SetupIndexRoute
@@ -504,6 +512,7 @@ export interface FileRoutesById {
   '/api/internal/members': typeof ApiInternalMembersRoute
   '/artefacto/$id/raw': typeof ArtefactoIdRawRoute
   '/coeditar/invitacion/$token': typeof CoeditarInvitacionTokenRoute
+  '/en-vivo/$slug/sala': typeof EnVivoSlugSalaRoute
   '/oauth/$provider/callback': typeof OauthProviderCallbackRoute
   '/setup/$provider/callback': typeof SetupProviderCallbackRoute
   '/setup/$provider/connect': typeof SetupProviderConnectRoute
@@ -563,6 +572,7 @@ export interface FileRouteTypes {
     | '/api/internal/members'
     | '/artefacto/$id/raw'
     | '/coeditar/invitacion/$token'
+    | '/en-vivo/$slug/sala'
     | '/oauth/$provider/callback'
     | '/setup/$provider/callback'
     | '/setup/$provider/connect'
@@ -619,6 +629,7 @@ export interface FileRouteTypes {
     | '/api/internal/members'
     | '/artefacto/$id/raw'
     | '/coeditar/invitacion/$token'
+    | '/en-vivo/$slug/sala'
     | '/oauth/$provider/callback'
     | '/setup/$provider/callback'
     | '/setup/$provider/connect'
@@ -676,6 +687,7 @@ export interface FileRouteTypes {
     | '/api/internal/members'
     | '/artefacto/$id/raw'
     | '/coeditar/invitacion/$token'
+    | '/en-vivo/$slug/sala'
     | '/oauth/$provider/callback'
     | '/setup/$provider/callback'
     | '/setup/$provider/connect'
@@ -712,7 +724,7 @@ export interface RootRouteChildren {
   ArtefactoIdRoute: typeof ArtefactoIdRouteWithChildren
   CSlugRoute: typeof CSlugRoute
   CoeditarSlugRoute: typeof CoeditarSlugRoute
-  EnVivoSlugRoute: typeof EnVivoSlugRoute
+  EnVivoSlugRoute: typeof EnVivoSlugRouteWithChildren
   JoinTokenRoute: typeof JoinTokenRoute
   T3SplatRoute: typeof T3SplatRoute
   ApiArtifactStreamIdRoute: typeof ApiArtifactStreamIdRoute
@@ -960,6 +972,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof OauthProviderCallbackRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/en-vivo/$slug/sala': {
+      id: '/en-vivo/$slug/sala'
+      path: '/sala'
+      fullPath: '/en-vivo/$slug/sala'
+      preLoaderRoute: typeof EnVivoSlugSalaRouteImport
+      parentRoute: typeof EnVivoSlugRoute
+    }
     '/coeditar/invitacion/$token': {
       id: '/coeditar/invitacion/$token'
       path: '/coeditar/invitacion/$token'
@@ -1161,6 +1180,18 @@ const ArtefactoIdRouteWithChildren = ArtefactoIdRoute._addFileChildren(
   ArtefactoIdRouteChildren,
 )
 
+interface EnVivoSlugRouteChildren {
+  EnVivoSlugSalaRoute: typeof EnVivoSlugSalaRoute
+}
+
+const EnVivoSlugRouteChildren: EnVivoSlugRouteChildren = {
+  EnVivoSlugSalaRoute: EnVivoSlugSalaRoute,
+}
+
+const EnVivoSlugRouteWithChildren = EnVivoSlugRoute._addFileChildren(
+  EnVivoSlugRouteChildren,
+)
+
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   ArtifactsRoute: ArtifactsRoute,
@@ -1184,7 +1215,7 @@ const rootRouteChildren: RootRouteChildren = {
   ArtefactoIdRoute: ArtefactoIdRouteWithChildren,
   CSlugRoute: CSlugRoute,
   CoeditarSlugRoute: CoeditarSlugRoute,
-  EnVivoSlugRoute: EnVivoSlugRoute,
+  EnVivoSlugRoute: EnVivoSlugRouteWithChildren,
   JoinTokenRoute: JoinTokenRoute,
   T3SplatRoute: T3SplatRoute,
   ApiArtifactStreamIdRoute: ApiArtifactStreamIdRoute,
@@ -1215,3 +1246,12 @@ const rootRouteChildren: RootRouteChildren = {
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
+
+import type { getRouter } from './router.tsx'
+import type { createStart } from '@tanstack/react-start'
+declare module '@tanstack/react-start' {
+  interface Register {
+    ssr: true
+    router: Awaited<ReturnType<typeof getRouter>>
+  }
+}

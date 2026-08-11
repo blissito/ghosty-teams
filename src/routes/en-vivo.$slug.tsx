@@ -82,25 +82,11 @@ const joinEvent = createServerFn({ method: "POST" })
     // volver con otro correo.
     if (banned) return { ok: false, error: "Este evento no está disponible" };
 
-    const base = ch.call_livekit_url || process.env.EVENT_LIVEKIT_URL || "";
-    if (!base) return { ok: false, error: "La sala no está configurada" };
-
-    const { currentNamespace } = await import("../server/tenant.server");
-    const { eventRoomName, mintEventTicket, eventRoomUrl } = await import("../server/events/ticket.server");
-    const ns = await currentNamespace();
-    const room = eventRoomName(ns, ch.id);
-    // El rol lo dicta el MODO del room, nunca el cliente: en un webinar se entra
-    // a escuchar y el host reparte la palabra desde su panel.
-    const role = ch.call_mode === "webinar" ? "viewer" : "speaker";
-
-    let ticket: string;
-    try {
-      ticket = mintEventTicket({ room, name, role, mode: ch.call_mode, title: ch.call_title || ch.name });
-    } catch (e) {
-      console.error("[en-vivo] no pude firmar el ticket", e);
-      return { ok: false, error: "La sala no está configurada" };
-    }
-    return { ok: true, url: eventRoomUrl(base, room, ticket) };
+    // El ticket NO se acuña aquí ni viaja por la URL: lo hace la página de la
+    // sala, que ya reconoce al invitado por su cookie de registro. Un ticket en
+    // la barra de direcciones se copia, se pega en un chat y se reenvía — y es
+    // de un solo uso, así que el primero que lo abra deja fuera al dueño.
+    return { ok: true, url: `/en-vivo/${encodeURIComponent(data.slug)}/sala` };
   });
 
 export const Route = createFileRoute("/en-vivo/$slug")({

@@ -1189,4 +1189,29 @@ export const en: Record<string, string> = {
   "Abriendo WhatsApp…": "Opening WhatsApp…",
   "Un número recién conectado RECIBE pero todavía no contesta.":
     "A newly connected number RECEIVES but doesn't reply yet.",
+
+  // Preexistente: el selector de "quién contesta" de Ajustes.
+  "Nadie contesta": "Nobody replies",
+
+  // Eventos abiertos (webinar / taller)
+  "Convertir en evento abierto…": "Turn into an open event…",
+  "Evento abierto": "Open event",
+  "EN VIVO": "LIVE",
+  "Cualquiera con la liga entra a la sala, sin cuenta y sin ocupar un asiento de tu plan.":
+    "Anyone with the link joins the room — no account, and it doesn't use a seat on your plan.",
+  webinar: "webinar",
+  taller: "workshop",
+  "entran a escuchar; tú das la palabra": "they join to listen; you hand out the mic",
+  "entran con micrófono y cámara": "they join with mic and camera",
+  "Título del evento": "Event title",
+  "Liga pública": "Public link",
+  "El agente responde en este evento": "The agent replies in this event",
+  "Sólo si lo mencionan. Cada respuesta consume saldo tuyo y aquí escribe gente de fuera.":
+    "Only when mentioned. Every reply spends your balance, and people from outside write here.",
+  "Abrir al público": "Open to the public",
+  "Cerrar el evento": "Close the event",
+  "¿Cerrar el evento? La liga deja de funcionar de inmediato.":
+    "Close the event? The link stops working immediately.",
+  registrados: "registered",
+  "No pude guardar": "Couldn't save",
 };

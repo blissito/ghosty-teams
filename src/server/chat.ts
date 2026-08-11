@@ -647,7 +647,15 @@ export const postMessage = createServerFn({ method: "POST" })
 
     const agents = await resolvedAgents();
     const handles = agents.map((a) => a.handle);
-    const mentionedList = detectMentions(body, handles); // TODOS los @tagged, en orden
+    // En un room de EVENTO el agente tiene interruptor y nace apagado: ahí escribe
+    // gente de fuera del workspace, y cada turno lo paga el dueño. Apagado, una
+    // mención se queda en texto. Sólo aplica a rooms de evento; los normales no
+    // cambian.
+    // ⚠️ Se vacía la LISTA, no sólo `mentioned`: quien levanta los turnos más abajo
+    // recorre `mentionedList`, así que apagar sólo el flag habría dejado el agente
+    // contestando igual con el mensaje marcado como si nadie lo hubiera llamado.
+    const agentOff = !!channel.call_mode && channel.agent_enabled !== 1;
+    const mentionedList = agentOff ? [] : detectMentions(body, handles); // TODOS los @tagged, en orden
     const mentioned = mentionedList[0] ?? null; // para el flag agent_handle del mensaje
     const me = await sessionUser();
     const name = me?.name || "invitado";

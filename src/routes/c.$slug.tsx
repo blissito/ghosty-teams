@@ -50,6 +50,7 @@ import {
   Download,
   Loader2,
   Archive,
+  Radio,
   ChevronDown,
   Headphones,
   Copy,
@@ -150,6 +151,8 @@ import { me } from "../server/auth";
 import {
   createChannelFn,
   updateChannelFn,
+  setChannelEventFn,
+  listEventRegistrationsFn,
   deleteChannelFn,
   getChannelMembersFn,
   addChannelMemberFn,
@@ -4736,6 +4739,186 @@ function CreateRoomModal({
   );
 }
 
+/**
+ * Convertir un room en la puerta de un evento abierto.
+ *
+ * ⚠️ Va aparte y con su propio botón de encendido porque cruza una frontera que
+ * el resto del formulario no cruza: "privado / del workspace" es una cosa y
+ * "abierto a internet" es otra. Meterlo como una casilla más entre el icono y la
+ * descripción invitaría a prenderlo sin leerlo.
+ */
+function EventSection({
+  slug,
+  channel,
+  onChanged,
+}: {
+  slug: string;
+  channel: Channel | null;
+  onChanged: () => void;
+}) {
+  const t = useT();
+  const [mode, setMode] = useState<"webinar" | "taller">(channel?.call_mode ?? "webinar");
+  const [shareSlug, setShareSlug] = useState(channel?.call_share_slug ?? "");
+  const [title, setTitle] = useState(channel?.call_title ?? "");
+  const [agentOn, setAgentOn] = useState(channel?.agent_enabled === 1);
+  const [open, setOpen] = useState(channel?.public_access === 1);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
+  const [regs, setRegs] = useState<{ id: number; name: string; email: string }[] | null>(null);
+
+  const isOn = channel?.public_access === 1;
+  const liveUrl = typeof window !== "undefined" && shareSlug ? `${window.location.origin}/en-vivo/${shareSlug}` : "";
+
+  async function save(next: { publicAccess?: boolean }) {
+    setBusy(true);
+    setErr(null);
+    try {
+      await setChannelEventFn({
+        data: {
+          slug,
+          mode,
+          shareSlug: shareSlug.trim() || null,
+          title: title.trim() || null,
+          agentEnabled: agentOn,
+          ...(next.publicAccess !== undefined ? { publicAccess: next.publicAccess } : {}),
+        },
+      });
+      setSaved(true);
+      onChanged();
+      setTimeout(() => setSaved(false), 1500);
+    } catch (e) {
+      setErr((e as Error).message || t("No pude guardar"));
+    }
+    setBusy(false);
+  }
+
+  useEffect(() => {
+    if (!isOn) return;
+    listEventRegistrationsFn({ data: { slug } })
+      .then((r) => setRegs(r.registrations))
+      .catch(() => setRegs([]));
+  }, [slug, isOn]);
+
+  if (!open) {
+    return (
+      <div className="mb-4">
+        <button
+          onClick={() => setOpen(true)}
+          className="flex items-center gap-1.5 rounded-lg px-2.5 py-2 text-sm text-muted hover:bg-surface-2 hover:text-ink"
+        >
+          <Radio size={15} /> {t("Convertir en evento abierto…")}
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mb-4">
+      <div className="mb-2 flex items-center gap-2">
+        <Radio size={15} className="text-muted" />
+        <span className="text-sm font-semibold">{t("Evento abierto")}</span>
+        {isOn && <span className="rounded bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-500">{t("EN VIVO")}</span>}
+      </div>
+      <p className="mb-3 text-xs text-muted">
+        {t("Cualquiera con la liga entra a la sala, sin cuenta y sin ocupar un asiento de tu plan.")}
+      </p>
+
+      <div className="mb-3 flex gap-2">
+        {(["webinar", "taller"] as const).map((m) => (
+          <button
+            key={m}
+            onClick={() => setMode(m)}
+            className={`flex-1 rounded-lg border px-3 py-2 text-left text-xs transition ${
+              mode === m ? "border-brand bg-brand/10" : "border-border hover:bg-surface-2"
+            }`}
+          >
+            <div className="font-semibold capitalize">{t(m)}</div>
+            <div className="text-muted">
+              {m === "webinar" ? t("entran a escuchar; tú das la palabra") : t("entran con micrófono y cámara")}
+            </div>
+          </button>
+        ))}
+      </div>
+
+      <label className="mb-1 block text-xs font-medium text-muted">{t("Título del evento")}</label>
+      <input
+        value={title}
+        onChange={(e) => setTitle(e.target.value)}
+        placeholder={channel?.name ?? ""}
+        className="mb-3 w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm outline-none focus:border-brand"
+      />
+
+      <label className="mb-1 block text-xs font-medium text-muted">{t("Liga pública")}</label>
+      <div className="mb-1 flex items-center gap-1 text-sm">
+        <span className="shrink-0 text-muted">/en-vivo/</span>
+        <input
+          value={shareSlug}
+          onChange={(e) => setShareSlug(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ""))}
+          placeholder={channel?.slug ?? "mi-evento"}
+          className="min-w-0 flex-1 rounded-lg border border-border bg-surface px-3 py-2 text-sm outline-none focus:border-brand"
+        />
+      </div>
+      {isOn && liveUrl && (
+        <button
+          onClick={() => navigator.clipboard?.writeText(liveUrl)}
+          className="mb-3 truncate text-left text-xs text-brand hover:underline"
+          title={t("Copiar")}
+        >
+          {liveUrl}
+        </button>
+      )}
+
+      <label className="mb-3 mt-2 flex items-start gap-2 text-xs">
+        <input type="checkbox" checked={agentOn} onChange={(e) => setAgentOn(e.target.checked)} className="mt-0.5" />
+        <span>
+          <span className="font-medium">{t("El agente responde en este evento")}</span>
+          <br />
+          <span className="text-muted">
+            {t("Sólo si lo mencionan. Cada respuesta consume saldo tuyo y aquí escribe gente de fuera.")}
+          </span>
+        </span>
+      </label>
+
+      {err && <p className="mb-2 text-xs text-red-400">{err}</p>}
+
+      <div className="flex flex-wrap items-center gap-2">
+        <button
+          onClick={() => save({})}
+          disabled={busy}
+          className="rounded-lg border border-border px-3 py-1.5 text-xs font-semibold hover:bg-surface-2 disabled:opacity-50"
+        >
+          {saved ? t("Guardado") : t("Guardar")}
+        </button>
+        {isOn ? (
+          <button
+            onClick={() => {
+              if (confirm(t("¿Cerrar el evento? La liga deja de funcionar de inmediato."))) save({ publicAccess: false });
+            }}
+            disabled={busy}
+            className="rounded-lg px-3 py-1.5 text-xs font-semibold text-red-400 hover:bg-red-400/10 disabled:opacity-50"
+          >
+            {t("Cerrar el evento")}
+          </button>
+        ) : (
+          <button
+            onClick={() => save({ publicAccess: true })}
+            disabled={busy}
+            className="rounded-lg bg-brand px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
+          >
+            {t("Abrir al público")}
+          </button>
+        )}
+        {isOn && regs && (
+          <span className="ml-auto text-xs text-muted">
+            {regs.length} {t("registrados")}
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function RoomSettingsModal({
   slug,
   channel,
@@ -4965,6 +5148,9 @@ function RoomSettingsModal({
           ))
         )}
       </div>
+      <div className="mb-4 border-t border-border" />
+      <EventSection slug={slug} channel={channel} onChanged={onChanged} />
+
       <div className="mb-3 border-t border-border" />
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-1">
