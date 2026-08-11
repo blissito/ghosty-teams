@@ -1209,6 +1209,9 @@ export const en: Record<string, string> = {
   "Sólo si lo mencionan. Cada respuesta consume saldo tuyo y aquí escribe gente de fuera.":
     "Only when mentioned. Every reply spends your balance, and people from outside write here.",
   "Abrir al público": "Open to the public",
+  "Abriendo…": "Opening…",
+  "Comparte esta liga": "Share this link",
+  Copiada: "Copied",
   "Cerrar el evento": "Close the event",
   "¿Cerrar el evento? La liga deja de funcionar de inmediato.":
     "Close the event? The link stops working immediately.",

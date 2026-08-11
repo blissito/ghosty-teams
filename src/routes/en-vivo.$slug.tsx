@@ -134,18 +134,21 @@ function EnVivo() {
   }
 
   return (
-    <div className="min-h-dvh flex items-center justify-center bg-[var(--color-bg)] p-4">
-      <div className="w-full max-w-md rounded-2xl border border-[var(--color-border)] bg-[var(--color-card)] p-7 shadow-sm">
+    <div className="min-h-dvh flex items-center justify-center bg-surface p-4">
+      <div className="w-full max-w-md rounded-2xl border border-border bg-card p-7 shadow-sm">
         <div className="flex items-center gap-2 mb-5">
           <GhostyMascot className="h-7 w-7" />
           <span className="font-semibold tracking-tight">Ghosty</span>
         </div>
 
         <h1 className="text-xl font-semibold leading-snug">{info.title}</h1>
-        <p className="mt-1.5 text-sm text-[var(--color-muted)]">
+        {/* El copy nombra las DOS cosas que hay del otro lado. Hablando sólo de la
+            llamada, quien entra no se entera de que también hay chat — y la mitad
+            de la sesión pasa ahí. */}
+        <p className="mt-1.5 text-sm text-muted">
           {info.mode === "webinar"
-            ? "Entras a escuchar. Si quieres participar, quien modera puede darte la palabra."
-            : "Sesión de trabajo: entras con micrófono y cámara."}
+            ? "Vas a ver la transmisión y escribir en el chat. El micrófono llega si quien modera te da la palabra."
+            : "Sesión de trabajo: entras con micrófono, cámara y chat."}
         </p>
 
         <form onSubmit={submit} className="mt-6 space-y-3">
@@ -154,7 +157,7 @@ function EnVivo() {
             <input
               id="ev-name" value={name} onChange={(e) => setName(e.target.value)}
               autoComplete="name" required maxLength={60}
-              className="w-full rounded-lg border border-[var(--color-border)] bg-transparent px-3 py-2 text-base"
+              className="w-full rounded-lg border border-border bg-transparent px-3 py-2 text-base"
             />
           </div>
           <div>
@@ -162,7 +165,7 @@ function EnVivo() {
             <input
               id="ev-email" type="email" value={email} onChange={(e) => setEmail(e.target.value)}
               autoComplete="email" required maxLength={120}
-              className="w-full rounded-lg border border-[var(--color-border)] bg-transparent px-3 py-2 text-base"
+              className="w-full rounded-lg border border-border bg-transparent px-3 py-2 text-base"
             />
           </div>
 
@@ -170,13 +173,13 @@ function EnVivo() {
 
           <button
             type="submit" disabled={busy}
-            className="w-full rounded-lg bg-[var(--color-accent)] px-4 py-2.5 font-medium text-white disabled:opacity-60"
+            className="w-full rounded-lg bg-brand px-4 py-2.5 font-medium text-white disabled:opacity-60"
           >
-            {busy ? "Conectando…" : "Entrar a la sala"}
+            {busy ? "Conectando…" : "Entrar"}
           </button>
         </form>
 
-        <p className="mt-4 text-xs text-[var(--color-muted)]">
+        <p className="mt-4 text-xs text-muted">
           Usamos tu correo para darte acceso y avisarte de la grabación. Nada más.
         </p>
       </div>

@@ -116,7 +116,7 @@ function Sala() {
   }
 
   return (
-    <div className="h-dvh flex flex-col md:flex-row bg-[var(--color-bg)]">
+    <div className="h-dvh flex flex-col md:flex-row bg-surface">
       <div className="flex-1 min-h-0 relative">
         {/* `allow` explícito: sin él el navegador bloquea cámara y micrófono
             dentro del iframe y la sala parece rota sin decir por qué. */}
@@ -136,23 +136,23 @@ function Sala() {
       </div>
 
       <aside
-        className={`${openChat ? "flex" : "hidden"} md:flex w-full md:w-80 lg:w-96 shrink-0 flex-col border-t md:border-t-0 md:border-l border-[var(--color-border)] bg-[var(--color-card)]`}
+        className={`${openChat ? "flex" : "hidden"} md:flex w-full md:w-80 lg:w-96 shrink-0 flex-col border-t md:border-t-0 md:border-l border-border bg-card`}
       >
-        <div className="px-4 py-3 border-b border-[var(--color-border)]">
+        <div className="px-4 py-3 border-b border-border">
           <div className="font-semibold text-sm truncate">{data.title}</div>
-          <div className="text-xs text-[var(--color-muted)]">
+          <div className="text-xs text-muted">
             {data.me.name}{data.me.isHost ? " · moderas" : ""}
           </div>
         </div>
 
         <div className="flex-1 min-h-0 overflow-y-auto px-4 py-3 space-y-3">
           {messages.length === 0 && (
-            <p className="text-xs text-[var(--color-muted)]">Aún no hay mensajes. Saluda 👋</p>
+            <p className="text-xs text-muted">Aún no hay mensajes. Saluda 👋</p>
           )}
           {messages.map((m) => (
             <div key={m.id} className="text-sm">
-              <span className={`font-medium ${m.isAgent ? "text-[var(--color-accent)]" : ""}`}>{m.sender}</span>
-              <span className="text-[10px] text-[var(--color-muted)] ml-2">
+              <span className={`font-medium ${m.isAgent ? "text-brand" : ""}`}>{m.sender}</span>
+              <span className="text-[10px] text-muted ml-2">
                 {new Date(m.created_at * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
               </span>
               <div className="whitespace-pre-wrap break-words">{m.body}</div>
@@ -161,17 +161,17 @@ function Sala() {
           <div ref={bottomRef} />
         </div>
 
-        <form onSubmit={send} className="p-3 border-t border-[var(--color-border)] flex gap-2">
+        <form onSubmit={send} className="p-3 border-t border-border flex gap-2">
           <input
             value={text}
             onChange={(e) => setText(e.target.value)}
             placeholder="Escribe un mensaje…"
             maxLength={1000}
-            className="flex-1 min-w-0 rounded-lg border border-[var(--color-border)] bg-transparent px-3 py-2 text-base"
+            className="flex-1 min-w-0 rounded-lg border border-border bg-transparent px-3 py-2 text-base"
           />
           <button
             type="submit" disabled={sending || !text.trim()}
-            className="rounded-lg bg-[var(--color-accent)] px-3 py-2 text-sm font-medium text-white disabled:opacity-50"
+            className="rounded-lg bg-brand px-3 py-2 text-sm font-medium text-white disabled:opacity-50"
           >
             Enviar
           </button>

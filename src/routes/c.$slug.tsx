@@ -4764,17 +4764,22 @@ function EventSection({
   const [open, setOpen] = useState(channel?.public_access === 1);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const [saved, setSaved] = useState(false);
+  const [copied, setCopied] = useState(false);
   const [regs, setRegs] = useState<{ id: number; name: string; email: string }[] | null>(null);
+  // ⚠️ El estado de "abierto" se lleva LOCAL además de en el prop. Leerlo sólo del
+  // prop dejaba la UI mintiendo justo después de abrir: se guardaba bien, pero el
+  // botón seguía diciendo "Abrir al público" hasta que el modal se remontara — o
+  // sea que parecía que el clic no había hecho nada.
+  const [isOn, setIsOn] = useState(channel?.public_access === 1);
 
-  const isOn = channel?.public_access === 1;
-  const liveUrl = typeof window !== "undefined" && shareSlug ? `${window.location.origin}/en-vivo/${shareSlug}` : "";
+  const effectiveSlug = (shareSlug.trim() || channel?.slug || "").toLowerCase();
+  const liveUrl = typeof window !== "undefined" && effectiveSlug ? `${window.location.origin}/en-vivo/${effectiveSlug}` : "";
 
   async function save(next: { publicAccess?: boolean }) {
     setBusy(true);
     setErr(null);
     try {
-      await setChannelEventFn({
+      const r = await setChannelEventFn({
         data: {
           slug,
           mode,
@@ -4784,13 +4789,26 @@ function EventSection({
           ...(next.publicAccess !== undefined ? { publicAccess: next.publicAccess } : {}),
         },
       });
-      setSaved(true);
+      // El servidor puede haber RELLENADO la liga (si se abrió sin una, la deriva
+      // del nombre del room): sin leer la respuesta, la caja se quedaba vacía y la
+      // liga que se enseña no sería la real.
+      if (r.channel?.call_share_slug) setShareSlug(r.channel.call_share_slug);
+      if (next.publicAccess !== undefined) setIsOn(next.publicAccess);
       onChanged();
-      setTimeout(() => setSaved(false), 1500);
     } catch (e) {
       setErr((e as Error).message || t("No pude guardar"));
     }
     setBusy(false);
+  }
+
+  async function copyLink() {
+    try {
+      await navigator.clipboard.writeText(liveUrl);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1800);
+    } catch {
+      /* sin permiso de portapapeles: el texto está a la vista para copiarlo a mano */
+    }
   }
 
   useEffect(() => {
@@ -4824,6 +4842,29 @@ function EventSection({
         {t("Cualquiera con la liga entra a la sala, sin cuenta y sin ocupar un asiento de tu plan.")}
       </p>
 
+      {/* Abierto: la liga es LO PRIMERO y con su botón de copiar. Es el único
+          resultado que le importa a quien acaba de abrir el evento; enterrarla
+          entre los campos obliga a buscarla justo cuando hay que repartirla. */}
+      {isOn && liveUrl && (
+        <div className="mb-4 rounded-lg border border-border bg-surface-2 p-3">
+          <div className="mb-1.5 text-xs font-medium text-muted">{t("Comparte esta liga")}</div>
+          <div className="flex items-center gap-2">
+            <input
+              readOnly
+              value={liveUrl}
+              onFocus={(e) => e.currentTarget.select()}
+              className="min-w-0 flex-1 rounded-lg border border-border bg-card px-2.5 py-1.5 text-xs outline-none"
+            />
+            <button
+              onClick={copyLink}
+              className="shrink-0 rounded-lg border border-border px-2.5 py-1.5 text-xs font-semibold hover:bg-surface-3"
+            >
+              {copied ? t("Copiada") : t("Copiar")}
+            </button>
+          </div>
+        </div>
+      )}
+
       <div className="mb-3 flex gap-2">
         {(["webinar", "taller"] as const).map((m) => (
           <button
@@ -4850,7 +4891,7 @@ function EventSection({
       />
 
       <label className="mb-1 block text-xs font-medium text-muted">{t("Liga pública")}</label>
-      <div className="mb-1 flex items-center gap-1 text-sm">
+      <div className="mb-3 flex items-center gap-1 text-sm">
         <span className="shrink-0 text-muted">/en-vivo/</span>
         <input
           value={shareSlug}
@@ -4859,15 +4900,6 @@ function EventSection({
           className="min-w-0 flex-1 rounded-lg border border-border bg-surface px-3 py-2 text-sm outline-none focus:border-brand"
         />
       </div>
-      {isOn && liveUrl && (
-        <button
-          onClick={() => navigator.clipboard?.writeText(liveUrl)}
-          className="mb-3 truncate text-left text-xs text-brand hover:underline"
-          title={t("Copiar")}
-        >
-          {liveUrl}
-        </button>
-      )}
 
       <label className="mb-3 mt-2 flex items-start gap-2 text-xs">
         <input type="checkbox" checked={agentOn} onChange={(e) => setAgentOn(e.target.checked)} className="mt-0.5" />
@@ -4882,15 +4914,15 @@ function EventSection({
 
       {err && <p className="mb-2 text-xs text-red-400">{err}</p>}
 
-      <div className="flex flex-wrap items-center gap-2">
-        <button
-          onClick={() => save({})}
-          disabled={busy}
-          className="rounded-lg border border-border px-3 py-1.5 text-xs font-semibold hover:bg-surface-2 disabled:opacity-50"
-        >
-          {saved ? t("Guardado") : t("Guardar")}
-        </button>
-        {isOn ? (
+      {isOn ? (
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            onClick={() => save({})}
+            disabled={busy}
+            className="rounded-lg border border-border px-3 py-1.5 text-xs font-semibold hover:bg-surface-2 disabled:opacity-50"
+          >
+            {t("Guardar cambios")}
+          </button>
           <button
             onClick={() => {
               if (confirm(t("¿Cerrar el evento? La liga deja de funcionar de inmediato."))) save({ publicAccess: false });
@@ -4900,21 +4932,23 @@ function EventSection({
           >
             {t("Cerrar el evento")}
           </button>
-        ) : (
-          <button
-            onClick={() => save({ publicAccess: true })}
-            disabled={busy}
-            className="rounded-lg bg-brand px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
-          >
-            {t("Abrir al público")}
-          </button>
-        )}
-        {isOn && regs && (
-          <span className="ml-auto text-xs text-muted">
-            {regs.length} {t("registrados")}
-          </span>
-        )}
-      </div>
+          {regs && (
+            <span className="ml-auto text-xs text-muted">
+              {regs.length} {t("registrados")}
+            </span>
+          )}
+        </div>
+      ) : (
+        /* Cerrado: UN solo botón. Abrir guarda todo lo de arriba y abre — con dos
+           botones no se elige nada, sólo se duda si hay que apretar los dos. */
+        <button
+          onClick={() => save({ publicAccess: true })}
+          disabled={busy}
+          className="w-full rounded-lg bg-brand px-3 py-2 text-xs font-semibold text-white disabled:opacity-50"
+        >
+          {busy ? t("Abriendo…") : t("Abrir al público")}
+        </button>
+      )}
     </div>
   );
 }
