@@ -286,6 +286,37 @@ export const expelMemberFn = createServerFn({ method: "POST" })
     return { ok: true as const };
   });
 
+/**
+ * ¿Puede esta persona ver este room? Devuelve el room, o `null`.
+ *
+ * Vive aparte y en una función pura porque estaba escrita DOS veces y las dos
+ * copias estaban mal, cada una a su manera: `getChannelView` se saltaba el chequeo
+ * cuando no había sesión (y entonces listaba todos los rooms públicos con sus
+ * nombres y sus hilos), y `getChannelFlow` no comprobaba absolutamente nada — con
+ * el slug, que es adivinable porque sale del nombre, se leía el flujo de cualquier
+ * room, incluidos los privados.
+ *
+ * Ninguna se veía desde la UI: la página está tras el guard de login. Pero son
+ * server functions, o sea RPC que se llama sin pasar por la página.
+ *
+ * Regla, una sola vez: **sin sesión no hay nada**, y con sesión decide
+ * `canSeeChannel` (que ya sabe resolver también a un invitado de evento).
+ */
+export async function visibleChannelFor(
+  slug: string,
+  user: { sub: string; isOwner: boolean } | null,
+  db: {
+    getChannel: (slug: string) => Promise<Channel | null>;
+    canSeeChannel: (ch: Channel, sub: string, isOwner: boolean) => Promise<boolean>;
+  }
+): Promise<Channel | null> {
+  const channel = await db.getChannel(slug);
+  if (!channel) return null;
+  if (!user) return null;
+  if (!(await db.canSeeChannel(channel, user.sub, user.isOwner))) return null;
+  return channel;
+}
+
 // Shell del room (sidebar + meta), SIN el flujo → el loader es ligero y el
 // flujo carga client-side con skeleton (apertura inmediata). Filtra visibilidad.
 export const getChannelView = createServerFn({ method: "GET" })
@@ -296,10 +327,9 @@ export const getChannelView = createServerFn({ method: "GET" })
     await (await import("./schema.server")).ensureSchema().catch(() => {});
     const db = await import("../db.server");
     const user = await sessionUser();
-    const channel = await db.getChannel(data.slug);
-    if (!channel) return null;
-    if (user && !(await db.canSeeChannel(channel, user.sub, user.isOwner))) return null;
-    const channels = await db.listChannels(user?.sub ?? "", !!user?.isOwner);
+    const channel = await visibleChannelFor(data.slug, user, db);
+    if (!channel || !user) return null;
+    const channels = await db.listChannels(user.sub, !!user.isOwner);
     // Adjunta los hilos de CADA room (una query) → el sidebar los muestra sin
     // haber visitado cada room y persisten al cambiar de room.
     const byChannel = await db.listThreadRootsForChannels(channels.map((c) => c.id));
@@ -315,10 +345,10 @@ export const getChannelFlow = createServerFn({ method: "GET" })
   .handler(async ({ data }) => {
     const _t0 = performance.now();
     const db = await import("../db.server");
-    const channel = await db.getChannel(data.slug);
-    if (!channel) return [];
     const user = await sessionUser();
-    const out = await db.attachMeta(await db.listChannelFlow(channel.id, data.topic), user?.sub ?? "");
+    const channel = await visibleChannelFor(data.slug, user, db);
+    if (!channel || !user) return [];
+    const out = await db.attachMeta(await db.listChannelFlow(channel.id, data.topic), user.sub);
     console.log(`[fn getChannelFlow ${Math.round(performance.now() - _t0)}ms] msgs=${out.length}`);
     return out;
   });
