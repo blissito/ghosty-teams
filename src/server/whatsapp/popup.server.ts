@@ -19,7 +19,7 @@
  * único confiable en móvil, donde el `postMessage` de vuelta se pierde.
  */
 import { createHmac } from "node:crypto";
-import { formmyBaseUrl, partnerSecret } from "./formmy-partner.server";
+import { PARTNER_ID, formmyBaseUrl, partnerSecret } from "./formmy-partner.server";
 
 /** Origin real del tenant detrás del proxy (TLS termina afuera). */
 export function requestOrigin(request: Request): string {
@@ -37,6 +37,17 @@ export function buildPartnerPopupUrl(
   const origin = requestOrigin(request);
   const ts = Math.floor(Date.now() / 1000).toString();
   const sig = createHmac("sha256", partnerSecret()).update(`${ts}.${origin}`).digest("hex");
-  const params = new URLSearchParams({ ts, o: origin, sig, s: opts.pairingId, r: opts.returnUrl });
+  // ⚠️ `p` es OBLIGATORIO y no es simetría con el header del server-to-server: el loader del
+  // popup resuelve el partner de ESTE query param, y omitirlo cae al default `denik`, cuyo
+  // único origin permitido es `denik.me`. Sin él la página contesta "Opener origin no
+  // autorizado" — que se lee como un problema de dominio y en realidad es de identidad.
+  const params = new URLSearchParams({
+    p: PARTNER_ID,
+    ts,
+    o: origin,
+    sig,
+    s: opts.pairingId,
+    r: opts.returnUrl,
+  });
   return `${formmyBaseUrl()}/partners/connect?${params.toString()}`;
 }
