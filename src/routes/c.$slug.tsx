@@ -850,7 +850,10 @@ function useEmojis(): CustomEmoji[] {
 }
 
 // Renderiza un código de reacción: `:name:` de emoji custom → <img>; si no, texto.
-function EmojiText({ code, className }: { code: string; className?: string }) {
+// `noTitle`: dentro de un chip de reacción el `title` del <img> le GANA al del botón
+// (el tooltip nativo lo pone el elemento más interno), así que salía ":party_blob:" en
+// vez de quién reaccionó.
+function EmojiText({ code, className, noTitle }: { code: string; className?: string; noTitle?: boolean }) {
   const { emojis } = useContext(ChatCtx);
   const m = /^:([a-z0-9_]+):$/.exec(code);
   const custom = m ? emojis.find((e) => e.name === m[1]) : null;
@@ -859,7 +862,7 @@ function EmojiText({ code, className }: { code: string; className?: string }) {
       <img
         src={`/api/attachment/${encodeURIComponent(custom.file_id)}`}
         alt={code}
-        title={code}
+        title={noTitle ? undefined : code}
         loading="lazy"
         decoding="async"
         className={className ?? "inline-block h-[1.15em] w-[1.15em] object-contain align-[-0.15em]"}
@@ -9762,7 +9765,14 @@ function ReactionBar({ m }: { m: Message }) {
     const names = subs
       .map((s) => (s === me?.sub ? me?.name : users.get(s)?.name))
       .filter((n): n is string => !!n);
-    return names.length ? names.join(", ") : t("Toggle reacción");
+    if (!names.length) return t("Toggle reacción");
+    // "Ana, Luis y Pau reaccionaron con :party_blob:" — el emoji al final, como Slack.
+    const list =
+      names.length === 1
+        ? names[0]
+        : `${names.slice(0, -1).join(", ")} ${t("y")} ${names[names.length - 1]}`;
+    const verb = names.length === 1 ? t("reaccionó con") : t("reaccionaron con");
+    return `${list} ${verb} ${r.emoji}`;
   };
   return (
     <div className="mt-1 flex flex-wrap items-center gap-1">
@@ -9777,7 +9787,7 @@ function ReactionBar({ m }: { m: Message }) {
               : "border-border bg-surface-2 text-muted hover:border-brand"
           }`}
         >
-          <EmojiText code={r.emoji} />
+          <EmojiText code={r.emoji} noTitle />
           <span className="tabular-nums">{r.count}</span>
         </button>
       ))}

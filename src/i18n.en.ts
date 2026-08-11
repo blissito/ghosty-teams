@@ -476,6 +476,8 @@ export const en: Record<string, string> = {
   "Todos entran como miembro": "Everyone joins as a member",
   "Todos tus agentes en un solo lugar. Cada uno se tagea por su @handle. Crea y configura agentes gestionados en Studio, o conecta bots externos por webhook.": "All your agents in one place. Each one is tagged by its @handle. Create and configure managed agents in Studio, or connect external bots via webhook.",
   "Toggle reacción": "Toggle reaction",
+  "reaccionó con": "reacted with",
+  "reaccionaron con": "reacted with",
   "Token de tu cuenta Claude Max (corre `claude setup-token`), no un API key de la consola. Corre off-meter en tu cuenta.": "Token from your Claude Max account (run `claude setup-token`), not a console API key. Runs off-meter on your account.",
   "Tono, rol y reglas SOLO para este espacio (ej. más formal, cita la fuente, ofrece el siguiente paso)…": "Tone, role and rules ONLY for this space (e.g. more formal, cite the source, offer the next step)…",
   "Trae issues y PRs al chat; @ghosty los resume y comenta.": "Brings issues and PRs into the chat; @ghosty summarizes and comments on them.",
