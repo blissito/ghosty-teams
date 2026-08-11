@@ -478,6 +478,7 @@ export const en: Record<string, string> = {
   "Toggle reacción": "Toggle reaction",
   "reaccionó con": "reacted with",
   "reaccionaron con": "reacted with",
+  "alguien más": "someone else",
   "Token de tu cuenta Claude Max (corre `claude setup-token`), no un API key de la consola. Corre off-meter en tu cuenta.": "Token from your Claude Max account (run `claude setup-token`), not a console API key. Runs off-meter on your account.",
   "Tono, rol y reglas SOLO para este espacio (ej. más formal, cita la fuente, ofrece el siguiente paso)…": "Tone, role and rules ONLY for this space (e.g. more formal, cite the source, offer the next step)…",
   "Trae issues y PRs al chat; @ghosty los resume y comenta.": "Brings issues and PRs into the chat; @ghosty summarizes and comments on them.",

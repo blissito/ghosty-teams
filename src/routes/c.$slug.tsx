@@ -9765,6 +9765,10 @@ function ReactionBar({ m }: { m: Message }) {
     const names = subs
       .map((s) => (s === me?.sub ? me?.name : users.get(s)?.name))
       .filter((n): n is string => !!n);
+    // Un sub que no está en el directorio vivo (agente, alguien que ya salió) se caía
+    // en silencio: el chip decía 3 y el tooltip nombraba 2. Se cuenta como "N más".
+    const faltan = subs.length - names.length;
+    if (faltan > 0) names.push(faltan === 1 ? t("alguien más") : `${faltan} ${t("más")}`);
     if (!names.length) return t("Toggle reacción");
     // "Ana, Luis y Pau reaccionaron con :party_blob:" — el emoji al final, como Slack.
     const list =
