@@ -40,7 +40,7 @@ import { Route as SetupEasybitsCallbackRouteImport } from './routes/setup.easybi
 import { Route as SetupProviderConnectRouteImport } from './routes/setup.$provider.connect'
 import { Route as SetupProviderCallbackRouteImport } from './routes/setup.$provider.callback'
 import { Route as OauthProviderCallbackRouteImport } from './routes/oauth.$provider.callback'
-import { Route as EnVivoSlugSalaRouteImport } from './routes/en-vivo.$slug.sala'
+import { Route as EnVivoSlugSalaRouteImport } from './routes/en-vivo.$slug_.sala'
 import { Route as CoeditarInvitacionTokenRouteImport } from './routes/coeditar.invitacion.$token'
 import { Route as ArtefactoIdRawRouteImport } from './routes/artefacto.$id.raw'
 import { Route as ApiInternalMembersRouteImport } from './routes/api.internal.members'
@@ -222,9 +222,9 @@ const OauthProviderCallbackRoute = OauthProviderCallbackRouteImport.update({
   getParentRoute: () => rootRouteImport,
 } as any)
 const EnVivoSlugSalaRoute = EnVivoSlugSalaRouteImport.update({
-  id: '/sala',
-  path: '/sala',
-  getParentRoute: () => EnVivoSlugRoute,
+  id: '/en-vivo/$slug_/sala',
+  path: '/en-vivo/$slug/sala',
+  getParentRoute: () => rootRouteImport,
 } as any)
 const CoeditarInvitacionTokenRoute = CoeditarInvitacionTokenRouteImport.update({
   id: '/coeditar/invitacion/$token',
@@ -374,7 +374,7 @@ export interface FileRoutesByFullPath {
   '/artefacto/$id': typeof ArtefactoIdRouteWithChildren
   '/c/$slug': typeof CSlugRoute
   '/coeditar/$slug': typeof CoeditarSlugRoute
-  '/en-vivo/$slug': typeof EnVivoSlugRouteWithChildren
+  '/en-vivo/$slug': typeof EnVivoSlugRoute
   '/join/$token': typeof JoinTokenRoute
   '/t3/$': typeof T3SplatRoute
   '/setup/': typeof SetupIndexRoute
@@ -431,7 +431,7 @@ export interface FileRoutesByTo {
   '/artefacto/$id': typeof ArtefactoIdRouteWithChildren
   '/c/$slug': typeof CSlugRoute
   '/coeditar/$slug': typeof CoeditarSlugRoute
-  '/en-vivo/$slug': typeof EnVivoSlugRouteWithChildren
+  '/en-vivo/$slug': typeof EnVivoSlugRoute
   '/join/$token': typeof JoinTokenRoute
   '/t3/$': typeof T3SplatRoute
   '/setup': typeof SetupIndexRoute
@@ -490,7 +490,7 @@ export interface FileRoutesById {
   '/artefacto/$id': typeof ArtefactoIdRouteWithChildren
   '/c/$slug': typeof CSlugRoute
   '/coeditar/$slug': typeof CoeditarSlugRoute
-  '/en-vivo/$slug': typeof EnVivoSlugRouteWithChildren
+  '/en-vivo/$slug': typeof EnVivoSlugRoute
   '/join/$token': typeof JoinTokenRoute
   '/t3/$': typeof T3SplatRoute
   '/setup/': typeof SetupIndexRoute
@@ -512,7 +512,7 @@ export interface FileRoutesById {
   '/api/internal/members': typeof ApiInternalMembersRoute
   '/artefacto/$id/raw': typeof ArtefactoIdRawRoute
   '/coeditar/invitacion/$token': typeof CoeditarInvitacionTokenRoute
-  '/en-vivo/$slug/sala': typeof EnVivoSlugSalaRoute
+  '/en-vivo/$slug_/sala': typeof EnVivoSlugSalaRoute
   '/oauth/$provider/callback': typeof OauthProviderCallbackRoute
   '/setup/$provider/callback': typeof SetupProviderCallbackRoute
   '/setup/$provider/connect': typeof SetupProviderConnectRoute
@@ -687,7 +687,7 @@ export interface FileRouteTypes {
     | '/api/internal/members'
     | '/artefacto/$id/raw'
     | '/coeditar/invitacion/$token'
-    | '/en-vivo/$slug/sala'
+    | '/en-vivo/$slug_/sala'
     | '/oauth/$provider/callback'
     | '/setup/$provider/callback'
     | '/setup/$provider/connect'
@@ -724,7 +724,7 @@ export interface RootRouteChildren {
   ArtefactoIdRoute: typeof ArtefactoIdRouteWithChildren
   CSlugRoute: typeof CSlugRoute
   CoeditarSlugRoute: typeof CoeditarSlugRoute
-  EnVivoSlugRoute: typeof EnVivoSlugRouteWithChildren
+  EnVivoSlugRoute: typeof EnVivoSlugRoute
   JoinTokenRoute: typeof JoinTokenRoute
   T3SplatRoute: typeof T3SplatRoute
   ApiArtifactStreamIdRoute: typeof ApiArtifactStreamIdRoute
@@ -744,6 +744,7 @@ export interface RootRouteChildren {
   ApiInternalAnnouncementsRoute: typeof ApiInternalAnnouncementsRoute
   ApiInternalMembersRoute: typeof ApiInternalMembersRoute
   CoeditarInvitacionTokenRoute: typeof CoeditarInvitacionTokenRoute
+  EnVivoSlugSalaRoute: typeof EnVivoSlugSalaRoute
   OauthProviderCallbackRoute: typeof OauthProviderCallbackRoute
   ApiCollabDocIdSessionEndRoute: typeof ApiCollabDocIdSessionEndRoute
   ApiCollabDocIdStateRoute: typeof ApiCollabDocIdStateRoute
@@ -972,12 +973,12 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof OauthProviderCallbackRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/en-vivo/$slug/sala': {
-      id: '/en-vivo/$slug/sala'
-      path: '/sala'
+    '/en-vivo/$slug_/sala': {
+      id: '/en-vivo/$slug_/sala'
+      path: '/en-vivo/$slug/sala'
       fullPath: '/en-vivo/$slug/sala'
       preLoaderRoute: typeof EnVivoSlugSalaRouteImport
-      parentRoute: typeof EnVivoSlugRoute
+      parentRoute: typeof rootRouteImport
     }
     '/coeditar/invitacion/$token': {
       id: '/coeditar/invitacion/$token'
@@ -1180,18 +1181,6 @@ const ArtefactoIdRouteWithChildren = ArtefactoIdRoute._addFileChildren(
   ArtefactoIdRouteChildren,
 )
 
-interface EnVivoSlugRouteChildren {
-  EnVivoSlugSalaRoute: typeof EnVivoSlugSalaRoute
-}
-
-const EnVivoSlugRouteChildren: EnVivoSlugRouteChildren = {
-  EnVivoSlugSalaRoute: EnVivoSlugSalaRoute,
-}
-
-const EnVivoSlugRouteWithChildren = EnVivoSlugRoute._addFileChildren(
-  EnVivoSlugRouteChildren,
-)
-
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   ArtifactsRoute: ArtifactsRoute,
@@ -1215,7 +1204,7 @@ const rootRouteChildren: RootRouteChildren = {
   ArtefactoIdRoute: ArtefactoIdRouteWithChildren,
   CSlugRoute: CSlugRoute,
   CoeditarSlugRoute: CoeditarSlugRoute,
-  EnVivoSlugRoute: EnVivoSlugRouteWithChildren,
+  EnVivoSlugRoute: EnVivoSlugRoute,
   JoinTokenRoute: JoinTokenRoute,
   T3SplatRoute: T3SplatRoute,
   ApiArtifactStreamIdRoute: ApiArtifactStreamIdRoute,
@@ -1235,6 +1224,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiInternalAnnouncementsRoute: ApiInternalAnnouncementsRoute,
   ApiInternalMembersRoute: ApiInternalMembersRoute,
   CoeditarInvitacionTokenRoute: CoeditarInvitacionTokenRoute,
+  EnVivoSlugSalaRoute: EnVivoSlugSalaRoute,
   OauthProviderCallbackRoute: OauthProviderCallbackRoute,
   ApiCollabDocIdSessionEndRoute: ApiCollabDocIdSessionEndRoute,
   ApiCollabDocIdStateRoute: ApiCollabDocIdStateRoute,

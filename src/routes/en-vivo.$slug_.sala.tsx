@@ -5,6 +5,14 @@ import { eventFlowFn, eventPostFn } from "../server/events/chat";
 
 // La sala del evento: el video de la caja de LiveKit embebido, y el chat al lado.
 //
+// ⚠️ El archivo se llama `en-vivo.$slug_.sala.tsx` con GUION BAJO en `$slug_`, y
+// no es cosmético: sin él, TanStack anida esta ruta DENTRO de `en-vivo.$slug` y,
+// como aquel componente no pinta ningún <Outlet/>, la sala no se renderiza nunca.
+// El síntoma es de los que engañan — la URL cambia a /sala, la navegación
+// "funciona", y en pantalla sigue el formulario de registro vacío, o sea que
+// parece que el registro no guardó. El guion bajo saca a la hija del layout de
+// la madre.
+//
 // Por qué embebida y no mandando a la gente a la URL de la caja: allá no existe
 // el chat, ni el agente, ni queda historial. Y de paso el TICKET deja de viajar
 // por la barra de direcciones — se acuña aquí, por carga de página, y sólo llega
@@ -44,7 +52,7 @@ const loadSala = createServerFn({ method: "GET" })
     };
   });
 
-export const Route = createFileRoute("/en-vivo/$slug/sala")({
+export const Route = createFileRoute("/en-vivo/$slug_/sala")({
   loader: async ({ params }) => {
     const d = await loadSala({ data: { slug: params.slug } });
     if (!d) throw notFound();
