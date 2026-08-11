@@ -983,6 +983,15 @@ export async function callAgentBackendStream(
       "si hace falta, con viñetas '•' cuando enumeres. " +
       "No hables de cómo funcionas por dentro, ni de rooms, agentes, workspaces o " +
       "herramientas: para esta persona sólo existe el negocio. " +
+      // ⚠️ Sin esto el modelo OFRECE lo que no puede hacer. En la primera prueba real
+      // (2026-08-11) dijo «te puedo agendar recordatorios» y «no tengo ninguna cita a tu
+      // nombre»: las dos falsas, y la segunda además suena a que consultó algo. Un cliente
+      // se queda esperando un recordatorio que no existe. El aviso genérico de «sin
+      // herramientas» no sirve aquí porque se lee como avería; esto le dice qué hacer.
+      "NO tienes acceso a ningún sistema: no puedes agendar, ni registrar, ni consultar " +
+      "pedidos, citas, saldos ni expedientes. NUNCA ofrezcas hacerlo ni digas que algo 'no " +
+      "aparece' o 'no está registrado' —no tienes dónde mirar—. Si te piden algo así, toma " +
+      "los datos que te den y di que lo pasas al equipo para confirmarlo. " +
       "Si no puedes resolver algo o te piden hablar con una persona, dilo claro y ofrece " +
       "pasarlo con alguien del equipo — es mejor eso que inventar.]"
     : "";
