@@ -843,7 +843,21 @@ export async function callAgentBackendStream(
    * "no tengo acceso a Sentry" mientras la integración está perfectamente conectada.
    * Falla en silencio porque ese catch es best-effort a propósito.
    */
-  originOverride?: string
+  originOverride?: string,
+  /**
+   * CANAL PÚBLICO (hoy: WhatsApp). Quien escribe es un desconocido sin sesión.
+   *
+   * 🔴 Es una frontera de SEGURIDAD, no una preferencia. Sin esto habría que pasar el `sub`
+   * de una persona para que el turno tuviera tools, y entonces un extraño —con el texto que
+   * él escribe— dispararía un turno con el tool-token de esa persona, con su agenda y sus
+   * conectores en el prompt, y con la respuesta saliendo hacia él: prompt injection con
+   * canal de exfiltración incluido. Por eso aquí NO se mintea token ni se inyecta contexto
+   * de conectores, ni siquiera si llega un `invokerSub`.
+   *
+   * Es el mismo patrón que sofi-0/tania-0 ya usan en producción: el turno público no tiene
+   * las herramientas privilegiadas, y eso se resuelve fuera del alcance del modelo.
+   */
+  publicChannel?: boolean
 ): Promise<string> {
   if (agent.backend.kind !== "fleet") {
     // Sin SSE todavía: colecta el reply completo y lo emite de un tirón (el cliente
@@ -878,7 +892,7 @@ export async function callAgentBackendStream(
       turnOrigin = null; // turno fuera de un request: se degrada, no se rompe
     }
   }
-  if (native && invokerSub) {
+  if (native && invokerSub && !publicChannel) {
     try {
       const { mintToolToken } = await import("./server/connectors/tool-token.server");
       // El ns va DENTRO del token: sin él, un token de este workspace serviría contra el
@@ -915,8 +929,14 @@ export async function callAgentBackendStream(
   // funciono por webhooks entrantes, hay dos caminos reales…" — falso desde hacía media
   // hora, y dicho con toda seguridad. Un cliente se lo cree. Decir "no puedo" es una
   // respuesta correcta; describir capacidades imaginarias no lo es.
-  const sinToolsHint =
-    toolToken && toolsUrl
+  //
+  // ⚠️ En un canal PÚBLICO este aviso sobra y hace daño: no es una degradación temporal
+  // —el turno público nunca tiene tools, por diseño— y el cliente acabaría leyendo "no
+  // tengo herramientas disponibles en este momento", que suena a avería. Lo sustituye el
+  // guardrail de canal, que sí le dice cómo comportarse.
+  const sinToolsHint = publicChannel
+    ? ""
+    : toolToken && toolsUrl
       ? ""
       : "[SIN HERRAMIENTAS EN ESTE TURNO. No tienes acceso a integraciones, recordatorios, " +
         "formularios ni búsqueda de mensajes. ESTO MANDA sobre cualquier otro bloque de " +
@@ -939,14 +959,34 @@ export async function callAgentBackendStream(
   // reciclaría la sesión persistente y cada turno correría en frío.
   let connHint = "";
   try {
-    if (invokerSub) {
+    // `!publicChannel`: este bloque nombra a las personas del equipo y lo que cada una
+    // tiene conectado. En un canal público sería filtrar datos de terceros a un extraño,
+    // aunque las tools no se puedan ejecutar.
+    if (invokerSub && !publicChannel) {
       const { buildConnectorContext } = await import("./server/connectors/context.server");
       connHint = await buildConnectorContext(invokerSub, sender || "el usuario", text, dest ?? null);
     }
   } catch { /* un conector roto nunca tumba el turno */ }
   // `sinToolsHint` va PRIMERO a propósito: dice que manda sobre cualquier bloque que
   // afirme tener integraciones, y este es exactamente ese bloque.
-  const outText = sinToolsHint + connHint + nowHint + memHint + brandHint + docHint + text;
+  // Guardrail del canal público. Va AL FINAL, pegado al mensaje del cliente, no en el
+  // system prompt: una regla enterrada en 70 KB de persona no pesa, y la de arriba es la
+  // lección que easybits ya pagó. Es de FORMA, no de personalidad — el tono lo pone el
+  // agente que el dueño asignó.
+  //
+  // Lo de "nunca markdown" no es estética: WhatsApp no lo renderiza, así que un `**` o una
+  // tabla llegan como basura literal al cliente.
+  const canalHint = publicChannel
+    ? "\n\n[ESTÁS CONTESTANDO POR WHATSAPP a un cliente, no en un chat interno. " +
+      "NUNCA uses markdown (ni **negritas**, ni ##, ni tablas, ni ```bloques```): WhatsApp no " +
+      "lo pinta y llega como basura. Responde corto —4-5 líneas—, en varios párrafos breves " +
+      "si hace falta, con viñetas '•' cuando enumeres. " +
+      "No hables de cómo funcionas por dentro, ni de rooms, agentes, workspaces o " +
+      "herramientas: para esta persona sólo existe el negocio. " +
+      "Si no puedes resolver algo o te piden hablar con una persona, dilo claro y ofrece " +
+      "pasarlo con alguien del equipo — es mejor eso que inventar.]"
+    : "";
+  const outText = sinToolsHint + connHint + nowHint + memHint + brandHint + docHint + text + canalHint;
   try {
     // `parts` = FileParts A2A (media); EasyBits los normaliza por MIME (Slice E1).
     // configGroupId "teams" = unidad de config ESTABLE de este canal en EasyBits
@@ -1566,6 +1606,8 @@ async function runAgentTurnInner(opts: {
   onShell?: (id: number) => void;
   /** Origin del tenant cuando el turno corre FUERA de un request (webhooks). Ver callAgentBackendStream. */
   originOverride?: string;
+  /** Canal PÚBLICO: sin tools ni contexto de conectores. Ver callAgentBackendStream. */
+  publicChannel?: boolean;
 }): Promise<{ id: number; reply: string }> {
   let id: number | null = null;
   const ensure = async (): Promise<number> => {
@@ -1777,7 +1819,7 @@ async function runAgentTurnInner(opts: {
     await onChunk(reply);
   } else {
     try {
-      reply = await callAgentBackendStream(opts.agent, opts.groupId, opts.sender, opts.text, onChunk, opts.parts ?? [], onTool, opts.currentDoc, opts.invokerSub, opts.signal, opts.dest, opts.inject, opts.originOverride);
+      reply = await callAgentBackendStream(opts.agent, opts.groupId, opts.sender, opts.text, onChunk, opts.parts ?? [], onTool, opts.currentDoc, opts.invokerSub, opts.signal, opts.dest, opts.inject, opts.originOverride, opts.publicChannel);
     } catch (e) {
       // Detenido: NO es un error del agente. Se conserva lo que alcanzó a escribir y se
       // dice que se detuvo — borrarlo tiraría trabajo que el usuario ya estaba leyendo.

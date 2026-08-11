@@ -966,6 +966,25 @@ async function migrate(): Promise<void> {
     PRIMARY KEY (integration_id, phone)
   )`);
 
+  // Estado de atención de cada conversación. Por `addColumn`: la tabla ya existe en los
+  // tenants vivos y un CREATE TABLE IF NOT EXISTS no la re-crearía.
+  //
+  // `paused_until` = alguien del equipo tomó la conversación y el agente se calla. **Con
+  // fecha, nunca un booleano**: una pausa que no caduca convierte "atiendo yo esto" en un
+  // cliente abandonado en silencio semanas después. Lo despausa el tiempo o una persona.
+  await addColumn("gt_wa_threads", "paused_until", "INTEGER");
+  await addColumn("gt_wa_threads", "paused_by", "TEXT");
+  await addColumn("gt_wa_threads", "last_message_at", "INTEGER");
+  await addColumn("gt_wa_threads", "contact_name", "TEXT");
+
+  // Límite de turnos por contacto (ver whatsapp/rate.server.ts). Gemela de gt_form_rate.
+  await exec(`CREATE TABLE IF NOT EXISTS gt_wa_rate (
+    bucket       TEXT NOT NULL,
+    window_start INTEGER NOT NULL,
+    count        INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (bucket, window_start)
+  )`);
+
   // Bitácora de los correos que manda el AGENTE (tool `email_send`). Append-only y aparte
   // del log de SES: un envío saliente a terceros, con nuestro dominio en el From y texto
   // escrito por un modelo, tiene que poder reconstruirse ante un reporte de abuso — quién lo

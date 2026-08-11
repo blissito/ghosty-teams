@@ -105,9 +105,8 @@ export const Route = createFileRoute("/api/hooks/whatsapp/$token/message")({
             if (dup && dup.length === 0) return json({ ok: true, duplicate: true });
           }
 
-          const { getWaChannel, resolveContactThread } = await import(
-            "../server/whatsapp/channels.server"
-          );
+          const { getWaChannel, resolveContactThread, isThreadPaused, touchContactThread } =
+            await import("../server/whatsapp/channels.server");
           const chan = await getWaChannel(integrationId);
           // Sin fila = número que ya no está conectado de nuestro lado. Ack para que no
           // reintente, y no se escribe nada.
@@ -172,6 +171,7 @@ export const Route = createFileRoute("/api/hooks/whatsapp/$token/message")({
           });
           const msg = await db.getMessage(msgId);
           if (msg) bus.publish(bus.ch.room(ref.ns, roomId), { t: "message:new", msg });
+          void touchContactThread(integrationId, phone, contactName);
 
           // ── Media: después del ack ──────────────────────────────────────────────
           // `media.url` es el PROXY autenticado de Formmy (streaming directo desde Meta),
@@ -190,6 +190,56 @@ export const Route = createFileRoute("/api/hooks/whatsapp/$token/message")({
               mime: media.mime_type || "application/octet-stream",
               name: media.filename || `wa-${media.type ?? "file"}`,
             }).catch((e) => console.error("[wa] media ingest failed", String(e).slice(0, 200)));
+          }
+
+          // ── La respuesta del agente ─────────────────────────────────────────────
+          // Cuatro compuertas antes de gastar un turno. Cada una responde a algo distinto,
+          // y el mensaje ya quedó guardado arriba pase lo que pase: ninguna DESCARTA nada,
+          // sólo deciden si el agente habla.
+          const paused = await isThreadPaused(integrationId, phone).catch(() => false);
+          const puedeContestar =
+            !!chan.agentHandle &&          // hay alguien asignado en Ajustes → Integraciones
+            !mine &&                       // el dueño escribiendo desde su móvil no se auto-contesta
+            !payload.manual_mode &&        // Formmy EMPUJA el handoff; nunca lo inferimos del outbound
+            !paused &&                     // o lo tomó alguien desde Teams (caduca sola, ~2h)
+            !chan.chainUrl;                // 🔴 con cadena viva contesta el destino anterior: dos respuestas
+
+          if (puedeContestar) {
+            const { waConversationKey, replyToWaMessage } = await import(
+              "../server/whatsapp/reply.server"
+            );
+            const { waTurnAllowed } = await import("../server/whatsapp/rate.server");
+            const convKey = waConversationKey(integrationId, phone);
+            if (await waTurnAllowed(convKey)) {
+              // 🔴 `origin` se captura AQUÍ, con el request vivo. `reqOrigin()` lee cabeceras;
+              // el turno corre después del ack y allá ya no hay ninguna. Sin esto el turno
+              // sale sin herramientas y en silencio.
+              const { reqOrigin } = await import("../origin.server");
+              const origin = (await reqOrigin().catch(() => "")) || "";
+              // Acuse + "escribiendo…" para que el cliente no crea que nadie lo leyó.
+              const { markWaRead } = await import("../server/whatsapp/formmy-partner.server");
+              void markWaRead({
+                integrationId,
+                channelSecret: chan.channelSecret,
+                phone,
+                messageId: String(payload.message_id ?? ""),
+              });
+              // Fire-and-forget DESPUÉS del ack: el webhook de Meta no espera a un turno.
+              void replyToWaMessage({
+                ns: ref.ns,
+                integrationId,
+                channelSecret: chan.channelSecret,
+                channelId: roomId,
+                threadId,
+                handle: chan.agentHandle!,
+                phone,
+                contactName,
+                text: body,
+                origin,
+              });
+            } else {
+              console.warn(`[wa] rate limit para ${convKey}: el mensaje se guardó, el agente no contesta`);
+            }
           }
 
           return json({ ok: true, messageId: msgId, mine });

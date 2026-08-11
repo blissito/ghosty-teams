@@ -338,8 +338,15 @@ export async function attachArtifacts(msgs: Message[]): Promise<Message[]> {
 
 export type AgentNote = { id: number; note: string; createdBy: string | null; updatedAt: number };
 
-/** Clave de alcance. Por ROOM o DM, nunca por hilo. */
-export function memoryScopeKey(d: { channelId?: number | null; dmId?: number | null }): string | null {
+/**
+ * Clave de alcance. Por ROOM o DM, nunca por hilo.
+ *
+ * La excepción es `memoryScope`, que pisa a los dos: un hilo de WhatsApp vive DENTRO de un
+ * room pero es la conversación de un contacto. Sin él, el agente mezclaría a ese cliente con
+ * los demás contactos del número y con lo que el equipo habla en el room.
+ */
+export function memoryScopeKey(d: { channelId?: number | null; dmId?: number | null; memoryScope?: string | null }): string | null {
+  if (d.memoryScope) return d.memoryScope;
   if (d.dmId != null) return `dm:${d.dmId}`;
   if (d.channelId != null) return `ch:${d.channelId}`;
   return null;

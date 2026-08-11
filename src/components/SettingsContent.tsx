@@ -29,8 +29,9 @@ import { intlLocale } from "../i18n.core";
 import { Monitor, Sun, Moon, Check, SlidersHorizontal, Palette, SwatchBook, Github, Plug, Users, Calendar, CalendarClock, CalendarCheck, Link2, RefreshCw, Gauge, Bug } from "lucide-react";
 import { workspaceUsageFn } from "../server/workspaces";
 import { listMyConnectorsFn, disconnectConnectorFn, shareConnectorFn } from "../server/connectors";
-import { listWaChannelsFn, disconnectWaFn, type WaChannelView } from "../server/whatsapp";
+import { listWaChannelsFn, disconnectWaFn, setWaAgentFn, type WaChannelView } from "../server/whatsapp";
 import { forwardTargetsFn } from "../server/forward";
+import { listAgentsFn } from "../server/agents";
 import { MessageCircle } from "lucide-react";
 import {
   PRESETS,
@@ -393,6 +394,7 @@ function WhatsAppPanel() {
   const [state, setState] = useState<{ channels: WaChannelView[]; canManage: boolean } | null>(null);
   const [rooms, setRooms] = useState<{ slug: string; name: string }[]>([]);
   const [room, setRoom] = useState("");
+  const [agents, setAgents] = useState<{ handle: string; name: string }[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
   const [connecting, setConnecting] = useState(false);
   const load = () => { listWaChannelsFn().then(setState).catch(() => setState({ channels: [], canManage: false })); };
@@ -401,6 +403,9 @@ function WhatsAppPanel() {
     forwardTargetsFn()
       .then((r) => setRooms(r.channels.map((c) => ({ slug: c.slug, name: c.name }))))
       .catch(() => setRooms([]));
+    listAgentsFn()
+      .then((a) => setAgents(a.map((x) => ({ handle: x.handle, name: x.name }))))
+      .catch(() => setAgents([]));
     // Volver con Atrás desde el wizard: Safari sirve la página del caché sin re-montar
     // React, así que el botón se quedaría girando para siempre. `pageshow` sí dispara ahí.
     const wake = () => setConnecting(false);
@@ -450,6 +455,25 @@ function WhatsAppPanel() {
                   </span>
                 </span>
               </span>
+              {/* Quién atiende. Se cambia aquí y no sólo al parear: cambiar de agente no
+                  puede obligar a repetir el wizard de Meta. "Nadie" es una opción real —
+                  el número recibe y el equipo contesta a mano desde el room. */}
+              <select
+                value={c.agentHandle ?? ""}
+                onChange={async (e) => {
+                  setBusy(c.integrationId);
+                  try { await setWaAgentFn({ data: { integrationId: c.integrationId, handle: e.target.value } }); }
+                  catch (err) { console.error("[whatsapp] set agent failed", err); }
+                  finally { load(); setBusy(null); }
+                }}
+                disabled={busy === c.integrationId}
+                className="shrink-0 rounded-md border border-border bg-surface px-2 py-1 text-xs disabled:opacity-50"
+              >
+                <option value="">{t("Nadie contesta")}</option>
+                {agents.map((a) => (
+                  <option key={a.handle} value={a.handle}>@{a.handle}</option>
+                ))}
+              </select>
               <button
                 onClick={() => disconnect(c.integrationId)}
                 disabled={busy === c.integrationId}

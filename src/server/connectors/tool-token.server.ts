@@ -29,7 +29,10 @@ const DEFAULT_TTL_S = 900; // 15 min: cubre turnos largos con tools encadenadas.
 // recordatorio a otra persona en otro canal. Firmado = no lo puede cambiar.
 // `parentId` = el turno ocurre dentro de un HILO. Lo usa la lectura de historial para no
 // salirse de él: si te invocan en un hilo, lo que se puede leer es ese hilo.
-export type ToolDest = { channelId?: number; dmId?: number; parentId?: number; topic?: string; handle?: string; name?: string; avatar?: string };
+// `memoryScope` PISA la clave derivada de channelId/dmId. Existe para las conversaciones
+// que viven dentro de un room pero NO son del room: un hilo de WhatsApp es de UN contacto,
+// y sin esto compartiría memoria con el equipo y con los demás contactos del mismo número.
+export type ToolDest = { channelId?: number; dmId?: number; parentId?: number; topic?: string; handle?: string; name?: string; avatar?: string; memoryScope?: string };
 
 /**
  * ⚠️ `ns` es OBLIGATORIO y va SEGUNDO, no al final.

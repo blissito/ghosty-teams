@@ -65,6 +65,20 @@ export async function getWaChannel(integrationId: string): Promise<WaChannel | n
 }
 
 /**
+ * Cambia QUÉ agente atiende el número.
+ *
+ * Existe aparte de `saveWaChannel` porque el handle se fijaba sólo al parear, y cambiar de
+ * agente no puede exigir volver a pasar por el wizard de Meta. `null` = nadie atiende: el
+ * número sigue recibiendo y los mensajes aterrizan en el room, pero no contesta.
+ */
+export async function setWaAgent(integrationId: string, handle: string | null): Promise<void> {
+  await dbq(`UPDATE gt_wa_channels SET agent_handle = ? WHERE integration_id = ?`, [
+    handle || null,
+    integrationId,
+  ]);
+}
+
+/**
  * Prende (o apaga, con `url` vacía) la CADENA de un número.
  *
  * Existe para migrar un número que ya tenía dueño: `Integration.externalAgentUrl` de
@@ -107,6 +121,56 @@ export async function deleteWaChannel(integrationId: string): Promise<void> {
  * Devuelve también `created` para que quien llama publique la raíz al bus la primera vez
  * (sin eso, el hilo nuevo no aparece hasta recargar).
  */
+/**
+ * Marca actividad en la conversación: es lo que ordena la bandeja.
+ *
+ * El nombre se refresca en cada mensaje porque la gente se cambia el perfil de WhatsApp, y
+ * una bandeja con el nombre de hace seis meses no sirve para encontrar a nadie.
+ */
+export async function touchContactThread(
+  integrationId: string,
+  phone: string,
+  contactName: string,
+): Promise<void> {
+  await dbq(
+    `UPDATE gt_wa_threads SET last_message_at = unixepoch(), contact_name = COALESCE(NULLIF(?, ''), contact_name)
+       WHERE integration_id = ? AND phone = ?`,
+    [contactName, integrationId, phone],
+  ).catch(() => []);
+}
+
+/** Cuánto se calla el agente cuando una persona toma la conversación. */
+export const WA_PAUSE_MS = 2 * 60 * 60 * 1000;
+
+/**
+ * ¿El agente debe callarse en esta conversación?
+ *
+ * La pausa CADUCA sola. Es la práctica estándar de las herramientas de atención (~2h) y la
+ * razón es concreta: alguien contesta a mano una vez, se va a comer, y sin caducidad esa
+ * conversación se queda sin agente para siempre sin que nadie se entere.
+ */
+export async function isThreadPaused(integrationId: string, phone: string): Promise<boolean> {
+  const rows = await dbq(
+    `SELECT paused_until FROM gt_wa_threads WHERE integration_id = ? AND phone = ?`,
+    [integrationId, phone],
+  ).catch(() => []);
+  const until = rows[0]?.paused_until;
+  return !!until && Number(until) * 1000 > Date.now();
+}
+
+/** Toma (o suelta, con `on:false`) una conversación. `by` = sub de quien la tomó. */
+export async function setThreadPause(
+  integrationId: string,
+  phone: string,
+  on: boolean,
+  by: string | null,
+): Promise<void> {
+  await dbq(
+    `UPDATE gt_wa_threads SET paused_until = ?, paused_by = ? WHERE integration_id = ? AND phone = ?`,
+    [on ? Math.floor((Date.now() + WA_PAUSE_MS) / 1000) : null, on ? by : null, integrationId, phone],
+  );
+}
+
 export async function resolveContactThread(args: {
   integrationId: string;
   roomId: number;
