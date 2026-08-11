@@ -922,6 +922,39 @@ async function migrate(): Promise<void> {
     PRIMARY KEY (channel_id, window_start)
   )`);
 
+  // ── WhatsApp Business ─────────────────────────────────────────────────────────
+  // Un número conectado por Formmy (que es el BSP: tiene el App Secret de Meta y la
+  // Integration con el token). De su lado sólo guardamos lo necesario para reconocer
+  // la entrega y para pedirle a Formmy que envíe: NUNCA el token de Meta.
+  //
+  // `room_id` es el room DESTINO, elegido al conectar. `acting_sub` es en nombre de
+  // quién trabaja el agente cuando escribe un desconocido — un contacto de WhatsApp no
+  // tiene sesión, así que sin esto un turno saldría sin conectores y sin nadie que
+  // pueda detenerlo. Se llena aquí y lo consume la fase de respuesta.
+  await exec(`CREATE TABLE IF NOT EXISTS gt_wa_channels (
+    integration_id TEXT PRIMARY KEY,
+    phone          TEXT NOT NULL,
+    channel_secret TEXT NOT NULL,
+    room_id        INTEGER NOT NULL,
+    agent_handle   TEXT,
+    acting_sub     TEXT,
+    created_at     INTEGER NOT NULL
+  )`);
+
+  // Un HILO por contacto. `thread_id` es el mensaje raíz (la cabecera del contacto);
+  // cada mensaje que llega cuelga de él como respuesta.
+  //
+  // La clave es (integration_id, phone) y no el teléfono solo: dos números conectados
+  // pueden hablar con el MISMO contacto, y compartir hilo mezclaría dos conversaciones
+  // distintas en la misma pantalla.
+  await exec(`CREATE TABLE IF NOT EXISTS gt_wa_threads (
+    integration_id TEXT NOT NULL,
+    phone          TEXT NOT NULL,
+    thread_id      INTEGER NOT NULL,
+    created_at     INTEGER NOT NULL,
+    PRIMARY KEY (integration_id, phone)
+  )`);
+
   // Bitácora de los correos que manda el AGENTE (tool `email_send`). Append-only y aparte
   // del log de SES: un envío saliente a terceros, con nuestro dominio en el From y texto
   // escrito por un modelo, tiene que poder reconstruirse ante un reporte de abuso — quién lo

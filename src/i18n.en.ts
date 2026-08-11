@@ -1176,4 +1176,14 @@ export const en: Record<string, string> = {
   "«{name}» sale de la lista; las notas ya destiladas se quedan.":
     "“{name}” leaves the list; already-distilled notes stay.",
   "Adjuntar archivo o imagen": "Attach a file or image",
+
+  // WhatsApp Business
+  "WhatsApp Business": "WhatsApp Business",
+  "Conecta tu número y cada conversación aparece como un hilo en el room que elijas.":
+    "Connect your number and every conversation shows up as a thread in the room you pick.",
+  "room no disponible": "room unavailable",
+  "Elige el room destino…": "Pick the destination room…",
+  "Conectar número": "Connect number",
+  "Un número recién conectado RECIBE pero todavía no contesta.":
+    "A newly connected number RECEIVES but doesn't reply yet.",
 };

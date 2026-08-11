@@ -57,9 +57,12 @@ import { Route as ApiConnectorsToolsRouteImport } from './routes/api.connectors.
 import { Route as ApiBrandAssetSplatRouteImport } from './routes/api.brand-asset.$'
 import { Route as ApiAttachmentIdRouteImport } from './routes/api.attachment.$id'
 import { Route as ApiArtifactStreamIdRouteImport } from './routes/api.artifact-stream.$id'
+import { Route as ApiWhatsappConnectStartRouteImport } from './routes/api.whatsapp.connect.start'
+import { Route as ApiWhatsappConnectFinishRouteImport } from './routes/api.whatsapp.connect.finish'
 import { Route as ApiHooksSentryTokenRouteImport } from './routes/api.hooks.sentry.$token'
 import { Route as ApiCollabDocIdStateRouteImport } from './routes/api.collab.$docId.state'
 import { Route as ApiCollabDocIdSessionEndRouteImport } from './routes/api.collab.$docId.session-end'
+import { Route as ApiHooksWhatsappTokenMessageRouteImport } from './routes/api.hooks.whatsapp.$token.message'
 
 const SetupRoute = SetupRouteImport.update({
   id: '/setup',
@@ -302,6 +305,17 @@ const ApiArtifactStreamIdRoute = ApiArtifactStreamIdRouteImport.update({
   path: '/api/artifact-stream/$id',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiWhatsappConnectStartRoute = ApiWhatsappConnectStartRouteImport.update({
+  id: '/api/whatsapp/connect/start',
+  path: '/api/whatsapp/connect/start',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiWhatsappConnectFinishRoute =
+  ApiWhatsappConnectFinishRouteImport.update({
+    id: '/api/whatsapp/connect/finish',
+    path: '/api/whatsapp/connect/finish',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const ApiHooksSentryTokenRoute = ApiHooksSentryTokenRouteImport.update({
   id: '/api/hooks/sentry/$token',
   path: '/api/hooks/sentry/$token',
@@ -316,6 +330,12 @@ const ApiCollabDocIdSessionEndRoute =
   ApiCollabDocIdSessionEndRouteImport.update({
     id: '/api/collab/$docId/session-end',
     path: '/api/collab/$docId/session-end',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const ApiHooksWhatsappTokenMessageRoute =
+  ApiHooksWhatsappTokenMessageRouteImport.update({
+    id: '/api/hooks/whatsapp/$token/message',
+    path: '/api/hooks/whatsapp/$token/message',
     getParentRoute: () => rootRouteImport,
   } as any)
 
@@ -371,6 +391,9 @@ export interface FileRoutesByFullPath {
   '/api/collab/$docId/session-end': typeof ApiCollabDocIdSessionEndRoute
   '/api/collab/$docId/state': typeof ApiCollabDocIdStateRoute
   '/api/hooks/sentry/$token': typeof ApiHooksSentryTokenRoute
+  '/api/whatsapp/connect/finish': typeof ApiWhatsappConnectFinishRoute
+  '/api/whatsapp/connect/start': typeof ApiWhatsappConnectStartRoute
+  '/api/hooks/whatsapp/$token/message': typeof ApiHooksWhatsappTokenMessageRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -423,6 +446,9 @@ export interface FileRoutesByTo {
   '/api/collab/$docId/session-end': typeof ApiCollabDocIdSessionEndRoute
   '/api/collab/$docId/state': typeof ApiCollabDocIdStateRoute
   '/api/hooks/sentry/$token': typeof ApiHooksSentryTokenRoute
+  '/api/whatsapp/connect/finish': typeof ApiWhatsappConnectFinishRoute
+  '/api/whatsapp/connect/start': typeof ApiWhatsappConnectStartRoute
+  '/api/hooks/whatsapp/$token/message': typeof ApiHooksWhatsappTokenMessageRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -477,6 +503,9 @@ export interface FileRoutesById {
   '/api/collab/$docId/session-end': typeof ApiCollabDocIdSessionEndRoute
   '/api/collab/$docId/state': typeof ApiCollabDocIdStateRoute
   '/api/hooks/sentry/$token': typeof ApiHooksSentryTokenRoute
+  '/api/whatsapp/connect/finish': typeof ApiWhatsappConnectFinishRoute
+  '/api/whatsapp/connect/start': typeof ApiWhatsappConnectStartRoute
+  '/api/hooks/whatsapp/$token/message': typeof ApiHooksWhatsappTokenMessageRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -532,6 +561,9 @@ export interface FileRouteTypes {
     | '/api/collab/$docId/session-end'
     | '/api/collab/$docId/state'
     | '/api/hooks/sentry/$token'
+    | '/api/whatsapp/connect/finish'
+    | '/api/whatsapp/connect/start'
+    | '/api/hooks/whatsapp/$token/message'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -584,6 +616,9 @@ export interface FileRouteTypes {
     | '/api/collab/$docId/session-end'
     | '/api/collab/$docId/state'
     | '/api/hooks/sentry/$token'
+    | '/api/whatsapp/connect/finish'
+    | '/api/whatsapp/connect/start'
+    | '/api/hooks/whatsapp/$token/message'
   id:
     | '__root__'
     | '/'
@@ -637,6 +672,9 @@ export interface FileRouteTypes {
     | '/api/collab/$docId/session-end'
     | '/api/collab/$docId/state'
     | '/api/hooks/sentry/$token'
+    | '/api/whatsapp/connect/finish'
+    | '/api/whatsapp/connect/start'
+    | '/api/hooks/whatsapp/$token/message'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -685,6 +723,9 @@ export interface RootRouteChildren {
   ApiCollabDocIdSessionEndRoute: typeof ApiCollabDocIdSessionEndRoute
   ApiCollabDocIdStateRoute: typeof ApiCollabDocIdStateRoute
   ApiHooksSentryTokenRoute: typeof ApiHooksSentryTokenRoute
+  ApiWhatsappConnectFinishRoute: typeof ApiWhatsappConnectFinishRoute
+  ApiWhatsappConnectStartRoute: typeof ApiWhatsappConnectStartRoute
+  ApiHooksWhatsappTokenMessageRoute: typeof ApiHooksWhatsappTokenMessageRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -1025,6 +1066,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiArtifactStreamIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/whatsapp/connect/start': {
+      id: '/api/whatsapp/connect/start'
+      path: '/api/whatsapp/connect/start'
+      fullPath: '/api/whatsapp/connect/start'
+      preLoaderRoute: typeof ApiWhatsappConnectStartRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/whatsapp/connect/finish': {
+      id: '/api/whatsapp/connect/finish'
+      path: '/api/whatsapp/connect/finish'
+      fullPath: '/api/whatsapp/connect/finish'
+      preLoaderRoute: typeof ApiWhatsappConnectFinishRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/hooks/sentry/$token': {
       id: '/api/hooks/sentry/$token'
       path: '/api/hooks/sentry/$token'
@@ -1044,6 +1099,13 @@ declare module '@tanstack/react-router' {
       path: '/api/collab/$docId/session-end'
       fullPath: '/api/collab/$docId/session-end'
       preLoaderRoute: typeof ApiCollabDocIdSessionEndRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/hooks/whatsapp/$token/message': {
+      id: '/api/hooks/whatsapp/$token/message'
+      path: '/api/hooks/whatsapp/$token/message'
+      fullPath: '/api/hooks/whatsapp/$token/message'
+      preLoaderRoute: typeof ApiHooksWhatsappTokenMessageRouteImport
       parentRoute: typeof rootRouteImport
     }
   }
@@ -1125,6 +1187,9 @@ const rootRouteChildren: RootRouteChildren = {
   ApiCollabDocIdSessionEndRoute: ApiCollabDocIdSessionEndRoute,
   ApiCollabDocIdStateRoute: ApiCollabDocIdStateRoute,
   ApiHooksSentryTokenRoute: ApiHooksSentryTokenRoute,
+  ApiWhatsappConnectFinishRoute: ApiWhatsappConnectFinishRoute,
+  ApiWhatsappConnectStartRoute: ApiWhatsappConnectStartRoute,
+  ApiHooksWhatsappTokenMessageRoute: ApiHooksWhatsappTokenMessageRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

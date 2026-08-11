@@ -29,6 +29,9 @@ import { intlLocale } from "../i18n.core";
 import { Monitor, Sun, Moon, Check, SlidersHorizontal, Palette, SwatchBook, Github, Plug, Users, Calendar, CalendarClock, CalendarCheck, Link2, RefreshCw, Gauge, Bug } from "lucide-react";
 import { workspaceUsageFn } from "../server/workspaces";
 import { listMyConnectorsFn, disconnectConnectorFn, shareConnectorFn } from "../server/connectors";
+import { listWaChannelsFn, disconnectWaFn, type WaChannelView } from "../server/whatsapp";
+import { forwardTargetsFn } from "../server/forward";
+import { MessageCircle } from "lucide-react";
 import {
   PRESETS,
   BRAND_PRESET_ID,
@@ -381,6 +384,97 @@ function connIcon(icon: string) {
   }
 }
 
+/* ── WhatsApp Business: es config del WORKSPACE, no un conector per-user, así que va en su
+   propio bloque arriba y sólo lo ve el owner. Conectar NO es una llamada desde el cliente:
+   es un redirect al wizard de Embedded Signup que hospeda Formmy (dueño del App Secret de
+   Meta). Ver `src/server/whatsapp/formmy-partner.server.ts`. ── */
+function WhatsAppPanel() {
+  const t = useT();
+  const [state, setState] = useState<{ channels: WaChannelView[]; canManage: boolean } | null>(null);
+  const [rooms, setRooms] = useState<{ slug: string; name: string }[]>([]);
+  const [room, setRoom] = useState("");
+  const [busy, setBusy] = useState<string | null>(null);
+  const load = () => { listWaChannelsFn().then(setState).catch(() => setState({ channels: [], canManage: false })); };
+  useEffect(() => {
+    load();
+    forwardTargetsFn()
+      .then((r) => setRooms(r.channels.map((c) => ({ slug: c.slug, name: c.name }))))
+      .catch(() => setRooms([]));
+  }, []);
+
+  // Sólo el owner: conectar un número gasta en el WABA del cliente.
+  if (!state?.canManage) return null;
+
+  async function disconnect(integrationId: string) {
+    setBusy(integrationId);
+    try { await disconnectWaFn({ data: { integrationId } }); }
+    catch (e) { console.error("[whatsapp] disconnect failed", e); }
+    finally { load(); setBusy(null); }
+  }
+
+  return (
+    <div className="rounded-xl border border-border bg-surface-2 p-4">
+      <div className="flex items-center gap-2">
+        <MessageCircle className="size-4 text-muted" />
+        <h3 className="text-sm font-semibold">{t("WhatsApp Business")}</h3>
+      </div>
+      <p className="mt-1 text-sm text-muted">
+        {t("Conecta tu número y cada conversación aparece como un hilo en el room que elijas.")}
+      </p>
+
+      {state.channels.length > 0 && (
+        <ul className="mt-3 space-y-2">
+          {state.channels.map((c) => (
+            <li key={c.integrationId} className="flex items-center justify-between gap-3 rounded-lg bg-surface-3 px-3 py-2 text-sm">
+              <span className="min-w-0">
+                <span className="font-medium">+{c.phone}</span>
+                <span className="text-muted">
+                  {" → "}
+                  {/* Sin room = se archivó o se borró desde que se conectó. Se dice, en vez de
+                      enseñar un destino que ya no existe. */}
+                  {c.roomName ? `#${c.roomName}` : t("room no disponible")}
+                </span>
+              </span>
+              <button
+                onClick={() => disconnect(c.integrationId)}
+                disabled={busy === c.integrationId}
+                className="shrink-0 rounded-md px-2 py-1 text-muted hover:text-ink disabled:opacity-50"
+              >
+                {busy === c.integrationId ? <Loader2 className="size-4 animate-spin" /> : t("Desconectar")}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <select
+          value={room}
+          onChange={(e) => setRoom(e.target.value)}
+          className="rounded-lg border border-border bg-surface px-2 py-1.5 text-sm"
+        >
+          <option value="">{t("Elige el room destino…")}</option>
+          {rooms.map((r) => (
+            <option key={r.slug} value={r.slug}>#{r.name}</option>
+          ))}
+        </select>
+        {/* Navegación de página completa a propósito: el flujo sigue por REDIRECT hasta Meta
+            y de vuelta, que es el único camino confiable en móvil. */}
+        <a
+          href={room ? `/api/whatsapp/connect/start?room=${encodeURIComponent(room)}` : undefined}
+          aria-disabled={!room}
+          className={`rounded-lg px-3 py-1.5 text-sm font-medium ${room ? "bg-surface-3 text-ink hover:bg-surface" : "pointer-events-none bg-surface-3 text-muted opacity-50"}`}
+        >
+          {t("Conectar número")}
+        </a>
+      </div>
+      <p className="mt-2 text-xs text-muted">
+        {t("Un número recién conectado RECIBE pero todavía no contesta.")}
+      </p>
+    </div>
+  );
+}
+
 function IntegrationsPanel() {
   const t = useT();
   const [items, setItems] = useState<ConnItem[] | null>(null);
@@ -418,6 +512,8 @@ function IntegrationsPanel() {
       <p className="text-sm text-muted">
         {t("Conecta herramientas externas para que @ghosty trabaje con tu contexto.")}
       </p>
+
+      <WhatsAppPanel />
 
       {/* Filtros (segmento), estilo claude.ai */}
       <div className="inline-flex rounded-lg border border-border bg-surface-2 p-0.5 text-sm">
