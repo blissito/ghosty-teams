@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { Children, Fragment, cloneElement, isValidElement, useEffect, useRef, useState } from "react";
 import { ChevronDown, MoreHorizontal, ShieldAlert, Globe, Lock, FileText } from "lucide-react";
 import { useT } from "../i18n";
 import ArtifactShareDialog from "./ArtifactShareDialog";
@@ -35,6 +35,55 @@ export type ArtifactShareBarProps = {
   /** Cambió el estado de compartir → la superficie debe releer lo que sirve. */
   onShareChange?: (s: { sharedArtifactId: number | null }) => void;
 };
+
+/**
+ * Las acciones son iconos SIN texto: en la fila eso está bien (hay `title` y espacio
+ * de sobra para adivinar), pero dentro del menú ⋯ dejaba cinco cuadritos mudos —
+ * nadie sabe cuál baja el Word y cuál imprime. Aquí cada botón se convierte en una
+ * FILA con su etiqueta, tomada de su propio `title`, así que una acción nueva se
+ * etiqueta sola sin tocar este archivo.
+ *
+ * Se recorre en profundidad porque el que las manda usa fragmentos y envoltorios
+ * (`<span className="relative">` para anclar el panel de versiones, que hay que
+ * conservar tal cual o el panel se despega del botón).
+ */
+function menuRows(node: React.ReactNode, key = "r"): React.ReactNode {
+  if (Array.isArray(node)) return node.map((n, i) => menuRows(n, `${key}.${i}`));
+  if (!isValidElement(node)) return node;
+  const el = node as React.ReactElement<any>;
+  const kids = el.props?.children;
+
+  // Fragmento o envoltorio: se conserva y se baja a sus hijos.
+  if (el.type === Fragment || (typeof el.type === "string" && el.type !== "button" && el.type !== "a")) {
+    const inner = Children.count(kids) ? menuRows(kids, `${key}.c`) : kids;
+    if (el.type === Fragment) return <>{inner}</>;
+    return cloneElement(el, {
+      className: `${el.props.className ?? ""} w-full`.trim(),
+      children: inner,
+    });
+  }
+
+  // El botón: fila ancha, icono + etiqueta. Se quitan las clases de cuadrito
+  // (`size-7 grid place-items-center`) en vez de intentar ganarles por orden —
+  // en Tailwind gana la que el CSS declare después, no la última que escribas.
+  if (el.type === "button" || el.type === "a") {
+    const label = el.props?.title ?? el.props?.["aria-label"];
+    if (!label) return el;
+    const base = String(el.props.className ?? "")
+      .replace(/\b(grid|place-items-center|size-7)\b/g, "")
+      .trim();
+    return cloneElement(el, {
+      className: `${base} flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm`,
+      children: (
+        <>
+          <span className="grid size-4 shrink-0 place-items-center">{kids}</span>
+          <span className="truncate">{label}</span>
+        </>
+      ),
+    });
+  }
+  return el;
+}
 
 export default function ArtifactShareBar({
   title,
@@ -170,7 +219,7 @@ export default function ArtifactShareBar({
                 className="absolute right-0 top-9 z-30 flex min-w-[10rem] flex-col gap-0.5 rounded-lg border border-border bg-surface-2 p-1 shadow-lg"
                 onClick={(e) => e.stopPropagation()}
               >
-                {actions}
+                {menuRows(actions)}
               </div>
             ) : null}
           </div>

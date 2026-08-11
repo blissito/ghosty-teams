@@ -18,6 +18,7 @@ import {
   Upload,
   Link as LinkIcon,
   Check,
+  Copy,
   Pencil,
   Eye,
   Maximize2,
@@ -396,6 +397,7 @@ export default function ArtifactPanel({
   const [refreshTick, setRefreshTick] = useState(0); // botón "refrescar" del header (re-fetch manual)
   const [downloading, setDownloading] = useState(false); // el export docx es lento → spinner
   const [copied, setCopied] = useState(false); // feedback del botón "Copiar enlace" del artefacto HTML
+  const [copiedText, setCopiedText] = useState(false); // feedback de "Copiar texto" del documento
   // Estado del autoguardado del documento, para pintarlo EN LA BARRA — junto a los iconos,
   // que es donde lo ponen Google Docs y Word y donde la gente lo busca. Lo sube DocSurface.
   const [guardadoDoc, setGuardadoDoc] = useState<"pendiente" | "guardando" | "ok" | "error" | null>(null);
@@ -965,6 +967,23 @@ export default function ArtifactPanel({
     }
   };
 
+  // Copiar el TEXTO del documento (no el enlace): se lee de la hoja pintada, la misma
+  // que usa Imprimir, porque es lo que el usuario está viendo y no cuesta una llamada.
+  const copyDocText = async () => {
+    const hoja = document.querySelector<HTMLElement>(
+      ".gt-doc article, [data-gt-hoja]",
+    );
+    const texto = (hoja?.innerText ?? "").trim();
+    if (!texto) return;
+    try {
+      await navigator.clipboard.writeText(texto);
+      setCopiedText(true);
+      setTimeout(() => setCopiedText(false), 1600);
+    } catch {
+      /* sin permiso de portapapeles: nada que hacer, no vale un prompt con 40 KB */
+    }
+  };
+
   // Descarga de MEDIA (imagen/audio/video/file): antes solo tenían "abrir" (el src es una
   // URL firmada/presigned → abrir la previsualiza, no la baja). Intenta fetch→blob (funciona
   // same-origin /api/attachment y si el bucket permite CORS); si falla (cross-origin), cae a
@@ -1454,6 +1473,24 @@ export default function ArtifactPanel({
                                   />
                                 ) : null}
                               </span>
+                            ) : null}
+                            {artifact.kind === "doc" ? (
+                              <button
+                                type="button"
+                                onClick={copyDocText}
+                                title={
+                                  copiedText
+                                    ? t("¡Copiado!")
+                                    : t("Copiar texto")
+                                }
+                                className="grid size-7 place-items-center rounded-md text-muted transition hover:bg-surface-3 hover:text-brand"
+                              >
+                                {copiedText ? (
+                                  <Check size={15} className="text-brand" />
+                                ) : (
+                                  <Copy size={15} />
+                                )}
+                              </button>
                             ) : null}
                             {artifact.kind === "doc" ? (
                               <button

@@ -203,6 +203,7 @@ export const en: Record<string, string> = {
   "Conversación": "Conversation",
   "Copiar": "Copy",
   "Copiar enlace": "Copy link",
+  "Copiar texto": "Copy text",
   "Copiar mensaje": "Copy message",
   "Creando…": "Creating…",
   "Crear": "Create",
