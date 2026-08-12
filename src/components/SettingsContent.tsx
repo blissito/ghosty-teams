@@ -1156,7 +1156,12 @@ function Row({ title, desc, children }: { title: string; desc?: string; children
   );
 }
 
-function Toggle({ on, onChange }: { on: boolean; onChange: (v: boolean) => void }) {
+/**
+ * El interruptor de Ghosty Teams. ⚠️ Exportado: los ajustes del room usaban CHECKBOXES
+ * mientras el resto de la app usa esto, y dos formas del mismo control en el mismo
+ * producto se leen como dos cosas distintas.
+ */
+export function Toggle({ on, onChange }: { on: boolean; onChange: (v: boolean) => void }) {
   return (
     <button
       onClick={() => onChange(!on)}

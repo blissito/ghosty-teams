@@ -120,7 +120,7 @@ import { useRtSubscribe } from "../utils/rt-bus";
 import type { RtEvent } from "../server/bus.server";
 import { Markdown } from "../components/Markdown";
 import { Avatar } from "../components/Avatar";
-import { SettingsContent, loadSettingsData } from "../components/SettingsContent";
+import { SettingsContent, loadSettingsData, Toggle } from "../components/SettingsContent";
 import { getTheme, subscribeTheme, resolveDark, presetById, paletteVars } from "../utils/theme";
 import { subscribeMentions } from "../utils/mentions-bus";
 import { subscribeEmojis } from "../utils/emojis-bus";
@@ -4695,8 +4695,11 @@ function EventSection({
         />
       </div>
 
-      <label className="mb-3 mt-2 flex items-start gap-2 text-xs">
-        <input type="checkbox" checked={agentOn} onChange={(e) => setAgentOn(e.target.checked)} className="mt-0.5" />
+      {/* Interruptores, no casillas: es el control que usa el resto de Teams, y dos formas
+          del mismo gesto en el mismo producto se leen como dos cosas distintas. Además
+          esto se enciende y se apaga a media sesión —el agente sobre todo—, y un
+          interruptor dice de un vistazo en qué estado está. */}
+      <div className="mb-3 mt-2 flex items-start justify-between gap-3 text-xs">
         <span>
           <span className="font-medium">{t("El agente responde en este evento")}</span>
           <br />
@@ -4704,10 +4707,10 @@ function EventSection({
             {t("Sólo si lo mencionan. Cada respuesta consume saldo tuyo y aquí escribe gente de fuera.")}
           </span>
         </span>
-      </label>
+        <Toggle on={agentOn} onChange={setAgentOn} />
+      </div>
 
-      <label className="mb-3 flex items-start gap-2 text-xs">
-        <input type="checkbox" checked={callOn} onChange={(e) => setCallOn(e.target.checked)} className="mt-0.5" />
+      <div className="mb-3 flex items-start justify-between gap-3 text-xs">
         <span>
           <span className="font-medium">{t("Llamada abierta")}</span>
           <br />
@@ -4715,7 +4718,8 @@ function EventSection({
             {t("Apagada, el botón sale desactivado. Déjala prendida para que la comunidad entre cuando quiera, o enciéndela sólo a la hora del evento.")}
           </span>
         </span>
-      </label>
+        <Toggle on={callOn} onChange={setCallOn} />
+      </div>
 
       {err && <p className="mb-2 text-xs text-red-400">{err}</p>}
 
@@ -4910,12 +4914,14 @@ function RoomSettingsModal({
         className="mb-3 w-full resize-none rounded-lg border border-border bg-surface px-3 py-2 text-sm outline-none focus:border-brand"
       />
 
-      {/* Privacidad */}
-      <label className="mb-4 flex cursor-pointer items-center gap-2 rounded-lg bg-surface px-3 py-2.5 text-sm">
-        <input type="checkbox" checked={isPrivate} onChange={(e) => setIsPrivate(e.target.checked)} />
-        <Lock size={14} className="text-muted" />
-        <span>{t("Privado (solo miembros invitados)")}</span>
-      </label>
+      {/* Privacidad — mismo interruptor que el resto de la app. */}
+      <div className="mb-4 flex items-center justify-between gap-3 rounded-lg bg-surface px-3 py-2.5 text-sm">
+        <span className="flex items-center gap-2">
+          <Lock size={14} className="text-muted" />
+          {t("Privado (solo miembros invitados)")}
+        </span>
+        <Toggle on={isPrivate} onChange={setIsPrivate} />
+      </div>
 
       {/* Guardar identidad (nombre/icono/privado/descripción juntos) */}
       <div className="mb-5 flex items-center justify-end gap-2">
