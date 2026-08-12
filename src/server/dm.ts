@@ -404,27 +404,33 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
     // RETOMAR UN ARTEFACTO (ver el comentario largo en chat.ts). En un DM no hay canal con
     // el que comparar "nació aquí", así que sólo aplican las reglas de pertenencia: ser el
     // dueño del artefacto, o el del workspace.
-    const slugPegado = db.slugDeArtefactoEn(data.body ?? "");
-    if (slugPegado) {
-      const adoptado = await db
-        .adoptableArtifact(slugPegado, {
-          requesterSub: me?.sub ?? null,
-          isWorkspaceOwner: !!me?.isOwner,
-        })
-        .catch(() => null);
-      if (adoptado) await db.setDmArtifact(data.id, adoptado).catch(() => {});
-    }
-
-    const currentDocId = await db.getDmArtifact(data.id).catch(() => null);
-    const currentDoc = currentDocId ? await db.getDoc(currentDocId).catch(() => null) : null;
-    // Gemelo de chat.ts: si la última entrega fue un ARCHIVO posterior al artefacto, el
-    // antecedente de "modifícalo" es el archivo.
-    if (currentDoc) {
-      const entrega = await db.getDmDelivery(data.id).catch(() => null);
-      if (entrega && entrega.at >= (currentDoc.at ?? 0)) {
-        currentDoc.lastFile = { name: entrega.name, mime: entrega.mime };
+    // ⚠️ Gemelo de chat.ts: la resolución se RETRASA hasta tener el lock del grupo, o dos
+    // turnos concurrentes se llevan versiones distintas del mismo artefacto y el segundo
+    // revierte al primero al re-emitirlo. Ver `withGroupLock` en turns.server.ts.
+    const resolverArtefactoDelDm = async () => {
+      const slugPegado = db.slugDeArtefactoEn(data.body ?? "");
+      if (slugPegado) {
+        const adoptado = await db
+          .adoptableArtifact(slugPegado, {
+            requesterSub: me?.sub ?? null,
+            isWorkspaceOwner: !!me?.isOwner,
+          })
+          .catch(() => null);
+        if (adoptado) await db.setDmArtifact(data.id, adoptado).catch(() => {});
       }
-    }
+
+      const currentDocId = await db.getDmArtifact(data.id).catch(() => null);
+      const currentDoc = currentDocId ? await db.getDoc(currentDocId).catch(() => null) : null;
+      // Gemelo de chat.ts: si la última entrega fue un ARCHIVO posterior al artefacto, el
+      // antecedente de "modifícalo" es el archivo.
+      if (currentDoc) {
+        const entrega = await db.getDmDelivery(data.id).catch(() => null);
+        if (entrega && entrega.at >= (currentDoc.at ?? 0)) {
+          currentDoc.lastFile = { name: entrega.name, mime: entrega.mime };
+        }
+      }
+      return { currentDocId, currentDoc };
+    };
     // Igual que en el room: lo mío se interrumpe, lo ajeno se encola (ver turns.server).
     // En un DM 1:1 el invocador siempre es la misma persona, así que aquí la interrupción
     // es la regla y no la excepción.
@@ -470,8 +476,11 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
         agent: name, avatar: agent?.avatar ?? "", tarea: tareaDelTurno,
       });
     };
+    // Registrar ANTES del lock: un turno en cola tiene que verse en "Trabajando ahora".
     if (data.shellId != null) register(data.shellId);
-    const { id, reply } = await runAgentTurn({
+    const { turnResult, currentDocId, currentDoc } = await turns.withGroupLock(groupId, async () => {
+    const { currentDocId, currentDoc } = await resolverArtefactoDelDm();
+    const turnResult = await runAgentTurn({
       signal: controller.signal,
       onShell: register,
       agent,
@@ -509,6 +518,9 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
         turns.finishTurn(ns, registeredId);
       }
     });
+    return { turnResult, currentDocId, currentDoc };
+    }); // ← withGroupLock
+    const { id, reply } = turnResult;
 
     // Entró a un turno vivo (steer): la respuesta sale por aquella burbuja. Se borra la
     // cáscara eager para no dejar una vacía. Mismo criterio que el room.

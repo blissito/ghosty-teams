@@ -1061,8 +1061,6 @@ export const askAgent = createServerFn({ method: "POST" })
     // simultáneas en el mismo room, el segundo turno se llevaba la versión ANTERIOR del
     // documento, el agente la re-emitía y la edición del primero desaparecía sin señal.
     // Ver `withGroupLock` en turns.server.ts.
-    let currentDocId: Awaited<ReturnType<typeof db.resolveThreadArtifact>> | null = null;
-    let currentDoc: Awaited<ReturnType<typeof db.getDoc>> | null = null;
     const resolverArtefactoDelHilo = async () => {
       const slugPegado = db.slugDeArtefactoEn(data.body ?? "");
       if (slugPegado) {
@@ -1078,8 +1076,8 @@ export const askAgent = createServerFn({ method: "POST" })
         }
       }
 
-      currentDocId = await db.resolveThreadArtifact(channel.id, data.parentId).catch(() => null);
-      currentDoc = currentDocId ? await db.getDoc(currentDocId).catch(() => null) : null;
+      const currentDocId = await db.resolveThreadArtifact(channel.id, data.parentId).catch(() => null);
+      const currentDoc = currentDocId ? await db.getDoc(currentDocId).catch(() => null) : null;
       // ¿La última entrega del hilo fue un ARCHIVO posterior a este artefacto? Entonces el
       // antecedente de "modifícalo" es el archivo, no el artefacto — se lo decimos al agente
       // en el hint. Comparación por fecha y no "existe un archivo": tras editar el artefacto,
@@ -1090,6 +1088,7 @@ export const askAgent = createServerFn({ method: "POST" })
           currentDoc.lastFile = { name: entrega.name, mime: entrega.mime };
         }
       }
+      return { currentDocId, currentDoc };
     };
 
     // INTERRUMPIR lo mío, encolar lo ajeno. Si el que escribe es el mismo que tiene un
@@ -1151,7 +1150,14 @@ export const askAgent = createServerFn({ method: "POST" })
         tarea: tareaDelTurno,
       });
     };
+    // ⚠️ Registrar ANTES de pedir el lock. Si no, un turno que espera su vuelta no aparece
+    // en "Trabajando ahora" — se vería congelado justo mientras hace cola.
     if (data.shellId != null) register(data.shellId);
+    // El lock se toma aquí y se suelta al terminar el turno: sirve tanto para que el
+    // artefacto se lea FRESCO como para que la escritura del turno anterior ya haya
+    // aterrizado. El worker serializa igual, así que esto no añade espera real.
+    const { turnResult, currentDocId, currentDoc } = await turns.withGroupLock(groupId, async () => {
+    const { currentDocId, currentDoc } = await resolverArtefactoDelHilo();
     // finally: un turno que revienta no puede quedarse registrado como vivo — tendría a
     // los siguientes eternamente "en espera" detrás de un fantasma.
     const turnResult = await runAgentTurn({
@@ -1209,6 +1215,8 @@ export const askAgent = createServerFn({ method: "POST" })
         turns.finishTurn(ns, registeredId);
       }
     });
+    return { turnResult, currentDocId, currentDoc };
+    }); // ← withGroupLock
 
     // Persiste el body final (autoritativo, sin marcar "editado") y reconcilia por si
     // se perdió algún delta (el bus es best-effort). NUNCA persistas un body VACÍO:
