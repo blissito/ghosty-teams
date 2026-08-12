@@ -214,40 +214,45 @@ function Transcripcion() {
           {!hayNombres && " Esta grabación es anterior a que se anotara quién habla."}
         </p>
 
-        <input
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-          placeholder="Buscar en la transcripción…"
-          className="mt-5 w-full rounded-lg border border-border bg-surface-2 px-3 py-2 text-sm outline-none focus:border-brand"
-        />
-        {q && (
-          <div className="mt-2 flex items-center gap-2 text-xs text-muted">
-            {coincidencias.length === 0 ? (
-              <span>Sin coincidencias</span>
-            ) : (
-              <>
-                <span>
-                  {idx + 1} de {coincidencias.length}
-                </span>
-                <button
-                  onClick={() => irA(idx - 1)}
-                  aria-label="Coincidencia anterior"
-                  className="rounded p-1 hover:bg-surface-2 hover:text-ink"
-                >
-                  <ChevronUp size={14} />
-                </button>
-                <button
-                  onClick={() => irA(idx + 1)}
-                  aria-label="Siguiente coincidencia"
-                  className="rounded p-1 hover:bg-surface-2 hover:text-ink"
-                >
-                  <ChevronDown size={14} />
-                </button>
-              </>
-            )}
-          </div>
-        )}
-
+        {/* ⚠️ PEGAJOSA. Con la búsqueda fija arriba del documento, saltar a una
+            coincidencia te dejaba sin los botones para ir a la siguiente: había que subir
+            74 minutos de scroll para volver a pulsarlos. Viajando contigo, ‹ n/m › está
+            siempre donde la mano. */}
+        <div className="sticky top-0 z-10 -mx-1 bg-surface/95 px-1 pb-3 pt-4 backdrop-blur">
+          <input
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="Buscar en la transcripción…"
+            className="w-full rounded-lg border border-border bg-surface-2 px-3 py-2 text-sm outline-none focus:border-brand"
+          />
+          {q && (
+            <div className="mt-2 flex items-center gap-2 text-xs text-muted">
+              {coincidencias.length === 0 ? (
+                <span>Sin coincidencias</span>
+              ) : (
+                <>
+                  <span>
+                    {idx + 1} de {coincidencias.length}
+                  </span>
+                  <button
+                    onClick={() => irA(idx - 1)}
+                    aria-label="Coincidencia anterior"
+                    className="rounded p-1 hover:bg-surface-2 hover:text-ink"
+                  >
+                    <ChevronUp size={14} />
+                  </button>
+                  <button
+                    onClick={() => irA(idx + 1)}
+                    aria-label="Siguiente coincidencia"
+                    className="rounded p-1 hover:bg-surface-2 hover:text-ink"
+                  >
+                    <ChevronDown size={14} />
+                  </button>
+                </>
+              )}
+            </div>
+          )}
+        </div>
         <div className="mt-6 space-y-4">
           {bloques.map((s, i) => (
             <div
