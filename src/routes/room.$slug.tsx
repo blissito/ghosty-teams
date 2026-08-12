@@ -1,7 +1,7 @@
 import { createFileRoute, notFound } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createServerFn } from "@tanstack/react-start";
-import { MessageSquare, Radio, Video, X } from "lucide-react";
+import { MessageSquare, Video, X } from "lucide-react";
 import GhostyMascot from "../components/GhostyMascot";
 import { ChatCtx, ChatCtxDefaults, MessageRow, type SessionUser } from "../components/chat/message";
 import type { Message, CustomEmoji, ReactionAgg } from "../db.server";
@@ -135,7 +135,6 @@ function RoomAbierto() {
     return () => clearInterval(t);
   }, [data.startsAt]);
   const cuantoFalta = data.startsAt ? faltan(data.startsAt, ahora) : null;
-  const yaEmpezo = !!data.startsAt && !cuantoFalta;
 
   const traerNuevos = useCallback(async () => {
     try {
@@ -255,7 +254,7 @@ function RoomAbierto() {
       if (r.ok) setCallUrl(r.url);
       else setErr(r.error);
     } catch {
-      setErr("No pude abrir la sala. Intenta de nuevo.");
+      setErr("No pude abrir la llamada. Intenta de nuevo.");
     }
     setCallBusy(false);
   }
@@ -283,73 +282,16 @@ function RoomAbierto() {
 
   return (
     <ChatCtx.Provider value={ctx}>
-    <div className="flex h-dvh flex-col bg-surface">
-      <header className="flex shrink-0 items-center gap-3 border-b border-border px-4 py-3">
-        {data.brand.logo ? (
-          <img src={data.brand.logo} alt={data.brand.name ?? ""} className="h-7 w-auto max-w-[140px] object-contain" />
-        ) : (
-          <GhostyMascot className="h-7 w-7" />
-        )}
-        <div className="min-w-0">
-          <div className="flex items-center gap-2">
-            <h1 className="truncate text-sm font-semibold">{data.title}</h1>
-            <Radio size={13} className="shrink-0 text-brand" />
-          </div>
-          <p className="flex flex-wrap items-center gap-x-1.5 text-[11px] text-muted">
-            <span className="inline-flex items-center gap-1.5">
-              <span className="size-1.5 rounded-full bg-emerald-500" />
-              {online} por aquí
-            </span>
-            {data.startsAt && (
-              <>
-                <span aria-hidden className="text-muted/50">·</span>
-                {/* La hora se pinta en el reloj de QUIEN MIRA, no en el del dueño: un
-                    webinar se anuncia a gente de varias zonas horarias. */}
-                <span>
-                  {new Date(data.startsAt * 1000).toLocaleString([], {
-                    weekday: "long", day: "numeric", month: "long", hour: "2-digit", minute: "2-digit",
-                  })}
-                </span>
-                {cuantoFalta && <span className="font-medium text-brand">· {cuantoFalta}</span>}
-              </>
-            )}
-          </p>
-        </div>
-        {data.callOpen && !callUrl && (
-          <button
-            onClick={entrarALlamada}
-            disabled={callBusy}
-            // A la hora del evento el botón deja de ser un detalle de la cabecera: es lo
-            // que la gente vino a hacer. Antes de la hora se queda discreto para no
-            // invitar a despertar la caja media hora antes de tiempo.
-            className={`ml-auto flex shrink-0 items-center gap-1.5 rounded-lg px-3 py-1.5 font-medium disabled:opacity-60 ${
-              yaEmpezo || !data.startsAt
-                ? "bg-brand text-sm text-white"
-                : "border border-border bg-transparent text-xs text-muted hover:text-ink"
-            }`}
-          >
-            <Video size={14} />
-            {callBusy ? "Abriendo la sala…" : "Entrar a la transmisión"}
-          </button>
-        )}
-      </header>
-
-      {/* El video sólo existe DESPUÉS de pulsar. Nunca se pre-carga: la caja puede estar
-          dormida y pedirle algo la despierta — no se despierta porque alguien pase por
-          aquí, sólo porque alguien entre de verdad.
-          ⚠️ A PANTALLA COMPLETA, y no en una franja arriba del chat. En una franja, el
-          lobby de LiveKit —vista previa de cámara, dos selectores, nombre y el botón de
-          entrar— no cabe: quedaba cortado por abajo y **el botón de entrar era
-          inalcanzable**, con lo que la sala parecía rota justo en el paso que importa.
-          Entrar a la transmisión es un MODO, no un panel. */}
-      {callUrl && (
-        <div className="fixed inset-0 z-40 flex bg-black">
-          {/* El video y el chat CONVIVEN: el chat le quita ancho a la transmisión en vez
-              de taparla. Es lo que un webinar necesita —la gente pregunta mientras mira—,
-              y un panel encima obliga a elegir entre las dos cosas.
-              Contrapartida asumida: al abrirlo o cerrarlo, LiveKit re-hace su grid de
-              tiles. Se paga una vez por clic, y el chat se queda abierto casi siempre. */}
-          <div className="relative min-w-0 flex-1">
+      {/* UNA SOLA VISTA: el escenario a la izquierda y el chat a la derecha, siempre.
+          Antes había dos páginas —una de sólo chat y otra a pantalla completa al entrar a
+          la llamada— y sobraba: quien llega a un evento viene a las dos cosas a la vez.
+          Lo que cambia al entrar no es la página, es lo que ocupa el escenario. */}
+      <div className="flex h-dvh bg-surface">
+        <main className="relative flex min-w-0 flex-1 flex-col bg-black">
+          {callUrl ? (
+            /* ⚠️ El iframe sólo se monta DESPUÉS de pulsar. La caja de LiveKit puede
+               estar dormida y pedirle algo la despierta: no se despierta porque alguien
+               pase por aquí, sólo porque alguien entre de verdad. */
             <iframe
               src={callUrl}
               title={data.title}
@@ -357,77 +299,104 @@ function RoomAbierto() {
               allow="camera; microphone; display-capture; autoplay; fullscreen; speaker-selection"
               allowFullScreen
             />
+          ) : (
+            <div className="flex h-full flex-col items-center justify-center gap-5 p-6 text-center">
+              {data.brand.logo ? (
+                <img src={data.brand.logo} alt={data.brand.name ?? ""} className="h-9 w-auto max-w-[180px] object-contain" />
+              ) : (
+                <GhostyMascot className="h-10 w-10" />
+              )}
+              <div>
+                <h1 className="text-2xl font-bold leading-tight text-white sm:text-3xl">{data.title}</h1>
+                {data.startsAt && (
+                  <p className="mt-2 text-sm text-white/70">
+                    {/* En el reloj de QUIEN MIRA: un evento se anuncia a gente de varias
+                        zonas horarias, y la hora del dueño es la equivocada para el resto. */}
+                    {new Date(data.startsAt * 1000).toLocaleString([], {
+                      weekday: "long", day: "numeric", month: "long", hour: "2-digit", minute: "2-digit",
+                    })}
+                    {cuantoFalta && <span className="ml-1 font-medium text-brand">· {cuantoFalta}</span>}
+                  </p>
+                )}
+              </div>
 
-            <div className="absolute right-4 top-4 flex items-center gap-2">
               <button
-                onClick={() => setChatAbierto((v) => !v)}
-                className="flex items-center gap-1.5 rounded-full bg-black/70 px-3 py-1.5 text-xs font-medium text-white backdrop-blur hover:bg-black/85"
+                onClick={entrarALlamada}
+                // Se DESACTIVA, no se esconde: si la llamada no está disponible, quien
+                // llega tiene que ver que existe y que ahora no se puede — esconderla
+                // deja la duda de si el evento es sólo un chat.
+                disabled={callBusy || !data.callOpen}
+                className="flex items-center gap-2 rounded-xl bg-brand px-5 py-3 text-sm font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-40"
               >
-                <MessageSquare size={14} /> {chatAbierto ? "Ocultar chat" : "Chat"}
+                <Video size={16} />
+                {callBusy ? "Abriendo la llamada…" : "Entrar a la llamada"}
               </button>
+              {!data.callOpen && (
+                <p className="-mt-2 text-xs text-white/50">La llamada no está abierta ahora mismo.</p>
+              )}
+              {err && <p className="text-xs text-red-400">{err}</p>}
+            </div>
+          )}
+
+          <div className="absolute right-4 top-4 flex items-center gap-2">
+            <button
+              onClick={() => setChatAbierto((v) => !v)}
+              className="flex items-center gap-1.5 rounded-full bg-black/70 px-3 py-1.5 text-xs font-medium text-white backdrop-blur hover:bg-black/85 sm:hidden"
+            >
+              <MessageSquare size={14} /> {chatAbierto ? "Ocultar chat" : "Chat"}
+            </button>
+            {callUrl && (
               <button
                 onClick={() => setCallUrl(null)}
                 className="flex items-center gap-1.5 rounded-full bg-black/70 px-3 py-1.5 text-xs font-medium text-white backdrop-blur hover:bg-black/85"
               >
-                {/* ⚠️ Dice "salir" y no "volver al chat" porque esto DESMONTA el iframe: se
-                    abandona la llamada de verdad, y volver a entrar cuesta un ticket
-                    nuevo. Con el chat al lado, nadie necesita salirse para leerlo — que
-                    era justo la confusión que este botón invitaba a cometer. */}
+                {/* ⚠️ "Salir" y no "volver al chat": esto DESMONTA el iframe, o sea que
+                    abandona la llamada, y volver a entrar cuesta un ticket nuevo. Con el
+                    chat siempre al lado, nadie necesita salirse para leerlo. */}
                 <X size={14} /> Salir
               </button>
-            </div>
+            )}
           </div>
+        </main>
 
-          {/* En MÓVIL no hay ancho que repartir: ahí sí se superpone, porque partir 380px
-              en dos deja el video del tamaño de un sello y el chat ilegible. */}
-          <aside
-            // Superficies NORMALES del producto, no un negro forzado: con el tema claro, el
-            // texto del markdown (`text-ink`) quedaba negro sobre negro.
-            className={`${chatAbierto ? "flex" : "hidden"} absolute inset-y-0 right-0 z-10 w-full flex-col border-l border-border bg-surface sm:relative sm:z-0 sm:w-80 sm:shrink-0 lg:w-96`}
-          >
-            <div className="flex shrink-0 items-center justify-between border-b border-border px-4 py-3">
+        {/* En MÓVIL no hay ancho que repartir: ahí se superpone, porque partir 380px en
+            dos deja el video del tamaño de un sello y el chat ilegible. */}
+        <aside
+          className={`${chatAbierto ? "flex" : "hidden"} absolute inset-y-0 right-0 z-10 w-full flex-col border-l border-border bg-surface sm:relative sm:z-0 sm:flex sm:w-80 sm:shrink-0 lg:w-96`}
+        >
+          <div className="flex shrink-0 items-center justify-between border-b border-border px-4 py-3">
+            <div className="min-w-0">
               <span className="text-sm font-semibold">Chat</span>
-              <button onClick={() => setChatAbierto(false)} aria-label="Cerrar el chat" className="text-muted hover:text-ink">
-                <X size={16} />
-              </button>
+              <p className="flex items-center gap-1.5 text-[11px] text-muted">
+                <span className="size-1.5 rounded-full bg-emerald-500" />
+                {online} por aquí
+              </p>
             </div>
-            <Mensajes messages={messages} />
-            <Composer
-              text={text}
-              setText={setText}
-              onSubmit={enviar}
-              sending={sending}
-              canWrite={canWrite}
-            />
-          </aside>
-        </div>
-      )}
+            <button onClick={() => setChatAbierto(false)} aria-label="Cerrar el chat" className="text-muted hover:text-ink sm:hidden">
+              <X size={16} />
+            </button>
+          </div>
+          <Mensajes messages={messages} bottomRef={bottomRef} />
+          {err && callUrl && <p className="px-4 pb-1 text-xs text-red-400">{err}</p>}
+          <Composer text={text} setText={setText} onSubmit={enviar} sending={sending} canWrite={canWrite} />
+          <footer className="shrink-0 pb-2 text-center text-[11px] text-muted">
+            <a href="https://ghosty.studio" target="_blank" rel="noreferrer" className="hover:text-brand">
+              Hecho con Ghosty Teams
+            </a>
+          </footer>
+        </aside>
 
-      <Mensajes messages={messages} bottomRef={bottomRef} />
-
-      {err && <p className="px-4 pb-1 text-center text-xs text-red-400">{err}</p>}
-
-      <div className="mx-auto w-full max-w-3xl shrink-0">
-        <Composer text={text} setText={setText} onSubmit={enviar} sending={sending} canWrite={canWrite} />
+        {identificando && (
+          <Identificarse
+            slug={slug}
+            onListo={() => {
+              setIdentificando(false);
+              setCanWrite(true);
+            }}
+            onCerrar={() => setIdentificando(false)}
+          />
+        )}
       </div>
-
-      <footer className="shrink-0 pb-3 text-center text-[11px] text-muted">
-        <a href="https://ghosty.studio" target="_blank" rel="noreferrer" className="hover:text-brand">
-          Hecho con Ghosty Teams
-        </a>
-      </footer>
-
-      {identificando && (
-        <Identificarse
-          slug={slug}
-          onListo={() => {
-            setIdentificando(false);
-            setCanWrite(true);
-          }}
-          onCerrar={() => setIdentificando(false)}
-        />
-      )}
-    </div>
     </ChatCtx.Provider>
   );
 }

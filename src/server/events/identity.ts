@@ -102,15 +102,15 @@ export const joinCallFn = createServerFn({ method: "POST" })
     if (!r || !r.ch.call_mode) return { ok: false, error: "Este room no está disponible" };
     // El dueño decide si la sala está abierta. Apagada, no hay URL que dar — ni siquiera
     // a quien adivine el nombre de esta función.
-    if (r.ch.call_open !== 1) return { ok: false, error: "La sala de video está cerrada" };
+    if (r.ch.call_open !== 1) return { ok: false, error: "La llamada está cerrada" };
 
     // Entrar al video SÍ exige identidad: es lo mismo que escribir. Leer es libre.
     const { eventViewerFor, roomUrlFor } = await import("./access.server");
     const viewer = await eventViewerFor(r.ch);
-    if (!viewer) return { ok: false, error: "Identifícate para entrar a la transmisión" };
+    if (!viewer) return { ok: false, error: "Identifícate para entrar a la llamada" };
 
     const url = await roomUrlFor(r.ch, viewer);
-    if (!url) return { ok: false, error: "La sala de video no está configurada" };
+    if (!url) return { ok: false, error: "La llamada no está configurada" };
     return { ok: true, url };
   });
 

@@ -4709,10 +4709,10 @@ function EventSection({
       <label className="mb-3 flex items-start gap-2 text-xs">
         <input type="checkbox" checked={callOn} onChange={(e) => setCallOn(e.target.checked)} className="mt-0.5" />
         <span>
-          <span className="font-medium">{t("Sala de video abierta")}</span>
+          <span className="font-medium">{t("Llamada abierta")}</span>
           <br />
           <span className="text-muted">
-            {t("Apagada, no se ofrece el botón. Déjala prendida para que la comunidad entre cuando quiera, o enciéndela sólo a la hora del evento.")}
+            {t("Apagada, el botón sale desactivado. Déjala prendida para que la comunidad entre cuando quiera, o enciéndela sólo a la hora del evento.")}
           </span>
         </span>
       </label>
