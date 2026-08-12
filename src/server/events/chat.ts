@@ -271,7 +271,11 @@ export const eventPostFn = createServerFn({ method: "POST" })
           handle: agentHandle,
           sender: r.viewer.name,
           text: body,
-          parentId: id,
+          // ⚠️ En el FLUJO, no colgado como hilo del mensaje que lo invocó. En Teams el
+          // hilo mantiene el room limpio; en una sala abierta hace lo contrario: la
+          // respuesta desaparece de la vista —el room no pinta hilos a propósito, es una
+          // conversación corrida— y quien preguntó ve que el agente nunca contestó.
+          parentId: null,
           topic: "general",
           origin,
         });

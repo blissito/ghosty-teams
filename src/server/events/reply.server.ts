@@ -35,7 +35,7 @@ export async function replyToEventMessage(opts: {
   sender: string;
   text: string;
   /** El mensaje del invitado: la respuesta cuelga de ahí, como en el chat normal. */
-  parentId: number;
+  parentId: number | null;
   topic: string;
   /** Capturado DENTRO del request: aquí ya no hay cabeceras que leer. */
   origin: string;
@@ -67,7 +67,7 @@ export async function replyToEventMessage(opts: {
       originOverride: opts.origin,
       dest: {
         channelId: opts.channelId,
-        parentId: opts.parentId,
+        parentId: opts.parentId ?? undefined,
         topic: opts.topic,
         handle: opts.handle,
         name,
