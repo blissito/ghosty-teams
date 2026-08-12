@@ -73,7 +73,14 @@ export async function eventViewerFor(ch: Channel): Promise<EventViewer | null> {
 
 /** La URL de la sala de video, ya con su ticket. Se acuña por carga de página. */
 export async function roomUrlFor(ch: Channel, viewer: EventViewer): Promise<string | null> {
-  const base = ch.call_livekit_url || process.env.EVENT_LIVEKIT_URL || "";
+  // ⚠️ El default es un DOMINIO ESTABLE, no la URL con el `sandboxId` dentro. Es lo que
+  // hace que recrear la caja —por disco, por imagen nueva, o porque el janitor la recicló
+  // a las 72 h dormida— no invalide las ligas ya repartidas: el nombre se re-apunta a la
+  // caja nueva y el router del host lo sigue. Ver `event-box.server.ts` en Studio.
+  const base =
+    ch.call_livekit_url ||
+    process.env.EVENT_LIVEKIT_URL ||
+    "https://evento.sandboxes.easybits.cloud";
   if (!base || !ch.call_mode) return null;
 
   const { currentNamespace } = await import("../tenant.server");
