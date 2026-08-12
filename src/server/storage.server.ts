@@ -134,6 +134,28 @@ export function signedUrl(key: string, ttl = 3600, visibility: Visibility = "pri
   return presign("GET", bucketFor(visibility), key, ttl);
 }
 
+/**
+ * URL firmada de ESCRITURA, para que otra máquina suba el objeto ella misma.
+ *
+ * La usa la caja del evento con su grabación: un MP4 de una hora pesa más de un
+ * giga, y hacerlo pasar por Teams sería descargarlo y volverlo a subir sin ninguna
+ * razón. Con esto la caja hace un PUT directo a Tigris y **nunca ve las
+ * credenciales** — la firma sola no abre nada más que esa clave, ese método y esa
+ * ventana de tiempo.
+ *
+ * TTL generoso a propósito (1 h por defecto): subir un giga desde la caja tarda, y
+ * una firma que caduca a media subida deja la grabación en el limbo.
+ */
+export function presignPut(key: string, ttl = 3600, visibility: Visibility = "private"): string {
+  requireCreds();
+  return presign("PUT", bucketFor(visibility), key, ttl);
+}
+
+/** Clave nueva bajo el prefijo del bucket, a partir de un nombre de archivo. */
+export function keyFor(fileName: string): string {
+  return newKey(fileName);
+}
+
 // URL pública directa (sin firma) — sólo válida para objetos del bucket público.
 export function publicUrl(key: string): string {
   return `${ENDPOINT}/${uriEncode(BUCKET_PUBLIC, true)}/${uriEncode(key, true)}`;
