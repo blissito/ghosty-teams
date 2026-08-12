@@ -34,6 +34,14 @@ export const Route = createFileRoute("/api/attachment/$id")({
               crypto.timingSafeEqual(a, b) &&
               Math.abs(Math.floor(Date.now() / 1000) - Number(ts)) <= 300;
           }
+          // Tercera puerta: el archivo YA ES PÚBLICO — un adjunto de un room abierto
+          // (posterior a su apertura) o un emoji custom del workspace. Sin esto, a un
+          // invitado se le servía el mensaje y se le negaba su imagen, así que los
+          // emojis de reacción llegaban rotos y las fotos del room no cargaban.
+          if (!ok) {
+            const { publicFileAccess } = await import("../server/events/public-files.server");
+            ok = await publicFileAccess(params.id);
+          }
           if (!ok) return new Response("unauthorized", { status: 401 });
         }
 
