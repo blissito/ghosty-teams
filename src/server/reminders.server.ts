@@ -189,7 +189,10 @@ function toReminder(r: Record<string, string | null>): Reminder {
     ownerSub: r.owner_sub!,
     channelId: r.channel_id == null ? null : Number(r.channel_id),
     dmId: r.dm_id == null ? null : Number(r.dm_id),
-    topic: r.topic ?? "general",
+    // Se conserva el NULL: es el dato honesto ("este recordatorio no va a ningún canal").
+    // Con un `?? "general"` aquí, una fila de DM se volvía a leer como si tuviera destino
+    // de canal — que es exactamente la confusión que costó tiempo al diagnosticar esto.
+    topic: r.topic ?? null,
     agentHandle: r.agent_handle!,
     agentName: r.agent_name || "Ghosty",
     agentAvatar: r.agent_avatar || "",
