@@ -248,9 +248,14 @@ function RoomAbierto() {
 
       {/* El video sólo existe DESPUÉS de pulsar. Nunca se pre-carga: la caja puede estar
           dormida y pedirle algo la despierta — no se despierta porque alguien pase por
-          aquí, sólo porque alguien entre de verdad. */}
+          aquí, sólo porque alguien entre de verdad.
+          ⚠️ A PANTALLA COMPLETA, y no en una franja arriba del chat. En una franja, el
+          lobby de LiveKit —vista previa de cámara, dos selectores, nombre y el botón de
+          entrar— no cabe: quedaba cortado por abajo y **el botón de entrar era
+          inalcanzable**, con lo que la sala parecía rota justo en el paso que importa.
+          Entrar a la transmisión es un MODO, no un panel. */}
       {callUrl && (
-        <div className="relative shrink-0 border-b border-border bg-black" style={{ height: "min(50vh, 440px)" }}>
+        <div className="fixed inset-0 z-40 bg-black">
           <iframe
             src={callUrl}
             title={data.title}
@@ -260,10 +265,13 @@ function RoomAbierto() {
           />
           <button
             onClick={() => setCallUrl(null)}
-            aria-label="Salir de la transmisión"
-            className="absolute right-3 top-3 rounded-full bg-black/70 p-1.5 text-white"
+            className="absolute right-4 top-4 flex items-center gap-1.5 rounded-full bg-black/70 px-3 py-1.5 text-xs font-medium text-white backdrop-blur hover:bg-black/85"
           >
-            <X size={16} />
+            {/* ⚠️ Dice "salir" y no "volver al chat" porque esto DESMONTA el iframe: se
+                abandona la llamada de verdad, y volver a entrar cuesta un ticket nuevo.
+                Prometer un vistazo al chat y colgarle la llamada a alguien a media
+                sesión es de las cosas que no se perdonan. */}
+            <X size={14} /> Salir de la transmisión
           </button>
         </div>
       )}
