@@ -157,6 +157,7 @@ function Transcripcion() {
   const [idx, setIdx] = useState(0);
   const [abajo, setAbajo] = useState(false);
   const refs = useRef<(HTMLDivElement | null)[]>([]);
+  const scrollerRef = useRef<HTMLDivElement>(null);
   const segmentos = useMemo(() => partirTranscripcion(data.texto), [data.texto]);
   // ⚠️ Buscar NO filtra. Filtrar dejaba tres párrafos sueltos en pantalla —todos visibles
   // a la vez, así que saltar entre ellos no servía de nada— y sobre todo mataba el
@@ -188,15 +189,21 @@ function Transcripcion() {
   // "¿Estoy abajo?" con holgura, igual que en el chat: pedir el píxel exacto haría que un
   // scroll suave sin terminar contara como "no he llegado".
   useEffect(() => {
-    const alScroll = () =>
-      setAbajo(window.innerHeight + window.scrollY >= document.body.scrollHeight - 80);
+    const el = scrollerRef.current;
+    if (!el) return;
+    const alScroll = () => setAbajo(el.scrollHeight - el.scrollTop - el.clientHeight < 80);
     alScroll();
-    window.addEventListener("scroll", alScroll, { passive: true });
-    return () => window.removeEventListener("scroll", alScroll);
+    el.addEventListener("scroll", alScroll, { passive: true });
+    return () => el.removeEventListener("scroll", alScroll);
   }, []);
 
   return (
-    <div className="min-h-dvh bg-surface text-ink">
+    /* ⚠️ Scroll PROPIO, no el de la página. `body { overflow-x: hidden }` (styles.css,
+       puesto para que nada haga la app pannable en móvil) convierte al body en el
+       contenedor de scroll, y dentro de él `position: sticky` deja de pegarse al viewport:
+       la barra de búsqueda se iba con el texto. Ese CSS es load-bearing, así que la que se
+       adapta es esta página. */
+    <div ref={scrollerRef} className="h-dvh overflow-y-auto bg-surface text-ink">
       <div className="mx-auto max-w-3xl px-5 py-8">
         <Link to="/room/$slug" params={{ slug }} className="text-xs text-muted hover:text-ink">
           ← Volver a la sala
@@ -289,7 +296,12 @@ function Transcripcion() {
       {/* Un solo botón que cambia de sentido. Dos botones fijos —bajar y subir— obligan a
           mirar cuál toca; éste dice siempre lo único que se puede hacer desde donde estás. */}
       <button
-        onClick={() => window.scrollTo({ top: abajo ? 0 : document.body.scrollHeight, behavior: "smooth" })}
+        onClick={() =>
+          scrollerRef.current?.scrollTo({
+            top: abajo ? 0 : scrollerRef.current.scrollHeight,
+            behavior: "smooth",
+          })
+        }
         aria-label={abajo ? "Volver arriba" : "Ir al final"}
         title={abajo ? "Volver arriba" : "Ir al final"}
         className="fixed bottom-6 right-6 grid size-10 place-items-center rounded-full bg-brand text-white shadow-lg hover:opacity-90"
