@@ -1065,6 +1065,10 @@ async function migrate(): Promise<void> {
   // gente de varias zonas horarias, y una hora en el huso del dueño es una hora equivocada
   // para casi todos los demás.
   await addColumn("gc_channels", "starts_at", "INTEGER");
+  // La grabación, YA SUBIDA. Vive aquí y no en la caja porque la caja hiberna y el janitor
+  // la recicla a las 72 h: sin esto, la grabación de un webinar desaparece el fin de semana.
+  await addColumn("gc_channels", "call_recording_url", "TEXT");
+  await addColumn("gc_channels", "call_recorded_at", "INTEGER");
   // Las filas que YA estaban abiertas cuando llegó esta columna se sellan ahora mismo. Es
   // el lado seguro del error: se pierde de vista lo que la comunidad escribió antes de la
   // migración, pero no se publica nada que estuviera dentro.

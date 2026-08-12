@@ -119,3 +119,35 @@ export const verifyCodeFn = createServerFn({ method: "POST" })
     await r.db.confirmEventVerification({ channelId: r.ch.id, email, guestSub });
     return { ok: true, name: fila.name || "Invitado" };
   });
+
+/**
+ * Grabar la llamada. Sólo el HOST — es una acción sobre la sesión de todos, y su rastro
+ * queda publicado en el room.
+ */
+export const recordingFn = createServerFn({ method: "POST" })
+  .validator((d: { slug: string; action: "start" | "stop" }) => d)
+  .handler(async ({ data }): Promise<{ ok: true; url?: string; transcriptUrl?: string | null } | { ok: false; error: string }> => {
+    const r = await room(data.slug);
+    if (!r || !r.ch.call_mode) return { ok: false, error: "Este room no está disponible" };
+    const { eventViewerFor } = await import("./access.server");
+    const viewer = await eventViewerFor(r.ch);
+    if (!viewer?.isHost) return { ok: false, error: "Sólo quien modera puede grabar" };
+
+    const { iniciarGrabacion, detenerGrabacion } = await import("./recording.server");
+    const { eventRoomName } = await import("./ticket.server");
+    const { currentNamespace } = await import("../tenant.server");
+
+    try {
+      if (data.action === "start") {
+        await iniciarGrabacion(r.ch, eventRoomName(await currentNamespace(), r.ch.id));
+        return { ok: true };
+      }
+      const res = await detenerGrabacion(r.ch);
+      // Se guarda en el room: quien llegue después tiene dónde verla, y el enlace deja de
+      // depender de que alguien apuntara la URL.
+      await r.db.setChannelEvent(r.ch.id, { recordingUrl: res.url, recordedAt: Math.floor(Date.now() / 1000) });
+      return { ok: true, url: res.url, transcriptUrl: res.transcriptUrl };
+    } catch (e) {
+      return { ok: false, error: (e as Error).message || "No pude grabar" };
+    }
+  });

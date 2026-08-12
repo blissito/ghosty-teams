@@ -26,6 +26,9 @@ export type Channel = {
   call_open?: number;
   /** Cuándo empieza el evento (epoch UTC). NULL = siempre abierto, sin hora. */
   starts_at?: number | null;
+  /** La grabación ya subida a storage, y cuándo se grabó. */
+  call_recording_url?: string | null;
+  call_recorded_at?: number | null;
   threads?: Message[]; // hilos raíz (adjuntados por getChannelView para el sidebar)
 };
 
@@ -48,6 +51,8 @@ function toChannel(r: Row): Channel {
     public_since: r.public_since == null ? null : num(r.public_since),
     call_open: num(r.call_open),
     starts_at: r.starts_at == null ? null : num(r.starts_at),
+    call_recording_url: r.call_recording_url ?? null,
+    call_recorded_at: r.call_recorded_at == null ? null : num(r.call_recorded_at),
   };
 }
 
@@ -1677,6 +1682,8 @@ export async function setChannelEvent(
     agentEnabled?: boolean;
     callOpen?: boolean;
     startsAt?: number | null;
+    recordingUrl?: string | null;
+    recordedAt?: number | null;
   }
 ): Promise<void> {
   const sets: string[] = [];
@@ -1690,6 +1697,8 @@ export async function setChannelEvent(
   if (patch.agentEnabled !== undefined) put("agent_enabled", patch.agentEnabled ? 1 : 0);
   if (patch.callOpen !== undefined) put("call_open", patch.callOpen ? 1 : 0);
   if (patch.startsAt !== undefined) put("starts_at", patch.startsAt);
+  if (patch.recordingUrl !== undefined) put("call_recording_url", patch.recordingUrl);
+  if (patch.recordedAt !== undefined) put("call_recorded_at", patch.recordedAt);
   if (!sets.length) return;
   args.push(channelId);
   await dbq(`UPDATE gc_channels SET ${sets.join(", ")} WHERE id = ?`, args);

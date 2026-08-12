@@ -1,12 +1,12 @@
 import { createFileRoute, notFound, useRouter } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createServerFn } from "@tanstack/react-start";
-import { MessageSquare, Paperclip, X } from "lucide-react";
+import { Circle, MessageSquare, Paperclip, Square, X } from "lucide-react";
 import GhostyMascot from "../components/GhostyMascot";
 import { ChatCtx, ChatCtxDefaults, MessageRow, type SessionUser } from "../components/chat/message";
 import type { Message, CustomEmoji, ReactionAgg } from "../db.server";
 import { eventFlowFn, eventPostFn, eventReactFn } from "../server/events/chat";
-import { requestCodeFn, verifyCodeFn } from "../server/events/identity";
+import { recordingFn, requestCodeFn, verifyCodeFn } from "../server/events/identity";
 import { useEventStream } from "../hooks/useEventStream";
 import { shouldChime } from "../lib/chime";
 import { DropOverlay, useAdjuntos, useFileDrop } from "../components/chat/adjuntos";
@@ -35,6 +35,8 @@ type RoomInfo = {
   callOpen: boolean;
   /** Epoch UTC, o `null` si el room no tiene hora (siempre abierto). */
   startsAt: number | null;
+  /** La grabación, si la hay. Quien llega tarde suele venir sólo por esto. */
+  recordingUrl: string | null;
   /**
    * La URL de la llamada, YA FIRMADA, cuando quien abre puede entrar.
    *
@@ -94,6 +96,7 @@ const loadRoom = createServerFn({ method: "GET" })
       mode: ch.call_mode,
       callOpen: ch.call_open === 1,
       startsAt: ch.starts_at ?? null,
+      recordingUrl: ch.call_recording_url ?? null,
       brand,
       callUrl,
     };
@@ -129,6 +132,9 @@ function RoomAbierto() {
   // improvisada no tenía, y por eso salían dos menús a la vez.
   const [pickerFor, setPickerFor] = useState<number | null>(null);
   const [canWrite, setCanWrite] = useState(false);
+  const [modero, setModero] = useState(false);
+  const [grabando, setGrabando] = useState(false);
+  const [recBusy, setRecBusy] = useState(false);
   const [online, setOnline] = useState(1);
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
@@ -172,6 +178,7 @@ function RoomAbierto() {
       const r = await eventFlowFn({ data: { slug, after: lastId.current } });
       if (!r.ok) return;
       setCanWrite(r.canWrite);
+      setModero(r.canModerate);
       setEmojis(r.emojis ?? []);
       setMe(r.me ?? null);
       miSub.current = r.me?.sub ?? null;
@@ -254,6 +261,19 @@ function RoomAbierto() {
     const t = setInterval(tick, 15000);
     return () => { vivo = false; clearInterval(t); };
   }, [traerNuevos]);
+
+  async function grabar() {
+    setRecBusy(true);
+    setErr(null);
+    try {
+      const r = await recordingFn({ data: { slug, action: grabando ? "stop" : "start" } });
+      if (!r.ok) setErr(r.error);
+      else setGrabando(!grabando);
+    } catch {
+      setErr("No pude cambiar la grabación.");
+    }
+    setRecBusy(false);
+  }
 
   async function enviar(e: React.FormEvent) {
     e.preventDefault();
@@ -377,15 +397,32 @@ function RoomAbierto() {
               {/* Sin botón: la puerta es el CHAT. Al intentar escribir se pide el correo,
                   y con él verificado la llamada llega ya montada en la siguiente carga. */}
               <p className="max-w-xs text-sm text-muted">
-                {!data.callOpen
-                  ? "La llamada no está abierta ahora mismo."
-                  : "Escribe en el chat para entrar a la llamada."}
+                {data.recordingUrl
+                  ? "Grabación del evento."
+                  : !data.callOpen
+                    ? "La llamada no está abierta ahora mismo."
+                    : "Escribe en el chat para entrar a la llamada."}
               </p>
               {err && <p className="text-xs text-red-400">{err}</p>}
             </div>
           )}
 
           <div className="absolute right-4 top-4 flex items-center gap-2">
+            {/* Grabar es de QUIEN MODERA: es una acción sobre la sesión de todos, y su
+                rastro queda publicado. El punto rojo va SIEMPRE visible mientras graba —
+                que se grabe sin que se note es exactamente lo que no puede pasar. */}
+            {modero && callUrl && (
+              <button
+                onClick={grabar}
+                disabled={recBusy}
+                className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium backdrop-blur disabled:opacity-60 ${
+                  grabando ? "bg-red-600 text-white" : "bg-black/70 text-white hover:bg-black/85"
+                }`}
+              >
+                {grabando ? <Square size={12} fill="currentColor" /> : <Circle size={12} fill="currentColor" className="text-red-500" />}
+                {recBusy ? "…" : grabando ? "Detener y guardar" : "Grabar"}
+              </button>
+            )}
             <button
               onClick={() => setChatAbierto((v) => !v)}
               className="flex items-center gap-1.5 rounded-full bg-black/70 px-3 py-1.5 text-xs font-medium text-white backdrop-blur hover:bg-black/85 sm:hidden"
