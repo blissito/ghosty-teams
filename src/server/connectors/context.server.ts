@@ -70,6 +70,12 @@ export async function buildConnectorContext(
     const { tasksContext } = await import("./tasks.native.server");
     const tareas = await tasksContext(dest).catch(() => null);
     if (tareas) blocks.push(tareas);
+    // Igual que Tasks: nativo, sin nada que autorizar. Dice DÓNDE saldrán los recordatorios
+    // de esta conversación, que es lo único que el agente no podía saber y por eso confirmaba
+    // destinos que no iba a cumplir.
+    const { remindersContext } = await import("./reminders.native.server");
+    const recordatorios = remindersContext(dest);
+    if (recordatorios) blocks.push(recordatorios);
     const ajenos = await contextoDeConectoresDelEquipo(sub);
     if (ajenos) blocks.push(ajenos);
     if (!blocks.length) return "";

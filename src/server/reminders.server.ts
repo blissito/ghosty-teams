@@ -19,7 +19,10 @@ export type Reminder = {
   ownerSub: string;
   channelId: number | null;
   dmId: number | null;
-  topic: string;
+  /** Sólo tiene sentido con `channelId`: es la columna `topic` del mensaje que se publica.
+   *  En un DM va `null` — antes se estampaba "general" y esa cadena se leía como si el
+   *  recordatorio fuera al canal #general, que es justo lo que no hace. */
+  topic: string | null;
   agentHandle: string;
   agentName: string;
   agentAvatar: string;
@@ -297,7 +300,9 @@ async function deliver(ns: string, r: Reminder): Promise<void> {
       if (msg) bus.publish(bus.ch.user(ns, sub), { t: "message:new", msg });
     }
   } else if (r.channelId != null) {
-    const { id } = await db.postAgent(r.channelId, null, body, "msg", r.agentHandle, r.agentName, r.topic, r.agentAvatar);
+    // En esta rama SIEMPRE hay canal, así que el topic existe; el `?? "general"` sólo cubre
+    // las filas viejas y los recordatorios de canal creados antes de que fuera obligatorio.
+    const { id } = await db.postAgent(r.channelId, null, body, "msg", r.agentHandle, r.agentName, r.topic ?? "general", r.agentAvatar);
     const msg = await db.getMessage(id);
     if (msg) bus.publish(bus.ch.room(ns, r.channelId), { t: "message:new", msg });
   } else {

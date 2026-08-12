@@ -849,6 +849,10 @@ export const en: Record<string, string> = {
   "Expulsar del workspace": "Remove from workspace",
   "Historial": "History",
   "Historial de versiones": "Version history",
+  "Versión anterior · Restaurar para editar": "Older version · Restore to edit",
+  "Publica esta versión como la más reciente. No borra nada.":
+    "Publishes this version as the most recent one. Nothing is deleted.",
+  "Restaurando…": "Restoring…",
   "Importar de Formmy": "Import from Formmy",
   "Imprimir o guardar como PDF": "Print or save as PDF",
   "Invitación enviada": "Invitation sent",

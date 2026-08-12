@@ -30,7 +30,18 @@ export function nativeTools(dest: ToolDest | null): ConnectorTool[] {
         "Programa un recordatorio que Ghosty publicará en esta conversación a la hora indicada. " +
         "Úsalo siempre que te pidan recordar, avisar o programar algo — es una capacidad REAL de Ghosty Teams. " +
         "`when` va en hora LOCAL del usuario (YYYY-MM-DDTHH:mm); resuelve tú las expresiones relativas " +
-        "('mañana', 'el 1 de agosto', 'en 2 horas') usando la fecha actual antes de llamar.",
+        "('mañana', 'el 1 de agosto', 'en 2 horas') usando la fecha actual antes de llamar. " +
+        // ⚠️ El destino es FIJO y no es negociable: sale del token firmado del turno, no de
+        // nada que tú mandes. No hay parámetro de canal ni de destinatario, y no lo va a
+        // haber por accidente. Esto se dice como LÍMITE y no de pasada porque el fallo real
+        // es de confirmación: el 2026-08-12 alguien pidió en un DM "manda el recordatorio a
+        // #general", el recordatorio se agendó (bien) en el DM, y el agente lo confirmó como
+        // si fuera a salir en #general. Nadie le había dicho que no podía.
+        "⚠️ DESTINO FIJO: SIEMPRE se publica AQUÍ, en esta misma conversación. NO puedes elegir " +
+        "otro canal, ni otro room, ni mandárselo por DM a nadie — no existe ningún parámetro para eso. " +
+        "Si te piden otro destino ('avisa en #general', 'mándaselo a Ana'), NO lo agendes en silencio " +
+        "como si obedecieras: DILO en una frase y ofrece la salida — que te lo pidan EN ese canal, y " +
+        "ahí sí queda. Y al confirmar, di siempre DÓNDE va a salir además de cuándo.",
       inputSchema: {
         type: "object",
         properties: {
@@ -60,7 +71,12 @@ export function nativeTools(dest: ToolDest | null): ConnectorTool[] {
           ownerSub: sub,
           channelId: dest.channelId ?? null,
           dmId: dest.dmId ?? null,
-          topic: dest.topic || "general",
+          // ⚠️ El topic sólo significa algo en un CANAL: `deliver` rutea por dmId y, si no
+          // hay, por channelId — el topic viaja como columna del mensaje, nunca decide
+          // destino. En un DM `dest` no trae topic y esto estampaba el literal "general",
+          // dato muerto que PARECE un destino: al diagnosticar el incidente del 2026-08-12
+          // una fila de DM decía `topic: "general"` y se leyó como "iba al canal general".
+          topic: dest.channelId ? dest.topic || "general" : null,
           agentHandle: dest.handle || "ghosty",
           agentName: dest.name || "Ghosty",
           agentAvatar: dest.avatar || "",

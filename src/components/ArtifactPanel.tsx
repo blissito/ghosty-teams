@@ -673,6 +673,42 @@ export default function ArtifactPanel({
   // documento tiene una sola versión, esto es `false` y no cambia nada.
   const viewingOldVersion =
     latestVersionId != null && vActual != null && vActual !== latestVersionId;
+
+  // Si estabas editando el artefacto HTML y saltas a una versión anterior, se sale del
+  // editor. El botón ya no está (lo sustituye el de restaurar), pero el Canvas podría
+  // seguir montado de antes — y ahí Guardar publicaría el HTML viejo como versión nueva
+  // sin haberlo pedido.
+  useEffect(() => {
+    if (viewingOldVersion) setEditing(false);
+  }, [viewingOldVersion]);
+
+  // Restaurar: publica el contenido de esta versión como una NUEVA. No borra nada — las
+  // posteriores siguen en el historial y la propia restauración es reversible.
+  const [restoring, setRestoring] = useState(false);
+  const restaurarVersion = useCallback(async () => {
+    if (!documentIdActual || vActual == null || restoring) return;
+    setRestoring(true);
+    try {
+      const { restoreArtifactVersionFn } = await import("../server/artifacts");
+      const r = await restoreArtifactVersionFn({
+        data: { documentId: documentIdActual, versionId: Number(vActual) },
+      });
+      // El pin salta a la fila nueva; el contenido lo trae el `refresh` del bus.
+      // ⚠️ NO se congela nada: `congelar()` existe para que el eco de TU guardado no pise lo
+      // que estabas escribiendo. Al restaurar es al revés — quieres que entre el valor nuevo.
+      const nueva = (r as { versionId?: number } | undefined)?.versionId ?? null;
+      if (nueva != null) {
+        setVersionDoc(nueva);
+        setLatestVersionId(nueva);
+      }
+      // Un artefacto HTML pudo quedarse en modo Editar de un montaje anterior.
+      setEditing(false);
+    } catch (e) {
+      console.error("[artefacto] no se pudo restaurar", e);
+    } finally {
+      setRestoring(false);
+    }
+  }, [documentIdActual, vActual, restoring]);
   const verParam = vActual ? `&v=${vActual}` : "";
   const downloadHref =
     artifact?.kind === "doc"
@@ -1342,9 +1378,27 @@ export default function ArtifactPanel({
                       )
                     }
                     primaryAction={
-                      // Ver/Editar: la acción principal del artefacto — con etiqueta, a la
-                      // izquierda del grupo, y nunca escondida en el ⋯.
-                      artifact.kind === "artifact" ? (
+                      // Viendo una versión ANTERIOR: la acción principal deja de ser
+                      // Ver/Editar y pasa a ser la única salida — restaurar.
+                      //
+                      // Va aquí y no en `actions` a propósito: `actions` se colapsa en un ⋯
+                      // cuando el panel se estrecha, y un aviso que se puede esconder no es
+                      // un aviso. `primaryAction` se pinta siempre.
+                      //
+                      // Un solo elemento que dice DÓNDE estás y qué hacer: hasta hoy una
+                      // versión vieja se veía idéntica al documento vivo, sin ninguna señal.
+                      viewingOldVersion ? (
+                        <button
+                          type="button"
+                          disabled={restoring}
+                          onClick={restaurarVersion}
+                          title={t("Publica esta versión como la más reciente. No borra nada.")}
+                          className="mr-0.5 inline-flex shrink-0 items-center gap-1.5 rounded-md bg-amber-500/15 px-2 py-1 text-xs text-amber-600 transition hover:bg-amber-500/25 disabled:opacity-60"
+                        >
+                          <History size={14} />
+                          {restoring ? t("Restaurando…") : t("Versión anterior · Restaurar para editar")}
+                        </button>
+                      ) : artifact.kind === "artifact" ? (
                         <button
                           type="button"
                           onClick={() => setEditing((v) => !v)}
@@ -1515,6 +1569,11 @@ export default function ArtifactPanel({
                                 {historyOpen ? (
                                   <ArtifactHistoryPanel
                                     documentId={artifact.documentId}
+                                    // Cuál estás viendo. El componente ya sabía marcarla y se
+                                    // montaba sin este dato, así que listaba cinco versiones
+                                    // sin señalar ninguna — de ahí salió el "las versiones
+                                    // son ficticias" de la demo.
+                                    actual={vActual != null ? Number(vActual) : null}
                                     onClose={() => setHistoryOpen(false)}
                                   />
                                 ) : null}
@@ -2059,6 +2118,10 @@ export default function ArtifactPanel({
                         title={artifact.title}
                         patchRefs={artifact.patchRefs}
                         version={artifact.versionId}
+                        // Una versión anterior NO se edita: se restaura y entonces sí. Sin
+                        // esto el editor se veía idéntico al documento vivo y escribir aquí
+                        // guardaba sobre la ÚLTIMA versión, no sobre la que tienes delante.
+                        readOnly={viewingOldVersion}
                         onGuardado={setGuardadoDoc}
                         onVersion={setVersionDoc}
                         cerrando={cerrando}

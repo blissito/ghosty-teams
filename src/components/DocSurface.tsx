@@ -52,6 +52,7 @@ export default function DocSurface({
   title,
   patchRefs,
   version,
+  readOnly = false,
   onVersion,
   onGuardado,
   cerrando,
@@ -65,6 +66,15 @@ export default function DocSurface({
   title?: string;
   /** Alias del patch en curso → el editor marca ya, sin esperar la republicación. */
   patchRefs?: string[];
+  /**
+   * Estás mirando una versión ANTERIOR: se ve, no se escribe.
+   *
+   * ⚠️ No es cosmético. El guardado no lleva la versión que tienes en pantalla —escribe
+   * siempre sobre la fila VIVA—, así que teclear aquí publicaba el contenido viejo encima
+   * de lo nuevo, y si la última era humana lo hacía **en sitio**, sin dejar versión. Para
+   * editar una versión vieja hay que restaurarla primero.
+   */
+  readOnly?: boolean;
   /**
    * La fila de `gc_artifacts` que enseña el panel — la del MENSAJE que abriste. Es la
    * semilla del pin: a partir de ahí lo mueve `flush`, no el prop.
@@ -220,7 +230,10 @@ export default function DocSurface({
 
   const onChange = useCallback(
     (blocks: DocBlock[]) => {
-      if (!documentId) return;
+      // En sólo lectura no debería llegar ningún cambio (el editor va `editable={false}`),
+      // pero si llegara —una edición programática, un paste raro— NO puede armarse un
+      // guardado: aterrizaría sobre la versión viva con el contenido de una vieja.
+      if (!documentId || readOnly) return;
       pending.current = blocks;
       congelar(true);
       // Señal INMEDIATA: el cambio ya está registrado aunque el guardado espere al
@@ -232,7 +245,7 @@ export default function DocSurface({
       const since = Date.now() - lastSaved.current;
       saveTimer.current = setTimeout(flush, Math.max(SAVE_IDLE_MS, SAVE_MIN_INTERVAL_MS - since));
     },
-    [documentId, flush, congelar],
+    [documentId, flush, congelar, readOnly],
   );
 
   // Cerrar el panel, cambiar de pestaña o recargar NO puede perder lo escrito: ahí se
@@ -281,7 +294,7 @@ export default function DocSurface({
         {...source}
         // Editable en cuanto el agente suelta el turno. Un borrador (sin documentId)
         // todavía no existe como fila, así que no hay dónde guardar.
-        editable={!!documentId && !streaming}
+        editable={!!documentId && !streaming && !readOnly}
         streaming={streaming}
         onChange={onChange}
         highlightIds={marcar}
