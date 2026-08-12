@@ -1,7 +1,10 @@
 import { createFileRoute, notFound, redirect } from "@tanstack/react-router";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { createServerFn } from "@tanstack/react-start";
+import { Menu, Radio } from "lucide-react";
 import { eventFlowFn, eventPostFn } from "../server/events/chat";
+import { useEventStream } from "../hooks/useEventStream";
+import { EventArtifacts, EventSidebar } from "../components/EventShowcase";
 
 // La sala del evento: el video de la caja de LiveKit embebido, y el chat al lado.
 //
@@ -76,29 +79,56 @@ function Sala() {
   const [messages, setMessages] = useState<ChatMsg[]>([]);
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
-  const [openChat, setOpenChat] = useState(false);
+  const [navOpen, setNavOpen] = useState(false);
+  const [videoOpen, setVideoOpen] = useState(true);
+  const [online, setOnline] = useState(1);
   const bottomRef = useRef<HTMLDivElement>(null);
   const lastId = useRef(0);
 
-  // Sondeo y no SSE: el stream de Teams exige sesión de miembro, y abrirlo a
-  // invitados obligaría a tocar justo la puerta que este módulo evita tocar.
-  // Con una sesión de una tarde, un GET cada 4 s es más barato que ese riesgo.
+  // Trae lo que falte desde `lastId`. Es a la vez el catch-up del arranque, la red del
+  // sondeo y lo que se llama cuando el stream avisa de algo que no trae cuerpo.
+  const traerNuevos = useCallback(async () => {
+    try {
+      const r = await eventFlowFn({ data: { slug, after: lastId.current } });
+      if (!r.ok || !r.messages.length) return;
+      lastId.current = r.messages[r.messages.length - 1].id;
+      setMessages((prev) => {
+        // El SSE y el sondeo pueden traer el MISMO mensaje: el stream lo entrega al
+        // instante y el sondeo lo vuelve a pedir si su `after` iba atrasado. Sin
+        // deduplicar por id, un mensaje aparecía dos veces.
+        const vistos = new Set(prev.map((m) => m.id));
+        return [...prev, ...r.messages.filter((m) => !vistos.has(m.id))].slice(-200);
+      });
+    } catch {
+      /* un sondeo perdido se recupera en el siguiente */
+    }
+  }, [slug]);
+
+  // Tiempo real. El sondeo se QUEDA, cada 15 s en vez de cada 4: es la red por si el
+  // stream tiene un hueco (la VM suspendida, un deploy, la red del móvil cambiando de
+  // antena), y `after` hace que sólo pida lo que le falta. Bajar de 4 s a 15 s con SSE
+  // encima es menos tráfico y aun así más rápido.
+  useEventStream(slug, (ev) => {
+    if (ev.t === "event:presence") {
+      setOnline(ev.count);
+      return;
+    }
+    // Todo lo que toca el flujo se resuelve pidiendo lo nuevo, en vez de reconstruir el
+    // mensaje desde el evento: el `msg` del bus y lo que devuelve `eventFlowFn` no tienen
+    // la misma forma (`mine`, `isAgent`), y mantener dos mapeos que no divergan cuesta
+    // más que un GET.
+    if (ev.t === "message:new" || ev.t === "message:body" || ev.t === "message:edited" || ev.t === "refresh") {
+      void traerNuevos();
+    }
+  });
+
   useEffect(() => {
     let alive = true;
-    const tick = async () => {
-      try {
-        const r = await eventFlowFn({ data: { slug, after: lastId.current } });
-        if (!alive || !r.ok || !r.messages.length) return;
-        lastId.current = r.messages[r.messages.length - 1].id;
-        setMessages((prev) => [...prev, ...r.messages].slice(-200));
-      } catch {
-        /* un sondeo perdido se recupera en el siguiente */
-      }
-    };
+    const tick = () => { if (alive) void traerNuevos(); };
     tick();
-    const t = setInterval(tick, 4000);
+    const t = setInterval(tick, 15000);
     return () => { alive = false; clearInterval(t); };
-  }, [slug]);
+  }, [traerNuevos]);
 
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages.length]);
 
@@ -110,11 +140,7 @@ function Sala() {
     setText("");
     try {
       await eventPostFn({ data: { slug, body } });
-      const r = await eventFlowFn({ data: { slug, after: lastId.current } });
-      if (r.ok && r.messages.length) {
-        lastId.current = r.messages[r.messages.length - 1].id;
-        setMessages((prev) => [...prev, ...r.messages].slice(-200));
-      }
+      await traerNuevos();
     } catch {
       // Se devuelve el texto al campo: perder lo que alguien acaba de escribir
       // por un fallo de red es de las cosas que más molestan de un chat.
@@ -124,43 +150,82 @@ function Sala() {
   }
 
   return (
-    <div className="h-dvh flex flex-col md:flex-row bg-surface">
-      <div className="flex-1 min-h-0 relative">
-        {/* `allow` explícito: sin él el navegador bloquea cámara y micrófono
-            dentro del iframe y la sala parece rota sin decir por qué. */}
-        <iframe
-          src={data.roomUrl}
-          title={data.title}
-          className="w-full h-full border-0"
-          allow="camera; microphone; display-capture; autoplay; fullscreen; speaker-selection"
-          allowFullScreen
-        />
-        <button
-          onClick={() => setOpenChat((v) => !v)}
-          className="md:hidden absolute top-3 right-3 rounded-full bg-black/70 text-white px-4 py-2 text-sm font-medium"
-        >
-          {openChat ? "Ver sala" : "Chat"}
-        </button>
-      </div>
-
+    <div className="h-dvh flex bg-surface overflow-hidden">
+      {/* ── Sidebar de escaparate ──────────────────────────────────────────
+          En MÓVIL nace oculta y es un cajón: quien entra a un webinar desde el
+          teléfono viene a ver el video, y una barra de adorno comiéndose media
+          pantalla convierte el escaparate en un estorbo. */}
       <aside
-        className={`${openChat ? "flex" : "hidden"} md:flex w-full md:w-80 lg:w-96 shrink-0 flex-col border-t md:border-t-0 md:border-l border-border bg-card`}
+        className={`${navOpen ? "flex" : "hidden"} md:flex absolute md:relative inset-y-0 left-0 z-30 w-60 shrink-0 flex-col border-r border-border`}
       >
-        <div className="px-4 py-3 border-b border-border">
-          <div className="font-semibold text-sm truncate">{data.title}</div>
-          <div className="text-xs text-muted">
-            {data.me.name}{data.me.isHost ? " · moderas" : ""}
-          </div>
-        </div>
+        <EventSidebar eventName={data.title} online={online} />
+      </aside>
+      {navOpen && (
+        <button
+          aria-label="Cerrar menú"
+          onClick={() => setNavOpen(false)}
+          className="md:hidden fixed inset-0 z-20 bg-black/40"
+        />
+      )}
 
-        <div className="flex-1 min-h-0 overflow-y-auto px-4 py-3 space-y-3">
+      {/* ── El room del evento: lo único vivo ───────────────────────────── */}
+      <main className="flex min-w-0 flex-1 flex-col">
+        <header className="flex items-center gap-2 border-b border-border px-3 py-2">
+          <button
+            onClick={() => setNavOpen(true)}
+            aria-label="Abrir menú"
+            className="md:hidden rounded-lg p-1.5 text-muted hover:bg-surface-2"
+          >
+            <Menu size={18} />
+          </button>
+          <Radio size={16} className="shrink-0 text-brand" />
+          <div className="min-w-0">
+            <div className="truncate text-sm font-semibold">{data.title}</div>
+            <div className="flex items-center gap-1.5 text-[11px] text-muted">
+              <span className="truncate">{data.me.name}{data.me.isHost ? " · moderas" : ""}</span>
+              {/* Presencia de la SALA, no del workspace: la señal de que hay alguien
+                  más del otro lado, que es justo lo que no se sabe al entrar por una
+                  liga. Nunca sale de aquí un nombre del equipo del cliente. */}
+              <span aria-hidden className="text-muted/50">·</span>
+              <span className="inline-flex shrink-0 items-center gap-1">
+                <span className="size-1.5 rounded-full bg-emerald-500" />
+                {online} en la sala
+              </span>
+            </div>
+          </div>
+          <button
+            onClick={() => setVideoOpen((v) => !v)}
+            className="ml-auto shrink-0 rounded-lg border border-border px-2 py-1 text-xs text-muted hover:bg-surface-2"
+          >
+            {videoOpen ? "Ocultar video" : "Ver video"}
+          </button>
+        </header>
+
+        {/* El video vive DENTRO del room, colapsable. Se desmonta al ocultarlo a
+            propósito: dejarlo montado mantendría la conexión de LiveKit —y el
+            micrófono— viva detrás de un `display:none`. */}
+        {videoOpen && (
+          <div className="relative shrink-0 border-b border-border bg-black" style={{ height: "min(52vh, 460px)" }}>
+            {/* `allow` explícito: sin él el navegador bloquea cámara y micrófono
+                dentro del iframe y la sala parece rota sin decir por qué. */}
+            <iframe
+              src={data.roomUrl}
+              title={data.title}
+              className="h-full w-full border-0"
+              allow="camera; microphone; display-capture; autoplay; fullscreen; speaker-selection"
+              allowFullScreen
+            />
+          </div>
+        )}
+
+        <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-4 py-3">
           {messages.length === 0 && (
             <p className="text-xs text-muted">Aún no hay mensajes. Saluda 👋</p>
           )}
           {messages.map((m) => (
             <div key={m.id} className="text-sm">
               <span className={`font-medium ${m.isAgent ? "text-brand" : ""}`}>{m.sender}</span>
-              <span className="text-[10px] text-muted ml-2">
+              <span className="ml-2 text-[10px] text-muted">
                 {new Date(m.created_at * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
               </span>
               <div className="whitespace-pre-wrap break-words">{m.body}</div>
@@ -169,13 +234,13 @@ function Sala() {
           <div ref={bottomRef} />
         </div>
 
-        <form onSubmit={send} className="p-3 border-t border-border flex gap-2">
+        <form onSubmit={send} className="flex gap-2 border-t border-border p-3">
           <input
             value={text}
             onChange={(e) => setText(e.target.value)}
             placeholder="Escribe un mensaje…"
             maxLength={1000}
-            className="flex-1 min-w-0 rounded-lg border border-border bg-transparent px-3 py-2 text-base"
+            className="min-w-0 flex-1 rounded-lg border border-border bg-transparent px-3 py-2 text-base"
           />
           <button
             type="submit" disabled={sending || !text.trim()}
@@ -184,6 +249,12 @@ function Sala() {
             Enviar
           </button>
         </form>
+      </main>
+
+      {/* Panel derecho sólo en pantallas anchas: en un portátil estrecho le robaría
+          espacio a lo que sí funciona. */}
+      <aside className="hidden w-64 shrink-0 xl:block">
+        <EventArtifacts />
       </aside>
     </div>
   );

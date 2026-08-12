@@ -277,6 +277,7 @@ export const en: Record<string, string> = {
   "Esto no se puede deshacer.": "This can't be undone.",
   "Expandir": "Expand",
   "Extra": "Extra",
+  "Entró por la liga del evento": "Joined through the event link",
   "Fijado": "Pinned",
   "Fijar en el room": "Pin to room",
   "Agente gestionado": "Managed agent",

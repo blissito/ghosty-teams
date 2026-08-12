@@ -317,6 +317,60 @@ export async function visibleChannelFor(
   return channel;
 }
 
+/**
+ * ¿Puede esta persona ver el hilo de este mensaje?
+ *
+ * Hermana de `visibleChannelFor` y por la misma razón: `getThread` no comprobaba
+ * NADA. Con un `messageId` —entero autoincremental, o sea enumerable de uno en uno—
+ * cualquiera, incluso sin sesión, se llevaba el hilo completo de cualquier room
+ * privado o DM del tenant.
+ *
+ * El permiso se aplica sobre el CONTENEDOR (su room o su DM), que es donde vive la
+ * frontera. Un mensaje no tiene permiso propio.
+ */
+export async function threadVisibleFor(
+  msg: { channel_id: number; dm_id?: number | null } | null,
+  user: { sub: string; isOwner: boolean } | null,
+  db: {
+    getChannelById: (id: number) => Promise<Channel | null>;
+    canSeeChannel: (ch: Channel, sub: string, isOwner: boolean) => Promise<boolean>;
+    getDmMembers: (dmId: number) => Promise<string[]>;
+  }
+): Promise<boolean> {
+  if (!msg || !user) return false;
+  if (msg.dm_id != null) {
+    const miembros = await db.getDmMembers(msg.dm_id).catch((): string[] => []);
+    return miembros.includes(user.sub);
+  }
+  const canal = await db.getChannelById(msg.channel_id).catch(() => null);
+  if (!canal) return false;
+  return db.canSeeChannel(canal, user.sub, user.isOwner);
+}
+
+/**
+ * ¿Quién tiene derecho a levantar un turno de agente en este room?
+ *
+ * `askAgent` no comprobaba NADA: bastaba el slug —que sale del nombre del room, o sea
+ * adivinable— para hacer trabajar al agente. Y un turno cuesta dinero del dueño (no hay
+ * enforcement de saldo en ninguna parte del sistema) y mete el texto de quien llame en la
+ * conversación del equipo. `sessionUser()` sí aparecía dentro del handler, pero sólo para
+ * ATRIBUIR el turno — que no es lo mismo que autorizarlo.
+ *
+ * En un room de EVENTO hay dos clases legítimas de invocador, miembro e invitado
+ * registrado, y `eventViewerFor` ya las cubre con una sola regla. En un room normal,
+ * membresía y nada más.
+ */
+export async function canInvokeAgent(
+  channel: Channel,
+  user: { sub: string; isOwner: boolean } | null,
+  db: { canSeeChannel: (ch: Channel, sub: string, isOwner: boolean) => Promise<boolean> },
+  eventViewerFor: (ch: Channel) => Promise<unknown | null>
+): Promise<boolean> {
+  if (channel.call_mode) return !!(await eventViewerFor(channel));
+  if (!user) return false;
+  return db.canSeeChannel(channel, user.sub, user.isOwner);
+}
+
 // Shell del room (sidebar + meta), SIN el flujo → el loader es ligero y el
 // flujo carga client-side con skeleton (apertura inmediata). Filtra visibilidad.
 export const getChannelView = createServerFn({ method: "GET" })
@@ -388,14 +442,21 @@ export const getLiveTurnsFn = createServerFn({ method: "POST" }).handler(async (
    * de permiso que puedan divergir.
    */
   const me = await sessionUser();
+  // ⚠️ Sin sesión se corta AQUÍ, no se cae a `listChannels("")`. Ese `?? ""` de antes
+  // no era inofensivo: `listChannels` devuelve todo room con `is_private = 0`, así que
+  // un anónimo recibía la lista de rooms no privados del tenant —y con ella los turnos
+  // vivos, que llevan `tarea`, el texto literal de lo que pidió una persona—. La ruta
+  // del chat está tras el guard de login, pero esto es una server function y desde el
+  // 2026-08-11 hay tráfico anónimo en el vecindario (la sala de eventos).
+  if (!me) return [];
   const db = await import("../db.server");
   const visibles = new Set(
-    (await db.listChannels(me?.sub ?? "", !!me?.isOwner).catch(() => [])).map((c) => c.id),
+    (await db.listChannels(me.sub, !!me.isOwner).catch(() => [])).map((c) => c.id),
   );
   return todos
     .filter((t) => {
       // Turno de DM: sólo el suyo. En un DM el invocador es el humano de la conversación.
-      if (t.dmId != null) return !!me?.sub && t.invokerSub === me.sub;
+      if (t.dmId != null) return t.invokerSub === me.sub;
       if (t.channelId == null) return false;
       return visibles.has(t.channelId);
     })
@@ -613,16 +674,31 @@ export const editMessageFn = createServerFn({ method: "POST" })
   });
 
 // Un hilo: el mensaje raíz + sus respuestas.
+//
+// ⚠️ Esto NO comprobaba NADA: con un `messageId` —un entero autoincremental, o sea
+// enumerable— cualquiera, incluso sin sesión, se llevaba el hilo completo de cualquier
+// room privado o DM del tenant. El permiso se aplica sobre el CONTENEDOR del mensaje
+// (su room o su DM), que es donde vive la frontera, y se reusa `canSeeChannel` /
+// `getDmMembers` para no abrir un tercer criterio que pueda divergir del sidebar.
 export const getThread = createServerFn({ method: "GET" })
   .validator((d: { messageId: number }) => d)
   .handler(async ({ data }) => {
     const db = await import("../db.server");
     const user = await sessionUser();
+    const raiz = await db.getMessage(data.messageId);
+    const puede = await threadVisibleFor(
+      raiz,
+      user ? { sub: user.sub, isOwner: !!user.isOwner } : null,
+      db
+    );
+    // Vacío y no un error: quien no puede verlo no debería ni distinguir "no existe" de
+    // "no es tuyo" — un 403 confirmaría que ese id existe.
+    if (!puede || !raiz) return { root: null, replies: [] };
     const [root, replies] = await Promise.all([
-      db.getMessage(data.messageId),
+      Promise.resolve(raiz),
       db.listThread(data.messageId),
     ]);
-    const withReactions = await db.attachMeta([...(root ? [root] : []), ...replies], user?.sub ?? "");
+    const withReactions = await db.attachMeta([...(root ? [root] : []), ...replies], user!.sub);
     const newRoot = root ? withReactions[0] : null;
     const newReplies = root ? withReactions.slice(1) : withReactions;
     return { root: newRoot, replies: newReplies };
@@ -631,7 +707,12 @@ export const getThread = createServerFn({ method: "GET" })
 export const listChannelsFn = createServerFn({ method: "GET" }).handler(async () => {
   const db = await import("../db.server");
   const user = await sessionUser();
-  return db.listChannels(user?.sub ?? "", !!user?.isOwner);
+  // ⚠️ Sin sesión NO se cae a `listChannels("")`. Esa llamada devuelve todo room con
+  // `is_private = 0` —"lo ve el workspace", no "lo ve internet"—, así que un anónimo
+  // recibía la lista de rooms del cliente CON SUS NOMBRES. Un nombre de room puede ser
+  // "Despido Juan". Misma regla que `visibleChannelFor`: sin usuario, nada.
+  if (!user) return [];
+  return db.listChannels(user.sub, !!user.isOwner);
 });
 
 // Postea al flujo (parentId null) o dentro de un hilo (parentId set).
@@ -822,6 +903,20 @@ export const askAgent = createServerFn({ method: "POST" })
     const { currentNamespace } = await import("./tenant.server");
     const channel = await db.getChannel(data.slug);
     if (!channel) throw new Error("Canal no encontrado");
+
+    // ⚠️ AUTORIZACIÓN — ver `canInvokeAgent`. Antes no había ninguna.
+    {
+      const me = await sessionUser();
+      const { eventViewerFor } = await import("./events/access.server");
+      const ok = await canInvokeAgent(
+        channel,
+        me ? { sub: me.sub, isOwner: !!me.isOwner } : null,
+        db,
+        eventViewerFor
+      );
+      if (!ok) throw new Error("no autorizado");
+    }
+
     const ns = await currentNamespace();
     const agent = (await resolvedAgents()).find((a) => a.handle === data.handle);
     const name = agent?.name ?? "Ghosty";

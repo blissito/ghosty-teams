@@ -9016,6 +9016,9 @@ function MessageRow({
   // Personas: resuelve nombre/avatar del DIRECTORIO VIVO por sub (fallback al denormalizado
   // del mensaje) → editar tu avatar se ve en mensajes viejos también, como Slack. Agentes
   // conservan su propio nombre/avatar (no están en el directorio de personas).
+  // Invitado de un evento abierto. El `sub` lo acuña el servidor con el prefijo `guest:`
+  // (events/guest.server.ts), así que es una marca fiable: el cliente nunca lo elige.
+  const isGuest = !isAgent && !!m.sender_sub?.startsWith("guest:");
   const dirUser = !isAgent && m.sender_sub ? users.get(m.sender_sub) : undefined;
   const displayName = isAgent && m.sender === "ghosty" ? "Ghosty" : (dirUser?.name || m.sender);
   const avatarSrc = dirUser?.avatar || m.avatar;
@@ -9143,6 +9146,18 @@ function MessageRow({
           {isAgent ? (
             <span className="rounded bg-brand/15 px-1 py-px text-[9px] font-bold uppercase leading-none tracking-wide text-brand">
               {t("Agente")}
+            </span>
+          ) : null}
+          {isGuest ? (
+            // Alguien de FUERA del workspace: entró por la liga de un evento abierto y no
+            // tiene cuenta ni ocupa asiento. Con 100 desconocidos escribiendo en un room
+            // del cliente, el equipo tiene que distinguirlos de un vistazo — si no, un
+            // nombre cualquiera en el flujo se lee como si fuera un compañero.
+            <span
+              title={t("Entró por la liga del evento")}
+              className="rounded bg-amber-500/15 px-1 py-px text-[9px] font-bold uppercase leading-none tracking-wide text-amber-600"
+            >
+              {t("Invitado")}
             </span>
           ) : null}
           <span suppressHydrationWarning className="text-[11px] text-muted">{time}</span>

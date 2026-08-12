@@ -32,6 +32,7 @@ import { Route as ApiUploadRouteImport } from './routes/api.upload'
 import { Route as ApiTtsWarmRouteImport } from './routes/api.tts-warm'
 import { Route as ApiStreamRouteImport } from './routes/api.stream'
 import { Route as ApiManifestRouteImport } from './routes/api.manifest'
+import { Route as ApiEventStreamRouteImport } from './routes/api.event-stream'
 import { Route as ApiBrandLogoRouteImport } from './routes/api.brand-logo'
 import { Route as ApiBrandCssRouteImport } from './routes/api.brand-css'
 import { Route as ApiAgentAssetRouteImport } from './routes/api.agent-asset'
@@ -179,6 +180,11 @@ const ApiStreamRoute = ApiStreamRouteImport.update({
 const ApiManifestRoute = ApiManifestRouteImport.update({
   id: '/api/manifest',
   path: '/api/manifest',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiEventStreamRoute = ApiEventStreamRouteImport.update({
+  id: '/api/event-stream',
+  path: '/api/event-stream',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiBrandLogoRoute = ApiBrandLogoRouteImport.update({
@@ -366,6 +372,7 @@ export interface FileRoutesByFullPath {
   '/api/agent-asset': typeof ApiAgentAssetRoute
   '/api/brand-css': typeof ApiBrandCssRoute
   '/api/brand-logo': typeof ApiBrandLogoRoute
+  '/api/event-stream': typeof ApiEventStreamRoute
   '/api/manifest': typeof ApiManifestRoute
   '/api/stream': typeof ApiStreamRoute
   '/api/tts-warm': typeof ApiTtsWarmRoute
@@ -423,6 +430,7 @@ export interface FileRoutesByTo {
   '/api/agent-asset': typeof ApiAgentAssetRoute
   '/api/brand-css': typeof ApiBrandCssRoute
   '/api/brand-logo': typeof ApiBrandLogoRoute
+  '/api/event-stream': typeof ApiEventStreamRoute
   '/api/manifest': typeof ApiManifestRoute
   '/api/stream': typeof ApiStreamRoute
   '/api/tts-warm': typeof ApiTtsWarmRoute
@@ -482,6 +490,7 @@ export interface FileRoutesById {
   '/api/agent-asset': typeof ApiAgentAssetRoute
   '/api/brand-css': typeof ApiBrandCssRoute
   '/api/brand-logo': typeof ApiBrandLogoRoute
+  '/api/event-stream': typeof ApiEventStreamRoute
   '/api/manifest': typeof ApiManifestRoute
   '/api/stream': typeof ApiStreamRoute
   '/api/tts-warm': typeof ApiTtsWarmRoute
@@ -542,6 +551,7 @@ export interface FileRouteTypes {
     | '/api/agent-asset'
     | '/api/brand-css'
     | '/api/brand-logo'
+    | '/api/event-stream'
     | '/api/manifest'
     | '/api/stream'
     | '/api/tts-warm'
@@ -599,6 +609,7 @@ export interface FileRouteTypes {
     | '/api/agent-asset'
     | '/api/brand-css'
     | '/api/brand-logo'
+    | '/api/event-stream'
     | '/api/manifest'
     | '/api/stream'
     | '/api/tts-warm'
@@ -657,6 +668,7 @@ export interface FileRouteTypes {
     | '/api/agent-asset'
     | '/api/brand-css'
     | '/api/brand-logo'
+    | '/api/event-stream'
     | '/api/manifest'
     | '/api/stream'
     | '/api/tts-warm'
@@ -716,6 +728,7 @@ export interface RootRouteChildren {
   ApiAgentAssetRoute: typeof ApiAgentAssetRoute
   ApiBrandCssRoute: typeof ApiBrandCssRoute
   ApiBrandLogoRoute: typeof ApiBrandLogoRoute
+  ApiEventStreamRoute: typeof ApiEventStreamRoute
   ApiManifestRoute: typeof ApiManifestRoute
   ApiStreamRoute: typeof ApiStreamRoute
   ApiTtsWarmRoute: typeof ApiTtsWarmRoute
@@ -915,6 +928,13 @@ declare module '@tanstack/react-router' {
       path: '/api/manifest'
       fullPath: '/api/manifest'
       preLoaderRoute: typeof ApiManifestRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/event-stream': {
+      id: '/api/event-stream'
+      path: '/api/event-stream'
+      fullPath: '/api/event-stream'
+      preLoaderRoute: typeof ApiEventStreamRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/brand-logo': {
@@ -1196,6 +1216,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiAgentAssetRoute: ApiAgentAssetRoute,
   ApiBrandCssRoute: ApiBrandCssRoute,
   ApiBrandLogoRoute: ApiBrandLogoRoute,
+  ApiEventStreamRoute: ApiEventStreamRoute,
   ApiManifestRoute: ApiManifestRoute,
   ApiStreamRoute: ApiStreamRoute,
   ApiTtsWarmRoute: ApiTtsWarmRoute,

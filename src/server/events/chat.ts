@@ -80,8 +80,28 @@ export const eventPostFn = createServerFn({ method: "POST" })
     // ⚠️ El agente sólo entra si el room lo tiene ENCENDIDO y alguien lo menciona.
     // Nunca por su cuenta: 100 desconocidos con un agente suelto es la factura del
     // dueño, y hoy no hay enforcement de saldo en ninguna parte del sistema.
+    //
+    // El interruptor es `agent_enabled` (Ajustes del room → Evento abierto), y se lee
+    // AQUÍ, en cada mensaje: apagarlo a media sesión calla al agente desde el mensaje
+    // siguiente, sin reiniciar nada. Es la forma en que se usa —encendido un par de
+    // horas y apagado— así que tiene que ser inmediato y reversible.
     const mentioned = /(^|\s)@ghosty\b/i.test(body);
     const agentHandle = r.ch.agent_enabled === 1 && mentioned ? "ghosty" : null;
+
+    // ⚠️ El origin se captura DENTRO del request, antes de contestarle al invitado.
+    // Después ya no hay cabeceras que leer: `reqOrigin()` devolvería nada, el minteo del
+    // tool-token caería al catch y el agente correría SIN herramientas, diciendo que no
+    // tiene acceso a nada mientras todo está bien configurado. Falla en silencio porque
+    // ese catch es best-effort a propósito (agents.server.ts:840). Misma razón y mismo
+    // orden que en el webhook de WhatsApp.
+    let origin = "";
+    if (agentHandle) {
+      try {
+        origin = (await (await import("../../origin.server")).reqOrigin()) || "";
+      } catch {
+        origin = "";
+      }
+    }
 
     const { id } = await r.db.createMessage({
       channelId: r.ch.id,
@@ -93,18 +113,61 @@ export const eventPostFn = createServerFn({ method: "POST" })
       agentHandle,
     });
 
+    // El namespace se resuelve FUERA del try del bus: lo necesitan las dos cosas de
+    // abajo, y si viviera dentro, un fallo del bus se llevaría por delante el turno del
+    // agente — que no tiene nada que ver con avisar a las pestañas.
+    const { currentNamespace } = await import("../tenant.server");
+    const ns = await currentNamespace();
+
     // Aviso al room para quien lo tenga abierto en Teams. Va por el bus normal:
     // un mensaje de la sala ES un mensaje del room, no una cosa aparte.
     try {
       const bus = await import("../bus.server");
-      const { currentNamespace } = await import("../tenant.server");
-      const ns = await currentNamespace();
-      // `refresh` y NO `message:new`: éste último despierta al agente y pinta
-      // notificación. Un mensaje de la sala tiene que aparecer en el room, no
-      // levantar a nadie — y menos con 100 personas escribiendo a la vez.
-      bus.publish(bus.ch.room(ns, r.ch.id), { t: "refresh", channelId: r.ch.id, parentId: null });
+      // ⚠️ Esto era `refresh` a propósito, y se cambió a `message:new` el 2026-08-11.
+      // El miedo de entonces era que `message:new` "despertara al agente": no lo hace.
+      // Quien levanta un turno es una llamada explícita —`askAgent` en el camino de
+      // los miembros, `replyToEventMessage` en éste—, nunca un evento del bus. Lo que
+      // sí hacía `refresh` era obligar a cada pestaña a re-consultar el flujo entero,
+      // que con 100 personas escribiendo es exactamente lo que no se quería.
+      //
+      // Y el motivo de fondo: con `refresh` el equipo veía aparecer los mensajes de la
+      // comunidad sólo si tenía el room abierto y sin saber que eran nuevos. La gente
+      // de fuera tiene que ser parte del room, no un rumor de fondo.
+      const creado = await r.db.getMessage(id);
+      if (creado) bus.publish(bus.ch.room(ns, r.ch.id), { t: "message:new", msg: creado });
+      // Badge para quien NO tiene el room abierto. Push no: `notifyMentions` se queda
+      // fuera de este camino porque un invitado no puede mencionar humanos (su
+      // typeahead sólo ofrece agentes), así que no hay a quién timbrar.
+      bus.publish(bus.ch.room(ns, r.ch.id), { t: "unread", scope: "room", scopeId: r.ch.id });
     } catch {
       /* el chat no depende del bus: el sondeo lo recoge igual */
+    }
+
+    // ── El turno del agente ──────────────────────────────────────────────────
+    // Se levanta AQUÍ, en el servidor, y no devolviéndole `respondents` al cliente como
+    // hace `postMessage`: eso sería decirle a un anónimo "llama tú a esta cosa que le
+    // cuesta dinero al dueño". Es el camino del webhook de WhatsApp, que lleva meses en
+    // producción con exactamente el mismo tipo de remitente.
+    if (agentHandle) {
+      const { eventAgentTurnAllowed } = await import("./agent-rate.server");
+      if (await eventAgentTurnAllowed(r.ch.id, r.viewer.sub)) {
+        const { replyToEventMessage } = await import("./reply.server");
+        // Fire-and-forget: el invitado ya tiene su mensaje publicado y no espera a que
+        // el agente termine de pensar. `replyToEventMessage` nunca lanza.
+        void replyToEventMessage({
+          ns,
+          channelId: r.ch.id,
+          handle: agentHandle,
+          sender: r.viewer.name,
+          text: body,
+          parentId: id,
+          topic: "general",
+          origin,
+        });
+      }
+      // Si el tope corta, no se avisa en la sala: un "te pasaste de turnos" delante de
+      // 100 personas convierte un límite invisible en un incidente público. El mensaje
+      // quedó publicado, que es lo que esa persona pidió.
     }
     return { ok: true as const, id };
   });

@@ -20,6 +20,13 @@ export const ch = {
   dm: (ns: string, id: number) => `${ns}|dm:${id}`,
   user: (ns: string, sub: string) => `${ns}|user:${sub}`,
   presence: (ns: string) => `${ns}|presence`,
+  // Presencia de UNA sala de evento. Es sólo la CLAVE del mapa, no un canal al que
+  // nadie se suscriba: el aviso viaja por `room`, donde ya están los miembros y los
+  // invitados. Existe aparte de `presence` porque son dos públicos distintos: aquélla
+  // es el padrón del workspace —gente con cuenta y nombre real— y ésta, desconocidos
+  // que entraron por una liga. Mezclarlos metería 100 `guest:*` en el chip de "quiénes
+  // están en línea" del dueño, y le enseñaría a cada invitado la plantilla del cliente.
+  event: (ns: string, channelId: number) => `${ns}|event:${channelId}`,
 };
 
 // Union versionada de eventos. `nonce` = id del cliente devuelto en el eco para que
@@ -62,6 +69,11 @@ export type RtEvent =
   | { t: "presence"; sub: string; name: string; avatar?: string; status: "online" | "offline"; lastActiveAt: number }
   | { t: "presence:init"; online: { sub: string; name: string; avatar?: string; lastActiveAt: number }[] }
   | { t: "typing"; sub: string; name: string; channelId: number | null; parentId?: number | null; dmId?: number | null }
+  // Cuánta gente hay AHORA en la sala de un evento, y quién entró o salió. Va al canal
+  // del room, así que lo reciben por igual los invitados de la sala y el equipo desde su
+  // Teams. Lleva `count` además del delta porque quien acaba de conectarse no tiene otra
+  // fuente para el total, y porque un delta perdido se corrige solo al siguiente.
+  | { t: "event:presence"; channelId: number; count: number; joined?: { sub: string; name: string }; left?: { sub: string; name: string } }
   // Quick-call arrancada/terminada en un scope → banner de "unirse" para la audiencia.
   // NO lleva token (cada quien acuña el suyo al unirse, ver quick-calls.ts).
   | { t: "quickcall:started"; scope: "room" | "dm"; scopeId: number; slug?: string; callId: string; host: { sub: string; name: string; avatar: string }; label: string; startedAt: number }
@@ -186,6 +198,84 @@ export function addClient(
     } else {
       om.set(sub, { n, name, avatar: e?.avatar ?? avatar, lastActiveAt: e?.lastActiveAt ?? now });
     }
+  };
+}
+
+// ── Presencia de las salas de evento ────────────────────────────────────────
+// Mapa aparte del de `online` A PROPÓSITO, y es la decisión que importa de todo este
+// bloque: ahí viven las personas del workspace, y `onlinePeople()` —que alimenta el
+// snapshot `presence:init` y el chip del dueño— devuelve la lista ENTERA con nombres.
+// Un `guest:<uuid>` metido ahí saldría en el chip como si fuera del equipo, y peor:
+// haría que el snapshot que recibe cada invitado llevara los nombres de la plantilla.
+// Contarlos por separado hace que eso no pueda pasar por descuido.
+type EventEntry = { n: number; name: string };
+const eventOnline = new Map<string, Map<string, EventEntry>>(); // `${ns}|event:${chId}` → sub → entry
+
+function eventMap(key: string): Map<string, EventEntry> {
+  let m = eventOnline.get(key);
+  if (!m) {
+    m = new Map();
+    eventOnline.set(key, m);
+  }
+  return m;
+}
+
+/** Quién está ahora en la sala de un evento (para el snapshot del recién llegado). */
+export function eventPeople(ns: string, channelId: number): { sub: string; name: string }[] {
+  const m = eventOnline.get(ch.event(ns, channelId));
+  return [...(m?.entries() ?? [])].map(([sub, e]) => ({ sub, name: e.name }));
+}
+
+/**
+ * Registra una conexión a la sala de un evento: recibe todo lo del room y cuenta en la
+ * presencia DEL EVENTO, nunca en la del workspace.
+ *
+ * `filtro` es la lista blanca de eventos que puede ver quien se conecta. Va aquí y no
+ * en el endpoint para que ninguna conexión de invitado pueda existir sin ella.
+ */
+export function addEventClient(
+  ns: string,
+  channelId: number,
+  sub: string,
+  name: string,
+  listener: Listener,
+  filtro: (ev: RtEvent) => boolean
+): () => void {
+  const roomCh = ch.room(ns, channelId);
+  const key = ch.event(ns, channelId);
+  const client: Client = {
+    ns,
+    channels: new Set([roomCh]),
+    listener: (ev) => {
+      if (filtro(ev)) listener(ev);
+    },
+    sub,
+  };
+  clients.add(client);
+
+  const m = eventMap(key);
+  const prev = m.get(sub)?.n ?? 0;
+  m.set(sub, { n: prev + 1, name });
+  // Sólo al ABRIR la primera pestaña de esa persona: dos pestañas no son dos personas.
+  if (prev === 0) publish(roomCh, { t: "event:presence", channelId, count: m.size, joined: { sub, name } });
+
+  let dado = false;
+  return () => {
+    // De un SOLO uso, igual que en `api.stream.ts`: la baja la puede disparar tanto el
+    // `cancel()` del stream como el heartbeat que descubre el socket muerto, y descontar
+    // dos veces la misma pestaña deja el contador por debajo de la realidad.
+    if (dado) return;
+    dado = true;
+    clients.delete(client);
+    const e = m.get(sub);
+    const n = (e?.n ?? 1) - 1;
+    if (n > 0) {
+      m.set(sub, { n, name: e?.name ?? name });
+      return;
+    }
+    m.delete(sub);
+    if (m.size === 0) eventOnline.delete(key);
+    publish(roomCh, { t: "event:presence", channelId, count: m.size, left: { sub, name } });
   };
 }
 

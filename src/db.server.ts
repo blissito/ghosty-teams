@@ -1635,6 +1635,16 @@ export async function getChannel(slug: string): Promise<Channel | null> {
   return rows[0] ? toChannel(rows[0]) : null;
 }
 
+/**
+ * El room por id. Existe para poder autorizar partiendo de un MENSAJE: un mensaje
+ * conoce su `channel_id`, no su slug, y `canSeeChannel` necesita la fila entera.
+ */
+export async function getChannelById(id: number): Promise<Channel | null> {
+  if (!id) return null;
+  const rows = await dbq("SELECT * FROM gc_channels WHERE id = ?", [id]);
+  return rows[0] ? toChannel(rows[0]) : null;
+}
+
 // ── Salas de evento ──────────────────────────────────────────────────────────
 
 /** El room detrás de una liga pública. `null` si el slug no existe o ya no es público. */
