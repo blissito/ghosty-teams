@@ -469,6 +469,84 @@ export const setArtifactShareFn = createServerFn({ method: "POST" })
  * cada llamada es un INSERT y `pruneArtifactVersions` sólo guarda 20 versiones, así que
  * un autosave por pulsación se comería las versiones del agente en un minuto de tecleo.
  */
+/**
+ * La SUPERFICIE donde vive un documento: el mensaje que lo ancla, el room o DM al que
+ * pertenece, cómo se avisa a los demás y cómo se mueve el puntero de la conversación.
+ *
+ * Esto estaba copiado LITERALMENTE en `updateDocBlocksFn` y `updateArtifactHtmlFn` —el
+ * mismo fallback de messageId, el mismo SELECT, el mismo `avisar`, el mismo `setPointer`—
+ * y restaurar una versión lo necesitaba por tercera vez. Se extrae en vez de triplicarlo:
+ * son los cuatro sitios donde una divergencia entre room y DM se paga con un guardado que
+ * falla en silencio (ver el comentario del 2026-08-02 sobre `channel_id` en DMs).
+ */
+async function docSurface(documentId: string, messageIdHint: number | undefined, meSub: string) {
+  const { dbq, num } = await import("../dbq.server");
+
+  // El cliente propaga el messageId del ArtifactView; si falta, la última fila de
+  // gc_artifacts (todas las versiones cuelgan del MISMO mensaje).
+  let messageId = messageIdHint;
+  if (!messageId || messageId <= 0) {
+    const rows = await dbq(
+      `SELECT message_id FROM gc_artifacts WHERE url = ? ORDER BY id DESC LIMIT 1`,
+      [documentId]
+    );
+    messageId = num(rows[0]?.message_id);
+  }
+  if (!messageId) throw new Error("no se encontró el mensaje del documento");
+
+  // ⚠️ Un documento puede vivir en un ROOM o en un DM. Hasta el 2026-08-02 esto sólo sabía
+  // de rooms: en un DM (`channel_id` = 0) lanzaba antes de escribir nada, y el fallo era
+  // mudo — desde fuera parecía un caché que no soltaba el texto viejo.
+  const rows = await dbq(`SELECT channel_id, parent_id, dm_id FROM gc_messages WHERE id = ?`, [messageId]);
+  if (!rows.length) throw new Error("no se encontró el mensaje del documento");
+  const channelId = num(rows[0]?.channel_id);
+  const parentId = rows[0]?.parent_id != null ? num(rows[0].parent_id) : null;
+  const dmId = rows[0]?.dm_id != null ? num(rows[0].dm_id) : 0;
+  if (!channelId && !dmId) throw new Error("no se encontró el canal del documento");
+
+  // Cada superficie tiene su propio fanout: el room publica al canal; el DM, a cada miembro
+  // por su bus de usuario (no hay canal al que publicar).
+  // ⚠️ Va como `refresh`, NUNCA `message:new`: eso despertaría al agente por una edición.
+  const avisar = async () => {
+    const bus = await import("./bus.server");
+    const { currentNamespace } = await import("./tenant.server");
+    const ns = await currentNamespace();
+    if (dmId) {
+      const db = await import("../db.server");
+      const miembros = await db.getDmMembers(dmId).catch(() => [] as string[]);
+      for (const sub of miembros.length ? miembros : [meSub]) {
+        bus.publish(bus.ch.user(ns, sub), { t: "refresh", channelId: null, parentId: null, dmId });
+      }
+      return;
+    }
+    bus.publish(bus.ch.room(ns, channelId), { t: "refresh", channelId, parentId });
+  };
+
+  const setPointer = async (docId: string) => {
+    const db = await import("../db.server");
+    if (dmId) await db.setDmArtifact(dmId, docId);
+    else await db.setThreadArtifact(channelId, parentId, docId);
+  };
+
+  return { messageId, channelId, parentId, dmId, avisar, setPointer };
+}
+
+/**
+ * Permiso para ESCRIBIR sobre un documento. Mismo criterio que los hilos de comentarios
+ * (`doc-threads.server.ts:36`), la co-edición (`collab.ts:74`) y las invitaciones.
+ *
+ * ⚠️ Las dos funciones de guardado NO lo comprobaban: sólo exigían sesión. O sea que
+ * cualquiera con cuenta en el workspace podía sobrescribir el documento de un room privado
+ * ajeno sabiendo su `documentId` — el mismo agujero que ya se cerró en el export, que hoy
+ * responde 404 sin permiso.
+ */
+async function requireDocEdit(documentId: string, sub: string, isOwner: boolean): Promise<void> {
+  const { resolveDocRole } = await import("./doc-access.server");
+  const role = await resolveDocRole(documentId, { sub, isOwner });
+  if (!role) throw new Error("sin acceso a ese documento");
+  if (role !== "edit") throw new Error("sólo puedes leer ese documento");
+}
+
 export const updateDocBlocksFn = createServerFn({ method: "POST" })
   .validator((d: { documentId: string; blocks: unknown[]; messageId?: number; title?: string }) => d)
   .handler(async ({ data }) => {
@@ -481,47 +559,9 @@ export const updateDocBlocksFn = createServerFn({ method: "POST" })
     );
     if (!me) throw new Error("no autenticado");
     if (!Array.isArray(data.blocks) || !data.blocks.length) throw new Error("documento vacío");
+    await requireDocEdit(data.documentId, me.sub, !!me.isOwner);
 
-    const { dbq, num } = await import("../dbq.server");
-
-    let messageId = data.messageId;
-    if (!messageId || messageId <= 0) {
-      const rows = await dbq(
-        `SELECT message_id FROM gc_artifacts WHERE url = ? ORDER BY id DESC LIMIT 1`,
-        [data.documentId]
-      );
-      messageId = num(rows[0]?.message_id);
-    }
-    if (!messageId) throw new Error("no se encontró el mensaje del documento");
-
-    // ⚠️ Un documento puede vivir en un ROOM o en un DM, y hasta el 2026-08-02 esto sólo
-    // sabía de rooms: exigía `channel_id` y en un DM (donde vale 0) lanzaba "no se
-    // encontró el canal" ANTES de escribir nada. Resultado: editar un documento nacido en
-    // un DM no guardaba, y el fallo era mudo —el throw viaja al cliente, no al log—, así
-    // que desde fuera se veía como un caché que se negaba a soltar el texto viejo.
-    const rows = await dbq(`SELECT channel_id, parent_id, dm_id FROM gc_messages WHERE id = ?`, [messageId]);
-    if (!rows.length) throw new Error("no se encontró el mensaje del documento");
-    const channelId = num(rows[0]?.channel_id);
-    const parentId = rows[0]?.parent_id != null ? num(rows[0].parent_id) : null;
-    const dmId = rows[0]?.dm_id != null ? num(rows[0].dm_id) : 0;
-    if (!channelId && !dmId) throw new Error("no se encontró el canal del documento");
-
-    // Avisar de la versión nueva: cada superficie tiene su propio fanout. El room publica
-    // al canal; el DM, a cada miembro por su bus de usuario (no hay canal al que publicar).
-    const avisar = async () => {
-      const bus = await import("./bus.server");
-      const { currentNamespace } = await import("./tenant.server");
-      const ns = await currentNamespace();
-      if (dmId) {
-        const db = await import("../db.server");
-        const miembros = await db.getDmMembers(dmId).catch(() => [] as string[]);
-        for (const sub of miembros.length ? miembros : [me.sub]) {
-          bus.publish(bus.ch.user(ns, sub), { t: "refresh", channelId: null, parentId: null, dmId });
-        }
-        return;
-      }
-      bus.publish(bus.ch.room(ns, channelId), { t: "refresh", channelId, parentId });
-    };
+    const { messageId, avisar, setPointer } = await docSurface(data.documentId, data.messageId, me.sub);
 
     // El markdown del `md` es para el export y para lo que el agente lee después; la
     // verdad son los `blocks` que van aparte.
@@ -558,13 +598,7 @@ export const updateDocBlocksFn = createServerFn({ method: "POST" })
       blocks,
       humanEdited: true,
       ownerSub: me.sub,
-      setPointer: async (docId) => {
-        const db = await import("../db.server");
-        // El puntero también es de la superficie: en un DM la conversación apunta al
-        // documento por `setDmArtifact`, y `setThreadArtifact` no tiene canal al que ir.
-        if (dmId) await db.setDmArtifact(dmId, docId);
-        else await db.setThreadArtifact(channelId, parentId, docId);
-      },
+      setPointer,
       notify: () => void avisar(),
     });
     // El id se toma de lo que devolvió el INSERT, NUNCA de un `latestDocVersion` posterior:
@@ -579,44 +613,9 @@ export const updateArtifactHtmlFn = createServerFn({ method: "POST" })
     const { sessionUser } = await import("./chat");
     const me = await sessionUser();
     if (!me) throw new Error("no autenticado");
+    await requireDocEdit(data.documentId, me.sub, !!me.isOwner);
 
-    const { dbq, num } = await import("../dbq.server");
-
-    // Resolver el message_id que ancla el artefacto. El cliente propaga el messageId
-    // del ArtifactView; si falta (o es inválido), fallback robusto = la última fila de
-    // gc_artifacts con este documentId (todas las versiones cuelgan del mismo mensaje).
-    let messageId = data.messageId;
-    if (!messageId || messageId <= 0) {
-      const rows = await dbq(
-        `SELECT message_id FROM gc_artifacts WHERE url = ? ORDER BY id DESC LIMIT 1`,
-        [data.documentId]
-      );
-      messageId = num(rows[0]?.message_id);
-    }
-    if (!messageId) throw new Error("no se encontró el mensaje del artefacto");
-
-    // Canal/hilo del mensaje ancla (para el puntero y el refresh). Mismo caso que el
-    // documento: un artefacto puede haber nacido en un DM, donde `channel_id` vale 0.
-    const rows = await dbq(`SELECT channel_id, parent_id, dm_id FROM gc_messages WHERE id = ?`, [messageId]);
-    const channelId = num(rows[0]?.channel_id);
-    const parentId = rows[0]?.parent_id != null ? num(rows[0].parent_id) : null;
-    const dmId = rows[0]?.dm_id != null ? num(rows[0].dm_id) : 0;
-    if (!channelId && !dmId) throw new Error("no se encontró el canal del artefacto");
-
-    const avisar = async () => {
-      const bus = await import("./bus.server");
-      const { currentNamespace } = await import("./tenant.server");
-      const ns = await currentNamespace();
-      if (dmId) {
-        const db = await import("../db.server");
-        const miembros = await db.getDmMembers(dmId).catch(() => [] as string[]);
-        for (const sub of miembros.length ? miembros : [me.sub]) {
-          bus.publish(bus.ch.user(ns, sub), { t: "refresh", channelId: null, parentId: null, dmId });
-        }
-        return;
-      }
-      bus.publish(bus.ch.room(ns, channelId), { t: "refresh", channelId, parentId });
-    };
+    const { messageId, avisar, setPointer } = await docSurface(data.documentId, data.messageId, me.sub);
 
     // MISMO camino que el agente (publishArtifactVersion): estampa data-id, publica a
     // storage, INSERT de versión, puntero del hilo y refresh. Antes esto era una copia
@@ -628,12 +627,97 @@ export const updateArtifactHtmlFn = createServerFn({ method: "POST" })
       title: data.title ?? "Artefacto",
       md: data.html,
       ownerSub: me.sub,
-      setPointer: async (docId) => {
-        const db = await import("../db.server");
-        if (dmId) await db.setDmArtifact(dmId, docId);
-        else await db.setThreadArtifact(channelId, parentId, docId);
-      },
+      setPointer,
       notify: () => void avisar(),
     });
     return { ok: true as const, src };
+  });
+
+/**
+ * RESTAURAR una versión anterior: publica su contenido como versión NUEVA.
+ *
+ * No borra nada —la 4 y la 5 siguen ahí— así que la propia restauración es reversible y el
+ * historial queda honesto. Es lo que hacen Docs y Notion, y lo que evita que un clic mal
+ * dado sea irrecuperable con una poda de 20 versiones y sin papelera.
+ *
+ * Sale de una demo: el historial listaba cinco versiones, ninguna respondía al clic, y la
+ * lectura del usuario fue "las versiones son ficticias". El contenido siempre estuvo ahí;
+ * lo que faltaba era la forma de llegar a él.
+ */
+export const restoreArtifactVersionFn = createServerFn({ method: "POST" })
+  .validator((d: { documentId: string; versionId: number; messageId?: number }) => d)
+  .handler(async ({ data }) => {
+    const { sessionUser } = await import("./chat");
+    const me = await sessionUser();
+    if (!me) throw new Error("no autenticado");
+    await requireDocEdit(data.documentId, me.sub, !!me.isOwner);
+
+    const db = await import("../db.server");
+
+    // ⚠️ `getArtifactVersion(id)` NO filtra por documento: es un SELECT por id a secas. Sin
+    // este paso, un id de OTRO documento se restauraría sobre éste. Se comprueba que la
+    // versión pedida esté en la lista de ESTE documento antes de leerla — mismo orden que
+    // `resolveExportDoc`, que es donde este cuidado ya estaba resuelto.
+    const versiones = await db.listArtifactVersions(data.documentId);
+    if (!versiones.some((v) => v.id === data.versionId)) {
+      throw new Error("esa versión no es de este documento");
+    }
+    // Restaurar la que ya está viva no es un error, pero tampoco es nada: evita ensuciar el
+    // historial con una versión idéntica a la anterior.
+    if (versiones[versiones.length - 1]?.id === data.versionId) {
+      return { ok: true as const, versionId: data.versionId, sinCambios: true as const };
+    }
+
+    const vieja = await db.getArtifactVersion(data.versionId);
+    if (!vieja?.md) throw new Error("esa versión ya no tiene contenido");
+
+    const kind = (await db.getDoc(data.documentId))?.kind ?? "doc";
+    const { messageId, avisar, setPointer } = await docSurface(data.documentId, data.messageId, me.sub);
+
+    const comun = {
+      messageId,
+      documentId: data.documentId,
+      title: vieja.title ?? (kind === "artifact" ? "Artefacto" : "Documento"),
+      ownerSub: me.sub,
+      // Quién restauró, para que el historial lo diga.
+      authors: [me.sub],
+      setPointer,
+      notify: () => void avisar(),
+    };
+
+    if (kind === "doc") {
+      // ⚠️ Se pasan los BLOQUES del sobre, nunca el markdown. Dejar que se re-derive del md
+      // haría `docEnvelopeFromMd`, que **cambia el uuid de todos los bloques**: el documento
+      // restaurado perdería sus direcciones y con ellas el parcheo del agente, el corrector
+      // y el marcado de cambios.
+      const { parseDocEnvelope } = await import("../lib/doc-blocks");
+      const env = parseDocEnvelope(vieja.md);
+      if (!env?.blocks?.length) throw new Error("esa versión no se puede restaurar (sin bloques)");
+      const { blocksToMd } = await import("./doc-blocks.server");
+      const { versionId } = await publishArtifactVersion({
+        ...comun,
+        kind: "doc",
+        md: await blocksToMd(env.blocks).catch(() => ""),
+        blocks: env.blocks,
+        // ⚠️⚠️ SIN `humanEdited`. Si naciera `true`, el primer autoguardado siguiente entra
+        // en la rama `overwrite` de arriba y **sobrescribe la fila restaurada en sitio**: el
+        // punto de restauración desaparecería del historial. En `false`, el siguiente tecleo
+        // crea versión nueva y la restauración se queda como marcador al que volver — el
+        // mismo razonamiento por el que la primera edición tras un turno del agente sí crea
+        // versión.
+      });
+      return { ok: true as const, versionId };
+    }
+
+    // Artefacto HTML: el `md` guardado ya viene estampado y con Tailwind horneado, así que
+    // `stamp: false` lo republica tal cual. Se sube un objeto de storage NUEVO a propósito:
+    // si compartiera `src` con la fila original, podar la original mataría el objeto que
+    // ésta referencia.
+    const { versionId } = await publishArtifactVersion({
+      ...comun,
+      kind: kind === "sheet" ? "sheet" : "artifact",
+      md: vieja.md,
+      ...(kind === "artifact" ? { stamp: false as const } : {}),
+    });
+    return { ok: true as const, versionId };
   });

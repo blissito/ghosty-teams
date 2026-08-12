@@ -49,7 +49,7 @@ async function subirTranscript(file: string): Promise<string | null> {
   const txt = file.replace(/\.mp4$/, ".txt");
   const keyTexto = keyFor(txt);
   try {
-    await pedirAStudio({ action: "upload", file: txt, putUrl: presignPut(keyTexto, 3600), contentType: "text/plain" });
+    await pedirAStudio({ action: "upload", file: txt, putUrl: presignPut(keyTexto, 3600), contentType: "text/plain; charset=utf-8" });
   } catch {
     return null; // whisper sigue trabajando, o no hubo audio
   }

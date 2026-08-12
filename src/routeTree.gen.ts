@@ -59,6 +59,7 @@ import { Route as ApiConnectorsToolsRouteImport } from './routes/api.connectors.
 import { Route as ApiBrandAssetSplatRouteImport } from './routes/api.brand-asset.$'
 import { Route as ApiAttachmentIdRouteImport } from './routes/api.attachment.$id'
 import { Route as ApiArtifactStreamIdRouteImport } from './routes/api.artifact-stream.$id'
+import { Route as RoomSlugTranscripcionIdRouteImport } from './routes/room.$slug.transcripcion.$id'
 import { Route as ApiWhatsappConnectStartRouteImport } from './routes/api.whatsapp.connect.start'
 import { Route as ApiWhatsappConnectFinishRouteImport } from './routes/api.whatsapp.connect.finish'
 import { Route as ApiHooksSentryTokenRouteImport } from './routes/api.hooks.sentry.$token'
@@ -317,6 +318,11 @@ const ApiArtifactStreamIdRoute = ApiArtifactStreamIdRouteImport.update({
   path: '/api/artifact-stream/$id',
   getParentRoute: () => rootRouteImport,
 } as any)
+const RoomSlugTranscripcionIdRoute = RoomSlugTranscripcionIdRouteImport.update({
+  id: '/transcripcion/$id',
+  path: '/transcripcion/$id',
+  getParentRoute: () => RoomSlugRoute,
+} as any)
 const ApiWhatsappConnectStartRoute = ApiWhatsappConnectStartRouteImport.update({
   id: '/api/whatsapp/connect/start',
   path: '/api/whatsapp/connect/start',
@@ -376,7 +382,7 @@ export interface FileRoutesByFullPath {
   '/c/$slug': typeof CSlugRoute
   '/coeditar/$slug': typeof CoeditarSlugRoute
   '/join/$token': typeof JoinTokenRoute
-  '/room/$slug': typeof RoomSlugRoute
+  '/room/$slug': typeof RoomSlugRouteWithChildren
   '/t3/$': typeof T3SplatRoute
   '/setup/': typeof SetupIndexRoute
   '/api/artifact-stream/$id': typeof ApiArtifactStreamIdRoute
@@ -407,6 +413,7 @@ export interface FileRoutesByFullPath {
   '/api/hooks/sentry/$token': typeof ApiHooksSentryTokenRoute
   '/api/whatsapp/connect/finish': typeof ApiWhatsappConnectFinishRoute
   '/api/whatsapp/connect/start': typeof ApiWhatsappConnectStartRoute
+  '/room/$slug/transcripcion/$id': typeof RoomSlugTranscripcionIdRoute
   '/api/hooks/whatsapp/$token/message': typeof ApiHooksWhatsappTokenMessageRoute
 }
 export interface FileRoutesByTo {
@@ -433,7 +440,7 @@ export interface FileRoutesByTo {
   '/c/$slug': typeof CSlugRoute
   '/coeditar/$slug': typeof CoeditarSlugRoute
   '/join/$token': typeof JoinTokenRoute
-  '/room/$slug': typeof RoomSlugRoute
+  '/room/$slug': typeof RoomSlugRouteWithChildren
   '/t3/$': typeof T3SplatRoute
   '/setup': typeof SetupIndexRoute
   '/api/artifact-stream/$id': typeof ApiArtifactStreamIdRoute
@@ -464,6 +471,7 @@ export interface FileRoutesByTo {
   '/api/hooks/sentry/$token': typeof ApiHooksSentryTokenRoute
   '/api/whatsapp/connect/finish': typeof ApiWhatsappConnectFinishRoute
   '/api/whatsapp/connect/start': typeof ApiWhatsappConnectStartRoute
+  '/room/$slug/transcripcion/$id': typeof RoomSlugTranscripcionIdRoute
   '/api/hooks/whatsapp/$token/message': typeof ApiHooksWhatsappTokenMessageRoute
 }
 export interface FileRoutesById {
@@ -492,7 +500,7 @@ export interface FileRoutesById {
   '/c/$slug': typeof CSlugRoute
   '/coeditar/$slug': typeof CoeditarSlugRoute
   '/join/$token': typeof JoinTokenRoute
-  '/room/$slug': typeof RoomSlugRoute
+  '/room/$slug': typeof RoomSlugRouteWithChildren
   '/t3/$': typeof T3SplatRoute
   '/setup/': typeof SetupIndexRoute
   '/api/artifact-stream/$id': typeof ApiArtifactStreamIdRoute
@@ -523,6 +531,7 @@ export interface FileRoutesById {
   '/api/hooks/sentry/$token': typeof ApiHooksSentryTokenRoute
   '/api/whatsapp/connect/finish': typeof ApiWhatsappConnectFinishRoute
   '/api/whatsapp/connect/start': typeof ApiWhatsappConnectStartRoute
+  '/room/$slug/transcripcion/$id': typeof RoomSlugTranscripcionIdRoute
   '/api/hooks/whatsapp/$token/message': typeof ApiHooksWhatsappTokenMessageRoute
 }
 export interface FileRouteTypes {
@@ -583,6 +592,7 @@ export interface FileRouteTypes {
     | '/api/hooks/sentry/$token'
     | '/api/whatsapp/connect/finish'
     | '/api/whatsapp/connect/start'
+    | '/room/$slug/transcripcion/$id'
     | '/api/hooks/whatsapp/$token/message'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -640,6 +650,7 @@ export interface FileRouteTypes {
     | '/api/hooks/sentry/$token'
     | '/api/whatsapp/connect/finish'
     | '/api/whatsapp/connect/start'
+    | '/room/$slug/transcripcion/$id'
     | '/api/hooks/whatsapp/$token/message'
   id:
     | '__root__'
@@ -698,6 +709,7 @@ export interface FileRouteTypes {
     | '/api/hooks/sentry/$token'
     | '/api/whatsapp/connect/finish'
     | '/api/whatsapp/connect/start'
+    | '/room/$slug/transcripcion/$id'
     | '/api/hooks/whatsapp/$token/message'
   fileRoutesById: FileRoutesById
 }
@@ -726,7 +738,7 @@ export interface RootRouteChildren {
   CSlugRoute: typeof CSlugRoute
   CoeditarSlugRoute: typeof CoeditarSlugRoute
   JoinTokenRoute: typeof JoinTokenRoute
-  RoomSlugRoute: typeof RoomSlugRoute
+  RoomSlugRoute: typeof RoomSlugRouteWithChildren
   T3SplatRoute: typeof T3SplatRoute
   ApiArtifactStreamIdRoute: typeof ApiArtifactStreamIdRoute
   ApiAttachmentIdRoute: typeof ApiAttachmentIdRoute
@@ -1106,6 +1118,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiArtifactStreamIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/room/$slug/transcripcion/$id': {
+      id: '/room/$slug/transcripcion/$id'
+      path: '/transcripcion/$id'
+      fullPath: '/room/$slug/transcripcion/$id'
+      preLoaderRoute: typeof RoomSlugTranscripcionIdRouteImport
+      parentRoute: typeof RoomSlugRoute
+    }
     '/api/whatsapp/connect/start': {
       id: '/api/whatsapp/connect/start'
       path: '/api/whatsapp/connect/start'
@@ -1181,6 +1200,18 @@ const ArtefactoIdRouteWithChildren = ArtefactoIdRoute._addFileChildren(
   ArtefactoIdRouteChildren,
 )
 
+interface RoomSlugRouteChildren {
+  RoomSlugTranscripcionIdRoute: typeof RoomSlugTranscripcionIdRoute
+}
+
+const RoomSlugRouteChildren: RoomSlugRouteChildren = {
+  RoomSlugTranscripcionIdRoute: RoomSlugTranscripcionIdRoute,
+}
+
+const RoomSlugRouteWithChildren = RoomSlugRoute._addFileChildren(
+  RoomSlugRouteChildren,
+)
+
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   ArtifactsRoute: ArtifactsRoute,
@@ -1206,7 +1237,7 @@ const rootRouteChildren: RootRouteChildren = {
   CSlugRoute: CSlugRoute,
   CoeditarSlugRoute: CoeditarSlugRoute,
   JoinTokenRoute: JoinTokenRoute,
-  RoomSlugRoute: RoomSlugRoute,
+  RoomSlugRoute: RoomSlugRouteWithChildren,
   T3SplatRoute: T3SplatRoute,
   ApiArtifactStreamIdRoute: ApiArtifactStreamIdRoute,
   ApiAttachmentIdRoute: ApiAttachmentIdRoute,

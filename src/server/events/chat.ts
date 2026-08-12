@@ -310,19 +310,23 @@ function recogerPendientes(channelId: number): void {
 }
 
 /** Las grabaciones del room, con enlace fresco. Nunca lanza: sin ellas la sala sigue viva. */
-async function listarGrabaciones(r: { ch: { id: number } }) {
+async function listarGrabaciones(r: { ch: { id: number; call_share_slug?: string | null } }) {
   try {
     const { dbq } = await import("../../dbq.server");
     const { signedUrl } = await import("../storage.server");
     const filas = await dbq(
-      `SELECT storage_key, transcript_key, transcript_state, bytes, started_at, ended_at, by_name
+      `SELECT id, storage_key, transcript_key, transcript_state, bytes, started_at, ended_at, by_name
          FROM gt_event_recordings WHERE channel_id = ? ORDER BY ended_at DESC LIMIT 20`,
       [r.ch.id]
     );
     const TTL = 7 * 24 * 3600;
     return filas.map((f) => ({
       url: signedUrl(String(f.storage_key), TTL),
-      transcriptUrl: f.transcript_key ? signedUrl(String(f.transcript_key), TTL) : null,
+      // ⚠️ Ya NO es la URL del objeto: es NUESTRA página. Enlazar al `.txt` de storage
+      // dejaba un muro de texto sin puntuación y con los acentos rotos (el objeto no
+      // declara charset, el navegador adivina latin-1).
+      id: Number(f.id),
+      transcriptUrl: f.transcript_key ? `/room/${r.ch.call_share_slug}/transcripcion/${f.id}` : null,
       bytes: Number(f.bytes ?? 0),
       startedAt: f.started_at == null ? null : Number(f.started_at),
       endedAt: Number(f.ended_at),

@@ -627,6 +627,52 @@ export default function ArtifactPanel({
   const vActual =
     (artifact?.kind === "doc" ? versionDoc : null) ??
     (artifact && "versionId" in artifact ? artifact.versionId : null);
+
+  // ── ¿Estoy viendo la última versión? ────────────────────────────────────────
+  //
+  // El panel enseña la versión del MENSAJE que abriste, no la viva (ver `artifactToView`).
+  // Hasta hoy eso no se notaba EN ABSOLUTO: una versión vieja se veía idéntica al documento
+  // vivo, editable, con su botón de guardar. De ahí salió el "las versiones son ficticias"
+  // de la demo — no es que no se pudiera volver, es que no sabías dónde estabas.
+  //
+  // El dato sale de `versions` del share, que ya viaja con caché de módulo. `null` =
+  // todavía no se sabe, y entonces NO se bloquea nada: ante la duda, editable.
+  const [latestVersionId, setLatestVersionId] = useState<number | null>(null);
+  const documentIdActual = artifact && "documentId" in artifact ? artifact.documentId : null;
+  useEffect(() => {
+    setLatestVersionId(null);
+    if (!documentIdActual) return;
+    let alive = true;
+    void (async () => {
+      const { cachedShare, putCachedShare } = await import("./ArtifactShareDialog");
+      const cache = cachedShare(documentIdActual);
+      const ultima = (s: { versions?: { id: number }[] } | null) =>
+        s?.versions?.length ? s.versions[s.versions.length - 1].id : null;
+      if (cache) {
+        if (alive) setLatestVersionId(ultima(cache));
+        return;
+      }
+      try {
+        const { getArtifactShareFn } = await import("../server/artifacts");
+        const s = await getArtifactShareFn({ data: { documentId: documentIdActual } });
+        if (!alive) return;
+        putCachedShare(documentIdActual, s);
+        setLatestVersionId(ultima(s));
+      } catch {
+        // Sin permiso o artefacto viejo: se queda en null → todo sigue como antes.
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+    // `vActual` entra a propósito: tras restaurar o guardar hay una versión nueva y la
+    // comparación de abajo tiene que rehacerse contra la lista fresca.
+  }, [documentIdActual, vActual]);
+
+  // Sólo se declara vieja cuando SE SABE que hay una más nueva. Si el dato no llegó, o el
+  // documento tiene una sola versión, esto es `false` y no cambia nada.
+  const viewingOldVersion =
+    latestVersionId != null && vActual != null && vActual !== latestVersionId;
   const verParam = vActual ? `&v=${vActual}` : "";
   const downloadHref =
     artifact?.kind === "doc"
