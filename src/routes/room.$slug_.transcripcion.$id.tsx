@@ -1,7 +1,7 @@
 import { createFileRoute, notFound, Link } from "@tanstack/react-router";
 import { createServerFn } from "@tanstack/react-start";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ChevronDown, ChevronUp } from "lucide-react";
+import { ChevronDown, ChevronUp, Download } from "lucide-react";
 import { colorDeNombre } from "../components/chat/message";
 
 // ── La transcripción de una grabación, LEGIBLE ──────────────────────────────
@@ -120,6 +120,25 @@ function resaltar(texto: string, q: string) {
   );
 }
 
+/**
+ * La transcripción como Markdown, para descargar.
+ *
+ * Se elige `.md` y no `.srt` a propósito: un `.srt` sirve para subtitular un vídeo, pero
+ * para lo que la gente hace de verdad con esto —leerlo, buscar algo, pegar un trozo en un
+ * correo o en un documento— es peor que el texto plano. El `.md` se abre en cualquier
+ * sitio, conserva las horas y los nombres, y se pega sin arrastrar formato.
+ */
+export function comoMarkdown(
+  titulo: string,
+  fecha: string,
+  bloques: { quien: string | null; t: string; texto: string }[]
+): string {
+  const cuerpo = bloques
+    .map((b) => `**${[b.t, b.quien].filter(Boolean).join(" · ")}**\n\n${b.texto}`)
+    .join("\n\n");
+  return `# ${titulo}\n\n_Transcripción · ${fecha}. Generada automáticamente: puede tener errores._\n\n${cuerpo}\n`;
+}
+
 export function agruparPorHablante(segs: Segmento[]): { quien: string | null; t: string; texto: string }[] {
   const out: { quien: string | null; t: string; texto: string }[] = [];
   for (const s of segs) {
@@ -188,6 +207,23 @@ function Transcripcion() {
     return () => clearTimeout(t);
   }, [q, coincidencias]);
 
+  const descargar = () => {
+    const fecha = new Date(data.endedAt * 1000).toLocaleString([], {
+      day: "numeric", month: "long", year: "numeric", hour: "2-digit", minute: "2-digit",
+    });
+    const md = comoMarkdown(data.titulo, fecha, bloques);
+    // Se arma en el navegador: el texto ya está aquí entero, así que pedirlo otra vez al
+    // servidor sería bajar 78 KB para nada.
+    const url = URL.createObjectURL(new Blob([md], { type: "text/markdown;charset=utf-8" }));
+    const a = document.createElement("a");
+    a.href = url;
+    // Nombre por el TÍTULO y la fecha, no por el id: un archivo llamado `3.md` en la
+    // carpeta de descargas no se distingue de nada dentro de una semana.
+    a.download = `${data.titulo.replace(/[^\w\sáéíóúñü-]/gi, "").trim().slice(0, 60) || "transcripcion"}.md`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   const irA = (n: number) => {
     if (!coincidencias.length) return;
     const destino = (n + coincidencias.length) % coincidencias.length; // circular
@@ -217,7 +253,16 @@ function Transcripcion() {
         <Link to="/room/$slug" params={{ slug }} className="text-xs text-muted hover:text-ink">
           ← Volver a la sala
         </Link>
-        <h1 className="mt-3 text-2xl font-bold leading-tight">{data.titulo}</h1>
+        <div className="mt-3 flex items-start justify-between gap-3">
+          <h1 className="text-2xl font-bold leading-tight">{data.titulo}</h1>
+          <button
+            onClick={descargar}
+            title="Descargar en Markdown"
+            className="mt-1 flex shrink-0 items-center gap-1.5 rounded-lg border border-border px-2.5 py-1.5 text-xs font-medium text-muted hover:bg-surface-2 hover:text-ink"
+          >
+            <Download size={14} /> Descargar
+          </button>
+        </div>
         <p className="mt-1 text-sm text-muted">
           Transcripción ·{" "}
           {new Date(data.endedAt * 1000).toLocaleString([], {

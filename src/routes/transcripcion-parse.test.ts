@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { partirTranscripcion, agruparPorHablante } from "./room.$slug_.transcripcion.$id";
+import { partirTranscripcion, agruparPorHablante, comoMarkdown } from "./room.$slug_.transcripcion.$id";
 
 describe("partirTranscripcion", () => {
   it("lee las marcas de tiempo de whisper", () => {
@@ -87,5 +87,24 @@ describe("agruparPorHablante", () => {
   it("no junta los segmentos sin hablante", () => {
     const g = agruparPorHablante([seg(null, "a"), seg(null, "b")]);
     expect(g).toHaveLength(2);
+  });
+});
+
+describe("comoMarkdown", () => {
+  it("lleva título, fecha, hora y hablante", () => {
+    const md = comoMarkdown("Sesión de prueba", "12 de agosto, 16:30", [
+      { quien: "ana", t: "00:10", texto: "hola" },
+      { quien: null, t: "01:00", texto: "sin nombre" },
+    ]);
+    expect(md).toContain("# Sesión de prueba");
+    expect(md).toContain("12 de agosto, 16:30");
+    expect(md).toContain("**00:10 · ana**");
+    // Sin hablante no se deja un separador colgando.
+    expect(md).toContain("**01:00**");
+    expect(md).not.toContain("01:00 · \n");
+  });
+
+  it("avisa de que es automática: se va a pegar en documentos donde eso importa", () => {
+    expect(comoMarkdown("x", "hoy", [])).toContain("puede tener errores");
   });
 });
