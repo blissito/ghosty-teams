@@ -1,5 +1,6 @@
 import { forwardRef, Fragment, useCallback, useContext, useEffect, useImperativeHandle, useMemo, useReducer, useRef, useState } from "react";
 import { IDLE_MS } from "../lib/presence";
+import { shouldChime } from "../lib/chime";
 import { createPortal } from "react-dom";
 import { useEditor, EditorContent, type Editor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
@@ -133,7 +134,6 @@ import { marcarCierre, limpiarCierre } from "../lib/panel-cerrando";
 import { playNotificationSound, playGhostySound, playSelfSound, playMentionSound, playDmSound, playReadySound, playDeleteSound, playArtifactOpen, playArtifactClose, playArtifactReady } from "../utils/notificationSound";
 
 // Menciones que cuentan como "a ti": tu @handle o una grupal (@all/@channel/…).
-const SOUND_GROUP_MENTIONS = new Set(["all", "everyone", "todos", "room", "here", "aqui", "aquí", "channel"]);
 import { useT } from "../i18n";
 
 type Mention = { handle: string; name: string; avatar: string; kind: "agent" | "user" | "group"; sub?: string | null };
@@ -216,8 +216,7 @@ import {
 
 
 
-
-
+  ForwardModal,
 } from "../components/chat/message";
 import type {
   Attach,
@@ -1099,6 +1098,9 @@ function ChannelPage() {
   const [boundary, setBoundary] = useState<{ key: string; at: number } | null>(null);
   // Un ÚNICO picker de reacciones abierto a la vez (Slack/Zulip): id del mensaje.
   const [pickerFor, setPickerFor] = useState<number | null>(null);
+  // Mensaje que se está reenviando. Vive aquí y no dentro del botón: "puedo reenviar" es
+  // una capacidad de la superficie, y el botón sólo la pide.
+  const [reenviar, setReenviar] = useState<Message | null>(null);
   // Turnos de agente EN VUELO (id → estado). Lo alimenta el evento `turn` del bus; se
   // vacía solo al llegar el body final. Es lo que distingue "está trabajando" de "espera
   // su turno" y lo que da dónde colgar el botón de Detener.
@@ -1607,11 +1609,6 @@ function ChannelPage() {
         const isMine = ev.msg.sender_sub
           ? ev.msg.sender_sub === user?.sub
           : ev.msg.sender === user?.name;
-        // Sonido oficial de notificación: mensaje real de alguien más en un scope no
-        // silenciado. Los "status" no suenan, y la CÁSCARA del agente (kind:"msg" con
-        // agent_handle y mentions_ghosty=0) tampoco AQUÍ: nace vacía al enviar → su sonido
-        // se dispara al PRIMER token (message:body/delta), no al aparecer la caja.
-        const isAgentShell = ev.msg.agent_handle != null && ev.msg.mentions_ghosty === 0;
         // ¿Realmente lo estoy viendo? = scope enfocado Y pestaña visible. Gatea sonido,
         // toast, notificación de escritorio Y el auto-marcado de leído.
         const visible = typeof document !== "undefined" && document.visibilityState === "visible";
@@ -1621,17 +1618,16 @@ function ChannelPage() {
           (openDmId == null && view == null && openThreadId == null &&
             ev.msg.dm_id == null && ev.msg.parent_id == null && ev.msg.channel_id === channel.id);
         const activeScope = inFocus && visible;
-        if (ev.msg.kind === "msg" && !isMine && !isAgentShell) {
-          const muteKey = ev.msg.dm_id != null ? `dm:${ev.msg.dm_id}` : `room:${ev.msg.channel_id}`;
-          if (!mutes.has(muteKey) && !activeScope) {
-            // ¿Me menciona? (mi @handle o una grupal). Solo relevante en rooms.
-            const h = user?.handle?.toLowerCase();
-            const mentionsMe = (ev.msg.body.match(/@([\wáéíóúñ]+)/gi) ?? [])
-              .map((x) => x.slice(1).toLowerCase())
-              .some((x) => x === h || SOUND_GROUP_MENTIONS.has(x));
-            // Prioridad: DM → DM · mención → atención · resto → knock. (El reply del
-            // agente ya no suena aquí: se maneja al primer token — ver isAgentShell arriba.)
-            if (ev.msg.dm_id != null) playDmSound();
+        // La REGLA de si suena vive en `lib/chime.ts`, no aquí: los rooms abiertos también
+        // suenan, y una segunda copia de "cuándo suena" diverge al primer matiz.
+        const chime = shouldChime(ev.msg, {
+          miSub: user?.sub, miNombre: user?.name, miHandle: user?.handle,
+          activeScope, mutes,
+        });
+        if (chime) {
+          const mentionsMe = chime === "mention";
+          {
+            if (chime === "dm") playDmSound();
             else if (mentionsMe) playMentionSound();
             else playNotificationSound();
             // Aviso VISUAL que acompaña al sonido: toast in-app + (si la pestaña está oculta)
@@ -2480,7 +2476,9 @@ function ChannelPage() {
 
   return (
     <ChatCtx.Provider
-      value={{ me: user, slug: channel.slug, emojis, users, react, star, pin, remove, editMsg, retrySend, discardSend, replyTo, setReplyTo, pickerFor, setPickerFor, turns, stopTurn: stopTurnLocal, onOpenArtifact: openArtifactWithSound, sendQuickReply, openPrefs, openProfile, joinCall: joinCallFromCard, myCallKey }}
+      // El chat de Teams pasa TODAS las capacidades. Una superficie que no pueda hacer
+      // algo simplemente no lo pasa, y el botón deja de existir — ver ChatCtxValue.
+      value={{ me: user, slug: channel.slug, emojis, users, react, star, pin, remove, editMsg, retrySend, discardSend, replyTo, setReplyTo, pickerFor, setPickerFor, turns, stopTurn: stopTurnLocal, onOpenArtifact: openArtifactWithSound, sendQuickReply, openPrefs, openProfile, joinCall: joinCallFromCard, myCallKey, forward: setReenviar }}
     >
     {/* pt safe-area: en PWA standalone (viewport-fit=cover + status-bar black-translucent)
         el contenido va DEBAJO de la hora/notch → el header y su botón de menú quedaban
@@ -2742,6 +2740,8 @@ function ChannelPage() {
       {/* El dock de la llamada y el aviso de entrante se pintan desde la RAÍZ
           (components/CallLayer), para que sobrevivan a salir de esta ruta. */}
       <ToastStack toasts={toasts} onDismiss={dismissToast} />
+      {/* El modal de reenviar lo monta QUIEN puede reenviar. El botón sólo pide abrirlo. */}
+      {reenviar && <ForwardModal message={reenviar} onClose={() => setReenviar(null)} />}
       <NovedadesModal />
     </div>
     </ChatCtx.Provider>
@@ -3636,7 +3636,7 @@ function Sidebar({
                 );
               })}
               <button
-                onClick={() => { setWsOpen(false); openPrefs(); }}
+                onClick={() => { setWsOpen(false); openPrefs?.(); }}
                 className="mt-0.5 flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm text-muted hover:bg-surface-3 hover:text-ink"
               >
                 <Settings size={15} className="shrink-0" /> {t("Ajustes del workspace")}
@@ -4023,7 +4023,7 @@ function Sidebar({
 
       {/* Ajustes = modal instantáneo in-panel (SPA), no navegación de ruta. */}
       <button
-        onClick={() => openPrefs()}
+        onClick={() => openPrefs?.()}
         className="flex w-full items-center gap-2 border-t border-border p-3 text-left hover:bg-surface-3"
       >
         <Avatar name={user?.name} avatar={user?.avatar} className="h-8 w-8" />
@@ -5173,7 +5173,7 @@ function DocsButton({ channelId, channelSlug, threadRootId }: { channelId: numbe
   return (
     <button
       type="button"
-      onClick={() => onOpenArtifact({ kind: "docindex", title: t("Documentos"), channelId, channelSlug, threadRootId })}
+      onClick={() => onOpenArtifact?.({ kind: "docindex", title: t("Documentos"), channelId, channelSlug, threadRootId })}
       title={t("Documentos del caso")}
       aria-label={t("Documentos del caso")}
       className="grid h-9 w-9 shrink-0 place-items-center rounded-lg text-muted transition hover:bg-surface-3 hover:text-ink"
@@ -6175,7 +6175,7 @@ function HomeDashboard({
             {people.slice(0, 8).map((p) => (
               <button
                 key={`${p.kind}:${p.handle}`}
-                onClick={() => openProfile({ name: p.name, avatar: p.avatar, handle: p.handle, isAgent: p.kind === "agent", sub: p.kind === "user" ? p.sub : null })}
+                onClick={() => openProfile?.({ name: p.name, avatar: p.avatar, handle: p.handle, isAgent: p.kind === "agent", sub: p.kind === "user" ? p.sub : null })}
                 className="flex items-center gap-2 rounded-lg px-2 py-1.5 text-left hover:bg-surface-3"
               >
                 {p.kind === "agent" ? (
@@ -7122,12 +7122,12 @@ function OptimisticRow({ o, grouped }: { o: Optimistic; grouped?: boolean }) {
         {failed && (
           <div className="mt-1 flex items-center gap-3 text-xs">
             <button
-              onClick={() => retrySend(o)}
+              onClick={() => retrySend?.(o)}
               className="inline-flex items-center gap-1 font-semibold text-brand hover:underline"
             >
               <RotateCcw size={12} /> {t("Reintentar")}
             </button>
-            <button onClick={() => discardSend(o.id)} className="text-muted hover:text-ink">
+            <button onClick={() => discardSend?.(o.id)} className="text-muted hover:text-ink">
               {t("Descartar")}
             </button>
           </div>
@@ -7486,7 +7486,7 @@ const Composer = forwardRef<ComposerHandle, {
         ? { body, attachments, quotedId: replyTo.id, quotedAuthor: replyTo.author, quotedExcerpt: replyTo.excerpt }
         : { body, attachments }
     );
-    if (replyTo) setReplyTo(null);
+    if (replyTo) setReplyTo?.(null);
   }
   submitRef.current = submit;
 
@@ -7549,7 +7549,7 @@ const Composer = forwardRef<ComposerHandle, {
           </div>
           <button
             type="button"
-            onClick={() => setReplyTo(null)}
+            onClick={() => setReplyTo?.(null)}
             title={t("Cancelar")}
             className="shrink-0 rounded p-0.5 text-muted transition hover:text-ink"
           >

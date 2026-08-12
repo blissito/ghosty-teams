@@ -128,87 +128,79 @@ export type ReplyTarget = { id: number; author: string; excerpt: string };
 
 // Estados rápidos sugeridos (estilo Slack): emoji + texto, un clic los llena.
 
+/**
+ * El HOST del chat: lo que la superficie de turno le presta a estas piezas.
+ *
+ * ⚠️ Las capacidades son OPCIONALES a propósito, y ésa es toda la idea:
+ * **método ausente = capacidad ausente = affordance escondido.** El chat de Teams las pasa
+ * todas; un room abierto pasa sólo las que tienen sentido ahí y no tiene que "apagar" nada.
+ *
+ * Antes esto era al revés: los defaults rellenaban TODO con no-ops, así que "no puedo" y
+ * "no hace nada" eran indistinguibles, y hubo que añadir una bandera `publicSurface` para
+ * esconder los botones muertos. Una bandera así es un `if (esPublico)` disfrazado: crece
+ * con cada superficie nueva y hay que acordarse de consultarla en cada sitio. Con métodos
+ * opcionales, olvidarse tiene el efecto seguro — el botón no sale.
+ *
+ * Los DATOS siguen siendo obligatorios: sin `me`/`slug`/`emojis`/`users` no hay nada que
+ * pintar, y un default silencioso ahí sí escondería un bug.
+ */
 export type ChatCtxValue = {
   me: SessionUser | null;
   slug: string;
   emojis: CustomEmoji[];
   users: Map<string, WsUser>; // directorio vivo sub→perfil (avatars/nombres/status)
-  react: (m: Message, emoji: string) => void;
-  star: (m: Message) => void;
-  pin: (m: Message) => void;
-  remove: (m: Message) => Promise<void>;
-  editMsg: (m: Message, body: string) => void;
-  retrySend: (o: Optimistic) => void;
-  discardSend: (id: string) => void;
   // Quote-reply: cita activa del composer (una global; solo un composer visible a la vez).
   replyTo: ReplyTarget | null;
-  setReplyTo: (r: ReplyTarget | null) => void;
   // Picker de reacciones GLOBAL (id del mensaje con el picker abierto, o null).
   // Uno solo a la vez (referencia Slack/Zulip): abrir otro cierra el anterior.
   pickerFor: number | null;
-  setPickerFor: (id: number | null) => void;
-  // Turnos de agente en vuelo (id → estado) + cómo cortarlos. La burbuja necesita los
-  // dos: sin el estado, un turno en cola se ve igual que uno trabajando.
+  // Turnos de agente en vuelo (id → estado). Sin el estado, un turno en cola se ve igual
+  // que uno trabajando.
   turns: Map<number, { state: "running" | "queued"; position: number; startedAt: number }>;
-  stopTurn: (messageId: number) => void;
-  // Abre un artefacto (pdf/imagen/doc) en el panel lateral del room.
-  onOpenArtifact: (a: ArtifactView) => void;
-  // Envía `body` como respuesta del usuario en el MISMO hilo/DM que `ownerMsg`
-  // (usado por artefactos interactivos inline, ej. ask-user: un clic = enviar).
-  sendQuickReply: (body: string, ownerMsg: Message) => void;
-  // Abre Ajustes/Preferencias como modal in-panel (SPA) en la pestaña indicada.
-  openPrefs: (tab?: "general" | "agentes" | "emojis") => void;
-  // Abre el perfil (drawer) de una persona o agente.
-  openProfile: (p: ProfileTarget) => void;
-  // Unirse a una call desde una tarjeta del timeline (CallCard); myCallKey = la call
-  // en la que estoy ahora (`scope:scopeId`) para mostrar "En llamada" en vez de "Unirse".
-  joinCall: (join: CallJoin) => void;
+  // La call en la que estoy ahora (`scope:scopeId`), para decir "En llamada" y no "Unirse".
   myCallKey: string | null;
+
+  // ── Capacidades. Ausente = no se ofrece. ──────────────────────────────────
+  react?: (m: Message, emoji: string) => void;
+  star?: (m: Message) => void;
+  pin?: (m: Message) => void;
+  remove?: (m: Message) => Promise<void>;
+  editMsg?: (m: Message, body: string) => void;
+  retrySend?: (o: Optimistic) => void;
+  discardSend?: (id: string) => void;
+  setReplyTo?: (r: ReplyTarget | null) => void;
+  setPickerFor?: (id: number | null) => void;
+  stopTurn?: (messageId: number) => void;
+  /** Abre un artefacto (pdf/imagen/doc) en el panel lateral. */
+  onOpenArtifact?: (a: ArtifactView) => void;
+  /** Reenviar a otro room/DM. Sin esto no hay botón de reenviar. */
+  forward?: (m: Message) => void;
   /**
-   * Superficie PÚBLICA (un room abierto): quien mira puede no ser del workspace.
-   *
-   * Apaga las acciones que ahí no existen —reenviar a otros rooms, abrir perfiles del
-   * directorio, el menú de fijar/editar/borrar—. No es sólo estética: un botón que no
-   * hace nada se lee como que el producto está a medias, y es exactamente la diferencia
-   * entre "el chat de Teams" y "una copia del chat de Teams".
-   *
-   * No es una frontera de seguridad —las server functions de detrás ya exigen sesión y
-   * `forwardTargetsFn` devuelve vacío sin ella—, es la superficie.
+   * Envía `body` como respuesta del usuario en el MISMO hilo/DM que `ownerMsg`
+   * (artefactos interactivos inline, ej. ask-user: un clic = enviar).
    */
-  publicSurface?: boolean;
+  sendQuickReply?: (body: string, ownerMsg: Message) => void;
+  /** Abre Ajustes como modal in-panel. */
+  openPrefs?: (tab?: "general" | "agentes" | "emojis") => void;
+  /** Abre el perfil (drawer) de una persona o agente. */
+  openProfile?: (p: ProfileTarget) => void;
+  /** Unirse a una call desde una tarjeta del timeline. */
+  joinCall?: (join: CallJoin) => void;
 };
 
 /**
- * Los valores por defecto, EXPORTADOS: son todos no-ops, así que sirven de base para
- * quien sólo puede hacer una parte. Un room abierto arranca de aquí y enciende lo poco
- * que sí aplica (reaccionar, el picker, los emojis del workspace) en vez de tener que
- * escribir a mano veinte funciones vacías — y de olvidarse de una.
+ * Sólo los DATOS, vacíos. No hay defaults de capacidades: eso es justamente lo que hacía
+ * indistinguibles "no puedo" y "no hace nada".
  */
 export const ChatCtxDefaults: ChatCtxValue = {
   me: null,
   slug: "",
   emojis: [],
   users: new Map(),
-  turns: new Map(),
-  stopTurn: () => {},
-  react: () => {},
-  star: () => {},
-  pin: () => {},
-  remove: async () => {},
-  editMsg: () => {},
-  retrySend: () => {},
-  discardSend: () => {},
   replyTo: null,
-  setReplyTo: () => {},
   pickerFor: null,
-  setPickerFor: () => {},
-  onOpenArtifact: () => {},
-  sendQuickReply: () => {},
-  openPrefs: () => {},
-  openProfile: () => {},
-  joinCall: () => {},
+  turns: new Map(),
   myCallKey: null,
-  publicSurface: false,
 };
 
 export const ChatCtx = createContext<ChatCtxValue>(ChatCtxDefaults);
@@ -800,7 +792,7 @@ export function AttachmentList({ attachments }: { attachments: Attachment[] }) {
             <button
               key={a.id}
               type="button"
-              onClick={() => onOpenArtifact(view)}
+              onClick={onOpenArtifact ? () => onOpenArtifact(view) : undefined}
               className="block cursor-pointer"
               title={t("Abrir en panel")}
             >
@@ -818,7 +810,7 @@ export function AttachmentList({ attachments }: { attachments: Attachment[] }) {
               <FileCard
                 key={a.id}
                 a={a}
-                onOpen={() => onOpenArtifact(view)}
+                onOpen={() => onOpenArtifact?.(view)}
                 title={t("Abrir en panel")}
               />
             );
@@ -827,7 +819,7 @@ export function AttachmentList({ attachments }: { attachments: Attachment[] }) {
             <button
               key={a.id}
               type="button"
-              onClick={() => onOpenArtifact(view)}
+              onClick={onOpenArtifact ? () => onOpenArtifact(view) : undefined}
               className="group flex max-w-xs items-center gap-2.5 rounded-lg gt-card px-3 py-2 text-left transition hover:border-brand"
               title={t("Abrir en panel")}
             >
@@ -1749,7 +1741,7 @@ export function ArtifactCard({ artifact, ownerMsg }: { artifact: Artifact; owner
         artifactId={artifact.id}
         question={view.question}
         options={view.options}
-        onPick={(opt) => sendQuickReply(opt, ownerMsg)}
+        onPick={(opt) => sendQuickReply?.(opt, ownerMsg)}
       />
     );
   }
@@ -1823,7 +1815,7 @@ export function ArtifactCard({ artifact, ownerMsg }: { artifact: Artifact; owner
     <div className="group mt-1.5 flex max-w-md items-center gap-3 rounded-xl gt-card p-2 pr-2.5 transition hover:border-brand/50">
       <button
         type="button"
-        onClick={() => onOpenArtifact(view)}
+        onClick={onOpenArtifact ? () => onOpenArtifact(view) : undefined}
         className="flex min-w-0 flex-1 items-center gap-3 text-left"
         title={t("Abrir en el panel")}
       >
@@ -1993,7 +1985,7 @@ export function CallCard({ data, msg }: { data: CallCardData; msg: Message }) {
           <span className="shrink-0 rounded-full border border-brand/40 bg-brand/10 px-3 py-1.5 text-xs font-semibold text-brand">{t("En llamada")}</span>
         ) : (
           <button
-            onClick={() => joinCall(data.join)}
+            onClick={() => joinCall?.(data.join)}
             className="shrink-0 rounded-full bg-brand px-4 py-1.5 text-xs font-semibold text-brand-fg transition hover:opacity-90 active:scale-95"
           >
             {t("Unirse")}
@@ -2018,7 +2010,7 @@ export function CallCard({ data, msg }: { data: CallCardData; msg: Message }) {
         confirmLabel={t("Eliminar")}
         danger
         onCancel={() => setConfirmDel(false)}
-        onConfirm={() => remove(msg)}
+        onConfirm={() => remove?.(msg)}
       />
     )}
     </>
@@ -2121,7 +2113,7 @@ export function StopTurnButton({ id, className = "" }: { id: number; className?:
   return (
     <button
       type="button"
-      onClick={() => stopTurn(id)}
+      onClick={() => stopTurn?.(id)}
       aria-label={t("Detener")}
       title={t("Detener")}
       className={`grid size-5 place-items-center rounded-full border border-border text-muted transition hover:border-red-400/50 hover:text-red-400 ${className}`}
@@ -2203,7 +2195,12 @@ export function MessageRow({
   canPin?: boolean;
 }) {
   const t = useT();
-  const { me, slug, emojis, users, pickerFor, onOpenArtifact, openProfile, turns, sendQuickReply, publicSurface } = useContext(ChatCtx);
+  const {
+    me, slug, emojis, users, pickerFor, turns,
+    // Capacidades: las que falten hacen desaparecer su botón, no lo dejan muerto.
+    onOpenArtifact, openProfile, sendQuickReply,
+    react, setReplyTo, forward, editMsg, star, pin, remove,
+  } = useContext(ChatCtx);
   const [editing, setEditing] = useState(false);
   // Mientras un popover de la barra (reaccionar/⋯) esté abierto, la barra NO debe
   // desaparecer al perder el hover del row (si no, el popover se vuelve inclicable).
@@ -2327,12 +2324,12 @@ export function MessageRow({
       ) : (
       /* Avatar clickable → perfil (persona o agente). */
       <button
-        // En una superficie pública el perfil no existe (no hay directorio que abrir),
+        // Sin `openProfile` no hay perfil que abrir (un room abierto no tiene directorio),
         // así que el avatar deja de ofrecerse como botón: sin cursor, sin hover y sin
         // tooltip. Un clic que no hace nada es peor que no poder hacer clic.
-        onClick={publicSurface ? undefined : () => openProfile({ name: displayName, avatar: avatarSrc, handle: m.agent_handle ?? (isGhostyAvatar ? "ghosty" : null), isAgent, sub: isAgent ? null : m.sender_sub })}
-        className={`shrink-0 rounded-lg transition ${publicSurface ? "cursor-default" : "hover:opacity-80"}`}
-        title={publicSurface ? undefined : t("Ver perfil")}
+        onClick={openProfile ? () => openProfile({ name: displayName, avatar: avatarSrc, handle: m.agent_handle ?? (isGhostyAvatar ? "ghosty" : null), isAgent, sub: isAgent ? null : m.sender_sub }) : undefined}
+        className={`shrink-0 rounded-lg transition ${openProfile ? "hover:opacity-80" : "cursor-default"}`}
+        title={openProfile ? t("Ver perfil") : undefined}
       >
       {isGhostyAvatar ? (
         <div className="mt-0.5 grid h-9 w-9 shrink-0 place-items-center overflow-hidden rounded-lg bg-white">
@@ -2358,12 +2355,14 @@ export function MessageRow({
         >
           {/* Orden: emoji → hilo → flechas (responder, reenviar) → editar (propio) → ⋯.
               Copiar y destacar viven ahora en el menú ⋯. */}
-          {canReact && <ReactButton m={m} />}
+          {canReact && react && <ReactButton m={m} />}
           {showThreadLink && onOpenThread && !m.reply_count && <ThreadReplyButton onOpen={() => onOpenThread(m.id)} />}
-          <ReplyButton m={m} author={displayName} />
-          {!publicSurface && <ForwardButton m={m} />}
-          {canEdit && <EditButton onEdit={() => setEditing(true)} />}
-          {!publicSurface && (
+          {setReplyTo && <ReplyButton m={m} author={displayName} />}
+          {forward && <ForwardButton m={m} />}
+          {canEdit && editMsg && <EditButton onEdit={() => setEditing(true)} />}
+          {/* El menú ⋯ agrupa copiar, destacar, fijar y borrar. Sale si hay al menos una
+              de esas capacidades; si no, sería un menú vacío. */}
+          {(star || pin || remove) && (
             <MessageActions
               m={m}
               slug={slug}
@@ -2437,7 +2436,7 @@ export function MessageRow({
               })()}
               {(() => {
                 const al = extractAlert(m.body);
-                return al ? <AlertCard msgId={m.id} a={al} onAct={(send) => sendQuickReply(send, m)} /> : null;
+                return al ? <AlertCard msgId={m.id} a={al} onAct={(send) => sendQuickReply?.(send, m)} /> : null;
               })()}
               {/* Con tarjeta de alerta el bubble se calla: la línea de texto plano que
                   acompaña al fence es el RESPALDO (citas, buscador, notificación), y
@@ -2446,14 +2445,14 @@ export function MessageRow({
               <Markdown
                 body={bubbleWithoutEbDoc(m.body)}
                 artifactUrl={m.artifact?.url}
-                onOpenArtifact={m.artifact ? () => onOpenArtifact(artifactToView(m.artifact!)) : undefined}
-                onImage={(src, alt) => onOpenArtifact({ kind: "image", title: alt || "Imagen", src })}
+                onOpenArtifact={m.artifact && onOpenArtifact ? () => onOpenArtifact(artifactToView(m.artifact!)) : undefined}
+                onImage={onOpenArtifact ? (src, alt) => onOpenArtifact({ kind: "image", title: alt || "Imagen", src }) : undefined}
                 emojis={emojis}
                 onMention={(h) => {
                   // Clic en @mención → abre el perfil de esa persona (Slack: hovercard con
                   // Message). Resuelve por handle en el directorio vivo; grupos (@all…) no matchean.
                   const u = [...users.values()].find((x) => x.handle.toLowerCase() === h.toLowerCase());
-                  if (u) openProfile({ name: u.name, avatar: u.avatar, handle: u.handle, isAgent: false, sub: u.sub });
+                  if (u) openProfile?.({ name: u.name, avatar: u.avatar, handle: u.handle, isAgent: false, sub: u.sub });
                 }}
               />
               ) : null}
@@ -2723,7 +2722,7 @@ export function ReplyButton({ m, author }: { m: Message; author: string }) {
   const { setReplyTo } = useContext(ChatCtx);
   return (
     <button
-      onClick={() => setReplyTo({ id: m.id, author, excerpt: plainExcerpt(m.body) })}
+      onClick={() => setReplyTo?.({ id: m.id, author, excerpt: plainExcerpt(m.body) })}
       title={t("Responder")}
       className="grid h-7 w-7 place-items-center rounded-md text-muted transition hover:bg-surface-3 hover:text-ink"
     >
@@ -2747,9 +2746,9 @@ export function ReactButton({ m }: { m: Message }) {
       // El panel vive en un portal (fuera de wrapRef) → excluirlo por su marca para no
       // cerrar al hacer click DENTRO del picker (si no, el pick nunca registraba).
       if (target.closest?.("[data-emoji-picker]")) return;
-      if (wrapRef.current && !wrapRef.current.contains(target)) setPickerFor(null);
+      if (wrapRef.current && !wrapRef.current.contains(target)) setPickerFor?.(null);
     };
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setPickerFor(null);
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setPickerFor?.(null);
     document.addEventListener("mousedown", onDown);
     document.addEventListener("keydown", onKey);
     return () => {
@@ -2762,7 +2761,7 @@ export function ReactButton({ m }: { m: Message }) {
     <div ref={wrapRef} className="relative">
       <button
         ref={btnRef}
-        onClick={() => setPickerFor(open ? null : m.id)}
+        onClick={() => setPickerFor?.(open ? null : m.id)}
         title={t("Reaccionar")}
         className={`rounded p-1 transition ${open ? "text-brand" : "text-muted hover:text-ink"}`}
       >
@@ -2772,8 +2771,8 @@ export function ReactButton({ m }: { m: Message }) {
         <EmojiPicker
           anchorRef={btnRef}
           onPick={(e) => {
-            setPickerFor(null);
-            react(m, e);
+            setPickerFor?.(null);
+            react?.(m, e);
           }}
         />
       )}
@@ -2785,18 +2784,24 @@ export function ReactButton({ m }: { m: Message }) {
 // se sincroniza en todas mis pestañas, igual que las reacciones.
 // Rápida: reenviar (abre el selector de destino). Reemplaza a copiar en la barra.
 
+/**
+ * Reenviar. El botón NO se abre su propio modal: llama al host.
+ *
+ * Antes se lo abría solo, y entonces "puede reenviar" no era una capacidad sino un dato
+ * implícito del componente — había que apagarlo desde fuera con una bandera. Delegando al
+ * host, la superficie que no sabe reenviar simplemente no pasa `forward`, y el botón no
+ * existe. El modal (`ForwardModal`) lo monta quien sí puede.
+ */
 export function ForwardButton({ m }: { m: Message }) {
   const t = useT();
-  const [open, setOpen] = useState(false);
+  const { forward } = useContext(ChatCtx);
+  if (!forward) return null;
   return (
-    <>
-      <button onClick={() => setOpen(true)} title={t("Reenviar")} className="rounded p-1 text-muted hover:text-ink">
-        {/* ReplyAll = doble flecha curva (apunta a la izq); la volteo → doble flecha curva
-            a la DERECHA = el ícono clásico de reenviar. */}
-        <ReplyAll size={15} className="-scale-x-100" />
-      </button>
-      {open && <ForwardModal message={m} onClose={() => setOpen(false)} />}
-    </>
+    <button onClick={() => forward(m)} title={t("Reenviar")} className="rounded p-1 text-muted hover:text-ink">
+      {/* ReplyAll = doble flecha curva (apunta a la izq); la volteo → doble flecha curva
+          a la DERECHA = el ícono clásico de reenviar. */}
+      <ReplyAll size={15} className="-scale-x-100" />
+    </button>
   );
 }
 
@@ -2912,7 +2917,7 @@ export function MessageActions({
               <Copy size={14} className="text-muted" /> {t("Copiar mensaje")}
             </button>
             {/* Destacar (antes era acción rápida). */}
-            <button className={item} onClick={() => { star(m); close(); }}>
+            <button className={item} onClick={() => { star?.(m); close(); }}>
               <Star size={14} className={m.starred ? "text-amber-500" : "text-muted"} fill={m.starred ? "currentColor" : "none"} />
               {m.starred ? t("Quitar destacado") : t("Destacar")}
             </button>
@@ -2936,7 +2941,7 @@ export function MessageActions({
               <button
                 className={item}
                 onClick={() => {
-                  pin(m);
+                  pin?.(m);
                   close();
                 }}
               >
@@ -2965,7 +2970,7 @@ export function MessageActions({
           confirmLabel={t("Eliminar")}
           danger
           onCancel={() => setConfirmDel(false)}
-          onConfirm={() => remove(m)}
+          onConfirm={() => remove?.(m)}
         />
       )}
     </div>
@@ -3202,7 +3207,7 @@ export function EmojiPicker({ onPick, anchorRef }: { onPick: (e: string) => void
       {/* Footer: añadir emoji custom del workspace (owner) → Preferencias en la pestaña
           Emojis, in-panel (SPA), no navegación de ruta. */}
       <button
-        onClick={() => openPrefs("emojis")}
+        onClick={() => openPrefs?.("emojis")}
         className="flex w-full items-center gap-1.5 border-t border-border px-3 py-2 text-left text-xs text-muted transition hover:bg-surface-2 hover:text-ink"
       >
         <Plus size={13} /> {t("Añadir emoji")}
@@ -3240,7 +3245,7 @@ export function ReactionBar({ m }: { m: Message }) {
       {(m.reactions ?? []).map((r) => (
         <button
           key={r.emoji}
-          onClick={() => react(m, r.emoji)}
+          onClick={() => react?.(m, r.emoji)}
           title={reactorsTitle(r)}
           className={`flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-xs transition ${
             r.mine
@@ -3272,7 +3277,7 @@ export function EditBox({ m, onDone }: { m: Message; onDone: () => void }) {
   }, []);
   function save() {
     if (!val.trim()) return;
-    editMsg(m, val.trim()); // optimista: patch local + server en bg, cierra al instante
+    editMsg?.(m, val.trim()); // optimista: patch local + server en bg, cierra al instante
     onDone();
   }
   return (

@@ -8,6 +8,8 @@ import type { Message, CustomEmoji, ReactionAgg } from "../db.server";
 import { eventFlowFn, eventPostFn, eventReactFn } from "../server/events/chat";
 import { requestCodeFn, verifyCodeFn } from "../server/events/identity";
 import { useEventStream } from "../hooks/useEventStream";
+import { shouldChime } from "../lib/chime";
+import { playGhostySound, playMentionSound, playNotificationSound, playSelfSound } from "../utils/notificationSound";
 
 // Un ROOM ABIERTO: /room/<slug>. Una sola página, para todo.
 //
@@ -143,6 +145,9 @@ function RoomAbierto() {
   // Mi `sub`, para saber si una reacción que llega por el bus es mía. Lo devuelve el
   // propio toggle: no hace falta pedirlo aparte.
   const miSub = useRef<string | null>(null);
+  // Ids del agente a los que ya se les sonó: los deltas llegan sin parar y sin esto el
+  // turno entero sería un redoble.
+  const agentesSonados = useRef<Set<number>>(new Set());
 
   // El reloj avanza cada 30 s, no cada segundo: lo que se pinta son minutos, así que un
   // tick por segundo serían 60 renders para cambiar nada.
@@ -177,6 +182,36 @@ function RoomAbierto() {
 
   useEventStream(slug, (ev) => {
     if (ev.t === "event:presence") return setOnline(ev.count);
+
+    // Sonido, con la MISMA regla que el chat de Teams (`lib/chime.ts`): no suena lo mío,
+    // ni la cáscara vacía del agente, ni lo que tengo delante.
+    //
+    // ⚠️ `activeScope` es `false` a propósito cuando la pestaña está oculta y `true` sólo
+    // si la persona está mirando ESTA página. En un room no hay varios scopes que
+    // distinguir —hay uno—, así que "estoy en el scope" es literalmente "la pestaña está
+    // visible". Sin esto, un webinar de 100 personas sonaría en cada mensaje aunque lo
+    // estés leyendo.
+    if (ev.t === "message:new") {
+      const visible = typeof document !== "undefined" && document.visibilityState === "visible";
+      const tono = shouldChime(ev.msg, {
+        miSub: miSub.current,
+        miHandle: null, // un invitado no tiene @handle: sólo le suenan las grupales
+        activeScope: visible,
+        mutes: new Set<string>(),
+      });
+      if (tono === "mention") playMentionSound();
+      else if (tono) playNotificationSound();
+    }
+
+    // El agente suena al PRIMER token, no al aparecer su caja vacía. Dedupe por id porque
+    // los deltas siguen llegando durante todo el turno.
+    if (ev.t === "message:delta" || ev.t === "message:body") {
+      if (!agentesSonados.current.has(ev.id)) {
+        agentesSonados.current.add(ev.id);
+        const suyo = messages.find((m) => m.id === ev.id);
+        if (suyo?.agent_handle) playGhostySound();
+      }
+    }
     // ⚠️ Una reacción se aplica AQUÍ, sobre el estado, y no re-pidiendo el flujo: el
     // sondeo va con `after`, o sea que sólo trae mensajes NUEVOS. Reaccionar a algo de
     // hace un minuto no cambia ningún id, así que por esa vía no llegaría nunca.
@@ -224,6 +259,7 @@ function RoomAbierto() {
     try {
       const r = await eventPostFn({ data: { slug, body } });
       if (!r.ok) setErr(r.error);
+      else playSelfSound(); // acuse de "salió", como en el chat
       await traerNuevos();
     } catch {
       setText(body); // perder lo que alguien acaba de escribir es de lo que más molesta
@@ -276,8 +312,9 @@ function RoomAbierto() {
       // y por eso salían dos menús de reacción a la vez.
       pickerFor,
       setPickerFor,
-      // Apaga reenviar, perfiles y el menú de fijar/editar/borrar: aquí no existen.
-      publicSurface: true,
+      // Y nada más. Reenviar, perfiles, fijar, editar, borrar y ajustes NO se pasan
+      // —no se apagan—: aquí no existen, así que sus botones tampoco. Es la diferencia
+      // entre una capacidad ausente y un botón muerto.
     }),
     [me, slug, emojis, pickerFor, canWrite]
   );
