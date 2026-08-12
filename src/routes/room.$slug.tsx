@@ -143,6 +143,11 @@ function RoomAbierto() {
   // storage, la URL se guardaba en el room, y nadie la veía nunca — desde fuera era
   // indistinguible de haberla perdido.
   const [grabada, setGrabada] = useState<{ url: string; at: number | null } | null>(null);
+  type Grabacion = { url: string; transcriptUrl: string | null; bytes: number; startedAt: number | null; endedAt: number; by: string | null };
+  // ⚠️ TODAS, no la última. Con un solo enlace, grabar dos veces dejaba la primera sin
+  // forma de abrirla aunque el archivo siguiera en storage.
+  const [grabaciones, setGrabaciones] = useState<Grabacion[]>([]);
+  const [listaAbierta, setListaAbierta] = useState(false);
   // Sólo importa para no disparar dos veces: quien ve el botón es el iframe, y ése ya se
   // deshabilita solo mientras la petición va en camino.
   // ⚠️ En `localStorage` y no en el servidor: apagar el sonido es del DISPOSITIVO. La misma
@@ -209,6 +214,7 @@ function RoomAbierto() {
       setModero(r.canModerate);
       setGrabacion(r.recording ?? null);
       setGrabada(r.recorded ?? null);
+      setGrabaciones(r.recordings ?? []);
       setEmojis(r.emojis ?? []);
       setMe(r.me ?? null);
       miSub.current = r.me?.sub ?? null;
@@ -509,15 +515,63 @@ function RoomAbierto() {
             {/* Y aquí NO hay botón, hay TESTIGO. Que se grabe sin que se note es
                 exactamente lo que no puede pasar, así que el punto rojo lo ve todo el
                 mundo — no sólo quien presenta, que es el único que ve el botón. */}
-            {!grabacion && grabada && (
-              <a
-                href={grabada.url}
-                target="_blank"
-                rel="noreferrer"
-                className="flex items-center gap-1.5 rounded-full bg-black/70 px-3 py-1.5 text-xs font-medium text-white backdrop-blur hover:bg-black/85"
-              >
-                <Circle size={10} /> Ver la grabación
-              </a>
+            {!grabacion && (grabaciones.length > 0 || grabada) && (
+              <div className="relative">
+                <button
+                  onClick={() => {
+                    // Una sola: se abre directa. Varias: se elige. Un menú de un elemento
+                    // es un clic de más.
+                    if (grabaciones.length > 1) return setListaAbierta((v) => !v);
+                    const sola = grabaciones[0]?.url ?? grabada?.url;
+                    if (sola) window.open(sola, "_blank", "noopener");
+                  }}
+                  className="flex items-center gap-1.5 rounded-full bg-black/70 px-3 py-1.5 text-xs font-medium text-white backdrop-blur hover:bg-black/85"
+                >
+                  <Circle size={10} />
+                  {grabaciones.length > 1 ? `Grabaciones (${grabaciones.length})` : "Ver la grabación"}
+                </button>
+                {listaAbierta && grabaciones.length > 1 && (
+                  <div className="absolute right-0 top-full z-20 mt-1 w-64 overflow-hidden rounded-lg border border-border bg-surface shadow-lg">
+                    {grabaciones.map((g) => (
+                      <div key={g.url} className="border-b border-border last:border-0">
+                      <a
+                        href={g.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        onClick={() => setListaAbierta(false)}
+                        className="block px-3 py-2 text-xs text-ink hover:bg-surface-2"
+                      >
+                        {/* Duración y peso: con tres grabaciones del mismo día, la hora sola
+                            no dice cuál es la buena. */}
+                        <span className="font-medium">
+                          {new Date(g.endedAt * 1000).toLocaleString([], { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}
+                        </span>
+                        <span className="ml-1 text-muted">
+                          {g.startedAt ? `· ${Math.max(1, Math.round((g.endedAt - g.startedAt) / 60))} min` : ""}
+                          {g.bytes ? ` · ${(g.bytes / 1073741824).toFixed(2)} GB` : ""}
+                        </span>
+                      </a>
+                      {/* El transcript llega MINUTOS después del vídeo. Decirlo es la
+                          diferencia entre "está en camino" y "esto no existe" — que fue
+                          justo lo que pareció la primera vez. */}
+                      {g.transcriptUrl ? (
+                        <a
+                          href={g.transcriptUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          onClick={() => setListaAbierta(false)}
+                          className="block px-3 pb-2 text-[11px] text-brand hover:underline"
+                        >
+                          Transcripción
+                        </a>
+                      ) : (
+                        <p className="px-3 pb-2 text-[11px] text-muted">Transcribiendo…</p>
+                      )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
             )}
             <button
               onClick={() => setChatAbierto((v) => !v)}

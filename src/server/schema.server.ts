@@ -1098,6 +1098,28 @@ async function migrate(): Promise<void> {
     ip_hash     TEXT,
     banned      INTEGER NOT NULL DEFAULT 0
   )`);
+  // ⚠️ Las grabaciones son MUCHAS, y por eso son una TABLA. `call_recording_url` es un
+  // solo campo: la segunda grabación pisaba a la primera y su enlace desaparecía aunque el
+  // MP4 siguiera en storage. Pasó el 2026-08-12 con dos grabaciones seguidas.
+  //
+  // Se guarda la CLAVE, no la URL: una URL firmada caduca a los 7 días y guardarla es
+  // guardar algo que dejará de funcionar sin que nadie se entere. Se firma al leer.
+  await exec(`CREATE TABLE IF NOT EXISTS gt_event_recordings (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    channel_id  INTEGER NOT NULL,
+    storage_key TEXT NOT NULL,
+    transcript_key TEXT,
+    bytes       INTEGER,
+    started_at  INTEGER,
+    ended_at    INTEGER NOT NULL DEFAULT (unixepoch()),
+    by_name     TEXT
+  )`);
+  // ⚠️ El nombre DENTRO de la caja, explícito. No se puede deducir de `storage_key`: la
+  // clave es `t3/<uuid>-<archivo>` y el uuid lleva guiones, así que cualquier intento de
+  // partirla acaba recortando el nombre. Hace falta para ir a buscar el transcript después.
+  await addColumn("gt_event_recordings", "box_file", "TEXT");
+  await exec("CREATE INDEX IF NOT EXISTS gt_event_rec_ch ON gt_event_recordings(channel_id, ended_at)");
+
   // Una persona, una fila por evento: si vuelve a registrarse se actualiza, no se
   // duplica — un registro duplicado inflaría la lista y rompería el baneo.
   await exec(

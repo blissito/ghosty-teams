@@ -80,7 +80,7 @@ export const eventFlowFn = createServerFn({ method: "GET" })
   .validator((d: { slug: string; after?: number }) => d)
   .handler(async ({ data }) => {
     const r = await resolveRoom(data.slug);
-    if (!r) return { ok: false as const, messages: [], canModerate: false, canWrite: false, recording: null, recorded: null };
+    if (!r) return { ok: false as const, messages: [], canModerate: false, canWrite: false, recording: null, recorded: null, recordings: [] };
     // Quién eres sólo decide si puedes ESCRIBIR y qué mensajes son tuyos; nunca si puedes
     // leer. Un anónimo devuelve `null` aquí y sigue adelante.
     const { eventViewerFor } = await import("./access.server");
@@ -96,6 +96,9 @@ export const eventFlowFn = createServerFn({ method: "GET" })
     // mantener dos formas del mensaje que divergirían al primer campo nuevo — que es
     // exactamente cómo nació el chat de juguete que esto vino a reemplazar.
     const messages = await r.db.attachMeta(recortados, viewer?.sub ?? "");
+    // ⚠️ Sin esperarlo: recoger un transcript implica hablar con la caja, y el chat de una
+    // sala no puede quedarse colgado de eso. Lo que complete aparece en el sondeo siguiente.
+    recogerPendientes(r.ch.id);
     return {
       ok: true as const,
       messages,
@@ -109,6 +112,10 @@ export const eventFlowFn = createServerFn({ method: "GET" })
       // modera— porque el testigo rojo es para quien aparece en la grabación, no para
       // quien la controla. Y viene del servidor: el estado en la pestaña de quien pulsó
       // el botón no lo ve nadie más, y se pierde al recargar.
+      // TODAS las grabaciones, las más nuevas primero. Se firman AQUÍ y no se guardan
+      // firmadas: una URL firmada caduca a los 7 días, y guardarla es guardar algo que
+      // dejará de funcionar sin que nadie se entere.
+      recordings: await listarGrabaciones(r),
       // La grabación YA LISTA. Va a todo el mundo: es un evento público y quien no pudo
       // llegar es justo quien la necesita. ⚠️ Es una URL firmada que caduca a los 7 días.
       recorded: r.ch.call_recording_url
@@ -286,6 +293,45 @@ export const eventPostFn = createServerFn({ method: "POST" })
     }
     return { ok: true as const, id };
   });
+
+/**
+ * Dispara la recogida de transcripts pendientes, sin esperarla y sin repetirla en cada
+ * sondeo: con cien personas en la sala, preguntarle a la caja por cada carga sería
+ * machacarla. Una vez por minuto y por room es de sobra para algo que tarda minutos.
+ */
+const ultimaRecogida = new Map<number, number>();
+function recogerPendientes(channelId: number): void {
+  const antes = ultimaRecogida.get(channelId) ?? 0;
+  if (Date.now() - antes < 60_000) return;
+  ultimaRecogida.set(channelId, Date.now());
+  void import("./recording.server")
+    .then((m) => m.recogerTranscript(channelId))
+    .catch(() => {});
+}
+
+/** Las grabaciones del room, con enlace fresco. Nunca lanza: sin ellas la sala sigue viva. */
+async function listarGrabaciones(r: { ch: { id: number } }) {
+  try {
+    const { dbq } = await import("../../dbq.server");
+    const { signedUrl } = await import("../storage.server");
+    const filas = await dbq(
+      `SELECT storage_key, transcript_key, bytes, started_at, ended_at, by_name
+         FROM gt_event_recordings WHERE channel_id = ? ORDER BY ended_at DESC LIMIT 20`,
+      [r.ch.id]
+    );
+    const TTL = 7 * 24 * 3600;
+    return filas.map((f) => ({
+      url: signedUrl(String(f.storage_key), TTL),
+      transcriptUrl: f.transcript_key ? signedUrl(String(f.transcript_key), TTL) : null,
+      bytes: Number(f.bytes ?? 0),
+      startedAt: f.started_at == null ? null : Number(f.started_at),
+      endedAt: Number(f.ended_at),
+      by: (f.by_name as string | null) ?? null,
+    }));
+  } catch {
+    return [];
+  }
+}
 
 /**
  * Reaccionar a un mensaje del room abierto.
