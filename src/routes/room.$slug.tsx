@@ -1,7 +1,7 @@
 import { createFileRoute, notFound, useRouter } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createServerFn } from "@tanstack/react-start";
-import { MessageSquare, X } from "lucide-react";
+import { MessageSquare, Paperclip, X } from "lucide-react";
 import GhostyMascot from "../components/GhostyMascot";
 import { ChatCtx, ChatCtxDefaults, MessageRow, type SessionUser } from "../components/chat/message";
 import type { Message, CustomEmoji, ReactionAgg } from "../db.server";
@@ -9,6 +9,7 @@ import { eventFlowFn, eventPostFn, eventReactFn } from "../server/events/chat";
 import { requestCodeFn, verifyCodeFn } from "../server/events/identity";
 import { useEventStream } from "../hooks/useEventStream";
 import { shouldChime } from "../lib/chime";
+import { DropOverlay, useAdjuntos, useFileDrop } from "../components/chat/adjuntos";
 import { playGhostySound, playMentionSound, playNotificationSound, playSelfSound } from "../utils/notificationSound";
 
 // Un ROOM ABIERTO: /room/<slug>. Una sola página, para todo.
@@ -140,6 +141,13 @@ function RoomAbierto() {
     () => typeof window === "undefined" || window.innerWidth >= 640
   );
   const [err, setErr] = useState<string | null>(null);
+  // Adjuntos: la MISMA subida del chat de Teams. `roomSlug` le dice al endpoint de qué
+  // room es el invitado, que es de donde salen su cuota y sus límites.
+  const adj = useAdjuntos({ roomSlug: slug });
+  const { dragOver, handlers: dropHandlers } = useFileDrop((files) => {
+    if (!canWrite) return setIdentificando(true);
+    adj.addFiles(files);
+  });
   const bottomRef = useRef<HTMLDivElement>(null);
   const lastId = useRef(0);
   // Mi `sub`, para saber si una reacción que llega por el bus es mía. Lo devuelve el
@@ -250,16 +258,18 @@ function RoomAbierto() {
   async function enviar(e: React.FormEvent) {
     e.preventDefault();
     const body = text.trim();
-    if (!body || sending) return;
+    const files = adj.listos();
+    // Con adjunto, el texto puede ir vacío: mandar una foto sin comentario es normal.
+    if ((!body && !files.length) || sending || adj.subiendo) return;
     // Escribir es el momento en que se pide el correo — no antes. La persona ya redactó su
     // mensaje: se le guarda y se manda en cuanto se identifique.
     if (!canWrite) return setIdentificando(true);
     setSending(true);
     setText("");
     try {
-      const r = await eventPostFn({ data: { slug, body } });
+      const r = await eventPostFn({ data: { slug, body, attachments: files } });
       if (!r.ok) setErr(r.error);
-      else playSelfSound(); // acuse de "salió", como en el chat
+      else { adj.limpiar(); playSelfSound(); } // acuse de "salió", como en el chat
       await traerNuevos();
     } catch {
       setText(body); // perder lo que alguien acaba de escribir es de lo que más molesta
@@ -399,8 +409,10 @@ function RoomAbierto() {
         {/* En MÓVIL no hay ancho que repartir: ahí se superpone, porque partir 380px en
             dos deja el video del tamaño de un sello y el chat ilegible. */}
         <aside
+          {...dropHandlers}
           className={`${chatAbierto ? "flex" : "hidden"} absolute inset-y-0 right-0 z-10 w-full flex-col border-l border-border bg-surface sm:relative sm:z-0 sm:flex sm:w-80 sm:shrink-0 lg:w-96`}
         >
+          <DropOverlay show={dragOver} />
           <div className="flex shrink-0 items-center justify-between border-b border-border px-4 py-3">
             <div className="min-w-0">
               <span className="text-sm font-semibold">Chat</span>
@@ -430,7 +442,41 @@ function RoomAbierto() {
               </button>
             </div>
           )}
-          <Composer text={text} setText={setText} onSubmit={enviar} sending={sending} canWrite={canWrite} />
+          {adj.pendientes.length > 0 && (
+            <div className="flex flex-wrap gap-2 px-3 pb-2">
+              {adj.pendientes.map((p) => (
+                <div key={p.localId} className="relative">
+                  {p.previewUrl ? (
+                    <img src={p.previewUrl} alt={p.name} className="h-14 w-14 rounded-lg object-cover" />
+                  ) : (
+                    <div className="grid h-14 w-14 place-items-center rounded-lg border border-border bg-card px-1 text-center text-[9px] leading-tight text-muted">
+                      {p.name.slice(0, 18)}
+                    </div>
+                  )}
+                  {/* Subiendo / falló: el estado va ENCIMA de la miniatura, no en un texto
+                      aparte — con varios archivos, un texto no dice cuál es cuál. */}
+                  {p.uploading && <div className="absolute inset-0 grid place-items-center rounded-lg bg-black/50 text-[10px] text-white">…</div>}
+                  {p.error && <div className="absolute inset-0 grid place-items-center rounded-lg bg-red-900/70 text-[10px] text-white">error</div>}
+                  <button
+                    onClick={() => adj.quitar(p.localId)}
+                    aria-label="Quitar"
+                    className="absolute -right-1.5 -top-1.5 grid size-5 place-items-center rounded-full bg-surface-3 text-xs text-ink shadow"
+                  >
+                    ×
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+          <Composer
+            text={text}
+            setText={setText}
+            onSubmit={enviar}
+            sending={sending || adj.subiendo}
+            canWrite={canWrite}
+            onFiles={(f) => (canWrite ? adj.addFiles(f) : setIdentificando(true))}
+            hayAdjuntos={adj.pendientes.length > 0}
+          />
           <footer className="shrink-0 pb-2 text-center text-[11px] text-muted">
             <a href="https://ghosty.studio" target="_blank" rel="noreferrer" className="hover:text-brand">
               Hecho con Ghosty Teams
@@ -504,16 +550,40 @@ function Composer({
   onSubmit,
   sending,
   canWrite,
+  onFiles,
+  hayAdjuntos,
 }: {
   text: string;
   setText: (v: string) => void;
   onSubmit: (e: React.FormEvent) => void;
   sending: boolean;
   canWrite: boolean;
+  onFiles: (files: FileList | File[]) => void;
+  hayAdjuntos: boolean;
 }) {
+  const fileRef = useRef<HTMLInputElement>(null);
   return (
     <form onSubmit={onSubmit} className="shrink-0 px-4 pb-3 pt-1">
       <div className="flex gap-2">
+        <input
+          ref={fileRef}
+          type="file"
+          multiple
+          accept="image/*,application/pdf"
+          className="hidden"
+          onChange={(e) => {
+            if (e.target.files?.length) onFiles(e.target.files);
+            e.target.value = ""; // sin esto, elegir el MISMO archivo dos veces no dispara change
+          }}
+        />
+        <button
+          type="button"
+          onClick={() => fileRef.current?.click()}
+          aria-label="Adjuntar"
+          className="shrink-0 rounded-xl border border-border px-3 text-muted hover:text-brand"
+        >
+          <Paperclip size={16} />
+        </button>
         <input
           value={text}
           onChange={(e) => setText(e.target.value)}
@@ -526,7 +596,7 @@ function Composer({
         />
         <button
           type="submit"
-          disabled={sending || !text.trim()}
+          disabled={sending || (!text.trim() && !hayAdjuntos)}
           className="rounded-xl bg-brand px-4 py-2.5 text-sm font-medium text-white disabled:opacity-50"
         >
           Enviar

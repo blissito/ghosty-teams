@@ -108,14 +108,42 @@ export const eventFlowFn = createServerFn({ method: "GET" })
     };
   });
 
+export type AdjuntoEntrante = {
+  fileId: string;
+  mime: string;
+  size: number;
+  name: string;
+  thumbFileId?: string | null;
+  width?: number | null;
+  height?: number | null;
+  /** Firma que emite `/api/upload`: ata el archivo a quien lo subió y a este room. */
+  pass?: string;
+};
+
 export const eventPostFn = createServerFn({ method: "POST" })
-  .validator((d: { slug: string; body: string }) => d)
+  .validator((d: { slug: string; body: string; attachments?: AdjuntoEntrante[] }) => d)
   .handler(async ({ data }) => {
     const r = await resolve(data.slug);
     if (!r) return { ok: false as const, error: "no disponible" };
 
     const body = (data.body ?? "").trim().slice(0, MAX_LEN);
-    if (!body) return { ok: false as const, error: "vacío" };
+    // Con adjunto, el texto puede ir vacío: mandar una foto sin comentario es normal.
+    const entrantes = (data.attachments ?? []).slice(0, 4);
+    if (!body && !entrantes.length) return { ok: false as const, error: "vacío" };
+
+    // ⚠️ Cada adjunto tiene que traer su PASE, salvo que quien escribe sea del workspace.
+    // Sin esto habría que creerle al cliente qué `fileId` cuelga, y bastaría conocer el de
+    // otro sitio para publicarlo aquí como si lo hubiera subido él.
+    const { verifyUploadPass } = await import("./upload-pass.server");
+    const adjuntos: AdjuntoEntrante[] = [];
+    for (const a of entrantes) {
+      if (!a?.fileId) continue;
+      if (r.viewer.isMember) { adjuntos.push(a); continue; }
+      if (await verifyUploadPass(a.pass, a.fileId, r.viewer.sub, r.ch.id)) adjuntos.push(a);
+    }
+    if (entrantes.length && !adjuntos.length) {
+      return { ok: false as const, error: "No pude adjuntar ese archivo" };
+    }
 
     // Límite por persona, en la DB. Un room público anunciado a 100 personas es
     // superficie de spam, y el `sub` es mejor cubeta que la IP: varias personas
@@ -165,6 +193,24 @@ export const eventPostFn = createServerFn({ method: "POST" })
       body,
       agentHandle,
     });
+    // El MISMO `createAttachments` del chat: los adjuntos de la sala son adjuntos del room,
+    // así que el equipo los abre desde su Teams sin nada especial.
+    if (adjuntos.length) {
+      await r.db.createAttachments(
+        id,
+        adjuntos.map((a) => ({
+          fileId: a.fileId,
+          mime: a.mime,
+          size: a.size,
+          // El nombre lo pone el SERVIDOR a partir de lo que llegó, saneado: acaba impreso
+          // en el room de un cliente y viene de alguien sin cuenta.
+          name: (a.name ?? "archivo").replace(/[\r\n\t]/g, " ").slice(0, 120),
+          thumbFileId: a.thumbFileId ?? null,
+          width: a.width ?? null,
+          height: a.height ?? null,
+        }))
+      ).catch(() => {});
+    }
 
     // El namespace se resuelve FUERA del try del bus: lo necesitan las dos cosas de
     // abajo, y si viviera dentro, un fallo del bus se llevaría por delante el turno del
