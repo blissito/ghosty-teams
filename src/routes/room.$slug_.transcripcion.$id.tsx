@@ -175,9 +175,18 @@ function Transcripcion() {
   // encontrarlos hace dudar de si el buscador funciona.
   const hayNombres = useMemo(() => segmentos.some((s) => s.quien), [segmentos]);
 
-  // Al cambiar la búsqueda se vuelve a la primera: dejar el índice donde estaba haría
-  // saltar a un sitio que ya no corresponde a lo que se buscó.
-  useEffect(() => { setIdx(0); }, [q]);
+  // Al cambiar la búsqueda se vuelve a la primera Y SE VA A ELLA. Anunciar "1 de 1" y
+  // quedarse quieto obliga a un clic para hacer lo único que se puede querer al buscar.
+  // ⚠️ Con un pequeño retraso: el resaltado se pinta en este mismo render, y sin esperarlo
+  // `scrollIntoView` apunta a la posición vieja.
+  useEffect(() => {
+    setIdx(0);
+    if (!coincidencias.length) return;
+    const t = setTimeout(() => {
+      refs.current[coincidencias[0]]?.scrollIntoView({ behavior: "smooth", block: "center" });
+    }, 60);
+    return () => clearTimeout(t);
+  }, [q, coincidencias]);
 
   const irA = (n: number) => {
     if (!coincidencias.length) return;
