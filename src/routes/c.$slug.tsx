@@ -4761,6 +4761,7 @@ function EventSection({
   const [shareSlug, setShareSlug] = useState(channel?.call_share_slug ?? "");
   const [title, setTitle] = useState(channel?.call_title ?? "");
   const [agentOn, setAgentOn] = useState(channel?.agent_enabled === 1);
+  const [callOn, setCallOn] = useState(channel?.call_open === 1);
   const [open, setOpen] = useState(channel?.public_access === 1);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -4786,6 +4787,7 @@ function EventSection({
           shareSlug: shareSlug.trim() || null,
           title: title.trim() || null,
           agentEnabled: agentOn,
+          callOpen: callOn,
           ...(next.publicAccess !== undefined ? { publicAccess: next.publicAccess } : {}),
         },
       });
@@ -4908,6 +4910,17 @@ function EventSection({
           <br />
           <span className="text-muted">
             {t("Sólo si lo mencionan. Cada respuesta consume saldo tuyo y aquí escribe gente de fuera.")}
+          </span>
+        </span>
+      </label>
+
+      <label className="mb-3 flex items-start gap-2 text-xs">
+        <input type="checkbox" checked={callOn} onChange={(e) => setCallOn(e.target.checked)} className="mt-0.5" />
+        <span>
+          <span className="font-medium">{t("Sala de video abierta")}</span>
+          <br />
+          <span className="text-muted">
+            {t("Apagada, no se ofrece el botón. Déjala prendida para que la comunidad entre cuando quiera, o enciéndela sólo a la hora del evento.")}
           </span>
         </span>
       </label>

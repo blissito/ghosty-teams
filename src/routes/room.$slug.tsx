@@ -1,187 +1,400 @@
 import { createFileRoute, notFound } from "@tanstack/react-router";
-import { useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { createServerFn } from "@tanstack/react-start";
+import { Radio, Video, X } from "lucide-react";
 import GhostyMascot from "../components/GhostyMascot";
+import { eventFlowFn, eventPostFn } from "../server/events/chat";
+import { joinCallFn, requestCodeFn, verifyCodeFn } from "../server/events/identity";
+import { useEventStream } from "../hooks/useEventStream";
 
-// Puerta PÚBLICA de un evento: /room/<slug>.
+// Un ROOM ABIERTO: /room/<slug>. Una sola página, para todo.
 //
-// Aquí entra la comunidad —gente que no es del workspace y que no debe ocupar
-// asiento—, deja su nombre y su correo, y sale rumbo a la sala con un ticket
-// firmado que lleva su rol dentro.
+// ⚠️ Esto reemplaza a la pareja "puerta de registro + sala" y, sobre todo, reemplaza una
+// réplica del chrome de Teams con rooms inventados alrededor. Aquella réplica se sentía
+// falsa porque lo era, y con cualquier workspace pudiendo abrir rooms públicos era algo
+// peor que feo: unos rooms de mentira en el dominio de un cliente, con su marca, parecen
+// suyos. El modelo bueno es el de Discord — al invitado se le entrega UN room y nada más,
+// no una barra lateral de puertas que no puede abrir.
 //
-// Esta página es la frontera. Todo lo que decide quién puede hablar se resuelve
-// del lado servidor y viaja firmado; el navegador no aporta más que el nombre y
-// el correo, que son datos, no permisos. En un webinar el rol es justo lo que
-// alguien querría cambiarse, así que no puede salir de la URL.
+// Las tres puertas, y el orden importa:
+//   · cualquiera         → LEE. Sin dar nada, sin registro, al instante.
+//   · correo verificado  → escribe y entra a la transmisión.
+//   · miembro con sesión → todo, sin verificar nada.
 //
-// No toca `auth.ts` ni crea `Membership`: un asistente no es un miembro del
-// workspace y no consume asiento. Ver "salas de evento" en schema.server.ts.
+// Leer libre es lo que engancha: quien llega ve una conversación viva en vez de un
+// formulario. El correo se pide en el momento en que la persona ya quiere participar.
 
-type EventInfo = {
+type RoomInfo = {
   title: string;
-  roomName: string;
   mode: "webinar" | "taller";
-  live: boolean;
+  callOpen: boolean;
+  brand: { logo: string | null; name: string | null };
 };
 
-const loadEvent = createServerFn({ method: "GET" })
+const loadRoom = createServerFn({ method: "GET" })
   .validator((d: { slug: string }) => d)
-  .handler(async ({ data }): Promise<EventInfo | null> => {
+  .handler(async ({ data }): Promise<RoomInfo | null> => {
     await (await import("../server/schema.server")).ensureSchema().catch(() => {});
     const { channelByShareSlug } = await import("../db.server");
     const ch = await channelByShareSlug(data.slug);
     if (!ch || !ch.call_mode) return null;
+    // La marca REAL del tenant: el visitante viene por el cliente, no por nosotros. Los
+    // colores y la tipografía ya entran solos por `/api/brand-css`, que el shell inyecta
+    // en todas las rutas; aquí sólo hace falta el logo y el nombre.
+    const brand = await import("../server/brand.server")
+      .then((m) => m.activeBrandKit())
+      .then((k) => ({ logo: k?.logoUrl ?? null, name: k?.name ?? null }))
+      .catch(() => ({ logo: null, name: null }));
     return {
       title: ch.call_title || ch.name,
-      roomName: ch.name,
       mode: ch.call_mode,
-      live: false,
+      callOpen: ch.call_open === 1,
+      brand,
     };
-  });
-
-const joinEvent = createServerFn({ method: "POST" })
-  .validator((d: { slug: string; name: string; email: string }) => d)
-  .handler(async ({ data }): Promise<{ ok: true; url: string } | { ok: false; error: string }> => {
-    const { getRequest } = await import("@tanstack/react-start/server");
-    await (await import("../server/schema.server")).ensureSchema().catch(() => {});
-
-    const name = (data.name ?? "").trim().slice(0, 60);
-    const email = (data.email ?? "").trim().toLowerCase().slice(0, 120);
-    if (name.length < 2) return { ok: false, error: "Escribe tu nombre" };
-    // Validación deliberadamente floja: sirve para atajar erratas, no para
-    // verificar que el correo existe. Rechazar de más deja gente fuera de un
-    // evento en vivo, que es peor que un correo inválido en la lista.
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return { ok: false, error: "Escribe un correo válido" };
-
-    const db = await import("../db.server");
-    const ch = await db.channelByShareSlug(data.slug);
-    // "No existe" y "ya no está abierto" responden igual: el error no debe
-    // confirmar qué slugs son reales para quien esté probando.
-    if (!ch || !ch.call_mode) return { ok: false, error: "Este evento no está disponible" };
-
-    // Límite por IP, en la DB (un contador en memoria no sobrevive un deploy ni
-    // sirve con dos procesos). Sin IP no hay bypass: su propia cubeta, más
-    // estrecha. Reusa el limitador de formularios, que ya resuelve justo esto.
-    const { rateCheck, clientIp } = await import("../server/forms/rate.server");
-    const ip = clientIp(getRequest());
-    const { ipHash, allowed } = await rateCheck(`evt:${ch.id}`, ip, {
-      scope: "envivo",
-      windowS: 60,
-      maxWithIp: 8,
-      maxNoIp: 4,
-    });
-    if (!allowed) return { ok: false, error: "Demasiados intentos. Espera un minuto." };
-
-    // Identidad estable del invitado: el `sub` lo acuña el SERVIDOR y vive en
-    // cookie, así que nadie puede presentarse con el `sub` de un miembro.
-    const { guestSubForEvents } = await import("../server/events/guest.server");
-    const guestSub = await guestSubForEvents();
-
-    const { banned } = await db.registerForEvent({ channelId: ch.id, name, email, guestSub, ipHash });
-    // Mismo texto que un evento cerrado: decirle "estás vetado" sólo le enseña a
-    // volver con otro correo.
-    if (banned) return { ok: false, error: "Este evento no está disponible" };
-
-    // El ticket NO se acuña aquí ni viaja por la URL: lo hace la página de la
-    // sala, que ya reconoce al invitado por su cookie de registro. Un ticket en
-    // la barra de direcciones se copia, se pega en un chat y se reenvía — y es
-    // de un solo uso, así que el primero que lo abra deja fuera al dueño.
-    return { ok: true, url: `/room/${encodeURIComponent(data.slug)}/sala` };
   });
 
 export const Route = createFileRoute("/room/$slug")({
   loader: async ({ params }) => {
-    const info = await loadEvent({ data: { slug: params.slug } });
+    const info = await loadRoom({ data: { slug: params.slug } });
     if (!info) throw notFound();
     return info;
   },
   head: ({ loaderData }) => ({
     meta: [
-      { title: loaderData ? `${loaderData.title} — en vivo` : "En vivo" },
+      { title: loaderData ? loaderData.title : "Room" },
+      // Un room abierto es público, pero no es una página que queramos indexada: su
+      // contenido lo escribe gente que no eligió salir en Google.
       { name: "robots", content: "noindex" },
     ],
   }),
-  component: EnVivo,
+  component: RoomAbierto,
 });
 
-function EnVivo() {
-  const info = Route.useLoaderData();
-  const { slug } = Route.useParams();
-  const [name, setName] = useState("");
-  const [email, setEmail] = useState("");
-  const [error, setError] = useState("");
-  const [busy, setBusy] = useState(false);
+type Msg = { id: number; sender: string; body: string; created_at: number; mine: boolean; isAgent: boolean };
 
-  async function submit(e: React.FormEvent) {
-    e.preventDefault();
-    if (busy) return;
-    setBusy(true);
-    setError("");
+function RoomAbierto() {
+  const data = Route.useLoaderData();
+  const { slug } = Route.useParams();
+
+  const [messages, setMessages] = useState<Msg[]>([]);
+  const [canWrite, setCanWrite] = useState(false);
+  const [online, setOnline] = useState(1);
+  const [text, setText] = useState("");
+  const [sending, setSending] = useState(false);
+  const [identificando, setIdentificando] = useState(false);
+  const [callUrl, setCallUrl] = useState<string | null>(null);
+  const [callBusy, setCallBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const bottomRef = useRef<HTMLDivElement>(null);
+  const lastId = useRef(0);
+
+  const traerNuevos = useCallback(async () => {
     try {
-      const r = await joinEvent({ data: { slug, name, email } });
-      if (!r.ok) {
-        setError(r.error);
-        setBusy(false);
-        return;
-      }
-      // Reemplaza la entrada del historial: si la persona le da "atrás" desde la
-      // sala, no debe caer en un formulario que ya envió y volver a registrarse.
-      window.location.replace(r.url);
+      const r = await eventFlowFn({ data: { slug, after: lastId.current } });
+      if (!r.ok) return;
+      setCanWrite(r.canWrite);
+      if (!r.messages.length) return;
+      lastId.current = r.messages[r.messages.length - 1].id;
+      setMessages((prev) => {
+        // El stream y el sondeo pueden traer el MISMO mensaje. Sin deduplicar por id, sale
+        // dos veces.
+        const vistos = new Set(prev.map((m) => m.id));
+        return [...prev, ...r.messages.filter((m) => !vistos.has(m.id))].slice(-200);
+      });
     } catch {
-      setError("No pude conectarte. Intenta de nuevo.");
-      setBusy(false);
+      /* un sondeo perdido se recupera en el siguiente */
     }
+  }, [slug]);
+
+  useEventStream(slug, (ev) => {
+    if (ev.t === "event:presence") return setOnline(ev.count);
+    if (ev.t === "message:new" || ev.t === "message:body" || ev.t === "message:edited" || ev.t === "refresh") {
+      void traerNuevos();
+    }
+  });
+
+  // El sondeo se queda como RED del stream (un hueco de SSE, la red del móvil cambiando de
+  // antena, un deploy). `after` hace que sólo pida lo que le falta.
+  useEffect(() => {
+    let vivo = true;
+    const tick = () => { if (vivo) void traerNuevos(); };
+    tick();
+    const t = setInterval(tick, 15000);
+    return () => { vivo = false; clearInterval(t); };
+  }, [traerNuevos]);
+
+  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages.length]);
+
+  async function enviar(e: React.FormEvent) {
+    e.preventDefault();
+    const body = text.trim();
+    if (!body || sending) return;
+    // Escribir es el momento en que se pide el correo — no antes. La persona ya redactó su
+    // mensaje: se le guarda y se manda en cuanto se identifique.
+    if (!canWrite) return setIdentificando(true);
+    setSending(true);
+    setText("");
+    try {
+      const r = await eventPostFn({ data: { slug, body } });
+      if (!r.ok) setErr(r.error);
+      await traerNuevos();
+    } catch {
+      setText(body); // perder lo que alguien acaba de escribir es de lo que más molesta
+    }
+    setSending(false);
+  }
+
+  async function entrarALlamada() {
+    if (!canWrite) return setIdentificando(true);
+    setCallBusy(true);
+    setErr(null);
+    try {
+      // El ticket se acuña AHORA: dura 120 s y es de un solo uso. Acuñarlo al cargar la
+      // página lo dejaría muerto para quien lleva media hora leyendo.
+      const r = await joinCallFn({ data: { slug } });
+      if (r.ok) setCallUrl(r.url);
+      else setErr(r.error);
+    } catch {
+      setErr("No pude abrir la sala. Intenta de nuevo.");
+    }
+    setCallBusy(false);
   }
 
   return (
-    <div className="min-h-dvh flex items-center justify-center bg-surface p-4">
-      <div className="w-full max-w-md rounded-2xl border border-border bg-card p-7 shadow-sm">
-        <div className="flex items-center gap-2 mb-5">
+    <div className="flex h-dvh flex-col bg-surface">
+      <header className="flex shrink-0 items-center gap-3 border-b border-border px-4 py-3">
+        {data.brand.logo ? (
+          <img src={data.brand.logo} alt={data.brand.name ?? ""} className="h-7 w-auto max-w-[140px] object-contain" />
+        ) : (
           <GhostyMascot className="h-7 w-7" />
-          <span className="font-semibold tracking-tight">Ghosty</span>
+        )}
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <h1 className="truncate text-sm font-semibold">{data.title}</h1>
+            <Radio size={13} className="shrink-0 text-brand" />
+          </div>
+          <p className="flex items-center gap-1.5 text-[11px] text-muted">
+            <span className="size-1.5 rounded-full bg-emerald-500" />
+            {online} {online === 1 ? "por aquí" : "por aquí"}
+          </p>
+        </div>
+        {data.callOpen && !callUrl && (
+          <button
+            onClick={entrarALlamada}
+            disabled={callBusy}
+            className="ml-auto flex shrink-0 items-center gap-1.5 rounded-lg bg-brand px-3 py-1.5 text-xs font-medium text-white disabled:opacity-60"
+          >
+            <Video size={14} />
+            {callBusy ? "Abriendo la sala…" : "Entrar a la transmisión"}
+          </button>
+        )}
+      </header>
+
+      {/* El video sólo existe DESPUÉS de pulsar. Nunca se pre-carga: la caja puede estar
+          dormida y pedirle algo la despierta — no se despierta porque alguien pase por
+          aquí, sólo porque alguien entre de verdad. */}
+      {callUrl && (
+        <div className="relative shrink-0 border-b border-border bg-black" style={{ height: "min(50vh, 440px)" }}>
+          <iframe
+            src={callUrl}
+            title={data.title}
+            className="h-full w-full border-0"
+            allow="camera; microphone; display-capture; autoplay; fullscreen; speaker-selection"
+            allowFullScreen
+          />
+          <button
+            onClick={() => setCallUrl(null)}
+            aria-label="Salir de la transmisión"
+            className="absolute right-3 top-3 rounded-full bg-black/70 p-1.5 text-white"
+          >
+            <X size={16} />
+          </button>
+        </div>
+      )}
+
+      <div className="mx-auto w-full max-w-3xl flex-1 space-y-4 overflow-y-auto px-4 py-5">
+        {messages.length === 0 && (
+          <p className="text-sm text-muted">Todavía no hay mensajes. Sé quien empiece 👋</p>
+        )}
+        {messages.map((m) => (
+          <div key={m.id} className="text-sm">
+            <span className={`font-semibold ${m.isAgent ? "text-brand" : ""}`}>{m.sender}</span>
+            <span className="ml-2 text-[11px] text-muted">
+              {new Date(m.created_at * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+            </span>
+            <div className="whitespace-pre-wrap break-words leading-relaxed">{m.body}</div>
+          </div>
+        ))}
+        <div ref={bottomRef} />
+      </div>
+
+      {err && <p className="px-4 pb-1 text-center text-xs text-red-400">{err}</p>}
+
+      <form onSubmit={enviar} className="mx-auto w-full max-w-3xl shrink-0 px-4 pb-3">
+        <div className="flex gap-2">
+          <input
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            placeholder={canWrite ? "Escribe un mensaje…" : "Escribe para participar…"}
+            maxLength={1000}
+            className="min-w-0 flex-1 rounded-xl border border-border bg-card px-3.5 py-2.5 text-base outline-none focus:border-brand"
+          />
+          <button
+            type="submit"
+            disabled={sending || !text.trim()}
+            className="rounded-xl bg-brand px-4 py-2.5 text-sm font-medium text-white disabled:opacity-50"
+          >
+            Enviar
+          </button>
+        </div>
+      </form>
+
+      <footer className="shrink-0 pb-3 text-center text-[11px] text-muted">
+        <a href="https://ghosty.studio" target="_blank" rel="noreferrer" className="hover:text-brand">
+          Hecho con Ghosty Teams
+        </a>
+      </footer>
+
+      {identificando && (
+        <Identificarse
+          slug={slug}
+          onListo={() => {
+            setIdentificando(false);
+            setCanWrite(true);
+          }}
+          onCerrar={() => setIdentificando(false)}
+        />
+      )}
+    </div>
+  );
+}
+
+/**
+ * Nombre + correo → código de 6 dígitos → dentro.
+ *
+ * ⚠️ Código y no liga mágica: una liga abre una PESTAÑA NUEVA y quien la pulsa pierde el
+ * room donde estaba leyendo. En un evento en vivo es justo el peor momento. El código se
+ * pega aquí mismo y la persona no se mueve de la página.
+ */
+function Identificarse({ slug, onListo, onCerrar }: { slug: string; onListo: () => void; onCerrar: () => void }) {
+  const [paso, setPaso] = useState<"datos" | "codigo">("datos");
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [code, setCode] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  // El reenvío se ofrece a los 30 s: antes de eso, el correo casi siempre está en camino y
+  // un segundo código sólo confunde (llega el viejo, y el que sirve es el nuevo).
+  const [puedeReenviar, setPuedeReenviar] = useState(false);
+
+  useEffect(() => {
+    if (paso !== "codigo") return;
+    setPuedeReenviar(false);
+    const t = setTimeout(() => setPuedeReenviar(true), 30000);
+    return () => clearTimeout(t);
+  }, [paso]);
+
+  async function pedirCodigo(e?: React.FormEvent) {
+    e?.preventDefault();
+    setBusy(true);
+    setErr(null);
+    try {
+      const r = await requestCodeFn({ data: { slug, name, email } });
+      if (r.ok) setPaso("codigo");
+      else setErr(r.error);
+    } catch {
+      setErr("No pude mandarte el código. Intenta de nuevo.");
+    }
+    setBusy(false);
+  }
+
+  async function confirmar(e: React.FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    setErr(null);
+    try {
+      const r = await verifyCodeFn({ data: { slug, email, code } });
+      if (r.ok) onListo();
+      else setErr(r.error);
+    } catch {
+      setErr("No pude confirmarlo. Intenta de nuevo.");
+    }
+    setBusy(false);
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+      <div className="w-full max-w-sm rounded-2xl border border-border bg-card p-6 shadow-xl">
+        <div className="mb-4 flex items-start justify-between gap-2">
+          <div>
+            <h2 className="text-base font-semibold">
+              {paso === "datos" ? "Preséntate para participar" : "Revisa tu correo"}
+            </h2>
+            <p className="mt-1 text-xs text-muted">
+              {paso === "datos"
+                ? "Leer es libre. Para escribir y entrar a la transmisión necesitamos saber quién eres."
+                : `Te mandamos un código de 6 dígitos a ${email}. Míralo también en spam.`}
+            </p>
+          </div>
+          <button onClick={onCerrar} aria-label="Cerrar" className="shrink-0 text-muted hover:text-ink">
+            <X size={18} />
+          </button>
         </div>
 
-        <h1 className="text-xl font-semibold leading-snug">{info.title}</h1>
-        {/* El copy nombra las DOS cosas que hay del otro lado. Hablando sólo de la
-            llamada, quien entra no se entera de que también hay chat — y la mitad
-            de la sesión pasa ahí. */}
-        <p className="mt-1.5 text-sm text-muted">
-          {info.mode === "webinar"
-            ? "Vas a ver la transmisión y escribir en el chat. El micrófono llega si quien modera te da la palabra."
-            : "Sesión de trabajo: entras con micrófono, cámara y chat."}
-        </p>
-
-        <form onSubmit={submit} className="mt-6 space-y-3">
-          <div>
-            <label className="block text-xs font-medium mb-1" htmlFor="ev-name">Tu nombre</label>
+        {paso === "datos" ? (
+          <form onSubmit={pedirCodigo} className="space-y-3">
             <input
-              id="ev-name" value={name} onChange={(e) => setName(e.target.value)}
-              autoComplete="name" required maxLength={60}
-              className="w-full rounded-lg border border-border bg-transparent px-3 py-2 text-base"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="Tu nombre"
+              autoFocus
+              className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-base outline-none focus:border-brand"
             />
-          </div>
-          <div>
-            <label className="block text-xs font-medium mb-1" htmlFor="ev-email">Tu correo</label>
             <input
-              id="ev-email" type="email" value={email} onChange={(e) => setEmail(e.target.value)}
-              autoComplete="email" required maxLength={120}
-              className="w-full rounded-lg border border-border bg-transparent px-3 py-2 text-base"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              type="email"
+              placeholder="tu@correo.com"
+              className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-base outline-none focus:border-brand"
             />
-          </div>
-
-          {error && <p className="text-sm text-red-600">{error}</p>}
-
-          <button
-            type="submit" disabled={busy}
-            className="w-full rounded-lg bg-brand px-4 py-2.5 font-medium text-white disabled:opacity-60"
-          >
-            {busy ? "Conectando…" : "Entrar"}
-          </button>
-        </form>
-
-        <p className="mt-4 text-xs text-muted">
-          Usamos tu correo para darte acceso y avisarte de la grabación. Nada más.
-        </p>
+            {err && <p className="text-xs text-red-400">{err}</p>}
+            <button
+              type="submit"
+              disabled={busy}
+              className="w-full rounded-lg bg-brand py-2.5 text-sm font-medium text-white disabled:opacity-60"
+            >
+              {busy ? "Mandando…" : "Mandarme el código"}
+            </button>
+          </form>
+        ) : (
+          <form onSubmit={confirmar} className="space-y-3">
+            <input
+              value={code}
+              onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              placeholder="000000"
+              autoFocus
+              className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-center text-2xl tracking-[0.4em] outline-none focus:border-brand"
+            />
+            {err && <p className="text-xs text-red-400">{err}</p>}
+            <button
+              type="submit"
+              disabled={busy || code.length < 6}
+              className="w-full rounded-lg bg-brand py-2.5 text-sm font-medium text-white disabled:opacity-60"
+            >
+              {busy ? "Comprobando…" : "Entrar"}
+            </button>
+            <button
+              type="button"
+              onClick={() => pedirCodigo()}
+              disabled={!puedeReenviar || busy}
+              className="w-full text-xs text-muted hover:text-brand disabled:opacity-50"
+            >
+              {puedeReenviar ? "Mandar otro código" : "Mandar otro código (espera unos segundos)"}
+            </button>
+          </form>
+        )}
       </div>
     </div>
   );

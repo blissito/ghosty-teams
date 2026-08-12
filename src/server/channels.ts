@@ -74,6 +74,7 @@ export const setChannelEventFn = createServerFn({ method: "POST" })
       livekitUrl?: string | null;
       publicAccess?: boolean;
       agentEnabled?: boolean;
+      callOpen?: boolean;
     }) => d
   )
   .handler(async ({ data }) => {
@@ -97,6 +98,7 @@ export const setChannelEventFn = createServerFn({ method: "POST" })
         livekitUrl: data.livekitUrl === undefined ? undefined : data.livekitUrl?.trim() || null,
         publicAccess: data.publicAccess,
         agentEnabled: data.agentEnabled,
+        callOpen: data.callOpen,
       });
     } catch (e) {
       // El índice único de `call_share_slug` es lo que impide que dos eventos

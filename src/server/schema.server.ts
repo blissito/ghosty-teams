@@ -1045,6 +1045,25 @@ async function migrate(): Promise<void> {
   await addColumn("gc_channels", "call_title", "TEXT");         // el nombre del evento, no el del room
   await addColumn("gc_channels", "public_access", "INTEGER NOT NULL DEFAULT 0");
   await addColumn("gc_channels", "agent_enabled", "INTEGER NOT NULL DEFAULT 0");
+  // ⚠️ DESDE CUÁNDO es público, y por qué importa: sin esto, convertir en abierto un room
+  // que ya existía publicaba TODO lo que el equipo había escrito ahí antes. El camino
+  // público servía los últimos 200 mensajes del room sin ningún corte de fecha, y con
+  // cualquier workspace pudiendo abrir rooms, eso es una fuga esperando a pasar.
+  //
+  // Se sella la PRIMERA vez que se abre y no se vuelve a tocar: cerrar y reabrir no puede
+  // regalar el intervalo en que estuvo cerrado.
+  await addColumn("gc_channels", "public_since", "INTEGER");
+  // ¿La sala de video está abierta a la comunidad? Lo decide el dueño y es aparte de
+  // `public_access`: la caja de LiveKit se puede apagar entre eventos, o dejar encendida
+  // como un canal de voz de Discord. Apagado = ni se ofrece el botón. Un botón que lleva
+  // a una sala muerta es peor que no tener botón.
+  await addColumn("gc_channels", "call_open", "INTEGER NOT NULL DEFAULT 0");
+  // Las filas que YA estaban abiertas cuando llegó esta columna se sellan ahora mismo. Es
+  // el lado seguro del error: se pierde de vista lo que la comunidad escribió antes de la
+  // migración, pero no se publica nada que estuviera dentro.
+  await exec(
+    "UPDATE gc_channels SET public_since = unixepoch() WHERE public_access = 1 AND public_since IS NULL"
+  );
   await exec(
     "CREATE UNIQUE INDEX IF NOT EXISTS gc_channels_share ON gc_channels(call_share_slug) WHERE call_share_slug IS NOT NULL"
   );
@@ -1069,6 +1088,28 @@ async function migrate(): Promise<void> {
   );
   await exec(
     "CREATE INDEX IF NOT EXISTS gt_event_reg_ch ON gt_event_registrations(channel_id, id DESC)"
+  );
+  // ── Correo VERIFICADO ───────────────────────────────────────────────────────
+  // El registro nació sin verificar nada: cualquiera ponía un correo inventado y entraba.
+  // Eso hacía dos cosas mal a la vez — el baneo por correo se saltaba escribiendo otro, y
+  // la lista de asistentes (que es el objetivo comercial de un room abierto: una lista de
+  // suscriptores) quedaba llena de basura.
+  //
+  // Código de 6 dígitos en la MISMA página, no magic link: una liga por correo abre una
+  // pestaña nueva y la persona pierde el room donde estaba, que en un evento en vivo es
+  // justo cuando peor cae.
+  //
+  // ⚠️ Se guarda el HASH, no el código. Es un secreto de un solo uso, y la lista de
+  // asistentes es de las tablas que más se leen a mano.
+  await addColumn("gt_event_registrations", "verify_code_hash", "TEXT");
+  await addColumn("gt_event_registrations", "verify_expires_at", "INTEGER");
+  await addColumn("gt_event_registrations", "verify_attempts", "INTEGER NOT NULL DEFAULT 0");
+  await addColumn("gt_event_registrations", "verified_at", "INTEGER");
+  // ⚠️ Las filas ANTERIORES a esto se dan por verificadas: se registraron cuando no había
+  // nada que verificar, y dejarlas sin sellar les cerraría la puerta a personas que ya
+  // habían entrado. La lista limpia empieza a contar desde aquí.
+  await exec(
+    "UPDATE gt_event_registrations SET verified_at = created_at WHERE verified_at IS NULL"
   );
 
   // Flip único: correo por default OFF (opt-in). Las filas existentes heredaron el viejo

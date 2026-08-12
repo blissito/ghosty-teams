@@ -40,7 +40,6 @@ import { Route as SetupEasybitsConnectRouteImport } from './routes/setup.easybit
 import { Route as SetupEasybitsCallbackRouteImport } from './routes/setup.easybits.callback'
 import { Route as SetupProviderConnectRouteImport } from './routes/setup.$provider.connect'
 import { Route as SetupProviderCallbackRouteImport } from './routes/setup.$provider.callback'
-import { Route as RoomSlugSalaRouteImport } from './routes/room.$slug_.sala'
 import { Route as OauthProviderCallbackRouteImport } from './routes/oauth.$provider.callback'
 import { Route as CoeditarInvitacionTokenRouteImport } from './routes/coeditar.invitacion.$token'
 import { Route as ArtefactoIdRawRouteImport } from './routes/artefacto.$id.raw'
@@ -222,11 +221,6 @@ const SetupProviderCallbackRoute = SetupProviderCallbackRouteImport.update({
   path: '/$provider/callback',
   getParentRoute: () => SetupRoute,
 } as any)
-const RoomSlugSalaRoute = RoomSlugSalaRouteImport.update({
-  id: '/room/$slug_/sala',
-  path: '/room/$slug/sala',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const OauthProviderCallbackRoute = OauthProviderCallbackRouteImport.update({
   id: '/oauth/$provider/callback',
   path: '/oauth/$provider/callback',
@@ -404,7 +398,6 @@ export interface FileRoutesByFullPath {
   '/artefacto/$id/raw': typeof ArtefactoIdRawRoute
   '/coeditar/invitacion/$token': typeof CoeditarInvitacionTokenRoute
   '/oauth/$provider/callback': typeof OauthProviderCallbackRoute
-  '/room/$slug/sala': typeof RoomSlugSalaRoute
   '/setup/$provider/callback': typeof SetupProviderCallbackRoute
   '/setup/$provider/connect': typeof SetupProviderConnectRoute
   '/setup/easybits/callback': typeof SetupEasybitsCallbackRoute
@@ -462,7 +455,6 @@ export interface FileRoutesByTo {
   '/artefacto/$id/raw': typeof ArtefactoIdRawRoute
   '/coeditar/invitacion/$token': typeof CoeditarInvitacionTokenRoute
   '/oauth/$provider/callback': typeof OauthProviderCallbackRoute
-  '/room/$slug/sala': typeof RoomSlugSalaRoute
   '/setup/$provider/callback': typeof SetupProviderCallbackRoute
   '/setup/$provider/connect': typeof SetupProviderConnectRoute
   '/setup/easybits/callback': typeof SetupEasybitsCallbackRoute
@@ -522,7 +514,6 @@ export interface FileRoutesById {
   '/artefacto/$id/raw': typeof ArtefactoIdRawRoute
   '/coeditar/invitacion/$token': typeof CoeditarInvitacionTokenRoute
   '/oauth/$provider/callback': typeof OauthProviderCallbackRoute
-  '/room/$slug_/sala': typeof RoomSlugSalaRoute
   '/setup/$provider/callback': typeof SetupProviderCallbackRoute
   '/setup/$provider/connect': typeof SetupProviderConnectRoute
   '/setup/easybits/callback': typeof SetupEasybitsCallbackRoute
@@ -583,7 +574,6 @@ export interface FileRouteTypes {
     | '/artefacto/$id/raw'
     | '/coeditar/invitacion/$token'
     | '/oauth/$provider/callback'
-    | '/room/$slug/sala'
     | '/setup/$provider/callback'
     | '/setup/$provider/connect'
     | '/setup/easybits/callback'
@@ -641,7 +631,6 @@ export interface FileRouteTypes {
     | '/artefacto/$id/raw'
     | '/coeditar/invitacion/$token'
     | '/oauth/$provider/callback'
-    | '/room/$slug/sala'
     | '/setup/$provider/callback'
     | '/setup/$provider/connect'
     | '/setup/easybits/callback'
@@ -700,7 +689,6 @@ export interface FileRouteTypes {
     | '/artefacto/$id/raw'
     | '/coeditar/invitacion/$token'
     | '/oauth/$provider/callback'
-    | '/room/$slug_/sala'
     | '/setup/$provider/callback'
     | '/setup/$provider/connect'
     | '/setup/easybits/callback'
@@ -758,7 +746,6 @@ export interface RootRouteChildren {
   ApiInternalMembersRoute: typeof ApiInternalMembersRoute
   CoeditarInvitacionTokenRoute: typeof CoeditarInvitacionTokenRoute
   OauthProviderCallbackRoute: typeof OauthProviderCallbackRoute
-  RoomSlugSalaRoute: typeof RoomSlugSalaRoute
   ApiCollabDocIdSessionEndRoute: typeof ApiCollabDocIdSessionEndRoute
   ApiCollabDocIdStateRoute: typeof ApiCollabDocIdStateRoute
   ApiHooksSentryTokenRoute: typeof ApiHooksSentryTokenRoute
@@ -985,13 +972,6 @@ declare module '@tanstack/react-router' {
       fullPath: '/setup/$provider/callback'
       preLoaderRoute: typeof SetupProviderCallbackRouteImport
       parentRoute: typeof SetupRoute
-    }
-    '/room/$slug_/sala': {
-      id: '/room/$slug_/sala'
-      path: '/room/$slug/sala'
-      fullPath: '/room/$slug/sala'
-      preLoaderRoute: typeof RoomSlugSalaRouteImport
-      parentRoute: typeof rootRouteImport
     }
     '/oauth/$provider/callback': {
       id: '/oauth/$provider/callback'
@@ -1246,7 +1226,6 @@ const rootRouteChildren: RootRouteChildren = {
   ApiInternalMembersRoute: ApiInternalMembersRoute,
   CoeditarInvitacionTokenRoute: CoeditarInvitacionTokenRoute,
   OauthProviderCallbackRoute: OauthProviderCallbackRoute,
-  RoomSlugSalaRoute: RoomSlugSalaRoute,
   ApiCollabDocIdSessionEndRoute: ApiCollabDocIdSessionEndRoute,
   ApiCollabDocIdStateRoute: ApiCollabDocIdStateRoute,
   ApiHooksSentryTokenRoute: ApiHooksSentryTokenRoute,

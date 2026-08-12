@@ -55,14 +55,18 @@ export async function eventViewerFor(ch: Channel): Promise<EventViewer | null> {
   const sub = await currentGuestSub();
   if (!sub) return null;
 
-  // El registro es la autorización. No basta con traer cookie: tiene que existir
-  // una fila para ESTE room, y no estar baneada.
+  // El registro es la autorización. No basta con traer cookie: tiene que existir una fila
+  // para ESTE room, no estar baneada, y **tener el correo verificado**.
+  //
+  // ⚠️ Lo de verificado es nuevo y es lo que le da sentido al resto. Antes bastaba teclear
+  // un correo cualquiera, así que el baneo por correo se saltaba escribiendo otro y la
+  // lista de asistentes —que es el producto de abrir un room— no valía nada.
   const { dbq, num } = await import("../../dbq.server");
   const rows = await dbq(
-    "SELECT name, banned FROM gt_event_registrations WHERE channel_id = ? AND guest_sub = ? LIMIT 1",
+    "SELECT name, banned, verified_at FROM gt_event_registrations WHERE channel_id = ? AND guest_sub = ? LIMIT 1",
     [ch.id, sub]
   );
-  if (!rows[0] || num(rows[0].banned) === 1) return null;
+  if (!rows[0] || num(rows[0].banned) === 1 || rows[0].verified_at == null) return null;
 
   return { sub, name: rows[0].name || "Invitado", isMember: false, isHost: false };
 }

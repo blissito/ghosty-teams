@@ -20,39 +20,91 @@ import { createServerFn } from "@tanstack/react-start";
 // sólo se importan DINÁMICAMENTE dentro de los handlers, así que nunca cruzan.
 const MAX_LEN = 1000;
 
-async function resolve(slug: string) {
+/**
+ * Los mensajes que un room abierto puede enseñar HACIA FUERA.
+ *
+ * ⚠️ El corte por `public_since` es la pieza importante y no es cosmética. Antes esto
+ * servía los últimos 200 mensajes del room **sin ninguna condición de fecha**, así que
+ * convertir en abierto un room que ya existía publicaba de golpe todo lo que el equipo
+ * había hablado ahí dentro. Con cualquier workspace pudiendo abrir rooms públicos, esa
+ * era la fuga más cara del sistema — y ni siquiera hacía falta un exploit: bastaba abrir
+ * la liga.
+ *
+ * Función aparte y pura para poder probarla sin DB: es una frontera de datos, y una
+ * frontera que sólo existe embebida en un handler es una frontera que nadie revisa.
+ *
+ * `public_since` NULL = el room no ha sido abierto nunca → no se enseña nada. Cerrado por
+ * omisión, que es como tiene que fallar.
+ */
+export function publicMessages<T extends { parent_id: number | null; id: number; created_at: number }>(
+  todos: T[],
+  publicSince: number | null | undefined,
+  after = 0,
+  limite = 200
+): T[] {
+  if (publicSince == null) return [];
+  return todos
+    .filter((m) => m.parent_id == null && m.id > after && m.created_at >= publicSince)
+    .slice(-limite);
+}
+
+/** El room de una liga pública, sin preguntar quién eres. `null` si no existe o no es público. */
+async function resolveRoom(slug: string) {
   await (await import("../schema.server")).ensureSchema().catch(() => {});
   const db = await import("../../db.server");
   const ch = await db.channelByShareSlug(slug);
-  if (!ch) return null;
-  const { eventViewerFor } = await import("./access.server");
-  const viewer = await eventViewerFor(ch);
-  if (!viewer) return null;
-  return { db, ch, viewer };
+  return ch ? { db, ch } : null;
 }
 
+/** Como `resolveRoom`, pero exigiendo además que quien llama pueda PARTICIPAR. */
+async function resolve(slug: string) {
+  const r = await resolveRoom(slug);
+  if (!r) return null;
+  const { eventViewerFor } = await import("./access.server");
+  const viewer = await eventViewerFor(r.ch);
+  if (!viewer) return null;
+  return { ...r, viewer };
+}
+
+/**
+ * El flujo de un room abierto. **No exige nada a quien llama.**
+ *
+ * Leer es libre a propósito: quien llega por la liga ve una conversación viva en vez de
+ * una puerta, y ésa es la diferencia entre un room que engancha y uno que parece cerrado.
+ * El correo se pide en el momento en que la persona quiere PARTICIPAR, que es cuando ya
+ * quiere darlo.
+ *
+ * Lo que sí acota el daño es `publicMessages`: nada anterior a la apertura sale de aquí.
+ */
 export const eventFlowFn = createServerFn({ method: "GET" })
   .validator((d: { slug: string; after?: number }) => d)
   .handler(async ({ data }) => {
-    const r = await resolve(data.slug);
-    if (!r) return { ok: false as const, messages: [] };
+    const r = await resolveRoom(data.slug);
+    if (!r) return { ok: false as const, messages: [], canModerate: false, canWrite: false };
+    // Quién eres sólo decide si puedes ESCRIBIR y qué mensajes son tuyos; nunca si puedes
+    // leer. Un anónimo devuelve `null` aquí y sigue adelante.
+    const { eventViewerFor } = await import("./access.server");
+    const viewer = await eventViewerFor(r.ch).catch(() => null);
     const all = await r.db.listChannelFlow(r.ch.id);
     // Sólo lo que se escribió en el flujo del evento, y nada de hilos: la sala es
     // una conversación corrida, no el room completo con su historial de meses.
-    const after = data.after ?? 0;
-    const messages = all
-      .filter((m) => m.parent_id == null && m.id > after)
-      .slice(-200)
+    // Y sólo DESDE QUE SE ABRIÓ — ver `publicMessages`.
+    const messages = publicMessages(all, r.ch.public_since, data.after ?? 0)
       .map((m) => ({
         id: m.id,
         sender: m.sender,
         avatar: m.avatar,
         body: m.body,
         created_at: m.created_at,
-        mine: m.sender_sub === r.viewer.sub,
+        mine: !!viewer && m.sender_sub === viewer.sub,
         isAgent: !!m.agent_handle,
       }));
-    return { ok: true as const, messages, canModerate: r.viewer.isHost };
+    return {
+      ok: true as const,
+      messages,
+      canModerate: !!viewer?.isHost,
+      canWrite: !!viewer,
+    };
   });
 
 export const eventPostFn = createServerFn({ method: "POST" })

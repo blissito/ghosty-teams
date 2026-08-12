@@ -51,12 +51,21 @@ export const Route = createFileRoute("/api/event-stream")({
         const channel = await db.channelByShareSlug(slug);
         if (!channel) return new Response("not found", { status: 404 });
 
-        // La MISMA puerta que la sala y el chat: cookie de invitado + fila de registro
-        // no baneada, o miembro con acceso al room. Cero criterio de permiso nuevo —
-        // si algún día se endurece el registro, esto se endurece con él.
+        // ⚠️ Aquí NO se exige identidad. Leer un room abierto es libre —igual que en
+        // `eventFlowFn`— y sin esto la página tendría que sondear para enseñar la
+        // conversación en vivo a quien acaba de llegar, que es justo el momento en que
+        // hay que engancharlo. Quien no se ha identificado entra en modo MIRÓN: recibe
+        // lo mismo que ya podría leer con un GET, y no puede publicar nada por aquí.
+        //
+        // El `sub` de un mirón es efímero y no se persiste: sólo sirve para contarlo en
+        // la presencia y para darlo de baja al cerrar.
         const { eventViewerFor } = await import("../server/events/access.server");
-        const viewer = await eventViewerFor(channel);
-        if (!viewer) return new Response("unauthorized", { status: 401 });
+        const viewer = await eventViewerFor(channel).catch(() => null);
+        const sub = viewer?.sub ?? `watch:${crypto.randomUUID()}`;
+        // El nombre de un mirón NO viaja al bus: no lo tiene, y publicar uno inventado
+        // ("Invitado 4") ensuciaría la lista de quién está en la sala con gente que no
+        // se ha presentado. Se cuenta, no se nombra.
+        const nombre = viewer?.name ?? "";
 
         const bus = await import("../server/bus.server");
         const { currentNamespace } = await import("../server/tenant.server");
@@ -84,8 +93,8 @@ export const Route = createFileRoute("/api/event-stream")({
             unsub = bus.addEventClient(
               ns,
               channel.id,
-              viewer.sub,
-              viewer.name,
+              sub,
+              nombre,
               (ev) => {
                 try {
                   send(ev);

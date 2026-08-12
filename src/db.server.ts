@@ -20,6 +20,10 @@ export type Channel = {
   call_title?: string | null;
   public_access?: number;
   agent_enabled?: number;
+  /** Desde cuándo es público. El camino público NO sirve nada anterior a esto. */
+  public_since?: number | null;
+  /** ¿La sala de video está abierta a la comunidad? Lo decide el dueño. */
+  call_open?: number;
   threads?: Message[]; // hilos raíz (adjuntados por getChannelView para el sidebar)
 };
 
@@ -39,6 +43,8 @@ function toChannel(r: Row): Channel {
     call_title: r.call_title ?? null,
     public_access: num(r.public_access),
     agent_enabled: num(r.agent_enabled),
+    public_since: r.public_since == null ? null : num(r.public_since),
+    call_open: num(r.call_open),
   };
 }
 
@@ -1666,6 +1672,7 @@ export async function setChannelEvent(
     title?: string | null;
     publicAccess?: boolean;
     agentEnabled?: boolean;
+    callOpen?: boolean;
   }
 ): Promise<void> {
   const sets: string[] = [];
@@ -1677,9 +1684,22 @@ export async function setChannelEvent(
   if (patch.title !== undefined) put("call_title", patch.title);
   if (patch.publicAccess !== undefined) put("public_access", patch.publicAccess ? 1 : 0);
   if (patch.agentEnabled !== undefined) put("agent_enabled", patch.agentEnabled ? 1 : 0);
+  if (patch.callOpen !== undefined) put("call_open", patch.callOpen ? 1 : 0);
   if (!sets.length) return;
   args.push(channelId);
   await dbq(`UPDATE gc_channels SET ${sets.join(", ")} WHERE id = ?`, args);
+
+  // El sello de apertura, en su propia sentencia y con `IS NULL` en el WHERE: así la
+  // PRIMERA apertura lo pone y ninguna posterior lo mueve. Si se recalculara al reabrir,
+  // un room cerrado tres meses volvería enseñando sólo lo último — pero si se pisara con
+  // la fecha nueva, lo que se habló mientras estaba cerrado quedaría al descubierto. Se
+  // conserva el primero, que es el lado seguro.
+  if (patch.publicAccess === true) {
+    await dbq(
+      "UPDATE gc_channels SET public_since = unixepoch() WHERE id = ? AND public_since IS NULL",
+      [channelId]
+    );
+  }
 }
 
 export type EventRegistration = {
@@ -1712,6 +1732,100 @@ export async function registerForEvent(input: {
     [input.channelId, input.name.trim().slice(0, 60), email, input.guestSub, input.ipHash]
   );
   return { banned: num(rows[0]?.banned) === 1 };
+}
+
+/**
+ * Arranca (o reintenta) la verificación de un correo: guarda el hash del código y su
+ * caducidad, y devuelve si esa persona está baneada.
+ *
+ * ⚠️ **No toca `guest_sub`.** El `sub` se ata al correo sólo cuando el código se acierta;
+ * si se atara aquí, pedir un código para el correo de otro le robaría la sesión a esa
+ * persona. Tampoco resetea `verified_at`: quien ya estaba dentro sigue dentro aunque
+ * alguien pida un código a su nombre.
+ *
+ * ⚠️ `verify_attempts` vuelve a 0 con cada código nuevo, que es lo correcto —el tope es
+ * por código, no de por vida— pero por eso el **reenvío** tiene que tener su propio
+ * límite: sin él, pedir código nuevo sería la forma de reiniciar los intentos.
+ */
+export async function startEventVerification(input: {
+  channelId: number;
+  name: string;
+  email: string;
+  codeHash: string;
+  expiresAt: number;
+  ipHash: string | null;
+}): Promise<{ banned: boolean; alreadyVerified: boolean }> {
+  const email = input.email.trim().toLowerCase();
+  const rows = await dbq(
+    `INSERT INTO gt_event_registrations
+       (channel_id, name, email, ip_hash, last_seen_at, verify_code_hash, verify_expires_at, verify_attempts)
+     VALUES (?,?,?,?, unixepoch(), ?, ?, 0)
+     ON CONFLICT(channel_id, email) DO UPDATE SET
+       name = excluded.name,
+       last_seen_at = unixepoch(),
+       verify_code_hash = excluded.verify_code_hash,
+       verify_expires_at = excluded.verify_expires_at,
+       verify_attempts = 0
+     RETURNING banned, verified_at`,
+    [input.channelId, input.name.trim().slice(0, 60), email, input.ipHash, input.codeHash, input.expiresAt]
+  );
+  return {
+    banned: num(rows[0]?.banned) === 1,
+    alreadyVerified: rows[0]?.verified_at != null,
+  };
+}
+
+/** La fila de verificación de un correo, para comprobar el código contra ella. */
+export async function eventVerificationRow(
+  channelId: number,
+  email: string
+): Promise<{ verify_code_hash: string | null; verify_expires_at: number | null; verify_attempts: number; banned: number; name: string } | null> {
+  const rows = await dbq(
+    `SELECT name, banned, verify_code_hash, verify_expires_at, verify_attempts
+       FROM gt_event_registrations WHERE channel_id = ? AND email = ? LIMIT 1`,
+    [channelId, email.trim().toLowerCase()]
+  );
+  const r = rows[0];
+  if (!r) return null;
+  return {
+    name: r.name ?? "",
+    banned: num(r.banned),
+    verify_code_hash: r.verify_code_hash ?? null,
+    verify_expires_at: r.verify_expires_at == null ? null : num(r.verify_expires_at),
+    verify_attempts: num(r.verify_attempts),
+  };
+}
+
+/** Un intento fallido. Se cuenta SIEMPRE, aunque el código ya hubiera caducado. */
+export async function bumpEventVerifyAttempt(channelId: number, email: string): Promise<void> {
+  await dbq(
+    "UPDATE gt_event_registrations SET verify_attempts = verify_attempts + 1 WHERE channel_id = ? AND email = ?",
+    [channelId, email.trim().toLowerCase()]
+  );
+}
+
+/**
+ * Código acertado: se sella la verificación y AHORA sí se ata el `guest_sub`.
+ *
+ * El código se borra en el mismo UPDATE: es de un solo uso, y dejarlo permitiría
+ * reutilizarlo desde otro navegador durante los diez minutos de su ventana.
+ */
+export async function confirmEventVerification(input: {
+  channelId: number;
+  email: string;
+  guestSub: string;
+}): Promise<void> {
+  await dbq(
+    `UPDATE gt_event_registrations
+        SET verified_at = COALESCE(verified_at, unixepoch()),
+            guest_sub = ?,
+            verify_code_hash = NULL,
+            verify_expires_at = NULL,
+            verify_attempts = 0,
+            last_seen_at = unixepoch()
+      WHERE channel_id = ? AND email = ?`,
+    [input.guestSub, input.channelId, input.email.trim().toLowerCase()]
+  );
 }
 
 export async function listEventRegistrations(channelId: number): Promise<EventRegistration[]> {

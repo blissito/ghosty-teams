@@ -278,6 +278,8 @@ export const en: Record<string, string> = {
   "Expandir": "Expand",
   "Extra": "Extra",
   "Entró por la liga del evento": "Joined through the event link",
+  "Sala de video abierta": "Video room open",
+  "Apagada, no se ofrece el botón. Déjala prendida para que la comunidad entre cuando quiera, o enciéndela sólo a la hora del evento.": "Off means no button at all. Leave it on so the community can drop in any time, or switch it on only at event time.",
   "Fijado": "Pinned",
   "Fijar en el room": "Pin to room",
   "Agente gestionado": "Managed agent",

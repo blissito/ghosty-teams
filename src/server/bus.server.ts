@@ -257,7 +257,19 @@ export function addEventClient(
   const prev = m.get(sub)?.n ?? 0;
   m.set(sub, { n: prev + 1, name });
   // Sólo al ABRIR la primera pestaña de esa persona: dos pestañas no son dos personas.
-  if (prev === 0) publish(roomCh, { t: "event:presence", channelId, count: m.size, joined: { sub, name } });
+  //
+  // Sin nombre (un MIRÓN, que llegó por la liga y aún no se ha identificado) se anuncia
+  // el conteo pero no el `joined`: cuenta como presencia, no como alguien que "entró".
+  // Nombrarlo obligaría a inventarle uno, y una lista de "Invitado 7, Invitado 8" es peor
+  // señal que un número honesto.
+  if (prev === 0) {
+    publish(roomCh, {
+      t: "event:presence",
+      channelId,
+      count: m.size,
+      ...(name ? { joined: { sub, name } } : {}),
+    });
+  }
 
   let dado = false;
   return () => {
@@ -275,7 +287,12 @@ export function addEventClient(
     }
     m.delete(sub);
     if (m.size === 0) eventOnline.delete(key);
-    publish(roomCh, { t: "event:presence", channelId, count: m.size, left: { sub, name } });
+    publish(roomCh, {
+      t: "event:presence",
+      channelId,
+      count: m.size,
+      ...(name ? { left: { sub, name } } : {}),
+    });
   };
 }
 
