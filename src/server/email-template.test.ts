@@ -19,7 +19,10 @@ describe("pie según el destinatario", () => {
     const { html } = ghostyEmail({ head: "Brendi te compartió un documento", footer: "externo", deQuien: "Brendi" });
     expect(html).not.toContain("Ajustes");
     expect(html).not.toContain("lo activaste");
-    expect(html).toContain("Te escribe Brendi desde Ghosty Teams");
+    // Sin "desde Ghosty Teams": con un cliente que tiene marca propia salía "Te escribe
+    // Formmy desde Ghosty Teams", dos nombres de producto en un renglón.
+    expect(html).toContain("Te escribe Brendi.");
+    expect(html).not.toContain("desde Ghosty Teams");
   });
 
   it("externo sin nombre no inventa quién escribe", () => {

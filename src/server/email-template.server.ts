@@ -98,9 +98,15 @@ function pieTexto(f: EmailFooter, deQuien: string | undefined, locale: Locale): 
   if (typeof f === "object") return f.text;
   if (f === "externo") {
     // Ni opt-out ni ajustes: esta persona no tiene cuenta. Lo único honesto que se le puede
-    // decir es quién le escribe y desde dónde.
+    // decir es quién le escribe.
+    //
+    // ⚠️ Antes decía "Te escribe {deQuien} DESDE GHOSTY TEAMS", y con un cliente que tiene
+    // su propia marca salía "Te escribe Formmy desde Ghosty Teams": dos nombres de producto
+    // en un renglón, y el segundo no le dice nada a quien se registró en el evento de
+    // Formmy. La atribución del producto se queda donde no estorba —el "Hecho con Ghosty
+    // Teams" del pie de la página—; el correo dice quién escribe y punto.
     return deQuien
-      ? t("Te escribe {deQuien} desde Ghosty Teams. Si no esperabas este correo, puedes ignorarlo.", { deQuien })
+      ? t("Te escribe {deQuien}. Si no esperabas este correo, puedes ignorarlo.", { deQuien })
       : t("Enviado desde Ghosty Teams. Si no esperabas este correo, puedes ignorarlo.");
   }
   return t("Recibes este correo porque lo activaste en Ghosty Studio. Puedes apagarlo en Ajustes → Notificaciones.");

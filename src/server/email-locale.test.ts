@@ -16,7 +16,7 @@ describe("idioma de los correos", () => {
       deQuien: "Ana",
       locale: "en",
     });
-    expect(text).toContain("Ana is writing to you from Ghosty Teams");
+    expect(text).toContain("Ana is writing to you.");
     expect(text).not.toContain("Te escribe");
   });
 
