@@ -170,6 +170,10 @@ function RoomAbierto() {
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
   const [identificando, setIdentificando] = useState(false);
+  // Las reglas se enseñan UNA vez por dispositivo. Un cartel permanente se vuelve
+  // invisible en dos minutos, que es justo lo contrario de lo que hace falta.
+  const [reglasVistas, setReglasVistas] = useState(true);
+  useEffect(() => { setReglasVistas(localStorage.getItem("room:reglas") === "1"); }, []);
   const [callUrl, setCallUrl] = useState<string | null>(data.callUrl);
   // Nace ABIERTO: el chat es la mitad de para qué existe el room, y esconderlo por
   // defecto obliga a descubrirlo. En móvil se abre encima, así que ahí arranca cerrado
@@ -638,6 +642,14 @@ function RoomAbierto() {
               </button>
             </div>
           </div>
+          {!reglasVistas && (
+            <Reglas
+              onOk={() => {
+                localStorage.setItem("room:reglas", "1");
+                setReglasVistas(true);
+              }}
+            />
+          )}
           <Mensajes messages={messages} bottomRef={bottomRef} />
           {err && callUrl && <p className="px-4 pb-1 text-xs text-red-400">{err}</p>}
           {/* El aviso va ANTES de escribir, con su acción al lado. Dejar teclear y
@@ -737,6 +749,36 @@ function RoomAbierto() {
 function fmtDesde(since: number, ahora: number): string {
   const s = Math.max(0, ahora - since);
   return `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
+}
+
+/**
+ * Las reglas del chat, arriba del todo, antes de leer nada.
+ *
+ * Es lo que hace Twitch y funciona por una razón: en un chat abierto el primer mensaje
+ * desagradable ya se leyó cuando alguien lo modera. Decir de antemano qué pasa aquí evita
+ * la mayoría, y deja a quien modera actuar sin parecer arbitrario.
+ *
+ * Se acepta una vez y no vuelve — por dispositivo, no por persona: nadie quiere volver a
+ * aceptar nada por abrir el enlace en el teléfono.
+ */
+function Reglas({ onOk }: { onOk: () => void }) {
+  return (
+    <div className="mx-3 mt-3 rounded-xl border border-border bg-surface-2 p-3">
+      <p className="text-xs font-semibold">Antes de escribir</p>
+      <ul className="mt-2 space-y-1 text-[11px] leading-relaxed text-muted">
+        <li>· Se vale preguntar cualquier cosa, por básica que parezca.</li>
+        <li>· Nada de insultos, spam ni enlaces de promoción.</li>
+        <li>· Esto es público: no pongas datos personales tuyos ni de nadie.</li>
+        <li>· Si se graba la sesión, el chat NO se graba — pero queda en el room.</li>
+      </ul>
+      <button
+        onClick={onOk}
+        className="mt-2.5 w-full rounded-lg bg-brand px-3 py-1.5 text-xs font-semibold text-white"
+      >
+        Entendido
+      </button>
+    </div>
+  );
 }
 
 function Mensajes({
