@@ -70,12 +70,6 @@ export const requestCodeFn = createServerFn({ method: "POST" })
     // "estás vetado" sólo le enseña a volver con otra dirección.
     if (banned) return { ok: true };
 
-    // Quien recibe esto no conoce "Ghosty": conoce al cliente. El pie del correo lleva el
-    // nombre de su marca, igual que hace la página del artefacto compartido.
-    const marca = await import("../brand.server")
-      .then((m) => m.activeBrandKit())
-      .then((k) => k?.name ?? undefined)
-      .catch(() => undefined);
     // El origin se lee del REQUEST vivo: cada workspace sirve el room desde su propio
     // subdominio, así que una base fija mandaría a la gente al host equivocado.
     const origin = await import("../../origin.server")
@@ -85,7 +79,6 @@ export const requestCodeFn = createServerFn({ method: "POST" })
       to: email,
       code,
       roomTitle: r.ch.call_title || r.ch.name,
-      deQuien: marca,
       roomUrl: origin ? `${origin.replace(/\/$/, "")}/room/${encodeURIComponent(data.slug)}` : undefined,
     });
     return { ok: true };

@@ -82,8 +82,6 @@ export async function sendCodeEmail(opts: {
   to: string;
   code: string;
   roomTitle: string;
-  /** Nombre del workspace: quien recibe esto no conoce "Ghosty", conoce al cliente. */
-  deQuien?: string;
   /** La liga del room. Sin ella, quien cierra la pestaña se queda con un código y sin dónde usarlo. */
   roomUrl?: string;
 }): Promise<boolean> {
@@ -109,10 +107,14 @@ export async function sendCodeEmail(opts: {
     ...(opts.roomUrl ? { cta: { label: "Volver al room", url: opts.roomUrl } } : {}),
     footer: "externo",
     locale,
-    deQuien: opts.deQuien,
-    // El renglón de arriba dice el nombre del CLIENTE cuando lo hay: quien recibe esto se
-    // registró en su evento y no sabe qué es "Ghosty Studio".
-    marca: opts.deQuien ?? "Ghosty Teams",
+    // ⚠️ Sin `deQuien`: aquí NO hay una persona ni una empresa que firme. Se intentó con el
+    // nombre del brand kit del workspace y salió "Te escribe Formmy" — el brand kit es un
+    // juego de colores y tipografías, no la identidad de quien manda un correo. Sin nombre,
+    // el pie se queda en lo único cierto: si no lo esperabas, ignóralo.
+    //
+    // Arriba va el TÍTULO DEL EVENTO, que es lo que esa persona sí reconoce: acaba de
+    // registrarse en él hace diez segundos.
+    marca: opts.roomTitle,
   });
 
   return sendSesEmail({
