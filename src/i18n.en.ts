@@ -246,6 +246,10 @@ export const en: Record<string, string> = {
   "Elige un motor…": "Choose an engine…",
   "Elige una opción": "Choose an option",
   "Eliminar": "Delete",
+  "Expulsar": "Ban",
+  "Expulsar del room": "Ban from room",
+  "No podrá volver a escribir y se borrarán sus mensajes de este room.":
+    "They won't be able to post again, and their messages in this room will be deleted.",
   "Eliminar hilo": "Delete thread",
   "Eliminar mensaje": "Delete message",
   "Eliminar registro de llamada": "Delete call record",

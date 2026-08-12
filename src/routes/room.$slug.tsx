@@ -1,11 +1,12 @@
 import { createFileRoute, notFound, useRouter } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createServerFn } from "@tanstack/react-start";
-import { Circle, MessageSquare, Paperclip, Square, X } from "lucide-react";
+import { ChevronDown, Circle, MessageSquare, Paperclip, Square, X } from "lucide-react";
 import GhostyMascot from "../components/GhostyMascot";
 import { ChatCtx, ChatCtxDefaults, MessageRow, type SessionUser } from "../components/chat/message";
 import type { Message, CustomEmoji, ReactionAgg } from "../db.server";
 import { eventFlowFn, eventPostFn, eventReactFn } from "../server/events/chat";
+import { eventModerateFn } from "../server/events/chat";
 import { recordingFn, requestCodeFn, verifyCodeFn } from "../server/events/identity";
 import { useEventStream } from "../hooks/useEventStream";
 import { shouldChime } from "../lib/chime";
@@ -327,6 +328,20 @@ function RoomAbierto() {
     }
   }
 
+  // Moderar. Optimista en los dos casos: el evento del bus reconcilia, y ver el mensaje
+  // seguir ahí medio segundo después de borrarlo hace dudar de si el clic funcionó —
+  // justo cuando quien modera está apurado.
+  async function borrarMensaje(m: Message) {
+    setMessages((prev) => prev.filter((x) => x.id !== m.id));
+    await eventModerateFn({ data: { slug, action: "delete", messageId: m.id } }).catch(() => {});
+  }
+  async function expulsar(m: Message) {
+    // Se van TODOS sus mensajes, no sólo el que se tocó: es lo que hace el servidor y lo
+    // que espera quien expulsa.
+    setMessages((prev) => prev.filter((x) => x.sender_sub !== m.sender_sub));
+    await eventModerateFn({ data: { slug, action: "ban", sub: m.sender_sub ?? undefined } }).catch(() => {});
+  }
+
   // ⚠️ El CONTEXTO es lo que hace que aquí se pinte el chat DE VERDAD y no una copia.
   // Lo que un room abierto no tiene se apaga con no-ops: fijar, destacar, editar,
   // reenviar, hilos, perfiles y ajustes son cosas de miembros. `MessageRow` ya sabe
@@ -345,11 +360,13 @@ function RoomAbierto() {
       // Compacto: una línea por mensaje, como Twitch. Un webinar a cien mensajes por
       // minuto en formato Slack es un scroll donde no se sigue nada.
       density: "compact" as const,
+      // Moderación: sólo para quien presenta, y sólo sobre ESTE room.
+      ...(modero ? { canModerate: true, remove: borrarMensaje, banUser: expulsar } : {}),
       // Y nada más. Reenviar, perfiles, fijar, editar, borrar y ajustes NO se pasan
       // —no se apagan—: aquí no existen, así que sus botones tampoco. Es la diferencia
       // entre una capacidad ausente y un botón muerto.
     }),
-    [me, slug, emojis, pickerFor, canWrite]
+    [me, slug, emojis, pickerFor, canWrite, modero]
   );
 
   return (
@@ -564,19 +581,61 @@ function Mensajes({
   messages: Message[];
   bottomRef?: React.RefObject<HTMLDivElement | null>;
 }) {
+  const scroller = useRef<HTMLDivElement>(null);
   const propio = useRef<HTMLDivElement>(null);
   const fin = bottomRef ?? propio;
-  useEffect(() => { fin.current?.scrollIntoView({ behavior: "smooth" }); }, [messages.length, fin]);
+  // ⚠️ El autoscroll SE PAUSA al subir, como en Twitch. Sin esto, con cien mensajes por
+  // minuto releer algo es imposible: cada mensaje nuevo te devuelve al final a media
+  // frase. El chat no deja de recibir — sólo deja de moverse.
+  const [pegado, setPegado] = useState(true);
+  const [perdidos, setPerdidos] = useState(0);
+
+  useEffect(() => {
+    if (pegado) {
+      fin.current?.scrollIntoView({ behavior: "smooth" });
+      setPerdidos(0);
+    } else {
+      setPerdidos((n) => n + 1);
+    }
+    // `pegado` NO va en las deps a propósito: al despegarse no hay que contar el mensaje
+    // que ya estaba, y al re-pegarse ya lo hace `irAlFinal`.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [messages.length, fin]);
+
+  // "Estoy abajo" con holgura de 60px: pedir el píxel exacto haría que un scroll suave sin
+  // terminar, o un decimal del navegador, contaran como "se despegó".
+  const alScroll = () => {
+    const el = scroller.current;
+    if (!el) return;
+    setPegado(el.scrollHeight - el.scrollTop - el.clientHeight < 60);
+  };
+
+  const irAlFinal = () => {
+    setPegado(true);
+    setPerdidos(0);
+    fin.current?.scrollIntoView({ behavior: "smooth" });
+  };
 
   return (
-    <div className="w-full flex-1 overflow-y-auto px-2 py-4">
-      {messages.length === 0 && (
-        <p className="px-2 text-sm text-muted">Todavía no hay mensajes. Sé quien empiece 👋</p>
+    <div className="relative flex min-h-0 flex-1 flex-col">
+      <div ref={scroller} onScroll={alScroll} className="w-full flex-1 overflow-y-auto px-2 py-4">
+        {messages.length === 0 && (
+          <p className="px-2 text-sm text-muted">Todavía no hay mensajes. Sé quien empiece 👋</p>
+        )}
+        {messages.map((m, i) => (
+          <MessageRow key={m.id} m={m} prev={messages[i - 1]} />
+        ))}
+        <div ref={fin} />
+      </div>
+      {!pegado && (
+        <button
+          onClick={irAlFinal}
+          className="absolute inset-x-3 bottom-2 flex items-center justify-center gap-2 rounded-full bg-brand/90 px-3 py-1.5 text-xs font-medium text-white shadow-lg backdrop-blur"
+        >
+          <ChevronDown size={14} />
+          {perdidos > 0 ? `${perdidos} ${perdidos === 1 ? "mensaje nuevo" : "mensajes nuevos"}` : "Ir al final"}
+        </button>
       )}
-      {messages.map((m, i) => (
-        <MessageRow key={m.id} m={m} prev={messages[i - 1]} />
-      ))}
-      <div ref={fin} />
     </div>
   );
 }

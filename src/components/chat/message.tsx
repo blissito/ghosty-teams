@@ -68,7 +68,7 @@ import ConfirmModal from "../../components/ConfirmModal";
 import type { Message, Attachment, Artifact, CustomEmoji } from "../../db.server";
 import { forwardTargetsFn, forwardMessageFn } from "../../server/forward";
 import { readReceiptsFn} from "../../server/reads";
-import { SmilePlus, Pencil, ArrowLeft, Reply, Square} from "lucide-react";
+import { SmilePlus, Pencil, ArrowLeft, Reply, Square, Ban } from "lucide-react";
 import { useRtSubscribe } from "../../utils/rt-bus";
 import { Markdown } from "../../components/Markdown";
 import { Avatar } from "../../components/Avatar";
@@ -176,6 +176,13 @@ export type ChatCtxValue = {
   star?: (m: Message) => void;
   pin?: (m: Message) => void;
   remove?: (m: Message) => Promise<void>;
+  /**
+   * Modero este espacio aunque el mensaje no sea mío ni yo sea dueño del workspace. Lo usa
+   * el room abierto de un evento: quien presenta modera SU room y nada más.
+   */
+  canModerate?: boolean;
+  /** Expulsar a quien escribió. Ausente = no se ofrece. */
+  banUser?: (m: Message) => void;
   editMsg?: (m: Message, body: string) => void;
   retrySend?: (o: Optimistic) => void;
   discardSend?: (id: string) => void;
@@ -2225,7 +2232,7 @@ export function MessageRow({
     me, slug, emojis, users, pickerFor, turns, density,
     // Capacidades: las que falten hacen desaparecer su botón, no lo dejan muerto.
     onOpenArtifact, openProfile, sendQuickReply,
-    react, setReplyTo, forward, editMsg, star, pin, remove,
+    react, setReplyTo, forward, editMsg, star, pin, remove, canModerate,
   } = useContext(ChatCtx);
   const [editing, setEditing] = useState(false);
   // Mientras un popover de la barra (reaccionar/⋯) esté abierto, la barra NO debe
@@ -2285,7 +2292,7 @@ export function MessageRow({
   // fila y descuadraba el spacing) ni se corta. Los headers (no-agrupados) siguen con `time`.
   const timeShort = new Date(m.created_at * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
   const canEdit = !!me && (me.isOwner || m.sender === me.name) && !isAgent && m.kind === "msg";
-  const canDelete = !!me && (me.isOwner || m.sender === me.name) && m.kind === "msg";
+  const canDelete = !!me && (me.isOwner || canModerate || m.sender === me.name) && m.kind === "msg";
   const canReact = m.kind === "msg" && !!slug;
   // Agrupación estilo Slack: mensajes CONSECUTIVOS del mismo autor dentro de ~5 min se
   // colapsan (sin repetir avatar/nombre/hora → feed denso). No agrupa si el previo es de
@@ -2938,9 +2945,10 @@ export function MessageActions({
   onOpenChange?: (open: boolean) => void;
 }) {
   const t = useT();
-  const { pin, remove, star } = useContext(ChatCtx);
+  const { pin, remove, star, banUser } = useContext(ChatCtx);
   const [open, setOpen] = useState(false);
   const [confirmDel, setConfirmDel] = useState(false);
+  const [confirmBan, setConfirmBan] = useState(false);
   const [dropUp, setDropUp] = useState(false); // último mensaje: abre hacia arriba (no se corta)
   useEffect(() => onOpenChange?.(open), [open]); // mantiene la barra visible con el menú abierto
   const [receipts, setReceipts] = useState<{ sub: string; name: string; avatar: string }[] | null>(null);
@@ -3066,6 +3074,17 @@ export function MessageActions({
                 <Trash2 size={14} /> {t("Eliminar")}
               </button>
             )}
+            {banUser && m.kind === "msg" && (
+              <button
+                className={`${item} text-red-500 hover:bg-red-500/10`}
+                onClick={() => {
+                  close();
+                  setConfirmBan(true);
+                }}
+              >
+                <Ban size={14} /> {t("Expulsar del room")}
+              </button>
+            )}
           </div>
         </>
       )}
@@ -3077,6 +3096,21 @@ export function MessageActions({
           danger
           onCancel={() => setConfirmDel(false)}
           onConfirm={() => remove?.(m)}
+        />
+      )}
+      {confirmBan && (
+        <ConfirmModal
+          title={t("Expulsar del room")}
+          // Se dice lo que hace de verdad: el veto es por correo (sobrevive a borrar la
+          // cookie) y se le borran sus mensajes, porque dejar el rastro es media expulsión.
+          body={t("No podrá volver a escribir y se borrarán sus mensajes de este room.")}
+          confirmLabel={t("Expulsar")}
+          danger
+          onCancel={() => setConfirmBan(false)}
+          onConfirm={() => {
+            banUser?.(m);
+            setConfirmBan(false);
+          }}
         />
       )}
     </div>

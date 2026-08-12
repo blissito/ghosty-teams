@@ -313,7 +313,7 @@ export const eventReactFn = createServerFn({ method: "POST" })
   });
 
 export const eventModerateFn = createServerFn({ method: "POST" })
-  .validator((d: { slug: string; action: "delete" | "ban"; messageId?: number; email?: string }) => d)
+  .validator((d: { slug: string; action: "delete" | "ban"; messageId?: number; email?: string; sub?: string }) => d)
   .handler(async ({ data }) => {
     const r = await resolve(data.slug);
     if (!r || !r.viewer.isHost) return { ok: false as const, error: "no autorizado" };
@@ -325,6 +325,18 @@ export const eventModerateFn = createServerFn({ method: "POST" })
       await dbq("DELETE FROM gc_messages WHERE id = ? AND channel_id = ?", [data.messageId, r.ch.id]);
       return { ok: true as const };
     }
+    // Expulsar desde un MENSAJE: quien modera ve un `guest:<uuid>`, no un correo. Se
+    // resuelve aquí, acotado a este room, y se sigue baneando POR CORREO — que es lo que
+    // sobrevive a que la persona borre su cookie y vuelva a registrarse.
+    if (data.action === "ban" && data.sub && !data.email) {
+      const filas = await dbq(
+        "SELECT email FROM gt_event_registrations WHERE channel_id = ? AND guest_sub = ? LIMIT 1",
+        [r.ch.id, data.sub]
+      );
+      const email = filas[0]?.email as string | undefined;
+      if (!email) return { ok: false as const, error: "no encontré a esa persona" };
+      data = { ...data, email };
+    }
     if (data.action === "ban" && data.email) {
       // Se banea por CORREO y no por cookie: la cookie se borra en un clic. Y no
       // se borra la fila, para que el veto sobreviva a que vuelva a registrarse.
@@ -332,6 +344,19 @@ export const eventModerateFn = createServerFn({ method: "POST" })
         "UPDATE gt_event_registrations SET banned = 1 WHERE channel_id = ? AND email = ?",
         [r.ch.id, data.email.trim().toLowerCase()]
       );
+      // Y se le borran sus mensajes de este room: dejar el rastro de quien acaba de ser
+      // expulsado delante de cien personas es media expulsión.
+      await dbq("DELETE FROM gc_messages WHERE channel_id = ? AND sender_sub = ?", [
+        r.ch.id,
+        data.sub ?? "",
+      ]).catch(() => {});
+      try {
+        const bus = await import("../bus.server");
+        const { currentNamespace } = await import("../tenant.server");
+        bus.publish(bus.ch.room(await currentNamespace(), r.ch.id), {
+          t: "refresh", channelId: r.ch.id, parentId: null,
+        });
+      } catch { /* el sondeo lo recoge */ }
       return { ok: true as const };
     }
     return { ok: false as const, error: "acción inválida" };
