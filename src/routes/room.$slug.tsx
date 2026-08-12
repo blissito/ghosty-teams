@@ -107,7 +107,12 @@ function RoomAbierto() {
   const [identificando, setIdentificando] = useState(false);
   const [callUrl, setCallUrl] = useState<string | null>(null);
   const [callBusy, setCallBusy] = useState(false);
-  const [chatAbierto, setChatAbierto] = useState(false);
+  // Nace ABIERTO: el chat es la mitad de para qué existe el room, y esconderlo por
+  // defecto obliga a descubrirlo. En móvil se abre encima, así que ahí arranca cerrado
+  // para no tapar el video nada más entrar.
+  const [chatAbierto, setChatAbierto] = useState(
+    () => typeof window === "undefined" || window.innerWidth >= 640
+  );
   const [err, setErr] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const lastId = useRef(0);
@@ -254,42 +259,45 @@ function RoomAbierto() {
           inalcanzable**, con lo que la sala parecía rota justo en el paso que importa.
           Entrar a la transmisión es un MODO, no un panel. */}
       {callUrl && (
-        <div className="fixed inset-0 z-40 bg-black">
-          <iframe
-            src={callUrl}
-            title={data.title}
-            className="h-full w-full border-0"
-            allow="camera; microphone; display-capture; autoplay; fullscreen; speaker-selection"
-            allowFullScreen
-          />
+        <div className="fixed inset-0 z-40 flex bg-black">
+          {/* El video y el chat CONVIVEN: el chat le quita ancho a la transmisión en vez
+              de taparla. Es lo que un webinar necesita —la gente pregunta mientras mira—,
+              y un panel encima obliga a elegir entre las dos cosas.
+              Contrapartida asumida: al abrirlo o cerrarlo, LiveKit re-hace su grid de
+              tiles. Se paga una vez por clic, y el chat se queda abierto casi siempre. */}
+          <div className="relative min-w-0 flex-1">
+            <iframe
+              src={callUrl}
+              title={data.title}
+              className="h-full w-full border-0"
+              allow="camera; microphone; display-capture; autoplay; fullscreen; speaker-selection"
+              allowFullScreen
+            />
 
-          <div className="absolute right-4 top-4 flex items-center gap-2">
-            <button
-              onClick={() => setChatAbierto((v) => !v)}
-              className="flex items-center gap-1.5 rounded-full bg-black/70 px-3 py-1.5 text-xs font-medium text-white backdrop-blur hover:bg-black/85"
-            >
-              <MessageSquare size={14} /> {chatAbierto ? "Ocultar chat" : "Chat"}
-            </button>
-            <button
-              onClick={() => setCallUrl(null)}
-              className="flex items-center gap-1.5 rounded-full bg-black/70 px-3 py-1.5 text-xs font-medium text-white backdrop-blur hover:bg-black/85"
-            >
-              {/* ⚠️ Dice "salir" y no "volver al chat" porque esto DESMONTA el iframe: se
-                  abandona la llamada de verdad, y volver a entrar cuesta un ticket nuevo.
-                  Ahora que el chat es un cajón AQUÍ MISMO, nadie necesita salirse para
-                  leerlo — que era justo la confusión que este botón invitaba a cometer. */}
-              <X size={14} /> Salir
-            </button>
+            <div className="absolute right-4 top-4 flex items-center gap-2">
+              <button
+                onClick={() => setChatAbierto((v) => !v)}
+                className="flex items-center gap-1.5 rounded-full bg-black/70 px-3 py-1.5 text-xs font-medium text-white backdrop-blur hover:bg-black/85"
+              >
+                <MessageSquare size={14} /> {chatAbierto ? "Ocultar chat" : "Chat"}
+              </button>
+              <button
+                onClick={() => setCallUrl(null)}
+                className="flex items-center gap-1.5 rounded-full bg-black/70 px-3 py-1.5 text-xs font-medium text-white backdrop-blur hover:bg-black/85"
+              >
+                {/* ⚠️ Dice "salir" y no "volver al chat" porque esto DESMONTA el iframe: se
+                    abandona la llamada de verdad, y volver a entrar cuesta un ticket
+                    nuevo. Con el chat al lado, nadie necesita salirse para leerlo — que
+                    era justo la confusión que este botón invitaba a cometer. */}
+                <X size={14} /> Salir
+              </button>
+            </div>
           </div>
 
-          {/* El chat como CAJÓN sobre el video. Se superpone en vez de encoger el iframe
-              porque redimensionar un iframe de LiveKit lo obliga a re-hacer su layout de
-              tiles: en una llamada de verdad eso es un parpadeo cada vez que alguien abre
-              o cierra el chat. */}
+          {/* En MÓVIL no hay ancho que repartir: ahí sí se superpone, porque partir 380px
+              en dos deja el video del tamaño de un sello y el chat ilegible. */}
           <aside
-            className={`absolute inset-y-0 right-0 z-10 flex w-full flex-col border-l border-white/10 bg-black/85 backdrop-blur transition-transform duration-200 sm:w-96 ${
-              chatAbierto ? "translate-x-0" : "translate-x-full"
-            }`}
+            className={`${chatAbierto ? "flex" : "hidden"} absolute inset-y-0 right-0 z-10 w-full flex-col border-l border-white/10 bg-black/85 backdrop-blur sm:relative sm:z-0 sm:w-80 sm:shrink-0 sm:bg-black lg:w-96`}
           >
             <div className="flex shrink-0 items-center justify-between border-b border-white/10 px-4 py-3 text-white">
               <span className="text-sm font-semibold">Chat</span>
