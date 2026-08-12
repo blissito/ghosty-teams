@@ -1,6 +1,7 @@
 import { createFileRoute, notFound, Link } from "@tanstack/react-router";
 import { createServerFn } from "@tanstack/react-start";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { ChevronDown, ChevronUp } from "lucide-react";
 import { colorDeNombre } from "../components/chat/message";
 
 // ── La transcripción de una grabación, LEGIBLE ──────────────────────────────
@@ -132,6 +133,11 @@ function Transcripcion() {
   const data = Route.useLoaderData();
   const { slug } = Route.useParams();
   const [q, setQ] = useState("");
+  // Índice de la coincidencia actual. Buscar en 74 minutos sin poder saltar de una a otra
+  // es encontrar la palabra y seguir sin saber dónde está.
+  const [idx, setIdx] = useState(0);
+  const [abajo, setAbajo] = useState(false);
+  const refs = useRef<(HTMLDivElement | null)[]>([]);
   const segmentos = useMemo(() => partirTranscripcion(data.texto), [data.texto]);
   const filtrados = useMemo(() => {
     const t = q.trim().toLowerCase();
@@ -145,6 +151,27 @@ function Transcripcion() {
   // Se dice si la transcripción trae hablantes o no: en una que no los tiene, no
   // encontrarlos hace dudar de si el buscador funciona.
   const hayNombres = useMemo(() => segmentos.some((s) => s.quien), [segmentos]);
+
+  // Al cambiar la búsqueda se vuelve a la primera: dejar el índice donde estaba haría
+  // saltar a un sitio que ya no corresponde a lo que se buscó.
+  useEffect(() => { setIdx(0); }, [q]);
+
+  const irA = (n: number) => {
+    if (!filtrados.length) return;
+    const destino = (n + filtrados.length) % filtrados.length; // circular: tras la última, la primera
+    setIdx(destino);
+    refs.current[destino]?.scrollIntoView({ behavior: "smooth", block: "center" });
+  };
+
+  // "¿Estoy abajo?" con holgura, igual que en el chat: pedir el píxel exacto haría que un
+  // scroll suave sin terminar contara como "no he llegado".
+  useEffect(() => {
+    const alScroll = () =>
+      setAbajo(window.innerHeight + window.scrollY >= document.body.scrollHeight - 80);
+    alScroll();
+    window.addEventListener("scroll", alScroll, { passive: true });
+    return () => window.removeEventListener("scroll", alScroll);
+  }, []);
 
   return (
     <div className="min-h-dvh bg-surface text-ink">
@@ -172,16 +199,42 @@ function Transcripcion() {
           className="mt-5 w-full rounded-lg border border-border bg-surface-2 px-3 py-2 text-sm outline-none focus:border-brand"
         />
         {q && (
-          <p className="mt-2 text-xs text-muted">
-            {filtrados.length === 0
-              ? "Sin coincidencias"
-              : `${filtrados.length} de ${segmentos.length} fragmentos`}
-          </p>
+          <div className="mt-2 flex items-center gap-2 text-xs text-muted">
+            {filtrados.length === 0 ? (
+              <span>Sin coincidencias</span>
+            ) : (
+              <>
+                <span>
+                  {idx + 1} de {filtrados.length}
+                </span>
+                <button
+                  onClick={() => irA(idx - 1)}
+                  aria-label="Coincidencia anterior"
+                  className="rounded p-1 hover:bg-surface-2 hover:text-ink"
+                >
+                  <ChevronUp size={14} />
+                </button>
+                <button
+                  onClick={() => irA(idx + 1)}
+                  aria-label="Siguiente coincidencia"
+                  className="rounded p-1 hover:bg-surface-2 hover:text-ink"
+                >
+                  <ChevronDown size={14} />
+                </button>
+              </>
+            )}
+          </div>
         )}
 
         <div className="mt-6 space-y-4">
           {filtrados.map((s, i) => (
-            <div key={i} className="flex gap-3 text-[15px] leading-relaxed">
+            <div
+              key={i}
+              ref={(el) => { refs.current[i] = el; }}
+              className={`flex gap-3 rounded-lg text-[15px] leading-relaxed transition-colors ${
+                q && i === idx ? "bg-brand/10" : ""
+              }`}
+            >
               {/* La marca de tiempo a la izquierda, en su columna: es lo que convierte un
                   muro en algo por donde se puede navegar. Las grabaciones viejas no la
                   tienen y entonces no se pinta nada — mejor que un 00:00 falso. */}
@@ -205,6 +258,17 @@ function Transcripcion() {
           Transcrita en la propia sala, sin enviar el audio a ningún servicio externo.
         </p>
       </div>
+
+      {/* Un solo botón que cambia de sentido. Dos botones fijos —bajar y subir— obligan a
+          mirar cuál toca; éste dice siempre lo único que se puede hacer desde donde estás. */}
+      <button
+        onClick={() => window.scrollTo({ top: abajo ? 0 : document.body.scrollHeight, behavior: "smooth" })}
+        aria-label={abajo ? "Volver arriba" : "Ir al final"}
+        title={abajo ? "Volver arriba" : "Ir al final"}
+        className="fixed bottom-6 right-6 grid size-10 place-items-center rounded-full bg-brand text-white shadow-lg hover:opacity-90"
+      >
+        {abajo ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
+      </button>
     </div>
   );
 }
