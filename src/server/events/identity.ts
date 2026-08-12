@@ -171,6 +171,32 @@ export const recordingFn = createServerFn({ method: "POST" })
         [r.ch.id, res.key, res.transcriptKey, res.bytes, res.startedAt, viewer.name ?? null, res.file]
       ).catch((e) => console.error("[event] no pude registrar la grabación:", e));
       await r.db.setChannelEvent(r.ch.id, { recordingUrl: res.url, recordedAt: Math.floor(Date.now() / 1000) });
+
+      // Y se ANUNCIA en el chat. El menú de arriba está bien para volver, pero quien está
+      // en la sala cuando termina la sesión mira el chat, no la barra: ahí es donde el
+      // enlace queda a la vista y a la mano de todos.
+      //
+      // ⚠️ Lo publica quien moderó, con su nombre, no un "sistema" anónimo: en una sala
+      // abierta un mensaje sin cara se lee como spam. Y va con el bus, así que aparece sin
+      // que nadie recargue.
+      try {
+        const minutos = res.startedAt ? Math.max(1, Math.round((Date.now() / 1000 - res.startedAt) / 60)) : null;
+        const { id: mid } = await r.db.createMessage({
+          channelId: r.ch.id,
+          parentId: null,
+          sender: viewer.name,
+          senderSub: viewer.sub,
+          avatar: "",
+          body: `🎬 Grabación lista${minutos ? ` (${minutos} min)` : ""} — [ver o descargar](${res.url})\n\n_El enlace caduca en 7 días._`,
+        });
+        const bus = await import("../bus.server");
+        const { currentNamespace } = await import("../tenant.server");
+        const msg = await r.db.getMessage(mid);
+        if (msg) bus.publish(bus.ch.room(await currentNamespace(), r.ch.id), { t: "message:new", msg });
+      } catch (e) {
+        // Que falle el anuncio no puede tumbar el guardado: la grabación YA está a salvo.
+        console.error("[event] no pude anunciar la grabación:", e);
+      }
       return { ok: true, url: res.url, transcriptUrl: res.transcriptUrl };
     } catch (e) {
       return { ok: false, error: (e as Error).message || "No pude grabar" };
