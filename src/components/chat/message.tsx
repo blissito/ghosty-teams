@@ -164,6 +164,18 @@ export type ChatCtxValue = {
   // en la que estoy ahora (`scope:scopeId`) para mostrar "En llamada" en vez de "Unirse".
   joinCall: (join: CallJoin) => void;
   myCallKey: string | null;
+  /**
+   * Superficie PÚBLICA (un room abierto): quien mira puede no ser del workspace.
+   *
+   * Apaga las acciones que ahí no existen —reenviar a otros rooms, abrir perfiles del
+   * directorio, el menú de fijar/editar/borrar—. No es sólo estética: un botón que no
+   * hace nada se lee como que el producto está a medias, y es exactamente la diferencia
+   * entre "el chat de Teams" y "una copia del chat de Teams".
+   *
+   * No es una frontera de seguridad —las server functions de detrás ya exigen sesión y
+   * `forwardTargetsFn` devuelve vacío sin ella—, es la superficie.
+   */
+  publicSurface?: boolean;
 };
 
 /**
@@ -196,6 +208,7 @@ export const ChatCtxDefaults: ChatCtxValue = {
   openProfile: () => {},
   joinCall: () => {},
   myCallKey: null,
+  publicSurface: false,
 };
 
 export const ChatCtx = createContext<ChatCtxValue>(ChatCtxDefaults);
@@ -2190,7 +2203,7 @@ export function MessageRow({
   canPin?: boolean;
 }) {
   const t = useT();
-  const { me, slug, emojis, users, pickerFor, onOpenArtifact, openProfile, turns, sendQuickReply } = useContext(ChatCtx);
+  const { me, slug, emojis, users, pickerFor, onOpenArtifact, openProfile, turns, sendQuickReply, publicSurface } = useContext(ChatCtx);
   const [editing, setEditing] = useState(false);
   // Mientras un popover de la barra (reaccionar/⋯) esté abierto, la barra NO debe
   // desaparecer al perder el hover del row (si no, el popover se vuelve inclicable).
@@ -2314,9 +2327,12 @@ export function MessageRow({
       ) : (
       /* Avatar clickable → perfil (persona o agente). */
       <button
-        onClick={() => openProfile({ name: displayName, avatar: avatarSrc, handle: m.agent_handle ?? (isGhostyAvatar ? "ghosty" : null), isAgent, sub: isAgent ? null : m.sender_sub })}
-        className="shrink-0 rounded-lg transition hover:opacity-80"
-        title={t("Ver perfil")}
+        // En una superficie pública el perfil no existe (no hay directorio que abrir),
+        // así que el avatar deja de ofrecerse como botón: sin cursor, sin hover y sin
+        // tooltip. Un clic que no hace nada es peor que no poder hacer clic.
+        onClick={publicSurface ? undefined : () => openProfile({ name: displayName, avatar: avatarSrc, handle: m.agent_handle ?? (isGhostyAvatar ? "ghosty" : null), isAgent, sub: isAgent ? null : m.sender_sub })}
+        className={`shrink-0 rounded-lg transition ${publicSurface ? "cursor-default" : "hover:opacity-80"}`}
+        title={publicSurface ? undefined : t("Ver perfil")}
       >
       {isGhostyAvatar ? (
         <div className="mt-0.5 grid h-9 w-9 shrink-0 place-items-center overflow-hidden rounded-lg bg-white">
@@ -2345,15 +2361,17 @@ export function MessageRow({
           {canReact && <ReactButton m={m} />}
           {showThreadLink && onOpenThread && !m.reply_count && <ThreadReplyButton onOpen={() => onOpenThread(m.id)} />}
           <ReplyButton m={m} author={displayName} />
-          <ForwardButton m={m} />
+          {!publicSurface && <ForwardButton m={m} />}
           {canEdit && <EditButton onEdit={() => setEditing(true)} />}
-          <MessageActions
-            m={m}
-            slug={slug}
-            canDelete={canDelete}
-            canPin={!!canPin}
-            onOpenChange={setMenuOpen}
-          />
+          {!publicSurface && (
+            <MessageActions
+              m={m}
+              slug={slug}
+              canDelete={canDelete}
+              canPin={!!canPin}
+              onOpenChange={setMenuOpen}
+            />
+          )}
         </div>
       )}
       <div className="min-w-0 flex-1">

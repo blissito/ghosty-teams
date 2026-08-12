@@ -275,6 +275,8 @@ function RoomAbierto() {
       // y por eso salían dos menús de reacción a la vez.
       pickerFor,
       setPickerFor,
+      // Apaga reenviar, perfiles y el menú de fijar/editar/borrar: aquí no existen.
+      publicSurface: true,
     }),
     [me, slug, emojis, pickerFor, canWrite]
   );
