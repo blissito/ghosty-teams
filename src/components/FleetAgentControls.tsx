@@ -1,3 +1,4 @@
+import { Toggle as Switch } from "./Toggle";
 import { useEffect, useRef, useState } from "react";
 import { fleetChannelStateFn, setFleetChannelFn } from "../server/agent-config";
 import { FleetCapabilities } from "./FleetCapabilities";
@@ -6,17 +7,6 @@ import { useT } from "../i18n";
 
 const STUDIO = "https://www.ghosty.studio";
 
-function Switch({ on, onChange, disabled }: { on: boolean; onChange: (v: boolean) => void; disabled?: boolean }) {
-  return (
-    <button
-      type="button" role="switch" aria-checked={on} disabled={disabled}
-      onClick={() => onChange(!on)}
-      className={`relative h-6 w-11 shrink-0 rounded-full transition-colors disabled:opacity-50 ${on ? "bg-brand" : "bg-surface-3"}`}
-    >
-      <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-all ${on ? "left-[22px]" : "left-0.5"}`} />
-    </button>
-  );
-}
 
 /**
  * Controles del agente de flota en Ajustes. Si el agente corre en el native gs

@@ -1,3 +1,4 @@
+import { Toggle } from "./Toggle";
 import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { Bot, Plus, Trash2, X, Bell, Smile, Loader2, Pencil, Mail, ExternalLink } from "lucide-react";
@@ -1156,25 +1157,6 @@ function Row({ title, desc, children }: { title: string; desc?: string; children
   );
 }
 
-/**
- * El interruptor de Ghosty Teams. ⚠️ Exportado: los ajustes del room usaban CHECKBOXES
- * mientras el resto de la app usa esto, y dos formas del mismo control en el mismo
- * producto se leen como dos cosas distintas.
- */
-export function Toggle({ on, onChange }: { on: boolean; onChange: (v: boolean) => void }) {
-  return (
-    <button
-      onClick={() => onChange(!on)}
-      role="switch"
-      aria-checked={on}
-      className={`relative h-6 w-11 rounded-full transition ${on ? "bg-brand" : "bg-surface-3"}`}
-    >
-      <span
-        className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-all ${on ? "left-[22px]" : "left-0.5"}`}
-      />
-    </button>
-  );
-}
 
 /* ── Perfil editable: nombre + avatar. El email lo ancla el IdP (read-only). El
    avatar se sube por /api/upload (→ Tigris, sin CORS) y se guarda su URL. Al guardar
@@ -1379,21 +1361,12 @@ function NotificationsCard() {
           <h2 className="text-sm font-semibold">{t("Notificaciones por correo")}</h2>
           <p className="text-xs text-muted">{t("Recibe un correo cuando te mencionan o te escriben por DM y no estás conectado.")}</p>
         </div>
-        <button
-          type="button"
-          role="switch"
-          aria-checked={!!emailOn}
+        <Toggle
+          on={!!emailOn}
+          onChange={toggleEmail}
           disabled={emailOn == null || emailBusy}
-          onClick={toggleEmail}
-          title={emailOn ? t("Desactivar") : t("Activar")}
-          className="shrink-0 disabled:opacity-50"
-        >
-          {/* Mismo patrón/geometría que <Toggle> (left explícito, no translate desde
-              absolute sin left → evita el thumb chueco/desbordado entre browsers). */}
-          <span className={`relative block h-6 w-11 rounded-full transition-colors ${emailOn ? "bg-brand" : "bg-surface-3"}`}>
-            <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-all ${emailOn ? "left-[22px]" : "left-0.5"}`} />
-          </span>
-        </button>
+          label={emailOn ? t("Desactivar") : t("Activar")}
+        />
       </div>
     </div>
     </>

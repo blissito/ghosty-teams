@@ -1,3 +1,4 @@
+import { Toggle as Switch } from "./Toggle";
 import { useEffect, useState, useCallback, useRef } from "react";
 import { Loader2, Plus, Trash2, Sparkles, Maximize2, Minimize2, KeyRound, Check, Upload } from "lucide-react";
 import { useT } from "../i18n";
@@ -39,17 +40,6 @@ type Cfg = {
 const clone = (c: Cfg): Cfg => (typeof structuredClone === "function" ? structuredClone(c) : JSON.parse(JSON.stringify(c)));
 const gc = (c: Cfg): GroupCfg => { c.groups ??= {}; return (c.groups[GROUP] ??= {}); };
 
-function Switch({ on, onChange, disabled }: { on: boolean; onChange: (v: boolean) => void; disabled?: boolean }) {
-  return (
-    <button
-      type="button" role="switch" aria-checked={on} disabled={disabled}
-      onClick={() => onChange(!on)}
-      className={`relative h-5 w-9 shrink-0 rounded-full transition-colors disabled:opacity-50 ${on ? "bg-brand" : "bg-surface-3"}`}
-    >
-      <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-all ${on ? "left-[18px]" : "left-0.5"}`} />
-    </button>
-  );
-}
 
 export function FleetCapabilities({ agentId }: { agentId: number }) {
   const t = useT();

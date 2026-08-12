@@ -120,7 +120,8 @@ import { useRtSubscribe } from "../utils/rt-bus";
 import type { RtEvent } from "../server/bus.server";
 import { Markdown } from "../components/Markdown";
 import { Avatar } from "../components/Avatar";
-import { SettingsContent, loadSettingsData, Toggle } from "../components/SettingsContent";
+import { SettingsContent, loadSettingsData } from "../components/SettingsContent";
+import { Toggle } from "../components/Toggle";
 import { getTheme, subscribeTheme, resolveDark, presetById, paletteVars } from "../utils/theme";
 import { subscribeMentions } from "../utils/mentions-bus";
 import { subscribeEmojis } from "../utils/emojis-bus";
@@ -4477,19 +4478,14 @@ function CreateRoomModal({
           </button>
         ))}
       </div>
-      <button
-        type="button"
-        role="switch"
-        aria-checked={isPrivate}
-        onClick={() => setIsPrivate((v) => !v)}
-        className="mb-5 flex w-full items-center gap-2 rounded-lg bg-surface px-3 py-2.5 text-left text-sm transition hover:bg-surface-2"
-      >
+      {/* El MISMO interruptor que en todas partes: éste era más pequeño (h-5 w-9) y con su
+          propio cálculo de desplazamiento, así que el control de "privado" se veía distinto
+          según desde dónde llegaras a él. */}
+      <div className="mb-5 flex w-full items-center gap-2 rounded-lg bg-surface px-3 py-2.5 text-left text-sm">
         <Lock size={14} className="text-muted" />
         <span className="flex-1">{t("Privado (solo miembros invitados)")}</span>
-        <span className={`relative h-5 w-9 shrink-0 rounded-full transition-colors ${isPrivate ? "bg-brand" : "bg-surface-3"}`}>
-          <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform ${isPrivate ? "translate-x-[18px]" : "translate-x-0.5"}`} />
-        </span>
-      </button>
+        <Toggle on={isPrivate} onChange={setIsPrivate} />
+      </div>
       {err && <p className="mb-3 text-sm text-red-400">{err}</p>}
       <div className="flex justify-end gap-2">
         <button onClick={onClose} className="rounded-lg px-3 py-2 text-sm text-muted hover:text-ink">
