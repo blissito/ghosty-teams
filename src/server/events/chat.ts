@@ -89,16 +89,21 @@ export const eventFlowFn = createServerFn({ method: "GET" })
     // Sólo lo que se escribió en el flujo del evento, y nada de hilos: la sala es
     // una conversación corrida, no el room completo con su historial de meses.
     // Y sólo DESDE QUE SE ABRIÓ — ver `publicMessages`.
-    const messages = publicMessages(all, r.ch.public_since, data.after ?? 0)
-      .map((m) => ({
-        id: m.id,
-        sender: m.sender,
-        avatar: m.avatar,
-        body: m.body,
-        created_at: m.created_at,
-        mine: !!viewer && m.sender_sub === viewer.sub,
-        isAgent: !!m.agent_handle,
-      }));
+    const recortados = publicMessages(all, r.ch.public_since, data.after ?? 0);
+    // Las reacciones se agregan en UNA consulta para todo el lote (`attachReactions` ya
+    // resuelve el N+1). `mine` sale del sub de quien mira; un anónimo no tiene, así que
+    // ve los conteos sin nada marcado como suyo — que es exactamente lo correcto.
+    const conReacciones = await r.db.attachReactions(recortados, viewer?.sub ?? "");
+    const messages = conReacciones.map((m) => ({
+      id: m.id,
+      sender: m.sender,
+      avatar: m.avatar,
+      body: m.body,
+      created_at: m.created_at,
+      mine: !!viewer && m.sender_sub === viewer.sub,
+      isAgent: !!m.agent_handle,
+      reactions: m.reactions ?? [],
+    }));
     return {
       ok: true as const,
       messages,
@@ -222,6 +227,47 @@ export const eventPostFn = createServerFn({ method: "POST" })
       // quedó publicado, que es lo que esa persona pidió.
     }
     return { ok: true as const, id };
+  });
+
+/**
+ * Reaccionar a un mensaje del room abierto.
+ *
+ * No se reusa `toggleReactionFn` del chat normal porque aquélla exige `sessionUser()`, o
+ * sea "eres del workspace" — justo la puerta que este módulo no puede abrir. Lo que sí se
+ * reusa es lo que importa: `db.toggleReaction`, el mismo almacén, así que una reacción
+ * puesta desde la sala se ve idéntica dentro de Teams.
+ */
+export const eventReactFn = createServerFn({ method: "POST" })
+  .validator((d: { slug: string; messageId: number; emoji: string }) => d)
+  .handler(async ({ data }) => {
+    const r = await resolve(data.slug);
+    if (!r) return { ok: false as const, error: "identifícate para reaccionar" };
+
+    // ⚠️ El mensaje tiene que ser DE ESTE ROOM. Sin esta comprobación, el `messageId`
+    // —autoincremental y enumerable— dejaría reaccionar a cualquier mensaje del tenant,
+    // incluidos los de rooms privados: no se leen, pero se contaminan.
+    const msg = await r.db.getMessage(data.messageId);
+    if (!msg || msg.channel_id !== r.ch.id) return { ok: false as const, error: "no disponible" };
+    // Y tampoco a lo anterior a la apertura: si no se puede ver, no se puede tocar.
+    if (r.ch.public_since == null || msg.created_at < r.ch.public_since) {
+      return { ok: false as const, error: "no disponible" };
+    }
+    // Un emoji, no un ensayo: la columna es libre y sin tope alguien guarda ahí un texto.
+    const emoji = (data.emoji ?? "").trim().slice(0, 16);
+    if (!emoji) return { ok: false as const, error: "no disponible" };
+
+    const { op, count } = await r.db.toggleReaction(data.messageId, r.viewer.sub, emoji);
+    try {
+      const bus = await import("../bus.server");
+      const { currentNamespace } = await import("../tenant.server");
+      const ns = await currentNamespace();
+      bus.publish(bus.ch.room(ns, r.ch.id), {
+        t: "reaction", messageId: data.messageId, emoji, userSub: r.viewer.sub, op, count,
+      });
+    } catch {
+      /* el sondeo lo recoge igual */
+    }
+    return { ok: true as const, op, count };
   });
 
 export const eventModerateFn = createServerFn({ method: "POST" })

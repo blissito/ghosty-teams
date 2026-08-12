@@ -1,9 +1,11 @@
 import { createFileRoute, notFound } from "@tanstack/react-router";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createServerFn } from "@tanstack/react-start";
-import { MessageSquare, Radio, Video, X } from "lucide-react";
+import { MessageSquare, Radio, SmilePlus, Video, X } from "lucide-react";
 import GhostyMascot from "../components/GhostyMascot";
-import { eventFlowFn, eventPostFn } from "../server/events/chat";
+import { Avatar } from "../components/Avatar";
+import { Markdown } from "../components/Markdown";
+import { eventFlowFn, eventPostFn, eventReactFn } from "../server/events/chat";
 import { joinCallFn, requestCodeFn, verifyCodeFn } from "../server/events/identity";
 import { useEventStream } from "../hooks/useEventStream";
 
@@ -93,7 +95,14 @@ export const Route = createFileRoute("/room/$slug")({
   component: RoomAbierto,
 });
 
-type Msg = { id: number; sender: string; body: string; created_at: number; mine: boolean; isAgent: boolean };
+type Reaccion = { emoji: string; count: number; mine: boolean };
+type Msg = {
+  id: number; sender: string; avatar: string; body: string; created_at: number;
+  mine: boolean; isAgent: boolean; reactions: Reaccion[];
+};
+
+/** Las de un vistazo. Un selector completo de emoji es otra pieza; esto cubre el 90%. */
+const RAPIDAS = ["👏", "🔥", "❤️", "😂", "🤔", "👍"];
 
 function RoomAbierto() {
   const data = Route.useLoaderData();
@@ -116,6 +125,9 @@ function RoomAbierto() {
   const [err, setErr] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const lastId = useRef(0);
+  // Mi `sub`, para saber si una reacción que llega por el bus es mía. Lo devuelve el
+  // propio toggle: no hace falta pedirlo aparte.
+  const miSub = useRef<string | null>(null);
 
   // El reloj avanza cada 30 s, no cada segundo: lo que se pinta son minutos, así que un
   // tick por segundo serían 60 renders para cambiar nada.
@@ -148,6 +160,24 @@ function RoomAbierto() {
 
   useEventStream(slug, (ev) => {
     if (ev.t === "event:presence") return setOnline(ev.count);
+    // ⚠️ Una reacción se aplica AQUÍ, sobre el estado, y no re-pidiendo el flujo: el
+    // sondeo va con `after`, o sea que sólo trae mensajes NUEVOS. Reaccionar a algo de
+    // hace un minuto no cambia ningún id, así que por esa vía no llegaría nunca.
+    if (ev.t === "reaction") {
+      const { messageId, emoji, op, count, userSub } = ev;
+      return setMessages((prev) =>
+        prev.map((m) => {
+          if (m.id !== messageId) return m;
+          const otras = m.reactions.filter((x) => x.emoji !== emoji);
+          if (count <= 0) return { ...m, reactions: otras };
+          const previa = m.reactions.find((x) => x.emoji === emoji);
+          // `mine` sólo cambia si el evento es MÍO; el de otra persona no puede alterar
+          // si yo reaccioné o no.
+          const mine = userSub === miSub.current ? op === "add" : !!previa?.mine;
+          return { ...m, reactions: [...otras, { emoji, count, mine }] };
+        })
+      );
+    }
     if (ev.t === "message:new" || ev.t === "message:body" || ev.t === "message:edited" || ev.t === "refresh") {
       void traerNuevos();
     }
@@ -180,6 +210,30 @@ function RoomAbierto() {
       setText(body); // perder lo que alguien acaba de escribir es de lo que más molesta
     }
     setSending(false);
+  }
+
+  async function reaccionar(messageId: number, emoji: string) {
+    if (!canWrite) return setIdentificando(true);
+    // Optimista: la reacción se pinta al instante y el evento del bus la reconcilia con
+    // el conteo autoritativo. Esperar el round-trip para ver tu propio 👏 se siente roto.
+    setMessages((prev) =>
+      prev.map((m) => {
+        if (m.id !== messageId) return m;
+        const previa = m.reactions.find((x) => x.emoji === emoji);
+        const otras = m.reactions.filter((x) => x.emoji !== emoji);
+        if (previa?.mine) {
+          return previa.count <= 1
+            ? { ...m, reactions: otras }
+            : { ...m, reactions: [...otras, { emoji, count: previa.count - 1, mine: false }] };
+        }
+        return { ...m, reactions: [...otras, { emoji, count: (previa?.count ?? 0) + 1, mine: true }] };
+      })
+    );
+    try {
+      await eventReactFn({ data: { slug, messageId, emoji } });
+    } catch {
+      // Se recupera solo: el siguiente sondeo trae el conteo de verdad.
+    }
   }
 
   async function entrarALlamada() {
@@ -297,28 +351,29 @@ function RoomAbierto() {
           {/* En MÓVIL no hay ancho que repartir: ahí sí se superpone, porque partir 380px
               en dos deja el video del tamaño de un sello y el chat ilegible. */}
           <aside
-            className={`${chatAbierto ? "flex" : "hidden"} absolute inset-y-0 right-0 z-10 w-full flex-col border-l border-white/10 bg-black/85 backdrop-blur sm:relative sm:z-0 sm:w-80 sm:shrink-0 sm:bg-black lg:w-96`}
+            // Superficies NORMALES del producto, no un negro forzado: con el tema claro, el
+            // texto del markdown (`text-ink`) quedaba negro sobre negro.
+            className={`${chatAbierto ? "flex" : "hidden"} absolute inset-y-0 right-0 z-10 w-full flex-col border-l border-border bg-surface sm:relative sm:z-0 sm:w-80 sm:shrink-0 lg:w-96`}
           >
-            <div className="flex shrink-0 items-center justify-between border-b border-white/10 px-4 py-3 text-white">
+            <div className="flex shrink-0 items-center justify-between border-b border-border px-4 py-3">
               <span className="text-sm font-semibold">Chat</span>
-              <button onClick={() => setChatAbierto(false)} aria-label="Cerrar el chat" className="text-white/60 hover:text-white">
+              <button onClick={() => setChatAbierto(false)} aria-label="Cerrar el chat" className="text-muted hover:text-ink">
                 <X size={16} />
               </button>
             </div>
-            <Mensajes messages={messages} oscuro />
+            <Mensajes messages={messages} onReaccionar={reaccionar} />
             <Composer
               text={text}
               setText={setText}
               onSubmit={enviar}
               sending={sending}
               canWrite={canWrite}
-              oscuro
             />
           </aside>
         </div>
       )}
 
-      <Mensajes messages={messages} bottomRef={bottomRef} />
+      <Mensajes messages={messages} bottomRef={bottomRef} onReaccionar={reaccionar} />
 
       {err && <p className="px-4 pb-1 text-center text-xs text-red-400">{err}</p>}
 
@@ -354,39 +409,114 @@ function RoomAbierto() {
 function Mensajes({
   messages,
   bottomRef,
-  oscuro,
+  onReaccionar,
 }: {
   messages: Msg[];
   bottomRef?: React.RefObject<HTMLDivElement | null>;
-  oscuro?: boolean;
+  onReaccionar: (messageId: number, emoji: string) => void;
 }) {
   const propio = useRef<HTMLDivElement>(null);
   const fin = bottomRef ?? propio;
-  // El cajón se monta con la conversación ya empezada: sin esto abre arriba del todo y
-  // hay que bajar a mano hasta lo último, que es lo único que interesa.
+  // El panel de la llamada se monta con la conversación ya empezada: sin esto abre arriba
+  // del todo y hay que bajar a mano hasta lo último, que es lo único que interesa.
   useEffect(() => { fin.current?.scrollIntoView({ behavior: "smooth" }); }, [messages.length, fin]);
 
   return (
-    <div
-      className={`w-full flex-1 space-y-4 overflow-y-auto px-4 py-5 ${
-        oscuro ? "text-white" : "mx-auto max-w-3xl"
-      }`}
-    >
+    <div className="w-full flex-1 space-y-3 overflow-y-auto px-4 py-5">
       {messages.length === 0 && (
-        <p className={`text-sm ${oscuro ? "text-white/60" : "text-muted"}`}>
-          Todavía no hay mensajes. Sé quien empiece 👋
-        </p>
+        <p className="text-sm text-muted">Todavía no hay mensajes. Sé quien empiece 👋</p>
       )}
-      {messages.map((m) => (
-        <div key={m.id} className="text-sm">
-          <span className={`font-semibold ${m.isAgent ? "text-brand" : ""}`}>{m.sender}</span>
-          <span className={`ml-2 text-[11px] ${oscuro ? "text-white/50" : "text-muted"}`}>
-            {new Date(m.created_at * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-          </span>
-          <div className="whitespace-pre-wrap break-words leading-relaxed">{m.body}</div>
-        </div>
-      ))}
+      {messages.map((m, i) => {
+        // Agrupación estilo Slack: mensajes seguidos de la misma persona dentro de ~5 min
+        // se colapsan y no repiten avatar ni nombre. Sin esto, quien escribe tres líneas
+        // seguidas ocupa media pantalla con su propia cara.
+        const prev = messages[i - 1];
+        const junto =
+          !!prev && prev.sender === m.sender && prev.isAgent === m.isAgent && m.created_at - prev.created_at < 300;
+        return (
+          <div key={m.id} className={`flex gap-2.5 ${junto ? "mt-0.5" : ""}`}>
+            <div className="w-8 shrink-0">
+              {!junto && <Avatar name={m.sender} avatar={m.avatar || undefined} className="h-8 w-8" />}
+            </div>
+            <div className="min-w-0 flex-1">
+              {!junto && (
+                <div className="flex items-baseline gap-2">
+                  <span className={`text-sm font-semibold ${m.isAgent ? "text-brand" : ""}`}>{m.sender}</span>
+                  {m.isAgent && (
+                    <span className="rounded bg-brand/15 px-1 py-px text-[9px] font-bold uppercase leading-none tracking-wide text-brand">
+                      Agente
+                    </span>
+                  )}
+                  <span className="text-[11px] text-muted">
+                    {new Date(m.created_at * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                  </span>
+                </div>
+              )}
+              {/* El MISMO renderizador que el chat de Teams: negritas, listas, código,
+                  enlaces y emojis. Antes era texto pelado, y el agente contesta en
+                  markdown — o sea que sus respuestas llegaban con los asteriscos a la
+                  vista. */}
+              <div className="text-sm leading-relaxed">
+                <Markdown body={m.body} />
+              </div>
+              <Reacciones msg={m} onReaccionar={onReaccionar} />
+            </div>
+          </div>
+        );
+      })}
       <div ref={fin} />
+    </div>
+  );
+}
+
+/**
+ * Las reacciones de un mensaje, y el atajo para poner una.
+ *
+ * El selector rápido aparece al pasar el ratón (y en móvil, con el botón "+", porque ahí
+ * no hay hover y sin eso reaccionar sería imposible en la mitad de los dispositivos).
+ */
+function Reacciones({ msg, onReaccionar }: { msg: Msg; onReaccionar: (id: number, emoji: string) => void }) {
+  const [abierto, setAbierto] = useState(false);
+  const puestas = [...msg.reactions].sort((a, b) => b.count - a.count || a.emoji.localeCompare(b.emoji));
+
+  return (
+    <div className="group/react mt-1 flex flex-wrap items-center gap-1">
+      {puestas.map((r) => (
+        <button
+          key={r.emoji}
+          onClick={() => onReaccionar(msg.id, r.emoji)}
+          className={`flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-xs transition ${
+            r.mine ? "border-brand bg-brand/15 text-brand" : "border-border bg-card text-muted hover:border-brand/50"
+          }`}
+        >
+          <span>{r.emoji}</span>
+          <span className="tabular-nums">{r.count}</span>
+        </button>
+      ))}
+      <div className="relative">
+        <button
+          onClick={() => setAbierto((v) => !v)}
+          aria-label="Reaccionar"
+          className={`rounded-full border border-border px-1.5 py-0.5 text-xs text-muted hover:border-brand/50 hover:text-brand ${
+            puestas.length ? "" : "opacity-0 group-hover/react:opacity-100 focus:opacity-100"
+          }`}
+        >
+          <SmilePlus size={13} />
+        </button>
+        {abierto && (
+          <div className="absolute bottom-full left-0 z-20 mb-1 flex gap-0.5 rounded-full border border-border bg-card p-1 shadow-lg">
+            {RAPIDAS.map((e) => (
+              <button
+                key={e}
+                onClick={() => { onReaccionar(msg.id, e); setAbierto(false); }}
+                className="rounded-full px-1.5 py-0.5 text-base hover:bg-surface-2"
+              >
+                {e}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -397,14 +527,12 @@ function Composer({
   onSubmit,
   sending,
   canWrite,
-  oscuro,
 }: {
   text: string;
   setText: (v: string) => void;
   onSubmit: (e: React.FormEvent) => void;
   sending: boolean;
   canWrite: boolean;
-  oscuro?: boolean;
 }) {
   return (
     <form onSubmit={onSubmit} className="shrink-0 px-4 pb-3 pt-1">
@@ -417,9 +545,7 @@ function Composer({
           // ⚠️ `text-base` y no `text-sm`: por debajo de 16px, iOS hace zoom al enfocar un
           // campo y NO vuelve. Es la misma razón por la que styles.css conserva uno de sus
           // pocos `!important`.
-          className={`min-w-0 flex-1 rounded-xl border px-3.5 py-2.5 text-base outline-none focus:border-brand ${
-            oscuro ? "border-white/15 bg-white/10 text-white placeholder:text-white/40" : "border-border bg-card"
-          }`}
+          className="min-w-0 flex-1 rounded-xl border border-border bg-card px-3.5 py-2.5 text-base outline-none focus:border-brand"
         />
         <button
           type="submit"
