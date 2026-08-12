@@ -28,6 +28,8 @@ export type Channel = {
   starts_at?: number | null;
   /** La grabación ya subida a storage, y cuándo se grabó. */
   call_recording_url?: string | null;
+  call_recording_by?: string | null;
+  call_recording_since?: number | null;
   call_recorded_at?: number | null;
   threads?: Message[]; // hilos raíz (adjuntados por getChannelView para el sidebar)
 };
@@ -52,6 +54,8 @@ function toChannel(r: Row): Channel {
     call_open: num(r.call_open),
     starts_at: r.starts_at == null ? null : num(r.starts_at),
     call_recording_url: r.call_recording_url ?? null,
+    call_recording_by: r.call_recording_by ?? null,
+    call_recording_since: r.call_recording_since == null ? null : num(r.call_recording_since),
     call_recorded_at: r.call_recorded_at == null ? null : num(r.call_recorded_at),
   };
 }
@@ -1684,6 +1688,8 @@ export async function setChannelEvent(
     startsAt?: number | null;
     recordingUrl?: string | null;
     recordedAt?: number | null;
+    recordingBy?: string | null;
+    recordingSince?: number | null;
   }
 ): Promise<void> {
   const sets: string[] = [];
@@ -1699,6 +1705,8 @@ export async function setChannelEvent(
   if (patch.startsAt !== undefined) put("starts_at", patch.startsAt);
   if (patch.recordingUrl !== undefined) put("call_recording_url", patch.recordingUrl);
   if (patch.recordedAt !== undefined) put("call_recorded_at", patch.recordedAt);
+  if (patch.recordingBy !== undefined) put("call_recording_by", patch.recordingBy);
+  if (patch.recordingSince !== undefined) put("call_recording_since", patch.recordingSince);
   if (!sets.length) return;
   args.push(channelId);
   await dbq(`UPDATE gc_channels SET ${sets.join(", ")} WHERE id = ?`, args);

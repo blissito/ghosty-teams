@@ -1069,6 +1069,12 @@ async function migrate(): Promise<void> {
   // la recicla a las 72 h: sin esto, la grabación de un webinar desaparece el fin de semana.
   await addColumn("gc_channels", "call_recording_url", "TEXT");
   await addColumn("gc_channels", "call_recorded_at", "INTEGER");
+  // Grabación EN CURSO. Va en la DB y no en la memoria del navegador de quien la empezó:
+  // si recarga, si entra otro que también modera, o si abre el room en el teléfono, todos
+  // tienen que ver lo MISMO. Un botón que dice "Grabar" mientras se está grabando es cómo
+  // se acaba con dos grabaciones, o con una que nadie detiene.
+  await addColumn("gc_channels", "call_recording_by", "TEXT");
+  await addColumn("gc_channels", "call_recording_since", "INTEGER");
   // Las filas que YA estaban abiertas cuando llegó esta columna se sellan ahora mismo. Es
   // el lado seguro del error: se pierde de vista lo que la comunidad escribió antes de la
   // migración, pero no se publica nada que estuviera dentro.

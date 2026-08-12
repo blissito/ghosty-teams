@@ -139,9 +139,27 @@ export const recordingFn = createServerFn({ method: "POST" })
 
     try {
       if (data.action === "start") {
+        // ⚠️ Idempotente a propósito. Dos personas que moderan, o la misma tras recargar,
+        // pueden pulsar Grabar creyendo que no se está grabando: sin esta puerta se
+        // levantaría un segundo recorder que se come el disco y produce un archivo que
+        // nadie está mirando.
+        if (r.ch.call_recording_since) {
+          return { ok: false, error: `Ya se está grabando (${r.ch.call_recording_by ?? "alguien"})` };
+        }
         await iniciarGrabacion(r.ch, eventRoomName(await currentNamespace(), r.ch.id));
+        // El "quién" se guarda para que se SEPA, no para restringir: cualquiera que modere
+        // puede detenerla. Si sólo pudiera pararla quien la empezó, una grabación se
+        // quedaría corriendo toda la tarde porque esa persona cerró la pestaña.
+        await r.db.setChannelEvent(r.ch.id, {
+          recordingBy: viewer.name ?? "quien modera",
+          recordingSince: Math.floor(Date.now() / 1000),
+        });
         return { ok: true };
       }
+      // Se marca como detenida ANTES de la subida, que tarda. Si se hiciera después, el
+      // testigo diría "grabando" durante todo el rato que el MP4 viaja a storage — y si la
+      // subida falla, el room se quedaría grabando para siempre a ojos de todos.
+      await r.db.setChannelEvent(r.ch.id, { recordingBy: null, recordingSince: null });
       const res = await detenerGrabacion(r.ch);
       // Se guarda en el room: quien llegue después tiene dónde verla, y el enlace deja de
       // depender de que alguien apuntara la URL.

@@ -134,7 +134,11 @@ function RoomAbierto() {
   const [pickerFor, setPickerFor] = useState<number | null>(null);
   const [canWrite, setCanWrite] = useState(false);
   const [modero, setModero] = useState(false);
-  const [grabando, setGrabando] = useState(false);
+  // ⚠️ El estado de la grabación es DEL SERVIDOR, no de esta pestaña. Quien la empezó
+  // puede recargar, entrar desde el teléfono, o ser otra persona distinta a la que la
+  // detiene. Se refresca con el sondeo del flujo, cada 15 s.
+  const [grabacion, setGrabacion] = useState<{ by: string | null; since: number } | null>(null);
+  const grabando = !!grabacion;
   // Sólo importa para no disparar dos veces: quien ve el botón es el iframe, y ése ya se
   // deshabilita solo mientras la petición va en camino.
   const [recBusy, setRecBusy] = useState(false);
@@ -171,10 +175,12 @@ function RoomAbierto() {
   // tick por segundo serían 60 renders para cambiar nada.
   const [ahora, setAhora] = useState(() => Math.floor(Date.now() / 1000));
   useEffect(() => {
-    if (!data.startsAt) return;
-    const t = setInterval(() => setAhora(Math.floor(Date.now() / 1000)), 30_000);
+    // La cuenta atrás del evento se contenta con medio minuto; el cronómetro de la
+    // grabación no, un reloj que salta de 30 en 30 parece detenido.
+    if (!data.startsAt && !grabacion) return;
+    const t = setInterval(() => setAhora(Math.floor(Date.now() / 1000)), grabacion ? 1000 : 30_000);
     return () => clearInterval(t);
-  }, [data.startsAt]);
+  }, [data.startsAt, grabacion]);
   const cuantoFalta = data.startsAt ? faltan(data.startsAt, ahora) : null;
 
   const traerNuevos = useCallback(async () => {
@@ -183,6 +189,7 @@ function RoomAbierto() {
       if (!r.ok) return;
       setCanWrite(r.canWrite);
       setModero(r.canModerate);
+      setGrabacion(r.recording ?? null);
       setEmojis(r.emojis ?? []);
       setMe(r.me ?? null);
       miSub.current = r.me?.sub ?? null;
@@ -284,7 +291,8 @@ function RoomAbierto() {
         const r = await recordingFn({ data: { slug, action: accion } });
         if (!r.ok) setErr(r.error);
         else {
-          setGrabando(accion === "start");
+          // Optimista con el nombre de quien pulsó: el sondeo lo confirma en segundos.
+          setGrabacion(accion === "start" ? { by: me?.name ?? null, since: Math.floor(Date.now() / 1000) } : null);
           avisarIframe(accion === "start");
         }
       } catch {
@@ -310,6 +318,11 @@ function RoomAbierto() {
     window.addEventListener("message", onMsg);
     return () => window.removeEventListener("message", onMsg);
   }, [grabar, avisarIframe, grabando]);
+
+  // Y al revés: si la grabación la empezó (o la detuvo) alguien MÁS, el botón de dentro de
+  // la llamada tiene que enterarse. Sin esto, quien no pulsó el botón sigue viendo
+  // "Grabar" y lo pulsa — y se lleva un "ya se está grabando" que no entiende.
+  useEffect(() => { avisarIframe(grabando); }, [grabando, avisarIframe, callUrl]);
 
   async function enviar(e: React.FormEvent) {
     e.preventDefault();
@@ -464,9 +477,12 @@ function RoomAbierto() {
             {/* Y aquí NO hay botón, hay TESTIGO. Que se grabe sin que se note es
                 exactamente lo que no puede pasar, así que el punto rojo lo ve todo el
                 mundo — no sólo quien presenta, que es el único que ve el botón. */}
-            {grabando && (
-              <span className="flex items-center gap-1.5 rounded-full bg-red-600 px-3 py-1.5 text-xs font-medium text-white">
-                <Circle size={10} fill="currentColor" /> Grabando
+            {grabacion && (
+              <span
+                className="flex items-center gap-1.5 rounded-full bg-red-600 px-3 py-1.5 text-xs font-medium text-white"
+                title={grabacion.by ? `La empezó ${grabacion.by}` : undefined}
+              >
+                <Circle size={10} fill="currentColor" /> Grabando {fmtDesde(grabacion.since, ahora)}
               </span>
             )}
             <button
@@ -603,6 +619,12 @@ function RoomAbierto() {
  * ve aquí es el chat de verdad, con las capacidades que no aplican apagadas desde el
  * contexto (fijar, destacar, editar, hilos, perfiles).
  */
+/** "05:12" desde que empezó. Un cronómetro dice que sigue viva; un "Grabando" pelado, no. */
+function fmtDesde(since: number, ahora: number): string {
+  const s = Math.max(0, ahora - since);
+  return `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
+}
+
 function Mensajes({
   messages,
   bottomRef,

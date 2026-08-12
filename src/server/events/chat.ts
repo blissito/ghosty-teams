@@ -80,7 +80,7 @@ export const eventFlowFn = createServerFn({ method: "GET" })
   .validator((d: { slug: string; after?: number }) => d)
   .handler(async ({ data }) => {
     const r = await resolveRoom(data.slug);
-    if (!r) return { ok: false as const, messages: [], canModerate: false, canWrite: false };
+    if (!r) return { ok: false as const, messages: [], canModerate: false, canWrite: false, recording: null };
     // Quién eres sólo decide si puedes ESCRIBIR y qué mensajes son tuyos; nunca si puedes
     // leer. Un anónimo devuelve `null` aquí y sigue adelante.
     const { eventViewerFor } = await import("./access.server");
@@ -105,6 +105,13 @@ export const eventFlowFn = createServerFn({ method: "GET" })
       // una lista de seis emojis inventada.
       emojis: await r.db.listCustomEmojis().catch(() => []),
       me: viewer ? { sub: viewer.sub, name: viewer.name } : null,
+      // Se está grabando o no, y desde cuándo. Viaja a TODO EL MUNDO —no sólo a quien
+      // modera— porque el testigo rojo es para quien aparece en la grabación, no para
+      // quien la controla. Y viene del servidor: el estado en la pestaña de quien pulsó
+      // el botón no lo ve nadie más, y se pierde al recargar.
+      recording: r.ch.call_recording_since
+        ? { by: r.ch.call_recording_by ?? null, since: r.ch.call_recording_since }
+        : null,
     };
   });
 
