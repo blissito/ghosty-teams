@@ -101,6 +101,25 @@ const cargar = createServerFn({ method: "GET" })
  * Junta los segmentos consecutivos del mismo hablante. Repetir el nombre en cada línea de
  * una frase partida en cinco trozos es ruido, no información.
  */
+/**
+ * Parte el texto por el término buscado para poder marcarlo. Sin esto, un párrafo entero
+ * en amarillo no dice DÓNDE está la palabra, que es justo lo que se estaba buscando.
+ */
+function resaltar(texto: string, q: string) {
+  const t = q.trim();
+  if (!t) return texto;
+  // La búsqueda es literal, así que los caracteres especiales se escapan: buscar "¿qué?"
+  // con una regex sin escapar no encuentra nada o revienta.
+  const re = new RegExp(`(${t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")})`, "gi");
+  return texto.split(re).map((trozo, i) =>
+    i % 2 === 1 ? (
+      <mark key={i} className="rounded bg-brand/30 px-0.5 text-ink">{trozo}</mark>
+    ) : (
+      trozo
+    )
+  );
+}
+
 export function agruparPorHablante(segs: Segmento[]): { quien: string | null; t: string; texto: string }[] {
   const out: { quien: string | null; t: string; texto: string }[] = [];
   for (const s of segs) {
@@ -139,15 +158,18 @@ function Transcripcion() {
   const [abajo, setAbajo] = useState(false);
   const refs = useRef<(HTMLDivElement | null)[]>([]);
   const segmentos = useMemo(() => partirTranscripcion(data.texto), [data.texto]);
-  const filtrados = useMemo(() => {
+  // ⚠️ Buscar NO filtra. Filtrar dejaba tres párrafos sueltos en pantalla —todos visibles
+  // a la vez, así que saltar entre ellos no servía de nada— y sobre todo mataba el
+  // contexto: en una transcripción, una frase sin lo que se dijo antes no dice nada.
+  // Se pinta todo y se marcan las coincidencias.
+  const bloques = useMemo(() => agruparPorHablante(segmentos), [segmentos]);
+  const coincidencias = useMemo(() => {
     const t = q.trim().toLowerCase();
-    // Se busca ANTES de agrupar: si no, buscar dentro de un bloque de diez frases devuelve
-    // el bloque entero y no se ve qué coincidió.
-    const base = t
-      ? segmentos.filter((s) => s.texto.toLowerCase().includes(t) || (s.quien ?? "").toLowerCase().includes(t))
-      : segmentos;
-    return agruparPorHablante(base);
-  }, [segmentos, q]);
+    if (!t) return [];
+    return bloques
+      .map((b, i) => (b.texto.toLowerCase().includes(t) || (b.quien ?? "").toLowerCase().includes(t) ? i : -1))
+      .filter((i) => i >= 0);
+  }, [bloques, q]);
   // Se dice si la transcripción trae hablantes o no: en una que no los tiene, no
   // encontrarlos hace dudar de si el buscador funciona.
   const hayNombres = useMemo(() => segmentos.some((s) => s.quien), [segmentos]);
@@ -157,10 +179,10 @@ function Transcripcion() {
   useEffect(() => { setIdx(0); }, [q]);
 
   const irA = (n: number) => {
-    if (!filtrados.length) return;
-    const destino = (n + filtrados.length) % filtrados.length; // circular: tras la última, la primera
+    if (!coincidencias.length) return;
+    const destino = (n + coincidencias.length) % coincidencias.length; // circular
     setIdx(destino);
-    refs.current[destino]?.scrollIntoView({ behavior: "smooth", block: "center" });
+    refs.current[coincidencias[destino]]?.scrollIntoView({ behavior: "smooth", block: "center" });
   };
 
   // "¿Estoy abajo?" con holgura, igual que en el chat: pedir el píxel exacto haría que un
@@ -200,12 +222,12 @@ function Transcripcion() {
         />
         {q && (
           <div className="mt-2 flex items-center gap-2 text-xs text-muted">
-            {filtrados.length === 0 ? (
+            {coincidencias.length === 0 ? (
               <span>Sin coincidencias</span>
             ) : (
               <>
                 <span>
-                  {idx + 1} de {filtrados.length}
+                  {idx + 1} de {coincidencias.length}
                 </span>
                 <button
                   onClick={() => irA(idx - 1)}
@@ -227,12 +249,12 @@ function Transcripcion() {
         )}
 
         <div className="mt-6 space-y-4">
-          {filtrados.map((s, i) => (
+          {bloques.map((s, i) => (
             <div
               key={i}
               ref={(el) => { refs.current[i] = el; }}
               className={`flex gap-3 rounded-lg text-[15px] leading-relaxed transition-colors ${
-                q && i === idx ? "bg-brand/10" : ""
+                q && coincidencias[idx] === i ? "bg-brand/10" : ""
               }`}
             >
               {/* La marca de tiempo a la izquierda, en su columna: es lo que convierte un
@@ -248,7 +270,7 @@ function Transcripcion() {
                     {s.quien}
                   </span>
                 )}
-                <span>{s.texto}</span>
+                <span>{resaltar(s.texto, q)}</span>
               </div>
             </div>
           ))}

@@ -648,10 +648,12 @@ export default function ArtifactPanel({
       const cache = cachedShare(documentIdActual);
       const ultima = (s: { versions?: { id: number }[] } | null) =>
         s?.versions?.length ? s.versions[s.versions.length - 1].id : null;
-      if (cache) {
-        if (alive) setLatestVersionId(ultima(cache));
-        return;
-      }
+      // La caché sirve para pintar YA, pero ⚠️ NO se puede confiar en ella y volver: no
+      // tiene TTL y NADIE la invalida al publicar una versión. Con un early-return, el
+      // agente republicaba, el panel pasaba a la fila nueva, esto seguía creyendo la vieja,
+      // y el documento VIVO se marcaba como "versión anterior" y se bloqueaba. Se pinta lo
+      // cacheado y se revalida siempre — igual que hace el diálogo de compartir.
+      if (cache && alive) setLatestVersionId(ultima(cache));
       try {
         const { getArtifactShareFn } = await import("../server/artifacts");
         const s = await getArtifactShareFn({ data: { documentId: documentIdActual } });
@@ -671,8 +673,13 @@ export default function ArtifactPanel({
 
   // Sólo se declara vieja cuando SE SABE que hay una más nueva. Si el dato no llegó, o el
   // documento tiene una sola versión, esto es `false` y no cambia nada.
+  // ⚠️ `<` y no `!==`. Los ids de `gc_artifacts` son autoincrementales, así que si lo que
+  // estoy viendo tiene un id MAYOR que la "última" que conozco, el desactualizado soy yo —
+  // no el documento. Con `!==`, cualquier carrera entre la publicación y la revalidación
+  // bloqueaba el documento vivo, que es el peor fallo posible de esta función: te deja sin
+  // poder escribir en lo que sí es editable.
   const viewingOldVersion =
-    latestVersionId != null && vActual != null && vActual !== latestVersionId;
+    latestVersionId != null && vActual != null && Number(vActual) < latestVersionId;
 
   // Si estabas editando el artefacto HTML y saltas a una versión anterior, se sale del
   // editor. El botón ya no está (lo sustituye el de restaurar), pero el Canvas podría
