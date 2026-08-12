@@ -1,7 +1,7 @@
 import { createFileRoute, notFound, useRouter } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createServerFn } from "@tanstack/react-start";
-import { ChevronDown, Circle, MessageSquare, Paperclip, X } from "lucide-react";
+import { ChevronDown, Circle, MessageSquare, Paperclip, Volume2, VolumeX, X } from "lucide-react";
 import GhostyMascot from "../components/GhostyMascot";
 import { ChatCtx, ChatCtxDefaults, MessageRow, type SessionUser } from "../components/chat/message";
 import type { Message, CustomEmoji, ReactionAgg } from "../db.server";
@@ -145,6 +145,20 @@ function RoomAbierto() {
   const [grabada, setGrabada] = useState<{ url: string; at: number | null } | null>(null);
   // Sólo importa para no disparar dos veces: quien ve el botón es el iframe, y ése ya se
   // deshabilita solo mientras la petición va en camino.
+  // ⚠️ En `localStorage` y no en el servidor: apagar el sonido es del DISPOSITIVO. La misma
+  // persona quiere el tic en su portátil y silencio en el teléfono que lleva en la mesa.
+  // Se lee perezosamente para no tocar `window` en el render del servidor.
+  const [suena, setSuena] = useState(true);
+  useEffect(() => { setSuena(localStorage.getItem("room:mudo") !== "1"); }, []);
+  const alternarSonido = () => {
+    setSuena((v) => {
+      localStorage.setItem("room:mudo", v ? "1" : "0");
+      return !v;
+    });
+  };
+  const sonando = useRef(true);
+  useEffect(() => { sonando.current = suena; }, [suena]);
+
   const [recBusy, setRecBusy] = useState(false);
   void recBusy;
   const [online, setOnline] = useState(1);
@@ -230,6 +244,10 @@ function RoomAbierto() {
         activeScope: visible,
         mutes: new Set<string>(),
       });
+      // ⚠️ El gate se lee de una ref, no del estado: este handler vive dentro del efecto
+      // del stream, que no se re-suscribe al cambiar la preferencia — con el valor
+      // capturado, apagar el sonido no surtía efecto hasta recargar.
+      if (!sonando.current) return;
       if (tono === "mention") playMentionSound();
       else if (tono) playNotificationSound();
     }
@@ -240,7 +258,7 @@ function RoomAbierto() {
       if (!agentesSonados.current.has(ev.id)) {
         agentesSonados.current.add(ev.id);
         const suyo = messages.find((m) => m.id === ev.id);
-        if (suyo?.agent_handle) playGhostySound();
+        if (suyo?.agent_handle && sonando.current) playGhostySound();
       }
     }
     // ⚠️ Una reacción se aplica AQUÍ, sobre el estado, y no re-pidiendo el flujo: el
@@ -352,7 +370,7 @@ function RoomAbierto() {
     try {
       const r = await eventPostFn({ data: { slug, body, attachments: files } });
       if (!r.ok) setErr(r.error);
-      else { adj.limpiar(); playSelfSound(); } // acuse de "salió", como en el chat
+      else { adj.limpiar(); if (sonando.current) playSelfSound(); } // acuse de "salió"
       await traerNuevos();
     } catch {
       setText(body); // perder lo que alguien acaba de escribir es de lo que más molesta
@@ -487,7 +505,7 @@ function RoomAbierto() {
             </div>
           )}
 
-          <div className="absolute right-4 top-4 flex items-center gap-2">
+          <div className="absolute right-4 top-4 flex flex-wrap items-center justify-end gap-2">
             {/* Y aquí NO hay botón, hay TESTIGO. Que se grabe sin que se note es
                 exactamente lo que no puede pasar, así que el punto rojo lo ve todo el
                 mundo — no sólo quien presenta, que es el único que ve el botón. */}
@@ -500,14 +518,6 @@ function RoomAbierto() {
               >
                 <Circle size={10} /> Ver la grabación
               </a>
-            )}
-            {grabacion && (
-              <span
-                className="flex items-center gap-1.5 rounded-full bg-red-600 px-3 py-1.5 text-xs font-medium text-white"
-                title={grabacion.by ? `La empezó ${grabacion.by}` : undefined}
-              >
-                <Circle size={10} fill="currentColor" /> Grabando {fmtDesde(grabacion.since, ahora)}
-              </span>
             )}
             <button
               onClick={() => setChatAbierto((v) => !v)}
@@ -525,6 +535,18 @@ function RoomAbierto() {
                     chat siempre al lado, nadie necesita salirse para leerlo. */}
                 <X size={14} /> Salir
               </button>
+            )}
+            {grabacion && (
+              <span
+                // ⚠️ `pointer-events-none` y el ÚLTIMO de la fila: el testigo no es un
+                // control, y puesto delante se montaba encima de "Salir" y se comía el
+                // clic — con la grabación corriendo no había forma de abandonar la
+                // llamada. Un adorno jamás debe poder robarle el clic a un botón.
+                className="pointer-events-none flex items-center gap-1.5 rounded-full bg-red-600 px-3 py-1.5 text-xs font-medium text-white"
+                title={grabacion.by ? `La empezó ${grabacion.by}` : undefined}
+              >
+                <Circle size={10} fill="currentColor" /> Grabando {fmtDesde(grabacion.since, ahora)}
+              </span>
             )}
           </div>
         </main>
@@ -544,9 +566,21 @@ function RoomAbierto() {
                 {online} por aquí
               </p>
             </div>
-            <button onClick={() => setChatAbierto(false)} aria-label="Cerrar el chat" className="text-muted hover:text-ink sm:hidden">
-              <X size={16} />
-            </button>
+            <div className="flex items-center gap-1">
+              {/* El icono DICE el estado sin pasar el ratón: un altavoz tachado se lee de
+                  un vistazo; un "sonidos" a secas, no. */}
+              <button
+                onClick={alternarSonido}
+                aria-label={suena ? "Silenciar el chat" : "Activar los sonidos del chat"}
+                title={suena ? "Silenciar el chat" : "Activar los sonidos del chat"}
+                className="rounded p-1.5 text-muted hover:bg-surface-2 hover:text-ink"
+              >
+                {suena ? <Volume2 size={16} /> : <VolumeX size={16} />}
+              </button>
+              <button onClick={() => setChatAbierto(false)} aria-label="Cerrar el chat" className="text-muted hover:text-ink sm:hidden">
+                <X size={16} />
+              </button>
+            </div>
           </div>
           <Mensajes messages={messages} bottomRef={bottomRef} />
           {err && callUrl && <p className="px-4 pb-1 text-xs text-red-400">{err}</p>}
@@ -693,7 +727,9 @@ function Mensajes({
 
   return (
     <div className="relative flex min-h-0 flex-1 flex-col">
-      <div ref={scroller} onScroll={alScroll} className="w-full flex-1 overflow-y-auto px-2 py-4">
+      {/* `thin-scroll`: la barra fina del chat de Teams. Sin ella sale la del sistema,
+          gruesa y blanca, que en el panel oscuro de la sala canta muchísimo. */}
+      <div ref={scroller} onScroll={alScroll} className="thin-scroll w-full flex-1 overflow-y-auto px-2 py-4">
         {messages.length === 0 && (
           <p className="px-2 text-sm text-muted">Todavía no hay mensajes. Sé quien empiece 👋</p>
         )}

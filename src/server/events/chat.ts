@@ -311,7 +311,11 @@ export const eventReactFn = createServerFn({ method: "POST" })
       return { ok: false as const, error: "no disponible" };
     }
     // Un emoji, no un ensayo: la columna es libre y sin tope alguien guarda ahí un texto.
-    const emoji = (data.emoji ?? "").trim().slice(0, 16);
+    // ⚠️ 64, no 16: `:squirtle_jammin:` son 18 caracteres y se guardaba SIN el `:` final,
+    // así que el chip salía como texto crudo y quien reaccionaba creía que no funcionaba.
+    // Los emojis custom del workspace llevan nombres largos; el tope es contra abuso, no
+    // contra ellos.
+    const emoji = (data.emoji ?? "").trim().slice(0, 64);
     if (!emoji) return { ok: false as const, error: "no disponible" };
 
     const { op, count } = await r.db.toggleReaction(data.messageId, r.viewer.sub, emoji);
