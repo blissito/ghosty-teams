@@ -312,6 +312,9 @@ function RoomAbierto() {
       // y por eso salían dos menús de reacción a la vez.
       pickerFor,
       setPickerFor,
+      // Compacto: una línea por mensaje, como Twitch. Un webinar a cien mensajes por
+      // minuto en formato Slack es un scroll donde no se sigue nada.
+      density: "compact" as const,
       // Y nada más. Reenviar, perfiles, fijar, editar, borrar y ajustes NO se pasan
       // —no se apagan—: aquí no existen, así que sus botones tampoco. Es la diferencia
       // entre una capacidad ausente y un botón muerto.
@@ -412,6 +415,21 @@ function RoomAbierto() {
           </div>
           <Mensajes messages={messages} bottomRef={bottomRef} />
           {err && callUrl && <p className="px-4 pb-1 text-xs text-red-400">{err}</p>}
+          {/* El aviso va ANTES de escribir, con su acción al lado. Dejar teclear y
+              sorprender al enviar es peor: ya redactaste el mensaje cuando te enteras. */}
+          {!canWrite && (
+            <div className="mx-3 mb-2 flex items-center gap-2 rounded-lg border border-border bg-surface-2 px-3 py-2">
+              <p className="min-w-0 flex-1 text-xs text-muted">
+                Para escribir y entrar a la llamada necesitamos tu correo.
+              </p>
+              <button
+                onClick={() => setIdentificando(true)}
+                className="shrink-0 rounded-lg bg-brand px-2.5 py-1 text-xs font-semibold text-white"
+              >
+                Identificarme
+              </button>
+            </div>
+          )}
           <Composer text={text} setText={setText} onSubmit={enviar} sending={sending} canWrite={canWrite} />
           <footer className="shrink-0 pb-2 text-center text-[11px] text-muted">
             <a href="https://ghosty.studio" target="_blank" rel="noreferrer" className="hover:text-brand">

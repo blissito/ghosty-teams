@@ -159,6 +159,17 @@ export type ChatCtxValue = {
   turns: Map<number, { state: "running" | "queued"; position: number; startedAt: number }>;
   // La call en la que estoy ahora (`scope:scopeId`), para decir "En llamada" y no "Unirse".
   myCallKey: string | null;
+  /**
+   * Cuánto respira cada mensaje. No es una capacidad, es una VARIANTE de presentación:
+   * la misma información con otra densidad.
+   *
+   * · `comfortable` (default) — estilo Slack: avatar, nombre arriba, cuerpo debajo. Bien
+   *   para un equipo de ocho conversando.
+   * · `compact` — estilo Twitch: una línea, sin avatar, nombre en color. Cabe ~4× más en
+   *   pantalla, y es lo que hace legible un chat a cien mensajes por minuto. En un
+   *   webinar el formato cómodo se vuelve un scroll infinito.
+   */
+  density?: "comfortable" | "compact";
 
   // ── Capacidades. Ausente = no se ofrece. ──────────────────────────────────
   react?: (m: Message, emoji: string) => void;
@@ -204,6 +215,21 @@ export const ChatCtxDefaults: ChatCtxValue = {
 };
 
 export const ChatCtx = createContext<ChatCtxValue>(ChatCtxDefaults);
+
+/**
+ * Color estable de un nombre, al estilo Twitch: ayuda a seguir a UNA persona entre cien
+ * mensajes sin llegar a leer el nombre completo.
+ *
+ * Se deriva del `sub` (o del nombre, si no hay) con un hash barato; el mismo remitente
+ * cae siempre en el mismo tono. Se fija la saturación y la luminosidad para que ninguno
+ * salga ilegible sobre el fondo — un hash suelto sobre el espacio RGB entero produce
+ * grises y amarillos que no se leen.
+ */
+export function colorDeNombre(clave: string): string {
+  let h = 0;
+  for (let i = 0; i < clave.length; i++) h = (h * 31 + clave.charCodeAt(i)) | 0;
+  return `hsl(${Math.abs(h) % 360} 65% 62%)`;
+}
 
 // Identidad mostrada en el drawer de perfil (persona o agente).
 
@@ -2196,7 +2222,7 @@ export function MessageRow({
 }) {
   const t = useT();
   const {
-    me, slug, emojis, users, pickerFor, turns,
+    me, slug, emojis, users, pickerFor, turns, density,
     // Capacidades: las que falten hacen desaparecer su botón, no lo dejan muerto.
     onOpenArtifact, openProfile, sendQuickReply,
     react, setReplyTo, forward, editMsg, star, pin, remove,
@@ -2295,6 +2321,86 @@ export function MessageRow({
       <div className="flex items-center gap-2.5 py-1 pl-11 text-xs text-muted">
         <ThinkingRing size={20} />
         <span className="italic">{m.body || t("Pensando…")}</span>
+      </div>
+    );
+  }
+
+  // ── Variante COMPACTA (estilo Twitch) ────────────────────────────────────────
+  //
+  // Una línea por mensaje: hora, insignias, nombre en color, y el cuerpo a continuación.
+  // Cabe ~4× más en pantalla que el formato cómodo, y ésa es toda la razón: en un webinar
+  // con cien personas el avatar de cada mensaje convierte la conversación en un scroll
+  // infinito donde no se sigue nada.
+  //
+  // No es un renderer aparte: reusa `Markdown`, `AttachmentList`, `ReactionBar`, la barra
+  // de acciones y las tarjetas. Lo único que cambia es cómo se ordena.
+  if (density === "compact" && m.kind === "msg") {
+    const colorNombre = isAgent ? undefined : colorDeNombre(m.sender_sub || m.sender || "");
+    return (
+      <div
+        id={`msg-${m.id}`}
+        onTouchStart={onTouchStart}
+        onTouchEnd={cancelPress}
+        onTouchMove={cancelPress}
+        onTouchCancel={cancelPress}
+        className={`group relative rounded px-2 py-[3px] text-sm leading-snug transition-colors hover:bg-surface-2 ${pressed ? "bg-surface-2" : ""}`}
+      >
+        {/* La barra de acciones es la MISMA que en el formato cómodo; sólo cambia dónde
+            se ancla. Sin esto, reaccionar en compacto sería otro camino que mantener. */}
+        {!editing && (
+          <div
+            className={`absolute right-1 top-0 z-20 flex -translate-y-1/2 items-center gap-0.5 rounded-lg border border-border bg-surface-2 px-0.5 shadow-sm transition ${
+              barVisible ? "opacity-100" : "pointer-events-none opacity-0 md:pointer-events-auto md:group-hover:opacity-100"
+            }`}
+          >
+            {canReact && react && <ReactButton m={m} />}
+            {setReplyTo && <ReplyButton m={m} author={displayName} />}
+            {forward && <ForwardButton m={m} />}
+            {canEdit && editMsg && <EditButton onEdit={() => setEditing(true)} />}
+            {(star || pin || remove) && (
+              <MessageActions m={m} slug={slug} canDelete={canDelete} canPin={!!canPin} onOpenChange={setMenuOpen} />
+            )}
+          </div>
+        )}
+
+        {editing ? (
+          <EditBox m={m} onDone={() => setEditing(false)} />
+        ) : (
+          <>
+            {/* `[&>*]:inline` mete el markdown en el mismo renglón que el nombre. Con
+                contenido rico (una tabla, una tarjeta) vuelve a comportarse como bloque,
+                que es lo correcto: eso no cabe en una línea de todos modos. */}
+            <span suppressHydrationWarning className="mr-1.5 select-none text-[11px] tabular-nums text-muted/70">
+              {timeShort}
+            </span>
+            {isAgent && (
+              <span className="mr-1 rounded bg-brand/15 px-1 py-px text-[9px] font-bold uppercase leading-none tracking-wide text-brand">
+                {t("Agente")}
+              </span>
+            )}
+            {isGuest && (
+              <span
+                title={t("Entró por la liga del evento")}
+                className="mr-1 rounded bg-amber-500/15 px-1 py-px text-[9px] font-bold uppercase leading-none tracking-wide text-amber-600"
+              >
+                {t("Invitado")}
+              </span>
+            )}
+            <span className={`font-semibold ${isAgent ? "text-brand" : ""}`} style={colorNombre ? { color: colorNombre } : undefined}>
+              {displayName}
+            </span>
+            <span className="mr-1 text-muted">:</span>
+            <span className="[&>*]:inline [&_p]:inline [&_p]:m-0">
+              <Markdown body={bubbleWithoutEbDoc(m.body)} emojis={emojis} onImage={onOpenArtifact ? (src, alt) => onOpenArtifact({ kind: "image", title: alt || "Imagen", src }) : undefined} />
+            </span>
+            {(() => {
+              const ts = extractToolState(m.body);
+              return ts ? <ToolGroup tools={ts} vivo={turns.has(m.id)} /> : null;
+            })()}
+            {m.attachments && m.attachments.length > 0 && <AttachmentList attachments={m.attachments} />}
+            <ReactionBar m={m} />
+          </>
+        )}
       </div>
     );
   }
