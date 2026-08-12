@@ -315,7 +315,7 @@ async function listarGrabaciones(r: { ch: { id: number } }) {
     const { dbq } = await import("../../dbq.server");
     const { signedUrl } = await import("../storage.server");
     const filas = await dbq(
-      `SELECT storage_key, transcript_key, bytes, started_at, ended_at, by_name
+      `SELECT storage_key, transcript_key, transcript_state, bytes, started_at, ended_at, by_name
          FROM gt_event_recordings WHERE channel_id = ? ORDER BY ended_at DESC LIMIT 20`,
       [r.ch.id]
     );
@@ -327,8 +327,15 @@ async function listarGrabaciones(r: { ch: { id: number } }) {
       startedAt: f.started_at == null ? null : Number(f.started_at),
       endedAt: Number(f.ended_at),
       by: (f.by_name as string | null) ?? null,
+      // Tres estados, no dos: hay grabaciones para las que el transcript ya no puede
+      // llegar, y decirlo es mejor que dejar un "Transcribiendo…" que nunca acaba.
+      transcriptState: (f.transcript_key ? "ready" : ((f.transcript_state as string) ?? "pending")) as
+        "pending" | "ready" | "none",
     }));
-  } catch {
+  } catch (e) {
+    // Se traga el fallo para no tumbar la sala, pero DICE por qué: sin esto, una lista
+    // vacía era indistinguible de "no hay grabaciones".
+    console.error("[event] no pude listar las grabaciones:", e);
     return [];
   }
 }

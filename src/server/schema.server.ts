@@ -1118,6 +1118,11 @@ async function migrate(): Promise<void> {
   // clave es `t3/<uuid>-<archivo>` y el uuid lleva guiones, así que cualquier intento de
   // partirla acaba recortando el nombre. Hace falta para ir a buscar el transcript después.
   await addColumn("gt_event_recordings", "box_file", "TEXT");
+  // ⚠️ Y si el transcript es IMPOSIBLE, hay que poder decirlo. Sin este campo, una
+  // grabación sin `.txt` se queda en "Transcribiendo…" eternamente, que es una mentira
+  // peor que un "no hay": deja esperando algo que no va a llegar.
+  //   pending (o NULL) · ready · none  — `none` = whisper falló, o el MP4 ya no está.
+  await addColumn("gt_event_recordings", "transcript_state", "TEXT");
   await exec("CREATE INDEX IF NOT EXISTS gt_event_rec_ch ON gt_event_recordings(channel_id, ended_at)");
 
   // Una persona, una fila por evento: si vuelve a registrarse se actualiza, no se

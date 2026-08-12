@@ -69,7 +69,9 @@ export async function recogerTranscript(channelId: number): Promise<number> {
   // preguntando en cada carga del room es gastar por gastar.
   const pendientes = await dbq(
     `SELECT id, box_file FROM gt_event_recordings
-      WHERE channel_id = ? AND transcript_key IS NULL AND ended_at > unixepoch() - 10800`,
+      WHERE channel_id = ? AND transcript_key IS NULL
+        AND COALESCE(transcript_state, 'pending') = 'pending'
+        AND ended_at > unixepoch() - 10800`,
     [channelId]
   ).catch(() => []);
   let hechos = 0;
@@ -81,14 +83,17 @@ export async function recogerTranscript(channelId: number): Promise<number> {
     if (estado.status === "ready") {
       const keyTexto = await subirTranscript(file);
       if (keyTexto) {
-        await dbq("UPDATE gt_event_recordings SET transcript_key = ? WHERE id = ?", [keyTexto, fila.id]);
+        await dbq("UPDATE gt_event_recordings SET transcript_key = ?, transcript_state = 'ready' WHERE id = ?", [keyTexto, fila.id]);
         await pedirAStudio({ action: "delete", file }).catch(() => {});
         hechos++;
       }
     } else if (estado.status === "failed" || estado.status === "not_found") {
-      // Sin transcript posible: se libera el disco de la caja, que es finito y ya no
-      // guarda nada que podamos aprovechar. La fila se queda sin `.txt` a propósito.
+      // Sin transcript posible: se anota, y se libera el disco de la caja —que es finito y
+      // ya no guarda nada aprovechable—. Anotarlo es lo que evita el "Transcribiendo…"
+      // eterno y que sigamos preguntando por algo que no existe.
+      await dbq("UPDATE gt_event_recordings SET transcript_state = 'none' WHERE id = ?", [fila.id]).catch(() => {});
       await pedirAStudio({ action: "delete", file }).catch(() => {});
+      hechos++;
     }
   }
   return hechos;

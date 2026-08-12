@@ -143,7 +143,7 @@ function RoomAbierto() {
   // storage, la URL se guardaba en el room, y nadie la veía nunca — desde fuera era
   // indistinguible de haberla perdido.
   const [grabada, setGrabada] = useState<{ url: string; at: number | null } | null>(null);
-  type Grabacion = { url: string; transcriptUrl: string | null; bytes: number; startedAt: number | null; endedAt: number; by: string | null };
+  type Grabacion = { url: string; transcriptUrl: string | null; transcriptState: "pending" | "ready" | "none"; bytes: number; startedAt: number | null; endedAt: number; by: string | null };
   // ⚠️ TODAS, no la última. Con un solo enlace, grabar dos veces dejaba la primera sin
   // forma de abrirla aunque el archivo siguiera en storage.
   const [grabaciones, setGrabaciones] = useState<Grabacion[]>([]);
@@ -565,7 +565,9 @@ function RoomAbierto() {
                           Transcripción
                         </a>
                       ) : (
-                        <p className="px-3 pb-2 text-[11px] text-muted">Transcribiendo…</p>
+                        <p className="px-3 pb-2 text-[11px] text-muted">
+                          {g.transcriptState === "none" ? "Sin transcripción" : "Transcribiendo…"}
+                        </p>
                       )}
                       </div>
                     ))}
