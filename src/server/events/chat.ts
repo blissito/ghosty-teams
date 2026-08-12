@@ -80,7 +80,7 @@ export const eventFlowFn = createServerFn({ method: "GET" })
   .validator((d: { slug: string; after?: number }) => d)
   .handler(async ({ data }) => {
     const r = await resolveRoom(data.slug);
-    if (!r) return { ok: false as const, messages: [], canModerate: false, canWrite: false, recording: null };
+    if (!r) return { ok: false as const, messages: [], canModerate: false, canWrite: false, recording: null, recorded: null };
     // Quién eres sólo decide si puedes ESCRIBIR y qué mensajes son tuyos; nunca si puedes
     // leer. Un anónimo devuelve `null` aquí y sigue adelante.
     const { eventViewerFor } = await import("./access.server");
@@ -109,6 +109,11 @@ export const eventFlowFn = createServerFn({ method: "GET" })
       // modera— porque el testigo rojo es para quien aparece en la grabación, no para
       // quien la controla. Y viene del servidor: el estado en la pestaña de quien pulsó
       // el botón no lo ve nadie más, y se pierde al recargar.
+      // La grabación YA LISTA. Va a todo el mundo: es un evento público y quien no pudo
+      // llegar es justo quien la necesita. ⚠️ Es una URL firmada que caduca a los 7 días.
+      recorded: r.ch.call_recording_url
+        ? { url: r.ch.call_recording_url, at: r.ch.call_recorded_at ?? null }
+        : null,
       recording: r.ch.call_recording_since
         ? { by: r.ch.call_recording_by ?? null, since: r.ch.call_recording_since }
         : null,

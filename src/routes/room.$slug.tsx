@@ -139,6 +139,10 @@ function RoomAbierto() {
   // detiene. Se refresca con el sondeo del flujo, cada 15 s.
   const [grabacion, setGrabacion] = useState<{ by: string | null; since: number } | null>(null);
   const grabando = !!grabacion;
+  // La grabación ya subida. ⚠️ Sin esto, detener no entregaba NADA: el MP4 llegaba a
+  // storage, la URL se guardaba en el room, y nadie la veía nunca — desde fuera era
+  // indistinguible de haberla perdido.
+  const [grabada, setGrabada] = useState<{ url: string; at: number | null } | null>(null);
   // Sólo importa para no disparar dos veces: quien ve el botón es el iframe, y ése ya se
   // deshabilita solo mientras la petición va en camino.
   const [recBusy, setRecBusy] = useState(false);
@@ -190,6 +194,7 @@ function RoomAbierto() {
       setCanWrite(r.canWrite);
       setModero(r.canModerate);
       setGrabacion(r.recording ?? null);
+      setGrabada(r.recorded ?? null);
       setEmojis(r.emojis ?? []);
       setMe(r.me ?? null);
       miSub.current = r.me?.sub ?? null;
@@ -279,8 +284,8 @@ function RoomAbierto() {
   // EasyBits, y aquí el destino es el storage del workspace, con transcript y con el
   // enlace publicado en el chat. Así que el iframe manda la intención y Teams la ejecuta.
   const callRef = useRef<HTMLIFrameElement>(null);
-  const avisarIframe = useCallback((recording: boolean, error?: string) => {
-    callRef.current?.contentWindow?.postMessage({ t: "gs:rec:state", recording, error }, "*");
+  const avisarIframe = useCallback((recording: boolean, error?: string, url?: string) => {
+    callRef.current?.contentWindow?.postMessage({ t: "gs:rec:state", recording, error, url }, "*");
   }, []);
 
   const grabar = useCallback(
@@ -298,7 +303,10 @@ function RoomAbierto() {
         } else {
           // Optimista con el nombre de quien pulsó: el sondeo lo confirma en segundos.
           setGrabacion(accion === "start" ? { by: me?.name ?? null, since: Math.floor(Date.now() / 1000) } : null);
-          avisarIframe(accion === "start");
+          if (accion === "stop" && r.url) setGrabada({ url: r.url, at: Math.floor(Date.now() / 1000) });
+          // El enlace viaja al iframe: quien pulsó Detener está mirando ESE botón, y ahí
+          // es donde tiene que aparecer "guardada · abrir".
+          avisarIframe(accion === "start", undefined, accion === "stop" ? r.url : undefined);
         }
       } catch {
         setErr("No pude cambiar la grabación.");
@@ -483,6 +491,16 @@ function RoomAbierto() {
             {/* Y aquí NO hay botón, hay TESTIGO. Que se grabe sin que se note es
                 exactamente lo que no puede pasar, así que el punto rojo lo ve todo el
                 mundo — no sólo quien presenta, que es el único que ve el botón. */}
+            {!grabacion && grabada && (
+              <a
+                href={grabada.url}
+                target="_blank"
+                rel="noreferrer"
+                className="flex items-center gap-1.5 rounded-full bg-black/70 px-3 py-1.5 text-xs font-medium text-white backdrop-blur hover:bg-black/85"
+              >
+                <Circle size={10} /> Ver la grabación
+              </a>
+            )}
             {grabacion && (
               <span
                 className="flex items-center gap-1.5 rounded-full bg-red-600 px-3 py-1.5 text-xs font-medium text-white"
