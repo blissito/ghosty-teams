@@ -1,7 +1,7 @@
 import { createFileRoute, notFound } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createServerFn } from "@tanstack/react-start";
-import { MessageSquare, Video, X } from "lucide-react";
+import { MessageSquare, X } from "lucide-react";
 import GhostyMascot from "../components/GhostyMascot";
 import { ChatCtx, ChatCtxDefaults, MessageRow, type SessionUser } from "../components/chat/message";
 import type { Message, CustomEmoji, ReactionAgg } from "../db.server";
@@ -335,20 +335,16 @@ function RoomAbierto() {
                 )}
               </div>
 
-              <button
-                onClick={entrarALlamada}
-                // Se DESACTIVA, no se esconde: si la llamada no está disponible, quien
-                // llega tiene que ver que existe y que ahora no se puede — esconderla
-                // deja la duda de si el evento es sólo un chat.
-                disabled={callBusy || !data.callOpen}
-                className="flex items-center gap-2 rounded-xl bg-brand px-5 py-3 text-sm font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-40"
-              >
-                <Video size={16} />
-                {callBusy ? "Abriendo la llamada…" : canWrite ? "Entrar a la llamada" : "Participar"}
-              </button>
-              {!data.callOpen && (
-                <p className="-mt-2 text-xs text-white/50">La llamada no está abierta ahora mismo.</p>
-              )}
+              {/* Sin botón. La puerta es el CHAT: al intentar escribir se pide el
+                  correo, y en cuanto está verificado la llamada se abre sola con ese
+                  nombre. Un botón aquí sería una segunda puerta que pide lo mismo. */}
+              <p className="max-w-xs text-sm text-white/60">
+                {!data.callOpen
+                  ? "La llamada no está abierta ahora mismo."
+                  : callBusy
+                    ? "Abriendo la llamada…"
+                    : "Escribe en el chat para entrar a la llamada."}
+              </p>
               {err && <p className="text-xs text-red-400">{err}</p>}
             </div>
           )}
