@@ -243,6 +243,21 @@ function RoomAbierto() {
     }
   }
 
+  // Entra SOLO en cuanto se puede. La pantalla de espera propia sobraba: detrás venía el
+  // lobby de LiveKit —vista previa de cámara, micrófono, nombre— o sea la misma pantalla
+  // dos veces seguidas.
+  //
+  // ⚠️ Esto DESPIERTA la caja al abrir la página, no al pulsar. Es el precio de quitar el
+  // paso de más, y sólo lo pagan los identificados: a un anónimo no se le puede acuñar
+  // ticket, así que para él sigue habiendo un botón (que además es su puerta de entrada).
+  const autoEntré = useRef(false);
+  useEffect(() => {
+    if (autoEntré.current || callUrl || callBusy) return;
+    if (!data.callOpen || !canWrite) return;
+    autoEntré.current = true;
+    void entrarALlamada();
+  }, [data.callOpen, canWrite, callUrl, callBusy]);
+
   async function entrarALlamada() {
     if (!canWrite) return setIdentificando(true);
     setCallBusy(true);
@@ -329,7 +344,7 @@ function RoomAbierto() {
                 className="flex items-center gap-2 rounded-xl bg-brand px-5 py-3 text-sm font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-40"
               >
                 <Video size={16} />
-                {callBusy ? "Abriendo la llamada…" : "Entrar a la llamada"}
+                {callBusy ? "Abriendo la llamada…" : canWrite ? "Entrar a la llamada" : "Participar"}
               </button>
               {!data.callOpen && (
                 <p className="-mt-2 text-xs text-white/50">La llamada no está abierta ahora mismo.</p>
