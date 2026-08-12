@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { partirTranscripcion } from "./room.$slug_.transcripcion.$id";
+import { partirTranscripcion, agruparPorHablante } from "./room.$slug_.transcripcion.$id";
 
 describe("partirTranscripcion", () => {
   it("lee las marcas de tiempo de whisper", () => {
@@ -39,5 +39,53 @@ describe("partirTranscripcion", () => {
 
   it("no revienta con texto vacío", () => {
     expect(partirTranscripcion("")).toEqual([]);
+  });
+
+  it("lee el nombre de quien habla", () => {
+    const s = partirTranscripcion(
+      "[00:00:01.000 --> 00:00:04.000] fresnnyy: hola qué tal\n" +
+        "[00:00:05.000 --> 00:00:08.000] blissmo: aquí andamos\n"
+    );
+    expect(s.map((x) => [x.quien, x.texto])).toEqual([
+      ["fresnnyy", "hola qué tal"],
+      ["blissmo", "aquí andamos"],
+    ]);
+  });
+
+  // ⚠️ Sin esto, "bueno: mira" convertiría la palabra "bueno" en un hablante.
+  it("no confunde una frase con dos puntos con un hablante", () => {
+    const [s] = partirTranscripcion("[00:00:01.000 --> 00:00:04.000]  o sea mira: esto es así\n");
+    expect(s.quien).toBeNull();
+    expect(s.texto).toBe("o sea mira: esto es así");
+  });
+
+  it("convive con segmentos sin hablante en la misma transcripción", () => {
+    const s = partirTranscripcion(
+      "[00:00:01.000 --> 00:00:02.000] ana: hola\n[00:00:03.000 --> 00:00:04.000]  ruido\n"
+    );
+    expect(s.map((x) => x.quien)).toEqual(["ana", null]);
+  });
+});
+
+describe("agruparPorHablante", () => {
+  const seg = (quien: string | null, texto: string, t = "00:01") => ({ quien, texto, t, segundos: 61 });
+
+  it("junta lo consecutivo del mismo hablante", () => {
+    const g = agruparPorHablante([seg("ana", "una frase"), seg("ana", "y otra"), seg("luis", "yo")]);
+    expect(g).toHaveLength(2);
+    expect(g[0]).toMatchObject({ quien: "ana", texto: "una frase y otra" });
+    expect(g[1]).toMatchObject({ quien: "luis", texto: "yo" });
+  });
+
+  it("conserva la marca de tiempo del PRIMER segmento del bloque", () => {
+    const g = agruparPorHablante([seg("ana", "a", "00:10"), seg("ana", "b", "00:20")]);
+    expect(g[0].t).toBe("00:10");
+  });
+
+  // Sin hablante no hay a quién juntar: agrupar por `null` fundiría en un bloque cosas
+  // dichas por gente distinta.
+  it("no junta los segmentos sin hablante", () => {
+    const g = agruparPorHablante([seg(null, "a"), seg(null, "b")]);
+    expect(g).toHaveLength(2);
   });
 });

@@ -1,6 +1,7 @@
 import { createFileRoute, notFound, Link } from "@tanstack/react-router";
 import { createServerFn } from "@tanstack/react-start";
 import { useMemo, useState } from "react";
+import { colorDeNombre } from "../components/chat/message";
 
 // ── La transcripción de una grabación, LEGIBLE ──────────────────────────────
 //
@@ -12,24 +13,36 @@ import { useMemo, useState } from "react";
 // Aquí el texto se sirve desde NUESTRO servidor (así el charset es nuestro y no una
 // suposición del navegador), partido por marcas de tiempo y con buscador.
 
-type Segmento = { t: string; segundos: number; texto: string };
+type Segmento = { t: string; segundos: number; texto: string; quien: string | null };
 
 /**
  * Parte la salida de whisper en segmentos.
  *
- * Whisper emite `[00:01:02.500 --> 00:01:07.000]   texto`. Pero las grabaciones anteriores
- * al 2026-08-12 se generaron SIN marcas de tiempo, así que hay que sobrevivir a las dos
- * formas: sin marcas, se corta cada ~350 caracteres para que al menos haya párrafos.
+ * Hay TRES formas por ahí fuera y las tres tienen que leerse:
+ *
+ *   `[00:01:02.500 --> 00:01:07.000] fresnnyy: texto`  ← con hablante (lo de hoy)
+ *   `[00:01:02.500 --> 00:01:07.000]  texto`           ← sólo marca
+ *   `texto corrido sin nada`                           ← anteriores al 2026-08-12
+ *
+ * La última se corta cada ~350 caracteres para que al menos haya párrafos.
+ *
+ * ⚠️ El nombre se acepta sin espacios (`fresnnyy:`) a propósito: una frase que empiece por
+ * "bueno: mira" no puede confundirse con un hablante.
  */
 export function partirTranscripcion(texto: string): Segmento[] {
   const conMarca = [...texto.matchAll(/\[(\d{2}):(\d{2}):(\d{2})\.\d+\s*-->[^\]]+\]\s*(.*)/g)];
   if (conMarca.length) {
     return conMarca
-      .map((m) => ({
-        t: m[1] === "00" ? `${m[2]}:${m[3]}` : `${m[1]}:${m[2]}:${m[3]}`,
-        segundos: +m[1] * 3600 + +m[2] * 60 + +m[3],
-        texto: m[4].trim(),
-      }))
+      .map((m) => {
+        const resto = m[4].trim();
+        const conQuien = /^(\S[^:\s]{0,58}):\s+(.*)$/.exec(resto);
+        return {
+          t: m[1] === "00" ? `${m[2]}:${m[3]}` : `${m[1]}:${m[2]}:${m[3]}`,
+          segundos: +m[1] * 3600 + +m[2] * 60 + +m[3],
+          quien: conQuien ? conQuien[1] : null,
+          texto: conQuien ? conQuien[2] : resto,
+        };
+      })
       .filter((s) => s.texto);
   }
   const limpio = texto.replace(/\s+/g, " ").trim();
@@ -37,7 +50,7 @@ export function partirTranscripcion(texto: string): Segmento[] {
   for (let i = 0; i < limpio.length; i += 350) {
     // Se corta en el siguiente espacio para no partir una palabra por la mitad.
     const fin = limpio.indexOf(" ", i + 350);
-    trozos.push({ t: "", segundos: 0, texto: limpio.slice(i, fin === -1 ? undefined : fin) });
+    trozos.push({ t: "", segundos: 0, quien: null, texto: limpio.slice(i, fin === -1 ? undefined : fin) });
     if (fin === -1) break;
     i = fin - 350;
   }
@@ -83,6 +96,23 @@ const cargar = createServerFn({ method: "GET" })
 // anida esta ruta bajo `room.$slug`, que no es un layout y no pinta ningún <Outlet/>: el
 // resultado es que al abrir la transcripción se vuelve a pintar la sala, como si el enlace
 // no hiciera nada. La URL pública no cambia.
+/**
+ * Junta los segmentos consecutivos del mismo hablante. Repetir el nombre en cada línea de
+ * una frase partida en cinco trozos es ruido, no información.
+ */
+export function agruparPorHablante(segs: Segmento[]): { quien: string | null; t: string; texto: string }[] {
+  const out: { quien: string | null; t: string; texto: string }[] = [];
+  for (const s of segs) {
+    const ultimo = out[out.length - 1];
+    if (ultimo && ultimo.quien === s.quien && s.quien !== null) {
+      ultimo.texto += " " + s.texto;
+    } else {
+      out.push({ quien: s.quien, t: s.t, texto: s.texto });
+    }
+  }
+  return out;
+}
+
 export const Route = createFileRoute("/room/$slug_/transcripcion/$id")({
   loader: async ({ params }) => {
     const d = await cargar({ data: { slug: params.slug, id: Number(params.id) } });
@@ -105,8 +135,16 @@ function Transcripcion() {
   const segmentos = useMemo(() => partirTranscripcion(data.texto), [data.texto]);
   const filtrados = useMemo(() => {
     const t = q.trim().toLowerCase();
-    return t ? segmentos.filter((s) => s.texto.toLowerCase().includes(t)) : segmentos;
+    // Se busca ANTES de agrupar: si no, buscar dentro de un bloque de diez frases devuelve
+    // el bloque entero y no se ve qué coincidió.
+    const base = t
+      ? segmentos.filter((s) => s.texto.toLowerCase().includes(t) || (s.quien ?? "").toLowerCase().includes(t))
+      : segmentos;
+    return agruparPorHablante(base);
   }, [segmentos, q]);
+  // Se dice si la transcripción trae hablantes o no: en una que no los tiene, no
+  // encontrarlos hace dudar de si el buscador funciona.
+  const hayNombres = useMemo(() => segmentos.some((s) => s.quien), [segmentos]);
 
   return (
     <div className="min-h-dvh bg-surface text-ink">
@@ -124,6 +162,7 @@ function Transcripcion() {
         </p>
         <p className="mt-1 text-xs text-muted">
           Generada automáticamente: puede tener errores, sobre todo en nombres y cifras.
+          {!hayNombres && " Esta grabación es anterior a que se anotara quién habla."}
         </p>
 
         <input
@@ -140,17 +179,25 @@ function Transcripcion() {
           </p>
         )}
 
-        <div className="mt-6 space-y-3">
+        <div className="mt-6 space-y-4">
           {filtrados.map((s, i) => (
-            <p key={i} className="flex gap-3 text-[15px] leading-relaxed">
+            <div key={i} className="flex gap-3 text-[15px] leading-relaxed">
               {/* La marca de tiempo a la izquierda, en su columna: es lo que convierte un
                   muro en algo por donde se puede navegar. Las grabaciones viejas no la
                   tienen y entonces no se pinta nada — mejor que un 00:00 falso. */}
               {s.t && (
-                <span className="shrink-0 select-none pt-0.5 font-mono text-xs text-muted">{s.t}</span>
+                <span className="shrink-0 select-none pt-1 font-mono text-xs text-muted">{s.t}</span>
               )}
-              <span>{s.texto}</span>
-            </p>
+              <div>
+                {/* El mismo color que en el chat: quien habla se reconoce sin leer. */}
+                {s.quien && (
+                  <span className="mr-2 font-semibold" style={{ color: colorDeNombre(s.quien) }}>
+                    {s.quien}
+                  </span>
+                )}
+                <span>{s.texto}</span>
+              </div>
+            </div>
           ))}
         </div>
 
