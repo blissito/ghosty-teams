@@ -90,25 +90,21 @@ export const eventFlowFn = createServerFn({ method: "GET" })
     // una conversación corrida, no el room completo con su historial de meses.
     // Y sólo DESDE QUE SE ABRIÓ — ver `publicMessages`.
     const recortados = publicMessages(all, r.ch.public_since, data.after ?? 0);
-    // Las reacciones se agregan en UNA consulta para todo el lote (`attachReactions` ya
-    // resuelve el N+1). `mine` sale del sub de quien mira; un anónimo no tiene, así que
-    // ve los conteos sin nada marcado como suyo — que es exactamente lo correcto.
-    const conReacciones = await r.db.attachReactions(recortados, viewer?.sub ?? "");
-    const messages = conReacciones.map((m) => ({
-      id: m.id,
-      sender: m.sender,
-      avatar: m.avatar,
-      body: m.body,
-      created_at: m.created_at,
-      mine: !!viewer && m.sender_sub === viewer.sub,
-      isAgent: !!m.agent_handle,
-      reactions: m.reactions ?? [],
-    }));
+    // ⚠️ Se devuelven los mensajes COMPLETOS (`attachMeta`: reacciones, adjuntos,
+    // artefactos, fijados), no un resumen a medida. La sala pinta con el MISMO
+    // `MessageRow` que el chat de Teams, así que un shape recortado obligaría a
+    // mantener dos formas del mensaje que divergirían al primer campo nuevo — que es
+    // exactamente cómo nació el chat de juguete que esto vino a reemplazar.
+    const messages = await r.db.attachMeta(recortados, viewer?.sub ?? "");
     return {
       ok: true as const,
       messages,
       canModerate: !!viewer?.isHost,
       canWrite: !!viewer,
+      // Los emojis del workspace, para que el selector de la sala sea EL de Teams y no
+      // una lista de seis emojis inventada.
+      emojis: await r.db.listCustomEmojis().catch(() => []),
+      me: viewer ? { sub: viewer.sub, name: viewer.name } : null,
     };
   });
 

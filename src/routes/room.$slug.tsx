@@ -1,10 +1,10 @@
 import { createFileRoute, notFound } from "@tanstack/react-router";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createServerFn } from "@tanstack/react-start";
-import { MessageSquare, Radio, SmilePlus, Video, X } from "lucide-react";
+import { MessageSquare, Radio, Video, X } from "lucide-react";
 import GhostyMascot from "../components/GhostyMascot";
-import { Avatar } from "../components/Avatar";
-import { Markdown } from "../components/Markdown";
+import { ChatCtx, ChatCtxDefaults, MessageRow, type SessionUser } from "../components/chat/message";
+import type { Message, CustomEmoji, ReactionAgg } from "../db.server";
 import { eventFlowFn, eventPostFn, eventReactFn } from "../server/events/chat";
 import { joinCallFn, requestCodeFn, verifyCodeFn } from "../server/events/identity";
 import { useEventStream } from "../hooks/useEventStream";
@@ -95,20 +95,17 @@ export const Route = createFileRoute("/room/$slug")({
   component: RoomAbierto,
 });
 
-type Reaccion = { emoji: string; count: number; mine: boolean };
-type Msg = {
-  id: number; sender: string; avatar: string; body: string; created_at: number;
-  mine: boolean; isAgent: boolean; reactions: Reaccion[];
-};
-
-/** Las de un vistazo. Un selector completo de emoji es otra pieza; esto cubre el 90%. */
-const RAPIDAS = ["👏", "🔥", "❤️", "😂", "🤔", "👍"];
 
 function RoomAbierto() {
   const data = Route.useLoaderData();
   const { slug } = Route.useParams();
 
-  const [messages, setMessages] = useState<Msg[]>([]);
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [emojis, setEmojis] = useState<CustomEmoji[]>([]);
+  const [me, setMe] = useState<{ sub: string; name: string } | null>(null);
+  // Picker de reacciones GLOBAL: uno solo abierto a la vez. Es el estado que mi versión
+  // improvisada no tenía, y por eso salían dos menús a la vez.
+  const [pickerFor, setPickerFor] = useState<number | null>(null);
   const [canWrite, setCanWrite] = useState(false);
   const [online, setOnline] = useState(1);
   const [text, setText] = useState("");
@@ -145,6 +142,9 @@ function RoomAbierto() {
       const r = await eventFlowFn({ data: { slug, after: lastId.current } });
       if (!r.ok) return;
       setCanWrite(r.canWrite);
+      setEmojis(r.emojis ?? []);
+      setMe(r.me ?? null);
+      miSub.current = r.me?.sub ?? null;
       if (!r.messages.length) return;
       lastId.current = r.messages[r.messages.length - 1].id;
       setMessages((prev) => {
@@ -168,13 +168,15 @@ function RoomAbierto() {
       return setMessages((prev) =>
         prev.map((m) => {
           if (m.id !== messageId) return m;
-          const otras = m.reactions.filter((x) => x.emoji !== emoji);
+          const actuales = m.reactions ?? [];
+          const otras = actuales.filter((x) => x.emoji !== emoji);
           if (count <= 0) return { ...m, reactions: otras };
-          const previa = m.reactions.find((x) => x.emoji === emoji);
+          const previa = actuales.find((x) => x.emoji === emoji);
           // `mine` sólo cambia si el evento es MÍO; el de otra persona no puede alterar
           // si yo reaccioné o no.
           const mine = userSub === miSub.current ? op === "add" : !!previa?.mine;
-          return { ...m, reactions: [...otras, { emoji, count, mine }] };
+          const rs: ReactionAgg[] = [...otras, { emoji, count, mine, subs: previa?.subs ?? [] }];
+          return { ...m, reactions: rs };
         })
       );
     }
@@ -212,25 +214,31 @@ function RoomAbierto() {
     setSending(false);
   }
 
-  async function reaccionar(messageId: number, emoji: string) {
+  // `MessageRow` pide `react(m, emoji)` por contexto; aquí se traduce a la server fn del
+  // room. Optimista: esperar el round-trip para ver tu propio 👏 se siente roto, y el
+  // evento del bus lo reconcilia con el conteo autoritativo.
+  async function reaccionar(m: Message, emoji: string) {
     if (!canWrite) return setIdentificando(true);
-    // Optimista: la reacción se pinta al instante y el evento del bus la reconcilia con
-    // el conteo autoritativo. Esperar el round-trip para ver tu propio 👏 se siente roto.
     setMessages((prev) =>
-      prev.map((m) => {
-        if (m.id !== messageId) return m;
-        const previa = m.reactions.find((x) => x.emoji === emoji);
-        const otras = m.reactions.filter((x) => x.emoji !== emoji);
+      prev.map((x) => {
+        if (x.id !== m.id) return x;
+        const actuales = x.reactions ?? [];
+        const previa = actuales.find((r) => r.emoji === emoji);
+        const otras = actuales.filter((r) => r.emoji !== emoji);
         if (previa?.mine) {
-          return previa.count <= 1
-            ? { ...m, reactions: otras }
-            : { ...m, reactions: [...otras, { emoji, count: previa.count - 1, mine: false }] };
+          const bajada: ReactionAgg[] =
+            previa.count <= 1 ? otras : [...otras, { ...previa, count: previa.count - 1, mine: false }];
+          return { ...x, reactions: bajada };
         }
-        return { ...m, reactions: [...otras, { emoji, count: (previa?.count ?? 0) + 1, mine: true }] };
+        const subida: ReactionAgg[] = [
+          ...otras,
+          { emoji, count: (previa?.count ?? 0) + 1, mine: true, subs: previa?.subs ?? [] },
+        ];
+        return { ...x, reactions: subida };
       })
     );
     try {
-      await eventReactFn({ data: { slug, messageId, emoji } });
+      await eventReactFn({ data: { slug, messageId: m.id, emoji } });
     } catch {
       // Se recupera solo: el siguiente sondeo trae el conteo de verdad.
     }
@@ -252,7 +260,27 @@ function RoomAbierto() {
     setCallBusy(false);
   }
 
+  // ⚠️ El CONTEXTO es lo que hace que aquí se pinte el chat DE VERDAD y no una copia.
+  // Lo que un room abierto no tiene se apaga con no-ops: fijar, destacar, editar,
+  // reenviar, hilos, perfiles y ajustes son cosas de miembros. `MessageRow` ya sabe
+  // esconder lo que no puede hacer.
+  const ctx = useMemo(
+    () => ({
+      ...ChatCtxDefaults,
+      me: me ? ({ sub: me.sub, name: me.name, avatar: "", isOwner: false } as SessionUser) : null,
+      slug,
+      emojis,
+      react: reaccionar,
+      // Uno solo abierto a la vez: es el estado que faltaba cuando esto era una copia,
+      // y por eso salían dos menús de reacción a la vez.
+      pickerFor,
+      setPickerFor,
+    }),
+    [me, slug, emojis, pickerFor, canWrite]
+  );
+
   return (
+    <ChatCtx.Provider value={ctx}>
     <div className="flex h-dvh flex-col bg-surface">
       <header className="flex shrink-0 items-center gap-3 border-b border-border px-4 py-3">
         {data.brand.logo ? (
@@ -361,7 +389,7 @@ function RoomAbierto() {
                 <X size={16} />
               </button>
             </div>
-            <Mensajes messages={messages} onReaccionar={reaccionar} />
+            <Mensajes messages={messages} />
             <Composer
               text={text}
               setText={setText}
@@ -373,7 +401,7 @@ function RoomAbierto() {
         </div>
       )}
 
-      <Mensajes messages={messages} bottomRef={bottomRef} onReaccionar={reaccionar} />
+      <Mensajes messages={messages} bottomRef={bottomRef} />
 
       {err && <p className="px-4 pb-1 text-center text-xs text-red-400">{err}</p>}
 
@@ -398,6 +426,7 @@ function RoomAbierto() {
         />
       )}
     </div>
+    </ChatCtx.Provider>
   );
 }
 
@@ -406,117 +435,38 @@ function RoomAbierto() {
  * fuente de datos: si fueran dos listas separadas, una se quedaría atrás en cuanto alguien
  * escribiera durante la transmisión, que es justo cuando más se escribe.
  */
+/**
+ * La conversación, con el MISMO `MessageRow` que el chat de Teams.
+ *
+ * ⚠️ Aquí hubo un chat improvisado durante unas horas —lista de texto, avatar a mano,
+ * seis emojis inventados— y se notó enseguida: dos selectores de reacción abiertos a la
+ * vez, sin click-outside, sin los emojis del workspace, sin adjuntos. Cada detalle que
+ * el chat de Teams ya tenía resuelto había que volver a resolverlo, peor.
+ *
+ * Por eso `MessageRow` y compañía se sacaron a `components/chat/message.tsx`: lo que se
+ * ve aquí es el chat de verdad, con las capacidades que no aplican apagadas desde el
+ * contexto (fijar, destacar, editar, hilos, perfiles).
+ */
 function Mensajes({
   messages,
   bottomRef,
-  onReaccionar,
 }: {
-  messages: Msg[];
+  messages: Message[];
   bottomRef?: React.RefObject<HTMLDivElement | null>;
-  onReaccionar: (messageId: number, emoji: string) => void;
 }) {
   const propio = useRef<HTMLDivElement>(null);
   const fin = bottomRef ?? propio;
-  // El panel de la llamada se monta con la conversación ya empezada: sin esto abre arriba
-  // del todo y hay que bajar a mano hasta lo último, que es lo único que interesa.
   useEffect(() => { fin.current?.scrollIntoView({ behavior: "smooth" }); }, [messages.length, fin]);
 
   return (
-    <div className="w-full flex-1 space-y-3 overflow-y-auto px-4 py-5">
+    <div className="w-full flex-1 overflow-y-auto px-2 py-4">
       {messages.length === 0 && (
-        <p className="text-sm text-muted">Todavía no hay mensajes. Sé quien empiece 👋</p>
+        <p className="px-2 text-sm text-muted">Todavía no hay mensajes. Sé quien empiece 👋</p>
       )}
-      {messages.map((m, i) => {
-        // Agrupación estilo Slack: mensajes seguidos de la misma persona dentro de ~5 min
-        // se colapsan y no repiten avatar ni nombre. Sin esto, quien escribe tres líneas
-        // seguidas ocupa media pantalla con su propia cara.
-        const prev = messages[i - 1];
-        const junto =
-          !!prev && prev.sender === m.sender && prev.isAgent === m.isAgent && m.created_at - prev.created_at < 300;
-        return (
-          <div key={m.id} className={`flex gap-2.5 ${junto ? "mt-0.5" : ""}`}>
-            <div className="w-8 shrink-0">
-              {!junto && <Avatar name={m.sender} avatar={m.avatar || undefined} className="h-8 w-8" />}
-            </div>
-            <div className="min-w-0 flex-1">
-              {!junto && (
-                <div className="flex items-baseline gap-2">
-                  <span className={`text-sm font-semibold ${m.isAgent ? "text-brand" : ""}`}>{m.sender}</span>
-                  {m.isAgent && (
-                    <span className="rounded bg-brand/15 px-1 py-px text-[9px] font-bold uppercase leading-none tracking-wide text-brand">
-                      Agente
-                    </span>
-                  )}
-                  <span className="text-[11px] text-muted">
-                    {new Date(m.created_at * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-                  </span>
-                </div>
-              )}
-              {/* El MISMO renderizador que el chat de Teams: negritas, listas, código,
-                  enlaces y emojis. Antes era texto pelado, y el agente contesta en
-                  markdown — o sea que sus respuestas llegaban con los asteriscos a la
-                  vista. */}
-              <div className="text-sm leading-relaxed">
-                <Markdown body={m.body} />
-              </div>
-              <Reacciones msg={m} onReaccionar={onReaccionar} />
-            </div>
-          </div>
-        );
-      })}
-      <div ref={fin} />
-    </div>
-  );
-}
-
-/**
- * Las reacciones de un mensaje, y el atajo para poner una.
- *
- * El selector rápido aparece al pasar el ratón (y en móvil, con el botón "+", porque ahí
- * no hay hover y sin eso reaccionar sería imposible en la mitad de los dispositivos).
- */
-function Reacciones({ msg, onReaccionar }: { msg: Msg; onReaccionar: (id: number, emoji: string) => void }) {
-  const [abierto, setAbierto] = useState(false);
-  const puestas = [...msg.reactions].sort((a, b) => b.count - a.count || a.emoji.localeCompare(b.emoji));
-
-  return (
-    <div className="group/react mt-1 flex flex-wrap items-center gap-1">
-      {puestas.map((r) => (
-        <button
-          key={r.emoji}
-          onClick={() => onReaccionar(msg.id, r.emoji)}
-          className={`flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-xs transition ${
-            r.mine ? "border-brand bg-brand/15 text-brand" : "border-border bg-card text-muted hover:border-brand/50"
-          }`}
-        >
-          <span>{r.emoji}</span>
-          <span className="tabular-nums">{r.count}</span>
-        </button>
+      {messages.map((m, i) => (
+        <MessageRow key={m.id} m={m} prev={messages[i - 1]} />
       ))}
-      <div className="relative">
-        <button
-          onClick={() => setAbierto((v) => !v)}
-          aria-label="Reaccionar"
-          className={`rounded-full border border-border px-1.5 py-0.5 text-xs text-muted hover:border-brand/50 hover:text-brand ${
-            puestas.length ? "" : "opacity-0 group-hover/react:opacity-100 focus:opacity-100"
-          }`}
-        >
-          <SmilePlus size={13} />
-        </button>
-        {abierto && (
-          <div className="absolute bottom-full left-0 z-20 mb-1 flex gap-0.5 rounded-full border border-border bg-card p-1 shadow-lg">
-            {RAPIDAS.map((e) => (
-              <button
-                key={e}
-                onClick={() => { onReaccionar(msg.id, e); setAbierto(false); }}
-                className="rounded-full px-1.5 py-0.5 text-base hover:bg-surface-2"
-              >
-                {e}
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
+      <div ref={fin} />
     </div>
   );
 }
