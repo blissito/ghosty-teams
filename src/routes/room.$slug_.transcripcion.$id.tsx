@@ -79,7 +79,11 @@ const cargar = createServerFn({ method: "GET" })
     };
   });
 
-export const Route = createFileRoute("/room/$slug/transcripcion/$id")({
+// ⚠️ El archivo se llama `room.$slug_.transcripcion.$id` con GUION BAJO. Sin él, TanStack
+// anida esta ruta bajo `room.$slug`, que no es un layout y no pinta ningún <Outlet/>: el
+// resultado es que al abrir la transcripción se vuelve a pintar la sala, como si el enlace
+// no hiciera nada. La URL pública no cambia.
+export const Route = createFileRoute("/room/$slug_/transcripcion/$id")({
   loader: async ({ params }) => {
     const d = await cargar({ data: { slug: params.slug, id: Number(params.id) } });
     if (!d) throw notFound();

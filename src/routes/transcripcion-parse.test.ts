@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { partirTranscripcion } from "./room.$slug.transcripcion.$id";
+import { partirTranscripcion } from "./room.$slug_.transcripcion.$id";
 
 describe("partirTranscripcion", () => {
   it("lee las marcas de tiempo de whisper", () => {
