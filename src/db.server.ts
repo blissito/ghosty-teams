@@ -2486,6 +2486,45 @@ export async function recentContext(
 }
 
 /**
+ * Cuántos mensajes hay DESPUÉS de `afterId` en un scope. Existe para que el catch-up del
+ * agente pueda DECIR cuántos mensajes se está saltando en vez de recortar en silencio.
+ *
+ * `recentContext` mira la cola con un `LIMIT` y no puede saber si detrás quedaron 3 o 300;
+ * un agente que ignora que le falta información contesta con confianza sobre una versión
+ * truncada del canal, que es el peor modo de fallo posible. Con el conteo, el bloque
+ * inyectado declara el hueco y el agente sabe que tiene que ir por `chat_history`.
+ *
+ * `afterId` null = todo el scope (el agente nunca respondió aquí). Sólo vale la pena
+ * llamarlo cuando el fetch de `recentContext` volvió LLENO: si volvió corto, ya tienes la
+ * conversación entera y el conteo es el largo del arreglo, sin query.
+ */
+export async function countAfter(
+  scope: { dmId: number } | { channelId: number; parentId?: number | null },
+  afterId: number | null
+): Promise<number> {
+  const cur = afterId && afterId > 0 ? afterId : null;
+  const cond = cur ? "AND id > ?" : "";
+  let rows;
+  if ("dmId" in scope) {
+    rows = await dbq(
+      `SELECT COUNT(*) AS n FROM gc_messages WHERE dm_id = ? AND kind = 'msg' ${cond}`,
+      cur ? [scope.dmId, cur] : [scope.dmId]
+    );
+  } else if (scope.parentId != null) {
+    rows = await dbq(
+      `SELECT COUNT(*) AS n FROM gc_messages WHERE parent_id = ? AND kind = 'msg' ${cond}`,
+      cur ? [scope.parentId, cur] : [scope.parentId]
+    );
+  } else {
+    rows = await dbq(
+      `SELECT COUNT(*) AS n FROM gc_messages WHERE channel_id = ? AND parent_id IS NULL AND kind = 'msg' ${cond}`,
+      cur ? [scope.channelId, cur] : [scope.channelId]
+    );
+  }
+  return Number(rows?.[0]?.n ?? 0);
+}
+
+/**
  * Historial hacia ATRÁS de un scope, paginado. Es lo que consume la tool `chat_history`
  * del agente — el equivalente de `conversations.history` de Slack.
  *

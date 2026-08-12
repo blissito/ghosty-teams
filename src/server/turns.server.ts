@@ -366,3 +366,57 @@ export async function sweepOrphans(): Promise<number> {
     return 0;
   }
 }
+
+// ── Serialización del ARMADO de un turno ────────────────────────────────────
+//
+// El worker ya serializa los turnos de un mismo `groupId` (su lock por sesión), pero eso
+// pasa TARDE: para entonces Teams ya construyó el contexto de los dos. Dos personas que
+// mencionan al agente en el mismo room a la vez producen dos turnos que leen la base
+// CONCURRENTEMENTE, antes de que ninguno haya escrito nada.
+//
+// ⚠️ Y eso PIERDE DATOS, no sólo calidad de contexto: `artifactDocHint` le inyecta a cada
+// turno el artefacto vigente al momento de armarlo. El segundo turno se lleva la versión
+// ANTERIOR, el agente la re-emite, y la edición del primero desaparece sin ninguna señal.
+// El mismo patrón afecta al catch-up (el gap no excluye lo que el agente acaba de decir) y
+// a la memoria del room.
+//
+// La cura es barata: encadenar el ARMADO (no el streaming) de los turnos del mismo grupo,
+// para que el segundo lea la base DESPUÉS de las escrituras del primero. Son un puñado de
+// queries indexadas, así que el p99 no se mueve.
+//
+// ⚠️ Es un lock EN PROCESO: asume un solo nodo de Teams, igual que `live`. Si algún día hay
+// varias réplicas, esto tiene que mudarse a un advisory lock en la base — un lock local con
+// dos procesos da una falsa sensación de seguridad, que es peor que no tenerlo.
+const groupLocks = new Map<string, Promise<void>>();
+
+/** Tras este tiempo se sigue SIN lock. Un turno atorado no puede trabar un room entero. */
+const GROUP_LOCK_TIMEOUT_MS = 10_000;
+
+export async function withGroupLock<T>(groupId: string, fn: () => Promise<T>): Promise<T> {
+  const previo = groupLocks.get(groupId);
+  let liberar!: () => void;
+  const mio = new Promise<void>((r) => (liberar = r));
+  groupLocks.set(groupId, mio);
+  try {
+    if (previo) {
+      // `Promise.race` con un timer: esperar al anterior, pero nunca para siempre.
+      let t: ReturnType<typeof setTimeout> | undefined;
+      await Promise.race([
+        previo,
+        new Promise<void>((r) => {
+          t = setTimeout(() => {
+            console.warn(`[turns] lock de ${groupId} excedió ${GROUP_LOCK_TIMEOUT_MS}ms; sigo sin él`);
+            r();
+          }, GROUP_LOCK_TIMEOUT_MS);
+        }),
+      ]);
+      if (t) clearTimeout(t);
+    }
+    return await fn();
+  } finally {
+    liberar();
+    // Sólo se borra si nadie se encadenó detrás: si otro turno ya puso el suyo, borrarlo
+    // dejaría al siguiente sin nada que esperar.
+    if (groupLocks.get(groupId) === mio) groupLocks.delete(groupId);
+  }
+}

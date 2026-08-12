@@ -898,7 +898,7 @@ export const askAgent = createServerFn({ method: "POST" })
   )
   .handler(async ({ data }) => {
     const db = await import("../db.server");
-    const { resolvedAgents, runAgentTurn, buildMediaParts, quotedContextPrefix, clampQuote, historyContext, gapDesdeUltimaRespuesta, agentGroupId, INJECTED } = await import("../agents.server");
+    const { resolvedAgents, runAgentTurn, buildMediaParts, quotedContextPrefix, clampQuote, historyContext, gapDesdeUltimaRespuesta, CATCHUP_FETCH, agentGroupId, INJECTED } = await import("../agents.server");
     const bus = await import("./bus.server");
     const { currentNamespace } = await import("./tenant.server");
     const channel = await db.getChannel(data.slug);
@@ -977,9 +977,20 @@ export const askAgent = createServerFn({ method: "POST" })
       // justo lo que este bloque existe para recuperar. La memoria es una por room
       // (FLEET_THREAD), así que el gap tiene que mirar lo mismo.
       const scope = { channelId: channel.id };
-      const recent = await db.recentContext(scope, 8).catch(() => []);
+      // Se traen 40 y NO 8: el render sigue acotado por presupuesto, pero traer de más es
+      // lo que hace el hueco OBSERVABLE. Sin esto no hay forma de saber si detrás quedaron
+      // 3 mensajes o 300, y el agente contestaba sobre un recorte sin enterarse.
+      const recent = await db.recentContext(scope, CATCHUP_FETCH).catch(() => []);
       const { esRecordatorio } = await import("./reminders.server");
-      const history = historyContext(gapDesdeUltimaRespuesta(recent, esRecordatorio), data.body);
+      const gap = gapDesdeUltimaRespuesta(recent, esRecordatorio);
+      // El COUNT sólo se paga si el fetch volvió lleno: si volvió corto ya tenemos la
+      // conversación entera y el total es el largo del gap, sin query.
+      let totalGap = gap.length;
+      if (recent.length >= CATCHUP_FETCH) {
+        const afterId = recent[recent.length - gap.length - 1]?.id ?? null;
+        totalGap = await db.countAfter(scope, afterId).catch(() => gap.length);
+      }
+      const history = historyContext(gap, data.body, { totalGap, sender: data.sender });
       if (history) text = history + text;
     }
 
@@ -1045,32 +1056,41 @@ export const askAgent = createServerFn({ method: "POST" })
     // La autorización vive en db.adoptableArtifact: dueño, o nacido en este room. Un link
     // que no cumpla se ignora en silencio — el agente sigue con el artefacto que ya tuviera
     // el hilo, que es mejor que abortar el turno por un link que quizá era sólo una cita.
-    const slugPegado = db.slugDeArtefactoEn(data.body ?? "");
-    if (slugPegado) {
-      const adoptado = await db
-        .adoptableArtifact(slugPegado, {
-          requesterSub: poster?.sub ?? null,
-          channelId: channel.id,
-          isWorkspaceOwner: !!poster?.isOwner,
-        })
-        .catch(() => null);
-      if (adoptado) {
-        await db.setThreadArtifact(channel.id, data.parentId, adoptado).catch(() => {});
+    // ⚠️ La resolución del artefacto se RETRASA hasta tener el lock del grupo (más abajo).
+    // Leerla aquí era la fuente de una pérdida de datos silenciosa: con dos menciones
+    // simultáneas en el mismo room, el segundo turno se llevaba la versión ANTERIOR del
+    // documento, el agente la re-emitía y la edición del primero desaparecía sin señal.
+    // Ver `withGroupLock` en turns.server.ts.
+    let currentDocId: Awaited<ReturnType<typeof db.resolveThreadArtifact>> | null = null;
+    let currentDoc: Awaited<ReturnType<typeof db.getDoc>> | null = null;
+    const resolverArtefactoDelHilo = async () => {
+      const slugPegado = db.slugDeArtefactoEn(data.body ?? "");
+      if (slugPegado) {
+        const adoptado = await db
+          .adoptableArtifact(slugPegado, {
+            requesterSub: poster?.sub ?? null,
+            channelId: channel.id,
+            isWorkspaceOwner: !!poster?.isOwner,
+          })
+          .catch(() => null);
+        if (adoptado) {
+          await db.setThreadArtifact(channel.id, data.parentId, adoptado).catch(() => {});
+        }
       }
-    }
 
-    const currentDocId = await db.resolveThreadArtifact(channel.id, data.parentId).catch(() => null);
-    const currentDoc = currentDocId ? await db.getDoc(currentDocId).catch(() => null) : null;
-    // ¿La última entrega del hilo fue un ARCHIVO posterior a este artefacto? Entonces el
-    // antecedente de "modifícalo" es el archivo, no el artefacto — se lo decimos al agente
-    // en el hint. Comparación por fecha y no "existe un archivo": tras editar el artefacto,
-    // el artefacto vuelve a ser lo último y la regla debe apagarse sola.
-    if (currentDoc) {
-      const entrega = await db.getThreadDelivery(channel.id, data.parentId).catch(() => null);
-      if (entrega && entrega.at >= (currentDoc.at ?? 0)) {
-        currentDoc.lastFile = { name: entrega.name, mime: entrega.mime };
+      currentDocId = await db.resolveThreadArtifact(channel.id, data.parentId).catch(() => null);
+      currentDoc = currentDocId ? await db.getDoc(currentDocId).catch(() => null) : null;
+      // ¿La última entrega del hilo fue un ARCHIVO posterior a este artefacto? Entonces el
+      // antecedente de "modifícalo" es el archivo, no el artefacto — se lo decimos al agente
+      // en el hint. Comparación por fecha y no "existe un archivo": tras editar el artefacto,
+      // el artefacto vuelve a ser lo último y la regla debe apagarse sola.
+      if (currentDoc) {
+        const entrega = await db.getThreadDelivery(channel.id, data.parentId).catch(() => null);
+        if (entrega && entrega.at >= (currentDoc.at ?? 0)) {
+          currentDoc.lastFile = { name: entrega.name, mime: entrega.mime };
+        }
       }
-    }
+    };
 
     // INTERRUMPIR lo mío, encolar lo ajeno. Si el que escribe es el mismo que tiene un
     // turno corriendo en este flow, casi siempre está corrigiendo ("mejor en html") y

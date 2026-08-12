@@ -279,8 +279,8 @@ function RoomAbierto() {
   // EasyBits, y aquí el destino es el storage del workspace, con transcript y con el
   // enlace publicado en el chat. Así que el iframe manda la intención y Teams la ejecuta.
   const callRef = useRef<HTMLIFrameElement>(null);
-  const avisarIframe = useCallback((recording: boolean) => {
-    callRef.current?.contentWindow?.postMessage({ t: "gs:rec:state", recording }, "*");
+  const avisarIframe = useCallback((recording: boolean, error?: string) => {
+    callRef.current?.contentWindow?.postMessage({ t: "gs:rec:state", recording, error }, "*");
   }, []);
 
   const grabar = useCallback(
@@ -289,18 +289,24 @@ function RoomAbierto() {
       setErr(null);
       try {
         const r = await recordingFn({ data: { slug, action: accion } });
-        if (!r.ok) setErr(r.error);
-        else {
+        // ⚠️ El aviso al iframe va TAMBIÉN cuando falla, y con el motivo. Sin esto el botón
+        // se quedaba en "iniciando…" para siempre y el error sólo aparecía en el chat, que
+        // es justo donde no está mirando quien acaba de pulsar Grabar.
+        if (!r.ok) {
+          setErr(r.error);
+          avisarIframe(grabando, r.error);
+        } else {
           // Optimista con el nombre de quien pulsó: el sondeo lo confirma en segundos.
           setGrabacion(accion === "start" ? { by: me?.name ?? null, since: Math.floor(Date.now() / 1000) } : null);
           avisarIframe(accion === "start");
         }
       } catch {
         setErr("No pude cambiar la grabación.");
+        avisarIframe(grabando, "No pude cambiar la grabación.");
       }
       setRecBusy(false);
     },
-    [slug, avisarIframe]
+    [slug, avisarIframe, grabando, me]
   );
 
   // La autorización NO la decide este listener: `recordingFn` ya exige ser quien presenta.

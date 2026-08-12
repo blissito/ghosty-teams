@@ -322,7 +322,7 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
     const db = await import("../db.server");
     const bus = await import("./bus.server");
     const { currentNamespace } = await import("./tenant.server");
-    const { resolvedAgents, runAgentTurn, buildMediaParts, quotedContextPrefix, clampQuote, historyContext, gapDesdeUltimaRespuesta, agentGroupId, INJECTED } = await import("../agents.server");
+    const { resolvedAgents, runAgentTurn, buildMediaParts, quotedContextPrefix, clampQuote, historyContext, gapDesdeUltimaRespuesta, CATCHUP_FETCH, agentGroupId, INJECTED } = await import("../agents.server");
     const me = await sessionUser();
     if (!me || !(await db.isDmMember(data.id, me.sub))) throw new Error("no autorizado");
     const ns = await currentNamespace();
@@ -353,9 +353,17 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
     // En un DM 1:1 normalmente responde a todo → el gap = solo el turno actual → historyContext
     // lo filtra → sin inyección (eficiente). Si acumuló mensajes sin verlos (o sesión fresca),
     // el gap los trae. La cita completa SÍ va por-turno.
-    const recent = await db.recentContext({ dmId: data.id }, 8).catch(() => []);
+    const dmScope = { dmId: data.id };
+    const recent = await db.recentContext(dmScope, CATCHUP_FETCH).catch(() => []);
     const { esRecordatorio } = await import("./reminders.server");
-    const history = historyContext(gapDesdeUltimaRespuesta(recent, esRecordatorio), data.body);
+    const gap = gapDesdeUltimaRespuesta(recent, esRecordatorio);
+    // Ver el gemelo en chat.ts: el COUNT sólo se paga si el fetch volvió lleno.
+    let totalGap = gap.length;
+    if (recent.length >= CATCHUP_FETCH) {
+      const afterId = recent[recent.length - gap.length - 1]?.id ?? null;
+      totalGap = await db.countAfter(dmScope, afterId).catch(() => gap.length);
+    }
+    const history = historyContext(gap, data.body, { totalGap, sender: data.sender });
     // El contexto de conectores ya NO se arma aquí: vive en `runAgentTurn`
     // (agents.server.ts), que lo hace para DMs y canales por igual a partir del
     // `invokerSub` que este mismo archivo le pasa. Estaba sólo en este camino, y los
@@ -368,7 +376,10 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
       data.attachments ?? [];
     let reentrega = false;
     if (!mediaAtts.length && recent.length) {
-      const conAdj = await db.attachAttachments([...recent]).catch(() => []);
+      // ⚠️ Sólo los últimos 8, aunque el catch-up ahora traiga 40. Este scan busca el
+      // adjunto que se está discutiendo AHORA; ensancharlo a 40 re-entregaría un archivo
+      // de hace media conversación como si fuera del turno.
+      const conAdj = await db.attachAttachments(recent.slice(-8)).catch(() => []);
       for (let i = conAdj.length - 1; i >= 0; i--) {
         const m = conAdj[i];
         if (m.agent_handle || !m.attachments?.length) continue;
