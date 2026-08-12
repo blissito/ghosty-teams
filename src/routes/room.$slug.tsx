@@ -1,7 +1,7 @@
 import { createFileRoute, notFound, useRouter } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createServerFn } from "@tanstack/react-start";
-import { ChevronDown, Circle, MessageSquare, Paperclip, Square, X } from "lucide-react";
+import { ChevronDown, Circle, MessageSquare, Paperclip, X } from "lucide-react";
 import GhostyMascot from "../components/GhostyMascot";
 import { ChatCtx, ChatCtxDefaults, MessageRow, type SessionUser } from "../components/chat/message";
 import type { Message, CustomEmoji, ReactionAgg } from "../db.server";
@@ -135,7 +135,10 @@ function RoomAbierto() {
   const [canWrite, setCanWrite] = useState(false);
   const [modero, setModero] = useState(false);
   const [grabando, setGrabando] = useState(false);
+  // Sólo importa para no disparar dos veces: quien ve el botón es el iframe, y ése ya se
+  // deshabilita solo mientras la petición va en camino.
   const [recBusy, setRecBusy] = useState(false);
+  void recBusy;
   const [online, setOnline] = useState(1);
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
@@ -263,18 +266,50 @@ function RoomAbierto() {
     return () => { vivo = false; clearInterval(t); };
   }, [traerNuevos]);
 
-  async function grabar() {
-    setRecBusy(true);
-    setErr(null);
-    try {
-      const r = await recordingFn({ data: { slug, action: grabando ? "stop" : "start" } });
-      if (!r.ok) setErr(r.error);
-      else setGrabando(!grabando);
-    } catch {
-      setErr("No pude cambiar la grabación.");
-    }
-    setRecBusy(false);
-  }
+  // ⚠️ El BOTÓN de grabar vive DENTRO de la llamada, junto a Salir — que es donde ya
+  // estaba y donde lo espera cualquiera que haya usado Meet, Zoom o Twitch. Lo que no
+  // puede vivir ahí es el CAMINO: la página de la llamada sabe subir a los Files de
+  // EasyBits, y aquí el destino es el storage del workspace, con transcript y con el
+  // enlace publicado en el chat. Así que el iframe manda la intención y Teams la ejecuta.
+  const callRef = useRef<HTMLIFrameElement>(null);
+  const avisarIframe = useCallback((recording: boolean) => {
+    callRef.current?.contentWindow?.postMessage({ t: "gs:rec:state", recording }, "*");
+  }, []);
+
+  const grabar = useCallback(
+    async (accion: "start" | "stop") => {
+      setRecBusy(true);
+      setErr(null);
+      try {
+        const r = await recordingFn({ data: { slug, action: accion } });
+        if (!r.ok) setErr(r.error);
+        else {
+          setGrabando(accion === "start");
+          avisarIframe(accion === "start");
+        }
+      } catch {
+        setErr("No pude cambiar la grabación.");
+      }
+      setRecBusy(false);
+    },
+    [slug, avisarIframe]
+  );
+
+  // La autorización NO la decide este listener: `recordingFn` ya exige ser quien presenta.
+  // Aquí sólo se filtra por procedencia, y **nunca viaja una credencial** en ninguno de los
+  // dos sentidos — sólo "quiero grabar" y "se está grabando".
+  useEffect(() => {
+    const onMsg = (e: MessageEvent) => {
+      if (!callRef.current || e.source !== callRef.current.contentWindow) return;
+      const d = e.data as { t?: string; action?: "start" | "stop" };
+      if (d?.t === "gs:rec:ask") return avisarIframe(grabando);
+      if (d?.t === "gs:rec" && (d.action === "start" || d.action === "stop")) {
+        void grabar(d.action);
+      }
+    };
+    window.addEventListener("message", onMsg);
+    return () => window.removeEventListener("message", onMsg);
+  }, [grabar, avisarIframe, grabando]);
 
   async function enviar(e: React.FormEvent) {
     e.preventDefault();
@@ -385,6 +420,7 @@ function RoomAbierto() {
                ⚠️ Eso significa que abrir la página DESPIERTA la caja. El interruptor
                `call_open` del dueño es la forma de que eso no ocurra. */
             <iframe
+              ref={callRef}
               src={callUrl}
               title={data.title}
               className="h-full w-full border-0"
@@ -425,20 +461,13 @@ function RoomAbierto() {
           )}
 
           <div className="absolute right-4 top-4 flex items-center gap-2">
-            {/* Grabar es de QUIEN MODERA: es una acción sobre la sesión de todos, y su
-                rastro queda publicado. El punto rojo va SIEMPRE visible mientras graba —
-                que se grabe sin que se note es exactamente lo que no puede pasar. */}
-            {modero && callUrl && (
-              <button
-                onClick={grabar}
-                disabled={recBusy}
-                className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium backdrop-blur disabled:opacity-60 ${
-                  grabando ? "bg-red-600 text-white" : "bg-black/70 text-white hover:bg-black/85"
-                }`}
-              >
-                {grabando ? <Square size={12} fill="currentColor" /> : <Circle size={12} fill="currentColor" className="text-red-500" />}
-                {recBusy ? "…" : grabando ? "Detener y guardar" : "Grabar"}
-              </button>
+            {/* Y aquí NO hay botón, hay TESTIGO. Que se grabe sin que se note es
+                exactamente lo que no puede pasar, así que el punto rojo lo ve todo el
+                mundo — no sólo quien presenta, que es el único que ve el botón. */}
+            {grabando && (
+              <span className="flex items-center gap-1.5 rounded-full bg-red-600 px-3 py-1.5 text-xs font-medium text-white">
+                <Circle size={10} fill="currentColor" /> Grabando
+              </span>
             )}
             <button
               onClick={() => setChatAbierto((v) => !v)}
