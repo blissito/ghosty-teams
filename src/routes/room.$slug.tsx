@@ -3,7 +3,7 @@ import { useState } from "react";
 import { createServerFn } from "@tanstack/react-start";
 import GhostyMascot from "../components/GhostyMascot";
 
-// Puerta PÚBLICA de un evento: /en-vivo/<slug>.
+// Puerta PÚBLICA de un evento: /room/<slug>.
 //
 // Aquí entra la comunidad —gente que no es del workspace y que no debe ocupar
 // asiento—, deja su nombre y su correo, y sale rumbo a la sala con un ticket
@@ -86,10 +86,10 @@ const joinEvent = createServerFn({ method: "POST" })
     // sala, que ya reconoce al invitado por su cookie de registro. Un ticket en
     // la barra de direcciones se copia, se pega en un chat y se reenvía — y es
     // de un solo uso, así que el primero que lo abra deja fuera al dueño.
-    return { ok: true, url: `/en-vivo/${encodeURIComponent(data.slug)}/sala` };
+    return { ok: true, url: `/room/${encodeURIComponent(data.slug)}/sala` };
   });
 
-export const Route = createFileRoute("/en-vivo/$slug")({
+export const Route = createFileRoute("/room/$slug")({
   loader: async ({ params }) => {
     const info = await loadEvent({ data: { slug: params.slug } });
     if (!info) throw notFound();

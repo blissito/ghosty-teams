@@ -22,8 +22,8 @@ import { Route as ArtifactsRouteImport } from './routes/artifacts'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as SetupIndexRouteImport } from './routes/setup.index'
 import { Route as T3SplatRouteImport } from './routes/t3.$'
+import { Route as RoomSlugRouteImport } from './routes/room.$slug'
 import { Route as JoinTokenRouteImport } from './routes/join.$token'
-import { Route as EnVivoSlugRouteImport } from './routes/en-vivo.$slug'
 import { Route as CoeditarSlugRouteImport } from './routes/coeditar.$slug'
 import { Route as CSlugRouteImport } from './routes/c.$slug'
 import { Route as ArtefactoIdRouteImport } from './routes/artefacto.$id'
@@ -40,8 +40,8 @@ import { Route as SetupEasybitsConnectRouteImport } from './routes/setup.easybit
 import { Route as SetupEasybitsCallbackRouteImport } from './routes/setup.easybits.callback'
 import { Route as SetupProviderConnectRouteImport } from './routes/setup.$provider.connect'
 import { Route as SetupProviderCallbackRouteImport } from './routes/setup.$provider.callback'
+import { Route as RoomSlugSalaRouteImport } from './routes/room.$slug_.sala'
 import { Route as OauthProviderCallbackRouteImport } from './routes/oauth.$provider.callback'
-import { Route as EnVivoSlugSalaRouteImport } from './routes/en-vivo.$slug_.sala'
 import { Route as CoeditarInvitacionTokenRouteImport } from './routes/coeditar.invitacion.$token'
 import { Route as ArtefactoIdRawRouteImport } from './routes/artefacto.$id.raw'
 import { Route as ApiInternalMembersRouteImport } from './routes/api.internal.members'
@@ -132,14 +132,14 @@ const T3SplatRoute = T3SplatRouteImport.update({
   path: '/t3/$',
   getParentRoute: () => rootRouteImport,
 } as any)
+const RoomSlugRoute = RoomSlugRouteImport.update({
+  id: '/room/$slug',
+  path: '/room/$slug',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const JoinTokenRoute = JoinTokenRouteImport.update({
   id: '/join/$token',
   path: '/join/$token',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const EnVivoSlugRoute = EnVivoSlugRouteImport.update({
-  id: '/en-vivo/$slug',
-  path: '/en-vivo/$slug',
   getParentRoute: () => rootRouteImport,
 } as any)
 const CoeditarSlugRoute = CoeditarSlugRouteImport.update({
@@ -222,14 +222,14 @@ const SetupProviderCallbackRoute = SetupProviderCallbackRouteImport.update({
   path: '/$provider/callback',
   getParentRoute: () => SetupRoute,
 } as any)
+const RoomSlugSalaRoute = RoomSlugSalaRouteImport.update({
+  id: '/room/$slug_/sala',
+  path: '/room/$slug/sala',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const OauthProviderCallbackRoute = OauthProviderCallbackRouteImport.update({
   id: '/oauth/$provider/callback',
   path: '/oauth/$provider/callback',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const EnVivoSlugSalaRoute = EnVivoSlugSalaRouteImport.update({
-  id: '/en-vivo/$slug_/sala',
-  path: '/en-vivo/$slug/sala',
   getParentRoute: () => rootRouteImport,
 } as any)
 const CoeditarInvitacionTokenRoute = CoeditarInvitacionTokenRouteImport.update({
@@ -381,8 +381,8 @@ export interface FileRoutesByFullPath {
   '/artefacto/$id': typeof ArtefactoIdRouteWithChildren
   '/c/$slug': typeof CSlugRoute
   '/coeditar/$slug': typeof CoeditarSlugRoute
-  '/en-vivo/$slug': typeof EnVivoSlugRoute
   '/join/$token': typeof JoinTokenRoute
+  '/room/$slug': typeof RoomSlugRoute
   '/t3/$': typeof T3SplatRoute
   '/setup/': typeof SetupIndexRoute
   '/api/artifact-stream/$id': typeof ApiArtifactStreamIdRoute
@@ -403,8 +403,8 @@ export interface FileRoutesByFullPath {
   '/api/internal/members': typeof ApiInternalMembersRoute
   '/artefacto/$id/raw': typeof ArtefactoIdRawRoute
   '/coeditar/invitacion/$token': typeof CoeditarInvitacionTokenRoute
-  '/en-vivo/$slug/sala': typeof EnVivoSlugSalaRoute
   '/oauth/$provider/callback': typeof OauthProviderCallbackRoute
+  '/room/$slug/sala': typeof RoomSlugSalaRoute
   '/setup/$provider/callback': typeof SetupProviderCallbackRoute
   '/setup/$provider/connect': typeof SetupProviderConnectRoute
   '/setup/easybits/callback': typeof SetupEasybitsCallbackRoute
@@ -439,8 +439,8 @@ export interface FileRoutesByTo {
   '/artefacto/$id': typeof ArtefactoIdRouteWithChildren
   '/c/$slug': typeof CSlugRoute
   '/coeditar/$slug': typeof CoeditarSlugRoute
-  '/en-vivo/$slug': typeof EnVivoSlugRoute
   '/join/$token': typeof JoinTokenRoute
+  '/room/$slug': typeof RoomSlugRoute
   '/t3/$': typeof T3SplatRoute
   '/setup': typeof SetupIndexRoute
   '/api/artifact-stream/$id': typeof ApiArtifactStreamIdRoute
@@ -461,8 +461,8 @@ export interface FileRoutesByTo {
   '/api/internal/members': typeof ApiInternalMembersRoute
   '/artefacto/$id/raw': typeof ArtefactoIdRawRoute
   '/coeditar/invitacion/$token': typeof CoeditarInvitacionTokenRoute
-  '/en-vivo/$slug/sala': typeof EnVivoSlugSalaRoute
   '/oauth/$provider/callback': typeof OauthProviderCallbackRoute
+  '/room/$slug/sala': typeof RoomSlugSalaRoute
   '/setup/$provider/callback': typeof SetupProviderCallbackRoute
   '/setup/$provider/connect': typeof SetupProviderConnectRoute
   '/setup/easybits/callback': typeof SetupEasybitsCallbackRoute
@@ -499,8 +499,8 @@ export interface FileRoutesById {
   '/artefacto/$id': typeof ArtefactoIdRouteWithChildren
   '/c/$slug': typeof CSlugRoute
   '/coeditar/$slug': typeof CoeditarSlugRoute
-  '/en-vivo/$slug': typeof EnVivoSlugRoute
   '/join/$token': typeof JoinTokenRoute
+  '/room/$slug': typeof RoomSlugRoute
   '/t3/$': typeof T3SplatRoute
   '/setup/': typeof SetupIndexRoute
   '/api/artifact-stream/$id': typeof ApiArtifactStreamIdRoute
@@ -521,8 +521,8 @@ export interface FileRoutesById {
   '/api/internal/members': typeof ApiInternalMembersRoute
   '/artefacto/$id/raw': typeof ArtefactoIdRawRoute
   '/coeditar/invitacion/$token': typeof CoeditarInvitacionTokenRoute
-  '/en-vivo/$slug_/sala': typeof EnVivoSlugSalaRoute
   '/oauth/$provider/callback': typeof OauthProviderCallbackRoute
+  '/room/$slug_/sala': typeof RoomSlugSalaRoute
   '/setup/$provider/callback': typeof SetupProviderCallbackRoute
   '/setup/$provider/connect': typeof SetupProviderConnectRoute
   '/setup/easybits/callback': typeof SetupEasybitsCallbackRoute
@@ -560,8 +560,8 @@ export interface FileRouteTypes {
     | '/artefacto/$id'
     | '/c/$slug'
     | '/coeditar/$slug'
-    | '/en-vivo/$slug'
     | '/join/$token'
+    | '/room/$slug'
     | '/t3/$'
     | '/setup/'
     | '/api/artifact-stream/$id'
@@ -582,8 +582,8 @@ export interface FileRouteTypes {
     | '/api/internal/members'
     | '/artefacto/$id/raw'
     | '/coeditar/invitacion/$token'
-    | '/en-vivo/$slug/sala'
     | '/oauth/$provider/callback'
+    | '/room/$slug/sala'
     | '/setup/$provider/callback'
     | '/setup/$provider/connect'
     | '/setup/easybits/callback'
@@ -618,8 +618,8 @@ export interface FileRouteTypes {
     | '/artefacto/$id'
     | '/c/$slug'
     | '/coeditar/$slug'
-    | '/en-vivo/$slug'
     | '/join/$token'
+    | '/room/$slug'
     | '/t3/$'
     | '/setup'
     | '/api/artifact-stream/$id'
@@ -640,8 +640,8 @@ export interface FileRouteTypes {
     | '/api/internal/members'
     | '/artefacto/$id/raw'
     | '/coeditar/invitacion/$token'
-    | '/en-vivo/$slug/sala'
     | '/oauth/$provider/callback'
+    | '/room/$slug/sala'
     | '/setup/$provider/callback'
     | '/setup/$provider/connect'
     | '/setup/easybits/callback'
@@ -677,8 +677,8 @@ export interface FileRouteTypes {
     | '/artefacto/$id'
     | '/c/$slug'
     | '/coeditar/$slug'
-    | '/en-vivo/$slug'
     | '/join/$token'
+    | '/room/$slug'
     | '/t3/$'
     | '/setup/'
     | '/api/artifact-stream/$id'
@@ -699,8 +699,8 @@ export interface FileRouteTypes {
     | '/api/internal/members'
     | '/artefacto/$id/raw'
     | '/coeditar/invitacion/$token'
-    | '/en-vivo/$slug_/sala'
     | '/oauth/$provider/callback'
+    | '/room/$slug_/sala'
     | '/setup/$provider/callback'
     | '/setup/$provider/connect'
     | '/setup/easybits/callback'
@@ -737,8 +737,8 @@ export interface RootRouteChildren {
   ArtefactoIdRoute: typeof ArtefactoIdRouteWithChildren
   CSlugRoute: typeof CSlugRoute
   CoeditarSlugRoute: typeof CoeditarSlugRoute
-  EnVivoSlugRoute: typeof EnVivoSlugRoute
   JoinTokenRoute: typeof JoinTokenRoute
+  RoomSlugRoute: typeof RoomSlugRoute
   T3SplatRoute: typeof T3SplatRoute
   ApiArtifactStreamIdRoute: typeof ApiArtifactStreamIdRoute
   ApiAttachmentIdRoute: typeof ApiAttachmentIdRoute
@@ -757,8 +757,8 @@ export interface RootRouteChildren {
   ApiInternalAnnouncementsRoute: typeof ApiInternalAnnouncementsRoute
   ApiInternalMembersRoute: typeof ApiInternalMembersRoute
   CoeditarInvitacionTokenRoute: typeof CoeditarInvitacionTokenRoute
-  EnVivoSlugSalaRoute: typeof EnVivoSlugSalaRoute
   OauthProviderCallbackRoute: typeof OauthProviderCallbackRoute
+  RoomSlugSalaRoute: typeof RoomSlugSalaRoute
   ApiCollabDocIdSessionEndRoute: typeof ApiCollabDocIdSessionEndRoute
   ApiCollabDocIdStateRoute: typeof ApiCollabDocIdStateRoute
   ApiHooksSentryTokenRoute: typeof ApiHooksSentryTokenRoute
@@ -860,18 +860,18 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof T3SplatRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/room/$slug': {
+      id: '/room/$slug'
+      path: '/room/$slug'
+      fullPath: '/room/$slug'
+      preLoaderRoute: typeof RoomSlugRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/join/$token': {
       id: '/join/$token'
       path: '/join/$token'
       fullPath: '/join/$token'
       preLoaderRoute: typeof JoinTokenRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/en-vivo/$slug': {
-      id: '/en-vivo/$slug'
-      path: '/en-vivo/$slug'
-      fullPath: '/en-vivo/$slug'
-      preLoaderRoute: typeof EnVivoSlugRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/coeditar/$slug': {
@@ -986,18 +986,18 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SetupProviderCallbackRouteImport
       parentRoute: typeof SetupRoute
     }
+    '/room/$slug_/sala': {
+      id: '/room/$slug_/sala'
+      path: '/room/$slug/sala'
+      fullPath: '/room/$slug/sala'
+      preLoaderRoute: typeof RoomSlugSalaRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/oauth/$provider/callback': {
       id: '/oauth/$provider/callback'
       path: '/oauth/$provider/callback'
       fullPath: '/oauth/$provider/callback'
       preLoaderRoute: typeof OauthProviderCallbackRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/en-vivo/$slug_/sala': {
-      id: '/en-vivo/$slug_/sala'
-      path: '/en-vivo/$slug/sala'
-      fullPath: '/en-vivo/$slug/sala'
-      preLoaderRoute: typeof EnVivoSlugSalaRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/coeditar/invitacion/$token': {
@@ -1225,8 +1225,8 @@ const rootRouteChildren: RootRouteChildren = {
   ArtefactoIdRoute: ArtefactoIdRouteWithChildren,
   CSlugRoute: CSlugRoute,
   CoeditarSlugRoute: CoeditarSlugRoute,
-  EnVivoSlugRoute: EnVivoSlugRoute,
   JoinTokenRoute: JoinTokenRoute,
+  RoomSlugRoute: RoomSlugRoute,
   T3SplatRoute: T3SplatRoute,
   ApiArtifactStreamIdRoute: ApiArtifactStreamIdRoute,
   ApiAttachmentIdRoute: ApiAttachmentIdRoute,
@@ -1245,8 +1245,8 @@ const rootRouteChildren: RootRouteChildren = {
   ApiInternalAnnouncementsRoute: ApiInternalAnnouncementsRoute,
   ApiInternalMembersRoute: ApiInternalMembersRoute,
   CoeditarInvitacionTokenRoute: CoeditarInvitacionTokenRoute,
-  EnVivoSlugSalaRoute: EnVivoSlugSalaRoute,
   OauthProviderCallbackRoute: OauthProviderCallbackRoute,
+  RoomSlugSalaRoute: RoomSlugSalaRoute,
   ApiCollabDocIdSessionEndRoute: ApiCollabDocIdSessionEndRoute,
   ApiCollabDocIdStateRoute: ApiCollabDocIdStateRoute,
   ApiHooksSentryTokenRoute: ApiHooksSentryTokenRoute,

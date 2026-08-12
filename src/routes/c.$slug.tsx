@@ -4773,7 +4773,7 @@ function EventSection({
   const [isOn, setIsOn] = useState(channel?.public_access === 1);
 
   const effectiveSlug = (shareSlug.trim() || channel?.slug || "").toLowerCase();
-  const liveUrl = typeof window !== "undefined" && effectiveSlug ? `${window.location.origin}/en-vivo/${effectiveSlug}` : "";
+  const liveUrl = typeof window !== "undefined" && effectiveSlug ? `${window.location.origin}/room/${effectiveSlug}` : "";
 
   async function save(next: { publicAccess?: boolean }) {
     setBusy(true);
@@ -4892,7 +4892,7 @@ function EventSection({
 
       <label className="mb-1 block text-xs font-medium text-muted">{t("Liga pública")}</label>
       <div className="mb-3 flex items-center gap-1 text-sm">
-        <span className="shrink-0 text-muted">/en-vivo/</span>
+        <span className="shrink-0 text-muted">/room/</span>
         <input
           value={shareSlug}
           onChange={(e) => setShareSlug(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ""))}

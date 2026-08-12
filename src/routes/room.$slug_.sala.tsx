@@ -8,8 +8,8 @@ import { EventArtifacts, EventSidebar } from "../components/EventShowcase";
 
 // La sala del evento: el video de la caja de LiveKit embebido, y el chat al lado.
 //
-// ⚠️ El archivo se llama `en-vivo.$slug_.sala.tsx` con GUION BAJO en `$slug_`, y
-// no es cosmético: sin él, TanStack anida esta ruta DENTRO de `en-vivo.$slug` y,
+// ⚠️ El archivo se llama `room.$slug_.sala.tsx` con GUION BAJO en `$slug_`, y
+// no es cosmético: sin él, TanStack anida esta ruta DENTRO de `room.$slug` y,
 // como aquel componente no pinta ningún <Outlet/>, la sala no se renderiza nunca.
 // El síntoma es de los que engañan — la URL cambia a /sala, la navegación
 // "funciona", y en pantalla sigue el formulario de registro vacío, o sea que
@@ -55,11 +55,11 @@ const loadSala = createServerFn({ method: "GET" })
     };
   });
 
-export const Route = createFileRoute("/en-vivo/$slug_/sala")({
+export const Route = createFileRoute("/room/$slug_/sala")({
   loader: async ({ params }) => {
     const d = await loadSala({ data: { slug: params.slug } });
     if (!d) throw notFound();
-    if ("needsRegistration" in d) throw redirect({ to: "/en-vivo/$slug", params: { slug: params.slug } });
+    if ("needsRegistration" in d) throw redirect({ to: "/room/$slug", params: { slug: params.slug } });
     return d;
   },
   head: ({ loaderData }) => ({
