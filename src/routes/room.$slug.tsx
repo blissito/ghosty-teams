@@ -1,4 +1,4 @@
-import { createFileRoute, notFound } from "@tanstack/react-router";
+import { createFileRoute, notFound, useRouter } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createServerFn } from "@tanstack/react-start";
 import { MessageSquare, X } from "lucide-react";
@@ -6,7 +6,7 @@ import GhostyMascot from "../components/GhostyMascot";
 import { ChatCtx, ChatCtxDefaults, MessageRow, type SessionUser } from "../components/chat/message";
 import type { Message, CustomEmoji, ReactionAgg } from "../db.server";
 import { eventFlowFn, eventPostFn, eventReactFn } from "../server/events/chat";
-import { joinCallFn, requestCodeFn, verifyCodeFn } from "../server/events/identity";
+import { requestCodeFn, verifyCodeFn } from "../server/events/identity";
 import { useEventStream } from "../hooks/useEventStream";
 
 // Un ROOM ABIERTO: /room/<slug>. Una sola página, para todo.
@@ -32,6 +32,15 @@ type RoomInfo = {
   callOpen: boolean;
   /** Epoch UTC, o `null` si el room no tiene hora (siempre abierto). */
   startsAt: number | null;
+  /**
+   * La URL de la llamada, YA FIRMADA, cuando quien abre puede entrar.
+   *
+   * ⚠️ Se acuña en el LOADER y no al pulsar. Con el minteo en el cliente siempre había
+   * un hueco —medio segundo de pantalla intermedia mientras iba y volvía la llamada—, y
+   * ese paso es justo el que sobra: se llega a la llamada, no a una antesala.
+   * El ticket dura 120 s y aquí se usa en el mismo instante, así que le sobra de largo.
+   */
+  callUrl: string | null;
   brand: { logo: string | null; name: string | null };
 };
 
@@ -69,12 +78,21 @@ const loadRoom = createServerFn({ method: "GET" })
       .then((m) => m.activeBrandKit())
       .then((k) => ({ logo: k?.logoUrl ?? null, name: k?.name ?? null }))
       .catch(() => ({ logo: null, name: null }));
+    // Sólo si la llamada está abierta Y quien abre puede entrar (miembro, o invitado con
+    // el correo verificado). Un anónimo recibe `null` y su puerta es el chat.
+    let callUrl: string | null = null;
+    if (ch.call_open === 1) {
+      const { eventViewerFor, roomUrlFor } = await import("../server/events/access.server");
+      const viewer = await eventViewerFor(ch).catch(() => null);
+      if (viewer) callUrl = await roomUrlFor(ch, viewer).catch(() => null);
+    }
     return {
       title: ch.call_title || ch.name,
       mode: ch.call_mode,
       callOpen: ch.call_open === 1,
       startsAt: ch.starts_at ?? null,
       brand,
+      callUrl,
     };
   });
 
@@ -99,6 +117,7 @@ export const Route = createFileRoute("/room/$slug")({
 function RoomAbierto() {
   const data = Route.useLoaderData();
   const { slug } = Route.useParams();
+  const router = useRouter();
 
   const [messages, setMessages] = useState<Message[]>([]);
   const [emojis, setEmojis] = useState<CustomEmoji[]>([]);
@@ -111,8 +130,7 @@ function RoomAbierto() {
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
   const [identificando, setIdentificando] = useState(false);
-  const [callUrl, setCallUrl] = useState<string | null>(null);
-  const [callBusy, setCallBusy] = useState(false);
+  const [callUrl, setCallUrl] = useState<string | null>(data.callUrl);
   // Nace ABIERTO: el chat es la mitad de para qué existe el room, y esconderlo por
   // defecto obliga a descubrirlo. En móvil se abre encima, así que ahí arranca cerrado
   // para no tapar el video nada más entrar.
@@ -243,37 +261,6 @@ function RoomAbierto() {
     }
   }
 
-  // Entra SOLO en cuanto se puede. La pantalla de espera propia sobraba: detrás venía el
-  // lobby de LiveKit —vista previa de cámara, micrófono, nombre— o sea la misma pantalla
-  // dos veces seguidas.
-  //
-  // ⚠️ Esto DESPIERTA la caja al abrir la página, no al pulsar. Es el precio de quitar el
-  // paso de más, y sólo lo pagan los identificados: a un anónimo no se le puede acuñar
-  // ticket, así que para él sigue habiendo un botón (que además es su puerta de entrada).
-  const autoEntré = useRef(false);
-  useEffect(() => {
-    if (autoEntré.current || callUrl || callBusy) return;
-    if (!data.callOpen || !canWrite) return;
-    autoEntré.current = true;
-    void entrarALlamada();
-  }, [data.callOpen, canWrite, callUrl, callBusy]);
-
-  async function entrarALlamada() {
-    if (!canWrite) return setIdentificando(true);
-    setCallBusy(true);
-    setErr(null);
-    try {
-      // El ticket se acuña AHORA: dura 120 s y es de un solo uso. Acuñarlo al cargar la
-      // página lo dejaría muerto para quien lleva media hora leyendo.
-      const r = await joinCallFn({ data: { slug } });
-      if (r.ok) setCallUrl(r.url);
-      else setErr(r.error);
-    } catch {
-      setErr("No pude abrir la llamada. Intenta de nuevo.");
-    }
-    setCallBusy(false);
-  }
-
   // ⚠️ El CONTEXTO es lo que hace que aquí se pinte el chat DE VERDAD y no una copia.
   // Lo que un room abierto no tiene se apaga con no-ops: fijar, destacar, editar,
   // reenviar, hilos, perfiles y ajustes son cosas de miembros. `MessageRow` ya sabe
@@ -302,11 +289,14 @@ function RoomAbierto() {
           la llamada— y sobraba: quien llega a un evento viene a las dos cosas a la vez.
           Lo que cambia al entrar no es la página, es lo que ocupa el escenario. */}
       <div className="flex h-dvh bg-surface">
-        <main className="relative flex min-w-0 flex-1 flex-col bg-black">
+        {/* El escenario. Con llamada, negro; sin ella, superficie normal — con el logo
+            del cliente encima, un fondo negro se come los logos oscuros. */}
+        <main className={`relative flex min-w-0 flex-1 flex-col ${callUrl ? "bg-black" : "bg-surface-2"}`}>
           {callUrl ? (
-            /* ⚠️ El iframe sólo se monta DESPUÉS de pulsar. La caja de LiveKit puede
-               estar dormida y pedirle algo la despierta: no se despierta porque alguien
-               pase por aquí, sólo porque alguien entre de verdad. */
+            /* La URL llega YA FIRMADA desde el loader, así que el lobby de LiveKit está
+               en el primer pintado: no hay antesala propia, ni spinner, ni un paso de más.
+               ⚠️ Eso significa que abrir la página DESPIERTA la caja. El interruptor
+               `call_open` del dueño es la forma de que eso no ocurra. */
             <iframe
               src={callUrl}
               title={data.title}
@@ -322,9 +312,9 @@ function RoomAbierto() {
                 <GhostyMascot className="h-10 w-10" />
               )}
               <div>
-                <h1 className="text-2xl font-bold leading-tight text-white sm:text-3xl">{data.title}</h1>
+                <h1 className="text-2xl font-bold leading-tight sm:text-3xl">{data.title}</h1>
                 {data.startsAt && (
-                  <p className="mt-2 text-sm text-white/70">
+                  <p className="mt-2 text-sm text-muted">
                     {/* En el reloj de QUIEN MIRA: un evento se anuncia a gente de varias
                         zonas horarias, y la hora del dueño es la equivocada para el resto. */}
                     {new Date(data.startsAt * 1000).toLocaleString([], {
@@ -334,16 +324,12 @@ function RoomAbierto() {
                   </p>
                 )}
               </div>
-
-              {/* Sin botón. La puerta es el CHAT: al intentar escribir se pide el
-                  correo, y en cuanto está verificado la llamada se abre sola con ese
-                  nombre. Un botón aquí sería una segunda puerta que pide lo mismo. */}
-              <p className="max-w-xs text-sm text-white/60">
+              {/* Sin botón: la puerta es el CHAT. Al intentar escribir se pide el correo,
+                  y con él verificado la llamada llega ya montada en la siguiente carga. */}
+              <p className="max-w-xs text-sm text-muted">
                 {!data.callOpen
                   ? "La llamada no está abierta ahora mismo."
-                  : callBusy
-                    ? "Abriendo la llamada…"
-                    : "Escribe en el chat para entrar a la llamada."}
+                  : "Escribe en el chat para entrar a la llamada."}
               </p>
               {err && <p className="text-xs text-red-400">{err}</p>}
             </div>
@@ -403,6 +389,10 @@ function RoomAbierto() {
             onListo={() => {
               setIdentificando(false);
               setCanWrite(true);
+              // Re-corre el loader con la cookie recién sembrada: vuelve con la URL de la
+              // llamada ya firmada, así que quien acaba de verificar aterriza DENTRO sin
+              // recargar ni pulsar nada.
+              void router.invalidate();
             }}
             onCerrar={() => setIdentificando(false)}
           />

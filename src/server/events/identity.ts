@@ -85,36 +85,6 @@ export const requestCodeFn = createServerFn({ method: "POST" })
   });
 
 /**
- * La URL de la sala de video, acuñada EN ESTE INSTANTE.
- *
- * ⚠️ Existe como llamada aparte por una razón concreta: el ticket dura **120 s y es de un
- * solo uso** (`ticket.server.ts`). Acuñarlo al cargar la página —como se hacía— funcionaba
- * cuando la página ERA el video; con un room donde alguien lee media hora antes de
- * entrar, ese ticket llega muerto y la sala parece rota.
- *
- * Y por eso tampoco se pre-carga el iframe: la caja de LiveKit puede estar dormida, y
- * pedirle algo la DESPIERTA. Sólo se despierta cuando alguien pulsa de verdad.
- */
-export const joinCallFn = createServerFn({ method: "POST" })
-  .validator((d: { slug: string }) => d)
-  .handler(async ({ data }): Promise<{ ok: true; url: string } | { ok: false; error: string }> => {
-    const r = await room(data.slug);
-    if (!r || !r.ch.call_mode) return { ok: false, error: "Este room no está disponible" };
-    // El dueño decide si la sala está abierta. Apagada, no hay URL que dar — ni siquiera
-    // a quien adivine el nombre de esta función.
-    if (r.ch.call_open !== 1) return { ok: false, error: "La llamada está cerrada" };
-
-    // Entrar al video SÍ exige identidad: es lo mismo que escribir. Leer es libre.
-    const { eventViewerFor, roomUrlFor } = await import("./access.server");
-    const viewer = await eventViewerFor(r.ch);
-    if (!viewer) return { ok: false, error: "Identifícate para entrar a la llamada" };
-
-    const url = await roomUrlFor(r.ch, viewer);
-    if (!url) return { ok: false, error: "La llamada no está configurada" };
-    return { ok: true, url };
-  });
-
-/**
  * Paso 2: el código → cookie de invitado y permiso para participar.
  *
  * El `sub` lo acuña el SERVIDOR (`guestSubForEvents`) y se ata al correo sólo aquí, al
