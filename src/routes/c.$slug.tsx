@@ -4762,6 +4762,15 @@ function EventSection({
   const [title, setTitle] = useState(channel?.call_title ?? "");
   const [agentOn, setAgentOn] = useState(channel?.agent_enabled === 1);
   const [callOn, setCallOn] = useState(channel?.call_open === 1);
+  // `datetime-local` habla en hora LOCAL y sin zona; la columna es epoch UTC. La ida y la
+  // vuelta se hacen aquí, en un solo sitio, para que no haya dos conversiones que puedan
+  // divergir por una hora sin que nadie lo note hasta el día del evento.
+  const [startsAt, setStartsAt] = useState(() => {
+    if (!channel?.starts_at) return "";
+    const d = new Date(channel.starts_at * 1000);
+    const p2 = (n: number) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}T${p2(d.getHours())}:${p2(d.getMinutes())}`;
+  });
   const [open, setOpen] = useState(channel?.public_access === 1);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -4788,6 +4797,7 @@ function EventSection({
           title: title.trim() || null,
           agentEnabled: agentOn,
           callOpen: callOn,
+          startsAt: startsAt ? Math.floor(new Date(startsAt).getTime() / 1000) : null,
           ...(next.publicAccess !== undefined ? { publicAccess: next.publicAccess } : {}),
         },
       });
@@ -4891,6 +4901,20 @@ function EventSection({
         placeholder={channel?.name ?? ""}
         className="mb-3 w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm outline-none focus:border-brand"
       />
+
+      <label className="mb-1 block text-xs font-medium text-muted">{t("Empieza el…")}</label>
+      {/* `datetime-local` da la hora en el RELOJ DE QUIEN LA ESCRIBE y se guarda en UTC:
+          un webinar se anuncia a gente de varias zonas, y la página se la pinta a cada
+          quien en la suya. Vacío = room siempre abierto, que es un caso legítimo. */}
+      <input
+        type="datetime-local"
+        value={startsAt}
+        onChange={(e) => setStartsAt(e.target.value)}
+        className="mb-1 w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm outline-none focus:border-brand"
+      />
+      <p className="mb-3 text-[11px] text-muted">
+        {t("Déjalo vacío si el room está siempre abierto y no hay una hora concreta.")}
+      </p>
 
       <label className="mb-1 block text-xs font-medium text-muted">{t("Liga pública")}</label>
       <div className="mb-3 flex items-center gap-1 text-sm">

@@ -84,6 +84,8 @@ export async function sendCodeEmail(opts: {
   roomTitle: string;
   /** Nombre del workspace: quien recibe esto no conoce "Ghosty", conoce al cliente. */
   deQuien?: string;
+  /** La liga del room. Sin ella, quien cierra la pestaña se queda con un código y sin dónde usarlo. */
+  roomUrl?: string;
 }): Promise<boolean> {
   const { ghostyEmail } = await import("../email-template.server");
   const { sendSesEmail } = await import("../ses.server");
@@ -98,9 +100,19 @@ export async function sendCodeEmail(opts: {
       `Escríbelo en la página de «${opts.roomTitle}» para poder participar.`,
       "Caduca en 10 minutos. Si no lo pediste tú, ignora este correo.",
     ].join("\n\n"),
+    // ⚠️ El botón vuelve al ROOM, no verifica nada: el código se teclea en la página. Una
+    // liga que verificara sola convertiría esto en un magic link, que es justo lo que se
+    // evitó — abre pestaña nueva y quien la pulsa pierde el room donde estaba.
+    //
+    // Y hace falta: sin él, quien lee el correo en el teléfono se queda con seis dígitos y
+    // sin sitio donde ponerlos.
+    ...(opts.roomUrl ? { cta: { label: "Volver al room", url: opts.roomUrl } } : {}),
     footer: "externo",
     locale,
     deQuien: opts.deQuien,
+    // El renglón de arriba dice el nombre del CLIENTE cuando lo hay: quien recibe esto se
+    // registró en su evento y no sabe qué es "Ghosty Studio".
+    marca: opts.deQuien ?? "Ghosty Teams",
   });
 
   return sendSesEmail({

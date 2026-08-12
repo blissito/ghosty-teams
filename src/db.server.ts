@@ -24,6 +24,8 @@ export type Channel = {
   public_since?: number | null;
   /** ¿La sala de video está abierta a la comunidad? Lo decide el dueño. */
   call_open?: number;
+  /** Cuándo empieza el evento (epoch UTC). NULL = siempre abierto, sin hora. */
+  starts_at?: number | null;
   threads?: Message[]; // hilos raíz (adjuntados por getChannelView para el sidebar)
 };
 
@@ -45,6 +47,7 @@ function toChannel(r: Row): Channel {
     agent_enabled: num(r.agent_enabled),
     public_since: r.public_since == null ? null : num(r.public_since),
     call_open: num(r.call_open),
+    starts_at: r.starts_at == null ? null : num(r.starts_at),
   };
 }
 
@@ -1673,6 +1676,7 @@ export async function setChannelEvent(
     publicAccess?: boolean;
     agentEnabled?: boolean;
     callOpen?: boolean;
+    startsAt?: number | null;
   }
 ): Promise<void> {
   const sets: string[] = [];
@@ -1685,6 +1689,7 @@ export async function setChannelEvent(
   if (patch.publicAccess !== undefined) put("public_access", patch.publicAccess ? 1 : 0);
   if (patch.agentEnabled !== undefined) put("agent_enabled", patch.agentEnabled ? 1 : 0);
   if (patch.callOpen !== undefined) put("call_open", patch.callOpen ? 1 : 0);
+  if (patch.startsAt !== undefined) put("starts_at", patch.startsAt);
   if (!sets.length) return;
   args.push(channelId);
   await dbq(`UPDATE gc_channels SET ${sets.join(", ")} WHERE id = ?`, args);

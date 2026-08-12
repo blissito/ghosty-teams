@@ -45,6 +45,12 @@ export type GhostyEmail = {
   locale?: Locale;
   /** "Brendi" → el pie externo dice quién escribe. Sin esto, sólo el producto. */
   deQuien?: string;
+  /**
+   * El renglón de arriba. Por defecto "Ghosty Studio", que es de dónde salen los correos
+   * del producto; un correo que manda un WORKSPACE a gente de fuera pone ahí el nombre que
+   * esa gente reconoce, que es el del cliente y no el nuestro.
+   */
+  marca?: string;
 };
 
 export function escapeHtml(s: string): string {
@@ -116,9 +122,13 @@ export function ghostyEmail(e: GhostyEmail): { html: string; text: string; inlin
     : null;
   const pie = pieTexto(e.footer ?? "workspace", e.deQuien, e.locale ?? DEFAULT_LOCALE);
 
-  const html = `<!doctype html><html><body style="margin:0;padding:28px 12px;background:#f5f5f7">
-  <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="max-width:540px;margin:0 auto;background:#f4f4f7;border:1px solid #e6e6ea;border-radius:16px">
-    <tr><td style="padding:22px 24px 0;font:600 13px/1 system-ui,-apple-system,Segoe UI,sans-serif;color:#8a8a94;letter-spacing:.02em">Ghosty Studio</td></tr>
+  // ⚠️ Tres NIVELES de fondo, y tienen que distinguirse: página → tarjeta → globo. Estaban
+  // en #f5f5f7 y #f4f4f7, o sea el mismo gris con otro nombre, así que la tarjeta no se
+  // leía como tarjeta y el correo parecía un bloque de texto suelto. El globo es blanco y
+  // es lo que tiene que destacar: ahí va el mensaje.
+  const html = `<!doctype html><html><body style="margin:0;padding:28px 12px;background:#e8e8ee">
+  <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="max-width:540px;margin:0 auto;background:#f7f7fa;border:1px solid #dcdce4;border-radius:16px">
+    <tr><td style="padding:22px 24px 0;font:600 13px/1 system-ui,-apple-system,Segoe UI,sans-serif;color:#6b6b78;letter-spacing:.02em">${escapeHtml(e.marca ?? "Ghosty Studio")}</td></tr>
 
     <!-- Ghosty HABLANDO: mascot + globo de cómic. Dos celdas de tabla (no flex: Outlook no
          lo entiende). -->

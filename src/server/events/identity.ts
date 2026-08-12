@@ -76,11 +76,17 @@ export const requestCodeFn = createServerFn({ method: "POST" })
       .then((m) => m.activeBrandKit())
       .then((k) => k?.name ?? undefined)
       .catch(() => undefined);
+    // El origin se lee del REQUEST vivo: cada workspace sirve el room desde su propio
+    // subdominio, así que una base fija mandaría a la gente al host equivocado.
+    const origin = await import("../../origin.server")
+      .then((m) => m.reqOrigin())
+      .catch(() => "");
     await v.sendCodeEmail({
       to: email,
       code,
       roomTitle: r.ch.call_title || r.ch.name,
       deQuien: marca,
+      roomUrl: origin ? `${origin.replace(/\/$/, "")}/room/${encodeURIComponent(data.slug)}` : undefined,
     });
     return { ok: true };
   });

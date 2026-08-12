@@ -75,6 +75,7 @@ export const setChannelEventFn = createServerFn({ method: "POST" })
       publicAccess?: boolean;
       agentEnabled?: boolean;
       callOpen?: boolean;
+      startsAt?: number | null;
     }) => d
   )
   .handler(async ({ data }) => {
@@ -99,6 +100,7 @@ export const setChannelEventFn = createServerFn({ method: "POST" })
         publicAccess: data.publicAccess,
         agentEnabled: data.agentEnabled,
         callOpen: data.callOpen,
+        startsAt: data.startsAt,
       });
     } catch (e) {
       // El índice único de `call_share_slug` es lo que impide que dos eventos

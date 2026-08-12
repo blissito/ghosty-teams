@@ -28,8 +28,30 @@ type RoomInfo = {
   title: string;
   mode: "webinar" | "taller";
   callOpen: boolean;
+  /** Epoch UTC, o `null` si el room no tiene hora (siempre abierto). */
+  startsAt: number | null;
   brand: { logo: string | null; name: string | null };
 };
+
+/**
+ * Cuánto falta, en palabras. Devuelve `null` cuando ya empezó — a partir de ahí el
+ * contador estorba, y un «hace 3 h» al lado del botón de entrar sólo diría que llegaste
+ * tarde a algo que sigue pasando.
+ */
+export function faltan(startsAt: number, ahora: number): string | null {
+  const s = startsAt - ahora;
+  if (s <= 0) return null;
+  const d = Math.floor(s / 86400);
+  const h = Math.floor((s % 86400) / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  if (d > 0) return `en ${d} ${d === 1 ? "día" : "días"}`;
+  if (h > 0) return `en ${h} h ${m} min`;
+  if (m > 0) return `en ${m} min`;
+  // Bajo el minuto se deja de contar en segundos: un contador corriendo hacia cero
+  // promete una precisión que ningún evento cumple, y a los 0 s quedaría en ridículo si
+  // alguien se retrasa dos minutos.
+  return "en unos momentos";
+}
 
 const loadRoom = createServerFn({ method: "GET" })
   .validator((d: { slug: string }) => d)
@@ -49,6 +71,7 @@ const loadRoom = createServerFn({ method: "GET" })
       title: ch.call_title || ch.name,
       mode: ch.call_mode,
       callOpen: ch.call_open === 1,
+      startsAt: ch.starts_at ?? null,
       brand,
     };
   });
@@ -87,6 +110,17 @@ function RoomAbierto() {
   const [err, setErr] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const lastId = useRef(0);
+
+  // El reloj avanza cada 30 s, no cada segundo: lo que se pinta son minutos, así que un
+  // tick por segundo serían 60 renders para cambiar nada.
+  const [ahora, setAhora] = useState(() => Math.floor(Date.now() / 1000));
+  useEffect(() => {
+    if (!data.startsAt) return;
+    const t = setInterval(() => setAhora(Math.floor(Date.now() / 1000)), 30_000);
+    return () => clearInterval(t);
+  }, [data.startsAt]);
+  const cuantoFalta = data.startsAt ? faltan(data.startsAt, ahora) : null;
+  const yaEmpezo = !!data.startsAt && !cuantoFalta;
 
   const traerNuevos = useCallback(async () => {
     try {
@@ -173,16 +207,38 @@ function RoomAbierto() {
             <h1 className="truncate text-sm font-semibold">{data.title}</h1>
             <Radio size={13} className="shrink-0 text-brand" />
           </div>
-          <p className="flex items-center gap-1.5 text-[11px] text-muted">
-            <span className="size-1.5 rounded-full bg-emerald-500" />
-            {online} {online === 1 ? "por aquí" : "por aquí"}
+          <p className="flex flex-wrap items-center gap-x-1.5 text-[11px] text-muted">
+            <span className="inline-flex items-center gap-1.5">
+              <span className="size-1.5 rounded-full bg-emerald-500" />
+              {online} por aquí
+            </span>
+            {data.startsAt && (
+              <>
+                <span aria-hidden className="text-muted/50">·</span>
+                {/* La hora se pinta en el reloj de QUIEN MIRA, no en el del dueño: un
+                    webinar se anuncia a gente de varias zonas horarias. */}
+                <span>
+                  {new Date(data.startsAt * 1000).toLocaleString([], {
+                    weekday: "long", day: "numeric", month: "long", hour: "2-digit", minute: "2-digit",
+                  })}
+                </span>
+                {cuantoFalta && <span className="font-medium text-brand">· {cuantoFalta}</span>}
+              </>
+            )}
           </p>
         </div>
         {data.callOpen && !callUrl && (
           <button
             onClick={entrarALlamada}
             disabled={callBusy}
-            className="ml-auto flex shrink-0 items-center gap-1.5 rounded-lg bg-brand px-3 py-1.5 text-xs font-medium text-white disabled:opacity-60"
+            // A la hora del evento el botón deja de ser un detalle de la cabecera: es lo
+            // que la gente vino a hacer. Antes de la hora se queda discreto para no
+            // invitar a despertar la caja media hora antes de tiempo.
+            className={`ml-auto flex shrink-0 items-center gap-1.5 rounded-lg px-3 py-1.5 font-medium disabled:opacity-60 ${
+              yaEmpezo || !data.startsAt
+                ? "bg-brand text-sm text-white"
+                : "border border-border bg-transparent text-xs text-muted hover:text-ink"
+            }`}
           >
             <Video size={14} />
             {callBusy ? "Abriendo la sala…" : "Entrar a la transmisión"}

@@ -1058,6 +1058,13 @@ async function migrate(): Promise<void> {
   // como un canal de voz de Discord. Apagado = ni se ofrece el botón. Un botón que lleva
   // a una sala muerta es peor que no tener botón.
   await addColumn("gc_channels", "call_open", "INTEGER NOT NULL DEFAULT 0");
+  // Cuándo empieza (epoch, UTC). NULL = room siempre abierto, sin evento — que es un caso
+  // legítimo y no un dato faltante: un canal de comunidad no tiene hora.
+  //
+  // ⚠️ Se guarda en UTC y se pinta en el reloj de CADA visitante. Un webinar se anuncia a
+  // gente de varias zonas horarias, y una hora en el huso del dueño es una hora equivocada
+  // para casi todos los demás.
+  await addColumn("gc_channels", "starts_at", "INTEGER");
   // Las filas que YA estaban abiertas cuando llegó esta columna se sellan ahora mismo. Es
   // el lado seguro del error: se pierde de vista lo que la comunidad escribió antes de la
   // migración, pero no se publica nada que estuviera dentro.
