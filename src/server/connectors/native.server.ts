@@ -507,22 +507,36 @@ export function nativeTools(dest: ToolDest | null): ConnectorTool[] {
     {
       name: "memory_read",
       description:
-        "Lee una nota completa de la memoria del workspace por su id del índice (`ws:N`). El índice " +
-        "del turno sólo trae título y arranque; usa esto ANTES de aplicar un hecho del workspace " +
-        "(formato, datos de un cliente, reglas de marca) para trabajar con la nota entera.",
+        "Lee una nota completa de la memoria por su id. `ws:N` = memoria del WORKSPACE (al turno " +
+        "sólo llega el índice: título y arranque, así que léela entera antes de aplicar un hecho de " +
+        "la empresa). `N` a secas = nota de ESTA conversación, para cuando el bloque de memoria dice " +
+        "que algunas no cupieron.",
       inputSchema: {
         type: "object",
-        properties: { id: { type: "string", description: "id del índice, ej. 'ws:12' (o el número solo)" } },
+        properties: { id: { type: "string", description: "'ws:12' para el workspace, '12' para esta conversación" } },
         required: ["id"],
       },
+      // ⚠️ Se ramifica igual que `memory_forget`. Antes hacía strip de `ws:` y llamaba
+      // SIEMPRE a la memoria del workspace, así que un id numérico pelón leía la tabla
+      // equivocada en silencio — devolvía la nota de otro alcance como si fuera la pedida.
       handler: async (_sub, args) => {
         const db = await import("../../db.server");
-        const id = Number(String(args.id ?? "").replace(/^ws:/, ""));
-        if (!Number.isFinite(id) || id <= 0) return { ok: false, error: "id inválido; usa el ws:N del índice" };
-        const note = await db.getWorkspaceMemory(id);
+        const bruto = String(args.id ?? "").trim();
+        const esWs = /^ws:\d+$/i.test(bruto);
+        const id = Number(bruto.replace(/^ws:/i, ""));
+        if (!Number.isFinite(id) || id <= 0) return { ok: false, error: "id inválido; usa 'ws:N' o el número de la nota" };
+        if (esWs) {
+          const note = await db.getWorkspaceMemory(id);
+          return note
+            ? { ok: true, id: `ws:${note.id}`, title: note.title, note: note.note, author: note.createdBy }
+            : { ok: false, error: "esa nota no existe (¿la borraron desde /memory?)" };
+        }
+        const scope = dest ? db.memoryScopeKey(dest) : null;
+        if (!scope || !dest?.handle) return { ok: false, error: "no hay conversación en este turno" };
+        const note = await db.getAgentMemory(id, scope, dest.handle);
         return note
-          ? { ok: true, id: `ws:${note.id}`, title: note.title, note: note.note, author: note.createdBy }
-          : { ok: false, error: "esa nota no existe (¿la borraron desde /memory?)" };
+          ? { ok: true, id: String(note.id), note: note.note, author: note.createdBy }
+          : { ok: false, error: "esa nota no existe en esta conversación" };
       },
     },
     {
@@ -733,6 +747,84 @@ export function nativeTools(dest: ToolDest | null): ConnectorTool[] {
         const db = await import("../../db.server");
         const msgs = await db.searchInScope(scope, q, Number(args.limit) || 20);
         return { ok: true, query: q, count: msgs.length, messages: msgs.map(paraElModelo) };
+      },
+    },
+    {
+      name: "doc_read",
+      description:
+        "Lee partes del DOCUMENTO/ARTEFACTO de esta conversación. Úsalo cuando el contenido " +
+        "que te inyectaron venga RECORTADO (lo dice el propio bloque): tienes el índice completo " +
+        "de direcciones, pero no todo el texto. Pide bloques por su dirección (`n7`, `n8`) o " +
+        "busca por palabra con `query`. NUNCA re-emitas un documento entero desde una vista " +
+        "recortada sin haber leído antes lo que falta.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          blocks: {
+            type: "array",
+            items: { type: "string" },
+            description: "Direcciones a leer, tal cual salen en el índice (ej. ['n3','n4'])",
+          },
+          query: { type: "string", description: "Palabra o frase a buscar dentro del documento" },
+          limit: { type: "number", description: "Máximo de bloques a devolver (tope 40, default 20)" },
+        },
+      },
+      // ⚠️ SIN parámetro de documento, a propósito — igual que chat_search/chat_history. El
+      // objetivo se resuelve en el servidor desde el `dest` FIRMADO del tool-token, así que
+      // se conserva el invariante que promete el system prompt (sólo se toca el artefacto de
+      // la conversación donde te invocaron) sin abrir ninguna superficie de autorización.
+      handler: async (_sub, args) => {
+        const db = await import("../../db.server");
+        const documentId = dest?.dmId
+          ? await db.getDmArtifact(dest.dmId).catch(() => null)
+          : dest?.channelId
+            ? await db.resolveThreadArtifact(dest.channelId, dest.parentId ?? null).catch(() => null)
+            : null;
+        if (!documentId) return { ok: false, error: "esta conversación no tiene documento" };
+        const doc = await db.getDoc(documentId).catch(() => null);
+        if (!doc?.md) return { ok: false, error: "el documento está vacío o no se pudo leer" };
+
+        const tope = Math.max(1, Math.min(Number(args.limit) || 20, 40));
+        const pedidas = Array.isArray(args.blocks) ? args.blocks.map(String) : [];
+        const q = String(args.query ?? "").trim().toLowerCase();
+
+        // Documento de bloques: se responde por DIRECCIÓN, que es lo que el agente necesita
+        // para parchear. Un artefacto HTML no tiene esta estructura → cae al camino de texto.
+        const { parseDocEnvelope, aliasTable, blockText } = await import("../../lib/doc-blocks");
+        const env = doc.kind === "doc" ? parseDocEnvelope(doc.md) : null;
+        if (env) {
+          const byId = new Map<string, string>();
+          const walk = (bs: typeof env.blocks): void => {
+            for (const b of bs) {
+              if (b?.id) byId.set(b.id, blockText(b));
+              if (b?.children?.length) walk(b.children);
+            }
+          };
+          walk(env.blocks);
+          const out: { address: string; text: string }[] = [];
+          for (const [alias, id] of aliasTable(env.blocks)) {
+            const text = byId.get(id) ?? "";
+            const quiere = pedidas.length ? pedidas.includes(alias) : q ? text.toLowerCase().includes(q) : true;
+            if (!quiere) continue;
+            out.push({ address: alias, text });
+            if (out.length >= tope) break;
+          }
+          return { ok: true, kind: doc.kind, count: out.length, blocks: out };
+        }
+
+        // Artefacto/hoja: no hay direcciones de bloque. Con `query` se devuelven las
+        // ventanas de texto alrededor de cada coincidencia; sin ella, el principio.
+        if (q) {
+          const hay = doc.md.toLowerCase();
+          const trozos: string[] = [];
+          let i = hay.indexOf(q);
+          while (i !== -1 && trozos.length < tope) {
+            trozos.push(doc.md.slice(Math.max(0, i - 400), i + 400));
+            i = hay.indexOf(q, i + q.length);
+          }
+          return { ok: true, kind: doc.kind, count: trozos.length, matches: trozos };
+        }
+        return { ok: true, kind: doc.kind, head: doc.md.slice(0, 8000), totalChars: doc.md.length };
       },
     },
     {

@@ -437,6 +437,30 @@ export async function updateAgentMemory(
   return rows.length > 0;
 }
 
+/**
+ * Una nota de room POR ID. Existe porque el hint del turno pasó a ir acotado: cuando la
+ * memoria del room no cabe entera, la cola sale como lista de ids y el agente los lee de
+ * aquí. Antes no hacía falta —iban todas siempre— y por eso no existía.
+ *
+ * ⚠️ El `WHERE` va scoped igual que `deleteAgentMemory`: con el id a secas, una nota de
+ * otro room se podría leer probando números.
+ */
+export async function getAgentMemory(id: number, scopeKey: string, handle: string): Promise<AgentNote | null> {
+  const rows = await dbq(
+    `SELECT id, note, created_by, updated_at FROM gt_agent_memory
+       WHERE id = ? AND scope_key = ? AND agent_handle = ?`,
+    [id, scopeKey, handle]
+  );
+  const r = rows[0];
+  if (!r) return null;
+  return {
+    id: num(r.id),
+    note: String(r.note ?? ""),
+    createdBy: r.created_by == null ? null : String(r.created_by),
+    updatedAt: num(r.updated_at),
+  };
+}
+
 export async function deleteAgentMemory(id: number, scopeKey: string, handle: string): Promise<boolean> {
   const rows = await dbq(
     `DELETE FROM gt_agent_memory WHERE id = ? AND scope_key = ? AND agent_handle = ? RETURNING id`,

@@ -269,6 +269,8 @@ async function brandContextHint(origin?: string): Promise<string> {
 // cada nota; el agente trae la completa con memory_read. Sin techo, 200 notas serían un
 // impuesto de contexto en CADA turno del workspace.
 const WS_MEMORY_HINT_MAX_CHARS = 1500;
+/** Ver el comentario largo en `roomSection`: más alto que el del workspace a propósito. */
+const ROOM_MEMORY_HINT_MAX_CHARS = 2500;
 
 async function memoryHint(dest: import("./server/connectors/tool-token.server").ToolDest | null): Promise<string> {
   if (!dest) return "";
@@ -310,9 +312,38 @@ async function memoryHint(dest: import("./server/connectors/tool-token.server").
     if (scope && dest.handle) {
       const notas = await db.listAgentMemory(scope, dest.handle);
       if (notas.length) {
+        // Tope, igual que el índice del workspace. Son ~9.6 KB en el peor caso
+        // (MEMORY_MAX_NOTES × MEMORY_MAX_CHARS) y se pagan en CADA turno de room y DM.
+        //
+        // 2500 y no 1500 como el workspace: una nota de room es una DIRECTIVA a obedecer
+        // ahora ("los títulos van en ##"), no un índice de hechos que se consulta. Elidir
+        // una se ve al instante como incumplimiento, así que el tope es más alto y cubre
+        // el estado realista (~10-12 notas); 40 es la cola patológica.
+        //
+        // Van COMPLETAS, sin recorte a 80 como el índice de workspace: media convención es
+        // peor que ninguna. Y de MÁS NUEVAS a más viejas, para que el tope tire lo rancio.
+        const lines: string[] = [];
+        let used = 0;
+        let rest = 0;
+        const colaIds: number[] = [];
+        for (const n of [...notas].reverse()) {
+          const line = `#${n.id}: ${n.note}`;
+          if (used + line.length > ROOM_MEMORY_HINT_MAX_CHARS) {
+            rest++;
+            if (colaIds.length < 12) colaIds.push(n.id);
+            continue;
+          }
+          used += line.length;
+          lines.push(line);
+        }
+        lines.reverse();
         roomSection =
           `De esta conversación (convenciones YA ACORDADAS aquí — respétalas sin volver a preguntar):\n` +
-          notas.map((n) => `#${n.id}: ${n.note}`).join("\n") +
+          lines.join("\n") +
+          // La cola sale DIRECCIONABLE, no como un número: un id se puede leer, un conteo no.
+          (rest > 0
+            ? `\n…y ${rest} más que no caben: #${colaIds.join(", #")} (léelas con memory_read si vienen al caso)`
+            : "") +
           `\n`;
       }
     }
@@ -632,7 +663,8 @@ const TEAMS_PRODUCT_CONTEXT = [
   "ARTEFACTO COMPARTIDO POR LINK — cada artefacto se edita DESDE LA CONVERSACIÓN DONDE NACIÓ. En cada turno la plataforma te inyecta el contenido del artefacto ACTUAL de este hilo (si lo hay); ese es el único que puedes modificar. Si alguien te PEGA UN LINK a un artefacto (una URL de artefacto/`/t3/…`) y te pide cambiarlo, ese documento NO está cargado aquí: el link es una copia publicada, no te da acceso a editarlo. NUNCA respondas «no puedo editarlo» a secas ni lo presentes como un error o una falla tuya — EXPLICA con calma el porqué (los artefactos se editan en su propia conversación) y ofrece SIEMPRE las dos salidas: (a) que te lo pidan en el hilo/DM donde se creó, donde sí lo tienes a la mano; o (b) que te peguen aquí el contenido y creas una versión NUEVA en esta conversación.",
   "VOZ / NOTA DE VOZ: sí puedes responder con una nota de voz. En code-mode usa `/opt/gs-sdk/voice.mjs` (`speak(texto)`): sintetiza el audio, lo publica e imprime un bloque ```eb-audio que **debes incluir tal cual** en tu respuesta para que aparezca la burbuja reproducible; puedes acompañarlo de una frase corta. Voz por default masculina: `em_santa`; si piden otra, `speak(texto, { voice: \"ef_dora\" })` — em_santa (M), ef_dora (F), em_alex (M). Nunca digas que solo te comunicas por texto. (Distinto de las LLAMADAS en vivo, que aún no puedes iniciar.)",
   "CUÁNDO USAR LA VOZ por tu cuenta, sin que te la pidan: saludos, confirmaciones y respuestas cortas con personalidad — le da calidez y presencia. No en cada turno, y nunca para código, tablas, documentos ni respuestas técnicas o largas, donde el texto se lee mejor. Si la respuesta es corta pero es un DATO que van a querer releer (una hora, una cifra, un nombre, un link), va en texto.",
-  "MEMORIA DE LA CONVERSACIÓN: tienes memoria propia de este room (o DM) y es REAL. Al inicio de cada turno recibes un bloque `[Memoria de esta conversación]` con las convenciones ya acordadas y su `#id`; respétalas sin volver a preguntar. Para guardar una: en code-mode, `const { run } = await import('/opt/gs-sdk/connectors.mjs')` y `await run('memory_write', { note: 'los títulos van en ##, los subtítulos en ###' })`. Para retirarla, `run('memory_forget', { id })`; si cambia, `run('memory_write', { note: '…', replaces: <id> })` en vez de añadir otra — dos notas que se contradicen es peor que ninguna. NO existe `memory_read`: ya las tienes en el turno, no las pidas. QUÉ GUARDAR: lo que alguien te dice con 'de ahora en adelante', 'siempre', 'recuérdalo' o 'anótalo' — formato de los documentos, cómo se llaman las partes, cómo firma el despacho, tratamientos, criterios de redacción. QUÉ NO: el contenido de los documentos (para eso están los artefactos y sus versiones), datos personales o sensibles que nadie te pidió guardar, ni el estado de una tarea en curso. Es del ROOM y COMPARTIDA: aplica también cuando escriba otra persona del equipo, y sigue viva en otros hilos del mismo room y después de un /clear (borra la conversación, no las convenciones). Si guardas algo, dilo en una frase — que quede claro qué vas a recordar.",
+  "MEMORIA DE LA CONVERSACIÓN: tienes memoria propia de este room (o DM) y es REAL. Al inicio de cada turno recibes un bloque `[Memoria de esta conversación]` con las convenciones ya acordadas y su `#id`; respétalas sin volver a preguntar. Para guardar una: en code-mode, `const { run } = await import('/opt/gs-sdk/connectors.mjs')` y `await run('memory_write', { note: 'los títulos van en ##, los subtítulos en ###' })`. Para retirarla, `run('memory_forget', { id })`; si cambia, `run('memory_write', { note: '…', replaces: <id> })` en vez de añadir otra — dos notas que se contradicen es peor que ninguna. Normalmente ya las tienes en el turno y no hace falta pedirlas. QUÉ GUARDAR: lo que alguien te dice con 'de ahora en adelante', 'siempre', 'recuérdalo' o 'anótalo' — formato de los documentos, cómo se llaman las partes, cómo firma el despacho, tratamientos, criterios de redacción. QUÉ NO: el contenido de los documentos (para eso están los artefactos y sus versiones), datos personales o sensibles que nadie te pidió guardar, ni el estado de una tarea en curso. Es del ROOM y COMPARTIDA: aplica también cuando escriba otra persona del equipo, y sigue viva en otros hilos del mismo room y después de un /clear (borra la conversación, no las convenciones). Si guardas algo, dilo en una frase — que quede claro qué vas a recordar.",
+  "LEER UNA NOTA COMPLETA: `memory_read` SÍ existe, y hay dos alcances. Las del WORKSPACE llegan al turno como ÍNDICE (título + arranque), así que antes de aplicar un hecho de la empresa —formato, datos de un cliente, reglas de marca— léela entera con `run('memory_read', { id: 'ws:12' })`. Las de ESTA conversación llegan completas y NO hace falta pedirlas… salvo que el bloque diga que algunas no cupieron: ahí trae la lista de ids y las lees con `run('memory_read', { id: 12 })` (el número solo, sin `ws:`).",
   "RECORDATORIOS: SÍ puedes programar recordatorios — es una capacidad REAL de Ghosty Teams, no depende de ningún servicio externo ni de que el usuario conecte nada. CÓMO: en code-mode, `const { run } = await import('/opt/gs-sdk/connectors.mjs')` y luego `await run('reminder_create', { text: 'pagar la tarjeta', when: '2026-08-01T09:00', repeat: 'daily'|'weekly'|'monthly' /* omítelo si es una sola vez */ })`. `when` va en hora LOCAL del usuario (YYYY-MM-DDTHH:mm): resuelve 'mañana', 'el 1 de agosto' o 'en 2 horas' con el `[Ahora: …]` que recibes al inicio del turno. Si te dictan direcciones a las que mandar copia del correo, pásalas en `emailCc: ['a@b.com']` (máx 5). También tienes `run('reminder_list')`, `run('reminder_update', { id, ...sólo lo que cambia })` — para cambiarle la hora, el texto o encenderle el correo a uno YA agendado, sin cancelarlo — y `run('reminder_cancel', { id })`. NO hace falta llamar a `list()` antes: estas tres existen SIEMPRE. A la hora pedida el recordatorio lo publicas TÚ en esta misma conversación. Al programarlo, CONFIRMA el día y la hora que devolvió la tool. CORREO: por default el aviso llega SOLO al chat; si además lo quiere por correo, pásale `email: true` — pregúntaselo en la misma frase en que confirmas ('¿te lo mando también por correo?') y no lo des por hecho.",
   "FORMULARIOS DE INTAKE: cuando te pidan un formulario, un cuestionario, un formato de alta o \"recabar datos\" de alguien que NO tiene cuenta aquí (un cliente, un tercero), usa la tool: `const { run } = await import('/opt/gs-sdk/connectors.mjs')` y `await run('form_create', { title: 'Alta de cliente', fields: [{ name: 'razon_social', type: 'text', label: 'Razón social', required: true, section: 'Datos' }, …] })`. Devuelve `{ url }`: PÁSALE esa liga al usuario tal cual — es lo que se le manda al cliente. Las respuestas caen SOLAS en esta conversación, en UNA hoja que crece con cada envío (se descarga en Excel). Para el documento de UNA respuesta —'pásame el expediente de Fulano'— usa `run('form_ficha', { formId, submissionId })`, donde `submissionId` es el `id` que te dio form_submissions. Campos: `type` es text|email|tel|textarea|select|date|number|checkbox|radio|file|matrix; agrupa con `section` (los consecutivos con la misma sección forman un paso); usa `showIf: { field, equals }` para una pregunta que sólo aplica según una respuesta ANTERIOR; en `matrix` las columnas van en `options` y las filas en `rows`. Cuando la CANTIDAD la decide quien responde (herederos, dependientes, inmuebles, hijos, socios), usa `type:'group'` con sus subcampos en `fields` y `itemLabel` ('Heredero') — NUNCA inventes heredero_1, heredero_2, heredero_3: quien tiene cinco se queda sin dónde ponerlos. Manda `locale: 'en'` cuando quien vaya a responder lee en inglés (normalmente el idioma de esta conversación): eso traduce los botones, los avisos y los errores del formulario, no sólo lo que tú escribes. Para repetir algo que ya funcionó —el mismo intake con otro cliente, o adaptar una plantilla— usa `form_create` con `fromFormId`: hereda los campos y lo que mandes los pisa, así no vuelves a dictar 40 campos. También tienes `run('form_list')` y `run('form_submissions', { formId })` para leer lo que llegó, y `run('form_update', { formId, fields })` para cambiarlo — la liga NO cambia, así que edítalo en vez de crear otro.",
   "HISTORIAL DE LA CONVERSACIÓN: tu contexto sólo trae los mensajes RECIENTES; lo de más atrás no lo tienes cargado, pero SÍ puedes ir a buscarlo. Antes de decir «no lo veo», «no lo recuerdo» o «eso no existe», búscalo: `const { run } = await import('/opt/gs-sdk/connectors.mjs')` y `await run('chat_search', { query: 'arquetipo de artífice' })` — busca por palabras en TODO lo que se dijo en esta conversación, incluidos tus propios mensajes. Para leer hacia atrás en orden, `await run('chat_history', { limit: 25 })` y, para seguir subiendo, otra llamada con `before: <oldestId de la respuesta anterior>`. Sólo alcanzan ESTA conversación (este canal, hilo o DM), que es justo la que te están preguntando. Y nunca afirmes que tienes «todo el historial en tu contexto»: no lo tienes, lo consultas.",
@@ -677,6 +709,51 @@ type CurrentDoc = {
    *  `artifactDocHint`. Ver `gt_thread_delivery`. */
   lastFile?: { name: string; mime: string | null } | null;
 };
+
+/**
+ * Techo de lo que se inlinea del documento, en caracteres (~3K tokens).
+ *
+ * Antes NO había techo: el artefacto ENTERO viajaba en CADA turno del hilo, para siempre.
+ * Un HTML de 40 KB son ~10K tokens por turno encima de los ~27-30 KB de la capa system, y
+ * se pagaban igual cuando el turno era "gracias".
+ *
+ * 12000 sale de lo que la edición quirúrgica necesita de verdad: el MAPA de direcciones
+ * (que da `blockIndex`/`nodeIndex`, y que sí va completo — un bloque fuera del índice no se
+ * puede parchear) más el texto alrededor de lo que se cambia. El resto se pide con
+ * `doc_read`.
+ */
+export const ARTIFACT_INLINE_MAX_CHARS = 12_000;
+
+/**
+ * Recorta por el MEDIO conservando principio y final, y DICE que lo hizo.
+ *
+ * Por el medio y no por el final a propósito: el principio fija de qué va el documento y el
+ * final es donde suele estar lo último que se tocó. Un corte al final se lee como "el
+ * documento termina aquí", que es exactamente la confusión que produce una re-emisión corta.
+ *
+ * Devuelve `null` cuando cabe entero — el caso común, y así no se paga nada.
+ */
+export function clampInline(md: string, max = ARTIFACT_INLINE_MAX_CHARS): string | null {
+  if (md.length <= max) return null;
+  const mitad = Math.floor((max - 200) / 2);
+  const omitidos = md.length - mitad * 2;
+  return (
+    md.slice(0, mitad) +
+    `\n\n… [RECORTE DE LA PLATAFORMA: aquí faltan ~${omitidos.toLocaleString("es-MX")} caracteres ` +
+    `del documento. NO están en tu contexto. Pídelos con doc_read antes de tocarlos.] …\n\n` +
+    md.slice(-mitad)
+  );
+}
+
+/** La regla que hace seguro el recorte. Sin esto, una re-emisión completa desde una vista
+ *  truncada BORRARÍA el documento en el siguiente guardado. */
+const TRUNCATED_RULE =
+  `\n\n⚠️ EL CONTENIDO DE ABAJO ESTÁ RECORTADO: el documento es largo y sólo tienes el ` +
+  `principio y el final. Tienes el índice COMPLETO de direcciones, así que puedes parchear ` +
+  `cualquier parte, pero LEE ANTES lo que vayas a tocar con ` +
+  `\`await run('doc_read', { blocks: ['n7','n8'] })\` (o \`{ query: 'palabra' }\` para buscarlo). ` +
+  `NUNCA re-emitas el documento entero desde esta vista: lo dejarías truncado de verdad. ` +
+  `Si te piden una reescritura completa, lee primero todo lo que falte.`;
 
 async function artifactDocHint(currentDoc?: CurrentDoc | null): Promise<string> {
   // El CSS de Tailwind HORNEADO al publicar (marca `gt-baked-tw`) es derivado: se recalcula
@@ -768,6 +845,8 @@ async function artifactDocHint(currentDoc?: CurrentDoc | null): Promise<string> 
     // Un bloque son ~70 chars de índice (alias + tipo + 60 de texto), así que 250 son
     // ~17 KB en el peor caso — barato al lado de re-emitir el documento entero.
     const index = blockIndex(docBlocks, 250);
+    // El índice va COMPLETO aunque el cuerpo se recorte: es el techo de lo editable.
+    const recortado = clampInline(md);
     return (
       `[Contexto del hilo — DOCUMENTO ACTUAL. En esta conversación ya existe ${noun}. ` +
       `Está hecho de BLOQUES y cada uno tiene su dirección (n1, n2, …). Si el usuario pide ` +
@@ -782,8 +861,9 @@ async function artifactDocHint(currentDoc?: CurrentDoc | null): Promise<string> 
       `ábrelo con su herramienta, extrae SÓLO lo que necesitas y colócalo con eb-patch. ` +
       `No transcribas el documento fuente en tu respuesta.` +
       extentRule +
+      (recortado ? TRUNCATED_RULE : "") +
       (index ? `\n\nBloques direccionables:\n${index}` : "") +
-      `\n\nContenido actual en ${lang}:\n\n\`\`\`\n${md}\n\`\`\`]\n\n`
+      `\n\nContenido actual en ${lang}:\n\n\`\`\`\n${recortado ?? md}\n\`\`\`]\n\n`
     );
   }
 
@@ -793,6 +873,7 @@ async function artifactDocHint(currentDoc?: CurrentDoc | null): Promise<string> 
     // es justo lo que permite al modelo elegir el data-id correcto.
     const { serverParseOpts } = await import("./server/artifact-dom.server");
     const index = nodeIndex(md, 80, await serverParseOpts());
+    const recortado = clampInline(md);
     return (
       `[Contexto del hilo — ARTEFACTO ACTUAL. En esta conversación ya existe ${noun}. ` +
       linkLine +
@@ -804,10 +885,16 @@ async function artifactDocHint(currentDoc?: CurrentDoc | null): Promise<string> 
       PATCH_RULES("artifact") +
       NEW_DOC_RULE(fence) +
       lastFileRule +
+      (recortado ? TRUNCATED_RULE : "") +
       (index ? `\n\nNodos direccionables:\n${index}` : "") +
-      `\n\nContenido actual en ${lang}:\n\n\`\`\`\n${md}\n\`\`\`]\n\n`
+      `\n\nContenido actual en ${lang}:\n\n\`\`\`\n${recortado ?? md}\n\`\`\`]\n\n`
     );
   }
+  // ⚠️ Camino NO direccionable: aquí NO se recorta, y es deliberado. Esta rama ORDENA
+  // re-emitir el documento completo, así que truncar la fuente garantizaría pérdida
+  // silenciosa en el siguiente guardado. La condición se auto-sana: al guardar esa
+  // re-emisión el server estampa los ids y el documento pasa al camino de parche.
+  // Un documento perdido es irrecuperable; unos turnos caros no lo son.
   return (
     `[Contexto del hilo — ARTEFACTO ACTUAL. En esta conversación ya existe ${noun}. ` +
     linkLine +
