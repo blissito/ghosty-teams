@@ -48,6 +48,15 @@ export function mintEventTicket(input: {
   role: EventRole;
   mode: EventMode;
   title?: string | null;
+  /**
+   * Cuándo empieza (epoch UTC), para la cuenta regresiva de la pantalla de espera.
+   *
+   * Viaja en el ticket y no en la URL porque el ticket ES el canal por el que Teams le
+   * cuenta a la caja lo cosmético de este evento —ya lleva título y modo—. La caja no
+   * tiene DB ni forma de preguntarlo, y un parámetro suelto en la URL sería un dato que
+   * cualquiera cambia para adelantar el reloj de la pantalla.
+   */
+  startsAt?: number | null;
   ttlSec?: number;
 }): string {
   const body = b64url(
@@ -57,6 +66,7 @@ export function mintEventTicket(input: {
       role: input.role,
       mode: input.mode,
       ...(input.title ? { title: input.title } : {}),
+      ...(input.startsAt ? { startsAt: input.startsAt } : {}),
       // Corto a propósito: sólo tiene que sobrevivir el salto de esta página a la
       // sala. Una vez dentro, quien manda es el token de LiveKit, que dura horas.
       exp: Math.floor(Date.now() / 1000) + (input.ttlSec ?? 120),

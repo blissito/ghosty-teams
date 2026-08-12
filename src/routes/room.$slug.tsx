@@ -1,7 +1,7 @@
 import { createFileRoute, notFound } from "@tanstack/react-router";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createServerFn } from "@tanstack/react-start";
-import { Radio, Video, X } from "lucide-react";
+import { MessageSquare, Radio, Video, X } from "lucide-react";
 import GhostyMascot from "../components/GhostyMascot";
 import { eventFlowFn, eventPostFn } from "../server/events/chat";
 import { joinCallFn, requestCodeFn, verifyCodeFn } from "../server/events/identity";
@@ -107,6 +107,7 @@ function RoomAbierto() {
   const [identificando, setIdentificando] = useState(false);
   const [callUrl, setCallUrl] = useState<string | null>(null);
   const [callBusy, setCallBusy] = useState(false);
+  const [chatAbierto, setChatAbierto] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const lastId = useRef(0);
@@ -156,8 +157,6 @@ function RoomAbierto() {
     const t = setInterval(tick, 15000);
     return () => { vivo = false; clearInterval(t); };
   }, [traerNuevos]);
-
-  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages.length]);
 
   async function enviar(e: React.FormEvent) {
     e.preventDefault();
@@ -263,55 +262,61 @@ function RoomAbierto() {
             allow="camera; microphone; display-capture; autoplay; fullscreen; speaker-selection"
             allowFullScreen
           />
-          <button
-            onClick={() => setCallUrl(null)}
-            className="absolute right-4 top-4 flex items-center gap-1.5 rounded-full bg-black/70 px-3 py-1.5 text-xs font-medium text-white backdrop-blur hover:bg-black/85"
+
+          <div className="absolute right-4 top-4 flex items-center gap-2">
+            <button
+              onClick={() => setChatAbierto((v) => !v)}
+              className="flex items-center gap-1.5 rounded-full bg-black/70 px-3 py-1.5 text-xs font-medium text-white backdrop-blur hover:bg-black/85"
+            >
+              <MessageSquare size={14} /> {chatAbierto ? "Ocultar chat" : "Chat"}
+            </button>
+            <button
+              onClick={() => setCallUrl(null)}
+              className="flex items-center gap-1.5 rounded-full bg-black/70 px-3 py-1.5 text-xs font-medium text-white backdrop-blur hover:bg-black/85"
+            >
+              {/* ⚠️ Dice "salir" y no "volver al chat" porque esto DESMONTA el iframe: se
+                  abandona la llamada de verdad, y volver a entrar cuesta un ticket nuevo.
+                  Ahora que el chat es un cajón AQUÍ MISMO, nadie necesita salirse para
+                  leerlo — que era justo la confusión que este botón invitaba a cometer. */}
+              <X size={14} /> Salir
+            </button>
+          </div>
+
+          {/* El chat como CAJÓN sobre el video. Se superpone en vez de encoger el iframe
+              porque redimensionar un iframe de LiveKit lo obliga a re-hacer su layout de
+              tiles: en una llamada de verdad eso es un parpadeo cada vez que alguien abre
+              o cierra el chat. */}
+          <aside
+            className={`absolute inset-y-0 right-0 z-10 flex w-full flex-col border-l border-white/10 bg-black/85 backdrop-blur transition-transform duration-200 sm:w-96 ${
+              chatAbierto ? "translate-x-0" : "translate-x-full"
+            }`}
           >
-            {/* ⚠️ Dice "salir" y no "volver al chat" porque esto DESMONTA el iframe: se
-                abandona la llamada de verdad, y volver a entrar cuesta un ticket nuevo.
-                Prometer un vistazo al chat y colgarle la llamada a alguien a media
-                sesión es de las cosas que no se perdonan. */}
-            <X size={14} /> Salir de la transmisión
-          </button>
+            <div className="flex shrink-0 items-center justify-between border-b border-white/10 px-4 py-3 text-white">
+              <span className="text-sm font-semibold">Chat</span>
+              <button onClick={() => setChatAbierto(false)} aria-label="Cerrar el chat" className="text-white/60 hover:text-white">
+                <X size={16} />
+              </button>
+            </div>
+            <Mensajes messages={messages} oscuro />
+            <Composer
+              text={text}
+              setText={setText}
+              onSubmit={enviar}
+              sending={sending}
+              canWrite={canWrite}
+              oscuro
+            />
+          </aside>
         </div>
       )}
 
-      <div className="mx-auto w-full max-w-3xl flex-1 space-y-4 overflow-y-auto px-4 py-5">
-        {messages.length === 0 && (
-          <p className="text-sm text-muted">Todavía no hay mensajes. Sé quien empiece 👋</p>
-        )}
-        {messages.map((m) => (
-          <div key={m.id} className="text-sm">
-            <span className={`font-semibold ${m.isAgent ? "text-brand" : ""}`}>{m.sender}</span>
-            <span className="ml-2 text-[11px] text-muted">
-              {new Date(m.created_at * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-            </span>
-            <div className="whitespace-pre-wrap break-words leading-relaxed">{m.body}</div>
-          </div>
-        ))}
-        <div ref={bottomRef} />
-      </div>
+      <Mensajes messages={messages} bottomRef={bottomRef} />
 
       {err && <p className="px-4 pb-1 text-center text-xs text-red-400">{err}</p>}
 
-      <form onSubmit={enviar} className="mx-auto w-full max-w-3xl shrink-0 px-4 pb-3">
-        <div className="flex gap-2">
-          <input
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            placeholder={canWrite ? "Escribe un mensaje…" : "Escribe para participar…"}
-            maxLength={1000}
-            className="min-w-0 flex-1 rounded-xl border border-border bg-card px-3.5 py-2.5 text-base outline-none focus:border-brand"
-          />
-          <button
-            type="submit"
-            disabled={sending || !text.trim()}
-            className="rounded-xl bg-brand px-4 py-2.5 text-sm font-medium text-white disabled:opacity-50"
-          >
-            Enviar
-          </button>
-        </div>
-      </form>
+      <div className="mx-auto w-full max-w-3xl shrink-0">
+        <Composer text={text} setText={setText} onSubmit={enviar} sending={sending} canWrite={canWrite} />
+      </div>
 
       <footer className="shrink-0 pb-3 text-center text-[11px] text-muted">
         <a href="https://ghosty.studio" target="_blank" rel="noreferrer" className="hover:text-brand">
@@ -330,6 +335,93 @@ function RoomAbierto() {
         />
       )}
     </div>
+  );
+}
+
+/**
+ * La lista de mensajes. Se usa en la página y dentro del cajón de la llamada, con la MISMA
+ * fuente de datos: si fueran dos listas separadas, una se quedaría atrás en cuanto alguien
+ * escribiera durante la transmisión, que es justo cuando más se escribe.
+ */
+function Mensajes({
+  messages,
+  bottomRef,
+  oscuro,
+}: {
+  messages: Msg[];
+  bottomRef?: React.RefObject<HTMLDivElement | null>;
+  oscuro?: boolean;
+}) {
+  const propio = useRef<HTMLDivElement>(null);
+  const fin = bottomRef ?? propio;
+  // El cajón se monta con la conversación ya empezada: sin esto abre arriba del todo y
+  // hay que bajar a mano hasta lo último, que es lo único que interesa.
+  useEffect(() => { fin.current?.scrollIntoView({ behavior: "smooth" }); }, [messages.length, fin]);
+
+  return (
+    <div
+      className={`w-full flex-1 space-y-4 overflow-y-auto px-4 py-5 ${
+        oscuro ? "text-white" : "mx-auto max-w-3xl"
+      }`}
+    >
+      {messages.length === 0 && (
+        <p className={`text-sm ${oscuro ? "text-white/60" : "text-muted"}`}>
+          Todavía no hay mensajes. Sé quien empiece 👋
+        </p>
+      )}
+      {messages.map((m) => (
+        <div key={m.id} className="text-sm">
+          <span className={`font-semibold ${m.isAgent ? "text-brand" : ""}`}>{m.sender}</span>
+          <span className={`ml-2 text-[11px] ${oscuro ? "text-white/50" : "text-muted"}`}>
+            {new Date(m.created_at * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+          </span>
+          <div className="whitespace-pre-wrap break-words leading-relaxed">{m.body}</div>
+        </div>
+      ))}
+      <div ref={fin} />
+    </div>
+  );
+}
+
+function Composer({
+  text,
+  setText,
+  onSubmit,
+  sending,
+  canWrite,
+  oscuro,
+}: {
+  text: string;
+  setText: (v: string) => void;
+  onSubmit: (e: React.FormEvent) => void;
+  sending: boolean;
+  canWrite: boolean;
+  oscuro?: boolean;
+}) {
+  return (
+    <form onSubmit={onSubmit} className="shrink-0 px-4 pb-3 pt-1">
+      <div className="flex gap-2">
+        <input
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          placeholder={canWrite ? "Escribe un mensaje…" : "Escribe para participar…"}
+          maxLength={1000}
+          // ⚠️ `text-base` y no `text-sm`: por debajo de 16px, iOS hace zoom al enfocar un
+          // campo y NO vuelve. Es la misma razón por la que styles.css conserva uno de sus
+          // pocos `!important`.
+          className={`min-w-0 flex-1 rounded-xl border px-3.5 py-2.5 text-base outline-none focus:border-brand ${
+            oscuro ? "border-white/15 bg-white/10 text-white placeholder:text-white/40" : "border-border bg-card"
+          }`}
+        />
+        <button
+          type="submit"
+          disabled={sending || !text.trim()}
+          className="rounded-xl bg-brand px-4 py-2.5 text-sm font-medium text-white disabled:opacity-50"
+        >
+          Enviar
+        </button>
+      </div>
+    </form>
   );
 }
 

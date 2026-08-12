@@ -90,6 +90,7 @@ export async function roomUrlFor(ch: Channel, viewer: EventViewer): Promise<stri
       role,
       mode: ch.call_mode,
       title: ch.call_title || ch.name,
+      startsAt: ch.starts_at ?? null,
     });
     return eventRoomUrl(base, room, ticket);
   } catch (e) {
