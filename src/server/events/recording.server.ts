@@ -121,17 +121,19 @@ export async function iniciarGrabacion(_ch: unknown, roomName: string) {
  */
 export async function cerrarPublicaciones(channelId: number): Promise<number> {
   const { dbq } = await import("../../dbq.server");
+  // `pending` = falta subir el vídeo. `partial` = el vídeo ya está allá, pero whisper aún
+  // no había terminado cuando se cerró — y sin la transcripción no hay subtítulos, ni
+  // capítulos, ni buscador. Se vuelve a pasar por aquí hasta tenerla.
   const pendientes = await dbq(
-    `SELECT id, box_file, video_id, poster_key, started_at, ended_at FROM gt_event_recordings
+    `SELECT id, box_file, video_id, poster_key, started_at, ended_at, publish_state FROM gt_event_recordings
       WHERE channel_id = ? AND video_id IS NOT NULL
-        AND COALESCE(publish_state, 'none') = 'pending'
+        AND COALESCE(publish_state, 'none') IN ('pending', 'partial')
         AND ended_at > unixepoch() - 604800`,
     [channelId]
   ).catch(() => []);
   if (!pendientes.length) return 0;
 
-  const { cerrarPublicacion, m3u8Para } = await import("./publish.server");
-  const { signedUrl } = await import("../storage.server");
+  const { cerrarPublicacion, m3u8Para, posterPublico } = await import("./publish.server");
   const ch = await dbq("SELECT call_course_id FROM gc_channels WHERE id = ?", [channelId]).catch(() => []);
   const courseId = String(ch[0]?.call_course_id ?? "");
   if (!courseId) return 0;
@@ -140,12 +142,18 @@ export async function cerrarPublicaciones(channelId: number): Promise<number> {
   for (const fila of pendientes) {
     const file = String(fila.box_file ?? "");
     if (!/^[\w.-]+\.mp4$/.test(file)) continue;
-    const estado = await pedirAStudio({ action: "hls-status", file }).catch(() => null);
-    if (!estado || estado.status !== "ready") continue;
+    const yaPublicado = fila.publish_state === "partial";
+    if (!yaPublicado) {
+      const estado = await pedirAStudio({ action: "hls-status", file }).catch(() => null);
+      if (!estado || estado.status !== "ready") continue;
+    }
 
     // La transcripción viaja como DATOS, no como archivo: de ahí salen los subtítulos, los
-    // capítulos y el buscador del curso.
+    // capítulos y el buscador del curso. ⚠️ Puede NO estar todavía: whisper tarda ~1/4 de
+    // lo que dure el audio, y el vídeo se publica en cuanto está listo. En ese caso se
+    // manda ahora lo que hay y la transcripción va en una segunda pasada.
     const t = await pedirAStudio({ action: "transcript-json", file }).catch(() => null);
+    const hayTranscript = !!(t?.transcript as { segments?: unknown[] } | undefined)?.segments?.length;
 
     const minutos = fila.started_at
       ? Math.max(1, Math.round((Number(fila.ended_at) - Number(fila.started_at)) / 60))
@@ -155,7 +163,10 @@ export async function cerrarPublicaciones(channelId: number): Promise<number> {
       await cerrarPublicacion({
         videoId,
         m3u8: m3u8Para(courseId, videoId),
-        poster: fila.poster_key ? signedUrl(String(fila.poster_key), 7 * 24 * 3600) : null,
+        // ⚠️ La portada NO puede ser una firma nuestra: caduca a los 7 días y el vídeo se
+        // queda sin imagen para siempre, en un sitio donde ya nadie va a mirar. Se usa la
+        // que la caja subió al bucket del propio taller, junto al HLS.
+        poster: posterPublico(courseId, videoId),
         durationMin: minutos,
         transcript: t?.transcript ?? undefined,
       });
@@ -165,9 +176,12 @@ export async function cerrarPublicaciones(channelId: number): Promise<number> {
     }
     // `published_url` ya se guardó al crear el borrador: se conoce desde el principio. Lo
     // que cambia aquí es el ESTADO, que es lo que decide si el enlace se ofrece.
-    await dbq("UPDATE gt_event_recordings SET publish_state = 'ready' WHERE id = ?", [fila.id]).catch(() => {});
-    // Publicado y confirmado: ahora sí se libera el disco de la caja.
-    await pedirAStudio({ action: "delete", file }).catch(() => {});
+    await dbq("UPDATE gt_event_recordings SET publish_state = ? WHERE id = ?",
+      [hayTranscript ? "ready" : "partial", fila.id]).catch(() => {});
+    // ⚠️ El disco se libera sólo cuando está TODO. Borrar con la transcripción a medias se
+    // lleva el `transcript.json` que aún no se ha mandado, y ya no se puede rehacer: el
+    // audio vivía en ese mismo directorio.
+    if (hayTranscript) await pedirAStudio({ action: "delete", file }).catch(() => {});
     hechos++;
   }
   return hechos;

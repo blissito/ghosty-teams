@@ -90,6 +90,18 @@ export function m3u8Para(courseId: string, videoId: string): string {
   return `${endpoint}/${bucket}/fixtergeek/videos/${courseId}/${videoId}/hls/master.m3u8`;
 }
 
+/**
+ * La portada, en el bucket del taller. La sube la caja junto al HLS.
+ *
+ * ⚠️ No se usa una URL firmada NUESTRA: caduca, y un vídeo publicado se queda sin imagen
+ * meses después, cuando ya nadie está mirando esa parte.
+ */
+export function posterPublico(courseId: string, videoId: string): string {
+  const endpoint = (process.env.FIXTERGEEK_STORAGE_ENDPOINT || "https://t3.storage.dev").replace(/\/$/, "");
+  const bucket = process.env.FIXTERGEEK_BUCKET || "wild-bird-2039";
+  return `${endpoint}/${bucket}/fixtergeek/videos/${courseId}/${videoId}/hls/poster.jpg`;
+}
+
 /** El prefijo que se le manda a la caja al detener. Termina en `/hls` a propósito: el
  *  storyboard cuelga de su PADRE, y así lo deriva quien lo consume. */
 export const prefijoHls = (courseId: string, videoId: string) =>
