@@ -318,7 +318,7 @@ function recogerPendientes(channelId: number): void {
 async function listarGrabaciones(r: { ch: { id: number; call_share_slug?: string | null } }) {
   try {
     const { dbq } = await import("../../dbq.server");
-    const { signedUrl } = await import("../storage.server");
+    const { signedUrl, signedUrlEstable } = await import("../storage.server");
     const filas = await dbq(
       `SELECT id, storage_key, transcript_key, transcript_state, bytes, started_at, ended_at, by_name, poster_key, published_url, publish_state
          FROM gt_event_recordings WHERE channel_id = ? ORDER BY ended_at DESC LIMIT 20`,
@@ -332,7 +332,9 @@ async function listarGrabaciones(r: { ch: { id: number; call_share_slug?: string
       // declara charset, el navegador adivina latin-1).
       id: Number(f.id),
       // La portada vive en storage privado, así que viaja firmada como el vídeo.
-      poster: f.poster_key ? signedUrl(String(f.poster_key), TTL) : null,
+      // Estable: si la firma cambiara en cada render, el navegador volvería a bajar la
+      // imagen cada vez que se abre la lista.
+      poster: f.poster_key ? signedUrlEstable(String(f.poster_key), TTL) : null,
       // El visor de fixtergeek, sólo cuando la publicación está CONFIRMADA: la URL se
       // conoce desde que se crea el borrador, pero enlazarla antes lleva a un vídeo
       // que todavía no tiene qué reproducir.

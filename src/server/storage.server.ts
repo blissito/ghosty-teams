@@ -50,9 +50,9 @@ function sha256Hex(data: string | Buffer): string {
 function hmac(key: string | Buffer, data: string): Buffer {
   return createHmac("sha256", key).update(data, "utf8").digest();
 }
-function amzDates(): { amzDate: string; dateStamp: string } {
+function amzDates(at = Date.now()): { amzDate: string; dateStamp: string } {
   // 20260722T101112Z / 20260722
-  const iso = new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d{3}/, "");
+  const iso = new Date(at).toISOString().replace(/[-:]/g, "").replace(/\.\d{3}/, "");
   return { amzDate: iso, dateStamp: iso.slice(0, 8) };
 }
 function signingKey(dateStamp: string): Buffer {
@@ -63,9 +63,9 @@ function signingKey(dateStamp: string): Buffer {
 }
 
 // Genera una URL presignada (query-auth) para method sobre bucket/key, válida ttl s.
-function presign(method: "GET" | "PUT" | "DELETE", bucket: string, key: string, ttl: number): string {
+function presign(method: "GET" | "PUT" | "DELETE", bucket: string, key: string, ttl: number, at?: number): string {
   requireCreds();
-  const { amzDate, dateStamp } = amzDates();
+  const { amzDate, dateStamp } = amzDates(at);
   const canonicalUri = "/" + uriEncode(bucket, true) + "/" + uriEncode(key, true);
   const scope = `${dateStamp}/${REGION}/${SERVICE}/aws4_request`;
   const q: Record<string, string> = {
@@ -132,6 +132,20 @@ export async function put(opts: {
 // URL firmada de lectura (TTL en segundos). El proxy la re-mintea on-demand.
 export function signedUrl(key: string, ttl = 3600, visibility: Visibility = "private"): string {
   return presign("GET", bucketFor(visibility), key, ttl);
+}
+
+/**
+ * Igual, pero con la firma ANCLADA a bloques de media hora.
+ *
+ * ⚠️ `signedUrl` mete el segundo exacto en `X-Amz-Date`, así que devuelve una URL distinta
+ * en cada render. Para un enlace de descarga da igual; para una IMAGEN es fatal: el
+ * navegador nunca reconoce dos cargas como el mismo recurso y se vuelve a bajar entera cada
+ * vez que se abre la lista. Redondeando, la URL se repite durante 30 minutos y la caché
+ * empieza a servir para algo. Es el mismo truco que usa el token del proxy de vídeo.
+ */
+export function signedUrlEstable(key: string, ttl = 3600, visibility: Visibility = "private"): string {
+  const BLOQUE = 1800_000;   // media hora
+  return presign("GET", bucketFor(visibility), key, ttl, Math.floor(Date.now() / BLOQUE) * BLOQUE);
 }
 
 /**
