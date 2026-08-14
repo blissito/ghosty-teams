@@ -7,7 +7,7 @@ import { ChatCtx, ChatCtxDefaults, MessageRow, type SessionUser } from "../compo
 import type { Message, CustomEmoji, ReactionAgg } from "../db.server";
 import { eventFlowFn, eventPostFn, eventReactFn } from "../server/events/chat";
 import { eventModerateFn } from "../server/events/chat";
-import { recordingFn, requestCodeFn, verifyCodeFn } from "../server/events/identity";
+import { deleteRecordingFn, recordingFn, requestCodeFn, verifyCodeFn } from "../server/events/identity";
 import { useEventStream } from "../hooks/useEventStream";
 import { shouldChime } from "../lib/chime";
 import { DropOverlay, useAdjuntos, useFileDrop } from "../components/chat/adjuntos";
@@ -148,6 +148,10 @@ function RoomAbierto() {
   // forma de abrirla aunque el archivo siguiera en storage.
   const [grabaciones, setGrabaciones] = useState<Grabacion[]>([]);
   const [listaAbierta, setListaAbierta] = useState(false);
+  // Borrar una grabación es IRREVERSIBLE —el original vivía en la caja y ya no está—, así
+  // que no basta un botón: se guarda cuál se va a borrar y se pregunta en un modal.
+  const [porBorrar, setPorBorrar] = useState<Grabacion | null>(null);
+  const [borrando, setBorrando] = useState(false);
   // Sólo importa para no disparar dos veces: quien ve el botón es el iframe, y ése ya se
   // deshabilita solo mientras la petición va en camino.
   // ⚠️ En `localStorage` y no en el servidor: apagar el sonido es del DISPOSITIVO. La misma
@@ -318,6 +322,18 @@ function RoomAbierto() {
     callRef.current?.contentWindow?.postMessage({ t: "gs:rec:state", recording, error, url, uploading }, "*");
   }, []);
 
+  const borrarGrabacion = useCallback(async () => {
+    if (!porBorrar) return;
+    setBorrando(true);
+    const r = await deleteRecordingFn({ data: { slug, id: porBorrar.id } }).catch(() => ({ ok: false as const, error: "No pude borrarla." }));
+    setBorrando(false);
+    if (!r.ok) return setErr(r.error);
+    // Se quita de la lista sin esperar al sondeo: el modal se cierra y la fila tiene que
+    // haber desaparecido, o parece que no funcionó.
+    setGrabaciones((v) => v.filter((x) => x.id !== porBorrar.id));
+    setPorBorrar(null);
+  }, [porBorrar, slug]);
+
   const grabar = useCallback(
     async (accion: "start" | "stop") => {
       setRecBusy(true);
@@ -357,6 +373,9 @@ function RoomAbierto() {
     const onMsg = (e: MessageEvent) => {
       if (!callRef.current || e.source !== callRef.current.contentWindow) return;
       const d = e.data as { t?: string; action?: "start" | "stop" };
+      // Salir vive DENTRO de la llamada (había dos botones idénticos): la sala se
+      // desconecta sola y avisa aquí para que además se cierre la vista.
+      if (d?.t === "gs:leave") return setCallUrl(null);
       if (d?.t === "gs:rec:ask") return avisarIframe(grabando);
       if (d?.t === "gs:rec" && (d.action === "start" || d.action === "stop")) {
         void grabar(d.action);
@@ -564,6 +583,16 @@ function RoomAbierto() {
                       {/* El transcript llega MINUTOS después del vídeo. Decirlo es la
                           diferencia entre "está en camino" y "esto no existe" — que fue
                           justo lo que pareció la primera vez. */}
+                      {/* Sólo quien modera. El borrado se lleva el vídeo Y su
+                          transcripción, y no hay copia en ninguna otra parte. */}
+                      {modero && (
+                        <button
+                          onClick={() => { setListaAbierta(false); setPorBorrar(g); }}
+                          className="block w-full px-3 pb-2 text-left text-[11px] text-red-600 hover:underline"
+                        >
+                          Borrar
+                        </button>
+                      )}
                       {g.transcriptUrl ? (
                         <a
                           href={g.transcriptUrl}
@@ -591,28 +620,26 @@ function RoomAbierto() {
             >
               <MessageSquare size={14} /> {chatAbierto ? "Ocultar chat" : "Chat"}
             </button>
-            {callUrl && (
-              <button
-                onClick={() => setCallUrl(null)}
-                className="flex items-center gap-1.5 rounded-full bg-black/70 px-3 py-1.5 text-xs font-medium text-white backdrop-blur hover:bg-black/85"
-              >
-                {/* ⚠️ "Salir" y no "volver al chat": esto DESMONTA el iframe, o sea que
-                    abandona la llamada, y volver a entrar cuesta un ticket nuevo. Con el
-                    chat siempre al lado, nadie necesita salirse para leerlo. */}
-                <X size={14} /> Salir
-              </button>
-            )}
+            {/* ⚠️ Aquí había un segundo "Salir", gemelo del de la barra amarilla de la
+                llamada y con el mismo efecto: abandonarla. Dos botones idénticos a dos
+                centímetros invitan a pulsar el que no era. La salida vive DENTRO de la
+                llamada, junto al resto de sus controles; el iframe avisa aquí para que
+                además se desmonte. */}
             {grabacion && (
-              <span
-                // ⚠️ `pointer-events-none` y el ÚLTIMO de la fila: el testigo no es un
-                // control, y puesto delante se montaba encima de "Salir" y se comía el
-                // clic — con la grabación corriendo no había forma de abandonar la
-                // llamada. Un adorno jamás debe poder robarle el clic a un botón.
-                className="pointer-events-none flex items-center gap-1.5 rounded-full bg-red-600 px-3 py-1.5 text-xs font-medium text-white"
-                title={grabacion.by ? `La empezó ${grabacion.by}` : undefined}
+              <button
+                // El testigo es también el freno. Antes era un adorno con
+                // `pointer-events-none`, y al salir de la llamada la grabación se quedaba
+                // corriendo sin NINGUNA forma de pararla: el único botón vivía dentro del
+                // iframe que acababas de cerrar. Se llenaba el disco de la caja y el vídeo
+                // seguía creciendo solo.
+                onClick={() => { if (!recBusy) void grabar("stop"); }}
+                disabled={recBusy}
+                className="flex items-center gap-1.5 rounded-full bg-red-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-red-700 disabled:opacity-60"
+                title={grabacion.by ? `La empezó ${grabacion.by} · clic para detener` : "clic para detener"}
               >
                 <Circle size={10} fill="currentColor" /> Grabando {fmtDesde(grabacion.since, ahora)}
-              </span>
+                <span className="opacity-80">· Detener</span>
+              </button>
             )}
             {/* ⚠️ Entre Detener y el enlace pasan minutos: el MP4 pasa del giga y se sube
                 dentro de la misma petición. Sin este testigo, la barra se quedaba muda y
@@ -736,6 +763,40 @@ function RoomAbierto() {
             }}
             onCerrar={() => setIdentificando(false)}
           />
+        )}
+
+        {/* ⚠️ Confirmación explícita, y con lo que se pierde escrito: el MP4 original ya no
+            está en la caja, así que esto no se puede deshacer ni rehacer. */}
+        {porBorrar && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => !borrando && setPorBorrar(null)}>
+            <div className="w-full max-w-sm rounded-xl border border-border bg-surface p-5 shadow-xl" onClick={(e) => e.stopPropagation()}>
+              <h3 className="text-base font-semibold text-ink">¿Borrar esta grabación?</h3>
+              <p className="mt-2 text-sm text-muted">
+                {new Date(porBorrar.endedAt * 1000).toLocaleString([], { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}
+                {porBorrar.startedAt ? ` · ${Math.max(1, Math.round((porBorrar.endedAt - porBorrar.startedAt) / 60))} min` : ""}
+                {porBorrar.bytes ? ` · ${(porBorrar.bytes / 1073741824).toFixed(2)} GB` : ""}
+              </p>
+              <p className="mt-3 text-sm text-ink">
+                Se borra el vídeo y su transcripción. <strong>No se puede deshacer.</strong>
+              </p>
+              <div className="mt-5 flex justify-end gap-2">
+                <button
+                  onClick={() => setPorBorrar(null)}
+                  disabled={borrando}
+                  className="rounded-lg px-3 py-1.5 text-sm text-ink hover:bg-surface-2 disabled:opacity-50"
+                >
+                  Cancelar
+                </button>
+                <button
+                  onClick={() => void borrarGrabacion()}
+                  disabled={borrando}
+                  className="rounded-lg bg-red-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-60"
+                >
+                  {borrando ? "Borrando…" : "Borrar"}
+                </button>
+              </div>
+            </div>
+          </div>
         )}
       </div>
     </ChatCtx.Provider>

@@ -124,6 +124,44 @@ export const verifyCodeFn = createServerFn({ method: "POST" })
  * Grabar la llamada. Sólo el HOST — es una acción sobre la sesión de todos, y su rastro
  * queda publicado en el room.
  */
+/**
+ * Borra una grabación: la fila, el MP4 y su transcripción.
+ *
+ * ⚠️ Es irreversible y no se puede rehacer —el original vivía en la caja y ya se borró—,
+ * así que sólo lo puede hacer quien modera. Y por eso el botón pide confirmación.
+ */
+export const deleteRecordingFn = createServerFn({ method: "POST" })
+  .validator((d: { slug: string; id: number }) => d)
+  .handler(async ({ data }): Promise<{ ok: true } | { ok: false; error: string }> => {
+    const r = await room(data.slug);
+    if (!r || !r.ch.call_mode) return { ok: false, error: "Este room no está disponible" };
+    const { eventViewerFor } = await import("./access.server");
+    const viewer = await eventViewerFor(r.ch);
+    if (!viewer?.isHost) return { ok: false, error: "Sólo quien modera puede borrar una grabación" };
+
+    const { dbq } = await import("../../dbq.server");
+    const filas = await dbq(
+      "SELECT storage_key, transcript_key FROM gt_event_recordings WHERE id = ? AND channel_id = ?",
+      [data.id, r.ch.id]
+    ).catch(() => []);
+    const fila = filas[0];
+    if (!fila) return { ok: false, error: "Esa grabación ya no existe" };
+
+    // Primero los objetos, después la fila: al revés, un fallo a mitad deja bytes pagándose
+    // en storage sin nada que apunte a ellos.
+    const { del } = await import("../storage.server");
+    for (const key of [fila.storage_key, fila.transcript_key]) {
+      if (key) await del(String(key)).catch(() => {});
+    }
+    await dbq("DELETE FROM gt_event_recordings WHERE id = ? AND channel_id = ?", [data.id, r.ch.id]);
+    // `call_recording_url` es la copia vieja de "la última grabación": si apuntaba a ésta,
+    // se limpia, o el room seguiría ofreciendo un enlace muerto.
+    if (r.ch.call_recording_url && fila.storage_key && String(r.ch.call_recording_url).includes(String(fila.storage_key))) {
+      await r.db.setChannelEvent(r.ch.id, { recordingUrl: null, recordedAt: null }).catch(() => {});
+    }
+    return { ok: true };
+  });
+
 export const recordingFn = createServerFn({ method: "POST" })
   .validator((d: { slug: string; action: "start" | "stop" }) => d)
   .handler(async ({ data }): Promise<{ ok: true; url?: string; transcriptUrl?: string | null } | { ok: false; error: string }> => {
