@@ -150,6 +150,9 @@ function RoomAbierto() {
   const [listaAbierta, setListaAbierta] = useState(false);
   // Borrar una grabación es IRREVERSIBLE —el original vivía en la caja y ya no está—, así
   // que no basta un botón: se guarda cuál se va a borrar y se pregunta en un modal.
+  // La sala (dentro del iframe) tiene su propio panel de participantes; estos botones flotan
+  // por encima y lo taparían.
+  const [panelSala, setPanelSala] = useState(false);
   const [porBorrar, setPorBorrar] = useState<Grabacion | null>(null);
   const [borrando, setBorrando] = useState(false);
   // Sólo importa para no disparar dos veces: quien ve el botón es el iframe, y ése ya se
@@ -376,6 +379,9 @@ function RoomAbierto() {
       // Salir vive DENTRO de la llamada (había dos botones idénticos): la sala se
       // desconecta sola y avisa aquí para que además se cierre la vista.
       if (d?.t === "gs:leave") return setCallUrl(null);
+      // La sala abrió su panel de participantes: estos botones flotan encima del iframe y lo
+      // taparían. Se apartan mientras dure.
+      if (d?.t === "gs:panel") return setPanelSala(!!(d as { open?: boolean }).open);
       if (d?.t === "gs:rec:ask") return avisarIframe(grabando);
       if (d?.t === "gs:rec" && (d.action === "start" || d.action === "stop")) {
         void grabar(d.action);
@@ -539,7 +545,11 @@ function RoomAbierto() {
             </div>
           )}
 
-          <div className="absolute right-4 top-4 flex flex-wrap items-center justify-end gap-2">
+          <div
+            className={`absolute right-4 top-4 flex flex-wrap items-center justify-end gap-2 transition-opacity ${
+              panelSala ? "pointer-events-none opacity-0" : "opacity-100"
+            }`}
+          >
             {/* Y aquí NO hay botón, hay TESTIGO. Que se grabe sin que se note es
                 exactamente lo que no puede pasar, así que el punto rojo lo ve todo el
                 mundo — no sólo quien presenta, que es el único que ve el botón. */}
@@ -623,9 +633,12 @@ function RoomAbierto() {
                 )}
               </div>
             )}
+            {/* ⚠️ Este botón era `sm:hidden`: en escritorio el chat NO se podía cerrar y se
+                llevaba 320-384px fijos. Presentando, ese ancho es justo el que le falta a lo
+                que se está enseñando. */}
             <button
               onClick={() => setChatAbierto((v) => !v)}
-              className="flex items-center gap-1.5 rounded-full bg-black/70 px-3 py-1.5 text-xs font-medium text-white backdrop-blur hover:bg-black/85 sm:hidden"
+              className="flex items-center gap-1.5 rounded-full bg-black/70 px-3 py-1.5 text-xs font-medium text-white backdrop-blur hover:bg-black/85"
             >
               <MessageSquare size={14} /> {chatAbierto ? "Ocultar chat" : "Chat"}
             </button>
@@ -665,7 +678,9 @@ function RoomAbierto() {
             dos deja el video del tamaño de un sello y el chat ilegible. */}
         <aside
           {...dropHandlers}
-          className={`${chatAbierto ? "flex" : "hidden"} absolute inset-y-0 right-0 z-10 w-full flex-col border-l border-border bg-surface sm:relative sm:z-0 sm:flex sm:w-80 sm:shrink-0 lg:w-96`}
+          // ⚠️ El `sm:flex` de antes forzaba el chat SIEMPRE visible en escritorio: el botón
+          // de ocultar no hacía nada porque esta clase lo pisaba.
+          className={`${chatAbierto ? "flex sm:flex" : "hidden sm:hidden"} absolute inset-y-0 right-0 z-10 w-full flex-col border-l border-border bg-surface sm:relative sm:z-0 sm:w-80 sm:shrink-0 lg:w-96`}
         >
           <DropOverlay show={dragOver} />
           <div className="flex shrink-0 items-center justify-between border-b border-border px-4 py-3">
