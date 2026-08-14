@@ -65,13 +65,16 @@ async function subirTranscript(file: string): Promise<string | null> {
  */
 export async function recogerTranscript(channelId: number): Promise<number> {
   const { dbq } = await import("../../dbq.server");
-  // Tres horas: pasado ese punto, o whisper falló o la caja se recicló, y seguir
-  // preguntando en cada carga del room es gastar por gastar.
+  // ⚠️ Esto eran TRES HORAS, y por eso el transcript del webinar del 13-ago no se recogió
+  // nunca: whisper murió con un reinicio de la caja, nadie volvió a abrir el room a tiempo,
+  // y la fila se quedó en "Transcribiendo…" para siempre. Una hora de audio tarda más que
+  // eso en un CPU compartido, así que la ventana era más corta que el propio trabajo.
+  // Siete días es el orden de magnitud de lo que vive una caja de eventos.
   const pendientes = await dbq(
     `SELECT id, box_file FROM gt_event_recordings
       WHERE channel_id = ? AND transcript_key IS NULL
         AND COALESCE(transcript_state, 'pending') = 'pending'
-        AND ended_at > unixepoch() - 10800`,
+        AND ended_at > unixepoch() - 604800`,
     [channelId]
   ).catch(() => []);
   let hechos = 0;
@@ -87,12 +90,15 @@ export async function recogerTranscript(channelId: number): Promise<number> {
         await pedirAStudio({ action: "delete", file }).catch(() => {});
         hechos++;
       }
-    } else if (estado.status === "failed" || estado.status === "not_found") {
-      // Sin transcript posible: se anota, y se libera el disco de la caja —que es finito y
-      // ya no guarda nada aprovechable—. Anotarlo es lo que evita el "Transcribiendo…"
-      // eterno y que sigamos preguntando por algo que no existe.
+    } else if (estado.status === "not_found") {
+      // ⚠️ `not_found` NO significa "imposible": la caja pudo reiniciarse y perder el
+      // estado, que vive en memoria. Se pide que lo retome —es idempotente— en vez de dar
+      // el transcript por muerto y BORRAR el MP4, que es irrecuperable.
+      await pedirAStudio({ action: "transcript-retry", file }).catch(() => {});
+    } else if (estado.status === "failed") {
+      // Falló de verdad: se anota para no preguntar en cada carga del room. El MP4 se
+      // conserva —ya está subido, pero borrarlo cierra la puerta a reintentarlo—.
       await dbq("UPDATE gt_event_recordings SET transcript_state = 'none' WHERE id = ?", [fila.id]).catch(() => {});
-      await pedirAStudio({ action: "delete", file }).catch(() => {});
       hechos++;
     }
   }
