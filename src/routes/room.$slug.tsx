@@ -585,7 +585,7 @@ function RoomAbierto() {
                   {grabaciones.length > 1 ? `Grabaciones (${grabaciones.length})` : "Ver la grabación"}
                 </button>
                 {listaAbierta && grabaciones.length > 0 && (
-                  <div className="absolute right-0 top-full z-20 mt-1 w-72 overflow-hidden rounded-lg border border-border bg-surface shadow-lg">
+                  <div className="absolute right-0 top-full z-20 mt-1 w-80 overflow-hidden rounded-lg border border-border bg-surface shadow-lg">
                     {/* UNA fila por grabación: el vídeo a la izquierda y sus acciones como
                         iconos a la derecha. Apiladas en vertical, tres grabaciones se
                         convertían en nueve renglones y había que leerlos todos para
@@ -602,9 +602,11 @@ function RoomAbierto() {
                           {/* Un fotograma del propio vídeo: con tres grabaciones del mismo
                               día, la hora y el peso no dicen cuál es cuál. */}
                           {g.poster ? (
-                            <img src={g.poster} alt="" className="h-9 w-16 shrink-0 rounded object-cover" />
+                            // 112px: a 64 no se distinguía nada — una captura de escritorio
+                            // reducida a ese tamaño es una mancha gris.
+                            <img src={g.poster} alt="" className="h-16 w-28 shrink-0 rounded border border-border object-cover" />
                           ) : (
-                            <span className="flex h-9 w-16 shrink-0 items-center justify-center rounded bg-surface-2 text-muted">
+                            <span className="flex h-16 w-28 shrink-0 items-center justify-center rounded bg-surface-2 text-muted">
                               <Circle size={10} />
                             </span>
                           )}
