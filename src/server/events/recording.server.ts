@@ -176,8 +176,12 @@ export async function cerrarPublicaciones(channelId: number): Promise<number> {
     }
     // `published_url` ya se guardó al crear el borrador: se conoce desde el principio. Lo
     // que cambia aquí es el ESTADO, que es lo que decide si el enlace se ofrece.
+    // ⚠️ `partial` no puede ser eterno: si la caja ya no tiene el `transcript.json` —se
+    // recicló, o se limpió— esa transcripción no va a llegar nunca, y seguir preguntando en
+    // cada carga del room es gastar por gastar. Se cierra como está.
+    const imposible = !hayTranscript && (t?.status === "not_found" || !t);
     await dbq("UPDATE gt_event_recordings SET publish_state = ? WHERE id = ?",
-      [hayTranscript ? "ready" : "partial", fila.id]).catch(() => {});
+      [hayTranscript || imposible ? "ready" : "partial", fila.id]).catch(() => {});
     // ⚠️ El disco se libera sólo cuando está TODO. Borrar con la transcripción a medias se
     // lleva el `transcript.json` que aún no se ha mandado, y ya no se puede rehacer: el
     // audio vivía en ese mismo directorio.
