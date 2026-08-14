@@ -165,7 +165,6 @@ function RoomAbierto() {
   useEffect(() => { sonando.current = suena; }, [suena]);
 
   const [recBusy, setRecBusy] = useState(false);
-  void recBusy;
   const [online, setOnline] = useState(1);
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
@@ -312,14 +311,20 @@ function RoomAbierto() {
   // EasyBits, y aquí el destino es el storage del workspace, con transcript y con el
   // enlace publicado en el chat. Así que el iframe manda la intención y Teams la ejecuta.
   const callRef = useRef<HTMLIFrameElement>(null);
-  const avisarIframe = useCallback((recording: boolean, error?: string, url?: string) => {
-    callRef.current?.contentWindow?.postMessage({ t: "gs:rec:state", recording, error, url }, "*");
+  // ⚠️ `uploading` NO es cosmético: entre Detener y el enlace pasan minutos —el MP4 pasa del
+  // giga y se sube dentro de la misma petición—, y sin esta señal el botón se apagaba y no
+  // volvía a decir nada. Quien acaba de detener cree que se perdió la grabación.
+  const avisarIframe = useCallback((recording: boolean, error?: string, url?: string, uploading = false) => {
+    callRef.current?.contentWindow?.postMessage({ t: "gs:rec:state", recording, error, url, uploading }, "*");
   }, []);
 
   const grabar = useCallback(
     async (accion: "start" | "stop") => {
       setRecBusy(true);
       setErr(null);
+      // Detener arrastra la subida del MP4 dentro de la misma petición: el iframe tiene que
+      // saberlo YA, no cuando termine.
+      if (accion === "stop") avisarIframe(false, undefined, undefined, true);
       try {
         const r = await recordingFn({ data: { slug, action: accion } });
         // ⚠️ El aviso al iframe va TAMBIÉN cuando falla, y con el motivo. Sin esto el botón
@@ -523,18 +528,19 @@ function RoomAbierto() {
               <div className="relative">
                 <button
                   onClick={() => {
-                    // Una sola: se abre directa. Varias: se elige. Un menú de un elemento
-                    // es un clic de más.
-                    if (grabaciones.length > 1) return setListaAbierta((v) => !v);
-                    const sola = grabaciones[0]?.url ?? grabada?.url;
-                    if (sola) window.open(sola, "_blank", "noopener");
+                    // ⚠️ Antes, con UNA grabación se abría el vídeo directo — y la
+                    // transcripción vive dentro de este desplegable, así que en el caso más
+                    // común (una sola) NO HABÍA DÓNDE VERLA: parecía que no se había
+                    // generado. El atajo se reserva para la grabación suelta sin fila.
+                    if (grabaciones.length) return setListaAbierta((v) => !v);
+                    if (grabada?.url) window.open(grabada.url, "_blank", "noopener");
                   }}
                   className="flex items-center gap-1.5 rounded-full bg-black/70 px-3 py-1.5 text-xs font-medium text-white backdrop-blur hover:bg-black/85"
                 >
                   <Circle size={10} />
                   {grabaciones.length > 1 ? `Grabaciones (${grabaciones.length})` : "Ver la grabación"}
                 </button>
-                {listaAbierta && grabaciones.length > 1 && (
+                {listaAbierta && grabaciones.length > 0 && (
                   <div className="absolute right-0 top-full z-20 mt-1 w-64 overflow-hidden rounded-lg border border-border bg-surface shadow-lg">
                     {grabaciones.map((g) => (
                       <div key={g.url} className="border-b border-border last:border-0">
@@ -606,6 +612,14 @@ function RoomAbierto() {
                 title={grabacion.by ? `La empezó ${grabacion.by}` : undefined}
               >
                 <Circle size={10} fill="currentColor" /> Grabando {fmtDesde(grabacion.since, ahora)}
+              </span>
+            )}
+            {/* ⚠️ Entre Detener y el enlace pasan minutos: el MP4 pasa del giga y se sube
+                dentro de la misma petición. Sin este testigo, la barra se quedaba muda y
+                quien detuvo daba la grabación por perdida. */}
+            {recBusy && !grabacion && (
+              <span className="pointer-events-none flex items-center gap-1.5 rounded-full bg-black/70 px-3 py-1.5 text-xs font-medium text-white backdrop-blur">
+                <Circle size={10} className="animate-pulse" fill="currentColor" /> Guardando la grabación…
               </span>
             )}
           </div>
