@@ -611,11 +611,14 @@ function RoomAbierto() {
                             </span>
                           )}
                           <span className="min-w-0">
-                            <span className="block truncate font-medium">
-                              {new Date(g.endedAt * 1000).toLocaleString([], { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}
-                            </span>
+                            {/* El TÍTULO manda: una fila que empieza por una fecha obliga a
+                                recordar qué se hizo ese día. Se repite entre grabaciones del
+                                mismo room, y da igual — es lo que se descarga y se comparte,
+                                y así se sabe qué es sin abrirlo. */}
+                            <span className="block truncate font-medium">{data.title}</span>
                             <span className="block truncate text-[11px] text-muted">
-                              {g.startedAt ? `${Math.max(1, Math.round((g.endedAt - g.startedAt) / 60))} min` : ""}
+                              {new Date(g.endedAt * 1000).toLocaleString([], { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}
+                              {g.startedAt ? ` · ${Math.max(1, Math.round((g.endedAt - g.startedAt) / 60))} min` : ""}
                               {g.bytes ? ` · ${g.bytes >= 1073741824 ? `${(g.bytes / 1073741824).toFixed(1)} GB` : `${Math.round(g.bytes / 1048576)} MB`}` : ""}
                             </span>
                           </span>
