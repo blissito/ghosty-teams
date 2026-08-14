@@ -1123,6 +1123,9 @@ async function migrate(): Promise<void> {
   // peor que un "no hay": deja esperando algo que no va a llegar.
   //   pending (o NULL) · ready · none  — `none` = whisper falló, o el MP4 ya no está.
   await addColumn("gt_event_recordings", "transcript_state", "TEXT");
+  // La portada: un fotograma del propio vídeo. Con tres grabaciones del mismo día, la hora
+  // y el peso no dicen cuál es cuál; la imagen sí.
+  await addColumn("gt_event_recordings", "poster_key", "TEXT");
   await exec("CREATE INDEX IF NOT EXISTS gt_event_rec_ch ON gt_event_recordings(channel_id, ended_at)");
 
   // Una persona, una fila por evento: si vuelve a registrarse se actualiza, no se

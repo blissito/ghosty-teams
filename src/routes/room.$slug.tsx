@@ -143,7 +143,7 @@ function RoomAbierto() {
   // storage, la URL se guardaba en el room, y nadie la veía nunca — desde fuera era
   // indistinguible de haberla perdido.
   const [grabada, setGrabada] = useState<{ url: string; at: number | null } | null>(null);
-  type Grabacion = { id: number; url: string; transcriptUrl: string | null; transcriptState: "pending" | "ready" | "none"; bytes: number; startedAt: number | null; endedAt: number; by: string | null };
+  type Grabacion = { id: number; url: string; poster: string | null; transcriptUrl: string | null; transcriptState: "pending" | "ready" | "none"; bytes: number; startedAt: number | null; endedAt: number; by: string | null };
   // ⚠️ TODAS, no la última. Con un solo enlace, grabar dos veces dejaba la primera sin
   // forma de abrirla aunque el archivo siguiera en storage.
   const [grabaciones, setGrabaciones] = useState<Grabacion[]>([]);
@@ -597,16 +597,25 @@ function RoomAbierto() {
                           target="_blank"
                           rel="noreferrer"
                           onClick={() => setListaAbierta(false)}
-                          className="min-w-0 flex-1 text-xs text-ink"
+                          className="flex min-w-0 flex-1 items-center gap-2 text-xs text-ink"
                         >
-                          {/* Duración y peso: con tres grabaciones del mismo día, la hora
-                              sola no dice cuál es la buena. */}
-                          <span className="font-medium">
-                            {new Date(g.endedAt * 1000).toLocaleString([], { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}
-                          </span>
-                          <span className="ml-1 text-muted">
-                            {g.startedAt ? `· ${Math.max(1, Math.round((g.endedAt - g.startedAt) / 60))} min` : ""}
-                            {g.bytes ? ` · ${(g.bytes / 1073741824).toFixed(2)} GB` : ""}
+                          {/* Un fotograma del propio vídeo: con tres grabaciones del mismo
+                              día, la hora y el peso no dicen cuál es cuál. */}
+                          {g.poster ? (
+                            <img src={g.poster} alt="" className="h-9 w-16 shrink-0 rounded object-cover" />
+                          ) : (
+                            <span className="flex h-9 w-16 shrink-0 items-center justify-center rounded bg-surface-2 text-muted">
+                              <Circle size={10} />
+                            </span>
+                          )}
+                          <span className="min-w-0">
+                            <span className="block truncate font-medium">
+                              {new Date(g.endedAt * 1000).toLocaleString([], { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}
+                            </span>
+                            <span className="block truncate text-[11px] text-muted">
+                              {g.startedAt ? `${Math.max(1, Math.round((g.endedAt - g.startedAt) / 60))} min` : ""}
+                              {g.bytes ? ` · ${g.bytes >= 1073741824 ? `${(g.bytes / 1073741824).toFixed(1)} GB` : `${Math.round(g.bytes / 1048576)} MB`}` : ""}
+                            </span>
                           </span>
                         </a>
                         {/* El transcript llega MINUTOS después del vídeo, así que el icono

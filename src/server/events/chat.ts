@@ -315,7 +315,7 @@ async function listarGrabaciones(r: { ch: { id: number; call_share_slug?: string
     const { dbq } = await import("../../dbq.server");
     const { signedUrl } = await import("../storage.server");
     const filas = await dbq(
-      `SELECT id, storage_key, transcript_key, transcript_state, bytes, started_at, ended_at, by_name
+      `SELECT id, storage_key, transcript_key, transcript_state, bytes, started_at, ended_at, by_name, poster_key
          FROM gt_event_recordings WHERE channel_id = ? ORDER BY ended_at DESC LIMIT 20`,
       [r.ch.id]
     );
@@ -326,6 +326,8 @@ async function listarGrabaciones(r: { ch: { id: number; call_share_slug?: string
       // dejaba un muro de texto sin puntuación y con los acentos rotos (el objeto no
       // declara charset, el navegador adivina latin-1).
       id: Number(f.id),
+      // La portada vive en storage privado, así que viaja firmada como el vídeo.
+      poster: f.poster_key ? signedUrl(String(f.poster_key), TTL) : null,
       transcriptUrl: f.transcript_key ? `/room/${r.ch.call_share_slug}/transcripcion/${f.id}` : null,
       bytes: Number(f.bytes ?? 0),
       startedAt: f.started_at == null ? null : Number(f.started_at),

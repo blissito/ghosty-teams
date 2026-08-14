@@ -124,6 +124,18 @@ export async function detenerGrabacion(_ch: unknown) {
   const key = keyFor(file);
   await pedirAStudio({ action: "upload", file, putUrl: presignPut(key, 3600), contentType: "video/mp4" });
 
+  // La portada: un fotograma del 25% que saca la caja al parar. Pesa unos 30 KB y es lo
+  // que convierte la lista de grabaciones en algo que se mira en vez de leerse.
+  let keyPortada: string | null = null;
+  const portada = String(parada.poster ?? "");
+  if (portada) {
+    const k = keyFor(portada);
+    const subida = await pedirAStudio({
+      action: "upload", file: portada, putUrl: presignPut(k, 3600), contentType: "image/webp",
+    }).then(() => true).catch(() => false);   // sin portada se sigue: no vale romper el guardado
+    if (subida) keyPortada = k;
+  }
+
   // ⚠️ El transcript NO se espera aquí. Whisper sobre una hora de audio tarda mucho más
   // que un request, así que se intenta una vez —una grabación corta ya puede estar lista—
   // y si no, se recoge después con `recogerTranscript`.
@@ -138,6 +150,7 @@ export async function detenerGrabacion(_ch: unknown) {
     file,
     key,
     transcriptKey: keyTexto,
+    posterKey: keyPortada,
     startedAt: parada.startedAt ? Math.floor(Date.parse(String(parada.startedAt)) / 1000) : null,
     bytes: Number(parada.bytes ?? 0),
     // 7 días: es lo que dura una firma de lectura, y para "ver lo que me perdí" alcanza.

@@ -141,7 +141,7 @@ export const deleteRecordingFn = createServerFn({ method: "POST" })
 
     const { dbq } = await import("../../dbq.server");
     const filas = await dbq(
-      "SELECT storage_key, transcript_key FROM gt_event_recordings WHERE id = ? AND channel_id = ?",
+      "SELECT storage_key, transcript_key, poster_key FROM gt_event_recordings WHERE id = ? AND channel_id = ?",
       [data.id, r.ch.id]
     ).catch(() => []);
     const fila = filas[0];
@@ -150,7 +150,7 @@ export const deleteRecordingFn = createServerFn({ method: "POST" })
     // Primero los objetos, después la fila: al revés, un fallo a mitad deja bytes pagándose
     // en storage sin nada que apunte a ellos.
     const { del } = await import("../storage.server");
-    for (const key of [fila.storage_key, fila.transcript_key]) {
+    for (const key of [fila.storage_key, fila.transcript_key, fila.poster_key]) {
       if (key) await del(String(key)).catch(() => {});
     }
     await dbq("DELETE FROM gt_event_recordings WHERE id = ? AND channel_id = ?", [data.id, r.ch.id]);
@@ -204,9 +204,9 @@ export const recordingFn = createServerFn({ method: "POST" })
       // grabación pisaba a la primera y su enlace se perdía aunque el MP4 siguiera ahí.
       const { dbq } = await import("../../dbq.server");
       await dbq(
-        `INSERT INTO gt_event_recordings (channel_id, storage_key, transcript_key, bytes, started_at, by_name, box_file)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        [r.ch.id, res.key, res.transcriptKey, res.bytes, res.startedAt, viewer.name ?? null, res.file]
+        `INSERT INTO gt_event_recordings (channel_id, storage_key, transcript_key, bytes, started_at, by_name, box_file, poster_key)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [r.ch.id, res.key, res.transcriptKey, res.bytes, res.startedAt, viewer.name ?? null, res.file, res.posterKey ?? null]
       ).catch((e) => console.error("[event] no pude registrar la grabación:", e));
       await r.db.setChannelEvent(r.ch.id, { recordingUrl: res.url, recordedAt: Math.floor(Date.now() / 1000) });
 
