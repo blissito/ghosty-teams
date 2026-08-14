@@ -534,6 +534,20 @@ function RoomAbierto() {
               </div>
               {/* Sin botón: la puerta es el CHAT. Al intentar escribir se pide el correo,
                   y con él verificado la llamada llega ya montada en la siguiente carga. */}
+              {/* ⚠️ Salir de la llamada dejaba esta misma pantalla diciendo "escribe en el
+                  chat para entrar" — a alguien que acababa de salir, y que SÍ puede volver.
+                  Se distingue el caso y se le da la puerta de vuelta. */}
+              {data.callUrl && !callUrl ? (
+                <div className="flex flex-col items-center gap-3">
+                  <p className="text-sm text-muted">Saliste de la llamada.</p>
+                  <button
+                    onClick={() => setCallUrl(data.callUrl)}
+                    className="rounded-full bg-brand px-4 py-2 text-sm font-medium text-white hover:opacity-90"
+                  >
+                    Volver a entrar
+                  </button>
+                </div>
+              ) : (
               <p className="max-w-xs text-sm text-muted">
                 {data.recordingUrl
                   ? "Grabación del evento."
@@ -541,6 +555,7 @@ function RoomAbierto() {
                     ? "La llamada no está abierta ahora mismo."
                     : "Escribe en el chat para entrar a la llamada."}
               </p>
+              )}
               {err && <p className="text-xs text-red-400">{err}</p>}
             </div>
           )}
