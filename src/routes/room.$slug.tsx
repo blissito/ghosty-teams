@@ -1,7 +1,7 @@
 import { createFileRoute, notFound, useRouter } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createServerFn } from "@tanstack/react-start";
-import { ChevronDown, Circle, MessageSquare, Paperclip, Volume2, VolumeX, X } from "lucide-react";
+import { ChevronDown, Circle, FileText, Loader2, MessageSquare, Paperclip, Trash2, Volume2, VolumeX, X } from "lucide-react";
 import GhostyMascot from "../components/GhostyMascot";
 import { ChatCtx, ChatCtxDefaults, MessageRow, type SessionUser } from "../components/chat/message";
 import type { Message, CustomEmoji, ReactionAgg } from "../db.server";
@@ -560,54 +560,63 @@ function RoomAbierto() {
                   {grabaciones.length > 1 ? `Grabaciones (${grabaciones.length})` : "Ver la grabación"}
                 </button>
                 {listaAbierta && grabaciones.length > 0 && (
-                  <div className="absolute right-0 top-full z-20 mt-1 w-64 overflow-hidden rounded-lg border border-border bg-surface shadow-lg">
+                  <div className="absolute right-0 top-full z-20 mt-1 w-72 overflow-hidden rounded-lg border border-border bg-surface shadow-lg">
+                    {/* UNA fila por grabación: el vídeo a la izquierda y sus acciones como
+                        iconos a la derecha. Apiladas en vertical, tres grabaciones se
+                        convertían en nueve renglones y había que leerlos todos para
+                        encontrar la buena. */}
                     {grabaciones.map((g) => (
-                      <div key={g.url} className="border-b border-border last:border-0">
-                      <a
-                        href={g.url}
-                        target="_blank"
-                        rel="noreferrer"
-                        onClick={() => setListaAbierta(false)}
-                        className="block px-3 py-2 text-xs text-ink hover:bg-surface-2"
-                      >
-                        {/* Duración y peso: con tres grabaciones del mismo día, la hora sola
-                            no dice cuál es la buena. */}
-                        <span className="font-medium">
-                          {new Date(g.endedAt * 1000).toLocaleString([], { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}
-                        </span>
-                        <span className="ml-1 text-muted">
-                          {g.startedAt ? `· ${Math.max(1, Math.round((g.endedAt - g.startedAt) / 60))} min` : ""}
-                          {g.bytes ? ` · ${(g.bytes / 1073741824).toFixed(2)} GB` : ""}
-                        </span>
-                      </a>
-                      {/* El transcript llega MINUTOS después del vídeo. Decirlo es la
-                          diferencia entre "está en camino" y "esto no existe" — que fue
-                          justo lo que pareció la primera vez. */}
-                      {/* Sólo quien modera. El borrado se lleva el vídeo Y su
-                          transcripción, y no hay copia en ninguna otra parte. */}
-                      {modero && (
-                        <button
-                          onClick={() => { setListaAbierta(false); setPorBorrar(g); }}
-                          className="block w-full px-3 pb-2 text-left text-[11px] text-red-600 hover:underline"
-                        >
-                          Borrar
-                        </button>
-                      )}
-                      {g.transcriptUrl ? (
+                      <div key={g.url} className="flex items-center gap-1 border-b border-border px-2 py-1.5 last:border-0 hover:bg-surface-2">
                         <a
-                          href={g.transcriptUrl}
+                          href={g.url}
                           target="_blank"
                           rel="noreferrer"
                           onClick={() => setListaAbierta(false)}
-                          className="block px-3 pb-2 text-[11px] text-brand hover:underline"
+                          className="min-w-0 flex-1 text-xs text-ink"
                         >
-                          Transcripción
+                          {/* Duración y peso: con tres grabaciones del mismo día, la hora
+                              sola no dice cuál es la buena. */}
+                          <span className="font-medium">
+                            {new Date(g.endedAt * 1000).toLocaleString([], { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}
+                          </span>
+                          <span className="ml-1 text-muted">
+                            {g.startedAt ? `· ${Math.max(1, Math.round((g.endedAt - g.startedAt) / 60))} min` : ""}
+                            {g.bytes ? ` · ${(g.bytes / 1073741824).toFixed(2)} GB` : ""}
+                          </span>
                         </a>
-                      ) : (
-                        <p className="px-3 pb-2 text-[11px] text-muted">
-                          {g.transcriptState === "none" ? "Sin transcripción" : "Transcribiendo…"}
-                        </p>
-                      )}
+                        {/* El transcript llega MINUTOS después del vídeo, así que el icono
+                            tiene tres caras: enlace, reloj girando, o nada. */}
+                        {g.transcriptUrl ? (
+                          <a
+                            href={g.transcriptUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            onClick={() => setListaAbierta(false)}
+                            title="Transcripción"
+                            className="rounded p-1.5 text-brand hover:bg-surface"
+                          >
+                            <FileText size={14} />
+                          </a>
+                        ) : g.transcriptState === "none" ? (
+                          <span title="Sin transcripción" className="p-1.5 text-muted opacity-40">
+                            <FileText size={14} />
+                          </span>
+                        ) : (
+                          <span title="Transcribiendo…" className="p-1.5 text-muted">
+                            <Loader2 size={14} className="animate-spin" />
+                          </span>
+                        )}
+                        {/* Sólo quien modera. Se lleva el vídeo Y su transcripción, y no hay
+                            copia en ninguna otra parte. */}
+                        {modero && (
+                          <button
+                            onClick={() => { setListaAbierta(false); setPorBorrar(g); }}
+                            title="Borrar"
+                            className="rounded p-1.5 text-muted hover:bg-surface hover:text-red-600"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        )}
                       </div>
                     ))}
                   </div>
