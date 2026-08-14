@@ -141,11 +141,23 @@ export const deleteRecordingFn = createServerFn({ method: "POST" })
 
     const { dbq } = await import("../../dbq.server");
     const filas = await dbq(
-      "SELECT storage_key, transcript_key, poster_key FROM gt_event_recordings WHERE id = ? AND channel_id = ?",
+      "SELECT storage_key, transcript_key, poster_key, video_id FROM gt_event_recordings WHERE id = ? AND channel_id = ?",
       [data.id, r.ch.id]
     ).catch(() => []);
     const fila = filas[0];
     if (!fila) return { ok: false, error: "Esa grabación ya no existe" };
+
+    // Y la publicación, si la hubo: quien borra la grabación espera que desaparezca de
+    // todas partes, no que siga viéndose en el curso. ⚠️ Si allá ya está PUBLICADA, el otro
+    // lado se niega y se queda — quitar algo que la gente ya está viendo es decisión de
+    // quien lo publicó, no efecto colateral de limpiar aquí.
+    if (fila.video_id) {
+      const { borrarPublicacion } = await import("./publish.server");
+      const fuera = await borrarPublicacion(String(fila.video_id));
+      if (!fuera) {
+        return { ok: false, error: "Esa grabación ya está publicada en el curso: quítala primero desde ahí" };
+      }
+    }
 
     // Primero los objetos, después la fila: al revés, un fallo a mitad deja bytes pagándose
     // en storage sin nada que apunte a ellos.
