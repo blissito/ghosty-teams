@@ -848,9 +848,8 @@ function RoomAbierto() {
                 {porBorrar.bytes ? ` · ${(porBorrar.bytes / 1073741824).toFixed(2)} GB` : ""}
               </p>
               <p className="mt-3 text-sm text-ink">
-                Se borra el vídeo y su transcripción
-                {porBorrar.viewerUrl || porBorrar.publishState ? ", aquí y en el curso" : ""}.{" "}
-                <strong>No se puede deshacer.</strong>
+                Se borra de esta sala, con su transcripción. <strong>No se puede deshacer.</strong>
+                {porBorrar.viewerUrl ? " Lo que ya está en el curso se queda: eso se quita desde ahí." : ""}
               </p>
               <div className="mt-5 flex justify-end gap-2">
                 <button

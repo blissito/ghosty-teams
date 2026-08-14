@@ -91,19 +91,6 @@ export function m3u8Para(courseId: string, videoId: string): string {
 }
 
 /**
- * Borra la publicación. Devuelve `false` si el vídeo YA estaba publicado allá — en ese caso
- * no se toca: puede tener vistas y estar enlazado, y quitarlo es decisión de quien publicó.
- */
-export async function borrarPublicacion(videoId: string): Promise<boolean> {
-  try {
-    await pedirAFixtergeek({ intent: "delete", videoId });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/**
  * La portada, en el bucket del taller. La sube la caja junto al HLS.
  *
  * ⚠️ No se usa una URL firmada NUESTRA: caduca, y un vídeo publicado se queda sin imagen

@@ -147,18 +147,12 @@ export const deleteRecordingFn = createServerFn({ method: "POST" })
     const fila = filas[0];
     if (!fila) return { ok: false, error: "Esa grabación ya no existe" };
 
-    // Y la publicación, si la hubo: quien borra la grabación espera que desaparezca de
-    // todas partes, no que siga viéndose en el curso. ⚠️ Si allá ya está PUBLICADA, el otro
-    // lado se niega y se queda — quitar algo que la gente ya está viendo es decisión de
-    // quien lo publicó, no efecto colateral de limpiar aquí.
-    if (fila.video_id) {
-      const { borrarPublicacion } = await import("./publish.server");
-      const fuera = await borrarPublicacion(String(fila.video_id));
-      if (!fuera) {
-        return { ok: false, error: "Esa grabación ya está publicada en el curso: quítala primero desde ahí" };
-      }
-    }
-
+    // ⚠️ NO se toca la publicación en el curso, y es a propósito: son dos ciclos de vida
+    // distintos. Aquí se limpia la SALA —el original pesado y su fila—; lo que ya vive en el
+    // curso es un vídeo con su propio HLS, sus vistas y su público, y se quita desde el
+    // admin de allá. Borrar en cascada convertiría una limpieza de room en despublicar algo
+    // que la gente puede estar viendo.
+    //
     // Primero los objetos, después la fila: al revés, un fallo a mitad deja bytes pagándose
     // en storage sin nada que apunte a ellos.
     const { del } = await import("../storage.server");
