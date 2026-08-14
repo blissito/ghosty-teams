@@ -1,7 +1,7 @@
 import { createFileRoute, notFound, useRouter } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createServerFn } from "@tanstack/react-start";
-import { ChevronDown, Circle, FileText, Loader2, MessageSquare, Paperclip, Trash2, Volume2, VolumeX, X } from "lucide-react";
+import { ChevronDown, Circle, Download, FileText, Loader2, MessageSquare, Paperclip, Trash2, Volume2, VolumeX, X } from "lucide-react";
 import GhostyMascot from "../components/GhostyMascot";
 import { ChatCtx, ChatCtxDefaults, MessageRow, type SessionUser } from "../components/chat/message";
 import type { Message, CustomEmoji, ReactionAgg } from "../db.server";
@@ -143,7 +143,7 @@ function RoomAbierto() {
   // storage, la URL se guardaba en el room, y nadie la veía nunca — desde fuera era
   // indistinguible de haberla perdido.
   const [grabada, setGrabada] = useState<{ url: string; at: number | null } | null>(null);
-  type Grabacion = { id: number; url: string; poster: string | null; transcriptUrl: string | null; transcriptState: "pending" | "ready" | "none"; bytes: number; startedAt: number | null; endedAt: number; by: string | null };
+  type Grabacion = { id: number; url: string; poster: string | null; viewerUrl: string | null; publishState: string | null; transcriptUrl: string | null; transcriptState: "pending" | "ready" | "none"; bytes: number; startedAt: number | null; endedAt: number; by: string | null };
   // ⚠️ TODAS, no la última. Con un solo enlace, grabar dos veces dejaba la primera sin
   // forma de abrirla aunque el archivo siguiera en storage.
   const [grabaciones, setGrabaciones] = useState<Grabacion[]>([]);
@@ -592,8 +592,11 @@ function RoomAbierto() {
                         encontrar la buena. */}
                     {grabaciones.map((g) => (
                       <div key={g.url} className="flex items-center gap-1 border-b border-border px-2 py-1.5 last:border-0 hover:bg-surface-2">
+                        {/* ⚠️ Si ya está publicada, el clic va al VISOR: allí hay capítulos,
+                            transcripción y miniaturas de scrub. El MP4 crudo son gigas y su
+                            firma caduca a los 7 días — se queda como descarga, abajo. */}
                         <a
-                          href={g.url}
+                          href={g.viewerUrl ?? g.url}
                           target="_blank"
                           rel="noreferrer"
                           onClick={() => setListaAbierta(false)}
@@ -617,6 +620,7 @@ function RoomAbierto() {
                                 y así se sabe qué es sin abrirlo. */}
                             <span className="block truncate font-medium">{data.title}</span>
                             <span className="block truncate text-[11px] text-muted">
+                              {g.publishState === "pending" ? "publicando… · " : ""}
                               {new Date(g.endedAt * 1000).toLocaleString([], { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}
                               {g.startedAt ? ` · ${Math.max(1, Math.round((g.endedAt - g.startedAt) / 60))} min` : ""}
                               {g.bytes ? ` · ${g.bytes >= 1073741824 ? `${(g.bytes / 1073741824).toFixed(1)} GB` : `${Math.round(g.bytes / 1048576)} MB`}` : ""}
@@ -644,6 +648,20 @@ function RoomAbierto() {
                           <span title="Transcribiendo…" className="p-1.5 text-muted">
                             <Loader2 size={14} className="animate-spin" />
                           </span>
+                        )}
+                        {/* Con la grabación ya publicada, el clic principal va al visor; el
+                            MP4 original queda aquí, para quien lo quiera bajar. */}
+                        {g.viewerUrl && (
+                          <a
+                            href={g.url}
+                            target="_blank"
+                            rel="noreferrer"
+                            onClick={() => setListaAbierta(false)}
+                            title="Descargar el original"
+                            className="rounded p-1.5 text-muted hover:bg-surface hover:text-ink"
+                          >
+                            <Download size={14} />
+                          </a>
                         )}
                         {/* Sólo quien modera. Se lleva el vídeo Y su transcripción, y no hay
                             copia en ninguna otra parte. */}

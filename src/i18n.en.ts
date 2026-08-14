@@ -1217,6 +1217,10 @@ export const en: Record<string, string> = {
   "entran a escuchar; tú das la palabra": "they join to listen; you hand out the mic",
   "entran con micrófono y cámara": "they join with mic and camera",
   "Título del evento": "Event title",
+  "Publicar en el taller (opcional)": "Publish to the workshop (optional)",
+  "id del taller en fixtergeek": "workshop id on fixtergeek",
+  "Vacío = la grabación se queda aquí. Con id, se publica en borrador y tú decides cuándo se ve.":
+    "Empty = the recording stays here. With an id, it's published as a draft and you decide when it goes live.",
   "Liga pública": "Public link",
   "El agente responde en este evento": "The agent replies in this event",
   "Sólo si lo mencionan. Cada respuesta consume saldo tuyo y aquí escribe gente de fuera.":

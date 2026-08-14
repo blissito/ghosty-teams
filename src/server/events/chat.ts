@@ -305,7 +305,12 @@ function recogerPendientes(channelId: number): void {
   if (Date.now() - antes < 60_000) return;
   ultimaRecogida.set(channelId, Date.now());
   void import("./recording.server")
-    .then((m) => m.recogerTranscript(channelId))
+    .then(async (m) => {
+      await m.recogerTranscript(channelId).catch(() => 0);
+      // Y la publicación en fixtergeek, que espera a que la caja termine las calidades
+      // chicas. Mismo sitio y misma razón: nadie va a esperar con el dedo en el botón.
+      await m.cerrarPublicaciones(channelId).catch(() => 0);
+    })
     .catch(() => {});
 }
 
@@ -315,7 +320,7 @@ async function listarGrabaciones(r: { ch: { id: number; call_share_slug?: string
     const { dbq } = await import("../../dbq.server");
     const { signedUrl } = await import("../storage.server");
     const filas = await dbq(
-      `SELECT id, storage_key, transcript_key, transcript_state, bytes, started_at, ended_at, by_name, poster_key
+      `SELECT id, storage_key, transcript_key, transcript_state, bytes, started_at, ended_at, by_name, poster_key, published_url, publish_state
          FROM gt_event_recordings WHERE channel_id = ? ORDER BY ended_at DESC LIMIT 20`,
       [r.ch.id]
     );
@@ -328,6 +333,11 @@ async function listarGrabaciones(r: { ch: { id: number; call_share_slug?: string
       id: Number(f.id),
       // La portada vive en storage privado, así que viaja firmada como el vídeo.
       poster: f.poster_key ? signedUrl(String(f.poster_key), TTL) : null,
+      // El visor de fixtergeek, sólo cuando la publicación está CONFIRMADA: la URL se
+      // conoce desde que se crea el borrador, pero enlazarla antes lleva a un vídeo
+      // que todavía no tiene qué reproducir.
+      viewerUrl: f.publish_state === "ready" && f.published_url ? String(f.published_url) : null,
+      publishState: (f.publish_state as string | null) ?? null,
       transcriptUrl: f.transcript_key ? `/room/${r.ch.call_share_slug}/transcripcion/${f.id}` : null,
       bytes: Number(f.bytes ?? 0),
       startedAt: f.started_at == null ? null : Number(f.started_at),

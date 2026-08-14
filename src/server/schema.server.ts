@@ -1043,6 +1043,9 @@ async function migrate(): Promise<void> {
   await addColumn("gc_channels", "call_share_slug", "TEXT");    // la liga pública
   await addColumn("gc_channels", "call_livekit_url", "TEXT");   // a qué caja va; NULL = la de siempre
   await addColumn("gc_channels", "call_title", "TEXT");         // el nombre del evento, no el del room
+  // A qué taller de fixtergeek se publican las grabaciones de este room. Se pega a mano una
+  // vez; vacío = no se publica en ninguna parte y todo sigue como antes.
+  await addColumn("gc_channels", "call_course_id", "TEXT");
   await addColumn("gc_channels", "public_access", "INTEGER NOT NULL DEFAULT 0");
   await addColumn("gc_channels", "agent_enabled", "INTEGER NOT NULL DEFAULT 0");
   // ⚠️ DESDE CUÁNDO es público, y por qué importa: sin esto, convertir en abierto un room
@@ -1126,6 +1129,12 @@ async function migrate(): Promise<void> {
   // La portada: un fotograma del propio vídeo. Con tres grabaciones del mismo día, la hora
   // y el peso no dicen cuál es cuál; la imagen sí.
   await addColumn("gt_event_recordings", "poster_key", "TEXT");
+  // Publicación en fixtergeek. `publish_state`: pending · ready · none (el room no publica).
+  // El `video_id` se guarda porque es lo que ata esta grabación a su fila allá, y sin él un
+  // reintento crearía un vídeo nuevo en vez de terminar el que quedó a medias.
+  await addColumn("gt_event_recordings", "video_id", "TEXT");
+  await addColumn("gt_event_recordings", "published_url", "TEXT");
+  await addColumn("gt_event_recordings", "publish_state", "TEXT");
   await exec("CREATE INDEX IF NOT EXISTS gt_event_rec_ch ON gt_event_recordings(channel_id, ended_at)");
 
   // Una persona, una fila por evento: si vuelve a registrarse se actualiza, no se

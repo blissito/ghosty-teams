@@ -71,6 +71,7 @@ export const setChannelEventFn = createServerFn({ method: "POST" })
       mode?: "webinar" | "taller" | null;
       shareSlug?: string | null;
       title?: string | null;
+      courseId?: string | null;
       livekitUrl?: string | null;
       publicAccess?: boolean;
       agentEnabled?: boolean;
@@ -96,6 +97,8 @@ export const setChannelEventFn = createServerFn({ method: "POST" })
         mode: data.mode,
         shareSlug,
         title: data.title === undefined ? undefined : data.title?.trim() || null,
+        // El id del taller de fixtergeek: se pega tal cual, es un ObjectId de Mongo.
+        courseId: data.courseId === undefined ? undefined : data.courseId?.trim() || null,
         livekitUrl: data.livekitUrl === undefined ? undefined : data.livekitUrl?.trim() || null,
         publicAccess: data.publicAccess,
         agentEnabled: data.agentEnabled,

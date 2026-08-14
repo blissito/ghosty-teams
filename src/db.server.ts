@@ -18,6 +18,8 @@ export type Channel = {
   call_share_slug?: string | null;
   call_livekit_url?: string | null;
   call_title?: string | null;
+  /** Taller de fixtergeek al que se publican las grabaciones. Vacío = no se publica. */
+  call_course_id?: string | null;
   public_access?: number;
   agent_enabled?: number;
   /** Desde cuándo es público. El camino público NO sirve nada anterior a esto. */
@@ -48,6 +50,7 @@ function toChannel(r: Row): Channel {
     call_share_slug: r.call_share_slug ?? null,
     call_livekit_url: r.call_livekit_url ?? null,
     call_title: r.call_title ?? null,
+    call_course_id: r.call_course_id ?? null,
     public_access: num(r.public_access),
     agent_enabled: num(r.agent_enabled),
     public_since: r.public_since == null ? null : num(r.public_since),
@@ -1706,6 +1709,7 @@ export async function setChannelEvent(
     shareSlug?: string | null;
     livekitUrl?: string | null;
     title?: string | null;
+    courseId?: string | null;
     publicAccess?: boolean;
     agentEnabled?: boolean;
     callOpen?: boolean;
@@ -1723,6 +1727,7 @@ export async function setChannelEvent(
   if (patch.shareSlug !== undefined) put("call_share_slug", patch.shareSlug);
   if (patch.livekitUrl !== undefined) put("call_livekit_url", patch.livekitUrl);
   if (patch.title !== undefined) put("call_title", patch.title);
+  if (patch.courseId !== undefined) put("call_course_id", patch.courseId);
   if (patch.publicAccess !== undefined) put("public_access", patch.publicAccess ? 1 : 0);
   if (patch.agentEnabled !== undefined) put("agent_enabled", patch.agentEnabled ? 1 : 0);
   if (patch.callOpen !== undefined) put("call_open", patch.callOpen ? 1 : 0);

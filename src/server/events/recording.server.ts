@@ -71,7 +71,7 @@ export async function recogerTranscript(channelId: number): Promise<number> {
   // eso en un CPU compartido, así que la ventana era más corta que el propio trabajo.
   // Siete días es el orden de magnitud de lo que vive una caja de eventos.
   const pendientes = await dbq(
-    `SELECT id, box_file FROM gt_event_recordings
+    `SELECT id, box_file, video_id FROM gt_event_recordings
       WHERE channel_id = ? AND transcript_key IS NULL
         AND COALESCE(transcript_state, 'pending') = 'pending'
         AND ended_at > unixepoch() - 604800`,
@@ -87,7 +87,8 @@ export async function recogerTranscript(channelId: number): Promise<number> {
       const keyTexto = await subirTranscript(file);
       if (keyTexto) {
         await dbq("UPDATE gt_event_recordings SET transcript_key = ?, transcript_state = 'ready' WHERE id = ?", [keyTexto, fila.id]);
-        await pedirAStudio({ action: "delete", file }).catch(() => {});
+        // El borrado espera si la grabación aún tiene que publicarse: se lleva el HLS.
+        if (!fila.video_id) await pedirAStudio({ action: "delete", file }).catch(() => {});
         hechos++;
       }
     } else if (estado.status === "not_found") {
@@ -111,12 +112,101 @@ export async function iniciarGrabacion(_ch: unknown, roomName: string) {
 }
 
 /**
+ * Cierra las publicaciones que quedaron a medias: mira si la caja ya terminó el HLS y, si
+ * sí, le pasa a fixtergeek el `m3u8`, la portada y la transcripción.
+ *
+ * Corre en el mismo sitio que `recogerTranscript` —al abrir el room— por la misma razón: la
+ * conversión de las calidades chicas tarda minutos y nadie va a esperar con el dedo en el
+ * botón. Y nunca lanza: un fallo de publicación no puede tumbar la vista del room.
+ */
+export async function cerrarPublicaciones(channelId: number): Promise<number> {
+  const { dbq } = await import("../../dbq.server");
+  const pendientes = await dbq(
+    `SELECT id, box_file, video_id, poster_key, started_at, ended_at FROM gt_event_recordings
+      WHERE channel_id = ? AND video_id IS NOT NULL
+        AND COALESCE(publish_state, 'none') = 'pending'
+        AND ended_at > unixepoch() - 604800`,
+    [channelId]
+  ).catch(() => []);
+  if (!pendientes.length) return 0;
+
+  const { cerrarPublicacion, m3u8Para } = await import("./publish.server");
+  const { signedUrl } = await import("../storage.server");
+  const ch = await dbq("SELECT call_course_id FROM gc_channels WHERE id = ?", [channelId]).catch(() => []);
+  const courseId = String(ch[0]?.call_course_id ?? "");
+  if (!courseId) return 0;
+
+  let hechos = 0;
+  for (const fila of pendientes) {
+    const file = String(fila.box_file ?? "");
+    if (!/^[\w.-]+\.mp4$/.test(file)) continue;
+    const estado = await pedirAStudio({ action: "hls-status", file }).catch(() => null);
+    if (!estado || estado.status !== "ready") continue;
+
+    // La transcripción viaja como DATOS, no como archivo: de ahí salen los subtítulos, los
+    // capítulos y el buscador del curso.
+    const t = await pedirAStudio({ action: "transcript-json", file }).catch(() => null);
+
+    const minutos = fila.started_at
+      ? Math.max(1, Math.round((Number(fila.ended_at) - Number(fila.started_at)) / 60))
+      : null;
+    const videoId = String(fila.video_id);
+    try {
+      await cerrarPublicacion({
+        videoId,
+        m3u8: m3u8Para(courseId, videoId),
+        poster: fila.poster_key ? signedUrl(String(fila.poster_key), 7 * 24 * 3600) : null,
+        durationMin: minutos,
+        transcript: t?.transcript ?? undefined,
+      });
+    } catch (e) {
+      console.error("[event] no pude cerrar la publicación:", e);
+      continue;   // se reintenta la próxima vez que alguien abra el room
+    }
+    // `published_url` ya se guardó al crear el borrador: se conoce desde el principio. Lo
+    // que cambia aquí es el ESTADO, que es lo que decide si el enlace se ofrece.
+    await dbq("UPDATE gt_event_recordings SET publish_state = 'ready' WHERE id = ?", [fila.id]).catch(() => {});
+    // Publicado y confirmado: ahora sí se libera el disco de la caja.
+    await pedirAStudio({ action: "delete", file }).catch(() => {});
+    hechos++;
+  }
+  return hechos;
+}
+
+/**
  * Para, SUBE y sólo entonces borra el local. Devuelve las URLs firmadas del video y del
  * transcript; el transcript es `null` si whisper aún no terminó — el video, que es lo caro,
  * ya está fuera de la caja.
  */
-export async function detenerGrabacion(_ch: unknown) {
-  const parada = await pedirAStudio({ action: "stop" });
+export async function detenerGrabacion(ch: { call_course_id?: string | null; call_title?: string | null; name?: string; starts_at?: number | null }) {
+  // ⚠️ El borrador se crea ANTES de parar, y no es un capricho: el `videoId` va dentro de la
+  // llave de todos los objetos que la caja va a subir, así que tiene que existir antes de
+  // que empiece a subirlos. Si fixtergeek no contesta, la grabación se guarda igual y queda
+  // pendiente de publicar — perder el vídeo por un fallo de publicación sería absurdo.
+  let publicacion: { videoId: string; viewerUrl: string } | null = null;
+  let hlsPrefix = "";
+  const courseId = (ch?.call_course_id ?? "").trim();
+  if (courseId) {
+    try {
+      const { crearBorrador, prefijoHls } = await import("./publish.server");
+      const d = await crearBorrador({
+        courseId,
+        title: (ch.call_title || ch.name || "Grabación").trim(),
+        eventDate: ch.starts_at ?? null,
+      });
+      publicacion = { videoId: d.videoId, viewerUrl: d.viewerUrl };
+      hlsPrefix = prefijoHls(courseId, d.videoId);
+    } catch (e) {
+      console.error("[event] no pude crear el borrador en fixtergeek:", e);
+    }
+  }
+
+  const parada = await pedirAStudio({
+    action: "stop",
+    // Sin prefijo la caja NO transcodifica: una junta interna no paga el precio de un
+    // webinar. Con prefijo, genera el HLS completo y lo sube ella misma.
+    ...(hlsPrefix ? { hls: true, hlsPrefix } : {}),
+  });
   const file = String(parada.file ?? "");
   if (!file) throw new Error("No había ninguna grabación en curso");
 
@@ -144,11 +234,17 @@ export async function detenerGrabacion(_ch: unknown) {
   // ⚠️ Y el MP4 sólo se borra si NO queda transcript pendiente: whisper transcribe desde
   // ese archivo, y borrarlo antes deja la grabación muda para siempre. Es la misma
   // disciplina que ya rige el vídeo — primero se confirma, después se borra.
-  if (keyTexto) await pedirAStudio({ action: "delete", file }).catch(() => {});
+  // ⚠️ Y tampoco se borra si queda una publicación en marcha: el `delete` de la caja se
+  // lleva el directorio entero del id —HLS, storyboard y el `transcript.json`—, que es
+  // justo lo que falta por subir. Primero se publica, después se limpia.
+  if (keyTexto && !publicacion) await pedirAStudio({ action: "delete", file }).catch(() => {});
 
   return {
     file,
     key,
+    videoId: publicacion?.videoId ?? null,
+    viewerUrl: publicacion?.viewerUrl ?? null,
+    publishState: publicacion ? ("pending" as const) : ("none" as const),
     transcriptKey: keyTexto,
     posterKey: keyPortada,
     startedAt: parada.startedAt ? Math.floor(Date.parse(String(parada.startedAt)) / 1000) : null,

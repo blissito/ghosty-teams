@@ -4524,6 +4524,9 @@ function EventSection({
   const [mode, setMode] = useState<"webinar" | "taller">(channel?.call_mode ?? "webinar");
   const [shareSlug, setShareSlug] = useState(channel?.call_share_slug ?? "");
   const [title, setTitle] = useState(channel?.call_title ?? "");
+  // Taller de fixtergeek al que se publican las grabaciones de este room. Vacío = no se
+  // publica en ninguna parte, que es como se comportaba hasta ahora.
+  const [courseId, setCourseId] = useState(channel?.call_course_id ?? "");
   const [agentOn, setAgentOn] = useState(channel?.agent_enabled === 1);
   const [callOn, setCallOn] = useState(channel?.call_open === 1);
   // `datetime-local` habla en hora LOCAL y sin zona; la columna es epoch UTC. La ida y la
@@ -4559,6 +4562,7 @@ function EventSection({
           mode,
           shareSlug: shareSlug.trim() || null,
           title: title.trim() || null,
+          courseId: courseId.trim() || null,
           agentEnabled: agentOn,
           callOpen: callOn,
           startsAt: startsAt ? Math.floor(new Date(startsAt).getTime() / 1000) : null,
@@ -4665,6 +4669,20 @@ function EventSection({
         placeholder={channel?.name ?? ""}
         className="mb-3 w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm outline-none focus:border-brand"
       />
+
+      {/* Publicar la grabación es OPCIONAL y va apagado por defecto: la mayoría de las
+          llamadas no acaban en un curso. Con el id pegado, cada grabación de este room se
+          sube sola al taller y aparece ahí en borrador. */}
+      <label className="mb-1 block text-xs font-medium text-muted">{t("Publicar en el taller (opcional)")}</label>
+      <input
+        value={courseId}
+        onChange={(e) => setCourseId(e.target.value)}
+        placeholder={t("id del taller en fixtergeek")}
+        className="mb-1 w-full rounded-lg border border-border bg-surface px-3 py-2 font-mono text-xs outline-none focus:border-brand"
+      />
+      <p className="mb-3 text-[11px] text-muted">
+        {t("Vacío = la grabación se queda aquí. Con id, se publica en borrador y tú decides cuándo se ve.")}
+      </p>
 
       <label className="mb-1 block text-xs font-medium text-muted">{t("Empieza el…")}</label>
       {/* `datetime-local` da la hora en el RELOJ DE QUIEN LA ESCRIBE y se guarda en UTC:
