@@ -387,9 +387,33 @@ export function quotedContextPrefix(author: string, excerpt: string, body: strin
 // Cita COMPLETA para el agente: a diferencia del excerpt del snapshot (220 chars + tapa
 // bloques), conserva el contenido real del mensaje citado (para que "dame tips sobre ESTO"
 // tenga el material). Cap generoso para no explotar el turno.
+/**
+ * ⚠️ Un `slice()` cuenta unidades UTF-16, y un emoji ocupa DOS. Cortar justo en medio deja
+ * un surrogate huérfano: `JSON.stringify` lo escapa tan feliz (`\ud83d`) y es la API de
+ * Anthropic la que revienta con `400 ... no low surrogate in string: line 1 column N`.
+ * Nadie lo ve hasta que un documento largo con emojis cae exactamente en la frontera.
+ *
+ * Estos dos ajustan el índice para no partir ningún par.
+ */
+export function sliceStart(s: string, end: number): string {
+  const i = end > 0 && end < s.length && s.charCodeAt(end - 1) >= 0xd800 && s.charCodeAt(end - 1) <= 0xdbff ? end - 1 : end;
+  return s.slice(0, i);
+}
+export function sliceEnd(s: string, from: number): string {
+  const start = Math.max(0, s.length - from);
+  const i = start < s.length && s.charCodeAt(start) >= 0xdc00 && s.charCodeAt(start) <= 0xdfff ? start + 1 : start;
+  return s.slice(i);
+}
+
+/** Red final antes de serializar: quita cualquier surrogate que quedara suelto (venga de un
+ *  slice nuestro, de la DB o de un tercero). Sin esto el turno entero se pierde con un 400. */
+export function stripLoneSurrogates(s: string): string {
+  return s.replace(/[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/g, "");
+}
+
 export function clampQuote(body: string, max = 2000): string {
   const s = (body || "").trim();
-  return s.length > max ? s.slice(0, max) + "\n…[citado recortado]" : s;
+  return s.length > max ? sliceStart(s, max) + "\n…[citado recortado]" : s;
 }
 
 // Bloque de HISTORIAL reciente para el turno del agente: resuelve referencias ("otra vez",
@@ -738,10 +762,10 @@ export function clampInline(md: string, max = ARTIFACT_INLINE_MAX_CHARS): string
   const mitad = Math.floor((max - 200) / 2);
   const omitidos = md.length - mitad * 2;
   return (
-    md.slice(0, mitad) +
+    sliceStart(md, mitad) +
     `\n\n… [RECORTE DE LA PLATAFORMA: aquí faltan ~${omitidos.toLocaleString("es-MX")} caracteres ` +
     `del documento. NO están en tu contexto. Pídelos con doc_read antes de tocarlos.] …\n\n` +
-    md.slice(-mitad)
+    sliceEnd(md, mitad)
   );
 }
 
@@ -1178,7 +1202,9 @@ export async function callAgentBackendStream(
       "Si no puedes resolver algo o te piden hablar con una persona, dilo claro y ofrece " +
       "pasarlo con alguien del equipo — es mejor eso que inventar.]"
     : "";
-  const outText = sinToolsHint + connHint + nowHint + memHint + brandHint + docHint + text + canalHint;
+  const outText = stripLoneSurrogates(
+    sinToolsHint + connHint + nowHint + memHint + brandHint + docHint + text + canalHint
+  );
   try {
     // `parts` = FileParts A2A (media); EasyBits los normaliza por MIME (Slice E1).
     // configGroupId "teams" = unidad de config ESTABLE de este canal en EasyBits
@@ -2079,7 +2105,7 @@ export async function callAgentBackend(
       groupId,
       configGroupId: "teams",
       sender: sender || "invitado",
-      text,
+      text: stripLoneSurrogates(text),
       parts,
       appendSystemPrompt: [
         // NATIVO: Studio es dueño de la identidad (FleetAgent.persona.prompt, aplicada
