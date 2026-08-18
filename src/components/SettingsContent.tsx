@@ -1649,12 +1649,19 @@ function AgentsManager({ isOwner }: { isOwner: boolean }) {
 
 function AddAgentForm({ onClose, onCreated }: { onClose: () => void; onCreated: () => void; connected: Set<string> }) {
   const t = useT();
-  // "create" = agente nuevo (nace con su propio agente de cómputo, invisible) ·
-  // "webhook" = bot externo · "formmy" = importar (próximamente, deshabilitado).
-  const [tab, setTab] = useState<"create" | "webhook">("create");
+  // "create" = activar uno de Studio · "a2a" = agente ajeno que publica un AgentCard
+  // (protocolo abierto: se describe solo) · "webhook" = bot externo con NUESTRO formato,
+  // sin streaming · "formmy" = importar (próximamente, deshabilitado).
+  const [tab, setTab] = useState<"create" | "webhook" | "a2a">("create");
   const [name, setName] = useState("");
   const [handle, setHandle] = useState("");
   const [webhookUrl, setWebhookUrl] = useState("");
+  // A2A: la URL del AgentCard y lo que ese card dice de sí mismo. Probar ANTES de guardar
+  // es el punto entero del protocolo — si el descubrimiento no sirve, mejor saberlo aquí
+  // que en el primer mensaje que alguien mande en un canal.
+  const [cardUrl, setCardUrl] = useState("");
+  const [probe, setProbe] = useState<{ name?: string; skills: string[]; streaming: boolean } | null>(null);
+  const [probing, setProbing] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   // Agentes que el owner ya tiene en Studio, para ACTIVARLOS aquí. El alta sigue
@@ -1680,6 +1687,10 @@ function AddAgentForm({ onClose, onCreated }: { onClose: () => void; onCreated: 
       if (tab === "create") {
         if (!picked) throw new Error(t("elige un agente de Studio"));
         await activateStudioAgentFn({ data: { studioAgentId: picked, handle: handle.trim() } });
+      } else if (tab === "a2a") {
+        await createAgentFn({
+          data: { handle: handle.trim(), name: name.trim(), kind: "a2a", cardUrl: cardUrl.trim() },
+        });
       } else {
         await createAgentFn({
           data: { handle: handle.trim(), name: name.trim(), kind: "webhook", webhookUrl: webhookUrl.trim() },
@@ -1699,7 +1710,9 @@ function AddAgentForm({ onClose, onCreated }: { onClose: () => void; onCreated: 
       ? studio === null || studio.agents.length === 0
         ? null
         : !!picked && !!handle.trim()
-      : !!handle.trim() && !!webhookUrl.trim();
+      : tab === "a2a"
+        ? !!handle.trim() && !!cardUrl.trim()
+        : !!handle.trim() && !!webhookUrl.trim();
 
   const input = "w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm outline-none focus:border-brand";
   return (
@@ -1711,7 +1724,7 @@ function AddAgentForm({ onClose, onCreated }: { onClose: () => void; onCreated: 
         </button>
       </div>
       <div className="mb-2.5 flex gap-1">
-        {(["create", "webhook"] as const).map((k) => (
+        {(["create", "a2a", "webhook"] as const).map((k) => (
           <button
             key={k}
             onClick={() => setTab(k)}
@@ -1735,7 +1748,7 @@ function AddAgentForm({ onClose, onCreated }: { onClose: () => void; onCreated: 
             {/* "De Studio", no "Crear agente": el agente ya existe allá y aquí sólo
                 se le da un @handle. Decir "crear" prometía algo que no pasa. */}
             <span className="relative z-10">
-              {k === "create" ? t("De Studio") : t("Webhook externo")}
+              {k === "create" ? t("De Studio") : k === "a2a" ? t("Por AgentCard") : t("Webhook externo")}
             </span>
           </button>
         ))}
@@ -1893,6 +1906,76 @@ function AddAgentForm({ onClose, onCreated }: { onClose: () => void; onCreated: 
               </>
             )}
           </div>
+        ) : tab === "a2a" ? (
+          <>
+            {/* A2A (Agent2Agent): pegas la URL de un AgentCard y el agente se describe
+                solo — qué sabe hacer, si streamea, cómo autenticarse. No hay que
+                programar nada del otro lado contra un formato nuestro. */}
+            <div className="flex gap-2">
+              <input
+                value={cardUrl}
+                onChange={(e) => { setCardUrl(e.target.value); setProbe(null); }}
+                placeholder={t("https://agente.ejemplo.com/.well-known/agent-card.json")}
+                className={`${input} min-w-0 flex-1`}
+              />
+              <button
+                type="button"
+                disabled={!cardUrl.trim() || probing}
+                onClick={async () => {
+                  setProbing(true);
+                  setErr(null);
+                  setProbe(null);
+                  try {
+                    const res = await fetch(cardUrl.trim(), { headers: { accept: "application/json" } });
+                    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                    const c = (await res.json()) as {
+                      name?: string;
+                      skills?: { id: string }[];
+                      capabilities?: { streaming?: boolean };
+                    };
+                    setProbe({
+                      name: c.name,
+                      skills: (c.skills ?? []).map((k) => k.id),
+                      streaming: c.capabilities?.streaming !== false,
+                    });
+                    if (!name.trim() && c.name) setName(c.name);
+                  } catch (e) {
+                    setErr(t("no pude leer ese AgentCard") + `: ${e instanceof Error ? e.message : e}`);
+                  }
+                  setProbing(false);
+                }}
+                className="shrink-0 rounded-lg border border-border bg-surface-2 px-3 text-xs font-medium text-muted transition-colors hover:text-ink disabled:opacity-50"
+              >
+                {probing ? t("probando…") : t("probar")}
+              </button>
+            </div>
+            {probe && (
+              <div className="rounded-lg border border-border bg-surface-2 px-3 py-2 text-xs">
+                <p className="font-medium">{probe.name || t("(sin nombre)")}</p>
+                <p className="mt-0.5 text-muted">
+                  {probe.skills.length ? probe.skills.join(" · ") : t("sin habilidades declaradas")}
+                  {!probe.streaming && ` — ${t("sin streaming")}`}
+                </p>
+              </div>
+            )}
+            <div className="flex gap-2">
+              <div className="flex flex-1 min-w-0 items-center rounded-lg border border-border bg-surface pl-3 text-sm focus-within:border-brand">
+                <span className="select-none text-muted">@</span>
+                <input
+                  value={handle}
+                  onChange={(e) => setHandle(e.target.value.replace(/[^a-zA-Z0-9]/g, "").toLowerCase())}
+                  placeholder={t("handle (ej. soporte)")}
+                  className="w-full min-w-0 bg-transparent py-2 pr-3 pl-1 outline-none"
+                />
+              </div>
+              <input
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder={t("nombre visible")}
+                className={`${input} flex-1 min-w-0`}
+              />
+            </div>
+          </>
         ) : (
           <>
             <input

@@ -1452,7 +1452,8 @@ export type Agent = {
   id: number;
   handle: string;
   name: string;
-  kind: "fleet" | "webhook";
+  /** "a2a" = agente ajeno descrito por su AgentCard; su URL vive en `runtime_url`. */
+  kind: "fleet" | "webhook" | "a2a";
   fleet_id: string | null;
   fleet_token: string | null;
   webhook_url: string | null;
@@ -1531,7 +1532,7 @@ export async function ensureGhostyAgentRow(input: {
 export async function createAgent(input: {
   handle: string;
   name: string;
-  kind: "fleet" | "webhook";
+  kind: "fleet" | "webhook" | "a2a";
   fleetId?: string | null;
   fleetToken?: string | null;
   webhookUrl?: string | null;

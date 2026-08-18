@@ -53,8 +53,10 @@ export async function connectTeamsChannel(
   runtime?: string | null,
 ): Promise<void> {
   try {
-    const { runtimeFor } = await import("./agent-runtime.server");
-    const rt = await runtimeFor({ runtime });
+    const { runtimeFor, requireHttp } = await import("./agent-runtime.server");
+    // `/capabilities` es del contrato de Studio, no de A2A: un agente A2A declara lo suyo
+    // en su card y no hay nada que "conectar" en él.
+    const rt = requireHttp(await runtimeFor({ runtime }));
     const body = JSON.stringify({ action: "connect-teams" });
     const res = await fetch(`${rt.base}/api/v2/fleet-agents/${fleetId}/capabilities`, {
       method: "POST",

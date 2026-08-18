@@ -1,10 +1,23 @@
 // ── Dónde corre un agente ─────────────────────────────────────────────────────
 //
-// Un agente de Teams no corre en Teams: corre en un RUNTIME. Hoy hay dos, y los
-// dos son válidos — no es una migración a medias:
+// Un agente de Teams no corre en Teams: corre en un RUNTIME. Hoy hay tres, y los
+// tres son válidos — no es una migración a medias:
 //
 //   gs-native  → el runtime nativo de Ghosty Studio, co-locado en el mismo host.
 //   easybits   → la flota de EasyBits, donde nacieron los agentes más viejos.
+//   a2a        → un agente AJENO que publica un AgentCard (Agent2Agent v1.0, Linux
+//                Foundation). No es nuestro, no lo hospedamos y no sabemos de antemano
+//                qué hace: lo declara él en su card.
+//
+// ── Por qué a2a cambia la forma de este archivo ──────────────────────────────
+//
+// Los dos primeros están en la tabla `SUPPORTS` de abajo: sus capacidades las escribimos
+// nosotros porque conocemos esos sistemas. El tercero NO puede estar ahí — cada agente
+// A2A es distinto y ninguno lo controlamos. Sus `supports` se DERIVAN del card en cada
+// resolución (ver `supportsFromCard`).
+//
+// Ésa es la diferencia entre una lista cerrada y un registro: para sumar un agente nuevo
+// ya no hay que editar este archivo, basta con que publique su card.
 //
 // Antes esto se elegía por TENANT (`gc_config.agent_runtime_url`), o sea que
 // todos los agentes de un workspace iban al mismo lado. Un workspace puede tener
@@ -24,7 +37,7 @@
 // base + auth), y mañana `local` se suma como otro transporte sin tocar a los
 // llamadores, que ya preguntan acá en vez de ramificar sobre un booleano.
 
-export type RuntimeKind = "gs-native" | "easybits";
+export type RuntimeKind = "gs-native" | "easybits" | "a2a";
 
 /**
  * Qué sabe hacer cada runtime. Existe para que la UI y el prompt no prometan lo
@@ -47,7 +60,13 @@ export interface RuntimeSupports {
   modelEscalation: boolean;
 }
 
-const SUPPORTS: Record<RuntimeKind, RuntimeSupports> = {
+/**
+ * Tabla de los runtimes que conocemos DE ANTEMANO. `a2a` no está aquí a propósito: sus
+ * capacidades no las declara Teams, las declara el propio agente en su AgentCard y se
+ * derivan al vuelo (ver `supportsFromCard`). Esa es la diferencia entre una lista cerrada
+ * y un registro: para sumar un agente nuevo ya no hay que editar este archivo.
+ */
+const SUPPORTS: Record<"gs-native" | "easybits", RuntimeSupports> = {
   "gs-native": { voiceNote: true, sessionReset: true, connectorTools: true, ownsPersona: true, modelEscalation: true },
   easybits: { voiceNote: false, sessionReset: false, connectorTools: false, ownsPersona: false, modelEscalation: false },
 };
@@ -64,7 +83,26 @@ export interface HttpRuntime {
   refreshesOn401: boolean;
 }
 
-export type AgentRuntime = HttpRuntime;
+/**
+ * Transporte A2A: el agente se describe a sí mismo en un AgentCard y hablamos el protocolo
+ * abierto contra el endpoint que ese card declara.
+ *
+ * No tiene `base`: en A2A la dirección sale de `supportedInterfaces[].url` del card, que
+ * puede vivir en otro origen que el card mismo. Por eso los llamadores que arman URLs a
+ * mano (`${rt.base}/api/v2/...`) tienen que ramificar — esas rutas son del contrato de
+ * Studio, no de A2A.
+ */
+export interface A2ARuntime {
+  transport: "a2a";
+  kind: "a2a";
+  /** De dónde se leyó el card. Es la identidad del agente para nosotros. */
+  cardUrl: string;
+  supports: RuntimeSupports;
+  /** El card ya resuelto (viene de caché); evita un segundo GET en el mismo turno. */
+  card: import("./a2a-client.server").AgentCard;
+}
+
+export type AgentRuntime = HttpRuntime | A2ARuntime;
 
 /** Lo mínimo que necesitamos saber de un agente para ubicar su runtime. */
 export interface RuntimeBinding {
@@ -81,7 +119,7 @@ export interface RuntimeBinding {
  */
 function parseKind(v: string | null | undefined): RuntimeKind | null {
   if (!v) return null;
-  if (v === "gs-native" || v === "easybits") return v;
+  if (v === "gs-native" || v === "easybits" || v === "a2a") return v;
   throw new Error(`runtime desconocido para este agente: "${v}"`);
 }
 
@@ -100,6 +138,18 @@ export async function runtimeFor(agent: RuntimeBinding): Promise<AgentRuntime> {
   const { nativeRuntimeBase, partnerHeaders } = await import("./ghosty-runtime.server");
 
   const declared = parseKind(agent.runtime);
+
+  // A2A: las capacidades NO salen de una tabla nuestra, salen del card del agente. Si el
+  // card no se puede leer, se rompe con un mensaje claro en vez de asumir capacidades: dar
+  // por buenas unas que el agente no tiene es justo lo que RuntimeSupports evita.
+  if (declared === "a2a") {
+    const cardUrl = (agent.runtimeUrl || "").trim();
+    if (!cardUrl) throw new Error("el agente es A2A pero no tiene la URL de su AgentCard");
+    const { fetchCard, supportsFromCard } = await import("./a2a-client.server");
+    const card = await fetchCard(cardUrl);
+    return { transport: "a2a", kind: "a2a", cardUrl, card, supports: supportsFromCard(card) };
+  }
+
   const nativeBase = declared === "easybits" ? null : await nativeRuntimeBase();
   const kind: RuntimeKind = declared ?? (nativeBase ? "gs-native" : "easybits");
 
@@ -139,6 +189,25 @@ export async function runtimeFor(agent: RuntimeBinding): Promise<AgentRuntime> {
     }),
     refreshesOn401: true,
   };
+}
+
+/**
+ * Estrecha a HTTP, o falla diciendo por qué.
+ *
+ * Existe porque hay operaciones que NO son del protocolo sino del contrato de Studio
+ * —`/session/reset`, `/escalate`, `/capabilities`— y esas se piden armando una URL sobre
+ * `rt.base`. Un agente A2A no tiene `base` ni esas rutas: tiene el endpoint que declara su
+ * card y los métodos del protocolo. Llamarlas contra él es un error de programación, no una
+ * condición de ejecución, y por eso lanza en vez de degradar en silencio.
+ *
+ * En los caminos donde la operación es OPCIONAL, el gate correcto es `rt.supports.*`, que
+ * para A2A sale del card — no este helper.
+ */
+export function requireHttp(rt: AgentRuntime): HttpRuntime {
+  if (rt.transport !== "http") {
+    throw new Error(`esta operación no existe en el protocolo A2A (agente ${rt.cardUrl})`);
+  }
+  return rt;
 }
 
 /** Kind con el que se estampa un agente recién creado en cada camino de alta. */

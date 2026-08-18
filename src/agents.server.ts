@@ -19,7 +19,10 @@ export type ResolvedAgent = {
     // agente-fleet — hay más de un runtime que habla el mismo contrato, y la
     // elección es de cada agente, no del workspace. Ver agent-runtime.server.ts.
     | { kind: "fleet"; id: string; token: string; runtime?: string | null; runtimeUrl?: string | null }
-    | { kind: "webhook"; url: string };
+    | { kind: "webhook"; url: string }
+    // A2A: no hay id nuestro ni credencial nuestra — el agente es de otro y se describe
+    // solo. `runtimeUrl` es la URL de su AgentCard, que ES su identidad para nosotros.
+    | { kind: "a2a"; runtime: "a2a"; runtimeUrl: string };
 };
 
 // ── Clave de conversación (groupId) ───────────────────────────────────────────
@@ -80,7 +83,16 @@ export async function resolvedAgents(): Promise<ResolvedAgent[]> {
   }
   for (const a of rows) {
     if (!a.enabled) continue;
-    if (a.kind === "webhook" && a.webhook_url) {
+    if (a.kind === "a2a" && a.runtime_url) {
+      out.push({
+        handle: a.handle,
+        name: a.name,
+        avatar: a.avatar || "",
+        systemPrompt: a.system_prompt,
+        groupNs: !!a.group_ns,
+        backend: { kind: "a2a", runtime: "a2a", runtimeUrl: a.runtime_url },
+      });
+    } else if (a.kind === "webhook" && a.webhook_url) {
       out.push({ handle: a.handle, name: a.name, avatar: a.avatar || "", systemPrompt: a.system_prompt, backend: { kind: "webhook", url: a.webhook_url } });
       // El token sólo es credencial en EasyBits. Un agente nativo se opera por HMAC
       // y no guarda ninguna — exigirlo acá lo dejaba fuera del chat sin decir por qué.
@@ -135,7 +147,11 @@ export async function warmAgent(handle: string): Promise<void> {
     // trabajo se hacía, pero no servía de nada.
     const { runtimeFor } = await import("./server/agent-runtime.server");
     const rt = await runtimeFor(agent.backend);
-    await fetch(rt.base, { method: "HEAD" }).catch(() => {}); // calienta la conexión
+    // A2A: el card ya se resolvió (y quedó en caché) al construir el runtime, que es
+    // justo el trabajo que este warm quería adelantar. Su endpoint no se toca: un GET
+    // ciego puede despertar la caja del otro lado y eso se paga.
+    const warmUrl = rt.transport === "http" ? rt.base : null;
+    if (warmUrl) await fetch(warmUrl, { method: "HEAD" }).catch(() => {}); // calienta la conexión
   } catch {
     // best-effort: el warm nunca debe afectar el flujo del usuario
   }
@@ -1066,9 +1082,11 @@ export async function callAgentBackendStream(
    */
   publicChannel?: boolean
 ): Promise<string> {
-  if (agent.backend.kind !== "fleet") {
-    // Sin SSE todavía: colecta el reply completo y lo emite de un tirón (el cliente
-    // ya lo ve aterrizar). Cuando exista un webhook A2A real, aquí va message/stream.
+  // El webhook sigue sin SSE: junta el reply y lo emite de un tirón. Un agente A2A NO cae
+  // aquí — tiene streaming de verdad y se atiende más abajo.
+  if (agent.backend.kind === "webhook") {
+    // Sin SSE: colecta el reply completo y lo emite de un tirón (el cliente ya lo ve
+    // aterrizar). Es la limitación del formato propio, no del agente.
     const full = await callAgentBackend(agent, groupId, sender, text, parts);
     if (full) await onChunk(full);
     return full;
@@ -1079,6 +1097,42 @@ export async function callAgentBackendStream(
   // en Studio, y los dos son válidos. Ver server/agent-runtime.server.ts.
   const { runtimeFor } = await import("./server/agent-runtime.server");
   const rt = await runtimeFor(agent.backend);
+
+  // ── A2A: el contrato ABIERTO ────────────────────────────────────────────────
+  //
+  // Aquí se cierra el TODO que llevaba tiempo escrito arriba ("cuando exista un webhook
+  // A2A real, aquí va message/stream"): un agente externo deja de ser "un webhook que
+  // programaste contra nuestro formato" y pasa a ser cualquier cosa que publique un
+  // AgentCard. Streaming de verdad, y tools que se ven en el checklist.
+  //
+  // Va ANTES de todo el armado del turno nativo a propósito: nada de lo de abajo
+  // —tool-token, hints de marca, appendSystemPrompt— aplica a un agente ajeno. Esas piezas
+  // hablan con NUESTRO worker; un agente A2A trae las suyas.
+  if (rt.transport === "a2a") {
+    const { runA2ATurn } = await import("./server/a2a-client.server");
+    const { currentNamespace } = await import("./server/tenant.server");
+    // La persona sí viaja: es lo que el usuario escribió en Teams para ESTE agente. Va
+    // antepuesta al texto porque A2A no tiene un canal aparte de system prompt, y el card
+    // puede declarar que la persona la aplica él (ownsPersona) — en ese caso no se manda.
+    const prefix = !rt.supports.ownsPersona && persona ? `[${persona}]\n\n` : "";
+    return await runA2ATurn({
+      cardUrl: rt.cardUrl,
+      contextId: groupId,
+      text: prefix + stripLoneSurrogates(text),
+      parts,
+      workspaceNs: await currentNamespace(),
+      agentToken: agent.backend.kind === "fleet" ? agent.backend.token : "",
+      onChunk,
+      onTool,
+      signal,
+    });
+  }
+
+  // Aquí sólo puede quedar `fleet`: el webhook salió arriba y A2A acabó de retornar. Se
+  // afirma en vez de asumirlo para que añadir un backend nuevo falle aquí y no en un
+  // `undefined` a mitad del turno.
+  if (agent.backend.kind !== "fleet") throw new Error(`backend no soportado en este camino: ${agent.backend.kind}`);
+
   const native = rt.kind === "gs-native";
   const base = rt.base;
   // Tools de conectores per-invocador (solo runtime nativo): mintamos un token-capacidad
@@ -1332,6 +1386,10 @@ export async function resetAgentSession(agent: ResolvedAgent, groupId: string): 
     // No todos los runtimes saben borrar memoria. Se pregunta por CAPACIDAD en vez
     // de asumir "si no es el nativo, no puede": mañana habrá otros que sí.
     if (!rt.supports.sessionReset) return false;
+    // Tras el gate de capacidad sólo queda HTTP: la ruta `/session/reset` es del contrato
+    // de Studio. Un agente A2A que declare la extensión de reset se atendería aquí con su
+    // propio método, y hoy ninguno lo hace — por eso el gate de arriba ya lo excluyó.
+    if (rt.transport !== "http") return false;
     const res = await fetch(`${rt.base}/api/v2/fleet-agents/${agent.backend.id}/session/reset`, {
       method: "POST",
       headers: rt.headers(body, agent.backend.token),
@@ -1452,6 +1510,10 @@ async function escalationEndpoint(agent: ResolvedAgent) {
   const { runtimeFor } = await import("./server/agent-runtime.server");
   const rt = await runtimeFor(agent.backend);
   if (!rt.supports.modelEscalation) return null;
+  // El escalón vive en `/escalate` del contrato de Studio. Un agente A2A que algún día
+  // declare la extensión correspondiente tendría que resolverse por su card; hoy el gate de
+  // capacidad de arriba ya lo dejó fuera, así que aquí sólo puede quedar HTTP.
+  if (rt.transport !== "http") return null;
   return { rt, url: `${rt.base}/api/v2/fleet-agents/${agent.backend.id}/escalate` };
 }
 
@@ -2097,6 +2159,33 @@ export async function callAgentBackend(
   // Mismo resolvedor que el camino de streaming: el runtime lo dice el AGENTE.
   const { runtimeFor } = await import("./server/agent-runtime.server");
   const rt = await runtimeFor(agent.backend);
+
+  // A2A por el camino bloqueante: mismo cliente, juntando los chunks. El protocolo no
+  // tiene un modo "sin stream" que valga la pena aquí —`SendMessage` bloquea hasta el
+  // estado terminal, que es exactamente esto— y así hay UN solo cliente que mantener.
+  if (rt.transport === "a2a") {
+    const { runA2ATurn } = await import("./server/a2a-client.server");
+    const { currentNamespace } = await import("./server/tenant.server");
+    try {
+      return await runA2ATurn({
+        cardUrl: rt.cardUrl,
+        contextId: groupId,
+        text: stripLoneSurrogates(text),
+        parts,
+        workspaceNs: await currentNamespace(),
+        agentToken: agent.backend.kind === "fleet" ? agent.backend.token : "",
+        onChunk: () => {},
+      });
+    } catch (e) {
+      return `⚠️ No pude contactar a @${agent.handle}: ${e instanceof Error ? e.message : e}`;
+    }
+  }
+
+  // Aquí sólo puede quedar `fleet`: el webhook salió arriba y A2A acabó de retornar. Se
+  // afirma en vez de asumirlo para que añadir un backend nuevo falle aquí y no en un
+  // `undefined` a mitad del turno.
+  if (agent.backend.kind !== "fleet") throw new Error(`backend no soportado en este camino: ${agent.backend.kind}`);
+
   const native = rt.kind === "gs-native";
   const base = rt.base;
   try {

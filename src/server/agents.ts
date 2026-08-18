@@ -240,9 +240,11 @@ export const createAgentFn = createServerFn({ method: "POST" })
     (d: {
       handle: string;
       name: string;
-      kind: "fleet" | "webhook";
+      kind: "fleet" | "webhook" | "a2a";
       fleetId?: string;
       webhookUrl?: string;
+      /** A2A: la URL del AgentCard. Es la identidad del agente, no un endpoint más. */
+      cardUrl?: string;
       systemPrompt?: string;
       avatar?: string;
     }) => d
@@ -259,6 +261,7 @@ export const createAgentFn = createServerFn({ method: "POST" })
     let fleetId: string | undefined;
     let fleetToken: string | undefined;
     let webhookUrl: string | undefined;
+    let cardUrl: string | undefined;
 
     if (data.kind === "fleet") {
       if (!data.fleetId) throw new Error("elige un agente de la flota");
@@ -271,6 +274,31 @@ export const createAgentFn = createServerFn({ method: "POST" })
       // una (sin esperar el primer mensaje que estamparía connectedAt). Best-effort.
       const { connectTeamsChannel } = await import("./agent-config");
       await connectTeamsChannel(fleetId, fleetToken, "easybits"); // este camino adopta uno de EasyBits
+    } else if (data.kind === "a2a") {
+      // El alta A2A LEE el card antes de guardar. Es la razón de ser del protocolo: si el
+      // descubrimiento funciona, guardamos algo que sabemos que sirve; si no, se dice ahora
+      // y no en el primer mensaje que alguien mande en un canal.
+      const raw = data.cardUrl?.trim();
+      if (!raw) throw new Error("URL del AgentCard requerida");
+      let u: URL;
+      try {
+        u = new URL(raw);
+      } catch {
+        throw new Error("URL inválida");
+      }
+      if (u.protocol !== "https:") throw new Error("el AgentCard tiene que servirse por HTTPS");
+      const { fetchCard, interfaceOf } = await import("./a2a-client.server");
+      const card = await fetchCard(raw, { force: true }).catch((e) => {
+        throw new Error(`no pude leer el AgentCard: ${e instanceof Error ? e.message : e}`);
+      });
+      if (!interfaceOf(card)) {
+        throw new Error("ese AgentCard no ofrece una interfaz JSONRPC, que es la que sabemos hablar");
+      }
+      if (card.capabilities?.streaming === false) {
+        throw new Error("ese agente no soporta streaming y Teams lo necesita para el chat");
+      }
+      cardUrl = raw;
+      if (!name) name = card.name?.slice(0, 40) || handle;
     } else {
       if (!data.webhookUrl?.trim()) throw new Error("URL del webhook requerida");
       try {
@@ -293,9 +321,10 @@ export const createAgentFn = createServerFn({ method: "POST" })
       systemPrompt: data.systemPrompt?.trim() || null,
       createdBy: user.sub,
       // Este camino ADOPTA un agente que ya existe en la flota de EasyBits
-      // (`fleetAgentsWithRefresh`), así que ahí corre. Un webhook no tiene runtime:
-      // la URL ya dice todo.
-      runtime: data.kind === "fleet" ? "easybits" : null,
+      // (`fleetAgentsWithRefresh`), así que ahí corre. Un webhook no tiene runtime: la URL
+      // ya dice todo. Un agente A2A sí lo tiene, y su "dónde" es su card.
+      runtime: data.kind === "fleet" ? "easybits" : data.kind === "a2a" ? "a2a" : null,
+      runtimeUrl: cardUrl ?? null,
     });
     return { ok: true as const, handle: ag.handle };
   });
