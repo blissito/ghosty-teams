@@ -1,4 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { tokenPara } from "../dbq.server";
 
 // ── Endpoint interno: analytics de novedades (para el admin de gs) ──────────
 // El estado "visto" vive en Teams per-tenant (gt_announcement_seen). Este endpoint
@@ -34,10 +35,17 @@ function namespaces(): string[] {
 }
 
 // Query sqld crudo contra un namespace específico (bypass currentNamespace).
+//
+// Este bypass es DELIBERADO y legítimo: los anuncios se agregan leyendo varios
+// workspaces. Lo que cambia es cómo se autentica: antes iba un único token
+// compartido —sin acotar, o sea con acceso a TODA la instancia— y ahora se firma
+// uno por cada namespace de la vuelta, acotado a ese y con minutos de vida.
+// Sigue leyendo lo mismo, pero un token que se escape sólo sirve para el
+// workspace del que salió.
 async function sqld(ns: string, sql: string, args: { type: string; value?: string }[] = []) {
   const url = process.env.SQLD_URL ?? "http://127.0.0.1:8100";
-  const auth = process.env.SQLD_AUTH_TOKEN ?? "";
   const headers: Record<string, string> = { "Content-Type": "application/json", "x-namespace": ns };
+  const auth = tokenPara(ns);
   if (auth) headers.Authorization = `Bearer ${auth}`;
   const res = await fetch(`${url}/v2/pipeline`, {
     method: "POST",
