@@ -1910,12 +1910,51 @@ function AddAgentForm({ onClose, onCreated }: { onClose: () => void; onCreated: 
             {/* ACP: una caja NUESTRA manejada por WebSocket. A diferencia del AgentCard, aquí
                 no hay nada que descubrir —la caja es nuestra— así que lo único que se
                 comprueba al guardar es que esté viva. */}
-            <input
-              value={wsUrl}
-              onChange={(e) => setWsUrl(e.target.value)}
-              placeholder={t("wss://sb-….sandboxes.easybits.cloud/acp")}
-              className={input}
-            />
+            <div className="flex gap-2">
+              <input
+                value={wsUrl}
+                onChange={(e) => { setWsUrl(e.target.value); setProbe(null); }}
+                placeholder={t("wss://sb-….sandboxes.easybits.cloud/acp")}
+                className={`${input} min-w-0 flex-1`}
+              />
+              <button
+                type="button"
+                disabled={!wsUrl.trim() || probing}
+                onClick={async () => {
+                  setProbing(true);
+                  setErr(null);
+                  setProbe(null);
+                  try {
+                    // No hay card que leer —la caja es nuestra— así que se comprueba que
+                    // esté VIVA y si tiene sesiones abiertas. `/busy` va por HTTPS sobre el
+                    // mismo host y puerto; el socket sólo cambia el esquema.
+                    const u = new URL(wsUrl.trim().replace(/^ws/, "http"));
+                    u.pathname = "/busy";
+                    u.search = "";
+                    const res = await fetch(u.toString());
+                    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                    const b = (await res.json()) as { busy?: boolean; sessions?: number };
+                    setProbe({
+                      name: t("Caja viva"),
+                      skills: [b.sessions ? t("{n} sesión(es) abiertas", { n: String(b.sessions) }) : t("sin sesiones")],
+                      streaming: true, // ACP siempre streamea; el campo es del probe de A2A
+                    });
+                  } catch (e) {
+                    setErr(t("la caja no responde") + `: ${e instanceof Error ? e.message : e}`);
+                  }
+                  setProbing(false);
+                }}
+                className="shrink-0 rounded-lg border border-border bg-surface-2 px-3 text-xs font-medium text-muted transition-colors hover:text-ink disabled:opacity-50"
+              >
+                {probing ? t("probando…") : t("probar")}
+              </button>
+            </div>
+            {probe && (
+              <div className="rounded-lg border border-border bg-surface-2 px-3 py-2 text-xs">
+                <p className="font-medium">{probe.name}</p>
+                <p className="mt-0.5 text-muted">{probe.skills.join(" · ")}</p>
+              </div>
+            )}
             <div className="flex gap-2">
               <div className="flex flex-1 min-w-0 items-center rounded-lg border border-border bg-surface pl-3 text-sm focus-within:border-brand">
                 <span className="select-none text-muted">@</span>

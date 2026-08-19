@@ -120,6 +120,10 @@ export interface RuntimeBinding {
 function parseKind(v: string | null | undefined): RuntimeKind | null {
   if (!v) return null;
   if (v === "gs-native" || v === "easybits" || v === "a2a") return v;
+  // `acp` es un kind VÁLIDO que este módulo no resuelve: una caja ACP no tiene base HTTP, su
+  // dirección es el socket, y el turno la atiende antes de llegar aquí. Si llegó, el orden de
+  // las ramas del llamador se rompió — y decirlo así ahorra el rato que costó la primera vez.
+  if (v === "acp") throw new Error("un agente ACP no pasa por runtimeFor: se atiende antes, por su socket");
   throw new Error(`runtime desconocido para este agente: "${v}"`);
 }
 

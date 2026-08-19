@@ -1107,9 +1107,6 @@ export async function callAgentBackendStream(
   // DÓNDE corre este agente. Lo dice el agente (gc_agents.runtime), no el
   // workspace: un mismo workspace puede tener uno nacido en EasyBits y otro creado
   // en Studio, y los dos son válidos. Ver server/agent-runtime.server.ts.
-  const { runtimeFor } = await import("./server/agent-runtime.server");
-  const rt = await runtimeFor(agent.backend);
-
   // ── ACP: la caja se maneja por WebSocket ────────────────────────────────────
   //
   // Va antes que A2A porque no comparte nada con él: aquí la caja es NUESTRA, así que no hay
@@ -1148,6 +1145,9 @@ export async function callAgentBackendStream(
     });
     return r.text;
   }
+
+  const { runtimeFor } = await import("./server/agent-runtime.server");
+  const rt = await runtimeFor(agent.backend);
 
   // ── A2A: el contrato ABIERTO ────────────────────────────────────────────────
   //
@@ -2218,6 +2218,27 @@ export async function callAgentBackend(
       return `⚠️ No pude contactar a @${agent.handle}: ${e instanceof Error ? e.message : e}`;
     }
   }
+  // ACP va ANTES de resolver el runtime, por la misma razón que en el camino de streaming:
+  // `runtimeFor` sólo conoce los runtimes que resuelve a una base HTTP, y con un kind que no
+  // reconoce LANZA. Una caja ACP no tiene runtime que resolver — su dirección es el socket.
+  if (agent.backend.kind === "acp") {
+    const { runAcpTurn } = await import("./server/acp-client.server");
+    const { currentNamespace } = await import("./server/tenant.server");
+    try {
+      const r = await runAcpTurn({
+        wsUrl: agent.backend.runtimeUrl,
+        workspaceNs: await currentNamespace(),
+        sub: "teams",
+        sessionId: groupId,
+        text: stripLoneSurrogates(text),
+        onUpdate: () => {},
+      });
+      return r.text || "(sin respuesta)";
+    } catch (e) {
+      return `⚠️ No pude contactar a @${agent.handle}: ${e instanceof Error ? e.message : e}`;
+    }
+  }
+
   // fleet: la persona por-agente va en la CAPA SYSTEM (appendSystemPrompt), NO en el
   // texto. Meterla en el texto (`[Instrucciones para X: …]`) hacía que el modelo la
   // leyera como inyección de prompt y la rechazara. El texto solo lleva el turno.
