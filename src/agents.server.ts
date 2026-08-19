@@ -1125,6 +1125,20 @@ export async function callAgentBackendStream(
       onChunk,
       onTool,
       signal,
+      // El agente PREGUNTA y se queda esperando. Se emite como una tarjeta con botones dentro
+      // del propio mensaje: el hilo es mejor superficie de aprobación que un modal —es
+      // asíncrono, lo ve el equipo, y queda como bitácora—, pero exige que la pregunta lleve
+      // consigo a quién y a qué tarea contestarle, porque el turno queda DETENIDO al otro lado.
+      onAsk: async (ask) => {
+        await onChunk(
+          `\n\n\`\`\`gt-ask\n${JSON.stringify({
+            taskId: ask.taskId,
+            handle: agent.handle,
+            groupId,
+            question: ask.question,
+          })}\n\`\`\`\n`,
+        );
+      },
     });
   }
 

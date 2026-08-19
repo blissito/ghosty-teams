@@ -68,7 +68,7 @@ import ConfirmModal from "../../components/ConfirmModal";
 import type { Message, Attachment, Artifact, CustomEmoji } from "../../db.server";
 import { forwardTargetsFn, forwardMessageFn } from "../../server/forward";
 import { readReceiptsFn} from "../../server/reads";
-import { SmilePlus, Pencil, ArrowLeft, Reply, Square, Ban } from "lucide-react";
+import { SmilePlus, Pencil, ArrowLeft, Reply, Square, Ban, CircleHelp } from "lucide-react";
 import { useRtSubscribe } from "../../utils/rt-bus";
 import { Markdown } from "../../components/Markdown";
 import { Avatar } from "../../components/Avatar";
@@ -76,8 +76,9 @@ import { unfurlLinkFn } from "../../server/unfurl";
 import { registerModalEsc } from "../../utils/modal-esc";
 import { useScrollLock } from "../../utils/scroll-lock";
 import { type ArtifactView, viewFromAttachment } from "../../components/ArtifactPanel";
-import { extractEbDoc, bubbleWithoutEbDoc, extractToolState, extractSteps, extractAlert, extractPr, extractTask, extractTests, type ToolState, type AlertCardData, type PrCardData, type TaskCardData, type TestsCardData } from "../../lib/ebdoc";
+import { extractEbDoc, bubbleWithoutEbDoc, extractToolState, extractSteps, extractAlert, extractAsk, extractPr, extractTask, extractTests, type ToolState, type AlertCardData, type AskCardData, type PrCardData, type TaskCardData, type TestsCardData } from "../../lib/ebdoc";
 import { prCardStateFn, runCardActionFn, taskCardStateFn, runTaskCardActionFn } from "../../server/connectors";
+import { answerAgentAskFn } from "../../server/agent-ask";
 import { ThinkingRing } from "../../components/ThinkingRing";
 import { useT } from "../../i18n";
 
@@ -1047,6 +1048,109 @@ export function readAlertState(id: number): { asked?: string } {
 
 export function writeAlertState(id: number, s: { asked?: string }) {
   try { localStorage.setItem(`alert:${id}`, JSON.stringify(s)); } catch {}
+}
+
+/**
+ * El agente PREGUNTA y espera.
+ *
+ * Es la única tarjeta con un turno DETENIDO al otro lado: mientras nadie conteste, el agente
+ * está parado y su caja no puede hibernar. Por eso el estado se persiste por mensaje —volver
+ * al hilo tiene que mostrar lo que ya se respondió— y por eso los botones desaparecen después:
+ * un "Sí" que se puede pulsar dos veces sugiere que la primera no contó.
+ *
+ * Sirve para los dos protocolos: el `TASK_STATE_INPUT_REQUIRED` de A2A y el
+ * `session/request_permission` de ACP son el mismo gesto con distinto nombre.
+ */
+/**
+ * Lo respondido se recuerda por MENSAJE y no por tarea: volver al hilo tiene que enseñar lo
+ * que ya se contestó, aunque la tarea del agente haya terminado hace rato.
+ */
+const ASK_KEY = "gt-ask-answers";
+
+function readAskState(msgId: number): string | null {
+  try {
+    return (JSON.parse(localStorage.getItem(ASK_KEY) || "{}") as Record<string, string>)[msgId] ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function writeAskState(msgId: number, label: string): void {
+  try {
+    const all = JSON.parse(localStorage.getItem(ASK_KEY) || "{}") as Record<string, string>;
+    all[msgId] = label;
+    localStorage.setItem(ASK_KEY, JSON.stringify(all));
+  } catch {
+    /* sin storage, la tarjeta simplemente no recuerda */
+  }
+}
+
+export function AskCard({ msgId, a }: { msgId: number; a: AskCardData }) {
+  const t = useT();
+  const [respondido, setRespondido] = useState<string | null>(() => readAskState(msgId));
+  const [enviando, setEnviando] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  // Sin opciones declaradas, sí/no: es lo que un agente pregunta el 90% de las veces, y
+  // obligarlo a declararlas sólo haría que muchas preguntas llegaran sin botones.
+  const opciones = a.options.length
+    ? a.options
+    : [
+        { id: "yes", label: t("Sí"), tone: "ok" },
+        { id: "no", label: t("No"), tone: undefined },
+      ];
+
+  async function responder(id: string, label: string) {
+    if (enviando || respondido) return;
+    setEnviando(id);
+    setErr(null);
+    try {
+      await answerAgentAskFn({ data: { handle: a.handle, groupId: a.groupId, taskId: a.taskId, answer: id } });
+      setRespondido(label);
+      writeAskState(msgId, label);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : t("no se pudo responder"));
+      setEnviando(null);
+    }
+  }
+
+  return (
+    <div className="my-1.5 overflow-hidden rounded-xl border border-amber-500/40 bg-amber-500/5">
+      <div className="flex gap-2.5 px-3 py-2.5">
+        <div className="mt-0.5 shrink-0 text-amber-500" aria-hidden>
+          <CircleHelp size={16} />
+        </div>
+        <div className="min-w-0 flex-1">
+          <p className="text-sm text-ink">{a.question}</p>
+          {respondido ? (
+            <p className="mt-1.5 text-xs text-muted">
+              {t("Respondiste")} <span className="font-medium text-ink">{respondido}</span>
+            </p>
+          ) : (
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {opciones.map((o: { id: string; label: string; tone?: string }) => (
+                <button
+                  key={o.id}
+                  disabled={!!enviando}
+                  onClick={() => responder(o.id, o.label)}
+                  className={`rounded-lg border px-2.5 py-1 text-xs font-medium transition-colors disabled:opacity-50 ${
+                    o.tone === "ok"
+                      ? "border-emerald-600 text-emerald-600 hover:bg-emerald-600/10"
+                      : o.tone === "danger"
+                        ? "border-border text-red-500 hover:bg-red-500/10"
+                        : "border-border text-ink hover:bg-surface-3"
+                  }`}
+                >
+                  {enviando === o.id ? t("enviando…") : o.label}
+                </button>
+              ))}
+            </div>
+          )}
+          {err && <p className="mt-1.5 text-xs text-red-500">{err}</p>}
+        </div>
+      </div>
+    </div>
+  );
 }
 
 export function AlertCard({ msgId, a, onAct }: { msgId: number; a: AlertCardData; onAct: (send: string) => void }) {
@@ -2550,6 +2654,12 @@ export function MessageRow({
               {(() => {
                 const al = extractAlert(m.body);
                 return al ? <AlertCard msgId={m.id} a={al} onAct={(send) => sendQuickReply?.(send, m)} /> : null;
+              })()}
+              {(() => {
+                // Pregunta del agente: hay un turno DETENIDO al otro lado esperando esta
+                // respuesta, así que la tarjeta va antes que el texto y no como pie.
+                const ask = extractAsk(m.body);
+                return ask ? <AskCard msgId={m.id} a={ask} /> : null;
               })()}
               {/* Con tarjeta de alerta el bubble se calla: la línea de texto plano que
                   acompaña al fence es el RESPALDO (citas, buscador, notificación), y

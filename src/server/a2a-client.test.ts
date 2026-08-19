@@ -148,6 +148,62 @@ describe("turno por SendStreamingMessage", () => {
     await expect(t.run()).rejects.toThrow("me quedé sin cuota");
   });
 
+  it("INPUT_REQUIRED NO es un fallo: es una pregunta con su taskId", async () => {
+    // Hasta que esto existió, la pregunta se perdía en silencio: el turno se daba por cerrado
+    // y el agente quedaba esperando una respuesta que nunca iba a llegar.
+    const asks: unknown[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input: any) =>
+      String(input).endsWith("/card")
+        ? Response.json(card())
+        : sseResponse([
+            {
+              statusUpdate: {
+                taskId: "t-42",
+                contextId: "c",
+                status: {
+                  state: "TASK_STATE_INPUT_REQUIRED",
+                  message: { parts: [{ text: "¿Borro el archivo?" }] },
+                },
+              },
+            },
+          ]),
+    );
+    const out = await runA2ATurn({
+      cardUrl: "https://otro.example/card",
+      contextId: "c",
+      text: "borra",
+      workspaceNs: "ws1",
+      onChunk: () => {},
+      onAsk: (a) => void asks.push(a),
+    });
+    expect(asks).toEqual([{ taskId: "t-42", question: "¿Borro el archivo?" }]);
+    expect(out).toBe(""); // la pregunta no es texto de respuesta
+  });
+
+  it("sin onAsk la pregunta al menos se ve, en vez de desaparecer", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input: any) =>
+      String(input).endsWith("/card")
+        ? Response.json(card())
+        : sseResponse([
+            {
+              statusUpdate: {
+                taskId: "t-1",
+                contextId: "c",
+                status: { state: "TASK_STATE_INPUT_REQUIRED", message: { parts: [{ text: "¿Sigo?" }] } },
+              },
+            },
+          ]),
+    );
+    const out = await runA2ATurn({
+      cardUrl: "https://otro.example/card",
+      contextId: "c",
+      text: "x",
+      workspaceNs: "ws1",
+      onChunk: () => {},
+    });
+    expect(out).toContain("¿Sigo?");
+  });
+
   it("REJECTED (la flota del otro a tope) se distingue de un fallo", async () => {
     const t = turno([{ statusUpdate: { status: { state: "TASK_STATE_REJECTED" } } }]);
     await expect(t.run()).rejects.toThrow(/a tope/);

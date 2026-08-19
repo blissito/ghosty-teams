@@ -334,6 +334,74 @@ export function stripAskUser(body: string): string {
 // si algún día alguien lo emite por partes.
 
 export type AlertAction = { label: string; send: string };
+/**
+ * Una PREGUNTA del agente que espera respuesta.
+ *
+ * A diferencia del resto de las tarjetas, ésta tiene un turno DETENIDO al otro lado: el
+ * agente bloqueó su ejecución esperando un sí o un no. Por eso lleva `taskId` — contestar es
+ * continuar ESA tarea, no abrir otra— y por eso importa que el silencio tenga un default.
+ *
+ * Sirve para los dos protocolos: el `TASK_STATE_INPUT_REQUIRED` de A2A y el
+ * `session/request_permission` de ACP son el mismo gesto con distinto nombre.
+ */
+export type AskCardData = {
+  /** Identifica el turno detenido. Sin esto no hay a quién contestarle. */
+  taskId: string;
+  /** @handle del agente que preguntó. */
+  handle: string;
+  /**
+   * La conversación a la que pertenece el turno.
+   *
+   * Viaja DENTRO de la tarjeta y no por props del componente a propósito: la forma del
+   * groupId es una convención del servidor —lleva el namespace del workspace para las filas
+   * nuevas— y la UI no tiene por qué conocerla. Así la tarjeta es autosuficiente.
+   */
+  groupId: string;
+  question: string;
+  /** Opciones a pintar. Si vienen vacías, se usan Sí/No. */
+  options: { id: string; label: string; tone?: string }[];
+};
+
+export function extractAsk(body: string): AskCardData | null {
+  const open = body.match(/```gt-ask[^\n]*\n/);
+  if (!open || open.index == null) return null;
+  const rest = body.slice(open.index + open[0].length);
+  const closeIdx = rest.indexOf("```");
+  if (closeIdx === -1) return null;
+  try {
+    const p = JSON.parse(rest.slice(0, closeIdx).trim()) as Record<string, unknown>;
+    const str = (v: unknown) => (typeof v === "string" ? v.trim() : "");
+    const taskId = str(p.taskId);
+    const handle = str(p.handle);
+    const groupId = str(p.groupId);
+    const question = str(p.question);
+    // Sin estos tres, la tarjeta sería un botón que no puede contestarle a nadie.
+    if (!taskId || !handle || !groupId || !question) return null;
+    const options = Array.isArray(p.options)
+      ? (p.options as unknown[])
+          .map((o) => {
+            const x = o as Record<string, unknown>;
+            return { id: str(x?.id), label: str(x?.label), tone: str(x?.tone) || undefined };
+          })
+          .filter((o) => o.id && o.label)
+          .slice(0, 4)
+      : [];
+    return { taskId, handle, groupId, question, options };
+  } catch {
+    return null;
+  }
+}
+
+/** El cuerpo sin el bloque de la pregunta, para no pintar el JSON crudo. */
+export function bodyWithoutAsk(body: string): string {
+  const open = body.match(/```gt-ask[^\n]*\n/);
+  if (!open || open.index == null) return body;
+  const rest = body.slice(open.index + open[0].length);
+  const closeIdx = rest.indexOf("```");
+  if (closeIdx === -1) return body;
+  return (body.slice(0, open.index) + rest.slice(closeIdx + 3)).trim();
+}
+
 export type AlertCardData = {
   level: string;
   substatus: string;

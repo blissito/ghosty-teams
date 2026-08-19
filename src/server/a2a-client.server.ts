@@ -162,16 +162,39 @@ function toA2AParts(text: string, parts: MediaPart[]): Array<Record<string, unkn
   return out;
 }
 
+/**
+ * Un turno puede terminar de dos formas: con la respuesta, o con una PREGUNTA.
+ *
+ * `TASK_STATE_INPUT_REQUIRED` no es terminal —la tarea sigue viva esperando— y hasta ahora se
+ * trataba como un turno cerrado, así que la pregunta se perdía en silencio. Devolverla con su
+ * `taskId` es lo que permite contestarla después: un `SendMessage` con ese taskId continúa esa
+ * misma tarea en vez de abrir otra.
+ */
+export interface A2AAsk {
+  taskId: string;
+  question: string;
+}
+
 export interface A2ATurn {
   cardUrl: string;
   /** La conversación. Va como `contextId`, que es lo que el agente usa para su memoria. */
   contextId: string;
+  /**
+   * Continúa una tarea EXISTENTE en vez de abrir una nueva.
+   *
+   * Es lo que convierte una respuesta en "desbloquea aquel turno": A2A modela tanto el STEER
+   * como la respuesta a un INPUT_REQUIRED igual, mandando un mensaje con el `taskId` de la
+   * tarea a la que pertenece.
+   */
+  taskId?: string;
   text: string;
   parts?: MediaPart[];
   workspaceNs: string;
   agentToken?: string;
   onChunk: (chunk: string) => void | Promise<void>;
   onTool?: (ev: ToolEvent) => void | Promise<void>;
+  /** El agente preguntó algo y espera respuesta. El turno NO falló. */
+  onAsk?: (ask: A2AAsk) => void | Promise<void>;
   signal?: AbortSignal;
 }
 
@@ -198,6 +221,7 @@ export async function runA2ATurn(t: A2ATurn): Promise<string> {
         messageId: crypto.randomUUID(),
         role: "ROLE_USER",
         contextId: t.contextId,
+        ...(t.taskId ? { taskId: t.taskId } : {}),
         parts: toA2AParts(t.text, t.parts ?? []),
       },
       // El tenant del card es opaco y el cliente DEBE reenviarlo.
@@ -272,7 +296,14 @@ export async function runA2ATurn(t: A2ATurn): Promise<string> {
               }
             }
           }
-          if (st.state === "TASK_STATE_FAILED" || st.state === "TASK_STATE_REJECTED") {
+          if (st.state === "TASK_STATE_INPUT_REQUIRED") {
+            // El agente PREGUNTA y se queda esperando. No es un fallo ni un cierre: la tarea
+            // sigue viva, y contestarla es un SendMessage con su mismo taskId.
+            const q =
+              st.message?.parts?.find((p: any) => typeof p.text === "string")?.text ?? "¿Continúo?";
+            if (t.onAsk) await t.onAsk({ taskId: result.statusUpdate.taskId, question: q });
+            else full += `\n\n${q}`; // sin manejador, al menos que la pregunta se vea
+          } else if (st.state === "TASK_STATE_FAILED" || st.state === "TASK_STATE_REJECTED") {
             failure =
               st.message?.parts?.find((p: any) => typeof p.text === "string")?.text ??
               (st.state === "TASK_STATE_REJECTED" ? "el agente está a tope" : "el agente falló");
