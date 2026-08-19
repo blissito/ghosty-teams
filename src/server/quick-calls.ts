@@ -269,7 +269,29 @@ async function resolveTarget(target: Target) {
   };
 }
 
+/**
+ * Despierta la caja del SFU antes de entregar el token.
+ *
+ * ⚠️ **Un WebSocket NO despierta una caja dormida.** El proxy del host resume la VM cuando
+ * le llega una petición HTTP normal; el upgrade a WS de `livekit-client` no la resume, así
+ * que el navegador se estrella contra una caja apagada. Y el fallo engaña al máximo: el
+ * turno del servidor sale PERFECTO —la tarjeta se crea, suenan los timbres, salen los
+ * correos de "X está llamando"— y quien llamó ve un escueto "No se pudo abrir la llamada".
+ * O sea que parece un fallo del cliente cuando es una caja que hay que tocar por HTTP.
+ * Pasó el 2026-08-19: la caja llevaba semanas dormida porque nadie llamaba.
+ *
+ * `/health` lo contesta el PROXY, pero da igual: lo que despierta la VM es que la petición
+ * llegue, no quién la conteste. Es fire-and-forget con tope corto — la caja tarda ~1.8 s en
+ * resumir y para cuando el navegador negocia el WS ya está arriba; y si esto falla, más
+ * vale entregar el token igual que tumbar la llamada, porque casi siempre significa que la
+ * caja YA estaba despierta.
+ */
+function despertarSfu(cfg: CallConfig): void {
+  void fetch(`${cfg.controlUrl}/health`, { signal: AbortSignal.timeout(8000) }).catch(() => {});
+}
+
 function conn(t: Awaited<ReturnType<typeof resolveTarget>>) {
+  despertarSfu(t.cfg);
   return {
     token: mintToken(t.cfg, t.room, t.me.sub, t.me.name, undefined, JSON.stringify({ avatar: t.me.avatar || "" })),
     wss: t.cfg.wssUrl,
