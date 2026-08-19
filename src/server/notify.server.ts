@@ -28,9 +28,22 @@ export type NotifyEvent = {
 
 export async function notify(ev: NotifyEvent, ns: string): Promise<void> {
   if (!ev.recipients.length) return;
-  // "call-end" sólo retira la notificación de llamada que ya está en pantalla: ni
-  // email ni banner nuevo.
-  if (ev.kind === "call-end") return void (await deliverWebPush(ev, ns).catch(() => {}));
+  // ⚠️ NADA de lo que sea una llamada sale por correo — ni al llamar ni al colgar.
+  //
+  // Es un aviso con fecha de caducidad de minutos: para cuando el correo aterriza en la
+  // bandeja ya colgaste, así que lo que deja no es un aviso sino basura. Y le llega a todo
+  // el que esté offline, que en un workspace es casi todo el mundo casi siempre: una sola
+  // llamada mandó cinco correos de "blissmo está llamando" el 2026-08-19.
+  //
+  // El push sí se queda: llega en el momento y `call-end` lo RETIRA de la pantalla. Un
+  // correo no se puede retirar, y ésa es la diferencia que decide el canal.
+  //
+  // ⚠️ Va como UNA regla sobre los dos `kind`, no como dos ramas. Antes `call-end` tenía
+  // la suya —y por eso no mandaba correo— mientras `call` caía al fan-out normal: dos
+  // caminos para el mismo concepto, y el que importaba era el que no estaba cubierto.
+  if (ev.kind === "call" || ev.kind === "call-end") {
+    return void (await deliverWebPush(ev, ns).catch(() => {}));
+  }
   // Best-effort y en paralelo: un canal que falle no tumba a los demás. Los rechazos se
   // LOGUEAN: `allSettled` los descarta, y un canal roto en silencio no se nota nunca.
   const r = await Promise.allSettled([deliverWebPush(ev, ns), deliverEmail(ev, ns)]);
