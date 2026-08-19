@@ -189,6 +189,9 @@ export const listStudioAgentsFn = createServerFn({ method: "GET" }).handler(asyn
         name: p.name || p.assistantName || p.id,
         engine: p.engine ?? null,
         model: p.model ?? null,
+        // Se enseña para que en la lista se vea de qué tipo es cada uno: un agente ACP
+        // tiene su propia caja y no comparte la del nativo, y eso explica su capacidad.
+        protocol: p.protocol ?? "sse",
         activatedAs: local ? local.handle : null,
       };
     }),
@@ -221,23 +224,40 @@ export const activateStudioAgentFn = createServerFn({ method: "POST" })
     const ya = (await db.listAgents()).find((a) => a.fleet_id === found.id);
     if (ya) throw new Error(`ese agente ya está activo como @${ya.handle}`);
 
+    // Un agente de Studio puede hablar ACP en vez del camino nativo. Se distingue por lo que
+    // DECLARA Studio, no por el nombre de su template: el transporte es propiedad del motor.
+    //
+    // Antes esto sólo se podía hacer a mano en Ajustes → Agentes → ACP, pegando la `wss://…`
+    // de una caja que alguien había provisionado por su cuenta. Dos costos: gs no sabía que
+    // esa caja existía —así que no contaba para capacidad ni para el panel de Uso— y la URL
+    // llevaba el sandboxId dentro, o sea que recrear la caja rompía todas las activaciones
+    // sin más señal que un turno que no arranca.
+    const esAcp = found.protocol === "acp";
+    if (esAcp && !found.runtimeUrl) {
+      throw new Error("ese agente es ACP pero Studio no mandó su URL: revisa que su caja esté aprovisionada");
+    }
     const ag = await db.createAgent({
       handle,
       name: found.name || found.assistantName || handle,
-      kind: "fleet",
+      kind: esAcp ? "acp" : "fleet",
       fleetId: found.id,
       // Sin token a propósito: el runtime nativo se opera con la firma de partner.
       // Guardar una credencial que no se usa sólo agranda lo que se pierde.
       fleetToken: null,
-      runtime: "gs-native",
+      runtime: esAcp ? "acp" : "gs-native",
+      ...(esAcp ? { runtimeUrl: found.runtimeUrl } : {}),
       // Clave de conversación con el namespace del workspace: este agente PUEDE
       // estar activo en varios, y sin esto compartirían memoria (ver agentGroupId).
       groupNs: true,
       createdBy: user.sub,
     });
 
-    const { connectTeamsChannel } = await import("./agent-config");
-    await connectTeamsChannel(found.id, "", "gs-native").catch(() => {});
+    // El canal de Teams se declara en Studio sólo para el camino nativo: en ACP no hay
+    // `capabilities` que configurar — el transporte es el WebSocket y ya.
+    if (!esAcp) {
+      const { connectTeamsChannel } = await import("./agent-config");
+      await connectTeamsChannel(found.id, "", "gs-native").catch(() => {});
+    }
     return { ok: true as const, handle: ag.handle };
   });
 

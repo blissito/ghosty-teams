@@ -1678,7 +1678,14 @@ function AddAgentForm({ onClose, onCreated }: { onClose: () => void; onCreated: 
   // viviendo allá (persona, motor, modelo); acá sólo se les da @handle.
   const [studio, setStudio] = useState<{
     native: boolean;
-    agents: { id: string; name: string; engine: string | null; model: string | null; activatedAs: string | null }[];
+    agents: {
+      id: string;
+      name: string;
+      engine: string | null;
+      model: string | null;
+      protocol?: string;
+      activatedAs: string | null;
+    }[];
   } | null>(null);
   const [picked, setPicked] = useState<string>("");
 
@@ -1852,7 +1859,17 @@ function AddAgentForm({ onClose, onCreated }: { onClose: () => void; onCreated: 
                                 {t("ya activo como")} <span className="font-medium">@{a.activatedAs}</span>
                               </>
                             ) : (
-                              a.model || a.engine || t("agente gestionado")
+                              <>
+                                {a.model || a.engine || t("agente gestionado")}
+                                {/* Un agente ACP tiene su PROPIA caja: no comparte la del
+                                    nativo, así que su capacidad y su gasto son aparte. Que se
+                                    vea aquí evita la sorpresa al mirar el panel de Uso. */}
+                                {a.protocol === "acp" ? (
+                                  <span className="ml-1.5 rounded bg-surface-3 px-1 py-0.5 text-[10px] uppercase tracking-wide">
+                                    {t("caja propia")}
+                                  </span>
+                                ) : null}
+                              </>
                             )}
                           </p>
                         </div>

@@ -15,6 +15,17 @@ export type FleetPool = {
   workerTemplate?: string;
   engine?: string;
   model?: string;
+  /**
+   * Cómo se le habla a ese agente. Ausente = `sse`, el camino nativo de siempre
+   * (`message-stream` contra Studio).
+   *
+   * `acp` es otro transporte: WebSocket contra la caja del agente, con `runAcpTurn`. Studio
+   * lo declara por MOTOR y manda además su `runtimeUrl`, que es un dominio FIJO — no la URL
+   * con el sandboxId dentro, justamente para que recrear la caja no deje muertos a todos los
+   * workspaces donde el agente esté activado.
+   */
+  protocol?: "sse" | "acp";
+  runtimeUrl?: string;
 };
 
 /** Lista los FleetAgent del owner en Studio. GET firma HMAC sobre body vacío. */

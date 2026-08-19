@@ -1182,6 +1182,7 @@ export const en: Record<string, string> = {
   "Convenciones que cada agente guarda por room o DM. También se pueden podar desde aquí.":
     "Conventions each agent keeps per room or DM. They can be pruned from here too.",
   "Por espacio": "Per space",
+  "caja propia": "own box",
   "Lineamiento": "Guideline",
   "Añadir lineamiento": "Add guideline",
   "¿Borrar este lineamiento?": "Delete this guideline?",
