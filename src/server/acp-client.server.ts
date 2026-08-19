@@ -138,6 +138,18 @@ export async function runAcpTurn(t: AcpTurn): Promise<AcpResult> {
   let ultimoMensaje = Date.now();
   /** Permisos esperando respuesta humana. Mientras haya uno, el silencio es legítimo. */
   let permisosEnVuelo = 0;
+  /**
+   * Estamos dentro de `session/load`, o sea que lo que llega es el REPLAY de la conversación.
+   *
+   * La spec no deja margen: *"the Agent MUST replay the entire conversation to the Client in
+   * the form of session/update notifications"*. Son los mensajes de turnos ANTERIORES, no la
+   * respuesta de ahora — y acumularlos era pegar la conversación entera delante de cada
+   * respuesta nueva. En el chat se veía como si un hilo viejo (incluso uno ya BORRADO)
+   * volviera solo, amontonado con lo nuevo y sin un salto de línea entre medias.
+   *
+   * No se pintan y no se acumulan: el historial ya está en el chat, que es de donde salió.
+   */
+  let rehidratando = false;
 
   const enviar = (o: unknown) => ws.send(JSON.stringify(o));
   const llama = (method: string, params: unknown) =>
@@ -212,6 +224,10 @@ export async function runAcpTurn(t: AcpTurn): Promise<AcpResult> {
 
         // Notificación de progreso.
         if (m.method === "session/update") {
+          // Durante el replay se descarta TODO, hasta los `tool_call`: repintar en el
+          // checklist las herramientas de un turno viejo es contar dos veces un trabajo que
+          // ya se hizo.
+          if (rehidratando) continue;
           void handleUpdate(m.params?.update ?? {}, t, (s) => (texto += s));
           continue;
         }
@@ -243,10 +259,16 @@ export async function runAcpTurn(t: AcpTurn): Promise<AcpResult> {
     // `session/load` retoma la conversación; si el agente no lo soporta, se abre una nueva.
     let sessionId = t.sessionId ?? "";
     if (sessionId) {
+      rehidratando = true;
       try {
+        // El `finally` no es adorno: si `session/load` falla a mitad del replay y la bandera
+        // se quedara puesta, el turno entero saldría MUDO — y un turno mudo es peor que uno
+        // repetido, porque no deja ni rastro de qué pasó.
         await llama("session/load", { sessionId, cwd: t.cwd ?? "/data/work", mcpServers: [] });
       } catch {
         sessionId = "";
+      } finally {
+        rehidratando = false;
       }
     }
     if (!sessionId) {

@@ -19,6 +19,8 @@ let ultimosHeaders: Record<string, string | undefined> = {};
 /** Un agente que valida SUS sessionId rechaza los ajenos. goose no lo hacía. */
 let cargaFalla = false;
 let ultimoPrompt: { type: string; text: string }[] = [];
+/** Lo que el agente re-emite al cargar la sesión (el replay que exige la spec). */
+let replay: string[] = [];
 
 const env = (o: any, extra: any) => JSON.stringify({ jsonrpc: "2.0", ...o, ...extra }) + "\n";
 
@@ -35,10 +37,23 @@ beforeAll(async () => {
         const m = JSON.parse(line);
         if (m.method === "initialize") ws.send(env({ id: m.id }, { result: { protocolVersion: 1 } }));
         else if (m.method === "session/new") ws.send(env({ id: m.id }, { result: { sessionId: "ses-1" } }));
-        else if (m.method === "session/load")
-          cargaFalla
-            ? ws.send(env({ id: m.id }, { error: { code: -32602, message: "sesión desconocida" } }))
-            : ws.send(env({ id: m.id }, { result: {} }));
+        else if (m.method === "session/load") {
+          if (cargaFalla) {
+            ws.send(env({ id: m.id }, { error: { code: -32602, message: "sesión desconocida" } }));
+          } else {
+            // La spec obliga: al cargar, el agente REPLICA la conversación entera antes de
+            // contestar. Este agente falso lo hace, que es lo que hace goose de verdad.
+            for (const viejo of replay) {
+              ws.send(
+                env({}, {
+                  method: "session/update",
+                  params: { update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: viejo } } },
+                }),
+              );
+            }
+            ws.send(env({ id: m.id }, { result: {} }));
+          }
+        }
         else if (m.method === "session/prompt") {
           ultimoPrompt = m.params?.prompt ?? [];
           guion(ws, m);
@@ -326,5 +341,57 @@ describe("los bloques del turno", () => {
     guion = (ws, m) => ws.send(env({ id: m.id }, { result: { stopReason: "end_turn" } }));
     await turno().run();
     expect(ultimoPrompt).toEqual([{ type: "text", text: "hola" }]);
+  });
+});
+
+/**
+ * El REPLAY de `session/load` no es la respuesta de este turno.
+ *
+ * La spec es literal: *"the Agent MUST replay the entire conversation to the Client in the
+ * form of session/update notifications"*. Acumularlo pegaba la conversación entera delante de
+ * cada respuesta — en el chat se veía como si un hilo viejo, incluso uno ya BORRADO, volviera
+ * solo y amontonado. Lo reportó el usuario el 19 ago 2026 con una captura de dos turnos
+ * concatenados sin ni un salto de línea entre medias.
+ */
+describe("al retomar una sesión", () => {
+  it("🔴 lo que se replica NO entra en la respuesta del turno", async () => {
+    replay = ["Análisis del PR #149 de ayer", "…y su conclusión"];
+    guion = (ws, m) => {
+      ws.send(
+        env({}, {
+          method: "session/update",
+          params: { update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "issue creado" } } },
+        }),
+      );
+      ws.send(env({ id: m.id }, { result: { stopReason: "end_turn" } }));
+    };
+    const t = turno({ sessionId: "ses-1" });
+    const r = await t.run();
+    replay = [];
+    expect(r.text).toBe("issue creado");
+    expect(r.text).not.toContain("#149");
+    // Y tampoco se pinta: lo que llega en el replay no debe llamar a `onUpdate`, o el chat
+    // lo streamea como si el agente lo estuviera diciendo ahora.
+    expect(t.updates.filter((u) => u.kind === "text").map((u) => u.text)).toEqual(["issue creado"]);
+  });
+
+  it("si la carga falla a mitad del replay, el turno NO se queda mudo", async () => {
+    // La bandera se limpia en un `finally`: un turno mudo es peor que uno repetido, porque
+    // no deja ni rastro de qué pasó.
+    replay = ["algo viejo"];
+    cargaFalla = true;
+    guion = (ws, m) => {
+      ws.send(
+        env({}, {
+          method: "session/update",
+          params: { update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "respuesta nueva" } } },
+        }),
+      );
+      ws.send(env({ id: m.id }, { result: { stopReason: "end_turn" } }));
+    };
+    const r = await turno({ sessionId: "ses-vieja" }).run();
+    cargaFalla = false;
+    replay = [];
+    expect(r.text).toBe("respuesta nueva");
   });
 });
