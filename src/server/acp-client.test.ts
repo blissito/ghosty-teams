@@ -194,3 +194,37 @@ describe("🔴 el ticket lleva el tenant dentro de la firma", () => {
     delete process.env.ACP_TICKET_SECRET;
   });
 });
+
+/**
+ * Los dos silencios. Un turno colgado no es un error del protocolo —es lo que el usuario ve:
+ * una burbuja vacía girando para siempre. Pasó el 19 ago 2026 con una caja borrada cuya URL
+ * seguía viva en el router: el WS abría, el prompt salía, y nadie contestaba jamás.
+ */
+describe("cuando el agente se calla", () => {
+  it("falla si el socket muere a media respuesta, en vez de esperar para siempre", async () => {
+    guion = (ws) => ws.close();
+    await expect(turno().run()).rejects.toThrow(/cerró la conexión/);
+  });
+
+  it("falla por SILENCIO, y el reloj no corre mientras un humano decide un permiso", async () => {
+    // El relé pide permiso y se calla. Quien contesta tarda MÁS que el `idleMs`: el turno
+    // debe sobrevivir esa espera —es un humano— y morir sólo por el silencio de después.
+    guion = (ws, m) => {
+      ws.send(
+        env({ id: 99 }, { method: "session/request_permission", params: { title: "¿sigo?", options: [{ optionId: "ok", name: "Sí" }] } }),
+      );
+      void m;
+    };
+    const t = turno({
+      idleMs: 300,
+      onPermission: async () => {
+        await new Promise((r) => setTimeout(r, 900));
+        return "ok";
+      },
+    });
+    const t0 = Date.now();
+    await expect(t.run()).rejects.toThrow(/sin responder/);
+    // Si el permiso no hubiera pausado el reloj, habría muerto a los ~300ms.
+    expect(Date.now() - t0).toBeGreaterThan(900);
+  });
+});

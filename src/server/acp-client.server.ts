@@ -73,6 +73,14 @@ export interface AcpTurn {
   onDeliver?: (e: AcpEntrega) => void | Promise<void>;
   signal?: AbortSignal;
   timeoutMs?: number;
+  /**
+   * Cuánto SILENCIO se tolera durante el prompt antes de dar el turno por perdido.
+   *
+   * No es un tope de duración: un turno largo que va emitiendo chunks nunca lo toca, y
+   * mientras hay un permiso esperando a un humano el reloj no corre. Es el seguro contra el
+   * agente que se calla para siempre.
+   */
+  idleMs?: number;
 }
 
 export interface AcpResult {
@@ -107,6 +115,10 @@ export async function runAcpTurn(t: AcpTurn): Promise<AcpResult> {
   const pendientes = new Map<number, { ok: (v: any) => void; err: (e: Error) => void }>();
   let seq = 0;
   let texto = "";
+  /** Cuándo se oyó al agente por última vez. El watchdog mide SILENCIO, no duración. */
+  let ultimoMensaje = Date.now();
+  /** Permisos esperando respuesta humana. Mientras haya uno, el silencio es legítimo. */
+  let permisosEnVuelo = 0;
 
   const enviar = (o: unknown) => ws.send(JSON.stringify(o));
   const llama = (method: string, params: unknown) =>
@@ -141,7 +153,21 @@ export async function runAcpTurn(t: AcpTurn): Promise<AcpResult> {
 
     t.signal?.addEventListener("abort", cerrar, { once: true });
 
+    // Si el socket MUERE a media conversación, cada `llama()` pendiente se queda esperando
+    // una respuesta que ya no puede llegar: el turno se cuelga para siempre y el usuario ve
+    // una burbuja vacía girando. Pasó el 19 ago con una caja borrada cuya URL seguía viva en
+    // el router: el WS abría, el prompt salía, y nadie contestaba nunca.
+    const tumbar = (e: Error) => {
+      for (const [id, p] of pendientes) {
+        pendientes.delete(id);
+        p.err(e);
+      }
+    };
+    ws.on("close", () => tumbar(new Error("el agente cerró la conexión a media respuesta")));
+    ws.on("error", (e: Error) => tumbar(e));
+
     ws.on("message", (d: Buffer | string) => {
+      ultimoMensaje = Date.now();
       for (const line of d.toString().split("\n")) {
         if (!line.trim()) continue;
         let m: any;
@@ -174,7 +200,11 @@ export async function runAcpTurn(t: AcpTurn): Promise<AcpResult> {
         // ⚠️ El AGENTE nos llama a NOSOTROS. ACP es full-duplex, y aquí está lo que lo
         // distingue: si esto no se contesta, el agente se queda detenido para siempre.
         if (m.method === "session/request_permission" && m.id != null) {
-          void responderPermiso(m, t, enviar);
+          permisosEnVuelo++;
+          void responderPermiso(m, t, enviar).finally(() => {
+            permisosEnVuelo--;
+            ultimoMensaje = Date.now();
+          });
           continue;
         }
         // Cualquier otra petición del agente se rechaza explícitamente: dejarla sin
@@ -205,10 +235,12 @@ export async function runAcpTurn(t: AcpTurn): Promise<AcpResult> {
       sessionId = s?.sessionId ?? "";
     }
 
-    const fin = await llama("session/prompt", {
-      sessionId,
-      prompt: [{ type: "text", text: t.text }],
-    });
+    const fin = await conLatido(
+      llama("session/prompt", { sessionId, prompt: [{ type: "text", text: t.text }] }),
+      () => ultimoMensaje,
+      () => permisosEnVuelo > 0,
+      t.idleMs ?? 5 * 60_000,
+    );
 
     return { text: texto, sessionId, stopReason: fin?.stopReason };
   } finally {
@@ -273,4 +305,37 @@ async function responderPermiso(m: any, t: AcpTurn, enviar: (o: unknown) => void
       ? { outcome: { outcome: "selected", optionId: elegido } }
       : { outcome: { outcome: "cancelled" } },
   });
+}
+
+/**
+ * Espera una promesa mientras el otro lado dé señales de vida.
+ *
+ * `latido` devuelve el instante del último mensaje recibido; `enEspera` dice si el silencio
+ * está justificado (un permiso pendiente de un humano puede tardar lo que tarde). Si no hay
+ * ninguna de las dos cosas durante `idleMs`, se falla — colgar el turno del usuario sin
+ * explicación es peor que decirle que el agente se calló.
+ */
+async function conLatido<T>(
+  p: Promise<T>,
+  latido: () => number,
+  enEspera: () => boolean,
+  idleMs: number,
+): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  const vigilancia = new Promise<never>((_, rej) => {
+    const tic = () => {
+      const quieto = Date.now() - latido();
+      if (!enEspera() && quieto >= idleMs) {
+        rej(new Error(`el agente lleva ${Math.round(quieto / 1000)}s sin responder`));
+        return;
+      }
+      timer = setTimeout(tic, Math.max(1000, idleMs - quieto));
+    };
+    timer = setTimeout(tic, idleMs);
+  });
+  try {
+    return await Promise.race([p, vigilancia]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
