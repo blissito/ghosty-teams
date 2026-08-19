@@ -403,6 +403,8 @@ export const updateAgentFn = createServerFn({ method: "POST" })
       enabled?: boolean;
       systemPrompt?: string | null;
       avatar?: string | null;
+      /** A2A: nueva URL del AgentCard. */
+      cardUrl?: string;
     }) => d
   )
   .handler(async ({ data }) => {
@@ -421,6 +423,31 @@ export const updateAgentFn = createServerFn({ method: "POST" })
         if (self?.handle !== db.GHOSTY_HANDLE) throw new Error("@ghosty está reservado");
       }
     }
+    // A2A: cambiar la URL del card es cambiar A QUÉ AGENTE apunta esta fila, así que se
+    // valida igual que en el alta —leyéndolo— en vez de guardar a ciegas. La dirección de una
+    // caja cambia cada vez que se recrea, y sin esto la única salida era borrar y volver a
+    // dar de alta el agente, perdiendo su @handle y su historial.
+    let cardUrl: string | undefined;
+    if (data.cardUrl !== undefined) {
+      const raw = data.cardUrl.trim();
+      if (!raw) throw new Error("URL del AgentCard requerida");
+      let u: URL;
+      try {
+        u = new URL(raw);
+      } catch {
+        throw new Error("URL inválida");
+      }
+      if (u.protocol !== "https:") throw new Error("el AgentCard tiene que servirse por HTTPS");
+      const { fetchCard, interfaceOf } = await import("./a2a-client.server");
+      const card = await fetchCard(raw, { force: true }).catch((e) => {
+        throw new Error(`no pude leer el AgentCard: ${e instanceof Error ? e.message : e}`);
+      });
+      if (!interfaceOf(card)) {
+        throw new Error("ese AgentCard no ofrece una interfaz JSONRPC, que es la que sabemos hablar");
+      }
+      cardUrl = raw;
+    }
+
     await db.updateAgent(data.id, {
       name: data.name,
       handle,
@@ -428,6 +455,7 @@ export const updateAgentFn = createServerFn({ method: "POST" })
       enabled: data.enabled,
       systemPrompt: data.systemPrompt,
       avatar: data.avatar,
+      runtimeUrl: cardUrl,
     });
     return { ok: true as const };
   });

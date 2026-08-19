@@ -1578,6 +1578,8 @@ export async function updateAgent(
     avatar?: string | null;
     systemPrompt?: string | null;
     enabled?: boolean;
+    /** A2A: la URL del AgentCard. Es la dirección del agente, y cambia si su caja se recrea. */
+    runtimeUrl?: string;
   }
 ): Promise<void> {
   const sets: string[] = [];
@@ -1590,6 +1592,7 @@ export async function updateAgent(
   if (patch.avatar !== undefined) (sets.push("avatar = ?"), args.push(patch.avatar));
   if (patch.systemPrompt !== undefined) (sets.push("system_prompt = ?"), args.push(patch.systemPrompt));
   if (patch.enabled !== undefined) (sets.push("enabled = ?"), args.push(patch.enabled ? 1 : 0));
+  if (patch.runtimeUrl !== undefined) (sets.push("runtime_url = ?"), args.push(patch.runtimeUrl));
   if (!sets.length) return;
   args.push(id);
   await dbq(`UPDATE gc_agents SET ${sets.join(", ")} WHERE id = ?`, args);

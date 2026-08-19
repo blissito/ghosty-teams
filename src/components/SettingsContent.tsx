@@ -1510,9 +1510,11 @@ type ManagedAgent = {
   id: number;
   handle: string;
   name: string;
-  kind: "fleet" | "webhook";
+  kind: "fleet" | "webhook" | "a2a";
   fleet_id: string | null;
   webhook_url: string | null;
+  /** A2A: la URL de su AgentCard. Es su dirección, y cambia si su caja se recrea. */
+  runtime_url?: string | null;
   avatar: string | null;
   system_prompt: string | null;
   enabled: number;
@@ -2063,6 +2065,12 @@ function EditAgentForm({
   const [handle, setHandle] = useState(agent.handle);
   const [persona, setPersona] = useState(agent.system_prompt ?? "");
   const [avatar, setAvatar] = useState(agent.avatar ?? "");
+  // A2A: la URL del card se edita porque la dirección de una caja cambia al recrearla, y sin
+  // esto la única salida era borrar el agente y darlo de alta otra vez —perdiendo su @handle
+  // y su historial— por un cambio de URL.
+  const [cardUrl, setCardUrl] = useState(agent.runtime_url ?? "");
+  const [probe, setProbe] = useState<{ name?: string; skills: string[] } | null>(null);
+  const [probing, setProbing] = useState(false);
   const [busy, setBusy] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -2124,6 +2132,12 @@ function EditAgentForm({
           handle: cleanHandle && cleanHandle !== agent.handle ? cleanHandle : undefined,
           systemPrompt: persona.trim() || null,
           avatar: avatar || null,
+          // Sólo se manda si cambió: el servidor RE-LEE el card al recibirla, y no vale la
+          // pena pagar ese fetch en cada guardado del nombre o la persona.
+          cardUrl:
+            agent.kind === "a2a" && cardUrl.trim() && cardUrl.trim() !== (agent.runtime_url ?? "")
+              ? cardUrl.trim()
+              : undefined,
         },
       });
       onSaved();
@@ -2202,6 +2216,52 @@ function EditAgentForm({
                   : t("Se envía a tu webhook como systemPrompt junto al mensaje.")}
               </p>
             </div>
+
+            {agent.kind === "a2a" && (
+              <div>
+                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-muted">
+                  {t("AgentCard")}
+                </label>
+                <div className="flex gap-2">
+                  <input
+                    value={cardUrl}
+                    onChange={(e) => { setCardUrl(e.target.value); setProbe(null); }}
+                    placeholder={t("https://agente.ejemplo.com/.well-known/agent-card.json")}
+                    className={`${input} min-w-0 flex-1`}
+                  />
+                  <button
+                    type="button"
+                    disabled={!cardUrl.trim() || probing}
+                    onClick={async () => {
+                      setProbing(true);
+                      setErr(null);
+                      setProbe(null);
+                      try {
+                        const res = await fetch(cardUrl.trim(), { headers: { accept: "application/json" } });
+                        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                        const c = (await res.json()) as { name?: string; skills?: { id: string }[] };
+                        setProbe({ name: c.name, skills: (c.skills ?? []).map((k) => k.id) });
+                      } catch (e) {
+                        setErr(t("no pude leer ese AgentCard") + `: ${e instanceof Error ? e.message : e}`);
+                      }
+                      setProbing(false);
+                    }}
+                    className="shrink-0 rounded-lg border border-border bg-surface-2 px-3 text-xs font-medium text-muted transition-colors hover:text-ink disabled:opacity-50"
+                  >
+                    {probing ? t("probando…") : t("probar")}
+                  </button>
+                </div>
+                {probe && (
+                  <p className="mt-1.5 text-[11px] text-muted">
+                    <span className="font-medium text-ink">{probe.name || t("(sin nombre)")}</span>
+                    {probe.skills.length ? ` — ${probe.skills.join(" · ")}` : ` — ${t("sin habilidades declaradas")}`}
+                  </p>
+                )}
+                <p className="mt-1 text-[11px] text-muted">
+                  {t("La dirección del agente. Cámbiala si su caja se recreó y quedó en otra URL — el @handle y el historial se conservan.")}
+                </p>
+              </div>
+            )}
 
             {isOwner && (
               <div className="rounded-lg border border-border bg-surface-2 p-2.5">
