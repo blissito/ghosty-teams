@@ -281,17 +281,25 @@ async function resolveTarget(target: Target) {
  * Pasó el 2026-08-19: la caja llevaba semanas dormida porque nadie llamaba.
  *
  * `/health` lo contesta el PROXY, pero da igual: lo que despierta la VM es que la petición
- * llegue, no quién la conteste. Es fire-and-forget con tope corto — la caja tarda ~1.8 s en
- * resumir y para cuando el navegador negocia el WS ya está arriba; y si esto falla, más
- * vale entregar el token igual que tumbar la llamada, porque casi siempre significa que la
- * caja YA estaba despierta.
+ * llegue, no quién la conteste.
+ *
+ * ⚠️ **Se ESPERA, no es fire-and-forget.** Sin esperar queda una carrera: si el resume
+ * tarda más que lo que el navegador tarda en negociar el WS, el primer intento falla
+ * igual — y ese primer intento es justo el caso que esto viene a arreglar. Esperar sale
+ * casi gratis porque el coste real sólo lo paga la caja DORMIDA: despierta contesta en
+ * ~450 ms (medido contra la caja de producción, no estimado).
+ *
+ * El tope son 6 s: un resume mide ~1.8 s, así que con holgura de sobra, y por encima de
+ * eso más vale entregar el token y dejar que el cliente lo intente que dejar a alguien
+ * mirando un botón muerto. Por eso el `catch` sigue devolviendo control en vez de lanzar:
+ * un fallo aquí casi siempre significa que la caja YA estaba despierta.
  */
-function despertarSfu(cfg: CallConfig): void {
-  void fetch(`${cfg.controlUrl}/health`, { signal: AbortSignal.timeout(8000) }).catch(() => {});
+async function despertarSfu(cfg: CallConfig): Promise<void> {
+  await fetch(`${cfg.controlUrl}/health`, { signal: AbortSignal.timeout(6000) }).catch(() => {});
 }
 
-function conn(t: Awaited<ReturnType<typeof resolveTarget>>) {
-  despertarSfu(t.cfg);
+async function conn(t: Awaited<ReturnType<typeof resolveTarget>>) {
+  await despertarSfu(t.cfg);
   return {
     token: mintToken(t.cfg, t.room, t.me.sub, t.me.name, undefined, JSON.stringify({ avatar: t.me.avatar || "" })),
     wss: t.cfg.wssUrl,
@@ -380,7 +388,11 @@ export const startCallFn = createServerFn({ method: "POST" })
     } else if (addPerson(c, t.me)) {
       await refreshCard(t.db, t.fanout, c);
     }
-    return { callId: c.callId, ...conn(t) };
+    // ⚠️ `await` obligatorio: esparcir una Promise da `{}` y TypeScript NO se queja —el
+    // spread de un objeto es legal y una Promise es un objeto—, así que se habría
+    // devuelto una conexión sin `token` ni `wss` y la llamada fallaría en el cliente
+    // exactamente igual que el bug que esto arregla.
+    return { callId: c.callId, ...(await conn(t)) };
   });
 
 // Únete a una call en curso: MI propio token scoped; agrega mi avatar a la tarjeta.
@@ -390,7 +402,7 @@ export const joinCallFn = createServerFn({ method: "POST" })
     const t = await resolveTarget(data);
     const c = active.get(keyOf(t.ns, t.scope, t.scopeId));
     if (c && addPerson(c, t.me)) await refreshCard(t.db, t.fanout, c);
-    return conn(t);
+    return await conn(t);
   });
 
 // Al salir: sondea la sala; si quedó vacía, colapsa la tarjeta a resumen.
