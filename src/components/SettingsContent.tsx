@@ -1651,13 +1651,15 @@ function AgentsManager({ isOwner }: { isOwner: boolean }) {
 
 function AddAgentForm({ onClose, onCreated }: { onClose: () => void; onCreated: () => void; connected: Set<string> }) {
   const t = useT();
-  // "create" = activar uno de Studio · "a2a" = agente ajeno que publica un AgentCard
-  // (protocolo abierto: se describe solo) · "webhook" = bot externo con NUESTRO formato,
-  // sin streaming · "formmy" = importar (próximamente, deshabilitado).
-  const [tab, setTab] = useState<"create" | "webhook" | "a2a">("create");
+  // "create" = activar uno de Studio · "a2a" = agente ajeno que publica un AgentCard.
+  //
+  // El tab "webhook" SE RETIRÓ: era un POST a una URL con NUESTRO formato, así que obligaba a
+  // programar contra un contrato que sólo existe aquí, y encima sin streaming (el turno se
+  // juntaba entero y aterrizaba de golpe). A2A hace lo mismo mejor y con un estándar. Los
+  // webhooks que YA existan siguen funcionando —el backend no se tocó—, pero no se crean más.
+  const [tab, setTab] = useState<"create" | "a2a">("create");
   const [name, setName] = useState("");
   const [handle, setHandle] = useState("");
-  const [webhookUrl, setWebhookUrl] = useState("");
   // A2A: la URL del AgentCard y lo que ese card dice de sí mismo. Probar ANTES de guardar
   // es el punto entero del protocolo — si el descubrimiento no sirve, mejor saberlo aquí
   // que en el primer mensaje que alguien mande en un canal.
@@ -1689,13 +1691,9 @@ function AddAgentForm({ onClose, onCreated }: { onClose: () => void; onCreated: 
       if (tab === "create") {
         if (!picked) throw new Error(t("elige un agente de Studio"));
         await activateStudioAgentFn({ data: { studioAgentId: picked, handle: handle.trim() } });
-      } else if (tab === "a2a") {
-        await createAgentFn({
-          data: { handle: handle.trim(), name: name.trim(), kind: "a2a", cardUrl: cardUrl.trim() },
-        });
       } else {
         await createAgentFn({
-          data: { handle: handle.trim(), name: name.trim(), kind: "webhook", webhookUrl: webhookUrl.trim() },
+          data: { handle: handle.trim(), name: name.trim(), kind: "a2a", cardUrl: cardUrl.trim() },
         });
       }
       onCreated();
@@ -1712,9 +1710,7 @@ function AddAgentForm({ onClose, onCreated }: { onClose: () => void; onCreated: 
       ? studio === null || studio.agents.length === 0
         ? null
         : !!picked && !!handle.trim()
-      : tab === "a2a"
-        ? !!handle.trim() && !!cardUrl.trim()
-        : !!handle.trim() && !!webhookUrl.trim();
+      : !!handle.trim() && !!cardUrl.trim();
 
   const input = "w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm outline-none focus:border-brand";
   return (
@@ -1726,7 +1722,7 @@ function AddAgentForm({ onClose, onCreated }: { onClose: () => void; onCreated: 
         </button>
       </div>
       <div className="mb-2.5 flex gap-1">
-        {(["create", "a2a", "webhook"] as const).map((k) => (
+        {(["create", "a2a"] as const).map((k) => (
           <button
             key={k}
             onClick={() => setTab(k)}
@@ -1750,17 +1746,19 @@ function AddAgentForm({ onClose, onCreated }: { onClose: () => void; onCreated: 
             {/* "De Studio", no "Crear agente": el agente ya existe allá y aquí sólo
                 se le da un @handle. Decir "crear" prometía algo que no pasa. */}
             <span className="relative z-10">
-              {k === "create" ? t("De Studio") : k === "a2a" ? t("Por AgentCard") : t("Webhook externo")}
+              {k === "create" ? t("De Studio") : t("Por AgentCard")}
             </span>
           </button>
         ))}
-        {/* Importar desde Formmy — próximamente (deshabilitado). */}
+        {/* ACP — próximamente. Deshabilitado a propósito: el cliente ACP todavía no existe y
+            un botón que promete lo que no hay es peor que no tenerlo. Se activa cuando el
+            relé y las aprobaciones estén. */}
         <button
           disabled
           title={t("Próximamente")}
           className="flex-1 cursor-not-allowed rounded-lg bg-surface-2 px-2 py-1.5 text-xs font-medium text-muted opacity-50"
         >
-          {t("Importar de Formmy")}
+          {t("Por ACP")}
         </button>
       </div>
       <div className="space-y-2">
@@ -1978,33 +1976,7 @@ function AddAgentForm({ onClose, onCreated }: { onClose: () => void; onCreated: 
               />
             </div>
           </>
-        ) : (
-          <>
-            <input
-              value={webhookUrl}
-              onChange={(e) => setWebhookUrl(e.target.value)}
-              placeholder={t("https://tu-bot.com/webhook")}
-              className={input}
-            />
-            <div className="flex gap-2">
-              <div className="flex flex-1 min-w-0 items-center rounded-lg border border-border bg-surface pl-3 text-sm focus-within:border-brand">
-                <span className="select-none text-muted">@</span>
-                <input
-                  value={handle}
-                  onChange={(e) => setHandle(e.target.value.replace(/[^a-zA-Z0-9]/g, "").toLowerCase())}
-                  placeholder={t("handle (ej. soporte)")}
-                  className="w-full min-w-0 bg-transparent py-2 pr-3 pl-1 outline-none"
-                />
-              </div>
-              <input
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder={t("nombre visible")}
-                className={`${input} flex-1 min-w-0`}
-              />
-            </div>
-          </>
-        )}
+        ) : null}
 
         {/* Pie COMPARTIDO por los dos tabs. Antes vivía dentro del de webhook, así
             que el otro no tenía con qué enviar. */}
