@@ -22,7 +22,10 @@ export type ResolvedAgent = {
     | { kind: "webhook"; url: string }
     // A2A: no hay id nuestro ni credencial nuestra — el agente es de otro y se describe
     // solo. `runtimeUrl` es la URL de su AgentCard, que ES su identidad para nosotros.
-    | { kind: "a2a"; runtime: "a2a"; runtimeUrl: string };
+    | { kind: "a2a"; runtime: "a2a"; runtimeUrl: string }
+    // ACP: una caja que manejamos por WebSocket. `runtimeUrl` es la URL del socket; no hay
+    // card que descubrir porque la caja es NUESTRA — lo que se negocia es en `initialize`.
+    | { kind: "acp"; runtime: "acp"; runtimeUrl: string };
 };
 
 // ── Clave de conversación (groupId) ───────────────────────────────────────────
@@ -83,7 +86,16 @@ export async function resolvedAgents(): Promise<ResolvedAgent[]> {
   }
   for (const a of rows) {
     if (!a.enabled) continue;
-    if (a.kind === "a2a" && a.runtime_url) {
+    if (a.kind === "acp" && a.runtime_url) {
+      out.push({
+        handle: a.handle,
+        name: a.name,
+        avatar: a.avatar || "",
+        systemPrompt: a.system_prompt,
+        groupNs: !!a.group_ns,
+        backend: { kind: "acp", runtime: "acp", runtimeUrl: a.runtime_url },
+      });
+    } else if (a.kind === "a2a" && a.runtime_url) {
       out.push({
         handle: a.handle,
         name: a.name,
@@ -1097,6 +1109,45 @@ export async function callAgentBackendStream(
   // en Studio, y los dos son válidos. Ver server/agent-runtime.server.ts.
   const { runtimeFor } = await import("./server/agent-runtime.server");
   const rt = await runtimeFor(agent.backend);
+
+  // ── ACP: la caja se maneja por WebSocket ────────────────────────────────────
+  //
+  // Va antes que A2A porque no comparte nada con él: aquí la caja es NUESTRA, así que no hay
+  // card que descubrir ni firma de partner que mandar — la identidad la da un ticket firmado
+  // con el namespace del workspace dentro.
+  if (agent.backend.kind === "acp") {
+    const { runAcpTurn } = await import("./server/acp-client.server");
+    const { currentNamespace } = await import("./server/tenant.server");
+    const ns = await currentNamespace();
+    const prefix = persona ? `[${persona}]\n\n` : "";
+    const r = await runAcpTurn({
+      wsUrl: agent.backend.runtimeUrl,
+      workspaceNs: ns,
+      sub: invokerSub || "teams",
+      // La conversación es la sesión: `session/load` la retoma entre turnos.
+      sessionId: groupId,
+      text: prefix + stripLoneSurrogates(text),
+      signal,
+      onUpdate: async (u) => {
+        if (u.kind === "text") await onChunk(u.text);
+        else if (u.kind === "tool" && onTool) {
+          // ACP manda el estado en el mismo evento; se traduce al checklist que ya existe.
+          await onTool({
+            name: u.title,
+            id: u.id,
+            phase: u.status === "completed" || u.status === "failed" ? "end" : "start",
+            ok: u.status === "completed",
+          });
+        }
+        // `thought` y los updates que no conocemos NO se pintan: el razonamiento es contexto,
+        // no respuesta, y un tipo nuevo del protocolo no debería aparecer como texto suelto.
+      },
+      // El permiso se resuelve en el HILO, no aquí: se emite la tarjeta con botones y el
+      // turno queda esperando. Hasta que eso esté cableado, se rechaza — un permiso que se
+      // concede porque nadie estaba mirando no es un permiso.
+    });
+    return r.text;
+  }
 
   // ── A2A: el contrato ABIERTO ────────────────────────────────────────────────
   //

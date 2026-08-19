@@ -1657,13 +1657,16 @@ function AddAgentForm({ onClose, onCreated }: { onClose: () => void; onCreated: 
   // programar contra un contrato que sólo existe aquí, y encima sin streaming (el turno se
   // juntaba entero y aterrizaba de golpe). A2A hace lo mismo mejor y con un estándar. Los
   // webhooks que YA existan siguen funcionando —el backend no se tocó—, pero no se crean más.
-  const [tab, setTab] = useState<"create" | "a2a">("create");
+  const [tab, setTab] = useState<"create" | "a2a" | "acp">("create");
   const [name, setName] = useState("");
   const [handle, setHandle] = useState("");
   // A2A: la URL del AgentCard y lo que ese card dice de sí mismo. Probar ANTES de guardar
   // es el punto entero del protocolo — si el descubrimiento no sirve, mejor saberlo aquí
   // que en el primer mensaje que alguien mande en un canal.
   const [cardUrl, setCardUrl] = useState("");
+  // ACP: la URL del WebSocket de una caja nuestra. No hay card que descubrir —la caja es
+  // nuestra—, así que lo que se comprueba antes de guardar es que responda su /health.
+  const [wsUrl, setWsUrl] = useState("");
   const [probe, setProbe] = useState<{ name?: string; skills: string[]; streaming: boolean } | null>(null);
   const [probing, setProbing] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -1691,6 +1694,10 @@ function AddAgentForm({ onClose, onCreated }: { onClose: () => void; onCreated: 
       if (tab === "create") {
         if (!picked) throw new Error(t("elige un agente de Studio"));
         await activateStudioAgentFn({ data: { studioAgentId: picked, handle: handle.trim() } });
+      } else if (tab === "acp") {
+        await createAgentFn({
+          data: { handle: handle.trim(), name: name.trim(), kind: "acp", wsUrl: wsUrl.trim() },
+        });
       } else {
         await createAgentFn({
           data: { handle: handle.trim(), name: name.trim(), kind: "a2a", cardUrl: cardUrl.trim() },
@@ -1710,7 +1717,9 @@ function AddAgentForm({ onClose, onCreated }: { onClose: () => void; onCreated: 
       ? studio === null || studio.agents.length === 0
         ? null
         : !!picked && !!handle.trim()
-      : !!handle.trim() && !!cardUrl.trim();
+      : tab === "acp"
+        ? !!handle.trim() && !!wsUrl.trim()
+        : !!handle.trim() && !!cardUrl.trim();
 
   const input = "w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm outline-none focus:border-brand";
   return (
@@ -1722,7 +1731,7 @@ function AddAgentForm({ onClose, onCreated }: { onClose: () => void; onCreated: 
         </button>
       </div>
       <div className="mb-2.5 flex gap-1">
-        {(["create", "a2a"] as const).map((k) => (
+        {(["create", "a2a", "acp"] as const).map((k) => (
           <button
             key={k}
             onClick={() => setTab(k)}
@@ -1746,20 +1755,10 @@ function AddAgentForm({ onClose, onCreated }: { onClose: () => void; onCreated: 
             {/* "De Studio", no "Crear agente": el agente ya existe allá y aquí sólo
                 se le da un @handle. Decir "crear" prometía algo que no pasa. */}
             <span className="relative z-10">
-              {k === "create" ? t("De Studio") : t("Por AgentCard")}
+              {k === "create" ? t("De Studio") : k === "a2a" ? t("Por AgentCard") : t("Por ACP")}
             </span>
           </button>
         ))}
-        {/* ACP — próximamente. Deshabilitado a propósito: el cliente ACP todavía no existe y
-            un botón que promete lo que no hay es peor que no tenerlo. Se activa cuando el
-            relé y las aprobaciones estén. */}
-        <button
-          disabled
-          title={t("Próximamente")}
-          className="flex-1 cursor-not-allowed rounded-lg bg-surface-2 px-2 py-1.5 text-xs font-medium text-muted opacity-50"
-        >
-          {t("Por ACP")}
-        </button>
       </div>
       <div className="space-y-2">
         {tab === "create" ? (
@@ -1906,6 +1905,38 @@ function AddAgentForm({ onClose, onCreated }: { onClose: () => void; onCreated: 
               </>
             )}
           </div>
+        ) : tab === "acp" ? (
+          <>
+            {/* ACP: una caja NUESTRA manejada por WebSocket. A diferencia del AgentCard, aquí
+                no hay nada que descubrir —la caja es nuestra— así que lo único que se
+                comprueba al guardar es que esté viva. */}
+            <input
+              value={wsUrl}
+              onChange={(e) => setWsUrl(e.target.value)}
+              placeholder={t("wss://sb-….sandboxes.easybits.cloud/acp")}
+              className={input}
+            />
+            <div className="flex gap-2">
+              <div className="flex flex-1 min-w-0 items-center rounded-lg border border-border bg-surface pl-3 text-sm focus-within:border-brand">
+                <span className="select-none text-muted">@</span>
+                <input
+                  value={handle}
+                  onChange={(e) => setHandle(e.target.value.replace(/[^a-zA-Z0-9]/g, "").toLowerCase())}
+                  placeholder={t("handle (ej. code)")}
+                  className="w-full min-w-0 bg-transparent py-2 pr-3 pl-1 outline-none"
+                />
+              </div>
+              <input
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder={t("nombre visible")}
+                className={`${input} flex-1 min-w-0`}
+              />
+            </div>
+            <p className="text-[11px] text-muted">
+              {t("Un agente de código en su propia caja aislada. Tu código no sale de ahí: usa su propio disco y su propia terminal, no los de tu máquina.")}
+            </p>
+          </>
         ) : tab === "a2a" ? (
           <>
             {/* A2A (Agent2Agent): pegas la URL de un AgentCard y el agente se describe

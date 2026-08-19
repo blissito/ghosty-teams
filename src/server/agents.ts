@@ -240,11 +240,13 @@ export const createAgentFn = createServerFn({ method: "POST" })
     (d: {
       handle: string;
       name: string;
-      kind: "fleet" | "webhook" | "a2a";
+      kind: "fleet" | "webhook" | "a2a" | "acp";
       fleetId?: string;
       webhookUrl?: string;
       /** A2A: la URL del AgentCard. Es la identidad del agente, no un endpoint más. */
       cardUrl?: string;
+      /** ACP: la URL del WebSocket de la caja. */
+      wsUrl?: string;
       systemPrompt?: string;
       avatar?: string;
     }) => d
@@ -262,6 +264,7 @@ export const createAgentFn = createServerFn({ method: "POST" })
     let fleetToken: string | undefined;
     let webhookUrl: string | undefined;
     let cardUrl: string | undefined;
+    let wsUrl: string | undefined;
 
     if (data.kind === "fleet") {
       if (!data.fleetId) throw new Error("elige un agente de la flota");
@@ -274,6 +277,29 @@ export const createAgentFn = createServerFn({ method: "POST" })
       // una (sin esperar el primer mensaje que estamparía connectedAt). Best-effort.
       const { connectTeamsChannel } = await import("./agent-config");
       await connectTeamsChannel(fleetId, fleetToken, "easybits"); // este camino adopta uno de EasyBits
+    } else if (data.kind === "acp") {
+      // Se comprueba que la caja ESTÉ VIVA antes de guardar. No hay card que descubrir —la
+      // caja es nuestra— pero sí un `/health`, y guardar una URL muerta sólo mueve el fallo
+      // al primer mensaje que alguien mande en un canal.
+      const raw = data.wsUrl?.trim();
+      if (!raw) throw new Error("URL del agente requerida");
+      let u: URL;
+      try {
+        u = new URL(raw);
+      } catch {
+        throw new Error("URL inválida");
+      }
+      if (u.protocol !== "wss:" && u.protocol !== "ws:") {
+        throw new Error("tiene que ser una URL de WebSocket (wss://…)");
+      }
+      // El health va por HTTPS sobre el mismo host y puerto; el socket sólo cambia el esquema.
+      const health = new URL(raw.replace(/^ws/, "http"));
+      health.pathname = "/health";
+      health.search = "";
+      const res = await fetch(health.toString()).catch(() => null);
+      if (!res?.ok) throw new Error(`la caja no responde en ${health.host}`);
+      wsUrl = raw;
+      if (!name) name = handle;
     } else if (data.kind === "a2a") {
       // El alta A2A LEE el card antes de guardar. Es la razón de ser del protocolo: si el
       // descubrimiento funciona, guardamos algo que sabemos que sirve; si no, se dice ahora
@@ -323,8 +349,9 @@ export const createAgentFn = createServerFn({ method: "POST" })
       // Este camino ADOPTA un agente que ya existe en la flota de EasyBits
       // (`fleetAgentsWithRefresh`), así que ahí corre. Un webhook no tiene runtime: la URL
       // ya dice todo. Un agente A2A sí lo tiene, y su "dónde" es su card.
-      runtime: data.kind === "fleet" ? "easybits" : data.kind === "a2a" ? "a2a" : null,
-      runtimeUrl: cardUrl ?? null,
+      runtime:
+        data.kind === "fleet" ? "easybits" : data.kind === "a2a" ? "a2a" : data.kind === "acp" ? "acp" : null,
+      runtimeUrl: cardUrl ?? wsUrl ?? null,
     });
     return { ok: true as const, handle: ag.handle };
   });
@@ -405,6 +432,8 @@ export const updateAgentFn = createServerFn({ method: "POST" })
       avatar?: string | null;
       /** A2A: nueva URL del AgentCard. */
       cardUrl?: string;
+      /** ACP: nueva URL del WebSocket de la caja. */
+      wsUrl?: string;
     }) => d
   )
   .handler(async ({ data }) => {
@@ -428,6 +457,7 @@ export const updateAgentFn = createServerFn({ method: "POST" })
     // caja cambia cada vez que se recrea, y sin esto la única salida era borrar y volver a
     // dar de alta el agente, perdiendo su @handle y su historial.
     let cardUrl: string | undefined;
+    let wsUrl: string | undefined;
     if (data.cardUrl !== undefined) {
       const raw = data.cardUrl.trim();
       if (!raw) throw new Error("URL del AgentCard requerida");
@@ -448,6 +478,28 @@ export const updateAgentFn = createServerFn({ method: "POST" })
       cardUrl = raw;
     }
 
+    // ACP: cambiar la URL es apuntar a OTRA caja. Se comprueba que responda, por lo mismo que
+    // en el alta: guardar una muerta sólo mueve el fallo al primer mensaje de un canal.
+    if (data.wsUrl !== undefined) {
+      const raw = data.wsUrl.trim();
+      if (!raw) throw new Error("URL del agente requerida");
+      let u: URL;
+      try {
+        u = new URL(raw);
+      } catch {
+        throw new Error("URL inválida");
+      }
+      if (u.protocol !== "wss:" && u.protocol !== "ws:") {
+        throw new Error("tiene que ser una URL de WebSocket (wss://…)");
+      }
+      const health = new URL(raw.replace(/^ws/, "http"));
+      health.pathname = "/health";
+      health.search = "";
+      const res = await fetch(health.toString()).catch(() => null);
+      if (!res?.ok) throw new Error(`la caja no responde en ${health.host}`);
+      wsUrl = raw;
+    }
+
     await db.updateAgent(data.id, {
       name: data.name,
       handle,
@@ -455,7 +507,7 @@ export const updateAgentFn = createServerFn({ method: "POST" })
       enabled: data.enabled,
       systemPrompt: data.systemPrompt,
       avatar: data.avatar,
-      runtimeUrl: cardUrl,
+      runtimeUrl: cardUrl ?? wsUrl,
     });
     return { ok: true as const };
   });
