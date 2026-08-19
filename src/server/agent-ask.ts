@@ -61,3 +61,40 @@ export const answerAgentAskFn = createServerFn({ method: "POST" })
 
     return { ok: true as const, reply: texto };
   });
+
+/**
+ * Comprueba que una caja ACP esté viva, DESDE EL SERVIDOR.
+ *
+ * Hacerlo desde el navegador no funciona: la caja no manda cabeceras CORS, así que el fetch
+ * falla antes de leer nada y el usuario ve un botón que se queda pensando. Y aunque las
+ * mandara, el navegador tampoco alcanza una caja que no esté expuesta al público — el
+ * servidor sí.
+ */
+export const probeAcpBoxFn = createServerFn({ method: "POST" })
+  .validator((d: { wsUrl: string }) => d)
+  .handler(async ({ data }) => {
+    const user = await sessionUser();
+    if (!user) throw new Error("sesión requerida");
+
+    const raw = data.wsUrl.trim();
+    let u: URL;
+    try {
+      u = new URL(raw);
+    } catch {
+      throw new Error("URL inválida");
+    }
+    if (u.protocol !== "wss:" && u.protocol !== "ws:") {
+      throw new Error("tiene que ser una URL de WebSocket (wss://…)");
+    }
+    // `/busy` vive en el mismo host y puerto que el socket; sólo cambia el esquema.
+    const health = new URL(raw.replace(/^ws/, "http"));
+    health.pathname = "/busy";
+    health.search = "";
+
+    const res = await fetch(health.toString()).catch((e) => {
+      throw new Error(`no responde: ${e instanceof Error ? e.message : e}`);
+    });
+    if (!res.ok) throw new Error(`la caja respondió ${res.status}`);
+    const b = (await res.json()) as { busy?: boolean; sessions?: number };
+    return { ok: true as const, busy: !!b.busy, sessions: b.sessions ?? 0 };
+  });

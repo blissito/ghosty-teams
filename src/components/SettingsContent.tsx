@@ -30,6 +30,7 @@ import { intlLocale } from "../i18n.core";
 import { Monitor, Sun, Moon, Check, SlidersHorizontal, Palette, SwatchBook, Github, Plug, Users, Calendar, CalendarClock, CalendarCheck, Link2, RefreshCw, Gauge, Bug } from "lucide-react";
 import { workspaceUsageFn } from "../server/workspaces";
 import { listMyConnectorsFn, disconnectConnectorFn, shareConnectorFn } from "../server/connectors";
+import { probeAcpBoxFn } from "../server/agent-ask";
 import { listWaChannelsFn, disconnectWaFn, setWaAgentFn, type WaChannelView } from "../server/whatsapp";
 import { forwardTargetsFn } from "../server/forward";
 import { listAgentsFn } from "../server/agents";
@@ -1928,12 +1929,9 @@ function AddAgentForm({ onClose, onCreated }: { onClose: () => void; onCreated: 
                     // No hay card que leer —la caja es nuestra— así que se comprueba que
                     // esté VIVA y si tiene sesiones abiertas. `/busy` va por HTTPS sobre el
                     // mismo host y puerto; el socket sólo cambia el esquema.
-                    const u = new URL(wsUrl.trim().replace(/^ws/, "http"));
-                    u.pathname = "/busy";
-                    u.search = "";
-                    const res = await fetch(u.toString());
-                    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-                    const b = (await res.json()) as { busy?: boolean; sessions?: number };
+                    // Va por el SERVIDOR: la caja no manda cabeceras CORS, así que un fetch
+                    // del navegador falla antes de poder leer nada.
+                    const b = await probeAcpBoxFn({ data: { wsUrl: wsUrl.trim() } });
                     setProbe({
                       name: t("Caja viva"),
                       skills: [b.sessions ? t("{n} sesión(es) abiertas", { n: String(b.sessions) }) : t("sin sesiones")],
@@ -2262,7 +2260,11 @@ function EditAgentForm({
               <p className="mt-1 text-[11px] text-muted">
                 {agent.kind === "fleet"
                   ? t("Capa que se suma a la base SOLO en este espacio. No cambia quién es el agente; su identidad y el prompt base (todos los canales) van a la derecha. Déjala vacía para usar solo la base.")
-                  : t("Se envía a tu webhook como systemPrompt junto al mensaje.")}
+                  : agent.kind === "acp"
+                    ? t("Se antepone al turno que se le manda a su caja. No cambia lo que el agente es; sólo cómo se comporta en este espacio.")
+                    : agent.kind === "a2a"
+                      ? t("Se antepone al turno, salvo que su AgentCard declare que la persona la aplica él.")
+                      : t("Se envía a tu webhook como systemPrompt junto al mensaje.")}
               </p>
             </div>
 
@@ -2286,12 +2288,9 @@ function EditAgentForm({
                       setErr(null);
                       setProbe(null);
                       try {
-                        const u = new URL(wsUrl.trim().replace(/^ws/, "http"));
-                        u.pathname = "/busy";
-                        u.search = "";
-                        const res = await fetch(u.toString());
-                        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-                        const b = (await res.json()) as { sessions?: number };
+                        // Va por el SERVIDOR: la caja no manda cabeceras CORS, así que un
+                        // fetch del navegador falla antes de poder leer nada.
+                        const b = await probeAcpBoxFn({ data: { wsUrl: wsUrl.trim() } });
                         setProbe({
                           name: t("Caja viva"),
                           skills: [b.sessions ? t("{n} sesión(es) abiertas", { n: String(b.sessions) }) : t("sin sesiones")],
