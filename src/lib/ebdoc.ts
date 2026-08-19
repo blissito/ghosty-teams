@@ -360,6 +360,18 @@ export type AskCardData = {
   question: string;
   /** Opciones a pintar. Si vienen vacías, se usan Sí/No. */
   options: { id: string; label: string; tone?: string }[];
+  /**
+   * Por dónde viaja la respuesta.
+   *
+   * Ausente ⇒ `a2a`, para que las tarjetas ya escritas en hilos viejos —que nacieron cuando
+   * ACP no estaba cableado— sigan contestando por donde saben.
+   *
+   * La diferencia no es cosmética: en A2A contestar LANZA un turno nuevo con el mismo
+   * `taskId`, mientras que en ACP el turno sigue corriendo y contestar sólo desbloquea la
+   * promesa que lo tiene detenido. Confundirlos sería lanzarle al agente un turno que nadie
+   * pidió, o dejarlo colgado para siempre.
+   */
+  kind?: "a2a" | "acp";
 };
 
 export function extractAsk(body: string): AskCardData | null {
@@ -386,7 +398,8 @@ export function extractAsk(body: string): AskCardData | null {
           .filter((o) => o.id && o.label)
           .slice(0, 4)
       : [];
-    return { taskId, handle, groupId, question, options };
+    const kind = str(p.kind) === "acp" ? ("acp" as const) : ("a2a" as const);
+    return { taskId, handle, groupId, question, options, kind };
   } catch {
     return null;
   }

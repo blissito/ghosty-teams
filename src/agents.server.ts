@@ -1140,8 +1140,42 @@ export async function callAgentBackendStream(
         // no respuesta, y un tipo nuevo del protocolo no debería aparecer como texto suelto.
       },
       // El permiso se resuelve en el HILO, no aquí: se emite la tarjeta con botones y el
-      // turno queda esperando. Hasta que eso esté cableado, se rechaza — un permiso que se
-      // concede porque nadie estaba mirando no es un permiso.
+      // turno queda esperando a que alguien del espacio conteste.
+      onPermission: async (p) => {
+        const { esperarPermiso } = await import("./server/acp-permission.server");
+        const { randomUUID } = await import("node:crypto");
+        const askId = randomUUID();
+
+        // La tarjeta viaja por el pipeline normal del body, igual que la de A2A: no hay ruta
+        // de persistencia especial. El JSON sale COMPLETO en una sola emisión porque
+        // `extractAsk` exige el fence cerrado — un fence a medias no pinta nada.
+        await onChunk(
+          `\n\n\`\`\`gt-ask\n${JSON.stringify({
+            kind: "acp",
+            taskId: askId,
+            handle: agent.handle,
+            groupId,
+            question: p.title,
+            options: p.options.map((o) => ({
+              id: o.id,
+              label: o.label,
+              // `kind` de ACP nombra la intención de la opción; se traduce al tono que la
+              // tarjeta ya sabe pintar para que aprobar y rechazar no se vean igual.
+              tone: o.kind?.startsWith("allow") ? "ok" : o.kind?.startsWith("reject") ? "danger" : undefined,
+            })),
+          })}\n\`\`\`\n`,
+        );
+
+        // Aquí el turno se DETIENE. Es seguro esperar minutos: el `/busy` de la caja mide
+        // sockets y no turnos, así que no hiberna con un permiso pendiente.
+        const elegido = await esperarPermiso(ns, { askId, title: p.title, options: p.options });
+
+        // La decisión se escribe en el hilo para que la vea TODO el equipo, no sólo quien hizo
+        // clic. El body es append-only: este renglón es la bitácora.
+        const etiqueta = elegido ? (p.options.find((o) => o.id === elegido)?.label ?? elegido) : null;
+        await onChunk(etiqueta ? `\n\n_Autorizado: ${etiqueta}_\n\n` : `\n\n_Sin autorización._\n\n`);
+        return elegido;
+      },
     });
     return r.text;
   }
@@ -2232,6 +2266,10 @@ export async function callAgentBackend(
         sessionId: groupId,
         text: stripLoneSurrogates(text),
         onUpdate: () => {},
+        // SIN `onPermission` a propósito, al revés que el camino de streaming: aquí no hay
+        // `onChunk`, así que no hay dónde pintar la tarjeta de aprobación. Pedir un permiso
+        // que nadie puede contestar dejaría al agente detenido hasta el timeout; sin
+        // manejador el cliente responde `cancelled` de inmediato y el turno cierra limpio.
       });
       return r.text || "(sin respuesta)";
     } catch (e) {

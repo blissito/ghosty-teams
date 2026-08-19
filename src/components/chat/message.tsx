@@ -1105,7 +1105,9 @@ export function AskCard({ msgId, a }: { msgId: number; a: AskCardData }) {
     setEnviando(id);
     setErr(null);
     try {
-      await answerAgentAskFn({ data: { handle: a.handle, groupId: a.groupId, taskId: a.taskId, answer: id } });
+      await answerAgentAskFn({
+        data: { handle: a.handle, groupId: a.groupId, taskId: a.taskId, answer: id, kind: a.kind },
+      });
       setRespondido(label);
       writeAskState(msgId, label);
     } catch (e) {
