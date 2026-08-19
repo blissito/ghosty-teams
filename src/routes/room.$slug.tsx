@@ -369,14 +369,16 @@ function RoomAbierto() {
   }, [porBorrar, slug]);
 
   const grabar = useCallback(
-    async (accion: "start" | "stop") => {
+    async (accion: "start" | "stop", enVivo = false) => {
       setRecBusy(true);
       setErr(null);
       // Detener arrastra la subida del MP4 dentro de la misma petición: el iframe tiene que
       // saberlo YA, no cuando termine.
       if (accion === "stop") avisarIframe(false, undefined, undefined, true);
       try {
-        const r = await recordingFn({ data: { slug, action: accion } });
+        // `live` sólo tiene sentido al EMPEZAR: transmitir y grabar son el mismo ffmpeg,
+        // así que no se puede enganchar un destino a una grabación ya en curso.
+        const r = await recordingFn({ data: { slug, action: accion, live: enVivo } });
         // ⚠️ El aviso al iframe va TAMBIÉN cuando falla, y con el motivo. Sin esto el botón
         // se quedaba en "iniciando…" para siempre y el error sólo aparecía en el chat, que
         // es justo donde no está mirando quien acaba de pulsar Grabar.
@@ -400,13 +402,14 @@ function RoomAbierto() {
     [slug, avisarIframe, grabando, me]
   );
 
+
   // La autorización NO la decide este listener: `recordingFn` ya exige ser quien presenta.
   // Aquí sólo se filtra por procedencia, y **nunca viaja una credencial** en ninguno de los
   // dos sentidos — sólo "quiero grabar" y "se está grabando".
   useEffect(() => {
     const onMsg = (e: MessageEvent) => {
       if (!callRef.current || e.source !== callRef.current.contentWindow) return;
-      const d = e.data as { t?: string; action?: "start" | "stop" };
+      const d = e.data as { t?: string; action?: "start" | "stop"; live?: boolean };
       // Salir vive DENTRO de la llamada (había dos botones idénticos): la sala se
       // desconecta sola y avisa aquí para que además se cierre la vista.
       if (d?.t === "gs:leave") return setCallUrl(null);
@@ -415,7 +418,11 @@ function RoomAbierto() {
       if (d?.t === "gs:panel") return setPanelSala(!!(d as { open?: boolean }).open);
       if (d?.t === "gs:rec:ask") return avisarIframe(grabando);
       if (d?.t === "gs:rec" && (d.action === "start" || d.action === "stop")) {
-        void grabar(d.action);
+        // ⚠️ El `live` viene del iframe y aquí NO se le cree del todo: sólo viaja como
+        // booleano, y quien decide si esa persona puede grabar —y por tanto transmitir—
+        // es `recordingFn` en el servidor, que exige ser quien presenta. Lo peor que
+        // puede hacer un iframe manipulado es pedir el canal del propio dueño.
+        void grabar(d.action, !!d.live);
       }
     };
     window.addEventListener("message", onMsg);

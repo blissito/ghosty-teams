@@ -193,7 +193,12 @@ export const recordingFn = createServerFn({ method: "POST" })
         // Transmitir en vivo es OPT-IN de quien modera, en el momento de grabar. No es una
         // preferencia guardada del room a propósito: un ensayo y el evento usan el mismo
         // room, y un ajuste pegajoso mandaría el ensayo a YouTube sin que nadie lo pidiera.
-        await iniciarGrabacion(r.ch, eventRoomName(await currentNamespace(), r.ch.id), !!data.live);
+        await iniciarGrabacion(
+          r.ch,
+          eventRoomName(await currentNamespace(), r.ch.id),
+          !!data.live,
+          r.ch.call_title ?? r.ch.name ?? ""
+        );
         // El "quién" se guarda para que se SEPA, no para restringir: cualquiera que modere
         // puede detenerla. Si sólo pudiera pararla quien la empezó, una grabación se
         // quedaría corriendo toda la tarde porque esa persona cerró la pestaña.

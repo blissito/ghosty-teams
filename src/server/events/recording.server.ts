@@ -120,8 +120,17 @@ export async function recogerTranscript(channelId: number): Promise<number> {
  * caja: ni Teams ni Studio las ven, así que ninguno de los dos puede filtrarlas, y quien
  * tenga el ADMIN_TOKEN no puede redirigir el webinar a un canal ajeno.
  */
-export async function iniciarGrabacion(_ch: unknown, roomName: string, live = false) {
-  return pedirAStudio({ action: "start", room: roomName, live });
+export async function iniciarGrabacion(
+  _ch: unknown,
+  roomName: string,
+  live = false,
+  title = ""
+) {
+  // ⚠️ El TÍTULO tiene que viajar. El recorder entra a la sala con un token de LiveKit que
+  // se mintea la caja, sin `ticket=`, así que la pantalla de espera —fondo animado, título,
+  // cuenta atrás— se grababa SIN TÍTULO. Y es justo lo que más se ve: los diez minutos
+  // previos, que en una transmisión son lo primero que encuentra quien llega temprano.
+  return pedirAStudio({ action: "start", room: roomName, live, title });
 }
 
 /**
