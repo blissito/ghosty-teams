@@ -67,6 +67,12 @@ export const listManagedAgentsFn = createServerFn({ method: "GET" }).handler(asy
     avatar: a.avatar,
     system_prompt: a.system_prompt,
     enabled: a.enabled,
+    // ⚠️ Faltaban las dos. `runtime_url` es la DIRECCIÓN del agente (el AgentCard de un A2A o
+    // la caja de un ACP): sin ella, el modal de edición nacía con el campo VACÍO y guardar
+    // sin tocarlo parecía inofensivo — hasta que alguien escribía algo y creía estar
+    // corrigiendo una URL que en realidad nunca se le enseñó.
+    runtime_url: a.runtime_url,
+    acp_scope: a.acp_scope,
   }));
 });
 
@@ -434,6 +440,8 @@ export const updateAgentFn = createServerFn({ method: "POST" })
       cardUrl?: string;
       /** ACP: nueva URL del WebSocket de la caja. */
       wsUrl?: string;
+      /** ACP: qué puede EJERCER el agente. CSV de familias; ver `parseScope`. */
+      acpScope?: string;
     }) => d
   )
   .handler(async ({ data }) => {
@@ -500,6 +508,20 @@ export const updateAgentFn = createServerFn({ method: "POST" })
       wsUrl = raw;
     }
 
+    // El alcance se NORMALIZA antes de guardar: se acepta lo que venga con espacios o en
+    // mayúsculas, y se descarta lo vacío. Guardar el CSV crudo del cliente dejaría filas que
+    // sólo `parseScope` sabría leer, y esta columna la va a mirar un humano en una consola.
+    let acpScope: string | undefined;
+    if (data.acpScope !== undefined) {
+      const fam = data.acpScope
+        .split(",")
+        .map((x) => x.trim().toLowerCase())
+        .filter(Boolean);
+      // Sin familias no se guarda cadena vacía: eso significaría `completo` al releerlo, o sea
+      // lo contrario de lo que quiso decir quien desmarcó todas las casillas.
+      acpScope = fam.length ? [...new Set(fam)].sort().join(",") : "lectura";
+    }
+
     await db.updateAgent(data.id, {
       name: data.name,
       handle,
@@ -508,6 +530,7 @@ export const updateAgentFn = createServerFn({ method: "POST" })
       systemPrompt: data.systemPrompt,
       avatar: data.avatar,
       runtimeUrl: cardUrl ?? wsUrl,
+      acpScope,
     });
     return { ok: true as const };
   });

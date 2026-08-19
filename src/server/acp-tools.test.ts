@@ -4,6 +4,7 @@
 import { beforeAll, describe, expect, it } from "vitest";
 
 import { acpToolToken } from "./acp-tools.server";
+import { parseScope } from "./connectors/tool-token.server";
 
 beforeAll(() => {
   process.env.GHOSTY_PARTNER_SECRET = "secreto-de-prueba";
@@ -14,7 +15,7 @@ const base = {
   ns: "ns-1",
   dest: { channelId: 9, parentId: 4 },
   origin: "https://acme.ghosty.mx",
-  scope: "lectura" as const,
+  scope: parseScope("lectura"),
 };
 
 const claims = (t: string) => JSON.parse(Buffer.from(t.split(".")[0], "base64url").toString());
@@ -57,6 +58,6 @@ describe("el token de tools de un turno ACP", () => {
   });
 
   it("el scope del agente viaja tal cual: `completo` sólo si alguien lo eligió", async () => {
-    expect(claims((await acpToolToken({ ...base, scope: "completo" }))!).scope).toBe("completo");
+    expect(claims((await acpToolToken({ ...base, scope: parseScope("completo") }))!).scope).toBe("completo");
   });
 });

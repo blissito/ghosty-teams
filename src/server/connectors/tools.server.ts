@@ -9,7 +9,7 @@
 import { loaderFor, toolsOf } from "./impl";
 import { nativeTools, type ToolDest } from "./native.server";
 import { taskTools } from "./tasks.native.server";
-import type { ToolScope } from "./tool-token.server";
+import { SCOPE_COMPLETO, type ToolScope } from "./tool-token.server";
 
 // Declaración expuesta al modelo (sin el handler).
 export type ToolDecl = { name: string; description: string; inputSchema: Record<string, unknown> };
@@ -26,9 +26,44 @@ export type ToolDecl = { name: string; description: string; inputSchema: Record<
  */
 const SOLO_LECTURA = new Set(["chat_history", "chat_search", "doc_read"]);
 
-/** ¿Puede este portador ejercer esta tool? El scope acota QUÉ hace; el `dest`, DÓNDE. */
+/**
+ * FAMILIAS por prefijo de nombre.
+ *
+ * Es por prefijo y no por lista de nombres para que añadir `github_create_release` mañana no
+ * obligue a tocar este archivo. Y la regla que lo hace seguro está abajo: **un prefijo que no
+ * esté aquí sólo lo alcanza `completo`**. O sea, una tool con nombre nuevo nace FUERA de todas
+ * las familias acotadas. El olvido falla cerrado, que es la única dirección aceptable.
+ *
+ * ⚠️ No añadas aquí un prefijo "por si acaso": cada entrada amplía lo que un binario de
+ * terceros puede ejecutar con las credenciales de quien le escribe.
+ */
+const FAMILIAS: Array<[prefijo: string, familia: string]> = [
+  ["github_", "codigo"],
+  ["task_", "tareas"],
+  ["reminder_", "agenda"],
+  ["form_", "formularios"],
+  ["doc_", "docs"],
+  ["memory_", "memoria"],
+];
+
+function familiaDe(name: string): string | null {
+  for (const [prefijo, familia] of FAMILIAS) if (name.startsWith(prefijo)) return familia;
+  return null;
+}
+
+/**
+ * ¿Puede este portador ejercer esta tool? El scope acota QUÉ hace; el `dest`, DÓNDE.
+ *
+ * Son ejes ORTOGONALES y uno no cierra el otro: el room decide sobre qué repos se trabaja,
+ * pero no dice nada de si este agente puede además mandar correo a tu nombre.
+ */
 export function toolEnScope(name: string, scope: ToolScope): boolean {
-  return scope === "completo" || SOLO_LECTURA.has(name);
+  if (scope.has("completo")) return true;
+  // Las de lectura de la conversación van por lista blanca y no por prefijo: `doc_read` lee y
+  // `doc_share` reparte, y las dos empiezan igual. Aquí la precisión importa más que la regla.
+  if (SOLO_LECTURA.has(name)) return scope.has("lectura");
+  const f = familiaDe(name);
+  return f !== null && scope.has(f);
 }
 
 /**
@@ -39,15 +74,18 @@ export function toolEnScope(name: string, scope: ToolScope): boolean {
 export async function listUserTools(
   sub: string,
   dest: ToolDest | null = null,
-  scope: ToolScope = "completo"
+  scope: ToolScope = SCOPE_COMPLETO
 ): Promise<ToolDecl[]> {
-  // El filtro de verdad está en `runTool`; éste es para no ANUNCIAR lo que no se puede usar.
+  // El filtro de verdad está en `runTool`; esto es para no ANUNCIAR lo que no se puede usar.
   // Anunciar de más haría que el modelo lo intentara y fallara, que es peor que no verlo.
-  if (scope !== "completo") {
-    return nativeTools(dest)
-      .filter((t) => toolEnScope(t.name, scope))
-      .map((t) => ({ name: t.name, description: t.description, inputSchema: t.inputSchema }));
-  }
+  //
+  // ⚠️ Aquí vivía un atajo que costó una tarde: con cualquier scope acotado se devolvían sólo
+  // las nativas y NO se consultaban los conectores. O sea que un agente con permiso de
+  // `codigo` no veía ni una tool de GitHub, y desde fuera parecía que el permiso no servía —
+  // el 19 ago 2026 @goose acabó intentando `gh` por shell y redactando en un artefacto el
+  // issue que le pidieron crear. Un scope acotado tiene que ENTRAR igual al bucle de
+  // conectores; lo que cambia es lo que sale, y de eso se encarga el filtro del final.
+  //
   // Los suyos + los COMPARTIDOS del workspace. Éste es el cambio que hace funcionar las
   // conexiones de equipo: sin él las tools ni se le anuncian al modelo, y el agente diría
   // "no tengo Sentry" teniendo una compartida delante.
@@ -68,7 +106,9 @@ export async function listUserTools(
       // un conector roto no rompe el listado de los demás
     }
   }
-  return out;
+  // Un solo filtro al final, sobre TODO lo reunido: nativas, tablero y conectores. Filtrar en
+  // cada rama era lo que dejaba huecos.
+  return out.filter((t) => toolEnScope(t.name, scope));
 }
 
 export type RunResult =
@@ -123,14 +163,19 @@ export async function runTool(
   toolName: string,
   args: Record<string, unknown>,
   dest: ToolDest | null = null,
-  scope: ToolScope = "completo"
+  scope: ToolScope = SCOPE_COMPLETO
 ): Promise<RunResult> {
   // ⚠️ El scope se aplica AQUÍ, en la ejecución, y no sólo en el listado. Filtrar únicamente
   // lo que se anuncia sería cosmético: nada impide que un modelo llame por nombre a una tool
   // que nunca se le enseñó, y los nombres de las nuestras están en el código, en los tests y
   // en cualquier transcripción.
   if (!toolEnScope(toolName, scope)) {
-    return { ok: false, error: `${toolName} no está disponible para este agente (sólo lectura de la conversación).` };
+    return {
+      ok: false,
+      error:
+        `${toolName} no está disponible para este agente. Su alcance en este espacio es ` +
+        `"${[...scope].join(", ")}". Díselo a la persona en vez de buscar otra vía.`,
+    };
   }
   const denial = await repoScopeDenial(toolName, args ?? {}, dest);
   if (denial) return { ok: false, error: denial };

@@ -1514,8 +1514,10 @@ type ManagedAgent = {
   kind: "fleet" | "webhook" | "a2a" | "acp";
   fleet_id: string | null;
   webhook_url: string | null;
-  /** A2A: la URL de su AgentCard. Es su dirección, y cambia si su caja se recrea. */
+  /** A2A/ACP: su dirección (AgentCard o WebSocket de la caja). Cambia si la caja se recrea. */
   runtime_url?: string | null;
+  /** ACP: qué familias de tools puede ejercer. CSV; vacío = sólo leer la conversación. */
+  acp_scope?: string | null;
   avatar: string | null;
   system_prompt: string | null;
   enabled: number;
@@ -2112,6 +2114,10 @@ function EditAgentForm({
   // ACP comparte el campo con A2A —los dos guardan su dirección en `runtime_url`— pero lo que
   // se comprueba es distinto: allá se LEE el card, aquí sólo que la caja esté viva.
   const [wsUrl, setWsUrl] = useState(agent.runtime_url ?? "");
+  // Vacío ⇒ `lectura`. El default acotado es deliberado: un agente ACP es un binario de
+  // terceros ejecutando lo que escribe un modelo, y darle de entrada los conectores de quien
+  // le hable sería una decisión que nadie tomó.
+  const [scope, setScope] = useState<string>(agent.acp_scope?.trim() || "lectura");
   const [probe, setProbe] = useState<{ name?: string; skills: string[] } | null>(null);
   const [probing, setProbing] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -2185,6 +2191,7 @@ function EditAgentForm({
             agent.kind === "acp" && wsUrl.trim() && wsUrl.trim() !== (agent.runtime_url ?? "")
               ? wsUrl.trim()
               : undefined,
+          acpScope: agent.kind === "acp" && scope !== (agent.acp_scope?.trim() || "lectura") ? scope : undefined,
         },
       });
       onSaved();
@@ -2313,6 +2320,45 @@ function EditAgentForm({
                 <p className="mt-1 text-[11px] text-muted">
                   {t("La dirección de su caja. Cámbiala si se recreó y quedó en otra URL — el @handle y el historial se conservan.")}
                 </p>
+
+                <label className="mb-1 mt-4 block text-[11px] font-semibold uppercase tracking-wide text-muted">
+                  {t("Qué puede hacer")}
+                </label>
+                <div className="space-y-1.5">
+                  {(
+                    [
+                      ["lectura", t("Leer esta conversación"), t("El historial del hilo y su documento. Nada más.")],
+                      ["lectura,codigo", t("Trabajar con el repositorio"), t("Además, GitHub: leer código, abrir issues y pull requests. En un room sólo toca los repos conectados ahí.")],
+                      ["completo", t("Todo lo que tengas conectado"), t("También tu correo, tu calendario y el resto de tus integraciones, a tu nombre.")],
+                    ] as const
+                  ).map(([valor, titulo, detalle]) => (
+                    <label
+                      key={valor}
+                      className={`flex cursor-pointer gap-2 rounded-lg border p-2 transition-colors ${
+                        scope === valor ? "border-brand bg-brand/5" : "border-border hover:bg-surface-3"
+                      }`}
+                    >
+                      <input
+                        type="radio"
+                        name="acp-scope"
+                        checked={scope === valor}
+                        onChange={() => setScope(valor)}
+                        className="mt-0.5 shrink-0"
+                      />
+                      <span className="min-w-0">
+                        <span className="block text-xs font-medium text-ink">{titulo}</span>
+                        <span className="block text-[11px] text-muted">{detalle}</span>
+                      </span>
+                    </label>
+                  ))}
+                </div>
+                {/* Se dice donde se decide, no en un doc que nadie abre: el candado por repos
+                    es del ROOM, así que en un mensaje directo no acota nada. */}
+                {scope !== "lectura" && (
+                  <p className="mt-1.5 text-[11px] text-muted">
+                    {t("En un room, el agente sólo alcanza los repositorios conectados a ese room. En un mensaje directo contigo no hay ese límite.")}
+                  </p>
+                )}
               </div>
             )}
 

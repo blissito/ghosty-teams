@@ -54,7 +54,30 @@ export type ToolDest = { channelId?: number; dmId?: number; parentId?: number; t
  * conectores del invocador —Gmail, GitHub, Sentry— a un binario que ejecuta código escrito
  * por un modelo. El `dest` acota DÓNDE lee; esto acota QUÉ puede hacer.
  */
-export type ToolScope = "lectura" | "completo";
+export type ToolScope = ReadonlySet<string>;
+
+/** Lo que reciben los agentes NATIVOS y cualquier token emitido antes de que esto existiera. */
+export const SCOPE_COMPLETO: ToolScope = new Set(["completo"]);
+
+/**
+ * Lee el alcance de su forma guardada: CSV en `gc_agents.acp_scope` o en el claim del token.
+ *
+ * - vacío/ausente ⇒ `completo`. Es lo que ya tienen los nativos, así que esta columna no le
+ *   cambia el comportamiento a nadie el día que se despliega.
+ * - una lista ⇒ ese conjunto, en minúsculas y sin espacios.
+ *
+ * NO valida contra un catálogo cerrado a propósito: una familia que no exista simplemente no
+ * casa con ninguna tool y no concede nada. Rechazar aquí un valor desconocido sólo serviría
+ * para convertir un typo en un turno roto en vez de en un turno sin esa familia.
+ */
+export function parseScope(raw: string | null | undefined): ToolScope {
+  const partes = (raw ?? "")
+    .split(",")
+    .map((x) => x.trim().toLowerCase())
+    .filter(Boolean);
+  if (!partes.length) return SCOPE_COMPLETO;
+  return new Set(partes);
+}
 
 export function mintToolToken(
   sub: string,
@@ -75,7 +98,9 @@ export function mintToolToken(
       ns: ns ?? undefined,
       dest: dest ?? undefined,
       aud: extra?.aud || undefined,
-      scope: extra?.scope || undefined,
+      // Se serializa ORDENADO para que dos tokens del mismo alcance sean idénticos: así el
+      // caché de installation tokens y cualquier comparación por igualdad no se despistan.
+      scope: extra?.scope ? [...extra.scope].sort().join(",") || undefined : undefined,
       exp: Math.floor(Date.now() / 1000) + ttlSec,
     })
   ).toString("base64url");
@@ -100,10 +125,9 @@ export function verifyToolToken(
       exp?: number;
     };
     if (!p.sub || !p.exp || p.exp < Math.floor(Date.now() / 1000)) return null;
-    // Un valor desconocido cae a `lectura`, no a `completo`: si mañana aparece un scope nuevo
-    // y un emisor viejo lo emite mal, que el error sea de menos permiso y no de más.
-    const scope: ToolScope = p.scope === undefined ? "completo" : p.scope === "completo" ? "completo" : "lectura";
-    return { sub: p.sub, ns: p.ns ?? null, dest: p.dest ?? null, scope };
+    // Sin claim ⇒ `completo`: es lo que emiten hoy todos los call-sites nativos y hay que
+    // seguir aceptándolo. Con claim, vale exactamente lo que diga y ni una familia más.
+    return { sub: p.sub, ns: p.ns ?? null, dest: p.dest ?? null, scope: parseScope(p.scope) };
   } catch {
     return null;
   }

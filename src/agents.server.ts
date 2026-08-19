@@ -5,7 +5,7 @@
 import { hasIds, nodeIndex } from "./lib/artifact-ids";
 import { stripStepsBlock, stripToolBlock } from "./lib/ebdoc";
 import { ARTIFACT_DESIGN_GUIDE } from "./server/prompts/artifact-design";
-import type { ToolScope } from "./server/connectors/tool-token.server";
+import { parseScope, type ToolScope } from "./server/connectors/tool-token.server";
 
 export type ResolvedAgent = {
   handle: string;
@@ -109,7 +109,9 @@ export async function resolvedAgents(): Promise<ResolvedAgent[]> {
           kind: "acp",
           runtime: "acp",
           runtimeUrl: a.runtime_url,
-          scope: a.acp_scope === "completo" ? "completo" : "lectura",
+          // Columna vacía ⇒ `lectura`, no `completo`: un agente ACP es un binario de terceros
+          // y nace acotado. Los agentes NATIVOS no pasan por aquí; ellos siguen en `completo`.
+          scope: parseScope(a.acp_scope || "lectura"),
         },
       });
     } else if (a.kind === "a2a" && a.runtime_url) {
