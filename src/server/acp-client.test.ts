@@ -16,6 +16,8 @@ let url = "";
 let guion: (ws: WS, m: any) => void = () => {};
 let ultimaUrl = "";
 let ultimosHeaders: Record<string, string | undefined> = {};
+/** Un agente que valida SUS sessionId rechaza los ajenos. goose no lo hacía. */
+let cargaFalla = false;
 
 const env = (o: any, extra: any) => JSON.stringify({ jsonrpc: "2.0", ...o, ...extra }) + "\n";
 
@@ -32,7 +34,10 @@ beforeAll(async () => {
         const m = JSON.parse(line);
         if (m.method === "initialize") ws.send(env({ id: m.id }, { result: { protocolVersion: 1 } }));
         else if (m.method === "session/new") ws.send(env({ id: m.id }, { result: { sessionId: "ses-1" } }));
-        else if (m.method === "session/load") ws.send(env({ id: m.id }, { result: {} }));
+        else if (m.method === "session/load")
+          cargaFalla
+            ? ws.send(env({ id: m.id }, { error: { code: -32602, message: "sesión desconocida" } }))
+            : ws.send(env({ id: m.id }, { result: {} }));
         else if (m.method === "session/prompt") guion(ws, m);
         else if (m.id != null) ws.send(env({ id: m.id }, { result: {} }));
       }
@@ -251,5 +256,32 @@ describe("el token de tools", () => {
     guion = (ws, m) => ws.send(env({ id: m.id }, { result: { stopReason: "end_turn" } }));
     await turno().run();
     expect(ultimosHeaders["x-ghosty-tools"]).toBeUndefined();
+  });
+});
+
+/**
+ * Que esto funcione con OTROS agentes ACP, no sólo con goose.
+ *
+ * goose acepta el `sessionId` que le mandemos, así que durante meses tapó una suposición
+ * nuestra. Un agente que valida los suyos —lo que dice la spec: el id lo genera él— devuelve
+ * error, y el turno tiene que salir adelante igual.
+ */
+describe("un agente que no es goose", () => {
+  it("rechaza un sessionId ajeno y el turno sigue: se abre una sesión nueva", async () => {
+    cargaFalla = true;
+    guion = (ws, m) => {
+      ws.send(
+        env({}, {
+          method: "session/update",
+          params: { update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "listo" } } },
+        }),
+      );
+      ws.send(env({ id: m.id }, { result: { stopReason: "end_turn" } }));
+    };
+    const r = await turno({ sessionId: "un-id-que-inventamos-nosotros" }).run();
+    cargaFalla = false;
+    // Ni excepción ni turno vacío: el cliente cayó a `session/new` y devolvió el id DEL AGENTE.
+    expect(r.text).toBe("listo");
+    expect(r.sessionId).toBe("ses-1");
   });
 });
