@@ -43,9 +43,11 @@ export function publicMessages<T extends { parent_id: number | null; id: number;
   limite = 200
 ): T[] {
   if (publicSince == null) return [];
-  return todos
-    .filter((m) => m.parent_id == null && m.id > after && m.created_at >= publicSince)
-    .slice(-limite);
+  // ⚠️ Las respuestas de HILO entran (2026-08-19). Antes se filtraban por `parent_id`, y
+  // el efecto era que todo lo dicho en un hilo desaparecía de la sala — incluido lo que el
+  // agente contesta a un miembro desde Teams, que SIEMPRE va en hilo. Desde fuera se leía
+  // como que nadie respondió. La sala las aplana en orden cronológico.
+  return todos.filter((m) => m.id > after && m.created_at >= publicSince).slice(-limite);
 }
 
 /** El room de una liga pública, sin preguntar quién eres. `null` si no existe o no es público. */
@@ -85,10 +87,10 @@ export const eventFlowFn = createServerFn({ method: "GET" })
     // leer. Un anónimo devuelve `null` aquí y sigue adelante.
     const { eventViewerFor } = await import("./access.server");
     const viewer = await eventViewerFor(r.ch).catch(() => null);
-    const all = await r.db.listChannelFlow(r.ch.id);
-    // Sólo lo que se escribió en el flujo del evento, y nada de hilos: la sala es
-    // una conversación corrida, no el room completo con su historial de meses.
-    // Y sólo DESDE QUE SE ABRIÓ — ver `publicMessages`.
+    // ⚠️ `listChannelFlowFlat`, no `listChannelFlow`: aquél devuelve sólo raíces y dejaba
+    // los hilos fuera de la sala. Ver su comentario en `db.server.ts`.
+    const all = await r.db.listChannelFlowFlat(r.ch.id);
+    // Sólo lo que se escribió en el room desde QUE SE ABRIÓ — ver `publicMessages`.
     const recortados = publicMessages(all, r.ch.public_since, data.after ?? 0);
     // ⚠️ Se devuelven los mensajes COMPLETOS (`attachMeta`: reacciones, adjuntos,
     // artefactos, fijados), no un resumen a medida. La sala pinta con el MISMO

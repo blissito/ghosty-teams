@@ -277,6 +277,37 @@ function RoomAbierto() {
         if (suyo?.agent_handle && sonando.current) playGhostySound();
       }
     }
+
+    // ⚠️ El cuerpo de un mensaje se aplica AQUÍ, sobre el estado, igual que las
+    // reacciones y por la MISMA razón: `traerNuevos` va con `after` y deduplica por id,
+    // así que trae mensajes NUEVOS y jamás una actualización de uno que ya está pintado.
+    // El agente publica una cáscara VACÍA y la va llenando por deltas: sin esto su
+    // burbuja se quedaba en blanco para siempre —no "tarda", nunca llega— y en la sala
+    // se leía como que ghosty no contestó. Es lo mismo que hace `c.$slug.tsx`.
+    if (ev.t === "message:delta") {
+      return setMessages((prev) =>
+        prev.map((m) => (m.id === ev.id ? { ...m, body: (m.body ?? "") + ev.chunk } : m))
+      );
+    }
+    if (ev.t === "message:body" || ev.t === "message:edited") {
+      // Un body autoritativo EN BLANCO no borra lo ya streameado: algunos motores cierran
+      // el turno con "" y eso hacía desaparecer una respuesta que ya se estaba leyendo.
+      const vacio = !(ev.body ?? "").trim();
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id !== ev.id ? m : vacio && (m.body ?? "").trim() ? m : { ...m, body: ev.body }
+        )
+      );
+      // Y se sigue pidiendo el flujo: el mensaje puede no estar todavía en el estado
+      // (llegó el body antes que el sondeo que lo trae).
+      void traerNuevos();
+      return;
+    }
+    // La cáscara de un turno en blanco se borra en el servidor; sin esto quedaba una
+    // burbuja vacía del agente en pantalla hasta recargar.
+    if (ev.t === "message:deleted") {
+      return setMessages((prev) => prev.filter((m) => m.id !== ev.id));
+    }
     // ⚠️ Una reacción se aplica AQUÍ, sobre el estado, y no re-pidiendo el flujo: el
     // sondeo va con `after`, o sea que sólo trae mensajes NUEVOS. Reaccionar a algo de
     // hace un minuto no cambia ningún id, así que por esa vía no llegaría nunca.
@@ -297,7 +328,7 @@ function RoomAbierto() {
         })
       );
     }
-    if (ev.t === "message:new" || ev.t === "message:body" || ev.t === "message:edited" || ev.t === "refresh") {
+    if (ev.t === "message:new" || ev.t === "refresh") {
       void traerNuevos();
     }
   });

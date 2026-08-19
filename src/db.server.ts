@@ -2207,6 +2207,34 @@ export async function listChannelFlow(channelId: number, topic?: string): Promis
   return rows.map(toMessage);
 }
 
+/**
+ * El flujo de un room ABIERTO, con las respuestas de hilo APLANADAS.
+ *
+ * ⚠️ Existe porque `listChannelFlow` devuelve sólo raíces (`parent_id IS NULL`): en Teams
+ * el hilo mantiene el room limpio, y quien quiere leerlo lo abre. En una sala pública no
+ * hay dónde abrirlo —la sala es una conversación corrida, sin panel de hilo— así que todo
+ * lo que se dijera en un hilo DESAPARECÍA para quien mira desde fuera. Y no es un caso
+ * raro: en Teams el agente contesta a un miembro dentro del hilo de su pregunta.
+ *
+ * Se aplana en orden cronológico, o sea que una respuesta de hilo se lee como un mensaje
+ * más. Es lo mismo que hace un chat de webinar y evita mantener dos formas del mensaje.
+ *
+ * ⚠️ El corte por fecha NO se hace aquí: lo hace `publicMessages`, que es la frontera
+ * probada. Esto sólo trae filas.
+ */
+export async function listChannelFlowFlat(channelId: number, limite = 400): Promise<Message[]> {
+  const rows = await dbq(
+    `SELECT m.*, 0 AS reply_count
+       FROM gc_messages m
+      WHERE m.channel_id = ?
+      ORDER BY m.created_at DESC, m.id DESC
+      LIMIT ${limite}`,
+    [channelId]
+  );
+  // La consulta pide los ÚLTIMOS por eficiencia; la sala los quiere en orden de lectura.
+  return rows.map(toMessage).reverse();
+}
+
 // Topics del room (eje Zulip): distintos topics de mensajes top-level, con conteo
 // y actividad reciente, para pintar los submenús colapsables del sidebar.
 export type TopicInfo = { topic: string; count: number; last_at: number };

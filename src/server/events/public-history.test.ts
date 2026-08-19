@@ -33,8 +33,17 @@ describe("publicMessages", () => {
     expect(publicMessages([m(9, ABIERTO)], ABIERTO).map((x) => x.id)).toEqual([9]);
   });
 
-  it("las respuestas de hilo no salen al flujo", () => {
-    expect(publicMessages([...DESPUES, m(6, 1300, 4)], ABIERTO).map((x) => x.id)).toEqual([4, 5]);
+  it("las respuestas de hilo SÍ salen al flujo, aplanadas", () => {
+    // Cambiado el 2026-08-19: antes se filtraban y todo lo dicho en un hilo desaparecía
+    // de la sala —incluida la respuesta del agente a un miembro, que siempre va en hilo—,
+    // así que desde fuera parecía que nadie había contestado.
+    expect(publicMessages([...DESPUES, m(6, 1300, 4)], ABIERTO).map((x) => x.id)).toEqual([4, 5, 6]);
+  });
+
+  it("un hilo ANTERIOR a la apertura sigue sin salir", () => {
+    // El aplanado no puede abrir una puerta trasera al corte de fecha: una respuesta vieja
+    // colgada de un mensaje viejo es exactamente lo que `public_since` protege.
+    expect(publicMessages([...ANTES, m(7, 300, 1), ...DESPUES], ABIERTO).map((x) => x.id)).toEqual([4, 5]);
   });
 
   it("`after` no puede saltarse el corte", () => {
