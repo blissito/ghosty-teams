@@ -9,7 +9,7 @@
 // de 15 min con su `sub` firmado, y los handlers de aquí corren en el servidor.
 import { getValidToken } from "./oauth.server";
 import { getConnectorRow } from "./store.server";
-import type { ConnectorTool } from "./impl";
+import type { ConnectorTool, ToolChannel } from "./impl";
 import type { ToolDest } from "./tool-token.server";
 import { listRoomRepos } from "../../db.server";
 import {
@@ -362,10 +362,15 @@ export async function ambientContext(
   sub: string,
   sender: string,
   _message: string,
-  dest: ToolDest | null = null
+  dest: ToolDest | null = null,
+  opts?: { toolChannel?: ToolChannel }
 ): Promise<string | null> {
   const meta = await readMeta(sub);
   if (!meta) return null;
+  // Un agente ACP recibe las tools como herramientas del protocolo; el worker nativo las
+  // llama por el SDK de su caja. Es la misma lista con dos formas de invocarla, y decirle la
+  // ajena a cualquiera de los dos lo manda a un callejón.
+  const porMcp = opts?.toolChannel === "mcp";
 
   // El alcance del room manda, y se DICE. Un room sin repos no tiene tools de GitHub, y si
   // el modelo no sabe por qué contesta "no tengo acceso a tu código" — que es falso y es la
@@ -389,8 +394,12 @@ export async function ambientContext(
         `no consultes ni menciones otros repositorios aunque te los pidan, aquí no existen. ` +
         `Si no dicen cuál, es ${scoped[0].repo}. `
       : "") +
-    `TIENES HERRAMIENTAS para sus repos vía el GS Tools SDK: importa /opt/gs-sdk/connectors.mjs y usa ` +
-    `list() y run(name, args). Lectura: github_list_repos, github_list_issues, github_get_issue, ` +
+    (porMcp
+      ? `TIENES HERRAMIENTAS para sus repos: te llegan como herramientas tuyas y las llamas por su ` +
+        `nombre, directamente. NO busques un SDK ni un archivo que importar. `
+      : `TIENES HERRAMIENTAS para sus repos vía el GS Tools SDK: importa /opt/gs-sdk/connectors.mjs y usa ` +
+        `list() y run(name, args). `) +
+    `Lectura: github_list_repos, github_list_issues, github_get_issue, ` +
     `github_list_prs, github_get_pr, github_pr_files, github_read_file, github_search_code, ` +
     `github_checkout, github_workflow_runs, github_workflow_run_logs. Escritura: github_create_review, github_merge_pr, github_comment, github_update_issue, github_create_issue, ` +
     `github_create_branch, github_write_file, github_create_pr. ` +
@@ -416,6 +425,14 @@ export async function ambientContext(
     // skill correcta en su caja, NO llamó a github_checkout: se puso a averiguar si el repo
     // era público para bajarlo por una URL abierta. Funcionó de casualidad (ese repo lo era)
     // y con un repo de cliente —privados todos— habría fallado diciendo que no puede.
+    // ⚠️ El 19 ago 2026 un agente ACP hizo `which gh`, no lo encontró, y en vez de decirlo
+    // REDACTÓ el issue en un artefacto y lo entregó como si fuera lo pedido. Cerrar sólo la
+    // vía del `gh` no basta: hay que prohibir también el SUCEDÁNEO, o el modelo encuentra
+    // otro. Un "no puedo" es una respuesta correcta; un sustituto plausible es una mentira.
+    `NO HAY \`gh\` NI CREDENCIALES DE GIT en tu caja, y no los instales: no falla por un error ` +
+    `tuyo, es que esa vía no existe. Todo GitHub pasa por estas herramientas. Y si de verdad no ` +
+    `las tienes en este turno, DILO — no redactes en un documento lo que te pidieron crear, ni ` +
+    `entregues un borrador como si fuera la cosa hecha. ` +
     `CÓMO ENTRA EL CÓDIGO A LA CAJA DE TRABAJO, sin excepciones: llama a github_checkout, que te ` +
     `devuelve una URL de descarga, y haz \`curl\` de ESA URL DENTRO de la caja. Funciona igual con ` +
     `repos PRIVADOS —la URL va firmada y no necesita credencial—, así que está PROHIBIDO ponerte a ` +

@@ -1168,7 +1168,9 @@ export async function callAgentBackendStream(
     const { runAcpTurn } = await import("./server/acp-client.server");
     const { currentNamespace } = await import("./server/tenant.server");
     const ns = await currentNamespace();
-    const prefix = persona ? `[${persona}]\n\n` : "";
+    // La persona ya NO se antepone al texto: viaja en su propio bloque (ver más abajo). Iba
+    // pegada al mensaje entre corchetes, que es exactamente la forma que el modelo confunde
+    // con una inyección de quien escribe.
     // Traza mínima del turno ACP. Sin ella, un turno colgado no deja NADA en el journal y
     // diagnosticar es adivinar: no se distingue "nunca llegó aquí" de "conectó y se calló".
     const acpT0 = Date.now();
@@ -1198,7 +1200,38 @@ export async function callAgentBackendStream(
       origin: originOverride ?? (await reqOrigin().catch(() => null)),
       scope: agent.backend.scope,
     });
-    console.log(`[acp ->] ${agent.handle} ${agent.backend.runtimeUrl} sesion=${sesionPrevia ?? "(nueva)"}`);
+    // ── El contexto del espacio ───────────────────────────────────────────────────────
+    //
+    // Sin esto, un agente ACP con todas las tools del mundo no sabe que las tiene: no conoce
+    // los repos del room, ni la hora de quien escribe, ni el documento del hilo. Es la mitad
+    // que faltaba — el 19 ago 2026 @goose tenía el permiso en la mano y aun así fue a buscar
+    // `gh` por la shell, porque nadie le había dicho lo otro.
+    //
+    // Se componen las MISMAS funciones que usa el camino nativo (viven en este archivo), no
+    // una copia: un hint que diverja entre agentes es un hint que se corrige en un sitio y
+    // sigue mal en el otro.
+    //
+    // `toolChannel: "mcp"` no es un detalle: el bloque de GitHub le dice al worker nativo que
+    // importe `/opt/gs-sdk/connectors.mjs`, y en una caja ACP ese archivo no existe. Darle esa
+    // instrucción sería peor que no darle ninguna.
+    const contexto = (
+      await Promise.all([
+        invokerSub && !publicChannel
+          ? import("./server/connectors/context.server")
+              .then((m) => m.buildConnectorContext(invokerSub, sender || "el usuario", text, dest ?? null, "mcp"))
+              .catch(() => "")
+          : Promise.resolve(""),
+        clockHint(invokerSub).catch(() => ""),
+        memoryHint(dest ?? null).catch(() => ""),
+        artifactDocHint(currentDoc).catch(() => ""),
+      ])
+    )
+      .map((x) => x.trim())
+      .filter(Boolean)
+      .join("\n\n");
+    console.log(
+      `[acp ->] ${agent.handle} ${agent.backend.runtimeUrl} sesion=${sesionPrevia ?? "(nueva)"} ctx=${contexto.length}b`,
+    );
     const r = await runAcpTurn({
       wsUrl: agent.backend.runtimeUrl,
       workspaceNs: ns,
@@ -1207,7 +1240,12 @@ export async function callAgentBackendStream(
       // dio el agente. Vacío la primera vez → el cliente abre una nueva y la guardamos abajo.
       sessionId: sesionPrevia ?? undefined,
       toolToken,
-      text: prefix + stripLoneSurrogates(text),
+      // La persona y el contexto van en BLOQUES APARTE, no pegados al mensaje: es lo que
+      // evita que el agente los lea como si se los dictara quien escribe (incidente
+      // 2026-07-12). Ver `bloquesDelTurno` en acp-client.server.ts.
+      persona: persona ?? undefined,
+      context: contexto,
+      text: stripLoneSurrogates(text),
       signal,
       onUpdate: async (u) => {
         if (u.kind === "text") await onChunk(u.text);

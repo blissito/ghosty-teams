@@ -8,7 +8,7 @@
 // aquí — son TOOLS/SKILLS que el runtime nativo descubre y el agente invoca on-demand (así
 // no se inyectan miles de conectores en cada mensaje). Ese surface es el siguiente paso.
 
-import { loaderFor } from "./impl";
+import { loaderFor, type ToolChannel } from "./impl";
 import type { ToolDest } from "./tool-token.server";
 
 /** Contexto ambiente de TODOS los conectores conectados del usuario, listo para el prompt. */
@@ -16,7 +16,9 @@ export async function buildConnectorContext(
   sub: string,
   sender: string,
   message: string,
-  dest: ToolDest | null = null
+  dest: ToolDest | null = null,
+  /** Cómo ejerce sus tools quien va a leer esto. Ver `ToolChannel` en impl.ts. */
+  toolChannel: ToolChannel = "gs-sdk"
 ): Promise<string> {
   try {
     // Los suyos + los COMPARTIDOS del workspace: una conexión del equipo tiene que dar el
@@ -48,7 +50,7 @@ export async function buildConnectorContext(
           // mientras esté fresco, y sólo espera la PRIMERA vez de cada conexión.
           await refreshConnectorMetaIfStale(dueño.ownerSub, id);
           const mod = await load();
-          const bloque = (await mod.ambientContext?.(dueño.ownerSub, sender, message, dest)) ?? null;
+          const bloque = (await mod.ambientContext?.(dueño.ownerSub, sender, message, dest, { toolChannel })) ?? null;
           if (!bloque || !dueño.shared) return bloque;
           // Es de otra persona: hay que decirlo, o el agente hablaría de "tus" errores y
           // "tu" organización cuando son de alguien más.

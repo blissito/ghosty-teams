@@ -18,6 +18,7 @@ let ultimaUrl = "";
 let ultimosHeaders: Record<string, string | undefined> = {};
 /** Un agente que valida SUS sessionId rechaza los ajenos. goose no lo hacía. */
 let cargaFalla = false;
+let ultimoPrompt: { type: string; text: string }[] = [];
 
 const env = (o: any, extra: any) => JSON.stringify({ jsonrpc: "2.0", ...o, ...extra }) + "\n";
 
@@ -38,7 +39,10 @@ beforeAll(async () => {
           cargaFalla
             ? ws.send(env({ id: m.id }, { error: { code: -32602, message: "sesión desconocida" } }))
             : ws.send(env({ id: m.id }, { result: {} }));
-        else if (m.method === "session/prompt") guion(ws, m);
+        else if (m.method === "session/prompt") {
+          ultimoPrompt = m.params?.prompt ?? [];
+          guion(ws, m);
+        }
         else if (m.id != null) ws.send(env({ id: m.id }, { result: {} }));
       }
     });
@@ -283,5 +287,44 @@ describe("un agente que no es goose", () => {
     // Ni excepción ni turno vacío: el cliente cayó a `session/new` y devolvió el id DEL AGENTE.
     expect(r.text).toBe("listo");
     expect(r.sessionId).toBe("ses-1");
+  });
+});
+
+/**
+ * El turno va en BLOQUES, no en un texto pegado.
+ *
+ * El 2026-07-12 la persona del agente se metió dentro del mensaje del usuario y el modelo la
+ * leyó como intento de inyección — con razón: desde su punto de vista era el usuario dándole
+ * órdenes. El camino nativo lo arregló con una capa system que ACP no tiene; aquí se arregla
+ * diciendo QUIÉN HABLA en cada bloque.
+ */
+describe("los bloques del turno", () => {
+  const soloTexto = () => ultimoPrompt.map((b) => b.text);
+
+  it("persona, contexto y mensaje van separados y EN ESE ORDEN", async () => {
+    guion = (ws, m) => ws.send(env({ id: m.id }, { result: { stopReason: "end_turn" } }));
+    await turno({ persona: "Eres seco y directo", context: "Repos del room: acme/web" }).run();
+    const [persona, ctx, msg] = soloTexto();
+    expect(persona).toContain("Eres seco y directo");
+    expect(ctx).toContain("acme/web");
+    // El mensaje va SOLO, al final: es lo único que escribió una persona.
+    expect(msg).toBe("hola");
+    expect(ultimoPrompt).toHaveLength(3);
+  });
+
+  it("el bloque de contexto dice de dónde viene y que no se negocia", async () => {
+    guion = (ws, m) => ws.send(env({ id: m.id }, { result: { stopReason: "end_turn" } }));
+    await turno({ context: "Repos del room: acme/web" }).run();
+    const ctx = soloTexto()[0];
+    expect(ctx).toMatch(/plataforma/i);
+    expect(ctx).toMatch(/no son instrucciones de nadie del chat/i);
+    // Y no arrastra el mensaje del usuario: si lo llevara dentro, volveríamos al problema.
+    expect(ctx).not.toContain("hola");
+  });
+
+  it("sin persona ni contexto se manda un solo bloque, como siempre", async () => {
+    guion = (ws, m) => ws.send(env({ id: m.id }, { result: { stopReason: "end_turn" } }));
+    await turno().run();
+    expect(ultimoPrompt).toEqual([{ type: "text", text: "hola" }]);
   });
 });

@@ -19,17 +19,27 @@ export type ConnectorTool = {
   handler: ToolHandler;
 };
 
+/** Por dónde ejerce sus tools quien recibe el contexto. Ver `ambientContext`. */
+export type ToolChannel = "gs-sdk" | "mcp";
+
 export type ConnectorModule = {
   // `message` = texto del turno del usuario → el conector decide si enriquece (p.ej. Calendly
   // sólo pega a la API en intención de agenda). La lógica per-conector vive AQUÍ, no en dm.ts.
   // El `dest` es por el mismo motivo que en `tools`: hay conectores cuyo set de tools
   // depende de DÓNDE ocurre el turno (las alertas de Sentry sólo existen dentro de un
   // canal), y sin él el bloque le anunciaba al modelo tools que en un DM no existen.
+  // `opts.toolChannel` dice CÓMO llegan las tools a este agente, y sólo importa para el texto:
+  // un worker nativo las llama por el SDK de su caja (`/opt/gs-sdk/connectors.mjs`), y un
+  // agente ACP las recibe como herramientas del protocolo y las invoca por su nombre. Decirle
+  // a un ACP que importe un SDK que no existe es peor que no decirle nada: intenta el import,
+  // falla, y concluye que no tiene la integración. Opcional ⇒ ningún conector se rompe por
+  // ignorarlo, y el default es el de siempre.
   ambientContext?: (
     sub: string,
     sender: string,
     message: string,
-    dest: ToolDest | null
+    dest: ToolDest | null,
+    opts?: { toolChannel?: ToolChannel }
   ) => Promise<string | null>;
   // Lista fija, o función cuando el set depende de QUIÉN es el usuario o de DÓNDE ocurre el
   // turno. Denik usa el `sub`: sus tools de administración de plataforma sólo existen para
