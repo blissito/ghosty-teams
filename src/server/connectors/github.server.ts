@@ -309,12 +309,30 @@ async function roomRepos(channelId: number) {
 }
 
 /**
- * ¿A qué repos alcanza este turno? `null` = sin restricción (DM 1:1: es su conexión y su
- * privacidad). Array = exactamente esos, y vacío significa NINGUNO.
+ * ¿A qué repos alcanza este turno? `null` = sin restricción. Array = exactamente esos, y
+ * vacío significa NINGUNO.
+ *
+ * Las tres situaciones, que antes eran una sola por accidente:
+ *
+ * - **Room** → los repos conectados a ese room. Es la frontera de siempre.
+ * - **DM 1:1** → sin restricción, a propósito: el único humano es el dueño del token y lee
+ *   sus propios repos. Acotarlo sería quitarle al usuario acceso a lo que ya es suyo.
+ * - **DM de grupo** → como un room sin repos. Aquí el agente lee con el token de QUIEN
+ *   ESCRIBIÓ y lo vuelca a los demás, que en GitHub pueden no tener ese acceso: es
+ *   exactamente el daño que motivó atar repos a los rooms. Se cierra reusando la maquinaria
+ *   que ya existe —incluido su mensaje explicativo— en vez de inventar una rama nueva.
  */
 export async function allowedRepos(dest: ToolDest | null): Promise<string[] | null> {
-  if (!dest?.channelId) return null;
-  return (await roomRepos(dest.channelId)).map((r) => r.repo);
+  if (dest?.channelId) return (await roomRepos(dest.channelId)).map((r) => r.repo);
+  if (dest?.dmId) {
+    // El `catch` es el mismo cinturón que lleva `roomRepos`: si no se puede saber qué clase
+    // de DM es, se trata como grupo. Un fallo de DB puede cerrar la frontera, nunca abrirla.
+    const esGrupo = await import("../../db.server")
+      .then((db) => db.isGroupDm(dest.dmId!))
+      .catch(() => true);
+    return esGrupo ? [] : null;
+  }
+  return null;
 }
 
 /**

@@ -6,7 +6,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const listRoomRepos = vi.fn();
-vi.mock("../../db.server", () => ({ listRoomRepos: (...a: unknown[]) => listRoomRepos(...a) }));
+const isGroupDm = vi.fn();
+vi.mock("../../db.server", () => ({
+  listRoomRepos: (...a: unknown[]) => listRoomRepos(...a),
+  isGroupDm: (...a: unknown[]) => isGroupDm(...a),
+}));
 
 // El dispatch pregunta por los conectores conectados ANTES de ejecutar. Se responde que no
 // hay ninguno: a estas pruebas les importa la puerta, no lo que hay detrás — si el candado
@@ -23,6 +27,8 @@ const ROOM = { channelId: 7 };
 const DM = { dmId: 3 };
 
 beforeEach(() => {
+  isGroupDm.mockReset();
+  isGroupDm.mockResolvedValue(false); // por defecto, un DM 1:1
   listRoomRepos.mockReset();
   listRoomRepos.mockResolvedValue([{ repo: "blissito/gs", connectedBy: "ana", createdAt: 0 }]);
 });
@@ -75,6 +81,24 @@ describe("alcance de repos por room", () => {
     const r = await runTool("ana", "github_read_file", { repo: "lo/que/sea" }, DM);
     expect((r as { error: string }).error).toContain("conector no conectado");
     expect(listRoomRepos).not.toHaveBeenCalled();
+  });
+
+  it("🔴 en un DM de GRUPO no hay GitHub: lo que uno lee lo verían los demás", async () => {
+    // Un DM 1:1 es contigo y lees tus propios repos. En grupo, el agente lee con el token de
+    // QUIEN ESCRIBIÓ y lo vuelca a gente que en GitHub puede no tener ese acceso — que es
+    // exactamente el daño que motivó atar los repos a los rooms.
+    isGroupDm.mockResolvedValue(true);
+    const r = await runTool("ana", "github_read_file", { repo: "acme/privado" }, DM);
+    expect((r as { error: string }).error).toContain("chat de grupo");
+    // Y no se le manda al botón del encabezado del room, que ahí no existe.
+    expect((r as { error: string }).error).not.toContain("encabezado del room");
+  });
+
+  it("un DM cuyo tipo no se puede leer se trata como grupo, no como 1:1", async () => {
+    // Falla CERRADO: una base intermitente no puede abrir la frontera.
+    isGroupDm.mockRejectedValue(new Error("db caída"));
+    const r = await runTool("ana", "github_read_file", { repo: "acme/privado" }, DM);
+    expect((r as { error: string }).error).toContain("chat de grupo");
   });
 
   it("no toca las tools que no son de GitHub", async () => {

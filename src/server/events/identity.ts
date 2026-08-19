@@ -169,7 +169,7 @@ export const deleteRecordingFn = createServerFn({ method: "POST" })
   });
 
 export const recordingFn = createServerFn({ method: "POST" })
-  .validator((d: { slug: string; action: "start" | "stop" }) => d)
+  .validator((d: { slug: string; action: "start" | "stop"; live?: boolean }) => d)
   .handler(async ({ data }): Promise<{ ok: true; url?: string; transcriptUrl?: string | null } | { ok: false; error: string }> => {
     const r = await room(data.slug);
     if (!r || !r.ch.call_mode) return { ok: false, error: "Este room no está disponible" };
@@ -190,7 +190,10 @@ export const recordingFn = createServerFn({ method: "POST" })
         if (r.ch.call_recording_since) {
           return { ok: false, error: `Ya se está grabando (${r.ch.call_recording_by ?? "alguien"})` };
         }
-        await iniciarGrabacion(r.ch, eventRoomName(await currentNamespace(), r.ch.id));
+        // Transmitir en vivo es OPT-IN de quien modera, en el momento de grabar. No es una
+        // preferencia guardada del room a propósito: un ensayo y el evento usan el mismo
+        // room, y un ajuste pegajoso mandaría el ensayo a YouTube sin que nadie lo pidiera.
+        await iniciarGrabacion(r.ch, eventRoomName(await currentNamespace(), r.ch.id), !!data.live);
         // El "quién" se guarda para que se SEPA, no para restringir: cualquiera que modere
         // puede detenerla. Si sólo pudiera pararla quien la empezó, una grabación se
         // quedaría corriendo toda la tarde porque esa persona cerró la pestaña.

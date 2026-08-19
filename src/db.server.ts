@@ -2538,6 +2538,25 @@ export async function getDmAgentHandle(convId: number): Promise<string | null> {
   return rows[0]?.agent_handle ?? null;
 }
 
+/**
+ * ¿Es un DM de GRUPO? Lo usa el alcance de repos, y por eso falla CERRADO.
+ *
+ * Un DM 1:1 es contigo: lo que alcanza el agente es lo que alcanzas tú. Uno de grupo no —
+ * ahí lee con el token de quien escribió y lo vuelca a gente que en GitHub puede no tener ese
+ * acceso. Ante un fallo de DB se responde `true`, o sea "trátalo como grupo": la alternativa
+ * sería que una base intermitente abriera la frontera, que es el error que ya evita
+ * `roomRepos` con su `catch`.
+ */
+export async function isGroupDm(convId: number): Promise<boolean> {
+  try {
+    const rows = await dbq("SELECT is_group FROM gc_dm_conversations WHERE id = ?", [convId]);
+    if (!rows[0]) return true; // un DM que no existe no es "tuyo" por descarte
+    return num(rows[0].is_group) === 1;
+  } catch {
+    return true;
+  }
+}
+
 export async function getDmMembers(convId: number): Promise<string[]> {
   const rows = await dbq("SELECT user_sub FROM gc_dm_members WHERE conversation_id = ?", [convId]);
   return rows.map((r) => r.user_sub!);

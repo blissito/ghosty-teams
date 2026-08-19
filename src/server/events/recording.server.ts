@@ -106,9 +106,22 @@ export async function recogerTranscript(channelId: number): Promise<number> {
   return hechos;
 }
 
-/** Empieza a grabar la sala de este room. */
-export async function iniciarGrabacion(_ch: unknown, roomName: string) {
-  return pedirAStudio({ action: "start", room: roomName });
+/**
+ * Empieza a grabar la sala de este room, y —si `live`— la transmite además a los destinos
+ * RTMP configurados en la caja (YouTube, Facebook).
+ *
+ * ⚠️ Transmitir NO es una acción aparte: es el MISMO ffmpeg con una rama más del `tee`, así
+ * que un solo encode alimenta el MP4, el HLS y cada destino. La contrapartida es que **a un
+ * ffmpeg ya corriendo no se le puede añadir un destino**: "salir en vivo" se decide al
+ * empezar a grabar, no a mitad. Si hiciera falta empezar a transmitir después, habría que
+ * cortar la grabación y volver a arrancarla — y eso parte el MP4 en dos.
+ *
+ * ⚠️ Aquí viaja un BOOLEANO, nunca una URL. Las claves de stream viven sólo en el env de la
+ * caja: ni Teams ni Studio las ven, así que ninguno de los dos puede filtrarlas, y quien
+ * tenga el ADMIN_TOKEN no puede redirigir el webinar a un canal ajeno.
+ */
+export async function iniciarGrabacion(_ch: unknown, roomName: string, live = false) {
+  return pedirAStudio({ action: "start", room: roomName, live });
 }
 
 /**

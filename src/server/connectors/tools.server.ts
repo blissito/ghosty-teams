@@ -139,12 +139,18 @@ async function repoScopeDenial(
   dest: ToolDest | null
 ): Promise<string | null> {
   if (!toolName.startsWith("github_")) return null;
-  if (!dest?.channelId) return null; // DM 1:1 → sin restricción de room
+  // Ya NO se sale por "no hay canal": la excepción del DM la resuelve `allowedRepos`, que
+  // distingue el 1:1 (sin restricción, son tus propios repos) del grupo (como un room sin
+  // repos). Meter esa decisión aquí duplicaba la regla en dos sitios que podían divergir.
   const { allowedRepos, normalizeRepo, REPOLESS_TOOLS } = await import("./github.server");
   const allowed = await allowedRepos(dest);
   if (!allowed) return null;
   if (!allowed.length)
-    return "Este room no tiene ningún repositorio conectado, así que aquí no puedes consultar GitHub. Pídele a la persona que conecte uno con el botón de GitHub del encabezado del room.";
+    // El texto cambia con el sitio: mandar a alguien al "botón del encabezado del room"
+    // estando en un chat de grupo es mandarlo a buscar algo que no va a encontrar.
+    return dest?.channelId
+      ? "Este room no tiene ningún repositorio conectado, así que aquí no puedes consultar GitHub. Pídele a la persona que conecte uno con el botón de GitHub del encabezado del room."
+      : "En un chat de grupo no puedes consultar GitHub: no hay forma de decir sobre qué repositorio se trabaja, y lo que leyeras lo verían personas que quizá no tengan ese acceso. Dile que te lo pida en el room del repositorio, o en un mensaje directo.";
   if (REPOLESS_TOOLS.has(toolName)) return null;
   const asked = normalizeRepo(args?.repo);
   if (!asked)
