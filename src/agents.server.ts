@@ -1150,6 +1150,10 @@ export async function callAgentBackendStream(
     const { currentNamespace } = await import("./server/tenant.server");
     const ns = await currentNamespace();
     const prefix = persona ? `[${persona}]\n\n` : "";
+    // Traza mínima del turno ACP. Sin ella, un turno colgado no deja NADA en el journal y
+    // diagnosticar es adivinar: no se distingue "nunca llegó aquí" de "conectó y se calló".
+    const acpT0 = Date.now();
+    console.log(`[acp ->] ${agent.handle} ${agent.backend.runtimeUrl} sesion=${groupId}`);
     const r = await runAcpTurn({
       wsUrl: agent.backend.runtimeUrl,
       workspaceNs: ns,
@@ -1249,7 +1253,19 @@ export async function callAgentBackendStream(
         await onChunk(etiqueta ? `\n\n_Autorizado: ${etiqueta}_\n\n` : `\n\n_Sin autorización._\n\n`);
         return elegido;
       },
+    }).catch((e) => {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.log(`[acp x] ${agent.handle} ${Math.round((Date.now() - acpT0) / 1000)}s: ${msg}`);
+      // Un fallo del cable se DICE, no se lanza. Lanzándolo, el stream moría y la burbuja se
+      // quedaba girando para siempre sin una palabra — que es exactamente lo que vio el
+      // usuario el 19 ago con un ticket 401 (la caja llevaba el tenant equivocado). Un
+      // agente inalcanzable es una respuesta legítima del turno, no una excepción.
+      const pista = /401|403/.test(msg)
+        ? "el ticket no fue aceptado por la caja (¿tenant o secreto distinto?)"
+        : msg;
+      return { text: `⚠️ No pude hablar con @${agent.handle}: ${pista}`, sessionId: "", stopReason: "error" };
     });
+    console.log(`[acp <-] ${agent.handle} ${Math.round((Date.now() - acpT0) / 1000)}s stop=${r.stopReason} ${r.text.length}b`);
     return r.text;
   }
 
