@@ -1510,7 +1510,7 @@ type ManagedAgent = {
   id: number;
   handle: string;
   name: string;
-  kind: "fleet" | "webhook" | "a2a";
+  kind: "fleet" | "webhook" | "a2a" | "acp";
   fleet_id: string | null;
   webhook_url: string | null;
   /** A2A: la URL de su AgentCard. Es su dirección, y cambia si su caja se recrea. */
@@ -2111,6 +2111,9 @@ function EditAgentForm({
   // esto la única salida era borrar el agente y darlo de alta otra vez —perdiendo su @handle
   // y su historial— por un cambio de URL.
   const [cardUrl, setCardUrl] = useState(agent.runtime_url ?? "");
+  // ACP comparte el campo con A2A —los dos guardan su dirección en `runtime_url`— pero lo que
+  // se comprueba es distinto: allá se LEE el card, aquí sólo que la caja esté viva.
+  const [wsUrl, setWsUrl] = useState(agent.runtime_url ?? "");
   const [probe, setProbe] = useState<{ name?: string; skills: string[] } | null>(null);
   const [probing, setProbing] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -2179,6 +2182,10 @@ function EditAgentForm({
           cardUrl:
             agent.kind === "a2a" && cardUrl.trim() && cardUrl.trim() !== (agent.runtime_url ?? "")
               ? cardUrl.trim()
+              : undefined,
+          wsUrl:
+            agent.kind === "acp" && wsUrl.trim() && wsUrl.trim() !== (agent.runtime_url ?? "")
+              ? wsUrl.trim()
               : undefined,
         },
       });
@@ -2258,6 +2265,57 @@ function EditAgentForm({
                   : t("Se envía a tu webhook como systemPrompt junto al mensaje.")}
               </p>
             </div>
+
+            {agent.kind === "acp" && (
+              <div>
+                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-muted">
+                  {t("Caja del agente")}
+                </label>
+                <div className="flex gap-2">
+                  <input
+                    value={wsUrl}
+                    onChange={(e) => { setWsUrl(e.target.value); setProbe(null); }}
+                    placeholder={t("wss://sb-….sandboxes.easybits.cloud/acp")}
+                    className={`${input} min-w-0 flex-1`}
+                  />
+                  <button
+                    type="button"
+                    disabled={!wsUrl.trim() || probing}
+                    onClick={async () => {
+                      setProbing(true);
+                      setErr(null);
+                      setProbe(null);
+                      try {
+                        const u = new URL(wsUrl.trim().replace(/^ws/, "http"));
+                        u.pathname = "/busy";
+                        u.search = "";
+                        const res = await fetch(u.toString());
+                        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                        const b = (await res.json()) as { sessions?: number };
+                        setProbe({
+                          name: t("Caja viva"),
+                          skills: [b.sessions ? t("{n} sesión(es) abiertas", { n: String(b.sessions) }) : t("sin sesiones")],
+                        });
+                      } catch (e) {
+                        setErr(t("la caja no responde") + `: ${e instanceof Error ? e.message : e}`);
+                      }
+                      setProbing(false);
+                    }}
+                    className="shrink-0 rounded-lg border border-border bg-surface-2 px-3 text-xs font-medium text-muted transition-colors hover:text-ink disabled:opacity-50"
+                  >
+                    {probing ? t("probando…") : t("probar")}
+                  </button>
+                </div>
+                {probe && (
+                  <p className="mt-1.5 text-[11px] text-muted">
+                    <span className="font-medium text-ink">{probe.name}</span> — {probe.skills.join(" · ")}
+                  </p>
+                )}
+                <p className="mt-1 text-[11px] text-muted">
+                  {t("La dirección de su caja. Cámbiala si se recreó y quedó en otra URL — el @handle y el historial se conservan.")}
+                </p>
+              </div>
+            )}
 
             {agent.kind === "a2a" && (
               <div>
