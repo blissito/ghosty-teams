@@ -1186,6 +1186,8 @@ export function PermissionCard({ msgId, p }: { msgId: number; p: PermissionCardD
   const t = useT();
   const [resuelto, setResuelto] = useState<string | null>(() => readPermState(msgId));
   const [vencida, setVencida] = useState(false);
+  /** No es "ya no espera": es "sigue esperando, pero no a ti". Ver `answerAcpPermissionFn`. */
+  const [ajena, setAjena] = useState(false);
   const [enviando, setEnviando] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
@@ -1197,7 +1199,11 @@ export function PermissionCard({ msgId, p }: { msgId: number; p: PermissionCardD
       const r = await answerAcpPermissionFn({ data: { askId: p.askId, optionId: id } });
       if (!r.ok) {
         // Alguien más contestó, o pasaron los cinco minutos. Es información, no una falla.
-        setVencida(true);
+        // `ajena` es otra cosa: el permiso sigue vivo y esta persona no ve el hilo donde
+        // ocurre. Colapsar las dos en "ya no esperaba" le mentiría y la mandaría a
+        // diagnosticar el problema equivocado.
+        if (r.motivo === "ajena") setAjena(true);
+        else setVencida(true);
         setEnviando(null);
         return;
       }
@@ -1209,7 +1215,7 @@ export function PermissionCard({ msgId, p }: { msgId: number; p: PermissionCardD
     }
   }
 
-  const decidido = resuelto || vencida;
+  const decidido = resuelto || vencida || ajena;
 
   return (
     <div className="my-1.5 overflow-hidden rounded-xl border border-violet-500/40 bg-violet-500/5">
@@ -1228,6 +1234,10 @@ export function PermissionCard({ msgId, p }: { msgId: number; p: PermissionCardD
             </p>
           ) : vencida ? (
             <p className="mt-1.5 text-xs text-muted">{t("Ya no esperaba respuesta")}</p>
+          ) : ajena ? (
+            <p className="mt-1.5 text-xs text-muted">
+              {t("Esto lo autoriza quien participa en esa conversación.")}
+            </p>
           ) : (
             <>
               <div className="mt-2 flex flex-wrap gap-1.5">

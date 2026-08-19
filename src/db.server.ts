@@ -1147,6 +1147,32 @@ async function setDeliveryByKey(key: string, file: { name: string; mime?: string
 // Igual que get/setThreadArtifact pero para un DM (channel_id=0 colisiona en convKey → clave
 // propia `dm:<id>`). Da IDENTIDAD al artefacto del DM: al modificarlo se reusa el MISMO
 // documentId (nueva versión, misma card) en vez de crear un duplicado y regenerar de cero.
+// ── Sesiones ACP ──────────────────────────────────────────────────────────────
+//
+// El `sessionId` es del AGENTE: lo devuelve él en `session/new` y es el único que reconoce
+// en `session/load`. Pasarle el `groupId` nuestro funcionaba con goose de casualidad. Aquí se
+// guarda el que dio, para poder retomar la conversación en el turno siguiente.
+export async function getAcpSession(agentHandle: string, groupId: string): Promise<string | null> {
+  const rows = await dbq("SELECT session_id FROM gc_acp_sessions WHERE agent_handle = ? AND group_id = ?", [
+    agentHandle.toLowerCase(),
+    groupId,
+  ]);
+  return (rows[0]?.session_id as string) ?? null;
+}
+
+export async function setAcpSession(agentHandle: string, groupId: string, sessionId: string): Promise<void> {
+  await dbq(
+    `INSERT INTO gc_acp_sessions (agent_handle, group_id, session_id, updated_at) VALUES (?, ?, ?, unixepoch())
+     ON CONFLICT(agent_handle, group_id) DO UPDATE SET session_id = excluded.session_id, updated_at = excluded.updated_at`,
+    [agentHandle.toLowerCase(), groupId, sessionId]
+  );
+}
+
+/** Suelta la sesión ACP de una conversación. Para el reset explícito del usuario. */
+export async function clearAcpSession(agentHandle: string, groupId: string): Promise<void> {
+  await dbq("DELETE FROM gc_acp_sessions WHERE agent_handle = ? AND group_id = ?", [agentHandle.toLowerCase(), groupId]);
+}
+
 export async function getDmArtifact(dmId: number): Promise<string | null> {
   const rows = await dbq("SELECT document_id FROM gc_thread_artifact WHERE conv_key = ?", [`dm:${dmId}`]);
   return (rows[0]?.document_id as string) ?? null;

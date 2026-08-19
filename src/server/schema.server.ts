@@ -1168,6 +1168,24 @@ async function migrate(): Promise<void> {
     "UPDATE gt_event_registrations SET verified_at = created_at WHERE verified_at IS NULL"
   );
 
+  // ── Sesiones ACP ────────────────────────────────────────────────────────────────────
+  //
+  // El `sessionId` lo genera el AGENTE en `session/new`; la spec de ACP es explícita. Hasta
+  // ahora le pasábamos el `groupId` nuestro y `session/load` funcionaba con goose por
+  // casualidad — un agente que valide sus propios ids lo rechaza, y el turno arranca en frío
+  // cada vez sin que nadie lo note.
+  //
+  // Clave por handle y no por id de fila: `ResolvedAgent` no lleva id (el @ghosty implícito
+  // ni siquiera tiene fila), y el handle es lo que ya identifica al agente en todo el resto
+  // del turno.
+  await exec(`CREATE TABLE IF NOT EXISTS gc_acp_sessions (
+    agent_handle TEXT NOT NULL,
+    group_id     TEXT NOT NULL,
+    session_id   TEXT NOT NULL,
+    updated_at   INTEGER NOT NULL DEFAULT (unixepoch()),
+    PRIMARY KEY (agent_handle, group_id)
+  )`);
+
   // Flip único: correo por default OFF (opt-in). Las filas existentes heredaron el viejo
   // DEFAULT 1 (opt-out silencioso, nadie lo eligió conscientemente) → las apagamos una sola
   // vez, guardado por flag en gc_config. Reversible: el usuario lo reactiva en el panel.

@@ -8,6 +8,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   barrerPermisos,
+  contextoPermiso,
   esperarPermiso,
   permisoVivo,
   resolverPermiso,
@@ -75,5 +76,39 @@ describe("permisos ACP en vuelo", () => {
     expect(barrerPermisos(0)).toBeGreaterThanOrEqual(1);
     await expect(p).resolves.toBeNull();
     expect(permisoVivo("ns-c", "k5")).toBe(false);
+  });
+});
+
+/**
+ * El contexto no es decorado: es contra lo que `answerAcpPermissionFn` comprueba quién puede
+ * contestar. Antes el único candado era el `ns`, que aísla ESPACIOS pero no CANALES — así que
+ * alguien de fuera de un canal privado podía autorizarle al agente una acción de ese canal.
+ */
+describe("el contexto de autorización", () => {
+  it("viaja con el permiso mientras espera, y se va con él", async () => {
+    const p = esperarPermiso("ns-a", {
+      ...permiso("ctx1"),
+      ctx: { channelId: 7, dmId: null, parentId: 3, invokerSub: "ana" },
+    });
+    expect(contextoPermiso("ns-a", "ctx1")).toEqual({
+      channelId: 7,
+      dmId: null,
+      parentId: 3,
+      invokerSub: "ana",
+    });
+    // El del vecino no se ve desde otro espacio, igual que el permiso mismo.
+    expect(contextoPermiso("ns-b", "ctx1")).toBeNull();
+    resolverPermiso("ns-a", "ctx1", "allow");
+    await p;
+    // Contestado = no queda rastro contra el que comprobar: la tarjeta ya no puede decidir
+    // nada, y quien llegue tarde recibe "vencida", no una decisión sobre datos viejos.
+    expect(contextoPermiso("ns-a", "ctx1")).toBeNull();
+  });
+
+  it("un permiso sin contexto no rompe a quien lo consulta", async () => {
+    const p = esperarPermiso("ns-a", permiso("ctx2"));
+    expect(contextoPermiso("ns-a", "ctx2")).toBeNull();
+    resolverPermiso("ns-a", "ctx2", null);
+    await p;
   });
 });

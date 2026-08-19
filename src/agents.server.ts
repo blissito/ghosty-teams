@@ -1153,13 +1153,19 @@ export async function callAgentBackendStream(
     // Traza mínima del turno ACP. Sin ella, un turno colgado no deja NADA en el journal y
     // diagnosticar es adivinar: no se distingue "nunca llegó aquí" de "conectó y se calló".
     const acpT0 = Date.now();
-    console.log(`[acp ->] ${agent.handle} ${agent.backend.runtimeUrl} sesion=${groupId}`);
+    // La sesión es DEL AGENTE: él la crea en `session/new` y es el único id que reconoce en
+    // `session/load`. Pasarle nuestro `groupId` funcionaba con goose por casualidad; un agente
+    // que valide sus ids lo rechaza y cada turno arrancaría en frío sin que nadie lo note.
+    const dbAcp = await import("./db.server");
+    const sesionPrevia = await dbAcp.getAcpSession(agent.handle, groupId).catch(() => null);
+    console.log(`[acp ->] ${agent.handle} ${agent.backend.runtimeUrl} sesion=${sesionPrevia ?? "(nueva)"}`);
     const r = await runAcpTurn({
       wsUrl: agent.backend.runtimeUrl,
       workspaceNs: ns,
       sub: invokerSub || "teams",
-      // La conversación es la sesión: `session/load` la retoma entre turnos.
-      sessionId: groupId,
+      // La conversación es la sesión: `session/load` la retoma entre turnos, con el id que
+      // dio el agente. Vacío la primera vez → el cliente abre una nueva y la guardamos abajo.
+      sessionId: sesionPrevia ?? undefined,
       text: prefix + stripLoneSurrogates(text),
       signal,
       onUpdate: async (u) => {
@@ -1245,7 +1251,20 @@ export async function callAgentBackendStream(
 
         // Aquí el turno se DETIENE. Es seguro esperar minutos: el `/busy` de la caja mide
         // sockets y no turnos, así que no hiberna con un permiso pendiente.
-        const elegido = await esperarPermiso(ns, { askId, title: p.title, options: p.options });
+        const elegido = await esperarPermiso(ns, {
+          askId,
+          title: p.title,
+          options: p.options,
+          // DÓNDE ocurre y QUIÉN lo provocó. Es contra esto que se comprueba quién tiene derecho
+          // a contestar: sin el contexto, el único candado era el `ns` — o sea que cualquiera con
+          // sesión en el workspace podía autorizar una acción de un canal privado ajeno.
+          ctx: {
+            channelId: dest?.channelId ?? null,
+            dmId: dest?.dmId ?? null,
+            parentId: dest?.parentId ?? null,
+            invokerSub: invokerSub ?? null,
+          },
+        });
 
         // La decisión se escribe en el hilo para que la vea TODO el equipo, no sólo quien hizo
         // clic. El body es append-only: este renglón es la bitácora.
@@ -1266,6 +1285,12 @@ export async function callAgentBackendStream(
       return { text: `⚠️ No pude hablar con @${agent.handle}: ${pista}`, sessionId: "", stopReason: "error" };
     });
     console.log(`[acp <-] ${agent.handle} ${Math.round((Date.now() - acpT0) / 1000)}s stop=${r.stopReason} ${r.text.length}b`);
+    // Se guarda DESPUÉS del turno y sólo si cambió: si el agente abrió una sesión nueva (o
+    // renombró la suya), el turno siguiente la retoma. Un fallo aquí no toca la respuesta —
+    // lo peor que pasa es que la próxima conversación empiece en frío.
+    if (r.sessionId && r.sessionId !== sesionPrevia) {
+      await dbAcp.setAcpSession(agent.handle, groupId, r.sessionId).catch(() => {});
+    }
     return r.text;
   }
 
@@ -1566,6 +1591,15 @@ export async function callAgentBackendStream(
 // (Studio expone POST /session/reset con HMAC); en EasyBits no hay reset por sesión →
 // no-op silencioso. Best-effort: devuelve true si el runtime confirmó.
 export async function resetAgentSession(agent: ResolvedAgent, groupId: string): Promise<boolean> {
+  // ACP: la memoria no vive en un runtime nuestro sino en la sesión que guarda el AGENTE.
+  // Olvidar el `sessionId` es todo el reset que podemos hacer —y es el correcto: el turno
+  // siguiente abre una sesión nueva y arranca sin memoria. Sin esto, `/clear` en una
+  // conversación con un agente ACP no borraba nada y devolvía `false` en silencio.
+  if (agent.backend.kind === "acp") {
+    const db = await import("./db.server");
+    await db.clearAcpSession(agent.handle, groupId).catch(() => {});
+    return true;
+  }
   if (agent.backend.kind !== "fleet") return false;
   const { runtimeFor } = await import("./server/agent-runtime.server");
   const body = JSON.stringify({ groupId });
@@ -2352,7 +2386,7 @@ export async function callAgentBackend(
         wsUrl: agent.backend.runtimeUrl,
         workspaceNs: await currentNamespace(),
         sub: "teams",
-        sessionId: groupId,
+        sessionId: (await (await import("./db.server")).getAcpSession(agent.handle, groupId).catch(() => null)) ?? undefined,
         text: stripLoneSurrogates(text),
         onUpdate: () => {},
         // SIN `onPermission` a propósito, al revés que el camino de streaming: aquí no hay

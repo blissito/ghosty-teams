@@ -1239,6 +1239,7 @@ export const en: Record<string, string> = {
   "Pide autorización": "Needs approval",
   Autorizado: "Approved",
   "Ya no esperaba respuesta": "No longer waiting",
+  "Esto lo autoriza quien participa en esa conversación.": "Only people in that conversation can authorize this.",
   "El agente está detenido. Si nadie contesta, se rechaza.":
     "The agent is paused. If nobody answers, it's denied.",
   Respondiste: "You answered",

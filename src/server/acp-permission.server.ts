@@ -22,12 +22,35 @@ export type PermisoPendiente = {
   /** Lo que el agente quiere hacer. */
   title: string;
   options: { id: string; label: string; kind?: string }[];
+  /**
+   * DÓNDE y POR QUIÉN corre el turno. No es decorado: es contra lo que se comprueba quién
+   * tiene derecho a contestar.
+   *
+   * Sin esto, el único candado era el `ns`, o sea que cualquiera con sesión en el workspace
+   * podía autorizar una acción de un canal PRIVADO al que no pertenece — le bastaba con un
+   * `askId`. El `askId` no se le enseña a quien no ve el hilo, pero eso es esconder la llave
+   * debajo del tapete, no cerrar la puerta.
+   */
+  ctx?: PermisoCtx;
+};
+
+/** El contexto de autorización de un permiso: dónde ocurre y quién lo provocó. */
+export type PermisoCtx = {
+  /** Canal del turno, si es un canal. */
+  channelId?: number | null;
+  /** DM del turno, si es un DM. */
+  dmId?: number | null;
+  /** Hilo dentro del canal. */
+  parentId?: number | null;
+  /** Quien escribió el mensaje que disparó el turno. Siempre puede contestar. */
+  invokerSub?: string | null;
 };
 
 type Entrada = {
   resolve: (optionId: string | null) => void;
   timer: ReturnType<typeof setTimeout>;
   at: number;
+  ctx?: PermisoCtx;
 };
 
 /**
@@ -62,7 +85,7 @@ export function esperarPermiso(
       resolve(null);
     }, timeoutMs);
     timer.unref?.();
-    pendientes.set(k, { resolve, timer, at: Date.now() });
+    pendientes.set(k, { resolve, timer, at: Date.now(), ctx: p.ctx });
   });
 }
 
@@ -80,6 +103,11 @@ export function resolverPermiso(ns: string, askId: string, optionId: string | nu
   clearTimeout(e.timer);
   e.resolve(optionId);
   return true;
+}
+
+/** El contexto de un permiso que sigue esperando, para decidir quién puede contestarlo. */
+export function contextoPermiso(ns: string, askId: string): PermisoCtx | null {
+  return pendientes.get(claveDe(ns, askId))?.ctx ?? null;
 }
 
 /** ¿Sigue esperando? Para pintar la tarjeta sin botones muertos. */
