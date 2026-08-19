@@ -8,6 +8,7 @@ import Placeholder from "@tiptap/extension-placeholder";
 import Mention from "@tiptap/extension-mention";
 import { Markdown as MarkdownExt } from "tiptap-markdown";
 import { motion, AnimatePresence } from "motion/react";
+import { AgentsHint } from "../components/AgentsHint";
 import {
   Hash,
   Lock,
@@ -3988,37 +3989,9 @@ function Sidebar({
       </div>
 
       {/* Los agentes REALES de este workspace, no "Ghosty" cableado: el agente puede
-          llamarse @blue o @gaspar, y un workspace sin agentes no debe anunciar ninguno. */}
-      {agentes.length > 0 && (
-        <div className="mx-2 mb-2 rounded-xl border border-border bg-surface p-3">
-          <p className="flex items-center gap-1.5 text-sm font-medium text-ink">
-            {agentes.length === 1 && agentes[0].avatar ? (
-              <Avatar name={agentes[0].name} avatar={agentes[0].avatar} className="h-4 w-4" />
-            ) : (
-              <img src="/ghosty.svg" alt="" className="h-4 w-4" />
-            )}
-            {agentes.length === 1
-              ? t("{name} está aquí", { name: agentes[0].name })
-              : t("Tus agentes están aquí")}
-          </p>
-          <p className="mt-0.5 text-xs text-muted">
-            {/* Sin `.slice(0, 3)`: el cap silencioso dejaba fuera al CUARTO agente y la
-                tarjeta se leía como si no existiera (pasó con @deep el 2026-08-08). Aquí no
-                sobra espacio para inventar un "+N": son los handles con los que se invoca al
-                agente, y un handle que no se ve es un agente que nadie menciona. */}
-            {agentes.map((a, i) => (
-              <span key={a.handle}>
-                {i > 0 ? " · " : ""}
-                <span className="text-brand">@{a.handle}</span>
-              </span>
-            ))}
-            <br />
-            {agentes.length === 1
-              ? t("Menciónalo en un room o hilo y responde ahí mismo.")
-              : t("Menciónalos en un room o hilo y responden ahí mismo.")}
-          </p>
-        </div>
-      )}
+          llamarse @blue o @gaspar, y un workspace sin agentes no debe anunciar ninguno.
+          Se pliega solo y deja una pestañita: ver AgentsHint. */}
+      <AgentsHint agentes={agentes} />
 
       <InstallAppButton />
 
