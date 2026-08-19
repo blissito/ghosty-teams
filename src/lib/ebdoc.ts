@@ -579,14 +579,29 @@ export type PrCardData = {
 
 export type PrComment = { path: string; line: number; body: string };
 
+/**
+ * TODAS las tarjetas de PR del cuerpo, en orden.
+ *
+ * Nació leyendo sólo la primera —un `match` sin flag `g`— y eso dejaba la segunda CRUDA en el
+ * chat: el fence sobrevivía en el body, Markdown lo pintaba como bloque de código y el usuario
+ * veía el JSON. Es el mismo incidente que ya se pagó con `eb-audio` el 2026-07-31, y aquí sólo
+ * no había estallado porque un agente rara vez revisa dos PRs en un turno. Rara vez no es nunca.
+ */
+export function extractAllPr(body: string): PrCardData[] {
+  return scanFences(body, "gt-pr")
+    .filter((f) => f.closed) // a medio streamear no se pinta media tarjeta
+    .map((f) => unaTarjetaPr(f.raw))
+    .filter((p): p is PrCardData => p != null);
+}
+
+/** La primera, o null. Conveniencia sobre `extractAllPr` para los call-sites de siempre. */
 export function extractPr(body: string): PrCardData | null {
-  const open = body.match(/```gt-pr[^\n]*\n/);
-  if (!open || open.index == null) return null;
-  const rest = body.slice(open.index + open[0].length);
-  const closeIdx = rest.indexOf("```");
-  if (closeIdx === -1) return null; // fence a medio streamear: no se pinta media tarjeta
+  return extractAllPr(body)[0] ?? null;
+}
+
+function unaTarjetaPr(crudo: string): PrCardData | null {
   try {
-    const p = JSON.parse(rest.slice(0, closeIdx).trim()) as Record<string, unknown>;
+    const p = JSON.parse(crudo.trim()) as Record<string, unknown>;
     const str = (v: unknown) => (typeof v === "string" ? v.trim() : "");
     // 0 es un valor legítimo aquí (un PR que sólo borra tiene additions 0), así que
     // esto NO puede usar el `num` de las alertas, que descarta el cero.
@@ -629,13 +644,8 @@ export function extractPr(body: string): PrCardData | null {
 
 /** El cuerpo sin el fence. Lo de alrededor es la reseña y se conserva entera. */
 export function stripPr(body: string): string {
-  const open = body.match(/```gt-pr[^\n]*\n/);
-  if (!open || open.index == null) return body;
-  const before = body.slice(0, open.index);
-  const rest = body.slice(open.index + open[0].length);
-  const closeIdx = rest.indexOf("```");
-  const after = closeIdx === -1 ? "" : rest.slice(closeIdx + 3);
-  return [before.trim(), after.trim()].filter(Boolean).join("\n\n");
+  // TODOS los fences, no sólo el primero: el que se quedara sin recortar saldría como JSON.
+  return cutFences(body, scanFences(body, "gt-pr").filter((f) => f.closed));
 }
 
 // ── Escaneo de fences: TODAS las ocurrencias, no sólo la primera ───────────────
@@ -937,6 +947,10 @@ export function bubbleWithoutEbDoc(
     // previa genérica del sitio. Un fence sin `strip` no es medio bug: son tres.
     body = stripTask(body);
     body = stripTests(body);
+    // Y la simple, por la misma razón de siempre. Es la tercera vez que este comentario
+    // hace falta en este archivo: un fence sin `strip` sale como recuadro de código encima
+    // de la tarjeta que ya dice lo mismo, y su URL se lleva una vista previa del sitio.
+    body = stripGh(body);
     // ⚠️ Éstas dos faltaban, y es exactamente el bug que describe el comentario de `stripTask`
     // ahí arriba. `bodyWithoutAsk` existía desde que se hizo la tarjeta de A2A pero no la
     // llamaba NADIE: el JSON de cada pregunta se pintaba como recuadro de código justo encima
@@ -997,6 +1011,75 @@ export function bubbleWithoutEbDoc(
   const writing =
     doc.kind === "sheet" ? "📊 Generando la hoja…" : doc.kind === "artifact" ? "🎨 Generando el artefacto…" : "✍️ Redactando el documento…";
   return around ? `${around}\n\n${writing}` : writing;
+}
+
+/* ── Tarjeta simple de GitHub (```gt-gh```) ───────────────────────────────── */
+//
+// Hermana pobre de `gt-pr`, y a propósito. `gt-pr` existe para un PR que se puede APROBAR o
+// MERGEAR: trae estado en vivo y botones. Un issue recién creado, un commit o una rama no
+// tienen nada que accionar desde aquí, y pintarles los botones de un PR sería ofrecer cosas
+// que no funcionan.
+//
+// Lo que sustituye es un enlace suelto en medio de la prosa, que se pierde. Con esto el
+// resultado del trabajo del agente tiene forma y se ve de un vistazo.
+//
+// Cero acciones ⇒ la regla "el MODELO emite datos, la PLATAFORMA pone los botones" se cumple
+// por construcción, igual que en `gt-tests`.
+
+export type GhCardData = {
+  kind: "issue" | "commit" | "branch" | "pr";
+  repo: string;
+  /** Número de issue/PR, sha corto o nombre de rama. Es lo que identifica la cosa. */
+  ref: string;
+  title: string;
+  url: string;
+  /** `open`/`closed`/`merged`. Vacío si el agente no lo miró — nunca se inventa. */
+  state: string;
+  author: string;
+};
+
+const GH_KINDS = new Set(["issue", "commit", "branch", "pr"]);
+
+/** TODAS las tarjetas simples del cuerpo. Un turno puede abrir dos issues. */
+export function extractAllGh(body: string): GhCardData[] {
+  return scanFences(body, "gt-gh")
+    .filter((f) => f.closed)
+    .map((f) => unaTarjetaGh(f.raw))
+    .filter((g): g is GhCardData => g != null);
+}
+
+function unaTarjetaGh(crudo: string): GhCardData | null {
+  try {
+    const p = JSON.parse(crudo.trim()) as Record<string, unknown>;
+    const str = (v: unknown) => (typeof v === "string" ? v.trim() : "");
+    const kind = str(p.kind).toLowerCase();
+    const repo = str(p.repo);
+    // `ref` acepta número (issue #42) o texto (sha, rama): se normaliza a texto.
+    const ref = typeof p.ref === "number" ? String(p.ref) : str(p.ref);
+    const url = str(p.url);
+    // Sin tipo, repo o referencia no hay nada que enseñar; y sin enlace la tarjeta es un
+    // callejón sin salida — el usuario no puede ir a ver la cosa de la que le hablan.
+    if (!GH_KINDS.has(kind) || !repo || !ref || !url) return null;
+    // Sólo https, igual que el `preview` de gt-pr: un `javascript:` en un enlace que pinta
+    // la plataforma con datos que escribe un modelo es exactamente el agujero clásico.
+    if (!/^https:\/\//i.test(url)) return null;
+    return {
+      kind: kind as GhCardData["kind"],
+      repo,
+      ref,
+      title: str(p.title),
+      url,
+      state: str(p.state).toLowerCase(),
+      author: str(p.author),
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** El cuerpo sin los fences. Lo de alrededor es la respuesta y se conserva entera. */
+export function stripGh(body: string): string {
+  return cutFences(body, scanFences(body, "gt-gh").filter((f) => f.closed));
 }
 
 /* ── Tarjeta de TAREA (```gt-task```) ─────────────────────────────────────── */

@@ -68,7 +68,7 @@ import ConfirmModal from "../../components/ConfirmModal";
 import type { Message, Attachment, Artifact, CustomEmoji } from "../../db.server";
 import { forwardTargetsFn, forwardMessageFn } from "../../server/forward";
 import { readReceiptsFn} from "../../server/reads";
-import { SmilePlus, Pencil, ArrowLeft, Reply, Square, Ban, CircleHelp, ShieldAlert } from "lucide-react";
+import { SmilePlus, Pencil, ArrowLeft, Reply, Square, Ban, CircleHelp, ShieldAlert, Github } from "lucide-react";
 import { useRtSubscribe } from "../../utils/rt-bus";
 import { Markdown } from "../../components/Markdown";
 import { Avatar } from "../../components/Avatar";
@@ -76,7 +76,7 @@ import { unfurlLinkFn } from "../../server/unfurl";
 import { registerModalEsc } from "../../utils/modal-esc";
 import { useScrollLock } from "../../utils/scroll-lock";
 import { type ArtifactView, viewFromAttachment } from "../../components/ArtifactPanel";
-import { extractEbDoc, bubbleWithoutEbDoc, extractToolState, extractSteps, extractAlert, extractAsk, extractPermission, extractPr, extractTask, extractTests, type ToolState, type AlertCardData, type AskCardData, type PermissionCardData, type PrCardData, type TaskCardData, type TestsCardData } from "../../lib/ebdoc";
+import { extractEbDoc, bubbleWithoutEbDoc, extractToolState, extractSteps, extractAlert, extractAsk, extractPermission, extractAllPr, extractAllGh, extractTask, extractTests, type ToolState, type AlertCardData, type AskCardData, type PermissionCardData, type GhCardData, type PrCardData, type TaskCardData, type TestsCardData } from "../../lib/ebdoc";
 import { prCardStateFn, runCardActionFn, taskCardStateFn, runTaskCardActionFn } from "../../server/connectors";
 import { answerAgentAskFn } from "../../server/agent-ask";
 import { answerAcpPermissionFn } from "../../server/agent-permission";
@@ -1570,6 +1570,53 @@ export function TaskCard({ task, channelId, parentId }: { task: TaskCardData; ch
  * arriba y aquí quedan los números verificables (comando, conteos, fallos).
  */
 
+/**
+ * La tarjeta simple: un issue, un commit o una rama.
+ *
+ * Sin botones a propósito — no es una versión recortada de `PrCard`, es otra cosa. Un PR
+ * abierto se aprueba o se mergea desde aquí; un issue creado sólo se mira. Ofrecer botones
+ * que no hacen nada es peor que no ofrecerlos.
+ */
+export function GhCard({ gh }: { gh: GhCardData }) {
+  const t = useT();
+  const etiqueta =
+    gh.kind === "issue" ? t("Issue") : gh.kind === "commit" ? t("Commit") : gh.kind === "pr" ? "PR" : t("Rama");
+  // El `#` sólo para lo que se numera; un sha o una rama no lo llevan.
+  const ref = gh.kind === "issue" || gh.kind === "pr" ? `#${gh.ref}` : gh.ref;
+  const cerrado = gh.state === "closed" || gh.state === "merged";
+  return (
+    <a
+      href={gh.url}
+      target="_blank"
+      rel="noreferrer"
+      className="mt-1.5 flex max-w-xl items-center gap-2 rounded-lg px-3 py-2 gt-card transition-colors hover:bg-surface-3"
+    >
+      <span className="shrink-0 text-muted" aria-hidden>
+        <Github size={14} />
+      </span>
+      <span className="shrink-0 font-mono text-[11px] text-muted">
+        {gh.repo} {ref}
+      </span>
+      <span className={`min-w-0 flex-1 truncate text-[13px] ${cerrado ? "text-muted line-through" : "text-ink"}`}>
+        {gh.title || etiqueta}
+      </span>
+      {gh.state ? (
+        <span
+          className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium ${
+            gh.state === "merged"
+              ? "bg-violet-500/15 text-violet-600"
+              : gh.state === "closed"
+                ? "bg-surface-3 text-muted"
+                : "bg-emerald-500/15 text-emerald-600"
+          }`}
+        >
+          {gh.state}
+        </span>
+      ) : null}
+    </a>
+  );
+}
+
 export function TestsCard({ data }: { data: TestsCardData }) {
   const t = useT();
   const [open, setOpen] = useState(false);
@@ -2808,8 +2855,23 @@ export function MessageRow({
                 // Va DESPUES de la prosa, no antes: la resena es el contenido y la
                 // tarjeta es su pie accionable. Al reves se lee como si el PR fuera el
                 // mensaje y la resena un apendice.
-                const pr = extractPr(m.body);
-                return pr ? <PrCard pr={pr} channelId={m.channel_id ?? 0} parentId={m.parent_id ?? m.id} prosa={bubbleWithoutEbDoc(m.body)} /> : null;
+                //
+                // TODAS, no sólo la primera: un turno puede revisar dos PRs, y la que se
+                // quedara sin pintar saldría como JSON crudo en la burbuja.
+                return extractAllPr(m.body).map((pr) => (
+                  <PrCard
+                    key={`${pr.repo}#${pr.number}`}
+                    pr={pr}
+                    channelId={m.channel_id ?? 0}
+                    parentId={m.parent_id ?? m.id}
+                    prosa={bubbleWithoutEbDoc(m.body)}
+                  />
+                ));
+              })()}
+              {(() => {
+                // Las simples (issue, commit, rama): sin botones, porque no hay nada que
+                // accionar desde aquí. Ver `gt-gh` en lib/ebdoc.
+                return extractAllGh(m.body).map((gh) => <GhCard key={`${gh.kind}:${gh.repo}:${gh.ref}`} gh={gh} />);
               })()}
               {(() => {
                 const tk = extractTask(m.body);
