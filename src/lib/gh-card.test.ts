@@ -68,3 +68,19 @@ describe("varias tarjetas de PR en un turno", () => {
     expect(extractPr("sin fence")).toBeNull();
   });
 });
+
+describe("mientras el agente escribe", () => {
+  it("🔴 un fence a medio llegar se OCULTA de la burbuja, aunque no se pueda pintar", () => {
+    // Dos preguntas distintas sobre el mismo fence: pintar exige el bloque entero, limpiar
+    // exige quitarlo desde que empieza. Si no, el usuario ve el JSON crecer en pantalla.
+    const medias = 'Ya casi.\n\n```gt-gh\n{"kind":"issue","repo":"a/b","ref":1';
+    expect(extractAllGh(medias)).toHaveLength(0);
+    expect(stripGh(medias)).toBe("Ya casi.");
+    expect(bubbleWithoutEbDoc(medias)).toBe("Ya casi.");
+  });
+
+  it("lo mismo para la tarjeta de PR, que es la que más streamea", () => {
+    const medias = 'Revisado.\n\n```gt-pr\n{"repo":"a/b","number":12,"title":"a med';
+    expect(bubbleWithoutEbDoc(medias)).toBe("Revisado.");
+  });
+});

@@ -101,6 +101,18 @@ describe("alcance de repos por room", () => {
     expect((r as { error: string }).error).toContain("chat de grupo");
   });
 
+  it("dentro de un HILO manda el mismo room: el candado no cambia", async () => {
+    // Un hilo vive dentro de su canal, así que el alcance de repos es el del canal. Se fija
+    // aquí porque el `dest` de un hilo trae `parentId` además de `channelId`, y un candado
+    // que mirara el campo equivocado dejaría los hilos sin frontera sin que nadie lo notara.
+    const HILO = { channelId: 7, parentId: 2214 };
+    expect(await runTool("ana", "github_read_file", { repo: "blissito/gs" }, HILO)).not.toMatchObject({
+      error: expect.stringContaining("no está conectado"),
+    });
+    const r = await runTool("ana", "github_read_file", { repo: "otro/ajeno" }, HILO);
+    expect((r as { error: string }).error).toContain("no está conectado a este room");
+  });
+
   it("no toca las tools que no son de GitHub", async () => {
     const r = await runTool("ana", "sentry_list_issues", {}, ROOM);
     expect((r as { error: string }).error).toContain("conector no conectado");

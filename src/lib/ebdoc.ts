@@ -645,7 +645,13 @@ function unaTarjetaPr(crudo: string): PrCardData | null {
 /** El cuerpo sin el fence. Lo de alrededor es la reseña y se conserva entera. */
 export function stripPr(body: string): string {
   // TODOS los fences, no sólo el primero: el que se quedara sin recortar saldría como JSON.
-  return cutFences(body, scanFences(body, "gt-pr").filter((f) => f.closed));
+  //
+  // Y también los ABIERTOS, al revés que `extractPr`. No es una incoherencia, son dos
+  // preguntas distintas: para PINTAR la tarjeta hace falta el fence entero (media tarjeta no
+  // se pinta), pero para LIMPIAR la burbuja hay que quitarlo desde que empieza — mientras el
+  // agente lo escribe, un fence a medias es JSON crudo en pantalla. `scanFences` cierra un
+  // fence sin cerrar al final del cuerpo, que es justo lo que se quiere recortar.
+  return cutFences(body, scanFences(body, "gt-pr"));
 }
 
 // ── Escaneo de fences: TODAS las ocurrencias, no sólo la primera ───────────────
@@ -1079,7 +1085,9 @@ function unaTarjetaGh(crudo: string): GhCardData | null {
 
 /** El cuerpo sin los fences. Lo de alrededor es la respuesta y se conserva entera. */
 export function stripGh(body: string): string {
-  return cutFences(body, scanFences(body, "gt-gh").filter((f) => f.closed));
+  // Abiertos incluidos, por lo mismo que en `stripPr`: lo que aún se está escribiendo no
+  // debe verse como JSON en la burbuja.
+  return cutFences(body, scanFences(body, "gt-gh"));
 }
 
 /* ── Tarjeta de TAREA (```gt-task```) ─────────────────────────────────────── */
