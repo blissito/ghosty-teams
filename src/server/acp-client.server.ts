@@ -71,6 +71,16 @@ export interface AcpTurn {
    * sería darle un botón que siempre falla.
    */
   onDeliver?: (e: AcpEntrega) => void | Promise<void>;
+  /**
+   * Token-capacidad para que el agente use las tools del ESPACIO (`chat_history`, `doc_read`,
+   * los conectores del invocador…). Lleva firmados quién pregunta, dónde, y hasta dónde.
+   *
+   * Viaja en un HEADER del handshake y no en la URL: es una credencial de verdad y las URIs
+   * acaban en los access logs de cualquier proxy del camino. El ticket sí va en la URL, pero
+   * por una limitación que aquí no aplica —un WebSocket de navegador no puede poner headers—
+   * y porque no vale fuera de su caja.
+   */
+  toolToken?: string;
   signal?: AbortSignal;
   timeoutMs?: number;
   /**
@@ -111,7 +121,9 @@ export function acpTicketUrl(wsUrl: string, ns: string, sub: string, tools = fal
 
 /** Un turno completo: conecta, negocia, abre o retoma sesión, manda el prompt y espera. */
 export async function runAcpTurn(t: AcpTurn): Promise<AcpResult> {
-  const ws = new WebSocket(acpTicketUrl(t.wsUrl, t.workspaceNs, t.sub, !!t.onDeliver));
+  const ws = new WebSocket(acpTicketUrl(t.wsUrl, t.workspaceNs, t.sub, !!t.onDeliver), {
+    ...(t.toolToken ? { headers: { "x-ghosty-tools": t.toolToken } } : {}),
+  });
   const pendientes = new Map<number, { ok: (v: any) => void; err: (e: Error) => void }>();
   let seq = 0;
   let texto = "";

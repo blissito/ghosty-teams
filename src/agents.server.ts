@@ -5,6 +5,7 @@
 import { hasIds, nodeIndex } from "./lib/artifact-ids";
 import { stripStepsBlock, stripToolBlock } from "./lib/ebdoc";
 import { ARTIFACT_DESIGN_GUIDE } from "./server/prompts/artifact-design";
+import type { ToolScope } from "./server/connectors/tool-token.server";
 
 export type ResolvedAgent = {
   handle: string;
@@ -25,7 +26,18 @@ export type ResolvedAgent = {
     | { kind: "a2a"; runtime: "a2a"; runtimeUrl: string }
     // ACP: una caja que manejamos por WebSocket. `runtimeUrl` es la URL del socket; no hay
     // card que descubrir porque la caja es NUESTRA — lo que se negocia es en `initialize`.
-    | { kind: "acp"; runtime: "acp"; runtimeUrl: string };
+    | {
+        kind: "acp";
+        runtime: "acp";
+        runtimeUrl: string;
+        /**
+         * Qué puede EJERCER este agente con las tools del espacio. Default `lectura`: un
+         * agente ACP es un binario de terceros corriendo código que escribe un modelo, y
+         * darle de entrada los conectores de quien le escriba sería una decisión que nadie
+         * tomó. Se abre a propósito desde Ajustes.
+         */
+        scope: ToolScope;
+      };
 };
 
 // ── Clave de conversación (groupId) ───────────────────────────────────────────
@@ -93,7 +105,12 @@ export async function resolvedAgents(): Promise<ResolvedAgent[]> {
         avatar: a.avatar || "",
         systemPrompt: a.system_prompt,
         groupNs: !!a.group_ns,
-        backend: { kind: "acp", runtime: "acp", runtimeUrl: a.runtime_url },
+        backend: {
+          kind: "acp",
+          runtime: "acp",
+          runtimeUrl: a.runtime_url,
+          scope: a.acp_scope === "completo" ? "completo" : "lectura",
+        },
       });
     } else if (a.kind === "a2a" && a.runtime_url) {
       out.push({
@@ -1158,6 +1175,27 @@ export async function callAgentBackendStream(
     // que valide sus ids lo rechaza y cada turno arrancaría en frío sin que nadie lo note.
     const dbAcp = await import("./db.server");
     const sesionPrevia = await dbAcp.getAcpSession(agent.handle, groupId).catch(() => null);
+
+    // ── Las tools del ESPACIO ─────────────────────────────────────────────────────────
+    //
+    // Mismo token-capacidad y mismo dispatch que usan los agentes nativos: el `sub` de quien
+    // escribe, la conversación, y el alcance, todo firmado. Esto es lo que convierte a un
+    // agente ACP en alguien que puede LEER el hilo en vez de inventarse que no lo ve.
+    //
+    // Las tres condiciones son las mismas que en el camino nativo, y por las mismas razones:
+    // sin invocador no hay a nombre de quién actuar; en un canal público no hay tools por
+    // diseño (el texto lo escribe un extraño y el agente sería su canal de exfiltración); y
+    // sin origin no sabemos a dónde tiene que llamar la caja.
+    const { acpToolToken } = await import("./server/acp-tools.server");
+    const { reqOrigin } = await import("./origin.server");
+    const toolToken = await acpToolToken({
+      invokerSub,
+      publicChannel,
+      ns,
+      dest,
+      origin: originOverride ?? (await reqOrigin().catch(() => null)),
+      scope: agent.backend.scope,
+    });
     console.log(`[acp ->] ${agent.handle} ${agent.backend.runtimeUrl} sesion=${sesionPrevia ?? "(nueva)"}`);
     const r = await runAcpTurn({
       wsUrl: agent.backend.runtimeUrl,
@@ -1166,6 +1204,7 @@ export async function callAgentBackendStream(
       // La conversación es la sesión: `session/load` la retoma entre turnos, con el id que
       // dio el agente. Vacío la primera vez → el cliente abre una nueva y la guardamos abajo.
       sessionId: sesionPrevia ?? undefined,
+      toolToken,
       text: prefix + stripLoneSurrogates(text),
       signal,
       onUpdate: async (u) => {

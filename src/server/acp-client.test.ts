@@ -15,6 +15,7 @@ let url = "";
 /** Lo que el relé falso debe hacer en el próximo turno. */
 let guion: (ws: WS, m: any) => void = () => {};
 let ultimaUrl = "";
+let ultimosHeaders: Record<string, string | undefined> = {};
 
 const env = (o: any, extra: any) => JSON.stringify({ jsonrpc: "2.0", ...o, ...extra }) + "\n";
 
@@ -24,6 +25,7 @@ beforeAll(async () => {
   url = `ws://127.0.0.1:${(wss.address() as AddressInfo).port}/acp`;
   wss.on("connection", (ws, req) => {
     ultimaUrl = req.url ?? "";
+    ultimosHeaders = req.headers as Record<string, string | undefined>;
     ws.on("message", (d) => {
       for (const line of d.toString().split("\n")) {
         if (!line.trim()) continue;
@@ -226,5 +228,28 @@ describe("cuando el agente se calla", () => {
     await expect(t.run()).rejects.toThrow(/sin responder/);
     // Si el permiso no hubiera pausado el reloj, habría muerto a los ~300ms.
     expect(Date.now() - t0).toBeGreaterThan(900);
+  });
+});
+
+/**
+ * El token de las tools del espacio viaja en el HANDSHAKE, no en la URL.
+ *
+ * Es una credencial de verdad —con ella se ejercen las herramientas de una persona— y las
+ * URIs acaban en los access logs de cualquier proxy del camino. El ticket sí va en la URL,
+ * pero por una limitación que aquí no aplica (un WebSocket de navegador no puede poner
+ * headers) y porque no sirve fuera de su caja.
+ */
+describe("el token de tools", () => {
+  it("va en un header y NO ensucia la URL", async () => {
+    guion = (ws, m) => ws.send(env({ id: m.id }, { result: { stopReason: "end_turn" } }));
+    await turno({ toolToken: "tok-capacidad-abc" }).run();
+    expect(ultimosHeaders["x-ghosty-tools"]).toBe("tok-capacidad-abc");
+    expect(ultimaUrl).not.toContain("tok-capacidad-abc");
+  });
+
+  it("sin token no se manda el header: un turno sin tools no aparenta tenerlas", async () => {
+    guion = (ws, m) => ws.send(env({ id: m.id }, { result: { stopReason: "end_turn" } }));
+    await turno().run();
+    expect(ultimosHeaders["x-ghosty-tools"]).toBeUndefined();
   });
 });

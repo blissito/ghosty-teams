@@ -290,6 +290,16 @@ async function migrate(): Promise<void> {
   // los que nacen de aquí en adelante.
   await addColumn("gc_agents", "group_ns", "INTEGER");
 
+  // Qué puede EJERCER un agente ACP con las tools del espacio: `lectura` (sólo leer la
+  // conversación donde lo invocaron) o `completo` (todo lo que tenga conectado el invocador,
+  // igual que un agente nativo). NULL = `lectura`.
+  //
+  // El default acotado es deliberado y va al revés que casi todo lo demás de este esquema: un
+  // agente ACP es un binario de terceros que ejecuta código escrito por un modelo, y darle de
+  // entrada el Gmail y el GitHub de quien le escriba sería una decisión que nadie tomó. Se
+  // abre a propósito desde Ajustes, nunca por omisión.
+  await addColumn("gc_agents", "acp_scope", "TEXT");
+
   // Backfill por la forma del id, que delata el origen sin ambigüedad: los de
   // EasyBits son ObjectId de Mongo (24 hex), los de Studio cuid. Se hace por regla
   // y NO consultando a Studio: una migración no puede depender de que otro sistema

@@ -1496,6 +1496,8 @@ export type Agent = {
   runtime_url: string | null;
   /** 1 → su groupId lleva el namespace del workspace. NULL = formato legacy. */
   group_ns: number | null;
+  /** ACP: qué puede ejercer con las tools del espacio. NULL = `lectura` (el default acotado). */
+  acp_scope: string | null;
 };
 
 function toAgent(r: Row): Agent {
@@ -1514,6 +1516,7 @@ function toAgent(r: Row): Agent {
     runtime: r.runtime ?? null,
     runtime_url: r.runtime_url ?? null,
     group_ns: r.group_ns == null ? null : num(r.group_ns),
+    acp_scope: r.acp_scope ?? null,
   };
 }
 
