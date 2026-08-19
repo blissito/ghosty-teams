@@ -46,6 +46,9 @@ export const Route = createFileRoute("/api/connectors/tools")({
         // El destino (canal/DM del turno) sale del token FIRMADO, nunca del body: es lo
         // que ata las tools nativas a esta conversación y a esta persona.
         const dest = claims.dest;
+        // Qué puede EJERCER este portador. Sale del token firmado igual que el `sub` y el
+        // `dest`: un agente no puede ampliarse el scope porque no hay parámetro por donde.
+        const scope = claims.scope;
 
         let body: { action?: string; name?: string; args?: Record<string, unknown> };
         try {
@@ -55,10 +58,10 @@ export const Route = createFileRoute("/api/connectors/tools")({
         }
 
         const { listUserTools, runTool } = await import("../server/connectors/tools.server");
-        if (body.action === "list") return json({ tools: await listUserTools(sub, dest) });
+        if (body.action === "list") return json({ tools: await listUserTools(sub, dest, scope) });
         if (body.action === "run") {
           if (!body.name) return json({ error: "falta name" }, 400);
-          return json(await runTool(sub, body.name, body.args ?? {}, dest));
+          return json(await runTool(sub, body.name, body.args ?? {}, dest, scope));
         }
         return json({ error: "action debe ser 'list' o 'run'" }, 400);
       },

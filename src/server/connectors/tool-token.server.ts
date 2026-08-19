@@ -42,20 +42,50 @@ export type ToolDest = { channelId?: number; dmId?: number; parentId?: number; t
  * un parámetro opcional al final— produciría tokens que se saltan la comprobación **por
  * diseño de la firma**. Que el compilador lo exija es lo único que lo impide.
  */
+/**
+ * Qué puede EJERCER quien lleva el token, que es distinto de a qué datos tiene derecho.
+ *
+ * `lectura` = sólo las tools nativas de lectura de la conversación (`chat_*`, `doc_read`).
+ * `completo` = todo lo que la persona tenga conectado, que es lo que reciben los agentes
+ * nativos. Un token SIN `scope` vale como `completo`: así esta columna no cambia el
+ * comportamiento de nadie el día que se despliega.
+ *
+ * Existe porque conectar un agente de terceros al dispatch le entrega, si no, todos los
+ * conectores del invocador —Gmail, GitHub, Sentry— a un binario que ejecuta código escrito
+ * por un modelo. El `dest` acota DÓNDE lee; esto acota QUÉ puede hacer.
+ */
+export type ToolScope = "lectura" | "completo";
+
 export function mintToolToken(
   sub: string,
   ns: string,
   dest?: ToolDest | null,
-  ttlSec: number = DEFAULT_TTL_S
+  ttlSec: number = DEFAULT_TTL_S,
+  /**
+   * ⚠️ Estos dos SÍ pueden ir opcionales al final, al revés que `ns` y por la razón contraria:
+   * ninguno relaja una comprobación. Omitir `aud` deja al portador sin saber a dónde llamar
+   * (falla cerrado), y omitir `scope` da el mismo permiso que hoy tienen los nativos. Si algún
+   * día uno de los dos empieza a AUTORIZAR algo, tiene que subir en la firma como hizo `ns`.
+   */
+  extra?: { aud?: string; scope?: ToolScope }
 ): string {
   const payload = Buffer.from(
-    JSON.stringify({ sub, ns: ns ?? undefined, dest: dest ?? undefined, exp: Math.floor(Date.now() / 1000) + ttlSec })
+    JSON.stringify({
+      sub,
+      ns: ns ?? undefined,
+      dest: dest ?? undefined,
+      aud: extra?.aud || undefined,
+      scope: extra?.scope || undefined,
+      exp: Math.floor(Date.now() / 1000) + ttlSec,
+    })
   ).toString("base64url");
   const sig = crypto.createHmac("sha256", secret()).update(payload).digest("base64url");
   return `${payload}.${sig}`;
 }
 
-export function verifyToolToken(token: string): { sub: string; ns: string | null; dest: ToolDest | null } | null {
+export function verifyToolToken(
+  token: string
+): { sub: string; ns: string | null; dest: ToolDest | null; scope: ToolScope } | null {
   const [payload, sig] = (token || "").split(".");
   if (!payload || !sig) return null;
   const expect = crypto.createHmac("sha256", secret()).update(payload).digest("base64url");
@@ -66,10 +96,14 @@ export function verifyToolToken(token: string): { sub: string; ns: string | null
       sub?: string;
       ns?: string;
       dest?: ToolDest;
+      scope?: string;
       exp?: number;
     };
     if (!p.sub || !p.exp || p.exp < Math.floor(Date.now() / 1000)) return null;
-    return { sub: p.sub, ns: p.ns ?? null, dest: p.dest ?? null };
+    // Un valor desconocido cae a `lectura`, no a `completo`: si mañana aparece un scope nuevo
+    // y un emisor viejo lo emite mal, que el error sea de menos permiso y no de más.
+    const scope: ToolScope = p.scope === undefined ? "completo" : p.scope === "completo" ? "completo" : "lectura";
+    return { sub: p.sub, ns: p.ns ?? null, dest: p.dest ?? null, scope };
   } catch {
     return null;
   }

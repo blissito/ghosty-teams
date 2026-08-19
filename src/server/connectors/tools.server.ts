@@ -9,16 +9,45 @@
 import { loaderFor, toolsOf } from "./impl";
 import { nativeTools, type ToolDest } from "./native.server";
 import { taskTools } from "./tasks.native.server";
+import type { ToolScope } from "./tool-token.server";
 
 // Declaración expuesta al modelo (sin el handler).
 export type ToolDecl = { name: string; description: string; inputSchema: Record<string, unknown> };
+
+/**
+ * Las únicas tools que ve un portador con `scope: "lectura"`.
+ *
+ * Es una LISTA BLANCA y no una negra a propósito: una tool nueva nace fuera del scope
+ * acotado, y hay que meterla aquí a mano. Con una lista negra, cada tool que alguien añadiera
+ * quedaría automáticamente al alcance de un agente de terceros — y ese olvido no avisa.
+ *
+ * Todas leen SÓLO la conversación del turno: ninguna acepta un canal o un documento por
+ * argumento, el objetivo sale del `dest` firmado. Ver el comentario de `doc_read`.
+ */
+const SOLO_LECTURA = new Set(["chat_history", "chat_search", "doc_read"]);
+
+/** ¿Puede este portador ejercer esta tool? El scope acota QUÉ hace; el `dest`, DÓNDE. */
+export function toolEnScope(name: string, scope: ToolScope): boolean {
+  return scope === "completo" || SOLO_LECTURA.has(name);
+}
 
 /**
  * Tools disponibles para el usuario = las NATIVAS (siempre) + las de sus conectores
  * CONECTADOS. Las nativas van incondicionalmente: no dependen de que nadie autorice
  * nada, y sin ellas un usuario sin integraciones veía cero tools.
  */
-export async function listUserTools(sub: string, dest: ToolDest | null = null): Promise<ToolDecl[]> {
+export async function listUserTools(
+  sub: string,
+  dest: ToolDest | null = null,
+  scope: ToolScope = "completo"
+): Promise<ToolDecl[]> {
+  // El filtro de verdad está en `runTool`; éste es para no ANUNCIAR lo que no se puede usar.
+  // Anunciar de más haría que el modelo lo intentara y fallara, que es peor que no verlo.
+  if (scope !== "completo") {
+    return nativeTools(dest)
+      .filter((t) => toolEnScope(t.name, scope))
+      .map((t) => ({ name: t.name, description: t.description, inputSchema: t.inputSchema }));
+  }
   // Los suyos + los COMPARTIDOS del workspace. Éste es el cambio que hace funcionar las
   // conexiones de equipo: sin él las tools ni se le anuncian al modelo, y el agente diría
   // "no tengo Sentry" teniendo una compartida delante.
@@ -89,7 +118,20 @@ async function repoScopeDenial(
 }
 
 /** Ejecuta una tool por nombre, SOLO si pertenece a un conector conectado del usuario. */
-export async function runTool(sub: string, toolName: string, args: Record<string, unknown>, dest: ToolDest | null = null): Promise<RunResult> {
+export async function runTool(
+  sub: string,
+  toolName: string,
+  args: Record<string, unknown>,
+  dest: ToolDest | null = null,
+  scope: ToolScope = "completo"
+): Promise<RunResult> {
+  // ⚠️ El scope se aplica AQUÍ, en la ejecución, y no sólo en el listado. Filtrar únicamente
+  // lo que se anuncia sería cosmético: nada impide que un modelo llame por nombre a una tool
+  // que nunca se le enseñó, y los nombres de las nuestras están en el código, en los tests y
+  // en cualquier transcripción.
+  if (!toolEnScope(toolName, scope)) {
+    return { ok: false, error: `${toolName} no está disponible para este agente (sólo lectura de la conversación).` };
+  }
   const denial = await repoScopeDenial(toolName, args ?? {}, dest);
   if (denial) return { ok: false, error: denial };
   // Las de Tasks antes que nada: su nombre está reservado y no dependen de ningún conector.
