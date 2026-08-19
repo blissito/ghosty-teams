@@ -372,7 +372,25 @@ export async function attachArtifacts(msgs: Message[]): Promise<Message[]> {
 // ── Memoria del agente por conversación ─────────────────────────────────────────
 // Ver el comentario de `gt_agent_memory` en schema.server.ts para el porqué del alcance.
 
-export type AgentNote = { id: number; note: string; createdBy: string | null; updatedAt: number };
+export type AgentNote = {
+  id: number;
+  note: string;
+  createdBy: string | null;
+  updatedAt: number;
+  /** `''` = lineamiento del espacio (lo obedece cualquier agente); `@x` = nota de ese agente. */
+  agentHandle: string;
+};
+
+/**
+ * Centinela de "compartida entre agentes", el mismo que ya usaba el alcance workspace.
+ *
+ * En scope de room significa LINEAMIENTO DEL ESPACIO: la regla es del lugar, no del agente,
+ * así que la leen todos los que trabajen ahí. Sin esto, un workspace con dos agentes tendría
+ * que dictar cada convención una vez por agente — y el día que entra un tercero, otra vez.
+ *
+ * Es seguro como centinela porque un handle real nunca es vacío (`resolvedAgents` los exige).
+ */
+export const SHARED_HANDLE = "";
 
 /**
  * Clave de alcance. Por ROOM o DM, nunca por hilo.
@@ -397,45 +415,69 @@ export function memoryScopeKey(d: { channelId?: number | null; dmId?: number | n
 export const MEMORY_MAX_NOTES = 40;
 export const MEMORY_MAX_CHARS = 240;
 
-export async function listAgentMemory(scopeKey: string, handle: string): Promise<AgentNote[]> {
+/**
+ * Lo que un agente ve en un room: los LINEAMIENTOS del espacio (`agent_handle=''`) más sus
+ * propias notas. Con `handle` en null —un turno sin agente resuelto— quedan sólo los primeros,
+ * que es lo correcto: la regla del lugar no depende de quién la lea.
+ *
+ * ⚠️ Antes esto filtraba por handle a secas y el llamador de arriba se saltaba la sección
+ * ENTERA si no había handle. Un lineamiento escrito desde `/memory` no se habría leído nunca.
+ */
+export async function listAgentMemory(scopeKey: string, handle: string | null): Promise<AgentNote[]> {
   const rows = await dbq(
-    `SELECT id, note, created_by, updated_at FROM gt_agent_memory
-       WHERE scope_key = ? AND agent_handle = ? ORDER BY id ASC`,
-    [scopeKey, handle]
+    handle
+      ? `SELECT id, note, created_by, updated_at, agent_handle FROM gt_agent_memory
+           WHERE scope_key = ? AND (agent_handle = ? OR agent_handle = '') ORDER BY id ASC`
+      : `SELECT id, note, created_by, updated_at, agent_handle FROM gt_agent_memory
+           WHERE scope_key = ? AND agent_handle = '' ORDER BY id ASC`,
+    handle ? [scopeKey, handle] : [scopeKey]
   );
   return rows.map((r) => ({
     id: num(r.id),
     note: String(r.note ?? ""),
     createdBy: (r.created_by as string | null) ?? null,
     updatedAt: num(r.updated_at),
+    agentHandle: String(r.agent_handle ?? ""),
   }));
 }
 
 export async function addAgentMemory(
   scopeKey: string,
-  handle: string,
+  handle: string | null,
   note: string,
   createdBy: string | null
 ): Promise<number> {
   const rows = await dbq(
     `INSERT INTO gt_agent_memory (scope_key, agent_handle, note, created_by)
        VALUES (?, ?, ?, ?) RETURNING id`,
-    [scopeKey, handle, note, createdBy]
+    [scopeKey, handle ?? SHARED_HANDLE, note, createdBy]
   );
   return num(rows[0]?.id);
 }
 
-/** El scope va en el WHERE: un id no debe poder editar la nota de otra conversación. */
+/**
+ * El scope va en el WHERE: un id no debe poder editar la nota de otra conversación.
+ *
+ * El handle admite además el lineamiento compartido (`''`), igual que la lectura: si el agente
+ * puede VER una regla del espacio, tiene que poder corregirla y olvidarla cuando se lo pidan.
+ * Un `agent_handle` exacto dejaría "corrige la regla de los oficios" en un "no la encuentro".
+ */
+const handleFilter = (handle: string | null) =>
+  handle
+    ? { sql: `(agent_handle = ? OR agent_handle = '')`, args: [handle] }
+    : { sql: `agent_handle = ''`, args: [] as string[] };
+
 export async function updateAgentMemory(
   id: number,
   scopeKey: string,
-  handle: string,
+  handle: string | null,
   note: string
 ): Promise<boolean> {
+  const h = handleFilter(handle);
   const rows = await dbq(
     `UPDATE gt_agent_memory SET note = ?, updated_at = unixepoch()
-       WHERE id = ? AND scope_key = ? AND agent_handle = ? RETURNING id`,
-    [note, id, scopeKey, handle]
+       WHERE id = ? AND scope_key = ? AND ${h.sql} RETURNING id`,
+    [note, id, scopeKey, ...h.args]
   );
   return rows.length > 0;
 }
@@ -448,11 +490,16 @@ export async function updateAgentMemory(
  * ⚠️ El `WHERE` va scoped igual que `deleteAgentMemory`: con el id a secas, una nota de
  * otro room se podría leer probando números.
  */
-export async function getAgentMemory(id: number, scopeKey: string, handle: string): Promise<AgentNote | null> {
+export async function getAgentMemory(
+  id: number,
+  scopeKey: string,
+  handle: string | null
+): Promise<AgentNote | null> {
+  const h = handleFilter(handle);
   const rows = await dbq(
-    `SELECT id, note, created_by, updated_at FROM gt_agent_memory
-       WHERE id = ? AND scope_key = ? AND agent_handle = ?`,
-    [id, scopeKey, handle]
+    `SELECT id, note, created_by, updated_at, agent_handle FROM gt_agent_memory
+       WHERE id = ? AND scope_key = ? AND ${h.sql}`,
+    [id, scopeKey, ...h.args]
   );
   const r = rows[0];
   if (!r) return null;
@@ -461,13 +508,23 @@ export async function getAgentMemory(id: number, scopeKey: string, handle: strin
     note: String(r.note ?? ""),
     createdBy: r.created_by == null ? null : String(r.created_by),
     updatedAt: num(r.updated_at),
+    agentHandle: String(r.agent_handle ?? ""),
   };
 }
 
-export async function deleteAgentMemory(id: number, scopeKey: string, handle: string): Promise<boolean> {
+/**
+ * ⚠️ El borrado desde `/memory` sí pasa el handle EXACTO de la fila (lo trae la lista), así que
+ * la UI nunca se lleva por delante un lineamiento creyendo que borra una nota: los pinta aparte.
+ */
+export async function deleteAgentMemory(
+  id: number,
+  scopeKey: string,
+  handle: string | null
+): Promise<boolean> {
+  const h = handleFilter(handle);
   const rows = await dbq(
-    `DELETE FROM gt_agent_memory WHERE id = ? AND scope_key = ? AND agent_handle = ? RETURNING id`,
-    [id, scopeKey, handle]
+    `DELETE FROM gt_agent_memory WHERE id = ? AND scope_key = ? AND ${h.sql} RETURNING id`,
+    [id, scopeKey, ...h.args]
   );
   return rows.length > 0;
 }

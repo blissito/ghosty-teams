@@ -19,18 +19,29 @@ async function requireMember() {
 }
 
 export const listWorkspaceMemoryFn = createServerFn({ method: "GET" }).handler(async () => {
-  await requireMember();
+  const user = await requireMember();
   const db = await ready();
-  const [workspace, rooms, docs] = await Promise.all([
+  const [workspace, rooms, docs, channels] = await Promise.all([
     db.listWorkspaceMemory(),
     db.listAllRoomMemory(),
     db.listMemoryDocs(),
+    // Para poder fijar un lineamiento en un room que todavía no tiene ni una nota: sin la
+    // lista, sólo se podrían editar los rooms que ya aparecen, o sea ninguno al empezar.
+    // Va con el mismo filtro de visibilidad del sidebar: un room privado ajeno no se enseña.
+    db.listChannels(user.sub, !!user.isOwner),
   ]);
   return {
     workspace,
     rooms,
     docs,
-    limits: { maxNotes: db.WS_MEMORY_MAX_NOTES, maxChars: db.WS_MEMORY_MAX_CHARS, titleMax: db.WS_MEMORY_TITLE_MAX },
+    channels: channels.map((c) => ({ id: c.id, slug: c.slug })),
+    limits: {
+      maxNotes: db.WS_MEMORY_MAX_NOTES,
+      maxChars: db.WS_MEMORY_MAX_CHARS,
+      titleMax: db.WS_MEMORY_TITLE_MAX,
+      roomMaxNotes: db.MEMORY_MAX_NOTES,
+      roomMaxChars: db.MEMORY_MAX_CHARS,
+    },
   };
 });
 
@@ -157,6 +168,36 @@ export const deleteWorkspaceMemoryFn = createServerFn({ method: "POST" })
     await requireMember();
     const db = await ready();
     return { ok: await db.deleteWorkspaceMemory(data.id) };
+  });
+
+/**
+ * Fija (o corrige) un LINEAMIENTO de un room: la regla del espacio, que obedece cualquier
+ * agente que trabaje ahí. Se guarda con el handle compartido (`''`), igual que la memoria
+ * del workspace.
+ *
+ * Existe porque las reglas de un espacio institucional las pone una PERSONA de una vez —
+ * dictárselas al agente room por room es el trabajo que este panel evita. Las notas por
+ * agente siguen siendo cosa suya: aquí sólo se borran.
+ */
+export const saveRoomRuleFn = createServerFn({ method: "POST" })
+  .validator((d: { id?: number; channelId: number; note: string }) => d)
+  .handler(async ({ data }) => {
+    const user = await requireMember();
+    const db = await ready();
+    const note = data.note.trim().replace(/\s+/g, " ");
+    if (!note) return { ok: false as const, error: "el lineamiento viene vacío" };
+    if (note.length > db.MEMORY_MAX_CHARS)
+      return { ok: false as const, error: `máximo ${db.MEMORY_MAX_CHARS} caracteres` };
+    const scopeKey = `ch:${data.channelId}`;
+    if (data.id) {
+      const ok = await db.updateAgentMemory(data.id, scopeKey, db.SHARED_HANDLE, note);
+      return ok ? { ok: true as const, id: data.id } : { ok: false as const, error: "ese lineamiento ya no existe" };
+    }
+    const actuales = await db.listAgentMemory(scopeKey, null);
+    if (actuales.length >= db.MEMORY_MAX_NOTES)
+      return { ok: false as const, error: `este espacio ya tiene ${db.MEMORY_MAX_NOTES} lineamientos` };
+    const id = await db.addAgentMemory(scopeKey, db.SHARED_HANDLE, note, user.sub);
+    return { ok: true as const, id };
   });
 
 // Borrar una nota de room desde la curaduría: hasta hoy sólo el agente podía olvidarlas.

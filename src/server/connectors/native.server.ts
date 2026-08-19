@@ -416,14 +416,21 @@ export function nativeTools(dest: ToolDest | null): ConnectorTool[] {
     // no confundir al agente con dos sistemas):
     //  · room/DM — convenciones de ESA conversación, por agente. Se inyectan COMPLETAS
     //    en cada turno (memoryHint), por eso no necesitan lectura.
+    //  · room_rules — LINEAMIENTOS de ese espacio: los obedece cualquier agente que trabaje
+    //    ahí (`agent_handle=''`). Misma tabla y mismo bloque del turno; lo que cambia es a
+    //    quién obligan. Sin esto, un workspace con dos agentes dicta cada regla dos veces.
     //  · workspace — hechos de la empresa, compartidos entre rooms y agentes. Al turno
     //    sólo viaja el ÍNDICE (título + hook); `memory_read` trae la nota completa.
     {
       name: "memory_write",
       description:
-        "Guarda algo en la memoria, para que siga vigente en turnos futuros. Dos alcances: " +
-        "`room` (default) = convención de ESTA conversación (formato de los documentos, cómo se " +
-        "llaman las partes, tratamientos); `workspace` = hecho de la EMPRESA que vale en cualquier " +
+        "Guarda algo en la memoria, para que siga vigente en turnos futuros. Tres alcances: " +
+        "`room` (default) = convención que acordaste TÚ en ESTA conversación (formato de los " +
+        "documentos, cómo se llaman las partes, tratamientos); `room_rules` = LINEAMIENTO de este " +
+        "espacio, que obedece cualquier agente que trabaje aquí — úsalo cuando la regla sea del lugar " +
+        "y no tuya ('en este canal se escribe en registro formal', 'aquí los oficios llevan el " +
+        "consecutivo en blanco'), y avisa que la guardaste como regla del espacio; `workspace` = hecho " +
+        "de la EMPRESA que vale en cualquier " +
         "conversación (datos de un cliente, un proceso, un manual de marca destilado, cómo firma el " +
         "despacho). Úsalo cuando te digan 'de ahora en adelante', 'siempre', 'recuérdalo', 'anótalo' " +
         "o 'guárdalo en la memoria del workspace'. NO guardes el contenido de los documentos (para " +
@@ -438,8 +445,10 @@ export function nativeTools(dest: ToolDest | null): ConnectorTool[] {
           note: { type: "string", description: "el contenido, corto y accionable" },
           scope: {
             type: "string",
-            enum: ["room", "workspace"],
-            description: "room = esta conversación (default) · workspace = toda la empresa",
+            enum: ["room", "room_rules", "workspace"],
+            description:
+              "room = convención tuya en esta conversación (default) · room_rules = regla de este " +
+              "espacio, la obedece cualquier agente · workspace = toda la empresa",
           },
           title: {
             type: "string",
@@ -500,8 +509,14 @@ export function nativeTools(dest: ToolDest | null): ConnectorTool[] {
 
         if (!dest) return { ok: false, error: "no puedo guardar memoria de room fuera de una conversación" };
         const scope = db.memoryScopeKey(dest);
-        const handle = dest.handle;
-        if (!scope || !handle) return { ok: false, error: "no pude identificar la conversación" };
+        // `room_rules` escribe con el handle compartido: la regla es del espacio, no del agente.
+        // El handle deja de ser obligatorio — un turno sin agente resuelto puede fijar un
+        // lineamiento, y antes eso fallaba con "no pude identificar la conversación".
+        const reglas = args.scope === "room_rules";
+        const handle = reglas ? null : (dest.handle ?? null);
+        if (!scope) return { ok: false, error: "no pude identificar la conversación" };
+        if (!reglas && !handle)
+          return { ok: false, error: "no pude identificar al agente; guárdala como `room_rules` si es una regla del espacio" };
         if (note.length > db.MEMORY_MAX_CHARS)
           return { ok: false, error: `demasiado larga (máx ${db.MEMORY_MAX_CHARS} caracteres); resúmela` };
 
@@ -517,7 +532,9 @@ export function nativeTools(dest: ToolDest | null): ConnectorTool[] {
             error: `la memoria está llena (${db.MEMORY_MAX_NOTES} notas). Borra alguna con memory_forget o sustituye una con \`replaces\``,
           };
         const id = await db.addAgentMemory(scope, handle, note, sub);
-        return { ok: true, id };
+        // El alcance vuelve en la respuesta: el agente tiene que poder DECIR si lo guardó como
+        // regla del espacio o como convención suya, y si no se lo devolvemos, lo inventa.
+        return { ok: true, id, scope: reglas ? "room_rules" : "room" };
       },
     },
     {
@@ -548,10 +565,18 @@ export function nativeTools(dest: ToolDest | null): ConnectorTool[] {
             : { ok: false, error: "esa nota no existe (¿la borraron desde /memory?)" };
         }
         const scope = dest ? db.memoryScopeKey(dest) : null;
-        if (!scope || !dest?.handle) return { ok: false, error: "no hay conversación en este turno" };
-        const note = await db.getAgentMemory(id, scope, dest.handle);
+        if (!scope) return { ok: false, error: "no hay conversación en este turno" };
+        const note = await db.getAgentMemory(id, scope, dest?.handle ?? null);
         return note
-          ? { ok: true, id: String(note.id), note: note.note, author: note.createdBy }
+          ? {
+              ok: true,
+              id: String(note.id),
+              note: note.note,
+              author: note.createdBy,
+              // Quién manda sobre la nota: sin esto el agente no sabe si al corregirla está
+              // tocando una regla del espacio (que rige para todos) o algo suyo.
+              scope: note.agentHandle === "" ? "room_rules" : "room",
+            }
           : { ok: false, error: "esa nota no existe en esta conversación" };
       },
     },
@@ -574,10 +599,14 @@ export function nativeTools(dest: ToolDest | null): ConnectorTool[] {
         }
         if (!dest) return { ok: false, error: "no puedo borrar memoria de room fuera de una conversación" };
         const scope = db.memoryScopeKey(dest);
-        const handle = dest.handle;
-        if (!scope || !handle) return { ok: false, error: "no pude identificar la conversación" };
-        const ok = await db.deleteAgentMemory(Number(raw), scope, handle);
-        return ok ? { ok: true } : { ok: false, error: "esa nota no existe en esta conversación" };
+        if (!scope) return { ok: false, error: "no pude identificar la conversación" };
+        // Alcanza también a los lineamientos del espacio: si el agente los VE y se los puede
+        // pedir corregir, negarse a olvidarlos deja "olvida esa regla" en un "no la encuentro".
+        const previa = await db.getAgentMemory(Number(raw), scope, dest.handle ?? null);
+        const ok = await db.deleteAgentMemory(Number(raw), scope, dest.handle ?? null);
+        return ok
+          ? { ok: true, scope: previa?.agentHandle === "" ? "room_rules" : "room" }
+          : { ok: false, error: "esa nota no existe en esta conversación" };
       },
     },
 

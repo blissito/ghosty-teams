@@ -28,6 +28,7 @@ import {
   ingestMemoryDocFn,
   listWorkspaceMemoryFn,
   retryMemoryDocFn,
+  saveRoomRuleFn,
   saveWorkspaceMemoryFn,
 } from "../server/memory";
 
@@ -71,6 +72,10 @@ function MemoryPage() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [roomsOpen, setRoomsOpen] = useState(false);
+  // Borrador de un LINEAMIENTO del espacio (agnóstico del agente). Las notas por agente no
+  // se editan desde aquí: son suyas, y aquí sólo se podan.
+  const [rule, setRule] = useState<{ id?: number; channelId: number; note: string } | null>(null);
+  const [ruleError, setRuleError] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
   const [ingesting, setIngesting] = useState<string | null>(null); // nombre del archivo en vuelo
   const [ingestError, setIngestError] = useState<string | null>(null);
@@ -149,10 +154,27 @@ function MemoryPage() {
     });
   };
 
+  const saveRule = () => {
+    if (!rule) return;
+    setBusy(true);
+    setRuleError(null);
+    saveRoomRuleFn({ data: rule })
+      .then((r) => {
+        if (!r.ok) setRuleError(r.error);
+        else setRule(null);
+        return reload();
+      })
+      .catch(() => setRuleError(t("No se pudo. Inténtalo otra vez.")))
+      .finally(() => setBusy(false));
+  };
+
   const removeRoom = (n: { id: number; scopeKey: string; agentHandle: string }) => {
+    const esRegla = n.agentHandle === "";
     setConfirming({
-      title: t("¿Borrar esta nota?"),
-      body: t("El agente dejará de saberlo en esa conversación. No se puede deshacer."),
+      title: esRegla ? t("¿Borrar este lineamiento?") : t("¿Borrar esta nota?"),
+      body: esRegla
+        ? t("Ningún agente lo seguirá en ese espacio. No se puede deshacer.")
+        : t("El agente dejará de saberlo en esa conversación. No se puede deshacer."),
       confirmLabel: t("Borrar"),
       action: () => {
         setData((prev) => (prev ? { ...prev, rooms: prev.rooms.filter((r) => r.id !== n.id) } : prev));
@@ -543,36 +565,136 @@ function MemoryPage() {
           ) : null}
         </section>
 
-        {data && data.rooms.length > 0 ? (
+        {data && (data.rooms.length > 0 || data.channels.length > 0) ? (
           <section className="mt-8">
-            <button
-              onClick={() => setRoomsOpen((v) => !v)}
-              className="inline-flex items-center gap-1.5 text-sm font-semibold text-muted hover:text-ink"
-            >
-              {roomsOpen ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
-              {t("Por conversación")} <span className="text-faint font-normal">({data.rooms.length})</span>
-            </button>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => setRoomsOpen((v) => !v)}
+                className="inline-flex items-center gap-1.5 text-sm font-semibold text-muted hover:text-ink"
+              >
+                {roomsOpen ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
+                {t("Por espacio")} <span className="text-faint font-normal">({data.rooms.length})</span>
+              </button>
+              {roomsOpen && data.channels.length > 0 && !rule ? (
+                <button
+                  onClick={() => setRule({ channelId: data.channels[0]!.id, note: "" })}
+                  className="inline-flex items-center gap-1 text-xs text-muted hover:text-ink"
+                >
+                  <Plus size={13} /> {t("Lineamiento")}
+                </button>
+              ) : null}
+            </div>
             {roomsOpen ? (
-              <ul className="mt-3 flex flex-col gap-2">
-                {data.rooms.map((n) => (
-                  <li key={`${n.scopeKey}-${n.id}`} className="text-sm flex items-start gap-2 border border-border rounded-xl px-3 py-2">
-                    <span className="text-xs text-faint shrink-0 mt-0.5 w-24 truncate">
-                      {n.label} · @{n.agentHandle}
-                    </span>
-                    <span className="flex-1 min-w-0 break-words">{n.note}</span>
-                    <button
-                      onClick={() => removeRoom(n)}
-                      title={t("Borrar")}
-                      className="p-1 rounded text-muted hover:text-red-500 shrink-0"
+              <>
+                {rule ? (
+                  <div className="mt-3 border border-border rounded-xl p-3 flex flex-col gap-2">
+                    <select
+                      value={rule.channelId}
+                      onChange={(e) => setRule({ ...rule, channelId: Number(e.target.value) })}
+                      disabled={rule.id != null}
+                      className="text-sm bg-transparent border border-border rounded-lg px-2 py-1 self-start"
                     >
-                      <Trash2 size={13} />
-                    </button>
-                  </li>
-                ))}
-              </ul>
+                      {data.channels.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          #{c.slug}
+                        </option>
+                      ))}
+                    </select>
+                    <textarea
+                      autoFocus
+                      value={rule.note}
+                      onChange={(e) => setRule({ ...rule, note: e.target.value })}
+                      maxLength={data.limits.roomMaxChars}
+                      rows={2}
+                      placeholder={t("Ej. En este espacio se escribe en registro formal, de usted.")}
+                      className="text-sm bg-transparent border border-border rounded-lg px-2 py-1.5 resize-none"
+                    />
+                    {ruleError ? <p className="text-xs text-red-500">{ruleError}</p> : null}
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={saveRule}
+                        disabled={busy || !rule.note.trim()}
+                        className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-ink text-surface disabled:opacity-40"
+                      >
+                        {t("Guardar")}
+                      </button>
+                      <button onClick={() => setRule(null)} className="text-xs text-muted hover:text-ink">
+                        {t("Cancelar")}
+                      </button>
+                      <span className="text-[11px] text-faint ml-auto">
+                        {t("Rige para cualquier agente que trabaje en ese espacio.")}
+                      </span>
+                    </div>
+                  </div>
+                ) : null}
+                {/* Agrupado por espacio, y dentro los LINEAMIENTOS antes que las notas de cada
+                    agente: es el orden en el que también llegan al turno. En plano no se veía
+                    de quién era cada regla ni a qué room pertenecía. */}
+                <ul className="mt-3 flex flex-col gap-4">
+                  {[...new Set(data.rooms.map((r) => r.scopeKey))].map((scopeKey) => {
+                    const notas = data.rooms.filter((r) => r.scopeKey === scopeKey);
+                    const label = notas[0]!.label;
+                    const channelId = scopeKey.startsWith("ch:") ? Number(scopeKey.slice(3)) : null;
+                    const ordenadas = [
+                      ...notas.filter((n) => n.agentHandle === ""),
+                      ...notas.filter((n) => n.agentHandle !== ""),
+                    ];
+                    return (
+                      <li key={scopeKey}>
+                        <div className="flex items-center gap-2 mb-1.5">
+                          <span className="text-xs font-semibold text-muted">{label}</span>
+                          {channelId != null && !rule ? (
+                            <button
+                              onClick={() => setRule({ channelId, note: "" })}
+                              title={t("Añadir lineamiento")}
+                              className="p-0.5 rounded text-faint hover:text-ink"
+                            >
+                              <Plus size={13} />
+                            </button>
+                          ) : null}
+                        </div>
+                        <ul className="flex flex-col gap-2">
+                          {ordenadas.map((n) => {
+                            const esRegla = n.agentHandle === "";
+                            return (
+                              <li
+                                key={`${n.scopeKey}-${n.id}`}
+                                className="text-sm flex items-start gap-2 border border-border rounded-xl px-3 py-2"
+                              >
+                                <span className="text-[11px] text-faint shrink-0 mt-0.5 w-28 truncate">
+                                  {esRegla ? t("todos los agentes") : `@${n.agentHandle}`}
+                                </span>
+                                <span className="flex-1 min-w-0 break-words">{n.note}</span>
+                                {esRegla && channelId != null ? (
+                                  <button
+                                    onClick={() => setRule({ id: n.id, channelId, note: n.note })}
+                                    title={t("Editar")}
+                                    className="p-1 rounded text-muted hover:text-ink shrink-0"
+                                  >
+                                    <Pencil size={13} />
+                                  </button>
+                                ) : null}
+                                <button
+                                  onClick={() => removeRoom(n)}
+                                  title={t("Borrar")}
+                                  className="p-1 rounded text-muted hover:text-red-500 shrink-0"
+                                >
+                                  <Trash2 size={13} />
+                                </button>
+                              </li>
+                            );
+                          })}
+                        </ul>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </>
             ) : (
               <p className="text-[11px] text-faint mt-1">
-                {t("Convenciones que cada agente guarda por room o DM. También se pueden podar desde aquí.")}
+                {t(
+                  "Lineamientos de cada espacio (los sigue cualquier agente) y las convenciones que cada agente guardó por su cuenta."
+                )}
               </p>
             )}
           </section>

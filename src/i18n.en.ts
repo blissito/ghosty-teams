@@ -1181,6 +1181,19 @@ export const en: Record<string, string> = {
   "Por conversación": "Per conversation",
   "Convenciones que cada agente guarda por room o DM. También se pueden podar desde aquí.":
     "Conventions each agent keeps per room or DM. They can be pruned from here too.",
+  "Por espacio": "Per space",
+  "Lineamiento": "Guideline",
+  "Añadir lineamiento": "Add guideline",
+  "¿Borrar este lineamiento?": "Delete this guideline?",
+  "Ningún agente lo seguirá en ese espacio. No se puede deshacer.":
+    "No agent will follow it in that space any more. This can't be undone.",
+  "todos los agentes": "all agents",
+  "Rige para cualquier agente que trabaje en ese espacio.":
+    "Applies to any agent working in that space.",
+  "Ej. En este espacio se escribe en registro formal, de usted.":
+    "E.g. In this space, write in a formal register.",
+  "Lineamientos de cada espacio (los sigue cualquier agente) y las convenciones que cada agente guardó por su cuenta.":
+    "Each space's guidelines (any agent follows them) plus the conventions each agent saved on its own.",
   "Borrar": "Delete",
   "Suelta un documento (o haz clic): el agente lo lee y lo destila a notas de memoria.":
     "Drop a document (or click): the agent reads it and distills it into memory notes.",

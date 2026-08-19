@@ -356,8 +356,10 @@ async function memoryHint(dest: import("./server/connectors/tool-token.server").
 
     let roomSection = "";
     const scope = db.memoryScopeKey(dest);
-    if (scope && dest.handle) {
-      const notas = await db.listAgentMemory(scope, dest.handle);
+    // Sin `dest.handle` la sección se omitía ENTERA y en silencio. Hoy no: los lineamientos del
+    // espacio (`agent_handle=''`) son del lugar, no de quién los lea, así que van igual.
+    if (scope) {
+      const notas = await db.listAgentMemory(scope, dest.handle ?? null);
       if (notas.length) {
         // Tope, igual que el índice del workspace. Son ~9.6 KB en el peor caso
         // (MEMORY_MAX_NOTES × MEMORY_MAX_CHARS) y se pagan en CADA turno de room y DM.
@@ -369,29 +371,13 @@ async function memoryHint(dest: import("./server/connectors/tool-token.server").
         //
         // Van COMPLETAS, sin recorte a 80 como el índice de workspace: media convención es
         // peor que ninguna. Y de MÁS NUEVAS a más viejas, para que el tope tire lo rancio.
-        const lines: string[] = [];
-        let used = 0;
-        let rest = 0;
-        const colaIds: number[] = [];
-        for (const n of [...notas].reverse()) {
-          const line = `#${n.id}: ${n.note}`;
-          if (used + line.length > ROOM_MEMORY_HINT_MAX_CHARS) {
-            rest++;
-            if (colaIds.length < 12) colaIds.push(n.id);
-            continue;
-          }
-          used += line.length;
-          lines.push(line);
-        }
-        lines.reverse();
-        roomSection =
-          `De esta conversación (convenciones YA ACORDADAS aquí — respétalas sin volver a preguntar):\n` +
-          lines.join("\n") +
-          // La cola sale DIRECCIONABLE, no como un número: un id se puede leer, un conteo no.
-          (rest > 0
-            ? `\n…y ${rest} más que no caben: #${colaIds.join(", #")} (léelas con memory_read si vienen al caso)`
-            : "") +
-          `\n`;
+        //
+        // Dos orígenes en el mismo bloque: los LINEAMIENTOS del espacio (`agent_handle=''`,
+        // valen para cualquier agente) y las convenciones dictadas a ESTE agente. Se separan
+        // porque el agente tiene que saber cuál puede cambiar a nombre de quién. El reparto
+        // del presupuesto vive en `memory-hint.ts` — es puro y tiene sus propios tests.
+        const { splitRoomMemory, renderRoomMemory } = await import("./server/memory-hint");
+        roomSection = renderRoomMemory(splitRoomMemory(notas, ROOM_MEMORY_HINT_MAX_CHARS));
       }
     }
 
