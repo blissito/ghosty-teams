@@ -28,6 +28,17 @@ export type AcpUpdate =
   | { kind: "plan"; entries: { content: string; status?: string }[] }
   | { kind: "otro"; tipo: string };
 
+/**
+ * El agente entregó algo con las herramientas de Ghosty.
+ *
+ * Llega como notificación `ghosty/artifact` que emite el relé de la caja, no como parte de
+ * ACP: es nuestra extensión, y por eso viaja como notificación —un cliente que no la conozca
+ * la ignora sin romperse, que es justo lo que debe pasarle a Zed.
+ */
+export type AcpEntrega =
+  | { tipo: "archivo"; nombre: string; contenidoBase64: string }
+  | { tipo: "artefacto"; subtipo: "doc" | "sheet" | "artifact"; titulo: string; contenido: string };
+
 /** El agente pide autorización y NO sigue hasta que se le conteste. */
 export type AcpPermission = {
   requestId: number | string;
@@ -52,6 +63,14 @@ export interface AcpTurn {
    * porque el relé cuenta el socket abierto como trabajo en vuelo.
    */
   onPermission?: (p: AcpPermission) => Promise<string | null>;
+  /**
+   * El agente entregó un archivo o un artefacto.
+   *
+   * Sin este manejador las herramientas no se piden: `acpTicketUrl` sólo pone `?tools=1`
+   * cuando hay quién reciba. Ofrecerle al agente una tool que no entrega a ninguna parte
+   * sería darle un botón que siempre falla.
+   */
+  onDeliver?: (e: AcpEntrega) => void | Promise<void>;
   signal?: AbortSignal;
   timeoutMs?: number;
 }
@@ -63,9 +82,15 @@ export interface AcpResult {
 }
 
 /** Firma el ticket de conexión. El `ns` va dentro: sin él serviría contra la caja de otro. */
-export function acpTicketUrl(wsUrl: string, ns: string, sub: string): string {
+export function acpTicketUrl(wsUrl: string, ns: string, sub: string, tools = false): string {
   const secret = process.env.ACP_TICKET_SECRET;
-  if (!secret) return wsUrl; // sin secreto, la URL no adivinable de la caja es la capability
+  // `tools` NO va firmado: no concede nada por sí solo, sólo dice qué quiere el cliente que
+  // ya entró. Por eso se pone aun sin secreto, donde la capability es la URL no adivinable.
+  const conTools = (u: URL) => {
+    if (tools) u.searchParams.set("tools", "1");
+    return u.toString();
+  };
+  if (!secret) return conTools(new URL(wsUrl));
   const ts = Math.floor(Date.now() / 1000).toString();
   const sig = crypto.createHmac("sha256", secret).update(`${ts}.${ns}.${sub}`).digest("hex");
   const u = new URL(wsUrl);
@@ -73,12 +98,12 @@ export function acpTicketUrl(wsUrl: string, ns: string, sub: string): string {
   u.searchParams.set("ns", ns);
   u.searchParams.set("sub", sub);
   u.searchParams.set("sig", sig);
-  return u.toString();
+  return conTools(u);
 }
 
 /** Un turno completo: conecta, negocia, abre o retoma sesión, manda el prompt y espera. */
 export async function runAcpTurn(t: AcpTurn): Promise<AcpResult> {
-  const ws = new WebSocket(acpTicketUrl(t.wsUrl, t.workspaceNs, t.sub));
+  const ws = new WebSocket(acpTicketUrl(t.wsUrl, t.workspaceNs, t.sub, !!t.onDeliver));
   const pendientes = new Map<number, { ok: (v: any) => void; err: (e: Error) => void }>();
   let seq = 0;
   let texto = "";
@@ -131,6 +156,12 @@ export async function runAcpTurn(t: AcpTurn): Promise<AcpResult> {
           const p = pendientes.get(m.id)!;
           pendientes.delete(m.id);
           m.error ? p.err(new Error(m.error.message ?? "error del agente")) : p.ok(m.result);
+          continue;
+        }
+
+        // El agente entregó algo. Es notificación: no lleva id y no se contesta.
+        if (m.method === "ghosty/artifact") {
+          if (t.onDeliver && m.params) void t.onDeliver(m.params as AcpEntrega);
           continue;
         }
 

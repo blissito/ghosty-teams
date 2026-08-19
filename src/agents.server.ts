@@ -1007,6 +1007,39 @@ const NEW_DOC_RULE = (fence: string) =>
  * comportamiento de siempre (re-emisión completa) sin deploy. Si el modelo resultara ser
  * malo emitiendo patches, se apaga en segundos.
  */
+/**
+ * Tipo MIME por extensión, para lo que entrega un agente ACP.
+ *
+ * La entrega trae bytes y nombre, no `Content-Type`: la tool del lado de la caja lee un
+ * archivo del disco, y ahí no hay cabecera que copiar. Con octet-stream todo caía como
+ * "descargar", sin miniatura ni vista previa; la extensión es la única pista que hay.
+ */
+function mimeDeNombre(name: string): string {
+  const ext = name.toLowerCase().match(/\.([a-z0-9]+)$/)?.[1] ?? "";
+  const tabla: Record<string, string> = {
+    pdf: "application/pdf",
+    png: "image/png",
+    jpg: "image/jpeg",
+    jpeg: "image/jpeg",
+    gif: "image/gif",
+    webp: "image/webp",
+    svg: "image/svg+xml",
+    txt: "text/plain",
+    md: "text/markdown",
+    csv: "text/csv",
+    json: "application/json",
+    html: "text/html",
+    zip: "application/zip",
+    mp3: "audio/mpeg",
+    ogg: "audio/ogg",
+    wav: "audio/wav",
+    mp4: "video/mp4",
+    docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  };
+  return tabla[ext] ?? "application/octet-stream";
+}
+
 function patchModeOn(): boolean {
   return (process.env.ARTIFACT_PATCH ?? "on").toLowerCase() !== "off";
 }
@@ -1138,6 +1171,46 @@ export async function callAgentBackendStream(
         }
         // `thought` y los updates que no conocemos NO se pintan: el razonamiento es contexto,
         // no respuesta, y un tipo nuevo del protocolo no debería aparecer como texto suelto.
+      },
+      /**
+       * El agente ENTREGÓ algo con las tools de Ghosty (notificación `ghosty/artifact`).
+       *
+       * La idea que ahorra casi todo el trabajo: el agente no sabe escribir nuestros fences,
+       * pero el cliente sí. Se traduce la entrega al fence que el pipeline YA entiende y de
+       * ahí en adelante no hay plomería nueva — extractEbDoc/attachPublished corren solos.
+       */
+      onDeliver: async (e) => {
+        if (e.tipo === "artefacto") {
+          // Cero plomería: `extractEbDoc` → `publishArtifactVersion` → panel, ya existe.
+          const fence = e.subtipo === "sheet" ? "eb-sheet" : e.subtipo === "artifact" ? "eb-artifact" : "eb-doc";
+          const titulo = (e.titulo || "").replace(/[\r\n`]/g, " ").trim();
+          await onChunk(`\n\n\`\`\`${fence}${titulo ? " " + titulo : ""}\n${e.contenido}\n\`\`\`\n`);
+          return;
+        }
+        // Archivo: se re-sube a NUESTRO storage y se emite ```eb-file```, que `chat.ts` /
+        // `dm.ts` convierten en adjunto. Sí, eso es una segunda subida (el agente ya lo tenía
+        // en su disco y nos llegó en base64) — es redundante a propósito: reusa el camino
+        // exacto de las cajas del SDK, sin código nuevo y sin depender de una URL ajena.
+        try {
+          const { uploadToEasyBits, mintReadUrl } = await import("./server/easybits-files.server");
+          const bytes = Buffer.from(e.contenidoBase64, "base64");
+          const name = (e.nombre || "archivo").split("/").pop() || "archivo";
+          const mime = mimeDeNombre(name);
+          const up = await uploadToEasyBits({
+            blob: new Blob([bytes], { type: mime }),
+            contentType: mime,
+            fileName: name,
+          });
+          const url = await mintReadUrl(up.fileId);
+          if (!url) throw new Error("sin readUrl");
+          await onChunk(
+            `\n\n\`\`\`eb-file\n${JSON.stringify({ url, name: up.name, mime: up.mime, size: up.size })}\n\`\`\`\n`,
+          );
+        } catch (err) {
+          // Que falle una entrega no debe tumbar el turno: el agente sigue hablando y el
+          // usuario ve por qué no le llegó el archivo.
+          await onChunk(`\n\n_No pude adjuntar ${e.nombre}: ${err instanceof Error ? err.message : err}_\n\n`);
+        }
       },
       // El permiso se resuelve en el HILO, no aquí: se emite la tarjeta con botones y el
       // turno queda esperando a que alguien del espacio conteste.
