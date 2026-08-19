@@ -1234,4 +1234,35 @@ export const en: Record<string, string> = {
     "Close the event? The link stops working immediately.",
   registrados: "registered",
   "No pude guardar": "Couldn't save",
+
+  // ── Permiso del agente (ACP) y alta de agentes ────────────────────────────────
+  "Pide autorización": "Needs approval",
+  Autorizado: "Approved",
+  "Ya no esperaba respuesta": "No longer waiting",
+  "El agente está detenido. Si nadie contesta, se rechaza.":
+    "The agent is paused. If nobody answers, it's denied.",
+  Respondiste: "You answered",
+  "enviando…": "sending…",
+  "no se pudo responder": "couldn't answer",
+  "Sí": "Yes",
+  // Igual en los dos idiomas, pero la clave tiene que existir o el chequeo la da por floja.
+  No: "No",
+  "(sin nombre)": "(unnamed)",
+  "Caja viva": "Box alive",
+  "Por ACP": "Via ACP",
+  "Por AgentCard": "Via AgentCard",
+  "Un agente de código en su propia caja aislada. Tu código no sale de ahí: usa su propio disco y su propia terminal, no los de tu máquina.":
+    "A coding agent in its own isolated box. Your code never leaves it: the agent uses its own disk and its own terminal, not your machine's.",
+  "handle (ej. code)": "handle (e.g. code)",
+  "https://agente.ejemplo.com/.well-known/agent-card.json":
+    "https://agent.example.com/.well-known/agent-card.json",
+  "la caja no responde": "the box isn't responding",
+  "no pude leer ese AgentCard": "couldn't read that AgentCard",
+  "probando…": "testing…",
+  probar: "test",
+  "sin habilidades declaradas": "no skills declared",
+  "sin sesiones": "no sessions",
+  "sin streaming": "no streaming",
+  "wss://sb-….sandboxes.easybits.cloud/acp": "wss://sb-….sandboxes.easybits.cloud/acp",
+  "{n} sesión(es) abiertas": "{n} open session(s)",
 };

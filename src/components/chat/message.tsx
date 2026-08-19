@@ -68,7 +68,7 @@ import ConfirmModal from "../../components/ConfirmModal";
 import type { Message, Attachment, Artifact, CustomEmoji } from "../../db.server";
 import { forwardTargetsFn, forwardMessageFn } from "../../server/forward";
 import { readReceiptsFn} from "../../server/reads";
-import { SmilePlus, Pencil, ArrowLeft, Reply, Square, Ban, CircleHelp } from "lucide-react";
+import { SmilePlus, Pencil, ArrowLeft, Reply, Square, Ban, CircleHelp, ShieldAlert } from "lucide-react";
 import { useRtSubscribe } from "../../utils/rt-bus";
 import { Markdown } from "../../components/Markdown";
 import { Avatar } from "../../components/Avatar";
@@ -76,9 +76,10 @@ import { unfurlLinkFn } from "../../server/unfurl";
 import { registerModalEsc } from "../../utils/modal-esc";
 import { useScrollLock } from "../../utils/scroll-lock";
 import { type ArtifactView, viewFromAttachment } from "../../components/ArtifactPanel";
-import { extractEbDoc, bubbleWithoutEbDoc, extractToolState, extractSteps, extractAlert, extractAsk, extractPr, extractTask, extractTests, type ToolState, type AlertCardData, type AskCardData, type PrCardData, type TaskCardData, type TestsCardData } from "../../lib/ebdoc";
+import { extractEbDoc, bubbleWithoutEbDoc, extractToolState, extractSteps, extractAlert, extractAsk, extractPermission, extractPr, extractTask, extractTests, type ToolState, type AlertCardData, type AskCardData, type PermissionCardData, type PrCardData, type TaskCardData, type TestsCardData } from "../../lib/ebdoc";
 import { prCardStateFn, runCardActionFn, taskCardStateFn, runTaskCardActionFn } from "../../server/connectors";
 import { answerAgentAskFn } from "../../server/agent-ask";
+import { answerAcpPermissionFn } from "../../server/agent-permission";
 import { ThinkingRing } from "../../components/ThinkingRing";
 import { useT } from "../../i18n";
 
@@ -1105,9 +1106,7 @@ export function AskCard({ msgId, a }: { msgId: number; a: AskCardData }) {
     setEnviando(id);
     setErr(null);
     try {
-      await answerAgentAskFn({
-        data: { handle: a.handle, groupId: a.groupId, taskId: a.taskId, answer: id, kind: a.kind },
-      });
+      await answerAgentAskFn({ data: { handle: a.handle, groupId: a.groupId, taskId: a.taskId, answer: id } });
       setRespondido(label);
       writeAskState(msgId, label);
     } catch (e) {
@@ -1149,6 +1148,113 @@ export function AskCard({ msgId, a }: { msgId: number; a: AskCardData }) {
             </div>
           )}
           {err && <p className="mt-1.5 text-xs text-red-500">{err}</p>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * El agente está DETENIDO pidiendo autorización — `session/request_permission` de ACP.
+ *
+ * No es la tarjeta de pregunta con otro color. Una pregunta se puede ignorar y el hilo sigue;
+ * aquí hay un turno parado que no avanza hasta que alguien actúe, y a los cinco minutos se
+ * rechaza solo. Las dos cosas están dichas en la tarjeta a propósito: la regla del silencio
+ * existía desde que se cableó y hasta ahora sólo la conocía el código.
+ */
+const PERM_KEY = "gt-perm-answers";
+
+function readPermState(msgId: number): string | null {
+  try {
+    return (JSON.parse(localStorage.getItem(PERM_KEY) || "{}") as Record<string, string>)[msgId] ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function writePermState(msgId: number, label: string): void {
+  try {
+    const all = JSON.parse(localStorage.getItem(PERM_KEY) || "{}") as Record<string, string>;
+    all[msgId] = label;
+    localStorage.setItem(PERM_KEY, JSON.stringify(all));
+  } catch {
+    /* sin storage, la tarjeta simplemente no recuerda */
+  }
+}
+
+export function PermissionCard({ msgId, p }: { msgId: number; p: PermissionCardData }) {
+  const t = useT();
+  const [resuelto, setResuelto] = useState<string | null>(() => readPermState(msgId));
+  const [vencida, setVencida] = useState(false);
+  const [enviando, setEnviando] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  async function autorizar(id: string, label: string) {
+    if (enviando || resuelto || vencida) return;
+    setEnviando(id);
+    setErr(null);
+    try {
+      const r = await answerAcpPermissionFn({ data: { askId: p.askId, optionId: id } });
+      if (!r.ok) {
+        // Alguien más contestó, o pasaron los cinco minutos. Es información, no una falla.
+        setVencida(true);
+        setEnviando(null);
+        return;
+      }
+      setResuelto(label);
+      writePermState(msgId, label);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : t("no se pudo responder"));
+      setEnviando(null);
+    }
+  }
+
+  const decidido = resuelto || vencida;
+
+  return (
+    <div className="my-1.5 overflow-hidden rounded-xl border border-violet-500/40 bg-violet-500/5">
+      <div className="flex gap-2.5 px-3 py-2.5">
+        <div className="mt-0.5 shrink-0 text-violet-500" aria-hidden>
+          <ShieldAlert size={16} />
+        </div>
+        <div className="min-w-0 flex-1">
+          <p className="text-[11px] font-medium uppercase tracking-wide text-violet-500">
+            {t("Pide autorización")}
+          </p>
+          <p className="mt-0.5 text-sm text-ink">{p.title}</p>
+          {resuelto ? (
+            <p className="mt-1.5 text-xs text-muted">
+              {t("Autorizado")} <span className="font-medium text-ink">{resuelto}</span>
+            </p>
+          ) : vencida ? (
+            <p className="mt-1.5 text-xs text-muted">{t("Ya no esperaba respuesta")}</p>
+          ) : (
+            <>
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {p.options.map((o) => (
+                  <button
+                    key={o.id}
+                    disabled={!!enviando}
+                    onClick={() => autorizar(o.id, o.label)}
+                    className={`rounded-lg border px-2.5 py-1 text-xs font-medium transition-colors disabled:opacity-50 ${
+                      o.tone === "ok"
+                        ? "border-emerald-600 text-emerald-600 hover:bg-emerald-600/10"
+                        : o.tone === "danger"
+                          ? "border-border text-red-500 hover:bg-red-500/10"
+                          : "border-border text-ink hover:bg-surface-3"
+                    }`}
+                  >
+                    {enviando === o.id ? t("enviando…") : o.label}
+                  </button>
+                ))}
+              </div>
+              {/* El turno está parado esperando esto, y el silencio tiene consecuencia. */}
+              <p className="mt-1.5 text-xs text-muted">
+                {t("El agente está detenido. Si nadie contesta, se rechaza.")}
+              </p>
+            </>
+          )}
+          {err && !decidido && <p className="mt-1.5 text-xs text-red-500">{err}</p>}
         </div>
       </div>
     </div>
@@ -2662,6 +2768,13 @@ export function MessageRow({
                 // respuesta, así que la tarjeta va antes que el texto y no como pie.
                 const ask = extractAsk(m.body);
                 return ask ? <AskCard msgId={m.id} a={ask} /> : null;
+              })()}
+              {(() => {
+                // Permiso de ACP. Va aparte de la pregunta y no como una variante suya: aquí
+                // el turno no está esperando una preferencia, está esperando que lo dejen
+                // actuar — y si nadie contesta, se rechaza solo.
+                const perm = extractPermission(m.body);
+                return perm ? <PermissionCard msgId={m.id} p={perm} /> : null;
               })()}
               {/* Con tarjeta de alerta el bubble se calla: la línea de texto plano que
                   acompaña al fence es el RESPALDO (citas, buscador, notificación), y

@@ -1148,14 +1148,14 @@ export async function callAgentBackendStream(
 
         // La tarjeta viaja por el pipeline normal del body, igual que la de A2A: no hay ruta
         // de persistencia especial. El JSON sale COMPLETO en una sola emisión porque
-        // `extractAsk` exige el fence cerrado — un fence a medias no pinta nada.
+        // `extractPermission` exige el fence cerrado — un fence a medias no pinta nada.
+        //
+        // Sólo van `askId`, `title` y opciones: contestar es `resolverPermiso(ns, askId, …)` y
+        // el `ns` lo pone el servidor. Lo que no se manda no se puede falsificar.
         await onChunk(
-          `\n\n\`\`\`gt-ask\n${JSON.stringify({
-            kind: "acp",
-            taskId: askId,
-            handle: agent.handle,
-            groupId,
-            question: p.title,
+          `\n\n\`\`\`gt-perm\n${JSON.stringify({
+            askId,
+            title: p.title,
             options: p.options.map((o) => ({
               id: o.id,
               label: o.label,

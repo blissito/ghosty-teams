@@ -4,9 +4,9 @@
 // el agente bloqueó su ejecución esperando una respuesta. Por eso contestar no es "mandar un
 // mensaje": es CONTINUAR esa tarea con su `taskId`, que es lo que la desbloquea.
 //
-// Sirve para los dos protocolos. `TASK_STATE_INPUT_REQUIRED` de A2A y
-// `session/request_permission` de ACP son el mismo gesto; sólo cambia por dónde viaja la
-// respuesta, y eso lo resuelve el runtime del agente, no esta función.
+// Esto es SÓLO A2A. El `session/request_permission` de ACP se parece en pantalla pero no
+// comparte lógica —allá el turno sigue corriendo y contestar sólo desbloquea una promesa, no
+// lanza nada— y vive en `agent-permission.ts`.
 
 import { createServerFn } from "@tanstack/react-start";
 
@@ -25,8 +25,6 @@ export const answerAgentAskFn = createServerFn({ method: "POST" })
       groupId: string;
       /** Lo que se contesta: el `id` de la opción elegida, o texto libre. */
       answer: string;
-      /** Por dónde viaja la respuesta. Ausente ⇒ `a2a`, como las tarjetas de hilos viejos. */
-      kind?: "a2a" | "acp";
     }) => d,
   )
   .handler(async ({ data }) => {
@@ -38,25 +36,6 @@ export const answerAgentAskFn = createServerFn({ method: "POST" })
     const agents = await resolvedAgents();
     const agent = agents.find((a: ResolvedAgent) => a.handle === data.handle);
     if (!agent) throw new Error(`@${data.handle} no está conectado`);
-    const { currentNamespace } = await import("./tenant.server");
-
-    // ── ACP: el turno NO terminó ────────────────────────────────────────────────
-    //
-    // Aquí no se lanza nada. Hay un turno corriendo con un WebSocket abierto y una petición
-    // del agente sin contestar; lo único que hace falta es desbloquear la promesa que lo
-    // tiene detenido. Lanzar un turno nuevo —como en A2A— sería pedirle al agente algo que
-    // nadie pidió, además de dejar al primero colgado hasta que venza.
-    if (data.kind === "acp" || agent.backend.kind === "acp") {
-      const { resolverPermiso } = await import("./acp-permission.server");
-      const ok = resolverPermiso(await currentNamespace(), data.taskId, data.answer || null);
-      if (!ok) {
-        // Contestada por alguien más, vencida, o el proceso se reinició y se llevó el
-        // registro en memoria. Decirlo es mejor que fingir que el clic sirvió.
-        throw new Error("esa pregunta ya no está esperando respuesta");
-      }
-      return { ok: true as const, reply: "" };
-    }
-
     if (agent.backend.kind !== "a2a") {
       // Los runtimes propios no tienen (todavía) un turno que se pueda detener y reanudar por
       // id: su equivalente es el STEER, que entra al turno vivo. Decirlo es mejor que fingir.
@@ -64,6 +43,7 @@ export const answerAgentAskFn = createServerFn({ method: "POST" })
     }
 
     const { runA2ATurn } = await import("./a2a-client.server");
+    const { currentNamespace } = await import("./tenant.server");
 
     let texto = "";
     await runA2ATurn({

@@ -360,18 +360,6 @@ export type AskCardData = {
   question: string;
   /** Opciones a pintar. Si vienen vacías, se usan Sí/No. */
   options: { id: string; label: string; tone?: string }[];
-  /**
-   * Por dónde viaja la respuesta.
-   *
-   * Ausente ⇒ `a2a`, para que las tarjetas ya escritas en hilos viejos —que nacieron cuando
-   * ACP no estaba cableado— sigan contestando por donde saben.
-   *
-   * La diferencia no es cosmética: en A2A contestar LANZA un turno nuevo con el mismo
-   * `taskId`, mientras que en ACP el turno sigue corriendo y contestar sólo desbloquea la
-   * promesa que lo tiene detenido. Confundirlos sería lanzarle al agente un turno que nadie
-   * pidió, o dejarlo colgado para siempre.
-   */
-  kind?: "a2a" | "acp";
 };
 
 export function extractAsk(body: string): AskCardData | null {
@@ -398,11 +386,76 @@ export function extractAsk(body: string): AskCardData | null {
           .filter((o) => o.id && o.label)
           .slice(0, 4)
       : [];
-    const kind = str(p.kind) === "acp" ? ("acp" as const) : ("a2a" as const);
-    return { taskId, handle, groupId, question, options, kind };
+    return { taskId, handle, groupId, question, options };
   } catch {
     return null;
   }
+}
+
+/**
+ * Tarjeta de PERMISO — el `session/request_permission` de ACP.
+ *
+ * Parecida a la pregunta pero NO es la misma cosa, y por eso tiene su propio fence en vez de
+ * un campo que las distinga. Una pregunta es "¿qué prefieres?"; un permiso es "estoy detenido
+ * y no actúo hasta que alguien me autorice". Cambia el gesto, cambia el dibujo, y cambia por
+ * dónde viaja la respuesta: contestar una pregunta de A2A LANZA un turno nuevo con su
+ * `taskId`, mientras que contestar un permiso sólo desbloquea la promesa que tiene detenido
+ * al turno que ya está corriendo.
+ *
+ * El payload es deliberadamente MÁS CHICO que el de la pregunta: no lleva `groupId` ni
+ * `handle` porque contestar es `resolverPermiso(ns, askId, …)` y el `ns` lo pone el servidor.
+ * Lo que no se manda no se puede falsificar.
+ */
+export type PermissionCardData = {
+  /** Se llama `askId` y no `taskId` porque en ACP no hay tareas: hay una promesa esperando. */
+  askId: string;
+  /** Lo que el agente quiere hacer. */
+  title: string;
+  /** Las que declaró el agente. Sin default: ver `extractPermission`. */
+  options: { id: string; label: string; tone?: string }[];
+};
+
+export function extractPermission(body: string): PermissionCardData | null {
+  const open = body.match(/```gt-perm[^\n]*\n/);
+  if (!open || open.index == null) return null;
+  const rest = body.slice(open.index + open[0].length);
+  const closeIdx = rest.indexOf("```");
+  // Fence a medio llegar: no se pinta. Unos botones incompletos son peores que ninguno
+  // cuando lo que está en juego es autorizar al agente a actuar.
+  if (closeIdx === -1) return null;
+  try {
+    const p = JSON.parse(rest.slice(0, closeIdx).trim()) as Record<string, unknown>;
+    const str = (v: unknown) => (typeof v === "string" ? v.trim() : "");
+    const askId = str(p.askId);
+    const title = str(p.title);
+    if (!askId || !title) return null;
+    const options = Array.isArray(p.options)
+      ? (p.options as unknown[])
+          .map((o) => {
+            const x = o as Record<string, unknown>;
+            return { id: str(x?.id), label: str(x?.label), tone: str(x?.tone) || undefined };
+          })
+          .filter((o) => o.id && o.label)
+          .slice(0, 4)
+      : [];
+    // ⚠️ SIN default Sí/No, al revés que la pregunta. Ahí inventar botones ayuda; aquí sería
+    // ofrecer una autorización que el agente nunca ofreció, y el `optionId` que mandáramos no
+    // significaría nada del otro lado.
+    if (!options.length) return null;
+    return { askId, title, options };
+  } catch {
+    return null;
+  }
+}
+
+/** El cuerpo sin el bloque del permiso. */
+export function stripPermission(body: string): string {
+  const open = body.match(/```gt-perm[^\n]*\n/);
+  if (!open || open.index == null) return body;
+  const rest = body.slice(open.index + open[0].length);
+  const closeIdx = rest.indexOf("```");
+  if (closeIdx === -1) return body;
+  return (body.slice(0, open.index) + rest.slice(closeIdx + 3)).trim();
 }
 
 /** El cuerpo sin el bloque de la pregunta, para no pintar el JSON crudo. */
@@ -884,6 +937,12 @@ export function bubbleWithoutEbDoc(
     // previa genérica del sitio. Un fence sin `strip` no es medio bug: son tres.
     body = stripTask(body);
     body = stripTests(body);
+    // ⚠️ Éstas dos faltaban, y es exactamente el bug que describe el comentario de `stripTask`
+    // ahí arriba. `bodyWithoutAsk` existía desde que se hizo la tarjeta de A2A pero no la
+    // llamaba NADIE: el JSON de cada pregunta se pintaba como recuadro de código justo encima
+    // de la tarjeta que ya dice lo mismo, bonito. La de permiso nace con su strip puesto.
+    body = bodyWithoutAsk(body);
+    body = stripPermission(body);
   }
   body = bubbleWithoutEbAudio(body);
   body = bubbleWithoutEbFile(body);
