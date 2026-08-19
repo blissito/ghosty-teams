@@ -5,7 +5,7 @@
 // hasta que contestemos.
 import crypto from "node:crypto";
 import type { AddressInfo } from "node:net";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { WebSocketServer, type WebSocket as WS } from "ws";
 
 import { acpTicketUrl, runAcpTurn } from "./acp-client.server";
@@ -21,6 +21,8 @@ let cargaFalla = false;
 let ultimoPrompt: { type: string; text: string }[] = [];
 /** Lo que el agente re-emite al cargar la sesión (el replay que exige la spec). */
 let replay: string[] = [];
+/** Lo que el agente declara en `initialize`. Un agente sin visión NO recibe imágenes inline. */
+let declaraImagen = false;
 
 const env = (o: any, extra: any) => JSON.stringify({ jsonrpc: "2.0", ...o, ...extra }) + "\n";
 
@@ -35,7 +37,15 @@ beforeAll(async () => {
       for (const line of d.toString().split("\n")) {
         if (!line.trim()) continue;
         const m = JSON.parse(line);
-        if (m.method === "initialize") ws.send(env({ id: m.id }, { result: { protocolVersion: 1 } }));
+        if (m.method === "initialize")
+          ws.send(
+            env({ id: m.id }, {
+              result: {
+                protocolVersion: 1,
+                agentCapabilities: { promptCapabilities: { image: declaraImagen } },
+              },
+            }),
+          );
         else if (m.method === "session/new") ws.send(env({ id: m.id }, { result: { sessionId: "ses-1" } }));
         else if (m.method === "session/load") {
           if (cargaFalla) {
@@ -393,5 +403,92 @@ describe("al retomar una sesión", () => {
     cargaFalla = false;
     replay = [];
     expect(r.text).toBe("respuesta nueva");
+  });
+});
+
+
+// ADJUNTOS (2026-08-19). Antes de esto `runAcpTurn` no recibía `parts`: subirle un PDF a un
+// agente ACP no fallaba, simplemente NO LLEGABA — y el agente contestaba que no había recibido
+// nada, que desde fuera se lee como que el producto perdió el archivo.
+describe("adjuntos", () => {
+  const soloTexto = () => ultimoPrompt.filter((b: any) => b.type === "text").map((b: any) => b.text).join("\n");
+
+  beforeEach(() => {
+    declaraImagen = false;
+  });
+
+  it("una imagen va INLINE si el agente declara que las ve", async () => {
+    declaraImagen = true;
+    guion = (ws, m) => ws.send(env({ id: m.id }, { result: { stopReason: "end_turn" } }));
+    await turno({
+      parts: [{ kind: "file", file: { name: "logo.png", mimeType: "image/png", bytes: "AAAA" } }],
+    }).run();
+    const img: any = ultimoPrompt.find((b: any) => b.type === "image");
+    expect(img).toBeTruthy();
+    expect(img.data).toBe("AAAA");
+    expect(img.mimeType).toBe("image/png");
+  });
+
+  // 🔴 Mandarle una imagen inline a un agente que no las declara la rechaza con error de
+  // protocolo y tumba el TURNO ENTERO: no degrada. Por eso se pregunta en vez de suponer.
+  it("un agente SIN visión no recibe la imagen inline, recibe el enlace", async () => {
+    declaraImagen = false;
+    guion = (ws, m) => ws.send(env({ id: m.id }, { result: { stopReason: "end_turn" } }));
+    await turno({
+      parts: [
+        { kind: "file", file: { name: "logo.png", mimeType: "image/png", bytes: "AAAA", uri: "https://x/logo.png" } },
+      ],
+    }).run();
+    expect(ultimoPrompt.find((b: any) => b.type === "image")).toBeUndefined();
+    expect(ultimoPrompt.find((b: any) => b.type === "resource_link")).toBeTruthy();
+  });
+
+  it("un PDF viaja como enlace firmado, nunca en base64", async () => {
+    guion = (ws, m) => ws.send(env({ id: m.id }, { result: { stopReason: "end_turn" } }));
+    await turno({
+      parts: [
+        { kind: "file", file: { name: "escritura.pdf", mimeType: "application/pdf", uri: "https://x/e.pdf" } },
+      ],
+    }).run();
+    const link: any = ultimoPrompt.find((b: any) => b.type === "resource_link");
+    expect(link.uri).toBe("https://x/e.pdf");
+    expect(link.name).toBe("escritura.pdf");
+  });
+
+  // Un `resource_link` suelto es fácil de ignorar; nombrarlos en texto es lo que hace que el
+  // agente sepa que tiene material que abrir.
+  it("los adjuntos se NOMBRAN además en un bloque de texto", async () => {
+    guion = (ws, m) => ws.send(env({ id: m.id }, { result: { stopReason: "end_turn" } }));
+    await turno({
+      parts: [{ kind: "file", file: { name: "escritura.pdf", mimeType: "application/pdf", uri: "https://x/e.pdf" } }],
+    }).run();
+    expect(soloTexto()).toContain("escritura.pdf");
+    expect(soloTexto()).toContain("ADJUNTOS DE ESTE MENSAJE");
+  });
+
+  it("un adjunto que no se puede entregar se DICE, no se pierde en silencio", async () => {
+    guion = (ws, m) => ws.send(env({ id: m.id }, { result: { stopReason: "end_turn" } }));
+    await turno({
+      parts: [{ kind: "file", file: { name: "roto.docx", mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" } }],
+    }).run();
+    expect(soloTexto()).toContain("roto.docx");
+    expect(ultimoPrompt.find((b: any) => b.type === "resource_link")).toBeUndefined();
+  });
+
+  it("el mensaje de la persona sigue siendo el ÚLTIMO bloque", async () => {
+    // Los adjuntos son material; las instrucciones las da quien escribe, y van al final para
+    // que el modelo no lea el material como si le diera órdenes.
+    guion = (ws, m) => ws.send(env({ id: m.id }, { result: { stopReason: "end_turn" } }));
+    await turno({
+      text: "resúmelo",
+      parts: [{ kind: "file", file: { name: "a.pdf", mimeType: "application/pdf", uri: "https://x/a.pdf" } }],
+    }).run();
+    expect((ultimoPrompt[ultimoPrompt.length - 1] as any).text).toBe("resúmelo");
+  });
+
+  it("sin adjuntos no aparece ningún bloque de adjuntos", async () => {
+    guion = (ws, m) => ws.send(env({ id: m.id }, { result: { stopReason: "end_turn" } }));
+    await turno().run();
+    expect(soloTexto()).not.toContain("ADJUNTOS");
   });
 });

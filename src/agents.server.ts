@@ -707,6 +707,53 @@ const EB_DOC_STREAM_GUARDRAIL = [
 // artefactos) en vez de quedar perdido cuando preguntan "¿cómo te escribo directo?" (le
 // pasó 2026-07-23). Estable → va en appendSystemPrompt (persistencia-safe). Describe SOLO
 // lo que existe de verdad; ante duda, la vía de la @mención (que siempre funciona).
+/**
+ * Aviso de turno DEGRADADO: hay agente pero no hay tools.
+ *
+ * Es una constante y no texto inline porque lo emiten los DOS caminos —nativo y ACP— y un
+ * aviso que diverja entre ellos se corrige en un sitio y sigue mal en el otro.
+ *
+ * ⚠️ En un canal PÚBLICO sobra y hace daño: ahí el turno nunca tiene tools POR DISEÑO, así
+ * que esto sonaría a avería. Lo sustituye el guardrail de canal.
+ */
+/**
+ * Guardrail del canal PÚBLICO (WhatsApp). Constante compartida por el camino nativo y el ACP:
+ * un agente ACP puede atender WhatsApp igual que uno nativo, y sin esto contestaría con
+ * markdown —que WhatsApp no pinta y llega como basura literal al cliente— y ofrecería
+ * sistemas que no tiene.
+ *
+ * Va AL FINAL, pegado al mensaje del cliente, no en la persona: una regla enterrada en 70 KB
+ * de prompt no pesa. Es de FORMA, no de personalidad — el tono lo pone el agente asignado.
+ */
+const CANAL_PUBLICO_HINT =
+"\n\n[ESTÁS CONTESTANDO POR WHATSAPP a un cliente, no en un chat interno. " +
+      "NUNCA uses markdown (ni **negritas**, ni ##, ni tablas, ni ```bloques```): WhatsApp no " +
+      "lo pinta y llega como basura. Responde corto —4-5 líneas—, en varios párrafos breves " +
+      "si hace falta, con viñetas '•' cuando enumeres. " +
+      "No hables de cómo funcionas por dentro, ni de rooms, agentes, workspaces o " +
+      "herramientas: para esta persona sólo existe el negocio. " +
+      // ⚠️ Sin esto el modelo OFRECE lo que no puede hacer. En la primera prueba real
+      // (2026-08-11) dijo «te puedo agendar recordatorios» y «no tengo ninguna cita a tu
+      // nombre»: las dos falsas, y la segunda además suena a que consultó algo. Un cliente
+      // se queda esperando un recordatorio que no existe. El aviso genérico de «sin
+      // herramientas» no sirve aquí porque se lee como avería; esto le dice qué hacer.
+      "NO tienes acceso a ningún sistema: no puedes agendar, ni registrar, ni consultar " +
+      "pedidos, citas, saldos ni expedientes. NUNCA ofrezcas hacerlo ni digas que algo 'no " +
+      "aparece' o 'no está registrado' —no tienes dónde mirar—. Si te piden algo así, toma " +
+      "los datos que te den y di que lo pasas al equipo para confirmarlo. " +
+      "Si no puedes resolver algo o te piden hablar con una persona, dilo claro y ofrece " +
+      "pasarlo con alguien del equipo — es mejor eso que inventar.]";
+
+const SIN_TOOLS_HINT =
+  "[SIN HERRAMIENTAS EN ESTE TURNO. No tienes acceso a integraciones, recordatorios, " +
+  "formularios ni búsqueda de mensajes. ESTO MANDA sobre cualquier otro bloque de " +
+  "este mensaje que diga que tienes herramientas o integraciones disponibles: esos " +
+  "bloques describen lo que hay CONECTADO, no lo que puedes ejecutar ahora. " +
+  "Si te piden algo que las necesite, dilo tal cual —'no tengo herramientas " +
+  "disponibles en este momento'— y sugiere volver a intentarlo. NO expliques cómo " +
+  "funcionas por dentro, NO propongas caminos alternativos y NO afirmes qué puede o " +
+  "no puede hacer la plataforma: no tienes forma de saberlo desde aquí.]\n\n";
+
 const TEAMS_PRODUCT_CONTEXT = [
   "SOBRE DÓNDE VIVES — eres un agente de IA dentro de **Ghosty Teams**, una app de chat de equipo (estilo Slack) con canales, hilos, mensajes directos, llamadas y artefactos. Conoces el producto y puedes ORIENTAR a los usuarios sobre cómo usarlo.",
   "IDIOMA: escribe SIEMPRE en el idioma en el que te habla la persona, y no lo cambies a mitad de un mensaje. Eso incluye el CONTENIDO de los documentos que produces: si te piden una denuncia en español, su título y su cuerpo van en español — un escrito titulado \'CRIMINAL COMPLAINT\' no se puede presentar en un juzgado mexicano. Esto incluye las líneas de progreso y los pasos que narras entre herramientas — es donde se cuela el inglés cuando el trabajo se pone técnico, y deja la conversación en dos idiomas. Los nombres de herramientas, librerías, rutas y campos van tal cual (`python-docx`, `eb-file`, `<w:tcBorders>`), pero la frase que los rodea va en el idioma de la persona. Si te escriben en español, 'the table is a clean borderless 2×2' es un error, no un detalle.",
@@ -1178,12 +1225,15 @@ export async function callAgentBackendStream(
     // sin origin no sabemos a dónde tiene que llamar la caja.
     const { acpToolToken } = await import("./server/acp-tools.server");
     const { reqOrigin } = await import("./origin.server");
+    // Se resuelve UNA vez: lo necesitan el tool-token (a dónde llama la caja) y el hint de
+    // marca (la URL absoluta del logo — una relativa no la puede resolver render-svc).
+    const turnOrigin = originOverride ?? (await reqOrigin().catch(() => null));
     const toolToken = await acpToolToken({
       invokerSub,
       publicChannel,
       ns,
       dest,
-      origin: originOverride ?? (await reqOrigin().catch(() => null)),
+      origin: turnOrigin,
       scope: agent.backend.scope,
     });
     // ── El contexto del espacio ───────────────────────────────────────────────────────
@@ -1202,6 +1252,9 @@ export async function callAgentBackendStream(
     // instrucción sería peor que no darle ninguna.
     const contexto = (
       await Promise.all([
+        // Va PRIMERO y manda sobre todo lo demás, igual que en el nativo: sin tools, los
+        // bloques de abajo describen lo que hay CONECTADO, no lo que puede ejecutar ahora.
+        Promise.resolve(publicChannel || toolToken ? "" : SIN_TOOLS_HINT),
         invokerSub && !publicChannel
           ? import("./server/connectors/context.server")
               .then((m) => m.buildConnectorContext(invokerSub, sender || "el usuario", text, dest ?? null, "mcp"))
@@ -1209,10 +1262,37 @@ export async function callAgentBackendStream(
           : Promise.resolve(""),
         clockHint(invokerSub).catch(() => ""),
         memoryHint(dest ?? null).catch(() => ""),
+        // La MARCA del espacio. Faltaba, y es la diferencia entre un documento con los
+        // colores del cliente y uno donde el agente se inventa el color — que en una
+        // dependencia con identidad institucional se ve a la primera.
+        brandContextHint(turnOrigin || undefined).catch(() => ""),
         artifactDocHint(currentDoc).catch(() => ""),
       ])
     )
       .map((x) => x.trim())
+      .filter(Boolean)
+      .join("\n\n");
+
+    // Encuadre del PRODUCTO y de quién es él. En el camino nativo esto viaja por
+    // `appendSystemPrompt`; ACP no tiene capa system, así que se suma a la persona — que es
+    // el bloque que ya declara "esto lo configuró quien administra el agente".
+    //
+    // `EB_DOC_STREAM_GUARDRAIL` NO va: en ACP los documentos salen por la tool
+    // `crear_artefacto`, no por fences (ver la cabecera de `mcp.ts` en la caja). La guía de
+    // DISEÑO sí, porque describe el contenido del artefacto, no cómo se emite.
+    //
+    // ⚠️ Y la razón por la que esto va aquí y el contexto va en su propio bloque AL FINAL:
+    // el prefijo de la conversación es lo que cachea el proveedor (DeepSeek cobra la lectura
+    // de caché al 10%). Este bloque es ESTABLE entre turnos; la hora, la memoria y la marca
+    // cambian, así que subirlos aquí "para que pesen más" convertiría cada turno en un cache
+    // miss. Misma disciplina que el `configSig` del worker nativo.
+    const identidad = [
+      persona ? `[Persona de ${agent.name}]\n${persona}` : null,
+      TEAMS_PRODUCT_CONTEXT,
+      selfIdentity(agent),
+      ARTIFACT_DESIGN_GUIDE,
+      await escalationHint(agent).catch(() => null),
+    ]
       .filter(Boolean)
       .join("\n\n");
     console.log(
@@ -1229,9 +1309,15 @@ export async function callAgentBackendStream(
       // La persona y el contexto van en BLOQUES APARTE, no pegados al mensaje: es lo que
       // evita que el agente los lea como si se los dictara quien escribe (incidente
       // 2026-07-12). Ver `bloquesDelTurno` en acp-client.server.ts.
-      persona: persona ?? undefined,
+      persona: identidad || undefined,
       context: contexto,
-      text: stripLoneSurrogates(text),
+      // Los adjuntos del turno. `buildMediaParts` ya decidió inline vs URL firmada por
+      // tamaño; el cliente ACP decide además por lo que el agente declare que sabe recibir.
+      parts,
+      // El guardrail de canal público va PEGADO al mensaje, igual que en el nativo: es una
+      // regla sobre CÓMO contestar a esta persona, y desde el bloque de contexto —que el
+      // agente lee como "del espacio"— no pesa lo mismo.
+      text: stripLoneSurrogates(text) + (publicChannel ? CANAL_PUBLICO_HINT : ""),
       signal,
       onUpdate: async (u) => {
         if (u.kind === "text") await onChunk(u.text);
@@ -1473,18 +1559,7 @@ export async function callAgentBackendStream(
   // —el turno público nunca tiene tools, por diseño— y el cliente acabaría leyendo "no
   // tengo herramientas disponibles en este momento", que suena a avería. Lo sustituye el
   // guardrail de canal, que sí le dice cómo comportarse.
-  const sinToolsHint = publicChannel
-    ? ""
-    : toolToken && toolsUrl
-      ? ""
-      : "[SIN HERRAMIENTAS EN ESTE TURNO. No tienes acceso a integraciones, recordatorios, " +
-        "formularios ni búsqueda de mensajes. ESTO MANDA sobre cualquier otro bloque de " +
-        "este mensaje que diga que tienes herramientas o integraciones disponibles: esos " +
-        "bloques describen lo que hay CONECTADO, no lo que puedes ejecutar ahora. " +
-        "Si te piden algo que las necesite, dilo tal cual —'no tengo herramientas " +
-        "disponibles en este momento'— y sugiere volver a intentarlo. NO expliques cómo " +
-        "funcionas por dentro, NO propongas caminos alternativos y NO afirmes qué puede o " +
-        "no puede hacer la plataforma: no tienes forma de saberlo desde aquí.]\n\n";
+  const sinToolsHint = publicChannel ? "" : toolToken && toolsUrl ? "" : SIN_TOOLS_HINT;
   // Integraciones del invocador (y las compartidas del workspace).
   //
   // ⚠️ Esto vivía SÓLO en dm.ts, y los dos incidentes que motivaron ese código pasaron en
@@ -1515,25 +1590,7 @@ export async function callAgentBackendStream(
   //
   // Lo de "nunca markdown" no es estética: WhatsApp no lo renderiza, así que un `**` o una
   // tabla llegan como basura literal al cliente.
-  const canalHint = publicChannel
-    ? "\n\n[ESTÁS CONTESTANDO POR WHATSAPP a un cliente, no en un chat interno. " +
-      "NUNCA uses markdown (ni **negritas**, ni ##, ni tablas, ni ```bloques```): WhatsApp no " +
-      "lo pinta y llega como basura. Responde corto —4-5 líneas—, en varios párrafos breves " +
-      "si hace falta, con viñetas '•' cuando enumeres. " +
-      "No hables de cómo funcionas por dentro, ni de rooms, agentes, workspaces o " +
-      "herramientas: para esta persona sólo existe el negocio. " +
-      // ⚠️ Sin esto el modelo OFRECE lo que no puede hacer. En la primera prueba real
-      // (2026-08-11) dijo «te puedo agendar recordatorios» y «no tengo ninguna cita a tu
-      // nombre»: las dos falsas, y la segunda además suena a que consultó algo. Un cliente
-      // se queda esperando un recordatorio que no existe. El aviso genérico de «sin
-      // herramientas» no sirve aquí porque se lee como avería; esto le dice qué hacer.
-      "NO tienes acceso a ningún sistema: no puedes agendar, ni registrar, ni consultar " +
-      "pedidos, citas, saldos ni expedientes. NUNCA ofrezcas hacerlo ni digas que algo 'no " +
-      "aparece' o 'no está registrado' —no tienes dónde mirar—. Si te piden algo así, toma " +
-      "los datos que te den y di que lo pasas al equipo para confirmarlo. " +
-      "Si no puedes resolver algo o te piden hablar con una persona, dilo claro y ofrece " +
-      "pasarlo con alguien del equipo — es mejor eso que inventar.]"
-    : "";
+  const canalHint = publicChannel ? CANAL_PUBLICO_HINT : "";
   const outText = stripLoneSurrogates(
     sinToolsHint + connHint + nowHint + memHint + brandHint + docHint + text + canalHint
   );
