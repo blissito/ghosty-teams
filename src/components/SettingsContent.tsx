@@ -2345,7 +2345,14 @@ function EditAgentForm({
                   {(
                     [
                       ["lectura", t("Leer esta conversación"), t("El historial del hilo y su documento. Nada más.")],
-                      ["lectura,codigo", t("Trabajar con el repositorio"), t("Además, GitHub: leer código, abrir issues y pull requests. En un room sólo toca los repos conectados ahí.")],
+                      // ⚠️ El escalón de en medio lleva `tareas` ADEMÁS de `codigo`, y no es un
+                      // añadido cosmético: sin él, las cinco familias que no son GitHub
+                      // (`tareas`, `agenda`, `formularios`, `docs`, `memoria`) sólo se
+                      // alcanzaban por "todo lo que tengas conectado". O sea que para dejar a
+                      // un agente mover una tarjeta del tablero DEL ESPACIO había que
+                      // entregarle además el correo personal de quien le escribe. El tablero
+                      // se parece mucho más a los repos del room que a un Gmail.
+                      ["lectura,codigo,tareas", t("Trabajar con el equipo"), t("Además, el tablero de tareas y GitHub: leer código, abrir issues y pull requests. En un room sólo toca los repos conectados ahí.")],
                       ["completo", t("Todo lo que tengas conectado"), t("También tu correo, tu calendario y el resto de tus integraciones, a tu nombre.")],
                     ] as const
                   ).map(([valor, titulo, detalle]) => (
