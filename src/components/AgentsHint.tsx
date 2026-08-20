@@ -1,4 +1,4 @@
-import { AnimatePresence, motion } from "motion/react";
+import { motion } from "motion/react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { useT } from "../i18n";
@@ -99,66 +99,75 @@ export function AgentsHint({
 
   return (
     <div className="mx-2 mb-2" onMouseEnter={() => setEncima(true)} onMouseLeave={() => setEncima(false)}>
-      <AnimatePresence initial={false} mode="wait">
-        {abierto ? (
-          <motion.div
-            key="abierto"
-            // `height: auto` para que la barra lateral no dé un salto: el contenido crece y
-            // encoge, no aparece y desaparece.
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: "auto", opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.22, ease: "easeOut" }}
-            className="overflow-hidden rounded-xl border border-border bg-surface"
-          >
-            <div className="p-3">
-              <button
-                onClick={alternar}
-                title={t("Ocultar")}
-                aria-expanded
-                className="flex w-full items-center gap-1.5 text-left text-sm font-medium text-ink"
-              >
-                {icono}
-                <span className="min-w-0 flex-1 truncate">{titulo}</span>
-                <ChevronPequeno abierto />
-              </button>
-              <p className="mt-0.5 text-xs text-muted">
-                {/* Sin `.slice(0, 3)`: el cap silencioso dejaba fuera al CUARTO agente y la
-                    tarjeta se leía como si no existiera (pasó con @deep el 2026-08-08). Aquí
-                    no sobra espacio para inventar un "+N": son los handles con los que se
-                    invoca al agente, y un handle que no se ve es un agente que nadie menciona. */}
-                {agentes.map((a, i) => (
-                  <span key={a.handle}>
-                    {i > 0 ? " · " : ""}
-                    <span className="text-brand">@{a.handle}</span>
-                  </span>
-                ))}
-                <br />
-                {uno
-                  ? t("Menciónalo en un room o hilo y responde ahí mismo.")
-                  : t("Menciónalos en un room o hilo y responden ahí mismo.")}
-              </p>
-            </div>
-          </motion.div>
-        ) : (
-          <motion.button
-            key="pestana"
-            onClick={alternar}
-            title={t("Ver tus agentes")}
-            aria-expanded={false}
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ duration: 0.18 }}
-            className="flex w-full items-center gap-1.5 rounded-lg border border-border/60 bg-surface/60 px-2 py-1 text-left text-xs text-muted transition-colors hover:bg-surface-3 hover:text-ink"
-          >
-            {icono}
-            <span className="min-w-0 flex-1 truncate">
-              {uno ? `@${uno.handle}` : t("{n} agentes", { n: String(agentes.length) })}
-            </span>
-            <ChevronPequeno />
-          </motion.button>
-        )}
-      </AnimatePresence>
+      {/*
+        UNA sola caja que crece y encoge, no dos que se relevan.
+
+        ⚠️ Antes eran dos elementos dentro de un `AnimatePresence mode="wait"`: la tarjeta y
+        la pestañita. Con `mode="wait"` el que sale tiene que TERMINAR antes de que monte el
+        que entra, así que al plegarse el contenedor pasaba por altura CERO —la barra lateral
+        se cerraba del todo— y volvía a abrirse al aparecer la pestaña. Se veía como un
+        brinco, y no era la animación: era el hueco entre las dos.
+
+        La cabecera es la MISMA fila en los dos estados (icono · texto · flecha), así que no
+        hay nada que relevar: se queda montada y sólo colapsa el cuerpo. De paso el botón no
+        se remonta, que es lo que hacía que el puntero perdiera el hover a media transición.
+      */}
+      <motion.div
+        // El marco se atenúa al plegarse en vez de desaparecer: plegado es una pestañita
+        // discreta, no otra cosa.
+        animate={{ opacity: abierto ? 1 : 0.75 }}
+        transition={{ duration: 0.2 }}
+        className={`overflow-hidden rounded-xl border transition-colors ${
+          abierto ? "border-border bg-surface" : "border-border/60 bg-surface/60 hover:bg-surface-3"
+        }`}
+      >
+        <button
+          onClick={alternar}
+          title={abierto ? t("Ocultar") : t("Ver tus agentes")}
+          aria-expanded={!!abierto}
+          className={`flex w-full items-center gap-1.5 text-left transition-[padding,font-size] duration-200 ${
+            abierto ? "p-3 pb-1.5 text-sm font-medium text-ink" : "px-2 py-1 text-xs text-muted hover:text-ink"
+          }`}
+        >
+          {icono}
+          <span className="min-w-0 flex-1 truncate">
+            {abierto ? titulo : uno ? `@${uno.handle}` : t("{n} agentes", { n: String(agentes.length) })}
+          </span>
+          <ChevronPequeno abierto={!!abierto} />
+        </button>
+        {/*
+          El cuerpo. `height: auto` mide el contenido real, así que no hay que clavar una
+          altura que se rompa cuando el workspace tenga un agente más.
+
+          `abierto === null` (todavía no sabemos si es la primera visita) se trata como
+          CERRADO y sin animación: pintar abierto y plegar de golpe es el parpadeo que este
+          componente ya evitaba antes.
+        */}
+        <motion.div
+          initial={false}
+          animate={{ height: abierto ? "auto" : 0, opacity: abierto ? 1 : 0 }}
+          transition={{ duration: 0.22, ease: "easeOut" }}
+          className="overflow-hidden"
+          aria-hidden={!abierto}
+        >
+          <p className="px-3 pb-3 text-xs text-muted">
+            {/* Sin `.slice(0, 3)`: el cap silencioso dejaba fuera al CUARTO agente y la
+                tarjeta se leía como si no existiera (pasó con @deep el 2026-08-08). Aquí
+                no sobra espacio para inventar un "+N": son los handles con los que se
+                invoca al agente, y un handle que no se ve es un agente que nadie menciona. */}
+            {agentes.map((a, i) => (
+              <span key={a.handle}>
+                {i > 0 ? " · " : ""}
+                <span className="text-brand">@{a.handle}</span>
+              </span>
+            ))}
+            <br />
+            {uno
+              ? t("Menciónalo en un room o hilo y responde ahí mismo.")
+              : t("Menciónalos en un room o hilo y responden ahí mismo.")}
+          </p>
+        </motion.div>
+      </motion.div>
     </div>
   );
 }
