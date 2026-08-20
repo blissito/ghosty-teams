@@ -22,6 +22,32 @@ export type ConnectorTool = {
 /** Por dónde ejerce sus tools quien recibe el contexto. Ver `ambientContext`. */
 export type ToolChannel = "gs-sdk" | "mcp";
 
+/**
+ * Aviso que acompaña a CUALQUIER lista de nombres de tools cuando quien la lee las recibe
+ * por MCP.
+ *
+ * ⚠️ Un cliente MCP NAMESPACEA las tools con el nombre del servidor: en goose, `task_create`
+ * aparece como `ghosty__task_create` (comprobado en su sesión real el 2026-08-20 —
+ * `grep -ao "ghosty__[a-z_]*" sessions.db-wal`). Nuestros bloques de contexto las nombraban
+ * en crudo, así que el agente buscaba un nombre que en su lista NO EXISTE, y de ahí concluía
+ * —y le decía al usuario— que no tenía acceso al tablero mientras lo tenía delante.
+ *
+ * Se enseña la REGLA en vez de escribir el prefijo en cada sitio: el prefijo lo decide el
+ * cliente, no nosotros, y hoy es `ghosty__` porque así se llama nuestro servidor en el relé
+ * de goose-acp. Un cliente ACP nuevo puede usar otro separador, otro nombre o ninguno; con
+ * la regla, ese agente sigue funcionando sin tocar este archivo.
+ */
+export const NOTA_PREFIJO_MCP =
+  "OJO con los nombres: tu cliente puede mostrarlas con el prefijo de su servidor " +
+  "(p. ej. `ghosty__task_create` en vez de `task_create`). Es la MISMA herramienta: " +
+  "llámala con el nombre exacto que veas en TU lista y nunca concluyas que no la tienes " +
+  "porque el nombre no coincida letra por letra con el de este texto. ";
+
+/** El aviso, sólo cuando aplica. Vacío para el SDK, donde los nombres son literales. */
+export function notaNombres(toolChannel: ToolChannel = "gs-sdk"): string {
+  return toolChannel === "mcp" ? NOTA_PREFIJO_MCP : "";
+}
+
 export type ConnectorModule = {
   // `message` = texto del turno del usuario → el conector decide si enriquece (p.ej. Calendly
   // sólo pega a la API en intención de agenda). La lógica per-conector vive AQUÍ, no en dm.ts.

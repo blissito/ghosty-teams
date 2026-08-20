@@ -9,7 +9,7 @@
 // de 15 min con su `sub` firmado, y los handlers de aquí corren en el servidor.
 import { getValidToken } from "./oauth.server";
 import { getConnectorRow } from "./store.server";
-import type { ConnectorTool, ToolChannel } from "./impl";
+import { notaNombres, type ConnectorTool, type ToolChannel } from "./impl";
 import type { ToolDest } from "./tool-token.server";
 import { listRoomRepos } from "../../db.server";
 import {
@@ -421,6 +421,7 @@ export async function ambientContext(
     `github_list_prs, github_get_pr, github_pr_files, github_read_file, github_search_code, ` +
     `github_checkout, github_workflow_runs, github_workflow_run_logs. Escritura: github_create_review, github_merge_pr, github_comment, github_update_issue, github_create_issue, ` +
     `github_create_branch, github_write_file, github_create_pr. ` +
+    notaNombres(opts?.toolChannel) +
     `Si te piden "conecta mi repo" o "agrega este repo", contesta con github_install_link. ` +
     `Para CUALQUIER pregunta sobre repos, issues, pull requests o CI de ${sender}, USA estas tools — ` +
     `NO inventes datos ni digas que no tienes acceso (SÍ lo tienes). El repo va como "dueño/repo". ` +

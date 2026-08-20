@@ -70,7 +70,7 @@ export async function buildConnectorContext(
     // secreto y namespace—, así que su bloque no sale del bucle de arriba. Va aquí, y no en
     // una skill: `gotcha_skill_autodescubrible_no_es_leida`.
     const { tasksContext } = await import("./tasks.native.server");
-    const tareas = await tasksContext(dest).catch(() => null);
+    const tareas = await tasksContext(dest, toolChannel).catch(() => null);
     if (tareas) blocks.push(tareas);
     // Igual que Tasks: nativo, sin nada que autorizar. Dice DÓNDE saldrán los recordatorios
     // de esta conversación, que es lo único que el agente no podía saber y por eso confirmaba

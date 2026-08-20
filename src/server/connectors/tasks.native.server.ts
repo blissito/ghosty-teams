@@ -1,4 +1,4 @@
-import type { ConnectorTool } from "./impl";
+import { notaNombres, type ConnectorTool, type ToolChannel } from "./impl";
 import type { ToolDest } from "./tool-token.server";
 import {
   boardSchemas,
@@ -177,7 +177,11 @@ async function estadoRealDelPr(sub: string, url: unknown): Promise<string | null
  * `gotcha_skill_autodescubrible_no_es_leida` — lo que tiene que pasar siempre no puede
  * depender de que el modelo abra un archivo.
  */
-export async function tasksContext(dest: ToolDest | null): Promise<string | null> {
+export async function tasksContext(
+  dest: ToolDest | null,
+  /** Cómo ve las tools quien va a leer esto. Un cliente MCP las namespacea. Ver `toolRef`. */
+  toolChannel: ToolChannel = "gs-sdk",
+): Promise<string | null> {
   const slug = await currentSlug().catch(() => null);
   if (!slug) return null;
   const boards = await listBoards().catch(() => []);
@@ -198,9 +202,16 @@ export async function tasksContext(dest: ToolDest | null): Promise<string | null
 
   return (
     `[GHOSTY TASKS conectado. ${donde} ` +
-    `Tienes tools task_* para el tablero: task_boards, task_board_read, task_find, task_create, ` +
+    `Tienes tools para el tablero: task_boards, task_board_read, task_find, task_create, ` +
     `task_move, task_update, task_labels, task_comment, task_checklist_add, task_member_add, ` +
     `task_delete y task_board_create. ` +
+    notaNombres(toolChannel) +
+    // ⚠️ El aviso de arriba (`notaNombres`) no es adorno: un cliente MCP prefija los nombres
+    // y @goose, el 2026-08-20, buscó `task_create`, no la encontró como tal y contestó que no
+    // tenía el tablero teniéndolo delante. Y esta frase cierra la otra mitad del mismo fallo:
+    // tenerlas y no llamarlas.
+    `Son tuyas y ya están disponibles en este turno: si te piden algo del tablero, LLÁMALAS ` +
+    `—no digas que no tienes acceso, ni mandes a revisar integraciones—. ` +
     `Cuando alguien acuerde algo que hay que HACER —con dueño o con fecha— ofrécete a crear la ` +
     `tarea; no lo hagas a sus espaldas. Trabajas con la cuenta de quien te habló, así que la ` +
     `tarea aparece a su nombre. ` +
