@@ -90,17 +90,26 @@ export function NativeAgentConfig({ agentId }: { agentId: number }) {
             </option>
           ))}
         </select>
-        {/* Se dice porque es real y se nota: cambiar de modelo recicla la caja del
-            agente, y con ella el hilo de la conversación en curso.
+        {/* Se dice porque es real y se nota, y CADA transporte cuesta algo distinto:
+            en un worker nativo cambiar de modelo recicla cajas y arranca la conversación
+            de nuevo; en un agente ACP hay que reescribir el env de SU caja, lo que reinicia
+            al agente y se lleva por delante el turno que esté en vuelo —el de otra persona,
+            posiblemente—. Lo que NO se pierde es la memoria: vive en el disco de la caja.
             Y se aclara que esto es el modelo BASE: con el escalón (⚡) una conversación
             puede estar corriendo en otro AHORA MISMO, y ver aquí "Flash" mientras el
-            rayo está encendido se lee como una contradicción. */}
+            rayo está encendido se lee como una contradicción. Sólo donde el ⚡ existe:
+            prometerlo en un motor que no escala manda a buscar un botón que no está. */}
         <p className="mt-1 text-xs text-muted">
-          {t("Motor")}: {cfg.engineLabel}. {t("Al cambiar de modelo, la conversación arranca de nuevo.")}
+          {t("Motor")}: {cfg.engineLabel}.{" "}
+          {cfg.protocol === "acp"
+            ? t("Al cambiar de modelo se reinicia el agente: un turno en curso se corta. Su memoria se conserva.")
+            : t("Al cambiar de modelo, la conversación arranca de nuevo.")}
         </p>
-        <p className="mt-1 text-xs text-muted">
-          {t("Es el modelo base. Una conversación puede subir temporalmente a uno más capaz con el ⚡ de su cabecera, sin cambiar esto.")}
-        </p>
+        {cfg.canEscalate !== false && (
+          <p className="mt-1 text-xs text-muted">
+            {t("Es el modelo base. Una conversación puede subir temporalmente a uno más capaz con el ⚡ de su cabecera, sin cambiar esto.")}
+          </p>
+        )}
       </div>
 
       <div>

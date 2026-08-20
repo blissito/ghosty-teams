@@ -29,7 +29,11 @@ export async function resolveFleetAgent(agentId: number): Promise<{
     throw new Error("no autorizado para este agente");
   const a = await db.getAgentById(agentId);
   if (!a) throw new Error("agente no encontrado");
-  if (a.kind !== "fleet" || !a.fleet_id) return null;
+  // ACP también: un agente ACP activado desde Studio SÍ tiene `fleet_id` (lo guarda
+  // `activateStudioAgentFn`), así que su config —modelo, prompt base— se pide por el mismo
+  // proxy de capabilities. Excluirlo era una guarda escrita cuando "de Studio" y "nativo"
+  // eran lo mismo, y dejaba su modelo sin ninguna pantalla donde cambiarlo.
+  if ((a.kind !== "fleet" && a.kind !== "acp") || !a.fleet_id) return null;
   return { id: a.fleet_id, token: a.fleet_token, runtime: a.runtime, runtimeUrl: a.runtime_url };
 }
 
@@ -83,7 +87,14 @@ export async function connectTeamsChannel(
 async function nativeRuntime(be: { runtime: string | null; runtimeUrl: string | null }) {
   const { runtimeFor } = await import("./agent-runtime.server");
   try {
-    const rt = await runtimeFor({ runtime: be.runtime, runtimeUrl: be.runtimeUrl });
+    // ⚠️ Un agente ACP se resuelve SIN sus propios campos, a propósito. Su `runtimeUrl` es
+    // el `wss://` de SU CAJA, y ahí no vive `capabilities`: la config del agente la sirve
+    // Studio, que es su dueño. Pasarle los campos del agente resolvería el transporte del
+    // turno —el WebSocket— y esta pantalla se quedaría sin config para siempre.
+    const rt =
+      be.runtime === "acp"
+        ? await runtimeFor({ runtime: null, runtimeUrl: null })
+        : await runtimeFor({ runtime: be.runtime, runtimeUrl: be.runtimeUrl });
     return rt.kind === "gs-native" ? rt : null;
   } catch {
     return null;
@@ -143,6 +154,11 @@ export type NativeAgentConfig = {
   model: string | null;
   prompt: string;
   models: Array<{ id: string; label: string; ready?: boolean }>;
+  /** Transporte del motor. Decide el aviso al cambiar de modelo: un ACP reinicia su caja
+   *  (y corta el turno en vuelo); un worker nativo sólo recicla cajas frías. */
+  protocol?: "sse" | "acp";
+  /** ¿Este motor sabe subir de modelo dentro de una conversación (el ⚡)? goose no. */
+  canEscalate?: boolean;
 };
 
 export const nativeAgentConfigFn = createServerFn({ method: "GET" })

@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { Bot, Plus, Trash2, X, Bell, Smile, Loader2, Pencil, Mail, ExternalLink } from "lucide-react";
 import { FleetAgentControls } from "./FleetAgentControls";
+import { NativeAgentConfig } from "./NativeAgentConfig";
 import { BrandPanel } from "./BrandPanel";
 import { Avatar } from "./Avatar";
 import { currentPushState, enablePush, disablePush } from "../utils/push-subscribe";
@@ -2457,6 +2458,11 @@ function EditAgentForm({
           <div className="lg:col-span-2 lg:border-l lg:border-border lg:pl-6">
             {agent.kind === "fleet" ? (
               <FleetAgentControls agentId={agent.id} />
+            ) : agent.kind === "acp" ? (
+              /* Un ACP no tiene canales que configurar (su transporte ES el WebSocket), así
+                 que recibe sólo la config del agente —modelo y prompt base—, no el resto de
+                 `FleetAgentControls`. */
+              <NativeAgentConfig agentId={agent.id} />
             ) : (
               <div className="rounded-lg border border-dashed border-border p-4 text-center text-xs text-muted">
                 {t("Los bots por webhook no tienen capacidades de flota. Su comportamiento lo controla tu servidor.")}
