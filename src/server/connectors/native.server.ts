@@ -618,7 +618,7 @@ export function nativeTools(dest: ToolDest | null): ConnectorTool[] {
       name: "email_send",
       description:
         "Envía un correo. Úsalo cuando te pidan mandar algo por correo — es una capacidad REAL de Ghosty Teams. " +
-        "Con `attachDoc` adjunta el documento DE ESTA conversación (docx o pdf); no puedes adjuntar otros archivos ni otros documentos. " +
+        "Con `attachDoc` adjunta el documento DE ESTA conversación (docx, pdf o xlsx según lo que sea); no puedes adjuntar otros archivos ni otros documentos. " +
         "⚠️ Un correo enviado NO se puede deshacer: CONFIRMA con quien te lo pide el destinatario, el asunto y si va el documento, " +
         "y hazlo en un solo mensaje antes de llamar a esta herramienta. Nunca mandes correo por iniciativa propia.",
       inputSchema: {
@@ -629,9 +629,10 @@ export function nativeTools(dest: ToolDest | null): ConnectorTool[] {
           body: { type: "string", description: "cuerpo en texto. Se manda como párrafos: no uses HTML ni markdown, no se interpretan" },
           attachDoc: {
             type: "string",
-            enum: ["docx", "pdf", "link"],
+            enum: ["docx", "pdf", "xlsx", "link"],
             description:
-              "qué va del documento de esta conversación: `docx`/`pdf` lo adjunta; `link` manda la liga (mejor si pesa —el tope es 10MB— y así ve siempre la versión viva). " +
+              "qué va del documento de esta conversación: `docx`/`pdf` para prosa, `xlsx` para una HOJA DE CÁLCULO; `link` manda la liga (mejor si pesa —el tope es 10MB— y así ve siempre la versión viva). " +
+              "El formato tiene que casar con lo que es: pedir `docx` de una hoja falla en vez de aplanarla. " +
               "⚠️ `link` PUBLICA el documento: queda visible para cualquiera que tenga la liga. Avísalo. Omítelo si no va nada del documento.",
           },
         },

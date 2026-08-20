@@ -86,7 +86,7 @@ export async function bitacora(row: {
 async function adjuntoDelTurno(
   dest: ToolDest | null,
   sub: string,
-  formato: "docx" | "pdf"
+  formato: "docx" | "pdf" | "xlsx"
 ): Promise<{ bytes: Buffer; fileName: string; mime: string } | { error: string }> {
   const { documentoDelTurno } = await import("./conv-doc.server");
   const documentId = await documentoDelTurno(dest);
@@ -97,12 +97,37 @@ async function adjuntoDelTurno(
   // del artefacto. Aquí no hay request del que sacar la sesión, sólo el `sub` del token.
   const doc = await resolveExportDoc(documentId, null, { sub, isOwner: false });
   if (!doc) return { error: "no tienes acceso a ese documento" };
-  if (formato === "pdf" && doc.kind !== "doc") {
-    return { error: "sólo los documentos de prosa se pueden mandar como PDF; usa docx" };
+  // ⚠️ El tipo del documento manda sobre el formato pedido, en LOS DOS sentidos. Antes sólo
+  // existía el guard del PDF, así que una HOJA pedida como `docx` salía convertida a prosa
+  // sin decir nada: el destinatario recibía un Word con la tabla aplanada creyendo que era
+  // la hoja. Una degradación silenciosa en un adjunto que ya salió por correo no se puede
+  // deshacer — por eso aquí se falla y se nombra el formato correcto.
+  const esHoja = doc.kind === "sheet";
+  if (formato === "xlsx" && !esHoja) {
+    return { error: "sólo una hoja de cálculo se puede mandar como .xlsx; usa docx o pdf" };
   }
-  const blocks = await docBlocks(doc.md);
+  if (formato === "pdf" && doc.kind !== "doc") {
+    return { error: esHoja ? "una hoja de cálculo no se manda como PDF; usa xlsx" : "sólo los documentos de prosa se pueden mandar como PDF; usa docx" };
+  }
+  if (formato === "docx" && esHoja) {
+    return { error: "esto es una hoja de cálculo: mándala como xlsx (docx aplanaría la tabla)" };
+  }
+
   const titulo = doc.title || "Documento";
   const base = titulo.replace(/[\\/:*?"<>|]/g, "-").slice(0, 80);
+
+  // La hoja NO pasa por bloques: su verdad es el CSV de `gc_artifacts.md`, igual que en
+  // `api.doc-xlsx.$id`. Mismo motor (SheetJS, ya es dependencia) → el adjunto del correo y
+  // la descarga del panel no pueden divergir.
+  if (formato === "xlsx") {
+    const XLSX = await import("xlsx");
+    const wb = XLSX.read(doc.md, { type: "string" });
+    const bytes = XLSX.write(wb, { type: "buffer", bookType: "xlsx" }) as Buffer;
+    return { bytes, fileName: `${base}.xlsx`,
+      mime: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" };
+  }
+
+  const blocks = await docBlocks(doc.md);
   const ex = await import("../doc-export.server");
   if (formato === "docx") {
     return { bytes: await ex.blocksToDocx(blocks, titulo), fileName: `${base}.docx`,
@@ -133,7 +158,10 @@ export async function enviarCorreo(sub: string, args: EmailArgs, dest: ToolDest 
     return { ok: false, error: `tope de ${MAX_POR_HORA} correos por hora alcanzado; inténtalo más tarde` };
   }
 
-  const modo = args.attachDoc === "docx" || args.attachDoc === "pdf" || args.attachDoc === "link" ? args.attachDoc : null;
+  const modo =
+    args.attachDoc === "docx" || args.attachDoc === "pdf" || args.attachDoc === "xlsx" || args.attachDoc === "link"
+      ? args.attachDoc
+      : null;
   let adjunto: { bytes: Buffer; fileName: string; mime: string } | null = null;
   let liga: { url: string; titulo: string; publicado: boolean } | null = null;
   if (modo === "link") {
