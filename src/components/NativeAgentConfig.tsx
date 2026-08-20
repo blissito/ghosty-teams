@@ -102,7 +102,7 @@ export function NativeAgentConfig({ agentId }: { agentId: number }) {
         <p className="mt-1 text-xs text-muted">
           {t("Motor")}: {cfg.engineLabel}.{" "}
           {cfg.protocol === "acp"
-            ? t("Al cambiar de modelo se reinicia el agente: un turno en curso se corta. Su memoria se conserva.")
+            ? t("Al cambiar de modelo se reinicia el agente: un turno en curso se corta. Las conversaciones ya abiertas siguen con el modelo anterior hasta que uses /clear en cada una.")
             : t("Al cambiar de modelo, la conversación arranca de nuevo.")}
         </p>
         {cfg.canEscalate !== false && (

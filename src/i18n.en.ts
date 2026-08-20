@@ -3,7 +3,7 @@ export const en: Record<string, string> = {
   // Config del agente nativo (Ajustes → Agentes → Configurar). Modelo/Motor/Prompt
   // base ya están más abajo: los comparte el editor de EasyBits.
   "(próximamente)": "(coming soon)",
-  "Al cambiar de modelo se reinicia el agente: un turno en curso se corta. Su memoria se conserva.": "Changing the model restarts the agent: a turn in progress is cut short. Its memory is kept.",
+  "Al cambiar de modelo se reinicia el agente: un turno en curso se corta. Las conversaciones ya abiertas siguen con el modelo anterior hasta que uses /clear en cada una.": "Changing the model restarts the agent: a turn in progress is cut short. Conversations already open keep the previous model until you run /clear in each one.",
   "Al cambiar de modelo, la conversación arranca de nuevo.": "Changing the model restarts the conversation.",
   "Es el modelo base. Una conversación puede subir temporalmente a uno más capaz con el ⚡ de su cabecera, sin cambiar esto.":
     "This is the base model. A conversation can temporarily move up to a more capable one with the ⚡ in its header, without changing this.",
