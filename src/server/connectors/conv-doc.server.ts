@@ -11,7 +11,14 @@ export async function documentoDelTurno(dest: ToolDest | null): Promise<string |
   if (!dest) return null;
   const db = await import("../../db.server");
   if (dest.dmId) return db.getDmArtifact(dest.dmId);
-  if (dest.channelId) return db.getThreadArtifact(dest.channelId, null);
+  // ⚠️ El `parentId` del dest es OBLIGATORIO aquí. El puntero se guarda con la clave
+  // `<canal>:<parentId>` (`setThreadArtifact(channel.id, data.parentId, ...)`), así que
+  // pasar `null` a ciegas buscaba siempre `<canal>:root` y devolvía null en cuanto la
+  // conversación ocurría dentro de un HILO — que es el caso normal cuando el agente
+  // trabaja un expediente. Firma: `email_send`/`doc_share` contestando "no hay ningún
+  // documento en esta conversación" con la tarjeta del documento a la vista.
+  // `resolveThreadArtifact` además cae al artefacto anclado al hilo si el puntero falta.
+  if (dest.channelId) return db.resolveThreadArtifact(dest.channelId, dest.parentId ?? null);
   return null;
 }
 
