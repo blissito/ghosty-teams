@@ -118,16 +118,105 @@ async function persistir(sql: string, args: unknown[]): Promise<void> {
   }
 }
 
+/**
+ * Cada cuánto late un turno vivo, y cuánto silencio lo da por muerto.
+ *
+ * El latido es lo que distingue "trabajando" de "el proceso que lo atendía ya no existe", y
+ * hasta ahora esa distinción no se podía hacer: el barrido la ADIVINABA por la edad del
+ * mensaje. 15 s de latido y 90 s de gracia dejan margen de sobra para un event loop ocupado
+ * —seis latidos perdidos seguidos— sin que un huérfano se quede media hora en "pensando".
+ */
+const HEARTBEAT_MS = 15_000;
+const LEASE_S = 90;
+
+/**
+ * UN intervalo por proceso, no uno por turno.
+ *
+ * Con N turnos simultáneos, N timers escribiendo N filas cada 15 s es ruido de escrituras en
+ * una base que es de UN tenant; una sola sentencia los cubre a todos. `.unref()` para que el
+ * proceso pueda salir limpio en el deploy (sin él, systemd cuelga hasta el SIGKILL).
+ */
+let latido: ReturnType<typeof setInterval> | null = null;
+function asegurarLatido(): void {
+  if (latido || live.size === 0) return;
+  latido = setInterval(() => {
+    void latir();
+  }, HEARTBEAT_MS);
+  latido.unref?.();
+}
+
+// ── Barrido periódico de turnos sin latido ──────────────────────────────────
+//
+// El barrido de ARRANQUE (`sweepOrphans`, desde `ensureSchema`) sólo corre la primera vez que
+// este proceso toca un tenant. Con despliegues solapados eso deja un hueco real: el proceso
+// viejo muere con turnos en vuelo y el nuevo ya tocó ese tenant, así que nadie vuelve a mirar
+// y la burbuja se queda en "pensando" hasta el siguiente reinicio — el modo de falla que
+// Slack nombra como *el pensando eterno*.
+//
+// Mismo molde que `reminders.server.ts`: un set de tenants, UN intervalo, `withNamespace` por
+// vuelta. La verdad son las filas; el timer es desechable.
+const tenantsConTurnos = new Set<string>();
+let barrido: ReturnType<typeof setInterval> | null = null;
+const SWEEP_MS = 60_000;
+
+/** Llamado desde `ensureSchema`: este tenant existe y su tabla está lista. */
+export function armTurnSweep(ns: string): void {
+  tenantsConTurnos.add(ns);
+  if (barrido) return;
+  barrido = setInterval(() => {
+    void (async () => {
+      const { withNamespace } = await import("./tenant.server");
+      for (const t of Array.from(tenantsConTurnos)) {
+        // Un tenant con la base intermitente no puede dejar sin barrer a los demás.
+        await withNamespace(t, () => sweepOrphans()).catch(() => {});
+      }
+    })();
+  }, SWEEP_MS);
+  barrido.unref?.();
+}
+
+async function latir(): Promise<void> {
+  if (live.size === 0) {
+    if (latido) clearInterval(latido);
+    latido = null;
+    return;
+  }
+  // ⚠️ POR TENANT, y con `withNamespace`.
+  //
+  // Este tick corre FUERA de un request, así que `dbq` no tiene de dónde sacar el namespace
+  // y cae al del env: sin esto, el latido de TODOS los workspaces se escribiría en la base de
+  // uno solo — y los demás se darían por muertos mientras trabajan. Es la misma trampa que
+  // ya está documentada en `reminders.server.ts` y en `sentry-enrich.server.ts`.
+  const porNs = new Map<string, number[]>();
+  for (const t of live.values()) {
+    const ids = porNs.get(t.ns) ?? [];
+    ids.push(t.messageId);
+    porNs.set(t.ns, ids);
+  }
+  const { withNamespace } = await import("./tenant.server");
+  for (const [ns, ids] of porNs) {
+    // `unixepoch()` — el reloj de la BASE. Escribir el latido con el reloj de Node y
+    // compararlo con el de SQLite es la forma clásica de cerrar turnos a destiempo.
+    await withNamespace(ns, () =>
+      persistir(`UPDATE gt_turns SET heartbeat_at = unixepoch() WHERE message_id IN (${ids.join(",")})`, []),
+    ).catch(() => {});
+  }
+}
+
 export function registerTurn(t: Omit<LiveTurn, "startedAt"> & { startedAt?: number }): LiveTurn {
   const entry: LiveTurn = { ...t, startedAt: t.startedAt ?? Date.now() };
   live.set(claveDe(entry.ns, entry.messageId), entry);
+  // ⚠️ El primer latido va DENTRO del INSERT, no en una escritura aparte ni en el primer tick
+  // del intervalo: un turno que nace con `heartbeat_at` nulo lo daría por huérfano cualquier
+  // barrido que corriera en ese hueco — y el hueco dura hasta 15 s.
   void persistir(
-    `INSERT INTO gt_turns (message_id, group_id, invoker_sub, channel_id, parent_id, agent, avatar, tarea, state, started_at)
-     VALUES (?,?,?,?,?,?,?,?,'running',?)
-     ON CONFLICT(message_id) DO UPDATE SET state='running', started_at=excluded.started_at, ended_at=NULL, outcome=NULL`,
+    `INSERT INTO gt_turns (message_id, group_id, invoker_sub, channel_id, parent_id, agent, avatar, tarea, state, started_at, heartbeat_at)
+     VALUES (?,?,?,?,?,?,?,?,'running',?,unixepoch())
+     ON CONFLICT(message_id) DO UPDATE SET state='running', started_at=excluded.started_at, ended_at=NULL, outcome=NULL, error=NULL, heartbeat_at=unixepoch()`,
     [entry.messageId, entry.groupId, entry.invokerSub ?? null, entry.channelId ?? null,
      entry.parentId ?? null, entry.agent ?? null, entry.avatar ?? null, entry.tarea ?? null, entry.startedAt],
   );
+  asegurarLatido();
   announceGroup(entry.groupId);
   return entry;
 }
@@ -326,40 +415,42 @@ export async function sweepOrphans(): Promise<number> {
     // o durante un despliegue solapado— así que "todo lo running es huérfano" era falso: le
     // clavaba el aviso de interrupción a un documento que se estaba escribiendo en ese
     // instante.
+    // ⚠️ EL LATIDO manda, no la lista de exclusión.
+    //
+    // La exclusión de "lo que este proceso tiene vivo" seguía siendo una adivinanza con una
+    // premisa falsa: cubre a ESTE proceso, pero durante un despliegue solapado hay OTRO
+    // atendiendo turnos legítimos que este barrido no ve, y se los cerraba. Un turno vivo es
+    // el que LATE — venga del proceso que venga. Se conserva la exclusión local como red por
+    // si el latido no llegó a escribirse todavía (turno recién nacido, base lenta).
     const vivosAhora = [...live.values()].map((t) => t.messageId);
     const excluir = vivosAhora.length ? ` AND message_id NOT IN (${vivosAhora.join(",")})` : "";
-    await dbq(`UPDATE gt_turns SET state = 'interrupted', ended_at = ? WHERE state = 'running'${excluir}`, [
-      Date.now(),
-    ]).catch(() => {});
-    // ⚠️ DOS formas de quedar huérfano, y la segunda nació el 2026-08-03 con la
-    // persistencia incremental: antes una cáscara abandonada estaba VACÍA, y desde que el
-    // cuerpo se guarda mientras el agente escribe, un turno cortado a media respuesta tiene
-    // TEXTO — así que este barrido dejaba de reconocerlo y la burbuja se quedaba
-    // "trabajando" para siempre. El flag `streaming` es lo que las distingue.
-    //
-    // Y al huérfano CON texto no se le borra lo escrito: se le añade el aviso. Lo que el
-    // agente alcanzó a redactar suele ser la mitad de un documento — tirarlo sería el
-    // peor de los dos males.
-    await dbq(
-      `UPDATE gc_messages SET body = body || ?, streaming = 0
-         WHERE streaming = 1 AND created_at < unixepoch() - 60${excluir ? excluir.replace("message_id", "id") : ""}`,
-      ["\n\n⏹ _Interrumpido: el servidor se reinició mientras el agente escribía._"],
-    ).catch(() => {});
-    // ⚠️ 60s NO basta: un motor lento tarda más que eso en emitir el primer token (el propio
-    // cliente tiene frases para turnos de más de 120s). Con el margen corto, un turno
-    // legítimo que coincidiera con el primer request del tenant en un proceso nuevo se
-    // llevaba un "Detenido" encima. 10 minutos deja fuera cualquier turno real.
-    const rows = await dbq(
-      `UPDATE gc_messages SET body = ?
-         WHERE agent_handle IS NOT NULL
-           AND (body IS NULL OR trim(body) = '')
-           AND created_at < unixepoch() - 600${excluir ? excluir.replace("message_id", "id") : ""}
-       RETURNING id`,
-      ["⏹ Detenido (el servidor se reinició)."],
-    );
-    const n = rows.length;
-    if (n) console.log(`[turns] barrido de arranque: ${n} cáscara(s) huérfana(s) cerrada(s)`);
-    return n;
+    const late = ` AND (heartbeat_at IS NULL OR heartbeat_at < unixepoch() - ${LEASE_S})`;
+    const muertos = await dbq(
+      `UPDATE gt_turns SET state = 'expired', ended_at = ?, error = ?
+         WHERE state = 'running'${late}${excluir}
+       RETURNING message_id`,
+      [Date.now(), "el proceso que lo atendía dejó de latir"],
+    ).catch(() => [] as { message_id?: unknown }[]);
+    // Sólo se cierran las cáscaras de los turnos que ACABAN de darse por muertos. Antes se
+    // barría por edad del mensaje (60 s / 600 s), que es de dónde salían los dos falsos
+    // positivos documentados aquí abajo: un motor lento y un turno que empezó justo antes.
+    const huerfanos = muertos.map((f) => Number(f.message_id)).filter(Number.isFinite);
+    if (huerfanos.length) {
+      const enIds = `(${huerfanos.join(",")})`;
+      // Al huérfano CON texto no se le borra lo escrito: se le añade el aviso. Lo que el
+      // agente alcanzó a redactar suele ser la mitad de un documento.
+      await dbq(
+        `UPDATE gc_messages SET body = body || ?, streaming = 0 WHERE id IN ${enIds} AND streaming = 1`,
+        ["\n\n⏹ _Interrumpido: el servidor se reinició mientras el agente escribía._"],
+      ).catch(() => {});
+      await dbq(
+        `UPDATE gc_messages SET body = ?, streaming = 0
+           WHERE id IN ${enIds} AND (body IS NULL OR trim(body) = '')`,
+        ["⏹ Detenido (el servidor se reinició)."],
+      ).catch(() => {});
+      console.log(`[turns] barrido: ${huerfanos.length} turno(s) sin latido cerrado(s)`);
+    }
+    return huerfanos.length;
   } catch (e) {
     // Best-effort: esto es limpieza, no puede tumbar el arranque de un tenant.
     console.error("[turns] sweepOrphans falló", e);

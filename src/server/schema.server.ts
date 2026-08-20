@@ -44,8 +44,13 @@ export async function ensureSchema(): Promise<void> {
         // registro es en memoria) y deja sus burbujas en "pensando…" para siempre. Aquí
         // es el "arranque" de este tenant, así que aquí se limpian.
         try {
-          const { sweepOrphans } = await import("./turns.server");
+          const { sweepOrphans, armTurnSweep } = await import("./turns.server");
           await sweepOrphans();
+          // Y se deja armado el barrido PERIÓDICO: el de arranque sólo corre la primera vez
+          // que este proceso toca este tenant, así que con despliegues solapados un turno
+          // huérfano del proceso anterior se quedaría en "pensando" hasta el siguiente
+          // reinicio. Con el latido, barrer cada minuto ya no puede cerrar nada vivo.
+          armTurnSweep(ns);
         } catch { /* limpieza best-effort */ }
       })
       .catch((e) => {
@@ -835,6 +840,25 @@ async function migrate(): Promise<void> {
   )`);
   // Para el barrido de huérfanos al arrancar y para listar lo vivo sin recorrer la tabla.
   await exec("CREATE INDEX IF NOT EXISTS gt_turns_state ON gt_turns(state, started_at)");
+  // LATIDO del turno (2026-08-19). Lo escribe el bucle del turno mientras trabaja, y es lo
+  // que convierte el barrido de huérfanos de heurística en HECHO.
+  //
+  // Antes el barrido asumía "todo lo `running` al arrancar es huérfano, porque un turno no
+  // sobrevive a su proceso". La premisa es cierta pero la CONCLUSIÓN no: `sweepOrphans` corre
+  // la primera vez que ESTE proceso toca ESE tenant, que puede ser horas después del arranque
+  // o durante un despliegue solapado — y ahí le clavaba el aviso de interrupción a un turno
+  // que estaba escribiendo en ese instante. Se tapó con una lista de exclusión de lo que este
+  // proceso tiene vivo; con el latido deja de hacer falta adivinar: vivo es el que late.
+  //
+  // ⚠️ Se compara contra `unixepoch()`, el reloj de la BASE, nunca contra el de Node: son dos
+  // relojes distintos y el desfase se manifiesta como turnos cerrados a destiempo.
+  await addColumn("gt_turns", "heartbeat_at", "INTEGER");
+  // Cursor de reanudación: hasta qué evento del turno se entregó ya. Sirve para reabrir el
+  // stream con `> seq` sin perder ni duplicar — el `sequence_number` de OpenAI, el
+  // `Last-Event-ID` de SSE, y lo que deepseek-worker ya hace con su log de ghostycode.
+  await addColumn("gt_turns", "last_seq", "INTEGER");
+  // Por qué falló, cuando falló. Sin esto un turno muerto y uno interrumpido se ven igual.
+  await addColumn("gt_turns", "error", "TEXT");
 
   // Borradores de "guardar y continuar". Un intake patrimonial son 60+ preguntas y hoy quien
   // lo abandona pierde todo.
