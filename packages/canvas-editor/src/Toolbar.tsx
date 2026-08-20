@@ -8,6 +8,33 @@ import { BLOCKS } from './blocks'
 import type { EditorState, EditorStore } from './store'
 import type { RefineProvider } from './refine'
 
+/**
+ * Anchos de referencia del lienzo. 390 es el iPhone actual y 1440 el diseño
+ * desktop — los mismos dos que usa el resto del producto.
+ *
+ * Son botones y no un menú porque alternar entre móvil y escritorio es el gesto
+ * que se repite todo el tiempo mientras se revisa un diseño; enterrarlo en un
+ * desplegable le cuesta dos clicks a la acción más frecuente.
+ */
+/*
+ * ⚠️ Esto cambia el ANCHO DEL MARCO, no el dispositivo — y la diferencia
+ * importa, así que los títulos lo dicen.
+ *
+ * El artboard es un `div` dentro de la página del editor, no un iframe, así que
+ * las media queries de Tailwind miden la VENTANA del navegador y no la caja.
+ * Poner el marco en 390px no activa el layout móvil: se sigue pintando el de
+ * escritorio, apretado. Medido en producción — `lg:grid-cols-4` aplicando dentro
+ * de un artboard de 284px, cuatro columnas de 63.5px, las tarjetas partidas.
+ *
+ * El daño no es cosmético: el dueño ve roto algo que en el sitio real se apila
+ * bien y le pide al agente que lo arregle. Para un móvil FIEL está el botón de
+ * Preview, que sí renderiza en un iframe con su propio viewport.
+ */
+const DEVICE_PRESETS = [
+  { w: 1440, icon: '🖥️', title: 'Escritorio (1440px)' },
+  { w: 390, icon: '📱', title: 'Móvil real (390px) — abre el preview fiel' },
+] as const
+
 export function Toolbar({
   store,
   state,
@@ -19,6 +46,9 @@ export function Toolbar({
   onSave?: (doc: Doc) => Promise<void> | void
 }) {
   const [menu, setMenu] = useState<null | 'frame' | 'block'>(null)
+  // El primero: los documentos de una sola página (una landing) tienen uno solo,
+  // y con varios el ancho de referencia es el del primero igual.
+  const artboard = state.doc.artboards[0]
   const [copied, setCopied] = useState(false)
   const [exportOpen, setExportOpen] = useState(false)
 
@@ -114,6 +144,46 @@ export function Toolbar({
         <TBtn onClick={() => store.undo()} title="Undo">↶</TBtn>
         <TBtn onClick={() => store.redo()} title="Redo">↷</TBtn>
       </div>
+
+      {/* Ancho del artboard. Va junto al zoom porque es lo mismo: cómo MIRAS el
+          documento, no qué dice. Por eso restaura el flag `dirty` — cambiar de
+          dispositivo no debe marcar el documento como editado ni disparar un
+          guardado que el usuario no pidió. */}
+      {/* Se ESCONDEN en preview: ahí manda la fila Full/Desktop/Tablet/Mobile
+          del propio panel, que tiene cuatro opciones contra estas dos. Con las
+          dos visibles se contradecían — la barra marcaba 📱 mientras la fila
+          decía Tablet, y ninguna de las dos estaba mintiendo. */}
+      {artboard && !isPreview && (
+        <div style={styles.group}>
+          {DEVICE_PRESETS.map((d) => {
+            const isMobile = d.w === 390
+            return (
+              <TBtn
+                key={d.w}
+                /* Sólo se pinta en edición, así que el activo es siempre el de
+                   escritorio: 📱 no es un estado, es un salto al preview. */
+                active={!isMobile}
+                onClick={() => {
+                  const dirty = store.getSnapshot().dirty
+                  store.updateArtboard(artboard.id, { w: d.w })
+                  if (!dirty) store.markSaved()
+                  store.fitAll()
+                  /* Móvil SÓLO en preview: en modo edición el artboard es un
+                     `div` de la propia página, así que angostarlo no activa el
+                     layout móvil —las media queries miden la ventana— y pinta
+                     el de escritorio apretado. El preview es un iframe con su
+                     propio viewport, que sí es la verdad. */
+                  store.setPreviewDevice(isMobile ? 'mobile' : 'full')
+                  store.setMode(isMobile ? 'preview' : 'edit')
+                }}
+                title={d.title}
+              >
+                {d.icon}
+              </TBtn>
+            )
+          })}
+        </div>
+      )}
 
       <div style={styles.group}>
         <TBtn onClick={() => store.zoomCenter(1 / 1.2)} title="Zoom out">−</TBtn>

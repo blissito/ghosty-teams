@@ -1355,6 +1355,13 @@ function RefinePanel({ store, node, doc, refineProvider }: { store: EditorStore;
   )
 }
 
+/* ⚠️ Estos tres guardias tienen un GEMELO server-side en `app/lib/refine-guards.ts`,
+   que es el que usa la ruta del agente (`/api/mcp/landing`) — hasta 2026-08 esa
+   ruta no tenía ninguno y escribía respuestas truncadas sobre páginas en vivo.
+   Si cambias uno, cambia el otro. El paquete no puede importar `~/lib/*`; la
+   dirección correcta (pendiente) es mover la implementación aquí y que `app/`
+   importe del paquete. */
+
 /** ¿El HTML acumulado ya cierra su elemento raíz? Evita pintar tags a medias. */
 function isCompleteElement(html: string): boolean {
   const s = html.trim()

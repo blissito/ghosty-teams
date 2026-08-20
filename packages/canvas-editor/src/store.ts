@@ -22,6 +22,13 @@ export interface EditorState {
   /** all selected ids (multi-select highlight + group); includes the primary */
   selectionSet: NodeId[]
   mode: 'edit' | 'preview'
+  /**
+   * Ancho del iframe de preview. Vive en el store, y no local a `PreviewPane`,
+   * porque la barra necesita poder mandar directo a "móvil": el marco angosto
+   * del modo edición NO es una vista móvil (las media queries miden la ventana,
+   * no el artboard), así que el botón 📱 tiene que llevar aquí.
+   */
+  previewDevice: 'full' | 'desktop' | 'tablet' | 'mobile'
   tool: 'select' | 'hand'
   xray: boolean
   /** show the side panels (layers + inspector); false = focus mode */
@@ -63,6 +70,7 @@ export class EditorStore {
       selection: null,
       selectionSet: [],
       mode: 'edit',
+      previewDevice: 'full',
       tool: 'select',
       xray: false,
       panels: true,
@@ -254,6 +262,9 @@ export class EditorStore {
   }
   setMode(mode: EditorState['mode']) {
     this.set({ mode })
+  }
+  setPreviewDevice(previewDevice: EditorState['previewDevice']) {
+    this.set({ previewDevice })
   }
   toggleXray() {
     this.set({ xray: !this.state.xray })

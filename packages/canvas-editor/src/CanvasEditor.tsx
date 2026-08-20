@@ -621,7 +621,7 @@ export function CanvasEditor({ doc, onChange, refineProvider, imageProvider, onA
       <div className="ce-root" style={styles.root}>
         <style>{CHROME_CSS}</style>
         <Toolbar store={store} state={state} refineProvider={refineProvider} onSave={onSave} />
-        <PreviewPane doc={state.doc} renderPreview={renderPreview} />
+        <PreviewPane doc={state.doc} renderPreview={renderPreview} store={store} device={state.previewDevice} />
       </div>
     )
   }
@@ -653,6 +653,16 @@ export function CanvasEditor({ doc, onChange, refineProvider, imageProvider, onA
           onPointerMove={onPointerMove}
           onPointerUp={onPointerUp}
           onDoubleClick={onDoubleClick}
+          /* El lienzo contiene HTML REAL, con sus `<a href>`. Sin esto, hacer
+             clic en una tarjeta para seleccionarla NAVEGA el dashboard a la
+             página de reserva y te saca del editor — con lo que llevaras sin
+             guardar. Pasó en producción al primer clic sobre una tarjeta de
+             servicio. Se frena en `click` y no en `pointerdown` porque la
+             selección ya vive ahí y el navegador decide navegar en el click. */
+          onClick={(e) => {
+            const el = e.target as HTMLElement | null
+            if (el?.closest?.('a[href]')) e.preventDefault()
+          }}
         >
           <div className="ce-world" style={worldStyle}>
             {state.doc.artboards.map((ab) => (
@@ -800,11 +810,37 @@ function SelectionOverlay({
 }
 
 // Preview with a real device-size switcher (Desktop/Tablet/Mobile/Full).
-function PreviewPane({ doc, renderPreview }: { doc: Doc; renderPreview?: (doc: Doc) => string }) {
-  const [device, setDevice] = useState<'full' | 'desktop' | 'tablet' | 'mobile'>('full')
-  const widths = { full: '100%', desktop: 1440, tablet: 768, mobile: 375 } as const
+function PreviewPane({ doc, renderPreview, store, device }: { doc: Doc; renderPreview?: (doc: Doc) => string; store: EditorStore; device: 'full' | 'desktop' | 'tablet' | 'mobile' }) {
+  const setDevice = (d: 'full' | 'desktop' | 'tablet' | 'mobile') => store.setPreviewDevice(d)
+  // 390 y no 375: es el ancho de referencia de la caja del agente y el de un
+  // iPhone moderno. Que los dos midan lo MISMO es lo que hace comparables el
+  // preview y lo que reporta `audit_page`.
+  const widths = { full: '100%', desktop: 1440, tablet: 768, mobile: 390 } as const
   const w = widths[device]
-  const html = useMemo(() => (renderPreview ? renderPreview(doc) : docToHtml(doc)), [doc, renderPreview])
+  /* La barra VERTICAL se queda: es útil para saber cuánto falta de página. Sólo
+     se adelgaza, porque la del sistema es ancha y fea dentro de un marco de
+     teléfono.
+
+     La HORIZONTAL sí se mata, y su causa era la vertical: se come ~15px del
+     ancho, el contenido de 390px desborda esos 15 y aparece una barra abajo que
+     no corresponde a ningún problema de la página. Es un falso positivo caro —
+     hace que el dueño pida arreglar algo que no está roto (verificado: el agente
+     auditó a cinco anchos y no encontró desborde real). Medir el desborde de
+     verdad es trabajo de `audit_page`, que corre en otro navegador y no se ve
+     afectado por esto. */
+  const html = useMemo(() => {
+    const raw = renderPreview ? renderPreview(doc) : docToHtml(doc)
+    const scrollbars =
+      '<style>' +
+      'html{scrollbar-width:thin;scrollbar-color:rgba(0,0,0,.25) transparent;overflow-x:hidden}' +
+      'html::-webkit-scrollbar{width:6px}' +
+      'html::-webkit-scrollbar-thumb{background:rgba(0,0,0,.25);border-radius:3px}' +
+      'html::-webkit-scrollbar-track{background:transparent}' +
+      '</style>'
+    return raw.includes('</head>')
+      ? raw.replace('</head>', `${scrollbars}</head>`)
+      : scrollbars + raw
+  }, [doc, renderPreview])
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
       <div style={{ display: 'flex', gap: 4, justifyContent: 'center', padding: 6, borderBottom: '1px solid #1f2937', background: '#111318' }}>
