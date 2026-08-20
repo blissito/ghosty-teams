@@ -1425,8 +1425,8 @@ export const askAgent = createServerFn({ method: "POST" })
         // Publicación por el camino ÚNICO (mismo que la edición humana del Canvas): siembra
         // los `data-id` del artefacto (dirección para el próximo ```eb-patch```), sube el HTML
         // a storage como enlace compartible, INSERTa la versión, apunta el hilo y refresca.
-        const { publishArtifactVersion } = await import("./artifacts");
-        await publishArtifactVersion({
+        const { publishArtifactVersion, imageGapNotice } = await import("./artifacts");
+        const pub = await publishArtifactVersion({
           messageId: id,
           documentId,
           kind: ebdoc.kind, // "doc" | "sheet" | "artifact"
@@ -1437,6 +1437,14 @@ export const askAgent = createServerFn({ method: "POST" })
           notify: () =>
             bus.publish(bus.ch.room(ns, channel.id), { t: "refresh", channelId: channel.id, parentId: data.parentId }),
         });
+        // El hueco se sabe DESPUÉS de publicar, así que el body se reescribe aquí. Sólo
+        // cuando de verdad falló algo: en el camino normal no hay segundo write.
+        const aviso = imageGapNotice(pub.imagesFailed);
+        if (aviso) {
+          const conAviso = `${cleaned}\n\n${aviso}`.trim();
+          await db.setMessageBody(id, conAviso);
+          bus.publish(bus.ch.room(ns, channel.id), { t: "message:body", id, body: conAviso });
+        }
         return { ok: true as const };
       }
 

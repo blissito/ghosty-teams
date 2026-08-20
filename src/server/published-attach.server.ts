@@ -152,18 +152,24 @@ async function pdfThumb(url: string): Promise<Buffer | null> {
  * Best-effort por imagen: la que falle se queda con su url original en vez de
  * tumbar la publicación entera del documento.
  */
-export async function rehostMarkdownImages(md: string): Promise<string> {
+export async function rehostMarkdownImages(md: string): Promise<{ md: string; failed: string[] }> {
   const IMG = /!\[([^\]]*)\]\(([^)\s]+)(\s+"[^"]*")?\)/g;
   const encontradas = [...md.matchAll(IMG)];
-  if (!encontradas.length) return md;
+  if (!encontradas.length) return { md, failed: [] };
 
   const { uploadToEasyBits } = await import("./easybits-files.server");
   const nuevo = new Map<string, string>();
+  // ⚠️ Una imagen que no se pudo traer NO puede irse en silencio. Antes moría en el
+  // `console.error` de abajo y el documento se entregaba con el hueco, turno en verde:
+  // ni el agente ni la persona se enteraban. El caso típico es que el agente escriba
+  // una ruta de su caja (`logo.png`, `/tmp/…`), que aquí ni siquiera es una URL válida.
+  const failed: string[] = [];
 
   for (const m of encontradas) {
     const url = m[2];
     // Ya es nuestra (o es un data: URI): nada que hacer.
     if (nuevo.has(url) || url.startsWith("/api/attachment/") || url.startsWith("data:")) continue;
+    if (failed.includes(url)) continue;
     try {
       const r = await fetch(url, { signal: AbortSignal.timeout(20_000) });
       if (!r.ok) throw new Error(`fetch ${r.status}`);
@@ -177,11 +183,15 @@ export async function rehostMarkdownImages(md: string): Promise<string> {
       });
       nuevo.set(url, `/api/attachment/${up.fileId}`);
     } catch (e) {
+      failed.push(url);
       console.error(`[doc] re-hospedar imagen falló (${url.slice(0, 100)}):`, e instanceof Error ? e.message : e);
     }
   }
-  if (!nuevo.size) return md;
-  return md.replace(IMG, (todo, alt, url, titulo) =>
-    nuevo.has(url) ? `![${alt}](${nuevo.get(url)}${titulo ?? ""})` : todo
-  );
+  if (!nuevo.size) return { md, failed };
+  return {
+    md: md.replace(IMG, (todo, alt, url, titulo) =>
+      nuevo.has(url) ? `![${alt}](${nuevo.get(url)}${titulo ?? ""})` : todo
+    ),
+    failed,
+  };
 }

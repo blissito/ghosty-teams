@@ -14,6 +14,27 @@ import { stampIds } from "../lib/artifact-ids";
  * Devuelve el HTML finalmente persistido (ya estampado) — el llamador lo necesita para
  * publicarlo al bus / re-inyectarlo al agente.
  */
+/**
+ * Marcador para la burbuja cuando el documento salió con un hueco.
+ *
+ * ⚠️ Existe porque el fallo era MUDO: una imagen que no se pudo traer moría en un
+ * `console.error` y el documento se entregaba igual, con el turno en verde. Ni el
+ * agente ni la persona se enteraban — se veía como un documento completo. Nombra las
+ * rutas que fallaron porque la causa casi siempre está ahí a la vista: una ruta de la
+ * caja del agente (`logo.png`, `/tmp/…`) en vez de la URL de un archivo publicado.
+ *
+ * Mismo criterio que el marcador de `patchOutcome` en `bubbleWithoutEbDoc`: lo que el
+ * servidor descubrió y el modelo no podía saber, se dice en la burbuja.
+ */
+export function imageGapNotice(failed: string[]): string {
+  if (!failed.length) return "";
+  const cuales = failed.slice(0, 3).map((u) => `\`${u.slice(0, 60)}\``).join(", ");
+  const resto = failed.length > 3 ? ` y ${failed.length - 3} más` : "";
+  return failed.length === 1
+    ? `⚠️ El documento quedó sin una imagen: no pude traer ${cuales}.`
+    : `⚠️ El documento quedó sin ${failed.length} imágenes: no pude traer ${cuales}${resto}.`;
+}
+
 export async function publishArtifactVersion(args: {
   messageId: number;
   documentId: string;
@@ -56,11 +77,15 @@ export async function publishArtifactVersion(args: {
   // `versionId` es la fila que se acaba de INSERTar. El editor la fija para que leer en
   // voz alta / revisar la ortografía miren la versión que él tiene pintada y no "la
   // última" — que en un hilo con dos documentos es el OTRO documento.
-}): Promise<{ md: string; src: string | null; versionId: number }> {
+}): Promise<{ md: string; src: string | null; versionId: number; imagesFailed: string[] }> {
   const db = await import("../db.server");
   const t0 = performance.now();
 
   let md = args.md;
+  // Imágenes que no se pudieron resolver (ver `rehostMarkdownImages`). Viaja hasta el
+  // llamador para que el mensaje lo DIGA: un documento con un hueco que nadie anuncia se
+  // lee como un documento completo.
+  let imagesFailed: string[] = [];
 
   // Un DOC se persiste como ÁRBOL DE BLOQUES (sobre `v:1`), no como markdown: los uuid
   // de los bloques son lo que hace direccionable el documento para el próximo
@@ -82,9 +107,10 @@ export async function publishArtifactVersion(args: {
       const { rehostMarkdownImages } = await import("./published-attach.server");
       const conImagenes = await rehostMarkdownImages(args.md).catch((e) => {
         console.error("[artifact] re-hospedar imágenes falló", e);
-        return args.md;
+        return { md: args.md, failed: [] as string[] };
       });
-      md = await docEnvelopeFromMd(conImagenes);
+      imagesFailed = conImagenes.failed;
+      md = await docEnvelopeFromMd(conImagenes.md);
     }
   }
 
@@ -184,7 +210,7 @@ export async function publishArtifactVersion(args: {
   console.log(
     `[artifact publish] kind=${args.kind} ${Math.round(performance.now() - t0)}ms html=${md.length}b src=${src ? "sí" : "no"}`
   );
-  return { md, src, versionId };
+  return { md, src, versionId, imagesFailed };
 }
 
 /**

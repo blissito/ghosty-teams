@@ -696,8 +696,8 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
         const title = draftTitle(ebdoc.md, ebdoc.kind, ebdoc.fenceTitle);
         // MISMO camino que el room y que el editor humano: estampa los data-id (dirección
         // para el próximo patch), publica a storage, INSERTa la versión y avisa.
-        const { publishArtifactVersion } = await import("./artifacts");
-        await publishArtifactVersion({
+        const { publishArtifactVersion, imageGapNotice } = await import("./artifacts");
+        const pub = await publishArtifactVersion({
           messageId: id,
           documentId,
           kind: ebdoc.kind,
@@ -708,6 +708,14 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
           setPointer: (docId) => db.setDmArtifact(data.id, docId),
           notify: () => fanout({ t: "refresh", channelId: null, parentId: null, dmId: data.id }),
         });
+        // Gemelo de chat.ts: el hueco se sabe DESPUÉS de publicar. ⚠️ dm.ts siempre se
+        // queda atrás de chat.ts — si tocas uno, toca el otro.
+        const aviso = imageGapNotice(pub.imagesFailed);
+        if (aviso) {
+          const conAviso = `${cleaned}\n\n${aviso}`.trim();
+          await db.setMessageBody(id, conAviso);
+          fanout({ t: "message:body", id, body: conAviso });
+        }
       } else {
         // ask-user: pregunta con opciones clicables (mismo formato que en el room).
         const ask = extractAskUser(reply);

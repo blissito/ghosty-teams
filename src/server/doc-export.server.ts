@@ -299,6 +299,23 @@ export async function htmlToPdf(html: string): Promise<Buffer | null> {
 async function ourFiles(url: string): Promise<Blob> {
   try {
     const storage = await import("./storage.server");
+
+    // ⚠️ Primero lo NUESTRO, y es el caso más común: `rehostMarkdownImages`
+    // (published-attach.server.ts) reescribe TODA imagen de un documento a
+    // `/api/attachment/<fileId>`, o sea que ésta es la forma que la plataforma
+    // produce. Es relativa y autenticada: `new URL()` tira, y un `fetch` de una
+    // ruta relativa tira en Node — se caía al `catch` y devolvía el pixel vacío.
+    // Resultado: toda imagen bien re-hospedada salía invisible en el .docx y como
+    // hueco en el PDF. Se resuelve con el mismo `mintReadUrl` que usa la ruta HTTP
+    // (routes/api.attachment.$id.ts): firma ~1h y no necesita cookie, así que el
+    // fetch de abajo sí la alcanza.
+    const fileId = attachmentId(url);
+    if (fileId) {
+      const { mintReadUrl } = await import("./easybits-files.server");
+      const firmada = await mintReadUrl(fileId);
+      if (firmada) url = firmada;
+    }
+
     const key = keyFromUrl(url);
     if (key && storage.storageConfigured()) {
       const bytes = await storage.getBytes(key, "private");
@@ -311,6 +328,16 @@ async function ourFiles(url: string): Promise<Blob> {
     console.error("[doc export] imagen falló", e);
   }
   return new Blob([EMPTY_PNG]);
+}
+
+/**
+ * `/api/attachment/<fileId>` → el fileId. Acepta la forma relativa (la que escribe
+ * `rehostMarkdownImages`) y la absoluta contra nuestro propio origen, porque el
+ * editor colab guarda la que el navegador tenía resuelta.
+ */
+function attachmentId(url: string): string | null {
+  const m = String(url).match(/^(?:https?:\/\/[^/]+)?\/api\/attachment\/([\w.-]+)(?:[?#]|$)/);
+  return m ? m[1] : null;
 }
 
 /** `.../t3/<key>.png` o el link branded → la key del bucket. Null si es externa. */

@@ -670,6 +670,13 @@ const EB_DOC_STREAM_GUARDRAIL = [
   // el MISMO reglamento: con eb-doc son versiones con historial; con .docx es un archivo
   // nuevo de 2.1 MB cada vez y el turno que compara no tiene contra que comparar.
   "QUE TE DEN UN ARCHIVO NO SIGNIFICA QUE DEBAS DEVOLVER UNO. Si el insumo fue un .docx, .pdf o .txt y el resultado es PROSA (un reglamento corregido, un contrato revisado, un escrito reescrito), entregalo como ```eb-doc igual que si te lo hubieran pedido de cero. El formato de entrada NO dicta el de salida. Devolver el archivo pierde justo lo que hace util a un documento vivo: se edita, tiene versiones, se compara con la anterior y se exporta a .docx y PDF desde el panel cuando alguien lo necesite. Manda el archivo SOLO si te lo piden explicitamente («devuelvemelo en Word», «necesito el .docx»).",
+  // ⚠️ La regla de arriba disparó bien el 2026-08-20 —pidieron "conviértelo a Word"— y el
+  // agente entregó un eb-doc igual, porque el guardrail no distingue "quiero este texto en
+  // Word" de "quiero ESTE FORMATO reproducido". Lo segundo el eb-doc no lo puede: markdown
+  // no expresa celdas combinadas, anchos de columna ni bordes por celda, así que la cédula
+  // salió con el contenido correcto y la rejilla aproximada. La ruta existe: skill
+  // `docx-clone` sobre python-docx, que ya está en la caja.
+  "REPRODUCIR UN FORMATO NO ES LO MISMO QUE ESCRIBIR UN TEXTO. Si lo que te piden es replicar la MAQUETA de un documento fuente —una cédula, un formato, un formulario, un machote, una hoja con recuadros o rejilla, «lo más idéntico posible», «igualito al PDF»— eso NO cabe en un ```eb-doc: markdown no tiene celdas combinadas, ni anchos de columna, ni bordes por celda. Usa la skill `docx-clone` (mina el original, mide, construye con python-docx, RENDERIZA tu .docx y lo MIRAS antes de entregar) y entrégalo como ```eb-file. Y di qué no pudiste replicar: «lo más idéntico posible» sin decir dónde te quedaste corto es una promesa que nadie puede comprobar.",
   // ⚠️ Falla reincidente y CARA de diagnosticar: si un turno anterior se corta (deploy,
   // reinicio, red), el agente lo recuerda como entregado aunque el bloque nunca se publicara.
   // En el turno siguiente contesta "ya te lo entregué, míralo en el panel" y manda a la
@@ -689,6 +696,14 @@ const EB_DOC_STREAM_GUARDRAIL = [
   "eb-artifact — tema: **define la paleta en un solo `:root{}`** con estos tokens: `--color-background`, `--color-foreground`, `--color-primary`, `--color-primary-foreground`, `--color-secondary`, `--color-secondary-foreground`, `--color-muted`, `--color-muted-foreground`, `--color-accent`, `--color-accent-foreground`, `--color-border`, más `--radius`, `--font-heading` y `--font-body`. Todo color sale de ahí vía clases arbitrarias (`bg-[var(--color-primary)]`, `text-[var(--color-foreground)]`, `border-[var(--color-border)]`). Nada de colores regados por el markup (`bg-purple-600`, `#7c3aed`, `text-white`, gradientes hardcodeados): eso rompe el recoloreado del panel y la vista pública.",
   "eb-artifact — responsivo: mobile-first y sin desbordes, legible desde 360px. Nada de anchos o altos fijos en px para contenedores; usa `w-full`, `max-w-*`, `mx-auto`, `flex-wrap`, `grid-cols-1` subiendo con `sm:`/`md:`/`lg:`, tipografía escalada (`text-3xl md:text-5xl`), padding responsivo (`px-4 md:px-8`) e imágenes `max-w-full h-auto`.",
   "IMÁGENES: cuando te pidan generar, crear o dibujar una imagen, produce un PNG real con gpt-image-2. Si tienes tool MCP de imagen (generate_image / create_or_edit_image), úsala; en code-mode usa `/opt/gs-sdk/image.mjs` (`generate` para crear, `edit` para editar una existente — no la re-dibujes). Para que se vea en el chat en code-mode: sube los bytes con `image.publish(bytes, nombre)` y emite la URL que devuelve como markdown `![descripción](url)`. Una ruta local (/tmp/…) no se muestra: el usuario vería solo texto. Sí puedes generar imágenes; no digas que no tienes herramienta.",
+  // ⚠️ La regla de arriba estaba redactada SÓLO alrededor de imágenes generadas con
+  // `image.mjs`, y el modelo la leyó como que aplica a ésas. El 2026-08-20 un agente minó
+  // el logo de un PDF con `pdf-assets`, lo metió como `![Liga…](logo.png)` —ruta de su
+  // caja— y entregó la cédula sin logo. La única línea que decía "publica primero" vivía
+  // en `escrito-juridico`, dentro de la sección de dictámenes periciales: el agente no
+  // tenía por qué abrirla. Va aquí, y ENUMERANDO los orígenes, porque una lista
+  // incompleta se lee como permiso (mismo criterio que la lista de tipos de escrito).
+  "TODA IMAGEN DE UN DOCUMENTO VA COMO URL PUBLICADA — venga de donde venga. Da igual si la generaste, la minaste de un PDF con `pdf-assets`, la sacaste de un .docx con `unzip`, la descargaste o ya estaba en tu workspace: antes de escribirla en un ```eb-doc o ```eb-artifact, PUBLÍCALA con `publish()` de `/opt/gs-sdk/storage.mjs` (o `image.publish`) y usa la URL que te devuelve. **NUNCA** un nombre pelón (`logo.png`), una ruta relativa (`analysis/foto.png`), `/tmp/…`, `/data/workspaces/…` ni `file://`: el documento se guarda en la plataforma, no en tu caja, así que esas rutas no existen para quien lo abre y salen como hueco. El hueco NO da error — el documento se entrega igual y se lee como completo, que es justo lo que lo hace caro. Si publicaste bien, la URL empieza con `https://`.",
   "PROGRESO EN VIVO: antes de lanzar algo que tarde (generar o editar imagen, renderizar PDF, buscar o scrapear web, correr código del SDK, consultar la base) escribe una línea corta de qué vas a hacer ('🎨 Generando la imagen…', '🔎 Buscando en la web…'). Una línea, no un párrafo, y solo para lo que tarda — las lecturas rápidas no se narran.",
   "SUBAGENTES: si delegas partes de un artefacto, copia en el prompt de cada subagente las reglas de tema y responsivo de arriba. Si no, cada uno inventa su paleta y el ensamblado sale incoherente.",
   "Un bloque = un artefacto, y se muestra generándose en vivo en el panel; la plataforma lo guarda con versiones. Fuera del bloque, solo una frase breve de contexto, sin links.",
@@ -916,6 +931,26 @@ async function artifactDocHint(currentDoc?: CurrentDoc | null): Promise<string> 
       `\`renderDoc()\` de \`pdf-doc\`, MISMO nombre) y entrega un \`\`\`eb-file nuevo. Toca el ` +
       `artefacto de abajo SÓLO si lo mencionan explícitamente.`
     : "";
+  // ⚠️ IMÁGENES ROTAS del documento vivo, medidas por el servidor.
+  //
+  // Se deriva del markdown en cada turno en vez de guardarse: así sigue avisando hasta que
+  // de verdad se arregle, y no hace falta columna nueva. Una imagen sana quedó reescrita a
+  // `/api/attachment/<id>` por `rehostMarkdownImages`; lo que sobreviva como ruta relativa
+  // es una ruta de la CAJA del agente (`logo.png`, `analysis/foto.png`) — no existe fuera de
+  // ella y sale como hueco.
+  //
+  // Va en el TEXTO del turno y nunca en `appendSystemPrompt`: contenido variable ahí entra
+  // en el `configSig` del worker por valor y recicla la sesión en cada turno.
+  const rotas = [...md.matchAll(/!\[[^\]]*\]\(([^)\s]+)/g)]
+    .map((m) => m[1])
+    .filter((u) => !/^(https?:|data:|\/api\/attachment\/)/i.test(u));
+  const imagenesRotas = rotas.length
+    ? `\n\n⚠️ ESTE DOCUMENTO TIENE ${rotas.length} IMAGEN${rotas.length > 1 ? "ES" : ""} ROTA${rotas.length > 1 ? "S" : ""}: ` +
+      `${[...new Set(rotas)].slice(0, 5).map((u) => `\`${u}\``).join(", ")}. ` +
+      `Son rutas de TU caja: el documento se guarda en la plataforma, no en tu disco, así que ahí no existen y el usuario ve un hueco. ` +
+      `Publica el archivo con \`publish()\` de \`/opt/gs-sdk/storage.mjs\` y re-emite el documento con la URL que te devuelve. ` +
+      `Si el archivo ya no está en tu caja, dilo — no lo dejes roto en silencio.`
+    : "";
   if (!md) return "";
   const kind = currentDoc!.kind;
   const fence = kind === "sheet" ? "eb-sheet" : kind === "artifact" ? "eb-artifact" : "eb-doc";
@@ -976,6 +1011,7 @@ async function artifactDocHint(currentDoc?: CurrentDoc | null): Promise<string> 
       `ábrelo con su herramienta, extrae SÓLO lo que necesitas y colócalo con eb-patch. ` +
       `No transcribas el documento fuente en tu respuesta.` +
       extentRule +
+      imagenesRotas +
       (recortado ? TRUNCATED_RULE : "") +
       (index ? `\n\nBloques direccionables:\n${index}` : "") +
       `\n\nContenido actual en ${lang}:\n\n\`\`\`\n${recortado ?? md}\n\`\`\`]\n\n`
@@ -1000,6 +1036,7 @@ async function artifactDocHint(currentDoc?: CurrentDoc | null): Promise<string> 
       PATCH_RULES("artifact") +
       NEW_DOC_RULE(fence) +
       lastFileRule +
+      imagenesRotas +
       (recortado ? TRUNCATED_RULE : "") +
       (index ? `\n\nNodos direccionables:\n${index}` : "") +
       `\n\nContenido actual en ${lang}:\n\n\`\`\`\n${recortado ?? md}\n\`\`\`]\n\n`
@@ -1019,6 +1056,7 @@ async function artifactDocHint(currentDoc?: CurrentDoc | null): Promise<string> 
     NEW_DOC_RULE(fence) +
     lastFileRule +
     extentRule +
+    imagenesRotas +
     ` Este es su contenido actual en ${lang}:\n\n\`\`\`\n${md}\n\`\`\`]\n\n`
   );
 }
