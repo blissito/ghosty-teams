@@ -43,6 +43,13 @@ export async function ensureSchema(): Promise<void> {
         // Barrido de cáscaras huérfanas: un reinicio se lleva los turnos en vuelo (el
         // registro es en memoria) y deja sus burbujas en "pensando…" para siempre. Aquí
         // es el "arranque" de este tenant, así que aquí se limpian.
+        // Y el barrido de publicaciones a medias: hasta ahora la única forma de cerrar una
+        // era que alguien ABRIERA el room, así que una grabación cuya caja terminó después
+        // de que todos se fueron se quedaba en `pending` para siempre.
+        try {
+          const { armPublishSweep } = await import("./events/publish-sweep.server");
+          armPublishSweep(ns);
+        } catch { /* best-effort */ }
         try {
           const { sweepOrphans, armTurnSweep } = await import("./turns.server");
           await sweepOrphans();
