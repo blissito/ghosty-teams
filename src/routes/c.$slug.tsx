@@ -5985,7 +5985,7 @@ function RepoHomeCard({ onOpenRoom }: { onOpenRoom: (slug: string) => void }) {
   }, []);
 
   return (
-    <section className="gt-card rounded-2xl p-4">
+    <section className="gt-card h-full rounded-2xl p-4">
       <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold">
         <Github size={15} className="text-muted" /> {t("Repos")}
       </h2>
@@ -6140,7 +6140,7 @@ function HomeDashboard({
               único sitio donde se ve junto lo que cada room declaró por su cuenta. */}
           <RepoHomeCard onOpenRoom={onOpenRoom} />
 
-          <section className="gt-card rounded-2xl p-4">
+          <section className="gt-card h-full rounded-2xl p-4">
             <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold">
               <MessageSquare size={15} className="text-muted" /> {t("Conversaciones")}
             </h2>
