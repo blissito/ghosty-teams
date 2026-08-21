@@ -6131,11 +6131,10 @@ function HomeDashboard({
         </div>
 
         {/* Repos + Conversaciones.
-            `items-start`: sin él la rejilla estira las dos tarjetas a la altura de la más
-            alta, y con un solo repo eso dejaba ~250 px de vacío bajo un renglón. Con el
-            relleno gris el hueco pasaba por "tarjeta grande"; en plano se lee como que
-            algo falta. Cada una mide lo que tiene. */}
-        <div className="mb-8 grid items-start gap-4 sm:grid-cols-2">
+            Las dos miden lo mismo (sin `items-start`): dos tarjetas de distinta altura
+            lado a lado se leen como un desalineado, no como "una tiene menos". El vacío
+            bajo un repo suelto es preferible a la rejilla rota. */}
+        <div className="mb-8 grid gap-4 sm:grid-cols-2">
           {/* La lista de rooms vivía aquí y era redundante: el sidebar ya los tiene y sus
               nombres no dicen nada. Los repos sí — es en qué código anda el equipo, y el
               único sitio donde se ve junto lo que cada room declaró por su cuenta. */}
