@@ -321,6 +321,7 @@ async function listarGrabaciones(r: { ch: { id: number; call_share_slug?: string
   try {
     const { dbq } = await import("../../dbq.server");
     const { signedUrl, signedUrlEstable } = await import("../storage.server");
+    const { absolutaEnFixtergeek } = await import("./publish.server");
     const filas = await dbq(
       `SELECT id, storage_key, transcript_key, transcript_state, bytes, started_at, ended_at, by_name, poster_key, published_url, publish_state
          FROM gt_event_recordings WHERE channel_id = ? ORDER BY ended_at DESC LIMIT 20`,
@@ -340,7 +341,9 @@ async function listarGrabaciones(r: { ch: { id: number; call_share_slug?: string
       // El visor de fixtergeek, sólo cuando la publicación está CONFIRMADA: la URL se
       // conoce desde que se crea el borrador, pero enlazarla antes lleva a un vídeo
       // que todavía no tiene qué reproducir.
-      viewerUrl: f.publish_state === "ready" && f.published_url ? String(f.published_url) : null,
+      // ⚠️ Las filas anteriores al 2026-08-21 guardaron la ruta RELATIVA que devuelve
+      // fixtergeek, y el navegador la resolvía contra el host de Teams → "Not Found".
+      viewerUrl: f.publish_state === "ready" && f.published_url ? absolutaEnFixtergeek(String(f.published_url)) : null,
       publishState: (f.publish_state as string | null) ?? null,
       transcriptUrl: f.transcript_key ? `/room/${r.ch.call_share_slug}/transcripcion/${f.id}` : null,
       bytes: Number(f.bytes ?? 0),

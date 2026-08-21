@@ -42,6 +42,18 @@ async function pedirAFixtergeek(payload: Record<string, unknown>): Promise<Recor
 }
 
 /**
+ * ⚠️ fixtergeek devuelve el `viewerUrl` RELATIVO (`/cursos/<curso>/<video>`), y guardarlo
+ * tal cual hacía que el enlace de la lista de grabaciones se resolviera contra el host de
+ * Teams (`<slug>.teams.ghosty.studio/cursos/…`): "Not Found" con el vídeo perfectamente
+ * publicado del otro lado.
+ */
+export function absolutaEnFixtergeek(u: string): string {
+  if (!u || /^https?:\/\//i.test(u)) return u;
+  const base = (process.env.FIXTERGEEK_BASE_URL || "https://www.fixtergeek.com").replace(/\/$/, "");
+  return base + (u.startsWith("/") ? u : "/" + u);
+}
+
+/**
  * Crea el vídeo en borrador y devuelve su id. Es lo PRIMERO que pasa al detener, porque el
  * `videoId` va dentro de la llave de todos los objetos que la caja va a subir.
  *
@@ -61,7 +73,7 @@ export async function crearBorrador(opts: {
   return {
     videoId: String(d.videoId),
     slug: String(d.slug),
-    viewerUrl: String(d.viewerUrl ?? ""),
+    viewerUrl: absolutaEnFixtergeek(String(d.viewerUrl ?? "")),
   };
 }
 
