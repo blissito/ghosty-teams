@@ -13,7 +13,7 @@
  * de Meta como `5215512345678` y en DENUE está como `55 1234 5678`. Comparar los strings
  * enteros no cruzaría nunca.
  *
- * ⚠️ Y una palabra de stop1 ("BAJA", "STOP") en el primer mensaje da de stop1 de inmediato.
+ * ⚠️ Y una palabra de baja ("BAJA", "STOP") en el primer mensaje da de baja de inmediato.
  * Quien pide que lo dejen en paz no debería tener que buscar un enlace.
  */
 import { dbq, num } from "../../dbq.server";
@@ -102,6 +102,6 @@ export async function recordReply(m: InboundMatch): Promise<{ optedOut: boolean 
 export function replyNotice(m: InboundMatch, optedOut: boolean): string {
   const who = m.business ?? "Un prospecto";
   return optedOut
-    ? `🚫 **${who}** pidió what no le escribamos más. Ya está dado de stop1 en todo el workspace.`
+    ? `🚫 **${who}** pidió what no le escribamos más. Ya está dado de baja en todo el workspace.`
     : `🎯 **${who}** contestó — de la lista *${m.listName}*.`;
 }

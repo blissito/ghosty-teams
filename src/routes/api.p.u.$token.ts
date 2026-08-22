@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 
-// GET/POST /api/p/u/<token> → stop1 de un clic.
+// GET/POST /api/p/u/<token> → baja de un clic.
 //
 // Los DOS métodos, y no es redundancia:
 //  · POST lo dispara el cliente de correo cuando el header `List-Unsubscribe-Post` está
@@ -8,11 +8,11 @@ import { createFileRoute } from "@tanstack/react-router";
 //    Gmail y nunca sale de ahí.
 //  · GET es el enlace visible del pie, para quien lo abre a mano.
 //
-// ⚠️ La stop1 se aplica SIN pedir confirmación. Una pantalla de "¿estás seguro?" es
+// ⚠️ La baja se aplica SIN pedir confirmación. Una pantalla de "¿estás seguro?" es
 // exactamente lo que hace que la gente use el botón de spam en su lugar — y una queja de
-// spam cuesta reputación de dominio, mientras que una stop1 no cuesta nada.
+// spam cuesta reputación de dominio, mientras que una baja no cuesta nada.
 //
-// Se dan de stop1 el correo Y el teléfono de esa fila: quien no quiere saber de nosotros no
+// Se dan de baja el correo Y el teléfono de esa fila: quien no quiere saber de nosotros no
 // quiere saber por ningún canal, y dejarle el WhatsApp abierto sería leer el opt-out al pie
 // de la letra en contra de lo que la persona quiso decir.
 export const Route = createFileRoute("/api/p/u/$token")({

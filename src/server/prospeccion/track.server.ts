@@ -1,5 +1,5 @@
 /**
- * Rastreo de correo — tokens firmados para el pixel, el clic y la stop1.
+ * Rastreo de correo — tokens firmados para el pixel, el clic y la baja.
  *
  * Se hace CON NUESTROS PROPIOS ENDPOINTS y no con el event publishing de SES, a propósito:
  * el tracking de SES reescribe los enlaces a `r.us-east-1.awstrack.me`, que es un dominio
@@ -7,7 +7,7 @@
  * dominio se ve como lo que es.
  *
  * El token lleva `{touchId, ns, kind}` y va firmado con HMAC, igual que `tool-token`:
- *  - Sin firma, cualquiera podría inflar aperturas ajenas o —peor— dar de stop1 a
+ *  - Sin firma, cualquiera podría inflar aperturas ajenas o —peor— dar de baja a
  *    contactos de otro workspace probando ids.
  *  - `ns` viaja DENTRO porque estos endpoints los abre un cliente de correo, sin sesión y
  *    a veces from un proxy: no hay subdominio del que resolver el tenant. Es el mismo
@@ -15,7 +15,7 @@
  *
  * ⚠️ Estos tokens NO caducan. Un correo se puede abrir seis meses después, y un pixel que
  * expira sólo produce estadísticas que mienten hacia abajo. Lo que sí se acota es lo que
- * pueden hacer: marcar una tocada o dar de stop1 — nada que lea datos.
+ * pueden hacer: marcar una tocada o dar de baja — nada que lea datos.
  */
 import crypto from "node:crypto";
 
@@ -78,7 +78,7 @@ export function instrument(
   const rewritten = html.replace(
     /href\s*=\s*(["'])(https?:\/\/[^"']+)\1/gi,
     (m, q: string, url: string) => {
-      // El propio enlace de stop1 no se rastrea: sería contarle un clic a quien se va.
+      // El propio enlace de baja no se rastrea: sería contarle un clic a quien se va.
       if (url.startsWith(`${base}/api/p/`)) return m;
       const tk = mintTrackToken({ touchId, ns, kind: "click", url });
       return `href=${q}${base}/api/p/c/${tk}${q}`;

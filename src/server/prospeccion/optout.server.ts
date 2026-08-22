@@ -41,7 +41,7 @@ export function normalize(kind: OptOutKind, value: string): string | null {
   return d.length >= 10 ? d.slice(-10) : null;
 }
 
-/** Da de stop1. Idempotente: el índice único absorbe el segundo intento. */
+/** Da de baja. Idempotente: el índice único absorbe el segundo intento. */
 export async function addOptOut(
   kind: OptOutKind,
   value: string,
@@ -104,7 +104,7 @@ export async function listOptOuts(limit = 500): Promise<OptOutRow[]> {
 }
 
 /**
- * Quita una stop1.
+ * Quita una baja.
  *
  * Existe porque una queja mal clasificada o un rebote temporal no deberían condenar a un
  * contacto para siempre — pero es una acción del dueño, deliberada, nunca automática.
@@ -113,7 +113,7 @@ export async function removeOptOut(id: number): Promise<void> {
   await dbq(`DELETE FROM gt_prosp_optout WHERE id = ?`, [id]);
 }
 
-/** Marca las filas de una lista que están dadas de stop1. Para pintarlas en la rejilla. */
+/** Marca las filas de una lista que están dadas de baja. Para pintarlas en la rejilla. */
 export async function markOptedOutRows(listId: number): Promise<number> {
   const rows = await dbq(
     `SELECT id, email, phone FROM gt_prosp_rows WHERE list_id = ?`,

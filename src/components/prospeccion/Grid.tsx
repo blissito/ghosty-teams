@@ -191,7 +191,7 @@ export function ProspGrid({
         resizable: false,
         renderCell: ({ rowIdx, row }) =>
           row.__status === "optout" ? (
-            <span title={t("Se dio de stop1. No se le vuelve a escribir.")} className="text-draft-500/70 flex items-center h-full">
+            <span title={t("Se dio de baja. No se le vuelve a escribir.")} className="text-red-500/70 flex items-center h-full">
               <Ban size={13} />
             </span>
           ) : (

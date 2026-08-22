@@ -180,7 +180,7 @@ export function DropZone({
             onAnimationComplete={() => setTimeout(() => setError(null), 3500)}
             className="absolute bottom-4 left-1/2 -translate-x-1/2 z-30 gt-card rounded-xl px-4 py-2.5 text-xs flex items-center gap-2"
           >
-            <FileSpreadsheet size={14} className="text-draft-500" /> {error}
+            <FileSpreadsheet size={14} className="text-red-500" /> {error}
           </motion.div>
         ) : null}
       </AnimatePresence>

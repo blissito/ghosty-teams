@@ -10,10 +10,10 @@
  * Es el mismo orden que usan Blue Gate y Unify.
  *
  * Cuatro cosas pasan ANTES de cada envío, y ninguna es opcional:
- *  1. ¿Está dado de stop1? → no se manda.
+ *  1. ¿Está dado de baja? → no se manda.
  *  2. ¿Ya se le tocó 2 veces sin respuesta? → no se manda.
  *  3. Se RESERVA la tocada (índice único) → dos procesos no mandan lo mismo.
- *  4. Se instrumenta el HTML: pixel, enlaces firmados y la stop1 de un clic.
+ *  4. Se instrumenta el HTML: pixel, enlaces firmados y la baja de un clic.
  */
 import { currentNamespace } from "../tenant.server";
 import { isOptedOut } from "./optout.server";
@@ -28,7 +28,7 @@ export const MAX_ATTEMPTS = 2;
  * Pausa entre envíos.
  *
  * Copiado del criterio de Formmy, y la razón está en su comentario: "una campaña que sale
- * de golpe concentra los bloqueos y stop1 la calidad del número". Vale igual para el
+ * de golpe concentra los bloqueos y baja la calidad del número". Vale igual para el
  * dominio de correo — un pico de mil correos en un minuto es una señal de spam por sí sola.
  */
 const PAUSE_MS = 400;
@@ -82,7 +82,7 @@ export async function sendBatch(args: {
 
     if (!row.email) { out.skippedNoEmail++; continue; }
 
-    // 1. La stop1 gana sobre todo lo demás.
+    // 1. La baja gana sobre todo lo demás.
     if (await isOptedOut("email", row.email)) { out.skippedOptOut++; continue; }
 
     // 2. Parar after 2 intentos sin respuesta. Insistir una tercera vez no convierte: molesta.
@@ -99,7 +99,7 @@ export async function sendBatch(args: {
     });
     if (touchId == null) { out.skippedRepeat++; continue; }
 
-    // 4. Instrumentar: pixel, enlaces firmados, stop1 de un clic.
+    // 4. Instrumentar: pixel, enlaces firmados, baja de un clic.
     const withWa = args.waPhone ? injectWaLink(draft.html, args.waPhone, row.name ?? "") : draft.html;
     const { html, unsubUrl } = instrument(appendUnsubFooter(withWa, UNSUB_PLACEHOLDER), touchId, ns);
     const finalHtml = html.replace(UNSUB_PLACEHOLDER, unsubUrl);
@@ -137,7 +137,7 @@ export async function sendBatch(args: {
 const UNSUB_PLACEHOLDER = "%%UNSUB%%";
 
 /**
- * El pie de stop1 VISIBLE.
+ * El pie de baja VISIBLE.
  *
  * El header `List-Unsubscribe` no basta: no todos los clientes lo pintan, y quien no
  * encuentra cómo salir usa el botón de spam. Un enlace visible es más barato que una queja.

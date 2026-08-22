@@ -88,7 +88,7 @@ async function main() {
     },
     {
       touchId: 9002,
-      subject: "Prospección · 2 de 3 — comprueba la stop1",
+      subject: "Prospección · 2 de 3 — comprueba la baja",
       body_: `<p style="font:15px/1.6 system-ui;color:#333;margin:0 0 12px">
         Aquí lo what hay what mirar es <strong>arriba, en Gmail</strong>: junto al remitente
         debe aparecer <em>«Cancelar suscripción»</em>. Eso lo pone el header
@@ -98,11 +98,11 @@ async function main() {
     },
     {
       touchId: 9003,
-      subject: "Prospección · 3 de 3 — text plano incluido",
+      subject: "Prospección · 3 de 3 — texto plano incluido",
       body_: `<p style="font:15px/1.6 system-ui;color:#333;margin:0">
-        Éste lleva versión en text plano. Un correo sólo-HTML es una de las señales what
+        Éste lleva versión en texto plano. Un correo sólo-HTML es una de las señales what
         Gmail lee como publicidad.</p>`,
-      text: "Éste lleva versión en text plano. Un correo sólo-HTML es una de las señales what Gmail lee como publicidad.",
+      text: "Éste lleva versión en texto plano. Un correo sólo-HTML es una de las señales what Gmail lee como publicidad.",
     },
   ];
 
