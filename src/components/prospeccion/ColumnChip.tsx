@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { ChevronDown, Loader2, Play, Sparkles, Trash2 } from "lucide-react";
+import { AtSign, ChevronDown, Loader2, Play, Sparkles, Trash2 } from "lucide-react";
 import { useT } from "../../i18n";
 
 /**
@@ -23,14 +23,26 @@ import { useT } from "../../i18n";
 export function ColumnChip({
   label,
   kind,
+  emailCount,
   running,
   onRun,
+  onUseAsEmail,
   onRemove,
 }: {
   label: string;
   kind: "base" | "enrich" | "ai" | "manual";
+  /**
+   * Cuántas de sus celdas parecen correos.
+   *
+   * ⚠️ La acción se ofrece SÓLO si hay: en «Madurez digital» era una pista falsa, y por eso
+   * se quitó. Pero quitarla del todo dejó sin salida el caso real — una lista cuyos correos
+   * viven en una columna propia («Correo de contacto») y no en la base, donde el envío y el
+   * verificador los buscan. El error no era la acción: era ofrecerla siempre.
+   */
+  emailCount: number;
   running: boolean;
   onRun: () => void;
+  onUseAsEmail: () => void;
   onRemove: () => void;
 }) {
   const t = useT();
@@ -50,6 +62,13 @@ export function ColumnChip({
   const acciones = [
     kind === "enrich" && { id: "run", icon: Play, label: t("Volver a buscarlo"), hint: t("En todas las filas"), run: onRun },
     kind === "ai" && { id: "run", icon: Sparkles, label: t("Que el agente la escriba"), hint: t("Un turno por fila: cuesta"), run: onRun },
+    emailCount > 0 && {
+      id: "email",
+      icon: AtSign,
+      label: t("Usar como Correo"),
+      hint: `${emailCount} ${emailCount === 1 ? "correo" : "correos"} · es la columna que usa el envío`,
+      run: onUseAsEmail,
+    },
     { id: "remove", icon: Trash2, label: t("Quitar columna"), hint: t("El dato conseguido se conserva"), run: onRemove, danger: true },
   ].filter(Boolean) as { id: string; icon: typeof Play; label: string; hint: string; run: () => void; danger?: boolean }[];
 

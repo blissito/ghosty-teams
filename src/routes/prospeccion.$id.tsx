@@ -4,7 +4,7 @@ import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { ArrowLeft, Plus, Sparkles, Target } from "lucide-react";
 import { useT } from "../i18n";
 import { me } from "../server/auth";
-import { addColumnFn, deleteColumnFn, getListFn, importTableFn, runAiColumnFn, runColumnFn, setCellFn } from "../server/prospeccion";
+import { addColumnFn, deleteColumnFn, getListFn, importTableFn, promoteEmailFn, runAiColumnFn, runColumnFn, setCellFn } from "../server/prospeccion";
 import { ProspGrid, aplanar, findLatLon, type GridRow } from "../components/prospeccion/Grid";
 import { FilterBar } from "../components/prospeccion/FilterBar";
 import { AgentDrawer } from "../components/prospeccion/AgentDrawer";
@@ -253,6 +253,21 @@ function ListPage() {
    * servidor corre la columna entera en una llamada y no reporta progreso parcial. Es honesto
    * — la columna está working — y evita fingir un detalle que no tenemos.
    */
+  /**
+   * Pasa los correos de una columna propia a la columna base Correo.
+   *
+   * Existe porque el envío y el verificador miran SÓLO la columna base, y una hoja
+   * importada trae los correos donde los traiga. Nunca pisa un correo que ya está.
+   */
+  const promote = useCallback(
+    async (key: string) => {
+      const r = await promoteEmailFn({ data: { listId, key } });
+      if (r.ok) setNotice(`✓ ${r.n} ${r.n === 1 ? "correo pasado" : "correos pasados"} a la columna Correo`);
+      await reload();
+    },
+    [listId, reload]
+  );
+
   const removeColumn = useCallback(
     async (key: string) => {
       await deleteColumnFn({ data: { listId, key } });
@@ -367,8 +382,11 @@ function ListPage() {
               key={c.key}
               label={c.label}
               kind={c.kind}
+              /* Se cuenta sobre la VISTA: si filtraste, la acción va a actuar sobre eso. */
+              emailCount={view.filter((r) => (r.data[c.key]?.v ?? "").includes("@")).length}
               running={running === c.key}
               onRun={() => runColumn_(c.key, c.kind)}
+              onUseAsEmail={() => promote(c.key)}
               onRemove={() => removeColumn(c.key)}
             />
           ))}
