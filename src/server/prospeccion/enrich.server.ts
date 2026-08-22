@@ -1,0 +1,265 @@
+/**
+ * Enriquecimiento por COLUMNA — el motor tipo Clay.
+ *
+ * La unidad de trabajo es la columna, no la fila: el usuario dice "agrégame ¿tiene sitio
+ * web?" y eso corre sobre las N filas. Cada enriquecedor es una función pequeña detrás de
+ * un registro, así que agregar uno nuevo no toca el motor.
+ *
+ * Dos ideas de Clay que sí valen la pena copiar:
+ *  · **Cascada**: se intentan varias fuentes en orden y gana la primera que resuelve. Un
+ *    correo puede salir del sitio, de una redactado social o de un proveedor de pago; la columna
+ *    declara el orden y el motor lo recorre.
+ *  · **Verificado**: la celda guarda si el dato se confirmó o se dedujo. Es lo que después
+ *    permite cobrar sólo lo que sirve — en México cobrar el intento fallido se castiga.
+ */
+import { dbq } from "../../dbq.server";
+import { listRows, setCell, type ProspRow, type Recipe } from "./lists.server";
+import { matches, type Filter } from "../../lib/prospeccion-filter";
+
+export type EnrichResult = { v: string | null; verified: boolean };
+
+export type Enricher = {
+  id: string;
+  label: string;
+  /**
+   * Si el dato ES una columna base, se escribe ahí directo.
+   *
+   * Sin esto, un enriquecedor de correos creaba una columna aparte y hacía falta una acción
+   * de «pasar estos valores a la columna Correo» — que es una idea del modelo interno, no
+   * del trabajo: quien busca el correo de un negocio quiere el correo del negocio, no una
+   * segunda columna de correos que además hay que promover a mano.
+   */
+  writesTo?: "name" | "phone" | "email" | "website" | "address" | "category";
+  /** Qué necesita de la fila para poder correr. Sin esto se salta sin gastar redactado. */
+  needs: (row: ProspRow) => boolean;
+  run: (row: ProspRow) => Promise<EnrichResult>;
+};
+
+const UA = "Mozilla/5.0 (compatible; GhostyProspeccion/1.0; +https://ghosty.studio)";
+const TIMEOUT = 12_000;
+
+async function fetchText(url: string): Promise<string | null> {
+  try {
+    const res = await fetch(url, {
+      headers: { "User-Agent": UA, Accept: "text/html,application/xhtml+xml" },
+      redirect: "follow",
+      signal: AbortSignal.timeout(TIMEOUT),
+    });
+    if (!res.ok) return null;
+    const tipo = res.headers.get("content-type") ?? "";
+    if (!tipo.includes("html") && !tipo.includes("text")) return null;
+    // Tope de 400KB: una homeHtml normal no pasa de 150KB y no hay razón para leer un blob.
+    const buf = await res.arrayBuffer();
+    return new TextDecoder("utf-8").decode(buf.slice(0, 400_000));
+  } catch {
+    return null;
+  }
+}
+
+/** Correos de plataforma que aparecen en cualquier sitio y no son del negocio. */
+const JUNK_EMAIL = /@(sentry|wixpress|example|sentry\.io|godaddy|wordpress|squarespace|shopify|schema|w3\.org|googleapis)/i;
+const ASSET_EXT = /\.(png|jpe?g|gif|webp|svg|css|js)$/i;
+
+function emailsIn(html: string): string[] {
+  const seen = new Set<string>();
+  // `mailto:` primero: es una declaración explícita, no una coincidencia de text.
+  for (const m of html.matchAll(/mailto:([^"'?>\s]+)/gi)) {
+    const e = decodeURIComponent(m[1]).toLowerCase().trim();
+    if (e.includes("@") && !JUNK_EMAIL.test(e) && !ASSET_EXT.test(e)) seen.add(e);
+  }
+  for (const m of html.matchAll(/[\w.+-]+@[\w-]+\.[\w.-]{2,}/g)) {
+    const e = m[0].toLowerCase();
+    if (!JUNK_EMAIL.test(e) && !ASSET_EXT.test(e)) seen.add(e);
+  }
+  return [...seen];
+}
+
+/**
+ * Ordena los correos por qué tan probable es que sean del negocio.
+ *
+ * `contacto@` y `ventas@` ganan a `soporte@`, y cualquiera gana a un gmail suelto que suele
+ * ser de quien hizo la página. No es exacto y no pretende serlo: la columna se puede
+ * corregir a mano, que es justo para lo que la rejilla es editable.
+ */
+function bestEmail(emails: string[], domain: string | null): string | null {
+  if (!emails.length) return null;
+  const score = (e: string): number => {
+    let p = 0;
+    const [mailbox, host] = e.split("@");
+    if (domain && host?.endsWith(domain)) p += 10;
+    if (/^(contacto|ventas|hola|info|comercial|citas|reservas)/.test(mailbox)) p += 5;
+    if (/^(no-?reply|postmaster|abuse|webmaster|admin|soporte)/.test(mailbox)) p -= 6;
+    if (/(gmail|hotmail|outlook|yahoo)\./.test(host ?? "")) p -= 2;
+    return p;
+  };
+  return [...emails].sort((a, b) => score(b) - score(a))[0];
+}
+
+function domainOf(url: string | null): string | null {
+  if (!url) return null;
+  try {
+    return new URL(url.startsWith("http") ? url : `https://${url}`).hostname.replace(/^www\./, "");
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Los enriquecedores que existen hoy.
+ *
+ * Deliberadamente pocos y todos gratis: cada uno que necesite un proveedor de pago hay que
+ * costearlo POR FILA antes de fijarle precio, y eso es una decisión aparte.
+ */
+export const ENRICHERS: Record<string, Enricher> = {
+  /** ¿El sitio existe y responde? Es el filtro de calidad más barato que hay. */
+  sitio_vivo: {
+    id: "sitio_vivo",
+    label: "¿El sitio funciona?",
+    needs: (r) => !!r.website,
+    async run(r) {
+      const html = await fetchText(r.website!);
+      return { v: html ? "sí" : "no", verified: true };
+    },
+  },
+
+  /**
+   * El correo, sacado del sitio del negocio.
+   *
+   * Es EL enriquecedor que desbloquea el loop: DENUE casi nunca trae correo, y sin correo
+   * no hay paso "abrir". Mira la homeHtml y, si no encuentra, una página de contacto.
+   */
+  correo_del_sitio: {
+    id: "correo_del_sitio",
+    label: "Correo del sitio",
+    writesTo: "email",
+    needs: (r) => !!r.website && !r.email,
+    async run(r) {
+      const domain = domainOf(r.website);
+      const homeHtml = await fetchText(r.website!);
+      if (homeHtml) {
+        const e = bestEmail(emailsIn(homeHtml), domain);
+        if (e) return { v: e, verified: true };
+      }
+      // Segunda pasada: las rutas de contacto habituales. Una sola, no un crawl.
+      const base = r.website!.replace(/\/$/, "");
+      for (const path of ["/contacto", "/contact", "/nosotros"]) {
+        const p = await fetchText(`${base}${path}`);
+        if (!p) continue;
+        const e = bestEmail(emailsIn(p), domain);
+        if (e) return { v: e, verified: true };
+      }
+      return { v: null, verified: false };
+    },
+  },
+
+  /** ¿Tiene sitio, sí o no? Sale de la fila, sin redactado. El clásico "sin sitio web" del ICP. */
+  tiene_sitio: {
+    id: "tiene_sitio",
+    label: "¿Tiene sitio?",
+    needs: () => true,
+    async run(r) {
+      return { v: r.website ? "sí" : "no", verified: true };
+    },
+  },
+};
+
+export function listEnrichers() {
+  return Object.values(ENRICHERS).map((e) => ({ id: e.id, label: e.label, writesTo: e.writesTo ?? null }));
+}
+
+/** A qué columna base escribe una cascada, si alguno de sus pasos lo declara. */
+export function waterfallWritesTo(ids: string[]): string | null {
+  for (const id of ids) {
+    const w = ENRICHERS[id]?.writesTo;
+    if (w) return w;
+  }
+  return null;
+}
+
+export type RunProgress = { done: number; total: number; filled: number };
+
+/**
+ * Corre una columna sobre toda la lista.
+ *
+ * Concurrencia limitada a propósito: son peticiones a sitios de terceros, y disparar 100 a
+ * la vez es indistinguible de un ataque from el otro lado. Cuatro a la vez tarda poco y no
+ * se gana enemigos.
+ *
+ * ⚠️ Nunca pisa una celda escrita A MANO. Alguien que corrigió un correo no quiere que la
+ * siguiente pasada se lo borre, y sin esta regla el trabajo humano se pierde en silencio.
+ */
+export async function runColumn(args: {
+  listId: number;
+  key: string;
+  recipe: Recipe | null;
+  /**
+   * ⚠️ La VISTA, no la lista. Enriquecer sobre las 10,728 cuando la persona está mirando
+   * 312 es hacer algo distinto de lo que pidió — y en las que cuestan red o tokens, es
+   * gastar de más sin avisar.
+   */
+  filter?: Filter;
+  fields?: string[];
+  onProgress?: (p: RunProgress) => void;
+  concurrency?: number;
+}): Promise<RunProgress> {
+  const todas = await listRows(args.listId);
+  const rows = args.filter?.length
+    ? todas.filter((r) => matches(r as unknown as Record<string, unknown>, args.filter!, args.fields ?? []))
+    : todas;
+  const waterfall_ = (args.recipe?.waterfall ?? []).map((id) => ENRICHERS[id]).filter(Boolean);
+  const total = rows.length;
+  let done = 0;
+  let filled = 0;
+
+  if (!waterfall_.length) return { done: 0, total, filled: 0 };
+
+  const queue = [...rows];
+  const workers = Array.from({ length: Math.min(args.concurrency ?? 4, 8) }, async () => {
+    for (;;) {
+      const row = queue.shift();
+      if (!row) return;
+
+      const ya = row.data[args.key];
+      if (ya?.src === "manual" && ya.v) { done++; args.onProgress?.({ done, total, filled }); continue; }
+
+      let res: EnrichResult = { v: null, verified: false };
+      let fuente = "";
+      for (const e of waterfall_) {
+        if (!e.needs(row)) continue;
+        try {
+          res = await e.run(row);
+        } catch {
+          res = { v: null, verified: false };
+        }
+        if (res.v) { fuente = e.id; break; }
+      }
+
+      await setCell(row.id, args.key, res.v, { src: fuente || "sin_fuente", verified: res.verified });
+      if (res.v) filled++;
+      done++;
+      args.onProgress?.({ done, total, filled });
+    }
+  });
+
+  await Promise.all(workers);
+  return { done, total, filled };
+}
+
+/**
+ * Copia a la columna base `email` lo que encontró una columna de enriquecimiento.
+ *
+ * Existe porque el envío lee `row.email` y no un JSON: la columna descubre, esto promueve.
+ * Se hace explícito y no automático — quien mira la lista decide si ese correo le convence.
+ */
+export async function promoteToEmail(listId: number, key: string): Promise<number> {
+  const rows = await listRows(listId);
+  let n = 0;
+  for (const r of rows) {
+    const c = r.data[key];
+    if (!r.email && c?.v && c.v.includes("@")) {
+      await dbq(`UPDATE gt_prosp_rows SET email = ? WHERE id = ?`, [c.v, r.id]);
+      n++;
+    }
+  }
+  return n;
+}

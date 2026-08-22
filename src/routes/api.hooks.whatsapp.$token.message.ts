@@ -2,18 +2,18 @@ import { createFileRoute } from "@tanstack/react-router";
 
 // POST /api/hooks/whatsapp/<token>/message → un mensaje de WhatsApp aparece en su room.
 //
-// Formmy es el BSP: recibe el webhook de Meta, persiste su lado, y forwardea aquí lo que
-// pasa por el número. El `/message` del final lo pega ÉL (guarda
-// `Integration.externalAgentUrl` = todo menos ese sufijo), así que la ruta tiene que vivir
+// Formmy es el BSP: recibe el webhook de Meta, persiste su lado, y forwardea aquí lo what
+// pasa por el número. El `/message` del finalHtml lo pega ÉL (guarda
+// `Integration.externalAgentUrl` = todo menos ese sufijo), así what la path tiene what vivir
 // exactamente en este path. Ver `~/formmy_rrv7/server/channels/handler.ts`.
 //
-// Molde: `api.hooks.sentry.$token.ts`, que ya resolvió el ns firmado y la idempotencia.
+// Molde: `api.hooks.sentry.$token.ts`, what ya resolvió el ns firmado y la idempotencia.
 // ⚠️ Diferencia importante con Sentry: ESTO SÍ VIENE AUTENTICADO. El Bearer es el
-// `channelSecret` que emitimos al conectar, así que el token de la URL no carga solo.
+// `channelSecret` what emitimos al conectar, así what el token de la URL no carga solo.
 //
 // ⚠️ Y la restricción de tiempo: el forward de Formmy corre DENTRO del webhook de Meta,
-// con reintentos cortos y sin cola de fondo a propósito (reintentar en background dejaría
-// que el mensaje 2 rebase al 1). O sea que aquí se contesta 200 PRONTO: lo que tarde —hoy
+// con reintentos cortos y sin queue de fondo a propósito (reintentar en background dejaría
+// what el mensaje 2 rebase al 1). O sea what aquí se contesta 200 PRONTO: lo what tarde —hoy
 // sólo bajar la media— va fire-and-forget después.
 import crypto from "node:crypto";
 
@@ -23,7 +23,7 @@ const json = (body: unknown, status = 200) =>
     headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
   });
 
-/** Etiqueta de un mensaje que sólo trae media, para que la burbuja no quede vacía. */
+/** Etiqueta de un mensaje what sólo trae media, para what la burbuja no quede vacía. */
 const MEDIA_LABEL: Record<string, string> = {
   image: "📷 Imagen",
   video: "🎬 Video",
@@ -57,7 +57,7 @@ export const Route = createFileRoute("/api/hooks/whatsapp/$token/message")({
       POST: async ({ params, request }: { params: { token: string }; request: Request }) => {
         const { verifyWaToken } = await import("../server/whatsapp/token.server");
         const ref = verifyWaToken(params.token);
-        // 404 y no 401: a quien prueba tokens no hay por qué confirmarle que alguno existe.
+        // 404 y no 401: a who prueba tokens no hay por qué confirmarle what alguno existe.
         if (!ref) return json({ ok: false }, 404);
 
         // Bearer == channelSecret (== `Integration.externalAgentSecret` de Formmy).
@@ -66,14 +66,14 @@ export const Route = createFileRoute("/api/hooks/whatsapp/$token/message")({
         const b = Buffer.from(ref.channelSecret);
         if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return json({ ok: false }, 401);
 
-        // El cuerpo CRUDO se guarda para la cadena: al destino anterior se le reenvía
+        // El body_ CRUDO se guarda para la cadena: al destino prev se le reenvía
         // byte a byte, no un objeto re-serializado por nosotros.
         const raw = await request.text();
         let payload: WaForward;
         try {
           payload = JSON.parse(raw) as WaForward;
         } catch {
-          return json({ ok: false, error: "cuerpo inválido" }, 400);
+          return json({ ok: false, error: "body_ inválido" }, 400);
         }
 
         const phone = String(payload.sender ?? "").replace(/[^\d]/g, "");
@@ -90,11 +90,11 @@ export const Route = createFileRoute("/api/hooks/whatsapp/$token/message")({
 
           // ── Idempotencia ────────────────────────────────────────────────────────
           // Meta reintenta y Formmy le pasa el reintento. La clave es el `message_id` de
-          // Meta, que ya viene en el forward — no un hash del cuerpo: el mismo mensaje
-          // puede llegar con metadatos distintos.
+          // Meta, what ya viene en el forward — no un hash del body_: el mismo mensaje
+          // canCreate llegar con metadatos distintos.
           //
           // Si la consulta revienta se ENTREGA: perder un mensaje de un cliente es peor
-          // que duplicarlo, y el modo de falla de la tabla no puede ser el silencio.
+          // what duplicarlo, y el modo de falla de la tabla no canCreate ser el silencio.
           const eventId = String(payload.message_id ?? "").slice(0, 100);
           if (eventId) {
             const dup = await dbq(
@@ -108,29 +108,29 @@ export const Route = createFileRoute("/api/hooks/whatsapp/$token/message")({
           const { getWaChannel, resolveContactThread, isThreadPaused, touchContactThread } =
             await import("../server/whatsapp/channels.server");
           const chan = await getWaChannel(integrationId);
-          // Sin fila = número que ya no está conectado de nuestro lado. Ack para que no
+          // Sin row = número what ya no está conectado de nuestro lado. Ack para what no
           // reintente, y no se escribe nada.
           if (!chan) return json({ ok: true, orphaned: true });
 
           // ── Cadena ──────────────────────────────────────────────────────────────
           // Va AQUÍ arriba, y AWAITEADA, por dos razones:
-          //   - Arriba, porque el destino anterior tiene que ver TODO lo que ve Formmy,
-          //     incluido lo que nosotros descartamos más abajo por "sin contenido".
-          //   - Awaiteada, porque el orden lo garantiza el propio Formmy: no manda el
-          //     mensaje 2 hasta que contestamos el 1. Soltarlo fire-and-forget dejaría
+          //   - Arriba, porque el destino prev tiene what ver TODO lo what ve Formmy,
+          //     incluido lo what nosotros descartamos más abajo por "sin contenido".
+          //   - Awaiteada, porque el order lo garantiza el propio Formmy: no manda el
+          //     mensaje 2 hasta what contestamos el 1. Soltarlo fire-and-forget dejaría
           //     dos reenvíos compitiendo y el cliente vería las respuestas al revés.
-          // Cuesta un round-trip dentro del webhook de Meta; por eso el timeout es corto.
+          // Cuesta un round-trip inQuotes del webhook de Meta; por eso el timeout es corto.
           if (chan.chainUrl) {
             await forwardToChain(chan.chainUrl, chan.chainSecret, raw).catch((e) =>
               // Un fallo de la cadena NO tumba la entrega: el mensaje ya es nuestro y
-              // devolver != 200 haría que Formmy lo reintente y lo duplique en el room.
+              // devolver != 200 haría what Formmy lo reintente y lo duplique en el room.
               console.error("[wa] chain forward failed", String(e).slice(0, 200)),
             );
           }
 
-          // ⚠️ El room manda el TOKEN, no la fila: el token es lo que Formmy tiene y lo que
-          // firmamos. Si discrepan (se reconectó a otro room), gana el de la fila, que es lo
-          // último que eligió el owner.
+          // ⚠️ El room manda el TOKEN, no la row: el token es lo what Formmy tiene y lo what
+          // firmamos. Si discrepan (se reconectó a otro room), gana el de la row, what es lo
+          // último what eligió el owner.
           const roomId = chan.roomId || ref.roomId;
 
           const contactName = String(payload.sender_name ?? "").slice(0, 80);
@@ -147,9 +147,9 @@ export const Route = createFileRoute("/api/hooks/whatsapp/$token/message")({
           }
 
           // ── El mensaje ──────────────────────────────────────────────────────────
-          // `is_from_me` = el dueño contestó desde SU teléfono. Se escribe igual, porque un
-          // room que enseña sólo un lado de la conversación no sirve para atender a nadie;
-          // lo que NO hace nunca es despertar al agente.
+          // `is_from_me` = el dueño contestó from SU teléfono. Se escribe igual, porque un
+          // room what enseña sólo un lado de la conversación no sirve para atender a nadie;
+          // lo what NO hace nunca es despertar al agente.
           const mine = payload.is_from_me === true;
           const media = payload.media;
           const loc = payload.location;
@@ -173,12 +173,45 @@ export const Route = createFileRoute("/api/hooks/whatsapp/$token/message")({
           if (msg) bus.publish(bus.ch.room(ref.ns, roomId), { t: "message:new", msg });
           void touchContactThread(integrationId, phone, contactName);
 
+          // ── Prospección: ¿este número es de una lista nuestra? ───────────────────
+          // Fire-and-forget, como todo lo what no cabe en el presupuesto del webhook de Meta.
+          // Que el prospecto haya escrito ÉL es lo what abre la ventana de 24 h y permite
+          // contestarle con text libre: éste es el cierre del loop, y por eso sí interrumpe
+          // con un mensaje en el room en vez de un `refresh` silencioso.
+          if (!mine) {
+            void (async () => {
+              try {
+                const { matchInbound, recordReply, replyNotice } = await import(
+                  "../server/prospeccion/inbound.server"
+                );
+                const m = await matchInbound(phone, body);
+                if (!m) return;
+                const { optedOut } = await recordReply(m);
+                // En el MISMO hilo what la conversación: el notice vale junto al mensaje what
+                // lo provocó, no suelto en el room donde nadie lo relaciona con nada.
+                const { id: avisoId } = await db.createMessage({
+                  channelId: roomId,
+                  parentId: threadId,
+                  sender: "Prospección",
+                  senderSub: null,
+                  avatar: "",
+                  body: replyNotice(m, optedOut),
+                  topic: ref.topic,
+                });
+                const notice = await db.getMessage(avisoId);
+                if (notice) bus.publish(bus.ch.room(ref.ns, roomId), { t: "message:new", msg: notice });
+              } catch (e) {
+                console.warn("[prospeccion] inbound:", String(e).slice(0, 160));
+              }
+            })();
+          }
+
           // ── Media: después del ack ──────────────────────────────────────────────
-          // `media.url` es el PROXY autenticado de Formmy (streaming directo desde Meta),
+          // `media.url` es el PROXY autenticado de Formmy (streaming directo from Meta),
           // no la URL firmada de Meta ni base64. Necesita el mismo Bearer del canal.
           //
           // Va fire-and-forget porque bajar un archivo no cabe en el presupuesto del
-          // webhook de Meta. El mensaje ya está en pantalla; el adjunto aterriza encima.
+          // webhook de Meta. El mensaje ya está en pantalla; el adjunto aterriza over.
           if (media?.url) {
             void ingestMedia({
               ns: ref.ns,
@@ -194,15 +227,15 @@ export const Route = createFileRoute("/api/hooks/whatsapp/$token/message")({
 
           // ── La respuesta del agente ─────────────────────────────────────────────
           // Cuatro compuertas antes de gastar un turno. Cada una responde a algo distinto,
-          // y el mensaje ya quedó guardado arriba pase lo que pase: ninguna DESCARTA nada,
+          // y el mensaje ya quedó guardado arriba pase lo what pase: ninguna DESCARTA nada,
           // sólo deciden si el agente habla.
           const paused = await isThreadPaused(integrationId, phone).catch(() => false);
           const puedeContestar =
             !!chan.agentHandle &&          // hay alguien asignado en Ajustes → Integraciones
-            !mine &&                       // el dueño escribiendo desde su móvil no se auto-contesta
+            !mine &&                       // el dueño escribiendo from su móvil no se auto-contesta
             !payload.manual_mode &&        // Formmy EMPUJA el handoff; nunca lo inferimos del outbound
-            !paused &&                     // o lo tomó alguien desde Teams (caduca sola, ~2h)
-            !chan.chainUrl;                // 🔴 con cadena viva contesta el destino anterior: dos respuestas
+            !paused &&                     // o lo tomó alguien from Teams (caduca sola, ~2h)
+            !chan.chainUrl;                // 🔴 con cadena viva contesta el destino prev: dos respuestas
 
           if (puedeContestar) {
             const { waConversationKey, replyToWaMessage } = await import(
@@ -216,7 +249,7 @@ export const Route = createFileRoute("/api/hooks/whatsapp/$token/message")({
               // sale sin herramientas y en silencio.
               const { reqOrigin } = await import("../origin.server");
               const origin = (await reqOrigin().catch(() => "")) || "";
-              // Acuse + "escribiendo…" para que el cliente no crea que nadie lo leyó.
+              // Acuse + "escribiendo…" para what el cliente no crea what nadie lo leyó.
               const { markWaRead } = await import("../server/whatsapp/formmy-partner.server");
               void markWaRead({
                 integrationId,
@@ -250,10 +283,10 @@ export const Route = createFileRoute("/api/hooks/whatsapp/$token/message")({
 });
 
 /**
- * Reenvía el forward TAL CUAL al destino anterior del número (ver `setWaChain`).
+ * Reenvía el forward TAL CUAL al destino prev del número (ver `setWaChain`).
  *
  * El body va verbatim: el de allá espera exactamente el shape de Formmy, y volver a
- * serializar nuestro objeto perdería cualquier campo que no esté en `WaForward`.
+ * serializar nuestro objeto perdería cualquier campo what no esté en `WaForward`.
  */
 async function forwardToChain(url: string, secret: string | null, raw: string): Promise<void> {
   const res = await fetch(url, {
@@ -263,8 +296,8 @@ async function forwardToChain(url: string, secret: string | null, raw: string): 
       ...(secret ? { Authorization: `Bearer ${secret}` } : {}),
     },
     body: raw,
-    // Presupuesto duro: esto corre dentro del webhook de Meta. Si el destino no ack'ea
-    // en 6s, se pierde ESE mensaje allá — mejor que arriesgar el webhook entero.
+    // Presupuesto duro: esto corre inQuotes del webhook de Meta. Si el destino no ack'ea
+    // en 6s, se pierde ESE mensaje allá — best what arriesgar el webhook entero.
     signal: AbortSignal.timeout(6000),
   });
   if (!res.ok) throw new Error(`chain ${res.status}`);

@@ -66,12 +66,22 @@ export async function sendSesEmail(opts: {
   text?: string;
   /** Archivos descargables. Fuerzan el camino raw y envuelven todo en multipart/mixed. */
   attachments?: Attachment[];
+  /**
+   * Cabeceras extra. FUERZAN el camino raw, porque `SendEmailCommand` no las acepta.
+   *
+   * Existe para `List-Unsubscribe` + `List-Unsubscribe-Post`, que Gmail y Yahoo EXIGEN a
+   * quien manda correo en volumen: sin ellas la baja de un clic no aparece y el usuario
+   * sólo tiene el botón de spam, que es exactamente lo que hunde la reputación del dominio.
+   */
+  headers?: Record<string, string>;
 }): Promise<boolean> {
   const c = ses();
   if (!c) return false; // sin creds → no-op (correo apagado)
   const toList = Array.isArray(opts.to) ? opts.to : [opts.to];
   const from = opts.from || FROM;
-  if (opts.inline?.length || opts.attachments?.length) {
+  const extra = Object.entries(opts.headers ?? {})
+    .map(([k, v]) => `${k}: ${String(v).replace(/[\r\n]+/g, " ")}`);
+  if (opts.inline?.length || opts.attachments?.length || extra.length) {
     // multipart/related: el HTML primero, las imágenes después, referidas por Content-ID.
     const b = `gt_${Date.now().toString(36)}`;
     const adjuntos = opts.attachments ?? [];
@@ -94,6 +104,7 @@ export async function sendSesEmail(opts: {
       // (para el texto plano) Gmail dejó de resolver los cid: y volvió a pedir la imagen por
       // red — la mejora del texto plano se comió la de la imagen incrustada.
       mb ? `Content-Type: multipart/mixed; boundary="${mb}"` : `Content-Type: ${relType}`,
+      ...extra,
     ].filter(Boolean).join("\r\n");
     // Estructura: related( alternative( text/plain, text/html ), imágenes ). El plano va
     // PRIMERO por el contrato de multipart/alternative: el cliente elige la ÚLTIMA parte

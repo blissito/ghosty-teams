@@ -54,6 +54,15 @@ export type RtEvent =
       agent?: string; avatar?: string; channelId?: number | null; parentId?: number | null; dmId?: number | null;
       tarea?: string; paso?: string; outcome?: string;
     }
+  // El agente movió el filtro de una lista de prospección.
+  //
+  // ⚠️ Va a `ch.user`, no al room: es la vista de UNA persona. Y va como evento propio y no
+  // como `refresh` porque trae DATOS (el filtro) — la pantalla tiene que aplicar ese filtro
+  // exacto, no volver a leer y quedarse igual.
+  //
+  // Es lo que hace que el agente mueva LA MISMA barra que la persona ve, en vez de filtrar
+  // por dentro y contestar «listo».
+  | { t: "prospeccion:filter"; listId: number; f: string | null }
   | { t: "reaction"; messageId: number; emoji: string; userSub: string; op: "add" | "remove"; count: number }
   | { t: "pin"; channelId: number; messageId: number; pinned: boolean } // fijado/desfijado (room-wide)
   | { t: "star"; messageId: number; starred: boolean } // marcado personal (a ch.user, cross-device)

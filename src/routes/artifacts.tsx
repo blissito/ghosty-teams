@@ -102,7 +102,7 @@ function ArtifactsPage() {
   }, [docs]);
 
   return (
-    <div className="flex min-h-dvh bg-bg text-ink">
+    <div className="flex min-h-dvh bg-surface text-ink">
       <div className="min-w-0 flex-1 overflow-auto">
         <div className="mx-auto max-w-4xl px-5 py-8">
           <Link to="/c/$slug" params={{ slug: "general" }} className="mb-4 inline-flex items-center gap-1.5 text-sm text-muted hover:text-ink">

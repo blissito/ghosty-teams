@@ -1227,6 +1227,118 @@ async function migrate(): Promise<void> {
     PRIMARY KEY (agent_handle, group_id)
   )`);
 
+  // ─────────────────────────────────────────────────────────────────────────────
+  // PROSPECCIÓN — outbound. Una lista de prospectos que se enriquece por COLUMNA
+  // (la unidad de trabajo, como en Clay), se toca por correo, y sólo llega a
+  // WhatsApp cuando el prospecto escribió PRIMERO.
+  //
+  // ⚠️ Toda columna que se agregue DESPUÉS de este primer CREATE va por addColumn(),
+  // nunca aquí dentro: `CREATE TABLE IF NOT EXISTS` no toca una tabla que ya existe
+  // y el SELECT sí pide la columna → 500 en todos los tenants viejos (2026-07-29).
+
+  // La lista. `criteria` es el texto literal que escribió la persona ("100 dentistas
+  // en Polanco sin sitio web") — se guarda para poder repetir la búsqueda y para que
+  // el agente sepa de qué iba sin re-preguntarle.
+  await exec(`CREATE TABLE IF NOT EXISTS gt_prosp_lists (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    name       TEXT NOT NULL,
+    criteria   TEXT,
+    source     TEXT NOT NULL DEFAULT 'denue',
+    created_by TEXT NOT NULL,
+    status     TEXT NOT NULL DEFAULT 'draft',
+    created_at INTEGER NOT NULL DEFAULT (unixepoch())
+  )`);
+  await exec(`CREATE INDEX IF NOT EXISTS idx_prosp_lists_at ON gt_prosp_lists (created_at DESC)`);
+
+  // La COLUMNA es la unidad de trabajo. `kind` decide quién la llena:
+  //   base   → vino de la fuente, no se recalcula
+  //   enrich → la llena una tool (scrape, lookup) siguiendo `recipe.waterfall`
+  //   ai     → la redacta el modelo con `recipe.prompt` y las columnas previas
+  //   manual → la escribe una persona
+  await exec(`CREATE TABLE IF NOT EXISTS gt_prosp_columns (
+    id       INTEGER PRIMARY KEY AUTOINCREMENT,
+    list_id  INTEGER NOT NULL,
+    key      TEXT NOT NULL,
+    label    TEXT NOT NULL,
+    kind     TEXT NOT NULL DEFAULT 'manual',
+    recipe   TEXT,
+    width    INTEGER,
+    position INTEGER NOT NULL DEFAULT 0
+  )`);
+  await exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_prosp_col_key ON gt_prosp_columns (list_id, key)`);
+
+  // La fila. Campos fijos para lo que TODA fuente da, y `data_json` para las columnas
+  // dinámicas: {colKey: {v, src, verified}}. `src` por celda porque cuando el cliente
+  // pregunte "¿de dónde sacaste esto?" hay que poder contestar.
+  await exec(`CREATE TABLE IF NOT EXISTS gt_prosp_rows (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    list_id    INTEGER NOT NULL,
+    position   INTEGER NOT NULL DEFAULT 0,
+    name       TEXT,
+    phone      TEXT,
+    email      TEXT,
+    website    TEXT,
+    address    TEXT,
+    category   TEXT,
+    data_json  TEXT NOT NULL DEFAULT '{}',
+    status     TEXT NOT NULL DEFAULT 'new',
+    created_at INTEGER NOT NULL DEFAULT (unixepoch())
+  )`);
+  await exec(`CREATE INDEX IF NOT EXISTS idx_prosp_rows_list ON gt_prosp_rows (list_id, position)`);
+  await exec(`CREATE INDEX IF NOT EXISTS idx_prosp_rows_phone ON gt_prosp_rows (phone)`);
+
+  // APPEND-ONLY: una fila por intento de contacto, y nunca se sobrescribe. Es la
+  // diferencia con `suppressions` de mailmask, que es un upsert y por eso no tiene
+  // historia. Sin historia no se puede responder "¿cuántas veces tocamos a éste?",
+  // que es justo lo que hay que saber para parar a los 2 intentos.
+  await exec(`CREATE TABLE IF NOT EXISTS gt_prosp_touches (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    list_id        INTEGER NOT NULL,
+    row_id         INTEGER NOT NULL,
+    channel        TEXT NOT NULL,
+    subject        TEXT,
+    body           TEXT,
+    idem_key       TEXT NOT NULL,
+    ses_message_id TEXT,
+    sent_at        INTEGER,
+    opened_at      INTEGER,
+    clicked_at     INTEGER,
+    replied_at     INTEGER,
+    bounced_at     INTEGER,
+    error          TEXT,
+    created_at     INTEGER NOT NULL DEFAULT (unixepoch())
+  )`);
+  // El índice único ES el mecanismo de idempotencia: reintentar un envío no duplica.
+  await exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_prosp_touch_idem ON gt_prosp_touches (idem_key)`);
+  await exec(`CREATE INDEX IF NOT EXISTS idx_prosp_touch_row ON gt_prosp_touches (row_id, created_at)`);
+  await exec(`CREATE INDEX IF NOT EXISTS idx_prosp_touch_list ON gt_prosp_touches (list_id, created_at)`);
+
+  // ⚠️ Del WORKSPACE, no de la lista. Es la tabla que protege el número de WhatsApp y
+  // el dominio de correo. Si cada lista llevara sus propias bajas, dos personas del
+  // mismo equipo tocarían al mismo que ya dijo que no — y esa persona ya se enojó una
+  // vez. Se consulta ANTES de cada envío, sin excepción.
+  await exec(`CREATE TABLE IF NOT EXISTS gt_prosp_optout (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    kind       TEXT NOT NULL,
+    value      TEXT NOT NULL,
+    reason     TEXT NOT NULL,
+    note       TEXT,
+    created_at INTEGER NOT NULL DEFAULT (unixepoch())
+  )`);
+  await exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_prosp_optout ON gt_prosp_optout (kind, value)`);
+
+  // Archivar con purga programada, en vez de borrar.
+  //
+  // ⚠️ Por `addColumn` y NUNCA dentro del CREATE de arriba: `CREATE TABLE IF NOT EXISTS` no
+  // toca una tabla que YA existe, así que en un tenant con listas creadas estas columnas no
+  // aparecerían y el SELECT las pide → 500 en todo. Firma exacta del incidente del 2026-07-29.
+  //
+  // Por qué archivar y no borrar: una lista de cien filas enriquecidas costó dinero (cada
+  // celda es una petición de red) y tiempo. Un clic no puede tirar eso sin vuelta atrás.
+  await addColumn("gt_prosp_lists", "archived_at", "INTEGER");
+  await addColumn("gt_prosp_lists", "purge_at", "INTEGER");
+  await exec(`CREATE INDEX IF NOT EXISTS idx_prosp_lists_purge ON gt_prosp_lists (purge_at)`);
+
   // Flip único: correo por default OFF (opt-in). Las filas existentes heredaron el viejo
   // DEFAULT 1 (opt-out silencioso, nadie lo eligió conscientemente) → las apagamos una sola
   // vez, guardado por flag en gc_config. Reversible: el usuario lo reactiva en el panel.

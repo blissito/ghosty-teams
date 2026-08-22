@@ -3755,6 +3755,15 @@ function Sidebar({
             <Layers size={16} className="shrink-0" />
             <span className="truncate">{t("Documentos")}</span>
           </Link>
+          {/* Prospección: listas de prospectos que se enriquecen por columna y se
+              tocan por correo. El WhatsApp sólo entra cuando el prospecto escribió. */}
+          <Link
+            to="/prospeccion"
+            className="flex w-full items-center gap-2 rounded-lg px-2 py-2.5 text-sm md:py-1.5 text-muted hover:bg-surface-3 hover:text-ink"
+          >
+            <Target size={16} className="shrink-0" />
+            <span className="truncate">{t("Prospección")}</span>
+          </Link>
           {/* Memoria del workspace: lo que los agentes saben de la empresa. Curaduría. */}
           <Link
             to="/memory"

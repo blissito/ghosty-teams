@@ -158,6 +158,100 @@ export function nativeTools(dest: ToolDest | null): ConnectorTool[] {
     // El agente dicta el SCHEMA (título y campos); el HTML lo renderiza el servidor.
     // El formulario se publica como artefacto y su liga es /artefacto/<slug>.
     {
+      name: "prospect_lists",
+      description:
+        "Las listas de prospección del equipo, con cuántas filas tiene cada una. Úsalo para " +
+        "saber de qué lista se está hablando cuando no te lo digan, o cuando pregunten qué hay.",
+      inputSchema: { type: "object", properties: {} },
+      handler: async () => {
+        const { listsBrief } = await import("../prospeccion/agent.server");
+        return { lists: await listsBrief() };
+      },
+    },
+    {
+      name: "prospect_filter",
+      description:
+        "Acota la VISTA de una lista y la aplica en la pantalla de la persona, como chips que " +
+        "puede editar. Úsalo SIEMPRE antes de enriquecer o mandar sobre un subconjunto: todo lo " +
+        "demás opera sobre la vista, no sobre la lista entera. " +
+        "Operadores: `empty` (sin dato en esa columna), `filled` (con dato), `has` (contiene), " +
+        "`text` (busca en todas las columnas), `status` (new|sent|opened|clicked|replied|bounced|optout). " +
+        "La columna se nombra por su etiqueta tal como se ve (Teléfono, Correo, Giro…). " +
+        "Manda `conditions: []` para quitar el filtro y volver a la lista completa.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          listId: { type: "number", description: "La lista" },
+          conditions: {
+            type: "array",
+            description: "Las condiciones se SUMAN: todas tienen que cumplirse",
+            items: {
+              type: "object",
+              properties: {
+                op: { type: "string", enum: ["empty", "filled", "has", "text", "status"] },
+                field: { type: "string", description: "Etiqueta de la columna. No aplica a text ni status" },
+                value: { type: "string", description: "Para has, text y status" },
+              },
+              required: ["op"],
+            },
+          },
+        },
+        required: ["listId", "conditions"],
+      },
+      handler: async (_sub, args) => {
+        const a = args as { listId: number; conditions: { op: string; field?: string; value?: string }[] };
+        const { applyFilter } = await import("../prospeccion/agent.server");
+        const r = await applyFilter({ listId: Number(a.listId), conditions: a.conditions ?? [] });
+        if (!r.ok) return { ok: false, error: r.error };
+        // La pantalla escucha esto y mueve SUS chips. Es lo que hace que el filtro sea
+        // comprobable y corregible, en vez de una decisión invisible del modelo.
+        const { publish, ch } = await import("../bus.server");
+        const { currentNamespace } = await import("../tenant.server");
+        const ns = await currentNamespace();
+        publish(ch.user(ns, _sub), {
+          t: "prospeccion:filter",
+          listId: Number(a.listId),
+          f: r.f ?? null,
+        });
+        return { ok: true, shown: r.shown, total: r.total, aplicado_en_pantalla: true };
+      },
+    },
+    {
+      name: "prospect_rows",
+      description:
+        "Una muestra de las filas de la VISTA actual, para poder contestar preguntas sobre ellas " +
+        "(«¿de qué colonias son?», «enséñame tres»). No trae las 10 mil: trae hasta 50.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          listId: { type: "number" },
+          limit: { type: "number", description: "Cuántas, máximo 50. Por defecto 10" },
+        },
+        required: ["listId"],
+      },
+      handler: async (_sub, args) => {
+        const a = args as { listId: number; limit?: number; f?: string };
+        const { sampleRows } = await import("../prospeccion/agent.server");
+        return sampleRows({ listId: Number(a.listId), limit: a.limit, f: a.f });
+      },
+    },
+    {
+      name: "prospect_gaps",
+      description:
+        "Cuántas filas de la vista les FALTA cada dato. Úsalo para proponer trabajo sin que te lo " +
+        "pidan: si 8,400 no tienen correo, ofrece buscárselo.",
+      inputSchema: {
+        type: "object",
+        properties: { listId: { type: "number" } },
+        required: ["listId"],
+      },
+      handler: async (_sub, args) => {
+        const a = args as { listId: number; f?: string };
+        const { gaps } = await import("../prospeccion/agent.server");
+        return { faltan: await gaps(Number(a.listId), a.f) };
+      },
+    },
+    {
       name: "form_create",
       description:
         "Crea un formulario de intake con liga pública para mandarle a un cliente. Las respuestas " +

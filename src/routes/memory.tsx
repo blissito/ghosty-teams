@@ -278,7 +278,7 @@ function MemoryPage() {
 
   return (
     <div
-      className="min-h-screen bg-bg text-ink"
+      className="min-h-screen bg-surface text-ink"
       onDragOver={(e) => {
         if (e.dataTransfer.types.includes("Files")) {
           e.preventDefault();

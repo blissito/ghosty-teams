@@ -44,6 +44,7 @@ const FAMILIAS: Array<[prefijo: string, familia: string]> = [
   ["form_", "formularios"],
   ["doc_", "docs"],
   ["memory_", "memoria"],
+  ["prospect_", "prospeccion"],
 ];
 
 function familiaDe(name: string): string | null {

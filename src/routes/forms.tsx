@@ -59,7 +59,7 @@ function FormsPage() {
   };
 
   return (
-    <div className="min-h-screen bg-bg text-ink">
+    <div className="min-h-screen bg-surface text-ink">
       <div className="max-w-3xl mx-auto px-5 py-8">
         <Link to="/c/$slug" params={{ slug: "general" }} className="inline-flex items-center gap-1.5 text-sm text-muted hover:text-ink mb-4">
           <ArrowLeft size={15} /> {t("Volver al chat")}
@@ -206,7 +206,7 @@ function Destinos({ formId }: { formId: string }) {
           ) : (
             hooks.map((h) => (
               <div key={h.id} className="text-xs flex flex-wrap items-center gap-2">
-                <span className={h.enabled ? "text-ok" : "text-faint"}>{h.enabled ? "●" : "○"}</span>
+                <span className={h.enabled ? "text-emerald-500" : "text-faint"}>{h.enabled ? "●" : "○"}</span>
                 <span className="font-mono flex-1 min-w-[160px] break-all">{h.url}</span>
                 <button
                   disabled={ocupado}

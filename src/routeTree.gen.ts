@@ -21,8 +21,10 @@ import { Route as BrandProbeRouteImport } from './routes/brand-probe'
 import { Route as ArtifactsRouteImport } from './routes/artifacts'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as SetupIndexRouteImport } from './routes/setup.index'
+import { Route as ProspeccionIndexRouteImport } from './routes/prospeccion.index'
 import { Route as T3SplatRouteImport } from './routes/t3.$'
 import { Route as RoomSlugRouteImport } from './routes/room.$slug'
+import { Route as ProspeccionIdRouteImport } from './routes/prospeccion.$id'
 import { Route as JoinTokenRouteImport } from './routes/join.$token'
 import { Route as CoeditarSlugRouteImport } from './routes/coeditar.$slug'
 import { Route as CSlugRouteImport } from './routes/c.$slug'
@@ -43,6 +45,7 @@ import { Route as SetupProviderCallbackRouteImport } from './routes/setup.$provi
 import { Route as OauthProviderCallbackRouteImport } from './routes/oauth.$provider.callback'
 import { Route as CoeditarInvitacionTokenRouteImport } from './routes/coeditar.invitacion.$token'
 import { Route as ArtefactoIdRawRouteImport } from './routes/artefacto.$id.raw'
+import { Route as ApiProspeccionAgentRouteImport } from './routes/api.prospeccion.agent'
 import { Route as ApiInternalMembersRouteImport } from './routes/api.internal.members'
 import { Route as ApiInternalAnnouncementsRouteImport } from './routes/api.internal.announcements'
 import { Route as ApiFormTokenRouteImport } from './routes/api.form.$token'
@@ -62,6 +65,9 @@ import { Route as ApiArtifactStreamIdRouteImport } from './routes/api.artifact-s
 import { Route as RoomSlugTranscripcionIdRouteImport } from './routes/room.$slug_.transcripcion.$id'
 import { Route as ApiWhatsappConnectStartRouteImport } from './routes/api.whatsapp.connect.start'
 import { Route as ApiWhatsappConnectFinishRouteImport } from './routes/api.whatsapp.connect.finish'
+import { Route as ApiPUTokenRouteImport } from './routes/api.p.u.$token'
+import { Route as ApiPOTokenRouteImport } from './routes/api.p.o.$token'
+import { Route as ApiPCTokenRouteImport } from './routes/api.p.c.$token'
 import { Route as ApiHooksSentryTokenRouteImport } from './routes/api.hooks.sentry.$token'
 import { Route as ApiCollabDocIdStateRouteImport } from './routes/api.collab.$docId.state'
 import { Route as ApiCollabDocIdSessionEndRouteImport } from './routes/api.collab.$docId.session-end'
@@ -127,6 +133,11 @@ const SetupIndexRoute = SetupIndexRouteImport.update({
   path: '/',
   getParentRoute: () => SetupRoute,
 } as any)
+const ProspeccionIndexRoute = ProspeccionIndexRouteImport.update({
+  id: '/prospeccion/',
+  path: '/prospeccion/',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const T3SplatRoute = T3SplatRouteImport.update({
   id: '/t3/$',
   path: '/t3/$',
@@ -135,6 +146,11 @@ const T3SplatRoute = T3SplatRouteImport.update({
 const RoomSlugRoute = RoomSlugRouteImport.update({
   id: '/room/$slug',
   path: '/room/$slug',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ProspeccionIdRoute = ProspeccionIdRouteImport.update({
+  id: '/prospeccion/$id',
+  path: '/prospeccion/$id',
   getParentRoute: () => rootRouteImport,
 } as any)
 const JoinTokenRoute = JoinTokenRouteImport.update({
@@ -237,6 +253,11 @@ const ArtefactoIdRawRoute = ArtefactoIdRawRouteImport.update({
   path: '/raw',
   getParentRoute: () => ArtefactoIdRoute,
 } as any)
+const ApiProspeccionAgentRoute = ApiProspeccionAgentRouteImport.update({
+  id: '/api/prospeccion/agent',
+  path: '/api/prospeccion/agent',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiInternalMembersRoute = ApiInternalMembersRouteImport.update({
   id: '/api/internal/members',
   path: '/api/internal/members',
@@ -334,6 +355,21 @@ const ApiWhatsappConnectFinishRoute =
     path: '/api/whatsapp/connect/finish',
     getParentRoute: () => rootRouteImport,
   } as any)
+const ApiPUTokenRoute = ApiPUTokenRouteImport.update({
+  id: '/api/p/u/$token',
+  path: '/api/p/u/$token',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiPOTokenRoute = ApiPOTokenRouteImport.update({
+  id: '/api/p/o/$token',
+  path: '/api/p/o/$token',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiPCTokenRoute = ApiPCTokenRouteImport.update({
+  id: '/api/p/c/$token',
+  path: '/api/p/c/$token',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiHooksSentryTokenRoute = ApiHooksSentryTokenRouteImport.update({
   id: '/api/hooks/sentry/$token',
   path: '/api/hooks/sentry/$token',
@@ -382,8 +418,10 @@ export interface FileRoutesByFullPath {
   '/c/$slug': typeof CSlugRoute
   '/coeditar/$slug': typeof CoeditarSlugRoute
   '/join/$token': typeof JoinTokenRoute
+  '/prospeccion/$id': typeof ProspeccionIdRoute
   '/room/$slug': typeof RoomSlugRoute
   '/t3/$': typeof T3SplatRoute
+  '/prospeccion/': typeof ProspeccionIndexRoute
   '/setup/': typeof SetupIndexRoute
   '/api/artifact-stream/$id': typeof ApiArtifactStreamIdRoute
   '/api/attachment/$id': typeof ApiAttachmentIdRoute
@@ -401,6 +439,7 @@ export interface FileRoutesByFullPath {
   '/api/form/$token': typeof ApiFormTokenRoute
   '/api/internal/announcements': typeof ApiInternalAnnouncementsRoute
   '/api/internal/members': typeof ApiInternalMembersRoute
+  '/api/prospeccion/agent': typeof ApiProspeccionAgentRoute
   '/artefacto/$id/raw': typeof ArtefactoIdRawRoute
   '/coeditar/invitacion/$token': typeof CoeditarInvitacionTokenRoute
   '/oauth/$provider/callback': typeof OauthProviderCallbackRoute
@@ -411,6 +450,9 @@ export interface FileRoutesByFullPath {
   '/api/collab/$docId/session-end': typeof ApiCollabDocIdSessionEndRoute
   '/api/collab/$docId/state': typeof ApiCollabDocIdStateRoute
   '/api/hooks/sentry/$token': typeof ApiHooksSentryTokenRoute
+  '/api/p/c/$token': typeof ApiPCTokenRoute
+  '/api/p/o/$token': typeof ApiPOTokenRoute
+  '/api/p/u/$token': typeof ApiPUTokenRoute
   '/api/whatsapp/connect/finish': typeof ApiWhatsappConnectFinishRoute
   '/api/whatsapp/connect/start': typeof ApiWhatsappConnectStartRoute
   '/room/$slug/transcripcion/$id': typeof RoomSlugTranscripcionIdRoute
@@ -440,8 +482,10 @@ export interface FileRoutesByTo {
   '/c/$slug': typeof CSlugRoute
   '/coeditar/$slug': typeof CoeditarSlugRoute
   '/join/$token': typeof JoinTokenRoute
+  '/prospeccion/$id': typeof ProspeccionIdRoute
   '/room/$slug': typeof RoomSlugRoute
   '/t3/$': typeof T3SplatRoute
+  '/prospeccion': typeof ProspeccionIndexRoute
   '/setup': typeof SetupIndexRoute
   '/api/artifact-stream/$id': typeof ApiArtifactStreamIdRoute
   '/api/attachment/$id': typeof ApiAttachmentIdRoute
@@ -459,6 +503,7 @@ export interface FileRoutesByTo {
   '/api/form/$token': typeof ApiFormTokenRoute
   '/api/internal/announcements': typeof ApiInternalAnnouncementsRoute
   '/api/internal/members': typeof ApiInternalMembersRoute
+  '/api/prospeccion/agent': typeof ApiProspeccionAgentRoute
   '/artefacto/$id/raw': typeof ArtefactoIdRawRoute
   '/coeditar/invitacion/$token': typeof CoeditarInvitacionTokenRoute
   '/oauth/$provider/callback': typeof OauthProviderCallbackRoute
@@ -469,6 +514,9 @@ export interface FileRoutesByTo {
   '/api/collab/$docId/session-end': typeof ApiCollabDocIdSessionEndRoute
   '/api/collab/$docId/state': typeof ApiCollabDocIdStateRoute
   '/api/hooks/sentry/$token': typeof ApiHooksSentryTokenRoute
+  '/api/p/c/$token': typeof ApiPCTokenRoute
+  '/api/p/o/$token': typeof ApiPOTokenRoute
+  '/api/p/u/$token': typeof ApiPUTokenRoute
   '/api/whatsapp/connect/finish': typeof ApiWhatsappConnectFinishRoute
   '/api/whatsapp/connect/start': typeof ApiWhatsappConnectStartRoute
   '/room/$slug/transcripcion/$id': typeof RoomSlugTranscripcionIdRoute
@@ -500,8 +548,10 @@ export interface FileRoutesById {
   '/c/$slug': typeof CSlugRoute
   '/coeditar/$slug': typeof CoeditarSlugRoute
   '/join/$token': typeof JoinTokenRoute
+  '/prospeccion/$id': typeof ProspeccionIdRoute
   '/room/$slug': typeof RoomSlugRoute
   '/t3/$': typeof T3SplatRoute
+  '/prospeccion/': typeof ProspeccionIndexRoute
   '/setup/': typeof SetupIndexRoute
   '/api/artifact-stream/$id': typeof ApiArtifactStreamIdRoute
   '/api/attachment/$id': typeof ApiAttachmentIdRoute
@@ -519,6 +569,7 @@ export interface FileRoutesById {
   '/api/form/$token': typeof ApiFormTokenRoute
   '/api/internal/announcements': typeof ApiInternalAnnouncementsRoute
   '/api/internal/members': typeof ApiInternalMembersRoute
+  '/api/prospeccion/agent': typeof ApiProspeccionAgentRoute
   '/artefacto/$id/raw': typeof ArtefactoIdRawRoute
   '/coeditar/invitacion/$token': typeof CoeditarInvitacionTokenRoute
   '/oauth/$provider/callback': typeof OauthProviderCallbackRoute
@@ -529,6 +580,9 @@ export interface FileRoutesById {
   '/api/collab/$docId/session-end': typeof ApiCollabDocIdSessionEndRoute
   '/api/collab/$docId/state': typeof ApiCollabDocIdStateRoute
   '/api/hooks/sentry/$token': typeof ApiHooksSentryTokenRoute
+  '/api/p/c/$token': typeof ApiPCTokenRoute
+  '/api/p/o/$token': typeof ApiPOTokenRoute
+  '/api/p/u/$token': typeof ApiPUTokenRoute
   '/api/whatsapp/connect/finish': typeof ApiWhatsappConnectFinishRoute
   '/api/whatsapp/connect/start': typeof ApiWhatsappConnectStartRoute
   '/room/$slug_/transcripcion/$id': typeof RoomSlugTranscripcionIdRoute
@@ -561,8 +615,10 @@ export interface FileRouteTypes {
     | '/c/$slug'
     | '/coeditar/$slug'
     | '/join/$token'
+    | '/prospeccion/$id'
     | '/room/$slug'
     | '/t3/$'
+    | '/prospeccion/'
     | '/setup/'
     | '/api/artifact-stream/$id'
     | '/api/attachment/$id'
@@ -580,6 +636,7 @@ export interface FileRouteTypes {
     | '/api/form/$token'
     | '/api/internal/announcements'
     | '/api/internal/members'
+    | '/api/prospeccion/agent'
     | '/artefacto/$id/raw'
     | '/coeditar/invitacion/$token'
     | '/oauth/$provider/callback'
@@ -590,6 +647,9 @@ export interface FileRouteTypes {
     | '/api/collab/$docId/session-end'
     | '/api/collab/$docId/state'
     | '/api/hooks/sentry/$token'
+    | '/api/p/c/$token'
+    | '/api/p/o/$token'
+    | '/api/p/u/$token'
     | '/api/whatsapp/connect/finish'
     | '/api/whatsapp/connect/start'
     | '/room/$slug/transcripcion/$id'
@@ -619,8 +679,10 @@ export interface FileRouteTypes {
     | '/c/$slug'
     | '/coeditar/$slug'
     | '/join/$token'
+    | '/prospeccion/$id'
     | '/room/$slug'
     | '/t3/$'
+    | '/prospeccion'
     | '/setup'
     | '/api/artifact-stream/$id'
     | '/api/attachment/$id'
@@ -638,6 +700,7 @@ export interface FileRouteTypes {
     | '/api/form/$token'
     | '/api/internal/announcements'
     | '/api/internal/members'
+    | '/api/prospeccion/agent'
     | '/artefacto/$id/raw'
     | '/coeditar/invitacion/$token'
     | '/oauth/$provider/callback'
@@ -648,6 +711,9 @@ export interface FileRouteTypes {
     | '/api/collab/$docId/session-end'
     | '/api/collab/$docId/state'
     | '/api/hooks/sentry/$token'
+    | '/api/p/c/$token'
+    | '/api/p/o/$token'
+    | '/api/p/u/$token'
     | '/api/whatsapp/connect/finish'
     | '/api/whatsapp/connect/start'
     | '/room/$slug/transcripcion/$id'
@@ -678,8 +744,10 @@ export interface FileRouteTypes {
     | '/c/$slug'
     | '/coeditar/$slug'
     | '/join/$token'
+    | '/prospeccion/$id'
     | '/room/$slug'
     | '/t3/$'
+    | '/prospeccion/'
     | '/setup/'
     | '/api/artifact-stream/$id'
     | '/api/attachment/$id'
@@ -697,6 +765,7 @@ export interface FileRouteTypes {
     | '/api/form/$token'
     | '/api/internal/announcements'
     | '/api/internal/members'
+    | '/api/prospeccion/agent'
     | '/artefacto/$id/raw'
     | '/coeditar/invitacion/$token'
     | '/oauth/$provider/callback'
@@ -707,6 +776,9 @@ export interface FileRouteTypes {
     | '/api/collab/$docId/session-end'
     | '/api/collab/$docId/state'
     | '/api/hooks/sentry/$token'
+    | '/api/p/c/$token'
+    | '/api/p/o/$token'
+    | '/api/p/u/$token'
     | '/api/whatsapp/connect/finish'
     | '/api/whatsapp/connect/start'
     | '/room/$slug_/transcripcion/$id'
@@ -738,8 +810,10 @@ export interface RootRouteChildren {
   CSlugRoute: typeof CSlugRoute
   CoeditarSlugRoute: typeof CoeditarSlugRoute
   JoinTokenRoute: typeof JoinTokenRoute
+  ProspeccionIdRoute: typeof ProspeccionIdRoute
   RoomSlugRoute: typeof RoomSlugRoute
   T3SplatRoute: typeof T3SplatRoute
+  ProspeccionIndexRoute: typeof ProspeccionIndexRoute
   ApiArtifactStreamIdRoute: typeof ApiArtifactStreamIdRoute
   ApiAttachmentIdRoute: typeof ApiAttachmentIdRoute
   ApiBrandAssetSplatRoute: typeof ApiBrandAssetSplatRoute
@@ -756,11 +830,15 @@ export interface RootRouteChildren {
   ApiFormTokenRoute: typeof ApiFormTokenRoute
   ApiInternalAnnouncementsRoute: typeof ApiInternalAnnouncementsRoute
   ApiInternalMembersRoute: typeof ApiInternalMembersRoute
+  ApiProspeccionAgentRoute: typeof ApiProspeccionAgentRoute
   CoeditarInvitacionTokenRoute: typeof CoeditarInvitacionTokenRoute
   OauthProviderCallbackRoute: typeof OauthProviderCallbackRoute
   ApiCollabDocIdSessionEndRoute: typeof ApiCollabDocIdSessionEndRoute
   ApiCollabDocIdStateRoute: typeof ApiCollabDocIdStateRoute
   ApiHooksSentryTokenRoute: typeof ApiHooksSentryTokenRoute
+  ApiPCTokenRoute: typeof ApiPCTokenRoute
+  ApiPOTokenRoute: typeof ApiPOTokenRoute
+  ApiPUTokenRoute: typeof ApiPUTokenRoute
   ApiWhatsappConnectFinishRoute: typeof ApiWhatsappConnectFinishRoute
   ApiWhatsappConnectStartRoute: typeof ApiWhatsappConnectStartRoute
   RoomSlugTranscripcionIdRoute: typeof RoomSlugTranscripcionIdRoute
@@ -853,6 +931,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SetupIndexRouteImport
       parentRoute: typeof SetupRoute
     }
+    '/prospeccion/': {
+      id: '/prospeccion/'
+      path: '/prospeccion'
+      fullPath: '/prospeccion/'
+      preLoaderRoute: typeof ProspeccionIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/t3/$': {
       id: '/t3/$'
       path: '/t3/$'
@@ -865,6 +950,13 @@ declare module '@tanstack/react-router' {
       path: '/room/$slug'
       fullPath: '/room/$slug'
       preLoaderRoute: typeof RoomSlugRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/prospeccion/$id': {
+      id: '/prospeccion/$id'
+      path: '/prospeccion/$id'
+      fullPath: '/prospeccion/$id'
+      preLoaderRoute: typeof ProspeccionIdRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/join/$token': {
@@ -1007,6 +1099,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ArtefactoIdRawRouteImport
       parentRoute: typeof ArtefactoIdRoute
     }
+    '/api/prospeccion/agent': {
+      id: '/api/prospeccion/agent'
+      path: '/api/prospeccion/agent'
+      fullPath: '/api/prospeccion/agent'
+      preLoaderRoute: typeof ApiProspeccionAgentRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/internal/members': {
       id: '/api/internal/members'
       path: '/api/internal/members'
@@ -1140,6 +1239,27 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiWhatsappConnectFinishRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/p/u/$token': {
+      id: '/api/p/u/$token'
+      path: '/api/p/u/$token'
+      fullPath: '/api/p/u/$token'
+      preLoaderRoute: typeof ApiPUTokenRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/p/o/$token': {
+      id: '/api/p/o/$token'
+      path: '/api/p/o/$token'
+      fullPath: '/api/p/o/$token'
+      preLoaderRoute: typeof ApiPOTokenRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/p/c/$token': {
+      id: '/api/p/c/$token'
+      path: '/api/p/c/$token'
+      fullPath: '/api/p/c/$token'
+      preLoaderRoute: typeof ApiPCTokenRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/hooks/sentry/$token': {
       id: '/api/hooks/sentry/$token'
       path: '/api/hooks/sentry/$token'
@@ -1226,8 +1346,10 @@ const rootRouteChildren: RootRouteChildren = {
   CSlugRoute: CSlugRoute,
   CoeditarSlugRoute: CoeditarSlugRoute,
   JoinTokenRoute: JoinTokenRoute,
+  ProspeccionIdRoute: ProspeccionIdRoute,
   RoomSlugRoute: RoomSlugRoute,
   T3SplatRoute: T3SplatRoute,
+  ProspeccionIndexRoute: ProspeccionIndexRoute,
   ApiArtifactStreamIdRoute: ApiArtifactStreamIdRoute,
   ApiAttachmentIdRoute: ApiAttachmentIdRoute,
   ApiBrandAssetSplatRoute: ApiBrandAssetSplatRoute,
@@ -1244,11 +1366,15 @@ const rootRouteChildren: RootRouteChildren = {
   ApiFormTokenRoute: ApiFormTokenRoute,
   ApiInternalAnnouncementsRoute: ApiInternalAnnouncementsRoute,
   ApiInternalMembersRoute: ApiInternalMembersRoute,
+  ApiProspeccionAgentRoute: ApiProspeccionAgentRoute,
   CoeditarInvitacionTokenRoute: CoeditarInvitacionTokenRoute,
   OauthProviderCallbackRoute: OauthProviderCallbackRoute,
   ApiCollabDocIdSessionEndRoute: ApiCollabDocIdSessionEndRoute,
   ApiCollabDocIdStateRoute: ApiCollabDocIdStateRoute,
   ApiHooksSentryTokenRoute: ApiHooksSentryTokenRoute,
+  ApiPCTokenRoute: ApiPCTokenRoute,
+  ApiPOTokenRoute: ApiPOTokenRoute,
+  ApiPUTokenRoute: ApiPUTokenRoute,
   ApiWhatsappConnectFinishRoute: ApiWhatsappConnectFinishRoute,
   ApiWhatsappConnectStartRoute: ApiWhatsappConnectStartRoute,
   RoomSlugTranscripcionIdRoute: RoomSlugTranscripcionIdRoute,
