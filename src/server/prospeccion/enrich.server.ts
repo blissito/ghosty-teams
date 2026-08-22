@@ -152,7 +152,30 @@ export const ENRICHERS: Record<string, Enricher> = {
     },
   },
 
-  /** ¿Tiene sitio, sí o no? Sale de la fila, sin redactado. El clásico "sin sitio web" del ICP. */
+  /**
+   * ¿El correo que tenemos sirve?
+   *
+   * ⚠️ Es lo que hay que correr ANTES de la primera tanda. Una lista scrapeada trae 20-40%
+   * de direcciones muertas, y mandarle a eso desde un dominio recién calentado lo quema de
+   * una sola vez: el dominio tarda semanas en calentarse y minutos en arruinarse.
+   *
+   * No cuesta nada — sintaxis, lista de desechables y UNA consulta DNS por dominio (con
+   * caché, y en una lista cientos de filas comparten dominio).
+   */
+  correo_sirve: {
+    id: "correo_sirve",
+    label: "¿El correo sirve?",
+    needs: (r) => !!r.email,
+    async run(r) {
+      const { verifyEmail, verdictLabel } = await import("./verify-email.server");
+      const v = await verifyEmail(r.email!);
+      // `verified` sólo cuando de verdad se comprobó algo contra el mundo (el MX): un
+      // «mal escrito» se sabe sin salir a la red.
+      return { v: verdictLabel(v.verdict), verified: v.verdict !== "sintaxis" };
+    },
+  },
+
+  /** ¿Tiene sitio, sí o no? Sale de la fila, sin red. El clásico "sin sitio web" del ICP. */
   tiene_sitio: {
     id: "tiene_sitio",
     label: "¿Tiene sitio?",

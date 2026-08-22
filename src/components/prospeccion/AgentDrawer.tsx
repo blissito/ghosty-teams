@@ -4,6 +4,8 @@ import { ArrowUp, Check, ChevronDown, Square, X } from "lucide-react";
 import { listProspAgentsFn } from "../../server/prospeccion";
 import { useT } from "../../i18n";
 import { registerModalEsc } from "../../utils/modal-esc";
+import { Markdown } from "../Markdown";
+import { toolLabel, TOOLS_OCULTAS } from "../../lib/tool-label";
 
 /**
  * El agente, aquí.
@@ -26,25 +28,31 @@ import { registerModalEsc } from "../../utils/modal-esc";
 
 export type Msg =
   | { role: "user"; text: string }
-  | { role: "agent"; text: string; tools: { name: string; detail?: string }[]; running?: boolean };
+  | { role: "agent"; text: string; tools: Tool[]; running?: boolean };
+
+/** Las dos formas: «Filtrando la lista» mientras corre, «Filtré la lista» al terminar. */
+export type Tool = { name: string; done: string; detail?: string };
 
 /** Historial por lista, a nivel de módulo: reabrir el drawer no lo pierde. */
 const historyCache = new Map<number, Msg[]>();
 /** Con qué agente se estaba hablando en cada lista. */
 const agentCache = new Map<number, string>();
 
-function ToolGroup({ names, running }: { names: { name: string; detail?: string }[]; running: boolean }) {
+function ToolGroup({ names, running }: { names: Tool[]; running: boolean }) {
   const t = useT();
   const [open, setOpen] = useState(true);
   if (!names.length) return null;
 
   // Seis veces «Filtré la lista» no dice nada. Se agrupan las iguales con su contador.
   const grouped: { label: string; detail?: string; n: number }[] = [];
-  for (const x of names) {
+  names.forEach((x, i) => {
+    // La ÚLTIMA en gerundio si todavía corre; las demás en pasado. Un checklist entero en
+    // gerundio se lee como si seis pasos ya hechos siguieran en curso.
+    const label = running && i === names.length - 1 ? x.name : x.done;
     const last = grouped[grouped.length - 1];
-    if (last && last.label === x.name && last.detail === x.detail) last.n++;
-    else grouped.push({ label: x.name, detail: x.detail, n: 1 });
-  }
+    if (last && last.label === label && last.detail === x.detail) last.n++;
+    else grouped.push({ label, detail: x.detail, n: 1 });
+  });
 
   const line = (g: { label: string; detail?: string; n: number }, last: boolean) => (
     <>
@@ -221,8 +229,18 @@ export function AgentDrawer({
             try { ev = JSON.parse(line.slice(5)); } catch { continue; }
             if (ev.t === "delta") patch((l) => { l.text += String(ev.v ?? ""); });
             else if (ev.t === "tool") {
-              const e = ev.v as { name?: string; label?: string; detail?: string };
-              patch((l) => { l.tools = [...l.tools, { name: e.label ?? e.name ?? "…", detail: e.detail }]; });
+              // ⚠️ El evento viene en PARES `start`/`end` y el `end` no trae nombre. Pintar
+              // los dos producía una línea «…» entre cada herramienta — que es justo el
+              // amontonamiento que se veía. Sólo el `start` es una acción nueva.
+              const e = ev.v as { name?: string; phase?: string; detail?: string };
+              if (e.phase === "end" || !e.name) continue;
+              // Las ocultas son contabilidad interna del agente (TodoWrite, ToolSearch):
+              // enseñarlas llena la lista de ruido y esconde lo que de verdad hizo.
+              if (TOOLS_OCULTAS.has(e.name)) continue;
+              const lbl = toolLabel(e.name);
+              patch((l) => {
+                l.tools = [...l.tools, { name: lbl?.ing ?? e.name!, done: lbl?.done ?? e.name!, detail: e.detail }];
+              });
             } else if (ev.t === "error") patch((l) => { l.text = String(ev.v ?? "Algo falló."); });
           }
         }
@@ -326,7 +344,11 @@ export function AgentDrawer({
                   <div key={i} className="mb-3">
                     <ToolGroup names={m.tools} running={!!m.running} />
                     {m.text ? (
-                      <div className="whitespace-pre-wrap text-xs leading-relaxed">{m.text}</div>
+                      // El renderer del chat: Streamdown cierra el markdown incompleto EN
+                      // VIVO, así que una tabla o un bloque a medio llegar no parpadean.
+                      <div className="text-xs leading-relaxed">
+                        <Markdown body={m.text} />
+                      </div>
                     ) : m.running && !m.tools.length ? (
                       <div className="flex items-center gap-2 text-xs text-muted">
                         <span className="h-3 w-3 animate-spin rounded-full border-2 border-muted/40 border-t-brand" />

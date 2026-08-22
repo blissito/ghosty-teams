@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { motion, AnimatePresence, useReducedMotion } from "motion/react";
-import { AtSign, Check, Globe, PenLine, Sparkles, Wifi, X } from "lucide-react";
+import { AtSign, Check, Globe, PenLine, ShieldCheck, Sparkles, Wifi, X } from "lucide-react";
 import { useT } from "../../i18n";
 import { listEnrichersFn } from "../../server/prospeccion";
 
@@ -32,6 +32,7 @@ export type NewColumn = {
 
 /** Icono por enriquecedor. El id viene del servidor; esto es sólo presentación. */
 const ICONS: Record<string, typeof Globe> = {
+  correo_sirve: ShieldCheck,
   correo_del_sitio: AtSign,
   sitio_vivo: Wifi,
   tiene_sitio: Globe,
@@ -139,7 +140,9 @@ export function NewColumnModal({
                   icon={ICONS[e.id] ?? Globe}
                   title={e.label}
                   hint={
-                    e.id === "correo_del_sitio"
+                    e.id === "correo_sirve"
+                      ? t("Comprueba que exista antes de mandarle. Córrelo SIEMPRE antes de la primera tanda.")
+                      : e.id === "correo_del_sitio"
                       ? t("Lo busca en su sitio web. Va directo a la columna Correo.")
                       : e.id === "sitio_vivo"
                         ? t("Entra al sitio y comprueba que responda.")
