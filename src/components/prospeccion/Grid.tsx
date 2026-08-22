@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useRef, useState } from "react";
 import { DataGrid, type CellMouseArgs, type Column, type RenderCellProps, type RenderEditCellProps, type RowsChangeData } from "react-data-grid";
 import { motion, useReducedMotion } from "motion/react";
-import { Ban, Check, Loader2 } from "lucide-react";
+import { Ban, Check, Loader2, MapPin } from "lucide-react";
 import { useT } from "../../i18n";
 import type { getListFn } from "../../server/prospeccion";
 
@@ -21,11 +21,22 @@ export type GridRow = {
 
 const BASE_KEYS = new Set(["name", "phone", "email", "website", "address", "category"]);
 
-export function aplanar(rows: RowData[], busy: Record<number, Set<string>> = {}): GridRow[] {
+export function aplanar(
+  rows: RowData[],
+  busy: Record<number, Set<string>> = {},
+  latLon?: { lat: string; lon: string } | null
+): GridRow[] {
   return rows.map((r) => {
     const o: GridRow = { id: r.id, __status: r.status, __busy: busy[r.id] ?? new Set() };
     for (const k of BASE_KEYS) o[k] = (r as unknown as Record<string, unknown>)[k] ?? "";
     for (const [k, cell] of Object.entries(r.data ?? {})) o[k] = cell?.v ?? "";
+    if (latLon) {
+      const la = String(o[latLon.lat] ?? "").trim();
+      const lo = String(o[latLon.lon] ?? "").trim();
+      // `?q=lat,lon` y no `@lat,lon`: la primera forma pone un PIN en el sitio; la segunda
+      // sólo centra el mapa ahí, y con el local sin marcar no se sabe cuál es.
+      o.__maps = la && lo ? `https://www.google.com/maps/search/?api=1&query=${la},${lo}` : "";
+    }
     return o;
   });
 }
@@ -38,6 +49,25 @@ export function aplanar(rows: RowData[], busy: Record<number, Set<string>> = {})
  * para que el ojo la cace — sin eso, cien celdas llenándose a destiempo se ven como una
  * pantalla que parpadea sola.
  */
+/**
+ * ¿Este par de columnas es una coordenada?
+ *
+ * Dos columnas de flotantes (`19.3729836` / `-99.17487047`) no las lee nadie: ocupan la
+ * mitad del ancho útil y no dicen nada. Detectadas, se colapsan en UN enlace al local.
+ *
+ * Se reconocen por NOMBRE y no por el valor, a propósito: un número entre -90 y 90 puede
+ * ser cualquier cosa (un porcentaje, una calificación), y adivinar por rango convertiría
+ * una columna de datos en un enlace roto.
+ */
+const LAT = /^(lat|latitud|latitude|y)$/i;
+const LON = /^(lon|lng|long|longitud|longitude|x)$/i;
+
+export function findLatLon(fields: { key: string; label: string }[]): { lat: string; lon: string } | null {
+  const lat = fields.find((f) => LAT.test(f.label) || LAT.test(f.key));
+  const lon = fields.find((f) => LON.test(f.label) || LON.test(f.key));
+  return lat && lon ? { lat: lat.key, lon: lon.key } : null;
+}
+
 function CellView({ row, column }: RenderCellProps<GridRow>) {
   const still = useReducedMotion();
   const key = column.key;
@@ -66,6 +96,36 @@ function CellView({ row, column }: RenderCellProps<GridRow>) {
   }
   if (text === "false" || text === "no") {
     return <span className="text-muted">no</span>;
+  }
+
+  // Correo, sitio y coordenada: eran texto plano y había que copiarlos a mano para usarlos.
+  if (key === "email" && text.includes("@")) {
+    return (
+      <a href={`mailto:${text}`} className="text-brand hover:underline" onClick={(e) => e.stopPropagation()}>
+        {text}
+      </a>
+    );
+  }
+  if (key === "website" && /^https?:\/\//i.test(text)) {
+    return (
+      <a href={text} target="_blank" rel="noreferrer" className="text-brand hover:underline" onClick={(e) => e.stopPropagation()}>
+        {/* Sin el `https://www.`: ocupa un tercio de la celda y no dice nada. */}
+        {text.replace(/^https?:\/\/(www\.)?/i, "")}
+      </a>
+    );
+  }
+  if (key === "__maps") {
+    return (
+      <a
+        href={text}
+        target="_blank"
+        rel="noreferrer"
+        className="inline-flex items-center gap-1 text-brand hover:underline"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <MapPin size={11} /> Ver en Maps
+      </a>
+    );
   }
 
   return (
@@ -101,6 +161,7 @@ export function ProspGrid({
   rows,
   base,
   columns,
+  latLon,
   onCellChange,
   onPasteBlock,
   onColumnHeaderClick,
@@ -108,6 +169,8 @@ export function ProspGrid({
   rows: GridRow[];
   base: Base[];
   columns: ColumnDef[];
+  /** El par de columnas de coordenada, si la lista lo trae. */
+  latLon?: { lat: string; lon: string } | null;
   onCellChange: (rowId: number, key: string, value: string) => void;
   /** Pegado multi-celda: (filaInicial, colInicial, matriz). */
   onPasteBlock: (rowIdx: number, colKey: string, matrix: string[][]) => void;
@@ -150,7 +213,20 @@ export function ProspGrid({
         renderEditCell: CellEditor,
       });
     }
+    // El par lat/lon se colapsa en UNA columna con enlace: dos columnas de flotantes ocupan
+    // la mitad del ancho útil y no se leen.
+    if (latLon) {
+      built.push({
+        key: "__maps",
+        name: t("Ubicación"),
+        width: 130,
+        resizable: false,
+        renderCell: CellView,
+      });
+    }
+
     for (const c of columns) {
+      if (latLon && (c.key === latLon.lat || c.key === latLon.lon)) continue;
       built.push({
         key: c.key,
         name: c.label,
@@ -171,7 +247,7 @@ export function ProspGrid({
       });
     }
     return built;
-  }, [base, columns, onColumnHeaderClick, t]);
+  }, [base, columns, latLon, onColumnHeaderClick, t]);
 
   /**
    * Pegado from Excel.

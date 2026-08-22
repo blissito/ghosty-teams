@@ -1,14 +1,15 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence, useReducedMotion } from "motion/react";
-import { Target as TargetIcon, ArrowLeft, Search, Loader2, Archive, ArchiveRestore, ChevronRight, ClipboardPaste, Trash2, X } from "lucide-react";
+import { Target as TargetIcon, ArrowLeft, Search, Loader2, Archive, ArchiveRestore, ChevronRight, ClipboardPaste, MessageCircle, Trash2, X } from "lucide-react";
 import { DropZone, type Sheet } from "../components/prospeccion/DropZone";
 import { ImportReview } from "../components/prospeccion/ImportReview";
 import { planImport, type Plan, type Target } from "../lib/prospeccion-mapping";
 import { importInChunks } from "../lib/prospeccion-import-client";
+import { prettyWaPhone as prettyWa } from "../lib/prospeccion-wa-phone";
 import { useT } from "../i18n";
 import { me } from "../server/auth";
-import { archiveListFn, createListFromSheetFn, createListFn, createEmptyListFn, importTableFn, listArchivedFn, listProspListsFn, purgeListFn, restoreListFn } from "../server/prospeccion";
+import { archiveListFn, createListFromSheetFn, createListFn, createEmptyListFn, getProspWaFn, importTableFn, listArchivedFn, listProspListsFn, purgeListFn, restoreListFn, setProspWaFn } from "../server/prospeccion";
 
 type ListRow = Awaited<ReturnType<typeof listProspListsFn>>["lists"][number];
 
@@ -93,6 +94,10 @@ function ProspeccionPage() {
   const [view, setView] = useState<"live" | "archived">("live");
   const [archived, setArchived] = useState<ListRow[] | null>(null);
   const [archivedCount, setArchivedCount] = useState(0);
+  /** El WhatsApp al que escriben los prospectos: TU número, el que va en el botón del correo. */
+  const [waPhone, setWaPhone] = useState("");
+  const [waEditando, setWaEditando] = useState(false);
+  const [waError, setWaError] = useState<string | null>(null);
 
   const refresh = () =>
     listProspListsFn()
@@ -100,6 +105,15 @@ function ProspeccionPage() {
       .catch(() => {});
 
   useEffect(() => { refresh(); }, []);
+  useEffect(() => { getProspWaFn().then((r) => setWaPhone(r.phone)).catch(() => {}); }, []);
+
+  const guardarWa = async (valor: string) => {
+    const r = await setProspWaFn({ data: { phone: valor } }).catch(() => ({ ok: false as const, phone: "", error: "" }));
+    if (!r.ok) { setWaError(("error" in r && r.error) || t("No parece un número de WhatsApp")); return; }
+    setWaPhone(r.phone);
+    setWaError(null);
+    setWaEditando(false);
+  };
 
   // Las archivadas se piden al ENTRAR a su vista, no con la página: casi ningún workspace
   // tiene, y una consulta más en cada carga por algo que se mira una vez al mes no se paga.
@@ -280,6 +294,43 @@ function ProspeccionPage() {
               {searching ? t("Buscando…") : t("Buscar")}
             </button>
           </div>
+          {/*
+            El WhatsApp al que te escriben.
+            Va AQUÍ y no dentro de una lista porque es el número de la empresa, y va visible
+            —no escondido en Ajustes— porque sin él el correo sale sin su botón: el paso que
+            convierte un correo en una conversación. Un ajuste que rompe el producto cuando
+            falta no puede vivir en otra pantalla.
+          */}
+          <div className="mt-2 flex items-center gap-2 text-xs">
+            <MessageCircle size={13} className="text-muted shrink-0" />
+            {waEditando ? (
+              <input
+                autoFocus
+                defaultValue={waPhone}
+                placeholder={t("771 446 0521")}
+                onBlur={(e) => guardarWa(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") guardarWa(e.currentTarget.value);
+                  if (e.key === "Escape") { setWaEditando(false); setWaError(null); }
+                }}
+                className="w-44 bg-surface-2 border border-border rounded-lg px-2 py-1 outline-none focus:border-brand"
+              />
+            ) : (
+              <button onClick={() => setWaEditando(true)} className="text-muted hover:text-ink">
+                {waPhone ? (
+                  <>
+                    {t("Te escriben al")} <span className="text-ink font-medium">{prettyWa(waPhone)}</span>
+                  </>
+                ) : (
+                  <span className="text-brand underline underline-offset-2">
+                    {t("Pon el WhatsApp al que quieres que te escriban")}
+                  </span>
+                )}
+              </button>
+            )}
+            {waError ? <span className="text-red-500">{waError}</span> : null}
+          </div>
+
           <button
             onClick={createEmpty}
             disabled={searching}

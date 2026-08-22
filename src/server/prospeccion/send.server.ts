@@ -67,7 +67,9 @@ export async function sendBatch(args: {
   const out: SendResult = { sent: 0, skippedOptOut: 0, skippedRepeat: 0, skippedNoEmail: 0, failed: 0, errors: [] };
 
   if (!sesConfigured()) {
-    out.errors.push("SES no está configurado (faltan SES_KEY/SES_SECRET)");
+    // Mismo criterio: el nombre de la credencial va al log, no a la pantalla.
+    console.warn("[prospeccion] SES sin credenciales: faltan SES_KEY/SES_SECRET en el env de Teams");
+    out.errors.push("El correo todavía no está configurado en este workspace.");
     return out;
   }
 

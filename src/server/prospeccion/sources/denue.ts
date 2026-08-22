@@ -124,7 +124,14 @@ export const denue: SearchSource = {
 
   async search(criteria, limit) {
     const token = TOKEN();
-    if (!token) throw new Error("Falta DENUE_TOKEN. Se pide gratis en inegi.org.mx/servicios/api_denue.html");
+    if (!token) {
+      // ⚠️ Lo que ve el usuario NO nombra la fuente ni la variable de entorno: es
+      // infraestructura nuestra, no puede hacer nada con ese dato, y de paso le regala a
+      // cualquiera con una cuenta el mapa de con qué proveedores trabajamos.
+      // Lo accionable va al LOG, que es donde puede leerlo quien sí puede arreglarlo.
+      console.warn("[prospeccion] falta DENUE_TOKEN — se pide gratis en inegi.org.mx/servicios/api_denue.html");
+      throw new Error("La búsqueda de negocios todavía no está disponible en este workspace.");
+    }
 
     const { what, zone } = parseCriteria(criteria);
     const url =
@@ -132,7 +139,10 @@ export const denue: SearchSource = {
       `${encodeURIComponent(what)}/${zone.lat},${zone.lng}/${zone.radius}/${token}`;
 
     const res = await fetch(url, { signal: AbortSignal.timeout(25_000) });
-    if (!res.ok) throw new Error(`DENUE respondió ${res.status}`);
+    if (!res.ok) {
+      console.warn(`[prospeccion] DENUE respondió ${res.status}`);
+      throw new Error("La búsqueda de negocios no respondió. Inténtalo en un momento.");
+    }
 
     // DENUE devuelve 200 con un array vacío cuando no hay nada, y a veces un objeto de
     // error con 200. Las dos formas se tratan igual: sin filas.

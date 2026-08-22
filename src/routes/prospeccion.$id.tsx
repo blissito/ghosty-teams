@@ -5,7 +5,7 @@ import { ArrowLeft, Plus, Sparkles, Target } from "lucide-react";
 import { useT } from "../i18n";
 import { me } from "../server/auth";
 import { addColumnFn, deleteColumnFn, getListFn, importTableFn, runAiColumnFn, runColumnFn, setCellFn } from "../server/prospeccion";
-import { ProspGrid, aplanar, type GridRow } from "../components/prospeccion/Grid";
+import { ProspGrid, aplanar, findLatLon, type GridRow } from "../components/prospeccion/Grid";
 import { FilterBar } from "../components/prospeccion/FilterBar";
 import { AgentDrawer } from "../components/prospeccion/AgentDrawer";
 import { useRtSubscribe } from "../utils/rt-bus";
@@ -85,7 +85,10 @@ function ListPage() {
     return data.rows.filter((r) => matches(r as unknown as Record<string, unknown>, filter, keys));
   }, [data, filter, fields]);
 
-  const rows: GridRow[] = useMemo(() => aplanar(view, busy), [view, busy]);
+  /** ¿La lista trae coordenadas? Si sí, las dos columnas se colapsan en un enlace a Maps. */
+  const latLon = useMemo(() => (data ? findLatLon(fields) : null), [data, fields]);
+
+  const rows: GridRow[] = useMemo(() => aplanar(view, busy, latLon), [view, busy, latLon]);
 
   /**
    * El filtro que aplica el AGENTE aterriza aquí, en la barra de la persona.
@@ -391,6 +394,7 @@ function ListPage() {
             rows={rows}
             base={data.base}
             columns={data.columns}
+            latLon={latLon}
             onCellChange={onCellChange}
             onPasteBlock={onPasteBlock}
           />

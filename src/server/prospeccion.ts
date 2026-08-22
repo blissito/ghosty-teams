@@ -340,6 +340,45 @@ export const listOptOutsFn = createServerFn({ method: "GET" }).handler(async () 
   return listOptOuts();
 });
 
+/**
+ * El WhatsApp al que escriben los prospectos.
+ *
+ * ⚠️ Es el número TUYO, no el del prospecto. El correo lleva un botón `wa.me` que apunta
+ * aquí; el prospecto le da clic, escribe, y **ese envío suyo abre la ventana de 24 h** que
+ * permite contestarle con texto libre. Por eso el teléfono del prospecto no hace falta para
+ * el loop: el que viaja es éste.
+ *
+ * Vive en la config del WORKSPACE y no por lista: es el número de la empresa. Si algún día
+ * hace falta uno por campaña (agencia que prospecta para varios clientes), la columna se
+ * añade a `gt_prosp_lists` y este valor pasa a ser el default.
+ */
+export const getProspWaFn = createServerFn({ method: "GET" }).handler(async () => {
+  const me = await sessionUser();
+  if (!me) return { phone: "" };
+  const { getConfig } = await import("../config.server");
+  const guardado = await getConfig("prospeccion_wa_phone");
+  if (guardado) return { phone: guardado };
+  // Si hay un canal de WhatsApp conectado, ése es el número obvio: se propone solo.
+  const { dbq } = await import("../dbq.server");
+  const r = await dbq(`SELECT phone FROM gt_wa_channels LIMIT 1`).catch(() => []);
+  return { phone: r[0]?.phone ? String(r[0].phone) : "" };
+});
+
+export const setProspWaFn = createServerFn({ method: "POST" })
+  .validator((d: { phone: string }) => d)
+  .handler(async ({ data }) => {
+    const me = await sessionUser();
+    if (!me) return { ok: false as const, phone: "" };
+    const { normalizeWaPhone } = await import("../lib/prospeccion-wa-phone");
+    const n = normalizeWaPhone(data.phone);
+    if (data.phone.trim() && !n) {
+      return { ok: false as const, phone: "", error: "No parece un número de WhatsApp" };
+    }
+    const { setConfig } = await import("../config.server");
+    await setConfig("prospeccion_wa_phone", n ?? "");
+    return { ok: true as const, phone: n ?? "" };
+  });
+
 /** Las fuentes disponibles, para el selector y para enseñárselas al agente. */
 export const listSourcesFn = createServerFn({ method: "GET" }).handler(async () => {
   const { SOURCES } = await import("./prospeccion/sources/index");
