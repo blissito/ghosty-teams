@@ -49,7 +49,7 @@ export function NewColumnModal({
 }) {
   const t = useT();
   const still = useReducedMotion();
-  const [enrichers, setEnrichers] = useState<{ id: string; label: string }[]>([]);
+  const [enrichers, setEnrichers] = useState<{ id: string; label: string; requires?: string }[]>([]);
   /** Qué se eligió: un enriquecedor por id, o "__ai__" / "__manual__". */
   const [choice, setChoice] = useState<string | null>(null);
   const [label, setLabel] = useState("");
@@ -83,7 +83,7 @@ export function NewColumnModal({
   };
 
   /** Una opción de la lista: qué dato se va a conseguir, dicho como resultado. */
-  const Option = ({ id, icon: Icon, title, hint }: { id: string; icon: typeof Globe; title: string; hint: string }) => {
+  const Option = ({ id, icon: Icon, title, hint, requires }: { id: string; icon: typeof Globe; title: string; hint: string; requires?: string }) => {
     const active = choice === id;
     return (
       <button
@@ -98,6 +98,11 @@ export function NewColumnModal({
         <span className="min-w-0 flex-1">
           <span className="block text-sm font-medium">{title}</span>
           <span className="block text-xs text-muted mt-0.5">{hint}</span>
+          {requires && active ? (
+            <span className="block text-[11px] text-muted mt-1.5 border-l-2 border-border pl-2">
+              {t("Necesita")} {requires}
+            </span>
+          ) : null}
         </span>
         {active ? <Check size={15} className="text-brand shrink-0 mt-1.5" /> : null}
       </button>
@@ -143,11 +148,14 @@ export function NewColumnModal({
                     e.id === "correo_sirve"
                       ? t("Comprueba que exista antes de mandarle. Córrelo SIEMPRE antes de la primera tanda.")
                       : e.id === "correo_del_sitio"
-                      ? t("Lo busca en su sitio web. Va directo a la columna Correo.")
-                      : e.id === "sitio_vivo"
-                        ? t("Entra al sitio y comprueba que responda.")
-                        : t("Sale de los datos que ya tienes. Instantáneo.")
+                        ? t("Lo busca en su sitio web. Va directo a la columna Correo.")
+                        : t("Entra al sitio y comprueba que responda. Tarda: una petición por fila.")
                   }
+                  /* ⚠️ De qué PARTE, dicho antes de crear la columna. Sin esto se creaba una
+                     columna que se saltaba todas las filas y quedaba vacía sin explicación —
+                     pasó con «¿El correo sirve?» sobre una lista cuyos correos vivían en una
+                     columna propia y no en la columna base Correo. */
+                  requires={e.requires}
                 />
               ))}
 

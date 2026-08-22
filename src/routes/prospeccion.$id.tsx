@@ -217,7 +217,13 @@ function ListPage() {
         const r = tipo === "ai"
           ? await runAiColumnFn({ data: { listId, key, f } })
           : await runColumnFn({ data: { listId, key, f } });
-        if (r.ok) setNotice(`${r.filled} de ${r.total} llenadas`);
+        if (r.ok) {
+          // El motivo va JUNTO al número: «0 de 4 llenadas» sin explicación se lee como
+          // que la herramienta está rota. «0 de 4 · ninguna fila tenía un valor en la
+          // columna Correo» se lee como qué hacer a continuación.
+          const nota = "note" in r && r.note ? ` · ${r.note}` : "";
+          setNotice(`${r.filled} de ${r.total} llenadas${nota}`);
+        }
         else setNotice(("error" in r && r.error) || "No se pudo correr la columna");
       } finally {
         setBusy({});

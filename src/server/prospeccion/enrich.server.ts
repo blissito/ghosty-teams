@@ -22,6 +22,16 @@ export type Enricher = {
   id: string;
   label: string;
   /**
+   * Qué le falta a la fila para poder correr, EN PALABRAS.
+   *
+   * ⚠️ Cuando `needs()` dice que no, la fila se salta en silencio. Si se salta a TODAS, la
+   * persona ve una columna vacía y ninguna explicación — que es exactamente lo que pasó con
+   * «¿El correo sirve?» sobre una lista cuyos correos vivían en una columna propia
+   * («Correo de contacto») y no en la columna base Correo. Sin esta frase, un enriquecedor
+   * que no puede trabajar es indistinguible de uno roto.
+   */
+  requires: string;
+  /**
    * Si el dato ES una columna base, se escribe ahí directo.
    *
    * Sin esto, un enriquecedor de correos creaba una columna aparte y hacía falta una acción
@@ -115,6 +125,7 @@ export const ENRICHERS: Record<string, Enricher> = {
   sitio_vivo: {
     id: "sitio_vivo",
     label: "¿El sitio funciona?",
+    requires: "un valor en la columna Sitio web",
     needs: (r) => !!r.website,
     async run(r) {
       const html = await fetchText(r.website!);
@@ -131,6 +142,7 @@ export const ENRICHERS: Record<string, Enricher> = {
   correo_del_sitio: {
     id: "correo_del_sitio",
     label: "Correo del sitio",
+    requires: "un valor en la columna Sitio web, y la columna Correo vacía",
     writesTo: "email",
     needs: (r) => !!r.website && !r.email,
     async run(r) {
@@ -165,6 +177,7 @@ export const ENRICHERS: Record<string, Enricher> = {
   correo_sirve: {
     id: "correo_sirve",
     label: "¿El correo sirve?",
+    requires: "un valor en la columna Correo",
     needs: (r) => !!r.email,
     async run(r) {
       const { verifyEmail, verdictLabel } = await import("./verify-email.server");
@@ -175,19 +188,26 @@ export const ENRICHERS: Record<string, Enricher> = {
     },
   },
 
-  /** ¿Tiene sitio, sí o no? Sale de la fila, sin red. El clásico "sin sitio web" del ICP. */
-  tiene_sitio: {
-    id: "tiene_sitio",
-    label: "¿Tiene sitio?",
-    needs: () => true,
-    async run(r) {
-      return { v: r.website ? "sí" : "no", verified: true };
-    },
-  },
 };
 
+/**
+ * ⚠️ El ORDEN de esta lista es el orden en que se ofrecen, y lo dicta el LOOP.
+ *
+ * «¿El correo sirve?» va PRIMERO porque su propia descripción dice «córrelo siempre antes
+ * de la primera tanda» — tenerla en tercer lugar contradecía su propio texto. Sin correo
+ * vivo no hay nada que abrir, y mandar a una lista sin verificar quema el dominio.
+ *
+ * Y ya NO está «¿Tiene sitio?»: contestaba exactamente lo mismo que el filtro «sin Sitio
+ * web», que es instantáneo y no ocupa una columna. Crear una columna, correrla sobre once
+ * mil filas y gastar ancho de pantalla para saber algo que un chip contesta al momento era
+ * duplicar una capacidad que ya existía.
+ */
+const ORDEN = ["correo_sirve", "correo_del_sitio", "sitio_vivo"];
+
 export function listEnrichers() {
-  return Object.values(ENRICHERS).map((e) => ({ id: e.id, label: e.label, writesTo: e.writesTo ?? null }));
+  return ORDEN.map((id) => ENRICHERS[id])
+    .filter(Boolean)
+    .map((e) => ({ id: e.id, label: e.label, writesTo: e.writesTo ?? null, requires: e.requires }));
 }
 
 /** A qué columna base escribe una cascada, si alguno de sus pasos lo declara. */
@@ -200,6 +220,9 @@ export function waterfallWritesTo(ids: string[]): string | null {
 }
 
 export type RunProgress = { done: number; total: number; filled: number };
+
+/** El resultado con su explicación, para que una columna vacía nunca sea un misterio. */
+export type RunOutcome = RunProgress & { skipped: number; note: string | null };
 
 /**
  * Corre una columna sobre toda la lista.
@@ -224,7 +247,7 @@ export async function runColumn(args: {
   fields?: string[];
   onProgress?: (p: RunProgress) => void;
   concurrency?: number;
-}): Promise<RunProgress> {
+}): Promise<RunOutcome> {
   const todas = await listRows(args.listId);
   const rows = args.filter?.length
     ? todas.filter((r) => matches(r as unknown as Record<string, unknown>, args.filter!, args.fields ?? []))
@@ -233,8 +256,10 @@ export async function runColumn(args: {
   const total = rows.length;
   let done = 0;
   let filled = 0;
+  /** Filas que ningún paso de la cascada pudo ni intentar. */
+  let skipped = 0;
 
-  if (!waterfall_.length) return { done: 0, total, filled: 0 };
+  if (!waterfall_.length) return { done: 0, total, filled: 0, skipped: 0, note: "esta columna no tiene de dónde sacar el dato" };
 
   const queue = [...rows];
   const workers = Array.from({ length: Math.min(args.concurrency ?? 4, 8) }, async () => {
@@ -265,7 +290,15 @@ export async function runColumn(args: {
   });
 
   await Promise.all(workers);
-  return { done, total, filled };
+
+  // La explicación sólo aparece cuando hace falta: si llenó algo, el número habla solo.
+  let note: string | null = null;
+  if (skipped === total && total > 0) {
+    note = `ninguna fila tenía ${waterfall_[0]?.requires ?? "lo que hace falta"}`;
+  } else if (skipped > 0) {
+    note = `${skipped} se saltaron: les falta ${waterfall_[0]?.requires ?? "el dato de partida"}`;
+  }
+  return { done, total, filled, skipped, note };
 }
 
 /**
