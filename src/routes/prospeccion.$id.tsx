@@ -111,26 +111,42 @@ function ListPage() {
    */
   const sugerencias = useMemo(() => {
     if (!data) return [];
-    const huecos = fields
-      .map((f) => ({
-        label: f.label,
-        n: view.filter((r) => {
-          const v = ["name", "phone", "email", "website", "address", "category"].includes(f.key)
-            ? (r as unknown as Record<string, string | null>)[f.key]
-            : r.data[f.key]?.v;
-          return !String(v ?? "").trim();
-        }).length,
-      }))
-      .filter((x) => x.n > 0)
-      .sort((a, b) => b.n - a.n);
 
+    const hueco = (key: string) =>
+      view.filter((r) => {
+        const v = ["name", "phone", "email", "website", "address", "category"].includes(key)
+          ? (r as unknown as Record<string, string | null>)[key]
+          : r.data[key]?.v;
+        return !String(v ?? "").trim();
+      }).length;
+
+    /**
+     * ⚠️ El orden lo dicta EL LOOP, no el tamaño del hueco.
+     *
+     * La primera versión ordenaba por cuántas filas faltaban y proponía «a las 2,000 sin
+     * dirección, búscaselo»: el hueco más grande, y la sugerencia más inútil que existe.
+     * Nadie prospecta por dirección — y encima no hay enriquecedor de direcciones, así que
+     * era ofrecer trabajo que no se puede hacer.
+     *
+     * El loop es: el correo abre, WhatsApp cierra. Sin correo no hay nada que abrir, así
+     * que ése es siempre el primer hueco que importa. Y sólo se ofrece lo que se sabe
+     * llenar: una sugerencia que no se puede cumplir es peor que ninguna.
+     */
     const out: string[] = [];
-    if (huecos[0]) out.push(`A las ${huecos[0].n.toLocaleString("es-MX")} sin ${huecos[0].label.toLowerCase()}, búscaselo`);
-    if (huecos[1]) out.push(`Filtra las que no tienen ${huecos[1].label.toLowerCase()}`);
-    out.push("¿De qué colonias son estas empresas?");
-    out.push("Escribe una primera línea para cada una");
+    const sinCorreo = hueco("email");
+    const sinTel = hueco("phone");
+    const listas = view.length;
+
+    if (sinCorreo) out.push(`Búscale el correo a las ${sinCorreo.toLocaleString("es-MX")} que no lo tienen`);
+    if (sinTel && !sinCorreo) out.push(`Filtra las ${sinTel.toLocaleString("es-MX")} sin teléfono`);
+    if (!sinCorreo && listas) out.push(`Escríbeles una primera línea a las ${listas.toLocaleString("es-MX")}`);
+
+    // Preguntas sobre los datos: siempre útiles y no cuestan nada más que un turno.
+    out.push("¿Qué tienen en común las que ya contestaron?");
+    out.push("Enséñame 5 y dime cuáles se ven mejores");
+
     return out.slice(0, 4);
-  }, [data, fields, view]);
+  }, [data, view]);
 
   const setFilter = useCallback(
     (next: Filter) => {
