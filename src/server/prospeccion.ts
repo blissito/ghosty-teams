@@ -179,10 +179,44 @@ export const listEnrichersFn = createServerFn({ method: "GET" }).handler(async (
 
 /** Agrega una columna. Si trae waterfall_, se puede correr enseguida. */
 export const addColumnFn = createServerFn({ method: "POST" })
-  .validator((d: { listId: number; label: string; kind: "enrich" | "ai" | "manual"; waterfall?: string[]; prompt?: string }) => d)
+  .validator((d: { listId: number; label: string; kind: "enrich" | "ai" | "manual"; waterfall?: string[]; prompt?: string; f?: string }) => d)
   .handler(async ({ data }) => {
     const me = await sessionUser();
     if (!me) return { ok: false as const, error: "sin sesión" };
+    /**
+     * ⚠️ Si NINGUNA fila puede llenarse, no se crea la columna.
+     *
+     * Antes se creaba igual y quedaba vacía: el usuario veía una columna nueva sin un solo
+     * dato y concluía —con razón— que enriquecer «sólo añade columnas vacías». Una columna
+     * que no se puede llenar no es un resultado parcial, es basura que hay que borrar a
+     * mano, y encima invita a intentarlo otra vez.
+     *
+     * Se comprueba contra la VISTA, que es sobre lo que va a correr.
+     */
+    if (data.kind === "enrich" && (data.waterfall ?? []).length) {
+      const { ENRICHERS } = await import("./prospeccion/enrich.server");
+      const { listRows } = await import("./prospeccion/lists.server");
+      const { decodeFilter, matches } = await import("../lib/prospeccion-filter");
+      const { listColumns } = await import("./prospeccion/lists.server");
+
+      const cols = await listColumns(Number(data.listId));
+      const fields = [...BASE_FIELD_KEYS, ...cols.map((c) => c.key)];
+      const todas = await listRows(Number(data.listId), 20000);
+      const filtro = decodeFilter(data.f);
+      const vista = filtro.length
+        ? todas.filter((r) => matches(r as unknown as Record<string, unknown>, filtro, fields))
+        : todas;
+
+      const pasos = (data.waterfall ?? []).map((id) => ENRICHERS[id]).filter(Boolean);
+      const alguna = vista.some((r) => pasos.some((e) => e.needs(r)));
+      if (!alguna && vista.length) {
+        return {
+          ok: false as const,
+          error: `No se creó la columna: ninguna de las ${vista.length} filas tiene ${pasos[0]?.requires ?? "el dato de partida"}.`,
+        };
+      }
+    }
+
     const { addColumn } = await import("./prospeccion/lists.server");
     const col = await addColumn({
       listId: Number(data.listId),
@@ -413,4 +447,161 @@ export const createListFromSheetFn = createServerFn({ method: "POST" })
       added: r.added,
       truncated: total > MAX_IMPORT_ROWS ? total - MAX_IMPORT_ROWS : 0,
     };
+  });
+
+/**
+ * Qué pasaría si mandas. NO manda nada.
+ *
+ * Invariante del spec: «el agente propone, la persona confirma todo lo que sale hacia
+ * fuera». Y es lo único honesto que se puede enseñar: «Mandar a 312» no dice que 40 están
+ * dadas de baja y 60 tienen el correo muerto. El número que de verdad sale es otro.
+ */
+export const planSendFn = createServerFn({ method: "GET" })
+  .validator((d: { listId: number; f?: string }) => d)
+  .handler(async ({ data }) => {
+    const me = await sessionUser();
+    if (!me) return { ok: false as const };
+    const { listRows, listColumns } = await import("./prospeccion/lists.server");
+    const { decodeFilter, matches } = await import("../lib/prospeccion-filter");
+    const { planSend } = await import("./prospeccion/send.server");
+
+    const cols = await listColumns(Number(data.listId));
+    const fields = [...BASE_FIELD_KEYS, ...cols.map((c) => c.key)];
+    const todas = await listRows(Number(data.listId), 20000);
+    const filtro = decodeFilter(data.f);
+    const rows = filtro.length
+      ? todas.filter((r) => matches(r as unknown as Record<string, unknown>, filtro, fields))
+      : todas;
+
+    const plan = await planSend({ listId: Number(data.listId), campaign: "", rows });
+    // Las columnas de texto son las candidatas a ser EL mensaje.
+    const mensajes = cols
+      .filter((c) => c.kind === "ai" || c.kind === "manual")
+      .map((c) => ({ key: c.key, label: c.label }));
+    return { ok: true as const, plan, mensajes };
+  });
+
+/**
+ * Manda de verdad.
+ *
+ * ⚠️ Va sobre la VISTA, pasa por opt-out sin excepción, y sólo se llama después de que una
+ * persona vio el plan y confirmó.
+ */
+export const sendFn = createServerFn({ method: "POST" })
+  .validator((d: { listId: number; f?: string; messageKey: string; subject: string }) => d)
+  .handler(async ({ data }) => {
+    const me = await sessionUser();
+    if (!me) return { ok: false as const, error: "sin sesión", sent: 0, skippedOptOut: 0, failed: 0 };
+    if (!data.subject.trim()) {
+      return { ok: false as const, error: "Falta el asunto", sent: 0, skippedOptOut: 0, failed: 0 };
+    }
+
+    const { listRows, listColumns } = await import("./prospeccion/lists.server");
+    const { decodeFilter, matches } = await import("../lib/prospeccion-filter");
+    const { sendBatch } = await import("./prospeccion/send.server");
+    const { getConfig } = await import("../config.server");
+
+    const cols = await listColumns(Number(data.listId));
+    const fields = [...BASE_FIELD_KEYS, ...cols.map((c) => c.key)];
+    const todas = await listRows(Number(data.listId), 20000);
+    const filtro = decodeFilter(data.f);
+    const rows = filtro.length
+      ? todas.filter((r) => matches(r as unknown as Record<string, unknown>, filtro, fields))
+      : todas;
+
+    // El cuerpo sale de la columna elegida, fila por fila. Una fila SIN mensaje no se manda:
+    // un correo vacío es peor que ningún correo.
+    // ⚠️ MISMO `renderDraft` que la previsualización. Si fueran dos caminos, la pantalla
+    // enseñaría una cosa y saldría otra — que es exactamente el fallo que la previsualización
+    // existe para evitar.
+    const waPhonePrev = await getConfig("prospeccion_wa_phone");
+    const redactados = (
+      await Promise.all(
+        rows.map(async (r) => {
+          const cuerpo = r.data[data.messageKey]?.v?.trim();
+          if (!cuerpo) return null;
+          const { renderDraft } = await import("./prospeccion/send.server");
+          const { html, text } = await renderDraft({
+            subject: data.subject,
+            body: cuerpo,
+            businessName: r.name,
+            waPhone: waPhonePrev,
+          });
+          return { rowId: r.id, subject: data.subject, html, text };
+        })
+      )
+    ).filter(Boolean) as { rowId: number; subject: string; html: string; text: string }[];
+
+    // La campaña ES la llave de idempotencia: el mismo asunto sobre la misma fila el mismo
+    // día no sale dos veces, aunque se apriete el botón dos veces.
+    const campaign = `${data.subject.slice(0, 40)}:${new Date().toISOString().slice(0, 10)}`;
+    const r = await sendBatch({
+      listId: Number(data.listId),
+      campaign,
+      rows,
+      redactados,
+      waPhone: waPhonePrev,
+      // Sin replyTo: el `From` del sobre ya lleva el dominio correcto, y meter el correo
+      // personal de quien manda lo expone a 11 mil desconocidos.
+    });
+    return { ok: true as const, error: null, ...r };
+  });
+
+
+/**
+ * El correo de UNA fila, ya renderizado, y opcionalmente mandado a quien lo pide.
+ *
+ * Es lo que hacen lemlist y Smartlead antes de lanzar: enseñar el mensaje con las variables
+ * ya resueltas, y dejar mandarse una prueba para ver maquetación y enlaces en un cliente de
+ * correo real. Un HTML se ve distinto en Gmail que en una previsualización, y el botón de
+ * WhatsApp o abre o no abre — eso sólo se sabe apretándolo.
+ */
+export const previewSendFn = createServerFn({ method: "POST" })
+  .validator((d: { listId: number; f?: string; messageKey: string; subject: string; test?: boolean }) => d)
+  .handler(async ({ data }) => {
+    const me = await sessionUser();
+    if (!me) return { ok: false as const, error: "sin sesión", html: "", to: "", sent: false, sinBoton: false };
+
+    const { listRows, listColumns } = await import("./prospeccion/lists.server");
+    const { decodeFilter, matches } = await import("../lib/prospeccion-filter");
+    const { renderDraft } = await import("./prospeccion/send.server");
+    const { getConfig } = await import("../config.server");
+
+    const cols = await listColumns(Number(data.listId));
+    const fields = [...BASE_FIELD_KEYS, ...cols.map((c) => c.key)];
+    const todas = await listRows(Number(data.listId), 20000);
+    const filtro = decodeFilter(data.f);
+    const rows = filtro.length
+      ? todas.filter((r) => matches(r as unknown as Record<string, unknown>, filtro, fields))
+      : todas;
+
+    // La primera fila que SÍ tenga mensaje y correo: previsualizar una vacía no enseña nada.
+    const row = rows.find((r) => r.data[data.messageKey]?.v?.trim() && r.email);
+    if (!row) {
+      return { ok: false as const, error: "Ninguna fila de la vista tiene mensaje y correo todavía.", html: "", to: "", sent: false, sinBoton: false };
+    }
+
+    const waPhone = await getConfig("prospeccion_wa_phone");
+    const { html, sinBoton } = await renderDraft({
+      subject: data.subject || "(sin asunto)",
+      body: row.data[data.messageKey]!.v!,
+      businessName: row.name,
+      waPhone,
+    });
+
+    if (!data.test) return { ok: true as const, error: null, html, to: row.email!, sent: false, sinBoton };
+
+    // La prueba va al correo de QUIEN la pide, nunca al prospecto.
+    const { getUserEmail } = await import("./prospeccion/send.server");
+    const destino = await getUserEmail(me.sub);
+    if (!destino) {
+      return { ok: false as const, error: "No encuentro tu correo para mandarte la prueba.", html, to: row.email!, sent: false, sinBoton };
+    }
+    const { sendSesEmail } = await import("./ses.server");
+    const enviado = await sendSesEmail({
+      to: destino,
+      subject: `[PRUEBA] ${data.subject || "(sin asunto)"}`,
+      html,
+    });
+    return { ok: true as const, error: null, html, to: destino, sent: enviado, sinBoton };
   });

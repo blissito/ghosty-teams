@@ -52,30 +52,35 @@ async function main() {
     check("3 newRows", rows.length === 3);
     check("order estable", rows.map((r) => r.name).join(",") === "Alfa,Beta,Gama");
 
-    const col = await L.addColumn({ listId, label: "¿Tiene sitio?", kind: "enrich", recipe: { waterfall: ["tiene_sitio"] } });
-    check("columna con key sin acentos", col.key === "tiene_sitio", col.key);
-    const col2 = await L.addColumn({ listId, label: "¿Tiene sitio?", kind: "manual" });
-    check("colisión de key se resuelve", col2.key !== col.key, col2.key);
+    const col = await L.addColumn({ listId, label: "¿El sitio funciona?", kind: "enrich", recipe: { waterfall: ["sitio_vivo"] } });
+    check("columna con llave sin acentos", col.key === "el_sitio_funciona", col.key);
+    // Pedir DOS VECES la misma columna REUSA la que está: antes creaba una gemela con el
+    // mismo nombre, indistinguible en la cabecera. Pasa constantemente, porque la primera
+    // sale vacía si falta el dato de partida y la reacción natural es reintentar.
+    const col2 = await L.addColumn({ listId, label: "¿El sitio funciona?", kind: "manual" });
+    check("pedirla dos veces REUSA, no duplica", col2.key === col.key, col2.key);
 
     console.log("\n── Celdas ──");
-    await L.setCell(rows[0].id, "tiene_sitio", "no", { src: "denue", verified: true });
+    await L.setCell(rows[0].id, col.key, "no", { src: "denue", verified: true });
     // Gama la escribe UNA PERSONA: es la what no se debe pisar al re-correr.
-    await L.setCell(rows[2].id, "tiene_sitio", "corregido a mano", { src: "manual" });
+    await L.setCell(rows[2].id, col.key, "corregido a mano", { src: "manual" });
     await L.setCell(rows[0].id, "email", "OTRO@ejemplo.mx");
     const r0 = await L.getRow(rows[0].id);
-    check("cell dinámica guarda valor y fuente", r0?.data.tiene_sitio?.v === "no" && r0?.data.tiene_sitio?.src === "denue");
+    check("celda dinámica guarda valor y fuente", r0?.data[col.key]?.v === "no" && r0?.data[col.key]?.src === "denue");
     check("cell base va al campo fijo", r0?.email === "OTRO@ejemplo.mx");
 
     console.log("\n── Enriquecimiento ──");
     const E = await import("../src/server/prospeccion/enrich.server");
     await L.setCell(rows[1].id, "web", null);
     await dbq(`UPDATE gt_prosp_rows SET website = 'https://ghosty.studio' WHERE id = ?`, [rows[1].id]);
-    const p = await E.runColumn({ listId, key: col.key, recipe: { waterfall: ["tiene_sitio"] } });
-    check("corrió sobre las 3 newRows", p.total === 3 && p.done === 3, `${p.filled} llenadas`);
+    const p = await E.runColumn({ listId, key: col.key, recipe: { waterfall: ["sitio_vivo"] } });
+    check("corrió sobre las 3 filas", p.total === 3 && p.done === 3, `${p.filled} llenadas · ${p.note ?? "sin nota"}`);
     const after = await L.listRows(listId);
-    check("Beta (con sitio) → sí", after[1].data.tiene_sitio?.v === "sí");
-    check("una cell de FUENTE sí se refresca", after[0].data.tiene_sitio?.src === "tiene_sitio");
-    check("NO pisó la cell escrita a mano", after[2].data.tiene_sitio?.v === "corregido a mano" && after[2].data.tiene_sitio?.src === "manual");
+    check("Beta (con sitio REAL) → sí", after[1].data[col.key]?.v === "sí", "entra al sitio de verdad");
+    // Alfa no tiene sitio, así que el enriquecedor NO puede intentarlo: su celda se deja
+    // INTACTA. Antes se le escribía null y le borraba el valor que ya tenía.
+    check("una fila que no califica CONSERVA su valor", after[0].data[col.key]?.v === "no" && after[0].data[col.key]?.src === "denue");
+    check("NO pisó la celda escrita a mano", after[2].data[col.key]?.v === "corregido a mano" && after[2].data[col.key]?.src === "manual");
 
     console.log("\n── Idempotencia de tocadas ──");
     const t1 = await T.reserveTouch({ listId, rowId: rows[0].id, channel: "email", campaign: "c1" });

@@ -24,9 +24,10 @@ await check("x@yopmail.com", "desechable");
 
 console.log("\n── Dominios REALES (consulta DNS) ──");
 await check("hola@gmail.com", "ok", "Gmail sí recibe");
-// ⚠️ ghosty.studio NO tiene MX (comprobado con dig el 2026-08-22): manda correo pero no
-// puede RECIBIRLO. Si un prospecto le da a responder, su mensaje no llega a ninguna parte.
-await check("contacto@ghosty.studio", "sin_mx", "⚠️ nuestro dominio NO recibe correo");
+// ✅ ghosty.studio YA tiene MX (se le puso el 2026-08-22, junto con SPF y DMARC). Antes
+// daba `sin_mx`: mandaba correo y no podía recibirlo, así que quien respondía escribía al
+// vacío. Este caso es la red que avisa si alguien vuelve a quitarle el MX.
+await check("contacto@ghosty.studio", "ok", "✅ ya recibe: el MX se puso el 22-ago");
 await check("alguien@denik.me", "ok");
 
 console.log("\n── Dominios que NO reciben correo ──");

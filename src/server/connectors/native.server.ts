@@ -236,6 +236,42 @@ export function nativeTools(dest: ToolDest | null): ConnectorTool[] {
       },
     },
     {
+      name: "prospect_send",
+      description:
+        "PROPONE mandarle correo a la vista actual de una lista. NO manda: abre la pantalla de " +
+        "confirmación en el navegador de la persona, con el número real que saldría (descontando " +
+        "bajas, correos muertos y quienes ya recibieron dos intentos) y la previsualización. " +
+        "Ella decide. Úsalo cuando te pidan mandar, escribir o contactar a un grupo de prospectos. " +
+        "⚠️ Necesita una columna de mensaje ya escrita (créala con prospect_column) y un asunto.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          listId: { type: "number" },
+          subject: { type: "string", description: "El asunto del correo. Corto y concreto, sin mayúsculas ni signos de más" },
+        },
+        required: ["listId", "subject"],
+      },
+      handler: async (_sub, args) => {
+        const a = args as { listId: number; subject: string; f?: string };
+        // ⚠️ El agente NO manda. Invariante del spec: «el agente propone, la persona
+        // confirma todo lo que sale hacia fuera». Mandar es la única acción del módulo que
+        // no se puede deshacer — un archivo se recupera 30 días, un correo enviado nunca.
+        const { publish, ch } = await import("../bus.server");
+        const { currentNamespace } = await import("../tenant.server");
+        const ns = await currentNamespace();
+        publish(ch.user(ns, _sub), {
+          t: "prospeccion:send",
+          listId: Number(a.listId),
+          subject: String(a.subject ?? ""),
+        });
+        return {
+          ok: true,
+          abierto_en_pantalla: true,
+          nota: "Abrí la pantalla de confirmación. Dile a la persona que revise el número y el correo, y que confirme ella.",
+        };
+      },
+    },
+    {
       name: "prospect_gaps",
       description:
         "Cuántas filas de la vista les FALTA cada dato. Úsalo para proponer trabajo sin que te lo " +

@@ -288,7 +288,32 @@ export async function addColumn(args: {
 }): Promise<ProspColumn> {
   const existing = await listColumns(args.listId);
   let key = columnKey(args.label);
-  // Colisión de slug: "¿Tiene sitio?" y "¿tiene sitio!" dan la misma llave.
+
+  /**
+   * ⚠️ Pedir DOS VECES la misma columna reusa la que ya está, no crea otra.
+   *
+   * Antes desambiguaba la llave y creaba una gemela: dos columnas «¿El correo sirve?»
+   * idénticas, indistinguibles en la cabecera, ocupando el doble de ancho. Y pasa
+   * constantemente — la primera sale vacía porque falta el dato de partida, así que la
+   * reacción natural es intentarlo otra vez.
+   *
+   * Se compara por ETIQUETA y no por llave: es lo que la persona ve y lo que cree estar
+   * repitiendo. Volver a crearla con otra receta la ACTUALIZA, que es lo que se quiere al
+   * corregir una cascada mal elegida.
+   */
+  const yaEsta = existing.find((c) => c.label.trim().toLowerCase() === args.label.trim().toLowerCase());
+  if (yaEsta) {
+    if (args.recipe) {
+      await dbq(`UPDATE gt_prosp_columns SET kind = ?, recipe = ? WHERE id = ?`, [
+        args.kind,
+        JSON.stringify(args.recipe),
+        yaEsta.id,
+      ]);
+    }
+    return (await listColumns(args.listId)).find((c) => c.id === yaEsta.id)!;
+  }
+
+  // Colisión de slug entre etiquetas distintas: "¿Tiene sitio?" y "¿tiene sitio!".
   if (existing.some((c) => c.key === key)) key = `${key}_${existing.length + 1}`;
   const position = existing.length ? Math.max(...existing.map((c) => c.position)) + 1 : 0;
   await dbq(

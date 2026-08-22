@@ -46,6 +46,59 @@ export type SendResult = {
 export type Drafted = { rowId: number; subject: string; html: string; text?: string };
 
 /**
+ * Qué pasaría si se manda: se calcula SIN mandar nada.
+ *
+ * El spec lo pide como invariante — «el agente propone, la persona confirma todo lo que
+ * sale hacia fuera» — y además es lo único honesto: «Mandar a 312» no dice que 40 están
+ * dadas de baja, 60 tienen el correo muerto y 12 ya recibieron dos intentos. El número que
+ * de verdad sale es otro, y hay que verlo ANTES.
+ */
+export type SendPlan = {
+  total: number;
+  irian: number;
+  optOut: number;
+  sinCorreo: number;
+  correoMuerto: number;
+  yaTocados: number;
+  /** Los primeros, para poder mirar a quién se le va a escribir. */
+  muestra: { rowId: number; name: string | null; email: string }[];
+};
+
+export async function planSend(args: {
+  listId: number;
+  campaign: string;
+  rows: ProspRow[];
+}): Promise<SendPlan> {
+  const { optOutSet } = await import("./optout.server");
+  const bajas = await optOutSet("email", args.rows.map((r) => r.email));
+  const { normalize } = await import("./optout.server");
+
+  const plan: SendPlan = {
+    total: args.rows.length,
+    irian: 0,
+    optOut: 0,
+    sinCorreo: 0,
+    correoMuerto: 0,
+    yaTocados: 0,
+    muestra: [],
+  };
+
+  for (const row of args.rows) {
+    if (!row.email) { plan.sinCorreo++; continue; }
+    const n = normalize("email", row.email);
+    if (n && bajas.has(n)) { plan.optOut++; continue; }
+    // El veredicto del verificador, si esa columna se corrió: no se re-verifica aquí
+    // (serían N consultas DNS por cada previsualización).
+    const veredicto = Object.values(row.data).find((c) => c?.src === "correo_sirve")?.v ?? "";
+    if (veredicto && veredicto !== "sirve" && veredicto !== "buzón de rol") { plan.correoMuerto++; continue; }
+    if ((await touchCount(row.id, "email")) >= MAX_ATTEMPTS) { plan.yaTocados++; continue; }
+    plan.irian++;
+    if (plan.muestra.length < 5) plan.muestra.push({ rowId: row.id, name: row.name, email: row.email });
+  }
+  return plan;
+}
+
+/**
  * Manda un lote ya redactado.
  *
  * Recibe el contenido HECHO en vez de redactar aquí porque quien escribe es el agente, y
@@ -158,4 +211,51 @@ function injectWaLink(html: string, phone: string, business: string): string {
   const text = encodeURIComponent(`Hola, me llegó su correo${business ? ` (soy de ${business})` : ""}. Cuéntenme más.`);
   const url = `https://wa.me/${phone.replace(/\D/g, "")}?text=${text}`;
   return html.replace(/%%WA%%/g, url);
+}
+
+
+/**
+ * El HTML de un correo, con su botón de WhatsApp ya resuelto.
+ *
+ * Sacado aparte para que la PREVISUALIZACIÓN y el ENVÍO usen exactamente el mismo código.
+ * Si fueran dos caminos, la previsualización enseñaría una cosa y saldría otra — que es el
+ * fallo clásico de este paso y la razón por la que existe la previsualización.
+ */
+export async function renderDraft(args: {
+  subject: string;
+  body: string;
+  businessName?: string | null;
+  waPhone?: string | null;
+}): Promise<{ html: string; text: string; sinBoton: boolean }> {
+  const { ghostyEmail } = await import("../email-template.server");
+
+  const wa = args.waPhone
+    ? `https://wa.me/${args.waPhone.replace(/\D/g, "")}?text=${encodeURIComponent(
+        `Hola, me llegó su correo${args.businessName ? ` (soy de ${args.businessName})` : ""}.`
+      )}`
+    : "";
+
+  /**
+   * ⚠️ El botón va por `cta`, NO metido en el `body`.
+   *
+   * `ghostyEmail` declara que el body es PROSA y lo escapa siempre —«puede venir de un
+   * modelo»—, que es exactamente lo correcto porque este cuerpo lo escribió un agente y
+   * acaba en el correo de un tercero. Al meter ahí el `<a href>` del botón, se escapaba
+   * también: al prospecto le llegaba el HTML como texto literal en vez de un botón.
+   * Medido con el smoke antes de que saliera un solo correo.
+   */
+  const out = ghostyEmail({
+    head: args.subject,
+    body: args.body,
+    cta: wa ? { label: "Escríbenos por WhatsApp", url: wa } : undefined,
+    footer: "externo",
+  });
+  return { ...out, sinBoton: !wa };
+}
+
+/** El correo de quien está usando la app, para mandarle la prueba a él y no al prospecto. */
+export async function getUserEmail(sub: string): Promise<string | null> {
+  const { dbq } = await import("../../dbq.server");
+  const r = await dbq(`SELECT email FROM gc_users WHERE sub = ? LIMIT 1`, [sub]).catch(() => []);
+  return r[0]?.email ? String(r[0].email) : null;
 }

@@ -6,6 +6,12 @@ import { useT } from "../../i18n";
 import { registerModalEsc } from "../../utils/modal-esc";
 import { Markdown } from "../Markdown";
 import { toolLabel, TOOLS_OCULTAS } from "../../lib/tool-label";
+// ⚠️ El checklist de herramientas NO se reimplementa: `ToolGroup` de Teams ya lleva dentro
+// tres incidentes pagados — que trabajar gane sobre fallar en el estado del grupo, que un
+// fallo de quince no pinte los quince en rojo, y que el anillo no gire para siempre cuando
+// el turno murió. Escribí uno al lado y era peor en las tres cosas.
+import { ToolGroup } from "../chat/message";
+import type { ToolState } from "../../lib/ebdoc";
 
 /**
  * El agente, aquí.
@@ -28,75 +34,12 @@ import { toolLabel, TOOLS_OCULTAS } from "../../lib/tool-label";
 
 export type Msg =
   | { role: "user"; text: string }
-  | { role: "agent"; text: string; tools: Tool[]; running?: boolean };
-
-/** Las dos formas: «Filtrando la lista» mientras corre, «Filtré la lista» al terminar. */
-export type Tool = { name: string; done: string; detail?: string };
+  | { role: "agent"; text: string; tools: ToolState[]; running?: boolean };
 
 /** Historial por lista, a nivel de módulo: reabrir el drawer no lo pierde. */
 const historyCache = new Map<number, Msg[]>();
 /** Con qué agente se estaba hablando en cada lista. */
 const agentCache = new Map<number, string>();
-
-function ToolGroup({ names, running }: { names: Tool[]; running: boolean }) {
-  const t = useT();
-  const [open, setOpen] = useState(true);
-  if (!names.length) return null;
-
-  // Seis veces «Filtré la lista» no dice nada. Se agrupan las iguales con su contador.
-  const grouped: { label: string; detail?: string; n: number }[] = [];
-  names.forEach((x, i) => {
-    // La ÚLTIMA en gerundio si todavía corre; las demás en pasado. Un checklist entero en
-    // gerundio se lee como si seis pasos ya hechos siguieran en curso.
-    const label = running && i === names.length - 1 ? x.name : x.done;
-    const last = grouped[grouped.length - 1];
-    if (last && last.label === label && last.detail === x.detail) last.n++;
-    else grouped.push({ label, detail: x.detail, n: 1 });
-  });
-
-  const line = (g: { label: string; detail?: string; n: number }, last: boolean) => (
-    <>
-      {running && last ? (
-        <span className="h-3 w-3 shrink-0 animate-spin rounded-full border-2 border-muted/40 border-t-brand" />
-      ) : (
-        <Check size={13} className="shrink-0 text-emerald-500" />
-      )}
-      <span className="truncate">{g.label}</span>
-      {g.detail ? <span className="truncate font-mono text-[10px] text-muted">· {g.detail}</span> : null}
-      {g.n > 1 ? <span className="shrink-0 text-[10px] text-muted">×{g.n}</span> : null}
-    </>
-  );
-
-  if (grouped.length === 1) {
-    return (
-      <div className="mb-1.5 flex items-center gap-2 rounded-lg border border-border bg-surface-2 px-2.5 py-1.5 text-xs">
-        {line(grouped[0], true)}
-      </div>
-    );
-  }
-  return (
-    <div className="mb-1.5 overflow-hidden rounded-lg border border-border bg-surface-2">
-      <button onClick={() => setOpen((o) => !o)} className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-xs hover:bg-surface-3">
-        <span className="truncate font-medium">{names.length} {t("herramientas")}</span>
-        {running ? (
-          <span className="h-3 w-3 shrink-0 animate-spin rounded-full border-2 border-muted/40 border-t-brand" />
-        ) : (
-          <Check size={12} className="shrink-0 text-emerald-500" />
-        )}
-        <ChevronDown size={14} className={`ml-auto shrink-0 text-muted transition-transform ${open ? "rotate-180" : ""}`} />
-      </button>
-      {open ? (
-        <div className="border-t border-border px-2.5 py-1.5">
-          {grouped.map((g, i) => (
-            <div key={`${g.label}-${i}`} className="flex items-center gap-2 py-0.5 text-xs text-muted">
-              {line(g, i === grouped.length - 1)}
-            </div>
-          ))}
-        </div>
-      ) : null}
-    </div>
-  );
-}
 
 export function AgentDrawer({
   open,
@@ -239,7 +182,19 @@ export function AgentDrawer({
               if (TOOLS_OCULTAS.has(e.name)) continue;
               const lbl = toolLabel(e.name);
               patch((l) => {
-                l.tools = [...l.tools, { name: lbl?.ing ?? e.name!, done: lbl?.done ?? e.name!, detail: e.detail }];
+                // La anterior pasa a `done` y la nueva entra `running`: es el checklist
+                // incremental del chat, no una lista que sólo crece.
+                const previas = l.tools.map((x) => (x.status === "running" ? { ...x, status: "done" as const } : x));
+                const ultima = previas[previas.length - 1];
+                const etiqueta = lbl?.ing ?? e.name!;
+                // Repetida seguida: sube el contador en vez de añadir otra línea.
+                if (ultima && ultima.label === etiqueta && ultima.detail === e.detail) {
+                  ultima.n = (ultima.n ?? 1) + 1;
+                  ultima.status = "running";
+                  l.tools = [...previas];
+                } else {
+                  l.tools = [...previas, { label: etiqueta, status: "running", detail: e.detail }];
+                }
               });
             } else if (ev.t === "error") patch((l) => { l.text = String(ev.v ?? "Algo falló."); });
           }
@@ -249,7 +204,12 @@ export function AgentDrawer({
           patch((l) => { l.text = l.text || t("No se pudo hablar con el agente."); });
         }
       } finally {
-        patch((l) => { l.running = false; });
+        patch((l) => {
+          l.running = false;
+          // Lo que quedó corriendo cuando el turno cerró ya terminó: si no, el checklist
+          // se queda con un anillo eterno.
+          l.tools = l.tools.map((x) => (x.status === "running" ? { ...x, status: "done" as const } : x));
+        });
         setRunning(false);
         abortRef.current = null;
       }
@@ -342,7 +302,9 @@ export function AgentDrawer({
                   </div>
                 ) : (
                   <div key={i} className="mb-3">
-                    <ToolGroup names={m.tools} running={!!m.running} />
+                    {/* `vivo` = si este turno sigue corriendo. Sin eso, un turno terminado
+                        deja el anillo girando para siempre. */}
+                    <ToolGroup tools={m.tools} vivo={!!m.running} />
                     {m.text ? (
                       // El renderer del chat: Streamdown cierra el markdown incompleto EN
                       // VIVO, así que una tabla o un bloque a medio llegar no parpadean.

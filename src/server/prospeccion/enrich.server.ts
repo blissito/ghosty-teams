@@ -267,13 +267,21 @@ export async function runColumn(args: {
       const row = queue.shift();
       if (!row) return;
 
+      // Si la cascada declara columna base (un buscador de correos escribe en Correo), el
+      // valor va AHÍ. `args.key` sólo se usa cuando el dato no cabe en ningún campo fijo.
+      const destino = waterfallWritesTo(args.recipe?.waterfall ?? []) ?? args.key;
+
       const ya = row.data[args.key];
+      // Nunca pisa lo escrito A MANO: alguien que corrigió un dato no quiere que la
+      // siguiente pasada se lo borre.
       if (ya?.src === "manual" && ya.v) { done++; args.onProgress?.({ done, total, filled }); continue; }
 
       let res: EnrichResult = { v: null, verified: false };
       let fuente = "";
+      let intentado = false;
       for (const e of waterfall_) {
         if (!e.needs(row)) continue;
+        intentado = true;
         try {
           res = await e.run(row);
         } catch {
@@ -282,7 +290,17 @@ export async function runColumn(args: {
         if (res.v) { fuente = e.id; break; }
       }
 
-      await setCell(row.id, args.key, res.v, { src: fuente || "sin_fuente", verified: res.verified });
+      if (!intentado) {
+        // ⚠️ Una fila que NO se pudo intentar se deja INTACTA. Antes se le escribía igual
+        // (null, `sin_fuente`) y eso BORRABA lo que ya tuviera: volver a correr una columna
+        // vaciaba las filas que no calificaban. Cazado por el smoke, no en producción.
+        skipped++;
+        done++;
+        args.onProgress?.({ done, total, filled });
+        continue;
+      }
+
+      await setCell(row.id, destino, res.v, { src: fuente || "sin_fuente", verified: res.verified });
       if (res.v) filled++;
       done++;
       args.onProgress?.({ done, total, filled });

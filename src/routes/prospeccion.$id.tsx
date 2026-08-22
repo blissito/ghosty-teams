@@ -1,12 +1,13 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { ArrowLeft, Plus, Sparkles, Target } from "lucide-react";
+import { ArrowLeft, Plus, Send, Sparkles, Target } from "lucide-react";
 import { useT } from "../i18n";
 import { me } from "../server/auth";
 import { addColumnFn, deleteColumnFn, getListFn, importTableFn, promoteEmailFn, runAiColumnFn, runColumnFn, setCellFn } from "../server/prospeccion";
 import { ProspGrid, aplanar, findLatLon, type GridRow } from "../components/prospeccion/Grid";
 import { FilterBar } from "../components/prospeccion/FilterBar";
+import { SendReview } from "../components/prospeccion/SendReview";
 import { AgentDrawer } from "../components/prospeccion/AgentDrawer";
 import { useRtSubscribe } from "../utils/rt-bus";
 import { decodeFilter, encodeFilter, matches, type Filter } from "../lib/prospeccion-filter";
@@ -50,6 +51,8 @@ function ListPage() {
   const [notice, setNotice] = useState<string | null>(null);
   const [review, setReview] = useState<{ plan: Plan; fileName: string } | null>(null);
   const [agentOpen, setAgentOpen] = useState(false);
+  const [sendOpen, setSendOpen] = useState(false);
+  const [sendSubject, setSendSubject] = useState("");
 
   const reload = useCallback(async () => {
     const r = await getListFn({ data: { listId } });
@@ -99,8 +102,15 @@ function ListPage() {
    */
   useRtSubscribe({
     onEvent: (ev) => {
-      if (ev.t !== "prospeccion:filter" || ev.listId !== listId) return;
-      navigate({ search: (prev) => ({ ...prev, f: ev.f ?? undefined }), replace: true });
+      if (ev.t === "prospeccion:filter" && ev.listId === listId) {
+        navigate({ search: (prev) => ({ ...prev, f: ev.f ?? undefined }), replace: true });
+        return;
+      }
+      // El agente propuso mandar: se abre la confirmación con su asunto. Decide la persona.
+      if (ev.t === "prospeccion:send" && ev.listId === listId) {
+        setSendSubject(ev.subject);
+        setSendOpen(true);
+      }
     },
   });
 
@@ -346,6 +356,19 @@ function ListPage() {
                 <div className="text-[10px] uppercase tracking-wide text-muted">{c.l}</div>
               </div>
             ))}
+            {/*
+              ⚠️ El botón dice el NÚMERO, nunca sólo el verbo. Del spec: «Mandar» sobre una
+              vista de 312 y sobre una lista de 10,728 es la misma palabra y dos
+              consecuencias muy distintas.
+            */}
+            <button
+              onClick={() => setSendOpen(true)}
+              disabled={!view.length}
+              className="inline-flex items-center gap-1.5 text-xs font-semibold border border-border rounded-lg px-3 py-2 hover:bg-surface-3 disabled:opacity-40"
+              title={t("Mandarles correo a las filas que estás viendo")}
+            >
+              <Send size={13} /> {t("Mandar a")} {view.length.toLocaleString("es-MX")}
+            </button>
             <button
               data-keep-agent
               onClick={() => setAgentOpen((v) => !v)}
@@ -432,6 +455,15 @@ function ListPage() {
         existingColumns={data.columns.map((c) => ({ key: c.key, label: c.label }))}
         onCancel={() => setReview(null)}
         onConfirm={confirmImport}
+      />
+
+      <SendReview
+        open={sendOpen}
+        onClose={() => setSendOpen(false)}
+        listId={listId}
+        filter={f}
+        initialSubject={sendSubject}
+        onSent={(resumen) => { setNotice(resumen); reload(); }}
       />
 
       <AgentDrawer

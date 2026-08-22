@@ -63,6 +63,9 @@ export type RtEvent =
   // Es lo que hace que el agente mueva LA MISMA barra que la persona ve, en vez de filtrar
   // por dentro y contestar «listo».
   | { t: "prospeccion:filter"; listId: number; f: string | null }
+  // El agente PROPONE mandar. Abre la pantalla de confirmación con el asunto ya puesto; no
+  // manda nada. Un correo enviado es lo único de todo el módulo que no se puede deshacer.
+  | { t: "prospeccion:send"; listId: number; subject: string }
   | { t: "reaction"; messageId: number; emoji: string; userSub: string; op: "add" | "remove"; count: number }
   | { t: "pin"; channelId: number; messageId: number; pinned: boolean } // fijado/desfijado (room-wide)
   | { t: "star"; messageId: number; starred: boolean } // marcado personal (a ch.user, cross-device)
