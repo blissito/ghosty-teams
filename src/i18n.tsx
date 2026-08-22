@@ -55,7 +55,23 @@ export function useSetLocale(): (l: Locale) => void {
 
 // Hook principal: `const t = useT();` → `t("texto en español", { params })`.
 export type TFn = (key: string, params?: Record<string, string | number>) => string;
+
+/**
+ * ⚠️ MEMORIZADO por idioma, y no es una optimización: es corrección.
+ *
+ * Devolvía una función NUEVA en cada render. Poner `t` en las dependencias de un `useEffect`
+ * —lo natural, y lo que sugiere la regla de lint `exhaustive-deps`— convertía ese efecto en
+ * un bucle infinito si además hacía `setState`: efecto → estado → render → `t` nueva →
+ * efecto.
+ *
+ * El síntoma no parece un bucle. El 2026-08-22 se vio como un modal CONGELADO a media
+ * animación: `opacity: 0.36` y ahí se quedaba, porque Motion nunca llegaba a terminar entre
+ * re-render y re-render. Se diagnosticó midiendo la opacidad computada, no mirando.
+ *
+ * Con `useCallback([locale])` la identidad sólo cambia al cambiar de idioma, que es
+ * exactamente cuando un efecto que depende de `t` SÍ debe volver a correr.
+ */
 export function useT(): TFn {
   const { locale } = useContext(LocaleCtx);
-  return (key, params) => translate(locale, key, params);
+  return useCallback<TFn>((key, params) => translate(locale, key, params), [locale]);
 }
