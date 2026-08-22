@@ -141,7 +141,7 @@ export function DropZone({
             /* ⚠️ El velo va con `--color-card`, NO con `bg-surface`: el token `--color-bg` no
                está definido en el tema, así que `bg-surface/88` se resuelve a rgba(0,0,0,0) —
                medido — y el overlay quedaba SIN velo. Mismo gotcha que `bg-surface-1`. */
-            className="absolute inset-0 z-30 grid place-items-center bg-card/90 backdrop-blur-sm pointer-events-none"
+            className="absolute inset-0 z-30 grid place-items-center bg-ink/25 backdrop-blur-sm pointer-events-none"
           >
             <motion.div
               initial={still ? false : { scale: 0.94, y: 8 }}

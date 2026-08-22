@@ -113,14 +113,14 @@ export function NewColumnModal({
     <AnimatePresence>
       {open ? (
         <motion.div
-          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-card/85 backdrop-blur-sm"
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-ink/25 backdrop-blur-sm"
           initial={still ? false : { opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
           onClick={onClose}
         >
           <motion.div
-            className="gt-card rounded-2xl w-full max-w-md max-h-[88vh] flex flex-col overflow-hidden"
+            className="gt-card rounded-2xl w-full max-w-md max-h-[88vh] flex flex-col overflow-hidden shadow-2xl"
             initial={still ? false : { opacity: 0, y: 12, scale: 0.985 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 8, scale: 0.985 }}
