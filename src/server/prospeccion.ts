@@ -474,10 +474,18 @@ export const planSendFn = createServerFn({ method: "GET" })
       : todas;
 
     const plan = await planSend({ listId: Number(data.listId), campaign: "", rows });
-    // Las columnas de texto son las candidatas a ser EL mensaje.
+    /**
+     * Qué columnas pueden ser EL MENSAJE.
+     *
+     * ⚠️ Las de tipo `ai` primero y marcadas, porque son las escritas para eso. Una columna
+     * `manual` puede serlo (alguien pegó los mensajes desde Excel) pero también puede ser
+     * «Madurez digital» — y ofrecerla igual llevó a mandar un correo cuyo cuerpo entero
+     * decía «Alta». Se ofrecen las dos, pero se distinguen, y se propone una `ai`.
+     */
     const mensajes = cols
       .filter((c) => c.kind === "ai" || c.kind === "manual")
-      .map((c) => ({ key: c.key, label: c.label }));
+      .map((c) => ({ key: c.key, label: c.label, escrita: c.kind === "ai" }))
+      .sort((a, b) => Number(b.escrita) - Number(a.escrita));
     return { ok: true as const, plan, mensajes };
   });
 
@@ -582,14 +590,15 @@ export const previewSendFn = createServerFn({ method: "POST" })
     }
 
     const waPhone = await getConfig("prospeccion_wa_phone");
-    const { html, sinBoton } = await renderDraft({
+    const { html, text, inline, preview, sinBoton } = await renderDraft({
       subject: data.subject || "(sin asunto)",
       body: row.data[data.messageKey]!.v!,
       businessName: row.name,
       waPhone,
     });
 
-    if (!data.test) return { ok: true as const, error: null, html, to: row.email!, sent: false, sinBoton };
+    // La pantalla enseña `preview` (imágenes incrustadas); la prueba manda `html` (cid:).
+    if (!data.test) return { ok: true as const, error: null, html: preview, to: row.email!, sent: false, sinBoton };
 
     // La prueba va al correo de QUIEN la pide, nunca al prospecto.
     const { getUserEmail } = await import("./prospeccion/send.server");
@@ -602,6 +611,10 @@ export const previewSendFn = createServerFn({ method: "POST" })
       to: destino,
       subject: `[PRUEBA] ${data.subject || "(sin asunto)"}`,
       html,
+      text,
+      // ⚠️ Las imágenes van adjuntas: sin esto la prueba llega con el logo roto y hace
+      // dudar de un correo que está bien. Es el mismo `inline` que usa el envío real.
+      inline,
     });
-    return { ok: true as const, error: null, html, to: destino, sent: enviado, sinBoton };
+    return { ok: true as const, error: null, html: preview, to: destino, sent: enviado, sinBoton };
   });

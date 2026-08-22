@@ -19,6 +19,7 @@ import { currentNamespace } from "../tenant.server";
 import { isOptedOut } from "./optout.server";
 import { markError, markSent, reserveTouch, touchCount } from "./touches.server";
 import { instrument } from "./track.server";
+import type { InlineImage } from "../ses.server";
 import type { ProspRow } from "./lists.server";
 
 /** Tope de intentos por fila y canal. Al tercero se deja en paz. */
@@ -226,7 +227,7 @@ export async function renderDraft(args: {
   body: string;
   businessName?: string | null;
   waPhone?: string | null;
-}): Promise<{ html: string; text: string; sinBoton: boolean }> {
+}): Promise<{ html: string; text: string; inline: InlineImage[]; preview: string; sinBoton: boolean }> {
   const { ghostyEmail } = await import("../email-template.server");
 
   const wa = args.waPhone
@@ -250,7 +251,23 @@ export async function renderDraft(args: {
     cta: wa ? { label: "Escríbenos por WhatsApp", url: wa } : undefined,
     footer: "externo",
   });
-  return { ...out, sinBoton: !wa };
+
+  /**
+   * Para MIRAR el correo, las imágenes van incrustadas como data URI.
+   *
+   * ⚠️ En el correo de verdad viajan como `cid:` —adjuntas al mensaje, sin una petición de
+   * red que el destinatario pague al abrir—, pero `cid:` sólo lo resuelve un cliente de
+   * correo. En un iframe se ve como imagen ROTA, y una previsualización con el logo roto
+   * hace dudar de que el correo esté bien cuando está perfecto.
+   *
+   * El HTML que SE MANDA no se toca: esto es una copia sólo para la pantalla.
+   */
+  let paraMirar = out.html;
+  for (const img of out.inline ?? []) {
+    paraMirar = paraMirar.replaceAll(`cid:${img.cid}`, `data:${img.mime};base64,${img.bytes.toString("base64")}`);
+  }
+
+  return { ...out, preview: paraMirar, sinBoton: !wa };
 }
 
 /** El correo de quien está usando la app, para mandarle la prueba a él y no al prospecto. */

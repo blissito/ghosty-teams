@@ -199,13 +199,15 @@ export function SendReview({
                       className="w-full bg-surface-2 border border-border rounded-xl px-3 py-2.5 text-sm outline-none focus:border-brand"
                     >
                       {data.mensajes.map((m) => (
-                        <option key={m.key} value={m.key}>{m.label}</option>
+                        <option key={m.key} value={m.key}>
+                          {m.label}{m.escrita ? "" : ` — ${t("no es un mensaje escrito")}`}
+                        </option>
                       ))}
                     </select>
                   ) : (
                     <p className="text-xs text-muted">
                       {t("Todavía no hay ninguna columna de mensaje. Créala con")}{" "}
-                      <span className="text-ink font-medium">{t("Enriquecer → Que lo escriba el agente")}</span>.
+                      <span className="text-ink font-medium">{t("Enriquecer → Escribir un texto")}</span>.
                     </p>
                   )}
 
@@ -247,6 +249,13 @@ export function SendReview({
                         </span>
                       ) : null}
                     </div>
+                  ) : null}
+
+                  {messageKey && data.mensajes.find((m) => m.key === messageKey)?.escrita === false ? (
+                    <p className="text-xs text-amber-500 mt-2 flex items-start gap-1.5">
+                      <AlertTriangle size={13} className="shrink-0 mt-0.5" />
+                      {t("Esa columna no la escribió el agente: el cuerpo del correo va a ser su valor tal cual. Míralo con «Ver el correo».")}
+                    </p>
                   ) : null}
 
                   {/* Sin número, el correo sale sin su botón: o sea, sin el paso que
