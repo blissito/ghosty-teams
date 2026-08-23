@@ -37,9 +37,57 @@ function rowContext(row: ProspRow, columnLabels: Record<string, string>): string
  * de tabla. Un preámbulo ("Claro, aquí tienes:") o un bloque de markdown convierten la
  * columna en basura, y son justo lo que un modelo hace por defecto al conversar.
  */
-function buildPrompt(instruction: string, context: string): string {
+/** Qué se le pide al agente: redactar un texto, o averiguar un hecho. */
+export type AiMode = "write" | "research";
+
+const SALIDA = [
+  "REGLAS DE SALIDA (obligatorias):",
+  "- Responde SÓLO el valor de la celda. Nada de preámbulos, comillas ni markdown.",
+  "- Una sola línea, sin saltos.",
+];
+
+/**
+ * El prompt cambia según el trabajo, y la diferencia NO es cosmética.
+ *
+ * **Escribir** un texto es generativo: no hay respuesta correcta, y una frase inventada es
+ * exactamente lo que se pidió.
+ *
+ * **Buscar** un dato es lo contrario: hay UNA respuesta correcta y el modelo no la tiene.
+ * Tiene que salir a buscarla, y si no la encuentra **el silencio vale más que un invento**
+ * — un teléfono inventado no se ve inventado, se ve como un teléfono, y alguien lo va a
+ * marcar. Por eso las reglas de esa rama son duras y repetidas: es el único sitio de todo
+ * el módulo donde una alucinación acaba en un dato que alguien usa.
+ */
+/** Alias exportado para el smoke: el contrato del prompt es lo que impide un dato inventado. */
+export const buildPromptForTest = (i: string, c: string, m: AiMode) => buildPrompt(i, c, m);
+
+function buildPrompt(instruction: string, context: string, mode: AiMode): string {
+  if (mode === "research") {
+    return [
+      "Vas a AVERIGUAR un dato de un negocio real y ponerlo en UNA celda de una tabla.",
+      "",
+      "DATOS QUE YA TENEMOS DE ESTE NEGOCIO:",
+      context || "(sin datos)",
+      "",
+      "QUÉ HAY QUE AVERIGUAR:",
+      instruction,
+      "",
+      "CÓMO:",
+      "- Búscalo de VERDAD: mira su sitio web, búscalo en internet, entra a sus redes.",
+      "- Usa los datos de arriba para no confundirlo con otro negocio del mismo nombre.",
+      "",
+      "⚠️ LO MÁS IMPORTANTE:",
+      "- Si NO lo encuentras, contesta exactamente: —",
+      "- NUNCA lo deduzcas, lo aproximes ni lo inventes. Un dato inventado no parece",
+      "  inventado: parece un dato, y alguien lo va a usar. Es peor que una celda vacía.",
+      "- Si encuentras algo PARECIDO pero no estás seguro de que sea este negocio, contesta —",
+      "",
+      ...SALIDA,
+    ].join("\n");
+  }
+
   return [
-    "Vas a llenar UNA celda de una tabla de prospección.",
+    "Vas a ESCRIBIR el texto de UNA celda de una tabla de prospección.",
     "",
     "DATOS DE ESTE NEGOCIO:",
     context || "(sin datos)",
@@ -47,10 +95,8 @@ function buildPrompt(instruction: string, context: string): string {
     "LO QUE HAY QUE ESCRIBIR:",
     instruction,
     "",
-    "REGLAS DE SALIDA (obligatorias):",
-    "- Responde SÓLO el valor de la celda. Nada de preámbulos, comillas ni markdown.",
-    "- Una sola línea, sin saltos.",
-    "- Si los datos no alcanzan para responder, contesta exactamente: —",
+    ...SALIDA,
+    "- Si los datos no alcanzan para escribirlo, contesta exactamente: —",
   ].join("\n");
 }
 
@@ -75,6 +121,8 @@ export async function runAiColumn(args: {
   listId: number;
   key: string;
   instruction: string;
+  /** `write` redacta; `research` averigua un hecho y calla si no lo encuentra. */
+  mode?: AiMode;
   agentHandle?: string | null;
   /** La VISTA. Aquí importa el doble: cada fila es un turno de agente que se factura. */
   filter?: Filter;
@@ -120,7 +168,7 @@ export async function runAiColumn(args: {
           // con las 39 anteriores en el contexto y el modelo empezaría a mezclarlas.
           `prosp:${args.listId}:${args.key}:${row.id}`,
           "Prospección",
-          buildPrompt(args.instruction, rowContext(row, columnLabels)),
+          buildPrompt(args.instruction, rowContext(row, columnLabels), args.mode ?? "write"),
           (chunk) => { out += chunk; },
           [],
           undefined,

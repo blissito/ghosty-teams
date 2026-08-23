@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { motion, AnimatePresence, useReducedMotion } from "motion/react";
-import { AtSign, Check, Globe, PenLine, ShieldCheck, Sparkles, Wifi, X } from "lucide-react";
+import { AtSign, Check, Globe, PenLine, Search, ShieldCheck, Sparkles, Wifi, X } from "lucide-react";
 import { useT } from "../../i18n";
 import { listEnrichersFn } from "../../server/prospeccion";
 
@@ -9,6 +9,8 @@ export type NewColumn = {
   kind: "enrich" | "ai" | "manual";
   waterfall?: string[];
   prompt?: string;
+  /** Para `ai`: redactar un texto, o averiguar un hecho y callarse si no lo encuentra. */
+  mode?: "write" | "research";
 };
 
 /**
@@ -63,10 +65,11 @@ export function NewColumnModal({
   useEffect(() => {
     if (!choice) return;
     const e = enrichers.find((x) => x.id === choice);
-    setLabel(e ? e.label : choice === "__ai__" ? t("Mensaje") : t("Nota"));
+    setLabel(e ? e.label : choice === "__ai__" ? t("Mensaje") : choice === "__buscar__" ? t("Dato nuevo") : t("Nota"));
   }, [choice, enrichers, t]);
 
-  const isAi = choice === "__ai__";
+  const isAi = choice === "__ai__" || choice === "__buscar__";
+  const esBusqueda = choice === "__buscar__";
   const canCreate = !!choice && !!label.trim() && (!isAi || !!prompt.trim());
 
   const create = async () => {
@@ -77,6 +80,7 @@ export function NewColumnModal({
       kind: isAi ? "ai" : choice === "__manual__" ? "manual" : "enrich",
       waterfall: isAi || choice === "__manual__" ? [] : [choice!],
       prompt: isAi ? prompt.trim() : undefined,
+      mode: isAi ? (esBusqueda ? "research" : "write") : undefined,
     });
     setSaving(false);
     onClose();
@@ -161,11 +165,23 @@ export function NewColumnModal({
 
               <div className="h-px bg-border my-1" />
 
+              {/*
+                Buscar un dato ≠ escribir un texto, aunque las dos las haga el agente.
+                Escribir es generativo: no hay respuesta correcta. Buscar tiene UNA respuesta
+                correcta que el modelo no tiene y debe salir a averiguar — y callarse si no
+                la encuentra, porque un teléfono inventado no parece inventado.
+              */}
+              <Option
+                id="__buscar__"
+                icon={Search}
+                title={t("Buscar otro dato")}
+                hint={t("Su teléfono, su horario, si tienen estacionamiento… Lo busca en internet, fila por fila.")}
+              />
               <Option
                 id="__ai__"
                 icon={Sparkles}
-                title={t("Que lo escriba el agente")}
-                hint={t("Redacta por fila usando las demás columnas. Cada fila es un turno: cuesta.")}
+                title={t("Escribir un texto")}
+                hint={t("Un mensaje para cada negocio, usando sus demás columnas.")}
               />
               <Option
                 id="__manual__"
@@ -183,16 +199,25 @@ export function NewColumnModal({
                     className="overflow-hidden"
                   >
                     <label className="block text-xs font-semibold uppercase tracking-wide text-muted mt-3 mb-1.5">
-                      {t("Qué le pides por cada fila")}
+                      {esBusqueda ? t("Qué quieres averiguar de cada negocio") : t("Qué le pides por cada fila")}
                     </label>
                     <textarea
                       value={prompt}
                       onChange={(e) => setPrompt(e.target.value)}
                       rows={3}
                       autoFocus
-                      placeholder={t("Escribe una primera línea para este negocio, mencionando su giro.")}
+                      placeholder={
+                        esBusqueda
+                          ? t("su teléfono · su horario · quién es el dueño · si tienen estacionamiento")
+                          : t("Escribe una primera línea para este negocio, mencionando su giro.")
+                      }
                       className="w-full bg-surface-2 border border-border rounded-xl px-3 py-2.5 text-sm outline-none focus:border-brand resize-none"
                     />
+                    <p className="text-[11px] text-muted mt-1.5">
+                      {esBusqueda
+                        ? t("⚠️ Si no lo encuentra, deja la celda vacía. Nunca lo inventa: un dato falso no parece falso.")
+                        : t("⚠️ Cada fila es un turno de agente. Sobre miles de filas, cuesta.")}
+                    </p>
                   </motion.div>
                 ) : null}
               </AnimatePresence>

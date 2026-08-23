@@ -44,6 +44,14 @@ export type Recipe = {
   waterfall?: string[];
   /** `ai`: qué se le pide al modelo por fila. */
   prompt?: string;
+  /**
+   * `ai`: si es REDACTAR (`write`) o AVERIGUAR (`research`).
+   *
+   * Cambia el prompt entero, y no es cosmético: al averiguar, un dato inventado no parece
+   * inventado —parece un dato— y alguien lo va a usar. Esa rama exige callarse cuando no
+   * se encuentra.
+   */
+  mode?: "write" | "research";
   /** Sugerencia de tipo para pintar la celda: text, sí/no, número, url. */
   format?: "text" | "bool" | "number" | "url";
 };

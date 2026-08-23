@@ -179,7 +179,7 @@ export const listEnrichersFn = createServerFn({ method: "GET" }).handler(async (
 
 /** Agrega una columna. Si trae waterfall_, se puede correr enseguida. */
 export const addColumnFn = createServerFn({ method: "POST" })
-  .validator((d: { listId: number; label: string; kind: "enrich" | "ai" | "manual"; waterfall?: string[]; prompt?: string; f?: string }) => d)
+  .validator((d: { listId: number; label: string; kind: "enrich" | "ai" | "manual"; waterfall?: string[]; prompt?: string; mode?: "write" | "research"; f?: string }) => d)
   .handler(async ({ data }) => {
     const me = await sessionUser();
     if (!me) return { ok: false as const, error: "sin sesión" };
@@ -226,7 +226,7 @@ export const addColumnFn = createServerFn({ method: "POST" })
         data.kind === "enrich"
           ? { waterfall: data.waterfall ?? [] }
           : data.kind === "ai"
-            ? { prompt: data.prompt ?? "" }
+            ? { prompt: data.prompt ?? "", mode: data.mode ?? "write" }
             : null,
     });
     return { ok: true as const, column: col };
@@ -305,6 +305,7 @@ export const runAiColumnFn = createServerFn({ method: "POST" })
       listId: Number(data.listId),
       key: col.key,
       instruction: col.recipe.prompt,
+      mode: col.recipe.mode ?? "write",
       agentHandle: data.agentHandle ?? null,
       filter: decodeFilter(data.f),
       fields: [...BASE_FIELD_KEYS, ...cols.map((c) => c.key)],
