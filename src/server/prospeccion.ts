@@ -550,6 +550,10 @@ export const sendFn = createServerFn({ method: "POST" })
       rows,
       redactados,
       waPhone: waPhonePrev,
+      // Quién manda: va a la bitácora de cada toque, y es lo que después deja decir
+      // «Luis le escribió hace 3 días» en vez de un «bloqueado» que no se puede accionar.
+      bySub: me.sub,
+      byName: me.name ?? null,
       // Sin replyTo: el `From` del sobre ya lleva el dominio correcto, y meter el correo
       // personal de quien manda lo expone a 11 mil desconocidos.
     });

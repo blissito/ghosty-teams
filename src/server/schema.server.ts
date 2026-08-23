@@ -1339,6 +1339,15 @@ async function migrate(): Promise<void> {
   await addColumn("gt_prosp_lists", "purge_at", "INTEGER");
   await exec(`CREATE INDEX IF NOT EXISTS idx_prosp_lists_purge ON gt_prosp_lists (purge_at)`);
 
+  // QUIÉN mandó cada toque.
+  //
+  // ⚠️ Por `addColumn`, que es la regla de siempre. Y hace falta por dos razones: una lista
+  // es del WORKSPACE, así que Ana y Luis trabajan la misma y hoy pueden escribirle al mismo
+  // prospecto el mismo día — la llave de idempotencia incluye la campaña, y la de cada uno
+  // es distinta. La segunda: algo que sale hacia clientes reales tiene que ser atribuible.
+  await addColumn("gt_prosp_touches", "by_sub", "TEXT");
+  await addColumn("gt_prosp_touches", "by_name", "TEXT");
+
   // Flip único: correo por default OFF (opt-in). Las filas existentes heredaron el viejo
   // DEFAULT 1 (opt-out silencioso, nadie lo eligió conscientemente) → las apagamos una sola
   // vez, guardado por flag en gc_config. Reversible: el usuario lo reactiva en el panel.

@@ -17,7 +17,7 @@
  */
 import { currentNamespace } from "../tenant.server";
 import { isOptedOut } from "./optout.server";
-import { markError, markSent, reserveTouch, touchCount } from "./touches.server";
+import { COOLDOWN_DAYS, lastTouch, markError, markSent, reserveTouch, touchCount } from "./touches.server";
 import { instrument } from "./track.server";
 import type { InlineImage } from "../ses.server";
 import type { ProspRow } from "./lists.server";
@@ -61,6 +61,10 @@ export type SendPlan = {
   sinCorreo: number;
   correoMuerto: number;
   yaTocados: number;
+  /** Tocados hace poco por ALGUIEN del equipo: descansan antes del siguiente. */
+  enDescanso: number;
+  /** Quién los tocó y cuándo, para poder hablarlo en vez de sólo bloquear. */
+  descansoNota: string | null;
   /** Los primeros, para poder mirar a quién se le va a escribir. */
   muestra: { rowId: number; name: string | null; email: string }[];
 };
@@ -81,8 +85,11 @@ export async function planSend(args: {
     sinCorreo: 0,
     correoMuerto: 0,
     yaTocados: 0,
+    enDescanso: 0,
+    descansoNota: null,
     muestra: [],
   };
+  const quienes = new Map<string, number>();
 
   for (const row of args.rows) {
     if (!row.email) { plan.sinCorreo++; continue; }
@@ -93,8 +100,28 @@ export async function planSend(args: {
     const veredicto = Object.values(row.data).find((c) => c?.src === "correo_sirve")?.v ?? "";
     if (veredicto && veredicto !== "sirve" && veredicto !== "buzón de rol") { plan.correoMuerto++; continue; }
     if ((await touchCount(row.id, "email")) >= MAX_ATTEMPTS) { plan.yaTocados++; continue; }
+
+    // ⚠️ El guard del EQUIPO: una lista es del workspace, y sin esto Ana manda su campaña y
+    // Luis la suya el mismo día — la llave de idempotencia incluye la campaña, así que son
+    // dos llaves y salen los dos correos.
+    const ultimo = await lastTouch(row.id);
+    if (ultimo && ultimo.days < COOLDOWN_DAYS) {
+      plan.enDescanso++;
+      const quien = ultimo.byName ?? "alguien del equipo";
+      quienes.set(quien, (quienes.get(quien) ?? 0) + 1);
+      continue;
+    }
+
     plan.irian++;
     if (plan.muestra.length < 5) plan.muestra.push({ rowId: row.id, name: row.name, email: row.email });
+  }
+
+  if (quienes.size) {
+    const [quien] = [...quienes.entries()].sort((a, b) => b[1] - a[1])[0];
+    plan.descansoNota =
+      quienes.size === 1
+        ? `${quien} ya les escribió esta semana`
+        : `${quien} y otros ya les escribieron esta semana`;
   }
   return plan;
 }
@@ -113,6 +140,9 @@ export async function sendBatch(args: {
   redactados: Drafted[];
   fromName?: string;
   replyTo?: string;
+  /** Quién manda. Va a la bitácora de cada toque. */
+  bySub?: string | null;
+  byName?: string | null;
   /** El número al que el prospecto va a escribir, en E.164 sin signos. */
   waPhone?: string | null;
 }): Promise<SendResult> {
@@ -142,6 +172,11 @@ export async function sendBatch(args: {
     // 2. Parar after 2 intentos sin respuesta. Insistir una tercera vez no convierte: molesta.
     if ((await touchCount(row.id, "email")) >= MAX_ATTEMPTS) { out.skippedRepeat++; continue; }
 
+    // El mismo guard del equipo, también aquí: el plan es una previsualización y puede
+    // haber pasado tiempo (o haber mandado otra persona) entre verlo y confirmar.
+    const ultimo = await lastTouch(row.id);
+    if (ultimo && ultimo.days < COOLDOWN_DAYS) { out.skippedRepeat++; continue; }
+
     // 3. Reservar. Si devuelve null, otro proceso ya la tomó o ya se mandó.
     const touchId = await reserveTouch({
       listId: args.listId,
@@ -150,6 +185,8 @@ export async function sendBatch(args: {
       campaign: args.campaign,
       subject: draft.subject,
       body: draft.html.slice(0, 4000),
+      bySub: args.bySub,
+      byName: args.byName,
     });
     if (touchId == null) { out.skippedRepeat++; continue; }
 

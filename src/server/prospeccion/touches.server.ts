@@ -43,12 +43,16 @@ export async function reserveTouch(args: {
   campaign: string;
   subject?: string | null;
   body?: string | null;
+  /** Quién lo manda. Va a la bitácora: algo que sale a clientes tiene que ser atribuible. */
+  bySub?: string | null;
+  byName?: string | null;
 }): Promise<number | null> {
   const key = idemKey(args.rowId, args.channel, args.campaign);
   await dbq(
-    `INSERT INTO gt_prosp_touches (list_id, row_id, channel, subject, body, idem_key)
-     VALUES (?,?,?,?,?,?) ON CONFLICT (idem_key) DO NOTHING`,
-    [args.listId, args.rowId, args.channel, args.subject ?? null, args.body ?? null, key]
+    `INSERT INTO gt_prosp_touches (list_id, row_id, channel, subject, body, idem_key, by_sub, by_name)
+     VALUES (?,?,?,?,?,?,?,?) ON CONFLICT (idem_key) DO NOTHING`,
+    [args.listId, args.rowId, args.channel, args.subject ?? null, args.body ?? null, key,
+     args.bySub ?? null, args.byName ?? null]
   );
   const r = await dbq(`SELECT id, sent_at FROM gt_prosp_touches WHERE idem_key = ? LIMIT 1`, [key]);
   if (!r[0]) return null;
@@ -125,4 +129,34 @@ export async function touchCount(rowId: number, channel?: string): Promise<numbe
     ? await dbq(`SELECT COUNT(*) AS n FROM gt_prosp_touches WHERE row_id = ? AND channel = ? AND sent_at IS NOT NULL`, [rowId, channel])
     : await dbq(`SELECT COUNT(*) AS n FROM gt_prosp_touches WHERE row_id = ? AND sent_at IS NOT NULL`, [rowId]);
   return num(r[0]?.n);
+}
+
+
+/** Días que un prospecto descansa entre un toque y el siguiente, lo mande QUIEN lo mande. */
+export const COOLDOWN_DAYS = 7;
+
+export type LastTouch = { at: number; byName: string | null; days: number };
+
+/**
+ * El último toque a esta fila, de CUALQUIERA.
+ *
+ * ⚠️ Es el guard que faltaba. `touchCount >= 2` frena el TERCER intento, pero no impide que
+ * Ana mande su campaña y Luis la suya el mismo día: la llave de idempotencia incluye la
+ * campaña, así que son dos llaves distintas y salen los dos correos. Al dentista le llegan
+ * dos correos nuestros con horas de diferencia, que es exactamente lo que produce una queja
+ * de spam — y una queja cuesta reputación de dominio, que tarda semanas en recuperarse.
+ *
+ * Devuelve el NOMBRE de quien lo tocó, no sólo la fecha: «Luis le escribió hace 3 días» se
+ * puede accionar (se le pregunta a Luis); «bloqueado» no.
+ */
+export async function lastTouch(rowId: number, channel = "email"): Promise<LastTouch | null> {
+  const r = await dbq(
+    `SELECT sent_at, by_name FROM gt_prosp_touches
+      WHERE row_id = ? AND channel = ? AND sent_at IS NOT NULL
+      ORDER BY sent_at DESC LIMIT 1`,
+    [rowId, channel]
+  );
+  if (!r[0]?.sent_at) return null;
+  const at = num(r[0].sent_at);
+  return { at, byName: r[0].by_name ?? null, days: Math.floor((Date.now() / 1000 - at) / 86400) };
 }

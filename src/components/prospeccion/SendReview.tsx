@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { AlertTriangle, Ban, Eye, MailX, Send, X } from "lucide-react";
+import { AlertTriangle, Ban, Eye, MailX, Send, Users, X } from "lucide-react";
 import { useT } from "../../i18n";
 import { planSendFn } from "../../server/prospeccion";
 
@@ -97,7 +97,7 @@ export function SendReview({
   };
 
   const p = data?.plan;
-  const saltados = p ? p.optOut + p.sinCorreo + p.correoMuerto + p.yaTocados : 0;
+  const saltados = p ? p.optOut + p.sinCorreo + p.correoMuerto + p.yaTocados + p.enDescanso : 0;
   const puede = !!p && p.irian > 0 && !!messageKey && !!subject.trim();
 
   return (
@@ -165,6 +165,15 @@ export function SendReview({
                           <MailX size={13} className="text-muted shrink-0" />
                           <span className="tabular-nums font-medium">{p.sinCorreo}</span>
                           <span className="text-muted">{t("sin correo")}</span>
+                        </li>
+                      ) : null}
+                      {p.enDescanso ? (
+                        <li className="flex items-center gap-2">
+                          <Users size={13} className="text-muted shrink-0" />
+                          <span className="tabular-nums font-medium">{p.enDescanso}</span>
+                          <span className="text-muted">
+                            {p.descansoNota ?? t("ya recibieron correo esta semana")}
+                          </span>
                         </li>
                       ) : null}
                       {p.yaTocados ? (

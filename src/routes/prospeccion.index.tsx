@@ -477,9 +477,13 @@ function ProspeccionPage() {
                       {l.name}
                       <ChevronRight size={15} className="text-muted opacity-0 group-hover:opacity-100 transition-opacity" />
                     </div>
-                    {l.criteria && l.criteria !== l.name ? (
-                      <div className="text-xs text-muted mt-1 truncate">{l.criteria}</div>
-                    ) : null}
+                    {/* Quién la armó: una lista es del WORKSPACE y la trabajan varios. Se
+                        guardaba desde el principio y no aparecía en ningún lado. */}
+                    <div className="text-xs text-muted mt-1 truncate">
+                      {l.criteria && l.criteria !== l.name ? l.criteria : null}
+                      {l.criteria && l.criteria !== l.name && l.createdByName ? " · " : null}
+                      {l.createdByName ? `${t("la armó")} ${l.createdByName}` : null}
+                    </div>
                   </Link>
                   <Funnel l={l} />
                   <button

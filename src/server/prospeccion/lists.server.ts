@@ -73,6 +73,8 @@ export type ProspList = {
   criteria: string | null;
   source: string;
   createdBy: string;
+  /** Nombre de quien la creó. `created_by` se guardaba desde el principio y no se enseñaba. */
+  createdByName: string | null;
   status: string;
   createdAt: number;
   /** Archivada: sigue existiendo y se puede recuperar hasta `purgeAt`. */
@@ -135,7 +137,7 @@ export const PURGE_DAYS = 30;
  */
 export async function listLists(opts?: { archived?: boolean }): Promise<ProspList[]> {
   const where = opts?.archived ? "archived_at IS NOT NULL" : "archived_at IS NULL";
-  const [rows, agg, sizes] = await dbqMany([
+  const [rows, agg, sizes, gente] = await dbqMany([
     { sql: `SELECT * FROM gt_prosp_lists WHERE ${where} ORDER BY created_at DESC LIMIT 200` },
     {
       sql: `SELECT list_id,
@@ -146,6 +148,8 @@ export async function listLists(opts?: { archived?: boolean }): Promise<ProspLis
             FROM gt_prosp_touches GROUP BY list_id`,
     },
     { sql: `SELECT list_id, COUNT(*) AS n FROM gt_prosp_rows GROUP BY list_id` },
+    // Los nombres, en el MISMO viaje: una consulta por lista serían N round-trips.
+    { sql: `SELECT sub, name FROM gc_users LIMIT 500` },
   ]);
   if (!rows.length) return [];
 
@@ -160,6 +164,8 @@ export async function listLists(opts?: { archived?: boolean }): Promise<ProspLis
   }
   const size = new Map<number, number>();
   for (const x of sizes) size.set(num(x.list_id), num(x.n));
+  const nombres = new Map<string, string>();
+  for (const g of gente) if (g.sub) nombres.set(String(g.sub), String(g.name ?? ""));
 
   return rows.map((l) => {
     const id = num(l.id);
@@ -170,6 +176,7 @@ export async function listLists(opts?: { archived?: boolean }): Promise<ProspLis
       criteria: l.criteria ?? null,
       source: l.source ?? "denue",
       createdBy: l.created_by ?? "",
+      createdByName: nombres.get(String(l.created_by ?? "")) || null,
       status: l.status ?? "draft",
       createdAt: num(l.created_at),
       archivedAt: l.archived_at == null ? null : num(l.archived_at),
