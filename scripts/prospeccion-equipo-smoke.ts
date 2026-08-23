@@ -16,7 +16,7 @@ const check = (l: string, ok: boolean, extra = "") => {
 
 await withNamespace(process.env.SQLD_NAMESPACE ?? "default", async () => {
   await (await import("../src/server/schema.server")).ensureSchema();
-  const { dbq, num } = await import("../src/dbq.server");
+  const { dbq } = await import("../src/dbq.server");
   const L = await import("../src/server/prospeccion/lists.server");
   const T = await import("../src/server/prospeccion/touches.server");
   const S = await import("../src/server/prospeccion/send.server");
