@@ -1320,6 +1320,19 @@ function ChannelPage() {
     chimedArtifactIds.current.add(id);
     playArtifactReady();
   };
+  // Quién pidió cada turno (messageId → sub). Lo manda el evento `turn`; NO se borra al
+  // terminar, porque el último `message:body` —el que trae el artefacto cerrado— llega
+  // después del `done`. Es lo que decide si el panel se abre SOLO en tu pantalla.
+  const turnInvokerRef = useRef<Map<number, string | null>>(new Map());
+  // ¿Este borrador es MÍO? Abrir el panel es una acción sobre la pantalla de alguien: el
+  // trabajo que otro le encargó al agente no te la puede tomar (ni en un room compartido,
+  // ni —el caso reportado— si un evento de un DM 1:1 se cuela). Sin invocador conocido
+  // (automatismos, formularios) NO se abre solo: queda la píldora para abrirlo a mano.
+  const draftEsMio = (id: number): boolean => {
+    const inv = turnInvokerRef.current.get(id);
+    if (inv === undefined) return false;
+    return inv != null && inv === user?.sub;
+  };
   const draftSeenLenRef = useRef(0);
   const driveDraftFromBody = (id: number, body: string) => {
     const doc = extractEbDoc(body);
@@ -1339,7 +1352,9 @@ function ChannelPage() {
       // DOCUMENTO: no hay preview cliente que aplicar (los bloques los parchea el
       // server). Se espera la versión nueva y se abre el panel en ella.
       const enDoc = !openArtifact || openArtifact.kind === "doc" || (openArtifact.kind === "draft" && !openArtifact.artifact);
-      if (enDoc && patches.every((p) => p.closed)) {
+      // Un patch sobre un documento que NO tienes abierto sólo puede abrirlo si el turno es
+      // tuyo: si no, el panel de todo el room saltaría al documento que otro está editando.
+      if (enDoc && patches.every((p) => p.closed) && (openArtifact?.kind === "doc" || draftEsMio(id))) {
         // Si el documento YA está abierto, se le pasan los alias del patch para que marque
         // AHORA: el editor tiene el documento que el agente vio, así que los alias casan y
         // los nodos están montados. Esperar la republicación era el orden equivocado.
@@ -1397,6 +1412,19 @@ function ChannelPage() {
     });
     // Lo cerraste a propósito: no se reabre solo (cada token lo reabría y cerrarlo no
     // servía de nada). Se guarda para poder volver cuando tú quieras.
+    // ⚠️ EL PANEL SE ABRE SOLO **SÓLO PARA QUIEN PIDIÓ EL TURNO**. El borrador viaja por el
+    // canal del room (y el de cada miembro del DM), así que sin esta puerta el trabajo que un
+    // agente hace para una persona le tomaba la pantalla a todos los conectados y les
+    // enseñaba lo que estaba escribiendo — el caso reportado, incluido un DM 1:1. Para los
+    // demás queda la píldora "Armando · <doc>": lo abren si quieren, y si ya lo abrieron a
+    // mano se sigue actualizando en vivo.
+    const yaLoTengoAbierto =
+      openArtifactRef.current?.kind === "draft" && openArtifactRef.current.messageId === id;
+    if (!draftEsMio(id) && !yaLoTengoAbierto) {
+      setHiddenDraft(doc.closed ? null : draftView());
+      setHiddenDraftParent(doc.closed ? null : draftParentRef.current);
+      return;
+    }
     if (draftDismissedRef.current.has(id)) {
       setHiddenDraft(doc.closed ? null : draftView());
       setHiddenDraftParent(doc.closed ? null : draftParentRef.current);
@@ -1715,6 +1743,12 @@ function ChannelPage() {
         // Estado del turno de agente: corriendo o esperando su lugar en la cola. Vive en
         // memoria (no en el mensaje): es de la sesión, no del historial — al recargar, un
         // turno que ya terminó no debe seguir diciendo "en espera".
+        // El invocador se registra SIEMPRE y no se borra: el body final llega tras el `done`.
+        turnInvokerRef.current.set(ev.id, ev.invokerSub ?? null);
+        if (turnInvokerRef.current.size > 300) {
+          const k = turnInvokerRef.current.keys().next().value;
+          if (k != null) turnInvokerRef.current.delete(k);
+        }
         setTurns((prev) => {
           const next = new Map(prev);
           if (ev.state === "stopped" || ev.state === "done") next.delete(ev.id);

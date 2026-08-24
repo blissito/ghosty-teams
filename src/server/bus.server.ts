@@ -53,6 +53,14 @@ export type RtEvent =
       position: number; startedAt: number;
       agent?: string; avatar?: string; channelId?: number | null; parentId?: number | null; dmId?: number | null;
       tarea?: string; paso?: string; outcome?: string;
+      /**
+       * Quién PIDIÓ el turno. Viaja al cliente porque el panel de artefactos se abre solo,
+       * y abrirlo es una acción sobre la pantalla de alguien: sin esto, el borrador que un
+       * agente escribe en un room le tomaba el panel a TODOS los conectados —incluido el
+       * trabajo de un DM 1:1 si el evento se colaba— y enseñaba lo que otro está haciendo.
+       * Los demás siguen viéndolo como píldora y lo abren si quieren.
+       */
+      invokerSub?: string | null;
     }
   // El agente movió el filtro de una lista de prospección.
   //
