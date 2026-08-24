@@ -50,6 +50,7 @@ export function SendReview({
   const [probando, setProbando] = useState(false);
   const [pruebaOk, setPruebaOk] = useState<string | null>(null);
   const [sinBoton, setSinBoton] = useState(false);
+  const [marca, setMarca] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -75,6 +76,7 @@ export function SendReview({
     if (!r.ok) { setError(("error" in r && r.error) || t("No se pudo previsualizar")); return; }
     setPreview(r.html);
     setSinBoton(("sinBoton" in r && r.sinBoton) === true);
+    setMarca(("marca" in r ? r.marca : null) ?? null);
     if (test && r.sent) setPruebaOk(r.to);
   };
 
@@ -287,6 +289,14 @@ export function SendReview({
                         {/* En un iframe con `sandbox` vacío: el HTML lo compuso un modelo y
                             no puede correr nada ni heredar los estilos de la app — que
                             además lo harían verse distinto de como llega a Gmail. */}
+                        {/* Con qué marca sale. Es lo primero que hay que comprobar: si al
+                            prospecto le llega el mascot de Ghosty en vez de la marca de
+                            quien prospecta, el remitente no es quien dice ser. */}
+                        <p className="text-[11px] text-muted mb-1.5">
+                          {marca
+                            ? `${t("Sale con la marca de")} ${marca}`
+                            : t("⚠️ Sin marca activa: sale con la de Ghosty. Ponla en Ajustes → Marca.")}
+                        </p>
                         <iframe
                           title={t("Previsualización")}
                           sandbox=""

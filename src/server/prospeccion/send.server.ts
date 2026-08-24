@@ -264,8 +264,30 @@ export async function renderDraft(args: {
   body: string;
   businessName?: string | null;
   waPhone?: string | null;
-}): Promise<{ html: string; text: string; inline: InlineImage[]; preview: string; sinBoton: boolean }> {
+}): Promise<{ html: string; text: string; inline: InlineImage[]; preview: string; sinBoton: boolean; marca: string | null }> {
   const { ghostyEmail } = await import("../email-template.server");
+
+  /**
+   * La MARCA del workspace en el sobre.
+   *
+   * ⚠️ Cambia quién habla. La plantilla por defecto es «Ghosty hablando» —mascot y globo de
+   * cómic— y eso está bien para una notificación del producto. A un prospecto de Deník
+   * tiene que hablarle Deník: si al abrir el correo ve el mascot de Ghosty, el remitente no
+   * es quien dice ser, y eso es exactamente lo que la gente lee como spam.
+   *
+   * Si el workspace no tiene marca activa, sale como siempre. `activeBrandKit` ya cachea 20
+   * segundos, así que mandar mil correos no son mil consultas.
+   */
+  const { activeBrandKit } = await import("../brand.server");
+  const kit = await activeBrandKit().catch(() => null);
+  const brand = kit
+    ? {
+        name: kit.name,
+        logoUrl: kit.logoUrl ?? null,
+        accent: kit.colors?.primary ?? null,
+        fontFamily: kit.fonts?.body ?? kit.fonts?.heading ?? null,
+      }
+    : null;
 
   const wa = args.waPhone
     ? `https://wa.me/${args.waPhone.replace(/\D/g, "")}?text=${encodeURIComponent(
@@ -287,6 +309,7 @@ export async function renderDraft(args: {
     body: args.body,
     cta: wa ? { label: "Escríbenos por WhatsApp", url: wa } : undefined,
     footer: "externo",
+    brand,
   });
 
   /**
@@ -304,7 +327,7 @@ export async function renderDraft(args: {
     paraMirar = paraMirar.replaceAll(`cid:${img.cid}`, `data:${img.mime};base64,${img.bytes.toString("base64")}`);
   }
 
-  return { ...out, preview: paraMirar, sinBoton: !wa };
+  return { ...out, preview: paraMirar, sinBoton: !wa, marca: brand?.name ?? null };
 }
 
 /** El correo de quien está usando la app, para mandarle la prueba a él y no al prospecto. */

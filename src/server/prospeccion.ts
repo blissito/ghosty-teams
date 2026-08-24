@@ -573,7 +573,7 @@ export const previewSendFn = createServerFn({ method: "POST" })
   .validator((d: { listId: number; f?: string; messageKey: string; subject: string; test?: boolean }) => d)
   .handler(async ({ data }) => {
     const me = await sessionUser();
-    if (!me) return { ok: false as const, error: "sin sesión", html: "", to: "", sent: false, sinBoton: false };
+    if (!me) return { ok: false as const, error: "sin sesión", html: "", to: "", sent: false, sinBoton: false, marca: null };
 
     const { listRows, listColumns } = await import("./prospeccion/lists.server");
     const { decodeFilter, matches } = await import("../lib/prospeccion-filter");
@@ -591,11 +591,11 @@ export const previewSendFn = createServerFn({ method: "POST" })
     // La primera fila que SÍ tenga mensaje y correo: previsualizar una vacía no enseña nada.
     const row = rows.find((r) => r.data[data.messageKey]?.v?.trim() && r.email);
     if (!row) {
-      return { ok: false as const, error: "Ninguna fila de la vista tiene mensaje y correo todavía.", html: "", to: "", sent: false, sinBoton: false };
+      return { ok: false as const, error: "Ninguna fila de la vista tiene mensaje y correo todavía.", html: "", to: "", sent: false, sinBoton: false, marca: null };
     }
 
     const waPhone = await getConfig("prospeccion_wa_phone");
-    const { html, text, inline, preview, sinBoton } = await renderDraft({
+    const { html, text, inline, preview, sinBoton, marca } = await renderDraft({
       subject: data.subject || "(sin asunto)",
       body: row.data[data.messageKey]!.v!,
       businessName: row.name,
@@ -603,13 +603,13 @@ export const previewSendFn = createServerFn({ method: "POST" })
     });
 
     // La pantalla enseña `preview` (imágenes incrustadas); la prueba manda `html` (cid:).
-    if (!data.test) return { ok: true as const, error: null, html: preview, to: row.email!, sent: false, sinBoton };
+    if (!data.test) return { ok: true as const, error: null, html: preview, to: row.email!, sent: false, sinBoton, marca };
 
     // La prueba va al correo de QUIEN la pide, nunca al prospecto.
     const { getUserEmail } = await import("./prospeccion/send.server");
     const destino = await getUserEmail(me.sub);
     if (!destino) {
-      return { ok: false as const, error: "No encuentro tu correo para mandarte la prueba.", html, to: row.email!, sent: false, sinBoton };
+      return { ok: false as const, error: "No encuentro tu correo para mandarte la prueba.", html, to: row.email!, sent: false, sinBoton, marca };
     }
     const { sendSesEmail } = await import("./ses.server");
     const enviado = await sendSesEmail({
@@ -621,5 +621,5 @@ export const previewSendFn = createServerFn({ method: "POST" })
       // dudar de un correo que está bien. Es el mismo `inline` que usa el envío real.
       inline,
     });
-    return { ok: true as const, error: null, html: preview, to: destino, sent: enviado, sinBoton };
+    return { ok: true as const, error: null, html: preview, to: destino, sent: enviado, sinBoton, marca };
   });

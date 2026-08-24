@@ -16,6 +16,7 @@
 //   correo (500ms medidos, casi todo handshake TLS contra OVH) para traer 1.5KB, y dependía
 //   de que el destinatario aceptara "mostrar imágenes de este remitente".
 import { DEFAULT_LOCALE, translate, type Locale } from "../i18n.core";
+import { createRequire } from "node:module";
 import type { InlineImage } from "./ses.server";
 
 /**
@@ -51,6 +52,24 @@ export type GhostyEmail = {
    * esa gente reconoce, que es el del cliente y no el nuestro.
    */
   marca?: string;
+  /**
+   * La marca del workspace, para el correo que sale HACIA FUERA.
+   *
+   * ⚠️ Cambia quién HABLA. La plantilla por defecto es «Ghosty hablando»: mascot + globo de
+   * cómic. A un prospecto de Deník tiene que hablarle Deník, no Ghosty — así que con marca
+   * el logo sustituye al mascot, y si no hay logo se quita el globo entero y queda una
+   * tarjeta limpia. Un globo sin nadie que lo diga no significa nada.
+   *
+   * Sin este campo, el correo sale exactamente igual que siempre: las notificaciones del
+   * producto SÍ son Ghosty hablando y no deben cambiar.
+   */
+  brand?: {
+    name: string;
+    logoUrl?: string | null;
+    /** El color del botón. El resto de la tarjeta se queda neutro a propósito. */
+    accent?: string | null;
+    fontFamily?: string | null;
+  } | null;
 };
 
 export function escapeHtml(s: string): string {
@@ -69,12 +88,22 @@ export function splitHead(text: string): { head: string; rest: string } {
  * Si el archivo no está (build sin public), se cae al enlace de siempre.
  */
 let mascotCache: InlineImage | null | undefined;
+// Se importa arriba y no dentro: un `import()` dinámico haría asíncrona toda la cadena.
+const require_esm = { createRequire } as { createRequire: typeof createRequire };
+
 export function mascotInline(): InlineImage | null {
   if (mascotCache !== undefined) return mascotCache;
   mascotCache = null;
   try {
-    const fs = require("node:fs") as typeof import("node:fs");
-    const path = require("node:path") as typeof import("node:path");
+    // ⚠️ `createRequire` y NO `require()` a secas: este proyecto es ESM y ahí `require` no
+    // existe. Reventaba en la primera línea, el catch se lo tragaba, y el mascot caía
+    // siempre al respaldo por URL — o sea que se pagaba una petición de red al abrir cada
+    // correo, que es justo lo que incrustarlo venía a evitar. Se veía como `inline=0` en el
+    // log de SES y no como un error.
+    const { createRequire } = require_esm;
+    const req = createRequire(import.meta.url);
+    const fs = req("node:fs") as typeof import("node:fs");
+    const path = req("node:path") as typeof import("node:path");
     for (const dir of [".output/public", "public", "build/client"]) {
       const p = path.resolve(process.cwd(), dir, "mascot-mail.png");
       if (fs.existsSync(p)) {
@@ -128,18 +157,34 @@ export function ghostyEmail(e: GhostyEmail): { html: string; text: string; inlin
     : null;
   const pie = pieTexto(e.footer ?? "workspace", e.deQuien, e.locale ?? DEFAULT_LOCALE);
 
+  // ── La marca, si la hay ──────────────────────────────────────────────────────
+  const b = e.brand ?? null;
+  const rotulo = b?.name || e.marca || "Ghosty Studio";
+  // ⚠️ La tipografía SIEMPRE termina en la pila del sistema. Un cliente de correo no carga
+  // fuentes web: si el nombre no resuelve, sin respaldo el texto cae en Times.
+  const fuente = `${b?.fontFamily ? `${JSON.stringify(b.fontFamily)}, ` : ""}system-ui,-apple-system,Segoe UI,sans-serif`;
+  // El acento sólo pinta el BOTÓN. Teñir la tarjeta entera con un color de marca cualquiera
+  // produce correos ilegibles — es el mismo error que `brandKitToDirection` de EasyBits, que
+  // deja el texto fijo en #1a1a1a y con un kit oscuro sale negro sobre negro.
+  const acento = b?.accent && /^#[0-9a-f]{6}$/i.test(b.accent) ? b.accent : "#16161a";
+  // Un logo de marca va ENLAZADO (ya vive en storage público), no incrustado como el mascot.
+  const conLogo = !!b?.logoUrl;
+  const conMascot = !b;
+
   // ⚠️ Tres NIVELES de fondo, y tienen que distinguirse: página → tarjeta → globo. Estaban
   // en #f5f5f7 y #f4f4f7, o sea el mismo gris con otro nombre, así que la tarjeta no se
   // leía como tarjeta y el correo parecía un bloque de texto suelto. El globo es blanco y
   // es lo que tiene que destacar: ahí va el mensaje.
   const html = `<!doctype html><html><body style="margin:0;padding:28px 12px;background:#e8e8ee">
   <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="max-width:540px;margin:0 auto;background:#f7f7fa;border:1px solid #dcdce4;border-radius:16px">
-    <tr><td style="padding:22px 24px 0;font:600 13px/1 system-ui,-apple-system,Segoe UI,sans-serif;color:#6b6b78;letter-spacing:.02em">${escapeHtml(e.marca ?? "Ghosty Studio")}</td></tr>
+    <tr><td style="padding:22px 24px 0">${conLogo
+      ? `<img src="${escapeHtml(b!.logoUrl!)}" alt="${escapeHtml(rotulo)}" style="display:block;border:0;max-height:28px;max-width:180px">`
+      : `<span style="font:600 13px/1 ${fuente};color:#6b6b78;letter-spacing:.02em">${escapeHtml(rotulo)}</span>`}</td></tr>
 
     <!-- Ghosty HABLANDO: mascot + globo de cómic. Dos celdas de tabla (no flex: Outlook no
          lo entiende). -->
     <tr><td style="padding:16px 24px 0">
-      <table role="presentation" cellpadding="0" cellspacing="0" width="100%"><tr>
+${conMascot ? `      <table role="presentation" cellpadding="0" cellspacing="0" width="100%"><tr>
         <td width="64" valign="top" style="padding-right:2px">
           <img src="${mascot ? "cid:mascot" : `${asset}/mascot-mail.png`}" width="56" height="66" alt="Ghosty" style="display:block;border:0">
         </td>
@@ -151,22 +196,27 @@ export function ghostyEmail(e: GhostyEmail): { html: string; text: string; inlin
             <td>
               <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="background:#ffffff;border-radius:16px">
                 <tr><td style="padding:14px 18px">
-                  <div style="font:700 20px/1.3 system-ui,-apple-system,Segoe UI,sans-serif;color:#16161a">${escapeHtml(e.head)}</div>${e.body ? `
-                  <div style="margin-top:6px;font:400 15px/1.6 system-ui,-apple-system,Segoe UI,sans-serif;color:#3f3f46;white-space:pre-wrap">${escapeHtml(e.body)}</div>` : ""}
+                  <div style="font:700 20px/1.3 ${fuente};color:#16161a">${escapeHtml(e.head)}</div>${e.body ? `
+                  <div style="margin-top:6px;font:400 15px/1.6 ${fuente};color:#3f3f46;white-space:pre-wrap">${escapeHtml(e.body)}</div>` : ""}
                 </td></tr>
               </table>
             </td>
           </tr></table>
         </td>
-      </tr></table>
+      </tr></table>` : `      <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="background:#ffffff;border-radius:16px">
+        <tr><td style="padding:18px 20px">
+          <div style="font:700 20px/1.3 ${fuente};color:#16161a">${escapeHtml(e.head)}</div>${e.body ? `
+          <div style="margin-top:8px;font:400 15px/1.6 ${fuente};color:#3f3f46;white-space:pre-wrap">${escapeHtml(e.body)}</div>` : ""}
+        </td></tr>
+      </table>`}
     </td></tr>
 ${cta ? `
-    <tr><td style="padding:20px 24px 26px 90px">
-      <a href="${escapeHtml(cta.url)}" style="display:inline-block;background:#16161a;color:#fff;font:600 14px/1 system-ui,-apple-system,Segoe UI,sans-serif;padding:12px 18px;border-radius:9px;text-decoration:none">${escapeHtml(cta.label)}</a>
+    <tr><td style="padding:20px 24px 26px ${conMascot ? "90px" : "24px"}">
+      <a href="${escapeHtml(cta.url)}" style="display:inline-block;background:${acento};color:#fff;font:600 14px/1 ${fuente};padding:12px 18px;border-radius:9px;text-decoration:none">${escapeHtml(cta.label)}</a>
     </td></tr>` : `
     <tr><td style="padding:0 24px 8px">&nbsp;</td></tr>`}
     <tr><td style="padding:0 24px 22px">
-      <div style="border-top:1px solid #e2e2e8;padding-top:14px;font:400 12px/1.5 system-ui,-apple-system,Segoe UI,sans-serif;color:#8a8a94">
+      <div style="border-top:1px solid #e2e2e8;padding-top:14px;font:400 12px/1.5 ${fuente};color:#8a8a94">
         ${escapeHtml(pie)}
       </div>
     </td></tr>
@@ -176,5 +226,6 @@ ${cta ? `
   // La misma información sin adornos. Un correo SÓLO-html es una de las señales que Gmail
   // lee como publicidad, y hay clientes que ni siquiera muestran html.
   const text = [e.head, e.body, cta?.url, `—\n${pie}`].filter(Boolean).join("\n\n");
-  return { html, text, inline: mascot ? [mascot] : [] };
+  // El mascot sólo se adjunta si de verdad se usa: con marca no aparece en el HTML.
+  return { html, text, inline: conMascot && mascot ? [mascot] : [] };
 }
