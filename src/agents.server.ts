@@ -31,6 +31,17 @@ export type ResolvedAgent = {
         runtime: "acp";
         runtimeUrl: string;
         /**
+         * Su `FleetAgent.id` en Studio. La caja se maneja sola por el socket, así que este
+         * id NO hace falta para hablar con ella — hace falta para preguntar por su SALDO,
+         * que es lo único de un agente ACP que Studio sabe y nosotros no. Sin él, la bolsa
+         * de un agente ACP se mide y no corta nunca.
+         *
+         * Puede venir vacío en las filas ACP añadidas a mano desde Ajustes (una `wss://`
+         * pegada de una caja ajena): ésas no tienen agente en Studio y no hay saldo que
+         * consultar.
+         */
+        id: string;
+        /**
          * Qué puede EJERCER este agente con las tools del espacio. Default `lectura`: un
          * agente ACP es un binario de terceros corriendo código que escribe un modelo, y
          * darle de entrada los conectores de quien le escriba sería una decisión que nadie
@@ -109,6 +120,7 @@ export async function resolvedAgents(): Promise<ResolvedAgent[]> {
           kind: "acp",
           runtime: "acp",
           runtimeUrl: a.runtime_url,
+          id: a.fleet_id || "",
           // Columna vacía ⇒ `lectura`, no `completo`: un agente ACP es un binario de terceros
           // y nace acotado. Los agentes NATIVOS no pasan por aquí; ellos siguen en `completo`.
           scope: parseScope(a.acp_scope || "lectura"),
@@ -1264,7 +1276,7 @@ export async function callAgentBackendStream(
     // excepción salía la burbuja roja de "falló el agente", que manda a diagnosticar un
     // servicio que está perfectamente bien.
     const { turnDenial } = await import("./server/ghosty-runtime.server");
-    const negado = await turnDenial((agent.backend as { id: string }).id);
+    const negado = agent.backend.id ? await turnDenial(agent.backend.id) : null;
     if (negado) {
       await onChunk(negado.message);
       return negado.message;
@@ -2374,7 +2386,7 @@ export async function callAgentBackend(
     // por Studio. Los dos caminos o ninguno — dejarlo sólo en uno es un bypass con la
     // puerta de al lado abierta.
     const { turnDenial } = await import("./server/ghosty-runtime.server");
-    const negado = await turnDenial((agent.backend as { id: string }).id);
+    const negado = agent.backend.id ? await turnDenial(agent.backend.id) : null;
     if (negado) return negado.message;
     try {
       const r = await runAcpTurn({

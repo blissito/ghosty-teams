@@ -99,7 +99,9 @@ export const workspaceUsageFn = createServerFn({ method: "GET" }).handler(async 
       /** UNA BOLSA POR MOTOR. `included:null` = ilimitado, porque ese agente corre con la
        *  llave del cliente: es su saldo con el proveedor, no el nuestro. Se mide y se
        *  enseña; no se corta. */
-      engines?: { engine: string; used: number; included: number | null; turns: number; ownKey: boolean; agentId?: string | null; agentName?: string | null; name?: string; avatar?: string; handle?: string }[];
+      /** `chargedUsed` es el saldo que DECIDE: con bolsa compartida es el total de la
+       *  bolsa, no lo de este agente. `bag` sólo viene cuando tiene bolsa propia. */
+      engines?: { engine: string; used: number; included: number | null; turns: number; ownKey: boolean; agentId?: string | null; agentName?: string | null; chargedUsed?: number; bag?: { id: string; name: string; agents: number } | null; name?: string; avatar?: string; handle?: string }[];
     };
 
     // ⚠️ UNA TARJETA POR AGENTE USABLE, y ninguna más. La lista de este tab tiene que
@@ -130,7 +132,11 @@ export const workspaceUsageFn = createServerFn({ method: "GET" }).handler(async 
           agentes.map(async (a) => ({
             a,
             engine: await engineOfAgent(a),
-            fleetId: a.backend.kind === "fleet" ? a.backend.id : null,
+            // ⚠️ También el ACP. Antes sólo el nativo traía id, así que las filas de un
+            // agente ACP no cruzaban con ninguna tarjeta y su gasto se descartaba: goose
+            // trabajaba y el tab de Uso no lo enseñaba nunca.
+            fleetId:
+              a.backend.kind === "fleet" || a.backend.kind === "acp" ? a.backend.id || null : null,
           })),
         );
         const filas = raw.engines;
@@ -155,6 +161,13 @@ export const workspaceUsageFn = createServerFn({ method: "GET" }).handler(async 
               : (suyas.find((e) => e.included !== null)?.included ??
                 raw.included ??
                 null);
+            // La bolsa la declaran sus propias filas (todas las de un agente traen la
+            // misma). `chargedUsed` NO se suma: con bolsa compartida ya es el total de la
+            // bolsa, y sumarlo por fila lo multiplicaría por el número de modelos usados.
+            const bag = ownKey ? null : (suyas.find((e) => e.bag)?.bag ?? null);
+            const chargedUsed = bag
+              ? (suyas.find((e) => e.bag)?.chargedUsed ?? used)
+              : used;
             return {
               // Sólo se usa de respaldo para la etiqueta cuando falta el nombre; aquí
               // siempre hay nombre, así que el "" nunca llega a verse.
@@ -163,6 +176,8 @@ export const workspaceUsageFn = createServerFn({ method: "GET" }).handler(async 
               included,
               turns,
               ownKey,
+              chargedUsed,
+              bag,
               agentId: fleetId,
               name: a.name,
               avatar: a.avatar,

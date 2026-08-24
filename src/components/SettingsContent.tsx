@@ -808,10 +808,20 @@ function UsagePanel() {
   //
   // Va por motor y ya no por workspace: al ritmo de Blue caben ~1,000 turnos y al de
   // Ghosty ~60, así que un solo número era el promedio de dos cosas que no se parecen.
-  const turnosQueQuedan = (e: { used: number; included: number | null; turns: number }) =>
-    e.included !== null && e.turns > 0 && e.used > 0 && e.included > e.used
-      ? Math.round((e.included - e.used) / (e.used / e.turns))
+  // ⚠️ Lo que QUEDA sale del saldo que decide (`chargedUsed`), no de lo que gastó este
+  // agente: con bolsa compartida el resto es de la bolsa. El ritmo, en cambio, sí es suyo
+  // —son SUS turnos— así que son dos numeradores distintos y no se pueden mezclar.
+  const turnosQueQuedan = (e: {
+    used: number;
+    chargedUsed?: number;
+    included: number | null;
+    turns: number;
+  }) => {
+    const gastado = e.chargedUsed ?? e.used;
+    return e.included !== null && e.turns > 0 && e.used > 0 && e.included > gastado
+      ? Math.round((e.included - gastado) / (e.used / e.turns))
       : null;
+  };
   const fmtM = (n: number) => `${(n / 1_000_000).toFixed(n >= 10_000_000 ? 0 : 1)}M`;
   const fecha = (iso: string) =>
     new Date(iso).toLocaleDateString(intlLocale(locale), { day: "numeric", month: "long" });
@@ -840,7 +850,11 @@ function UsagePanel() {
           dibujar. */}
       <div className="space-y-2.5">
         {(data.engines ?? []).map((e, i) => {
-          const p = e.included && e.included > 0 ? Math.min(100, (e.used / e.included) * 100) : 0;
+          // ⚠️ La barra mide el saldo que DECIDE. Con seis agentes en una bolsa, pintar
+          // lo de cada uno contra el tope entero enseña seis barras al 17% con la bolsa
+          // llena — y el corte llega sin que ninguna lo hubiera anunciado.
+          const cargado = e.chargedUsed ?? e.used;
+          const p = e.included && e.included > 0 ? Math.min(100, (cargado / e.included) * 100) : 0;
           const alto = p >= 90;
           const medio = p >= 75 && !alto;
           const q = turnosQueQuedan(e);
@@ -874,7 +888,7 @@ function UsagePanel() {
                   // El gastado en fuerte y el tope en tenue: son dos cosas distintas, y
                   // del mismo color "0.0M de 6.0M" se lee como un bloque sin jerarquía.
                   <span className="shrink-0 text-sm tabular-nums text-muted">
-                    <span className="font-semibold text-ink">{fmtM(e.used)}</span> {t("de")}{" "}
+                    <span className="font-semibold text-ink">{fmtM(cargado)}</span> {t("de")}{" "}
                     {fmtM(e.included)}
                   </span>
                 )}
@@ -887,7 +901,7 @@ function UsagePanel() {
                     style={{
                       // Mínimo visible: con 6M de bolsa un consumo real redondea a 0% y la
                       // barra desaparecía justo cuando la persona viene a comprobarla.
-                      width: `${Math.max(p, e.used > 0 ? 2 : 0)}%`,
+                      width: `${Math.max(p, cargado > 0 ? 2 : 0)}%`,
                       // ⚠️ Estos dos hex están elegidos por MEDICIÓN contra la pista
                       // (`surface-3`) en los DOS temas, no por gusto. Los de antes
                       // —#ef4444 y #f59e0b— daban 3.08:1 y 1.76:1 en claro: el ámbar se
@@ -913,6 +927,18 @@ function UsagePanel() {
                   </>
                 )}
               </p>
+              {/* Sólo cuando la bolsa es de VARIOS. Sin esta línea, ver la barra casi
+                  llena habiendo gastado poco no tiene explicación posible desde aquí: la
+                  llenaron los otros. Con un solo agente la bolsa es suya y decirlo sobra. */}
+              {e.bag && e.bag.agents > 1 && (
+                <p className="mt-1 text-xs text-muted">
+                  {t("De su bolsa")} «{e.bag.name}», {t("compartida con")}{" "}
+                  {(e.bag.agents - 1).toLocaleString(intlLocale(locale))}{" "}
+                  {e.bag.agents - 1 === 1 ? t("agente más") : t("agentes más")}
+                  {" · "}
+                  {t("gastó")} {fmtM(e.used)} {t("de los")} {fmtM(cargado)} {t("usados")}
+                </p>
+              )}
             </div>
           );
         })}
