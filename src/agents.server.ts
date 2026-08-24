@@ -209,6 +209,17 @@ export type MediaPart = {
   file: { name?: string; mimeType: string; uri?: string; bytes?: string };
 };
 
+/**
+ * Regla que acompaña al manifiesto cuando un turno trae VARIOS adjuntos. Vive aquí, al
+ * lado de `buildMediaParts`, porque es la contrapartida de lo que ese transporte NO puede
+ * expresar: los FileParts van en orden pero sin índice, y el `name` —lo único que viaja—
+ * suele ser `image.png` para todos, que es como el navegador nombra lo que se pega.
+ */
+export const REGLA_VARIOS_ADJUNTOS =
+  "Este mensaje trae varios archivos: identifícalos por su NÚMERO en esta lista, no por el nombre (suelen llamarse todos igual). " +
+  "Si te dicen «usa ESTE / esta imagen» sin más seña, es el ÚLTIMO de la lista; si aun así no queda claro cuál quieren, " +
+  "pregúntalo antes de gastar un turno trabajando con el equivocado.";
+
 const MEDIA_INLINE_MAX_BYTES = 256 * 1024; // < 256KB → bytes inline; ≥ → uri firmada
 
 export async function buildMediaParts(
@@ -721,7 +732,17 @@ const EB_DOC_STREAM_GUARDRAIL = [
   "eb-artifact — estilo: incluye `<script src=\"https://cdn.tailwindcss.com\"></script>` en el <head> y estiliza con clases de Tailwind (bg-*, text-*, flex, grid, gap-*, p-*, rounded-*). El editor visual del panel edita clases, así que el layout no va en `style=\"…\"` inline ni en un `<style>` gigante; reserva `<style>` para lo que Tailwind no cubre (keyframes). Tu lógica va en un `<script>` inline; para React, Babel-standalone por CDN. Pon `<title>`.",
   "eb-artifact — tema: **define la paleta en un solo `:root{}`** con estos tokens: `--color-background`, `--color-foreground`, `--color-primary`, `--color-primary-foreground`, `--color-secondary`, `--color-secondary-foreground`, `--color-muted`, `--color-muted-foreground`, `--color-accent`, `--color-accent-foreground`, `--color-border`, más `--radius`, `--font-heading` y `--font-body`. Todo color sale de ahí vía clases arbitrarias (`bg-[var(--color-primary)]`, `text-[var(--color-foreground)]`, `border-[var(--color-border)]`). Nada de colores regados por el markup (`bg-purple-600`, `#7c3aed`, `text-white`, gradientes hardcodeados): eso rompe el recoloreado del panel y la vista pública.",
   "eb-artifact — responsivo: mobile-first y sin desbordes, legible desde 360px. Nada de anchos o altos fijos en px para contenedores; usa `w-full`, `max-w-*`, `mx-auto`, `flex-wrap`, `grid-cols-1` subiendo con `sm:`/`md:`/`lg:`, tipografía escalada (`text-3xl md:text-5xl`), padding responsivo (`px-4 md:px-8`) e imágenes `max-w-full h-auto`.",
-  "IMÁGENES: cuando te pidan generar, crear o dibujar una imagen, produce un PNG real con gpt-image-2. Si tienes tool MCP de imagen (generate_image / create_or_edit_image), úsala; en code-mode usa `/opt/gs-sdk/image.mjs` (`generate` para crear, `edit` para editar una existente — no la re-dibujes). Para que se vea en el chat en code-mode: sube los bytes con `image.publish(bytes, nombre)` y emite la URL que devuelve como markdown `![descripción](url)`. Una ruta local (/tmp/…) no se muestra: el usuario vería solo texto. Sí puedes generar imágenes; no digas que no tienes herramienta.",
+  // ⚠️ La obligación de emitir `![](url)` estaba CONDICIONADA: decía "para que se vea en el
+  // chat EN CODE-MODE", así que con la tool MCP el modelo no se daba por aludido — y aun en
+  // code-mode se leía como un detalle de la herramienta, no como la entrega. Por eso se parte
+  // en dos: qué herramienta usar, y —aparte y sin condición— que la imagen va en el mensaje.
+  // Medido el 2026-08-24 en un DM de `business`: tres turnos seguidos generaron el sticker, lo
+  // publicaron a Tigris (los PNG están ahí, íntegros) y la respuesta no llevó un solo `![](…)`.
+  // La persona escribió "no veo nada" y luego "?", y acabó pidiendo lo mismo veinte turnos.
+  // Gemela de la 816 de TEAMS_PRODUCT_CONTEXT ("entregar es adjuntar, no anunciar"), que es la
+  // única que llega a los agentes ACP — este guardrail no se les manda.
+  "IMÁGENES: cuando te pidan generar, crear o dibujar una imagen, produce un PNG real con gpt-image-2. Si tienes tool MCP de imagen (generate_image / create_or_edit_image), úsala; en code-mode usa `/opt/gs-sdk/image.mjs` (`generate` para crear, `edit` para editar una existente — no la re-dibujes). Sí puedes generar imágenes; no digas que no tienes herramienta.",
+  "UNA IMAGEN GENERADA SE ENTREGA EN ESE MISMO MENSAJE, SIEMPRE. Da igual con qué la hiciste —tool MCP o code-mode— y da igual que ya la hayas publicado o guardado: si no escribes `![descripción](url)` EN TU RESPUESTA, la persona no ve nada. En code-mode: sube los bytes con `image.publish(bytes, nombre)` y emite la URL `https://…` que te devuelve. NUNCA una ruta local (`/tmp/…`, `sticker.png`, `/data/workspaces/…`): no se muestra, y el usuario sólo lee texto. Describir la imagen («quedó con las letras naranjas y la espada»), anunciarla («ahí está», «ya la generé») o decir que la tienes lista NO es entregarla — es exactamente lo que se ve como que no hiciste nada. Si el turno produjo VARIAS imágenes, van TODAS, una por `![](url)`. Y si vas a regenerarla porque no gustó, la nueva también se emite: cada intento se muestra o el intento no existió.",
   // ⚠️ La regla de arriba estaba redactada SÓLO alrededor de imágenes generadas con
   // `image.mjs`, y el modelo la leyó como que aplica a ésas. El 2026-08-20 un agente minó
   // el logo de un PDF con `pdf-assets`, lo metió como `![Liga…](logo.png)` —ruta de su

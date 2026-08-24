@@ -898,7 +898,7 @@ export const askAgent = createServerFn({ method: "POST" })
   )
   .handler(async ({ data }) => {
     const db = await import("../db.server");
-    const { resolvedAgents, runAgentTurn, buildMediaParts, quotedContextPrefix, clampQuote, historyContext, gapDesdeUltimaRespuesta, CATCHUP_FETCH, agentGroupId, INJECTED } = await import("../agents.server");
+    const { resolvedAgents, runAgentTurn, buildMediaParts, REGLA_VARIOS_ADJUNTOS, quotedContextPrefix, clampQuote, historyContext, gapDesdeUltimaRespuesta, CATCHUP_FETCH, agentGroupId, INJECTED } = await import("../agents.server");
     const bus = await import("./bus.server");
     const { currentNamespace } = await import("./tenant.server");
     const channel = await db.getChannel(data.slug);
@@ -1015,9 +1015,22 @@ export const askAgent = createServerFn({ method: "POST" })
     }
     // El manifiesto va en el texto para que sepa QUÉ tiene sin abrir todo: con un
     // expediente grande, enumerar es más barato que descubrir.
-    if (reentrega) {
-      const lista = mediaAtts.map((a) => `- ${a.name ?? "(sin nombre)"} (${a.mime ?? "?"}, ${a.size ?? "?"} B)`).join("\n");
-      text = `[Adjuntos del hilo, disponibles en este turno]\n${lista}\n\n` + text;
+    // ⚠️ El manifiesto también va cuando el turno trae VARIOS adjuntos propios, y no sólo
+    // en la re-entrega. Sin él, dos imágenes llegan como dos FileParts anónimos: el nombre
+    // es lo único que viaja (`buildMediaParts`) y el navegador sube las dos como
+    // `image.png`, así que el agente no tiene con qué distinguirlas. Medido el 2026-08-24:
+    // alguien mandó dos fotos en un mensaje, el agente usó la que no era y la persona lo
+    // repitió tres veces en mayúsculas. Numerado porque el orden ES la dirección: es el
+    // mismo de los FileParts (`gc_attachments ORDER BY id`).
+    if (reentrega || mediaAtts.length > 1) {
+      const lista = mediaAtts
+        .map((a, i) => `${i + 1}. ${a.name ?? "(sin nombre)"} (${a.mime ?? "?"}, ${a.size ?? "?"} B)`)
+        .join("\n");
+      const titulo = reentrega
+        ? "Adjuntos del hilo, disponibles en este turno"
+        : `Adjuntos de este mensaje, en orden (${mediaAtts.length})`;
+      const pista = reentrega ? "" : `\n${REGLA_VARIOS_ADJUNTOS}`;
+      text = `[${titulo}]\n${lista}${pista}\n\n` + text;
     }
     const parts = await buildMediaParts(mediaAtts, { forceUri: reentrega });
 

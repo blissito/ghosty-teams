@@ -322,7 +322,7 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
     const db = await import("../db.server");
     const bus = await import("./bus.server");
     const { currentNamespace } = await import("./tenant.server");
-    const { resolvedAgents, runAgentTurn, buildMediaParts, quotedContextPrefix, clampQuote, historyContext, gapDesdeUltimaRespuesta, CATCHUP_FETCH, agentGroupId, INJECTED } = await import("../agents.server");
+    const { resolvedAgents, runAgentTurn, buildMediaParts, REGLA_VARIOS_ADJUNTOS, quotedContextPrefix, clampQuote, historyContext, gapDesdeUltimaRespuesta, CATCHUP_FETCH, agentGroupId, INJECTED } = await import("../agents.server");
     const me = await sessionUser();
     if (!me || !(await db.isDmMember(data.id, me.sub))) throw new Error("no autorizado");
     const ns = await currentNamespace();
@@ -390,10 +390,18 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
         break;
       }
     }
+    // Gemelo del de `chat.ts` — ver allí el porqué de numerar y de incluirlo cuando el
+    // turno trae varios adjuntos propios. El incidente que lo motivó fue justo en un DM.
     let manifiesto = "";
-    if (reentrega) {
-      const lista = mediaAtts.map((a) => `- ${a.name ?? "(sin nombre)"} (${a.mime ?? "?"}, ${a.size ?? "?"} B)`).join("\n");
-      manifiesto = `[Adjuntos de esta conversación, disponibles en este turno]\n${lista}\n\n`;
+    if (reentrega || mediaAtts.length > 1) {
+      const lista = mediaAtts
+        .map((a, i) => `${i + 1}. ${a.name ?? "(sin nombre)"} (${a.mime ?? "?"}, ${a.size ?? "?"} B)`)
+        .join("\n");
+      const titulo = reentrega
+        ? "Adjuntos de esta conversación, disponibles en este turno"
+        : `Adjuntos de este mensaje, en orden (${mediaAtts.length})`;
+      const pista = reentrega ? "" : `\n${REGLA_VARIOS_ADJUNTOS}`;
+      manifiesto = `[${titulo}]\n${lista}${pista}\n\n`;
     }
     const parts = await buildMediaParts(mediaAtts, { forceUri: reentrega });
 
