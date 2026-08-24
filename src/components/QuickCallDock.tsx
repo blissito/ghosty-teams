@@ -1,7 +1,8 @@
 import { Suspense, lazy, useLayoutEffect, useRef, useState } from "react";
 import type { Room } from "livekit-client";
-import { Headphones, Maximize2, Minimize2 } from "lucide-react";
+import { Headphones, Maximize2, Minimize2, PictureInPicture2 } from "lucide-react";
 import { useT } from "../i18n";
+import { CallPipPortal, useCallPipWindow } from "./CallPipWindow";
 
 // Lazy: livekit-client toca APIs del browser al importar → sólo se carga en cliente,
 // cuando hay una llamada abierta (mantiene el SSR de cualquier ruta a salvo).
@@ -17,6 +18,9 @@ export function QuickCallDock({ room, label }: { room: Room; label: string }) {
   const [size, setSize] = useState<{ w: number; h: number } | null>(null); // null = tamaño default
   const [hasVideo, setHasVideo] = useState(false); // solo-audio → dock compacto (mínimo)
   const dockRef = useRef<HTMLDivElement>(null);
+  // Ventana aparte (Document PiP). El dock de la página se queda tal cual estaba: esto
+  // es una salida ADICIONAL, no un modo nuevo.
+  const { pip, open: openPip, close: closePip, supported: pipSupported } = useCallPipWindow();
   const positioned = !!pos && !expanded;
   const sized = !!size && !expanded;
   // Solo-audio y sin tamaño manual ni expandido → ventana mínima (avatares + controles).
@@ -80,6 +84,36 @@ export function QuickCallDock({ room, label }: { room: Room; label: string }) {
     window.addEventListener("pointerup", up);
   };
 
+  // La llamada, sin marco: se pinta igual dentro del dock y dentro de la ventana aparte.
+  const callBody = (
+    <Suspense fallback={<div className="flex flex-1 items-center justify-center text-sm text-muted">{t("Conectando…")}</div>}>
+      <QuickCall room={room} onVideoChange={setHasVideo} />
+    </Suspense>
+  );
+
+  if (pip) {
+    return (
+      <>
+        {/* Rastro en la página: sin esto la llamada desaparece de la app y no hay forma
+            de traerla de vuelta si la ventana quedó detrás de otra. */}
+        <div className="fixed right-4 top-4 z-50 flex items-center gap-2 rounded-xl border-2 border-brand/40 bg-surface-2 px-3 py-2 shadow-2xl ring-1 ring-black/10">
+          <Headphones size={15} className="shrink-0 text-brand" />
+          <span className="max-w-[14rem] truncate text-sm font-semibold text-ink">{label}</span>
+          <button
+            onClick={closePip}
+            title={t("Traer de vuelta")}
+            className="grid h-7 w-7 shrink-0 place-items-center rounded-md text-muted transition hover:bg-surface-3 hover:text-ink"
+          >
+            <Maximize2 size={15} />
+          </button>
+        </div>
+        <CallPipPortal win={pip}>
+          <div className="flex h-full min-h-0 flex-col bg-surface-2 text-ink">{callBody}</div>
+        </CallPipPortal>
+      </>
+    );
+  }
+
   const style =
     !expanded && (positioned || sized)
       ? { ...(positioned ? { left: pos!.x, top: pos!.y } : {}), ...(sized ? { width: size!.w, height: size!.h } : {}) }
@@ -112,6 +146,19 @@ export function QuickCallDock({ room, label }: { room: Room; label: string }) {
               controles. */}
           <span className="truncate text-sm font-semibold text-ink" title={t("Llamada")}>{label}</span>
         </div>
+        <div className="flex shrink-0 items-center gap-1">
+        {pipSupported && (
+          <button
+            onClick={() => {
+              const r = dockRef.current?.getBoundingClientRect();
+              void openPip(r ? { width: r.width, height: r.height } : undefined);
+            }}
+            title={t("Abrir en ventana aparte")}
+            className="grid h-7 w-7 shrink-0 place-items-center rounded-md text-muted transition hover:bg-surface-3 hover:text-ink"
+          >
+            <PictureInPicture2 size={15} />
+          </button>
+        )}
         <button
           onClick={() => setExpanded((e) => !e)}
           title={expanded ? t("Restaurar") : t("Expandir")}
@@ -119,10 +166,9 @@ export function QuickCallDock({ room, label }: { room: Room; label: string }) {
         >
           {expanded ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
         </button>
+        </div>
       </div>
-      <Suspense fallback={<div className="flex flex-1 items-center justify-center text-sm text-muted">{t("Conectando…")}</div>}>
-        <QuickCall room={room} onVideoChange={setHasVideo} />
-      </Suspense>
+      {callBody}
       {!expanded && (
         <div
           onPointerDown={startResize}

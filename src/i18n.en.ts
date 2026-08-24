@@ -74,6 +74,8 @@ export const en: Record<string, string> = {
   "Salir de la llamada": "Leave call",
   "Salir": "Leave",
   "Restaurar": "Restore",
+  "Abrir en ventana aparte": "Open in a separate window",
+  "Traer de vuelta": "Bring back",
   "Redimensionar": "Resize",
   "Llamada en curso": "Call in progress",
   "Llamada terminada": "Call ended",
