@@ -19,6 +19,13 @@ import { currentNamespace } from "./server/tenant.server";
 
 import { createPrivateKey, sign as cryptoSign } from "node:crypto";
 
+import { assertEnv } from "./server/env-check.server";
+
+// Se engancha AQUÍ porque todo el servidor pasa por la base de datos: es el módulo que
+// garantiza que la comprobación corra, sin depender de un hook de arranque del framework
+// (nitro no expone uno por esta integración de vite).
+assertEnv();
+
 const SQLD_URL = process.env.SQLD_URL ?? "http://127.0.0.1:8080";
 /** Clave privada Ed25519 (base64) con la que se firman los tokens por namespace. */
 const SQLD_JWT_PRIVATE_KEY = process.env.SQLD_JWT_PRIVATE_KEY ?? "";
