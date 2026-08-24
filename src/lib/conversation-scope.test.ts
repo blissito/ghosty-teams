@@ -19,7 +19,7 @@ describe("belongsToOpenConversation", () => {
     expect(belongsToOpenConversation({ channel_id: null, dm_id: 43 }, 42, 7)).toBe(false);
   });
 
-  it("sin el mensaje en cache no bloquea", () => {
-    expect(belongsToOpenConversation(undefined, null, 7)).toBe(true);
+  it("sin el mensaje en cache NO pasa (fail-closed: la duda no abre el panel)", () => {
+    expect(belongsToOpenConversation(undefined, null, 7)).toBe(false);
   });
 });

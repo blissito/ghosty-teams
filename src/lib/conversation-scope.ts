@@ -10,8 +10,12 @@ export function belongsToOpenConversation(
   openDmId: number | null,
   openChannelId: number
 ): boolean {
-  // Sin el mensaje en cache no podemos ubicarlo → no bloqueamos (comportamiento previo).
-  if (!msg) return true;
+  // Sin el mensaje en cache no podemos ubicarlo → NO pasa. Esto decide si un borrador te
+  // toma el panel, así que la duda se resuelve a favor de no enseñar nada: dejarlo pasar
+  // era un fail-open que abría en tu pantalla trabajo de otra conversación. No se pierde
+  // nada: los deltas siguen llegando y el `message:new` de la cáscara aterriza antes que
+  // el siguiente chunk, así que el panel abre un instante después.
+  if (!msg) return false;
   if (openDmId != null) return msg.dm_id === openDmId;
   return msg.dm_id == null && msg.channel_id === openChannelId;
 }
