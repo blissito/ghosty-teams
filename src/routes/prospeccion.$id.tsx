@@ -1,5 +1,5 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { ArrowLeft, Plus, Send, ShieldCheck, Sparkles, Target } from "lucide-react";
 import { useT } from "../i18n";
@@ -11,7 +11,7 @@ import { SendReview } from "../components/prospeccion/SendReview";
 import { AgentDrawer } from "../components/prospeccion/AgentDrawer";
 import { Permisos } from "../components/prospeccion/Permisos";
 import { useRtSubscribe } from "../utils/rt-bus";
-import { decodeFilter, encodeFilter, matches, type Filter } from "../lib/prospeccion-filter";
+import { decodeFilter, encodeFilter, matches, type Condition, type Filter } from "../lib/prospeccion-filter";
 import { NewColumnModal, type NewColumn } from "../components/prospeccion/NewColumnModal";
 import { ColumnChip } from "../components/prospeccion/ColumnChip";
 import { DropZone, type Sheet } from "../components/prospeccion/DropZone";
@@ -132,6 +132,18 @@ function ListPage() {
       if (ev.t === "prospeccion:send" && ev.listId === listId) {
         setSendSubject(ev.subject);
         setSendOpen(true);
+        return;
+      }
+      // El agente pidió una columna: se crea y se corre por el MISMO camino que el modal,
+      // así que hereda el pulso de progreso y el aviso de por qué se saltó cada fila.
+      if (ev.t === "prospeccion:column" && ev.listId === listId) {
+        crearColumnaRef.current?.({
+          label: ev.label,
+          kind: ev.kind,
+          waterfall: ev.waterfall,
+          prompt: ev.prompt,
+          mode: ev.mode,
+        } as NewColumn);
       }
     },
   });
@@ -266,6 +278,13 @@ function ListPage() {
     [listId, reload, running, data, view, f]
   );
 
+  /*
+    El bus llega antes de que `createColumn` esté declarada, y meterla en las dependencias
+    del suscriptor lo re-suscribiría en cada render. Una ref lo resuelve sin ninguna de las
+    dos cosas.
+  */
+  const crearColumnaRef = useRef<((c: NewColumn) => void) | null>(null);
+
   const createColumn = useCallback(
     async (c: NewColumn) => {
       const r = await addColumnFn({ data: { listId, ...c } });
@@ -274,9 +293,11 @@ function ListPage() {
       // Una columna de búsqueda sin correr no sirve de nada: se dispara sola al crearla.
       if (r.column && (c.kind === "enrich" || c.kind === "ai")) runColumn_(r.column.key, c.kind);
     },
-    // eslint-disable-next-línea react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [listId, reload]
   );
+
+  useEffect(() => { crearColumnaRef.current = createColumn; }, [createColumn]);
 
   /**
    * Corre una columna y pinta el pulso mientras.
@@ -367,16 +388,36 @@ function ListPage() {
             ) : null}
           </div>
           <div className="flex items-center gap-4">
+            {/*
+              El embudo, en el vocabulario de prospección y no en el del mecanismo.
+              «Abrieron» y «contestaron» nombran lo que pasó; TIBIO y CALIENTE nombran qué
+              hacer con cada uno, que es lo que se pregunta en voz alta.
+
+              ⚠️ Caliente = te escribió él, y ésa es exactamente la ventana de 24h de
+              WhatsApp: se le puede contestar libre. A un frío sólo plantilla aprobada, y
+              masivo eso quema el número. Por eso la línea que los separa se pinta.
+
+              Cada número FILTRA al hacer clic: un contador que no lleva a las filas que
+              cuenta obliga a reconstruir el filtro a mano.
+            */}
             {[
-              { n: list.rows, l: t("filas") },
-              { n: list.sent, l: t("mandados") },
-              { n: list.opened, l: t("abrieron") },
-              { n: list.replied, l: t("contestaron") },
-            ].map((c) => (
-              <div key={c.l} className="text-center">
-                <div className="text-base font-bold tabular-nums">{c.n}</div>
-                <div className="text-[10px] uppercase tracking-wide text-muted">{c.l}</div>
-              </div>
+              { n: list.rows, l: t("filas"), c: null as Condition | null, hint: t("Toda la lista") },
+              { n: list.sent, l: t("mandados"), c: { op: "status", value: "sent" } as Condition, hint: t("Ya les salió el correo") },
+              { n: list.opened + list.clicked, l: t("tibios"), c: { op: "temp", value: "tibio" } as Condition, hint: t("Abrieron o dieron clic") },
+              { n: list.replied, l: t("calientes"), c: { op: "temp", value: "caliente" } as Condition, hint: t("Te escribieron: se les puede contestar libre") },
+            ].map((x) => (
+              <button
+                key={x.l}
+                onClick={() => setFilter(x.c ? [x.c] : [])}
+                title={x.hint}
+                disabled={!x.n && !!x.c}
+                className="text-center px-1 rounded-lg hover:bg-surface-3 disabled:hover:bg-transparent disabled:opacity-50 transition-colors"
+              >
+                <div className={`text-base font-bold tabular-nums ${x.l === t("calientes") && x.n ? "text-amber-500" : ""}`}>
+                  {x.n}
+                </div>
+                <div className="text-[10px] uppercase tracking-wide text-muted">{x.l}</div>
+              </button>
             ))}
             {/*
               ⚠️ El botón dice el NÚMERO, nunca sólo el verbo. Del spec: «Mandar» sobre una

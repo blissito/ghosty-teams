@@ -11,7 +11,7 @@
  * aceptable — y además así se puede corregir cuando entiende mal.
  */
 import { dbq, num } from "../../dbq.server";
-import { decodeFilter, encodeFilter, matches, STATUSES, type Filter } from "../../lib/prospeccion-filter";
+import { decodeFilter, encodeFilter, matches, STATUSES, TEMPS, type Filter, type TempId } from "../../lib/prospeccion-filter";
 import { BASE_COLUMNS, listColumns, listRows, type ProspRow } from "./lists.server";
 
 const BASE_KEYS = BASE_COLUMNS.map((c) => c.key);
@@ -90,6 +90,9 @@ export async function applyFilter(args: {
     const resolved = c.field ? byKey.get(c.field) ?? byLabel.get(c.field.toLowerCase()) : undefined;
     if (c.op === "text" && c.value) filter.push({ op: "text", value: c.value });
     else if (c.op === "status" && c.value) filter.push({ op: "status", value: c.value });
+    else if (c.op === "temp" && TEMPS.some((x) => x.id === c.value)) {
+      filter.push({ op: "temp", value: c.value as TempId });
+    }
     else if ((c.op === "empty" || c.op === "filled") && resolved) filter.push({ op: c.op, field: resolved.key });
     else if (c.op === "has" && resolved && c.value) filter.push({ op: "has", field: resolved.key, value: c.value });
     else {

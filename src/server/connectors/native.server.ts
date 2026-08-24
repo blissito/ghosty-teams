@@ -175,7 +175,11 @@ export function nativeTools(dest: ToolDest | null): ConnectorTool[] {
         "puede editar. Úsalo SIEMPRE antes de enriquecer o mandar sobre un subconjunto: todo lo " +
         "demás opera sobre la vista, no sobre la lista entera. " +
         "Operadores: `empty` (sin dato en esa columna), `filled` (con dato), `has` (contiene), " +
-        "`text` (busca en todas las columnas), `status` (new|sent|opened|clicked|replied|bounced|optout). " +
+        "`text` (busca en todas las columnas), `status` (new|sent|opened|clicked|replied|bounced|optout), " +
+        "`temp` (frio|tibio|caliente). " +
+        "⚠️ La TEMPERATURA es lo que suelen querer decir: frío = nunca ha tenido contacto; tibio = " +
+        "abrió o dio clic; caliente = te escribió él. La frontera tibio→caliente es la ventana de " +
+        "24h de WhatsApp: a un caliente se le contesta libre, a un frío sólo plantilla aprobada. " +
         "La columna se nombra por su etiqueta tal como se ve (Teléfono, Correo, Giro…). " +
         "Manda `conditions: []` para quitar el filtro y volver a la lista completa.",
       inputSchema: {
@@ -188,9 +192,9 @@ export function nativeTools(dest: ToolDest | null): ConnectorTool[] {
             items: {
               type: "object",
               properties: {
-                op: { type: "string", enum: ["empty", "filled", "has", "text", "status"] },
-                field: { type: "string", description: "Etiqueta de la columna. No aplica a text ni status" },
-                value: { type: "string", description: "Para has, text y status" },
+                op: { type: "string", enum: ["empty", "filled", "has", "text", "status", "temp"] },
+                field: { type: "string", description: "Etiqueta de la columna. No aplica a text, status ni temp" },
+                value: { type: "string", description: "Para has, text, status y temp" },
               },
               required: ["op"],
             },
@@ -268,6 +272,80 @@ export function nativeTools(dest: ToolDest | null): ConnectorTool[] {
           ok: true,
           abierto_en_pantalla: true,
           nota: "Abrí la pantalla de confirmación. Dile a la persona que revise el número y el correo, y que confirme ella.",
+        };
+      },
+    },
+    {
+      name: "prospect_column",
+      description:
+        "Agrega una columna a una lista y la LLENA sobre la vista actual. Es la herramienta de " +
+        "enriquecer: úsala cuando pidan conseguir un dato que no está («búscales el correo», " +
+        "«enriquece la dirección», «dime si tienen estacionamiento») o redactar un texto por fila " +
+        "(«una primera línea para cada uno»). " +
+        "Elige el `kind`:\n" +
+        "· `enrich` — un buscador de casa, barato y sin turnos de modelo. Sólo hay tres: " +
+        "`correo_del_sitio` (saca el correo del sitio web), `correo_sirve` (comprueba si un correo " +
+        "puede recibir), `sitio_vivo` (comprueba que el sitio responda). Van en `waterfall`, y se " +
+        "intenta en ese orden hasta que uno conteste.\n" +
+        "· `ai` — un turno del modelo por fila, con `prompt`. CUESTA: úsalo sólo cuando ningún " +
+        "`enrich` sirva. `mode: \"research\"` le deja buscar en la web (para datos que no están en " +
+        "la fila); `mode: \"write\"` sólo redacta con lo que ya hay.\n" +
+        "⚠️ Acota con `prospect_filter` ANTES si son muchas filas: se llena la VISTA, y un `ai` " +
+        "sobre diez mil filas son diez mil turnos. Si la lista tiene más de 200 a la vista y no te " +
+        "lo pidieron explícitamente, propón acotar primero en vez de arrancar.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          listId: { type: "number" },
+          label: { type: "string", description: "Cómo se llama la columna, como lo diría la persona: «Correo», «Su horario»" },
+          kind: { type: "string", enum: ["enrich", "ai"] },
+          waterfall: {
+            type: "array",
+            description: "Sólo para enrich. Los buscadores a intentar, en orden",
+            items: { type: "string", enum: ["correo_del_sitio", "correo_sirve", "sitio_vivo"] },
+          },
+          prompt: { type: "string", description: "Sólo para ai. Qué tiene que poner en cada fila" },
+          mode: { type: "string", enum: ["write", "research"], description: "Sólo para ai. research puede buscar en la web" },
+        },
+        required: ["listId", "label", "kind"],
+      },
+      handler: async (_sub, args) => {
+        const a = args as {
+          listId: number;
+          label: string;
+          kind: "enrich" | "ai";
+          waterfall?: string[];
+          prompt?: string;
+          mode?: "write" | "research";
+          f?: string;
+        };
+        /*
+          Se le pide a la PANTALLA que la cree y la corra, en vez de hacerlo aquí.
+          Tres razones, y ninguna es de comodidad:
+           · Llenar 295 filas tarda minutos y el turno del agente no vive tanto — el trabajo
+             de fondo se congela y nadie recoge la salida.
+           · La pantalla ya tiene el pulso de progreso y el aviso de por qué se saltó cada
+             fila. Duplicarlo daría dos caminos que se desincronizan.
+           · La vista sobre la que corre es la que la persona TIENE delante, con sus chips.
+        */
+        const { publish, ch } = await import("../bus.server");
+        const { currentNamespace } = await import("../tenant.server");
+        const ns = await currentNamespace();
+        publish(ch.user(ns, _sub), {
+          t: "prospeccion:column",
+          listId: Number(a.listId),
+          label: String(a.label ?? "").slice(0, 60),
+          kind: a.kind,
+          waterfall: a.waterfall ?? [],
+          prompt: a.prompt ?? "",
+          mode: a.mode ?? "write",
+        });
+        return {
+          ok: true,
+          arrancado_en_pantalla: true,
+          nota:
+            "La columna se está creando y llenando en la pantalla de la persona, con su progreso. " +
+            "No repitas la llamada ni esperes el resultado aquí: dile que ya va y qué va a ver.",
         };
       },
     },

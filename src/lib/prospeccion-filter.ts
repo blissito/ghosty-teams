@@ -21,7 +21,9 @@ export type Condition =
   /** Una columna contiene esto. */
   | { op: "has"; field: string; value: string }
   /** Estado en el embudo. */
-  | { op: "status"; value: string };
+  | { op: "status"; value: string }
+  /** Temperatura: frío · tibio · caliente. Se deriva del estado. */
+  | { op: "temp"; value: TempId };
 
 export type Filter = Condition[];
 
@@ -35,6 +37,40 @@ export const STATUSES: { id: string; label: string }[] = [
   { id: "bounced", label: "Rebotó" },
   { id: "optout", label: "Dado de baja" },
 ];
+
+/**
+ * La TEMPERATURA de un prospecto — el vocabulario estándar de prospección.
+ *
+ * No es una etiqueta nueva ni un dato que haya que guardar: se DERIVA del estado que ya se
+ * mide. Existe porque «MANDADOS · ABRIERON · CONTESTARON» nombra el mecanismo y la
+ * temperatura nombra lo que hay que hacer con cada uno.
+ *
+ * ⚠️ Y no es cosmética: la frontera tibio→caliente es exactamente la **ventana de 24h de
+ * WhatsApp**. A un caliente se le puede contestar libre porque él escribió primero; a un
+ * frío sólo con plantilla aprobada, y masivo eso quema el número. Confundirlos es el error
+ * caro de este módulo.
+ */
+export type TempId = "frio" | "tibio" | "caliente";
+
+export const TEMPS: { id: TempId; label: string; hint: string }[] = [
+  { id: "frio", label: "Frío", hint: "Nunca ha tenido contacto contigo" },
+  { id: "tibio", label: "Tibio", hint: "Dio una señal: abrió o dio clic" },
+  { id: "caliente", label: "Caliente", hint: "Te escribió él: se le puede contestar libre" },
+];
+
+/** Qué estados cuentan como cada temperatura. Lo demás (baja, rebote) no tiene. */
+const TEMP_DE: Record<string, TempId> = {
+  new: "frio",
+  sent: "frio",   // que salga el correo no lo entibia: entibia que él REACCIONE
+  opened: "tibio",
+  clicked: "tibio",
+  replied: "caliente",
+};
+
+/** La temperatura de una fila, o null si su estado no tiene ninguna (baja, rebote). */
+export function tempOf(row: Record<string, unknown>): TempId | null {
+  return TEMP_DE[String(row.status ?? "new")] ?? null;
+}
 
 const BASE_FIELDS = new Set(["name", "phone", "email", "website", "address", "category"]);
 
@@ -71,6 +107,9 @@ export function matches(row: Record<string, unknown>, filter: Filter, fields: st
       case "status":
         if (String(row.status ?? "new") !== c.value) return false;
         break;
+      case "temp":
+        if (tempOf(row) !== c.value) return false;
+        break;
     }
   }
   return true;
@@ -90,6 +129,7 @@ export function describe(c: Condition, labelOf: (field: string) => string): stri
     case "filled": return `con ${labelOf(c.field)}`;
     case "has": return `${labelOf(c.field)}: ${c.value}`;
     case "status": return STATUSES.find((s) => s.id === c.value)?.label ?? c.value;
+    case "temp": return TEMPS.find((x) => x.id === c.value)?.label ?? c.value;
   }
 }
 

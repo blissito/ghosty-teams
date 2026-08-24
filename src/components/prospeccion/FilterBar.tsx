@@ -4,6 +4,7 @@ import { Filter as FilterIcon, Plus, Search, X } from "lucide-react";
 import { useT } from "../../i18n";
 import {
   STATUSES,
+  TEMPS,
   describe,
   sameCondition,
   type Condition,
@@ -156,6 +157,25 @@ export function FilterBar({
                   className="w-full text-left px-3 py-1.5 text-xs hover:bg-surface-3"
                 >
                   {t("con")} {f.label}
+                </button>
+              ))}
+
+              {/*
+                La temperatura va ANTES del embudo: es lo que la gente pide en voz alta
+                («enséñame los tibios»), y el embudo es el detalle de cómo llegó ahí.
+              */}
+              <div className="px-3 pb-1 pt-3 text-[11px] font-semibold uppercase tracking-wider text-muted">
+                {t("Temperatura")}
+              </div>
+              {TEMPS.map((x) => (
+                <button
+                  key={x.id}
+                  onClick={() => add({ op: "temp", value: x.id })}
+                  title={t(x.hint)}
+                  className="w-full text-left px-3 py-1.5 text-xs hover:bg-surface-3 flex items-baseline gap-2"
+                >
+                  <span>{t(x.label)}</span>
+                  <span className="text-[10px] text-muted truncate">{t(x.hint)}</span>
                 </button>
               ))}
 
