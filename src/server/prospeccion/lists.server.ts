@@ -371,9 +371,20 @@ export async function addColumn(args: {
   label: string;
   kind: ProspColumn["kind"];
   recipe?: Recipe | null;
+  /**
+   * Llave explícita, para cuando la celda YA existe con un nombre que no se deriva de la
+   * etiqueta.
+   *
+   * ⚠️ Es el caso de las columnas que declara una fuente: la celda se llama `antiguedad` y
+   * la etiqueta es «Años en el directorio». Derivando la llave de la etiqueta saldría
+   * `anos_en_el_directorio`, la columna se crearía apuntando a una celda que no existe y
+   * se pintaría vacía sobre filas que sí tienen el dato — invisible y muy difícil de
+   * atribuir después.
+   */
+  key?: string;
 }): Promise<ProspColumn> {
   const existing = await listColumns(args.listId);
-  let key = columnKey(args.label);
+  let key = args.key?.trim() || columnKey(args.label);
 
   /**
    * ⚠️ Pedir DOS VECES la misma columna reusa la que ya está, no crea otra.

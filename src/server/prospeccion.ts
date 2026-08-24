@@ -27,10 +27,13 @@ export const listProspListsFn = createServerFn({ method: "GET" }).handler(async 
 /**
  * Crea una lista y la llena con la fuente.
  *
- * Devuelve el error de la fuente TAL CUAL en `error`: si falta el token de DENUE o la
- * zona no se reconoce, quien lo lee es la persona que escribió el criterio y necesita
- * saber qué corregir. Un "no se encontró nada" genérico manda a diagnosticar el lugar
- * equivocado.
+ * Devuelve el error de la fuente TAL CUAL en `error`: quien lo lee es la persona que
+ * escribió el criterio y necesita saber qué corregir. Un "no se encontró nada" genérico
+ * manda a diagnosticar el lugar equivocado.
+ *
+ * ⚠️ Ese error lo redacta la fuente y NO nombra al proveedor ni a su variable de entorno:
+ * lo accionable va al log del servidor, que es donde puede leerlo quien sí puede
+ * arreglarlo.
  */
 export const createListFn = createServerFn({ method: "POST" })
   .validator((d: { criteria: string; name?: string; source?: string; limit?: number }) => d)
@@ -42,7 +45,7 @@ export const createListFn = createServerFn({ method: "POST" })
     if (!criteria) return { ok: false as const, error: "Escribe qué negocios buscas" };
 
     await (await import("./schema.server")).ensureSchema().catch(() => {});
-    const { createList, insertRows } = await import("./prospeccion/lists.server");
+    const { createList, insertRows, addColumn } = await import("./prospeccion/lists.server");
     const { sourceById } = await import("./prospeccion/sources/index");
 
     const src = sourceById(data.source ?? "denue");
@@ -60,6 +63,27 @@ export const createListFn = createServerFn({ method: "POST" })
       createdBy: me.sub,
     });
     await insertRows(listId, found);
+
+    /**
+     * Registra las columnas de las celdas que la fuente SÍ trajo.
+     *
+     * ⚠️ Sin esto el dato se guarda y no se ve: la rejilla pinta `gt_prosp_columns`, y una
+     * llave suelta en `data_json` no la enseña nadie. Le pasaba al tamaño de empresa desde
+     * el primer día — se escribía en cada fila y era invisible, no filtrable y no exportable.
+     *
+     * Sólo las que aparecieron: una búsqueda cuyos resultados no traen coordenadas no debe
+     * dejar dos columnas vacías comiendo pantalla.
+     */
+    const conDato = new Set<string>();
+    for (const f of found) for (const [k, c] of Object.entries(f.data ?? {})) if (c?.v) conDato.add(k);
+    for (const col of src.columns ?? []) {
+      if (!conDato.has(col.key)) continue;
+      // `manual`: la fuente ya la llenó, no hay receta que volver a correr.
+      // La llave va EXPLÍCITA: es la de la celda que la fuente ya escribió, no una
+      // derivada de la etiqueta.
+      await addColumn({ listId, key: col.key, label: col.label, kind: "manual" }).catch(() => {});
+    }
+
     return { ok: true as const, listId, rows: found.length };
   });
 

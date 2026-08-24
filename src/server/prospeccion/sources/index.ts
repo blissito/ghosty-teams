@@ -18,8 +18,25 @@ export type Found = Partial<Pick<ProspRow, "name" | "phone" | "email" | "website
 export type SearchSource = {
   id: string;
   label: string;
-  /** Qué sabe hacer, en una línea. Se le enseña al agente. */
+  /**
+   * Qué sabe hacer, en una línea. Se le enseña al agente.
+   *
+   * ⚠️ NO nombra al proveedor. Este texto llega al modelo y de ahí al chat.
+   */
   blurb: string;
+  /**
+   * Las celdas de `data` que esta fuente puede emitir, con la etiqueta que llevan.
+   *
+   * ⚠️ Existe porque una celda SIN columna es invisible. La rejilla pinta las columnas de
+   * `gt_prosp_columns`, y las base son campos fijos de la fila; una llave suelta en
+   * `data_json` no la enseña nadie. El tamaño de empresa llevaba así desde el principio:
+   * se guardaba en cada fila y no se veía, no se podía filtrar y no salía al exportar.
+   *
+   * Se declaran aquí y no se crean a ciegas: sólo se registran las que de verdad
+   * aparecieron en los resultados, para que una búsqueda sin coordenadas no deje dos
+   * columnas vacías ocupando pantalla.
+   */
+  columns?: { key: string; label: string }[];
   /**
    * Busca a partir del criterio en lenguaje natural.
    * Devuelve filas crudas; deduplicar y persistir es del motor, no de la fuente.

@@ -1,9 +1,14 @@
 /**
- * DENUE (INEGI) — el directorio de unidades económicas de México.
+ * El directorio nacional de unidades económicas de México.
  *
  * Por qué es la primera fuente: es API oficial, gratis, sin proxy ni scraping, cubre ~6
  * millones de establecimientos y trae giro, tamaño y ubicación. Google Maps da más
  * señales (reseñas, sitio web) pero exige proxy residencial; ése es el segundo adaptador.
+ *
+ * ⚠️ QUÉ PROVEEDOR HAY DETRÁS NO SE DICE NUNCA hacia afuera — ni en la pantalla, ni en un
+ * error, ni en el `blurb` que lee el agente. Es infraestructura nuestra: el usuario no
+ * puede hacer nada con ese dato, y publicarlo regala el mapa de con quién trabajamos a
+ * cualquiera que abra una cuenta. Dentro del código sí se nombra, que es donde sirve.
  *
  * El endpoint que usamos es `Buscar/<condición>/<lat>/<lng>/<radius>/<token>`: busca por
  * palabra en un radio. La alternativa `BuscarEntidad` filtra por estado y no por zona, y
@@ -76,6 +81,15 @@ export function parseCriteria(criteria: string): { what: string; zone: { lat: nu
   return { what, zone: ZONES[zoneName], zoneName };
 }
 
+/**
+ * Lo que un establecimiento trae por respuesta.
+ *
+ * ⚠️ Los campos de abajo de `Estrato` estuvieron AUSENTES de este tipo hasta el 2026-08-24
+ * y por eso se tiraban: la API los mandaba en cada respuesta y el mapeo no los miraba.
+ * El más caro fue `Latitud`/`Longitud` — la rejilla YA sabe colapsar un par lat/lon en un
+ * enlace al local (`Grid.tsx`, `findLatLon`), o sea que la función estaba construida
+ * esperando un dato que se descartaba a la entrada.
+ */
 type DenueRaw = {
   Nombre?: string;
   Razon_social?: string;
@@ -86,18 +100,29 @@ type DenueRaw = {
   Tipo_vialidad?: string;
   Calle?: string;
   Num_Exterior?: string;
+  Num_Interior?: string;
   Colonia?: string;
   Ubicacion?: string;
   Estrato?: string;
+  /** Clave estable del establecimiento. Es lo que permite dedupe ENTRE listas. */
+  CLEE?: string;
+  CP?: string;
+  /** SCIAN a 6 dígitos. Los 2 primeros son el sector. */
+  Codigo_Act?: string;
+  /** "Mes Año" del alta en el directorio. Aproxima la antigüedad del negocio. */
+  Fecha_Alta?: string;
+  Latitud?: string;
+  Longitud?: string;
 };
 
 /** Arma la dirección legible a partir de los pedazos que DENUE devuelve sueltos. */
 function buildAddress(r: DenueRaw): string | null {
   const parts = [
     [r.Tipo_vialidad, r.Calle].filter(Boolean).join(" "),
-    r.Num_Exterior,
+    [r.Num_Exterior, r.Num_Interior ? `int. ${r.Num_Interior}` : ""].filter(Boolean).join(" "),
     r.Colonia,
     r.Ubicacion,
+    r.CP,
   ]
     .map((p) => (p ?? "").trim())
     .filter((p) => p && p !== "0");
@@ -117,10 +142,124 @@ function cleanWebsite(s: string | undefined): string | null {
   return v.startsWith("http") ? v : `https://${v}`;
 }
 
+
+/**
+ * Sector a partir del SCIAN.
+ *
+ * Los 2 primeros dígitos del código de actividad son el sector, y con eso 40 giros
+ * distintos ("consultorios dentales", "consultorios de nutrición", "laboratorios") caen
+ * en UN grupo. Es la única segmentación gruesa que se puede hacer sin gastar un turno de
+ * modelo, y el giro en texto no sirve para agrupar: filtrar por `has` es substring.
+ *
+ * Los rangos son los oficiales del clasificador; varios sectores comparten grupo (31-33
+ * es manufactura entera), por eso la tabla es por prefijo y no por número suelto.
+ */
+const SCIAN_SECTORS: [RegExp, string][] = [
+  [/^11/, "Agricultura y ganadería"],
+  [/^21/, "Minería"],
+  [/^22/, "Energía y agua"],
+  [/^23/, "Construcción"],
+  [/^3[123]/, "Manufactura"],
+  [/^43/, "Comercio al por mayor"],
+  [/^4[6-7]/, "Comercio al por menor"],
+  [/^4[89]/, "Transporte"],
+  [/^51/, "Medios y telecomunicaciones"],
+  [/^52/, "Servicios financieros"],
+  [/^53/, "Inmobiliaria y alquiler"],
+  [/^54/, "Servicios profesionales"],
+  [/^55/, "Corporativos"],
+  [/^56/, "Servicios de apoyo a negocios"],
+  [/^61/, "Educación"],
+  [/^62/, "Salud"],
+  [/^71/, "Cultura y deporte"],
+  [/^72/, "Hoteles y restaurantes"],
+  [/^81/, "Otros servicios"],
+  [/^93/, "Gobierno"],
+];
+
+export function sectorOf(code: string | undefined): string | null {
+  const c = (code ?? "").replace(/\D/g, "");
+  if (c.length < 2) return null;
+  return SCIAN_SECTORS.find(([re]) => re.test(c))?.[1] ?? null;
+}
+
+/**
+ * Años en el directorio, a partir de la fecha de alta ("Julio 2010").
+ *
+ * NO es la edad del negocio y la etiqueta de la columna no lo promete: es desde cuándo
+ * está censado. Aun así separa al changarro de este año del que lleva quince, que es la
+ * pregunta que de verdad se hace quien califica una lista.
+ */
+export function yearsListed(fecha: string | undefined): string | null {
+  const y = Number((fecha ?? "").match(/\b(19|20)\d{2}\b/)?.[0]);
+  if (!y) return null;
+  const años = new Date().getFullYear() - y;
+  return años < 0 || años > 60 ? null : String(años);
+}
+
+/** Un flotante que sirva como coordenada, o nada. `"0"` y `""` no son coordenadas. */
+function coord(v: string | undefined, max: number): string | null {
+  const n = Number(v);
+  return Number.isFinite(n) && n !== 0 && Math.abs(n) <= max ? String(n) : null;
+}
+
+/** Sólo las celdas con valor: una celda vacía ocupa columna y no dice nada. */
+function cells(pairs: Record<string, string | null>): Record<string, { v: string; src: string; verified: boolean }> {
+  const out: Record<string, { v: string; src: string; verified: boolean }> = {};
+  for (const [k, v] of Object.entries(pairs)) {
+    if (v) out[k] = { v, src: "directorio", verified: true };
+  }
+  return out;
+}
+
+/**
+ * Un establecimiento crudo → una fila.
+ *
+ * Vive fuera de `search` para poder probarse sin red: el mapeo es donde se pierden los
+ * datos en silencio (un campo que no está en el tipo se descarta y nada falla), así que es
+ * justo la parte que necesita prueba con un ejemplo real delante.
+ */
+export function toFound(r: DenueRaw): Found | null {
+  const name = (r.Nombre || r.Razon_social || "").trim();
+  if (!name) return null;
+  return {
+    name,
+    phone: cleanPhone(r.Telefono),
+    email: (r.Correo_e ?? "").trim() || null,
+    website: cleanWebsite(r.Sitio_internet),
+    address: buildAddress(r),
+    category: (r.Clase_actividad ?? "").trim() || null,
+    data: cells({
+      tamano: (r.Estrato ?? "").trim() || null,
+      sector: sectorOf(r.Codigo_Act),
+      antiguedad: yearsListed(r.Fecha_Alta),
+      // La rejilla reconoce el par por su ETIQUETA y lo colapsa en un enlace al local.
+      lat: coord(r.Latitud, 90),
+      lon: coord(r.Longitud, 180),
+    }),
+  };
+}
+
 export const denue: SearchSource = {
   id: "denue",
-  label: "DENUE (INEGI)",
-  blurb: "Directorio oficial de ~6 millones de negocios en México. Da fileName, giro, teléfono y dirección. Casi nunca da correo.",
+  label: "Directorio de negocios de México",
+  blurb:
+    "Directorio de ~6 millones de negocios en México. Da nombre, giro, sector, teléfono, " +
+    "dirección, ubicación en el mapa, tamaño y antigüedad. Casi nunca da correo: ése sale " +
+    "después con la columna «Contacto del sitio».",
+
+  /**
+   * ⚠️ Las etiquetas de `lat`/`lon` importan: `findLatLon` (Grid.tsx) las reconoce POR
+   * NOMBRE y las colapsa en un enlace al local en vez de pintar dos columnas de flotantes
+   * que nadie lee. Cambiarlas por «Coordenada X» rompe esa función en silencio.
+   */
+  columns: [
+    { key: "sector", label: "Sector" },
+    { key: "tamano", label: "Tamaño" },
+    { key: "antiguedad", label: "Años en el directorio" },
+    { key: "lat", label: "Latitud" },
+    { key: "lon", label: "Longitud" },
+  ],
 
   async search(criteria, limit) {
     const token = TOKEN();
@@ -152,22 +291,20 @@ export const denue: SearchSource = {
     const out: Found[] = [];
     const seen = new Set<string>();
     for (const r of json) {
-      const name = (r.Nombre || r.Razon_social || "").trim();
-      if (!name) continue;
-      // Dedup por fileName + dirección: DENUE repite la misma unidad con distinto id.
-      const key = stripAccents(`${name}|${r.Calle ?? ""}${r.Num_Exterior ?? ""}`);
+      const row = toFound(r);
+      if (!row) continue;
+      // Dedup por la clave estable cuando viene; si no, por nombre + dirección, que es lo
+      // que había: el directorio repite la misma unidad con distinto id interno.
+      //
+      // ⚠️ Esto dedupe DENTRO de una búsqueda, no ENTRE listas. Para lo segundo la clave
+      // tiene que viajar hasta la fila y eso pide una columna en `gt_prosp_rows`; hoy dos
+      // búsquedas parecidas siguen produciendo el mismo negocio dos veces, y el cooldown
+      // de 7 días no las cruza porque es por `row_id`.
+      const key = (r.CLEE ?? "").trim() || stripAccents(`${row.name}|${r.Calle ?? ""}${r.Num_Exterior ?? ""}`);
       if (seen.has(key)) continue;
       seen.add(key);
 
-      out.push({
-        name,
-        phone: cleanPhone(r.Telefono),
-        email: (r.Correo_e ?? "").trim() || null,
-        website: cleanWebsite(r.Sitio_internet),
-        address: buildAddress(r),
-        category: (r.Clase_actividad ?? "").trim() || null,
-        data: r.Estrato ? { tamano: { v: r.Estrato, src: "denue", verified: true } } : undefined,
-      });
+      out.push(row);
       if (out.length >= limit) break;
     }
     return out;
