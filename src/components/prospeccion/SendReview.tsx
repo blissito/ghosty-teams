@@ -66,7 +66,10 @@ export function SendReview({
   }, [open, listId, filter, initialSubject, t]);
 
   const verPreview = async (test: boolean) => {
-    if (!messageKey || !subject.trim()) return;
+    // ⚠️ El asunto NO hace falta para ver el cuerpo: se previsualiza con «(sin asunto)».
+    // Exigirlo escondía los botones justo cuando el aviso de arriba ya decía «míralo con
+    // Ver el correo» — mandaba a un botón que no estaba en pantalla.
+    if (!messageKey) return;
     setProbando(test);
     setError(null);
     const { previewSendFn } = await import("../../server/prospeccion");
@@ -239,8 +242,8 @@ export function SendReview({
 
                   {/* Ver el correo y mandarse una prueba: el paso que todos los players
                       ponen antes de lanzar. */}
-                  {messageKey && subject.trim() ? (
-                    <div className="flex items-center gap-2 mt-4">
+                  {messageKey ? (
+                    <div className="flex items-center gap-2 mt-4 flex-wrap">
                       <button
                         onClick={() => verPreview(false)}
                         className="inline-flex items-center gap-1.5 text-xs font-medium border border-border rounded-lg px-3 py-2 hover:bg-surface-3"
