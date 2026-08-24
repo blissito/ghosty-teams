@@ -117,6 +117,28 @@ export interface AcpTurn {
   idleMs?: number;
 }
 
+/**
+ * Un error que originó el RELÉ de la caja, no el agente.
+ *
+ * Lleva el `code` de JSON-RPC porque el llamador necesita distinguir lo TRANSITORIO de lo
+ * definitivo: `CUPO_LLENO` se reintenta (la caja está ocupada ahora mismo y los turnos duran
+ * segundos), un fallo de arranque no — reintentar un error permanente sólo retrasa la mala
+ * noticia.
+ */
+export class AcpServerError extends Error {
+  constructor(
+    message: string,
+    readonly code: number,
+  ) {
+    super(message);
+    this.name = "AcpServerError";
+  }
+}
+
+/** El relé rechaza la conexión porque ya atiende su tope de turnos a la vez. Es el único
+ *  error que vale la pena reintentar: se despeja solo en cuanto termina cualquier turno. */
+export const CUPO_LLENO = -32000;
+
 export interface AcpResult {
   text: string;
   sessionId: string;
@@ -155,8 +177,40 @@ export function acpTicketUrl(wsUrl: string, ns: string, sub: string, tools = fal
   return conTools(u);
 }
 
-/** Un turno completo: conecta, negocia, abre o retoma sesión, manda el prompt y espera. */
+/**
+ * Un turno completo, reintentando **sólo** cuando la caja está llena.
+ *
+ * El relé atiende un tope de turnos a la vez y rechaza el resto al instante. Es la más
+ * transitoria de las condiciones —un turno dura segundos— así que rendirse a la primera
+ * convierte un «espera un momento» en un error a la cara de alguien que no hizo nada mal.
+ *
+ * ⚠️ Sólo se reintenta `CUPO_LLENO`, y sólo ANTES de haber emitido un solo `onChunk`:
+ * reconectar a media respuesta repetiría en el chat el texto ya pintado. Como el rechazo
+ * ocurre en el `attach` —antes de que el agente vea nada— esa condición se cumple sola,
+ * pero se comprueba igual: es el tipo de invariante que un refactor rompe sin enterarse.
+ *
+ * Las esperas son cortas y crecientes (0.4 s, 0.9 s). Con turnos de ~1.5 s eso cubre a quien
+ * llegó un instante tarde sin hacer esperar a nadie de forma perceptible.
+ */
 export async function runAcpTurn(t: AcpTurn): Promise<AcpResult> {
+  const ESPERAS = [400, 900];
+  let intento = 0;
+  for (;;) {
+    let emitio = false;
+    try {
+      return await unTurnoAcp({ ...t, onUpdate: async (u) => { emitio = true; await t.onUpdate(u); } });
+    } catch (e) {
+      const lleno = e instanceof AcpServerError && e.code === CUPO_LLENO;
+      if (!lleno || emitio || intento >= ESPERAS.length) throw e;
+      const espera = ESPERAS[intento++];
+      console.log(`[acp ~] caja llena, reintento ${intento}/${ESPERAS.length} en ${espera}ms`);
+      await new Promise((r) => setTimeout(r, espera));
+    }
+  }
+}
+
+/** Un turno completo: conecta, negocia, abre o retoma sesión, manda el prompt y espera. */
+async function unTurnoAcp(t: AcpTurn): Promise<AcpResult> {
   const ws = new WebSocket(acpTicketUrl(t.wsUrl, t.workspaceNs, t.sub, !!t.onDeliver), {
     ...(t.toolToken ? { headers: { "x-ghosty-tools": t.toolToken } } : {}),
   });
@@ -165,6 +219,8 @@ export async function runAcpTurn(t: AcpTurn): Promise<AcpResult> {
   let texto = "";
   /** Cuándo se oyó al agente por última vez. El watchdog mide SILENCIO, no duración. */
   let ultimoMensaje = Date.now();
+  /** El último error que mandó el RELÉ por su cuenta (sin `id`). Ver `tumbar`. */
+  let ultimoErrorSinId: AcpServerError | null = null;
   /** Permisos esperando respuesta humana. Mientras haya uno, el silencio es legítimo. */
   let permisosEnVuelo = 0;
   /**
@@ -196,6 +252,98 @@ export async function runAcpTurn(t: AcpTurn): Promise<AcpResult> {
     }
   };
 
+  // ⚠️ Los handlers se registran ANTES de esperar el `open`, y no es cosmética: el relé
+  // rechaza por cupo lleno en cuanto acepta el socket —manda su error y cierra en el mismo
+  // suspiro— así que un `ws.on("message")` puesto después del `await` llega tarde y el
+  // motivo se PIERDE. `ws` emite el evento tenga o no oyente; lo que no hay nadie para oír,
+  // no se guarda. Estuvo así y el usuario leía «cerró la conexión» en vez de «no hay cupo».
+
+  // Si el socket MUERE a media conversación, cada `llama()` pendiente se queda esperando
+  // una respuesta que ya no puede llegar: el turno se cuelga para siempre y el usuario ve
+  // una burbuja vacía girando. Pasó el 19 ago con una caja borrada cuya URL seguía viva en
+  // el router: el WS abría, el prompt salía, y nadie contestaba nunca.
+  const tumbar = (e: Error) => {
+    // ⚠️ Si el relé nos DIJO por qué, se dice eso y no el genérico.
+    //
+    // Un error de servidor sin `id` no responde a nada que hayamos pedido, así que no
+    // cae en ninguna rama del despachador de abajo y se descartaba en silencio; medio
+    // segundo después el socket cerraba y el usuario leía «el agente cerró la conexión a
+    // media respuesta», que suena a avería. Son los DOS frames que el relé origina por su
+    // cuenta: el cupo lleno (-32000, con una frase perfectamente clara que se estaba
+    // tirando a la basura) y el fallo de arranque de la sesión (-32603).
+    const real = ultimoErrorSinId;
+    for (const [id, p] of pendientes) {
+      pendientes.delete(id);
+      p.err(real ?? e);
+    }
+  };
+  ws.on("close", () => tumbar(new Error("el agente cerró la conexión a media respuesta")));
+  ws.on("error", (e: Error) => tumbar(e));
+
+  ws.on("message", (d: Buffer | string) => {
+    ultimoMensaje = Date.now();
+    for (const line of d.toString().split("\n")) {
+      if (!line.trim()) continue;
+      let m: any;
+      try {
+        m = JSON.parse(line);
+      } catch {
+        continue; // una línea mala se salta; no puede terminar la sesión
+      }
+
+      // Error del RELÉ, no del agente: llega sin `id` porque no contesta a nada nuestro.
+      // Se guarda en vez de despacharse — el relé cierra el socket justo después, y es
+      // `tumbar` quien tiene las promesas pendientes que hay que rechazar con esto.
+      if (m.error && m.id == null) {
+        ultimoErrorSinId = new AcpServerError(
+          String(m.error.message ?? "el agente rechazó la conexión"),
+          Number(m.error.code ?? 0),
+        );
+        continue;
+      }
+
+      // Respuesta a algo que pedimos.
+      if (m.id != null && pendientes.has(m.id)) {
+        const p = pendientes.get(m.id)!;
+        pendientes.delete(m.id);
+        m.error ? p.err(new Error(m.error.message ?? "error del agente")) : p.ok(m.result);
+        continue;
+      }
+
+      // El agente entregó algo. Es notificación: no lleva id y no se contesta.
+      if (m.method === "ghosty/artifact") {
+        if (t.onDeliver && m.params) void t.onDeliver(m.params as AcpEntrega);
+        continue;
+      }
+
+      // Notificación de progreso.
+      if (m.method === "session/update") {
+        // Durante el replay se descarta TODO, hasta los `tool_call`: repintar en el
+        // checklist las herramientas de un turno viejo es contar dos veces un trabajo que
+        // ya se hizo.
+        if (rehidratando) continue;
+        void handleUpdate(m.params?.update ?? {}, t, (s) => (texto += s));
+        continue;
+      }
+
+      // ⚠️ El AGENTE nos llama a NOSOTROS. ACP es full-duplex, y aquí está lo que lo
+      // distingue: si esto no se contesta, el agente se queda detenido para siempre.
+      if (m.method === "session/request_permission" && m.id != null) {
+        permisosEnVuelo++;
+        void responderPermiso(m, t, enviar).finally(() => {
+          permisosEnVuelo--;
+          ultimoMensaje = Date.now();
+        });
+        continue;
+      }
+      // Cualquier otra petición del agente se rechaza explícitamente: dejarla sin
+      // contestar lo dejaría colgado, y fingir que la soportamos sería peor.
+      if (m.method && m.id != null) {
+        enviar({ jsonrpc: "2.0", id: m.id, error: { code: -32601, message: `no soportado: ${m.method}` } });
+      }
+    }
+  });
+
   try {
     await new Promise<void>((res, rej) => {
       // Si el sidecar no responde, se falla rápido en vez de colgar el turno del usuario —
@@ -213,71 +361,6 @@ export async function runAcpTurn(t: AcpTurn): Promise<AcpResult> {
 
     t.signal?.addEventListener("abort", cerrar, { once: true });
 
-    // Si el socket MUERE a media conversación, cada `llama()` pendiente se queda esperando
-    // una respuesta que ya no puede llegar: el turno se cuelga para siempre y el usuario ve
-    // una burbuja vacía girando. Pasó el 19 ago con una caja borrada cuya URL seguía viva en
-    // el router: el WS abría, el prompt salía, y nadie contestaba nunca.
-    const tumbar = (e: Error) => {
-      for (const [id, p] of pendientes) {
-        pendientes.delete(id);
-        p.err(e);
-      }
-    };
-    ws.on("close", () => tumbar(new Error("el agente cerró la conexión a media respuesta")));
-    ws.on("error", (e: Error) => tumbar(e));
-
-    ws.on("message", (d: Buffer | string) => {
-      ultimoMensaje = Date.now();
-      for (const line of d.toString().split("\n")) {
-        if (!line.trim()) continue;
-        let m: any;
-        try {
-          m = JSON.parse(line);
-        } catch {
-          continue; // una línea mala se salta; no puede terminar la sesión
-        }
-
-        // Respuesta a algo que pedimos.
-        if (m.id != null && pendientes.has(m.id)) {
-          const p = pendientes.get(m.id)!;
-          pendientes.delete(m.id);
-          m.error ? p.err(new Error(m.error.message ?? "error del agente")) : p.ok(m.result);
-          continue;
-        }
-
-        // El agente entregó algo. Es notificación: no lleva id y no se contesta.
-        if (m.method === "ghosty/artifact") {
-          if (t.onDeliver && m.params) void t.onDeliver(m.params as AcpEntrega);
-          continue;
-        }
-
-        // Notificación de progreso.
-        if (m.method === "session/update") {
-          // Durante el replay se descarta TODO, hasta los `tool_call`: repintar en el
-          // checklist las herramientas de un turno viejo es contar dos veces un trabajo que
-          // ya se hizo.
-          if (rehidratando) continue;
-          void handleUpdate(m.params?.update ?? {}, t, (s) => (texto += s));
-          continue;
-        }
-
-        // ⚠️ El AGENTE nos llama a NOSOTROS. ACP es full-duplex, y aquí está lo que lo
-        // distingue: si esto no se contesta, el agente se queda detenido para siempre.
-        if (m.method === "session/request_permission" && m.id != null) {
-          permisosEnVuelo++;
-          void responderPermiso(m, t, enviar).finally(() => {
-            permisosEnVuelo--;
-            ultimoMensaje = Date.now();
-          });
-          continue;
-        }
-        // Cualquier otra petición del agente se rechaza explícitamente: dejarla sin
-        // contestar lo dejaría colgado, y fingir que la soportamos sería peor.
-        if (m.method && m.id != null) {
-          enviar({ jsonrpc: "2.0", id: m.id, error: { code: -32601, message: `no soportado: ${m.method}` } });
-        }
-      }
-    });
 
     const init = await llama("initialize", {
       protocolVersion: 1,

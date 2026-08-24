@@ -23,6 +23,12 @@ let ultimoPrompt: { type: string; text: string }[] = [];
 let replay: string[] = [];
 /** Lo que el agente declara en `initialize`. Un agente sin visión NO recibe imágenes inline. */
 let declaraImagen = false;
+/** Cuántas conexiones seguidas debe rechazar el relé antes de atender. */
+let rechazosPendientes = 0;
+/** Con qué código rechaza. -32000 = cupo lleno (transitorio); otro = definitivo. */
+let codigoRechazo = -32000;
+/** Cuántas veces se ha conectado el cliente. Es lo que prueba que hubo reintento. */
+let conexiones = 0;
 
 const env = (o: any, extra: any) => JSON.stringify({ jsonrpc: "2.0", ...o, ...extra }) + "\n";
 
@@ -33,6 +39,25 @@ beforeAll(async () => {
   wss.on("connection", (ws, req) => {
     ultimaUrl = req.url ?? "";
     ultimosHeaders = req.headers as Record<string, string | undefined>;
+    conexiones++;
+    // El relé de verdad rechaza en el `attach`: manda un error SIN `id` (no contesta a nada
+    // nuestro) y cierra. Es el frame que el cliente descartaba en silencio.
+    if (rechazosPendientes > 0) {
+      rechazosPendientes--;
+      ws.send(
+        env({ id: null }, {
+          error: {
+          code: codigoRechazo,
+          message:
+            codigoRechazo === -32000
+              ? "esta caja ya atiende 4 conversaciones a la vez (tope 4); inténtalo en un momento"
+              : "no pude arrancar la sesión del agente",
+        },
+        }),
+      );
+      ws.close();
+      return;
+    }
     ws.on("message", (d) => {
       for (const line of d.toString().split("\n")) {
         if (!line.trim()) continue;
@@ -490,5 +515,51 @@ describe("adjuntos", () => {
     guion = (ws, m) => ws.send(env({ id: m.id }, { result: { stopReason: "end_turn" } }));
     await turno().run();
     expect(soloTexto()).not.toContain("ADJUNTOS");
+  });
+});
+
+
+describe("🔴 cupo lleno: el relé DICE por qué, y se reintenta", () => {
+  beforeEach(() => {
+    rechazosPendientes = 0;
+    conexiones = 0;
+    codigoRechazo = -32000;
+    guion = (ws, m) => ws.send(env({ id: m.id }, { result: { stopReason: "end_turn" } }));
+  });
+
+  it("el mensaje del relé llega al llamador en vez del genérico de socket cerrado", async () => {
+    // Más rechazos que reintentos: se agotan y el error tiene que salir.
+    rechazosPendientes = 99;
+    // ⚠️ Lo que fallaba: el frame va sin `id`, así que no respondía a ninguna promesa
+    // pendiente y se tiraba; el `close` de después ganaba la carrera y el usuario leía «el
+    // agente cerró la conexión a media respuesta» — indistinguible de una caja caída.
+    await expect(turno().run()).rejects.toThrow(/ya atiende 4 conversaciones/);
+    await expect(turno().run()).rejects.not.toThrow(/cerró la conexión/);
+  });
+
+  it("un rechazo pasajero se reintenta y el turno SALE", async () => {
+    rechazosPendientes = 1;
+    const t = turno();
+    const r = await t.run();
+    expect(r.stopReason).toBe("end_turn");
+    // Dos conexiones: la rechazada y la buena. Es lo único que prueba que hubo reintento.
+    expect(conexiones).toBe(2);
+  });
+
+  it("deja de reintentar y se rinde con el motivo a la vista", async () => {
+    rechazosPendientes = 99;
+    await expect(turno().run()).rejects.toThrow(/ya atiende/);
+    // Un intento + los dos reintentos, y ni uno más: reintentar sin fin dejaría al usuario
+    // mirando una burbuja girando mientras la caja sigue llena.
+    expect(conexiones).toBe(3);
+  });
+
+  it("un error que NO es de cupo se entrega A LA PRIMERA", async () => {
+    // El fallo de arranque de la sesión (-32603) no se despeja solo: reintentarlo sólo
+    // retrasaría la mala noticia. Y su mensaje también se estaba perdiendo.
+    codigoRechazo = -32603;
+    rechazosPendientes = 99;
+    await expect(turno().run()).rejects.toThrow(/no pude arrancar la sesión/);
+    expect(conexiones).toBe(1);
   });
 });
