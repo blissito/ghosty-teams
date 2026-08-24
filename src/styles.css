@@ -539,10 +539,23 @@ body {
   block-size: 100%;
 }
 
-/* La cabecera manda: es la que dice qué columna estás mirando cuando te desplazas. */
-.gt-prosp .rdg-header-row {
+/* La cabecera manda: es la que dice qué columna estás mirando cuando te desplazas.
+
+   ⚠️ Se selecciona por ROL, no por `.rdg-header-row`: react-data-grid v7 hashea sus clases
+   y no emite ninguna con ese nombre — la regla que había aquí no pintaba nada. */
+.gt-prosp [role="columnheader"] {
   font-weight: 600;
   letter-spacing: 0.01em;
+  /* La manita va SÓLO aquí: la cabecera es el asa para desplazarse a lo ancho. Sobre las
+     celdas el arrastre es de ellas (seleccionar, marcar texto), como en Airtable y Excel. */
+  cursor: grab;
+  user-select: none;
+}
+
+/* Mientras se arrastra, el puño gana sobre la mano abierta de la cabecera. Sin esta regla
+   la de arriba es más específica que la de la caja y el cursor no cambiaba nunca. */
+.gt-prosp.cursor-grabbing [role="columnheader"] {
+  cursor: grabbing;
 }
 
 /* Barra horizontal VISIBLE. Por defecto en macOS la barra se esconde hasta que

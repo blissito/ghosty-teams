@@ -282,29 +282,57 @@ export function ProspGrid({
   );
 
   /**
-   * Arrastrar con la mano para desplazar.
+   * Arrastrar con la mano para desplazar — **desde la CABECERA**.
    *
-   * Se puede porque en esta rejilla el arrastre no significa nada más: seleccionar es un
-   * clic y editar es doble clic. ⚠️ Si algún día se agrega selección de rango con arrastre,
-   * esto tiene que pasar a un modificador (espacio, o botón central).
+   * Así lo resuelven Airtable, Notion y Excel, y la razón es que dentro de una celda el
+   * arrastre ya tiene tres dueños: seleccionar, marcar texto y editar. Robárselo para
+   * desplazar deja lo que se veía en la captura del 2026-08-23 — la mano mueve la rejilla y
+   * de paso va pintando de azul el texto de media fila.
    *
-   * No se toca cuando el objetivo es un input (celda en edición), un botón o la cabecera:
-   * ahí el arrastre ya tiene dueño (redimensionar columnas).
-   */
-  const pan = useRef<{ x: number; y: number; left: number; top: number } | null>(null);
+   * ⚠️ El `closest(".rdg-header-row")` que había aquí NUNCA casó: react-data-grid v7 hashea
+   * sus clases y no emite ninguna que se llame así. O sea que la cabecera sí se arrastraba
+   * (por accidente) y las celdas también (que es el bug). Se hit-testea por **rol ARIA**,
+   * que es API pública y sobrevive a la versión.
+   *
+   * Lo que queda para las celdas: rueda con Shift, trackpad de dos dedos, y las flechas.
+   */  const pan = useRef<{ x: number; y: number; left: number; top: number } | null>(null);
+
+  /** El borde derecho de una cabecera es para redimensionar; ahí no se arrastra. */
+  const RESIZER_PX = 12;
 
   const onMouseDown = useCallback((e: React.MouseEvent) => {
+    if (e.button !== 0) return;
     const el = e.target as HTMLElement;
-    if (el.closest("input, textarea, button, .rdg-header-row")) return;
-    const grid = wrapRef.current?.querySelector(".rdg") as HTMLElement | null;
+    if (el.closest("input, textarea, button, a, [role='gridcell']")) return;
+
+    const th = el.closest("[role='columnheader']") as HTMLElement | null;
+    if (th && th.getBoundingClientRect().right - e.clientX < RESIZER_PX) return;
+
+    const grid = wrapRef.current?.querySelector("[role='grid']") as HTMLElement | null;
     if (!grid) return;
+    // Mata la selección de texto en el origen. Ponerle `select-none` a la caja no basta:
+    // el navegador ya empezó a seleccionar antes de que React repinte.
+    e.preventDefault();
     pan.current = { x: e.clientX, y: e.clientY, left: grid.scrollLeft, top: grid.scrollTop };
+  }, []);
+
+  /**
+   * Rueda con Shift → horizontal.
+   *
+   * El trackpad ya lo hace solo; esto es para el ratón de rueda, que si no sólo puede llegar
+   * a la columna 12 arrastrando.
+   */
+  const onWheel = useCallback((e: React.WheelEvent) => {
+    if (!e.shiftKey || e.deltaX !== 0) return;
+    const grid = wrapRef.current?.querySelector("[role='grid']") as HTMLElement | null;
+    if (!grid) return;
+    grid.scrollLeft += e.deltaY;
   }, []);
 
   const onMouseMove = useCallback((e: React.MouseEvent) => {
     const p = pan.current;
     if (!p) return;
-    const grid = wrapRef.current?.querySelector(".rdg") as HTMLElement | null;
+    const grid = wrapRef.current?.querySelector("[role='grid']") as HTMLElement | null;
     if (!grid) return;
     const dx = e.clientX - p.x;
     const dy = e.clientY - p.y;
@@ -326,7 +354,10 @@ export function ProspGrid({
       onMouseMove={onMouseMove}
       onMouseUp={endPan}
       onMouseLeave={endPan}
-      className={`gt-prosp h-full ${dragging ? "cursor-grabbing select-none" : "cursor-grab"}`}
+      onWheel={onWheel}
+      /* La manita va sólo donde de verdad se agarra (la cabecera, por CSS); sobre las celdas
+         el cursor sigue siendo el de siempre, o promete un gesto que no existe. */
+      className={`gt-prosp h-full ${dragging ? "cursor-grabbing select-none" : ""}`}
     >
       <DataGrid
         columns={cols}
