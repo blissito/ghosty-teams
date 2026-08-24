@@ -432,6 +432,7 @@ function ListPage() {
               /* Sólo se distingue cuando hace falta: un contador permanente sería ruido. */
               duplicada={data.columns.filter((x) => x.label === c.label).length > 1}
               filled={view.filter((r) => (r.data[c.key]?.v ?? "").trim()).length}
+              total={view.length}
               running={running === c.key}
               onRun={() => runColumn_(c.key, c.kind)}
               onUseAsEmail={() => promote(c.key)}

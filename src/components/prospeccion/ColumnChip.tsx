@@ -25,6 +25,7 @@ export function ColumnChip({
   kind,
   emailCount,
   filled,
+  total,
   duplicada,
   running,
   onRun,
@@ -43,14 +44,17 @@ export function ColumnChip({
    */
   emailCount: number;
   /**
-   * Cuántas celdas tiene llenas, y si comparte nombre con otra columna.
+   * Cuántas celdas tiene llenas, sobre cuántas hay a la vista.
    *
-   * ⚠️ Sólo se enseña cuando hay ambigüedad. Dos columnas «¿El correo sirve?» —creadas antes
-   * de que pedirla dos veces reusara la que había— son indistinguibles en la cabecera y en
-   * el chip, así que no se puede saber cuál borrar. El número de celdas llenas lo resuelve:
-   * la vacía es la de sobra.
+   * ⚠️ **Se enseña SIEMPRE**, y es la cifra que decide si una columna sirve. Medido el
+   * 2026-08-23 en `denik_barb`: 1,683 filas, 1,582 con teléfono y sólo 295 con correo. Sin
+   * el número, «¿El correo sirve?» se ve casi entera vacía y parece rota — cuando lo que
+   * pasa es que DENUE da teléfonos y casi nunca correos, y eso cambia el canal de la
+   * campaña. Nació sólo para desempatar columnas homónimas y era demasiado poco.
    */
   filled?: number;
+  /** Filas a la vista. Sin el denominador, `295` no dice nada. */
+  total?: number;
   duplicada?: boolean;
   running: boolean;
   onRun: () => void;
@@ -103,9 +107,25 @@ export function ColumnChip({
       >
         {running ? <Loader2 size={11} className="animate-spin text-brand" /> : null}
         <span className="font-medium">{label}</span>
-        {duplicada ? (
-          <span className={`text-[10px] tabular-nums ${filled ? "text-muted" : "text-amber-500"}`}>
-            {filled ? `${filled} ${t("llenas")}` : t("vacía")}
+        {/*
+          La cobertura, siempre. En ámbar sólo cuando de verdad hay poco que mirar: una
+          columna a menos de la mitad es una columna que no sostiene una campaña, y una
+          vacía con nombre repetido es la que sobra.
+        */}
+        {total ? (
+          <span
+            className={`text-[10px] tabular-nums ${
+              !filled ? "text-amber-500" : filled < total / 2 ? "text-amber-500/80" : "text-muted"
+            }`}
+            title={
+              filled
+                ? `${filled.toLocaleString("es-MX")} ${t("de")} ${total.toLocaleString("es-MX")} ${t("filas a la vista tienen este dato")}`
+                : duplicada
+                  ? t("Está vacía y hay otra con el mismo nombre")
+                  : t("Ninguna fila a la vista tiene este dato")
+            }
+          >
+            {filled ? `${filled.toLocaleString("es-MX")}/${total.toLocaleString("es-MX")}` : t("vacía")}
           </span>
         ) : null}
         <ChevronDown size={12} className={`text-muted transition-transform ${open ? "rotate-180" : ""}`} />
