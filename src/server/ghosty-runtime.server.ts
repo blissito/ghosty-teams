@@ -121,3 +121,65 @@ export async function turnDenial(fleetAgentId: string): Promise<TurnDenial | nul
     return null;
   }
 }
+
+/**
+ * Reporta a Studio los tokens de un turno **ACP**.
+ *
+ * ⚠️ Sólo hace falta para ACP, y la asimetría es la misma que la de `turnDenial`: un
+ * agente nativo reporta desde su propia caja con `REPORT_TOKEN`, que viaja por `turnEnv`.
+ * Un agente ACP no tiene `turnEnv` —su cerebro arrancó al bootear— así que **nadie**
+ * reportaba: su bolsa se llenaba con cero y su tope era decorativo.
+ *
+ * El modelo NO se manda: lo lee Studio de la fila del agente. El multiplicador del saldo
+ * sale del modelo, así que dejar que el reportero lo declare sería dejarle declarar
+ * cuánto se le cobra.
+ *
+ * Fire-and-forget: perder una medición es preferible a retrasar la respuesta de un turno
+ * que YA terminó.
+ *
+ * ⚠️ Sobre la idempotencia, para no creerse más de lo que es: la clave lleva el
+ * `messageId` del turno cuando el llamador lo sabe, y sólo entonces protege de verdad
+ * contra contar dos veces el MISMO turno. Sin él cae a un id aleatorio, que únicamente
+ * evita el duplicado exacto de un POST repetido. Se llama una vez por turno, así que
+ * alcanza — pero si algún día esto se reintenta, el `messageId` deja de ser opcional.
+ */
+export function reportAcpUsage(input: {
+  fleetAgentId: string;
+  sessionId: string;
+  groupId: string;
+  inputTokens: number;
+  outputTokens: number;
+  /** Id del mensaje que se está contestando. Es lo que hace la clave estable por turno. */
+  messageId?: string | number | null;
+}): void {
+  void (async () => {
+    try {
+      const base = await nativeRuntimeBase();
+      if (!base || !input.fleetAgentId) return;
+      const { currentNamespace } = await import("./tenant.server");
+      const ns = await currentNamespace();
+      const body = JSON.stringify({
+        session_id: input.sessionId,
+        agent_group_id: input.groupId,
+        // ⚠️ La clave lleva el NAMESPACE, no sólo la sesión. Los ids de sesión de goose son
+        // correlativos POR CAJA (`20260824_1`) y el mismo agente puede estar activado en
+        // varios workspaces: sin el ns, el segundo equipo que tuviera ese turno se comería
+        // un "duplicate" y su gasto no se registraría nunca.
+        turn_idempotency_key: `acp:${ns}:${input.fleetAgentId}:${input.sessionId}:${
+          input.messageId ?? crypto.randomUUID()
+        }`,
+        input_tokens: input.inputTokens,
+        output_tokens: input.outputTokens,
+        occurred_at: new Date().toISOString(),
+      });
+      await fetch(`${base}/api/v2/fleet-agents/${encodeURIComponent(input.fleetAgentId)}/usage`, {
+        method: "POST",
+        headers: partnerHeaders(body, ns),
+        body,
+        signal: AbortSignal.timeout(8_000),
+      });
+    } catch {
+      // Silencio a propósito: el turno ya se entregó y esto no puede tumbarlo.
+    }
+  })();
+}

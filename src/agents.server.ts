@@ -1513,7 +1513,10 @@ export async function callAgentBackendStream(
       const pista = /401|403/.test(msg)
         ? "el ticket no fue aceptado por la caja (¿tenant o secreto distinto?)"
         : msg;
-      return { text: `⚠️ No pude hablar con @${agent.handle}: ${pista}`, sessionId: "", stopReason: "error" };
+      // `usage: undefined` explícito: sin él el tipo de la rama de error no encaja con
+      // `AcpResult` y el reporte de gasto de abajo deja de compilar. Y es lo correcto —
+      // un turno que no llegó a hablar con la caja no gastó un token.
+      return { text: `⚠️ No pude hablar con @${agent.handle}: ${pista}`, sessionId: "", stopReason: "error", usage: undefined };
     });
     console.log(`[acp <-] ${agent.handle} ${Math.round((Date.now() - acpT0) / 1000)}s stop=${r.stopReason} ${r.text.length}b`);
     // Se guarda DESPUÉS del turno y sólo si cambió: si el agente abrió una sesión nueva (o
@@ -1521,6 +1524,19 @@ export async function callAgentBackendStream(
     // lo peor que pasa es que la próxima conversación empiece en frío.
     if (r.sessionId && r.sessionId !== sesionPrevia) {
       await dbAcp.setAcpSession(agent.handle, groupId, r.sessionId).catch(() => {});
+    }
+    // El gasto del turno. Es el ÚNICO camino por el que un agente ACP se mide: los gemelos
+    // reportan desde su caja con `REPORT_TOKEN`, que viaja por `turnEnv`, y en ACP no hay
+    // `turnEnv`. Sin esto su bolsa se llena con cero y su tope no corta nunca.
+    if (r.usage && agent.backend.id) {
+      const { reportAcpUsage } = await import("./server/ghosty-runtime.server");
+      reportAcpUsage({
+        fleetAgentId: agent.backend.id,
+        sessionId: r.sessionId,
+        groupId,
+        inputTokens: r.usage.inputTokens,
+        outputTokens: r.usage.outputTokens,
+      });
     }
     return r.text;
   }
@@ -2401,6 +2417,18 @@ export async function callAgentBackend(
         // que nadie puede contestar dejaría al agente detenido hasta el timeout; sin
         // manejador el cliente responde `cancelled` de inmediato y el turno cierra limpio.
       });
+      // El gasto del turno, igual que en el camino de streaming. Los dos o ninguno: medir
+      // sólo por un lado deja al mismo agente con bolsa a medias según por dónde le hablen.
+      if (r.usage && agent.backend.id) {
+        const { reportAcpUsage } = await import("./server/ghosty-runtime.server");
+        reportAcpUsage({
+          fleetAgentId: agent.backend.id,
+          sessionId: r.sessionId,
+          groupId,
+          inputTokens: r.usage.inputTokens,
+          outputTokens: r.usage.outputTokens,
+        });
+      }
       return r.text || "(sin respuesta)";
     } catch (e) {
       return `⚠️ No pude contactar a @${agent.handle}: ${e instanceof Error ? e.message : e}`;

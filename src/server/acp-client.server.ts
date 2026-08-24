@@ -121,6 +121,18 @@ export interface AcpResult {
   text: string;
   sessionId: string;
   stopReason?: string;
+  /**
+   * Tokens del turno, cuando el agente los declara en el resultado de `session/prompt`.
+   *
+   * ⚠️ Es la ÚNICA forma de medir a un agente ACP. Los gemelos reportan desde su caja con
+   * `REPORT_TOKEN`, que viaja por `turnEnv` — y en ACP no hay `turnEnv`: el cerebro
+   * arrancó al bootear. Sin esto su bolsa se llena con cero y no corta nunca.
+   *
+   * Medido contra goose 1.46.0: `{totalTokens, inputTokens, outputTokens}`. `undefined`
+   * en un agente que no lo declare, y entonces no se reporta nada — inventar un número
+   * sería peor que no medir.
+   */
+  usage?: { inputTokens: number; outputTokens: number };
 }
 
 /** Firma el ticket de conexión. El `ns` va dentro: sin él serviría contra la caja de otro. */
@@ -304,7 +316,14 @@ export async function runAcpTurn(t: AcpTurn): Promise<AcpResult> {
       t.idleMs ?? 5 * 60_000,
     );
 
-    return { text: texto, sessionId, stopReason: fin?.stopReason };
+    // `usage` sólo si vienen los dos números y son finitos: un reporte a medias acabaría
+    // como una fila de TokenUsage con ceros, que se lee igual que "no gastó nada".
+    const u = fin?.usage as { inputTokens?: unknown; outputTokens?: unknown } | undefined;
+    const ent = Number(u?.inputTokens);
+    const sal = Number(u?.outputTokens);
+    const usage = Number.isFinite(ent) && Number.isFinite(sal) ? { inputTokens: ent, outputTokens: sal } : undefined;
+
+    return { text: texto, sessionId, stopReason: fin?.stopReason, usage };
   } finally {
     cerrar();
   }
