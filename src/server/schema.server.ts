@@ -1337,6 +1337,13 @@ async function migrate(): Promise<void> {
   // celda es una petición de red) y tiempo. Un clic no puede tirar eso sin vuelta atrás.
   await addColumn("gt_prosp_lists", "archived_at", "INTEGER");
   await addColumn("gt_prosp_lists", "purge_at", "INTEGER");
+  // El orden de las columnas EN PANTALLA, como JSON de llaves.
+  //
+  // ⚠️ No basta con `gt_prosp_columns.position`: las columnas base (Negocio, Teléfono,
+  // Correo…) no viven en esa tabla —son campos fijos de la fila— y reordenarlas no tendría
+  // dónde guardarse. Aquí va el orden COMPLETO, base y añadidas mezcladas, que es justo lo
+  // que se quiere al mover Tamaño junto a Correo.
+  await addColumn("gt_prosp_lists", "col_order", "TEXT");
   await exec(`CREATE INDEX IF NOT EXISTS idx_prosp_lists_purge ON gt_prosp_lists (purge_at)`);
 
   // QUIÉN mandó cada toque.

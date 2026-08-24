@@ -103,6 +103,18 @@ export const getListFn = createServerFn({ method: "GET" })
     return { ok: true as const, list, rows, columns, base: BASE_COLUMNS };
   });
 
+/** Reordenar columnas. Lo dispara arrastrar una cabecera. */
+export const setColumnOrderFn = createServerFn({ method: "POST" })
+  .validator((d: { listId: number; keys: string[] }) => d)
+  .handler(async ({ data }) => {
+    const me = await sessionUser();
+    if (!me) return { ok: false as const };
+    // No pide permiso: reordenar es cosmético y reversible arrastrando otra vez.
+    const { setColumnOrder } = await import("./prospeccion/lists.server");
+    await setColumnOrder(Number(data.listId), data.keys);
+    return { ok: true as const };
+  });
+
 export const setCellFn = createServerFn({ method: "POST" })
   .validator((d: { rowId: number; key: string; value: string | null }) => d)
   .handler(async ({ data }) => {

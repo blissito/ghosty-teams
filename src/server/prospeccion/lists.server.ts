@@ -80,6 +80,8 @@ export type ProspList = {
   /** Archivada: sigue existiendo y se puede recuperar hasta `purgeAt`. */
   archivedAt: number | null;
   purgeAt: number | null;
+  /** Orden de las columnas en pantalla. Vacío = el de siempre. */
+  colOrder: string[];
   rows: number;
   /** Contadores del embudo, para la tarjeta y el panel. */
   sent: number;
@@ -181,6 +183,7 @@ export async function listLists(opts?: { archived?: boolean }): Promise<ProspLis
       createdAt: num(l.created_at),
       archivedAt: l.archived_at == null ? null : num(l.archived_at),
       purgeAt: l.purge_at == null ? null : num(l.purge_at),
+      colOrder: parseColOrder(l.col_order),
       rows: size.get(id) ?? 0,
       sent: c.sent ?? 0,
       opened: c.opened ?? 0,
@@ -275,6 +278,29 @@ export async function purgeExpired(): Promise<number> {
   );
   for (const r of due) await purgeList(num(r.id));
   return due.length;
+}
+
+/** El orden guardado de las columnas. Una lista de llaves; lo que no esté va al final. */
+function parseColOrder(raw: unknown): string[] {
+  if (!raw) return [];
+  try {
+    const o = JSON.parse(String(raw));
+    return Array.isArray(o) ? o.filter((k) => typeof k === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Guardar el orden de las columnas de una lista.
+ *
+ * ⚠️ Se guarda el orden COMPLETO —base y añadidas mezcladas—, no la posición de la que se
+ * movió: las columnas base no tienen fila en `gt_prosp_columns` donde escribir una posición.
+ * Las llaves que ya no existan se ignoran al leer, así que borrar una columna no lo rompe.
+ */
+export async function setColumnOrder(listId: number, keys: string[]): Promise<void> {
+  const limpio = keys.filter((k) => typeof k === "string" && k).slice(0, 200);
+  await dbq(`UPDATE gt_prosp_lists SET col_order = ? WHERE id = ?`, [JSON.stringify(limpio), listId]);
 }
 
 export async function listColumns(listId: number): Promise<ProspColumn[]> {

@@ -4,7 +4,7 @@ import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { ArrowLeft, Plus, Send, ShieldCheck, Sparkles, Target } from "lucide-react";
 import { useT } from "../i18n";
 import { me } from "../server/auth";
-import { addColumnFn, deleteColumnFn, getListFn, importTableFn, misPermisosFn, promoteEmailFn, runAiColumnFn, runColumnFn, setCellFn } from "../server/prospeccion";
+import { addColumnFn, deleteColumnFn, getListFn, importTableFn, misPermisosFn, promoteEmailFn, runAiColumnFn, runColumnFn, setCellFn, setColumnOrderFn } from "../server/prospeccion";
 import { ProspGrid, aplanar, findLatLon, type GridRow } from "../components/prospeccion/Grid";
 import { FilterBar } from "../components/prospeccion/FilterBar";
 import { SendReview } from "../components/prospeccion/SendReview";
@@ -62,6 +62,21 @@ function ListPage() {
     const r = await getListFn({ data: { listId } });
     if (r.ok) setData(r);
   }, [listId]);
+
+  /**
+   * Reordenar columnas.
+   *
+   * Se guarda y se recarga. No se pinta optimista a propósito: el orden lo aplica `useMemo`
+   * sobre `colOrder`, así que si se pintara antes de guardar y el guardado fallara, la
+   * pantalla se quedaría enseñando un orden que no existe en ningún sitio.
+   */
+  const onReorder = useCallback(
+    async (keys: string[]) => {
+      await setColumnOrderFn({ data: { listId, keys } }).catch(() => {});
+      await reload();
+    },
+    [listId, reload]
+  );
 
   useEffect(() => { reload(); }, [reload]);
   // ⚠️ Con la lista: quien la creó manda sobre ella, y sin el `listId` el servidor no
@@ -467,6 +482,8 @@ function ListPage() {
             rows={rows}
             base={data.base}
             columns={data.columns}
+            colOrder={data.list.colOrder}
+            onReorder={onReorder}
             latLon={latLon}
             onCellChange={onCellChange}
             onPasteBlock={onPasteBlock}

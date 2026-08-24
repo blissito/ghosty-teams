@@ -161,6 +161,8 @@ export function ProspGrid({
   rows,
   base,
   columns,
+  colOrder,
+  onReorder,
   latLon,
   onCellChange,
   onPasteBlock,
@@ -169,6 +171,10 @@ export function ProspGrid({
   rows: GridRow[];
   base: Base[];
   columns: ColumnDef[];
+  /** Orden guardado de las columnas, por llave. Vacío = el natural. */
+  colOrder?: string[];
+  /** Reordenar: llega el orden COMPLETO ya aplicado, para guardarlo tal cual. */
+  onReorder?: (keys: string[]) => void;
   /** El par de columnas de coordenada, si la lista lo trae. */
   latLon?: { lat: string; lon: string } | null;
   onCellChange: (rowId: number, key: string, value: string) => void;
@@ -207,6 +213,9 @@ export function ProspGrid({
         // El nombre del negocio va CONGELADO: con doce columnas, desplazarse a la derecha
         // sin él deja filas de puros datos sueltos sin saber de quién son.
         frozen: b.key === "name",
+        // El nombre del negocio va congelado y por eso NO se mueve: sacarlo de su sitio
+        // dejaría las filas sin ancla al desplazarse.
+        draggable: b.key !== "name",
         resizable: true,
         editable: true,
         renderCell: CellView,
@@ -220,6 +229,7 @@ export function ProspGrid({
         key: "__maps",
         name: t("Ubicación"),
         width: 130,
+        draggable: true,
         resizable: false,
         renderCell: CellView,
       });
@@ -231,6 +241,7 @@ export function ProspGrid({
         key: c.key,
         name: c.label,
         width: c.width ?? 170,
+        draggable: true,
         resizable: true,
         editable: true,
         renderCell: CellView,
@@ -246,8 +257,20 @@ export function ProspGrid({
         ),
       });
     }
+    // El orden guardado manda. Lo que no esté en él va al final, en su orden natural: así
+    // una columna nueva aparece sin tener que reescribir el orden entero.
+    if (colOrder?.length) {
+      const pos = new Map(colOrder.map((k, i) => [k, i]));
+      const N = colOrder.length;
+      built.sort((a, b2) => {
+        // El índice de fila nunca se mueve: es la numeración, no un dato.
+        if (a.key === "__idx") return -1;
+        if (b2.key === "__idx") return 1;
+        return (pos.get(a.key) ?? N) - (pos.get(b2.key) ?? N);
+      });
+    }
     return built;
-  }, [base, columns, latLon, onColumnHeaderClick, t]);
+  }, [base, columns, latLon, colOrder, onColumnHeaderClick, t]);
 
   /**
    * Pegado from Excel.
@@ -282,31 +305,27 @@ export function ProspGrid({
   );
 
   /**
-   * Arrastrar con la mano para desplazar — **desde la CABECERA**.
+   * Arrastrar con la mano para desplazar — **sólo en el chrome vacío**.
    *
-   * Así lo resuelven Airtable, Notion y Excel, y la razón es que dentro de una celda el
-   * arrastre ya tiene tres dueños: seleccionar, marcar texto y editar. Robárselo para
-   * desplazar deja lo que se veía en la captura del 2026-08-23 — la mano mueve la rejilla y
-   * de paso va pintando de azul el texto de media fila.
+   * ⚠️ La cabecera NO es el asa: es donde se **reordenan** las columnas, que es lo que hacen
+   * Airtable, Notion y Clay y lo que la gente espera al agarrar un encabezado. Y no es una
+   * preferencia — react-data-grid reordena con drag-and-drop de HTML5, así que el
+   * `preventDefault()` del mousedown que hacía falta para panear **mata el `dragstart`**:
+   * las dos cosas no caben en el mismo gesto.
    *
-   * ⚠️ El `closest(".rdg-header-row")` que había aquí NUNCA casó: react-data-grid v7 hashea
-   * sus clases y no emite ninguna que se llame así. O sea que la cabecera sí se arrastraba
-   * (por accidente) y las celdas también (que es el bug). Se hit-testea por **rol ARIA**,
-   * que es API pública y sobrevive a la versión.
+   * Dentro de una celda el arrastre tampoco se toca: ya tiene tres dueños (seleccionar,
+   * marcar texto, editar). Robárselo pintaba de azul media fila mientras la rejilla se
+   * movía — la captura del 2026-08-23.
    *
-   * Lo que queda para las celdas: rueda con Shift, trackpad de dos dedos, y las flechas.
+   * Para desplazarse a lo ancho quedan tres caminos, todos estándar: la barra (que aquí se
+   * pinta siempre visible a propósito), el trackpad de dos dedos, y Shift+rueda.
    */  const pan = useRef<{ x: number; y: number; left: number; top: number } | null>(null);
-
-  /** El borde derecho de una cabecera es para redimensionar; ahí no se arrastra. */
-  const RESIZER_PX = 12;
 
   const onMouseDown = useCallback((e: React.MouseEvent) => {
     if (e.button !== 0) return;
     const el = e.target as HTMLElement;
-    if (el.closest("input, textarea, button, a, [role='gridcell']")) return;
-
-    const th = el.closest("[role='columnheader']") as HTMLElement | null;
-    if (th && th.getBoundingClientRect().right - e.clientX < RESIZER_PX) return;
+    // Celdas y cabeceras tienen dueño. Aquí sólo queda el chrome de alrededor.
+    if (el.closest("input, textarea, button, a, [role='gridcell'], [role='columnheader']")) return;
 
     const grid = wrapRef.current?.querySelector("[role='grid']") as HTMLElement | null;
     if (!grid) return;
@@ -365,6 +384,19 @@ export function ProspGrid({
     >
       <DataGrid
         columns={cols}
+        /*
+          Reordenar arrastrando la cabecera. react-data-grid da la llave que se movió y
+          sobre cuál se soltó; el orden nuevo lo calculamos y lo mandamos ENTERO, porque las
+          columnas base no tienen dónde guardar una posición propia.
+        */
+        onColumnsReorder={(sourceKey: string, targetKey: string) => {
+          const keys = cols.map((c) => c.key).filter((k) => k !== "__idx");
+          const from = keys.indexOf(sourceKey);
+          const to = keys.indexOf(targetKey);
+          if (from < 0 || to < 0 || from === to) return;
+          keys.splice(to, 0, keys.splice(from, 1)[0]);
+          onReorder?.(keys);
+        }}
         rows={rows}
         rowKeyGetter={(r: GridRow) => r.id}
         onCellClick={({ row, column }: CellMouseArgs<GridRow>) => {

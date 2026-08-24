@@ -548,13 +548,13 @@ body {
   letter-spacing: 0.01em;
   /* La manita va SÓLO aquí: la cabecera es el asa para desplazarse a lo ancho. Sobre las
      celdas el arrastre es de ellas (seleccionar, marcar texto), como en Airtable y Excel. */
-  cursor: grab;
   user-select: none;
+  /* Sin `cursor: grab`: la cabecera es para REORDENAR (drag-and-drop nativo de
+     react-data-grid), no para desplazarse. La manita prometía el gesto equivocado. */
 }
 
-/* Mientras se arrastra, el puño gana sobre la mano abierta de la cabecera. Sin esta regla
-   la de arriba es más específica que la de la caja y el cursor no cambiaba nunca. */
-.gt-prosp.cursor-grabbing [role="columnheader"] {
+/* Al arrastrar una cabecera para reordenar, el puño. */
+.gt-prosp [role="columnheader"]:active {
   cursor: grabbing;
 }
 
