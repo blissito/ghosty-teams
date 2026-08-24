@@ -1344,6 +1344,30 @@ async function migrate(): Promise<void> {
   // dónde guardarse. Aquí va el orden COMPLETO, base y añadidas mezcladas, que es justo lo
   // que se quiere al mover Tamaño junto a Correo.
   await addColumn("gt_prosp_lists", "col_order", "TEXT");
+  // Y sus ANCHOS, por la misma razón: `gt_prosp_columns.width` no cubre a las columnas base.
+  await addColumn("gt_prosp_lists", "col_widths", "TEXT");
+
+  /*
+    La conversación del drawer con el agente.
+
+    ⚠️ Vivía SÓLO en un Map del navegador, y eso dejaba la peor combinación posible: el
+    agente sí recuerda —su sesión es `prosp:drawer:<lista>:<sub>` y persiste en el worker—
+    pero tras recargar la persona no veía nada. Se re-explicaba lo que el otro ya sabía.
+
+    Es POR PERSONA, igual que la sesión: el hilo de Ana sobre la lista 7 no es el de Luis.
+  */
+  await exec(`CREATE TABLE IF NOT EXISTS gt_prosp_agent_msgs (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    list_id    INTEGER NOT NULL,
+    sub        TEXT NOT NULL,
+    role       TEXT NOT NULL,
+    text       TEXT NOT NULL DEFAULT '',
+    tools      TEXT,
+    created_at INTEGER NOT NULL DEFAULT (unixepoch())
+  )`);
+  await exec(
+    `CREATE INDEX IF NOT EXISTS idx_prosp_agent_msgs ON gt_prosp_agent_msgs (list_id, sub, id)`
+  );
   await exec(`CREATE INDEX IF NOT EXISTS idx_prosp_lists_purge ON gt_prosp_lists (purge_at)`);
 
   // QUIÉN mandó cada toque.

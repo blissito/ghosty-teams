@@ -103,6 +103,38 @@ export const getListFn = createServerFn({ method: "GET" })
     return { ok: true as const, list, rows, columns, base: BASE_COLUMNS };
   });
 
+/** La conversación del drawer con el agente. Sólo la de quien la pide. */
+export const drawerHistoryFn = createServerFn({ method: "GET" })
+  .validator((d: { listId: number }) => d)
+  .handler(async ({ data }) => {
+    const me = await sessionUser();
+    if (!me) return { msgs: [] };
+    const { drawerHistory } = await import("./prospeccion/agent.server");
+    return { msgs: await drawerHistory(Number(data.listId), me.sub) };
+  });
+
+/** Vaciar la conversación. No toca la memoria del agente, sólo lo que se ve. */
+export const clearDrawerFn = createServerFn({ method: "POST" })
+  .validator((d: { listId: number }) => d)
+  .handler(async ({ data }) => {
+    const me = await sessionUser();
+    if (!me) return { ok: false as const };
+    const { clearDrawer } = await import("./prospeccion/agent.server");
+    await clearDrawer(Number(data.listId), me.sub);
+    return { ok: true as const };
+  });
+
+/** Guardar el ancho de una columna. Lo dispara soltar el borde. */
+export const setColumnWidthFn = createServerFn({ method: "POST" })
+  .validator((d: { listId: number; key: string; width: number }) => d)
+  .handler(async ({ data }) => {
+    const me = await sessionUser();
+    if (!me) return { ok: false as const };
+    const { setColumnWidth } = await import("./prospeccion/lists.server");
+    await setColumnWidth(Number(data.listId), data.key, Number(data.width));
+    return { ok: true as const };
+  });
+
 /** Reordenar columnas. Lo dispara arrastrar una cabecera. */
 export const setColumnOrderFn = createServerFn({ method: "POST" })
   .validator((d: { listId: number; keys: string[] }) => d)
@@ -268,7 +300,7 @@ export const deleteColumnFn = createServerFn({ method: "POST" })
  * que una cola con estado que hay que sondear. Cuando las listas crezcan, esto se parte.
  */
 export const runColumnFn = createServerFn({ method: "POST" })
-  .validator((d: { listId: number; key: string; f?: string }) => d)
+  .validator((d: { listId: number; key: string; f?: string; limit?: number }) => d)
   .handler(async ({ data }) => {
     const me = await sessionUser();
     if (!me) return { ok: false as const, error: "sin sesión" };
@@ -287,6 +319,7 @@ export const runColumnFn = createServerFn({ method: "POST" })
       recipe: col.recipe,
       filter: decodeFilter(data.f),
       fields,
+      limit: data.limit,
     });
     return { ok: true as const, ...p };
   });
@@ -299,7 +332,7 @@ export const runColumnFn = createServerFn({ method: "POST" })
  * pensar una columna de 500 filas.
  */
 export const runAiColumnFn = createServerFn({ method: "POST" })
-  .validator((d: { listId: number; key: string; agentHandle?: string; f?: string }) => d)
+  .validator((d: { listId: number; key: string; agentHandle?: string; f?: string; limit?: number }) => d)
   .handler(async ({ data }) => {
     const me = await sessionUser();
     if (!me) return { ok: false as const, error: "sin sesión", done: 0, total: 0, filled: 0 };
@@ -329,6 +362,7 @@ export const runAiColumnFn = createServerFn({ method: "POST" })
       fields: [...BASE_FIELD_KEYS, ...cols.map((c) => c.key)],
       invokerSub: me.sub,
       origin,
+      limit: data.limit,
     });
     return { ok: !r.error, error: r.error ?? null, done: r.done, total: r.total, filled: r.filled };
   });

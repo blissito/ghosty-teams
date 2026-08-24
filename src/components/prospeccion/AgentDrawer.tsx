@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { ArrowUp, Check, ChevronDown, Square, X } from "lucide-react";
-import { listProspAgentsFn } from "../../server/prospeccion";
+import { drawerHistoryFn, listProspAgentsFn } from "../../server/prospeccion";
 import { useT } from "../../i18n";
 import { registerModalEsc } from "../../utils/modal-esc";
 import { Markdown } from "../Markdown";
@@ -80,6 +80,42 @@ export function AgentDrawer({
   const returnFocus = useRef<HTMLElement | null>(null);
 
   useEffect(() => { setMsgs(historyCache.get(listId) ?? []); setHandle(agentCache.get(listId) ?? null); }, [listId]);
+
+  /*
+    El historial vive en el SERVIDOR desde el 2026-08-23.
+
+    ⚠️ Antes sólo estaba en `historyCache`, un Map de módulo, y eso dejaba la peor
+    combinación posible: el agente SÍ recuerda —su sesión `prosp:drawer:<lista>:<sub>`
+    persiste en el worker— pero al recargar la persona no veía nada y se re-explicaba lo
+    que él ya sabía.
+
+    Sólo se pide si el caché está vacío: dentro de la misma pestaña el caché ya es la
+    verdad, y volver a pedirlo haría parpadear la conversación al reabrir el panel.
+  */
+  useEffect(() => {
+    if (!open || historyCache.get(listId)?.length) return;
+    let vivo = true;
+    drawerHistoryFn({ data: { listId } })
+      .then((r) => {
+        if (!vivo || !r.msgs.length) return;
+        const cargados: Msg[] = r.msgs.map((m) =>
+          m.role === "user"
+            ? ({ role: "user", text: m.text } as Msg)
+            : ({
+                role: "agent",
+                text: m.text,
+                // Se guardan sólo los NOMBRES; el resto del estado (girando, ×N) es de un
+                // turno vivo y no significa nada en un turno ya cerrado.
+                tools: (m.tools ?? []).map((label) => ({ label, status: "done" as const })),
+                running: false,
+              } as Msg)
+        );
+        historyCache.set(listId, cargados);
+        setMsgs(cargados);
+      })
+      .catch(() => {});
+    return () => { vivo = false; };
+  }, [open, listId]);
 
   useEffect(() => {
     if (!open || agents.length) return;
@@ -304,7 +340,9 @@ export function AgentDrawer({
                   <div key={i} className="mb-3">
                     {/* `vivo` = si este turno sigue corriendo. Sin eso, un turno terminado
                         deja el anillo girando para siempre. */}
-                    <ToolGroup tools={m.tools} vivo={!!m.running} />
+                    {/* Con cero herramientas no hay tarjeta: «0 herramientas ✓» ocupa una
+                        línea para decir que no pasó nada. */}
+                    {m.tools.length ? <ToolGroup tools={m.tools} vivo={!!m.running} /> : null}
                     {m.text ? (
                       // El renderer del chat: Streamdown cierra el markdown incompleto EN
                       // VIVO, así que una tabla o un bloque a medio llegar no parpadean.
@@ -325,7 +363,7 @@ export function AgentDrawer({
           </div>
 
           <footer className="shrink-0 border-t border-border p-3">
-            <div className="flex items-end gap-2 rounded-xl border border-border bg-surface-2 px-3 py-2 focus-within:border-brand">
+            <div className="flex items-center gap-2 rounded-xl border border-border bg-surface-2 px-3 py-2 focus-within:border-brand">
               <textarea
                 ref={inputRef}
                 value={text}
@@ -335,7 +373,7 @@ export function AgentDrawer({
                 }}
                 rows={1}
                 placeholder={t("filtra las que no tienen teléfono…")}
-                className="max-h-32 min-w-0 flex-1 resize-none bg-transparent text-xs outline-none placeholder:text-muted"
+                className="max-h-32 min-w-0 flex-1 resize-none self-center bg-transparent py-1 text-xs leading-5 outline-none placeholder:text-muted"
               />
               {running ? (
                 <button onClick={stop} title={t("Detener")} className="grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-surface-3 hover:bg-border">

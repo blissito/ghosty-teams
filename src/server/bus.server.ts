@@ -75,6 +75,8 @@ export type RtEvent =
       waterfall: string[];
       prompt: string;
       mode: "write" | "research";
+      /** Sólo las primeras N de la vista. null = toda. */
+      limit: number | null;
     }
   | { t: "reaction"; messageId: number; emoji: string; userSub: string; op: "add" | "remove"; count: number }
   | { t: "pin"; channelId: number; messageId: number; pinned: boolean } // fijado/desfijado (room-wide)

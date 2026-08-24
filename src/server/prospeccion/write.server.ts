@@ -127,6 +127,8 @@ export async function runAiColumn(args: {
   /** La VISTA. Aquí importa el doble: cada fila es un turno de agente que se factura. */
   filter?: Filter;
   fields?: string[];
+  /** Sólo las primeras N de la vista. «Pruébalo con 10» es el primer movimiento de todos. */
+  limit?: number;
   invokerSub: string;
   origin?: string;
   concurrency?: number;
@@ -143,9 +145,10 @@ export async function runAiColumn(args: {
 
   const columnLabels = Object.fromEntries((await listColumns(args.listId)).map((c) => [c.key, c.label]));
   const todas = await listRows(args.listId);
-  const rows = args.filter?.length
+  const filtradas = args.filter?.length
     ? todas.filter((r) => matches(r as unknown as Record<string, unknown>, args.filter!, args.fields ?? []))
     : todas;
+  const rows = args.limit && args.limit > 0 ? filtradas.slice(0, args.limit) : filtradas;
   const queue = [...rows];
   let done = 0;
   let filled = 0;

@@ -162,7 +162,9 @@ export function ProspGrid({
   base,
   columns,
   colOrder,
+  colWidths,
   onReorder,
+  onResize,
   latLon,
   onCellChange,
   onPasteBlock,
@@ -175,6 +177,9 @@ export function ProspGrid({
   colOrder?: string[];
   /** Reordenar: llega el orden COMPLETO ya aplicado, para guardarlo tal cual. */
   onReorder?: (keys: string[]) => void;
+  /** Ancho guardado por llave. Lo que no esté usa el suyo por defecto. */
+  colWidths?: Record<string, number>;
+  onResize?: (key: string, width: number) => void;
   /** El par de columnas de coordenada, si la lista lo trae. */
   latLon?: { lat: string; lon: string } | null;
   onCellChange: (rowId: number, key: string, value: string) => void;
@@ -257,6 +262,14 @@ export function ProspGrid({
         ),
       });
     }
+    // El ancho guardado gana sobre el de fábrica, en TODAS las columnas de una pasada: es
+    // lo único que hace que ajustar «Correo» a mano sobreviva a recargar.
+    if (colWidths) {
+      for (let i = 0; i < built.length; i++) {
+        const w = colWidths[built[i].key];
+        if (w) built[i] = { ...built[i], width: w };
+      }
+    }
     // El orden guardado manda. Lo que no esté en él va al final, en su orden natural: así
     // una columna nueva aparece sin tener que reescribir el orden entero.
     if (colOrder?.length) {
@@ -270,7 +283,7 @@ export function ProspGrid({
       });
     }
     return built;
-  }, [base, columns, latLon, colOrder, onColumnHeaderClick, t]);
+  }, [base, columns, latLon, colOrder, colWidths, onColumnHeaderClick, t]);
 
   /**
    * Pegado from Excel.
@@ -389,6 +402,9 @@ export function ProspGrid({
           sobre cuál se soltó; el orden nuevo lo calculamos y lo mandamos ENTERO, porque las
           columnas base no tienen dónde guardar una posición propia.
         */
+        /* Al SOLTAR el borde, no mientras se arrastra: react-data-grid emite esto una vez
+           al terminar, así que no hay que estrangular nada. */
+        onColumnResize={(column: { key: string }, width: number) => onResize?.(column.key, width)}
         onColumnsReorder={(sourceKey: string, targetKey: string) => {
           const keys = cols.map((c) => c.key).filter((k) => k !== "__idx");
           const from = keys.indexOf(sourceKey);

@@ -258,13 +258,23 @@ export async function runColumn(args: {
    */
   filter?: Filter;
   fields?: string[];
+  /**
+   * Correr sólo sobre las primeras N de la vista.
+   *
+   * Existe porque «pruébalo con 10 a ver qué sale» es el primer movimiento de cualquiera
+   * ante una lista de 295, y no se puede expresar como filtro. El agente lo daba por hecho
+   * y decía haberlo hecho sin poder — el 2026-08-23 anunció «lo lancé sobre las primeras
+   * 10» con la herramienta corriendo sobre las 295.
+   */
+  limit?: number;
   onProgress?: (p: RunProgress) => void;
   concurrency?: number;
 }): Promise<RunOutcome> {
   const todas = await listRows(args.listId);
-  const rows = args.filter?.length
+  const filtradas = args.filter?.length
     ? todas.filter((r) => matches(r as unknown as Record<string, unknown>, args.filter!, args.fields ?? []))
     : todas;
+  const rows = args.limit && args.limit > 0 ? filtradas.slice(0, args.limit) : filtradas;
   const waterfall_ = (args.recipe?.waterfall ?? []).map((id) => ENRICHERS[id]).filter(Boolean);
   const total = rows.length;
   let done = 0;

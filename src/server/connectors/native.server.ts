@@ -306,6 +306,13 @@ export function nativeTools(dest: ToolDest | null): ConnectorTool[] {
           },
           prompt: { type: "string", description: "Sólo para ai. Qué tiene que poner en cada fila" },
           mode: { type: "string", enum: ["write", "research"], description: "Sólo para ai. research puede buscar en la web" },
+          limit: {
+            type: "number",
+            description:
+              "Correr sólo sobre las primeras N filas de la vista. Úsalo cuando digan «prueba con 10» " +
+              "o cuando la vista sea grande y convenga ver qué sale antes de gastar. SIN esto corre " +
+              "sobre TODA la vista: no anuncies un tope que no mandaste.",
+          },
         },
         required: ["listId", "label", "kind"],
       },
@@ -317,6 +324,7 @@ export function nativeTools(dest: ToolDest | null): ConnectorTool[] {
           waterfall?: string[];
           prompt?: string;
           mode?: "write" | "research";
+          limit?: number;
           f?: string;
         };
         /*
@@ -339,10 +347,12 @@ export function nativeTools(dest: ToolDest | null): ConnectorTool[] {
           waterfall: a.waterfall ?? [],
           prompt: a.prompt ?? "",
           mode: a.mode ?? "write",
+          limit: a.limit && a.limit > 0 ? Math.floor(a.limit) : null,
         });
         return {
           ok: true,
           arrancado_en_pantalla: true,
+          sobre: a.limit && a.limit > 0 ? `las primeras ${Math.floor(a.limit)} de la vista` : "toda la vista",
           nota:
             "La columna se está creando y llenando en la pantalla de la persona, con su progreso. " +
             "No repitas la llamada ni esperes el resultado aquí: dile que ya va y qué va a ver.",

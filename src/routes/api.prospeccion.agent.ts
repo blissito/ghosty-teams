@@ -64,6 +64,10 @@ export const Route = createFileRoute("/api/prospeccion/agent")({
               }
             };
 
+            // Lo que contestó, para poder guardarlo al cerrar el turno.
+            let respuesta = "";
+            const usadas: string[] = [];
+
             try {
               await callAgentBackendStream(
                 agent,
@@ -72,9 +76,13 @@ export const Route = createFileRoute("/api/prospeccion/agent")({
                 `prosp:drawer:${listId}:${me.sub}`,
                 me.name ?? "Alguien",
                 `${contexto}\n\n---\n\n${text}`,
-                (chunk) => send({ t: "delta", v: chunk }),
+                (chunk) => { respuesta += chunk; send({ t: "delta", v: chunk }); },
                 [],
-                (ev) => send({ t: "tool", v: ev }),
+                (ev) => {
+                  const nombre = (ev as { name?: string } | null)?.name;
+                  if (nombre) usadas.push(String(nombre));
+                  send({ t: "tool", v: ev });
+                },
                 null,
                 me.sub,
                 request.signal,
@@ -85,6 +93,23 @@ export const Route = createFileRoute("/api/prospeccion/agent")({
                 origin
               );
               send({ t: "done" });
+              /*
+                Se guarda al CERRAR, no al empezar. Un turno abortado a la mitad no debe
+                dejar una respuesta vacía en el historial: al recargar se leería como que el
+                agente no contestó, cuando lo que pasó es que se canceló.
+              */
+              if (respuesta.trim()) {
+                const { saveDrawerTurn } = await import("../server/prospeccion/agent.server");
+                await saveDrawerTurn({
+                  listId,
+                  sub: me.sub,
+                  user: text,
+                  agent: respuesta,
+                  tools: usadas,
+                }).catch(() => {
+                  // Perder el historial no puede tumbar el turno: el trabajo ya se hizo.
+                });
+              }
             } catch (e) {
               send({ t: "error", v: String(e instanceof Error ? e.message : e).slice(0, 300) });
             } finally {

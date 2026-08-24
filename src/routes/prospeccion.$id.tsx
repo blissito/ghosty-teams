@@ -4,7 +4,7 @@ import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { ArrowLeft, Plus, Send, ShieldCheck, Sparkles, Target } from "lucide-react";
 import { useT } from "../i18n";
 import { me } from "../server/auth";
-import { addColumnFn, deleteColumnFn, getListFn, importTableFn, misPermisosFn, promoteEmailFn, runAiColumnFn, runColumnFn, setCellFn, setColumnOrderFn } from "../server/prospeccion";
+import { addColumnFn, deleteColumnFn, getListFn, importTableFn, misPermisosFn, promoteEmailFn, runAiColumnFn, runColumnFn, setCellFn, setColumnOrderFn, setColumnWidthFn } from "../server/prospeccion";
 import { ProspGrid, aplanar, findLatLon, type GridRow } from "../components/prospeccion/Grid";
 import { FilterBar } from "../components/prospeccion/FilterBar";
 import { SendReview } from "../components/prospeccion/SendReview";
@@ -57,6 +57,19 @@ function ListPage() {
   /** Lo que ESTA persona puede. El servidor lo comprueba igual; esto es para no ofrecerlo. */
   const [permisos, setPermisos] = useState<{ mandar: boolean; purgar: boolean; puedeConceder: boolean } | null>(null);
   const [permisosOpen, setPermisosOpen] = useState(false);
+
+  /*
+    Ancho de columna. Se guarda y ya: NO se recarga la lista.
+
+    Recargar repintaría la rejilla entera a media interacción, y el ancho nuevo ya está en
+    pantalla porque lo puso react-data-grid. La lectura siguiente lo trae de la base.
+  */
+  const onResize = useCallback(
+    (key: string, width: number) => {
+      void setColumnWidthFn({ data: { listId, key, width } }).catch(() => {});
+    },
+    [listId]
+  );
 
   const reload = useCallback(async () => {
     const r = await getListFn({ data: { listId } });
@@ -122,6 +135,21 @@ function ListPage() {
    * puede quitar si entendió mal. Un `refresh` no serviría — este evento trae DATOS (el
    * filtro exacto), no un «vuelve a leer».
    */
+  /*
+    ⌘K / Ctrl+K abre y cierra el agente. Es el atajo que ya espera todo el mundo para «la
+    caja donde le pido cosas», y sin él el panel sólo se alcanza con el ratón — justo lo
+    contrario de lo que se quiere de una superficie agéntica.
+  */
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key.toLowerCase() !== "k" || !(e.metaKey || e.ctrlKey)) return;
+      e.preventDefault();
+      setAgentOpen((v) => !v);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
   useRtSubscribe({
     onEvent: (ev) => {
       if (ev.t === "prospeccion:filter" && ev.listId === listId) {
@@ -137,13 +165,10 @@ function ListPage() {
       // El agente pidió una columna: se crea y se corre por el MISMO camino que el modal,
       // así que hereda el pulso de progreso y el aviso de por qué se saltó cada fila.
       if (ev.t === "prospeccion:column" && ev.listId === listId) {
-        crearColumnaRef.current?.({
-          label: ev.label,
-          kind: ev.kind,
-          waterfall: ev.waterfall,
-          prompt: ev.prompt,
-          mode: ev.mode,
-        } as NewColumn);
+        crearColumnaRef.current?.(
+          { label: ev.label, kind: ev.kind, waterfall: ev.waterfall, prompt: ev.prompt, mode: ev.mode } as NewColumn,
+          ev.limit ?? undefined
+        );
       }
     },
   });
@@ -250,17 +275,18 @@ function ListPage() {
   );
 
   const runColumn_ = useCallback(
-    async (key: string, kind?: string) => {
+    async (key: string, kind?: string, limit?: number) => {
       if (running) return;
       const tipo = kind ?? data?.columns.find((c) => c.key === key)?.kind;
       setRunning(key);
       // El pulso sólo en las filas de la VISTA: son las que van a cambiar.
-      setBusy(Object.fromEntries(view.map((r) => [r.id, new Set([key])])));
+      // El pulso, sólo en las filas que de verdad van a correr.
+      setBusy(Object.fromEntries(view.slice(0, limit && limit > 0 ? limit : undefined).map((r) => [r.id, new Set([key])])));
       try {
         // ⚠️ Va el MISMO filtro que está en la URL. Lo que se ve es lo que se enriquece.
         const r = tipo === "ai"
-          ? await runAiColumnFn({ data: { listId, key, f } })
-          : await runColumnFn({ data: { listId, key, f } });
+          ? await runAiColumnFn({ data: { listId, key, f, limit } })
+          : await runColumnFn({ data: { listId, key, f, limit } });
         if (r.ok) {
           // El motivo va JUNTO al número: «0 de 4 llenadas» sin explicación se lee como
           // que la herramienta está rota. «0 de 4 · ninguna fila tenía un valor en la
@@ -283,15 +309,20 @@ function ListPage() {
     del suscriptor lo re-suscribiría en cada render. Una ref lo resuelve sin ninguna de las
     dos cosas.
   */
-  const crearColumnaRef = useRef<((c: NewColumn) => void) | null>(null);
+  const crearColumnaRef = useRef<((c: NewColumn, limit?: number) => void) | null>(null);
 
   const createColumn = useCallback(
-    async (c: NewColumn) => {
-      const r = await addColumnFn({ data: { listId, ...c } });
-      if (!r.ok) return;
+    async (c: NewColumn, limit?: number) => {
+      const r = await addColumnFn({ data: { listId, ...c, f } });
+      // ⚠️ Callarse aquí era el bug: el agente decía «ya la lancé», el guard la rechazaba
+      // («ninguna de las N filas tiene…») y en pantalla no pasaba nada de nada.
+      if (!r.ok) {
+        setNotice(("error" in r && r.error) || t("No se pudo crear la columna"));
+        return;
+      }
       await reload();
       // Una columna de búsqueda sin correr no sirve de nada: se dispara sola al crearla.
-      if (r.column && (c.kind === "enrich" || c.kind === "ai")) runColumn_(r.column.key, c.kind);
+      if (r.column && (c.kind === "enrich" || c.kind === "ai")) runColumn_(r.column.key, c.kind, limit);
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [listId, reload]
@@ -524,7 +555,9 @@ function ListPage() {
             base={data.base}
             columns={data.columns}
             colOrder={data.list.colOrder}
+            colWidths={data.list.colWidths}
             onReorder={onReorder}
+            onResize={onResize}
             latLon={latLon}
             onCellChange={onCellChange}
             onPasteBlock={onPasteBlock}

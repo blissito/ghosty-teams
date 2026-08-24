@@ -10,7 +10,7 @@
  * como chips editables. Sobre diez mil filas de datos de clientes, una caja negra no es
  * aceptable — y además así se puede corregir cuando entiende mal.
  */
-import { dbq, num } from "../../dbq.server";
+import { dbq, dbqMany, num, type Row } from "../../dbq.server";
 import { decodeFilter, encodeFilter, matches, STATUSES, TEMPS, type Filter, type TempId } from "../../lib/prospeccion-filter";
 import { BASE_COLUMNS, listColumns, listRows, type ProspRow } from "./lists.server";
 
@@ -159,4 +159,68 @@ export async function listsBrief(): Promise<{ id: number; name: string; rows: nu
        FROM gt_prosp_lists l WHERE l.archived_at IS NULL ORDER BY l.created_at DESC LIMIT 50`
   );
   return rows.map((r) => ({ id: num(r.id), name: r.name ?? "", rows: num(r.n) }));
+}
+
+/* ── La conversación del drawer ──────────────────────────────────────────────
+ *
+ * El agente ya recordaba (su sesión persiste en el worker); lo que se perdía al recargar
+ * era lo que la PERSONA ve. Con eso, ella se re-explicaba lo que él ya sabía.
+ */
+
+export type DrawerMsg = { role: "user" | "agent"; text: string; tools?: string[] };
+
+/** Cuántos turnos se conservan por lista y persona. */
+const TOPE = 60;
+
+export async function drawerHistory(listId: number, sub: string): Promise<DrawerMsg[]> {
+  const rows = (await dbq(
+    `SELECT role, text, tools FROM gt_prosp_agent_msgs
+      WHERE list_id = ? AND sub = ? ORDER BY id DESC LIMIT ?`,
+    [listId, sub, TOPE]
+  )) as Row[];
+  return rows
+    .reverse()
+    .map((r) => ({
+      role: (String(r.role) === "user" ? "user" : "agent") as DrawerMsg["role"],
+      text: String(r.text ?? ""),
+      tools: r.tools ? (JSON.parse(String(r.tools)) as string[]) : undefined,
+    }));
+}
+
+/**
+ * Guarda un turno completo (lo que se pidió y lo que contestó).
+ *
+ * Se escribe al CERRAR el turno, no al empezarlo: un turno abortado a la mitad no deja una
+ * respuesta vacía en el historial, que al recargar se leería como que el agente no contestó.
+ */
+export async function saveDrawerTurn(args: {
+  listId: number;
+  sub: string;
+  user: string;
+  agent: string;
+  tools: string[];
+}): Promise<void> {
+  await dbqMany([
+    {
+      sql: `INSERT INTO gt_prosp_agent_msgs (list_id, sub, role, text) VALUES (?,?,'user',?)`,
+      args: [args.listId, args.sub, args.user.slice(0, 4000)],
+    },
+    {
+      sql: `INSERT INTO gt_prosp_agent_msgs (list_id, sub, role, text, tools) VALUES (?,?,'agent',?,?)`,
+      args: [args.listId, args.sub, args.agent.slice(0, 20000), JSON.stringify(args.tools.slice(0, 40))],
+    },
+    // Poda: se queda con los últimos TOPE de ESTA conversación, no de la tabla entera.
+    {
+      sql: `DELETE FROM gt_prosp_agent_msgs
+             WHERE list_id = ? AND sub = ? AND id NOT IN (
+               SELECT id FROM gt_prosp_agent_msgs WHERE list_id = ? AND sub = ? ORDER BY id DESC LIMIT ?
+             )`,
+      args: [args.listId, args.sub, args.listId, args.sub, TOPE],
+    },
+  ]);
+}
+
+/** Vaciar la conversación. Sólo la de quien la pide. */
+export async function clearDrawer(listId: number, sub: string): Promise<void> {
+  await dbq(`DELETE FROM gt_prosp_agent_msgs WHERE list_id = ? AND sub = ?`, [listId, sub]);
 }

@@ -82,6 +82,8 @@ export type ProspList = {
   purgeAt: number | null;
   /** Orden de las columnas en pantalla. Vacío = el de siempre. */
   colOrder: string[];
+  /** Ancho por llave, en píxeles. Lo que no esté usa su ancho por defecto. */
+  colWidths: Record<string, number>;
   rows: number;
   /** Contadores del embudo, para la tarjeta y el panel. */
   sent: number;
@@ -184,6 +186,7 @@ export async function listLists(opts?: { archived?: boolean }): Promise<ProspLis
       archivedAt: l.archived_at == null ? null : num(l.archived_at),
       purgeAt: l.purge_at == null ? null : num(l.purge_at),
       colOrder: parseColOrder(l.col_order),
+      colWidths: parseColWidths(l.col_widths),
       rows: size.get(id) ?? 0,
       sent: c.sent ?? 0,
       opened: c.opened ?? 0,
@@ -289,6 +292,33 @@ function parseColOrder(raw: unknown): string[] {
   } catch {
     return [];
   }
+}
+
+function parseColWidths(raw: unknown): Record<string, number> {
+  if (!raw) return {};
+  try {
+    const o = JSON.parse(String(raw)) as Record<string, unknown>;
+    const out: Record<string, number> = {};
+    for (const [k, v] of Object.entries(o ?? {})) {
+      const n = Number(v);
+      // Se acota al leer, no sólo al escribir: una fila vieja o tocada a mano no puede
+      // dejar una columna de 4px que no se puede volver a agarrar.
+      if (Number.isFinite(n) && n >= 60 && n <= 900) out[k] = Math.round(n);
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+/** Guardar el ancho de UNA columna. Se llama al soltar el borde, no mientras se arrastra. */
+export async function setColumnWidth(listId: number, key: string, width: number): Promise<void> {
+  const rows = (await dbq(`SELECT col_widths FROM gt_prosp_lists WHERE id = ? LIMIT 1`, [listId])) as Row[];
+  const actual = parseColWidths(rows[0]?.col_widths);
+  const n = Math.round(Number(width));
+  if (!Number.isFinite(n)) return;
+  actual[key] = Math.min(900, Math.max(60, n));
+  await dbq(`UPDATE gt_prosp_lists SET col_widths = ? WHERE id = ?`, [JSON.stringify(actual), listId]);
 }
 
 /**
