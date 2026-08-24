@@ -357,6 +357,7 @@ export const runAiColumnFn = createServerFn({ method: "POST" })
       key: col.key,
       instruction: col.recipe.prompt,
       mode: col.recipe.mode ?? "write",
+      writesTo: col.recipe.writesTo,
       agentHandle: data.agentHandle ?? null,
       filter: decodeFilter(data.f),
       fields: [...BASE_FIELD_KEYS, ...cols.map((c) => c.key)],

@@ -242,6 +242,8 @@ export function ProspGrid({
 
     for (const c of columns) {
       if (latLon && (c.key === latLon.lat || c.key === latLon.lon)) continue;
+      // Oculta: lo que encuentra va a una columna base, y pintarla dejaría dos «Dirección».
+      if (c.recipe?.hidden) continue;
       built.push({
         key: c.key,
         name: c.label,

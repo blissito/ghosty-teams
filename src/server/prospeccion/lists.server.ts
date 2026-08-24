@@ -54,6 +54,21 @@ export type Recipe = {
   mode?: "write" | "research";
   /** Sugerencia de tipo para pintar la celda: text, sí/no, número, url. */
   format?: "text" | "bool" | "number" | "url";
+  /**
+   * Escribir el resultado en una columna BASE en vez de en la propia.
+   *
+   * ⚠️ Existe porque pedir «enriquece la Dirección» creaba una columna «Dirección» GEMELA
+   * de la base, que ya estaba ahí. El reuso por etiqueta sólo miraba las columnas añadidas,
+   * y las base —Negocio, Teléfono, Correo, Sitio web, Dirección, Giro— no viven en
+   * `gt_prosp_columns`. Es el caso más natural del módulo: casi siempre lo que falta es un
+   * dato base, no uno nuevo.
+   *
+   * Es el mismo mecanismo que ya usaban las cascadas de enriquecimiento (`writesTo` del
+   * enriquecedor), traído a las columnas del agente.
+   */
+  writesTo?: string;
+  /** No se pinta: su resultado vive en la columna base a la que apunta `writesTo`. */
+  hidden?: boolean;
 };
 
 export type ProspColumn = {
@@ -372,6 +387,24 @@ export async function addColumn(args: {
    * repitiendo. Volver a crearla con otra receta la ACTUALIZA, que es lo que se quiere al
    * corregir una cascada mal elegida.
    */
+  const pedida = args.label.trim().toLowerCase();
+
+  /*
+    ⚠️ Y las columnas BASE también cuentan.
+    Pedir «Dirección» creaba una gemela de la que ya existe, porque las base no viven en
+    esta tabla. Cuando la etiqueta es la de una base, la columna se crea OCULTA y escribe
+    dentro de ella: se llenan los huecos de la que ya está, que es lo que se quiso decir.
+  */
+  const base = BASE_COLUMNS.find((b) => b.label.trim().toLowerCase() === pedida);
+  if (base) {
+    args = {
+      ...args,
+      // Se le da un nombre propio para que no choque con la base en ninguna pantalla.
+      label: `${args.label} (buscada)`,
+      recipe: { ...(args.recipe ?? {}), writesTo: base.key, hidden: true },
+    };
+  }
+
   const yaEsta = existing.find((c) => c.label.trim().toLowerCase() === args.label.trim().toLowerCase());
   if (yaEsta) {
     if (args.recipe) {

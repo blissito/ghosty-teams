@@ -105,7 +105,13 @@ function ListPage() {
 
   /** Las columnas que se pueden filtrar: las base y las que se hayan agregado. */
   const fields = useMemo(
-    () => (data ? [...data.base, ...data.columns.map((c) => ({ key: c.key, label: c.label }))] : []),
+    () =>
+      data
+        ? [
+            ...data.base,
+            ...data.columns.filter((c) => !c.recipe?.hidden).map((c) => ({ key: c.key, label: c.label })),
+          ]
+        : [],
     [data]
   );
 
@@ -509,7 +515,7 @@ function ListPage() {
 
       {data.columns.length || notice ? (
         <div className="shrink-0 border-b border-border px-5 py-2 flex items-center gap-2 flex-wrap">
-          {data.columns.map((c) => (
+          {data.columns.filter((c) => !c.recipe?.hidden).map((c) => (
             <ColumnChip
               key={c.key}
               label={c.label}

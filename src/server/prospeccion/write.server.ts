@@ -129,6 +129,8 @@ export async function runAiColumn(args: {
   fields?: string[];
   /** Sólo las primeras N de la vista. «Pruébalo con 10» es el primer movimiento de todos. */
   limit?: number;
+  /** Escribir en esta columna base en vez de en `key`. */
+  writesTo?: string;
   invokerSub: string;
   origin?: string;
   concurrency?: number;
@@ -188,7 +190,12 @@ export async function runAiColumn(args: {
       }
 
       const value = cleanCellValue(out);
-      await setCell(row.id, args.key, value, { src: `agente:${agent.handle}`, verified: false });
+      // El destino puede ser una columna BASE: «enriquece la Dirección» llena la que ya
+      // está, no una gemela.
+      await setCell(row.id, args.writesTo || args.key, value, {
+        src: `agente:${agent.handle}`,
+        verified: false,
+      });
       if (value) filled++;
       done++;
       args.onProgress?.({ done, total: rows.length, filled });
