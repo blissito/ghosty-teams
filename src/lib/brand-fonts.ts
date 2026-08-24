@@ -33,6 +33,11 @@ export const BRAND_FONTS: readonly BrandFontDef[] = [
   { id: "plex-sans", family: "IBM Plex Sans", file: "plex-sans.woff2", kind: "sans" },
   { id: "space-grotesk", family: "Space Grotesk", file: "space-grotesk.woff2", kind: "sans" },
   { id: "nunito", family: "Nunito", file: "nunito.woff2", kind: "sans" },
+  // Montserrat entra por una exigencia REAL, no por gusto: es la tipográfica que el
+  // manual de imagen del Gobierno de Hidalgo fija para títulos y cuerpo de texto en toda
+  // su papelería, y sin ella el kit de una dependencia no puede cumplir su propio manual.
+  // (Su compañera GMX es una fuente de encargo, sólo para títulos, y no se distribuye.)
+  { id: "montserrat", family: "Montserrat", file: "montserrat.woff2", kind: "sans" },
   { id: "playfair", family: "Playfair Display", file: "playfair.woff2", kind: "serif" },
   { id: "lora", family: "Lora", file: "lora.woff2", kind: "serif" },
   { id: "source-serif", family: "Source Serif 4", file: "source-serif.woff2", kind: "serif" },

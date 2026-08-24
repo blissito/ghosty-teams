@@ -48,7 +48,7 @@ export const createListFn = createServerFn({ method: "POST" })
     const { createList, insertRows, addColumn } = await import("./prospeccion/lists.server");
     const { sourceById } = await import("./prospeccion/sources/index");
 
-    const src = sourceById(data.source ?? "denue");
+    const src = sourceById(data.source ?? "directorio");
     let found;
     try {
       found = await src.search(criteria, Math.min(data.limit ?? 100, 500));

@@ -6,8 +6,15 @@
  * de dónde salieron las filas, y agregar Google Maps o un CSV es un archivo más aquí
  * sin tocar nada del resto.
  *
- * ⚠️ La data se consigue POR TENANT Y POR PETICIÓN. No hay catálogo compartido entre
- * workspaces ni base que acumule: lo que se busca se guarda en las filas de ESE tenant.
+ * ⚠️ **Esto cambió el 2026-08-24.** Antes decía que no había catálogo compartido y que la
+ * data se conseguía por tenant y por petición. Hoy la fuente por defecto es un DIRECTORIO
+ * PROPIO compartido por todos los workspaces (`directorio.server.ts`), y la frontera pasó
+ * a ser otra:
+ *
+ *   · El **directorio** guarda hechos públicos del negocio y es de todos. Enriquecer una
+ *     vez sirve a todos, que es lo que hace valioso a un motor de prospección.
+ *   · Las **filas de una lista** siguen siendo del tenant: sus notas, su estado, su
+ *     segmentación y a quién ya tocó no salen nunca de su namespace.
  */
 import type { ProspRow } from "../lists.server";
 
@@ -45,9 +52,18 @@ export type SearchSource = {
 };
 
 import { denue } from "./denue";
+import { directorio } from "./directorio";
 
-export const SOURCES: SearchSource[] = [denue];
+/**
+ * El orden importa: la primera es la que se ofrece por defecto.
+ *
+ * `denue` (consulta en vivo a la API del proveedor) se queda como respaldo y NO se usa
+ * salvo que se pida por id. Sus techos son los que motivaron el directorio propio: ~100
+ * resultados por consulta, radio máximo de 5 km, token con registro roto, y casi nunca
+ * devuelve correo.
+ */
+export const SOURCES: SearchSource[] = [directorio, denue];
 
 export function sourceById(id: string): SearchSource {
-  return SOURCES.find((s) => s.id === id) ?? denue;
+  return SOURCES.find((s) => s.id === id) ?? directorio;
 }
