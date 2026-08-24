@@ -112,6 +112,9 @@ const turno = (over: Partial<Parameters<typeof runAcpTurn>[0]> = {}) => {
         sub: "user-1",
         text: "hola",
         onUpdate: (u) => void updates.push(u),
+        // Los de producción son segundos: un caso que los agota tarda más que el timeout
+        // del runner. Lo que se prueba aquí es la LÓGICA del reintento, no su reloj.
+        reintentosMs: [5, 5],
         ...over,
       }),
   };

@@ -115,6 +115,12 @@ export interface AcpTurn {
    * agente que se calla para siempre.
    */
   idleMs?: number;
+  /**
+   * Esperas entre reintentos cuando la caja está llena, en ms. Se puede acortar en los
+   * tests: con los valores de producción (segundos, porque un slot se libera cuando alguien
+   * TERMINA) un caso que agota los reintentos tarda más que el timeout del runner.
+   */
+  reintentosMs?: number[];
 }
 
 /**
@@ -189,11 +195,15 @@ export function acpTicketUrl(wsUrl: string, ns: string, sub: string, tools = fal
  * ocurre en el `attach` —antes de que el agente vea nada— esa condición se cumple sola,
  * pero se comprueba igual: es el tipo de invariante que un refactor rompe sin enterarse.
  *
- * Las esperas son cortas y crecientes (0.4 s, 0.9 s). Con turnos de ~1.5 s eso cubre a quien
- * llegó un instante tarde sin hacer esperar a nadie de forma perceptible.
+ * ⚠️ Las esperas tienen que ser MÁS LARGAS QUE UN TURNO, y el primer intento no lo era.
+ * Un slot se libera cuando alguien TERMINA, y un turno mide ~1.5 s en vacío y ~2.4 s con la
+ * caja llena: reintentar a los 0.4 s y 0.9 s era volver a tocar la puerta antes de que nadie
+ * hubiera podido salir — medido contra la caja de DESCTI, los cuatro reintentos fallaron.
+ * Con 0.6 / 1.5 / 3 s se cubre a quien llegó tarde de verdad, y el peor caso son ~5 s de
+ * espera en vez de un error, que es un cambio que el usuario agradece.
  */
 export async function runAcpTurn(t: AcpTurn): Promise<AcpResult> {
-  const ESPERAS = [400, 900];
+  const ESPERAS = t.reintentosMs ?? [600, 1500, 3000];
   let intento = 0;
   for (;;) {
     let emitio = false;
