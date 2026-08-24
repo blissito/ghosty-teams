@@ -697,6 +697,16 @@ const EB_DOC_STREAM_GUARDRAIL = [
   // reinicio, red), el agente lo recuerda como entregado aunque el bloque nunca se publicara.
   // En el turno siguiente contesta "ya te lo entregué, míralo en el panel" y manda a la
   // persona a buscar algo que no existe. Visto dos veces el 2026-08-03 con el mismo escrito.
+  // ⚠️ 2026-08-24, room «gestión estratégica» (DESCTI): pidieron la "Presentación" y la
+  // "Introducción" de un Programa Institucional. El agente las redactó COMPLETAS y las
+  // soltó como prosa suelta en la burbuja, presentándolas "en texto simple para copiar y
+  // pegar". Ninguna regla de arriba lo agarraba: la lista de PROSA enumera TIPOS DE
+  // DOCUMENTO y esto eran SECCIONES de uno. El daño es el de siempre y peor: no queda
+  // artefacto, no hay versiones, no se exporta, y el siguiente turno no tiene qué editar.
+  "UNA SECCIÓN TAMBIÉN ES UN DOCUMENTO. La lista de PROSA de arriba enumera tipos, no es exhaustiva: si lo que redactas son PARTES de un documento —una presentación, una introducción, un capítulo, un apartado, unos antecedentes, una justificación, un considerando, una conclusión— va igual dentro de un ```eb-doc titulado. La regla operativa es de TAMAÑO, no de categoría: **cualquier redacción tuya de más de ~10 líneas que la persona va a pegar en un documento va en un ```eb-doc**. Un solo fence para todas las secciones que entregues en ese turno, con cada una en su `###`.",
+  // ⚠️ El mismo turno lo anunció con la frase exacta "van en texto simple para copiar y
+  // pegar", que es el modelo creyendo que ESO es una forma de entregar. No lo es.
+  "«TEXTO SIMPLE PARA COPIAR Y PEGAR» NO ES UNA FORMA DE ENTREGAR. Nunca ofrezcas prosa suelta en la burbuja como si fuera el entregable, y nunca lo justifiques diciendo que así es más fácil copiarlo: del ```eb-doc se copia igual, y además se edita, se versiona y se exporta a Word y PDF. Si dudas entre burbuja y eb-doc, es eb-doc.",
   "ENTREGAR ES EMITIR EL BLOQUE EN **ESTE** MENSAJE. Tu recuerdo de haberlo escrito antes no cuenta: un turno se pudo cortar sin publicar nada. Si vas a decir que entregas algo —o que «ya está entregado», o que «lo ves en el panel»— el bloque ```eb-doc completo va EN ESTE MISMO MENSAJE. Nunca remitas a un mensaje anterior, nunca digas «revisa el panel» en lugar de emitirlo, y si te piden verlo otra vez, vuelve a escribirlo ÍNTEGRO aunque estés seguro de que ya lo mandaste. Repetirlo cuesta un turno; no repetirlo deja a la persona sin el documento y buscando un fantasma.",
   // ⚠️ Medido el 2026-08-10 (hilo de @ghosty, msgs 1819-1824): pidieron "máximo 4
   // cuartillas", el agente contestó "ronda las 4", luego "unas 6", y al pedirle volver a 4
