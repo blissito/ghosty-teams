@@ -323,9 +323,13 @@ export function ProspGrid({
    * a la columna 12 arrastrando.
    */
   const onWheel = useCallback((e: React.WheelEvent) => {
+    // Con `deltaX` el navegador ya lo convirtió él solo (Chrome en macOS lo hace): no hay
+    // nada que hacer, y tocarlo lo desplazaría el doble.
     if (!e.shiftKey || e.deltaX !== 0) return;
     const grid = wrapRef.current?.querySelector("[role='grid']") as HTMLElement | null;
     if (!grid) return;
+    // Sin esto el mismo gesto mueve las dos direcciones y la rejilla se va en diagonal.
+    e.preventDefault();
     grid.scrollLeft += e.deltaY;
   }, []);
 
