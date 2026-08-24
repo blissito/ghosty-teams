@@ -1254,6 +1254,21 @@ export async function callAgentBackendStream(
     const { runAcpTurn } = await import("./server/acp-client.server");
     const { currentNamespace } = await import("./server/tenant.server");
     const ns = await currentNamespace();
+
+    // ⚠️ El saldo se pregunta AQUÍ y no en Studio, al revés que en el camino nativo: un
+    // turno ACP va por WebSocket DIRECTO a la caja, así que Studio no está en medio y su
+    // `denyIfOutOfQuota` nunca corre. Sin esta llamada la bolsa de un agente ACP se mide
+    // y no corta jamás.
+    //
+    // Se DICE, no se lanza: quedarse sin saldo es una respuesta legítima del turno. Como
+    // excepción salía la burbuja roja de "falló el agente", que manda a diagnosticar un
+    // servicio que está perfectamente bien.
+    const { turnDenial } = await import("./server/ghosty-runtime.server");
+    const negado = await turnDenial((agent.backend as { id: string }).id);
+    if (negado) {
+      await onChunk(negado.message);
+      return negado.message;
+    }
     // La persona ya NO se antepone al texto: viaja en su propio bloque (ver más abajo). Iba
     // pegada al mensaje entre corchetes, que es exactamente la forma que el modelo confunde
     // con una inyección de quien escribe.
@@ -1699,6 +1714,20 @@ export async function callAgentBackendStream(
       await res.text().catch(() => "");
       const fresh = await refreshFleetToken((agent.backend as { id: string }).id);
       if (fresh) res = await doStream(fresh);
+    }
+    // ⚠️ 402 = SIN SALDO, y es una respuesta legítima del turno, no una avería. Lanzándolo
+    // salía la burbuja roja de "falló el agente" —indistinguible de un worker caído— y el
+    // motivo real (se acabó la bolsa, se reinicia tal día) se quedaba dentro del body que
+    // nadie leía. El texto ya viene en español desde Studio, armado por `turnGate`, que es
+    // quien sabe si la bolsa es propia o compartida y con cuántos.
+    if (res.status === 402) {
+      const aviso = await res
+        .json()
+        .then((j: { message?: string }) => j?.message)
+        .catch(() => null);
+      const texto = aviso || "Este agente se quedó sin saldo.";
+      await onChunk(texto);
+      return texto;
     }
     if (!res.ok || !res.body) throw new Error(`fleet-stream ${res.status}: ${await res.text().catch(() => "")}`);
     // Parseo SSE: acumula por líneas `data: {json}`. `done.value` es el reply
@@ -2341,6 +2370,12 @@ export async function callAgentBackend(
   if (agent.backend.kind === "acp") {
     const { runAcpTurn } = await import("./server/acp-client.server");
     const { currentNamespace } = await import("./server/tenant.server");
+    // El mismo gate que el camino de streaming, y por la misma razón: un turno ACP no pasa
+    // por Studio. Los dos caminos o ninguno — dejarlo sólo en uno es un bypass con la
+    // puerta de al lado abierta.
+    const { turnDenial } = await import("./server/ghosty-runtime.server");
+    const negado = await turnDenial((agent.backend as { id: string }).id);
+    if (negado) return negado.message;
     try {
       const r = await runAcpTurn({
         wsUrl: agent.backend.runtimeUrl,

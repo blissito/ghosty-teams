@@ -77,3 +77,47 @@ export function verifyPartner(rawBody: string, ts: string | null, sig: string | 
   const b = Buffer.from(expected);
   return a.length === b.length && crypto.timingSafeEqual(a, b);
 }
+
+/** Lo que Studio contesta cuando un turno no puede correr. `message` viene ya en español
+ *  y listo para que el agente lo diga: el texto lo arma `turnGate`, que es quien sabe si
+ *  la bolsa es propia o compartida y con cuántos. */
+export type TurnDenial = {
+  error: "trial_expired" | "quota_exhausted" | string;
+  message: string;
+  used?: number;
+  included?: number;
+  resetsAt?: string;
+  paidUntil?: string;
+};
+
+/**
+ * ¿Puede correr este turno? Sólo hace falta preguntarlo para los agentes **ACP**.
+ *
+ * ⚠️ La asimetría es real y conviene entenderla: un agente nativo manda su turno POR
+ * Studio, así que Studio ya lo gatea de camino (`denyIfOutOfQuota` en las rutas de
+ * mensaje). Uno ACP habla por WebSocket DIRECTO con su caja —Studio no está en el
+ * camino— así que sin esta llamada su bolsa se mide y no corta nunca.
+ *
+ * La decisión NO se replica aquí: vive en `bagVerdict`, sobre datos que sólo tiene
+ * Studio. Dos entradas al mismo turno con reglas distintas es como se cuela un bypass.
+ *
+ * Ante cualquier fallo devuelve `null` (adelante). Un medidor caído no puede dejar mudo
+ * a un agente: el error que se ve es el turno que no salió, no el gate que no respondió.
+ */
+export async function turnDenial(fleetAgentId: string): Promise<TurnDenial | null> {
+  try {
+    const base = await nativeRuntimeBase();
+    if (!base) return null;
+    const { currentNamespace } = await import("./tenant.server");
+    const res = await fetch(`${base}/api/v2/fleet-agents/${encodeURIComponent(fleetAgentId)}/gate`, {
+      method: "POST",
+      headers: partnerHeaders("", await currentNamespace()),
+      body: "",
+      signal: AbortSignal.timeout(5_000),
+    });
+    if (res.status !== 402) return null;
+    return (await res.json()) as TurnDenial;
+  } catch {
+    return null;
+  }
+}

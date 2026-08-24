@@ -47,6 +47,22 @@ const ZONES: Record<string, { lat: number; lng: number; radius: number }> = {
   cancun: { lat: 21.1619, lng: -86.8515, radius: 6000 },
 };
 
+/**
+ * El radio que acepta la API, no el que pide la zona.
+ *
+ * ⚠️ El máximo documentado son **5,000 metros**. Media tabla de zonas pedía 6,000 u 8,000
+ * (CDMX, Guadalajara, Monterrey, Tijuana) — justo las ciudades grandes, o sea las
+ * búsquedas que más importan. Un parámetro fuera de rango no devuelve "lo ajusté": la
+ * consulta se rechaza entera.
+ *
+ * Se topa aquí y no en la tabla para que los centros sigan diciendo la verdad sobre el
+ * área que se quiso cubrir el día que se pueda barrer en varios círculos.
+ */
+const MAX_RADIUS = 5000;
+function radiusOf(z: { radius: number }): number {
+  return Math.min(z.radius, MAX_RADIUS);
+}
+
 function stripAccents(s: string): string {
   return s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
 }
@@ -273,9 +289,18 @@ export const denue: SearchSource = {
     }
 
     const { what, zone } = parseCriteria(criteria);
+    /**
+     * ⚠️ El verbo es `Buscar`, en español y con mayúscula.
+     *
+     * Estuvo como `search` desde el principio y devuelve **404 con una página HTML** —
+     * o sea que el buscador habría fallado igual con token. No se notó porque el token
+     * tampoco existía: el error de la llave tapaba el de la ruta. Comprobado contra la
+     * API viva el 2026-08-24; `BuscarEntidad` sí contesta JSON, que es lo que confirma
+     * que el estilo de ruta son verbos en español y no que el servicio esté caído.
+     */
     const url =
-      `https://www.inegi.org.mx/app/api/denue/v1/consulta/search/` +
-      `${encodeURIComponent(what)}/${zone.lat},${zone.lng}/${zone.radius}/${token}`;
+      `https://www.inegi.org.mx/app/api/denue/v1/consulta/Buscar/` +
+      `${encodeURIComponent(what)}/${zone.lat},${zone.lng}/${radiusOf(zone)}/${token}`;
 
     const res = await fetch(url, { signal: AbortSignal.timeout(25_000) });
     if (!res.ok) {
