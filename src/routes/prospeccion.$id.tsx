@@ -4,7 +4,7 @@ import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { ArrowLeft, Plus, Send, ShieldCheck, Sparkles, Target } from "lucide-react";
 import { useT } from "../i18n";
 import { me } from "../server/auth";
-import { addColumnFn, deleteColumnFn, getListFn, importTableFn, misPermisosFn, promoteEmailFn, runAiColumnFn, runColumnFn, setCellFn, setColumnOrderFn, setColumnWidthFn } from "../server/prospeccion";
+import { addColumnFn, deleteColumnFn, getListFn, importTableFn, misPermisosFn, promoteEmailFn, runAiColumnFn, runColumnFn, promoteToBaseFn, setCellFn, setColumnOrderFn, setColumnWidthFn } from "../server/prospeccion";
 import { ProspGrid, aplanar, findLatLon, type GridRow } from "../components/prospeccion/Grid";
 import { FilterBar } from "../components/prospeccion/FilterBar";
 import { SendReview } from "../components/prospeccion/SendReview";
@@ -18,6 +18,20 @@ import { DropZone, type Sheet } from "../components/prospeccion/DropZone";
 import { ImportReview } from "../components/prospeccion/ImportReview";
 import { planImport, type Plan, type Target as ImportTarget } from "../lib/prospeccion-mapping";
 import "react-data-grid/lib/styles.css";
+
+/**
+ * ¿Esta columna lleva el nombre de una base?
+ *
+ * Se le quita el «(buscada)» que se le pone a las que enriquecen una base, y se compara sin
+ * mayúsculas. Es lo que ofrece el rescate de una duplicada con datos dentro.
+ */
+function baseGemela(
+  label: string,
+  base: { key: string; label: string }[]
+): { key: string; label: string } | null {
+  const limpio = label.replace(/\s*\(buscada\)\s*$/i, "").trim().toLowerCase();
+  return base.find((b) => b.label.trim().toLowerCase() === limpio) ?? null;
+}
 
 export const Route = createFileRoute("/prospeccion/$id")({
   // ⚠️ El router parsea los search params como JSON: `?guardadas=5` llega como NÚMERO.
@@ -349,6 +363,23 @@ function ListPage() {
    * Existe porque el envío y el verificador miran SÓLO la columna base, y una hoja
    * importada trae los correos donde los traiga. Nunca pisa un correo que ya está.
    */
+  /**
+   * Pasa el dato de una columna a la base del mismo nombre y quita la columna.
+   *
+   * ⚠️ Quita SIEMPRE, no pregunta: la columna sólo existe porque enriquecer una base creaba
+   * una gemela, y dejar las dos es exactamente el problema que se está resolviendo. Lo que
+   * sí se respeta es el dato: nunca pisa lo que la base ya tenía.
+   */
+  const promote_ = useCallback(
+    async (key: string, base: { key: string; label: string } | null) => {
+      if (!base) return;
+      const r = await promoteToBaseFn({ data: { listId, key, baseKey: base.key, remove: true } });
+      if (r.ok) setNotice(`✓ ${r.n} ${r.n === 1 ? "dato pasado" : "datos pasados"} a ${base.label}`);
+      await reload();
+    },
+    [listId, reload]
+  );
+
   const promote = useCallback(
     async (key: string) => {
       const r = await promoteEmailFn({ data: { listId, key } });
@@ -526,6 +557,9 @@ function ListPage() {
               duplicada={data.columns.filter((x) => x.label === c.label).length > 1}
               filled={view.filter((r) => (r.data[c.key]?.v ?? "").trim()).length}
               total={view.length}
+              /* Si su etiqueta es la de una columna base, se ofrece mover el dato allí. */
+              promoteTo={baseGemela(c.label, data.base)}
+              onPromote={() => promote_(c.key, baseGemela(c.label, data.base))}
               running={running === c.key}
               onRun={() => runColumn_(c.key, c.kind)}
               onUseAsEmail={() => promote(c.key)}

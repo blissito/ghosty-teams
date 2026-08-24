@@ -388,6 +388,26 @@ export const promoteEmailFn = createServerFn({ method: "POST" })
   });
 
 /**
+ * Pasa lo que encontró una columna a CUALQUIER columna base, y opcionalmente la quita.
+ *
+ * La salida que faltaba para una columna duplicada que ya tiene datos: borrarla tira el
+ * trabajo, dejarla deja dos con el mismo nombre.
+ */
+export const promoteToBaseFn = createServerFn({ method: "POST" })
+  .validator((d: { listId: number; key: string; baseKey: string; remove?: boolean }) => d)
+  .handler(async ({ data }) => {
+    const me = await sessionUser();
+    if (!me) return { ok: false as const, n: 0 };
+    const { promoteToBase } = await import("./prospeccion/enrich.server");
+    const n = await promoteToBase(Number(data.listId), data.key, data.baseKey);
+    if (data.remove) {
+      const { deleteColumn } = await import("./prospeccion/lists.server");
+      await deleteColumn(Number(data.listId), data.key);
+    }
+    return { ok: true as const, n };
+  });
+
+/**
  * Aplica a una lista existente el plan de importación que la persona ya confirmó.
  *
  * El plan (qué columna de la hoja va a qué campo) viene DECIDIDO desde la pantalla de

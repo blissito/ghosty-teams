@@ -12,7 +12,7 @@
  *  · **Verificado**: la celda guarda si el dato se confirmó o se dedujo. Es lo que después
  *    permite cobrar sólo lo que sirve — en México cobrar el intento fallido se castiga.
  */
-import { dbq } from "../../dbq.server";
+import { dbqMany } from "../../dbq.server";
 import { listRows, setCell, type ProspRow, type Recipe } from "./lists.server";
 import { matches, type Filter } from "../../lib/prospeccion-filter";
 
@@ -357,14 +357,39 @@ export async function runColumn(args: {
  * Se hace explícito y no automático — quien mira la lista decide si ese correo le convence.
  */
 export async function promoteToEmail(listId: number, key: string): Promise<number> {
-  const rows = await listRows(listId);
-  let n = 0;
-  for (const r of rows) {
-    const c = r.data[key];
-    if (!r.email && c?.v && c.v.includes("@")) {
-      await dbq(`UPDATE gt_prosp_rows SET email = ? WHERE id = ?`, [c.v, r.id]);
-      n++;
-    }
-  }
-  return n;
+  return promoteToBase(listId, key, "email");
 }
+
+/**
+ * Pasa lo que encontró una columna a una columna BASE.
+ *
+ * ⚠️ Existe para el caso que pasó el 2026-08-23: una columna «Dirección» duplicada, creada
+ * antes de que pedir una etiqueta base reusara la base, y YA CON DATOS. Borrarla tiraba el
+ * trabajo y dejarla dejaba dos columnas con el mismo nombre. Faltaba la tercera salida:
+ * mover el dato a donde debía estar.
+ *
+ * NUNCA pisa: sólo llena donde la base está vacía. Lo que ya estaba lo puso alguien o vino
+ * de la fuente, y una promoción no es motivo para perderlo.
+ */
+export async function promoteToBase(listId: number, key: string, baseKey: string): Promise<number> {
+  if (!BASE_FIELD_KEYS.has(baseKey)) return 0;
+  const rows = await listRows(listId);
+  const stmts: { sql: string; args: unknown[] }[] = [];
+  for (const r of rows) {
+    const v = r.data[key]?.v?.trim();
+    if (!v) continue;
+    if (String((r as unknown as Record<string, unknown>)[baseKey] ?? "").trim()) continue;
+    // Un correo tiene que parecerlo: promover basura a la columna que usa el ENVÍO es
+    // exactamente cómo se quema un dominio.
+    if (baseKey === "email" && !v.includes("@")) continue;
+    stmts.push({ sql: `UPDATE gt_prosp_rows SET ${baseKey} = ? WHERE id = ?`, args: [v, r.id] });
+  }
+  if (!stmts.length) return 0;
+  // Por lotes: una sentencia por fila contra sqld son ~290ms cada una — 10 mil filas serían
+  // casi una hora (medido el 2026-08-22).
+  for (let i = 0; i < stmts.length; i += 400) await dbqMany(stmts.slice(i, i + 400));
+  return stmts.length;
+}
+
+/** Las llaves de columna base que se pueden escribir. Lista cerrada: van en SQL directo. */
+const BASE_FIELD_KEYS = new Set(["name", "phone", "email", "website", "address", "category"]);

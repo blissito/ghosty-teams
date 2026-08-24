@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { AtSign, ChevronDown, Loader2, Play, Sparkles, Trash2 } from "lucide-react";
+import { ArrowLeftToLine, AtSign, ChevronDown, Loader2, Play, Sparkles, Trash2 } from "lucide-react";
 import { useT } from "../../i18n";
 
 /**
@@ -30,6 +30,8 @@ export function ColumnChip({
   running,
   onRun,
   onUseAsEmail,
+  onPromote,
+  promoteTo,
   onRemove,
 }: {
   label: string;
@@ -57,6 +59,15 @@ export function ColumnChip({
   total?: number;
   duplicada?: boolean;
   running: boolean;
+  /**
+   * La columna base a la que ESTA columna debería haber ido.
+   *
+   * ⚠️ Sale de que su etiqueta es la de una base. Es el rescate de una duplicada con datos
+   * dentro: borrarla tira el trabajo y dejarla deja dos columnas con el mismo nombre. La
+   * tercera salida es mover el dato a donde debía estar.
+   */
+  promoteTo?: { key: string; label: string } | null;
+  onPromote?: () => void;
   onRun: () => void;
   onUseAsEmail: () => void;
   onRemove: () => void;
@@ -78,6 +89,13 @@ export function ColumnChip({
   const acciones = [
     kind === "enrich" && { id: "run", icon: Play, label: t("Volver a buscarlo"), hint: t("En todas las filas"), run: onRun },
     kind === "ai" && { id: "run", icon: Sparkles, label: t("Que el agente la escriba"), hint: t("Un turno por fila: cuesta"), run: onRun },
+    promoteTo && {
+      id: "promote",
+      icon: ArrowLeftToLine,
+      label: `${t("Pasar a")} ${promoteTo.label}`,
+      hint: t("Llena los huecos de esa columna y quita ésta. No pisa lo que ya está"),
+      run: onPromote ?? (() => {}),
+    },
     emailCount > 0 && {
       id: "email",
       icon: AtSign,
