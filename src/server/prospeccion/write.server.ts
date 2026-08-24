@@ -135,7 +135,7 @@ export async function runAiColumn(args: {
   origin?: string;
   concurrency?: number;
   onProgress?: (p: WriteProgress) => void;
-}): Promise<WriteProgress & { error?: string }> {
+}): Promise<WriteProgress & { error?: string; note?: string | null }> {
   const { resolvedAgents, callAgentBackendStream } = await import("../../agents.server");
   const { listColumns } = await import("./lists.server");
 
@@ -154,6 +154,12 @@ export async function runAiColumn(args: {
   const queue = [...rows];
   let done = 0;
   let filled = 0;
+  // ⚠️ Sin esto «0 de 6 llenadas» era TODO lo que se veía, y los dos motivos son
+  // opuestos: si el turno del agente REVENTÓ hay que arreglar algo; si contestó vacío
+  // es que el dato no existe en la web y no hay nada que arreglar. El camino de
+  // enriquecimiento ya explicaba sus saltos; éste no explicaba ninguno.
+  let failed = 0;
+  let blank = 0;
 
   // Concurrencia baja: cada fila es un turno de agente y cuestan tokens de verdad.
   const workers = Array.from({ length: Math.min(args.concurrency ?? 3, 6) }, async () => {
@@ -186,6 +192,7 @@ export async function runAiColumn(args: {
         );
       } catch (e) {
         out = "";
+        failed++;
         console.warn("[prospeccion] fila", row.id, String(e).slice(0, 120));
       }
 
@@ -197,11 +204,19 @@ export async function runAiColumn(args: {
         verified: false,
       });
       if (value) filled++;
+      else if (!failed || out) blank++;
       done++;
       args.onProgress?.({ done, total: rows.length, filled });
     }
   });
 
   await Promise.all(workers);
-  return { done, total: rows.length, filled };
+
+  // La explicación sólo aparece cuando hace falta — igual que en `runEnrichColumn`: si
+  // llenó todo, el número habla solo.
+  const partes: string[] = [];
+  if (failed) partes.push(`${failed} el turno del agente falló`);
+  if (blank) partes.push(`${blank} el agente no encontró el dato`);
+  const note = filled < rows.length && partes.length ? partes.join(" · ") : null;
+  return { done, total: rows.length, filled, note };
 }

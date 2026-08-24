@@ -389,7 +389,7 @@ export const runAiColumnFn = createServerFn({ method: "POST" })
       origin,
       limit: data.limit,
     });
-    return { ok: !r.error, error: r.error ?? null, done: r.done, total: r.total, filled: r.filled };
+    return { ok: !r.error, error: r.error ?? null, done: r.done, total: r.total, filled: r.filled, note: r.note ?? null };
   });
 
 /** Los agentes del workspace, para elegir quién escribe la columna. */
