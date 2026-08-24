@@ -155,10 +155,16 @@ export const purgeListFn = createServerFn({ method: "POST" })
   .validator((d: { listId: number }) => d)
   .handler(async ({ data }) => {
     const me = await sessionUser();
-    if (!me) return { ok: false as const };
+    if (!me) return { ok: false as const, error: "sin sesión" };
+    // Borra de verdad, con el trabajo de enriquecer las filas. Archivar sí lo hace
+    // cualquiera: se recupera 30 días.
+    const { puede } = await import("./prospeccion/permisos.server");
+    if (!(await puede(me, "purgar", Number(data.listId)))) {
+      return { ok: false as const, error: "Sólo quien creó esta lista, o el dueño del espacio, puede borrarla para siempre." };
+    }
     const { purgeList } = await import("./prospeccion/lists.server");
     await purgeList(Number(data.listId));
-    return { ok: true as const };
+    return { ok: true as const, error: null };
   });
 
 /** Las listas archivadas, con su fecha de purga. */
@@ -501,6 +507,18 @@ export const sendFn = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     const me = await sessionUser();
     if (!me) return { ok: false as const, error: "sin sesión", sent: 0, skippedOptOut: 0, failed: 0 };
+
+    // ⚠️ Mandar sale a terceros con tu dominio y tu marca, y no se deshace. Se comprueba
+    // AQUÍ, en el servidor: esconder el botón no es un permiso.
+    const { puede } = await import("./prospeccion/permisos.server");
+    if (!(await puede(me, "mandar", Number(data.listId)))) {
+      return {
+        ok: false as const,
+        error: "No tienes permiso para mandar correo desde esta lista. Pídeselo a quien la creó.",
+        sent: 0, skippedOptOut: 0, failed: 0,
+      };
+    }
+
     if (!data.subject.trim()) {
       return { ok: false as const, error: "Falta el asunto", sent: 0, skippedOptOut: 0, failed: 0 };
     }
@@ -622,4 +640,60 @@ export const previewSendFn = createServerFn({ method: "POST" })
       inline,
     });
     return { ok: true as const, error: null, html: preview, to: destino, sent: enviado, sinBoton, marca };
+  });
+
+
+/** Qué puede hacer QUIEN está mirando. La pantalla esconde lo que no puede. */
+export const misPermisosFn = createServerFn({ method: "GET" })
+  .validator((d: { listId?: number } | undefined) => d ?? {})
+  .handler(async ({ data }) => {
+    const me = await sessionUser();
+    const nada = { mandar: false, purgar: false, esDueno: false, puedeConceder: false };
+    if (!me) return nada;
+    const { puede, puedeConceder } = await import("./prospeccion/permisos.server");
+    const id = data.listId != null ? Number(data.listId) : undefined;
+    return {
+      mandar: await puede(me, "mandar", id),
+      purgar: await puede(me, "purgar", id),
+      esDueno: !!me.isOwner,
+      // Quien creó la lista reparte permisos sobre ella; el dueño, sobre todas.
+      puedeConceder: await puedeConceder(me, id),
+    };
+  });
+
+/** El padrón con quién puede qué. Sólo lo pide el panel del dueño. */
+export const listPermisosFn = createServerFn({ method: "GET" })
+  .validator((d: { listId?: number } | undefined) => d ?? {})
+  .handler(async ({ data }) => {
+  const me = await sessionUser();
+  const vacio = { mandar: [], purgar: [], porLista: {} };
+  const { concesiones, puedeConceder } = await import("./prospeccion/permisos.server");
+  const id = data.listId != null ? Number(data.listId) : undefined;
+  if (!me || !(await puedeConceder(me, id))) {
+    return { ok: false as const, gente: [], concesiones: vacio, esDueno: false, listId: id ?? null };
+  }
+  const { listWorkspaceUsers } = await import("../users.server");
+  const [c, gente] = await Promise.all([concesiones(), listWorkspaceUsers()]);
+  return {
+    ok: true as const,
+    concesiones: c,
+    esDueno: !!me.isOwner,
+    listId: id ?? null,
+    gente: gente.map((g) => ({ sub: g.sub, name: g.name, avatar: g.avatar, isOwner: !!g.isOwner })),
+  };
+});
+
+export const concederFn = createServerFn({ method: "POST" })
+  .validator((d: { sub: string; accion: "mandar" | "purgar"; dar: boolean; listId?: number }) => d)
+  .handler(async ({ data }) => {
+    const me = await sessionUser();
+    if (!me) return { ok: false as const, error: "sin sesión" };
+    const { conceder } = await import("./prospeccion/permisos.server");
+    return conceder({
+      actor: me,
+      sub: data.sub,
+      accion: data.accion,
+      dar: data.dar,
+      listId: data.listId != null ? Number(data.listId) : undefined,
+    });
   });

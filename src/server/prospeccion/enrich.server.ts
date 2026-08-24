@@ -32,6 +32,16 @@ export type Enricher = {
    */
   requires: string;
   /**
+   * POR QUÉ esta fila no se pudo intentar, en palabras.
+   *
+   * ⚠️ Una sola frase para todos los saltos MIENTE cuando los motivos son opuestos. Pasó
+   * con «Correo del sitio»: decía «les falta un valor en Sitio web, y la columna Correo
+   * vacía» — pero a las filas que ya tenían correo no les FALTA nada, es que ya lo tienen.
+   * Juntar «no puede» con «no hace falta» en una frase deja al usuario buscando un problema
+   * que no existe.
+   */
+  whyNot: (row: ProspRow) => string | null;
+  /**
    * Si el dato ES una columna base, se escribe ahí directo.
    *
    * Sin esto, un enriquecedor de correos creaba una columna aparte y hacía falta una acción
@@ -126,6 +136,7 @@ export const ENRICHERS: Record<string, Enricher> = {
     id: "sitio_vivo",
     label: "¿El sitio funciona?",
     requires: "un valor en la columna Sitio web",
+    whyNot: (r) => (!r.website ? "sin sitio web" : null),
     needs: (r) => !!r.website,
     async run(r) {
       const html = await fetchText(r.website!);
@@ -142,7 +153,8 @@ export const ENRICHERS: Record<string, Enricher> = {
   correo_del_sitio: {
     id: "correo_del_sitio",
     label: "Correo del sitio",
-    requires: "un valor en la columna Sitio web, y la columna Correo vacía",
+    requires: "un valor en la columna Sitio web",
+    whyNot: (r) => (!r.website ? "sin sitio web" : r.email ? "ya tenían correo" : null),
     writesTo: "email",
     needs: (r) => !!r.website && !r.email,
     async run(r) {
@@ -178,6 +190,7 @@ export const ENRICHERS: Record<string, Enricher> = {
     id: "correo_sirve",
     label: "¿El correo sirve?",
     requires: "un valor en la columna Correo",
+    whyNot: (r) => (!r.email ? "sin correo que comprobar" : null),
     needs: (r) => !!r.email,
     async run(r) {
       const { verifyEmail, verdictLabel } = await import("./verify-email.server");
@@ -256,8 +269,9 @@ export async function runColumn(args: {
   const total = rows.length;
   let done = 0;
   let filled = 0;
-  /** Filas que ningún paso de la cascada pudo ni intentar. */
+  /** Filas que ningún paso pudo ni intentar, agrupadas por POR QUÉ. */
   let skipped = 0;
+  const motivos = new Map<string, number>();
 
   if (!waterfall_.length) return { done: 0, total, filled: 0, skipped: 0, note: "esta columna no tiene de dónde sacar el dato" };
 
@@ -291,6 +305,9 @@ export async function runColumn(args: {
       }
 
       if (!intentado) {
+        // El motivo del PRIMER paso que la rechazó: es el que explica el salto.
+        const porQue = waterfall_.map((e) => e.whyNot(row)).find(Boolean) ?? "no aplicaba";
+        motivos.set(porQue, (motivos.get(porQue) ?? 0) + 1);
         // ⚠️ Una fila que NO se pudo intentar se deja INTACTA. Antes se le escribía igual
         // (null, `sin_fuente`) y eso BORRABA lo que ya tuviera: volver a correr una columna
         // vaciaba las filas que no calificaban. Cazado por el smoke, no en producción.
@@ -310,11 +327,15 @@ export async function runColumn(args: {
   await Promise.all(workers);
 
   // La explicación sólo aparece cuando hace falta: si llenó algo, el número habla solo.
+  // Los motivos, cada uno con su cuenta: «2 ya tenían correo · 1 sin sitio web» dice qué
+  // pasó de verdad. Una frase sola para motivos opuestos manda a buscar un problema que
+  // no existe.
   let note: string | null = null;
-  if (skipped === total && total > 0) {
-    note = `ninguna fila tenía ${waterfall_[0]?.requires ?? "lo que hace falta"}`;
-  } else if (skipped > 0) {
-    note = `${skipped} se saltaron: les falta ${waterfall_[0]?.requires ?? "el dato de partida"}`;
+  if (skipped > 0) {
+    const partes = [...motivos.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .map(([m, n]) => `${n} ${m}`);
+    note = skipped === total ? `ninguna se pudo: ${partes.join(" · ")}` : `${partes.join(" · ")}`;
   }
   return { done, total, filled, skipped, note };
 }

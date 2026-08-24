@@ -1,14 +1,15 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { ArrowLeft, Plus, Send, Sparkles, Target } from "lucide-react";
+import { ArrowLeft, Plus, Send, ShieldCheck, Sparkles, Target } from "lucide-react";
 import { useT } from "../i18n";
 import { me } from "../server/auth";
-import { addColumnFn, deleteColumnFn, getListFn, importTableFn, promoteEmailFn, runAiColumnFn, runColumnFn, setCellFn } from "../server/prospeccion";
+import { addColumnFn, deleteColumnFn, getListFn, importTableFn, misPermisosFn, promoteEmailFn, runAiColumnFn, runColumnFn, setCellFn } from "../server/prospeccion";
 import { ProspGrid, aplanar, findLatLon, type GridRow } from "../components/prospeccion/Grid";
 import { FilterBar } from "../components/prospeccion/FilterBar";
 import { SendReview } from "../components/prospeccion/SendReview";
 import { AgentDrawer } from "../components/prospeccion/AgentDrawer";
+import { Permisos } from "../components/prospeccion/Permisos";
 import { useRtSubscribe } from "../utils/rt-bus";
 import { decodeFilter, encodeFilter, matches, type Filter } from "../lib/prospeccion-filter";
 import { NewColumnModal, type NewColumn } from "../components/prospeccion/NewColumnModal";
@@ -53,6 +54,9 @@ function ListPage() {
   const [agentOpen, setAgentOpen] = useState(false);
   const [sendOpen, setSendOpen] = useState(false);
   const [sendSubject, setSendSubject] = useState("");
+  /** Lo que ESTA persona puede. El servidor lo comprueba igual; esto es para no ofrecerlo. */
+  const [permisos, setPermisos] = useState<{ mandar: boolean; purgar: boolean; puedeConceder: boolean } | null>(null);
+  const [permisosOpen, setPermisosOpen] = useState(false);
 
   const reload = useCallback(async () => {
     const r = await getListFn({ data: { listId } });
@@ -60,6 +64,9 @@ function ListPage() {
   }, [listId]);
 
   useEffect(() => { reload(); }, [reload]);
+  // ⚠️ Con la lista: quien la creó manda sobre ella, y sin el `listId` el servidor no
+  // puede saberlo — le negaría el permiso a su propio dueño.
+  useEffect(() => { misPermisosFn({ data: { listId } }).then(setPermisos).catch(() => {}); }, [listId]);
 
   // Confirmación del alta recién hecha desde la pantalla de listas.
   useEffect(() => {
@@ -361,6 +368,10 @@ function ListPage() {
               vista de 312 y sobre una lista de 10,728 es la misma palabra y dos
               consecuencias muy distintas.
             */}
+            {/* Se esconde si no puede, en vez de dejarlo y fallar al apretar: ofrecer algo
+                que va a ser rechazado es peor que no ofrecerlo. El servidor lo comprueba
+                igual — esconder un botón NO es un permiso. */}
+            {permisos?.mandar !== false ? (
             <button
               onClick={() => setSendOpen(true)}
               disabled={!view.length}
@@ -369,6 +380,17 @@ function ListPage() {
             >
               <Send size={13} /> {t("Mandar a")} {view.length.toLocaleString("es-MX")}
             </button>
+            ) : null}
+            {/* Sólo lo ve quien puede repartir: el dueño del espacio, o quien creó la lista. */}
+            {permisos?.puedeConceder ? (
+              <button
+                onClick={() => setPermisosOpen(true)}
+                className="inline-flex items-center gap-1.5 text-xs font-semibold border border-border rounded-lg px-3 py-2 hover:bg-surface-3"
+                title={t("Quién puede mandar y borrar en esta lista")}
+              >
+                <ShieldCheck size={13} /> {t("Permisos")}
+              </button>
+            ) : null}
             <button
               data-keep-agent
               onClick={() => setAgentOpen((v) => !v)}
@@ -475,6 +497,14 @@ function ListPage() {
         listId={listId}
         filter={f}
         suggestions={sugerencias}
+      />
+
+      <Permisos
+        open={permisosOpen}
+        onClose={() => setPermisosOpen(false)}
+        listId={listId}
+        listName={data?.list.name}
+        creadorSub={data?.list.createdBy}
       />
 
       <NewColumnModal open={columnModal} onClose={() => setColumnModal(false)} onCreate={createColumn} />
