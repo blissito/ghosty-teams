@@ -19,14 +19,20 @@ export const Route = createFileRoute("/api/doc-pdf/$id")({
         const { sessionUser } = await import("../server/chat");
         const me = await sessionUser();
 
-        const { resolveExportDoc, docBlocks } = await import("../server/doc-access.server");
+        const { resolveExportDoc, docBlocks, docUnbranded } = await import("../server/doc-access.server");
         const doc = await resolveExportDoc(params.id, url.searchParams.get("v"), me);
         if (!doc) return new Response("not found", { status: 404 });
         // Una hoja de cálculo no se imprime por este camino: bajaría una tabla sin sentido.
         if (doc.kind !== "doc") return new Response("not a document", { status: 400 });
 
         const { blocksToPrintHtml, htmlToPdf } = await import("../server/doc-export.server");
-        const html = await blocksToPrintHtml(await docBlocks(doc.md), doc.title || name);
+        // `null` = sin membrete ni colores del espacio: `brandHeader` y `brandPrintCss`
+        // devuelven cadena vacía y el papel sale limpio.
+        const html = await blocksToPrintHtml(
+          await docBlocks(doc.md),
+          doc.title || name,
+          docUnbranded(doc.md) ? null : undefined,
+        );
         const pdf = await htmlToPdf(html);
         // Sin motor de respaldo a propósito: un segundo generador daría un PDF distinto al
         // de siempre, y "a veces se ve de otra forma" es peor que "ahora no se pudo".

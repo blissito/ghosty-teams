@@ -634,6 +634,9 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
               md: nuevoMd,
               blocks: res.blocks,
               changedIds: res.changedIds,
+              // El sobre ya está leído aquí (`env`): un patch cambia BLOQUES, nada más, así
+              // que todo lo demás del documento —su marca— se arrastra tal cual.
+              previo: env,
               visibility: "public",
               ownerSub: me.sub,
               setPointer: (docId) => db.setDmArtifact(data.id, docId),
@@ -703,6 +706,10 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
           kind: ebdoc.kind,
           title,
           md: ebdoc.md,
+          // `undefined` cuando el agente no dijo nada, y eso NO es "con marca": es "lo que
+          // ya dijera el documento". Re-emitir un oficio sin repetir la marca no debe
+          // devolverle el membrete que alguien pidió quitar.
+          unbranded: ebdoc.unbranded,
           visibility: "public",
           ownerSub: me.sub,
           setPointer: (docId) => db.setDmArtifact(data.id, docId),

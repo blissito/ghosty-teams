@@ -21,14 +21,21 @@ export const Route = createFileRoute("/api/doc-docx/$id")({
         const { sessionUser } = await import("../server/chat");
         const me = await sessionUser();
 
-        const { resolveExportDoc, docBlocks } = await import("../server/doc-access.server");
+        const { resolveExportDoc, docBlocks, docUnbranded } = await import("../server/doc-access.server");
         const doc = await resolveExportDoc(params.id, url.searchParams.get("v"), me);
         // 404 también cuando falta permiso: un 403 confirmaría que el documento existe.
         if (!doc) return new Response("not found", { status: 404 });
 
         try {
           const { blocksToDocx } = await import("../server/doc-export.server");
-          const buf = await blocksToDocx(await docBlocks(doc.md), doc.title || name);
+          // `null` = este documento se pidió sin la marca del espacio. Se decide con el
+          // MISMO lector que el PDF (`docUnbranded`), o los dos formatos del mismo
+          // documento saldrían distintos.
+          const buf = await blocksToDocx(
+            await docBlocks(doc.md),
+            doc.title || name,
+            docUnbranded(doc.md) ? null : undefined,
+          );
           return new Response(new Uint8Array(buf), {
             status: 200,
             headers: {

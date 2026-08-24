@@ -3,6 +3,7 @@ import {
   parseDocEnvelope,
   serializeDocEnvelope,
   type DocBlock,
+  type DocEnvelope,
 } from "../lib/doc-blocks";
 
 // Conversión markdown ↔ bloques del lado del SERVER. El agente escribe markdown en el
@@ -78,11 +79,19 @@ export async function blocksToMd(blocks: DocBlock[]): Promise<string> {
  * sigue abriendo. Perder el documento porque no se pudo convertir sería mucho peor
  * que perder la edición quirúrgica de un turno.
  */
-export async function docEnvelopeFromMd(md: string): Promise<string> {
+export async function docEnvelopeFromMd(
+  md: string,
+  /** Sobre de la versión anterior, para heredar lo que es del DOCUMENTO y no de la
+   *  versión (hoy: la marca). Ausente = documento nuevo. */
+  previo?: DocEnvelope | null,
+  /** Lo pide quien escribe el documento (el agente, por el fence). `undefined` = lo que
+   *  dijera el sobre anterior. */
+  unbranded?: boolean,
+): Promise<string> {
   try {
     const blocks = await mdToBlocks(md);
     if (!blocks.length) return md;
-    return serializeDocEnvelope({ blocks, sourceMd: md });
+    return serializeDocEnvelope({ blocks, sourceMd: md, previo, unbranded });
   } catch (e) {
     console.error("[doc] mdToBlocks failed, guardo markdown crudo", e);
     return md;

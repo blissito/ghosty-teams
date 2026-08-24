@@ -128,12 +128,17 @@ async function adjuntoDelTurno(
   }
 
   const blocks = await docBlocks(doc.md);
+  // Un documento sin marca lo es también por correo. Si esto no estuviera, el mismo
+  // oficio saldría limpio al descargarlo y con membrete al enviarlo — y el que llega al
+  // destinatario es el segundo.
+  const { docUnbranded } = await import("../doc-access.server");
+  const marca = docUnbranded(doc.md) ? null : undefined;
   const ex = await import("../doc-export.server");
   if (formato === "docx") {
-    return { bytes: await ex.blocksToDocx(blocks, titulo), fileName: `${base}.docx`,
+    return { bytes: await ex.blocksToDocx(blocks, titulo, marca), fileName: `${base}.docx`,
       mime: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" };
   }
-  const html = await ex.blocksToPrintHtml(blocks, titulo);
+  const html = await ex.blocksToPrintHtml(blocks, titulo, marca);
   const pdf = await ex.htmlToPdf(html);
   // `htmlToPdf` devuelve null si el render falla o tarda demasiado (despierta una caja).
   // Decirlo es obligatorio: un "ya lo mandé" sin PDF es peor que un error.

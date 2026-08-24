@@ -26,6 +26,11 @@ export const en: Record<string, string> = {
   "Saldo de este mes": "This month's balance",
   "quedan ~": "~",
   "a este ritmo": "left at this pace",
+  // Interruptor de la marca en las descargas de un documento.
+  "Se descarga SIN membrete. Clic para volver a la marca del espacio.":
+    "Downloads WITHOUT letterhead. Click to restore the workspace brand.",
+  "Se descarga con la marca del espacio. Clic para dejarlo en papel blanco.":
+    "Downloads with the workspace brand. Click for plain paper.",
   // Nota de bolsa compartida en Ajustes → Uso.
   "De su bolsa": "From its bag",
   "compartida con": "shared with",

@@ -23,7 +23,16 @@ import type { DocBlock } from "../lib/doc-blocks";
  * Se usa `toBlob` y no el `Packer` de `docx` para no declarar `docx` como dependencia
  * directa: es un detalle interno del exportador y no queremos atarnos a su versión.
  */
-export async function blocksToDocx(blocks: DocBlock[], title: string): Promise<Buffer> {
+export async function blocksToDocx(
+  blocks: DocBlock[],
+  title: string,
+  /**
+   * `null` = documento SIN marca. Aquí eso significa **fuentes del sistema**: el .docx no
+   * lleva membrete por diseño (ver el comentario de abajo), así que lo único que la marca
+   * aporta es la tipografía. `undefined` = la del espacio, que es el default de siempre.
+   */
+  brandOverride?: BrandKit | null,
+): Promise<Buffer> {
   const { DOCXExporter, docxDefaultSchemaMappings } = await import("@blocknote/xl-docx-exporter");
   const { docSchema } = await import("./doc-blocks.server");
   const schema = (await docSchema()) as never;
@@ -40,9 +49,12 @@ export async function blocksToDocx(blocks: DocBlock[], title: string): Promise<B
   // con "es-MX" clavado Word se los subrayaba enteros.
   const { currentLocale } = await import("./locale.server");
   const { intlLocale } = await import("../i18n.core");
-  const brand = await import("./brand.server")
-    .then((m) => m.activeBrandKit())
-    .catch(() => null);
+  const brand =
+    brandOverride !== undefined
+      ? brandOverride
+      : await import("./brand.server")
+          .then((m) => m.activeBrandKit())
+          .catch(() => null);
   const blob = await exporter.toBlob(blocks as never, {
     locale: intlLocale(await currentLocale()),
     documentOptions: { title, styles: docxBrandStyles(brand) },

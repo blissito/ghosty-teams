@@ -723,7 +723,7 @@ export async function listAllRoomMemory(): Promise<RoomNoteRow[]> {
  */
 export async function latestDocVersion(
   documentId: string
-): Promise<{ id: number; messageId: number; title: string | null; humanEdited: boolean } | null> {
+): Promise<{ id: number; messageId: number; title: string | null; humanEdited: boolean; md: string } | null> {
   const rows = await dbq(
     `SELECT id, md, message_id, title FROM gc_artifacts WHERE url = ? AND kind = 'doc' ORDER BY id DESC LIMIT 1`,
     [documentId]
@@ -737,6 +737,10 @@ export async function latestDocVersion(
     messageId: num(rows[0].message_id),
     title: (rows[0].title as string | null) ?? null,
     humanEdited: /"humanEdited"\s*:\s*true/.test(md),
+    // El contenido crudo (el sobre) para que quien publique la siguiente versión pueda
+    // heredar lo que no pisa. Sin esto cada versión nacía desde cero y perdía `sourceMd`
+    // y —desde que existe— la marca del documento.
+    md,
   };
 }
 

@@ -60,6 +60,15 @@ export interface DocEnvelope {
    * respuesta y recién entonces abres el documento) y sobrevive a una recarga.
    */
   changedIds?: string[];
+  /**
+   * Este documento se exporta SIN la marca del espacio: sin membrete, sin colores, con las
+   * fuentes del sistema.
+   *
+   * Vive en el sobre y no en la fila porque es del DOCUMENTO, no de la versión: un oficio
+   * que se pidió sin membrete lo sigue estando después de editarlo. Que eso se cumpla
+   * depende de `arrastra` — ver el aviso de `serializeDocEnvelope`.
+   */
+  unbranded?: boolean;
 }
 
 /**
@@ -90,20 +99,54 @@ export function parseDocEnvelope(md: string | null | undefined): DocEnvelope | n
   }
 }
 
+/**
+ * Lo que un sobre nuevo HEREDA del anterior cuando el llamador no lo pisa.
+ *
+ * ⚠️ La lista es corta a propósito y `humanEdited` NO está: es estado de ESA versión (¿la
+ * tocó una persona?), no una propiedad del documento. Arrastrarlo marcaría como editadas a
+ * mano versiones que escribió el agente, que es justo lo que `restoreArtifactVersionFn`
+ * evita a mano hoy.
+ *
+ * `changedIds` tampoco: son los bloques que cambiaron EN esta versión. Heredarlos pintaría
+ * el resaltado de un cambio viejo sobre un documento que ya no cambió ahí.
+ */
+type Heredable = Pick<DocEnvelope, "sourceMd" | "yUpdate" | "unbranded">;
+
 export function serializeDocEnvelope(e: {
   blocks: DocBlock[];
   sourceMd?: string;
   humanEdited?: boolean;
   yUpdate?: string;
   changedIds?: string[];
+  unbranded?: boolean;
+  /**
+   * El sobre ANTERIOR del documento, para no perder lo que esta escritura no menciona.
+   *
+   * ⚠️ Sin esto, cada versión nacía DESDE CERO: los cinco sitios que reescriben un sobre
+   * pasan sólo lo que les importa, así que guardar en el editor tiraba `sourceMd` y un
+   * `eb-patch` tiraba todo menos los bloques. Se notaba poco porque `sourceMd` sólo se lee
+   * cuando NO hubo edición humana; con un flag que sí importa siempre —la marca— habría
+   * sido un fallo diario: pides el oficio sin membrete, lo editas, y vuelve el membrete.
+   *
+   * Sólo se hereda lo de `Heredable`. Un spread ciego arrastraría estado de versión.
+   */
+  previo?: DocEnvelope | null;
 }): string {
+  const h: Heredable = e.previo ?? {};
   const out: DocEnvelope = { v: DOC_ENVELOPE_VERSION, blocks: e.blocks };
   // Sólo lo que aporta: un sobre con `"humanEdited":false` y `"sourceMd":""` en
   // cada versión es peso muerto en una columna que se guarda 20 veces por doc.
-  if (e.sourceMd) out.sourceMd = e.sourceMd;
+  //
+  // `??` y no `||` en los heredables: un `sourceMd` de cadena vacía es una decisión del
+  // llamador ("este documento ya no tiene texto fuente"), no una omisión.
+  const sourceMd = e.sourceMd ?? h.sourceMd;
+  const yUpdate = e.yUpdate ?? h.yUpdate;
+  const unbranded = e.unbranded ?? h.unbranded;
+  if (sourceMd) out.sourceMd = sourceMd;
   if (e.humanEdited) out.humanEdited = true;
-  if (e.yUpdate) out.yUpdate = e.yUpdate;
+  if (yUpdate) out.yUpdate = yUpdate;
   if (e.changedIds?.length) out.changedIds = e.changedIds;
+  if (unbranded) out.unbranded = true;
   return JSON.stringify(out);
 }
 

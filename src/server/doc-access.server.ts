@@ -161,3 +161,17 @@ export async function docBlocks(md: string): Promise<DocBlock[]> {
   const { mdToBlocks } = await import("./doc-blocks.server");
   return mdToBlocks(md);
 }
+
+/**
+ * ¿Este documento se entrega SIN la marca del espacio?
+ *
+ * Vive aquí y no en cada ruta de export para que **un solo sitio** sepa abrir un sobre:
+ * `docBlocks` tira todo lo que no son bloques, así que sin esto cada exportador tendría
+ * que volver a parsear el JSON por su cuenta y acabarían discrepando — el PDF sin membrete
+ * y el .docx con él.
+ *
+ * Una fila legacy (markdown pelado) no tiene sobre: lleva marca, como siempre.
+ */
+export function docUnbranded(md: string): boolean {
+  return parseDocEnvelope(md)?.unbranded === true;
+}

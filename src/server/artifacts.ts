@@ -67,6 +67,22 @@ export async function publishArtifactVersion(args: {
   /** Quiénes co-editaron en la sesión que dejó esta versión (`sub`). Sólo la co-edición. */
   authors?: string[];
   /**
+   * Exportar este documento SIN la marca del espacio. `undefined` = lo que ya dijera el
+   * documento (se hereda); `true`/`false` lo fijan.
+   *
+   * Es del DOCUMENTO, no de la versión: un oficio pedido sin membrete lo sigue estando
+   * después de editarlo.
+   */
+  unbranded?: boolean;
+  /**
+   * El sobre de la versión anterior, cuando quien llama YA lo tiene leído (el patch de
+   * `eb-patch`, el restore de una versión). Ahorra la lectura y, sobre todo, deja
+   * DECIDIR de qué versión se hereda — que en un restore no es la última.
+   *
+   * `undefined` = léelo tú. `null` = no heredes nada (documento nuevo).
+   */
+  previo?: import("../lib/doc-blocks").DocEnvelope | null;
+  /**
    * `false` publica el HTML TAL CUAL: sin sembrar `data-id` y sin hornear Tailwind.
    * Lo usan los artefactos que NO escribió el agente y que por lo tanto no se editan
    * por `eb-patch` — hoy, los formularios nativos (`forms/publish.server.ts`), cuyo
@@ -96,9 +112,24 @@ export async function publishArtifactVersion(args: {
   // re-derivarlos del markdown les cambiaría los uuid a todos.
   if (args.kind === "doc") {
     const { docEnvelopeFromMd } = await import("./doc-blocks.server");
-    const { serializeDocEnvelope } = await import("../lib/doc-blocks");
+    const { serializeDocEnvelope, parseDocEnvelope } = await import("../lib/doc-blocks");
+    // El sobre de la versión ANTERIOR de este documento. Se lee aquí, una vez, y lo heredan
+    // las dos ramas: sin esto cada versión nacía desde cero y se perdía lo que es del
+    // DOCUMENTO y no de la versión — hoy `sourceMd` y la marca. `args.previo` deja que el
+    // llamador lo aporte cuando ya lo tiene en la mano (el patch de `eb-patch`, el restore)
+    // y evita una lectura de más.
+    const previo =
+      args.previo !== undefined
+        ? args.previo
+        : parseDocEnvelope((await db.latestDocVersion(args.documentId).catch(() => null))?.md);
     if (args.blocks?.length) {
-      md = serializeDocEnvelope({ blocks: args.blocks, humanEdited: args.humanEdited, changedIds: args.changedIds });
+      md = serializeDocEnvelope({
+        blocks: args.blocks,
+        humanEdited: args.humanEdited,
+        changedIds: args.changedIds,
+        unbranded: args.unbranded,
+        previo,
+      });
     } else {
       // Las imágenes que trae el agente apuntan a una presignada del box (7 días).
       // Se re-hospedan ANTES de volverse bloques, para que el documento nazca
@@ -110,7 +141,7 @@ export async function publishArtifactVersion(args: {
         return { md: args.md, failed: [] as string[] };
       });
       imagesFailed = conImagenes.failed;
-      md = await docEnvelopeFromMd(conImagenes.md);
+      md = await docEnvelopeFromMd(conImagenes.md, previo, args.unbranded);
     }
   }
 
@@ -573,6 +604,48 @@ async function requireDocEdit(documentId: string, sub: string, isOwner: boolean)
   if (role !== "edit") throw new Error("sólo puedes leer ese documento");
 }
 
+/**
+ * Prender o apagar la marca de un documento desde el panel.
+ *
+ * Existe porque un flag que sólo el agente puede poner es media función: quien recibe el
+ * oficio ya hecho tiene que poder quitarle el membrete sin volver a pedírselo al agente.
+ *
+ * ⚠️ Reescribe la ÚLTIMA versión en sitio (`overwriteArtifactMd`) en vez de publicar una
+ * nueva: cambiar el papel no es una edición del contenido, y publicar una versión por cada
+ * clic llenaría el historial de entradas idénticas y gastaría el tope de 20 que se guardan.
+ * El resto del sobre se hereda, que es justo para lo que existe `previo`.
+ */
+export const setDocUnbrandedFn = createServerFn({ method: "POST" })
+  .validator((d: { documentId: string; unbranded: boolean }) => d)
+  .handler(async ({ data }) => {
+    const { sessionUser } = await import("./chat");
+    const me = await sessionUser();
+    if (!me) throw new Error("no autenticado");
+    // El mismo permiso que editarlo: quien no puede cambiar el texto tampoco el papel.
+    await requireDocEdit(data.documentId, me.sub, !!me.isOwner);
+
+    const db = await import("../db.server");
+    const ultima = await db.latestDocVersion(data.documentId);
+    if (!ultima) throw new Error("ese documento no existe");
+    const { parseDocEnvelope, serializeDocEnvelope } = await import("../lib/doc-blocks");
+    const previo = parseDocEnvelope(ultima.md);
+    // Una fila legacy (markdown pelado, sin sobre) no se puede marcar sin convertirla, y
+    // convertirla aquí le cambiaría los uuid a todos los bloques. Se dice en vez de hacerlo.
+    if (!previo?.blocks?.length) throw new Error("este documento es de un formato viejo: ábrelo y guárdalo una vez");
+    await db.overwriteArtifactMd(
+      ultima.id,
+      serializeDocEnvelope({
+        blocks: previo.blocks,
+        humanEdited: previo.humanEdited,
+        changedIds: previo.changedIds,
+        previo,
+        // Explícito, para poder APAGARLO: `previo` sólo hereda cuando esto es `undefined`.
+        unbranded: data.unbranded,
+      }),
+    );
+    return { ok: true as const, unbranded: data.unbranded };
+  });
+
 export const updateDocBlocksFn = createServerFn({ method: "POST" })
   .validator((d: { documentId: string; blocks: unknown[]; messageId?: number; title?: string }) => d)
   .handler(async ({ data }) => {
@@ -609,8 +682,14 @@ export const updateDocBlocksFn = createServerFn({ method: "POST" })
       } rama=${ultima?.humanEdited ? "overwrite" : "publish"} ini=${JSON.stringify(md.slice(0, 90))}`,
     );
     if (ultima?.humanEdited) {
-      const { serializeDocEnvelope } = await import("../lib/doc-blocks");
-      await db.overwriteArtifactMd(ultima.id, serializeDocEnvelope({ blocks, humanEdited: true }));
+      const { serializeDocEnvelope, parseDocEnvelope } = await import("../lib/doc-blocks");
+      // Hereda del sobre que está PISANDO. Sin esto, guardar en el editor tiraba `sourceMd`
+      // y la marca del documento: el oficio sin membrete volvía a llevarlo en cuanto
+      // alguien le corregía una coma.
+      await db.overwriteArtifactMd(
+        ultima.id,
+        serializeDocEnvelope({ blocks, humanEdited: true, previo: parseDocEnvelope(ultima.md) }),
+      );
       await avisar();
       return { ok: true as const, versionId: ultima.id };
     }
@@ -725,6 +804,10 @@ export const restoreArtifactVersionFn = createServerFn({ method: "POST" })
         kind: "doc",
         md: await blocksToMd(env.blocks).catch(() => ""),
         blocks: env.blocks,
+        // Se hereda del sobre RESTAURADO, no de la última versión: restaurar es volver a
+        // ESE documento, marca incluida. `Heredable` deja fuera `humanEdited`, que es lo
+        // único que aquí no se puede arrastrar (ver el aviso de abajo).
+        previo: env,
         // ⚠️⚠️ SIN `humanEdited`. Si naciera `true`, el primer autoguardado siguiente entra
         // en la rama `overwrite` de arriba y **sobrescribe la fila restaurada en sitio**: el
         // punto de restauración desaparecería del historial. En `false`, el siguiente tecleo

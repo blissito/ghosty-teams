@@ -181,3 +181,48 @@ describe("navegación del árbol", () => {
     expect(collectIds(doc).size).toBe(6);
   });
 });
+
+describe("🔴 el sobre HEREDA lo que es del documento", () => {
+  const bloques = [{ id: "b1", type: "paragraph", props: {}, content: [], children: [] }] as any;
+  const sobre = (o: any) => parseDocEnvelope(serializeDocEnvelope(o))!;
+
+  it("lo que el llamador no menciona se arrastra de la versión anterior", () => {
+    // El caso real que fallaba: publicas un oficio sin membrete, alguien le corrige una
+    // coma en el editor, y el guardado reescribía el sobre DESDE CERO. Volvía el membrete
+    // y se perdía el `sourceMd` — y nadie se enteraba hasta abrir el .docx.
+    const previo = sobre({ blocks: bloques, sourceMd: "# Oficio", unbranded: true });
+    const nuevo = sobre({ blocks: bloques, humanEdited: true, previo });
+    expect(nuevo.unbranded).toBe(true);
+    expect(nuevo.sourceMd).toBe("# Oficio");
+  });
+
+  it("lo que el llamador SÍ dice gana sobre lo heredado, incluso para apagarlo", () => {
+    const previo = sobre({ blocks: bloques, unbranded: true });
+    // `false` tiene que poder apagar la marca; con `||` en vez de `??` esto heredaría
+    // `true` y el interruptor del panel no serviría para volver atrás.
+    expect(sobre({ blocks: bloques, unbranded: false, previo }).unbranded).toBeUndefined();
+  });
+
+  it("NO se hereda el estado de la VERSIÓN, sólo lo del documento", () => {
+    // `humanEdited` marca "esta versión la tocó una persona" y `changedIds` "estos bloques
+    // cambiaron AQUÍ". Arrastrarlos marcaría como editada a mano una versión que escribió
+    // el agente, y pintaría el resaltado de un cambio viejo sobre un documento intacto.
+    const previo = sobre({ blocks: bloques, humanEdited: true, changedIds: ["b1"] });
+    const nuevo = sobre({ blocks: bloques, previo });
+    expect(nuevo.humanEdited).toBeUndefined();
+    expect(nuevo.changedIds).toBeUndefined();
+  });
+
+  it("sin `previo` no hereda nada — un documento nuevo nace limpio", () => {
+    const previo = sobre({ blocks: bloques, unbranded: true, sourceMd: "viejo" });
+    expect(previo.unbranded).toBe(true);
+    expect(sobre({ blocks: bloques }).unbranded).toBeUndefined();
+    expect(sobre({ blocks: bloques }).sourceMd).toBeUndefined();
+  });
+
+  it("un sobre sin marca no engorda con `false`", () => {
+    // Se guardan hasta 20 versiones por documento: un `"unbranded":false` en cada una es
+    // peso muerto, y es el mismo criterio que ya seguían `humanEdited` y `sourceMd`.
+    expect(serializeDocEnvelope({ blocks: bloques })).not.toContain("unbranded");
+  });
+});

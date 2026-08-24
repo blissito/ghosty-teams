@@ -133,3 +133,52 @@ describe("bubbleWithoutEbDoc — resultado real del patch", () => {
     expect(out).toContain("a47");
   });
 });
+
+describe("marcas de la cabecera del fence", () => {
+  const abre = (header: string) => `texto\n\`\`\`eb-doc${header}\n# Hola\n\`\`\`\n`;
+
+  it("sin marcas, toda la cabecera es el título", () => {
+    const d = extractEbDoc(abre(" Acta de la sesión"))!;
+    expect(d.fenceTitle).toBe("Acta de la sesión");
+    expect(d.isNew).toBe(false);
+    expect(d.unbranded).toBeUndefined();
+  });
+
+  it("«sin membrete» marca el documento y NO se cuela en el título", () => {
+    // ⚠️ Lo que hay que evitar: la cabecera se toma entera como título si no se reconoce
+    // la marca, así que un token mal parseado bautiza al documento «sin-membrete Acta…».
+    for (const h of [" sin-membrete Acta", " sin membrete: Acta", " sin-marca Acta", " unbranded Acta"]) {
+      const d = extractEbDoc(abre(h))!;
+      expect(d.unbranded, h).toBe(true);
+      expect(d.fenceTitle, h).toBe("Acta");
+    }
+  });
+
+  it("las marcas se combinan en cualquier orden", () => {
+    for (const h of [" nuevo sin-membrete Oficio 12", " sin-membrete nuevo Oficio 12"]) {
+      const d = extractEbDoc(abre(h))!;
+      expect(d.isNew, h).toBe(true);
+      expect(d.unbranded, h).toBe(true);
+      expect(d.fenceTitle, h).toBe("Oficio 12");
+    }
+  });
+
+  it("una marca sola deja el documento sin título", () => {
+    const d = extractEbDoc(abre(" sin-membrete"))!;
+    expect(d.unbranded).toBe(true);
+    expect(d.fenceTitle).toBeUndefined();
+  });
+
+  it("🔴 no dice nada ≠ dice que SÍ lleva marca", () => {
+    // `undefined` significa "el agente no se pronunció", y entonces manda lo que ya dijera
+    // el documento. Si esto fuera `false`, re-emitir un oficio sin repetir la marca le
+    // devolvería el membrete que alguien pidió quitar.
+    expect(extractEbDoc(abre(" Acta"))!.unbranded).toBeUndefined();
+  });
+
+  it("una palabra que sólo EMPIEZA como la marca es título, no marca", () => {
+    const d = extractEbDoc(abre(" Sinaloa en cifras"))!;
+    expect(d.unbranded).toBeUndefined();
+    expect(d.fenceTitle).toBe("Sinaloa en cifras");
+  });
+});

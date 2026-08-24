@@ -26,6 +26,15 @@ export type EbDoc = {
    * comparativa de TTS y su enlace abría el documento equivocado.
    */
   isNew?: boolean;
+  /**
+   * El agente declaró que este documento se entrega SIN la marca del espacio
+   * (```eb-doc sin-membrete Acta de…```), porque se lo pidieron así.
+   *
+   * `undefined` —el caso normal— NO significa "con marca": significa "no dijo nada", y
+   * entonces manda lo que ya dijera el documento. Un agente que re-emite un oficio sin
+   * repetir la marca no debe devolverle el membrete.
+   */
+  unbranded?: boolean;
 };
 
 // Extrae el bloque ```eb-doc``` o ```eb-sheet``` del texto. Tolera el fence ABIERTO (aún
@@ -37,16 +46,37 @@ export function extractEbDoc(body: string): EbDoc | null {
   const open = body.match(/(^|\n)```eb-(doc|sheet|artifact)([^\n`]*)\n/);
   if (!open || open.index == null) return null;
   const kind = open[2] as EbDocKind;
-  // `nuevo` / `new` como PRIMERA palabra de la cabecera es una marca, no el título.
+  // La cabecera son MARCAS al principio y luego el título.
+  //
+  // ⚠️ Todo lo que no se reconozca como marca se toma ENTERO como título, así que un token
+  // mal escrito no falla: acaba dentro del nombre del documento («sin-membrete Acta de…»).
+  // Por eso se consumen en bucle y con `\b`, y por eso hay tests.
   const header = (open[3] ?? "").trim();
-  const newMark = /^(nuevo|new)\b[:\s-]*/i.exec(header);
-  const isNew = !!newMark;
-  const fenceTitle = (newMark ? header.slice(newMark[0].length).trim() : header) || undefined;
+  let resto = header;
+  let isNew = false;
+  let unbranded: boolean | undefined;
+  for (;;) {
+    const nueva = /^(nuevo|new)\b[:\s-]*/i.exec(resto);
+    if (nueva) {
+      isNew = true;
+      resto = resto.slice(nueva[0].length);
+      continue;
+    }
+    // `sin-membrete` / `sin-marca` / `unbranded`: se entrega sin el membrete del espacio.
+    const sinMarca = /^(sin[-\s]?(membrete|marca)|unbranded)\b[:\s-]*/i.exec(resto);
+    if (sinMarca) {
+      unbranded = true;
+      resto = resto.slice(sinMarca[0].length);
+      continue;
+    }
+    break;
+  }
+  const fenceTitle = resto.trim() || undefined;
   const start = open.index + open[0].length;
   const rest = body.slice(start);
   const closeIdx = rest.indexOf("```");
   if (closeIdx === -1) {
-    return { kind, before: body.slice(0, open.index), md: rest, after: "", closed: false, fenceTitle, isNew };
+    return { kind, before: body.slice(0, open.index), md: rest, after: "", closed: false, fenceTitle, isNew, unbranded };
   }
   return {
     kind,
@@ -56,6 +86,7 @@ export function extractEbDoc(body: string): EbDoc | null {
     closed: true,
     fenceTitle,
     isNew,
+    unbranded,
   };
 }
 

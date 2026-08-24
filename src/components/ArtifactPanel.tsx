@@ -10,6 +10,7 @@ import {
   X,
   ExternalLink,
   FileText,
+  Stamp,
   Download,
   Loader2,
   ChevronRight,
@@ -35,6 +36,7 @@ import { officeToHtmlFn, xlsxToCsvFn, postMessage } from "../server/chat";
 import { listTeamDocumentsFn, type TeamDocument } from "../server/documents";
 import { FileGlyph, glyphNameFor } from "./FileGlyph";
 import { updateArtifactHtmlFn } from "../server/artifacts";
+import { parseDocEnvelope } from "../lib/doc-blocks";
 import {
   CanvasEditor,
   EditorStore,
@@ -716,6 +718,15 @@ export default function ArtifactPanel({
       setRestoring(false);
     }
   }, [documentIdActual, vActual, restoring]);
+  // ¿Este documento se entrega sin la marca del espacio? Sale del sobre, que el panel ya
+  // tiene en la mano — no hace falta ir a pedirlo.
+  const sinMarcaDoc =
+    artifact?.kind === "doc" ? parseDocEnvelope(artifact.md ?? "")?.unbranded === true : false;
+  // Optimista: el guardado reescribe la versión en sitio y el `md` del panel no cambia
+  // solo, así que sin esto el interruptor se quedaba visualmente en el estado anterior.
+  const [sinMarca, setSinMarca] = useState(sinMarcaDoc);
+  useEffect(() => setSinMarca(sinMarcaDoc), [sinMarcaDoc, artifact?.kind === "doc" ? artifact.documentId : null]);
+
   const verParam = vActual ? `&v=${vActual}` : "";
   const downloadHref =
     artifact?.kind === "doc"
@@ -1529,6 +1540,39 @@ export default function ArtifactPanel({
                                 className="grid size-7 place-items-center rounded-md text-muted transition hover:bg-surface-3 hover:text-brand disabled:opacity-60"
                               >
                                 <FileText size={15} />
+                              </button>
+                            ) : null}
+                            {/* La marca del espacio en las descargas. Existe para que quien
+                        recibe un documento ya hecho pueda quitarle el membrete sin volver a
+                        pedírselo al agente — un flag que sólo él puede poner es media
+                        función. Cambia el PAPEL, no el contenido: por eso reescribe la
+                        versión en sitio y no publica una nueva. */}
+                            {artifact.kind === "doc" ? (
+                              <button
+                                type="button"
+                                onClick={async () => {
+                                  const v = !sinMarca;
+                                  setSinMarca(v);
+                                  try {
+                                    const { setDocUnbrandedFn } = await import("../server/artifacts");
+                                    await setDocUnbrandedFn({
+                                      data: { documentId: artifact.documentId, unbranded: v },
+                                    });
+                                  } catch (e) {
+                                    setSinMarca(!v);
+                                    alert(String((e as Error)?.message ?? e));
+                                  }
+                                }}
+                                title={
+                                  sinMarca
+                                    ? t("Se descarga SIN membrete. Clic para volver a la marca del espacio.")
+                                    : t("Se descarga con la marca del espacio. Clic para dejarlo en papel blanco.")
+                                }
+                                className={`grid size-7 place-items-center rounded-md transition hover:bg-surface-3 ${
+                                  sinMarca ? "text-brand" : "text-muted hover:text-brand"
+                                }`}
+                              >
+                                <Stamp size={15} />
                               </button>
                             ) : null}
                             {/* Imprimir se queda, y NO es redundante con el PDF de arriba: éste sale
