@@ -823,8 +823,27 @@ function UsagePanel() {
       : null;
   };
   const fmtM = (n: number) => `${(n / 1_000_000).toFixed(n >= 10_000_000 ? 0 : 1)}M`;
+  /**
+   * Fechas del PERIODO, en UTC.
+   *
+   * ⚠️ `timeZone: "UTC"` no es un detalle: estos instantes están anclados a UTC —el periodo
+   * es el mes natural en UTC y `paidUntil` es una fecha de calendario guardada a las 00:00—
+   * así que pintarlos en la hora del navegador los corre un día hacia atrás en cualquier
+   * huso al oeste de Greenwich. En México se veía «se reinicia el 31 de agosto» para un
+   * reinicio que ocurre el 1 de septiembre 00:00 UTC.
+   *
+   * No era falso —a las 6 de la tarde del 31 en CDMX es cuando de verdad se reinicia— pero
+   * CONTRADECÍA a Studio, que ya lo pinta en UTC (`fechaLarga`, token-usage.server): el
+   * agente decía «se reinicia el 1 de septiembre» al quedarse sin saldo y este panel decía
+   * el 31. Dos superficies con la misma verdad y distinta fecha es peor que un día de
+   * desfase, así que mandan las dos lo mismo.
+   */
   const fecha = (iso: string) =>
-    new Date(iso).toLocaleDateString(intlLocale(locale), { day: "numeric", month: "long" });
+    new Date(iso).toLocaleDateString(intlLocale(locale), {
+      day: "numeric",
+      month: "long",
+      timeZone: "UTC",
+    });
 
   return (
     <div className="space-y-5">
