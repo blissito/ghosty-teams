@@ -24,6 +24,8 @@ export function ColumnChip({
   label,
   kind,
   emailCount,
+  filled,
+  duplicada,
   running,
   onRun,
   onUseAsEmail,
@@ -40,6 +42,16 @@ export function ColumnChip({
    * verificador los buscan. El error no era la acción: era ofrecerla siempre.
    */
   emailCount: number;
+  /**
+   * Cuántas celdas tiene llenas, y si comparte nombre con otra columna.
+   *
+   * ⚠️ Sólo se enseña cuando hay ambigüedad. Dos columnas «¿El correo sirve?» —creadas antes
+   * de que pedirla dos veces reusara la que había— son indistinguibles en la cabecera y en
+   * el chip, así que no se puede saber cuál borrar. El número de celdas llenas lo resuelve:
+   * la vacía es la de sobra.
+   */
+  filled?: number;
+  duplicada?: boolean;
   running: boolean;
   onRun: () => void;
   onUseAsEmail: () => void;
@@ -69,7 +81,16 @@ export function ColumnChip({
       hint: `${emailCount} ${emailCount === 1 ? "correo" : "correos"} · es la columna que usa el envío`,
       run: onUseAsEmail,
     },
-    { id: "remove", icon: Trash2, label: t("Quitar columna"), hint: t("El dato conseguido se conserva"), run: onRemove, danger: true },
+    {
+      id: "remove",
+      icon: Trash2,
+      label: t("Quitar columna"),
+      hint: duplicada && !filled
+        ? t("Está vacía y hay otra con el mismo nombre")
+        : t("El dato conseguido se conserva"),
+      run: onRemove,
+      danger: true,
+    },
   ].filter(Boolean) as { id: string; icon: typeof Play; label: string; hint: string; run: () => void; danger?: boolean }[];
 
   return (
@@ -82,6 +103,11 @@ export function ColumnChip({
       >
         {running ? <Loader2 size={11} className="animate-spin text-brand" /> : null}
         <span className="font-medium">{label}</span>
+        {duplicada ? (
+          <span className={`text-[10px] tabular-nums ${filled ? "text-muted" : "text-amber-500"}`}>
+            {filled ? `${filled} ${t("llenas")}` : t("vacía")}
+          </span>
+        ) : null}
         <ChevronDown size={12} className={`text-muted transition-transform ${open ? "rotate-180" : ""}`} />
       </button>
 
