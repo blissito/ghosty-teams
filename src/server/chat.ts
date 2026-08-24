@@ -1497,6 +1497,12 @@ export const askAgent = createServerFn({ method: "POST" })
       // ⚠️ UN SOLO punto de enganche. El bloque de arriba tiene SIETE ramas y cada una hace
       // su propio `return`: colgar esto rama por rama garantiza que alguna se quede sin
       // aviso. El `finally` es el único sitio por el que pasan todas.
+      // ⚠️ ANTES del aviso de fin de turno: la barra resume lo que se entregó, y con el
+      // hueco ya escrito la burbuja y el resumen cuentan lo mismo.
+      const { warnIfNothingDelivered } = await import("./delivery-gap");
+      await warnIfNothingDelivered(id, (body) =>
+        bus.publish(bus.ch.room(ns, channel.id), { t: "message:body", id, body }),
+      ).catch(() => {});
       await avisarFinDeTurno({
         ns, messageId: id, channelId: channel.id, channelSlug: channel.slug,
         parentId: data.parentId ?? null, invokerSub: poster?.sub ?? null,

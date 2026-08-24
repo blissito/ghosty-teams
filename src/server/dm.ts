@@ -742,6 +742,10 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
     } catch (e) {
       console.error("[dm artifact] commit failed", e);
     } finally {
+      // El entregable prometido que no viajó. Va aquí y no en cada rama por lo mismo que
+      // el cierre de abajo: es el único punto por el que pasan todas.
+      const { warnIfNothingDelivered } = await import("./delivery-gap");
+      await warnIfNothingDelivered(id, (body) => fanout({ t: "message:body", id, body })).catch(() => {});
       // Cierre del turno, igual que en rooms y por el mismo motivo: es el único punto por el
       // que pasan todas las ramas del bloque de artefactos. Sin esto la fila del DM se
       // quedaba con el cronómetro corriendo hasta el reconcile del minuto.
