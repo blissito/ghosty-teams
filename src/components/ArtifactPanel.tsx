@@ -181,6 +181,10 @@ export type ArtifactView =
       channelId: number;
       channelSlug: string;
       threadRootId?: number;
+      /** Abierto desde un DM: el índice lista los documentos de ESA conversación.
+       *  Un mensaje de DM tiene `channelId` = 0, así que filtrar por canal aquí
+       *  mezclaría TODOS los DMs en uno solo. */
+      dmId?: number;
     };
 
 // URL del VISOR OFICIAL de Microsoft (Office Online) para un office con URL pública. Word/
@@ -841,8 +845,13 @@ export default function ArtifactPanel({
       : null;
   const roomChannelId =
     threadDocs && threadDocs.length ? threadDocs[0].channelId : idxChannelId;
+  const idxDmId = rootArtifact?.kind === "docindex" ? rootArtifact.dmId : undefined;
+  // En un DM el alcance es la CONVERSACIÓN. No se puede filtrar por `channelId`: el de
+  // un mensaje de DM es 0 para todos, así que todos los DMs caerían en el mismo saco.
   const roomDocs = idxDocs
-    ? idxDocs.filter((d) => d.channelId === roomChannelId)
+    ? idxDmId != null
+      ? idxDocs.filter((d) => d.dmId === idxDmId)
+      : idxDocs.filter((d) => d.channelId === roomChannelId)
     : null;
   const roomLabel =
     (threadDocs && threadDocs.length ? threadDocs[0].channelName : null) ??
@@ -1152,6 +1161,7 @@ export default function ArtifactPanel({
   // agente no responde; el archivo aparece en el índice y en el room.
   const doUploadToCase = async (files: FileList | null) => {
     if (!files?.length || artifact?.kind !== "docindex") return;
+    if (artifact.dmId != null) return; // sin slug de canal no hay a dónde postear
     // Sube al room REAL del hilo (derivado de sus docs), NO al room seleccionado: en un hilo
     // cuyo room ≠ el seleccionado (o estando en #general) el slug seleccionado mandaba el
     // archivo al chat equivocado y no aparecía en esta lista. Fallback al slug del artefacto.
@@ -1775,7 +1785,11 @@ export default function ArtifactPanel({
                             {idxScope === "thread" && idxThreadRootId != null
                               ? t("Este hilo")
                               : roomLabel
-                                ? `# ${roomLabel}`
+                                ? // Un DM no lleva `#`: ése es el prefijo de un canal y
+                                  // aquí leería como si «Ghosty» fuera una sala.
+                                  idxDmId != null
+                                  ? roomLabel
+                                  : `# ${roomLabel}`
                                 : t("Documentos")}
                           </span>
                           {shownDocs ? (
@@ -1802,11 +1816,20 @@ export default function ArtifactPanel({
                               onClick={() => setIdxScope("case")}
                               className={`flex-1 truncate rounded-md px-2 py-1 transition ${idxScope === "case" ? "bg-surface text-ink shadow-sm" : "text-muted hover:text-ink"}`}
                             >
-                              {roomLabel ? `# ${roomLabel}` : t("Todo el room")}
+                              {roomLabel
+                                ? idxDmId != null
+                                  ? roomLabel
+                                  : `# ${roomLabel}`
+                                : t("Todo el room")}
                             </button>
                           </div>
                         ) : null}
-                        {/* Área de DROP VISIBLE (además de que todo el panel acepta soltar). Clic = picker. */}
+                        {/* Área de DROP VISIBLE (además de que todo el panel acepta soltar). Clic = picker.
+                            ⚠️ En un DM NO se pinta: `doUploadToCase` postea a un SLUG de canal
+                            y un DM no tiene. Ofrecerla ahí mandaría el archivo al chat
+                            equivocado, o a ninguno. Para subir a un DM está su composer,
+                            que ya acepta arrastrar. */}
+                        {idxDmId == null && (
                         <button
                           type="button"
                           onClick={() => fileInputRef.current?.click()}
@@ -1827,6 +1850,7 @@ export default function ArtifactPanel({
                             </>
                           )}
                         </button>
+                        )}
                         <input
                           ref={fileInputRef}
                           type="file"

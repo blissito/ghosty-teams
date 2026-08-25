@@ -5203,15 +5203,16 @@ function NewDmModal({
 // Botón de Documentos del CASO (matter-centric): abre el índice Cowork del room en
 // el panel (todos sus docs generados + subidos). Convención Slack/Zulip: acción por
 // canal a la derecha del header. Mismo channelId para el room y sus hilos.
-function DocsButton({ channelId, channelSlug, threadRootId }: { channelId: number; channelSlug: string; threadRootId?: number }) {
+function DocsButton({ channelId, channelSlug, threadRootId, dmId }: { channelId: number; channelSlug: string; threadRootId?: number; dmId?: number }) {
   const t = useT();
   const { onOpenArtifact } = useContext(ChatCtx);
+  const label = dmId != null ? t("Documentos de esta conversación") : t("Documentos del caso");
   return (
     <button
       type="button"
-      onClick={() => onOpenArtifact?.({ kind: "docindex", title: t("Documentos"), channelId, channelSlug, threadRootId })}
-      title={t("Documentos del caso")}
-      aria-label={t("Documentos del caso")}
+      onClick={() => onOpenArtifact?.({ kind: "docindex", title: t("Documentos"), channelId, channelSlug, threadRootId, dmId })}
+      title={label}
+      aria-label={label}
       className="grid h-9 w-9 shrink-0 place-items-center rounded-lg text-muted transition hover:bg-surface-3 hover:text-ink"
     >
       <FolderOpen size={17} />
@@ -6916,20 +6917,14 @@ function DmView({
             <RotateCcw size={17} />
           </button>
         )}
-        {/* Documentos de esta conversación. Ocupa el sitio donde estuvo el ⚡ de "subir a
-            un modelo más capaz", deprecado el 2026-08-24.
+        {/* Documentos de ESTA conversación, en el panel — el MISMO `DocsButton` del header
+            de un room, no un enlace a la página global. Ocupa el sitio donde estuvo el ⚡
+            de "subir a un modelo más capaz", deprecado el 2026-08-24.
             ⚠️ El escalón NO se desmanteló: `/pro` sigue funcionando y los server fns
             siguen ahí. Lo que se retiró es su ENTRADA en la cabecera. Por eso
             `escalationHint` dejó de nombrar el ⚡: un prompt que manda a un botón que ya
-            no existe es la forma más barata de que el agente quede mintiendo.
-            El destino es la página «Documentos», que desde hoy sí lista los de un DM. */}
-        <Link
-          to="/artifacts"
-          title={t("Documentos")}
-          className="grid h-11 w-11 shrink-0 place-items-center rounded-lg text-muted transition hover:bg-surface-3 hover:text-ink md:h-9 md:w-9"
-        >
-          <Layers size={17} />
-        </Link>
+            no existe es la forma más barata de que el agente quede mintiendo. */}
+        <DocsButton channelId={0} channelSlug="" dmId={dmId} />
       </header>
       {!isAgentDm && <CallBanner h={call} />}
       {/* overflow-anchor:none → desactiva el scroll-anchoring nativo del navegador. Al cargar
