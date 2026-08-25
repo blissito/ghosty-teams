@@ -31,4 +31,31 @@ describe("deliveryGapNotice", () => {
     expect(deliveryGapNotice("Ese link de Meet no lo puedo abrir ni unirme a llamadas.", false)).toBe("");
     expect(deliveryGapNotice("Va, la dejamos así, solo la etiqueta de Goku.", false)).toBe("");
   });
+
+  // ── Falso positivo real, 2026-08-25 ──────────────────────────────────────────
+  // El PRIMER mensaje que un cliente nuevo (Luis, DESCTI) vio del producto: una
+  // respuesta de puro texto sobre alcances y límites, rematada con el aviso. El
+  // culpable es «Aquí va», que en español introduce texto mucho más seguido que un
+  // archivo. Un falso positivo aquí es peor que no avisar: inventa un hueco.
+  it("🔴 no avisa cuando «aquí va» sólo introduce el texto que sigue", () => {
+    const real =
+      "Trabajo sobre **Claude Sonnet 5**, de Anthropic — dentro de Ghosty Teams como " +
+      '"Ghosty". Aquí va el panorama honesto:\n\n**Alcances (lo que sí hago)**\n- ' +
+      "Razonamiento, análisis y redacción larga.";
+    expect(deliveryGapNotice(real, false)).toBe("");
+  });
+
+  it("tampoco sobre otros marcadores de discurso", () => {
+    expect(deliveryGapNotice("Aquí está el resumen de lo que encontré: son tres puntos.", false)).toBe("");
+    expect(deliveryGapNotice("Aquí tienes la comparación entre ambos modelos.", false)).toBe("");
+    expect(deliveryGapNotice("Aquí va mi lectura del asunto.", false)).toBe("");
+  });
+
+  // …y lo que NO puede romperse al arreglar lo de arriba: cuando el anuncio ambiguo sí
+  // nombra un archivo, el aviso tiene que seguir saliendo.
+  it("sigue avisando cuando «aquí va» nombra un entregable", () => {
+    expect(deliveryGapNotice("Aquí va la cotización en PDF:", false)).toContain("no lleva ninguno");
+    expect(deliveryGapNotice("Aquí está de nuevo la etiqueta:", false)).toContain("no lleva ninguno");
+    expect(deliveryGapNotice("Ya está lista la portada:", false)).toContain("no lleva ninguno");
+  });
 });

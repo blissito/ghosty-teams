@@ -29,6 +29,29 @@ const ANUNCIOS = [
   /est[aá] (?:lista|listo) (?:la|el)/i,
 ];
 
+/** Los anuncios que por sí solos NO prueban nada, porque en español son marcador de
+ *  discurso antes que entrega. «Aquí va el panorama», «aquí está el resumen» y «aquí
+ *  tienes la comparación» introducen texto que viene a continuación, no un archivo.
+ *
+ *  ⚠️ Esto se descubrió en producción el 2026-08-25, en el PRIMER mensaje que un cliente
+ *  nuevo vio del producto: una respuesta de puro texto rematada con «anuncia un archivo y
+ *  no lleva ninguno». El aviso existe para cerrar un hueco mudo; disparado en falso hace
+ *  justo lo contrario — le dice a la persona que le falta algo que nunca hubo. */
+const AMBIGUOS = [0, 4];
+
+/** Lo que hay que mirar o abrir: un archivo, no un párrafo. Un anuncio ambiguo sólo cuenta
+ *  si nombra uno de éstos cerca.
+ *
+ *  Es una ALLOWLIST a propósito, y por eso deja fuera «reporte», «informe» y «análisis»:
+ *  esos se entregan como prosa en el chat la mayoría de las veces, y el modo de falla
+ *  tolerable aquí es callarse de más, nunca avisar de menos. Ver la nota de arriba. */
+const ENTREGABLE =
+  /\b(archivo|imagen|im[aá]genes|foto|fotos|captura|gr[aá]fica|gr[aá]fico|diagrama|tabla|hoja|documento|etiqueta|logo|portada|banner|cartel|cat[aá]logo|presentaci[oó]n|cotizaci[oó]n|factura|video|audio|nota de voz|liga|enlace|link|pdf|docx?|xlsx?|pptx?|png|jpe?g|svg|zip|csv)\b/i;
+
+/** Ventana en la que se busca el entregable después del anuncio. «Aquí está de nuevo la
+ *  etiqueta» mete tres palabras en medio, así que la adyacencia no sirve. */
+const VENTANA = 60;
+
 /** Lo que cuenta como que SÍ viajó algo: imagen markdown, enlace, o un fence nuestro
  *  (`eb-doc`, `gt-pr`, `eb-file`…) que la plataforma convierte en tarjeta. */
 const LLEVA_ALGO = [
@@ -38,6 +61,15 @@ const LLEVA_ALGO = [
   /https?:\/\/\S{8,}/i,             // URL suelta
   /```(?:gt|eb)-[a-z-]+/i,          // fence de la plataforma
 ];
+
+/** ¿Este patrón, en este texto, anuncia de verdad una entrega? Los ambiguos exigen además
+ *  que se nombre un entregable en la ventana siguiente. */
+function anuncia(re: RegExp, i: number, prosa: string): boolean {
+  const m = re.exec(prosa);
+  if (!m) return false;
+  if (!AMBIGUOS.includes(i)) return true;
+  return ENTREGABLE.test(prosa.slice(m.index, m.index + m[0].length + VENTANA));
+}
 
 /**
  * El aviso, o "" si no hay contradicción.
@@ -53,7 +85,7 @@ export function deliveryGapNotice(body: string, tieneAdjunto: boolean): string {
   // Los bloques de herramientas y pasos no son la respuesta: se quitan antes de buscar el
   // anuncio, o un `detail` con una URL contaría como entrega.
   const prosa = texto.replace(/```[\s\S]*?```/g, " ");
-  if (!ANUNCIOS.some((re) => re.test(prosa))) return "";
+  if (!ANUNCIOS.some((re, i) => anuncia(re, i, prosa))) return "";
   if (LLEVA_ALGO.some((re) => re.test(prosa))) return "";
   return (
     "⚠️ Este mensaje anuncia un archivo y no lleva ninguno. " +
