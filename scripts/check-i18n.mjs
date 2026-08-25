@@ -62,16 +62,20 @@ for (const file of walk(SRC)) {
 // `ToolGroup` hace `tr(t.label)`: la clave no está en la llamada, está en la tabla que la
 // produjo. Un extractor puramente sintáctico las perdería TODAS —son ~180, las que se ven
 // en cada turno del agente— y el check pasaría en verde mintiendo.
-const AGENTS = readFileSync(join(SRC, "agents.server.ts"), "utf8");
+// ⚠️ `TOOL_LABELS` VIVE EN `lib/tool-label.ts`, no en `agents.server.ts`. El check
+// apuntaba al sitio viejo y por eso salía `exit 2` sin comprobar UNA sola clave —
+// llevaba tiempo roto en silencio, que es peor que no tenerlo: parecía que había red.
+const TOOL_LABELS_FILE = "lib/tool-label.ts";
+const AGENTS = readFileSync(join(SRC, TOOL_LABELS_FILE), "utf8");
 const TABLE = AGENTS.match(/const TOOL_LABELS[^=]*=\s*\{([\s\S]*?)\n\};/);
 if (!TABLE) {
-  console.error("✗ no encontré TOOL_LABELS en agents.server.ts — ¿se renombró?");
+  console.error(`✗ no encontré TOOL_LABELS en ${TOOL_LABELS_FILE} — ¿se movió otra vez?`);
   process.exit(2);
 }
 for (const m of TABLE[1].matchAll(/\b(?:ing|done):\s*"((?:[^"\\]|\\.)*)"/g)) {
   const key = unescape(m[1]);
   if (!used.has(key)) used.set(key, []);
-  used.get(key).push("/src/agents.server.ts (TOOL_LABELS)");
+  used.get(key).push(`/src/${TOOL_LABELS_FILE} (TOOL_LABELS)`);
 }
 
 // ── El diccionario ──────────────────────────────────────────────────────────────
