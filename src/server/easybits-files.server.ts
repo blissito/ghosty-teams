@@ -142,8 +142,18 @@ async function uploadToEasyBitsLegacy(opts: {
 // ids legacy → EasyBits (compat con adjuntos previos). El proxy lo llama on-demand.
 // Cache en memoria del readUrl firmado por fileId. Cada <img src="/api/attachment/:id">
 // pegaba aquí y, para los adjuntos LEGACY (EasyBits, remoto), hacía un fetch de red POR
-// IMAGEN y POR VISITA → el timeline se pintaba "mensaje por mensaje". El TTL del signed
-// URL es ~1h; cacheamos 50 min y medimos lo que tarda mintear.
+// IMAGEN y POR VISITA → el timeline se pintaba "mensaje por mensaje". Cacheamos 50 min y
+// medimos lo que tarda mintear.
+//
+// ⚠️ Las CADUCIDADES SE SUMAN, y ésa fue la trampa (2026-08-24, el avatar de @goose salía
+// roto en Ajustes con el objeto intacto en Tigris y el proxy respondiendo 200): este cache
+// entrega hasta 50 min una URL ya firmada, y el 302 de `/api/attachment/:id` se cachea en
+// el navegador otros 50 min (`max-age=3000`). Peor caso: 100 min de vida para una firma que
+// duraba 3600s → el navegador reusa un redirect a una URL EXPIRADA y la imagen sale rota.
+// Es intermitente y POR IMAGEN (depende del minuto en que cada `<img>` cacheó su redirect),
+// así que se lee como "esta foto está mal", no como un problema de firmas. Por eso la firma
+// dura ahora 6h: cubre la suma con margen sin renunciar a ningún cache. Al tocar cualquiera
+// de los tres números, comprobar que `firma > cacheServidor + maxAgeNavegador`.
 const readUrlCache = new Map<string, { url: string; exp: number }>();
 
 export async function mintReadUrl(fileId: string): Promise<string | null> {
@@ -154,7 +164,7 @@ export async function mintReadUrl(fileId: string): Promise<string | null> {
   const t0 = performance.now();
   let url: string | null = null;
   if (storage.isOwnKey(fileId)) {
-    url = await storage.signedUrl(fileId, 3600);
+    url = await storage.signedUrl(fileId, 6 * 3600);
   } else {
     try {
       const res = await ebFetch(`/api/v2/files/${encodeURIComponent(fileId)}`, { method: "GET" });
