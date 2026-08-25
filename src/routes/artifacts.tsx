@@ -6,7 +6,11 @@ import { intlLocale } from "../i18n.core";
 import { me } from "../server/auth";
 import { listTeamDocumentsFn, type TeamDocument } from "../server/documents";
 import { FileGlyph, glyphNameFor } from "../components/FileGlyph";
-import ArtifactPanel, { type ArtifactView } from "../components/ArtifactPanel";
+// ⚠️ `docToView` se IMPORTA, no se copia. `artifacts.tsx` tenía su propia versión y se
+// quedó atrás: sin la rama de imagen (las imágenes salían como «Descargar») y sin la de
+// documentos generados y hospedados (tiles inertes). El índice DENTRO de un room usaba la
+// buena, así que el mismo documento abría ahí y no aquí. La duplicación era el bug.
+import ArtifactPanel, { docToView, type ArtifactView } from "../components/ArtifactPanel";
 
 // Estudio de artefactos / Documentos del team (Cowork): todos los documentos del
 // team en tiles — los GENERADOS por el agente (eb-doc en vivo) y los SUBIDOS al
@@ -30,25 +34,10 @@ function fmtSize(bytes?: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-// Un documento del team → vista para el ArtifactPanel. Devuelve null si no es
-// previsualizable (el tile cae a "ver en el room").
-function toView(d: TeamDocument): ArtifactView | null {
-  if (d.source === "uploaded" && d.fileId) {
-    const src = `/api/attachment/${encodeURIComponent(d.fileId)}`;
-    if (d.kind === "pdf") return { kind: "pdf", title: d.title, src };
-    if (d.kind === "office") return { kind: "office", title: d.title, src };
-    return { kind: "file", title: d.title, src };
-  }
-  if (d.kind === "doc") return { kind: "doc", title: d.title, documentId: d.documentId ?? d.key, md: d.md ?? "" };
-  if (d.kind === "sheet") return { kind: "sheet", title: d.title, documentId: d.documentId ?? d.key, csv: d.md ?? "" };
-  if (d.kind === "html" && d.documentId) return { kind: "html", title: d.title, embedUrl: d.documentId };
-  return null;
-}
-
 function DocTile({ d, onOpen }: { d: TeamDocument; onOpen: (v: ArtifactView) => void }) {
   const t = useT();
   const locale = useLocale();
-  const view = toView(d);
+  const view = docToView(d);
   return (
     <button
       type="button"
@@ -150,7 +139,12 @@ function ArtifactsPage() {
   }, [docs]);
 
   return (
-    <div className="flex min-h-dvh bg-surface text-ink">
+    // ⚠️ `h-[100dvh]`, NO `min-h-`. El panel lleva `lg:self-stretch`, así que se estira a
+    // la altura del contenedor; con `min-h-` ese contenedor crece con la lista (decenas de
+    // tiles = miles de px) y el panel salía altísimo, con el documento perdido a media de
+    // un scroll gigante. La columna de la izquierda ya es `overflow-auto` y es la que
+    // scrollea. Mismo patrón que el room (`c.$slug.tsx`).
+    <div className="flex h-[100dvh] overflow-hidden bg-surface text-ink">
       <div className="min-w-0 flex-1 overflow-auto">
         <div className="mx-auto max-w-4xl px-5 py-8">
           <Link to="/c/$slug" params={{ slug: "general" }} className="mb-4 inline-flex items-center gap-1.5 text-sm text-muted hover:text-ink">

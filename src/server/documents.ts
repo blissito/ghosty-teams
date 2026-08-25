@@ -7,10 +7,36 @@ import { createServerFn } from "@tanstack/react-start";
 // pdf/office arrojados al chat, ya en EasyBits privado). Cada uno se abre en el
 // ArtifactPanel (visor). No inventa storage: reusa las tablas que ya existen.
 
+/** Los tipos que un documento del team puede tener.
+ *
+ *  ⚠️ `"artifact"` FALTABA aquí, y `documents.ts` metía el valor de la DB con un cast a
+ *  ciegas (`g.kind as TeamDocument["kind"]`). Como el tipo mentía, TypeScript nunca pudo
+ *  avisar de que `docToView` no tenía rama para él: los tiles «Redactado ARTIFACT` salían
+ *  INERTES —clic y no pasaba nada— sin un solo error de compilación. */
+export const DOC_KINDS = [
+  "doc",
+  "sheet",
+  "artifact",
+  "office",
+  "pdf",
+  "html",
+  "image",
+  "file",
+] as const;
+export type DocKind = (typeof DOC_KINDS)[number];
+
+/** El `kind` de la DB, validado. Un valor desconocido cae a `"doc"` en vez de colarse
+ *  como si fuera del tipo — que es lo que hacía el cast. */
+function toDocKind(raw: unknown): DocKind {
+  return (DOC_KINDS as readonly string[]).includes(String(raw))
+    ? (String(raw) as DocKind)
+    : "doc";
+}
+
 export type TeamDocument = {
   key: string;
   source: "generated" | "uploaded";
-  kind: "doc" | "sheet" | "office" | "pdf" | "html" | "image" | "file";
+  kind: DocKind;
   title: string;
   channelId: number;
   channelName: string | null;
@@ -45,6 +71,8 @@ export type TeamDocument = {
   // generados:
   documentId?: string;
   md?: string;
+  /** URL pública del artefacto (`gc_artifacts.src`). La pide `kind:"artifact"`. */
+  src?: string;
 };
 
 const OFFICE_MIMES = [
@@ -161,7 +189,7 @@ export const listTeamDocumentsFn = createServerFn({ method: "GET" }).handler(asy
   // canal el muro ético de arriba no aplica. Se acota a SU DUEÑO — así el documento sigue
   // siendo recuperable por quien lo hizo sin exponer casos ajenos a los demás.
   const generated = await dbq(
-    `SELECT a.id, a.kind, a.url, a.title, a.md, a.message_id, m.channel_id, m.dm_id, m.parent_id,
+    `SELECT a.id, a.kind, a.url, a.title, a.md, a.src, a.message_id, m.channel_id, m.dm_id, m.parent_id,
             COALESCE(m.created_at, a.created_at) AS created_at, c.name AS room_name, c.slug AS room_slug
        FROM gc_artifacts a
        LEFT JOIN gc_messages m ON m.id = a.message_id
@@ -232,7 +260,7 @@ export const listTeamDocumentsFn = createServerFn({ method: "GET" }).handler(asy
       prev.versions = (prev.versions ?? 1) + 1;
       continue;
     }
-    const kind = (g.kind as TeamDocument["kind"]) || "doc";
+    const kind = toDocKind(g.kind);
     const doc: TeamDocument = {
       key: `g${g.id}`,
       source: "generated",
@@ -245,6 +273,7 @@ export const listTeamDocumentsFn = createServerFn({ method: "GET" }).handler(asy
       versions: 1,
       documentId: g.url ?? undefined,
       md: g.md ?? undefined,
+      src: g.src ?? undefined,
     };
     seenDoc.set(docId, doc);
     docs.push(doc);

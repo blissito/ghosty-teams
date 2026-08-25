@@ -76,6 +76,18 @@ export function docToView(d: TeamDocument): ArtifactView | null {
     };
   if (d.kind === "html" && d.documentId)
     return { kind: "html", title: d.title, embedUrl: d.documentId };
+  // Artefacto (eb-artifact): HTML autocontenido, con su URL pública en `src`. Faltaba
+  // esta rama y caía a `null` → el tile salía INERTE en el índice, aunque el mismo
+  // artefacto abre bien desde su tarjeta del chat.
+  if (d.kind === "artifact" && d.documentId)
+    return {
+      kind: "artifact",
+      title: d.title,
+      documentId: d.documentId,
+      html: d.md ?? "",
+      src: d.src ?? "",
+      messageId: d.messageId,
+    };
   // Doc GENERADO y hospedado (pdf/imagen/office/file): `documentId` = URL pública (g.url).
   // Antes caía a `null` → en el índice salía DISABLED (opacity-70) "como si ya no existiera",
   // aunque abre bien desde la tarjeta del chat (que usa esa misma URL).
