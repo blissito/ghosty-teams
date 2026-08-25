@@ -22,4 +22,16 @@ describe("avisoDeCorte", () => {
     // `error_max_turns` y compañía SÍ se recuperan repitiendo: ahí el texto viejo es correcto.
     expect(avisoDeCorte({ subtype: "error_max_turns" })).toMatch(/otra vez/i);
   });
+
+  // goose (ACP) no pasa por el worker: su corte llega como `stopReason` del protocolo, y
+  // hasta ahora se logueaba sin usarse — el turno terminaba mudo a media faena.
+  it("`length` no manda repetir lo mismo: dice cómo salir", () => {
+    const a = avisoDeCorte({ subtype: "max_tokens", classification: "length" });
+    expect(a).toMatch(/por partes/i);
+    expect(a).not.toMatch(/sigo desde aqu/i);
+  });
+
+  it("quedarse sin pasos en ACP sí se recupera repitiendo", () => {
+    expect(avisoDeCorte({ subtype: "max_turn_requests" })).toMatch(/otra vez/i);
+  });
 });

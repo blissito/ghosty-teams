@@ -1273,6 +1273,12 @@ export function avisoDeCorte(ev: TruncatedEvent): string {
       "de un documento, vuelve a adjuntarlo ahí y seguimos."
     );
   }
+  if (ev.classification === "length") {
+    return (
+      "⚠️ Me quedé a medias: la respuesta llegó a su largo máximo. " +
+      "Repetir lo mismo volverá a cortarse — pídemela por partes, o dime qué sección quieres primero."
+    );
+  }
   return "_Me quedé a medias: el turno se cortó antes de terminar. Pídemelo otra vez y sigo desde aquí._";
 }
 
@@ -1603,6 +1609,21 @@ export async function callAgentBackendStream(
       return { text: `⚠️ No pude hablar con @${agent.handle}: ${pista}`, sessionId: "", stopReason: "error", usage: undefined };
     });
     console.log(`[acp <-] ${agent.handle} ${Math.round((Date.now() - acpT0) / 1000)}s stop=${r.stopReason} ${r.text.length}b`);
+    // Un turno ACP que se corta terminaba MUDO: `stopReason` se logueaba y no se usaba para
+    // nada, así que quedarse sin pasos o llegar al largo máximo era indistinguible de haber
+    // terminado — la última línea narrada se quedaba como respuesta y la persona esperaba
+    // algo que ya nadie iba a mandar. Es el mismo bug que claude-worker resolvió en su lado.
+    //
+    // `end_turn` y `refusal` NO son cortes (terminó, o se negó a propósito) y `cancelled` ya
+    // lo pinta Detener. `notice:"event"` sin más: aquí no hay worker que escriba nada, así
+    // que no existe el duplicado que el default `inline` viene a evitar.
+    if (r.stopReason === "max_turn_requests" || r.stopReason === "max_tokens") {
+      onTruncated?.({
+        subtype: r.stopReason,
+        classification: r.stopReason === "max_tokens" ? "length" : undefined,
+        notice: "event",
+      });
+    }
     // Se guarda DESPUÉS del turno y sólo si cambió: si el agente abrió una sesión nueva (o
     // renombró la suya), el turno siguiente la retoma. Un fallo aquí no toca la respuesta —
     // lo peor que pasa es que la próxima conversación empiece en frío.
