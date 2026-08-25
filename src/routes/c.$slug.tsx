@@ -115,7 +115,7 @@ import {
   expelMemberFn,
   stopTurnFn,
 } from "../server/chat";
-import { SmilePlus, Pencil, ArrowLeft, RotateCcw, Send, Bold, Italic, Strikethrough, List, ListOrdered, Quote, Code, Type, Reply, Square, Zap } from "lucide-react";
+import { SmilePlus, Pencil, ArrowLeft, RotateCcw, Send, Bold, Italic, Strikethrough, List, ListOrdered, Quote, Code, Type, Reply, Square } from "lucide-react";
 import { getDeferredPrompt, onInstallable, clearDeferredPrompt, type BeforeInstallPromptEvent } from "../utils/pwa-install";
 import { useRtSubscribe } from "../utils/rt-bus";
 import type { RtEvent } from "../server/bus.server";
@@ -6842,7 +6842,6 @@ function DmView({
     model: string | null; to: string | null; escalated: boolean;
     turnsLeft: number | null; turnsOnEscalate: number;
   } | null>(null);
-  const [pidiendoPro, setPidiendoPro] = useState(false);
   const [pidiendoClear, setPidiendoClear] = useState(false);
   // ⚠️ Depende del LARGO del flujo, no sólo del dmId. Pidiéndolo una vez al abrir, el
   // contador se congelaba: el ícono seguía en ámbar aunque la escalada ya hubiera
@@ -6917,32 +6916,20 @@ function DmView({
             <RotateCcw size={17} />
           </button>
         )}
-        {/* Subir esta conversación a un modelo más capaz. NO es destructivo (la memoria
-            se conserva) → sin advertencia; pero SÍ es de ida y no vuelta, y eso lo dice
-            el propio texto en vez de esconderlo. El servidor decide a qué modelo: aquí
-            no se nombra ninguno. */}
-        {/* RELLENO ámbar = corriendo en el modelo capaz; contorno = se puede subir.
-            SIEMPRE es un botón: escalado, el clic RENUEVA los turnos, que es lo que pide
-            quien sigue en la misma tarea. Un `button disabled` heredaba el
-            `cursor: not-allowed` global de styles.css y leía como "prohibido" cuando en
-            realidad ya estaba hecho — y encima dejaba sin salida a quien necesitaba más. */}
-        {isAgentDm && esc && (
-          <button
-            onClick={() => { if (esc.escalated) void bajarDeModelo(); else setPidiendoPro(true); }}
-            title={
-              esc.escalated
-                ? t("Modelo capaz · quedan {n} mensajes. Clic para volver al rápido.", { n: String(esc.turnsLeft ?? esc.turnsOnEscalate) })
-                : t("Subir a un modelo más capaz para esta conversación")
-            }
-            className={`grid h-11 w-11 shrink-0 place-items-center rounded-lg transition md:h-9 md:w-9 ${
-              esc.escalated
-                ? "text-amber-500 hover:bg-surface-3"
-                : "text-muted hover:bg-surface-3 hover:text-ink"
-            }`}
-          >
-            <Zap size={17} fill={esc.escalated ? "currentColor" : "none"} />
-          </button>
-        )}
+        {/* Documentos de esta conversación. Ocupa el sitio donde estuvo el ⚡ de "subir a
+            un modelo más capaz", deprecado el 2026-08-24.
+            ⚠️ El escalón NO se desmanteló: `/pro` sigue funcionando y los server fns
+            siguen ahí. Lo que se retiró es su ENTRADA en la cabecera. Por eso
+            `escalationHint` dejó de nombrar el ⚡: un prompt que manda a un botón que ya
+            no existe es la forma más barata de que el agente quede mintiendo.
+            El destino es la página «Documentos», que desde hoy sí lista los de un DM. */}
+        <Link
+          to="/artifacts"
+          title={t("Documentos")}
+          className="grid h-11 w-11 shrink-0 place-items-center rounded-lg text-muted transition hover:bg-surface-3 hover:text-ink md:h-9 md:w-9"
+        >
+          <Layers size={17} />
+        </Link>
       </header>
       {!isAgentDm && <CallBanner h={call} />}
       {/* overflow-anchor:none → desactiva el scroll-anchoring nativo del navegador. Al cargar
@@ -7020,15 +7007,6 @@ function DmView({
           danger
           onCancel={() => setPidiendoClear(false)}
           onConfirm={async () => { await clearDmAgentFn({ data: { id: dmId } }).catch(() => {}); setPidiendoClear(false); }}
-        />
-      )}
-      {pidiendoPro && (
-        <ConfirmModal
-          title={t("Subir a un modelo más capaz")}
-          body={t("{name} responderá con más capacidad durante los próximos {n} mensajes de esta conversación, conservando la memoria. El primer mensaje tardará un poco más. Después vuelve solo al modelo rápido; puedes extenderlo cuando quieras.", { name: title, n: String(esc?.turnsOnEscalate ?? 10) })}
-          confirmLabel={t("Subir")}
-          onCancel={() => setPidiendoPro(false)}
-          onConfirm={async () => { await subirDeModelo(); setPidiendoPro(false); }}
         />
       )}
     </section>

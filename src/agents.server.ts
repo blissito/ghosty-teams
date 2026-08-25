@@ -1968,7 +1968,10 @@ export async function escalationHint(agent: ResolvedAgent): Promise<string | nul
   }
   return (
     `SI UNA TAREA TE QUEDA GRANDE puedes decirlo y ofrecer subir esta conversación a un ` +
-    `modelo más capaz: quien te escribe lo activa con \`/pro\` (o el ⚡ de la cabecera). ` +
+    // ⚠️ Ya NO se nombra el ⚡ de la cabecera: se retiró el 2026-08-24 y su sitio lo ocupa
+    // «Documentos». Mandar a un botón que no existe hace que el agente quede mintiendo,
+    // y el usuario buscando algo que no está. El comando sigue vivo.
+    `modelo más capaz: quien te escribe lo activa escribiendo \`/pro\`. ` +
     `Ofrécelo SÓLO cuando de verdad te quedaste corto —no de entrada ni por costumbre— y ` +
     `sigue con lo que sí puedas mientras tanto. NUNCA lo presentes como que no puedes ` +
     `ayudar. La memoria se conserva al subir, y vuelve sola al modelo rápido después.`

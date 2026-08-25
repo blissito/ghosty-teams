@@ -1,6 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
-import { ArrowLeft, Layers, Sparkles, Upload, Hash } from "lucide-react";
+import { ArrowLeft, Layers, Sparkles, Upload, Hash, Lock, MessageCircle } from "lucide-react";
 import { useLocale, useT } from "../i18n";
 import { intlLocale } from "../i18n.core";
 import { me } from "../server/auth";
@@ -73,7 +73,40 @@ function DocTile({ d, onOpen }: { d: TeamDocument; onOpen: (v: ArtifactView) => 
   );
 }
 
-type DocGroup = { channelId: number; channelName: string | null; channelSlug: string | null; docs: TeamDocument[] };
+type DocGroup = {
+  key: string;
+  /** Presente si el grupo es un DM. Su enlace no es un room: los DMs se abren con
+   *  `/c/$slug?dm=<id>` (ver `validateSearch` en `c.$slug.tsx`). */
+  dmId?: number;
+  channelName: string | null;
+  channelSlug: string | null;
+  /** Marca de quién más lo ve. Viene resuelta del servidor. */
+  audience?: TeamDocument["audience"];
+  audienceNames?: string[];
+  docs: TeamDocument[];
+};
+
+
+// Quién MÁS ve los documentos de este grupo. Sin marca = canal público.
+//
+// Tres textos y no uno: «Sólo tú» en un DM de dos personas, o en un canal privado con
+// miembros, es falso — y es justo el error que hace que alguien comparta de más creyendo
+// que no lo ve nadie.
+function AudienceBadge({ audience, names }: { audience?: TeamDocument["audience"]; names?: string[] }) {
+  const t = useT();
+  if (!audience) return null;
+  const label =
+    audience === "solo"
+      ? t("Sólo tú")
+      : audience === "conmigo"
+        ? `${t("Tú y")} ${(names ?? []).join(", ")}`
+        : t("Privado");
+  return (
+    <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-surface-3 px-2 py-0.5 text-[11px] text-muted">
+      <Lock size={10} className="shrink-0" /> {label}
+    </span>
+  );
+}
 
 function ArtifactsPage() {
   const t = useT();
@@ -92,10 +125,25 @@ function ArtifactsPage() {
   // que los casos con actividad más reciente salgan primero.
   const groups = useMemo<DocGroup[] | null>(() => {
     if (!docs) return null;
-    const map = new Map<number, DocGroup>();
+    // ⚠️ La clave es STRING y lleva el espacio ("dm:" / "ch:"). Con el `channelId` a
+    // secas, TODOS los documentos de DM caen en el grupo `0` —un mensaje de DM tiene
+    // `channel_id = 0`— y se mezclan los de conversaciones distintas bajo «Sin caso».
+    const map = new Map<string, DocGroup>();
     for (const d of docs) {
-      let g = map.get(d.channelId);
-      if (!g) { g = { channelId: d.channelId, channelName: d.channelName, channelSlug: d.channelSlug, docs: [] }; map.set(d.channelId, g); }
+      const key = d.dmId ? `dm:${d.dmId}` : `ch:${d.channelId}`;
+      let g = map.get(key);
+      if (!g) {
+        g = {
+          key,
+          dmId: d.dmId,
+          channelName: d.channelName,
+          channelSlug: d.channelSlug,
+          audience: d.audience,
+          audienceNames: d.audienceNames,
+          docs: [],
+        };
+        map.set(key, g);
+      }
       g.docs.push(d);
     }
     return [...map.values()];
@@ -134,10 +182,23 @@ function ArtifactsPage() {
             // expediente (generados + subidos), unificados. Solo rooms que puedes ver.
             <div className="flex flex-col gap-8">
               {groups!.map((g) => (
-                <section key={g.channelId}>
+                <section key={g.key}>
                   <div className="mb-3 flex items-center gap-2 border-b border-border/70 pb-2">
-                    <Hash size={15} className="shrink-0 text-brand" />
-                    {g.channelSlug ? (
+                    {g.dmId ? (
+                      <MessageCircle size={15} className="shrink-0 text-brand" />
+                    ) : (
+                      <Hash size={15} className="shrink-0 text-brand" />
+                    )}
+                    {g.dmId ? (
+                      <Link
+                        to="/c/$slug"
+                        params={{ slug: "general" }}
+                        search={{ dm: g.dmId }}
+                        className="truncate text-sm font-semibold text-ink hover:text-ink"
+                      >
+                        {g.channelName ?? "Mensaje directo"}
+                      </Link>
+                    ) : g.channelSlug ? (
                       <Link to="/c/$slug" params={{ slug: g.channelSlug }} className="truncate text-sm font-semibold text-ink hover:text-ink">
                         {g.channelName ?? g.channelSlug}
                       </Link>
@@ -145,6 +206,7 @@ function ArtifactsPage() {
                       <span className="truncate text-sm font-semibold text-ink">{g.channelName ?? "Sin caso"}</span>
                     )}
                     <span className="text-xs text-faint">· {g.docs.length}</span>
+                    <AudienceBadge audience={g.audience} names={g.audienceNames} />
                   </div>
                   <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                     {g.docs.map((d) => (

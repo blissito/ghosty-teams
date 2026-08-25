@@ -15,6 +15,25 @@ export type TeamDocument = {
   channelId: number;
   channelName: string | null;
   channelSlug: string | null;
+  /** DM del que viene el documento. Presente SÓLO para los de un mensaje directo.
+   *  No se reutiliza `channelId` con un id sintético: alimenta también `threadRootId`
+   *  y la clave de agrupación, y un valor inventado se propaga a sitios que esperan
+   *  un canal real. */
+  dmId?: number;
+  /** Quién MÁS ve este documento. Decide la marca del grupo.
+   *
+   *  - `"solo"`    — nadie más: un DM con el agente.
+   *  - `"conmigo"` — un DM 1:1: `audienceNames` trae a la otra persona.
+   *  - `"privado"` — un canal privado: lo ven sus miembros, que no se enumeran aquí.
+   *  - ausente     — canal público, sin marca.
+   *
+   *  Son cuatro estados y no un booleano porque «Sólo tú», «Tú y Rodrigo» y «Privado»
+   *  dicen cosas distintas. Colapsarlos —rotular «Sólo tú» un DM de dos, o un canal
+   *  privado con miembros— es exactamente el error que hace que alguien comparta de más
+   *  creyendo que no lo ve nadie. */
+  audience?: "solo" | "conmigo" | "privado";
+  /** Los OTROS del DM. Sólo con `audience: "conmigo"`. */
+  audienceNames?: string[];
   messageId: number;
   threadRootId: number; // raíz del hilo del mensaje (parent_id ?? id) → alcance "Este hilo"
   createdAt: number;
@@ -44,20 +63,91 @@ function uploadedKind(mime: string, name: string): TeamDocument["kind"] {
   return "file";
 }
 
+/** El ALCANCE de lectura de una persona: los canales que puede ver y los DMs de los que
+ *  es miembro, más la etiqueta de cada DM para pintar el grupo.
+ *
+ *  ⚠️ Los DMs faltaban, y por eso «Documentos» mentía. Un mensaje de DM tiene
+ *  `channel_id` = **0** (entero, no NULL), así que fallaba las DOS ramas del filtro: ni
+ *  está en la lista de canales, ni es NULL. La rama de `owner_sub` se escribió para
+ *  artefactos HUÉRFANOS —cuyo mensaje se borró— y por eso pide NULL; nunca contempló los
+ *  DMs. Medido en descti el 2026-08-24: 6 de sus 9 documentos (el expediente LANUA
+ *  entero) no se listaban para NADIE, ni para quien los subió.
+ *
+ *  El alcance de un DM es su MEMBRESÍA, no `owner_sub`: los dos participantes ya ven el
+ *  documento en el hilo, así que listárselo sólo a quien lo subió dejaría al otro sin
+ *  verlo en el panel teniéndolo delante. Y los adjuntos ni siquiera guardan dueño:
+ *  cuelgan del mensaje.
+ *
+ *  `listDmConversations` ya viene acotada al usuario (`JOIN gc_dm_members … WHERE
+ *  mm.user_sub = ?`), así que el muro ético lo pone ella. */
+async function readScope(me: { sub: string; isOwner?: boolean | number | null }) {
+  const db = await import("../db.server");
+  const [channels, dms] = await Promise.all([
+    db.listChannels(me.sub, !!me.isOwner).catch(() => []),
+    db.listDmConversations(me.sub).catch(() => []),
+  ]);
+  // Etiqueta del grupo: el agente si el DM es con uno, si no la persona del otro lado.
+  //
+  // `audience` es QUIÉN MÁS lo ve, y tiene que decir la verdad: un DM con el agente sólo
+  // lo ve esta persona, pero uno con Rodrigo lo ven dos. Rotular «Sólo tú» un DM de dos
+  // es la clase de error que hace que alguien comparta de más creyendo que no.
+  const dmLabel = new Map<number, string>();
+  const dmAudience = new Map<number, string[]>();
+  for (const c of dms) {
+    const otros = c.members.map((m) => m.name || m.email).filter(Boolean) as string[];
+    dmLabel.set(c.id, c.title || otros.join(", ") || "Mensaje directo");
+    // Un DM con un agente no tiene humanos del otro lado: `agent_handle` lo marca.
+    dmAudience.set(c.id, c.agent_handle ? [] : otros);
+  }
+  const chanPrivate = new Map<number, boolean>();
+  for (const c of channels) chanPrivate.set(c.id, !!c.is_private);
+  return {
+    chanIds: channels.map((c) => c.id),
+    dmIds: dms.map((c) => c.id),
+    dmLabel,
+    dmAudience,
+    chanPrivate,
+  };
+}
+
+/** Las dos ramas del alcance, ya en SQL. Devuelve `null` si la persona no ve NADA —
+ *  ahí el llamador corta antes de consultar.
+ *
+ *  ⚠️ `IN ()` con lista vacía es error de sintaxis en SQLite, así que cada rama sólo se
+ *  emite si tiene elementos. */
+function scopeSql(
+  chanIds: number[],
+  dmIds: number[]
+): { sql: string; args: (number | string)[] } | null {
+  const parts: string[] = [];
+  const args: (number | string)[] = [];
+  if (chanIds.length) {
+    parts.push(`m.channel_id IN (${chanIds.map(() => "?").join(",")})`);
+    args.push(...chanIds);
+  }
+  if (dmIds.length) {
+    parts.push(`m.dm_id IN (${dmIds.map(() => "?").join(",")})`);
+    args.push(...dmIds);
+  }
+  if (!parts.length) return null;
+  return { sql: `(${parts.join(" OR ")})`, args };
+}
+
 export const listTeamDocumentsFn = createServerFn({ method: "GET" }).handler(async () => {
   const { sessionUser } = await import("./chat");
   const me = await sessionUser();
   if (!me) return [] as TeamDocument[];
   const { dbq, num } = await import("../dbq.server");
-  const db = await import("../db.server");
 
-  // Muro ético (matter-centric): solo docs de rooms que ESTE user puede ver — mismo
-  // scope que la lista de canales (is_private=0 OR owner OR miembro). Sin esto un
-  // invitado vería docs de casos ajenos.
-  const channels = await db.listChannels(me.sub, !!me.isOwner).catch(() => []);
-  const chanIds = channels.map((c) => c.id);
-  if (!chanIds.length) return [] as TeamDocument[];
-  const ph = chanIds.map(() => "?").join(",");
+  // Muro ético (matter-centric): solo docs de rooms que ESTE user puede ver y de DMs de
+  // los que es miembro. Sin esto un invitado vería docs de casos ajenos.
+  //
+  // ⚠️ El corte por lista vacía mira LAS DOS: antes bastaba con quedarse sin canales para
+  // devolver nada, y alguien que sólo tiene DMs se iba con las manos vacías.
+  const scope = await readScope(me);
+  const { chanIds, dmIds } = scope;
+  const where = scopeSql(chanIds, dmIds);
+  if (!where) return [] as TeamDocument[];
 
   // Generados por el agente (eb-doc/eb-sheet/office/html committed a gc_artifacts).
   // ⚠️ `archived_at IS NULL`: la papelera no se lista aquí (ver listArchivedDocumentsFn).
@@ -71,27 +161,27 @@ export const listTeamDocumentsFn = createServerFn({ method: "GET" }).handler(asy
   // canal el muro ético de arriba no aplica. Se acota a SU DUEÑO — así el documento sigue
   // siendo recuperable por quien lo hizo sin exponer casos ajenos a los demás.
   const generated = await dbq(
-    `SELECT a.id, a.kind, a.url, a.title, a.md, a.message_id, m.channel_id, m.parent_id,
+    `SELECT a.id, a.kind, a.url, a.title, a.md, a.message_id, m.channel_id, m.dm_id, m.parent_id,
             COALESCE(m.created_at, a.created_at) AS created_at, c.name AS room_name, c.slug AS room_slug
        FROM gc_artifacts a
        LEFT JOIN gc_messages m ON m.id = a.message_id
        LEFT JOIN gc_channels c ON c.id = m.channel_id
       WHERE a.archived_at IS NULL
-        AND (m.channel_id IN (${ph}) OR (m.channel_id IS NULL AND a.owner_sub = ?))
+        AND (${where.sql} OR (m.channel_id IS NULL AND a.owner_sub = ?))
       ORDER BY created_at DESC`,
-    [...chanIds, me.sub]
+    [...where.args, me.sub]
   ).catch(() => []);
 
   // Subidos por el usuario (arrojados al chat → EasyBits privado).
   const uploaded = await dbq(
-    `SELECT att.id, att.file_id, att.mime, att.size, att.name, att.message_id, m.channel_id, m.parent_id,
+    `SELECT att.id, att.file_id, att.mime, att.size, att.name, att.message_id, m.channel_id, m.dm_id, m.parent_id,
             m.created_at, c.name AS room_name, c.slug AS room_slug
        FROM gc_attachments att
        JOIN gc_messages m ON m.id = att.message_id
        LEFT JOIN gc_channels c ON c.id = m.channel_id
-      WHERE att.archived_at IS NULL AND m.channel_id IN (${ph})
+      WHERE att.archived_at IS NULL AND ${where.sql}
       ORDER BY m.created_at DESC`,
-    chanIds
+    where.args
   ).catch(() => []);
 
   // Raíz del hilo del mensaje: un reply → su parent_id; un top-level → su propio id.
@@ -103,6 +193,37 @@ export const listTeamDocumentsFn = createServerFn({ method: "GET" }).handler(asy
   // Dedup por documentId: en EasyBits un doc ES uno solo que versiona. Cada re-emisión
   // del MISMO documentId es OTRA fila en gc_artifacts (una por mensaje) → aquí colapsamos
   // a UN tile (la última versión, porque viene DESC por created_at) contando versiones.
+  // Un documento de DM no tiene canal: su "caso" es la conversación. `channelName` se
+  // llena con la etiqueta del DM para que el grupo se pinte igual que un room.
+  const anclaje = (channelId: unknown, dmIdRaw: unknown, roomName: unknown, roomSlug: unknown) => {
+    const dmId = dmIdRaw != null ? num(dmIdRaw as never) : 0;
+    if (dmId) {
+      return {
+        channelId: 0,
+        dmId,
+        channelName: scope.dmLabel.get(dmId) ?? "Mensaje directo",
+        channelSlug: null,
+        ...(() => {
+          const otros = scope.dmAudience.get(dmId) ?? [];
+          return otros.length
+            ? { audience: "conmigo" as const, audienceNames: otros }
+            : { audience: "solo" as const };
+        })(),
+      };
+    }
+    const cid = num(channelId as never);
+    return {
+      channelId: cid,
+      dmId: undefined,
+      channelName: (roomName as string) ?? null,
+      channelSlug: (roomSlug as string) ?? null,
+      // Un canal privado también se marca: hasta hoy la página no distinguía «General»
+      // de «Gestión Estratégica», que es privado. Los DMs sólo lo hicieron evidente.
+      // `undefined` en un canal público → sin marca.
+      audience: scope.chanPrivate.get(cid) ? ("privado" as const) : undefined,
+    };
+  };
+
   const seenDoc = new Map<string, TeamDocument>();
   for (const g of generated) {
     const docId = (g.url && String(g.url)) || `g${g.id}`;
@@ -117,9 +238,7 @@ export const listTeamDocumentsFn = createServerFn({ method: "GET" }).handler(asy
       source: "generated",
       kind,
       title: g.title || "Documento",
-      channelId: num(g.channel_id),
-      channelName: g.room_name ?? null,
-      channelSlug: g.room_slug ?? null,
+      ...anclaje(g.channel_id, g.dm_id, g.room_name, g.room_slug),
       messageId: num(g.message_id),
       threadRootId: rootOf(g.parent_id, g.message_id),
       createdAt: num(g.created_at),
@@ -142,9 +261,7 @@ export const listTeamDocumentsFn = createServerFn({ method: "GET" }).handler(asy
       source: "uploaded",
       kind,
       title: name || "Archivo",
-      channelId: num(u.channel_id),
-      channelName: u.room_name ?? null,
-      channelSlug: u.room_slug ?? null,
+      ...anclaje(u.channel_id, u.dm_id, u.room_name, u.room_slug),
       messageId: num(u.message_id),
       threadRootId: rootOf(u.parent_id, u.message_id),
       createdAt: num(u.created_at),
@@ -236,10 +353,11 @@ export const listArchivedDocumentsFn = createServerFn({ method: "GET" }).handler
   const me = await sessionUser();
   if (!me) return [] as ArchivedDocument[];
   const { dbq, num } = await import("../dbq.server");
-  const db = await import("../db.server");
-  const channels = await db.listChannels(me.sub, !!me.isOwner).catch(() => []);
-  const chanIds = channels.map((c) => c.id);
-  const ph = chanIds.length ? chanIds.map(() => "?").join(",") : "NULL";
+  // MISMO alcance que el listado vivo, DMs incluidos. Si aquí se quedara sólo con los
+  // canales, un documento de DM se podría archivar y luego no aparecería en la papelera:
+  // irrecuperable hasta que lo purgue la retención.
+  const { chanIds, dmIds } = await readScope(me);
+  const where = scopeSql(chanIds, dmIds);
   // Una fila por DOCUMENTO (MIN(id) = la raíz), no una por versión: si no, la papelera
   // mostraría el mismo documento veinte veces.
   const rows = await dbq(
@@ -250,10 +368,10 @@ export const listArchivedDocumentsFn = createServerFn({ method: "GET" }).handler
        LEFT JOIN gc_messages m ON m.id = a.message_id
        LEFT JOIN gc_channels c ON c.id = m.channel_id
       WHERE a.archived_at IS NOT NULL
-        AND (m.channel_id IN (${ph}) OR (m.channel_id IS NULL AND a.owner_sub = ?))
+        AND (${where ? where.sql : "0"} OR (m.channel_id IS NULL AND a.owner_sub = ?))
       GROUP BY a.url
       ORDER BY MAX(a.archived_at) DESC`,
-    [...chanIds, me.sub]
+    [...(where ? where.args : []), me.sub]
   ).catch(() => []);
   const ahora = Math.floor(Date.now() / 1000);
   return rows.map((r: any) => ({

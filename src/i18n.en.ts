@@ -443,6 +443,9 @@ export const en: Record<string, string> = {
   "Pregunta lo que sea… (tagea @ghosty)": "Ask anything… (tag @ghosty)",
   "Presentación": "Presentation",
   "Privado": "Private",
+  // Marca de audiencia en «Documentos». "Tú y" se concatena con los nombres.
+  "Sólo tú": "Only you",
+  "Tú y": "You and",
   "Privado (solo miembros invitados)": "Private (invited members only)",
   "Prompt base (todos los canales)": "Base prompt (all channels)",
   "Próximamente": "Coming soon",
