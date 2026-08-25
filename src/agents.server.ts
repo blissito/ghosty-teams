@@ -1232,6 +1232,51 @@ import { toolLabel } from "./lib/tool-label";
 export type ToolEvent = { name?: string; id?: string; phase?: "start" | "end"; ok?: boolean; detail?: string };
 
 /**
+ * El turno NO terminó: lo cortó el runtime (se acabaron los pasos o el presupuesto, o la
+ * API contestó mal a media conversación).
+ *
+ * ⚠️ `notice` es el campo de COMPATIBILIDAD, y su default importa. Los workers con imagen
+ * vieja ya mandan su propio aviso dentro del texto (`notice` ausente ⇒ "inline"): si Teams
+ * pintara el suyo encima, la persona vería DOS avisos que se contradicen. Sólo se pinta con
+ * `notice === "event"`, que un worker únicamente emite cuando ya dejó de escribirlo él.
+ *
+ * Nunca se resuelve mirando el texto (`body.includes("Me quedé a medias")`): eso se rompe
+ * el día que alguien edite la frase, y se rompe en silencio.
+ */
+export type TruncatedEvent = {
+  subtype: string;
+  /** `session` = reintentar NO sirve, la conversación quedó inservible. Ver `avisoDeCorte`. */
+  classification?: string;
+  numTurns?: number;
+  stopReason?: string | null;
+  notice?: "inline" | "event";
+};
+
+/**
+ * Qué decirle a la persona según POR QUÉ se cortó.
+ *
+ * ⚠️ El aviso viejo decía "pídemelo otra vez" pasara lo que pasara, y para la clase
+ * `session` eso es mandarla contra la misma pared: el turno se cortó porque la conversación
+ * acumuló demasiadas imágenes, así que repetir la petición vuelve a reventar. El 2026-08-25
+ * un cliente lo intentó y abandonó ahí.
+ *
+ * El reset NO se hace solo ni se ofrece de un clic: borra la memoria de la conversación, y
+ * en un expediente de varios días eso es más caro que el turno perdido. Se dice y decide la
+ * persona.
+ */
+export function avisoDeCorte(ev: TruncatedEvent): string {
+  if (ev.classification === "session") {
+    return (
+      "⚠️ Esta conversación acumuló demasiadas imágenes y el turno ya no cabe. " +
+      "Repetir la petición volverá a fallar. Para seguir, empieza una conversación nueva " +
+      "(o usa `/clear` aquí, que **borra la memoria de este chat**). Si el trabajo depende " +
+      "de un documento, vuelve a adjuntarlo ahí y seguimos."
+    );
+  }
+  return "_Me quedé a medias: el turno se cortó antes de terminar. Pídemelo otra vez y sigo desde aquí._";
+}
+
+/**
  * STEER: el turno no se abrió — el mensaje entró al que ya corría y su respuesta sale por
  * AQUELLA burbuja. Se propaga como valor de retorno (no como excepción) porque no es un
  * fallo: es el camino feliz de escribir mientras el agente trabaja.
@@ -1277,7 +1322,11 @@ export async function callAgentBackendStream(
    * Es el mismo patrón que sofi-0/tania-0 ya usan en producción: el turno público no tiene
    * las herramientas privilegiadas, y eso se resuelve fuera del alcance del modelo.
    */
-  publicChannel?: boolean
+  publicChannel?: boolean,
+  /** El turno se cortó. Se avisa por callback y NO por el texto del stream: el cuerpo
+   *  autoritativo lo pisa `done.value` (ver el bucle de abajo), así que un aviso metido
+   *  por `onChunk` se vería en vivo y desaparecería del historial. */
+  onTruncated?: (ev: TruncatedEvent) => void
 ): Promise<string> {
   // El webhook sigue sin SSE: junta el reply y lo emite de un tirón. Un agente A2A NO cae
   // aquí — tiene streaming de verdad y se atiende más abajo.
@@ -1814,7 +1863,7 @@ export async function callAgentBackendStream(
           buf = buf.slice(nl + 2);
           const line = frame.split("\n").find((l) => l.startsWith("data:"));
           if (!line) continue;
-          let ev: { type?: string; value?: string; message?: string; name?: string; id?: string; phase?: "start" | "end"; ok?: boolean; detail?: string };
+          let ev: { type?: string; value?: string; message?: string; name?: string; id?: string; phase?: "start" | "end"; ok?: boolean; detail?: string } & Partial<TruncatedEvent>;
           try {
             ev = JSON.parse(line.slice(5).trim());
           } catch {
@@ -1829,6 +1878,10 @@ export async function callAgentBackendStream(
           } else if (ev.type === "tool") {
             // start trae name+id+detail; end trae id+ok. Correlación por id en runAgentTurn.
             await onTool?.({ name: ev.name, id: ev.id, phase: ev.phase ?? "start", ok: ev.ok, detail: ev.detail });
+          } else if (ev.type === "truncated") {
+            // ⚠️ NO lanza. Sólo `error` lanza, y así debe seguir: un corte que tire el turno
+            // perdería el trabajo parcial, que es justo lo que este aviso viene a conservar.
+            onTruncated?.({ subtype: String(ev.subtype ?? "unknown"), classification: ev.classification, numTurns: ev.numTurns, stopReason: ev.stopReason, notice: ev.notice });
           } else if (ev.type === "done") {
             authoritative = ev.value ?? streamed;
           } else if (ev.type === "error") {
@@ -2371,12 +2424,17 @@ async function runAgentTurnInner(opts: {
   };
 
   let reply: string;
+  /** El corte, si lo hubo. Se compone al final, sobre el texto autoritativo.
+   *  Va en un contenedor y no en un `let` suelto porque la única asignación ocurre dentro
+   *  del callback, que el análisis de flujo de TS no rastrea: con un `let` lo estrecha a
+   *  `null` y leer `.notice` deja de compilar. */
+  const corte: { ev: TruncatedEvent | null } = { ev: null };
   if (!opts.agent) {
     reply = `👾 @${opts.handle} no está conectado. El owner lo configura en Ajustes → Agentes.`;
     await onChunk(reply);
   } else {
     try {
-      reply = await callAgentBackendStream(opts.agent, opts.groupId, opts.sender, opts.text, onChunk, opts.parts ?? [], onTool, opts.currentDoc, opts.invokerSub, opts.signal, opts.dest, opts.inject, opts.originOverride, opts.publicChannel);
+      reply = await callAgentBackendStream(opts.agent, opts.groupId, opts.sender, opts.text, onChunk, opts.parts ?? [], onTool, opts.currentDoc, opts.invokerSub, opts.signal, opts.dest, opts.inject, opts.originOverride, opts.publicChannel, (t) => { corte.ev = t; });
     } catch (e) {
       // Detenido: NO es un error del agente. Se conserva lo que alcanzó a escribir y se
       // dice que se detuvo — borrarlo tiraría trabajo que el usuario ya estaba leyendo.
@@ -2394,8 +2452,16 @@ async function runAgentTurnInner(opts: {
   }
   // `acc` (con separadores) es el texto bonito; reply es la acumulación cruda del stream.
   const finalText = narration().trim() || reply || "(sin respuesta)";
+  // El aviso de corte se pega AQUÍ y no por `onChunk` a propósito: éste es el cuerpo que el
+  // caller persiste. Metido en el stream se vería en vivo y `done.value` lo borraría del
+  // historial — el turno quedaría cortado sin decirlo, que es el bug original.
+  //
+  // `notice === "event"` sólo lo manda un worker que ya NO escribe el aviso él mismo. Con
+  // una caja de imagen vieja el campo no viene, y aquí no se pinta nada: su frase sigue
+  // dentro del texto y se ve una sola vez.
+  const avisoCorte = corte.ev?.notice === "event" ? `\n\n${avisoDeCorte(corte.ev)}` : "";
   // Body final autoritativo: bloque gt-tools TODO ✅ + texto separado. El caller lo persiste.
-  return { id: await ensure(), reply: renderToolBlock(true) + finalText };
+  return { id: await ensure(), reply: renderToolBlock(true) + finalText + avisoCorte };
 }
 
 // Llama al backend del agente y devuelve su respuesta en texto.
