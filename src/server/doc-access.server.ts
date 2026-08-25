@@ -80,7 +80,7 @@ export async function resolveDocRole(
     if (root.ownerSub && root.ownerSub === me.sub) return "edit";
     if (me.isOwner) return "edit";
     // Miembro del room donde vive el documento → es del equipo, edita.
-    if (await esDelRoom(documentId, me)) return "edit";
+    if (await canReachDocument(documentId, me)) return "edit";
   }
   // Lo único que queda es la liga. OJO: tener sesión NO basta — un miembro del
   // workspace ajeno al room llega aquí y debe quedarse con lo que da el enlace, no
@@ -88,27 +88,55 @@ export async function resolveDocRole(
   return root.visibility === "link" ? root.role : null;
 }
 
-/** ¿Puede ver el room donde vive el mensaje del artefacto? (sin contar la liga) */
-async function esDelRoom(
+/** ¿El documento está en un sitio que ESTA persona alcanza? — canal visible, o un DM del
+ *  que es miembro.
+ *
+ *  Es la única fuente del criterio: `resolveDocRole` y `puedeVer` tenían **la misma
+ *  consulta duplicada**, así que un arreglo en una dejaba a la otra atrás.
+ *
+ *  ⚠️ Antes devolvía `true` cuando no encontraba canal, y eso era un agujero: el
+ *  `channel_id` de un mensaje de DM es **0**, y no hay `gc_channels` con id 0, así que el
+ *  JOIN no casaba y **un documento nacido en un 1:1 privado quedaba editable por
+ *  cualquiera con sesión** que tuviera el `documentId`. Se toleró porque ese mismo `true`
+ *  sostenía a los documentos sin mensaje (el mensaje se borró), y no se sabía cuántos
+ *  eran.
+ *
+ *  Medido el 2026-08-24 en los 13 tenants: 47 de canal, 44 de DM, **26 huérfanos** — o
+ *  sea que no se podía cerrar en seco. Los tres casos se separan:
+ *
+ *  1. **canal** → `canSeeChannel`, como siempre.
+ *  2. **DM** → ¿eres miembro? Es la membresía y NO `owner_sub`: 13 de los 42 documentos
+ *     de DM de `business` no tienen dueño registrado, y con la regla del dueño se
+ *     habrían vuelto inalcanzables para todos.
+ *  3. **huérfano** → `false`. No es un cierre total: `resolveDocRole` y `puedeVer` ya
+ *     comprobaron dueño del documento y dueño del workspace ANTES de llegar aquí, y 24
+ *     de los 25 huérfanos de `business` conservan su `owner_sub`.
+ *
+ *  ⚠️ Lo que sí cambia para alguien: quien viniera editando un documento huérfano AJENO
+ *  deja de poder, y no hay ningún mensaje que se lo explique. Decidido a propósito el
+ *  2026-08-24. */
+async function canReachDocument(
   documentId: string,
   me: { sub: string; isOwner: boolean }
 ): Promise<boolean> {
   const db = await import("../db.server");
   const { dbq, num } = await import("../dbq.server");
+  // La fila más VIEJA del documento es la que lo ancla (cada publicación es un INSERT).
   const rows = await dbq(
-    `SELECT c.id, c.is_private FROM gc_artifacts a
+    `SELECT m.channel_id, m.dm_id, c.is_private FROM gc_artifacts a
        JOIN gc_messages m ON m.id = a.message_id
-       JOIN gc_channels c ON c.id = m.channel_id
+       LEFT JOIN gc_channels c ON c.id = m.channel_id
       WHERE a.url = ? ORDER BY a.id ASC LIMIT 1`,
     [documentId]
   );
-  const ch = rows[0];
-  // Sin room resoluble (un DM, o filas viejas sin ancla) se cae a la misma regla
-  // permisiva que `puedeVer`: tener sesión. Endurecerlo aquí rompería documentos que
-  // hoy se editan.
-  if (!ch) return true;
+  const row = rows[0];
+  if (!row) return false; // huérfano: sin mensaje no hay sitio que comprobar
+  const dmId = row.dm_id != null ? num(row.dm_id) : 0;
+  if (dmId) return db.isDmMember(dmId, me.sub);
+  const channelId = num(row.channel_id);
+  if (!channelId) return false; // ni canal ni DM: no hay a qué pertenecer
   return db.canSeeChannel(
-    { id: num(ch.id), is_private: num(ch.is_private) } as never,
+    { id: channelId, is_private: num(row.is_private) } as never,
     me.sub,
     me.isOwner
   );
@@ -119,7 +147,6 @@ async function puedeVer(
   me: { sub: string; isOwner: boolean } | null
 ): Promise<boolean> {
   const db = await import("../db.server");
-  const { dbq, num } = await import("../dbq.server");
 
   const root = await db.shareRootFor(documentId);
   // Compartido por liga: cualquiera, con o sin sesión. Es exactamente lo que promete el
@@ -129,24 +156,9 @@ async function puedeVer(
   if (root?.ownerSub && root.ownerSub === me.sub) return true;
   if (me.isOwner) return true;
 
-  // Si no es el dueño: ¿puede ver el room donde vive el mensaje del artefacto?
-  const rows = await dbq(
-    `SELECT c.id, c.is_private FROM gc_artifacts a
-       JOIN gc_messages m ON m.id = a.message_id
-       JOIN gc_channels c ON c.id = m.channel_id
-      WHERE a.url = ? ORDER BY a.id ASC LIMIT 1`,
-    [documentId]
-  );
-  const ch = rows[0];
-  // Sin room resoluble (un DM, o filas viejas sin ancla) se cae a la regla de antes —tener
-  // sesión—: endurecerlo aquí rompería descargas que hoy funcionan, y el DM ya tiene su
-  // propio control de acceso.
-  if (!ch) return true;
-  return db.canSeeChannel(
-    { id: num(ch.id), is_private: num(ch.is_private) } as never,
-    me.sub,
-    me.isOwner
-  );
+  // Si no es el dueño: ¿alcanza el sitio donde vive el documento? MISMO criterio que el
+  // panel — antes era esta consulta repetida a mano.
+  return canReachDocument(documentId, me);
 }
 
 /**
