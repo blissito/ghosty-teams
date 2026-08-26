@@ -38,7 +38,7 @@ export function QuickCallDock({ room, label }: { room: Room; label: string }) {
     const y = Math.max(4, Math.min(pos.y, window.innerHeight - r.height - 4));
     if (x !== pos.x || y !== pos.y) setPos({ x, y });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [compact, hasVideo, expanded]);
+  }, [compact, hasVideo, expanded, pip]);
 
   // Arrastra el dock por su barra (solo acoplado). Se clampa al viewport.
   const startDrag = (e: React.PointerEvent) => {
@@ -95,8 +95,21 @@ export function QuickCallDock({ room, label }: { room: Room; label: string }) {
     return (
       <>
         {/* Rastro en la página: sin esto la llamada desaparece de la app y no hay forma
-            de traerla de vuelta si la ventana quedó detrás de otra. */}
-        <div className="fixed right-4 top-4 z-50 flex items-center gap-2 rounded-xl border-2 border-brand/40 bg-surface-2 px-3 py-2 shadow-2xl ring-1 ring-black/10">
+            de traerla de vuelta si la ventana quedó detrás de otra.
+            Arrastrable por las MISMAS razones que el dock: vive fijo arriba-derecha, que es
+            justo donde muchas pantallas tienen sus propios controles, y tapaba sin remedio.
+            Comparte `pos` y `startDrag` con el dock; el clamp de arriba corre al entrar y
+            salir de PiP porque el chip es mucho más chico y la posición del dock lo dejaría
+            flotando lejos del borde. */}
+        <div
+          ref={dockRef}
+          onPointerDown={startDrag}
+          style={pos ? { left: pos.x, top: pos.y } : undefined}
+          className={
+            "fixed z-50 flex cursor-move select-none items-center gap-2 rounded-xl border-2 border-brand/40 bg-surface-2 px-3 py-2 shadow-2xl ring-1 ring-black/10" +
+            (pos ? "" : " right-4 top-4")
+          }
+        >
           <Headphones size={15} className="shrink-0 text-brand" />
           <span className="max-w-[14rem] truncate text-sm font-semibold text-ink">{label}</span>
           <button
