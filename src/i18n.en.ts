@@ -206,6 +206,8 @@ export const en: Record<string, string> = {
   "Conecta tu cuenta para tener a @ghosty": "Connect your account to get @ghosty",
   "Conectados ahora": "Connected now",
   "Conectando…": "Connecting…",
+  "Comprobando…": "Checking…",
+  "Cómo obtener estos datos": "How to get these details",
   "Conectar": "Connect",
   "Conectar EasyBits": "Connect EasyBits",
   "Conectores": "Connectors",

@@ -8,6 +8,43 @@
 
 export type ConnectorStatus = "available" | "soon";
 
+/**
+ * Un campo del formulario de conexión de un conector por CREDENCIALES.
+ *
+ * Existe porque no todo proveedor es OAuth: Odoo pide URL + base de datos + usuario + API
+ * key, Kommo pide subdominio + token de larga duración, y los que vengan pedirán lo suyo.
+ * Declarándolos, el formulario, la validación y el guard de red son UNO para toda la
+ * familia — agregar el siguiente cuesta una entrada aquí y un módulo, igual que un OAuth.
+ */
+export type CredentialField = {
+  key: string; // "url" | "db" | "login" | "apiKey" | "subdomain" …
+  label: string;
+  type: "text" | "password" | "url";
+  placeholder?: string;
+  help?: string; // una línea: DÓNDE se saca el dato
+  required?: boolean; // default true
+  /** El secreto. EXACTAMENTE uno por conector → va a `access_token`, como un token OAuth. */
+  secret?: boolean;
+  /** El servidor va a hacerle `fetch` a esto ⇒ pasa por el guard de red. */
+  host?: boolean;
+  /** Para proveedores que piden un subdominio: `"https://{value}.kommo.com"`. */
+  hostTemplate?: string;
+};
+
+export type CredentialsDef = {
+  fields: CredentialField[];
+  /** Qué va a poder hacer el agente y qué NO. Lo lee la persona antes de pegar su llave. */
+  intro?: string;
+  /** Guía del proveedor para crear la credencial. */
+  docsUrl?: string;
+  /**
+   * Sufijos de dominio admitidos. Para un SaaS de host fijo (Kommo) ésta es la defensa
+   * anti-SSRF más eficaz y más barata que cualquier validador. Se omite en proveedores
+   * que se auto-hospedan (Odoo), donde manda el guard genérico.
+   */
+  allowHostSuffixes?: string[];
+};
+
 export type ConnectorDef = {
   id: string; // slug URL-safe; = segmento de /setup/<id>/connect
   name: string;
@@ -21,6 +58,9 @@ export type ConnectorDef = {
   // que elegir a qué repositorios llega la app, y eso se cambia después sin
   // reconectar. Sin este botón el usuario no tiene forma de descubrirlo.
   manage?: { url: string; label: string };
+  // Conexión por credenciales tecleadas, la hermana de `oauth`. Son EXCLUYENTES: un
+  // conector tiene una forma de conectarse o la otra, nunca las dos (hay un test).
+  credentials?: CredentialsDef;
   oauth?: {
     authUrl: string;
     tokenUrl: string;
@@ -250,6 +290,53 @@ export const CONNECTORS: ConnectorDef[] = [
       // /applications/{client_id}/grant, que no es RFC 7009 y el cliente
       // genérico no sabe emitir. Desconectar borra la fila local; el usuario
       // quita la instalación en github.com/settings/installations.
+    },
+  },
+  {
+    id: "odoo",
+    name: "Odoo",
+    blurb:
+      "Deja que @ghosty trabaje en tu Odoo: consulta y actualiza clientes, oportunidades, cotizaciones e inventario.",
+    icon: "odoo",
+    type: "Web",
+    status: "available",
+    // Odoo NO es proveedor OAuth: su API (JSON-RPC) se autentica con una API key permanente
+    // ligada a un usuario y a una base de datos. Los cuatro datos los teclea la persona.
+    credentials: {
+      intro:
+        "El agente podrá consultar y modificar registros de tu Odoo. No puede borrar nada: cuando haga falta, archiva (que en Odoo se deshace).",
+      docsUrl: "https://www.odoo.com/documentation/master/developer/reference/external_api.html",
+      fields: [
+        {
+          key: "url",
+          label: "URL de tu Odoo",
+          type: "url",
+          host: true,
+          placeholder: "https://miempresa.odoo.com",
+          help: "La dirección donde entras a Odoo, sin la parte de /web/login.",
+        },
+        {
+          key: "db",
+          label: "Base de datos",
+          type: "text",
+          placeholder: "miempresa",
+          help: "En Odoo Online suele ser el subdominio. Si te equivocas, el agente te lo dirá al conectar.",
+        },
+        {
+          key: "login",
+          label: "Usuario (correo)",
+          type: "text",
+          placeholder: "ana@miempresa.com",
+          help: "El correo del usuario de Odoo que generó la API key.",
+        },
+        {
+          key: "apiKey",
+          label: "API key",
+          type: "password",
+          secret: true,
+          help: "En Odoo: Preferencias → Seguridad de la cuenta → Nueva clave API. Conviene crear un usuario dedicado con acceso sólo a los módulos que quieras que toque.",
+        },
+      ],
     },
   },
   // Próximamente (sin oauth aún → el panel los muestra como "Próximamente"):

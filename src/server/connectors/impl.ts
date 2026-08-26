@@ -48,6 +48,15 @@ export function notaNombres(toolChannel: ToolChannel = "gs-sdk"): string {
   return toolChannel === "mcp" ? NOTA_PREFIJO_MCP : "";
 }
 
+/**
+ * Resultado del "ping" de un conector por CREDENCIALES: prueba lo que tecleó la persona
+ * ANTES de que se guarde nada. El `error` lo lee un HUMANO en el formulario (a diferencia
+ * del `{error}` de un handler de tool, que lo lee el modelo), así que dice qué corregir.
+ */
+export type VerifyResult =
+  | { ok: true; externalId?: string | null; probe?: unknown }
+  | { ok: false; error: string };
+
 export type ConnectorModule = {
   // `message` = texto del turno del usuario → el conector decide si enriquece (p.ej. Calendly
   // sólo pega a la API en intención de agenda). La lógica per-conector vive AQUÍ, no en dm.ts.
@@ -78,6 +87,12 @@ export type ConnectorModule = {
   // un proyecto al canal privado de otro equipo. Es el mismo criterio que ya protege a las
   // tools nativas (ver tool-token.server.ts).
   tools?: ConnectorTool[] | ((sub: string, dest: ToolDest | null) => Promise<ConnectorTool[]>);
+  // Sólo conectores con `credentials` en el registry. Recibe los campos YA pasados por el
+  // guard de red (net-guard.server.ts) y NO recibe `sub`: no puede persistir nada ni
+  // saltarse el guard — de eso se encarga credentials.server.ts. Vive aquí y no en el
+  // registry porque el registry se importa SIEMPRE (lo lee el panel) y esto hace red: con
+  // 40 conectores serían 40 clientes HTTP cargados para pintar una lista.
+  verifyCredentials?: (fields: Record<string, string>) => Promise<VerifyResult>;
 };
 
 /** Resuelve `tools` sea lista o función. */
@@ -97,6 +112,7 @@ const LOADERS: Record<string, () => Promise<ConnectorModule>> = {
   denik: () => import("./denik.server"),
   sentry: () => import("./sentry.server"),
   github: () => import("./github.server"),
+  odoo: () => import("./odoo.server"),
 };
 
 export function loaderFor(id: string): (() => Promise<ConnectorModule>) | undefined {

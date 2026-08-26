@@ -26,6 +26,7 @@ export const listMyConnectorsFn = createServerFn({ method: "GET" }).handler(asyn
   // `listWorkspaceUsers` ya filtra a los baneados y no expone correos.
   const { listWorkspaceUsers } = await import("../users.server");
   const gente = new Map((await listWorkspaceUsers()).map((u) => [u.sub, u]));
+  const { describeCredentials } = await import("./connectors/credentials.server");
   const { listHooks } = await import("./hooks/registry.server");
   const hooks = await listHooks().catch(() => []);
 
@@ -38,6 +39,9 @@ export const listMyConnectorsFn = createServerFn({ method: "GET" }).handler(asyn
     custom: !!c.custom,
     status: c.status,
     manage: c.manage ?? null,
+    // La FORMA del formulario de credenciales (nunca valores) para los conectores que no
+    // son OAuth. `null` en los OAuth, que siguen yéndose por /setup/<id>/connect.
+    credentials: describeCredentials(c.id),
     connected: connected.has(c.id),
     // La conexión del EQUIPO, si la hay: quién la puso y si soy yo. `mine` es lo que
     // decide si el switch se pinta como "compartir la mía" o como "es de fulano".
@@ -99,6 +103,44 @@ export const startConnectFn = createServerFn({ method: "GET" })
     }
     return { url: buildAuthorizeUrl(def, redirectUri, state, challenge) };
   });
+
+// Conecta un proveedor por CREDENCIALES tecleadas (Odoo, Kommo…). Es la hermana de
+// startConnect+finishConnect, que no sirven aquí: no hay authorize al que mandar a nadie ni
+// callback que cerrar — la persona teclea sus datos y se comprueban contra el proveedor.
+//
+// Se deja `startConnectFn` intacta a propósito: su `if (!def?.oauth) throw` sigue siendo
+// correcto, y el panel ya no manda ahí a los conectores de credenciales.
+export const connectCredentialsFn = createServerFn({ method: "POST" })
+  .validator((d: { provider: string; fields: Record<string, string> }) => d)
+  .handler(async ({ data }) => {
+    const me = await sessionUser();
+    if (!me) return { ok: false as const, error: "no autenticado" };
+    // Este endpoint hace peticiones a un host que elige quien llama: sin tope es un escáner
+    // de puertos con reintentos. El guard de red decide a DÓNDE; esto, cada cuánto.
+    if (!allowAttempt(me.sub)) {
+      return { ok: false as const, error: "Demasiados intentos seguidos. Espera unos minutos y vuelve a probar." };
+    }
+    const { saveCredentials } = await import("./connectors/credentials.server");
+    const res = await saveCredentials(me.sub, data.provider, data.fields ?? {});
+    return res.ok ? { ok: true as const } : { ok: false as const, error: res.error };
+  });
+
+// Cubeta en memoria por usuario. No sobrevive a un deploy y no sirve con dos procesos, y
+// para esto está bien: es un freno contra el abuso automatizado, no una cuota.
+const attempts = new Map<string, number[]>();
+const ATTEMPT_WINDOW_MS = 10 * 60_000;
+const ATTEMPT_MAX = 10;
+function allowAttempt(sub: string): boolean {
+  const now = Date.now();
+  const recent = (attempts.get(sub) ?? []).filter((t) => now - t < ATTEMPT_WINDOW_MS);
+  if (recent.length >= ATTEMPT_MAX) {
+    attempts.set(sub, recent);
+    return false;
+  }
+  recent.push(now);
+  attempts.set(sub, recent);
+  return true;
+}
 
 // Relay central: el redirect global (oauth.teams.ghosty.studio/oauth/$provider/callback)
 // no tiene sesión ni tenant. Verifica el state firmado, saca el workspace de origen y
@@ -192,6 +234,17 @@ export const shareConnectorFn = createServerFn({ method: "POST" })
     const ownerSub = data.ownerSub || me.sub;
     const ajena = ownerSub !== me.sub;
     if (ajena && !me.isOwner) throw new Error("solo staff u owner puede compartir la conexión de otro");
+    // ⚠️ Una credencial tecleada NO es un token OAuth. El OAuth llega acotado por los scopes
+    // que concedió el proveedor; una API key de un ERP hereda TODOS los permisos de su
+    // usuario, no es revocable desde aquí, y en el otro lado los cambios quedan firmados con
+    // el nombre de esa persona. Compartir la de otro sin que esté delante es distinto que
+    // hacerlo con un Calendly: eso lo decide su dueño, no el owner.
+    if (ajena) {
+      const { getConnector: defOf } = await import("./connectors/registry");
+      if (defOf(data.provider)?.credentials) {
+        throw new Error("esta conexión lleva una credencial personal: sólo su dueño puede compartirla");
+      }
+    }
 
     const { getConnectorRow, setConnectorShared } = await import("./connectors/store.server");
     const row = await getConnectorRow(ownerSub, data.provider);
@@ -292,6 +345,10 @@ export const disconnectConnectorFn = createServerFn({ method: "POST" })
     await deleteConnectorRow(me.sub, data.provider);
     return {
       ok: true as const,
+      // ⚠️ El único caso del sistema en que desconectar NO revoca. Un OAuth con `revokeUrl`
+      // muere de verdad arriba; una credencial tecleada sigue viva en el proveedor hasta que
+      // su dueño la borre allí. Callarlo es dejar creer que se revocó.
+      sigueViva: def?.credentials ? (def.name ?? data.provider) : null,
       // Proyectos cuyas alertas NO se pudieron apagar: el usuario tiene que quitarlas a
       // mano en su Sentry, porque desde aquí ya no hay token con qué hacerlo.
       pendientesDeLimpiar: sueltos,

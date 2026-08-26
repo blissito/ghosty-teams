@@ -28,9 +28,9 @@ import { bumpUsers } from "../utils/users-bus";
 import type { CustomEmoji } from "../db.server";
 import { useT, useLocale, useSetLocale, type Locale } from "../i18n";
 import { intlLocale } from "../i18n.core";
-import { Monitor, Sun, Moon, Check, SlidersHorizontal, Palette, SwatchBook, Github, Plug, Users, Calendar, CalendarClock, CalendarCheck, Link2, RefreshCw, Gauge, Bug } from "lucide-react";
+import { Monitor, Sun, Moon, Check, SlidersHorizontal, Palette, SwatchBook, Github, Plug, Users, Calendar, CalendarClock, CalendarCheck, Link2, RefreshCw, Gauge, Bug, Boxes } from "lucide-react";
 import { workspaceUsageFn } from "../server/workspaces";
-import { listMyConnectorsFn, disconnectConnectorFn, shareConnectorFn } from "../server/connectors";
+import { listMyConnectorsFn, disconnectConnectorFn, shareConnectorFn, connectCredentialsFn } from "../server/connectors";
 import { probeAcpBoxFn } from "../server/agent-ask";
 import { listWaChannelsFn, disconnectWaFn, setWaAgentFn, type WaChannelView } from "../server/whatsapp";
 import { forwardTargetsFn } from "../server/forward";
@@ -374,6 +374,12 @@ type ConnItem = {
   canShareOthers: boolean;
   /** Lo que dejamos configurado en la cuenta del proveedor (alertas hacia un canal). */
   hooks: { project: string; channelId: number }[];
+  /** Conectores que NO son OAuth: la forma del formulario, nunca valores. */
+  credentials: {
+    intro: string | null;
+    docsUrl: string | null;
+    fields: { key: string; label: string; type: string; placeholder: string | null; help: string | null; required: boolean }[];
+  } | null;
 };
 
 function connIcon(icon: string) {
@@ -384,6 +390,7 @@ function connIcon(icon: string) {
     case "github": return Github;
     case "hubspot": return Users;
     case "google-calendar": return Calendar;
+    case "odoo": return Boxes;
     default: return Plug;
   }
 }
@@ -536,11 +543,113 @@ function WhatsAppPanel() {
   );
 }
 
+/* ── Conexión por CREDENCIALES (Odoo, Kommo y los que vengan) ────────────────────
+   UNO solo para toda la familia: los campos los dicta el registry, así que un conector
+   nuevo no trae formulario propio. Es la contraparte del `<a href="/setup/…">` de los
+   OAuth, que ahí sí tiene sentido porque hay un authorize al que mandar a la persona. ── */
+function CredentialsDialog({ item, onClose, onDone }: { item: ConnItem; onClose: () => void; onDone: () => void }) {
+  const t = useT();
+  const [values, setValues] = useState<Record<string, string>>({});
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => registerModalEsc(onClose), [onClose]);
+
+  const fields = item.credentials?.fields ?? [];
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await connectCredentialsFn({ data: { provider: item.id, fields: values } });
+      if (res.ok) {
+        onDone();
+        onClose();
+        return;
+      }
+      // El error se pinta DEBAJO sin cerrar ni borrar lo tecleado: casi siempre es el
+      // nombre de la base de datos, y volver a escribir los cuatro campos es donde la
+      // persona abandona.
+      setError(res.error);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const input = "w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm outline-none focus:border-brand";
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-3 sm:p-5" onMouseDown={onClose}>
+      <form
+        onSubmit={submit}
+        className="flex max-h-[94vh] w-full max-w-[440px] flex-col overflow-hidden rounded-2xl border border-border bg-surface shadow-2xl"
+        onMouseDown={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between border-b border-border px-5 py-3">
+          <p className="text-sm font-semibold">{t("Conectar")} {item.name}</p>
+          <button type="button" onClick={onClose} className="text-muted hover:text-ink"><X size={18} /></button>
+        </div>
+
+        <div className="thin-scroll flex-1 space-y-4 overflow-y-auto p-5">
+          {item.credentials?.intro ? <p className="text-sm text-muted">{item.credentials.intro}</p> : null}
+          {fields.map((f) => (
+            <div key={f.key} className="space-y-1">
+              <label className="block text-xs font-medium text-muted" htmlFor={`cred-${f.key}`}>
+                {f.label}
+                {f.required ? null : <span className="ml-1 font-normal">({t("opcional")})</span>}
+              </label>
+              <input
+                id={`cred-${f.key}`}
+                className={input}
+                type={f.type === "password" ? "password" : "text"}
+                inputMode={f.type === "url" ? "url" : undefined}
+                autoComplete={f.type === "password" ? "new-password" : "off"}
+                placeholder={f.placeholder ?? ""}
+                value={values[f.key] ?? ""}
+                onChange={(e) => setValues((v) => ({ ...v, [f.key]: e.target.value }))}
+              />
+              {f.help ? <p className="text-[11px] leading-snug text-muted">{f.help}</p> : null}
+            </div>
+          ))}
+          {error ? (
+            <p className="rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-2 text-xs text-red-500">{error}</p>
+          ) : null}
+          {item.credentials?.docsUrl ? (
+            <a
+              href={item.credentials.docsUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-1 text-xs text-muted hover:text-ink"
+            >
+              {t("Cómo obtener estos datos")} <ExternalLink size={11} />
+            </a>
+          ) : null}
+        </div>
+
+        <div className="flex items-center justify-end gap-2 border-t border-border px-5 py-3">
+          <button type="button" onClick={onClose} className="rounded-lg border border-border px-3 py-1.5 text-xs text-muted hover:text-ink">
+            {t("Cancelar")}
+          </button>
+          <button
+            type="submit"
+            disabled={busy}
+            className="rounded-lg bg-brand px-3 py-1.5 text-xs font-semibold text-brand-fg hover:brightness-110 disabled:opacity-50"
+          >
+            {busy ? t("Comprobando…") : t("Conectar")}
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
 function IntegrationsPanel() {
   const t = useT();
   const [items, setItems] = useState<ConnItem[] | null>(null);
   const [filter, setFilter] = useState<"all" | "connected" | "disconnected">("all");
   const [busy, setBusy] = useState<string | null>(null);
+  const [creds, setCreds] = useState<ConnItem | null>(null);
   const load = () => { listMyConnectorsFn().then(setItems).catch(() => setItems([])); };
   useEffect(() => { load(); }, []);
 
@@ -731,6 +840,15 @@ function IntegrationsPanel() {
                         {busy === c.id ? "…" : t("Desconectar")}
                       </button>
                     </div>
+                  ) : c.credentials ? (
+                    /* Sin OAuth no hay a dónde redirigir: la persona teclea sus datos y se
+                       comprueban contra el proveedor antes de guardar nada. */
+                    <button
+                      onClick={() => setCreds(c)}
+                      className="rounded-lg bg-brand px-3 py-1.5 text-xs font-semibold text-brand-fg hover:brightness-110"
+                    >
+                      {c.shared ? t("Conectar la mía") : t("Conectar")}
+                    </button>
                   ) : (
                     <a
                       href={`/setup/${c.id}/connect`}
@@ -751,6 +869,8 @@ function IntegrationsPanel() {
           })
         )}
       </div>
+
+      {creds ? <CredentialsDialog item={creds} onClose={() => setCreds(null)} onDone={load} /> : null}
     </div>
   );
 }
