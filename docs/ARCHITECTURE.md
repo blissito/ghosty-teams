@@ -8,6 +8,8 @@ libSQL), y la identidad + el registro de teams viven en **Formmy**.
 > Estado (2026-07-04): backbone (ingress + login + selector + provisioning)
 > desplegado; ver [Estado](#estado) al final para qué está vivo vs pendiente.
 
+> Integraciones externas (OAuth y credenciales tecleadas): **[CONECTORES.md](./CONECTORES.md)**.
+
 ---
 
 ## 1. Las tres capas
