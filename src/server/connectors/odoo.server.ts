@@ -30,9 +30,16 @@ const MAX_WRITE_IDS = 50;
 type RpcOk = { result: unknown };
 type RpcErr = { error: { message?: string; data?: { name?: string; message?: string; arguments?: unknown[] } } };
 
-/** Quita el secreto de cualquier texto antes de que viaje al modelo o a un log. */
+/**
+ * Quita el secreto de cualquier texto antes de que viaje al modelo o a un log.
+ *
+ * ⚠️ Sólo a partir de 8 caracteres. Con una key corta —una errata, o un `k` de prueba— el
+ * `split/join` hace estropicio: sustituye TODAS las letras `k` del mensaje y lo deja
+ * ilegible, que es peor que no redactar. Una API key de verdad es larga; un secreto de 3
+ * caracteres no es un secreto que proteger, es un dato mal tecleado.
+ */
 function redact(text: string, secret: string): string {
-  if (!secret) return text;
+  if (!secret || secret.length < 8) return text;
   return text.split(secret).join("«api key»");
 }
 
@@ -58,7 +65,15 @@ async function rpc(
   try {
     json = JSON.parse(body);
   } catch {
-    throw new OdooError(`Odoo respondió ${status} con algo que no es JSON: ${redact(body.slice(0, 300), secret)}`);
+    // Una página web en vez de JSON es el síntoma de una URL que no es la instancia: el
+    // sitio comercial, un proxy, un portal de login. Volcarle 300 caracteres de HTML al
+    // modelo no le dice nada y le da material para inventar diagnósticos.
+    if (/^\s*<(!doctype|html)/i.test(body)) {
+      throw new OdooError(
+        "Esa dirección devuelve una página web, no la API de Odoo. Suele pasar al poner la URL del sitio en vez de la de la instancia."
+      );
+    }
+    throw new OdooError(`Odoo respondió ${status} con algo que no es JSON: ${clip(redact(body, secret), 200)}`);
   }
   if ("error" in json && json.error) {
     throw translateOdooError(json.error, secret);
@@ -74,6 +89,11 @@ class OdooError extends Error {
     super(message);
     this.session = session;
   }
+}
+
+/** El detalle de Odoo va al contexto del modelo: útil, pero no un volcado entero. */
+function clip(text: string, max = 300): string {
+  return text.length > max ? `${text.slice(0, max)}…` : text;
 }
 
 function translateOdooError(err: RpcErr["error"], secret: string): OdooError {
@@ -98,9 +118,19 @@ function translateOdooError(err: RpcErr["error"], secret: string): OdooError {
     return new OdooError("La sesión de Odoo caducó.", true);
   }
   if (name.includes("ValidationError") || name.includes("UserError") || name.includes("MissingError")) {
-    return new OdooError(`Odoo no aceptó la operación: ${detail}`);
+    return new OdooError(`Odoo no aceptó la operación: ${clip(detail)}`);
   }
-  return new OdooError(detail ? `Odoo respondió: ${detail}` : "Odoo respondió con un error que no trae detalle.");
+  // Base de datos inexistente. Odoo NO lo manda como AccessDenied: lo deja salir como el
+  // error crudo de su Postgres, que además viene con la IP y el puerto internos de su
+  // infraestructura. Ni eso le sirve al modelo ni debe acabar en pantalla; y el nombre de la
+  // base es justo el dato que la gente escribe mal al conectar.
+  const db = /database "?([^"\s]+)"? does not exist/i.exec(detail);
+  if (db) {
+    return new OdooError(
+      `La base de datos "${db[1]}" no existe en ese Odoo. Corrige su nombre en Ajustes → Integraciones (en Odoo Online suele ser el subdominio).`
+    );
+  }
+  return new OdooError(detail ? `Odoo respondió: ${clip(detail)}` : "Odoo respondió con un error que no trae detalle.");
 }
 
 async function login(origin: string, db: string, user: string, secret: string): Promise<number | null> {

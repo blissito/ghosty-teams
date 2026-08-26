@@ -8,13 +8,16 @@ vi.mock("./net-guard.server", () => ({
   guardedFetch: async (_origin: string, _path: string, init: any) => {
     calls.push(JSON.parse(init.body));
     const r = typeof reply === "function" ? reply(calls.length) : reply;
+    if (r === "__HTML__") return { status: 200, body: "<!doctype html><html><body>hola</body></html>" };
     return { status: r.__status ?? 200, body: JSON.stringify(r) };
   },
   assertPublicOrigin: async (u: string) => u,
 }));
 
 const creds = {
-  secret: "APIKEY",
+  // Longitud realista: las API keys de Odoo son cadenas largas, y la redacción sólo actúa
+  // a partir de 8 caracteres (con menos destrozaría el mensaje — hay un test abajo).
+  secret: "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0",
   fields: { url: "https://acme.odoo.com", db: "acme", login: "ana@acme.com" },
   origin: "https://acme.odoo.com",
   externalId: "7",
@@ -41,7 +44,13 @@ describe("protocolo", () => {
     await byName("odoo_search_read").handler("u1", { model: "res.partner" });
     expect(calls[0].params.service).toBe("object");
     expect(calls[0].params.method).toBe("execute_kw");
-    expect(calls[0].params.args.slice(0, 5)).toEqual(["acme", 7, "APIKEY", "res.partner", "search_read"]);
+    expect(calls[0].params.args.slice(0, 5)).toEqual([
+      "acme",
+      7,
+      "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0",
+      "res.partner",
+      "search_read",
+    ]);
   });
 
   it("aplica el tope de filas aunque pidan miles", async () => {
@@ -72,9 +81,41 @@ describe("errores traducidos — los lee el modelo, así que dicen qué hacer", 
   });
 
   it("nunca deja escapar la API key en el texto de un error", async () => {
-    reply = { error: { message: "fallo con la llave APIKEY dentro" } };
+    reply = { error: { message: "fallo con la llave a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0 dentro" } };
     const r: any = await byName("odoo_count").handler("u1", { model: "crm.lead" });
-    expect(r.error).not.toContain("APIKEY");
+    expect(r.error).not.toContain("a1b2c3d4e5f6");
+  });
+
+  it("una base de datos inexistente NO filtra la infraestructura de Odoo", async () => {
+    // Odoo no lo manda como AccessDenied: deja salir el error crudo de su Postgres, con la
+    // IP y el puerto internos dentro. Medido contra www.odoo.com el 2026-08-25.
+    reply = {
+      error: {
+        data: {
+          message: 'connection to server at "10.1.0.14", port 5432 failed: FATAL:  database "no-existe" does not exist',
+        },
+      },
+    };
+    const r: any = await byName("odoo_count").handler("u1", { model: "crm.lead" });
+    expect(r.error).toMatch(/base de datos "no-existe"/);
+    expect(r.error).not.toMatch(/10\.1\.0\.14|5432|FATAL/);
+  });
+
+  it("una página web en vez de JSON se explica, no se vuelca", async () => {
+    reply = "__HTML__";
+    const r: any = await byName("odoo_count").handler("u1", { model: "crm.lead" });
+    expect(r.error).toMatch(/página web/i);
+    expect(r.error).not.toMatch(/<html|<!doctype/i);
+  });
+
+  it("una key CORTA no destroza el mensaje al redactarla", async () => {
+    // `split/join` con un secreto de un carácter sustituye todas sus apariciones y deja el
+    // texto ilegible — peor que no redactar. Visto en el humo real contra Odoo.
+    credsOrNull = { ...creds, secret: "k" };
+    reply = { error: { message: "no se pudo konectar al stok" } };
+    const r: any = await byName("odoo_count").handler("u1", { model: "crm.lead" });
+    expect(r.error).toContain("konectar");
+    expect(r.error).not.toContain("«api key»");
   });
 
   it("un handler NUNCA lanza: sin conexión devuelve {error}", async () => {
