@@ -32,7 +32,7 @@ describe("adjuntos en un turno ACP", () => {
     expect(t).not.toContain("pídeselo a quien escribe");
   });
 
-  it("nunca trunca en silencio: lo dice y deja la uri para el resto", () => {
+  it("un texto que NO cabe se DESCARGA entero, no se trunca", () => {
     const grande = "x".repeat(100 * 1024);
     const bs = bloquesDelTurno(
       turno([
@@ -41,10 +41,60 @@ describe("adjuntos en un turno ACP", () => {
       { puedeImagen: false }
     );
     const t = textos(bs);
+    // Un archivo completo en disco vale más que su primer trozo en el prompt.
+    expect(t).toContain("curl");
+    expect(t).toContain("adjuntos/g.csv");
+    expect(t).toContain("pandas");
+    expect(t).not.toContain("CORTADO");
+    // Y sobre todo: los 100KB NO entraron al contexto.
+    expect(t.length).toBeLessThan(4 * 1024);
+  });
+
+  it("sin uri no hay de dónde bajarlo: se trunca, pero se DICE", () => {
+    const grande = "x".repeat(100 * 1024);
+    const bs = bloquesDelTurno(
+      turno([{ kind: "file", file: { name: "g.csv", mimeType: "text/csv", bytes: b64(grande) } }]),
+      { puedeImagen: false }
+    );
+    const t = textos(bs);
     expect(t).toContain("CORTADO");
-    expect(t).toContain("https://s3/g");
     expect(t).toContain("No concluyas sobre lo que falta");
-    expect(t.length).toBeLessThan(80 * 1024);
+  });
+
+  it("el prefijo ORDENA abrirlos y prohíbe decir que no llegaron", () => {
+    const bs = bloquesDelTurno(
+      turno([{ kind: "file", file: { name: "a.pdf", mimeType: "application/pdf", uri: "https://s3/a" } }]),
+      { puedeImagen: false }
+    );
+    const t = textos(bs);
+    expect(t).toContain("ÁBRELOS ANTES de responder");
+    expect(t).toContain("NUNCA digas que no te llegó");
+    expect(t).toContain("no te inventes el contenido");
+  });
+
+  it("cada tipo trae SU comando: un .docx nunca se abre con cat", () => {
+    const bs = bloquesDelTurno(
+      turno([
+        { kind: "file", file: { name: "a.docx", mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", uri: "https://s3/d" } },
+        { kind: "file", file: { name: "b.zip", mimeType: "application/zip", uri: "https://s3/z" } },
+      ]),
+      { puedeImagen: false }
+    );
+    const t = textos(bs);
+    expect(t).toContain("office-reader");
+    expect(t).toContain("NUNCA `cat`");
+    expect(t).toContain("COMPRIMIDO");
+    expect(t).toContain("nunca extraigas a ciegas");
+  });
+
+  it("el nombre del archivo se sanea antes de meterlo en una ruta", () => {
+    const bs = bloquesDelTurno(
+      turno([{ kind: "file", file: { name: "../../etc/pa sswd.csv", mimeType: "text/csv", uri: "https://s3/x" } }]),
+      { puedeImagen: false }
+    );
+    const t = textos(bs);
+    expect(t).toContain("adjuntos/");
+    expect(t).not.toContain("adjuntos/../");
   });
 
   it("un texto que cabe entero NO se anuncia como cortado", () => {
