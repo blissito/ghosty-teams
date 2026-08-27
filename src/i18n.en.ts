@@ -782,6 +782,8 @@ export const en: Record<string, string> = {
   "Reordené las páginas": "Reordered the pages",
   "Repartiendo el trabajo": "Splitting up the work",
   "Repartí el trabajo": "Split up the work",
+  "Recuperando trabajo anterior": "Recovering earlier work",
+  "Recuperé trabajo anterior": "Recovered earlier work",
   "Sacando el link de invitación": "Getting the invite link",
   "Saqué el link de invitación": "Got the invite link",
   "Subiendo el documento": "Uploading the document",

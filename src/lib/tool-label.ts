@@ -86,6 +86,13 @@ export const TOOL_LABELS: Record<string, { ing: string; done: string }> = {
   gs_db_query: { ing: "Consultando los datos", done: "Consulté los datos" },
   gs_db_write: { ing: "Guardando los datos", done: "Guardé los datos" },
   gs_subagent_spawn: { ing: "Repartiendo el trabajo", done: "Repartí el trabajo" },
+  // Leer resultados guardados de un fan-out anterior. Etiqueta PROPIA y no "Repartí el
+  // trabajo" porque el usuario lee esta fila para saber si el turno gastó: recuperar algo
+  // ya pagado es lo contrario de lanzar trabajo nuevo.
+  gs_subagent_results: {
+    ing: "Recuperando trabajo anterior",
+    done: "Recuperé trabajo anterior",
+  },
   // `Skill` a secas = cualquier habilidad que el agente cargue, no necesariamente una de
   // documentos. Decía "Redacté el documento" SIEMPRE, así que un turno que sólo consultó
   // una guía anunciaba un documento que nunca existió (visto en prod 2026-07-29). La
