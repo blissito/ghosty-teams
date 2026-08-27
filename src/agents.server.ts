@@ -239,13 +239,28 @@ export async function buildMediaParts(
     if (small) {
       const bytes = await mintFileBytes(a.fileId);
       if (bytes) {
-        parts.push({ kind: "file", file: { name, mimeType, bytes } });
+        // Las dos vías, no una. `bytes` y `uri` fueron EXCLUYENTES hasta el 2026-08-27, y
+        // ahí estaba el bug: esta función elegía por TAMAÑO y el transporte ACP sabe mandar
+        // inline sólo las imágenes, así que todo archivo no-imagen de menos de 256KB —un CSV,
+        // un PDF— llegaba al agente como "no pude ponértelo a mano". El chico fallaba y el
+        // grande funcionaba. Dos criterios distintos que nadie coordinaba.
+        //
+        // Llevar ambas no rompe A2A: el part es INTERNO y cada transporte elige una al
+        // serializar, siempre con el mismo orden de preferencia (`bytes` y si no `uri`) —
+        // ver `toA2AParts` en a2a-client.server.ts y el worker nativo en claude-worker.
+        // En el wire A2A sigue saliendo `raw` XOR `url`, como manda la spec.
+        parts.push({ kind: "file", file: { name, mimeType, bytes, uri: (await mintReadUrl(a.fileId)) || undefined } });
         continue;
       }
     }
     // Grande, o falló el inline → uri firmada (TTL corto lo controla EasyBits).
     const uri = await mintReadUrl(a.fileId);
     if (uri) parts.push({ kind: "file", file: { name, mimeType, uri } });
+    else {
+      // Ni bytes ni uri: este adjunto NO va a llegar, con el transporte que sea. El único
+      // rastro que tenía este fallo era lo que el modelo eligiera contarle al usuario.
+      console.warn(`[media] adjunto sin vía de entrega: ${a.name ?? "(sin nombre)"} ${mimeType} ${a.size ?? "?"}B fileId=${a.fileId}`);
+    }
   }
   return parts;
 }
@@ -1481,8 +1496,11 @@ export async function callAgentBackendStream(
       // 2026-07-12). Ver `bloquesDelTurno` en acp-client.server.ts.
       persona: identidad || undefined,
       context: contexto,
-      // Los adjuntos del turno. `buildMediaParts` ya decidió inline vs URL firmada por
-      // tamaño; el cliente ACP decide además por lo que el agente declare que sabe recibir.
+      // Los adjuntos del turno. `buildMediaParts` mintea AMBAS vías (bytes + uri firmada);
+      // este cliente elige por mime y por lo que el agente declare que sabe recibir: texto
+      // como texto, imagen inline si la ve, y lo demás por `resource_link`. Antes decidía
+      // aquí sólo el tamaño y el ACP sólo el mime — dos criterios sin coordinar, y por eso
+      // se perdía todo archivo no-imagen de menos de 256KB.
       parts,
       // El guardrail de canal público va PEGADO al mensaje, igual que en el nativo: es una
       // regla sobre CÓMO contestar a esta persona, y desde el bloque de contexto —que el
@@ -2536,6 +2554,10 @@ export async function callAgentBackend(
         sub: "teams",
         sessionId: (await (await import("./db.server")).getAcpSession(agent.handle, groupId).catch(() => null)) ?? undefined,
         text: stripLoneSurrogates(text),
+        // Los adjuntos. Este camino NO los pasaba, así que aquí el archivo no se degradaba:
+        // desaparecía entero, sin que se mencionara siquiera su nombre. El de streaming sí
+        // los pasa desde siempre; los dos o ninguno.
+        parts,
         onUpdate: () => {},
         // SIN `onPermission` a propósito, al revés que el camino de streaming: aquí no hay
         // `onChunk`, así que no hay dónde pintar la tarjeta de aprobación. Pedir un permiso

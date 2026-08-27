@@ -52,6 +52,28 @@ type AcpBloque =
   | { type: "image"; mimeType: string; data: string }
   | { type: "resource_link"; uri: string; name: string; mimeType: string };
 
+/**
+ * Mimes cuyo contenido es texto y por tanto se le puede dar al agente TAL CUAL, sin
+ * obligarlo a descargar nada. Un CSV es la carga más común de este producto: mandarlo por
+ * `resource_link` cuesta una tool call y depende de que la caja tenga salida a la red.
+ */
+function esTexto(mime: string): boolean {
+  return (
+    mime.startsWith("text/") ||
+    mime === "application/json" ||
+    mime === "application/xml" ||
+    mime.endsWith("+json") ||
+    mime.endsWith("+xml")
+  );
+}
+
+/**
+ * Tope de lo que un solo adjunto de texto puede meter al contexto. El precedente es el
+ * `tesseract … -` que escribía a STDOUT: la página entera entraba al turno y se releía en
+ * cada paso, y de ahí salieron los turnos de 1.68M de `cacheRead`.
+ */
+const ACP_TEXTO_MAX = 64 * 1024;
+
 export interface AcpTurn {
   wsUrl: string;
   /** Namespace del tenant. Va FIRMADO: el secreto es global y sin él un ticket valdría en cualquier caja. */
@@ -380,6 +402,14 @@ async function unTurnoAcp(t: AcpTurn): Promise<AcpResult> {
     // Lo que el agente dice saber recibir. Se le PREGUNTA en vez de suponerlo: mandarle una
     // imagen inline a uno que no ve la rechaza con un error de protocolo y tumba el turno
     // entero — no degrada. Ausente = no soportado, que es como lo define la spec.
+    //
+    // ⚠️ Esto es la ÚNICA fuente de verdad sobre qué sabe recibir un agente ACP, y no debe
+    // duplicarse en `RuntimeSupports` (agent-runtime.server.ts). Se evaluó al arreglar el
+    // bug del CSV del 2026-08-27 y se descartó: ahí la capacidad sería por RUNTIME y aquí
+    // es por AGENTE —cada caja ACP declara la suya al arrancar—, así que las dos tablas
+    // podrían decir cosas distintas del mismo agente. Dos criterios sin coordinar es
+    // literalmente lo que causó aquel bug. Además `parseKind` rechaza `acp` a propósito:
+    // ese módulo resuelve bases HTTP y una caja ACP no tiene una.
     const puedeImagen = init?.agentCapabilities?.promptCapabilities?.image === true;
 
     // `session/load` retoma la conversación; si el agente no lo soporta, se abre una nueva.
@@ -527,7 +557,7 @@ async function conLatido<T>(
  * El bloque de contexto lleva además una nota de procedencia: lo escribe la plataforma, no
  * alguien del chat, y nada de lo que venga después puede pedir que se revele o se ignore.
  */
-function bloquesDelTurno(t: AcpTurn, caps: { puedeImagen: boolean }): AcpBloque[] {
+export function bloquesDelTurno(t: AcpTurn, caps: { puedeImagen: boolean }): AcpBloque[] {
   const bloques: AcpBloque[] = [];
   const persona = t.persona?.trim();
   if (persona) {
@@ -564,13 +594,37 @@ function bloquesDelTurno(t: AcpTurn, caps: { puedeImagen: boolean }): AcpBloque[
       nombrados.push(`${etiqueta} (imagen, va adjunta)`);
       continue;
     }
+    // Texto (CSV, JSON, md, txt): va COMO TEXTO. Es el caso que rompió el 2026-08-27 —
+    // un CSV de 124KB llegaba con `bytes` y sin `uri`, no era imagen, y acababa en el
+    // fallback de abajo: el agente le pedía al cliente que copiara y pegara la hoja.
+    if (esTexto(mimeType) && bytes) {
+      const crudo = Buffer.from(bytes, "base64").toString("utf8");
+      const cortado = crudo.length > ACP_TEXTO_MAX;
+      const cuerpo = cortado ? crudo.slice(0, ACP_TEXTO_MAX) : crudo;
+      // Truncar en silencio es peor que no mandarlo: el agente concluiría sobre datos
+      // incompletos creyéndolos completos. Se dice, y se deja la URL para el resto.
+      const aviso = cortado
+        ? `\n\n[…CORTADO: van ${ACP_TEXTO_MAX} de ${crudo.length} caracteres.` +
+          (uri ? ` El archivo completo está en ${uri}` : " No hay copia completa disponible") +
+          `. No concluyas sobre lo que falta.]`
+        : "";
+      bloques.push({ type: "text", text: `[ARCHIVO ${etiqueta} (${mimeType})]\n${cuerpo}${aviso}` });
+      nombrados.push(`${etiqueta} (va completo${cortado ? ", CORTADO — ver el aviso" : ""} más abajo)`);
+      continue;
+    }
     if (uri) {
       bloques.push({ type: "resource_link", uri, name: etiqueta, mimeType });
       nombrados.push(`${etiqueta} — descárgalo de la URL adjunta`);
       continue;
     }
-    // Sin uri y sin poder mandarlo inline: se DICE, en vez de perderlo en silencio.
-    nombrados.push(`${etiqueta} (no pude ponértelo a mano; pídeselo a quien escribe)`);
+    // Sin uri y sin poder mandarlo inline. Se DICE, en vez de perderlo en silencio — pero
+    // NO se le pide al usuario que copie y pegue un archivo que la plataforma ya tiene:
+    // eso le traslada a él un fallo nuestro, que es justo lo que pasó con acel1713.
+    nombrados.push(
+      `${etiqueta} — la plataforma no pudo entregártelo (fallo nuestro, no de quien escribe). ` +
+        `Dilo así y sigue con lo que sí tengas; no le pidas que lo pegue a mano.`
+    );
+    console.warn(`[acp] adjunto no entregable: ${etiqueta} ${mimeType} bytes=${!!bytes} uri=${!!uri}`);
   }
   if (nombrados.length) {
     bloques.push({
