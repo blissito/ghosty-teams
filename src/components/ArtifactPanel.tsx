@@ -41,9 +41,9 @@ import {
   CanvasEditor,
   EditorStore,
   htmlToDoc,
+  shellStyleCss,
   htmlToNode,
   docToHtml,
-  type Node as CeNode,
 } from "@ghosty/canvas-editor";
 import ArtifactShareBar from "./ArtifactShareBar";
 import ArtifactHistoryPanel from "./ArtifactHistoryPanel";
@@ -535,23 +535,11 @@ export default function ArtifactPanel({
       : null;
   const editorDoc = useMemo(() => {
     if (artifactHtml == null) return null;
-    const doc = htmlToDoc(artifactHtml);
-    // Quitar nodos no-visuales (style/script/meta/link/title): su CSS lo inyectamos
-    // por extraCss (reescrito); dejarlos como nodos ensucia Capas y no aporta.
-    const NON_VISUAL = new Set([
-      "style",
-      "script",
-      "meta",
-      "link",
-      "title",
-      "head",
-    ]);
-    const strip = (nodes: CeNode[]): CeNode[] =>
-      nodes
-        .filter((n) => !NON_VISUAL.has(n.tag))
-        .map((n) => ({ ...n, children: strip(n.children) }));
-    for (const ab of doc.artboards) ab.nodes = strip(ab.nodes);
-    return doc;
+    // Sin poda: desde que `htmlToDoc` llena `doc.shell`, los style/script/link ya no
+    // entran al árbol de nodos — salen por el shell y vuelven al guardar. Aquí había una
+    // criba manual que los tiraba, y por eso el CSS del artefacto sólo sobrevivía gracias
+    // a un regex sobre el HTML crudo.
+    return htmlToDoc(artifactHtml);
     // Depende del HTML, no solo de la tarjeta: al Guardar, `savedHtml` cambia
     // `artifactHtml` y hay que re-parsear, o al volver a Editar el editor se
     // remonta con el doc VIEJO y los cambios guardados "se pierden" (aunque en
@@ -594,30 +582,16 @@ export default function ArtifactPanel({
   // no-visuales) → hay que reinyectarlos: RAW (body intacto) para el preview iframe
   // (docToHtml envuelve en <body>), y REESCRITO (body→.ce-artboard) para la superficie
   // de edición (el contenido vive en un <div.ce-artboard>, no en <body>).
-  const artifactStyleCssRaw = useMemo(() => {
-    if (!artifactHtml) return "";
-    const blocks =
-      artifactHtml.match(/<style[^>]*>([\s\S]*?)<\/style>/gi) || [];
-    return blocks.map((b) => b.replace(/<\/?style[^>]*>/gi, "")).join("\n");
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [artifactKey]);
+
+  // Los selectores de documento (html/body/:root) se reescriben al scope del lienzo:
+  // dentro del editor, el elemento que hace de <body> es el `.ce-artboard`. La
+  // transformación vive en el paquete —junto a su test— desde el 2026-08-27; aquí estaba
+  // copiada a mano y podía divergir de lo que hace el serializador de verdad.
   const artifactStyleCss = useMemo(
-    () =>
-      artifactStyleCssRaw
-        .replace(/(^|[\s,{}])(html|body)\b/gi, "$1.ce-artboard")
-        .replace(/:root\b/gi, ".ce-artboard")
-        // EN EDICIÓN el TEMA lo manda el editor. El artefacto trae su propia paleta en
-        // `:root` (autocontenida para su URL pública); al reescribirla a `.ce-artboard`
-        // quedaba con la MISMA especificidad que la del editor y, al ir después en la
-        // cascada, GANABA → cambiar de paleta en el panel no hacía nada (reportado
-        // 2026-07-24). Quitamos solo esas declaraciones de token; el resto del CSS del
-        // artefacto (keyframes, reglas propias) se conserva intacto.
-        .replace(
-          /^\s*--(?:color-[\w-]+|radius|font-(?:heading|body|mono))\s*:[^;]*;/gim,
-          "",
-        ),
-    [artifactStyleCssRaw],
+    () => shellStyleCss(editorDoc?.shell, { scope: ".ce-artboard" }),
+    [editorDoc],
   );
+
   // Al cambiar de artefacto (o cerrar), volver a modo Ver.
   useEffect(() => {
     setEditing(false);
@@ -2267,27 +2241,17 @@ export default function ArtifactPanel({
                               // La paleta inicial sale del propio artefacto: htmlToDoc lee su
                               // bloque :root y siembra doc.theme.
                               tailwindPlay
-                              renderPreview={(doc) =>
-                                docToHtml(doc).replace(
-                                  "</head>",
-                                  `<style>${artifactStyleCssRaw}</style></head>`,
-                                )
-                              }
+                              // Sin reinyectar nada: `docToHtml` ya emite el CSS propio
+                              // del artefacto desde `doc.shell`.
+                              renderPreview={(doc) => docToHtml(doc)}
                               onSave={async (doc) => {
-                                // El export del editor NO conserva el <style> propio del
-                                // artefacto (keyframes, reglas custom): sin esto, guardar lo
-                                // borraba. Lo reinyectamos sin sus tokens (esos los emite el
-                                // tema del editor, que es lo que el usuario acaba de elegir).
-                                const custom = artifactStyleCssRaw.replace(
-                                  /^\s*--(?:color-[\w-]+|radius|font-(?:heading|body|mono))\s*:[^;]*;/gim,
-                                  "",
-                                );
-                                const html = docToHtml(doc).replace(
-                                  "</head>",
-                                  custom.trim()
-                                    ? `<style>${custom}</style></head>`
-                                    : "</head>",
-                                );
+                                // El CSS propio, los <script> y la clase del <body> viajan
+                                // en `doc.shell` y `docToHtml` los reemite. Aquí se
+                                // reinyectaba a mano un `<style>` con regex — que rescataba
+                                // el CSS pero perdía todo lo demás, y es lo que hizo
+                                // desaparecer el fondo de una landing en la demo del
+                                // 2026-08-27.
+                                const html = docToHtml(doc);
                                 await updateArtifactHtmlFn({
                                   data: {
                                     documentId: artifact.documentId,

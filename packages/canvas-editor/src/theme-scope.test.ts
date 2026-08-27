@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from 'vitest'
-import { htmlToDoc, docToHtml, themeToCss } from './serialize'
+import { htmlToDoc, docToHtml, themeToCss, shellStyleCss } from './serialize'
 import { PALETTE_PRESETS } from './model'
 
 // Artefacto tal como lo emite el agente: define SU PROPIA paleta en :root (autocontenido
@@ -21,15 +21,11 @@ const ARTIFACT = `<!doctype html><html data-theme="light"><head><style>
   <section data-id="hero" class="bg-[var(--color-primary)] text-[var(--color-primary-foreground)]">Hola</section>
 </body></html>`
 
-// Copia EXACTA de la transformación que hace ArtifactPanel al entrar a editar.
+// El CSS del artefacto en la superficie de edición. Era una copia manual del regex de
+// ArtifactPanel; ahora usa la función REAL del paquete, así que estos tests prueban de
+// verdad lo que corre en producción en vez de una réplica que podía divergir.
 function toEditSurfaceCss(html: string): string {
-  const blocks = html.match(/<style[^>]*>([\s\S]*?)<\/style>/gi) || []
-  return blocks
-    .map((b) => b.replace(/<\/?style[^>]*>/gi, ''))
-    .join('\n')
-    .replace(/(^|[\s,{}])(html|body)\b/gi, '$1.ce-artboard')
-    .replace(/:root\b/gi, '.ce-artboard')
-    .replace(/^\s*--(?:color-[\w-]+|radius|font-(?:heading|body|mono))\s*:[^;]*;/gim, '')
+  return shellStyleCss(htmlToDoc(html).shell, { scope: '.ce-artboard' })
 }
 
 describe('tema del artefacto dentro del editor', () => {
@@ -108,5 +104,35 @@ describe('HTML exportado', () => {
     expect(style).toContain('width:100%')
     expect(style).not.toMatch(/width:\d+px/)
     expect(style).not.toContain('max-width')
+  })
+
+  // ── Precedencia: quién gana sobre qué ────────────────────────────────────────
+  //
+  // El equilibrio que hay que sostener, y que se rompió en las dos direcciones:
+  //   · el TEMA manda sobre los TOKENS  (si no, el selector de paleta no hace nada)
+  //   · el ARTEFACTO manda sobre las REGLAS (si no, se pierde su fondo)
+
+  it('el tema gana en TOKENS y el artefacto gana en REGLAS', () => {
+    const conFondo = ARTIFACT.replace(
+      '@keyframes float { to { transform: translateY(-4px) } }',
+      '@keyframes float { to { transform: translateY(-4px) } }\n  body { background: #123456 }',
+    )
+    const doc = htmlToDoc(conFondo)
+    const otra = PALETTE_PRESETS.find((p) => p.name !== doc.theme.name) ?? PALETTE_PRESETS[0]
+    const html = docToHtml({ ...doc, theme: { ...doc.theme, light: otra.light, dark: otra.dark } })
+
+    // El token viene del tema elegido, no del que traía el artefacto.
+    expect(html).toContain(`--color-primary: ${otra.light.primary}`)
+    expect(html).not.toContain('--color-primary: #7c3aed')
+    // Y su regla propia sobrevive.
+    expect(html).toContain('background: #123456')
+  })
+
+  it('las reglas base del tema van en :where() y NUNCA con !important', () => {
+    const css = themeToCss(htmlToDoc(ARTIFACT).theme)
+    expect(css).toContain(':where(body)')
+    expect(css).not.toContain('!important')
+    // El bloque de variables NO va en :where(): tiene que poder ganarle al artefacto.
+    expect(css).toMatch(/:root\s*\{/)
   })
 })

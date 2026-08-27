@@ -19,7 +19,7 @@ export {
   findArtboardOf,
   walk,
 } from './model'
-export { docToHtml, htmlToDoc, htmlToNode, nodeSubtreeToHtml, themeToCss, semanticUtilityCss, arbitraryUtilityCss, type ParseOpts } from './serialize'
+export { docToHtml, htmlToDoc, htmlToNode, nodeSubtreeToHtml, themeToCss, semanticUtilityCss, arbitraryUtilityCss, shellStyleCss, stripThemeTokens, CE_MARK, type ParseOpts, type DocToHtmlOpts } from './serialize'
 export {
   type RefineProvider,
   type RefineNodeInput,

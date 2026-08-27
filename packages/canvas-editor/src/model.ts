@@ -62,10 +62,60 @@ export function activeTokens(theme: Theme): Record<string, string> {
   return (theme.mode === 'dark' ? theme.dark : theme.light) ?? {}
 }
 
+/**
+ * Un recurso del documento que NO es árbol de nodos: un `<style>`, un `<script>`, un
+ * `<link>`. Se preserva VERBATIM y se re-emite donde estaba.
+ */
+export interface ShellAsset {
+  kind: 'style' | 'script' | 'link' | 'meta' | 'title'
+  /** Contenido crudo de style/script/title. NO se escapa (ver RAW_TEXT_TAGS). */
+  text?: string
+  /** Atributos verbatim: media, src, defer, rel, href, charset… */
+  attrs?: Record<string, string>
+  /** Dónde estaba en el documento original; se re-emite en el mismo sitio. */
+  slot: 'head' | 'body-end'
+}
+
+/**
+ * Todo lo que un documento tiene y no cabe en `artboards` ni en `theme`.
+ *
+ * POR QUÉ EXISTE: sin esto el round-trip HTML → Doc → HTML destruía cualquier
+ * artefacto con CSS propio. El caso que lo destapó (demo del 2026-08-27): una landing
+ * cuyo fondo era un `<div class="grid-paper">` con
+ * `background-image: linear-gradient(var(--color-border) 1px, …)` declarado en uno de
+ * sus CINCO bloques `<style>`. `parseTheme` sólo miraba el PRIMERO, el `<body class>`
+ * no se leía nunca y `docToHtml` emitía `<body>` desnudo: el cliente editó y el fondo
+ * desapareció. Es la misma pérdida que `src/lib/artifact-ids.ts` ya documentaba para
+ * los `<script>`.
+ *
+ * ⚠️ El ORDEN de `assets` importa: es lo que decide la cascada CSS.
+ *
+ * ⚠️ Preservar ≠ garantizar que sigan funcionando. El editor envuelve el contenido en
+ * `<section data-artboard-id>`, así que un `<script>` que dependa de `body > .foo` o de
+ * `document.body.firstElementChild` puede romperse igual. Por eso el server NO usa este
+ * round-trip para estampar ids (ver `artifact-ids.ts`).
+ *
+ * ⚠️ `bodyCls` se DUPLICA en `artboard.cls` cuando hay un solo artboard, porque en el
+ * editor la superficie que representa al body es el `.ce-artboard`. Al exportar manda
+ * `artboard.cls` — es la que el usuario pudo editar.
+ */
+export interface DocShell {
+  /** Atributos de `<html>` salvo `data-theme`, que ya vive en `theme.mode`. */
+  htmlAttrs?: Record<string, string>
+  bodyCls?: string
+  /** Atributos del `<body>` salvo `class`. */
+  bodyAttrs?: Record<string, string>
+  /** En ORDEN DE DOCUMENTO. */
+  assets?: ShellAsset[]
+}
+
 export interface Doc {
   id: string
   artboards: Artboard[]
   theme: Theme
+  /** Ver `DocShell`. OPCIONAL: un doc nacido en el editor no lo lleva, y sin él el
+   *  HTML emitido es byte a byte el de siempre. */
+  shell?: DocShell
 }
 
 // ---------------------------------------------------------------------------

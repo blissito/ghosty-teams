@@ -47,21 +47,25 @@ const CHROME_CSS = `
 // Play CDN with preflight ON (globally, in its own iframe/page); the edit surface can't
 // run global preflight without wrecking the host UI, so we replicate the essential base
 // rules scoped to .ce-artboard. Keeps edit == published for headings/lists/margins.
+// ⚠️ Todo en `:where()` (especificidad CERO). Este preflight es un RESET: debe poner el
+// piso, no ganarle al artefacto. Con especificidad normal, `.ce-artboard section > *
+// { max-width: 80rem }` recortaba cualquier hero full-bleed EN LA SUPERFICIE DE EDICIÓN
+// aunque el HTML guardado estuviera bien — el editor mentía sobre cómo se ve el sitio.
 const SCOPED_PREFLIGHT = `
-.ce-artboard *, .ce-artboard ::before, .ce-artboard ::after { box-sizing: border-box; border: 0 solid currentColor; }
-.ce-artboard h1,.ce-artboard h2,.ce-artboard h3,.ce-artboard h4,.ce-artboard h5,.ce-artboard h6 { font-size: inherit; font-weight: inherit; margin: 0; }
-.ce-artboard p,.ce-artboard figure,.ce-artboard blockquote,.ce-artboard dl,.ce-artboard dd,.ce-artboard pre,.ce-artboard hr { margin: 0; }
-.ce-artboard a { color: inherit; text-decoration: inherit; }
-.ce-artboard ol,.ce-artboard ul,.ce-artboard menu { list-style: none; margin: 0; padding: 0; }
-.ce-artboard img,.ce-artboard svg,.ce-artboard video,.ce-artboard canvas,.ce-artboard picture { display: block; vertical-align: middle; max-width: 100%; height: auto; }
-.ce-artboard button,.ce-artboard input,.ce-artboard select,.ce-artboard textarea { font: inherit; color: inherit; margin: 0; padding: 0; }
-.ce-artboard button,.ce-artboard [role="button"] { cursor: pointer; background: transparent; }
-.ce-artboard table { border-collapse: collapse; }
+:where(.ce-artboard *, .ce-artboard ::before, .ce-artboard ::after) { box-sizing: border-box; border: 0 solid currentColor; }
+:where(.ce-artboard h1,.ce-artboard h2,.ce-artboard h3,.ce-artboard h4,.ce-artboard h5,.ce-artboard h6) { font-size: inherit; font-weight: inherit; margin: 0; }
+:where(.ce-artboard p,.ce-artboard figure,.ce-artboard blockquote,.ce-artboard dl,.ce-artboard dd,.ce-artboard pre,.ce-artboard hr) { margin: 0; }
+:where(.ce-artboard a) { color: inherit; text-decoration: inherit; }
+:where(.ce-artboard ol,.ce-artboard ul,.ce-artboard menu) { list-style: none; margin: 0; padding: 0; }
+:where(.ce-artboard img,.ce-artboard svg,.ce-artboard video,.ce-artboard canvas,.ce-artboard picture) { display: block; vertical-align: middle; max-width: 100%; height: auto; }
+:where(.ce-artboard button,.ce-artboard input,.ce-artboard select,.ce-artboard textarea) { font: inherit; color: inherit; margin: 0; padding: 0; }
+:where(.ce-artboard button,.ce-artboard [role="button"]) { cursor: pointer; background: transparent; }
+:where(.ce-artboard table) { border-collapse: collapse; }
 /* Contenedor de sección. Lo emite el HTML publicado (buildDeployHtml) y lo tenía
    el lienzo del editor clásico, pero no éste: sin él CADA sección se veía a otro
    ancho y con otro padding horizontal que en el sitio real. */
-.ce-artboard section { width: 100%; }
-.ce-artboard section > * { max-width: 80rem; margin-left: auto; margin-right: auto; padding-left: 1rem; padding-right: 1rem; }
+:where(.ce-artboard section) { width: 100%; }
+:where(.ce-artboard section > *) { max-width: 80rem; margin-left: auto; margin-right: auto; padding-left: 1rem; padding-right: 1rem; }
 `
 
 // Load the Tailwind Play CDN ONCE, configured so every utility is scoped as a

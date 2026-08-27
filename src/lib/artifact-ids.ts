@@ -8,8 +8,16 @@
 //
 // Se siembran AL PERSISTIR (server), nunca los escribe el agente: el modelo los duplica,
 // los omite o los renumera, y encarece cada nodo. Tampoco se regenera el HTML con
-// htmlToDoc→docToHtml del canvas-editor: eso reconstruye el documento y se lleva por delante
-// los <script> del artefacto (una calculadora o un juego dejarían de funcionar).
+// htmlToDoc→docToHtml del canvas-editor.
+//
+// ⚠️ Ese último motivo CAMBIÓ a medias el 2026-08-27. El round-trip del canvas ya no se
+// come el CSS propio, los <script> ni el `<body class>` — ahora viajan en `Doc.shell`
+// (ver `packages/canvas-editor/src/model.ts`), y fue justo esa pérdida la que hizo
+// desaparecer el fondo de una landing en una demo. Pero el server SIGUE sin usar ese
+// camino, y con razón: `docToHtml` REESTRUCTURA el documento (envuelve el contenido en
+// `<section data-artboard-id>`), así que un <script> que dependa de `body > .foo` o de
+// `document.body.firstElementChild` se rompe igual. Preservar no es lo mismo que
+// garantizar que siga funcionando. Estampar los ids con DOM directo no toca la forma.
 //
 // El parseo es por DOM (jsdom en server, DOMParser en browser) — mismo patrón `ParseOpts`
 // que packages/canvas-editor/src/serialize.ts, y `elToNode` de ese paquete YA respeta los

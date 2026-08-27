@@ -3,7 +3,7 @@
 // so htmlToDoc() can parse back losslessly. The emitted HTML (theme <style> +
 // artboards) is what we persist in gc_artifacts.md and serve at artefacto.ghosty.studio.
 
-import type { Artboard, Doc, Node, Theme } from './model'
+import type { Artboard, Doc, DocShell, Node, ShellAsset, Theme } from './model'
 import { DEFAULT_THEME, activeTokens, genId, googleFontsHref, walk } from './model'
 
 const VOID_TAGS = new Set(['img', 'br', 'hr', 'input', 'meta', 'link'])
@@ -108,9 +108,19 @@ export function themeToCss(theme: Theme, opts: { scope?: string } = {}): string 
   // por eso el host los suprimía (`suppressThemeCss`) — con el efecto de que el selector
   // de paleta no pintaba NADA sobre el artefacto. Scoped = sin fuga y con tema aplicable.
   const varScope = scope || ':root'
+  // ⚠️ Las reglas BASE van en `:where()`, que tiene especificidad CERO, para que
+  // cualquier regla propia del artefacto les gane pase lo que pase con el orden de la
+  // cascada. Es el sustituto legítimo de un `!important` invertido — y `!important` está
+  // prohibido en este ecosistema. Sin esto, el `body { background-color: … }` del tema
+  // empataba en especificidad con el `body{background:…}` del artefacto y ganaba el
+  // último en salir, que cambia entre la superficie de edición y el HTML publicado.
+  //
+  // NO se envuelven ni el bloque de VARIABLES ni `semanticUtilityCss`: los tokens tienen
+  // que seguir con especificidad normal, porque son justo lo que el selector de paleta
+  // usa para mandar sobre el artefacto (ver stripThemeTokens y theme-scope.test.ts).
   return `  ${varScope} {\n${vars}\n    --radius: ${theme.radius};\n    --font-heading: ${theme.fonts.heading};\n    --font-body: ${theme.fonts.body};\n    --font-mono: ${theme.fonts.mono};\n  }
-  ${base} { font-family: var(--font-body), system-ui, sans-serif; background-color: var(--color-background); color: var(--color-foreground); }
-  ${headings} { font-family: var(--font-heading), system-ui, sans-serif; }
+  :where(${base}) { font-family: var(--font-body), system-ui, sans-serif; background-color: var(--color-background); color: var(--color-foreground); }
+  :where(${headings}) { font-family: var(--font-heading), system-ui, sans-serif; }
 ${semanticUtilityCss(scope)}`
 }
 
@@ -136,23 +146,121 @@ function artboardToHtml(ab: Artboard, opts: { centered?: boolean } = {}): string
 }
 
 /** Full standalone HTML document — used for persistence and ▶ preview / publish. */
-export function docToHtml(doc: Doc): string {
+/**
+ * Marca los elementos que emite ESTE archivo. `parseShell` los salta, y sin eso cada ida
+ * y vuelta acumularía otra copia del CSS del tema dentro de `doc.shell`: el artefacto
+ * crecería en cada guardado y al segundo viaje el selector de paleta dejaría de mandar.
+ * Es el invariante más caro de esta pieza — lo cubre el test anti-crecimiento.
+ */
+export const CE_MARK = 'data-ce'
+
+/**
+ * Quita del CSS las DECLARACIONES de token del tema, dejando el resto intacto.
+ *
+ * ⚠️ Existe por un bug concreto (2026-07-24): un artefacto trae su propia paleta en
+ * `:root` para ser autocontenido en su URL pública. Al reescribir ese `:root` al scope
+ * del editor quedaba con la MISMA especificidad que la paleta del editor y, al ir
+ * después en la cascada, GANABA → el selector de paleta no hacía nada. `doc.theme` ya
+ * absorbió esos tokens al parsear, así que aquí sobran.
+ *
+ * Sólo las declaraciones: `@keyframes`, reglas propias y cualquier otra cosa se conserva.
+ */
+export function stripThemeTokens(css: string): string {
+  // ⚠️ El separador de delante es parte del arreglo. El regex heredado del host anclaba
+  // en `^` (inicio de línea), así que sólo limpiaba CSS formateado: un `:root{--color-x:…}`
+  // en UNA sola línea —lo que emite cualquier minificador— pasaba entero y volvía a
+  // ganarle al selector de paleta. Ahora vale también tras `{` o `;`.
+  //
+  // Y el separador va en LOOKBEHIND, no capturado: consumiéndolo, el `;` que separa dos
+  // tokens seguidos se comía con el primero y el segundo se quedaba sin delimitador a la
+  // izquierda — `{--a:1;--b:2}` perdía `--a` en el primer viaje y `--b` en el SEGUNDO. El
+  // test anti-crecimiento lo cazó: dos round-trips daban HTML distinto.
+  return css.replace(
+    /(?<=^|[{;])\s*--(?:color-[\w-]+|radius|font-(?:heading|body|mono))\s*:[^;}]*;?/gim,
+    '',
+  )
+}
+
+/**
+ * El CSS propio del artefacto, listo para la SUPERFICIE DE EDICIÓN: reescribe los
+ * selectores de documento (`html`, `body`, `:root`) al scope del lienzo, porque dentro
+ * del editor el elemento que hace de `<body>` es el `.ce-artboard`.
+ *
+ * Vivía copiado en `ArtifactPanel.tsx` con un regex sobre el HTML crudo; ahora se sirve
+ * del `doc.shell`, que ya viene parseado y sin tokens.
+ */
+export function shellStyleCss(
+  shell: DocShell | undefined,
+  opts: { scope?: string } = {},
+): string {
+  const scope = opts.scope ?? '.ce-artboard'
+  const css = (shell?.assets ?? [])
+    .filter((a) => a.kind === 'style')
+    .map((a) => a.text ?? '')
+    .join('\n')
+  return css
+    .replace(/(^|[\s,{}])(html|body)\b/gi, `$1${scope}`)
+    .replace(/:root\b/gi, scope)
+}
+
+export interface DocToHtmlOpts {
+  /** HTML extra al final del `<head>`. Sustituye al `.replace("</head>", …)` del host. */
+  headExtra?: string
+  /** Omitir los `<script>` del shell (preview sandboxeado, copiar al portapapeles…). */
+  omitScripts?: boolean
+}
+
+function assetToHtml(a: ShellAsset): string {
+  const attrs = Object.entries(a.attrs ?? {})
+    .map(([k, v]) => (v === '' ? k : `${k}="${escAttr(v)}"`))
+    .join(' ')
+  const open = attrs ? `<${a.kind} ${attrs}>` : `<${a.kind}>`
+  // link y meta son void; el resto lleva su texto CRUDO (no se escapa: es CSS o JS).
+  if (a.kind === 'link' || a.kind === 'meta') return open
+  return `${open}${a.text ?? ''}</${a.kind}>`
+}
+
+function shellHtml(shell: DocShell | undefined, slot: ShellAsset['slot'], opts: DocToHtmlOpts): string {
+  const assets = (shell?.assets ?? []).filter(
+    (a) => a.slot === slot && !(opts.omitScripts && a.kind === 'script'),
+  )
+  return assets.length ? '\n' + assets.map(assetToHtml).join('\n') : ''
+}
+
+function attrsHtml(attrs: Record<string, string> | undefined): string {
+  const e = Object.entries(attrs ?? {})
+  return e.length ? ' ' + e.map(([k, v]) => (v === '' ? k : `${k}="${escAttr(v)}"`)).join(' ') : ''
+}
+
+/**
+ * HTML completo y autónomo — persistencia, preview y publicación.
+ *
+ * ⚠️ El ORDEN del `<head>` es cascada: el CSS del TEMA va primero y el del ARTEFACTO
+ * después, para que las reglas propias del artefacto ganen. Los tokens del tema no se
+ * pierden por eso: viven en un bloque de variables aparte, con especificidad normal,
+ * mientras que las reglas base del tema van en `:where()` (especificidad cero).
+ */
+export function docToHtml(doc: Doc, opts: DocToHtmlOpts = {}): string {
   const multi = doc.artboards.length > 1
   const body = doc.artboards.map((ab) => artboardToHtml(ab, { centered: multi })).join('\n')
+  const shell = doc.shell
+  // Con UN solo artboard, su `cls` es la del <body> (parseShell la copió ahí) y es la que
+  // el usuario pudo editar: manda ella. Con varios, el body no representa a ninguno.
+  const bodyCls = doc.artboards.length === 1 ? (doc.artboards[0].cls ?? shell?.bodyCls) : shell?.bodyCls
   return `<!doctype html>
-<html data-theme="${doc.theme.mode}">
+<html data-theme="${doc.theme.mode}"${attrsHtml(shell?.htmlAttrs)}>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<script src="https://cdn.tailwindcss.com"></script>
-<link rel="stylesheet" href="${googleFontsHref([doc.theme.fonts.heading, doc.theme.fonts.body])}">
-<style>
+<script ${CE_MARK}="tw" src="https://cdn.tailwindcss.com"></script>
+<link ${CE_MARK}="fonts" rel="stylesheet" href="${googleFontsHref([doc.theme.fonts.heading, doc.theme.fonts.body])}">
+<style ${CE_MARK}="theme">
 ${themeToCss(doc.theme)}
 ${arbitraryUtilityCss(doc)}
-</style>
+</style>${shellHtml(shell, 'head', opts)}${opts.headExtra ? '\n' + opts.headExtra : ''}
 </head>
-<body>
-${body}
+<body${bodyCls ? ` class="${escAttr(bodyCls)}"` : ''}${attrsHtml(shell?.bodyAttrs)}>
+${body}${shellHtml(shell, 'body-end', opts)}
 </body>
 </html>`
 }
@@ -247,7 +355,17 @@ function parseTheme(docEl: Document): Theme {
   const mode = html?.getAttribute('data-theme')
   if (mode === 'dark' || mode === 'light') theme.mode = mode
   const parsed: Record<string, string> = {}
-  const styleText = docEl.querySelector('style')?.textContent || ''
+  // TODOS los <style>, no sólo el primero: un artefacto real declara sus tokens en
+  // cualquiera de ellos (el que destapó esto tenía CINCO y el `:root` no estaba en el
+  // primero).
+  //
+  // ⚠️ Aquí NO se filtra por CE_MARK, al revés que en `parseShell`. El `<style>` del
+  // editor es la fuente CANÓNICA del tema —es la paleta que el usuario eligió— y va
+  // primero en el documento, así que el regex de `:root` lo encuentra antes que el del
+  // artefacto y gana. Filtrarlo dejaba el round-trip del editor consigo mismo sin tema.
+  const styleText = Array.from(docEl.querySelectorAll('style'))
+    .map((el) => el.textContent || '')
+    .join('\n')
   const rootMatch = styleText.match(/:root\s*{([^}]*)}/)
   if (rootMatch) {
     for (const decl of rootMatch[1].split(';')) {
@@ -272,16 +390,93 @@ function parseTheme(docEl: Document): Theme {
   return theme
 }
 
+const SHELL_TAGS: Record<string, ShellAsset['kind']> = {
+  style: 'style',
+  script: 'script',
+  link: 'link',
+  meta: 'meta',
+  title: 'title',
+}
+/** Los que `docToHtml` re-emite siempre: preservarlos duplicaría el head en cada viaje. */
+const SHELL_SKIP_META = new Set(['charset', 'viewport'])
+
+function elToAsset(el: Element, slot: ShellAsset['slot']): ShellAsset | null {
+  const kind = SHELL_TAGS[el.tagName.toLowerCase()]
+  if (!kind) return null
+  // Lo que emitió el editor no se preserva: se regenera solo (ver CE_MARK).
+  if (el.hasAttribute(CE_MARK)) return null
+  if (kind === 'meta') {
+    const name = el.getAttribute('name') || (el.hasAttribute('charset') ? 'charset' : '')
+    if (SHELL_SKIP_META.has(name)) return null
+  }
+  const attrs: Record<string, string> = {}
+  for (const a of Array.from(el.attributes)) attrs[a.name] = a.value
+  const asset: ShellAsset = { kind, slot }
+  if (Object.keys(attrs).length) asset.attrs = attrs
+  // style/script/title llevan texto CRUDO; el resto son elementos vacíos.
+  if (kind === 'style' || kind === 'script' || kind === 'title') {
+    const raw = el.textContent || ''
+    // Los tokens del artefacto ya viven en `doc.theme`; dejarlos aquí los duplicaría y
+    // le ganarían al selector de paleta (ver stripThemeTokens).
+    asset.text = kind === 'style' ? stripThemeTokens(raw) : raw
+  }
+  return asset
+}
+
+/**
+ * Recoge del DOM todo lo que no es árbol de nodos: atributos de `<html>` y `<body>`, y
+ * los `<style>`/`<script>`/`<link>` del `<head>` y del final del `<body>`.
+ */
+function parseShell(dom: Document): DocShell | undefined {
+  const shell: DocShell = {}
+  const assets: ShellAsset[] = []
+
+  for (const el of Array.from(dom.head?.children || [])) {
+    const a = elToAsset(el as Element, 'head')
+    if (a) assets.push(a)
+  }
+  // Hijos directos del body: van al SHELL, no al árbol. Antes entraban como nodos y el
+  // host los podaba después (ArtifactPanel), así que su CSS sólo sobrevivía por un regex.
+  for (const el of Array.from(dom.body?.children || [])) {
+    const a = elToAsset(el as Element, 'body-end')
+    if (a) assets.push(a)
+  }
+  if (assets.length) shell.assets = assets
+
+  const htmlEl = dom.documentElement
+  if (htmlEl) {
+    const htmlAttrs: Record<string, string> = {}
+    for (const a of Array.from(htmlEl.attributes)) {
+      if (a.name !== 'data-theme') htmlAttrs[a.name] = a.value
+    }
+    if (Object.keys(htmlAttrs).length) shell.htmlAttrs = htmlAttrs
+  }
+  const bodyEl = dom.body
+  if (bodyEl) {
+    const cls = bodyEl.getAttribute('class')
+    if (cls) shell.bodyCls = cls
+    const bodyAttrs: Record<string, string> = {}
+    for (const a of Array.from(bodyEl.attributes)) {
+      if (a.name !== 'class') bodyAttrs[a.name] = a.value
+    }
+    if (Object.keys(bodyAttrs).length) shell.bodyAttrs = bodyAttrs
+  }
+  return Object.keys(shell).length ? shell : undefined
+}
+
 export function htmlToDoc(html: string, id = genId('doc'), opts?: ParseOpts): Doc {
   const parser = getParser(opts)
   const dom = parser.parseFromString(html, 'text/html')
+  const shell = parseShell(dom)
   const abEls = Array.from(dom.querySelectorAll('[data-artboard-id]'))
   let artboards: Artboard[]
   if (abEls.length) {
     artboards = abEls.map(elToArtboard)
   } else {
     // Legacy / foreign HTML with no artboard wrappers → wrap the body as one desktop frame.
-    const bodyKids = Array.from(dom.body?.children || [])
+    const bodyKids = Array.from(dom.body?.children || []).filter(
+      (c) => !SHELL_TAGS[c.tagName.toLowerCase()],
+    )
     artboards = [
       {
         id: genId('ab'),
@@ -290,11 +485,17 @@ export function htmlToDoc(html: string, id = genId('doc'), opts?: ParseOpts): Do
         y: 0,
         w: 1440,
         h: 1024,
+        // La clase del <body> se COPIA al artboard porque en el editor la superficie que
+        // hace de body es el `.ce-artboard`: sin esto, `min-h-screen` y compañía se veían
+        // distinto editando que publicado. Al exportar manda ésta (ver DocShell).
+        cls: shell?.bodyCls,
         nodes: bodyKids.map((c) => elToNode(c as Element)),
       },
     ]
   }
-  return { id, artboards, theme: parseTheme(dom) }
+  const doc: Doc = { id, artboards, theme: parseTheme(dom) }
+  if (shell) doc.shell = shell
+  return doc
 }
 
 // Arbitrary-value mini-JIT: the host's compiled Tailwind won't emit classes like
