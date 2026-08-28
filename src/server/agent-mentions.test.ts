@@ -29,7 +29,7 @@ vi.mock("../db.server", () => ({
 }));
 vi.mock("./notify.server", () => ({ notify: (...a: unknown[]) => notify(...a) }));
 
-const { notifyMentions, notificarMencionesDelAgente } = await import("./chat");
+const { notifyMentions, notificarMencionesDelAgente } = await import("./mentions.server");
 
 const ROOM = { id: 7, slug: "general", name: "general", is_private: 0 } as never;
 const PRIVADO = { id: 7, slug: "legal", name: "legal", is_private: 1 } as never;
