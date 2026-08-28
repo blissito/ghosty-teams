@@ -1176,6 +1176,13 @@ async function migrate(): Promise<void> {
   await addColumn("gt_event_recordings", "video_id", "TEXT");
   await addColumn("gt_event_recordings", "published_url", "TEXT");
   await addColumn("gt_event_recordings", "publish_state", "TEXT");
+  // ⚠️ El TÍTULO de ESTA grabación, congelado al parar. Sin él la lista pintaba el título
+  // del ROOM en todas las filas: tres grabaciones seguidas salían con el mismo texto,
+  // truncado, y lo único que las distinguía era la línea gris de la fecha. El dato ya se
+  // conocía —`detenerGrabacion` se lo manda a fixtergeek para el borrador—, sólo que no se
+  // guardaba. Congelado y no derivado, porque el room se renombra y las grabaciones viejas
+  // seguirían diciendo el nombre nuevo. NULL en las filas anteriores → cae al del room.
+  await addColumn("gt_event_recordings", "title", "TEXT");
   await exec("CREATE INDEX IF NOT EXISTS gt_event_rec_ch ON gt_event_recordings(channel_id, ended_at)");
 
   // Una persona, una fila por evento: si vuelve a registrarse se actualiza, no se

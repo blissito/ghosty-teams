@@ -143,7 +143,7 @@ function RoomAbierto() {
   // storage, la URL se guardaba en el room, y nadie la veía nunca — desde fuera era
   // indistinguible de haberla perdido.
   const [grabada, setGrabada] = useState<{ url: string; at: number | null } | null>(null);
-  type Grabacion = { id: number; url: string; poster: string | null; viewerUrl: string | null; publishState: string | null; transcriptUrl: string | null; transcriptState: "pending" | "ready" | "none"; bytes: number; startedAt: number | null; endedAt: number; by: string | null };
+  type Grabacion = { id: number; url: string; poster: string | null; viewerUrl: string | null; publishState: string | null; transcriptUrl: string | null; transcriptState: "pending" | "ready" | "none"; bytes: number; startedAt: number | null; endedAt: number; by: string | null; title: string | null };
   // ⚠️ TODAS, no la última. Con un solo enlace, grabar dos veces dejaba la primera sin
   // forma de abrirla aunque el archivo siguiera en storage.
   const [grabaciones, setGrabaciones] = useState<Grabacion[]>([]);
@@ -653,10 +653,23 @@ function RoomAbierto() {
                           )}
                           <span className="min-w-0">
                             {/* El TÍTULO manda: una fila que empieza por una fecha obliga a
-                                recordar qué se hizo ese día. Se repite entre grabaciones del
-                                mismo room, y da igual — es lo que se descarga y se comparte,
-                                y así se sabe qué es sin abrirlo. */}
-                            <span className="block truncate font-medium">{data.title}</span>
+                                recordar qué se hizo ese día.
+                                ⚠️ Pero cuando se REPITE deja de informar: tres grabaciones
+                                del mismo room salían con el mismo texto truncado y lo único
+                                que las distinguía era la línea gris de abajo. Cada fila trae
+                                ya su propio título (congelado al parar); las anteriores a esa
+                                columna caen al del room, y ésas sí se desempatan con la fecha
+                                delante. */}
+                            <span className="block truncate font-medium">
+                              {g.title ?? (
+                                <>
+                                  <span className="text-muted">
+                                    {new Date(g.endedAt * 1000).toLocaleDateString([], { day: "numeric", month: "short" })} ·{" "}
+                                  </span>
+                                  {data.title}
+                                </>
+                              )}
+                            </span>
                             <span className="block truncate text-[11px] text-muted">
                               {g.publishState === "pending" ? "publicando… · " : ""}
                               {new Date(g.endedAt * 1000).toLocaleString([], { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}

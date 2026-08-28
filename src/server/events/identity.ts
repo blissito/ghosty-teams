@@ -218,10 +218,13 @@ export const recordingFn = createServerFn({ method: "POST" })
       // grabación pisaba a la primera y su enlace se perdía aunque el MP4 siguiera ahí.
       const { dbq } = await import("../../dbq.server");
       await dbq(
-        `INSERT INTO gt_event_recordings (channel_id, storage_key, transcript_key, bytes, started_at, by_name, box_file, poster_key, video_id, published_url, publish_state)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO gt_event_recordings (channel_id, storage_key, transcript_key, bytes, started_at, by_name, box_file, poster_key, video_id, published_url, publish_state, title)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [r.ch.id, res.key, res.transcriptKey, res.bytes, res.startedAt, viewer.name ?? null, res.file, res.posterKey ?? null,
-         res.videoId ?? null, res.viewerUrl ?? null, res.publishState]
+         res.videoId ?? null, res.viewerUrl ?? null, res.publishState,
+         // El mismo `(call_title || name)` que ya viaja a fixtergeek en el borrador, para
+         // que el título de la lista y el del vídeo publicado no puedan divergir.
+         (r.ch.call_title || r.ch.name || "").trim() || null]
       ).catch((e) => console.error("[event] no pude registrar la grabación:", e));
       await r.db.setChannelEvent(r.ch.id, { recordingUrl: res.url, recordedAt: Math.floor(Date.now() / 1000) });
 

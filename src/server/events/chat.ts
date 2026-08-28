@@ -323,7 +323,7 @@ async function listarGrabaciones(r: { ch: { id: number; call_share_slug?: string
     const { signedUrl, signedUrlEstable } = await import("../storage.server");
     const { absolutaEnFixtergeek } = await import("./publish.server");
     const filas = await dbq(
-      `SELECT id, storage_key, transcript_key, transcript_state, bytes, started_at, ended_at, by_name, poster_key, published_url, publish_state
+      `SELECT id, storage_key, transcript_key, transcript_state, bytes, started_at, ended_at, by_name, poster_key, published_url, publish_state, title
          FROM gt_event_recordings WHERE channel_id = ? ORDER BY ended_at DESC LIMIT 20`,
       [r.ch.id]
     );
@@ -350,6 +350,9 @@ async function listarGrabaciones(r: { ch: { id: number; call_share_slug?: string
       startedAt: f.started_at == null ? null : Number(f.started_at),
       endedAt: Number(f.ended_at),
       by: (f.by_name as string | null) ?? null,
+      // El título de ESTA grabación, congelado al parar. NULL en las filas anteriores a la
+      // columna: quien pinta la lista cae al título del room, que es lo que se hacía antes.
+      title: ((f.title as string | null) ?? "").trim() || null,
       // Tres estados, no dos: hay grabaciones para las que el transcript ya no puede
       // llegar, y decirlo es mejor que dejar un "Transcribiendo…" que nunca acaba.
       transcriptState: (f.transcript_key ? "ready" : ((f.transcript_state as string) ?? "pending")) as
