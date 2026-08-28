@@ -998,7 +998,8 @@ export function nativeTools(dest: ToolDest | null): ConnectorTool[] {
         "Busca por palabras en el historial de ESTA conversación (todo lo que se dijo aquí, " +
         "también antes de que tú llegaras). Úsalo ANTES de decir que algo no existe o que no lo " +
         "recuerdas: tu contexto sólo trae los mensajes recientes. Cada resultado trae su `id`; " +
-        "con ese id puedes leer lo que había alrededor usando chat_history({before: id}).",
+        "con ese id puedes leer lo que había alrededor usando chat_history({before: id}), y si el " +
+        "resultado trae `truncated: true` el texto completo con chat_message({ids: [id]}).",
       inputSchema: {
         type: "object",
         properties: {
@@ -1101,7 +1102,9 @@ export function nativeTools(dest: ToolDest | null): ConnectorTool[] {
         "Lee hacia atrás el historial de ESTA conversación, en orden cronológico. Sin `before` " +
         "devuelve lo más reciente. Para seguir subiendo, vuelve a llamar con `before` = el " +
         "`oldestId` de la respuesta anterior. Úsalo cuando te pidan algo de 'antes' o necesites " +
-        "el hilo de una decisión; si sabes qué palabras buscar, chat_search es más directo.",
+        "el hilo de una decisión; si sabes qué palabras buscar, chat_search es más directo. Los " +
+        "cuerpos vienen recortados: los marcados con `truncated: true` se leen enteros con " +
+        "chat_message({ids: [...]}).",
       inputSchema: {
         type: "object",
         properties: {
@@ -1123,6 +1126,50 @@ export function nativeTools(dest: ToolDest | null): ConnectorTool[] {
           // vino la página llena, lo normal es que haya más.
           oldestId: msgs.length ? msgs[0].id : null,
           hasMore: msgs.length === pedidos,
+        };
+      },
+    },
+    {
+      name: "chat_message",
+      description:
+        "Trae el texto COMPLETO de mensajes de ESTA conversación, por id. Úsalo siempre que " +
+        "un resultado de chat_search o chat_history venga con `truncated: true`: ahí sólo " +
+        "viste los primeros 800 caracteres y lo que buscas suele estar detrás del corte. " +
+        "Máximo 5 ids por llamada.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          ids: {
+            type: "array",
+            items: { type: "number" },
+            description: "Ids de mensaje (los `id` que devolvieron chat_search / chat_history)",
+          },
+        },
+        required: ["ids"],
+      },
+      handler: async (_sub, args) => {
+        const scope = scopeDelTurno(dest);
+        if (!scope) return { ok: false, error: "no hay conversación en este turno" };
+        const ids = Array.isArray(args.ids) ? args.ids.map(Number) : [];
+        if (!ids.length) return { ok: false, error: "falta ids" };
+        const db = await import("../../db.server");
+        const msgs = await db.messagesByIdInScope(scope, ids);
+        // Un cuerpo entero puede ser un documento pegado. Se acota por mensaje para que
+        // pedir cinco no reviente el turno, y el recorte se vuelve a declarar.
+        const TOPE = 24_000;
+        return {
+          ok: true,
+          count: msgs.length,
+          messages: msgs.map((m) => {
+            const body = (m.body || "").trim();
+            return {
+              id: m.id,
+              who: m.agent_handle ? `@${m.agent_handle}` : m.sender || "usuario",
+              at: new Date(m.created_at).toISOString(),
+              text: body.length > TOPE ? body.slice(0, TOPE) + "…" : body,
+              ...(body.length > TOPE ? { truncated: true, chars: body.length } : {}),
+            };
+          }),
         };
       },
     },
@@ -1526,13 +1573,27 @@ function paraElModelo(m: {
   created_at: number;
 }) {
   const body = (m.body || "").trim();
+  const recortado = body.length > TOPE_VISTA;
   return {
     id: m.id,
     who: m.agent_handle ? `@${m.agent_handle}` : m.sender || "usuario",
     at: new Date(m.created_at).toISOString(),
-    text: body.length > 800 ? body.slice(0, 800) + "…" : body,
+    text: recortado ? body.slice(0, TOPE_VISTA) + "…" : body,
+    // ⚠️ El corte se DECLARA. Antes sólo quedaba un «…» al final, y el modelo lo leía
+    // como el final del mensaje: el 2026-08-27 un turno gastó 1.4M de cacheRead y 308s
+    // buscando un párrafo que estaba justo detrás del corte, y acabó diciéndole al
+    // usuario que sus herramientas truncaban. Un hueco mudo se paga entero y falla.
+    ...(recortado ? { truncated: true, chars: body.length, readFull: "chat_message({ ids: [" + m.id + "] })" } : {}),
   };
 }
+
+/**
+ * Cuánto cuerpo entra en un resultado de `chat_search`/`chat_history`.
+ *
+ * Son un ÍNDICE, no el texto: subirlo mete la conversación entera en cada búsqueda. Lo
+ * que faltaba no era más ventana, era una vía para pedir el resto — `chat_message`.
+ */
+const TOPE_VISTA = 800;
 
 /**
  * El documento sobre el que actúan las tools de comentarios. NO viene en los argumentos,

@@ -9,8 +9,8 @@ import { toolEnScope } from "./tools.server";
 import { parseScope } from "./tool-token.server";
 
 describe("el scope de un tool-token", () => {
-  it("con `lectura` sólo deja las tres que leen la conversación del turno", () => {
-    for (const t of ["chat_history", "chat_search", "doc_read"]) {
+  it("con `lectura` sólo deja las que leen la conversación del turno", () => {
+    for (const t of ["chat_history", "chat_search", "chat_message", "doc_read"]) {
       expect(toolEnScope(t, parseScope("lectura"))).toBe(true);
     }
     // Las que escriben o salen del espacio, no. `email_send` es la prueba que importa: es

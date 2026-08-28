@@ -2745,6 +2745,45 @@ export async function historyBefore(
 }
 
 /**
+ * Los mensajes COMPLETOS de un scope, por id (la tool `chat_message`).
+ *
+ * Existe porque `chat_search`/`chat_history` entregan los cuerpos RECORTADOS: son un
+ * índice, no el texto. Sin esta vía, un mensaje largo —justo los que importan: un
+ * documento pegado, un párrafo que hay que citar— era irrecuperable, y el agente lo
+ * reportaba al usuario como una limitación suya.
+ *
+ * Los ids se filtran por el scope FIRMADO del turno, igual que las otras dos: un id
+ * inventado de otra conversación no devuelve nada en vez de devolver texto ajeno.
+ */
+export async function messagesByIdInScope(
+  scope: { dmId: number } | { channelId: number; parentId?: number | null },
+  ids: number[]
+): Promise<Message[]> {
+  const limpios = [...new Set(ids.filter((n) => Number.isInteger(n) && n > 0))].slice(0, 5);
+  if (!limpios.length) return [];
+  const marcas = limpios.map(() => "?").join(",");
+  let rows;
+  if ("dmId" in scope) {
+    rows = await dbq(
+      `SELECT * FROM gc_messages WHERE dm_id = ? AND kind = 'msg' AND id IN (${marcas})`,
+      [scope.dmId, ...limpios]
+    );
+  } else if (scope.parentId != null) {
+    rows = await dbq(
+      `SELECT * FROM gc_messages WHERE (parent_id = ? OR id = ?) AND kind = 'msg' AND id IN (${marcas})`,
+      [scope.parentId, scope.parentId, ...limpios]
+    );
+  } else {
+    // Igual que `searchInScope`: en un canal cuenta también lo que vive en sus hilos.
+    rows = await dbq(
+      `SELECT * FROM gc_messages WHERE channel_id = ? AND dm_id IS NULL AND kind = 'msg' AND id IN (${marcas})`,
+      [scope.channelId, ...limpios]
+    );
+  }
+  return rows.map(toMessage);
+}
+
+/**
  * Busca texto DENTRO de un scope (la tool `chat_search`).
  *
  * `searchRoomMessages` no sirve aquí: barre todos los rooms visibles, y `searchDmMessages`

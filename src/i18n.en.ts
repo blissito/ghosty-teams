@@ -936,6 +936,8 @@ export const en: Record<string, string> = {
   "Revisando la conversación": "Reviewing the conversation",
   "Revisando tus recordatorios": "Checking your reminders",
   "Revisé la conversación": "Reviewed the conversation",
+  "Leí un mensaje": "Read a message",
+  "Leyendo un mensaje": "Reading a message",
   "Revisé tus recordatorios": "Checked your reminders",
   "Salir de pantalla completa": "Exit full screen",
   "Se comparte esta versión: si editas el artefacto después, quien tenga el enlace seguirá viendo la que elegiste.":

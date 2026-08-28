@@ -24,7 +24,7 @@ export type ToolDecl = { name: string; description: string; inputSchema: Record<
  * Todas leen SÓLO la conversación del turno: ninguna acepta un canal o un documento por
  * argumento, el objetivo sale del `dest` firmado. Ver el comentario de `doc_read`.
  */
-const SOLO_LECTURA = new Set(["chat_history", "chat_search", "doc_read"]);
+const SOLO_LECTURA = new Set(["chat_history", "chat_search", "chat_message", "doc_read"]);
 
 /**
  * FAMILIAS por prefijo de nombre.
