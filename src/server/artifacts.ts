@@ -35,6 +35,23 @@ export function imageGapNotice(failed: string[]): string {
     : `⚠️ El documento quedó sin ${failed.length} imágenes: no pude traer ${cuales}${resto}.`;
 }
 
+/**
+ * Menciones del agente que no llegaron a nadie. Mismo criterio que `imageGapNotice`:
+ * lo que el servidor descubrió y el modelo no podía saber, se dice en la burbuja.
+ *
+ * Y hace doble trabajo a propósito: el aviso queda en el BODY del mensaje, o sea en el
+ * historial, así que el propio agente lo lee en el turno siguiente y puede corregir el
+ * handle. Sin esto hace falta una columna y un canal de vuelta para decirle lo mismo.
+ */
+export function mentionGapNotice(unresolved: string[]): string {
+  if (!unresolved.length) return "";
+  const cuales = unresolved.slice(0, 3).map((h) => `\`@${h}\``).join(", ");
+  const resto = unresolved.length > 3 ? ` y ${unresolved.length - 3} más` : "";
+  return unresolved.length === 1
+    ? `⚠️ No avisé a ${cuales}: no encontré ese handle en este canal.`
+    : `⚠️ No avisé a ${cuales}${resto}: no encontré esos handles en este canal.`;
+}
+
 export async function publishArtifactVersion(args: {
   messageId: number;
   documentId: string;

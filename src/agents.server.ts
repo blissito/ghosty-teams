@@ -831,6 +831,44 @@ const SIN_TOOLS_HINT =
   "funcionas por dentro, NO propongas caminos alternativos y NO afirmes qué puede o " +
   "no puede hacer la plataforma: no tienes forma de saberlo desde aquí.]\n\n";
 
+/**
+ * Quién está en este canal, con su @handle exacto, para que el agente pueda ETIQUETAR.
+ *
+ * Va en el contexto y no detrás de una tool a propósito: es dato acotado, exacto y que se
+ * necesita casi siempre — el caso de libro para grounding. El camino con tool ya falló dos
+ * veces documentadas aquí (goose no encontró `task_create` por el prefijo MCP y contestó
+ * que no tenía el tablero; la skill autodescubrible que el modelo nunca abrió).
+ *
+ * ⚠️ Sólo el roster de ESTE canal. El agente etiqueta a quien ya está donde ocurre el
+ * trabajo; no le abre conversación a nadie que no esté aquí. Es la razón por la que no
+ * existe una tool de DM.
+ */
+const ROSTER_MAX = 40;
+async function buildRosterHint(
+  dest?: import("./server/connectors/tool-token.server").ToolDest | null,
+  publicChannel?: boolean
+): Promise<string> {
+  // En un canal público (WhatsApp) quien lee es un cliente: nombrarle al equipo es filtrar
+  // datos de terceros. En un DM 1:1 no hay a quién etiquetar.
+  if (publicChannel || !dest?.channelId) return "";
+  const db = await import("./db.server");
+  const ch = await db.getChannelById(dest.channelId);
+  if (!ch) return "";
+  const roster = (await db.listRoomRoster(ch)).filter((m) => m.handle);
+  if (!roster.length) return "";
+  // Un roster de 500 se come el turno. Pasado el tope no se inventa una lista parcial —que
+  // sería peor: el agente daría por hecho que quien no aparece no está— sino que se calla.
+  if (roster.length > ROSTER_MAX) return "";
+  const quienes = roster.map((m) => `${m.name || m.handle} (@${m.handle})`).join(", ");
+  return (
+    `\n\n[EN ESTE CANAL ESTÁN: ${quienes}. ` +
+    `Si algo le toca a una de estas personas, ETIQUÉTALA con su @handle EXACTO de esta ` +
+    `lista y díselo en la misma frase — le llega aviso. Un handle que no esté en la lista ` +
+    `no le llega a nadie, así que no lo inventes ni lo deduzcas del nombre. ` +
+    `Sólo a quien esté aquí: no menciones a nadie más, y no existe "@todos".]\n\n`
+  );
+}
+
 const TEAMS_PRODUCT_CONTEXT = [
   "SOBRE DÓNDE VIVES — eres un agente de IA dentro de **Ghosty Teams**, una app de chat de equipo (estilo Slack) con canales, hilos, mensajes directos, llamadas y artefactos. Conoces el producto y puedes ORIENTAR a los usuarios sobre cómo usarlo.",
   "IDIOMA: escribe SIEMPRE en el idioma en el que te habla la persona, y no lo cambies a mitad de un mensaje. Eso incluye el CONTENIDO de los documentos que produces: si te piden una denuncia en español, su título y su cuerpo van en español — un escrito titulado \'CRIMINAL COMPLAINT\' no se puede presentar en un juzgado mexicano. Esto incluye las líneas de progreso y los pasos que narras entre herramientas — es donde se cuela el inglés cuando el trabajo se pone técnico, y deja la conversación en dos idiomas. Los nombres de herramientas, librerías, rutas y campos van tal cual (`python-docx`, `eb-file`, `<w:tcBorders>`), pero la frase que los rodea va en el idioma de la persona. Si te escriben en español, 'the table is a clean borderless 2×2' es un error, no un detalle.",
@@ -1347,14 +1385,24 @@ export async function callAgentBackendStream(
   /** El turno se cortó. Se avisa por callback y NO por el texto del stream: el cuerpo
    *  autoritativo lo pisa `done.value` (ver el bucle de abajo), así que un aviso metido
    *  por `onChunk` se vería en vivo y desaparecería del historial. */
-  onTruncated?: (ev: TruncatedEvent) => void
+  onTruncated?: (ev: TruncatedEvent) => void,
+  /**
+   * El turno MURIÓ por un fallo de transporte (`terminated`, `fleet-stream 502`, la caja
+   * caída). Se avisa por callback porque el `catch` de abajo devuelve el aviso como si
+   * fuera la respuesta del agente: sin esta señal el turno se cierra como `done` y el
+   * medidor lo cobra como una entrega.
+   *
+   * ⚠️ NO se dispara con el botón Detener (se re-lanza antes) ni con un 402 sin saldo
+   * (ése no es un fallo nuestro y se avisa sin lanzar, más arriba).
+   */
+  onFailure?: (info: { message: string }) => void
 ): Promise<string> {
   // El webhook sigue sin SSE: junta el reply y lo emite de un tirón. Un agente A2A NO cae
   // aquí — tiene streaming de verdad y se atiende más abajo.
   if (agent.backend.kind === "webhook") {
     // Sin SSE: colecta el reply completo y lo emite de un tirón (el cliente ya lo ve
     // aterrizar). Es la limitación del formato propio, no del agente.
-    const full = await callAgentBackend(agent, groupId, sender, text, parts);
+    const full = await callAgentBackend(agent, groupId, sender, text, parts, onFailure);
     if (full) await onChunk(full);
     return full;
   }
@@ -1810,8 +1858,15 @@ export async function callAgentBackendStream(
   // Lo de "nunca markdown" no es estética: WhatsApp no lo renderiza, así que un `**` o una
   // tabla llegan como basura literal al cliente.
   const canalHint = publicChannel ? CANAL_PUBLICO_HINT : "";
+  // Quién está en este canal, CON su @handle. Sin esto el agente no tiene de dónde sacar
+  // un identificador exacto y se lo inventa (`@ana` cuando el handle es `@ana.g`): la
+  // mención se pinta bien y no le llega a nadie.
+  //
+  // Va en el TEXTO por la misma razón que `connHint`: entra al `configSig` del worker por
+  // valor, y una lista que cambia por canal reciclaría la sesión en cada turno.
+  const rosterHint = await buildRosterHint(dest, publicChannel).catch(() => "");
   const outText = stripLoneSurrogates(
-    sinToolsHint + connHint + nowHint + memHint + brandHint + docHint + text + canalHint
+    sinToolsHint + connHint + nowHint + memHint + brandHint + docHint + rosterHint + text + canalHint
   );
   try {
     // `parts` = FileParts A2A (media); EasyBits los normaliza por MIME (Slice E1).
@@ -1940,6 +1995,11 @@ export async function callAgentBackendStream(
     // runAgentTurn ya sabe cerrar el turno con "⏹ Detenido" conservando lo escrito.
     if (signal?.aborted || (e instanceof Error && e.name === "AbortError")) throw e;
     const msg = `⚠️ No pude contactar a @${agent.handle}: ${e instanceof Error ? e.message : e}`;
+    // El turno MURIÓ. Se sigue escribiendo el aviso en la burbuja —el usuario tiene que
+    // enterarse— pero además se marca como fallo: devolver esto como si fuera la respuesta
+    // era lo que hacía que `finishTurn` lo cerrara en `done` y el medidor lo cobrara como
+    // una entrega. Cuatro turnos de descti se pagaron así en agosto.
+    onFailure?.({ message: e instanceof Error ? e.message : String(e) });
     await onChunk(msg);
     return msg;
   }
@@ -2218,7 +2278,7 @@ export function agentTurnsInflight(): number {
 
 export async function runAgentTurn(
   opts: Parameters<typeof runAgentTurnInner>[0]
-): Promise<{ id: number; reply: string }> {
+): Promise<{ id: number; reply: string; failure?: string | null }> {
   turnsInflight++;
   try {
     return await runAgentTurnInner(opts);
@@ -2257,7 +2317,9 @@ async function runAgentTurnInner(opts: {
   originOverride?: string;
   /** Canal PÚBLICO: sin tools ni contexto de conectores. Ver callAgentBackendStream. */
   publicChannel?: boolean;
-}): Promise<{ id: number; reply: string }> {
+  /** Causa del fallo de transporte, si el turno murió. `null` = entregó.
+   *  Lo consumen chat.ts/dm.ts para marcar el turno como fallido en vez de `done`. */
+}): Promise<{ id: number; reply: string; failure?: string | null }> {
   let id: number | null = null;
   const ensure = async (): Promise<number> => {
     if (id == null) {
@@ -2468,12 +2530,14 @@ async function runAgentTurnInner(opts: {
    *  del callback, que el análisis de flujo de TS no rastrea: con un `let` lo estrecha a
    *  `null` y leer `.notice` deja de compilar. */
   const corte: { ev: TruncatedEvent | null } = { ev: null };
+  /** El turno murió por transporte. Mismo patrón de contenedor que `corte`, y por lo mismo. */
+  const fallo: { message: string | null } = { message: null };
   if (!opts.agent) {
     reply = `👾 @${opts.handle} no está conectado. El owner lo configura en Ajustes → Agentes.`;
     await onChunk(reply);
   } else {
     try {
-      reply = await callAgentBackendStream(opts.agent, opts.groupId, opts.sender, opts.text, onChunk, opts.parts ?? [], onTool, opts.currentDoc, opts.invokerSub, opts.signal, opts.dest, opts.inject, opts.originOverride, opts.publicChannel, (t) => { corte.ev = t; });
+      reply = await callAgentBackendStream(opts.agent, opts.groupId, opts.sender, opts.text, onChunk, opts.parts ?? [], onTool, opts.currentDoc, opts.invokerSub, opts.signal, opts.dest, opts.inject, opts.originOverride, opts.publicChannel, (t) => { corte.ev = t; }, (f) => { fallo.message = f.message; });
     } catch (e) {
       // Detenido: NO es un error del agente. Se conserva lo que alcanzó a escribir y se
       // dice que se detuvo — borrarlo tiraría trabajo que el usuario ya estaba leyendo.
@@ -2500,7 +2564,7 @@ async function runAgentTurnInner(opts: {
   // dentro del texto y se ve una sola vez.
   const avisoCorte = corte.ev?.notice === "event" ? `\n\n${avisoDeCorte(corte.ev)}` : "";
   // Body final autoritativo: bloque gt-tools TODO ✅ + texto separado. El caller lo persiste.
-  return { id: await ensure(), reply: renderToolBlock(true) + finalText + avisoCorte };
+  return { id: await ensure(), reply: renderToolBlock(true) + finalText + avisoCorte, failure: fallo.message };
 }
 
 // Llama al backend del agente y devuelve su respuesta en texto.
@@ -2509,7 +2573,10 @@ export async function callAgentBackend(
   groupId: string,
   sender: string,
   text: string,
-  parts: MediaPart[] = []
+  parts: MediaPart[] = [],
+  /** Igual que en `callAgentBackendStream`: un fallo de transporte se DICE, para que el
+   *  turno no se cierre como entregado. Ver el comentario de allá. */
+  onFailure?: (info: { message: string }) => void
 ): Promise<string> {
   const persona = agent.systemPrompt?.trim() || null;
   if (agent.backend.kind === "webhook") {
@@ -2532,6 +2599,7 @@ export async function callAgentBackend(
       const data = (await res.json()) as { reply?: string };
       return data.reply ?? "(sin respuesta)";
     } catch (e) {
+      onFailure?.({ message: e instanceof Error ? e.message : String(e) });
       return `⚠️ No pude contactar a @${agent.handle}: ${e instanceof Error ? e.message : e}`;
     }
   }
@@ -2578,6 +2646,7 @@ export async function callAgentBackend(
       }
       return r.text || "(sin respuesta)";
     } catch (e) {
+      onFailure?.({ message: e instanceof Error ? e.message : String(e) });
       return `⚠️ No pude contactar a @${agent.handle}: ${e instanceof Error ? e.message : e}`;
     }
   }
@@ -2606,6 +2675,7 @@ export async function callAgentBackend(
         onChunk: () => {},
       });
     } catch (e) {
+      onFailure?.({ message: e instanceof Error ? e.message : String(e) });
       return `⚠️ No pude contactar a @${agent.handle}: ${e instanceof Error ? e.message : e}`;
     }
   }
@@ -2662,6 +2732,7 @@ export async function callAgentBackend(
     if (!res.ok) throw new Error(`fleet ${res.status}: ${await res.text()}`);
     return ((await res.json()) as { reply?: string }).reply ?? "(sin respuesta)";
   } catch (e) {
+    onFailure?.({ message: e instanceof Error ? e.message : String(e) });
     return `⚠️ No pude contactar a @${agent.handle}: ${e instanceof Error ? e.message : e}`;
   }
 }

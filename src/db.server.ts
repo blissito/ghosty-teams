@@ -2214,15 +2214,18 @@ export async function setEmailNotifs(sub: string, on: boolean): Promise<void> {
   await dbq("UPDATE gc_users SET email_notifs=? WHERE sub=?", [on ? 1 : 0, sub]);
 }
 
-export type MemberInfo = { sub: string; name: string; email: string; avatar: string };
+// `handle` es OPCIONAL: sólo lo traen los listados de ROOM (los de DM no lo piden, y
+// pedirlo ahí sería una columna de más para nada). Está aquí porque es lo que el AGENTE
+// necesita para etiquetar: sin el handle exacto se lo inventa, y eso no le llega a nadie.
+export type MemberInfo = { sub: string; name: string; email: string; avatar: string; handle?: string };
 export async function listChannelMembersInfo(channelId: number): Promise<MemberInfo[]> {
   const rows = await dbq(
-    `SELECT u.sub, u.name, u.email, u.avatar
+    `SELECT u.sub, u.name, u.email, u.avatar, u.handle
        FROM gc_channel_members m JOIN gc_users u ON u.sub = m.user_sub
       WHERE m.channel_id = ?`,
     [channelId]
   );
-  return rows.map((r) => ({ sub: r.sub!, name: r.name ?? "", email: r.email ?? "", avatar: r.avatar ?? "" }));
+  return rows.map((r) => ({ sub: r.sub!, name: r.name ?? "", email: r.email ?? "", avatar: r.avatar ?? "", handle: r.handle ?? "" }));
 }
 
 // Roster VISIBLE de un room, para que CUALQUIER miembro vea quién está (patrón Slack/
@@ -2235,13 +2238,13 @@ export async function listChannelMembersInfo(channelId: number): Promise<MemberI
 export async function listRoomRoster(ch: Channel): Promise<MemberInfo[]> {
   if (ch.is_private !== 0) return listChannelMembersInfo(ch.id);
   const rows = await dbq(
-    `SELECT DISTINCT u.sub, u.name, u.email, u.avatar
+    `SELECT DISTINCT u.sub, u.name, u.email, u.avatar, u.handle
        FROM gc_messages m JOIN gc_users u ON u.sub = m.sender_sub
       WHERE m.channel_id = ? AND m.sender_sub IS NOT NULL AND m.agent_handle IS NULL
       ORDER BY u.name`,
     [ch.id]
   );
-  return rows.map((r) => ({ sub: r.sub!, name: r.name ?? "", email: r.email ?? "", avatar: r.avatar ?? "" }));
+  return rows.map((r) => ({ sub: r.sub!, name: r.name ?? "", email: r.email ?? "", avatar: r.avatar ?? "", handle: r.handle ?? "" }));
 }
 
 // Flujo principal del canal: mensajes top-level (parent_id NULL) + nº de respuestas.

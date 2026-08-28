@@ -393,13 +393,29 @@ export async function listUsers(): Promise<MentionUser[]> {
   }));
 }
 
-// Subs de usuarios cuyos @handle aparecen (para push). Excluye a excludeSub.
-export async function resolveMentionedUserSubs(handles: string[], excludeSub: string): Promise<string[]> {
+// Usuarios cuyos @handle aparecen, CON el handle que los resolvió. Excluye a excludeSub.
+//
+// Devuelve el par y no sólo el sub porque quien llama necesita saber qué handle NO
+// resolvió: un agente que etiqueta `@ana` cuando el handle real es `@ana.g` tiene que
+// enterarse de que nadie recibió aviso. Con una lista de subs a secas eso es indeducible.
+export async function resolveMentionedUsers(
+  handles: string[],
+  excludeSub: string
+): Promise<Array<{ sub: string; handle: string }>> {
   if (!handles.length) return [];
   const ph = handles.map(() => "?").join(",");
-  const { rows } = await dbq(
-    `SELECT sub FROM gc_users WHERE handle IN (${ph}) AND sub != ?`,
+  const { rows, cols } = await dbq(
+    `SELECT sub, handle FROM gc_users WHERE handle IN (${ph}) AND sub != ?`,
     [...handles.map((h) => h.toLowerCase()), excludeSub]
   );
-  return rows.map((r) => r[0] as string);
+  const idx = (c: string) => cols.indexOf(c);
+  return rows.map((r) => ({
+    sub: r[idx("sub")] as string,
+    handle: ((r[idx("handle")] as string) ?? "").toLowerCase(),
+  }));
+}
+
+// Subs de usuarios cuyos @handle aparecen (para push). Excluye a excludeSub.
+export async function resolveMentionedUserSubs(handles: string[], excludeSub: string): Promise<string[]> {
+  return (await resolveMentionedUsers(handles, excludeSub)).map((u) => u.sub);
 }

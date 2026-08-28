@@ -44,22 +44,41 @@ const FLEET_THREAD = "flow";
 
 // Push a los usuarios cuyos @handle aparecen en el mensaje (excluye al autor).
 // Soporta menciones grupales (@all = workspace, @room = este room).
-async function notifyMentions(
+//
+// Devuelve QUÉ pasó porque tiene dos emisores con necesidades distintas. Una persona
+// que se equivoca de handle lo ve en pantalla y lo repite; el AGENTE no ve su propio
+// mensaje renderizado, así que si nadie le dice que `@ana` no resolvió, cierra el turno
+// convencido de que avisó. `unresolved` es lo que alimenta ese aviso.
+export type MentionOutcome = { notified: string[]; unresolved: string[] };
+const SIN_MENCIONES: MentionOutcome = { notified: [], unresolved: [] };
+
+export async function notifyMentions(
   ns: string,
   channel: Channel,
   body: string,
   senderName: string,
-  senderSub: string
-): Promise<void> {
+  // ⚠️ Vacío cuando escribe el AGENTE, y no es un descuido: sólo se usa para excluir al
+  // emisor de sus propias menciones, y un agente no tiene `sub` que excluir.
+  senderSub: string,
+  // Las grupales (@all, @todos, @room) sólo para humanos. Un agente que puede escribir
+  // @todos le suena el teléfono a la empresa entera por iniciativa propia, y no tiene
+  // forma de medir ese coste. Se le ignora el token en vez de negarle el mensaje.
+  allowGroup = true
+): Promise<MentionOutcome> {
   const { id: channelId, slug, name: channelName } = channel;
   const isPrivate = channel.is_private === 1;
   const tokens = (body.match(/@([\wáéíóúñ]+)/gi) ?? []).map((t) => t.slice(1).toLowerCase());
-  if (!tokens.length) return;
+  if (!tokens.length) return SIN_MENCIONES;
   const users = await import("../users.server");
   const db = await import("../db.server");
 
+  // Lo que se le va a reportar a quien escribió: los @ a personas que no llegaron a
+  // nadie. Las grupales nunca cuentan como "sin resolver" — o valen, o se ignoran.
+  const personales = tokens.filter((t) => !GROUP_MENTIONS.has(t));
+  let unresolved: string[] = [];
+
   let targets: string[];
-  if (tokens.some((t) => GROUP_MENTIONS.has(t))) {
+  if (allowGroup && tokens.some((t) => GROUP_MENTIONS.has(t))) {
     // El nivel MÁS amplio gana: quien escribe @room @all quiere a todo el workspace.
     const wantsWorkspace = tokens.some((t) => WORKSPACE_MENTIONS.has(t));
     let audience: string[];
@@ -76,18 +95,25 @@ async function notifyMentions(
     }
     targets = audience.filter((s) => s && s !== senderSub);
   } else {
-    targets = await users.resolveMentionedUserSubs(tokens, senderSub);
+    let hits = await users.resolveMentionedUsers(personales, senderSub);
     // En un room PRIVADO, no filtrar por membresía filtraría info (excerpt + deep
     // link inservible) a no-miembros. Solo notifica a quienes pueden ver el room.
     if (isPrivate) {
       const members = new Set(await db.listChannelMembers(channelId));
-      targets = targets.filter((s) => members.has(s));
+      hits = hits.filter((u) => members.has(u.sub));
     }
+    // Un handle que no existe y uno que existe pero no está en este room privado son
+    // el mismo caso para quien escribió: nadie recibió el aviso.
+    const alcanzados = new Set(hits.map((u) => u.handle));
+    unresolved = [...new Set(personales.filter((t) => !alcanzados.has(t)))];
+    targets = hits.map((u) => u.sub);
   }
-  if (!targets.length) return;
+  if (!targets.length) return { notified: [], unresolved };
   // Silencio (mute): quien silenció este room no recibe push por menciones.
+  // Ojo: seguir en `notified` sería mentir, pero tampoco es un fallo que reportar —
+  // la persona SÍ está etiquetada y lo ve al entrar; sólo eligió no recibir el timbre.
   const subs = await db.filterMutedOut(targets, "room", channelId);
-  if (!subs.length) return;
+  if (!subs.length) return { notified: [], unresolved };
   const { notify } = await import("./notify.server");
   const excerpt = body.length > 120 ? body.slice(0, 117) + "…" : body;
   await notify({
@@ -97,6 +123,36 @@ async function notifyMentions(
     body: excerpt,
     url: `/c/${slug}`,
   }, ns);
+  return { notified: subs, unresolved };
+}
+
+/**
+ * Notifica las menciones que escribió el AGENTE y devuelve el aviso para la burbuja
+ * cuando alguna no llegó a nadie ("" si todo bien).
+ *
+ * ⚠️ Se parsea la PROSA, no el body crudo. Un `@` dentro de un documento, de un bloque de
+ * herramientas o de un diff no es una mención: sin quitar los fences, un `eb-doc` con un
+ * correo adentro le manda push a media oficina.
+ */
+export async function notificarMencionesDelAgente(
+  ns: string,
+  channel: Channel,
+  reply: string,
+  agentName: string
+): Promise<string> {
+  if (!reply.trim() || !mencionaAAlguienMas(reply)) return "";
+  const eb = await import("../lib/ebdoc");
+  // `bubbleWithoutEbDoc` ya quita tools, pasos, alertas, PR, tareas, tests, gh, permisos y
+  // los patches: es el mismo texto que ve el usuario en la burbuja, que es exactamente el
+  // criterio correcto. Sólo faltan los tres fences que se vuelven adjunto más abajo.
+  const prosa = [eb.stripEbAudio, eb.stripEbFile, eb.stripAskUser].reduce(
+    (s, f) => f(s),
+    eb.bubbleWithoutEbDoc(reply)
+  );
+  // senderSub vacío: el agente no tiene sub que excluir. allowGroup=false: nada de @todos.
+  const { unresolved } = await notifyMentions(ns, channel, prosa, agentName, "", false);
+  const { mentionGapNotice } = await import("./artifacts");
+  return mentionGapNotice(unresolved);
 }
 
 // Publica un evento a la audiencia de un mensaje: si es DM → a cada miembro
@@ -1235,10 +1291,14 @@ export const askAgent = createServerFn({ method: "POST" })
     // se perdió algún delta (el bus es best-effort). NUNCA persistas un body VACÍO:
     // deepseek/ghosty-gc a veces cierra el turno en blanco → se guardaba "" en la DB y
     // el mensaje quedaba vacío (y reaparecía vacío al refetch, borrando lo streameado).
-    const { id, reply } = turnResult;
+    const { id, reply: replyDelTurno } = turnResult;
+    // El turno MURIÓ por transporte (`terminated`, 502, la caja caída). El aviso ya está en
+    // la burbuja, pero además hay que decirlo en `gt_turns`: sin esto se cierra en `done` y
+    // el medidor lo cobra como una entrega — 4 turnos de descti se pagaron así en agosto.
+    if (turnResult.failure) turns.setTurnOutcome(ns, id, `error: ${turnResult.failure}`);
     // El mensaje entró a un turno vivo: acá no hay nada que escribir. La cáscara que
     // postMessage creó eager se borra, o quedarían dos burbujas para una sola respuesta.
-    if (reply === INJECTED) {
+    if (replyDelTurno === INJECTED) {
       // Steer: la cáscara se borra, así que su fila de la barra también tiene que irse —
       // este camino no pasa por el bloque de artefactos y no emitiría "done" nunca.
       if (registeredId != null) {
@@ -1252,6 +1312,19 @@ export const askAgent = createServerFn({ method: "POST" })
       }
       return { ok: true, steered: true };
     }
+
+    // Menciones que escribió el AGENTE. Hasta ahora `notifyMentions` sólo se llamaba en el
+    // camino del mensaje humano, así que un "@ana revisa esto" del agente se pintaba en el
+    // chat y a Ana no le llegaba nada: el turno cerraba en verde y el agente creía que
+    // había avisado.
+    //
+    // Se hace ANTES del primer setMessageBody, y sobre `reply`, a propósito. Más abajo hay
+    // ~6 reescrituras del body en bloques best-effort, todas derivadas de `reply` y todas
+    // quitando fences: un aviso pegado después se lo comería la siguiente. Metido aquí,
+    // viaja con el texto y sobrevive a todas.
+    const mencionesAgente = await notificarMencionesDelAgente(ns, channel, replyDelTurno, name).catch(() => "");
+    const reply = mencionesAgente ? `${replyDelTurno}\n\n${mencionesAgente}`.trim() : replyDelTurno;
+
     const finalBody = reply.trim() ? reply : "(sin respuesta)";
     await db.setMessageBody(id, finalBody);
     bus.publish(bus.ch.room(ns, channel.id), { t: "message:body", id, body: finalBody });
