@@ -326,6 +326,15 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
     const me = await sessionUser();
     if (!me || !(await db.isDmMember(data.id, me.sub))) throw new Error("no autorizado");
     const ns = await currentNamespace();
+    // Drenando para un despliegue: no arranques un turno que systemd va a matar. Ver chat.ts.
+    {
+      const { seEstaApagando } = await import("./shutdown.server");
+      if (seEstaApagando()) {
+        const aviso = "⏸ Estamos actualizando Ghosty en este momento. Vuelve a mandarlo en unos segundos — no se perdió nada.";
+        if (data.shellId != null) await db.setMessageBody(data.shellId, aviso).catch(() => {});
+        return { ok: false as const, drenando: true as const };
+      }
+    }
     // Sólo DMs humano↔agente: en un DM humano-humano el agente no contesta.
     const dmAgent = await db.getDmAgentHandle(data.id);
     if (!dmAgent || dmAgent !== data.handle) return { ok: false as const };
@@ -482,6 +491,8 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
         // El DM no tiene channelId: la fila se abre por `dmId` (ver el panel).
         channelId: null, parentId: null, dmId: data.id,
         agent: name, avatar: agent?.avatar ?? "", tarea: tareaDelTurno,
+        // Con qué RETOMARLO si muere. Ver chat.ts.
+        body: data.body, shellId: data.shellId ?? null, attachments: data.attachments ?? [],
       });
     };
     // Registrar ANTES del lock: un turno en cola tiene que verse en "Trabajando ahora".
@@ -519,6 +530,18 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
         const p = pasoDe(body);
         if (p) turns.setTurnStep(ns, mid, p);
       },
+    }).catch((e) => {
+      // ⚠️ Sin este catch, un turno de DM que revienta quedaba como un rechazo SIN dueño:
+      // llegaba a `unhandledRejection`, que re-lanza (shutdown.server.ts) y MATA el proceso
+      // — llevándose por delante los turnos en vuelo de todos los tenants. El room lo tenía
+      // desde el principio (chat.ts) y aquí faltaba; es la firma del turno perdido del
+      // 2026-08-24 (Ley de Obras, 173,590 facturables cobrados sin entregar).
+      // Además emite el cierre de la barra: si no, la burbuja se queda con el anillo girando
+      // y el reconcile acaba clasificando el fallo como "terminó ✓".
+      if (registeredId != null) {
+        fanout({ t: "turn", id: registeredId, state: "stopped", position: 1, startedAt: Date.now() });
+      }
+      throw e;
     }).finally(async () => {
       if (registeredId != null) {
         await flusher.flush(registeredId);
@@ -529,6 +552,14 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
     return { turnResult, currentDocId, currentDoc };
     }); // ← withGroupLock
     const { id, reply } = turnResult;
+    // Igual que en el room: un fallo de transporte no puede cerrarse como `done`. Ver chat.ts.
+    if (turnResult.failure) {
+      turns.setTurnOutcome(ns, id, `error: ${turnResult.failure}`);
+      // Las tools se persisten SÓLO aquí: una escritura, y justo cuando hacen falta. Si el
+      // proceso muere de golpe (deploy) no llegan, y esa ausencia se lee como DESCONOCIDO,
+      // no como "ninguna" — ver `turnoMuerto`, que falla cerrado.
+      turns.setTurnTools(ns, id, turnResult.toolsCorridas ?? []);
+    }
 
     // Entró a un turno vivo (steer): la respuesta sale por aquella burbuja. Se borra la
     // cáscara eager para no dejar una vacía. Mismo criterio que el room.

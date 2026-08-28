@@ -1317,4 +1317,10 @@ export const en: Record<string, string> = {
   "sin streaming": "no streaming",
   "wss://sb-….sandboxes.easybits.cloud/acp": "wss://sb-….sandboxes.easybits.cloud/acp",
   "{n} sesión(es) abiertas": "{n} open session(s)",
+  "Retomar": "Resume",
+  "Se cortó por una falla nuestra, no por tu petición.": "This stopped because of a failure on our side, not your request.",
+  "No hay registro de qué alcanzó a hacer antes de cortarse.": "There's no record of what it managed to do before it stopped.",
+  "Antes de cortarse ya ejecutó:": "Before stopping it already ran:",
+  "¿Retomar de todos modos?": "Resume anyway?",
+  "⏸ Estamos actualizando Ghosty en este momento. Vuelve a mandarlo en unos segundos — no se perdió nada.": "⏸ We're updating Ghosty right now. Send it again in a few seconds — nothing was lost.",
 };

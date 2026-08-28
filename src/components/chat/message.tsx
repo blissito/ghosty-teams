@@ -191,6 +191,8 @@ export type ChatCtxValue = {
   setReplyTo?: (r: ReplyTarget | null) => void;
   setPickerFor?: (id: number | null) => void;
   stopTurn?: (messageId: number) => void;
+  /** Retomar un turno que MURIÓ. Sin esto la burbuja muerta no ofrece ninguna salida. */
+  retryTurn?: (messageId: number) => void;
   /** Abre un artefacto (pdf/imagen/doc) en el panel lateral. */
   onOpenArtifact?: (a: ArtifactView) => void;
   /** Reenviar a otro room/DM. Sin esto no hay botón de reenviar. */
@@ -2461,6 +2463,47 @@ export function TurnLiveFooter({ id }: { id: number }) {
   );
 }
 
+/**
+ * Las tres formas en que la PLATAFORMA mata un turno. Se detecta por el cuerpo porque es
+ * lo único que el cliente tiene: el estado del turno vive en `gt_turns`, del lado servidor.
+ *
+ * ⚠️ Van los tres o el botón aparece sólo en un tercio de los casos: `terminated`/502 los
+ * escribe el catch del turno, y los otros dos el barrido de huérfanos (con texto y sin él).
+ */
+const MUERTO = ["⚠️ No pude contactar a @", "⏹ _Interrumpido:", "⏹ Detenido (el servidor se reinició)"];
+export function turnoSeMurio(body: string | null | undefined): boolean {
+  return !!body && MUERTO.some((f) => body.includes(f));
+}
+
+/**
+ * Retomar un turno que murió por una falla NUESTRA.
+ *
+ * Medido en descti: 4 turnos de 67 murieron sin entregar y se cobraron enteros — y la
+ * persona tuvo que volver a escribir la petición a mano. Retomar es barato (el turno nuevo
+ * resume la misma sesión del agente), pero no había ninguna manija para hacerlo.
+ *
+ * Lo dispara una PERSONA a propósito: el turno necesita la sesión de quien lo pide, y
+ * además hay efectos que no se pueden deshacer y merecen un humano decidiendo.
+ */
+export function TurnFailedFooter({ id, body }: { id: number; body: string | null | undefined }) {
+  const t = useT();
+  const { retryTurn, turns } = useContext(ChatCtx);
+  // Si el turno volvió a estar vivo (ya se reintentó), esta línea sobra.
+  if (!retryTurn || turns.get(id) || !turnoSeMurio(body)) return null;
+  return (
+    <div className="mt-1 flex items-center gap-2 text-xs text-muted">
+      <span className="italic">{t("Se cortó por una falla nuestra, no por tu petición.")}</span>
+      <button
+        type="button"
+        onClick={() => retryTurn(id)}
+        className="rounded-full border border-border px-2 py-0.5 transition hover:border-accent/50 hover:text-accent"
+      >
+        {t("Retomar")}
+      </button>
+    </div>
+  );
+}
+
 export function AgentPending({ id }: { id: number }) {
   const t = useT();
   const { turns } = useContext(ChatCtx);
@@ -2884,6 +2927,7 @@ export function MessageRow({
               {/* El turno sigue vivo aunque ya haya texto: la salida tiene que seguir
                   a la vista (ver TurnLiveFooter). */}
               {isAgent ? <TurnLiveFooter id={m.id} /> : null}
+              {isAgent ? <TurnFailedFooter id={m.id} body={m.body} /> : null}
             </div>
           ) : isAgent && !m.attachments?.length && !m.artifact ? (
             // Caja caliente: cáscara del agente aún sin texto → indicador inline (la fila

@@ -866,6 +866,29 @@ async function migrate(): Promise<void> {
   await addColumn("gt_turns", "last_seq", "INTEGER");
   // Por qué falló, cuando falló. Sin esto un turno muerto y uno interrumpido se ven igual.
   await addColumn("gt_turns", "error", "TEXT");
+  // ── Lo que hace falta para RETOMAR un turno que murió (2026-08-28) ──────────────────
+  //
+  // Medido en descti: 4 turnos de 67 murieron sin entregar y se cobraron enteros (17% del
+  // gasto del mes). Retomar es barato —cuando uno murió, el usuario escribió "termina la
+  // última tarea" y el siguiente turno lo completó en 183 s— pero `gt_turns` no guardaba
+  // con qué volver a dispararlo.
+  //
+  // ⚠️ `tarea` NO sirve: está recortada a 60 caracteres para nombrar la fila del panel.
+  await addColumn("gt_turns", "body", "TEXT");
+  // ⚠️ Los turnos de DM se guardaban con `channel_id` NULL y eran INDISTINGUIBLES entre sí:
+  // sin esto no se puede saber a qué conversación devolver el reintento.
+  await addColumn("gt_turns", "dm_id", "INTEGER");
+  await addColumn("gt_turns", "slug", "TEXT");
+  await addColumn("gt_turns", "attachments", "TEXT");
+  await addColumn("gt_turns", "shell_id", "INTEGER");
+  // Las tools que YA corrieron, en JSON. Es la columna que hace segura la reanudación: el
+  // prompt de continuación ENUMERA hechos ("ya ejecutaste Bash(...), Read(...)") en vez de
+  // pedirle al modelo que confíe en su memoria. Y es lo que permite avisar cuando corrió
+  // algo irreversible (email_send, prospect_send…) antes de dejar reintentar.
+  await addColumn("gt_turns", "tools_json", "TEXT");
+  // De qué turno es reintento. Para poder reconstruir después qué se reintentó y qué costó
+  // — sin esto, un reintento es indistinguible de un turno normal en la factura.
+  await addColumn("gt_turns", "reintento_de", "INTEGER");
 
   // Borradores de "guardar y continuar". Un intake patrimonial son 60+ preguntas y hoy quien
   // lo abandona pierde todo.

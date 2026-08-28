@@ -103,6 +103,7 @@ import {
   getChannelThreads,
   postMessage,
   askAgent,
+  prepareRetryFn,
   warmAgentFn,
   deleteMessageFn,
   listMentionsFn,
@@ -1237,6 +1238,47 @@ function ChannelPage() {
     void stopTurnFn({ data: { messageId } })
       .catch(() => {})
       .finally(() => refreshLiveTurns());
+  };
+
+  // Retomar un turno que MURIÓ por una falla nuestra.
+  //
+  // El servidor sólo PREPARA (lee la fila muerta y arma el texto de continuación); quien
+  // dispara el turno es esta llamada, porque el turno necesita la sesión de la persona —
+  // un barrido de servidor no tiene ninguna, y por eso esto es un botón y no un automatismo.
+  const retryTurnLocal = (messageId: number) => {
+    void prepareRetryFn({ data: { messageId } })
+      .then(async (r) => {
+        if (!r.ok && r.razon === "confirmar") {
+          // Puede haber efectos ya ocurridos que no se deshacen (un correo enviado). No se
+          // bloquea —a veces retomar es justo lo que hace falta— pero lo decide la persona,
+          // con el nombre de la herramienta delante.
+          const qué = r.desconocidas
+            ? t("No hay registro de qué alcanzó a hacer antes de cortarse.")
+            : t("Antes de cortarse ya ejecutó:") + " " + r.tools.join(", ") + ".";
+          if (!window.confirm(`${qué}\n\n${t("¿Retomar de todos modos?")}`)) return;
+          const r2 = await prepareRetryFn({ data: { messageId, confirmado: true } });
+          if (!r2.ok) return;
+          return disparar(r2);
+        }
+        if (!r.ok) return;
+        return disparar(r);
+      })
+      .catch(() => {});
+
+    type Preparado = Extract<Awaited<ReturnType<typeof prepareRetryFn>>, { ok: true }>;
+    function disparar(r: Preparado) {
+      const done = () => revalidate();
+      // El `payload` se lee DENTRO de cada rama: sacarlo antes colapsa la unión y TS deja de
+      // saber si trae `id` (DM) o `slug` (room).
+      if (r.kind === "dm") {
+        const p = r.payload;
+        return askDmAgentFn({ data: { id: p.id, body: p.body, sender: p.sender, handle: p.handle, shellId: p.shellId } })
+          .then(done).catch(done);
+      }
+      const p = r.payload;
+      return askAgent({ data: { slug: p.slug, parentId: p.parentId, body: p.body, sender: p.sender, handle: p.handle, shellId: p.shellId } })
+        .then(done).catch(done);
+    }
   };
 
   // Parchea un mensaje (por id) en el flujo activo y en cualquier hilo cacheado (inmutable).
@@ -2514,7 +2556,7 @@ function ChannelPage() {
     <ChatCtx.Provider
       // El chat de Teams pasa TODAS las capacidades. Una superficie que no pueda hacer
       // algo simplemente no lo pasa, y el botón deja de existir — ver ChatCtxValue.
-      value={{ me: user, slug: channel.slug, emojis, users, react, star, pin, remove, editMsg, retrySend, discardSend, replyTo, setReplyTo, pickerFor, setPickerFor, turns, stopTurn: stopTurnLocal, onOpenArtifact: openArtifactWithSound, sendQuickReply, openPrefs, openProfile, joinCall: joinCallFromCard, myCallKey, forward: setReenviar }}
+      value={{ me: user, slug: channel.slug, emojis, users, react, star, pin, remove, editMsg, retrySend, discardSend, replyTo, setReplyTo, pickerFor, setPickerFor, turns, stopTurn: stopTurnLocal, retryTurn: retryTurnLocal, onOpenArtifact: openArtifactWithSound, sendQuickReply, openPrefs, openProfile, joinCall: joinCallFromCard, myCallKey, forward: setReenviar }}
     >
     {/* pt safe-area: en PWA standalone (viewport-fit=cover + status-bar black-translucent)
         el contenido va DEBAJO de la hora/notch → el header y su botón de menú quedaban

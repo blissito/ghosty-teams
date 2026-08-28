@@ -2278,7 +2278,7 @@ export function agentTurnsInflight(): number {
 
 export async function runAgentTurn(
   opts: Parameters<typeof runAgentTurnInner>[0]
-): Promise<{ id: number; reply: string; failure?: string | null }> {
+): Promise<{ id: number; reply: string; failure?: string | null; toolsCorridas?: string[] }> {
   turnsInflight++;
   try {
     return await runAgentTurnInner(opts);
@@ -2319,7 +2319,7 @@ async function runAgentTurnInner(opts: {
   publicChannel?: boolean;
   /** Causa del fallo de transporte, si el turno murió. `null` = entregó.
    *  Lo consumen chat.ts/dm.ts para marcar el turno como fallido en vez de `done`. */
-}): Promise<{ id: number; reply: string; failure?: string | null }> {
+}): Promise<{ id: number; reply: string; failure?: string | null; toolsCorridas?: string[] }> {
   let id: number | null = null;
   const ensure = async (): Promise<number> => {
     if (id == null) {
@@ -2475,6 +2475,9 @@ async function runAgentTurnInner(opts: {
   };
   const onTool = async (ev: ToolEvent) => {
     anyActivity = true;
+    // Nombre CRUDO, para poder retomar el turno si muere: el prompt de continuación enumera
+    // hechos ("ya ejecutaste Bash, Read") y de aquí sale también si corrió algo irreversible.
+    if (ev.phase !== "end" && ev.name) toolsCrudas.add(ev.name);
     // Subagente hijo (fila viva): cada uno es una fila propia (label = su tarea), NUNCA se
     // dedup, y al cerrar el `detail` pasa a ser su duración ("22.9s"). Es la visibilidad
     // tipo Claude Code (N background agents con tarea + estado + tiempo).
@@ -2532,6 +2535,8 @@ async function runAgentTurnInner(opts: {
   const corte: { ev: TruncatedEvent | null } = { ev: null };
   /** El turno murió por transporte. Mismo patrón de contenedor que `corte`, y por lo mismo. */
   const fallo: { message: string | null } = { message: null };
+  /** Nombres crudos de las tools que corrieron. Sólo se persisten si el turno MUERE. */
+  const toolsCrudas = new Set<string>();
   if (!opts.agent) {
     reply = `👾 @${opts.handle} no está conectado. El owner lo configura en Ajustes → Agentes.`;
     await onChunk(reply);
@@ -2564,7 +2569,13 @@ async function runAgentTurnInner(opts: {
   // dentro del texto y se ve una sola vez.
   const avisoCorte = corte.ev?.notice === "event" ? `\n\n${avisoDeCorte(corte.ev)}` : "";
   // Body final autoritativo: bloque gt-tools TODO ✅ + texto separado. El caller lo persiste.
-  return { id: await ensure(), reply: renderToolBlock(true) + finalText + avisoCorte, failure: fallo.message };
+  return {
+    id: await ensure(),
+    reply: renderToolBlock(true) + finalText + avisoCorte,
+    failure: fallo.message,
+    // Sólo importan si murió; el llamador las persiste en ese caso.
+    toolsCorridas: [...toolsCrudas],
+  };
 }
 
 // Llama al backend del agente y devuelve su respuesta en texto.

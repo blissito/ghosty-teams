@@ -42,8 +42,16 @@ export function alApagar(fn: Cierre): () => void {
  * lleva por delante los turnos en vuelo de TODO el workspace. Medido el 2026-08-03: una
  * sola pestaña sin refrescar reinició Teams y huerfanó el trabajo de tres agentes.
  *
- * Se filtra SÓLO ese caso —módulo del build viejo no encontrado— y se re-lanza cualquier
- * otro: tragarse todas las promesas rechazadas escondería bugs de verdad.
+ * ⚠️ Antes se re-lanzaba cualquier otro rechazo, con el argumento de que tragárselos
+ * escondería bugs de verdad. El argumento es bueno y la consecuencia era peor: re-lanzar
+ * aquí **mata el proceso**, y este proceso sirve a TODOS los tenants — o sea que una sola
+ * promesa suelta de un workspace tira el trabajo en vuelo de los demás. Es el mismo daño
+ * que el párrafo de arriba describe, sólo que causado por nosotros.
+ *
+ * Ahora no se re-lanza NUNCA: se registra con `[unhandled]`, que es greppable y alertable.
+ * El bug no se esconde —se ve en el journal con su stack— pero deja de ser un apagón.
+ * Para que además tenga dueño, el camino de turnos captura lo suyo (`chat.ts`, `dm.ts`) y
+ * marca el turno como fallido en vez de dejarlo llegar hasta aquí.
  */
 function blindarContraChunksViejos(): void {
   process.on("unhandledRejection", (razon) => {
@@ -54,7 +62,7 @@ function blindarContraChunksViejos(): void {
       console.warn(`[stale-client] chunk de un build anterior: ${e.url} — el cliente debe recargar`);
       return;
     }
-    throw razon;
+    console.error("[unhandled] promesa rechazada sin dueño — NO se tira el proceso:", razon);
   });
 }
 

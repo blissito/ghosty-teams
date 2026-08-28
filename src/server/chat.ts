@@ -162,6 +162,63 @@ export const stopTurnFn = createServerFn({ method: "POST" })
     return { ok: true as const };
   });
 
+/**
+ * Prepara el REINTENTO de un turno que murió.
+ *
+ * Devuelve el payload con el que el cliente vuelve a llamar a `askAgent`/`askDmAgentFn` en
+ * vez de disparar el turno aquí, y no es por comodidad: el invocador sale de `sessionUser()`,
+ * así que el turno tiene que nacer dentro de la petición de una PERSONA. Un barrido de
+ * servidor no tiene sesión y por eso no puede reintentar nada — es el argumento por el que
+ * esto es un botón y no un automatismo.
+ *
+ * El texto que se manda es de CONTINUACIÓN, no la petición repetida: el mismo `groupId`
+ * resume la misma sesión del SDK, así que el modelo LEE en su transcript lo que ya hizo en
+ * vez de recordarlo. Repetir la petición sería estrictamente peor — se reejecuta desde cero
+ * *y* resume igual la sesión.
+ */
+export const prepareRetryFn = createServerFn({ method: "POST" })
+  .validator((d: { messageId: number; confirmado?: boolean }) => d)
+  .handler(async ({ data }) => {
+    const me = await sessionUser();
+    const { turnoMuerto, textoDeContinuacion } = await import("./turns.server");
+    const { currentNamespace } = await import("./tenant.server");
+    const ns = await currentNamespace();
+    const t = await turnoMuerto(data.messageId);
+    if (!t) return { ok: false as const, razon: "no-retomable" as const };
+    // Sólo quien pidió el turno lo retoma. Mismo criterio que Detener: reintentar el trabajo
+    // que encargó otro es una acción sobre esa persona, y encima con SUS conectores.
+    if (t.invokerSub && me?.sub !== t.invokerSub) return { ok: false as const, razon: "ajeno" as const };
+
+    // Hay efectos que ya pudieron ocurrir y no se pueden deshacer (un correo enviado, una
+    // difusión). No se bloquea el reintento —a veces es justo lo que hace falta— pero se
+    // nombra la tool y se pide confirmación explícita.
+    const dudoso = t.sucias.length > 0 || t.toolsDesconocidas;
+    if (dudoso && !data.confirmado) {
+      return {
+        ok: false as const,
+        razon: "confirmar" as const,
+        tools: t.sucias,
+        desconocidas: t.toolsDesconocidas,
+      };
+    }
+
+    // El barrido le pegó "⏹ Interrumpido…" al cuerpo. Si no se limpia, el turno nuevo
+    // arranca con ese ruido dentro de su propia burbuja.
+    const db = await import("../db.server");
+    if (t.shellId != null) {
+      await db.setMessageBody(t.shellId, "").catch(() => {});
+      const bus = await import("./bus.server");
+      const canal = t.dmId ? bus.ch.dm(ns, t.dmId) : t.channelId ? bus.ch.room(ns, t.channelId) : null;
+      if (canal) bus.publish(canal, { t: "message:body", id: t.shellId, body: "" });
+    }
+
+    const texto = textoDeContinuacion(t);
+    const comun = { body: texto, sender: me?.name ?? "", handle: t.agent ?? "", shellId: t.shellId ?? undefined };
+    return t.dmId
+      ? { ok: true as const, kind: "dm" as const, payload: { ...comun, id: t.dmId } }
+      : { ok: true as const, kind: "room" as const, payload: { ...comun, slug: t.slug ?? "", parentId: t.parentId ?? null } };
+  });
+
 export const listUsersFn = createServerFn({ method: "GET" }).handler(async () => {
   const me = await sessionUser();
   if (!me) throw new Error("no autenticado");
@@ -830,6 +887,21 @@ export const askAgent = createServerFn({ method: "POST" })
     const { resolvedAgents, runAgentTurn, buildMediaParts, REGLA_VARIOS_ADJUNTOS, quotedContextPrefix, clampQuote, historyContext, gapDesdeUltimaRespuesta, CATCHUP_FETCH, agentGroupId, INJECTED } = await import("../agents.server");
     const bus = await import("./bus.server");
     const { currentNamespace } = await import("./tenant.server");
+    // ⚠️ Estamos DRENANDO para un despliegue: arrancar un turno ahora es fabricar una
+    // víctima. El proceso sigue atendiendo lo que ya está en vuelo, pero systemd lo mata a
+    // los ~90 s y un turno recién nacido no llega — se cobra entero y no entrega nada, que
+    // es exactamente lo que costó 173,590 facturables el 24-ago.
+    //
+    // Se dice en el CUERPO de la cáscara, no sólo por el bus: el SIGTERM ya cerró los SSE,
+    // así que un aviso que viaje sólo por ahí no lo ve nadie.
+    {
+      const { seEstaApagando } = await import("./shutdown.server");
+      if (seEstaApagando()) {
+        const aviso = "⏸ Estamos actualizando Ghosty en este momento. Vuelve a mandarlo en unos segundos — no se perdió nada.";
+        if (data.shellId != null) await db.setMessageBody(data.shellId, aviso).catch(() => {});
+        return { ok: false as const, drenando: true as const };
+      }
+    }
     const channel = await db.getChannel(data.slug);
     if (!channel) throw new Error("Canal no encontrado");
 
@@ -1090,6 +1162,10 @@ export const askAgent = createServerFn({ method: "POST" })
         channelId: channel.id, parentId: data.parentId ?? null,
         agent: name, avatar: agent?.avatar ?? "",
         tarea: tareaDelTurno,
+        // Con qué RETOMARLO si muere. `tarea` va recortada a 60 para nombrar la fila del
+        // panel, así que no sirve para re-disparar: hace falta el texto íntegro.
+        body: data.body, slug: data.slug, shellId: data.shellId ?? null,
+        attachments: data.attachments ?? [],
       });
     };
     // ⚠️ Registrar ANTES de pedir el lock. Si no, un turno que espera su vuelta no aparece
@@ -1168,7 +1244,13 @@ export const askAgent = createServerFn({ method: "POST" })
     // El turno MURIÓ por transporte (`terminated`, 502, la caja caída). El aviso ya está en
     // la burbuja, pero además hay que decirlo en `gt_turns`: sin esto se cierra en `done` y
     // el medidor lo cobra como una entrega — 4 turnos de descti se pagaron así en agosto.
-    if (turnResult.failure) turns.setTurnOutcome(ns, id, `error: ${turnResult.failure}`);
+    if (turnResult.failure) {
+      turns.setTurnOutcome(ns, id, `error: ${turnResult.failure}`);
+      // Las tools se persisten SÓLO aquí: una escritura, y justo cuando hacen falta. Si el
+      // proceso muere de golpe (deploy) no llegan, y esa ausencia se lee como DESCONOCIDO,
+      // no como "ninguna" — ver `turnoMuerto`, que falla cerrado.
+      turns.setTurnTools(ns, id, turnResult.toolsCorridas ?? []);
+    }
     // El mensaje entró a un turno vivo: acá no hay nada que escribir. La cáscara que
     // postMessage creó eager se borra, o quedarían dos burbujas para una sola respuesta.
     if (replyDelTurno === INJECTED) {

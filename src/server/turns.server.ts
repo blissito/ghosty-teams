@@ -33,6 +33,15 @@ export type LiveTurn = {
   tarea?: string;
   /** Último paso narrado por el agente. */
   paso?: string;
+  // ── Con qué RETOMAR el turno si muere. Ver las columnas en schema.server.ts ──────────
+  /** El texto ÍNTEGRO que escribió la persona. `tarea` está recortada a 60 y no sirve. */
+  body?: string;
+  /** Room al que pertenece. Junto con `dmId` es lo que dice a dónde devolver el reintento. */
+  slug?: string;
+  /** Adjuntos del mensaje original, serializados. */
+  attachments?: unknown[];
+  /** La cáscara del agente, para reusarla en el reintento en vez de crear otra burbuja. */
+  shellId?: number | null;
 };
 
 export type TurnState = {
@@ -210,11 +219,14 @@ export function registerTurn(t: Omit<LiveTurn, "startedAt"> & { startedAt?: numb
   // del intervalo: un turno que nace con `heartbeat_at` nulo lo daría por huérfano cualquier
   // barrido que corriera en ese hueco — y el hueco dura hasta 15 s.
   void persistir(
-    `INSERT INTO gt_turns (message_id, group_id, invoker_sub, channel_id, parent_id, agent, avatar, tarea, state, started_at, heartbeat_at)
-     VALUES (?,?,?,?,?,?,?,?,'running',?,unixepoch())
-     ON CONFLICT(message_id) DO UPDATE SET state='running', started_at=excluded.started_at, ended_at=NULL, outcome=NULL, error=NULL, heartbeat_at=unixepoch()`,
+    `INSERT INTO gt_turns (message_id, group_id, invoker_sub, channel_id, parent_id, agent, avatar, tarea, state, started_at, heartbeat_at, body, dm_id, slug, attachments, shell_id, tools_json)
+     VALUES (?,?,?,?,?,?,?,?,'running',?,unixepoch(),?,?,?,?,?,NULL)
+     ON CONFLICT(message_id) DO UPDATE SET state='running', started_at=excluded.started_at, ended_at=NULL, outcome=NULL, error=NULL, heartbeat_at=unixepoch(),
+       body=excluded.body, dm_id=excluded.dm_id, slug=excluded.slug, attachments=excluded.attachments, shell_id=excluded.shell_id, tools_json=NULL`,
     [entry.messageId, entry.groupId, entry.invokerSub ?? null, entry.channelId ?? null,
-     entry.parentId ?? null, entry.agent ?? null, entry.avatar ?? null, entry.tarea ?? null, entry.startedAt],
+     entry.parentId ?? null, entry.agent ?? null, entry.avatar ?? null, entry.tarea ?? null, entry.startedAt,
+     entry.body ?? null, entry.dmId ?? null, entry.slug ?? null,
+     entry.attachments?.length ? JSON.stringify(entry.attachments) : null, entry.shellId ?? null],
   );
   asegurarLatido();
   announceGroup(entry.groupId);
@@ -224,6 +236,17 @@ export function registerTurn(t: Omit<LiveTurn, "startedAt"> & { startedAt?: numb
 /** Lo que el turno acabó produciendo, para la fila de "terminó". Se calcula UNA vez. */
 export function setTurnOutcome(_ns: string, messageId: number, outcome: string): void {
   void persistir("UPDATE gt_turns SET outcome = ? WHERE message_id = ?", [outcome, messageId]);
+}
+
+/**
+ * Las tools que YA corrieron en este turno.
+ *
+ * Es lo que hace segura la reanudación: el prompt de continuación enumera HECHOS en vez de
+ * pedirle al modelo que recuerde, y permite avisar si corrió algo irreversible antes de
+ * dejar reintentar. Se reescribe entera (la lista es corta y así no hay que leer-modificar).
+ */
+export function setTurnTools(_ns: string, messageId: number, tools: string[]): void {
+  void persistir("UPDATE gt_turns SET tools_json = ? WHERE message_id = ?", [JSON.stringify(tools), messageId]);
 }
 
 /** El paso en curso, para que la barra diga en qué va sin preguntar por el cuerpo. */
@@ -510,4 +533,119 @@ export async function withGroupLock<T>(groupId: string, fn: () => Promise<T>): P
     // dejaría al siguiente sin nada que esperar.
     if (groupLocks.get(groupId) === mio) groupLocks.delete(groupId);
   }
+}
+
+// ── Retomar un turno que murió ────────────────────────────────────────────────────────
+//
+// Medido en descti (2026-08-28): 4 turnos de 67 murieron sin entregar nada y se cobraron
+// enteros — 705,399 facturables, el 17% del gasto del mes. Retomar es BARATO: cuando uno
+// murió, el usuario escribió "@ghosty termina la ultima tarea" y el turno siguiente lo
+// completó en 183 s.
+//
+// La seguridad de esto NO es que el modelo "no rehará lo ya hecho" —eso es comportamiento,
+// no garantía— sino que el turno nuevo **resume la misma sesión del SDK** (mismo groupId):
+// el transcript vive en S3 y el modelo LEE lo que hizo en vez de recordarlo. Repetir la
+// petición sería estrictamente peor: se reejecuta desde cero *y* resume igual la sesión.
+
+/**
+ * Tools cuyo efecto NO se puede deshacer: si alguna corrió, el reintento se confirma a mano.
+ *
+ * ⚠️ Es una lista de SUCIAS, no de limpias, y el default es sucio. `Bash` es la tool
+ * dominante y es arbitrariamente destructiva, así que cualquier cosa que no esté en
+ * `LIMPIAS` se trata como efecto secundario.
+ *
+ * ⚠️ NO reutilizar `SOLO_LECTURA` de connectors/tools.server.ts: incluye `chat_message`,
+ * que ENVÍA. Sirve para acotar permisos, no para decidir idempotencia.
+ */
+const LIMPIAS = new Set(["Read", "Grep", "Glob", "chat_history", "chat_search", "chat_message_read", "doc_read"]);
+
+export type TurnoMuerto = {
+  messageId: number;
+  groupId: string;
+  invokerSub: string | null;
+  channelId: number | null;
+  parentId: number | null;
+  dmId: number | null;
+  slug: string | null;
+  shellId: number | null;
+  agent: string | null;
+  body: string;
+  attachments: unknown[];
+  tools: string[];
+  /** Tools cuyo efecto no se puede deshacer. Vacío = el reintento no necesita confirmarse. */
+  sucias: string[];
+  /** No sabemos QUÉ corrió (el proceso murió antes de poder anotarlo). Falla cerrado. */
+  toolsDesconocidas: boolean;
+  error: string | null;
+};
+
+/**
+ * Lee un turno que murió y decide si se puede retomar.
+ *
+ * Devuelve `null` si el turno no existe, si no murió (nadie retoma algo que entregó) o si
+ * la fila es anterior a las columnas de reanudación — en ese último caso no hay con qué
+ * re-disparar y ofrecerlo sería un botón que falla.
+ */
+export async function turnoMuerto(messageId: number): Promise<TurnoMuerto | null> {
+  try {
+    const { dbq } = await import("../dbq.server");
+    const [f] = await dbq(
+      `SELECT message_id, group_id, invoker_sub, channel_id, parent_id, dm_id, slug, shell_id,
+              agent, body, attachments, tools_json, error, state, outcome
+         FROM gt_turns WHERE message_id = ?`,
+      [messageId],
+    );
+    if (!f) return null;
+    // Murió = el barrido lo dio por huérfano, o el catch del turno lo marcó como fallo.
+    const murio = f.state === "expired" || String(f.outcome ?? "").startsWith("error:");
+    if (!murio) return null;
+    const body = (f.body as string) ?? "";
+    if (!body.trim()) return null; // fila vieja, sin con qué re-disparar
+    // ⚠️ NULL no es "ninguna": es "no lo sabemos". Sólo se escribe cuando el turno muere de
+    // forma ordenada; si el PROCESO murió (deploy, OOM) nadie llegó a anotarlo. Leerlo como
+    // "no corrió nada" haría que el reintento se ofreciera sin aviso justo en el caso en que
+    // más pudo haberse ejecutado algo irreversible.
+    const toolsDesconocidas = f.tools_json == null;
+    const tools: string[] = f.tools_json ? (JSON.parse(String(f.tools_json)) as string[]) : [];
+    return {
+      messageId: Number(f.message_id),
+      groupId: String(f.group_id),
+      invokerSub: (f.invoker_sub as string) ?? null,
+      channelId: f.channel_id != null ? Number(f.channel_id) : null,
+      parentId: f.parent_id != null ? Number(f.parent_id) : null,
+      dmId: f.dm_id != null ? Number(f.dm_id) : null,
+      slug: (f.slug as string) ?? null,
+      shellId: f.shell_id != null ? Number(f.shell_id) : null,
+      agent: (f.agent as string) ?? null,
+      body,
+      attachments: f.attachments ? (JSON.parse(String(f.attachments)) as unknown[]) : [],
+      tools,
+      sucias: [...new Set(tools.filter((t) => !LIMPIAS.has(t)))],
+      toolsDesconocidas,
+      error: (f.error as string) ?? (f.outcome as string) ?? null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * El texto con el que se retoma. ENUMERA lo que ya se hizo en vez de pedir confianza.
+ *
+ * Va como mensaje del usuario y no como system prompt a propósito: el system prompt entra
+ * por VALOR en el `configSig` del worker, así que un bloque que cambia cada turno reciclaría
+ * la sesión persistente — y perder la sesión es perder justo lo que hace barato retomar.
+ */
+export function textoDeContinuacion(t: TurnoMuerto): string {
+  const hechos = t.toolsDesconocidas
+    ? "No hay registro de qué herramientas alcanzaste a ejecutar: REVISA tu propio historial antes de repetir nada."
+    : t.tools.length
+      ? `Ya alcanzaste a ejecutar: ${t.tools.join(", ")}. Eso está hecho — no lo repitas.`
+      : "No alcanzaste a ejecutar ninguna herramienta.";
+  return (
+    `[Tu turno anterior se cortó por una falla de la plataforma, no por algo que hicieras mal. ` +
+    `${hechos} Revisa tu propio historial para ver dónde te quedaste y CONTINÚA desde ahí ` +
+    `hasta entregar. No vuelvas a empezar.]\n\n` +
+    `La petición original era:\n${t.body}`
+  );
 }
