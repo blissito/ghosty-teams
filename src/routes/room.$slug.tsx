@@ -654,22 +654,13 @@ function RoomAbierto() {
                           <span className="min-w-0">
                             {/* El TÍTULO manda: una fila que empieza por una fecha obliga a
                                 recordar qué se hizo ese día.
-                                ⚠️ Pero cuando se REPITE deja de informar: tres grabaciones
-                                del mismo room salían con el mismo texto truncado y lo único
-                                que las distinguía era la línea gris de abajo. Cada fila trae
-                                ya su propio título (congelado al parar); las anteriores a esa
-                                columna caen al del room, y ésas sí se desempatan con la fecha
-                                delante. */}
-                            <span className="block truncate font-medium">
-                              {g.title ?? (
-                                <>
-                                  <span className="text-muted">
-                                    {new Date(g.endedAt * 1000).toLocaleDateString([], { day: "numeric", month: "short" })} ·{" "}
-                                  </span>
-                                  {data.title}
-                                </>
-                              )}
-                            </span>
+                                ⚠️ Cada fila trae SU título, congelado al parar: pintar el del
+                                room daba tres filas con el mismo texto truncado, y lo único
+                                que las distinguía era la línea gris de abajo.
+                                ⚠️ Anteponerle la fecha al título NO es el arreglo — se probó:
+                                se come el ancho del título y repite la fecha que ya está
+                                debajo. Las filas viejas se rellenan por backfill, no aquí. */}
+                            <span className="block truncate font-medium">{g.title ?? data.title}</span>
                             <span className="block truncate text-[11px] text-muted">
                               {g.publishState === "pending" ? "publicando… · " : ""}
                               {new Date(g.endedAt * 1000).toLocaleString([], { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}
