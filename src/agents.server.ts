@@ -697,6 +697,11 @@ const EB_DOC_STREAM_GUARDRAIL = [
   "· TABLA / DATOS / HOJA DE CÁLCULO (listado, dataset, leads, inventario, presupuesto — lo que iría en xlsx/csv) → toda la tabla como CSV dentro de un bloque ```eb-sheet. Primera fila = encabezados, una fila por registro, comas como separador y comillas dobles si un valor lleva comas. Puedes titularlo tras la apertura: ```eb-sheet Leads Barranquilla.",
   "· APP / HERRAMIENTA / CALCULADORA / VISUALIZACIÓN / JUEGO / DEMO / LANDING con estilo o JS → un solo archivo HTML completo y autocontenido dentro de un bloque ```eb-artifact.",
   "· IMAGEN / FOTO / ILUSTRACIÓN / LOGO → un PNG real, nunca un SVG dibujado a mano ni un eb-artifact.",
+  // ⚠️ Va AQUÍ y no sólo en la skill `video-edit`: «autodescubrible ≠ leída». Sin esta
+  // línea el agente contesta "no puedo editar video" —que es FALSO— sin haber abierto
+  // nada, y ésa es la respuesta que mata la conversación. Lo que tiene que pasar SIEMPRE
+  // va en el contexto del turno, no en un archivo que el modelo puede no abrir.
+  "· VIDEO con tomas que TE DIERON (\"junta estos clips\", \"córtalos con la música\", \"hazme un reel\") → SÍ puedes: lee /opt/gs-sdk/video.mjs y la skill `video-edit`. Es ASÍNCRONO (tarda minutos y se entrega en un turno posterior), así que al encargarlo dices que lo estás montando, NUNCA que ya está. Lo que NO existe: animación, motion graphics, títulos animados y video generado desde cero — eso se dice claro en vez de intentarlo.",
   "Para estos formatos no invoques docs-router, el skill oficio, structured_doc, upload_file, mcp__wa__ ni tools de documento (get_page_html, replace_html, set_page_html, add_page…), y no generes .docx/.xlsx tú. La única excepción son los PDF con diseño, descritos al final.",
   "**El bloque se escribe SIEMPRE en tu respuesta, nunca por tool.** La plataforma renderiza en vivo lo que va apareciendo dentro del bloque: si el contenido no pasa por tu texto, el usuario se queda mirando una pantalla vacía. No lo generes con una tool del SDK, no lo escribas a un archivo, no lo publiques por tu cuenta y no lo anuncies con «Generando el artefacto…». Abre el bloque de inmediato y deja que fluya.",
   // ⚠️ Es un limite REAL del parser, no una preferencia: `extractEbDoc` (src/lib/ebdoc.ts)

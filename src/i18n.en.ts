@@ -768,6 +768,8 @@ export const en: Record<string, string> = {
   "Mandé la ubicación": "Sent the location",
   "Maquetando el PDF": "Laying out the PDF",
   "Maqueté el PDF": "Laid out the PDF",
+  "Montando el video": "Editing the video",
+  "Encargué el montaje del video": "Queued the video edit",
   "Preparando la cotización": "Preparing the quote",
   "Preparé la cotización": "Prepared the quote",
   "Procesando el audio": "Processing the audio",

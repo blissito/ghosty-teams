@@ -56,6 +56,10 @@ export const TOOL_LABELS: Record<string, { ing: string; done: string }> = {
   gs_box_destroy: { ing: "Soltando la caja", done: "Solté la caja" },
   gs_render: { ing: "Maquetando el PDF", done: "Maqueté el PDF" },
   gs_render_png: { ing: "Generando la imagen", done: "Generé la imagen" },
+  // "Encargué" y no "Monté": el render corre en otra caja y tarda minutos — cuando esta
+  // burbuja se cierra, el video todavía no existe. Prometer lo contrario haría que el
+  // usuario lo buscara en el chat.
+  gs_video_edit: { ing: "Montando el video", done: "Encargué el montaje del video" },
   gs_doc: { ing: "Armando el documento Word", done: "Armé el documento Word" },
   gs_doc_xlsx: { ing: "Armando la hoja de cálculo", done: "Armé la hoja de cálculo" },
   gs_doc_read: { ing: "Leyendo el documento", done: "Leí el documento" },
