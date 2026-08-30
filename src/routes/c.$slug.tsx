@@ -55,6 +55,7 @@ import {
   Headphones,
 
   Check,
+  Copy,
   ChevronRight,
   Layers,
 
@@ -5065,11 +5066,15 @@ function RoomSettingsModal({
               onFocus={(e) => e.currentTarget.select()}
               className="min-w-0 flex-1 rounded-lg border border-border bg-surface px-3 py-1.5 text-sm text-muted outline-none"
             />
+            {/* Icono, no texto: el botón vive pegado a un input largo y la palabra lo
+                ensancha justo donde falta espacio. La palomita es el acuse. */}
             <button
               onClick={copyInvite}
-              className="rounded-lg bg-brand px-3 py-1.5 text-sm font-semibold text-brand-fg"
+              title={copied ? t("Copiada") : t("Copiar")}
+              aria-label={copied ? t("Copiada") : t("Copiar")}
+              className="grid h-[34px] w-[34px] shrink-0 place-items-center rounded-lg bg-brand text-brand-fg"
             >
-              {copied ? t("Copiada") : t("Copiar")}
+              {copied ? <Check size={15} /> : <Copy size={15} />}
             </button>
           </div>
           <button
