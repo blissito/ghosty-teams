@@ -7,7 +7,11 @@ const IDP = process.env.GHOSTY_IDENTITY_URL ?? "https://www.ghosty.studio";
 async function session() {
   const { useSession } = await import("@tanstack/react-start/server");
   const { sessionConfig } = await import("./session.server");
-  return useSession<{ user?: import("../users.server").SessionUser }>(sessionConfig());
+  return useSession<{
+    user?: import("../users.server").SessionUser;
+    /** Destino pendiente (slug de canal) de una liga de invitación a un room. */
+    landing?: string;
+  }>(sessionConfig());
 }
 
 export const me = createServerFn({ method: "GET" }).handler(async () => {
@@ -223,7 +227,12 @@ export const completeGhostyLogin = createServerFn({ method: "POST" })
     }
 
     const s = await session();
-    await s.update({ user });
+    // `landing` va en la SESIÓN, no sólo en el redirect de vuelta: entre el join y el
+    // aterrizaje puede colarse un salto más (la cookie que aún no viajaba, un rebote por
+    // /login del guard de raíz), y ese camino pierde el token → `/` → el primer canal, o
+    // sea "empieza en home". Con el destino sellado en la cookie, el aterrizaje ocurre en
+    // cuanto la persona pisa `/`, venga por donde venga. Se consume una sola vez.
+    await s.update({ user, ...(joinedSlug ? { landing: joinedSlug } : {}) });
     return { ok: true as const, user, joinedSlug };
   });
 
@@ -260,4 +269,12 @@ export const logout = createServerFn({ method: "POST" }).handler(async () => {
   // sin más". Mandamos a gs /logout (top-level) → limpia gs_session → aterriza en el
   // landing de Ghosty.studio (sin ver el card puente de Teams).
   return { ok: true as const, next: `${IDP}/logout` };
+});
+
+/** Lee y BORRA el destino pendiente de una invitación a room (ver `landing`). */
+export const takeLanding = createServerFn({ method: "GET" }).handler(async () => {
+  const s = await session();
+  const slug = s.data.landing ?? null;
+  if (slug) await s.update({ landing: undefined });
+  return slug;
 });
