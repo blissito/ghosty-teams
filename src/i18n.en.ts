@@ -374,6 +374,13 @@ export const en: Record<string, string> = {
   "Miembro": "Member",
   "Staff": "Staff",
   "Miembros (rooms privados)": "Members (private rooms)",
+  "Liga de invitación": "Invite link",
+  "Quien la abra entra al workspace y cae en este room. También verá los rooms públicos.":
+    "Anyone who opens it joins the workspace and lands in this room. They'll also see public rooms.",
+  "Crear liga de invitación": "Create invite link",
+  "Cancelar liga": "Revoke link",
+  "¿Cancelar la liga? Quien la tenga ya no podrá entrar con ella.":
+    "Revoke this link? Anyone holding it will no longer be able to join with it.",
   "Modelo": "Model",
   "Modo": "Mode",
   "Mono": "Mono",
@@ -514,7 +521,7 @@ export const en: Record<string, string> = {
   "Armando": "Building",
   "Ver": "Open",
   "Tareas": "Tasks",
-  "Te invitaron a este chat. Entra para unirte.": "You've been invited to this chat. Sign in to join.",
+  "Te invitaron. Entra para unirte al equipo.": "You've been invited. Sign in to join the team.",
   "Todo el room": "Entire room",
   "Todos entran como miembro": "Everyone joins as a member",
   "Todos tus agentes en un solo lugar. Cada uno se tagea por su @handle. Crea y configura agentes gestionados en Studio, o conecta bots externos por webhook.": "All your agents in one place. Each one is tagged by its @handle. Create and configure managed agents in Studio, or connect external bots via webhook.",

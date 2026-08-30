@@ -152,6 +152,9 @@ import {
   removeChannelMemberFn,
   listWorkspaceUsersFn,
   listRoomMembersFn,
+  getRoomInviteFn,
+  createRoomInviteFn,
+  revokeRoomInviteFn,
 } from "../server/channels";
 
 // Las piezas del chat viven en `components/chat/message.tsx` desde que los rooms
@@ -4858,6 +4861,10 @@ function RoomSettingsModal({
   const [isPrivate, setIsPrivate] = useState(channel?.is_private === 1);
   const [desc, setDesc] = useState(channel?.description ?? "");
   const [infoSaved, setInfoSaved] = useState(false);
+  // Liga de invitación del room. `null` = no hay (se muestra el CTA de crear);
+  // `undefined` = todavía cargando.
+  const [inviteUrl, setInviteUrl] = useState<string | null | undefined>(undefined);
+  const [copied, setCopied] = useState(false);
 
   // Identidad del room (nombre + icono + privacidad + descripción) se guardan juntos.
   const infoDirty =
@@ -4893,7 +4900,31 @@ function RoomSettingsModal({
       .then(setMembers)
       .catch(() => setMembers([]));
     listWorkspaceUsersFn().then(setUsers).catch(() => setUsers([]));
+    getRoomInviteFn({ data: { slug } })
+      .then((r) => setInviteUrl(r.url))
+      .catch(() => setInviteUrl(null));
   }, [slug]);
+
+  async function createInvite() {
+    setBusy(true);
+    try {
+      setInviteUrl((await createRoomInviteFn({ data: { slug } })).url);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : t("error"));
+    }
+    setBusy(false);
+  }
+  async function revokeInvite() {
+    if (!confirm(t("¿Cancelar la liga? Quien la tenga ya no podrá entrar con ella."))) return;
+    await revokeRoomInviteFn({ data: { slug } }).catch(() => {});
+    setInviteUrl(null);
+  }
+  async function copyInvite() {
+    if (!inviteUrl) return;
+    await navigator.clipboard.writeText(inviteUrl).catch(() => {});
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  }
 
   // Sugerencias: usuarios del workspace que matchean y NO son ya miembros.
   const memberSubs = new Set((members ?? []).map((m) => m.sub));
@@ -5006,6 +5037,49 @@ function RoomSettingsModal({
           {t("Guardar cambios")}
         </button>
       </div>
+
+      <div className="mb-4 border-t border-border" />
+
+      <p className="mb-1 text-xs font-medium text-muted">{t("Liga de invitación")}</p>
+      <p className="mb-2 text-xs text-muted">
+        {t(
+          "Quien la abra entra al workspace y cae en este room. También verá los rooms públicos."
+        )}
+      </p>
+      {inviteUrl === undefined ? (
+        <p className="mb-4 text-sm text-muted">{t("Cargando…")}</p>
+      ) : inviteUrl === null ? (
+        <button
+          onClick={createInvite}
+          disabled={busy}
+          className="mb-4 rounded-lg border border-border px-3 py-1.5 text-sm font-medium hover:bg-surface-2 disabled:opacity-50"
+        >
+          {t("Crear liga de invitación")}
+        </button>
+      ) : (
+        <div className="mb-4">
+          <div className="flex gap-2">
+            <input
+              readOnly
+              value={inviteUrl}
+              onFocus={(e) => e.currentTarget.select()}
+              className="min-w-0 flex-1 rounded-lg border border-border bg-surface px-3 py-1.5 text-sm text-muted outline-none"
+            />
+            <button
+              onClick={copyInvite}
+              className="rounded-lg bg-brand px-3 py-1.5 text-sm font-semibold text-brand-fg"
+            >
+              {copied ? t("Copiada") : t("Copiar")}
+            </button>
+          </div>
+          <button
+            onClick={revokeInvite}
+            className="mt-1.5 text-xs text-muted underline hover:text-ink"
+          >
+            {t("Cancelar liga")}
+          </button>
+        </div>
+      )}
 
       <div className="mb-4 border-t border-border" />
 

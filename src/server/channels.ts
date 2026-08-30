@@ -187,7 +187,7 @@ export const addChannelMemberFn = createServerFn({ method: "POST" })
       throw new Error(
         data.email.trim().startsWith("@")
           ? "no encuentro ese @usuario en este workspace"
-          : "esa persona no es miembro del workspace todavía: invítala en Ajustes → Invitar miembros"
+          : "esa persona no es miembro del workspace todavía: mándale la liga de invitación de este room"
       );
     }
     await db.addChannelMember(ch.id, sub);
@@ -199,5 +199,43 @@ export const removeChannelMemberFn = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     const { db, ch } = await requireManage(data.slug);
     await db.removeChannelMember(ch.id, data.sub);
+    return { ok: true as const };
+  });
+
+// ── Liga de invitación DEL ROOM ──────────────────────────────────────────────
+// Reusa el sistema de `gc_invites` (mismo token, misma ruta /join/<token>, mismo
+// handshake) con `channel_id` puesto: quien la abre entra al workspace COMO MIEMBRO
+// NORMAL —ve los rooms públicos y se le puede DMear— y además queda en este room y
+// aterriza en él. Es la única forma de meter a alguien que todavía no es del workspace:
+// `addChannelMemberFn` exige que ya lo sea.
+// Puerta: `requireManage` (owner o creador), la misma que invitar y expulsar.
+
+export const getRoomInviteFn = createServerFn({ method: "GET" })
+  .validator((d: { slug: string }) => d)
+  .handler(async ({ data }) => {
+    const { ch } = await requireManage(data.slug);
+    const { roomToken, urlFor } = await import("./invites");
+    const token = await roomToken(ch.id);
+    return { url: token ? await urlFor(token) : null };
+  });
+
+// Get-or-create idempotente: devuelve la que hay o emite una.
+export const createRoomInviteFn = createServerFn({ method: "POST" })
+  .validator((d: { slug: string }) => d)
+  .handler(async ({ data }) => {
+    const { ch, user } = await requireManage(data.slug);
+    const { roomToken, mint, urlFor } = await import("./invites");
+    const token = (await roomToken(ch.id)) ?? (await mint(user.sub, ch.id));
+    return { url: await urlFor(token) };
+  });
+
+// Cancela: la liga vieja deja de resolver y quien la abra cae en "necesitas una
+// invitación". No saca a nadie que ya haya entrado.
+export const revokeRoomInviteFn = createServerFn({ method: "POST" })
+  .validator((d: { slug: string }) => d)
+  .handler(async ({ data }) => {
+    const { ch } = await requireManage(data.slug);
+    const { dropRoomTokens } = await import("./invites");
+    await dropRoomTokens(ch.id);
     return { ok: true as const };
   });

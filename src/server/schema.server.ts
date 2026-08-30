@@ -251,6 +251,13 @@ async function migrate(): Promise<void> {
   // guardado con flag en gc_config, ver más abajo.)
   await addColumn("gc_users", "email_notifs", "INTEGER NOT NULL DEFAULT 0");
 
+  // Liga de invitación POR ROOM: el mismo token de `gc_invites` pero apuntando a un
+  // canal. NULL = liga del workspace (lo de siempre); un id = además de entrar al
+  // workspace, quien la abre queda como miembro de ese room y aterriza ahí.
+  // ⚠️ Toda consulta de la liga de workspace tiene que filtrar `channel_id IS NULL`, o
+  // Ajustes acabaría repartiendo la liga de un room privado.
+  await addColumn("gc_invites", "channel_id", "INTEGER");
+
   // Thumbnail WebP de adjuntos-imagen (se sirve inline; el original queda para full/agente).
   await addColumn("gc_attachments", "thumb_file_id", "TEXT");
   // Dimensiones intrínsecas de la imagen (px) → el render reserva el alto EXACTO antes

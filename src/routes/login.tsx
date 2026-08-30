@@ -30,10 +30,15 @@ export function parseLoginSearch(s: Record<string, unknown>): LoginSearch {
 export async function runLoginLoader(search: LoginSearch, inviteToken?: string) {
   if (search.payload && search.sig) {
     let error: string | null = null;
+    // Si la liga era de un room, `joinedSlug` dice cuál: se aterriza ahí en vez de "/".
+    // El destino sale del TOKEN, resuelto en el servidor — por eso no hace falta un
+    // `?next=`, que sería un redirect pedido desde la URL.
+    let joinedSlug: string | null = null;
     try {
-      await completeGhostyLogin({
+      const res = await completeGhostyLogin({
         data: { payload: search.payload, sig: search.sig, inviteToken },
       });
+      joinedSlug = res?.joinedSlug ?? null;
     } catch (e) {
       error = (e as Error)?.message || "No se pudo iniciar sesión";
     }
@@ -41,7 +46,9 @@ export async function runLoginLoader(search: LoginSearch, inviteToken?: string) 
       // La sesión cambió → invalida la identidad cacheada para que la nav a "/" lea
       // fresco (en SSR es no-op; importa en nav de cliente donde _meCache seguiría null).
       clearMeCache();
-      throw redirect({ to: "/" });
+      throw joinedSlug
+        ? redirect({ to: "/c/$slug", params: { slug: joinedSlug } })
+        : redirect({ to: "/" });
     }
     return { error };
   }

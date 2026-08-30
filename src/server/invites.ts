@@ -31,9 +31,17 @@ export async function isEmptyWorkspace(): Promise<boolean> {
 // El invite es un LINK PERMANENTE del equipo: el mismo link sirve para todos. NO se
 // "gasta" — nunca marcamos `used_by` (esa columna queda para tokens legacy). "Activo"
 // = fila con `used_by IS NULL`. Cancelar = borrar; refrescar = borrar + emitir otro.
-export async function consumeInvite(token: string, _sub: string): Promise<boolean> {
-  const { rows } = await dbq("SELECT 1 FROM gc_invites WHERE token = ?", [token]);
-  return !!rows[0]; // válido si el token existe (no fue cancelado). Multi-uso.
+// `channelId` no null = liga de un room: además de abrir la puerta del workspace, el
+// que entra queda como miembro de ese canal (lo hace auth.ts, aquí solo se reporta).
+export async function consumeInvite(
+  token: string,
+  _sub: string
+): Promise<{ ok: boolean; channelId: number | null }> {
+  const { rows } = await dbq("SELECT channel_id FROM gc_invites WHERE token = ?", [token]);
+  const row = rows[0];
+  if (!row) return { ok: false, channelId: null }; // cancelado o inexistente
+  const raw = row[0];
+  return { ok: true, channelId: raw == null ? null : Number(raw) };
 }
 
 // ── Helpers (server-only) ────────────────────────────────────────────────────
@@ -49,24 +57,62 @@ async function currentSub(): Promise<string> {
   return user.sub;
 }
 
-async function urlFor(token: string): Promise<string> {
+export async function urlFor(token: string): Promise<string> {
   const { reqOrigin } = await import("../origin.server");
   return `${await reqOrigin()}/join/${token}`;
 }
 
-async function activeToken(sub: string): Promise<string | null> {
+// El link es per-creador Y per-destino: `channelId = null` es el del workspace, un id es
+// el de ese room. El filtro por `channel_id` NO es opcional — sin él, la tarjeta de
+// Ajustes del workspace devolvería la liga de un room privado (y al revés).
+function scope(channelId: number | null): { sql: string; args: unknown[] } {
+  return channelId == null
+    ? { sql: "channel_id IS NULL", args: [] }
+    : { sql: "channel_id = ?", args: [channelId] };
+}
+
+export async function activeToken(sub: string, channelId: number | null = null) {
+  const s = scope(channelId);
   const { rows } = await dbq(
-    "SELECT token FROM gc_invites WHERE created_by = ? AND used_by IS NULL ORDER BY rowid DESC LIMIT 1",
-    [sub]
+    `SELECT token FROM gc_invites WHERE created_by = ? AND used_by IS NULL AND ${s.sql} ORDER BY rowid DESC LIMIT 1`,
+    [sub, ...s.args]
   );
   return (rows[0]?.[0] as string) ?? null;
 }
 
-async function mint(sub: string): Promise<string> {
+export async function mint(sub: string, channelId: number | null = null): Promise<string> {
   const crypto = await import("node:crypto");
   const token = crypto.randomBytes(16).toString("hex");
-  await dbq("INSERT INTO gc_invites (token, created_by) VALUES (?, ?)", [token, sub]);
+  await dbq("INSERT INTO gc_invites (token, created_by, channel_id) VALUES (?, ?, ?)", [
+    token,
+    sub,
+    channelId,
+  ]);
   return token;
+}
+
+// La liga de un ROOM es del ROOM, no de quien la creó: el owner y el creador del canal
+// administran la misma. (La del workspace sí es per-creador — ahí cada quien reparte la
+// suya y revoca sólo la propia.) Si fuera per-creador, dos personas que administran el
+// mismo room verían ligas distintas y "Cancelar" dejaría viva la del otro.
+export async function roomToken(channelId: number): Promise<string | null> {
+  const { rows } = await dbq(
+    "SELECT token FROM gc_invites WHERE channel_id = ? AND used_by IS NULL ORDER BY rowid DESC LIMIT 1",
+    [channelId]
+  );
+  return (rows[0]?.[0] as string) ?? null;
+}
+
+export async function dropRoomTokens(channelId: number): Promise<void> {
+  await dbq("DELETE FROM gc_invites WHERE channel_id = ? AND used_by IS NULL", [channelId]);
+}
+
+export async function dropTokens(sub: string, channelId: number | null = null): Promise<void> {
+  const s = scope(channelId);
+  await dbq(`DELETE FROM gc_invites WHERE created_by = ? AND used_by IS NULL AND ${s.sql}`, [
+    sub,
+    ...s.args,
+  ]);
 }
 
 // ── Server fns (owner) ───────────────────────────────────────────────────────
@@ -90,13 +136,13 @@ export const createInvite = createServerFn({ method: "POST" }).handler(async () 
 // de resolver → útil si se filtró.
 export const refreshInvite = createServerFn({ method: "POST" }).handler(async () => {
   const sub = await currentSub();
-  await dbq("DELETE FROM gc_invites WHERE created_by = ? AND used_by IS NULL", [sub]);
+  await dropTokens(sub);
   return { url: await urlFor(await mint(sub)) };
 });
 
 // Cancela: elimina el link permanente. Nadie más puede unirse hasta crear uno nuevo.
 export const revokeInvite = createServerFn({ method: "POST" }).handler(async () => {
   const sub = await currentSub();
-  await dbq("DELETE FROM gc_invites WHERE created_by = ? AND used_by IS NULL", [sub]);
+  await dropTokens(sub);
   return { ok: true as const };
 });

@@ -32,7 +32,7 @@ function Join() {
     <LoginCard
       error={error}
       retryTo={`/join/${token}`}
-      subtitle={t("Te invitaron a este chat. Entra para unirte.")}
+      subtitle={t("Te invitaron. Entra para unirte al equipo.")}
     />
   );
 }

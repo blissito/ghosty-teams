@@ -142,7 +142,10 @@ export const completeGhostyLogin = createServerFn({ method: "POST" })
     const { consumeInvite } = await import("./invites");
     // Si trae invite, valídalo (member). Sin invite solo entra si ya hay owner
     // (o es el primer login = owner).
-    const invited = data.inviteToken ? await consumeInvite(data.inviteToken, id.sub) : false;
+    const invite = data.inviteToken
+      ? await consumeInvite(data.inviteToken, id.sub)
+      : { ok: false, channelId: null as number | null };
+    const invited = invite.ok;
 
     // Expulsado del workspace → rebota (aunque tenga identidad IdP válida). Antes del
     // upsert para no re-crearlo/tocarlo.
@@ -190,6 +193,22 @@ export const completeGhostyLogin = createServerFn({ method: "POST" })
     const { upsertUser } = await import("../users.server");
     const user = await upsertUser({ sub: id.sub, email: id.email, name: id.name, avatar: id.avatar });
 
+    // Liga de invitación de un ROOM: además de la puerta del workspace, lo mete al canal
+    // y devuelve su slug para aterrizar ahí (lo usa runLoginLoader). `addChannelMember`
+    // es ON CONFLICT DO NOTHING → volver a abrir la misma liga es inocuo.
+    // Best-effort: si esto falla, la persona YA está dentro del workspace; tirar aquí la
+    // dejaría sin sesión por no haber podido unirla a un room que se arregla a mano.
+    let joinedSlug: string | null = null;
+    if (invite.channelId != null) {
+      try {
+        const db = await import("../db.server");
+        await db.addChannelMember(invite.channelId, id.sub);
+        joinedSlug = (await db.getChannelById(invite.channelId))?.slug ?? null;
+      } catch (e) {
+        console.warn("[auth] auto-join al room falló (best-effort):", (e as Error)?.message);
+      }
+    }
+
     // Registra `Membership(MEMBER)` en gs (fuente única de verdad de membership+rol).
     // Corre para TODO el que cruzó la puerta, no sólo para el invitado: quien entra a un
     // workspace vacío o como dueño declarado también es miembro, y sin la fila el
@@ -205,7 +224,7 @@ export const completeGhostyLogin = createServerFn({ method: "POST" })
 
     const s = await session();
     await s.update({ user });
-    return { ok: true as const, user };
+    return { ok: true as const, user, joinedSlug };
   });
 
 // Registra Membership(MEMBER) del invitado en gs (control-plane), firmado HMAC
