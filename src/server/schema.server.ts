@@ -1213,6 +1213,17 @@ async function migrate(): Promise<void> {
   // guardaba. Congelado y no derivado, porque el room se renombra y las grabaciones viejas
   // seguirían diciendo el nombre nuevo. NULL en las filas anteriores → cae al del room.
   await addColumn("gt_event_recordings", "title", "TEXT");
+  // De qué CAJA salió esta grabación, porque son dos y no se pueden confundir: `event`
+  // (o NULL, las filas anteriores a esto) es el webinar; `call` es una llamada rápida.
+  //
+  // ⚠️ No es metadato de adorno. `recogerTranscript` va a buscar el `.txt` a la caja, y
+  // preguntarle a la de eventos por un archivo que está en la de llamadas devuelve "todavía
+  // no" para siempre: la fila se quedaría en "Transcribiendo…" eternamente, sin un error.
+  await addColumn("gt_event_recordings", "scope", "TEXT");
+  // El id de lo que se estaba grabando cuando no es un canal: el DM. En una llamada de room
+  // coincide con `channel_id`; en un DM, `channel_id` va en 0 —el convenio que este repo ya
+  // usa para los DM— y el dmId vive aquí.
+  await addColumn("gt_event_recordings", "scope_id", "INTEGER");
   await exec("CREATE INDEX IF NOT EXISTS gt_event_rec_ch ON gt_event_recordings(channel_id, ended_at)");
 
   // Una persona, una fila por evento: si vuelve a registrarse se actualiza, no se

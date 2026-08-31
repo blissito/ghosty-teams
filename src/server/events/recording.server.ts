@@ -19,23 +19,12 @@
 // Por eso `detener()` sube PRIMERO y sólo entonces borra el local — y si la subida falla,
 // no borra. Y el disco: 900 MB/h medidos con la sala VACÍA, 1.5-3 GB/h con contenido.
 
-async function pedirAStudio(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
-  const { nativeRuntimeBase, partnerHeaders } = await import("../ghosty-runtime.server");
-  const base = await nativeRuntimeBase();
-  if (!base) throw new Error("No hay runtime nativo al que pedirle la grabación");
-  const { currentNamespace } = await import("../tenant.server");
-  const body = JSON.stringify(payload);
-  const r = await fetch(`${base}/api/v2/event-recording`, {
-    method: "POST",
-    headers: partnerHeaders(body, await currentNamespace()),
-    body,
-    // Generoso: detrás puede haber una caja despertando y un PUT de más de un giga.
-    signal: AbortSignal.timeout(180_000),
-  });
-  const json = (await r.json().catch(() => ({}))) as Record<string, unknown>;
-  if (!r.ok) throw new Error(String(json.error ?? `studio ${r.status}`));
-  return json;
-}
+// El transporte vive en `recording-bridge.server.ts`: lo comparten esta caja y la de las
+// llamadas rápidas, que graban con el mismo protocolo. Aquí se fija el destino UNA vez.
+import { askStudio, uploadTranscript } from "../recording-bridge.server";
+
+/** Todo lo de este archivo va contra la caja de EVENTOS. */
+const pedirAStudio = (payload: Record<string, unknown>) => askStudio(payload, "event");
 
 /**
  * Sube el `.txt` del transcript si YA existe en la caja. Devuelve su clave, o `null` si
@@ -44,18 +33,7 @@ async function pedirAStudio(payload: Record<string, unknown>): Promise<Record<st
  * Borra el `.txt` de la caja al confirmar la subida, pero **nunca el `.mp4`**: de eso se
  * encarga quien llama, que es quien sabe si aún hace falta.
  */
-async function subirTranscript(file: string): Promise<string | null> {
-  const { presignPut, keyFor } = await import("../storage.server");
-  const txt = file.replace(/\.mp4$/, ".txt");
-  const keyTexto = keyFor(txt);
-  try {
-    await pedirAStudio({ action: "upload", file: txt, putUrl: presignPut(keyTexto, 3600), contentType: "text/plain; charset=utf-8" });
-  } catch {
-    return null; // whisper sigue trabajando, o no hubo audio
-  }
-  await pedirAStudio({ action: "delete", file: txt }).catch(() => {});
-  return keyTexto;
-}
+const subirTranscript = (file: string) => uploadTranscript(file, "event");
 
 /**
  * Recoge los transcripts que quedaron a medias. Se llama al abrir el room —Teams no tiene
@@ -71,7 +49,7 @@ export async function recogerTranscript(channelId: number): Promise<number> {
   // eso en un CPU compartido, así que la ventana era más corta que el propio trabajo.
   // Siete días es el orden de magnitud de lo que vive una caja de eventos.
   const pendientes = await dbq(
-    `SELECT id, box_file, video_id FROM gt_event_recordings
+    `SELECT id, box_file, video_id, scope FROM gt_event_recordings
       WHERE channel_id = ? AND transcript_key IS NULL
         AND COALESCE(transcript_state, 'pending') = 'pending'
         AND ended_at > unixepoch() - 604800`,
@@ -81,21 +59,27 @@ export async function recogerTranscript(channelId: number): Promise<number> {
   for (const fila of pendientes) {
     const file = String(fila.box_file ?? "");
     if (!/^[\w.-]+\.mp4$/.test(file)) continue; // filas viejas, sin el nombre guardado
-    const estado = await pedirAStudio({ action: "transcript-status", file }).catch(() => null);
+    // ⚠️ A CADA fila se le pregunta a SU caja. En un room conviven las grabaciones del
+    // webinar y las de las llamadas rápidas, y son dos cajas distintas: preguntarle a la de
+    // eventos por un archivo que está en la de llamadas devuelve `not_found` para siempre,
+    // así que la fila se quedaría en "Transcribiendo…" eternamente sin un solo error.
+    const box = fila.scope === "call" ? ("huddle" as const) : ("event" as const);
+    const ask = (payload: Record<string, unknown>) => askStudio(payload, box);
+    const estado = await ask({ action: "transcript-status", file }).catch(() => null);
     if (!estado) continue;
     if (estado.status === "ready") {
-      const keyTexto = await subirTranscript(file);
+      const keyTexto = await uploadTranscript(file, box);
       if (keyTexto) {
         await dbq("UPDATE gt_event_recordings SET transcript_key = ?, transcript_state = 'ready' WHERE id = ?", [keyTexto, fila.id]);
         // El borrado espera si la grabación aún tiene que publicarse: se lleva el HLS.
-        if (!fila.video_id) await pedirAStudio({ action: "delete", file }).catch(() => {});
+        if (!fila.video_id) await ask({ action: "delete", file }).catch(() => {});
         hechos++;
       }
     } else if (estado.status === "not_found") {
       // ⚠️ `not_found` NO significa "imposible": la caja pudo reiniciarse y perder el
       // estado, que vive en memoria. Se pide que lo retome —es idempotente— en vez de dar
       // el transcript por muerto y BORRAR el MP4, que es irrecuperable.
-      await pedirAStudio({ action: "transcript-retry", file }).catch(() => {});
+      await ask({ action: "transcript-retry", file }).catch(() => {});
     } else if (estado.status === "failed") {
       // Falló de verdad: se anota para no preguntar en cada carga del room. El MP4 se
       // conserva —ya está subido, pero borrarlo cierra la puerta a reintentarlo—.

@@ -47,9 +47,15 @@ export type CallSnapshot = {
   incoming: Incoming[];
   /** sube en cada evento de la sala → re-render de la UI que lee del Room */
   version: number;
+  /**
+   * La llamada se está grabando. Vive aquí y no dentro del componente porque quien
+   * aparece en la grabación tiene derecho a verlo aunque no haya sido quien pulsó: el
+   * testigo llega por el bus a TODOS los que están dentro.
+   */
+  recording: { by: string; startedAt: number; canStop: boolean } | null;
 };
 
-const EMPTY: CallSnapshot = { joined: null, status: "idle", incoming: [], version: 0 };
+const EMPTY: CallSnapshot = { joined: null, status: "idle", incoming: [], version: 0, recording: null };
 
 let snapshot: CallSnapshot = EMPTY;
 const listeners = new Set<() => void>();
@@ -282,7 +288,7 @@ export async function openCall(
     } catch {
       /* nunca llegó a conectar */
     }
-    set({ joined: null, status: "error" });
+    set({ joined: null, status: "error", recording: null });
     onError?.(String((e as Error)?.message ?? e));
   } finally {
     opening = false;
@@ -298,7 +304,7 @@ function finishLocal(alone: boolean, notifyServer: boolean) {
     set({ status: "idle" });
     return;
   }
-  set({ joined: null, status: "idle" });
+  set({ joined: null, status: "idle", recording: null });
   try {
     j.room.removeAllListeners();
     j.room.disconnect();
@@ -373,9 +379,24 @@ export function wireCallRealtime(): void {
         }
       } else if (ev.t === "quickcall:ended") {
         endCallFromServer(ev.scope, ev.scopeId);
+      } else if (ev.t === "quickcall:recording") {
+        // Sólo si es la llamada en la que estoy: el evento va al canal del room, que
+        // también lo reciben quienes NO entraron a la llamada.
+        const j = snapshot.joined;
+        if (j?.scope === ev.scope && j?.scopeId === ev.scopeId) {
+          // `canStop` no se deriva aquí: lo dice el servidor, que es quien sabe quién
+          // inició la llamada. Al recibirlo por el bus se asume que no, y el que sí puede
+          // ya lo tiene puesto desde su propia respuesta.
+          set({ recording: ev.recording ? { by: "", startedAt: Math.floor(Date.now() / 1000), canStop: false } : null });
+        }
       }
     },
   });
 }
 
 export { startCallFn, joinCallFn, getActiveCallFn };
+
+/** Marca local del estado de grabación (lo usa quien pulsa, sin esperar al bus). */
+export function setRecording(r: CallSnapshot["recording"]): void {
+  set({ recording: r });
+}

@@ -1,8 +1,9 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Room, Track, type Participant } from "livekit-client";
-import { Mic, MicOff, Video, VideoOff, ScreenShare, PhoneOff, Loader2 } from "lucide-react";
+import { Mic, MicOff, Video, VideoOff, ScreenShare, PhoneOff, Loader2, Circle } from "lucide-react";
 import { useT } from "../i18n";
-import { leaveCall, useCall, type CallConn } from "../lib/call-store";
+import { leaveCall, setRecording, useCall, type CallConn } from "../lib/call-store";
+import { getCallRecordingFn, startCallRecordingFn, stopCallRecordingFn } from "../server/quick-calls";
 
 // UI NATIVA de quick-call (corre en el browser del miembro). livekit-client → SFU
 // (box livekit-svc) con el token/wss que acuña el server (quick-calls.ts). Estilada
@@ -79,7 +80,8 @@ function Tile({ p, source, local }: { p: Participant; source: Track.Source; loca
 export function QuickCall({ room, onVideoChange }: { room: Room; onVideoChange?: (hasVideo: boolean) => void }) {
   const t = useT();
   // El store sube `version` en cada evento de la sala → esto re-renderiza.
-  const { status } = useCall();
+  const snap = useCall();
+  const { status, joined } = snap;
 
   const leave = () => leaveCall();
 
@@ -101,7 +103,7 @@ export function QuickCall({ room, onVideoChange }: { room: Room; onVideoChange?:
   const cams = participants; // una cámara-tile por participante
   const cols = Math.min(3, Math.max(1, Math.ceil(Math.sqrt(cams.length))));
 
-  // ¿Hay algún video vivo (cámara o pantalla)? → el dock encoge a tamaño mínimo cuando
+  // ¿Hay algún video alive (cámara o pantalla)? → el dock encoge a tamaño mínimo cuando
   // la llamada es solo-audio (nadie con cámara/pantalla), como Slack/Discord.
   const camOnAnyone = participants.some((p) => {
     const cp = p.getTrackPublication(Track.Source.Camera);
@@ -115,6 +117,50 @@ export function QuickCall({ room, onVideoChange }: { room: Room; onVideoChange?:
 
   const ctrl = "grid h-10 w-10 place-items-center rounded-full border border-border text-ink transition hover:bg-surface-3";
   const ctrlOff = "grid h-10 w-10 place-items-center rounded-full bg-red-600 text-white transition hover:bg-red-700";
+
+  // ── Grabación ──────────────────────────────────────────────────────────────
+  // El estado vive en el store, no aquí: llega por el bus a TODOS los que están dentro
+  // (ver `quickcall:recording`). Este componente sólo pinta y pulsa.
+  const target = joined?.target;
+  const rec = snap.recording;
+  const [recBusy, setRecBusy] = useState(false);
+  const [recError, setRecError] = useState<string | null>(null);
+
+  // Al entrar a una llamada que YA se está grabando, el testigo tiene que aparecer solo:
+  // el evento del bus se emitió antes de que yo llegara y no se repite.
+  useEffect(() => {
+    if (!target || status !== "live") return;
+    let alive = true;
+    getCallRecordingFn({ data: target })
+      .then((r) => { if (alive && r) setRecording(r); })
+      .catch(() => {});
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [status, target && ("slug" in target ? target.slug : target.dmId)]);
+
+  const toggleRec = async () => {
+    if (!target || recBusy) return;
+    setRecBusy(true);
+    setRecError(null);
+    try {
+      const r = rec
+        ? await stopCallRecordingFn({ data: target })
+        : await startCallRecordingFn({ data: target });
+      if (!r.ok) {
+        // El motivo se DICE. Un botón que no hace nada se lee como que la app está rota,
+        // y aquí el "no" más probable —no eres quien inició la llamada— es legítimo.
+        setRecError(r.error);
+        return;
+      }
+      // No se espera al bus: quien pulsa ve el cambio de inmediato. Parar además tarda
+      // (subir el MP4), y dejar el testigo rojo mientras tanto invita a pulsar otra vez.
+      setRecording(rec ? null : { by: t("Tú"), startedAt: Math.floor(Date.now() / 1000), canStop: true });
+    } catch (e) {
+      setRecError((e as Error).message || t("No pude cambiar la grabación"));
+    } finally {
+      setRecBusy(false);
+    }
+  };
 
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-surface">
@@ -151,6 +197,17 @@ export function QuickCall({ room, onVideoChange }: { room: Room; onVideoChange?:
           ))}
         </div>
       )}
+      {recError ? (
+        // El motivo del "no", donde se pulsó. Callarlo deja el botón pareciendo roto.
+        <div className="border-t border-border px-3 py-1.5 text-center text-xs text-red-600">{recError}</div>
+      ) : rec ? (
+        // El testigo lo ve TODO el mundo en la llamada, no sólo quien pulsó: quien aparece
+        // en una grabación tiene derecho a saber que se está grabando.
+        <div className="flex items-center justify-center gap-1.5 border-t border-border px-3 py-1.5 text-xs text-red-600">
+          <Circle size={9} fill="currentColor" className="animate-pulse" />
+          {rec.by ? t("Grabando · lo inició {quien}").replace("{quien}", rec.by) : t("Grabando")}
+        </div>
+      ) : null}
       <div className="flex items-center justify-center gap-2 border-t border-border px-3 py-2">
         <button onClick={() => lp?.setMicrophoneEnabled(!micOn)} className={micOn ? ctrl : ctrlOff} title={micOn ? t("Silenciar") : t("Activar micrófono")}>
           {micOn ? <Mic size={17} /> : <MicOff size={17} />}
@@ -164,6 +221,17 @@ export function QuickCall({ room, onVideoChange }: { room: Room; onVideoChange?:
           title={t("Compartir pantalla")}
         >
           <ScreenShare size={17} />
+        </button>
+        <button
+          onClick={toggleRec}
+          disabled={recBusy}
+          className={
+            "grid h-10 w-10 place-items-center rounded-full border transition disabled:opacity-50 " +
+            (rec ? "border-red-600 bg-red-600 text-white hover:bg-red-700" : "border-border text-ink hover:bg-surface-3")
+          }
+          title={rec ? t("Detener la grabación") : t("Grabar la llamada")}
+        >
+          {recBusy ? <Loader2 size={17} className="animate-spin" /> : <Circle size={17} fill={rec ? "currentColor" : "none"} />}
         </button>
         <button onClick={leave} className="grid h-10 w-10 place-items-center rounded-full bg-red-600 text-white transition hover:bg-red-700" title={t("Salir de la llamada")}>
           <PhoneOff size={17} />

@@ -23,9 +23,22 @@ type CallConfig = {
   adminToken: string;
 };
 
+// El nombre FIJO de la caja de llamadas. Antes las dos URLs llevaban el `sandboxId`
+// dentro, así que recrear la caja —por disco, por imagen nueva, o porque el janitor la
+// recicló— obligaba a editar los secretos de Teams a mano. Studio la resuelve por este
+// dominio y lo re-fija en cada arranque (`huddle-box.server.ts`).
+//
+// ⚠️ Son DOS nombres, y el segundo no es opcional: el panel va por el 8088 y el SFU por el
+// 7880. Con uno solo la llamada se queda en "CONECTANDO…" para siempre y sin un error
+// visible — le pasó a la caja de eventos en cuanto dejó de servirse por su id.
+const HUDDLE_HOST = "llamadas.sandboxes.easybits.cloud";
+const HUDDLE_RTC_HOST = "llamadas-rtc.sandboxes.easybits.cloud";
+
 function callConfig(): CallConfig | null {
-  const controlUrl = process.env.HUDDLE_CONTROL_URL;
-  const wssUrl = process.env.HUDDLE_WSS_URL;
+  // El env sigue mandando: deja apuntar a una caja concreta para depurar, y mantiene viva
+  // cualquier instalación que aún lo tenga cableado.
+  const controlUrl = process.env.HUDDLE_CONTROL_URL || `https://${HUDDLE_HOST}`;
+  const wssUrl = process.env.HUDDLE_WSS_URL || `wss://${HUDDLE_RTC_HOST}`;
   const apiKey = process.env.LK_API_KEY;
   const apiSecret = process.env.LK_API_SECRET;
   const salt = process.env.LK_ROOM_SALT;
@@ -107,6 +120,9 @@ type ActiveCall = {
   // Subs a los que se les mandó push de "te llaman" (sin el host, sin silenciados) →
   // los mismos a los que hay que RETIRARSELA al colgar. Ver notifyCall/endCall.
   pushed: string[];
+  /** Quién puso a grabar y desde cuándo. Sólo en memoria: si el proceso se reinicia, la
+   *  caja sigue grabando y `watchOrphanRecording` la para sola a los 3 min de sala vacía. */
+  recording?: { bySub: string; byName: string; startedAt: number };
 };
 const active = new Map<string, ActiveCall>(); // key: `${ns}::${scope}::${id}`
 const keyOf = (ns: string, scope: "room" | "dm", id: number) => `${ns}::${scope}::${id}`;
@@ -228,7 +244,7 @@ async function resolveTarget(target: Target) {
     const ringSubs =
       ch.is_private === 0 ? [] : (await db.getChannelMemberSubs(ch.id).catch(() => [] as string[]));
     // Audiencia del PUSH de llamada (distinta de ringSubs, que es el timbre por SSE):
-    // aquí SÍ entra el room público — el evento SSE sólo lo ve quien tiene la pestaña
+    // aquí SÍ entra el room público — el evento SSE sólo lo ve startedBy tiene la pestaña
     // abierta, y el reporte del 2026-07-27 era justo ese: "si estoy en otra ventana no
     // veo la llamada". Público = todo el workspace; privado = sus miembros.
     const audience = ch.is_private === 0
@@ -276,7 +292,7 @@ async function resolveTarget(target: Target) {
  * le llega una petición HTTP normal; el upgrade a WS de `livekit-client` no la resume, así
  * que el navegador se estrella contra una caja apagada. Y el fallo engaña al máximo: el
  * turno del servidor sale PERFECTO —la tarjeta se crea, suenan los timbres, salen los
- * correos de "X está llamando"— y quien llamó ve un escueto "No se pudo abrir la llamada".
+ * correos de "X está llamando"— y startedBy llamó ve un escueto "No se pudo abrir la llamada".
  * O sea que parece un fallo del cliente cuando es una caja que hay que tocar por HTTP.
  * Pasó el 2026-08-19: la caja llevaba semanas dormida porque nadie llamaba.
  *
@@ -351,7 +367,7 @@ export const startCallFn = createServerFn({ method: "POST" })
       };
       t.fanout(startedEv);
       // Timbre per-user "estés donde estés": para rooms privados, a los miembros que NO
-      // están suscritos al canal del room (el fanout de arriba solo llega a quien lo ve).
+      // están suscritos al canal del room (el fanout de arriba solo llega a startedBy lo ve).
       // En DM, el fanout YA es per-user → ringSubs=[]. Nunca a mí mismo (soy el host).
       for (const sub of t.ringSubs) {
         if (sub !== t.me.sub) t.bus.publish(t.bus.ch.user(t.ns, sub), startedEv);
@@ -459,4 +475,137 @@ export const getActiveCallFn = createServerFn({ method: "GET" })
       return null;
     }
     return { callId: c.callId, host: c.host, label: c.label, startedAt: c.startedAt, participants: n < 0 ? null : n };
+  });
+
+// ── Grabación de la llamada ──────────────────────────────────────────────────
+// La caja ya sabía grabar —ffmpeg, chromium y whisper llevan horneados desde siempre— y
+// nadie se lo pedía. Esto es el cable, no la máquina.
+//
+// ⚠️ Sólo graba startedBy INICIÓ la llamada. Es la misma regla que "sólo detiene su turno startedBy
+// lo pidió": grabar a un grupo es una acción sobre esas personas, no una preferencia de
+// startedBy pasaba por ahí. Y por eso el testigo rojo lo ve todo el mundo.
+
+/**
+ * ¿La caja que sirve las llamadas es la misma que Studio va a poner a grabar?
+ *
+ * Sin `HUDDLE_CONTROL_URL` sí lo es: los dos lados caen al mismo dominio fijo. Con el env
+ * puesto, sólo si apunta a ese mismo host — el env existe para depurar y para la ventana
+ * de migración, y durante ella grabar sería grabar otra sala.
+ */
+function configPointsAtRecordingBox(): boolean {
+  const env = process.env.HUDDLE_CONTROL_URL;
+  if (!env) return true;
+  try {
+    return new URL(env).host === HUDDLE_HOST;
+  } catch {
+    return false;
+  }
+}
+
+/** Quien inició la llamada. `null` si no hay llamada viva. */
+function callOfTarget(t: Awaited<ReturnType<typeof resolveTarget>>): ActiveCall | null {
+  return active.get(keyOf(t.ns, t.scope, t.scopeId)) ?? null;
+}
+
+export const startCallRecordingFn = createServerFn({ method: "POST" })
+  .validator((d: Target) => d)
+  .handler(async ({ data }) => {
+    const t = await resolveTarget(data);
+    const c = callOfTarget(t);
+    if (!c) return { ok: false as const, error: "No hay ninguna llamada activa" };
+    if (c.host.sub !== t.me.sub) return { ok: false as const, error: "Sólo startedBy inició la llamada puede grabar" };
+    if (c.recording) return { ok: true as const, recording: true, startedAt: c.recording.startedAt };
+
+    // ⚠️ La grabación la pide Studio, que resuelve la caja por su DOMINIO FIJO. Si esta
+    // instancia todavía habla con una caja distinta por `HUDDLE_CONTROL_URL`, grabaríamos
+    // en una sala VACÍA de otra caja: el turno saldría en verde, el testigo rojo se
+    // encendería, y al parar entregaríamos un MP4 de dos horas de nada. Es exactamente el
+    // fallo mudo que hay que negarse a cometer, así que se comprueba y se dice.
+    if (!configPointsAtRecordingBox()) {
+      return {
+        ok: false as const,
+        error: "Grabación no disponible: esta instancia apunta a otra caja de llamadas (HUDDLE_CONTROL_URL)",
+      };
+    }
+
+    const { startCallRecording } = await import("./call-recording.server");
+    try {
+      await startCallRecording(c.room, c.label);
+    } catch (e) {
+      // El motivo, tal cual. Un "no pude grabar" a secas manda a mirar la cámara cuando el
+      // problema es que la caja no tiene disco o está despertando.
+      return { ok: false as const, error: (e as Error).message || "No pude empezar a grabar" };
+    }
+    c.recording = { bySub: t.me.sub, byName: t.me.name, startedAt: Math.floor(Date.now() / 1000) };
+    // El testigo rojo es para TODOS los que están dentro, no sólo para startedBy pulsó.
+    t.fanout({ t: "quickcall:recording", scope: c.scope, scopeId: c.scopeId, recording: true });
+    return { ok: true as const, recording: true, startedAt: c.recording.startedAt };
+  });
+
+export const stopCallRecordingFn = createServerFn({ method: "POST" })
+  .validator((d: Target) => d)
+  .handler(async ({ data }) => {
+    const t = await resolveTarget(data);
+    const c = callOfTarget(t);
+    if (!c) return { ok: false as const, error: "No hay ninguna llamada activa" };
+    if (c.host.sub !== t.me.sub) return { ok: false as const, error: "Sólo startedBy inició la llamada puede detener la grabación" };
+    if (!c.recording) return { ok: false as const, error: "No se está grabando" };
+
+    const { stopCallRecording, saveCallRecording } = await import("./call-recording.server");
+    const startedBy = c.recording.byName;
+    // Se marca como parada ANTES de esperar la subida: parar y subir un MP4 de dos horas
+    // tarda, y dejar el testigo rojo encendido mientras tanto hace que alguien vuelva a
+    // pulsar y se lleve un "no se está grabando" con la grabación a medio guardar.
+    c.recording = undefined;
+    t.fanout({ t: "quickcall:recording", scope: c.scope, scopeId: c.scopeId, recording: false });
+
+    let r: Awaited<ReturnType<typeof stopCallRecording>>;
+    try {
+      r = await stopCallRecording();
+    } catch (e) {
+      return { ok: false as const, error: (e as Error).message || "No pude detener la grabación" };
+    }
+    await saveCallRecording(
+      { scope: c.scope, scopeId: c.scopeId, channelId: c.scope === "room" ? c.scopeId : 0 },
+      r,
+      startedBy,
+      c.label
+    ).catch((e) => console.error("[call-rec] no pude guardar la fila:", e));
+
+    // Y se ANUNCIA en el chat, igual que en el room de eventos: lo publica startedBy detuvo,
+    // con su nombre, no un "sistema" anónimo — un mensaje sin cara se lee como spam.
+    //
+    // ⚠️ Sólo en un room: un DM no tiene `channel_id` donde colgar el mensaje, y startedBy
+    // paró ya recibe la URL en la respuesta.
+    //
+    // ⚠️ Y en su propio try/catch: que falle avisar no puede tumbar el guardado, porque la
+    // grabación YA está a salvo en storage.
+    if (c.scope === "room") {
+      try {
+        const minutos = r.startedAt ? Math.max(1, Math.round(Date.now() / 1000 / 60 - r.startedAt / 60)) : null;
+        const { id: mid } = await t.db.createMessage({
+          channelId: c.scopeId,
+          parentId: null,
+          sender: t.me.name,
+          senderSub: t.me.sub,
+          avatar: t.me.avatar || "",
+          body: `🎬 Grabación lista${minutos ? ` (${minutos} min)` : ""} — [ver o descargar](${r.url})\n\n_El enlace caduca en 7 días._`,
+        });
+        const msg = await t.db.getMessage(mid);
+        if (msg) t.fanout({ t: "message:new", msg });
+      } catch (e) {
+        console.error("[call-rec] no pude anunciar la grabación:", e);
+      }
+    }
+    return { ok: true as const, url: r.url, transcriptUrl: r.transcriptUrl };
+  });
+
+/** Para pintar el testigo al entrar a una llamada que ya se está grabando. */
+export const getCallRecordingFn = createServerFn({ method: "GET" })
+  .validator((d: Target) => d)
+  .handler(async ({ data }) => {
+    const t = await resolveTarget(data);
+    const c = callOfTarget(t);
+    if (!c?.recording) return null;
+    return { by: c.recording.byName, startedAt: c.recording.startedAt, canStop: c.host.sub === t.me.sub };
   });

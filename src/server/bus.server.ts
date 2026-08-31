@@ -109,7 +109,10 @@ export type RtEvent =
   // Quick-call arrancada/terminada en un scope → banner de "unirse" para la audiencia.
   // NO lleva token (cada quien acuña el suyo al unirse, ver quick-calls.ts).
   | { t: "quickcall:started"; scope: "room" | "dm"; scopeId: number; slug?: string; callId: string; host: { sub: string; name: string; avatar: string }; label: string; startedAt: number }
-  | { t: "quickcall:ended"; scope: "room" | "dm"; scopeId: number; callId: string };
+  | { t: "quickcall:ended"; scope: "room" | "dm"; scopeId: number; callId: string }
+  // El testigo rojo es para TODOS los que están en la llamada, no sólo para quien pulsó
+  // Grabar: quien aparece en la grabación tiene derecho a saber que se está grabando.
+  | { t: "quickcall:recording"; scope: "room" | "dm"; scopeId: number; recording: boolean };
 
 type Listener = (ev: RtEvent) => void;
 type Client = { ns: string; channels: Set<string>; listener: Listener; sub: string };
