@@ -220,6 +220,61 @@ export const REGLA_VARIOS_ADJUNTOS =
   "Si te dicen «usa ESTE / esta imagen» sin más seña, es el ÚLTIMO de la lista; si aun así no queda claro cuál quieren, " +
   "pregúntalo antes de gastar un turno trabajando con el equivocado.";
 
+/**
+ * La regla que acompaña al manifiesto de RE-ENTREGA: el turno no trajo archivos propios, así
+ * que se reponen los de la conversación (o los del hilo).
+ *
+ * Es la contrapartida de lo que `REGLA_VARIOS_ADJUNTOS` NO cubre: allí el problema es
+ * distinguir entre varios archivos de UN mensaje; aquí es que el agente no sabe que esta lista
+ * es el REFERENTE de lo que le están pidiendo.
+ *
+ * ⚠️ 2026-08-31, descti: pidieron el .docx de un PDF escaneado. El PDF correcto se re-entregó
+ * y estaba nombrado en el manifiesto — y el agente entregó DOS VECES un .docx de otro tema,
+ * sacado de su propia caja, de veinte turnos antes. La lista estaba, pero sin estatuto: nadie
+ * le había dicho que «este documento» se resuelve AQUÍ y no en su disco.
+ *
+ * ⚠️ Se acota a la referencia DEÍCTICA sobre una ENTRADA («este documento», «el que te pasé»)
+ * a propósito, para no pisar a `lastFileRule` de `artifactDocHint`, que reclama el antecedente
+ * de los verbos de MODIFICACIÓN sobre una SALIDA («cámbiale…», «corrígelo»). Al tocar
+ * cualquiera de las dos, mirar la otra: ensanchar una invade a la otra.
+ */
+export const REGLA_REENTREGA =
+  "Estos son los archivos de la conversación, repuestos en este turno porque el mensaje no trajo " +
+  "ninguno. Son EL REFERENTE: cuando digan «este documento», «este archivo», «este PDF» o «el que " +
+  "te pasé», es uno de esta lista, identificado por su NÚMERO —normalmente el último—. " +
+  "Lo que TÚ hayas producido en turnos anteriores dentro de tu caja NO es el referente, aunque se " +
+  "parezca en el nombre o en el tema: si no está en esta lista, no es lo que te piden. " +
+  "Si no queda claro cuál de la lista es, pregúntalo antes de gastar un turno trabajando con el " +
+  "equivocado.";
+
+/**
+ * El manifiesto de adjuntos del turno, con su regla.
+ *
+ * Vive aquí y no duplicado en `chat.ts`/`dm.ts`: eran gemelos verbatim salvo una palabra del
+ * título, y el `pista` vacío de la rama de re-entrega —el bug del 2026-08-31— estaba escrito
+ * DOS veces. Un arreglo en un sitio y no en el otro es la forma barata de que vuelva.
+ *
+ * "" cuando no hay nada que enumerar: con un solo adjunto propio no hay ambigüedad que
+ * resolver, y el manifiesto sería ruido en cada turno.
+ */
+export function manifiestoAdjuntos(
+  atts: { name: string | null; mime: string | null; size: number | null }[],
+  opts: { reentrega: boolean; ambito: "hilo" | "conversación" }
+): string {
+  if (!(opts.reentrega || atts.length > 1)) return "";
+  // Numerado porque el orden ES la dirección: es el mismo de los FileParts
+  // (`gc_attachments ORDER BY id`), y el nombre no distingue (el navegador sube todo como
+  // `image.png`).
+  const lista = atts
+    .map((a, i) => `${i + 1}. ${a.name ?? "(sin nombre)"} (${a.mime ?? "?"}, ${a.size ?? "?"} B)`)
+    .join("\n");
+  const titulo = opts.reentrega
+    ? `Adjuntos de ${opts.ambito === "hilo" ? "este hilo" : "esta conversación"}, disponibles en este turno`
+    : `Adjuntos de este mensaje, en orden (${atts.length})`;
+  const pista = opts.reentrega ? REGLA_REENTREGA : REGLA_VARIOS_ADJUNTOS;
+  return `[${titulo}]\n${lista}\n${pista}\n\n`;
+}
+
 const MEDIA_INLINE_MAX_BYTES = 256 * 1024; // < 256KB → bytes inline; ≥ → uri firmada
 
 export async function buildMediaParts(
@@ -1493,6 +1548,11 @@ export async function callAgentBackendStream(
         // Va PRIMERO y manda sobre todo lo demás, igual que en el nativo: sin tools, los
         // bloques de abajo describen lo que hay CONECTADO, no lo que puede ejecutar ahora.
         Promise.resolve(publicChannel || toolToken ? "" : SIN_TOOLS_HINT),
+        // Gemelo del `huecoHint` del camino nativo — ver allí el porqué, incluido el gate de
+        // canal público. Aquí no lleva `\n\n` final: este bloque se une con `join("\n\n")`.
+        publicChannel
+          ? Promise.resolve("")
+          : import("./server/delivery-gap").then((m) => m.deliveryGapHint(dest)).catch(() => ""),
         invokerSub && !publicChannel
           ? import("./server/connectors/context.server")
               .then((m) => m.buildConnectorContext(invokerSub, sender || "el usuario", text, dest ?? null, "mcp"))
@@ -1803,6 +1863,19 @@ export async function callAgentBackendStream(
   // docHint (contexto por-doc del turno) va PRIMERO en el texto; el system prompt
   // queda estable (base) → la sesión persistente del worker no se rompe al cambiar doc.
   const docHint = await artifactDocHint(currentDoc);
+  // El hueco de entrega del turno ANTERIOR. Sin esto el aviso muere en la burbuja: el
+  // catch-up empieza después de la propia respuesta del agente, así que nunca se entera de
+  // que falló — y repite «está en la tarjeta de arriba» mientras la persona dice que no le
+  // aparece (2026-08-31, descti). Va en el TEXTO como todos los demás.
+  //
+  // ⚠️ En un canal PÚBLICO no: allá no hay tarjetas, un ```eb-file llega como basura literal
+  // (WhatsApp no renderiza markdown) y `/opt/gs-sdk/storage.mjs` puede no existir en esa
+  // caja. Mandarlo ahí crearía un incidente nuevo para arreglar otro.
+  const huecoHint = publicChannel
+    ? ""
+    : await import("./server/delivery-gap")
+        .then((m) => m.deliveryGapHint(dest))
+        .catch(() => "");
   // AHORA, en el reloj del que escribe. Sin esto el modelo no puede convertir "el 1 de
   // agosto" o "mañana a las 9" en una fecha concreta para reminder_create — adivinaba el
   // año o daba por hecho UTC. Va por-TURNO (dato variable), nunca en el system prompt.
@@ -1871,7 +1944,10 @@ export async function callAgentBackendStream(
   // valor, y una lista que cambia por canal reciclaría la sesión en cada turno.
   const rosterHint = await buildRosterHint(dest, publicChannel).catch(() => "");
   const outText = stripLoneSurrogates(
-    sinToolsHint + connHint + nowHint + memHint + brandHint + docHint + rosterHint + text + canalHint
+    // `huecoHint` va justo tras `sinToolsHint` y ANTES de `docHint`: contradice lo que el
+    // modelo cree que ya hizo, y en el caso de fallo `docHint` le presenta un artefacto que
+    // NO es el archivo prometido. El que corrige tiene que pesar más que el que describe.
+    sinToolsHint + huecoHint + connHint + nowHint + memHint + brandHint + docHint + rosterHint + text + canalHint
   );
   try {
     // `parts` = FileParts A2A (media); EasyBits los normaliza por MIME (Slice E1).

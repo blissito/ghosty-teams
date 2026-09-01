@@ -143,6 +143,8 @@ export const en: Record<string, string> = {
   "Aún no tienes DMs.": "You don't have any DMs yet.",
   "Bloqueadas en el navegador. Actívalas desde los permisos del sitio.": "Blocked in the browser. Enable them from the site permissions.",
   "Borrar memoria de la conversación": "Clear conversation memory",
+  "Esta conversación lleva {n} respuestas sin borrar memoria. Cada turno relee todo lo anterior: borrarla abarata los siguientes.":
+    "This conversation has gone {n} replies without clearing memory. Every turn re-reads everything before it: clearing makes the next ones cheaper.",
   "Borrar memoria": "Clear memory",
   "{name} empezará de cero: pierde todo el contexto de esta conversación. Los mensajes que ya están escritos se quedan. No se puede deshacer.":
     "{name} will start fresh: it loses all context from this conversation. Messages already written stay. This can't be undone.",

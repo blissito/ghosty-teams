@@ -1,6 +1,7 @@
 import { forwardRef, Fragment, useCallback, useContext, useEffect, useImperativeHandle, useMemo, useReducer, useRef, useState } from "react";
 import { IDLE_MS } from "../lib/presence";
 import { shouldChime } from "../lib/chime";
+import { turnosDesdeElClear, TURNOS_LARGA } from "../lib/session-hygiene";
 import { createPortal } from "react-dom";
 import { useEditor, EditorContent, type Editor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
@@ -6965,6 +6966,17 @@ function DmView({
     turnsLeft: number | null; turnsOnEscalate: number;
   } | null>(null);
   const [pidiendoClear, setPidiendoClear] = useState(false);
+  // Higiene de sesión: cada respuesta relee toda la conversación, así que una que se alarga
+  // se encarece sola y en pantalla no había ninguna señal (una de 44 turnos fue el 58% del
+  // gasto de un cliente). DERIVADO de `flow`, que ya está cargado: sin fetch, sin columna,
+  // sin estado en el servidor.
+  //
+  // ⚠️ NO se dice por el chat, y son tres razones: despertaría al agente —justo el turno que
+  // esto quiere ahorrar—, entraría en el catch-up y se re-inyectaría como contexto en cada
+  // turno siguiente, y se leería como un mensaje de plataforma con la cara del agente. Es la
+  // misma familia de fallo que el aviso de entrega que el usuario acabó copiando.
+  const turnosLargos = isAgentDm ? turnosDesdeElClear(flow) : 0;
+  const sugerirClear = turnosLargos >= TURNOS_LARGA;
   // ⚠️ Depende del LARGO del flujo, no sólo del dmId. Pidiéndolo una vez al abrir, el
   // contador se congelaba: el ícono seguía en ámbar aunque la escalada ya hubiera
   // caducado, y sólo se enteraba al recargar la página. Cada respuesta del agente hace
@@ -7032,8 +7044,20 @@ function DmView({
         {isAgentDm && (
           <button
             onClick={() => setPidiendoClear(true)}
-            title={t("Borrar memoria de la conversación")}
-            className="grid h-11 w-11 shrink-0 place-items-center rounded-lg text-muted transition hover:bg-surface-3 hover:text-ink md:h-9 md:w-9"
+            title={
+              sugerirClear
+                ? t("Esta conversación lleva {n} respuestas sin borrar memoria. Cada turno relee todo lo anterior: borrarla abarata los siguientes.", { n: turnosLargos })
+                : t("Borrar memoria de la conversación")
+            }
+            className={`grid h-11 w-11 shrink-0 place-items-center rounded-lg transition md:h-9 md:w-9 ${
+              // Ámbar, el mismo lenguaje que ya usa el contador de la escalada. No es un
+              // banner nuevo ni un modal: el aviso vive EN el control que resuelve el
+              // problema, así que verlo y arreglarlo son el mismo gesto — y un cartel
+              // permanente se vuelve invisible en una semana.
+              sugerirClear
+                ? "text-amber-500 hover:bg-amber-500/10"
+                : "text-muted hover:bg-surface-3 hover:text-ink"
+            }`}
           >
             <RotateCcw size={17} />
           </button>

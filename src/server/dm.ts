@@ -182,7 +182,10 @@ export const clearDmAgentFn = createServerFn({ method: "POST" })
     // Burbuja del agente confirmando el reset (queda en el historial del DM).
     const { id } = await db.postDmAgent(
       data.id,
-      "🧹 Listo, borré la memoria de esta conversación. Empezamos de cero.",
+      // El texto NO se escribe a mano: es el ancla desde la que la UI cuenta los turnos
+      // desde el último clear (`turnosDesdeElClear`). Dos literales sueltos = contador que
+      // deja de reiniciarse en silencio al retocar el copy.
+      (await import("../lib/session-hygiene")).MARCA_CLEAR,
       "msg",
       agent.handle,
       agent.name ?? "Ghosty",
@@ -322,7 +325,7 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
     const db = await import("../db.server");
     const bus = await import("./bus.server");
     const { currentNamespace } = await import("./tenant.server");
-    const { resolvedAgents, runAgentTurn, buildMediaParts, REGLA_VARIOS_ADJUNTOS, quotedContextPrefix, clampQuote, historyContext, gapDesdeUltimaRespuesta, CATCHUP_FETCH, agentGroupId, INJECTED } = await import("../agents.server");
+    const { resolvedAgents, runAgentTurn, buildMediaParts, manifiestoAdjuntos, quotedContextPrefix, clampQuote, historyContext, gapDesdeUltimaRespuesta, CATCHUP_FETCH, agentGroupId, INJECTED } = await import("../agents.server");
     const me = await sessionUser();
     if (!me || !(await db.isDmMember(data.id, me.sub))) throw new Error("no autorizado");
     const ns = await currentNamespace();
@@ -401,17 +404,7 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
     }
     // Gemelo del de `chat.ts` — ver allí el porqué de numerar y de incluirlo cuando el
     // turno trae varios adjuntos propios. El incidente que lo motivó fue justo en un DM.
-    let manifiesto = "";
-    if (reentrega || mediaAtts.length > 1) {
-      const lista = mediaAtts
-        .map((a, i) => `${i + 1}. ${a.name ?? "(sin nombre)"} (${a.mime ?? "?"}, ${a.size ?? "?"} B)`)
-        .join("\n");
-      const titulo = reentrega
-        ? "Adjuntos de esta conversación, disponibles en este turno"
-        : `Adjuntos de este mensaje, en orden (${mediaAtts.length})`;
-      const pista = reentrega ? "" : `\n${REGLA_VARIOS_ADJUNTOS}`;
-      manifiesto = `[${titulo}]\n${lista}${pista}\n\n`;
-    }
+    const manifiesto = manifiestoAdjuntos(mediaAtts, { reentrega, ambito: "conversación" });
     const parts = await buildMediaParts(mediaAtts, { forceUri: reentrega });
 
     const text = history + manifiesto + quoted;

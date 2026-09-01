@@ -2665,6 +2665,38 @@ export async function recentContext(
 }
 
 /**
+ * Cuerpo del ÚLTIMO mensaje del agente en un scope, o null.
+ *
+ * Lo usa `deliveryGapHint`: el aviso de "prometió un archivo y no llegó" se persiste en ese
+ * cuerpo, y el agente **no lo ve por el catch-up** — `gapDesdeUltimaRespuesta` empieza
+ * justo DESPUÉS de su propia última respuesta, así que su burbuja queda fuera por
+ * construcción. Por eso hay que ir a buscarla.
+ *
+ * ⚠️ `TRIM(body) <> ''` no es higiene, es el filtro que hace que esto funcione: la cáscara
+ * del turno se crea VACÍA y EAGER (`postDmMessageFn`), así que sin él el mensaje del agente
+ * más reciente es SIEMPRE la burbuja del turno que está empezando, y nunca la respuesta
+ * anterior. Mismo criterio que `gapDesdeUltimaRespuesta`.
+ */
+export async function lastAgentBody(
+  scope: { dmId: number } | { channelId: number; parentId?: number | null }
+): Promise<string | null> {
+  const cond = "agent_handle IS NOT NULL AND TRIM(body) <> '' AND kind = 'msg'";
+  const orden = "ORDER BY created_at DESC, id DESC LIMIT 1";
+  let rows;
+  if ("dmId" in scope) {
+    rows = await dbq(`SELECT body FROM gc_messages WHERE dm_id = ? AND ${cond} ${orden}`, [scope.dmId]);
+  } else if (scope.parentId != null) {
+    rows = await dbq(`SELECT body FROM gc_messages WHERE parent_id = ? AND ${cond} ${orden}`, [scope.parentId]);
+  } else {
+    rows = await dbq(
+      `SELECT body FROM gc_messages WHERE channel_id = ? AND parent_id IS NULL AND ${cond} ${orden}`,
+      [scope.channelId]
+    );
+  }
+  return rows[0]?.body ?? null;
+}
+
+/**
  * Cuántos mensajes hay DESPUÉS de `afterId` en un scope. Existe para que el catch-up del
  * agente pueda DECIR cuántos mensajes se está saltando en vez de recortar en silencio.
  *

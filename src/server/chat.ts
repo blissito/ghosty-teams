@@ -884,7 +884,7 @@ export const askAgent = createServerFn({ method: "POST" })
   )
   .handler(async ({ data }) => {
     const db = await import("../db.server");
-    const { resolvedAgents, runAgentTurn, buildMediaParts, REGLA_VARIOS_ADJUNTOS, quotedContextPrefix, clampQuote, historyContext, gapDesdeUltimaRespuesta, CATCHUP_FETCH, agentGroupId, INJECTED } = await import("../agents.server");
+    const { resolvedAgents, runAgentTurn, buildMediaParts, manifiestoAdjuntos, quotedContextPrefix, clampQuote, historyContext, gapDesdeUltimaRespuesta, CATCHUP_FETCH, agentGroupId, INJECTED } = await import("../agents.server");
     const bus = await import("./bus.server");
     const { currentNamespace } = await import("./tenant.server");
     // ⚠️ Estamos DRENANDO para un despliegue: arrancar un turno ahora es fabricar una
@@ -1023,16 +1023,7 @@ export const askAgent = createServerFn({ method: "POST" })
     // alguien mandó dos fotos en un mensaje, el agente usó la que no era y la persona lo
     // repitió tres veces en mayúsculas. Numerado porque el orden ES la dirección: es el
     // mismo de los FileParts (`gc_attachments ORDER BY id`).
-    if (reentrega || mediaAtts.length > 1) {
-      const lista = mediaAtts
-        .map((a, i) => `${i + 1}. ${a.name ?? "(sin nombre)"} (${a.mime ?? "?"}, ${a.size ?? "?"} B)`)
-        .join("\n");
-      const titulo = reentrega
-        ? "Adjuntos del hilo, disponibles en este turno"
-        : `Adjuntos de este mensaje, en orden (${mediaAtts.length})`;
-      const pista = reentrega ? "" : `\n${REGLA_VARIOS_ADJUNTOS}`;
-      text = `[${titulo}]\n${lista}${pista}\n\n` + text;
-    }
+    text = manifiestoAdjuntos(mediaAtts, { reentrega, ambito: "hilo" }) + text;
     const parts = await buildMediaParts(mediaAtts, { forceUri: reentrega });
 
     // Streaming first-class: la cáscara (body vacío) se crea al primer token → el
