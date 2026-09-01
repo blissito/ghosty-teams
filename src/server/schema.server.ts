@@ -329,6 +329,16 @@ async function migrate(): Promise<void> {
   // ⚠️ NUNCA sale hacia la UI. Se escribe y se lee sólo aquí, como `fleet_token`.
   await addColumn("gc_agents", "acp_token", "TEXT");
 
+  // Lo ÚLTIMO que el agente declaró que deja configurar (modelo, modo, esfuerzo…), en JSON.
+  // Se guarda para que el panel pinte los selectores sin tener que abrirle una sesión sólo
+  // para preguntarle. Y `acp_prefs` es lo que eligió el dueño: `{configId: value}`.
+  //
+  // ⚠️ Son del AGENTE y no de la conversación a propósito. El protocolo los define por
+  // sesión, pero para quien administra "el modelo de @taller" es una propiedad del agente;
+  // tenerlo por hilo obligaría a reconfigurarlo en cada canal.
+  await addColumn("gc_agents", "acp_settings", "TEXT");
+  await addColumn("gc_agents", "acp_prefs", "TEXT");
+
   // Backfill por la forma del id, que delata el origen sin ambigüedad: los de
   // EasyBits son ObjectId de Mongo (24 hex), los de Studio cuid. Se hace por regla
   // y NO consultando a Studio: una migración no puede depender de que otro sistema

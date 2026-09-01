@@ -189,6 +189,8 @@ export interface AcpTurn {
    * por la misma razón que aquél va en un header: una credencial no se pone en la URL.
    */
   token?: string;
+  /** Lo que el dueño eligió: `{configId: value}`. Se aplica sólo si difiere de lo actual. */
+  prefs?: Record<string, string>;
   signal?: AbortSignal;
   timeoutMs?: number;
   /**
@@ -229,6 +231,105 @@ export class AcpServerError extends Error {
  *  error que vale la pena reintentar: se despeja solo en cuanto termina cualquier turno. */
 export const CUPO_LLENO = -32000;
 
+/**
+ * Un ajuste que el agente declara y deja cambiar: su modelo, su modo, el esfuerzo de
+ * razonamiento… lo que sea que ofrezca.
+ *
+ * ⚠️ Existe porque hay DOS formas en el mundo real y hay que hablar las dos. Medido el
+ * 2026-09-01 contra cajas vivas:
+ *
+ * - **Gemini CLI** usa la forma vieja: `models` y `modes` en la respuesta de `session/new`,
+ *   y se escriben con `session/set_model` / `session/set_mode`.
+ * - **goose** usa la de la spec de hoy: `configOptions` con `category`, y se escribe con
+ *   `session/set_config_option` (en la v2 del protocolo hasta los modos se absorben ahí).
+ *
+ * Un cliente que sólo entienda una deja fuera a la mitad de los agentes, así que las dos se
+ * normalizan a ESTO y el resto del sistema no se entera de cuál habló cada quien.
+ */
+export type AcpSetting = {
+  /** `model`, `mode`, `thinking_effort`, `provider`… El id con el que se escribe. */
+  id: string;
+  name: string;
+  /** Semántica de la spec: `model` | `mode` | `model_config` | `thought_level`. Sólo UX. */
+  category?: string;
+  /** Valor actual, tal como lo declara el agente. */
+  current: string;
+  options: { value: string; name: string; description?: string }[];
+  /** Por dónde se escribe. Lo decide el agente al declararlo, no nosotros. */
+  via: "config_option" | "model" | "mode";
+};
+
+/** Los `configOptions` de la spec nueva. Se toman tal cual: ya vienen en esta forma. */
+function settingsDeConfigOptions(raw: unknown): AcpSetting[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((o: any) => ({
+      id: String(o?.id ?? ""),
+      name: String(o?.name ?? o?.id ?? ""),
+      category: typeof o?.category === "string" ? o.category : undefined,
+      current: String(o?.currentValue ?? ""),
+      options: Array.isArray(o?.options)
+        ? o.options
+            // Una opción puede venir agrupada (`SessionConfigSelectGroup`): se aplanan sus
+            // hijas y se ignora el grupo, que sólo aporta un encabezado.
+            .flatMap((x: any) => (Array.isArray(x?.options) ? x.options : [x]))
+            .map((x: any) => ({
+              value: String(x?.value ?? x?.id ?? ""),
+              name: String(x?.name ?? x?.value ?? ""),
+              description: typeof x?.description === "string" ? x.description : undefined,
+            }))
+            .filter((x: any) => x.value)
+        : [],
+      via: "config_option" as const,
+    }))
+    .filter((o) => o.id && o.options.length);
+}
+
+/** `models` y `modes` de la forma vieja, traducidos a lo mismo. */
+function settingsViejos(models: any, modes: any): AcpSetting[] {
+  const out: AcpSetting[] = [];
+  if (Array.isArray(models?.availableModels) && models.availableModels.length) {
+    out.push({
+      id: "model",
+      name: "Modelo",
+      category: "model",
+      current: String(models.currentModelId ?? ""),
+      options: models.availableModels.map((m: any) => ({
+        value: String(m?.modelId ?? ""),
+        name: String(m?.name ?? m?.modelId ?? ""),
+        description: typeof m?.description === "string" ? m.description : undefined,
+      })).filter((m: any) => m.value),
+      via: "model",
+    });
+  }
+  if (Array.isArray(modes?.availableModes) && modes.availableModes.length) {
+    out.push({
+      id: "mode",
+      name: "Modo",
+      category: "mode",
+      current: String(modes.currentModeId ?? ""),
+      options: modes.availableModes.map((m: any) => ({
+        value: String(m?.id ?? ""),
+        name: String(m?.name ?? m?.id ?? ""),
+        description: typeof m?.description === "string" ? m.description : undefined,
+      })).filter((m: any) => m.value),
+      via: "mode",
+    });
+  }
+  return out;
+}
+
+/** Lo que declare esta sesión, venga en la forma que venga. */
+export function settingsDeSesion(r: any): AcpSetting[] {
+  const nuevos = settingsDeConfigOptions(r?.configOptions);
+  // Si trae las dos —no se ha visto, pero la spec no lo prohíbe— gana `configOptions`: es la
+  // forma viva, y duplicar el mismo ajuste en la UI sería peor que ignorar la vieja.
+  const viejos = settingsViejos(r?.models, r?.modes).filter(
+    (v) => !nuevos.some((n) => n.category === v.category || n.id === v.id),
+  );
+  return [...nuevos, ...viejos];
+}
+
 export interface AcpResult {
   text: string;
   sessionId: string;
@@ -256,6 +357,8 @@ export interface AcpResult {
    * `undefined` cuando no había nada que retomar (primer turno): no se aprende nada.
    */
   retains?: boolean;
+  /** Lo que este agente deja configurar (modelo, modo…), normalizado. Ver `AcpSetting`. */
+  settings?: AcpSetting[];
 }
 
 /** Firma el ticket de conexión. El `ns` va dentro: sin él serviría contra la caja de otro. */
@@ -525,6 +628,8 @@ async function unTurnoAcp(t: AcpTurn): Promise<AcpResult> {
     const puedeRetomar = init?.agentCapabilities?.loadSession === true;
     /** Se aprende sobre la marcha: sólo hay algo que aprender si HABÍA sesión que retomar. */
     let retains = t.sessionId ? true : undefined;
+    /** Lo que el agente deja configurar. Sale de la sesión, no de `initialize`. */
+    let settings: AcpSetting[] = [];
     let sessionId = t.sessionId ?? "";
     if (sessionId && puedeRetomar) {
       rehidratando = true;
@@ -532,7 +637,12 @@ async function unTurnoAcp(t: AcpTurn): Promise<AcpResult> {
         // El `finally` no es adorno: si `session/load` falla a mitad del replay y la bandera
         // se quedara puesta, el turno entero saldría MUDO — y un turno mudo es peor que uno
         // repetido, porque no deja ni rastro de qué pasó.
-        await llama("session/load", { sessionId, cwd: t.cwd ?? "/data/work", mcpServers: [] });
+        const cargada = await llama("session/load", { sessionId, cwd: t.cwd ?? "/data/work", mcpServers: [] });
+        // `session/load` también declara los ajustes, y son los de ESTA sesión (que pueden
+        // no ser los del arranque: alguien pudo cambiarle el modelo). Si viene vacío se deja
+        // lo que se sepa; no todos los agentes los repiten al cargar.
+        const s0 = settingsDeSesion(cargada);
+        if (s0.length) settings = s0;
       } catch {
         sessionId = "";
         retains = false;
@@ -543,8 +653,39 @@ async function unTurnoAcp(t: AcpTurn): Promise<AcpResult> {
     const nuevaSesion = async () => {
       const s = await llama("session/new", { cwd: t.cwd ?? "/data/work", mcpServers: [] });
       sessionId = s?.sessionId ?? "";
+      settings = settingsDeSesion(s);
     };
     if (!sessionId) await nuevaSesion();
+
+    // Las preferencias del dueño, si difieren de lo que el agente declara AHORA. Se compara
+    // contra su `current` en vez de recordar lo que pedimos la vez pasada: el agente es el
+    // dueño de su estado y pudo cambiarlo por su cuenta (o reiniciarse).
+    if (t.prefs && settings.length) {
+      for (const [id, value] of Object.entries(t.prefs)) {
+        const dec = settings.find((x) => x.id === id);
+        if (!dec || !value || dec.current === value) continue;
+        if (!dec.options.some((o) => o.value === value)) continue; // ya no existe esa opción
+        try {
+          if (dec.via === "config_option") {
+            const r = await llama("session/set_config_option", { sessionId, configId: id, value });
+            // ⚠️ Su respuesta trae la lista COMPLETA y actualizada, y hay que quedársela:
+            // cambiar `provider` cambia los `model` disponibles (goose declara 74 providers).
+            const s1 = settingsDeSesion(r);
+            if (s1.length) settings = s1;
+          } else if (dec.via === "model") {
+            await llama("session/set_model", { sessionId, modelId: value });
+            dec.current = value;
+          } else {
+            await llama("session/set_mode", { sessionId, modeId: value });
+            dec.current = value;
+          }
+        } catch (e) {
+          // Un ajuste que el agente rechaza NO tumba el turno: se sigue con el suyo. Peor
+          // sería dejar sin respuesta a alguien porque un select quedó desactualizado.
+          console.log(`[acp ~] ${id}=${value} rechazado: ${e instanceof Error ? e.message : e}`);
+        }
+      }
+    }
 
     const prompt = () =>
       conLatido(
@@ -574,7 +715,7 @@ async function unTurnoAcp(t: AcpTurn): Promise<AcpResult> {
     const sal = Number(u?.outputTokens);
     const usage = Number.isFinite(ent) && Number.isFinite(sal) ? { inputTokens: ent, outputTokens: sal } : undefined;
 
-    return { text: texto, sessionId, stopReason: fin?.stopReason, usage, retains };
+    return { text: texto, sessionId, stopReason: fin?.stopReason, usage, retains, settings };
   } finally {
     cerrar();
   }

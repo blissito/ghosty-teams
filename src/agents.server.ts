@@ -32,6 +32,12 @@ export type ResolvedAgent = {
         runtimeUrl: string;
         /** Bearer de la caja, si la suya lo exige. NULL en las nuestras (basta el ticket). */
         token?: string;
+        /** Lo que el dueño eligió (modelo, modo…). Ver `AcpSetting`. */
+        prefs?: Record<string, string>;
+        /** La fila, para poder guardar lo que el agente declare. Vacío en el @ghosty implícito. */
+        rowId?: number;
+        /** Lo guardado, crudo: para no reescribir la columna cuando no cambió nada. */
+        settingsRaw?: string;
         /**
          * Su `FleetAgent.id` en Studio. La caja se maneja sola por el socket, así que este
          * id NO hace falta para hablar con ella — hace falta para preguntar por su SALDO,
@@ -74,6 +80,17 @@ export type ResolvedAgent = {
 //
 // Vive acá y no en cada llamador para que el clear y el turno no puedan
 // discrepar — si difieren, "borré la memoria" borra la de otra conversación.
+/** JSON de una columna, o nada. Una fila corrupta no debe tumbar la resolución de agentes. */
+function jsonObj(raw: string | null): Record<string, string> | undefined {
+  if (!raw) return undefined;
+  try {
+    const o = JSON.parse(raw);
+    return o && typeof o === "object" && !Array.isArray(o) ? o : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export async function agentGroupId(
   agent: { handle: string; groupNs?: boolean },
   suffix: string,
@@ -123,6 +140,9 @@ export async function resolvedAgents(): Promise<ResolvedAgent[]> {
           runtime: "acp",
           runtimeUrl: a.runtime_url,
           token: a.acp_token || undefined,
+          prefs: jsonObj(a.acp_prefs),
+          rowId: a.id,
+          settingsRaw: a.acp_settings ?? undefined,
           id: a.fleet_id || "",
           // Columna vacía ⇒ `lectura`, no `completo`: un agente ACP es un binario de terceros
           // y nace acotado. Los agentes NATIVOS no pasan por aquí; ellos siguen en `completo`.
@@ -1643,6 +1663,7 @@ export async function callAgentBackendStream(
     const r = await runAcpTurn({
       wsUrl: agent.backend.runtimeUrl,
       token: agent.backend.token,
+      prefs: agent.backend.prefs,
       workspaceNs: ns,
       sub: invokerSub || "teams",
       // La conversación es la sesión: `session/load` la retoma entre turnos, con el id que
@@ -1812,6 +1833,7 @@ export async function callAgentBackendStream(
         stopReason: "error",
         usage: undefined,
         retains: undefined,
+        settings: undefined,
       };
     });
     console.log(`[acp <-] ${agent.handle} ${Math.round((Date.now() - acpT0) / 1000)}s stop=${r.stopReason} ${r.text.length}b`);
@@ -1843,6 +1865,15 @@ export async function callAgentBackendStream(
     // que importa es el hecho, no la capability.
     if (r.retains !== undefined) {
       await dbAcp.setAcpRetains(agent.handle, groupId, r.retains).catch(() => {});
+    }
+    // Lo que el agente declaró que deja configurar. Se guarda para que el panel pueda pintar
+    // los selectores sin abrirle una sesión sólo para preguntar. Sólo si cambió: es una
+    // escritura por turno y el contenido es idéntico casi siempre.
+    if (r.settings?.length && agent.backend.rowId) {
+      const json = JSON.stringify(r.settings);
+      if (json !== agent.backend.settingsRaw) {
+        await dbAcp.updateAgent(agent.backend.rowId, { acpSettings: json }).catch(() => {});
+      }
     }
     // El gasto del turno. Es el ÚNICO camino por el que un agente ACP se mide: los gemelos
     // reportan desde su caja con `REPORT_TOKEN`, que viaja por `turnEnv`, y en ACP no hay
@@ -2794,6 +2825,7 @@ export async function callAgentBackend(
       const r = await runAcpTurn({
         wsUrl: agent.backend.runtimeUrl,
         token: agent.backend.token,
+        prefs: agent.backend.prefs,
         workspaceNs: await currentNamespace(),
         sub: "teams",
         sessionId: (await (await import("./db.server")).getAcpSession(agent.handle, groupId).catch(() => null)) ?? undefined,

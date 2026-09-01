@@ -102,6 +102,10 @@ export const listManagedAgentsFn = createServerFn({ method: "GET" }).handler(asy
     // corrigiendo una URL que en realidad nunca se le enseñó.
     runtime_url: a.runtime_url,
     acp_scope: a.acp_scope,
+    // Lo que el agente declaró configurable y lo que el dueño eligió. Van CRUDOS (JSON en
+    // string) porque el cliente los parsea igual y así no hay dos formas del mismo dato.
+    acp_settings: a.acp_settings,
+    acp_prefs: a.acp_prefs,
     // Para que la UI sepa de quién es sin volver a preguntar: quien lo creó puede editarlo y
     // borrarlo. El token NO se devuelve nunca — sólo si HAY uno, que es lo que el formulario
     // necesita para no pisar el guardado con un campo vacío.
@@ -503,6 +507,8 @@ export const updateAgentFn = createServerFn({ method: "POST" })
       acpScope?: string;
       /** ACP: bearer de la caja. Cadena vacía = quitarlo. */
       acpToken?: string;
+      /** ACP: preferencias del dueño, `{configId: value}`. */
+      acpPrefs?: Record<string, string>;
     }) => d
   )
   .handler(async ({ data }) => {
@@ -588,6 +594,11 @@ export const updateAgentFn = createServerFn({ method: "POST" })
 
     await db.updateAgent(data.id, {
       acpToken: data.acpToken,
+      // Se guardan tal cual: los ids y valores los declara el AGENTE, así que una lista
+      // blanca aquí envejecería mal. Lo que sí se comprueba es al aplicarlos (el cliente
+      // ignora un valor que ya no exista) — validar contra lo guardado sería validar contra
+      // una foto vieja.
+      acpPrefs: data.acpPrefs === undefined ? undefined : JSON.stringify(data.acpPrefs),
       name: data.name,
       handle,
       webhookUrl: data.webhookUrl,

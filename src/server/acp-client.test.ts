@@ -27,6 +27,10 @@ let declaraImagen = false;
 let declaraLoadSession = true;
 /** Métodos que el agente recibió, en orden. Es lo que prueba que NO abrimos sesión de más. */
 let metodos: string[] = [];
+/** Lo que el agente declara en `session/new` además del id: `models`/`modes` o `configOptions`. */
+let sesionExtra: Record<string, unknown> = {};
+/** Si está puesto, el agente RECHAZA ese método con un error. */
+let rechazaMetodo = "";
 /** Cuántas conexiones seguidas debe rechazar el relé antes de atender. */
 let rechazosPendientes = 0;
 /** Con qué código rechaza. -32000 = cupo lleno (transitorio); otro = definitivo. */
@@ -76,7 +80,7 @@ beforeAll(async () => {
               },
             }),
           );
-        else if (m.method === "session/new") ws.send(env({ id: m.id }, { result: { sessionId: "ses-1" } }));
+        else if (m.method === "session/new") ws.send(env({ id: m.id }, { result: { sessionId: "ses-1", ...sesionExtra } }));
         else if (m.method === "session/load") {
           if (cargaFalla) {
             ws.send(env({ id: m.id }, { error: { code: -32602, message: "sesión desconocida" } }));
@@ -98,6 +102,8 @@ beforeAll(async () => {
           ultimoPrompt = m.params?.prompt ?? [];
           guion(ws, m);
         }
+        else if (rechazaMetodo && m.method === rechazaMetodo)
+          ws.send(env({ id: m.id }, { error: { code: -32602, message: "no puedo cambiar eso" } }));
         else if (m.id != null) ws.send(env({ id: m.id }, { result: {} }));
       }
     });
@@ -715,5 +721,73 @@ describe("continuidad de la sesión", () => {
     expect(metodos).toContain("session/new");
     expect(r.text).toBe("ok");
     expect(r.sessionId).toBe("ses-1");
+  });
+});
+
+
+// ── Aplicar el modelo/modo que eligió el dueño ──────────────────────────────────
+//
+// Probado antes contra las cajas vivas: `session/set_model {sessionId, modelId}` y
+// `session/set_mode {sessionId, modeId}` contestan `{}`; goose usa
+// `session/set_config_option {sessionId, configId, value}` y su respuesta trae la lista
+// COMPLETA actualizada (cambiar de proveedor cambia los modelos disponibles).
+describe("preferencias de ajustes", () => {
+  beforeEach(() => {
+    metodos = [];
+    sesionExtra = {};
+    rechazaMetodo = "";
+    declaraLoadSession = true;
+    cargaFalla = false;
+    rechazosPendientes = 0;
+    codigoRechazo = -32000;
+    guion = (ws, m) => ws.send(env({ id: m.id }, { result: { stopReason: "end_turn" } }));
+  });
+
+  const conModelo = (current: string) => ({
+    models: {
+      currentModelId: current,
+      availableModels: [{ modelId: "auto", name: "Auto" }, { modelId: "pro", name: "Pro" }],
+    },
+  });
+
+  it("manda el cambio cuando difiere de lo que el agente declara", async () => {
+    sesionExtra = conModelo("auto");
+    const r = await turno({ prefs: { model: "pro" } }).run();
+    expect(metodos).toContain("session/set_model");
+    expect(r.settings?.find((x) => x.id === "model")?.current).toBe("pro");
+  });
+
+  it("NO manda nada si ya está en ese valor", async () => {
+    sesionExtra = conModelo("pro");
+    await turno({ prefs: { model: "pro" } }).run();
+    expect(metodos).not.toContain("session/set_model");
+  });
+
+  it("ignora un valor que el agente ya no ofrece", async () => {
+    sesionExtra = conModelo("auto");
+    await turno({ prefs: { model: "un-modelo-que-ya-no-existe" } }).run();
+    expect(metodos).not.toContain("session/set_model");
+  });
+
+  // Un select desactualizado no puede dejar sin respuesta a nadie: el ajuste se pierde, el
+  // turno no.
+  it("si el agente RECHAZA el ajuste, el turno sigue igual", async () => {
+    sesionExtra = conModelo("auto");
+    rechazaMetodo = "session/set_model";
+    try {
+      const r = await turno({ prefs: { model: "pro" } }).run();
+      expect(metodos).toContain("session/set_model");
+      expect(r.stopReason).toBe("end_turn");
+      // Y no se miente sobre el estado: sigue declarando el que de verdad tiene.
+      expect(r.settings?.find((x) => x.id === "model")?.current).toBe("auto");
+    } finally {
+      rechazaMetodo = "";
+    }
+  });
+
+  it("sin preferencias no se toca nada", async () => {
+    sesionExtra = conModelo("auto");
+    await turno().run();
+    expect(metodos.filter((x) => x.startsWith("session/set"))).toEqual([]);
   });
 });

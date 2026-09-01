@@ -1590,6 +1590,10 @@ export type Agent = {
   acp_scope: string | null;
   /** ACP: bearer para hablarle a una caja que lo exija. NULL = abierta. NUNCA sale a la UI. */
   acp_token: string | null;
+  /** ACP: lo que el agente declaró configurable, en JSON. Ver `AcpSetting`. */
+  acp_settings: string | null;
+  /** ACP: lo que eligió el dueño, JSON `{configId: value}`. */
+  acp_prefs: string | null;
 };
 
 function toAgent(r: Row): Agent {
@@ -1610,6 +1614,8 @@ function toAgent(r: Row): Agent {
     group_ns: r.group_ns == null ? null : num(r.group_ns),
     acp_scope: r.acp_scope ?? null,
     acp_token: r.acp_token ?? null,
+    acp_settings: r.acp_settings ?? null,
+    acp_prefs: r.acp_prefs ?? null,
   };
 }
 
@@ -1712,6 +1718,10 @@ export async function updateAgent(
     acpScope?: string;
     /** ACP: bearer de la caja. Cadena vacía = quitarlo (la caja dejó de pedirlo). */
     acpToken?: string | null;
+    /** ACP: lo que declaró el agente (JSON). Lo escribe el turno, no la UI. */
+    acpSettings?: string;
+    /** ACP: lo que eligió el dueño (JSON). */
+    acpPrefs?: string;
   }
 ): Promise<void> {
   const sets: string[] = [];
@@ -1729,6 +1739,8 @@ export async function updateAgent(
   // Cadena vacía → NULL: "la caja dejó de pedir token" tiene que poder decirse, y un "" en la
   // columna se leería después como un bearer vacío que sí se manda.
   if (patch.acpToken !== undefined) (sets.push("acp_token = ?"), args.push(patch.acpToken || null));
+  if (patch.acpSettings !== undefined) (sets.push("acp_settings = ?"), args.push(patch.acpSettings));
+  if (patch.acpPrefs !== undefined) (sets.push("acp_prefs = ?"), args.push(patch.acpPrefs));
   if (!sets.length) return;
   args.push(id);
   await dbq(`UPDATE gc_agents SET ${sets.join(", ")} WHERE id = ?`, args);

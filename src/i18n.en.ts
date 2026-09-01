@@ -1146,6 +1146,10 @@ export const en: Record<string, string> = {
   "Pedir cambios": "Request changes",
   "Cambios pedidos": "Changes requested",
   "Rechazar": "Reject",
+  // Ajustes que declara un agente ACP. Traducimos las categorías que la spec reserva; el
+  // resto se enseña con el nombre que mandó el agente.
+  "Esfuerzo de razonamiento": "Reasoning effort",
+  "Lo ofrece el agente. Se aplica en su siguiente turno.": "Offered by the agent. Applies on its next turn.",
   // Las cuatro opciones que ACP nombra igual en todas partes (`kind`). El label del agente
   // viene en SU idioma, así que la tarjeta pone el nuestro cuando reconoce el kind.
   "Permitir una vez": "Allow once",

@@ -1709,6 +1709,9 @@ type ManagedAgent = {
   created_by?: string | null;
   /** ACP: si la caja pide bearer. El token en sí NUNCA viaja al cliente. */
   has_acp_token?: boolean;
+  /** ACP: lo que el agente declaró configurable (JSON crudo) y lo que eligió el dueño. */
+  acp_settings?: string | null;
+  acp_prefs?: string | null;
 };
 
 // Cache de módulo → reabrir la pestaña Agentes pinta al instante y revalida en background.
@@ -2340,6 +2343,46 @@ function AddAgentForm({
   );
 }
 
+/**
+ * Un ajuste que el agente declaró. Espejo de `AcpSetting` del cliente ACP; llega como JSON
+ * en la fila, así que aquí sólo se describe la forma.
+ */
+type AcpSettingUI = {
+  id: string;
+  name: string;
+  category?: string;
+  current: string;
+  options: { value: string; name: string; description?: string }[];
+};
+
+/**
+ * Etiqueta NUESTRA para las categorías que la spec reserva; si es otra —o no hay— se usa el
+ * nombre que mandó el agente. Mismo criterio que los botones de permiso: traducimos lo
+ * estándar y respetamos lo suyo.
+ */
+function settingLabel(o: AcpSettingUI, t: (s: string) => string): string {
+  switch (o.category) {
+    case "model":
+      return t("Modelo");
+    case "mode":
+      return t("Modo");
+    case "thought_level":
+      return t("Esfuerzo de razonamiento");
+    default:
+      return o.name || o.id;
+  }
+}
+
+/** Orden estable y con sentido: lo que más se toca, primero. */
+const SETTING_ORDEN = ["model", "mode", "thought_level"];
+function ordenaSettings(xs: AcpSettingUI[]): AcpSettingUI[] {
+  const pos = (o: AcpSettingUI) => {
+    const i = SETTING_ORDEN.indexOf(o.category ?? "");
+    return i === -1 ? SETTING_ORDEN.length : i;
+  };
+  return [...xs].sort((a, b) => pos(a) - pos(b));
+}
+
 /* ── Configurar un agente: persona (system prompt), avatar y nombre ── */
 function EditAgentForm({
   agent,
@@ -2375,6 +2418,30 @@ function EditAgentForm({
    * nadie lo pidiera.
    */
   const [acpToken, setAcpToken] = useState("");
+  /**
+   * Lo que el agente deja configurar (modelo, modo, esfuerzo…), tal como lo declaró en su
+   * última sesión, y lo que el dueño eligió.
+   *
+   * ⚠️ Se pinta lo que DIGA EL AGENTE, sin nombres de modelo cableados: gemini declara seis
+   * modelos suyos, goose declara 74 proveedores y tres modelos, y mañana habrá otro. Una
+   * lista nuestra envejecería en una semana.
+   */
+  const acpSettings: AcpSettingUI[] = (() => {
+    try {
+      const x = JSON.parse(agent.acp_settings || "[]");
+      return Array.isArray(x) ? x : [];
+    } catch {
+      return [];
+    }
+  })();
+  const [prefs, setPrefs] = useState<Record<string, string>>(() => {
+    try {
+      const x = JSON.parse(agent.acp_prefs || "{}");
+      return x && typeof x === "object" ? x : {};
+    } catch {
+      return {};
+    }
+  });
   const [probe, setProbe] = useState<{ name?: string; skills: string[]; needsAuth?: string[] } | null>(null);
   const [probing, setProbing] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -2451,6 +2518,7 @@ function EditAgentForm({
           acpScope: agent.kind === "acp" && scope !== (agent.acp_scope?.trim() || "lectura") ? scope : undefined,
           // Vacío = no tocar. Ver el comentario de `acpToken`.
           acpToken: agent.kind === "acp" && acpToken.trim() ? acpToken.trim() : undefined,
+          acpPrefs: agent.kind === "acp" && acpSettings.length ? prefs : undefined,
         },
       });
       onSaved();
@@ -2597,6 +2665,43 @@ function EditAgentForm({
                 <p className="mt-1 text-[11px] text-muted">
                   {t("La dirección de su caja. Cámbiala si se recreó y quedó en otra URL — el @handle y el historial se conservan.")}
                 </p>
+
+                {/* Lo que el agente deja configurar. Se pinta lo que DECLARÓ él, no una lista
+                    nuestra: gemini trae 6 modelos, goose 74 proveedores, y el próximo traerá
+                    otra cosa. Si no declaró nada, la sección no existe. */}
+                {acpSettings.length > 0 && (
+                  <div className="mt-4 space-y-2">
+                    {ordenaSettings(acpSettings).map((o) => (
+                      <div key={o.id}>
+                        <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-muted">
+                          {settingLabel(o, t)}
+                        </label>
+                        <select
+                          value={prefs[o.id] ?? o.current}
+                          onChange={(e) => setPrefs({ ...prefs, [o.id]: e.target.value })}
+                          className={`${input} w-full`}
+                        >
+                          {o.options.map((x) => (
+                            <option key={x.value} value={x.value}>
+                              {x.name}
+                            </option>
+                          ))}
+                        </select>
+                        {/* La descripción es del agente y suele ser lo único que explica qué
+                            hace un modo ("Auto-approves all tools"). */}
+                        {(() => {
+                          const sel = o.options.find((x) => x.value === (prefs[o.id] ?? o.current));
+                          return sel?.description ? (
+                            <p className="mt-1 text-[11px] text-muted">{sel.description}</p>
+                          ) : null;
+                        })()}
+                      </div>
+                    ))}
+                    <p className="text-[11px] text-muted">
+                      {t("Lo ofrece el agente. Se aplica en su siguiente turno.")}
+                    </p>
+                  </div>
+                )}
 
                 <label className="mb-1 mt-4 block text-[11px] font-semibold uppercase tracking-wide text-muted">
                   {t("Qué puede hacer")}
