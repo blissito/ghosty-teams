@@ -414,7 +414,12 @@ async function unTurnoAcp(t: AcpTurn): Promise<AcpResult> {
       if (m.id != null && pendientes.has(m.id)) {
         const p = pendientes.get(m.id)!;
         pendientes.delete(m.id);
-        m.error ? p.err(new Error(m.error.message ?? "error del agente")) : p.ok(m.result);
+        // Con su CÓDIGO: un error del agente es exactamente lo que modela `AcpServerError`, y
+        // sin el código el llamador no puede distinguir «esta sesión ya no existe» de «el
+        // modelo se cayó» — que es lo que decide si tiene sentido reintentar.
+        m.error
+          ? p.err(new AcpServerError(m.error.message ?? "error del agente", m.error.code))
+          : p.ok(m.result);
         continue;
       }
 
@@ -491,9 +496,24 @@ async function unTurnoAcp(t: AcpTurn): Promise<AcpResult> {
     // ese módulo resuelve bases HTTP y una caja ACP no tiene una.
     const puedeImagen = init?.agentCapabilities?.promptCapabilities?.image === true;
 
-    // `session/load` retoma la conversación; si el agente no lo soporta, se abre una nueva.
+    /**
+     * ⚠️ `session/load` es para RESUCITAR una sesión que el agente ya no tiene en memoria, no
+     * un trámite previo a cada prompt. Sólo se pide si el agente dice saber hacerlo.
+     *
+     * Aquí estuvo la amnesia de @taller (2026-09-01). Se llamaba SIEMPRE que hubiera
+     * `sessionId`; un agente con `loadSession:false` —GhostyCode 0.0.19— contestaba error, y
+     * el `catch` concluía "no se puede continuar" y abría sesión nueva. Pero su sesión seguía
+     * VIVA en su proceso: la tirábamos nosotros. Una sesión nueva por turno, o sea un agente
+     * que no recuerda lo que acaba de hacer, y de paso churn contra el tope de sesiones del
+     * agente, que expulsa las más viejas.
+     *
+     * Sin `loadSession` se prompletea DIRECTO contra el id guardado. Si de verdad ya no
+     * existe, el prompt falla y ahí sí se abre una nueva — pero eso es la excepción, no el
+     * camino de cada turno.
+     */
+    const puedeRetomar = init?.agentCapabilities?.loadSession === true;
     let sessionId = t.sessionId ?? "";
-    if (sessionId) {
+    if (sessionId && puedeRetomar) {
       rehidratando = true;
       try {
         // El `finally` no es adorno: si `session/load` falla a mitad del replay y la bandera
@@ -506,17 +526,31 @@ async function unTurnoAcp(t: AcpTurn): Promise<AcpResult> {
         rehidratando = false;
       }
     }
-    if (!sessionId) {
+    const nuevaSesion = async () => {
       const s = await llama("session/new", { cwd: t.cwd ?? "/data/work", mcpServers: [] });
       sessionId = s?.sessionId ?? "";
-    }
+    };
+    if (!sessionId) await nuevaSesion();
 
-    const fin = await conLatido(
-      llama("session/prompt", { sessionId, prompt: bloquesDelTurno(t, { puedeImagen }) }),
-      () => ultimoMensaje,
-      () => permisosEnVuelo > 0,
-      t.idleMs ?? 5 * 60_000,
-    );
+    const prompt = () =>
+      conLatido(
+        llama("session/prompt", { sessionId, prompt: bloquesDelTurno(t, { puedeImagen }) }),
+        () => ultimoMensaje,
+        () => permisosEnVuelo > 0,
+        t.idleMs ?? 5 * 60_000,
+      );
+    let fin: any;
+    try {
+      fin = await prompt();
+    } catch (e) {
+      // La red del camino de arriba: el id guardado ya no vale (el agente reinició, o su tope
+      // de sesiones expulsó la más vieja). Se reintenta UNA vez con sesión nueva, y sólo si
+      // el turno no había emitido nada — reintentar a media respuesta la repetiría en el chat.
+      if (!t.sessionId || texto || !(e instanceof AcpServerError)) throw e;
+      console.log(`[acp ~] ${sessionId} no sirvió (${e.message}); abro sesión nueva`);
+      await nuevaSesion();
+      fin = await prompt();
+    }
 
     // `usage` sólo si vienen los dos números y son finitos: un reporte a medias acabaría
     // como una fila de TokenUsage con ceros, que se lee igual que "no gastó nada".

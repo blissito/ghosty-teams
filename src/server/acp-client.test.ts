@@ -23,6 +23,10 @@ let ultimoPrompt: { type: string; text: string }[] = [];
 let replay: string[] = [];
 /** Lo que el agente declara en `initialize`. Un agente sin visión NO recibe imágenes inline. */
 let declaraImagen = false;
+/** ¿Sabe retomar una sesión? GhostyCode 0.0.19 dice que NO, y aun así recuerda dentro de la suya. */
+let declaraLoadSession = true;
+/** Métodos que el agente recibió, en orden. Es lo que prueba que NO abrimos sesión de más. */
+let metodos: string[] = [];
 /** Cuántas conexiones seguidas debe rechazar el relé antes de atender. */
 let rechazosPendientes = 0;
 /** Con qué código rechaza. -32000 = cupo lleno (transitorio); otro = definitivo. */
@@ -62,12 +66,13 @@ beforeAll(async () => {
       for (const line of d.toString().split("\n")) {
         if (!line.trim()) continue;
         const m = JSON.parse(line);
+        if (m.method) metodos.push(m.method);
         if (m.method === "initialize")
           ws.send(
             env({ id: m.id }, {
               result: {
                 protocolVersion: 1,
-                agentCapabilities: { promptCapabilities: { image: declaraImagen } },
+                agentCapabilities: { loadSession: declaraLoadSession, promptCapabilities: { image: declaraImagen } },
               },
             }),
           );
@@ -608,5 +613,72 @@ describe("🔴 cupo lleno: el relé DICE por qué, y se reintenta", () => {
     rechazosPendientes = 99;
     await expect(turno().run()).rejects.toThrow(/no pude arrancar la sesión/);
     expect(conexiones).toBe(1);
+  });
+});
+
+
+// ── La sesión: NO se abre una nueva por turno ────────────────────────────────────
+//
+// La amnesia de @taller, 2026-09-01. Se llamaba a `session/load` SIEMPRE que hubiera
+// `sessionId`; GhostyCode 0.0.19 declara `loadSession:false`, contestaba error, y el catch
+// concluía "no se puede continuar" y abría sesión nueva — cada turno. Su sesión seguía viva
+// en su proceso y la tirábamos nosotros, así que el agente no recordaba lo que acababa de
+// hacer y de paso se churneaba contra su tope de sesiones.
+//
+// `session/load` es para RESUCITAR una sesión que el agente ya no tiene, no un trámite
+// previo a cada prompt.
+describe("continuidad de la sesión", () => {
+  beforeEach(() => {
+    metodos = [];
+    declaraLoadSession = true;
+    cargaFalla = false;
+    // ⚠️ Las fixtures son de MÓDULO y el `beforeEach` de cada suite corre antes de SUS tests,
+    // no después: la suite de reintentos deja `rechazosPendientes` en 99 de su último caso y
+    // el relé falso rechazaría todas las conexiones de aquí. Quien llega, limpia.
+    rechazosPendientes = 0;
+    codigoRechazo = -32000;
+    guion = (ws, m) => ws.send(env({ id: m.id }, { result: { stopReason: "end_turn" } }));
+  });
+
+  it("sin loadSession NO se pide load ni se abre sesión nueva: se promptea el id guardado", async () => {
+    declaraLoadSession = false;
+    const r = await turno({ sessionId: "ses-vieja" }).run();
+    expect(metodos).not.toContain("session/load");
+    expect(metodos).not.toContain("session/new");
+    expect(r.sessionId).toBe("ses-vieja");
+  });
+
+  it("con loadSession sí se retoma, que es para lo que existe", async () => {
+    const r = await turno({ sessionId: "ses-vieja" }).run();
+    expect(metodos).toContain("session/load");
+    expect(metodos).not.toContain("session/new");
+    expect(r.sessionId).toBe("ses-vieja");
+  });
+
+  it("sin sesión previa se abre una, claro", async () => {
+    declaraLoadSession = false;
+    const r = await turno().run();
+    expect(metodos).toContain("session/new");
+    expect(r.sessionId).toBe("ses-1");
+  });
+
+  it("si el id guardado ya no vale, se abre nueva y se reintenta UNA vez", async () => {
+    declaraLoadSession = false;
+    let primera = true;
+    guion = (ws, m) => {
+      if (primera) {
+        // Lo que contesta un agente cuyo tope de sesiones expulsó la más vieja.
+        primera = false;
+        ws.send(env({ id: m.id }, { error: { code: -32602, message: "session not found" } }));
+        return;
+      }
+      ws.send(env({}, { method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "ok" } } } }));
+      ws.send(env({ id: m.id }, { result: { stopReason: "end_turn" } }));
+    };
+    const r = await turno({ sessionId: "ses-caduca" }).run();
+    expect(metodos.filter((x) => x === "session/prompt")).toHaveLength(2);
+    expect(metodos).toContain("session/new");
+    expect(r.text).toBe("ok");
+    expect(r.sessionId).toBe("ses-1");
   });
 });
