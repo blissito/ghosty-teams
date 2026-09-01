@@ -1562,6 +1562,9 @@ export async function callAgentBackendStream(
     // que valide sus ids lo rechaza y cada turno arrancaría en frío sin que nadie lo note.
     const dbAcp = await import("./db.server");
     const sesionPrevia = await dbAcp.getAcpSession(agent.handle, groupId).catch(() => null);
+    // Lo que aprendimos de este agente: si su sesión no sobrevivió la última vez, no se le
+    // vuelve a pedir `session/load` (ver el comentario en `unTurnoAcp`).
+    const retuvo = await dbAcp.acpRetains(agent.handle, groupId).catch(() => true);
 
     // ── Las tools del ESPACIO ─────────────────────────────────────────────────────────
     //
@@ -1669,6 +1672,7 @@ export async function callAgentBackendStream(
       // La conversación es la sesión: `session/load` la retoma entre turnos, con el id que
       // dio el agente. Vacío la primera vez → el cliente abre una nueva y la guardamos abajo.
       sessionId: sesionPrevia ?? undefined,
+      retains: retuvo,
       toolToken,
       // La persona y el contexto van en BLOQUES APARTE, no pegados al mensaje: es lo que
       // evita que el agente los lea como si se los dictara quien escribe (incidente

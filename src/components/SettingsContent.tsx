@@ -1800,11 +1800,7 @@ function AgentsManager({ isOwner, mySub }: { isOwner: boolean; mySub: string | n
                     {a.name} <span className="text-xs font-normal text-muted">@{a.handle}</span>
                   </p>
                   <p className="truncate text-xs text-muted">
-                    {a.system_prompt
-                      ? a.system_prompt
-                      : a.kind === "fleet"
-                        ? t("Agente gestionado · sin persona")
-                        : t("Webhook externo · sin persona")}
+                    {a.system_prompt ? a.system_prompt : `${kindLabel(a.kind, t)} · ${t("sin persona")}`}
                   </p>
                 </div>
                 <button
@@ -2344,6 +2340,24 @@ function AddAgentForm({
 }
 
 /**
+ * Cómo se llama cada tipo de agente. Era un binario `fleet` / "Webhook externo", así que un
+ * agente ACP —una caja de código— y uno A2A salían los dos etiquetados como webhook, que es
+ * justo lo que NO son: el webhook fue el primer tipo y se quedó de comodín.
+ */
+function kindLabel(kind: ManagedAgent["kind"], t: (s: string) => string): string {
+  switch (kind) {
+    case "fleet":
+      return t("Agente gestionado");
+    case "acp":
+      return t("Agente en su propia caja");
+    case "a2a":
+      return t("Agente externo (AgentCard)");
+    default:
+      return t("Webhook externo");
+  }
+}
+
+/**
  * Un ajuste que el agente declaró. Espejo de `AcpSetting` del cliente ACP; llega como JSON
  * en la fila, así que aquí sólo se describe la forma.
  */
@@ -2544,7 +2558,7 @@ function EditAgentForm({
           <p className="text-sm font-semibold">
             {t("Configurar")} <span className="text-brand">@{handle || agent.handle}</span>
             <span className="ml-2 text-[11px] font-normal text-muted">
-              {agent.kind === "fleet" ? t("Agente gestionado") : t("Webhook externo")}
+              {kindLabel(agent.kind, t)}
             </span>
           </p>
           <button onClick={onClose} className="text-muted hover:text-ink">

@@ -1146,6 +1146,9 @@ export const en: Record<string, string> = {
   "Pedir cambios": "Request changes",
   "Cambios pedidos": "Changes requested",
   "Rechazar": "Reject",
+  "Agente en su propia caja": "Agent in its own box",
+  "Agente externo (AgentCard)": "External agent (AgentCard)",
+  "sin persona": "no persona",
   // Ajustes que declara un agente ACP. Traducimos las categorías que la spec reserva; el
   // resto se enseña con el nombre que mandó el agente.
   "Esfuerzo de razonamiento": "Reasoning effort",

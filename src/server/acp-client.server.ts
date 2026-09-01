@@ -191,6 +191,11 @@ export interface AcpTurn {
   token?: string;
   /** Lo que el dueño eligió: `{configId: value}`. Se aplica sólo si difiere de lo actual. */
   prefs?: Record<string, string>;
+  /**
+   * Lo que se aprendió la última vez: `false` = su sesión no sobrevivió, no vuelvas a pedir
+   * `session/load`. Ver el comentario donde se usa.
+   */
+  retains?: boolean;
   signal?: AbortSignal;
   timeoutMs?: number;
   /**
@@ -631,7 +636,11 @@ async function unTurnoAcp(t: AcpTurn): Promise<AcpResult> {
     /** Lo que el agente deja configurar. Sale de la sesión, no de `initialize`. */
     let settings: AcpSetting[] = [];
     let sessionId = t.sessionId ?? "";
-    if (sessionId && puedeRetomar) {
+    // ⚠️ `puedeRetomar` es lo que el agente DICE; `t.retains === false` es lo que hizo la
+    // última vez. Gana el hecho: gemini declara `loadSession:true` y su `session/load`
+    // contesta «Authentication required» en cada turno (medido el 2026-09-01), así que
+    // preguntárselo otra vez es un round-trip que ya sabemos cómo termina.
+    if (sessionId && puedeRetomar && t.retains !== false) {
       rehidratando = true;
       try {
         // El `finally` no es adorno: si `session/load` falla a mitad del replay y la bandera
