@@ -86,7 +86,18 @@ export async function notifyMentions(
     // Un handle que no existe y uno que existe pero no está en este room privado son
     // el mismo caso para quien escribió: nadie recibió el aviso.
     const alcanzados = new Set(hits.map((u) => u.handle));
-    unresolved = [...new Set(personales.filter((t) => !alcanzados.has(t)))];
+    // ⚠️ Un @agente NO es un handle roto. Las menciones se resuelven contra PERSONAS
+    // (`gc_users`) y los agentes viven en `gc_agents`, así que ninguno resolvía nunca y todos
+    // salían reportados como "no encontré ese handle en este canal". Se veía sobre todo
+    // cuando un agente se nombraba a sí mismo al cerrar («Listo, @taller — ahí tienes…»):
+    // el aviso decía que no existe, justo debajo de su propia respuesta.
+    //
+    // No se notifica a nadie por ellos, y está bien: a un agente se le habla mencionándolo, y
+    // de despertarlo se encarga el despacho del turno, no las notificaciones push.
+    const agentes = new Set(
+      (await db.listAgents()).map((a) => a.handle.toLowerCase()).concat(db.GHOSTY_HANDLE),
+    );
+    unresolved = [...new Set(personales.filter((t) => !alcanzados.has(t) && !agentes.has(t)))];
     targets = hits.map((u) => u.sub);
   }
   if (!targets.length) return { notified: [], unresolved };

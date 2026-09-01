@@ -15,6 +15,8 @@ const listChannelMembers = vi.fn();
 const listRoomRoster = vi.fn();
 const filterMutedOut = vi.fn();
 const notify = vi.fn();
+/** Los agentes del workspace. Un @agente NO es una persona ni un handle roto. */
+const listAgents = vi.fn();
 
 vi.mock("../users.server", () => ({
   resolveMentionedUsers: (...a: unknown[]) => resolveMentionedUsers(...a),
@@ -26,6 +28,8 @@ vi.mock("../db.server", () => ({
   listChannelMembers: (...a: unknown[]) => listChannelMembers(...a),
   listRoomRoster: (...a: unknown[]) => listRoomRoster(...a),
   filterMutedOut: (...a: unknown[]) => filterMutedOut(...a),
+  listAgents: (...a: unknown[]) => listAgents(...a),
+  GHOSTY_HANDLE: "ghosty",
 }));
 vi.mock("./notify.server", () => ({ notify: (...a: unknown[]) => notify(...a) }));
 
@@ -43,6 +47,7 @@ beforeEach(() => {
     handles.length ? [{ sub: "s-ana", handle: "ana" }] : []
   );
   filterMutedOut.mockImplementation(async (subs: string[]) => subs);
+  listAgents.mockResolvedValue([]);
   listUsers.mockResolvedValue([{ sub: "s-ana" }, { sub: "s-beto" }]);
   listChannelMembers.mockResolvedValue(["s-ana", "s-beto"]);
   listRoomRoster.mockResolvedValue([{ sub: "s-ana" }, { sub: "s-beto" }]);
@@ -155,5 +160,41 @@ describe("mentionGapNotice", () => {
     const varios = mentionGapNotice(["a", "b", "c", "d"]);
     expect(varios).toContain("`@a`");
     expect(varios).toContain("y 1 más");
+  });
+});
+
+
+// ── Un @agente no es un handle roto ─────────────────────────────────────────────
+//
+// Las menciones se resuelven contra PERSONAS (`gc_users`) y los agentes viven en
+// `gc_agents`, así que ninguno resolvía y todos salían como «no encontré ese handle».
+// Se veía sobre todo cuando el agente se nombraba a sí mismo al cerrar («Listo, @taller —
+// ahí tienes…»): el aviso desmentía su propia respuesta, justo debajo.
+describe("menciones a agentes", () => {
+  beforeEach(() => {
+    listAgents.mockResolvedValue([{ handle: "taller" }, { handle: "gaspar" }]);
+    // Ninguno de estos handles es una persona: es justo el caso.
+    resolveMentionedUsers.mockResolvedValue([]);
+  });
+
+  it("un agente que se menciona a SÍ MISMO no genera aviso", async () => {
+    const r = await notifyMentions("ns", ROOM, "Listo, @taller — ahí tienes el poema.", "taller", "", false);
+    expect(r.unresolved).toEqual([]);
+  });
+
+  it("mencionar a OTRO agente tampoco", async () => {
+    const r = await notifyMentions("ns", ROOM, "Se lo paso a @gaspar", "blissmo", "u1");
+    expect(r.unresolved).toEqual([]);
+  });
+
+  it("@ghosty tampoco, aunque no tenga fila propia", async () => {
+    listAgents.mockResolvedValue([]);
+    const r = await notifyMentions("ns", ROOM, "pregúntale a @ghosty", "blissmo", "u1");
+    expect(r.unresolved).toEqual([]);
+  });
+
+  it("un handle de PERSONA que no existe se sigue reportando", async () => {
+    const r = await notifyMentions("ns", ROOM, "avísale a @nadie", "blissmo", "u1");
+    expect(r.unresolved).toEqual(["nadie"]);
   });
 });
