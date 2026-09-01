@@ -2463,6 +2463,14 @@ function EditAgentForm({
     }
   });
   const [probe, setProbe] = useState<{ name?: string; skills: string[]; soloTerminal?: boolean } | null>(null);
+  /**
+   * El fallo de "probar", APARTE del error de guardar.
+   *
+   * Iban al mismo sitio y el de guardar se pinta en el pie del modal: al probar una caja
+   * muerta el botón parecía no hacer nada: la explicación estaba a una pantalla de scroll,
+   * junto a Guardar. El resultado de una acción va donde está la acción.
+   */
+  const [probeErr, setProbeErr] = useState<string | null>(null);
   const [probing, setProbing] = useState(false);
   const [busy, setBusy] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -2639,7 +2647,7 @@ function EditAgentForm({
                     disabled={!wsUrl.trim() || probing}
                     onClick={async () => {
                       setProbing(true);
-                      setErr(null);
+                      setProbeErr(null);
                       setProbe(null);
                       try {
                         // Va por el SERVIDOR: la caja no manda cabeceras CORS, así que un
@@ -2653,7 +2661,7 @@ function EditAgentForm({
                           soloTerminal: b.soloTerminal,
                         });
                       } catch (e) {
-                        setErr(t("el agente no responde") + `: ${e instanceof Error ? e.message : e}`);
+                        setProbeErr(t("el agente no responde") + `: ${e instanceof Error ? e.message : e}`);
                       }
                       setProbing(false);
                     }}
@@ -2670,9 +2678,14 @@ function EditAgentForm({
                   placeholder={agent.has_acp_token ? t("token guardado — escribe uno nuevo para cambiarlo") : t("token de la caja (si la tuya lo pide)")}
                   className={`${input} mt-2 w-full`}
                 />
+                {probeErr && <p className="mt-1.5 text-[11px] text-red-400">{probeErr}</p>}
+                {/* En verde y con palomita: es el resultado de una acción que la persona
+                    acaba de pedir, no un pie de foto. En gris se leía igual que la ayuda de
+                    abajo y no se distinguía de "no pasó nada". */}
                 {probe && (
-                  <p className="mt-1.5 text-[11px] text-muted">
-                    <span className="font-medium text-ink">{probe.name}</span> — {probe.skills.join(" · ")}
+                  <p className="mt-1.5 text-[11px] text-emerald-600">
+                    ✓ <span className="font-medium">{probe.name}</span>
+                    <span className="text-muted"> — {probe.skills.join(" · ")}</span>
                   </p>
                 )}
                 {probe?.soloTerminal && (
