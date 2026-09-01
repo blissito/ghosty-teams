@@ -801,12 +801,50 @@ function fenceJson<T extends { url?: unknown }>(f: Fence): T | null {
 //   ```eb-audio\n{"url","waveform","durationMs","mime"}\n```
 // que el agente incluye en su respuesta. El server lo parsea → re-sube el ogg a
 // nuestro storage → adjunto audio (gc_attachments) → burbuja de nota de voz.
-export type EbAudio = { url: string; waveform?: string; durationMs?: number; mime?: string };
+/**
+ * Una nota de voz del agente. DOS formas, y la segunda es la que hace falta:
+ *
+ * - `{url}` — el agente YA produjo el audio con el SDK de su caja y lo publicó.
+ * - `{text}` — el agente sólo pone el TEXTO y lo sintetiza la PLATAFORMA.
+ *
+ * La segunda existe porque un agente ACP de fuera no tiene ninguna tool nuestra: gemini
+ * corrió `ls /opt/gs-sdk` buscándolo y ahí no hay nada (medido el 2026-09-01). Sin esto su
+ * única salida era decir «no puedo generar audio», que es verdad y no le sirve a nadie.
+ * Un fence es texto, así que lo puede emitir cualquiera — lo mismo que hizo posible el
+ * confeti y la entrega de documentos.
+ */
+export type EbAudio = {
+  url?: string;
+  /** Lo que hay que decir. Se ignora si viene `url`: el audio ya existe. */
+  text?: string;
+  /** Voz, si el agente la eligió. La plataforma valida y cae a la suya. */
+  voice?: string;
+  waveform?: string;
+  durationMs?: number;
+  mime?: string;
+};
 
 /** TODAS las notas de voz del cuerpo, en orden. Un turno puede traer varias. */
 export function extractAllEbAudio(body: string): EbAudio[] {
+  // Parseo PROPIO y no `fenceJson`: aquél exige `url` porque lo comparte con `eb-file`, donde
+  // sin URL no hay archivo. Aquí un bloque con sólo `text` es legítimo —lo sintetiza la
+  // plataforma— así que relajar el compartido dejaría pasar un `eb-file` sin destino.
   return scanFences(body, "eb-audio")
-    .map((f) => fenceJson<EbAudio>(f))
+    .map((f): EbAudio | null => {
+      if (!f.closed) return null;
+      try {
+        const o = JSON.parse(f.raw.trim()) as EbAudio;
+        if (!o || typeof o !== "object") return null;
+        const url = typeof o.url === "string" && o.url ? o.url : undefined;
+        const text = typeof o.text === "string" && o.text.trim() ? o.text : undefined;
+        // Sin nada que decir y sin nada que bajar no hay nota de voz: dejarlo pasar crearía
+        // un adjunto vacío, que es peor que no crear ninguno.
+        if (!url && !text) return null;
+        return { ...o, url, text };
+      } catch {
+        return null;
+      }
+    })
     .filter((a): a is EbAudio => a != null);
 }
 

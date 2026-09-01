@@ -33,7 +33,7 @@ describe("eb-audio — TODOS los bloques, no sólo el primero", () => {
 
   it("extrae DOS bloques, en orden", () => {
     const all = extractAllEbAudio(`Encabezado:\n${audio(1)}\nY los incisos:\n${audio(2)}`);
-    expect(all.map((a) => a.url.match(/voz-(\d+)/)?.[1])).toEqual(["1", "2"]);
+    expect(all.map((a) => a.url?.match(/voz-(\d+)/)?.[1])).toEqual(["1", "2"]);
   });
 
   it("extrae TRES bloques — el caso real que rompió", () => {
@@ -109,5 +109,46 @@ describe("convivencia de bloques en un mismo cuerpo", () => {
     expect(extractAllEbAudio(body)).toHaveLength(1);
     expect(extractAllEbFile(body)).toHaveLength(1);
     expect(stripEbFile(stripEbAudio(body))).toBe("Te dejo la nota y el PDF:");
+  });
+});
+
+// ── La nota de voz que sintetiza la PLATAFORMA ──────────────────────────────────
+//
+// Existe porque un agente ACP de fuera no tiene ninguna tool nuestra: la caja de gemini ni
+// siquiera tiene `/opt/gs-sdk` (medido el 2026-09-01, su `ls` devuelve "No such file"). Su
+// única salida era decir «no puedo generar audio». Con esto pone el TEXTO y ya.
+describe("eb-audio con texto", () => {
+  const fence = (o: unknown) => "```eb-audio\n" + JSON.stringify(o) + "\n```";
+
+  it("acepta un bloque con sólo texto", () => {
+    const [a] = extractAllEbAudio(fence({ text: "Hola, soy tu agente." }));
+    expect(a.text).toBe("Hola, soy tu agente.");
+    expect(a.url).toBeUndefined();
+  });
+
+  it("la voz viaja cuando el agente la elige", () => {
+    const [a] = extractAllEbAudio(fence({ text: "hola", voice: "ef_dora" }));
+    expect(a.voice).toBe("ef_dora");
+  });
+
+  it("sigue aceptando la forma vieja, con url", () => {
+    const [a] = extractAllEbAudio(fence({ url: "https://x/voz.ogg", durationMs: 3000 }));
+    expect(a.url).toBe("https://x/voz.ogg");
+    expect(a.text).toBeUndefined();
+  });
+
+  // Sin nada que decir y sin nada que bajar no hay nota de voz: dejarlo pasar crearía un
+  // adjunto vacío, que es peor que no crear ninguno.
+  it("un bloque sin url y sin texto se descarta", () => {
+    expect(extractAllEbAudio(fence({ durationMs: 100 }))).toEqual([]);
+    expect(extractAllEbAudio(fence({ text: "   " }))).toEqual([]);
+  });
+
+  it("mezcladas, en orden", () => {
+    const body = `${fence({ text: "primero" })}\n${fence({ url: "https://x/2.ogg" })}`;
+    const all = extractAllEbAudio(body);
+    expect(all).toHaveLength(2);
+    expect(all[0].text).toBe("primero");
+    expect(all[1].url).toContain("2.ogg");
   });
 });

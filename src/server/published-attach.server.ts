@@ -13,7 +13,8 @@
 // cuatro copias del mismo bloque.
 
 export type PublishedAttachment = {
-  url: string;
+  /** De dónde bajarlo. Opcional: ver `bytes`. */
+  url?: string;
   /** Nombre visible del adjunto. */
   name: string;
   /** Nombre de archivo para el storage (con extensión). */
@@ -26,6 +27,11 @@ export type PublishedAttachment = {
    *  el archivo: la URL publicada caduca a los 7 días y la miniatura debe durar
    *  lo que dure el mensaje. */
   thumbUrl?: string | null;
+  /**
+   * Los bytes, cuando ya los tenemos y no hay nada que bajar — el caso de un audio que
+   * sintetizó ESTE proceso. Si vienen, `url` sobra.
+   */
+  bytes?: Buffer;
 };
 
 /**
@@ -37,11 +43,18 @@ export async function attachPublished(messageId: number, a: PublishedAttachment)
   try {
     const db = await import("../db.server");
     const { uploadToEasyBits } = await import("./easybits-files.server");
-    const r = await fetch(a.url);
-    if (!r.ok) throw new Error(`fetch ${r.status}`);
-    const bytes = Buffer.from(await r.arrayBuffer());
+    let bytes: Buffer;
+    if (a.bytes) {
+      bytes = a.bytes;
+    } else {
+      const r = await fetch(a.url!);
+      if (!r.ok) throw new Error(`fetch ${r.status}`);
+      bytes = Buffer.from(await r.arrayBuffer());
+    }
     const up = await uploadToEasyBits({
-      blob: new Blob([bytes], { type: a.mime }),
+      // `new Uint8Array(bytes)` y no el Buffer pelado: el `ArrayBufferLike` de Node no encaja
+      // en el `BlobPart` del DOM y TypeScript lo rechaza. Es una vista, no una copia.
+      blob: new Blob([new Uint8Array(bytes)], { type: a.mime }),
       contentType: a.mime,
       fileName: a.fileName,
     });
@@ -54,7 +67,10 @@ export async function attachPublished(messageId: number, a: PublishedAttachment)
     // ecuación — cualquier PDF que llegue tiene su miniatura.
     let thumbUrl = a.thumbUrl ?? null;
     let thumbBytes: Buffer | null = null;
-    if (!thumbUrl && (a.mime === "application/pdf" || /\.pdf$/i.test(a.fileName))) {
+    // Sólo con URL: la miniatura la hace `render-svc` bajándose el PDF, así que un PDF que
+    // llegara en bytes no la tendría. Hoy no pasa (los bytes son sólo audio) y forzarlo
+    // sería publicar el archivo dos veces para hacerle una portada.
+    if (!thumbUrl && a.url && (a.mime === "application/pdf" || /\.pdf$/i.test(a.fileName))) {
       thumbBytes = await pdfThumb(a.url);
     }
     if (thumbBytes) {

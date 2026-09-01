@@ -776,7 +776,12 @@ const ACP_ENTREGA = [
   // Un "no puedo" seco es honesto; un no-puedo-pero-allá-sí manda a la persona a probar algo
   // que nunca va a funcionar, y encima suena a que la plataforma está mal configurada.
   "LO QUE NO PUEDES HACER, y no cambia según dónde te escriban: no generas notas de voz, ni imágenes, ni usas herramientas de Ghosty. No depende del canal, del hilo ni del DM — depende de tu instalación. Así que NUNCA propongas que te lo pidan «en otro canal», «en un DM» o «donde tengas la voz habilitada»: no hay ningún sitio donde puedas, y mandar a alguien a intentarlo es peor que decir que no.",
-  "Pero para escuchar un texto SÍ hay salida, y es mejor que anunciarla como imposible: entrégalo como documento (el bloque de arriba) y dile que puede oírlo con el botón **Leer en voz alta** del documento. Eso lo pone la plataforma, no tú, y funciona siempre.",
+  // ⚠️ Esto sustituye a media verdad que estuvo aquí unas horas: se le decía que NO podía
+  // mandar notas de voz. Cierto que no puede GENERAR el audio —no tiene tools ni SDK—, pero
+  // no tiene por qué generarlo: pone el texto y lo sintetiza la plataforma. El fence es
+  // texto, y texto sí sabe escribir.
+  "MANDAR UNA NOTA DE VOZ: emite un bloque que abre con ```eb-audio y cierra con ```, y dentro `{\"text\":\"lo que quieres decir\"}`. La plataforma lo convierte en una nota de voz de verdad, con su onda y su duración. TÚ NO generas el audio y no te hace falta ninguna herramienta: sólo el texto. Opcionalmente `\"voice\"` con `em_santa`, `em_alex` o `ef_dora`. Va ADEMÁS de tu respuesta escrita y nunca menciones el bloque.",
+  "Cuándo usarla: cuando te la pidan («dímelo con voz», «recítalo», «mándame un audio»). No conviertas en audio una respuesta larga por tu cuenta — se corta, y leer es más rápido que escuchar. Para un texto largo entrégalo como documento y di que se oye con **Leer en voz alta**.",
 ].join("\n");
 
 const EB_DOC_STREAM_GUARDRAIL = [

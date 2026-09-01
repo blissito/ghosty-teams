@@ -1313,17 +1313,23 @@ export const askAgent = createServerFn({ method: "POST" })
         await db.setMessageBody(id, cleaned);
         bus.publish(bus.ch.room(ns, channel.id), { t: "message:body", id, body: cleaned });
         const { attachPublished, safeFileName } = await import("./published-attach.server");
+        const { sintetizar } = await import("./tts-fence.server");
         let algo = false;
         // En serie y no en paralelo: el orden de los adjuntos es el orden en que el agente
         // los emitió, y es el que el usuario leyó en la prosa ("primero el encabezado…").
         for (const a of ebAudios) {
+          // Sin `url` el agente sólo puso el TEXTO y lo sintetiza la plataforma. Es la única
+          // vía para un agente ACP de fuera, que no tiene ninguna tool nuestra.
+          const hecho = a.url ? null : await sintetizar(a);
+          if (!a.url && !hecho) continue; // el TTS falló; ya se dijo en el log
           const ok = await attachPublished(id, {
             url: a.url,
+            bytes: hecho?.bytes,
             name: "Nota de voz",
-            fileName: "voz.ogg",
-            mime: a.mime || "audio/ogg",
+            fileName: hecho ? "voz.mp3" : "voz.ogg",
+            mime: hecho?.contentType || a.mime || "audio/ogg",
             waveform: a.waveform,
-            durationMs: a.durationMs,
+            durationMs: hecho?.durMs ?? a.durationMs,
           });
           algo ||= ok;
         }
