@@ -31,6 +31,13 @@ let metodos: string[] = [];
 let sesionExtra: Record<string, unknown> = {};
 /** Si está puesto, el agente RECHAZA ese método con un error. */
 let rechazaMetodo = "";
+/** Lo que el agente declara en `initialize` como formas de autenticarse. */
+let authMethods: unknown[] = [];
+/** Si es true, `session/new` falla con `auth_required` hasta que llegue `authenticate`. */
+let exigeAuth = false;
+let autenticado = false;
+/** El agente acepta el `authenticate` pero SIGUE negando la sesión. El caso patológico. */
+let authNoSirve = false;
 /** Cuántas conexiones seguidas debe rechazar el relé antes de atender. */
 let rechazosPendientes = 0;
 /** Con qué código rechaza. -32000 = cupo lleno (transitorio); otro = definitivo. */
@@ -77,10 +84,16 @@ beforeAll(async () => {
               result: {
                 protocolVersion: 1,
                 agentCapabilities: { loadSession: declaraLoadSession, promptCapabilities: { image: declaraImagen } },
+                ...(authMethods.length ? { authMethods } : {}),
               },
             }),
           );
-        else if (m.method === "session/new") ws.send(env({ id: m.id }, { result: { sessionId: "ses-1", ...sesionExtra } }));
+        else if (m.method === "authenticate") { autenticado = true; ws.send(env({ id: m.id }, { result: {} })); }
+        else if (m.method === "session/new") {
+          // `auth_required` = -32000, el código propio de ACP.
+          if (exigeAuth && (!autenticado || authNoSirve)) ws.send(env({ id: m.id }, { error: { code: -32000, message: "auth_required" } }));
+          else ws.send(env({ id: m.id }, { result: { sessionId: "ses-1", ...sesionExtra } }));
+        }
         else if (m.method === "session/load") {
           if (cargaFalla) {
             ws.send(env({ id: m.id }, { error: { code: -32602, message: "sesión desconocida" } }));
@@ -789,5 +802,89 @@ describe("preferencias de ajustes", () => {
     sesionExtra = conModelo("auto");
     await turno().run();
     expect(metodos.filter((x) => x.startsWith("session/set"))).toEqual([]);
+  });
+});
+
+
+// ── Autenticación ───────────────────────────────────────────────────────────────
+//
+// ACP define `authenticate({methodId})` entre `initialize` y `session/new`, y el flujo es
+// REACTIVO: no hay regla que obligue a llamarlo por el mero hecho de que existan
+// `authMethods` — el agente lo pide con `auth_required` (-32000). Probado en vivo contra una
+// caja de Gemini CLI el 2026-09-01: sin esa llamada, `session/new` y `session/load` fallan y
+// el agente parecía no tener memoria.
+describe("autenticación", () => {
+  beforeEach(() => {
+    metodos = [];
+    sesionExtra = {};
+    rechazaMetodo = "";
+    declaraLoadSession = true;
+    cargaFalla = false;
+    rechazosPendientes = 0;
+    codigoRechazo = -32000;
+    authMethods = [];
+    exigeAuth = false;
+    autenticado = false;
+    authNoSirve = false;
+    guion = (ws, m) => ws.send(env({ id: m.id }, { result: { stopReason: "end_turn" } }));
+  });
+
+  const METODOS = [
+    { id: "gemini-api-key", name: "Gemini API key" },
+    // ⚠️ La spec PROHÍBE que un cliente le pase a `authenticate` un método `terminal`: ésos
+    // los ejecuta el cliente como proceso, y aquí no hay dónde. Ofrecerlo sería un botón que
+    // siempre falla. GhostyCode declara justo uno así.
+    { id: "ghosty-terminal-auth", name: "Terminal", type: "terminal" },
+  ];
+
+  it("los métodos `terminal` NO se ofrecen", async () => {
+    authMethods = METODOS;
+    const r = await turno().run();
+    const auth = r.settings?.find((x) => x.id === "auth")!;
+    expect(auth.options.map((o) => o.value)).toEqual(["gemini-api-key"]);
+    // Y nace SIN valor: el agente no dice cuál usa, `authMethods` es un menú.
+    expect(auth.current).toBe("");
+  });
+
+  it("si el agente pide auth y hay método elegido, se autentica y se reintenta", async () => {
+    authMethods = METODOS;
+    exigeAuth = true;
+    const r = await turno({ prefs: { auth: "gemini-api-key" } }).run();
+    expect(metodos).toContain("authenticate");
+    expect(metodos.filter((x) => x === "session/new")).toHaveLength(2);
+    expect(r.stopReason).toBe("end_turn");
+  });
+
+  it("NO se autentica si el agente no lo pide: el flujo es reactivo", async () => {
+    authMethods = METODOS;
+    exigeAuth = false;
+    await turno({ prefs: { auth: "gemini-api-key" } }).run();
+    expect(metodos).not.toContain("authenticate");
+  });
+
+  it("sin método elegido, el error sale tal cual y no se inventa uno", async () => {
+    authMethods = METODOS;
+    exigeAuth = true;
+    await expect(turno().run()).rejects.toThrow(/auth/i);
+    expect(metodos).not.toContain("authenticate");
+  });
+
+  // Un método guardado hace semanas puede ya no existir: no se manda a ciegas.
+  it("un método que el agente ya no ofrece no se manda", async () => {
+    authMethods = [{ id: "otro-metodo", name: "Otro" }];
+    exigeAuth = true;
+    await expect(turno({ prefs: { auth: "gemini-api-key" } }).run()).rejects.toThrow();
+    expect(metodos).not.toContain("authenticate");
+  });
+
+  // Si `authenticate` se acepta pero la sesión sigue negada, se rinde. Reintentar en bucle
+  // contra un agente mal configurado colgaría el turno de una persona.
+  it("un solo intento: si tras autenticar sigue negando, no hay bucle", async () => {
+    authMethods = METODOS;
+    exigeAuth = true;
+    authNoSirve = true;
+    await expect(turno({ prefs: { auth: "gemini-api-key" } }).run()).rejects.toThrow(/auth/i);
+    expect(metodos.filter((x) => x === "authenticate")).toHaveLength(1);
+    expect(metodos.filter((x) => x === "session/new")).toHaveLength(2);
   });
 });

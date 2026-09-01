@@ -234,6 +234,17 @@ export class AcpServerError extends Error {
   constructor(
     message: string,
     readonly code: number,
+    /**
+     * Vino del RELÉ (un frame sin `id`, que no contesta a nada que pidiéramos) y no del
+     * agente.
+     *
+     * ⚠️ Existe porque los dos códigos chocan: `CUPO_LLENO` del relé es **-32000** y el
+     * `auth_required` que define ACP **también**. Sin distinguirlos, un agente que pide
+     * autenticarse se leía como "la caja está llena" y `runAcpTurn` reintentaba el turno
+     * ENTERO cuatro veces con backoff — visto en un test el 2026-09-01, tres `authenticate`
+     * seguidos. Lo que los separa no es el número: es que el del relé llega sin `id`.
+     */
+    readonly delRele = false,
   ) {
     super(message);
     this.name = "AcpServerError";
@@ -269,7 +280,7 @@ export type AcpSetting = {
   current: string;
   options: { value: string; name: string; description?: string }[];
   /** Por dónde se escribe. Lo decide el agente al declararlo, no nosotros. */
-  via: "config_option" | "model" | "mode";
+  via: "config_option" | "model" | "mode" | "auth";
 };
 
 /** Los `configOptions` de la spec nueva. Se toman tal cual: ya vienen en esta forma. */
@@ -330,6 +341,41 @@ function settingsViejos(models: any, modes: any): AcpSetting[] {
     });
   }
   return out;
+}
+
+/**
+ * Los métodos de autenticación como UN AJUSTE MÁS, no como una alarma.
+ *
+ * ⚠️ Se filtran los de `type:"terminal"`. La spec es explícita: los clientes **MUST NOT**
+ * pasarle un método `terminal` a `authenticate` — ésos los ejecuta el CLIENTE como proceso
+ * interactivo, y para eso hay que declarar `clientCapabilities.auth.terminal` y poder lanzar
+ * un programa en la máquina del agente, que desde aquí no se puede. Ofrecerlo sería un botón
+ * que siempre falla. GhostyCode declara justo uno de ésos (`ghosty-terminal-auth`): su llave
+ * se configura dentro de su caja, y no hay nada que llamar.
+ *
+ * Vive en `initialize` y no en la sesión, al revés que el resto de ajustes, así que se pasa
+ * aparte. Ver https://agentclientprotocol.com/protocol/v1/authentication
+ */
+export function settingDeAuth(init: any): AcpSetting | null {
+  const metodos = (Array.isArray(init?.authMethods) ? init.authMethods : [])
+    .filter((m: any) => (m?.type ?? "agent") !== "terminal")
+    .map((m: any) => ({
+      value: String(m?.id ?? ""),
+      name: String(m?.name ?? m?.id ?? ""),
+      description: typeof m?.description === "string" ? m.description : undefined,
+    }))
+    .filter((m: any) => m.value);
+  if (!metodos.length) return null;
+  return {
+    id: "auth",
+    name: "Autenticación",
+    category: "auth",
+    // El agente no dice cuál está usando: `authMethods` es un menú, no un estado. Vacío
+    // significa "sin elegir", que es distinto de "mal configurado".
+    current: "",
+    options: metodos,
+    via: "auth",
+  };
 }
 
 /** Lo que declare esta sesión, venga en la forma que venga. */
@@ -421,7 +467,10 @@ export async function runAcpTurn(t: AcpTurn): Promise<AcpResult> {
     try {
       return await unTurnoAcp({ ...t, onUpdate: async (u) => { emitio = true; await t.onUpdate(u); } });
     } catch (e) {
-      const lleno = e instanceof AcpServerError && e.code === CUPO_LLENO;
+      // ⚠️ `e.delRele` no es un detalle: `CUPO_LLENO` y el `auth_required` de ACP son el
+      // MISMO número (-32000). Sin esa condición, un agente que pide autenticarse hacía
+      // reintentar el turno entero cuatro veces.
+      const lleno = e instanceof AcpServerError && e.code === CUPO_LLENO && e.delRele;
       if (!lleno || emitio || intento >= ESPERAS.length) throw e;
       const espera = ESPERAS[intento++];
       console.log(`[acp ~] caja llena, reintento ${intento}/${ESPERAS.length} en ${espera}ms`);
@@ -533,6 +582,7 @@ async function unTurnoAcp(t: AcpTurn): Promise<AcpResult> {
         ultimoErrorSinId = new AcpServerError(
           String(m.error.message ?? "el agente rechazó la conexión"),
           Number(m.error.code ?? 0),
+          true, // del relé: es lo que distingue "caja llena" de un -32000 del agente
         );
         continue;
       }
@@ -658,8 +708,32 @@ async function unTurnoAcp(t: AcpTurn): Promise<AcpResult> {
     const puedeRetomar = init?.agentCapabilities?.loadSession === true;
     /** Se aprende sobre la marcha: sólo hay algo que aprender si HABÍA sesión que retomar. */
     let retains = t.sessionId ? true : undefined;
-    /** Lo que el agente deja configurar. Sale de la sesión, no de `initialize`. */
-    let settings: AcpSetting[] = [];
+    /** Lo que el agente deja configurar. Casi todo sale de la sesión; la auth, de `initialize`. */
+    const auth = settingDeAuth(init);
+    let settings: AcpSetting[] = auth ? [auth] : [];
+
+    /**
+     * Autenticarse, y sólo cuando el agente lo pide.
+     *
+     * ⚠️ REACTIVO y no proactivo, porque es lo que dice la spec: no hay ninguna regla que
+     * obligue a llamar `authenticate` por el mero hecho de que existan `authMethods` — el
+     * agente avisa con `auth_required` (-32000). Llamarlo en cada turno "por si acaso"
+     * pagaría un round-trip de más para siempre; así sólo se paga cuando hace falta.
+     */
+    const metodoElegido = t.prefs?.auth;
+    let yaAutenticado = false;
+    const pideAuth = (e: unknown) =>
+      e instanceof AcpServerError && (e.code === -32000 || /auth/i.test(e.message));
+    const autenticar = async (): Promise<boolean> => {
+      if (!metodoElegido || yaAutenticado) return false;
+      // Aunque venga elegido, sólo se manda si el agente lo sigue ofreciendo y no es
+      // `terminal` (que `settingDeAuth` ya filtró): un método guardado hace semanas puede
+      // no existir hoy.
+      if (!auth?.options.some((o) => o.value === metodoElegido)) return false;
+      yaAutenticado = true; // un intento, no un bucle
+      await llama("authenticate", { methodId: metodoElegido });
+      return true;
+    };
     let sessionId = t.sessionId ?? "";
     // ⚠️ `puedeRetomar` es lo que el agente DICE; `t.retains === false` es lo que hizo la
     // última vez. Gana el hecho: gemini declara `loadSession:true` y su `session/load`
@@ -671,12 +745,21 @@ async function unTurnoAcp(t: AcpTurn): Promise<AcpResult> {
         // El `finally` no es adorno: si `session/load` falla a mitad del replay y la bandera
         // se quedara puesta, el turno entero saldría MUDO — y un turno mudo es peor que uno
         // repetido, porque no deja ni rastro de qué pasó.
-        const cargada = await llama("session/load", { sessionId, cwd: t.cwd ?? "/data/work", mcpServers });
+        let cargada;
+        try {
+          cargada = await llama("session/load", { sessionId, cwd: t.cwd ?? "/data/work", mcpServers });
+        } catch (e) {
+          // Es EXACTAMENTE lo que contestaba gemini en cada turno («Authentication
+          // required»), y por eso perdía la memoria: no es que no supiera retomar, es que no
+          // estaba autenticado.
+          if (!pideAuth(e) || !(await autenticar())) throw e;
+          cargada = await llama("session/load", { sessionId, cwd: t.cwd ?? "/data/work", mcpServers });
+        }
         // `session/load` también declara los ajustes, y son los de ESTA sesión (que pueden
         // no ser los del arranque: alguien pudo cambiarle el modelo). Si viene vacío se deja
         // lo que se sepa; no todos los agentes los repiten al cargar.
         const s0 = settingsDeSesion(cargada);
-        if (s0.length) settings = s0;
+        if (s0.length) settings = [...(auth ? [auth] : []), ...s0];
       } catch {
         sessionId = "";
         retains = false;
@@ -685,9 +768,16 @@ async function unTurnoAcp(t: AcpTurn): Promise<AcpResult> {
       }
     }
     const nuevaSesion = async () => {
-      const s = await llama("session/new", { cwd: t.cwd ?? "/data/work", mcpServers });
+      let s;
+      try {
+        s = await llama("session/new", { cwd: t.cwd ?? "/data/work", mcpServers });
+      } catch (e) {
+        if (!pideAuth(e) || !(await autenticar())) throw e;
+        s = await llama("session/new", { cwd: t.cwd ?? "/data/work", mcpServers });
+      }
       sessionId = s?.sessionId ?? "";
-      settings = settingsDeSesion(s);
+      // El ajuste de auth NO se pierde: viene de `initialize` y la sesión no lo repite.
+      settings = [...(auth ? [auth] : []), ...settingsDeSesion(s)];
     };
     if (!sessionId) await nuevaSesion();
 
@@ -698,6 +788,9 @@ async function unTurnoAcp(t: AcpTurn): Promise<AcpResult> {
       for (const [id, value] of Object.entries(t.prefs)) {
         const dec = settings.find((x) => x.id === id);
         if (!dec || !value || dec.current === value) continue;
+        // La autenticación no se "ajusta": se pide con `authenticate`, y sólo cuando el
+        // agente lo reclama. Mandarla por aquí sería un `session/set_*` inventado.
+        if (dec.via === "auth") continue;
         if (!dec.options.some((o) => o.value === value)) continue; // ya no existe esa opción
         try {
           if (dec.via === "config_option") {
@@ -1003,7 +1096,7 @@ export type AcpHandshake = {
    * No implementamos `authenticate`: los métodos que hemos visto son de tipo `terminal`, o
    * sea un comando que se corre DENTRO de su caja. Desde aquí no hay nada que ejecutar.
    */
-  authMethods?: { id?: string; name?: string; description?: string }[];
+  authMethods?: { id?: string; name?: string; description?: string; type?: string }[];
   /** `/busy` es NUESTRO, no del protocolo: un 404 aquí no dice nada malo del agente. */
   busy?: { busy: boolean; sessions: number } | null;
 };

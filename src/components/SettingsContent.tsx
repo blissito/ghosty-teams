@@ -1873,7 +1873,7 @@ function AddAgentForm({
   // ACP: la URL del WebSocket de una caja nuestra. No hay card que descubrir —la caja es
   // nuestra—, así que lo que se comprueba antes de guardar es que responda su /health.
   const [wsUrl, setWsUrl] = useState("");
-  const [probe, setProbe] = useState<{ name?: string; skills: string[]; streaming: boolean; needsAuth?: string[] } | null>(null);
+  const [probe, setProbe] = useState<{ name?: string; skills: string[]; streaming: boolean; soloTerminal?: boolean } | null>(null);
   const [probing, setProbing] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -2167,7 +2167,7 @@ function AddAgentForm({
                     setProbe({
                       name: b.agentName ? `${b.agentName}${b.agentVersion ? ` ${b.agentVersion}` : ""}` : t("Agente ACP vivo"),
                       skills: acpProbeDetails(b, t),
-                      needsAuth: b.needsAuth,
+                      soloTerminal: b.soloTerminal,
                       streaming: true, // ACP siempre streamea; el campo es del probe de A2A
                     });
                   } catch (e) {
@@ -2195,11 +2195,13 @@ function AddAgentForm({
                 {/* Saludar no es poder trabajar: si el agente declara métodos de auth, le
                     falta la llave de SU proveedor y el primer turno va a fallar. Se dice
                     ahora, con la caja delante, no tres días después en un canal. */}
-                {!!probe.needsAuth?.length && (
-                  <p className="mt-1.5 text-amber-500">
-                    {t("Saluda, pero pide credenciales: {m}. Configúralas dentro de tu caja o no podrá responder.", {
-                      m: probe.needsAuth.join(", "),
-                    })}
+                {/* Sólo cuando de verdad no hay nada que podamos hacer: todos sus métodos de
+                    autenticación son de tipo `terminal`, y la spec prohíbe que un cliente los
+                    invoque. Antes esto se disparaba con CUALQUIER `authMethods` —que es un
+                    menú, no una queja— y le salía a todo el mundo. */}
+                {probe.soloTerminal && (
+                  <p className="mt-1.5 text-muted">
+                    {t("Su llave se configura dentro de su caja: este agente no deja hacerlo desde aquí.")}
                   </p>
                 )}
               </div>
@@ -2382,13 +2384,17 @@ function settingLabel(o: AcpSettingUI, t: (s: string) => string): string {
       return t("Modo");
     case "thought_level":
       return t("Esfuerzo de razonamiento");
+    case "auth":
+      return t("Autenticación");
     default:
       return o.name || o.id;
   }
 }
 
 /** Orden estable y con sentido: lo que más se toca, primero. */
-const SETTING_ORDEN = ["model", "mode", "thought_level"];
+// `auth` primero: es prerrequisito de todo lo demás — sin autenticar, el agente no abre
+// sesión y da igual qué modelo tenga elegido.
+const SETTING_ORDEN = ["auth", "model", "mode", "thought_level"];
 function ordenaSettings(xs: AcpSettingUI[]): AcpSettingUI[] {
   const pos = (o: AcpSettingUI) => {
     const i = SETTING_ORDEN.indexOf(o.category ?? "");
@@ -2456,7 +2462,7 @@ function EditAgentForm({
       return {};
     }
   });
-  const [probe, setProbe] = useState<{ name?: string; skills: string[]; needsAuth?: string[] } | null>(null);
+  const [probe, setProbe] = useState<{ name?: string; skills: string[]; soloTerminal?: boolean } | null>(null);
   const [probing, setProbing] = useState(false);
   const [busy, setBusy] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -2644,7 +2650,7 @@ function EditAgentForm({
                         setProbe({
                           name: b.agentName ? `${b.agentName}${b.agentVersion ? ` ${b.agentVersion}` : ""}` : t("Agente ACP vivo"),
                           skills: acpProbeDetails(b, t),
-                          needsAuth: b.needsAuth,
+                          soloTerminal: b.soloTerminal,
                         });
                       } catch (e) {
                         setErr(t("el agente no responde") + `: ${e instanceof Error ? e.message : e}`);
@@ -2669,11 +2675,9 @@ function EditAgentForm({
                     <span className="font-medium text-ink">{probe.name}</span> — {probe.skills.join(" · ")}
                   </p>
                 )}
-                {!!probe?.needsAuth?.length && (
-                  <p className="mt-1 text-[11px] text-amber-500">
-                    {t("Saluda, pero pide credenciales: {m}. Configúralas dentro de tu caja o no podrá responder.", {
-                      m: probe.needsAuth.join(", "),
-                    })}
+                {probe?.soloTerminal && (
+                  <p className="mt-1 text-[11px] text-muted">
+                    {t("Su llave se configura dentro de su caja: este agente no deja hacerlo desde aquí.")}
                   </p>
                 )}
                 <p className="mt-1 text-[11px] text-muted">
@@ -2695,6 +2699,10 @@ function EditAgentForm({
                           onChange={(e) => setPrefs({ ...prefs, [o.id]: e.target.value })}
                           className={`${input} w-full`}
                         >
+                          {/* Sin valor actual el agente no dice cuál usa —`authMethods` es un
+                              menú, no un estado— así que hace falta un "sin elegir" o el
+                              select mentiría enseñando el primero como si fuera el activo. */}
+                          {!o.current && !prefs[o.id] && <option value="">{t("sin elegir")}</option>}
                           {o.options.map((x) => (
                             <option key={x.value} value={x.value}>
                               {x.name}

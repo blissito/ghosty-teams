@@ -1146,6 +1146,10 @@ export const en: Record<string, string> = {
   "Pedir cambios": "Request changes",
   "Cambios pedidos": "Changes requested",
   "Rechazar": "Reject",
+  "Autenticación": "Authentication",
+  "sin elegir": "not set",
+  "Su llave se configura dentro de su caja: este agente no deja hacerlo desde aquí.":
+    "Its key is set up inside its own box: this agent doesn't allow doing it from here.",
   "Agente en su propia caja": "Agent in its own box",
   "Agente externo (AgentCard)": "External agent (AgentCard)",
   "sin persona": "no persona",

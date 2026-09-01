@@ -100,10 +100,18 @@ export const probeAcpBoxFn = createServerFn({ method: "POST" })
       loadSession: caps?.loadSession === true,
       image: caps?.promptCapabilities?.image === true,
       busySessions: busy ? busy.sessions : null,
-      // Que el agente salude no significa que pueda trabajar: si declara `authMethods` es que
-      // le falta credencial de su proveedor y el primer turno va a fallar. Se avisa AQUÍ, que
-      // es cuando la persona tiene su caja delante — no tres días después en un canal.
-      needsAuth: (hs.authMethods ?? []).map((m) => m.name || m.id || "").filter(Boolean),
+      // ⚠️ Esto ERA una advertencia («pide credenciales») y era un falso positivo: gemini
+      // declara sus cuatro métodos SIEMPRE, tenga o no llave. `authMethods` es un menú, no
+      // una queja, así que la alarma le salía a todo el mundo. Ahora es un dato: cuántos
+      // métodos ofrece, para que el panel enseñe el selector.
+      //
+      // El caso que SÍ merece decirse es el contrario: si todos sus métodos son de tipo
+      // `terminal`, no hay nada que podamos llamar —la spec lo prohíbe— y su llave se
+      // configura dentro de su caja.
+      authMethods: (hs.authMethods ?? []).filter((m) => (m.type ?? "agent") !== "terminal").length,
+      soloTerminal:
+        (hs.authMethods ?? []).length > 0 &&
+        (hs.authMethods ?? []).every((m) => (m.type ?? "agent") === "terminal"),
     };
   });
 
