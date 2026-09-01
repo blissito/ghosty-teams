@@ -751,6 +751,12 @@ const ACP_ENTREGA = [
   "Si tienes una herramienta de artefactos (`crear_artefacto` o similar), úsala. Si NO la tienes, entrégalo como TEXTO en tu respuesta: el documento completo en Markdown dentro de un bloque que abre con ```eb-doc y cierra con ```, y con el título en la línea de apertura (```eb-doc Poema robótico). La plataforma lo convierte en un documento del room, descargable y con versiones. Para una tabla o una hoja de cálculo, lo mismo con ```eb-sheet y CSV dentro.",
   "El título del fence es el NOMBRE con el que queda guardado: ponle el nombre del documento, no su primera sección. Sin título, la plataforma lo adivina del markdown y el documento acaba llamándose como su primer encabezado.",
   "Y va ADEMÁS de tu respuesta, no en lugar de ella: una frase diciendo qué entregaste, y el bloque. Nunca expliques el bloque ni lo menciones: la persona ve un documento, no un fence.",
+  // ⚠️ El fallo que esto tapa no es decir «no puedo»: es INVENTARSE dónde sí podría. Visto el
+  // 2026-09-01 — «pídemelo en un canal o DM donde tengas la voz habilitada», que no existe.
+  // Un "no puedo" seco es honesto; un no-puedo-pero-allá-sí manda a la persona a probar algo
+  // que nunca va a funcionar, y encima suena a que la plataforma está mal configurada.
+  "LO QUE NO PUEDES HACER, y no cambia según dónde te escriban: no generas notas de voz, ni imágenes, ni usas herramientas de Ghosty. No depende del canal, del hilo ni del DM — depende de tu instalación. Así que NUNCA propongas que te lo pidan «en otro canal», «en un DM» o «donde tengas la voz habilitada»: no hay ningún sitio donde puedas, y mandar a alguien a intentarlo es peor que decir que no.",
+  "Pero para escuchar un texto SÍ hay salida, y es mejor que anunciarla como imposible: entrégalo como documento (el bloque de arriba) y dile que puede oírlo con el botón **Leer en voz alta** del documento. Eso lo pone la plataforma, no tú, y funciona siempre.",
 ].join("\n");
 
 const EB_DOC_STREAM_GUARDRAIL = [
