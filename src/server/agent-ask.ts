@@ -108,7 +108,16 @@ export const probeAcpBoxFn = createServerFn({ method: "POST" })
       // El caso que SÍ merece decirse es el contrario: si todos sus métodos son de tipo
       // `terminal`, no hay nada que podamos llamar —la spec lo prohíbe— y su llave se
       // configura dentro de su caja.
-      authMethods: (hs.authMethods ?? []).filter((m) => (m.type ?? "agent") !== "terminal").length,
+      // La LISTA, no un conteo: el panel la necesita para pintar el selector de una vez.
+      //
+      // ⚠️ Sin esto había un callejón sin salida: los ajustes de un agente se guardan al
+      // TERMINAR un turno, y un agente que exige autenticarse no puede terminar ninguno —
+      // así que el selector para elegir el método no aparecía nunca. El probe sí hace
+      // `initialize`, que es donde viven los métodos.
+      authMethods: (hs.authMethods ?? [])
+        .filter((m) => (m.type ?? "agent") !== "terminal")
+        .map((m) => ({ value: String(m.id ?? ""), name: String(m.name ?? m.id ?? "") }))
+        .filter((m) => m.value),
       soloTerminal:
         (hs.authMethods ?? []).length > 0 &&
         (hs.authMethods ?? []).every((m) => (m.type ?? "agent") === "terminal"),

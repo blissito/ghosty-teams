@@ -2454,6 +2454,20 @@ function EditAgentForm({
       return [];
     }
   })();
+  /**
+   * Los ajustes a pintar: los guardados MÁS lo que acaba de descubrir "probar".
+   *
+   * ⚠️ La mezcla no es comodidad. Los ajustes se guardan al terminar un turno, y un agente
+   * que exige autenticarse no puede terminar ninguno: sin esto, el selector para elegir el
+   * método de autenticación no aparecía JAMÁS. El probe hace `initialize`, que es donde
+   * viven los métodos, así que puede desatascarlo.
+   */
+  const settingsAPintar = (probe?: { authMethods?: { value: string; name: string }[] } | null): AcpSettingUI[] => {
+    const base = acpSettings;
+    const auth = probe?.authMethods ?? [];
+    if (!auth.length || base.some((o) => o.id === "auth")) return base;
+    return [{ id: "auth", name: "Autenticación", category: "auth", current: "", options: auth }, ...base];
+  };
   const [prefs, setPrefs] = useState<Record<string, string>>(() => {
     try {
       const x = JSON.parse(agent.acp_prefs || "{}");
@@ -2462,7 +2476,12 @@ function EditAgentForm({
       return {};
     }
   });
-  const [probe, setProbe] = useState<{ name?: string; skills: string[]; soloTerminal?: boolean } | null>(null);
+  const [probe, setProbe] = useState<{
+    name?: string;
+    skills: string[];
+    soloTerminal?: boolean;
+    authMethods?: { value: string; name: string }[];
+  } | null>(null);
   /**
    * El fallo de "probar", APARTE del error de guardar.
    *
@@ -2546,7 +2565,7 @@ function EditAgentForm({
           acpScope: agent.kind === "acp" && scope !== (agent.acp_scope?.trim() || "lectura") ? scope : undefined,
           // Vacío = no tocar. Ver el comentario de `acpToken`.
           acpToken: agent.kind === "acp" && acpToken.trim() ? acpToken.trim() : undefined,
-          acpPrefs: agent.kind === "acp" && acpSettings.length ? prefs : undefined,
+          acpPrefs: agent.kind === "acp" && settingsAPintar(probe).length ? prefs : undefined,
         },
       });
       onSaved();
@@ -2659,6 +2678,7 @@ function EditAgentForm({
                           name: b.agentName ? `${b.agentName}${b.agentVersion ? ` ${b.agentVersion}` : ""}` : t("Agente ACP vivo"),
                           skills: acpProbeDetails(b, t),
                           soloTerminal: b.soloTerminal,
+                          authMethods: b.authMethods,
                         });
                       } catch (e) {
                         setProbeErr(t("el agente no responde") + `: ${e instanceof Error ? e.message : e}`);
@@ -2700,9 +2720,9 @@ function EditAgentForm({
                 {/* Lo que el agente deja configurar. Se pinta lo que DECLARÓ él, no una lista
                     nuestra: gemini trae 6 modelos, goose 74 proveedores, y el próximo traerá
                     otra cosa. Si no declaró nada, la sección no existe. */}
-                {acpSettings.length > 0 && (
+                {settingsAPintar(probe).length > 0 && (
                   <div className="mt-4 space-y-2">
-                    {ordenaSettings(acpSettings).map((o) => (
+                    {ordenaSettings(settingsAPintar(probe)).map((o) => (
                       <div key={o.id}>
                         <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-muted">
                           {settingLabel(o, t)}
