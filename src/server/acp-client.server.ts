@@ -192,6 +192,14 @@ export interface AcpTurn {
   /** Lo que el dueño eligió: `{configId: value}`. Se aplica sólo si difiere de lo actual. */
   prefs?: Record<string, string>;
   /**
+   * El servidor MCP de Teams, para agentes que NO son nuestros y no tienen el GS SDK.
+   *
+   * Se entrega en `session/new` —que es el hueco que ACP ya tenía y que llevábamos mandando
+   * vacío— así que el dueño de la caja no configura nada. Sólo se manda si el agente declara
+   * `mcpCapabilities.http`: ofrecérselo a uno que no lo acepta es ruido.
+   */
+  mcp?: { url: string; ticket: string };
+  /**
    * Lo que se aprendió la última vez: `false` = su sesión no sobrevivió, no vuelvas a pedir
    * `session/load`. Ver el comentario donde se usa.
    */
@@ -630,6 +638,23 @@ async function unTurnoAcp(t: AcpTurn): Promise<AcpResult> {
      * existe, el prompt falla y ahí sí se abre una nueva — pero eso es la excepción, no el
      * camino de cada turno.
      */
+    /**
+     * ⚠️ La forma EXACTA del schema de ACP: `type:"http"`, y `headers` es una LISTA de
+     * `{name, value}` —no un mapa— y es obligatoria aunque vaya vacía. El ticket va en el
+     * header y NUNCA en la URL: la spec de MCP dice literal que un token no se pone en el
+     * query string, y ahí acabaría en los logs de cualquier proxy del camino.
+     */
+    const mcpServers =
+      t.mcp && init?.agentCapabilities?.mcpCapabilities?.http === true
+        ? [
+            {
+              type: "http",
+              name: "ghosty",
+              url: t.mcp.url,
+              headers: [{ name: "Authorization", value: `Bearer ${t.mcp.ticket}` }],
+            },
+          ]
+        : [];
     const puedeRetomar = init?.agentCapabilities?.loadSession === true;
     /** Se aprende sobre la marcha: sólo hay algo que aprender si HABÍA sesión que retomar. */
     let retains = t.sessionId ? true : undefined;
@@ -646,7 +671,7 @@ async function unTurnoAcp(t: AcpTurn): Promise<AcpResult> {
         // El `finally` no es adorno: si `session/load` falla a mitad del replay y la bandera
         // se quedara puesta, el turno entero saldría MUDO — y un turno mudo es peor que uno
         // repetido, porque no deja ni rastro de qué pasó.
-        const cargada = await llama("session/load", { sessionId, cwd: t.cwd ?? "/data/work", mcpServers: [] });
+        const cargada = await llama("session/load", { sessionId, cwd: t.cwd ?? "/data/work", mcpServers });
         // `session/load` también declara los ajustes, y son los de ESTA sesión (que pueden
         // no ser los del arranque: alguien pudo cambiarle el modelo). Si viene vacío se deja
         // lo que se sepa; no todos los agentes los repiten al cargar.
@@ -660,7 +685,7 @@ async function unTurnoAcp(t: AcpTurn): Promise<AcpResult> {
       }
     }
     const nuevaSesion = async () => {
-      const s = await llama("session/new", { cwd: t.cwd ?? "/data/work", mcpServers: [] });
+      const s = await llama("session/new", { cwd: t.cwd ?? "/data/work", mcpServers });
       sessionId = s?.sessionId ?? "";
       settings = settingsDeSesion(s);
     };

@@ -1157,6 +1157,18 @@ export const askAgent = createServerFn({ method: "POST" })
     // Registrar YA si la cáscara existe (postMessage la crea eager). Registrarlo hasta el
     // primer token dejaba sin botón ni reloj justo la ventana en la que hacen falta: la
     // del "pensando…" antes de que llegue nada.
+    // Destino de las tools nativas: este canal, este topic, este agente. Se declara ANTES del
+    // registro del turno porque los dos lo usan — el turno para su autoridad y `runAgentTurn`
+    // para firmarlo en el tool-token. Que sean el MISMO objeto es la garantía de que el MCP
+    // no puede resolver un destino distinto del que ve el camino de siempre.
+    const destDelTurno = {
+      channelId: channel.id,
+      parentId: data.parentId ?? undefined,
+      topic: topic ?? "general",
+      handle: data.handle,
+      name,
+      avatar: agent?.avatar ?? "",
+    };
     const register = (mid: number) => {
       if (registeredId === mid) return;
       registeredId = mid;
@@ -1165,6 +1177,12 @@ export const askAgent = createServerFn({ method: "POST" })
       turns.registerTurn({
         ns, messageId: mid, groupId, invokerSub: poster?.sub ?? null, controller, announce,
         channelId: channel.id, parentId: data.parentId ?? null,
+        // La AUTORIDAD del turno: contra esto resuelve el servidor MCP a nombre de quién
+        // ejerce las tools un agente de fuera. Es el mismo `dest` que se firma en el
+        // tool-token, ni más ni menos. Ver `inflightAuthority`.
+        dest: destDelTurno,
+        scope: agent?.backend.kind === "acp" ? agent.backend.scope : undefined,
+        publicChannel: false,
         agent: name, avatar: agent?.avatar ?? "",
         tarea: tareaDelTurno,
         // Con qué RETOMARLO si muere. `tarea` va recortada a 60 para nombrar la fila del
@@ -1179,7 +1197,9 @@ export const askAgent = createServerFn({ method: "POST" })
     // El lock se toma aquí y se suelta al terminar el turno: sirve tanto para que el
     // artefacto se lea FRESCO como para que la escritura del turno anterior ya haya
     // aterrizado. El worker serializa igual, así que esto no añade espera real.
-    const { turnResult, currentDocId, currentDoc } = await turns.withGroupLock(groupId, async () => {
+    const { turnResult, currentDocId, currentDoc } = await turns.withGroupLock(
+      groupId,
+      async () => {
     const { currentDocId, currentDoc } = await resolverArtefactoDelHilo();
     // finally: un turno que revienta no puede quedarse registrado como vivo — tendría a
     // los siguientes eternamente "en espera" detrás de un fantasma.
@@ -1196,7 +1216,7 @@ export const askAgent = createServerFn({ method: "POST" })
       invokerSub: poster?.sub, // sus tools de conectores (per-invocador, no del owner)
       inject: steer,
       // Destino de las tools nativas: este canal, este topic, este agente.
-      dest: { channelId: channel.id, parentId: data.parentId ?? undefined, topic: topic ?? "general", handle: data.handle, name, avatar: agent?.avatar ?? "" },
+      dest: destDelTurno,
       createShell: async () => {
         // Caja caliente: la cáscara ya fue creada EAGER por postMessage → reutiliza su id
         // (cero borrar/recrear, cero parpadeo). Fallback (cliente sin shellId): créala aquí.
@@ -1239,7 +1259,10 @@ export const askAgent = createServerFn({ method: "POST" })
       }
     });
     return { turnResult, currentDocId, currentDoc };
-    }); // ← withGroupLock
+      },
+      // Quién ejecuta, para que el servidor MCP pueda resolver su autoridad mientras dure.
+      { ns, getId: () => registeredId },
+    ); // ← withGroupLock
 
     // Persiste el body final (autoritativo, sin marcar "editado") y reconcilia por si
     // se perdió algún delta (el bus es best-effort). NUNCA persistas un body VACÍO:

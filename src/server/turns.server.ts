@@ -42,6 +42,23 @@ export type LiveTurn = {
   attachments?: unknown[];
   /** La cáscara del agente, para reusarla en el reintento en vez de crear otra burbuja. */
   shellId?: number | null;
+
+  // ── AUTORIDAD del turno. Ver `inflightAuthority`. ────────────────────────────────────
+  //
+  // ⚠️ Esto NO es para pintar: es contra lo que un servidor MCP resuelve a nombre de quién
+  // ejerce las tools un agente de fuera. Sin `publicChannel` aquí no se puede reproducir la
+  // regla más dura del sistema —en canal público NUNCA hay tools (acp-tools.server.ts)— y
+  // sin `scope` el agente ejercería más de lo que su dueño le concedió.
+  //
+  // `channelId`/`dmId`/`parentId` ya estaban arriba para la barra; el `dest` completo lleva
+  // además `topic`, `handle`, `name` y `memoryScope`, que es lo que las tools nativas usan
+  // para saber DÓNDE actuar.
+  /** El destino tal como se firma en el tool-token. */
+  dest?: unknown;
+  /** Qué familias de tools puede ejercer. CSV/Set según `parseScope`. */
+  scope?: unknown;
+  /** Canal público: el texto del turno lo escribe un extraño. Nunca hay tools. */
+  publicChannel?: boolean;
 };
 
 export type TurnState = {
@@ -84,6 +101,47 @@ const live = new Map<string, LiveTurn>();
 const claveDe = (ns: string, messageId: number) => `${ns}:${messageId}`;
 
 /** Los del mismo groupId, del más viejo al más nuevo: el orden REAL en que se atienden. */
+/**
+ * A nombre de quién y dónde puede ejercer tools QUIEN ESTÉ CORRIENDO en esta conversación.
+ *
+ * Existe para el servidor MCP: un agente ACP de fuera recibe una URL cuyo ticket sólo dice
+ * QUÉ conversación es. La autoridad —el `sub` del invocador, el destino, el alcance— sale de
+ * aquí, del turno vivo, no del ticket. Sin turno en curso no hay autoridad y la llamada se
+ * rechaza; es lo que evita que una URL filtrada valga para algo.
+ *
+ * ⚠️ Devuelve `null` si hay MÁS DE UNO corriendo. Normalmente es imposible —el turno entero
+ * va dentro de `withGroupLock` y uno encolado ni siquiera recibió su prompt— pero el lock se
+ * suelta a los `GROUP_LOCK_TIMEOUT_MS` y ahí sí pueden solaparse dos. Atribuir la llamada al
+ * invocador equivocado sería ejercer los conectores de una persona a petición de otra: ante
+ * la duda, no.
+ */
+/**
+ * Quién está DENTRO del lock, por grupo. Un `Set` y no un valor: si el lock se suelta a los
+ * `GROUP_LOCK_TIMEOUT_MS` puede haber dos, y eso hay que poder verlo para rechazar en vez de
+ * elegir a uno.
+ */
+const ejecutando = new Map<string, Set<{ ns: string; getId: () => number | null }>>();
+
+export function inflightAuthority(
+  groupId: string,
+): { ns: string; messageId: number; invokerSub: string | null; dest: unknown; scope: unknown; publicChannel: boolean } | null {
+  const dentro = ejecutando.get(groupId);
+  if (!dentro || dentro.size !== 1) return null;
+  const [quien] = dentro;
+  const id = quien.getId();
+  if (id == null) return null;
+  const t = live.get(claveDe(quien.ns, id));
+  if (!t || t.stopped) return null;
+  return {
+    ns: t.ns,
+    messageId: t.messageId,
+    invokerSub: t.invokerSub ?? null,
+    dest: t.dest,
+    scope: t.scope,
+    publicChannel: !!t.publicChannel,
+  };
+}
+
 function siblings(groupId: string): LiveTurn[] {
   return [...live.values()]
     .filter((t) => t.groupId === groupId)
@@ -503,10 +561,25 @@ export async function sweepOrphans(): Promise<number> {
 // dos procesos da una falsa sensación de seguridad, que es peor que no tenerlo.
 const groupLocks = new Map<string, Promise<void>>();
 
-/** Tras este tiempo se sigue SIN lock. Un turno atorado no puede trabar un room entero. */
-const GROUP_LOCK_TIMEOUT_MS = 10_000;
+/**
+ * Tras este tiempo se sigue SIN lock. Un turno atorado no puede trabar un room entero.
+ *
+ * Configurable sólo para poder PROBAR lo que pasa cuando se suelta: ahí dos turnos del mismo
+ * grupo corren de verdad a la vez, y es el único caso en que `inflightAuthority` no sabe a
+ * nombre de quién actuaría un agente. Sin poder bajarlo, ese test tardaría diez segundos.
+ */
+const GROUP_LOCK_TIMEOUT_MS = Number(process.env.GROUP_LOCK_TIMEOUT_MS) || 10_000;
 
-export async function withGroupLock<T>(groupId: string, fn: () => Promise<T>): Promise<T> {
+export async function withGroupLock<T>(
+  groupId: string,
+  fn: () => Promise<T>,
+  /**
+   * Quién está ejecutando, para poder resolver su autoridad mientras dure. El id se pide con
+   * una función y no como número porque la cáscara del mensaje SE CREA DENTRO del turno: al
+   * tomar el lock todavía no existe. Ver `inflightAuthority`.
+   */
+  turno?: { ns: string; getId: () => number | null },
+): Promise<T> {
   const previo = groupLocks.get(groupId);
   let liberar!: () => void;
   const mio = new Promise<void>((r) => (liberar = r));
@@ -526,7 +599,16 @@ export async function withGroupLock<T>(groupId: string, fn: () => Promise<T>): P
       ]);
       if (t) clearTimeout(t);
     }
-    return await fn();
+    if (!turno) return await fn();
+    let grupo = ejecutando.get(groupId);
+    if (!grupo) ejecutando.set(groupId, (grupo = new Set()));
+    grupo.add(turno);
+    try {
+      return await fn();
+    } finally {
+      grupo.delete(turno);
+      if (!grupo.size) ejecutando.delete(groupId);
+    }
   } finally {
     liberar();
     // Sólo se borra si nadie se encadenó detrás: si otro turno ya puso el suyo, borrarlo

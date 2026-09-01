@@ -481,6 +481,10 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
     // Registrar YA si la cáscara existe (postMessage la crea eager). Registrarlo hasta el
     // primer token dejaba sin botón ni reloj justo la ventana en la que hacen falta: la
     // del "pensando…" antes de que llegue nada.
+    // El destino de las tools nativas. Compartido entre el registro del turno (su autoridad)
+    // y `runAgentTurn` (que lo firma en el tool-token): el MISMO objeto, para que el MCP no
+    // pueda resolver un destino distinto del que ve el camino de siempre. Ver chat.ts.
+    const destDelTurno = { dmId: data.id, handle: data.handle, name, avatar: agent?.avatar ?? "" };
     const register = (mid: number) => {
       if (registeredId === mid) return;
       registeredId = mid;
@@ -489,6 +493,10 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
         announce: (st) => fanout({ t: "turn", ...st }),
         // El DM no tiene channelId: la fila se abre por `dmId` (ver el panel).
         channelId: null, parentId: null, dmId: data.id,
+        // La autoridad del turno; ver `inflightAuthority`.
+        dest: destDelTurno,
+        scope: agent?.backend.kind === "acp" ? agent.backend.scope : undefined,
+        publicChannel: false,
         agent: name, avatar: agent?.avatar ?? "", tarea: tareaDelTurno,
         // Con qué RETOMARLO si muere. Ver chat.ts.
         body: data.body, shellId: data.shellId ?? null, attachments: data.attachments ?? [],
@@ -496,7 +504,9 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
     };
     // Registrar ANTES del lock: un turno en cola tiene que verse en "Trabajando ahora".
     if (data.shellId != null) register(data.shellId);
-    const { turnResult, currentDocId, currentDoc } = await turns.withGroupLock(groupId, async () => {
+    const { turnResult, currentDocId, currentDoc } = await turns.withGroupLock(
+      groupId,
+      async () => {
     const { currentDocId, currentDoc } = await resolverArtefactoDelDm();
     const turnResult = await runAgentTurn({
       signal: controller.signal,
@@ -510,7 +520,7 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
       currentDoc,
       invokerSub: me.sub, // DM 1:1: el humano del DM es el invocador → sus tools de conectores
       inject: steer,
-      dest: { dmId: data.id, handle: data.handle, name, avatar: agent?.avatar ?? "" },
+      dest: destDelTurno,
       createShell: async () => {
         // Caja caliente: la cáscara ya fue creada EAGER por postDmMessageFn → reutiliza su
         // id. Fallback (cliente sin shellId): créala aquí.
@@ -549,7 +559,10 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
       }
     });
     return { turnResult, currentDocId, currentDoc };
-    }); // ← withGroupLock
+      },
+      // Quién ejecuta, para que el servidor MCP pueda resolver su autoridad. Ver chat.ts.
+      { ns, getId: () => registeredId },
+    ); // ← withGroupLock
     const { id, reply } = turnResult;
     // Igual que en el room: un fallo de transporte no puede cerrarse como `done`. Ver chat.ts.
     if (turnResult.failure) {

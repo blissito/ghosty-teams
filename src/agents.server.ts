@@ -1594,6 +1594,26 @@ export async function callAgentBackendStream(
       origin: turnOrigin,
       scope: agent.backend.scope,
     });
+    /**
+     * El servidor MCP de Teams, para el agente que NO tiene nuestro SDK.
+     *
+     * Mismas dos condiciones que el tool-token —origen conocido y no ser canal público— más
+     * una tercera implícita: el ticket no concede nada por sí solo, así que aquí no se decide
+     * nada de seguridad. Quién invoca y hasta dónde se resuelve en cada llamada contra el
+     * turno vivo (`inflightAuthority` en turns.server.ts).
+     */
+    const mcp = await (async () => {
+      if (!turnOrigin || publicChannel) return undefined;
+      try {
+        const { mintMcpTicket } = await import("./server/mcp-ticket.server");
+        return {
+          url: `${turnOrigin}/api/mcp`,
+          ticket: mintMcpTicket({ ns, agent: agent.handle, groupId }),
+        };
+      } catch {
+        return undefined; // sin secreto → turno sin MCP, no turno roto
+      }
+    })();
     // ── El contexto del espacio ───────────────────────────────────────────────────────
     //
     // Sin esto, un agente ACP con todas las tools del mundo no sabe que las tiene: no conoce
@@ -1672,6 +1692,7 @@ export async function callAgentBackendStream(
       wsUrl: agent.backend.runtimeUrl,
       token: agent.backend.token,
       prefs: agent.backend.prefs,
+      mcp,
       workspaceNs: ns,
       sub: invokerSub || "teams",
       // La conversación es la sesión: `session/load` la retoma entre turnos, con el id que
