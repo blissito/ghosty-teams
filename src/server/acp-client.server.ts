@@ -181,6 +181,14 @@ export interface AcpTurn {
    * y porque no vale fuera de su caja.
    */
   toolToken?: string;
+  /**
+   * Bearer de la CAJA, cuando el agente no es nuestro y exige autenticarse.
+   *
+   * Distinto del `toolToken` en todo salvo el transporte: aquél nos autoriza a NOSOTROS a
+   * ejercer las tools del espacio, éste nos deja entrar a una caja ajena. Va en `Authorization`
+   * por la misma razón que aquél va en un header: una credencial no se pone en la URL.
+   */
+  token?: string;
   signal?: AbortSignal;
   timeoutMs?: number;
   /**
@@ -298,7 +306,10 @@ export async function runAcpTurn(t: AcpTurn): Promise<AcpResult> {
 /** Un turno completo: conecta, negocia, abre o retoma sesión, manda el prompt y espera. */
 async function unTurnoAcp(t: AcpTurn): Promise<AcpResult> {
   const ws = new WebSocket(acpTicketUrl(t.wsUrl, t.workspaceNs, t.sub, !!t.onDeliver), {
-    ...(t.toolToken ? { headers: { "x-ghosty-tools": t.toolToken } } : {}),
+    headers: {
+      ...(t.toolToken ? { "x-ghosty-tools": t.toolToken } : {}),
+      ...(t.token ? { Authorization: `Bearer ${t.token}` } : {}),
+    },
   });
   const pendientes = new Map<number, { ok: (v: any) => void; err: (e: Error) => void }>();
   let seq = 0;
@@ -729,6 +740,15 @@ export type AcpHandshake = {
   agentVersion?: string;
   protocolVersion?: number;
   agentCapabilities?: Record<string, unknown>;
+  /**
+   * Lo que el agente pide para poder trabajar. Su presencia NO impide saludar, y ése es el
+   * problema que resuelve exponerlo: GhostyCode sin llave de proveedor contesta `initialize`
+   * tan campante —el probe sale verde— y revienta en el primer turno. Se enseña en el alta.
+   *
+   * No implementamos `authenticate`: los métodos que hemos visto son de tipo `terminal`, o
+   * sea un comando que se corre DENTRO de su caja. Desde aquí no hay nada que ejecutar.
+   */
+  authMethods?: { id?: string; name?: string; description?: string }[];
   /** `/busy` es NUESTRO, no del protocolo: un 404 aquí no dice nada malo del agente. */
   busy?: { busy: boolean; sessions: number } | null;
 };
@@ -751,10 +771,14 @@ export async function acpHandshake(o: {
   wsUrl: string;
   ns: string;
   sub: string;
+  /** Bearer de la caja, si la suya lo pide. Ver `AcpTurn.token`. */
+  token?: string;
   timeoutMs?: number;
 }): Promise<AcpHandshake> {
   const budget = o.timeoutMs ?? 5000;
-  const ws = new WebSocket(acpTicketUrl(o.wsUrl, o.ns, o.sub));
+  const ws = new WebSocket(acpTicketUrl(o.wsUrl, o.ns, o.sub), {
+    ...(o.token ? { headers: { Authorization: `Bearer ${o.token}` } } : {}),
+  });
   let closed = false;
   const close = () => {
     if (closed) return;
@@ -805,6 +829,7 @@ export async function acpHandshake(o: {
       agentVersion: init?.agentInfo?.version,
       protocolVersion: init?.protocolVersion,
       agentCapabilities: init?.agentCapabilities,
+      authMethods: Array.isArray(init?.authMethods) ? init.authMethods : undefined,
     };
   } finally {
     close();

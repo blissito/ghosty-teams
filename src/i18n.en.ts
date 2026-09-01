@@ -1318,6 +1318,22 @@ export const en: Record<string, string> = {
   No: "No",
   "(sin nombre)": "(unnamed)",
   "Caja viva": "Box alive",
+  // El alta ACP ya no dice "caja": un agente ACP puede ser de cualquiera, no sólo nuestro.
+  "Agente ACP vivo": "ACP agent alive",
+  "ACP v{n}": "ACP v{n}",
+  "retoma sesiones": "resumes sessions",
+  "acepta imágenes": "accepts images",
+  "contestó el saludo": "completed the handshake",
+  "el agente no responde": "the agent is not responding",
+  "token de la caja (sólo si la tuya lo pide)": "box token (only if yours requires one)",
+  "token de la caja (si la tuya lo pide)": "box token (if yours requires one)",
+  "token guardado — escribe uno nuevo para cambiarlo": "token saved — type a new one to replace it",
+  "Saluda, pero pide credenciales: {m}. Configúralas dentro de tu caja o no podrá responder.":
+    "It answers, but asks for credentials: {m}. Set them up inside your box or it won't be able to reply.",
+  "Tu agente lee la conversación. Para darle más, pídeselo a quien administra el espacio.":
+    "Your agent reads the conversation. For anything more, ask whoever administers the space.",
+  "Tus agentes y los que te compartieron. Se tagean por su @handle. Puedes conectar el tuyo si corre en tu propia caja.":
+    "Your agents and the ones shared with you. Tag them by @handle. You can connect your own if it runs in your own box.",
   "Por ACP": "Via ACP",
   "Por AgentCard": "Via AgentCard",
   "Un agente de código en su propia caja aislada. Tu código no sale de ahí: usa su propio disco y su propia terminal, no los de tu máquina.":

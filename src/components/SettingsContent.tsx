@@ -363,7 +363,7 @@ export function SettingsContent({
           {tab === "integraciones" && <IntegrationsPanel />}
 
           {tab === "agentes" && canManageAgents && (
-            <AgentsManager isOwner={isOwner} />
+            <AgentsManager isOwner={isOwner} mySub={user?.sub ?? null} />
           )}
 
           {tab === "uso" && <UsagePanel />}
@@ -1705,12 +1705,16 @@ type ManagedAgent = {
   avatar: string | null;
   system_prompt: string | null;
   enabled: number;
+  /** Quién lo dio de alta. Puede editarlo y borrarlo aunque no sea owner. */
+  created_by?: string | null;
+  /** ACP: si la caja pide bearer. El token en sí NUNCA viaja al cliente. */
+  has_acp_token?: boolean;
 };
 
 // Cache de módulo → reabrir la pestaña Agentes pinta al instante y revalida en background.
 let agentsCache: ManagedAgent[] | null = null;
 
-function AgentsManager({ isOwner }: { isOwner: boolean }) {
+function AgentsManager({ isOwner, mySub }: { isOwner: boolean; mySub: string | null }) {
   const t = useT();
   const [agents, setAgents] = useState<ManagedAgent[] | null>(agentsCache);
   const [adding, setAdding] = useState(false);
@@ -1724,6 +1728,9 @@ function AgentsManager({ isOwner }: { isOwner: boolean }) {
   useEffect(() => {
     reload();
   }, []);
+
+  /** Mío = lo di de alta yo. Mismo criterio que los emojis: el owner puede con todos. */
+  const isMine = (a: ManagedAgent) => isOwner || (!!mySub && a.created_by === mySub);
 
   async function toggle(a: ManagedAgent) {
     setAgents((xs) => xs?.map((x) => (x.id === a.id ? { ...x, enabled: x.enabled ? 0 : 1 } : x)) ?? xs);
@@ -1739,7 +1746,7 @@ function AgentsManager({ isOwner }: { isOwner: boolean }) {
     <div className="mb-4 rounded-xl gt-card p-4">
       <div className="mb-2 flex items-center justify-between">
         <h2 className="text-sm font-semibold">{t("Agentes")}</h2>
-        {isOwner && !adding && (
+        {!adding && (
           <button
             onClick={() => setAdding(true)}
             className="flex items-center gap-1 rounded-lg border border-border px-2 py-1 text-xs text-muted transition hover:border-brand hover:text-ink"
@@ -1751,7 +1758,7 @@ function AgentsManager({ isOwner }: { isOwner: boolean }) {
       <p className="mb-3 text-xs text-muted">
         {isOwner
           ? t("Todos tus agentes en un solo lugar. Cada uno se tagea por su @handle. Crea y configura agentes gestionados en Studio, o conecta bots externos por webhook.")
-          : t("Agentes que te compartieron para configurar. Se tagean por su @handle.")}
+          : t("Tus agentes y los que te compartieron. Se tagean por su @handle. Puedes conectar el tuyo si corre en tu propia caja.")}
       </p>
 
       <div className="space-y-1">
@@ -1811,7 +1818,7 @@ function AgentsManager({ isOwner }: { isOwner: boolean }) {
                 </button>
                 {/* TODOS los agentes son manejables, incluido @ghosty. Borrar @ghosty
                     limpia también su config (server) para que no se re-materialice. */}
-                {isOwner && (
+                {isMine(a) && (
                   <button onClick={() => remove(a)} className="p-1 text-muted hover:text-brand" title={t("Quitar")}>
                     <Trash2 size={15} />
                   </button>
@@ -1825,6 +1832,7 @@ function AgentsManager({ isOwner }: { isOwner: boolean }) {
       {adding && (
         <AddAgentForm
           connected={new Set((agents ?? []).map((a) => a.fleet_id).filter((x): x is string => !!x))}
+          isOwner={isOwner}
           onClose={() => setAdding(false)}
           onCreated={() => {
             setAdding(false);
@@ -1836,7 +1844,16 @@ function AgentsManager({ isOwner }: { isOwner: boolean }) {
   );
 }
 
-function AddAgentForm({ onClose, onCreated }: { onClose: () => void; onCreated: () => void; connected: Set<string> }) {
+function AddAgentForm({
+  onClose,
+  onCreated,
+  isOwner,
+}: {
+  onClose: () => void;
+  onCreated: () => void;
+  connected: Set<string>;
+  isOwner: boolean;
+}) {
   const t = useT();
   // "create" = activar uno de Studio · "a2a" = agente ajeno que publica un AgentCard.
   //
@@ -1844,7 +1861,10 @@ function AddAgentForm({ onClose, onCreated }: { onClose: () => void; onCreated: 
   // programar contra un contrato que sólo existe aquí, y encima sin streaming (el turno se
   // juntaba entero y aterrizaba de golpe). A2A hace lo mismo mejor y con un estándar. Los
   // webhooks que YA existan siguen funcionando —el backend no se tocó—, pero no se crean más.
-  const [tab, setTab] = useState<"create" | "a2a" | "acp">("create");
+  // Un miembro abre directo en ACP: es la única pestaña que va a ver.
+  const [tab, setTab] = useState<"create" | "a2a" | "acp">(isOwner ? "create" : "acp");
+  /** ACP: bearer, si su caja lo pide. Casi siempre vacío. */
+  const [acpToken, setAcpToken] = useState("");
   const [name, setName] = useState("");
   const [handle, setHandle] = useState("");
   // A2A: la URL del AgentCard y lo que ese card dice de sí mismo. Probar ANTES de guardar
@@ -1854,7 +1874,7 @@ function AddAgentForm({ onClose, onCreated }: { onClose: () => void; onCreated: 
   // ACP: la URL del WebSocket de una caja nuestra. No hay card que descubrir —la caja es
   // nuestra—, así que lo que se comprueba antes de guardar es que responda su /health.
   const [wsUrl, setWsUrl] = useState("");
-  const [probe, setProbe] = useState<{ name?: string; skills: string[]; streaming: boolean } | null>(null);
+  const [probe, setProbe] = useState<{ name?: string; skills: string[]; streaming: boolean; needsAuth?: string[] } | null>(null);
   const [probing, setProbing] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -1890,7 +1910,13 @@ function AddAgentForm({ onClose, onCreated }: { onClose: () => void; onCreated: 
         await activateStudioAgentFn({ data: { studioAgentId: picked, handle: handle.trim() } });
       } else if (tab === "acp") {
         await createAgentFn({
-          data: { handle: handle.trim(), name: name.trim(), kind: "acp", wsUrl: wsUrl.trim() },
+          data: {
+            handle: handle.trim(),
+            name: name.trim(),
+            kind: "acp",
+            wsUrl: wsUrl.trim(),
+            acpToken: acpToken.trim() || undefined,
+          },
         });
       } else {
         await createAgentFn({
@@ -1924,8 +1950,11 @@ function AddAgentForm({ onClose, onCreated }: { onClose: () => void; onCreated: 
           <X size={16} />
         </button>
       </div>
+      {/* Un miembro sólo puede conectar SU caja ACP: los otros dos adoptan agentes de la casa
+          o guardan credenciales del espacio. Se ocultan en vez de deshabilitarse — una
+          pestaña que no vas a poder usar nunca es ruido, no información. */}
       <div className="mb-2.5 flex gap-1">
-        {(["create", "a2a", "acp"] as const).map((k) => (
+        {(isOwner ? (["create", "a2a", "acp"] as const) : (["acp"] as const)).map((k) => (
           <button
             key={k}
             onClick={() => setTab(k)}
@@ -2135,10 +2164,11 @@ function AddAgentForm({ onClose, onCreated }: { onClose: () => void; onCreated: 
                     // sea nuestro relé devuelve 404 en las dos.
                     // Va por el SERVIDOR: la caja no manda cabeceras CORS, así que un fetch
                     // del navegador falla antes de poder leer nada.
-                    const b = await probeAcpBoxFn({ data: { wsUrl: wsUrl.trim() } });
+                    const b = await probeAcpBoxFn({ data: { wsUrl: wsUrl.trim(), token: acpToken.trim() || undefined } });
                     setProbe({
                       name: b.agentName ? `${b.agentName}${b.agentVersion ? ` ${b.agentVersion}` : ""}` : t("Agente ACP vivo"),
                       skills: acpProbeDetails(b, t),
+                      needsAuth: b.needsAuth,
                       streaming: true, // ACP siempre streamea; el campo es del probe de A2A
                     });
                   } catch (e) {
@@ -2151,10 +2181,28 @@ function AddAgentForm({ onClose, onCreated }: { onClose: () => void; onCreated: 
                 {probing ? t("probando…") : t("probar")}
               </button>
             </div>
+            <input
+              value={acpToken}
+              onChange={(e) => { setAcpToken(e.target.value); setProbe(null); }}
+              type="password"
+              autoComplete="off"
+              placeholder={t("token de la caja (sólo si la tuya lo pide)")}
+              className={`${input} w-full`}
+            />
             {probe && (
               <div className="rounded-lg border border-border bg-surface-2 px-3 py-2 text-xs">
                 <p className="font-medium">{probe.name}</p>
                 <p className="mt-0.5 text-muted">{probe.skills.join(" · ")}</p>
+                {/* Saludar no es poder trabajar: si el agente declara métodos de auth, le
+                    falta la llave de SU proveedor y el primer turno va a fallar. Se dice
+                    ahora, con la caja delante, no tres días después en un canal. */}
+                {!!probe.needsAuth?.length && (
+                  <p className="mt-1.5 text-amber-500">
+                    {t("Saluda, pero pide credenciales: {m}. Configúralas dentro de tu caja o no podrá responder.", {
+                      m: probe.needsAuth.join(", "),
+                    })}
+                  </p>
+                )}
               </div>
             )}
             <div className="flex gap-2">
@@ -2320,7 +2368,14 @@ function EditAgentForm({
   // terceros ejecutando lo que escribe un modelo, y darle de entrada los conectores de quien
   // le hable sería una decisión que nadie tomó.
   const [scope, setScope] = useState<string>(agent.acp_scope?.trim() || "lectura");
-  const [probe, setProbe] = useState<{ name?: string; skills: string[] } | null>(null);
+  /**
+   * Bearer de la caja. Nace VACÍO aunque haya uno guardado —el token nunca viaja al
+   * cliente—, así que "vacío" significa "no lo toques", no "bórralo". Para quitarlo hay que
+   * decirlo aparte; si no, abrir el panel y guardar cualquier otra cosa lo borraría sin que
+   * nadie lo pidiera.
+   */
+  const [acpToken, setAcpToken] = useState("");
+  const [probe, setProbe] = useState<{ name?: string; skills: string[]; needsAuth?: string[] } | null>(null);
   const [probing, setProbing] = useState(false);
   const [busy, setBusy] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -2394,6 +2449,8 @@ function EditAgentForm({
               ? wsUrl.trim()
               : undefined,
           acpScope: agent.kind === "acp" && scope !== (agent.acp_scope?.trim() || "lectura") ? scope : undefined,
+          // Vacío = no tocar. Ver el comentario de `acpToken`.
+          acpToken: agent.kind === "acp" && acpToken.trim() ? acpToken.trim() : undefined,
         },
       });
       onSaved();
@@ -2499,10 +2556,13 @@ function EditAgentForm({
                       try {
                         // Va por el SERVIDOR: la caja no manda cabeceras CORS, así que un
                         // fetch del navegador falla antes de poder leer nada.
-                        const b = await probeAcpBoxFn({ data: { wsUrl: wsUrl.trim() } });
+                        const b = await probeAcpBoxFn({
+                          data: { wsUrl: wsUrl.trim(), token: acpToken.trim() || undefined },
+                        });
                         setProbe({
                           name: b.agentName ? `${b.agentName}${b.agentVersion ? ` ${b.agentVersion}` : ""}` : t("Agente ACP vivo"),
                           skills: acpProbeDetails(b, t),
+                          needsAuth: b.needsAuth,
                         });
                       } catch (e) {
                         setErr(t("el agente no responde") + `: ${e instanceof Error ? e.message : e}`);
@@ -2514,9 +2574,24 @@ function EditAgentForm({
                     {probing ? t("probando…") : t("probar")}
                   </button>
                 </div>
+                <input
+                  value={acpToken}
+                  onChange={(e) => { setAcpToken(e.target.value); setProbe(null); }}
+                  type="password"
+                  autoComplete="off"
+                  placeholder={agent.has_acp_token ? t("token guardado — escribe uno nuevo para cambiarlo") : t("token de la caja (si la tuya lo pide)")}
+                  className={`${input} mt-2 w-full`}
+                />
                 {probe && (
                   <p className="mt-1.5 text-[11px] text-muted">
                     <span className="font-medium text-ink">{probe.name}</span> — {probe.skills.join(" · ")}
+                  </p>
+                )}
+                {!!probe?.needsAuth?.length && (
+                  <p className="mt-1 text-[11px] text-amber-500">
+                    {t("Saluda, pero pide credenciales: {m}. Configúralas dentro de tu caja o no podrá responder.", {
+                      m: probe.needsAuth.join(", "),
+                    })}
                   </p>
                 )}
                 <p className="mt-1 text-[11px] text-muted">
@@ -2526,6 +2601,15 @@ function EditAgentForm({
                 <label className="mb-1 mt-4 block text-[11px] font-semibold uppercase tracking-wide text-muted">
                   {t("Qué puede hacer")}
                 </label>
+                {/* Ampliar el alcance es del owner: estas familias son tools DEL ESPACIO y de
+                    los conectores de quien escriba, no de la caja de quien trae el agente. Se
+                    enseñan igual (deshabilitadas) para que se entienda qué hay y a quién
+                    pedírselo — esconderlas dejaría el "sólo leer" sin explicación. */}
+                {!isOwner && (
+                  <p className="mb-1.5 text-[11px] text-muted">
+                    {t("Tu agente lee la conversación. Para darle más, pídeselo a quien administra el espacio.")}
+                  </p>
+                )}
                 <div className="space-y-1.5">
                   {(
                     [
@@ -2543,14 +2627,15 @@ function EditAgentForm({
                   ).map(([valor, titulo, detalle]) => (
                     <label
                       key={valor}
-                      className={`flex cursor-pointer gap-2 rounded-lg border p-2 transition-colors ${
-                        scope === valor ? "border-brand bg-brand/5" : "border-border hover:bg-surface-3"
-                      }`}
+                      className={`flex gap-2 rounded-lg border p-2 transition-colors ${
+                        scope === valor ? "border-brand bg-brand/5" : "border-border"
+                      } ${isOwner ? "cursor-pointer hover:bg-surface-3" : "cursor-default opacity-60"}`}
                     >
                       <input
                         type="radio"
                         name="acp-scope"
                         checked={scope === valor}
+                        disabled={!isOwner}
                         onChange={() => setScope(valor)}
                         className="mt-0.5 shrink-0"
                       />

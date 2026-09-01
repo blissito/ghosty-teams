@@ -17,15 +17,43 @@ async function requireOwner() {
   return user;
 }
 
-// Puede EDITAR la config de este agente: owner o colaborador (slice 4). NO implica
-// ver el secret (nunca lo exponemos en la UI/lista).
+// Puede EDITAR la config de este agente: owner, colaborador (slice 4), o QUIEN LO CREÓ.
+// NO implica ver el secret (nunca lo exponemos en la UI/lista).
+//
+// El creador entra desde que un miembro puede dar de alta su propio agente ACP: la URL de
+// su caja cambia cada vez que la recrea, así que si no pudiera editarla el alta no serviría
+// de nada. `created_by` ya lo escribía `db.createAgent` desde siempre.
 async function requireAgentManage(agentId: number) {
   const user = await sessionUser();
   if (!user) throw new Error("no autenticado");
   if (user.isOwner) return user;
   const db = await import("../db.server");
+  const row = await db.getAgentById(agentId);
+  if (row?.created_by && row.created_by === user.sub) return user;
   if (await db.isAgentCollaborator(agentId, user.sub)) return user;
   throw new Error("no autorizado para este agente");
+}
+
+/**
+ * Un miembro puede dar de alta un agente ACP, y sólo ACP.
+ *
+ * Los otros tres kinds se quedan con el owner y no es simetría rota: `fleet` adopta un
+ * agente de la casa CON su token, `webhook` y `a2a` apuntan a un servicio que responde en
+ * nombre del espacio. Un ACP es al revés — la caja es de quien lo da de alta, corre con SU
+ * saldo, y la URL es toda la credencial que hay. Lo peor que puede pasar es que se hable con
+ * su propia caja.
+ *
+ * ⚠️ El alcance de tools NO se toca aquí: `createAgentFn` ni siquiera acepta `acpScope`, y
+ * una fila sin la columna la lee `parseScope(a.acp_scope || "lectura")`. O sea que un agente
+ * de un miembro nace en lectura sin que nadie tenga que acordarse. Ampliarlo es del owner,
+ * y eso se comprueba en `updateAgentFn`.
+ */
+async function requireAgentCreate(kind: string) {
+  const user = await sessionUser();
+  if (!user) throw new Error("no autenticado");
+  if (user.isOwner) return user;
+  if (kind !== "acp") throw new Error("solo el owner da de alta agentes de ese tipo");
+  return user;
 }
 
 // Los gc_agents extra (para la UI de Ajustes → Agentes). NO incluye el ghosty
@@ -52,10 +80,11 @@ export const listManagedAgentsFn = createServerFn({ method: "GET" }).handler(asy
     }
   }
   let list = await db.listAgents();
-  // Owner ve todos; un colaborador ve SOLO los agentes que le compartieron.
+  // Owner ve todos; los demás, los que les compartieron MÁS los suyos. Sin la segunda mitad,
+  // un miembro daba de alta su agente ACP y desaparecía de su vista al instante.
   if (!user.isOwner) {
     const ids = new Set(await db.listCollaboratorAgentIds(user.sub));
-    list = list.filter((a) => ids.has(a.id));
+    list = list.filter((a) => ids.has(a.id) || a.created_by === user.sub);
   }
   return list.map((a) => ({
     id: a.id,
@@ -73,16 +102,24 @@ export const listManagedAgentsFn = createServerFn({ method: "GET" }).handler(asy
     // corrigiendo una URL que en realidad nunca se le enseñó.
     runtime_url: a.runtime_url,
     acp_scope: a.acp_scope,
+    // Para que la UI sepa de quién es sin volver a preguntar: quien lo creó puede editarlo y
+    // borrarlo. El token NO se devuelve nunca — sólo si HAY uno, que es lo que el formulario
+    // necesita para no pisar el guardado con un campo vacío.
+    created_by: a.created_by,
+    has_acp_token: !!a.acp_token,
   }));
 });
 
-// ¿El usuario puede ver la pestaña Agentes? (owner o colaborador de ≥1 agente.)
+// ¿El usuario puede ver la pestaña Agentes? Todos: cualquiera puede dar de alta el suyo
+// (ACP). `canCreateOnlyAcp` dice si además puede crear de los otros tipos.
 export const agentAccessFn = createServerFn({ method: "GET" }).handler(async () => {
   const user = await sessionUser();
   if (!user) return { canManage: false };
   if (user.isOwner) return { canManage: true };
-  const db = await import("../db.server");
-  return { canManage: (await db.listCollaboratorAgentIds(user.sub)).length > 0 };
+  // Cualquier miembro puede dar de alta SU agente ACP, así que la pestaña se abre a todos:
+  // gatearla por "ya tienes agentes" es un huevo-y-gallina — sin pestaña no hay dónde crear
+  // el primero.
+  return { canManage: true, canCreateOnlyAcp: true };
 });
 
 // Colaboradores de un agente. Ver = owner o colaborador; gestionar (add/remove) = owner.
@@ -116,7 +153,7 @@ export const addAgentCollaboratorFn = createServerFn({ method: "POST" })
 export const removeAgentCollaboratorFn = createServerFn({ method: "POST" })
   .validator((d: { id: number; sub: string }) => d)
   .handler(async ({ data }) => {
-    await requireOwner();
+    await requireOwner(); // solo el owner suma/quita colaboradores
     const db = await import("../db.server");
     await db.removeAgentCollaborator(data.id, data.sub);
     return { ok: true as const };
@@ -273,12 +310,14 @@ export const createAgentFn = createServerFn({ method: "POST" })
       cardUrl?: string;
       /** ACP: la URL del WebSocket de la caja. */
       wsUrl?: string;
+      /** ACP: bearer de la caja, si la suya lo pide. */
+      acpToken?: string;
       systemPrompt?: string;
       avatar?: string;
     }) => d
   )
   .handler(async ({ data }) => {
-    const user = await requireOwner();
+    const user = await requireAgentCreate(data.kind);
     const db = await import("../db.server");
     const handle = data.handle.trim().toLowerCase().replace(/[^a-z0-9]/g, "");
     if (!handle) throw new Error("handle requerido");
@@ -319,6 +358,7 @@ export const createAgentFn = createServerFn({ method: "POST" })
         wsUrl: raw,
         ns: await currentNamespace(),
         sub: user.sub,
+        token: data.acpToken?.trim() || undefined,
       }).catch((e) => {
         throw new Error(`el agente no contestó el saludo ACP: ${e instanceof Error ? e.message : e}`);
       });
@@ -376,6 +416,7 @@ export const createAgentFn = createServerFn({ method: "POST" })
       runtime:
         data.kind === "fleet" ? "easybits" : data.kind === "a2a" ? "a2a" : data.kind === "acp" ? "acp" : null,
       runtimeUrl: cardUrl ?? wsUrl ?? null,
+      acpToken: data.acpToken?.trim() || null,
     });
     return { ok: true as const, handle: ag.handle };
   });
@@ -460,10 +501,12 @@ export const updateAgentFn = createServerFn({ method: "POST" })
       wsUrl?: string;
       /** ACP: qué puede EJERCER el agente. CSV de familias; ver `parseScope`. */
       acpScope?: string;
+      /** ACP: bearer de la caja. Cadena vacía = quitarlo. */
+      acpToken?: string;
     }) => d
   )
   .handler(async ({ data }) => {
-    await requireAgentManage(data.id); // owner o colaborador (editar config, no ver secret)
+    const user = await requireAgentManage(data.id); // owner, colaborador o creador
     const db = await import("../db.server");
     // Cambio de @handle (el tag): normaliza, valida no-vacío y unicidad. "ghosty" es
     // reservado — solo la propia fila @ghosty puede conservarlo (no se lo roba otro).
@@ -504,25 +547,25 @@ export const updateAgentFn = createServerFn({ method: "POST" })
       cardUrl = raw;
     }
 
-    // ACP: cambiar la URL es apuntar a OTRA caja. Se comprueba que responda, por lo mismo que
-    // en el alta: guardar una muerta sólo mueve el fallo al primer mensaje de un canal.
+    // ACP: cambiar la URL es apuntar a OTRA caja. Se comprueba con el MISMO saludo del alta,
+    // por lo mismo: guardar una muerta sólo mueve el fallo al primer mensaje de un canal.
+    //
+    // ⚠️ Aquí se pedía `/health`, que no es del protocolo. Es el bug que el alta ya tenía y
+    // que se arregló hoy; este camino se había quedado con la versión vieja, justo el que usa
+    // alguien que recrea su caja y viene a actualizar la URL.
     if (data.wsUrl !== undefined) {
-      const raw = data.wsUrl.trim();
-      if (!raw) throw new Error("URL del agente requerida");
-      let u: URL;
-      try {
-        u = new URL(raw);
-      } catch {
-        throw new Error("URL inválida");
-      }
-      if (u.protocol !== "wss:" && u.protocol !== "ws:") {
-        throw new Error("tiene que ser una URL de WebSocket (wss://…)");
-      }
-      const health = new URL(raw.replace(/^ws/, "http"));
-      health.pathname = "/health";
-      health.search = "";
-      const res = await fetch(health.toString()).catch(() => null);
-      if (!res?.ok) throw new Error(`la caja no responde en ${health.host}`);
+      const { normalizeWsUrl } = await import("./agent-ask");
+      const raw = normalizeWsUrl(data.wsUrl);
+      const { acpHandshake } = await import("./acp-client.server");
+      const { currentNamespace } = await import("./tenant.server");
+      await acpHandshake({
+        wsUrl: raw,
+        ns: await currentNamespace(),
+        sub: user.sub,
+        token: data.acpToken ?? (await db.getAgentById(data.id))?.acp_token ?? undefined,
+      }).catch((e) => {
+        throw new Error(`el agente no contestó el saludo ACP: ${e instanceof Error ? e.message : e}`);
+      });
       wsUrl = raw;
     }
 
@@ -530,7 +573,10 @@ export const updateAgentFn = createServerFn({ method: "POST" })
     // mayúsculas, y se descarta lo vacío. Guardar el CSV crudo del cliente dejaría filas que
     // sólo `parseScope` sabría leer, y esta columna la va a mirar un humano en una consola.
     let acpScope: string | undefined;
-    if (data.acpScope !== undefined) {
+    // ⚠️ AMPLIAR el alcance es del owner. Sin esto, quien crea su propio agente ACP se pone
+    // `completo` a sí mismo y el default de `lectura` no significa nada. Se IGNORA en vez de
+    // reventar: el resto del formulario (nombre, prompt, URL) es legítimo y tiene que guardar.
+    if (data.acpScope !== undefined && user.isOwner) {
       const fam = data.acpScope
         .split(",")
         .map((x) => x.trim().toLowerCase())
@@ -541,6 +587,7 @@ export const updateAgentFn = createServerFn({ method: "POST" })
     }
 
     await db.updateAgent(data.id, {
+      acpToken: data.acpToken,
       name: data.name,
       handle,
       webhookUrl: data.webhookUrl,
@@ -556,7 +603,10 @@ export const updateAgentFn = createServerFn({ method: "POST" })
 export const deleteAgentFn = createServerFn({ method: "POST" })
   .validator((d: { id: number }) => d)
   .handler(async ({ data }) => {
-    await requireOwner();
+    // Owner o quien lo creó. Un estudiante borra el suyo; el de otro, no — y por eso NO es
+    // `requireOwner`: sin esto, cada caja que alguien recrea deja un agente muerto que sólo
+    // tú puedes barrer.
+    await requireAgentManage(data.id);
     const db = await import("../db.server");
     const a = await db.getAgentById(data.id);
     await db.deleteAgent(data.id);

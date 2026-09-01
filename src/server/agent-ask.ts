@@ -75,7 +75,7 @@ export const answerAgentAskFn = createServerFn({ method: "POST" })
  * teniendo el WebSocket sano. Ver `acpHandshake`.
  */
 export const probeAcpBoxFn = createServerFn({ method: "POST" })
-  .validator((d: { wsUrl: string }) => d)
+  .validator((d: { wsUrl: string; token?: string }) => d)
   .handler(async ({ data }) => {
     const user = await sessionUser();
     if (!user) throw new Error("sesión requerida");
@@ -84,7 +84,7 @@ export const probeAcpBoxFn = createServerFn({ method: "POST" })
     const { acpHandshake, acpBusy } = await import("./acp-client.server");
     const { currentNamespace } = await import("./tenant.server");
     const ns = await currentNamespace();
-    const hs = await acpHandshake({ wsUrl: raw, ns, sub: user.sub }).catch((e) => {
+    const hs = await acpHandshake({ wsUrl: raw, ns, sub: user.sub, token: data.token?.trim() || undefined }).catch((e) => {
       throw new Error(`no responde: ${e instanceof Error ? e.message : e}`);
     });
     // Dato extra, nunca requisito: un 404 aquí sólo dice que no es nuestro relé.
@@ -100,6 +100,10 @@ export const probeAcpBoxFn = createServerFn({ method: "POST" })
       loadSession: caps?.loadSession === true,
       image: caps?.promptCapabilities?.image === true,
       busySessions: busy ? busy.sessions : null,
+      // Que el agente salude no significa que pueda trabajar: si declara `authMethods` es que
+      // le falta credencial de su proveedor y el primer turno va a fallar. Se avisa AQUÍ, que
+      // es cuando la persona tiene su caja delante — no tres días después en un canal.
+      needsAuth: (hs.authMethods ?? []).map((m) => m.name || m.id || "").filter(Boolean),
     };
   });
 

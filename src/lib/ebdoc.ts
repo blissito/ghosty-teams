@@ -984,6 +984,10 @@ export function bubbleWithoutEbDoc(
     // previa genérica del sitio. Un fence sin `strip` no es medio bug: son tres.
     body = stripTask(body);
     body = stripTests(body);
+    // El efecto no deja nada en el cuerpo: no es una tarjeta que se lea después, es algo que
+    // PASA al llegar el mensaje. Sin esto, el `{"fx":"confetti"}` queda de recuadro de código
+    // en la burbuja para siempre — el mismo bug que describe el comentario de `stripTask`.
+    body = stripFx(body);
     // Y la simple, por la misma razón de siempre. Es la tercera vez que este comentario
     // hace falta en este archivo: un fence sin `strip` sale como recuadro de código encima
     // de la tarjeta que ya dice lo mismo, y su URL se lleva una vista previa del sitio.
@@ -1247,6 +1251,50 @@ export function extractTests(body: string): TestsCardData | null {
 /** El cuerpo sin el fence. El diagnóstico de alrededor se conserva entero. */
 export function stripTests(body: string): string {
   const open = body.match(/```gt-tests[^\n]*\n/);
+  if (!open || open.index == null) return body;
+  const before = body.slice(0, open.index);
+  const rest = body.slice(open.index + open[0].length);
+  const closeIdx = rest.indexOf("```");
+  const after = closeIdx === -1 ? "" : rest.slice(closeIdx + 3);
+  return [before.trim(), after.trim()].filter(Boolean).join("\n\n");
+}
+
+/* ── EFECTO en el chat (```gt-fx```) ──────────────────────────────────────── */
+//
+// El agente pide una celebración; la plataforma la pinta. Mismo molde que las tarjetas, con
+// dos diferencias que lo hacen valer para lo que existe:
+//
+//  1. **Es texto, no una tool.** Un agente ACP de fuera —GhostyCode en la caja de otra
+//     persona— NO tiene tools nuestras: el puente MCP lo inyecta nuestro relé por stdio, o
+//     sea un proceso dentro de la caja, y GhostyCode declara `mcpCapabilities:{http:false,
+//     sse:false}`. Un fence es lo único que cualquier agente puede emitir siempre.
+//  2. **La lista es CERRADA.** Es la misma razón que `CARD_ACTIONS`: el modelo dice CUÁL de
+//     los efectos que existen, no inventa uno. Un nombre libre acaba siendo CSS de un modelo
+//     pintando en la pantalla de todo el room.
+export const FX_KINDS = ["confetti", "hearts", "snow", "shake"] as const;
+export type FxKind = (typeof FX_KINDS)[number];
+export type FxData = { fx: FxKind };
+
+export function extractFx(body: string): FxData | null {
+  const open = body.match(/```gt-fx[^\n]*\n/);
+  if (!open || open.index == null) return null;
+  const rest = body.slice(open.index + open[0].length);
+  const closeIdx = rest.indexOf("```");
+  if (closeIdx === -1) return null; // fence a medio streamear: no se dispara media fiesta
+  try {
+    const p = JSON.parse(rest.slice(0, closeIdx).trim()) as Record<string, unknown>;
+    const fx = typeof p.fx === "string" ? p.fx.trim().toLowerCase() : "";
+    // Un efecto que no conocemos NO cae a uno por defecto: se ignora. Elegir por él sería
+    // dejar que un nombre inventado dispare algo, que es justo lo que la lista cerrada evita.
+    return (FX_KINDS as readonly string[]).includes(fx) ? { fx: fx as FxKind } : null;
+  } catch {
+    return null;
+  }
+}
+
+/** El cuerpo sin el fence. Lo que el agente escribió alrededor se conserva entero. */
+export function stripFx(body: string): string {
+  const open = body.match(/```gt-fx[^\n]*\n/);
   if (!open || open.index == null) return body;
   const before = body.slice(0, open.index);
   const rest = body.slice(open.index + open[0].length);

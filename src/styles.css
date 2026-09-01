@@ -585,3 +585,57 @@ body {
 .gt-prosp-scroll::-webkit-scrollbar-track {
   background: transparent;
 }
+
+/* ── Efectos del chat (```gt-fx```) ─────────────────────────────────────────
+   Partículas efímeras: el componente monta el overlay al llegar el mensaje y lo
+   desmonta a los 2.6s. Nada persiste.
+   ⚠️ NO se exime de reduce-motion (a diferencia de `.gt-cambio`, que dice qué cambió
+   en un documento y por eso sí lo merece): esto es decoración, y quien pide menos
+   movimiento no la recibe — el componente ni siquiera monta. */
+@keyframes gt-fx-fall {
+  from { transform: translate3d(0, -10vh, 0) rotate(0deg); opacity: 1; }
+  to   { transform: translate3d(var(--gt-fx-drift, 0), 105vh, 0) rotate(540deg); opacity: 0.1; }
+}
+@keyframes gt-fx-rise {
+  from { transform: translate3d(0, 105vh, 0) scale(0.7); opacity: 0; }
+  25%  { opacity: 1; }
+  to   { transform: translate3d(var(--gt-fx-drift, 0), -10vh, 0) scale(1.1); opacity: 0; }
+}
+.gt-fx-p {
+  position: absolute;
+  top: 0;
+  display: block;
+  will-change: transform, opacity;
+}
+.gt-fx-confetti {
+  border-radius: 2px;
+  animation-name: gt-fx-fall;
+  animation-timing-function: cubic-bezier(0.25, 0.6, 0.5, 1);
+  animation-fill-mode: forwards;
+}
+/* La nieve cae más lenta y redonda; el color lo pone el tema, no un hue aleatorio. */
+.gt-fx-snow {
+  border-radius: 9999px;
+  background: color-mix(in srgb, var(--color-ink, #fff) 55%, transparent);
+  animation-name: gt-fx-fall;
+  animation-timing-function: linear;
+  animation-fill-mode: forwards;
+}
+.gt-fx-hearts {
+  color: #f43f5e;
+  line-height: 1;
+  animation-name: gt-fx-rise;
+  animation-timing-function: ease-out;
+  animation-fill-mode: forwards;
+}
+
+/* El zumbido: se le hace a la ventana entera, como el de Messenger. */
+@keyframes gt-fx-shake {
+  0%, 100% { transform: translate3d(0, 0, 0); }
+  15% { transform: translate3d(-9px, 4px, 0); }
+  30% { transform: translate3d(8px, -5px, 0); }
+  45% { transform: translate3d(-7px, -3px, 0); }
+  60% { transform: translate3d(6px, 4px, 0); }
+  80% { transform: translate3d(-3px, 2px, 0); }
+}
+.gt-fx-shake { animation: gt-fx-shake 0.65s ease-in-out; }

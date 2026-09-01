@@ -319,6 +319,16 @@ async function migrate(): Promise<void> {
   // abre a propósito desde Ajustes, nunca por omisión.
   await addColumn("gc_agents", "acp_scope", "TEXT");
 
+  // Bearer para hablarle a una caja ACP que lo exija. NULL = la caja es abierta y su URL es
+  // toda la credencial (el caso de una caja nuestra, donde el ticket HMAC ya la protege).
+  //
+  // Existe porque los agentes ACP dejaron de ser sólo nuestros: un alumno que levanta
+  // GhostyCode en su propia caja y le pone un bearer no se podía dar de alta — y el fallo era
+  // un `initialize` que nunca contesta, o sea indistinguible de una caja muerta.
+  //
+  // ⚠️ NUNCA sale hacia la UI. Se escribe y se lee sólo aquí, como `fleet_token`.
+  await addColumn("gc_agents", "acp_token", "TEXT");
+
   // Backfill por la forma del id, que delata el origen sin ambigüedad: los de
   // EasyBits son ObjectId de Mongo (24 hex), los de Studio cuid. Se hace por regla
   // y NO consultando a Studio: una migración no puede depender de que otro sistema

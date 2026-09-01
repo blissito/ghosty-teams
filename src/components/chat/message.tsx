@@ -76,7 +76,8 @@ import { unfurlLinkFn } from "../../server/unfurl";
 import { registerModalEsc } from "../../utils/modal-esc";
 import { useScrollLock } from "../../utils/scroll-lock";
 import { type ArtifactView, viewFromAttachment } from "../../components/ArtifactPanel";
-import { extractEbDoc, bubbleWithoutEbDoc, extractToolState, extractSteps, extractAlert, extractAsk, extractPermission, extractAllPr, extractAllGh, extractTask, extractTests, type ToolState, type AlertCardData, type AskCardData, type PermissionCardData, type GhCardData, type PrCardData, type TaskCardData, type TestsCardData } from "../../lib/ebdoc";
+import { FxOverlay } from "./FxOverlay";
+import { extractFx, extractEbDoc, bubbleWithoutEbDoc, extractToolState, extractSteps, extractAlert, extractAsk, extractPermission, extractAllPr, extractAllGh, extractTask, extractTests, type ToolState, type AlertCardData, type AskCardData, type PermissionCardData, type GhCardData, type PrCardData, type TaskCardData, type TestsCardData } from "../../lib/ebdoc";
 import { prCardStateFn, runCardActionFn, taskCardStateFn, runTaskCardActionFn } from "../../server/connectors";
 import { answerAgentAskFn } from "../../server/agent-ask";
 import { answerAcpPermissionFn } from "../../server/agent-permission";
@@ -2923,6 +2924,20 @@ export function MessageRow({
               {(() => {
                 const ts = extractTests(m.body);
                 return ts ? <TestsCard data={ts} /> : null;
+              })()}
+              {/* El efecto no es una tarjeta: no se lee, PASA. Se dispara una vez al llegar el
+                  mensaje y no deja nada — ver FxOverlay. La marquita de abajo es lo único que
+                  queda, para que quien llegue tarde sepa que hubo fiesta. */}
+              {(() => {
+                const fx = extractFx(m.body);
+                return fx ? (
+                  <>
+                    <FxOverlay messageId={m.id} fx={fx.fx} />
+                    <span className="mt-1 block text-[11px] text-muted">
+                      {fx.fx === "hearts" ? "❤" : fx.fx === "snow" ? "❄" : fx.fx === "shake" ? "💥" : "🎉"}
+                    </span>
+                  </>
+                ) : null;
               })()}
               {/* El turno sigue vivo aunque ya haya texto: la salida tiene que seguir
                   a la vista (ver TurnLiveFooter). */}

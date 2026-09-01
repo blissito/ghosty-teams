@@ -30,6 +30,8 @@ export type ResolvedAgent = {
         kind: "acp";
         runtime: "acp";
         runtimeUrl: string;
+        /** Bearer de la caja, si la suya lo exige. NULL en las nuestras (basta el ticket). */
+        token?: string;
         /**
          * Su `FleetAgent.id` en Studio. La caja se maneja sola por el socket, así que este
          * id NO hace falta para hablar con ella — hace falta para preguntar por su SALDO,
@@ -120,6 +122,7 @@ export async function resolvedAgents(): Promise<ResolvedAgent[]> {
           kind: "acp",
           runtime: "acp",
           runtimeUrl: a.runtime_url,
+          token: a.acp_token || undefined,
           id: a.fleet_id || "",
           // Columna vacía ⇒ `lectura`, no `completo`: un agente ACP es un binario de terceros
           // y nace acotado. Los agentes NATIVOS no pasan por aquí; ellos siguen en `completo`.
@@ -932,7 +935,12 @@ async function buildRosterHint(
 const TEAMS_PRODUCT_CONTEXT = [
   "SOBRE DÓNDE VIVES — eres un agente de IA dentro de **Ghosty Teams**, una app de chat de equipo (estilo Slack) con canales, hilos, mensajes directos, llamadas y artefactos. Conoces el producto y puedes ORIENTAR a los usuarios sobre cómo usarlo.",
   "IDIOMA: escribe SIEMPRE en el idioma en el que te habla la persona, y no lo cambies a mitad de un mensaje. Eso incluye el CONTENIDO de los documentos que produces: si te piden una denuncia en español, su título y su cuerpo van en español — un escrito titulado \'CRIMINAL COMPLAINT\' no se puede presentar en un juzgado mexicano. Esto incluye las líneas de progreso y los pasos que narras entre herramientas — es donde se cuela el inglés cuando el trabajo se pone técnico, y deja la conversación en dos idiomas. Los nombres de herramientas, librerías, rutas y campos van tal cual (`python-docx`, `eb-file`, `<w:tcBorders>`), pero la frase que los rodea va en el idioma de la persona. Si te escriben en español, 'the table is a clean borderless 2×2' es un error, no un detalle.",
-  "NUNCA NOMBRES EL PROTOCOLO. Los nombres de los bloques (eb-doc, eb-sheet, eb-artifact, eb-patch, eb-file, gt-tools, gt-steps) son mecánica interna de la plataforma: para la persona eso es \'el documento\', \'la hoja\', \'el artefacto\' o \'el archivo\'. Decir \'el eb-doc de este hilo\' o \'lo pongo en un bloque eb-artifact\' es como que un procesador de textos te hablara de su formato de archivo. Tampoco menciones ids internos, rutas del workspace ni nombres de tools salvo que te pregunten explícitamente cómo funciona algo.",
+  "NUNCA NOMBRES EL PROTOCOLO. Los nombres de los bloques (eb-doc, eb-sheet, eb-artifact, eb-patch, eb-file, gt-tools, gt-steps, gt-fx) son mecánica interna de la plataforma: para la persona eso es \'el documento\', \'la hoja\', \'el artefacto\' o \'el archivo\'. Decir \'el eb-doc de este hilo\' o \'lo pongo en un bloque eb-artifact\' es como que un procesador de textos te hablara de su formato de archivo. Tampoco menciones ids internos, rutas del workspace ni nombres de tools salvo que te pregunten explícitamente cómo funciona algo.",
+  // El efecto se ofrece en el contexto de TODOS los agentes porque es un fence: no depende de
+  // tools ni de conectores, así que también lo puede emitir un agente ACP de una caja ajena,
+  // que es justo el caso para el que se hizo. La lista es CERRADA: lo que no esté aquí, el
+  // parser lo ignora en silencio.
+  "CELEBRAR: puedes lanzar un efecto visual en el chat emitiendo un bloque ```gt-fx``` con `{\"fx\":\"confetti\"}`. Los efectos que existen son exactamente: `confetti`, `hearts`, `snow` y `shake` (una sacudida de la ventana) — cualquier otro nombre no hace nada. Es para momentos que de verdad lo merecen: algo que se logró, una bienvenida, una broma del equipo. Lo ve TODA la gente que esté mirando el canal, así que no lo pongas en cada respuesta ni lo uses para adornar una respuesta normal; si dudas, no lo pongas. Va además de tu texto, nunca en lugar de él, y no lo menciones ni lo expliques: la persona ve el efecto, no el bloque.",
   "CÓMO ESCRIBES — es un chat de equipo, no un informe. Responde en 1–3 frases cuando la pregunta sea simple, y ve directo a lo que preguntaron: sin preámbulo ('Déjame verificar…', 'Perfecto, entiendo…'), sin repetir la pregunta, sin resumir al final lo que acabas de decir. Una lista sólo cuando de verdad hay varios elementos paralelos; si son dos cosas, van en una frase. No narres tu proceso interno ni aclares lo que la herramienta devolvió salvo que cambie la respuesta (la línea corta de PROGRESO EN VIVO antes de una tool lenta es la única excepción, y es una línea, no un párrafo). Extiéndete cuando el tema lo pida —un procedimiento, una comparación, algo que salió mal— pero que la longitud venga del contenido, no del relleno. Termina cuando ya respondiste: nada de '¿lo dejo así?' ni ofertas de seguimiento que nadie pidió, salvo que falte un dato para actuar.",
   "CÓMO TE ESCRIBEN: (1) **@mención** — te escriben `@" + "handle` (p.ej. @ghosty) en cualquier mensaje de un canal o respuesta de hilo, y respondes AHÍ MISMO; esto SIEMPRE funciona. (2) **Mensaje directo (DM 1:1)** — abren un chat privado contigo: haciendo clic en tu nombre/avatar para abrir tu perfil y tocando **“Mensaje directo”**, o desde el botón **“Nuevo mensaje directo” (+)** en la barra lateral eligiendo tu @handle.",
   "Si alguien dice que NO puede escribirte directo o no te encuentra: dile con calma que puede @mencionarte en CUALQUIER canal (funciona siempre) y que para un DM abra tu perfil (clic en tu nombre) → “Mensaje directo”. No lo mandes a menús que no conoces; ofrece la vía de la @mención como la segura.",
@@ -1598,6 +1606,7 @@ export async function callAgentBackendStream(
     );
     const r = await runAcpTurn({
       wsUrl: agent.backend.runtimeUrl,
+      token: agent.backend.token,
       workspaceNs: ns,
       sub: invokerSub || "teams",
       // La conversación es la sesión: `session/load` la retoma entre turnos, con el id que
@@ -2710,6 +2719,7 @@ export async function callAgentBackend(
     try {
       const r = await runAcpTurn({
         wsUrl: agent.backend.runtimeUrl,
+        token: agent.backend.token,
         workspaceNs: await currentNamespace(),
         sub: "teams",
         sessionId: (await (await import("./db.server")).getAcpSession(agent.handle, groupId).catch(() => null)) ?? undefined,

@@ -1559,6 +1559,8 @@ export type Agent = {
   group_ns: number | null;
   /** ACP: qué puede ejercer con las tools del espacio. NULL = `lectura` (el default acotado). */
   acp_scope: string | null;
+  /** ACP: bearer para hablarle a una caja que lo exija. NULL = abierta. NUNCA sale a la UI. */
+  acp_token: string | null;
 };
 
 function toAgent(r: Row): Agent {
@@ -1578,6 +1580,7 @@ function toAgent(r: Row): Agent {
     runtime_url: r.runtime_url ?? null,
     group_ns: r.group_ns == null ? null : num(r.group_ns),
     acp_scope: r.acp_scope ?? null,
+    acp_token: r.acp_token ?? null,
   };
 }
 
@@ -1637,11 +1640,13 @@ export async function createAgent(input: {
   runtimeUrl?: string | null;
   /** Los agentes nuevos nacen con la clave namespaceada; ver agentGroupId. */
   groupNs?: boolean;
+  /** ACP: bearer de la caja, si la suya lo pide. */
+  acpToken?: string | null;
 }): Promise<Agent> {
   const handle = slugify(input.handle).replace(/-/g, "");
   const rows = await dbq(
-    `INSERT INTO gc_agents (handle, name, kind, fleet_id, fleet_token, webhook_url, avatar, system_prompt, created_by, runtime, runtime_url, group_ns)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *`,
+    `INSERT INTO gc_agents (handle, name, kind, fleet_id, fleet_token, webhook_url, avatar, system_prompt, created_by, runtime, runtime_url, group_ns, acp_token)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *`,
     [
       handle,
       input.name.slice(0, 40),
@@ -1655,6 +1660,7 @@ export async function createAgent(input: {
       input.runtime ?? null,
       input.runtimeUrl ?? null,
       input.groupNs ? 1 : null,
+      input.acpToken ?? null,
     ]
   );
   return toAgent(rows[0]);
@@ -1675,6 +1681,8 @@ export async function updateAgent(
     runtimeUrl?: string;
     /** ACP: qué familias de tools puede ejercer. CSV; ver `parseScope`. */
     acpScope?: string;
+    /** ACP: bearer de la caja. Cadena vacía = quitarlo (la caja dejó de pedirlo). */
+    acpToken?: string | null;
   }
 ): Promise<void> {
   const sets: string[] = [];
@@ -1689,6 +1697,9 @@ export async function updateAgent(
   if (patch.enabled !== undefined) (sets.push("enabled = ?"), args.push(patch.enabled ? 1 : 0));
   if (patch.runtimeUrl !== undefined) (sets.push("runtime_url = ?"), args.push(patch.runtimeUrl));
   if (patch.acpScope !== undefined) (sets.push("acp_scope = ?"), args.push(patch.acpScope));
+  // Cadena vacía → NULL: "la caja dejó de pedir token" tiene que poder decirse, y un "" en la
+  // columna se leería después como un bearer vacío que sí se manda.
+  if (patch.acpToken !== undefined) (sets.push("acp_token = ?"), args.push(patch.acpToken || null));
   if (!sets.length) return;
   args.push(id);
   await dbq(`UPDATE gc_agents SET ${sets.join(", ")} WHERE id = ?`, args);
