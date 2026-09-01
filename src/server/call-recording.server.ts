@@ -27,13 +27,6 @@ export async function startCallRecording(roomName: string, title = "") {
   return await askStudio({ action: "start", room: roomName, live: false, title }, "huddle");
 }
 
-/** Estado en vivo, para pintar el testigo rojo y el cronómetro. */
-export async function callRecordingState() {
-  return (await askStudio({ action: "state" }, "huddle").catch(() => null)) as
-    | { recording?: boolean; id?: string; room?: string; startedAt?: string }
-    | null;
-}
-
 /**
  * Para la grabación y la deja a salvo en storage.
  *
