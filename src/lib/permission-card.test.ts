@@ -138,3 +138,46 @@ describe("la decisión, en un segundo fence", () => {
     expect(limpio).toContain("Listo.");
   });
 });
+
+// ── Varios permisos en un turno ─────────────────────────────────────────────────
+//
+// El bug que colgaba turnos, medido el 2026-09-01 en uno de @gemini: el cuerpo tenía la
+// pregunta 1, su resolución, y una pregunta 2. La tarjeta enseñaba la 1 (ya autorizada) y la
+// 2 no se pintaba nunca — el agente esperaba una respuesta que nadie podía dar y el turno se
+// colgaba hasta que el vigilante lo cortaba a los cinco minutos.
+describe("varios permisos en el mismo mensaje", () => {
+  const preg = (askId: string, title: string) =>
+    "```gt-perm\n" +
+    JSON.stringify({ askId, title, options: [{ id: "ok", label: "Allow", tone: "ok" }] }) +
+    "\n```";
+  const res = (askId: string, resolved: string) =>
+    "```gt-perm\n" + JSON.stringify({ askId, resolved }) + "\n```";
+
+  it("tras resolver la primera, se enseña la SEGUNDA", () => {
+    const body = [preg("a1", "correr voice.mjs"), res("a1", "Allow"), preg("a2", "publicar el audio")].join("\n\n");
+    const c = extractPermission(body)!;
+    expect(c.askId).toBe("a2");
+    expect(c.title).toBe("publicar el audio");
+    expect(c.resolved).toBeUndefined();
+  });
+
+  it("con todas resueltas se queda en la ÚLTIMA, no vuelve a la primera", () => {
+    const body = [preg("a1", "una"), res("a1", "Allow"), preg("a2", "dos"), res("a2", "Reject")].join("\n\n");
+    const c = extractPermission(body)!;
+    expect(c.askId).toBe("a2");
+    expect(c.resolved).toBe("Reject");
+  });
+
+  it("una rechazada tampoco reabre: `denied` cuenta como resuelta", () => {
+    const body = [preg("a1", "una"), "```gt-perm\n" + JSON.stringify({ askId: "a1", denied: true }) + "\n```", preg("a2", "dos")].join("\n\n");
+    expect(extractPermission(body)!.askId).toBe("a2");
+  });
+
+  it("y el cuerpo sigue saliendo limpio con tres fences", () => {
+    const body = ["Voy a ello.", preg("a1", "una"), res("a1", "Allow"), preg("a2", "dos"), "Listo."].join("\n\n");
+    const limpio = stripPermission(body);
+    expect(limpio).not.toContain("gt-perm");
+    expect(limpio).toContain("Voy a ello.");
+    expect(limpio).toContain("Listo.");
+  });
+});

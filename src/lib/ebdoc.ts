@@ -489,8 +489,25 @@ export function extractPermission(body: string): PermissionCardData | null {
   const fences = permFences(body);
   if (!fences.length) return null;
   try {
-    // El primero con opciones es la PREGUNTA; los siguientes del mismo `askId` la resuelven.
-    const p = fences.find((f) => Array.isArray(f.options) && (f.options as unknown[]).length) ?? fences[0];
+    // ⚠️ Se elige la primera pregunta SIN RESOLVER, no la primera a secas.
+    //
+    // Un turno puede pedir VARIOS permisos, uno tras otro: el agente pide, contestas, y pide
+    // el siguiente. Con "la primera" la tarjeta se quedaba clavada en la que ya habías
+    // autorizado y la nueva no se pintaba NUNCA — el agente esperaba una respuesta que nadie
+    // podía dar y el turno se colgaba hasta que el vigilante lo cortaba a los 5 minutos.
+    // Medido el 2026-09-01 en un turno de @gemini: tres fences, la 3ª pregunta invisible.
+    const preguntas = fences.filter((f) => Array.isArray(f.options) && (f.options as unknown[]).length);
+    const resueltos = new Set(
+      fences
+        .filter((f) => typeof f.resolved === "string" || f.denied === true)
+        .map((f) => String(f.askId ?? "")),
+    );
+    // Si todas están resueltas se enseña la ÚLTIMA: el hilo debe leerse como quedó, no
+    // volver a la primera pregunta de hace diez minutos.
+    const p =
+      preguntas.find((f) => !resueltos.has(String(f.askId ?? ""))) ??
+      preguntas[preguntas.length - 1] ??
+      fences[0];
     const str = (v: unknown) => (typeof v === "string" ? v.trim() : "");
     const askId = str(p.askId);
     const title = str(p.title);
