@@ -305,6 +305,15 @@ export async function runAcpTurn(t: AcpTurn): Promise<AcpResult> {
 
 /** Un turno completo: conecta, negocia, abre o retoma sesión, manda el prompt y espera. */
 async function unTurnoAcp(t: AcpTurn): Promise<AcpResult> {
+  // Primero se despierta la caja por HTTP; un WebSocket no resucita una VM dormida. Ver
+  // `wakeBox`. Si la caja ya no existe se dice AQUÍ: por el socket saldría como
+  // «Unexpected server response: 404», que no le dice nada a nadie.
+  if ((await wakeBox(t.wsUrl)).gone) {
+    throw new Error(
+      "la caja de este agente ya no existe (la recicló el host tras días sin usarse). " +
+        "Hay que volver a levantarla.",
+    );
+  }
   const ws = new WebSocket(acpTicketUrl(t.wsUrl, t.workspaceNs, t.sub, !!t.onDeliver), {
     headers: {
       ...(t.toolToken ? { "x-ghosty-tools": t.toolToken } : {}),
@@ -448,6 +457,9 @@ async function unTurnoAcp(t: AcpTurn): Promise<AcpResult> {
       const to = setTimeout(() => rej(new Error("timeout conectando con el agente")), t.timeoutMs ?? 15_000);
       ws.once("open", () => {
         clearTimeout(to);
+        // Contestó: no hace falta volver a despertarla en un rato. Se marca AQUÍ y no al
+        // pedir el despertador — que aquel fetch salga bien no prueba que la caja esté viva.
+        markAwake(t.wsUrl);
         res();
       });
       ws.once("error", (e: Error) => {
@@ -776,6 +788,11 @@ export async function acpHandshake(o: {
   timeoutMs?: number;
 }): Promise<AcpHandshake> {
   const budget = o.timeoutMs ?? 5000;
+  // Fuera del presupuesto del handshake a propósito: los 5 s son para que el agente conteste
+  // `initialize`, y un resume de ~1.8 s se comería un tercio.
+  if ((await wakeBox(o.wsUrl)).gone) {
+    throw new Error("la caja de este agente ya no existe (la recicló el host)");
+  }
   const ws = new WebSocket(acpTicketUrl(o.wsUrl, o.ns, o.sub), {
     ...(o.token ? { headers: { Authorization: `Bearer ${o.token}` } } : {}),
   });
@@ -798,6 +815,7 @@ export async function acpHandshake(o: {
       // El relé rechaza mandando un error SIN `id` y cerrando; un cierre a secas también
       // es un no. Sin esto la promesa se quedaría colgada hasta el timeout.
       ws.on("close", () => settle(new Error("cerró la conexión sin saludar")));
+      ws.on("open", () => markAwake(o.wsUrl));
       ws.on("message", (raw: Buffer | string) => {
         for (const line of String(raw).split("\n")) {
           if (!line.trim()) continue;
@@ -842,14 +860,93 @@ export async function acpHandshake(o: {
  */
 export async function acpBusy(wsUrl: string): Promise<{ busy: boolean; sessions: number } | null> {
   try {
-    const u = new URL(wsUrl.replace(/^ws/, "http"));
-    u.pathname = "/busy";
-    u.search = "";
-    const res = await fetch(u.toString());
+    const res = await fetch(boxHttpUrl(wsUrl, "/busy"));
     if (!res.ok) return null;
     const b = (await res.json()) as { busy?: boolean; sessions?: number };
     return { busy: !!b.busy, sessions: b.sessions ?? 0 };
   } catch {
     return null;
   }
+}
+
+
+/** La misma caja por HTTP: `ws(s)://…/acp` → `http(s)://…<path>`. Sólo cambia el esquema. */
+export function boxHttpUrl(wsUrl: string, path: string): string {
+  const u = new URL(wsUrl.replace(/^ws/, "http"));
+  u.pathname = path;
+  u.search = "";
+  return u.toString();
+}
+
+/**
+ * Cajas que vimos despiertas hace poco, por host. Ver `wakeBox`.
+ *
+ * En memoria y por proceso a propósito: es una pista para ahorrarnos una petición, no un
+ * dato. Equivocarse cuesta 450 ms; guardarlo en la DB costaría una columna que hay que
+ * migrar, mantener y explicar.
+ */
+const seenAwake = new Map<string, number>();
+
+/**
+ * Una caja dormida se despierta a los 5 min de ocio. Con 4 se salta el despertador dentro de
+ * una conversación viva —que es el caso común— y se paga sólo tras una pausa de verdad.
+ */
+const AWAKE_TTL_MS = 4 * 60_000;
+
+/** Lo que contesta el ROUTER cuando la caja ya no existe. Ver `wakeBox`. */
+export const BOX_GONE = "preview host not found";
+
+/**
+ * Despierta la caja ANTES de abrir el WebSocket.
+ *
+ * ⚠️ Un WebSocket **no resucita una microVM dormida**. Quien la resucita es
+ * `publicProxy` del host, y sólo cuando le llega una petición **HTTP**: hace `acquireHTTP`
+ * → `resumeLocked` ANTES de mirar rutas ni puertos, así que hasta un 404 del servicio la
+ * despierta — lo que cuenta es que la petición LLEGUE. Sin esto, el primer turno tras unas
+ * horas de silencio falla y el segundo funciona, que es la peor forma de esconder un bug:
+ * "reintenta" parece arreglarlo.
+ *
+ * ⚠️ **NO se pide `/health`**, aunque el despertador gemelo de las llamadas
+ * (`despertarSfu`, quick-calls.ts) lo haga. El sandbox-router declara su propio
+ * `GET /health` en el listener público y lo contesta ÉL, sin tocar el daemon: medido contra
+ * una caja viva, devuelve `ok` en 2 bytes de texto plano mientras `/` y `/busy` los contesta
+ * el agente de dentro. Un despertador por `/health` sería un no-op mudo.
+ *
+ * Se ESPERA (no es fire-and-forget): esperar es justo lo que hace que el socket de después
+ * encuentre la caja viva. Y nunca lanza — que el despertador falle casi siempre significa
+ * que ya estaba despierta, y tumbar el turno por eso cambia un fallo raro por uno seguro.
+ *
+ * @returns `true` si la caja ya NO EXISTE (la recicló el janitor). Sirve para decirlo, en vez
+ * de dejar que el `404` salga crudo por el WebSocket como «Unexpected server response».
+ */
+export async function wakeBox(wsUrl: string): Promise<{ gone: boolean }> {
+  let host = "";
+  try {
+    host = new URL(wsUrl.replace(/^ws/, "http")).host;
+  } catch {
+    return { gone: false };
+  }
+  const last = seenAwake.get(host);
+  if (last && Date.now() - last < AWAKE_TTL_MS) return { gone: false };
+  try {
+    // La RAÍZ, no una ruta del agente: para el resume el path da igual, y así no se asume
+    // nada de un agente que puede no ser nuestro.
+    const res = await fetch(boxHttpUrl(wsUrl, "/"), { signal: AbortSignal.timeout(8000) });
+    // El 404 del router (la caja no existe) y el del agente (esa ruta no existe) son el mismo
+    // status: los distingue el CUERPO, y sólo el primero significa algo.
+    if (res.status === 404) {
+      const body = await res.text().catch(() => "");
+      if (body.includes(BOX_GONE)) return { gone: true };
+    }
+  } catch {
+    // Timeout o red: se sigue igual. El WebSocket dirá si de verdad no hay nadie.
+  }
+  return { gone: false };
+}
+
+/** La caja contestó por el socket: no hace falta despertarla otra vez en un rato. */
+function markAwake(wsUrl: string): void {
+  try {
+    seenAwake.set(new URL(wsUrl.replace(/^ws/, "http")).host, Date.now());
+  } catch {}
 }
