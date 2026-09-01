@@ -237,6 +237,10 @@ export function toolLabel(raw: string): { ing: string; done: string } | null {
     return { ing: `${marca}: ${acc}`, done: `${marca}: ${acc}` };
   }
   if (TOOLS_OCULTAS.has(raw) || TOOLS_OCULTAS.has(short)) return null;
+  // Sin nombre no hay etiqueta. `humanizeToolName` cae a la palabra "herramienta" —útil
+  // dentro de una frase, inútil como fila de un checklist: no dice qué se hizo y, peor, se
+  // agrupa con cualquier otra sin nombre. Un evento así se descarta.
+  if (!raw.trim()) return null;
   const humano = humanizeToolName(raw);
   return { ing: humano, done: humano };
 }

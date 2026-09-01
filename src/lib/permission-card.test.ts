@@ -78,3 +78,63 @@ describe("el JSON no se pinta crudo", () => {
     expect(bubbleWithoutEbDoc(body, undefined, { keepStatus: true })).toContain("gt-perm");
   });
 });
+
+// ── La decisión viaja en el MENSAJE, no en el navegador que hizo clic ────────────
+//
+// Antes el estado vivía sólo en `localStorage`, así que para el resto del canal la tarjeta
+// se quedaba pidiendo permiso para siempre — y por eso el servidor escribía además un
+// «_Autorizado: X_» en prosa que salía duplicado justo debajo de la tarjeta.
+describe("la decisión, en un segundo fence", () => {
+  const pregunta = (askId = "a1") =>
+    "```gt-perm\n" +
+    JSON.stringify({
+      askId,
+      title: "¿Escribo celebracion.txt?",
+      options: [
+        { id: "allow", label: "Allow once", tone: "ok", kind: "allow_once" },
+        { id: "deny", label: "Reject", tone: "danger", kind: "reject_once" },
+      ],
+    }) +
+    "\n```";
+  const decision = (o: Record<string, unknown>) => "```gt-perm\n" + JSON.stringify(o) + "\n```";
+
+  it("sin decisión, la tarjeta sigue abierta", () => {
+    const c = extractPermission(pregunta())!;
+    expect(c.resolved).toBeUndefined();
+    expect(c.denied).toBeUndefined();
+    expect(c.options).toHaveLength(2);
+  });
+
+  it("el segundo fence resuelve al primero, conservando pregunta y opciones", () => {
+    const c = extractPermission(`${pregunta()}\n\n${decision({ askId: "a1", resolved: "Allow once" })}`)!;
+    expect(c.resolved).toBe("Allow once");
+    expect(c.title).toBe("¿Escribo celebracion.txt?");
+    expect(c.options).toHaveLength(2);
+  });
+
+  it("rechazado no es lo mismo que aún-no", () => {
+    const c = extractPermission(`${pregunta()}\n\n${decision({ askId: "a1", denied: true })}`)!;
+    expect(c.denied).toBe(true);
+    expect(c.resolved).toBeUndefined();
+  });
+
+  it("una decisión de OTRO permiso no lo resuelve", () => {
+    const c = extractPermission(`${pregunta("a1")}\n\n${decision({ askId: "otro", resolved: "Sí" })}`)!;
+    expect(c.resolved).toBeUndefined();
+  });
+
+  it("el `kind` de ACP llega al cliente para poder traducir el botón", () => {
+    const c = extractPermission(pregunta())!;
+    // El label es del agente y viene en su idioma; el kind es del protocolo.
+    expect(c.options.map((o) => o.kind)).toEqual(["allow_once", "reject_once"]);
+  });
+
+  it("se quitan TODOS los fences del cuerpo, no sólo el primero", () => {
+    const body = `Voy a escribirlo.\n\n${pregunta()}\n\n${decision({ askId: "a1", resolved: "Allow once" })}\n\nListo.`;
+    const limpio = stripPermission(body);
+    expect(limpio).not.toContain("gt-perm");
+    expect(limpio).not.toContain("askId");
+    expect(limpio).toContain("Voy a escribirlo.");
+    expect(limpio).toContain("Listo.");
+  });
+});

@@ -169,6 +169,50 @@ describe("el turno", () => {
     expect(t.updates[0]).toEqual({ kind: "tool", id: "t1", title: "leer main.rs", status: "in_progress" });
     expect(t.updates[1]).toEqual({ kind: "plan", entries: [{ content: "paso 1", status: "pending" }] });
   });
+
+  // La secuencia REAL de una tool que pide permiso y acaba fallando. Es la que rompía el
+  // checklist: la spec manda el título UNA VEZ, en el `tool_call`, y los updates posteriores
+  // no lo repiten. Sin arrastrarlo, el fallo llegaba sin nombre, abría una segunda fila
+  // llamada "herramienta" y le robaba el id — la herramienta de verdad se quedaba con su
+  // palomita mientras el veredicto acababa en una fila anónima. Visto con @taller el
+  // 2026-09-01: «2 herramientas · 1 falló» para UNA sola escritura que nunca ocurrió.
+  it("el título se arrastra a los updates que no lo repiten", async () => {
+    guion = (ws, m) => {
+      const upd = (u: Record<string, unknown>) =>
+        ws.send(env({}, { method: "session/update", params: { update: u } }));
+      upd({ sessionUpdate: "tool_call", toolCallId: "t1", title: "apply patch: celebracion.txt", status: "pending" });
+      upd({ sessionUpdate: "tool_call_update", toolCallId: "t1", status: "in_progress" });
+      upd({ sessionUpdate: "tool_call_update", toolCallId: "t1", status: "failed" });
+      ws.send(env({ id: m.id }, { result: { stopReason: "end_turn" } }));
+    };
+    const t = turno();
+    await t.run();
+    const tools = t.updates.filter((u: any) => u.kind === "tool");
+    expect(tools).toHaveLength(3);
+    // Los tres hablan de la MISMA herramienta y los tres saben cómo se llama.
+    expect(tools.map((u: any) => u.title)).toEqual([
+      "apply patch: celebracion.txt",
+      "apply patch: celebracion.txt",
+      "apply patch: celebracion.txt",
+    ]);
+    expect(tools.map((u: any) => u.id)).toEqual(["t1", "t1", "t1"]);
+    expect((tools[2] as any).status).toBe("failed");
+  });
+
+  it("cada tool recuerda SU título, no el del vecino", async () => {
+    guion = (ws, m) => {
+      const upd = (u: Record<string, unknown>) =>
+        ws.send(env({}, { method: "session/update", params: { update: u } }));
+      upd({ sessionUpdate: "tool_call", toolCallId: "a", title: "leer LEEME.txt", status: "pending" });
+      upd({ sessionUpdate: "tool_call", toolCallId: "b", title: "escribir notas.md", status: "pending" });
+      upd({ sessionUpdate: "tool_call_update", toolCallId: "a", status: "completed" });
+      ws.send(env({ id: m.id }, { result: { stopReason: "end_turn" } }));
+    };
+    const t = turno();
+    await t.run();
+    const fin = t.updates.filter((u: any) => u.kind === "tool").at(-1) as any;
+    expect(fin.title).toBe("leer LEEME.txt");
+  });
 });
 
 describe("permisos — lo que distingue a ACP", () => {

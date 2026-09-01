@@ -1146,6 +1146,12 @@ export const en: Record<string, string> = {
   "Pedir cambios": "Request changes",
   "Cambios pedidos": "Changes requested",
   "Rechazar": "Reject",
+  // Las cuatro opciones que ACP nombra igual en todas partes (`kind`). El label del agente
+  // viene en SU idioma, así que la tarjeta pone el nuestro cuando reconoce el kind.
+  "Permitir una vez": "Allow once",
+  "Permitir siempre": "Allow always",
+  "Rechazar siempre": "Reject always",
+  "Sin autorización": "Not authorized",
   "Rechazado": "Rejected",
   "Ver en GitHub": "View on GitHub",
   "CI en verde": "CI passing",

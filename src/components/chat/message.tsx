@@ -1185,9 +1185,34 @@ function writePermState(msgId: number, label: string): void {
   }
 }
 
+/**
+ * Texto NUESTRO para las cuatro opciones que ACP nombra igual en todas partes.
+ *
+ * El `label` lo escribe el agente en SU idioma —un GhostyCode en inglés manda «Allow once» a
+ * una conversación en español— y por eso no pasa por `t()`. El `kind` sí es del protocolo,
+ * así que se traduce por ahí y el label queda de respaldo: una opción con `kind` raro o sin
+ * `kind` se sigue viendo tal como la mandó su agente.
+ */
+function permLabel(o: { label: string; kind?: string }, t: (s: string) => string): string {
+  switch (o.kind) {
+    case "allow_once":
+      return t("Permitir una vez");
+    case "allow_always":
+      return t("Permitir siempre");
+    case "reject_once":
+      return t("Rechazar");
+    case "reject_always":
+      return t("Rechazar siempre");
+    default:
+      return o.label;
+  }
+}
+
 export function PermissionCard({ msgId, p }: { msgId: number; p: PermissionCardData }) {
   const t = useT();
-  const [resuelto, setResuelto] = useState<string | null>(() => readPermState(msgId));
+  // Lo que dice el MENSAJE gana: lo ve todo el canal. El localStorage es sólo el eco
+  // optimista de quien acaba de hacer clic, para que el botón responda sin esperar al turno.
+  const [resuelto, setResuelto] = useState<string | null>(() => p.resolved ?? readPermState(msgId));
   const [vencida, setVencida] = useState(false);
   /** No es "ya no espera": es "sigue esperando, pero no a ti". Ver `answerAcpPermissionFn`. */
   const [ajena, setAjena] = useState(false);
@@ -1233,8 +1258,13 @@ export function PermissionCard({ msgId, p }: { msgId: number; p: PermissionCardD
           <p className="mt-0.5 text-sm text-ink">{p.title}</p>
           {resuelto ? (
             <p className="mt-1.5 text-xs text-muted">
-              {t("Autorizado")} <span className="font-medium text-ink">{resuelto}</span>
+              {t("Autorizado")}{" "}
+              <span className="font-medium text-ink">
+                {permLabel({ label: resuelto, kind: p.options.find((o) => o.label === resuelto)?.kind }, t)}
+              </span>
             </p>
+          ) : p.denied ? (
+            <p className="mt-1.5 text-xs text-muted">{t("Sin autorización")}</p>
           ) : vencida ? (
             <p className="mt-1.5 text-xs text-muted">{t("Ya no esperaba respuesta")}</p>
           ) : ajena ? (
@@ -1257,7 +1287,7 @@ export function PermissionCard({ msgId, p }: { msgId: number; p: PermissionCardD
                           : "border-border text-ink hover:bg-surface-3"
                     }`}
                   >
-                    {enviando === o.id ? t("enviando…") : o.label}
+                    {enviando === o.id ? t("enviando…") : permLabel(o, t)}
                   </button>
                 ))}
               </div>

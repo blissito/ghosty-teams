@@ -1633,10 +1633,17 @@ export async function callAgentBackendStream(
         if (u.kind === "text") await onChunk(u.text);
         else if (u.kind === "tool" && onTool) {
           // ACP manda el estado en el mismo evento; se traduce al checklist que ya existe.
+          const terminal = u.status === "completed" || u.status === "failed";
+          // ⚠️ Cinturón sobre el arreglo del cliente: un update SIN nombre no abre fila. Si
+          // llegara uno (un agente que no repita el título y que tampoco lo mandara al
+          // principio), `toolLabel("")` inventaría una fila llamada "herramienta" y le
+          // robaría el id a la de verdad — el fallo acabaría en la anónima y la real se
+          // quedaría con su palomita. Sin nombre y sin veredicto no hay nada que pintar.
+          if (!u.title && !terminal) return;
           await onTool({
             name: u.title,
             id: u.id,
-            phase: u.status === "completed" || u.status === "failed" ? "end" : "start",
+            phase: terminal ? "end" : "start",
             ok: u.status === "completed",
           });
         }
@@ -1706,6 +1713,10 @@ export async function callAgentBackendStream(
               // `kind` de ACP nombra la intención de la opción; se traduce al tono que la
               // tarjeta ya sabe pintar para que aprobar y rechazar no se vean igual.
               tone: o.kind?.startsWith("allow") ? "ok" : o.kind?.startsWith("reject") ? "danger" : undefined,
+              // Y viaja TAL CUAL: el `label` lo escribe el agente en su idioma («Allow once»
+              // en una conversación en español), así que la tarjeta prefiere su propio texto
+              // cuando reconoce el `kind`. Ver `PermissionCardData`.
+              kind: o.kind,
             })),
           })}\n\`\`\`\n`,
         );
@@ -1728,9 +1739,19 @@ export async function callAgentBackendStream(
         });
 
         // La decisión se escribe en el hilo para que la vea TODO el equipo, no sólo quien hizo
-        // clic. El body es append-only: este renglón es la bitácora.
+        // clic: la tarjeta guarda su estado en el `localStorage` del navegador que autorizó,
+        // así que para cualquier otro seguiría pareciendo pendiente.
+        //
+        // Va en un SEGUNDO fence con el mismo `askId`, no en prosa. El body es append-only —
+        // el fence de la pregunta ya se emitió y no se puede reescribir— y `extractPermission`
+        // los une. Antes esto era un `_Autorizado: X_` que salía DUPLICADO justo debajo de la
+        // tarjeta, que ya lo decía.
         const etiqueta = elegido ? (p.options.find((o) => o.id === elegido)?.label ?? elegido) : null;
-        await onChunk(etiqueta ? `\n\n_Autorizado: ${etiqueta}_\n\n` : `\n\n_Sin autorización._\n\n`);
+        await onChunk(
+          `\n\n\`\`\`gt-perm\n${JSON.stringify(
+            etiqueta ? { askId, resolved: etiqueta } : { askId, denied: true },
+          )}\n\`\`\`\n`,
+        );
         return elegido;
       },
     }).catch((e) => {

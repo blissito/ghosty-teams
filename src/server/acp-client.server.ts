@@ -325,6 +325,8 @@ async function unTurnoAcp(t: AcpTurn): Promise<AcpResult> {
   let texto = "";
   /** Cuándo se oyó al agente por última vez. El watchdog mide SILENCIO, no duración. */
   let ultimoMensaje = Date.now();
+  /** `toolCallId` → título. La spec lo manda una vez; ver `handleUpdate`. Vive un turno. */
+  const toolTitles = new Map<string, string>();
   /** El último error que mandó el RELÉ por su cuenta (sin `id`). Ver `tumbar`. */
   let ultimoErrorSinId: AcpServerError | null = null;
   /** Permisos esperando respuesta humana. Mientras haya uno, el silencio es legítimo. */
@@ -428,7 +430,7 @@ async function unTurnoAcp(t: AcpTurn): Promise<AcpResult> {
         // checklist las herramientas de un turno viejo es contar dos veces un trabajo que
         // ya se hizo.
         if (rehidratando) continue;
-        void handleUpdate(m.params?.update ?? {}, t, (s) => (texto += s));
+        void handleUpdate(m.params?.update ?? {}, t, (s) => (texto += s), toolTitles);
         continue;
       }
 
@@ -530,7 +532,12 @@ async function unTurnoAcp(t: AcpTurn): Promise<AcpResult> {
 }
 
 /** Traduce un `session/update` al vocabulario que el chat ya sabe pintar. */
-async function handleUpdate(u: any, t: AcpTurn, acumula: (s: string) => void): Promise<void> {
+async function handleUpdate(
+  u: any,
+  t: AcpTurn,
+  acumula: (s: string) => void,
+  toolTitles: Map<string, string>,
+): Promise<void> {
   switch (u.sessionUpdate) {
     case "agent_message_chunk": {
       const s = u.content?.text ?? "";
@@ -545,7 +552,19 @@ async function handleUpdate(u: any, t: AcpTurn, acumula: (s: string) => void): P
       return;
     case "tool_call":
     case "tool_call_update":
-      await t.onUpdate({ kind: "tool", id: u.toolCallId, title: u.title, status: u.status });
+      // ⚠️ El título viaja UNA VEZ. La spec lo manda en `tool_call` y los
+      // `tool_call_update` posteriores —incluido el que trae `failed`— NO lo repiten. Si se
+      // pasa tal cual, el update llega sin nombre, el checklist abre una fila NUEVA llamada
+      // "herramienta" y el fallo se anota ahí: la herramienta de verdad se queda con su
+      // palomita y el veredicto acaba en una fila anónima. O sea, la pantalla daba por buena
+      // una escritura que no ocurrió. Por eso el título se recuerda por `toolCallId`.
+      if (u.title) toolTitles.set(u.toolCallId, u.title);
+      await t.onUpdate({
+        kind: "tool",
+        id: u.toolCallId,
+        title: u.title ?? toolTitles.get(u.toolCallId),
+        status: u.status,
+      });
       return;
     case "plan":
       await t.onUpdate({

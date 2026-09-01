@@ -442,20 +442,55 @@ export type PermissionCardData = {
   askId: string;
   /** Lo que el agente quiere hacer. */
   title: string;
-  /** Las que declaró el agente. Sin default: ver `extractPermission`. */
-  options: { id: string; label: string; tone?: string }[];
+  /**
+   * Las que declaró el agente. Sin default: ver `extractPermission`.
+   *
+   * `kind` es el vocabulario ESTÁNDAR de ACP (`allow_once`, `allow_always`, `reject_once`,
+   * `reject_always`) y viaja porque el `label` lo escribe el agente en SU idioma: un
+   * GhostyCode en inglés mandaba «Allow once» a una conversación en español. Con el `kind`
+   * la tarjeta pone su propio texto y el `label` queda de respaldo para opciones raras.
+   */
+  options: { id: string; label: string; tone?: string; kind?: string }[];
+  /**
+   * Qué se autorizó, ya decidido. Lo escribe el SERVIDOR en un segundo fence.
+   *
+   * Antes esto vivía sólo en el `localStorage` del que hizo clic, así que para el resto del
+   * canal la tarjeta se quedaba pidiendo permiso para siempre — y por eso el servidor
+   * además escribía un «_Autorizado: X_» en prosa, que salía duplicado junto a la tarjeta.
+   * Estando aquí lo ve todo el mundo y la prosa sobra.
+   */
+  resolved?: string;
+  /** Nadie autorizó (se rechazó o venció). Distinto de `resolved` ausente, que es "aún no". */
+  denied?: boolean;
 };
 
+/** Cada `gt-perm` del cuerpo, en orden. El body es append-only: la decisión llega en uno nuevo. */
+function permFences(body: string): Record<string, unknown>[] {
+  const out: Record<string, unknown>[] = [];
+  let resto = body;
+  for (;;) {
+    const open = resto.match(/```gt-perm[^\n]*\n/);
+    if (!open || open.index == null) return out;
+    const tras = resto.slice(open.index + open[0].length);
+    const closeIdx = tras.indexOf("```");
+    // Fence a medio llegar: no se pinta. Unos botones incompletos son peores que ninguno
+    // cuando lo que está en juego es autorizar al agente a actuar.
+    if (closeIdx === -1) return out;
+    try {
+      out.push(JSON.parse(tras.slice(0, closeIdx).trim()) as Record<string, unknown>);
+    } catch {
+      // Un fence roto no invalida los demás.
+    }
+    resto = tras.slice(closeIdx + 3);
+  }
+}
+
 export function extractPermission(body: string): PermissionCardData | null {
-  const open = body.match(/```gt-perm[^\n]*\n/);
-  if (!open || open.index == null) return null;
-  const rest = body.slice(open.index + open[0].length);
-  const closeIdx = rest.indexOf("```");
-  // Fence a medio llegar: no se pinta. Unos botones incompletos son peores que ninguno
-  // cuando lo que está en juego es autorizar al agente a actuar.
-  if (closeIdx === -1) return null;
+  const fences = permFences(body);
+  if (!fences.length) return null;
   try {
-    const p = JSON.parse(rest.slice(0, closeIdx).trim()) as Record<string, unknown>;
+    // El primero con opciones es la PREGUNTA; los siguientes del mismo `askId` la resuelven.
+    const p = fences.find((f) => Array.isArray(f.options) && (f.options as unknown[]).length) ?? fences[0];
     const str = (v: unknown) => (typeof v === "string" ? v.trim() : "");
     const askId = str(p.askId);
     const title = str(p.title);
@@ -464,7 +499,13 @@ export function extractPermission(body: string): PermissionCardData | null {
       ? (p.options as unknown[])
           .map((o) => {
             const x = o as Record<string, unknown>;
-            return { id: str(x?.id), label: str(x?.label), tone: str(x?.tone) || undefined };
+            return {
+              id: str(x?.id),
+              label: str(x?.label),
+              tone: str(x?.tone) || undefined,
+              // Del protocolo, no del agente: es lo que deja traducir el botón. Ver `permLabel`.
+              kind: str(x?.kind) || undefined,
+            };
           })
           .filter((o) => o.id && o.label)
           .slice(0, 4)
@@ -473,20 +514,32 @@ export function extractPermission(body: string): PermissionCardData | null {
     // ofrecer una autorización que el agente nunca ofreció, y el `optionId` que mandáramos no
     // significaría nada del otro lado.
     if (!options.length) return null;
-    return { askId, title, options };
+    const fin = fences.find((f) => f.askId === askId && (typeof f.resolved === "string" || f.denied === true));
+    return {
+      askId,
+      title,
+      options,
+      resolved: typeof fin?.resolved === "string" ? fin.resolved : undefined,
+      denied: fin?.denied === true || undefined,
+    };
   } catch {
     return null;
   }
 }
 
-/** El cuerpo sin el bloque del permiso. */
+/** El cuerpo sin los bloques del permiso — TODOS: la pregunta y el que trae la decisión. */
 export function stripPermission(body: string): string {
-  const open = body.match(/```gt-perm[^\n]*\n/);
-  if (!open || open.index == null) return body;
-  const rest = body.slice(open.index + open[0].length);
-  const closeIdx = rest.indexOf("```");
-  if (closeIdx === -1) return body;
-  return (body.slice(0, open.index) + rest.slice(closeIdx + 3)).trim();
+  let out = body;
+  for (;;) {
+    const open = out.match(/```gt-perm[^\n]*\n/);
+    if (!open || open.index == null) return out.trim();
+    const rest = out.slice(open.index + open[0].length);
+    const closeIdx = rest.indexOf("```");
+    // Un fence sin cerrar se deja: quitarlo se llevaría por delante todo lo que venga
+    // después, que aún puede estar llegando.
+    if (closeIdx === -1) return out.trim();
+    out = out.slice(0, open.index) + rest.slice(closeIdx + 3);
+  }
 }
 
 /** El cuerpo sin el bloque de la pregunta, para no pintar el JSON crudo. */
