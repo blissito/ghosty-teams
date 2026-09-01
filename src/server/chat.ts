@@ -983,7 +983,21 @@ export const askAgent = createServerFn({ method: "POST" })
       // 3 mensajes o 300, y el agente contestaba sobre un recorte sin enterarse.
       const recent = await db.recentContext(scope, CATCHUP_FETCH).catch(() => []);
       const { esRecordatorio } = await import("./reminders.server");
-      const gap = gapDesdeUltimaRespuesta(recent, esRecordatorio);
+      // ⚠️ El hueco desde su última respuesta SÓLO vale si el agente conserva sus propios
+      // turnos. Un agente ACP cuya sesión no sobrevive a la reconexión empieza cada turno en
+      // blanco: mandarle únicamente el hueco es mandarle casi nada y darle por sabido el
+      // resto — la amnesia de @taller, que escribía un poema y al turno siguiente no sabía
+      // de qué le hablaban. A ése se le manda lo reciente COMPLETO.
+      //
+      // El dato lo aprende el propio turno (`AcpResult.retains`); no se deduce de
+      // `loadSession`, porque un agente puede no saber retomar y aun así conservar su sesión.
+      // La MISMA clave con la que el turno guardará su sesión más abajo: la conversación es
+      // por room, no por hilo (ver el comentario de `fleetThread`).
+      const gidCatchup = await agentGroupId(agent ?? { handle: data.handle }, `${channel.slug}-${data.fleetThread ?? FLEET_THREAD}`);
+      const retiene =
+        agent?.backend.kind !== "acp" ||
+        (await db.acpRetains(agent.handle, gidCatchup).catch(() => true));
+      const gap = retiene ? gapDesdeUltimaRespuesta(recent, esRecordatorio) : recent;
       // El COUNT sólo se paga si el fetch volvió lleno: si volvió corto ya tenemos la
       // conversación entera y el total es el largo del gap, sin query.
       let totalGap = gap.length;

@@ -1221,6 +1221,35 @@ export async function getAcpSession(agentHandle: string, groupId: string): Promi
   return (rows[0]?.session_id as string) ?? null;
 }
 
+/**
+ * ¿Este agente RETIENE la conversación entre turnos?
+ *
+ * `false` significa que hay que mandarle el contexto reciente COMPLETO, no sólo lo que pasó
+ * desde su última respuesta: el catch-up normal da por hecho que el agente conserva sus
+ * propios turnos, y con uno que no lo hace eso es exactamente la amnesia que vimos.
+ *
+ * NULL = aún no se sabe (nadie ha hablado con él). Se asume que SÍ retiene: es lo que hacen
+ * los agentes que teníamos, y mandar el contexto completo por si acaso lo pagaría cada turno
+ * de todos. El primer turno lo descubre y lo escribe.
+ */
+export async function acpRetains(agentHandle: string, groupId: string): Promise<boolean> {
+  const rows = await dbq("SELECT retains FROM gc_acp_sessions WHERE agent_handle = ? AND group_id = ?", [
+    agentHandle.toLowerCase(),
+    groupId,
+  ]);
+  return rows[0]?.retains == null ? true : Number(rows[0].retains) === 1;
+}
+
+/** Lo aprende el turno: si su sesión no sobrevivió, este agente no retiene. */
+export async function setAcpRetains(agentHandle: string, groupId: string, retains: boolean): Promise<void> {
+  await dbq(
+    `INSERT INTO gc_acp_sessions (agent_handle, group_id, session_id, retains, updated_at)
+     VALUES (?, ?, '', ?, unixepoch())
+     ON CONFLICT(agent_handle, group_id) DO UPDATE SET retains = excluded.retains`,
+    [agentHandle.toLowerCase(), groupId, retains ? 1 : 0]
+  );
+}
+
 export async function setAcpSession(agentHandle: string, groupId: string, sessionId: string): Promise<void> {
   await dbq(
     `INSERT INTO gc_acp_sessions (agent_handle, group_id, session_id, updated_at) VALUES (?, ?, ?, unixepoch())

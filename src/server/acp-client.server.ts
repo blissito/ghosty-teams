@@ -245,6 +245,17 @@ export interface AcpResult {
    * sería peor que no medir.
    */
   usage?: { inputTokens: number; outputTokens: number };
+  /**
+   * ¿El agente RETUVO la conversación de turnos anteriores?
+   *
+   * `false` cuando se le pasó un `sessionId` guardado y no sirvió: o no sabe retomar
+   * (`loadSession:false`) y su sesión no cruza conexiones, o su tope de sesiones ya la
+   * expulsó. En los dos casos empieza en blanco, y quien llama tiene que compensar
+   * mandándole el contexto reciente completo — si no, no recuerda ni lo que acaba de hacer.
+   *
+   * `undefined` cuando no había nada que retomar (primer turno): no se aprende nada.
+   */
+  retains?: boolean;
 }
 
 /** Firma el ticket de conexión. El `ns` va dentro: sin él serviría contra la caja de otro. */
@@ -512,6 +523,8 @@ async function unTurnoAcp(t: AcpTurn): Promise<AcpResult> {
      * camino de cada turno.
      */
     const puedeRetomar = init?.agentCapabilities?.loadSession === true;
+    /** Se aprende sobre la marcha: sólo hay algo que aprender si HABÍA sesión que retomar. */
+    let retains = t.sessionId ? true : undefined;
     let sessionId = t.sessionId ?? "";
     if (sessionId && puedeRetomar) {
       rehidratando = true;
@@ -522,6 +535,7 @@ async function unTurnoAcp(t: AcpTurn): Promise<AcpResult> {
         await llama("session/load", { sessionId, cwd: t.cwd ?? "/data/work", mcpServers: [] });
       } catch {
         sessionId = "";
+        retains = false;
       } finally {
         rehidratando = false;
       }
@@ -548,6 +562,7 @@ async function unTurnoAcp(t: AcpTurn): Promise<AcpResult> {
       // el turno no había emitido nada — reintentar a media respuesta la repetiría en el chat.
       if (!t.sessionId || texto || !(e instanceof AcpServerError)) throw e;
       console.log(`[acp ~] ${sessionId} no sirvió (${e.message}); abro sesión nueva`);
+      retains = false;
       await nuevaSesion();
       fin = await prompt();
     }
@@ -559,7 +574,7 @@ async function unTurnoAcp(t: AcpTurn): Promise<AcpResult> {
     const sal = Number(u?.outputTokens);
     const usage = Number.isFinite(ent) && Number.isFinite(sal) ? { inputTokens: ent, outputTokens: sal } : undefined;
 
-    return { text: texto, sessionId, stopReason: fin?.stopReason, usage };
+    return { text: texto, sessionId, stopReason: fin?.stopReason, usage, retains };
   } finally {
     cerrar();
   }

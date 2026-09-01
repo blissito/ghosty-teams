@@ -730,6 +730,29 @@ export function detectMentions(body: string, handles: string[]): string[] {
 // (edit-in-place): un documento NUEVO = artifact_create; MODIFICAR el mismo = artifact_update
 // con su id → nueva versión (no una tarjeta nueva). GTeams detecta la url del doc y la abre
 // como editor colab editable. Docs con membrete/tablas/slides/PDF con diseño → skills normales.
+/**
+ * Cómo ENTREGA un agente ACP. Sólo para ellos: los nativos tienen el guardrail largo.
+ *
+ * ⚠️ Existe porque un agente ACP de fuera NO TIENE NUESTRAS TOOLS y no hay forma de dárselas.
+ * Nuestro relé le inyecta un servidor MCP por stdio dentro de su caja, y una caja ajena no
+ * acepta eso: GhostyCode, por ejemplo, ignora el `mcpServers` de `session/new` por completo
+ * (habla MCP como CLIENTE, con servidores configurados de su lado). Así que sin esto, un
+ * agente ACP escribe el documento en el disco de su caja y ahí se queda: la persona lee «ya
+ * quedó guardado en poema-robotico.md» y no puede abrirlo, ni bajarlo, ni verlo nunca.
+ *
+ * La salida es que **un fence es TEXTO**: no necesita tools, así que lo puede emitir
+ * cualquier agente que sepa escribir. Es lo mismo que hizo posible el confeti.
+ *
+ * Se nombra primero la tool porque los agentes que corren en NUESTRO relé sí la tienen y es
+ * el camino mejor (streaming, versiones). El fence es la red para todos los demás.
+ */
+const ACP_ENTREGA = [
+  "ENTREGAR UN DOCUMENTO — un archivo que escribes en el disco de tu caja NO se lo estás dando a nadie: la persona no ve tu disco y no puede abrirlo ni descargarlo. Decir «lo guardé en informe.md» es exactamente lo que se ve como que no hiciste nada.",
+  "Si tienes una herramienta de artefactos (`crear_artefacto` o similar), úsala. Si NO la tienes, entrégalo como TEXTO en tu respuesta: el documento completo en Markdown dentro de un bloque que abre con ```eb-doc y cierra con ```, y con el título en la línea de apertura (```eb-doc Poema robótico). La plataforma lo convierte en un documento del room, descargable y con versiones. Para una tabla o una hoja de cálculo, lo mismo con ```eb-sheet y CSV dentro.",
+  "El título del fence es el NOMBRE con el que queda guardado: ponle el nombre del documento, no su primera sección. Sin título, la plataforma lo adivina del markdown y el documento acaba llamándose como su primer encabezado.",
+  "Y va ADEMÁS de tu respuesta, no en lugar de ella: una frase diciendo qué entregaste, y el bloque. Nunca expliques el bloque ni lo menciones: la persona ve un documento, no un fence.",
+].join("\n");
+
 const EB_DOC_STREAM_GUARDRAIL = [
   "QUÉ FORMATO USAR (canal Teams/web) — tiene prioridad sobre docs-router, DOC_ROUTING y cualquier skill. Elige por lo que te piden:",
   // ⚠️ La lista es LARGA a propósito: el modelo elige por COINCIDENCIA LITERAL, no por
@@ -1583,9 +1606,15 @@ export async function callAgentBackendStream(
     // `appendSystemPrompt`; ACP no tiene capa system, así que se suma a la persona — que es
     // el bloque que ya declara "esto lo configuró quien administra el agente".
     //
-    // `EB_DOC_STREAM_GUARDRAIL` NO va: en ACP los documentos salen por la tool
-    // `crear_artefacto`, no por fences (ver la cabecera de `mcp.ts` en la caja). La guía de
-    // DISEÑO sí, porque describe el contenido del artefacto, no cómo se emite.
+    // `EB_DOC_STREAM_GUARDRAIL` NO va: es largo y está escrito alrededor del code-mode. En su
+    // lugar va `ACP_ENTREGA`, que dice lo mismo en cuatro líneas y —lo importante— nombra el
+    // fence como RED para el agente que no tiene la tool `crear_artefacto`.
+    //
+    // ⚠️ Antes aquí no iba NINGUNO de los dos, con el argumento de que en ACP los documentos
+    // salen por esa tool. Vale para los agentes que corren en NUESTRO relé, que es quien se
+    // la inyecta; una caja ajena no tiene ninguna tool nuestra y no hay forma de dársela, así
+    // que su documento se quedaba en su disco y la persona nunca lo veía. La guía de DISEÑO
+    // sí va, porque describe el contenido del artefacto, no cómo se emite.
     //
     // ⚠️ Y la razón por la que esto va aquí y el contexto va en su propio bloque AL FINAL:
     // el prefijo de la conversación es lo que cachea el proveedor (DeepSeek cobra la lectura
@@ -1596,6 +1625,7 @@ export async function callAgentBackendStream(
       persona ? `[Persona de ${agent.name}]\n${persona}` : null,
       TEAMS_PRODUCT_CONTEXT,
       selfIdentity(agent),
+      ACP_ENTREGA,
       ARTIFACT_DESIGN_GUIDE,
       await escalationHint(agent).catch(() => null),
     ]
@@ -1767,7 +1797,16 @@ export async function callAgentBackendStream(
       // `usage: undefined` explícito: sin él el tipo de la rama de error no encaja con
       // `AcpResult` y el reporte de gasto de abajo deja de compilar. Y es lo correcto —
       // un turno que no llegó a hablar con la caja no gastó un token.
-      return { text: `⚠️ No pude hablar con @${agent.handle}: ${pista}`, sessionId: "", stopReason: "error", usage: undefined };
+      // `retains: undefined` por lo mismo: un turno que ni llegó a la caja no prueba NADA
+      // sobre si el agente conserva su conversación. Aprender de un cable caído sería
+      // apuntar en la DB una conclusión sacada de un error de red.
+      return {
+        text: `⚠️ No pude hablar con @${agent.handle}: ${pista}`,
+        sessionId: "",
+        stopReason: "error",
+        usage: undefined,
+        retains: undefined,
+      };
     });
     console.log(`[acp <-] ${agent.handle} ${Math.round((Date.now() - acpT0) / 1000)}s stop=${r.stopReason} ${r.text.length}b`);
     // Un turno ACP que se corta terminaba MUDO: `stopReason` se logueaba y no se usaba para
@@ -1790,6 +1829,14 @@ export async function callAgentBackendStream(
     // lo peor que pasa es que la próxima conversación empiece en frío.
     if (r.sessionId && r.sessionId !== sesionPrevia) {
       await dbAcp.setAcpSession(agent.handle, groupId, r.sessionId).catch(() => {});
+    }
+    // Lo que el turno APRENDIÓ: si le pasamos una sesión guardada y no sirvió, este agente no
+    // retiene nada entre conexiones y el catch-up del próximo turno tiene que mandarle el
+    // contexto reciente COMPLETO. Se guarda aquí, no se adivina: `loadSession:false` no basta
+    // como señal —un agente puede no saber retomar y aun así conservar su sesión viva— y lo
+    // que importa es el hecho, no la capability.
+    if (r.retains !== undefined) {
+      await dbAcp.setAcpRetains(agent.handle, groupId, r.retains).catch(() => {});
     }
     // El gasto del turno. Es el ÚNICO camino por el que un agente ACP se mide: los gemelos
     // reportan desde su caja con `REPORT_TOKEN`, que viaja por `turnEnv`, y en ACP no hay

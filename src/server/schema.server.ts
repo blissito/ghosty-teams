@@ -1285,6 +1285,15 @@ async function migrate(): Promise<void> {
     PRIMARY KEY (agent_handle, group_id)
   )`);
 
+  // ⚠️ Columna suelta, NUNCA dentro del CREATE de arriba: la tabla ya existe en producción y
+  // un `IF NOT EXISTS` no la altera. Es la firma exacta del incidente del 2026-07-29.
+  //
+  // 1 = el agente sabe RETOMAR su conversación (`loadSession` de ACP, o `session/prompt`
+  // contra un id viejo que sigue vivo). 0 = no, cada conexión empieza en blanco y hay que
+  // mandarle el contexto reciente COMPLETO o no recuerda ni lo que acaba de hacer.
+  // NULL = todavía no lo sabemos; lo escribe el propio turno al descubrirlo.
+  await addColumn("gc_acp_sessions", "retains", "INTEGER");
+
   // ─────────────────────────────────────────────────────────────────────────────
   // PROSPECCIÓN — outbound. Una lista de prospectos que se enriquece por COLUMNA
   // (la unidad de trabajo, como en Clay), se toca por correo, y sólo llega a

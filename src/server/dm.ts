@@ -368,7 +368,13 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
     const dmScope = { dmId: data.id };
     const recent = await db.recentContext(dmScope, CATCHUP_FETCH).catch(() => []);
     const { esRecordatorio } = await import("./reminders.server");
-    const gap = gapDesdeUltimaRespuesta(recent, esRecordatorio);
+    // ⚠️ Gemelo de chat.ts, y `dm.ts` siempre se queda atrás: el hueco desde su última
+    // respuesta sólo vale si el agente conserva sus propios turnos. Uno cuya sesión no
+    // sobrevive a la reconexión empieza en blanco, así que se le manda lo reciente COMPLETO.
+    const retiene =
+      agent?.backend.kind !== "acp" ||
+      (await db.acpRetains(agent.handle, await agentGroupId(agent, `dm-${data.id}`)).catch(() => true));
+    const gap = retiene ? gapDesdeUltimaRespuesta(recent, esRecordatorio) : recent;
     // Ver el gemelo en chat.ts: el COUNT sólo se paga si el fetch volvió lleno.
     let totalGap = gap.length;
     if (recent.length >= CATCHUP_FETCH) {

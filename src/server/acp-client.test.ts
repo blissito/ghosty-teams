@@ -662,6 +662,41 @@ describe("continuidad de la sesión", () => {
     expect(r.sessionId).toBe("ses-1");
   });
 
+  // Lo que el turno APRENDE, y que decide cuánto contexto se le manda al siguiente. No se
+  // deduce de `loadSession`: un agente puede no saber retomar y aun así conservar su sesión
+  // viva entre conexiones. Lo que importa es el hecho.
+  it("sin sesión previa no se aprende nada: no había nada que retomar", async () => {
+    const r = await turno().run();
+    expect(r.retains).toBeUndefined();
+  });
+
+  it("si la sesión guardada SIRVIÓ, el agente retiene", async () => {
+    declaraLoadSession = false;
+    const r = await turno({ sessionId: "ses-vieja" }).run();
+    expect(r.retains).toBe(true);
+  });
+
+  it("si NO sirvió, el agente no retiene y hay que compensarlo con contexto", async () => {
+    declaraLoadSession = false;
+    let primera = true;
+    guion = (ws, m) => {
+      if (primera) {
+        primera = false;
+        ws.send(env({ id: m.id }, { error: { code: -32602, message: "unknown sessionId" } }));
+        return;
+      }
+      ws.send(env({ id: m.id }, { result: { stopReason: "end_turn" } }));
+    };
+    const r = await turno({ sessionId: "ses-muerta" }).run();
+    expect(r.retains).toBe(false);
+  });
+
+  it("un session/load que falla también dice que no retiene", async () => {
+    cargaFalla = true;
+    const r = await turno({ sessionId: "ses-vieja" }).run();
+    expect(r.retains).toBe(false);
+  });
+
   it("si el id guardado ya no vale, se abre nueva y se reintenta UNA vez", async () => {
     declaraLoadSession = false;
     let primera = true;
