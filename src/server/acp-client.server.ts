@@ -1150,14 +1150,19 @@ const AWAKE_TTL_MS = 4 * 60_000;
 export const BOX_GONE = "preview host";
 
 /**
- * Despierta la caja ANTES de abrir el WebSocket.
+ * Comprueba la caja antes de abrir el WebSocket, y de paso la despierta.
  *
- * ⚠️ Un WebSocket **no resucita una microVM dormida**. Quien la resucita es
- * `publicProxy` del host, y sólo cuando le llega una petición **HTTP**: hace `acquireHTTP`
- * → `resumeLocked` ANTES de mirar rutas ni puertos, así que hasta un 404 del servicio la
- * despierta — lo que cuenta es que la petición LLEGUE. Sin esto, el primer turno tras unas
- * horas de silencio falla y el segundo funciona, que es la peor forma de esconder un bug:
- * "reintenta" parece arreglarlo.
+ * ⚠️ **CORRECCIÓN del 2026-09-01**: esto nació creyendo que un WebSocket no resucita una
+ * microVM dormida. **Es falso, y está medido**: se suspendió una caja a mano y se le mandó
+ * SÓLO el upgrade del WS — quedó `running`. La razón es obvia una vez vista: un upgrade
+ * ES una petición HTTP, y `publicProxy` hace `acquireHTTP` → `resumeLocked` antes de mirar
+ * rutas ni puertos. No distingue el `Upgrade`.
+ *
+ * Entonces esto ya NO existe para despertar —el socket lo hace solo— sino para **saber si la
+ * caja sigue existiendo** y poder decirlo. Una caja destruida contesta por el socket con un
+ * `Unexpected server response: 404` que no le dice nada a nadie; aquí se distingue y se
+ * traduce. Lo que mata cajas no es no despertarlas: es crearlas sin `suspendOnIdle`, y ahí
+ * el reaper las DESTRUYE al vencer su TTL en vez de dormirlas.
  *
  * ⚠️ **NO se pide `/health`**, aunque el despertador gemelo de las llamadas
  * (`despertarSfu`, quick-calls.ts) lo haga. El sandbox-router declara su propio
