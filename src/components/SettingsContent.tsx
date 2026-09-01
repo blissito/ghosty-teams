@@ -32,6 +32,24 @@ import { Monitor, Sun, Moon, Check, SlidersHorizontal, Palette, SwatchBook, Gith
 import { workspaceUsageFn } from "../server/workspaces";
 import { listMyConnectorsFn, disconnectConnectorFn, shareConnectorFn, connectCredentialsFn } from "../server/connectors";
 import { probeAcpBoxFn } from "../server/agent-ask";
+
+/**
+ * Lo que se enseña de un agente ACP tras el saludo. Sale de `initialize`, no de una ruta
+ * HTTP: `/busy` es nuestra y sólo aparece cuando el agente resulta ser nuestro relé.
+ */
+function acpProbeDetails(
+  b: { protocolVersion: number | null; loadSession: boolean; image: boolean; busySessions: number | null },
+  t: (s: string, v?: Record<string, string>) => string,
+): string[] {
+  const out: string[] = [];
+  if (b.protocolVersion != null) out.push(t("ACP v{n}", { n: String(b.protocolVersion) }));
+  if (b.loadSession) out.push(t("retoma sesiones"));
+  if (b.image) out.push(t("acepta imágenes"));
+  if (b.busySessions != null) {
+    out.push(b.busySessions ? t("{n} sesión(es) abiertas", { n: String(b.busySessions) }) : t("sin sesiones"));
+  }
+  return out.length ? out : [t("contestó el saludo")];
+}
 import { listWaChannelsFn, disconnectWaFn, setWaAgentFn, type WaChannelView } from "../server/whatsapp";
 import { forwardTargetsFn } from "../server/forward";
 import { listAgentsFn } from "../server/agents";
@@ -2111,19 +2129,20 @@ function AddAgentForm({ onClose, onCreated }: { onClose: () => void; onCreated: 
                   setErr(null);
                   setProbe(null);
                   try {
-                    // No hay card que leer —la caja es nuestra— así que se comprueba que
-                    // esté VIVA y si tiene sesiones abiertas. `/busy` va por HTTPS sobre el
-                    // mismo host y puerto; el socket sólo cambia el esquema.
+                    // Se le hace el saludo ACP (`initialize`) y se enseña lo que CONTESTA,
+                    // igual que el alta A2A enseña lo que dice el AgentCard. No se pregunta
+                    // por `/busy` ni por `/health`: no son del protocolo y un agente que no
+                    // sea nuestro relé devuelve 404 en las dos.
                     // Va por el SERVIDOR: la caja no manda cabeceras CORS, así que un fetch
                     // del navegador falla antes de poder leer nada.
                     const b = await probeAcpBoxFn({ data: { wsUrl: wsUrl.trim() } });
                     setProbe({
-                      name: t("Caja viva"),
-                      skills: [b.sessions ? t("{n} sesión(es) abiertas", { n: String(b.sessions) }) : t("sin sesiones")],
+                      name: b.agentName ? `${b.agentName}${b.agentVersion ? ` ${b.agentVersion}` : ""}` : t("Agente ACP vivo"),
+                      skills: acpProbeDetails(b, t),
                       streaming: true, // ACP siempre streamea; el campo es del probe de A2A
                     });
                   } catch (e) {
-                    setErr(t("la caja no responde") + `: ${e instanceof Error ? e.message : e}`);
+                    setErr(t("el agente no responde") + `: ${e instanceof Error ? e.message : e}`);
                   }
                   setProbing(false);
                 }}
@@ -2482,11 +2501,11 @@ function EditAgentForm({
                         // fetch del navegador falla antes de poder leer nada.
                         const b = await probeAcpBoxFn({ data: { wsUrl: wsUrl.trim() } });
                         setProbe({
-                          name: t("Caja viva"),
-                          skills: [b.sessions ? t("{n} sesión(es) abiertas", { n: String(b.sessions) }) : t("sin sesiones")],
+                          name: b.agentName ? `${b.agentName}${b.agentVersion ? ` ${b.agentVersion}` : ""}` : t("Agente ACP vivo"),
+                          skills: acpProbeDetails(b, t),
                         });
                       } catch (e) {
-                        setErr(t("la caja no responde") + `: ${e instanceof Error ? e.message : e}`);
+                        setErr(t("el agente no responde") + `: ${e instanceof Error ? e.message : e}`);
                       }
                       setProbing(false);
                     }}

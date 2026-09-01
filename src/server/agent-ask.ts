@@ -63,12 +63,16 @@ export const answerAgentAskFn = createServerFn({ method: "POST" })
   });
 
 /**
- * Comprueba que una caja ACP esté viva, DESDE EL SERVIDOR.
+ * Comprueba que un agente ACP esté vivo, DESDE EL SERVIDOR, con el handshake del protocolo.
  *
  * Hacerlo desde el navegador no funciona: la caja no manda cabeceras CORS, así que el fetch
  * falla antes de leer nada y el usuario ve un botón que se queda pensando. Y aunque las
  * mandara, el navegador tampoco alcanza una caja que no esté expuesta al público — el
  * servidor sí.
+ *
+ * ⚠️ Antes esto pegaba a `/busy`, que NO es del protocolo, y por eso un agente que no fuera
+ * nuestro relé (GhostyCode, Zed, uno de un tercero) fallaba con «la caja respondió 404»
+ * teniendo el WebSocket sano. Ver `acpHandshake`.
  */
 export const probeAcpBoxFn = createServerFn({ method: "POST" })
   .validator((d: { wsUrl: string }) => d)
@@ -76,25 +80,45 @@ export const probeAcpBoxFn = createServerFn({ method: "POST" })
     const user = await sessionUser();
     if (!user) throw new Error("sesión requerida");
 
-    const raw = data.wsUrl.trim();
-    let u: URL;
-    try {
-      u = new URL(raw);
-    } catch {
-      throw new Error("URL inválida");
-    }
-    if (u.protocol !== "wss:" && u.protocol !== "ws:") {
-      throw new Error("tiene que ser una URL de WebSocket (wss://…)");
-    }
-    // `/busy` vive en el mismo host y puerto que el socket; sólo cambia el esquema.
-    const health = new URL(raw.replace(/^ws/, "http"));
-    health.pathname = "/busy";
-    health.search = "";
-
-    const res = await fetch(health.toString()).catch((e) => {
+    const raw = normalizeWsUrl(data.wsUrl);
+    const { acpHandshake, acpBusy } = await import("./acp-client.server");
+    const { currentNamespace } = await import("./tenant.server");
+    const ns = await currentNamespace();
+    const hs = await acpHandshake({ wsUrl: raw, ns, sub: user.sub }).catch((e) => {
       throw new Error(`no responde: ${e instanceof Error ? e.message : e}`);
     });
-    if (!res.ok) throw new Error(`la caja respondió ${res.status}`);
-    const b = (await res.json()) as { busy?: boolean; sessions?: number };
-    return { ok: true as const, busy: !!b.busy, sessions: b.sessions ?? 0 };
+    // Dato extra, nunca requisito: un 404 aquí sólo dice que no es nuestro relé.
+    const busy = await acpBusy(raw);
+    // Se aplana a primitivos a propósito: lo que cruza a la UI son DATOS, no el objeto
+    // crudo del agente (que no es serializable ni tiene forma garantizada).
+    const caps = hs.agentCapabilities as any;
+    return {
+      ok: true as const,
+      agentName: hs.agentName ?? null,
+      agentVersion: hs.agentVersion ?? null,
+      protocolVersion: hs.protocolVersion ?? null,
+      loadSession: caps?.loadSession === true,
+      image: caps?.promptCapabilities?.image === true,
+      busySessions: busy ? busy.sessions : null,
+    };
   });
+
+/**
+ * Valida y normaliza la URL de un agente ACP. Vive aquí porque el probe y el alta tienen que
+ * exigir lo MISMO: dos criterios distintos para la misma pregunta es exactamente lo que hacía
+ * que «Probar» fallara y «Guardar» funcionara (o al revés), que es lo que confunde al usuario.
+ */
+export function normalizeWsUrl(raw: string): string {
+  const v = (raw ?? "").trim();
+  if (!v) throw new Error("URL del agente requerida");
+  let u: URL;
+  try {
+    u = new URL(v);
+  } catch {
+    throw new Error("URL inválida");
+  }
+  if (u.protocol !== "wss:" && u.protocol !== "ws:") {
+    throw new Error("tiene que ser una URL de WebSocket (wss://…)");
+  }
+  return v;
+}

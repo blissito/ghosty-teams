@@ -722,3 +722,109 @@ export function bloquesDelTurno(t: AcpTurn, caps: { puedeImagen: boolean }): Acp
   bloques.push({ type: "text", text: t.text });
   return bloques;
 }
+
+/** Lo que un agente ACP dice de sí mismo al saludarlo. Todo opcional: la spec no obliga. */
+export type AcpHandshake = {
+  agentName?: string;
+  agentVersion?: string;
+  protocolVersion?: number;
+  agentCapabilities?: Record<string, unknown>;
+  /** `/busy` es NUESTRO, no del protocolo: un 404 aquí no dice nada malo del agente. */
+  busy?: { busy: boolean; sessions: number } | null;
+};
+
+/**
+ * ¿Está vivo este agente ACP? Se le pregunta con `initialize`, que es lo ÚNICO que el
+ * protocolo garantiza.
+ *
+ * ⚠️ No se comprueba con `/health` ni con `/busy`. Ninguna de las dos es de ACP: `/busy` la
+ * expone NUESTRO relé para que el daemon de sandbox-host sepa si puede congelar la microVM,
+ * y cualquier otro agente —GhostyCode con `ghosty serve --acp --acp-http`, Zed, uno de un
+ * tercero— devuelve 404 ahí. Comprobado contra una caja viva: `/health` 200, `/busy` 404, y
+ * el alta fallaba con «la caja respondió 404» teniendo el WebSocket perfectamente sano.
+ *
+ * El handshake es además una prueba MÁS FUERTE que cualquier ping: es exactamente lo que
+ * hará el primer mensaje que alguien mande. Mismo criterio que el alta A2A, que lee el
+ * AgentCard antes de guardar.
+ */
+export async function acpHandshake(o: {
+  wsUrl: string;
+  ns: string;
+  sub: string;
+  timeoutMs?: number;
+}): Promise<AcpHandshake> {
+  const budget = o.timeoutMs ?? 5000;
+  const ws = new WebSocket(acpTicketUrl(o.wsUrl, o.ns, o.sub));
+  let closed = false;
+  const close = () => {
+    if (closed) return;
+    closed = true;
+    try {
+      ws.close();
+    } catch {}
+  };
+  try {
+    const init = await new Promise<any>((res, rej) => {
+      const to = setTimeout(() => rej(new Error("no contestó `initialize` a tiempo")), budget);
+      const settle = (e?: Error, v?: any) => {
+        clearTimeout(to);
+        e ? rej(e) : res(v);
+      };
+      ws.on("error", (e: Error) => settle(e));
+      // El relé rechaza mandando un error SIN `id` y cerrando; un cierre a secas también
+      // es un no. Sin esto la promesa se quedaría colgada hasta el timeout.
+      ws.on("close", () => settle(new Error("cerró la conexión sin saludar")));
+      ws.on("message", (raw: Buffer | string) => {
+        for (const line of String(raw).split("\n")) {
+          if (!line.trim()) continue;
+          let m: any;
+          try {
+            m = JSON.parse(line);
+          } catch {
+            continue;
+          }
+          if (m.error) return settle(new AcpServerError(m.error.message || "error del agente", m.error.code));
+          if (m.id === 1) return settle(undefined, m.result);
+        }
+      });
+      ws.on("open", () => {
+        ws.send(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id: 1,
+            method: "initialize",
+            // Mismas capabilities que un turno real: sin `fs` ni `terminal` a propósito
+            // (ver la cabecera de este módulo). El saludo tiene que ser el MISMO.
+            params: { protocolVersion: 1, clientCapabilities: {} },
+          }),
+        );
+      });
+    });
+    return {
+      agentName: init?.agentInfo?.name,
+      agentVersion: init?.agentInfo?.version,
+      protocolVersion: init?.protocolVersion,
+      agentCapabilities: init?.agentCapabilities,
+    };
+  } finally {
+    close();
+  }
+}
+
+/**
+ * `/busy` como DATO EXTRA, nunca como requisito. Es ruta nuestra: un 404 significa «este
+ * agente no es nuestro relé», no «está muerto». Por eso devuelve `null` en vez de tirar.
+ */
+export async function acpBusy(wsUrl: string): Promise<{ busy: boolean; sessions: number } | null> {
+  try {
+    const u = new URL(wsUrl.replace(/^ws/, "http"));
+    u.pathname = "/busy";
+    u.search = "";
+    const res = await fetch(u.toString());
+    if (!res.ok) return null;
+    const b = (await res.json()) as { busy?: boolean; sessions?: number };
+    return { busy: !!b.busy, sessions: b.sessions ?? 0 };
+  } catch {
+    return null;
+  }
+}

@@ -304,28 +304,26 @@ export const createAgentFn = createServerFn({ method: "POST" })
       const { connectTeamsChannel } = await import("./agent-config");
       await connectTeamsChannel(fleetId, fleetToken, "easybits"); // este camino adopta uno de EasyBits
     } else if (data.kind === "acp") {
-      // Se comprueba que la caja ESTÉ VIVA antes de guardar. No hay card que descubrir —la
-      // caja es nuestra— pero sí un `/health`, y guardar una URL muerta sólo mueve el fallo
-      // al primer mensaje que alguien mande en un canal.
-      const raw = data.wsUrl?.trim();
-      if (!raw) throw new Error("URL del agente requerida");
-      let u: URL;
-      try {
-        u = new URL(raw);
-      } catch {
-        throw new Error("URL inválida");
-      }
-      if (u.protocol !== "wss:" && u.protocol !== "ws:") {
-        throw new Error("tiene que ser una URL de WebSocket (wss://…)");
-      }
-      // El health va por HTTPS sobre el mismo host y puerto; el socket sólo cambia el esquema.
-      const health = new URL(raw.replace(/^ws/, "http"));
-      health.pathname = "/health";
-      health.search = "";
-      const res = await fetch(health.toString()).catch(() => null);
-      if (!res?.ok) throw new Error(`la caja no responde en ${health.host}`);
+      // Se comprueba que el agente ESTÉ VIVO antes de guardar, con `initialize` — el mismo
+      // handshake que hará el primer mensaje, y lo ÚNICO que el protocolo garantiza.
+      //
+      // ⚠️ Antes se pedía `/health`, que no es de ACP: un agente de un tercero no tiene por
+      // qué exponerlo, igual que no expone `/busy`. Y el probe del botón «Probar» miraba una
+      // ruta DISTINTA que ésta, así que uno podía fallar y el otro pasar sobre la misma caja.
+      // Hoy los dos llaman a `probeAcpBoxFn`/`acpHandshake`: un solo criterio.
+      const { normalizeWsUrl } = await import("./agent-ask");
+      const raw = normalizeWsUrl(data.wsUrl ?? "");
+      const { acpHandshake } = await import("./acp-client.server");
+      const { currentNamespace } = await import("./tenant.server");
+      const hs = await acpHandshake({
+        wsUrl: raw,
+        ns: await currentNamespace(),
+        sub: user.sub,
+      }).catch((e) => {
+        throw new Error(`el agente no contestó el saludo ACP: ${e instanceof Error ? e.message : e}`);
+      });
       wsUrl = raw;
-      if (!name) name = handle;
+      if (!name) name = hs.agentName?.slice(0, 40) || handle;
     } else if (data.kind === "a2a") {
       // El alta A2A LEE el card antes de guardar. Es la razón de ser del protocolo: si el
       // descubrimiento funciona, guardamos algo que sabemos que sirve; si no, se dice ahora
