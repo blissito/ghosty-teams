@@ -1136,8 +1136,18 @@ const seenAwake = new Map<string, number>();
  */
 const AWAKE_TTL_MS = 4 * 60_000;
 
-/** Lo que contesta el ROUTER cuando la caja ya no existe. Ver `wakeBox`. */
-export const BOX_GONE = "preview host not found";
+/**
+ * Cómo se ve, desde fuera, que la caja ya no existe.
+ *
+ * ⚠️ Son DOS capas con DOS mensajes distintos, y mirar sólo uno deja pasar la mitad de los
+ * casos: el `sandbox-router` (el front de varios fierros) dice «preview host not found» y el
+ * daemon de cada fierro dice «not a valid preview host». Con sólo el primero, una caja
+ * destruida salía como el `Unexpected server response: 404` crudo del WebSocket — que fue
+ * exactamente lo que vio el usuario el 2026-09-01 cuando la caja de gemini desapareció.
+ *
+ * Se compara por «preview host», que es lo común a los dos y no depende de qué capa conteste.
+ */
+export const BOX_GONE = "preview host";
 
 /**
  * Despierta la caja ANTES de abrir el WebSocket.

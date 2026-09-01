@@ -66,6 +66,11 @@ describe("wakeBox", () => {
   it("el 404 del router (caja reciclada) se distingue del 404 del agente", async () => {
     notFoundBody = "preview host not found";
     expect(await wakeBox(url)).toEqual({ gone: true });
+    // ⚠️ Y el del DAEMON, que es OTRO mensaje. Mirar sólo el del router dejaba pasar la
+    // mitad de los casos: el 2026-09-01 una caja destruida salió como el 404 crudo del
+    // WebSocket porque el fierro contestó con esta otra frase.
+    notFoundBody = '{"error":"not a valid preview host"}';
+    expect(await wakeBox(url + "?a=1")).toEqual({ gone: true });
     notFoundBody = null;
     // Mismo status, significado opuesto: el del agente sólo dice que esa ruta no existe.
     expect(await wakeBox(url + "?x=1")).toEqual({ gone: false });
