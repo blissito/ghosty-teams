@@ -201,6 +201,15 @@ async function endCall(
 ): Promise<void> {
   active.delete(k);
   fanout({ t: "quickcall:ended", scope: c.scope, scopeId: c.scopeId, callId: c.callId });
+  // Grabación huérfana: la llamada se cierra con el REC andando (el último se fue sin
+  // pararla, o cerró la pestaña). Se para, se guarda y se anuncia a nombre de quien la
+  // inició. Sin esperar: subir el MP4 tarda y esto corre también desde el reaper.
+  if (c.recording) {
+    const rec = c.recording;
+    void finalizeRecording(db, c, { sub: rec.bySub, name: rec.byName, avatar: c.host.sub === rec.bySub ? c.host.avatar : "" }).catch(
+      (e) => console.error("[call-rec] grabación huérfana:", e)
+    );
+  }
   // Retira el "te llaman" del sistema: sin esto queda una notificación muerta que al
   // tocarla no lleva a ninguna llamada (requireInteraction = persiste hasta cerrarla).
   if (c.pushed.length) {
@@ -542,6 +551,66 @@ export const startCallRecordingFn = createServerFn({ method: "POST" })
     return { ok: true as const, recording: true, startedAt: c.recording.startedAt };
   });
 
+/**
+ * Para la grabación, la deja a salvo y la anuncia. Lo llama el botón Detener y también
+ * `endCall`: antes, si el último salía con la grabación andando, nadie la paraba — la caja
+ * seguía grabando una sala vacía y la UI perdía el botón para detenerla.
+ *
+ * `who` firma el anuncio: quien pulsó Detener, o quien la inició si la cerró la llamada.
+ * Devuelve `null` si la caja no pudo parar (ya se dijo por consola).
+ */
+async function finalizeRecording(
+  db: typeof import("../db.server"),
+  c: ActiveCall,
+  who: Person
+): Promise<{ url: string; transcriptUrl: string | null } | null> {
+  if (!c.recording) return null;
+  const { stopCallRecording, saveCallRecording } = await import("./call-recording.server");
+  const startedBy = c.recording.byName;
+  // Se marca como parada ANTES de esperar la subida: parar y subir un MP4 de dos horas
+  // tarda, y dejar el testigo rojo encendido mientras tanto hace que alguien vuelva a
+  // pulsar y se lleve un "no se está grabando" con la grabación a medio guardar.
+  c.recording = undefined;
+  c.fanout({ t: "quickcall:recording", scope: c.scope, scopeId: c.scopeId, recording: false });
+
+  let r: Awaited<ReturnType<typeof stopCallRecording>>;
+  try {
+    r = await stopCallRecording();
+  } catch (e) {
+    console.error("[call-rec] no pude detener:", e);
+    return null;
+  }
+  await saveCallRecording(
+    { scope: c.scope, scopeId: c.scopeId, channelId: c.scope === "room" ? c.scopeId : 0 },
+    r,
+    startedBy,
+    c.label
+  ).catch((e) => console.error("[call-rec] no pude guardar la fila:", e));
+
+  // Y se ANUNCIA en el chat, igual que en el room de eventos: lo publica una persona con
+  // su nombre, no un "sistema" anónimo — un mensaje sin cara se lee como spam.
+  //
+  // También en DM: antes la URL sólo iba en la respuesta del botón, así que quien paraba y
+  // se salía antes de que terminara de subir no la veía nunca.
+  //
+  // En su propio try/catch: que falle avisar no puede tumbar el guardado, porque la
+  // grabación YA está a salvo en storage.
+  try {
+    const minutos = r.startedAt ? Math.max(1, Math.round(Date.now() / 1000 / 60 - r.startedAt / 60)) : null;
+    const body = `🎬 Grabación lista${minutos ? ` (${minutos} min)` : ""} — [ver o descargar](${r.url})\n\n_El enlace caduca en 7 días._`;
+    const base = { sender: who.name, senderSub: who.sub, avatar: who.avatar || "", body };
+    const { id: mid } =
+      c.scope === "room"
+        ? await db.createMessage({ channelId: c.scopeId, parentId: null, ...base })
+        : await db.createDmMessage({ dmId: c.scopeId, ...base });
+    const msg = await db.getMessage(mid);
+    if (msg) c.fanout({ t: "message:new", msg });
+  } catch (e) {
+    console.error("[call-rec] no pude anunciar la grabación:", e);
+  }
+  return { url: r.url, transcriptUrl: r.transcriptUrl };
+}
+
 export const stopCallRecordingFn = createServerFn({ method: "POST" })
   .validator((d: Target) => d)
   .handler(async ({ data }) => {
@@ -551,52 +620,8 @@ export const stopCallRecordingFn = createServerFn({ method: "POST" })
     if (c.host.sub !== t.me.sub) return { ok: false as const, error: "Sólo startedBy inició la llamada puede detener la grabación" };
     if (!c.recording) return { ok: false as const, error: "No se está grabando" };
 
-    const { stopCallRecording, saveCallRecording } = await import("./call-recording.server");
-    const startedBy = c.recording.byName;
-    // Se marca como parada ANTES de esperar la subida: parar y subir un MP4 de dos horas
-    // tarda, y dejar el testigo rojo encendido mientras tanto hace que alguien vuelva a
-    // pulsar y se lleve un "no se está grabando" con la grabación a medio guardar.
-    c.recording = undefined;
-    t.fanout({ t: "quickcall:recording", scope: c.scope, scopeId: c.scopeId, recording: false });
-
-    let r: Awaited<ReturnType<typeof stopCallRecording>>;
-    try {
-      r = await stopCallRecording();
-    } catch (e) {
-      return { ok: false as const, error: (e as Error).message || "No pude detener la grabación" };
-    }
-    await saveCallRecording(
-      { scope: c.scope, scopeId: c.scopeId, channelId: c.scope === "room" ? c.scopeId : 0 },
-      r,
-      startedBy,
-      c.label
-    ).catch((e) => console.error("[call-rec] no pude guardar la fila:", e));
-
-    // Y se ANUNCIA en el chat, igual que en el room de eventos: lo publica startedBy detuvo,
-    // con su nombre, no un "sistema" anónimo — un mensaje sin cara se lee como spam.
-    //
-    // ⚠️ Sólo en un room: un DM no tiene `channel_id` donde colgar el mensaje, y startedBy
-    // paró ya recibe la URL en la respuesta.
-    //
-    // ⚠️ Y en su propio try/catch: que falle avisar no puede tumbar el guardado, porque la
-    // grabación YA está a salvo en storage.
-    if (c.scope === "room") {
-      try {
-        const minutos = r.startedAt ? Math.max(1, Math.round(Date.now() / 1000 / 60 - r.startedAt / 60)) : null;
-        const { id: mid } = await t.db.createMessage({
-          channelId: c.scopeId,
-          parentId: null,
-          sender: t.me.name,
-          senderSub: t.me.sub,
-          avatar: t.me.avatar || "",
-          body: `🎬 Grabación lista${minutos ? ` (${minutos} min)` : ""} — [ver o descargar](${r.url})\n\n_El enlace caduca en 7 días._`,
-        });
-        const msg = await t.db.getMessage(mid);
-        if (msg) t.fanout({ t: "message:new", msg });
-      } catch (e) {
-        console.error("[call-rec] no pude anunciar la grabación:", e);
-      }
-    }
+    const r = await finalizeRecording(t.db, c, { sub: t.me.sub, name: t.me.name, avatar: t.me.avatar });
+    if (!r) return { ok: false as const, error: "No pude detener la grabación" };
     return { ok: true as const, url: r.url, transcriptUrl: r.transcriptUrl };
   });
 
