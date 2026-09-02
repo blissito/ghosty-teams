@@ -1574,7 +1574,18 @@ function ChannelPage() {
 
   // Quita un mensaje de todas las caches (flujo, hilos, DMs). Reusado por el
   // evento message:deleted y por el borrado optimista.
-  const removeMessageLocal = (id: number) => {
+  const removeMessageLocal = (id: number, parentId?: number | null) => {
+    // El padre pierde una respuesta. El contador es un COUNT vivo en el servidor, pero en
+    // pantalla es un número cacheado que `message:new` sube y nadie bajaba: tras borrar las
+    // respuestas, el room seguía diciendo «3 respuestas» hasta recargar. El `parent_id` se
+    // toma del evento o, en el borrado optimista, del propio mensaje antes de quitarlo.
+    const pid =
+      parentId ??
+      [...flowCache.values(), ...dmFlowCache.values()].flat().find((m) => m.id === id)?.parent_id ??
+      [...threadCache.values()].flatMap((t) => t.replies).find((m) => m.id === id)?.parent_id ??
+      null;
+    if (pid != null)
+      patchMessage(pid, (m) => ({ ...m, reply_count: Math.max(0, (m.reply_count ?? 0) - 1) }));
     for (const [slug, arr] of flowCache)
       if (arr.some((m) => m.id === id)) flowCache.set(slug, arr.filter((m) => m.id !== id));
     for (const [tid, t] of threadCache)
@@ -1777,7 +1788,9 @@ function ChannelPage() {
         break;
       }
       case "message:deleted": {
-        removeMessageLocal(ev.id); // idempotente — ya pudo quitarlo el borrado optimista
+        // ⚠️ Idempotente sólo si el borrado optimista ya no lo encuentra: el contador se
+        // resta cuando el mensaje SIGUE en caché, y el eco lo encuentra ya quitado.
+        removeMessageLocal(ev.id, ev.parentId ?? null);
         break;
       }
       case "reaction":

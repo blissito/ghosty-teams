@@ -306,7 +306,15 @@ function RoomAbierto() {
     // La cáscara de un turno en blanco se borra en el servidor; sin esto quedaba una
     // burbuja vacía del agente en pantalla hasta recargar.
     if (ev.t === "message:deleted") {
-      return setMessages((prev) => prev.filter((m) => m.id !== ev.id));
+      // Y el padre pierde una respuesta: el contador es cacheado, nadie lo bajaba.
+      const pid = ev.parentId as number | null | undefined;
+      return setMessages((prev) =>
+        prev
+          .filter((m) => m.id !== ev.id)
+          .map((m) =>
+            pid != null && m.id === pid ? { ...m, reply_count: Math.max(0, (m.reply_count ?? 0) - 1) } : m,
+          ),
+      );
     }
     // ⚠️ Una reacción se aplica AQUÍ, sobre el estado, y no re-pidiendo el flujo: el
     // sondeo va con `after`, o sea que sólo trae mensajes NUEVOS. Reaccionar a algo de
