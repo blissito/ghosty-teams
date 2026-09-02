@@ -112,7 +112,11 @@ export async function switchShareSource(lp: LocalParticipant): Promise<boolean> 
     shareTracks.delete(prev);
   }
   hardenShareTrack(track);
-  // El "Dejar de compartir" nativo del navegador tiene que seguir cortando tras el cambio.
-  vtrack.onended = () => void stopShare(lp);
+  // El "Dejar de compartir" nativo del navegador sigue cortando tras el cambio: el SDK
+  // vuelve a colgar su `ended` en la pista nueva (setMediaStreamTrack) y al terminar una
+  // pista de ScreenShare la despublica él mismo (LocalParticipant.handleTrackEnded).
+  // Aquí sólo se barren las pistas que el SDK no conoce; despublicar también desde aquí
+  // metía dos `unpublish` en carrera.
+  vtrack.onended = () => killShareTracks();
   return true;
 }
