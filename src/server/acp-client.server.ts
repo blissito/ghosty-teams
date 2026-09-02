@@ -204,6 +204,11 @@ export interface AcpTurn {
    * `session/load`. Ver el comentario donde se usa.
    */
   retains?: boolean;
+  /**
+   * La caja YA NO EXISTE en el host. Si viene, se llama UNA vez y el turno se reintenta;
+   * sin esto el error se dice y ya. Ver `acp-revive.server.ts`.
+   */
+  onGone?: () => Promise<void>;
   signal?: AbortSignal;
   timeoutMs?: number;
   /**
@@ -462,11 +467,21 @@ export function acpTicketUrl(wsUrl: string, ns: string, sub: string, tools = fal
 export async function runAcpTurn(t: AcpTurn): Promise<AcpResult> {
   const ESPERAS = t.reintentosMs ?? [600, 1500, 3000];
   let intento = 0;
+  let revivida = false;
   for (;;) {
     let emitio = false;
     try {
       return await unTurnoAcp({ ...t, onUpdate: async (u) => { emitio = true; await t.onUpdate(u); } });
     } catch (e) {
+      // La caja no existe: se pide al dueño que la recree y se reintenta UNA vez. Mismo
+      // guard que abajo —antes de emitir nada—, aunque aquí se cumple por construcción: el
+      // `gone` se detecta antes de abrir el socket.
+      if (e instanceof BoxGoneError && t.onGone && !revivida && !emitio) {
+        revivida = true;
+        await t.onGone();
+        forgetAwake(t.wsUrl);
+        continue;
+      }
       // ⚠️ `e.delRele` no es un detalle: `CUPO_LLENO` y el `auth_required` de ACP son el
       // MISMO número (-32000). Sin esa condición, un agente que pide autenticarse hacía
       // reintentar el turno entero cuatro veces.
@@ -485,9 +500,9 @@ async function unTurnoAcp(t: AcpTurn): Promise<AcpResult> {
   // `wakeBox`. Si la caja ya no existe se dice AQUÍ: por el socket saldría como
   // «Unexpected server response: 404», que no le dice nada a nadie.
   if ((await wakeBox(t.wsUrl)).gone) {
-    throw new Error(
+    throw new BoxGoneError(
       "la caja de este agente ya no existe (la recicló el host tras días sin usarse). " +
-        "Hay que volver a levantarla.",
+        (t.onGone ? "No se pudo volver a levantar." : "Hay que volver a levantarla."),
     );
   }
   const ws = new WebSocket(acpTicketUrl(t.wsUrl, t.workspaceNs, t.sub, !!t.onDeliver), {
@@ -1122,12 +1137,19 @@ export async function acpHandshake(o: {
   /** Bearer de la caja, si la suya lo pide. Ver `AcpTurn.token`. */
   token?: string;
   timeoutMs?: number;
+  /** Igual que en `AcpTurn`: quién recrea la caja si ya no existe. Una sola vez. */
+  onGone?: () => Promise<void>;
 }): Promise<AcpHandshake> {
   const budget = o.timeoutMs ?? 5000;
   // Fuera del presupuesto del handshake a propósito: los 5 s son para que el agente conteste
   // `initialize`, y un resume de ~1.8 s se comería un tercio.
   if ((await wakeBox(o.wsUrl)).gone) {
-    throw new Error("la caja de este agente ya no existe (la recicló el host)");
+    if (!o.onGone) throw new BoxGoneError("la caja de este agente ya no existe (la recicló el host)");
+    await o.onGone();
+    forgetAwake(o.wsUrl);
+    if ((await wakeBox(o.wsUrl)).gone) {
+      throw new BoxGoneError("la caja de este agente ya no existe y no se pudo volver a levantar");
+    }
   }
   const ws = new WebSocket(acpTicketUrl(o.wsUrl, o.ns, o.sub), {
     ...(o.token ? { headers: { Authorization: `Bearer ${o.token}` } } : {}),
@@ -1241,6 +1263,16 @@ const AWAKE_TTL_MS = 4 * 60_000;
  * Se compara por «preview host», que es lo común a los dos y no depende de qué capa conteste.
  */
 export const BOX_GONE = "preview host";
+
+/** La caja ya no existe en el host. Es el único error que dispara `onGone`. */
+export class BoxGoneError extends Error {}
+
+/** Olvida que un host estaba despierto: tras recrear la caja hay que volver a mirar. */
+function forgetAwake(wsUrl: string): void {
+  try {
+    seenAwake.delete(new URL(wsUrl.replace(/^ws/, "http")).host);
+  } catch {}
+}
 
 /**
  * Comprueba la caja antes de abrir el WebSocket, y de paso la despierta.

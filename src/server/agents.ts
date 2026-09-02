@@ -111,6 +111,7 @@ export const listManagedAgentsFn = createServerFn({ method: "GET" }).handler(asy
     // necesita para no pisar el guardado con un campo vacío.
     created_by: a.created_by,
     has_acp_token: !!a.acp_token,
+    revive_url: a.revive_url,
   }));
 });
 
@@ -277,6 +278,17 @@ export const activateStudioAgentFn = createServerFn({ method: "POST" })
     if (esAcp && !found.runtimeUrl) {
       throw new Error("ese agente es ACP pero Studio no mandó su URL: revisa que su caja esté aprovisionada");
     }
+    // La caja tiene que EXISTIR al activar: Studio manda el dominio fijo exista o no la caja,
+    // y sin esto la fila nacía apuntando a nadie y el primer mensaje era un 404. El mismo
+    // endpoint queda guardado como `revive_url` para cuando el host la recicle.
+    let reviveUrl: string | null = null;
+    if (esAcp) {
+      const { ensureNativeAcpBox } = await import("./fleet-native.server");
+      await ensureNativeAcpBox(base, found.id).catch((e) => {
+        throw new Error(`no pude levantar la caja del agente: ${e instanceof Error ? e.message : e}`);
+      });
+      reviveUrl = `${base}/api/v2/fleet-agents/${found.id}/acp-box`;
+    }
     const ag = await db.createAgent({
       handle,
       name: found.name || found.assistantName || handle,
@@ -286,7 +298,7 @@ export const activateStudioAgentFn = createServerFn({ method: "POST" })
       // Guardar una credencial que no se usa sólo agranda lo que se pierde.
       fleetToken: null,
       runtime: esAcp ? "acp" : "gs-native",
-      ...(esAcp ? { runtimeUrl: found.runtimeUrl } : {}),
+      ...(esAcp ? { runtimeUrl: found.runtimeUrl, reviveUrl } : {}),
       // Clave de conversación con el namespace del workspace: este agente PUEDE
       // estar activo en varios, y sin esto compartirían memoria (ver agentGroupId).
       groupNs: true,
@@ -334,6 +346,7 @@ export const createAgentFn = createServerFn({ method: "POST" })
     let webhookUrl: string | undefined;
     let cardUrl: string | undefined;
     let wsUrl: string | undefined;
+    let reviveUrl: string | null = null;
 
     if (data.kind === "fleet") {
       if (!data.fleetId) throw new Error("elige un agente de la flota");
@@ -368,6 +381,11 @@ export const createAgentFn = createServerFn({ method: "POST" })
       });
       wsUrl = raw;
       if (!name) name = hs.agentName?.slice(0, 40) || handle;
+      // Si la URL es el dominio fijo de un agente de EasyBits, se sabe a quién pedirle la
+      // caja cuando el host la recicle. Una `sb-<id>-…` no tiene identidad: queda sin revive
+      // y el fallo se dirá tal cual.
+      const { deriveReviveUrl } = await import("./acp-revive.server");
+      reviveUrl = deriveReviveUrl(raw);
     } else if (data.kind === "a2a") {
       // El alta A2A LEE el card antes de guardar. Es la razón de ser del protocolo: si el
       // descubrimiento funciona, guardamos algo que sabemos que sirve; si no, se dice ahora
@@ -421,6 +439,7 @@ export const createAgentFn = createServerFn({ method: "POST" })
         data.kind === "fleet" ? "easybits" : data.kind === "a2a" ? "a2a" : data.kind === "acp" ? "acp" : null,
       runtimeUrl: cardUrl ?? wsUrl ?? null,
       acpToken: data.acpToken?.trim() || null,
+      reviveUrl,
     });
     return { ok: true as const, handle: ag.handle };
   });
@@ -574,6 +593,14 @@ export const updateAgentFn = createServerFn({ method: "POST" })
       });
       wsUrl = raw;
     }
+    // Cambiar la caja es cambiar de dueño de caja: se recalcula a quién pedirle el revive.
+    // Un agente de Studio conserva el suyo (su URL no cambia por Ajustes).
+    let reviveUrl: string | null | undefined;
+    if (wsUrl !== undefined) {
+      const { deriveReviveUrl } = await import("./acp-revive.server");
+      const current = await db.getAgentById(data.id);
+      reviveUrl = current?.fleet_id ? undefined : deriveReviveUrl(wsUrl);
+    }
 
     // El alcance se NORMALIZA antes de guardar: se acepta lo que venga con espacios o en
     // mayúsculas, y se descarta lo vacío. Guardar el CSV crudo del cliente dejaría filas que
@@ -607,6 +634,7 @@ export const updateAgentFn = createServerFn({ method: "POST" })
       avatar: data.avatar,
       runtimeUrl: cardUrl ?? wsUrl,
       acpScope,
+      reviveUrl,
     });
     return { ok: true as const };
   });

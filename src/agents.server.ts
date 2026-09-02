@@ -38,6 +38,8 @@ export type ResolvedAgent = {
         rowId?: number;
         /** Lo guardado, crudo: para no reescribir la columna cuando no cambió nada. */
         settingsRaw?: string;
+        /** Quién recrea la caja si el host la perdió. Ver `acp-revive.server.ts`. */
+        reviveUrl?: string | null;
         /**
          * Su `FleetAgent.id` en Studio. La caja se maneja sola por el socket, así que este
          * id NO hace falta para hablar con ella — hace falta para preguntar por su SALDO,
@@ -143,6 +145,7 @@ export async function resolvedAgents(): Promise<ResolvedAgent[]> {
           prefs: jsonObj(a.acp_prefs),
           rowId: a.id,
           settingsRaw: a.acp_settings ?? undefined,
+          reviveUrl: a.revive_url,
           id: a.fleet_id || "",
           // Columna vacía ⇒ `lectura`, no `completo`: un agente ACP es un binario de terceros
           // y nace acotado. Los agentes NATIVOS no pasan por aquí; ellos siguen en `completo`.
@@ -1539,6 +1542,7 @@ export async function callAgentBackendStream(
   // con el namespace del workspace dentro.
   if (agent.backend.kind === "acp") {
     const { runAcpTurn } = await import("./server/acp-client.server");
+    const { reviveAcpBox } = await import("./server/acp-revive.server");
     const { currentNamespace } = await import("./server/tenant.server");
     const ns = await currentNamespace();
 
@@ -1688,6 +1692,7 @@ export async function callAgentBackendStream(
     console.log(
       `[acp ->] ${agent.handle} ${agent.backend.runtimeUrl} sesion=${sesionPrevia ?? "(nueva)"} ctx=${contexto.length}b`,
     );
+    const backend = agent.backend;
     const r = await runAcpTurn({
       wsUrl: agent.backend.runtimeUrl,
       token: agent.backend.token,
@@ -1716,6 +1721,14 @@ export async function callAgentBackendStream(
       // agente lee como "del espacio"— no pesa lo mismo.
       text: stripLoneSurrogates(text) + (publicChannel ? CANAL_PUBLICO_HINT : ""),
       signal,
+      // La caja ya no existe → se le pide al dueño (Studio o EasyBits) que la recree y el
+      // turno se reintenta una vez. Antes esto acababa en «hay que volver a levantarla».
+      onGone: () => reviveAcpBox({
+        reviveUrl: backend.reviveUrl,
+        fleetId: backend.id || undefined,
+        token: backend.token,
+        handle: agent.handle,
+      }),
       onUpdate: async (u) => {
         if (u.kind === "text") await onChunk(u.text);
         else if (u.kind === "tool" && onTool) {
@@ -2844,6 +2857,7 @@ export async function callAgentBackend(
   // reconoce LANZA. Una caja ACP no tiene runtime que resolver — su dirección es el socket.
   if (agent.backend.kind === "acp") {
     const { runAcpTurn } = await import("./server/acp-client.server");
+    const { reviveAcpBox } = await import("./server/acp-revive.server");
     const { currentNamespace } = await import("./server/tenant.server");
     // El mismo gate que el camino de streaming, y por la misma razón: un turno ACP no pasa
     // por Studio. Los dos caminos o ninguno — dejarlo sólo en uno es un bypass con la
@@ -2852,6 +2866,7 @@ export async function callAgentBackend(
     const negado = agent.backend.id ? await turnDenial(agent.backend.id) : null;
     if (negado) return negado.message;
     try {
+      const backend = agent.backend;
       const r = await runAcpTurn({
         wsUrl: agent.backend.runtimeUrl,
         token: agent.backend.token,
@@ -2860,6 +2875,12 @@ export async function callAgentBackend(
         sub: "teams",
         sessionId: (await (await import("./db.server")).getAcpSession(agent.handle, groupId).catch(() => null)) ?? undefined,
         text: stripLoneSurrogates(text),
+        onGone: () => reviveAcpBox({
+          reviveUrl: backend.reviveUrl,
+          fleetId: backend.id || undefined,
+          token: backend.token,
+          handle: agent.handle,
+        }),
         // Los adjuntos. Este camino NO los pasaba, así que aquí el archivo no se degradaba:
         // desaparecía entero, sin que se mencionara siquiera su nombre. El de streaming sí
         // los pasa desde siempre; los dos o ninguno.

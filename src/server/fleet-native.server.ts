@@ -62,3 +62,24 @@ export async function createNativeFleetAgent(
   if (!res.ok) throw new Error(`fleet-agents(native) create ${res.status}: ${await res.text()}`);
   return (await res.json()) as { id: string; token: string; assistantName: string };
 }
+
+/**
+ * Pide a Studio que la caja de un agente ACP EXISTA (`POST /acp-box`, idempotente). Se llama
+ * al activar —para que la fila no nazca apuntando a un dominio sin nadie detrás— y cuando un
+ * turno encuentra la caja reciclada. Tarda lo que tarda el boot: hasta ~90 s.
+ */
+export async function ensureNativeAcpBox(
+  base: string,
+  fleetAgentId: string,
+): Promise<{ wsUrl: string; sandboxId: string }> {
+  const { currentNamespace } = await import("./tenant.server");
+  const body = "{}";
+  const res = await fetch(`${base}/api/v2/fleet-agents/${encodeURIComponent(fleetAgentId)}/acp-box`, {
+    method: "POST",
+    headers: partnerHeaders(body, await currentNamespace()),
+    body,
+    signal: AbortSignal.timeout(150_000),
+  });
+  if (!res.ok) throw new Error(`acp-box ${res.status}: ${await res.text().catch(() => "")}`);
+  return (await res.json()) as { wsUrl: string; sandboxId: string };
+}

@@ -329,6 +329,13 @@ async function migrate(): Promise<void> {
   // ⚠️ NUNCA sale hacia la UI. Se escribe y se lee sólo aquí, como `fleet_token`.
   await addColumn("gc_agents", "acp_token", "TEXT");
 
+  // ACP: a quién pedirle que VUELVA A LEVANTAR la caja cuando el host ya no la tiene. Es lo
+  // que convierte una URL en una identidad: sin esto, una caja reciclada dejaba al agente
+  // muerto y el chat decía «hay que volver a levantarla» sin que nadie pudiera. Para un
+  // agente de Studio es su `/acp-box`; para uno de EasyBits, su `/revive`. NULL = no hay
+  // quién, y el fallo se dice tal cual.
+  await addColumn("gc_agents", "revive_url", "TEXT");
+
   // Lo ÚLTIMO que el agente declaró que deja configurar (modelo, modo, esfuerzo…), en JSON.
   // Se guarda para que el panel pinte los selectores sin tener que abrirle una sesión sólo
   // para preguntarle. Y `acp_prefs` es lo que eligió el dueño: `{configId: value}`.

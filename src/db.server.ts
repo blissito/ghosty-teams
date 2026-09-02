@@ -1594,6 +1594,8 @@ export type Agent = {
   acp_settings: string | null;
   /** ACP: lo que eligió el dueño, JSON `{configId: value}`. */
   acp_prefs: string | null;
+  /** ACP: endpoint que recrea la caja si el host la perdió. NULL = nadie puede. */
+  revive_url: string | null;
 };
 
 function toAgent(r: Row): Agent {
@@ -1616,6 +1618,7 @@ function toAgent(r: Row): Agent {
     acp_token: r.acp_token ?? null,
     acp_settings: r.acp_settings ?? null,
     acp_prefs: r.acp_prefs ?? null,
+    revive_url: r.revive_url ?? null,
   };
 }
 
@@ -1677,11 +1680,13 @@ export async function createAgent(input: {
   groupNs?: boolean;
   /** ACP: bearer de la caja, si la suya lo pide. */
   acpToken?: string | null;
+  /** ACP: quién recrea la caja. Ver `revive_url`. */
+  reviveUrl?: string | null;
 }): Promise<Agent> {
   const handle = slugify(input.handle).replace(/-/g, "");
   const rows = await dbq(
-    `INSERT INTO gc_agents (handle, name, kind, fleet_id, fleet_token, webhook_url, avatar, system_prompt, created_by, runtime, runtime_url, group_ns, acp_token)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *`,
+    `INSERT INTO gc_agents (handle, name, kind, fleet_id, fleet_token, webhook_url, avatar, system_prompt, created_by, runtime, runtime_url, group_ns, acp_token, revive_url)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *`,
     [
       handle,
       input.name.slice(0, 40),
@@ -1696,6 +1701,7 @@ export async function createAgent(input: {
       input.runtimeUrl ?? null,
       input.groupNs ? 1 : null,
       input.acpToken ?? null,
+      input.reviveUrl ?? null,
     ]
   );
   return toAgent(rows[0]);
@@ -1722,6 +1728,8 @@ export async function updateAgent(
     acpSettings?: string;
     /** ACP: lo que eligió el dueño (JSON). */
     acpPrefs?: string;
+    /** ACP: quién recrea la caja. `null` = nadie. */
+    reviveUrl?: string | null;
   }
 ): Promise<void> {
   const sets: string[] = [];
@@ -1741,6 +1749,7 @@ export async function updateAgent(
   if (patch.acpToken !== undefined) (sets.push("acp_token = ?"), args.push(patch.acpToken || null));
   if (patch.acpSettings !== undefined) (sets.push("acp_settings = ?"), args.push(patch.acpSettings));
   if (patch.acpPrefs !== undefined) (sets.push("acp_prefs = ?"), args.push(patch.acpPrefs));
+  if (patch.reviveUrl !== undefined) (sets.push("revive_url = ?"), args.push(patch.reviveUrl));
   if (!sets.length) return;
   args.push(id);
   await dbq(`UPDATE gc_agents SET ${sets.join(", ")} WHERE id = ?`, args);
