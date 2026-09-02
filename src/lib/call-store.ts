@@ -274,6 +274,12 @@ export async function openCall(
     set({ joined: { scope, scopeId, conn, label, target, room }, status: "connecting" });
     await room.connect(conn.wss, conn.token);
     await room.localParticipant.setMicrophoneEnabled(true); // mic on, cámara off por default
+    // El dispositivo elegido la última vez, si sigue conectado. Con `.catch`: un USB que
+    // ya no está no puede impedir entrar a la llamada.
+    for (const kind of ["audioinput", "videoinput"] as const) {
+      const id = readDevice(kind);
+      if (id) await room.switchActiveDevice(kind, id).catch(() => {});
+    }
     if (snapshot.joined?.room !== room) return; // salieron mientras conectaba
     writeMark({ scope, scopeId, target, label });
     set({ status: "live" });
@@ -387,7 +393,11 @@ export function wireCallRealtime(): void {
           // `canStop` no se deriva aquí: lo dice el servidor, que es quien sabe quién
           // inició la llamada. Al recibirlo por el bus se asume que no, y el que sí puede
           // ya lo tiene puesto desde su propia respuesta.
-          set({ recording: ev.recording ? { by: "", startedAt: Math.floor(Date.now() / 1000), canStop: false } : null });
+          set({
+            recording: ev.recording
+              ? { by: ev.by ?? "", startedAt: ev.startedAt ?? Math.floor(Date.now() / 1000), canStop: false }
+              : null,
+          });
         }
       }
     },
@@ -395,6 +405,24 @@ export function wireCallRealtime(): void {
 }
 
 export { startCallFn, joinCallFn, getActiveCallFn };
+
+// Preferencia de mic/cámara por navegador. La sala del webinar la pierde al salir y
+// obliga a re-elegir cada vez; aquí se recuerda y se aplica al entrar.
+const DEVICE_KEY = "gt.call.device.";
+export function rememberDevice(kind: "audioinput" | "videoinput", id: string): void {
+  try {
+    localStorage.setItem(DEVICE_KEY + kind, id);
+  } catch {
+    /* storage bloqueado */
+  }
+}
+function readDevice(kind: "audioinput" | "videoinput"): string {
+  try {
+    return localStorage.getItem(DEVICE_KEY + kind) ?? "";
+  } catch {
+    return "";
+  }
+}
 
 /** Marca local del estado de grabación (lo usa quien pulsa, sin esperar al bus). */
 export function setRecording(r: CallSnapshot["recording"]): void {

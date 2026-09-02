@@ -112,7 +112,10 @@ export type RtEvent =
   | { t: "quickcall:ended"; scope: "room" | "dm"; scopeId: number; callId: string }
   // El testigo rojo es para TODOS los que están en la llamada, no sólo para quien pulsó
   // Grabar: quien aparece en la grabación tiene derecho a saber que se está grabando.
-  | { t: "quickcall:recording"; scope: "room" | "dm"; scopeId: number; recording: boolean };
+  // `startedAt` (segundos, reloj del servidor) y `by` viajan en el evento para que el
+  // contador de TODOS marque el mismo tiempo; con la hora de recepción cada pestaña iba
+  // desfasada y quien entraba tarde empezaba en 00:00.
+  | { t: "quickcall:recording"; scope: "room" | "dm"; scopeId: number; recording: boolean; startedAt?: number; by?: string };
 
 type Listener = (ev: RtEvent) => void;
 type Client = { ns: string; channels: Set<string>; listener: Listener; sub: string };

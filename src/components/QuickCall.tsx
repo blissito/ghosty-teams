@@ -1,9 +1,20 @@
 import { useEffect, useRef, useState } from "react";
 import { Room, Track, type Participant } from "livekit-client";
-import { Mic, MicOff, Video, VideoOff, ScreenShare, PhoneOff, Loader2, Circle } from "lucide-react";
+import { Mic, MicOff, Video, VideoOff, ScreenShare, PhoneOff, Loader2, Circle, Repeat } from "lucide-react";
 import { useT } from "../i18n";
 import { leaveCall, setRecording, useCall, type CallConn } from "../lib/call-store";
 import { getCallRecordingFn, startCallRecordingFn, stopCallRecordingFn } from "../server/quick-calls";
+import { startShare, stopShare, switchShareSource } from "../lib/screen-share";
+import { DevicePicker } from "./call/DevicePicker";
+
+// mm:ss, y h:mm:ss a partir de la hora (la sala del webinar enseña "90:12").
+function fmtDur(sec: number): string {
+  const s = Math.max(0, sec);
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const two = (n: number) => String(n).padStart(2, "0");
+  return (h ? h + ":" + two(m) : two(m)) + ":" + two(s % 60);
+}
 
 // UI NATIVA de quick-call (corre en el browser del miembro). livekit-client → SFU
 // (box livekit-svc) con el token/wss que acuña el server (quick-calls.ts). Estilada
@@ -25,6 +36,10 @@ function Tile({ p, source, local }: { p: Participant; source: Track.Source; loca
   const on = !!(pub && track && !pub.isMuted && (local || pub.isSubscribed));
   const screen = source === Track.Source.ScreenShare;
 
+  // `replaceTrack` (cambiar la fuente compartida) conserva la identidad del LocalVideoTrack
+  // y cambia sólo el MediaStreamTrack de abajo: sin este id en las deps el <video> local se
+  // quedaba congelado en el último cuadro de la fuente anterior.
+  const mstId = track?.mediaStreamTrack?.id;
   useEffect(() => {
     const el = vref.current;
     if (!el || !track || !on) return;
@@ -32,7 +47,7 @@ function Tile({ p, source, local }: { p: Participant; source: Track.Source; loca
     return () => {
       track.detach(el);
     };
-  }, [track, on]);
+  }, [track, on, mstId]);
 
   const micPub = p.getTrackPublication(Track.Source.Microphone);
   const muted = !micPub || micPub.isMuted;
@@ -89,6 +104,8 @@ export function QuickCall({ room, onVideoChange }: { room: Room; onVideoChange?:
   const micOn = !!lp?.isMicrophoneEnabled;
   const camOn = !!lp?.isCameraEnabled;
   const screenOn = !!lp?.isScreenShareEnabled;
+  // Móvil no tiene getDisplayMedia: el botón sobra.
+  const canShare = typeof navigator !== "undefined" && !!navigator.mediaDevices?.getDisplayMedia;
   const participants: Participant[] = [lp, ...room.remoteParticipants.values()].filter(Boolean) as Participant[];
 
   // ¿Alguien comparte pantalla? (el primero manda el foco, patrón Meet/Zoom).
@@ -125,6 +142,38 @@ export function QuickCall({ room, onVideoChange }: { room: Room; onVideoChange?:
   const rec = snap.recording;
   const [recBusy, setRecBusy] = useState(false);
   const [recError, setRecError] = useState<string | null>(null);
+  // Contador del testigo. `startedAt` es reloj del servidor (segundos), así que todas las
+  // pestañas marcan lo mismo y quien entra tarde no arranca en 00:00.
+  const [recSec, setRecSec] = useState(0);
+  useEffect(() => {
+    if (!rec) return;
+    const tick = () => setRecSec(Math.floor(Date.now() / 1000) - rec.startedAt);
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, [rec]);
+  const [shareBusy, setShareBusy] = useState(false);
+  const toggleShare = async () => {
+    if (!lp || shareBusy) return;
+    setShareBusy(true);
+    try {
+      if (screenOn) await stopShare(lp);
+      else await startShare(lp);
+    } catch {
+      /* canceló el picker: el estado del botón sale del Room */
+    } finally {
+      setShareBusy(false);
+    }
+  };
+  const switchSource = async () => {
+    if (!lp || shareBusy) return;
+    setShareBusy(true);
+    try {
+      await switchShareSource(lp);
+    } finally {
+      setShareBusy(false);
+    }
+  };
 
   // Al entrar a una llamada que YA se está grabando, el testigo tiene que aparecer solo:
   // el evento del bus se emitió antes de que yo llegara y no se repite.
@@ -205,6 +254,7 @@ export function QuickCall({ room, onVideoChange }: { room: Room; onVideoChange?:
         // en una grabación tiene derecho a saber que se está grabando.
         <div className="flex items-center justify-center gap-1.5 border-t border-border px-3 py-1.5 text-xs text-red-600">
           <Circle size={9} fill="currentColor" className="animate-pulse" />
+          <span className="tabular-nums font-medium">{fmtDur(recSec)}</span>
           {rec.by ? t("Grabando · lo inició {quien}").replace("{quien}", rec.by) : t("Grabando")}
         </div>
       ) : null}
@@ -212,16 +262,27 @@ export function QuickCall({ room, onVideoChange }: { room: Room; onVideoChange?:
         <button onClick={() => lp?.setMicrophoneEnabled(!micOn)} className={micOn ? ctrl : ctrlOff} title={micOn ? t("Silenciar") : t("Activar micrófono")}>
           {micOn ? <Mic size={17} /> : <MicOff size={17} />}
         </button>
+        <DevicePicker room={room} kind="audioinput" />
         <button onClick={() => lp?.setCameraEnabled(!camOn)} className={camOn ? ctrl : ctrlOff} title={camOn ? t("Apagar cámara") : t("Encender cámara")}>
           {camOn ? <Video size={17} /> : <VideoOff size={17} />}
         </button>
-        <button
-          onClick={() => lp?.setScreenShareEnabled(!screenOn, { audio: true })}
-          className={"grid h-10 w-10 place-items-center rounded-full border border-border transition hover:bg-surface-3 " + (screenOn ? "bg-brand text-brand-fg" : "text-ink")}
-          title={t("Compartir pantalla")}
-        >
-          <ScreenShare size={17} />
-        </button>
+        <DevicePicker room={room} kind="videoinput" />
+        {canShare ? (
+          <button
+            onClick={toggleShare}
+            disabled={shareBusy}
+            className={"grid h-10 w-10 place-items-center rounded-full border border-border transition hover:bg-surface-3 disabled:opacity-50 " + (screenOn ? "bg-brand text-brand-fg" : "text-ink")}
+            title={screenOn ? t("Dejar de compartir") : t("Compartir pantalla")}
+          >
+            <ScreenShare size={17} />
+          </button>
+        ) : null}
+        {screenOn ? (
+          // Cambiar de ventana sin pasar por negro ni volver a pulsar Compartir.
+          <button onClick={switchSource} disabled={shareBusy} className={ctrl + " disabled:opacity-50"} title={t("Cambiar la fuente compartida")}>
+            <Repeat size={17} />
+          </button>
+        ) : null}
         <button
           onClick={toggleRec}
           disabled={recBusy}

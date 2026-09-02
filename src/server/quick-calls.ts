@@ -538,7 +538,7 @@ export const startCallRecordingFn = createServerFn({ method: "POST" })
     }
     c.recording = { bySub: t.me.sub, byName: t.me.name, startedAt: Math.floor(Date.now() / 1000) };
     // El testigo rojo es para TODOS los que están dentro, no sólo para startedBy pulsó.
-    t.fanout({ t: "quickcall:recording", scope: c.scope, scopeId: c.scopeId, recording: true });
+    t.fanout({ t: "quickcall:recording", scope: c.scope, scopeId: c.scopeId, recording: true, startedAt: c.recording.startedAt, by: c.recording.byName });
     return { ok: true as const, recording: true, startedAt: c.recording.startedAt };
   });
 
