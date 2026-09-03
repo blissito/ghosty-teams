@@ -1173,6 +1173,58 @@ export function nativeTools(dest: ToolDest | null): ConnectorTool[] {
         };
       },
     },
+    {
+      name: "chat_react",
+      description:
+        "Reacciona con un emoji a un mensaje de ESTA conversación. Sin `messageId` reacciona " +
+        "al mensaje que te invocó. Úsalo para acusar algo breve sin gastar un mensaje: 👍 de " +
+        "enterado, 🎉 al terminar algo que celebraban, ⚠️ si algo no cuadra. NO sustituye a tu " +
+        "respuesta, y la plataforma ya pone 👀 mientras trabajas y ✅ al terminar: no los repitas.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          emoji: { type: "string", description: "Un emoji, o `:nombre:` de un emoji del espacio" },
+          messageId: {
+            type: "number",
+            description: "Mensaje al que reaccionar. Por defecto, el que te invocó.",
+          },
+          on: { type: "boolean", description: "false para QUITAR tu reacción. Por defecto true." },
+        },
+        required: ["emoji"],
+      },
+      handler: async (_sub, args) => {
+        const handle = dest?.handle;
+        if (!handle) return { ok: false, error: "no hay agente en este turno" };
+        // Un emoji, no un ensayo: la columna es libre y sin tope alguien guarda ahí un texto.
+        // 64 y no 16 por los emojis custom del espacio (`:squirtle_jammin:` son 18).
+        const emoji = String(args.emoji ?? "").trim().slice(0, 64);
+        if (!emoji) return { ok: false, error: "falta emoji" };
+        const porDefecto = dest?.invokerMessageIds?.[0];
+        const messageId = args.messageId != null ? Number(args.messageId) : porDefecto;
+        if (!messageId || !Number.isFinite(messageId)) {
+          return { ok: false, error: "no hay mensaje al que reaccionar" };
+        }
+        // ⚠️ El id es autoincremental y enumerable: sin comprobar que el mensaje es de ESTA
+        // conversación, un `messageId` inventado dejaría reaccionar a cualquier mensaje del
+        // tenant, incluidos los de rooms privados. Misma guarda que `eventReactFn`.
+        const db = await import("../../db.server");
+        const msg = await db.getMessage(messageId);
+        const suyo = msg && (dest?.dmId != null
+          ? msg.dm_id === dest.dmId
+          : dest?.channelId != null && msg.channel_id === dest.channelId);
+        if (!suyo) return { ok: false, error: "ese mensaje no es de esta conversación" };
+        const on = args.on !== false;
+        const { agentSub } = await import("../agent-ack.server");
+        const userSub = agentSub(handle);
+        const { count } = await db.setReaction(messageId, userSub, emoji, on);
+        const { currentNamespace } = await import("../tenant.server");
+        const { publishToAudience } = await import("../chat");
+        await publishToAudience(await currentNamespace(), msg, {
+          t: "reaction", messageId, emoji, userSub, op: on ? "add" : "remove", count,
+        });
+        return { ok: true, messageId, emoji, count };
+      },
+    },
     // ── Papelera de documentos ────────────────────────────────────────────────
     //
     // ⚠️ Hay `doc_archived_list` y `doc_restore`, pero NO `doc_archive`, y es deliberado:

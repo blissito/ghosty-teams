@@ -113,3 +113,32 @@ describe("multitenant", () => {
     vi.useRealTimers();
   });
 });
+
+describe("el acuse 👀 del agente", () => {
+  it("el STEER cuelga el mensaje nuevo del turno que YA corría", async () => {
+    // Con steer, el segundo mensaje no abre turno: se mete en el que está vivo. Su 👀 ya
+    // está puesto, así que si no se le cuelga a ESE turno nadie se lo quita al cerrar — el
+    // turno cierra conociendo sólo el primer mensaje y el 👀 se queda para siempre.
+    turns.registerTurn({
+      ns: "acme", messageId: 10, groupId: "g", invokerSub: "u1",
+      handle: "blue", invokerMessageIds: [1],
+    } as never);
+    const t = turns.addInvokerMessage("g", "u1", 2);
+    expect(t?.invokerMessageIds).toEqual([1, 2]);
+    // Idempotente: reintentar no duplica.
+    turns.addInvokerMessage("g", "u1", 2);
+    expect(t?.invokerMessageIds).toEqual([1, 2]);
+    turns.finishTurn("acme", 10);
+  });
+
+  it("NO se lo cuelga al turno de otra persona", async () => {
+    // En un room todos ven la burbuja, pero el turno es de quien lo pidió: colgarle el
+    // mensaje de otro haría que su acuse lo cerrara un trabajo que no es suyo.
+    turns.registerTurn({
+      ns: "acme", messageId: 11, groupId: "g2", invokerSub: "u1",
+      handle: "blue", invokerMessageIds: [1],
+    } as never);
+    expect(turns.addInvokerMessage("g2", "u2", 5)).toBeNull();
+    turns.finishTurn("acme", 11);
+  });
+});

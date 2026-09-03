@@ -35,7 +35,10 @@ const FLEET_THREAD = "flow";
 
 // Publica un evento a la audiencia de un mensaje: si es DM → a cada miembro
 // (ch.user); si es de room → al room. Unifica delete/edit/react para rooms y DMs.
-async function publishToAudience(
+// Exportada porque el acuse del agente (`agent-ack.server.ts`) y la tool `chat_react`
+// publican por el MISMO camino: repetir la derivación de audiencia es exactamente cómo se
+// pierde el evento en DMs.
+export async function publishToAudience(
   ns: string,
   msg: { channel_id: number; dm_id?: number | null },
   ev: RtEvent
@@ -855,6 +858,13 @@ export const postMessage = createServerFn({ method: "POST" })
       r.shellId = shellId;
       const shell = await db.getMessage(shellId);
       if (shell) bus.publish(bus.ch.room(ns, channel.id), { t: "message:new", msg: shell });
+      // Acuse 👀 sobre el mensaje que lo invocó. Va AQUÍ y no en `askAgent` porque éste es
+      // el único punto que tiene a la vez el id del invocador (`id`) y la lista de agentes
+      // que van a responder: `askAgent` sólo recibe `parentId`, que coincide con el
+      // invocador en top-level pero es la RAÍZ DEL HILO cuando ya estás dentro de uno.
+      // Además así no hay que creerle un id al cliente.
+      const { ackStart } = await import("./agent-ack.server");
+      await ackStart(ns, id, r.handle);
     }
     return {
       ok: true as const,
@@ -876,6 +886,12 @@ export const askAgent = createServerFn({ method: "POST" })
       topic?: string;
       fleetThread?: string; // clave de flota (desacoplada del hilo UI; ver postMessage)
       shellId?: number; // caja caliente: cáscara ya creada por postMessage (reutilizar su id)
+      // El mensaje de la persona que disparó este turno, para cerrarle el acuse 👀 al
+      // terminar (`agent-ack.server.ts`). Es el `id` que devolvió `postMessage`.
+      // ⚠️ Se VALIDA contra el room y contra quien lo manda: sólo puedes marcar tu propio
+      // mensaje. Sin eso, el id —autoincremental y enumerable— dejaría acusar sobre
+      // cualquier mensaje del tenant. Misma guarda que `eventReactFn`.
+      invokerMessageId?: number;
       quotedAuthor?: string | null; // quote-reply: cita para que el agente SIEMPRE la vea
       quotedExcerpt?: string | null;
       quotedId?: number | null; // id del citado → cita COMPLETA (no el excerpt)
@@ -1161,6 +1177,13 @@ export const askAgent = createServerFn({ method: "POST" })
     // registro del turno porque los dos lo usan — el turno para su autoridad y `runAgentTurn`
     // para firmarlo en el tool-token. Que sean el MISMO objeto es la garantía de que el MCP
     // no puede resolver un destino distinto del que ve el camino de siempre.
+    // El mensaje que invocó al turno, ya validado: de ESTE room y de QUIEN lo manda.
+    const invokerMessageIds = await (async (): Promise<number[]> => {
+      if (data.invokerMessageId == null || !poster?.sub) return [];
+      const m = await db.getMessage(data.invokerMessageId).catch(() => null);
+      if (!m || m.channel_id !== channel.id || m.sender_sub !== poster.sub) return [];
+      return [data.invokerMessageId];
+    })();
     const destDelTurno = {
       channelId: channel.id,
       parentId: data.parentId ?? undefined,
@@ -1168,6 +1191,9 @@ export const askAgent = createServerFn({ method: "POST" })
       handle: data.handle,
       name,
       avatar: agent?.avatar ?? "",
+      // A qué mensaje le reacciona `chat_react` por defecto: al que lo invocó. Va firmado
+      // con el resto del destino, no por argumento.
+      invokerMessageIds,
     };
     const register = (mid: number) => {
       if (registeredId === mid) return;
@@ -1189,6 +1215,8 @@ export const askAgent = createServerFn({ method: "POST" })
         // panel, así que no sirve para re-disparar: hace falta el texto íntegro.
         body: data.body, slug: data.slug, shellId: data.shellId ?? null,
         attachments: data.attachments ?? [],
+        handle: data.handle,
+        invokerMessageIds,
       });
     };
     // ⚠️ Registrar ANTES de pedir el lock. Si no, un turno que espera su vuelta no aparece
@@ -1248,6 +1276,12 @@ export const askAgent = createServerFn({ method: "POST" })
           t: "turn", id: registeredId, state: "stopped", position: 1, startedAt: Date.now(),
         });
       }
+      // El acuse se cierra AQUÍ para el camino que revienta: este `throw` sale de `askAgent`
+      // y el `finally` de más abajo —el que cierra los otros dos desenlaces— no llega a
+      // correr. Sin esto, un turno que falla deja el 👀 puesto para siempre.
+      void import("./agent-ack.server").then((m) =>
+        m.ackEnd(ns, invokerMessageIds, data.handle, "error"),
+      );
       throw e;
     }).finally(async () => {
       if (registeredId != null) {
@@ -1293,6 +1327,9 @@ export const askAgent = createServerFn({ method: "POST" })
         await db.deleteMessage(data.shellId).catch(() => {});
         bus.publish(bus.ch.room(ns, channel.id), { t: "message:deleted", id: data.shellId, channelId: channel.id, parentId: data.parentId ?? null });
       }
+      // Este mensaje no abre turno propio: se metió en el que ya corría. Su 👀 ya está
+      // puesto, así que hay que colgárselo a ESE turno o nadie se lo quitará al cerrar.
+      for (const mid of invokerMessageIds) turns.addInvokerMessage(groupId, poster?.sub, mid);
       return { ok: true, steered: true };
     }
 
@@ -1586,6 +1623,18 @@ export const askAgent = createServerFn({ method: "POST" })
         // palomita verde y su resumen, como si hubiera entregado — y encima con aviso push.
         cancelado: controller.signal.aborted,
       }).catch(() => {});
+      // Cierra el acuse: quita el 👀 y deja la marca del desenlace. Va junto al aviso de fin
+      // de turno y no en el `finally` del turno, por la misma razón que aquél: ahí el
+      // artefacto todavía no está publicado.
+      // ⚠️ `invokerMessageIds` es EL MISMO array que guarda el turno vivo, así que aquí ya
+      // trae los mensajes que el STEER le fue colgando; leerlo antes los perdería.
+      const { ackEnd } = await import("./agent-ack.server");
+      await ackEnd(
+        ns,
+        invokerMessageIds,
+        data.handle,
+        controller.signal.aborted ? "stopped" : "done",
+      );
     }
     return { ok: true as const };
   });

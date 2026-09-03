@@ -664,7 +664,29 @@ function useUsersMap(): Map<string, WsUser> {
     document.addEventListener("visibilitychange", onVis);
     return () => { alive = false; off(); document.removeEventListener("visibilitychange", onVis); };
   }, []);
-  return users;
+  // Los AGENTES también viven en el directorio, keyeados `agent:<handle>` — el sub con el
+  // que firman sus reacciones (`agent-ack.server.ts`).
+  //
+  // ⚠️ Sin esto el acuse del agente se pinta pero el tooltip dice «alguien más reaccionó
+  // con 👀»: `reactorsTitle` resuelve contra ESTE mapa y colapsa en silencio lo que no
+  // encuentra. Va aquí, en el directorio, y no en el tooltip: cualquier otra cosa que
+  // resuelva un sub —hoy o mañana— hereda el arreglo.
+  const mentions = useMentions();
+  return useMemo(() => {
+    const agentes = mentions.filter((m) => m.kind === "agent");
+    if (!agentes.length) return users;
+    const m = new Map(users);
+    for (const a of agentes) {
+      const sub = `agent:${a.handle}`;
+      if (m.has(sub)) continue;
+      m.set(sub, {
+        sub, name: a.name, avatar: a.avatar, handle: a.handle,
+        isOwner: false, isStaff: false,
+        statusEmoji: null, statusText: null, title: null, pronouns: null, bio: null,
+      });
+    }
+    return m;
+  }, [users, mentions]);
 }
 
 // Emojis custom del workspace (para picker + render de reacciones/cuerpo). Cache módulo.
@@ -2365,7 +2387,7 @@ function ChannelPage() {
           }
           // Cada agente mencionado responde en paralelo y limpia su propio "pensando…".
           for (const ag of respondents) {
-            askAgent({ data: { slug: o.slug, parentId: ag.parent, fleetThread: ag.fleetThread, body: o.body, sender: "", handle: ag.handle, shellId: ag.shellId, quotedAuthor: o.quotedAuthor ?? null, quotedExcerpt: o.quotedExcerpt ?? null, quotedId: o.quotedId ?? null, attachments: o.attachments } })
+            askAgent({ data: { slug: o.slug, parentId: ag.parent, fleetThread: ag.fleetThread, body: o.body, sender: "", handle: ag.handle, shellId: ag.shellId, quotedAuthor: o.quotedAuthor ?? null, quotedExcerpt: o.quotedExcerpt ?? null, quotedId: o.quotedId ?? null, attachments: o.attachments, invokerMessageId: r.id } })
               .then(() => revalidate())
               .catch(() => revalidate());
           }

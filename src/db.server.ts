@@ -196,6 +196,39 @@ export async function toggleReaction(
   return { op, count: num(c[0]?.c) };
 }
 
+/**
+ * Pone o quita una reacción de forma EXPLÍCITA (no toggle). Devuelve el nuevo total.
+ *
+ * ⚠️ Existe además de `toggleReaction` porque el acuse del agente (👀 al invocarlo, ✅ al
+ * cerrar) no puede usar un toggle: un reintento —o dos menciones al mismo agente en el
+ * mismo mensaje— QUITARÍA la reacción que acaba de poner, y desde fuera eso se ve como
+ * que el acuse nunca llegó. Un humano sí quiere toggle: pulsar el chip dos veces lo quita.
+ */
+export async function setReaction(
+  messageId: number,
+  userSub: string,
+  emoji: string,
+  on: boolean
+): Promise<{ count: number }> {
+  if (on) {
+    await dbq(
+      "INSERT INTO gc_reactions (message_id, user_sub, emoji) VALUES (?, ?, ?) ON CONFLICT DO NOTHING",
+      [messageId, userSub, emoji]
+    );
+  } else {
+    await dbq("DELETE FROM gc_reactions WHERE message_id = ? AND user_sub = ? AND emoji = ?", [
+      messageId,
+      userSub,
+      emoji,
+    ]);
+  }
+  const c = await dbq("SELECT COUNT(*) AS c FROM gc_reactions WHERE message_id = ? AND emoji = ?", [
+    messageId,
+    emoji,
+  ]);
+  return { count: num(c[0]?.c) };
+}
+
 // Agrega las reacciones de un lote de mensajes (1 query, evita N+1 sobre HTTP).
 export async function attachReactions(msgs: Message[], userSub: string): Promise<Message[]> {
   if (!msgs.length) return msgs;

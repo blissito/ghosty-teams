@@ -920,6 +920,18 @@ async function migrate(): Promise<void> {
   // pedirle al modelo que confíe en su memoria. Y es lo que permite avisar cuando corrió
   // algo irreversible (email_send, prospect_send…) antes de dejar reintentar.
   await addColumn("gt_turns", "tools_json", "TEXT");
+  // El acuse 👀 del agente sobre el/los mensaje(s) que lo invocaron (`agent-ack.server.ts`).
+  //
+  // ⚠️ Se PERSISTE, no basta con el registro en memoria: un turno no sobrevive al proceso
+  // que lo atiende y un deploy mata los que están en vuelo (pasa en cada `git push`). Sin
+  // estas dos columnas, el barrido de huérfanos cierra la cáscara pero no tiene con qué
+  // quitar el 👀 — y ese 👀 se queda clavado para siempre, que es justo el modo de falla
+  // que este acuse viene a evitar.
+  //
+  // El handle va aparte porque `agent` guarda el NOMBRE para pintar, y el sub de la
+  // reacción se construye con el handle (`agent:<handle>`).
+  await addColumn("gt_turns", "invoker_message_ids", "TEXT");
+  await addColumn("gt_turns", "agent_handle", "TEXT");
   // De qué turno es reintento. Para poder reconstruir después qué se reintentó y qué costó
   // — sin esto, un reintento es indistinguible de un turno normal en la factura.
   await addColumn("gt_turns", "reintento_de", "INTEGER");

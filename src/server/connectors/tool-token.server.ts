@@ -32,7 +32,10 @@ const DEFAULT_TTL_S = 900; // 15 min: cubre turnos largos con tools encadenadas.
 // `memoryScope` PISA la clave derivada de channelId/dmId. Existe para las conversaciones
 // que viven dentro de un room pero NO son del room: un hilo de WhatsApp es de UN contacto,
 // y sin esto compartiría memoria con el equipo y con los demás contactos del mismo número.
-export type ToolDest = { channelId?: number; dmId?: number; parentId?: number; topic?: string; handle?: string; name?: string; avatar?: string; memoryScope?: string };
+// `invokerMessageIds` = los mensajes que dispararon el turno. Van FIRMADOS porque son el
+// destino por defecto de `chat_react`: sin ellos ahí, el agente tendría que recibir un id de
+// mensaje por argumento para poder reaccionarle a quien le habló.
+export type ToolDest = { channelId?: number; dmId?: number; parentId?: number; topic?: string; handle?: string; name?: string; avatar?: string; memoryScope?: string; invokerMessageIds?: number[] };
 
 /**
  * ⚠️ `ns` es OBLIGATORIO y va SEGUNDO, no al final.

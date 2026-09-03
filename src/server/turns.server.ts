@@ -42,6 +42,15 @@ export type LiveTurn = {
   attachments?: unknown[];
   /** La cáscara del agente, para reusarla en el reintento en vez de crear otra burbuja. */
   shellId?: number | null;
+  /**
+   * Los mensajes de la persona que dispararon este turno, para cerrarles el acuse 👀 →
+   * ✅/⏹/⚠️ (`agent-ack.server.ts`).
+   *
+   * ⚠️ Es una LISTA, no un id: con STEER, un segundo mensaje del mismo invocador se mete en
+   * el turno EN CURSO y `postMessage` ya le puso su propio 👀. Guardando sólo el primero,
+   * ese 👀 se queda clavado para siempre — nadie más vuelve por él.
+   */
+  invokerMessageIds?: number[];
 
   // ── AUTORIDAD del turno. Ver `inflightAuthority`. ────────────────────────────────────
   //
@@ -57,6 +66,8 @@ export type LiveTurn = {
   dest?: unknown;
   /** Qué familias de tools puede ejercer. CSV/Set según `parseScope`. */
   scope?: unknown;
+  /** El handle del agente. `agent` es el NOMBRE para pintar; el acuse necesita el handle. */
+  handle?: string | null;
   /** Canal público: el texto del turno lo escribe un extraño. Nunca hay tools. */
   publicChannel?: boolean;
 };
@@ -235,7 +246,7 @@ export function armTurnSweep(ns: string): void {
       const { withNamespace } = await import("./tenant.server");
       for (const t of Array.from(tenantsConTurnos)) {
         // Un tenant con la base intermitente no puede dejar sin barrer a los demás.
-        await withNamespace(t, () => sweepOrphans()).catch(() => {});
+        await withNamespace(t, () => sweepOrphans(t)).catch(() => {});
       }
     })();
   }, SWEEP_MS);
@@ -277,18 +288,49 @@ export function registerTurn(t: Omit<LiveTurn, "startedAt"> & { startedAt?: numb
   // del intervalo: un turno que nace con `heartbeat_at` nulo lo daría por huérfano cualquier
   // barrido que corriera en ese hueco — y el hueco dura hasta 15 s.
   void persistir(
-    `INSERT INTO gt_turns (message_id, group_id, invoker_sub, channel_id, parent_id, agent, avatar, tarea, state, started_at, heartbeat_at, body, dm_id, slug, attachments, shell_id, tools_json)
-     VALUES (?,?,?,?,?,?,?,?,'running',?,unixepoch(),?,?,?,?,?,NULL)
+    `INSERT INTO gt_turns (message_id, group_id, invoker_sub, channel_id, parent_id, agent, avatar, tarea, state, started_at, heartbeat_at, body, dm_id, slug, attachments, shell_id, tools_json, invoker_message_ids, agent_handle)
+     VALUES (?,?,?,?,?,?,?,?,'running',?,unixepoch(),?,?,?,?,?,NULL,?,?)
      ON CONFLICT(message_id) DO UPDATE SET state='running', started_at=excluded.started_at, ended_at=NULL, outcome=NULL, error=NULL, heartbeat_at=unixepoch(),
-       body=excluded.body, dm_id=excluded.dm_id, slug=excluded.slug, attachments=excluded.attachments, shell_id=excluded.shell_id, tools_json=NULL`,
+       body=excluded.body, dm_id=excluded.dm_id, slug=excluded.slug, attachments=excluded.attachments, shell_id=excluded.shell_id, tools_json=NULL,
+       invoker_message_ids=excluded.invoker_message_ids, agent_handle=excluded.agent_handle`,
     [entry.messageId, entry.groupId, entry.invokerSub ?? null, entry.channelId ?? null,
      entry.parentId ?? null, entry.agent ?? null, entry.avatar ?? null, entry.tarea ?? null, entry.startedAt,
      entry.body ?? null, entry.dmId ?? null, entry.slug ?? null,
-     entry.attachments?.length ? JSON.stringify(entry.attachments) : null, entry.shellId ?? null],
+     entry.attachments?.length ? JSON.stringify(entry.attachments) : null, entry.shellId ?? null,
+     entry.invokerMessageIds?.length ? JSON.stringify(entry.invokerMessageIds) : null,
+     entry.handle ?? null],
   );
   asegurarLatido();
   announceGroup(entry.groupId);
   return entry;
+}
+
+/**
+ * Cuelga otro mensaje invocador del turno VIVO de este grupo, para que su cierre le quite
+ * también el 👀. Devuelve el turno afectado, o null si no había ninguno.
+ *
+ * ⚠️ Existe por el STEER: si escribes otra vez con tu turno corriendo, el mensaje se mete en
+ * el turno EN CURSO y `postMessage` ya le puso su acuse. Sin esto, ese 👀 no lo quita nadie
+ * — el turno cierra conociendo sólo el primer mensaje.
+ */
+export function addInvokerMessage(
+  groupId: string,
+  invokerSub: string | null | undefined,
+  messageId: number
+): LiveTurn | null {
+  for (const t of live.values()) {
+    if (t.groupId !== groupId || t.stopped) continue;
+    if (invokerSub && t.invokerSub !== invokerSub) continue;
+    const ids = (t.invokerMessageIds ??= []);
+    if (ids.includes(messageId)) return t;
+    ids.push(messageId);
+    void persistir("UPDATE gt_turns SET invoker_message_ids = ? WHERE message_id = ?", [
+      JSON.stringify(ids),
+      t.messageId,
+    ]);
+    return t;
+  }
+  return null;
 }
 
 /** Lo que el turno acabó produciendo, para la fila de "terminó". Se calcula UNA vez. */
@@ -480,7 +522,9 @@ export function interruptOwnTurns(groupId: string, invokerSub?: string | null): 
  * vacía es basura. El margen de 60s es contra la carrera del arranque: si alguien postea
  * justo mientras esto corre, su turno legítimo no se toca.
  */
-export async function sweepOrphans(): Promise<number> {
+// `ns` sólo lo usa el cierre del acuse (necesita publicar al bus, que es por tenant). El
+// resto del barrido ya corre dentro de `withNamespace`.
+export async function sweepOrphans(ns?: string): Promise<number> {
   try {
     const { dbq } = await import("../dbq.server");
     // `agent_handle IS NOT NULL` = la cáscara la creó un turno de agente. Un mensaje de
@@ -509,9 +553,24 @@ export async function sweepOrphans(): Promise<number> {
     const muertos = await dbq(
       `UPDATE gt_turns SET state = 'expired', ended_at = ?, error = ?
          WHERE state = 'running'${late}${excluir}
-       RETURNING message_id`,
+       RETURNING message_id, invoker_message_ids, agent_handle`,
       [Date.now(), "el proceso que lo atendía dejó de latir"],
-    ).catch(() => [] as { message_id?: unknown }[]);
+    ).catch(() => [] as { message_id?: unknown; invoker_message_ids?: unknown; agent_handle?: unknown }[]);
+    // Cierra el acuse 👀 de los turnos que acaban de darse por muertos. Es el caso COMÚN,
+    // no el raro: cada deploy mata los turnos en vuelo. Sin esto el 👀 queda clavado y ya
+    // nadie vuelve por él — el turno ni siquiera existe en memoria.
+    // ⚠️ El estado del proceso ya no sirve aquí: los ids salen de la columna, que es para
+    // lo que se persiste.
+    for (const fila of muertos) {
+      const handle = typeof fila.agent_handle === "string" ? fila.agent_handle : "";
+      if (!handle || typeof fila.invoker_message_ids !== "string") continue;
+      const ids = JSON.parse(fila.invoker_message_ids) as unknown;
+      if (!Array.isArray(ids) || !ids.length) continue;
+      if (!ns) continue;
+      const { ackEnd } = await import("./agent-ack.server");
+      // ⏹, no ⚠️: es lo mismo que dice la cáscara aquí abajo ("el servidor se reinició").
+      await ackEnd(ns, ids.map(Number).filter(Number.isFinite), handle, "stopped").catch(() => {});
+    }
     // Sólo se cierran las cáscaras de los turnos que ACABAN de darse por muertos. Antes se
     // barría por edad del mensaje (60 s / 600 s), que es de dónde salían los dos falsos
     // positivos documentados aquí abajo: un motor lento y un turno que empezó justo antes.

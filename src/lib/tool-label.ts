@@ -146,6 +146,7 @@ export const TOOL_LABELS: Record<string, { ing: string; done: string }> = {
   chat_search: { ing: "Buscando en la conversación", done: "Busqué en la conversación" },
   chat_history: { ing: "Revisando la conversación", done: "Revisé la conversación" },
   chat_message: { ing: "Leyendo un mensaje", done: "Leí un mensaje" },
+  chat_react: { ing: "Reaccionando al mensaje", done: "Reaccioné al mensaje" },
   create_payment_link: { ing: "Generando el link de pago", done: "Generé el link de pago" },
   create_quotation: { ing: "Preparando la cotización", done: "Preparé la cotización" },
   fast_quotation: { ing: "Preparando la cotización", done: "Preparé la cotización" },
