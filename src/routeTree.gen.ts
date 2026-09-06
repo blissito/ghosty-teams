@@ -49,6 +49,7 @@ import { Route as ArtefactoIdRawRouteImport } from './routes/artefacto.$id.raw'
 import { Route as ApiProspeccionAgentRouteImport } from './routes/api.prospeccion.agent'
 import { Route as ApiInternalMembersRouteImport } from './routes/api.internal.members'
 import { Route as ApiInternalAnnouncementsRouteImport } from './routes/api.internal.announcements'
+import { Route as ApiInternalAlertRouteImport } from './routes/api.internal.alert'
 import { Route as ApiFormTokenRouteImport } from './routes/api.form.$token'
 import { Route as ApiFormUploadTokenRouteImport } from './routes/api.form-upload.$token'
 import { Route as ApiFormFileIdRouteImport } from './routes/api.form-file.$id'
@@ -275,6 +276,11 @@ const ApiInternalAnnouncementsRoute =
     path: '/api/internal/announcements',
     getParentRoute: () => rootRouteImport,
   } as any)
+const ApiInternalAlertRoute = ApiInternalAlertRouteImport.update({
+  id: '/api/internal/alert',
+  path: '/api/internal/alert',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiFormTokenRoute = ApiFormTokenRouteImport.update({
   id: '/api/form/$token',
   path: '/api/form/$token',
@@ -444,6 +450,7 @@ export interface FileRoutesByFullPath {
   '/api/form-file/$id': typeof ApiFormFileIdRoute
   '/api/form-upload/$token': typeof ApiFormUploadTokenRoute
   '/api/form/$token': typeof ApiFormTokenRoute
+  '/api/internal/alert': typeof ApiInternalAlertRoute
   '/api/internal/announcements': typeof ApiInternalAnnouncementsRoute
   '/api/internal/members': typeof ApiInternalMembersRoute
   '/api/prospeccion/agent': typeof ApiProspeccionAgentRoute
@@ -509,6 +516,7 @@ export interface FileRoutesByTo {
   '/api/form-file/$id': typeof ApiFormFileIdRoute
   '/api/form-upload/$token': typeof ApiFormUploadTokenRoute
   '/api/form/$token': typeof ApiFormTokenRoute
+  '/api/internal/alert': typeof ApiInternalAlertRoute
   '/api/internal/announcements': typeof ApiInternalAnnouncementsRoute
   '/api/internal/members': typeof ApiInternalMembersRoute
   '/api/prospeccion/agent': typeof ApiProspeccionAgentRoute
@@ -576,6 +584,7 @@ export interface FileRoutesById {
   '/api/form-file/$id': typeof ApiFormFileIdRoute
   '/api/form-upload/$token': typeof ApiFormUploadTokenRoute
   '/api/form/$token': typeof ApiFormTokenRoute
+  '/api/internal/alert': typeof ApiInternalAlertRoute
   '/api/internal/announcements': typeof ApiInternalAnnouncementsRoute
   '/api/internal/members': typeof ApiInternalMembersRoute
   '/api/prospeccion/agent': typeof ApiProspeccionAgentRoute
@@ -644,6 +653,7 @@ export interface FileRouteTypes {
     | '/api/form-file/$id'
     | '/api/form-upload/$token'
     | '/api/form/$token'
+    | '/api/internal/alert'
     | '/api/internal/announcements'
     | '/api/internal/members'
     | '/api/prospeccion/agent'
@@ -709,6 +719,7 @@ export interface FileRouteTypes {
     | '/api/form-file/$id'
     | '/api/form-upload/$token'
     | '/api/form/$token'
+    | '/api/internal/alert'
     | '/api/internal/announcements'
     | '/api/internal/members'
     | '/api/prospeccion/agent'
@@ -775,6 +786,7 @@ export interface FileRouteTypes {
     | '/api/form-file/$id'
     | '/api/form-upload/$token'
     | '/api/form/$token'
+    | '/api/internal/alert'
     | '/api/internal/announcements'
     | '/api/internal/members'
     | '/api/prospeccion/agent'
@@ -841,6 +853,7 @@ export interface RootRouteChildren {
   ApiFormFileIdRoute: typeof ApiFormFileIdRoute
   ApiFormUploadTokenRoute: typeof ApiFormUploadTokenRoute
   ApiFormTokenRoute: typeof ApiFormTokenRoute
+  ApiInternalAlertRoute: typeof ApiInternalAlertRoute
   ApiInternalAnnouncementsRoute: typeof ApiInternalAnnouncementsRoute
   ApiInternalMembersRoute: typeof ApiInternalMembersRoute
   ApiProspeccionAgentRoute: typeof ApiProspeccionAgentRoute
@@ -1140,6 +1153,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiInternalAnnouncementsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/internal/alert': {
+      id: '/api/internal/alert'
+      path: '/api/internal/alert'
+      fullPath: '/api/internal/alert'
+      preLoaderRoute: typeof ApiInternalAlertRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/form/$token': {
       id: '/api/form/$token'
       path: '/api/form/$token'
@@ -1385,6 +1405,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiFormFileIdRoute: ApiFormFileIdRoute,
   ApiFormUploadTokenRoute: ApiFormUploadTokenRoute,
   ApiFormTokenRoute: ApiFormTokenRoute,
+  ApiInternalAlertRoute: ApiInternalAlertRoute,
   ApiInternalAnnouncementsRoute: ApiInternalAnnouncementsRoute,
   ApiInternalMembersRoute: ApiInternalMembersRoute,
   ApiProspeccionAgentRoute: ApiProspeccionAgentRoute,

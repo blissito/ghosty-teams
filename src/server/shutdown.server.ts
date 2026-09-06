@@ -63,12 +63,32 @@ function blindarContraChunksViejos(): void {
       return;
     }
     console.error("[unhandled] promesa rechazada sin dueño — NO se tira el proceso:", razon);
+    // Y además se avisa. El journal de una caja no lo lee nadie: con clientes
+    // dentro, un error que sólo queda ahí es un error que descubre el cliente.
+    // La de-duplicación vive en gs, así que una ráfaga no manda una ráfaga.
+    void import("./alert.server").then((m) =>
+      m.alertar({
+        key: "unhandled-rejection",
+        title: "Promesa rechazada sin dueño (Teams)",
+        detail: String((razon as Error)?.stack ?? razon),
+      }),
+    );
   });
 }
 
 /** ¿Se está apagando? Los caminos que abren recursos nuevos deben rendirse. */
 export function seEstaApagando(): boolean {
   return apagando;
+}
+
+/** Arma los manejadores de proceso SIN esperar a que alguien registre un cierre.
+ *
+ * ⚠️ `armar()` sólo corría desde `alApagar()`, o sea tras el primer SSE. Hasta
+ * ese momento el proceso estaba a pelo: una promesa rechazada en el arranque
+ * —justo cuando más fallan las cosas— tiraba el servidor de TODOS los tenants
+ * sin dejar aviso. Lo llama `dbq.server.ts`, que es por donde pasa todo. */
+export function armarProteccionDeProceso(): void {
+  armar();
 }
 
 function armar(): void {

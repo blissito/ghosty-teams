@@ -26,6 +26,10 @@ import { assertEnv } from "./server/env-check.server";
 // (nitro no expone uno por esta integración de vite).
 assertEnv();
 
+// Y con la misma lógica se arman aquí los manejadores de proceso: hasta ahora
+// se armaban con el primer SSE, así que un fallo del arranque no dejaba rastro.
+import("./server/shutdown.server").then((m) => m.armarProteccionDeProceso()).catch(() => {});
+
 const SQLD_URL = process.env.SQLD_URL ?? "http://127.0.0.1:8080";
 /** Clave privada Ed25519 (base64) con la que se firman los tokens por namespace. */
 const SQLD_JWT_PRIVATE_KEY = process.env.SQLD_JWT_PRIVATE_KEY ?? "";
