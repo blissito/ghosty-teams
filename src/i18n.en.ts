@@ -233,6 +233,8 @@ export const en: Record<string, string> = {
   "Contraer": "Collapse",
   "Conversaciones": "Conversations",
   "Conversación": "Conversation",
+  "Caduca el": "Expires on",
+  "Después habrá que crear una nueva.": "After that you'll need to create a new one.",
   "Copiar": "Copy",
   "Copiar enlace": "Copy link",
   "Copiar texto": "Copy text",

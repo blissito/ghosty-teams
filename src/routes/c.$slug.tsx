@@ -94,7 +94,12 @@ import { openCall as openCallGlobal, leaveCall, refreshCallMutes, useMyCallKey, 
 // Descriptor para unirse a una call desde una tarjeta del timeline.
 import { listAgentsFn } from "../server/agents";
 import { unreadCountsFn, markReadFn, lastReadFn } from "../server/reads";
-import { unreadAnnouncementsFn, markAnnouncementSeenFn, type Announcement } from "../server/announcements";
+import {
+  unreadAnnouncementsFn,
+  markAnnouncementSeenFn,
+  maintenanceNoticeFn,
+  type Announcement,
+} from "../server/announcements";
 import { toggleStarFn, togglePinFn, getPinsFn, toggleMuteFn, listMutesFn } from "../server/stars";
 import { listMyWorkspacesFn } from "../server/workspaces";
 import {
@@ -2861,6 +2866,7 @@ function ChannelPage() {
       {/* El modal de reenviar lo monta QUIEN puede reenviar. El botón sólo pide abrirlo. */}
       {reenviar && <ForwardModal message={reenviar} onClose={() => setReenviar(null)} />}
       <NovedadesModal />
+      <BarraMantenimiento />
     </div>
     </ChatCtx.Provider>
   );
@@ -2960,6 +2966,41 @@ function startConfetti(): () => void {
   return () => {
     running = false;
   };
+}
+
+// Barra de mantenimiento. La enciende un admin desde gs y la ve todo el mundo,
+// en todos los workspaces, mientras dure.
+//
+// ⚠️ No se puede cerrar A PROPÓSITO. Lo que anuncia —que un turno puede cortarse
+// a media respuesta— sigue siendo verdad después de darle a la X, y sin ella la
+// gente lee el corte como un fallo del producto.
+//
+// Se pide UNA vez al montar: es una barra de aviso, no un semáforo. Quien deje la
+// pestaña abierta desde antes no la verá hasta recargar, y eso es aceptable —
+// quien está a punto de entrar sí, que es el que va a toparse con el corte.
+function BarraMantenimiento() {
+  const [aviso, setAviso] = useState<{ message: string; until: string | null } | null>(null);
+  useEffect(() => {
+    let vivo = true;
+    maintenanceNoticeFn()
+      .then((a) => { if (vivo) setAviso(a); })
+      .catch(() => {});
+    return () => { vivo = false; };
+  }, []);
+  if (!aviso) return null;
+  return (
+    <div
+      role="status"
+      className="fixed inset-x-0 top-0 z-[60] flex items-center justify-center gap-2 bg-amber-500/95 px-4 py-1.5 text-center text-[13px] font-medium text-amber-950"
+    >
+      <span>{aviso.message}</span>
+      {aviso.until && (
+        <span className="opacity-70">
+          (hasta {new Date(aviso.until).toLocaleString(undefined, { hour: "2-digit", minute: "2-digit" })})
+        </span>
+      )}
+    </div>
+  );
 }
 
 // Galería "Novedades" ("What's New" estilo Discord): al entrar, muestra las novedades

@@ -37,11 +37,24 @@ export async function consumeInvite(
   token: string,
   _sub: string
 ): Promise<{ ok: boolean; channelId: number | null }> {
-  const { rows } = await dbq("SELECT channel_id FROM gc_invites WHERE token = ?", [token]);
+  const { rows } = await dbq("SELECT channel_id, expires_at FROM gc_invites WHERE token = ?", [token]);
   const row = rows[0];
   if (!row) return { ok: false, channelId: null }; // cancelado o inexistente
+  // Caducada = igual que cancelada. Una liga permanente es una llave del
+  // workspace que se queda para siempre en el historial de WhatsApp de quien la
+  // reenvió; con caducidad, lo peor que puede pasar es que alguien tenga que
+  // pedirla otra vez.
+  const exp = row[1] == null ? null : Number(row[1]);
+  if (exp != null && exp < Math.floor(Date.now() / 1000)) return { ok: false, channelId: null };
   const raw = row[0];
   return { ok: true, channelId: raw == null ? null : Number(raw) };
+}
+
+/** Días que vive una liga nueva. 0 = sin caducidad (para volver al comportamiento
+ *  viejo sin tocar código si algún cliente lo pide). */
+function diasDeVida(): number {
+  const v = Number(process.env.INVITE_TTL_DAYS ?? "14");
+  return Number.isFinite(v) && v >= 0 ? v : 14;
 }
 
 // ── Helpers (server-only) ────────────────────────────────────────────────────
@@ -71,10 +84,15 @@ function scope(channelId: number | null): { sql: string; args: unknown[] } {
     : { sql: "channel_id = ?", args: [channelId] };
 }
 
+/** Fragmento SQL que descarta las caducadas. Se usa en TODAS las lecturas: una
+ *  liga muerta que la tarjeta de Ajustes sigue enseñando es peor que ninguna,
+ *  porque se reparte creyendo que sirve. */
+const VIVA = "(expires_at IS NULL OR expires_at > unixepoch())";
+
 export async function activeToken(sub: string, channelId: number | null = null) {
   const s = scope(channelId);
   const { rows } = await dbq(
-    `SELECT token FROM gc_invites WHERE created_by = ? AND used_by IS NULL AND ${s.sql} ORDER BY rowid DESC LIMIT 1`,
+    `SELECT token FROM gc_invites WHERE created_by = ? AND used_by IS NULL AND ${VIVA} AND ${s.sql} ORDER BY rowid DESC LIMIT 1`,
     [sub, ...s.args]
   );
   return (rows[0]?.[0] as string) ?? null;
@@ -83,10 +101,13 @@ export async function activeToken(sub: string, channelId: number | null = null) 
 export async function mint(sub: string, channelId: number | null = null): Promise<string> {
   const crypto = await import("node:crypto");
   const token = crypto.randomBytes(16).toString("hex");
-  await dbq("INSERT INTO gc_invites (token, created_by, channel_id) VALUES (?, ?, ?)", [
+  const dias = diasDeVida();
+  const exp = dias > 0 ? Math.floor(Date.now() / 1000) + dias * 86400 : null;
+  await dbq("INSERT INTO gc_invites (token, created_by, channel_id, expires_at) VALUES (?, ?, ?, ?)", [
     token,
     sub,
     channelId,
+    exp,
   ]);
   return token;
 }
@@ -97,7 +118,7 @@ export async function mint(sub: string, channelId: number | null = null): Promis
 // mismo room verían ligas distintas y "Cancelar" dejaría viva la del otro.
 export async function roomToken(channelId: number): Promise<string | null> {
   const { rows } = await dbq(
-    "SELECT token FROM gc_invites WHERE channel_id = ? AND used_by IS NULL ORDER BY rowid DESC LIMIT 1",
+    `SELECT token FROM gc_invites WHERE channel_id = ? AND used_by IS NULL AND ${VIVA} ORDER BY rowid DESC LIMIT 1`,
     [channelId]
   );
   return (rows[0]?.[0] as string) ?? null;
@@ -115,6 +136,14 @@ export async function dropTokens(sub: string, channelId: number | null = null): 
   ]);
 }
 
+/** Cuándo caduca esta liga (epoch en segundos). `null` = no caduca (filas
+ *  anteriores a la caducidad, o `INVITE_TTL_DAYS=0`). */
+export async function expiryOf(token: string): Promise<number | null> {
+  const { rows } = await dbq("SELECT expires_at FROM gc_invites WHERE token = ?", [token]);
+  const v = rows[0]?.[0];
+  return v == null ? null : Number(v);
+}
+
 // ── Server fns (owner) ───────────────────────────────────────────────────────
 
 // Lee el link permanente activo (NO crea). null = cancelado o nunca creado → la UI
@@ -122,14 +151,16 @@ export async function dropTokens(sub: string, channelId: number | null = null): 
 export const getInvite = createServerFn({ method: "GET" }).handler(async () => {
   const sub = await currentSub();
   const token = await activeToken(sub);
-  return { url: token ? await urlFor(token) : null };
+  // La fecha se devuelve para PINTARLA: una liga que caduca sin decirlo se
+  // reparte igual y deja a alguien fuera sin explicación.
+  return { url: token ? await urlFor(token) : null, expiresAt: token ? await expiryOf(token) : null };
 });
 
 // Get-or-create idempotente: crea el link permanente si no hay, o devuelve el actual.
 export const createInvite = createServerFn({ method: "POST" }).handler(async () => {
   const sub = await currentSub();
   const token = (await activeToken(sub)) ?? (await mint(sub));
-  return { url: await urlFor(token) };
+  return { url: await urlFor(token), expiresAt: await expiryOf(token) };
 });
 
 // Refresca: invalida el link actual (lo borra) y emite uno nuevo. El link viejo deja
@@ -137,7 +168,8 @@ export const createInvite = createServerFn({ method: "POST" }).handler(async () 
 export const refreshInvite = createServerFn({ method: "POST" }).handler(async () => {
   const sub = await currentSub();
   await dropTokens(sub);
-  return { url: await urlFor(await mint(sub)) };
+  const token = await mint(sub);
+  return { url: await urlFor(token), expiresAt: await expiryOf(token) };
 });
 
 // Cancela: elimina el link permanente. Nadie más puede unirse hasta crear uno nuevo.

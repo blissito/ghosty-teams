@@ -258,6 +258,13 @@ async function migrate(): Promise<void> {
   // Ajustes acabaría repartiendo la liga de un room privado.
   await addColumn("gc_invites", "channel_id", "INTEGER");
 
+  // Caducidad de la liga de invitación (epoch, segundos). NULL = no caduca.
+  //
+  // ⚠️ Las filas que ya existen se quedan en NULL A PROPÓSITO: caducar de golpe
+  // las ligas ya repartidas dejaría fuera, el mismo día, a gente que estaba a
+  // punto de entrar. La caducidad rige para las que se emitan desde ahora.
+  await addColumn("gc_invites", "expires_at", "INTEGER");
+
   // Thumbnail WebP de adjuntos-imagen (se sirve inline; el original queda para full/agente).
   await addColumn("gc_attachments", "thumb_file_id", "TEXT");
   // Dimensiones intrínsecas de la imagen (px) → el render reserva el alto EXACTO antes

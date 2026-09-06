@@ -37,6 +37,34 @@ async function fetchPublishedFromControlPlane(): Promise<Announcement[]> {
   }
 }
 
+/** Aviso de mantenimiento global (de gs). `null` = no hay.
+ *
+ * ⚠️ NO es una novedad, y por eso no viaja con ellas: una novedad se descarta al
+ * verla una vez, y esto tiene que seguir visible mientras dure, para todo el
+ * mundo y en cada carga. Fallar es no pintar nada: un aviso que no se pudo leer
+ * jamás puede impedir entrar al chat.
+ */
+export const maintenanceNoticeFn = createServerFn({ method: "GET" }).handler(
+  async (): Promise<{ message: string; until: string | null } | null> => {
+    try {
+      const crypto = await import("node:crypto");
+      const secret = process.env.GHOSTY_PARTNER_SECRET;
+      if (!secret) return null;
+      const IDP = process.env.GHOSTY_IDENTITY_URL ?? "https://www.ghosty.studio";
+      const ts = Math.floor(Date.now() / 1000);
+      const sig = crypto.createHmac("sha256", secret).update(`${ts}.status`).digest("hex");
+      const res = await fetch(`${IDP}/internal/status?ts=${ts}&sig=${sig}`, {
+        signal: AbortSignal.timeout(8_000),
+      });
+      if (!res.ok) return null;
+      const j = (await res.json()) as { maintenance?: { message: string; until: string | null } | null };
+      return j.maintenance ?? null;
+    } catch {
+      return null;
+    }
+  },
+);
+
 // Las novedades que el usuario AÚN NO ha visto (para la galería). Orden = como llegan
 // de gs (más nuevas primero).
 export const unreadAnnouncementsFn = createServerFn({ method: "GET" }).handler(

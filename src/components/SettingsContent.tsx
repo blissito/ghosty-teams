@@ -137,6 +137,8 @@ export function SettingsContent({
   const t = useT();
   const [data, setData] = useState<SettingsData | null>(seedSettingsData);
   const [invite, setInvite] = useState<string | null>(null); // null = sin link activo
+  // Epoch (s) en que caduca la liga. null = no caduca (ligas anteriores a la caducidad).
+  const [inviteExp, setInviteExp] = useState<number | null>(null);
   const [inviteLoaded, setInviteLoaded] = useState(false); // ya resolvimos el estado inicial
   const [copied, setCopied] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -150,7 +152,7 @@ export function SettingsContent({
   useEffect(() => {
     if (data?.user && !inviteLoaded) {
       getInvite()
-        .then((r) => setInvite(r.url))
+        .then((r) => { setInvite(r.url); setInviteExp(r.expiresAt ?? null); })
         .catch(() => {})
         .finally(() => setInviteLoaded(true));
     }
@@ -158,15 +160,15 @@ export function SettingsContent({
 
   async function makeInvite() {
     setBusy(true);
-    try { setInvite((await createInvite()).url); } finally { setBusy(false); }
+    try { const r = await createInvite(); setInvite(r.url); setInviteExp(r.expiresAt ?? null); } finally { setBusy(false); }
   }
   async function regenInvite() {
     setBusy(true);
-    try { setInvite((await refreshInvite()).url); } finally { setBusy(false); }
+    try { const r = await refreshInvite(); setInvite(r.url); setInviteExp(r.expiresAt ?? null); } finally { setBusy(false); }
   }
   async function cancelInvite() {
     setBusy(true);
-    try { await revokeInvite(); setInvite(null); } finally { setBusy(false); }
+    try { await revokeInvite(); setInvite(null); setInviteExp(null); } finally { setBusy(false); }
   }
   async function copy() {
     if (invite) {
@@ -308,6 +310,17 @@ export function SettingsContent({
                           {copied ? t("¡Copiado!") : t("Copiar")}
                         </button>
                       </div>
+                      {inviteExp && (
+                        <p className="mt-2 text-xs text-muted">
+                          {t("Caduca el")}{" "}
+                          {new Date(inviteExp * 1000).toLocaleDateString(undefined, {
+                            day: "numeric",
+                            month: "long",
+                          })}
+                          {". "}
+                          {t("Después habrá que crear una nueva.")}
+                        </p>
+                      )}
                       <div className="mt-3 flex items-center gap-4">
                         <button
                           onClick={regenInvite}
