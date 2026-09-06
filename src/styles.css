@@ -639,3 +639,13 @@ body {
   80% { transform: translate3d(-3px, 2px, 0); }
 }
 .gt-fx-shake { animation: gt-fx-shake 0.65s ease-in-out; }
+
+/* Barra de mantenimiento: EMPUJA la aplicación, no la tapa.
+   La barra es `fixed` para no irse con el scroll, así que sin esto se comía el
+   encabezado del room y el nombre del workspace (visto en producción el
+   2026-09-06). El atributo lo pone `BarraMantenimiento`; el selector le gana a
+   `pt-*` y a `md:pt-0` por especificidad —una media query no añade ninguna—, así
+   que no hace falta repetir la regla ni usar `!important`. */
+body[data-mantenimiento="1"] .gt-app {
+  padding-top: 30px;
+}

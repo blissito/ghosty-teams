@@ -2607,7 +2607,7 @@ function ChannelPage() {
         el contenido va DEBAJO de la hora/notch → el header y su botón de menú quedaban
         tapados. El inset superior empuja todo bajo la barra de estado (h-[100dvh] es
         border-box → el alto interior se ajusta). En desktop el inset es 0 (sin efecto). */}
-    <div className="flex h-[100dvh] bg-surface text-ink pt-[env(safe-area-inset-top)] md:pt-0">
+    <div className="gt-app flex h-[100dvh] bg-surface text-ink pt-[env(safe-area-inset-top)] md:pt-0">
       {/* Toast de resultado del OAuth de conectores (éxito → verde + confetti; error → rojo). */}
       {connToast && (
         <div
@@ -2987,6 +2987,19 @@ function BarraMantenimiento() {
       .catch(() => {});
     return () => { vivo = false; };
   }, []);
+  // ⚠️ La barra es `fixed`, así que por sí sola TAPA el encabezado del room y el
+  // nombre del workspace. Para que EMPUJE en vez de tapar, se marca el <body> y
+  // una regla de `styles.css` le da padding al contenedor de la app.
+  //
+  // Va por atributo en el body y no por estado de React por lo mismo que
+  // `panel-cerrando.ts`: quien tiene que reaccionar es un contenedor que vive en
+  // otra rama del árbol, y pasarle un prop obligaría a atravesar media aplicación.
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    if (aviso) document.body.setAttribute("data-mantenimiento", "1");
+    else document.body.removeAttribute("data-mantenimiento");
+    return () => document.body.removeAttribute("data-mantenimiento");
+  }, [aviso]);
   if (!aviso) return null;
   return (
     <div
