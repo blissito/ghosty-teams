@@ -281,6 +281,21 @@ export const listTeamDocumentsFn = createServerFn({ method: "GET" }).handler(asy
   // queries que se unen aquí en JS.
   const authorOf = new Map<string, string>();
 
+  /** ¿Es mío este documento?
+   *
+   *  ⚠️ Un mensaje del AGENTE no tiene `sender_sub` —lo marca `agent_handle`, ver
+   *  `postAgent`—, así que todo lo que @ghosty adjunta nace sin autor. Con la regla
+   *  ingenua (`autor === me.sub`) eso salía como «de otro»: en un DM con el agente
+   *  aparecía el toggle «Míos» y `cedula.docx` se rotulaba «· Ghosty», cuando ese
+   *  documento es tan tuyo como el que subiste tú.
+   *
+   *  Sin autor humano, manda DÓNDE vive: un DM ya está acotado a su membresía por
+   *  `readScope`, así que si lo estás viendo eres parte de la conversación y es tuyo.
+   *  En un CANAL no — ahí un documento sin autor es de la sala, no de quien pasa por
+   *  ella, y reclamárselo a cualquiera es exactamente lo que «Míos» viene a evitar. */
+  const esMio = (autor: string | null, dmId?: number) =>
+    autor ? autor === me.sub : dmId != null;
+
   const seenDoc = new Map<string, TeamDocument>();
   for (const g of generated) {
     const docId = (g.url && String(g.url)) || `g${g.id}`;
@@ -292,13 +307,14 @@ export const listTeamDocumentsFn = createServerFn({ method: "GET" }).handler(asy
     const kind = toDocKind(g.kind);
     const autor = g.author_sub ? String(g.author_sub) : null;
     if (autor) authorOf.set(`g${g.id}`, autor);
+    const anc = anclaje(g.channel_id, g.dm_id, g.room_name, g.room_slug);
     const doc: TeamDocument = {
       key: `g${g.id}`,
       source: "generated",
       kind,
       title: g.title || "Documento",
-      ...anclaje(g.channel_id, g.dm_id, g.room_name, g.room_slug),
-      mine: autor === me.sub,
+      ...anc,
+      mine: esMio(autor, anc.dmId),
       messageId: num(g.message_id),
       threadRootId: rootOf(g.parent_id, g.message_id),
       createdAt: num(g.created_at),
@@ -319,13 +335,14 @@ export const listTeamDocumentsFn = createServerFn({ method: "GET" }).handler(asy
     if (kind === "file") continue;
     const autor = u.author_sub ? String(u.author_sub) : null;
     if (autor) authorOf.set(`u${u.id}`, autor);
+    const anc = anclaje(u.channel_id, u.dm_id, u.room_name, u.room_slug);
     docs.push({
       key: `u${u.id}`,
       source: "uploaded",
       kind,
       title: name || "Archivo",
-      ...anclaje(u.channel_id, u.dm_id, u.room_name, u.room_slug),
-      mine: autor === me.sub,
+      ...anc,
+      mine: esMio(autor, anc.dmId),
       // Respaldo: el nombre congelado en el mensaje. Lo pisa el directorio si resuelve.
       authorName: u.author_name ? String(u.author_name) : undefined,
       messageId: num(u.message_id),

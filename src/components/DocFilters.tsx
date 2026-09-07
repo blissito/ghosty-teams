@@ -62,8 +62,10 @@ export function DocFilters({
   // tuyo, y un control que nunca cambia nada es ruido que estorba en 320 px.
   const hayAjenos = docs.some((d) => !d.mine);
 
+  // `whitespace-nowrap` y sin `truncate`: son dos palabras cortas y recortarlas («To…»)
+  // ahorra ocho píxeles a cambio de un control que ya no se entiende.
   const seg = (activo: boolean) =>
-    `flex-1 truncate rounded-md px-2 py-1 transition ${
+    `whitespace-nowrap rounded-md px-2.5 py-1 transition ${
       activo ? "bg-surface text-ink shadow-sm" : "text-muted hover:text-ink"
     }`;
 
@@ -71,7 +73,11 @@ export function DocFilters({
     <div
       className={`flex shrink-0 flex-wrap items-center gap-2 ${compact ? "mb-3" : "mb-5"}`}
     >
-      <div className="flex min-w-0 flex-1 items-center gap-1.5 rounded-lg border border-border bg-surface-2 px-2 py-1">
+      {/* En el panel (320 px) el buscador se queda con la fila entera: compartiéndola con
+          el segmentado, «Todos» salía recortado como «To…». */}
+      <div
+        className={`flex min-w-0 items-center gap-1.5 rounded-lg border border-border bg-surface-2 px-2 py-1 ${compact ? "w-full" : "flex-1"}`}
+      >
         <Search size={12} className="shrink-0 text-muted" />
         <input
           value={q}

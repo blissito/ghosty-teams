@@ -45,6 +45,17 @@ describe("filterDocs", () => {
     expect(r.map((d) => d.key)).toEqual(["d"]);
   });
 
+  it("un DM con el agente no tiene nada ajeno que esconder", () => {
+    // Regresión: los adjuntos que postea el agente no traen `sender_sub`, así que salían
+    // como «de otro» y el toggle «Míos» aparecía en un DM donde todo es tuyo. El servidor
+    // lo resuelve (`esMio`); aquí se comprueba lo que el componente mira para pintarlo.
+    const dm: TeamDocument[] = [
+      doc({ key: "x", mine: true }),
+      doc({ key: "y", title: "cedula.docx", kind: "office", source: "uploaded", mine: true }),
+    ];
+    expect(dm.some((d) => !d.mine)).toBe(false);
+  });
+
   it("«Míos» usa el `mine` del servidor y no adivina", () => {
     const r = filterDocs(DOCS, { ...EMPTY_DOC_FILTER, mine: true });
     expect(r.map((d) => d.key)).toEqual(["a", "b"]);
