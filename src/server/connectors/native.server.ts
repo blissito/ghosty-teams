@@ -1014,7 +1014,9 @@ export function nativeTools(dest: ToolDest | null): ConnectorTool[] {
         const q = String(args.query ?? "").trim();
         if (!q) return { ok: false, error: "falta query" };
         const db = await import("../../db.server");
-        const msgs = await db.searchInScope(scope, q, Number(args.limit) || 20);
+        const msgs = await db.attachAttachments(
+          await db.searchInScope(scope, q, Number(args.limit) || 20),
+        ).catch(() => [] as Awaited<ReturnType<typeof db.searchInScope>>);
         return { ok: true, query: q, count: msgs.length, messages: msgs.map(paraElModelo) };
       },
     },
@@ -1104,7 +1106,9 @@ export function nativeTools(dest: ToolDest | null): ConnectorTool[] {
         "`oldestId` de la respuesta anterior. Úsalo cuando te pidan algo de 'antes' o necesites " +
         "el hilo de una decisión; si sabes qué palabras buscar, chat_search es más directo. Los " +
         "cuerpos vienen recortados: los marcados con `truncated: true` se leen enteros con " +
-        "chat_message({ids: [...]}).",
+        "chat_message({ids: [...]}). Un mensaje con `files` traía ARCHIVOS adjuntos: es " +
+        "normal que su texto venga vacío, porque la gente manda la instrucción en un mensaje " +
+        "y los archivos en otro.",
       inputSchema: {
         type: "object",
         properties: {
@@ -1117,7 +1121,10 @@ export function nativeTools(dest: ToolDest | null): ConnectorTool[] {
         if (!scope) return { ok: false, error: "no hay conversación en este turno" };
         const db = await import("../../db.server");
         const pedidos = Math.max(1, Math.min(Number(args.limit) || 25, 50));
-        const msgs = await db.historyBefore(scope, Number(args.before) || null, pedidos);
+        // Con sus ADJUNTOS: un mensaje de archivos sin texto es invisible sin esto.
+        const msgs = await db.attachAttachments(
+          await db.historyBefore(scope, Number(args.before) || null, pedidos),
+        ).catch(() => [] as Awaited<ReturnType<typeof db.historyBefore>>);
         return {
           ok: true,
           count: msgs.length,
@@ -1153,7 +1160,9 @@ export function nativeTools(dest: ToolDest | null): ConnectorTool[] {
         const ids = Array.isArray(args.ids) ? args.ids.map(Number) : [];
         if (!ids.length) return { ok: false, error: "falta ids" };
         const db = await import("../../db.server");
-        const msgs = await db.messagesByIdInScope(scope, ids);
+        const msgs = await db.attachAttachments(
+          await db.messagesByIdInScope(scope, ids),
+        ).catch(() => [] as Awaited<ReturnType<typeof db.messagesByIdInScope>>);
         // Un cuerpo entero puede ser un documento pegado. Se acota por mensaje para que
         // pedir cinco no reviente el turno, y el recorte se vuelve a declarar.
         const TOPE = 24_000;
@@ -1164,8 +1173,11 @@ export function nativeTools(dest: ToolDest | null): ConnectorTool[] {
             const body = (m.body || "").trim();
             return {
               id: m.id,
-              who: m.agent_handle ? `@${m.agent_handle}` : m.sender || "usuario",
+              who: quienHablo(m),
               at: new Date(m.created_at).toISOString(),
+              ...(m.attachments?.length
+                ? { files: m.attachments.map((a) => a.name ?? "(sin nombre)") }
+                : {}),
               text: body.length > TOPE ? body.slice(0, TOPE) + "…" : body,
               ...(body.length > TOPE ? { truncated: true, chars: body.length } : {}),
             };
@@ -1617,19 +1629,47 @@ function scopeDelTurno(
  * su `search.messages` no devuelve mensajes de bot, así que el agente no encuentra lo que
  * él mismo escribió — justo lo que se le suele preguntar.
  */
+/**
+ * Quién escribió un mensaje.
+ *
+ * ⚠️ NO se decide con `agent_handle`: esa columna dice a quién va DIRIGIDO el mensaje, y en
+ * un DM con un agente la llevan TODOS, también los del humano (los 250 mensajes de los 7
+ * DMs de descti la tienen puesta, medido el 2026-09-07). Con el criterio viejo,
+ * `chat_history` le devolvía al agente su propio DM entero atribuido a él mismo: no podía
+ * distinguir lo que había dicho la persona de lo que había dicho él. Lo que marca al agente
+ * es `sender_sub` NULL — `postAgent` lo deja así. Ver [[gotcha_agent_handle_no_marca_al_agente]].
+ *
+ * El `?? true` de la primera rama conserva el comportamiento viejo para las filas donde la
+ * columna no viaja: sin `sender_sub` en el SELECT, adivinar por handle sigue siendo lo
+ * mejor disponible.
+ */
+function quienHablo(m: { sender: string; sender_sub?: string | null; agent_handle: string | null }): string {
+  const esAgente = "sender_sub" in m ? m.sender_sub == null : !!m.agent_handle;
+  if (esAgente) return `@${m.agent_handle ?? "agente"}`;
+  return m.sender || "usuario";
+}
+
 function paraElModelo(m: {
   id: number;
   sender: string;
+  sender_sub?: string | null;
   agent_handle: string | null;
   body: string;
   created_at: number;
+  attachments?: { name: string | null; mime: string | null; size: number | null }[] | null;
 }) {
   const body = (m.body || "").trim();
   const recortado = body.length > TOPE_VISTA;
+  const files = (m.attachments ?? []).map((a) => a.name ?? "(sin nombre)");
   return {
     id: m.id,
-    who: m.agent_handle ? `@${m.agent_handle}` : m.sender || "usuario",
+    who: quienHablo(m),
     at: new Date(m.created_at).toISOString(),
+    // ⚠️ Sin esto un mensaje que trae DIEZ PDFs y el cuerpo vacío se le presenta al modelo
+    // como `text: ""` — invisible. Es justo la forma en que la gente manda los archivos
+    // (instrucción en un mensaje, archivos en otro), así que el agente releía la
+    // conversación buscando «el documento que te pasé» y no lo encontraba nunca.
+    ...(files.length ? { files } : {}),
     text: recortado ? body.slice(0, TOPE_VISTA) + "…" : body,
     // ⚠️ El corte se DECLARA. Antes sólo quedaba un «…» al final, y el modelo lo leía
     // como el final del mensaje: el 2026-08-27 un turno gastó 1.4M de cacheRead y 308s

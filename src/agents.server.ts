@@ -1493,6 +1493,35 @@ export type TruncatedEvent = {
  * en un expediente de varios días eso es más caro que el turno perdido. Se dice y decide la
  * persona.
  */
+/**
+ * Los mensajes de error de la API del proveedor que se cuelan como si fueran la RESPUESTA.
+ *
+ * ⚠️ Visto en descti el 2026-08-25: la burbuja del agente decía, literalmente y en inglés,
+ * *«An image in the conversation exceeds the dimension limit for many-image requests
+ * (2000px). Start a new session with fewer images.»*, y debajo el aviso de corte. Para
+ * quien lo lee, el agente se puso a hablar en inglés de límites internos. El texto no es
+ * una respuesta: es lo que el SDK pone en `result.text` cuando la llamada murió, y en un
+ * turno sin narración previa acaba siendo lo único que queda.
+ *
+ * Los mismos literales que clasifica el worker (`classifyTruncation`). Se comprueba contra
+ * el texto ENTERO y sólo cuando el turno vino cortado: si el agente alcanzó a explicar
+ * algo, eso se conserva — borrar trabajo real es peor que dejar la frase fea.
+ */
+const ERRORES_DEL_PROVEEDOR = [
+  "dimension limit for many-image requests",
+  "start a new session with fewer images",
+  "prompt is too long",
+  "exceeds the maximum number of images",
+];
+
+export function esErrorDelProveedor(texto: string): boolean {
+  const t = texto.trim().toLowerCase();
+  // Un párrafo corto que no es más que el error. Con más de ~600 caracteres asumimos que
+  // el agente escribió algo propio alrededor y no se toca.
+  if (!t || t.length > 600) return false;
+  return ERRORES_DEL_PROVEEDOR.some((frag) => t.includes(frag));
+}
+
 export function avisoDeCorte(ev: TruncatedEvent): string {
   if (ev.classification === "session") {
     return (
@@ -2848,7 +2877,7 @@ async function runAgentTurnInner(opts: {
     return { id: await ensure(), reply: renderToolBlock(true) + (partial ? `${partial}\n\n⏹ Detenido.` : "⏹ Detenido.") };
   }
   // `acc` (con separadores) es el texto bonito; reply es la acumulación cruda del stream.
-  const finalText = narration().trim() || reply || "(sin respuesta)";
+  let finalText = narration().trim() || reply || "(sin respuesta)";
   // El aviso de corte se pega AQUÍ y no por `onChunk` a propósito: éste es el cuerpo que el
   // caller persiste. Metido en el stream se vería en vivo y `done.value` lo borraría del
   // historial — el turno quedaría cortado sin decirlo, que es el bug original.
@@ -2857,6 +2886,10 @@ async function runAgentTurnInner(opts: {
   // una caja de imagen vieja el campo no viene, y aquí no se pinta nada: su frase sigue
   // dentro del texto y se ve una sola vez.
   const avisoCorte = corte.ev?.notice === "event" ? `\n\n${avisoDeCorte(corte.ev)}` : "";
+  // El error crudo de la API no es una respuesta — ver `esErrorDelProveedor`. Sólo se cae
+  // cuando el aviso SÍ se va a pintar: sin él la burbuja quedaría vacía, que es peor que
+  // una frase fea en inglés.
+  if (avisoCorte && esErrorDelProveedor(finalText)) finalText = "";
   // Body final autoritativo: bloque gt-tools TODO ✅ + texto separado. El caller lo persiste.
   return {
     id: await ensure(),
