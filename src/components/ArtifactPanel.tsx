@@ -34,6 +34,8 @@ import { intlLocale } from "../i18n.core";
 import ConfirmModal from "./ConfirmModal";
 import { officeToHtmlFn, xlsxToCsvFn, postMessage } from "../server/chat";
 import { listTeamDocumentsFn, type TeamDocument } from "../server/documents";
+import { DocFilters } from "./DocFilters";
+import { EMPTY_DOC_FILTER, filterDocs, isDocFilterActive, type DocFilter } from "../lib/doc-filter";
 import { FileGlyph, glyphNameFor } from "./FileGlyph";
 import { updateArtifactHtmlFn } from "../server/artifacts";
 import { parseDocEnvelope } from "../lib/doc-blocks";
@@ -392,6 +394,7 @@ export default function ArtifactPanel({
   );
   const [idxDocs, setIdxDocs] = useState<TeamDocument[] | null>(null); // docindex: docs del room (Cowork)
   const [idxScope, setIdxScope] = useState<"thread" | "case">("case"); // alcance del índice
+  const [docFilter, setDocFilter] = useState<DocFilter>(EMPTY_DOC_FILTER); // buscador + míos + tipos
   const [uploadingDoc, setUploadingDoc] = useState(false); // subir archivo al caso desde el índice
   // Documento en espera de confirmación para archivar. Se guarda el título además del id
   // para poder NOMBRARLO en el diálogo: "¿Archivar este documento?" no deja claro cuál.
@@ -843,8 +846,13 @@ export default function ArtifactPanel({
     (threadDocs && threadDocs.length ? threadDocs[0].channelName : null) ??
     (roomDocs && roomDocs.length ? roomDocs[0].channelName : null) ??
     null;
-  const shownDocs =
+  // El ALCANCE (hilo/room) primero; el filtro después. Los chips y sus conteos se arman
+  // sobre `scopedDocs`, no sobre todo el team: un chip «PDF · 12» en un room que sólo
+  // tiene 2 estaría contando documentos que esta vista no va a enseñar nunca.
+  const scopedDocs =
     idxScope === "thread" && idxThreadRootId != null ? threadDocs : roomDocs;
+  const shownDocs = scopedDocs ? filterDocs(scopedDocs, docFilter) : null;
+  const filtrando = isDocFilterActive(docFilter);
   useEffect(() => {
     if (idxChannelId == null) return;
     let alive = true;
@@ -1779,9 +1787,15 @@ export default function ArtifactPanel({
                                 : t("Documentos")}
                           </span>
                           {shownDocs ? (
+                            // ⚠️ Con filtro puesto dice «12 de 37». Sólo «12» se lee como
+                            // que los otros 25 desaparecieron, que es exactamente el
+                            // susto que un filtro no debe dar.
                             <span className="shrink-0 text-muted">
-                              · {shownDocs.length}{" "}
-                              {shownDocs.length === 1
+                              ·{" "}
+                              {filtrando && scopedDocs
+                                ? `${shownDocs.length} ${t("de")} ${scopedDocs.length}`
+                                : shownDocs.length}{" "}
+                              {shownDocs.length === 1 && !filtrando
                                 ? t("documento")
                                 : t("documentos")}
                             </span>
@@ -1809,6 +1823,16 @@ export default function ArtifactPanel({
                                 : t("Todo el room")}
                             </button>
                           </div>
+                        ) : null}
+                        {/* Buscador + «Míos» + tipos. Va DEBAJO del alcance porque filtra
+                            dentro de él: primero eliges de dónde, luego qué. */}
+                        {scopedDocs && scopedDocs.length > 3 ? (
+                          <DocFilters
+                            compact
+                            docs={scopedDocs}
+                            filter={docFilter}
+                            onChange={setDocFilter}
+                          />
                         ) : null}
                         {/* Área de DROP VISIBLE (además de que todo el panel acepta soltar). Clic = picker.
                             ⚠️ En un DM NO se pinta: `doUploadToCase` postea a un SLUG de canal
@@ -1853,10 +1877,26 @@ export default function ArtifactPanel({
                               <Loader2 size={20} className="animate-spin" />
                             </div>
                           ) : shownDocs.length === 0 ? (
+                            // Dos vacíos distintos: «no hay nada» y «tu filtro no encuentra
+                            // nada». Decirle a alguien que su room está vacío cuando lo que
+                            // pasa es que escribió mal una palabra lo manda a buscar un bug.
                             <div className="grid h-full place-items-center px-6 text-center text-sm text-muted">
-                              {idxScope === "thread"
-                                ? t("Este hilo aún no tiene documentos.")
-                                : t("Este room aún no tiene documentos.")}
+                              {filtrando ? (
+                                <div>
+                                  <p>{t("Nada coincide con este filtro.")}</p>
+                                  <button
+                                    type="button"
+                                    onClick={() => setDocFilter(EMPTY_DOC_FILTER)}
+                                    className="mt-1 text-brand hover:underline"
+                                  >
+                                    {t("Limpiar filtros")}
+                                  </button>
+                                </div>
+                              ) : idxScope === "thread" ? (
+                                t("Este hilo aún no tiene documentos.")
+                              ) : (
+                                t("Este room aún no tiene documentos.")
+                              )}
                             </div>
                           ) : (
                             <div className="flex flex-col gap-2">
@@ -1909,6 +1949,12 @@ export default function ArtifactPanel({
                                           : ""}
                                         {d.versions && d.versions > 1
                                           ? ` · ${d.versions} versiones`
+                                          : ""}
+                                        {/* Sólo si es de OTRO: «· Tú» en cada fila de tu
+                                            propia lista es ruido, y el nombre ajeno es el
+                                            dato que faltaba. */}
+                                        {!d.mine && d.authorName
+                                          ? ` · ${d.authorName}`
                                           : ""}
                                       </div>
                                     </div>

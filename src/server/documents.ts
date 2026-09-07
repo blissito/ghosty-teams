@@ -60,6 +60,20 @@ export type TeamDocument = {
   audience?: "solo" | "conmigo" | "privado";
   /** Los OTROS del DM. Sólo con `audience: "conmigo"`. */
   audienceNames?: string[];
+  /** ¿Lo hice yo? Lo decide el SERVIDOR, que ya conoce `me.sub`: así el cliente filtra
+   *  sin tener que saber su propio sub (el directorio `useUsersMap` vive dentro de
+   *  `c.$slug.tsx` y no está exportado).
+   *
+   *  ⚠️ El agente redacta a PETICIÓN de alguien: `gc_artifacts.owner_sub` guarda al
+   *  HUMANO que lo pidió (`chat.ts` → `poster?.sub`, `dm.ts` → `me.sub`), nunca al
+   *  agente. Por eso un eb-doc que @ghosty escribió en mi DM cuenta como MÍO, que es
+   *  exactamente lo que la persona espera al pulsar «Míos».
+   *
+   *  Sin autor (huérfano, o fila anterior a `owner_sub`) → `false`. «Míos» no inventa
+   *  propiedad: enseñar de más ahí es justo el error que el filtro viene a arreglar. */
+  mine: boolean;
+  /** Nombre de quien lo hizo, para la fila. Ausente cuando no hay autor resoluble. */
+  authorName?: string;
   messageId: number;
   threadRootId: number; // raíz del hilo del mensaje (parent_id ?? id) → alcance "Este hilo"
   createdAt: number;
@@ -189,7 +203,12 @@ export const listTeamDocumentsFn = createServerFn({ method: "GET" }).handler(asy
   // canal el muro ético de arriba no aplica. Se acota a SU DUEÑO — así el documento sigue
   // siendo recuperable por quien lo hizo sin exponer casos ajenos a los demás.
   const generated = await dbq(
+    // ⚠️ El autor es `COALESCE(a.owner_sub, m.sender_sub)`: `owner_sub` es NULL en las
+    // filas anteriores a esa columna (schema.server.ts), y ahí el mensaje es la única
+    // pista. Al revés no vale — en un documento del agente `sender_sub` es NULL y el
+    // dueño está justo en `owner_sub`.
     `SELECT a.id, a.kind, a.url, a.title, a.md, a.src, a.message_id, m.channel_id, m.dm_id, m.parent_id,
+            COALESCE(a.owner_sub, m.sender_sub) AS author_sub,
             COALESCE(m.created_at, a.created_at) AS created_at, c.name AS room_name, c.slug AS room_slug
        FROM gc_artifacts a
        LEFT JOIN gc_messages m ON m.id = a.message_id
@@ -202,7 +221,11 @@ export const listTeamDocumentsFn = createServerFn({ method: "GET" }).handler(asy
 
   // Subidos por el usuario (arrojados al chat → EasyBits privado).
   const uploaded = await dbq(
+    // Un adjunto no guarda dueño: cuelga del mensaje, así que su autor es quien lo posteó.
+    // `m.sender` es el nombre ya congelado en el mensaje — sirve de respaldo cuando el
+    // `sub` no resuelve en `gc_users` (alguien que salió del workspace).
     `SELECT att.id, att.file_id, att.mime, att.size, att.name, att.message_id, m.channel_id, m.dm_id, m.parent_id,
+            m.sender_sub AS author_sub, m.sender AS author_name,
             m.created_at, c.name AS room_name, c.slug AS room_slug
        FROM gc_attachments att
        JOIN gc_messages m ON m.id = att.message_id
@@ -252,6 +275,12 @@ export const listTeamDocumentsFn = createServerFn({ method: "GET" }).handler(asy
     };
   };
 
+  // El `sub` del autor de cada documento, para resolver los nombres DE UNA en un solo
+  // lookup al final. Un JOIN por consulta no vale: el autor de un generado es un
+  // COALESCE de dos columnas y eso dentro de un `ON` es ilegible, además de que son dos
+  // queries que se unen aquí en JS.
+  const authorOf = new Map<string, string>();
+
   const seenDoc = new Map<string, TeamDocument>();
   for (const g of generated) {
     const docId = (g.url && String(g.url)) || `g${g.id}`;
@@ -261,12 +290,15 @@ export const listTeamDocumentsFn = createServerFn({ method: "GET" }).handler(asy
       continue;
     }
     const kind = toDocKind(g.kind);
+    const autor = g.author_sub ? String(g.author_sub) : null;
+    if (autor) authorOf.set(`g${g.id}`, autor);
     const doc: TeamDocument = {
       key: `g${g.id}`,
       source: "generated",
       kind,
       title: g.title || "Documento",
       ...anclaje(g.channel_id, g.dm_id, g.room_name, g.room_slug),
+      mine: autor === me.sub,
       messageId: num(g.message_id),
       threadRootId: rootOf(g.parent_id, g.message_id),
       createdAt: num(g.created_at),
@@ -285,12 +317,17 @@ export const listTeamDocumentsFn = createServerFn({ method: "GET" }).handler(asy
     const kind = uploadedKind(mime, name);
     // Solo documentos (pdf/office); imágenes/audio/otros no van al estudio de docs.
     if (kind === "file") continue;
+    const autor = u.author_sub ? String(u.author_sub) : null;
+    if (autor) authorOf.set(`u${u.id}`, autor);
     docs.push({
       key: `u${u.id}`,
       source: "uploaded",
       kind,
       title: name || "Archivo",
       ...anclaje(u.channel_id, u.dm_id, u.room_name, u.room_slug),
+      mine: autor === me.sub,
+      // Respaldo: el nombre congelado en el mensaje. Lo pisa el directorio si resuelve.
+      authorName: u.author_name ? String(u.author_name) : undefined,
       messageId: num(u.message_id),
       threadRootId: rootOf(u.parent_id, u.message_id),
       createdAt: num(u.created_at),
@@ -298,6 +335,23 @@ export const listTeamDocumentsFn = createServerFn({ method: "GET" }).handler(asy
       mime,
       size: u.size != null ? num(u.size) : undefined,
     });
+  }
+
+  // Los nombres, de una. Mismo patrón que `artifacts.ts` al resolver el dueño de un
+  // documento compartido. Si la consulta falla no se pierde nada: los subidos conservan
+  // el `m.sender` congelado y `mine` —que es lo que filtra— ya está decidido.
+  const subs = [...new Set(authorOf.values())];
+  if (subs.length) {
+    const rows = await dbq(
+      `SELECT sub, name FROM gc_users WHERE sub IN (${subs.map(() => "?").join(",")})`,
+      subs
+    ).catch(() => []);
+    const nameOf = new Map<string, string>();
+    for (const r of rows) if (r.name) nameOf.set(String(r.sub), String(r.name));
+    for (const d of docs) {
+      const n = nameOf.get(authorOf.get(d.key) ?? "");
+      if (n) d.authorName = n;
+    }
   }
 
   docs.sort((a, b) => b.createdAt - a.createdAt);

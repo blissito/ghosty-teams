@@ -273,6 +273,12 @@ export const en: Record<string, string> = {
   "Documento": "Document",
   "Documentos": "Documents",
   "Documentos del caso": "Case documents",
+  // Filtros de la lista de Documentos (DocFilters).
+  "Buscar documento o room…": "Search documents or rooms…",
+  "Míos": "Mine",
+  "Nada coincide con este filtro.": "Nothing matches this filter.",
+  "Limpiar filtros": "Clear filters",
+  "Todos": "All",
   "Donde te taggearon.": "Where you were tagged.",
   "Editar": "Edit",
   "Elige tu agente Ghosty": "Choose your Ghosty agent",

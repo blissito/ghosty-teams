@@ -11,6 +11,8 @@ import { FileGlyph, glyphNameFor } from "../components/FileGlyph";
 // documentos generados y hospedados (tiles inertes). El índice DENTRO de un room usaba la
 // buena, así que el mismo documento abría ahí y no aquí. La duplicación era el bug.
 import ArtifactPanel, { docToView, type ArtifactView } from "../components/ArtifactPanel";
+import { DocFilters } from "../components/DocFilters";
+import { EMPTY_DOC_FILTER, filterDocs, type DocFilter } from "../lib/doc-filter";
 
 // Estudio de artefactos / Documentos del team (Cowork): todos los documentos del
 // team en tiles — los GENERADOS por el agente (eb-doc en vivo) y los SUBIDOS al
@@ -56,6 +58,10 @@ function DocTile({ d, onOpen }: { d: TeamDocument; onOpen: (v: ArtifactView) => 
           <span className="uppercase tracking-wide">{d.kind === "sheet" ? t("hoja") : d.kind}</span>
           {d.size ? <span>· {fmtSize(d.size)}</span> : null}
           {d.createdAt ? <span>· {fmtDate(d.createdAt, intlLocale(locale))}</span> : null}
+          {/* El autor sólo cuando es OTRO. «· Tú» en cada tile de tu propia lista es ruido;
+              el nombre ajeno es justo el dato que faltaba para no leer la lista entera
+              como si fuera de uno. */}
+          {!d.mine && d.authorName ? <span>· {d.authorName}</span> : null}
         </div>
       </div>
     </button>
@@ -101,6 +107,7 @@ function ArtifactsPage() {
   const t = useT();
   const [docs, setDocs] = useState<TeamDocument[] | null>(docsCache);
   const [openArtifact, setOpenArtifact] = useState<ArtifactView | null>(null);
+  const [filter, setFilter] = useState<DocFilter>(EMPTY_DOC_FILTER);
 
   useEffect(() => {
     let alive = true;
@@ -114,11 +121,15 @@ function ArtifactsPage() {
   // que los casos con actividad más reciente salgan primero.
   const groups = useMemo<DocGroup[] | null>(() => {
     if (!docs) return null;
+    // Se agrupa lo FILTRADO. ⚠️ Un grupo que se queda sin documentos no puede pintarse:
+    // un encabezado de room con cero tiles debajo se lee como un error de la página, no
+    // como el resultado de un filtro.
+    const visibles = filterDocs(docs, filter);
     // ⚠️ La clave es STRING y lleva el espacio ("dm:" / "ch:"). Con el `channelId` a
     // secas, TODOS los documentos de DM caen en el grupo `0` —un mensaje de DM tiene
     // `channel_id = 0`— y se mezclan los de conversaciones distintas bajo «Sin caso».
     const map = new Map<string, DocGroup>();
-    for (const d of docs) {
+    for (const d of visibles) {
       const key = d.dmId ? `dm:${d.dmId}` : `ch:${d.channelId}`;
       let g = map.get(key);
       if (!g) {
@@ -136,7 +147,7 @@ function ArtifactsPage() {
       g.docs.push(d);
     }
     return [...map.values()];
-  }, [docs]);
+  }, [docs, filter]);
 
   return (
     // ⚠️ `h-[100dvh]`, NO `min-h-`. El panel lleva `lg:self-stretch`, así que se estira a
@@ -157,6 +168,10 @@ function ArtifactsPage() {
             </p>
           </header>
 
+          {docs && docs.length > 3 ? (
+            <DocFilters docs={docs} filter={filter} onChange={setFilter} />
+          ) : null}
+
           {docs === null ? (
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               {[0, 1, 2, 3].map((i) => (
@@ -170,6 +185,15 @@ function ArtifactsPage() {
             <div className="rounded-2xl border border-dashed border-border p-10 text-center text-sm text-muted">
               <p className="mb-1 font-semibold text-ink">{t("Aún no hay documentos")}</p>
               <p>{t("Pídele a")} <span className="text-brand">@ghosty</span> {t("que redacte algo, o arroja un PDF/Word al chat.")}</p>
+            </div>
+          ) : groups!.length === 0 ? (
+            // El filtro no encontró nada. Distinto de «aún no hay documentos»: aquí sí
+            // los hay, y lo que falta es aflojar el filtro.
+            <div className="rounded-2xl border border-dashed border-border p-10 text-center text-sm text-muted">
+              <p className="mb-1 font-semibold text-ink">{t("Nada coincide con este filtro.")}</p>
+              <button type="button" onClick={() => setFilter(EMPTY_DOC_FILTER)} className="text-brand hover:underline">
+                {t("Limpiar filtros")}
+              </button>
             </div>
           ) : (
             // Matter-centric: agrupado por CASO (room). Cada sección = los docs de un
