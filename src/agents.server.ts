@@ -301,6 +301,47 @@ export function manifiestoAdjuntos(
   return `[${titulo}]\n${lista}\n${pista}\n\n`;
 }
 
+/** Tope de adjuntos que se arrastran del hueco. Se conservan los MÁS NUEVOS. */
+export const HUECO_ADJUNTOS_MAX = 12;
+
+/**
+ * Los adjuntos que la persona soltó en mensajes SIN RESPONDER, para un turno que no trae
+ * ninguno propio.
+ *
+ * ⚠️ El fallo que esto cierra es el más frecuente de descti y no se ve como un fallo:
+ * la persona escribe la instrucción, la manda, y DESPUÉS suelta los archivos — que salen
+ * como un mensaje aparte con el cuerpo VACÍO. Verificado en `gc_attachments` el
+ * 2026-09-07: en 6 ocasiones los archivos no colgaban del mensaje con el texto sino de uno
+ * posterior sin cuerpo. El agente contestaba «no veo ningún archivo adjunto» —cierto para
+ * su turno, falso para la conversación— y encima le echaba la culpa al remitente («parece
+ * que el envío no se completó de tu lado»). Uno de esos mensajes traía DIEZ archivos.
+ *
+ * Es el gemelo de la re-entrega en hilos (`chat.ts`): ahí se reponen los del mensaje raíz,
+ * aquí los del hueco. El texto de esos mensajes YA viaja en el catch-up (`historyContext`);
+ * lo único que faltaba eran sus archivos, y la mitad que falta es justo la que importa.
+ *
+ * Se acota al **mismo invocador** a propósito. En un canal el hueco puede traer archivos de
+ * otras personas: su texto ya viaja como dato observado, pero subir sus bytes al modelo es
+ * otra cosa, y el caso real —«te lo mandé y ahora te lo pido»— es siempre de quien pregunta.
+ */
+export function adjuntosDelHueco<
+  T extends {
+    sender_sub?: string | null;
+    attachments?: { file_id: string; mime: string | null; size: number | null; name: string | null }[];
+  },
+>(gap: T[], invokerSub: string | null | undefined) {
+  if (!invokerSub) return [];
+  const out: { fileId: string; mime: string | null; size: number | null; name: string | null }[] = [];
+  for (const m of gap) {
+    if (m.sender_sub !== invokerSub) continue;
+    for (const a of m.attachments ?? []) {
+      out.push({ fileId: a.file_id, mime: a.mime, size: a.size, name: a.name });
+    }
+  }
+  // Los más nuevos, igual que el catch-up: lo que se omite queda del lado viejo.
+  return out.slice(-HUECO_ADJUNTOS_MAX);
+}
+
 const MEDIA_INLINE_MAX_BYTES = 256 * 1024; // < 256KB → bytes inline; ≥ → uri firmada
 
 export async function buildMediaParts(

@@ -900,7 +900,7 @@ export const askAgent = createServerFn({ method: "POST" })
   )
   .handler(async ({ data }) => {
     const db = await import("../db.server");
-    const { resolvedAgents, runAgentTurn, buildMediaParts, manifiestoAdjuntos, quotedContextPrefix, clampQuote, historyContext, gapDesdeUltimaRespuesta, CATCHUP_FETCH, agentGroupId, INJECTED } = await import("../agents.server");
+    const { resolvedAgents, runAgentTurn, buildMediaParts, manifiestoAdjuntos, quotedContextPrefix, clampQuote, historyContext, gapDesdeUltimaRespuesta, adjuntosDelHueco, CATCHUP_FETCH, agentGroupId, INJECTED } = await import("../agents.server");
     const bus = await import("./bus.server");
     const { currentNamespace } = await import("./tenant.server");
     // ⚠️ Estamos DRENANDO para un despliegue: arrancar un turno ahora es fabricar una
@@ -987,6 +987,12 @@ export const askAgent = createServerFn({ method: "POST" })
     // este scope (el "gap"), acotado por historyContext. Si nunca respondió aquí (sesión
     // fresca), el gap = lo reciente = seed inicial. Corre cada turno pero está acotado al gap
     // → eficiente cuando está al día (gap = solo el turno actual → historyContext lo filtra).
+    //
+    const poster = await sessionUser(); // el que postea/mencionó este turno = invocador
+
+    // Los ARCHIVOS que la persona soltó en ese hueco, para el turno que no trae ninguno
+    // propio. Se llena dentro del bloque y se consume en la sección de media.
+    let huecoAtts: { fileId: string; mime: string | null; size: number | null; name: string | null }[] = [];
     {
       // ⚠️ Scope del ROOM, no del hilo. Con el modelo Zulip toda respuesta del agente vive
       // en un hilo, así que acotar el gap a `parentId` lo calcularía sobre un hilo casi
@@ -1023,6 +1029,13 @@ export const askAgent = createServerFn({ method: "POST" })
       }
       const history = historyContext(gap, data.body, { totalGap, sender: data.sender });
       if (history) text = history + text;
+      // Los ARCHIVOS del hueco, no sólo su texto — ver `adjuntosDelHueco`. Se cargan aquí
+      // porque es el único punto con el gap ya resuelto; se usan más abajo, y sólo si el
+      // turno no trae adjuntos propios ni los del hilo.
+      if (!(data.attachments ?? []).length) {
+        const conAtt = await db.attachAttachments(gap as never).catch(() => []);
+        huecoAtts = adjuntosDelHueco(conAtt as never, poster?.sub ?? null);
+      }
     }
 
     // Media de entrada: los adjuntos del usuario → FileParts (uri firmada / bytes).
@@ -1044,6 +1057,9 @@ export const askAgent = createServerFn({ method: "POST" })
       }));
       if (prev.length) { mediaAtts = prev; reentrega = true; }
     }
+    // Y si tampoco los hay ahí, los del HUECO: la persona los soltó en un mensaje aparte,
+    // casi siempre con el cuerpo vacío, y la instrucción vino en otro. Ver `adjuntosDelHueco`.
+    if (!mediaAtts.length && huecoAtts.length) { mediaAtts = huecoAtts; reentrega = true; }
     // El manifiesto va en el texto para que sepa QUÉ tiene sin abrir todo: con un
     // expediente grande, enumerar es más barato que descubrir.
     // ⚠️ El manifiesto también va cuando el turno trae VARIOS adjuntos propios, y no sólo
@@ -1053,7 +1069,7 @@ export const askAgent = createServerFn({ method: "POST" })
     // alguien mandó dos fotos en un mensaje, el agente usó la que no era y la persona lo
     // repitió tres veces en mayúsculas. Numerado porque el orden ES la dirección: es el
     // mismo de los FileParts (`gc_attachments ORDER BY id`).
-    text = manifiestoAdjuntos(mediaAtts, { reentrega, ambito: "hilo" }) + text;
+    text = manifiestoAdjuntos(mediaAtts, { reentrega, ambito: mediaAtts === huecoAtts ? "conversación" : "hilo" }) + text;
     const parts = await buildMediaParts(mediaAtts, { forceUri: reentrega });
 
     // Streaming first-class: la cáscara (body vacío) se crea al primer token → el
@@ -1075,7 +1091,6 @@ export const askAgent = createServerFn({ method: "POST" })
     // aunque el worker recicle su sesión.
     // resolve* y no get*: el artefacto suele nacer en el ROOM y la conversación seguir en
     // el HILO de ese mensaje, que no tiene puntero propio (ver resolveThreadArtifact).
-    const poster = await sessionUser(); // el que postea/mencionó este turno = invocador
 
     // RETOMAR UN ARTEFACTO DE OTRA CONVERSACIÓN. Si el mensaje trae el link de un
     // artefacto, se ADOPTA en este hilo antes de resolver el puntero. Sin esto, pegar el

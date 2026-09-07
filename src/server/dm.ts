@@ -325,7 +325,7 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
     const db = await import("../db.server");
     const bus = await import("./bus.server");
     const { currentNamespace } = await import("./tenant.server");
-    const { resolvedAgents, runAgentTurn, buildMediaParts, manifiestoAdjuntos, quotedContextPrefix, clampQuote, historyContext, gapDesdeUltimaRespuesta, CATCHUP_FETCH, agentGroupId, INJECTED } = await import("../agents.server");
+    const { resolvedAgents, runAgentTurn, buildMediaParts, manifiestoAdjuntos, quotedContextPrefix, clampQuote, historyContext, gapDesdeUltimaRespuesta, adjuntosDelHueco, CATCHUP_FETCH, agentGroupId, INJECTED } = await import("../agents.server");
     const me = await sessionUser();
     if (!me || !(await db.isDmMember(data.id, me.sub))) throw new Error("no autorizado");
     const ns = await currentNamespace();
@@ -397,16 +397,22 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
       // ⚠️ Sólo los últimos 8, aunque el catch-up ahora traiga 40. Este scan busca el
       // adjunto que se está discutiendo AHORA; ensancharlo a 40 re-entregaría un archivo
       // de hace media conversación como si fuera del turno.
+      //
+      // ⚠️⚠️ Esto NUNCA funcionó, y el filtro era la razón: descartaba con
+      // `if (m.agent_handle) continue`, creyendo que esa columna marca los mensajes DEL
+      // agente. No: marca a quién van DIRIGIDOS, y en un DM con un agente la lleva
+      // también el mensaje del humano — comprobado en descti el 2026-09-07, donde los 250
+      // mensajes de los 7 DMs la tienen puesta. O sea que el bucle saltaba todo y la
+      // re-entrega en DMs era un no-op silencioso desde que se escribió. Lo que distingue
+      // al agente es `sender_sub` NULL (`postAgent` lo deja así), y ese criterio vive
+      // ahora en `adjuntosDelHueco`, en un solo sitio y compartido con `chat.ts`.
+      //
+      // De paso ya no se toma UN mensaje sino todos los del hueco de esa persona: el caso
+      // real trae la instrucción en un mensaje y los archivos en otro, y una vez fueron
+      // DIEZ archivos en el mismo envío.
       const conAdj = await db.attachAttachments(recent.slice(-8)).catch(() => []);
-      for (let i = conAdj.length - 1; i >= 0; i--) {
-        const m = conAdj[i];
-        if (m.agent_handle || !m.attachments?.length) continue;
-        mediaAtts = m.attachments.map((a) => ({
-          fileId: a.file_id, mime: a.mime, size: a.size, name: a.name,
-        }));
-        reentrega = true;
-        break;
-      }
+      const delHueco = adjuntosDelHueco(conAdj, me.sub);
+      if (delHueco.length) { mediaAtts = delHueco; reentrega = true; }
     }
     // Gemelo del de `chat.ts` — ver allí el porqué de numerar y de incluirlo cuando el
     // turno trae varios adjuntos propios. El incidente que lo motivó fue justo en un DM.
