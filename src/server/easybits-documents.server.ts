@@ -82,10 +82,13 @@ function titleFromReply(reply: string, url: string): string | undefined {
   );
   if (fn) return fn[1].replace(/\.[a-z0-9]+$/i, "").trim() || undefined;
   // 2) Label del link que envuelve la URL, verbatim.
+  // ⚠️ NO vale el `alt` de una IMAGEN (`![alt](url)`). El alt casi nunca es un nombre: el
+  // agente escribe el basename de su archivo local (`![index](…)`) y la card acababa
+  // llamándose "index". Un link de texto sí es una etiqueta que alguien eligió.
   const esc = url.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const link = reply.match(new RegExp(`\\[([^\\]]{2,80})\\]\\(\\s*${esc}`));
-  if (link) {
-    const label = link[1].trim();
+  const link = reply.match(new RegExp(`(!?)\\[([^\\]]{2,80})\\]\\(\\s*${esc}`));
+  if (link && !link[1]) {
+    const label = link[2].trim();
     if (label) return label;
   }
   return undefined;
@@ -125,13 +128,23 @@ function fileKindFromContentType(ct: string): FileKind | null {
 // HEAD al archivo → kind por content-type real. Best-effort: si falla, null (el caller
 // cae a la heurística por texto/URL). Rápido (solo headers).
 export async function resolveFileKind(url: string): Promise<FileKind | null> {
-  try {
-    const res = await fetch(url, { method: "HEAD", signal: AbortSignal.timeout(6000) });
-    const ct = res.headers.get("content-type") || "";
-    return fileKindFromContentType(ct);
-  } catch {
-    return null;
-  }
+  // ⚠️ Una URL FIRMADA de storage (Tigris/S3) firma el MÉTODO: un HEAD sobre una firma de
+  // GET responde 403 con `content-type: application/xml`. Sin mirar `res.ok` eso se leía
+  // como "no es nada conocido" → el kind caía a la heurística por extensión, y las URLs
+  // firmadas no traen extensión → card genérica "Descargar" con el panel VACÍO, encima de
+  // una imagen que el markdown ya estaba pintando bien. Por eso el fallback es un GET de
+  // UN byte: mismo método que la firma autoriza, y no baja el archivo.
+  const ct = async (init: RequestInit): Promise<string | null> => {
+    try {
+      const res = await fetch(url, { ...init, signal: AbortSignal.timeout(6000) });
+      return res.ok ? res.headers.get("content-type") || "" : null;
+    } catch {
+      return null;
+    }
+  };
+  const head = await ct({ method: "HEAD" });
+  const tipo = head ?? (await ct({ method: "GET", headers: { Range: "bytes=0-0" } }));
+  return tipo === null ? null : fileKindFromContentType(tipo);
 }
 
 export function detectArtifact(reply: string): DetectedArtifact | null {
