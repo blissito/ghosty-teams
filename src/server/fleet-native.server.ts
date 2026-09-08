@@ -26,6 +26,13 @@ export type FleetPool = {
    */
   protocol?: "sse" | "acp";
   runtimeUrl?: string;
+  /**
+   * La persona autorada en Studio. Se copia a `system_prompt` al ACTIVAR y ahí termina su
+   * viaje: a partir de entonces manda la fila local, que es la que se edita en Ajustes. Dos
+   * fuentes para el mismo campo se resuelven en el alta, no en cada turno — sincronizarlas
+   * después haría que editar aquí se deshiciera solo, sin que nadie viera por qué.
+   */
+  prompt?: string | null;
 };
 
 /** Lista los FleetAgent del owner en Studio. GET firma HMAC sobre body vacío. */
