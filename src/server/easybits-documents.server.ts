@@ -3,6 +3,7 @@
 // /api/v2/documents/collab-embed-link → recibe el editor colab embebible
 // (/collab/document/:token?embed=1) que el panel abre en un iframe.
 import { ebFetch } from "./easybits-files.server";
+import { stripToolBlock, stripStepsBlock } from "../lib/ebdoc";
 
 // Origen desde el que se sirve el room (para el CSP frame-ancestors del embed).
 // El iframe del editor vive dentro de teams.formmy.app.
@@ -160,14 +161,29 @@ export function detectArtifact(reply: string): DetectedArtifact | null {
   }
   // 2) Archivo crudo en storage público → visor/descarga directo, clasificado por
   // extensión (imagen/pdf/audio/video/archivo). Cubre toda la superficie de media.
-  const mf = reply.match(/https?:\/\/[^\s)]*(?:t3\.storage\.dev|easybits-public)[^\s)]*/i);
+  //
+  // ⚠️ Sobre la PROSA, nunca sobre los bloques de contabilidad del turno. `gt-tools` y
+  // `gt-steps` son JSON con lo que el agente narró, y ahí dentro hay URLs TRUNCADAS
+  // (`https://t3.storage.dev...…`) del propio log. La regex se tragaba una de ésas junto
+  // con las comillas y comas del JSON que la seguían, y el mensaje acababa con una card
+  // «Descargar» cuyo enlace no era una URL: panel en negro y `about:blank#blocked` al
+  // pulsarla. Medido en descti el 2026-09-08 (gc_artifacts id 37).
+  const prosa = stripToolBlock(stripStepsBlock(reply));
+  const mf = prosa.match(/https?:\/\/[^\s)"'`<>\\]*(?:t3\.storage\.dev|easybits-public)[^\s)"'`<>\\]*/i);
   if (mf) {
     const url = mf[0].replace(/[.,)]+$/, "");
-    const title = titleFromReply(reply, url);
+    // Una URL con elipsis viene de un log recortado: no apunta a ningún objeto.
+    if (/[.]{3}|…/.test(url)) return null;
+    try {
+      new URL(url);
+    } catch {
+      return null;
+    }
+    const title = titleFromReply(prosa, url);
     // La URL de upload_file NO trae extensión (`.../9i4`) → detectamos office por el
     // filename que el agente menciona en el texto (ej. "Oficio …docx"). Se previsualiza
     // con nuestro visor propio (mammoth docx→HTML) sin convertir.
-    const off = reply.match(/\.(docx|xlsx|pptx|odt|doc|xls|ppt)\b/i);
+    const off = prosa.match(/\.(docx|xlsx|pptx|odt|doc|xls|ppt)\b/i);
     if (off) return { type: "file", url, kind: "office", fmt: off[1].toLowerCase(), title };
     // PDF: la URL de upload_file NO trae extensión (`.../9i4`) → fileKindFromUrl cae a
     // "file" (card de descarga), y el HEAD (resolveFileKind) a veces falla → el visor no
@@ -175,7 +191,7 @@ export function detectArtifact(reply: string): DetectedArtifact | null {
     // título (el agente dice "PDF"). resolveFileKind (HEAD) sigue teniendo prioridad en
     // chat.ts, así que si el content-type real difiere, gana el HEAD.
     let kind = fileKindFromUrl(url);
-    if (kind === "file" && /\bpdf\b/i.test(`${reply} ${title ?? ""}`)) kind = "pdf";
+    if (kind === "file" && /\bpdf\b/i.test(`${prosa} ${title ?? ""}`)) kind = "pdf";
     return { type: "file", url, kind, title };
   }
   return null;
