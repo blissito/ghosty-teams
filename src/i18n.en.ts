@@ -123,6 +123,8 @@ export const en: Record<string, string> = {
   "Activar": "Enable",
   "Actualizar": "Update",
   "Adjuntar archivo": "Attach file",
+  "Adjuntar nota de voz": "Attach voice note",
+  "Grabar nota de voz": "Record voice note",
   "Agente": "Agent",
   "Agentes": "Agents",
   "Agentes que te compartieron para configurar. Se tagean por su @handle.": "Agents shared with you to configure. They're tagged by their @handle.",

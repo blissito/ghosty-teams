@@ -123,7 +123,8 @@ import {
   expelMemberFn,
   stopTurnFn,
 } from "../server/chat";
-import { SmilePlus, Pencil, ArrowLeft, RotateCcw, Send, Bold, Italic, Strikethrough, List, ListOrdered, Quote, Code, Type, Reply, Square } from "lucide-react";
+import { SmilePlus, Pencil, ArrowLeft, RotateCcw, Send, Bold, Italic, Strikethrough, List, ListOrdered, Quote, Code, Type, Reply, Square, Mic } from "lucide-react";
+import { useVoiceRecorder, canRecord } from "../lib/voice-recorder";
 import { getDeferredPrompt, onInstallable, clearDeferredPrompt, type BeforeInstallPromptEvent } from "../utils/pwa-install";
 import { useRtSubscribe } from "../utils/rt-bus";
 import type { RtEvent } from "../server/bus.server";
@@ -230,6 +231,7 @@ import {
 
 
   ForwardModal,
+  fmtDur,
 } from "../components/chat/message";
 import type {
   Attach,
@@ -7521,10 +7523,20 @@ const Composer = forwardRef<ComposerHandle, {
     uploading: boolean;
     error?: boolean;
     previewUrl?: string; // objectURL de la imagen → miniatura INSTANTÁNEA (antes de subir)
+    // Nota de voz: los mide el grabador (lib/voice-recorder) y viajan hasta
+    // `createAttachments`. Sin ellos la burbuja pinta una onda de relleno.
+    waveform?: string | null;
+    durationMs?: number | null;
   };
   const [pending, setPending] = useState<Pending[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const uploading = pending.some((p) => p.uploading);
+  // Nota de voz. `canRecord()` se resuelve en un efecto y no en el render: en el
+  // servidor siempre daría false y el botón parpadearía al hidratar.
+  const rec = useVoiceRecorder();
+  const [canRec, setCanRec] = useState(false);
+  useEffect(() => setCanRec(canRecord()), []);
+  const grabando = rec.state === "recording" || rec.state === "requesting";
   // El editor se crea más abajo; por ref para que `addFiles` siga con deps vacías —
   // se expone por `useImperativeHandle` y una identidad que cambie re-crearía el handle.
   const editorRef = useRef<Editor | null>(null);
@@ -7551,7 +7563,9 @@ const Composer = forwardRef<ComposerHandle, {
   }, []);
 
   // Solo depende de setPending (estable) → estable entre renders; seguro exponerlo por ref.
-  const addFiles = useCallback((files: FileList | File[]) => {
+  // `meta` sólo lo manda el grabador de voz: la onda y la duración se miden al
+  // grabar y no se pueden recuperar del archivo después (ver lib/voice-recorder).
+  const addFiles = useCallback((files: FileList | File[], meta?: { waveform?: string | null; durationMs?: number | null }) => {
     const list = Array.from(files);
     for (const f of list) {
       const localId = `${Date.now()}-${Math.round(Math.random() * 1e6)}-${f.name}`;
@@ -7559,7 +7573,7 @@ const Composer = forwardRef<ComposerHandle, {
       const previewUrl = f.type.startsWith("image/") ? URL.createObjectURL(f) : undefined;
       setPending((p) => [
         ...p,
-        { localId, name: f.name, mime: f.type || "application/octet-stream", size: f.size, uploading: true, previewUrl },
+        { localId, name: f.name, mime: f.type || "application/octet-stream", size: f.size, uploading: true, previewUrl, waveform: meta?.waveform ?? null, durationMs: meta?.durationMs ?? null },
       ]);
       const fd = new FormData();
       fd.append("file", f);
@@ -7579,6 +7593,12 @@ const Composer = forwardRef<ComposerHandle, {
   }, [focusComposer]);
   // La zona de drop grande (nivel conversación) empuja los archivos aquí.
   useImperativeHandle(ref, () => ({ addFiles, focus: focusComposer }), [addFiles, focusComposer]);
+  // Parar → File + onda + duración → `addFiles`, o sea el mismo camino de subida
+  // que un archivo elegido con el clip. Un clip vacío (micro mudo) no adjunta nada.
+  const cerrarGrabacion = async () => {
+    const clip = await rec.stop();
+    if (clip) addFiles([clip.file], { waveform: clip.waveform, durationMs: clip.durationMs });
+  };
   const removePending = (localId: string) =>
     setPending((p) => {
       const gone = p.find((x) => x.localId === localId);
@@ -7713,7 +7733,7 @@ const Composer = forwardRef<ComposerHandle, {
     // Adjuntos ya subidos (con fileId). Bloquea envío mientras alguno sube.
     const attachments = pending
       .filter((p) => p.fileId && !p.error)
-      .map((p) => ({ fileId: p.fileId!, mime: p.mime, size: p.size, name: p.name, thumbFileId: p.thumbFileId ?? null, width: p.width ?? null, height: p.height ?? null }));
+      .map((p) => ({ fileId: p.fileId!, mime: p.mime, size: p.size, name: p.name, thumbFileId: p.thumbFileId ?? null, width: p.width ?? null, height: p.height ?? null, waveform: p.waveform ?? null, durationMs: p.durationMs ?? null }));
     const body = editor ? ((editor.storage as any).markdown.getMarkdown() as string).trim() : "";
     if ((!body && attachments.length === 0) || uploading) return;
     setPending((p) => { p.forEach((x) => x.previewUrl && URL.revokeObjectURL(x.previewUrl)); return []; });
@@ -7812,6 +7832,17 @@ const Composer = forwardRef<ComposerHandle, {
                   alt={p.name}
                   className={`size-16 rounded-lg border border-border object-cover ${p.error ? "opacity-40" : ""}`}
                 />
+              ) : p.mime.startsWith("audio/") ? (
+                /* Nota de voz: micro + duración. Con la tarjeta genérica de archivo
+                   no se distinguía de un zip, y su nombre es una marca de tiempo. */
+                <div
+                  className={`flex size-16 flex-col items-center justify-center gap-1 rounded-lg border text-center text-[10px] ${
+                    p.error ? "border-red-500/40 text-red-500" : "border-border text-muted"
+                  }`}
+                >
+                  <Mic size={16} className="text-brand" />
+                  <span className="tabular-nums">{fmtDur((p.durationMs ?? 0) / 1000)}</span>
+                </div>
               ) : (
                 <div
                   className={`flex size-16 flex-col items-center justify-center gap-1 rounded-lg border px-1 text-center text-[10px] ${
@@ -7915,6 +7946,43 @@ const Composer = forwardRef<ComposerHandle, {
           </div>
         )}
         <div className="relative flex w-full items-end gap-1 px-1.5 py-1.5">
+        {grabando ? (
+          /* Grabando: la fila entera se sustituye. Cancelar descarta; la palomita
+             para, adjunta y deja el clip como cualquier otro pendiente. */
+          <div className="flex w-full items-center gap-3 px-1">
+            <span className="relative grid size-9 shrink-0 place-items-center">
+              <span className="absolute size-3 animate-ping rounded-full bg-red-500/60" />
+              <span className="size-2.5 rounded-full bg-red-500" />
+            </span>
+            <span className="shrink-0 text-sm font-medium tabular-nums text-ink">{fmtDur(rec.ms / 1000)}</span>
+            {/* Barra de nivel: sin ella, un micro silenciado se ve idéntico a uno que graba. */}
+            <span className="h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-surface-2">
+              <span
+                className="block h-full rounded-full bg-brand transition-[width] duration-75"
+                style={{ width: `${Math.round(rec.level * 100)}%` }}
+              />
+            </span>
+            <button
+              type="button"
+              onClick={rec.cancel}
+              title={t("Descartar")}
+              aria-label={t("Descartar")}
+              className="grid h-9 w-9 shrink-0 place-items-center rounded-lg text-muted transition hover:bg-surface-2 hover:text-ink"
+            >
+              <X size={18} />
+            </button>
+            <button
+              type="button"
+              onClick={cerrarGrabacion}
+              title={t("Adjuntar nota de voz")}
+              aria-label={t("Adjuntar nota de voz")}
+              className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-brand text-brand-fg transition hover:brightness-110"
+            >
+              <Check size={18} />
+            </button>
+          </div>
+        ) : (
+          <>
         <button
           type="button"
           onClick={toggleFormat}
@@ -7933,6 +8001,19 @@ const Composer = forwardRef<ComposerHandle, {
         >
           <Paperclip size={18} />
         </button>
+        {canRec && (
+          <button
+            type="button"
+            onClick={rec.start}
+            title={rec.error ?? t("Grabar nota de voz")}
+            aria-label={t("Grabar nota de voz")}
+            className={`grid h-9 w-9 shrink-0 place-items-center rounded-lg transition hover:bg-surface-2 hover:text-ink ${
+              rec.state === "error" ? "text-red-500" : "text-muted"
+            }`}
+          >
+            <Mic size={18} />
+          </button>
+        )}
         {/* Editor WYSIWYG (TipTap). El formato se ve visualmente; el body sale como
             markdown (getMarkdown) al enviar. Paste de imagen y Enter-envía en editorProps. */}
         <EditorContent editor={editor} className="min-w-0 flex-1" />
@@ -7948,6 +8029,8 @@ const Composer = forwardRef<ComposerHandle, {
               dos botones de la izquierda): ahí el botón va sólo con el ícono. */}
           <span className="hidden sm:inline">{t("Enviar")}</span>
         </button>
+          </>
+        )}
         </div>
       </div>
     </form>

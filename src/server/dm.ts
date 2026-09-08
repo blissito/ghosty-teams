@@ -90,7 +90,9 @@ export const postDmMessageFn = createServerFn({ method: "POST" })
       body: string;
       nonce?: string;
       quotedId?: number | null; // quote-reply
-      attachments?: { fileId: string; mime: string; size: number; name: string; thumbFileId?: string | null }[];
+      // `width`/`height` faltaban aquí y un DM perdía las dimensiones de cada
+      // imagen; `waveform`/`durationMs` son la onda de la nota de voz.
+      attachments?: { fileId: string; mime: string; size: number; name: string; thumbFileId?: string | null; width?: number | null; height?: number | null; waveform?: string | null; durationMs?: number | null }[];
     }) => d
   )
   .handler(async ({ data }) => {

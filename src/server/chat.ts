@@ -716,7 +716,10 @@ export const postMessage = createServerFn({ method: "POST" })
       nonce?: string;
       topic?: string;
       quotedId?: number | null; // quote-reply: id del mensaje citado
-      attachments?: { fileId: string; mime: string; size: number; name: string; thumbFileId?: string | null; width?: number | null; height?: number | null }[];
+      // `waveform`/`durationMs`: sólo las notas de voz. Van en la firma porque
+      // `createServerFn` descarta lo que no esté declarado, y `createAttachments`
+      // ya sabe escribirlos — sin esta línea la onda se pierde en el viaje.
+      attachments?: { fileId: string; mime: string; size: number; name: string; thumbFileId?: string | null; width?: number | null; height?: number | null; waveform?: string | null; durationMs?: number | null }[];
     }) => d
   )
   .handler(async ({ data }) => {

@@ -25,6 +25,9 @@ export type Pendiente = {
   error?: boolean;
   /** objectURL local → miniatura instantánea, sin esperar al servidor. */
   previewUrl?: string;
+  /** Nota de voz: onda (64 amplitudes base64) y duración, medidas al grabar. */
+  waveform?: string | null;
+  durationMs?: number | null;
 };
 
 /**
@@ -94,14 +97,16 @@ export function useAdjuntos(opts: { roomSlug?: string; onAdded?: () => void } = 
   const subiendo = pendientes.some((p) => p.uploading);
   const { roomSlug, onAdded } = opts;
 
+  // `meta` sólo lo manda el grabador de voz: la onda y la duración se miden
+  // mientras se graba y no se pueden sacar del archivo después.
   const addFiles = useCallback(
-    (files: FileList | File[]) => {
+    (files: FileList | File[], meta?: { waveform?: string | null; durationMs?: number | null }) => {
       for (const f of Array.from(files)) {
         const localId = `${Date.now()}-${Math.round(Math.random() * 1e6)}-${f.name}`;
         const previewUrl = f.type.startsWith("image/") ? URL.createObjectURL(f) : undefined;
         setPendientes((p) => [
           ...p,
-          { localId, name: f.name, mime: f.type || "application/octet-stream", size: f.size, uploading: true, previewUrl },
+          { localId, name: f.name, mime: f.type || "application/octet-stream", size: f.size, uploading: true, previewUrl, waveform: meta?.waveform ?? null, durationMs: meta?.durationMs ?? null },
         ]);
         const fd = new FormData();
         fd.append("file", f);
@@ -150,6 +155,8 @@ export function useAdjuntos(opts: { roomSlug?: string; onAdded?: () => void } = 
           thumbFileId: p.thumbFileId ?? null,
           width: p.width ?? null,
           height: p.height ?? null,
+          waveform: p.waveform ?? null,
+          durationMs: p.durationMs ?? null,
           pass: p.pass,
         })),
     [pendientes]

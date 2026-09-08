@@ -105,7 +105,7 @@ export type SessionUser = { sub: string; name: string; email: string; avatar: st
 // Presencia del workspace: sub → nombre + última señal REAL (no la última conexión).
 // `lastActiveAt` envejece con la pestaña abierta y quieta; ver IDLE_MS en bus.server.
 
-export type Attach = { fileId: string; mime: string; size: number; name: string; thumbFileId?: string | null; width?: number | null; height?: number | null };
+export type Attach = { fileId: string; mime: string; size: number; name: string; thumbFileId?: string | null; width?: number | null; height?: number | null; waveform?: string | null; durationMs?: number | null };
 // El optimista guarda su propio payload de envío → se puede reintentar tal cual.
 
 export type Optimistic = {

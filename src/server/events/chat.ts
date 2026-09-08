@@ -137,6 +137,9 @@ export type AdjuntoEntrante = {
   thumbFileId?: string | null;
   width?: number | null;
   height?: number | null;
+  /** Nota de voz: onda y duración, para que la burbuja pinte el reproductor. */
+  waveform?: string | null;
+  durationMs?: number | null;
   /** Firma que emite `/api/upload`: ata el archivo a quien lo subió y a este room. */
   pass?: string;
 };
@@ -229,6 +232,10 @@ export const eventPostFn = createServerFn({ method: "POST" })
           thumbFileId: a.thumbFileId ?? null,
           width: a.width ?? null,
           height: a.height ?? null,
+          // La onda es dato de dibujo, no texto: se acota a lo que cabe (64 bytes
+          // en base64) en vez de sanearse como el nombre.
+          waveform: typeof a.waveform === "string" ? a.waveform.slice(0, 128) : null,
+          durationMs: Number.isFinite(a.durationMs) ? Math.max(0, Math.round(Number(a.durationMs))) : null,
         }))
       ).catch(() => {});
     }

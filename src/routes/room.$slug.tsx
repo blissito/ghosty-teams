@@ -1,7 +1,7 @@
 import { createFileRoute, notFound, useRouter } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createServerFn } from "@tanstack/react-start";
-import { ChevronDown, Circle, Download, FileText, Loader2, MessageSquare, Paperclip, Trash2, Volume2, VolumeX, X } from "lucide-react";
+import { Check, ChevronDown, Circle, Download, FileText, Loader2, MessageSquare, Mic, Paperclip, Trash2, Volume2, VolumeX, X } from "lucide-react";
 import GhostyMascot from "../components/GhostyMascot";
 import { ChatCtx, ChatCtxDefaults, MessageRow, type SessionUser } from "../components/chat/message";
 import type { Message, CustomEmoji, ReactionAgg } from "../db.server";
@@ -11,6 +11,8 @@ import { deleteRecordingFn, recordingFn, requestCodeFn, verifyCodeFn } from "../
 import { useEventStream } from "../hooks/useEventStream";
 import { shouldChime } from "../lib/chime";
 import { DropOverlay, useAdjuntos, useFileDrop } from "../components/chat/adjuntos";
+import { useVoiceRecorder, canRecord } from "../lib/voice-recorder";
+import { fmtDur } from "../components/chat/message";
 import { playGhostySound, playMentionSound, playNotificationSound, playSelfSound } from "../utils/notificationSound";
 
 // Un ROOM ABIERTO: /room/<slug>. Una sola página, para todo.
@@ -861,7 +863,7 @@ function RoomAbierto() {
             onSubmit={enviar}
             sending={sending || adj.subiendo}
             canWrite={canWrite}
-            onFiles={(f) => (canWrite ? adj.addFiles(f) : setIdentificando(true))}
+            onFiles={(f, meta) => (canWrite ? adj.addFiles(f, meta) : setIdentificando(true))}
             hayAdjuntos={adj.pendientes.length > 0}
           />
           <footer className="shrink-0 pb-2 text-center text-[11px] text-muted">
@@ -1060,10 +1062,20 @@ function Composer({
   onSubmit: (e: React.FormEvent) => void;
   sending: boolean;
   canWrite: boolean;
-  onFiles: (files: FileList | File[]) => void;
+  onFiles: (files: FileList | File[], meta?: { waveform?: string | null; durationMs?: number | null }) => void;
   hayAdjuntos: boolean;
 }) {
   const fileRef = useRef<HTMLInputElement>(null);
+  // `canRecord()` en un efecto y no en el render: en el servidor daría siempre
+  // false y el botón parpadearía al hidratar.
+  const rec = useVoiceRecorder();
+  const [canRec, setCanRec] = useState(false);
+  useEffect(() => setCanRec(canRecord()), []);
+  const grabando = rec.state === "recording" || rec.state === "requesting";
+  const cerrarGrabacion = async () => {
+    const clip = await rec.stop();
+    if (clip) onFiles([clip.file], { waveform: clip.waveform, durationMs: clip.durationMs });
+  };
   return (
     <form onSubmit={onSubmit} className="shrink-0 px-4 pb-3 pt-1">
       <div className="flex gap-2">
@@ -1071,7 +1083,7 @@ function Composer({
           ref={fileRef}
           type="file"
           multiple
-          accept="image/*,application/pdf"
+          accept="image/*,application/pdf,audio/*"
           className="hidden"
           onChange={(e) => {
             if (e.target.files?.length) onFiles(e.target.files);
@@ -1086,6 +1098,55 @@ function Composer({
         >
           <Paperclip size={16} />
         </button>
+        {canRec && !grabando && (
+          <button
+            type="button"
+            onClick={rec.start}
+            aria-label="Grabar nota de voz"
+            title={rec.error ?? "Grabar nota de voz"}
+            className={`shrink-0 rounded-xl border border-border px-3 hover:text-brand ${
+              rec.state === "error" ? "text-red-500" : "text-muted"
+            }`}
+          >
+            <Mic size={16} />
+          </button>
+        )}
+        {grabando ? (
+          <>
+            {/* Grabando: en lugar del campo, el cronómetro y el nivel. Sin la barra
+                un micro silenciado se ve igual que uno que está grabando. */}
+            <span className="flex min-w-0 flex-1 items-center gap-3 rounded-xl border border-border bg-card px-3.5">
+              <span className="relative grid size-4 shrink-0 place-items-center">
+                <span className="absolute size-3 animate-ping rounded-full bg-red-500/60" />
+                <span className="size-2.5 rounded-full bg-red-500" />
+              </span>
+              <span className="shrink-0 text-sm tabular-nums text-ink">{fmtDur(rec.ms / 1000)}</span>
+              <span className="h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-surface-2">
+                <span
+                  className="block h-full rounded-full bg-brand transition-[width] duration-75"
+                  style={{ width: `${Math.round(rec.level * 100)}%` }}
+                />
+              </span>
+            </span>
+            <button
+              type="button"
+              onClick={rec.cancel}
+              aria-label="Descartar"
+              className="shrink-0 rounded-xl border border-border px-3 text-muted hover:text-brand"
+            >
+              <X size={16} />
+            </button>
+            <button
+              type="button"
+              onClick={cerrarGrabacion}
+              aria-label="Adjuntar nota de voz"
+              className="shrink-0 rounded-xl bg-brand px-4 py-2.5 text-sm font-medium text-white"
+            >
+              <Check size={16} />
+            </button>
+          </>
+        ) : (
+          <>
         <input
           value={text}
           onChange={(e) => setText(e.target.value)}
@@ -1103,6 +1164,8 @@ function Composer({
         >
           Enviar
         </button>
+          </>
+        )}
       </div>
     </form>
   );

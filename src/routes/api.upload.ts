@@ -112,8 +112,11 @@ export const Route = createFileRoute("/api/upload")({
         // más cara de todo el room abierto.
         if (invitado.ok) {
           const tipo = (file.type || "").toLowerCase();
-          const permitido = tipo.startsWith("image/") || tipo === "application/pdf";
-          if (!permitido) return new Response("solo imágenes o PDF", { status: 415 });
+          // Audio entra por la nota de voz del composer del room: es contenido que la
+          // persona produce ahí mismo, no un archivo que trae de fuera, y `GUEST_MAX_BYTES`
+          // sigue siendo el freno.
+          const permitido = tipo.startsWith("image/") || tipo === "application/pdf" || tipo.startsWith("audio/");
+          if (!permitido) return new Response("solo imágenes, audio o PDF", { status: 415 });
           if (file.size > GUEST_MAX_BYTES) return new Response("archivo demasiado grande", { status: 413 });
         }
 
