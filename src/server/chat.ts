@@ -1073,6 +1073,10 @@ export const askAgent = createServerFn({ method: "POST" })
     // repitió tres veces en mayúsculas. Numerado porque el orden ES la dirección: es el
     // mismo de los FileParts (`gc_attachments ORDER BY id`).
     text = manifiestoAdjuntos(mediaAtts, { reentrega, ambito: mediaAtts === huecoAtts ? "conversación" : "hilo" }) + text;
+    // Nota de voz: la plataforma la transcribe y la antepone al texto del turno; el audio
+    // viaja igual como adjunto. Ver `stt.server.ts`. Best-effort: si falla, no hay bloque.
+    const { transcripcionesDelTurno } = await import("./stt.server");
+    text = (await transcripcionesDelTurno(mediaAtts).catch(() => "")) + text;
     const parts = await buildMediaParts(mediaAtts, { forceUri: reentrega });
 
     // Streaming first-class: la cáscara (body vacío) se crea al primer token → el

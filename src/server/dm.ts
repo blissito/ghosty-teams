@@ -328,6 +328,7 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
     const bus = await import("./bus.server");
     const { currentNamespace } = await import("./tenant.server");
     const { resolvedAgents, runAgentTurn, buildMediaParts, manifiestoAdjuntos, quotedContextPrefix, clampQuote, historyContext, gapDesdeUltimaRespuesta, adjuntosDelHueco, CATCHUP_FETCH, agentGroupId, INJECTED } = await import("../agents.server");
+    const { transcripcionesDelTurno } = await import("./stt.server");
     const me = await sessionUser();
     if (!me || !(await db.isDmMember(data.id, me.sub))) throw new Error("no autorizado");
     const ns = await currentNamespace();
@@ -420,8 +421,12 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
     // turno trae varios adjuntos propios. El incidente que lo motivó fue justo en un DM.
     const manifiesto = manifiestoAdjuntos(mediaAtts, { reentrega, ambito: "conversación" });
     const parts = await buildMediaParts(mediaAtts, { forceUri: reentrega });
+    // Nota de voz: la plataforma la transcribe y la pone en el TEXTO del turno. El audio
+    // viaja igual como adjunto. Ver `stt.server.ts` para el porqué de no dejárselo al
+    // modelo. Best-effort: si falla, el turno sale sin el bloque y no pasa nada.
+    const dicho = await transcripcionesDelTurno(mediaAtts).catch(() => "");
 
-    const text = history + manifiesto + quoted;
+    const text = history + dicho + manifiesto + quoted;
 
     // Identidad del artefacto del DM → el agente recibe el artefacto ACTUAL (artifactDocHint)
     // para MODIFICARLO (re-emitir la misma versión), no recrearlo desde cero ni duplicar la card.

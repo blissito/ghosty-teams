@@ -1,7 +1,7 @@
 import { createFileRoute, notFound, useRouter } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createServerFn } from "@tanstack/react-start";
-import { Check, ChevronDown, Circle, Download, FileText, Loader2, MessageSquare, Mic, Paperclip, Trash2, Volume2, VolumeX, X } from "lucide-react";
+import { ChevronDown, Circle, Download, FileText, Loader2, MessageSquare, Mic, Paperclip, Send, Trash2, Volume2, VolumeX, X } from "lucide-react";
 import GhostyMascot from "../components/GhostyMascot";
 import { ChatCtx, ChatCtxDefaults, MessageRow, type SessionUser } from "../components/chat/message";
 import type { Message, CustomEmoji, ReactionAgg } from "../db.server";
@@ -444,6 +444,17 @@ function RoomAbierto() {
   // "Grabar" y lo pulsa — y se lleva un "ya se está grabando" que no entiende.
   useEffect(() => { avisarIframe(grabando); }, [grabando, avisarIframe, callUrl]);
 
+  // Nota de voz: parar es enviar. La subida es asíncrona, así que se marca la
+  // intención y la dispara el efecto de abajo cuando ya hay fileId.
+  const enviarTrasSubir = useRef(false);
+  useEffect(() => {
+    if (!enviarTrasSubir.current) return;
+    if (adj.pendientes.length === 0 || adj.subiendo) return;
+    enviarTrasSubir.current = false;
+    if (adj.pendientes.some((p) => p.error)) return;
+    void enviar({ preventDefault() {} } as unknown as React.FormEvent);
+  }, [adj.pendientes, adj.subiendo]);
+
   async function enviar(e: React.FormEvent) {
     e.preventDefault();
     const body = text.trim();
@@ -863,7 +874,11 @@ function RoomAbierto() {
             onSubmit={enviar}
             sending={sending || adj.subiendo}
             canWrite={canWrite}
-            onFiles={(f, meta) => (canWrite ? adj.addFiles(f, meta) : setIdentificando(true))}
+            onFiles={(f, meta) => {
+              if (!canWrite) return setIdentificando(true);
+              if (meta) enviarTrasSubir.current = true; // sólo la nota de voz se autoenvía
+              adj.addFiles(f, meta);
+            }}
             hayAdjuntos={adj.pendientes.length > 0}
           />
           <footer className="shrink-0 pb-2 text-center text-[11px] text-muted">
@@ -1139,10 +1154,10 @@ function Composer({
             <button
               type="button"
               onClick={cerrarGrabacion}
-              aria-label="Adjuntar nota de voz"
+              aria-label="Enviar nota de voz"
               className="shrink-0 rounded-xl bg-brand px-4 py-2.5 text-sm font-medium text-white"
             >
-              <Check size={16} />
+              <Send size={16} />
             </button>
           </>
         ) : (

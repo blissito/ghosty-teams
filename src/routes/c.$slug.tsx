@@ -7595,9 +7595,17 @@ const Composer = forwardRef<ComposerHandle, {
   useImperativeHandle(ref, () => ({ addFiles, focus: focusComposer }), [addFiles, focusComposer]);
   // Parar → File + onda + duración → `addFiles`, o sea el mismo camino de subida
   // que un archivo elegido con el clip. Un clip vacío (micro mudo) no adjunta nada.
+  //
+  // ⚠️ Y SE ENVÍA SOLO. Parar y que aparezca una tarjeta pendiente que además hay que
+  // enviar son dos gestos para un acto que en la cabeza es uno; nadie graba una nota de
+  // voz "para luego". Como la subida es asíncrona, se marca la intención y la dispara el
+  // efecto de abajo cuando el fileId ya está — enviar aquí mandaría el mensaje sin adjunto.
+  const enviarTrasSubir = useRef(false);
   const cerrarGrabacion = async () => {
     const clip = await rec.stop();
-    if (clip) addFiles([clip.file], { waveform: clip.waveform, durationMs: clip.durationMs });
+    if (!clip) return;
+    enviarTrasSubir.current = true;
+    addFiles([clip.file], { waveform: clip.waveform, durationMs: clip.durationMs });
   };
   const removePending = (localId: string) =>
     setPending((p) => {
@@ -7605,6 +7613,17 @@ const Composer = forwardRef<ComposerHandle, {
       if (gone?.previewUrl) URL.revokeObjectURL(gone.previewUrl); // libera el objectURL
       return p.filter((x) => x.localId !== localId);
     });
+  // Envío diferido de la nota de voz: en cuanto su subida termina. Si falló, la
+  // bandera se baja y el pendiente se queda a la vista con su error — perder la
+  // grabación en silencio sería peor que pedir un clic.
+  useEffect(() => {
+    if (!enviarTrasSubir.current) return;
+    if (pending.length === 0 || pending.some((p) => p.uploading)) return;
+    enviarTrasSubir.current = false;
+    if (pending.some((p) => p.error)) return;
+    submitRef.current?.();
+  }, [pending]);
+
   // Libera los objectURL pendientes al desmontar (cambiar de hilo/DM/room).
   useEffect(() => () => setPending((p) => { p.forEach((x) => x.previewUrl && URL.revokeObjectURL(x.previewUrl)); return p; }), []);
 
@@ -7974,11 +7993,11 @@ const Composer = forwardRef<ComposerHandle, {
             <button
               type="button"
               onClick={cerrarGrabacion}
-              title={t("Adjuntar nota de voz")}
-              aria-label={t("Adjuntar nota de voz")}
+              title={t("Enviar nota de voz")}
+              aria-label={t("Enviar nota de voz")}
               className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-brand text-brand-fg transition hover:brightness-110"
             >
-              <Check size={18} />
+              <Send size={18} />
             </button>
           </div>
         ) : (
