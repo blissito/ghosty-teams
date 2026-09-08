@@ -800,6 +800,26 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
             md: JSON.stringify(ask.options),
           });
           fanout({ t: "refresh", channelId: null, parentId: null, dmId: data.id });
+        } else {
+          // Archivo o documento que el agente dejó como URL en la prosa → card. Gemelo del
+          // room (chat.ts); en el DM no existía, así que un PDF o una imagen entregados por
+          // URL se quedaban como texto y el panel no se abría nunca. La deriva dm/chat de
+          // siempre: si tocas uno, toca el otro.
+          const { detectArtifact, mintCollabEmbed, resolveFileKind } = await import(
+            "./easybits-documents.server"
+          );
+          const found = detectArtifact(reply);
+          if (found?.type === "doc") {
+            const embed = await mintCollabEmbed({ slug: found.slug, documentId: found.documentId });
+            if (embed) await db.createArtifact(id, { kind: "html", url: embed.embedUrl, title: embed.title });
+            const docId = embed?.documentId || found.documentId;
+            if (docId) await db.setDmArtifact(data.id, docId).catch(() => {});
+          } else if (found?.type === "file") {
+            // Kind por content-type REAL: una URL firmada de storage no trae extensión.
+            const kind = (await resolveFileKind(found.url)) ?? found.kind;
+            await db.createArtifact(id, { kind, url: found.url, title: found.title ?? null });
+          }
+          if (found) fanout({ t: "refresh", channelId: null, parentId: null, dmId: data.id });
         }
       }
     } catch (e) {
