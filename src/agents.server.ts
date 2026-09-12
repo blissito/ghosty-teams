@@ -89,6 +89,12 @@ function sinModeloNiProveedor(p: Record<string, string> | undefined): Record<str
   return rest;
 }
 
+/** ¿La caja de este ACP la aprovisionó Studio? Es el `revive_url` que `activateStudioAgentFn`
+ *  escribe (`/api/v2/fleet-agents/:id/acp-box`); una caja así reporta su propio consumo. */
+function esCajaDeStudio(reviveUrl: string | null | undefined): boolean {
+  return !!reviveUrl && reviveUrl.includes("/acp-box");
+}
+
 function jsonObj(raw: string | null): Record<string, string> | undefined {
   if (!raw) return undefined;
   try {
@@ -2035,10 +2041,14 @@ export async function callAgentBackendStream(
         await dbAcp.updateAgent(agent.backend.rowId, { acpSettings: json }).catch(() => {});
       }
     }
-    // El gasto del turno. Es el ÚNICO camino por el que un agente ACP se mide: los gemelos
-    // reportan desde su caja con `REPORT_TOKEN`, que viaja por `turnEnv`, y en ACP no hay
-    // `turnEnv`. Sin esto su bolsa se llena con cero y su tope no corta nunca.
-    if (r.usage && agent.backend.id) {
+    // El gasto del turno. Desde el 2026-09-11 una caja ACP DE STUDIO se mide sola: su
+    // front reporta a gs con `REPORT_TOKEN` horneado en `acpBoxEnv` (así se mide el
+    // teléfono, donde Teams no está en medio). Reportar también desde aquí contaba cada
+    // turno DOS veces —12 «turnos» por 6 reales en `issa`, medido el 2026-09-12— y el
+    // duplicado no lo cazaba la idempotencia porque las claves son distintas. Se reporta
+    // desde Teams sólo para un ACP que NO sea de Studio (EasyBits u otro), que no tiene
+    // quien lo mida; se reconoce por el `revive_url` que Teams mismo escribió al activar.
+    if (r.usage && agent.backend.id && !esCajaDeStudio(agent.backend.reviveUrl)) {
       const { reportAcpUsage } = await import("./server/ghosty-runtime.server");
       reportAcpUsage({
         fleetAgentId: agent.backend.id,
@@ -3061,9 +3071,10 @@ export async function callAgentBackend(
         // que nadie puede contestar dejaría al agente detenido hasta el timeout; sin
         // manejador el cliente responde `cancelled` de inmediato y el turno cierra limpio.
       });
-      // El gasto del turno, igual que en el camino de streaming. Los dos o ninguno: medir
-      // sólo por un lado deja al mismo agente con bolsa a medias según por dónde le hablen.
-      if (r.usage && agent.backend.id) {
+      // El gasto del turno, igual que en el camino de streaming (y con la misma excepción:
+      // una caja de Studio se mide sola). Los dos o ninguno: medir sólo por un lado deja al
+      // mismo agente con bolsa a medias según por dónde le hablen.
+      if (r.usage && agent.backend.id && !esCajaDeStudio(agent.backend.reviveUrl)) {
         const { reportAcpUsage } = await import("./server/ghosty-runtime.server");
         reportAcpUsage({
           fleetAgentId: agent.backend.id,
