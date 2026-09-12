@@ -72,6 +72,23 @@ export type GhostyEmail = {
   } | null;
 };
 
+/**
+ * El cuerpo es prosa escapada, con UNA licencia: una línea que empiece con `## ` es un
+ * subtítulo. Un correo de más de tres párrafos sin subtítulos se lee como un muro; y como
+ * el cuerpo puede venir de un modelo, no se abre a HTML ni a markdown entero — sólo esto.
+ * En el texto plano el `## ` se quita.
+ */
+function bodyHtml(body: string, fuente: string): string {
+  return body
+    .split("\n")
+    .map((line) =>
+      line.startsWith("## ")
+        ? `<div style="margin-top:14px;font:700 12px/1.4 ${fuente};letter-spacing:.06em;text-transform:uppercase;color:#6b6b78">${escapeHtml(line.slice(3))}</div>`
+        : escapeHtml(line)
+    )
+    .join("\n");
+}
+
 export function escapeHtml(s: string): string {
   return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]!));
 }
@@ -197,7 +214,7 @@ ${conMascot ? `      <table role="presentation" cellpadding="0" cellspacing="0" 
               <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="background:#ffffff;border-radius:16px">
                 <tr><td style="padding:14px 18px">
                   <div style="font:700 20px/1.3 ${fuente};color:#16161a">${escapeHtml(e.head)}</div>${e.body ? `
-                  <div style="margin-top:6px;font:400 15px/1.6 ${fuente};color:#3f3f46;white-space:pre-wrap">${escapeHtml(e.body)}</div>` : ""}
+                  <div style="margin-top:6px;font:400 15px/1.6 ${fuente};color:#3f3f46;white-space:pre-wrap">${bodyHtml(e.body, fuente)}</div>` : ""}
                 </td></tr>
               </table>
             </td>
@@ -206,7 +223,7 @@ ${conMascot ? `      <table role="presentation" cellpadding="0" cellspacing="0" 
       </tr></table>` : `      <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="background:#ffffff;border-radius:16px">
         <tr><td style="padding:18px 20px">
           <div style="font:700 20px/1.3 ${fuente};color:#16161a">${escapeHtml(e.head)}</div>${e.body ? `
-          <div style="margin-top:8px;font:400 15px/1.6 ${fuente};color:#3f3f46;white-space:pre-wrap">${escapeHtml(e.body)}</div>` : ""}
+          <div style="margin-top:8px;font:400 15px/1.6 ${fuente};color:#3f3f46;white-space:pre-wrap">${bodyHtml(e.body, fuente)}</div>` : ""}
         </td></tr>
       </table>`}
     </td></tr>
@@ -225,7 +242,7 @@ ${cta ? `
 
   // La misma información sin adornos. Un correo SÓLO-html es una de las señales que Gmail
   // lee como publicidad, y hay clientes que ni siquiera muestran html.
-  const text = [e.head, e.body, cta?.url, `—\n${pie}`].filter(Boolean).join("\n\n");
+  const text = [e.head, e.body?.replace(/^## /gm, ""), cta?.url, `—\n${pie}`].filter(Boolean).join("\n\n");
   // El mascot sólo se adjunta si de verdad se usa: con marca no aparece en el HTML.
   return { html, text, inline: conMascot && mascot ? [mascot] : [] };
 }
