@@ -2476,7 +2476,13 @@ function EditAgentForm({
    * viven los métodos, así que puede desatascarlo.
    */
   const settingsAPintar = (probe?: { authMethods?: { value: string; name: string }[] } | null): AcpSettingUI[] => {
-    const base = acpSettings;
+    // Un agente de Studio (tiene `fleet_id`) ya tiene su selector de modelo arriba, curado
+    // por plan, precio y vault. El binario además declara SU proveedor (60 nombres ajenos)
+    // y SU catálogo entero de modelos; pintarlos aquí deja cambiar a cualquiera de los dos
+    // por fuera de ese gate, y expone marcas que no son nuestras. Modo y esfuerzo sí.
+    const base = agent.fleet_id
+      ? acpSettings.filter((o) => o.category !== "model" && o.id !== "provider" && o.id !== "model")
+      : acpSettings;
     const auth = probe?.authMethods ?? [];
     if (!auth.length || base.some((o) => o.id === "auth")) return base;
     return [{ id: "auth", name: "Autenticación", category: "auth", current: "", options: auth }, ...base];

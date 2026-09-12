@@ -2,6 +2,24 @@ import { useEffect, useState } from "react";
 import { nativeAgentConfigFn, setNativeAgentConfigFn, type NativeAgentConfig as Cfg } from "../server/agent-config";
 import { useT } from "../i18n";
 
+/** Nombre bonito del proveedor para el encabezado del grupo; lo que no conozcamos, tal cual. */
+const PROVIDER_LABEL: Record<string, string> = {
+  anthropic: "Claude",
+  openai: "OpenAI",
+  deepseek: "DeepSeek",
+  google: "Gemini",
+};
+
+function groupByProvider<M extends { provider?: string }>(models: M[]): Array<[string, M[]]> {
+  const out = new Map<string, M[]>();
+  for (const m of models) {
+    const k = m.provider ?? "";
+    if (!out.has(k)) out.set(k, []);
+    out.get(k)!.push(m);
+  }
+  return [...out.entries()];
+}
+
 /**
  * Config del agente que corre en el native gs runtime, desde Ajustes de Teams:
  * MODELO y PROMPT BASE. Studio sigue siendo la fuente única — esto sólo llama a sus
@@ -83,11 +101,18 @@ export function NativeAgentConfig({ agentId }: { agentId: number }) {
           onChange={(e) => cambiarModelo(e.target.value)}
           className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm disabled:opacity-50"
         >
-          {cfg.models.map((m) => (
-            <option key={m.id} value={m.id} disabled={m.ready === false}>
-              {m.label}
-              {m.ready === false ? ` ${t("(próximamente)")}` : ""}
-            </option>
+          {/* Agrupado por PROVEEDOR: un motor mixto (ghosty-lite) trae Claude, DeepSeek y
+              OpenAI en la misma lista y, planos, no se distingue cuál es cuál. El orden de
+              los grupos es el de aparición: el proveedor de casa va primero. */}
+          {groupByProvider(cfg.models).map(([provider, models]) => (
+            <optgroup key={provider} label={PROVIDER_LABEL[provider] ?? provider}>
+              {models.map((m) => (
+                <option key={m.id} value={m.id} disabled={m.ready === false}>
+                  {m.label}
+                  {m.ready === false ? ` ${t("(próximamente)")}` : ""}
+                </option>
+              ))}
+            </optgroup>
           ))}
         </select>
         {/* Se dice porque es real y se nota, y CADA transporte cuesta algo distinto:

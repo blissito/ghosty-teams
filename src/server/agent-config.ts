@@ -153,7 +153,7 @@ export type NativeAgentConfig = {
   engineLabel: string;
   model: string | null;
   prompt: string;
-  models: Array<{ id: string; label: string; ready?: boolean }>;
+  models: Array<{ id: string; label: string; ready?: boolean; provider?: string }>;
   /** Transporte del motor. Decide el aviso al cambiar de modelo: un ACP reinicia su caja
    *  (y corta el turno en vuelo); un worker nativo sólo recicla cajas frías. */
   protocol?: "sse" | "acp";
