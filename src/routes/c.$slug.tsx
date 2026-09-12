@@ -146,6 +146,7 @@ import { playNotificationSound, playGhostySound, playSelfSound, playMentionSound
 
 // Menciones que cuentan como "a ti": tu @handle o una grupal (@all/@channel/…).
 import { useT } from "../i18n";
+import { normalizeMentions } from "../lib/mention-normalize";
 
 type Mention = { handle: string; name: string; avatar: string; kind: "agent" | "user" | "group"; sub?: string | null };
 import { me } from "../server/auth";
@@ -7763,7 +7764,9 @@ const Composer = forwardRef<ComposerHandle, {
     const attachments = pending
       .filter((p) => p.fileId && !p.error)
       .map((p) => ({ fileId: p.fileId!, mime: p.mime, size: p.size, name: p.name, thumbFileId: p.thumbFileId ?? null, width: p.width ?? null, height: p.height ?? null, waveform: p.waveform ?? null, durationMs: p.durationMs ?? null }));
-    const body = editor ? ((editor.storage as any).markdown.getMarkdown() as string).trim() : "";
+    const crudo = editor ? ((editor.storage as any).markdown.getMarkdown() as string).trim() : "";
+    // `@ghostyinformación` → `@ghosty información`: el handle escrito a mano y sin espacio.
+    const body = normalizeMentions(crudo, mentionsRef.current);
     if ((!body && attachments.length === 0) || uploading) return;
     setPending((p) => { p.forEach((x) => x.previewUrl && URL.revokeObjectURL(x.previewUrl)); return []; });
     if (typeof window !== "undefined") localStorage.removeItem(draftKey); // borrador consumido
