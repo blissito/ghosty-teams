@@ -376,7 +376,7 @@ function MemoryPage() {
               <div className="flex items-center gap-2 text-xs border border-border rounded-lg px-2.5 py-1.5 self-start max-w-full">
                 {editing.attachment.mime.startsWith("image/") ? (
                   <img
-                    src={`/api/attachment/${editing.attachment.fileId}`}
+                    src={`/api/attachment/${encodeURIComponent(editing.attachment.fileId)}`}
                     alt=""
                     className="h-8 w-8 rounded object-cover shrink-0"
                   />
@@ -476,9 +476,9 @@ function MemoryPage() {
                   return (
                     <>
                       {doc?.mime?.startsWith("image/") ? (
-                        <a href={`/api/attachment/${doc.fileId}`} target="_blank" rel="noreferrer">
+                        <a href={`/api/attachment/${encodeURIComponent(doc.fileId)}`} target="_blank" rel="noreferrer">
                           <img
-                            src={`/api/attachment/${doc.fileId}`}
+                            src={`/api/attachment/${encodeURIComponent(doc.fileId)}`}
                             alt={doc.name}
                             className="mt-2 h-24 rounded-lg object-cover border border-border"
                           />
@@ -490,7 +490,7 @@ function MemoryPage() {
                         <span>· {fmtDate(n.updatedAt, intlLocale(locale))}</span>
                         {doc ? (
                           <a
-                            href={`/api/attachment/${doc.fileId}`}
+                            href={`/api/attachment/${encodeURIComponent(doc.fileId)}`}
                             target="_blank"
                             rel="noreferrer"
                             className="inline-flex items-center gap-1 text-muted hover:text-ink"

@@ -197,7 +197,7 @@ export async function rehostMarkdownImages(md: string): Promise<{ md: string; fa
         contentType: mime,
         fileName: safeFileName(url.split("/").pop()?.split("?")[0], "imagen"),
       });
-      nuevo.set(url, `/api/attachment/${up.fileId}`);
+      nuevo.set(url, `/api/attachment/${encodeURIComponent(up.fileId)}`);
     } catch (e) {
       failed.push(url);
       console.error(`[doc] re-hospedar imagen falló (${url.slice(0, 100)}):`, e instanceof Error ? e.message : e);
