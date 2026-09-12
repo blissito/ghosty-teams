@@ -8,16 +8,27 @@
 // Cache de 60 s por agente: un turno no puede pagar un GET a Studio cada vez, y "se aplica
 // al siguiente turno" tolera ese minuto. Guardar desde Ajustes invalida la entrada.
 const TTL_MS = 60_000;
-const cache = new Map<string, { prompt: string | null; until: number }>();
+export type StudioIdentity = { prompt: string | null; modelLine: string | null };
+const cache = new Map<string, { value: StudioIdentity; until: number }>();
 
 export function invalidateStudioPrompt(fleetId: string): void {
   cache.delete(fleetId);
 }
 
 export async function studioBasePrompt(fleetId: string): Promise<string | null> {
+  return (await studioIdentity(fleetId)).prompt;
+}
+
+/**
+ * Prompt base + qué modelo corre. Lo segundo va porque un modelo NO sabe su nombre
+ * (Sonnet 5 se presentó como «Sonnet 4.6», 2026-09-12) y la persona lo lee como que le
+ * vendieron otra cosa; la fila de Studio es la verdad del turno.
+ */
+export async function studioIdentity(fleetId: string): Promise<StudioIdentity> {
   const hit = cache.get(fleetId);
-  if (hit && hit.until > Date.now()) return hit.prompt;
+  if (hit && hit.until > Date.now()) return hit.value;
   let prompt: string | null = null;
+  let modelLine: string | null = null;
   try {
     const { runtimeFor } = await import("./agent-runtime.server");
     // Sin los campos del agente a propósito: su `runtimeUrl` es el wss:// de su caja y ahí no
@@ -29,14 +40,25 @@ export async function studioBasePrompt(fleetId: string): Promise<string | null> 
         signal: AbortSignal.timeout(5000),
       });
       if (res.ok) {
-        const j = (await res.json()) as { prompt?: string };
+        const j = (await res.json()) as {
+          prompt?: string;
+          model?: string | null;
+          models?: { id: string; label: string; provider?: string }[];
+        };
         prompt = j.prompt?.trim() || null;
+        const m = j.models?.find((x) => x.id === j.model);
+        if (j.model) {
+          modelLine =
+            `[TU MODELO: ${m?.label ?? j.model}${m?.provider ? ` (${m.provider}` : " ("}, id ${j.model}). ` +
+            `Si te preguntan qué modelo eres, contesta ESO; no lo deduzcas de tu entrenamiento.]`;
+        }
       }
     }
   } catch (e) {
     // Sin base no se cae el turno: el agente contesta con la persona del espacio, como antes.
     console.log(`[acp] sin prompt base de Studio para ${fleetId}: ${e instanceof Error ? e.message : e}`);
   }
-  cache.set(fleetId, { prompt, until: Date.now() + TTL_MS });
-  return prompt;
+  const value = { prompt, modelLine };
+  cache.set(fleetId, { value, until: Date.now() + TTL_MS });
+  return value;
 }
