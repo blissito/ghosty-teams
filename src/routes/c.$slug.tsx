@@ -3946,6 +3946,9 @@ function Sidebar({
           >
             <Target size={16} className="shrink-0" />
             <span className="truncate">{t("Prospección")}</span>
+            {/* Beta a la vista: está en desarrollo y puede fallar. Se dice en la entrada y en
+                la página, para que nadie lo descubra a mitad de una campaña. */}
+            <span className="ml-auto shrink-0 rounded-md border border-amber-500/40 bg-amber-500/10 px-1.5 py-px text-[10px] font-semibold uppercase tracking-wide text-amber-500">beta</span>
           </Link>
           {/* Memoria del workspace: lo que los agentes saben de la empresa. Curaduría. */}
           <Link

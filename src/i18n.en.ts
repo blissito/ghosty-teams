@@ -1393,4 +1393,5 @@ export const en: Record<string, string> = {
   "⏸ Estamos actualizando Ghosty en este momento. Vuelve a mandarlo en unos segundos — no se perdió nada.": "⏸ We're updating Ghosty right now. Send it again in a few seconds — nothing was lost.",
   "Viaja en su propio bloque al inicio de cada turno. Matiza la identidad base de Studio (a la derecha) sólo en este espacio.": "Travels as its own block at the start of every turn. It shades Studio's base identity (on the right) only in this space.",
   "La caja la administra Studio; si se recrea, se reconecta sola.": "Studio manages the box; if it is recreated, it reconnects on its own.",
+  "Prospección está en desarrollo: puede fallar o cambiar sin aviso. Revisa cada envío antes de mandarlo y cuéntanos lo que se rompa.": "Prospecting is under development: it may fail or change without notice. Review every send before it goes out, and tell us what breaks.",
 };

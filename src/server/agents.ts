@@ -309,6 +309,11 @@ export const activateStudioAgentFn = createServerFn({ method: "POST" })
       // copiarlo aquí lo congelaba al activar y ahora lo duplicaría.
       systemPrompt: esAcp ? null : (found.prompt ?? null),
     });
+    // Un ACP nacido en Studio es el agente DEL ESPACIO —ghosty-lite o goose, de la casa—,
+    // no la caja de un tercero que trae un miembro. Sin esto la fila se leía `lectura` y el
+    // agente no tenía GitHub, tareas ni conectores: «no tengo acceso a tu código» con el
+    // conector delante. Misma paridad que el worker nativo, que ya opera con `completo`.
+    if (esAcp) await db.updateAgent(ag.id, { acpScope: "completo" });
 
     // El canal de Teams se declara en Studio sólo para el camino nativo: en ACP no hay
     // `capabilities` que configurar — el transporte es el WebSocket y ya.

@@ -265,9 +265,13 @@ function ProspeccionPage() {
         <header className="mb-6">
           <h1 className="text-2xl font-bold flex items-center gap-2">
             <TargetIcon size={22} className="text-brand" /> {t("Prospección")}
+            <span className="rounded-md border border-amber-500/40 bg-amber-500/10 px-1.5 py-px text-[10px] font-semibold uppercase tracking-wide text-amber-500">beta</span>
           </h1>
           <p className="text-muted text-sm mt-1">
             {t("Busca negocios, enriquécelos por columna y ábreles conversación. El correo abre; WhatsApp cierra.")}
+          </p>
+          <p className="mt-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200/90">
+            {t("Prospección está en desarrollo: puede fallar o cambiar sin aviso. Revisa cada envío antes de mandarlo y cuéntanos lo que se rompa.")}
           </p>
         </header>
 
