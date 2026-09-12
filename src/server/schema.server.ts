@@ -20,6 +20,17 @@ import { currentNamespace } from "./tenant.server";
 // 500 (`no such column`) en workspaces recién provisionados. Keyed por `ns`, cada
 // tenant corre (y reintenta ante fallo) sus propias migraciones idempotentes.
 const done = new Map<string, Promise<void>>();
+async function seedTeamsGuide(): Promise<void> {
+  const { GUIA_TEAMS_SOURCE_REF, GUIA_TEAMS_TITLE, GUIA_TEAMS_NOTE } = await import("./guia-teams");
+  const db = await import("../db.server");
+  const actual = (await db.listWorkspaceMemory()).find((n) => n.sourceRef === GUIA_TEAMS_SOURCE_REF);
+  if (!actual) {
+    await db.addWorkspaceMemory(GUIA_TEAMS_TITLE, GUIA_TEAMS_NOTE, null, GUIA_TEAMS_SOURCE_REF);
+  } else if (actual.note !== GUIA_TEAMS_NOTE || actual.title !== GUIA_TEAMS_TITLE) {
+    await db.updateWorkspaceMemory(actual.id, { title: GUIA_TEAMS_TITLE, note: GUIA_TEAMS_NOTE });
+  }
+}
+
 export async function ensureSchema(): Promise<void> {
   const ns = await currentNamespace();
   let p = done.get(ns);
@@ -39,6 +50,12 @@ export async function ensureSchema(): Promise<void> {
         try {
           const { armFormWebhooks } = await import("./forms/webhooks.server");
           armFormWebhooks(ns);
+        } catch { /* best-effort */ }
+        // La guía de uso como nota de la memoria del workspace: visible para el equipo en
+        // Memoria y legible por el agente con memory_read. Se siembra aquí porque este es el
+        // "arranque" de cada tenant en este proceso; se actualiza sola cuando cambia el texto.
+        try {
+          await seedTeamsGuide();
         } catch { /* best-effort */ }
         // Barrido de cáscaras huérfanas: un reinicio se lleva los turnos en vuelo (el
         // registro es en memoria) y deja sus burbujas en "pensando…" para siempre. Aquí
