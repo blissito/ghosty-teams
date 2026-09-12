@@ -80,6 +80,8 @@ export async function buildConnectorContext(
     if (recordatorios) blocks.push(recordatorios);
     const ajenos = await contextoDeConectoresDelEquipo(sub);
     if (ajenos) blocks.push(ajenos);
+    const sinGithub = await contextoSinGithub(sub);
+    if (sinGithub) blocks.push(sinGithub);
     if (!blocks.length) return "";
     // ⚠️ La sesión del worker es PERSISTENTE, así que el agente arrastra lo que concluyó
     // en turnos anteriores. El 2026-08-04 uno dijo "no tengo Sentry conectado" a las 11:07
@@ -146,6 +148,33 @@ async function contextoDeConectoresDelEquipo(sub: string): Promise<string | null
       `compartidas. Si te piden algo que necesita una de éstas, NO inventes alternativas ni ` +
       `digas que no se puede: dile que la conecte él en Ajustes → Integraciones, que se lo ` +
       `pida a la persona de la lista, o que la compartan con el equipo desde ese mismo panel.]`
+    );
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * GitHub sin conectar por NADIE del espacio.
+ *
+ * Es el hueco que quedaba entre los dos bloques de arriba: el `ambientContext` de GitHub
+ * sólo corre para quien lo tiene, y la lista del equipo sólo nombra lo que tiene ALGUIEN.
+ * Con un espacio recién montado el agente no oía la palabra GitHub en todo el turno y
+ * contestaba «no hay integración de GitHub disponible» (issa, 2026-09-12) — cierto a medias
+ * y sin siguiente paso, que es justo lo que mata un trial de devs. Aquí se le dice qué
+ * decir: conectar en Ajustes → Integraciones y atar el repo al room.
+ */
+async function contextoSinGithub(sub: string): Promise<string | null> {
+  try {
+    const { listConnectorHolders, listAvailableProviders } = await import("./store.server");
+    const [holders, usables] = await Promise.all([listConnectorHolders(), listAvailableProviders(sub)]);
+    if (usables.has("github") || (holders.get("github") ?? []).length) return null;
+    return (
+      `[GitHub NO está conectado por nadie en este espacio todavía. Si te piden leer código, ` +
+      `revisar un PR o abrir un issue, NO digas que no existe la integración ni busques otra ` +
+      `vía: explica que existe y que hace falta (1) conectar GitHub en Ajustes → Integraciones ` +
+      `con la cuenta de quien te escribe y (2) atar el repositorio al room con el botón de ` +
+      `GitHub del encabezado. Después de eso tendrás las herramientas github_* en este room.]`
     );
   } catch {
     return null;
