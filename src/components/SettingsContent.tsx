@@ -1703,6 +1703,36 @@ function EmojiManager({ isOwner, mySub }: { isOwner: boolean; mySub: string | nu
   );
 }
 
+
+/**
+ * «OpenAI Astra ·» delante del subtítulo de un agente de Studio. Se pregunta a Studio por
+ * fila (`capabilities`, firmado) porque el modelo vive allá y cambia desde Ajustes; un
+ * agente que no es de Studio (webhook, ACP ajeno) no tiene modelo que enseñar y no pinta
+ * nada. Cache de módulo: reabrir la pestaña no vuelve a preguntar.
+ */
+const modelChipCache = new Map<number, string>();
+function AgentModelChip({ agentId, fleetId }: { agentId: number; fleetId: string | null }) {
+  const [label, setLabel] = useState<string | null>(modelChipCache.get(agentId) ?? null);
+  useEffect(() => {
+    if (!fleetId || modelChipCache.has(agentId)) return;
+    let vivo = true;
+    import("../server/agent-config")
+      .then(({ nativeAgentConfigFn }) => nativeAgentConfigFn({ data: { id: agentId } }))
+      .then((r) => {
+        if (!vivo || !r || !("models" in r)) return;
+        const m = r.models.find((x) => x.id === r.model);
+        const txt = m?.label ?? r.model ?? "";
+        if (!txt) return;
+        modelChipCache.set(agentId, txt);
+        setLabel(txt);
+      })
+      .catch(() => {});
+    return () => { vivo = false; };
+  }, [agentId, fleetId]);
+  if (!label) return null;
+  return <span className="text-ink/80">{label} · </span>;
+}
+
 /* ── Agentes: el @ghosty del wizard + agentes/bots extra (fleet o webhook) ── */
 type ManagedAgent = {
   id: number;
@@ -1813,6 +1843,7 @@ function AgentsManager({ isOwner, mySub }: { isOwner: boolean; mySub: string | n
                     {a.name} <span className="text-xs font-normal text-muted">@{a.handle}</span>
                   </p>
                   <p className="truncate text-xs text-muted">
+                    <AgentModelChip agentId={a.id} fleetId={a.fleet_id} />
                     {a.system_prompt ? a.system_prompt : `${kindLabel(a.kind, t)} · ${t("sin persona")}`}
                   </p>
                 </div>
