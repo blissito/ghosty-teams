@@ -611,6 +611,11 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
     // de la burbuja y lo commiteamos LOCAL (misma verdad markdown/csv que en el room). En DM
     // no cableamos identidad por-hilo → cada artefacto es una card nueva (co-edición diferida).
     try {
+      // Un turno MUERTO por transporte no commitea nada: lo que hay es trabajo a medias más
+      // el aviso. Las ~6 reescrituras de abajo derivan el body de `reply` quitando fences, y
+      // una de ellas puede dejarlo en "" — que es justo cómo quedó la burbuja de descti el
+      // 11-sep, sin aviso ni botón «Retomar». El `finally` sigue corriendo (acuse y fin de turno).
+      if (turnResult.failure) return { ok: true as const };
       const { extractEbDoc, extractEbPatches, isSameDocument, draftTitle, bubbleWithoutEbDoc, extractAskUser, stripAskUser, extractAllEbAudio, stripEbAudio, extractAllEbFile, stripEbFile } = await import("../lib/ebdoc");
       const { randomUUID } = await import("node:crypto");
 

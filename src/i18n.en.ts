@@ -390,6 +390,8 @@ export const en: Record<string, string> = {
   "Mantén el rail izquierdo oscuro en todos los modos — aunque el resto esté claro.": "Keep the left rail dark in all modes — even when the rest is light.",
   "Mencionable como @{handle}.": "Mentionable as @{handle}.",
   "Menciones": "Mentions",
+  "no es nadie en este espacio.": "isn't anyone in this workspace.",
+  "Agentes:": "Agents:",
   "Mensaje a #{room}…": "Message #{room}…",
   "Mensaje a {name}…": "Message {name}…",
   "Mensaje directo": "Direct message",

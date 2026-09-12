@@ -787,17 +787,37 @@ export function detectMention(body: string, handles: string[]): string | null {
 }
 
 // TODOS los agentes mencionados, en orden de aparición (para multi-mención: cada
-// uno responde). Case-insensitive, @handle con borde de palabra a ambos lados, sin
-// duplicados. El boundary IZQUIERDO `(?<![\w@.])` evita que un email (foo@blue.com)
-// dispare al agente cuyo handle coincide con el dominio.
-export function detectMentions(body: string, handles: string[]): string[] {
+// uno responde). Case-insensitive, sin duplicados. El boundary IZQUIERDO `(?<![\w@.])`
+// evita que un email (foo@blue.com) dispare al agente cuyo handle coincide con el dominio.
+//
+// A la DERECHA no hay borde de palabra a propósito. Hasta el 2026-09-12 se exigía `\b`, y
+// `@ghostyinformación en materia…` —la persona escribió el handle y siguió sin espacio— no
+// despertaba a nadie: ni 👀, ni aviso, y el cliente encima pintaba el token entero como
+// mención válida (descti, 11-sep). Ahora el token pegado al `@` se resuelve contra los
+// handles conocidos: exacto primero (de agente O de persona: `@anabel` no despierta a
+// `ana`), y si no, el handle de AGENTE más largo que sea prefijo del token.
+export function detectMentions(body: string, handles: string[], userHandles: string[] = []): string[] {
+  const agentes = handles.map((h) => h.toLowerCase());
+  const personas = new Set(userHandles.map((h) => h.toLowerCase()));
   const hits: { handle: string; idx: number }[] = [];
-  for (const h of handles) {
-    const re = new RegExp(`(?<![\\w@.])@${h.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i");
-    const m = body.match(re);
-    if (m && m.index != null) hits.push({ handle: h, idx: m.index });
+  const re = /(?<![\p{L}\p{N}_@.])@([\p{L}\p{N}_.-]+)/gu;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(body)) !== null) {
+    const tok = m[1].toLowerCase();
+    let best = agentes.indexOf(tok);
+    if (best === -1 && !personas.has(tok)) {
+      let largo = 0;
+      agentes.forEach((h, i) => {
+        if (tok.startsWith(h) && h.length > largo) { largo = h.length; best = i; }
+      });
+    }
+    if (best !== -1) hits.push({ handle: handles[best], idx: m.index });
   }
-  return hits.sort((a, b) => a.idx - b.idx).map((x) => x.handle);
+  const vistos = new Set<string>();
+  return hits
+    .sort((a, b) => a.idx - b.idx)
+    .map((x) => x.handle)
+    .filter((h) => (vistos.has(h) ? false : (vistos.add(h), true)));
 }
 
 // Artefacto vivo con identidad + versiones (Fase 1): instrucción per-turno SOLO para el
@@ -2347,7 +2367,10 @@ export async function callAgentBackendStream(
       if (signal?.aborted) throw new DOMException("Detenido durante el reintento", "AbortError");
       continue;
     }
-    const msg = `⚠️ No pude contactar a @${agent.handle}: ${e instanceof Error ? e.message : e}`;
+    // Si el texto se cortó con un fence abierto (medio ```eb-doc```), el aviso caería DENTRO
+    // del fence: el cliente lo trata como documento y la burbuja se ve vacía. Se cierra antes.
+    const fenceAbierto = (streamed.match(/^```/gm)?.length ?? 0) % 2 === 1;
+    const msg = `${fenceAbierto ? "\n```\n\n" : ""}⚠️ No pude contactar a @${agent.handle}: ${e instanceof Error ? e.message : e}`;
     // El turno MURIÓ. Se sigue escribiendo el aviso en la burbuja —el usuario tiene que
     // enterarse— pero además se marca como fallo: devolver esto como si fuera la respuesta
     // era lo que hacía que `finishTurn` lo cerrara en `done` y el medidor lo cobrara como

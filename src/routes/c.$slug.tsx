@@ -2365,6 +2365,16 @@ function ChannelPage() {
       .then((r) => {
         revalidate();
         const respondents = r?.respondents ?? [];
+        // Nadie va a contestar y hay un @ que no es nadie: se dice, en vez del silencio.
+        if (!respondents.length && r?.unresolved?.length) {
+          const quien = r.unresolved.map((h) => `@${h}`).join(", ");
+          const agentes = (r.agentHandles ?? []).map((h) => `@${h}`).join(", ");
+          pushToast({
+            sender: t("Menciones"), avatar: "", kind: "room",
+            preview: `${quien} ${t("no es nadie en este espacio.")}${agentes ? ` ${t("Agentes:")} ${agentes}` : ""}`,
+            onOpen: () => {},
+          });
+        }
         if (respondents.length) {
           // MODELO ZULIP: el agente responde SIEMPRE dentro de un hilo colgado del mensaje
           // que lo invocó. Si lo mandaste desde el flujo, hay que ABRIR ese hilo — el

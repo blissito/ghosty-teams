@@ -190,7 +190,8 @@ export const eventPostFn = createServerFn({ method: "POST" })
     // AQUÍ, en cada mensaje: apagarlo a media sesión calla al agente desde el mensaje
     // siguiente, sin reiniciar nada. Es la forma en que se usa —encendido un par de
     // horas y apagado— así que tiene que ser inmediato y reversible.
-    const mentioned = /(^|\s)@ghosty\b/i.test(body);
+    const { detectMentions } = await import("../../agents.server");
+    const mentioned = detectMentions(body, ["ghosty"]).length > 0;
     const agentHandle = r.ch.agent_enabled === 1 && mentioned ? "ghosty" : null;
 
     // ⚠️ El origin se captura DENTRO del request, antes de contestarle al invitado.

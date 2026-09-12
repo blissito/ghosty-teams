@@ -2480,11 +2480,17 @@ function EditAgentForm({
     // por plan, precio y vault. El binario además declara SU proveedor (60 nombres ajenos)
     // y SU catálogo entero de modelos; pintarlos aquí deja cambiar a cualquiera de los dos
     // por fuera de ese gate, y expone marcas que no son nuestras. Modo y esfuerzo sí.
+    //
+    // Tampoco `auth` ni `mode`: la llave la hornea Studio (el copy del binario invita a
+    // correr `ghosty configure`, que aquí no existe) y el modo `auto` es lo único que
+    // funciona sin nadie que apruebe tool por tool. Queda el esfuerzo de razonamiento,
+    // que sí es una decisión del cliente (calidad contra costo de su propia llave).
+    const OCULTOS_STUDIO = new Set(["provider", "model", "auth", "mode"]);
     const base = agent.fleet_id
-      ? acpSettings.filter((o) => o.category !== "model" && o.id !== "provider" && o.id !== "model")
+      ? acpSettings.filter((o) => !OCULTOS_STUDIO.has(o.id) && !OCULTOS_STUDIO.has(o.category ?? ""))
       : acpSettings;
     const auth = probe?.authMethods ?? [];
-    if (!auth.length || base.some((o) => o.id === "auth")) return base;
+    if (agent.fleet_id || !auth.length || base.some((o) => o.id === "auth")) return base;
     return [{ id: "auth", name: "Autenticación", category: "auth", current: "", options: auth }, ...base];
   };
   const [prefs, setPrefs] = useState<Record<string, string>>(() => {

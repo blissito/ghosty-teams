@@ -206,13 +206,16 @@ export const prepareRetryFn = createServerFn({ method: "POST" })
     }
 
     // El barrido le pegó "⏹ Interrumpido…" al cuerpo. Si no se limpia, el turno nuevo
-    // arranca con ese ruido dentro de su propia burbuja.
+    // arranca con ese ruido dentro de su propia burbuja. ⚠️ Nunca se deja en "": si el
+    // despacho de abajo falla, una burbuja vacía no dice nada y ya no tiene botón. Con el
+    // placeholder al menos se ve que se intentó, y el primer chunk del turno nuevo lo pisa.
     const db = await import("../db.server");
     if (t.shellId != null) {
-      await db.setMessageBody(t.shellId, "").catch(() => {});
+      const placeholder = "⏳ Retomando…";
+      await db.setMessageBody(t.shellId, placeholder).catch(() => {});
       const bus = await import("./bus.server");
       const canal = t.dmId ? bus.ch.dm(ns, t.dmId) : t.channelId ? bus.ch.room(ns, t.channelId) : null;
-      if (canal) bus.publish(canal, { t: "message:body", id: t.shellId, body: "" });
+      if (canal) bus.publish(canal, { t: "message:body", id: t.shellId, body: placeholder });
     }
 
     const texto = textoDeContinuacion(t);
@@ -758,7 +761,9 @@ export const postMessage = createServerFn({ method: "POST" })
     // recorre `mentionedList`, así que apagar sólo el flag habría dejado el agente
     // contestando igual con el mensaje marcado como si nadie lo hubiera llamado.
     const agentOff = !!channel.call_mode && channel.agent_enabled !== 1;
-    const mentionedList = agentOff ? [] : detectMentions(body, handles); // TODOS los @tagged, en orden
+    // Los handles de las personas entran para que un `@anabel` exacto no despierte a `ana`.
+    const userHandles = agentOff ? [] : (await import("../users.server").then((u) => u.listUsers()).catch(() => [])).map((u) => u.handle);
+    const mentionedList = agentOff ? [] : detectMentions(body, handles, userHandles); // TODOS los @tagged, en orden
     const mentioned = mentionedList[0] ?? null; // para el flag agent_handle del mensaje
     const me = await sessionUser();
     const name = me?.name || "invitado";
@@ -782,7 +787,10 @@ export const postMessage = createServerFn({ method: "POST" })
     if (created && files.length) [created] = await db.attachAttachments([created]);
     if (created) bus.publish(bus.ch.room(ns, channel.id), { t: "message:new", msg: created, nonce: data.nonce });
     // Push a los usuarios @tagged (fire-and-forget resiliente).
-    await notifyMentions(ns, channel, body, name, me?.sub ?? "").catch(() => {});
+    // `unresolved` viaja al cliente: un `@algo` que no es nadie y no despierta a ningún
+    // agente se quedaba en silencio absoluto (ni 👀 ni aviso). Ahora se dice, con los
+    // handles que sí hay.
+    const menciones = await notifyMentions(ns, channel, body, name, me?.sub ?? "").catch(() => null);
     // ¿Qué agentes responden y dónde? (multi-mención: cada @tagged responde)
     //
     // MODELO ZULIP (2026-08-03): la respuesta del agente NACE SIEMPRE EN UN HILO, colgada
@@ -874,6 +882,9 @@ export const postMessage = createServerFn({ method: "POST" })
       id,
       needsAgent: respondents.length > 0,
       respondents, // [{handle, parent, fleetThread, shellId}] → el cliente llama askAgent por cada uno
+      // Sólo cuando NADIE va a contestar: con un agente despierto, un @ suelto es ruido.
+      unresolved: respondents.length === 0 && menciones?.unresolved?.length ? menciones.unresolved : [],
+      agentHandles: handles,
     };
   });
 
@@ -1376,6 +1387,11 @@ export const askAgent = createServerFn({ method: "POST" })
     // abre el panel del room. Best-effort: si algo falla, el mensaje queda normal.
     // (Slice 3 del contrato: reemplazar este scraping por eventos artifact del SSE.)
     try {
+      // Un turno MUERTO por transporte no commitea nada: lo que hay es trabajo a medias más
+      // el aviso. Las ~6 reescrituras de abajo derivan el body de `reply` quitando fences, y
+      // una de ellas puede dejarlo en "" — que es justo cómo quedó la burbuja de descti el
+      // 11-sep, sin aviso ni botón «Retomar». El `finally` sigue corriendo (acuse y fin de turno).
+      if (turnResult.failure) return { ok: true as const };
       const { detectArtifact, mintCollabEmbed, resolveFileKind } = await import("./easybits-documents.server");
       const { extractEbDoc, extractEbPatches, isSameDocument, draftTitle, bubbleWithoutEbDoc, extractAskUser, stripAskUser, extractAllEbAudio, stripEbAudio, extractAllEbFile, stripEbFile } = await import("../lib/ebdoc");
       const { randomUUID } = await import("node:crypto");
