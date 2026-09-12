@@ -83,6 +83,12 @@ export type ResolvedAgent = {
 // Vive acá y no en cada llamador para que el clear y el turno no puedan
 // discrepar — si difieren, "borré la memoria" borra la de otra conversación.
 /** JSON de una columna, o nada. Una fila corrupta no debe tumbar la resolución de agentes. */
+function sinModeloNiProveedor(p: Record<string, string> | undefined): Record<string, string> | undefined {
+  if (!p) return p;
+  const { model: _m, provider: _p, ...rest } = p;
+  return rest;
+}
+
 function jsonObj(raw: string | null): Record<string, string> | undefined {
   if (!raw) return undefined;
   try {
@@ -142,7 +148,12 @@ export async function resolvedAgents(): Promise<ResolvedAgent[]> {
           runtime: "acp",
           runtimeUrl: a.runtime_url,
           token: a.acp_token || undefined,
-          prefs: jsonObj(a.acp_prefs),
+          // Un agente de Studio (`fleet_id`) tiene el modelo y el proveedor gobernados por
+          // Studio (env de su caja, gate de plan y vault). Una preferencia `model`/`provider`
+          // guardada aquí —del selector crudo que Ajustes ya no pinta para estos— se le
+          // mandaría por `session/set_*` en CADA sesión y pisaría en silencio lo elegido en
+          // Studio: el selector de arriba decía Terra y la caja hablaba con Astra.
+          prefs: a.fleet_id ? sinModeloNiProveedor(jsonObj(a.acp_prefs)) : jsonObj(a.acp_prefs),
           rowId: a.id,
           settingsRaw: a.acp_settings ?? undefined,
           reviveUrl: a.revive_url,
@@ -2186,6 +2197,16 @@ export async function callAgentBackendStream(
     // NO es el archivo prometido. El que corrige tiene que pesar más que el que describe.
     sinToolsHint + huecoHint + connHint + nowHint + memHint + brandHint + docHint + rosterHint + text + canalHint
   );
+  // REINTENTO DE TRANSPORTE. Un `terminated`/`fetch failed`/503 antes de que el worker
+  // haya dicho una sola palabra no es un fallo del agente: es gs reiniciándose (deploy) o
+  // el socket caído. Hasta el 2026-09-12 se cerraba el turno con «No pude contactar» y la
+  // persona tenía que volver a escribir su petición (descti, 11-sep). Se reintenta con
+  // espera creciente —hasta ~2 min, lo que dura el drain de gs— y SÓLO si aún no llegó
+  // texto ni tool: con trabajo a medias en la caja, repetir el turno lo duplicaría.
+  const ESPERAS_MS = [5_000, 15_000, 30_000, 60_000];
+  let streamed = "";
+  let huboTool = false;
+  for (let intento = 0; ; intento++) {
   try {
     // `parts` = FileParts A2A (media); EasyBits los normaliza por MIME (Slice E1).
     // configGroupId "teams" = unidad de config ESTABLE de este canal en EasyBits
@@ -2253,13 +2274,19 @@ export async function callAgentBackendStream(
       await onChunk(texto);
       return texto;
     }
-    if (!res.ok || !res.body) throw new Error(`fleet-stream ${res.status}: ${await res.text().catch(() => "")}`);
+    if (!res.ok || !res.body) {
+      const cuerpo = await res.text().catch(() => "");
+      const err = new Error(`fleet-stream ${res.status}: ${cuerpo}`) as Error & { retryAfterMs?: number };
+      // gs drenando: lo dice él mismo cuánto esperar.
+      const ra = Number(res.headers.get("retry-after"));
+      if (res.status === 503 && ra > 0) err.retryAfterMs = ra * 1000;
+      throw err;
+    }
     // Parseo SSE: acumula por líneas `data: {json}`. `done.value` es el reply
     // completo y autoritativo (correcto aun si un self-heal re-emitió chunks).
     const reader = res.body.getReader();
     const dec = new TextDecoder();
     let buf = "";
-    let streamed = "";
     let authoritative: string | null = null;
     // ⚠️ Casi todas las salidas de este bucle dejan el stream a medias: `injected`
     // retorna, `error` lanza, y Detener aborta desde fuera. Sin cancelar el reader la
@@ -2288,6 +2315,7 @@ export async function callAgentBackendStream(
             streamed += ev.value;
             await onChunk(ev.value);
           } else if (ev.type === "tool") {
+            huboTool = true;
             // start trae name+id+detail; end trae id+ok. Correlación por id en runAgentTurn.
             await onTool?.({ name: ev.name, id: ev.id, phase: ev.phase ?? "start", ok: ev.ok, detail: ev.detail });
           } else if (ev.type === "truncated") {
@@ -2312,6 +2340,13 @@ export async function callAgentBackendStream(
     // el usuario no provocó… cuando lo provocó él (visto en prod 2026-07-29). Se relanza:
     // runAgentTurn ya sabe cerrar el turno con "⏹ Detenido" conservando lo escrito.
     if (signal?.aborted || (e instanceof Error && e.name === "AbortError")) throw e;
+    if (!streamed && !huboTool && intento < ESPERAS_MS.length && esFalloDeTransporte(e)) {
+      const ms = (e as { retryAfterMs?: number }).retryAfterMs ?? ESPERAS_MS[intento];
+      console.warn(`[fleet-stream] @${agent.handle} ${String((e as Error)?.message ?? e).slice(0, 80)} → reintento ${intento + 1}/${ESPERAS_MS.length} en ${ms} ms`);
+      await esperar(ms, signal);
+      if (signal?.aborted) throw new DOMException("Detenido durante el reintento", "AbortError");
+      continue;
+    }
     const msg = `⚠️ No pude contactar a @${agent.handle}: ${e instanceof Error ? e.message : e}`;
     // El turno MURIÓ. Se sigue escribiendo el aviso en la burbuja —el usuario tiene que
     // enterarse— pero además se marca como fallo: devolver esto como si fuera la respuesta
@@ -2321,6 +2356,28 @@ export async function callAgentBackendStream(
     await onChunk(msg);
     return msg;
   }
+  }
+}
+
+/** Fallos que no son del agente sino del camino hasta él: gs reiniciando o el socket caído. */
+function esFalloDeTransporte(e: unknown): boolean {
+  const m = String((e as Error)?.message ?? e);
+  return (
+    /\bterminated\b|fetch failed|ECONNRESET|ECONNREFUSED|socket hang up|other side closed|UND_ERR/i.test(m) ||
+    /^fleet-stream 50[234]\b/.test(m)
+  );
+}
+
+function esperar(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    const t = setTimeout(fin, ms);
+    function fin() {
+      clearTimeout(t);
+      signal?.removeEventListener("abort", fin);
+      resolve();
+    }
+    signal?.addEventListener("abort", fin, { once: true });
+  });
 }
 
 // Reset de la sesión del agente para un groupId (comando /clear): el runtime rota su
