@@ -17,6 +17,8 @@ import {
   X,
 } from "lucide-react";
 import ConfirmModal from "../components/ConfirmModal";
+import { Markdown } from "../components/Markdown";
+import NoteEditor from "../components/NoteEditor";
 import { useLocale, useT } from "../i18n";
 import { intlLocale } from "../i18n.core";
 import { me } from "../server/auth";
@@ -38,6 +40,36 @@ import {
 
 type MemoryData = Awaited<ReturnType<typeof listWorkspaceMemoryFn>>;
 let memoryCache: MemoryData | null = null;
+
+
+/** Una nota larga (la guía, un manual destilado) se pinta contraída con un "Ver más"; y en
+ *  markdown, que es como el agente la escribe (## secciones, listas) y como se lee. */
+const NOTE_COLLAPSE_CHARS = 600;
+function NoteBody({ note }: { note: string }) {
+  const t = useT();
+  const larga = note.length > NOTE_COLLAPSE_CHARS;
+  const [open, setOpen] = useState(!larga);
+  return (
+    <div className="mt-1 text-sm text-muted">
+      <div className={open ? "" : "relative max-h-40 overflow-hidden"}>
+        <Markdown body={note} />
+        {!open && (
+          <div className="pointer-events-none absolute inset-x-0 bottom-0 h-12 bg-gradient-to-t from-surface-2 to-transparent" />
+        )}
+      </div>
+      {larga && (
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          className="mt-1.5 inline-flex items-center gap-1 text-xs font-medium text-brand hover:underline"
+        >
+          {open ? <ChevronDown size={13} className="rotate-180" /> : <ChevronDown size={13} />}
+          {open ? t("Ver menos") : t("Ver más")}
+        </button>
+      )}
+    </div>
+  );
+}
 
 export const Route = createFileRoute("/memory")({
   loader: async () => ({ user: await me() }),
@@ -335,13 +367,10 @@ function MemoryPage() {
               placeholder={t("Título — ej. Cliente ACME, facturación")}
               className="text-sm border border-border rounded-lg px-3 py-2 bg-surface-2"
             />
-            <textarea
-              value={editing.note}
-              maxLength={limits?.maxChars ?? 600}
-              onChange={(e) => setEditing({ ...editing, note: e.target.value })}
+            <NoteEditor
+              markdown={editing.note}
+              onMarkdown={(md) => setEditing((e) => (e ? { ...e, note: md } : e))}
               placeholder={t("El hecho, corto y accionable")}
-              rows={4}
-              className="text-sm border border-border rounded-lg px-3 py-2 bg-surface-2 resize-y"
             />
             {editing.attachment ? (
               <div className="flex items-center gap-2 text-xs border border-border rounded-lg px-2.5 py-1.5 self-start max-w-full">
@@ -423,7 +452,7 @@ function MemoryPage() {
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <div className="font-semibold text-[15px]">{n.title}</div>
-                    <p className="text-sm text-muted mt-1 whitespace-pre-wrap break-words">{n.note}</p>
+                    <NoteBody note={n.note} />
                   </div>
                   <div className="flex items-center gap-1 shrink-0">
                     <button

@@ -570,6 +570,10 @@ export async function deleteAgentMemory(
 export const WS_MEMORY_SCOPE = "ws";
 export const WS_MEMORY_MAX_NOTES = 200;
 export const WS_MEMORY_MAX_CHARS = 600;
+/** Tope para una nota escrita A MANO desde /memory. El de 600 es para el AGENTE (lo obliga a
+ *  destilar); una persona que pega una guía o un procedimiento con secciones necesita más, y
+ *  al índice del turno sólo viaja el arranque (80 chars): el tamaño no se paga por turno. */
+export const WS_MEMORY_MAX_CHARS_HUMAN = 4000;
 export const WS_MEMORY_TITLE_MAX = 80;
 
 export type WorkspaceNote = {

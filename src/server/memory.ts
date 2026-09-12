@@ -37,7 +37,7 @@ export const listWorkspaceMemoryFn = createServerFn({ method: "GET" }).handler(a
     channels: channels.map((c) => ({ id: c.id, slug: c.slug })),
     limits: {
       maxNotes: db.WS_MEMORY_MAX_NOTES,
-      maxChars: db.WS_MEMORY_MAX_CHARS,
+      maxChars: db.WS_MEMORY_MAX_CHARS_HUMAN,
       titleMax: db.WS_MEMORY_TITLE_MAX,
       roomMaxNotes: db.MEMORY_MAX_NOTES,
       roomMaxChars: db.MEMORY_MAX_CHARS,
@@ -134,8 +134,8 @@ export const saveWorkspaceMemoryFn = createServerFn({ method: "POST" })
     const title = data.title.trim().slice(0, db.WS_MEMORY_TITLE_MAX);
     const note = data.note.trim();
     if (!title || !note) return { ok: false as const, error: "faltan título o contenido" };
-    if (note.length > db.WS_MEMORY_MAX_CHARS)
-      return { ok: false as const, error: `máximo ${db.WS_MEMORY_MAX_CHARS} caracteres` };
+    if (note.length > db.WS_MEMORY_MAX_CHARS_HUMAN)
+      return { ok: false as const, error: `máximo ${db.WS_MEMORY_MAX_CHARS_HUMAN} caracteres` };
     if (!data.id) {
       const existing = await db.listWorkspaceMemory();
       if (existing.length >= db.WS_MEMORY_MAX_NOTES)
