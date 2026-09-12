@@ -2667,7 +2667,7 @@ function EditAgentForm({
                 {agent.kind === "fleet"
                   ? t("Capa que se suma a la base SOLO en este espacio. No cambia quién es el agente; su identidad y el prompt base (todos los canales) van a la derecha. Déjala vacía para usar solo la base.")
                   : agent.kind === "acp"
-                    ? t("Se antepone al turno que se le manda a su caja. No cambia lo que el agente es; sólo cómo se comporta en este espacio.")
+                    ? t("Viaja en su propio bloque al inicio de cada turno. Matiza la identidad base de Studio (a la derecha) sólo en este espacio.")
                     : agent.kind === "a2a"
                       ? t("Se antepone al turno, salvo que su AgentCard declare que la persona la aplica él.")
                       : t("Se envía a tu webhook como systemPrompt junto al mensaje.")}
@@ -2680,12 +2680,21 @@ function EditAgentForm({
                   {t("Caja del agente")}
                 </label>
                 <div className="flex gap-2">
+                  {/* Un agente de Studio (`fleet_id`) no edita su caja: la administra Studio
+                      (revive por HMAC, dominio fijo). Cambiarle la URL a mano rompía el
+                      reenganche y el token no aplica. Se deja "probar", que sí sirve. */}
+                  {agent.fleet_id ? (
+                    <p className="min-w-0 flex-1 self-center text-[11px] text-muted">
+                      {t("La caja la administra Studio; si se recrea, se reconecta sola.")}
+                    </p>
+                  ) : (
                   <input
                     value={wsUrl}
                     onChange={(e) => { setWsUrl(e.target.value); setProbe(null); }}
                     placeholder={t("wss://sb-….sandboxes.easybits.cloud/acp")}
                     className={`${input} min-w-0 flex-1`}
                   />
+                  )}
                   <button
                     type="button"
                     disabled={!wsUrl.trim() || probing}
@@ -2715,6 +2724,7 @@ function EditAgentForm({
                     {probing ? t("probando…") : t("probar")}
                   </button>
                 </div>
+                {!agent.fleet_id && (
                 <input
                   value={acpToken}
                   onChange={(e) => { setAcpToken(e.target.value); setProbe(null); }}
@@ -2723,6 +2733,7 @@ function EditAgentForm({
                   placeholder={agent.has_acp_token ? t("token guardado — escribe uno nuevo para cambiarlo") : t("token de la caja (si la tuya lo pide)")}
                   className={`${input} mt-2 w-full`}
                 />
+                )}
                 {probeErr && <p className="mt-1.5 text-[11px] text-red-400">{probeErr}</p>}
                 {/* En verde y con palomita: es el resultado de una acción que la persona
                     acaba de pedir, no un pie de foto. En gris se leía igual que la ayuda de
@@ -2738,9 +2749,11 @@ function EditAgentForm({
                     {t("Su llave se configura dentro de su caja: este agente no deja hacerlo desde aquí.")}
                   </p>
                 )}
+                {!agent.fleet_id && (
                 <p className="mt-1 text-[11px] text-muted">
                   {t("La dirección de su caja. Cámbiala si se recreó y quedó en otra URL — el @handle y el historial se conservan.")}
                 </p>
+                )}
 
                 {/* Lo que el agente deja configurar. Se pinta lo que DECLARÓ él, no una lista
                     nuestra: gemini trae 6 modelos, goose 74 proveedores, y el próximo traerá

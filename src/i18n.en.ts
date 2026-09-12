@@ -1391,4 +1391,6 @@ export const en: Record<string, string> = {
   "Antes de cortarse ya ejecutó:": "Before stopping it already ran:",
   "¿Retomar de todos modos?": "Resume anyway?",
   "⏸ Estamos actualizando Ghosty en este momento. Vuelve a mandarlo en unos segundos — no se perdió nada.": "⏸ We're updating Ghosty right now. Send it again in a few seconds — nothing was lost.",
+  "Viaja en su propio bloque al inicio de cada turno. Matiza la identidad base de Studio (a la derecha) sólo en este espacio.": "Travels as its own block at the start of every turn. It shades Studio's base identity (on the right) only in this space.",
+  "La caja la administra Studio; si se recrea, se reconecta sola.": "Studio manages the box; if it is recreated, it reconnects on its own.",
 };

@@ -303,10 +303,11 @@ export const activateStudioAgentFn = createServerFn({ method: "POST" })
       // estar activo en varios, y sin esto compartirían memoria (ver agentGroupId).
       groupNs: true,
       createdBy: user.sub,
-      // La persona que se escribió en Studio. Sin esto la fila nacía con `system_prompt`
-      // NULL y lo autorado allá NO llegaba al agente activado — ni un log, ni un aviso:
-      // simplemente el agente se comportaba como si nadie le hubiera escrito nada.
-      systemPrompt: found.prompt ?? null,
+      // La persona que se escribió en Studio. Para un worker nativo se copia como antes
+      // (sin esto la fila nacía con `system_prompt` NULL y lo autorado allá no llegaba).
+      // Para un ACP NO: su prompt base viaja VIVO en cada turno (`studioBasePrompt`), y
+      // copiarlo aquí lo congelaba al activar y ahora lo duplicaría.
+      systemPrompt: esAcp ? null : (found.prompt ?? null),
     });
 
     // El canal de Teams se declara en Studio sólo para el camino nativo: en ACP no hay

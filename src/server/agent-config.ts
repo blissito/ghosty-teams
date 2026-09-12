@@ -193,6 +193,10 @@ export const setNativeAgentConfigFn = createServerFn({ method: "POST" })
     // es de Empresarial: gasta 2× del saldo…") está escrito para que lo lea una
     // persona. Sustituirlo por un genérico convierte una explicación en un misterio.
     if (!res.ok) throw new Error(j.error || `capabilities ${res.status}`);
+    // Un prompt base nuevo tiene que llegar al SIGUIENTE turno, no al de dentro de un minuto.
+    if (data.body.action === "set-prompt") {
+      (await import("./studio-prompt.server")).invalidateStudioPrompt(be.id);
+    }
     return { ok: true as const };
   });
 

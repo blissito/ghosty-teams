@@ -1790,7 +1790,13 @@ export async function callAgentBackendStream(
     // de caché al 10%). Este bloque es ESTABLE entre turnos; la hora, la memoria y la marca
     // cambian, así que subirlos aquí "para que pesen más" convertiría cada turno en un cache
     // miss. Misma disciplina que el `configSig` del worker nativo.
+    // El prompt BASE de Studio va PRIMERO y la persona del espacio lo matiza. Sólo para un
+    // agente nacido en Studio (`backend.id` = fleet_id); un ACP ajeno no tiene base.
+    const base = agent.backend.id
+      ? await (await import("./server/studio-prompt.server")).studioBasePrompt(agent.backend.id)
+      : null;
     const identidad = [
+      base ? `[Identidad de ${agent.name} — la definió quien lo creó en Studio]\n${base}` : null,
       persona ? `[Persona de ${agent.name}]\n${persona}` : null,
       TEAMS_PRODUCT_CONTEXT,
       selfIdentity(agent),
