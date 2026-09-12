@@ -22,13 +22,17 @@ export type Announcement = {
 // Todas las novedades publicadas (global, desde gs) firmado con GHOSTY_PARTNER_SECRET.
 async function fetchPublishedFromControlPlane(): Promise<Announcement[]> {
   const crypto = await import("node:crypto");
+  // El namespace viaja para que gs sume las novedades dirigidas a ESTE workspace (un
+  // regalo, un aviso de su plan) a las globales. Sin tenant (no debería pasar aquí) van
+  // sólo las globales; nunca se deja de pintar por esto.
+  const ns = await import("./tenant.server").then((t) => t.currentNamespace()).catch(() => "");
   const secret = process.env.GHOSTY_PARTNER_SECRET;
   if (!secret) return [];
   const IDP = process.env.GHOSTY_IDENTITY_URL ?? "https://www.ghosty.studio";
   const ts = Math.floor(Date.now() / 1000);
   const sig = crypto.createHmac("sha256", secret).update(`${ts}.announcements`).digest("hex");
   try {
-    const res = await fetch(`${IDP}/internal/announcements?ts=${ts}&sig=${sig}`);
+    const res = await fetch(`${IDP}/internal/announcements?ts=${ts}&sig=${sig}&ws=${encodeURIComponent(ns)}`);
     if (!res.ok) return [];
     const j = (await res.json()) as { announcements?: Announcement[] | null };
     return Array.isArray(j.announcements) ? j.announcements : [];
