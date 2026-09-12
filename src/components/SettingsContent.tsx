@@ -1051,7 +1051,7 @@ function UsagePanel() {
                   <span className="flex shrink-0 items-center gap-2">
                     <span className="text-sm font-semibold tabular-nums text-ink">{fmtM(e.used)}</span>
                     <span className="rounded-full bg-surface-3 px-2 py-0.5 text-[11px] font-medium text-muted">
-                      {t("con tu llave, sin límite")}
+                      {e.ownKey ? t("con tu llave, sin límite") : t("sólo conteo, sin tope")}
                     </span>
                   </span>
                 ) : (

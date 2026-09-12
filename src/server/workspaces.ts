@@ -156,11 +156,15 @@ export const workspaceUsageFn = createServerFn({ method: "GET" }).handler(async 
             // La bolsa es la del plan; sólo desaparece si TODO su consumo es con llave
             // propia. Una llave PRESTADA por nosotros no es propia: descuenta y lleva
             // barra, que es justo el caso de @ghosty aquí.
+            // `included: null` en una fila de Studio es una DECISIÓN (llave del cliente, o
+            // bolsa de sólo conteo) y se respeta: caer a `raw.included` la pisaba y pintaba
+            // «de 7.0M» —la bolsa del trial— sobre un agente que no tiene tope. Al del
+            // workspace sólo se cae cuando NO hay filas de las que aprender.
             const included = ownKey
               ? null
-              : (suyas.find((e) => e.included !== null)?.included ??
-                raw.included ??
-                null);
+              : suyas.length
+                ? (suyas.find((e) => e.included !== null)?.included ?? null)
+                : (raw.included ?? null);
             // La bolsa la declaran sus propias filas (todas las de un agente traen la
             // misma). `chargedUsed` NO se suma: con bolsa compartida ya es el total de la
             // bolsa, y sumarlo por fila lo multiplicaría por el número de modelos usados.
