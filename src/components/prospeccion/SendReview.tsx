@@ -52,6 +52,8 @@ export function SendReview({
    */
   const [preview, setPreview] = useState<string | null>(null);
   const [from, setFrom] = useState<string | null>(null);
+  const [armado, setArmado] = useState(false);
+  useEffect(() => { setArmado(false); }, [open, messageKey, subject]);
   /** Qué fila se está viendo, de las que tienen mensaje y correo («Quadra · 1 de 17»). */
   const [nth, setNth] = useState(0);
   const [nav, setNav] = useState<{ total: number; rowName: string | null }>({ total: 1, rowName: null });
@@ -334,13 +336,15 @@ export function SendReview({
                 {t("Cancelar")}
               </button>
               {/* El botón dice el número REAL, no el de la vista: es lo que va a pasar. */}
+              {/* Dos clics: el primero arma, el segundo manda. Un correo no se deshace, y el
+                  botón estaba a un clic de distancia del de «Ver el correo». */}
               <button
-                onClick={enviar}
+                onClick={() => { if (armado) void enviar(); else setArmado(true); }}
                 disabled={!puede || sending}
-                className="inline-flex items-center gap-1.5 bg-brand text-brand-fg font-semibold text-sm rounded-lg px-4 py-2 hover:brightness-110 disabled:opacity-50"
+                className={`inline-flex items-center gap-1.5 font-semibold text-sm rounded-lg px-4 py-2 hover:brightness-110 disabled:opacity-50 ${armado ? "bg-red-600 text-white" : "bg-brand text-brand-fg"}`}
               >
                 <Send size={13} />
-                {sending ? t("Mandando…") : `${t("Mandar")} ${p?.irian.toLocaleString("es-MX") ?? ""}`}
+                {sending ? t("Mandando…") : armado ? `${t("¿Seguro? Mandar")} ${p?.irian.toLocaleString("es-MX") ?? ""} ${t("ahora")}` : `${t("Mandar")} ${p?.irian.toLocaleString("es-MX") ?? ""}`}
               </button>
             </footer>
           </motion.div>
