@@ -139,6 +139,8 @@ export async function sendBatch(args: {
   rows: ProspRow[];
   redactados: Drafted[];
   fromName?: string;
+  /** El `From` completo del sobre. Sin él, el de casa. */
+  from?: string;
   replyTo?: string;
   /** Quién manda. Va a la bitácora de cada toque. */
   bySub?: string | null;
@@ -201,6 +203,7 @@ export async function sendBatch(args: {
         subject: draft.subject,
         html: finalHtml,
         text: draft.text,
+        from: args.from,
         replyTo: args.replyTo,
         headers: {
           // Gmail y Yahoo lo exigen a quien manda en volumen. Los dos juntos son lo que

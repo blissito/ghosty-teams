@@ -10,7 +10,7 @@ export type NewColumn = {
   waterfall?: string[];
   prompt?: string;
   /** Para `ai`: redactar un texto, o averiguar un hecho y callarse si no lo encuentra. */
-  mode?: "write" | "research";
+  mode?: "write" | "research" | "pitch";
 };
 
 /**
@@ -65,11 +65,12 @@ export function NewColumnModal({
   useEffect(() => {
     if (!choice) return;
     const e = enrichers.find((x) => x.id === choice);
-    setLabel(e ? e.label : choice === "__ai__" ? t("Mensaje") : choice === "__buscar__" ? t("Dato nuevo") : t("Nota"));
+    setLabel(e ? e.label : choice === "__ai__" || choice === "__pitch__" ? t("Mensaje") : choice === "__buscar__" ? t("Dato nuevo") : t("Nota"));
   }, [choice, enrichers, t]);
 
-  const isAi = choice === "__ai__" || choice === "__buscar__";
+  const isAi = choice === "__ai__" || choice === "__buscar__" || choice === "__pitch__";
   const esBusqueda = choice === "__buscar__";
+  const esPitch = choice === "__pitch__";
   const canCreate = !!choice && !!label.trim() && (!isAi || !!prompt.trim());
 
   const create = async () => {
@@ -80,7 +81,7 @@ export function NewColumnModal({
       kind: isAi ? "ai" : choice === "__manual__" ? "manual" : "enrich",
       waterfall: isAi || choice === "__manual__" ? [] : [choice!],
       prompt: isAi ? prompt.trim() : undefined,
-      mode: isAi ? (esBusqueda ? "research" : "write") : undefined,
+      mode: isAi ? (esBusqueda ? "research" : esPitch ? "pitch" : "write") : undefined,
     });
     setSaving(false);
     onClose();
@@ -182,6 +183,12 @@ export function NewColumnModal({
                 icon={Sparkles}
                 title={t("Escribir un texto")}
                 hint={t("Un mensaje para cada negocio, usando sus demás columnas.")}
+              />
+              <Option
+                id="__pitch__"
+                icon={Sparkles}
+                title={t("Escribir un mensaje investigado")}
+                hint={t("Primero entra a su sitio y lo busca en internet; luego escribe el mensaje con lo que encontró. Cuesta más por fila.")}
               />
               <Option
                 id="__manual__"

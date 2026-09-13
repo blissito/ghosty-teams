@@ -82,7 +82,7 @@ export type RtEvent =
       kind: "enrich" | "ai";
       waterfall: string[];
       prompt: string;
-      mode: "write" | "research";
+      mode: "write" | "research" | "pitch";
       /** Sólo las primeras N de la vista. null = toda. */
       limit: number | null;
     }

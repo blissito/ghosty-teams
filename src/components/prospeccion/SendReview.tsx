@@ -51,6 +51,7 @@ export function SendReview({
    * abre — eso sólo se sabe apretándolo en un cliente de correo real.
    */
   const [preview, setPreview] = useState<string | null>(null);
+  const [from, setFrom] = useState<string | null>(null);
   const [probando, setProbando] = useState(false);
   const [pruebaOk, setPruebaOk] = useState<string | null>(null);
   const [sinBoton, setSinBoton] = useState(false);
@@ -84,6 +85,7 @@ export function SendReview({
     setProbando(false);
     if (!r.ok) { setError(("error" in r && r.error) || t("No se pudo previsualizar")); return; }
     setPreview(r.html);
+    setFrom("from" in r && r.from ? r.from : null);
     setSinBoton(("sinBoton" in r && r.sinBoton) === true);
     setMarca(("marca" in r ? r.marca : null) ?? null);
     if (test && r.sent) setPruebaOk(r.to);
@@ -296,6 +298,7 @@ export function SendReview({
                         className="overflow-hidden mt-3"
                       >
                         <MailPreview html={preview} marca={marca} />
+                        {from ? <p className="text-[11px] text-muted mt-1.5">{t("Sale de")} <span className="text-ink">{from}</span></p> : null}
                       </motion.div>
                     ) : null}
                   </AnimatePresence>

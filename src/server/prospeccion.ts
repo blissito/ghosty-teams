@@ -303,7 +303,7 @@ export const listEnrichersFn = createServerFn({ method: "GET" }).handler(async (
 
 /** Agrega una columna. Si trae waterfall_, se puede correr enseguida. */
 export const addColumnFn = createServerFn({ method: "POST" })
-  .validator((d: { listId: number; label: string; kind: "enrich" | "ai" | "manual"; waterfall?: string[]; prompt?: string; mode?: "write" | "research"; f?: string }) => d)
+  .validator((d: { listId: number; label: string; kind: "enrich" | "ai" | "manual"; waterfall?: string[]; prompt?: string; mode?: "write" | "research" | "pitch"; f?: string }) => d)
   .handler(async ({ data }) => {
     const me = await sessionUser();
     if (!me) return { ok: false as const, error: "sin sesión" };
@@ -561,6 +561,23 @@ export const setProspWaFn = createServerFn({ method: "POST" })
     return { ok: true as const, phone: n ?? "" };
   });
 
+/** El remitente del workspace y el estado de su dominio en SES. */
+export const getProspSenderFn = createServerFn({ method: "GET" }).handler(async () => {
+  const me = await sessionUser();
+  if (!me) return null;
+  const { getSender } = await import("./prospeccion/sender.server");
+  return getSender();
+});
+
+export const setProspSenderFn = createServerFn({ method: "POST" })
+  .validator((d: { email: string; name: string }) => d)
+  .handler(async ({ data }) => {
+    const me = await sessionUser();
+    if (!me) return { error: "sin sesión" };
+    const { setSender } = await import("./prospeccion/sender.server");
+    return setSender(data);
+  });
+
 /** Las fuentes disponibles, para el selector y para enseñárselas al agente. */
 export const listSourcesFn = createServerFn({ method: "GET" }).handler(async () => {
   const { SOURCES } = await import("./prospeccion/sources/index");
@@ -762,7 +779,10 @@ export const previewSendFn = createServerFn({ method: "POST" })
     });
 
     // La pantalla enseña `preview` (imágenes incrustadas); la prueba manda `html` (cid:).
-    if (!data.test) return { ok: true as const, error: null, html: preview, to: row.email!, sent: false, sinBoton, marca };
+    // Con qué remitente sale: el del workspace si su dominio ya está verificado.
+    const { effectiveFrom } = await import("./prospeccion/sender.server");
+    const sender = await effectiveFrom();
+    if (!data.test) return { ok: true as const, error: null, html: preview, to: row.email!, sent: false, sinBoton, marca, from: sender.from };
 
     // La prueba va al correo de QUIEN la pide, nunca al prospecto.
     const { getUserEmail } = await import("./prospeccion/send.server");
@@ -779,8 +799,9 @@ export const previewSendFn = createServerFn({ method: "POST" })
       // ⚠️ Las imágenes van adjuntas: sin esto la prueba llega con el logo roto y hace
       // dudar de un correo que está bien. Es el mismo `inline` que usa el envío real.
       inline,
+      from: sender.own ? sender.from : undefined,
     });
-    return { ok: true as const, error: null, html: preview, to: destino, sent: enviado, sinBoton, marca };
+    return { ok: true as const, error: null, html: preview, to: destino, sent: enviado, sinBoton, marca, from: sender.from };
   });
 
 

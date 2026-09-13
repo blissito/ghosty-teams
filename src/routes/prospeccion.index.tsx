@@ -2,6 +2,7 @@ import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence, useReducedMotion } from "motion/react";
 import { Target as TargetIcon, ArrowLeft, Search, Loader2, Archive, ArchiveRestore, ChevronRight, ClipboardPaste, MessageCircle, Trash2, X } from "lucide-react";
+import { SenderSetting } from "../components/prospeccion/SenderSetting";
 import { DropZone, type Sheet } from "../components/prospeccion/DropZone";
 import { ImportReview } from "../components/prospeccion/ImportReview";
 import { planImport, type Plan, type Target } from "../lib/prospeccion-mapping";
@@ -334,6 +335,8 @@ function ProspeccionPage() {
             )}
             {waError ? <span className="text-red-500">{waError}</span> : null}
           </div>
+
+          <SenderSetting />
 
           <button
             onClick={createEmpty}

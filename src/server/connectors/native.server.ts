@@ -302,7 +302,9 @@ export function nativeTools(dest: ToolDest | null): ConnectorTool[] {
         "intenta en ese orden hasta que uno conteste.\n" +
         "· `ai` — un turno del modelo por fila, con `prompt`. CUESTA: úsalo sólo cuando ningún " +
         "`enrich` sirva. `mode: \"research\"` le deja buscar en la web (para datos que no están en " +
-        "la fila); `mode: \"write\"` sólo redacta con lo que ya hay.\n" +
+        "la fila); `mode: \"write\"` sólo redacta con lo que ya hay; `mode: \"pitch\"` investiga cada negocio en la " +
+        "web y redacta el mensaje con lo que encontró — es lo que se pide cuando quieren un correo " +
+        "«personalizado de verdad». Cuesta más por fila: propón probarlo con `limit: 5` primero.\n" +
         "⚠️ Acota con `prospect_filter` ANTES si son muchas filas: se llena la VISTA, y un `ai` " +
         "sobre diez mil filas son diez mil turnos. Si la lista tiene más de 200 a la vista y no te " +
         "lo pidieron explícitamente, propón acotar primero en vez de arrancar.",
@@ -318,7 +320,7 @@ export function nativeTools(dest: ToolDest | null): ConnectorTool[] {
             items: { type: "string", enum: ["correo_del_sitio", "correo_sirve", "sitio_vivo"] },
           },
           prompt: { type: "string", description: "Sólo para ai. Qué tiene que poner en cada fila" },
-          mode: { type: "string", enum: ["write", "research"], description: "Sólo para ai. research puede buscar en la web" },
+          mode: { type: "string", enum: ["write", "research", "pitch"], description: "Sólo para ai. research puede buscar en la web; pitch investiga el negocio en la web Y redacta el mensaje con lo que encontró" },
           limit: {
             type: "number",
             description:
@@ -336,7 +338,7 @@ export function nativeTools(dest: ToolDest | null): ConnectorTool[] {
           kind: "enrich" | "ai";
           waterfall?: string[];
           prompt?: string;
-          mode?: "write" | "research";
+          mode?: "write" | "research" | "pitch";
           limit?: number;
           f?: string;
         };

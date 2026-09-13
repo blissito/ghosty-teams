@@ -51,7 +51,7 @@ export type Recipe = {
    * inventado —parece un dato— y alguien lo va a usar. Esa rama exige callarse cuando no
    * se encuentra.
    */
-  mode?: "write" | "research";
+  mode?: "write" | "research" | "pitch";
   /** Sugerencia de tipo para pintar la celda: text, sí/no, número, url. */
   format?: "text" | "bool" | "number" | "url";
   /**

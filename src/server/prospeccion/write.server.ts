@@ -38,7 +38,7 @@ function rowContext(row: ProspRow, columnLabels: Record<string, string>): string
  * columna en basura, y son justo lo que un modelo hace por defecto al conversar.
  */
 /** Qué se le pide al agente: redactar un texto, o averiguar un hecho. */
-export type AiMode = "write" | "research";
+export type AiMode = "write" | "research" | "pitch";
 
 const SALIDA = [
   "REGLAS DE SALIDA (obligatorias):",
@@ -86,6 +86,33 @@ function buildPrompt(instruction: string, context: string, mode: AiMode): string
     ].join("\n");
   }
 
+  if (mode === "pitch") {
+    return [
+      "Vas a ESCRIBIR un mensaje de prospección para UN negocio real, y antes vas a INVESTIGARLO.",
+      "",
+      "DATOS QUE YA TENEMOS DE ESTE NEGOCIO:",
+      context || "(sin datos)",
+      "",
+      "QUÉ MENSAJE HAY QUE ESCRIBIR:",
+      instruction,
+      "",
+      "CÓMO:",
+      "- Primero investiga de VERDAD: entra a su sitio web si lo hay, búscalo en internet, mira sus",
+      "  redes. Busca 1 o 2 hechos CONCRETOS y recientes de ESTE negocio (un servicio que ofrecen,",
+      "  una sucursal, una reseña, algo que publicaron, a quién atienden).",
+      "- Escribe el mensaje usando esos hechos, de forma natural: que se note que lo leíste, sin",
+      "  decir «vi en tu sitio que…» en cada frase.",
+      "- Si no encuentras NADA fiable de este negocio, escribe el mensaje sólo con los datos de",
+      "  arriba y NO inventes hechos: un dato inventado en un correo de venta quema el contacto.",
+      "- Usa los datos de arriba para no confundirlo con otro negocio del mismo nombre.",
+      "",
+      "REGLAS DE SALIDA (obligatorias):",
+      "- Responde SÓLO el texto del mensaje, listo para mandarse. Nada de preámbulos, comillas,",
+      "  markdown ni asunto.",
+      "- Párrafos cortos separados por una línea en blanco. Sin firma: la pone el sistema.",
+    ].join("\n");
+  }
+
   return [
     "Vas a ESCRIBIR el texto de UNA celda de una tabla de prospección.",
     "",
@@ -101,18 +128,21 @@ function buildPrompt(instruction: string, context: string, mode: AiMode): string
 }
 
 /** Limpia lo que el modelo devolvió para que quepa en una celda. */
-export function cleanCellValue(raw: string): string | null {
+export function cleanCellValue(raw: string, opts?: { multiline?: boolean; max?: number }): string | null {
   let v = (raw ?? "")
     .replace(/```[\s\S]*?```/g, " ")   // bloques de código
     .replace(/<internal>[\s\S]*?<\/internal>/g, " ")
-    .replace(/\s+/g, " ")
     .trim();
+  // Un mensaje de varios párrafos conserva sus saltos; una celda de dato se aplana.
+  v = opts?.multiline
+    ? v.replace(/[ \t]+/g, " ").replace(/\n{3,}/g, "\n\n").trim()
+    : v.replace(/\s+/g, " ").trim();
   // Comillas envolventes: el modelo las pone aunque se le pida que no.
   if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("«") && v.endsWith("»"))) {
     v = v.slice(1, -1).trim();
   }
   if (!v || v === "—" || v === "-") return null;
-  return v.slice(0, 600);
+  return v.slice(0, opts?.max ?? 600);
 }
 
 export type WriteProgress = { done: number; total: number; filled: number };
@@ -196,7 +226,8 @@ export async function runAiColumn(args: {
         console.warn("[prospeccion] fila", row.id, String(e).slice(0, 120));
       }
 
-      const value = cleanCellValue(out);
+      // Un pitch investigado es un correo entero: varios párrafos y más de 600 letras.
+      const value = args.mode === "pitch" ? cleanCellValue(out, { multiline: true, max: 2500 }) : cleanCellValue(out);
       // El destino puede ser una columna BASE: «enriquece la Dirección» llena la que ya
       // está, no una gemela.
       await setCell(row.id, args.writesTo || args.key, value, {
