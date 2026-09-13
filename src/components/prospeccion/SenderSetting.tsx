@@ -142,6 +142,10 @@ export function SenderSetting() {
                   ))}
                 </tbody>
               </table>
+              <p className="mt-2 text-muted">
+                {t("No cambies tu MX: sigues recibiendo donde siempre. Si tu SPF termina en -all, añádele")}{" "}
+                <code>include:amazonses.com</code>.
+              </p>
               <button onClick={() => void check()} disabled={busy} className="mt-2 inline-flex items-center gap-1 font-medium text-brand disabled:opacity-50">
                 {busy ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />} {t("Comprobar")}
               </button>
