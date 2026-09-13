@@ -68,9 +68,18 @@ export function SendReview({
         const pedida = initialMessageKey && r.mensajes.some((m) => m.key === initialMessageKey) ? initialMessageKey : null;
         if (pedida) setMessageKey(pedida);
         else if (r.mensajes[0]) setMessageKey(r.mensajes[0].key);
+        if (!initialSubject && r.ultimoAsunto) setSubject((s) => s || r.ultimoAsunto);
       })
       .catch(() => setError(t("No se pudo calcular el envío")));
   }, [open, listId, filter, initialSubject, initialMessageKey, t]);
+
+  // La vista previa se pide sola al elegir el mensaje: «Ver el correo» era un clic que
+  // todo el mundo tenía que dar, y sin darlo se mandaba a ciegas.
+  useEffect(() => {
+    if (!open || !messageKey) return;
+    void verPreview(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, messageKey]);
 
   const verPreview = async (test: boolean) => {
     // ⚠️ El asunto NO hace falta para ver el cuerpo: se previsualiza con «(sin asunto)».
@@ -228,8 +237,8 @@ export function SendReview({
                     </select>
                   ) : (
                     <p className="text-xs text-muted">
-                      {t("Todavía no hay ninguna columna de mensaje. Créala con")}{" "}
-                      <span className="text-ink font-medium">{t("Enriquecer → Escribir un texto")}</span>.
+                      {t("Todavía no hay mensaje. Pídele al agente «arma el mensaje base» o crea una columna con")}{" "}
+                      <span className="text-ink font-medium">{t("Enriquecer → Escribir un mensaje investigado")}</span>.
                     </p>
                   )}
 

@@ -670,11 +670,20 @@ export const planSendFn = createServerFn({ method: "GET" })
      * «Madurez digital» — y ofrecerla igual llevó a mandar un correo cuyo cuerpo entero
      * decía «Alta». Se ofrecen las dos, pero se distinguen, y se propone una `ai`.
      */
-    const mensajes = cols
-      .filter((c) => c.kind === "ai" || c.kind === "manual")
-      .map((c) => ({ key: c.key, label: c.label, escrita: c.kind === "ai" }))
-      .sort((a, b) => Number(b.escrita) - Number(a.escrita));
-    return { ok: true as const, plan, mensajes };
+    const { getMessageBase } = await import("./prospeccion/sender.server");
+    const { getConfig } = await import("../config.server");
+    const [base, ultimoAsunto] = await Promise.all([getMessageBase(), getConfig("prospeccion_last_subject")]);
+    const mensajes = [
+      ...cols
+        .filter((c) => c.kind === "ai" && c.recipe?.mode !== "research")
+        .map((c) => ({ key: c.key, label: c.label, escrita: true })),
+      // El base va DESPUÉS de las personalizadas: si hay una escrita por fila, es la buena.
+      ...(base ? [{ key: "__base__", label: "Mensaje base (el mismo para todos)", escrita: true }] : []),
+      ...cols
+        .filter((c) => c.kind === "manual")
+        .map((c) => ({ key: c.key, label: c.label, escrita: false })),
+    ];
+    return { ok: true as const, plan, mensajes, ultimoAsunto: ultimoAsunto ?? "" };
   });
 
 /**
@@ -726,7 +735,7 @@ export const sendFn = createServerFn({ method: "POST" })
     const redactados = (
       await Promise.all(
         rows.map(async (r) => {
-          const cuerpo = r.data[data.messageKey]?.v?.trim();
+          const cuerpo = data.messageKey === "__base__" ? baseText : r.data[data.messageKey]?.v?.trim();
           if (!cuerpo) return null;
           const { renderDraft } = await import("./prospeccion/send.server");
           const { html, text } = await renderDraft({
@@ -743,6 +752,10 @@ export const sendFn = createServerFn({ method: "POST" })
 
     // La campaña ES la llave de idempotencia: el mismo asunto sobre la misma fila el mismo
     // día no sale dos veces, aunque se apriete el botón dos veces.
+    const { getMessageBase } = await import("./prospeccion/sender.server");
+    const baseText = data.messageKey === "__base__" ? await getMessageBase() : "";
+    // El asunto se recuerda: la siguiente tanda casi siempre es la misma campaña.
+    await (await import("../config.server")).setConfig("prospeccion_last_subject", data.subject.slice(0, 200)).catch(() => {});
     const campaign = `${data.subject.slice(0, 40)}:${new Date().toISOString().slice(0, 10)}`;
     const r = await sendBatch({
       listId: Number(data.listId),
