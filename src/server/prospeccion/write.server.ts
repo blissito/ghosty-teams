@@ -142,9 +142,11 @@ function buildPrompt(instruction: string, context: string, mode: AiMode, sobre =
       "- Usa los datos de arriba para no confundirlo con otro negocio del mismo nombre.",
       "",
       "REGLAS DE SALIDA (obligatorias):",
-      "- Responde SÓLO el texto del mensaje, listo para mandarse. Nada de preámbulos, comillas ni asunto.",
+      "- El mensaje va ENTERO entre <correo> y </correo>. Sólo se guarda lo que esté dentro; lo que",
+      "  digas fuera (qué buscaste, qué falló) se descarta, así que puedes pensar en voz alta fuera.",
+      "- Dentro: sólo el texto del mensaje, listo para mandarse. Sin asunto, sin firma (la pone el sistema).",
       "- Es un correo: sin #títulos ni viñetas. Las **negritas** y los enlaces [texto](https://…) SÍ se pintan; úsalos con mesura.",
-      "- Párrafos cortos separados por una línea en blanco. Sin firma: la pone el sistema.",
+      "- Párrafos cortos separados por una línea en blanco.",
     ].join("\n");
   }
 
@@ -291,7 +293,12 @@ export async function runAiColumn(args: {
       }
 
       // Un pitch investigado es un correo entero: varios párrafos y más de 600 letras.
-      const value = args.mode === "pitch" ? cleanCellValue(out, { multiline: true, max: 2500 }) : cleanCellValue(out);
+      // El pitch viene marcado: se toma el ÚLTIMO <correo>…</correo> y nada más. Si el
+      // modelo no marcó, se cae a la limpieza heurística (que es lo que había antes).
+      const marcado = args.mode === "pitch" ? [...out.matchAll(/<correo>([\s\S]*?)<\/correo>/gi)].at(-1)?.[1] : undefined;
+      const value = args.mode === "pitch"
+        ? cleanCellValue(marcado ?? out, { multiline: true, max: 2500 })
+        : cleanCellValue(out);
       // El destino puede ser una columna BASE: «enriquece la Dirección» llena la que ya
       // está, no una gemela.
       await setCell(row.id, args.writesTo || args.key, value, {
