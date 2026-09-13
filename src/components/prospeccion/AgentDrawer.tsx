@@ -536,7 +536,10 @@ function MailCard({
   useEffect(() => {
     if (previewKey && !autoOpened.current) { autoOpened.current = true; setOpen(true); }
   }, [previewKey]);
-  const [state, setState] = useState<{ html: string; marca: string | null } | { error: string } | null>(null);
+  const [state, setState] = useState<{ html: string; marca: string | null; nth: number; total: number; rowName: string | null } | { error: string } | null>(null);
+  /** Qué fila de las que ya tienen mensaje se enseña. Se reinicia al cambiar de columna. */
+  const [nth, setNth] = useState(0);
+  useEffect(() => { setNth(0); }, [key]);
   /** Expandido: el correo a toda altura en un panel a la izquierda del hilo, en vivo. */
   const [expanded, setExpanded] = useState(false);
   useEffect(() => { if (!expanded) return; const esc = (e: KeyboardEvent) => { if (e.key === "Escape") setExpanded(false); }; document.addEventListener("keydown", esc); return () => document.removeEventListener("keydown", esc); }, [expanded]);
@@ -547,17 +550,30 @@ function MailCard({
     // No se vacía mientras se vuelve a pedir: el texto anterior se queda hasta que llega
     // el nuevo, y el cambio se ve como un cambio, no como un parpadeo.
     setState((s) => (s && "html" in s ? s : null));
-    previewSendFn({ data: { listId, f: filter, messageKey: key, subject: "" } })
+    previewSendFn({ data: { listId, f: filter, messageKey: key, subject: "", nth } })
       .then((r) => {
         if (!alive) return;
-        setState(r.ok ? { html: r.html, marca: r.marca ?? null } : { error: r.error || t("No se pudo previsualizar") });
+        setState(
+          r.ok
+            ? { html: r.html, marca: r.marca ?? null, nth: ("nth" in r && r.nth) || 0, total: ("total" in r && r.total) || 1, rowName: ("rowName" in r && r.rowName) || null }
+            : { error: r.error || t("No se pudo previsualizar") }
+        );
       })
       .catch(() => { if (alive) setState({ error: t("No se pudo previsualizar") }); });
     return () => { alive = false; };
-  }, [open, expanded, key, filter, listId, nonce, t]);
+  }, [open, expanded, key, filter, listId, nonce, nth, t]);
 
   const current = messages.find((m) => m.key === key) ?? messages[0];
   if (!current) return null;
+
+  // «Corporativo Quadra · 1 de 3» con ‹ ›: para revisar las personalizadas una por una.
+  const nav = state && "html" in state && state.total > 0 ? (
+    <div className="flex items-center gap-2 text-[11px] text-muted mb-1.5">
+      <button onClick={() => setNth((n) => Math.max(0, n - 1))} disabled={state.nth <= 0} className="rounded px-1 hover:text-ink disabled:opacity-30">‹</button>
+      <span className="truncate">{state.rowName ?? ""} · {state.nth + 1} {t("de")} {state.total}</span>
+      <button onClick={() => setNth((n) => Math.min(state.total - 1, n + 1))} disabled={state.nth >= state.total - 1} className="rounded px-1 hover:text-ink disabled:opacity-30">›</button>
+    </div>
+  ) : null;
 
   return (
     <div className="shrink-0 border-t border-border" data-keep-agent>
@@ -586,8 +602,9 @@ function MailCard({
             <div className="text-sm font-semibold">{t("Así se verá el correo")} <span className="text-xs font-normal text-muted">· {current.label}</span></div>
             <button onClick={() => setExpanded(false)} className="rounded-lg p-1.5 text-muted hover:bg-surface-3"><X size={16} /></button>
           </div>
-          <div className="min-h-0 flex-1 p-4">
-            <MailPreview html={state.html} marca={state.marca} mode="inline" fill />
+          <div className="flex min-h-0 flex-1 flex-col p-4">
+            {nav}
+            <div className="min-h-0 flex-1"><MailPreview html={state.html} marca={state.marca} mode="inline" fill /></div>
           </div>
         </div>
       ) : null}
@@ -607,7 +624,10 @@ function MailCard({
           ) : "error" in state ? (
             <p className="text-[11px] text-muted">{state.error}</p>
           ) : (
-            <MailPreview html={state.html} marca={state.marca} mode="inline" />
+            <>
+              {nav}
+              <MailPreview html={state.html} marca={state.marca} mode="inline" />
+            </>
           )}
           {onSend ? (
             <button

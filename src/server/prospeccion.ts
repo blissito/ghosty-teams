@@ -793,7 +793,7 @@ export const sendFn = createServerFn({ method: "POST" })
  * WhatsApp o abre o no abre — eso sólo se sabe apretándolo.
  */
 export const previewSendFn = createServerFn({ method: "POST" })
-  .validator((d: { listId: number; f?: string; messageKey: string; subject: string; test?: boolean }) => d)
+  .validator((d: { listId: number; f?: string; messageKey: string; subject: string; test?: boolean; nth?: number }) => d)
   .handler(async ({ data }) => {
     const me = await sessionUser();
     if (!me) return { ok: false as const, error: "sin sesión", html: "", to: "", sent: false, sinBoton: false, marca: null };
@@ -818,7 +818,10 @@ export const previewSendFn = createServerFn({ method: "POST" })
     const esBase = data.messageKey === "__base__";
     const base = esBase ? await getMessageBase() : "";
     if (esBase && !base) return { ok: false as const, error: "Todavía no hay mensaje base.", html: "", to: "", sent: false, sinBoton: false, marca: null };
-    const row = esBase ? rows.find((r) => r.email) : rows.find((r) => r.data[data.messageKey]?.v?.trim() && r.email);
+    // Las candidatas, para poder pasar de una a otra en la vista previa («1 de 3»).
+    const candidatas = esBase ? rows.filter((r) => r.email) : rows.filter((r) => r.data[data.messageKey]?.v?.trim() && r.email);
+    const nth = Math.min(Math.max(data.nth ?? 0, 0), Math.max(candidatas.length - 1, 0));
+    const row = candidatas[nth];
     if (!row) {
       return { ok: false as const, error: "Ninguna fila de la vista tiene mensaje y correo todavía.", html: "", to: "", sent: false, sinBoton: false, marca: null };
     }
@@ -836,7 +839,7 @@ export const previewSendFn = createServerFn({ method: "POST" })
     // Con qué remitente sale: el del workspace si su dominio ya está verificado.
     const { effectiveFrom } = await import("./prospeccion/sender.server");
     const sender = await effectiveFrom();
-    if (!data.test) return { ok: true as const, error: null, html: preview, to: row.email!, sent: false, sinBoton, marca, from: sender.from };
+    if (!data.test) return { ok: true as const, error: null, html: preview, to: row.email!, sent: false, sinBoton, marca, from: sender.from, nth, total: candidatas.length, rowName: row.name };
 
     // La prueba va al correo de QUIEN la pide, nunca al prospecto.
     const { getUserEmail } = await import("./prospeccion/send.server");
