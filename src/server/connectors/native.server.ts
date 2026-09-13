@@ -425,7 +425,7 @@ export function nativeTools(dest: ToolDest | null): ConnectorTool[] {
       name: "prospect_outreach_setup",
       description:
         "Configura cómo salen los correos de prospección del equipo: quién firma (`name`), de qué " +
-        "empresa (`business`), el remitente (`email`, con su dominio — si no está verificado la " +
+        "empresa (`business`), qué hace la empresa en una línea (`tagline`, va bajo la firma y en el pie), el remitente (`email`, con su dominio — si no está verificado la " +
         "pantalla enseña los CNAME), el cierre (`ctaKind`: wa | reply | link, con `ctaLabel` y " +
         "`ctaUrl`) y el WhatsApp al que escriben (`waPhone`). Manda SÓLO lo que te pidan cambiar. " +
         "Úsalo cuando digan «firma como…», «que sea de la empresa X», «que respondan por correo», etc.",
@@ -434,6 +434,7 @@ export function nativeTools(dest: ToolDest | null): ConnectorTool[] {
         properties: {
           name: { type: "string" },
           business: { type: "string" },
+          tagline: { type: "string", description: "Qué hace la empresa, una línea" },
           email: { type: "string" },
           ctaKind: { type: "string", enum: ["wa", "reply", "link"] },
           ctaLabel: { type: "string" },

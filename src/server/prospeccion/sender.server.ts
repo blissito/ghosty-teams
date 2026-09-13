@@ -204,6 +204,7 @@ export async function outreachBrief(bySub: string | null): Promise<string> {
     "[CÓMO SALE EL CORREO — lo arma la plataforma, tú NO escribes HTML ni plantillas]",
     `Cada correo = tu texto (párrafos) + cierre + firma + pie legal. Eso ya está hecho.`,
     `Firma: ${nombre}${empresa ? `, de ${empresa}` : ""}${wa ? `, WhatsApp ${wa}` : ""}. Remitente: ${remitente}.`,
+    `Pie del correo: «Te escribe ${nombre}${empresa ? ` de ${empresa}` : ""}${(await getSignatureTagline()) ? `, ${await getSignatureTagline()}` : ""}. Si no esperabas este correo, puedes ignorarlo.» La frase de ignorar es fija (es lo honesto en un correo frío); lo que dice de la empresa se cambia con \`tagline\` en \`prospect_outreach_setup\`.`,
     "Si te piden cambiar la firma, la empresa, el remitente, el cierre o el WhatsApp: hazlo con `prospect_outreach_setup`, no lo pidas por chat.",
     "CÓMO SE LLAMAN estas tools (`prospect_*`): son tools nativas de Teams. En code-mode: `const { run } = await import('/opt/gs-sdk/connectors.mjs'); await run('prospect_outreach_setup', { name: 'Héctor', business: 'Normi' })` — no hace falta que aparezcan en tu lista de tools, `run` las ejecuta por nombre. Si tienes tools MCP, es la del mismo nombre. Sólo si la llamada devuelve error, repórtalo tal cual; nunca digas que lo hiciste sin haberla llamado.",
     `Cierre: ${describeCta(cta, wa)}. No inventes otro cierre ni pidas dos cosas.`,
@@ -225,6 +226,12 @@ export async function outreachBrief(bySub: string | null): Promise<string> {
  * Un workspace prospecta a veces para otra marca (una agencia, un producto nuevo). Con esto
  * la firma dice esa empresa y NO pinta el logo de la marca activa, que sería de otra.
  */
+/** Una línea de qué hace la empresa: va bajo la firma y en el pie. */
+export async function getSignatureTagline(): Promise<string> {
+  const c = await getConfigMany(["prospeccion_signature_tagline"]);
+  return (c.prospeccion_signature_tagline ?? "").trim();
+}
+
 export async function getSignatureBusiness(): Promise<string> {
   const c = await getConfigMany(["prospeccion_signature_business"]);
   return (c.prospeccion_signature_business ?? "").trim();
@@ -234,6 +241,8 @@ export async function getSignatureBusiness(): Promise<string> {
 export async function setupOutreach(args: {
   name?: string;
   business?: string;
+  /** Qué hace la empresa, en una línea. Va bajo la firma y en el pie. */
+  tagline?: string;
   email?: string;
   ctaKind?: CtaKind;
   ctaLabel?: string;
@@ -249,6 +258,7 @@ export async function setupOutreach(args: {
     if ("error" in r && typeof r.error === "string") return { ok: false, error: r.error };
   }
   if (args.business !== undefined) await setConfig("prospeccion_signature_business", args.business.trim().slice(0, 80));
+  if (args.tagline !== undefined) await setConfig("prospeccion_signature_tagline", args.tagline.trim().slice(0, 140));
   if (args.ctaKind || args.ctaLabel !== undefined || args.ctaUrl !== undefined) {
     const cur = await getCta();
     const r = await setCta({

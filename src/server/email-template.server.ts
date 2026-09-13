@@ -269,7 +269,7 @@ export type ProspectCta =
 export type ProspectEmail = {
   /** Prosa escrita por el agente. SIEMPRE se escapa. Párrafos separados por línea en blanco. */
   body: string;
-  signature: { name: string; business: string | null; phone: string | null; logoUrl: string | null };
+  signature: { name: string; business: string | null; tagline?: string | null; phone: string | null; logoUrl: string | null };
   cta: ProspectCta | null;
   fontFamily?: string | null;
   accent?: string | null;
@@ -280,7 +280,7 @@ export function prospectEmail(e: ProspectEmail): { html: string; text: string; i
   const acento = e.accent && /^#[0-9a-f]{6}$/i.test(e.accent) ? e.accent : "#2f5bea";
   const s = e.signature;
   const firmaLineas = [s.business, s.phone].filter(Boolean).join(" · ");
-  const pie = `Te escribe ${s.name}${s.business ? ` de ${s.business}` : ""}. Si no esperabas este correo, puedes ignorarlo.`;
+  const pie = `Te escribe ${s.name}${s.business ? ` de ${s.business}` : ""}${s.tagline ? `, ${s.tagline}` : ""}. Si no esperabas este correo, puedes ignorarlo.`;
 
   const ctaHtml = !e.cta
     ? ""
@@ -297,7 +297,8 @@ export function prospectEmail(e: ProspectEmail): { html: string; text: string; i
         ${s.logoUrl ? `<td valign="middle" style="padding-right:12px"><img src="${escapeHtml(s.logoUrl)}" alt="" style="display:block;border:0;max-height:32px;max-width:120px"></td>` : ""}
         <td valign="middle" style="font:400 13px/1.5 ${fuente};color:#3f3f46">
           <div style="font-weight:600;color:#1f1f24">${escapeHtml(s.name)}</div>${firmaLineas ? `
-          <div>${escapeHtml(firmaLineas)}</div>` : ""}
+          <div>${escapeHtml(firmaLineas)}</div>` : ""}${s.tagline ? `
+          <div style="color:#6b6b78">${escapeHtml(s.tagline)}</div>` : ""}
         </td>
       </tr></table>
     </td></tr>
@@ -306,6 +307,6 @@ export function prospectEmail(e: ProspectEmail): { html: string; text: string; i
 </body></html>`;
 
   const ctaText = !e.cta ? "" : e.cta.kind === "reply" ? e.cta.label : `${e.cta.label}: ${e.cta.url}`;
-  const text = [e.body.replace(/^## /gm, ""), ctaText, `— ${s.name}${firmaLineas ? `\n${firmaLineas}` : ""}`, pie].filter(Boolean).join("\n\n");
+  const text = [e.body.replace(/^## /gm, ""), ctaText, `— ${s.name}${firmaLineas ? `\n${firmaLineas}` : ""}${s.tagline ? `\n${s.tagline}` : ""}`, pie].filter(Boolean).join("\n\n");
   return { html, text, inline: [] };
 }
