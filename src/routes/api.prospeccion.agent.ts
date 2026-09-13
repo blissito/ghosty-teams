@@ -74,7 +74,8 @@ export const Route = createFileRoute("/api/prospeccion/agent")({
             const usadas: string[] = [];
 
             try {
-              await callAgentBackendStream(
+              const { countingTurn } = await import("../agents.server");
+              await countingTurn(() => callAgentBackendStream(
                 agent,
                 // Una conversación por LISTA y por persona: el hilo de Ana sobre la lista 7
                 // no es el de Luis, y el de la lista 7 no es el de la 8.
@@ -96,7 +97,7 @@ export const Route = createFileRoute("/api/prospeccion/agent")({
                 { handle: agent.handle, name: agent.name ?? agent.handle },
                 false,
                 origin
-              );
+              ));
               send({ t: "done" });
               /*
                 Se guarda al CERRAR, no al empezar. Un turno abortado a la mitad no debe

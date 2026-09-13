@@ -2692,6 +2692,21 @@ export function agentTurnsInflight(): number {
   return turnsInflight;
 }
 
+/**
+ * Para los turnos que NO pasan por `runAgentTurn`: el panel de prospección y las columnas
+ * escritas por el agente. Sin esto, /busy decía 0 con un turno de ésos en vuelo, y el
+ * deploy «seguro» (que espera a que sea 0) lo mataba a media respuesta: la persona veía
+ * «pensando…» para siempre.
+ */
+export async function countingTurn<T>(fn: () => Promise<T>): Promise<T> {
+  turnsInflight++;
+  try {
+    return await fn();
+  } finally {
+    turnsInflight--;
+  }
+}
+
 export async function runAgentTurn(
   opts: Parameters<typeof runAgentTurnInner>[0]
 ): Promise<{ id: number; reply: string; failure?: string | null; toolsCorridas?: string[] }> {

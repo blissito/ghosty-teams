@@ -275,7 +275,9 @@ export async function runAiColumn(args: {
     }
   });
 
-  await Promise.all(workers);
+  // Cuenta como turno en vuelo mientras corran las filas: un deploy no debe pisarlo.
+  const { countingTurn } = await import("../../agents.server");
+  await countingTurn(() => Promise.all(workers));
 
   // La explicación sólo aparece cuando hace falta — igual que en `runEnrichColumn`: si
   // llenó todo, el número habla solo.
