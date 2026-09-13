@@ -526,14 +526,19 @@ function MailCard({
   useEffect(() => { if (previewKey) setKey(previewKey); }, [previewKey]);
   // Y se abre sola sólo cuando llega una nueva; si el usuario la cerró, se queda cerrada.
   const [open, setOpen] = useState(!!previewKey);
-  useEffect(() => { if (previewKey) setOpen(true); }, [previewKey, nonce]);
+  // Sólo se abre sola la PRIMERA vez que hay algo que enseñar. Cada cambio del agente
+  // llegaba con un nonce nuevo y volvía a abrir la card que la persona acababa de cerrar.
+  const autoOpened = useRef(false);
+  useEffect(() => {
+    if (previewKey && !autoOpened.current) { autoOpened.current = true; setOpen(true); }
+  }, [previewKey]);
   const [state, setState] = useState<{ html: string; marca: string | null } | { error: string } | null>(null);
   /** Expandido: el correo a toda altura en un panel a la izquierda del hilo, en vivo. */
   const [expanded, setExpanded] = useState(false);
   useEffect(() => { if (!expanded) return; const esc = (e: KeyboardEvent) => { if (e.key === "Escape") setExpanded(false); }; document.addEventListener("keydown", esc); return () => document.removeEventListener("keydown", esc); }, [expanded]);
 
   useEffect(() => {
-    if (!open || !key) return;
+    if ((!open && !expanded) || !key) return;
     let alive = true;
     // No se vacía mientras se vuelve a pedir: el texto anterior se queda hasta que llega
     // el nuevo, y el cambio se ve como un cambio, no como un parpadeo.
@@ -545,7 +550,7 @@ function MailCard({
       })
       .catch(() => { if (alive) setState({ error: t("No se pudo previsualizar") }); });
     return () => { alive = false; };
-  }, [open, key, filter, listId, nonce, t]);
+  }, [open, expanded, key, filter, listId, nonce, t]);
 
   const current = messages.find((m) => m.key === key) ?? messages[0];
   if (!current) return null;
@@ -561,7 +566,7 @@ function MailCard({
         <span
           role="button"
           title={expanded ? t("Volver a la card") : t("Ver completo")}
-          onClick={(e) => { e.stopPropagation(); setExpanded((v) => !v); setOpen(true); }}
+          onClick={(e) => { e.stopPropagation(); setExpanded((v) => !v); }}
           className="rounded p-0.5 text-muted hover:text-ink"
         >
           {expanded ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
@@ -582,7 +587,7 @@ function MailCard({
           </div>
         </div>
       ) : null}
-      {open ? (
+      {open && !expanded ? (
         <div className="px-4 pb-3">
           {messages.length > 1 ? (
             <select
