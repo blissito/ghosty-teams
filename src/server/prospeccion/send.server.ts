@@ -332,7 +332,7 @@ export async function renderDraft(args: {
     },
     cta: cierre,
     fontFamily: brand?.fontFamily ?? null,
-    accent: brand?.accent ?? null,
+    accent: extras.accent || brand?.accent || null,
   });
 
   let paraMirar = out.html;

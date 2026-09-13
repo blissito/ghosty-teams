@@ -297,6 +297,9 @@ export type ProspectEmail = {
 export function prospectEmail(e: ProspectEmail): { html: string; text: string; inline: InlineImage[] } {
   const fuente = `${e.fontFamily ? `${JSON.stringify(e.fontFamily)}, ` : ""}system-ui,-apple-system,Segoe UI,sans-serif`;
   const acento = e.accent && /^#[0-9a-f]{6}$/i.test(e.accent) ? e.accent : "#2f5bea";
+  // Texto del botón: negro sobre un color claro (amarillo, verde limón), blanco sobre oscuro.
+  const [r, g, b] = [1, 3, 5].map((i) => parseInt(acento.slice(i, i + 2), 16));
+  const botonTexto = (r * 299 + g * 587 + b * 114) / 1000 > 150 ? "#1f1f24" : "#ffffff";
   const s = e.signature;
   const firmaLineas = [[s.title, s.business].filter(Boolean).join(", "), s.phone].filter(Boolean).join(" · ");
   const sitioCorto = s.website ? s.website.replace(/^https?:\/\//, "").replace(/\/$/, "") : "";
@@ -314,7 +317,7 @@ export function prospectEmail(e: ProspectEmail): { html: string; text: string; i
     ? ""
     : e.cta.kind === "reply"
       ? `<p style="margin:18px 0 0;font:400 15px/1.6 ${fuente};color:#1f1f24">${escapeHtml(e.cta.label)}</p>`
-      : `<p style="margin:18px 0 0"><a href="${escapeHtml(e.cta.url)}" style="display:inline-block;background:${acento};color:#fff;font:600 14px/1 ${fuente};padding:11px 16px;border-radius:8px;text-decoration:none">${escapeHtml(e.cta.label)}</a></p>`;
+      : `<p style="margin:18px 0 0"><a href="${escapeHtml(e.cta.url)}" style="display:inline-block;background:${acento};color:${botonTexto};font:600 14px/1 ${fuente};padding:11px 16px;border-radius:8px;text-decoration:none">${escapeHtml(e.cta.label)}</a></p>`;
 
   const sitioHtml = sitioCorto
     ? `<p style="margin:10px 0 0;font:400 13px/1.5 ${fuente};color:#6b6b78">${e.cta ? "o " : ""}<a href="${escapeHtml(s.website!)}" style="color:#6b6b78">${escapeHtml(sitioCorto)}</a></p>`

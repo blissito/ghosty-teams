@@ -247,7 +247,7 @@ export async function outreachBrief(bySub: string | null): Promise<string> {
     "[CÓMO SALE EL CORREO — lo arma la plataforma, tú NO escribes HTML ni plantillas]",
     `Cada correo = tu texto (párrafos) + cierre + firma + pie legal. Eso ya está hecho.`,
     `Firma: ${nombre}${empresa ? `, de ${empresa}` : ""}${wa ? `, WhatsApp ${wa}` : ""}. Remitente: ${remitente}.`,
-    `Membrete y firma: ${(await getSignatureExtras()).logoUrl ? "logo propio" : kit?.logoUrl ? "logo de la marca activa" : "sin logo"}${(await getSignatureExtras()).website ? `, sitio ${(await getSignatureExtras()).website}` : ", sin sitio web"}${(await getSignatureExtras()).title ? `, cargo «${(await getSignatureExtras()).title}»` : ""}. Se cambian con \`title\`, \`website\` y \`logoUrl\` en \`prospect_outreach_setup\`. Al poner \`website\` la plataforma saca el logo del sitio sola; \`logoUrl\` sólo si quieren otro. El sitio va SÓLO en \`website\` (se pinta como membrete y bajo el cierre): no lo repitas en tagline, business ni name. El cargo va en \`title\`, no dentro de \`name\`.`,
+    `Membrete y firma: ${(await getSignatureExtras()).logoUrl ? "logo propio" : kit?.logoUrl ? "logo de la marca activa" : "sin logo"}${(await getSignatureExtras()).website ? `, sitio ${(await getSignatureExtras()).website}` : ", sin sitio web"}${(await getSignatureExtras()).title ? `, cargo «${(await getSignatureExtras()).title}»` : ""}. Botón del cierre: color ${(await getSignatureExtras()).accent || "de la marca activa"}. Se cambian con \`title\`, \`website\`, \`logoUrl\` y \`accent\` (hex; «del color del logo» = mira el logo o el sitio y elige el hex) en \`prospect_outreach_setup\`. Al poner \`website\` la plataforma saca el logo del sitio sola; \`logoUrl\` sólo si quieren otro. El sitio va SÓLO en \`website\` (se pinta como membrete y bajo el cierre): no lo repitas en tagline, business ni name. El cargo va en \`title\`, no dentro de \`name\`.`,
     `Pie del correo: «Te escribe ${nombre}${empresa ? ` de ${empresa}` : ""}${(await getSignatureTagline()) ? `, ${await getSignatureTagline()}` : ""}. Si no esperabas este correo, puedes ignorarlo.» La frase de ignorar es fija (es lo honesto en un correo frío); lo que dice de la empresa se cambia con \`tagline\` en \`prospect_outreach_setup\`.`,
     "Si te piden cambiar la firma, la empresa, el remitente, el cierre o el WhatsApp: hazlo con `prospect_outreach_setup`, no lo pidas por chat.",
     "CÓMO SE LLAMAN estas tools (`prospect_*`): son tools nativas de Teams. En code-mode: `const { run } = await import('/opt/gs-sdk/connectors.mjs'); await run('prospect_outreach_setup', { name: 'Héctor', business: 'Normi' })` — no hace falta que aparezcan en tu lista de tools, `run` las ejecuta por nombre. Si tienes tools MCP, es la del mismo nombre. Sólo si la llamada devuelve error, repórtalo tal cual; nunca digas que lo hiciste sin haberla llamado.",
@@ -278,12 +278,13 @@ export async function getSignatureTagline(): Promise<string> {
 }
 
 /** Cargo, sitio y logo propios de la firma. Vacíos = no se pintan (o el logo de la marca). */
-export async function getSignatureExtras(): Promise<{ title: string; website: string; logoUrl: string }> {
-  const c = await getConfigMany(["prospeccion_signature_title", "prospeccion_signature_website", "prospeccion_signature_logo"]);
+export async function getSignatureExtras(): Promise<{ title: string; website: string; logoUrl: string; accent: string }> {
+  const c = await getConfigMany(["prospeccion_signature_title", "prospeccion_signature_website", "prospeccion_signature_logo", "prospeccion_accent"]);
   return {
     title: plain(c.prospeccion_signature_title ?? ""),
     website: (c.prospeccion_signature_website ?? "").trim(),
     logoUrl: (c.prospeccion_signature_logo ?? "").trim(),
+    accent: (c.prospeccion_accent ?? "").trim(),
   };
 }
 
@@ -304,6 +305,8 @@ export async function setupOutreach(args: {
   website?: string;
   /** URL pública de un logo (png/svg/jpg). Sustituye al de la marca activa. */
   logoUrl?: string;
+  /** Color del botón de cierre, hex `#rrggbb`. Sin él, el de la marca activa. */
+  accent?: string;
   email?: string;
   ctaKind?: CtaKind;
   ctaLabel?: string;
@@ -330,6 +333,11 @@ export async function setupOutreach(args: {
       const found = await discoverLogo(w);
       if (found) await setConfig("prospeccion_signature_logo", found.slice(0, 300));
     }
+  }
+  if (args.accent !== undefined) {
+    const a = args.accent.trim();
+    if (a && !/^#[0-9a-f]{6}$/i.test(a)) return { ok: false, error: "El color va en hex de 6 dígitos, como #f5b800" };
+    await setConfig("prospeccion_accent", a.toLowerCase());
   }
   if (args.logoUrl !== undefined) {
     const l = args.logoUrl.trim();
