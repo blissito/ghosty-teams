@@ -106,6 +106,19 @@ export async function markEvent(
   const rowId = num(r[0].row_id);
 
   const estado = kind === "bounced" ? "bounced" : kind;
+  // Un rebote desmiente al verificador: la celda «sirve» pasa a «rebotó» para que la
+  // tabla no se contradiga (el verificador sólo comprueba que el servidor acepte el buzón).
+  if (kind === "bounced") {
+    try {
+      const { listColumns, setCell } = await import("./lists.server");
+      const listId = num(r[0].list_id);
+      for (const c of await listColumns(listId)) {
+        if (c.kind === "enrich" && (c.recipe?.waterfall ?? []).includes("correo_sirve")) {
+          await setCell(rowId, c.key, "rebotó", { src: "ses", verified: true });
+        }
+      }
+    } catch { /* la celda es cosmética; el estado de la fila es lo que manda */ }
+  }
   const current = await dbq(`SELECT status FROM gt_prosp_rows WHERE id = ? LIMIT 1`, [rowId]);
   const previo = current[0]?.status ?? "new";
   // `bounced` y `optout` son terminales: no los pisa un evento posterior.
