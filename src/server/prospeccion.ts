@@ -441,7 +441,7 @@ export const runColumnFn = createServerFn({ method: "POST" })
  * pensar una columna de 500 filas.
  */
 export const runAiColumnFn = createServerFn({ method: "POST" })
-  .validator((d: { listId: number; key: string; agentHandle?: string; f?: string; limit?: number }) => d)
+  .validator((d: { listId: number; key: string; agentHandle?: string; f?: string; limit?: number; onlyEmpty?: boolean }) => d)
   .handler(async ({ data }) => {
     const me = await sessionUser();
     if (!me) return { ok: false as const, error: "sin sesión", done: 0, total: 0, filled: 0 };
@@ -498,6 +498,8 @@ export const runAiColumnFn = createServerFn({ method: "POST" })
       writesTo: col.recipe.writesTo,
       structured: col.recipe.structured,
       readsKey: col.recipe.reads,
+      // Repetir una columna llena sólo los huecos: lo bueno no se reescribe (ni se paga).
+      onlyEmpty: data.onlyEmpty,
     });
     const note = [r.note, notaInv].filter(Boolean).join(" · ") || null;
     return { ok: !r.error, error: r.error ?? null, done: r.done, total: r.total, filled: r.filled, note };

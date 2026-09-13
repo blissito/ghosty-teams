@@ -372,7 +372,7 @@ export function nativeTools(dest: ToolDest | null): ConnectorTool[] {
             arrancado_en_pantalla: true,
             columna_existente: existente.label,
             sobre: a.limit && a.limit > 0 ? `las primeras ${Math.floor(a.limit)} de la vista` : "toda la vista",
-            nota: "La columna ya existía: se está volviendo a llenar en la pantalla de la persona (lo escrito a mano no se pisa). Dile en una frase que ya va.",
+            nota: "La columna ya existía: se están llenando SÓLO las celdas vacías de la vista (lo que ya tiene texto no se toca). Dile en una frase que ya va. Si quieren rehacer todo, que borren la columna primero.",
           };
         }
         publish(ch.user(ns, _sub), {

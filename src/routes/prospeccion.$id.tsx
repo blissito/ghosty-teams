@@ -205,7 +205,8 @@ function ListPage() {
       }
       // El agente pidió volver a correr una columna que ya existe.
       if (ev.t === "prospeccion:run" && ev.listId === listId) {
-        void runColumnRef.current?.(ev.key, undefined, ev.limit ?? undefined);
+        // El agente repite una columna que ya existe: sólo los huecos.
+        void runColumnRef.current?.(ev.key, undefined, ev.limit ?? undefined, true);
       }
       // El agente pidió una columna: se crea y se corre por el MISMO camino que el modal,
       // así que hereda el pulso de progreso y el aviso de por qué se saltó cada fila.
@@ -326,7 +327,7 @@ function ListPage() {
   );
 
   const runColumn_ = useCallback(
-    async (key: string, kind?: string, limit?: number) => {
+    async (key: string, kind?: string, limit?: number, onlyEmpty?: boolean) => {
       if (running) return;
       const tipo = kind ?? data?.columns.find((c) => c.key === key)?.kind;
       setRunning(key);
@@ -336,7 +337,7 @@ function ListPage() {
       try {
         // ⚠️ Va el MISMO filtro que está en la URL. Lo que se ve es lo que se enriquece.
         const r = tipo === "ai"
-          ? await runAiColumnFn({ data: { listId, key, f, limit } })
+          ? await runAiColumnFn({ data: { listId, key, f, limit, onlyEmpty } })
           : await runColumnFn({ data: { listId, key, f, limit } });
         if (r.ok) {
           // El motivo va JUNTO al número: «0 de 4 llenadas» sin explicación se lee como
@@ -364,7 +365,7 @@ function ListPage() {
     dos cosas.
   */
   const crearColumnaRef = useRef<((c: NewColumn, limit?: number) => void) | null>(null);
-  const runColumnRef = useRef<((key: string, kind?: string, limit?: number) => Promise<void>) | null>(null);
+  const runColumnRef = useRef<((key: string, kind?: string, limit?: number, onlyEmpty?: boolean) => Promise<void>) | null>(null);
   useEffect(() => { runColumnRef.current = runColumn_; }, [runColumn_]);
 
   const createColumn = useCallback(
