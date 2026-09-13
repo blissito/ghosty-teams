@@ -74,6 +74,14 @@ export async function sendSesEmail(opts: {
    * sólo tiene el botón de spam, que es exactamente lo que hunde la reputación del dominio.
    */
   headers?: Record<string, string>;
+  /**
+   * Correo que escribe UNA PERSONA a otra (prospección): sin las cabeceras de «generado»
+   * —que a un correo comercial le restan— y con etiquetas de SES para que los rebotes y
+   * quejas vuelvan a nosotros por SNS con el tenant dentro.
+   */
+  personal?: { ns: string };
+  /** Recibe el MessageId de SES cuando lo aceptó: es la llave para casar rebotes y quejas. */
+  onMessageId?: (id: string) => void;
 }): Promise<boolean> {
   const c = ses();
   if (!c) return false; // sin creds → no-op (correo apagado)
@@ -81,6 +89,12 @@ export async function sendSesEmail(opts: {
   const from = opts.from || FROM;
   const extra = Object.entries(opts.headers ?? {})
     .map(([k, v]) => `${k}: ${String(v).replace(/[\r\n]+/g, " ")}`);
+  const configSet = process.env.SES_EVENTS_CONFIG_SET || "ghosty-prospeccion";
+  if (opts.personal) {
+    extra.push(`X-SES-CONFIGURATION-SET: ${configSet}`);
+    // El tag viaja de vuelta en la notificación: es lo que dice EN QUÉ tenant buscar el toque.
+    extra.push(`X-SES-MESSAGE-TAGS: ns=${opts.personal.ns.replace(/[^A-Za-z0-9_-]/g, "_")}`);
+  }
   if (opts.inline?.length || opts.attachments?.length || extra.length) {
     // multipart/related: el HTML primero, las imágenes después, referidas por Content-ID.
     const b = `gt_${Date.now().toString(36)}`;
@@ -98,8 +112,7 @@ export async function sendSesEmail(opts: {
       "MIME-Version: 1.0",
       // Correo GENERADO, no una campaña: se lo decimos explícitamente a los filtros, y de
       // paso evitamos respuestas automáticas (fuera-de-oficina) contra noreply@.
-      "Auto-Submitted: auto-generated",
-      "X-Auto-Response-Suppress: All",
+      ...(opts.personal ? [] : ["Auto-Submitted: auto-generated", "X-Auto-Response-Suppress: All"]),
       // `type` = qué es la parte RAÍZ del related. Sin él, al anidar el multipart/alternative
       // (para el texto plano) Gmail dejó de resolver los cid: y volvió a pedir la imagen por
       // red — la mejora del texto plano se comió la de la imagen incrustada.
@@ -176,6 +189,7 @@ export async function sendSesEmail(opts: {
     }
     try {
       const r = await c.send(new SendRawEmailCommand({ RawMessage: { Data: raw } }));
+      if (r.MessageId) opts.onMessageId?.(r.MessageId);
       console.log(
         `[ses] ok ${r.MessageId} → ${toList.join(",")} · inline=${opts.inline?.length ?? 0}` +
           ` · adjuntos=${adjuntos.length} · ${opts.subject.slice(0, 60)}`

@@ -398,7 +398,7 @@ export function nativeTools(dest: ToolDest | null): ConnectorTool[] {
       name: "prospect_message_base",
       description:
         "Lee o guarda el MENSAJE BASE del equipo: el texto general del correo de prospección que " +
-        "luego se personaliza lead por lead. TEXTO con párrafos — sin HTML ni #títulos; **negritas** sí se pintan; sin asunto, sin " +
+        "luego se personaliza lead por lead. TEXTO con párrafos — sin HTML ni #títulos; **negritas** y enlaces [texto](https://…) sí se pintan; sin asunto, sin " +
         "firma, sin placeholders: la plantilla (cierre, firma, pie) la pone la plataforma. " +
         "Sin `text` sólo lo lee. Con `text` lo guarda y la persona lo ve renderizado en su panel.",
       inputSchema: {

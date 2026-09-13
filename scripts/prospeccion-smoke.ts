@@ -53,13 +53,13 @@ async function main() {
   console.log("\n── Instrumentación del HTML ──");
   const base = publicOrigin();
   const src = `<html><body><p>Hola</p><a href="https://ejemplo.mx/precios">Ver precios</a></body></html>`;
-  const { html, unsubUrl } = instrument(src, 9001, "demo");
+  const { html, unsubUrl } = instrument(src, 9001, "demo", "http://localhost:3000");
   check("el enlace se reescribió", html.includes(`${base}/api/p/c/`) && !html.includes("https://ejemplo.mx/precios\""));
   check("el pixel se pegó antes de </body>", /\/api\/p\/o\/[^"]+" width="1"/.test(html) && html.indexOf("/api/p/o/") < html.indexOf("</body>"));
   check("la URL de stop1 se armó", unsubUrl.startsWith(`${base}/api/p/u/`));
   const destinoEnToken = verifyTrackToken(html.match(/\/api\/p\/c\/([^"]+)"/)?.[1] ?? "");
   check("el destino viaja DENTRO del token", destinoEnToken?.url === "https://ejemplo.mx/precios");
-  const yaInstrumentado = instrument(html, 9001, "demo");
+  const yaInstrumentado = instrument(html, 9001, "demo", "http://localhost:3000");
   check("el enlace de stop1 NO se rastrea a sí mismo", !yaInstrumentado.html.includes(`/api/p/c/`) || !/\/api\/p\/c\/[^"]*"[^>]*>Ya no quiero/.test(yaInstrumentado.html));
 
   console.log("\n── Envío real ──");
@@ -120,7 +120,7 @@ async function main() {
       `<p style="margin:24px 0 0;font-size:11px;color:#8b8b8b;text-align:center">
 <a href="%%UNSUB%%" style="color:#8b8b8b">Ya no quiero recibir estos emails</a></p></body>`
     );
-    const inst = instrument(conPie, case_.touchId, "demo");
+    const inst = instrument(conPie, case_.touchId, "demo", "http://localhost:3000");
     const finalHtml = inst.html.replace(/%%UNSUB%%/g, inst.unsubUrl);
 
     const ok = await sendSesEmail({

@@ -66,6 +66,19 @@ export async function markSent(touchId: number, sesMessageId?: string | null): P
     `UPDATE gt_prosp_touches SET sent_at = unixepoch(), ses_message_id = ? WHERE id = ?`,
     [sesMessageId ?? null, touchId]
   );
+  // La fila pasa a `sent`. Antes se quedaba en `new` hasta que el prospecto abría, así que
+  // en la rejilla un contactado y uno sin tocar se veían igual.
+  await dbq(
+    `UPDATE gt_prosp_rows SET status = 'sent'
+     WHERE id = (SELECT row_id FROM gt_prosp_touches WHERE id = ?) AND status IN ('new', 'queued')`,
+    [touchId]
+  );
+}
+
+/** El toque al que pertenece un MessageId de SES (rebotes y quejas llegan con él). */
+export async function touchBySesId(sesMessageId: string): Promise<number | null> {
+  const r = await dbq(`SELECT id FROM gt_prosp_touches WHERE ses_message_id = ? LIMIT 1`, [sesMessageId]);
+  return r[0] ? num(r[0].id) : null;
 }
 
 export async function markError(touchId: number, error: string): Promise<void> {

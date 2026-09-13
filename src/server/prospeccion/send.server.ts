@@ -161,6 +161,8 @@ export async function sendBatch(args: {
 
   const byId = new Map(args.rows.map((r) => [r.id, r]));
   const batch = args.redactados.slice(0, BATCH_MAX);
+  const { trackingOrigin } = await import("./track.server");
+  const base = await trackingOrigin();
 
   for (const draft of batch) {
     const row = byId.get(draft.rowId);
@@ -194,12 +196,15 @@ export async function sendBatch(args: {
 
     // 4. Instrumentar: pixel, enlaces firmados, baja de un clic.
     const withWa = args.waPhone ? injectWaLink(draft.html, args.waPhone, row.name ?? "") : draft.html;
-    const { html, unsubUrl } = instrument(appendUnsubFooter(withWa, UNSUB_PLACEHOLDER), touchId, ns);
+    const { html, unsubUrl } = instrument(appendUnsubFooter(withWa, UNSUB_PLACEHOLDER), touchId, ns, base);
     const finalHtml = html.replace(UNSUB_PLACEHOLDER, unsubUrl);
 
     try {
+      let sesId: string | null = null;
       const ok = await sendSesEmail({
         to: row.email,
+        personal: { ns },
+        onMessageId: (id) => { sesId = id; },
         subject: draft.subject,
         html: finalHtml,
         text: draft.text,
@@ -212,7 +217,7 @@ export async function sendBatch(args: {
           "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
         },
       });
-      if (ok) { await markSent(touchId); out.sent++; }
+      if (ok) { await markSent(touchId, sesId); out.sent++; }
       else { await markError(touchId, "sendSesEmail devolvió false"); out.failed++; }
     } catch (e) {
       const msg = String(e instanceof Error ? e.message : e);

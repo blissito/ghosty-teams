@@ -256,7 +256,7 @@ export async function outreachBrief(bySub: string | null): Promise<string> {
     "",
     "Tu trabajo con el correo, en orden:",
     "1. Si no hay mensaje base o te piden «el general / la plantilla»: escríbelo como TEXTO (3-4 párrafos,",
-    "   sin asunto, sin firma, sin HTML, sin #títulos ni viñetas; **negritas** con dobles asteriscos SÍ se pintan y son lo único de markdown que vale; sin placeholders) y guárdalo: `run('prospect_message_base', { text })`.",
+    "   sin asunto, sin firma, sin HTML, sin #títulos ni viñetas; **negritas** y enlaces [texto](https://…) SÍ se pintan y son lo único de markdown que vale; sin placeholders) y guárdalo: `run('prospect_message_base', { text })`.",
     "   La persona lo ve renderizado en su panel al instante.",
     "2. Para personalizar lead por lead: `prospect_column` con `kind: \"ai\"`, `mode: \"pitch\"` y el",
     "   base como prompt (investiga cada negocio y lo adapta). Empieza con `limit: 3`.",

@@ -47,6 +47,7 @@ import { Route as OauthProviderCallbackRouteImport } from './routes/oauth.$provi
 import { Route as CoeditarInvitacionTokenRouteImport } from './routes/coeditar.invitacion.$token'
 import { Route as ArtefactoIdRawRouteImport } from './routes/artefacto.$id.raw'
 import { Route as ApiProspeccionAgentRouteImport } from './routes/api.prospeccion.agent'
+import { Route as ApiPSesRouteImport } from './routes/api.p.ses'
 import { Route as ApiInternalMembersRouteImport } from './routes/api.internal.members'
 import { Route as ApiInternalAnnouncementsRouteImport } from './routes/api.internal.announcements'
 import { Route as ApiInternalAlertRouteImport } from './routes/api.internal.alert'
@@ -265,6 +266,11 @@ const ApiProspeccionAgentRoute = ApiProspeccionAgentRouteImport.update({
   path: '/api/prospeccion/agent',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiPSesRoute = ApiPSesRouteImport.update({
+  id: '/api/p/ses',
+  path: '/api/p/ses',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiInternalMembersRoute = ApiInternalMembersRouteImport.update({
   id: '/api/internal/members',
   path: '/api/internal/members',
@@ -453,6 +459,7 @@ export interface FileRoutesByFullPath {
   '/api/internal/alert': typeof ApiInternalAlertRoute
   '/api/internal/announcements': typeof ApiInternalAnnouncementsRoute
   '/api/internal/members': typeof ApiInternalMembersRoute
+  '/api/p/ses': typeof ApiPSesRoute
   '/api/prospeccion/agent': typeof ApiProspeccionAgentRoute
   '/artefacto/$id/raw': typeof ArtefactoIdRawRoute
   '/coeditar/invitacion/$token': typeof CoeditarInvitacionTokenRoute
@@ -519,6 +526,7 @@ export interface FileRoutesByTo {
   '/api/internal/alert': typeof ApiInternalAlertRoute
   '/api/internal/announcements': typeof ApiInternalAnnouncementsRoute
   '/api/internal/members': typeof ApiInternalMembersRoute
+  '/api/p/ses': typeof ApiPSesRoute
   '/api/prospeccion/agent': typeof ApiProspeccionAgentRoute
   '/artefacto/$id/raw': typeof ArtefactoIdRawRoute
   '/coeditar/invitacion/$token': typeof CoeditarInvitacionTokenRoute
@@ -587,6 +595,7 @@ export interface FileRoutesById {
   '/api/internal/alert': typeof ApiInternalAlertRoute
   '/api/internal/announcements': typeof ApiInternalAnnouncementsRoute
   '/api/internal/members': typeof ApiInternalMembersRoute
+  '/api/p/ses': typeof ApiPSesRoute
   '/api/prospeccion/agent': typeof ApiProspeccionAgentRoute
   '/artefacto/$id/raw': typeof ArtefactoIdRawRoute
   '/coeditar/invitacion/$token': typeof CoeditarInvitacionTokenRoute
@@ -656,6 +665,7 @@ export interface FileRouteTypes {
     | '/api/internal/alert'
     | '/api/internal/announcements'
     | '/api/internal/members'
+    | '/api/p/ses'
     | '/api/prospeccion/agent'
     | '/artefacto/$id/raw'
     | '/coeditar/invitacion/$token'
@@ -722,6 +732,7 @@ export interface FileRouteTypes {
     | '/api/internal/alert'
     | '/api/internal/announcements'
     | '/api/internal/members'
+    | '/api/p/ses'
     | '/api/prospeccion/agent'
     | '/artefacto/$id/raw'
     | '/coeditar/invitacion/$token'
@@ -789,6 +800,7 @@ export interface FileRouteTypes {
     | '/api/internal/alert'
     | '/api/internal/announcements'
     | '/api/internal/members'
+    | '/api/p/ses'
     | '/api/prospeccion/agent'
     | '/artefacto/$id/raw'
     | '/coeditar/invitacion/$token'
@@ -856,6 +868,7 @@ export interface RootRouteChildren {
   ApiInternalAlertRoute: typeof ApiInternalAlertRoute
   ApiInternalAnnouncementsRoute: typeof ApiInternalAnnouncementsRoute
   ApiInternalMembersRoute: typeof ApiInternalMembersRoute
+  ApiPSesRoute: typeof ApiPSesRoute
   ApiProspeccionAgentRoute: typeof ApiProspeccionAgentRoute
   CoeditarInvitacionTokenRoute: typeof CoeditarInvitacionTokenRoute
   OauthProviderCallbackRoute: typeof OauthProviderCallbackRoute
@@ -1139,6 +1152,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiProspeccionAgentRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/p/ses': {
+      id: '/api/p/ses'
+      path: '/api/p/ses'
+      fullPath: '/api/p/ses'
+      preLoaderRoute: typeof ApiPSesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/internal/members': {
       id: '/api/internal/members'
       path: '/api/internal/members'
@@ -1408,6 +1428,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiInternalAlertRoute: ApiInternalAlertRoute,
   ApiInternalAnnouncementsRoute: ApiInternalAnnouncementsRoute,
   ApiInternalMembersRoute: ApiInternalMembersRoute,
+  ApiPSesRoute: ApiPSesRoute,
   ApiProspeccionAgentRoute: ApiProspeccionAgentRoute,
   CoeditarInvitacionTokenRoute: CoeditarInvitacionTokenRoute,
   OauthProviderCallbackRoute: OauthProviderCallbackRoute,
@@ -1425,12 +1446,3 @@ const rootRouteChildren: RootRouteChildren = {
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
-
-import type { getRouter } from './router.tsx'
-import type { createStart } from '@tanstack/react-start'
-declare module '@tanstack/react-start' {
-  interface Register {
-    ssr: true
-    router: Awaited<ReturnType<typeof getRouter>>
-  }
-}

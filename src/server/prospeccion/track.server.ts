@@ -53,7 +53,22 @@ export function verifyTrackToken(token: string): TrackClaims | null {
   }
 }
 
-/** El origen público de este tenant, para armar las URLs que van dentro del correo. */
+/**
+ * El origen público para las URLs que van DENTRO del correo (pixel, clics, baja).
+ *
+ * ⚠️ Tiene que ser el host del TENANT (`<slug>.teams.ghosty.studio`), no el apex:
+ * `teams.ghosty.studio` a secas redirige a la página de precios, así que con
+ * `GTEAMS_PUBLIC_ORIGIN` el pixel devolvía un 301 (ninguna apertura contó nunca) y un clic
+ * mandaba al prospecto a /planes. Se toma del request que dispara el envío; el env queda
+ * de respaldo para cuando no hay request.
+ */
+export async function trackingOrigin(): Promise<string> {
+  const { reqOrigin } = await import("../../origin.server");
+  const fromReq = await reqOrigin().catch(() => "");
+  return (fromReq || process.env.GTEAMS_PUBLIC_ORIGIN || "http://localhost:3000").replace(/\/$/, "");
+}
+
+/** A dónde mandar a quien llega con un token roto: la raíz del tenant o, sin él, el apex. */
 export function publicOrigin(): string {
   return (process.env.GTEAMS_PUBLIC_ORIGIN ?? "http://localhost:3000").replace(/\/$/, "");
 }
@@ -67,9 +82,9 @@ export function publicOrigin(): string {
 export function instrument(
   html: string,
   touchId: number,
-  ns: string
+  ns: string,
+  base: string
 ): { html: string; unsubUrl: string } {
-  const base = publicOrigin();
   const unsubUrl = `${base}/api/p/u/${mintTrackToken({ touchId, ns, kind: "unsub" })}`;
 
   // Los enlaces: cada href absoluto pasa por el redirect firmado, con el destino DENTRO
