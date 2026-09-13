@@ -3,6 +3,7 @@ import { DataGrid, type CellMouseArgs, type Column, type RenderCellProps, type R
 import { motion, useReducedMotion } from "motion/react";
 import { Ban, Check, Loader2, MapPin, X } from "lucide-react";
 import { useT } from "../../i18n";
+import { STATUSES } from "../../lib/prospeccion-filter";
 import type { getListFn } from "../../server/prospeccion";
 
 type Payload = Extract<Awaited<ReturnType<typeof getListFn>>, { ok: true }>;
@@ -229,6 +230,27 @@ export function ProspGrid({
             <span className="text-faint tabular-nums text-xs">{rowIdx + 1}</span>
           ),
       },
+      // El ESTADO, siempre visible: mandado, abrió, dio clic, contestó, rebotó, baja. Estaba
+      // sólo en los contadores de arriba y en el filtro, y en la tabla un contactado y uno
+      // sin tocar se veían iguales.
+      {
+        key: "__status",
+        name: t("Estado"),
+        width: 96,
+        frozen: true,
+        resizable: false,
+        renderCell: ({ row }) => {
+          const st = row.__status || "new";
+          if (st === "new") return <span className="text-faint text-xs">·</span>;
+          const label = STATUSES.find((x) => x.id === st)?.label ?? st;
+          const tone =
+            st === "sent" ? "bg-surface-3 text-ink"
+            : st === "opened" || st === "clicked" ? "bg-amber-500/15 text-amber-700"
+            : st === "replied" ? "bg-emerald-500/15 text-emerald-700"
+            : "bg-red-500/10 text-red-600";
+          return <span className={`inline-flex items-center rounded-md px-1.5 py-0.5 text-[11px] font-medium ${tone}`}>{label}</span>;
+        },
+      },
     ];
     for (const b of base) {
       built.push({
@@ -428,7 +450,7 @@ export function ProspGrid({
            al terminar, así que no hay que estrangular nada. */
         onColumnResize={(column: { key: string }, width: number) => onResize?.(column.key, width)}
         onColumnsReorder={(sourceKey: string, targetKey: string) => {
-          const keys = cols.map((c) => c.key).filter((k) => k !== "__idx");
+          const keys = cols.map((c) => c.key).filter((k) => k !== "__idx" && k !== "__n" && k !== "__status");
           const from = keys.indexOf(sourceKey);
           const to = keys.indexOf(targetKey);
           if (from < 0 || to < 0 || from === to) return;

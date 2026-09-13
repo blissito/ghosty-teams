@@ -508,6 +508,7 @@ function ListPage() {
             {[
               { n: list.rows, l: t("filas"), c: null as Condition | null, hint: t("Toda la lista") },
               { n: list.sent, l: t("mandados"), c: { op: "status", value: "sent" } as Condition, hint: t("Ya les salió el correo") },
+              ...(list.bounced ? [{ n: list.bounced, l: t("rebotaron"), c: { op: "status", value: "bounced" } as Condition, hint: t("Buzón muerto: quedan en baja y no se les vuelve a escribir") }] : []),
               { n: list.opened + list.clicked, l: t("tibios"), c: { op: "temp", value: "tibio" } as Condition, hint: t("Abrieron o dieron clic") },
               { n: list.replied, l: t("calientes"), c: { op: "temp", value: "caliente" } as Condition, hint: t("Te escribieron: se les puede contestar libre") },
             ].map((x) => (

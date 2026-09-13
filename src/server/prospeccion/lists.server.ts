@@ -113,6 +113,8 @@ export type ProspList = {
   rows: number;
   /** Contadores del embudo, para la tarjeta y el panel. */
   sent: number;
+  /** Rebotes permanentes (SES los avisa por SNS): correos muertos, ya en baja. */
+  bounced: number;
   opened: number;
   clicked: number;
   replied: number;
@@ -174,7 +176,8 @@ export async function listLists(opts?: { archived?: boolean }): Promise<ProspLis
               SUM(CASE WHEN sent_at    IS NOT NULL THEN 1 ELSE 0 END) AS sent,
               SUM(CASE WHEN opened_at  IS NOT NULL THEN 1 ELSE 0 END) AS opened,
               SUM(CASE WHEN clicked_at IS NOT NULL THEN 1 ELSE 0 END) AS clicked,
-              SUM(CASE WHEN replied_at IS NOT NULL THEN 1 ELSE 0 END) AS replied
+              SUM(CASE WHEN replied_at IS NOT NULL THEN 1 ELSE 0 END) AS replied,
+              SUM(CASE WHEN bounced_at IS NOT NULL THEN 1 ELSE 0 END) AS bounced
             FROM gt_prosp_touches GROUP BY list_id`,
     },
     { sql: `SELECT list_id, COUNT(*) AS n FROM gt_prosp_rows GROUP BY list_id` },
@@ -187,6 +190,7 @@ export async function listLists(opts?: { archived?: boolean }): Promise<ProspLis
   for (const a of agg) {
     counts.set(num(a.list_id), {
       sent: num(a.sent),
+      bounced: num(a.bounced),
       opened: num(a.opened),
       clicked: num(a.clicked),
       replied: num(a.replied),
@@ -216,6 +220,7 @@ export async function listLists(opts?: { archived?: boolean }): Promise<ProspLis
       views: parseViews(l.views_json),
       rows: size.get(id) ?? 0,
       sent: c.sent ?? 0,
+      bounced: c.bounced ?? 0,
       opened: c.opened ?? 0,
       clicked: c.clicked ?? 0,
       replied: c.replied ?? 0,
