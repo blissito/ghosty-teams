@@ -167,6 +167,14 @@ export function AgentDrawer({
     setAtBottom(el.scrollHeight - el.scrollTop - el.clientHeight < 80);
   };
   useEffect(() => { if (atBottom) bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [msgs, atBottom]);
+  // Al ABRIR, al fondo sin animación y después de que el panel haya pintado: el scroll
+  // suave de arriba corría antes del layout de la animación de entrada y se quedaba a medias.
+  useEffect(() => {
+    if (!open) return;
+    setAtBottom(true);
+    const id = setTimeout(() => { const el = listRef.current; if (el) el.scrollTop = el.scrollHeight; }, 350);
+    return () => clearTimeout(id);
+  }, [open]);
   const scrollDown = () => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }); setAtBottom(true); };
 
   const reset = async () => {
