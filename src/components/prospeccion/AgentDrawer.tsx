@@ -208,6 +208,7 @@ export function AgentDrawer({
       const attachments = adjuntos.listos();
       const nombres = attachments.map((a) => a.name).filter(Boolean);
       setText("");
+      if (inputRef.current) { inputRef.current.style.height = "auto"; inputRef.current.style.overflowY = "hidden"; }
       adjuntos.limpiar();
       setMsgs((m) => [...m, { role: "user", text: nombres.length ? `${q}\n📎 ${nombres.join(", ")}` : q }, { role: "agent", text: "", tools: [], running: true }]);
       setRunning(true);
@@ -473,8 +474,11 @@ export function AgentDrawer({
                   if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(text); }
                 }}
                 rows={1}
+                // Crece con el texto hasta 8 líneas; el scroll sólo aparece pasado ese alto.
+                // Con `rows=1` fijo y overflow automático salía una barra con una sola línea.
+                onInput={(e) => { const el = e.currentTarget; el.style.height = "auto"; el.style.height = `${Math.min(el.scrollHeight, 160)}px`; el.style.overflowY = el.scrollHeight > 160 ? "auto" : "hidden"; }}
                 placeholder={t("pídele algo, o suelta un archivo")}
-                className="max-h-32 min-w-0 flex-1 resize-none self-center bg-transparent py-1 text-xs leading-5 outline-none placeholder:text-muted placeholder:truncate [&::placeholder]:whitespace-nowrap"
+                className="min-w-0 flex-1 resize-none self-center overflow-hidden bg-transparent py-1 text-xs leading-5 outline-none placeholder:text-muted placeholder:truncate [&::placeholder]:whitespace-nowrap"
               />
               {running ? (
                 <button onClick={stop} title={t("Detener")} className="grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-surface-3 hover:bg-border">
