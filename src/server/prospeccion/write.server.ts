@@ -143,7 +143,9 @@ function hallazgosPrompt(instruction: string, context: string): string {
 
 /** Paso 2 del pitch: ESCRIBIR con los hallazgos, sin volver a investigar. */
 function correoConHallazgos(instruction: string, context: string, sobre: string, h: Hallazgos | null): string {
-  const hechos = h?.hechos.length ? h.hechos.map((x) => `- ${x.h}`).join("\n") : "(no se encontró nada fiable: escribe con los datos de arriba y el mensaje base, sin inventar)";
+  const hechos = h?.hechos.length
+    ? h.hechos.map((x) => `- ${x.h}`).join("\n")
+    : "(NADA fiable. Entonces NO afirmes nada sobre este despacho —ni qué clientes tiene, ni qué hace, ni su tamaño—: usa el giro de DATOS como mucho («en un despacho contable…») y el mensaje base. Inventar un rasgo suyo quema el contacto.)";
   return [
     "Vas a ESCRIBIR un correo de prospección para UN negocio real, con lo que ya se investigó.",
     "NO investigues ni uses herramientas: todo lo que necesitas está aquí.",
@@ -165,7 +167,10 @@ function correoConHallazgos(instruction: string, context: string, sobre: string,
     "  nunca como prueba de que lo investigaste: nada de «vi que…», «noté que…», «según su sitio…».",
     "  Bien: «en un despacho que lleva auditoría y cumplimiento…». Mal: «vi que abrieron vacante».",
     "- Respeta la oferta, el tono y la estructura del mensaje base; personaliza, no lo copies tal cual.",
-    "- Mismo TRATO que el base (si el base tutea, tuteas; nunca mezcles tú y usted).",
+    "- TRATO: el mismo del mensaje base, en TODO el correo. Si el base dice «tus clientes», «te», «tu",
+    "  escritorio», tú tuteas: nada de «usted», «su escritorio», «le sirve». Mezclarlos es el error más común.",
+    "- NUNCA cites textos suyos entre comillas (su lema, su descripción): es la forma más obvia de",
+    "  decir «leí tu sitio». Parafrasea lo que hacen, sin comillas.",
     "- El ÚLTIMO párrafo del base (el cierre, la invitación) va tal cual, siempre: es lo que lleva al botón.",
     "- Máximo 160 palabras. Personaliza sobre todo el primer párrafo; lo demás se acorta antes que alargarse.",
     "- Párrafos cortos con línea en blanco. Sin asunto, sin firma.",
