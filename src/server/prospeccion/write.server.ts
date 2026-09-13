@@ -139,7 +139,7 @@ function buildPrompt(instruction: string, context: string, mode: AiMode, sobre =
       "",
       "REGLAS DE SALIDA (obligatorias):",
       "- Responde SÓLO el texto del mensaje, listo para mandarse. Nada de preámbulos, comillas ni asunto.",
-      "- SIN MARKDOWN: es un correo. Ni **negritas**, ni #títulos, ni viñetas con guion.",
+      "- Es un correo: sin #títulos ni viñetas. Las **negritas** (dobles asteriscos) SÍ se pintan; úsalas con mesura.",
       "- Párrafos cortos separados por una línea en blanco. Sin firma: la pone el sistema.",
     ].join("\n");
   }
