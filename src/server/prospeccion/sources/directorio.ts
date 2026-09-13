@@ -26,7 +26,7 @@ const RADIUS: Record<string, number> = {
 };
 
 /** Palabras que no son ni el qué ni el dónde. Sacarlas mejora mucho el índice de texto. */
-const STOPWORDS = /\b(en|de|del|la|el|los|las|con|sin|un|una|por|para|cerca|zona|colonia|municipio|estado|negocios?|empresas?|dame|busca|buscame|encuentra|quiero|todos?|todas?)\b/g;
+const STOPWORDS = /\b(en|de|del|la|el|los|las|con|sin|un|una|por|para|cerca|zona|colonia|municipio|estado|negocios?|empresas?|dame|busca|buscame|encuentra|quiero|todos?|todas?|que|quien|quienes|cual|cuales|como|y|o|a|al|se|su|sus|mi|me|hay|necesito|ocupo)\b/g;
 
 function stripAccents(s: string): string {
   return s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();

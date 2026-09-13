@@ -84,9 +84,16 @@ function bodyHtml(body: string, fuente: string): string {
     .map((line) =>
       line.startsWith("## ")
         ? `<div style="margin-top:14px;font:700 12px/1.4 ${fuente};letter-spacing:.06em;text-transform:uppercase;color:#6b6b78">${escapeHtml(line.slice(3))}</div>`
-        : escapeHtml(line)
+        : linkUrls(escapeHtml(line))
     )
     .join("\n");
+}
+
+/** Una URL suelta en la prosa se vuelve enlace. Gmail lo hace solo; Outlook y Apple Mail
+ *  no siempre, y una URL que hay que copiar a mano no la abre nadie. Corre sobre texto YA
+ *  escapado, así que el href no puede traer comillas ni `<`. */
+function linkUrls(escaped: string): string {
+  return escaped.replace(/https?:\/\/[^\s<]+[^\s<.,;:)]/g, (u) => `<a href="${u}" style="color:#2f5bea;text-decoration:underline">${u}</a>`);
 }
 
 export function escapeHtml(s: string): string {

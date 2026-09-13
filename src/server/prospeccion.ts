@@ -56,6 +56,27 @@ export const createListFn = createServerFn({ method: "POST" })
       return { ok: false as const, error: String(e instanceof Error ? e.message : e) };
     }
 
+    /**
+     * Cero resultados NO crea lista. Antes sí: el usuario aterrizaba en una rejilla vacía
+     * sin explicación y la lista se quedaba en el historial para siempre, con nada dentro.
+     * Se dice qué se buscó y dónde, para que se vea que el lugar sí se entendió y lo que
+     * sobra son palabras.
+     */
+    if (found.length === 0) {
+      let error = `No encontré «${criteria}». Prueba con menos palabras: el giro y el lugar, como «dentistas en Torreón».`;
+      if (src.id === "directorio") {
+        const { resolveCriteria } = await import("./prospeccion/sources/directorio");
+        const r = await resolveCriteria(criteria).catch(() => null);
+        if (r?.ok) {
+          const lugar = r.place.entidad && r.place.entidad !== r.place.nombre ? `${r.place.nombre}, ${r.place.entidad}` : r.place.nombre;
+          error = r.what
+            ? `No hay «${r.what}» en ${lugar}. Prueba con el giro solo, sin condiciones — por ejemplo «${r.what.split(" ")[0]} en ${r.place.nombre}».`
+            : `No hay negocios en ${lugar}.`;
+        }
+      }
+      return { ok: false as const, error };
+    }
+
     const listId = await createList({
       name: (data.name ?? criteria).slice(0, 120),
       criteria,

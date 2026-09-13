@@ -270,7 +270,7 @@ function ProspeccionPage() {
           <p className="text-muted text-sm mt-1">
             {t("Busca negocios, enriquécelos por columna y ábreles conversación. El correo abre; WhatsApp cierra.")}
           </p>
-          <p className="mt-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200/90">
+          <p className="mt-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-800 dark:text-amber-200/90">
             {t("Prospección está en desarrollo: puede fallar o cambiar sin aviso. Revisa cada envío antes de mandarlo y cuéntanos lo que se rompa.")}
           </p>
         </header>

@@ -590,6 +590,15 @@ function ListPage() {
         transition={{ duration: 0.2 }}
       >
         <DropZone onSheet={importSheet}>
+          {data.rows.length === 0 && data.list.source !== "manual" ? (
+            // Lista de búsqueda sin filas (anteriores al 13-sep, cuando cero resultados aún
+            // creaba lista). Que se lea que no hay nada, no que algo falló en cargar.
+            <p className="px-6 py-4 text-sm text-muted">
+              {t("Esta búsqueda no encontró nada. Prueba otra desde")}{" "}
+              <Link to="/prospeccion" className="text-brand hover:underline">{t("Prospección")}</Link>
+              {" "}{t("con menos palabras: el giro y el lugar.")}
+            </p>
+          ) : null}
           <ProspGrid
             rows={rows}
             base={data.base}
