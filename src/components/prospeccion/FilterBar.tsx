@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { Filter as FilterIcon, Plus, Search, X } from "lucide-react";
+import { Bookmark, Filter as FilterIcon, Plus, Search, X } from "lucide-react";
 import { useT } from "../../i18n";
 import {
   STATUSES,
   TEMPS,
   describe,
+  encodeFilter,
   sameCondition,
   type Condition,
   type Filter,
@@ -30,6 +31,10 @@ export function FilterBar({
   fields,
   shown,
   total,
+  views = [],
+  onPickView,
+  onSaveView,
+  onDeleteView,
 }: {
   filter: Filter;
   onChange: (f: Filter) => void;
@@ -37,11 +42,23 @@ export function FilterBar({
   fields: { key: string; label: string }[];
   shown: number;
   total: number;
+  /**
+   * Vistas guardadas de la lista. `f` es el filtro codificado, el mismo que va en `?f=`:
+   * elegir una vista es navegar a ese `f`, no reconstruir condiciones.
+   */
+  views?: { name: string; f: string }[];
+  onPickView?: (f: string) => void;
+  onSaveView?: (name: string) => Promise<void> | void;
+  onDeleteView?: (name: string) => void;
 }) {
   const t = useT();
   const still = useReducedMotion();
   const [adding, setAdding] = useState(false);
   const addRef = useRef<HTMLDivElement>(null);
+  const [naming, setNaming] = useState(false);
+  const [viewName, setViewName] = useState("");
+  const nameRef = useRef<HTMLInputElement>(null);
+  useEffect(() => { if (naming) nameRef.current?.focus(); }, [naming]);
 
   // El texto libre es el filtro que la gente usa primero, así que tiene su propio campo
   // siempre visible en vez de esconderse tras «+ filtro».
@@ -71,6 +88,19 @@ export function FilterBar({
   const labelOf = (key: string) => fields.find((f) => f.key === key)?.label ?? key;
   const chips = filter.filter((c) => c.op !== "text");
   const filtering = filter.length > 0;
+  // La vista activa se reconoce por el filtro codificado, no por nombre: si el usuario
+  // toca un chip, deja de coincidir y el botón de guardar vuelve a aparecer.
+  const encoded = encodeFilter(filter);
+  const activeView = views.find((v) => v.f === encoded)?.name ?? null;
+  const canSave = filtering && !activeView && !!onSaveView;
+
+  const saveView = async () => {
+    const n = viewName.trim();
+    if (!n) return;
+    await onSaveView?.(n);
+    setNaming(false);
+    setViewName("");
+  };
 
   const add = (c: Condition) => {
     if (filter.some((x) => sameCondition(x, c))) { setAdding(false); return; }
@@ -113,6 +143,30 @@ export function FilterBar({
           </motion.button>
         ))}
       </AnimatePresence>
+
+      {/* Vistas guardadas: un clic aplica el filtro entero. La activa se pinta. */}
+      {views.map((v) => (
+        <span
+          key={v.name}
+          className={`group inline-flex items-center gap-1 rounded-lg border pl-2 pr-1 py-1 text-xs ${
+            activeView === v.name ? "border-brand bg-brand/10 text-brand" : "border-border bg-surface-2 hover:border-ink/40"
+          }`}
+        >
+          <button onClick={() => onPickView?.(v.f)} className="inline-flex items-center gap-1 font-medium" title={t("Aplicar esta vista")}>
+            <Bookmark size={11} />
+            {v.name}
+          </button>
+          {onDeleteView ? (
+            <button
+              onClick={() => onDeleteView(v.name)}
+              title={t("Borrar esta vista")}
+              className="rounded p-0.5 text-muted opacity-0 group-hover:opacity-100 hover:text-ink"
+            >
+              <X size={11} />
+            </button>
+          ) : null}
+        </span>
+      ))}
 
       {/* Añadir condición. Menú en palabras, mismo patrón que ColumnChip. */}
       <div ref={addRef} className="relative">
@@ -203,6 +257,36 @@ export function FilterBar({
         >
           {t("Quitar todo")}
         </button>
+      ) : null}
+
+      {/* Guardar la vista actual. Input en línea: un modal para escribir una palabra es mucho. */}
+      {canSave && !naming ? (
+        <button
+          onClick={() => setNaming(true)}
+          className="inline-flex items-center gap-1 text-xs text-muted hover:text-ink underline underline-offset-2"
+        >
+          <Bookmark size={11} />
+          {t("Guardar vista")}
+        </button>
+      ) : null}
+      {canSave && naming ? (
+        <span className="inline-flex items-center gap-1 rounded-lg border border-brand bg-surface-2 px-2 py-1">
+          <input
+            ref={nameRef}
+            value={viewName}
+            onChange={(e) => setViewName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") void saveView();
+              if (e.key === "Escape") { setNaming(false); setViewName(""); }
+            }}
+            placeholder={t("nombre de la vista")}
+            maxLength={40}
+            className="w-36 bg-transparent text-xs outline-none placeholder:text-muted"
+          />
+          <button onClick={() => void saveView()} disabled={!viewName.trim()} className="text-xs font-medium text-brand disabled:opacity-40">
+            {t("Guardar")}
+          </button>
+        </span>
       ) : null}
 
       {/* El contador es lo que dice a cuántas le va a pasar algo. Va SIEMPRE, y cuando hay

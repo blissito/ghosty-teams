@@ -4,7 +4,7 @@ import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { ArrowLeft, Plus, Send, ShieldCheck, Sparkles, Target } from "lucide-react";
 import { useT } from "../i18n";
 import { me } from "../server/auth";
-import { addColumnFn, deleteColumnFn, getListFn, importTableFn, misPermisosFn, promoteEmailFn, runAiColumnFn, runColumnFn, promoteToBaseFn, setCellFn, setColumnOrderFn, setColumnWidthFn } from "../server/prospeccion";
+import { addColumnFn, deleteColumnFn, getListFn, importTableFn, misPermisosFn, promoteEmailFn, runAiColumnFn, runColumnFn, promoteToBaseFn, setCellFn, setColumnOrderFn, setColumnWidthFn, saveViewFn, deleteViewFn } from "../server/prospeccion";
 import { ProspGrid, aplanar, findLatLon, type GridRow } from "../components/prospeccion/Grid";
 import { FilterBar } from "../components/prospeccion/FilterBar";
 import { SendReview } from "../components/prospeccion/SendReview";
@@ -67,6 +67,10 @@ function ListPage() {
   const [review, setReview] = useState<{ plan: Plan; fileName: string } | null>(null);
   const [agentOpen, setAgentOpen] = useState(false);
   const [sendOpen, setSendOpen] = useState(false);
+  /** La última columna de mensaje escrita: el panel del agente la enseña sin preguntar. */
+  const [previewKey, setPreviewKey] = useState<string | null>(null);
+  /** Con qué columna abrir «Mandar» (la eligió el panel del agente). */
+  const [sendKey, setSendKey] = useState<string | null>(null);
   const [sendSubject, setSendSubject] = useState("");
   /** Lo que ESTA persona puede. El servidor lo comprueba igual; esto es para no ofrecerlo. */
   const [permisos, setPermisos] = useState<{ mandar: boolean; purgar: boolean; puedeConceder: boolean } | null>(null);
@@ -126,6 +130,17 @@ function ListPage() {
             ...data.columns.filter((c) => !c.recipe?.hidden).map((c) => ({ key: c.key, label: c.label })),
           ]
         : [],
+    [data]
+  );
+
+  // Misma regla que `planSendFn`: es mensaje toda columna `ai` o `manual`; las escritas primero.
+  const mensajes = useMemo(
+    () =>
+      (data?.columns ?? [])
+        .filter((c) => (c.kind === "ai" && c.recipe?.mode !== "research") || c.kind === "manual")
+        .filter((c) => !c.recipe?.hidden)
+        .sort((a, b) => Number(b.kind === "ai") - Number(a.kind === "ai"))
+        .map((c) => ({ key: c.key, label: c.label })),
     [data]
   );
 
@@ -313,6 +328,9 @@ function ListPage() {
           // columna Correo» se lee como qué hacer a continuación.
           const nota = "note" in r && r.note ? ` · ${r.note}` : "";
           setNotice(`${r.filled} de ${r.total} llenadas${nota}`);
+          // Se acaba de escribir un mensaje: el panel del agente lo enseña como correo.
+          const col = data?.columns.find((c) => c.key === key);
+          if (tipo === "ai" && col?.recipe?.mode !== "research" && r.filled > 0) setPreviewKey(key);
         }
         else setNotice(("error" in r && r.error) || "No se pudo correr la columna");
       } finally {
@@ -542,6 +560,18 @@ function ListPage() {
         fields={fields}
         shown={view.length}
         total={data.rows.length}
+        views={data.list.views}
+        onPickView={(nextF) => navigate({ search: (prev) => ({ ...prev, f: nextF }), replace: true })}
+        onSaveView={async (name) => {
+          if (!f) return;
+          const r = await saveViewFn({ data: { listId, name, f } }).catch(() => ({ ok: false as const, error: "" }));
+          if (!r.ok) { setNotice(r.error || t("No se pudo guardar la vista")); return; }
+          await reload();
+        }}
+        onDeleteView={async (name) => {
+          await deleteViewFn({ data: { listId, name } }).catch(() => {});
+          await reload();
+        }}
       />
 
       {data.columns.length || notice ? (
@@ -629,6 +659,7 @@ function ListPage() {
         listId={listId}
         filter={f}
         initialSubject={sendSubject}
+        initialMessageKey={sendKey}
         onSent={(resumen) => { setNotice(resumen); reload(); }}
       />
 
@@ -638,6 +669,9 @@ function ListPage() {
         listId={listId}
         filter={f}
         suggestions={sugerencias}
+        messages={mensajes}
+        previewKey={previewKey}
+        onSend={(k) => { setSendKey(k); setSendOpen(true); }}
       />
 
       <Permisos

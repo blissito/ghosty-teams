@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { ArrowUp, Check, ChevronDown, Square, X } from "lucide-react";
-import { drawerHistoryFn, listProspAgentsFn } from "../../server/prospeccion";
+import { ArrowUp, Check, ChevronDown, ChevronUp, Mail, Square, X } from "lucide-react";
+import { drawerHistoryFn, listProspAgentsFn, previewSendFn } from "../../server/prospeccion";
+import { MailPreview } from "./MailPreview";
 import { useT } from "../../i18n";
 import { registerModalEsc } from "../../utils/modal-esc";
 import { Markdown } from "../Markdown";
@@ -47,6 +48,9 @@ export function AgentDrawer({
   listId,
   filter,
   suggestions,
+  messages,
+  previewKey,
+  onSend,
 }: {
   open: boolean;
   onClose: () => void;
@@ -55,6 +59,12 @@ export function AgentDrawer({
   filter: string | undefined;
   /** Lo que se propone cuando la conversación está vacía. Sale de los huecos de los datos. */
   suggestions: string[];
+  /** Columnas que pueden ser el cuerpo del correo (las `ai` escritas y las manuales). */
+  messages?: { key: string; label: string }[];
+  /** La última columna de mensaje que se escribió: es la que se enseña sin preguntar. */
+  previewKey?: string | null;
+  /** Abre la revisión de envío con esa columna ya elegida. */
+  onSend?: (messageKey: string) => void;
 }) {
   const t = useT();
   const still = useReducedMotion();
@@ -362,6 +372,16 @@ export function AgentDrawer({
             <div ref={bottomRef} />
           </div>
 
+          {messages && messages.length ? (
+            <MailCard
+              listId={listId}
+              filter={filter}
+              messages={messages}
+              previewKey={previewKey ?? null}
+              onSend={onSend}
+            />
+          ) : null}
+
           <footer className="shrink-0 border-t border-border p-3">
             <div className="flex items-center gap-2 rounded-xl border border-border bg-surface-2 px-3 py-2 focus-within:border-brand">
               <textarea
@@ -393,5 +413,93 @@ export function AgentDrawer({
         </motion.div>
       ) : null}
     </AnimatePresence>
+  );
+}
+
+/**
+ * «Así se verá el correo», al pie del hilo.
+ *
+ * Es la respuesta a "¿dónde lo veo mientras lo construye?". La columna es la fuente de
+ * verdad y esto es sólo lectura: cambiar el texto se pide al agente, no se edita aquí. Se
+ * vuelve a pedir cuando cambia la columna o el filtro — el ejemplo es la primera fila de la
+ * VISTA con mensaje y correo, así que otro filtro puede dar otro ejemplo.
+ */
+function MailCard({
+  listId,
+  filter,
+  messages,
+  previewKey,
+  onSend,
+}: {
+  listId: number;
+  filter: string | undefined;
+  messages: { key: string; label: string }[];
+  previewKey: string | null;
+  onSend?: (messageKey: string) => void;
+}) {
+  const t = useT();
+  const [key, setKey] = useState<string>(previewKey ?? messages[0]?.key ?? "");
+  // Una columna recién escrita gana: es lo que el usuario acaba de pedir.
+  useEffect(() => { if (previewKey) setKey(previewKey); }, [previewKey]);
+  // Y se abre sola sólo cuando llega una nueva; si el usuario la cerró, se queda cerrada.
+  const [open, setOpen] = useState(!!previewKey);
+  useEffect(() => { if (previewKey) setOpen(true); }, [previewKey]);
+  const [state, setState] = useState<{ html: string; marca: string | null } | { error: string } | null>(null);
+
+  useEffect(() => {
+    if (!open || !key) return;
+    let alive = true;
+    setState(null);
+    previewSendFn({ data: { listId, f: filter, messageKey: key, subject: "" } })
+      .then((r) => {
+        if (!alive) return;
+        setState(r.ok ? { html: r.html, marca: r.marca ?? null } : { error: r.error || t("No se pudo previsualizar") });
+      })
+      .catch(() => { if (alive) setState({ error: t("No se pudo previsualizar") }); });
+    return () => { alive = false; };
+  }, [open, key, filter, listId, t]);
+
+  const current = messages.find((m) => m.key === key) ?? messages[0];
+  if (!current) return null;
+
+  return (
+    <div className="shrink-0 border-t border-border" data-keep-agent>
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center gap-2 px-4 py-2 text-xs font-medium hover:bg-surface-2"
+      >
+        <Mail size={13} className="text-brand" />
+        <span className="flex-1 text-left">{t("Así se verá el correo")}</span>
+        {open ? <ChevronUp size={13} className="text-muted" /> : <ChevronDown size={13} className="text-muted" />}
+      </button>
+      {open ? (
+        <div className="px-4 pb-3">
+          {messages.length > 1 ? (
+            <select
+              value={current.key}
+              onChange={(e) => setKey(e.target.value)}
+              className="mb-2 w-full rounded-lg border border-border bg-surface-2 px-2 py-1 text-xs"
+            >
+              {messages.map((m) => <option key={m.key} value={m.key}>{m.label}</option>)}
+            </select>
+          ) : null}
+          {state === null ? (
+            <p className="text-[11px] text-muted">{t("Armando el ejemplo…")}</p>
+          ) : "error" in state ? (
+            <p className="text-[11px] text-muted">{state.error}</p>
+          ) : (
+            <MailPreview html={state.html} marca={state.marca} />
+          )}
+          {onSend ? (
+            <button
+              onClick={() => onSend(current.key)}
+              className="mt-2 text-xs font-medium text-brand underline underline-offset-2"
+            >
+              {t("Abrir en Mandar")}
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
   );
 }

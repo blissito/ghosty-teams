@@ -35,7 +35,8 @@ function viewOf(rows: ProspRow[], filter: Filter, fields: string[]): ProspRow[] 
  */
 export async function listContext(listId: number, encodedFilter?: string): Promise<string> {
   const [fields, rows] = await Promise.all([fieldsOf(listId), listRows(listId, 20000)]);
-  const l = await dbq(`SELECT name, criteria FROM gt_prosp_lists WHERE id = ? LIMIT 1`, [listId]);
+  const l = await dbq(`SELECT name, criteria, views_json FROM gt_prosp_lists WHERE id = ? LIMIT 1`, [listId]);
+  const vistas = parseViewNames(l[0]?.views_json);
   const filter = decodeFilter(encodedFilter);
   const keys = fields.map((f) => f.key);
   const view = viewOf(rows, filter, keys);
@@ -61,6 +62,7 @@ export async function listContext(listId: number, encodedFilter?: string): Promi
     `Filas: ${rows.length}${filter.length ? ` · EN LA VISTA ACTUAL: ${view.length}` : " (sin filtro)"}`,
     ``,
     `Columnas: ${fields.map((f) => f.label).join(" · ")}`,
+    vistas.length ? `Vistas guardadas: ${vistas.map((v) => `«${v}»`).join(" · ")} (aplica una con \`prospect_filter\` y \`vista\`)` : ``,
     faltan.length
       ? `Sin dato en la vista: ${faltan.map((x) => `${x.label} (${x.n})`).join(" · ")}`
       : `Todas las columnas están completas en la vista.`,
@@ -73,6 +75,30 @@ export async function listContext(listId: number, encodedFilter?: string): Promi
   ]
     .filter(Boolean)
     .join("\n");
+}
+
+function parseViewNames(raw: unknown): string[] {
+  try {
+    const o = raw ? JSON.parse(String(raw)) : [];
+    return Array.isArray(o) ? o.map((v) => String(v?.name ?? "")).filter(Boolean) : [];
+  } catch {
+    return [];
+  }
+}
+
+/** Aplica una vista guardada por nombre. Mismo contrato que `applyFilter`. */
+export async function applySavedView(args: { listId: number; name: string }): Promise<
+  { ok: true; f: string | undefined; shown: number; total: number } | { ok: false; error: string }
+> {
+  const l = await dbq(`SELECT views_json FROM gt_prosp_lists WHERE id = ? LIMIT 1`, [args.listId]);
+  let views: { name: string; f: string }[] = [];
+  try { views = JSON.parse(String(l[0]?.views_json ?? "[]")); } catch { views = []; }
+  const v = views.find((x) => x.name.toLowerCase() === args.name.trim().toLowerCase());
+  if (!v) return { ok: false, error: `No hay una vista llamada «${args.name}». Las que hay: ${views.map((x) => x.name).join(", ") || "ninguna"}` };
+  const [fields, rows] = await Promise.all([fieldsOf(args.listId), listRows(args.listId, 20000)]);
+  const filter = decodeFilter(v.f);
+  const view = viewOf(rows, filter, fields.map((f) => f.key));
+  return { ok: true, f: v.f, shown: view.length, total: rows.length };
 }
 
 /** Traduce lo que el agente pide a condiciones del modelo. Devuelve el filtro codificado. */

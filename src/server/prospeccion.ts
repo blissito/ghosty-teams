@@ -203,6 +203,24 @@ export const setColumnOrderFn = createServerFn({ method: "POST" })
     return { ok: true as const };
   });
 
+export const saveViewFn = createServerFn({ method: "POST" })
+  .validator((d: { listId: number; name: string; f: string }) => d)
+  .handler(async ({ data }) => {
+    const me = await sessionUser();
+    if (!me) return { ok: false as const, error: "sin sesión" };
+    const { saveView } = await import("./prospeccion/lists.server");
+    return saveView(data.listId, data.name, data.f);
+  });
+
+export const deleteViewFn = createServerFn({ method: "POST" })
+  .validator((d: { listId: number; name: string }) => d)
+  .handler(async ({ data }) => {
+    const me = await sessionUser();
+    if (!me) return { ok: false as const, error: "sin sesión" };
+    const { deleteView } = await import("./prospeccion/lists.server");
+    return { ok: true as const, views: await deleteView(data.listId, data.name) };
+  });
+
 export const setCellFn = createServerFn({ method: "POST" })
   .validator((d: { rowId: number; key: string; value: string | null }) => d)
   .handler(async ({ data }) => {

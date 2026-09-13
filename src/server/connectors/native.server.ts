@@ -181,11 +181,15 @@ export function nativeTools(dest: ToolDest | null): ConnectorTool[] {
         "abrió o dio clic; caliente = te escribió él. La frontera tibio→caliente es la ventana de " +
         "24h de WhatsApp: a un caliente se le contesta libre, a un frío sólo plantilla aprobada. " +
         "La columna se nombra por su etiqueta tal como se ve (Teléfono, Correo, Giro…). " +
-        "Manda `conditions: []` para quitar el filtro y volver a la lista completa.",
+        "Manda `conditions: []` para quitar el filtro y volver a la lista completa. " +
+        "Con `guardar_como` la vista queda guardada con ese nombre en la lista; con `vista` se " +
+        "aplica una vista ya guardada (y `conditions` se ignora).",
       inputSchema: {
         type: "object",
         properties: {
           listId: { type: "number", description: "La lista" },
+          guardar_como: { type: "string", description: "Guarda la vista resultante con este nombre (≤40 letras)" },
+          vista: { type: "string", description: "Nombre de una vista guardada que aplicar" },
           conditions: {
             type: "array",
             description: "Las condiciones se SUMAN: todas tienen que cumplirse",
@@ -203,10 +207,19 @@ export function nativeTools(dest: ToolDest | null): ConnectorTool[] {
         required: ["listId", "conditions"],
       },
       handler: async (_sub, args) => {
-        const a = args as { listId: number; conditions: { op: string; field?: string; value?: string }[] };
-        const { applyFilter } = await import("../prospeccion/agent.server");
-        const r = await applyFilter({ listId: Number(a.listId), conditions: a.conditions ?? [] });
+        const a = args as { listId: number; conditions: { op: string; field?: string; value?: string }[]; guardar_como?: string; vista?: string };
+        const { applyFilter, applySavedView } = await import("../prospeccion/agent.server");
+        const r = a.vista
+          ? await applySavedView({ listId: Number(a.listId), name: a.vista })
+          : await applyFilter({ listId: Number(a.listId), conditions: a.conditions ?? [] });
         if (!r.ok) return { ok: false, error: r.error };
+        let guardada: string | null = null;
+        if (a.guardar_como && r.f) {
+          const { saveView } = await import("../prospeccion/lists.server");
+          const sv = await saveView(Number(a.listId), a.guardar_como, r.f);
+          if (!sv.ok) return { ok: false, error: sv.error };
+          guardada = a.guardar_como.trim().slice(0, 40);
+        }
         // La pantalla escucha esto y mueve SUS chips. Es lo que hace que el filtro sea
         // comprobable y corregible, en vez de una decisión invisible del modelo.
         const { publish, ch } = await import("../bus.server");
@@ -217,7 +230,7 @@ export function nativeTools(dest: ToolDest | null): ConnectorTool[] {
           listId: Number(a.listId),
           f: r.f ?? null,
         });
-        return { ok: true, shown: r.shown, total: r.total, aplicado_en_pantalla: true };
+        return { ok: true, shown: r.shown, total: r.total, aplicado_en_pantalla: true, vista_guardada: guardada };
       },
     },
     {

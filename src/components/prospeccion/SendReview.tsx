@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { AlertTriangle, Ban, Eye, MailX, Send, Users, X } from "lucide-react";
 import { useT } from "../../i18n";
+import { MailPreview } from "./MailPreview";
 import { planSendFn } from "../../server/prospeccion";
 
 type Plan = Extract<Awaited<ReturnType<typeof planSendFn>>, { ok: true }>;
@@ -23,6 +24,7 @@ export function SendReview({
   listId,
   filter,
   initialSubject,
+  initialMessageKey,
   onSent,
 }: {
   open: boolean;
@@ -31,13 +33,15 @@ export function SendReview({
   filter: string | undefined;
   /** El asunto que propuso el agente, si vino de ahí. Editable: propone, no decide. */
   initialSubject?: string;
+  /** La columna de mensaje con la que abrir, si viene del panel del agente. */
+  initialMessageKey?: string | null;
   onSent: (resumen: string) => void;
 }) {
   const t = useT();
   const still = useReducedMotion();
   const [data, setData] = useState<Plan | null>(null);
   const [subject, setSubject] = useState("");
-  const [messageKey, setMessageKey] = useState("");
+  const [messageKey, setMessageKey] = useState(initialMessageKey ?? "");
   const [sending, setSending] = useState(false);
   /**
    * La previsualización del correo YA RENDERIZADO, y la prueba a uno mismo.
@@ -60,10 +64,12 @@ export function SendReview({
       .then((r) => {
         if (!r.ok) return;
         setData(r);
-        if (r.mensajes[0]) setMessageKey(r.mensajes[0].key);
+        const pedida = initialMessageKey && r.mensajes.some((m) => m.key === initialMessageKey) ? initialMessageKey : null;
+        if (pedida) setMessageKey(pedida);
+        else if (r.mensajes[0]) setMessageKey(r.mensajes[0].key);
       })
       .catch(() => setError(t("No se pudo calcular el envío")));
-  }, [open, listId, filter, initialSubject, t]);
+  }, [open, listId, filter, initialSubject, initialMessageKey, t]);
 
   const verPreview = async (test: boolean) => {
     // ⚠️ El asunto NO hace falta para ver el cuerpo: se previsualiza con «(sin asunto)».
@@ -289,23 +295,7 @@ export function SendReview({
                         exit={{ opacity: 0, height: 0 }}
                         className="overflow-hidden mt-3"
                       >
-                        {/* En un iframe con `sandbox` vacío: el HTML lo compuso un modelo y
-                            no puede correr nada ni heredar los estilos de la app — que
-                            además lo harían verse distinto de como llega a Gmail. */}
-                        {/* Con qué marca sale. Es lo primero que hay que comprobar: si al
-                            prospecto le llega el mascot de Ghosty en vez de la marca de
-                            quien prospecta, el remitente no es quien dice ser. */}
-                        <p className="text-[11px] text-muted mb-1.5">
-                          {marca
-                            ? `${t("Sale con la marca de")} ${marca}`
-                            : t("⚠️ Sin marca activa: sale con la de Ghosty. Ponla en Ajustes → Marca.")}
-                        </p>
-                        <iframe
-                          title={t("Previsualización")}
-                          sandbox=""
-                          srcDoc={preview}
-                          className="w-full h-72 rounded-xl border border-border bg-white"
-                        />
+                        <MailPreview html={preview} marca={marca} />
                       </motion.div>
                     ) : null}
                   </AnimatePresence>

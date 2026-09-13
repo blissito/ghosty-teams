@@ -82,6 +82,8 @@ export type ProspColumn = {
   position: number;
 };
 
+export type SavedView = { name: string; f: string };
+
 export type ProspList = {
   id: number;
   name: string;
@@ -99,6 +101,8 @@ export type ProspList = {
   colOrder: string[];
   /** Ancho por llave, en píxeles. Lo que no esté usa su ancho por defecto. */
   colWidths: Record<string, number>;
+  /** Filtros con nombre. `f` es el mismo texto codificado que viaja en `?f=`. */
+  views: SavedView[];
   rows: number;
   /** Contadores del embudo, para la tarjeta y el panel. */
   sent: number;
@@ -202,6 +206,7 @@ export async function listLists(opts?: { archived?: boolean }): Promise<ProspLis
       purgeAt: l.purge_at == null ? null : num(l.purge_at),
       colOrder: parseColOrder(l.col_order),
       colWidths: parseColWidths(l.col_widths),
+      views: parseViews(l.views_json),
       rows: size.get(id) ?? 0,
       sent: c.sent ?? 0,
       opened: c.opened ?? 0,
@@ -324,6 +329,49 @@ function parseColWidths(raw: unknown): Record<string, number> {
   } catch {
     return {};
   }
+}
+
+const MAX_VIEWS = 20;
+const VIEW_NAME_MAX = 40;
+
+function parseViews(raw: unknown): SavedView[] {
+  if (!raw) return [];
+  try {
+    const o = JSON.parse(String(raw));
+    if (!Array.isArray(o)) return [];
+    return o
+      .filter((v) => v && typeof v.name === "string" && typeof v.f === "string" && v.name.trim() && v.f)
+      .map((v) => ({ name: String(v.name).trim().slice(0, VIEW_NAME_MAX), f: String(v.f) }))
+      .slice(0, MAX_VIEWS);
+  } catch {
+    return [];
+  }
+}
+
+async function readViews(listId: number): Promise<SavedView[]> {
+  const rows = (await dbq(`SELECT views_json FROM gt_prosp_lists WHERE id = ? LIMIT 1`, [listId])) as Row[];
+  return parseViews(rows[0]?.views_json);
+}
+
+/**
+ * Guardar una vista con nombre. Mismo nombre = se pisa: es la forma natural de "actualizar
+ * la vista" sin un segundo verbo. Tope de 20 para que la barra no se vuelva un menú.
+ */
+export async function saveView(listId: number, name: string, f: string): Promise<{ ok: true; views: SavedView[] } | { ok: false; error: string }> {
+  const clean = name.trim().slice(0, VIEW_NAME_MAX);
+  if (!clean) return { ok: false, error: "Ponle nombre a la vista" };
+  if (!f) return { ok: false, error: "No hay filtro que guardar" };
+  const actual = (await readViews(listId)).filter((v) => v.name.toLowerCase() !== clean.toLowerCase());
+  if (actual.length >= MAX_VIEWS) return { ok: false, error: `Ya hay ${MAX_VIEWS} vistas; borra alguna` };
+  const views = [...actual, { name: clean, f }];
+  await dbq(`UPDATE gt_prosp_lists SET views_json = ? WHERE id = ?`, [JSON.stringify(views), listId]);
+  return { ok: true, views };
+}
+
+export async function deleteView(listId: number, name: string): Promise<SavedView[]> {
+  const views = (await readViews(listId)).filter((v) => v.name.toLowerCase() !== name.trim().toLowerCase());
+  await dbq(`UPDATE gt_prosp_lists SET views_json = ? WHERE id = ?`, [JSON.stringify(views), listId]);
+  return views;
 }
 
 /** Guardar el ancho de UNA columna. Se llama al soltar el borde, no mientras se arrastra. */
