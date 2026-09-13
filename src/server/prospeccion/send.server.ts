@@ -306,12 +306,12 @@ export async function renderDraft(args: {
    * ⚠️ El cierre va por `cta`, NO metido en el `body`: el cuerpo lo escribió un agente y
    * se escapa siempre. Al meter ahí el `<a href>` del botón, llegaba como texto literal.
    */
-  const { getSender, getCta, getSignatureBusiness, getSignatureTagline } = await import("./sender.server");
-  const [sender, cta, empresaPropia, tagline] = await Promise.all([getSender(), getCta(), getSignatureBusiness(), getSignatureTagline()]);
+  const { getSender, getCta, getSignatureBusiness, getSignatureTagline, getSignatureExtras } = await import("./sender.server");
+  const [sender, cta, empresaPropia, tagline, extras] = await Promise.all([getSender(), getCta(), getSignatureBusiness(), getSignatureTagline(), getSignatureExtras()]);
   const empresa = empresaPropia || brand?.name || null;
   const firma = sender.name || (await getUserName(args.bySub ?? null)) || empresa || "El equipo";
   // Si la firma es de OTRA empresa que la marca activa, su logo no le corresponde.
-  const logoUrl = empresaPropia && empresaPropia !== brand?.name ? null : (brand?.logoUrl ?? null);
+  const logoUrl = extras.logoUrl || (empresaPropia && empresaPropia !== brand?.name ? null : (brand?.logoUrl ?? null));
 
   const cierre =
     cta.kind === "wa" ? (wa ? { kind: "wa" as const, label: cta.label, url: wa } : null)
@@ -325,6 +325,8 @@ export async function renderDraft(args: {
       name: firma,
       business: empresa,
       tagline: tagline || null,
+      title: extras.title || null,
+      website: extras.website || null,
       phone: args.waPhone ? prettyPhone(args.waPhone) : null,
       logoUrl,
     },

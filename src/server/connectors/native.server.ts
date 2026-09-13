@@ -425,7 +425,7 @@ export function nativeTools(dest: ToolDest | null): ConnectorTool[] {
       name: "prospect_outreach_setup",
       description:
         "Configura cómo salen los correos de prospección del equipo: quién firma (`name`), de qué " +
-        "empresa (`business`), qué hace la empresa en una línea (`tagline`, va bajo la firma y en el pie), el remitente (`email`, con su dominio — si no está verificado la " +
+        "empresa (`business`), qué hace la empresa (`tagline`), el cargo (`title`), el sitio (`website`) y el logo (`logoUrl`, para el membrete), el remitente (`email`, con su dominio — si no está verificado la " +
         "pantalla enseña los CNAME), el cierre (`ctaKind`: wa | reply | link, con `ctaLabel` y " +
         "`ctaUrl`) y el WhatsApp al que escriben (`waPhone`). Manda SÓLO lo que te pidan cambiar. " +
         "Úsalo cuando digan «firma como…», «que sea de la empresa X», «que respondan por correo», etc.",
@@ -435,6 +435,9 @@ export function nativeTools(dest: ToolDest | null): ConnectorTool[] {
           name: { type: "string" },
           business: { type: "string" },
           tagline: { type: "string", description: "Qué hace la empresa, una línea" },
+          title: { type: "string", description: "Cargo de quien firma (Founder, Directora…)" },
+          website: { type: "string", description: "Sitio web con https://. Va como membrete, bajo el cierre y en la firma" },
+          logoUrl: { type: "string", description: "URL https directa a un png/svg/jpg del logo. Búscalo en el sitio (og:image o el <img> del logo) si te piden «pon el logo»" },
           email: { type: "string" },
           ctaKind: { type: "string", enum: ["wa", "reply", "link"] },
           ctaLabel: { type: "string" },

@@ -269,7 +269,15 @@ export type ProspectCta =
 export type ProspectEmail = {
   /** Prosa escrita por el agente. SIEMPRE se escapa. Párrafos separados por línea en blanco. */
   body: string;
-  signature: { name: string; business: string | null; tagline?: string | null; phone: string | null; logoUrl: string | null };
+  signature: {
+    name: string;
+    business: string | null;
+    tagline?: string | null;
+    title?: string | null;
+    website?: string | null;
+    phone: string | null;
+    logoUrl: string | null;
+  };
   cta: ProspectCta | null;
   fontFamily?: string | null;
   accent?: string | null;
@@ -279,7 +287,16 @@ export function prospectEmail(e: ProspectEmail): { html: string; text: string; i
   const fuente = `${e.fontFamily ? `${JSON.stringify(e.fontFamily)}, ` : ""}system-ui,-apple-system,Segoe UI,sans-serif`;
   const acento = e.accent && /^#[0-9a-f]{6}$/i.test(e.accent) ? e.accent : "#2f5bea";
   const s = e.signature;
-  const firmaLineas = [s.business, s.phone].filter(Boolean).join(" · ");
+  const firmaLineas = [[s.title, s.business].filter(Boolean).join(", "), s.phone].filter(Boolean).join(" · ");
+  const sitioCorto = s.website ? s.website.replace(/^https?:\/\//, "").replace(/\/$/, "") : "";
+  // Membrete: logo y/o sitio arriba, como el papel con encabezado de una empresa.
+  const membrete = s.logoUrl || sitioCorto
+    ? `<tr><td style="padding-bottom:18px;border-bottom:1px solid #ececf1"><table role="presentation" cellpadding="0" cellspacing="0" width="100%"><tr>
+        ${s.logoUrl ? `<td valign="middle"><img src="${escapeHtml(s.logoUrl)}" alt="${escapeHtml(s.business ?? "")}" style="display:block;border:0;max-height:36px;max-width:160px"></td>` : `<td valign="middle" style="font:600 14px/1 ${fuente};color:#1f1f24">${escapeHtml(s.business ?? "")}</td>`}
+        ${sitioCorto ? `<td valign="middle" align="right" style="font:400 12px/1 ${fuente}"><a href="${escapeHtml(s.website!)}" style="color:#6b6b78;text-decoration:none">${escapeHtml(sitioCorto)}</a></td>` : ""}
+      </tr></table></td></tr>
+    <tr><td style="height:18px;font-size:0;line-height:0">&nbsp;</td></tr>`
+    : "";
   const pie = `Te escribe ${s.name}${s.business ? ` de ${s.business}` : ""}${s.tagline ? `, ${s.tagline}` : ""}. Si no esperabas este correo, puedes ignorarlo.`;
 
   const ctaHtml = !e.cta
@@ -288,16 +305,20 @@ export function prospectEmail(e: ProspectEmail): { html: string; text: string; i
       ? `<p style="margin:18px 0 0;font:400 15px/1.6 ${fuente};color:#1f1f24">${escapeHtml(e.cta.label)}</p>`
       : `<p style="margin:18px 0 0"><a href="${escapeHtml(e.cta.url)}" style="display:inline-block;background:${acento};color:#fff;font:600 14px/1 ${fuente};padding:11px 16px;border-radius:8px;text-decoration:none">${escapeHtml(e.cta.label)}</a></p>`;
 
+  const sitioHtml = sitioCorto
+    ? `<p style="margin:10px 0 0;font:400 13px/1.5 ${fuente};color:#6b6b78">${e.cta ? "o " : ""}<a href="${escapeHtml(s.website!)}" style="color:#6b6b78">${escapeHtml(sitioCorto)}</a></p>`
+    : "";
   const html = `<!doctype html><html><body style="margin:0;padding:24px 12px;background:#ffffff">
   <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="max-width:600px;margin:0 auto">
+    ${membrete}
     <tr><td style="font:400 15px/1.65 ${fuente};color:#1f1f24;white-space:pre-wrap">${bodyHtml(e.body, fuente)}</td></tr>
-    ${ctaHtml ? `<tr><td>${ctaHtml}</td></tr>` : ""}
+    ${ctaHtml || sitioHtml ? `<tr><td>${ctaHtml}${sitioHtml}</td></tr>` : ""}
     <tr><td style="padding-top:26px">
       <table role="presentation" cellpadding="0" cellspacing="0"><tr>
-        ${s.logoUrl ? `<td valign="middle" style="padding-right:12px"><img src="${escapeHtml(s.logoUrl)}" alt="" style="display:block;border:0;max-height:32px;max-width:120px"></td>` : ""}
         <td valign="middle" style="font:400 13px/1.5 ${fuente};color:#3f3f46">
           <div style="font-weight:600;color:#1f1f24">${escapeHtml(s.name)}</div>${firmaLineas ? `
-          <div>${escapeHtml(firmaLineas)}</div>` : ""}${s.tagline ? `
+          <div>${escapeHtml(firmaLineas)}</div>` : ""}${sitioCorto ? `
+          <div><a href="${escapeHtml(s.website!)}" style="color:#3f3f46">${escapeHtml(sitioCorto)}</a></div>` : ""}${s.tagline ? `
           <div style="color:#6b6b78">${escapeHtml(s.tagline)}</div>` : ""}
         </td>
       </tr></table>
@@ -306,7 +327,7 @@ export function prospectEmail(e: ProspectEmail): { html: string; text: string; i
   </table>
 </body></html>`;
 
-  const ctaText = !e.cta ? "" : e.cta.kind === "reply" ? e.cta.label : `${e.cta.label}: ${e.cta.url}`;
+  const ctaText = [!e.cta ? "" : e.cta.kind === "reply" ? e.cta.label : `${e.cta.label}: ${e.cta.url}`, s.website ?? ""].filter(Boolean).join("\n");
   const text = [e.body.replace(/^## /gm, ""), ctaText, `— ${s.name}${firmaLineas ? `\n${firmaLineas}` : ""}${s.tagline ? `\n${s.tagline}` : ""}`, pie].filter(Boolean).join("\n\n");
   return { html, text, inline: [] };
 }
