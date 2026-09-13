@@ -422,6 +422,38 @@ export function nativeTools(dest: ToolDest | null): ConnectorTool[] {
       },
     },
     {
+      name: "prospect_outreach_setup",
+      description:
+        "Configura cómo salen los correos de prospección del equipo: quién firma (`name`), de qué " +
+        "empresa (`business`), el remitente (`email`, con su dominio — si no está verificado la " +
+        "pantalla enseña los CNAME), el cierre (`ctaKind`: wa | reply | link, con `ctaLabel` y " +
+        "`ctaUrl`) y el WhatsApp al que escriben (`waPhone`). Manda SÓLO lo que te pidan cambiar. " +
+        "Úsalo cuando digan «firma como…», «que sea de la empresa X», «que respondan por correo», etc.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          name: { type: "string" },
+          business: { type: "string" },
+          email: { type: "string" },
+          ctaKind: { type: "string", enum: ["wa", "reply", "link"] },
+          ctaLabel: { type: "string" },
+          ctaUrl: { type: "string" },
+          waPhone: { type: "string" },
+        },
+      },
+      handler: async (_sub, args) => {
+        const { setupOutreach } = await import("../prospeccion/sender.server");
+        const r = await setupOutreach(args as Parameters<typeof setupOutreach>[0]);
+        if (!r.ok) return r;
+        const { publish, ch } = await import("../bus.server");
+        const { currentNamespace } = await import("../tenant.server");
+        const ns = await currentNamespace();
+        // El panel vuelve a pedir la vista previa: la firma ya cambió.
+        publish(ch.user(ns, _sub), { t: "prospeccion:base", text: (await (await import("../prospeccion/sender.server")).getMessageBase()) });
+        return { ok: true, ahora: r.resumen };
+      },
+    },
+    {
       name: "form_create",
       description:
         "Crea un formulario de intake con liga pública para mandarle a un cliente. Las respuestas " +

@@ -51,6 +51,7 @@ export function AgentDrawer({
   suggestions,
   messages,
   previewKey,
+  previewNonce,
   onSend,
 }: {
   open: boolean;
@@ -64,6 +65,7 @@ export function AgentDrawer({
   messages?: { key: string; label: string }[];
   /** La última columna de mensaje que se escribió: es la que se enseña sin preguntar. */
   previewKey?: string | null;
+  previewNonce?: number;
   /** Abre la revisión de envío con esa columna ya elegida. */
   onSend?: (messageKey: string) => void;
 }) {
@@ -392,6 +394,7 @@ export function AgentDrawer({
               filter={filter}
               messages={messages}
               previewKey={previewKey ?? null}
+              nonce={previewNonce ?? 0}
               onSend={onSend}
             />
           ) : null}
@@ -464,12 +467,14 @@ function MailCard({
   filter,
   messages,
   previewKey,
+  nonce,
   onSend,
 }: {
   listId: number;
   filter: string | undefined;
   messages: { key: string; label: string }[];
   previewKey: string | null;
+  nonce: number;
   onSend?: (messageKey: string) => void;
 }) {
   const t = useT();
@@ -478,7 +483,7 @@ function MailCard({
   useEffect(() => { if (previewKey) setKey(previewKey); }, [previewKey]);
   // Y se abre sola sólo cuando llega una nueva; si el usuario la cerró, se queda cerrada.
   const [open, setOpen] = useState(!!previewKey);
-  useEffect(() => { if (previewKey) setOpen(true); }, [previewKey]);
+  useEffect(() => { if (previewKey) setOpen(true); }, [previewKey, nonce]);
   const [state, setState] = useState<{ html: string; marca: string | null } | { error: string } | null>(null);
 
   useEffect(() => {
@@ -492,7 +497,7 @@ function MailCard({
       })
       .catch(() => { if (alive) setState({ error: t("No se pudo previsualizar") }); });
     return () => { alive = false; };
-  }, [open, key, filter, listId, t]);
+  }, [open, key, filter, listId, nonce, t]);
 
   const current = messages.find((m) => m.key === key) ?? messages[0];
   if (!current) return null;

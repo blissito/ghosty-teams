@@ -186,12 +186,14 @@ export async function outreachBrief(bySub: string | null): Promise<string> {
     activeBrandKit().catch(() => null),
     getMessageBase(),
   ]);
-  const nombre = sender?.name || (await getUserName(bySub)) || kit?.name || "quien manda";
+  const empresa = (await getSignatureBusiness()) || kit?.name || null;
+  const nombre = sender?.name || (await getUserName(bySub)) || empresa || "quien manda";
   const remitente = sender?.status === "verified" ? sender.effectiveFrom : `${sender?.effectiveFrom ?? "noreply@ghosty.studio"}${sender?.email ? ` (su dominio ${sender.domain} aún no está verificado)` : " (sin dominio propio todavía)"}`;
   return [
     "[CÓMO SALE EL CORREO — lo arma la plataforma, tú NO escribes HTML ni plantillas]",
     `Cada correo = tu texto (párrafos) + cierre + firma + pie legal. Eso ya está hecho.`,
-    `Firma: ${nombre}${kit?.name ? `, de ${kit.name}` : ""}${wa ? `, WhatsApp ${wa}` : ""}. Remitente: ${remitente}.`,
+    `Firma: ${nombre}${empresa ? `, de ${empresa}` : ""}${wa ? `, WhatsApp ${wa}` : ""}. Remitente: ${remitente}.`,
+    "Si te piden cambiar la firma, la empresa, el remitente, el cierre o el WhatsApp: hazlo con `prospect_outreach_setup`, no lo pidas por chat.",
     `Cierre: ${describeCta(cta, wa)}. No inventes otro cierre ni pidas dos cosas.`,
     base ? `Mensaje base acordado (lo personalizas por fila):\n«${base}»` : "Todavía no hay mensaje base.",
     "",
@@ -203,4 +205,52 @@ export async function outreachBrief(bySub: string | null): Promise<string> {
     "   base como prompt (investiga cada negocio y lo adapta). Empieza con `limit: 3`.",
     "3. Mandar: `prospect_send` abre la revisión; nunca se manda sin que la persona confirme.",
   ].join("\n");
+}
+
+/**
+ * La EMPRESA de la firma, si no es la marca activa del workspace.
+ *
+ * Un workspace prospecta a veces para otra marca (una agencia, un producto nuevo). Con esto
+ * la firma dice esa empresa y NO pinta el logo de la marca activa, que sería de otra.
+ */
+export async function getSignatureBusiness(): Promise<string> {
+  const c = await getConfigMany(["prospeccion_signature_business"]);
+  return (c.prospeccion_signature_business ?? "").trim();
+}
+
+/** Todo lo del remitente en una llamada, para el agente: lo que venga vacío no se toca. */
+export async function setupOutreach(args: {
+  name?: string;
+  business?: string;
+  email?: string;
+  ctaKind?: CtaKind;
+  ctaLabel?: string;
+  ctaUrl?: string;
+  waPhone?: string;
+}): Promise<{ ok: true; resumen: string } | { ok: false; error: string }> {
+  if (args.name !== undefined || args.email !== undefined) {
+    const cur = await getConfigMany(["prospeccion_from_email", "prospeccion_from_name"]);
+    const r = await setSender({
+      email: args.email ?? cur.prospeccion_from_email ?? "",
+      name: args.name ?? cur.prospeccion_from_name ?? "",
+    });
+    if ("error" in r && typeof r.error === "string") return { ok: false, error: r.error };
+  }
+  if (args.business !== undefined) await setConfig("prospeccion_signature_business", args.business.trim().slice(0, 80));
+  if (args.ctaKind || args.ctaLabel !== undefined || args.ctaUrl !== undefined) {
+    const cur = await getCta();
+    const r = await setCta({
+      kind: args.ctaKind ?? cur.kind,
+      label: args.ctaLabel ?? (args.ctaKind && args.ctaKind !== cur.kind ? "" : cur.label),
+      url: args.ctaUrl ?? cur.url,
+    });
+    if ("error" in r) return { ok: false, error: r.error };
+  }
+  if (args.waPhone !== undefined) {
+    const { normalizeWaPhone } = await import("../../lib/prospeccion-wa-phone");
+    const n = normalizeWaPhone(args.waPhone);
+    if (args.waPhone.trim() && !n) return { ok: false, error: "No parece un número de WhatsApp" };
+    await setConfig("prospeccion_wa_phone", n ?? "");
+  }
+  return { ok: true, resumen: await outreachBrief(null) };
 }

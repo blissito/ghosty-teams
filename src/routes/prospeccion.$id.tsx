@@ -71,6 +71,8 @@ function ListPage() {
   const [previewKey, setPreviewKey] = useState<string | null>(null);
   /** Hay mensaje base del equipo: la card lo ofrece aunque no haya columna escrita. */
   const [hasBase, setHasBase] = useState(false);
+  /** Sube cuando la firma o el base cambian: la card vuelve a pedir la vista previa. */
+  const [previewNonce, setPreviewNonce] = useState(0);
   useEffect(() => { getProspBaseFn().then((r) => setHasBase(!!r?.text)).catch(() => {}); }, []);
   /** Con qué columna abrir «Mandar» (la eligió el panel del agente). */
   const [sendKey, setSendKey] = useState<string | null>(null);
@@ -207,6 +209,7 @@ function ListPage() {
       if (ev.t === "prospeccion:base") {
         setHasBase(!!ev.text);
         setPreviewKey(ev.text ? "__base__" : null);
+        setPreviewNonce((n) => n + 1);
       }
       if (ev.t === "prospeccion:column" && ev.listId === listId) {
         crearColumnaRef.current?.(
@@ -680,6 +683,7 @@ function ListPage() {
         suggestions={sugerencias}
         messages={mensajes}
         previewKey={previewKey}
+        previewNonce={previewNonce}
         onSend={(k) => { setSendKey(k); setSendOpen(true); }}
       />
 
