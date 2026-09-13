@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useRef, useState } from "react";
 import { DataGrid, type CellMouseArgs, type Column, type RenderCellProps, type RenderEditCellProps, type RowsChangeData } from "react-data-grid";
 import { motion, useReducedMotion } from "motion/react";
-import { Ban, Check, Loader2, MapPin } from "lucide-react";
+import { Ban, Check, Loader2, MapPin, X } from "lucide-react";
 import { useT } from "../../i18n";
 import type { getListFn } from "../../server/prospeccion";
 
@@ -203,6 +203,12 @@ export function ProspGrid({
 }) {
   const t = useT();
   const [sel, setSel] = useState<{ rowIdx: number; colKey: string } | null>(null);
+  /**
+   * Una celda larga (un mensaje, los hallazgos) no cabe en 38px: al hacer clic se abre
+   * entera en un panel al pie, con sus enlaces. Es como se LEE la investigación antes de
+   * mandar; sin esto había que abrir cada celda para editar y leerla en un input de una línea.
+   */
+  const [peek, setPeek] = useState<{ rowId: number; colKey: string } | null>(null);
   const [dragging, setDragging] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
 
@@ -434,6 +440,9 @@ export function ProspGrid({
         onCellClick={({ row, column }: CellMouseArgs<GridRow>) => {
           const idx = rows.findIndex((r) => r.id === row.id);
           setSel({ rowIdx: idx, colKey: column.key });
+          const v = String(row[column.key] ?? "");
+          if (v.length > 60 || v.startsWith('{"angulo"')) setPeek({ rowId: row.id, colKey: column.key });
+          else setPeek(null);
         }}
         onRowsChange={(extras: GridRow[], { indexes, column }: RowsChangeData<GridRow>) => {
           for (const i of indexes) {
@@ -450,6 +459,69 @@ export function ProspGrid({
         /* Sin `rdg-light` ni `rdg-dark`: el tema lo pone `.gt-prosp .rdg` en styles.css
            con los tokens del workspace, así sigue al preset y al brand kit. */
       />
+      {peek ? (
+        <CellPeek
+          row={rows.find((r) => r.id === peek.rowId)}
+          colKey={peek.colKey}
+          label={[...base, ...columns].find((c) => c.key === peek.colKey)?.label ?? peek.colKey}
+          onClose={() => setPeek(null)}
+          onSave={(v) => { onCellChange(peek.rowId, peek.colKey, v); }}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function CellPeek({ row, colKey, label, onClose, onSave }: { row: GridRow | undefined; colKey: string; label: string; onClose: () => void; onSave: (v: string) => void }) {
+  const t = useT();
+  const [editing, setEditing] = useState(false);
+  if (!row) return null;
+  const text = String(row[colKey] ?? "");
+  let h: { angulo?: string | null; hechos?: { h: string; fuente?: string }[]; no_usar?: string[] } | null = null;
+  if (text.startsWith('{"angulo"')) { try { h = JSON.parse(text); } catch { h = null; } }
+  return (
+    <div className="fixed bottom-4 left-4 z-30 flex max-h-[60vh] w-[min(520px,calc(100vw-2rem))] flex-col rounded-2xl border border-border bg-surface shadow-2xl" onMouseDown={(e) => e.stopPropagation()}>
+      <div className="flex shrink-0 items-center gap-2 border-b border-border px-4 py-2.5">
+        <span className="text-xs font-semibold">{label}</span>
+        <span className="min-w-0 flex-1 truncate text-xs text-muted">· {String(row.name ?? "")}</span>
+        {!h && !editing ? (
+          <button onClick={() => setEditing(true)} className="text-xs text-brand underline underline-offset-2">{t("Editar")}</button>
+        ) : null}
+        <button onClick={onClose} className="rounded-lg p-1 text-muted hover:bg-surface-3"><X size={14} /></button>
+      </div>
+      <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3 text-sm thin-scroll">
+        {h ? (
+          <div className="flex flex-col gap-2">
+            {h.angulo ? <p><span className="text-xs uppercase tracking-wide text-muted">{t("Ángulo")}</span><br /><b>{h.angulo}</b></p> : <p className="text-muted">{t("Sin ángulo claro.")}</p>}
+            {h.hechos?.length ? (
+              <div>
+                <span className="text-xs uppercase tracking-wide text-muted">{t("Lo que sabemos")}</span>
+                <ul className="mt-1 list-disc pl-5">
+                  {h.hechos.map((x, i) => (
+                    <li key={i}>
+                      {x.h}{x.fuente ? <> · <a href={x.fuente} target="_blank" rel="noreferrer" className="text-brand hover:underline text-xs">{t("fuente")}</a></> : null}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+            {h.no_usar?.length ? (
+              <p className="text-xs text-muted"><span className="uppercase tracking-wide">{t("No se usa")}</span>: {h.no_usar.join("; ")}</p>
+            ) : null}
+            <button onClick={() => { onSave(""); onClose(); }} className="self-start text-xs text-red-500 underline underline-offset-2">{t("Borrar esta investigación")}</button>
+          </div>
+        ) : editing ? (
+          <textarea
+            autoFocus
+            defaultValue={text}
+            rows={12}
+            className="w-full rounded-xl border border-border bg-surface-2 px-3 py-2 text-sm outline-none focus:border-brand"
+            onBlur={(e) => { onSave(e.target.value); setEditing(false); }}
+          />
+        ) : (
+          <p className="whitespace-pre-wrap">{text}</p>
+        )}
+      </div>
     </div>
   );
 }
