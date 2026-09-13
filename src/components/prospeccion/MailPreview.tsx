@@ -19,10 +19,14 @@ export function MailPreview({ html, marca, className }: { html: string; marca: s
           ? `${t("Sale con la marca de")} ${marca}`
           : t("⚠️ Sin marca activa: sale con la de Ghosty. Ponla en Ajustes → Marca.")}
       </p>
+      {/* Los enlaces abren en pestaña nueva: sin esto el botón de WhatsApp navegaba DENTRO
+          del iframe y wa.me, que no se deja enmarcar, dejaba la vista previa en «rechazó la
+          conexión». `allow-popups-to-escape-sandbox` es lo que permite que la pestaña nueva
+          sea una página normal; el iframe sigue sin scripts. */}
       <iframe
         title={t("Previsualización")}
-        sandbox=""
-        srcDoc={html}
+        sandbox="allow-popups allow-popups-to-escape-sandbox"
+        srcDoc={html.replace(/<html>/i, '<html><head><base target="_blank"></head>')}
         className="w-full h-72 rounded-xl border border-border bg-white"
       />
     </div>
