@@ -187,10 +187,14 @@ export function cleanCellValue(raw: string, opts?: { multiline?: boolean; max?: 
  * Y al armar el correo: una celda vieja no puede salir así a un cliente.
  */
 export function stripNarration(v: string): string {
-  const NARRA = /^(voy a|primero|déjame|dejame|antes de (escribir|redactar)|investigo|reviso|busco|permíteme|permiteme|ahora (sí )?(escribo|redacto)|aquí (va|está|tienes))\b/i;
+  const NARRA = /^(voy a|primero|déjame|dejame|antes de (escribir|redactar)|investigo|reviso|busco|permíteme|permiteme|ahora (sí )?(escribo|redacto)|aquí (va|está|tienes)|falla|falló|no pude|intento|intentaré|probando|reintento)\b/i;
   // Primero la frase pegada al párrafo real («…antes de escribir el mensaje.Tus clientes…»):
   // si se quitara el párrafo entero se llevaría también el texto bueno.
-  v = v.replace(/^(voy a|primero|déjame|dejame|antes de|permíteme|permiteme)[^.!?\n]{0,200}[.!?]\s*/i, "");
+  v = v.replace(/^(voy a|primero|déjame|dejame|antes de|permíteme|permiteme|falla|falló|fallo|no pude|no puedo|intento|intentaré|intentare|probando|reintento)[^.!?\n]{0,200}[.!?]\s*/i, "");
+  // La firma de la costura: el texto de antes de la herramienta y el de después quedaron
+  // pegados sin espacio («…proxy residencial.Tus clientes…»). Prosa real lleva espacio
+  // tras el punto; si en los primeros 300 caracteres hay un `.Mayúscula`, lo de antes sobra.
+  v = v.replace(/^[^\n]{0,300}?[.!?](?=[A-ZÁÉÍÓÚÑ¿¡])/, "");
   const partes = v.split(/\n\s*\n/);
   if (partes.length > 1 && NARRA.test(partes[0].trim())) v = partes.slice(1).join("\n\n");
   return v.trim();
