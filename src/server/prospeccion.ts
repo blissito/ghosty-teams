@@ -352,6 +352,8 @@ export const addColumnFn = createServerFn({ method: "POST" })
     }
 
     const { addColumn } = await import("./prospeccion/lists.server");
+    // Sin etiqueta la columna nace como un chip mudo que no se sabe qué es ni cómo quitar.
+    if (!data.label?.trim()) data.label = data.kind === "ai" && data.mode === "research" ? "Dato nuevo" : data.kind === "ai" ? "Mensaje" : "Columna";
 
     /**
      * «Mensaje investigado» son DOS columnas encadenadas, no una: «Investigación» (research
