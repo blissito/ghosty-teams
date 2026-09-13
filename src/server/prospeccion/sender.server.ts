@@ -204,7 +204,7 @@ export async function outreachBrief(bySub: string | null): Promise<string> {
     "[CÓMO SALE EL CORREO — lo arma la plataforma, tú NO escribes HTML ni plantillas]",
     `Cada correo = tu texto (párrafos) + cierre + firma + pie legal. Eso ya está hecho.`,
     `Firma: ${nombre}${empresa ? `, de ${empresa}` : ""}${wa ? `, WhatsApp ${wa}` : ""}. Remitente: ${remitente}.`,
-    `Membrete y firma: ${(await getSignatureExtras()).logoUrl ? "logo propio" : kit?.logoUrl ? "logo de la marca activa" : "sin logo"}${(await getSignatureExtras()).website ? `, sitio ${(await getSignatureExtras()).website}` : ", sin sitio web"}${(await getSignatureExtras()).title ? `, cargo «${(await getSignatureExtras()).title}»` : ""}. Se cambian con \`title\`, \`website\` y \`logoUrl\` (URL https directa a un png/svg) en \`prospect_outreach_setup\`. El sitio va arriba como membrete, como enlace bajo el cierre y en la firma.`,
+    `Membrete y firma: ${(await getSignatureExtras()).logoUrl ? "logo propio" : kit?.logoUrl ? "logo de la marca activa" : "sin logo"}${(await getSignatureExtras()).website ? `, sitio ${(await getSignatureExtras()).website}` : ", sin sitio web"}${(await getSignatureExtras()).title ? `, cargo «${(await getSignatureExtras()).title}»` : ""}. Se cambian con \`title\`, \`website\` y \`logoUrl\` (URL https directa a un png/svg) en \`prospect_outreach_setup\`. El sitio va SÓLO en \`website\` (se pinta como membrete y bajo el cierre): no lo repitas en tagline, business ni name. El cargo va en \`title\`, no dentro de \`name\`.`,
     `Pie del correo: «Te escribe ${nombre}${empresa ? ` de ${empresa}` : ""}${(await getSignatureTagline()) ? `, ${await getSignatureTagline()}` : ""}. Si no esperabas este correo, puedes ignorarlo.» La frase de ignorar es fija (es lo honesto en un correo frío); lo que dice de la empresa se cambia con \`tagline\` en \`prospect_outreach_setup\`.`,
     "Si te piden cambiar la firma, la empresa, el remitente, el cierre o el WhatsApp: hazlo con `prospect_outreach_setup`, no lo pidas por chat.",
     "CÓMO SE LLAMAN estas tools (`prospect_*`): son tools nativas de Teams. En code-mode: `const { run } = await import('/opt/gs-sdk/connectors.mjs'); await run('prospect_outreach_setup', { name: 'Héctor', business: 'Normi' })` — no hace falta que aparezcan en tu lista de tools, `run` las ejecuta por nombre. Si tienes tools MCP, es la del mismo nombre. Sólo si la llamada devuelve error, repórtalo tal cual; nunca digas que lo hiciste sin haberla llamado.",
@@ -249,6 +249,11 @@ export async function getSignatureBusiness(): Promise<string> {
 }
 
 /** Todo lo del remitente en una llamada, para el agente: lo que venga vacío no se toca. */
+/** Sin URLs ni saltos: el sitio va en `website`, y en la firma cada cosa va en su campo. */
+function plain(v: string): string {
+  return v.replace(/https?:\/\/\S+/gi, "").replace(/\s+/g, " ").replace(/^[\s,·—-]+|[\s,·—-]+$/g, "").trim();
+}
+
 export async function setupOutreach(args: {
   name?: string;
   business?: string;
@@ -270,13 +275,13 @@ export async function setupOutreach(args: {
     const cur = await getConfigMany(["prospeccion_from_email", "prospeccion_from_name"]);
     const r = await setSender({
       email: args.email ?? cur.prospeccion_from_email ?? "",
-      name: args.name ?? cur.prospeccion_from_name ?? "",
+      name: args.name !== undefined ? plain(args.name) : (cur.prospeccion_from_name ?? ""),
     });
     if ("error" in r && typeof r.error === "string") return { ok: false, error: r.error };
   }
-  if (args.business !== undefined) await setConfig("prospeccion_signature_business", args.business.trim().slice(0, 80));
-  if (args.tagline !== undefined) await setConfig("prospeccion_signature_tagline", args.tagline.trim().slice(0, 140));
-  if (args.title !== undefined) await setConfig("prospeccion_signature_title", args.title.trim().slice(0, 60));
+  if (args.business !== undefined) await setConfig("prospeccion_signature_business", plain(args.business).slice(0, 80));
+  if (args.tagline !== undefined) await setConfig("prospeccion_signature_tagline", plain(args.tagline).slice(0, 140));
+  if (args.title !== undefined) await setConfig("prospeccion_signature_title", plain(args.title).slice(0, 60));
   if (args.website !== undefined) {
     const w = args.website.trim();
     if (w && !/^https?:\/\/\S+$/.test(w)) return { ok: false, error: "El sitio va completo, con https://" };

@@ -317,8 +317,7 @@ export function prospectEmail(e: ProspectEmail): { html: string; text: string; i
       <table role="presentation" cellpadding="0" cellspacing="0"><tr>
         <td valign="middle" style="font:400 13px/1.5 ${fuente};color:#3f3f46">
           <div style="font-weight:600;color:#1f1f24">${escapeHtml(s.name)}</div>${firmaLineas ? `
-          <div>${escapeHtml(firmaLineas)}</div>` : ""}${sitioCorto ? `
-          <div><a href="${escapeHtml(s.website!)}" style="color:#3f3f46">${escapeHtml(sitioCorto)}</a></div>` : ""}${s.tagline ? `
+          <div>${escapeHtml(firmaLineas)}</div>` : ""}${s.tagline ? `
           <div style="color:#6b6b78">${escapeHtml(s.tagline)}</div>` : ""}
         </td>
       </tr></table>
