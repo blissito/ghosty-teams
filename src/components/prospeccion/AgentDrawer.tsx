@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { ArrowDown, ArrowUp, Check, ChevronDown, ChevronUp, FileText, Loader2, Mail, Paperclip, RotateCcw, Square, X } from "lucide-react";
+import { ArrowDown, ArrowUp, Check, ChevronDown, ChevronUp, FileText, Loader2, Mail, Maximize2, Minimize2, Paperclip, RotateCcw, Square, X } from "lucide-react";
 import { DropOverlay, useAdjuntos, useFileDrop } from "../chat/adjuntos";
 import { clearDrawerFn, drawerHistoryFn, listProspAgentsFn, previewSendFn } from "../../server/prospeccion";
 import { MailPreview } from "./MailPreview";
@@ -528,11 +528,16 @@ function MailCard({
   const [open, setOpen] = useState(!!previewKey);
   useEffect(() => { if (previewKey) setOpen(true); }, [previewKey, nonce]);
   const [state, setState] = useState<{ html: string; marca: string | null } | { error: string } | null>(null);
+  /** Expandido: el correo a toda altura en un panel a la izquierda del hilo, en vivo. */
+  const [expanded, setExpanded] = useState(false);
+  useEffect(() => { if (!expanded) return; const esc = (e: KeyboardEvent) => { if (e.key === "Escape") setExpanded(false); }; document.addEventListener("keydown", esc); return () => document.removeEventListener("keydown", esc); }, [expanded]);
 
   useEffect(() => {
     if (!open || !key) return;
     let alive = true;
-    setState(null);
+    // No se vacía mientras se vuelve a pedir: el texto anterior se queda hasta que llega
+    // el nuevo, y el cambio se ve como un cambio, no como un parpadeo.
+    setState((s) => (s && "html" in s ? s : null));
     previewSendFn({ data: { listId, f: filter, messageKey: key, subject: "" } })
       .then((r) => {
         if (!alive) return;
@@ -553,8 +558,30 @@ function MailCard({
       >
         <Mail size={13} className="text-brand" />
         <span className="flex-1 text-left">{t("Así se verá el correo")}</span>
+        <span
+          role="button"
+          title={expanded ? t("Volver a la card") : t("Ver completo")}
+          onClick={(e) => { e.stopPropagation(); setExpanded((v) => !v); setOpen(true); }}
+          className="rounded p-0.5 text-muted hover:text-ink"
+        >
+          {expanded ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
+        </span>
         {open ? <ChevronUp size={13} className="text-muted" /> : <ChevronDown size={13} className="text-muted" />}
       </button>
+      {expanded && state && "html" in state ? (
+        <div
+          data-keep-agent
+          className="fixed inset-y-0 left-0 right-0 z-30 flex flex-col md:left-auto md:right-[24rem] md:w-[min(680px,calc(100vw-24rem))] border-l border-border bg-surface shadow-2xl"
+        >
+          <div className="flex shrink-0 items-center justify-between border-b border-border px-4 py-3">
+            <div className="text-sm font-semibold">{t("Así se verá el correo")} <span className="text-xs font-normal text-muted">· {current.label}</span></div>
+            <button onClick={() => setExpanded(false)} className="rounded-lg p-1.5 text-muted hover:bg-surface-3"><X size={16} /></button>
+          </div>
+          <div className="min-h-0 flex-1 p-4">
+            <MailPreview html={state.html} marca={state.marca} mode="inline" fill />
+          </div>
+        </div>
+      ) : null}
       {open ? (
         <div className="px-4 pb-3">
           {messages.length > 1 ? (
@@ -571,7 +598,7 @@ function MailCard({
           ) : "error" in state ? (
             <p className="text-[11px] text-muted">{state.error}</p>
           ) : (
-            <MailPreview html={state.html} marca={state.marca} />
+            <MailPreview html={state.html} marca={state.marca} mode="inline" />
           )}
           {onSend ? (
             <button
