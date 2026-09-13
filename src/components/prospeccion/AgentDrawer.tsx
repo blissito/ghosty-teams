@@ -473,8 +473,8 @@ export function AgentDrawer({
                   if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(text); }
                 }}
                 rows={1}
-                placeholder={t("filtra las que no tienen teléfono… o suelta un archivo")}
-                className="max-h-32 min-w-0 flex-1 resize-none self-center bg-transparent py-1 text-xs leading-5 outline-none placeholder:text-muted"
+                placeholder={t("pídele algo, o suelta un archivo")}
+                className="max-h-32 min-w-0 flex-1 resize-none self-center bg-transparent py-1 text-xs leading-5 outline-none placeholder:text-muted placeholder:truncate [&::placeholder]:whitespace-nowrap"
               />
               {running ? (
                 <button onClick={stop} title={t("Detener")} className="grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-surface-3 hover:bg-border">
