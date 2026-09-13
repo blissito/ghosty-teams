@@ -57,29 +57,40 @@ export const createListFn = createServerFn({ method: "POST" })
     }
 
     /**
-     * Cero resultados NO crea lista. Antes sí: el usuario aterrizaba en una rejilla vacía
-     * sin explicación y la lista se quedaba en el historial para siempre, con nada dentro.
-     * Se dice qué se buscó y dónde, para que se vea que el lugar sí se entendió y lo que
-     * sobra son palabras.
+     * Cero resultados: primero se AFLOJA el criterio, y sólo si tampoco hay, se avisa.
+     *
+     * El índice exige todas las palabras, y «contadores que administren gasolinerías» no
+     * es un giro: es un giro («contadores») más una condición que ningún directorio guarda.
+     * Se recortan palabras por el final hasta que aparezca algo; la lista se llama como se
+     * pidió y `criteria` guarda lo que de verdad se buscó, que la pantalla enseña debajo.
+     * La condición se resuelve después, por columna, con «Enriquecer».
+     *
+     * Antes cero resultados creaba una lista vacía: el usuario aterrizaba en una rejilla en
+     * blanco sin explicación y la lista se quedaba en el historial para siempre.
      */
-    if (found.length === 0) {
-      let error = `No encontré «${criteria}». Prueba con menos palabras: el giro y el lugar, como «dentistas en Torreón».`;
-      if (src.id === "directorio") {
-        const { resolveCriteria } = await import("./prospeccion/sources/directorio");
-        const r = await resolveCriteria(criteria).catch(() => null);
-        if (r?.ok) {
-          const lugar = r.place.entidad && r.place.entidad !== r.place.nombre ? `${r.place.nombre}, ${r.place.entidad}` : r.place.nombre;
-          error = r.what
-            ? `No hay «${r.what}» en ${lugar}. Prueba con el giro solo, sin condiciones — por ejemplo «${r.what.split(" ")[0]} en ${r.place.nombre}».`
-            : `No hay negocios en ${lugar}.`;
+    let searched = criteria;
+    if (found.length === 0 && src.id === "directorio") {
+      const { resolveCriteria } = await import("./prospeccion/sources/directorio");
+      const r = await resolveCriteria(criteria).catch(() => null);
+      if (r?.ok) {
+        const terms = r.what.split(" ").filter(Boolean);
+        for (let k = terms.length - 1; k >= 1 && found.length === 0; k--) {
+          const what = terms.slice(0, k).join(" ");
+          searched = `${what} en ${r.place.nombre}`;
+          found = await src.search(searched, Math.min(data.limit ?? 100, 500)).catch(() => []);
         }
       }
-      return { ok: false as const, error };
+    }
+    if (found.length === 0) {
+      return {
+        ok: false as const,
+        error: `No encontré nada para «${criteria}». Prueba con el giro y el lugar, sin condiciones — por ejemplo «dentistas en Torreón».`,
+      };
     }
 
     const listId = await createList({
       name: (data.name ?? criteria).slice(0, 120),
-      criteria,
+      criteria: searched,
       source: src.id,
       createdBy: me.sub,
     });
