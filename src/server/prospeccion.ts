@@ -351,7 +351,16 @@ export const addColumnFn = createServerFn({ method: "POST" })
       }
     }
 
-    const { addColumn } = await import("./prospeccion/lists.server");
+    const { addColumn, listColumns } = await import("./prospeccion/lists.server");
+    // Un enriquecedor sólo una vez por lista: «Correo funcional» y «¿El correo sirve?» eran
+    // el mismo verificador creado dos veces con distinto nombre. Si ya existe, se devuelve
+    // ésa y la pantalla la vuelve a correr.
+    if (data.kind === "enrich" && (data.waterfall ?? []).length) {
+      const misma = (await listColumns(Number(data.listId))).find(
+        (c) => c.kind === "enrich" && JSON.stringify(c.recipe?.waterfall ?? []) === JSON.stringify(data.waterfall)
+      );
+      if (misma) return { ok: true as const, column: misma, existente: true as const };
+    }
     // Sin etiqueta la columna nace como un chip mudo que no se sabe qué es ni cómo quitar.
     if (!data.label?.trim()) data.label = data.kind === "ai" && data.mode === "research" ? "Dato nuevo" : data.kind === "ai" ? "Mensaje" : "Columna";
 
