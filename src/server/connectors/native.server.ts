@@ -422,6 +422,37 @@ export function nativeTools(dest: ToolDest | null): ConnectorTool[] {
       },
     },
     {
+      name: "prospect_test_send",
+      description:
+        "Manda una PRUEBA del correo de prospección a correos sueltos (hasta 5), por ejemplo al de la " +
+        "persona o a un colega, para verlo en un cliente de correo real. Usa el mensaje de la primera " +
+        "fila de la vista (`messageKey` = la columna escrita, o `__base__` para el mensaje base). No " +
+        "cuenta como envío ni toca a ningún prospecto.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          listId: { type: "number" },
+          to: { type: "array", items: { type: "string" }, description: "Correos destino" },
+          subject: { type: "string", description: "Asunto de la prueba" },
+          messageKey: { type: "string", description: "Columna del mensaje; `__base__` = el mensaje base. Sin él, el base." },
+          f: { type: "string", description: "Filtro codificado de la vista, si lo tienes" },
+        },
+        required: ["listId", "to"],
+      },
+      handler: async (_sub, args) => {
+        const a = args as { listId: number; to: string[]; subject?: string; messageKey?: string; f?: string };
+        const { sendTestEmail } = await import("../prospeccion/send.server");
+        return sendTestEmail({
+          listId: Number(a.listId),
+          to: a.to ?? [],
+          subject: a.subject ?? "",
+          messageKey: a.messageKey || "__base__",
+          f: a.f,
+          bySub: _sub,
+        });
+      },
+    },
+    {
       name: "prospect_outreach_setup",
       description:
         "Configura cómo salen los correos de prospección del equipo: quién firma (`name`), de qué " +

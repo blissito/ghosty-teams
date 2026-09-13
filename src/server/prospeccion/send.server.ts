@@ -368,3 +368,61 @@ function prettyPhone(e164: string): string {
   const m = /^52(\d{3})(\d{3})(\d{4})$/.exec(d);
   return m ? `+52 ${m[1]} ${m[2]} ${m[3]}` : `+${d}`;
 }
+
+/**
+ * Manda UNA prueba del correo (la primera fila de la vista con mensaje y correo, o el
+ * mensaje base) a direcciones sueltas. Lo usan el botón «Mandarme una prueba» y la tool
+ * del agente: «mándame una prueba a X y Y» no debería exigir meter X y Y como prospectos.
+ * No toca la bitácora: una prueba no es un toque.
+ */
+export async function sendTestEmail(args: {
+  listId: number;
+  f?: string;
+  messageKey: string;
+  subject: string;
+  to: string[];
+  bySub: string | null;
+}): Promise<{ ok: true; sent: string[]; from: string } | { ok: false; error: string }> {
+  const { listRows, listColumns } = await import("./lists.server");
+  const { decodeFilter, matches } = await import("../../lib/prospeccion-filter");
+  const { getMessageBase, effectiveFrom } = await import("./sender.server");
+  const { getConfig } = await import("../../config.server");
+  const { sendSesEmail } = await import("../ses.server");
+
+  const destinos = [...new Set(args.to.map((t) => t.trim().toLowerCase()).filter((t) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(t)))].slice(0, 5);
+  if (!destinos.length) return { ok: false, error: "Ningún correo válido a quien mandar la prueba" };
+
+  const cols = await listColumns(args.listId);
+  const fields = ["name", "phone", "email", "website", "address", "category", ...cols.map((c) => c.key)];
+  const todas = await listRows(args.listId, 20000);
+  const filtro = decodeFilter(args.f);
+  const rows = filtro.length ? todas.filter((r) => matches(r as unknown as Record<string, unknown>, filtro, fields)) : todas;
+  const esBase = args.messageKey === "__base__";
+  const base = esBase ? await getMessageBase() : "";
+  if (esBase && !base) return { ok: false, error: "Todavía no hay mensaje base." };
+  const row = esBase ? rows.find((r) => r.email) : rows.find((r) => r.data[args.messageKey]?.v?.trim() && r.email);
+  if (!row) return { ok: false, error: "Ninguna fila de la vista tiene mensaje y correo todavía." };
+
+  const waPhone = await getConfig("prospeccion_wa_phone");
+  const { html, text, inline } = await renderDraft({
+    subject: args.subject || "(sin asunto)",
+    body: esBase ? base : row.data[args.messageKey]!.v!,
+    businessName: row.name,
+    waPhone,
+    bySub: args.bySub,
+  });
+  const sender = await effectiveFrom();
+  const sent: string[] = [];
+  for (const to of destinos) {
+    const ok = await sendSesEmail({
+      to,
+      subject: `[PRUEBA] ${args.subject || "(sin asunto)"}`,
+      html,
+      text,
+      inline,
+      from: sender.own ? sender.from : undefined,
+    });
+    if (ok) sent.push(to);
+  }
+  return sent.length ? { ok: true, sent, from: sender.from } : { ok: false, error: "SES no aceptó la prueba" };
+}

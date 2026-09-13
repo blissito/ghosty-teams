@@ -260,7 +260,8 @@ export async function outreachBrief(bySub: string | null): Promise<string> {
     "   La persona lo ve renderizado en su panel al instante.",
     "2. Para personalizar lead por lead: `prospect_column` con `kind: \"ai\"`, `mode: \"pitch\"` y el",
     "   base como prompt (investiga cada negocio y lo adapta). Empieza con `limit: 3`.",
-    "3. Mandar: `prospect_send` abre la revisión; nunca se manda sin que la persona confirme.",
+    "3. Prueba: `prospect_test_send` manda el correo a los buzones que te digan (sin tocar prospectos).",
+    "4. Mandar: `prospect_send` abre la revisión; nunca se manda sin que la persona confirme.",
   ].join("\n");
 }
 
