@@ -370,7 +370,9 @@ export function nativeTools(dest: ToolDest | null): ConnectorTool[] {
           sobre: a.limit && a.limit > 0 ? `las primeras ${Math.floor(a.limit)} de la vista` : "toda la vista",
           nota:
             "La columna se está creando y llenando en la pantalla de la persona, con su progreso. " +
-            "No repitas la llamada ni esperes el resultado aquí: dile que ya va y qué va a ver. " +
+            "No repitas la llamada ni esperes el resultado aquí: dile en UNA frase que ya va, que las filas " +
+            "pulsan mientras trabaja, y que al terminar revise los correos en «Así se verá el correo» con ‹ ›. " +
+            "NO pidas que te avisen ni ofrezcas revisar después: la pantalla avisa sola cuando termina. " +
             "⚠️ NO SABES si encontró algo — el resultado no vuelve a este turno. No anuncies " +
             "que se llenó ni cuántas: eso lo dice la pantalla, con el motivo de las que se " +
             "saltaron. Si te preguntan cómo quedó, compruébalo con `prospect_gaps` antes de " +
