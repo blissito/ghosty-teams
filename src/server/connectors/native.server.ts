@@ -270,6 +270,10 @@ export function nativeTools(dest: ToolDest | null): ConnectorTool[] {
       },
       handler: async (_sub, args) => {
         const a = args as { listId: number; subject: string; f?: string };
+        // Sin asunto no se abre nada: la revisión aparecía en blanco y la persona tenía que
+        // repetir lo que ya había acordado en el chat. Y se guarda como asunto de la lista.
+        if (!String(a.subject ?? "").trim()) return { ok: false, error: "Falta el asunto: usa el que se acordó en la conversación, o propón uno y pásalo en `subject`." };
+        await (await import("../../config.server")).setConfig("prospeccion_last_subject", String(a.subject).trim().slice(0, 200)).catch(() => {});
         // ⚠️ El agente NO manda. Invariante del spec: «el agente propone, la persona
         // confirma todo lo que sale hacia fuera». Mandar es la única acción del módulo que
         // no se puede deshacer — un archivo se recupera 30 días, un correo enviado nunca.
