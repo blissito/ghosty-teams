@@ -151,7 +151,7 @@ export function SendReview({
           >
             <header className="shrink-0 flex items-start justify-between px-5 py-4 border-b border-border">
               <div>
-                <h2 className="font-bold text-[15px]">{t("Antes de mandar")}</h2>
+                <h2 className="font-bold text-[15px]">{t("Antes de enviar")}</h2>
                 <p className="text-xs text-muted mt-0.5">{t("Un correo enviado no se puede deshacer.")}</p>
               </div>
               <button onClick={onClose} className="p-1.5 rounded-lg text-muted hover:bg-surface-3">
@@ -281,7 +281,7 @@ export function SendReview({
                         disabled={probando}
                         className="inline-flex items-center gap-1.5 text-xs font-medium border border-border rounded-lg px-3 py-2 hover:bg-surface-3 disabled:opacity-50"
                       >
-                        {probando ? t("Mandando…") : t("Mandarme una prueba")}
+                        {probando ? t("Enviando…") : t("Enviarme una prueba")}
                       </button>
                       {pruebaOk ? (
                         <span className="text-xs text-emerald-500 truncate">
@@ -344,7 +344,7 @@ export function SendReview({
                 className={`inline-flex items-center gap-1.5 font-semibold text-sm rounded-lg px-4 py-2 hover:brightness-110 disabled:opacity-50 ${armado ? "bg-red-600 text-white" : "bg-brand text-brand-fg"}`}
               >
                 <Send size={13} />
-                {sending ? t("Mandando…") : armado ? `${t("¿Seguro? Mandar")} ${p?.irian.toLocaleString("es-MX") ?? ""} ${t("ahora")}` : `${t("Mandar")} ${p?.irian.toLocaleString("es-MX") ?? ""}`}
+                {sending ? t("Enviando…") : armado ? `${t("¿Seguro? Enviar")} ${p?.irian.toLocaleString("es-MX") ?? ""} ${t("ahora")}` : `${t("Enviar")} ${p?.irian.toLocaleString("es-MX") ?? ""}`}
               </button>
             </footer>
           </motion.div>

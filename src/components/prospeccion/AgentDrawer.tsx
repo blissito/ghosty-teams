@@ -642,7 +642,7 @@ function MailCard({
               onClick={() => onSend(current.key)}
               className="mt-2 text-xs font-medium text-brand underline underline-offset-2"
             >
-              {t("Abrir en Mandar")}
+              {t("Abrir en Enviar")}
             </button>
           ) : null}
         </div>

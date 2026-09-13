@@ -507,7 +507,7 @@ function ListPage() {
             */}
             {[
               { n: list.rows, l: t("filas"), c: null as Condition | null, hint: t("Toda la lista") },
-              { n: list.sent, l: t("mandados"), c: { op: "status", value: "sent" } as Condition, hint: t("Ya les salió el correo") },
+              { n: list.sent, l: t("enviados"), c: { op: "status", value: "sent" } as Condition, hint: t("Ya les salió el correo") },
               ...(list.bounced ? [{ n: list.bounced, l: t("rebotaron"), c: { op: "status", value: "bounced" } as Condition, hint: t("Buzón muerto: quedan en baja y no se les vuelve a escribir") }] : []),
               { n: list.opened + list.clicked, l: t("tibios"), c: { op: "temp", value: "tibio" } as Condition, hint: t("Abrieron o dieron clic") },
               { n: list.replied, l: t("calientes"), c: { op: "temp", value: "caliente" } as Condition, hint: t("Te escribieron: se les puede contestar libre") },
@@ -540,7 +540,7 @@ function ListPage() {
               className="inline-flex items-center gap-1.5 text-xs font-semibold border border-border rounded-lg px-3 py-2 hover:bg-surface-3 disabled:opacity-40"
               title={t("Mandarles correo a las filas que estás viendo")}
             >
-              <Send size={13} /> {t("Mandar a")} {view.length.toLocaleString("es-MX")}
+              <Send size={13} /> {t("Enviar a")} {view.length.toLocaleString("es-MX")}
             </button>
             ) : null}
             {/* Sólo lo ve quien puede repartir: el dueño del espacio, o quien creó la lista. */}

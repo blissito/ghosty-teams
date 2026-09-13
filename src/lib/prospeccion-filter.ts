@@ -30,7 +30,7 @@ export type Filter = Condition[];
 /** Los estados del embudo, con su nombre en la interfaz. */
 export const STATUSES: { id: string; label: string }[] = [
   { id: "new", label: "Sin tocar" },
-  { id: "sent", label: "Mandado" },
+  { id: "sent", label: "Enviado" },
   { id: "opened", label: "Abrió" },
   { id: "clicked", label: "Dio clic" },
   { id: "replied", label: "Contestó" },
