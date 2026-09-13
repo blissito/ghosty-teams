@@ -4,7 +4,7 @@ import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { ArrowLeft, Plus, Send, ShieldCheck, Sparkles, Target } from "lucide-react";
 import { useT } from "../i18n";
 import { me } from "../server/auth";
-import { addColumnFn, deleteColumnFn, getListFn, importTableFn, misPermisosFn, promoteEmailFn, runAiColumnFn, runColumnFn, promoteToBaseFn, setCellFn, setColumnOrderFn, setColumnWidthFn, saveViewFn, deleteViewFn } from "../server/prospeccion";
+import { addColumnFn, deleteColumnFn, getListFn, importTableFn, misPermisosFn, promoteEmailFn, runAiColumnFn, runColumnFn, promoteToBaseFn, setCellFn, setColumnOrderFn, setColumnWidthFn, saveViewFn, deleteViewFn, getProspBaseFn } from "../server/prospeccion";
 import { ProspGrid, aplanar, findLatLon, type GridRow } from "../components/prospeccion/Grid";
 import { FilterBar } from "../components/prospeccion/FilterBar";
 import { SendReview } from "../components/prospeccion/SendReview";
@@ -69,6 +69,9 @@ function ListPage() {
   const [sendOpen, setSendOpen] = useState(false);
   /** La última columna de mensaje escrita: el panel del agente la enseña sin preguntar. */
   const [previewKey, setPreviewKey] = useState<string | null>(null);
+  /** Hay mensaje base del equipo: la card lo ofrece aunque no haya columna escrita. */
+  const [hasBase, setHasBase] = useState(false);
+  useEffect(() => { getProspBaseFn().then((r) => setHasBase(!!r?.text)).catch(() => {}); }, []);
   /** Con qué columna abrir «Mandar» (la eligió el panel del agente). */
   const [sendKey, setSendKey] = useState<string | null>(null);
   const [sendSubject, setSendSubject] = useState("");
@@ -136,11 +139,13 @@ function ListPage() {
   // Sólo las columnas que ESCRIBIÓ el agente: una manual («Sector») como cuerpo del correo
   // es un accidente, y el panel del agente enseña lo que el agente hizo.
   const mensajes = useMemo(
-    () =>
-      (data?.columns ?? [])
+    () => [
+      ...(data?.columns ?? [])
         .filter((c) => c.kind === "ai" && c.recipe?.mode !== "research" && !c.recipe?.hidden)
         .map((c) => ({ key: c.key, label: c.label })),
-    [data]
+      ...(hasBase ? [{ key: "__base__", label: t("Mensaje base (sin personalizar)") }] : []),
+    ],
+    [data, hasBase, t]
   );
 
   /**
@@ -198,6 +203,11 @@ function ListPage() {
       }
       // El agente pidió una columna: se crea y se corre por el MISMO camino que el modal,
       // así que hereda el pulso de progreso y el aviso de por qué se saltó cada fila.
+      // El agente escribió el mensaje base: el panel lo enseña como correo.
+      if (ev.t === "prospeccion:base") {
+        setHasBase(!!ev.text);
+        setPreviewKey(ev.text ? "__base__" : null);
+      }
       if (ev.t === "prospeccion:column" && ev.listId === listId) {
         crearColumnaRef.current?.(
           { label: ev.label, kind: ev.kind, waterfall: ev.waterfall, prompt: ev.prompt, mode: ev.mode } as NewColumn,

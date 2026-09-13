@@ -55,7 +55,7 @@ export const Route = createFileRoute("/api/prospeccion/agent")({
         // worker firma la sesión con las CLAVES del env, y meter algo que cambia por lista
         // reciclaría la sesión en cada mensaje y tiraría el warm.
         const { listContext } = await import("../server/prospeccion/agent.server");
-        const contexto = await listContext(listId, body?.filter);
+        const contexto = await listContext(listId, body?.filter, me.sub);
 
         const stream = new ReadableStream({
           async start(controller) {

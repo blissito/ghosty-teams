@@ -75,7 +75,10 @@ async function senderContext(bySub: string | null): Promise<string> {
     const { activeBrandKit } = await import("../brand.server");
     const [sender, cta, wa, kit] = await Promise.all([getSender(), getCta(), getConfig("prospeccion_wa_phone"), activeBrandKit().catch(() => null)]);
     const nombre = sender.name || (await getUserName(bySub)) || kit?.name || "quien manda";
+    const { getMessageBase } = await import("./sender.server");
+    const base = await getMessageBase();
     return [
+      ...(base ? ["MENSAJE BASE ACORDADO CON EL EQUIPO (respeta su oferta, tono y estructura; personaliza, no lo copies tal cual):", `«${base}»`, ""] : []),
       "QUIÉN ESCRIBE Y CÓMO TERMINA EL CORREO:",
       `- Firma: ${nombre}${kit?.name ? `, de ${kit.name}` : ""}. NO escribas la firma: el sistema la pone al final.`,
       `- Cierre: el sistema añade ${describeCta(cta, wa)} justo después de tu texto. NO pidas otra cosa ni`,

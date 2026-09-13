@@ -33,7 +33,7 @@ function viewOf(rows: ProspRow[], filter: Filter, fields: string[]): ProspRow[] 
  * en vez de esperar: «8,400 no tienen correo, ¿se lo busco?». Un wizard de pasos fijos no
  * puede decir eso; sólo se puede mirando los datos.
  */
-export async function listContext(listId: number, encodedFilter?: string): Promise<string> {
+export async function listContext(listId: number, encodedFilter?: string, bySub: string | null = null): Promise<string> {
   const [fields, rows] = await Promise.all([fieldsOf(listId), listRows(listId, 20000)]);
   const l = await dbq(`SELECT name, criteria, views_json FROM gt_prosp_lists WHERE id = ? LIMIT 1`, [listId]);
   const vistas = parseViewNames(l[0]?.views_json);
@@ -72,6 +72,8 @@ export async function listContext(listId: number, encodedFilter?: string): Promi
     ``,
     `Puedes filtrar la vista con \`prospect_filter\`, agregar y correr columnas con`,
     `\`prospect_column\`, y leer una muestra con \`prospect_rows\`. Todo aplica a la VISTA.`,
+    ``,
+    await (await import("./sender.server")).outreachBrief(bySub).catch(() => ""),
   ]
     .filter(Boolean)
     .join("\n");

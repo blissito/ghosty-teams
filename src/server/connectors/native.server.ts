@@ -395,6 +395,33 @@ export function nativeTools(dest: ToolDest | null): ConnectorTool[] {
       },
     },
     {
+      name: "prospect_message_base",
+      description:
+        "Lee o guarda el MENSAJE BASE del equipo: el texto general del correo de prospección que " +
+        "luego se personaliza lead por lead. TEXTO PLANO con párrafos — sin HTML, sin asunto, sin " +
+        "firma, sin placeholders: la plantilla (cierre, firma, pie) la pone la plataforma. " +
+        "Sin `text` sólo lo lee. Con `text` lo guarda y la persona lo ve renderizado en su panel.",
+      inputSchema: {
+        type: "object",
+        properties: { text: { type: "string", description: "El mensaje base, 3-4 párrafos" } },
+      },
+      handler: async (_sub, args) => {
+        const a = args as { text?: string };
+        const { getMessageBase, setMessageBase } = await import("../prospeccion/sender.server");
+        if (!a.text?.trim()) return { ok: true, text: await getMessageBase() };
+        const text = await setMessageBase(a.text);
+        const { publish, ch } = await import("../bus.server");
+        const { currentNamespace } = await import("../tenant.server");
+        const ns = await currentNamespace();
+        publish(ch.user(ns, _sub), { t: "prospeccion:base", text });
+        return {
+          ok: true,
+          text,
+          nota: "Guardado y visible en el panel de la persona como correo renderizado. Ofrece ajustarlo o pasar a personalizar con prospect_column (mode pitch, limit 3).",
+        };
+      },
+    },
+    {
       name: "form_create",
       description:
         "Crea un formulario de intake con liga pública para mandarle a un cliente. Las respuestas " +

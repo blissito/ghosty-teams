@@ -152,3 +152,55 @@ export function describeCta(c: CtaConfig, waPhone: string | null): string {
   if (c.kind === "link") return `un botón «${c.label}» que abre ${c.url}`;
   return `la frase «${c.label}»`;
 }
+
+// ── El mensaje BASE ──────────────────────────────────────────────────────────────────────
+//
+// «Primero el general, luego lead por lead»: el usuario y el agente acuerdan un texto base
+// (qué ofrecemos, tono, estructura) y la columna `pitch` lo personaliza fila por fila con lo
+// que investiga. Es texto plano con párrafos, NO HTML: la plantilla (firma, cierre, pie) es
+// de la plataforma y el agente no la arma.
+export async function getMessageBase(): Promise<string> {
+  const c = await getConfigMany(["prospeccion_message_base"]);
+  return (c.prospeccion_message_base ?? "").trim();
+}
+
+export async function setMessageBase(text: string): Promise<string> {
+  const clean = text.replace(/<[^>]+>/g, "").replace(/\r/g, "").trim().slice(0, 4000);
+  await setConfig("prospeccion_message_base", clean);
+  return clean;
+}
+
+/**
+ * Lo que el agente tiene que saber del correo ANTES de proponer nada. Va en el contexto
+ * del panel y en el prompt de cada columna escrita. Sin esto armaba su propio HTML con
+ * placeholders y preguntaba quién firma.
+ */
+export async function outreachBrief(bySub: string | null): Promise<string> {
+  const { getUserName } = await import("./send.server");
+  const { getConfig } = await import("../../config.server");
+  const { activeBrandKit } = await import("../brand.server");
+  const [sender, cta, wa, kit, base] = await Promise.all([
+    getSender().catch(() => null),
+    getCta(),
+    getConfig("prospeccion_wa_phone"),
+    activeBrandKit().catch(() => null),
+    getMessageBase(),
+  ]);
+  const nombre = sender?.name || (await getUserName(bySub)) || kit?.name || "quien manda";
+  const remitente = sender?.status === "verified" ? sender.effectiveFrom : `${sender?.effectiveFrom ?? "noreply@ghosty.studio"}${sender?.email ? ` (su dominio ${sender.domain} aún no está verificado)` : " (sin dominio propio todavía)"}`;
+  return [
+    "[CÓMO SALE EL CORREO — lo arma la plataforma, tú NO escribes HTML ni plantillas]",
+    `Cada correo = tu texto (párrafos) + cierre + firma + pie legal. Eso ya está hecho.`,
+    `Firma: ${nombre}${kit?.name ? `, de ${kit.name}` : ""}${wa ? `, WhatsApp ${wa}` : ""}. Remitente: ${remitente}.`,
+    `Cierre: ${describeCta(cta, wa)}. No inventes otro cierre ni pidas dos cosas.`,
+    base ? `Mensaje base acordado (lo personalizas por fila):\n«${base}»` : "Todavía no hay mensaje base.",
+    "",
+    "Tu trabajo con el correo, en orden:",
+    "1. Si no hay mensaje base o te piden «el general / la plantilla»: escríbelo como TEXTO (3-4 párrafos,",
+    "   sin asunto, sin firma, sin HTML, sin placeholders) y guárdalo con `prospect_message_base`.",
+    "   La persona lo ve renderizado en su panel al instante.",
+    "2. Para personalizar lead por lead: `prospect_column` con `kind: \"ai\"`, `mode: \"pitch\"` y el",
+    "   base como prompt (investiga cada negocio y lo adapta). Empieza con `limit: 3`.",
+    "3. Mandar: `prospect_send` abre la revisión; nunca se manda sin que la persona confirme.",
+  ].join("\n");
+}

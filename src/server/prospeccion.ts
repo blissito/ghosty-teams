@@ -594,6 +594,13 @@ export const setProspCtaFn = createServerFn({ method: "POST" })
     return setCta(data);
   });
 
+export const getProspBaseFn = createServerFn({ method: "GET" }).handler(async () => {
+  const me = await sessionUser();
+  if (!me) return null;
+  const { getMessageBase } = await import("./prospeccion/sender.server");
+  return { text: await getMessageBase() };
+});
+
 /** Las fuentes disponibles, para el selector y para enseñárselas al agente. */
 export const listSourcesFn = createServerFn({ method: "GET" }).handler(async () => {
   const { SOURCES } = await import("./prospeccion/sources/index");
@@ -782,7 +789,13 @@ export const previewSendFn = createServerFn({ method: "POST" })
       : todas;
 
     // La primera fila que SÍ tenga mensaje y correo: previsualizar una vacía no enseña nada.
-    const row = rows.find((r) => r.data[data.messageKey]?.v?.trim() && r.email);
+    // «__base__»: el mensaje base del equipo sobre la primera fila con correo. Es lo que se
+    // enseña mientras aún no hay columna personalizada.
+    const { getMessageBase } = await import("./prospeccion/sender.server");
+    const esBase = data.messageKey === "__base__";
+    const base = esBase ? await getMessageBase() : "";
+    if (esBase && !base) return { ok: false as const, error: "Todavía no hay mensaje base.", html: "", to: "", sent: false, sinBoton: false, marca: null };
+    const row = esBase ? rows.find((r) => r.email) : rows.find((r) => r.data[data.messageKey]?.v?.trim() && r.email);
     if (!row) {
       return { ok: false as const, error: "Ninguna fila de la vista tiene mensaje y correo todavía.", html: "", to: "", sent: false, sinBoton: false, marca: null };
     }
@@ -790,7 +803,7 @@ export const previewSendFn = createServerFn({ method: "POST" })
     const waPhone = await getConfig("prospeccion_wa_phone");
     const { html, text, inline, preview, sinBoton, marca } = await renderDraft({
       subject: data.subject || "(sin asunto)",
-      body: row.data[data.messageKey]!.v!,
+      body: esBase ? base : row.data[data.messageKey]!.v!,
       businessName: row.name,
       waPhone,
       bySub: me.sub,
