@@ -217,7 +217,8 @@ export async function getMessageBase(): Promise<string> {
 }
 
 export async function setMessageBase(text: string): Promise<string> {
-  const clean = text.replace(/<[^>]+>/g, "").replace(/\r/g, "").trim().slice(0, 4000);
+  // Sin HTML ni markdown: es un correo, no un chat. Las negritas se quitan, el texto queda.
+  const clean = text.replace(/<[^>]+>/g, "").replace(/\*\*([^*\n]+)\*\*/g, "$1").replace(/^#{1,6}\s+/gm, "").replace(/\r/g, "").trim().slice(0, 4000);
   await setConfig("prospeccion_message_base", clean);
   return clean;
 }
@@ -254,7 +255,7 @@ export async function outreachBrief(bySub: string | null): Promise<string> {
     "",
     "Tu trabajo con el correo, en orden:",
     "1. Si no hay mensaje base o te piden «el general / la plantilla»: escríbelo como TEXTO (3-4 párrafos,",
-    "   sin asunto, sin firma, sin HTML, sin placeholders) y guárdalo: `run('prospect_message_base', { text })`.",
+    "   sin asunto, sin firma, sin HTML, SIN MARKDOWN —ni **negritas** ni #títulos ni viñetas: es un correo—, sin placeholders) y guárdalo: `run('prospect_message_base', { text })`.",
     "   La persona lo ve renderizado en su panel al instante.",
     "2. Para personalizar lead por lead: `prospect_column` con `kind: \"ai\"`, `mode: \"pitch\"` y el",
     "   base como prompt (investiga cada negocio y lo adapta). Empieza con `limit: 3`.",

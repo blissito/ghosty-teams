@@ -84,9 +84,20 @@ function bodyHtml(body: string, fuente: string): string {
     .map((line) =>
       line.startsWith("## ")
         ? `<div style="margin-top:14px;font:700 12px/1.4 ${fuente};letter-spacing:.06em;text-transform:uppercase;color:#6b6b78">${escapeHtml(line.slice(3))}</div>`
-        : linkUrls(escapeHtml(line))
+        : inlineMd(linkUrls(escapeHtml(line)))
     )
     .join("\n");
+}
+
+/**
+ * Lo mínimo de markdown que un modelo mete aunque se le pida que no: **negritas** y
+ * [enlaces](https://…). Corre sobre texto YA escapado; un asterisco suelto se queda como está.
+ * Sin esto los `**` llegaban literales al prospecto.
+ */
+function inlineMd(escaped: string): string {
+  return escaped
+    .replace(/\*\*([^*\n]+)\*\*/g, "<strong>$1</strong>")
+    .replace(/\[([^\]\n]+)\]\((https?:\/\/[^)\s]+)\)/g, (_m, t: string, u: string) => `<a href="${u}" style="color:#2f5bea;text-decoration:underline">${t}</a>`);
 }
 
 /** Una URL suelta en la prosa se vuelve enlace. Gmail lo hace solo; Outlook y Apple Mail

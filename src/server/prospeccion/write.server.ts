@@ -138,8 +138,8 @@ function buildPrompt(instruction: string, context: string, mode: AiMode, sobre =
       "- Usa los datos de arriba para no confundirlo con otro negocio del mismo nombre.",
       "",
       "REGLAS DE SALIDA (obligatorias):",
-      "- Responde SÓLO el texto del mensaje, listo para mandarse. Nada de preámbulos, comillas,",
-      "  markdown ni asunto.",
+      "- Responde SÓLO el texto del mensaje, listo para mandarse. Nada de preámbulos, comillas ni asunto.",
+      "- SIN MARKDOWN: es un correo. Ni **negritas**, ni #títulos, ni viñetas con guion.",
       "- Párrafos cortos separados por una línea en blanco. Sin firma: la pone el sistema.",
     ].join("\n");
   }
