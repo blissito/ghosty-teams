@@ -578,6 +578,22 @@ export const setProspSenderFn = createServerFn({ method: "POST" })
     return setSender(data);
   });
 
+export const getProspCtaFn = createServerFn({ method: "GET" }).handler(async () => {
+  const me = await sessionUser();
+  if (!me) return null;
+  const { getCta } = await import("./prospeccion/sender.server");
+  return getCta();
+});
+
+export const setProspCtaFn = createServerFn({ method: "POST" })
+  .validator((d: { kind: "wa" | "reply" | "link"; label: string; url: string }) => d)
+  .handler(async ({ data }) => {
+    const me = await sessionUser();
+    if (!me) return { error: "sin sesión" };
+    const { setCta } = await import("./prospeccion/sender.server");
+    return setCta(data);
+  });
+
 /** Las fuentes disponibles, para el selector y para enseñárselas al agente. */
 export const listSourcesFn = createServerFn({ method: "GET" }).handler(async () => {
   const { SOURCES } = await import("./prospeccion/sources/index");
@@ -711,6 +727,7 @@ export const sendFn = createServerFn({ method: "POST" })
             body: cuerpo,
             businessName: r.name,
             waPhone: waPhonePrev,
+            bySub: me.sub,
           });
           return { rowId: r.id, subject: data.subject, html, text };
         })
@@ -776,6 +793,7 @@ export const previewSendFn = createServerFn({ method: "POST" })
       body: row.data[data.messageKey]!.v!,
       businessName: row.name,
       waPhone,
+      bySub: me.sub,
     });
 
     // La pantalla enseña `preview` (imágenes incrustadas); la prueba manda `html` (cid:).

@@ -253,3 +253,59 @@ ${cta ? `
   // El mascot sólo se adjunta si de verdad se usa: con marca no aparece en el HTML.
   return { html, text, inline: conMascot && mascot ? [mascot] : [] };
 }
+
+// ── Correo de PROSPECCIÓN: habla una persona de un negocio, no el producto ──────────────
+//
+// `ghostyEmail` es «Ghosty hablando»: tarjeta, globo, título grande y botón. Sirve para
+// una notificación. Para un correo frío es exactamente lo contrario de lo que funciona:
+// el prospecto tiene que ver un correo que le escribió UNA persona con nombre y empresa,
+// con párrafos normales y una firma, y un solo cierre (WhatsApp, responder, o un enlace).
+// Cuanto más parece una plantilla, más parece spam.
+export type ProspectCta =
+  | { kind: "wa"; label: string; url: string }
+  | { kind: "reply"; label: string }
+  | { kind: "link"; label: string; url: string };
+
+export type ProspectEmail = {
+  /** Prosa escrita por el agente. SIEMPRE se escapa. Párrafos separados por línea en blanco. */
+  body: string;
+  signature: { name: string; business: string | null; phone: string | null; logoUrl: string | null };
+  cta: ProspectCta | null;
+  fontFamily?: string | null;
+  accent?: string | null;
+};
+
+export function prospectEmail(e: ProspectEmail): { html: string; text: string; inline: InlineImage[] } {
+  const fuente = `${e.fontFamily ? `${JSON.stringify(e.fontFamily)}, ` : ""}system-ui,-apple-system,Segoe UI,sans-serif`;
+  const acento = e.accent && /^#[0-9a-f]{6}$/i.test(e.accent) ? e.accent : "#2f5bea";
+  const s = e.signature;
+  const firmaLineas = [s.business, s.phone].filter(Boolean).join(" · ");
+  const pie = `Te escribe ${s.name}${s.business ? ` de ${s.business}` : ""}. Si no esperabas este correo, puedes ignorarlo.`;
+
+  const ctaHtml = !e.cta
+    ? ""
+    : e.cta.kind === "reply"
+      ? `<p style="margin:18px 0 0;font:400 15px/1.6 ${fuente};color:#1f1f24">${escapeHtml(e.cta.label)}</p>`
+      : `<p style="margin:18px 0 0"><a href="${escapeHtml(e.cta.url)}" style="display:inline-block;background:${acento};color:#fff;font:600 14px/1 ${fuente};padding:11px 16px;border-radius:8px;text-decoration:none">${escapeHtml(e.cta.label)}</a></p>`;
+
+  const html = `<!doctype html><html><body style="margin:0;padding:24px 12px;background:#ffffff">
+  <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="max-width:600px;margin:0 auto">
+    <tr><td style="font:400 15px/1.65 ${fuente};color:#1f1f24;white-space:pre-wrap">${bodyHtml(e.body, fuente)}</td></tr>
+    ${ctaHtml ? `<tr><td>${ctaHtml}</td></tr>` : ""}
+    <tr><td style="padding-top:26px">
+      <table role="presentation" cellpadding="0" cellspacing="0"><tr>
+        ${s.logoUrl ? `<td valign="middle" style="padding-right:12px"><img src="${escapeHtml(s.logoUrl)}" alt="" style="display:block;border:0;max-height:32px;max-width:120px"></td>` : ""}
+        <td valign="middle" style="font:400 13px/1.5 ${fuente};color:#3f3f46">
+          <div style="font-weight:600;color:#1f1f24">${escapeHtml(s.name)}</div>${firmaLineas ? `
+          <div>${escapeHtml(firmaLineas)}</div>` : ""}
+        </td>
+      </tr></table>
+    </td></tr>
+    <tr><td style="padding-top:22px;font:400 11px/1.5 ${fuente};color:#9a9aa3">${escapeHtml(pie)}</td></tr>
+  </table>
+</body></html>`;
+
+  const ctaText = !e.cta ? "" : e.cta.kind === "reply" ? e.cta.label : `${e.cta.label}: ${e.cta.url}`;
+  const text = [e.body.replace(/^## /gm, ""), ctaText, `— ${s.name}${firmaLineas ? `\n${firmaLineas}` : ""}`, pie].filter(Boolean).join("\n\n");
+  return { html, text, inline: [] };
+}

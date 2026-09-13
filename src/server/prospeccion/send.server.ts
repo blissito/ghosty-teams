@@ -267,8 +267,9 @@ export async function renderDraft(args: {
   body: string;
   businessName?: string | null;
   waPhone?: string | null;
+  /** Quién manda: su nombre firma si el workspace no puso un remitente con nombre. */
+  bySub?: string | null;
 }): Promise<{ html: string; text: string; inline: InlineImage[]; preview: string; sinBoton: boolean; marca: string | null }> {
-  const { ghostyEmail } = await import("../email-template.server");
 
   /**
    * La MARCA del workspace en el sobre.
@@ -299,38 +300,41 @@ export async function renderDraft(args: {
     : "";
 
   /**
-   * ⚠️ El botón va por `cta`, NO metido en el `body`.
+   * Quién firma y con qué cierra. Los dos son del WORKSPACE (remitente y CTA), no de la
+   * lista: es la misma persona escribiendo a todos sus prospectos.
    *
-   * `ghostyEmail` declara que el body es PROSA y lo escapa siempre —«puede venir de un
-   * modelo»—, que es exactamente lo correcto porque este cuerpo lo escribió un agente y
-   * acaba en el correo de un tercero. Al meter ahí el `<a href>` del botón, se escapaba
-   * también: al prospecto le llegaba el HTML como texto literal en vez de un botón.
-   * Medido con el smoke antes de que saliera un solo correo.
+   * ⚠️ El cierre va por `cta`, NO metido en el `body`: el cuerpo lo escribió un agente y
+   * se escapa siempre. Al meter ahí el `<a href>` del botón, llegaba como texto literal.
    */
-  const out = ghostyEmail({
-    head: args.subject,
+  const { getSender, getCta } = await import("./sender.server");
+  const [sender, cta] = await Promise.all([getSender(), getCta()]);
+  const firma = sender.name || (await getUserName(args.bySub ?? null)) || brand?.name || "El equipo";
+
+  const cierre =
+    cta.kind === "wa" ? (wa ? { kind: "wa" as const, label: cta.label, url: wa } : null)
+    : cta.kind === "link" ? (cta.url ? { kind: "link" as const, label: cta.label, url: cta.url } : null)
+    : { kind: "reply" as const, label: cta.label };
+
+  const { prospectEmail } = await import("../email-template.server");
+  const out = prospectEmail({
     body: args.body,
-    cta: wa ? { label: "Escríbenos por WhatsApp", url: wa } : undefined,
-    footer: "externo",
-    brand,
+    signature: {
+      name: firma,
+      business: brand?.name ?? null,
+      phone: args.waPhone ? prettyPhone(args.waPhone) : null,
+      logoUrl: brand?.logoUrl ?? null,
+    },
+    cta: cierre,
+    fontFamily: brand?.fontFamily ?? null,
+    accent: brand?.accent ?? null,
   });
 
-  /**
-   * Para MIRAR el correo, las imágenes van incrustadas como data URI.
-   *
-   * ⚠️ En el correo de verdad viajan como `cid:` —adjuntas al mensaje, sin una petición de
-   * red que el destinatario pague al abrir—, pero `cid:` sólo lo resuelve un cliente de
-   * correo. En un iframe se ve como imagen ROTA, y una previsualización con el logo roto
-   * hace dudar de que el correo esté bien cuando está perfecto.
-   *
-   * El HTML que SE MANDA no se toca: esto es una copia sólo para la pantalla.
-   */
   let paraMirar = out.html;
   for (const img of out.inline ?? []) {
     paraMirar = paraMirar.replaceAll(`cid:${img.cid}`, `data:${img.mime};base64,${img.bytes.toString("base64")}`);
   }
 
-  return { ...out, preview: paraMirar, sinBoton: !wa, marca: brand?.name ?? null };
+  return { ...out, preview: paraMirar, sinBoton: cta.kind === "wa" && !wa, marca: brand?.name ?? null };
 }
 
 /** El correo de quien está usando la app, para mandarle la prueba a él y no al prospecto. */
@@ -338,4 +342,18 @@ export async function getUserEmail(sub: string): Promise<string | null> {
   const { dbq } = await import("../../dbq.server");
   const r = await dbq(`SELECT email FROM gc_users WHERE sub = ? LIMIT 1`, [sub]).catch(() => []);
   return r[0]?.email ? String(r[0].email) : null;
+}
+
+export async function getUserName(sub: string | null): Promise<string | null> {
+  if (!sub) return null;
+  const { dbq } = await import("../../dbq.server");
+  const r = await dbq(`SELECT name FROM gc_users WHERE sub = ? LIMIT 1`, [sub]).catch(() => []);
+  return r[0]?.name ? String(r[0].name) : null;
+}
+
+/** +52 771 446 0521, para la firma. */
+function prettyPhone(e164: string): string {
+  const d = e164.replace(/\D/g, "");
+  const m = /^52(\d{3})(\d{3})(\d{4})$/.exec(d);
+  return m ? `+52 ${m[1]} ${m[2]} ${m[3]}` : `+${d}`;
 }

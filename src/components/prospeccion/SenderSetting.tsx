@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
-import { Check, Copy, Loader2, Mail, RefreshCw } from "lucide-react";
+import { Check, Copy, Loader2, Mail, MousePointerClick, RefreshCw } from "lucide-react";
 import { useT } from "../../i18n";
-import { getProspSenderFn, setProspSenderFn } from "../../server/prospeccion";
+import { getProspCtaFn, getProspSenderFn, setProspCtaFn, setProspSenderFn } from "../../server/prospeccion";
 
 type Sender = NonNullable<Awaited<ReturnType<typeof getProspSenderFn>>>;
 
@@ -153,6 +153,87 @@ export function SenderSetting() {
           )}
         </div>
       ) : null}
+    </div>
+  );
+}
+
+type Cta = NonNullable<Awaited<ReturnType<typeof getProspCtaFn>>>;
+
+/**
+ * Con qué cierra el correo. Una sola cosa que pedir, decidida una vez por workspace: el
+ * agente la conoce al redactar y no inventa otra, y la plantilla la pinta al final.
+ */
+export function CtaSetting() {
+  const t = useT();
+  const [c, setC] = useState<Cta | null>(null);
+  const [editing, setEditing] = useState(false);
+  const [kind, setKind] = useState<Cta["kind"]>("wa");
+  const [label, setLabel] = useState("");
+  const [url, setUrl] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => { getProspCtaFn().then((r) => { if (r) setC(r); }).catch(() => {}); }, []);
+
+  const save = async () => {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    const r = await setProspCtaFn({ data: { kind, label, url } }).catch(() => ({ error: t("No se pudo guardar") }));
+    setBusy(false);
+    if ("error" in r && r.error) { setError(r.error); return; }
+    setC(r as Cta);
+    setEditing(false);
+  };
+
+  if (!c) return null;
+  const KINDS: { id: Cta["kind"]; label: string }[] = [
+    { id: "wa", label: t("Botón a mi WhatsApp") },
+    { id: "reply", label: t("Que me responda el correo") },
+    { id: "link", label: t("Botón a un enlace") },
+  ];
+
+  return (
+    <div className="mt-1.5 text-xs flex items-center gap-2 flex-wrap">
+      <MousePointerClick size={13} className="text-muted shrink-0" />
+      {editing ? (
+        <>
+          <select value={kind} onChange={(e) => setKind(e.target.value as Cta["kind"])} className="bg-surface-2 border border-border rounded-lg px-2 py-1 outline-none focus:border-brand">
+            {KINDS.map((k) => <option key={k.id} value={k.id}>{k.label}</option>)}
+          </select>
+          <input
+            value={label}
+            onChange={(e) => setLabel(e.target.value)}
+            placeholder={kind === "reply" ? t("Si te interesa, responde y te cuento más.") : t("Texto del botón")}
+            onKeyDown={(e) => { if (e.key === "Enter") void save(); if (e.key === "Escape") setEditing(false); }}
+            className="w-64 bg-surface-2 border border-border rounded-lg px-2 py-1 outline-none focus:border-brand"
+          />
+          {kind === "link" ? (
+            <input
+              value={url}
+              onChange={(e) => setUrl(e.target.value)}
+              placeholder="https://…"
+              onKeyDown={(e) => { if (e.key === "Enter") void save(); if (e.key === "Escape") setEditing(false); }}
+              className="w-56 bg-surface-2 border border-border rounded-lg px-2 py-1 outline-none focus:border-brand"
+            />
+          ) : null}
+          <button onClick={() => void save()} disabled={busy} className="font-medium text-brand disabled:opacity-50">
+            {busy ? <Loader2 size={12} className="animate-spin" /> : t("Guardar")}
+          </button>
+          <button onClick={() => setEditing(false)} className="text-muted hover:text-ink">{t("Cancelar")}</button>
+        </>
+      ) : (
+        <button
+          onClick={() => { setKind(c.kind); setLabel(c.label); setUrl(c.url); setEditing(true); }}
+          className="text-muted hover:text-ink text-left"
+        >
+          {t("El correo cierra con")}{" "}
+          <span className="text-ink font-medium">
+            {c.kind === "wa" ? t("botón a WhatsApp") : c.kind === "link" ? t("botón a") + " " + c.url : t("«") + c.label + t("»")}
+          </span>
+        </button>
+      )}
+      {error ? <span className="text-red-500">{error}</span> : null}
     </div>
   );
 }

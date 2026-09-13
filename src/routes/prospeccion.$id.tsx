@@ -133,13 +133,12 @@ function ListPage() {
     [data]
   );
 
-  // Misma regla que `planSendFn`: es mensaje toda columna `ai` o `manual`; las escritas primero.
+  // Sólo las columnas que ESCRIBIÓ el agente: una manual («Sector») como cuerpo del correo
+  // es un accidente, y el panel del agente enseña lo que el agente hizo.
   const mensajes = useMemo(
     () =>
       (data?.columns ?? [])
-        .filter((c) => (c.kind === "ai" && c.recipe?.mode !== "research") || c.kind === "manual")
-        .filter((c) => !c.recipe?.hidden)
-        .sort((a, b) => Number(b.kind === "ai") - Number(a.kind === "ai"))
+        .filter((c) => c.kind === "ai" && c.recipe?.mode !== "research" && !c.recipe?.hidden)
         .map((c) => ({ key: c.key, label: c.label })),
     [data]
   );

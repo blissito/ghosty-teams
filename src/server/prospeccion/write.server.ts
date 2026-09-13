@@ -61,7 +61,33 @@ const SALIDA = [
 /** Alias exportado para el smoke: el contrato del prompt es lo que impide un dato inventado. */
 export const buildPromptForTest = (i: string, c: string, m: AiMode) => buildPrompt(i, c, m);
 
-function buildPrompt(instruction: string, context: string, mode: AiMode): string {
+/**
+ * Quién firma y con qué cierra, dicho al modelo antes de redactar.
+ *
+ * Sin esto inventaba su propio cierre («¿agendamos una llamada?») y firmaba como «El
+ * equipo»: luego la plantilla pegaba el botón real debajo y el correo pedía dos cosas.
+ */
+async function senderContext(bySub: string | null): Promise<string> {
+  try {
+    const { getSender, getCta, describeCta } = await import("./sender.server");
+    const { getUserName } = await import("./send.server");
+    const { getConfig } = await import("../../config.server");
+    const { activeBrandKit } = await import("../brand.server");
+    const [sender, cta, wa, kit] = await Promise.all([getSender(), getCta(), getConfig("prospeccion_wa_phone"), activeBrandKit().catch(() => null)]);
+    const nombre = sender.name || (await getUserName(bySub)) || kit?.name || "quien manda";
+    return [
+      "QUIÉN ESCRIBE Y CÓMO TERMINA EL CORREO:",
+      `- Firma: ${nombre}${kit?.name ? `, de ${kit.name}` : ""}. NO escribas la firma: el sistema la pone al final.`,
+      `- Cierre: el sistema añade ${describeCta(cta, wa)} justo después de tu texto. NO pidas otra cosa ni`,
+      "  repitas ese cierre: tu último párrafo lleva hacia él (qué gana si lo hace).",
+      "",
+    ].join("\n");
+  } catch {
+    return "";
+  }
+}
+
+function buildPrompt(instruction: string, context: string, mode: AiMode, sobre = ""): string {
   if (mode === "research") {
     return [
       "Vas a AVERIGUAR un dato de un negocio real y ponerlo en UNA celda de una tabla.",
@@ -93,6 +119,7 @@ function buildPrompt(instruction: string, context: string, mode: AiMode): string
       "DATOS QUE YA TENEMOS DE ESTE NEGOCIO:",
       context || "(sin datos)",
       "",
+      ...(sobre ? [sobre] : []),
       "QUÉ MENSAJE HAY QUE ESCRIBIR:",
       instruction,
       "",
@@ -119,6 +146,7 @@ function buildPrompt(instruction: string, context: string, mode: AiMode): string
     "DATOS DE ESTE NEGOCIO:",
     context || "(sin datos)",
     "",
+    ...(sobre ? [sobre] : []),
     "LO QUE HAY QUE ESCRIBIR:",
     instruction,
     "",
@@ -176,6 +204,8 @@ export async function runAiColumn(args: {
   if (!agent) return { done: 0, total: 0, filled: 0, error: "No hay ningún agente activo en este workspace" };
 
   const columnLabels = Object.fromEntries((await listColumns(args.listId)).map((c) => [c.key, c.label]));
+  // Una vez por columna, no por fila: remitente y cierre son del workspace.
+  const sobre = (args.mode ?? "write") === "research" ? "" : await senderContext(args.invokerSub ?? null);
   const todas = await listRows(args.listId);
   const filtradas = args.filter?.length
     ? todas.filter((r) => matches(r as unknown as Record<string, unknown>, args.filter!, args.fields ?? []))
@@ -209,7 +239,7 @@ export async function runAiColumn(args: {
           // con las 39 anteriores en el contexto y el modelo empezaría a mezclarlas.
           `prosp:${args.listId}:${args.key}:${row.id}`,
           "Prospección",
-          buildPrompt(args.instruction, rowContext(row, columnLabels), args.mode ?? "write"),
+          buildPrompt(args.instruction, rowContext(row, columnLabels), args.mode ?? "write", sobre),
           (chunk) => { out += chunk; },
           [],
           undefined,

@@ -112,3 +112,43 @@ export async function effectiveFrom(): Promise<{ from: string; own: boolean }> {
   const s = await getSender();
   return { from: s.effectiveFrom, own: s.status === "verified" };
 }
+
+// ── El cierre del correo (CTA) ───────────────────────────────────────────────────────────
+//
+// Un correo de prospección pide UNA cosa. Se decide por workspace, igual que el WhatsApp:
+// `wa` (botón a tu WhatsApp), `reply` (una frase que invita a contestar) o `link` (una URL
+// tuya: agenda, landing, formulario). El agente lo sabe al redactar para no inventar otro.
+export type CtaKind = "wa" | "reply" | "link";
+export type CtaConfig = { kind: CtaKind; label: string; url: string };
+
+const CTA_DEFAULT_LABEL: Record<CtaKind, string> = {
+  wa: "Escríbenos por WhatsApp",
+  reply: "Si te interesa, responde a este correo y te cuento más.",
+  link: "Agenda una llamada",
+};
+
+export async function getCta(): Promise<CtaConfig> {
+  const c = await getConfigMany(["prospeccion_cta_kind", "prospeccion_cta_label", "prospeccion_cta_url"]);
+  const kind = (["wa", "reply", "link"].includes(c.prospeccion_cta_kind ?? "") ? c.prospeccion_cta_kind : "wa") as CtaKind;
+  return {
+    kind,
+    label: (c.prospeccion_cta_label ?? "").trim() || CTA_DEFAULT_LABEL[kind],
+    url: (c.prospeccion_cta_url ?? "").trim(),
+  };
+}
+
+export async function setCta(args: { kind: CtaKind; label: string; url: string }): Promise<CtaConfig | { error: string }> {
+  const url = args.url.trim();
+  if (args.kind === "link" && !/^https?:\/\/\S+$/.test(url)) return { error: "Pon un enlace completo, con https://" };
+  await setConfig("prospeccion_cta_kind", args.kind);
+  await setConfig("prospeccion_cta_label", args.label.trim().slice(0, 80));
+  await setConfig("prospeccion_cta_url", args.kind === "link" ? url : "");
+  return getCta();
+}
+
+/** Cómo se le describe el cierre al agente que redacta, para que no invente otro. */
+export function describeCta(c: CtaConfig, waPhone: string | null): string {
+  if (c.kind === "wa") return waPhone ? `un botón «${c.label}» a WhatsApp` : "un botón a WhatsApp (todavía sin número configurado)";
+  if (c.kind === "link") return `un botón «${c.label}» que abre ${c.url}`;
+  return `la frase «${c.label}»`;
+}
