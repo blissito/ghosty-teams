@@ -165,6 +165,17 @@ export function cleanCellValue(raw: string, opts?: { multiline?: boolean; max?: 
     .replace(/```[\s\S]*?```/g, " ")   // bloques de código
     .replace(/<internal>[\s\S]*?<\/internal>/g, " ")
     .trim();
+  // Un primer párrafo que es narración del modelo («Voy a buscar…», «Primero reviso…»)
+  // se quita si hay más texto detrás. Le pasó a un pitch: la frase de arranque acabó como
+  // primera línea de un correo a un cliente.
+  if (opts?.multiline) {
+    const partes = v.split(/\n\s*\n/);
+    if (partes.length > 1 && /^(voy a|primero|déjame|dejame|antes de (escribir|redactar)|investigo|reviso|busco|permíteme|permiteme)\b/i.test(partes[0].trim())) {
+      v = partes.slice(1).join("\n\n");
+    }
+    // Y una narración pegada al primer párrafo sin línea en blanco («…antes de escribir el correo.Tus clientes…»).
+    v = v.replace(/^(voy a|primero|déjame|dejame|antes de)[^.!?\n]{0,160}[.!?]\s*/i, "");
+  }
   // Un mensaje de varios párrafos conserva sus saltos; una celda de dato se aplana.
   v = opts?.multiline
     ? v.replace(/[ \t]+/g, " ").replace(/\n{3,}/g, "\n\n").trim()
@@ -246,7 +257,10 @@ export async function runAiColumn(args: {
           buildPrompt(args.instruction, rowContext(row, columnLabels), args.mode ?? "write", sobre),
           (chunk) => { out += chunk; },
           [],
-          undefined,
+          // Lo que el modelo dice ANTES de una herramienta es narración («Voy a buscar…»),
+          // no la celda. Cada tool que arranca descarta lo acumulado: la respuesta es lo
+          // que viene después de la última.
+          (ev) => { if ((ev as { phase?: string } | null)?.phase !== "end") out = ""; },
           null,
           args.invokerSub,
           undefined,
