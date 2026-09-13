@@ -168,14 +168,7 @@ export function cleanCellValue(raw: string, opts?: { multiline?: boolean; max?: 
   // Un primer párrafo que es narración del modelo («Voy a buscar…», «Primero reviso…»)
   // se quita si hay más texto detrás. Le pasó a un pitch: la frase de arranque acabó como
   // primera línea de un correo a un cliente.
-  if (opts?.multiline) {
-    const partes = v.split(/\n\s*\n/);
-    if (partes.length > 1 && /^(voy a|primero|déjame|dejame|antes de (escribir|redactar)|investigo|reviso|busco|permíteme|permiteme)\b/i.test(partes[0].trim())) {
-      v = partes.slice(1).join("\n\n");
-    }
-    // Y una narración pegada al primer párrafo sin línea en blanco («…antes de escribir el correo.Tus clientes…»).
-    v = v.replace(/^(voy a|primero|déjame|dejame|antes de)[^.!?\n]{0,160}[.!?]\s*/i, "");
-  }
+  if (opts?.multiline) v = stripNarration(v);
   // Un mensaje de varios párrafos conserva sus saltos; una celda de dato se aplana.
   v = opts?.multiline
     ? v.replace(/[ \t]+/g, " ").replace(/\n{3,}/g, "\n\n").trim()
@@ -186,6 +179,21 @@ export function cleanCellValue(raw: string, opts?: { multiline?: boolean; max?: 
   }
   if (!v || v === "—" || v === "-") return null;
   return v.slice(0, opts?.max ?? 600);
+}
+
+/**
+ * Quita la narración del modelo al principio de un mensaje («Voy a buscar información
+ * real de este despacho antes de escribir.Tus clientes…»). Se aplica al escribir la celda
+ * Y al armar el correo: una celda vieja no puede salir así a un cliente.
+ */
+export function stripNarration(v: string): string {
+  const NARRA = /^(voy a|primero|déjame|dejame|antes de (escribir|redactar)|investigo|reviso|busco|permíteme|permiteme|ahora (sí )?(escribo|redacto)|aquí (va|está|tienes))\b/i;
+  // Primero la frase pegada al párrafo real («…antes de escribir el mensaje.Tus clientes…»):
+  // si se quitara el párrafo entero se llevaría también el texto bueno.
+  v = v.replace(/^(voy a|primero|déjame|dejame|antes de|permíteme|permiteme)[^.!?\n]{0,200}[.!?]\s*/i, "");
+  const partes = v.split(/\n\s*\n/);
+  if (partes.length > 1 && NARRA.test(partes[0].trim())) v = partes.slice(1).join("\n\n");
+  return v.trim();
 }
 
 export type WriteProgress = { done: number; total: number; filled: number };

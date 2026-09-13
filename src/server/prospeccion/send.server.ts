@@ -324,8 +324,9 @@ export async function renderDraft(args: {
     : { kind: "reply" as const, label: cta.label };
 
   const { prospectEmail } = await import("../email-template.server");
+  const { stripNarration } = await import("./write.server");
   const out = prospectEmail({
-    body: args.body,
+    body: stripNarration(args.body),
     signature: {
       name: firma,
       business: empresa,
