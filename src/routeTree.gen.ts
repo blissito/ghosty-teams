@@ -48,6 +48,7 @@ import { Route as CoeditarInvitacionTokenRouteImport } from './routes/coeditar.i
 import { Route as ArtefactoIdRawRouteImport } from './routes/artefacto.$id.raw'
 import { Route as ApiProspeccionAgentRouteImport } from './routes/api.prospeccion.agent'
 import { Route as ApiPSesRouteImport } from './routes/api.p.ses'
+import { Route as ApiInternalProspeccionRunRouteImport } from './routes/api.internal.prospeccion-run'
 import { Route as ApiInternalMembersRouteImport } from './routes/api.internal.members'
 import { Route as ApiInternalAnnouncementsRouteImport } from './routes/api.internal.announcements'
 import { Route as ApiInternalAlertRouteImport } from './routes/api.internal.alert'
@@ -271,6 +272,12 @@ const ApiPSesRoute = ApiPSesRouteImport.update({
   path: '/api/p/ses',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiInternalProspeccionRunRoute =
+  ApiInternalProspeccionRunRouteImport.update({
+    id: '/api/internal/prospeccion-run',
+    path: '/api/internal/prospeccion-run',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const ApiInternalMembersRoute = ApiInternalMembersRouteImport.update({
   id: '/api/internal/members',
   path: '/api/internal/members',
@@ -459,6 +466,7 @@ export interface FileRoutesByFullPath {
   '/api/internal/alert': typeof ApiInternalAlertRoute
   '/api/internal/announcements': typeof ApiInternalAnnouncementsRoute
   '/api/internal/members': typeof ApiInternalMembersRoute
+  '/api/internal/prospeccion-run': typeof ApiInternalProspeccionRunRoute
   '/api/p/ses': typeof ApiPSesRoute
   '/api/prospeccion/agent': typeof ApiProspeccionAgentRoute
   '/artefacto/$id/raw': typeof ArtefactoIdRawRoute
@@ -526,6 +534,7 @@ export interface FileRoutesByTo {
   '/api/internal/alert': typeof ApiInternalAlertRoute
   '/api/internal/announcements': typeof ApiInternalAnnouncementsRoute
   '/api/internal/members': typeof ApiInternalMembersRoute
+  '/api/internal/prospeccion-run': typeof ApiInternalProspeccionRunRoute
   '/api/p/ses': typeof ApiPSesRoute
   '/api/prospeccion/agent': typeof ApiProspeccionAgentRoute
   '/artefacto/$id/raw': typeof ArtefactoIdRawRoute
@@ -595,6 +604,7 @@ export interface FileRoutesById {
   '/api/internal/alert': typeof ApiInternalAlertRoute
   '/api/internal/announcements': typeof ApiInternalAnnouncementsRoute
   '/api/internal/members': typeof ApiInternalMembersRoute
+  '/api/internal/prospeccion-run': typeof ApiInternalProspeccionRunRoute
   '/api/p/ses': typeof ApiPSesRoute
   '/api/prospeccion/agent': typeof ApiProspeccionAgentRoute
   '/artefacto/$id/raw': typeof ArtefactoIdRawRoute
@@ -665,6 +675,7 @@ export interface FileRouteTypes {
     | '/api/internal/alert'
     | '/api/internal/announcements'
     | '/api/internal/members'
+    | '/api/internal/prospeccion-run'
     | '/api/p/ses'
     | '/api/prospeccion/agent'
     | '/artefacto/$id/raw'
@@ -732,6 +743,7 @@ export interface FileRouteTypes {
     | '/api/internal/alert'
     | '/api/internal/announcements'
     | '/api/internal/members'
+    | '/api/internal/prospeccion-run'
     | '/api/p/ses'
     | '/api/prospeccion/agent'
     | '/artefacto/$id/raw'
@@ -800,6 +812,7 @@ export interface FileRouteTypes {
     | '/api/internal/alert'
     | '/api/internal/announcements'
     | '/api/internal/members'
+    | '/api/internal/prospeccion-run'
     | '/api/p/ses'
     | '/api/prospeccion/agent'
     | '/artefacto/$id/raw'
@@ -868,6 +881,7 @@ export interface RootRouteChildren {
   ApiInternalAlertRoute: typeof ApiInternalAlertRoute
   ApiInternalAnnouncementsRoute: typeof ApiInternalAnnouncementsRoute
   ApiInternalMembersRoute: typeof ApiInternalMembersRoute
+  ApiInternalProspeccionRunRoute: typeof ApiInternalProspeccionRunRoute
   ApiPSesRoute: typeof ApiPSesRoute
   ApiProspeccionAgentRoute: typeof ApiProspeccionAgentRoute
   CoeditarInvitacionTokenRoute: typeof CoeditarInvitacionTokenRoute
@@ -1159,6 +1173,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiPSesRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/internal/prospeccion-run': {
+      id: '/api/internal/prospeccion-run'
+      path: '/api/internal/prospeccion-run'
+      fullPath: '/api/internal/prospeccion-run'
+      preLoaderRoute: typeof ApiInternalProspeccionRunRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/internal/members': {
       id: '/api/internal/members'
       path: '/api/internal/members'
@@ -1428,6 +1449,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiInternalAlertRoute: ApiInternalAlertRoute,
   ApiInternalAnnouncementsRoute: ApiInternalAnnouncementsRoute,
   ApiInternalMembersRoute: ApiInternalMembersRoute,
+  ApiInternalProspeccionRunRoute: ApiInternalProspeccionRunRoute,
   ApiPSesRoute: ApiPSesRoute,
   ApiProspeccionAgentRoute: ApiProspeccionAgentRoute,
   CoeditarInvitacionTokenRoute: CoeditarInvitacionTokenRoute,
@@ -1446,12 +1468,3 @@ const rootRouteChildren: RootRouteChildren = {
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
-
-import type { getRouter } from './router.tsx'
-import type { createStart } from '@tanstack/react-start'
-declare module '@tanstack/react-start' {
-  interface Register {
-    ssr: true
-    router: Awaited<ReturnType<typeof getRouter>>
-  }
-}
