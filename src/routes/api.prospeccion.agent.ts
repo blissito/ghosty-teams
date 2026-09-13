@@ -26,12 +26,17 @@ export const Route = createFileRoute("/api/prospeccion/agent")({
           text?: string;
           handle?: string;
           filter?: string;
+          attachments?: { fileId: string; mime: string | null; size: number | null; name: string | null }[];
         } | null;
         const text = (body?.text ?? "").trim();
         const listId = Number(body?.listId ?? 0);
         if (!text || !listId) return new Response("bad request", { status: 400 });
 
-        const { resolvedAgents, callAgentBackendStream } = await import("../agents.server");
+        const { resolvedAgents, callAgentBackendStream, buildMediaParts } = await import("../agents.server");
+        // Los adjuntos del turno, con las dos vías (bytes + URL firmada): el transporte
+        // elige. Es exactamente lo que hace el chat; sin esto el agente sólo podía leer
+        // lo que se le pegaba como texto.
+        const parts = await buildMediaParts((body?.attachments ?? []).slice(0, 10)).catch(() => []);
         const agents = await resolvedAgents().catch(() => []);
         const agent = body?.handle ? agents.find((a) => a.handle === body.handle) : agents[0];
         if (!agent) {
@@ -77,7 +82,7 @@ export const Route = createFileRoute("/api/prospeccion/agent")({
                 me.name ?? "Alguien",
                 `${contexto}\n\n---\n\n${text}`,
                 (chunk) => { respuesta += chunk; send({ t: "delta", v: chunk }); },
-                [],
+                parts,
                 (ev) => {
                   const nombre = (ev as { name?: string } | null)?.name;
                   if (nombre) usadas.push(String(nombre));

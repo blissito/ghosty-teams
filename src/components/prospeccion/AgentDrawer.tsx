@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { ArrowUp, Check, ChevronDown, ChevronUp, Mail, Square, X } from "lucide-react";
+import { ArrowUp, Check, ChevronDown, ChevronUp, FileText, Loader2, Mail, Paperclip, Square, X } from "lucide-react";
+import { DropOverlay, useAdjuntos, useFileDrop } from "../chat/adjuntos";
 import { drawerHistoryFn, listProspAgentsFn, previewSendFn } from "../../server/prospeccion";
 import { MailPreview } from "./MailPreview";
 import { useT } from "../../i18n";
@@ -68,6 +69,14 @@ export function AgentDrawer({
 }) {
   const t = useT();
   const still = useReducedMotion();
+  /**
+   * Adjuntos del turno: el análisis de servicio, la propuesta, el PDF con precios. Mismo
+   * camino que el chat (`/api/upload` → fileId → el agente recibe ACCESO al archivo, no el
+   * archivo). Sin esto el usuario tenía que pegar su documento como texto.
+   */
+  const adjuntos = useAdjuntos();
+  const fileRef = useRef<HTMLInputElement>(null);
+  const drop = useFileDrop((files) => adjuntos.addFiles(files));
   const [msgs, setMsgs] = useState<Msg[]>(() => historyCache.get(listId) ?? []);
   const [text, setText] = useState("");
   const [running, setRunning] = useState(false);
@@ -174,9 +183,12 @@ export function AgentDrawer({
   const send = useCallback(
     async (raw: string) => {
       const q = raw.trim();
-      if (!q || running) return;
+      if (!q || running || adjuntos.subiendo) return;
+      const attachments = adjuntos.listos();
+      const nombres = attachments.map((a) => a.name).filter(Boolean);
       setText("");
-      setMsgs((m) => [...m, { role: "user", text: q }, { role: "agent", text: "", tools: [], running: true }]);
+      adjuntos.limpiar();
+      setMsgs((m) => [...m, { role: "user", text: nombres.length ? `${q}\n📎 ${nombres.join(", ")}` : q }, { role: "agent", text: "", tools: [], running: true }]);
       setRunning(true);
 
       const ctrl = new AbortController();
@@ -194,7 +206,7 @@ export function AgentDrawer({
         const res = await fetch("/api/prospeccion/agent", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ listId, text: q, filter, handle }),
+          body: JSON.stringify({ listId, text: q, filter, handle, attachments }),
           signal: ctrl.signal,
         });
         if (!res.body) throw new Error("sin respuesta");
@@ -260,7 +272,7 @@ export function AgentDrawer({
         abortRef.current = null;
       }
     },
-    [listId, filter, running, handle, t]
+    [listId, filter, running, handle, t, adjuntos]
   );
 
   const stop = () => { abortRef.current?.abort(); setRunning(false); };
@@ -270,6 +282,7 @@ export function AgentDrawer({
       {open ? (
         <motion.div
           ref={panelRef}
+          {...drop.handlers}
           role="dialog"
           aria-modal="false"
           aria-label={t("Agente de prospección")}
@@ -279,6 +292,7 @@ export function AgentDrawer({
           transition={{ type: "spring", stiffness: 300, damping: 30 }}
           className="fixed bottom-0 right-0 top-0 z-40 flex w-full max-w-sm flex-col border-l border-border bg-surface shadow-2xl"
         >
+          <DropOverlay show={drop.dragOver} />
           <header className="shrink-0 flex items-center justify-between border-b border-border px-4 py-3">
             <div ref={pickRef} className="relative min-w-0">
               <button
@@ -383,7 +397,28 @@ export function AgentDrawer({
           ) : null}
 
           <footer className="shrink-0 border-t border-border p-3">
+            {adjuntos.pendientes.length ? (
+              <div className="mb-2 flex flex-wrap gap-1.5">
+                {adjuntos.pendientes.map((a) => (
+                  <span key={a.localId} className={`inline-flex items-center gap-1 rounded-lg border px-2 py-1 text-[11px] ${a.error ? "border-red-400 text-red-500" : "border-border bg-surface-2"}`}>
+                    {a.uploading ? <Loader2 size={11} className="animate-spin" /> : <FileText size={11} />}
+                    <span className="max-w-[160px] truncate">{a.name}</span>
+                    <button onClick={() => adjuntos.quitar(a.localId)} className="text-muted hover:text-ink"><X size={11} /></button>
+                  </span>
+                ))}
+              </div>
+            ) : null}
+            <input
+              ref={fileRef}
+              type="file"
+              multiple
+              hidden
+              onChange={(e) => { if (e.target.files?.length) adjuntos.addFiles(e.target.files); e.target.value = ""; }}
+            />
             <div className="flex items-center gap-2 rounded-xl border border-border bg-surface-2 px-3 py-2 focus-within:border-brand">
+              <button onClick={() => fileRef.current?.click()} title={t("Adjuntar un archivo para que lo lea")} className="shrink-0 text-muted hover:text-ink">
+                <Paperclip size={14} />
+              </button>
               <textarea
                 ref={inputRef}
                 value={text}
@@ -392,7 +427,7 @@ export function AgentDrawer({
                   if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(text); }
                 }}
                 rows={1}
-                placeholder={t("filtra las que no tienen teléfono…")}
+                placeholder={t("filtra las que no tienen teléfono… o suelta un archivo")}
                 className="max-h-32 min-w-0 flex-1 resize-none self-center bg-transparent py-1 text-xs leading-5 outline-none placeholder:text-muted"
               />
               {running ? (
