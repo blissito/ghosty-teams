@@ -50,6 +50,47 @@ function domainOf(email: string): string | null {
   return m ? m[1] : null;
 }
 
+/** Sin URLs ni saltos: el sitio va en `website`, y en la firma cada cosa va en su campo. */
+function plain(v: string): string {
+  return v.replace(/https?:\/\/\S+/gi, "").replace(/\s+/g, " ").replace(/^[\s,·—-]+|[\s,·—-]+$/g, "").trim();
+}
+
+/**
+ * El logo, sacado del sitio. Orden: un <img> que se llame logo, el apple-touch-icon (un
+ * cuadrado limpio de 180px, pensado para esto), el favicon en png/svg, y al final og:image
+ * (suele ser un banner 1200×630, mal como logo pero mejor que nada).
+ */
+export async function discoverLogo(website: string): Promise<string | null> {
+  try {
+    // Tres intentos: muchos sitios pequeños (los nuestros incluidos) duermen y el primer
+    // golpe devuelve 502 mientras despiertan.
+    let res: Response | null = null;
+    for (let i = 0; i < 3; i++) {
+      const ctrl = new AbortController();
+      const to = setTimeout(() => ctrl.abort(), 8000);
+      res = await fetch(website, { signal: ctrl.signal, headers: { "user-agent": "Mozilla/5.0 (compatible; GhostyTeams/1.0)" } }).catch(() => null);
+      clearTimeout(to);
+      if (res?.ok) break;
+      await new Promise((r) => setTimeout(r, 2500));
+    }
+    if (!res?.ok) return null;
+    const html = (await res.text()).slice(0, 400_000);
+    const abs = (u: string) => { try { return new URL(u, website).toString(); } catch { return null; } };
+    const attr = (tag: string, key: string) => new RegExp(`<${tag}[^>]*\\b${key}=["']([^"']+)["'][^>]*>`, "i").exec(html)?.[1];
+    const imgLogo = /<img[^>]+(?:src|alt|class|id)=["'][^"']*logo[^"']*["'][^>]*>/i.exec(html)?.[0];
+    const imgSrc = imgLogo ? /src=["']([^"']+)["']/i.exec(imgLogo)?.[1] : undefined;
+    const candidates = [
+      imgSrc,
+      /<link[^>]+rel=["'][^"']*apple-touch-icon[^"']*["'][^>]*>/i.exec(html)?.[0] && /href=["']([^"']+)["']/i.exec(/<link[^>]+rel=["'][^"']*apple-touch-icon[^"']*["'][^>]*>/i.exec(html)![0])?.[1],
+      (() => { const m = /<link[^>]+rel=["'](?:shortcut )?icon["'][^>]*>/i.exec(html)?.[0]; const h = m ? /href=["']([^"']+)["']/i.exec(m)?.[1] : undefined; return h && /\.(png|svg)(\?|$)/i.test(h) ? h : undefined; })(),
+      attr("meta", "property=[\"']og:image[\"'][^>]*content") ?? /<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']/i.exec(html)?.[1],
+    ].filter((u): u is string => !!u).map(abs).filter((u): u is string => !!u && /^https:\/\//.test(u));
+    return candidates[0] ?? null;
+  } catch {
+    return null;
+  }
+}
+
 function formatFrom(name: string, email: string): string {
   const n = name.trim().replace(/["<>\r\n]/g, "");
   return n ? `${n} <${email}>` : email;
@@ -204,7 +245,7 @@ export async function outreachBrief(bySub: string | null): Promise<string> {
     "[CÓMO SALE EL CORREO — lo arma la plataforma, tú NO escribes HTML ni plantillas]",
     `Cada correo = tu texto (párrafos) + cierre + firma + pie legal. Eso ya está hecho.`,
     `Firma: ${nombre}${empresa ? `, de ${empresa}` : ""}${wa ? `, WhatsApp ${wa}` : ""}. Remitente: ${remitente}.`,
-    `Membrete y firma: ${(await getSignatureExtras()).logoUrl ? "logo propio" : kit?.logoUrl ? "logo de la marca activa" : "sin logo"}${(await getSignatureExtras()).website ? `, sitio ${(await getSignatureExtras()).website}` : ", sin sitio web"}${(await getSignatureExtras()).title ? `, cargo «${(await getSignatureExtras()).title}»` : ""}. Se cambian con \`title\`, \`website\` y \`logoUrl\` (URL https directa a un png/svg) en \`prospect_outreach_setup\`. El sitio va SÓLO en \`website\` (se pinta como membrete y bajo el cierre): no lo repitas en tagline, business ni name. El cargo va en \`title\`, no dentro de \`name\`.`,
+    `Membrete y firma: ${(await getSignatureExtras()).logoUrl ? "logo propio" : kit?.logoUrl ? "logo de la marca activa" : "sin logo"}${(await getSignatureExtras()).website ? `, sitio ${(await getSignatureExtras()).website}` : ", sin sitio web"}${(await getSignatureExtras()).title ? `, cargo «${(await getSignatureExtras()).title}»` : ""}. Se cambian con \`title\`, \`website\` y \`logoUrl\` en \`prospect_outreach_setup\`. Al poner \`website\` la plataforma saca el logo del sitio sola; \`logoUrl\` sólo si quieren otro. El sitio va SÓLO en \`website\` (se pinta como membrete y bajo el cierre): no lo repitas en tagline, business ni name. El cargo va en \`title\`, no dentro de \`name\`.`,
     `Pie del correo: «Te escribe ${nombre}${empresa ? ` de ${empresa}` : ""}${(await getSignatureTagline()) ? `, ${await getSignatureTagline()}` : ""}. Si no esperabas este correo, puedes ignorarlo.» La frase de ignorar es fija (es lo honesto en un correo frío); lo que dice de la empresa se cambia con \`tagline\` en \`prospect_outreach_setup\`.`,
     "Si te piden cambiar la firma, la empresa, el remitente, el cierre o el WhatsApp: hazlo con `prospect_outreach_setup`, no lo pidas por chat.",
     "CÓMO SE LLAMAN estas tools (`prospect_*`): son tools nativas de Teams. En code-mode: `const { run } = await import('/opt/gs-sdk/connectors.mjs'); await run('prospect_outreach_setup', { name: 'Héctor', business: 'Normi' })` — no hace falta que aparezcan en tu lista de tools, `run` las ejecuta por nombre. Si tienes tools MCP, es la del mismo nombre. Sólo si la llamada devuelve error, repórtalo tal cual; nunca digas que lo hiciste sin haberla llamado.",
@@ -230,14 +271,15 @@ export async function outreachBrief(bySub: string | null): Promise<string> {
 /** Una línea de qué hace la empresa: va bajo la firma y en el pie. */
 export async function getSignatureTagline(): Promise<string> {
   const c = await getConfigMany(["prospeccion_signature_tagline"]);
-  return (c.prospeccion_signature_tagline ?? "").trim();
+  // Se limpia también al LEER: lo guardado antes de la limpieza traía la URL del sitio.
+  return plain(c.prospeccion_signature_tagline ?? "");
 }
 
 /** Cargo, sitio y logo propios de la firma. Vacíos = no se pintan (o el logo de la marca). */
 export async function getSignatureExtras(): Promise<{ title: string; website: string; logoUrl: string }> {
   const c = await getConfigMany(["prospeccion_signature_title", "prospeccion_signature_website", "prospeccion_signature_logo"]);
   return {
-    title: (c.prospeccion_signature_title ?? "").trim(),
+    title: plain(c.prospeccion_signature_title ?? ""),
     website: (c.prospeccion_signature_website ?? "").trim(),
     logoUrl: (c.prospeccion_signature_logo ?? "").trim(),
   };
@@ -245,15 +287,10 @@ export async function getSignatureExtras(): Promise<{ title: string; website: st
 
 export async function getSignatureBusiness(): Promise<string> {
   const c = await getConfigMany(["prospeccion_signature_business"]);
-  return (c.prospeccion_signature_business ?? "").trim();
+  return plain(c.prospeccion_signature_business ?? "");
 }
 
 /** Todo lo del remitente en una llamada, para el agente: lo que venga vacío no se toca. */
-/** Sin URLs ni saltos: el sitio va en `website`, y en la firma cada cosa va en su campo. */
-function plain(v: string): string {
-  return v.replace(/https?:\/\/\S+/gi, "").replace(/\s+/g, " ").replace(/^[\s,·—-]+|[\s,·—-]+$/g, "").trim();
-}
-
 export async function setupOutreach(args: {
   name?: string;
   business?: string;
@@ -286,10 +323,15 @@ export async function setupOutreach(args: {
     const w = args.website.trim();
     if (w && !/^https?:\/\/\S+$/.test(w)) return { ok: false, error: "El sitio va completo, con https://" };
     await setConfig("prospeccion_signature_website", w.slice(0, 200));
+    // Sin logo explícito, se saca del sitio: «pon el logo» no debería exigir la URL exacta.
+    if (w && args.logoUrl === undefined) {
+      const found = await discoverLogo(w);
+      if (found) await setConfig("prospeccion_signature_logo", found.slice(0, 300));
+    }
   }
   if (args.logoUrl !== undefined) {
     const l = args.logoUrl.trim();
-    if (l && !/^https:\/\/\S+\.(png|jpe?g|svg|webp)(\?\S*)?$/i.test(l)) return { ok: false, error: "El logo tiene que ser una URL https a un png/jpg/svg/webp" };
+    if (l && !/^https:\/\/\S+$/i.test(l)) return { ok: false, error: "El logo tiene que ser una URL https a la imagen" };
     await setConfig("prospeccion_signature_logo", l.slice(0, 300));
   }
   if (args.ctaKind || args.ctaLabel !== undefined || args.ctaUrl !== undefined) {
