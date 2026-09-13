@@ -391,6 +391,14 @@ export async function runAiColumn(args: {
         failed++;
         console.warn("[prospeccion] fila", row.id, String(e).slice(0, 120));
       }
+      // El transporte NO lanza cuando el worker muere: escribe «⚠️ No pude contactar a @…»
+      // como si fuera texto. En un chat eso es un aviso; en una celda es un correo que dice
+      // eso. Se trata como el fallo que es, y la celda queda vacía para volver a correrla.
+      if (/⚠️ No pude contactar a @/.test(out)) {
+        console.warn("[prospeccion] fila", row.id, "el turno del agente murió:", out.slice(0, 120));
+        out = "";
+        failed++;
+      }
 
       // Un pitch investigado es un correo entero: varios párrafos y más de 600 letras.
       // El pitch viene marcado: se toma el ÚLTIMO <correo>…</correo> y nada más. Si el
