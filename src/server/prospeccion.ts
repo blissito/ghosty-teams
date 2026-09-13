@@ -169,14 +169,24 @@ export const drawerHistoryFn = createServerFn({ method: "GET" })
     return { msgs: await drawerHistory(Number(data.listId), me.sub) };
   });
 
-/** Vaciar la conversación. No toca la memoria del agente, sólo lo que se ve. */
+/**
+ * Empezar de cero: borra lo que se ve Y la memoria del agente en esta conversación.
+ *
+ * ⚠️ Lo segundo es lo que importa: una sesión abierta congela las tools con las que nació
+ * (ficha «la sesión ACP congela modelo y tools»). Cuando se añade una herramienta nueva, el
+ * agente de una conversación vieja no la tiene, y sin este botón no había forma de dársela.
+ */
 export const clearDrawerFn = createServerFn({ method: "POST" })
-  .validator((d: { listId: number }) => d)
+  .validator((d: { listId: number; handle?: string | null }) => d)
   .handler(async ({ data }) => {
     const me = await sessionUser();
     if (!me) return { ok: false as const };
     const { clearDrawer } = await import("./prospeccion/agent.server");
     await clearDrawer(Number(data.listId), me.sub);
+    const { resolvedAgents, resetAgentSession } = await import("../agents.server");
+    const agents = await resolvedAgents().catch(() => []);
+    const agent = data.handle ? agents.find((a) => a.handle === data.handle) : agents[0];
+    if (agent) await resetAgentSession(agent, `prosp:drawer:v2:${Number(data.listId)}:${me.sub}`).catch(() => {});
     return { ok: true as const };
   });
 

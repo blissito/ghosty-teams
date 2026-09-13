@@ -58,27 +58,38 @@ function formatFrom(name: string, email: string): string {
 async function dkimOf(domain: string): Promise<{ status: DomainStatus; dns: { name: string; value: string }[]; error?: string }> {
   const c = ses();
   if (!c) return { status: "none", dns: [], error: "Correo no configurado en este servidor" };
+  const toDns = (tokens: string[]) => tokens.map((t) => ({ name: `${t}._domainkey.${domain}`, value: `${t}.dkim.amazonses.com` }));
+  // Se LEE primero. Un dominio ya verificado no necesita que se pida nada, y la lectura es
+  // lo único que seguro permite la llave: si `VerifyDomainDkim` no está en su policy, antes
+  // esto caía al catch y un dominio en `Success` salía como «sin verificar».
+  let dk: { status?: string; tokens: string[] } = { tokens: [] };
+  let vs: string | undefined;
   try {
-    // `VerifyDomainDkim` es idempotente: devuelve los mismos tokens si ya se pidió.
-    const v = await c.send(new VerifyDomainDkimCommand({ Domain: domain }));
-    const tokens = v.DkimTokens ?? [];
-    const dns = tokens.map((t) => ({ name: `${t}._domainkey.${domain}`, value: `${t}.dkim.amazonses.com` }));
     const [d, ver] = await Promise.all([
       c.send(new GetIdentityDkimAttributesCommand({ Identities: [domain] })),
       c.send(new GetIdentityVerificationAttributesCommand({ Identities: [domain] })),
     ]);
-    const dk = d.DkimAttributes?.[domain]?.DkimVerificationStatus;
-    const vs = ver.VerificationAttributes?.[domain]?.VerificationStatus;
-    // Con Easy DKIM, el dominio queda verificado cuando los CNAME resuelven: DKIM y la
-    // identidad pasan a Success juntos. Con uno solo, todavía no se puede mandar.
-    const status: DomainStatus =
-      dk === "Success" && vs === "Success" ? "verified"
-      : dk === "Failed" || vs === "Failed" ? "failed"
-      : "pending";
-    return { status, dns };
+    const a = d.DkimAttributes?.[domain];
+    dk = { status: a?.DkimVerificationStatus, tokens: a?.DkimTokens ?? [] };
+    vs = ver.VerificationAttributes?.[domain]?.VerificationStatus;
   } catch (e) {
     return { status: "none", dns: [], error: String(e instanceof Error ? e.message : e).slice(0, 200) };
   }
+  if (dk.status === "Success" && vs === "Success") return { status: "verified", dns: toDns(dk.tokens) };
+
+  // No está verificado: se piden (o se repiten) los tokens. Es idempotente.
+  let tokens = dk.tokens;
+  let error: string | undefined;
+  if (!tokens.length) {
+    try {
+      const v = await c.send(new VerifyDomainDkimCommand({ Domain: domain }));
+      tokens = v.DkimTokens ?? [];
+    } catch (e) {
+      error = String(e instanceof Error ? e.message : e).slice(0, 200);
+    }
+  }
+  if (!tokens.length) return { status: "none", dns: [], error: error ?? "SES no devolvió registros" };
+  return { status: dk.status === "Failed" || vs === "Failed" ? "failed" : "pending", dns: toDns(tokens), error };
 }
 
 export async function getSender(): Promise<SenderInfo> {
@@ -194,6 +205,7 @@ export async function outreachBrief(bySub: string | null): Promise<string> {
     `Cada correo = tu texto (párrafos) + cierre + firma + pie legal. Eso ya está hecho.`,
     `Firma: ${nombre}${empresa ? `, de ${empresa}` : ""}${wa ? `, WhatsApp ${wa}` : ""}. Remitente: ${remitente}.`,
     "Si te piden cambiar la firma, la empresa, el remitente, el cierre o el WhatsApp: hazlo con `prospect_outreach_setup`, no lo pidas por chat.",
+    "⚠️ Si NO tienes `prospect_outreach_setup` o `prospect_message_base` entre tus herramientas, di exactamente: «necesito que reinicies esta conversación (Empezar de cero) para tener esa herramienta». No digas que lo hiciste.",
     `Cierre: ${describeCta(cta, wa)}. No inventes otro cierre ni pidas dos cosas.`,
     base ? `Mensaje base acordado (lo personalizas por fila):\n«${base}»` : "Todavía no hay mensaje base.",
     "",

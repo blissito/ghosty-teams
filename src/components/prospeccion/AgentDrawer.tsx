@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { ArrowUp, Check, ChevronDown, ChevronUp, FileText, Loader2, Mail, Paperclip, Square, X } from "lucide-react";
+import { ArrowDown, ArrowUp, Check, ChevronDown, ChevronUp, FileText, Loader2, Mail, Paperclip, RotateCcw, Square, X } from "lucide-react";
 import { DropOverlay, useAdjuntos, useFileDrop } from "../chat/adjuntos";
-import { drawerHistoryFn, listProspAgentsFn, previewSendFn } from "../../server/prospeccion";
+import { clearDrawerFn, drawerHistoryFn, listProspAgentsFn, previewSendFn } from "../../server/prospeccion";
 import { MailPreview } from "./MailPreview";
 import { useT } from "../../i18n";
 import { registerModalEsc } from "../../utils/modal-esc";
@@ -155,7 +155,26 @@ export function AgentDrawer({
     return () => document.removeEventListener("mousedown", close);
   }, [picking]);
   useEffect(() => { historyCache.set(listId, msgs); }, [listId, msgs]);
-  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [msgs]);
+  /**
+   * Auto-scroll sólo si ya se estaba abajo. Si la persona subió a releer, el texto que
+   * llega no la arrastra; el botón de «ir abajo» aparece en su lugar.
+   */
+  const listRef = useRef<HTMLDivElement>(null);
+  const [atBottom, setAtBottom] = useState(true);
+  const onListScroll = () => {
+    const el = listRef.current;
+    if (!el) return;
+    setAtBottom(el.scrollHeight - el.scrollTop - el.clientHeight < 80);
+  };
+  useEffect(() => { if (atBottom) bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [msgs, atBottom]);
+  const scrollDown = () => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }); setAtBottom(true); };
+
+  const reset = async () => {
+    if (running) return;
+    await clearDrawerFn({ data: { listId, handle } }).catch(() => {});
+    historyCache.delete(listId);
+    setMsgs([]);
+  };
 
   // Foco al abrir, y DEVOLVERLO al cerrar. Sin lo segundo, cerrar el panel deja al teclado
   // en la nada y hay que volver a alcanzar la pantalla con el ratón.
@@ -335,12 +354,24 @@ export function AgentDrawer({
                 ) : null}
               </AnimatePresence>
             </div>
-            <button onClick={onClose} className="p-1.5 rounded-lg text-muted hover:bg-surface-3">
-              <X size={16} />
-            </button>
+            <div className="flex items-center gap-0.5">
+              {msgs.length ? (
+                <button
+                  onClick={() => void reset()}
+                  disabled={running}
+                  title={t("Empezar de cero: borra la conversación y la memoria del agente aquí")}
+                  className="p-1.5 rounded-lg text-muted hover:bg-surface-3 disabled:opacity-40"
+                >
+                  <RotateCcw size={14} />
+                </button>
+              ) : null}
+              <button onClick={onClose} className="p-1.5 rounded-lg text-muted hover:bg-surface-3">
+                <X size={16} />
+              </button>
+            </div>
           </header>
 
-          <div className="flex-1 overflow-y-auto px-4 py-3 thin-scroll">
+          <div ref={listRef} onScroll={onListScroll} className="relative flex-1 overflow-y-auto px-4 py-3 thin-scroll">
             {msgs.length === 0 ? (
               <div className="flex flex-col gap-2 pt-2">
                 <p className="text-xs text-muted mb-1">{t("Por ejemplo:")}</p>
@@ -387,6 +418,18 @@ export function AgentDrawer({
             )}
             <div ref={bottomRef} />
           </div>
+
+          {!atBottom && msgs.length ? (
+            <div className="relative h-0">
+              <button
+                onClick={scrollDown}
+                title={t("Ir al final")}
+                className="absolute -top-11 right-4 grid h-8 w-8 place-items-center rounded-full border border-border bg-surface shadow-lg hover:bg-surface-2"
+              >
+                <ArrowDown size={14} />
+              </button>
+            </div>
+          ) : null}
 
           {messages && messages.length ? (
             <MailCard
