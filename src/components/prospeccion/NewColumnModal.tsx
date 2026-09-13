@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { motion, AnimatePresence, useReducedMotion } from "motion/react";
-import { AtSign, Check, Globe, PenLine, Search, ShieldCheck, Sparkles, Wifi, X } from "lucide-react";
+import { AtSign, Globe, PenLine, Search, ShieldCheck, Sparkles, Wifi, X } from "lucide-react";
 import { useT } from "../../i18n";
 import { listEnrichersFn } from "../../server/prospeccion";
 
@@ -90,9 +90,13 @@ export function NewColumnModal({
   /** Una opción de la lista: qué dato se va a conseguir, dicho como resultado. */
   const Option = ({ id, icon: Icon, title, hint, requires }: { id: string; icon: typeof Globe; title: string; hint: string; requires?: string }) => {
     const active = choice === id;
+    // Con algo elegido, las demás se van: la instrucción y el nombre quedaban debajo de
+    // siete tarjetas, fuera de la pantalla, y parecía que no pasaba nada al elegir.
+    if (choice && !active) return null;
     return (
       <button
-        onClick={() => setChoice(id)}
+        onClick={() => (active ? setChoice(null) : setChoice(id))}
+        title={active ? t("Cambiar") : undefined}
         className={`w-full text-left flex items-start gap-3 rounded-xl border px-3.5 py-3 transition-colors ${
           active ? "border-brand bg-brand/5" : "border-border hover:bg-surface-3"
         }`}
@@ -109,7 +113,7 @@ export function NewColumnModal({
             </span>
           ) : null}
         </span>
-        {active ? <Check size={15} className="text-brand shrink-0 mt-1.5" /> : null}
+        {active ? <span className="text-[11px] text-brand shrink-0 mt-1.5 underline underline-offset-2">{t("cambiar")}</span> : null}
       </button>
     );
   };
@@ -164,7 +168,7 @@ export function NewColumnModal({
                 />
               ))}
 
-              <div className="h-px bg-border my-1" />
+              {choice ? null : <div className="h-px bg-border my-1" />}
 
               {/*
                 Buscar un dato ≠ escribir un texto, aunque las dos las haga el agente.
@@ -206,7 +210,7 @@ export function NewColumnModal({
                     className="overflow-hidden"
                   >
                     <label className="block text-xs font-semibold uppercase tracking-wide text-muted mt-3 mb-1.5">
-                      {esBusqueda ? t("Qué quieres averiguar de cada negocio") : t("Qué le pides por cada fila")}
+                      {esBusqueda ? t("Qué quieres averiguar de cada negocio") : esPitch ? t("Qué ofreces y en qué tono") : t("Qué le pides por cada fila")}
                     </label>
                     <textarea
                       value={prompt}
@@ -216,14 +220,18 @@ export function NewColumnModal({
                       placeholder={
                         esBusqueda
                           ? t("su teléfono · su horario · quién es el dueño · si tienen estacionamiento")
-                          : t("Escribe una primera línea para este negocio, mencionando su giro.")
+                          : esPitch
+                            ? t("Ofrecemos X para despachos contables. Tono cercano, 3 párrafos, cierra invitando a una llamada de 15 min.")
+                            : t("Escribe una primera línea para este negocio, mencionando su giro.")
                       }
                       className="w-full bg-surface-2 border border-border rounded-xl px-3 py-2.5 text-sm outline-none focus:border-brand resize-none"
                     />
                     <p className="text-[11px] text-muted mt-1.5">
                       {esBusqueda
                         ? t("⚠️ Si no lo encuentra, deja la celda vacía. Nunca lo inventa: un dato falso no parece falso.")
-                        : t("⚠️ Cada fila es un turno de agente. Sobre miles de filas, cuesta.")}
+                        : esPitch
+                          ? t("⚠️ Investiga y escribe: es el turno más caro por fila. Pruébalo con 3 antes de correrlo sobre todas.")
+                          : t("⚠️ Cada fila es un turno de agente. Sobre miles de filas, cuesta.")}
                     </p>
                   </motion.div>
                 ) : null}
