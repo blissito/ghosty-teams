@@ -203,6 +203,10 @@ function ListPage() {
         setSendOpen(true);
         return;
       }
+      // El agente pidió volver a correr una columna que ya existe.
+      if (ev.t === "prospeccion:run" && ev.listId === listId) {
+        void runColumnRef.current?.(ev.key, undefined, ev.limit ?? undefined);
+      }
       // El agente pidió una columna: se crea y se corre por el MISMO camino que el modal,
       // así que hereda el pulso de progreso y el aviso de por qué se saltó cada fila.
       // El agente escribió el mensaje base: el panel lo enseña como correo.
@@ -360,6 +364,8 @@ function ListPage() {
     dos cosas.
   */
   const crearColumnaRef = useRef<((c: NewColumn, limit?: number) => void) | null>(null);
+  const runColumnRef = useRef<((key: string, kind?: string, limit?: number) => Promise<void>) | null>(null);
+  useEffect(() => { runColumnRef.current = runColumn_; }, [runColumn_]);
 
   const createColumn = useCallback(
     async (c: NewColumn, limit?: number) => {

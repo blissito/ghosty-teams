@@ -74,6 +74,8 @@ export type RtEvent =
   // El agente PROPONE mandar. Abre la pantalla de confirmación con el asunto ya puesto; no
   // manda nada. Un correo enviado es lo único de todo el módulo que no se puede deshacer.
   | { t: "prospeccion:send"; listId: number; subject: string }
+  // Volver a correr una columna que ya existe (mismo camino que el botón «correr» del chip).
+  | { t: "prospeccion:run"; listId: number; key: string; limit: number | null }
   // El agente escribió o cambió el mensaje base: el panel lo enseña renderizado.
   | { t: "prospeccion:base"; text: string }
   // La pantalla la crea y la corre: el turno del agente no vive los minutos que tarda.

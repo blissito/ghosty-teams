@@ -354,6 +354,27 @@ export function nativeTools(dest: ToolDest | null): ConnectorTool[] {
         const { publish, ch } = await import("../bus.server");
         const { currentNamespace } = await import("../tenant.server");
         const ns = await currentNamespace();
+        // Si ya hay una columna con ese nombre, se VUELVE A CORRER en vez de crear otra:
+        // «vuelve a correr Mensaje» no debe dejar dos Mensaje y dos Investigación.
+        const { listColumns } = await import("../prospeccion/lists.server");
+        const existente = (await listColumns(Number(a.listId))).find(
+          (c) => c.label.trim().toLowerCase() === String(a.label ?? "").trim().toLowerCase() && c.kind === a.kind
+        );
+        if (existente) {
+          publish(ch.user(ns, _sub), {
+            t: "prospeccion:run",
+            listId: Number(a.listId),
+            key: existente.key,
+            limit: a.limit && a.limit > 0 ? Math.floor(a.limit) : null,
+          });
+          return {
+            ok: true,
+            arrancado_en_pantalla: true,
+            columna_existente: existente.label,
+            sobre: a.limit && a.limit > 0 ? `las primeras ${Math.floor(a.limit)} de la vista` : "toda la vista",
+            nota: "La columna ya existía: se está volviendo a llenar en la pantalla de la persona (lo escrito a mano no se pisa). Dile en una frase que ya va.",
+          };
+        }
         publish(ch.user(ns, _sub), {
           t: "prospeccion:column",
           listId: Number(a.listId),
