@@ -346,7 +346,9 @@ export async function renderDraft(args: {
     paraMirar = paraMirar.replaceAll(`cid:${img.cid}`, `data:${img.mime};base64,${img.bytes.toString("base64")}`);
   }
 
-  return { ...out, preview: paraMirar, sinBoton: cta.kind === "wa" && !wa, marca: brand?.name ?? null };
+  // La «marca» que se enseña es la de la FIRMA (la empresa que prospecta), no el kit del
+  // workspace: con Normi firmando, decir «sale con la marca de Formmy» era falso.
+  return { ...out, preview: paraMirar, sinBoton: cta.kind === "wa" && !wa, marca: empresa ?? brand?.name ?? null };
 }
 
 /** El correo de quien está usando la app, para mandarle la prueba a él y no al prospecto. */

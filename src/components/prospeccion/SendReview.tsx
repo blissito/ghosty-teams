@@ -52,6 +52,12 @@ export function SendReview({
    */
   const [preview, setPreview] = useState<string | null>(null);
   const [from, setFrom] = useState<string | null>(null);
+  /** Qué fila se está viendo, de las que tienen mensaje y correo («Quadra · 1 de 17»). */
+  const [nth, setNth] = useState(0);
+  const [nav, setNav] = useState<{ total: number; rowName: string | null }>({ total: 1, rowName: null });
+  useEffect(() => { setNth(0); }, [messageKey]);
+  useEffect(() => { if (open) void verPreview(false); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [nth]);
   const [probando, setProbando] = useState(false);
   const [pruebaOk, setPruebaOk] = useState<string | null>(null);
   const [sinBoton, setSinBoton] = useState(false);
@@ -89,11 +95,12 @@ export function SendReview({
     setProbando(test);
     setError(null);
     const { previewSendFn } = await import("../../server/prospeccion");
-    const r = await previewSendFn({ data: { listId, f: filter, messageKey, subject: subject.trim(), test } })
+    const r = await previewSendFn({ data: { listId, f: filter, messageKey, subject: subject.trim(), test, nth } })
       .catch(() => ({ ok: false as const, error: t("No se pudo previsualizar"), html: "", to: "", sent: false }));
     setProbando(false);
     if (!r.ok) { setError(("error" in r && r.error) || t("No se pudo previsualizar")); return; }
     setPreview(r.html);
+    if ("total" in r && r.total) setNav({ total: r.total, rowName: ("rowName" in r && r.rowName) || null });
     setFrom("from" in r && r.from ? r.from : null);
     setSinBoton(("sinBoton" in r && r.sinBoton) === true);
     setMarca(("marca" in r ? r.marca : null) ?? null);
@@ -306,7 +313,12 @@ export function SendReview({
                         exit={{ opacity: 0, height: 0 }}
                         className="overflow-hidden mt-3"
                       >
-                        <MailPreview html={preview} marca={marca} />
+                        <div className="flex items-center gap-2 text-[11px] text-muted mb-1.5">
+                          <button onClick={() => setNth((n) => Math.max(0, n - 1))} disabled={nth <= 0} className="rounded px-1 hover:text-ink disabled:opacity-30">‹</button>
+                          <span className="truncate">{nav.rowName ?? ""} · {Math.min(nth, nav.total - 1) + 1} {t("de")} {nav.total}</span>
+                          <button onClick={() => setNth((n) => Math.min(nav.total - 1, n + 1))} disabled={nth >= nav.total - 1} className="rounded px-1 hover:text-ink disabled:opacity-30">›</button>
+                        </div>
+                        <MailPreview html={preview} marca={marca} mode="inline" />
                         {from ? <p className="text-[11px] text-muted mt-1.5">{t("Sale de")} <span className="text-ink">{from}</span></p> : null}
                       </motion.div>
                     ) : null}
