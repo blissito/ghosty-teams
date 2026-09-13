@@ -192,7 +192,7 @@ export function NewColumnModal({
                 id="__pitch__"
                 icon={Sparkles}
                 title={t("Escribir un mensaje investigado")}
-                hint={t("Primero entra a su sitio y lo busca en internet; luego escribe el mensaje con lo que encontró. Cuesta más por fila.")}
+                hint={t("Dos columnas: «Investigación» (lo que encontró de cada negocio, para que lo revises) y el mensaje escrito con eso. Dos turnos por fila.")}
               />
               <Option
                 id="__manual__"

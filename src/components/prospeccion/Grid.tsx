@@ -90,6 +90,20 @@ function CellView({ row, column }: RenderCellProps<GridRow>) {
 
   if (!text) return <span className="text-faint">·</span>;
 
+  // Hallazgos de la investigación (JSON): ángulo en negritas y los hechos detrás. Es la
+  // celda que la persona revisa antes de escribir; un JSON crudo no se revisa.
+  if (text.startsWith('{"angulo"')) {
+    try {
+      const h = JSON.parse(text) as { angulo?: string | null; hechos?: { h: string }[]; no_usar?: string[] };
+      return (
+        <span className="text-xs" title={h.no_usar?.length ? `No se usa: ${h.no_usar.join("; ")}` : undefined}>
+          {h.angulo ? <b>{h.angulo}</b> : null}
+          {h.hechos?.length ? <span className="text-muted">{h.angulo ? " · " : ""}{h.hechos.map((x) => x.h).join(" · ")}</span> : null}
+        </span>
+      );
+    } catch { /* se pinta como texto */ }
+  }
+
   // Los sí/no se leen mejor como marca que como palabra.
   if (text === "true" || text === "sí" || text === "si") {
     return <span className="inline-flex items-center gap-1 text-emerald-600"><Check size={13} /> {"sí"}</span>;

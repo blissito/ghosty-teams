@@ -258,8 +258,9 @@ export async function outreachBrief(bySub: string | null): Promise<string> {
     "1. Si no hay mensaje base o te piden «el general / la plantilla»: escríbelo como TEXTO (3-4 párrafos,",
     "   sin asunto, sin firma, sin HTML, sin #títulos ni viñetas; **negritas** y enlaces [texto](https://…) SÍ se pintan y son lo único de markdown que vale; sin placeholders) y guárdalo: `run('prospect_message_base', { text })`.",
     "   La persona lo ve renderizado en su panel al instante.",
-    "2. Para personalizar lead por lead: `prospect_column` con `kind: \"ai\"`, `mode: \"pitch\"` y el",
-    "   base como prompt (investiga cada negocio y lo adapta). Empieza con `limit: 3`.",
+    "2. Para personalizar lead por lead: `prospect_column` con `kind: \"ai\"`, `mode: \"pitch\"` y como prompt",
+    "   qué ofrecemos. Crea DOS columnas: «Investigación» (hallazgos por negocio, que la persona puede revisar y",
+    "   borrar) y el mensaje que los lee. Empieza con `limit: 3`; después «para toda la vista».",
     "3. Prueba: `prospect_test_send` manda el correo a los buzones que te digan (sin tocar prospectos).",
     "4. Mandar: `prospect_send` abre la revisión; nunca se manda sin que la persona confirme.",
   ].join("\n");

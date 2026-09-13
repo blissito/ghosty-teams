@@ -91,6 +91,87 @@ async function senderContext(bySub: string | null): Promise<string> {
   }
 }
 
+export type Hallazgos = { angulo: string | null; hechos: { h: string; fuente?: string }[]; no_usar?: string[] };
+
+export function parseHallazgos(raw: string | null | undefined): Hallazgos | null {
+  if (!raw) return null;
+  try {
+    const o = JSON.parse(raw) as Partial<Hallazgos>;
+    if (!o || typeof o !== "object") return null;
+    return {
+      angulo: typeof o.angulo === "string" && o.angulo.trim() ? o.angulo.trim() : null,
+      hechos: Array.isArray(o.hechos) ? o.hechos.filter((x) => x && typeof x.h === "string" && x.h.trim()).map((x) => ({ h: x.h.trim(), fuente: typeof x.fuente === "string" ? x.fuente : undefined })).slice(0, 6) : [],
+      no_usar: Array.isArray(o.no_usar) ? o.no_usar.filter((x) => typeof x === "string").slice(0, 10) : [],
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Paso 1 del pitch: INVESTIGAR y devolver hallazgos estructurados, no un correo.
+ *
+ * Es lo que hace la industria (Clay, Smartlead): un trabajo por columna. La investigación
+ * queda en su propia celda, legible y podable, y el que escribe no vuelve a la web.
+ */
+function hallazgosPrompt(instruction: string, context: string): string {
+  return [
+    "Vas a INVESTIGAR un negocio real para que después OTRO paso le escriba un correo de prospección.",
+    "Tú NO escribes el correo: devuelves hallazgos.",
+    "",
+    "DATOS QUE YA TENEMOS:",
+    context || "(sin datos)",
+    "",
+    "QUÉ OFRECEMOS (para saber qué buscar):",
+    instruction,
+    "",
+    "CÓMO:",
+    "- Entra a su sitio web si lo hay, búscalo en internet, mira las redes públicas de la EMPRESA.",
+    "- Usa los datos de arriba para no confundirlo con otro negocio del mismo nombre.",
+    "- Busca lo que la empresa DICE DE SÍ MISMA: servicios, especialidades, giro, a quién atiende,",
+    "  dónde está, desde cuándo. Eso es lo que sirve para elegir el ángulo del correo.",
+    "- Lo que NO se usa en un correo frío, porque se siente vigilancia: vacantes, contrataciones,",
+    "  reseñas, nombres de socios o empleados, redes personales, noticias de personas, cifras",
+    "  internas. Si lo ves, va a `no_usar` (para que el que escribe no lo toque), nunca a `hechos`.",
+    "- Nada inventado ni deducido: si no encuentras nada fiable, `angulo: null` y `hechos: []`.",
+    "",
+    "SALIDA (obligatoria): un JSON entre <hallazgos> y </hallazgos>, y NADA más dentro:",
+    '<hallazgos>{"angulo": "una frase: por qué le sirve lo que ofrecemos, dicho como él lo diría", "hechos": [{"h": "lleva auditoría y cumplimiento normativo", "fuente": "https://…"}], "no_usar": ["vacante de agosto"]}</hallazgos>',
+    "Máximo 4 hechos, cada uno de una línea. Fuera del bloque puedes narrar lo que quieras: se descarta.",
+  ].join("\n");
+}
+
+/** Paso 2 del pitch: ESCRIBIR con los hallazgos, sin volver a investigar. */
+function correoConHallazgos(instruction: string, context: string, sobre: string, h: Hallazgos | null): string {
+  const hechos = h?.hechos.length ? h.hechos.map((x) => `- ${x.h}`).join("\n") : "(no se encontró nada fiable: escribe con los datos de arriba y el mensaje base, sin inventar)";
+  return [
+    "Vas a ESCRIBIR un correo de prospección para UN negocio real, con lo que ya se investigó.",
+    "NO investigues ni uses herramientas: todo lo que necesitas está aquí.",
+    "",
+    "DATOS DEL NEGOCIO:",
+    context || "(sin datos)",
+    "",
+    `ÁNGULO (por qué le sirve): ${h?.angulo ?? "(sin ángulo claro: usa el del mensaje base)"}`,
+    "LO QUE SABEMOS DE LA EMPRESA (contexto, no para citar):",
+    hechos,
+    ...(h?.no_usar?.length ? [`NO MENCIONES (se siente vigilancia): ${h.no_usar.join("; ")}`] : []),
+    "",
+    ...(sobre ? [sobre] : []),
+    "QUÉ MENSAJE HAY QUE ESCRIBIR:",
+    instruction,
+    "",
+    "CÓMO:",
+    "- El ángulo decide el primer párrafo. Los hechos son para que suene a que le hablas a ÉL,",
+    "  nunca como prueba de que lo investigaste: nada de «vi que…», «noté que…», «según su sitio…».",
+    "  Bien: «en un despacho que lleva auditoría y cumplimiento…». Mal: «vi que abrieron vacante».",
+    "- Respeta la oferta, el tono y la estructura del mensaje base; personaliza, no lo copies tal cual.",
+    "- Entre 80 y 160 palabras. Párrafos cortos con línea en blanco. Sin asunto, sin firma.",
+    "- Las **negritas** y los enlaces [texto](https://…) sí se pintan; con mesura. Sin #títulos ni viñetas.",
+    "",
+    "SALIDA (obligatoria): el correo ENTERO entre <correo> y </correo>. Sólo se guarda lo de dentro.",
+  ].join("\n");
+}
+
 function buildPrompt(instruction: string, context: string, mode: AiMode, sobre = ""): string {
   if (mode === "research") {
     return [
@@ -222,6 +303,12 @@ export async function runAiColumn(args: {
   limit?: number;
   /** Escribir en esta columna base en vez de en `key`. */
   writesTo?: string;
+  /** `research` estructurado: la celda guarda JSON de hallazgos. */
+  structured?: "hallazgos";
+  /** `write` que lee la columna de hallazgos `readsKey` de cada fila. */
+  readsKey?: string;
+  /** Saltar las filas que ya tienen valor en `key`. */
+  onlyEmpty?: boolean;
   invokerSub: string;
   origin?: string;
   concurrency?: number;
@@ -239,6 +326,11 @@ export async function runAiColumn(args: {
   const columnLabels = Object.fromEntries((await listColumns(args.listId)).map((c) => [c.key, c.label]));
   // Una vez por columna, no por fila: remitente y cierre son del workspace.
   const sobre = (args.mode ?? "write") === "research" ? "" : await senderContext(args.invokerSub ?? null);
+  const estructurado = args.structured === "hallazgos";
+  const conHallazgos = !!args.readsKey;
+  // Contador aparte: un turno que no devolvió su bloque marcado no es «vacío», es un fallo
+  // de formato, y el resumen tiene que decirlo para que no parezca que no había nada.
+  let sinBloque = 0;
   const todas = await listRows(args.listId);
   const filtradas = args.filter?.length
     ? todas.filter((r) => matches(r as unknown as Record<string, unknown>, args.filter!, args.fields ?? []))
@@ -263,6 +355,7 @@ export async function runAiColumn(args: {
       const existing = row.data[args.key];
       // Lo escrito a mano no se pisa, igual que en el enriquecimiento.
       if (existing?.src === "manual" && existing.v) { done++; args.onProgress?.({ done, total: rows.length, filled }); continue; }
+      if (args.onlyEmpty && existing?.v) { done++; filled++; args.onProgress?.({ done, total: rows.length, filled }); continue; }
 
       let out = "";
       try {
@@ -272,7 +365,11 @@ export async function runAiColumn(args: {
           // con las 39 anteriores en el contexto y el modelo empezaría a mezclarlas.
           `prosp:${args.listId}:${args.key}:${row.id}`,
           "Prospección",
-          buildPrompt(args.instruction, rowContext(row, columnLabels), args.mode ?? "write", sobre),
+          estructurado
+            ? hallazgosPrompt(args.instruction, rowContext(row, columnLabels))
+            : conHallazgos
+              ? correoConHallazgos(args.instruction, rowContext(row, columnLabels), sobre, parseHallazgos(row.data[args.readsKey!]?.v))
+              : buildPrompt(args.instruction, rowContext(row, columnLabels), args.mode ?? "write", sobre),
           (chunk) => { out += chunk; },
           [],
           // Lo que el modelo dice ANTES de una herramienta es narración («Voy a buscar…»),
@@ -295,10 +392,21 @@ export async function runAiColumn(args: {
       // Un pitch investigado es un correo entero: varios párrafos y más de 600 letras.
       // El pitch viene marcado: se toma el ÚLTIMO <correo>…</correo> y nada más. Si el
       // modelo no marcó, se cae a la limpieza heurística (que es lo que había antes).
-      const marcado = args.mode === "pitch" ? [...out.matchAll(/<correo>([\s\S]*?)<\/correo>/gi)].at(-1)?.[1] : undefined;
-      const value = args.mode === "pitch"
-        ? cleanCellValue(marcado ?? out, { multiline: true, max: 2500 })
-        : cleanCellValue(out);
+      let value: string | null;
+      if (estructurado) {
+        const bloque = [...out.matchAll(/<hallazgos>([\s\S]*?)<\/hallazgos>/gi)].at(-1)?.[1];
+        const h = parseHallazgos(bloque?.trim() ?? null);
+        if (!h) { sinBloque++; value = null; }
+        // Nada fiable = celda vacía, no un JSON vacío que parezca un hallazgo.
+        else value = h.angulo || h.hechos.length ? JSON.stringify(h) : null;
+      } else if (conHallazgos || args.mode === "pitch") {
+        const marcado = [...out.matchAll(/<correo>([\s\S]*?)<\/correo>/gi)].at(-1)?.[1];
+        if (marcado == null && out.trim()) sinBloque++;
+        // Sin bloque: la limpieza heurística de siempre, como respaldo.
+        value = cleanCellValue(marcado ?? out, { multiline: true, max: 2500 });
+      } else {
+        value = cleanCellValue(out);
+      }
       // El destino puede ser una columna BASE: «enriquece la Dirección» llena la que ya
       // está, no una gemela.
       await setCell(row.id, args.writesTo || args.key, value, {
@@ -306,7 +414,7 @@ export async function runAiColumn(args: {
         verified: false,
       });
       if (value) filled++;
-      else if (!failed || out) blank++;
+      else if ((!failed || out) && !(estructurado && !value && sinBloque)) blank++;
       done++;
       args.onProgress?.({ done, total: rows.length, filled });
     }
@@ -321,6 +429,7 @@ export async function runAiColumn(args: {
   const partes: string[] = [];
   if (failed) partes.push(`${failed} el turno del agente falló`);
   if (blank) partes.push(`${blank} el agente no encontró el dato`);
+  if (sinBloque) partes.push(`${sinBloque} contestó sin el formato pedido`);
   const note = filled < rows.length && partes.length ? partes.join(" · ") : null;
   return { done, total: rows.length, filled, note };
 }

@@ -52,6 +52,13 @@ export type Recipe = {
    * se encuentra.
    */
   mode?: "write" | "research" | "pitch";
+  /**
+   * `research` ESTRUCTURADO: la celda guarda JSON `{angulo, hechos:[{h,fuente}], no_usar}`
+   * en vez de un dato suelto. Es la mitad "investigar" del pitch en dos pasos.
+   */
+  structured?: "hallazgos";
+  /** `write`: llave de la columna de hallazgos de la que lee. Es la mitad "escribir". */
+  reads?: string;
   /** Sugerencia de tipo para pintar la celda: text, sí/no, número, url. */
   format?: "text" | "bool" | "number" | "url";
   /**

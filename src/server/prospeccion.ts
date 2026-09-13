@@ -352,6 +352,29 @@ export const addColumnFn = createServerFn({ method: "POST" })
     }
 
     const { addColumn } = await import("./prospeccion/lists.server");
+
+    /**
+     * «Mensaje investigado» son DOS columnas encadenadas, no una: «Investigación» (research
+     * estructurado, JSON de hallazgos, revisable y podable) y «<label>» (write que la lee).
+     * Es el patrón de la industria —un trabajo por columna— y lo que evita que la
+     * narración del que investiga caiga en el correo, o que el correo exhiba lo investigado.
+     */
+    if (data.kind === "ai" && data.mode === "pitch") {
+      const investigacion = await addColumn({
+        listId: Number(data.listId),
+        label: "Investigación",
+        kind: "ai",
+        recipe: { prompt: data.prompt ?? "", mode: "research", structured: "hallazgos" },
+      });
+      const col = await addColumn({
+        listId: Number(data.listId),
+        label: data.label,
+        kind: "ai",
+        recipe: { prompt: data.prompt ?? "", mode: "write", reads: investigacion.key },
+      });
+      return { ok: true as const, column: col };
+    }
+
     const col = await addColumn({
       listId: Number(data.listId),
       label: data.label,
@@ -436,20 +459,46 @@ export const runAiColumnFn = createServerFn({ method: "POST" })
     const origin = await reqOrigin().catch(() => undefined);
     const { decodeFilter } = await import("../lib/prospeccion-filter");
     const cols = await listColumns(Number(data.listId));
-    const r = await runAiColumn({
+    const comun = {
       listId: Number(data.listId),
-      key: col.key,
-      instruction: col.recipe.prompt,
-      mode: col.recipe.mode ?? "write",
-      writesTo: col.recipe.writesTo,
       agentHandle: data.agentHandle ?? null,
       filter: decodeFilter(data.f),
       fields: [...BASE_FIELD_KEYS, ...cols.map((c) => c.key)],
       invokerSub: me.sub,
       origin,
       limit: data.limit,
+    };
+
+    // Una columna que LEE hallazgos corre primero la investigación en las filas que aún no
+    // la tienen. Así «correr Mensaje» sobre 3 filas hace los dos pasos, en orden, y si la
+    // persona ya podó una celda de Investigación, esa fila se escribe con lo que quedó.
+    const lee = col.recipe.reads ? cols.find((c) => c.key === col.recipe!.reads) : null;
+    let notaInv: string | null = null;
+    if (lee?.recipe?.prompt) {
+      const inv = await runAiColumn({
+        ...comun,
+        key: lee.key,
+        instruction: lee.recipe.prompt,
+        mode: "research",
+        structured: "hallazgos",
+        // Sólo las filas sin hallazgos: correr Mensaje dos veces no investiga dos veces.
+        onlyEmpty: true,
+      });
+      if (inv.error) return { ok: false as const, error: inv.error, done: 0, total: 0, filled: 0 };
+      notaInv = inv.note ? `investigación: ${inv.note}` : null;
+    }
+
+    const r = await runAiColumn({
+      ...comun,
+      key: col.key,
+      instruction: col.recipe.prompt,
+      mode: col.recipe.mode ?? "write",
+      writesTo: col.recipe.writesTo,
+      structured: col.recipe.structured,
+      readsKey: col.recipe.reads,
     });
-    return { ok: !r.error, error: r.error ?? null, done: r.done, total: r.total, filled: r.filled, note: r.note ?? null };
+    const note = [r.note, notaInv].filter(Boolean).join(" · ") || null;
+    return { ok: !r.error, error: r.error ?? null, done: r.done, total: r.total, filled: r.filled, note };
   });
 
 /** Los agentes del workspace, para elegir quién escribe la columna. */
