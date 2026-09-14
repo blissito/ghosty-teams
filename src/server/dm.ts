@@ -99,7 +99,7 @@ export const postDmMessageFn = createServerFn({ method: "POST" })
     const db = await import("../db.server");
     const bus = await import("./bus.server");
     const { currentNamespace } = await import("./tenant.server");
-    const { resolvedAgents, quoteExcerpt } = await import("../agents.server");
+    const { resolvedAgents, quoteExcerpt, agentGroupId } = await import("../agents.server");
     const me = await sessionUser();
     if (!me || !(await db.isDmMember(data.id, me.sub))) throw new Error("no autorizado");
     const ns = await currentNamespace();
@@ -140,8 +140,18 @@ export const postDmMessageFn = createServerFn({ method: "POST" })
     // @agente en un DM → responde inline en el mismo DM. Caja caliente: la cáscara del
     // agente se crea EAGER (kind:"msg" VACÍA, con avatar+nombre) aquí → aparece al instante
     // y PERMANECE; askDmAgentFn streamea sobre este mismo id. Sin "pensando…" que borrar.
+    // Salvo si va a ser STEER (mi turno anterior sigue vivo): ahí no hay burbuja nueva que
+    // crear —askDmAgentFn mete el texto al turno en curso— y crearla era un "pensando…"
+    // que aparecía y se borraba. Mismo groupId que askDmAgentFn.
     let shellId: number | null = null;
+    let steered = false;
     if (mentioned) {
+      const ag = agents.find((a) => a.handle === mentioned);
+      const groupId = await agentGroupId(ag ?? { handle: mentioned }, `dm-${data.id}`);
+      const turns = await import("./turns.server");
+      steered = turns.hasOwnInflight(groupId, me.sub);
+    }
+    if (mentioned && !steered) {
       const ag = agents.find((a) => a.handle === mentioned);
       const { id: sid } = await db.postDmAgent(data.id, "", "msg", mentioned, ag?.name ?? "Ghosty", ag?.avatar ?? "");
       shellId = sid;
@@ -154,6 +164,7 @@ export const postDmMessageFn = createServerFn({ method: "POST" })
       needsAgent: mentioned != null,
       agentHandle: mentioned ?? null,
       shellId,
+      steered,
     };
   });
 
@@ -595,9 +606,12 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
       if (registeredId != null) {
         fanout({ t: "turn", id: registeredId, state: "stopped", position: 1, startedAt: Date.now() });
       }
-      if (data.shellId != null) {
-        await db.deleteMessage(data.shellId).catch(() => {});
-        fanout({ t: "message:deleted", id: data.shellId, channelId: null, parentId: null, dmId: data.id });
+      // La cáscara puede ser la eager del cliente o una que `ensure()` creó lazy (un tool
+      // event antes del `injected`): `registeredId` cubre las dos.
+      const huerfana = data.shellId ?? registeredId;
+      if (huerfana != null) {
+        await db.deleteMessage(huerfana).catch(() => {});
+        fanout({ t: "message:deleted", id: huerfana, channelId: null, parentId: null, dmId: data.id });
       }
       return { ok: true, steered: true };
     }

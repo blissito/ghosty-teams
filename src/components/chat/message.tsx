@@ -2451,7 +2451,7 @@ export function StopTurnButton({ id, className = "" }: { id: number; className?:
       onClick={() => stopTurn?.(id)}
       aria-label={t("Detener")}
       title={t("Detener")}
-      className={`grid size-5 place-items-center rounded-full border border-border text-muted transition hover:border-red-400/50 hover:text-red-400 ${className}`}
+      className={`gt-tap grid size-5 place-items-center rounded-full border border-border text-muted transition hover:border-red-400/50 hover:text-red-400 ${className}`}
     >
       <Square size={9} className="fill-current" />
     </button>
@@ -2693,7 +2693,7 @@ export function MessageRow({
         onTouchEnd={cancelPress}
         onTouchMove={cancelPress}
         onTouchCancel={cancelPress}
-        className={`group relative rounded px-2 py-[3px] text-sm leading-snug transition-colors hover:bg-surface-2 ${pressed ? "bg-surface-2" : ""}`}
+        className={`gt-row-touch group relative rounded px-2 py-[3px] text-sm leading-snug transition-colors hover:bg-surface-2 ${pressed ? "bg-surface-2" : ""}`}
       >
         {/* La barra de acciones es la MISMA que en el formato cómodo; sólo cambia dónde
             se ancla. Sin esto, reaccionar en compacto sería otro camino que mantener. */}
@@ -2706,6 +2706,7 @@ export function MessageRow({
             {canReact && react && <ReactButton m={m} />}
             {setReplyTo && <ReplyButton m={m} author={displayName} />}
             {forward && <ForwardButton m={m} />}
+            {m.body ? <CopyButton m={m} /> : null}
             {canEdit && editMsg && <EditButton onEdit={() => setEditing(true)} />}
             {(star || pin || remove) && (
               <MessageActions m={m} slug={slug} canDelete={canDelete} canPin={!!canPin} onOpenChange={setMenuOpen} />
@@ -2765,7 +2766,7 @@ export function MessageRow({
       onTouchMove={cancelPress}
       onTouchCancel={cancelPress}
       onPointerDown={(e) => { if (e.pointerType !== "touch") setPressed(false); }}
-      className={`group relative flex items-start gap-3 rounded-lg px-2 transition-colors hover:bg-surface-2 ${grouped ? "py-px" : "mt-2 py-0.5"} ${pressed ? "bg-surface-2" : ""}`}
+      className={`gt-row-touch group relative flex items-start gap-3 rounded-lg px-2 transition-colors hover:bg-surface-2 ${grouped ? "py-px" : "mt-2 py-0.5"} ${pressed ? "bg-surface-2" : ""}`}
     >
       {grouped ? (
         // Agrupado: sin avatar. Gutter angosto que muestra la hora SOLO al hover (Slack).
@@ -2815,6 +2816,7 @@ export function MessageRow({
           {showThreadLink && onOpenThread && !m.reply_count && <ThreadReplyButton onOpen={() => onOpenThread(m.id)} />}
           {setReplyTo && <ReplyButton m={m} author={displayName} />}
           {forward && <ForwardButton m={m} />}
+            {m.body ? <CopyButton m={m} /> : null}
           {canEdit && editMsg && <EditButton onEdit={() => setEditing(true)} />}
           {/* El menú ⋯ agrupa copiar, destacar, fijar y borrar. Sale si hay al menos una
               de esas capacidades; si no, sería un menú vacío. */}
@@ -3223,7 +3225,7 @@ export function ReplyButton({ m, author }: { m: Message; author: string }) {
     <button
       onClick={() => setReplyTo?.({ id: m.id, author, excerpt: plainExcerpt(m.body) })}
       title={t("Responder")}
-      className="grid h-7 w-7 place-items-center rounded-md text-muted transition hover:bg-surface-3 hover:text-ink"
+      className="gt-tap grid h-7 w-7 place-items-center rounded-md text-muted transition hover:bg-surface-3 hover:text-ink"
     >
       <Reply size={14} />
     </button>
@@ -3262,7 +3264,7 @@ export function ReactButton({ m }: { m: Message }) {
         ref={btnRef}
         onClick={() => setPickerFor?.(open ? null : m.id)}
         title={t("Reaccionar")}
-        className={`rounded p-1 transition ${open ? "text-brand" : "text-muted hover:text-ink"}`}
+        className={`gt-tap rounded p-1 transition ${open ? "text-brand" : "text-muted hover:text-ink"}`}
       >
         <SmilePlus size={14} />
       </button>
@@ -3296,10 +3298,28 @@ export function ForwardButton({ m }: { m: Message }) {
   const { forward } = useContext(ChatCtx);
   if (!forward) return null;
   return (
-    <button onClick={() => forward(m)} title={t("Reenviar")} className="rounded p-1 text-muted hover:text-ink">
+    <button onClick={() => forward(m)} title={t("Reenviar")} className="gt-tap rounded p-1 text-muted hover:text-ink">
       {/* ReplyAll = doble flecha curva (apunta a la izq); la volteo → doble flecha curva
           a la DERECHA = el ícono clásico de reenviar. */}
       <ReplyAll size={15} className="-scale-x-100" />
+    </button>
+  );
+}
+
+// Copiar el texto. Sólo en táctil: ahí la fila lleva `user-select: none` (para que la
+// pulsación larga no compita con la selección de iOS) y éste es el camino para copiar.
+export function CopyButton({ m }: { m: Message }) {
+  const t = useT();
+  const [done, setDone] = useState(false);
+  const copy = () => {
+    navigator.clipboard?.writeText(bubbleWithoutEbDoc(m.body)).then(() => {
+      setDone(true);
+      setTimeout(() => setDone(false), 1200);
+    }).catch(() => {});
+  };
+  return (
+    <button onClick={copy} title={t("Copiar")} className="gt-tap rounded p-1 text-muted hover:text-ink md:hidden">
+      {done ? <Check size={14} className="text-emerald-500" /> : <Copy size={14} />}
     </button>
   );
 }
@@ -3309,7 +3329,7 @@ export function ForwardButton({ m }: { m: Message }) {
 export function EditButton({ onEdit }: { onEdit: () => void }) {
   const t = useT();
   return (
-    <button onClick={onEdit} title={t("Editar")} className="rounded p-1 text-muted hover:text-ink">
+    <button onClick={onEdit} title={t("Editar")} className="gt-tap rounded p-1 text-muted hover:text-ink">
       <Pencil size={14} />
     </button>
   );
@@ -3350,11 +3370,15 @@ export function MessageActions({
     const onDown = (e: MouseEvent) => {
       if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) close();
     };
+    // `touchstart` además de `mousedown`: en el teléfono el mouse sintético llega tarde (o
+    // no llega si el toque se vuelve scroll) y el menú se quedaba abierto.
     document.addEventListener("keydown", onKey);
     document.addEventListener("mousedown", onDown);
+    document.addEventListener("touchstart", onDown as EventListener, true);
     return () => {
       document.removeEventListener("keydown", onKey);
       document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("touchstart", onDown as EventListener, true);
     };
   }, [open]);
   const item = "flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs text-ink hover:bg-surface-2";
@@ -3379,7 +3403,7 @@ export function MessageActions({
           })
         }
         title={t("Más acciones")}
-        className="rounded p-1 text-muted hover:text-ink"
+        className="gt-tap rounded p-1 text-muted hover:text-ink"
       >
         <MoreHorizontal size={14} />
       </button>

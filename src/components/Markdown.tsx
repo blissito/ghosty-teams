@@ -1,4 +1,4 @@
-import { Children, cloneElement, createElement, isValidElement, memo } from "react";
+import { Children, cloneElement, createElement, isValidElement, memo, useRef } from "react";
 import { Streamdown, type StreamdownProps } from "streamdown";
 import * as nodeEmoji from "node-emoji";
 
@@ -217,15 +217,7 @@ function emojiOnly(body: string, emojiMap: Map<string, string>): { jumbo: boolea
 // Render Markdown seguro (GFM + sanitize) con look de chat compacto.
 // `artifactUrl`/`onOpenArtifact`: si un link apunta al artefacto del mensaje, el click
 // ABRE el panel (no descarga). El resto de links abren en pestaña nueva.
-export const Markdown = memo(function Markdown({
-  body,
-  artifactUrl,
-  onOpenArtifact,
-  light,
-  emojis,
-  onMention,
-  onImage,
-}: {
+type MarkdownProps = {
   body: string;
   artifactUrl?: string;
   onOpenArtifact?: () => void;
@@ -233,7 +225,23 @@ export const Markdown = memo(function Markdown({
   emojis?: { name: string; file_id: string }[]; // emojis custom → `:name:` inline en el cuerpo
   onMention?: (handle: string) => void; // clic en @mención → hovercard/perfil (estilo Slack)
   onImage?: (src: string, alt?: string) => void; // clic en imagen del agente → panel lateral
-}) {
+};
+
+// Los callbacks NO entran en la comparación del memo: cada fila los crea inline, así que
+// eran una referencia nueva en cada render y el memo nunca pegaba — cada token del stream
+// re-parseaba (Streamdown + Shiki) TODOS los mensajes visibles, no sólo la burbuja viva.
+// En el teléfono eso era el "se pone lento". Se leen desde un ref que se refresca en cada
+// render, así el clic siempre llama a la versión más reciente sin costar un parseo.
+const sameMarkdown = (a: MarkdownProps, b: MarkdownProps) =>
+  a.body === b.body && a.artifactUrl === b.artifactUrl && a.light === b.light && a.emojis === b.emojis;
+
+export const Markdown = memo(function Markdown(props: MarkdownProps) {
+  const { body, artifactUrl, light, emojis } = props;
+  const cbs = useRef(props);
+  cbs.current = props;
+  const onOpenArtifact = props.onOpenArtifact ? () => cbs.current.onOpenArtifact?.() : undefined;
+  const onMention = props.onMention ? (h: string) => cbs.current.onMention?.(h) : undefined;
+  const onImage = props.onImage ? (src: string, alt?: string) => cbs.current.onImage?.(src, alt) : undefined;
   const emojiMap = new Map((emojis ?? []).map((e) => [e.name, e.file_id]));
   // Mensaje solo-emoji → JUMBO (grande), como Slack. Se salta markdown (no hace falta):
   // highlightText resuelve `:name:` custom → <img> y deja el unicode como texto; el
@@ -317,4 +325,4 @@ export const Markdown = memo(function Markdown({
       </Streamdown>
     </div>
   );
-});
+}, sameMarkdown);

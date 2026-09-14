@@ -1253,6 +1253,14 @@ function ChannelPage() {
     };
   }, []);
   const typingTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  // STEER: el mensaje entró al turno que ya corría, así que no nace burbuja nueva. Sin este
+  // aviso el envío parecía perderse (nada cambia en pantalla hasta que el agente lo retoma).
+  // Reusa la línea de "está escribiendo": mismo hueco, misma altura, cero salto.
+  const showSteerHint = (scope: { channelId: number | null; parentId: number | null; dmId: number | null }) => {
+    setTyping({ sub: STEER_SUB, name: "", ...scope });
+    clearTimeout(typingTimer.current);
+    typingTimer.current = setTimeout(() => setTyping(null), 4000);
+  };
   const channelsById = useMemo(() => new Map(channels.map((c) => [c.id, c.slug])), [channels]);
   const router = useRouter();
 
@@ -2354,6 +2362,7 @@ function ChannelPage() {
       postDmMessageFn({ data: { id: o.dmId, body: o.body, nonce: o.nonce, quotedId: o.quotedId ?? null, attachments: o.attachments } })
         .then((r) => {
           revalidate();
+          if (r?.steered) showSteerHint({ channelId: null, parentId: null, dmId: o.dmId! });
           if (r?.needsAgent && r.agentHandle)
             askDmAgentFn({ data: { id: o.dmId!, body: o.body, sender: "", handle: r.agentHandle, shellId: r.shellId ?? undefined, quotedAuthor: o.quotedAuthor ?? null, quotedExcerpt: o.quotedExcerpt ?? null, quotedId: o.quotedId ?? null, attachments: o.attachments } })
               .then(() => revalidate())
@@ -2405,7 +2414,9 @@ function ChannelPage() {
           }
           // Cada agente mencionado responde en paralelo y limpia su propio "pensando…".
           for (const ag of respondents) {
-            askAgent({ data: { slug: o.slug, parentId: ag.parent, fleetThread: ag.fleetThread, body: o.body, sender: "", handle: ag.handle, shellId: ag.shellId, quotedAuthor: o.quotedAuthor ?? null, quotedExcerpt: o.quotedExcerpt ?? null, quotedId: o.quotedId ?? null, attachments: o.attachments, invokerMessageId: r.id } })
+            if (ag.steered) showSteerHint({ channelId: channel.id, parentId: ag.parent, dmId: null });
+            // `shellId` 0 = no hay cáscara (steer): el server no debe tomarlo por un id.
+            askAgent({ data: { slug: o.slug, parentId: ag.parent, fleetThread: ag.fleetThread, body: o.body, sender: "", handle: ag.handle, shellId: ag.shellId || undefined, quotedAuthor: o.quotedAuthor ?? null, quotedExcerpt: o.quotedExcerpt ?? null, quotedId: o.quotedId ?? null, attachments: o.attachments, invokerMessageId: r.id } })
               .then(() => revalidate())
               .catch(() => revalidate());
           }
@@ -6629,11 +6640,13 @@ function crossesDay(prevAt: number | undefined, at: number): boolean {
 }
 
 // Línea efímera "X está escribiendo…" (encima del Composer). Altura fija → no salta.
-function TypingLine({ typing }: { typing: { name: string } | null }) {
+// También pinta el aviso de STEER (`sub === STEER_SUB`): "se lo pasé al turno en curso".
+const STEER_SUB = "__steer__";
+function TypingLine({ typing }: { typing: { sub?: string; name: string } | null }) {
   const t = useT();
   return (
     <div className="h-5 px-6 text-xs italic text-muted">
-      {typing ? t("{name} está escribiendo…", { name: typing.name }) : ""}
+      {!typing ? "" : typing.sub === STEER_SUB ? t("↪ Se lo pasé al turno en curso") : t("{name} está escribiendo…", { name: typing.name })}
     </div>
   );
 }

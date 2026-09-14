@@ -649,3 +649,19 @@ body {
 body[data-mantenimiento="1"] .gt-app {
   padding-top: 30px;
 }
+
+/* TÁCTIL. Los botones de la barra de un mensaje miden 20–28 px: en el teléfono el dedo
+   caía fuera y "Detener" o "Responder" parecían no responder (2026-09-14). Apple pide
+   44 pt. En vez de agrandar el dibujo, se agranda el ÁREA con un pseudo-elemento: el
+   layout de escritorio no cambia y en táctil cada botón acepta el toque a 10 px del borde. */
+@media (hover: none) {
+  .gt-tap { position: relative; }
+  .gt-tap::before { content: ""; position: absolute; inset: -10px; }
+  /* La barra se abre con pulsación larga; sin esto iOS abre a la vez su callout/selección
+     encima. La selección se recupera con el botón «Copiar» de la barra. */
+  .gt-row-touch {
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+}

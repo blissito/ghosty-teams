@@ -2854,17 +2854,41 @@ async function runAgentTurnInner(opts: {
     return "```gt-steps\n" + JSON.stringify({ steps: pasos }) + "\n```\n\n" + ultimo.trim();
   };
   const renderBody = (allDone: boolean): string => renderToolBlock(allDone) + narration();
-  const paint = async (allDone = false) => {
-    const bodyId = await ensure();
-    if (opts.emitBody) opts.emitBody(bodyId, renderBody(allDone));
+  // Pintado AGRUPADO. El runtime entrega token a token y cada pintado manda el cuerpo
+  // ENTERO a todos los suscriptores del room: sin ventana, una respuesta de 3 KB eran
+  // ~750 eventos de ~1.5 KB por espectador, y en el teléfono el hilo JS no daba abasto —
+  // el texto llegaba en ráfagas y los taps se perdían entre re-renders (2026-09-14).
+  // Los chunks de texto se juntan en ventanas de 80 ms (leading + trailing); las tools y
+  // el cierre pintan YA (`urgent`), que es donde la latencia se nota.
+  const PAINT_MS = 80;
+  let paintTimer: ReturnType<typeof setTimeout> | null = null;
+  let paintDirty = false;
+  const cancelPaint = () => {
+    if (paintTimer) clearTimeout(paintTimer);
+    paintTimer = null;
+    paintDirty = false;
   };
-
-  // SONDA del goteo (temporal): ¿el HTML del artefacto llega token a token o de un jalón?
-  // Va AQUÍ, upstream del bus, para distinguir "el runtime no streamea" de "se perdió
-  // en el camino al cliente". Una sola línea con +Nb gigante = el agente lo escupe entero.
-  const chunkT0 = Date.now();
-  let chunkN = 0;
-  let artifactOpenAt = -1;
+  const paint = async (allDone = false, urgent = false) => {
+    if (!opts.emitBody) return;
+    const bodyId = await ensure();
+    if (urgent || allDone) {
+      cancelPaint();
+      opts.emitBody(bodyId, renderBody(allDone));
+      return;
+    }
+    if (paintTimer) {
+      paintDirty = true;
+      return;
+    }
+    opts.emitBody(bodyId, renderBody(false));
+    paintTimer = setTimeout(() => {
+      paintTimer = null;
+      if (paintDirty && opts.emitBody) {
+        paintDirty = false;
+        opts.emitBody(bodyId, renderBody(false));
+      }
+    }, PAINT_MS);
+  };
   const onChunk = async (chunk: string) => {
     if (!chunk) return;
     if (opts.emitBody) {
@@ -2889,16 +2913,6 @@ async function runAgentTurnInner(opts: {
         if (!tools.some((t) => t.done === label.done))
           tools.push({ ing: label.ing, done: label.done, started: new Set(), ended: new Set(), fallos: 0, exitos: 0 });
       }
-      chunkN++;
-      if (artifactOpenAt < 0 && /```eb-artifact/.test(acc)) {
-        artifactOpenAt = chunkN;
-        console.log(`[gt-chunk] eb-artifact ABRE en chunk #${chunkN} t=${Date.now() - chunkT0}ms`);
-      }
-      if (artifactOpenAt >= 0)
-        console.log(
-          `[gt-chunk] #${chunkN} +${chunk.length}b acc=${acc.length}b t=${Date.now() - chunkT0}ms` +
-            (/<body[\s>]/i.test(acc) ? " body✓" : "")
-        );
       await paint();
     } else {
       opts.emitDelta(await ensure(), chunk); // fallback legacy (append)
@@ -2920,7 +2934,7 @@ async function runAgentTurnInner(opts: {
         if (ev.ok === false) entry.fallos++;
         else entry.exitos++;
         if (isChild && ev.detail) entry.detail = ev.detail; // duración
-        if (opts.emitBody) await paint();
+        if (opts.emitBody) await paint(false, true);
       }
       return;
     }
@@ -2930,7 +2944,7 @@ async function runAgentTurnInner(opts: {
       if (ev.id) { entry.started.add(ev.id); idToEntry.set(ev.id, entry); }
       tools.push(entry);
       brokeByTool = true;
-      if (opts.emitBody) await paint();
+      if (opts.emitBody) await paint(false, true);
       return;
     }
     // start. CUALQUIER tool (aunque sea oculta: Bash/Read/Write) corta el segmento de texto →
@@ -2954,7 +2968,7 @@ async function runAgentTurnInner(opts: {
       }
     }
     // Aun si la tool es oculta, re-pinta → la cáscara nace YA y "pensando" desaparece.
-    if (opts.emitBody) await paint();
+    if (opts.emitBody) await paint(false, true);
     else if (label) opts.emitDelta(await ensure(), `- ⏳ ${label.ing}\n`);
   };
 
@@ -2979,6 +2993,10 @@ async function runAgentTurnInner(opts: {
       // dice que se detuvo — borrarlo tiraría trabajo que el usuario ya estaba leyendo.
       if (opts.signal?.aborted) reply = "";
       else throw e;
+    } finally {
+      // Un pintado rezagado pisaría el body final que publica el caller: se cancela aquí,
+      // pase lo que pase (detenido, steer o normal).
+      cancelPaint();
     }
   }
   // STEER: no hay turno que cerrar acá. `id` sale 0 y el llamador borra la cáscara que

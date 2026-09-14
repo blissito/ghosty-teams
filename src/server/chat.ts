@@ -729,7 +729,7 @@ export const postMessage = createServerFn({ method: "POST" })
     const db = await import("../db.server");
     const bus = await import("./bus.server");
     const { currentNamespace } = await import("./tenant.server");
-    const { resolvedAgents, detectMentions, quoteExcerpt } = await import("../agents.server");
+    const { resolvedAgents, detectMentions, quoteExcerpt, agentGroupId } = await import("../agents.server");
     const channel = await db.getChannel(data.slug);
     if (!channel) throw new Error("Canal no encontrado");
     const ns = await currentNamespace();
@@ -824,7 +824,7 @@ export const postMessage = createServerFn({ method: "POST" })
     // "Nacer en hilo" ya existió y se quitó en b3f9530 por UX ("el agente conversa en el
     // room"). Aquel commit movió `parentFor` y dejó `fleetThread` quieto; éste mueve las
     // dos, que es lo que permite la UX sin pagar la sesión por mensaje.
-    const respondents: { handle: string; parent: number | null; fleetThread: string; shellId: number }[] = [];
+    const respondents: { handle: string; parent: number | null; fleetThread: string; shellId: number; steered?: boolean }[] = [];
     if (mentionedList.length) {
       const parentFor = data.parentId ?? id; // top-level → abre hilo bajo TU mensaje
       for (const h of mentionedList) respondents.push({ handle: h, parent: parentFor, fleetThread: FLEET_THREAD, shellId: 0 });
@@ -863,8 +863,19 @@ export const postMessage = createServerFn({ method: "POST" })
     // aquí mismo → aparece al instante y PERMANECE; el turno (askAgent) streamea sobre este
     // MISMO id vía message:body/delta. Sin "pensando…" que borrar/recrear → cero parpadeo.
     // El cliente recibe el shellId por respondent y se lo pasa a askAgent.
+    // ⚠️ Salvo cuando el mensaje va a ser STEER: si el que escribe ya tiene un turno vivo
+    // en este flow, `askAgent` mete el texto a ese turno y no abre otro. Crear la cáscara
+    // aquí y borrarla allá era una burbuja "pensando…" que aparecía y se esfumaba — en el
+    // teléfono, con el stream atrasado, duraba segundos y parecía un bug. Mismo criterio y
+    // mismo groupId que `askAgent`.
+    const turns = await import("./turns.server");
     for (const r of respondents) {
       const ag = agents.find((a) => a.handle === r.handle);
+      const groupId = await agentGroupId(ag ?? { handle: r.handle }, `${channel.slug}-${r.fleetThread}`);
+      if (turns.hasOwnInflight(groupId, me?.sub)) {
+        r.steered = true;
+        continue;
+      }
       const { id: shellId } = await db.postAgent(channel.id, r.parent, "", "msg", r.handle, ag?.name ?? "Ghosty", topic, ag?.avatar ?? "");
       r.shellId = shellId;
       const shell = await db.getMessage(shellId);
@@ -1356,9 +1367,12 @@ export const askAgent = createServerFn({ method: "POST" })
           t: "turn", id: registeredId, state: "stopped", position: 1, startedAt: Date.now(),
         });
       }
-      if (data.shellId != null) {
-        await db.deleteMessage(data.shellId).catch(() => {});
-        bus.publish(bus.ch.room(ns, channel.id), { t: "message:deleted", id: data.shellId, channelId: channel.id, parentId: data.parentId ?? null });
+      // La cáscara puede ser la eager del cliente o una que `ensure()` creó lazy (un tool
+      // event antes del `injected`): `registeredId` cubre las dos.
+      const huerfana = data.shellId ?? registeredId;
+      if (huerfana != null) {
+        await db.deleteMessage(huerfana).catch(() => {});
+        bus.publish(bus.ch.room(ns, channel.id), { t: "message:deleted", id: huerfana, channelId: channel.id, parentId: data.parentId ?? null });
       }
       // Este mensaje no abre turno propio: se metió en el que ya corría. Su 👀 ya está
       // puesto, así que hay que colgárselo a ESE turno o nadie se lo quitará al cerrar.

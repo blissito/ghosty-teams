@@ -685,6 +685,7 @@ export const en: Record<string, string> = {
   "sacar": "remove",
   "secret opcional (ej. STRIPE_API_KEY)": "optional secret (e.g. STRIPE_API_KEY)",
   "{name} está escribiendo…": "{name} is typing…",
+  "↪ Se lo pasé al turno en curso": "↪ Passed it to the running turn",
   "{n} en línea": "{n} online",
   "Personas activas en el espacio ahora mismo": "People active in the space right now",
   "Ver quién está conectado": "See who's connected",
