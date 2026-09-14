@@ -90,6 +90,9 @@ export const TOOL_LABELS: Record<string, { ing: string; done: string }> = {
   gs_db_query: { ing: "Consultando los datos", done: "Consulté los datos" },
   gs_db_write: { ing: "Guardando los datos", done: "Guardé los datos" },
   gs_subagent_spawn: { ing: "Repartiendo el trabajo", done: "Repartí el trabajo" },
+  // El worker la abre al empezar a compactar la sesión y la cierra al terminar. Dura
+  // minutos (medido: 135 s con 127k tokens) y antes era un turno colgado sin explicación.
+  gs_compact: { ing: "Compactando la memoria", done: "Compacté la memoria" },
   // Leer resultados guardados de un fan-out anterior. Etiqueta PROPIA y no "Repartí el
   // trabajo" porque el usuario lee esta fila para saber si el turno gastó: recuperar algo
   // ya pagado es lo contrario de lanzar trabajo nuevo.
