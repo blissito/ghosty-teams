@@ -2881,13 +2881,19 @@ async function runAgentTurnInner(opts: {
       return;
     }
     opts.emitBody(bodyId, renderBody(false));
-    paintTimer = setTimeout(() => {
-      paintTimer = null;
+    // El trailing RE-ARMA la ventana: sin eso, el chunk que llega justo después del
+    // trailing pintaba de inmediato y la cadencia real era el doble (medido: mediana
+    // de 59 ms con ventana de 80).
+    const tick = () => {
       if (paintDirty && opts.emitBody) {
         paintDirty = false;
         opts.emitBody(bodyId, renderBody(false));
+        paintTimer = setTimeout(tick, PAINT_MS);
+      } else {
+        paintTimer = null;
       }
-    }, PAINT_MS);
+    };
+    paintTimer = setTimeout(tick, PAINT_MS);
   };
   const onChunk = async (chunk: string) => {
     if (!chunk) return;
