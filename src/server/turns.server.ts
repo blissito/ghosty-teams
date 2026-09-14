@@ -637,9 +637,13 @@ export async function withGroupLock<T>(
    * una función y no como número porque la cáscara del mensaje SE CREA DENTRO del turno: al
    * tomar el lock todavía no existe. Ver `inflightAuthority`.
    */
-  turno?: { ns: string; getId: () => number | null },
+  turno?: { ns: string; getId: () => number | null; sinEspera?: boolean },
 ): Promise<T> {
-  const previo = groupLocks.get(groupId);
+  // STEER (`sinEspera`): el mensaje va DENTRO del turno que tiene el lock, así que esperar a
+  // que lo suelte es esperar a que termine el trabajo que se quería corregir. Medido el
+  // 2026-09-14: 10 s de espera, el turno acababa mientras tanto y el worker ya no tenía a
+  // dónde inyectar → corría un turno normal, o sea una cola disfrazada de steer.
+  const previo = turno?.sinEspera ? undefined : groupLocks.get(groupId);
   let liberar!: () => void;
   const mio = new Promise<void>((r) => (liberar = r));
   groupLocks.set(groupId, mio);

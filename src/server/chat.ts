@@ -1339,7 +1339,7 @@ export const askAgent = createServerFn({ method: "POST" })
     return { turnResult, currentDocId, currentDoc };
       },
       // Quién ejecuta, para que el servidor MCP pueda resolver su autoridad mientras dure.
-      { ns, getId: () => registeredId },
+      { ns, getId: () => registeredId, sinEspera: steer },
     ); // ← withGroupLock
 
     // Persiste el body final (autoritativo, sin marcar "editado") y reconcilia por si

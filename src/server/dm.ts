@@ -585,7 +585,7 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
     return { turnResult, currentDocId, currentDoc };
       },
       // Quién ejecuta, para que el servidor MCP pueda resolver su autoridad. Ver chat.ts.
-      { ns, getId: () => registeredId },
+      { ns, getId: () => registeredId, sinEspera: steer },
     ); // ← withGroupLock
     const { id, reply } = turnResult;
     // Igual que en el room: un fallo de transporte no puede cerrarse como `done`. Ver chat.ts.
