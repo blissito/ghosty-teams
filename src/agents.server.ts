@@ -2135,6 +2135,19 @@ export async function callAgentBackendStream(
       turnOrigin = null; // turno fuera de un request: se degrada, no se rompe
     }
   }
+  // La capacidad de DESPERTAR a este agente en esta conversación (ver wakeups.server.ts):
+  // gs la guarda con el encargo y la devuelve cuando el trabajo termina. Sólo nativo y con
+  // destino: sin `dest` no hay dónde abrir el turno.
+  let wakeUrl: string | undefined;
+  let wakeRef: string | undefined;
+  if (native && invokerSub && !publicChannel && dest && turnOrigin) {
+    try {
+      const { mintWakeRef } = await import("./server/wakeups.server");
+      const { currentNamespace } = await import("./server/tenant.server");
+      wakeRef = mintWakeRef({ sub: invokerSub, ns: await currentNamespace(), groupId, dest });
+      wakeUrl = `${turnOrigin}/api/internal/agent-wake`;
+    } catch { /* sin secret → sin despertador este turno; el aviso del turno siguiente sigue */ }
+  }
   if (native && invokerSub && !publicChannel) {
     try {
       const { mintToolToken } = await import("./server/connectors/tool-token.server");
@@ -2281,6 +2294,7 @@ export async function callAgentBackendStream(
         .join("\n\n"),
       // Solo runtime nativo + hay invocador → tools de conectores per-user (opaco a Studio).
       ...(toolToken && toolsUrl ? { toolToken, toolsUrl } : {}),
+      ...(wakeUrl && wakeRef ? { wakeUrl, wakeRef } : {}),
       ...(inject ? { inject: true } : {}),
     });
     const url = `${base}/api/v2/fleet-agents/${(agent.backend as { id: string }).id}/message-stream`;

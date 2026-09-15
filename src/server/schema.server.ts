@@ -51,6 +51,10 @@ export async function ensureSchema(): Promise<void> {
           const { armFormWebhooks } = await import("./forms/webhooks.server");
           armFormWebhooks(ns);
         } catch { /* best-effort */ }
+        try {
+          const { armWakeups } = await import("./wakeups.server");
+          armWakeups(ns);
+        } catch { /* best-effort */ }
         // La guía de uso como nota de la memoria del workspace: visible para el equipo en
         // Memoria y legible por el agente con memory_read. Se siembra aquí porque este es el
         // "arranque" de cada tenant en este proceso; se actualiza sola cuando cambia el texto.
@@ -758,6 +762,24 @@ async function migrate(): Promise<void> {
   // El índice que usa el tick: "lo pendiente que ya venció".
   await exec(`CREATE INDEX IF NOT EXISTS gc_reminders_due ON gc_reminders(fired_at, due_at)`);
   await exec(`CREATE INDEX IF NOT EXISTS gc_reminders_owner ON gc_reminders(owner_sub, due_at)`);
+
+  // Despertadores del agente (ver wakeups.server.ts): un evento de fuera (gs: "terminó tu
+  // encargo") abre un turno sin que nadie escriba. `key` UNIQUE = idempotencia; `ref` es la
+  // capacidad firmada que dice a quién y dónde; `origin` es el host del tenant para las
+  // tools del turno (fuera de un request no hay cabeceras de las que deducirlo).
+  await exec(`CREATE TABLE IF NOT EXISTS gt_agent_wakeups (
+    id         TEXT PRIMARY KEY,
+    key        TEXT NOT NULL UNIQUE,
+    ref        TEXT NOT NULL,
+    cause      TEXT NOT NULL DEFAULT 'evento',
+    text       TEXT NOT NULL,
+    origin     TEXT NOT NULL DEFAULT '',
+    due_at     INTEGER NOT NULL,
+    created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+    fired_at   INTEGER,
+    result     TEXT
+  )`);
+  await exec(`CREATE INDEX IF NOT EXISTS gt_agent_wakeups_due ON gt_agent_wakeups(fired_at, due_at)`);
 
   // ¿Además del mensaje, correo? Se pregunta AL PROGRAMAR y se guarda por recordatorio:
   // querer un correo por el pago de la tarjeta no significa quererlo por todo.

@@ -52,6 +52,7 @@ import { Route as ApiInternalProspeccionRunRouteImport } from './routes/api.inte
 import { Route as ApiInternalMembersRouteImport } from './routes/api.internal.members'
 import { Route as ApiInternalAnnouncementsRouteImport } from './routes/api.internal.announcements'
 import { Route as ApiInternalAlertRouteImport } from './routes/api.internal.alert'
+import { Route as ApiInternalAgentWakeRouteImport } from './routes/api.internal.agent-wake'
 import { Route as ApiFormTokenRouteImport } from './routes/api.form.$token'
 import { Route as ApiFormUploadTokenRouteImport } from './routes/api.form-upload.$token'
 import { Route as ApiFormFileIdRouteImport } from './routes/api.form-file.$id'
@@ -294,6 +295,11 @@ const ApiInternalAlertRoute = ApiInternalAlertRouteImport.update({
   path: '/api/internal/alert',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiInternalAgentWakeRoute = ApiInternalAgentWakeRouteImport.update({
+  id: '/api/internal/agent-wake',
+  path: '/api/internal/agent-wake',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiFormTokenRoute = ApiFormTokenRouteImport.update({
   id: '/api/form/$token',
   path: '/api/form/$token',
@@ -463,6 +469,7 @@ export interface FileRoutesByFullPath {
   '/api/form-file/$id': typeof ApiFormFileIdRoute
   '/api/form-upload/$token': typeof ApiFormUploadTokenRoute
   '/api/form/$token': typeof ApiFormTokenRoute
+  '/api/internal/agent-wake': typeof ApiInternalAgentWakeRoute
   '/api/internal/alert': typeof ApiInternalAlertRoute
   '/api/internal/announcements': typeof ApiInternalAnnouncementsRoute
   '/api/internal/members': typeof ApiInternalMembersRoute
@@ -531,6 +538,7 @@ export interface FileRoutesByTo {
   '/api/form-file/$id': typeof ApiFormFileIdRoute
   '/api/form-upload/$token': typeof ApiFormUploadTokenRoute
   '/api/form/$token': typeof ApiFormTokenRoute
+  '/api/internal/agent-wake': typeof ApiInternalAgentWakeRoute
   '/api/internal/alert': typeof ApiInternalAlertRoute
   '/api/internal/announcements': typeof ApiInternalAnnouncementsRoute
   '/api/internal/members': typeof ApiInternalMembersRoute
@@ -601,6 +609,7 @@ export interface FileRoutesById {
   '/api/form-file/$id': typeof ApiFormFileIdRoute
   '/api/form-upload/$token': typeof ApiFormUploadTokenRoute
   '/api/form/$token': typeof ApiFormTokenRoute
+  '/api/internal/agent-wake': typeof ApiInternalAgentWakeRoute
   '/api/internal/alert': typeof ApiInternalAlertRoute
   '/api/internal/announcements': typeof ApiInternalAnnouncementsRoute
   '/api/internal/members': typeof ApiInternalMembersRoute
@@ -672,6 +681,7 @@ export interface FileRouteTypes {
     | '/api/form-file/$id'
     | '/api/form-upload/$token'
     | '/api/form/$token'
+    | '/api/internal/agent-wake'
     | '/api/internal/alert'
     | '/api/internal/announcements'
     | '/api/internal/members'
@@ -740,6 +750,7 @@ export interface FileRouteTypes {
     | '/api/form-file/$id'
     | '/api/form-upload/$token'
     | '/api/form/$token'
+    | '/api/internal/agent-wake'
     | '/api/internal/alert'
     | '/api/internal/announcements'
     | '/api/internal/members'
@@ -809,6 +820,7 @@ export interface FileRouteTypes {
     | '/api/form-file/$id'
     | '/api/form-upload/$token'
     | '/api/form/$token'
+    | '/api/internal/agent-wake'
     | '/api/internal/alert'
     | '/api/internal/announcements'
     | '/api/internal/members'
@@ -878,6 +890,7 @@ export interface RootRouteChildren {
   ApiFormFileIdRoute: typeof ApiFormFileIdRoute
   ApiFormUploadTokenRoute: typeof ApiFormUploadTokenRoute
   ApiFormTokenRoute: typeof ApiFormTokenRoute
+  ApiInternalAgentWakeRoute: typeof ApiInternalAgentWakeRoute
   ApiInternalAlertRoute: typeof ApiInternalAlertRoute
   ApiInternalAnnouncementsRoute: typeof ApiInternalAnnouncementsRoute
   ApiInternalMembersRoute: typeof ApiInternalMembersRoute
@@ -1201,6 +1214,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiInternalAlertRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/internal/agent-wake': {
+      id: '/api/internal/agent-wake'
+      path: '/api/internal/agent-wake'
+      fullPath: '/api/internal/agent-wake'
+      preLoaderRoute: typeof ApiInternalAgentWakeRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/form/$token': {
       id: '/api/form/$token'
       path: '/api/form/$token'
@@ -1446,6 +1466,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiFormFileIdRoute: ApiFormFileIdRoute,
   ApiFormUploadTokenRoute: ApiFormUploadTokenRoute,
   ApiFormTokenRoute: ApiFormTokenRoute,
+  ApiInternalAgentWakeRoute: ApiInternalAgentWakeRoute,
   ApiInternalAlertRoute: ApiInternalAlertRoute,
   ApiInternalAnnouncementsRoute: ApiInternalAnnouncementsRoute,
   ApiInternalMembersRoute: ApiInternalMembersRoute,
@@ -1468,12 +1489,3 @@ const rootRouteChildren: RootRouteChildren = {
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
-
-import type { getRouter } from './router.tsx'
-import type { createStart } from '@tanstack/react-start'
-declare module '@tanstack/react-start' {
-  interface Register {
-    ssr: true
-    router: Awaited<ReturnType<typeof getRouter>>
-  }
-}
