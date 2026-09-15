@@ -873,6 +873,27 @@ export function AttachmentList({ attachments }: { attachments: Attachment[] }) {
         if (view?.kind === "audio") {
           return <VoiceNote key={a.id} src={src} waveform={a.waveform} durationMs={a.duration_ms} />;
         }
+        // Video (mp4/webm) → card que abre el REPRODUCTOR en el panel lateral; la descarga
+        // vive en el header del panel. Sin esta rama caía a "descarga directa" y el mp4
+        // entregado por el agente se abría como link crudo de Tigris (2026-09-15).
+        if (view?.kind === "video") {
+          return (
+            <button
+              key={a.id}
+              type="button"
+              onClick={onOpenArtifact ? () => onOpenArtifact(view) : undefined}
+              className="group flex max-w-xs items-center gap-2.5 rounded-lg gt-card px-3 py-2 text-left transition hover:border-brand"
+              title={t("Abrir en panel")}
+            >
+              <FileGlyph mime={a.mime} name={a.name} />
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-sm text-ink">{a.name ?? t("Video")}</span>
+                <span className="block text-[11px] text-muted">{fmtBytes(a.size)}</span>
+              </span>
+              <Play size={15} className="shrink-0 text-muted group-hover:text-brand" />
+            </button>
+          );
+        }
         // Otros archivos (docx, zip, etc.) → descarga directa, sin visor.
         return (
           <a
