@@ -95,7 +95,7 @@ export const workspaceUsageFn = createServerFn({ method: "GET" }).handler(async 
       nextPlanFrom?: string | null;
       nextTotal?: number | null;
       /** Escritorio / CI del plan, para enlazar. */
-      boxes?: { role: "desktop" | "ci"; index: number; host: string; state: string }[];
+      boxes?: { role: "desktop" | "ci"; index: number; host: string; url: string | null; state: string }[];
       resetsAt: string;
       used: number;
       included: number;

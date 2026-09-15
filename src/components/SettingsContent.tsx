@@ -1140,7 +1140,7 @@ function UsagePanel({ isOwner }: { isOwner: boolean }) {
           <span className="flex flex-wrap gap-2">
             {data.boxes.map((b) => (
               b.role === "desktop" ? (
-                <a key={`${b.role}${b.index}`} href={`https://${b.host}/`} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 rounded-lg border border-border px-2 py-1 text-ink hover:bg-surface-3">
+                <a key={`${b.role}${b.index}`} href={b.url ?? `https://${b.host}/`} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 rounded-lg border border-border px-2 py-1 text-ink hover:bg-surface-3">
                   {t("Escritorio")} {b.index + 1} <ExternalLink size={12} />
                 </a>
               ) : (
