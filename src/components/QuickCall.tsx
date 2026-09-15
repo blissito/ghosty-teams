@@ -155,7 +155,7 @@ export function QuickCall({ room, onVideoChange }: { room: Room; onVideoChange?:
     if (!lp) return;
     pushReaction(emoji, t("Tú"));
     void lp.publishData(new TextEncoder().encode(JSON.stringify({ t: "reaction", e: emoji })), {
-      reliable: false,
+      reliable: true, // la grabación también las pinta: que no se pierda ninguna
       topic: REACTION_TOPIC,
     });
   };
