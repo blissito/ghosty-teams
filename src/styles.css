@@ -665,3 +665,11 @@ body[data-mantenimiento="1"] .gt-app {
     user-select: none;
   }
 }
+
+/* Reacción de la llamada: sube y se desvanece. Duración = REACTION_MS en QuickCall. */
+@keyframes reaction-float {
+  0% { transform: translateY(0) scale(0.6); opacity: 0; }
+  12% { transform: translateY(-16px) scale(1.1); opacity: 1; }
+  100% { transform: translateY(-160px) scale(1); opacity: 0; }
+}
+.animate-reaction-float { animation: reaction-float 3s ease-out forwards; }

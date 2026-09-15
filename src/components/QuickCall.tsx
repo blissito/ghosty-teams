@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { Room, Track, type Participant } from "livekit-client";
-import { Mic, MicOff, Video, VideoOff, ScreenShare, PhoneOff, Loader2, Circle, Repeat } from "lucide-react";
+import { Room, RoomEvent, Track, type Participant } from "livekit-client";
+import { Mic, MicOff, Video, VideoOff, ScreenShare, PhoneOff, Loader2, Circle, Repeat, SmilePlus } from "lucide-react";
 import { useT } from "../i18n";
 import { leaveCall, setRecording, useCall, type CallConn } from "../lib/call-store";
 import { getCallRecordingFn, startCallRecordingFn, stopCallRecordingFn } from "../server/quick-calls";
@@ -92,6 +92,14 @@ function Tile({ p, source, local }: { p: Participant; source: Track.Source; loca
   );
 }
 
+// ── Reacciones (tipo Meet) ──────────────────────────────────────────────────
+// Viajan por data messages de LiveKit, sin backend: quien no está en la llamada no
+// tiene por qué verlas y no hace falta que duren más de lo que tardan en subir.
+const REACTIONS = ["👍", "❤️", "😂", "😮", "🎉", "👏"];
+const REACTION_TOPIC = "reaction";
+const REACTION_MS = 3000;
+type FloatingReaction = { id: number; emoji: string; x: number; by: string };
+
 export function QuickCall({ room, onVideoChange }: { room: Room; onVideoChange?: (hasVideo: boolean) => void }) {
   const t = useT();
   // El store sube `version` en cada evento de la sala → esto re-renderiza.
@@ -131,6 +139,41 @@ export function QuickCall({ room, onVideoChange }: { room: Room; onVideoChange?:
     onVideoChange?.(hasVideo);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hasVideo]);
+
+  // Reacciones en vuelo. Cada una se borra sola al terminar su animación; el emisor no
+  // se recibe a sí mismo por el bus, así que la suya se agrega directo.
+  const [reactions, setReactions] = useState<FloatingReaction[]>([]);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const reactionSeq = useRef(0);
+  const pushReaction = (emoji: string, by: string) => {
+    const id = ++reactionSeq.current;
+    setReactions((rs) => [...rs, { id, emoji, x: 15 + Math.random() * 70, by }]);
+    setTimeout(() => setReactions((rs) => rs.filter((r) => r.id !== id)), REACTION_MS);
+  };
+  const sendReaction = (emoji: string) => {
+    setPickerOpen(false);
+    if (!lp) return;
+    pushReaction(emoji, t("Tú"));
+    void lp.publishData(new TextEncoder().encode(JSON.stringify({ t: "reaction", e: emoji })), {
+      reliable: false,
+      topic: REACTION_TOPIC,
+    });
+  };
+  useEffect(() => {
+    const onData = (payload: Uint8Array, participant?: Participant, _kind?: unknown, topic?: string) => {
+      if (topic !== REACTION_TOPIC) return;
+      try {
+        const msg = JSON.parse(new TextDecoder().decode(payload)) as { t?: string; e?: string };
+        if (msg.t !== "reaction" || !msg.e || !REACTIONS.includes(msg.e)) return;
+        pushReaction(msg.e, participant?.name || participant?.identity || "");
+      } catch {
+        /* payload ajeno: se ignora */
+      }
+    };
+    room.on(RoomEvent.DataReceived, onData);
+    return () => { room.off(RoomEvent.DataReceived, onData); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [room]);
 
   const ctrl = "grid h-10 w-10 place-items-center rounded-full border border-border text-ink transition hover:bg-surface-3";
   const ctrlOff = "grid h-10 w-10 place-items-center rounded-full bg-red-600 text-white transition hover:bg-red-700";
@@ -213,6 +256,20 @@ export function QuickCall({ room, onVideoChange }: { room: Room; onVideoChange?:
 
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-surface">
+      <div className="relative flex min-h-0 flex-1 flex-col">
+      {/* Capa de reacciones: encima del video, no bloquea clics. */}
+      <div className="pointer-events-none absolute inset-0 z-10 overflow-hidden">
+        {reactions.map((r) => (
+          <div
+            key={r.id}
+            className="animate-reaction-float absolute bottom-2 flex flex-col items-center"
+            style={{ left: `${r.x}%` }}
+          >
+            <span className="text-4xl drop-shadow">{r.emoji}</span>
+            {r.by && <span className="rounded-full bg-black/50 px-1.5 text-xs text-white">{r.by}</span>}
+          </div>
+        ))}
+      </div>
       {status !== "live" ? (
         <div className="flex flex-1 flex-col items-center justify-center gap-2 text-sm text-muted">
           {status === "connecting" ? (
@@ -246,6 +303,7 @@ export function QuickCall({ room, onVideoChange }: { room: Room; onVideoChange?:
           ))}
         </div>
       )}
+      </div>
       {recError ? (
         // El motivo del "no", donde se pulsó. Callarlo deja el botón pareciendo roto.
         <div className="border-t border-border px-3 py-1.5 text-center text-xs text-red-600">{recError}</div>
@@ -283,6 +341,20 @@ export function QuickCall({ room, onVideoChange }: { room: Room; onVideoChange?:
             <Repeat size={17} />
           </button>
         ) : null}
+        <div className="relative">
+          <button onClick={() => setPickerOpen((o) => !o)} className={pickerOpen ? ctrl + " bg-surface-3" : ctrl} title={t("Reaccionar")}>
+            <SmilePlus size={17} />
+          </button>
+          {pickerOpen && (
+            <div className="absolute bottom-12 left-1/2 z-30 flex -translate-x-1/2 gap-1 rounded-full border border-border bg-surface-2 px-2 py-1 shadow-lg">
+              {REACTIONS.map((e) => (
+                <button key={e} onClick={() => sendReaction(e)} className="grid h-9 w-9 place-items-center rounded-full text-xl transition hover:scale-125 hover:bg-surface-3">
+                  {e}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
         <button
           onClick={toggleRec}
           disabled={recBusy}
