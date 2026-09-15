@@ -61,19 +61,36 @@ export function QuickCallDock({ room, label }: { room: Room; label: string }) {
     window.addEventListener("pointerup", up);
   };
 
-  // Redimensiona por la esquina inf-derecha. Ancla arriba-izquierda (fija pos) para
-  // crecer hacia abajo-derecha con el cursor; clampado al viewport.
-  const startResize = (e: React.PointerEvent) => {
+  // Redimensiona desde cualquier borde o esquina. El lado opuesto al que se jala queda
+  // fijo: jalar la izquierda mueve `left` y crece el ancho; jalar la derecha sólo crece.
+  // Clampado al viewport y a un mínimo de 320×240.
+  type Edge = { l?: boolean; r?: boolean; t?: boolean; b?: boolean };
+  const startResize = (edge: Edge) => (e: React.PointerEvent) => {
     if (expanded) return;
     e.stopPropagation();
     const el = dockRef.current;
     if (!el) return;
     const r = el.getBoundingClientRect();
     setPos({ x: r.left, y: r.top });
-    const sx = e.clientX, sy = e.clientY, sw = r.width, sh = r.height, left = r.left, top = r.top;
+    setSize({ w: r.width, h: r.height });
+    const sx = e.clientX, sy = e.clientY;
     const move = (ev: PointerEvent) => {
-      const w = Math.max(320, Math.min(window.innerWidth - left - 4, sw + (ev.clientX - sx)));
-      const h = Math.max(240, Math.min(window.innerHeight - top - 4, sh + (ev.clientY - sy)));
+      const dx = ev.clientX - sx, dy = ev.clientY - sy;
+      let left = r.left, top = r.top, w = r.width, h = r.height;
+      if (edge.r) w = Math.max(320, Math.min(window.innerWidth - r.left - 4, r.width + dx));
+      if (edge.b) h = Math.max(240, Math.min(window.innerHeight - r.top - 4, r.height + dy));
+      if (edge.l) {
+        // El borde derecho no se mueve: left sube/baja y el ancho compensa.
+        const right = r.left + r.width;
+        left = Math.max(4, Math.min(right - 320, r.left + dx));
+        w = right - left;
+      }
+      if (edge.t) {
+        const bottom = r.top + r.height;
+        top = Math.max(4, Math.min(bottom - 240, r.top + dy));
+        h = bottom - top;
+      }
+      setPos({ x: left, y: top });
       setSize({ w, h });
     };
     const up = () => {
@@ -183,15 +200,26 @@ export function QuickCallDock({ room, label }: { room: Room; label: string }) {
       </div>
       {callBody}
       {!expanded && (
-        <div
-          onPointerDown={startResize}
-          title={t("Arrastra para redimensionar")}
-          className="absolute bottom-0 right-0 z-20 grid size-6 cursor-nwse-resize place-items-center rounded-tl-md text-ink/60 transition hover:bg-surface-3 hover:text-brand"
-        >
-          <svg width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round">
-            <path d="M12 4 L4 12 M12 8.5 L8.5 12" />
-          </svg>
-        </div>
+        <>
+          {/* Asas invisibles en los 4 bordes; las esquinas van encima (z mayor) para ganar. */}
+          <div onPointerDown={startResize({ t: true })} className="absolute inset-x-2 top-0 z-10 h-1.5 cursor-ns-resize" />
+          <div onPointerDown={startResize({ b: true })} className="absolute inset-x-2 bottom-0 z-10 h-1.5 cursor-ns-resize" />
+          <div onPointerDown={startResize({ l: true })} className="absolute inset-y-2 left-0 z-10 w-1.5 cursor-ew-resize" />
+          <div onPointerDown={startResize({ r: true })} className="absolute inset-y-2 right-0 z-10 w-1.5 cursor-ew-resize" />
+          <div onPointerDown={startResize({ t: true, l: true })} className="absolute left-0 top-0 z-20 size-3 cursor-nwse-resize" />
+          <div onPointerDown={startResize({ t: true, r: true })} className="absolute right-0 top-0 z-20 size-3 cursor-nesw-resize" />
+          <div onPointerDown={startResize({ b: true, l: true })} className="absolute bottom-0 left-0 z-20 size-3 cursor-nesw-resize" />
+          {/* La inf-derecha sigue siendo la visible, con su grip. */}
+          <div
+            onPointerDown={startResize({ b: true, r: true })}
+            title={t("Arrastra para redimensionar")}
+            className="absolute bottom-0 right-0 z-20 grid size-6 cursor-nwse-resize place-items-center rounded-tl-md text-ink/60 transition hover:bg-surface-3 hover:text-brand"
+          >
+            <svg width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round">
+              <path d="M12 4 L4 12 M12 8.5 L8.5 12" />
+            </svg>
+          </div>
+        </>
       )}
     </div>
   );
