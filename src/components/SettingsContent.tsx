@@ -81,6 +81,8 @@ import {
 // Panel de flota de Studio (gs): dónde se crean+configuran los agentes gestionados.
 // Los agentes NO se crean inline en Teams; se dan de alta aquí y aparecen solos.
 const STUDIO_AGENTS_URL = "https://ghosty.studio/app/agents";
+// El dueño arma lo que paga el mes que entra en Studio (mismo configurador que /planes).
+const STUDIO_PLAN_URL = (slug: string) => `https://ghosty.studio/app/workspaces/${encodeURIComponent(slug)}/plan`;
 
 // Datos que Ajustes necesita (identidad + acceso a agentes). Se cargan una vez
 // y se cachean a nivel módulo → reabrir Preferencias (modal) pinta al instante y revalida
@@ -379,7 +381,7 @@ export function SettingsContent({
             <AgentsManager isOwner={isOwner} mySub={user?.sub ?? null} />
           )}
 
-          {tab === "uso" && <UsagePanel />}
+          {tab === "uso" && <UsagePanel isOwner={isOwner} />}
 
           {tab === "emojis" && <EmojiManager isOwner={isOwner} mySub={user?.sub ?? null} />}
         </div>
@@ -919,7 +921,7 @@ function useThemeStore() {
 
    La cifra la calcula gs (control-plane): es quien recibe los reportes del worker y
    quien sabe cuántos tokens trae el paquete. Aquí no se recalcula nada. */
-function UsagePanel() {
+function UsagePanel({ isOwner }: { isOwner: boolean }) {
   const t = useT();
   const locale = useLocale();
   const [data, setData] = useState<Awaited<ReturnType<typeof workspaceUsageFn>> | null>(null);
@@ -1117,13 +1119,33 @@ function UsagePanel() {
       {/* El total de turnos del espacio se quitó: cada tarjeta ya lleva los suyos, y el
           agregado encima de un desglose sólo invita a sumar y ver que no cuadra (no
           cuadra a propósito — lo que corre con llave del cliente no entra en el saldo). */}
-      <div className="border-t border-border pt-3 text-xs text-muted">
-        {t("Plan")}: <span className="font-medium text-ink">{data.plan}</span>
-        {data.paidUntil && (
-          <>
-            {" · "}
-            {t("pagado hasta el")} {fecha(data.paidUntil)}
-          </>
+      <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border pt-3 text-xs text-muted">
+        <span>
+          {t("Plan")}: <span className="font-medium text-ink">{data.plan}</span>
+          {data.paidUntil && (
+            <>
+              {" · "}
+              {t("pagado hasta el")} {fecha(data.paidUntil)}
+            </>
+          )}
+          {data.nextPlanFrom && data.nextTotal != null && (
+            <>
+              {" · "}
+              {t("desde el")} {fecha(data.nextPlanFrom)}: ${data.nextTotal.toLocaleString(locale === "es" ? "es-MX" : "en-US")} MXN
+            </>
+          )}
+        </span>
+        {/* Sólo el dueño: el plan es del workspace y lo ajusta quien lo paga. Es un enlace a
+            Studio, no un embed — el configurador vive allá con sus precios. */}
+        {isOwner && data.slug && (
+          <a
+            href={STUDIO_PLAN_URL(data.slug)}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1.5 rounded-lg bg-brand px-3 py-1.5 font-semibold text-brand-fg hover:opacity-90"
+          >
+            {t("Ajustar el siguiente pago")} <ExternalLink size={14} />
+          </a>
         )}
       </div>
     </div>

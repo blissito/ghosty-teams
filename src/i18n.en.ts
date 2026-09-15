@@ -50,6 +50,8 @@ export const en: Record<string, string> = {
   "Te quedan ~": "~",
   "turnos a este ritmo": "turns left at this pace",
   "pagado hasta el": "paid through",
+  "desde el": "from",
+  "Ajustar el siguiente pago": "Adjust next payment",
   "turnos del agente este mes": "agent turns this month",
   "No pudimos consultar el consumo en este momento.": "We couldn't load usage right now.",
 

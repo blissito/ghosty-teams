@@ -89,7 +89,11 @@ export const workspaceUsageFn = createServerFn({ method: "GET" }).handler(async 
     const raw = (await res.json()) as {
       plan: string;
       combo: string;
+      slug?: string;
       paidUntil: string | null;
+      /** Cambio de plan que el dueño dejó guardado para el siguiente corte (null = ninguno). */
+      nextPlanFrom?: string | null;
+      nextTotal?: number | null;
       resetsAt: string;
       used: number;
       included: number;
