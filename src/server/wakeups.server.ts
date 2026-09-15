@@ -202,6 +202,13 @@ async function fire(ns: string, w: Wakeup, ref: WakeRef): Promise<void> {
     if (shellId != null) await db.deleteMessage(shellId).catch(() => {});
     return;
   }
-  await db.setMessageBody(id, finalBody);
-  publish({ t: "message:body", id, body: finalBody });
+  // Archivos y notas de voz entregados en el turno (```eb-file``` / ```eb-audio```): el
+  // mismo tratamiento que un turno normal. Sin esto el video/mp3 que motivó el
+  // despertador se quedaba sin tarjeta.
+  const { attachDeliveryFences } = await import("./delivery-fences.server");
+  const delivered = await attachDeliveryFences(id, finalBody, dest);
+  const body = delivered?.body ?? finalBody;
+  await db.setMessageBody(id, body);
+  publish({ t: "message:body", id, body });
+  if (delivered?.attached) publish({ t: "refresh", channelId: dest.channelId ?? null, parentId: dest.parentId ?? null, dmId: dest.dmId ?? null });
 }
