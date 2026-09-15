@@ -97,7 +97,7 @@ function Tile({ p, source, local }: { p: Participant; source: Track.Source; loca
 // tiene por qué verlas y no hace falta que duren más de lo que tardan en subir.
 const REACTIONS = ["👍", "❤️", "😂", "😮", "🎉", "👏"];
 const REACTION_TOPIC = "reaction";
-const REACTION_MS = 3000;
+const REACTION_MS = 4500;
 type FloatingReaction = { id: number; emoji: string; x: number; by: string };
 
 export function QuickCall({ room, onVideoChange }: { room: Room; onVideoChange?: (hasVideo: boolean) => void }) {
@@ -150,8 +150,8 @@ export function QuickCall({ room, onVideoChange }: { room: Room; onVideoChange?:
     setReactions((rs) => [...rs, { id, emoji, x: 15 + Math.random() * 70, by }]);
     setTimeout(() => setReactions((rs) => rs.filter((r) => r.id !== id)), REACTION_MS);
   };
+  // El popover NO se cierra al elegir: se mandan varias seguidas (se cierra con el botón).
   const sendReaction = (emoji: string) => {
-    setPickerOpen(false);
     if (!lp) return;
     pushReaction(emoji, t("Tú"));
     void lp.publishData(new TextEncoder().encode(JSON.stringify({ t: "reaction", e: emoji })), {
@@ -263,9 +263,9 @@ export function QuickCall({ room, onVideoChange }: { room: Room; onVideoChange?:
           <div
             key={r.id}
             className="animate-reaction-float absolute bottom-2 flex flex-col items-center"
-            style={{ left: `${r.x}%` }}
+            style={{ left: `${r.x}%`, animationDelay: `0s, ${(r.id % 3) * 0.15}s` }}
           >
-            <span className="text-4xl drop-shadow">{r.emoji}</span>
+            <span className="animate-reaction-pop text-5xl drop-shadow-lg">{r.emoji}</span>
             {r.by && <span className="rounded-full bg-black/50 px-1.5 text-xs text-white">{r.by}</span>}
           </div>
         ))}
