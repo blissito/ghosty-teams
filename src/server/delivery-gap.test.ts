@@ -10,6 +10,14 @@ describe("deliveryGapNotice", () => {
     expect(deliveryGapNotice(real, false)).toContain(GAP_MARK);
   });
 
+  it("se calla ante un encargo asíncrono: la entrega es en FUTURO, no falta nada", () => {
+    // Los 20 éxitos de Los Bukis, 2026-09-15: el agente encargó bien y el aviso disparó igual.
+    const body =
+      "Ya quedó encargada la descarga: son 20 pistas, así que va a tomar varios minutos. " +
+      "En cuanto termine te la mando aquí mismo en un zip.";
+    expect(deliveryGapNotice(body, false)).toBe("");
+  });
+
   it("se calla cuando la imagen SÍ va en el texto", () => {
     const real = "Va como imagen directa:\n\n![Etiqueta](https://t3.storage.dev/ghosty-teams/t3/x.png?X-Amz-Signature=ab)";
     expect(deliveryGapNotice(real, false)).toBe("");

@@ -809,6 +809,8 @@ export const en: Record<string, string> = {
   "Maqueté el PDF": "Laid out the PDF",
   "Montando el video": "Editing the video",
   "Encargué el montaje del video": "Queued the video edit",
+  "Bajando el audio de YouTube": "Downloading the YouTube audio",
+  "Encargué la descarga del audio": "Queued the audio download",
   "Preparando la cotización": "Preparing the quote",
   "Preparé la cotización": "Prepared the quote",
   "Procesando el audio": "Processing the audio",

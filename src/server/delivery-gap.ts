@@ -59,6 +59,14 @@ const AMBIGUOS = [0, 4];
 const ENTREGABLE =
   /\b(archivo|imagen|im[aá]genes|foto|fotos|captura|gr[aá]fica|gr[aá]fico|diagrama|tabla|tarjeta|hoja|documento|etiqueta|logo|portada|banner|cartel|cat[aá]logo|presentaci[oó]n|cotizaci[oó]n|factura|video|audio|nota de voz|liga|enlace|link|pdf|docx?|xlsx?|pptx?|png|jpe?g|svg|zip|csv)\b/i;
 
+/** Un anuncio en FUTURO no es una entrega. «En cuanto termine te la mando en un zip» es
+ *  la frase correcta de un encargo asíncrono (montaje de video, audio de YouTube): el
+ *  archivo llega en un turno posterior por diseño. Sin esto el aviso disparaba en falso
+ *  justo cuando el agente hizo lo correcto (visto el 2026-09-15 con los 20 éxitos de Los
+ *  Bukis). Callarse de más es el modo de falla tolerable aquí. */
+const PENDIENTE =
+  /\b(en cuanto (?:termine|est[eé]|acabe|salga)|cuando (?:termine|est[eé] list[oa]|acabe)|te aviso|te avisar[eé]|va a tomar|va a tardar|tardar[aá]|qued[oó] encargad[oa]|encargu[eé]|en proceso|turno posterior|varios minutos)\b/i;
+
 /** Ventana en la que se busca el entregable después del anuncio. «Aquí está de nuevo la
  *  etiqueta» mete tres palabras en medio, así que la adyacencia no sirve. */
 const VENTANA = 60;
@@ -105,6 +113,7 @@ export function deliveryGapNotice(body: string, tieneAdjunto: boolean): string {
   const prosa = texto.replace(/```[\s\S]*?```/g, " ");
   if (!ANUNCIOS.some((re, i) => anuncia(re, i, prosa))) return "";
   if (LLEVA_ALGO.some((re) => re.test(prosa))) return "";
+  if (PENDIENTE.test(prosa)) return "";
   // ⚠️ Esto lo lee LA PERSONA, no el agente. Hasta el 2026-08-31 decía «hay que publicarlo y
   // pegar la URL — una ruta dentro de la caja del agente (`image.png`, `/tmp/…`)», que es una
   // instrucción para el modelo puesta en la cara del usuario. Y funcionó como tal: el cliente
