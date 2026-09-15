@@ -984,6 +984,7 @@ export const en: Record<string, string> = {
   "Leí un mensaje": "Read a message",
   "Leyendo un mensaje": "Reading a message",
   "Revisé tus recordatorios": "Checked your reminders",
+  "Pantalla completa": "Full screen",
   "Salir de pantalla completa": "Exit full screen",
   "Se comparte esta versión: si editas el artefacto después, quien tenga el enlace seguirá viendo la que elegiste.":
     "This version is what gets shared: if you edit the artifact later, anyone with the link keeps seeing the one you picked.",

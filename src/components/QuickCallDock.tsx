@@ -1,6 +1,6 @@
-import { Suspense, lazy, useLayoutEffect, useRef, useState } from "react";
+import { Suspense, lazy, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { Room } from "livekit-client";
-import { Headphones, Maximize2, Minimize2, PictureInPicture2 } from "lucide-react";
+import { Expand, Headphones, Maximize2, Minimize2, PictureInPicture2, Shrink } from "lucide-react";
 import { useT } from "../i18n";
 import { CallPipPortal, useCallPipWindow } from "./CallPipWindow";
 
@@ -17,11 +17,24 @@ export function QuickCallDock({ room, label }: { room: Room; label: string }) {
   const [pos, setPos] = useState<{ x: number; y: number } | null>(null); // null = anclado arriba-derecha
   const [size, setSize] = useState<{ w: number; h: number } | null>(null); // null = tamaño default
   const [hasVideo, setHasVideo] = useState(false); // solo-audio → dock compacto (mínimo)
+  const [fullscreen, setFullscreen] = useState(false); // pantalla completa REAL (Fullscreen API)
   const dockRef = useRef<HTMLDivElement>(null);
   // Ventana aparte (Document PiP). El dock de la página se queda tal cual estaba: esto
   // es una salida ADICIONAL, no un modo nuevo.
   const { pip, open: openPip, close: closePip, supported: pipSupported } = useCallPipWindow();
   const positioned = !!pos && !expanded;
+
+  // Pantalla completa real: el dock entero entra al modo del navegador; Esc lo saca y el
+  // evento nos mantiene en sincronía (no se puede deducir del estado de React).
+  useEffect(() => {
+    const sync = () => setFullscreen(document.fullscreenElement === dockRef.current);
+    document.addEventListener("fullscreenchange", sync);
+    return () => document.removeEventListener("fullscreenchange", sync);
+  }, []);
+  const toggleFullscreen = () => {
+    if (document.fullscreenElement) void document.exitFullscreen();
+    else void dockRef.current?.requestFullscreen();
+  };
   const sized = !!size && !expanded;
   // Solo-audio y sin tamaño manual ni expandido → ventana mínima (avatares + controles).
   const compact = !hasVideo && !expanded && !sized;
@@ -145,7 +158,7 @@ export function QuickCallDock({ room, label }: { room: Room; label: string }) {
   }
 
   const style =
-    !expanded && (positioned || sized)
+    !expanded && !fullscreen && (positioned || sized)
       ? { ...(positioned ? { left: pos!.x, top: pos!.y } : {}), ...(sized ? { width: size!.w, height: size!.h } : {}) }
       : undefined;
 
@@ -154,7 +167,7 @@ export function QuickCallDock({ room, label }: { room: Room; label: string }) {
       ref={dockRef}
       style={style}
       className={
-        (expanded
+        (expanded || fullscreen
           ? "fixed inset-3 md:inset-6"
           : compact
             ? "fixed h-64 w-[min(340px,92vw)]" + (positioned ? "" : " right-4 top-4")
@@ -189,6 +202,15 @@ export function QuickCallDock({ room, label }: { room: Room; label: string }) {
             <PictureInPicture2 size={15} />
           </button>
         )}
+        {typeof document !== "undefined" && document.fullscreenEnabled && (
+          <button
+            onClick={toggleFullscreen}
+            title={fullscreen ? t("Salir de pantalla completa") : t("Pantalla completa")}
+            className="grid h-7 w-7 shrink-0 place-items-center rounded-md text-muted transition hover:bg-surface-3 hover:text-ink"
+          >
+            {fullscreen ? <Shrink size={15} /> : <Expand size={15} />}
+          </button>
+        )}
         <button
           onClick={() => setExpanded((e) => !e)}
           title={expanded ? t("Restaurar") : t("Expandir")}
@@ -199,7 +221,7 @@ export function QuickCallDock({ room, label }: { room: Room; label: string }) {
         </div>
       </div>
       {callBody}
-      {!expanded && (
+      {!expanded && !fullscreen && (
         <>
           {/* Asas invisibles en los 4 bordes; las esquinas van encima (z mayor) para ganar. */}
           <div onPointerDown={startResize({ t: true })} className="absolute inset-x-2 top-0 z-10 h-1.5 cursor-ns-resize" />
