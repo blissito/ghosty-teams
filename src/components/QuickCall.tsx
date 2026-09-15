@@ -263,7 +263,7 @@ export function QuickCall({ room, onVideoChange }: { room: Room; onVideoChange?:
           <div
             key={r.id}
             className="animate-reaction-float absolute bottom-2 flex flex-col items-center"
-            style={{ left: `${r.x}%`, animationDelay: `0s, ${(r.id % 3) * 0.15}s` }}
+            style={{ left: `${r.x}%` }}
           >
             <span className="animate-reaction-pop text-5xl drop-shadow-lg">{r.emoji}</span>
             {r.by && <span className="rounded-full bg-black/50 px-1.5 text-xs text-white">{r.by}</span>}
