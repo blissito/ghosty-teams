@@ -1135,6 +1135,22 @@ function UsagePanel({ isOwner }: { isOwner: boolean }) {
             </>
           )}
         </span>
+        {/* Cajas del plan: el escritorio se abre aquí; la CI sólo se enseña. */}
+        {data.boxes?.length ? (
+          <span className="flex flex-wrap gap-2">
+            {data.boxes.map((b) => (
+              b.role === "desktop" ? (
+                <a key={`${b.role}${b.index}`} href={`https://${b.host}/`} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 rounded-lg border border-border px-2 py-1 text-ink hover:bg-surface-3">
+                  {t("Escritorio")} {b.index + 1} <ExternalLink size={12} />
+                </a>
+              ) : (
+                <span key={`${b.role}${b.index}`} className="rounded-lg border border-border px-2 py-1">
+                  CI {b.index + 1} · {b.state === "running" ? t("encendida") : t("dormida")}
+                </span>
+              )
+            ))}
+          </span>
+        ) : null}
         {/* Sólo el dueño: el plan es del workspace y lo ajusta quien lo paga. Es un enlace a
             Studio, no un embed — el configurador vive allá con sus precios. */}
         {isOwner && data.slug && (

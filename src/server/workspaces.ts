@@ -94,6 +94,8 @@ export const workspaceUsageFn = createServerFn({ method: "GET" }).handler(async 
       /** Cambio de plan que el dueño dejó guardado para el siguiente corte (null = ninguno). */
       nextPlanFrom?: string | null;
       nextTotal?: number | null;
+      /** Escritorio / CI del plan, para enlazar. */
+      boxes?: { role: "desktop" | "ci"; index: number; host: string; state: string }[];
       resetsAt: string;
       used: number;
       included: number;
