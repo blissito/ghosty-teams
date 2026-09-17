@@ -1658,7 +1658,14 @@ export async function callAgentBackendStream(
    * ⚠️ NO se dispara con el botón Detener (se re-lanza antes) ni con un 402 sin saldo
    * (ése no es un fallo nuestro y se avisa sin lanzar, más arriba).
    */
-  onFailure?: (info: { message: string }) => void
+  onFailure?: (info: { message: string }) => void,
+  /**
+   * RETOMAR un turno ACP que se quedó sin cliente (deploy, socket caído): primero se intenta
+   * ADOPTAR el turno huérfano que el relé de la caja conserva —sin mandar prompt, lo que el
+   * agente siguió produciendo llega solo— y si la caja ya no lo tiene, se manda `text` como
+   * un turno normal (el de continuación). Sólo aplica al camino ACP.
+   */
+  adoptar?: boolean
 ): Promise<string> {
   // El webhook sigue sin SSE: junta el reply y lo emite de un tirón. Un agente A2A NO cae
   // aquí — tiene streaming de verdad y se atiende más abajo.
@@ -1840,10 +1847,12 @@ export async function callAgentBackendStream(
       `[acp ->] ${agent.handle} ${agent.backend.runtimeUrl} sesion=${sesionPrevia ?? "(nueva)"} ctx=${contexto.length}b`,
     );
     const backend = agent.backend;
-    const r = await runAcpTurn({
-      wsUrl: agent.backend.runtimeUrl,
-      token: agent.backend.token,
-      prefs: agent.backend.prefs,
+    const turnoAcp = (extra: Partial<Parameters<typeof runAcpTurn>[0]> = {}) => runAcpTurn({
+      ...extra,
+      // `backend`, no `agent.backend`: dentro del closure TS pierde el narrowing a `acp`.
+      wsUrl: backend.runtimeUrl,
+      token: backend.token,
+      prefs: backend.prefs,
       mcp,
       workspaceNs: ns,
       sub: invokerSub || "teams",
@@ -1851,6 +1860,9 @@ export async function callAgentBackendStream(
       // dio el agente. Vacío la primera vez → el cliente abre una nueva y la guardamos abajo.
       sessionId: sesionPrevia ?? undefined,
       retains: retuvo,
+      // El id se guarda en cuanto existe (antes del prompt): es lo que permite adoptar un
+      // turno huérfano tras un reinicio. Abajo se vuelve a guardar sólo si cambió.
+      onSession: (id) => dbAcp.setAcpSession(agent.handle, groupId, id).catch(() => {}),
       toolToken,
       // La persona y el contexto van en BLOQUES APARTE, no pegados al mensaje: es lo que
       // evita que el agente los lea como si se los dictara quien escribe (incidente
@@ -2001,9 +2013,28 @@ export async function callAgentBackendStream(
         );
         return elegido;
       },
-    }).catch((e) => {
+    });
+    const { AcpNoAdoptadaError } = await import("./server/acp-client.server");
+    const r = await (adoptar && sesionPrevia
+      ? turnoAcp({ adoptar: true }).catch((e) => {
+          if (!(e instanceof AcpNoAdoptadaError)) throw e;
+          console.log(`[acp ~] ${agent.handle}: la caja no tenía turno huérfano; mando la continuación`);
+          return turnoAcp();
+        })
+      : turnoAcp()
+    ).catch((e) => {
       const msg = e instanceof Error ? e.message : String(e);
       console.log(`[acp x] ${agent.handle} ${Math.round((Date.now() - acpT0) / 1000)}s: ${msg}`);
+      // Detener no es un fallo: se relanza, igual que en el camino nativo, y `runAgentTurn`
+      // cierra con «⏹ Detenido» conservando lo escrito.
+      if (signal?.aborted || (e instanceof Error && e.name === "AbortError")) throw e;
+      // El turno MURIÓ, y hay que decirlo por los DOS canales: el texto para el usuario y
+      // `onFailure` para `gt_turns`. Sin el callback el turno se cerraba en `done`, el
+      // medidor lo cobraba, y el botón «Retomar» no aparecía nunca — `turnoMuerto` sólo
+      // ofrece retomar lo que quedó en `error:`. Y el texto lleva la misma frase que el
+      // camino nativo, porque el cliente reconoce la burbuja muerta por ese prefijo
+      // (`MUERTO` en message.tsx); «No pude hablar con» no estaba en la lista.
+      onFailure?.({ message: msg });
       // Un fallo del cable se DICE, no se lanza. Lanzándolo, el stream moría y la burbuja se
       // quedaba girando para siempre sin una palabra — que es exactamente lo que vio el
       // usuario el 19 ago con un ticket 401 (la caja llevaba el tenant equivocado). Un
@@ -2018,7 +2049,7 @@ export async function callAgentBackendStream(
       // sobre si el agente conserva su conversación. Aprender de un cable caído sería
       // apuntar en la DB una conclusión sacada de un error de red.
       return {
-        text: `⚠️ No pude hablar con @${agent.handle}: ${pista}`,
+        text: `⚠️ No pude contactar a @${agent.handle}: ${pista}`,
         sessionId: "",
         stopReason: "error",
         usage: undefined,
@@ -2785,6 +2816,13 @@ async function runAgentTurnInner(opts: {
   originOverride?: string;
   /** Canal PÚBLICO: sin tools ni contexto de conectores. Ver callAgentBackendStream. */
   publicChannel?: boolean;
+  /** Retomar: adoptar el turno ACP huérfano si la caja lo conserva. Ver callAgentBackendStream. */
+  adoptar?: boolean;
+  /**
+   * Con qué EMPIEZA la burbuja: lo que el turno muerto alcanzó a escribir. Al adoptar, lo que
+   * llega es la SEGUNDA mitad de la misma respuesta, y repintar desde vacío la tiraría.
+   */
+  prefijo?: string;
   /** Causa del fallo de transporte, si el turno murió. `null` = entregó.
    *  Lo consumen chat.ts/dm.ts para marcar el turno como fallido en vez de `done`. */
 }): Promise<{ id: number; reply: string; failure?: string | null; toolsCorridas?: string[] }> {
@@ -2818,7 +2856,7 @@ async function runAgentTurnInner(opts: {
   // como párrafos seguidos se leían como un muro donde nada se distingue.
   // Se guardan aparte para poder pintarlos como lista (ver `narration`).
   const segs: string[] = [];
-  let acc = "";
+  let acc = opts.prefijo ?? "";
   let segStart = 0; // inicio del segmento en curso dentro de `acc`
   let brokeByTool = false; // corrió una tool desde el último texto → el próximo es segmento nuevo
   let anyActivity = false;  // corrió CUALQUIER tool (aunque oculta) → hay trabajo en curso
@@ -3030,7 +3068,7 @@ async function runAgentTurnInner(opts: {
     await onChunk(reply);
   } else {
     try {
-      reply = await callAgentBackendStream(opts.agent, opts.groupId, opts.sender, opts.text, onChunk, opts.parts ?? [], onTool, opts.currentDoc, opts.invokerSub, opts.signal, opts.dest, opts.inject, opts.originOverride, opts.publicChannel, (t) => { corte.ev = t; }, (f) => { fallo.message = f.message; });
+      reply = await callAgentBackendStream(opts.agent, opts.groupId, opts.sender, opts.text, onChunk, opts.parts ?? [], onTool, opts.currentDoc, opts.invokerSub, opts.signal, opts.dest, opts.inject, opts.originOverride, opts.publicChannel, (t) => { corte.ev = t; }, (f) => { fallo.message = f.message; }, opts.adoptar);
     } catch (e) {
       // Detenido: NO es un error del agente. Se conserva lo que alcanzó a escribir y se
       // dice que se detuvo — borrarlo tiraría trabajo que el usuario ya estaba leyendo.

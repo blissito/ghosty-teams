@@ -1315,11 +1315,11 @@ function ChannelPage() {
       // saber si trae `id` (DM) o `slug` (room).
       if (r.kind === "dm") {
         const p = r.payload;
-        return askDmAgentFn({ data: { id: p.id, body: p.body, sender: p.sender, handle: p.handle, shellId: p.shellId } })
+        return askDmAgentFn({ data: { id: p.id, body: p.body, sender: p.sender, handle: p.handle, shellId: p.shellId, adoptar: p.adoptar } })
           .then(done).catch(done);
       }
       const p = r.payload;
-      return askAgent({ data: { slug: p.slug, parentId: p.parentId, body: p.body, sender: p.sender, handle: p.handle, shellId: p.shellId } })
+      return askAgent({ data: { slug: p.slug, parentId: p.parentId, body: p.body, sender: p.sender, handle: p.handle, shellId: p.shellId, adoptar: p.adoptar } })
         .then(done).catch(done);
     }
   };

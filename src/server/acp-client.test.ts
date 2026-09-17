@@ -44,6 +44,8 @@ let rechazosPendientes = 0;
 let codigoRechazo = -32000;
 /** Cuántas veces se ha conectado el cliente. Es lo que prueba que hubo reintento. */
 let conexiones = 0;
+/** Un turno que el relé conserva sin cliente: el próximo `session/load` de ses-1 lo adopta. */
+let huerfano: { promptId: number; resto: string[] } | null = null;
 
 const env = (o: any, extra: any) => JSON.stringify({ jsonrpc: "2.0", ...o, ...extra }) + "\n";
 
@@ -93,6 +95,18 @@ beforeAll(async () => {
           // `auth_required` = -32000, el código propio de ACP.
           if (exigeAuth && (!autenticado || authNoSirve)) ws.send(env({ id: m.id }, { error: { code: -32000, message: "auth_required" } }));
           else ws.send(env({ id: m.id }, { result: { sessionId: "ses-1", ...sesionExtra } }));
+        }
+        else if (m.method === "session/load" && huerfano) {
+          // El relé de la caja (goose/src/relay.ts) conserva el run cuando el cliente cae a
+          // medio turno: contesta el load él mismo, avisa qué prompt sigue en vuelo y vuelca
+          // lo que se emitió sin cliente, con la respuesta del prompt ORIGINAL.
+          const h = huerfano;
+          huerfano = null;
+          ws.send(env({ id: m.id }, { result: {} }));
+          ws.send(env({}, { method: "ghosty/turn_adopted", params: { sessionId: "ses-1", promptId: h.promptId } }));
+          for (const t of h.resto)
+            ws.send(env({}, { method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: t } } } }));
+          ws.send(env({ id: h.promptId }, { result: { stopReason: "end_turn" } }));
         }
         else if (m.method === "session/load") {
           if (cargaFalla) {
@@ -886,5 +900,66 @@ describe("autenticación", () => {
     await expect(turno({ prefs: { auth: "gemini-api-key" } }).run()).rejects.toThrow(/auth/i);
     expect(metodos.filter((x) => x === "authenticate")).toHaveLength(1);
     expect(metodos.filter((x) => x === "session/new")).toHaveLength(2);
+  });
+});
+
+// ── El socket cae a media respuesta ──────────────────────────────────────────────
+//
+// Un deploy o un WiFi caído cortaban el turno y el trabajo del agente se perdía: el relé
+// cerraba el upstream y goose abortaba el run. Ahora el relé lo conserva como huérfano y el
+// cliente, al notar la caída, reconecta y lo ADOPTA: lo ya pintado se conserva y el resto
+// llega por la conexión nueva, con la respuesta del prompt original.
+describe("socket caído a media respuesta", () => {
+  beforeEach(() => {
+    huerfano = null;
+    cargaFalla = false;
+    replay = [];
+    metodos = [];
+    conexiones = 0;
+  });
+
+  it("reconecta, adopta el turno huérfano y pega las dos mitades", async () => {
+    guion = (ws, m) => {
+      ws.send(env({}, { method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "primera " } } } }));
+      huerfano = { promptId: m.id, resto: ["segunda"] };
+      // El socket muere sin que nadie diga por qué: ni error del relé ni del agente.
+      setTimeout(() => ws.close(), 20);
+    };
+    const t = turno({ sessionId: "ses-1" });
+    const r = await t.run();
+    expect(r.text).toBe("primera segunda");
+    expect(r.stopReason).toBe("end_turn");
+    expect(conexiones).toBe(2);
+    // La segunda conexión hizo `session/load` y NO mandó otro prompt.
+    expect(metodos.filter((x) => x === "session/prompt")).toHaveLength(1);
+    expect(metodos.filter((x) => x === "session/load")).toHaveLength(2);
+    // Lo pintado en vivo también trae las dos mitades, en orden y sin repetir.
+    expect(t.updates.filter((u) => u.kind === "text").map((u) => u.text)).toEqual(["primera ", "segunda"]);
+  });
+
+  it("si la caja ya no conserva el turno, el error original sale tal cual", async () => {
+    guion = (ws) => {
+      ws.send(env({}, { method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "a medias" } } } }));
+      setTimeout(() => ws.close(), 20);
+    };
+    await expect(turno({ sessionId: "ses-1" }).run()).rejects.toThrow(/cerró la conexión a media respuesta/);
+    expect(conexiones).toBe(2); // lo intentó
+    expect(metodos.filter((x) => x === "session/prompt")).toHaveLength(1); // y no repitió el prompt
+  });
+
+  it("Detener no dispara la reconexión: el cierre fue del usuario", async () => {
+    const ctrl = new AbortController();
+    guion = (ws) => {
+      ws.send(env({}, { method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "..." } } } }));
+      setTimeout(() => ctrl.abort(), 20);
+    };
+    await expect(turno({ sessionId: "ses-1", signal: ctrl.signal }).run()).rejects.toThrow();
+    expect(conexiones).toBe(1);
+  });
+
+  it("adoptar sin turno huérfano cae a la continuación (AcpNoAdoptadaError)", async () => {
+    const { AcpNoAdoptadaError } = await import("./acp-client.server");
+    await expect(turno({ sessionId: "ses-1", adoptar: true }).run()).rejects.toBeInstanceOf(AcpNoAdoptadaError);
+    expect(metodos).not.toContain("session/prompt");
   });
 });

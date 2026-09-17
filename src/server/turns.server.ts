@@ -722,6 +722,8 @@ export type TurnoMuerto = {
   /** No sabemos QUÉ corrió (el proceso murió antes de poder anotarlo). Falla cerrado. */
   toolsDesconocidas: boolean;
   error: string | null;
+  /** Cuándo se dio por muerto (ms epoch), para saber si la caja aún conserva el turno. */
+  endedAt: number | null;
 };
 
 /**
@@ -736,7 +738,7 @@ export async function turnoMuerto(messageId: number): Promise<TurnoMuerto | null
     const { dbq } = await import("../dbq.server");
     const [f] = await dbq(
       `SELECT message_id, group_id, invoker_sub, channel_id, parent_id, dm_id, slug, shell_id,
-              agent, body, attachments, tools_json, error, state, outcome
+              agent, body, attachments, tools_json, error, state, outcome, ended_at
          FROM gt_turns WHERE message_id = ?`,
       [messageId],
     );
@@ -768,6 +770,7 @@ export async function turnoMuerto(messageId: number): Promise<TurnoMuerto | null
       sucias: [...new Set(tools.filter((t) => !LIMPIAS.has(t)))],
       toolsDesconocidas,
       error: (f.error as string) ?? (f.outcome as string) ?? null,
+      endedAt: f.ended_at != null && Number.isFinite(Number(f.ended_at)) ? Number(f.ended_at) : null,
     };
   } catch {
     return null;

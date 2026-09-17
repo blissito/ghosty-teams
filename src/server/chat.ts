@@ -179,6 +179,16 @@ export const stopTurnFn = createServerFn({ method: "POST" })
  * vez de recordarlo. Repetir la petición sería estrictamente peor — se reejecuta desde cero
  * *y* resume igual la sesión.
  */
+/**
+ * Lo que la burbuja de un turno adoptado ya dice (`prepareRetryFn` la dejó limpia). Vacío si
+ * era el placeholder: ahí no hay nada que conservar.
+ */
+export async function prefijoDeAdopcion(shellId: number): Promise<string | undefined> {
+  const db = await import("../db.server");
+  const body = (await db.getMessage(shellId).catch(() => null))?.body ?? "";
+  return body && body !== "⏳ Retomando…" ? body : undefined;
+}
+
 export const prepareRetryFn = createServerFn({ method: "POST" })
   .validator((d: { messageId: number; confirmado?: boolean }) => d)
   .handler(async ({ data }) => {
@@ -210,8 +220,20 @@ export const prepareRetryFn = createServerFn({ method: "POST" })
     // despacho de abajo falla, una burbuja vacía no dice nada y ya no tiene botón. Con el
     // placeholder al menos se ve que se intentó, y el primer chunk del turno nuevo lo pisa.
     const db = await import("../db.server");
+    // Un agente ACP cuya caja aún puede conservar el turno huérfano (el relé lo guarda 10
+    // min desde que perdió al cliente): se intenta ADOPTAR antes de re-pedir. Si la caja ya
+    // no lo tiene, el turno cae solo a la continuación de siempre.
+    const { resolvedAgents } = await import("../agents.server");
+    const ag = t.agent ? (await resolvedAgents()).find((a) => a.handle === t.agent) : undefined;
+    const reciente = t.endedAt != null && Date.now() - t.endedAt < 10 * 60_000;
+    const adoptar = ag?.backend.kind === "acp" && reciente ? true : undefined;
     if (t.shellId != null) {
-      const placeholder = "⏳ Retomando…";
+      // Al adoptar, lo escrito se CONSERVA: lo que llegue es la segunda mitad de la misma
+      // respuesta. Sólo se le quita el aviso que le pegó el barrido; `askAgent` lo lee como
+      // prefijo de la burbuja. En el camino normal, el placeholder de siempre.
+      const previo = adoptar ? (await db.getMessage(t.shellId).catch(() => null))?.body ?? "" : "";
+      const limpio = previo.replace(/\n\n⏹ _Interrumpido:[^\n]*$/, "").replace(/^⏹ Detenido \(el servidor se reinició\)\.$/, "");
+      const placeholder = adoptar && limpio.trim() ? limpio : "⏳ Retomando…";
       await db.setMessageBody(t.shellId, placeholder).catch(() => {});
       const bus = await import("./bus.server");
       const canal = t.dmId ? bus.ch.dm(ns, t.dmId) : t.channelId ? bus.ch.room(ns, t.channelId) : null;
@@ -219,7 +241,7 @@ export const prepareRetryFn = createServerFn({ method: "POST" })
     }
 
     const texto = textoDeContinuacion(t);
-    const comun = { body: texto, sender: me?.name ?? "", handle: t.agent ?? "", shellId: t.shellId ?? undefined };
+    const comun = { body: texto, sender: me?.name ?? "", handle: t.agent ?? "", shellId: t.shellId ?? undefined, adoptar };
     return t.dmId
       ? { ok: true as const, kind: "dm" as const, payload: { ...comun, id: t.dmId } }
       : { ok: true as const, kind: "room" as const, payload: { ...comun, slug: t.slug ?? "", parentId: t.parentId ?? null } };
@@ -911,6 +933,8 @@ export const askAgent = createServerFn({ method: "POST" })
       topic?: string;
       fleetThread?: string; // clave de flota (desacoplada del hilo UI; ver postMessage)
       shellId?: number; // caja caliente: cáscara ya creada por postMessage (reutilizar su id)
+      /** Retomar: adoptar el turno ACP huérfano si la caja lo conserva (ver prepareRetryFn). */
+      adoptar?: boolean;
       // El mensaje de la persona que disparó este turno, para cerrarle el acuse 👀 al
       // terminar (`agent-ack.server.ts`). Es el `id` que devolvió `postMessage`.
       // ⚠️ Se VALIDA contra el room y contra quien lo manda: sólo puedes marcar tu propio
@@ -1287,6 +1311,8 @@ export const askAgent = createServerFn({ method: "POST" })
       currentDoc,
       invokerSub: poster?.sub, // sus tools de conectores (per-invocador, no del owner)
       inject: steer,
+      adoptar: data.adoptar === true,
+      prefijo: data.adoptar === true && data.shellId != null ? await prefijoDeAdopcion(data.shellId) : undefined,
       // Destino de las tools nativas: este canal, este topic, este agente.
       dest: destDelTurno,
       createShell: async () => {

@@ -328,6 +328,8 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
       sender: string;
       handle: string;
       shellId?: number; // caja caliente: cáscara ya creada por postDmMessageFn
+      /** Retomar: adoptar el turno ACP huérfano si la caja lo conserva (ver prepareRetryFn). */
+      adoptar?: boolean;
       quotedAuthor?: string | null; // quote-reply: superficie para el agente
       quotedExcerpt?: string | null;
       quotedId?: number | null; // id del mensaje citado → cita COMPLETA (no el excerpt)
@@ -543,6 +545,8 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
       parts,
       currentDoc,
       invokerSub: me.sub, // DM 1:1: el humano del DM es el invocador → sus tools de conectores
+      adoptar: data.adoptar === true,
+      prefijo: data.adoptar === true && data.shellId != null ? await (await import("./chat")).prefijoDeAdopcion(data.shellId) : undefined,
       inject: steer,
       dest: destDelTurno,
       createShell: async () => {

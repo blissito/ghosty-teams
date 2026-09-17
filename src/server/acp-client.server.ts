@@ -209,6 +209,20 @@ export interface AcpTurn {
    * sin esto el error se dice y ya. Ver `acp-revive.server.ts`.
    */
   onGone?: () => Promise<void>;
+  /**
+   * NO mandes prompt: la conversación tiene un turno en vuelo que se quedó sin cliente (el
+   * socket cayó a media respuesta, o este proceso acaba de reiniciar) y el relé de la caja lo
+   * guarda como huérfano. Tras `session/load` se espera `ghosty/turn_adopted` y la respuesta
+   * del prompt ORIGINAL. Si el relé no lo adopta, se lanza `AcpNoAdoptadaError`.
+   */
+  adoptar?: boolean;
+  /**
+   * La sesión quedó abierta y el prompt está por salir. Se avisa ANTES del prompt y no al
+   * terminar el turno: si el proceso muere a media respuesta, el id ya está guardado y el
+   * siguiente proceso puede adoptar el turno huérfano; guardado al final, el primer turno de
+   * una conversación moría sin dejar con qué volver.
+   */
+  onSession?: (sessionId: string) => void | Promise<void>;
   signal?: AbortSignal;
   timeoutMs?: number;
   /**
@@ -576,8 +590,17 @@ async function unTurnoAcp(t: AcpTurn): Promise<AcpResult> {
       p.err(real ?? e);
     }
   };
-  ws.on("close", () => tumbar(new Error("el agente cerró la conexión a media respuesta")));
-  ws.on("error", (e: Error) => tumbar(e));
+  ws.on("close", () => tumbar(new AcpSocketDropError("el agente cerró la conexión a media respuesta")));
+  ws.on("error", (e: Error) => tumbar(new AcpSocketDropError(e.message)));
+
+  /**
+   * El relé nos entregó un turno huérfano: `promptId` es el id del `session/prompt` que
+   * sigue en vuelo (de OTRA conexión, así que no está en `pendientes`). Se registra ahí para
+   * que su respuesta caiga por el despachador normal.
+   */
+  let adoptado: Promise<any> | null = null;
+  let resolverAdopcion: ((p: Promise<any> | null) => void) | null = null;
+  const esperaAdopcion = new Promise<Promise<any> | null>((res) => (resolverAdopcion = res));
 
   ws.on("message", (d: Buffer | string) => {
     ultimoMensaje = Date.now();
@@ -612,6 +635,17 @@ async function unTurnoAcp(t: AcpTurn): Promise<AcpResult> {
         m.error
           ? p.err(new AcpServerError(m.error.message ?? "error del agente", m.error.code))
           : p.ok(m.result);
+        continue;
+      }
+
+      // El relé adoptó para nosotros un turno huérfano. Viene DESPUÉS de la respuesta al
+      // `session/load` y ANTES del buffer de lo que se emitió sin cliente: desde aquí lo que
+      // llega es respuesta de AHORA, no replay.
+      if (m.method === "ghosty/turn_adopted" && m.params?.promptId != null) {
+        rehidratando = false;
+        const pid = m.params.promptId as number;
+        adoptado = new Promise<any>((ok, err) => pendientes.set(pid, { ok, err }));
+        resolverAdopcion?.(adoptado);
         continue;
       }
 
@@ -754,7 +788,7 @@ async function unTurnoAcp(t: AcpTurn): Promise<AcpResult> {
     // última vez. Gana el hecho: gemini declara `loadSession:true` y su `session/load`
     // contesta «Authentication required» en cada turno (medido el 2026-09-01), así que
     // preguntárselo otra vez es un round-trip que ya sabemos cómo termina.
-    if (sessionId && puedeRetomar && t.retains !== false) {
+    if (sessionId && ((puedeRetomar && t.retains !== false) || t.adoptar)) {
       rehidratando = true;
       try {
         // El `finally` no es adorno: si `session/load` falla a mitad del replay y la bandera
@@ -829,6 +863,14 @@ async function unTurnoAcp(t: AcpTurn): Promise<AcpResult> {
       }
     }
 
+    if (sessionId && t.onSession && sessionId !== t.sessionId) {
+      try {
+        await t.onSession(sessionId);
+      } catch {
+        /* no toca el turno */
+      }
+    }
+
     const prompt = () =>
       conLatido(
         llama("session/prompt", { sessionId, prompt: bloquesDelTurno(t, { puedeImagen }) }),
@@ -837,17 +879,43 @@ async function unTurnoAcp(t: AcpTurn): Promise<AcpResult> {
         t.idleMs ?? 5 * 60_000,
       );
     let fin: any;
-    try {
-      fin = await prompt();
-    } catch (e) {
-      // La red del camino de arriba: el id guardado ya no vale (el agente reinició, o su tope
-      // de sesiones expulsó la más vieja). Se reintenta UNA vez con sesión nueva, y sólo si
-      // el turno no había emitido nada — reintentar a media respuesta la repetiría en el chat.
-      if (!t.sessionId || texto || !(e instanceof AcpServerError)) throw e;
-      console.log(`[acp ~] ${sessionId} no sirvió (${e.message}); abro sesión nueva`);
-      retains = false;
-      await nuevaSesion();
-      fin = await prompt();
+    if (t.adoptar) {
+      // El `turn_adopted` llega pegado a la respuesta del `session/load`; si en un segundo
+      // no vino, el relé no tenía nada que darnos (es viejo, o el huérfano ya caducó).
+      const p = await Promise.race([
+        esperaAdopcion,
+        new Promise<null>((r) => setTimeout(() => r(null), 1500)),
+      ]);
+      if (!p) throw new AcpNoAdoptadaError(`la caja no tenía un turno en vuelo para ${sessionId}`);
+      console.log(`[acp ~] ${sessionId}: turno huérfano adoptado, espero su respuesta`);
+      fin = await conLatido(p, () => ultimoMensaje, () => permisosEnVuelo > 0, t.idleMs ?? 5 * 60_000);
+    } else {
+      try {
+        fin = await prompt();
+      } catch (e) {
+        // El SOCKET murió a media respuesta (no el agente): el relé conserva el run como
+        // huérfano. Se reconecta UNA vez y se adopta; lo ya pintado se conserva y lo que
+        // siga llega por la conexión nueva. Si el usuario detuvo, no: el cierre fue suyo.
+        if (e instanceof AcpSocketDropError && sessionId && !t.signal?.aborted) {
+          console.log(`[acp ~] ${sessionId}: socket caído a media respuesta; reconecto y adopto`);
+          const antes = texto;
+          try {
+            const r = await unTurnoAcp({ ...t, sessionId, retains: true, adoptar: true });
+            return { ...r, text: antes + r.text };
+          } catch (e2) {
+            if (!(e2 instanceof AcpNoAdoptadaError)) throw e2;
+            throw e; // el original: «cerró la conexión a media respuesta»
+          }
+        }
+        // La red del camino de arriba: el id guardado ya no vale (el agente reinició, o su
+        // tope de sesiones expulsó la más vieja). Se reintenta UNA vez con sesión nueva, y
+        // sólo si el turno no había emitido nada — reintentar a media respuesta la repetiría.
+        if (!t.sessionId || texto || !(e instanceof AcpServerError)) throw e;
+        console.log(`[acp ~] ${sessionId} no sirvió (${e.message}); abro sesión nueva`);
+        retains = false;
+        await nuevaSesion();
+        fin = await prompt();
+      }
     }
 
     // `usage` sólo si vienen los dos números y son finitos: un reporte a medias acabaría
@@ -1266,6 +1334,12 @@ export const BOX_GONE = "preview host";
 
 /** La caja ya no existe en el host. Es el único error que dispara `onGone`. */
 export class BoxGoneError extends Error {}
+
+/** El socket hacia la caja murió a media respuesta (ni el relé ni el agente dijeron por qué). */
+export class AcpSocketDropError extends Error {}
+
+/** Se pidió adoptar un turno huérfano y el relé no tenía ninguno para esa conversación. */
+export class AcpNoAdoptadaError extends Error {}
 
 /** Olvida que un host estaba despierto: tras recrear la caja hay que volver a mirar. */
 function forgetAwake(wsUrl: string): void {
