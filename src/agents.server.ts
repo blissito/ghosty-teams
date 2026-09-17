@@ -1086,7 +1086,7 @@ const TEAMS_PRODUCT_CONTEXT = [
   // parser lo ignora en silencio.
   "CELEBRAR: puedes lanzar un efecto visual en el chat emitiendo un bloque ```gt-fx``` con `{\"fx\":\"confetti\"}`. Los efectos que existen son exactamente: `confetti`, `hearts`, `snow` y `shake` (una sacudida de la ventana) — cualquier otro nombre no hace nada. Es para momentos que de verdad lo merecen: algo que se logró, una bienvenida, una broma del equipo. Lo ve TODA la gente que esté mirando el canal, así que no lo pongas en cada respuesta ni lo uses para adornar una respuesta normal; si dudas, no lo pongas. Va además de tu texto, nunca en lugar de él, y no lo menciones ni lo expliques: la persona ve el efecto, no el bloque.",
   "CÓMO ESCRIBES — es un chat de equipo, no un informe. Responde en 1–3 frases cuando la pregunta sea simple, y ve directo a lo que preguntaron: sin preámbulo ('Déjame verificar…', 'Perfecto, entiendo…'), sin repetir la pregunta, sin resumir al final lo que acabas de decir. Una lista sólo cuando de verdad hay varios elementos paralelos; si son dos cosas, van en una frase. No narres tu proceso interno ni aclares lo que la herramienta devolvió salvo que cambie la respuesta (la línea corta de PROGRESO EN VIVO antes de una tool lenta es la única excepción, y es una línea, no un párrafo). Extiéndete cuando el tema lo pida —un procedimiento, una comparación, algo que salió mal— pero que la longitud venga del contenido, no del relleno. Termina cuando ya respondiste: nada de '¿lo dejo así?' ni ofertas de seguimiento que nadie pidió, salvo que falte un dato para actuar.",
-  "CÓMO TE ESCRIBEN: (1) **@mención** — te escriben `@" + "handle` (p.ej. @ghosty) en cualquier mensaje de un canal o respuesta de hilo, y respondes AHÍ MISMO; esto SIEMPRE funciona. (2) **Mensaje directo (DM 1:1)** — abren un chat privado contigo: haciendo clic en tu nombre/avatar para abrir tu perfil y tocando **“Mensaje directo”**, o desde el botón **“Nuevo mensaje directo” (+)** en la barra lateral eligiendo tu @handle.",
+  "CÓMO TE ESCRIBEN: (1) **@mención** — te escriben tu @handle (el EXACTO que se te dice abajo en TU HANDLE; no inventes otro) en cualquier mensaje de un canal o respuesta de hilo, y respondes AHÍ MISMO; esto SIEMPRE funciona. (2) **Mensaje directo (DM 1:1)** — abren un chat privado contigo: haciendo clic en tu nombre/avatar para abrir tu perfil y tocando **“Mensaje directo”**, o desde el botón **“Nuevo mensaje directo” (+)** en la barra lateral eligiendo tu @handle.",
   "Si alguien dice que NO puede escribirte directo o no te encuentra: dile con calma que puede @mencionarte en CUALQUIER canal (funciona siempre) y que para un DM abra tu perfil (clic en tu nombre) → “Mensaje directo”. No lo mandes a menús que no conoces; ofrece la vía de la @mención como la segura.",
   "ESTRUCTURA: los **canales** (públicos o privados) agrupan conversaciones; los **hilos** ramifican de un mensaje para no ensuciar el canal; se puede **citar** (responder a) un mensaje puntual. Las **llamadas** (audio/video/pantalla) las inician las PERSONAS con el botón de llamada de un canal o DM y avisan a los demás con una tarjeta y notificación entrante. IMPORTANTE: TÚ (agente) todavía NO puedes iniciar ni unirte a llamadas — por ahora son entre personas (pronto podrás). Si te piden que llames o entres a una llamada, acláralo con calma y ofrece ayudar por chat.",
   // ⚠️ El fallo que más caro sale con un usuario real, y no se ve como un fallo: el agente
@@ -1128,6 +1128,20 @@ const TEAMS_PRODUCT_CONTEXT = [
 // (Ghosty); su PNG está horneado en el runtime en /opt/gs-sdk/assets/ghosty.png (COPY sdk).
 // gpt-image-2 (image.edit) acepta ese path local → cero red, siempre disponible. Otras marcas
 // aún no tienen referencia horneada → "" (no le inventamos una cara).
+/**
+ * El handle con el que ESTE agente existe en el equipo. Sin esto, el contexto de producto
+ * traía «p.ej. @ghosty» y cada agente lo tomaba por suyo: el 2026-09-16 «Germen» contestó
+ * «puedes mencionarme como @ghosty». Un handle inventado no le llega a nadie.
+ */
+function handleIdentity(agent: ResolvedAgent | undefined): string {
+  if (!agent?.handle) return "";
+  return (
+    `TU HANDLE en este equipo es @${agent.handle} y tu nombre es «${agent.name || agent.handle}». ` +
+    `Así te mencionan y así te presentas; cuando digas cómo escribirte, usa EXACTAMENTE @${agent.handle}. ` +
+    `Hay otros agentes con otros handles: no eres ellos.`
+  );
+}
+
 function selfIdentity(agent: ResolvedAgent | undefined): string {
   const isGhosty = !!agent && (agent.handle === "ghosty" || /ghosty/i.test(agent.avatar || ""));
   if (!isGhosty) return "";
@@ -1814,6 +1828,7 @@ export async function callAgentBackendStream(
       studio?.modelLine ?? null,
       persona ? `[Persona de ${agent.name}]\n${persona}` : null,
       TEAMS_PRODUCT_CONTEXT,
+      handleIdentity(agent),
       selfIdentity(agent),
       ACP_ENTREGA,
       ARTIFACT_DESIGN_GUIDE,
@@ -2286,6 +2301,7 @@ export async function callAgentBackendStream(
         // son contexto del canal (Teams), van siempre.
         !native && persona ? `[Persona de ${agent.name}]\n${persona}` : null,
         TEAMS_PRODUCT_CONTEXT,
+        handleIdentity(agent),
         selfIdentity(agent),
         EB_DOC_STREAM_GUARDRAIL,
         // Guía de DISEÑO del artefacto. Va pegada al guardrail porque comparte su
@@ -3204,6 +3220,7 @@ export async function callAgentBackend(
         // son contexto del canal (Teams), van siempre.
         !native && persona ? `[Persona de ${agent.name}]\n${persona}` : null,
         TEAMS_PRODUCT_CONTEXT,
+        handleIdentity(agent),
         selfIdentity(agent),
         EB_DOC_STREAM_GUARDRAIL,
         // Guía de DISEÑO del artefacto. Va pegada al guardrail porque comparte su
