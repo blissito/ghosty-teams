@@ -738,7 +738,7 @@ export async function turnoMuerto(messageId: number): Promise<TurnoMuerto | null
     const { dbq } = await import("../dbq.server");
     const [f] = await dbq(
       `SELECT message_id, group_id, invoker_sub, channel_id, parent_id, dm_id, slug, shell_id,
-              agent, body, attachments, tools_json, error, state, outcome, ended_at
+              agent, agent_handle, body, attachments, tools_json, error, state, outcome, ended_at
          FROM gt_turns WHERE message_id = ?`,
       [messageId],
     );
@@ -763,7 +763,12 @@ export async function turnoMuerto(messageId: number): Promise<TurnoMuerto | null
       dmId: f.dm_id != null ? Number(f.dm_id) : null,
       slug: (f.slug as string) ?? null,
       shellId: f.shell_id != null ? Number(f.shell_id) : null,
-      agent: (f.agent as string) ?? null,
+      // ⚠️ `agent` guarda el NOMBRE («Ghosty»); el @handle («ghosty») vive en `agent_handle`.
+      // Con el nombre, `askDmAgentFn` lo comparaba contra el handle del DM y devolvía
+      // `ok:false` sin arrancar nada: la burbuja se quedaba en «⏳ Retomando…» para siempre
+      // (tres veces el 2026-09-17 en business). Las filas anteriores a `agent_handle` caen
+      // al nombre en minúsculas, que es el handle en todos los tenants de esa época.
+      agent: (f.agent_handle as string) ?? ((f.agent as string)?.toLowerCase() ?? null),
       body,
       attachments: f.attachments ? (JSON.parse(String(f.attachments)) as unknown[]) : [],
       tools,

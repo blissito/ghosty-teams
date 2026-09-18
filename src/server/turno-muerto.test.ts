@@ -70,6 +70,16 @@ describe("retomar un turno muerto", () => {
     }
   });
 
+  it("retoma con el @handle, no con el nombre del agente", () => {
+    // `gt_turns.agent` es el NOMBRE («Ghosty»). Mandarlo como handle hacía que `askDmAgentFn`
+    // lo comparara con el handle del DM («ghosty») y devolviera ok:false sin arrancar nada:
+    // «⏳ Retomando…» eterno (business, 2026-09-17, tres veces en un día).
+    const src = readFileSync(join(raiz, "server/turns.server.ts"), "utf8");
+    const fn = src.slice(src.indexOf("export async function turnoMuerto"));
+    expect(fn).toMatch(/SELECT[^`]*agent_handle[^`]*FROM gt_turns/);
+    expect(fn).toMatch(/agent:\s*\(f\.agent_handle as string\)/);
+  });
+
   it("no sabemos qué tools corrieron ⇒ se trata como sucio, no como limpio", async () => {
     // `tools_json` NULL sólo pasa cuando el PROCESO murió antes de anotarlo — justo el caso
     // en que más pudo haberse ejecutado algo irreversible. Leerlo como "no corrió nada"
@@ -86,7 +96,7 @@ describe("retomar un turno muerto", () => {
     const base = {
       messageId: 1, groupId: "g", invokerSub: null, channelId: 1, parentId: null, dmId: null,
       slug: "s", shellId: 1, agent: "ghosty", body: "analiza el documento", attachments: [],
-      sucias: [], error: null,
+      sucias: [], error: null, endedAt: null,
     };
     const conTools = textoDeContinuacion({ ...base, tools: ["Bash", "Read"], toolsDesconocidas: false });
     expect(conTools).toContain("Bash, Read");
@@ -118,6 +128,8 @@ describe("el botón de retomar", () => {
     // Cubrir sólo uno deja el botón invisible en dos tercios de los casos.
     const { turnoSeMurio } = await import("../components/chat/message");
     expect(turnoSeMurio("⚠️ No pude contactar a @ghosty: terminated")).toBe(true);
+    // Y el placeholder del propio reintento: si el disparo no arranca, hay que poder volver a pulsar.
+    expect(turnoSeMurio("⏳ Retomando…")).toBe(true);
     expect(turnoSeMurio("medio documento\n\n⏹ _Interrumpido: el servidor se reinició mientras el agente escribía._")).toBe(true);
     expect(turnoSeMurio("⏹ Detenido (el servidor se reinició).")).toBe(true);
     // Lo que NO es una muerte de la plataforma: el botón Detener del usuario, y una

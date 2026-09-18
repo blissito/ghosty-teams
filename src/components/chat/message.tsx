@@ -2522,7 +2522,11 @@ export function TurnLiveFooter({ id }: { id: number }) {
  * ⚠️ Van los tres o el botón aparece sólo en un tercio de los casos: `terminated`/502 los
  * escribe el catch del turno, y los otros dos el barrido de huérfanos (con texto y sin él).
  */
-const MUERTO = ["⚠️ No pude contactar a @", "⏹ _Interrumpido:", "⏹ Detenido (el servidor se reinició)"];
+// «⏳ Retomando…» es el placeholder que `prepareRetryFn` deja antes de disparar el turno
+// nuevo. Si ese disparo no arranca (devolvió `ok:false`, o el server cayó en medio) nadie
+// lo reescribe, y sin esta entrada la burbuja se quedaba sin botón para siempre. El turno
+// vivo se distingue por `turns.get(id)`, no por el texto, así que no compite con el reloj.
+const MUERTO = ["⚠️ No pude contactar a @", "⏹ _Interrumpido:", "⏹ Detenido (el servidor se reinició)", "⏳ Retomando…"];
 export function turnoSeMurio(body: string | null | undefined): boolean {
   return !!body && MUERTO.some((f) => body.includes(f));
 }
