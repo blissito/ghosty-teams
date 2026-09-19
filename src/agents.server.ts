@@ -2076,8 +2076,15 @@ export async function callAgentBackendStream(
     // Se guarda DESPUÉS del turno y sólo si cambió: si el agente abrió una sesión nueva (o
     // renombró la suya), el turno siguiente la retoma. Un fallo aquí no toca la respuesta —
     // lo peor que pasa es que la próxima conversación empiece en frío.
+    // ⚠️ Con tope de tiempo: estas escrituras van DESPUÉS de que el agente ya contestó, y
+    // una petición a sqld que no vuelve dejaba el turno vivo para siempre con la respuesta
+    // ya en la mano (descti, 2026-09-18: dos `end_turn` en el log y tres turnos en `live`
+    // seis horas después). Perder el apunte cuesta un arranque en frío; perder el turno
+    // cuesta la respuesta entera.
+    const acotado = <T,>(p: Promise<T>): Promise<T | undefined> =>
+      Promise.race([p, new Promise<undefined>((ok) => setTimeout(() => ok(undefined), 10_000).unref?.())]).catch(() => undefined);
     if (r.sessionId && r.sessionId !== sesionPrevia) {
-      await dbAcp.setAcpSession(agent.handle, groupId, r.sessionId).catch(() => {});
+      await acotado(dbAcp.setAcpSession(agent.handle, groupId, r.sessionId));
     }
     // Lo que el turno APRENDIÓ: si le pasamos una sesión guardada y no sirvió, este agente no
     // retiene nada entre conexiones y el catch-up del próximo turno tiene que mandarle el
@@ -2085,7 +2092,7 @@ export async function callAgentBackendStream(
     // como señal —un agente puede no saber retomar y aun así conservar su sesión viva— y lo
     // que importa es el hecho, no la capability.
     if (r.retains !== undefined) {
-      await dbAcp.setAcpRetains(agent.handle, groupId, r.retains).catch(() => {});
+      await acotado(dbAcp.setAcpRetains(agent.handle, groupId, r.retains));
     }
     // Lo que el agente declaró que deja configurar. Se guarda para que el panel pueda pintar
     // los selectores sin abrirle una sesión sólo para preguntar. Sólo si cambió: es una
@@ -2093,7 +2100,7 @@ export async function callAgentBackendStream(
     if (r.settings?.length && agent.backend.rowId) {
       const json = JSON.stringify(r.settings);
       if (json !== agent.backend.settingsRaw) {
-        await dbAcp.updateAgent(agent.backend.rowId, { acpSettings: json }).catch(() => {});
+        await acotado(dbAcp.updateAgent(agent.backend.rowId, { acpSettings: json }));
       }
     }
     // El gasto del turno. Desde el 2026-09-11 una caja ACP DE STUDIO se mide sola: su

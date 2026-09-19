@@ -451,12 +451,19 @@ export async function recentDoneTurns(ns: string, desdeMs = 10 * 60 * 1000): Pro
  * Devuelve false si el turno ya no existe — detener algo que acaba de terminar no es
  * un error, es una carrera normal entre el clic y el último token.
  */
+const STALE_TURN_MS = 15 * 60 * 1000;
+
 export function stopTurn(ns: string, messageId: number, bySub?: string | null): boolean {
   const t = live.get(claveDe(ns, messageId));
   if (!t) return false;
   // Sólo quien lo pidió lo detiene. En un canal cualquiera ve la burbuja, y cortar el
   // trabajo que otro pidió es una acción sobre esa persona, no sobre el agente.
-  if (t.invokerSub && bySub && t.invokerSub !== bySub) return false;
+  // Un turno que lleva más de 15 min ya no es "el trabajo de alguien": es una burbuja
+  // atorada que todos ven (goose en descti, 325 min, 2026-09-18: el turno lo pidió otra
+  // persona y el ■ de bliss devolvía false en silencio — el cliente lo quitaba del mapa y el
+  // siguiente latido lo volvía a pintar). Pasado ese umbral, cualquiera del workspace lo cierra.
+  const atorado = Date.now() - t.startedAt > STALE_TURN_MS;
+  if (t.invokerSub && bySub && t.invokerSub !== bySub && !atorado) return false;
   t.stopped = true;
   t.controller.abort();
   t.announce?.(stateOf(t));
