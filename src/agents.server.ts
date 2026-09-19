@@ -2014,7 +2014,14 @@ export async function callAgentBackendStream(
         return elegido;
       },
     });
-    const { AcpNoAdoptadaError } = await import("./server/acp-client.server");
+    const { AcpNoAdoptadaError, steerAcpTurn } = await import("./server/acp-client.server");
+    // STEER: si esta conversación tiene un turno ACP en vuelo en este proceso, la corrección
+    // va por su mismo socket (`_goose/unstable/session/steer`) y la respuesta sale en su
+    // burbuja. Si el run ya terminó, cae al turno normal — mismo contrato que los workers.
+    if (inject && sesionPrevia && (await steerAcpTurn(sesionPrevia, stripLoneSurrogates(text)))) {
+      console.log(`[acp ~] ${agent.handle}: corrección inyectada al turno en vuelo`);
+      return INJECTED;
+    }
     const r = await (adoptar && sesionPrevia
       ? turnoAcp({ adoptar: true }).catch((e) => {
           if (!(e instanceof AcpNoAdoptadaError)) throw e;

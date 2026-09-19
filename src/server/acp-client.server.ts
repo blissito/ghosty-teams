@@ -478,6 +478,25 @@ export function acpTicketUrl(wsUrl: string, ns: string, sub: string, tools = fal
  * Con 0.6 / 1.5 / 3 s se cubre a quien llegó tarde de verdad, y el peor caso son ~5 s de
  * espera en vez de un error, que es un cambio que el usuario agradece.
  */
+/**
+ * Turnos ACP en vuelo EN ESTE PROCESO, por sesión. Es lo que hace posible el steer: la
+ * corrección llega por otro request, pero el socket del turno lo tiene `unTurnoAcp`, así
+ * que se le pide a él que la mande por el MISMO WebSocket. `runId` sale de
+ * `session_info_update._meta.goose.activeRunId`; sin él, goose rechaza el steer.
+ */
+const turnosVivos = new Map<string, { steer: (text: string) => Promise<boolean> }>();
+
+/**
+ * STEER a un turno ACP en vuelo: `_goose/unstable/session/steer` sobre el socket del turno.
+ * `true` = el agente lo tomó y la respuesta sale por la burbuja de ese turno; `false` = no hay
+ * turno vivo aquí (terminó, o corre en otro proceso) y hay que abrir un turno normal.
+ */
+export async function steerAcpTurn(sessionId: string, text: string): Promise<boolean> {
+  const vivo = turnosVivos.get(sessionId);
+  if (!vivo) return false;
+  return vivo.steer(text);
+}
+
 export async function runAcpTurn(t: AcpTurn): Promise<AcpResult> {
   const ESPERAS = t.reintentosMs ?? [600, 1500, 3000];
   let intento = 0;
@@ -548,6 +567,9 @@ async function unTurnoAcp(t: AcpTurn): Promise<AcpResult> {
    * No se pintan y no se acumulan: el historial ya está en el chat, que es de donde salió.
    */
   let rehidratando = false;
+  /** `activeRunId` del run en vuelo (lo publica goose en `session_info_update`). */
+  let runId: string | null = null;
+  let sessionIdVivo = "";
 
   const enviar = (o: unknown) => ws.send(JSON.stringify(o));
   const llama = (method: string, params: unknown) =>
@@ -661,7 +683,13 @@ async function unTurnoAcp(t: AcpTurn): Promise<AcpResult> {
         // checklist las herramientas de un turno viejo es contar dos veces un trabajo que
         // ya se hizo.
         if (rehidratando) continue;
-        void handleUpdate(m.params?.update ?? {}, t, (s) => (texto += s), toolTitles);
+        const upd = m.params?.update ?? {};
+        // El id del run en vuelo: es lo que un steer tiene que citar (`expectedRunId`).
+        if (upd.sessionUpdate === "session_info_update") {
+          const g = upd._meta?.goose;
+          if (g && "activeRunId" in g) runId = typeof g.activeRunId === "string" ? g.activeRunId : null;
+        }
+        void handleUpdate(upd, t, (s) => (texto += s), toolTitles);
         continue;
       }
 
@@ -701,7 +729,20 @@ async function unTurnoAcp(t: AcpTurn): Promise<AcpResult> {
       });
     });
 
-    t.signal?.addEventListener("abort", cerrar, { once: true });
+    // Detener = `session/cancel`, no colgar: goose corta el run y contesta el prompt con
+    // `stopReason: cancelled`, y el relé no se queda con un huérfano falso que luego
+    // alguien adoptaría. Si en 5 s no contestó, se cierra el socket como antes.
+    const cancelar = () => {
+      if (sessionIdVivo) {
+        try {
+          enviar({ jsonrpc: "2.0", method: "session/cancel", params: { sessionId: sessionIdVivo } });
+        } catch {
+          /* socket ya muerto */
+        }
+        setTimeout(cerrar, 5_000).unref?.();
+      } else cerrar();
+    };
+    t.signal?.addEventListener("abort", cancelar, { once: true });
 
 
     const init = await llama("initialize", {
@@ -784,6 +825,8 @@ async function unTurnoAcp(t: AcpTurn): Promise<AcpResult> {
       return true;
     };
     let sessionId = t.sessionId ?? "";
+    // Copia para los closures registrados antes (cancel/steer): `sessionId` se reasigna.
+    sessionIdVivo = sessionId;
     // ⚠️ `puedeRetomar` es lo que el agente DICE; `t.retains === false` es lo que hizo la
     // última vez. Gana el hecho: gemini declara `loadSession:true` y su `session/load`
     // contesta «Authentication required» en cada turno (medido el 2026-09-01), así que
@@ -871,13 +914,36 @@ async function unTurnoAcp(t: AcpTurn): Promise<AcpResult> {
       }
     }
 
-    const prompt = () =>
-      conLatido(
+    const prompt = () => {
+      sessionIdVivo = sessionId;
+      const sid = sessionId;
+      turnosVivos.set(sid, {
+        steer: async (text) => {
+          if (!runId) return false;
+          try {
+            await llama("_goose/unstable/session/steer", {
+              sessionId: sid,
+              prompt: [{ type: "text", text }],
+              expectedRunId: runId,
+            });
+            ultimoMensaje = Date.now();
+            return true;
+          } catch (e) {
+            // El run ya terminó (o el id no coincide): que se abra un turno normal.
+            console.log(`[acp ~] ${sid}: steer rechazado (${e instanceof Error ? e.message : e})`);
+            return false;
+          }
+        },
+      });
+      return conLatido(
         llama("session/prompt", { sessionId, prompt: bloquesDelTurno(t, { puedeImagen }) }),
         () => ultimoMensaje,
         () => permisosEnVuelo > 0,
         t.idleMs ?? 5 * 60_000,
-      );
+      ).finally(() => {
+        if (turnosVivos.get(sid)?.steer) turnosVivos.delete(sid);
+      });
+    };
     let fin: any;
     if (t.adoptar) {
       // El `turn_adopted` llega pegado a la respuesta del `session/load`; si en un segundo

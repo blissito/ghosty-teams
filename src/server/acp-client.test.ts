@@ -75,6 +75,7 @@ beforeAll(async () => {
       ws.close();
       return;
     }
+    let promptEnVuelo: number | null = null;
     ws.on("message", (d) => {
       for (const line of d.toString().split("\n")) {
         if (!line.trim()) continue;
@@ -127,7 +128,13 @@ beforeAll(async () => {
         }
         else if (m.method === "session/prompt") {
           ultimoPrompt = m.params?.prompt ?? [];
+          promptEnVuelo = m.id;
           guion(ws, m);
+        }
+        // Como goose: `session/cancel` corta el run y el prompt contesta `cancelled`.
+        else if (m.method === "session/cancel") {
+          if (promptEnVuelo != null) ws.send(env({ id: promptEnVuelo }, { result: { stopReason: "cancelled" } }));
+          promptEnVuelo = null;
         }
         else if (rechazaMetodo && m.method === rechazaMetodo)
           ws.send(env({ id: m.id }, { error: { code: -32602, message: "no puedo cambiar eso" } }));
@@ -953,8 +960,32 @@ describe("socket caído a media respuesta", () => {
       ws.send(env({}, { method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "..." } } } }));
       setTimeout(() => ctrl.abort(), 20);
     };
-    await expect(turno({ sessionId: "ses-1", signal: ctrl.signal }).run()).rejects.toThrow();
+    // Detener manda `session/cancel` y el turno cierra con `cancelled`; no reconecta.
+    const r = await turno({ sessionId: "ses-1", signal: ctrl.signal }).run();
+    expect(r.stopReason).toBe("cancelled");
+    expect(metodos).toContain("session/cancel");
     expect(conexiones).toBe(1);
+  });
+
+  it("steer: una corrección entra al turno en vuelo por su mismo socket", async () => {
+    const { steerAcpTurn } = await import("./acp-client.server");
+    guion = (ws, m) => {
+      // goose publica el run activo; sin él no hay a qué steerear.
+      ws.send(env({}, { method: "session/update", params: { sessionId: "ses-1", update: { sessionUpdate: "session_info_update", _meta: { goose: { activeRunId: "run_1" } } } } }));
+      setTimeout(async () => {
+        expect(await steerAcpTurn("ses-1", "cambia de tema")).toBe(true);
+        ws.send(env({}, { method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "cambiado" } } } }));
+        ws.send(env({ id: m.id }, { result: { stopReason: "end_turn" } }));
+      }, 20);
+    };
+    const t = turno({ sessionId: "ses-1" });
+    // El falso contesta `{}` a cualquier método con id, así que el steer «entra».
+    const r = await t.run();
+    expect(r.text).toBe("cambiado");
+    expect(metodos).toContain("_goose/unstable/session/steer");
+    expect(metodos.indexOf("_goose/unstable/session/steer")).toBeGreaterThan(metodos.indexOf("session/prompt"));
+    // Terminado el turno ya no hay a quién inyectar.
+    expect(await steerAcpTurn("ses-1", "tarde")).toBe(false);
   });
 
   it("adoptar sin turno huérfano cae a la continuación (AcpNoAdoptadaError)", async () => {
