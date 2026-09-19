@@ -75,7 +75,7 @@ beforeAll(async () => {
       ws.close();
       return;
     }
-    let promptEnVuelo: number | null = null;
+    let promptInFlight: number | null = null;
     ws.on("message", (d) => {
       for (const line of d.toString().split("\n")) {
         if (!line.trim()) continue;
@@ -128,13 +128,13 @@ beforeAll(async () => {
         }
         else if (m.method === "session/prompt") {
           ultimoPrompt = m.params?.prompt ?? [];
-          promptEnVuelo = m.id;
+          promptInFlight = m.id;
           guion(ws, m);
         }
         // Como goose: `session/cancel` corta el run y el prompt contesta `cancelled`.
         else if (m.method === "session/cancel") {
-          if (promptEnVuelo != null) ws.send(env({ id: promptEnVuelo }, { result: { stopReason: "cancelled" } }));
-          promptEnVuelo = null;
+          if (promptInFlight != null) ws.send(env({ id: promptInFlight }, { result: { stopReason: "cancelled" } }));
+          promptInFlight = null;
         }
         else if (rechazaMetodo && m.method === rechazaMetodo)
           ws.send(env({ id: m.id }, { error: { code: -32602, message: "no puedo cambiar eso" } }));

@@ -484,7 +484,7 @@ export function acpTicketUrl(wsUrl: string, ns: string, sub: string, tools = fal
  * que se le pide a él que la mande por el MISMO WebSocket. `runId` sale de
  * `session_info_update._meta.goose.activeRunId`; sin él, goose rechaza el steer.
  */
-const turnosVivos = new Map<string, { steer: (text: string) => Promise<boolean> }>();
+const liveTurns = new Map<string, { steer: (text: string) => Promise<boolean> }>();
 
 /**
  * STEER a un turno ACP en vuelo: `_goose/unstable/session/steer` sobre el socket del turno.
@@ -492,7 +492,7 @@ const turnosVivos = new Map<string, { steer: (text: string) => Promise<boolean> 
  * turno vivo aquí (terminó, o corre en otro proceso) y hay que abrir un turno normal.
  */
 export async function steerAcpTurn(sessionId: string, text: string): Promise<boolean> {
-  const vivo = turnosVivos.get(sessionId);
+  const vivo = liveTurns.get(sessionId);
   if (!vivo) return false;
   return vivo.steer(text);
 }
@@ -569,7 +569,7 @@ async function unTurnoAcp(t: AcpTurn): Promise<AcpResult> {
   let rehidratando = false;
   /** `activeRunId` del run en vuelo (lo publica goose en `session_info_update`). */
   let runId: string | null = null;
-  let sessionIdVivo = "";
+  let liveSessionId = "";
 
   const enviar = (o: unknown) => ws.send(JSON.stringify(o));
   const llama = (method: string, params: unknown) =>
@@ -732,17 +732,17 @@ async function unTurnoAcp(t: AcpTurn): Promise<AcpResult> {
     // Detener = `session/cancel`, no colgar: goose corta el run y contesta el prompt con
     // `stopReason: cancelled`, y el relé no se queda con un huérfano falso que luego
     // alguien adoptaría. Si en 5 s no contestó, se cierra el socket como antes.
-    const cancelar = () => {
-      if (sessionIdVivo) {
+    const cancel = () => {
+      if (liveSessionId) {
         try {
-          enviar({ jsonrpc: "2.0", method: "session/cancel", params: { sessionId: sessionIdVivo } });
+          enviar({ jsonrpc: "2.0", method: "session/cancel", params: { sessionId: liveSessionId } });
         } catch {
           /* socket ya muerto */
         }
         setTimeout(cerrar, 5_000).unref?.();
       } else cerrar();
     };
-    t.signal?.addEventListener("abort", cancelar, { once: true });
+    t.signal?.addEventListener("abort", cancel, { once: true });
 
 
     const init = await llama("initialize", {
@@ -826,7 +826,7 @@ async function unTurnoAcp(t: AcpTurn): Promise<AcpResult> {
     };
     let sessionId = t.sessionId ?? "";
     // Copia para los closures registrados antes (cancel/steer): `sessionId` se reasigna.
-    sessionIdVivo = sessionId;
+    liveSessionId = sessionId;
     // ⚠️ `puedeRetomar` es lo que el agente DICE; `t.retains === false` es lo que hizo la
     // última vez. Gana el hecho: gemini declara `loadSession:true` y su `session/load`
     // contesta «Authentication required» en cada turno (medido el 2026-09-01), así que
@@ -915,9 +915,9 @@ async function unTurnoAcp(t: AcpTurn): Promise<AcpResult> {
     }
 
     const prompt = () => {
-      sessionIdVivo = sessionId;
+      liveSessionId = sessionId;
       const sid = sessionId;
-      turnosVivos.set(sid, {
+      liveTurns.set(sid, {
         steer: async (text) => {
           if (!runId) return false;
           try {
@@ -941,7 +941,7 @@ async function unTurnoAcp(t: AcpTurn): Promise<AcpResult> {
         () => permisosEnVuelo > 0,
         t.idleMs ?? 5 * 60_000,
       ).finally(() => {
-        if (turnosVivos.get(sid)?.steer) turnosVivos.delete(sid);
+        if (liveTurns.get(sid)?.steer) liveTurns.delete(sid);
       });
     };
     let fin: any;
