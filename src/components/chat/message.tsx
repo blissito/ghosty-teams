@@ -3122,14 +3122,19 @@ export function ToolGroup({ tools, vivo = true }: { tools: ToolState[]; vivo?: b
   // Abierta por default (el usuario quiere ver las tools sin tener que expandir cada vez).
   // Se queda como la deje: si la colapsa, respeta su elección para ese mensaje.
   const [open, setOpen] = useState(true);
-  const icon = (s: ToolState["status"], sz = 13) =>
-    s === "error" ? (
+  // Misma regla que `anyRunning` pero por FILA: el header ya dejaba de girar al morir el
+  // turno y cada renglón seguía con su anillo (visto en descti, 2026-09-18, sobre un turno
+  // «Interrumpido»). Sin turno vivo, un `running` guardado a media foto se pinta como hecho.
+  const icon = (s0: ToolState["status"], sz = 13) => {
+    const s = !vivo && s0 === "running" ? "done" : s0;
+    return s === "error" ? (
       <X size={sz} className="shrink-0 text-red-500" />
     ) : s === "done" ? (
       <Check size={sz} className="shrink-0 text-emerald-500" />
     ) : (
       <ThinkingRing size={sz} />
     );
+  };
   const total = tools.reduce((n, t) => n + (t.n ?? 1), 0);
   // UNA herramienta → una sola línea, sin colapsable (el header y la fila expandida
   // dirían lo mismo = info repetida). El ×n y el detalle van en esa línea.
