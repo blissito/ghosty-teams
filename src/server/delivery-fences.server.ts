@@ -34,7 +34,8 @@ export async function attachDeliveryFences(
         url: a.url,
         bytes: hecho?.bytes,
         name: "Nota de voz",
-        fileName: hecho ? "voz.mp3" : "voz.ogg",
+        // La extensión sale del mime: desde el 2026-09-21 `url` del eb-audio es mp3 (el ogg va en `ogg`).
+        fileName: hecho || /mpeg|mp3/.test(a.mime ?? "") ? "voz.mp3" : "voz.ogg",
         mime: hecho?.contentType || a.mime || "audio/ogg",
         waveform: a.waveform,
         durationMs: hecho?.durMs ?? a.durationMs,
