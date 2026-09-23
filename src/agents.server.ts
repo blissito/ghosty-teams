@@ -2317,6 +2317,15 @@ export async function callAgentBackendStream(
     // NO es el archivo prometido. El que corrige tiene que pesar más que el que describe.
     sinToolsHint + huecoHint + connHint + nowHint + memHint + brandHint + docHint + rosterHint + text + canalHint
   );
+  // El tablero de ventas que sigue este room (gt_room_sales_boards): el agente trabaja ÉSE
+  // aquí. gs lo valida contra el workspace que firma; si no es suyo, lo ignora.
+  let salesBoardId: string | undefined;
+  if (native && dest?.channelId) {
+    try {
+      const { getRoomSalesBoard } = await import("./db.server");
+      salesBoardId = (await getRoomSalesBoard(dest.channelId))?.boardId;
+    } catch { /* sin tabla todavía → sin tablero, no rompe el turno */ }
+  }
   // REINTENTO DE TRANSPORTE. Un `terminated`/`fetch failed`/503 antes de que el worker
   // haya dicho una sola palabra no es un fallo del agente: es gs reiniciándose (deploy) o
   // el socket caído. Hasta el 2026-09-12 se cerraba el turno con «No pude contactar» y la
@@ -2366,6 +2375,7 @@ export async function callAgentBackendStream(
       ...(toolToken && toolsUrl ? { toolToken, toolsUrl } : {}),
       ...(wakeUrl && wakeRef ? { wakeUrl, wakeRef } : {}),
       ...(inject ? { inject: true } : {}),
+      ...(salesBoardId ? { boardId: salesBoardId } : {}),
     });
     const url = `${base}/api/v2/fleet-agents/${(agent.backend as { id: string }).id}/message-stream`;
     const doStream = (tok: string) =>

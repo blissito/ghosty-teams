@@ -730,6 +730,21 @@ async function migrate(): Promise<void> {
   // comparten namespace. Sin FK a propósito — el esquema de Tasks lo crea su propio
   // `ensureSchema()`, que puede no haber corrido todavía en un workspace que nunca abrió el
   // tablero, y una FK a una tabla inexistente rompería la migración de Teams.
+  // El tablero de VENTAS de gs que este room sigue (2026-09-23). Uno por room. Vincularlo
+  // hace dos cosas: el agente trabaja ESE tablero cuando lo invocan aquí (gs lo recibe como
+  // `boardId` del turno y lo valida contra el workspace), y los avisos del tablero (lead
+  // nuevo, cambio de columna) caen en el room. NO da acceso: abrir el tablero pasa por el
+  // acceso de cada quien en sales.ghosty.studio. `board_name` es un espejo para pintar el
+  // botón sin llamar a gs.
+  await exec(`CREATE TABLE IF NOT EXISTS gt_room_sales_boards (
+    channel_id   INTEGER PRIMARY KEY,
+    board_id     TEXT NOT NULL,
+    board_name   TEXT NOT NULL,
+    connected_by TEXT NOT NULL,
+    created_at   INTEGER NOT NULL DEFAULT (unixepoch())
+  )`);
+  await exec("CREATE INDEX IF NOT EXISTS gt_room_sales_boards_board ON gt_room_sales_boards(board_id)");
+
   await exec(`CREATE TABLE IF NOT EXISTS gt_room_board (
     channel_id INTEGER PRIMARY KEY,
     project_id INTEGER NOT NULL,

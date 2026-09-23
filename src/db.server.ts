@@ -2195,6 +2195,41 @@ export async function removeChannelMember(channelId: number, userSub: string): P
   await dbq("DELETE FROM gc_channel_members WHERE channel_id = ? AND user_sub = ?", [channelId, userSub]);
 }
 
+// ── Tablero de ventas del room ──
+// Ver gt_room_sales_boards en server/schema.server.ts.
+
+export type RoomSalesBoard = { boardId: string; boardName: string; connectedBy: string; createdAt: number };
+
+export async function getRoomSalesBoard(channelId: number): Promise<RoomSalesBoard | null> {
+  const rows = await dbq(
+    "SELECT board_id, board_name, connected_by, created_at FROM gt_room_sales_boards WHERE channel_id = ?",
+    [channelId]
+  );
+  const r = rows[0];
+  return r
+    ? { boardId: String(r.board_id), boardName: String(r.board_name), connectedBy: String(r.connected_by), createdAt: Number(r.created_at) }
+    : null;
+}
+
+export async function setRoomSalesBoard(channelId: number, boardId: string, boardName: string, by: string): Promise<void> {
+  await dbq(
+    `INSERT INTO gt_room_sales_boards (channel_id, board_id, board_name, connected_by) VALUES (?, ?, ?, ?)
+     ON CONFLICT(channel_id) DO UPDATE SET board_id = excluded.board_id, board_name = excluded.board_name,
+       connected_by = excluded.connected_by, created_at = unixepoch()`,
+    [channelId, boardId, boardName, by]
+  );
+}
+
+export async function clearRoomSalesBoard(channelId: number): Promise<void> {
+  await dbq("DELETE FROM gt_room_sales_boards WHERE channel_id = ?", [channelId]);
+}
+
+/** Rooms que siguen un tablero: a dónde van sus avisos. */
+export async function roomsOfSalesBoard(boardId: string): Promise<number[]> {
+  const rows = await dbq("SELECT channel_id FROM gt_room_sales_boards WHERE board_id = ?", [boardId]);
+  return rows.map((r) => Number(r.channel_id));
+}
+
 // ── Repos del room ──
 // Los repos que un room declara suyos. Es la frontera del conector de GitHub: el agente
 // sólo ve éstos, y en un room sin ninguno no ve ninguno. Ver gt_room_repos en

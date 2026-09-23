@@ -1410,4 +1410,13 @@ export const en: Record<string, string> = {
   "La caja la administra Studio; si se recrea, se reconecta sola.": "Studio manages the box; if it is recreated, it reconnects on its own.",
   "Prospección está en desarrollo: puede fallar o cambiar sin aviso. Revisa cada envío antes de mandarlo y cuéntanos lo que se rompa.": "Prospecting is under development: it may fail or change without notice. Review every send before it goes out, and tell us what breaks.",
   "sólo conteo, sin tope": "count only, no cap",
+  "Vincular un tablero de ventas": "Link a sales board",
+  "Tablero de este room": "This room's board",
+  "Abrir tablero": "Open board",
+  "Cambiar de tablero": "Switch board",
+  "Buscando tableros…": "Looking for boards…",
+  "Este espacio no tiene tableros de ventas.": "This space has no sales boards.",
+  "El agente trabaja este tablero cuando lo invocan aquí y los leads nuevos se avisan en el room. No da acceso al tablero.": "The agent works this board when invoked here, and new leads are announced in the room. It does not grant access to the board.",
+  "Quitar el tablero del room": "Remove the board from the room",
+  "El agente dejará de trabajar «{name}» en este room y los avisos dejarán de llegar aquí.": "The agent will stop working “{name}” in this room and notices will stop arriving here.",
 };

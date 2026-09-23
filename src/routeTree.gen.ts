@@ -50,6 +50,7 @@ import { Route as ApiProspeccionAgentRouteImport } from './routes/api.prospeccio
 import { Route as ApiPSesRouteImport } from './routes/api.p.ses'
 import { Route as ApiInternalProspeccionRunRouteImport } from './routes/api.internal.prospeccion-run'
 import { Route as ApiInternalMembersRouteImport } from './routes/api.internal.members'
+import { Route as ApiInternalBoardEventRouteImport } from './routes/api.internal.board-event'
 import { Route as ApiInternalAnnouncementsRouteImport } from './routes/api.internal.announcements'
 import { Route as ApiInternalAlertRouteImport } from './routes/api.internal.alert'
 import { Route as ApiInternalAgentWakeRouteImport } from './routes/api.internal.agent-wake'
@@ -284,6 +285,11 @@ const ApiInternalMembersRoute = ApiInternalMembersRouteImport.update({
   path: '/api/internal/members',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiInternalBoardEventRoute = ApiInternalBoardEventRouteImport.update({
+  id: '/api/internal/board-event',
+  path: '/api/internal/board-event',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiInternalAnnouncementsRoute =
   ApiInternalAnnouncementsRouteImport.update({
     id: '/api/internal/announcements',
@@ -472,6 +478,7 @@ export interface FileRoutesByFullPath {
   '/api/internal/agent-wake': typeof ApiInternalAgentWakeRoute
   '/api/internal/alert': typeof ApiInternalAlertRoute
   '/api/internal/announcements': typeof ApiInternalAnnouncementsRoute
+  '/api/internal/board-event': typeof ApiInternalBoardEventRoute
   '/api/internal/members': typeof ApiInternalMembersRoute
   '/api/internal/prospeccion-run': typeof ApiInternalProspeccionRunRoute
   '/api/p/ses': typeof ApiPSesRoute
@@ -541,6 +548,7 @@ export interface FileRoutesByTo {
   '/api/internal/agent-wake': typeof ApiInternalAgentWakeRoute
   '/api/internal/alert': typeof ApiInternalAlertRoute
   '/api/internal/announcements': typeof ApiInternalAnnouncementsRoute
+  '/api/internal/board-event': typeof ApiInternalBoardEventRoute
   '/api/internal/members': typeof ApiInternalMembersRoute
   '/api/internal/prospeccion-run': typeof ApiInternalProspeccionRunRoute
   '/api/p/ses': typeof ApiPSesRoute
@@ -612,6 +620,7 @@ export interface FileRoutesById {
   '/api/internal/agent-wake': typeof ApiInternalAgentWakeRoute
   '/api/internal/alert': typeof ApiInternalAlertRoute
   '/api/internal/announcements': typeof ApiInternalAnnouncementsRoute
+  '/api/internal/board-event': typeof ApiInternalBoardEventRoute
   '/api/internal/members': typeof ApiInternalMembersRoute
   '/api/internal/prospeccion-run': typeof ApiInternalProspeccionRunRoute
   '/api/p/ses': typeof ApiPSesRoute
@@ -684,6 +693,7 @@ export interface FileRouteTypes {
     | '/api/internal/agent-wake'
     | '/api/internal/alert'
     | '/api/internal/announcements'
+    | '/api/internal/board-event'
     | '/api/internal/members'
     | '/api/internal/prospeccion-run'
     | '/api/p/ses'
@@ -753,6 +763,7 @@ export interface FileRouteTypes {
     | '/api/internal/agent-wake'
     | '/api/internal/alert'
     | '/api/internal/announcements'
+    | '/api/internal/board-event'
     | '/api/internal/members'
     | '/api/internal/prospeccion-run'
     | '/api/p/ses'
@@ -823,6 +834,7 @@ export interface FileRouteTypes {
     | '/api/internal/agent-wake'
     | '/api/internal/alert'
     | '/api/internal/announcements'
+    | '/api/internal/board-event'
     | '/api/internal/members'
     | '/api/internal/prospeccion-run'
     | '/api/p/ses'
@@ -893,6 +905,7 @@ export interface RootRouteChildren {
   ApiInternalAgentWakeRoute: typeof ApiInternalAgentWakeRoute
   ApiInternalAlertRoute: typeof ApiInternalAlertRoute
   ApiInternalAnnouncementsRoute: typeof ApiInternalAnnouncementsRoute
+  ApiInternalBoardEventRoute: typeof ApiInternalBoardEventRoute
   ApiInternalMembersRoute: typeof ApiInternalMembersRoute
   ApiInternalProspeccionRunRoute: typeof ApiInternalProspeccionRunRoute
   ApiPSesRoute: typeof ApiPSesRoute
@@ -1200,6 +1213,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiInternalMembersRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/internal/board-event': {
+      id: '/api/internal/board-event'
+      path: '/api/internal/board-event'
+      fullPath: '/api/internal/board-event'
+      preLoaderRoute: typeof ApiInternalBoardEventRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/internal/announcements': {
       id: '/api/internal/announcements'
       path: '/api/internal/announcements'
@@ -1469,6 +1489,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiInternalAgentWakeRoute: ApiInternalAgentWakeRoute,
   ApiInternalAlertRoute: ApiInternalAlertRoute,
   ApiInternalAnnouncementsRoute: ApiInternalAnnouncementsRoute,
+  ApiInternalBoardEventRoute: ApiInternalBoardEventRoute,
   ApiInternalMembersRoute: ApiInternalMembersRoute,
   ApiInternalProspeccionRunRoute: ApiInternalProspeccionRunRoute,
   ApiPSesRoute: ApiPSesRoute,

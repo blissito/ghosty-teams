@@ -68,6 +68,7 @@ import {
 
 
   Github,
+  Kanban,
   GitPullRequest,
   ExternalLink,
   Brain,
@@ -81,6 +82,7 @@ import {
   removeRoomRepoFn,
   workspaceRoomReposFn,
 } from "../server/room-repos";
+import { roomSalesBoardFn, salesBoardsFn, setRoomSalesBoardFn, clearRoomSalesBoardFn } from "../server/room-sales-board";
 import ConfirmModal from "../components/ConfirmModal";
 import { createFileRoute, notFound, Link, useRouter } from "@tanstack/react-router";
 import type { Channel, Message, DmConversation, RoomHit, ViewHit, CustomEmoji } from "../db.server";
@@ -5528,6 +5530,132 @@ function RepoButton({ channelId }: { channelId: number }) {
   );
 }
 
+function SalesBoardButton({ channelId }: { channelId: number }) {
+  const t = useT();
+  const [open, setOpen] = useState(false);
+  const [mine, setMine] = useState<{ boardId: string; boardName: string } | null>(null);
+  const [boards, setBoards] = useState<{ id: string; name: string; url: string }[] | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [confirmar, setConfirmar] = useState(false);
+
+  useEffect(() => {
+    roomSalesBoardFn({ data: { channelId } })
+      .then((r) => setMine(r ? { boardId: r.boardId, boardName: r.boardName } : null))
+      .catch(() => setMine(null));
+  }, [channelId]);
+
+  // La lista se pide al ABRIR: es una llamada a gs.
+  useEffect(() => {
+    if (!open || boards) return;
+    salesBoardsFn()
+      .then((r) => setBoards(r))
+      .catch(() => setBoards([]));
+  }, [open, boards]);
+
+  const vincular = async (boardId: string) => {
+    setBusy(true);
+    try {
+      const r = await setRoomSalesBoardFn({ data: { channelId, boardId } });
+      setMine(r ? { boardId: r.boardId, boardName: r.boardName } : null);
+    } catch (e) {
+      alert(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const quitar = async () => {
+    setBusy(true);
+    try {
+      await clearRoomSalesBoardFn({ data: { channelId } });
+      setMine(null);
+    } catch (e) {
+      alert(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+      setConfirmar(false);
+    }
+  };
+
+  const actual = boards?.find((b) => b.id === mine?.boardId);
+
+  return (
+    <div className="relative shrink-0">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        title={mine?.boardName ?? t("Vincular un tablero de ventas")}
+        aria-label={mine?.boardName ?? t("Vincular un tablero de ventas")}
+        className={`flex h-9 shrink-0 items-center gap-1.5 rounded-lg text-muted transition hover:bg-surface-3 hover:text-ink ${mine ? "px-2" : "w-9 justify-center"} ${open ? "bg-surface-3 text-ink" : ""}`}
+      >
+        <Kanban size={17} className="shrink-0" />
+        {mine && <span className="hidden max-w-[13ch] truncate text-xs @lg/hdr:inline">{mine.boardName}</span>}
+      </button>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-40 bg-black/40 sm:bg-transparent" onClick={() => setOpen(false)} />
+          <div className="fixed inset-x-2 top-14 z-50 max-w-[calc(100vw-1rem)] overflow-hidden rounded-xl border border-border bg-surface shadow-2xl ring-1 ring-black/10 sm:absolute sm:inset-x-auto sm:right-0 sm:top-auto sm:mt-1 sm:w-[20rem] dark:ring-white/10">
+            {mine && (
+              <section className="border-b border-border py-1">
+                <p className="px-3 py-1 text-[11px] uppercase tracking-wide text-muted">{t("Tablero de este room")}</p>
+                <div className="flex items-center gap-2 px-3 py-1.5 text-sm">
+                  <Kanban size={14} className="shrink-0 text-muted" />
+                  <span className="min-w-0 flex-1 truncate">{mine.boardName}</span>
+                  {actual && (
+                    <a href={actual.url} target="_blank" rel="noreferrer" className="shrink-0 rounded p-1 text-muted hover:bg-surface-3 hover:text-ink" aria-label={t("Abrir tablero")}>
+                      <ExternalLink size={13} />
+                    </a>
+                  )}
+                  <button type="button" disabled={busy} onClick={() => setConfirmar(true)} className="shrink-0 rounded p-1 text-muted hover:bg-surface-3 hover:text-ink" aria-label={t("Quitar del room")}>
+                    <X size={13} />
+                  </button>
+                </div>
+              </section>
+            )}
+            <section className="max-h-[min(22rem,60dvh)] overflow-y-auto py-1 thin-scroll">
+              <p className="px-3 py-1 text-[11px] uppercase tracking-wide text-muted">
+                {mine ? t("Cambiar de tablero") : t("Vincular un tablero de ventas")}
+              </p>
+              {boards === null ? (
+                <p className="px-3 py-2 text-xs text-muted">{t("Buscando tableros…")}</p>
+              ) : !boards.length ? (
+                <p className="px-3 py-2 text-xs text-muted">{t("Este espacio no tiene tableros de ventas.")}</p>
+              ) : (
+                boards
+                  .filter((b) => b.id !== mine?.boardId)
+                  .map((b) => (
+                    <button
+                      key={b.id}
+                      type="button"
+                      disabled={busy}
+                      onClick={() => vincular(b.id)}
+                      className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-surface-2 disabled:opacity-50"
+                    >
+                      <Kanban size={14} className="shrink-0 text-muted" />
+                      <span className="min-w-0 flex-1 truncate">{b.name}</span>
+                    </button>
+                  ))
+              )}
+              <p className="px-3 pb-2 pt-1 text-[11px] leading-snug text-muted">
+                {t("El agente trabaja este tablero cuando lo invocan aquí y los leads nuevos se avisan en el room. No da acceso al tablero.")}
+              </p>
+            </section>
+          </div>
+        </>
+      )}
+      {confirmar && mine && (
+        <ConfirmModal
+          title={t("Quitar el tablero del room")}
+          body={t("El agente dejará de trabajar «{name}» en este room y los avisos dejarán de llegar aquí.", { name: mine.boardName })}
+          confirmLabel={t("Quitar")}
+          danger
+          onCancel={() => setConfirmar(false)}
+          onConfirm={quitar}
+        />
+      )}
+    </div>
+  );
+}
+
 function RepoPanel({
   channelId,
   mine,
@@ -6821,6 +6949,9 @@ function Flow({
           {/* Sobre qué código habla este room. Es la frontera del conector de GitHub, no un
               atajo: sin repo atado el agente no tiene tools de GitHub aquí. */}
           <RepoButton channelId={channel.id} />
+          {/* Tablero de ventas que sigue este room: el agente trabaja ése aquí y los avisos
+              caen aquí. No da acceso al tablero. */}
+          <SalesBoardButton channelId={channel.id} />
           <SearchButton onOpenDm={onOpenDm} onOpenThread={onOpenThread} currentSlug={channel.slug} />
         </div>
       </header>
