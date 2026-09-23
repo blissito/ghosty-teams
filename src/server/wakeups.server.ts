@@ -153,11 +153,13 @@ async function fire(ns: string, w: Wakeup, ref: WakeRef): Promise<void> {
 
   // Igual que un turno programado en gs: el agente sabe que lo despertó la plataforma y que
   // si no hay nada que entregar contesta `OK` (y un `OK` no genera push).
-  // ⚠️ Salvo la revisión de una alerta (`alert:`): ahí «es ruido» ES la respuesta, y con la
-  // salida del `OK` el agente la tomaba y el hilo de la alerta quedaba vacío (medido).
-  const text =
-    `⏰ Turno programado por la plataforma (${w.cause}). ${w.text}` +
-    (w.key.startsWith("alert:") ? "" : `\nSi no hay nada nuevo que entregar, contesta exactamente: OK`);
+  // ⚠️ Salvo la revisión de una alerta (`alert:`): ahí «es ruido» ES la respuesta. Y no basta
+  // con quitar la cláusula: el prompt de gs (`tools-dispatch.server.ts`) le enseña al agente
+  // que TODO mensaje que empiece con «⏰ Turno programado» se contesta «OK» si no hay nada
+  // nuevo. Con esa marca contestaba «OK» y el hilo de la alerta quedaba vacío (medido 3 veces).
+  const text = w.key.startsWith("alert:")
+    ? `🔎 Alerta de la plataforma para revisar. ${w.text}`
+    : `⏰ Turno programado por la plataforma (${w.cause}). ${w.text}\nSi no hay nada nuevo que entregar, contesta exactamente: OK`;
 
   let shellId: number | null = null;
   const publish = (ev: Record<string, unknown>) => {
