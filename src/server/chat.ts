@@ -752,8 +752,20 @@ export const postMessage = createServerFn({ method: "POST" })
     const bus = await import("./bus.server");
     const { currentNamespace } = await import("./tenant.server");
     const { resolvedAgents, detectMentions, quoteExcerpt, agentGroupId } = await import("../agents.server");
-    const channel = await db.getChannel(data.slug);
+    // Una respuesta de hilo vive en el canal DE SU RAÍZ, no en el que diga el cliente. El
+    // cliente podía mandar el slug del room donde estaba parado con un hilo de OTRO room
+    // abierto (el toast de una respuesta abría el hilo sin cambiar de room): la respuesta
+    // se guardaba en ese otro canal. Medido en descti el 2026-09-23: respuestas de un hilo
+    // del canal PRIVADO de una persona quedaron en #general, y el agente corrió con la
+    // memoria y la búsqueda de #general.
+    const threadRoot = data.parentId !== null ? await db.getMessage(data.parentId) : null;
+    if (data.parentId !== null && (!threadRoot || threadRoot.dm_id != null)) throw new Error("Hilo no encontrado");
+    const channel = threadRoot ? await db.getChannelById(threadRoot.channel_id) : await db.getChannel(data.slug);
     if (!channel) throw new Error("Canal no encontrado");
+    if (threadRoot && channel.slug !== data.slug) {
+      const u = await sessionUser();
+      if (!u || !(await db.canSeeChannel(channel, u.sub, !!u.isOwner))) throw new Error("Hilo no encontrado");
+    }
     const ns = await currentNamespace();
     const body = data.body.trim();
     const files = data.attachments ?? [];
@@ -767,7 +779,7 @@ export const postMessage = createServerFn({ method: "POST" })
 
     // Topic (eje Zulip): los top-level llevan el topic elegido; las respuestas
     // heredan el del root del hilo (un hilo no cambia de topic a media conversación).
-    const parent = data.parentId !== null ? await db.getMessage(data.parentId) : null;
+    const parent = threadRoot;
     const topic =
       data.parentId !== null
         ? parent?.topic ?? "general"

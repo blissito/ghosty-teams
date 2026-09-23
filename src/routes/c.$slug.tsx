@@ -1767,7 +1767,14 @@ function ChannelPage() {
               // Limpia SIEMPRE Inicio/vista (si no, el Home tapa la conversación y "no lleva").
               setHomeOpen(false); setView(null);
               if (dmId != null) { setOpenThreadId(null); setOpenDmId(dmId); }
-              else if (parentId != null) { setOpenDmId(null); setOpenThreadId(parentId); }
+              else if (parentId != null) {
+                // El hilo puede ser de OTRO room: abrirlo aquí dejaba el room actual detrás, y
+                // las respuestas salían con este slug (guardadas en el canal equivocado).
+                const s = channelsById.get(chId);
+                setOpenDmId(null);
+                if (s && s !== channel.slug) router.navigate({ to: "/c/$slug", params: { slug: s }, search: { thread: parentId } });
+                else setOpenThreadId(parentId);
+              }
               else {
                 setOpenDmId(null); setOpenThreadId(null);
                 const s = channelsById.get(chId);
