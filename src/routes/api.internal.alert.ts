@@ -71,8 +71,15 @@ export const Route = createFileRoute("/api/internal/alert")({
         // refrescan estado.
         const bus = await import("../server/bus.server");
         const { currentNamespace } = await import("../server/tenant.server");
+        const ns = await currentNamespace();
         const creado = await db.getMessage(id);
-        if (creado) bus.publish(bus.ch.room(await currentNamespace(), room.id), { t: "message:new", msg: creado });
+        if (creado) bus.publish(bus.ch.room(ns, room.id), { t: "message:new", msg: creado });
+
+        // @ghosty la revisa en su hilo (una vez por problema al día). Best-effort: si falla,
+        // la alerta ya está publicada.
+        await import("../server/alert-triage.server")
+          .then((m) => m.enqueueAlertTriage({ ns, roomId: room.id, alertId: id, title, detail, origin: new URL(request.url).origin }))
+          .catch((e) => console.warn("[alert] triage", e));
 
         return Response.json({ ok: true, messageId: id });
       },
