@@ -68,7 +68,7 @@ import ConfirmModal from "../../components/ConfirmModal";
 import type { Message, Attachment, Artifact, CustomEmoji } from "../../db.server";
 import { forwardTargetsFn, forwardMessageFn } from "../../server/forward";
 import { readReceiptsFn} from "../../server/reads";
-import { SmilePlus, Pencil, ArrowLeft, Reply, Square, Ban, CircleHelp, ShieldAlert, Github } from "lucide-react";
+import { SmilePlus, Pencil, ArrowLeft, Reply, Square, Ban, CircleHelp, ShieldAlert, Github, Circle, Asterisk, ListChecks } from "lucide-react";
 import { useRtSubscribe } from "../../utils/rt-bus";
 import { Markdown } from "../../components/Markdown";
 import { Avatar } from "../../components/Avatar";
@@ -77,7 +77,7 @@ import { registerModalEsc } from "../../utils/modal-esc";
 import { useScrollLock } from "../../utils/scroll-lock";
 import { type ArtifactView, viewFromAttachment } from "../../components/ArtifactPanel";
 import { FxOverlay } from "./FxOverlay";
-import { extractFx, extractEbDoc, bubbleWithoutEbDoc, extractToolState, extractSteps, extractAlert, extractAsk, extractPermission, extractAllPr, extractAllGh, extractTask, extractTests, type ToolState, type AlertCardData, type AskCardData, type PermissionCardData, type GhCardData, type PrCardData, type TaskCardData, type TestsCardData } from "../../lib/ebdoc";
+import { extractFx, extractEbDoc, bubbleWithoutEbDoc, extractToolState, extractSteps, extractTodos, extractAlert, extractAsk, extractPermission, extractAllPr, extractAllGh, extractTask, extractTests, type ToolState, type TodoState, type AlertCardData, type AskCardData, type PermissionCardData, type GhCardData, type PrCardData, type TaskCardData, type TestsCardData } from "../../lib/ebdoc";
 import { prCardStateFn, runCardActionFn, taskCardStateFn, runTaskCardActionFn } from "../../server/connectors";
 import { answerAgentAskFn } from "../../server/agent-ask";
 import { answerAcpPermissionFn } from "../../server/agent-permission";
@@ -2910,6 +2910,10 @@ export function MessageRow({
           m.body ? (
             <div className="text-sm text-ink">
               {(() => {
+                const plan = extractTodos(m.body);
+                return plan ? <TodoCard msgId={m.id} plan={plan} vivo={turns.has(m.id)} /> : null;
+              })()}
+              {(() => {
                 const ts = extractToolState(m.body);
                 return ts ? <ToolGroup tools={ts} vivo={turns.has(m.id)} /> : null;
               })()}
@@ -3087,6 +3091,69 @@ export function StepList({ steps, emojis }: { steps: string[]; emojis?: { name: 
   );
 }
 
+/**
+ * Qué mensaje trae el plan MÁS RECIENTE de la conversación que se está viendo. Los planes
+ * anteriores se colapsan a «Última lista de tareas →», como en el hilo de Boris: el plan
+ * que importa es el vigente, y seis tarjetas enteras apiladas taparían las respuestas.
+ * `null` (default) = nadie lo calculó → ningún plan se colapsa.
+ */
+export const LatestPlanCtx = createContext<number | null>(null);
+
+export function latestPlanId(msgs: { id: number; body: string }[]): number | null {
+  for (let i = msgs.length - 1; i >= 0; i--) if (msgs[i].body?.includes("```gt-todos")) return msgs[i].id;
+  return null;
+}
+
+// El plan vivo del agente (TodoWrite): ✓ hecho · ✱ en curso · ○ pendiente. Se EDITA en su
+// lugar con cada TodoWrite, así que la tarjeta es la misma de principio a fin del turno.
+export function TodoCard({ msgId, plan, vivo }: { msgId: number; plan: TodoState; vivo: boolean }) {
+  const tr = useT();
+  const latest = useContext(LatestPlanCtx);
+  const hechas = plan.todos.filter((x) => x.status === "completed").length;
+  const hora = plan.asOf ? new Date(plan.asOf).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : null;
+  if (latest != null && latest !== msgId) {
+    return (
+      <button
+        onClick={() => document.getElementById(`plan-${latest}`)?.scrollIntoView({ behavior: "smooth", block: "center" })}
+        className="mb-1.5 flex items-center gap-1.5 text-xs italic text-brand hover:underline"
+      >
+        <ListChecks size={12} className="shrink-0" />
+        {tr("Última lista de tareas")} →
+        <span className="not-italic text-muted">({hechas}/{plan.todos.length})</span>
+      </button>
+    );
+  }
+  return (
+    <div id={`plan-${msgId}`} className="mb-1.5 max-w-md rounded-lg border border-border bg-surface-2/50 px-2.5 py-1.5 text-xs">
+      <div className="mb-1 flex items-center gap-2 font-medium text-ink">
+        <ListChecks size={12} className="shrink-0 text-muted" />
+        {tr("Plan")}
+        <span className="text-[10px] font-normal text-muted">{hechas}/{plan.todos.length}</span>
+      </div>
+      {plan.todos.map((x, i) => {
+        // Sin turno vivo, un «en curso» guardado a media foto no está corriendo: se pinta
+        // pendiente, igual que el anillo de ToolGroup.
+        const st = !vivo && x.status === "in_progress" ? "pending" : x.status;
+        return (
+          <div key={i} className="flex items-start gap-2 py-0.5">
+            {st === "completed" ? (
+              <Check size={13} className="mt-px shrink-0 text-emerald-500" />
+            ) : st === "in_progress" ? (
+              <Asterisk size={13} className="mt-px shrink-0 animate-spin text-brand [animation-duration:3s]" />
+            ) : (
+              <Circle size={11} className="mt-0.5 shrink-0 text-muted/70" />
+            )}
+            <span className={st === "completed" ? "text-muted" : st === "in_progress" ? "font-medium text-ink" : "text-muted"}>
+              {st === "in_progress" && x.activeForm ? x.activeForm : x.content}
+            </span>
+          </div>
+        );
+      })}
+      {hora ? <div className="mt-1 text-[10px] italic text-muted/70">{tr("tareas a las {h}", { h: hora })}</div> : null}
+    </div>
+  );
+}
+
 export function ToolGroup({ tools, vivo = true }: { tools: ToolState[]; vivo?: boolean }) {
   // Las etiquetas las arma el SERVER en español y viajan dentro del cuerpo del
   // mensaje. Como el i18n de Teams usa el texto fuente COMO clave, pasarlas por
@@ -3186,12 +3253,12 @@ export function ToolGroup({ tools, vivo = true }: { tools: ToolState[]; vivo?: b
   );
 }
 
-// Extracto de texto plano de un mensaje para la cita (quita fences gt-tools/eb-doc/código,
+// Extracto de texto plano de un mensaje para la cita (quita fences gt-todos/gt-tools/eb-doc/código,
 // markdown básico, y colapsa espacios). Espejo de quoteExcerpt del server.
 
 export function plainExcerpt(body: string): string {
   const s = (body || "")
-    .replace(/```gt-tools[\s\S]*?```/g, "")
+    .replace(/```gt-(tools|todos)[\s\S]*?```/g, "")
     .replace(/```eb-(doc|sheet)[\s\S]*?```/g, "[documento]")
     .replace(/```[\s\S]*?```/g, "[código]")
     .replace(/!\[[^\]]*\]\([^)]*\)/g, "[imagen]")

@@ -1324,6 +1324,15 @@ export const askAgent = createServerFn({ method: "POST" })
         if (shell) bus.publish(bus.ch.room(ns, channel.id), { t: "message:new", msg: shell });
         return id;
       },
+      // La respuesta aparte de un turno con plan: MISMO hilo y topic que la burbuja del
+      // turno (la cáscara eager puede haber nacido con un parent distinto a `data.parentId`).
+      createFollowUp: async (shellId) => {
+        const shell = await db.getMessage(shellId);
+        const { id } = await db.postAgent(channel.id, shell?.parent_id ?? data.parentId, "", "msg", data.handle, name, shell?.topic ?? topic ?? "general", agent?.avatar ?? "");
+        const msg = await db.getMessage(id);
+        if (msg) bus.publish(bus.ch.room(ns, channel.id), { t: "message:new", msg });
+        return id;
+      },
       emitDelta: (mid, chunk) =>
         bus.publish(bus.ch.room(ns, channel.id), { t: "message:delta", id: mid, chunk, channelId: channel.id, parentId: data.parentId }),
       // Checklist incremental: reemplaza el body con la lista re-pintada (previas ✓, actual ⚡).
@@ -1373,6 +1382,12 @@ export const askAgent = createServerFn({ method: "POST" })
     // deepseek/ghosty-gc a veces cierra el turno en blanco → se guardaba "" en la DB y
     // el mensaje quedaba vacío (y reaparecía vacío al refetch, borrando lo streameado).
     const { id, reply: replyDelTurno } = turnResult;
+    // Turno con plan: su burbuja quedó como plan vivo y la respuesta salió aparte (`id`).
+    // Se cierra aquí, autoritativa: el flush del `finally` la dejó con streaming = 1.
+    if (turnResult.plan) {
+      await db.setMessageBody(turnResult.plan.id, turnResult.plan.body);
+      bus.publish(bus.ch.room(ns, channel.id), { t: "message:body", id: turnResult.plan.id, body: turnResult.plan.body });
+    }
     // El turno MURIÓ por transporte (`terminated`, 502, la caja caída). El aviso ya está en
     // la burbuja, pero además hay que decirlo en `gt_turns`: sin esto se cierra en `done` y
     // el medidor lo cobra como una entrega — 4 turnos de descti se pagaron así en agosto.

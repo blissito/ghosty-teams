@@ -233,6 +233,8 @@ import {
 
   ForwardModal,
   fmtDur,
+  LatestPlanCtx,
+  latestPlanId,
 } from "../components/chat/message";
 import type {
   Attach,
@@ -6991,9 +6993,11 @@ function ThreadView({
                 <div className="my-2 border-t border-border pt-1 text-center text-[11px] text-muted">
                   {replyCount === 1 ? t("1 respuesta") : t("{n} respuestas", { n: replyCount })}
                 </div>
-                {replies.map((m, i) => (
-                  <MessageRow key={m.id} m={m} prev={replies[i - 1]} />
-                ))}
+                <LatestPlanCtx.Provider value={latestPlanId(replies)}>
+                  {replies.map((m, i) => (
+                    <MessageRow key={m.id} m={m} prev={replies[i - 1]} />
+                  ))}
+                </LatestPlanCtx.Provider>
               </>
             )}
             {optimistic.map((o, i) => (
@@ -7203,7 +7207,8 @@ function DmView({
             {t("Escribe el primer mensaje de {name}.", { name: title })}
           </p>
         ) : (
-          flow.map((m, i) => {
+          <LatestPlanCtx.Provider value={latestPlanId(flow)}>
+          {flow.map((m, i) => {
             const divider = m.id === unreadId;
             const dayBreak = crossesDay(flow[i - 1]?.created_at, m.created_at);
             const prev = divider || dayBreak ? undefined : flow[i - 1];
@@ -7214,7 +7219,8 @@ function DmView({
                 <MessageRow m={m} prev={prev} />
               </Fragment>
             );
-          })
+          })}
+          </LatestPlanCtx.Provider>
         )}
         {optimistic.map((o, i) => (
           <OptimisticRow key={o.id} o={o} grouped={optIsGrouped(o, i > 0 ? optimistic[i - 1] : flow ? flow[flow.length - 1] : undefined)} />

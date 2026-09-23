@@ -1374,6 +1374,47 @@ export function nativeTools(dest: ToolDest | null): ConnectorTool[] {
         return { ok: true, messageId, emoji, count };
       },
     },
+    {
+      // Los HITOS de un trabajo largo, como en el hilo de Boris: «seis máquinas probadas»,
+      // «sexto PR»… cada entregable sale como mensaje propio en cuanto existe, en vez de
+      // esperar a la respuesta final. El destino va FIRMADO en `dest`: el agente no elige
+      // dónde publica, sólo qué.
+      name: "chat_post",
+      description:
+        "Publica un mensaje TUYO en esta conversación (mismo hilo) SIN terminar tu turno. " +
+        "Úsalo en trabajos largos para entregar cada avance en cuanto lo tengas: un hallazgo, " +
+        "un PR abierto, un archivo listo. Un mensaje por hito, corto y concreto. NO lo uses " +
+        "para narrar lo que vas a hacer ni para la respuesta final: ésa sigue siendo tu respuesta.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          text: { type: "string", description: "El mensaje, en markdown. Máx. 4000 caracteres." },
+        },
+        required: ["text"],
+      },
+      handler: async (_sub, args) => {
+        const handle = dest?.handle;
+        if (!handle) return { ok: false, error: "no hay agente en este turno" };
+        const text = String(args.text ?? "").trim().slice(0, 4000);
+        if (!text) return { ok: false, error: "falta text" };
+        const db = await import("../../db.server");
+        const name = dest?.name || "Ghosty";
+        let id: number;
+        if (dest?.dmId != null) {
+          ({ id } = await db.postDmAgent(dest.dmId, text, "msg", handle, name, dest.avatar ?? ""));
+        } else if (dest?.channelId != null) {
+          ({ id } = await db.postAgent(dest.channelId, dest.parentId ?? null, text, "msg", handle, name, dest.topic ?? "general", dest.avatar ?? ""));
+        } else {
+          return { ok: false, error: "este turno no tiene conversación donde publicar" };
+        }
+        const msg = await db.getMessage(id);
+        if (!msg) return { ok: false, error: "no se pudo publicar" };
+        const { currentNamespace } = await import("../tenant.server");
+        const { publishToAudience } = await import("../chat");
+        await publishToAudience(await currentNamespace(), msg, { t: "message:new", msg });
+        return { ok: true, messageId: id };
+      },
+    },
     // ── Papelera de documentos ────────────────────────────────────────────────
     //
     // ⚠️ Hay `doc_archived_list` y `doc_restore`, pero NO `doc_archive`, y es deliberado:

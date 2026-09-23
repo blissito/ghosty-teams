@@ -699,6 +699,8 @@ export const en: Record<string, string> = {
   "hace {n} min": "{n} min ago",
   "{n} fijados": "{n} pinned",
   "{n} respuestas": "{n} replies",
+  "Última lista de tareas": "Latest task list",
+  "tareas a las {h}": "todos as of {h}",
   "¡Copiado!": "Copied!",
   "¿Archivar este room? Desaparece del sidebar (no se borra).": "Archive this room? It disappears from the sidebar (not deleted).",
   "¿De qué trata este room?": "What's this room about?",

@@ -558,6 +558,13 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
         if (shell) fanout({ t: "message:new", msg: shell });
         return id;
       },
+      // La respuesta aparte de un turno con plan (ver `createFollowUp` en runAgentTurn).
+      createFollowUp: async () => {
+        const { id } = await db.postDmAgent(data.id, "", "msg", data.handle, name, agent?.avatar ?? "");
+        const msg = await db.getMessage(id);
+        if (msg) fanout({ t: "message:new", msg });
+        return id;
+      },
       emitDelta: (mid, chunk) => fanout({ t: "message:delta", id: mid, chunk, channelId: null, parentId: null, dmId: data.id }),
       // Mismo tratamiento que en rooms: persistir mientras escribe (si no, un refresh a
       // media respuesta deja la cáscara muda) y anunciar el paso en curso.
@@ -592,6 +599,11 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
       { ns, getId: () => registeredId, sinEspera: steer },
     ); // ← withGroupLock
     const { id, reply } = turnResult;
+    // Turno con plan: la burbuja del turno se cierra autoritativa (ver chat.ts).
+    if (turnResult.plan) {
+      await db.setMessageBody(turnResult.plan.id, turnResult.plan.body);
+      fanout({ t: "message:body", id: turnResult.plan.id, body: turnResult.plan.body });
+    }
     // Igual que en el room: un fallo de transporte no puede cerrarse como `done`. Ver chat.ts.
     if (turnResult.failure) {
       turns.setTurnOutcome(ns, id, `error: ${turnResult.failure}`);

@@ -1022,8 +1022,48 @@ export function stripStepsBlock(body: string): string {
   return (before + after).replace(/^\s+/, "");
 }
 
-// Quita el bloque ```gt-tools``` del body (el estado se muestra como burbuja, no como texto).
+// ── Plan del agente (TodoWrite) ─────────────────────────────────────────────────
+// La tarjeta viva del hilo de Boris: el agente escribe su plan y lo va palomeando, y la
+// burbuja se EDITA en su lugar (✓ hecho · ✱ en curso · ○ pendiente). El server lo pinta
+// primero en el body:  ```gt-todos\n{"todos":[{content,status,activeForm?}],"asOf":ms}\n```
+export type TodoStatus = "pending" | "in_progress" | "completed";
+export type TodoItem = { content: string; status: TodoStatus; activeForm?: string };
+export type TodoState = { todos: TodoItem[]; asOf?: number };
+
+export function renderTodosBlock(state: TodoState): string {
+  return "```gt-todos\n" + JSON.stringify(state) + "\n```\n\n";
+}
+
+export function extractTodos(body: string): TodoState | null {
+  const open = body.match(/```gt-todos[^\n]*\n/);
+  if (!open || open.index == null) return null;
+  const rest = body.slice(open.index + open[0].length);
+  const closeIdx = rest.indexOf("```");
+  if (closeIdx === -1) return null;
+  try {
+    const obj = JSON.parse(rest.slice(0, closeIdx).trim()) as { todos?: unknown; asOf?: unknown };
+    if (!Array.isArray(obj.todos)) return null;
+    const todos = (obj.todos as TodoItem[]).filter((t) => t && typeof t.content === "string" && !!t.status);
+    return todos.length ? { todos, asOf: typeof obj.asOf === "number" ? obj.asOf : undefined } : null;
+  } catch {
+    return null;
+  }
+}
+
+function stripFence(body: string, tag: string): string {
+  const open = body.match(new RegExp("```" + tag + "[^\\n]*\\n"));
+  if (!open || open.index == null) return body;
+  const before = body.slice(0, open.index);
+  const rest = body.slice(open.index + open[0].length);
+  const closeIdx = rest.indexOf("```");
+  const after = closeIdx === -1 ? "" : rest.slice(closeIdx + 3);
+  return (before + after).replace(/^\s+/, "");
+}
+
+// Quita los bloques de ESTADO del turno (```gt-todos``` y ```gt-tools```) del body: se
+// muestran como tarjetas, no como texto, y el agente no los necesita en su historial.
 export function stripToolBlock(body: string): string {
+  body = stripFence(body, "gt-todos");
   const open = body.match(/```gt-tools[^\n]*\n/);
   if (!open || open.index == null) return body;
   const before = body.slice(0, open.index);

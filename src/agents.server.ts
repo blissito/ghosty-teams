@@ -3,7 +3,7 @@
 // (sin createServerFn) para que lo usen tanto chat.ts como server/agents.ts sin
 // ciclos de import.
 import { hasIds, nodeIndex } from "./lib/artifact-ids";
-import { stripStepsBlock, stripToolBlock } from "./lib/ebdoc";
+import { renderTodosBlock, stripStepsBlock, stripToolBlock, type TodoItem } from "./lib/ebdoc";
 import { ARTIFACT_DESIGN_GUIDE } from "./server/prompts/artifact-design";
 import { parseScope, type ToolScope } from "./server/connectors/tool-token.server";
 
@@ -1109,6 +1109,7 @@ const TEAMS_PRODUCT_CONTEXT = [
   "LEER UNA NOTA COMPLETA: `memory_read` SÍ existe, y hay dos alcances. Las del WORKSPACE llegan al turno como ÍNDICE (título + arranque), así que antes de aplicar un hecho de la empresa —formato, datos de un cliente, reglas de marca— léela entera con `run('memory_read', { id: 'ws:12' })`. Las de ESTA conversación llegan completas y NO hace falta pedirlas… salvo que el bloque diga que algunas no cupieron: ahí trae la lista de ids y las lees con `run('memory_read', { id: 12 })` (el número solo, sin `ws:`).",
   "RECORDATORIOS: SÍ puedes programar recordatorios — es una capacidad REAL de Ghosty Teams, no depende de ningún servicio externo ni de que el usuario conecte nada. CÓMO: en code-mode, `const { run } = await import('/opt/gs-sdk/connectors.mjs')` y luego `await run('reminder_create', { text: 'pagar la tarjeta', when: '2026-08-01T09:00', repeat: 'daily'|'weekly'|'monthly' /* omítelo si es una sola vez */ })`. `when` va en hora LOCAL del usuario (YYYY-MM-DDTHH:mm): resuelve 'mañana', 'el 1 de agosto' o 'en 2 horas' con el `[Ahora: …]` que recibes al inicio del turno. Si te dictan direcciones a las que mandar copia del correo, pásalas en `emailCc: ['a@b.com']` (máx 5). También tienes `run('reminder_list')`, `run('reminder_update', { id, ...sólo lo que cambia })` — para cambiarle la hora, el texto o encenderle el correo a uno YA agendado, sin cancelarlo — y `run('reminder_cancel', { id })`. NO hace falta llamar a `list()` antes: estas tres existen SIEMPRE. A la hora pedida el recordatorio lo publicas TÚ en esta misma conversación. Al programarlo, CONFIRMA el día y la hora que devolvió la tool. CORREO: por default el aviso llega SOLO al chat; si además lo quiere por correo, pásale `email: true` — pregúntaselo en la misma frase en que confirmas ('¿te lo mando también por correo?') y no lo des por hecho.",
   "REACCIONAR A UN MENSAJE: puedes ponerle un emoji a un mensaje de esta conversación con `const { run } = await import('/opt/gs-sdk/connectors.mjs')` y `await run('chat_react', { emoji: '👍' })` — sin `messageId` reacciona al mensaje que te invocó, y con `{ messageId }` a otro de esta misma conversación. Sirve para acusar algo breve sin gastar un mensaje entero: 👍 de enterado, 🎉 al cerrar algo que celebraban, ⚠️ si algo no cuadra. NO reemplaza tu respuesta, y NO pongas 👀 ni ✅: ésos los pone la plataforma sola mientras trabajas y al terminar.",
+  "TRABAJOS LARGOS (varios pasos, minutos u horas): 1) Arranca escribiendo tu PLAN con TodoWrite (si lo tienes) y mantenlo al día —marca cada tarea en curso y hecha en cuanto cambie—: la plataforma lo pinta como la lista viva del hilo y es lo primero que la persona mira para saber en qué vas. 2) Entrega cada avance en cuanto exista con `await run('chat_post', { text })` (mismo `connectors.mjs`): un mensaje corto por hito —un hallazgo, un PR abierto, un archivo listo—, sin esperar al final. Nunca uses `chat_post` para anunciar lo que vas a hacer ni para la respuesta final. 3) La respuesta final cierra con el resultado y lo que falta; menciona a la persona con @ sólo si necesitas que haga algo (aprobar, decidir).",
   "FORMULARIOS DE INTAKE: cuando te pidan un formulario, un cuestionario, un formato de alta o \"recabar datos\" de alguien que NO tiene cuenta aquí (un cliente, un tercero), usa la tool: `const { run } = await import('/opt/gs-sdk/connectors.mjs')` y `await run('form_create', { title: 'Alta de cliente', fields: [{ name: 'razon_social', type: 'text', label: 'Razón social', required: true, section: 'Datos' }, …] })`. Devuelve `{ url }`: PÁSALE esa liga al usuario tal cual — es lo que se le manda al cliente. Las respuestas caen SOLAS en esta conversación, en UNA hoja que crece con cada envío (se descarga en Excel). Para el documento de UNA respuesta —'pásame el expediente de Fulano'— usa `run('form_ficha', { formId, submissionId })`, donde `submissionId` es el `id` que te dio form_submissions. Campos: `type` es text|email|tel|textarea|select|date|number|checkbox|radio|file|matrix; agrupa con `section` (los consecutivos con la misma sección forman un paso); usa `showIf: { field, equals }` para una pregunta que sólo aplica según una respuesta ANTERIOR; en `matrix` las columnas van en `options` y las filas en `rows`. Cuando la CANTIDAD la decide quien responde (herederos, dependientes, inmuebles, hijos, socios), usa `type:'group'` con sus subcampos en `fields` y `itemLabel` ('Heredero') — NUNCA inventes heredero_1, heredero_2, heredero_3: quien tiene cinco se queda sin dónde ponerlos. Manda `locale: 'en'` cuando quien vaya a responder lee en inglés (normalmente el idioma de esta conversación): eso traduce los botones, los avisos y los errores del formulario, no sólo lo que tú escribes. Para repetir algo que ya funcionó —el mismo intake con otro cliente, o adaptar una plantilla— usa `form_create` con `fromFormId`: hereda los campos y lo que mandes los pisa, así no vuelves a dictar 40 campos. También tienes `run('form_list')` y `run('form_submissions', { formId })` para leer lo que llegó, y `run('form_update', { formId, fields })` para cambiarlo — la liga NO cambia, así que edítalo en vez de crear otro.",
   "HISTORIAL DE LA CONVERSACIÓN: tu contexto sólo trae los mensajes RECIENTES; lo de más atrás no lo tienes cargado, pero SÍ puedes ir a buscarlo. Antes de decir «no lo veo», «no lo recuerdo» o «eso no existe», búscalo: `const { run } = await import('/opt/gs-sdk/connectors.mjs')` y `await run('chat_search', { query: 'arquetipo de artífice' })` — busca por palabras en TODO lo que se dijo en esta conversación, incluidos tus propios mensajes. Para leer hacia atrás en orden, `await run('chat_history', { limit: 25 })` y, para seguir subiendo, otra llamada con `before: <oldestId de la respuesta anterior>`. ⚠️ Los dos devuelven los mensajes RECORTADOS a 800 caracteres: cuando un resultado traiga `truncated: true`, lo que buscas está detrás del corte y se lee entero con `await run('chat_message', { ids: [<id>] })`. Nunca concluyas que algo «no está» a partir de un resultado marcado como truncado. Sólo alcanzan ESTA conversación (este canal, hilo o DM), que es justo la que te están preguntando. Y nunca afirmes que tienes «todo el historial en tu contexto»: no lo tienes, lo consultas.",
   "⚠️ NUNCA armes un formulario como artefacto HTML (eb-artifact). Un artefacto corre en el navegador de quien lo abre y NO puede recibir respuestas: lo que se llena ahí no le llega a nadie y no queda registrado en ninguna parte. Es una maqueta, no un formulario. Si ya hiciste uno así, dilo y créalo con `form_create`. El diseño, la validación, los pasos y el guardado los pone la plataforma — tú sólo dictas los campos, y no escribes HTML de formulario nunca.",
@@ -1516,7 +1517,8 @@ async function clockHint(invokerSub?: string): Promise<string> {
 // necesita en el cliente, y este archivo es `.server`.
 import { toolLabel } from "./lib/tool-label";
 
-export type ToolEvent = { name?: string; id?: string; phase?: "start" | "end"; ok?: boolean; detail?: string };
+// `todos` = el plan completo del agente (TodoWrite) cuando la tool es ésa. Ver `gt-todos`.
+export type ToolEvent = { name?: string; id?: string; phase?: "start" | "end"; ok?: boolean; detail?: string; todos?: TodoItem[] };
 
 /**
  * El turno NO terminó: lo cortó el runtime (se acabaron los pasos o el presupuesto, o la
@@ -2422,7 +2424,7 @@ export async function callAgentBackendStream(
           buf = buf.slice(nl + 2);
           const line = frame.split("\n").find((l) => l.startsWith("data:"));
           if (!line) continue;
-          let ev: { type?: string; value?: string; message?: string; name?: string; id?: string; phase?: "start" | "end"; ok?: boolean; detail?: string } & Partial<TruncatedEvent>;
+          let ev: { type?: string; value?: string; message?: string; name?: string; id?: string; phase?: "start" | "end"; ok?: boolean; detail?: string; todos?: TodoItem[] } & Partial<TruncatedEvent>;
           try {
             ev = JSON.parse(line.slice(5).trim());
           } catch {
@@ -2437,7 +2439,7 @@ export async function callAgentBackendStream(
           } else if (ev.type === "tool") {
             huboTool = true;
             // start trae name+id+detail; end trae id+ok. Correlación por id en runAgentTurn.
-            await onTool?.({ name: ev.name, id: ev.id, phase: ev.phase ?? "start", ok: ev.ok, detail: ev.detail });
+            await onTool?.({ name: ev.name, id: ev.id, phase: ev.phase ?? "start", ok: ev.ok, detail: ev.detail, todos: Array.isArray(ev.todos) ? ev.todos : undefined });
           } else if (ev.type === "truncated") {
             // ⚠️ NO lanza. Sólo `error` lanza, y así debe seguir: un corte que tire el turno
             // perdería el trabajo parcial, que es justo lo que este aviso viene a conservar.
@@ -2791,7 +2793,7 @@ export async function countingTurn<T>(fn: () => Promise<T>): Promise<T> {
 
 export async function runAgentTurn(
   opts: Parameters<typeof runAgentTurnInner>[0]
-): Promise<{ id: number; reply: string; failure?: string | null; toolsCorridas?: string[] }> {
+): ReturnType<typeof runAgentTurnInner> {
   turnsInflight++;
   try {
     return await runAgentTurnInner(opts);
@@ -2837,9 +2839,16 @@ async function runAgentTurnInner(opts: {
    * llega es la SEGUNDA mitad de la misma respuesta, y repintar desde vacío la tiraría.
    */
   prefijo?: string;
+  /**
+   * Postea un mensaje NUEVO del agente debajo de la burbuja del turno (mismo hilo) y
+   * devuelve su id. Con él, un turno que trajo plan (TodoWrite) se lee como el hilo de
+   * Boris: la burbuja del turno se queda como el plan vivo + checklist, y la respuesta
+   * final sale aparte, debajo. Sin él (wakeups, sentry) todo va en una sola burbuja.
+   */
+  createFollowUp?: (shellId: number) => Promise<number>;
   /** Causa del fallo de transporte, si el turno murió. `null` = entregó.
    *  Lo consumen chat.ts/dm.ts para marcar el turno como fallido en vez de `done`. */
-}): Promise<{ id: number; reply: string; failure?: string | null; toolsCorridas?: string[] }> {
+}): Promise<{ id: number; reply: string; failure?: string | null; toolsCorridas?: string[]; plan?: { id: number; body: string } }> {
   let id: number | null = null;
   const ensure = async (): Promise<number> => {
     if (id == null) {
@@ -2875,6 +2884,11 @@ async function runAgentTurnInner(opts: {
   let brokeByTool = false; // corrió una tool desde el último texto → el próximo es segmento nuevo
   let anyActivity = false;  // corrió CUALQUIER tool (aunque oculta) → hay trabajo en curso
   let ebDocSeen = false;    // el reply abrió un bloque ```eb-doc``` (redacción en vivo, sin tools)
+  // Plan vivo del agente: el ÚLTIMO TodoWrite del turno, entero (cada TodoWrite reescribe
+  // la lista completa). `todosAt` = cuándo cambió, para el pie «tareas a las HH:MM».
+  let todos: TodoItem[] | null = null;
+  let todosAt = 0;
+  const renderTodos = (): string => (todos ? renderTodosBlock({ todos, asOf: todosAt }) : "");
 
   // El checklist ES el indicador de "trabajando" (reemplaza el "pensando…"). Si hay
   // actividad pero aún ninguna tool semántica, muestra "⏳ Trabajando…" para que el
@@ -2942,7 +2956,7 @@ async function runAgentTurnInner(opts: {
     if (!pasos.length || pasos.some((x) => x.includes("```"))) return acc;
     return "```gt-steps\n" + JSON.stringify({ steps: pasos }) + "\n```\n\n" + ultimo.trim();
   };
-  const renderBody = (allDone: boolean): string => renderToolBlock(allDone) + narration();
+  const renderBody = (allDone: boolean): string => renderTodos() + renderToolBlock(allDone) + narration();
   // Pintado AGRUPADO. El runtime entrega token a token y cada pintado manda el cuerpo
   // ENTERO a todos los suscriptores del room: sin ventana, una respuesta de 3 KB eran
   // ~750 eventos de ~1.5 KB por espectador, y en el teléfono el hilo JS no daba abasto —
@@ -3022,6 +3036,10 @@ async function runAgentTurnInner(opts: {
     // dedup, y al cerrar el `detail` pasa a ser su duración ("22.9s"). Es la visibilidad
     // tipo Claude Code (N background agents con tarea + estado + tiempo).
     const isChild = ev.name === "gs_subagent_child";
+    if (ev.phase !== "end" && ev.todos?.length) {
+      todos = ev.todos;
+      todosAt = Date.now();
+    }
     if (ev.phase === "end") {
       const entry = ev.id ? idToEntry.get(ev.id) : undefined;
       if (entry) {
@@ -3100,7 +3118,7 @@ async function runAgentTurnInner(opts: {
   if (reply === INJECTED) return { id: 0, reply: INJECTED };
   if (opts.signal?.aborted) {
     const partial = narration().trim();
-    return { id: await ensure(), reply: renderToolBlock(true) + (partial ? `${partial}\n\n⏹ Detenido.` : "⏹ Detenido.") };
+    return { id: await ensure(), reply: renderTodos() + renderToolBlock(true) + (partial ? `${partial}\n\n⏹ Detenido.` : "⏹ Detenido.") };
   }
   // `acc` (con separadores) es el texto bonito; reply es la acumulación cruda del stream.
   let finalText = narration().trim() || reply || "(sin respuesta)";
@@ -3116,6 +3134,28 @@ async function runAgentTurnInner(opts: {
   // cuando el aviso SÍ se va a pintar: sin él la burbuja quedaría vacía, que es peor que
   // una frase fea en inglés.
   if (avisoCorte && esErrorDelProveedor(finalText)) finalText = "";
+  // Layout Boris: hubo plan y el turno ENTREGÓ → la burbuja del turno se queda con el plan,
+  // el checklist y los pasos; la respuesta sale como mensaje nuevo debajo. Se devuelve el id
+  // NUEVO: todo el post-proceso del caller (artefactos, eb-doc, adjuntos) cae sobre la
+  // respuesta, que es donde siempre ha caído. Un turno muerto o cortado NO se parte: el
+  // aviso y «Retomar» viven en la burbuja del turno.
+  if (todos && opts.createFollowUp && opts.emitBody && !fallo.message && !avisoCorte) {
+    // `narration()` ya decidió si hay pasos limpios: si los hay, la respuesta es el último
+    // segmento; si no (un paso con bloque cercado, o uno solo), la respuesta es todo.
+    const pasos = segs.map((x) => x.trim()).filter(Boolean);
+    const conPasos = pasos.length > 0 && !pasos.some((x) => x.includes("```"));
+    const respuesta = conPasos ? acc.slice(segStart).trim() : finalText;
+    if (respuesta) {
+      const shellId = await ensure();
+      const bloquePasos = conPasos ? "```gt-steps\n" + JSON.stringify({ steps: pasos }) + "\n```" : "";
+      const planBody = (renderTodos() + renderToolBlock(true) + bloquePasos).trim();
+      opts.emitBody(shellId, planBody);
+      const newId = await opts.createFollowUp(shellId);
+      // `plan` = la burbuja del turno ya cerrada: el caller la persiste AUTORITATIVA
+      // (`setMessageBody`, streaming = 0), o al recargar se vería como turno a medias.
+      return { id: newId, reply: respuesta, failure: null, toolsCorridas: [...toolsCrudas], plan: { id: shellId, body: planBody } };
+    }
+  }
   // Body final autoritativo: bloque gt-tools TODO ✅ + texto separado. El caller lo persiste.
   return {
     id: await ensure(),
