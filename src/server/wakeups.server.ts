@@ -199,6 +199,9 @@ async function fire(ns: string, w: Wakeup, ref: WakeRef): Promise<void> {
   });
 
   const finalBody = reply.trim();
+  // Una línea por despertador: sin ella, un turno que no dejó burbuja es indistinguible de
+  // uno que no corrió (costó una tarde con la revisión de alertas de #soporte).
+  console.log(`[wake] ${w.key} agent=${agent ? handle : "∅"} id=${id} shell=${shellId} reply=${JSON.stringify(finalBody.slice(0, 120))}`);
   // Un `OK` es "nada que entregar": no se deja burbuja. Igual que en gs.
   if (!finalBody || finalBody === "OK") {
     if (shellId != null) await db.deleteMessage(shellId).catch(() => {});
