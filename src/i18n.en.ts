@@ -1205,6 +1205,8 @@ export const en: Record<string, string> = {
 
   "Mergeado": "Merged",
   "Cerrado sin mergear": "Closed without merging",
+  "Con conflictos": "Has conflicts",
+  "Auto-merge activado": "Auto-merge enabled",
   "Aprobado por {quien}": "Approved by {quien}",
   "Cambios pedidos por {quien}": "Changes requested by {quien}",
   "Conecta tu GitHub en Ajustes para poder aprobar desde aquí.": "Connect your GitHub in Settings to approve from here.",

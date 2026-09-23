@@ -511,6 +511,9 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
     // y `runAgentTurn` (que lo firma en el tool-token): el MISMO objeto, para que el MCP no
     // pueda resolver un destino distinto del que ve el camino de siempre. Ver chat.ts.
     const destDelTurno = { dmId: data.id, handle: data.handle, name, avatar: agent?.avatar ?? "" };
+    // Ver chat.ts: el origen se toma dentro del request, para el auto-retomar.
+    const { reqOrigin } = await import("../origin.server");
+    const origenDelTurno = await reqOrigin().catch(() => "");
     const register = (mid: number) => {
       if (registeredId === mid) return;
       registeredId = mid;
@@ -526,6 +529,7 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
         agent: name, avatar: agent?.avatar ?? "", tarea: tareaDelTurno,
         // Con qué RETOMARLO si muere. Ver chat.ts.
         body: data.body, shellId: data.shellId ?? null, attachments: data.attachments ?? [],
+        origin: origenDelTurno,
       });
     };
     // Registrar ANTES del lock: un turno en cola tiene que verse en "Trabajando ahora".
@@ -559,6 +563,9 @@ export const askDmAgentFn = createServerFn({ method: "POST" })
         return id;
       },
       // La respuesta aparte de un turno con plan (ver `createFollowUp` en runAgentTurn).
+      onToolNames: (names) => {
+        if (registeredId != null) turns.setTurnTools(ns, registeredId, names);
+      },
       createFollowUp: async () => {
         const { id } = await db.postDmAgent(data.id, "", "msg", data.handle, name, agent?.avatar ?? "");
         const msg = await db.getMessage(id);

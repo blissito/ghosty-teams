@@ -20,6 +20,7 @@ import {
   pushDenialReason,
   agentTrailer,
 } from "./github-app.server";
+import { loadChecks, type PrSnapshot } from "./github-checks";
 
 const API = "https://api.github.com";
 const APP_SLUG = process.env.GITHUB_APP_SLUG ?? "ghosty-studio";
@@ -268,6 +269,56 @@ async function apiWith(token: string, path: string, init?: RequestInit): Promise
   }
 }
 
+/**
+ * GraphQL con el token del usuario. Hace falta para lo que REST no tiene: sacar un PR de
+ * borrador y encender el auto-merge.
+ *
+ * ⚠️ GraphQL contesta 200 aunque falle: el error viene en `errors[]`. Por eso se revisan
+ * los dos, o un rechazo pasaría por éxito.
+ */
+async function graphql(sub: string, query: string, variables: Record<string, unknown>): Promise<any> {
+  const token = await getValidToken(sub, "github");
+  if (!token) {
+    return { error: "La cuenta de GitHub no está conectada. Conéctala en Ajustes → Integraciones." };
+  }
+  try {
+    const res = await fetch(`${API}/graphql`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "content-type": "application/json" },
+      body: JSON.stringify({ query, variables }),
+    });
+    const j = await res.json().catch(() => null);
+    if (!res.ok || j?.errors?.length) {
+      const msg = j?.errors?.map((e: any) => e?.message).filter(Boolean).join("; ") || `GitHub respondió ${res.status}`;
+      return { error: msg };
+    }
+    return j?.data ?? {};
+  } catch (e) {
+    return { error: `No pude contactar a GitHub: ${e instanceof Error ? e.message : String(e)}` };
+  }
+}
+
+/**
+ * Lo que la vigilancia de un PR necesita saber en cada vuelta: si sigue abierto, su HEAD,
+ * cómo va CI y si tiene auto-merge. `repo` va como "dueño/repo" (sin escapar).
+ */
+export async function prSnapshot(sub: string, repo: string, number: number): Promise<PrSnapshot | { error: string }> {
+  const p = repoPath(repo);
+  if (!p) return BAD_REPO;
+  const pr = await api(sub, `/repos/${p}/pulls/${number}`);
+  if (pr?.error) return pr;
+  const sha = String(pr?.head?.sha ?? "");
+  const checks = await loadChecks((path) => api(sub, path), p, sha);
+  if ("error" in checks) return checks;
+  return {
+    merged: pr?.merged === true || pr?.merged_at != null,
+    state: pr?.state === "closed" ? "closed" : "open",
+    sha,
+    checks,
+    autoMerge: pr?.auto_merge != null,
+  };
+}
+
 const qs = (args: Record<string, unknown>, keys: string[]): string => {
   const p = new URLSearchParams();
   for (const k of keys) {
@@ -419,8 +470,9 @@ export async function ambientContext(
         `list() y run(name, args). `) +
     `Lectura: github_list_repos, github_list_issues, github_get_issue, ` +
     `github_list_prs, github_get_pr, github_pr_files, github_read_file, github_search_code, ` +
-    `github_checkout, github_workflow_runs, github_workflow_run_logs. Escritura: github_create_review, github_merge_pr, github_comment, github_update_issue, github_create_issue, ` +
-    `github_create_branch, github_write_file, github_create_pr. ` +
+    `github_checkout, github_workflow_runs, github_workflow_run_logs, github_pr_checks. Escritura: github_create_review, github_merge_pr, github_comment, github_update_issue, github_create_issue, ` +
+    `github_create_branch, github_write_file, github_create_pr, github_mark_ready, github_enable_auto_merge, ` +
+    `github_update_branch, github_update_pr_base, github_watch_pr. ` +
     notaNombres(opts?.toolChannel) +
     `Si te piden "conecta mi repo" o "agrega este repo", contesta con github_install_link. ` +
     `Para CUALQUIER pregunta sobre repos, issues, pull requests o CI de ${sender}, USA estas tools — ` +
@@ -459,6 +511,14 @@ export async function ambientContext(
     `Al terminar una corrida de tests cierra con el bloque \`\`\`gt-tests que esa skill te enseña. ` +
     `Para escribir código: crea una rama con github_create_branch, escribe con github_write_file y abre ` +
     `un PR con github_create_pr — NUNCA escribas directo sobre la rama principal. ` +
+    // El ciclo de un PR sin quedarse esperando: el turno TERMINA y la plataforma lo despierta.
+    // Sin decirlo aquí, el modelo se quedaba haciendo polling de CI dentro del turno.
+    `CICLO DE UN PR: ábrelo como borrador (draft: true), llama a github_watch_pr y TERMINA el turno ` +
+    `diciendo que avisas — la plataforma te despierta aquí mismo cuando CI termina. NUNCA te quedes ` +
+    `consultando CI en bucle. Al despertar: si falló, lee el log y arréglalo; si pasó, github_mark_ready ` +
+    `y, si te pidieron mergear, github_enable_auto_merge (o github_merge_pr si el repo no lo permite) ` +
+    `y vuelve a vigilarlo. En PRs apilados, cuando se mergee el de abajo: github_update_pr_base a la ` +
+    `principal y github_update_branch. ` +
     `Todo lo que escribas aparece con el nombre de ${sender}, así que confirma con él antes de comentar, ` +
     `cerrar un issue o abrir un PR. ` +
     // ⚠️ Esto vive AQUÍ y no sólo en la skill `dev-github` a propósito. El 2026-08-05 el
@@ -480,7 +540,7 @@ export async function ambientContext(
     `del archivo NUEVO y debe caer dentro del diff; si dudas de una, NO la ancles —GitHub rechaza ` +
     `el review entero con un 422 si una sola está mal—. `+
     `con SU cuenta. Pon SÓLO campos que hayas leído de verdad (los conteos salen de github_get_pr ` +
-    `y github_pr_files; \`checks\` de github_workflow_runs) — si no lo miraste, omite el campo, ` +
+    `y github_pr_files; \`checks\` de github_pr_checks) — si no lo miraste, omite el campo, ` +
     `nunca lo inventes. La reseña va FUERA del fence, como prosa normal. ` +
     // Dos veces en la misma respuesta el modelo ofreció "¿lo apruebo con github_create_review?".
     // Es fontanería: la persona no sabe ni tiene por qué saber cómo se llaman las tools.
@@ -1023,6 +1083,160 @@ const ALL_TOOLS: ConnectorTool[] = [
     },
   },
   {
+    name: "github_pr_checks",
+    description:
+      "Cómo va CI en un pull request AHORA: junta los checks de Actions y los statuses externos (Vercel, etc.) de su último commit. `state` es success | failure | pending | none (none = el repo no tiene CI, NO es verde). Si falló, trae cuáles y su liga; para el porqué, github_workflow_run_logs.",
+    inputSchema: {
+      type: "object",
+      properties: { ...repoProp, number: { type: "number", description: "Número del PR." } },
+      required: ["repo", "number"],
+    },
+    handler: async (sub, a) => {
+      const p = repoPath(a.repo);
+      if (!p) return BAD_REPO;
+      const pr = await api(sub, `/repos/${p}/pulls/${Number(a.number)}`);
+      if (pr?.error) return pr;
+      const sha = String(pr?.head?.sha ?? "");
+      const r = await loadChecks((path) => api(sub, path), p, sha);
+      return "error" in r ? r : { ...r, sha: sha.slice(0, 7) };
+    },
+  },
+  {
+    name: "github_mark_ready",
+    description:
+      "Saca un pull request de BORRADOR y lo marca listo para revisión. Úsalo cuando CI ya pasó en un PR que abriste como draft.",
+    inputSchema: {
+      type: "object",
+      properties: { ...repoProp, number: { type: "number", description: "Número del PR." } },
+      required: ["repo", "number"],
+    },
+    handler: async (sub, a) => {
+      const p = repoPath(a.repo);
+      if (!p) return BAD_REPO;
+      const pr = await api(sub, `/repos/${p}/pulls/${Number(a.number)}`);
+      if (pr?.error) return pr;
+      // Llamarlo sobre un PR que ya está listo es un error de GraphQL poco claro; mejor
+      // decirle al modelo que no había nada que hacer.
+      if (pr?.draft !== true) return { ok: true, alreadyReady: true };
+      const r = await graphql(
+        sub,
+        `mutation($id: ID!) { markPullRequestReadyForReview(input: { pullRequestId: $id }) { pullRequest { isDraft } } }`,
+        { id: pr.node_id },
+      );
+      return r?.error ? r : { ok: true, draft: r?.markPullRequestReadyForReview?.pullRequest?.isDraft ?? false };
+    },
+  },
+  {
+    name: "github_enable_auto_merge",
+    description:
+      "Enciende el AUTO-MERGE de un pull request: GitHub lo mergea solo en cuanto pasen los checks y las aprobaciones requeridas. ⚠️ Es un merge diferido: confírmalo como confirmarías github_merge_pr. Si el repo no tiene el auto-merge permitido te lo dice, y entonces la salida es esperar a que CI pase (github_watch_pr) y mergear con github_merge_pr.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        ...repoProp,
+        number: { type: "number", description: "Número del PR." },
+        method: str("squash | merge | rebase. Default squash (o el que el repo permita)."),
+      },
+      required: ["repo", "number"],
+    },
+    handler: async (sub, a) => {
+      const p = repoPath(a.repo);
+      if (!p) return BAD_REPO;
+      const info = await api(sub, `/repos/${p}`);
+      if (info?.error) return info;
+      // Se dice ANTES de llamar: el error de GraphQL para esto es críptico y el modelo lo
+      // leía como un fallo de permisos.
+      if (info.allow_auto_merge !== true) {
+        return {
+          error:
+            "Este repositorio tiene el auto-merge DESACTIVADO (Settings → General → Allow auto-merge). " +
+            "Sin eso no se puede encender: espera a que pasen los checks y mergea con github_merge_pr.",
+          autoMergeDisabled: true,
+        };
+      }
+      // Mismo criterio que github_merge_pr: el método tiene que estar permitido en el repo.
+      const permitidos = [
+        info.allow_squash_merge ? "squash" : "",
+        info.allow_merge_commit ? "merge" : "",
+        info.allow_rebase_merge ? "rebase" : "",
+      ].filter(Boolean);
+      if (!permitidos.length) return { error: "Ese repositorio no permite mergear desde la API." };
+      const pedido = String(a.method ?? "squash");
+      const method = permitidos.includes(pedido) ? pedido : permitidos[0];
+      const pr = await api(sub, `/repos/${p}/pulls/${Number(a.number)}`);
+      if (pr?.error) return pr;
+      const r = await graphql(
+        sub,
+        `mutation($id: ID!, $m: PullRequestMergeMethod!) { enablePullRequestAutoMerge(input: { pullRequestId: $id, mergeMethod: $m }) { pullRequest { autoMergeRequest { mergeMethod } } } }`,
+        { id: pr.node_id, m: method.toUpperCase() },
+      );
+      if (r?.error) {
+        const txt = String(r.error).toLowerCase();
+        // "clean status" = no hay nada que esperar: ya se puede mergear directo.
+        if (txt.includes("clean status")) {
+          return { error: "No hay nada que esperar: el PR ya se puede mergear. Usa github_merge_pr." };
+        }
+        if (txt.includes("not allowed") || txt.includes("auto merge is not")) {
+          return {
+            error: "GitHub no deja auto-merge en este repositorio. Espera a que pasen los checks y mergea con github_merge_pr.",
+            autoMergeDisabled: true,
+          };
+        }
+        if (txt.includes("draft")) return { error: "El PR sigue en borrador: márcalo listo con github_mark_ready primero." };
+        return r;
+      }
+      return { ok: true, autoMerge: true, method };
+    },
+  },
+  {
+    name: "github_update_branch",
+    description:
+      "Trae a la rama del PR lo último de su rama destino (el botón «Update branch» de GitHub). Sirve cuando el PR quedó atrás de main o cuando un PR apilado necesita lo que ya se mergeó debajo. Vuelve a correr CI.",
+    inputSchema: {
+      type: "object",
+      properties: { ...repoProp, number: { type: "number", description: "Número del PR." } },
+      required: ["repo", "number"],
+    },
+    handler: async (sub, a) => {
+      const p = repoPath(a.repo);
+      if (!p) return BAD_REPO;
+      const r = await api(sub, `/repos/${p}/pulls/${Number(a.number)}/update-branch`, { method: "PUT", body: "{}" });
+      if (r?.error) {
+        // 422 aquí casi siempre es conflicto: eso NO lo resuelve un botón, hay que tocar código.
+        if (String(r.error).includes("rechazó")) {
+          return { error: `GitHub no pudo actualizar la rama (¿conflictos con la base?). ${r.error}` };
+        }
+        return r;
+      }
+      return { ok: true, message: r?.message ?? "Actualización encolada; CI vuelve a correr." };
+    },
+  },
+  {
+    name: "github_update_pr_base",
+    description:
+      "Cambia la rama DESTINO de un pull request. Es lo que se hace con PRs apilados: cuando se mergea el de abajo, el de arriba se re-apunta a main (y luego github_update_branch).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        ...repoProp,
+        number: { type: "number", description: "Número del PR." },
+        base: str("La nueva rama destino."),
+      },
+      required: ["repo", "number", "base"],
+    },
+    handler: async (sub, a) => {
+      const p = repoPath(a.repo);
+      if (!p) return BAD_REPO;
+      const base = String(a.base ?? "").trim();
+      if (!base) return { error: "Falta `base`: la rama a la que debe apuntar el PR." };
+      const r = await api(sub, `/repos/${p}/pulls/${Number(a.number)}`, {
+        method: "PATCH",
+        body: JSON.stringify({ base }),
+      });
+      return r?.error ? r : { ok: true, ...trimPr(r), body: undefined };
+    },
+  },
+  {
     name: "github_workflow_run_logs",
     description:
       "El LOG de una corrida de GitHub Actions que falló: qué job y qué paso reventaron, y las líneas de error. Es lo que de verdad responde '¿por qué está roja la build?' — github_workflow_runs sólo da el estado. Pásale el `id` que devolvió esa tool. Nunca inventes una línea de log: si esto falla, di que no lo pudiste leer y da la url del run.",
@@ -1295,11 +1509,84 @@ const ALL_TOOLS: ConnectorTool[] = [
  * ⚠️ No la use nada que corra en nombre del modelo. Para eso está `tools(sub, dest)`.
  */
 export function allTools(): ConnectorTool[] {
-  return ALL_TOOLS;
+  return [...ALL_TOOLS, watchTool(null)];
 }
 
 export async function tools(_sub: string, dest: ToolDest | null): Promise<ConnectorTool[]> {
   const allowed = await allowedRepos(dest);
   if (allowed && !allowed.length) return [];
-  return ALL_TOOLS;
+  return [...ALL_TOOLS, watchTool(dest)];
+}
+
+/**
+ * `github_watch_pr` es la única que necesita el `dest` del turno: el aviso vuelve a ESTA
+ * conversación. Como las nativas (`reminder_create`), el destino sale del token firmado y
+ * no de los argumentos — el agente no puede mandar el aviso a otro sitio.
+ */
+function watchTool(dest: ToolDest | null): ConnectorTool {
+  return {
+    name: "github_watch_pr",
+    description:
+      "Vigila un pull request y te DESPIERTA en esta misma conversación cuando CI termina (verde o rojo), cuando se mergea o cuando se cierra — no tienes que quedarte esperando ni pedirle a nadie que te avise. Úsalo justo después de abrir un PR, de empujar un arreglo o de encender el auto-merge, y termina tu turno diciendo que vas a avisar. Dura 24 h.",
+    inputSchema: {
+      type: "object",
+      properties: { ...repoProp, number: { type: "number", description: "Número del PR." } },
+      required: ["repo", "number"],
+    },
+    handler: async (sub, a) => {
+      const repo = normalizeRepo(a.repo);
+      if (!repo) return BAD_REPO;
+      const number = Number(a.number);
+      if (!Number.isFinite(number) || number <= 0) return { error: "Falta el número del PR." };
+      if (!dest?.handle || (dest.dmId == null && dest.channelId == null)) {
+        return { error: "Sólo puedo vigilar un PR desde una conversación: aquí no hay a dónde avisarte." };
+      }
+      const snap = await prSnapshot(sub, repo, number);
+      if ("error" in snap) return snap;
+      if (snap.merged || snap.state === "closed") {
+        return { error: `Ese PR ya está ${snap.merged ? "mergeado" : "cerrado"}: no hay nada que vigilar.` };
+      }
+
+      // La misma clave de conversación que usa un turno normal en ese sitio (chat.ts / dm.ts):
+      // con otra, el despertador abriría una sesión nueva sin memoria de por qué vigilaba.
+      const { resolvedAgents, agentGroupId } = await import("../../agents.server");
+      const agent = (await resolvedAgents()).find((x) => x.handle === dest.handle);
+      let suffix: string;
+      if (dest.dmId != null) suffix = `dm-${dest.dmId}`;
+      else {
+        const { dbq } = await import("../../dbq.server");
+        const rows = await dbq(`SELECT slug FROM gc_channels WHERE id = ?`, [dest.channelId]);
+        const slug = String(rows[0]?.slug ?? "");
+        if (!slug) return { error: "No encontré el room de esta conversación." };
+        suffix = `${slug}-flow`;
+      }
+      const groupId = await agentGroupId(agent ?? { handle: dest.handle }, suffix);
+
+      const { mintWakeRef } = await import("../wakeups.server");
+      const { currentNamespace } = await import("../tenant.server");
+      let origin = "";
+      try {
+        const { reqOrigin } = await import("../../origin.server");
+        origin = (await reqOrigin()) || "";
+      } catch { /* sin request: el turno despierto se degrada igual que uno de gs */ }
+      let ref: string;
+      try {
+        ref = mintWakeRef({ sub, ns: await currentNamespace(), groupId, dest });
+      } catch {
+        return { error: "La vigilancia de PRs no está disponible en este espacio." };
+      }
+      const { upsertPrWatch } = await import("../pr-watches.server");
+      await upsertPrWatch({
+        repo, number, sub, groupId, ref, origin,
+        memory: { sha: snap.sha, checks: snap.checks.state, greenSince: null },
+      });
+      return {
+        ok: true,
+        watching: `${repo}#${number}`,
+        checksNow: snap.checks.state,
+        autoMerge: snap.autoMerge,
+        nota: "Te despierto aquí mismo cuando CI termine o el PR se mergee/cierre. Termina el turno sin esperar.",
+      };
+    },
+  };
 }

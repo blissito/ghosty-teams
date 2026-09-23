@@ -1263,6 +1263,10 @@ export const askAgent = createServerFn({ method: "POST" })
       // con el resto del destino, no por argumento.
       invokerMessageIds,
     };
+    // El origen se toma AHORA, dentro del request: si un deploy mata el turno, el barrido
+    // que lo retoma corre sin request y no tendría de dónde sacarlo.
+    const { reqOrigin } = await import("../origin.server");
+    const origenDelTurno = await reqOrigin().catch(() => "");
     const register = (mid: number) => {
       if (registeredId === mid) return;
       registeredId = mid;
@@ -1285,6 +1289,7 @@ export const askAgent = createServerFn({ method: "POST" })
         attachments: data.attachments ?? [],
         handle: data.handle,
         invokerMessageIds,
+        origin: origenDelTurno,
       });
     };
     // ⚠️ Registrar ANTES de pedir el lock. Si no, un turno que espera su vuelta no aparece
@@ -1326,6 +1331,9 @@ export const askAgent = createServerFn({ method: "POST" })
       },
       // La respuesta aparte de un turno con plan: MISMO hilo y topic que la burbuja del
       // turno (la cáscara eager puede haber nacido con un parent distinto a `data.parentId`).
+      onToolNames: (names) => {
+        if (registeredId != null) turns.setTurnTools(ns, registeredId, names);
+      },
       createFollowUp: async (shellId) => {
         const shell = await db.getMessage(shellId);
         const { id } = await db.postAgent(channel.id, shell?.parent_id ?? data.parentId, "", "msg", data.handle, name, shell?.topic ?? topic ?? "general", agent?.avatar ?? "");

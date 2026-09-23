@@ -82,3 +82,37 @@ test("sin plan: una sola burbuja como siempre", { timeout: 30000 }, async () => 
   expect(r.reply).toContain("Todo verificado");
   expect(extractTodos(r.reply)).toBeNull();
 });
+
+test("retomar: el plan de la burbuja muerta sigue vivo y sin fences duplicados", { timeout: 30000 }, async () => {
+  const { renderTodosBlock } = await import("./lib/ebdoc");
+  const prefijo =
+    renderTodosBlock({ todos: [{ content: "Modelar", status: "completed" }, { content: "Probar", status: "in_progress" }], asOf: 5 }) +
+    '```gt-tools\n{"tools":[{"label":"Ejecuté un comando","status":"done"}]}\n```\n\nIba a medias.';
+  frames = [{ type: "chunk", value: " Sigo." }, { type: "done", value: " Sigo." }];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async (url: any, init: any) => {
+    const u = String(url);
+    if (u.includes("/v2/pipeline")) {
+      const reqs = JSON.parse(init.body).requests as any[];
+      const results = reqs.map((r) => r.type === "close" ? { type: "ok", response: { type: "close" } } : { type: "ok", response: { type: "execute", result: { cols: [], rows: [], affected_row_count: 0, last_insert_rowid: null } } });
+      return new Response(JSON.stringify({ baton: null, base_url: null, results }), { status: 200 });
+    }
+    return new Response(frames.map((f) => `data: ${JSON.stringify(f)}\n\n`).join(""), { status: 200 });
+  }) as any;
+  const pintados: string[] = [];
+  const r = await runAgentTurn({
+    agent: { handle: "lens", name: "Lens", avatar: "", systemPrompt: null, backend: { kind: "fleet", id: "x", token: "tok", runtime: "easybits", runtimeUrl: "http://fake.local" } } as any,
+    handle: "lens", groupId: "g", sender: "boris", text: "sigue", prefijo,
+    createShell: async () => 1, createFollowUp: async () => 2,
+    emitDelta: () => {}, emitBody: (_id, b) => pintados.push(b), originOverride: "http://localhost",
+  });
+  globalThis.fetch = realFetch;
+  for (const b of pintados) {
+    expect(b.split("```gt-todos").length - 1).toBeLessThanOrEqual(1);
+    expect(b.split("```gt-tools").length - 1).toBeLessThanOrEqual(1);
+  }
+  expect(extractTodos(pintados[0])?.todos[1].status).toBe("in_progress");
+  // Hubo plan → la continuación sale aparte y la burbuja conserva el plan.
+  expect(r.plan && extractTodos(r.plan.body)?.todos.length).toBe(2);
+  expect(r.reply).toContain("Sigo.");
+});

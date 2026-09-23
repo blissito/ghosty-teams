@@ -115,6 +115,14 @@ export const TOOL_LABELS: Record<string, { ing: string; done: string }> = {
   reminder_list: { ing: "Revisando tus recordatorios", done: "Revisé tus recordatorios" },
   reminder_update: { ing: "Ajustando el recordatorio", done: "Ajusté el recordatorio" },
   reminder_cancel: { ing: "Cancelando el recordatorio", done: "Cancelé el recordatorio" },
+  // Ciclo de un PR (GitHub). Llegan como gs_connector:github_*; con etiqueta propia para
+  // que no salgan como "Github: mark ready".
+  github_pr_checks: { ing: "Revisando CI del PR", done: "Revisé CI del PR" },
+  github_mark_ready: { ing: "Marcando el PR como listo", done: "Marqué el PR como listo" },
+  github_enable_auto_merge: { ing: "Activando el auto-merge", done: "Activé el auto-merge" },
+  github_update_branch: { ing: "Actualizando la rama del PR", done: "Actualicé la rama del PR" },
+  github_update_pr_base: { ing: "Cambiando la base del PR", done: "Cambié la base del PR" },
+  github_watch_pr: { ing: "Dejando vigilado el PR", done: "Dejé vigilado el PR" },
   // Memoria de la conversación. Sin etiqueta propia salía como "Memory: write" (el
   // humanizado genérico de cualquier MCP), que no dice qué pasó ni suena a esta app.
   // Comentarios del documento. `doc_comments` es lectura → sin etiqueta, como el resto
@@ -154,6 +162,7 @@ export const TOOL_LABELS: Record<string, { ing: string; done: string }> = {
   chat_message: { ing: "Leyendo un mensaje", done: "Leí un mensaje" },
   chat_react: { ing: "Reaccionando al mensaje", done: "Reaccioné al mensaje" },
   chat_post: { ing: "Publicando un avance", done: "Publiqué un avance" },
+  chat_edit: { ing: "Corrigiendo un mensaje", done: "Corregí un mensaje" },
   create_payment_link: { ing: "Generando el link de pago", done: "Generé el link de pago" },
   create_quotation: { ing: "Preparando la cotización", done: "Preparé la cotización" },
   fast_quotation: { ing: "Preparando la cotización", done: "Preparé la cotización" },

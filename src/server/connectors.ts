@@ -614,6 +614,23 @@ export const prCardStateFn = createServerFn({ method: "POST" })
     const approvers = [...last].filter(([, s]) => s === "APPROVED").map(([u]) => u);
     const blockers = [...last].filter(([, s]) => s === "CHANGES_REQUESTED").map(([u]) => u);
 
+    // CI EN VIVO. El `checks` del fence es una foto del momento en que el agente escribió;
+    // con el PR abierto eso envejece en minutos y la tarjeta se quedaba en "CI corriendo"
+    // para siempre. Sólo con el PR abierto: en uno cerrado ya no decide nada.
+    let checks: { state: string; total: number; failed: number } | null = null;
+    if (pr.state === "open" && pr.head?.sha) {
+      const { loadChecks } = await import("./connectors/github-checks");
+      const c = await loadChecks(
+        (p) =>
+          fetch(`https://api.github.com${p}`, { headers: h })
+            .then((r) => (r.ok ? r.json() : { error: String(r.status) }))
+            .catch(() => null),
+        repo,
+        String(pr.head.sha),
+      );
+      if (!("error" in c)) checks = { state: c.state, total: c.total, failed: c.failed.length };
+    }
+
     return {
       connected: true as const,
       state: pr.merged ? "merged" : (String(pr.state) as "open" | "closed"),
@@ -622,6 +639,10 @@ export const prCardStateFn = createServerFn({ method: "POST" })
       // Sólo con el PR abierto tienen sentido los botones.
       actionable: !pr.merged && pr.state === "open",
       soyElAutor,
+      // `null` = GitHub todavía lo está calculando; sólo `false` significa conflictos.
+      mergeable: typeof pr.mergeable === "boolean" ? (pr.mergeable as boolean) : null,
+      autoMerge: pr.auto_merge != null,
+      checks,
     };
   });
 

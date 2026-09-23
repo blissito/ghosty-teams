@@ -22,7 +22,26 @@ const REPEATS = ["daily", "weekly", "monthly"] as const;
 // "Playfair Display" y el saneador lo tiraría sin decir nada.
 const FONT_IDS = BRAND_FONTS.map((f) => `${f.id} (${f.family})`).join(", ");
 
+/** ¿Este mensaje lo escribió ESTE agente? Ver `chat_edit`: `agent_handle` solo no basta. */
+export function isOwnAgentMessage(
+  msg: { sender_sub?: string | null; agent_handle: string | null; mentions_ghosty?: unknown },
+  handle: string,
+): boolean {
+  return msg.sender_sub == null && msg.agent_handle === handle && !msg.mentions_ghosty;
+}
+
 export function nativeTools(dest: ToolDest | null): ConnectorTool[] {
+  // Push a quien el agente mencione en un mensaje que publica por su cuenta (chat_post,
+  // chat_edit). Sólo en rooms: en un DM el destinatario ya ve el mensaje. Devuelve el aviso
+  // de menciones que no llegaron a nadie ("" si todo bien) para que el agente lo sepa.
+  const avisarMencionesDelAgente = async (ns: string, text: string, agentName: string): Promise<string> => {
+    if (dest?.channelId == null || dest?.dmId != null) return "";
+    const db = await import("../../db.server");
+    const channel = await db.getChannelById(dest.channelId);
+    if (!channel) return "";
+    const { notificarMencionesDelAgente } = await import("../mentions.server");
+    return notificarMencionesDelAgente(ns, channel, text, agentName).catch(() => "");
+  };
   return [
     {
       name: "reminder_create",
@@ -1410,9 +1429,64 @@ export function nativeTools(dest: ToolDest | null): ConnectorTool[] {
         const msg = await db.getMessage(id);
         if (!msg) return { ok: false, error: "no se pudo publicar" };
         const { currentNamespace } = await import("../tenant.server");
+        const ns = await currentNamespace();
         const { publishToAudience } = await import("../chat");
-        await publishToAudience(await currentNamespace(), msg, { t: "message:new", msg });
-        return { ok: true, messageId: id };
+        await publishToAudience(ns, msg, { t: "message:new", msg });
+        // Un «@ana esto necesita tu aprobación» a media tarea tiene que AVISAR: sin esto se
+        // pintaba y a Ana no le llegaba nada (el mismo bug que ya tenía la respuesta final).
+        const aviso = await avisarMencionesDelAgente(ns, text, name);
+        return { ok: true, messageId: id, ...(aviso ? { aviso } : {}) };
+      },
+    },
+    {
+      // El «~~needs your approval again~~ [Edit: no action needed]» del hilo de Boris: cuando
+      // algo que el agente dijo resultó falso, lo corrige EN SU LUGAR en vez de apilar otro
+      // mensaje que contradice al anterior. Queda «(editado)» a la vista.
+      name: "chat_edit",
+      description:
+        "Reescribe un mensaje TUYO de esta conversación (se marca como editado). Úsalo cuando " +
+        "algo que dijiste resultó falso o quedó viejo: tacha lo que ya no vale con ~~así~~ y " +
+        "agrega «[Edit: …]» con lo correcto, conservando el resto del texto. No sirve para " +
+        "mensajes de otras personas. El id sale de `chat_post` o de `chat_history`.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          messageId: { type: "number", description: "Id de TU mensaje a corregir." },
+          text: { type: "string", description: "El texto completo nuevo, en markdown. Máx. 8000 caracteres." },
+        },
+        required: ["messageId", "text"],
+      },
+      handler: async (_sub, args) => {
+        const handle = dest?.handle;
+        if (!handle) return { ok: false, error: "no hay agente en este turno" };
+        const messageId = Number(args.messageId);
+        const text = String(args.text ?? "").trim().slice(0, 8000);
+        if (!Number.isFinite(messageId) || !messageId) return { ok: false, error: "falta messageId" };
+        if (!text) return { ok: false, error: "falta text" };
+        const db = await import("../../db.server");
+        const msg = await db.getMessage(messageId);
+        const deAqui = msg && (dest?.dmId != null
+          ? msg.dm_id === dest.dmId
+          : dest?.channelId != null && msg.channel_id === dest.channelId);
+        if (!deAqui) return { ok: false, error: "ese mensaje no es de esta conversación" };
+        // ⚠️ `agent_handle` solo NO prueba autoría: en un DM todos los mensajes lo llevan, y un
+        // humano que etiqueta al agente también. Lo que marca al agente es no tener
+        // `sender_sub` (postAgent lo deja NULL) y no ser una mención.
+        if (!isOwnAgentMessage(msg, handle)) return { ok: false, error: "sólo puedes editar tus propios mensajes" };
+        await db.editMessage(messageId, text);
+        const fresco = await db.getMessage(messageId);
+        const { currentNamespace } = await import("../tenant.server");
+        const ns = await currentNamespace();
+        const { publishToAudience } = await import("../chat");
+        await publishToAudience(ns, msg, {
+          t: "message:edited", id: messageId, body: text, edited_at: fresco?.edited_at ?? Math.floor(Date.now() / 1000),
+        });
+        // Sólo avisan las menciones NUEVAS: re-notificar las que ya estaban por cada
+        // corrección sería spam.
+        const antes = new Set((msg.body.match(/@[\w.-]+/g) ?? []).map((x) => x.toLowerCase()));
+        const nuevas = (text.match(/@[\w.-]+/g) ?? []).filter((x) => !antes.has(x.toLowerCase()));
+        const aviso = nuevas.length ? await avisarMencionesDelAgente(ns, nuevas.join(" "), dest?.name || "Ghosty") : "";
+        return { ok: true, messageId, ...(aviso ? { aviso } : {}) };
       },
     },
     // ── Papelera de documentos ────────────────────────────────────────────────

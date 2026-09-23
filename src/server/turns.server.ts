@@ -16,6 +16,8 @@ export type LiveTurn = {
   groupId: string;
   /** Quién lo pidió. Sólo esa persona (o quien pueda administrar) puede detenerlo. */
   invokerSub?: string | null;
+  /** Origen del tenant al abrir el turno: lo necesita el auto-retomar, que corre sin request. */
+  origin?: string;
   startedAt: number;
   /** Corta el fetch al worker. Colgar la conexión es lo que detiene el turno de verdad. */
   controller: AbortController;
@@ -288,17 +290,17 @@ export function registerTurn(t: Omit<LiveTurn, "startedAt"> & { startedAt?: numb
   // del intervalo: un turno que nace con `heartbeat_at` nulo lo daría por huérfano cualquier
   // barrido que corriera en ese hueco — y el hueco dura hasta 15 s.
   void persistir(
-    `INSERT INTO gt_turns (message_id, group_id, invoker_sub, channel_id, parent_id, agent, avatar, tarea, state, started_at, heartbeat_at, body, dm_id, slug, attachments, shell_id, tools_json, invoker_message_ids, agent_handle)
-     VALUES (?,?,?,?,?,?,?,?,'running',?,unixepoch(),?,?,?,?,?,NULL,?,?)
+    `INSERT INTO gt_turns (message_id, group_id, invoker_sub, channel_id, parent_id, agent, avatar, tarea, state, started_at, heartbeat_at, body, dm_id, slug, attachments, shell_id, tools_json, invoker_message_ids, agent_handle, origin, dest_json)
+     VALUES (?,?,?,?,?,?,?,?,'running',?,unixepoch(),?,?,?,?,?,NULL,?,?,?,?)
      ON CONFLICT(message_id) DO UPDATE SET state='running', started_at=excluded.started_at, ended_at=NULL, outcome=NULL, error=NULL, heartbeat_at=unixepoch(),
        body=excluded.body, dm_id=excluded.dm_id, slug=excluded.slug, attachments=excluded.attachments, shell_id=excluded.shell_id, tools_json=NULL,
-       invoker_message_ids=excluded.invoker_message_ids, agent_handle=excluded.agent_handle`,
+       invoker_message_ids=excluded.invoker_message_ids, agent_handle=excluded.agent_handle, origin=excluded.origin, dest_json=excluded.dest_json`,
     [entry.messageId, entry.groupId, entry.invokerSub ?? null, entry.channelId ?? null,
      entry.parentId ?? null, entry.agent ?? null, entry.avatar ?? null, entry.tarea ?? null, entry.startedAt,
      entry.body ?? null, entry.dmId ?? null, entry.slug ?? null,
      entry.attachments?.length ? JSON.stringify(entry.attachments) : null, entry.shellId ?? null,
      entry.invokerMessageIds?.length ? JSON.stringify(entry.invokerMessageIds) : null,
-     entry.handle ?? null],
+     entry.handle ?? null, entry.origin || null, entry.dest ? JSON.stringify(entry.dest) : null],
   );
   asegurarLatido();
   announceGroup(entry.groupId);
@@ -596,6 +598,7 @@ export async function sweepOrphans(ns?: string): Promise<number> {
         ["⏹ Detenido (el servidor se reinició)."],
       ).catch(() => {});
       console.log(`[turns] barrido: ${huerfanos.length} turno(s) sin latido cerrado(s)`);
+      if (ns) for (const id of huerfanos) await autoRetomarConPlan(ns, id).catch((e) => console.warn("[turns] auto-retomar", id, e));
     }
     return huerfanos.length;
   } catch (e) {
@@ -796,6 +799,57 @@ export async function turnoMuerto(messageId: number): Promise<TurnoMuerto | null
  * por VALOR en el `configSig` del worker, así que un bloque que cambia cada turno reciclaría
  * la sesión persistente — y perder la sesión es perder justo lo que hace barato retomar.
  */
+/**
+ * Un deploy mató un TRABAJO LARGO (su burbuja trae plan con tareas sin terminar): se retoma
+ * SOLO, una vez, sin esperar a que alguien vuelva y apriete «Retomar». Es lo que hace que un
+ * encargo de horas —el hilo de Boris— sobreviva a los deploys de Teams.
+ *
+ * Va por los despertadores (`gt_agent_wakeups`) y no por `askAgent`: el barrido corre fuera de
+ * un request, y los despertadores ya saben abrir un turno así (origen, destino firmado, cola
+ * si hay otro turno vivo). Idempotente por `retomar:<id>`. No encadena: el turno que abre un
+ * despertador no se registra en `gt_turns`, así que si muere no se vuelve a retomar solo.
+ *
+ * Sin plan no se toca: un turno corto que murió deja su botón «Retomar», como siempre.
+ */
+export async function autoRetomarConPlan(ns: string, messageId: number): Promise<boolean> {
+  const { withNamespace } = await import("./tenant.server");
+  return withNamespace(ns, async () => {
+    const t = await turnoMuerto(messageId);
+    if (!t || t.shellId == null || !t.agent) return false;
+    const { dbq } = await import("../dbq.server");
+    const [f] = await dbq("SELECT origin, dest_json FROM gt_turns WHERE message_id = ?", [messageId]);
+    const origin = typeof f?.origin === "string" ? f.origin : "";
+    if (!origin || typeof f?.dest_json !== "string") return false;
+    const db = await import("../db.server");
+    const shell = await db.getMessage(t.shellId);
+    const { extractTodos } = await import("../lib/ebdoc");
+    const plan = shell ? extractTodos(shell.body) : null;
+    const faltan = plan?.todos.filter((x) => x.status !== "completed") ?? [];
+    if (!plan || !faltan.length) return false;
+    const marca = (x: { status: string }) => (x.status === "completed" ? "✓" : x.status === "in_progress" ? "✱" : "○");
+    const texto =
+      textoDeContinuacion(t) +
+      `\n\nTu plan iba así (vuelve a escribirlo con tu herramienta de plan y sigue con lo pendiente):\n` +
+      plan.todos.map((x) => `${marca(x)} ${x.content}`).join("\n");
+    const { enqueueWakeup, mintWakeRef, armWakeups } = await import("./wakeups.server");
+    const ok = await enqueueWakeup({
+      key: `retomar:${messageId}`,
+      ref: mintWakeRef({ sub: t.invokerSub ?? "", ns, groupId: t.groupId, dest: JSON.parse(f.dest_json) }),
+      cause: "el servidor se reinició a media tarea",
+      text: texto,
+      origin,
+      // Un respiro: el proceso nuevo acaba de arrancar y el worker puede seguir soltando el
+      // turno viejo (su lock por sesión).
+      dueAt: Math.floor(Date.now() / 1000) + 20,
+    });
+    if (ok) {
+      armWakeups(ns);
+      console.log(`[turns] auto-retomar: turno ${messageId} (${faltan.length} tarea(s) pendientes)`);
+    }
+    return ok;
+  });
+}
+
 export function textoDeContinuacion(t: TurnoMuerto): string {
   const hechos = t.toolsDesconocidas
     ? "No hay registro de qué herramientas alcanzaste a ejecutar: REVISA tu propio historial antes de repetir nada."

@@ -68,6 +68,7 @@ import ConfirmModal from "../../components/ConfirmModal";
 import type { Message, Attachment, Artifact, CustomEmoji } from "../../db.server";
 import { forwardTargetsFn, forwardMessageFn } from "../../server/forward";
 import { readReceiptsFn} from "../../server/reads";
+import { agentMetaFn, type AgentMeta } from "../../server/agent-meta";
 import { SmilePlus, Pencil, ArrowLeft, Reply, Square, Ban, CircleHelp, ShieldAlert, Github, Circle, Asterisk, ListChecks } from "lucide-react";
 import { useRtSubscribe } from "../../utils/rt-bus";
 import { Markdown } from "../../components/Markdown";
@@ -1767,6 +1768,14 @@ export function PrCard({ pr, channelId, parentId, prosa }: { pr: PrCardData; cha
       .catch(() => {});
   }, [pr.repo, pr.number]);
   useEffect(() => { refresca(); }, [refresca]);
+  // Mientras CI corre (o GitHub aún calcula si hay conflictos) se vuelve a preguntar cada
+  // 30 s, para que la tarjeta pase sola a verde/rojo. En cuanto se asienta, se deja de pedir.
+  const vivo = st?.actionable && (st?.checks?.state === "pending" || st?.mergeable === null);
+  useEffect(() => {
+    if (!vivo) return;
+    const id = setInterval(refresca, 30_000);
+    return () => clearInterval(id);
+  }, [vivo, refresca]);
   useRtSubscribe({
     onEvent: (ev) => {
       if (ev.t === "refresh" && ev.channelId === channelId) refresca();
@@ -1819,12 +1828,15 @@ export function PrCard({ pr, channelId, parentId, prosa }: { pr: PrCardData; cha
     return v.length > 25 && norm(prosa).includes(v.slice(0, 40));
   })();
 
+  // El estado de CI EN VIVO gana sobre el del fence, que es una foto de cuando el agente
+  // escribió y envejece en minutos. Sin respuesta de GitHub se cae a la foto.
+  const ciState: string | undefined = st?.checks?.state ?? pr.checks;
   const checks =
-    pr.checks === "success"
+    ciState === "success"
       ? { txt: t("CI en verde"), cls: "text-emerald-500" }
-      : pr.checks === "failure"
+      : ciState === "failure"
         ? { txt: t("CI en rojo"), cls: "text-red-500" }
-        : pr.checks === "pending"
+        : ciState === "pending"
           ? { txt: t("CI corriendo"), cls: "text-amber-500" }
           : null;
 
@@ -1889,9 +1901,20 @@ export function PrCard({ pr, channelId, parentId, prosa }: { pr: PrCardData; cha
           {resumen ? (
             <span className={`rounded-md border px-2.5 py-1 text-xs font-medium ${resumen.cls}`}>{resumen.txt}</span>
           ) : null}
+          {/* Sólo con el PR abierto: en uno mergeado o cerrado ya no dicen nada útil. */}
+          {st?.actionable && st?.mergeable === false ? (
+            <span className="rounded-md border border-red-500 bg-red-500/10 px-2.5 py-1 text-xs font-medium text-red-500">
+              {t("Con conflictos")}
+            </span>
+          ) : null}
+          {st?.actionable && st?.autoMerge ? (
+            <span className="rounded-md border border-violet-500 bg-violet-500/10 px-2.5 py-1 text-xs font-medium text-violet-500">
+              {t("Auto-merge activado")}
+            </span>
+          ) : null}
           {/* Mergear sólo cuando YA está aprobado y CI no está en rojo. Sin esa compuerta
               es un pie de bala: un botón de merge junto a un check en rojo se pulsa solo. */}
-          {puedeActuar && st?.approvers?.length && pr.checks !== "failure" ? (
+          {puedeActuar && st?.approvers?.length && ciState !== "failure" && st?.mergeable !== false ? (
             <button
               type="button"
               disabled={!!busy}
@@ -2541,6 +2564,48 @@ export function turnoSeMurio(body: string | null | undefined): boolean {
  * Lo dispara una PERSONA a propósito: el turno necesita la sesión de quien lo pide, y
  * además hay efectos que no se pueden deshacer y merecen un humano decidiendo.
  */
+// Pie de cada respuesta de agente: «Nombre · modelo · Configurar» (el «Lens · Opus 5.5 ·
+// Configure» del hilo de Boris). Se pide UNA vez por pestaña: el modelo vive en Studio y
+// cambia poco; el server ya lo cachea 5 min.
+let agentMetaPromise: Promise<AgentMeta[]> | null = null;
+function useAgentMeta(handle: string): AgentMeta | null {
+  const [meta, setMeta] = useState<AgentMeta | null>(null);
+  useEffect(() => {
+    let vivo = true;
+    agentMetaPromise ??= agentMetaFn().catch(() => {
+      agentMetaPromise = null;
+      return [] as AgentMeta[];
+    });
+    agentMetaPromise.then((all) => {
+      if (vivo) setMeta(all.find((a) => a.handle === handle) ?? null);
+    });
+    return () => {
+      vivo = false;
+    };
+  }, [handle]);
+  return meta;
+}
+
+export function AgentFooter({ handle }: { handle: string }) {
+  const tr = useT();
+  const meta = useAgentMeta(handle);
+  if (!meta || (!meta.model && !meta.configUrl)) return null;
+  return (
+    <div className="mt-1 flex items-center gap-1 text-[10px] text-muted/80">
+      <span>{meta.name}</span>
+      {meta.model ? <span>· {meta.model}</span> : null}
+      {meta.configUrl ? (
+        <>
+          <span>·</span>
+          <a href={meta.configUrl} target="_blank" rel="noreferrer" className="text-brand hover:underline">
+            {tr("Configurar")}
+          </a>
+        </>
+      ) : null}
+    </div>
+  );
+}
+
 export function TurnFailedFooter({ id, body }: { id: number; body: string | null | undefined }) {
   const t = useT();
   const { retryTurn, turns } = useContext(ChatCtx);
@@ -3004,6 +3069,7 @@ export function MessageRow({
                   a la vista (ver TurnLiveFooter). */}
               {isAgent ? <TurnLiveFooter id={m.id} /> : null}
               {isAgent ? <TurnFailedFooter id={m.id} body={m.body} /> : null}
+              {isAgent && m.agent_handle && !turns.has(m.id) ? <AgentFooter handle={m.agent_handle} /> : null}
             </div>
           ) : isAgent && !m.attachments?.length && !m.artifact ? (
             // Caja caliente: cáscara del agente aún sin texto → indicador inline (la fila

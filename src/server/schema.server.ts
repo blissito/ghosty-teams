@@ -55,6 +55,10 @@ export async function ensureSchema(): Promise<void> {
           const { armWakeups } = await import("./wakeups.server");
           armWakeups(ns);
         } catch { /* best-effort */ }
+        try {
+          const { armPrWatches } = await import("./pr-watches.server");
+          armPrWatches(ns);
+        } catch { /* best-effort */ }
         // La guía de uso como nota de la memoria del workspace: visible para el equipo en
         // Memoria y legible por el agente con memory_read. Se siembra aquí porque este es el
         // "arranque" de cada tenant en este proceso; se actualiza sola cuando cambia el texto.
@@ -781,6 +785,28 @@ async function migrate(): Promise<void> {
   )`);
   await exec(`CREATE INDEX IF NOT EXISTS gt_agent_wakeups_due ON gt_agent_wakeups(fired_at, due_at)`);
 
+  // PRs vigilados por el agente (`github_watch_pr`, ver pr-watches.server.ts). `key` =
+  // repo#n@groupId: una vigilancia por PR y conversación. `sub` es con qué cuenta de GitHub
+  // se pregunta; `ref` es la capacidad firmada del despertador (a quién y dónde); `last_*`
+  // es lo visto en la vuelta anterior, para avisar por TRANSICIÓN y no por estado.
+  await exec(`CREATE TABLE IF NOT EXISTS gt_pr_watches (
+    id          TEXT PRIMARY KEY,
+    key         TEXT NOT NULL UNIQUE,
+    repo        TEXT NOT NULL,
+    number      INTEGER NOT NULL,
+    sub         TEXT NOT NULL,
+    ref         TEXT NOT NULL,
+    origin      TEXT NOT NULL DEFAULT '',
+    last_sha    TEXT,
+    last_checks TEXT,
+    green_since INTEGER,
+    created_at  INTEGER NOT NULL DEFAULT (unixepoch()),
+    expires_at  INTEGER NOT NULL,
+    done_at     INTEGER,
+    result      TEXT
+  )`);
+  await exec(`CREATE INDEX IF NOT EXISTS gt_pr_watches_open ON gt_pr_watches(done_at, created_at)`);
+
   // ¿Además del mensaje, correo? Se pregunta AL PROGRAMAR y se guarda por recordatorio:
   // querer un correo por el pago de la tarjeta no significa quererlo por todo.
   await addColumn("gc_reminders", "email", "INTEGER NOT NULL DEFAULT 0");
@@ -946,6 +972,11 @@ async function migrate(): Promise<void> {
   await addColumn("gt_turns", "last_seq", "INTEGER");
   // Por qué falló, cuando falló. Sin esto un turno muerto y uno interrumpido se ven igual.
   await addColumn("gt_turns", "error", "TEXT");
+  // Con qué RETOMARLO SOLO tras un deploy (2026-09-23): el destino firmado del turno y el
+  // origen del tenant. El barrido corre fuera de un request, y sin origen las tools del
+  // turno retomado no tendrían de dónde colgarse (ver `reqOrigin`).
+  await addColumn("gt_turns", "origin", "TEXT");
+  await addColumn("gt_turns", "dest_json", "TEXT");
   // ── Lo que hace falta para RETOMAR un turno que murió (2026-08-28) ──────────────────
   //
   // Medido en descti: 4 turnos de 67 murieron sin entregar y se cobraron enteros (17% del
