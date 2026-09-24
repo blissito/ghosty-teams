@@ -804,11 +804,23 @@ function useChatScroll(
   useEffect(() => {
     didLand.current = false;
   }, [resetKey]);
+  const lastTop = useRef(0);
   const onScroll = () => {
     const el = scrollRef.current;
     if (!el) return;
     const near = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
-    stick.current = near;
+    // Sólo se DESPEGA del fondo si la persona subió (scrollTop bajó). Si el contenido crece
+    // abajo (una tarjeta que carga sus datos después: plan, pedido, veredicto), el navegador
+    // también dispara `scroll` y `near` sale false por un instante; tomarlo como «el usuario
+    // subió» dejaba el hilo abierto a la mitad (medido: 501 px arriba del fondo al abrir).
+    const wentUp = el.scrollTop < lastTop.current - 2;
+    lastTop.current = el.scrollTop;
+    if (near) stick.current = true;
+    else if (wentUp) stick.current = false;
+    else if (stick.current) {
+      el.scrollTo({ top: el.scrollHeight });
+      return;
+    }
     setAtBottom((prev) => (prev === near ? prev : near)); // solo re-render al cambiar
   };
   // Fuerza el scroll al fondo (envío propio / botón flotante), aunque estés arriba.
@@ -839,6 +851,9 @@ function useChatScroll(
     if (unreadId != null && !didLand.current) {
       const el = document.getElementById(`msg-${unreadId}`);
       if (el) {
+        // Aterrizar en el no-leído ES estar leyendo historial: sin esto, el `scroll` que
+        // provoca se tomaría por «contenido creció» y te regresaría al fondo.
+        stick.current = false;
         el.scrollIntoView({ block: "center" });
         didLand.current = true;
         requestAnimationFrame(measure);
