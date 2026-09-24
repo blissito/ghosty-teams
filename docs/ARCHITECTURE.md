@@ -167,6 +167,11 @@ plataforma):
 - **Multi-agente**: `gc_agents` (fleet o webhook) + el `@ghosty` implícito del
   wizard. Typeahead lista agentes + usuarios. Routing por `@handle`; los hilos
   continúan con el agente del root. (`src/agents.server.ts`, `src/server/agents.ts`).
+- **Relevo entre agentes** (2026-09-24): «@a coordina con @b» arranca sólo a @a; un
+  @agente en la respuesta FINAL de un agente despierta al otro en el mismo hilo (cola
+  `gt_agent_wakeups`, clave `handoff:`), con el pedido raíz y sus adjuntos. Tope de 4
+  relevos por hilo que sólo resetea una persona. (`src/server/agent-handoff.server.ts`;
+  ficha en ghosty-studio `docs/claude/relevo-entre-agentes.md`).
 - **Menciones a usuarios + push**: `@handle` de un user → Web Push (VAPID). Subs
   en `gc_push_subs`; SW handlers en `public/sw.js`. Cliente y server se reparten el
   aviso según presencia, y hay reglas que NO son obvias (nunca `new Notification`,

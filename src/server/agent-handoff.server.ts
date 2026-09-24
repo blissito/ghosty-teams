@@ -24,9 +24,10 @@ import { dbq } from "../dbq.server";
 export const MAX_HANDOFFS = 4;
 const FLEET_THREAD = "flow"; // la misma clave de memoria por room que usa chat.ts
 
-// Verbos con los que una persona pide que un agente trabaje CON otro, no en paralelo.
+// Verbos con los que una persona pide que un agente trabaje CON otro, no en paralelo
+// (español e inglés: la doc pública promete los dos).
 const COORDINATION_RE =
-  /\b(co?ord[ií]n\w*|deleg\w*|p[ií]dele\w*|junto con|en conjunto con|trabaj\w* con|colabor\w* con|ap[oó]y\w* (en|de|con)|con (la )?ayuda de|reparte\w*|repart\w* con)\b/i;
+  /\b(co?ord[ií]n\w*|deleg\w*|p[ií]dele\w*|junto con|en conjunto con|trabaj\w* con|colabor\w* con|ap[oó]y\w* (en|de|con)|con (la )?ayuda de|reparte\w*|repart\w* con|work\w* with|together with|with (the )?help of|ask @)\b/i;
 
 /**
  * Qué agentes arrancan con un mensaje de persona. Con varios @agente y un verbo de
