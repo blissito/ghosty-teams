@@ -98,7 +98,8 @@ describe("Listo para agentes", () => {
   it("repo pelón: nivel 0 y los scripts que faltan", async () => {
     const r = await check();
     expect(r.level).toBe(0);
-    expect(r.passed).toBe(0);
+    // Sólo la preview: tiene `dev` y no pide variables, así que nuestra caja la puede dar.
+    expect(r.passed).toBe(1);
     expect(r.total).toBe(9);
     expect(r.facts.missingScripts).toEqual(["test", "typecheck"]);
     expect(r.facts.pm).toBeNull();
@@ -119,6 +120,20 @@ describe("Listo para agentes", () => {
     expect(r.checks.find((c) => c.key === "preview")!.ok).toBe(false);
     expect(r.level).toBe(2);
     expect(preparationPlan(r).planMd).toContain("Previews por PR");
+  });
+
+  it("sin previews del hosting, nuestra caja cuenta si el repo arranca y no pide variables", async () => {
+    complete();
+    deployments = [];
+    contents["package.json"] = JSON.stringify({ scripts: { test: "vitest", typecheck: "tsc", start: "node server.js" } });
+    expect((await check()).checks.find((c) => c.key === "preview")!.ok).toBe(true);
+    // Con .env.example y sin variables guardadas, todavía no.
+    root = [...root, ".env.example"];
+    contents[".env.example"] = "# db\nDATABASE_URL=\nexport SESSION_SECRET=x\n";
+    const r = await check();
+    expect(r.checks.find((c) => c.key === "preview")!.ok).toBe(false);
+    expect(r.facts.envExampleKeys).toEqual(["DATABASE_URL", "SESSION_SECRET"]);
+    expect(preparationPlan(r).planMd).toContain("Variables");
   });
 
   it("protección clásica de rama también cuenta", async () => {
@@ -183,6 +198,10 @@ describe("Listo para agentes", () => {
       scripts: { test: "vitest", typecheck: "tsc" },
       hasClaudeMd: true,
       missingScripts: [],
+      previewHosting: false,
+      previewRunnable: false,
+      envExampleKeys: [],
+      envSavedKeys: null,
     });
     expect(md).toContain("pnpm install --frozen-lockfile");
     expect(md).toContain("`pnpm typecheck`");

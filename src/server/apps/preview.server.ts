@@ -136,3 +136,60 @@ export async function repoHasPreviews(sub: string, repo: string, defaultBranch: 
   const statuses = await githubApi(sub, `/repos/${repo}/commits/${encodeURIComponent(defaultBranch)}/statuses?per_page=30`).catch(() => null);
   return Array.isArray(statuses) && statuses.some((s: any) => STATUS_CONTEXT.test(String(s?.context ?? "")) && isAppUrl(s?.target_url));
 }
+
+// ── Capa 2: la preview en NUESTRA caja (gs `internal/workspace-preview`) ───────
+//
+// Para el repo cuyo hosting no publica previews (Fly, VPS, Docker propio): gs levanta una
+// caja por PR, baja el commit, construye y arranca la app, y la publica con liga privada.
+// Aquí sólo se le pide y se le pregunta; la caja es de gs. Ver
+// ghosty-studio/app/lib/ci/pr-preview.server.ts.
+
+export type BoxPreview = {
+  phase: "creating" | "fetching" | "installing" | "building" | "starting" | "ready" | "failed";
+  sha: string | null;
+  url: string | null;
+  error: string | null;
+};
+
+/** Llamada firmada a gs, igual que `requestCiBox`. Lanza con el error de gs. */
+export async function gsPreview(op: "up" | "status" | "down" | "env-set" | "env-keys", body: Record<string, unknown>): Promise<any> {
+  const { currentSlug } = await import("../tenant.server");
+  const slug = await currentSlug();
+  if (!slug) throw new Error("sin espacio");
+  const raw = JSON.stringify({ op, ...body });
+  const crypto = await import("node:crypto");
+  const ts = Math.floor(Date.now() / 1000);
+  const sig = crypto.createHmac("sha256", process.env.GHOSTY_PARTNER_SECRET!).update(`${ts}.${slug}.${raw}`).digest("hex");
+  const IDP = process.env.GHOSTY_IDENTITY_URL ?? "https://www.ghosty.studio";
+  const res = await fetch(`${IDP}/internal/workspace-preview/${encodeURIComponent(slug)}?ts=${ts}&sig=${sig}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: raw,
+  });
+  const out = await res.json().catch(() => null);
+  if (!res.ok) throw new Error(String(out?.error ?? `gs ${res.status}`));
+  return out;
+}
+
+// ¿El hosting del repo publica previews? Decide la capa: con hosting no se gasta una caja.
+const hostingCache = new Map<string, { at: number; value: boolean }>();
+export async function hostingHasPreviews(sub: string, repo: string): Promise<boolean> {
+  const hit = hostingCache.get(repo);
+  if (hit && Date.now() - hit.at < 10 * 60_000) return hit.value;
+  const info = await githubApi(sub, `/repos/${repo}`).catch(() => null);
+  const value = await repoHasPreviews(sub, repo, String(info?.default_branch ?? "main")).catch(() => false);
+  hostingCache.set(repo, { at: Date.now(), value });
+  return value;
+}
+
+/** Las claves de un `.env.example` (sin valores ni comentarios). */
+export function envExampleKeys(text: string | null): string[] {
+  if (!text) return [];
+  const keys = text
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l && !l.startsWith("#"))
+    .map((l) => l.replace(/^export\s+/, "").split("=")[0].trim())
+    .filter((k) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(k));
+  return [...new Set(keys)];
+}

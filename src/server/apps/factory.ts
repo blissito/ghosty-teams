@@ -388,10 +388,8 @@ export const factoryRunCardFn = createServerFn({ method: "POST" })
       loops: run.loops,
       prUrl: run.prUrl,
       // La preview del PR (Vercel, Netlify…): el cambio se ve sin bajar el código.
-      preview:
-        run.prUrl && ["building", "checking", "pr_review"].includes(run.status)
-          ? await import("./preview.server").then((m) => m.prPreview(run.approvedBy ?? run.requestedBy, run.prUrl!)).catch(() => null)
-          : null,
+      // La preview del PR (la del hosting o la de nuestra caja), tal como la dejó el tick.
+      preview: ["checking", "pr_review"].includes(run.status) ? { ...(await R.runPreview(run.id)), provider: null as string | null } : null,
       threadUrl: `/c/${ch.slug}?thread=${run.rootMsgId}`,
       // Firmable desde la tarjeta: el plan vigente espera firma (o hay que decidir tras escalar).
       canSign: (run.status === "plan_review" && !!plan && !plan.decision) || run.status === "escalated",

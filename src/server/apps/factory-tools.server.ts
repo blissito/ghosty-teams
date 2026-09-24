@@ -436,23 +436,23 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
     {
       name: "factory_preview",
       description:
-        "La preview del PR del pedido (Vercel, Netlify, Cloudflare Pages, review apps): state ready|pending|failed|none y su URL. " +
-        "Úsala para probar el cambio como lo verá la persona antes de mezclar.",
+        "La preview del PR del pedido: state ready|pending|failed|none, su URL y, si falló, por qué. " +
+        "Si el hosting del repo no las publica, la plataforma la construye en una caja propia. Úsala para probar el cambio como lo verá la persona antes de mezclar.",
       inputSchema: { type: "object", properties: { runId: { type: "number" } } },
-      handler: async (sub, a) => {
+      handler: async (_sub, a) => {
         const run = await runOf(dest, a.runId);
         if (!run) return { ok: false, error: "no hay pedido en este hilo" };
         if (!run.prUrl) return { ok: true, state: "none", note: "el pedido todavía no tiene PR" };
-        const { prPreview } = await import("./preview.server");
-        const p = await prPreview(run.approvedBy ?? sub, run.prUrl);
+        const R = await import("./factory-runs.server");
+        const p = await R.runPreview(run.id);
         const note =
           p.state === "ready"
             ? "Ábrela y prueba ahí los criterios de aceptación visibles."
             : p.state === "pending"
               ? "Se está publicando: vuelve a preguntar en un minuto."
               : p.state === "failed"
-                ? "La preview falló al publicarse: es un hallazgo (el build de producción no pasa)."
-                : "Este repo no publica previews: revisa con el diff y las pruebas.";
+                ? "La preview no arrancó (el motivo va en error). Si es el código del PR, es un hallazgo; si faltan variables de entorno, dilo y sigue con el diff y las pruebas."
+                : "Todavía no hay preview de este PR: vuelve a preguntar en un minuto o revisa con el diff y las pruebas.";
         return { ok: true, ...p, note };
       },
     },

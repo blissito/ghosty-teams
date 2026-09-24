@@ -5,9 +5,9 @@
 // de resultados («las pruebas corren solas»), no de GitHub; el detalle técnico y la fuente
 // de cada criterio (OpenSSF Scorecard, agents.md) van en el tooltip.
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Check, Circle, ExternalLink, Loader2, RefreshCw, ShieldCheck, Sparkles } from "lucide-react";
+import { Check, Circle, ExternalLink, KeyRound, Loader2, RefreshCw, ShieldCheck, Sparkles } from "lucide-react";
 import { useT } from "../i18n";
-import { prepareRepoFn, repoReadinessFn, type ReadinessView } from "../server/apps/readiness";
+import { prepareRepoFn, repoReadinessFn, savePreviewEnvFn, type ReadinessView } from "../server/apps/readiness";
 import { protectMainFn } from "../server/apps/factory";
 import type { ReadinessKey } from "../server/apps/readiness.server";
 
@@ -27,7 +27,7 @@ const CRITERIA: Record<ReadinessKey, { label: string; detail: string }> = {
   codeowners: { label: "Una persona revisa los cambios al CI", detail: "CODEOWNERS que cubre .github/. OpenSSF Scorecard: Code-Review." },
   dependabot: { label: "Dependencias al día", detail: "dependabot.yml (o Renovate). OpenSSF Scorecard: Dependency-Update-Tool." },
   protected: { label: "Nada entra a main sin tu aprobación", detail: "Regla en la rama principal: PR, aprobación de una persona y CI en verde. OpenSSF Scorecard: Branch-Protection." },
-  preview: { label: "Cada cambio se ve antes de mezclar", detail: "Una preview por PR (Vercel, Netlify, Cloudflare Pages o review apps de Fly). La fábrica la encuentra sola y @check prueba ahí." },
+  preview: { label: "Cada cambio se ve antes de mezclar", detail: "Una preview por PR: la de tu hosting si la publica (Vercel, Netlify…) o una que la fábrica levanta en su propia caja. @check prueba ahí." },
 };
 
 export function RepoReadiness({ channelId, repo, compact = false, onLevel }: {
@@ -40,9 +40,11 @@ export function RepoReadiness({ channelId, repo, compact = false, onLevel }: {
   const t = useT();
   const [view, setView] = useState<ReadinessView | null>(null);
   const [loading, setLoading] = useState(true);
-  const [busy, setBusy] = useState<"prep" | "protect" | null>(null);
+  const [busy, setBusy] = useState<"prep" | "protect" | "env" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<{ threadUrl: string | null } | null>(null);
+  const [envOpen, setEnvOpen] = useState(false);
+  const [envText, setEnvText] = useState("");
 
   // En un ref: el padre suele pasar una flecha nueva en cada render y, como dependencia,
   // recargaría la revisión en bucle.
@@ -103,6 +105,27 @@ export function RepoReadiness({ channelId, repo, compact = false, onLevel }: {
       const out = await prepareRepoFn({ data: { repo } });
       setDone({ threadUrl: out.threadUrl });
       await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const openEnv = () => {
+    // Las claves del .env.example ya puestas: el dueño sólo llena valores.
+    setEnvText(r.facts.envExampleKeys.map((k) => `${k}=`).join("\n"));
+    setEnvOpen(true);
+  };
+
+  const saveEnv = async () => {
+    setBusy("env");
+    setError(null);
+    try {
+      await savePreviewEnvFn({ data: { channelId, repo, dotenv: envText } });
+      setEnvOpen(false);
+      setEnvText("");
+      await load(true);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -183,8 +206,20 @@ export function RepoReadiness({ channelId, repo, compact = false, onLevel }: {
                         {t("Activar")}
                       </button>
                     )}
-                    {!c.ok && c.key === "preview" && (
-                      <span className="shrink-0 text-[11px] text-muted">{t("en tu hosting")}</span>
+                    {c.key === "preview" && !r.facts.previewHosting && r.facts.previewRunnable && view!.isOwner && (r.facts.envExampleKeys.length > 0 || r.facts.envSavedKeys) && (
+                      <button
+                        type="button"
+                        onClick={() => (envOpen ? setEnvOpen(false) : openEnv())}
+                        disabled={!!busy}
+                        title={r.facts.envSavedKeys ? `${t("Guardadas")}: ${r.facts.envSavedKeys.join(", ")}` : undefined}
+                        className="inline-flex shrink-0 items-center gap-1 rounded-md border border-border px-2 py-0.5 text-[11px] font-semibold text-ink hover:bg-surface-3 disabled:opacity-50"
+                      >
+                        <KeyRound size={11} />
+                        {r.facts.envSavedKeys ? t("Reemplazar") : t("Variables")}
+                      </button>
+                    )}
+                    {!c.ok && c.key === "preview" && !r.facts.previewRunnable && (
+                      <span className="shrink-0 text-[11px] text-muted">{t("sin cómo arrancar")}</span>
                     )}
                     {!c.ok && c.key === "scripts" && (
                       <span className="shrink-0 text-[11px] text-muted">{r.facts.missingScripts.join(", ")}</span>
@@ -196,6 +231,37 @@ export function RepoReadiness({ channelId, repo, compact = false, onLevel }: {
           );
         })}
       </div>
+
+      {envOpen && (
+        <div className="mt-2 rounded-lg border border-border p-2">
+          <p className="text-[11px] font-semibold text-ink">{t("Variables de la preview")}</p>
+          <p className="mt-0.5 text-[11px] text-muted">{t("Usa datos de prueba, nunca los de producción: el código del PR corre con ellas.")}</p>
+          <textarea
+            value={envText}
+            onChange={(e) => setEnvText(e.target.value)}
+            rows={Math.min(10, Math.max(4, envText.split("\n").length))}
+            spellCheck={false}
+            autoComplete="off"
+            className="mt-1.5 w-full resize-y rounded-md border border-border bg-surface px-2 py-1.5 font-mono text-[11px] text-ink"
+            placeholder="DATABASE_URL=…"
+            autoFocus
+          />
+          <div className="mt-1.5 flex justify-end gap-2">
+            <button type="button" onClick={() => setEnvOpen(false)} className="rounded-md px-2 py-1 text-[11px] text-muted hover:text-ink">
+              {t("Cancelar")}
+            </button>
+            <button
+              type="button"
+              onClick={saveEnv}
+              disabled={!envText.trim() || !!busy}
+              className="inline-flex items-center gap-1 rounded-md bg-brand px-2.5 py-1 text-[11px] font-semibold text-brand-fg disabled:opacity-50"
+            >
+              {busy === "env" && <Loader2 size={11} className="animate-spin" />}
+              {t("Guardar variables")}
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* La acción principal. */}
       <div className="mt-3">

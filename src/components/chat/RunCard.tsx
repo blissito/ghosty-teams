@@ -10,6 +10,13 @@ import type { RunCardData } from "../../lib/ebdoc";
 
 type State = Awaited<ReturnType<typeof factoryRunCardFn>>;
 
+/** Quién tiene la estafeta mientras la fábrica trabaja: la tarjeta lo dice con un pulso. */
+const WORKING: Record<string, string> = {
+  planning: "@plan está escribiendo el plan…",
+  building: "@build está construyendo…",
+  checking: "@check está revisando el PR…",
+};
+
 const STEPS = [
   { key: "plan", label: "Plan", statuses: ["planning"] },
   { key: "sign", label: "Firma", statuses: ["plan_review"] },
@@ -83,8 +90,20 @@ export function RunCard({ card, channelId }: { card: RunCardData; channelId: num
             );
           })}
         </ol>
-        <p className="mt-2 text-xs text-muted">
-          {st.status === "escalated"
+        {WORKING[st.status] && (
+          <p className="mt-2 flex items-center gap-1.5 text-xs text-ink" role="status">
+            <span className="relative flex h-2 w-2">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-brand opacity-60 motion-reduce:animate-none" />
+              <span className="relative inline-flex h-2 w-2 rounded-full bg-brand" />
+            </span>
+            {t(WORKING[st.status])}
+            {st.loops ? <span className="text-muted">· {t("Vueltas de check")}: {st.loops}</span> : null}
+          </p>
+        )}
+        <p className="mt-2 text-xs text-muted empty:hidden">
+          {WORKING[st.status]
+            ? ""
+            : st.status === "escalated"
             ? t("@check no pudo cerrarlo en 3 vueltas: decide si otra vuelta o replanear.")
             : st.status === "cancelled"
               ? t("Cancelado.")

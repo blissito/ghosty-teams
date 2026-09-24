@@ -17,6 +17,12 @@ function envNamespace(): string | null {
 }
 
 const cache = new Map<string, { ns: string; exp: number }>();
+// namespace → slug, aprendido al resolver. Lo necesita el código que corre en un tick
+// (`withNamespace`), donde no hay host: sin esto `currentSlug()` daba null y todo lo que
+// habla con otra app del espacio (Tasks, gs) fallaba sin avisar — p.ej. la tarea que no
+// pasaba a Done al mezclarse el PR en GitHub. El tick sólo se arma desde un request, así que
+// el mapa ya está lleno cuando corre.
+const slugByNs = new Map<string, string>();
 const TTL_MS = 60_000;
 
 // "acme" de acme.teams.ghosty.studio. Apex (teams / www) → null (sin tenant: es el
@@ -66,6 +72,7 @@ async function resolveNamespace(slug: string): Promise<string> {
     const j = (await res.json()) as { namespace?: string; status?: string };
     if (!j.namespace) throw new Error(`workspace "${slug}" sin namespace`);
     cache.set(slug, { ns: j.namespace, exp: Date.now() + TTL_MS });
+    slugByNs.set(j.namespace, slug);
     return j.namespace;
   } catch (e) {
     if (hit) {
@@ -108,7 +115,10 @@ export async function currentNamespace(): Promise<string> {
 
 /** Slug del workspace de este request (o null en apex/dev sin subdominio). */
 export async function currentSlug(): Promise<string | null> {
-  return slugFromHost(await currentHost());
+  const fromHost = slugFromHost(await currentHost());
+  if (fromHost) return fromHost;
+  const forced = nsStore.getStore();
+  return forced ? (slugByNs.get(forced) ?? null) : null;
 }
 
 /** Invalida la cache de un slug (p.ej. tras re-provisionar). */

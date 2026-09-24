@@ -6,8 +6,9 @@
 //  - AGENTS.md (formato abierto de la Agentic AI Foundation / Linux Foundation, lo leen Codex,
 //    Copilot, Cursor, goose, Factory…);
 //  - Agent Readiness de Factory (niveles; «Functional» = README, dependencias, build/test);
-//  - previews por PR (Vercel, Netlify, Cloudflare Pages, review apps): el cambio se VE antes
-//    de mezclarse, y @check lo prueba ahí.
+//  - previews por PR (el modelo de Vercel/Render): el cambio se VE antes de mezclarse y
+//    @check lo prueba ahí. La da el hosting si la publica; si no, nuestra caja (ver
+//    preview.server.ts), para la que basta que el repo arranque y tenga sus variables.
 // La UI enseña la fuente de cada criterio, para que el cliente vea por qué se le pide.
 //
 // Todo se comprueba contra GitHub con el token de quien conectó el repo al room (así lo ve
@@ -53,6 +54,12 @@ export type RepoFacts = {
   scripts: Record<string, string>;
   hasClaudeMd: boolean;
   missingScripts: string[];
+  /** Previews: del hosting, o las de nuestra caja si el repo arranca y tiene sus variables. */
+  previewHosting: boolean;
+  previewRunnable: boolean;
+  envExampleKeys: string[];
+  /** Nombres de las variables guardadas para la preview (null = ninguna). */
+  envSavedKeys: string[] | null;
 };
 
 export const LEVELS: Record<1 | 2 | 3, ReadinessKey[]> = {
@@ -71,7 +78,7 @@ const FIXABLE: Record<ReadinessKey, boolean> = {
   codeowners: true,
   dependabot: true,
   protected: false,
-  // Se conecta en el proveedor de hosting, no con un archivo.
+  // La da el hosting o nuestra caja; lo que falta (variables) no va en un PR.
   preview: false,
 };
 
@@ -151,8 +158,14 @@ export async function repoReadiness(sub: string, repo: string, opts: { fresh?: b
   // Protegida = el ruleset de la fábrica, o cualquier protección que GitHub reporte en la rama.
   const { protectionState } = await import("./ci-starter.server");
   const protection = await protectionState(sub, repo).catch(() => "error" as const);
-  const { repoHasPreviews } = await import("./preview.server");
-  const previews = await repoHasPreviews(sub, repo, defaultBranch).catch(() => false);
+  const P = await import("./preview.server");
+  const previewHosting = await P.repoHasPreviews(sub, repo, defaultBranch).catch(() => false);
+  const previewRunnable = (has("package.json") && !!(scripts.start || scripts.preview || scripts.dev)) || has("index.html");
+  const envExampleKeys = has(".env.example") ? P.envExampleKeys(decode(await githubApi(sub, `/repos/${repo}/contents/.env.example`))) : [];
+  const envSavedKeys: string[] | null = await P.gsPreview("env-keys", { repo })
+    .then((r) => (Array.isArray(r?.keys) ? r.keys : null))
+    .catch(() => null);
+  const previews = previewHosting || (previewRunnable && (envExampleKeys.length === 0 || !!envSavedKeys));
 
   const ok: Record<ReadinessKey, boolean> = {
     readme: rootFiles.some((n) => /^readme(\.|$)/i.test(n)),
@@ -174,7 +187,18 @@ export async function repoReadiness(sub: string, repo: string, opts: { fresh?: b
     passed: checks.filter((c) => c.ok).length,
     total: checks.length,
     checks,
-    facts: { owner, defaultBranch, pm, scripts, hasClaudeMd: has("CLAUDE.md"), missingScripts },
+    facts: {
+      owner,
+      defaultBranch,
+      pm,
+      scripts,
+      hasClaudeMd: has("CLAUDE.md"),
+      missingScripts,
+      previewHosting,
+      previewRunnable,
+      envExampleKeys,
+      envSavedKeys,
+    },
     checkedAt: Date.now(),
   };
   cache.set(repo, out);
@@ -291,7 +315,11 @@ export function preparationPlan(r: Readiness): { title: string; planMd: string; 
     later.push(`- Faltan scripts en package.json: ${r.facts.missingScripts.map((s) => `\`${s}\``).join(", ")}. Piden elegir herramientas: va en su propio pedido.`);
   if (miss("lockfile")) later.push("- No hay lockfile: instala una vez en local y súbelo (`npm install` genera `package-lock.json`).");
   if (miss("preview"))
-    later.push("- Previews por PR: conecta el repo a Vercel, Netlify o Cloudflare Pages (o review apps de Fly). La fábrica las encuentra sola y @check prueba ahí.");
+    later.push(
+      r.facts.previewRunnable
+        ? "- Previews por PR: guarda las variables de la preview (con datos de prueba) en «Listo para agentes» → Variables. La fábrica levanta una por PR y @check prueba ahí."
+        : "- Previews por PR: el repo no tiene cómo arrancarse (`start`, `preview` o `dev` en package.json). Con eso, la fábrica levanta una por PR.",
+    );
   if (miss("protected")) later.push("- Proteger la rama principal: lo activa el dueño con un clic en «Listo para agentes» cuando este PR se mezcle.");
 
   const planMd = `# Preparar ${r.repo} para agentes

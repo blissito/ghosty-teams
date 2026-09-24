@@ -20,13 +20,16 @@ export type RunStatus =
   | "done"
   | "cancelled";
 
-export type RunEvent = "plan_submitted" | "approve" | "changes" | "build_done" | "check_pass" | "check_fail" | "close" | "cancel";
+export type RunEvent = "plan_submitted" | "approve" | "changes" | "build_done" | "check_pass" | "check_fail" | "close" | "merged" | "cancel";
 
 export const MAX_LOOPS = 3;
 
 /** El estado siguiente, o null si el evento no aplica en este estado. */
 export function nextStatus(status: RunStatus, event: RunEvent, loops = 0): RunStatus | null {
   if (event === "cancel") return status === "done" || status === "cancelled" ? null : "cancelled";
+  // El PR se mezcló en GitHub: el pedido terminó, vaya en la etapa que vaya (alguien pudo
+  // mezclarlo sin esperar a @check).
+  if (event === "merged") return status === "done" || status === "cancelled" ? null : "done";
   switch (status) {
     case "planning":
       return event === "plan_submitted" ? "plan_review" : null;

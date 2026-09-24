@@ -117,3 +117,24 @@ export const prepareRepoFn = createServerFn({ method: "POST" })
     void R.refreshRoom(room);
     return { runId: run.id, status: run.status, threadUrl: await threadUrl(room, rootId), existing: false };
   });
+
+/**
+ * «Variables» de la preview: el `.env` con que nuestra caja arranca los PRs del repo. Sólo
+ * el dueño. Entra a la bóveda de gs y nunca vuelve: la UI sólo ve los NOMBRES.
+ */
+export const savePreviewEnvFn = createServerFn({ method: "POST" })
+  .validator((d: { channelId: number; repo: string; dotenv: string }) => d)
+  .handler(async ({ data }) => {
+    const { visibleChannel } = await import("../room-repos");
+    const { me, db } = await visibleChannel(Number(data.channelId));
+    if (!me.isOwner) throw new Error("sólo el dueño del espacio guarda variables");
+    if (!(await db.listRoomRepos(Number(data.channelId))).some((r) => r.repo === data.repo)) throw new Error("ese repo no está en este room");
+    const dotenv = String(data.dotenv ?? "").trim();
+    if (!dotenv) throw new Error("las variables no pueden ir vacías");
+    if (dotenv.length > 32_000) throw new Error("demasiado largo");
+    const { gsPreview } = await import("./preview.server");
+    const out = await gsPreview("env-set", { repo: data.repo, dotenv });
+    const { invalidateReadiness } = await import("./readiness.server");
+    invalidateReadiness(data.repo);
+    return { keys: (out?.keys ?? []) as string[] };
+  });

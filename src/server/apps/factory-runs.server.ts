@@ -89,6 +89,11 @@ export async function applyEvent(run: Run, event: RunEvent, patch: Partial<Recor
   if (!rows[0]) throw new Error(`el pedido #${run.id} cambió mientras tanto; vuelve a mirarla`);
   const updated = toRun(rows[0]);
   void syncTask(updated).catch(() => {});
+  // Pedido terminado o cancelado: su preview (si es nuestra caja) ya no sirve.
+  if ((updated.status === "done" || updated.status === "cancelled") && updated.prUrl) {
+    const pr = parsePrUrl(updated.prUrl);
+    if (pr) void import("./preview.server").then((P) => P.gsPreview("down", { repo: pr.repo, pr: pr.number })).catch(() => {});
+  }
   void refreshRoom(updated.channelId);
   return updated;
 }
@@ -166,9 +171,13 @@ async function tasksCall(sub: string, name: string, args: Record<string, unknown
   if (!cfg?.boardId) return null;
   const { currentSlug } = await import("../tenant.server");
   const slug = await currentSlug();
-  if (!slug) return null;
+  if (!slug) {
+    console.error(`[factory] Tasks ${name}: sin slug del espacio`);
+    return null;
+  }
   const { callTasks } = await import("../tasks-bridge.server");
   const r = await callTasks(slug, sub, cfg.boardId, name, args);
+  if (!r.ok) console.error(`[factory] Tasks ${name} falló: ${r.error}`);
   return r.ok ? (r.result as Record<string, any>) : null;
 }
 
@@ -545,7 +554,8 @@ const PR_CHECK_EVERY_MS = 120_000;
  */
 export async function closeFinishedRuns(): Promise<void> {
   const rows = await dbq(
-    `SELECT * FROM gt_factory_runs WHERE status = 'pr_review' AND pr_url IS NOT NULL ORDER BY updated_at LIMIT 10`,
+    // No sólo en etapa PR: alguien puede mezclar en GitHub sin esperar a @check.
+    `SELECT * FROM gt_factory_runs WHERE status IN ('building','checking','escalated','pr_review') AND pr_url IS NOT NULL ORDER BY updated_at LIMIT 20`,
     [],
   ).catch(() => []);
   for (const row of rows) {
@@ -557,7 +567,7 @@ export async function closeFinishedRuns(): Promise<void> {
     const outcome = pr?.outcome ?? null;
     // Aprobado por una persona y CI en verde: el agente PROPONE mezclar y pregunta. Mezcla
     // sólo si le contestan que sí (`maybeMergeReply`), con las credenciales de quien contesta.
-    if (outcome === "open" && pr?.approved && !row.merge_asked) {
+    if (outcome === "open" && run.status === "pr_review" && pr?.approved && !row.merge_asked) {
       const ci = await prCi(run.approvedBy ?? run.requestedBy, run.prUrl!);
       if (ci?.state === "success" || ci?.state === "none") {
         const asked = await dbq("UPDATE gt_factory_runs SET merge_asked = 1 WHERE id = ? AND merge_asked IS NULL RETURNING id", [run.id]);
@@ -572,7 +582,7 @@ export async function closeFinishedRuns(): Promise<void> {
     if (outcome === "merged") {
       // Lo mezclado cambia la calificación «Listo para agentes» del repo.
       if (run.repo) void import("./readiness.server").then((m) => m.invalidateReadiness(run.repo!));
-      const done = await applyEvent(run, "close").catch(() => null);
+      const done = await applyEvent(run, "merged").catch(() => null);
       if (done) await postInThread(done, "check", `✅ **Pedido terminado:** el PR se mezcló. ${run.prUrl}`);
     } else if (outcome === "closed") {
       const gone = await applyEvent(run, "cancel").catch(() => null);
@@ -582,35 +592,74 @@ export async function closeFinishedRuns(): Promise<void> {
 }
 
 const lastPreviewCheck = new Map<number, number>();
-const PREVIEW_CHECK_EVERY_MS = 60_000;
 
 /**
- * Cuando el PR de un pedido tiene preview lista (Vercel, Netlify…), se anuncia UNA vez por
- * commit en el hilo: así quien revisa la abre sin buscarla. La tarjeta viva la enseña también.
+ * La preview del PR de cada pedido vivo: la del hosting si la publica (Vercel, Netlify…) y,
+ * si no, la de NUESTRA caja (gs la construye). Se guarda en la fila (`preview_*`) para la
+ * tarjeta y @check, y se avisa UNA vez por commit en el hilo: lista o por qué no arrancó.
  * Lo llama el mismo tick que `closeFinishedRuns`.
  */
 export async function announcePreviews(): Promise<void> {
   const rows = await dbq(
-    `SELECT * FROM gt_factory_runs WHERE status IN ('checking','pr_review') AND pr_url IS NOT NULL
-       AND (preview_sha IS NULL OR head_sha IS NULL OR preview_sha != head_sha) ORDER BY updated_at DESC LIMIT 10`,
+    `SELECT * FROM gt_factory_runs WHERE status IN ('checking','pr_review') AND pr_url IS NOT NULL ORDER BY updated_at DESC LIMIT 10`,
     [],
   ).catch(() => []);
-  const { prPreview } = await import("./preview.server");
+  const P = await import("./preview.server");
   for (const row of rows) {
     const run = toRun(row);
-    if (Date.now() - (lastPreviewCheck.get(run.id) ?? 0) < PREVIEW_CHECK_EVERY_MS) continue;
+    // Construyendo se mira cada 20 s; lista o fallida, cada 2 min (por si hubo push nuevo).
+    const every = row.preview_state === "pending" ? 20_000 : 120_000;
+    if (Date.now() - (lastPreviewCheck.get(run.id) ?? 0) < every) continue;
     lastPreviewCheck.set(run.id, Date.now());
-    const p = await prPreview(run.approvedBy ?? run.requestedBy, run.prUrl!);
-    if (p.state !== "ready" || !p.url || p.sha === row.preview_sha) continue;
-    const claimed = await dbq(
-      "UPDATE gt_factory_runs SET preview_url = ?, preview_sha = ? WHERE id = ? AND (preview_sha IS NULL OR preview_sha != ?) RETURNING id",
-      [p.url, p.sha, run.id, p.sha],
+    const sub = run.approvedBy ?? run.requestedBy;
+    const pr = parsePrUrl(run.prUrl!);
+    const head = await prHead(sub, run.prUrl!);
+    if (!pr || !head) continue;
+    const sameSha = row.preview_sha === head.sha;
+    if (sameSha && (row.preview_state === "ready" || row.preview_state === "failed")) continue;
+
+    let next: { state: "pending" | "ready" | "failed"; url: string | null; provider: string | null; error: string | null } | null = null;
+    if (await P.hostingHasPreviews(sub, pr.repo)) {
+      const p = await P.commitPreview(sub, pr.repo, head.sha);
+      if (p.state === "ready") next = { state: "ready", url: p.url, provider: p.provider, error: null };
+      else if (p.state === "failed") next = { state: "failed", url: null, provider: p.provider, error: "el hosting no pudo publicar la preview" };
+      else next = { state: "pending", url: null, provider: p.provider, error: null };
+    } else {
+      try {
+        const b: import("./preview.server").BoxPreview | null =
+          sameSha && row.preview_state === "pending"
+            ? (await P.gsPreview("status", { repo: pr.repo, pr: pr.number })).status
+            : await P.gsPreview("up", { repo: pr.repo, pr: pr.number, sha: head.sha });
+        if (!b || b.sha !== head.sha) next = { state: "pending", url: null, provider: null, error: null };
+        else if (b.phase === "ready") next = { state: "ready", url: b.url, provider: null, error: null };
+        else if (b.phase === "failed") next = { state: "failed", url: null, provider: null, error: b.error };
+        else next = { state: "pending", url: null, provider: null, error: null };
+      } catch (e) {
+        // Sin capacidad o gs caído: se reintenta en el siguiente tick, sin avisar a nadie.
+        console.warn(`[factory] preview #${run.id}: ${(e as Error).message}`);
+        continue;
+      }
+    }
+    const changed = await dbq(
+      `UPDATE gt_factory_runs SET preview_state = ?, preview_url = ?, preview_sha = ?, preview_error = ?
+       WHERE id = ? AND NOT (COALESCE(preview_state,'') = ? AND COALESCE(preview_sha,'') = ?) RETURNING id`,
+      [next.state, next.url, head.sha, next.error, run.id, next.state, head.sha],
     );
-    if (!claimed.length) continue;
-    const again = row.preview_sha ? " actualizada" : " lista";
-    await postInThread(run, "build", `🔎 **Preview${again}**${p.provider ? ` (${p.provider})` : ""}: ${p.url}`);
+    if (!changed.length) continue;
     void refreshRoom(run.channelId);
+    if (next.state === "ready")
+      await postInThread(run, "build", `🔎 **Preview ${row.preview_sha && !sameSha ? "actualizada" : "lista"}**${next.provider ? ` (${next.provider})` : ""}: ${next.url}`);
+    else if (next.state === "failed")
+      await postInThread(run, "build", `⚠️ **La preview no arrancó.** ${String(next.error ?? "").split("\n")[0]}\n\n\`\`\`\n${String(next.error ?? "").split("\n").slice(1).join("\n").slice(-1200)}\n\`\`\``);
   }
+}
+
+/** Lo que la tarjeta y @check saben de la preview del pedido (leído de la fila). */
+export async function runPreview(runId: number): Promise<{ state: "none" | "pending" | "ready" | "failed"; url: string | null; error: string | null }> {
+  const rows = await dbq("SELECT preview_state, preview_url, preview_error FROM gt_factory_runs WHERE id = ?", [runId]).catch(() => []);
+  const r = rows[0];
+  const state = (r?.preview_state ?? "none") as "none" | "pending" | "ready" | "failed";
+  return { state, url: state === "ready" ? (r?.preview_url ?? null) : null, error: state === "failed" ? (r?.preview_error ?? null) : null };
 }
 
 /**
