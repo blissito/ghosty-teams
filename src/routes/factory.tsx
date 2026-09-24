@@ -11,7 +11,7 @@ import { ArrowLeft, Check, CircleDot, Factory } from "lucide-react";
 import { useLocale, useT } from "../i18n";
 import { intlLocale } from "../i18n.core";
 import { me } from "../server/auth";
-import { factoryOverviewFn, factoryProposeSprintFn, factoryStatusFn, type FactoryStatus } from "../server/apps/factory";
+import { factoryEnsureBoardFn, factoryOverviewFn, factoryProposeSprintFn, factoryStatusFn, type FactoryStatus } from "../server/apps/factory";
 import { RepoReadiness } from "../components/RepoReadiness";
 import { RolesEditor, SchedulesEditor, SuggestAsks } from "../components/AppsPanel";
 import { AskAgentHint } from "../components/AskAgentHint";
@@ -49,6 +49,37 @@ const HINT: Record<string, string> = {
   "Correcciones de @check": "Cuántas veces, en promedio, @check le regresó el PR a @build para corregir algo antes de aprobarlo.",
   "Del pedido al PR": "Mediana del tiempo desde que se pide hasta que @check deja el PR listo para tu revisión.",
 };
+
+function MissingBoard({ onDone }: { onDone: () => void }) {
+  const t = useT();
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  return (
+    <div className="mt-4 flex flex-wrap items-center gap-2 rounded-xl border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-800 dark:text-amber-300">
+      <span className="min-w-0 flex-1">{t("La fábrica no tiene tablero en Tasks: sus pedidos no pueden crear tareas.")}</span>
+      <button
+        type="button"
+        disabled={busy}
+        onClick={async () => {
+          setBusy(true);
+          setErr("");
+          try {
+            await factoryEnsureBoardFn();
+            onDone();
+          } catch (e) {
+            setErr(e instanceof Error ? e.message : String(e));
+          } finally {
+            setBusy(false);
+          }
+        }}
+        className="rounded-md border border-current px-2 py-1 font-semibold disabled:opacity-50"
+      >
+        {busy ? t("Creando…") : t("Crear tablero")}
+      </button>
+      {err && <span className="w-full text-red-600 dark:text-red-400">{err}</span>}
+    </div>
+  );
+}
 
 /** «¿Qué quieres lograr?» → @plan propone el sprint como borrador en el room de la fábrica. */
 function NewSprint({ roomSlug, repos }: { roomSlug: string | null; repos: string[] }) {
@@ -197,6 +228,17 @@ function FactoryPage() {
 
       {data?.installed && (
         <>
+          {/* Sin tablero en Tasks los pedidos no tienen tarea: se dice y se arregla aquí. */}
+          {!data.board && data.isOwner && <MissingBoard onDone={() => void load()} />}
+          {data.board?.url && (
+            <p className="mt-2 text-xs text-muted">
+              {t("Tablero")}:{" "}
+              <a href={data.board.url} target="_blank" rel="noreferrer" className="text-brand hover:underline">
+                {data.board.name} ↗
+              </a>
+            </p>
+          )}
+
           {/* Sprint: el objetivo entra aquí; @plan lo parte en tickets (borrador en el room). */}
           <NewSprint roomSlug={data.room?.slug ?? null} repos={data.repos} />
           {data.sprints.length > 0 && (
@@ -307,6 +349,11 @@ function FactoryPage() {
                   {r.prUrl && (
                     <a href={r.prUrl} target="_blank" rel="noreferrer" className="relative z-10 shrink-0 text-xs text-muted hover:text-ink">
                       PR ↗
+                    </a>
+                  )}
+                  {r.taskUrl && (
+                    <a href={r.taskUrl} target="_blank" rel="noreferrer" className="relative z-10 shrink-0 text-xs text-muted hover:text-ink">
+                      {t("Tarea")} ↗
                     </a>
                   )}
                   <span className="shrink-0 text-xs font-semibold text-brand group-hover:underline">{t("Hilo")} →</span>

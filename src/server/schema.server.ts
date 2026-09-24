@@ -852,6 +852,8 @@ async function migrate(): Promise<void> {
   )`);
   await exec("CREATE INDEX IF NOT EXISTS gt_factory_sprint_items_sprint ON gt_factory_sprint_items(sprint_id, idx)");
   await addColumn("gt_factory_runs", "sprint_item_id", "INTEGER");
+  // Ya se avisó en el hilo que no se pudo crear su tarea en Tasks (una vez).
+  await addColumn("gt_factory_runs", "task_warned", "INTEGER");
   // Tareas programadas de la Software Factory (revisión nocturna, dependencias): a su hora
   // la plataforma despierta a @plan en el room de la fábrica con un encargo fijo. Una fila
   // por tipo; `owner_sub` = con qué credenciales (GitHub) trabaja @plan.

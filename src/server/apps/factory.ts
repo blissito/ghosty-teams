@@ -432,6 +432,8 @@ export type FactoryRunRow = {
   prUrl: string | null;
   threadUrl: string | null;
   kind: string | null;
+  /** Liga a su tarea en el tablero de la fábrica (Tasks), si la tiene. */
+  taskUrl: string | null;
 };
 
 /**
@@ -449,10 +451,17 @@ export const factoryOverviewFn = createServerFn({ method: "GET" }).handler(async
   const channels = await db.listChannels(me.sub, me.isOwner);
   const byId = new Map(channels.map((c) => [c.id, c]));
   const room = cfg?.roomId ? (byId.get(cfg.roomId) ?? null) : null;
+  // El tablero de la fábrica en Tasks (misma base del espacio): liga a cada tarea, y si no
+  // existe, se dice (sin tablero los pedidos no tienen tarea).
+  const { listBoards } = await import("../tasks-boards.server");
+  const board = cfg?.boardId ? ((await listBoards().catch(() => [])).find((b) => b.id === cfg.boardId) ?? null) : null;
+  const { currentSlug } = await import("../tenant.server");
+  const wsSlug = await currentSlug();
+  const tasksBase = wsSlug && board ? `https://${wsSlug}.${process.env.TASKS_ROOT_DOMAIN ?? "tasks.ghosty.studio"}/p/${board.slug}` : null;
   const repos = room ? (await db.listRoomRepos(room.id)).map((r) => r.repo) : [];
   const { dbq } = await import("../../dbq.server");
   const rows = await dbq(
-    `SELECT id, channel_id, root_msg_id, title, status, repo, loops, created_at, pr_ready_at, pr_url, kind
+    `SELECT id, channel_id, root_msg_id, title, status, repo, loops, created_at, pr_ready_at, pr_url, kind, task_ref
      FROM gt_factory_runs ORDER BY id DESC LIMIT 500`,
     [],
   ).catch(() => []);
@@ -470,6 +479,7 @@ export const factoryOverviewFn = createServerFn({ method: "GET" }).handler(async
       prUrl: r.pr_url ?? null,
       threadUrl: `/c/${byId.get(Number(r.channel_id))!.slug}?thread=${r.root_msg_id}`,
       kind: r.kind ?? null,
+      taskUrl: tasksBase && r.task_ref ? `${tasksBase}${/^\d+$/.test(String(r.task_ref)) ? `?task=${r.task_ref}` : ""}` : null,
     }));
   const { runStats } = await import("./factory-stats");
   // Sprints de los rooms que ve (con su avance: tickets con merge / incluidos).
@@ -493,6 +503,7 @@ export const factoryOverviewFn = createServerFn({ method: "GET" }).handler(async
       url: r.card_msg_id ? `/c/${byId.get(Number(r.channel_id))!.slug}?thread=${r.card_msg_id}` : null,
     }));
   return {
+    board: board ? { name: board.name, url: tasksBase } : null,
     sprints,
     installed,
     isOwner: !!me.isOwner,
@@ -551,6 +562,26 @@ export const factoryMergeFn = createServerFn({ method: "POST" })
     if (!r.ok) throw new Error(r.error);
     return { ok: true as const };
   });
+
+/** La fábrica sin tablero en Tasks (se borró, o la instalación no pudo crearlo): crearlo. */
+export const factoryEnsureBoardFn = createServerFn({ method: "POST" }).handler(async () => {
+  const user = await requireOwner();
+  const { getAppConfig, recordInstall } = await import("./installed.server");
+  const cfg = await getAppConfig<FactoryCfg>("factory");
+  if (!cfg?.roomId) throw new Error("la fábrica no está instalada");
+  const { listBoards, rememberRoomBoard } = await import("../tasks-boards.server");
+  if (cfg.boardId && (await listBoards().catch(() => [])).some((b) => b.id === cfg.boardId)) return { ok: true as const };
+  const { currentSlug } = await import("../tenant.server");
+  const slug = await currentSlug();
+  if (!slug) throw new Error("no pude resolver el espacio");
+  const { callTasks } = await import("../tasks-bridge.server");
+  const r = await callTasks(slug, user.sub, 0, "task_board_create", { name: "Fábrica" });
+  const id = Number((r as any)?.result?.id);
+  if (!r.ok || !Number.isFinite(id) || id <= 0) throw new Error(r.ok ? "Tasks no devolvió el tablero" : r.error);
+  await rememberRoomBoard(cfg.roomId, id, user.sub);
+  await recordInstall("factory", user.sub, { ...cfg, boardId: id });
+  return { ok: true as const };
+});
 
 // ── Sprints (ver apps/sprint.server.ts) ─────────────────────────────────────
 

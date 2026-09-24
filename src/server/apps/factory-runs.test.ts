@@ -7,11 +7,17 @@ let alive: { id: number }[] = [];
 const posted: string[] = [];
 const inserted: unknown[][] = [];
 const tasksCalls: string[] = [];
+let warnedAlready = false;
 
 vi.mock("./installed.server", () => ({ getAppConfig: async () => cfg, isInstalled: async () => !!cfg }));
 vi.mock("../../dbq.server", () => ({
   dbq: async (sql: string, args: unknown[] = []) => {
     if (sql.includes("WHERE task_ref")) return alive;
+    if (sql.includes("SET task_warned")) {
+      if (warnedAlready) return [];
+      warnedAlready = true;
+      return [{ id: 8 }];
+    }
     if (sql.startsWith("INSERT INTO gt_factory_runs")) {
       inserted.push(args);
       return [{ id: 7 }];
@@ -81,5 +87,30 @@ describe("startRunFromTask", () => {
     const run = (await getRun(7))!;
     await createTaskFor(run, "plan");
     expect(tasksCalls).not.toContain("task_create");
+  });
+});
+
+describe("la tarea del pedido nunca falla muda", () => {
+  const run = { id: 8, channelId: 3, rootMsgId: 99, topic: "general", title: "t", status: "planning" as const, planVersion: 1, loops: 0, repo: null, branch: null, prUrl: null, headSha: null, taskRef: null, requestedBy: "u1", approvedBy: null };
+  beforeEach(() => {
+    posted.length = 0;
+    tasksCalls.length = 0;
+    warnedAlready = false;
+  });
+
+  it("sin tablero: lo dice UNA vez en el hilo, con el motivo", async () => {
+    cfg = { roomId: 3 };
+    await createTaskFor(run, "plan");
+    await createTaskFor(run, "plan");
+    expect(tasksCalls).toHaveLength(0);
+    expect(posted).toHaveLength(1);
+    expect(posted[0]).toContain("no tiene tablero");
+  });
+
+  it("con tablero la crea y no avisa nada", async () => {
+    cfg = { roomId: 3, boardId: 1 };
+    await createTaskFor(run, "plan");
+    expect(tasksCalls).toEqual(["task_create"]);
+    expect(posted).toHaveLength(0);
   });
 });

@@ -168,32 +168,51 @@ export async function handoff(run: Run, to: "plan" | "build" | "check", sub: str
 
 // ── Tasks (best-effort: la corrida no depende del tablero) ───────────────────
 
-export async function tasksCall(sub: string, name: string, args: Record<string, unknown>) {
+/** Llamada a Tasks con el MOTIVO si falla (nunca calla: cada camino deja rastro). */
+export async function tasksTry(
+  sub: string,
+  name: string,
+  args: Record<string, unknown>,
+): Promise<{ ok: true; result: Record<string, any> } | { ok: false; error: string }> {
   const { getAppConfig } = await import("./installed.server");
   const cfg = await getAppConfig<{ boardId?: number | null }>("factory");
-  if (!cfg?.boardId) return null;
+  const fail = (error: string) => {
+    console.error(`[factory] Tasks ${name}: ${error}`);
+    return { ok: false as const, error };
+  };
+  if (!cfg?.boardId) return fail("la fábrica no tiene tablero en Tasks");
   const { currentSlug } = await import("../tenant.server");
   const slug = await currentSlug();
-  if (!slug) {
-    console.error(`[factory] Tasks ${name}: sin slug del espacio`);
-    return null;
-  }
+  if (!slug) return fail("no se pudo resolver el espacio");
   const { callTasks } = await import("../tasks-bridge.server");
-  const r = await callTasks(slug, sub, cfg.boardId, name, args);
-  if (!r.ok) console.error(`[factory] Tasks ${name} falló: ${r.error}`);
-  return r.ok ? (r.result as Record<string, any>) : null;
+  const r = await callTasks(slug, sub, cfg.boardId, name, args).catch((e) => ({ ok: false as const, error: String(e?.message ?? e) }));
+  if (!r.ok) return fail(r.error);
+  return { ok: true, result: (r.result ?? {}) as Record<string, any> };
+}
+
+export async function tasksCall(sub: string, name: string, args: Record<string, unknown>) {
+  const r = await tasksTry(sub, name, args);
+  return r.ok ? r.result : null;
 }
 
 export async function createTaskFor(run: Run, planMd: string): Promise<void> {
   // La corrida nació de una tarea de Tasks (asignada a @plan): ya tiene la suya.
   if (run.taskRef) return;
-  const r = await tasksCall(run.requestedBy, "task_create", {
+  const r = await tasksTry(run.requestedBy, "task_create", {
     title: run.title,
     description: planMd.slice(0, 8000),
     labels: [stageLabel(run.status)],
-  }).catch(() => null);
-  const ref = r ? String(r.ref ?? r.id ?? "") : "";
-  if (ref) await dbq("UPDATE gt_factory_runs SET task_ref = ? WHERE id = ?", [ref, run.id]);
+  });
+  const ref = r.ok ? String(r.result.ref ?? r.result.id ?? "") : "";
+  if (ref) {
+    await dbq("UPDATE gt_factory_runs SET task_ref = ? WHERE id = ?", [ref, run.id]);
+    void refreshRoom(run.channelId);
+    return;
+  }
+  // Sin tarea: se dice UNA vez en el hilo del pedido, con el motivo (antes fallaba mudo).
+  const warned = await dbq("UPDATE gt_factory_runs SET task_warned = 1 WHERE id = ? AND task_warned IS NULL RETURNING id", [run.id]).catch(() => []);
+  if (warned.length)
+    await postInThread(run, "plan", `⚠️ No pude crear la tarea de este pedido en Tasks: ${r.ok ? "Tasks no devolvió su id" : r.error}. El pedido sigue igual.`);
 }
 
 async function syncTask(run: Run): Promise<void> {
