@@ -7,7 +7,7 @@
 // Misma forma que /forms: el loader sólo resuelve auth; los datos llegan por server fns.
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
-import { ArrowLeft, Factory } from "lucide-react";
+import { ArrowLeft, Check, CircleDot, Factory } from "lucide-react";
 import { useLocale, useT } from "../i18n";
 import { intlLocale } from "../i18n.core";
 import { me } from "../server/auth";
@@ -43,6 +43,34 @@ function duration(seconds: number | null): string {
   return `${(seconds / 86400).toFixed(1)} d`;
 }
 
+// Qué significa cada número (tooltip).
+const HINT: Record<string, string> = {
+  "Se concretan": "Mezclados entre los pedidos ya cerrados (mezclados + cancelados).",
+  "Correcciones de @check": "Cuántas veces, en promedio, @check le regresó el PR a @build para corregir algo antes de aprobarlo.",
+  "Del pedido al PR": "Mediana del tiempo desde que se pide hasta que @check deja el PR listo para tu revisión.",
+};
+
+function RepoRow({ repo, channelId, initiallyOpen, focus }: { repo: string; channelId: number; initiallyOpen: boolean; focus: boolean }) {
+  const [open, setOpen] = useState(initiallyOpen);
+  const [level, setLevel] = useState<number | null>(null);
+  return (
+    <div id={`repo-${repo}`} className="rounded-xl border border-border bg-surface-2">
+      <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={open} className="flex w-full items-center gap-2 px-3 py-2.5 text-left">
+        <span className="min-w-0 flex-1 truncate font-mono text-xs text-ink">{repo}</span>
+        {level != null && (
+          <span className={`h-2 w-2 shrink-0 rounded-full ${level >= 3 ? "bg-emerald-500" : "bg-amber-500"}`} aria-hidden="true" />
+        )}
+        {level != null && <span className="shrink-0 text-[11px] text-muted">{level}/3</span>}
+        <span className={`shrink-0 text-muted transition-transform ${open ? "rotate-180" : ""}`}>▾</span>
+      </button>
+      {/* Montado siempre (así el renglón contraído sabe su nivel); sólo se oculta. */}
+      <div className={open ? "border-t border-border p-3" : "hidden"}>
+        <RepoReadiness channelId={channelId} repo={repo} autoOpenEnv={focus} onLevel={setLevel} />
+      </div>
+    </div>
+  );
+}
+
 function FactoryPage() {
   const t = useT();
   const locale = useLocale();
@@ -50,7 +78,7 @@ function FactoryPage() {
   const [data, setData] = useState<Overview | null>(cache);
   const [owner, setOwner] = useState<FactoryStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [filter, setFilter] = useState<"live" | "all">("live");
+  const [filter, setFilter] = useState<"open" | "closed">("open");
 
   const load = () =>
     factoryOverviewFn()
@@ -65,7 +93,7 @@ function FactoryPage() {
   }, []);
 
   const runs = useMemo(
-    () => (data?.runs ?? []).filter((r) => filter === "all" || !["done", "cancelled"].includes(r.status)),
+    () => (data?.runs ?? []).filter((r) => ["done", "cancelled"].includes(r.status) === (filter === "closed")),
     [data, filter],
   );
   const fmt = (ts: number) => new Date(ts * 1000).toLocaleDateString(intlLocale(locale), { day: "numeric", month: "short" });
@@ -114,11 +142,11 @@ function FactoryPage() {
                 [
                   [t("Pedidos"), String(data.stats.total)],
                   [t("Se concretan"), data.stats.successRate == null ? null : `${Math.round(data.stats.successRate * 100)}%`],
-                  [t("Vueltas de check"), data.stats.avgLoops == null ? null : data.stats.avgLoops.toFixed(1)],
+                  [t("Correcciones de @check"), data.stats.avgLoops == null ? null : data.stats.avgLoops.toFixed(1)],
                   [t("Del pedido al PR"), data.stats.medianToPrSeconds == null ? null : duration(data.stats.medianToPrSeconds)],
                 ].filter(([, v]) => v != null) as [string, string][]
               ).map(([k, v]) => (
-                <div key={k} className="rounded-lg border border-border bg-surface-2 px-3 py-2">
+                <div key={k} title={HINT[k] ? t(HINT[k]) : undefined} className="rounded-lg border border-border bg-surface-2 px-3 py-2">
                   <p className="text-[11px] text-muted">{k}</p>
                   <p className="text-lg font-semibold tabular-nums text-ink">{v}</p>
                 </div>
@@ -132,22 +160,29 @@ function FactoryPage() {
                 .replace("{d}", String(data.stats.escalated))}
             </p>
 
-            <div className="mt-3 flex gap-1" role="tablist">
-              {(["live", "all"] as const).map((f) => (
-                <button
-                  key={f}
-                  type="button"
-                  role="tab"
-                  aria-selected={filter === f}
-                  onClick={() => setFilter(f)}
-                  className={`rounded-full px-3 py-1 text-xs font-semibold ${filter === f ? "bg-ink text-surface" : "text-muted hover:text-ink"}`}
-                >
-                  {f === "live" ? t("Vivos") : t("Todos")}
-                </button>
-              ))}
-            </div>
-            <ul className="mt-2 divide-y divide-border overflow-hidden rounded-xl border border-border">
-              {runs.length === 0 && <li className="px-3 py-4 text-sm text-muted">{filter === "live" ? t("Nadie está trabajando en un pedido ahora.") : t("Todavía no hay pedidos.")}</li>}
+            {/* Como la lista de issues/PRs de GitHub: «N Pendientes · N Cerrados» en la cabecera. */}
+            <div className="mt-3 overflow-hidden rounded-xl border border-border">
+              <div className="flex gap-4 border-b border-border bg-surface-2 px-3 py-2" role="tablist">
+                {(["open", "closed"] as const).map((f) => {
+                  const n = (data.runs ?? []).filter((r) => ["done", "cancelled"].includes(r.status) === (f === "closed")).length;
+                  const Icon = f === "open" ? CircleDot : Check;
+                  return (
+                    <button
+                      key={f}
+                      type="button"
+                      role="tab"
+                      aria-selected={filter === f}
+                      onClick={() => setFilter(f)}
+                      className={`inline-flex items-center gap-1.5 text-sm ${filter === f ? "font-semibold text-ink" : "text-muted hover:text-ink"}`}
+                    >
+                      <Icon size={15} className="shrink-0" />
+                      {n} {f === "open" ? t("Pendientes") : t("Cerrados")}
+                    </button>
+                  );
+                })}
+              </div>
+            <ul className="divide-y divide-border">
+              {runs.length === 0 && <li className="px-3 py-4 text-sm text-muted">{filter === "open" ? t("Nadie está trabajando en un pedido ahora.") : t("Todavía no hay pedidos cerrados.")}</li>}
               {runs.map((r) => (
                 <li
                   key={r.id}
@@ -163,7 +198,7 @@ function FactoryPage() {
                     </a>
                     <p className="truncate text-[11px] text-muted">
                       {r.repo ?? "—"} · {fmt(r.createdAt)}
-                      {r.loops ? ` · ${r.loops} ${r.loops === 1 ? t("vuelta") : t("vueltas")}` : ""}
+                      {r.loops ? ` · ${r.loops} ${r.loops === 1 ? t("corrección") : t("correcciones")}` : ""}
                     </p>
                   </div>
                   <span
@@ -188,6 +223,7 @@ function FactoryPage() {
                 </li>
               ))}
             </ul>
+            </div>
           </section>
 
           {/* Repos del room de la fábrica. */}
@@ -196,10 +232,14 @@ function FactoryPage() {
               <h2 className="text-sm font-semibold text-ink">{t("Repos")}</h2>
               <div className="mt-2 space-y-2">
                 {data.repos.map((repo) => (
-                  <div key={repo} id={`repo-${repo}`} className="rounded-xl border border-border bg-surface-2 p-3">
-                    <p className="mb-2 font-mono text-xs text-muted">{repo}</p>
-                    <RepoReadiness channelId={data.room!.id} repo={repo} autoOpenEnv={focusRepo === repo} />
-                  </div>
+                  <RepoRow
+                    key={repo}
+                    repo={repo}
+                    channelId={data.room!.id}
+                    // Con uno solo (o si llegas desde una liga a ése) se ve abierto; con varios, contraídos.
+                    initiallyOpen={data.repos.length === 1 || focusRepo === repo}
+                    focus={focusRepo === repo}
+                  />
                 ))}
               </div>
             </section>
