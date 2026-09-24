@@ -213,7 +213,7 @@ async function fire(ns: string, w: Wakeup, ref: WakeRef): Promise<void> {
   // atorada en silencio (visto 2026-09-24: @build acabó y nunca llamó factory_build_done).
   if (w.key.startsWith("factory:")) {
     const { afterFactoryTurn } = await import("./apps/factory-runs.server");
-    void afterFactoryTurn(w, ref).catch(() => {});
+    void afterFactoryTurn(w, ref, finalBody).catch(() => {});
   }
   // Un `OK` es "nada que entregar": no se deja burbuja. Igual que en gs.
   if (!finalBody || finalBody === "OK") {

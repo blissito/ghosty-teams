@@ -466,12 +466,25 @@ const CLOSE_TOOL: Record<string, string> = { plan: "factory_plan_submit", build:
 export async function afterFactoryTurn(
   w: { key: string; ref: string; origin: string },
   ref: { sub: string },
+  reply = "",
 ): Promise<void> {
   const m = /^factory:(\d+):(plan|build|check):/.exec(w.key);
   if (!m) return;
   const run = await getRun(Number(m[1]));
   const role = m[2];
-  if (!run || run.status !== OPEN_STATUS[role]) return; // cerró su paso (o la corrida siguió)
+  if (!run || run.status !== OPEN_STATUS[role]) return; // cerró su paso (o el pedido siguió)
+  // El turno SE CAYÓ (vacío o cortado): empujar no sirve, el agente no está contestando.
+  // Se dice una vez qué pasa y dónde revisarlo (su motor, modelo o llave en Studio).
+  if (!reply.trim() || /se cort[óo] antes de terminar/i.test(reply)) {
+    if (w.key.endsWith(":nudge")) return; // ya se avisó en el intento anterior
+    await postInThread(
+      run,
+      role,
+      `⚠️ @${role} no pudo contestar (su turno se cortó). Revisa su agente en Studio (motor, modelo o llave) ` +
+        `o asígnale otro en Ajustes → Apps, y vuelve a mencionarlo.`,
+    );
+    return;
+  }
   const nudged = w.key.endsWith(":nudge");
   if (!nudged) {
     const { enqueueWakeup, armWakeups } = await import("../wakeups.server");
