@@ -5,6 +5,7 @@ import { Bot, Plus, Trash2, X, Bell, Smile, Loader2, Pencil, Mail, ExternalLink 
 import { FleetAgentControls } from "./FleetAgentControls";
 import { NativeAgentConfig } from "./NativeAgentConfig";
 import { BrandPanel } from "./BrandPanel";
+import { AppsPanel } from "./AppsPanel";
 import { Avatar } from "./Avatar";
 import { currentPushState, enablePush, disablePush } from "../utils/push-subscribe";
 import { me, cachedMe, peekMe, logout, clearMeCache } from "../server/auth";
@@ -127,7 +128,7 @@ function seedSettingsData(): SettingsData | null {
  * @param initial datos precargados por el loader de la ruta (evita flash en SSR).
  * @param onClose si viene → modo modal (header con X). Si no → modo ruta (link "volver").
  */
-type TabId = "general" | "notifications" | "appearance" | "marca" | "integraciones" | "agentes" | "emojis" | "uso";
+type TabId = "general" | "notifications" | "appearance" | "marca" | "integraciones" | "apps" | "agentes" | "emojis" | "uso";
 
 export function SettingsContent({
   initialTab,
@@ -199,6 +200,8 @@ export function SettingsContent({
     // gate que Agentes y no dentro de Apariencia, que es todo per-user.
     ...(canManageAgents ? [{ id: "marca" as const, label: t("Marca"), icon: SwatchBook }] : []),
     { id: "integraciones", label: t("Integraciones"), icon: Plug },
+    // Apps que se instalan en el espacio (Software Factory). Sólo el dueño las instala.
+    ...(isOwner ? [{ id: "apps" as const, label: t("Apps"), icon: Boxes }] : []),
     { id: "uso", label: t("Uso"), icon: Gauge },
     ...(canManageAgents ? [{ id: "agentes" as const, label: t("Agentes"), icon: Bot }] : []),
     // Emojis: visible para TODOS los members (Slack default — cualquiera agrega; borrar
@@ -376,6 +379,8 @@ export function SettingsContent({
           {tab === "marca" && canManageAgents && <BrandPanel isOwner={isOwner} />}
 
           {tab === "integraciones" && <IntegrationsPanel />}
+
+          {tab === "apps" && isOwner && <AppsPanel />}
 
           {tab === "agentes" && canManageAgents && (
             <AgentsManager isOwner={isOwner} mySub={user?.sub ?? null} />
