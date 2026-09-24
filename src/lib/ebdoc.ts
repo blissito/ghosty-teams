@@ -1439,7 +1439,7 @@ export function stripPreviewErrorCard(body: string): string {
 
 export type AsksCardData = {
   roomSlug: string;
-  items: { size: string; title: string; ask: string; why: string }[];
+  items: { size: string; title: string; ask: string; why: string; repo?: string }[];
 };
 
 export function extractAsksCard(body: string): AsksCardData | null {

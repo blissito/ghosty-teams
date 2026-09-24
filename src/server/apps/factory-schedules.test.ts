@@ -3,8 +3,10 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 let cfg: Record<string, unknown> | null = null;
 let due: Record<string, unknown>[] = [];
 let claimOk = true;
-const wakes: { key: string }[] = [];
+const wakes: { key: string; text?: string }[] = [];
+let roomRepos: string[] = [];
 
+vi.mock("../../db.server", () => ({ listRoomRepos: async () => roomRepos.map((repo) => ({ repo })) }));
 vi.mock("./installed.server", () => ({ getAppConfig: async () => cfg }));
 vi.mock("../tenant.server", () => ({ withNamespace: (_ns: string, fn: () => unknown) => fn() }));
 vi.mock("../../dbq.server", () => ({
@@ -37,6 +39,18 @@ describe("sweep de tareas programadas", () => {
     due = [row];
     claimOk = true;
     wakes.length = 0;
+    roomRepos = [];
+  });
+
+  it("con varios repos: un despertar por repo, y el encargo nombra el suyo", async () => {
+    cfg = { roomId: 12 };
+    roomRepos = ["acme/web", "acme/api"];
+    await sweepTenant("ns");
+    expect(wakes.map((w) => w.key)).toEqual([
+      expect.stringMatching(/^sched:factory-nightly:acme\/web:/),
+      expect.stringMatching(/^sched:factory-nightly:acme\/api:/),
+    ]);
+    expect(wakes[1].text).toContain("SÓLO sobre el repo acme/api");
   });
 
   it("sin la fábrica instalada no despierta a nadie", async () => {

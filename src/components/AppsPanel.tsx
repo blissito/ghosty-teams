@@ -431,13 +431,15 @@ export function RolesEditor({ status, onChange }: { status: FactoryStatus; onCha
 
 // «Sugerir pedidos»: @plan lee el repo y deja en el room una tarjeta con pedidos listos para
 // mandar (un botón «Pedir» cada uno). Es el arranque cuando nadie sabe qué pedir primero.
-export function SuggestAsks({ roomSlug }: { roomSlug: string | null }) {
+export function SuggestAsks({ roomSlug, repos = [] }: { roomSlug: string | null; repos?: string[] }) {
   const t = useT();
   const [state, setState] = useState<"idle" | "busy" | "sent" | "error">("idle");
+  // Con varios repos, de cuál sugerir (con uno, ése).
+  const [repo, setRepo] = useState(repos[0] ?? "");
   const run = async () => {
     setState("busy");
     try {
-      await factorySuggestFn();
+      await factorySuggestFn({ data: repo ? { repo } : {} });
       setState("sent");
     } catch {
       setState("error");
@@ -452,6 +454,20 @@ export function SuggestAsks({ roomSlug }: { roomSlug: string | null }) {
             ? t("No pude despertar a @plan. Intenta otra vez.")
             : t("¿No sabes qué pedir primero? @plan lee el repo y te propone pedidos listos para mandar.")}
       </span>
+      {repos.length > 1 && (
+        <select
+          value={repo}
+          onChange={(e) => setRepo(e.target.value)}
+          aria-label={t("Repo")}
+          className="shrink-0 rounded-md border border-border bg-surface-2 px-2 py-1 text-xs text-ink"
+        >
+          {repos.map((r) => (
+            <option key={r} value={r}>
+              {r.split("/")[1] ?? r}
+            </option>
+          ))}
+        </select>
+      )}
       <button
         type="button"
         disabled={state === "busy" || state === "sent"}

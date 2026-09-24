@@ -23,7 +23,9 @@ export function AsksCard({ card }: { card: AsksCardData }) {
     setErr("");
     try {
       // Enviar Y despertar a @plan: con sólo publicar, el pedido se quedaba sin respuesta.
-      await askInRoom(card.roomSlug, `@plan ${card.items[i].ask}`);
+      // El repo va en el pedido: con varios repos, @plan tiene que saber sobre cuál planea.
+      const it = card.items[i];
+      await askInRoom(card.roomSlug, `@plan ${it.repo ? `(repo ${it.repo}) ` : ""}${it.ask}`);
       setSent((s) => ({ ...s, [i]: true }));
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
@@ -48,6 +50,7 @@ export function AsksCard({ card }: { card: AsksCardData }) {
                 <span className="truncate text-sm font-semibold text-ink">{it.title}</span>
               </div>
               <p className="mt-1 text-xs text-muted">{it.why}</p>
+              {it.repo && <p className="mt-0.5 font-mono text-[11px] text-muted">{it.repo}</p>}
             </div>
             <button
               type="button"

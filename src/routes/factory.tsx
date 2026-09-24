@@ -257,7 +257,7 @@ function FactoryPage() {
               <section className="mt-8">
                 <h2 className="text-sm font-semibold text-ink">{t("Automático")}</h2>
                 <div className="mt-2 rounded-xl border border-border bg-surface-2 p-3 text-sm">
-                  <SuggestAsks roomSlug={owner.room?.slug ?? null} />
+                  <SuggestAsks roomSlug={owner.room?.slug ?? null} repos={owner.repos} />
                   <SchedulesEditor roomSlug={owner.room?.slug ?? null} />
                 </div>
               </section>

@@ -50,10 +50,10 @@ export function planRejection(planMd: string): string | null {
   return null;
 }
 
-export type SuggestedAsk = { size: "chico" | "mediano" | "grande"; title: string; ask: string; why: string };
+export type SuggestedAsk = { size: "chico" | "mediano" | "grande"; title: string; ask: string; why: string; repo?: string };
 
 /** Valida los pedidos sugeridos (string = por qué no). Un `ask` corto no es un pedido. */
-export function suggestItems(raw: unknown): SuggestedAsk[] | string {
+export function suggestItems(raw: unknown, repos: string[] = []): SuggestedAsk[] | string {
   if (!Array.isArray(raw) || raw.length < 2 || raw.length > 5) return "manda de 2 a 5 pedidos";
   const out: SuggestedAsk[] = [];
   for (const it of raw as Record<string, unknown>[]) {
@@ -64,7 +64,11 @@ export function suggestItems(raw: unknown): SuggestedAsk[] | string {
     if (!["chico", "mediano", "grande"].includes(size)) return "size va como chico, mediano o grande";
     if (!title || !why) return "cada pedido lleva title y why";
     if (ask.length < 40) return `el pedido «${title}» es muy corto: escribe el mensaje completo que recibirías`;
-    out.push({ size: size as SuggestedAsk["size"], title, ask, why });
+    // Con varios repos en el room, cada pedido dice de cuál es (si no, «Pedir» lo manda
+    // sin repo y el plan nace sin saber dónde trabajar).
+    const repo = String(it?.repo ?? "").trim() || (repos.length === 1 ? repos[0] : "");
+    if (repos.length > 1 && !repos.includes(repo)) return `«${title}»: di en \`repo\` de cuál repo es (${repos.join(", ")})`;
+    out.push({ size: size as SuggestedAsk["size"], title, ask, why, ...(repo ? { repo } : {}) });
   }
   return out;
 }
@@ -109,6 +113,17 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
         const { dbq } = await import("../../dbq.server");
         let run = await runOf(dest, a.runId);
         if (!run) {
+          // El repo del pedido: con un solo repo en el room es ése; con VARIOS es obligatorio.
+          // Sin esto el pedido nacía con repo NULL y la preview, «Listo para agentes» y el
+          // cierre al merge no sabían de qué repo era. Se valida antes de publicar nada.
+          const dbr = await import("../../db.server");
+          const repos = (await dbr.listRoomRepos(dest.channelId)).map((r) => r.repo);
+          const asked = a.repo ? String(a.repo).trim() : "";
+          if (asked && repos.length && !repos.includes(asked))
+            return { ok: false, error: `«${asked}» no está en este room. Repos del room: ${repos.join(", ")}` };
+          if (!asked && repos.length > 1)
+            return { ok: false, error: `Este room tiene varios repos: di en \`repo\` sobre cuál es el plan (${repos.join(", ")}).` };
+          const repo = asked || repos[0] || null;
           let root = threadRoot(dest);
           if (!root) {
             // Turno sin hilo (una tarea programada despierta a @plan top-level): el pedido
@@ -123,9 +138,6 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
             if (msg) bus.publish(bus.ch.room(await currentNamespace(), dest.channelId), { t: "message:new", msg });
             root = posted.id;
           }
-          const db = await import("../../db.server");
-          const repos = (await db.listRoomRepos(dest.channelId)).map((r) => r.repo);
-          const repo = a.repo ? String(a.repo) : repos.length === 1 ? repos[0] : null;
           const rows = await dbq(
             `INSERT INTO gt_factory_runs (channel_id, root_msg_id, topic, title, status, repo, requested_by)
              VALUES (?, ?, ?, ?, 'planning', ?, ?) RETURNING id`,
@@ -173,13 +185,8 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
           pr_url: { type: "string", description: "URL del PR en GitHub" },
           branch: { type: "string", description: "Rama del PR" },
           tests: { type: "string", description: "Resultado de pruebas, lint y typecheck, en una o dos líneas" },
-          pr_description: {
-            type: "string",
-            description:
-              "Descripción del PR tal como está AHORA la rama (qué cambia, cómo se prueba, qué falta). La plataforma la escribe en el PR en cada cierre, así nunca queda vieja tras una corrección.",
-          },
         },
-        required: ["pr_url", "tests", "pr_description"],
+        required: ["pr_url", "tests"],
       },
       handler: async (sub, a) => {
         if (dest?.handle && dest.handle !== "build") return { ok: false, error: "sólo @build cierra la construcción" };
@@ -213,14 +220,6 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
         }
         // Un PR que toca `.github/` (CI, CODEOWNERS) sólo se espera en el pedido de CI: en
         // cualquier otro, es justo la vía clásica para que un agente se salte los controles.
-        // La descripción del PR sigue a la rama: tras corregir hallazgos, la vieja decía lo
-        // contrario del código (@plan tuvo que aclarar «aunque el texto diga lo contrario»).
-        const prDesc = String(a.pr_description ?? "").trim();
-        if (prDesc) {
-          const pr = R.parsePrUrl(url)!;
-          const { githubApi } = await import("../connectors/github.server");
-          await githubApi(sub, `/repos/${pr.repo}/pulls/${pr.number}`, { method: "PATCH", body: JSON.stringify({ body: prDesc.slice(0, 60_000) }) }).catch(() => null);
-        }
         const touchesGithub = await R.prTouchesGithubDir(sub, url);
         const head = await R.prHead(sub, url);
         const next = await R.applyEvent(run, "build_done", {
@@ -418,6 +417,7 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
             items: {
               type: "object",
               properties: {
+                repo: { type: "string", description: 'Repo "dueño/repo" del pedido (obligatorio si el room tiene varios)' },
                 size: { type: "string", enum: ["chico", "mediano", "grande"] },
                 title: { type: "string", description: "Título corto (máx. 60 caracteres)" },
                 ask: { type: "string", description: "El pedido tal cual te llegaría, sin «@plan»" },
@@ -432,9 +432,10 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
       handler: async (_sub, a) => {
         if (dest?.handle && dest.handle !== "plan") return { ok: false, error: "sólo @plan sugiere pedidos" };
         if (!dest?.channelId) return { ok: false, error: "sin room no hay dónde publicar" };
-        const items = suggestItems(a.items);
-        if (typeof items === "string") return { ok: false, error: items };
         const db = await import("../../db.server");
+        const roomRepos = (await db.listRoomRepos(dest.channelId)).map((r) => r.repo);
+        const items = suggestItems(a.items, roomRepos);
+        if (typeof items === "string") return { ok: false, error: items };
         const ch = await db.getChannelById(dest.channelId);
         if (!ch) return { ok: false, error: "room no encontrado" };
         const { resolvedAgents } = await import("../../agents.server");

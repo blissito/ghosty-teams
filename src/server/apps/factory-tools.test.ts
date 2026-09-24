@@ -82,3 +82,16 @@ describe("título del pedido", () => {
     expect(planTitle("Explícito", "## Historia")).toBe("Explícito");
   });
 });
+
+describe("pedidos sugeridos con varios repos", () => {
+  it("cada uno dice su repo; con uno solo se asume", async () => {
+    const { suggestItems } = await import("./factory-tools.server");
+    const it1 = { size: "chico", title: "Pruebas", ask: "agrega pruebas de vitest para las funciones puras de utils.ts", why: "sin pruebas" };
+    const two = [it1, { ...it1, title: "Otra" }];
+    expect(suggestItems(two, ["acme/web", "acme/api"])).toMatch(/de cuál repo/);
+    const ok = suggestItems(two.map((x) => ({ ...x, repo: "acme/api" })), ["acme/web", "acme/api"]);
+    expect(Array.isArray(ok) && ok[0].repo).toBe("acme/api");
+    const single = suggestItems(two, ["acme/web"]);
+    expect(Array.isArray(single) && single[1].repo).toBe("acme/web");
+  });
+});

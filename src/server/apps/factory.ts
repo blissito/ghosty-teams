@@ -537,11 +537,18 @@ export const factoryMergeFn = createServerFn({ method: "POST" })
  * el primer pedido no depende de que alguien sepa qué pedir. Llave `factory:suggest:` para
  * caer en la rama de encargo de `fire()` (sin la cláusula del OK: aquí siempre hay trabajo).
  */
-export const factorySuggestFn = createServerFn({ method: "POST" }).handler(async () => {
+export const factorySuggestFn = createServerFn({ method: "POST" })
+  .validator((d: { repo?: string } | undefined) => d ?? {})
+  .handler(async ({ data }) => {
   const user = await requireOwner();
   const { getAppConfig } = await import("./installed.server");
   const cfg = await getAppConfig<FactoryCfg>("factory");
   if (!cfg?.roomId) throw new Error("la fábrica no está instalada");
+  // Con varios repos en el room, sobre cuál se sugiere (lo elige quien pica el botón).
+  const db = await import("../../db.server");
+  const roomRepos = (await db.listRoomRepos(cfg.roomId)).map((r) => r.repo);
+  const repo = data.repo && roomRepos.includes(data.repo) ? data.repo : roomRepos.length === 1 ? roomRepos[0] : "";
+  if (roomRepos.length > 1 && !repo) throw new Error("elige de qué repo sugerir");
   const { resolvedAgents, agentGroupId } = await import("../../agents.server");
   const plan = (await resolvedAgents()).find((a) => a.handle === "plan");
   if (!plan) throw new Error("no hay agente en @plan");
@@ -559,15 +566,15 @@ export const factorySuggestFn = createServerFn({ method: "POST" }).handler(async
     }),
     cause: "sugerir pedidos",
     text:
-      "Lee el repo de este room (issues abiertos, TODOs, código sin pruebas, CI) y sugiere 3 pedidos con " +
-      "factory_suggest: uno chico, uno mediano y uno con pruebas. Prefiere agregar sobre borrar; nada que toque " +
+      `Lee el repo ${repo || "de este room"} (issues abiertos, TODOs, código sin pruebas, CI) y sugiere 3 pedidos con ` +
+      `factory_suggest${repo ? ` (repo ${repo} en cada uno)` : ""}: uno chico, uno mediano y uno con pruebas. Prefiere agregar sobre borrar; nada que toque ` +
       "datos ni archivos de producción. No construyas ni planees todavía: sólo la tarjeta.",
     origin: await reqOrigin().catch(() => ""),
     dueAt: Math.floor(Date.now() / 1000),
   });
   armWakeups(ns);
   return { ok: true as const };
-});
+  });
 
 // ── Repos de la fábrica: CI y protección de la rama principal ────────────────
 
