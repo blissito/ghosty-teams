@@ -4,7 +4,7 @@
 //
 // Hoy: el webhook genérico de alertas de monitoreo. Las `factory_*` (corrida, estafeta,
 // tarjeta de plan) se suman aquí mismo.
-import type { ConnectorTool } from "../connectors/impl";
+import { notaNombres, type ConnectorTool, type ToolChannel } from "../connectors/impl";
 import type { ToolDest } from "../connectors/tool-token.server";
 import { isInstalled } from "./installed.server";
 
@@ -28,7 +28,12 @@ function threadRoot(dest: ToolDest | null): number | null {
 async function runOf(dest: ToolDest | null, runId: unknown) {
   const R = await import("./factory-runs.server");
   const id = Number(runId);
-  if (Number.isFinite(id) && id > 0) return R.getRun(id);
+  if (Number.isFinite(id) && id > 0) {
+    // Sólo corridas de ESTE room: con el id de otra, un agente invocado aquí leería o movería
+    // la de un room privado ajeno.
+    const run = await R.getRun(id);
+    return run && run.channelId === dest?.channelId ? run : null;
+  }
   const root = threadRoot(dest);
   return dest?.channelId && root ? R.runOfThread(dest.channelId, root) : null;
 }
@@ -189,12 +194,35 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
         await R.handoff(
           next,
           "build",
-          next.requestedBy,
+          // Con las credenciales de quien firmó (la 1ª construcción también): quien pidió
+          // puede no tener GitHub.
+          next.approvedBy ?? next.requestedBy,
           "corregir hallazgos de @check",
           `@check regresó el PR ${run.prUrl ?? ""} (vuelta ${next.loops} de 3). Corrige en la MISMA rama y cierra otra vez con factory_build_done (runId ${run.id}).\n\n## Hallazgos\n${findings}`,
           await origin(),
         );
         return { ok: true, status: next.status, note: "Regresado a @build." };
+      },
+    },
+    {
+      name: "factory_close",
+      description:
+        "Cierra la corrida de este hilo cuando una PERSONA lo pide o el PR ya se mezcló: outcome=merged (terminada) " +
+        "o cancelled (se abandona). Mueve la tarea a Done y libera el hilo para un pedido nuevo. Nunca la cierres por tu cuenta.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          runId: { type: "number" },
+          outcome: { type: "string", enum: ["merged", "cancelled"] },
+        },
+        required: ["outcome"],
+      },
+      handler: async (_sub, a) => {
+        const R = await import("./factory-runs.server");
+        const run = await runOf(dest, a.runId);
+        if (!run) return { ok: false, error: "no hay corrida en este hilo" };
+        const next = await R.applyEvent(run, a.outcome === "merged" ? "close" : "cancel");
+        return { ok: true, status: next.status };
       },
     },
     {
@@ -221,7 +249,7 @@ const ROLE_LINE: Record<string, string> = {
 };
 
 /** Bloque de contexto del turno: el papel del rol, la corrida del hilo y las alertas. null sin la app. */
-export async function factoryContext(dest: ToolDest | null): Promise<string | null> {
+export async function factoryContext(dest: ToolDest | null, toolChannel: ToolChannel = "gs-sdk"): Promise<string | null> {
   if (!(await isInstalled("factory").catch(() => false))) return null;
   const parts: string[] = ["[SOFTWARE FACTORY instalada en este espacio: @plan planea, @build construye, @check revisa; la plataforma pasa la estafeta y pide la firma humana."];
   const role = dest?.handle ? ROLE_LINE[dest.handle] : undefined;
@@ -240,6 +268,12 @@ export async function factoryContext(dest: ToolDest | null): Promise<string | nu
       );
     }
   }
+  // Misma frase que Tasks: tenerlas y no llamarlas es el otro modo de falla.
+  parts.push(
+    "Tus tools de la fábrica (factory_plan_submit, factory_build_done, factory_check_verdict, factory_status, factory_close) " +
+      "ya están disponibles en este turno: LLÁMALAS para cerrar tu paso; sin ellas la estafeta no avanza." +
+      notaNombres(toolChannel),
+  );
   parts.push(
     "ALERTAS DE MONITOREO: si piden conectar su monitoreo (Datadog, Grafana, Better Stack, UptimeRobot o cualquier herramienta con webhooks), usa alert_webhook_create { name } en el canal donde deben caer; la URL es SECRETA (sólo a quien la pidió). También alert_webhook_list y alert_webhook_delete. Para Sentry usa su conector.]",
   );

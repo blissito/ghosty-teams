@@ -17,7 +17,7 @@ export type FactoryConfig = {
   boardId: number | null;
 };
 
-type Row = { app: string; installed_by: string; installed_at: number; config: string };
+type Row = { app: string; installed_by: string; installed_at: number; config: string; uninstalled_at: number | null };
 
 const TTL_MS = 10_000;
 const cache = new Map<string, { at: number; rows: Map<string, Row> }>();
@@ -27,7 +27,7 @@ async function rowsOf(): Promise<Map<string, Row>> {
   const hit = cache.get(ns);
   if (hit && Date.now() - hit.at < TTL_MS) return hit.rows;
   // Si la tabla aún no existe (espacio que nunca corrió `ensureSchema` con ella), no hay apps.
-  const rows = (await dbq("SELECT app, installed_by, installed_at, config FROM gt_installed_apps", []).catch(
+  const rows = (await dbq("SELECT app, installed_by, installed_at, config, uninstalled_at FROM gt_installed_apps", []).catch(
     () => [],
   )) as Row[];
   const map = new Map(rows.map((r) => [r.app, r]));
@@ -36,12 +36,20 @@ async function rowsOf(): Promise<Map<string, Row>> {
 }
 
 export async function isInstalled(app: AppId): Promise<boolean> {
-  return (await rowsOf()).has(app);
+  const r = (await rowsOf()).get(app);
+  return !!r && !r.uninstalled_at;
 }
 
-export async function getAppConfig<T = Record<string, unknown>>(app: AppId): Promise<T | null> {
+/**
+ * Config de la app instalada. Con `includeUninstalled` devuelve también la de una
+ * instalación anterior (para reinstalar reusando caja y tablero).
+ */
+export async function getAppConfig<T = Record<string, unknown>>(
+  app: AppId,
+  opts?: { includeUninstalled?: boolean },
+): Promise<T | null> {
   const r = (await rowsOf()).get(app);
-  if (!r) return null;
+  if (!r || (r.uninstalled_at && !opts?.includeUninstalled)) return null;
   try {
     return JSON.parse(r.config) as T;
   } catch {
@@ -52,14 +60,15 @@ export async function getAppConfig<T = Record<string, unknown>>(app: AppId): Pro
 export async function recordInstall(app: AppId, by: string, config: Record<string, unknown>): Promise<void> {
   await dbq(
     `INSERT INTO gt_installed_apps (app, installed_by, config) VALUES (?, ?, ?)
-     ON CONFLICT(app) DO UPDATE SET installed_by = excluded.installed_by, config = excluded.config`,
+     ON CONFLICT(app) DO UPDATE SET installed_by = excluded.installed_by, config = excluded.config,
+                                    installed_at = unixepoch(), uninstalled_at = NULL`,
     [app, by, JSON.stringify(config)],
   );
   await invalidateApps();
 }
 
 export async function recordUninstall(app: AppId): Promise<void> {
-  await dbq("DELETE FROM gt_installed_apps WHERE app = ?", [app]);
+  await dbq("UPDATE gt_installed_apps SET uninstalled_at = unixepoch() WHERE app = ?", [app]);
   await invalidateApps();
 }
 

@@ -746,6 +746,9 @@ async function migrate(): Promise<void> {
     installed_at INTEGER NOT NULL DEFAULT (unixepoch()),
     config       TEXT NOT NULL DEFAULT '{}'
   )`);
+  // Desinstalar NO borra la fila: marca `uninstalled_at` y conserva `config` (caja, room,
+  // tablero) para que reinstalar reuse la misma caja y no choque con sus propios handles.
+  await addColumn("gt_installed_apps", "uninstalled_at", "INTEGER");
 
   // Corridas de la Software Factory: un pedido de principio a fin (plan → firma → build →
   // check → PR). La estafeta entre @plan, @build y @check la pasa la plataforma leyendo esto,
@@ -771,6 +774,8 @@ async function migrate(): Promise<void> {
     updated_at   INTEGER NOT NULL DEFAULT (unixepoch())
   )`);
   await exec("CREATE UNIQUE INDEX IF NOT EXISTS gt_factory_runs_root ON gt_factory_runs(channel_id, root_msg_id)");
+  // Quién firmó el plan vigente: con SUS credenciales (GitHub) trabaja @build en cada vuelta.
+  await addColumn("gt_factory_runs", "approved_by", "TEXT");
   // Cada versión del plan con su firma: la tarjeta de un plan viejo dice «reemplazado por vN».
   await exec(`CREATE TABLE IF NOT EXISTS gt_factory_plans (
     run_id     INTEGER NOT NULL,

@@ -823,11 +823,15 @@ export const postMessage = createServerFn({ method: "POST" })
     // Software Factory: «✅» o «cambios: …» en el hilo de una corrida es la firma del plan
     // (igual que los botones de la tarjeta). Sin mención a un agente: si la hay, es una
     // conversación con él. El origin se lee aquí, con el request vivo.
+    // ⚠️ Se ESPERA: si el mensaje fue una firma, nadie más lo contesta. El pedido raíz lleva
+    // `agent_handle="plan"`, así que sin esto el auto-seguir de abajo abría además un turno
+    // de @plan con cada «✅» (y con «cambios: …», dos @plan en paralelo y dos tarjetas).
+    let factorySigned = false;
     if (data.parentId !== null && !mentionedList.length && me?.sub && body) {
       const { reqOrigin } = await import("../origin.server");
       const origin = await reqOrigin().catch(() => "");
       const { maybeThreadDecision } = await import("./apps/factory-runs.server");
-      void maybeThreadDecision({ channelId: channel.id, rootId: data.parentId, text: body, sub: me.sub, who: name, origin });
+      factorySigned = await maybeThreadDecision({ channelId: channel.id, rootId: data.parentId, text: body, sub: me.sub, who: name, origin });
     }
     // Push a los usuarios @tagged (fire-and-forget resiliente).
     // `unresolved` viaja al cliente: un `@algo` que no es nadie y no despierta a ningún
@@ -872,6 +876,7 @@ export const postMessage = createServerFn({ method: "POST" })
       const parentFor = data.parentId ?? id; // top-level → abre hilo bajo TU mensaje
       for (const h of mentionedList) respondents.push({ handle: h, parent: parentFor, fleetThread: FLEET_THREAD, shellId: 0 });
     } else if (
+      !factorySigned &&
       data.parentId !== null &&
       parent?.agent_handle &&
       agents.some((a) => a.handle === parent.agent_handle) &&
@@ -892,7 +897,7 @@ export const postMessage = createServerFn({ method: "POST" })
       // describe ya está cubierto por el candado de la mención: si le hablas a otro, éste
       // no se mete.
       respondents.push({ handle: parent.agent_handle, parent: data.parentId, fleetThread: FLEET_THREAD, shellId: 0 });
-    } else if (quoted?.agent_handle && quoted.sender_sub == null && agents.some((a) => a.handle === quoted.agent_handle)) {
+    } else if (!factorySigned && quoted?.agent_handle && quoted.sender_sub == null && agents.some((a) => a.handle === quoted.agent_handle)) {
       // Citar el mensaje ESCRITO POR un agente (sin re-@mención) = responderle → ese agente
       // contesta en el MISMO contexto. `sender_sub == null` distingue un mensaje AUTORADO por
       // el agente (postAgent no setea sub) de un mensaje de un HUMANO que sólo TAGUEÓ al agente

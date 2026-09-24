@@ -1458,4 +1458,5 @@ export const en: Record<string, string> = {
   "Esperando al plan": "Waiting for the plan",
   "¿Qué cambiarías?": "What would you change?",
   "Enviando…": "Sending…",
+  "@check no pudo cerrarlo en 3 vueltas: ¿otra vuelta o replanear?": "@check couldn't close it in 3 rounds: another round or re-plan?",
 };

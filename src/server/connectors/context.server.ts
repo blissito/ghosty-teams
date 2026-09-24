@@ -80,7 +80,7 @@ export async function buildConnectorContext(
     if (recordatorios) blocks.push(recordatorios);
     // Apps instaladas en el espacio (hoy la Software Factory): su bloque sólo existe con ella.
     const { factoryContext } = await import("../apps/factory-tools.server");
-    const fabrica = await factoryContext(dest).catch(() => null);
+    const fabrica = await factoryContext(dest, toolChannel).catch(() => null);
     if (fabrica) blocks.push(fabrica);
     const ajenos = await contextoDeConectoresDelEquipo(sub);
     if (ajenos) blocks.push(ajenos);

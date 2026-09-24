@@ -59,10 +59,15 @@ export const installFactoryFn = createServerFn({ method: "POST" })
 
     // Los handles no pueden estar tomados por OTRO agente del espacio.
     const { getAppConfig, recordInstall } = await import("./installed.server");
-    const prev = await getAppConfig<{ fleetAgentId?: string; roomId?: number; boardId?: number | null }>("factory");
+    // La instalación anterior (aunque se haya desinstalado): su caja y su tablero se reusan.
+    const prev = await getAppConfig<{ fleetAgentId?: string; roomId?: number; boardId?: number | null }>("factory", {
+      includeUninstalled: true,
+    });
+    // Un handle sólo se toma si está libre o si ya es de la caja de la fábrica. Una fila sin
+    // `fleet_id` (webhook, A2A, ACP de un tercero) también es de OTRO: gs la repuntaría.
     for (const h of HANDLES) {
       const a = await db.getAgentByHandle(h);
-      if (a && a.fleet_id && a.fleet_id !== prev?.fleetAgentId)
+      if (a && (!a.fleet_id || a.fleet_id !== prev?.fleetAgentId))
         throw new Error(`@${h} ya lo usa otro agente de este espacio: renómbralo antes de instalar la fábrica`);
     }
 

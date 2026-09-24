@@ -29,7 +29,10 @@ export function PlanCard({ card, channelId }: { card: PlanCardData; channelId: n
   }, [refresh]);
   useRtSubscribe({
     onEvent: (ev) => {
-      if ((ev.t === "refresh" && ev.channelId === channelId) || ev.t === "message:new") refresh();
+      // Sólo lo de ESTE room: con cualquier mensaje de cualquier room cada tarjeta visible
+      // pedía su estado al servidor.
+      if (ev.t === "refresh" && ev.channelId === channelId) refresh();
+      else if (ev.t === "message:new" && (ev as any).msg?.channel_id === channelId) refresh();
     },
   });
 
@@ -53,7 +56,8 @@ export function PlanCard({ card, channelId }: { card: PlanCardData; channelId: n
 
   const superseded = st.version < st.current;
   // Se firma la versión vigente mientras la corrida espera firma (o tras escalar).
-  const canSign = !superseded && !st.decision && (st.status === "plan_review" || st.status === "escalated");
+  // Tras escalar se vuelve a decidir sobre el plan vigente aunque ya tenga firma.
+  const canSign = !superseded && ((st.status === "plan_review" && !st.decision) || st.status === "escalated");
 
   return (
     <div className="mt-1.5 max-w-xl overflow-hidden rounded-lg gt-card">
@@ -71,13 +75,16 @@ export function PlanCard({ card, channelId }: { card: PlanCardData; channelId: n
           </button>
         )}
         <div className="mt-3 flex flex-wrap items-center gap-2">
+          {canSign && st.status === "escalated" ? (
+            <span className="w-full text-xs font-semibold text-ink">⚠️ {t("@check no pudo cerrarlo en 3 vueltas: ¿otra vuelta o replanear?")}</span>
+          ) : null}
           {superseded ? (
             <span className="text-xs text-muted">{t("Reemplazado por la versión")} v{st.current}</span>
-          ) : st.decision === "approve" ? (
+          ) : st.decision === "approve" && !canSign ? (
             <span className="rounded-full bg-emerald-600 px-3 py-1 text-xs font-bold text-white">
               ✅ {t("Aprobado por")} {st.decidedBy}
             </span>
-          ) : st.decision === "changes" ? (
+          ) : st.decision === "changes" && !canSign ? (
             <span className="rounded-full border border-border px-3 py-1 text-xs font-bold text-ink">
               ↩ {st.decidedBy} {t("pidió cambios")}: «{st.note}»
             </span>

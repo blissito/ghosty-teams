@@ -22,6 +22,8 @@ export type Run = {
   headSha: string | null;
   taskRef: string | null;
   requestedBy: string;
+  /** Quien firmó el plan vigente; @build trabaja con sus credenciales. */
+  approvedBy: string | null;
 };
 
 const toRun = (r: Record<string, any>): Run => ({
@@ -39,6 +41,7 @@ const toRun = (r: Record<string, any>): Run => ({
   headSha: r.head_sha ?? null,
   taskRef: r.task_ref ?? null,
   requestedBy: String(r.requested_by),
+  approvedBy: r.approved_by ?? null,
 });
 
 export async function getRun(id: number): Promise<Run | null> {
@@ -77,12 +80,12 @@ export async function applyEvent(run: Run, event: RunEvent, patch: Partial<Recor
   const cols = Object.keys(patch);
   const sets = ["status = ?", "updated_at = unixepoch()", ...cols.map((c) => `${c} = ?`)];
   // Guarda contra carreras (dos firmas a la vez): sólo si sigue en el estado leído.
-  const rows = await dbq(`UPDATE gt_factory_runs SET ${sets.join(", ")} WHERE id = ? AND status = ? RETURNING *`, [
-    next,
-    ...cols.map((c) => patch[c] as never),
-    run.id,
-    run.status,
-  ]);
+  // Guarda también la VERSIÓN del plan: una firma de v1 que llega mientras @plan sube v2
+  // pasaría el filtro de estado (plan_review → plan_review) y aprobaría un plan que ya no es.
+  const rows = await dbq(
+    `UPDATE gt_factory_runs SET ${sets.join(", ")} WHERE id = ? AND status = ? AND plan_version = ? RETURNING *`,
+    [next, ...cols.map((c) => patch[c] as never), run.id, run.status, run.planVersion],
+  );
   if (!rows[0]) throw new Error(`la corrida #${run.id} cambió mientras tanto; vuelve a mirarla`);
   const updated = toRun(rows[0]);
   void syncTask(updated).catch(() => {});
@@ -180,9 +183,17 @@ export async function createTaskFor(run: Run, planMd: string): Promise<void> {
 
 async function syncTask(run: Run): Promise<void> {
   if (!run.taskRef) return;
-  await tasksCall(run.requestedBy, "task_labels", { id: run.taskRef, labels: [stageLabel(run.status)] });
+  // `set_labels` de Tasks es add/remove: la etapa nueva entra y las demás salen.
+  const all: RunStatus[] = ["planning", "plan_review", "building", "checking", "pr_review", "escalated", "done", "cancelled"];
+  const now = stageLabel(run.status);
+  await tasksCall(run.requestedBy, "task_labels", {
+    id: run.taskRef,
+    add: [now],
+    remove: all.map(stageLabel).filter((l) => l !== now),
+  });
   if (run.status === "building") await tasksCall(run.requestedBy, "task_move", { id: run.taskRef, column: "In Progress" });
-  if (run.status === "done") await tasksCall(run.requestedBy, "task_move", { id: run.taskRef, column: "Done" });
+  if (run.status === "done" || run.status === "cancelled")
+    await tasksCall(run.requestedBy, "task_move", { id: run.taskRef, column: "Done" });
 }
 
 export async function linkPrToTask(run: Run, url: string): Promise<void> {
@@ -232,7 +243,13 @@ export async function decide(opts: {
   if (version !== run.planVersion) throw new Error(`ese es el plan v${version}; el vigente es v${run.planVersion}`);
   const note = (opts.note ?? "").trim().slice(0, 2000);
   if (decision === "changes" && !note) throw new Error("di qué cambiar");
-  const next = await applyEvent(run, decision === "approve" ? "approve" : "changes");
+  // Replanear reinicia las vueltas de check (si no, un plan nuevo tras escalar volvía a
+  // escalar al primer hallazgo). Aprobar deja registrado con qué credenciales se construye.
+  const next = await applyEvent(
+    run,
+    decision === "approve" ? "approve" : "changes",
+    decision === "approve" ? (run.status === "escalated" ? { approved_by: sub } : { approved_by: sub, loops: 0 }) : { loops: 0 },
+  );
   await dbq("UPDATE gt_factory_plans SET decision = ?, decided_by = ?, note = ? WHERE run_id = ? AND version = ?", [
     decision,
     who,
