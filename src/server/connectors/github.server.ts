@@ -90,7 +90,7 @@ async function api(sub: string, path: string, init?: RequestInit): Promise<any> 
     // Función de plan, no de permiso: rulesets y protección de ramas en repos PRIVADOS de
     // cuentas gratis. Se deja el texto de GitHub para que quien lo lea sepa qué pide.
     if (/upgrade to github pro|make this repository public/i.test(body)) {
-      return { error: "GitHub pide GitHub Pro o Team para esto en repos privados (Upgrade to GitHub Pro or make this repository public)." };
+      return { error: "Límite de GitHub, no de Ghosty: en repos privados de cuentas gratis, GitHub pide Pro o Team para esto (Upgrade to GitHub Pro or make this repository public)." };
     }
     return {
       error:

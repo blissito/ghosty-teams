@@ -153,7 +153,7 @@ export function RepoReadiness({ channelId, repo, compact = false, onLevel, autoO
       const msg = e instanceof Error ? e.message : String(e);
       setError(
         /upgrade to github pro|make this repository public/i.test(msg)
-          ? t("GitHub sólo deja proteger ramas de repos privados con GitHub Pro o Team (o si el repo es público).")
+          ? t("Límite de GitHub, no de Ghosty: en cuentas gratis, GitHub no deja proteger la rama de un repo privado. Con GitHub Pro o Team (o un repo público) se activa con un clic.")
           : /permiso|permission|403/i.test(msg)
             ? t("Tienes que ser admin del repo y aceptar el permiso de Ghosty en GitHub.")
             : msg,
@@ -216,7 +216,7 @@ export function RepoReadiness({ channelId, repo, compact = false, onLevel, autoO
                         href="https://github.com/pricing"
                         target="_blank"
                         rel="noreferrer"
-                        title={t("GitHub sólo deja proteger ramas de repos privados con GitHub Pro o Team (o si el repo es público).")}
+                        title={t("Límite de GitHub, no de Ghosty: en cuentas gratis, GitHub no deja proteger la rama de un repo privado. Con GitHub Pro o Team (o un repo público) se activa con un clic.")}
                         className="inline-flex shrink-0 items-center gap-1 rounded-md border border-border px-2 py-0.5 text-[11px] font-semibold text-muted hover:bg-surface-3 hover:text-ink"
                       >
                         {t("Requiere GitHub Pro")} <ExternalLink size={9} />
@@ -333,7 +333,7 @@ export function RepoReadiness({ channelId, repo, compact = false, onLevel, autoO
         ) : fixable > 0 ? (
           <p className="text-xs text-muted">{t("Se prepara desde el room de la Software Factory.")}</p>
         ) : !protectedOk && r.facts.protectionPlanRequired ? (
-          <p className="text-xs text-muted">{t("Para proteger la rama de un repo privado, GitHub pide GitHub Pro o Team. Mientras, la fábrica nunca mezcla sin tu aprobación.")}</p>
+          <p className="text-xs text-muted">{t("Límite de GitHub, no de Ghosty: proteger la rama de un repo privado pide GitHub Pro o Team. Mientras, la fábrica nunca mezcla sin tu aprobación.")}</p>
         ) : !protectedOk ? (
           <p className="text-xs text-muted">{t("Sólo falta proteger la rama principal.")}</p>
         ) : null}
