@@ -3,7 +3,7 @@
 // depende de saber qué pedir (ni de un agente externo que lo redacte).
 import { useState } from "react";
 import { useT } from "../../i18n";
-import { postMessage } from "../../server/chat";
+import { askInRoom } from "../../lib/ask-in-room";
 import type { AsksCardData } from "../../lib/ebdoc";
 
 const SIZE_TONE: Record<string, string> = {
@@ -22,7 +22,8 @@ export function AsksCard({ card }: { card: AsksCardData }) {
     setBusy(i);
     setErr("");
     try {
-      await postMessage({ data: { slug: card.roomSlug, parentId: null, body: `@plan ${card.items[i].ask}` } });
+      // Enviar Y despertar a @plan: con sólo publicar, el pedido se quedaba sin respuesta.
+      await askInRoom(card.roomSlug, `@plan ${card.items[i].ask}`);
       setSent((s) => ({ ...s, [i]: true }));
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));

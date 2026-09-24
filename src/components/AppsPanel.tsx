@@ -9,6 +9,7 @@ import { createFactoryAgentFn, factorySchedulesFn, factorySuggestFn, setFactoryS
 import { githubInstallationReposFn } from "../server/room-repos";
 import { listChannelsFn } from "../server/chat";
 import ConfirmModal from "./ConfirmModal";
+import { AskAgentHint } from "./AskAgentHint";
 import { Toggle } from "./Toggle";
 
 type Repos = Awaited<ReturnType<typeof githubInstallationReposFn>>;
@@ -466,12 +467,24 @@ export function SuggestAsks({ roomSlug }: { roomSlug: string | null }) {
 // Tareas programadas (planes Equipo y Agencia): a su hora @plan revisa y, si hay algo,
 // PROPONE un plan que espera firma. Sin nada que atender no deja mensaje.
 type Sched = Awaited<ReturnType<typeof factorySchedulesFn>>[number];
-const SCHED_LABEL: Record<string, { icon: string; title: string; when: string }> = {
-  nightly: { icon: "🌙", title: "Revisión nocturna", when: "L–V a las" },
-  deps: { icon: "📦", title: "Dependencias", when: "lunes a las" },
+const SCHED_LABEL: Record<string, { icon: string; title: string; when: string; what: string; ask: string }> = {
+  nightly: {
+    icon: "🌙",
+    title: "Revisión nocturna",
+    when: "L–V a las",
+    what: "@plan mira lo del día en el repo: PRs mezclados, CI en rojo, alertas e issues nuevos. Si hay un arreglo chico, te deja un plan para firmar.",
+    ask: "¿qué revisas en la revisión nocturna, qué me dejarías si encuentras algo y qué pasa si no hay nada?",
+  },
+  deps: {
+    icon: "📦",
+    title: "Dependencias",
+    when: "lunes a las",
+    what: "@plan revisa dependencias, avisos de seguridad y versiones mayores. Si vale la pena, te deja UN plan agrupado para firmar.",
+    ask: "¿qué revisas en la revisión de dependencias y cómo decides qué actualizar?",
+  },
 };
 
-export function SchedulesEditor() {
+export function SchedulesEditor({ roomSlug = null }: { roomSlug?: string | null } = {}) {
   const t = useT();
   const [rows, setRows] = useState<Sched[] | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -514,6 +527,9 @@ export function SchedulesEditor() {
                   </option>
                 ))}
               </select>
+              <p className="order-last w-full pl-6 text-xs leading-relaxed text-muted">
+                {t(l.what)} <AskAgentHint roomSlug={roomSlug} handle="plan" question={t(l.ask)} label={t("Pregúntale")} />
+              </p>
               <div className="ml-auto">
                 <Toggle
                   on={r.enabled}

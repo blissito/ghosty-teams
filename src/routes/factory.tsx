@@ -14,6 +14,7 @@ import { me } from "../server/auth";
 import { factoryOverviewFn, factoryStatusFn, type FactoryStatus } from "../server/apps/factory";
 import { RepoReadiness } from "../components/RepoReadiness";
 import { RolesEditor, SchedulesEditor, SuggestAsks } from "../components/AppsPanel";
+import { AskAgentHint } from "../components/AskAgentHint";
 
 type Overview = Awaited<ReturnType<typeof factoryOverviewFn>>;
 let cache: Overview | null = null;
@@ -87,7 +88,8 @@ function FactoryPage() {
               </>
             ) : (
               t("@plan planea, @build construye, @check revisa. Tú firmas y mezclas.")
-            )}
+            )}{" "}
+            <AskAgentHint roomSlug={data?.room?.slug ?? null} handle="plan" question={t("¿cómo funciona la Fábrica Agéntica y cómo te pido algo?")} label={t("¿Cómo funciona?")} />
           </p>
         </div>
       </div>
@@ -107,12 +109,15 @@ function FactoryPage() {
           <section className="mt-6">
             <h2 className="text-sm font-semibold text-ink">{t("Pedidos")}</h2>
             <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
-              {[
-                [t("Pedidos"), String(data.stats.total)],
-                [t("Se concretan"), data.stats.successRate == null ? "—" : `${Math.round(data.stats.successRate * 100)}%`],
-                [t("Vueltas de check"), data.stats.avgLoops == null ? "—" : data.stats.avgLoops.toFixed(1)],
-                [t("Del pedido al PR"), duration(data.stats.medianToPrSeconds)],
-              ].map(([k, v]) => (
+              {/* Sólo lo que ya tiene datos: un «—» es una métrica que no mide nada. */}
+              {(
+                [
+                  [t("Pedidos"), String(data.stats.total)],
+                  [t("Se concretan"), data.stats.successRate == null ? null : `${Math.round(data.stats.successRate * 100)}%`],
+                  [t("Vueltas de check"), data.stats.avgLoops == null ? null : data.stats.avgLoops.toFixed(1)],
+                  [t("Del pedido al PR"), data.stats.medianToPrSeconds == null ? null : duration(data.stats.medianToPrSeconds)],
+                ].filter(([, v]) => v != null) as [string, string][]
+              ).map(([k, v]) => (
                 <div key={k} className="rounded-lg border border-border bg-surface-2 px-3 py-2">
                   <p className="text-[11px] text-muted">{k}</p>
                   <p className="text-lg font-semibold tabular-nums text-ink">{v}</p>
@@ -141,13 +146,19 @@ function FactoryPage() {
                 </button>
               ))}
             </div>
-            <ul className="mt-2 divide-y divide-border rounded-xl border border-border">
+            <ul className="mt-2 divide-y divide-border overflow-hidden rounded-xl border border-border">
               {runs.length === 0 && <li className="px-3 py-4 text-sm text-muted">{filter === "live" ? t("Nadie está trabajando en un pedido ahora.") : t("Todavía no hay pedidos.")}</li>}
               {runs.map((r) => (
-                <li key={r.id} className="flex items-center gap-3 px-3 py-2.5">
+                <li
+                  key={r.id}
+                  className={`group relative flex items-center gap-3 px-3 py-2.5 ${
+                    r.status === "done" ? "bg-emerald-600/10 hover:bg-emerald-600/15" : "hover:bg-surface-2"
+                  }`}
+                >
                   <span className="w-10 shrink-0 font-mono text-xs text-muted">#{r.id}</span>
                   <div className="min-w-0 flex-1">
-                    <a href={r.threadUrl ?? "#"} className="block truncate text-sm font-medium text-ink hover:underline">
+                    {/* Toda la fila abre el hilo del pedido (la liga se estira sobre la fila). */}
+                    <a href={r.threadUrl ?? "#"} className="block truncate text-sm font-medium text-ink after:absolute after:inset-0 after:content-['']">
                       {r.title}
                     </a>
                     <p className="truncate text-[11px] text-muted">
@@ -169,10 +180,11 @@ function FactoryPage() {
                     {t(STAGE[r.status] ?? r.status)}
                   </span>
                   {r.prUrl && (
-                    <a href={r.prUrl} target="_blank" rel="noreferrer" className="shrink-0 text-xs text-muted hover:text-ink">
+                    <a href={r.prUrl} target="_blank" rel="noreferrer" className="relative z-10 shrink-0 text-xs text-muted hover:text-ink">
                       PR ↗
                     </a>
                   )}
+                  <span className="shrink-0 text-xs font-semibold text-brand group-hover:underline">{t("Hilo")} →</span>
                 </li>
               ))}
             </ul>
@@ -206,7 +218,7 @@ function FactoryPage() {
                 <h2 className="text-sm font-semibold text-ink">{t("Automático")}</h2>
                 <div className="mt-2 rounded-xl border border-border bg-surface-2 p-3 text-sm">
                   <SuggestAsks roomSlug={owner.room?.slug ?? null} />
-                  <SchedulesEditor />
+                  <SchedulesEditor roomSlug={owner.room?.slug ?? null} />
                 </div>
               </section>
             </>

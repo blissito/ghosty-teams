@@ -13,6 +13,8 @@ describe("números de la fábrica", () => {
     expect(s).toMatchObject({ total: 5, merged: 2, cancelled: 1, escalated: 1, open: 2 });
     expect(s.successRate).toBeCloseTo(2 / 3);
     expect(s.avgLoops).toBe(0.5);
+    // Uno mezclado sin prReadyAt (anterior a la medición) igual cuenta sus vueltas.
+    expect(runStats([row("done", 2)]).avgLoops).toBe(2);
     expect(s.medianToPrSeconds).toBe(900);
   });
 
