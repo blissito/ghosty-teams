@@ -5,7 +5,7 @@
 import { useEffect, useState } from "react";
 import { Factory, Loader2, ExternalLink } from "lucide-react";
 import { useT } from "../i18n";
-import { createFactoryAgentFn, factoryStatusFn, installFactoryFn, setFactoryRolesFn, uninstallFactoryFn, type FactoryStatus } from "../server/apps/factory";
+import { createFactoryAgentFn, factorySchedulesFn, setFactoryScheduleFn, factoryStatusFn, installFactoryFn, setFactoryRolesFn, uninstallFactoryFn, type FactoryStatus } from "../server/apps/factory";
 import { githubInstallationReposFn } from "../server/room-repos";
 import { listChannelsFn } from "../server/chat";
 import ConfirmModal from "./ConfirmModal";
@@ -78,6 +78,7 @@ function Installed({ status, onChange }: { status: FactoryStatus; onChange: () =
         {t("Room")}: <b>#{status.room?.slug ?? "—"}</b> · {t("Repos")}: {status.repos.length ? status.repos.join(", ") : "—"}
       </p>
       <RolesEditor status={status} onChange={onChange} />
+      <SchedulesEditor />
       <div className="flex gap-2 pt-1">
         {status.room && (
           <a href={`/c/${status.room.slug}`} className="rounded-lg bg-brand px-3 py-1.5 text-xs font-semibold text-white hover:opacity-90">
@@ -420,6 +421,76 @@ function RolesEditor({ status, onChange }: { status: FactoryStatus; onChange: ()
           {busy ? t("Aplicando…") : t("Guardar roles")}
         </button>
       )}
+    </div>
+  );
+}
+
+// Tareas programadas (planes Equipo y Agencia): a su hora @plan revisa y, si hay algo,
+// PROPONE un plan que espera firma. Sin nada que atender no deja mensaje.
+type Sched = Awaited<ReturnType<typeof factorySchedulesFn>>[number];
+const SCHED_LABEL: Record<string, { icon: string; title: string; when: string }> = {
+  nightly: { icon: "🌙", title: "Revisión nocturna", when: "L–V a las" },
+  deps: { icon: "📦", title: "Dependencias", when: "lunes a las" },
+};
+
+function SchedulesEditor() {
+  const t = useT();
+  const [rows, setRows] = useState<Sched[] | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const load = () => factorySchedulesFn().then(setRows).catch(() => setRows([]));
+  useEffect(() => {
+    void load();
+  }, []);
+  if (!rows) return null;
+  const save = async (r: Sched, patch: Partial<Sched>) => {
+    setBusy(r.kind);
+    try {
+      await setFactoryScheduleFn({ data: { kind: r.kind, enabled: patch.enabled ?? r.enabled, hour: patch.hour ?? r.hour } });
+      await load();
+    } finally {
+      setBusy(null);
+    }
+  };
+  return (
+    <div className="mt-3 space-y-2">
+      <p className="text-xs font-semibold text-muted">
+        {t("Tareas programadas")} <span className="font-normal">· {t("incluidas en Equipo y Agencia")}</span>
+      </p>
+      <div className="divide-y divide-border rounded-lg border border-border bg-surface">
+        {rows.map((r) => {
+          const l = SCHED_LABEL[r.kind];
+          return (
+            <div key={r.kind} className="flex flex-wrap items-center gap-2 px-3 py-2 text-sm">
+              <span>{l.icon}</span>
+              <span className="font-semibold text-ink">{t(l.title)}</span>
+              <span className="text-xs text-muted">{t(l.when)}</span>
+              <select
+                value={r.hour}
+                disabled={busy === r.kind}
+                onChange={(e) => save(r, { hour: Number(e.target.value) })}
+                className="rounded-md border border-border bg-surface-2 px-2 py-1 text-sm text-ink"
+              >
+                {Array.from({ length: 24 }, (_, h) => (
+                  <option key={h} value={h}>
+                    {String(h).padStart(2, "0")}:00
+                  </option>
+                ))}
+              </select>
+              <label className="ml-auto inline-flex cursor-pointer items-center gap-2 text-xs text-muted">
+                <input
+                  type="checkbox"
+                  checked={r.enabled}
+                  disabled={busy === r.kind}
+                  onChange={(e) => save(r, { enabled: e.target.checked })}
+                  className="size-4 accent-[var(--color-brand,#7c3aed)]"
+                />
+                {r.enabled ? t("Encendida") : t("Apagada")}
+              </label>
+            </div>
+          );
+        })}
+      </div>
+      <p className="text-xs text-muted">{t("@plan revisa a esa hora y, si encuentra algo, propone un plan que espera tu firma. Si no hay nada, no deja mensaje.")}</p>
     </div>
   );
 }

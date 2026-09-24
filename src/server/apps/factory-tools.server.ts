@@ -66,8 +66,20 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
         const { dbq } = await import("../../dbq.server");
         let run = await runOf(dest, a.runId);
         if (!run) {
-          const root = threadRoot(dest);
-          if (!root) return { ok: false, error: "no encuentro el mensaje del pedido para colgar la corrida" };
+          let root = threadRoot(dest);
+          if (!root) {
+            // Turno sin hilo (una tarea programada despierta a @plan top-level): el pedido
+            // nace aquí, con su cara, y la corrida cuelga de él.
+            const db0 = await import("../../db.server");
+            const bus = await import("../bus.server");
+            const { currentNamespace } = await import("../tenant.server");
+            const head = "🗓️ Revisión programada";
+            const title0 = String(a.title || planMd.split("\n")[0]).replace(/^#+\s*/, "").slice(0, 120);
+            const posted = await db0.postAgent(dest.channelId, null, `**${head}:** ${title0}`, "msg", dest.handle || "plan", dest.name || "Plan", dest.topic || "general", dest.avatar || "");
+            const msg = await db0.getMessage(posted.id);
+            if (msg) bus.publish(bus.ch.room(await currentNamespace(), dest.channelId), { t: "message:new", msg });
+            root = posted.id;
+          }
           const db = await import("../../db.server");
           const repos = (await db.listRoomRepos(dest.channelId)).map((r) => r.repo);
           const repo = a.repo ? String(a.repo) : repos.length === 1 ? repos[0] : null;

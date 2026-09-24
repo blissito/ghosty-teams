@@ -56,6 +56,10 @@ export async function ensureSchema(): Promise<void> {
           armWakeups(ns);
         } catch { /* best-effort */ }
         try {
+          const { armFactorySchedules } = await import("./apps/factory-schedules.server");
+          armFactorySchedules(ns);
+        } catch { /* best-effort */ }
+        try {
           const { armPrWatches } = await import("./pr-watches.server");
           armPrWatches(ns);
         } catch { /* best-effort */ }
@@ -776,6 +780,20 @@ async function migrate(): Promise<void> {
   await exec("CREATE UNIQUE INDEX IF NOT EXISTS gt_factory_runs_root ON gt_factory_runs(channel_id, root_msg_id)");
   // Quién firmó el plan vigente: con SUS credenciales (GitHub) trabaja @build en cada vuelta.
   await addColumn("gt_factory_runs", "approved_by", "TEXT");
+  // Tareas programadas de la Software Factory (revisión nocturna, dependencias): a su hora
+  // la plataforma despierta a @plan en el room de la fábrica con un encargo fijo. Una fila
+  // por tipo; `owner_sub` = con qué credenciales (GitHub) trabaja @plan.
+  await exec(`CREATE TABLE IF NOT EXISTS gt_factory_schedules (
+    kind          TEXT PRIMARY KEY,
+    enabled       INTEGER NOT NULL DEFAULT 0,
+    hour          INTEGER NOT NULL,
+    weekdays_only INTEGER NOT NULL DEFAULT 1,
+    tz            TEXT NOT NULL,
+    next_at       INTEGER,
+    owner_sub     TEXT NOT NULL,
+    origin        TEXT NOT NULL DEFAULT '',
+    updated_at    INTEGER NOT NULL DEFAULT (unixepoch())
+  )`);
   // Cada versión del plan con su firma: la tarjeta de un plan viejo dice «reemplazado por vN».
   await exec(`CREATE TABLE IF NOT EXISTS gt_factory_plans (
     run_id     INTEGER NOT NULL,

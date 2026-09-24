@@ -1482,4 +1482,13 @@ export const en: Record<string, string> = {
   "Todavía no hay agentes con Claude, DeepSeek o Codex: crea uno para cada rol aquí mismo.": "No agents with Claude, DeepSeek or Codex yet: create one for each role right here.",
   "+ Crear agente nuevo…": "+ Create a new agent…",
   "Nombre del agente": "Agent name",
+  "Tareas programadas": "Scheduled tasks",
+  "incluidas en Equipo y Agencia": "included in Team and Agency",
+  "Revisión nocturna": "Nightly review",
+  "Dependencias": "Dependencies",
+  "L–V a las": "Mon–Fri at",
+  "lunes a las": "Mondays at",
+  "Encendida": "On",
+  "Apagada": "Off",
+  "@plan revisa a esa hora y, si encuentra algo, propone un plan que espera tu firma. Si no hay nada, no deja mensaje.": "@plan reviews at that time and, if it finds something, proposes a plan that waits for your sign-off. If there's nothing, it leaves no message.",
 };

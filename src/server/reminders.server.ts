@@ -61,10 +61,10 @@ export function isValidTz(tz: string): boolean {
   try { fmtFor(tz); return true; } catch { return false; }
 }
 
-type Wall = { y: number; mo: number; d: number; h: number; mi: number };
+export type Wall = { y: number; mo: number; d: number; h: number; mi: number };
 
 /** La hora de pared que marca el reloj de `tz` en ese instante. */
-function wallOf(ms: number, tz: string): Wall {
+export function wallOf(ms: number, tz: string): Wall {
   const p = Object.fromEntries(fmtFor(tz).formatToParts(new Date(ms)).map((x) => [x.type, x.value]));
   return { y: +p.year, mo: +p.month, d: +p.day, h: +p.hour % 24, mi: +p.minute };
 }

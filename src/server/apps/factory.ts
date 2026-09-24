@@ -308,3 +308,28 @@ export const factoryDecisionFn = createServerFn({ method: "POST" })
     });
     return { ok: true as const, status: next.status };
   });
+
+// ── Tareas programadas (revisión nocturna, dependencias) ─────────────────────
+
+export const factorySchedulesFn = createServerFn({ method: "GET" }).handler(async () => {
+  await requireOwner();
+  const { listSchedules } = await import("./factory-schedules.server");
+  return listSchedules();
+});
+
+export const setFactoryScheduleFn = createServerFn({ method: "POST" })
+  .validator((d: { kind: "nightly" | "deps"; enabled: boolean; hour: number }) => d)
+  .handler(async ({ data }) => {
+    const user = await requireOwner();
+    if (data.kind !== "nightly" && data.kind !== "deps") throw new Error("tarea desconocida");
+    // La hora se entiende en la zona de quien la programa (la misma que usan los recordatorios).
+    const { dbq } = await import("../../dbq.server");
+    const rem = await import("../reminders.server");
+    const rows = await dbq("SELECT tz FROM gc_users WHERE sub = ?", [user.sub]).catch(() => []);
+    const tz = rows[0]?.tz && rem.isValidTz(String(rows[0].tz)) ? String(rows[0].tz) : rem.DEFAULT_TZ;
+    const { saveSchedule } = await import("./factory-schedules.server");
+    const { reqOrigin } = await import("../../origin.server");
+    const origin = await reqOrigin().catch(() => "");
+    const nextAt = await saveSchedule(data.kind, { enabled: !!data.enabled, hour: Number(data.hour) }, user.sub, tz, origin);
+    return { ok: true as const, nextAt };
+  });
