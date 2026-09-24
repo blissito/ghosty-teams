@@ -20,7 +20,7 @@ export type RunStatus =
   | "done"
   | "cancelled";
 
-export type RunEvent = "plan_submitted" | "approve" | "changes" | "build_done" | "check_pass" | "check_fail" | "close" | "merged" | "cancel";
+export type RunEvent = "plan_submitted" | "approve" | "changes" | "build_done" | "check_pass" | "check_fail" | "check_blocked" | "close" | "merged" | "cancel";
 
 export const MAX_LOOPS = 3;
 
@@ -44,6 +44,9 @@ export function nextStatus(status: RunStatus, event: RunEvent, loops = 0): RunSt
     case "checking":
       if (event === "check_pass") return "pr_review";
       if (event === "check_fail") return loops + 1 >= MAX_LOOPS ? "escalated" : "building";
+      // Lo que falta no lo puede hacer @build (una tool, un permiso, un acceso): regresárselo
+      // sólo gasta vueltas. Pasa directo a una persona.
+      if (event === "check_blocked") return "escalated";
       return null;
     case "escalated":
       // Una persona decide: mandar a construir otra vez o replanear.

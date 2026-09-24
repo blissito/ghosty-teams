@@ -73,3 +73,12 @@ describe("planTitle", () => {
     expect(planTitle("", "Sin encabezado\nresto")).toBe("Sin encabezado");
   });
 });
+
+describe("título del pedido", () => {
+  it("salta los encabezados de sección del plan", async () => {
+    const { planTitle } = await import("./factory-tools.server");
+    expect(planTitle(undefined, "## Historia\nqueremos x\n## Brief técnico\n...")).toBe("queremos x");
+    expect(planTitle(undefined, "# Limpiar la raíz\n## Historia\n...")).toBe("Limpiar la raíz");
+    expect(planTitle("Explícito", "## Historia")).toBe("Explícito");
+  });
+});

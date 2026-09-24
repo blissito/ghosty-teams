@@ -48,3 +48,13 @@ describe("parseThreadDecision", () => {
     for (const t of ["¿y si lo hacemos semanal?", "va a tardar mucho?", "cambios", "✅ pero ponme en copia"]) expect(parseThreadDecision(t)).toBeNull();
   });
 });
+
+describe("atajos al cierre y al bloqueo", () => {
+  it("bloqueo de herramienta escala a la primera; merged cierra desde cualquier etapa viva", () => {
+    expect(nextStatus("checking", "check_blocked")).toBe("escalated");
+    expect(nextStatus("building", "check_blocked")).toBeNull();
+    expect(nextStatus("checking", "merged")).toBe("done");
+    expect(nextStatus("escalated", "merged")).toBe("done");
+    expect(nextStatus("cancelled", "merged")).toBeNull();
+  });
+});

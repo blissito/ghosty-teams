@@ -562,7 +562,32 @@ const PR_CHECK_EVERY_MS = 120_000;
  * cierra sin mezclar), con un mensaje al final del hilo: así nadie tiene que adivinar si
  * la fábrica sigue trabajando. Lo llama el tick de `factory-schedules.server.ts`.
  */
+let titlesRepaired = false;
+
+/** Una vez por proceso: pedidos que quedaron titulados con un encabezado de sección
+ *  («Historia») recuperan su nombre del plan v1. */
+async function repairRunTitles(): Promise<void> {
+  if (titlesRepaired) return;
+  titlesRepaired = true;
+  const rows = await dbq(
+    `SELECT r.id, p.plan_md FROM gt_factory_runs r JOIN gt_factory_plans p ON p.run_id = r.id AND p.version = 1
+     WHERE lower(r.title) IN ('historia','brief','brief técnico','riesgos','plan','contexto','resumen','objetivo','alcance')`,
+    [],
+  ).catch(() => []);
+  const { planTitle } = await import("./factory-tools.server");
+  const db = await import("../../db.server");
+  for (const r of rows) {
+    // El título de la v1 vive en la raíz del hilo («**Plan:** <título>»); si no, del plan.
+    const run = await getRun(Number(r.id));
+    const root = run ? await db.getMessage(run.rootMsgId).catch(() => null) : null;
+    const fromRoot = /^\*\*[^*]+:\*\*\s*(.+)$/m.exec(String(root?.body ?? ""))?.[1]?.trim();
+    const title = (fromRoot && !/^(historia|plan)$/i.test(fromRoot) ? fromRoot : planTitle(undefined, String(r.plan_md ?? ""))).slice(0, 120);
+    if (title) await dbq("UPDATE gt_factory_runs SET title = ? WHERE id = ?", [title, Number(r.id)]).catch(() => {});
+  }
+}
+
 export async function closeFinishedRuns(): Promise<void> {
+  await repairRunTitles();
   // Autocorrección: un pedido cancelado (reciente) cuyo PR SÍ se mezcló es un pedido
   // terminado. Pasa cuando alguien lo cierra a mano antes de que el tick vea el merge.
   const wrong = await dbq(

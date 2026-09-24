@@ -484,7 +484,7 @@ export async function ambientContext(
     `Lectura: github_list_repos, github_list_issues, github_get_issue, ` +
     `github_list_prs, github_get_pr, github_pr_files, github_read_file, github_search_code, ` +
     `github_checkout, github_workflow_runs, github_workflow_run_logs, github_pr_checks. Escritura: github_create_review, github_merge_pr, github_comment, github_update_issue, github_create_issue, ` +
-    `github_create_branch, github_write_file, github_create_pr, github_mark_ready, github_enable_auto_merge, ` +
+    `github_create_branch, github_write_file, github_delete_file, github_create_pr, github_mark_ready, github_enable_auto_merge, ` +
     `github_update_branch, github_update_pr_base, github_watch_pr. ` +
     notaNombres(opts?.toolChannel) +
     `Si te piden "conecta mi repo" o "agrega este repo", contesta con github_install_link. ` +
@@ -1447,6 +1447,43 @@ const ALL_TOOLS: ConnectorTool[] = [
         }),
       });
       return r?.error ? r : { ok: true, commit: r?.commit?.sha, url: r?.content?.html_url, asBot: w.bot };
+    },
+  },
+  {
+    name: "github_delete_file",
+    description:
+      "Borra un archivo en una rama de trabajo, con su commit (nunca en la principal). Úsala cuando el plan pide ELIMINAR archivos: sin ella, un «borra X» no se podía cumplir.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        ...repoProp,
+        path: str("Ruta del archivo a borrar."),
+        message: str("Mensaje del commit."),
+        branch: str("Rama de trabajo donde commitear (no la principal)."),
+      },
+      required: ["repo", "path", "message", "branch"],
+    },
+    handler: async (sub, a) => {
+      const p = repoPath(a.repo);
+      if (!p) return BAD_REPO;
+      const w = await writeToken(sub, p);
+      if ("error" in w) return w;
+      const branch = String(a.branch ?? "").trim();
+      if (!branch) return { error: "Falta la rama." };
+      // Borrar en la principal se salta el PR y la revisión: nunca.
+      const info = await apiWith(w.token, `/repos/${p}`);
+      if (branch === String(info?.default_branch ?? "main")) return { error: "No se borra en la rama principal: hazlo en tu rama de trabajo y entra por PR." };
+      const path = String(a.path).replace(/^\/+/, "");
+      const cur = await apiWith(w.token, `/repos/${p}/contents/${path}?ref=${encodeURIComponent(branch)}`);
+      if (cur?.error) return { error: `No encuentro ${path} en ${branch}: ${cur.error}` };
+      if (Array.isArray(cur)) return { error: `${path} es una carpeta: borra sus archivos uno por uno.` };
+      const meta = w.bot ? await readMeta(sub) : null;
+      const message = String(a.message) + (meta?.login ? coAuthorTrailer(meta.login) : "");
+      const r = await apiWith(w.token, `/repos/${p}/contents/${path}`, {
+        method: "DELETE",
+        body: JSON.stringify({ message, sha: cur?.sha, branch }),
+      });
+      return r?.error ? r : { ok: true, deleted: path, commit: r?.commit?.sha, asBot: w.bot };
     },
   },
   {

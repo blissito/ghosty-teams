@@ -69,9 +69,14 @@ export function suggestItems(raw: unknown): SuggestedAsk[] | string {
   return out;
 }
 
-/** Título de la corrida: el explícito, o el primer encabezado/renglón del plan. */
+/** Encabezados de SECCIÓN del plan: nunca son el nombre del pedido (así quedó #1 como «Historia»). */
+const SECTION_HEADING = /^(historia|brief( técnico)?|riesgos?( y lo que no se hará)?|plan|contexto|resumen|objetivo|criterios( de aceptación)?|alcance|qué no se hará|pruebas|cómo)\s*:?\s*$/i;
+
+/** Título de la corrida: el explícito, o el primer encabezado del plan que no sea de sección. */
 export function planTitle(title: unknown, planMd: string): string {
-  const t = String(title ?? "").trim() || (planMd.match(/^#+\s*(.+)$/m)?.[1] ?? planMd.split("\n")[0]);
+  const explicit = String(title ?? "").trim();
+  const heading = [...planMd.matchAll(/^#+\s*(.+)$/gm)].map((m) => m[1].trim()).find((h) => !SECTION_HEADING.test(h));
+  const t = explicit || heading || planMd.split("\n").find((l) => l.trim() && !/^#/.test(l)) || "";
   return t.replace(/^#+\s*/, "").trim().slice(0, 120);
 }
 
@@ -132,7 +137,9 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
         const firstPlan = run.planVersion === 0;
         // El título sigue al plan vigente: antes se congelaba con la primera versión y viajaba
         // así a @build, @check, la tarjeta y la tarea.
-        const title = planTitle(a.title, planMd);
+        // Sólo con título EXPLÍCITO: sin él, una v2 le cambiaba el nombre al pedido por su
+        // primer encabezado («Historia»).
+        const title = String(a.title ?? "").trim() ? planTitle(a.title, planMd) : "";
         if (!firstPlan && title && title !== run.title) {
           await dbq("UPDATE gt_factory_runs SET title = ? WHERE id = ?", [title, run.id]);
           run = { ...run, title };
@@ -241,6 +248,12 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
           runId: { type: "number", description: "El pedido (si no, el del hilo)" },
           pass: { type: "boolean", description: "true = listo para revisión humana" },
           findings: { type: "string", description: "Hallazgos (obligatorio si pass=false), en markdown breve" },
+          blocked: {
+            type: "boolean",
+            description:
+              "true si lo que falta NO lo puede resolver @build con sus herramientas (falta una tool, un permiso o un acceso). " +
+              "No se le regresa: pasa directo a una persona. Úsalo en vez de regresar lo mismo varias veces.",
+          },
         },
         required: ["pass"],
       },
@@ -308,6 +321,16 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
           return { ok: true, status: next.status, note: "La plataforma ya avisó en el hilo y sacó el PR de borrador. Termina sin repetirlo." };
         }
         if (!findings) return { ok: false, error: "con pass=false los hallazgos son obligatorios" };
+        if (a.blocked === true) {
+          const next = await R.applyEvent(run, "check_blocked");
+          await R.postInThread(
+            next,
+            "check",
+            `⚠️ **Necesita una decisión** — @build no puede resolver esto con sus herramientas, así que no se lo regresé:\n\n${findings}\n\n` +
+              `Contesta «✅» para otra vuelta de @build (si ya lo destrabaste), o «cambios: …» para replanear.`,
+          );
+          return { ok: true, status: next.status, note: "Escalado a una persona. No lo repitas." };
+        }
         const next = await R.applyEvent(run, "check_fail", { loops: run.loops + 1 });
         if (next.status === "escalated") {
           await R.postInThread(
