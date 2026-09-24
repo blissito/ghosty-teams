@@ -1447,4 +1447,15 @@ export const en: Record<string, string> = {
   "Revisé los webhooks de alertas": "Checked the alerts webhooks",
   "Borrando el webhook de alertas": "Deleting the alerts webhook",
   "Borré el webhook de alertas": "Deleted the alerts webhook",
+
+  // Tarjeta de plan de la Software Factory.
+  "Ver el plan completo": "See the full plan",
+  "Reemplazado por la versión": "Replaced by version",
+  "Aprobado por": "Approved by",
+  "pidió cambios": "asked for changes",
+  "Firmando…": "Signing…",
+  "o contesta «✅» / «cambios: …» en el hilo": "or reply «✅» / «cambios: …» in the thread",
+  "Esperando al plan": "Waiting for the plan",
+  "¿Qué cambiarías?": "What would you change?",
+  "Enviando…": "Sending…",
 };

@@ -117,7 +117,10 @@ export async function enqueueAlertInvestigation(opts: {
     const hash = createHash("sha1").update(alert.key).digest("hex").slice(0, 16);
     const { enqueueWakeup, mintWakeRef, armWakeups } = await import("../wakeups.server");
     const ok = await enqueueWakeup({
-      key: `hook:${ref.channelId}:${hash}:${day}`,
+      // ⚠️ Prefijo `alert:` a propósito: `fire()` sólo quita la cláusula «si no hay nada,
+      // contesta OK» a las llaves `alert:`. Con otra, el agente contestaba «OK» y el hilo
+      // de la alerta quedaba vacío (medido con las de #soporte).
+      key: `alert:hook:${ref.channelId}:${hash}:${day}`,
       ref: mintWakeRef({
         sub: ref.ownerSub,
         ns: ref.ns,

@@ -1132,6 +1132,8 @@ export function bubbleWithoutEbDoc(
     // previa genérica del sitio. Un fence sin `strip` no es medio bug: son tres.
     body = stripTask(body);
     body = stripTests(body);
+    // La de plan de la Software Factory: el fence sólo trae ids, la tarjeta lee el resto.
+    body = stripPlanCard(body);
     // El efecto no deja nada en el cuerpo: no es una tarjeta que se lea después, es algo que
     // PASA al llegar el mensaje. Sin esto, el `{"fx":"confetti"}` queda de recuadro de código
     // en la burbuja para siempre — el mismo bug que describe el comentario de `stripTask`.
@@ -1320,6 +1322,39 @@ export function extractTask(body: string): TaskCardData | null {
 /** El cuerpo sin el fence. Lo de alrededor es la respuesta y se conserva entera. */
 export function stripTask(body: string): string {
   const open = body.match(/```gt-task[^\n]*\n/);
+  if (!open || open.index == null) return body;
+  const before = body.slice(0, open.index);
+  const rest = body.slice(open.index + open[0].length);
+  const closeIdx = rest.indexOf("```");
+  const after = closeIdx === -1 ? "" : rest.slice(closeIdx + 3);
+  return [before.trim(), after.trim()].filter(Boolean).join("\n\n");
+}
+
+/* ── Tarjeta de PLAN de la Software Factory (```gt-plan```) ───────────────── */
+// La publica la PLATAFORMA (`factory_plan_submit`), no el modelo: el fence sólo lleva
+// `{runId, version}` y la tarjeta lee el plan y su firma al pintar. Sus botones (Aprobar /
+// Pedir cambios) firman con la sesión de QUIEN HACE CLIC — nunca mandan texto al chat.
+
+export type PlanCardData = { runId: number; version: number };
+
+export function extractPlanCard(body: string): PlanCardData | null {
+  const open = body.match(/```gt-plan[^\n]*\n/);
+  if (!open || open.index == null) return null;
+  const rest = body.slice(open.index + open[0].length);
+  const closeIdx = rest.indexOf("```");
+  if (closeIdx === -1) return null;
+  try {
+    const p = JSON.parse(rest.slice(0, closeIdx).trim()) as Record<string, unknown>;
+    const runId = Number(p.runId);
+    const version = Number(p.version);
+    return runId > 0 && version > 0 ? { runId, version } : null;
+  } catch {
+    return null;
+  }
+}
+
+export function stripPlanCard(body: string): string {
+  const open = body.match(/```gt-plan[^\n]*\n/);
   if (!open || open.index == null) return body;
   const before = body.slice(0, open.index);
   const rest = body.slice(open.index + open[0].length);

@@ -747,6 +747,43 @@ async function migrate(): Promise<void> {
     config       TEXT NOT NULL DEFAULT '{}'
   )`);
 
+  // Corridas de la Software Factory: un pedido de principio a fin (plan → firma → build →
+  // check → PR). La estafeta entre @plan, @build y @check la pasa la plataforma leyendo esto,
+  // no los agentes. `root_msg_id` = el mensaje del pedido: todo cuelga de su hilo.
+  // `head_sha` = la cabeza del PR al cerrar @build; si cambia antes del veredicto de @check,
+  // @check empujó código y el veredicto se rechaza (su regla es no editar nunca).
+  await exec(`CREATE TABLE IF NOT EXISTS gt_factory_runs (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    channel_id   INTEGER NOT NULL,
+    root_msg_id  INTEGER NOT NULL,
+    topic        TEXT NOT NULL DEFAULT 'general',
+    title        TEXT NOT NULL,
+    status       TEXT NOT NULL,
+    plan_version INTEGER NOT NULL DEFAULT 0,
+    loops        INTEGER NOT NULL DEFAULT 0,
+    repo         TEXT,
+    branch       TEXT,
+    pr_url       TEXT,
+    head_sha     TEXT,
+    task_ref     TEXT,
+    requested_by TEXT NOT NULL,
+    created_at   INTEGER NOT NULL DEFAULT (unixepoch()),
+    updated_at   INTEGER NOT NULL DEFAULT (unixepoch())
+  )`);
+  await exec("CREATE UNIQUE INDEX IF NOT EXISTS gt_factory_runs_root ON gt_factory_runs(channel_id, root_msg_id)");
+  // Cada versión del plan con su firma: la tarjeta de un plan viejo dice «reemplazado por vN».
+  await exec(`CREATE TABLE IF NOT EXISTS gt_factory_plans (
+    run_id     INTEGER NOT NULL,
+    version    INTEGER NOT NULL,
+    plan_md    TEXT NOT NULL,
+    msg_id     INTEGER,
+    decision   TEXT,
+    decided_by TEXT,
+    note       TEXT,
+    at         INTEGER NOT NULL DEFAULT (unixepoch()),
+    PRIMARY KEY (run_id, version)
+  )`);
+
   await exec(`CREATE TABLE IF NOT EXISTS gt_room_sales_boards (
     channel_id   INTEGER PRIMARY KEY,
     board_id     TEXT NOT NULL,

@@ -137,3 +137,57 @@ export const uninstallFactoryFn = createServerFn({ method: "POST" }).handler(asy
   await recordUninstall("factory");
   return { ok: true as const };
 });
+
+// ── La tarjeta de plan ───────────────────────────────────────────────────────
+
+/** Lo que pinta la tarjeta `gt-plan`: se lee al pintar, nunca se congela en el mensaje. */
+export const factoryPlanCardFn = createServerFn({ method: "POST" })
+  .validator((d: { runId: number; version: number }) => d)
+  .handler(async ({ data }) => {
+    const me = await sessionUser();
+    if (!me) throw new Error("no autenticado");
+    const R = await import("./factory-runs.server");
+    const run = await R.getRun(Number(data.runId));
+    if (!run) return null;
+    // Quien no ve el room no ve la corrida.
+    const db = await import("../../db.server");
+    if (!(await db.listChannels(me.sub, me.isOwner)).some((c) => c.id === run.channelId)) return null;
+    const plan = await R.getPlan(run.id, Number(data.version));
+    if (!plan) return null;
+    return {
+      runId: run.id,
+      title: run.title,
+      status: run.status,
+      version: plan.version,
+      current: run.planVersion,
+      planMd: plan.planMd,
+      decision: plan.decision,
+      decidedBy: plan.decidedBy,
+      note: plan.note,
+      prUrl: run.prUrl,
+    };
+  });
+
+/** Aprobar / pedir cambios desde la tarjeta. Firma QUIEN HACE CLIC, no el agente. */
+export const factoryDecisionFn = createServerFn({ method: "POST" })
+  .validator((d: { runId: number; version: number; decision: "approve" | "changes"; note?: string }) => d)
+  .handler(async ({ data }) => {
+    const me = await sessionUser();
+    if (!me) throw new Error("no autenticado");
+    const R = await import("./factory-runs.server");
+    const run = await R.getRun(Number(data.runId));
+    if (!run) throw new Error("corrida no encontrada");
+    const db = await import("../../db.server");
+    if (!(await db.listChannels(me.sub, me.isOwner)).some((c) => c.id === run.channelId)) throw new Error("no ves ese room");
+    const { reqOrigin } = await import("../../origin.server");
+    const next = await R.decide({
+      run,
+      version: Number(data.version),
+      decision: data.decision === "changes" ? "changes" : "approve",
+      note: data.note,
+      sub: me.sub,
+      who: me.name || "alguien",
+      origin: await reqOrigin().catch(() => ""),
+    });
+    return { ok: true as const, status: next.status };
+  });

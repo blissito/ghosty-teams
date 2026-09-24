@@ -1,0 +1,305 @@
+// Corridas de la Software Factory: persistencia, estafeta y publicación en el hilo.
+//
+// La estafeta la pasa la PLATAFORMA: cuando un rol cierra su paso con su tool `factory_*`
+// (o una persona firma el plan), aquí se cambia el estado y se despierta al rol siguiente
+// con `enqueueWakeup` en el hilo del pedido. Ningún agente decide a quién le toca: así el
+// plan no se construye sin firma y @check no se salta.
+import { dbq } from "../../dbq.server";
+import { nextStatus, stageLabel, type RunEvent, type RunStatus } from "./factory-flow";
+
+export type Run = {
+  id: number;
+  channelId: number;
+  rootMsgId: number;
+  topic: string;
+  title: string;
+  status: RunStatus;
+  planVersion: number;
+  loops: number;
+  repo: string | null;
+  branch: string | null;
+  prUrl: string | null;
+  headSha: string | null;
+  taskRef: string | null;
+  requestedBy: string;
+};
+
+const toRun = (r: Record<string, any>): Run => ({
+  id: Number(r.id),
+  channelId: Number(r.channel_id),
+  rootMsgId: Number(r.root_msg_id),
+  topic: String(r.topic ?? "general"),
+  title: String(r.title),
+  status: r.status as RunStatus,
+  planVersion: Number(r.plan_version ?? 0),
+  loops: Number(r.loops ?? 0),
+  repo: r.repo ?? null,
+  branch: r.branch ?? null,
+  prUrl: r.pr_url ?? null,
+  headSha: r.head_sha ?? null,
+  taskRef: r.task_ref ?? null,
+  requestedBy: String(r.requested_by),
+});
+
+export async function getRun(id: number): Promise<Run | null> {
+  const rows = await dbq("SELECT * FROM gt_factory_runs WHERE id = ?", [id]);
+  return rows[0] ? toRun(rows[0]) : null;
+}
+
+export async function runOfThread(channelId: number, rootMsgId: number): Promise<Run | null> {
+  const rows = await dbq("SELECT * FROM gt_factory_runs WHERE channel_id = ? AND root_msg_id = ?", [channelId, rootMsgId]);
+  return rows[0] ? toRun(rows[0]) : null;
+}
+
+export async function getPlan(runId: number, version: number) {
+  const rows = await dbq("SELECT * FROM gt_factory_plans WHERE run_id = ? AND version = ?", [runId, version]);
+  const r = rows[0];
+  return r
+    ? {
+        runId,
+        version,
+        planMd: String(r.plan_md),
+        msgId: r.msg_id != null ? Number(r.msg_id) : null,
+        decision: (r.decision ?? null) as "approve" | "changes" | null,
+        decidedBy: (r.decided_by ?? null) as string | null,
+        note: (r.note ?? null) as string | null,
+      }
+    : null;
+}
+
+/**
+ * Aplica un evento: valida la transición y guarda. Lanza con un mensaje para el agente o
+ * la persona si el evento no aplica (p.ej. construir sin firma).
+ */
+export async function applyEvent(run: Run, event: RunEvent, patch: Partial<Record<string, unknown>> = {}): Promise<Run> {
+  const next = nextStatus(run.status, event, run.loops);
+  if (!next) throw new Error(`la corrida #${run.id} está en «${stageLabel(run.status)}»: no se puede ${event} ahora`);
+  const cols = Object.keys(patch);
+  const sets = ["status = ?", "updated_at = unixepoch()", ...cols.map((c) => `${c} = ?`)];
+  // Guarda contra carreras (dos firmas a la vez): sólo si sigue en el estado leído.
+  const rows = await dbq(`UPDATE gt_factory_runs SET ${sets.join(", ")} WHERE id = ? AND status = ? RETURNING *`, [
+    next,
+    ...cols.map((c) => patch[c] as never),
+    run.id,
+    run.status,
+  ]);
+  if (!rows[0]) throw new Error(`la corrida #${run.id} cambió mientras tanto; vuelve a mirarla`);
+  const updated = toRun(rows[0]);
+  void syncTask(updated).catch(() => {});
+  return updated;
+}
+
+// ── Publicar en el hilo ──────────────────────────────────────────────────────
+
+async function agentIdentity(handle: string) {
+  const { resolvedAgents } = await import("../../agents.server");
+  const a = (await resolvedAgents()).find((x) => x.handle === handle);
+  return { handle, name: a?.name ?? handle, avatar: a?.avatar ?? "" };
+}
+
+/** Publica en el hilo del pedido con la cara de un rol. `postAgent`: no despierta a nadie. */
+export async function postInThread(run: Run, handle: string, body: string): Promise<number | null> {
+  try {
+    const db = await import("../../db.server");
+    const bus = await import("../bus.server");
+    const { currentNamespace } = await import("../tenant.server");
+    const who = await agentIdentity(handle);
+    const { id } = await db.postAgent(run.channelId, run.rootMsgId, body, "msg", who.handle, who.name, run.topic, who.avatar);
+    const msg = await db.getMessage(id);
+    if (msg) bus.publish(bus.ch.room(await currentNamespace(), run.channelId), { t: "message:new", msg });
+    return id;
+  } catch (e) {
+    console.error("[factory] no pude publicar en el hilo", e);
+    return null;
+  }
+}
+
+/** El fence de la tarjeta de plan. La tarjeta lee estado y texto al pintar. */
+export const planCardFence = (runId: number, version: number) =>
+  "```gt-plan\n" + JSON.stringify({ runId, version }) + "\n```";
+
+// ── La estafeta ──────────────────────────────────────────────────────────────
+
+/**
+ * Despierta al rol siguiente en el hilo del pedido. `sub` = de quién son las credenciales
+ * del turno (su GitHub): quien firmó, o quien pidió.
+ */
+export async function handoff(run: Run, to: "plan" | "build" | "check", sub: string, cause: string, text: string, origin: string): Promise<boolean> {
+  const { resolvedAgents, agentGroupId } = await import("../../agents.server");
+  const agent = (await resolvedAgents()).find((a) => a.handle === to);
+  if (!agent) {
+    await postInThread(run, "plan", `⚠️ No encuentro a @${to} en este espacio: la fábrica está desinstalada o su handle cambió.`);
+    return false;
+  }
+  const { currentNamespace } = await import("../tenant.server");
+  const ns = await currentNamespace();
+  // Una conversación por corrida y rol: el contexto viaja en el encargo, y @check no hereda
+  // lo que @build pensó.
+  const groupId = await agentGroupId(agent, `factory-${run.id}`);
+  const { enqueueWakeup, mintWakeRef, armWakeups } = await import("../wakeups.server");
+  const ok = await enqueueWakeup({
+    key: `factory:${run.id}:${to}:${Date.now()}`,
+    ref: mintWakeRef({
+      sub,
+      ns,
+      groupId,
+      dest: { channelId: run.channelId, parentId: run.rootMsgId, topic: run.topic, handle: agent.handle, name: agent.name, avatar: agent.avatar },
+    }),
+    cause,
+    text: `[Corrida #${run.id} · «${run.title}»${run.repo ? ` · repo ${run.repo}` : ""}]\n${text}`,
+    origin,
+    dueAt: Math.floor(Date.now() / 1000) + 2,
+  });
+  if (ok) armWakeups(ns);
+  return ok;
+}
+
+// ── Tasks (best-effort: la corrida no depende del tablero) ───────────────────
+
+async function tasksCall(sub: string, name: string, args: Record<string, unknown>) {
+  const { getAppConfig } = await import("./installed.server");
+  const cfg = await getAppConfig<{ boardId?: number | null }>("factory");
+  if (!cfg?.boardId) return null;
+  const { currentSlug } = await import("../tenant.server");
+  const slug = await currentSlug();
+  if (!slug) return null;
+  const { callTasks } = await import("../tasks-bridge.server");
+  const r = await callTasks(slug, sub, cfg.boardId, name, args);
+  return r.ok ? (r.result as Record<string, any>) : null;
+}
+
+export async function createTaskFor(run: Run, planMd: string): Promise<void> {
+  const r = await tasksCall(run.requestedBy, "task_create", {
+    title: run.title,
+    description: planMd.slice(0, 8000),
+    labels: [stageLabel(run.status)],
+  }).catch(() => null);
+  const ref = r ? String(r.ref ?? r.id ?? "") : "";
+  if (ref) await dbq("UPDATE gt_factory_runs SET task_ref = ? WHERE id = ?", [ref, run.id]);
+}
+
+async function syncTask(run: Run): Promise<void> {
+  if (!run.taskRef) return;
+  await tasksCall(run.requestedBy, "task_labels", { id: run.taskRef, labels: [stageLabel(run.status)] });
+  if (run.status === "building") await tasksCall(run.requestedBy, "task_move", { id: run.taskRef, column: "In Progress" });
+  if (run.status === "done") await tasksCall(run.requestedBy, "task_move", { id: run.taskRef, column: "Done" });
+}
+
+export async function linkPrToTask(run: Run, url: string): Promise<void> {
+  if (!run.taskRef) return;
+  await tasksCall(run.requestedBy, "task_link", { id: run.taskRef, url, title: `PR · ${run.title}` }).catch(() => null);
+}
+
+// ── GitHub ───────────────────────────────────────────────────────────────────
+
+export function parsePrUrl(url: string): { repo: string; number: number } | null {
+  const m = String(url ?? "").match(/^https?:\/\/github\.com\/([^/\s]+\/[^/\s]+)\/pull\/(\d+)/i);
+  return m ? { repo: m[1], number: Number(m[2]) } : null;
+}
+
+/** La cabeza del PR y si es borrador. null si GitHub no contesta. */
+export async function prHead(sub: string, url: string): Promise<{ sha: string; draft: boolean } | null> {
+  const pr = parsePrUrl(url);
+  if (!pr) return null;
+  try {
+    const { allTools } = await import("../connectors/github.server");
+    const tool = allTools().find((t) => t.name === "github_get_pr");
+    const r = (await tool?.handler(sub, { repo: pr.repo, number: pr.number })) as any;
+    if (!r || r.error || !r.headSha) return null;
+    return { sha: String(r.headSha), draft: !!r.draft };
+  } catch {
+    return null;
+  }
+}
+
+// ── La firma humana (botón de la tarjeta o respuesta en el hilo) ─────────────
+
+/**
+ * Aprobar o pedir cambios sobre la versión vigente del plan. `sub` firma: sus credenciales
+ * (GitHub) son con las que @build trabaja después. Sólo aplica a la ÚLTIMA versión: firmar
+ * una tarjeta vieja sería aprobar un plan que ya no existe.
+ */
+export async function decide(opts: {
+  run: Run;
+  version: number;
+  decision: "approve" | "changes";
+  note?: string;
+  sub: string;
+  who: string;
+  origin: string;
+}): Promise<Run> {
+  const { run, version, decision, sub, who } = opts;
+  if (version !== run.planVersion) throw new Error(`ese es el plan v${version}; el vigente es v${run.planVersion}`);
+  const note = (opts.note ?? "").trim().slice(0, 2000);
+  if (decision === "changes" && !note) throw new Error("di qué cambiar");
+  const next = await applyEvent(run, decision === "approve" ? "approve" : "changes");
+  await dbq("UPDATE gt_factory_plans SET decision = ?, decided_by = ?, note = ? WHERE run_id = ? AND version = ?", [
+    decision,
+    who,
+    note || null,
+    run.id,
+    version,
+  ]);
+  const plan = await getPlan(run.id, version);
+  if (decision === "approve") {
+    // Desde `escalated` también se aprueba («otra vuelta»): el encargo lo dice.
+    const again = run.status === "escalated";
+    await handoff(
+      next,
+      "build",
+      sub,
+      again ? "otra vuelta tras escalar" : "construir el plan aprobado",
+      (again
+        ? `${who} pidió otra vuelta. Revisa los últimos hallazgos de @check en este hilo, corrige en la misma rama y cierra con factory_build_done.`
+        : `${who} aprobó el plan v${version}. Constrúyelo: rama nueva, código, pruebas, PR en BORRADOR, y cierra con factory_build_done.`) +
+        `\n\n## Plan aprobado (v${version})\n${plan?.planMd ?? ""}`,
+      opts.origin,
+    );
+  } else {
+    await handoff(
+      next,
+      "plan",
+      sub,
+      "rehacer el plan",
+      `${who} pidió cambios al plan v${version}: «${note}». Ajusta el plan (no discutas lo decidido) y entrégalo otra vez con factory_plan_submit.\n\n## Plan v${version}\n${plan?.planMd ?? ""}`,
+      opts.origin,
+    );
+  }
+  return next;
+}
+
+/**
+ * Firma escrita en el hilo: «✅», «aprobado», «cambios: …». Sólo aplica si el hilo tiene una
+ * corrida esperando firma; lo demás es conversación normal y no se toca. Nunca lanza.
+ */
+export async function maybeThreadDecision(opts: {
+  channelId: number;
+  rootId: number;
+  text: string;
+  sub: string;
+  who: string;
+  origin: string;
+}): Promise<boolean> {
+  try {
+    const { isInstalled } = await import("./installed.server");
+    if (!(await isInstalled("factory"))) return false;
+    const { parseThreadDecision } = await import("./factory-flow");
+    const d = parseThreadDecision(opts.text);
+    if (!d) return false;
+    const run = await runOfThread(opts.channelId, opts.rootId);
+    if (!run || (run.status !== "plan_review" && run.status !== "escalated")) return false;
+    await decide({
+      run,
+      version: run.planVersion,
+      decision: d.decision,
+      note: d.decision === "changes" ? d.note : undefined,
+      sub: opts.sub,
+      who: opts.who,
+      origin: opts.origin,
+    });
+    return true;
+  } catch (e) {
+    console.error("[factory] firma en el hilo", e);
+    return false;
+  }
+}

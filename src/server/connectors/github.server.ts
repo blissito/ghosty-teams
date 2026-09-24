@@ -419,6 +419,9 @@ const trimPr = (p: any) => ({
   merged: p?.merged ?? p?.merged_at != null,
   mergeable: p?.mergeable,
   head: p?.head?.ref,
+  // El SHA de la cabeza: la Software Factory lo compara antes y después de que @check revise
+  // para saber que no empujó nada (`apps/factory-runs.server.ts`).
+  headSha: p?.head?.sha,
   base: p?.base?.ref,
   changedFiles: p?.changed_files,
   additions: p?.additions,

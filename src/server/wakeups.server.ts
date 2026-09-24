@@ -157,9 +157,14 @@ async function fire(ns: string, w: Wakeup, ref: WakeRef): Promise<void> {
   // con quitar la cláusula: el prompt de gs (`tools-dispatch.server.ts`) le enseña al agente
   // que TODO mensaje que empiece con «⏰ Turno programado» se contesta «OK» si no hay nada
   // nuevo. Con esa marca contestaba «OK» y el hilo de la alerta quedaba vacío (medido 3 veces).
+  // La estafeta de la Software Factory (`factory:`) tampoco lleva la cláusula del OK: es un
+  // encargo con trabajo seguro (construir, revisar, rehacer el plan), no una revisión que
+  // pueda salir vacía.
   const text = w.key.startsWith("alert:")
     ? `🔎 Alerta de la plataforma para revisar. ${w.text}`
-    : `⏰ Turno programado por la plataforma (${w.cause}). ${w.text}\nSi no hay nada nuevo que entregar, contesta exactamente: OK`;
+    : w.key.startsWith("factory:")
+      ? `🏭 Encargo de la Software Factory (${w.cause}). ${w.text}`
+      : `⏰ Turno programado por la plataforma (${w.cause}). ${w.text}\nSi no hay nada nuevo que entregar, contesta exactamente: OK`;
 
   let shellId: number | null = null;
   const publish = (ev: Record<string, unknown>) => {

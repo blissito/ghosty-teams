@@ -820,6 +820,15 @@ export const postMessage = createServerFn({ method: "POST" })
     let created = await db.getMessage(id);
     if (created && files.length) [created] = await db.attachAttachments([created]);
     if (created) bus.publish(bus.ch.room(ns, channel.id), { t: "message:new", msg: created, nonce: data.nonce });
+    // Software Factory: «✅» o «cambios: …» en el hilo de una corrida es la firma del plan
+    // (igual que los botones de la tarjeta). Sin mención a un agente: si la hay, es una
+    // conversación con él. El origin se lee aquí, con el request vivo.
+    if (data.parentId !== null && !mentionedList.length && me?.sub && body) {
+      const { reqOrigin } = await import("../origin.server");
+      const origin = await reqOrigin().catch(() => "");
+      const { maybeThreadDecision } = await import("./apps/factory-runs.server");
+      void maybeThreadDecision({ channelId: channel.id, rootId: data.parentId, text: body, sub: me.sub, who: name, origin });
+    }
     // Push a los usuarios @tagged (fire-and-forget resiliente).
     // `unresolved` viaja al cliente: un `@algo` que no es nadie y no despierta a ningún
     // agente se quedaba en silencio absoluto (ni 👀 ni aviso). Ahora se dice, con los
