@@ -70,7 +70,7 @@ describe("tools de GitHub para la fábrica", () => {
       "POST /repos/acme/app/actions/runs/9/rerun-failed-jobs": { status: 403, json: { message: "Resource not accessible by integration" } },
       "GET /repos/acme/app/dependabot/alerts": { status: 403, json: { message: "Resource not accessible by integration" } },
     });
-    expect(((await tool("github_rerun_workflow").handler("u", { repo: "acme/app", run_id: 9 })) as any).error).toMatch(/Actions: write/);
+    expect(((await tool("github_rerun_workflow").handler("u", { repo: "acme/app", run_id: 9 })) as any).error).toMatch(/Actions: write.*github\.com\/settings\/installations/);
     expect(((await tool("github_dependabot_alerts").handler("u", { repo: "acme/app" })) as any).error).toMatch(/Dependabot alerts: read/);
   });
 });

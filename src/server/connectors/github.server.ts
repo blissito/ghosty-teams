@@ -215,6 +215,28 @@ async function writeToken(
   return botToken ? { token: botToken, bot: true } : { token: userToken, bot: false };
 }
 
+/**
+ * Liga directa a la página donde el dueño ACEPTA los permisos nuevos de la App en su
+ * instalación («Review request»). Cuenta personal → /settings/installations/<id>;
+ * organización → /organizations/<org>/settings/installations/<id>. Sin App o sin
+ * instalación, la lista general.
+ */
+async function permissionsReviewUrl(repoPath: string): Promise<string> {
+  const r = await appFetch(`/repos/${repoPath}/installation`).catch(() => null);
+  const id = typeof r?.id === "number" ? r.id : null;
+  if (!id) return "https://github.com/settings/installations";
+  const org = String(r?.account?.type ?? "") === "Organization" ? String(r?.account?.login ?? "") : "";
+  return org ? `https://github.com/organizations/${org}/settings/installations/${id}` : `https://github.com/settings/installations/${id}`;
+}
+
+/** Error de permiso faltante con la liga para aceptarlo (el agente la pasa tal cual). */
+async function missingPermission(repoPath: string, permission: string): Promise<{ error: string }> {
+  const url = await permissionsReviewUrl(repoPath);
+  return {
+    error: `A la GitHub App de Ghosty le falta el permiso «${permission}» en este repo. El dueño lo acepta aquí (botón «Review request» → Accept): ${url} — pásale la liga tal cual.`,
+  };
+}
+
 /** GET a la API con el JWT de la App (sin instalación). Devuelve `null` si falla. */
 async function appFetch(path: string): Promise<any> {
   const jwt = appJwtOrNull();
@@ -1442,8 +1464,7 @@ const ALL_TOOLS: ConnectorTool[] = [
       const p = repoPath(a.repo);
       if (!p) return BAD_REPO;
       const r = await api(sub, `/repos/${p}/actions/runs/${Number(a.run_id)}/rerun-failed-jobs`, { method: "POST" });
-      if (r?.error && /Sin permiso/.test(String(r.error)))
-        return { error: "La GitHub App de Ghosty todavía no tiene el permiso «Actions: write» en este repo: el dueño lo acepta en GitHub (Settings → Applications → Ghosty)." };
+      if (r?.error && /Sin permiso/.test(String(r.error))) return missingPermission(p, "Actions: write");
       return r?.error ? r : { ok: true };
     },
   },
@@ -1457,8 +1478,7 @@ const ALL_TOOLS: ConnectorTool[] = [
       const q = new URLSearchParams({ state: "open", per_page: "50" });
       if (a.severity) q.set("severity", String(a.severity));
       const r = await api(sub, `/repos/${p}/dependabot/alerts?${q}`);
-      if (r?.error && /Sin permiso/.test(String(r.error)))
-        return { error: "La GitHub App de Ghosty todavía no tiene el permiso «Dependabot alerts: read» en este repo: el dueño lo acepta en GitHub (Settings → Applications → Ghosty)." };
+      if (r?.error && /Sin permiso/.test(String(r.error))) return missingPermission(p, "Dependabot alerts: read");
       if (r?.error) return r;
       return (Array.isArray(r) ? r : []).map((x: any) => ({
         number: x?.number,
