@@ -663,8 +663,8 @@ export async function announcePreviews(): Promise<void> {
 export async function retryPreviews(by: { runId?: number; repo?: string }): Promise<number> {
   const rows = await dbq(
     by.runId
-      ? `UPDATE gt_factory_runs SET preview_state = NULL, preview_error = NULL WHERE id = ? AND preview_state = 'failed' RETURNING id, channel_id`
-      : `UPDATE gt_factory_runs SET preview_state = NULL, preview_error = NULL WHERE repo = ? AND preview_state = 'failed' RETURNING id, channel_id`,
+      ? `UPDATE gt_factory_runs SET preview_state = 'pending', preview_sha = NULL, preview_error = NULL WHERE id = ? AND preview_state = 'failed' RETURNING id, channel_id`
+      : `UPDATE gt_factory_runs SET preview_state = 'pending', preview_sha = NULL, preview_error = NULL WHERE repo = ? AND preview_state = 'failed' RETURNING id, channel_id`,
     [by.runId ?? by.repo ?? ""],
   ).catch(() => []);
   for (const r of rows) {

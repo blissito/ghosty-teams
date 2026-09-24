@@ -509,6 +509,7 @@ export const en: Record<string, string> = {
   "Reenvía canales y menciones desde tu workspace de Slack.": "Forwards channels and mentions from your Slack workspace.",
   "Refrescar": "Refresh",
   "Reintentar": "Retry",
+  "🏁 La fábrica terminó su parte. Se está construyendo la preview del PR para que lo revises.": "🏁 The factory did its part. The PR's preview is being built for you to review.",
   "Reproduce un sonido corto cuando llega algo nuevo. Apágalos todos o afina por tipo.": "Plays a short sound when something new arrives. Turn them all off or fine-tune by type.",
   "Reproducir": "Play",
   "Responde desde el chat.": "Reply from the chat.",
