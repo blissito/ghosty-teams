@@ -94,6 +94,12 @@ export function armWakeups(ns: string): void {
   void sweep();
 }
 
+/** Barre YA en vez de esperar al tick: un relevo entre agentes no debe tardar 30 s. */
+export function kickWakeups(ns: string): void {
+  armWakeups(ns);
+  void sweep();
+}
+
 async function sweep(): Promise<void> {
   for (const ns of Array.from(tenants)) {
     try {
@@ -164,7 +170,14 @@ async function fire(ns: string, w: Wakeup, ref: WakeRef): Promise<void> {
     ? `🔎 Alerta de la plataforma para revisar. ${w.text}`
     : w.key.startsWith("factory:")
       ? `🏭 Encargo de la Software Factory (${w.cause}). ${w.text}`
-      : `⏰ Turno programado por la plataforma (${w.cause}). ${w.text}\nSi no hay nada nuevo que entregar, contesta exactamente: OK`;
+      : w.key.startsWith("handoff:")
+        ? w.text
+        : `⏰ Turno programado por la plataforma (${w.cause}). ${w.text}\nSi no hay nada nuevo que entregar, contesta exactamente: OK`;
+  // Relevo entre agentes (`agent-handoff.server.ts`): llega con el pedido original del hilo y
+  // sus adjuntos, porque el relevado corre en su memoria del room y ése pedido no lo vio.
+  const handoff = w.key.startsWith("handoff:")
+    ? await (await import("./agent-handoff.server")).handoffTurnInput(dest.parentId ?? null, w.cause, w.text)
+    : null;
 
   let shellId: number | null = null;
   const publish = (ev: Record<string, unknown>) => {
@@ -182,7 +195,8 @@ async function fire(ns: string, w: Wakeup, ref: WakeRef): Promise<void> {
     handle,
     groupId: ref.groupId,
     sender: "Ghosty Studio",
-    text,
+    text: handoff?.text ?? text,
+    parts: handoff?.parts,
     invokerSub: ref.sub,
     originOverride: w.origin || undefined,
     dest: { ...dest, handle, name, avatar },
@@ -215,6 +229,19 @@ async function fire(ns: string, w: Wakeup, ref: WakeRef): Promise<void> {
     const { afterFactoryTurn } = await import("./apps/factory-runs.server");
     void afterFactoryTurn(w, ref, finalBody).catch(() => {});
   }
+  // La cadena sigue: si el relevado menciona a otro agente (o le regresa el turno a quien lo
+  // llamó), ése se despierta igual. El tope por hilo vive en `handoffFromReply`.
+  let handoffNotice = "";
+  if (handoff && dest.channelId != null) {
+    const { handoffFromReply } = await import("./agent-handoff.server");
+    const channel = await db.getChannelById(dest.channelId).catch(() => null);
+    if (channel) {
+      handoffNotice = await handoffFromReply({
+        ns, channel, parentId: dest.parentId ?? null, topic: dest.topic ?? "general",
+        fromHandle: handle, fromName: name, reply: finalBody, invokerSub: ref.sub, origin: w.origin,
+      }).catch(() => "");
+    }
+  }
   // Un `OK` es "nada que entregar": no se deja burbuja. Igual que en gs.
   if (!finalBody || finalBody === "OK") {
     if (shellId != null) await db.deleteMessage(shellId).catch(() => {});
@@ -225,7 +252,7 @@ async function fire(ns: string, w: Wakeup, ref: WakeRef): Promise<void> {
   // despertador se quedaba sin tarjeta.
   const { attachDeliveryFences } = await import("./delivery-fences.server");
   const delivered = await attachDeliveryFences(id, finalBody, dest);
-  const body = delivered?.body ?? finalBody;
+  const body = [delivered?.body ?? finalBody, handoffNotice].filter(Boolean).join("\n\n");
   await db.setMessageBody(id, body);
   publish({ t: "message:body", id, body });
   if (delivered?.attached) publish({ t: "refresh", channelId: dest.channelId ?? null, parentId: dest.parentId ?? null, dmId: dest.dmId ?? null });

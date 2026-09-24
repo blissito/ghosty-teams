@@ -879,7 +879,10 @@ export const postMessage = createServerFn({ method: "POST" })
     const respondents: { handle: string; parent: number | null; fleetThread: string; shellId: number; steered?: boolean }[] = [];
     if (mentionedList.length) {
       const parentFor = data.parentId ?? id; // top-level → abre hilo bajo TU mensaje
-      for (const h of mentionedList) respondents.push({ handle: h, parent: parentFor, fleetThread: FLEET_THREAD, shellId: 0 });
+      // «@a coordina con @b» arranca sólo a @a, que llama a @b cuando lo necesite. Antes
+      // arrancaban los dos con el mismo pedido y salían dos entregables (descti, 24-sep).
+      const { pickRespondents } = await import("./agent-handoff.server");
+      for (const h of pickRespondents(body, mentionedList)) respondents.push({ handle: h, parent: parentFor, fleetThread: FLEET_THREAD, shellId: 0 });
     } else if (
       !factorySigned &&
       data.parentId !== null &&
@@ -1150,6 +1153,12 @@ export const askAgent = createServerFn({ method: "POST" })
     // repitió tres veces en mayúsculas. Numerado porque el orden ES la dirección: es el
     // mismo de los FileParts (`gc_attachments ORDER BY id`).
     text = manifiestoAdjuntos(mediaAtts, { reentrega, ambito: mediaAtts === huecoAtts ? "conversación" : "hilo" }) + text;
+    // El mensaje nombra a OTROS agentes: cómo se les pasa trabajo (ver `agent-handoff.server.ts`).
+    {
+      const { coordinationHint } = await import("./agent-handoff.server");
+      const handles = (await resolvedAgents()).map((a) => a.handle);
+      text = (await coordinationHint(data.body, data.handle, handles).catch(() => "")) + text;
+    }
     // Nota de voz: la plataforma la transcribe y la antepone al texto del turno; el audio
     // viaja igual como adjunto. Ver `stt.server.ts`. Best-effort: si falla, no hay bloque.
     const { transcripcionesDelTurno } = await import("./stt.server");
@@ -1470,7 +1479,18 @@ export const askAgent = createServerFn({ method: "POST" })
     // quitando fences: un aviso pegado después se lo comería la siguiente. Metido aquí,
     // viaja con el texto y sobrevive a todas.
     const mencionesAgente = await notificarMencionesDelAgente(ns, channel, replyDelTurno, name).catch(() => "");
-    const reply = mencionesAgente ? `${replyDelTurno}\n\n${mencionesAgente}`.trim() : replyDelTurno;
+    // Relevo: un @agente en la respuesta lo despierta en este hilo (con tope por hilo).
+    // Un turno muerto no releva: su texto es trabajo a medias, no un encargo.
+    const relevo = turnResult.failure
+      ? ""
+      : await import("./agent-handoff.server")
+          .then((h) => h.handoffFromReply({
+            ns, channel, parentId: data.parentId ?? null, topic: topic ?? "general",
+            fromHandle: data.handle, fromName: name, reply: replyDelTurno,
+            invokerSub: poster?.sub ?? "", origin: origenDelTurno,
+          }))
+          .catch(() => "");
+    const reply = [replyDelTurno, mencionesAgente, relevo].filter(Boolean).join("\n\n").trim();
 
     const finalBody = reply.trim() ? reply : "(sin respuesta)";
     await db.setMessageBody(id, finalBody);
