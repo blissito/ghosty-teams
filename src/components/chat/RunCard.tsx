@@ -19,7 +19,7 @@ const WORKING: Record<string, string> = {
 
 const STEPS = [
   { key: "plan", label: "Plan", statuses: ["planning"] },
-  { key: "sign", label: "Firma", statuses: ["plan_review"] },
+  { key: "sign", label: "Aprobación", statuses: ["plan_review"] },
   { key: "build", label: "Build", statuses: ["building"] },
   { key: "check", label: "Check", statuses: ["checking", "escalated"] },
   { key: "pr", label: "PR", statuses: ["pr_review", "done"] },

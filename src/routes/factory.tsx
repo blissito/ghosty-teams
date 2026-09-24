@@ -27,7 +27,7 @@ export const Route = createFileRoute("/factory")({
 
 const STAGE: Record<string, string> = {
   planning: "Plan",
-  plan_review: "Firma",
+  plan_review: "Esperando aprobación",
   building: "Build",
   checking: "Check",
   pr_review: "PR",

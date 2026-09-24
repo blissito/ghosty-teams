@@ -62,7 +62,7 @@ export function stageLabel(status: RunStatus): string {
   return (
     {
       planning: "plan",
-      plan_review: "firma del plan",
+      plan_review: "esperando aprobación",
       building: "build",
       checking: "check",
       pr_review: "PR",

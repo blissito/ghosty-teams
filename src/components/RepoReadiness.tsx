@@ -280,7 +280,7 @@ export function RepoReadiness({ channelId, repo, compact = false, onLevel, autoO
             {t("Listo: el plan espera tu firma.")}{" "}
             {done.threadUrl && (
               <a href={done.threadUrl} className="font-semibold underline">
-                {t("Firmar el plan")} →
+                {t("Aprobar el plan")} →
               </a>
             )}
           </div>
