@@ -72,6 +72,7 @@ import { agentMetaFn, type AgentMeta } from "../../server/agent-meta";
 import { SmilePlus, Pencil, ArrowLeft, Reply, Square, Ban, CircleHelp, ShieldAlert, Github, Circle, Asterisk, ListChecks } from "lucide-react";
 import { useRtSubscribe } from "../../utils/rt-bus";
 import { PlanCard } from "./PlanCard";
+import { RunCard } from "./RunCard";
 import { Markdown } from "../../components/Markdown";
 import { Avatar } from "../../components/Avatar";
 import { unfurlLinkFn } from "../../server/unfurl";
@@ -79,7 +80,7 @@ import { registerModalEsc } from "../../utils/modal-esc";
 import { useScrollLock } from "../../utils/scroll-lock";
 import { type ArtifactView, viewFromAttachment } from "../../components/ArtifactPanel";
 import { FxOverlay } from "./FxOverlay";
-import { extractFx, extractEbDoc, bubbleWithoutEbDoc, extractToolState, extractSteps, extractTodos, extractAlert, extractAsk, extractPermission, extractAllPr, extractAllGh, extractTask, extractTests, extractPlanCard, type ToolState, type TodoState, type AlertCardData, type AskCardData, type PermissionCardData, type GhCardData, type PrCardData, type TaskCardData, type TestsCardData } from "../../lib/ebdoc";
+import { extractFx, extractEbDoc, bubbleWithoutEbDoc, extractToolState, extractSteps, extractTodos, extractAlert, extractAsk, extractPermission, extractAllPr, extractAllGh, extractTask, extractTests, extractPlanCard, extractRunCard, type ToolState, type TodoState, type AlertCardData, type AskCardData, type PermissionCardData, type GhCardData, type PrCardData, type TaskCardData, type TestsCardData } from "../../lib/ebdoc";
 import { prCardStateFn, runCardActionFn, taskCardStateFn, runTaskCardActionFn } from "../../server/connectors";
 import { answerAgentAskFn } from "../../server/agent-ask";
 import { answerAcpPermissionFn } from "../../server/agent-permission";
@@ -3051,6 +3052,10 @@ export function MessageRow({
               {(() => {
                 const pc = extractPlanCard(m.body);
                 return pc ? <PlanCard card={pc} channelId={m.channel_id ?? 0} /> : null;
+              })()}
+              {(() => {
+                const rc = extractRunCard(m.body);
+                return rc ? <RunCard card={rc} channelId={m.channel_id ?? 0} /> : null;
               })()}
               {(() => {
                 const ts = extractTests(m.body);

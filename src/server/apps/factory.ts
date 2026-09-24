@@ -333,3 +333,31 @@ export const setFactoryScheduleFn = createServerFn({ method: "POST" })
     const nextAt = await saveSchedule(data.kind, { enabled: !!data.enabled, hour: Number(data.hour) }, user.sub, tz, origin);
     return { ok: true as const, nextAt };
   });
+
+// ── La tarjeta viva de una corrida (```gt-run```) ────────────────────────────
+
+/** Estado de una corrida para su tarjeta viva en el room. Se lee al pintar. */
+export const factoryRunCardFn = createServerFn({ method: "POST" })
+  .validator((d: { runId: number }) => d)
+  .handler(async ({ data }) => {
+    const me = await sessionUser();
+    if (!me) throw new Error("no autenticado");
+    const R = await import("./factory-runs.server");
+    const run = await R.getRun(Number(data.runId));
+    if (!run) return null;
+    const db = await import("../../db.server");
+    const ch = (await db.listChannels(me.sub, me.isOwner)).find((c) => c.id === run.channelId);
+    if (!ch) return null; // quien no ve el room no ve la corrida
+    const plan = run.planVersion ? await R.getPlan(run.id, run.planVersion) : null;
+    return {
+      runId: run.id,
+      title: run.title,
+      status: run.status,
+      planVersion: run.planVersion,
+      loops: run.loops,
+      prUrl: run.prUrl,
+      threadUrl: `/c/${ch.slug}?thread=${run.rootMsgId}`,
+      // Firmable desde la tarjeta: el plan vigente espera firma (o hay que decidir tras escalar).
+      canSign: (run.status === "plan_review" && !!plan && !plan.decision) || run.status === "escalated",
+    };
+  });

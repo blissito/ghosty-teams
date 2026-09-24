@@ -97,6 +97,9 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
         const msgId = await R.postInThread(run, "plan", R.planCardFence(run.id, version));
         if (msgId) await dbq("UPDATE gt_factory_plans SET msg_id = ? WHERE run_id = ? AND version = ?", [msgId, run.id, version]);
         if (firstPlan) void R.createTaskFor(run, planMd).catch(() => {});
+        // La tarjeta viva en el room (la primera vez) y el aviso de que hay plan nuevo.
+        await R.ensureRunCard(run);
+        void R.refreshRoom(run.channelId);
         return {
           ok: true,
           runId: run.id,

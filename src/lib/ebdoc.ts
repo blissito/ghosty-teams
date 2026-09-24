@@ -1134,6 +1134,7 @@ export function bubbleWithoutEbDoc(
     body = stripTests(body);
     // La de plan de la Software Factory: el fence sólo trae ids, la tarjeta lee el resto.
     body = stripPlanCard(body);
+    body = stripRunCard(body);
     // El efecto no deja nada en el cuerpo: no es una tarjeta que se lea después, es algo que
     // PASA al llegar el mensaje. Sin esto, el `{"fx":"confetti"}` queda de recuadro de código
     // en la burbuja para siempre — el mismo bug que describe el comentario de `stripTask`.
@@ -1361,6 +1362,26 @@ export function stripPlanCard(body: string): string {
   const closeIdx = rest.indexOf("```");
   const after = closeIdx === -1 ? "" : rest.slice(closeIdx + 3);
   return [before.trim(), after.trim()].filter(Boolean).join("\n\n");
+}
+
+/* ── Tarjeta VIVA de una corrida de la Software Factory (```gt-run```) ─────── */
+// Top-level en el room: etapa de la corrida y firma sin abrir el hilo. Sólo lleva el id.
+
+export type RunCardData = { runId: number };
+
+export function extractRunCard(body: string): RunCardData | null {
+  const m = body.match(/```gt-run[^\n]*\n([\s\S]*?)```/);
+  if (!m) return null;
+  try {
+    const runId = Number((JSON.parse(m[1].trim()) as Record<string, unknown>).runId);
+    return runId > 0 ? { runId } : null;
+  } catch {
+    return null;
+  }
+}
+
+export function stripRunCard(body: string): string {
+  return body.replace(/```gt-run[^\n]*\n[\s\S]*?```/, "").trim();
 }
 
 /* ── Tarjeta de RESULTADO DE TESTS (```gt-tests```) ───────────────────────── */

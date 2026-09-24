@@ -89,6 +89,7 @@ export async function applyEvent(run: Run, event: RunEvent, patch: Partial<Recor
   if (!rows[0]) throw new Error(`la corrida #${run.id} cambió mientras tanto; vuelve a mirarla`);
   const updated = toRun(rows[0]);
   void syncTask(updated).catch(() => {});
+  void refreshRoom(updated.channelId);
   return updated;
 }
 
@@ -369,6 +370,7 @@ export async function startRunFromTask(opts: {
     [cfg.roomId, rootId, title, repos.length === 1 ? repos[0] : null, opts.taskRef, opts.requestedBy],
   );
   const run = (await getRun(Number(rows[0].id)))!;
+  await ensureRunCard(run);
   await handoff(
     run,
     "plan",
@@ -379,4 +381,40 @@ export async function startRunFromTask(opts: {
     opts.origin,
   );
   return { runId: run.id, existing: false };
+}
+
+// ── La tarjeta viva de la corrida (top-level en el room) ─────────────────────
+
+/** Avisa al room que algo de una corrida cambió: la tarjeta viva y la de plan se releen. */
+export async function refreshRoom(channelId: number): Promise<void> {
+  try {
+    const bus = await import("../bus.server");
+    const { currentNamespace } = await import("../tenant.server");
+    bus.publish(bus.ch.room(await currentNamespace(), channelId), { t: "refresh", channelId, parentId: null, dmId: null } as never);
+  } catch {
+    /* sin bus, la tarjeta se actualiza al recargar */
+  }
+}
+
+/**
+ * Publica UNA vez la tarjeta viva de la corrida en el room (top-level, con la cara de @plan).
+ * Dice en qué etapa va y deja firmar ahí mismo; el detalle vive en el hilo del pedido. Nunca
+ * lanza: sin tarjeta, la corrida funciona igual.
+ */
+export async function ensureRunCard(run: Run): Promise<void> {
+  try {
+    const rows = await dbq("SELECT card_msg_id FROM gt_factory_runs WHERE id = ?", [run.id]);
+    if (rows[0]?.card_msg_id) return;
+    const db = await import("../../db.server");
+    const bus = await import("../bus.server");
+    const { currentNamespace } = await import("../tenant.server");
+    const who = await agentIdentity("plan");
+    const body = "```gt-run\n" + JSON.stringify({ runId: run.id }) + "\n```";
+    const { id } = await db.postAgent(run.channelId, null, body, "msg", who.handle, who.name, run.topic, who.avatar);
+    await dbq("UPDATE gt_factory_runs SET card_msg_id = ? WHERE id = ? AND card_msg_id IS NULL", [id, run.id]);
+    const msg = await db.getMessage(id);
+    if (msg) bus.publish(bus.ch.room(await currentNamespace(), run.channelId), { t: "message:new", msg });
+  } catch (e) {
+    console.error("[factory] no pude publicar la tarjeta viva", e);
+  }
 }

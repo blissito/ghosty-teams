@@ -780,6 +780,9 @@ async function migrate(): Promise<void> {
   await exec("CREATE UNIQUE INDEX IF NOT EXISTS gt_factory_runs_root ON gt_factory_runs(channel_id, root_msg_id)");
   // Quién firmó el plan vigente: con SUS credenciales (GitHub) trabaja @build en cada vuelta.
   await addColumn("gt_factory_runs", "approved_by", "TEXT");
+  // La tarjeta VIVA de la corrida en el room (top-level): el estado de un vistazo y la firma
+  // sin abrir el hilo. Una por corrida; el detalle sigue en el hilo del pedido.
+  await addColumn("gt_factory_runs", "card_msg_id", "INTEGER");
   // Tareas programadas de la Software Factory (revisión nocturna, dependencias): a su hora
   // la plataforma despierta a @plan en el room de la fábrica con un encargo fijo. Una fila
   // por tipo; `owner_sub` = con qué credenciales (GitHub) trabaja @plan.
