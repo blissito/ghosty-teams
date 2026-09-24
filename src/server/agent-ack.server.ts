@@ -79,8 +79,27 @@ export async function ackEnd(
   handle: string,
   outcome: AckOutcome
 ): Promise<void> {
+  const runRoots = outcome === "done" ? await factoryRunRoots(messageIds) : new Set<number>();
   for (const id of messageIds) {
     await react(ns, id, handle, ACK_WORKING, false).catch(() => {});
+    // El pedido de la Software Factory NO se cierra con ✅: ahí el ✅ es la FIRMA, y un pedido
+    // sin firmar se leía como aprobado (visto 2026-09-24). Su estado lo lleva la tarjeta viva.
+    if (runRoots.has(id)) continue;
     await react(ns, id, handle, ACK_OUTCOME[outcome], true).catch(() => {});
+  }
+}
+
+/** De estos mensajes, cuáles son la raíz de un pedido de la fábrica. Best-effort. */
+async function factoryRunRoots(messageIds: number[]): Promise<Set<number>> {
+  if (!messageIds.length) return new Set();
+  try {
+    const { dbq } = await import("../dbq.server");
+    const rows = await dbq(
+      `SELECT root_msg_id FROM gt_factory_runs WHERE root_msg_id IN (${messageIds.map(() => "?").join(",")})`,
+      messageIds,
+    );
+    return new Set(rows.map((r: any) => Number(r.root_msg_id)));
+  } catch {
+    return new Set();
   }
 }

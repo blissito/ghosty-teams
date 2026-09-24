@@ -50,6 +50,25 @@ export function planRejection(planMd: string): string | null {
   return null;
 }
 
+export type SuggestedAsk = { size: "chico" | "mediano" | "grande"; title: string; ask: string; why: string };
+
+/** Valida los pedidos sugeridos (string = por qué no). Un `ask` corto no es un pedido. */
+export function suggestItems(raw: unknown): SuggestedAsk[] | string {
+  if (!Array.isArray(raw) || raw.length < 2 || raw.length > 5) return "manda de 2 a 5 pedidos";
+  const out: SuggestedAsk[] = [];
+  for (const it of raw as Record<string, unknown>[]) {
+    const size = String(it?.size ?? "");
+    const title = String(it?.title ?? "").trim().slice(0, 80);
+    const ask = String(it?.ask ?? "").trim().replace(/^@plan\s+/i, "").slice(0, 600);
+    const why = String(it?.why ?? "").trim().slice(0, 200);
+    if (!["chico", "mediano", "grande"].includes(size)) return "size va como chico, mediano o grande";
+    if (!title || !why) return "cada pedido lleva title y why";
+    if (ask.length < 40) return `el pedido «${title}» es muy corto: escribe el mensaje completo que recibirías`;
+    out.push({ size: size as SuggestedAsk["size"], title, ask, why });
+  }
+  return out;
+}
+
 /** Título de la corrida: el explícito, o el primer encabezado/renglón del plan. */
 export function planTitle(title: unknown, planMd: string): string {
   const t = String(title ?? "").trim() || (planMd.match(/^#+\s*(.+)$/m)?.[1] ?? planMd.split("\n")[0]);
@@ -71,7 +90,7 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
           title: { type: "string", description: "Título corto del pedido (primera versión)" },
           plan_md: { type: "string", description: "El plan completo en markdown" },
           repo: { type: "string", description: 'Repo "dueño/repo" (si el room tiene varios)' },
-          runId: { type: "number", description: "Corrida existente (si no, se toma la del hilo)" },
+          runId: { type: "number", description: "Pedido existente (si no, se toma el del hilo)" },
         },
         required: ["plan_md"],
       },
@@ -292,6 +311,55 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
       },
     },
     {
+      name: "factory_suggest",
+      description:
+        "SÓLO @plan. Cuando te llaman sin un pedido concreto (o te encargan sugerir), propone de 2 a 5 pedidos listos " +
+        "para mandar, leídos del repo del room. La plataforma publica una tarjeta con un botón «Pedir» por pedido: " +
+        "quien lo pulsa te lo manda tal cual en su propio hilo. Cada `ask` es el mensaje completo que recibirías " +
+        "(sin «@plan»): concreto, con archivos o funciones por nombre y el límite de alcance. Prefiere agregar " +
+        "(pruebas, validaciones, TODOs chicos) sobre borrar; nada que borre datos, archivos de producción o historial. " +
+        "Después de llamarla, NO repitas la lista en tu respuesta.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          items: {
+            type: "array",
+            minItems: 2,
+            maxItems: 5,
+            items: {
+              type: "object",
+              properties: {
+                size: { type: "string", enum: ["chico", "mediano", "grande"] },
+                title: { type: "string", description: "Título corto (máx. 60 caracteres)" },
+                ask: { type: "string", description: "El pedido tal cual te llegaría, sin «@plan»" },
+                why: { type: "string", description: "Por qué vale la pena, en una línea" },
+              },
+              required: ["size", "title", "ask", "why"],
+            },
+          },
+        },
+        required: ["items"],
+      },
+      handler: async (_sub, a) => {
+        if (dest?.handle && dest.handle !== "plan") return { ok: false, error: "sólo @plan sugiere pedidos" };
+        if (!dest?.channelId) return { ok: false, error: "sin room no hay dónde publicar" };
+        const items = suggestItems(a.items);
+        if (typeof items === "string") return { ok: false, error: items };
+        const db = await import("../../db.server");
+        const ch = await db.getChannelById(dest.channelId);
+        if (!ch) return { ok: false, error: "room no encontrado" };
+        const { resolvedAgents } = await import("../../agents.server");
+        const me = (await resolvedAgents()).find((x) => x.handle === "plan");
+        const body = "```gt-asks\n" + JSON.stringify({ roomSlug: ch.slug, items }) + "\n```";
+        const { id } = await db.postAgent(dest.channelId, threadRoot(dest), body, "msg", "plan", me?.name ?? "plan", dest.topic || "general", me?.avatar ?? "");
+        const bus = await import("../bus.server");
+        const { currentNamespace } = await import("../tenant.server");
+        const msg = await db.getMessage(id);
+        if (msg) bus.publish(bus.ch.room(await currentNamespace(), dest.channelId), { t: "message:new", msg });
+        return { ok: true, published: items.length, note: "Tarjeta publicada. Termina con una sola línea (o nada): la lista ya está en la tarjeta." };
+      },
+    },
+    {
       name: "factory_status",
       description: "Estado del pedido de este hilo (o de runId): etapa, versión del plan, vueltas, PR y tarea.",
       inputSchema: { type: "object", properties: { runId: { type: "number" } } },
@@ -326,7 +394,7 @@ export async function factoryContext(dest: ToolDest | null, toolChannel: ToolCha
     if (run) {
       const { stageLabel } = await import("./factory-flow");
       parts.push(
-        `Corrida de ESTE hilo: #${run.id} «${run.title}», etapa «${stageLabel(run.status)}», plan v${run.planVersion}` +
+        `Pedido de ESTE hilo: #${run.id} «${run.title}», etapa «${stageLabel(run.status)}», plan v${run.planVersion}` +
           (run.prUrl ? `, PR ${run.prUrl}` : "") +
           (run.loops ? `, ${run.loops} vuelta(s) de check` : "") +
           ". Usa su runId en las tools factory_*.",

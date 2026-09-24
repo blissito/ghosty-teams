@@ -5,7 +5,7 @@
 import { useEffect, useState } from "react";
 import { Factory, Loader2, ExternalLink } from "lucide-react";
 import { useT } from "../i18n";
-import { createFactoryAgentFn, factorySchedulesFn, setFactoryScheduleFn, factoryStatusFn, installFactoryFn, setFactoryRolesFn, uninstallFactoryFn, type FactoryStatus } from "../server/apps/factory";
+import { createFactoryAgentFn, factorySchedulesFn, factorySuggestFn, setFactoryScheduleFn, factoryStatusFn, installFactoryFn, setFactoryRolesFn, uninstallFactoryFn, type FactoryStatus } from "../server/apps/factory";
 import { githubInstallationReposFn } from "../server/room-repos";
 import { listChannelsFn } from "../server/chat";
 import ConfirmModal from "./ConfirmModal";
@@ -79,6 +79,7 @@ function Installed({ status, onChange }: { status: FactoryStatus; onChange: () =
         {t("Room")}: <b>#{status.room?.slug ?? "—"}</b> · {t("Repos")}: {status.repos.length ? status.repos.join(", ") : "—"}
       </p>
       <RolesEditor status={status} onChange={onChange} />
+      <SuggestAsks roomSlug={status.room?.slug ?? null} />
       <SchedulesEditor />
       <div className="flex gap-2 pt-1">
         {status.room && (
@@ -422,6 +423,41 @@ function RolesEditor({ status, onChange }: { status: FactoryStatus; onChange: ()
           {busy ? t("Aplicando…") : t("Guardar roles")}
         </button>
       )}
+    </div>
+  );
+}
+
+// «Sugerir pedidos»: @plan lee el repo y deja en el room una tarjeta con pedidos listos para
+// mandar (un botón «Pedir» cada uno). Es el arranque cuando nadie sabe qué pedir primero.
+function SuggestAsks({ roomSlug }: { roomSlug: string | null }) {
+  const t = useT();
+  const [state, setState] = useState<"idle" | "busy" | "sent" | "error">("idle");
+  const run = async () => {
+    setState("busy");
+    try {
+      await factorySuggestFn();
+      setState("sent");
+    } catch {
+      setState("error");
+    }
+  };
+  return (
+    <div className="mt-3 flex flex-wrap items-center gap-2 rounded-lg border border-border bg-surface px-3 py-2">
+      <span className="min-w-0 flex-1 text-xs text-muted">
+        {state === "sent"
+          ? `${t("@plan está leyendo el repo; las sugerencias llegan a")} #${roomSlug ?? "—"}.`
+          : state === "error"
+            ? t("No pude despertar a @plan. Intenta otra vez.")
+            : t("¿No sabes qué pedir primero? @plan lee el repo y te propone pedidos listos para mandar.")}
+      </span>
+      <button
+        type="button"
+        disabled={state === "busy" || state === "sent"}
+        onClick={run}
+        className="shrink-0 rounded-full border border-brand px-3 py-1 text-xs font-bold text-brand hover:bg-brand/10 disabled:opacity-50"
+      >
+        {t("Sugerir pedidos")}
+      </button>
     </div>
   );
 }

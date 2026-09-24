@@ -361,3 +361,41 @@ export const factoryRunCardFn = createServerFn({ method: "POST" })
       canSign: (run.status === "plan_review" && !!plan && !plan.decision) || run.status === "escalated",
     };
   });
+
+/**
+ * «Sugerir pedidos»: despierta a @plan en el room de la fábrica con el encargo de leer el
+ * repo y publicar pedidos listos para mandar (`factory_suggest` → tarjeta con «Pedir»). Así
+ * el primer pedido no depende de que alguien sepa qué pedir. Llave `factory:suggest:` para
+ * caer en la rama de encargo de `fire()` (sin la cláusula del OK: aquí siempre hay trabajo).
+ */
+export const factorySuggestFn = createServerFn({ method: "POST" }).handler(async () => {
+  const user = await requireOwner();
+  const { getAppConfig } = await import("./installed.server");
+  const cfg = await getAppConfig<FactoryCfg>("factory");
+  if (!cfg?.roomId) throw new Error("la fábrica no está instalada");
+  const { resolvedAgents, agentGroupId } = await import("../../agents.server");
+  const plan = (await resolvedAgents()).find((a) => a.handle === "plan");
+  if (!plan) throw new Error("no hay agente en @plan");
+  const { enqueueWakeup, mintWakeRef, armWakeups } = await import("../wakeups.server");
+  const { currentNamespace } = await import("../tenant.server");
+  const { reqOrigin } = await import("../../origin.server");
+  const ns = await currentNamespace();
+  await enqueueWakeup({
+    key: `factory:suggest:${Date.now()}`,
+    ref: mintWakeRef({
+      sub: user.sub,
+      ns,
+      groupId: await agentGroupId(plan, "factory-suggest"),
+      dest: { channelId: cfg.roomId, topic: "general", handle: plan.handle, name: plan.name, avatar: plan.avatar },
+    }),
+    cause: "sugerir pedidos",
+    text:
+      "Lee el repo de este room (issues abiertos, TODOs, código sin pruebas, CI) y sugiere 3 pedidos con " +
+      "factory_suggest: uno chico, uno mediano y uno con pruebas. Prefiere agregar sobre borrar; nada que toque " +
+      "datos ni archivos de producción. No construyas ni planees todavía: sólo la tarjeta.",
+    origin: await reqOrigin().catch(() => ""),
+    dueAt: Math.floor(Date.now() / 1000),
+  });
+  armWakeups(ns);
+  return { ok: true as const };
+});

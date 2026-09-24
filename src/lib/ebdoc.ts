@@ -1135,6 +1135,7 @@ export function bubbleWithoutEbDoc(
     // La de plan de la Software Factory: el fence sólo trae ids, la tarjeta lee el resto.
     body = stripPlanCard(body);
     body = stripRunCard(body);
+    body = stripAsksCard(body);
     // El efecto no deja nada en el cuerpo: no es una tarjeta que se lea después, es algo que
     // PASA al llegar el mensaje. Sin esto, el `{"fx":"confetti"}` queda de recuadro de código
     // en la burbuja para siempre — el mismo bug que describe el comentario de `stripTask`.
@@ -1382,6 +1383,30 @@ export function extractRunCard(body: string): RunCardData | null {
 
 export function stripRunCard(body: string): string {
   return body.replace(/```gt-run[^\n]*\n[\s\S]*?```/, "").trim();
+}
+
+/* ── Pedidos SUGERIDOS por @plan (```gt-asks```) ──────────────────────────── */
+// Los publica la plataforma (tool `factory_suggest`); cada pedido trae su botón «Pedir».
+
+export type AsksCardData = {
+  roomSlug: string;
+  items: { size: string; title: string; ask: string; why: string }[];
+};
+
+export function extractAsksCard(body: string): AsksCardData | null {
+  const m = body.match(/```gt-asks[^\n]*\n([\s\S]*?)```/);
+  if (!m) return null;
+  try {
+    const d = JSON.parse(m[1].trim()) as Record<string, unknown>;
+    const items = Array.isArray(d.items) ? (d.items as AsksCardData["items"]).filter((x) => x && x.ask && x.title) : [];
+    return typeof d.roomSlug === "string" && items.length ? { roomSlug: d.roomSlug, items } : null;
+  } catch {
+    return null;
+  }
+}
+
+export function stripAsksCard(body: string): string {
+  return body.replace(/```gt-asks[^\n]*\n[\s\S]*?```/, "").trim();
 }
 
 /* ── Tarjeta de RESULTADO DE TESTS (```gt-tests```) ───────────────────────── */
