@@ -32,7 +32,7 @@ const STAGE: Record<string, string> = {
   checking: "Check",
   pr_review: "PR",
   escalated: "Necesita decisión",
-  done: "Mezclado",
+  done: "Merged",
   cancelled: "Cancelado",
 };
 
@@ -45,7 +45,7 @@ function duration(seconds: number | null): string {
 
 // Qué significa cada número (tooltip).
 const HINT: Record<string, string> = {
-  "Se concretan": "Mezclados entre los pedidos ya cerrados (mezclados + cancelados).",
+  "Se concretan": "Merged entre los pedidos ya cerrados (merged + cancelados).",
   "Correcciones de @check": "Cuántas veces, en promedio, @check le regresó el PR a @build para corregir algo antes de aprobarlo.",
   "Del pedido al PR": "Mediana del tiempo desde que se pide hasta que @check deja el PR listo para tu revisión.",
 };
@@ -153,7 +153,7 @@ function FactoryPage() {
               ))}
             </div>
             <p className="mt-1.5 text-[11px] text-muted">
-              {t("{a} mezclados · {b} cancelados · {c} abiertos · {d} necesitan decisión")
+              {t("{a} merged · {b} cancelados · {c} abiertos · {d} necesitan decisión")
                 .replace("{a}", String(data.stats.merged))
                 .replace("{b}", String(data.stats.cancelled))
                 .replace("{c}", String(data.stats.open))

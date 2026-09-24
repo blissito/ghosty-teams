@@ -472,7 +472,7 @@ const SCHED_LABEL: Record<string, { icon: string; title: string; when: string; w
     icon: "🌙",
     title: "Revisión nocturna",
     when: "L–V a las",
-    what: "@plan mira lo del día en el repo: PRs mezclados, CI en rojo, alertas e issues nuevos. Si hay un arreglo chico, te deja un plan para firmar.",
+    what: "@plan mira lo del día en el repo: PRs merged, CI en rojo, alertas e issues nuevos. Si hay un arreglo chico, te deja un plan para firmar.",
     ask: "¿qué revisas en la revisión nocturna, qué me dejarías si encuentras algo y qué pasa si no hay nada?",
   },
   deps: {

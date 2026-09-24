@@ -535,7 +535,7 @@ export async function prIsMerged(sub: string, url: string): Promise<boolean> {
 
 /** El cierre festivo al mezclarse: confeti y una línea. */
 export function mergedMessage(run: Run): string {
-  return "```gt-fx\n" + JSON.stringify({ fx: "confetti" }) + "\n```\n" + `🎉 **Pedido terminado:** el PR se mezcló. ${run.prUrl ?? ""}`;
+  return "```gt-fx\n" + JSON.stringify({ fx: "confetti" }) + "\n```\n" + `🎉 **Pedido terminado:** PR merged. ${run.prUrl ?? ""}`;
 }
 
 async function prOutcome(sub: string, url: string): Promise<{ outcome: "merged" | "closed" | "open"; approved: boolean } | null> {
@@ -629,7 +629,7 @@ export async function closeFinishedRuns(): Promise<void> {
           await postInThread(
             run,
             "build",
-            `✅ El PR ya tiene aprobación${ci.state === "success" ? " y el CI está en verde" : ""}. ¿Lo mezclo? Contesta **«mézclalo»** en este hilo y lo hago. ${run.prUrl}`,
+            `✅ El PR ya tiene aprobación${ci.state === "success" ? " y el CI está en verde" : ""}. ¿Hago merge? Contesta **«merge»** en este hilo y lo hago. ${run.prUrl}`,
           );
       }
     }

@@ -93,7 +93,7 @@ export function RunCard({ card, channelId }: { card: RunCardData; channelId: num
         </ol>
         {st.status === "done" && (
           <p className="mt-2 rounded-md bg-violet-600/10 px-2.5 py-1.5 text-xs font-semibold text-violet-700 dark:text-violet-300">
-            🎉 {t("Terminado: el PR se mezcló.")}
+            🎉 {t("Terminado: PR merged.")}
           </p>
         )}
         {WORKING[st.status] && (
