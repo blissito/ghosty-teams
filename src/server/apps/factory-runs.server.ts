@@ -150,7 +150,7 @@ export async function handoff(run: Run, to: "plan" | "build" | "check", sub: str
       dest: { channelId: run.channelId, parentId: run.rootMsgId, topic: run.topic, handle: agent.handle, name: agent.name, avatar: agent.avatar },
     }),
     cause,
-    text: `[Corrida #${run.id} · «${run.title}»${run.repo ? ` · repo ${run.repo}` : ""}]\n${text}`,
+    text: `[Pedido #${run.id} · «${run.title}»${run.repo ? ` · repo ${run.repo}` : ""}]\n${text}`,
     origin,
     dueAt: Math.floor(Date.now() / 1000) + 2,
   });
