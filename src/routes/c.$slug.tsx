@@ -5832,7 +5832,7 @@ function RepoPanel({
           `sm:` vuelve a ser el popover de siempre.
           El `ring` va además del borde: sobre el chat —blanco sobre blanco— un borde de
           #e4e2f0 es casi invisible y el panel se lee como transparente. */}
-      <div className="fixed inset-x-2 top-14 z-50 max-w-[calc(100vw-1rem)] overflow-hidden rounded-xl border border-border bg-surface shadow-2xl ring-1 ring-black/10 sm:absolute sm:inset-x-auto sm:right-0 sm:top-auto sm:mt-1 sm:w-[22rem] dark:ring-white/10">
+      <div className="fixed inset-x-2 top-14 z-50 max-w-[calc(100vw-1rem)] overflow-hidden rounded-xl border border-border bg-surface shadow-2xl ring-1 ring-black/10 sm:absolute sm:inset-x-auto sm:right-0 sm:top-auto sm:mt-1 sm:w-[24rem] dark:ring-white/10">
         <div className="flex items-center gap-2 border-b border-border px-3 py-2">
           <Search size={14} className="shrink-0 text-muted" />
           <input
@@ -5846,7 +5846,7 @@ function RepoPanel({
 
         {/* dvh, no rem: en un teléfono con el teclado abierto 26rem no cabe y la lista
             quedaba cortada sin poder llegar al final. */}
-        <div className="max-h-[min(26rem,65dvh)] overflow-y-auto thin-scroll">
+        <div className="max-h-[min(40rem,75dvh)] overflow-y-auto thin-scroll">
           {mine.length > 0 && (
             <section className="border-b border-border py-1">
               <p className="px-3 py-1 text-[11px] uppercase tracking-wide text-muted">

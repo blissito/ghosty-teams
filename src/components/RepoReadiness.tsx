@@ -170,7 +170,7 @@ export function RepoReadiness({ channelId, repo, compact = false, onLevel }: {
                     ) : (
                       <Circle size={14} className="shrink-0 text-faint" aria-label={t("falta")} />
                     )}
-                    <span className={`min-w-0 flex-1 truncate ${c.ok ? "text-muted" : "text-ink"}`}>{t(CRITERIA[c.key].label)}</span>
+                    <span className={`min-w-0 flex-1 leading-snug ${c.ok ? "text-muted" : "text-ink"}`}>{t(CRITERIA[c.key].label)}</span>
                     {!c.ok && c.key === "protected" && view!.canPrepare && (
                       <button
                         type="button"
