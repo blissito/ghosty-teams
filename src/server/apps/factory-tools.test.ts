@@ -80,6 +80,7 @@ describe("título del pedido", () => {
     expect(planTitle(undefined, "## Historia\nqueremos x\n## Brief técnico\n...")).toBe("queremos x");
     expect(planTitle(undefined, "# Limpiar la raíz\n## Historia\n...")).toBe("Limpiar la raíz");
     expect(planTitle("Explícito", "## Historia")).toBe("Explícito");
+    expect(planTitle(undefined, "## Riesgos y qué NO se hará\n# Limpiar la raíz")).toBe("Limpiar la raíz");
   });
 });
 

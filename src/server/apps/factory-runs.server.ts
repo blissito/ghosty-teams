@@ -592,18 +592,17 @@ async function repairRunTitles(): Promise<void> {
   if (titlesRepaired) return;
   titlesRepaired = true;
   const rows = await dbq(
-    `SELECT r.id, p.plan_md FROM gt_factory_runs r JOIN gt_factory_plans p ON p.run_id = r.id AND p.version = 1
-     WHERE lower(r.title) IN ('historia','brief','brief técnico','riesgos','plan','contexto','resumen','objetivo','alcance')`,
+    `SELECT r.id, r.title, p.plan_md FROM gt_factory_runs r JOIN gt_factory_plans p ON p.run_id = r.id AND p.version = 1`,
     [],
   ).catch(() => []);
-  const { planTitle } = await import("./factory-tools.server");
+  const { planTitle, SECTION_HEADING } = await import("./factory-tools.server");
   const db = await import("../../db.server");
-  for (const r of rows) {
+  for (const r of rows.filter((x) => SECTION_HEADING.test(String(x.title ?? "")))) {
     // El título de la v1 vive en la raíz del hilo («**Plan:** <título>»); si no, del plan.
     const run = await getRun(Number(r.id));
     const root = run ? await db.getMessage(run.rootMsgId).catch(() => null) : null;
     const fromRoot = /^\*\*[^*]+:\*\*\s*(.+)$/m.exec(String(root?.body ?? ""))?.[1]?.trim();
-    const title = (fromRoot && !/^(historia|plan)$/i.test(fromRoot) ? fromRoot : planTitle(undefined, String(r.plan_md ?? ""))).slice(0, 120);
+    const title = (fromRoot && !SECTION_HEADING.test(fromRoot) ? fromRoot : planTitle(undefined, String(r.plan_md ?? ""))).slice(0, 120);
     if (title) await dbq("UPDATE gt_factory_runs SET title = ? WHERE id = ?", [title, Number(r.id)]).catch(() => {});
   }
 }

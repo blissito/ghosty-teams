@@ -74,7 +74,8 @@ export function suggestItems(raw: unknown, repos: string[] = []): SuggestedAsk[]
 }
 
 /** Encabezados de SECCIÓN del plan: nunca son el nombre del pedido (así quedó #1 como «Historia»). */
-const SECTION_HEADING = /^(historia|brief( técnico)?|riesgos?( y lo que no se hará)?|plan|contexto|resumen|objetivo|criterios( de aceptación)?|alcance|qué no se hará|pruebas|cómo)\s*:?\s*$/i;
+export const SECTION_HEADING =
+  /^(historia|brief|riesgos|contexto|resumen|objetivo|criterios|alcance|qu[ée] no se har[áa]|lo que no se har[áa]|pruebas|c[óo]mo se prueba)\b|^(plan|c[óo]mo)\s*:?\s*$/i;
 
 /** Título de la corrida: el explícito, o el primer encabezado del plan que no sea de sección. */
 export function planTitle(title: unknown, planMd: string): string {
