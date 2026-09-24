@@ -173,8 +173,13 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
           pr_url: { type: "string", description: "URL del PR en GitHub" },
           branch: { type: "string", description: "Rama del PR" },
           tests: { type: "string", description: "Resultado de pruebas, lint y typecheck, en una o dos líneas" },
+          pr_description: {
+            type: "string",
+            description:
+              "Descripción del PR tal como está AHORA la rama (qué cambia, cómo se prueba, qué falta). La plataforma la escribe en el PR en cada cierre, así nunca queda vieja tras una corrección.",
+          },
         },
-        required: ["pr_url", "tests"],
+        required: ["pr_url", "tests", "pr_description"],
       },
       handler: async (sub, a) => {
         if (dest?.handle && dest.handle !== "build") return { ok: false, error: "sólo @build cierra la construcción" };
@@ -208,6 +213,14 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
         }
         // Un PR que toca `.github/` (CI, CODEOWNERS) sólo se espera en el pedido de CI: en
         // cualquier otro, es justo la vía clásica para que un agente se salte los controles.
+        // La descripción del PR sigue a la rama: tras corregir hallazgos, la vieja decía lo
+        // contrario del código (@plan tuvo que aclarar «aunque el texto diga lo contrario»).
+        const prDesc = String(a.pr_description ?? "").trim();
+        if (prDesc) {
+          const pr = R.parsePrUrl(url)!;
+          const { githubApi } = await import("../connectors/github.server");
+          await githubApi(sub, `/repos/${pr.repo}/pulls/${pr.number}`, { method: "PATCH", body: JSON.stringify({ body: prDesc.slice(0, 60_000) }) }).catch(() => null);
+        }
         const touchesGithub = await R.prTouchesGithubDir(sub, url);
         const head = await R.prHead(sub, url);
         const next = await R.applyEvent(run, "build_done", {
