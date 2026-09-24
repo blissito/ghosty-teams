@@ -9,6 +9,7 @@ import { createFactoryAgentFn, factorySchedulesFn, setFactoryScheduleFn, factory
 import { githubInstallationReposFn } from "../server/room-repos";
 import { listChannelsFn } from "../server/chat";
 import ConfirmModal from "./ConfirmModal";
+import { Toggle } from "./Toggle";
 
 type Repos = Awaited<ReturnType<typeof githubInstallationReposFn>>;
 type Room = { id: number; name: string; slug: string };
@@ -476,16 +477,14 @@ function SchedulesEditor() {
                   </option>
                 ))}
               </select>
-              <label className="ml-auto inline-flex cursor-pointer items-center gap-2 text-xs text-muted">
-                <input
-                  type="checkbox"
-                  checked={r.enabled}
+              <div className="ml-auto">
+                <Toggle
+                  on={r.enabled}
                   disabled={busy === r.kind}
-                  onChange={(e) => save(r, { enabled: e.target.checked })}
-                  className="size-4 accent-[var(--color-brand,#7c3aed)]"
+                  label={`${t(l.title)}: ${r.enabled ? t("Encendida") : t("Apagada")}`}
+                  onChange={(on) => void save(r, { enabled: on })}
                 />
-                {r.enabled ? t("Encendida") : t("Apagada")}
-              </label>
+              </div>
             </div>
           );
         })}
