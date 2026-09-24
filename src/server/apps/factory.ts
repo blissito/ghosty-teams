@@ -472,7 +472,28 @@ export const factoryOverviewFn = createServerFn({ method: "GET" }).handler(async
       kind: r.kind ?? null,
     }));
   const { runStats } = await import("./factory-stats");
+  // Sprints de los rooms que ve (con su avance: tickets con merge / incluidos).
+  const sprintRows = await dbq(
+    `SELECT s.id, s.channel_id, s.card_msg_id, s.title, s.status, s.repo, s.created_at,
+            SUM(CASE WHEN i.included = 1 THEN 1 ELSE 0 END) AS total,
+            SUM(CASE WHEN i.included = 1 AND i.status IN ('merged','skipped') THEN 1 ELSE 0 END) AS merged
+     FROM gt_factory_sprints s LEFT JOIN gt_factory_sprint_items i ON i.sprint_id = s.id
+     GROUP BY s.id ORDER BY s.id DESC LIMIT 50`,
+    [],
+  ).catch(() => []);
+  const sprints = sprintRows
+    .filter((r) => byId.has(Number(r.channel_id)))
+    .map((r) => ({
+      id: Number(r.id),
+      title: String(r.title),
+      status: String(r.status),
+      repo: r.repo ?? null,
+      total: Number(r.total ?? 0),
+      merged: Number(r.merged ?? 0),
+      url: r.card_msg_id ? `/c/${byId.get(Number(r.channel_id))!.slug}?thread=${r.card_msg_id}` : null,
+    }));
   return {
+    sprints,
     installed,
     isOwner: !!me.isOwner,
     room: room ? { id: room.id, slug: room.slug, name: room.name } : null,
@@ -530,6 +551,169 @@ export const factoryMergeFn = createServerFn({ method: "POST" })
     if (!r.ok) throw new Error(r.error);
     return { ok: true as const };
   });
+
+// ── Sprints (ver apps/sprint.server.ts) ─────────────────────────────────────
+
+/** El sprint es de un room: lo ve quien ve el room; lo edita/aprueba el dueño o quien lo pidió. */
+async function sprintAccess(sprintId: number) {
+  const me = await sessionUser();
+  if (!me) throw new Error("no autenticado");
+  const S = await import("./sprint.server");
+  const sprint = await S.getSprint(Number(sprintId));
+  if (!sprint) throw new Error("no existe ese sprint");
+  const db = await import("../../db.server");
+  const ch = (await db.listChannels(me.sub, me.isOwner)).find((c) => c.id === sprint.channelId);
+  if (!ch) throw new Error("no ves ese room");
+  return { me, S, sprint, ch, canEdit: !!me.isOwner || me.sub === sprint.createdBy };
+}
+
+export type SprintView = Awaited<ReturnType<typeof readSprint>>;
+
+async function readSprint(sprintId: number) {
+  const { S, sprint, ch, canEdit } = await sprintAccess(sprintId);
+  const R = await import("./factory-runs.server");
+  const items = await S.getSprintItems(sprint.id);
+  const out = [];
+  for (const it of items) {
+    const run = it.runId ? await R.getRun(it.runId) : null;
+    out.push({
+      id: it.id,
+      idx: it.idx,
+      key: it.key,
+      title: it.title,
+      size: it.size,
+      dependsOn: it.dependsOn,
+      bodyMd: it.bodyMd,
+      included: it.included,
+      status: it.status,
+      runId: run?.id ?? null,
+      prUrl: run?.prUrl ?? null,
+      threadUrl: run ? `/c/${ch.slug}?thread=${run.rootMsgId}` : null,
+    });
+  }
+  return {
+    id: sprint.id,
+    title: sprint.title,
+    goal: sprint.goal,
+    repo: sprint.repo,
+    status: sprint.status,
+    version: sprint.version,
+    canEdit,
+    threadUrl: sprint.cardMsgId ? `/c/${ch.slug}?thread=${sprint.cardMsgId}` : null,
+    items: out,
+  };
+}
+
+export const factorySprintFn = createServerFn({ method: "POST" })
+  .validator((d: { sprintId: number }) => d)
+  .handler(async ({ data }) => readSprint(Number(data.sprintId)).catch(() => null));
+
+/** Borrador: dejar fuera/incluir un ticket o cambiarle el título. */
+export const factorySprintEditFn = createServerFn({ method: "POST" })
+  .validator((d: { sprintId: number; itemId: number; included?: boolean; title?: string }) => d)
+  .handler(async ({ data }) => {
+    const { sprint, canEdit } = await sprintAccess(Number(data.sprintId));
+    if (!canEdit) throw new Error("sólo el dueño o quien pidió el sprint lo edita");
+    if (sprint.status !== "draft") throw new Error("el sprint ya se aprobó");
+    const { dbq } = await import("../../dbq.server");
+    if (typeof data.included === "boolean")
+      await dbq("UPDATE gt_factory_sprint_items SET included = ? WHERE id = ? AND sprint_id = ?", [data.included ? 1 : 0, data.itemId, sprint.id]);
+    const title = String(data.title ?? "").trim().slice(0, 120);
+    if (title) await dbq("UPDATE gt_factory_sprint_items SET title = ? WHERE id = ? AND sprint_id = ?", [title, data.itemId, sprint.id]);
+    return readSprint(sprint.id);
+  });
+
+/** «Crear sprint»: una sola aprobación para todos los tickets. */
+export const factorySprintApproveFn = createServerFn({ method: "POST" })
+  .validator((d: { sprintId: number }) => d)
+  .handler(async ({ data }) => {
+    const { me, S, sprint, canEdit } = await sprintAccess(Number(data.sprintId));
+    if (!canEdit) throw new Error("sólo el dueño o quien pidió el sprint lo aprueba");
+    // Un ticket incluido que depende de uno que se dejó fuera no podría arrancar nunca.
+    const items = await S.getSprintItems(sprint.id);
+    const out = new Set(items.filter((i) => !i.included).map((i) => i.key));
+    const stuck = items.find((i) => i.included && i.dependsOn.some((d) => out.has(d)));
+    if (stuck) throw new Error(`«${stuck.title}» depende de un ticket que dejaste fuera: inclúyelo o quita también ése`);
+    const { reqOrigin } = await import("../../origin.server");
+    await S.approveSprint(sprint.id, me.sub, await reqOrigin().catch(() => ""));
+    return readSprint(sprint.id);
+  });
+
+/** «Pedir cambios»: @plan rehace el borrador en el hilo de la tarjeta. */
+export const factorySprintChangesFn = createServerFn({ method: "POST" })
+  .validator((d: { sprintId: number; note: string }) => d)
+  .handler(async ({ data }) => {
+    const { me, S, sprint, canEdit } = await sprintAccess(Number(data.sprintId));
+    if (!canEdit) throw new Error("sólo el dueño o quien pidió el sprint lo cambia");
+    if (sprint.status !== "draft") throw new Error("el sprint ya se aprobó");
+    const note = String(data.note ?? "").trim().slice(0, 2000);
+    if (!note) throw new Error("di qué cambiar");
+    const items = await S.getSprintItems(sprint.id);
+    const current = items.map((i) => `${i.key}. ${i.title} [${i.size}]${i.included ? "" : " (fuera)"}${i.dependsOn.length ? ` · tras ${i.dependsOn.join(", ")}` : ""}`).join("\n");
+    await wakePlanForSprint(me.sub, sprint.channelId, sprint.cardMsgId, `sprint:${sprint.id}`,
+      `${me.name ?? "Una persona"} pidió cambios al sprint «${sprint.title}» (sprint_id ${sprint.id}, repo ${sprint.repo ?? "—"}): «${note}».\n` +
+        `Ajústalo y entrégalo otra vez con factory_sprint_submit mandando sprint_id ${sprint.id}. No discutas lo decidido.\n\n## Borrador actual\n${current}`);
+    return { ok: true as const };
+  });
+
+/** Ticket fallido: reintentarlo o quitarlo del sprint. */
+export const factorySprintItemFn = createServerFn({ method: "POST" })
+  .validator((d: { sprintId: number; itemId: number; action: "retry" | "skip" }) => d)
+  .handler(async ({ data }) => {
+    const { S, sprint, canEdit } = await sprintAccess(Number(data.sprintId));
+    if (!canEdit) throw new Error("sólo el dueño o quien pidió el sprint decide");
+    await S.resolveFailedItem(sprint.id, Number(data.itemId), data.action === "skip" ? "skip" : "retry");
+    return readSprint(sprint.id);
+  });
+
+/** «Proponer sprint» desde la Fábrica: despierta a @plan con el objetivo. */
+export const factoryProposeSprintFn = createServerFn({ method: "POST" })
+  .validator((d: { goal: string; repo?: string }) => d)
+  .handler(async ({ data }) => {
+    const me = await sessionUser();
+    if (!me) throw new Error("no autenticado");
+    const goal = String(data.goal ?? "").trim().slice(0, 1000);
+    if (goal.length < 8) throw new Error("describe el objetivo en una frase");
+    const { getAppConfig } = await import("./installed.server");
+    const cfg = await getAppConfig<FactoryCfg>("factory");
+    if (!cfg?.roomId) throw new Error("la fábrica no está instalada");
+    const db = await import("../../db.server");
+    if (!(await db.listChannels(me.sub, me.isOwner)).some((c) => c.id === cfg.roomId)) throw new Error("no ves el room de la fábrica");
+    const repos = (await db.listRoomRepos(cfg.roomId)).map((r) => r.repo);
+    const repo = data.repo && repos.includes(data.repo) ? data.repo : repos.length === 1 ? repos[0] : "";
+    if (repos.length > 1 && !repo) throw new Error("elige el repo");
+    await wakePlanForSprint(me.sub, cfg.roomId, null, "sprint-propose",
+      `${me.name ?? "Una persona"} quiere lograr: «${goal}»${repo ? ` en el repo ${repo}` : ""}.\n` +
+        `Lee el repo (estructura, código relevante, issues abiertos) y propón un sprint con factory_sprint_submit${repo ? ` (repo ${repo})` : ""}: ` +
+        `3 a 8 tickets de ≤ ~3 h, en orden, cada uno con criterios de aceptación verificables y dependencias sólo si son reales. ` +
+        `No construyas ni abras ramas: sólo la tarjeta.`);
+    return { ok: true as const };
+  });
+
+async function wakePlanForSprint(sub: string, channelId: number, parentId: number | null, group: string, text: string): Promise<void> {
+  const { resolvedAgents, agentGroupId } = await import("../../agents.server");
+  const plan = (await resolvedAgents()).find((a) => a.handle === "plan");
+  if (!plan) throw new Error("no hay agente en @plan");
+  const { enqueueWakeup, mintWakeRef, armWakeups } = await import("../wakeups.server");
+  const { currentNamespace } = await import("../tenant.server");
+  const { reqOrigin } = await import("../../origin.server");
+  const ns = await currentNamespace();
+  await enqueueWakeup({
+    // `factory:suggest:` cae en la rama de encargo de fire() (sin la cláusula del OK).
+    key: `factory:suggest:${group}:${Date.now()}`,
+    ref: mintWakeRef({
+      sub,
+      ns,
+      groupId: await agentGroupId(plan, `factory-${group}`),
+      dest: { channelId, ...(parentId ? { parentId } : {}), topic: "general", handle: plan.handle, name: plan.name, avatar: plan.avatar },
+    }),
+    cause: "proponer sprint",
+    text,
+    origin: await reqOrigin().catch(() => ""),
+    dueAt: Math.floor(Date.now() / 1000),
+  });
+  armWakeups(ns);
+}
 
 /**
  * «Sugerir pedidos»: despierta a @plan en el room de la fábrica con el encargo de leer el

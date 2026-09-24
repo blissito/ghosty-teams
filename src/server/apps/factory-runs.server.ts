@@ -89,6 +89,9 @@ export async function applyEvent(run: Run, event: RunEvent, patch: Partial<Recor
   if (!rows[0]) throw new Error(`el pedido #${run.id} cambió mientras tanto; vuelve a mirarla`);
   const updated = toRun(rows[0]);
   void syncTask(updated).catch(() => {});
+  // Pedido de un sprint que llega a PR, merge o se cancela: puede destrabar el siguiente ticket.
+  if (updated.status === "done" || updated.status === "cancelled" || updated.status === "pr_review")
+    void import("./sprint.server").then((S) => S.onSprintRunChanged(updated.id)).catch(() => {});
   // Pedido terminado o cancelado: su preview (si es nuestra caja) ya no sirve.
   if ((updated.status === "done" || updated.status === "cancelled") && updated.prUrl) {
     const pr = parsePrUrl(updated.prUrl);
@@ -165,7 +168,7 @@ export async function handoff(run: Run, to: "plan" | "build" | "check", sub: str
 
 // ── Tasks (best-effort: la corrida no depende del tablero) ───────────────────
 
-async function tasksCall(sub: string, name: string, args: Record<string, unknown>) {
+export async function tasksCall(sub: string, name: string, args: Record<string, unknown>) {
   const { getAppConfig } = await import("./installed.server");
   const cfg = await getAppConfig<{ boardId?: number | null }>("factory");
   if (!cfg?.boardId) return null;
@@ -604,6 +607,7 @@ export async function closeFinishedRuns(): Promise<void> {
       const done = toRun(fixed[0]);
       void syncTask(done).catch(() => {});
       void refreshRoom(done.channelId);
+      void import("./sprint.server").then((S) => S.onSprintRunChanged(done.id)).catch(() => {});
     }
   }
 
@@ -654,6 +658,7 @@ export async function onPrEvent(run: Run, outcome: "merged" | "closed", role: "c
       const done = toRun(fixed[0]);
       void syncTask(done).catch(() => {});
       void refreshRoom(done.channelId);
+      void import("./sprint.server").then((S) => S.onSprintRunChanged(done.id)).catch(() => {});
       return done;
     }
     const done = await applyEvent(run, "merged").catch(() => null);

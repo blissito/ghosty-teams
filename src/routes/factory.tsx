@@ -11,7 +11,7 @@ import { ArrowLeft, Check, CircleDot, Factory } from "lucide-react";
 import { useLocale, useT } from "../i18n";
 import { intlLocale } from "../i18n.core";
 import { me } from "../server/auth";
-import { factoryOverviewFn, factoryStatusFn, type FactoryStatus } from "../server/apps/factory";
+import { factoryOverviewFn, factoryProposeSprintFn, factoryStatusFn, type FactoryStatus } from "../server/apps/factory";
 import { RepoReadiness } from "../components/RepoReadiness";
 import { RolesEditor, SchedulesEditor, SuggestAsks } from "../components/AppsPanel";
 import { AskAgentHint } from "../components/AskAgentHint";
@@ -49,6 +49,70 @@ const HINT: Record<string, string> = {
   "Correcciones de @check": "Cuántas veces, en promedio, @check le regresó el PR a @build para corregir algo antes de aprobarlo.",
   "Del pedido al PR": "Mediana del tiempo desde que se pide hasta que @check deja el PR listo para tu revisión.",
 };
+
+/** «¿Qué quieres lograr?» → @plan propone el sprint como borrador en el room de la fábrica. */
+function NewSprint({ roomSlug, repos }: { roomSlug: string | null; repos: string[] }) {
+  const t = useT();
+  const [goal, setGoal] = useState("");
+  const [repo, setRepo] = useState(repos[0] ?? "");
+  const [state, setState] = useState<"idle" | "busy" | "sent">("idle");
+  const [err, setErr] = useState("");
+  const send = async () => {
+    setState("busy");
+    setErr("");
+    try {
+      await factoryProposeSprintFn({ data: { goal, ...(repo ? { repo } : {}) } });
+      setState("sent");
+      setGoal("");
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+      setState("idle");
+    }
+  };
+  return (
+    <section className="mt-6 rounded-xl border border-border bg-surface-2 p-3">
+      <label htmlFor="sprint-goal" className="text-sm font-semibold text-ink">
+        {t("¿Qué quieres lograr?")}
+      </label>
+      <p className="text-[11px] text-muted">{t("@plan lo parte en un sprint de 3 a 8 tickets en orden. Lo revisas y lo apruebas una sola vez.")}</p>
+      <textarea
+        id="sprint-goal"
+        value={goal}
+        onChange={(e) => setGoal(e.target.value)}
+        rows={2}
+        placeholder={t("Ej.: que los clientes puedan exportar sus citas a CSV")}
+        className="mt-2 w-full resize-y rounded-lg border border-border bg-surface px-3 py-2 text-sm text-ink"
+      />
+      <div className="mt-2 flex flex-wrap items-center gap-2">
+        {repos.length > 1 && (
+          <select value={repo} onChange={(e) => setRepo(e.target.value)} aria-label={t("Repo")} className="rounded-md border border-border bg-surface px-2 py-1 text-xs text-ink">
+            {repos.map((r) => (
+              <option key={r} value={r}>
+                {r.split("/")[1] ?? r}
+              </option>
+            ))}
+          </select>
+        )}
+        <span className="min-w-0 flex-1 text-xs text-muted">
+          {state === "sent" && roomSlug ? (
+            <>
+              {t("@plan está armando el sprint; llega a")} <a href={`/c/${roomSlug}`} className="text-brand hover:underline">#{roomSlug}</a>
+            </>
+          ) : null}
+          {err && <span className="text-red-600 dark:text-red-400">{err}</span>}
+        </span>
+        <button
+          type="button"
+          disabled={goal.trim().length < 8 || state === "busy"}
+          onClick={() => void send()}
+          className="rounded-lg bg-brand px-3 py-1.5 text-xs font-semibold text-brand-fg hover:opacity-90 disabled:opacity-50"
+        >
+          {state === "busy" ? t("Enviando…") : t("Proponer sprint")}
+        </button>
+      </div>
+    </section>
+  );
+}
 
 function RepoRow({ repo, channelId, initiallyOpen, focus }: { repo: string; channelId: number; initiallyOpen: boolean; focus: boolean }) {
   const [open, setOpen] = useState(initiallyOpen);
@@ -133,6 +197,32 @@ function FactoryPage() {
 
       {data?.installed && (
         <>
+          {/* Sprint: el objetivo entra aquí; @plan lo parte en tickets (borrador en el room). */}
+          <NewSprint roomSlug={data.room?.slug ?? null} repos={data.repos} />
+          {data.sprints.length > 0 && (
+            <section className="mt-6">
+              <h2 className="text-sm font-semibold text-ink">{t("Sprints")}</h2>
+              <ul className="mt-2 divide-y divide-border overflow-hidden rounded-xl border border-border">
+                {data.sprints.map((sp) => (
+                  <li key={sp.id} className={`group relative flex items-center gap-3 px-3 py-2.5 ${sp.status === "done" ? "bg-violet-600/10" : "hover:bg-surface-2"}`}>
+                    <span className="shrink-0">🧩</span>
+                    <div className="min-w-0 flex-1">
+                      <a href={sp.url ?? "#"} className="block truncate text-sm font-medium text-ink after:absolute after:inset-0 after:content-['']">
+                        {sp.title}
+                      </a>
+                      <p className="truncate text-[11px] text-muted">
+                        {sp.repo ?? "—"} · {sp.merged}/{sp.total} {t("con merge")}
+                      </p>
+                    </div>
+                    <span className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold ${sp.status === "draft" ? "bg-amber-500/15 text-amber-700 dark:text-amber-400" : sp.status === "done" ? "bg-violet-600/15 text-violet-700 dark:text-violet-300" : "bg-brand/12 text-brand"}`}>
+                      {sp.status === "draft" ? t("Borrador") : sp.status === "done" ? t("Terminado") : t("En curso")}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
+
           {/* Pedidos: números y lista. */}
           <section className="mt-6">
             <h2 className="text-sm font-semibold text-ink">{t("Pedidos")}</h2>

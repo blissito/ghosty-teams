@@ -1137,6 +1137,7 @@ export function bubbleWithoutEbDoc(
     body = stripRunCard(body);
     body = stripVerdictCard(body);
     body = stripPreviewErrorCard(body);
+    body = stripSprintCard(body);
     body = stripAsksCard(body);
     // El efecto no deja nada en el cuerpo: no es una tarjeta que se lea después, es algo que
     // PASA al llegar el mensaje. Sin esto, el `{"fx":"confetti"}` queda de recuadro de código
@@ -1431,6 +1432,29 @@ export function stripPreviewErrorCard(body: string): string {
   return body
     .replace(/```gt-preview-error[^\n]*\n[\s\S]*?```/, "")
     .replace(/^⚠️ La preview no arrancó\.\s*$/m, "")
+    .trim();
+}
+
+/* ── Sprint de la Fábrica (```gt-sprint```) ─────────────────────────────────── */
+// Lo publica la plataforma (`factory_sprint_submit`). Sólo el id: la tarjeta lee el borrador
+// o el progreso. La línea «🧩 Sprint propuesto…» es para avisos: con tarjeta, sobra.
+
+export function extractSprintCard(body: string): { sprintId: number } | null {
+  const m = body.match(/```gt-sprint[^\n]*\n([\s\S]*?)```/);
+  if (!m) return null;
+  try {
+    const sprintId = Number((JSON.parse(m[1].trim()) as Record<string, unknown>).sprintId);
+    return sprintId > 0 ? { sprintId } : null;
+  } catch {
+    return null;
+  }
+}
+
+export function stripSprintCard(body: string): string {
+  if (!/```gt-sprint/.test(body)) return body;
+  return body
+    .replace(/```gt-sprint[^\n]*\n[\s\S]*?```/, "")
+    .replace(/^🧩 Sprint propuesto: .*$/m, "")
     .trim();
 }
 

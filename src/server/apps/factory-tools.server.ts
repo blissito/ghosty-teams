@@ -399,6 +399,81 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
       },
     },
     {
+      name: "factory_sprint_submit",
+      description:
+        "SÓLO @plan. Propone un SPRINT para un objetivo: épica + 3 a 8 tickets en orden, cada uno de ≤ ~3 h de agente (size S/M/L), " +
+        "con criterios de aceptación VERIFICABLES (pruebas o CI) y dependencias sólo si son reales (`depends_on` con las keys). " +
+        "La plataforma publica la tarjeta en borrador; una persona la edita y la aprueba con un clic, y entonces cada ticket se " +
+        "construye en orden sin volver a pedir firma. Para ajustar un borrador (te piden cambios), manda `sprint_id`. No construyas.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          sprint_id: { type: "number", description: "Sólo para rehacer un sprint en borrador" },
+          repo: { type: "string", description: 'Repo "dueño/repo" (obligatorio si el room tiene varios)' },
+          goal: { type: "string", description: "El objetivo, en una o dos frases" },
+          title: { type: "string", description: "Título corto de la épica" },
+          items: {
+            type: "array",
+            minItems: 3,
+            maxItems: 8,
+            items: {
+              type: "object",
+              properties: {
+                key: { type: "string", description: "Identificador corto: A, B, C…" },
+                title: { type: "string" },
+                size: { type: "string", enum: ["S", "M", "L"] },
+                depends_on: { type: "array", items: { type: "string" }, description: "Keys de los tickets que deben tener merge antes" },
+                brief: { type: "string", description: "Qué y cómo, en markdown breve" },
+                criteria: { type: "string", description: "Criterios de aceptación verificables (lista markdown)" },
+                files: { type: "array", items: { type: "string" }, description: "Archivos principales que toca" },
+              },
+              required: ["key", "title", "size", "criteria"],
+            },
+          },
+        },
+        required: ["goal", "title", "items"],
+      },
+      handler: async (sub, a) => {
+        if (dest?.handle && dest.handle !== "plan") return { ok: false, error: "sólo @plan propone sprints" };
+        if (!dest?.channelId) return { ok: false, error: "la fábrica trabaja en un room, no en un DM" };
+        const S = await import("./sprint.server");
+        const items = S.validateSprintItems(a.items);
+        if (typeof items === "string") return { ok: false, error: items };
+        const goal = String(a.goal ?? "").trim();
+        const title = String(a.title ?? "").trim().slice(0, 120);
+        if (!goal || !title) return { ok: false, error: "el sprint lleva goal y title" };
+        const db = await import("../../db.server");
+        const repos = (await db.listRoomRepos(dest.channelId)).map((r) => r.repo);
+        const asked = a.repo ? String(a.repo).trim() : "";
+        if (asked && repos.length && !repos.includes(asked)) return { ok: false, error: `«${asked}» no está en este room (${repos.join(", ")})` };
+        if (!asked && repos.length > 1) return { ok: false, error: `Este room tiene varios repos: di en \`repo\` de cuál es el sprint (${repos.join(", ")}).` };
+        const repo = asked || repos[0] || null;
+        // Repo no listo para agentes → el primer ticket es prepararlo (como empieza Factory).
+        const withPrep = await S.withPrepFirst(sub, repo, items);
+        try {
+          const sprint = await S.submitSprint({
+            sprintId: a.sprint_id ? Number(a.sprint_id) : undefined,
+            channelId: dest.channelId,
+            repo,
+            goal,
+            title,
+            items: withPrep,
+            createdBy: sub,
+          });
+          return {
+            ok: true,
+            sprintId: sprint.id,
+            tickets: withPrep.length,
+            note:
+              (withPrep.length > items.length ? "La plataforma antepuso «Preparar repo»: el repo no está listo para agentes. " : "") +
+              "Tarjeta publicada en borrador. Termina con una sola línea: la persona la revisa y la aprueba ahí.",
+          };
+        } catch (e) {
+          return { ok: false, error: e instanceof Error ? e.message : String(e) };
+        }
+      },
+    },
+    {
       name: "factory_suggest",
       description:
         "SÓLO @plan. Cuando te llaman sin un pedido concreto (o te encargan sugerir), propone de 2 a 5 pedidos listos " +
@@ -576,7 +651,7 @@ export async function factoryContext(dest: ToolDest | null, toolChannel: ToolCha
   }
   // Misma frase que Tasks: tenerlas y no llamarlas es el otro modo de falla.
   parts.push(
-    "Tus tools de la fábrica (factory_plan_submit, factory_build_done, factory_check_verdict, factory_status, factory_close, factory_ci_starter, factory_repo_prep, factory_preview) " +
+    "Tus tools de la fábrica (factory_plan_submit, factory_build_done, factory_check_verdict, factory_status, factory_close, factory_ci_starter, factory_repo_prep, factory_preview, factory_sprint_submit) " +
       "ya están disponibles en este turno: LLÁMALAS para cerrar tu paso; sin ellas la estafeta no avanza." +
       notaNombres(toolChannel),
   );

@@ -816,6 +816,42 @@ async function migrate(): Promise<void> {
   // (mide el tiempo pedido→PR en la página de la Fábrica).
   await addColumn("gt_factory_runs", "verdict_json", "TEXT");
   await addColumn("gt_factory_runs", "pr_ready_at", "INTEGER");
+  // Sprints de la Fábrica: una épica con tickets ordenados y dependencias. Lo propone @plan
+  // (borrador), una persona lo aprueba UNA vez y la plataforma arranca cada ticket como un
+  // pedido cuando sus dependencias ya tienen merge (ver apps/sprint.server.ts).
+  await exec(`CREATE TABLE IF NOT EXISTS gt_factory_sprints (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    channel_id INTEGER NOT NULL,
+    root_msg_id INTEGER,
+    card_msg_id INTEGER,
+    repo TEXT,
+    goal TEXT NOT NULL,
+    title TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'draft',
+    version INTEGER NOT NULL DEFAULT 1,
+    created_by TEXT NOT NULL,
+    approved_by TEXT,
+    origin TEXT,
+    goal_ref TEXT,
+    created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+    updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+  )`);
+  await exec(`CREATE TABLE IF NOT EXISTS gt_factory_sprint_items (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    sprint_id INTEGER NOT NULL,
+    idx INTEGER NOT NULL,
+    key TEXT NOT NULL,
+    title TEXT NOT NULL,
+    size TEXT NOT NULL,
+    depends_on TEXT NOT NULL DEFAULT '[]',
+    body_md TEXT NOT NULL,
+    included INTEGER NOT NULL DEFAULT 1,
+    task_ref TEXT,
+    run_id INTEGER,
+    status TEXT NOT NULL DEFAULT 'pending'
+  )`);
+  await exec("CREATE INDEX IF NOT EXISTS gt_factory_sprint_items_sprint ON gt_factory_sprint_items(sprint_id, idx)");
+  await addColumn("gt_factory_runs", "sprint_item_id", "INTEGER");
   // Tareas programadas de la Software Factory (revisión nocturna, dependencias): a su hora
   // la plataforma despierta a @plan en el room de la fábrica con un encargo fijo. Una fila
   // por tipo; `owner_sub` = con qué credenciales (GitHub) trabaja @plan.
