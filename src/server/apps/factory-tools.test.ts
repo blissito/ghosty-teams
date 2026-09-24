@@ -81,6 +81,8 @@ describe("título del pedido", () => {
     expect(planTitle(undefined, "# Limpiar la raíz\n## Historia\n...")).toBe("Limpiar la raíz");
     expect(planTitle("Explícito", "## Historia")).toBe("Explícito");
     expect(planTitle(undefined, "## Riesgos y qué NO se hará\n# Limpiar la raíz")).toBe("Limpiar la raíz");
+    // Un título real que EMPIEZA como una sección no es una sección.
+    expect(planTitle(undefined, "# Pruebas vitest para agendaUtils\n...")).toBe("Pruebas vitest para agendaUtils");
   });
 });
 
