@@ -52,6 +52,30 @@ async function studioAgents() {
 export type StudioAgentOption = Awaited<ReturnType<typeof studioAgents>>[number];
 
 /**
+ * Crea un agente de Studio DESDE AQUÍ, para asignarlo a un rol sin salir de Teams. Es un
+ * agente normal (sale en /app/agents, se afina ahí): lo crea gs con el mismo alta firmada que
+ * ya usa Teams (`POST api/v2/fleet-agents`), a nombre del dueño del espacio y ligado a él,
+ * así que siempre aparece en la lista de roles. El modelo es el default del motor que quepa
+ * en el plan.
+ */
+export const createFactoryAgentFn = createServerFn({ method: "POST" })
+  .validator((d: { name: string; engine: string }) => d)
+  .handler(async ({ data }): Promise<StudioAgentOption> => {
+    await requireOwner();
+    const name = String(data.name ?? "").trim().slice(0, 40);
+    if (!name) throw new Error("ponle nombre al agente");
+    if (!(FACTORY_ENGINES as readonly string[]).includes(data.engine)) throw new Error("motor no válido");
+    const { nativeRuntimeBase } = await import("../ghosty-runtime.server");
+    const base = await nativeRuntimeBase();
+    if (!base) throw new Error("este espacio no tiene runtime nativo");
+    const { createNativeFleetAgent } = await import("../fleet-native.server");
+    // `ownerUserId` vacío: gs resuelve el dueño desde el espacio que firma.
+    const created = await createNativeFleetAgent(base, { ownerUserId: "", engine: data.engine, name });
+    const found = (await studioAgents()).find((a) => a.id === created.id);
+    return found ?? { id: created.id, name, engine: data.engine, model: "" };
+  });
+
+/**
  * Apunta cada handle al agente elegido. Crea el handle si no existe (y lo marca como de la
  * fábrica); si ya es de la fábrica, lo repunta; si es de OTRA cosa, error. Reusa la
  * activación "De Studio": fila `fleet` gs-native con `groupNs` + canal Teams declarado.

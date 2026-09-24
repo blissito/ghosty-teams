@@ -5,7 +5,7 @@
 import { useEffect, useState } from "react";
 import { Factory, Loader2, ExternalLink } from "lucide-react";
 import { useT } from "../i18n";
-import { factoryStatusFn, installFactoryFn, setFactoryRolesFn, uninstallFactoryFn, type FactoryStatus } from "../server/apps/factory";
+import { createFactoryAgentFn, factoryStatusFn, installFactoryFn, setFactoryRolesFn, uninstallFactoryFn, type FactoryStatus } from "../server/apps/factory";
 import { githubInstallationReposFn } from "../server/room-repos";
 import { listChannelsFn } from "../server/chat";
 import ConfirmModal from "./ConfirmModal";
@@ -243,36 +243,73 @@ function RolePickers({
   const t = useT();
   if (!status.candidates.length) {
     return (
-      <div className="mt-1 space-y-2">
-      <CreateAgentsCta url={status.studioAgentsUrl} />
-      <p className="text-muted">
-        {t("No hay agentes de Studio con Claude, DeepSeek o Codex para este espacio.")}
-      </p>
+      <div className="mt-1">
+        <p className="mb-2 text-muted">{t("Todavía no hay agentes con Claude, DeepSeek o Codex: crea uno para cada rol aquí mismo.")}</p>
+        <RolePickersList status={status} value={value} onChange={onChange} />
       </div>
     );
   }
   return <RolePickersList status={status} value={value} onChange={onChange} />;
 }
 
+const NEW_AGENT = "__new__";
+const DEFAULT_NAME: Record<string, string> = { plan: "Planeador", build: "Constructor", check: "Revisor" };
+
 /**
- * «Crea agentes nuevos para tu Factory»: abre el creador de /app/agents YA LLENO con la
- * receta `factory-dev` (constructor en Claude, revisor en DeepSeek). Los agentes quedan en
- * Studio como cualquier otro: visibles y afinables; luego se eligen aquí.
+ * Crear un agente para un rol SIN salir de aquí: nombre + motor. Nace como agente normal de
+ * Studio (se afina en /app/agents) y queda elegido para el rol. @check sugiere otro motor.
  */
-function CreateAgentsCta({ url }: { url: string }) {
+function NewAgentForm({
+  handle,
+  onCancel,
+  onCreated,
+}: {
+  handle: string;
+  onCancel: () => void;
+  onCreated: (a: FactoryStatus["candidates"][number]) => void;
+}) {
   const t = useT();
-  const link = (motor?: string) => `${url}?crear=1&receta=factory-dev${motor ? `&motor=${motor}` : ""}`;
+  const [name, setName] = useState(DEFAULT_NAME[handle] ?? "");
+  const [engine, setEngine] = useState(handle === "check" ? "deepseek" : "claude");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   return (
-    <div className="rounded-lg border border-dashed border-border p-3">
-      <p className="text-xs font-semibold text-ink">{t("Crea agentes nuevos para tu Factory")}</p>
-      <div className="mt-2 flex flex-wrap gap-2">
-        <a href={link()} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 rounded-full border border-border px-3 py-1 text-xs font-semibold text-ink hover:bg-surface-3">
-          {t("Constructor (Claude)")} <ExternalLink className="size-3" />
-        </a>
-        <a href={link("deepseek")} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 rounded-full border border-border px-3 py-1 text-xs font-semibold text-ink hover:bg-surface-3">
-          {t("Revisor (DeepSeek)")} <ExternalLink className="size-3" />
-        </a>
-      </div>
+    <div className="mt-2 flex w-full flex-wrap items-center gap-2 rounded-md border border-dashed border-border p-2">
+      <input
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+        placeholder={t("Nombre del agente")}
+        className="min-w-0 flex-1 rounded-md border border-border bg-surface-2 px-2 py-1 text-sm text-ink"
+        autoFocus
+      />
+      <select value={engine} onChange={(e) => setEngine(e.target.value)} className="rounded-md border border-border bg-surface-2 px-2 py-1 text-sm text-ink">
+        <option value="claude">Claude</option>
+        <option value="deepseek">DeepSeek</option>
+        <option value="codex">Codex</option>
+      </select>
+      <button
+        type="button"
+        disabled={busy || !name.trim()}
+        onClick={async () => {
+          setBusy(true);
+          setError(null);
+          try {
+            onCreated(await createFactoryAgentFn({ data: { name, engine } }));
+          } catch (e) {
+            setError(e instanceof Error ? e.message : String(e));
+          } finally {
+            setBusy(false);
+          }
+        }}
+        className="inline-flex items-center gap-1 rounded-md bg-brand px-3 py-1 text-xs font-semibold text-white disabled:opacity-50"
+      >
+        {busy && <Loader2 className="size-3 animate-spin" />}
+        {busy ? t("Creando…") : t("Crear")}
+      </button>
+      <button type="button" onClick={onCancel} className="text-xs text-muted hover:text-ink">
+        {t("Cancelar")}
+      </button>
+      {error && <p className="w-full text-xs text-danger">{error}</p>}
     </div>
   );
 }
@@ -287,6 +324,11 @@ function RolePickersList({
   onChange: (v: Record<string, string>) => void;
 }) {
   const t = useT();
+  // Los que se crean aquí mismo se suman a la lista sin recargar el panel.
+  const [created, setCreated] = useState<FactoryStatus["candidates"]>([]);
+  const candidates = [...status.candidates, ...created.filter((c) => !status.candidates.some((x) => x.id === c.id))];
+  const [creatingFor, setCreatingFor] = useState<string | null>(null);
+  status = { ...status, candidates };
   const engines = new Set(HANDLES_UI.map((h) => status.candidates.find((a) => a.id === value[h])?.engine));
   const checkEngine = status.candidates.find((a) => a.id === value.check)?.engine;
   const buildEngine = status.candidates.find((a) => a.id === value.build)?.engine;
@@ -299,7 +341,10 @@ function RolePickersList({
             <span className="w-20 text-xs text-muted">{t(ROLE_LABEL[h])}</span>
             <select
               value={value[h] ?? ""}
-              onChange={(e) => onChange({ ...value, [h]: e.target.value })}
+              onChange={(e) => {
+                if (e.target.value === NEW_AGENT) setCreatingFor(h);
+                else onChange({ ...value, [h]: e.target.value });
+              }}
               className="min-w-0 flex-1 rounded-md border border-border bg-surface-2 px-2 py-1 text-sm text-ink"
             >
               <option value="">{t("Elige un agente")}</option>
@@ -308,6 +353,7 @@ function RolePickersList({
                   {agentLabel(a)}
                 </option>
               ))}
+              <option value={NEW_AGENT}>{t("+ Crear agente nuevo…")}</option>
             </select>
             {value[h] && (
               <a
@@ -319,13 +365,23 @@ function RolePickersList({
                 {t("Afinar en Studio")} <ExternalLink className="size-3" />
               </a>
             )}
+            {creatingFor === h && (
+              <NewAgentForm
+                handle={h}
+                onCancel={() => setCreatingFor(null)}
+                onCreated={(a) => {
+                  setCreated((prev) => [...prev, a]);
+                  onChange({ ...value, [h]: a.id });
+                  setCreatingFor(null);
+                }}
+              />
+            )}
           </div>
         ))}
       </div>
       {engines.size === 1 || checkEngine === buildEngine ? (
         <p className="text-xs text-muted">{t("Consejo: @check con un agente de otro motor revisa mejor; el mismo modelo comparte los puntos ciegos de quien construyó.")}</p>
       ) : null}
-      <CreateAgentsCta url={status.studioAgentsUrl} />
     </div>
   );
 }

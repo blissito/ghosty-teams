@@ -1479,4 +1479,7 @@ export const en: Record<string, string> = {
   "Crea agentes nuevos para tu Factory": "Create new agents for your Factory",
   "Constructor (Claude)": "Builder (Claude)",
   "Revisor (DeepSeek)": "Reviewer (DeepSeek)",
+  "Todavía no hay agentes con Claude, DeepSeek o Codex: crea uno para cada rol aquí mismo.": "No agents with Claude, DeepSeek or Codex yet: create one for each role right here.",
+  "+ Crear agente nuevo…": "+ Create a new agent…",
+  "Nombre del agente": "Agent name",
 };
