@@ -38,6 +38,24 @@ async function runOf(dest: ToolDest | null, runId: unknown) {
   return dest?.channelId && root ? R.runOfThread(dest.channelId, root) : null;
 }
 
+/** Por qué un plan no se acepta (null = pasa). El 2026-09-24 @plan en deepseek-v4-flash
+ *  «probó» la tool con «Markdown Markdown…» y «SONDEO DE CAMPO… relleno relleno…»: las dos
+ *  pasaban el mínimo de 40 caracteres y quedaron como v1 y v2 esperando firma. Un plan de
+ *  verdad (historia, criterios, brief, riesgos) nunca baja de ~25 palabras distintas. */
+export function planRejection(planMd: string): string | null {
+  if (planMd.length < 200) return "el plan está vacío o demasiado corto: entrega el plan real completo, no una prueba";
+  const words = planMd.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [];
+  if (new Set(words).size < 25)
+    return "esto no es un plan (texto de relleno o repetido). No pruebes la tool: llámala UNA vez con el plan real";
+  return null;
+}
+
+/** Título de la corrida: el explícito, o el primer encabezado/renglón del plan. */
+export function planTitle(title: unknown, planMd: string): string {
+  const t = String(title ?? "").trim() || (planMd.match(/^#+\s*(.+)$/m)?.[1] ?? planMd.split("\n")[0]);
+  return t.replace(/^#+\s*/, "").trim().slice(0, 120);
+}
+
 function runTools(dest: ToolDest | null): ConnectorTool[] {
   return [
     {
@@ -61,7 +79,8 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
         if (dest?.handle && dest.handle !== "plan") return { ok: false, error: "sólo @plan entrega planes" };
         if (!dest?.channelId) return { ok: false, error: "la fábrica trabaja en un room, no en un DM" };
         const planMd = String(a.plan_md ?? "").trim();
-        if (planMd.length < 40) return { ok: false, error: "el plan está vacío o demasiado corto" };
+        const rejected = planRejection(planMd);
+        if (rejected) return { ok: false, error: rejected };
         const R = await import("./factory-runs.server");
         const { dbq } = await import("../../dbq.server");
         let run = await runOf(dest, a.runId);
@@ -86,12 +105,19 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
           const rows = await dbq(
             `INSERT INTO gt_factory_runs (channel_id, root_msg_id, topic, title, status, repo, requested_by)
              VALUES (?, ?, ?, ?, 'planning', ?, ?) RETURNING id`,
-            [dest.channelId, root, dest.topic || "general", String(a.title || planMd.split("\n")[0]).replace(/^#+\s*/, "").slice(0, 120), repo, sub],
+            [dest.channelId, root, dest.topic || "general", planTitle(a.title, planMd), repo, sub],
           );
           run = (await R.getRun(Number(rows[0].id)))!;
         }
         const version = run.planVersion + 1;
         const firstPlan = run.planVersion === 0;
+        // El título sigue al plan vigente: antes se congelaba con la primera versión y viajaba
+        // así a @build, @check, la tarjeta y la tarea.
+        const title = planTitle(a.title, planMd);
+        if (!firstPlan && title && title !== run.title) {
+          await dbq("UPDATE gt_factory_runs SET title = ? WHERE id = ?", [title, run.id]);
+          run = { ...run, title };
+        }
         run = await R.applyEvent(run, "plan_submitted", { plan_version: version });
         await dbq("INSERT INTO gt_factory_plans (run_id, version, plan_md) VALUES (?, ?, ?)", [run.id, version, planMd]);
         const msgId = await R.postInThread(run, "plan", R.planCardFence(run.id, version));

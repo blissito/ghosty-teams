@@ -10,7 +10,7 @@ vi.mock("../hooks/generic-alert.server", () => ({
   ],
 }));
 
-import { factoryTools, factoryContext } from "./factory-tools.server";
+import { factoryTools, factoryContext, planRejection, planTitle } from "./factory-tools.server";
 import { toolEnScope } from "../connectors/tools.server";
 
 describe("factoryTools", () => {
@@ -44,5 +44,32 @@ describe("factoryTools", () => {
     expect(toolEnScope("factory_plan_submit", new Set(["fabrica"]) as any)).toBe(true);
     expect(toolEnScope("alert_webhook_create", new Set(["codigo"]) as any)).toBe(false);
     expect(toolEnScope("factory_plan_submit", new Set(["completo"]) as any)).toBe(true);
+  });
+});
+
+// 2026-09-24: @plan (deepseek-v4-flash) probó la tool con relleno y quedó como v1 y v2.
+describe("planRejection", () => {
+  it("rechaza el relleno que llegó a producción", () => {
+    expect(planRejection("Markdown Markdown Markdown Markdown Markdown Markdown")).not.toBeNull();
+    expect(planRejection("SONDEO DE CAMPO (reemplazar por el plan real). " + "relleno ".repeat(70))).not.toBeNull();
+  });
+  it("acepta un plan de verdad", () => {
+    const plan = `# Plan — Homologación de actions
+## Historia
+Que el catálogo de actions del agente de backoffice no se quede atrás cuando se construye o modifica un feature del API.
+## Criterios de aceptación
+- Un test de paridad falla si una ruta nueva no tiene action registrada.
+- El registro se genera desde services y no se duplica a mano.
+## Riesgos
+Rutas internas que no deben exponerse al agente; se listan en una allowlist explícita.`;
+    expect(planRejection(plan)).toBeNull();
+  });
+});
+
+describe("planTitle", () => {
+  it("usa el título explícito, si no el primer encabezado", () => {
+    expect(planTitle("Paridad de actions", "# Otro")).toBe("Paridad de actions");
+    expect(planTitle(undefined, "intro\n# Plan v3 — Homologación\n...")).toBe("Plan v3 — Homologación");
+    expect(planTitle("", "Sin encabezado\nresto")).toBe("Sin encabezado");
   });
 });
