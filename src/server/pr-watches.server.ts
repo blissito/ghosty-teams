@@ -113,6 +113,14 @@ async function sweepTenant(): Promise<void> {
       [notice.slice(0, 500), id],
     );
     if (!claimed.length) continue;
+    // PR de un pedido de la fábrica que ya terminó su parte (o cerró): la plataforma se
+    // encarga (pregunta «¿lo mezclo?», cierra al mezclar). Despertar a @build o @check aquí
+    // sólo deja un «ya está listo, OK» de ruido en el hilo.
+    const factoryDone = await dbq(
+      `SELECT id FROM gt_factory_runs WHERE status IN ('pr_review','done','cancelled') AND (pr_url = ? OR pr_url LIKE ?) LIMIT 1`,
+      [`https://github.com/${repo}/pull/${number}`, `%/${repo}/pull/${number}`],
+    ).catch(() => []);
+    if (factoryDone.length) continue;
     const failedLinks = snap.checks.failed
       .filter((f) => f.url)
       .slice(0, 5)
