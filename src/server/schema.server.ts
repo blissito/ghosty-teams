@@ -796,6 +796,10 @@ async function migrate(): Promise<void> {
   // Estado de la preview del PR: pending | ready | failed (y por qué falló).
   await addColumn("gt_factory_runs", "preview_state", "TEXT");
   await addColumn("gt_factory_runs", "preview_error", "TEXT");
+  // Veredicto de @check para su tarjeta (diff, CI, hallazgos) y cuándo quedó listo el PR
+  // (mide el tiempo pedido→PR en la página de la Fábrica).
+  await addColumn("gt_factory_runs", "verdict_json", "TEXT");
+  await addColumn("gt_factory_runs", "pr_ready_at", "INTEGER");
   // Tareas programadas de la Software Factory (revisión nocturna, dependencias): a su hora
   // la plataforma despierta a @plan en el room de la fábrica con un encargo fijo. Una fila
   // por tipo; `owner_sub` = con qué credenciales (GitHub) trabaja @plan.

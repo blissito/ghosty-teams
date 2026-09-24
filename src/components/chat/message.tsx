@@ -73,6 +73,7 @@ import { SmilePlus, Pencil, ArrowLeft, Reply, Square, Ban, CircleHelp, ShieldAle
 import { useRtSubscribe } from "../../utils/rt-bus";
 import { PlanCard } from "./PlanCard";
 import { RunCard } from "./RunCard";
+import { VerdictCard, PreviewErrorCard } from "./VerdictCard";
 import { AsksCard } from "./AsksCard";
 import { Markdown } from "../../components/Markdown";
 import { Avatar } from "../../components/Avatar";
@@ -81,7 +82,7 @@ import { registerModalEsc } from "../../utils/modal-esc";
 import { useScrollLock } from "../../utils/scroll-lock";
 import { type ArtifactView, viewFromAttachment } from "../../components/ArtifactPanel";
 import { FxOverlay } from "./FxOverlay";
-import { extractFx, extractEbDoc, bubbleWithoutEbDoc, extractToolState, extractSteps, extractTodos, extractAlert, extractAsk, extractPermission, extractAllPr, extractAllGh, extractTask, extractTests, extractPlanCard, extractRunCard, extractAsksCard, type ToolState, type TodoState, type AlertCardData, type AskCardData, type PermissionCardData, type GhCardData, type PrCardData, type TaskCardData, type TestsCardData } from "../../lib/ebdoc";
+import { extractFx, extractEbDoc, bubbleWithoutEbDoc, extractToolState, extractSteps, extractTodos, extractAlert, extractAsk, extractPermission, extractAllPr, extractAllGh, extractTask, extractTests, extractPlanCard, extractRunCard, extractVerdictCard, extractPreviewErrorCard, extractAsksCard, type ToolState, type TodoState, type AlertCardData, type AskCardData, type PermissionCardData, type GhCardData, type PrCardData, type TaskCardData, type TestsCardData } from "../../lib/ebdoc";
 import { prCardStateFn, runCardActionFn, taskCardStateFn, runTaskCardActionFn } from "../../server/connectors";
 import { answerAgentAskFn } from "../../server/agent-ask";
 import { answerAcpPermissionFn } from "../../server/agent-permission";
@@ -3057,6 +3058,14 @@ export function MessageRow({
               {(() => {
                 const rc = extractRunCard(m.body);
                 return rc ? <RunCard card={rc} channelId={m.channel_id ?? 0} /> : null;
+              })()}
+              {(() => {
+                const vc = extractVerdictCard(m.body);
+                return vc ? <VerdictCard card={vc} channelId={m.channel_id ?? 0} /> : null;
+              })()}
+              {(() => {
+                const pe = extractPreviewErrorCard(m.body);
+                return pe ? <PreviewErrorCard card={pe} channelId={m.channel_id ?? 0} /> : null;
               })()}
               {(() => {
                 const ac = extractAsksCard(m.body);

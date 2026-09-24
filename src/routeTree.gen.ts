@@ -13,6 +13,7 @@ import { Route as SetupRouteImport } from './routes/setup'
 import { Route as MemoryRouteImport } from './routes/memory'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as FormsRouteImport } from './routes/forms'
+import { Route as FactoryRouteImport } from './routes/factory'
 import { Route as DocProbeRouteImport } from './routes/doc-probe'
 import { Route as CanvasProbeRouteImport } from './routes/canvas-probe'
 import { Route as CanvasDemoRouteImport } from './routes/canvas-demo'
@@ -99,6 +100,11 @@ const LoginRoute = LoginRouteImport.update({
 const FormsRoute = FormsRouteImport.update({
   id: '/forms',
   path: '/forms',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const FactoryRoute = FactoryRouteImport.update({
+  id: '/factory',
+  path: '/factory',
   getParentRoute: () => rootRouteImport,
 } as any)
 const DocProbeRoute = DocProbeRouteImport.update({
@@ -450,6 +456,7 @@ export interface FileRoutesByFullPath {
   '/canvas-demo': typeof CanvasDemoRoute
   '/canvas-probe': typeof CanvasProbeRoute
   '/doc-probe': typeof DocProbeRoute
+  '/factory': typeof FactoryRoute
   '/forms': typeof FormsRoute
   '/login': typeof LoginRoute
   '/memory': typeof MemoryRoute
@@ -523,6 +530,7 @@ export interface FileRoutesByTo {
   '/canvas-demo': typeof CanvasDemoRoute
   '/canvas-probe': typeof CanvasProbeRoute
   '/doc-probe': typeof DocProbeRoute
+  '/factory': typeof FactoryRoute
   '/forms': typeof FormsRoute
   '/login': typeof LoginRoute
   '/memory': typeof MemoryRoute
@@ -596,6 +604,7 @@ export interface FileRoutesById {
   '/canvas-demo': typeof CanvasDemoRoute
   '/canvas-probe': typeof CanvasProbeRoute
   '/doc-probe': typeof DocProbeRoute
+  '/factory': typeof FactoryRoute
   '/forms': typeof FormsRoute
   '/login': typeof LoginRoute
   '/memory': typeof MemoryRoute
@@ -671,6 +680,7 @@ export interface FileRouteTypes {
     | '/canvas-demo'
     | '/canvas-probe'
     | '/doc-probe'
+    | '/factory'
     | '/forms'
     | '/login'
     | '/memory'
@@ -744,6 +754,7 @@ export interface FileRouteTypes {
     | '/canvas-demo'
     | '/canvas-probe'
     | '/doc-probe'
+    | '/factory'
     | '/forms'
     | '/login'
     | '/memory'
@@ -816,6 +827,7 @@ export interface FileRouteTypes {
     | '/canvas-demo'
     | '/canvas-probe'
     | '/doc-probe'
+    | '/factory'
     | '/forms'
     | '/login'
     | '/memory'
@@ -890,6 +902,7 @@ export interface RootRouteChildren {
   CanvasDemoRoute: typeof CanvasDemoRoute
   CanvasProbeRoute: typeof CanvasProbeRoute
   DocProbeRoute: typeof DocProbeRoute
+  FactoryRoute: typeof FactoryRoute
   FormsRoute: typeof FormsRoute
   LoginRoute: typeof LoginRoute
   MemoryRoute: typeof MemoryRoute
@@ -978,6 +991,13 @@ declare module '@tanstack/react-router' {
       path: '/forms'
       fullPath: '/forms'
       preLoaderRoute: typeof FormsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/factory': {
+      id: '/factory'
+      path: '/factory'
+      fullPath: '/factory'
+      preLoaderRoute: typeof FactoryRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/doc-probe': {
@@ -1490,6 +1510,7 @@ const rootRouteChildren: RootRouteChildren = {
   CanvasDemoRoute: CanvasDemoRoute,
   CanvasProbeRoute: CanvasProbeRoute,
   DocProbeRoute: DocProbeRoute,
+  FactoryRoute: FactoryRoute,
   FormsRoute: FormsRoute,
   LoginRoute: LoginRoute,
   MemoryRoute: MemoryRoute,

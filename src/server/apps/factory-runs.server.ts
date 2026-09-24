@@ -528,6 +528,16 @@ export async function afterFactoryTurn(
 // ── Cierre solo: el PR se mezcló (o se cerró) ────────────────────────────────
 
 /** Estado del PR en GitHub y si ya tiene una aprobación. null si no contesta. */
+/** ¿El PR ya se mezcló? false si GitHub no contesta. */
+export async function prIsMerged(sub: string, url: string): Promise<boolean> {
+  return (await prOutcome(sub, url))?.outcome === "merged";
+}
+
+/** El cierre festivo al mezclarse: confeti y una línea. */
+export function mergedMessage(run: Run): string {
+  return "```gt-fx\n" + JSON.stringify({ fx: "confetti" }) + "\n```\n" + `🎉 **Pedido terminado:** el PR se mezcló. ${run.prUrl ?? ""}`;
+}
+
 async function prOutcome(sub: string, url: string): Promise<{ outcome: "merged" | "closed" | "open"; approved: boolean } | null> {
   const pr = parsePrUrl(url);
   if (!pr) return null;
@@ -553,6 +563,25 @@ const PR_CHECK_EVERY_MS = 120_000;
  * la fábrica sigue trabajando. Lo llama el tick de `factory-schedules.server.ts`.
  */
 export async function closeFinishedRuns(): Promise<void> {
+  // Autocorrección: un pedido cancelado (reciente) cuyo PR SÍ se mezcló es un pedido
+  // terminado. Pasa cuando alguien lo cierra a mano antes de que el tick vea el merge.
+  const wrong = await dbq(
+    `SELECT * FROM gt_factory_runs WHERE status = 'cancelled' AND pr_url IS NOT NULL AND updated_at > unixepoch() - 3*86400 ORDER BY updated_at DESC LIMIT 5`,
+    [],
+  ).catch(() => []);
+  for (const row of wrong) {
+    const run = toRun(row);
+    if (lastPrCheck.has(-run.id)) continue; // una vez por proceso basta
+    lastPrCheck.set(-run.id, Date.now());
+    if (!(await prIsMerged(run.approvedBy ?? run.requestedBy, run.prUrl!))) continue;
+    const fixed = await dbq("UPDATE gt_factory_runs SET status = 'done', updated_at = unixepoch() WHERE id = ? AND status = 'cancelled' RETURNING *", [run.id]);
+    if (fixed[0]) {
+      const done = toRun(fixed[0]);
+      void syncTask(done).catch(() => {});
+      void refreshRoom(done.channelId);
+    }
+  }
+
   const rows = await dbq(
     // No sólo en etapa PR: alguien puede mezclar en GitHub sin esperar a @check.
     `SELECT * FROM gt_factory_runs WHERE status IN ('building','checking','escalated','pr_review') AND pr_url IS NOT NULL ORDER BY updated_at LIMIT 20`,
@@ -583,7 +612,7 @@ export async function closeFinishedRuns(): Promise<void> {
       // Lo mezclado cambia la calificación «Listo para agentes» del repo.
       if (run.repo) void import("./readiness.server").then((m) => m.invalidateReadiness(run.repo!));
       const done = await applyEvent(run, "merged").catch(() => null);
-      if (done) await postInThread(done, "check", `✅ **Pedido terminado:** el PR se mezcló. ${run.prUrl}`);
+      if (done) await postInThread(done, "check", mergedMessage(run));
     } else if (outcome === "closed") {
       const gone = await applyEvent(run, "cancel").catch(() => null);
       if (gone) await postInThread(gone, "check", `⏹️ El PR se cerró sin mezclar: pedido cancelado. ${run.prUrl}`);
@@ -617,14 +646,18 @@ export async function announcePreviews(): Promise<void> {
     if (!pr || !head) continue;
     // Sin estado (nuevo o «Reintentar») cuenta como commit nuevo: se vuelve a pedir `up`.
     const sameSha = row.preview_sha === head.sha && !!row.preview_state;
-    if (sameSha && (row.preview_state === "ready" || row.preview_state === "failed")) continue;
+    if (sameSha && (row.preview_state === "ready" || row.preview_state === "failed" || row.preview_state === "needs_env")) continue;
 
-    let next: { state: "pending" | "ready" | "failed"; url: string | null; provider: string | null; error: string | null } | null = null;
+    let next: { state: "pending" | "ready" | "failed" | "needs_env"; url: string | null; provider: string | null; error: string | null } | null = null;
     if (await P.hostingHasPreviews(sub, pr.repo)) {
       const p = await P.commitPreview(sub, pr.repo, head.sha);
       if (p.state === "ready") next = { state: "ready", url: p.url, provider: p.provider, error: null };
       else if (p.state === "failed") next = { state: "failed", url: null, provider: p.provider, error: "el hosting no pudo publicar la preview" };
       else next = { state: "pending", url: null, provider: p.provider, error: null };
+    } else if (await missingPreviewEnv(sub, pr.repo)) {
+      // Con .env.example y sin variables guardadas, la app no arrancaría: no se gasta una caja,
+      // se piden en el hilo (guardarlas la reintenta sola).
+      next = { state: "needs_env", url: null, provider: null, error: null };
     } else {
       try {
         const b: import("./preview.server").BoxPreview | null =
@@ -650,8 +683,16 @@ export async function announcePreviews(): Promise<void> {
     void refreshRoom(run.channelId);
     if (next.state === "ready")
       await postInThread(run, "build", `🔎 **Preview ${row.preview_sha && !sameSha ? "actualizada" : "lista"}**${next.provider ? ` (${next.provider})` : ""}: ${next.url}`);
+    else if (next.state === "needs_env")
+      await postInThread(
+        run,
+        "build",
+        `🔑 **La preview necesita las variables de \`${pr.repo}\`.** Guárdalas con datos de prueba y arranca sola: ` +
+          `[Guardar variables](/factory?repo=${encodeURIComponent(pr.repo)})`,
+      );
     else if (next.state === "failed")
-      await postInThread(run, "build", `⚠️ **La preview no arrancó.** ${String(next.error ?? "").split("\n")[0]}\n\n\`\`\`\n${String(next.error ?? "").split("\n").slice(1).join("\n").slice(-1200)}\n\`\`\``);
+      // Tarjeta con paso, causa, qué hacer y el log plegado (ver lib/preview-errors.ts).
+      await postInThread(run, "build", "```gt-preview-error\n" + JSON.stringify({ runId: run.id }) + "\n```\n⚠️ La preview no arrancó.");
   }
 }
 
@@ -663,8 +704,8 @@ export async function announcePreviews(): Promise<void> {
 export async function retryPreviews(by: { runId?: number; repo?: string }): Promise<number> {
   const rows = await dbq(
     by.runId
-      ? `UPDATE gt_factory_runs SET preview_state = 'pending', preview_sha = NULL, preview_error = NULL WHERE id = ? AND preview_state = 'failed' RETURNING id, channel_id`
-      : `UPDATE gt_factory_runs SET preview_state = 'pending', preview_sha = NULL, preview_error = NULL WHERE repo = ? AND preview_state = 'failed' RETURNING id, channel_id`,
+      ? `UPDATE gt_factory_runs SET preview_state = 'pending', preview_sha = NULL, preview_error = NULL WHERE id = ? AND preview_state IN ('failed','needs_env') RETURNING id, channel_id`
+      : `UPDATE gt_factory_runs SET preview_state = 'pending', preview_sha = NULL, preview_error = NULL WHERE repo = ? AND preview_state IN ('failed','needs_env') RETURNING id, channel_id`,
     [by.runId ?? by.repo ?? ""],
   ).catch(() => []);
   for (const r of rows) {
@@ -674,11 +715,21 @@ export async function retryPreviews(by: { runId?: number; repo?: string }): Prom
   return rows.length;
 }
 
+/** ¿El repo pide variables (.env.example) y no hay ninguna guardada para su preview? */
+async function missingPreviewEnv(sub: string, repo: string): Promise<boolean> {
+  const { repoReadiness } = await import("./readiness.server");
+  const r = await repoReadiness(sub, repo).catch(() => null);
+  if (!r || "error" in r) return false;
+  return r.facts.envExampleKeys.length > 0 && !r.facts.envSavedKeys;
+}
+
+export type RunPreviewState = "none" | "pending" | "ready" | "failed" | "needs_env";
+
 /** Lo que la tarjeta y @check saben de la preview del pedido (leído de la fila). */
-export async function runPreview(runId: number): Promise<{ state: "none" | "pending" | "ready" | "failed"; url: string | null; error: string | null }> {
+export async function runPreview(runId: number): Promise<{ state: RunPreviewState; url: string | null; error: string | null }> {
   const rows = await dbq("SELECT preview_state, preview_url, preview_error FROM gt_factory_runs WHERE id = ?", [runId]).catch(() => []);
   const r = rows[0];
-  const state = (r?.preview_state ?? "none") as "none" | "pending" | "ready" | "failed";
+  const state = (r?.preview_state ?? "none") as RunPreviewState;
   return { state, url: state === "ready" ? (r?.preview_url ?? null) : null, error: state === "failed" ? (r?.preview_error ?? null) : null };
 }
 
@@ -694,20 +745,33 @@ export async function maybeMergeReply(opts: { channelId: number; rootId: number;
     if (!run || run.status !== "pr_review" || !run.prUrl) return false;
     const asked = await dbq("SELECT merge_asked FROM gt_factory_runs WHERE id = ?", [run.id]);
     if (!asked[0]?.merge_asked) return false;
-    const pr = parsePrUrl(run.prUrl)!;
-    const { allTools } = await import("../connectors/github.server");
-    const tool = allTools().find((t) => t.name === "github_merge_pr");
-    const r = (await tool?.handler(opts.sub, { repo: pr.repo, number: pr.number })) as any;
-    if (!r || r.error) {
-      await postInThread(run, "build", `⚠️ No pude mezclarlo: ${r?.error ?? "GitHub no contestó"}. ${run.prUrl}`);
-      return true;
-    }
-    const done = await applyEvent(run, "close").catch(() => null);
-    await postInThread(done ?? run, "build", `✅ **Pedido terminado:** mezclé el PR. ${run.prUrl}`);
+    const r = await mergeRun(run, opts.sub);
+    if (!r.ok) await postInThread(run, "build", `⚠️ No pude mezclarlo: ${r.error}. ${run.prUrl}`);
     return true;
   } catch (e) {
     console.error("[factory] mezclar desde el hilo", e);
     return false;
+  }
+}
+
+/**
+ * Mezcla el PR del pedido con las credenciales de QUIEN lo pide (GitHub decide si puede:
+ * aprobación, CI, permisos) y cierra el pedido. Lo usan «mézclalo» en el hilo y «Mezclar»
+ * en la tarjeta del veredicto. Nunca lanza.
+ */
+export async function mergeRun(run: Run, sub: string): Promise<{ ok: true } | { ok: false; error: string }> {
+  const pr = run.prUrl ? parsePrUrl(run.prUrl) : null;
+  if (!pr) return { ok: false, error: "el pedido no tiene PR" };
+  try {
+    const { allTools } = await import("../connectors/github.server");
+    const tool = allTools().find((t) => t.name === "github_merge_pr");
+    const r = (await tool?.handler(sub, { repo: pr.repo, number: pr.number })) as any;
+    if (!r || r.error) return { ok: false, error: String(r?.error ?? "GitHub no contestó") };
+    const done = await applyEvent(run, "merged").catch(() => null);
+    await postInThread(done ?? run, "build", mergedMessage(run));
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
   }
 }
 

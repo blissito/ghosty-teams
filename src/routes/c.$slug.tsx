@@ -21,6 +21,7 @@ import {
   Rocket,
   Wrench,
   Target,
+  Factory as FactoryIcon,
   Lightbulb,
   Flame,
   BarChart3,
@@ -73,6 +74,7 @@ import {
   ExternalLink,
   Brain,
 } from "lucide-react";
+import { factoryInstalledFn } from "../server/apps/factory";
 import { searchMessagesFn } from "../server/search";
 import {
   roomReposFn,
@@ -3671,6 +3673,11 @@ function Sidebar({
   onDismissTurn: (id: number) => void;
 }) {
   const t = useT();
+  // «Fábrica» sólo aparece donde la Software Factory está instalada.
+  const [factoryOn, setFactoryOn] = useState(false);
+  useEffect(() => {
+    factoryInstalledFn().then(setFactoryOn).catch(() => {});
+  }, []);
   const router = useRouter();
   const { openPrefs } = useContext(ChatCtx); // Ajustes in-panel (modal a nivel shell)
   const [wsOpen, setWsOpen] = useState(false); // dropdown del switcher de workspace
@@ -3996,6 +4003,17 @@ function Sidebar({
                 la página, para que nadie lo descubra a mitad de una campaña. */}
             <span className="ml-auto shrink-0 rounded-md border border-amber-500/40 bg-amber-500/10 px-1.5 py-px text-[10px] font-semibold uppercase tracking-wide text-amber-500">beta</span>
           </Link>
+          {/* Fábrica: pedidos, repos y equipo de la Software Factory (antes en Ajustes → Apps). */}
+          {factoryOn && (
+            <Link
+              to="/factory"
+              search={{ repo: undefined }}
+              className="flex w-full items-center gap-2 rounded-lg px-2 py-2.5 text-sm md:py-1.5 text-muted hover:bg-surface-3 hover:text-ink"
+            >
+              <FactoryIcon size={16} className="shrink-0" />
+              <span className="truncate">{t("Fábrica")}</span>
+            </Link>
+          )}
           {/* Memoria del workspace: lo que los agentes saben de la empresa. Curaduría. */}
           <Link
             to="/memory"

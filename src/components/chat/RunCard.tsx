@@ -90,6 +90,11 @@ export function RunCard({ card, channelId }: { card: RunCardData; channelId: num
             );
           })}
         </ol>
+        {st.status === "done" && (
+          <p className="mt-2 rounded-md bg-emerald-600/10 px-2.5 py-1.5 text-xs font-semibold text-emerald-700 dark:text-emerald-400">
+            🎉 {t("Terminado: el PR se mezcló.")}
+          </p>
+        )}
         {WORKING[st.status] && (
           <p className="mt-2 flex items-center gap-1.5 text-xs text-ink" role="status">
             <span className="relative flex h-2 w-2">
@@ -108,7 +113,7 @@ export function RunCard({ card, channelId }: { card: RunCardData; channelId: num
             : st.status === "cancelled"
               ? t("Cancelado.")
               : st.status === "done"
-                ? t("Terminado: el PR se mezcló.")
+                ? ""
                 : st.status === "pr_review"
                   ? st.preview?.state === "pending"
                     ? t("🏁 La fábrica terminó su parte. Se está construyendo la preview del PR para que lo revises.")
@@ -154,6 +159,14 @@ export function RunCard({ card, channelId }: { card: RunCardData; channelId: num
               <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-amber-500 motion-reduce:animate-none" />
               {t("Preview en camino…")}
             </span>
+          )}
+          {st.preview?.state === "needs_env" && st.repo && (
+            <a
+              href={`/factory?repo=${encodeURIComponent(st.repo)}`}
+              className="rounded-full bg-amber-500/15 px-3 py-1 text-xs font-semibold text-amber-700 hover:bg-amber-500/25 dark:text-amber-400"
+            >
+              🔑 {t("Faltan variables")}
+            </a>
           )}
           {st.preview?.state === "failed" && (
             <span className="inline-flex items-center gap-2 rounded-full bg-red-600/10 py-1 pl-3 pr-1 text-xs text-red-700 dark:text-red-400" title={st.preview.error ?? undefined}>

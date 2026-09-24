@@ -264,29 +264,46 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
         const findings = String(a.findings ?? "").trim();
         // Aprobar exige CI en verde, verificado aquí y no en la palabra del modelo. `none` (el
         // repo no tiene CI) se permite, pero se dice en la tarjeta.
-        let ciNote = "";
         if (a.pass === true && run.prUrl) {
           const ci = await R.prCi(sub, run.prUrl);
           if (ci?.state === "pending")
             return { ok: false, error: "el CI todavía corre: usa github_watch_pr y da tu veredicto cuando termine." };
           if (ci?.state === "failure")
             return { ok: false, error: `el CI está en rojo (${ci.failed.join(", ") || "ver checks"}): no puede pasar. Repórtalo con pass=false.` };
-          if (ci?.state === "none") ciNote = "\n\n⚠️ Este repo no tiene CI: nada corrió las pruebas fuera de la caja.";
+          // `none` (sin CI) pasa, pero la tarjeta lo dice.
         }
         if (a.pass === true) {
           const next = await R.applyEvent(run, "check_pass");
           // Sacarlo de borrador lo hace la plataforma, no el prompt: antes dependía de que
           // @check se acordara de github_mark_ready, y la tarjeta ya decía «listo».
           const ready = run.prUrl ? await R.markPrReady(sub, run.prUrl) : false;
-          const draftNote = run.prUrl && !ready ? "\n\n⚠️ No pude sacar el PR de borrador: márcalo listo en GitHub." : "";
+          // El veredicto va como TARJETA (```gt-verdict```): los datos duros (diff, CI) salen de
+          // GitHub, no de la palabra del modelo; su texto queda como «Detalle» plegado.
+          const pr = run.prUrl ? R.parsePrUrl(run.prUrl) : null;
+          const { githubApi } = await import("../connectors/github.server");
+          const info = pr ? await githubApi(sub, `/repos/${pr.repo}/pulls/${pr.number}`).catch(() => null) : null;
+          const ciState = run.prUrl ? ((await R.prCi(sub, run.prUrl))?.state ?? "none") : "none";
+          const verdict = {
+            prNumber: pr?.number ?? null,
+            files: Number(info?.changed_files ?? 0),
+            additions: Number(info?.additions ?? 0),
+            deletions: Number(info?.deletions ?? 0),
+            ci: ciState,
+            ready,
+            planVersion: run.planVersion,
+            loops: run.loops,
+            findings: findings.slice(0, 4000),
+          };
+          const { dbq } = await import("../../dbq.server");
+          await dbq("UPDATE gt_factory_runs SET verdict_json = ?, pr_ready_at = unixepoch() WHERE id = ?", [JSON.stringify(verdict), run.id]);
           await R.postInThread(
             next,
             "check",
             // Cierre explícito de la fábrica: quien lee el hilo tiene que saber que ya NADIE está
-            // trabajando y que lo que sigue es de una persona (revisar y mezclar).
-            `🏁 **La fábrica terminó su parte.** Pasó el check contra el plan v${run.planVersion}${ready ? " y el PR ya no es borrador" : ""}. ` +
-              `Nadie está trabajando en este pedido: el PR espera **tu revisión** (apruébalo y mézclalo). Al mezclarlo, el pedido se cierra solo.` +
-              `${findings ? `\n\n${findings}` : ""}${ciNote}${draftNote}\n\n${run.prUrl ?? ""}`,
+            // trabajando y que lo que sigue es de una persona (revisar y mezclar). La línea de
+            // texto es para avisos y clientes que no pintan la tarjeta.
+            "```gt-verdict\n" + JSON.stringify({ runId: run.id }) + "\n```\n" +
+              "🏁 La fábrica terminó su parte: el PR espera tu revisión.",
           );
           return { ok: true, status: next.status, note: "La plataforma ya avisó en el hilo y sacó el PR de borrador. Termina sin repetirlo." };
         }
@@ -331,7 +348,15 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
         const R = await import("./factory-runs.server");
         const run = await runOf(dest, a.runId);
         if (!run) return { ok: false, error: "no hay pedido en este hilo" };
-        const next = await R.applyEvent(run, a.outcome === "merged" ? "close" : "cancel");
+        // Manda GitHub, no la palabra del agente: un PR mezclado es pedido TERMINADO aunque el
+        // agente diga «cancelled» (así quedó #3 como cancelado con el PR ya mezclado).
+        const merged = run.prUrl ? await R.prIsMerged(run.approvedBy ?? run.requestedBy, run.prUrl) : false;
+        if (merged || a.outcome === "merged") {
+          const next = await R.applyEvent(run, "merged");
+          await R.postInThread(next, "check", R.mergedMessage(run));
+          return { ok: true, status: next.status, note: "La plataforma ya avisó en el hilo. No lo repitas." };
+        }
+        const next = await R.applyEvent(run, "cancel");
         return { ok: true, status: next.status };
       },
     },
@@ -450,7 +475,9 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
             ? "Ábrela y prueba ahí los criterios de aceptación visibles."
             : p.state === "pending"
               ? "Se está publicando: vuelve a preguntar en un minuto."
-              : p.state === "failed"
+              : p.state === "needs_env"
+                ? "La preview espera que el dueño guarde sus variables: revisa con el diff y las pruebas."
+                : p.state === "failed"
                 ? "La preview no arrancó (el motivo va en error). Si es el código del PR, es un hallazgo; si faltan variables de entorno, dilo y sigue con el diff y las pruebas."
                 : "Todavía no hay preview de este PR: vuelve a preguntar en un minuto o revisa con el diff y las pruebas.";
         return { ok: true, ...p, note };

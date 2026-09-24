@@ -387,6 +387,7 @@ export const factoryRunCardFn = createServerFn({ method: "POST" })
       planVersion: run.planVersion,
       loops: run.loops,
       prUrl: run.prUrl,
+      repo: run.repo,
       // La preview del PR (Vercel, Netlify…): el cambio se ve sin bajar el código.
       // La preview del PR (la del hosting o la de nuestra caja), tal como la dejó el tick.
       preview: ["checking", "pr_review"].includes(run.status) ? { ...(await R.runPreview(run.id)), provider: null as string | null } : null,
@@ -408,6 +409,126 @@ export const factoryRetryPreviewFn = createServerFn({ method: "POST" })
     const db = await import("../../db.server");
     if (!(await db.listChannels(me.sub, me.isOwner)).some((c) => c.id === run.channelId)) throw new Error("no ves ese room");
     return { retried: await R.retryPreviews({ runId: run.id }) };
+  });
+
+// ── La página «Fábrica» (/factory) ───────────────────────────────────────────
+
+/** ¿La fábrica está instalada? Para la barra lateral: cualquiera con sesión. */
+export const factoryInstalledFn = createServerFn({ method: "GET" }).handler(async () => {
+  const me = await sessionUser();
+  if (!me) return false;
+  const { isInstalled } = await import("./installed.server");
+  return await isInstalled("factory").catch(() => false);
+});
+
+export type FactoryRunRow = {
+  id: number;
+  title: string;
+  status: string;
+  repo: string | null;
+  loops: number;
+  createdAt: number;
+  prReadyAt: number | null;
+  prUrl: string | null;
+  threadUrl: string | null;
+  kind: string | null;
+};
+
+/**
+ * Lo que ve cualquier miembro en /factory: los pedidos de los rooms que ve (con los números
+ * del espacio), el room de la fábrica y sus repos. Lo del dueño (roles, horarios) sigue en
+ * `factoryStatusFn`.
+ */
+export const factoryOverviewFn = createServerFn({ method: "GET" }).handler(async () => {
+  const me = await sessionUser();
+  if (!me) throw new Error("no autenticado");
+  const { isInstalled, getAppConfig } = await import("./installed.server");
+  const installed = await isInstalled("factory").catch(() => false);
+  const cfg = await getAppConfig<FactoryCfg>("factory").catch(() => null);
+  const db = await import("../../db.server");
+  const channels = await db.listChannels(me.sub, me.isOwner);
+  const byId = new Map(channels.map((c) => [c.id, c]));
+  const room = cfg?.roomId ? (byId.get(cfg.roomId) ?? null) : null;
+  const repos = room ? (await db.listRoomRepos(room.id)).map((r) => r.repo) : [];
+  const { dbq } = await import("../../dbq.server");
+  const rows = await dbq(
+    `SELECT id, channel_id, root_msg_id, title, status, repo, loops, created_at, pr_ready_at, pr_url, kind
+     FROM gt_factory_runs ORDER BY id DESC LIMIT 500`,
+    [],
+  ).catch(() => []);
+  // Sólo los pedidos de rooms que esta persona ve (mismo criterio que la tarjeta viva).
+  const runs: FactoryRunRow[] = rows
+    .filter((r) => byId.has(Number(r.channel_id)))
+    .map((r) => ({
+      id: Number(r.id),
+      title: String(r.title),
+      status: String(r.status),
+      repo: r.repo ?? null,
+      loops: Number(r.loops ?? 0),
+      createdAt: Number(r.created_at ?? 0),
+      prReadyAt: r.pr_ready_at != null ? Number(r.pr_ready_at) : null,
+      prUrl: r.pr_url ?? null,
+      threadUrl: `/c/${byId.get(Number(r.channel_id))!.slug}?thread=${r.root_msg_id}`,
+      kind: r.kind ?? null,
+    }));
+  const { runStats } = await import("./factory-stats");
+  return {
+    installed,
+    isOwner: !!me.isOwner,
+    room: room ? { id: room.id, slug: room.slug, name: room.name } : null,
+    repos,
+    runs,
+    stats: runStats(runs),
+  };
+});
+
+/** Datos de la tarjeta de veredicto de @check. */
+export const factoryVerdictFn = createServerFn({ method: "POST" })
+  .validator((d: { runId: number }) => d)
+  .handler(async ({ data }) => {
+    const me = await sessionUser();
+    if (!me) throw new Error("no autenticado");
+    const R = await import("./factory-runs.server");
+    const run = await R.getRun(Number(data.runId));
+    if (!run) return null;
+    const db = await import("../../db.server");
+    if (!(await db.listChannels(me.sub, me.isOwner)).some((c) => c.id === run.channelId)) return null;
+    const { dbq } = await import("../../dbq.server");
+    const rows = await dbq("SELECT verdict_json FROM gt_factory_runs WHERE id = ?", [run.id]);
+    let verdict: {
+      prNumber: number | null;
+      files: number;
+      additions: number;
+      deletions: number;
+      ci: string;
+      ready: boolean;
+      planVersion: number;
+      loops: number;
+      findings: string;
+    } | null = null;
+    try {
+      verdict = rows[0]?.verdict_json ? JSON.parse(String(rows[0].verdict_json)) : null;
+    } catch {
+      verdict = null;
+    }
+    return { runId: run.id, status: run.status, repo: run.repo, prUrl: run.prUrl, verdict, preview: await R.runPreview(run.id) };
+  });
+
+/** «Mezclar» desde la tarjeta del veredicto: con el GitHub de quien pica. */
+export const factoryMergeFn = createServerFn({ method: "POST" })
+  .validator((d: { runId: number }) => d)
+  .handler(async ({ data }) => {
+    const me = await sessionUser();
+    if (!me) throw new Error("no autenticado");
+    const R = await import("./factory-runs.server");
+    const run = await R.getRun(Number(data.runId));
+    if (!run) throw new Error("no existe el pedido");
+    const db = await import("../../db.server");
+    if (!(await db.listChannels(me.sub, me.isOwner)).some((c) => c.id === run.channelId)) throw new Error("no ves ese room");
+    if (run.status !== "pr_review") throw new Error("el pedido no está esperando revisión");
+    const r = await R.mergeRun(run, me.sub);
+    if (!r.ok) throw new Error(r.error);
+    return { ok: true as const };
   });
 
 /**

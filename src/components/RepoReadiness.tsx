@@ -30,12 +30,14 @@ const CRITERIA: Record<ReadinessKey, { label: string; detail: string }> = {
   preview: { label: "Cada cambio se ve antes de mezclar", detail: "Una preview por PR: la de tu hosting si la publica (Vercel, Netlify…) o una que la fábrica levanta en su propia caja. @check prueba ahí." },
 };
 
-export function RepoReadiness({ channelId, repo, compact = false, onLevel }: {
+export function RepoReadiness({ channelId, repo, compact = false, onLevel, autoOpenEnv = false }: {
   channelId: number;
   repo: string;
   /** En el popover del room: sin título grande y con menos aire. */
   compact?: boolean;
   onLevel?: (level: number | null) => void;
+  /** Abre «Variables» al cargar (la liga «Guardar variables» del hilo cae aquí). */
+  autoOpenEnv?: boolean;
 }) {
   const t = useT();
   const [view, setView] = useState<ReadinessView | null>(null);
@@ -71,6 +73,14 @@ export function RepoReadiness({ channelId, repo, compact = false, onLevel }: {
   }, [load]);
 
   const r = view?.readiness ?? null;
+
+  const autoOpened = useRef(false);
+  useEffect(() => {
+    if (!autoOpenEnv || autoOpened.current || !r || !view?.isOwner) return;
+    autoOpened.current = true;
+    setEnvText(r.facts.envExampleKeys.map((k) => `${k}=`).join("\n"));
+    setEnvOpen(true);
+  }, [autoOpenEnv, r, view?.isOwner]);
 
   if (!view && loading) {
     return (

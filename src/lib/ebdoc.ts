@@ -1135,6 +1135,8 @@ export function bubbleWithoutEbDoc(
     // La de plan de la Software Factory: el fence sólo trae ids, la tarjeta lee el resto.
     body = stripPlanCard(body);
     body = stripRunCard(body);
+    body = stripVerdictCard(body);
+    body = stripPreviewErrorCard(body);
     body = stripAsksCard(body);
     // El efecto no deja nada en el cuerpo: no es una tarjeta que se lea después, es algo que
     // PASA al llegar el mensaje. Sin esto, el `{"fx":"confetti"}` queda de recuadro de código
@@ -1383,6 +1385,53 @@ export function extractRunCard(body: string): RunCardData | null {
 
 export function stripRunCard(body: string): string {
   return body.replace(/```gt-run[^\n]*\n[\s\S]*?```/, "").trim();
+}
+
+/* ── Veredicto de @check (```gt-verdict```) ────────────────────────────────── */
+// Lo publica la plataforma al pasar el check. Sólo lleva el id; la tarjeta lee diff, CI y
+// hallazgos. La línea «🏁 …» que lo acompaña es para avisos: con tarjeta, sobra.
+
+export type VerdictCardData = { runId: number };
+
+export function extractVerdictCard(body: string): VerdictCardData | null {
+  const m = body.match(/```gt-verdict[^\n]*\n([\s\S]*?)```/);
+  if (!m) return null;
+  try {
+    const runId = Number((JSON.parse(m[1].trim()) as Record<string, unknown>).runId);
+    return runId > 0 ? { runId } : null;
+  } catch {
+    return null;
+  }
+}
+
+export function stripVerdictCard(body: string): string {
+  if (!/```gt-verdict/.test(body)) return body;
+  return body
+    .replace(/```gt-verdict[^\n]*\n[\s\S]*?```/, "")
+    .replace(/^🏁 La fábrica terminó su parte: el PR espera tu revisión\.\s*$/m, "")
+    .trim();
+}
+
+/* ── La preview de un pedido no arrancó (```gt-preview-error```) ─────────────── */
+// Sólo el id: la tarjeta lee el error de la fila y lo diagnostica (lib/preview-errors.ts).
+
+export function extractPreviewErrorCard(body: string): { runId: number } | null {
+  const m = body.match(/```gt-preview-error[^\n]*\n([\s\S]*?)```/);
+  if (!m) return null;
+  try {
+    const runId = Number((JSON.parse(m[1].trim()) as Record<string, unknown>).runId);
+    return runId > 0 ? { runId } : null;
+  } catch {
+    return null;
+  }
+}
+
+export function stripPreviewErrorCard(body: string): string {
+  if (!/```gt-preview-error/.test(body)) return body;
+  return body
+    .replace(/```gt-preview-error[^\n]*\n[\s\S]*?```/, "")
+    .replace(/^⚠️ La preview no arrancó\.\s*$/m, "")
+    .trim();
 }
 
 /* ── Pedidos SUGERIDOS por @plan (```gt-asks```) ──────────────────────────── */

@@ -5,12 +5,11 @@
 import { useEffect, useState } from "react";
 import { Factory, Loader2, ExternalLink } from "lucide-react";
 import { useT } from "../i18n";
-import { createFactoryAgentFn, factoryReposFn, factorySchedulesFn, factorySuggestFn, setFactoryScheduleFn, factoryStatusFn, installFactoryFn, setFactoryRolesFn, uninstallFactoryFn, type FactoryStatus } from "../server/apps/factory";
+import { createFactoryAgentFn, factorySchedulesFn, factorySuggestFn, setFactoryScheduleFn, factoryStatusFn, installFactoryFn, setFactoryRolesFn, uninstallFactoryFn, type FactoryStatus } from "../server/apps/factory";
 import { githubInstallationReposFn } from "../server/room-repos";
 import { listChannelsFn } from "../server/chat";
 import ConfirmModal from "./ConfirmModal";
 import { Toggle } from "./Toggle";
-import { RepoReadiness } from "./RepoReadiness";
 
 type Repos = Awaited<ReturnType<typeof githubInstallationReposFn>>;
 type Room = { id: number; name: string; slug: string };
@@ -79,11 +78,11 @@ function Installed({ status, onChange }: { status: FactoryStatus; onChange: () =
       <p className="text-ink">
         {t("Room")}: <b>#{status.room?.slug ?? "—"}</b> · {t("Repos")}: {status.repos.length ? status.repos.join(", ") : "—"}
       </p>
-      <RolesEditor status={status} onChange={onChange} />
-      <SuggestAsks roomSlug={status.room?.slug ?? null} />
-      <RepoGuards />
-      <SchedulesEditor />
+      <p className="text-muted">{t("Pedidos, repos, equipo y tareas automáticas viven en la Fábrica.")}</p>
       <div className="flex gap-2 pt-1">
+        <a href="/factory" className="rounded-lg border border-brand px-3 py-1.5 text-xs font-semibold text-brand hover:bg-brand/10">
+          {t("Abrir la Fábrica")} →
+        </a>
         {status.room && (
           <a href={`/c/${status.room.slug}`} className="rounded-lg bg-brand px-3 py-1.5 text-xs font-semibold text-white hover:opacity-90">
             {t("Ir al room")}
@@ -391,7 +390,7 @@ function RolePickersList({
   );
 }
 
-function RolesEditor({ status, onChange }: { status: FactoryStatus; onChange: () => void }) {
+export function RolesEditor({ status, onChange }: { status: FactoryStatus; onChange: () => void }) {
   const t = useT();
   const current = Object.fromEntries(status.roles.map((r) => [r.handle, r.agentId ?? ""]));
   const [draft, setDraft] = useState<Record<string, string>>(current);
@@ -431,7 +430,7 @@ function RolesEditor({ status, onChange }: { status: FactoryStatus; onChange: ()
 
 // «Sugerir pedidos»: @plan lee el repo y deja en el room una tarjeta con pedidos listos para
 // mandar (un botón «Pedir» cada uno). Es el arranque cuando nadie sabe qué pedir primero.
-function SuggestAsks({ roomSlug }: { roomSlug: string | null }) {
+export function SuggestAsks({ roomSlug }: { roomSlug: string | null }) {
   const t = useT();
   const [state, setState] = useState<"idle" | "busy" | "sent" | "error">("idle");
   const run = async () => {
@@ -472,7 +471,7 @@ const SCHED_LABEL: Record<string, { icon: string; title: string; when: string }>
   deps: { icon: "📦", title: "Dependencias", when: "lunes a las" },
 };
 
-function SchedulesEditor() {
+export function SchedulesEditor() {
   const t = useT();
   const [rows, setRows] = useState<Sched[] | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -534,25 +533,3 @@ function SchedulesEditor() {
 
 // Por repo de la fábrica: ¿tiene CI? ¿está protegida la rama principal? Todo con un clic; el
 // usuario no tiene que saber de rulesets ni de runners.
-function RepoGuards() {
-  const t = useT();
-  const [data, setData] = useState<Awaited<ReturnType<typeof factoryReposFn>> | null>(null);
-  useEffect(() => {
-    factoryReposFn()
-      .then(setData)
-      .catch(() => setData({ repos: [], ciLabel: null, roomId: null }));
-  }, []);
-  if (!data?.roomId || !data.repos.length) return null;
-  // El MISMO «Listo para agentes» que abre el ícono de GitHub del room.
-  return (
-    <div className="mt-3 space-y-2">
-      {data.repos.map((r) => (
-        <div key={r.repo} className="rounded-lg border border-border bg-surface p-3">
-          <p className="mb-2 font-mono text-xs text-muted">{r.repo}</p>
-          <RepoReadiness channelId={data.roomId!} repo={r.repo} />
-        </div>
-      ))}
-      {data.ciLabel && <p className="text-xs text-muted">{t("⚡ El CI corre en la caja de CI de tu espacio: caché caliente y sin fila.")}</p>}
-    </div>
-  );
-}
