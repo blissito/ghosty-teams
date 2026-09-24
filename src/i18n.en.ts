@@ -1459,4 +1459,12 @@ export const en: Record<string, string> = {
   "¿Qué cambiarías?": "What would you change?",
   "Enviando…": "Sending…",
   "@check no pudo cerrarlo en 3 vueltas: ¿otra vuelta o replanear?": "@check couldn't close it in 3 rounds: another round or re-plan?",
+  "Roles y motor": "Roles and engine",
+  "Planea": "Plans",
+  "Construye": "Builds",
+  "Revisa": "Reviews",
+  "Modelo y llaves en Studio": "Model and keys in Studio",
+  "Consejo: @check en otro motor revisa mejor; el mismo modelo comparte los puntos ciegos de quien construyó.": "Tip: @check on a different engine reviews better; the same model shares the builder's blind spots.",
+  "Aplicando…": "Applying…",
+  "Guardar motores": "Save engines",
 };

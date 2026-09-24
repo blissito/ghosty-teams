@@ -4,7 +4,7 @@
 import { useEffect, useState } from "react";
 import { Factory, Loader2, ExternalLink } from "lucide-react";
 import { useT } from "../i18n";
-import { factoryStatusFn, installFactoryFn, uninstallFactoryFn, type FactoryStatus } from "../server/apps/factory";
+import { factoryStatusFn, installFactoryFn, setFactoryEnginesFn, uninstallFactoryFn, type FactoryStatus } from "../server/apps/factory";
 import { githubInstallationReposFn } from "../server/room-repos";
 import { listChannelsFn } from "../server/chat";
 import ConfirmModal from "./ConfirmModal";
@@ -76,9 +76,7 @@ function Installed({ status, onChange }: { status: FactoryStatus; onChange: () =
       <p className="text-ink">
         {t("Room")}: <b>#{status.room?.slug ?? "—"}</b> · {t("Repos")}: {status.repos.length ? status.repos.join(", ") : "—"}
       </p>
-      <p className="text-muted">
-        {t("Handles activos")}: {status.handles.length ? status.handles.map((h) => `@${h}`).join(", ") : "—"}
-      </p>
+      <RolesEditor status={status} onChange={onChange} />
       <div className="flex gap-2 pt-1">
         {status.room && (
           <a href={`/c/${status.room.slug}`} className="rounded-lg bg-brand px-3 py-1.5 text-xs font-semibold text-white hover:opacity-90">
@@ -203,6 +201,75 @@ function Installer({ onDone }: { onDone: () => void }) {
         {busy && <Loader2 className="size-3.5 animate-spin" />}
         3. {busy ? t("Instalando…") : t("Instalar")}
       </button>
+    </div>
+  );
+}
+
+// Los roles y su motor. Cada motor es una caja propia en gs; cambiar el de un rol crea (o
+// reusa) la caja de ese motor y repunta el handle. Modelo, prompt y llaves: en Studio.
+const ENGINE_LABEL: Record<string, string> = { claude: "Claude", deepseek: "DeepSeek", codex: "Codex (OpenAI)" };
+const ROLE_LABEL: Record<string, string> = { plan: "Planea", build: "Construye", check: "Revisa" };
+
+function RolesEditor({ status, onChange }: { status: FactoryStatus; onChange: () => void }) {
+  const t = useT();
+  const [draft, setDraft] = useState<Record<string, string>>(() => Object.fromEntries(status.roles.map((r) => [r.handle, r.engine])));
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const dirty = status.roles.some((r) => draft[r.handle] !== r.engine);
+  const sameModel = new Set(Object.values(draft)).size === 1;
+  return (
+    <div className="mt-2 space-y-2">
+      <p className="text-xs font-semibold text-muted">{t("Roles y motor")}</p>
+      <div className="divide-y divide-border rounded-lg border border-border bg-surface">
+        {status.roles.map((r) => (
+          <div key={r.handle} className="flex flex-wrap items-center gap-2 px-3 py-2">
+            <span className="w-16 font-mono text-sm font-semibold text-ink">@{r.handle}</span>
+            <span className="w-20 text-xs text-muted">{t(ROLE_LABEL[r.handle] ?? r.handle)}</span>
+            <select
+              value={draft[r.handle]}
+              onChange={(e) => setDraft((d) => ({ ...d, [r.handle]: e.target.value }))}
+              className="rounded-md border border-border bg-surface-2 px-2 py-1 text-sm text-ink"
+            >
+              {status.engineOptions.map((e) => (
+                <option key={e} value={e}>
+                  {ENGINE_LABEL[e] ?? e}
+                </option>
+              ))}
+            </select>
+            {r.studioUrl && (
+              <a href={r.studioUrl} target="_blank" rel="noreferrer" className="ml-auto inline-flex items-center gap-1 text-xs text-brand hover:underline">
+                {t("Modelo y llaves en Studio")} <ExternalLink className="size-3" />
+              </a>
+            )}
+          </div>
+        ))}
+      </div>
+      {sameModel && (
+        <p className="text-xs text-muted">{t("Consejo: @check en otro motor revisa mejor; el mismo modelo comparte los puntos ciegos de quien construyó.")}</p>
+      )}
+      {error && <p className="text-xs text-danger">{error}</p>}
+      {dirty && (
+        <button
+          type="button"
+          disabled={busy}
+          onClick={async () => {
+            setBusy(true);
+            setError(null);
+            try {
+              await setFactoryEnginesFn({ data: { engines: draft } });
+              onChange();
+            } catch (e) {
+              setError(e instanceof Error ? e.message : String(e));
+            } finally {
+              setBusy(false);
+            }
+          }}
+          className="inline-flex items-center gap-2 rounded-lg bg-brand px-3 py-1.5 text-xs font-semibold text-white hover:opacity-90 disabled:opacity-50"
+        >
+          {busy && <Loader2 className="size-3.5 animate-spin" />}
+          {busy ? t("Aplicando…") : t("Guardar motores")}
+        </button>
+      )}
     </div>
   );
 }

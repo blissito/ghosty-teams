@@ -5,8 +5,9 @@ import { sessionUser } from "../chat";
 //
 // Instalar deja la fábrica lista para trabajar:
 //  1. un room (uno existente o `#fabrica`) con el repo del equipo atado (`gt_room_repos`);
-//  2. la caja en gs con sus tres handles (`@plan`, `@build`, `@check`) — la crea gs por HMAC
-//     (`internal/workspace-factory/:slug`) porque ahí vive el FleetAgent;
+//  2. las cajas en gs (una por motor: hoy Claude para @plan/@build y DeepSeek para @check) con
+//     sus tres handles — las crea gs por HMAC (`internal/workspace-factory/:slug`) porque ahí
+//     viven los FleetAgent. El motor de cada rol se cambia en Ajustes → Apps;
 //  3. un tablero de Tasks «Fábrica» recordado para el room (las tres columnas estándar: la
 //     etapa de cada corrida va en su tarea y su tarjeta, no en columnas propias);
 //  4. la fila en `gt_installed_apps`, que es lo que hace aparecer las tools `factory_*` y
@@ -16,11 +17,63 @@ import { sessionUser } from "../chat";
 
 const HANDLES = ["plan", "build", "check"] as const;
 
+/** Motores que puede tener un rol (espejo de FACTORY_ENGINES en gs). */
+export const FACTORY_ENGINES = ["claude", "deepseek", "codex"] as const;
+
+/** Config guardada en `gt_installed_apps`. `fleetAgentId` = formato viejo (sólo la caja Claude). */
+type FactoryCfg = {
+  fleetAgentId?: string;
+  boxes?: Record<string, string>;
+  engines?: Record<string, string>;
+  roomId?: number;
+  boardId?: number | null;
+};
+
+/** Todas las cajas que la fábrica ha usado: un handle que apunta a cualquiera es "nuestro". */
+const ownBoxes = (cfg: FactoryCfg | null): Set<string> =>
+  new Set([cfg?.fleetAgentId, ...Object.values(cfg?.boxes ?? {})].filter((x): x is string => !!x));
+
 async function requireOwner() {
   const user = await sessionUser();
   if (!user?.isOwner) throw new Error("sólo el dueño del espacio instala apps");
   return user;
 }
+
+/**
+ * Pide a gs las cajas y los handles (idempotente: reusa las cajas previas por motor) y
+ * declara el canal Teams en cada caja. Devuelve lo que hay que guardar en la config.
+ */
+async function provisionInGs(prev: FactoryCfg | null, engines: Record<string, string>) {
+  const { currentSlug } = await import("../tenant.server");
+  const slug = await currentSlug();
+  if (!slug) throw new Error("no pude resolver el espacio");
+  const boxes = { ...(prev?.fleetAgentId ? { claude: prev.fleetAgentId } : {}), ...(prev?.boxes ?? {}) };
+  const body = JSON.stringify({ boxes, engines });
+  const crypto = await import("node:crypto");
+  const ts = Math.floor(Date.now() / 1000);
+  const sig = crypto.createHmac("sha256", process.env.GHOSTY_PARTNER_SECRET!).update(`${ts}.${slug}.${body}`).digest("hex");
+  const IDP = process.env.GHOSTY_IDENTITY_URL ?? "https://www.ghosty.studio";
+  const res = await fetch(`${IDP}/internal/workspace-factory/${encodeURIComponent(slug)}?ts=${ts}&sig=${sig}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body,
+  });
+  const out = (await res.json().catch(() => null)) as {
+    ok?: boolean;
+    boxes?: Record<string, string>;
+    engines?: Record<string, string>;
+    error?: string;
+  } | null;
+  if (!res.ok || !out?.ok || !out.boxes) throw new Error(out?.error || `gs no pudo crear las cajas (${res.status})`);
+  // Igual que al activar un agente de Studio: el canal Teams se declara en Studio, por caja.
+  const { connectTeamsChannel } = await import("../agent-config");
+  for (const id of new Set(Object.values(out.boxes))) await connectTeamsChannel(id, "", "gs-native").catch(() => {});
+  // Las cajas que ya no usa ningún rol se conservan en la config: si se regresa a ese motor,
+  // se reusa la misma caja con su /data.
+  return { boxes: { ...boxes, ...out.boxes }, engines: out.engines ?? engines };
+}
+
+export type FactoryRoleView = { handle: string; engine: string; fleetAgentId: string | null; studioUrl: string | null };
 
 export type FactoryStatus = {
   installed: boolean;
@@ -28,28 +81,58 @@ export type FactoryStatus = {
   repos: string[];
   handles: string[];
   boardId: number | null;
+  roles: FactoryRoleView[];
+  engineOptions: readonly string[];
 };
 
 export const factoryStatusFn = createServerFn({ method: "GET" }).handler(async (): Promise<FactoryStatus> => {
   await requireOwner();
   const { getAppConfig } = await import("./installed.server");
-  const cfg = await getAppConfig<{ roomId?: number; boardId?: number | null }>("factory");
-  if (!cfg) return { installed: false, room: null, repos: [], handles: [], boardId: null };
+  const cfg = await getAppConfig<FactoryCfg>("factory");
+  const empty = { installed: false, room: null, repos: [], handles: [], boardId: null, roles: [], engineOptions: FACTORY_ENGINES };
+  if (!cfg) return empty;
   const db = await import("../../db.server");
   const ch = cfg.roomId ? await db.getChannelById(cfg.roomId) : null;
   const repos = cfg.roomId ? (await db.listRoomRepos(cfg.roomId)).map((r) => r.repo) : [];
   const agents = await db.listAgents();
+  const IDP = process.env.GHOSTY_IDENTITY_URL ?? "https://www.ghosty.studio";
+  // El motor de cada rol sale de la caja a la que apunta su handle HOY (la verdad), no de la
+  // config: si alguien lo repuntó a mano, se ve.
+  const engineOfBox = new Map<string, string>(Object.entries(cfg.boxes ?? (cfg.fleetAgentId ? { claude: cfg.fleetAgentId } : {})).map(([e, id]) => [id, e]));
+  const roles: FactoryRoleView[] = HANDLES.map((h) => {
+    const a = agents.find((x) => x.handle === h && x.enabled);
+    const id = a?.fleet_id ?? null;
+    return {
+      handle: h,
+      engine: (id && engineOfBox.get(id)) || cfg.engines?.[h] || "claude",
+      fleetAgentId: id,
+      // Modelo, prompt y llaves de la caja se ajustan en Studio.
+      studioUrl: id ? `${IDP}/app/agents/${id}` : null,
+    };
+  });
   return {
     installed: true,
     room: ch ? { id: ch.id, slug: ch.slug, name: ch.name } : null,
     repos,
     handles: agents.filter((a) => a.enabled && (HANDLES as readonly string[]).includes(a.handle)).map((a) => a.handle),
     boardId: cfg.boardId ?? null,
+    roles,
+    engineOptions: FACTORY_ENGINES,
   };
 });
 
+function cleanEngines(input: unknown): Record<string, string> {
+  const out: Record<string, string> = {};
+  const obj = (input && typeof input === "object" ? input : {}) as Record<string, unknown>;
+  for (const h of HANDLES) {
+    const e = String(obj[h] ?? "");
+    if ((FACTORY_ENGINES as readonly string[]).includes(e)) out[h] = e;
+  }
+  return out;
+}
+
 export const installFactoryFn = createServerFn({ method: "POST" })
-  .validator((d: { roomId?: number | null; repo: string }) => d)
+  .validator((d: { roomId?: number | null; repo: string; engines?: Record<string, string> }) => d)
   .handler(async ({ data }) => {
     const user = await requireOwner();
     const db = await import("../../db.server");
@@ -57,17 +140,15 @@ export const installFactoryFn = createServerFn({ method: "POST" })
     const repo = normalizeRepo(String(data.repo ?? ""));
     if (!repo) throw new Error('elige el repositorio (va como "dueño/repo")');
 
-    // Los handles no pueden estar tomados por OTRO agente del espacio.
     const { getAppConfig, recordInstall } = await import("./installed.server");
-    // La instalación anterior (aunque se haya desinstalado): su caja y su tablero se reusan.
-    const prev = await getAppConfig<{ fleetAgentId?: string; roomId?: number; boardId?: number | null }>("factory", {
-      includeUninstalled: true,
-    });
-    // Un handle sólo se toma si está libre o si ya es de la caja de la fábrica. Una fila sin
+    // La instalación anterior (aunque se haya desinstalado): sus cajas y su tablero se reusan.
+    const prev = await getAppConfig<FactoryCfg>("factory", { includeUninstalled: true });
+    // Un handle sólo se toma si está libre o si ya es de una caja de la fábrica. Una fila sin
     // `fleet_id` (webhook, A2A, ACP de un tercero) también es de OTRO: gs la repuntaría.
+    const mine = ownBoxes(prev);
     for (const h of HANDLES) {
       const a = await db.getAgentByHandle(h);
-      if (a && (!a.fleet_id || a.fleet_id !== prev?.fleetAgentId))
+      if (a && (!a.fleet_id || !mine.has(a.fleet_id)))
         throw new Error(`@${h} ya lo usa otro agente de este espacio: renómbralo antes de instalar la fábrica`);
     }
 
@@ -87,30 +168,12 @@ export const installFactoryFn = createServerFn({ method: "POST" })
     }
     await db.addRoomRepo(roomId, repo, user.sub);
 
-    // 2. La caja y sus tres handles, en gs.
-    const { currentSlug } = await import("../tenant.server");
-    const slug = await currentSlug();
-    if (!slug) throw new Error("no pude resolver el espacio");
-    const body = JSON.stringify({ fleetAgentId: prev?.fleetAgentId ?? null });
-    const crypto = await import("node:crypto");
-    const ts = Math.floor(Date.now() / 1000);
-    const sig = crypto
-      .createHmac("sha256", process.env.GHOSTY_PARTNER_SECRET!)
-      .update(`${ts}.${slug}.${body}`)
-      .digest("hex");
-    const IDP = process.env.GHOSTY_IDENTITY_URL ?? "https://www.ghosty.studio";
-    const res = await fetch(`${IDP}/internal/workspace-factory/${encodeURIComponent(slug)}?ts=${ts}&sig=${sig}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body,
-    });
-    const out = (await res.json().catch(() => null)) as { ok?: boolean; fleetAgentId?: string; error?: string } | null;
-    if (!res.ok || !out?.ok || !out.fleetAgentId) throw new Error(out?.error || `gs no pudo crear la caja (${res.status})`);
-    // Igual que al activar un agente de Studio: el canal Teams se declara en Studio.
-    const { connectTeamsChannel } = await import("../agent-config");
-    await connectTeamsChannel(out.fleetAgentId, "", "gs-native").catch(() => {});
+    // 2. Las cajas y los tres handles, en gs.
+    const prov = await provisionInGs(prev, { ...(prev?.engines ?? {}), ...cleanEngines(data.engines) });
 
     // 3. El tablero (reusa el de una instalación anterior si sigue vivo).
+    const { currentSlug } = await import("../tenant.server");
+    const slug = (await currentSlug())!;
     let boardId: number | null = prev?.boardId ?? null;
     const { listBoards, rememberRoomBoard } = await import("../tasks-boards.server");
     if (boardId && !(await listBoards().catch(() => [])).some((b) => b.id === boardId)) boardId = null;
@@ -123,20 +186,38 @@ export const installFactoryFn = createServerFn({ method: "POST" })
     if (boardId) await rememberRoomBoard(roomId, boardId, user.sub);
 
     // 4. La fila que enciende las tools.
-    await recordInstall("factory", user.sub, { fleetAgentId: out.fleetAgentId, roomId, boardId });
+    await recordInstall("factory", user.sub, { boxes: prov.boxes, engines: prov.engines, roomId, boardId });
     const ch = await db.getChannelById(roomId);
     return { ok: true as const, room: ch ? { id: ch.id, slug: ch.slug, name: ch.name } : null, boardId };
+  });
+
+/**
+ * Cambia el motor de uno o más roles sin reinstalar: gs crea (o reusa) la caja del motor
+ * nuevo y repunta el handle. Las corridas en curso siguen; el siguiente turno del rol ya
+ * corre en la caja nueva.
+ */
+export const setFactoryEnginesFn = createServerFn({ method: "POST" })
+  .validator((d: { engines: Record<string, string> }) => d)
+  .handler(async ({ data }) => {
+    const user = await requireOwner();
+    const { getAppConfig, recordInstall } = await import("./installed.server");
+    const cfg = await getAppConfig<FactoryCfg>("factory");
+    if (!cfg) throw new Error("la fábrica no está instalada");
+    const prov = await provisionInGs(cfg, { ...(cfg.engines ?? {}), ...cleanEngines(data.engines) });
+    await recordInstall("factory", user.sub, { ...cfg, fleetAgentId: undefined, boxes: prov.boxes, engines: prov.engines });
+    return { ok: true as const, engines: prov.engines };
   });
 
 export const uninstallFactoryFn = createServerFn({ method: "POST" }).handler(async () => {
   await requireOwner();
   const { getAppConfig, recordUninstall } = await import("./installed.server");
-  const cfg = await getAppConfig<{ fleetAgentId?: string }>("factory");
-  if (cfg?.fleetAgentId) {
+  const cfg = await getAppConfig<FactoryCfg>("factory");
+  const boxes = [...ownBoxes(cfg)];
+  if (boxes.length) {
     const { dbq } = await import("../../dbq.server");
     await dbq(
-      `UPDATE gc_agents SET enabled = 0 WHERE fleet_id = ? AND handle IN (${HANDLES.map(() => "?").join(",")})`,
-      [cfg.fleetAgentId, ...HANDLES],
+      `UPDATE gc_agents SET enabled = 0 WHERE fleet_id IN (${boxes.map(() => "?").join(",")}) AND handle IN (${HANDLES.map(() => "?").join(",")})`,
+      [...boxes, ...HANDLES],
     );
   }
   await recordUninstall("factory");
