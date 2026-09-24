@@ -5,7 +5,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useT } from "../../i18n";
 import { useRtSubscribe } from "../../utils/rt-bus";
-import { factoryRunCardFn, factoryDecisionFn } from "../../server/apps/factory";
+import { factoryRunCardFn, factoryDecisionFn, factoryRetryPreviewFn } from "../../server/apps/factory";
 import type { RunCardData } from "../../lib/ebdoc";
 
 type State = Awaited<ReturnType<typeof factoryRunCardFn>>;
@@ -154,7 +154,22 @@ export function RunCard({ card, channelId }: { card: RunCardData; channelId: num
             </span>
           )}
           {st.preview?.state === "failed" && (
-            <span className="rounded-full bg-red-600/10 px-3 py-1 text-xs text-red-700 dark:text-red-400">{t("La preview falló")}</span>
+            <span className="inline-flex items-center gap-2 rounded-full bg-red-600/10 py-1 pl-3 pr-1 text-xs text-red-700 dark:text-red-400" title={st.preview.error ?? undefined}>
+              {t("La preview falló")}
+              <button
+                type="button"
+                disabled={busy}
+                onClick={async () => {
+                  setBusy(true);
+                  await factoryRetryPreviewFn({ data: { runId: st.runId } }).catch(() => {});
+                  setBusy(false);
+                  refresh();
+                }}
+                className="rounded-full bg-surface px-2 py-0.5 font-semibold text-ink hover:bg-surface-3 disabled:opacity-50"
+              >
+                {t("Reintentar")}
+              </button>
+            </span>
           )}
           {st.prUrl && (
             <a href={st.prUrl} target="_blank" rel="noreferrer" className="rounded-full border border-border px-3 py-1 text-xs font-semibold text-ink hover:bg-surface-3">

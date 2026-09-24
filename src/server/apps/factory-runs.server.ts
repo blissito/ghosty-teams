@@ -615,7 +615,8 @@ export async function announcePreviews(): Promise<void> {
     const pr = parsePrUrl(run.prUrl!);
     const head = await prHead(sub, run.prUrl!);
     if (!pr || !head) continue;
-    const sameSha = row.preview_sha === head.sha;
+    // Sin estado (nuevo o «Reintentar») cuenta como commit nuevo: se vuelve a pedir `up`.
+    const sameSha = row.preview_sha === head.sha && !!row.preview_state;
     if (sameSha && (row.preview_state === "ready" || row.preview_state === "failed")) continue;
 
     let next: { state: "pending" | "ready" | "failed"; url: string | null; provider: string | null; error: string | null } | null = null;
@@ -652,6 +653,25 @@ export async function announcePreviews(): Promise<void> {
     else if (next.state === "failed")
       await postInThread(run, "build", `⚠️ **La preview no arrancó.** ${String(next.error ?? "").split("\n")[0]}\n\n\`\`\`\n${String(next.error ?? "").split("\n").slice(1).join("\n").slice(-1200)}\n\`\`\``);
   }
+}
+
+/**
+ * Vuelve a intentar las previews que fallaron (de un pedido, o de todos los de un repo): se
+ * olvida el estado y el siguiente tick las levanta otra vez. Lo usan «Reintentar» en la
+ * tarjeta y guardar variables.
+ */
+export async function retryPreviews(by: { runId?: number; repo?: string }): Promise<number> {
+  const rows = await dbq(
+    by.runId
+      ? `UPDATE gt_factory_runs SET preview_state = NULL, preview_error = NULL WHERE id = ? AND preview_state = 'failed' RETURNING id, channel_id`
+      : `UPDATE gt_factory_runs SET preview_state = NULL, preview_error = NULL WHERE repo = ? AND preview_state = 'failed' RETURNING id, channel_id`,
+    [by.runId ?? by.repo ?? ""],
+  ).catch(() => []);
+  for (const r of rows) {
+    lastPreviewCheck.delete(Number(r.id));
+    void refreshRoom(Number(r.channel_id));
+  }
+  return rows.length;
 }
 
 /** Lo que la tarjeta y @check saben de la preview del pedido (leído de la fila). */

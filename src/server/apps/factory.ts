@@ -396,6 +396,20 @@ export const factoryRunCardFn = createServerFn({ method: "POST" })
     };
   });
 
+/** «Reintentar» la preview del pedido desde su tarjeta. Cualquiera que vea el room. */
+export const factoryRetryPreviewFn = createServerFn({ method: "POST" })
+  .validator((d: { runId: number }) => d)
+  .handler(async ({ data }) => {
+    const me = await sessionUser();
+    if (!me) throw new Error("no autenticado");
+    const R = await import("./factory-runs.server");
+    const run = await R.getRun(Number(data.runId));
+    if (!run) throw new Error("no existe el pedido");
+    const db = await import("../../db.server");
+    if (!(await db.listChannels(me.sub, me.isOwner)).some((c) => c.id === run.channelId)) throw new Error("no ves ese room");
+    return { retried: await R.retryPreviews({ runId: run.id }) };
+  });
+
 /**
  * «Sugerir pedidos»: despierta a @plan en el room de la fábrica con el encargo de leer el
  * repo y publicar pedidos listos para mandar (`factory_suggest` → tarjeta con «Pedir»). Así
