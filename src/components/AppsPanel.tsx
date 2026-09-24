@@ -97,7 +97,7 @@ function Installed({ status, onChange }: { status: FactoryStatus; onChange: () =
       {confirm && (
         <ConfirmModal
           title={t("¿Desinstalar la Software Factory?")}
-          body={t("Los handles @plan, @build y @check dejan de contestar y sus tools desaparecen. El room, el tablero y las corridas se conservan; puedes volver a instalarla.")}
+          body={t("Los handles @plan, @build y @check dejan de contestar y sus tools desaparecen. El room, el tablero y los pedidos se conservan; puedes volver a instalarla.")}
           confirmLabel={t("Desinstalar")}
           danger
           onCancel={() => setConfirm(false)}

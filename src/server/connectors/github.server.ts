@@ -511,7 +511,7 @@ export async function ambientContext(
     `devuelve una URL de descarga, y haz \`curl\` de ESA URL DENTRO de la caja. Funciona igual con ` +
     `repos PRIVADOS —la URL va firmada y no necesita credencial—, así que está PROHIBIDO ponerte a ` +
     `averiguar si el repo es público, buscarlo por otra vía, o pasar el código con write(). ` +
-    `Al terminar una corrida de tests cierra con el bloque \`\`\`gt-tests que esa skill te enseña. ` +
+    `Al terminar un run de tests cierra con el bloque \`\`\`gt-tests que esa skill te enseña. ` +
     `Para escribir código: crea una rama con github_create_branch, escribe con github_write_file y abre ` +
     `un PR con github_create_pr — NUNCA escribas directo sobre la rama principal. ` +
     // El ciclo de un PR sin quedarse esperando: el turno TERMINA y la plataforma lo despierta.
@@ -1242,7 +1242,7 @@ const ALL_TOOLS: ConnectorTool[] = [
   {
     name: "github_workflow_run_logs",
     description:
-      "El LOG de una corrida de GitHub Actions que falló: qué job y qué paso reventaron, y las líneas de error. Es lo que de verdad responde '¿por qué está roja la build?' — github_workflow_runs sólo da el estado. Pásale el `id` que devolvió esa tool. Nunca inventes una línea de log: si esto falla, di que no lo pudiste leer y da la url del run.",
+      "El LOG de un run de GitHub Actions que falló: qué job y qué paso reventaron, y las líneas de error. Es lo que de verdad responde '¿por qué está roja la build?' — github_workflow_runs sólo da el estado. Pásale el `id` que devolvió esa tool. Nunca inventes una línea de log: si esto falla, di que no lo pudiste leer y da la url del run.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1267,7 +1267,7 @@ const ALL_TOOLS: ConnectorTool[] = [
           runId: Number(a.runId),
           failedJobs: 0,
           jobs: all.map((j) => ({ name: j?.name, conclusion: j?.conclusion, url: j?.html_url })),
-          note: "Ningún job de este run terminó en failure. Puede seguir corriendo, o la corrida roja ser otra.",
+          note: "Ningún job de este run terminó en failure. Puede seguir corriendo, o el run rojo ser otro.",
         };
       }
 

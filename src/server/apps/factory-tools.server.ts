@@ -61,8 +61,8 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
     {
       name: "factory_plan_submit",
       description:
-        "SÓLO @plan. Entrega el plan de una corrida de la Software Factory para que una persona lo firme: " +
-        "crea la corrida (si es un pedido nuevo) o una versión nueva del plan (si te pidieron cambios). Publica la " +
+        "SÓLO @plan. Entrega el plan de un pedido de la Software Factory para que una persona lo firme: " +
+        "crea el pedido (si es nuevo) o una versión nueva del plan (si te pidieron cambios). Publica la " +
         "tarjeta con Aprobar / Pedir cambios en el hilo del pedido. No construyas nada: al firmarse, la plataforma " +
         "despierta a @build. `plan_md` en markdown: historia con criterios de aceptación, brief técnico y riesgos.",
       inputSchema: {
@@ -130,7 +130,7 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
           ok: true,
           runId: run.id,
           version,
-          note: "Tarjeta publicada en el hilo. Ahora espera la firma: no construyas. Di en una línea qué necesita revisar la persona.",
+          note: `Tarjeta publicada en el hilo. Ahora espera la firma: no construyas. Di en una línea qué necesita revisar la persona. Si lo nombras, es el «pedido #${run.id}» (nunca «corrida»).`,
         };
       },
     },
@@ -143,7 +143,7 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
       inputSchema: {
         type: "object",
         properties: {
-          runId: { type: "number", description: "La corrida (si no, la del hilo)" },
+          runId: { type: "number", description: "El pedido (si no, el del hilo)" },
           pr_url: { type: "string", description: "URL del PR en GitHub" },
           branch: { type: "string", description: "Rama del PR" },
           tests: { type: "string", description: "Resultado de pruebas, lint y typecheck, en una o dos líneas" },
@@ -154,7 +154,7 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
         if (dest?.handle && dest.handle !== "build") return { ok: false, error: "sólo @build cierra la construcción" };
         const R = await import("./factory-runs.server");
         const run = await runOf(dest, a.runId);
-        if (!run) return { ok: false, error: "no encuentro la corrida de este hilo" };
+        if (!run) return { ok: false, error: "no encuentro el pedido de este hilo" };
         const url = String(a.pr_url ?? "");
         if (!R.parsePrUrl(url)) return { ok: false, error: "pr_url tiene que ser la URL de un PR de GitHub" };
         // CI en rojo no llega a @check: se ahorra una vuelta y lo arregla quien construyó.
@@ -198,7 +198,7 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
       inputSchema: {
         type: "object",
         properties: {
-          runId: { type: "number", description: "La corrida (si no, la del hilo)" },
+          runId: { type: "number", description: "El pedido (si no, el del hilo)" },
           pass: { type: "boolean", description: "true = listo para revisión humana" },
           findings: { type: "string", description: "Hallazgos (obligatorio si pass=false), en markdown breve" },
         },
@@ -208,8 +208,8 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
         if (dest?.handle && dest.handle !== "check") return { ok: false, error: "sólo @check da el veredicto" };
         const R = await import("./factory-runs.server");
         const run = await runOf(dest, a.runId);
-        if (!run) return { ok: false, error: "no encuentro la corrida de este hilo" };
-        if (run.status !== "checking") return { ok: false, error: `la corrida no está en revisión (está en ${run.status})` };
+        if (!run) return { ok: false, error: "no encuentro el pedido de este hilo" };
+        if (run.status !== "checking") return { ok: false, error: `el pedido no está en revisión (está en ${run.status})` };
         // La regla de @check se cumple aquí, no en su prompt: si la cabeza del PR se movió
         // desde que @build cerró, alguien empujó durante la revisión.
         if (run.prUrl && run.headSha) {
@@ -235,12 +235,16 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
         }
         if (a.pass === true) {
           const next = await R.applyEvent(run, "check_pass");
+          // Sacarlo de borrador lo hace la plataforma, no el prompt: antes dependía de que
+          // @check se acordara de github_mark_ready, y la tarjeta ya decía «listo».
+          const ready = run.prUrl ? await R.markPrReady(sub, run.prUrl) : false;
+          const draftNote = run.prUrl && !ready ? "\n\n⚠️ No pude sacar el PR de borrador: márcalo listo en GitHub." : "";
           await R.postInThread(
             next,
             "check",
-            `✅ **Listo para tu revisión** — pasó el check contra el plan v${run.planVersion}.${findings ? `\n\n${findings}` : ""}${ciNote}\n\n${run.prUrl ?? ""}`,
+            `✅ **Listo para tu revisión** — pasó el check contra el plan v${run.planVersion}${ready ? " y el PR ya no es borrador" : ""}.${findings ? `\n\n${findings}` : ""}${ciNote}${draftNote}\n\n${run.prUrl ?? ""}`,
           );
-          return { ok: true, status: next.status, note: "Márcalo listo para revisión con github_mark_ready y avisa en una línea." };
+          return { ok: true, status: next.status, note: "La plataforma ya avisó en el hilo y sacó el PR de borrador. Termina sin repetirlo." };
         }
         if (!findings) return { ok: false, error: "con pass=false los hallazgos son obligatorios" };
         const next = await R.applyEvent(run, "check_fail", { loops: run.loops + 1 });
@@ -269,7 +273,7 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
     {
       name: "factory_close",
       description:
-        "Cierra la corrida de este hilo cuando una PERSONA lo pide o el PR ya se mezcló: outcome=merged (terminada) " +
+        "Cierra el pedido de este hilo cuando una PERSONA lo pide o el PR ya se mezcló: outcome=merged (terminada) " +
         "o cancelled (se abandona). Mueve la tarea a Done y libera el hilo para un pedido nuevo. Nunca la cierres por tu cuenta.",
       inputSchema: {
         type: "object",
@@ -282,18 +286,18 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
       handler: async (_sub, a) => {
         const R = await import("./factory-runs.server");
         const run = await runOf(dest, a.runId);
-        if (!run) return { ok: false, error: "no hay corrida en este hilo" };
+        if (!run) return { ok: false, error: "no hay pedido en este hilo" };
         const next = await R.applyEvent(run, a.outcome === "merged" ? "close" : "cancel");
         return { ok: true, status: next.status };
       },
     },
     {
       name: "factory_status",
-      description: "Estado de la corrida de este hilo (o de runId): etapa, versión del plan, vueltas, PR y tarea.",
+      description: "Estado del pedido de este hilo (o de runId): etapa, versión del plan, vueltas, PR y tarea.",
       inputSchema: { type: "object", properties: { runId: { type: "number" } } },
       handler: async (_sub, a) => {
         const run = await runOf(dest, a.runId);
-        if (!run) return { ok: false, error: "no hay corrida en este hilo" };
+        if (!run) return { ok: false, error: "no hay pedido en este hilo" };
         const { stageLabel } = await import("./factory-flow");
         return { ok: true, ...run, stage: stageLabel(run.status) };
       },

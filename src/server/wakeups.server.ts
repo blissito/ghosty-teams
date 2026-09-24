@@ -209,6 +209,12 @@ async function fire(ns: string, w: Wakeup, ref: WakeRef): Promise<void> {
   // Una línea por despertador: sin ella, un turno que no dejó burbuja es indistinguible de
   // uno que no corrió (costó una tarde con la revisión de alertas de #soporte).
   console.log(`[wake] ${w.key} agent=${agent ? handle : "∅"} id=${id} shell=${shellId} reply=${JSON.stringify(finalBody.slice(0, 120))}`);
+  // Software Factory: si el rol terminó su turno SIN cerrar su paso, la corrida se quedaría
+  // atorada en silencio (visto 2026-09-24: @build acabó y nunca llamó factory_build_done).
+  if (w.key.startsWith("factory:")) {
+    const { afterFactoryTurn } = await import("./apps/factory-runs.server");
+    void afterFactoryTurn(w, ref).catch(() => {});
+  }
   // Un `OK` es "nada que entregar": no se deja burbuja. Igual que en gs.
   if (!finalBody || finalBody === "OK") {
     if (shellId != null) await db.deleteMessage(shellId).catch(() => {});

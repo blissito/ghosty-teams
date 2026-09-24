@@ -76,7 +76,7 @@ export async function getPlan(runId: number, version: number) {
  */
 export async function applyEvent(run: Run, event: RunEvent, patch: Partial<Record<string, unknown>> = {}): Promise<Run> {
   const next = nextStatus(run.status, event, run.loops);
-  if (!next) throw new Error(`la corrida #${run.id} está en «${stageLabel(run.status)}»: no se puede ${event} ahora`);
+  if (!next) throw new Error(`el pedido #${run.id} está en «${stageLabel(run.status)}»: no se puede ${event} ahora`);
   const cols = Object.keys(patch);
   const sets = ["status = ?", "updated_at = unixepoch()", ...cols.map((c) => `${c} = ?`)];
   // Guarda contra carreras (dos firmas a la vez): sólo si sigue en el estado leído.
@@ -86,7 +86,7 @@ export async function applyEvent(run: Run, event: RunEvent, patch: Partial<Recor
     `UPDATE gt_factory_runs SET ${sets.join(", ")} WHERE id = ? AND status = ? AND plan_version = ? RETURNING *`,
     [next, ...cols.map((c) => patch[c] as never), run.id, run.status, run.planVersion],
   );
-  if (!rows[0]) throw new Error(`la corrida #${run.id} cambió mientras tanto; vuelve a mirarla`);
+  if (!rows[0]) throw new Error(`el pedido #${run.id} cambió mientras tanto; vuelve a mirarla`);
   const updated = toRun(rows[0]);
   void syncTask(updated).catch(() => {});
   void refreshRoom(updated.channelId);
@@ -223,6 +223,20 @@ export async function prHead(sub: string, url: string): Promise<{ sha: string; d
     return { sha: String(r.headSha), draft: !!r.draft };
   } catch {
     return null;
+  }
+}
+
+/** Saca el PR de borrador con las credenciales de `sub`. true si quedó listo (o ya lo estaba). */
+export async function markPrReady(sub: string, url: string): Promise<boolean> {
+  const pr = parsePrUrl(url);
+  if (!pr) return false;
+  try {
+    const { allTools } = await import("../connectors/github.server");
+    const tool = allTools().find((t) => t.name === "github_mark_ready");
+    const r = (await tool?.handler(sub, { repo: pr.repo, number: pr.number })) as any;
+    return !!r && !r.error && (r.alreadyReady === true || r.draft === false);
+  } catch {
+    return false;
   }
 }
 
@@ -376,7 +390,7 @@ export async function startRunFromTask(opts: {
     "plan",
     opts.requestedBy,
     "tarea asignada desde Tasks",
-    `Te asignaron la tarea #${opts.taskRef} en Tasks. Es el pedido de esta corrida:\n\n**${title}**\n${opts.description.trim().slice(0, 4000)}\n\n` +
+    `Te asignaron la tarea #${opts.taskRef} en Tasks. Es el pedido:\n\n**${title}**\n${opts.description.trim().slice(0, 4000)}\n\n` +
       `Lee el repo y entrega el plan con factory_plan_submit (runId ${run.id}). La tarea ya existe en el tablero: no crees otra.`,
     opts.origin,
   );
@@ -436,4 +450,55 @@ export async function prCi(sub: string, url: string): Promise<{ state: string; f
   } catch {
     return null;
   }
+}
+
+// ── Rol que termina sin cerrar su paso ───────────────────────────────────────
+
+/** En qué estado se queda la corrida mientras el rol no cierra su paso. */
+const OPEN_STATUS: Record<string, RunStatus> = { plan: "planning", build: "building", check: "checking" };
+const CLOSE_TOOL: Record<string, string> = { plan: "factory_plan_submit", build: "factory_build_done", check: "factory_check_verdict" };
+
+/**
+ * Llamado al terminar un turno de la estafeta (`factory:<run>:<rol>:…`). Si la corrida
+ * sigue en el estado de ese rol, el rol no cerró su paso: se le da UN empujón (mismo hilo,
+ * misma conversación) y, si tampoco cierra, se avisa en el hilo a quien pidió.
+ */
+export async function afterFactoryTurn(
+  w: { key: string; ref: string; origin: string },
+  ref: { sub: string },
+): Promise<void> {
+  const m = /^factory:(\d+):(plan|build|check):/.exec(w.key);
+  if (!m) return;
+  const run = await getRun(Number(m[1]));
+  const role = m[2];
+  if (!run || run.status !== OPEN_STATUS[role]) return; // cerró su paso (o la corrida siguió)
+  const nudged = w.key.endsWith(":nudge");
+  if (!nudged) {
+    const { enqueueWakeup, armWakeups } = await import("../wakeups.server");
+    const { currentNamespace } = await import("../tenant.server");
+    await enqueueWakeup({
+      key: `factory:${run.id}:${role}:${Date.now()}:nudge`,
+      ref: w.ref,
+      cause: "cerrar el paso",
+      text:
+        `[Corrida #${run.id}] Terminaste tu turno sin cerrar tu paso y la corrida está detenida. ` +
+        `Si ya acabaste, ciérralo AHORA con ${CLOSE_TOOL[role]} (runId ${run.id}). ` +
+        `Si no puedes terminar, dilo en una línea con el motivo concreto.`,
+      origin: w.origin,
+      dueAt: Math.floor(Date.now() / 1000) + 5,
+    });
+    armWakeups(await currentNamespace());
+    return;
+  }
+  // Ya se le empujó una vez: que lo vea una persona.
+  const requester = await dbq("SELECT handle FROM gc_users WHERE sub = ?", [run.requestedBy]).catch(() => []);
+  const who = requester[0]?.handle ? `@${requester[0].handle} ` : "";
+  await postInThread(
+    run,
+    role,
+    `⚠️ ${who}@${role} terminó dos veces sin cerrar su paso y la corrida #${run.id} está detenida. ` +
+      `Revisa su último mensaje en este hilo y dile qué hacer (o menciónalo para que retome).`,
+  );
+  void refreshRoom(run.channelId);
+  void ref;
 }

@@ -293,7 +293,7 @@ export const factoryDecisionFn = createServerFn({ method: "POST" })
     if (!me) throw new Error("no autenticado");
     const R = await import("./factory-runs.server");
     const run = await R.getRun(Number(data.runId));
-    if (!run) throw new Error("corrida no encontrada");
+    if (!run) throw new Error("pedido no encontrado");
     const db = await import("../../db.server");
     if (!(await db.listChannels(me.sub, me.isOwner)).some((c) => c.id === run.channelId)) throw new Error("no ves ese room");
     const { reqOrigin } = await import("../../origin.server");

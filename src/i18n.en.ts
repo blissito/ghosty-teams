@@ -1430,7 +1430,7 @@ export const en: Record<string, string> = {
   "Ir al room": "Go to the room",
   "Desinstalar": "Uninstall",
   "¿Desinstalar la Software Factory?": "Uninstall the Software Factory?",
-  "Los handles @plan, @build y @check dejan de contestar y sus tools desaparecen. El room, el tablero y las corridas se conservan; puedes volver a instalarla.": "@plan, @build and @check stop answering and their tools disappear. The room, the board and the runs are kept; you can install it again.",
+  "Los handles @plan, @build y @check dejan de contestar y sus tools desaparecen. El room, el tablero y los pedidos se conservan; puedes volver a instalarla.": "@plan, @build and @check stop answering and their tools disappear. The room, the board and the runs are kept; you can install it again.",
   "Room donde vive la fábrica": "Room where the factory lives",
   "Crear #fabrica": "Create #fabrica",
   "Repositorio de GitHub": "GitHub repository",
