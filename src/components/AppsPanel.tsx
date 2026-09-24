@@ -78,10 +78,10 @@ function Installed({ status, onChange }: { status: FactoryStatus; onChange: () =
       <p className="text-ink">
         {t("Room")}: <b>#{status.room?.slug ?? "—"}</b> · {t("Repos")}: {status.repos.length ? status.repos.join(", ") : "—"}
       </p>
-      <p className="text-muted">{t("Pedidos, repos, equipo y tareas automáticas viven en la Fábrica.")}</p>
+      <p className="text-muted">{t("Pedidos, repos, equipo y tareas automáticas viven en la Fábrica Agéntica.")}</p>
       <div className="flex gap-2 pt-1">
         <a href="/factory" className="rounded-lg border border-brand px-3 py-1.5 text-xs font-semibold text-brand hover:bg-brand/10">
-          {t("Abrir la Fábrica")} →
+          {t("Abrir la Fábrica Agéntica")} →
         </a>
         {status.room && (
           <a href={`/c/${status.room.slug}`} className="rounded-lg bg-brand px-3 py-1.5 text-xs font-semibold text-white hover:opacity-90">
