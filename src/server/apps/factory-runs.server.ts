@@ -716,7 +716,7 @@ export async function announcePreviews(): Promise<void> {
     if (!changed.length) continue;
     void refreshRoom(run.channelId);
     if (next.state === "ready")
-      await postInThread(run, "build", `🔎 **Preview ${row.preview_sha && !sameSha ? "actualizada" : "lista"}**${next.provider ? ` (${next.provider})` : ""}: ${next.url}`);
+      await postInThread(run, "build", `🔎 **Preview ${row.preview_sha && !sameSha ? "actualizada" : "lista"}**${next.provider ? ` (${next.provider})` : ""} · [Abrir](${next.url})`);
     else if (next.state === "needs_env")
       await postInThread(
         run,

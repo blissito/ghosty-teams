@@ -3032,6 +3032,9 @@ export function MessageRow({
                 //
                 // TODAS, no sólo la primera: un turno puede revisar dos PRs, y la que se
                 // quedara sin pintar saldría como JSON crudo en la burbuja.
+                // En la Software Factory la decisión vive en la tarjeta del veredicto (```gt-verdict```):
+                // una tarjeta de PR de @check con Aprobar/Rechazar pedía lo mismo dos veces.
+                if (isAgent && m.agent_handle === "check") return null;
                 return extractAllPr(m.body).map((pr) => (
                   <PrCard
                     key={`${pr.repo}#${pr.number}`}
