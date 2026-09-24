@@ -608,16 +608,50 @@ export async function closeFinishedRuns(): Promise<void> {
           );
       }
     }
-    if (outcome === "merged") {
-      // Lo mezclado cambia la calificación «Listo para agentes» del repo.
-      if (run.repo) void import("./readiness.server").then((m) => m.invalidateReadiness(run.repo!));
-      const done = await applyEvent(run, "merged").catch(() => null);
-      if (done) await postInThread(done, "check", mergedMessage(run));
-    } else if (outcome === "closed") {
-      const gone = await applyEvent(run, "cancel").catch(() => null);
-      if (gone) await postInThread(gone, "check", `⏹️ El PR se cerró sin mezclar: pedido cancelado. ${run.prUrl}`);
-    }
+    if (outcome === "merged" || outcome === "closed") await onPrEvent(run, outcome);
   }
+}
+
+/**
+ * El PR de un pedido se mezcló o se cerró. Un solo lugar para el sondeo de arriba, para
+ * `mergeRun` y para el webhook de la GitHub App (`api.internal.github-event`), que llega en
+ * segundos. Idempotente: `applyEvent` sólo avanza una vez, así que webhook + sondeo (o un
+ * reenvío de GitHub) no dejan dos mensajes. Devuelve la corrida si ESTA llamada la cerró.
+ */
+export async function onPrEvent(run: Run, outcome: "merged" | "closed", role: "check" | "build" = "check"): Promise<Run | null> {
+  if (outcome === "merged") {
+    // Lo mezclado cambia la calificación «Listo para agentes» del repo.
+    if (run.repo) void import("./readiness.server").then((m) => m.invalidateReadiness(run.repo!));
+    if (run.status === "cancelled") {
+      // Cancelado a mano antes de que alguien viera el merge: el pedido sí terminó.
+      const fixed = await dbq("UPDATE gt_factory_runs SET status = 'done', updated_at = unixepoch() WHERE id = ? AND status = 'cancelled' RETURNING *", [run.id]);
+      if (!fixed[0]) return null;
+      const done = toRun(fixed[0]);
+      void syncTask(done).catch(() => {});
+      void refreshRoom(done.channelId);
+      return done;
+    }
+    const done = await applyEvent(run, "merged").catch(() => null);
+    if (done) await postInThread(done, role, mergedMessage(run));
+    return done;
+  }
+  const gone = await applyEvent(run, "cancel").catch(() => null);
+  if (gone) await postInThread(gone, role, `⏹️ El PR se cerró sin mezclar: pedido cancelado. ${run.prUrl}`);
+  return gone;
+}
+
+/** Pedidos cuyo PR es `repo#number` (webhook). Los cancelados entran por la autocorrección. */
+export async function runsByPr(repo: string, number: number): Promise<Run[]> {
+  const rows = await dbq(
+    `SELECT * FROM gt_factory_runs WHERE pr_url IS NOT NULL AND status NOT IN ('done') AND LOWER(pr_url) LIKE ?`,
+    [`%github.com/${repo.toLowerCase()}/pull/${number}%`],
+  ).catch(() => []);
+  return rows
+    .map(toRun)
+    .filter((r) => {
+      const pr = parsePrUrl(r.prUrl ?? "");
+      return !!pr && pr.repo.toLowerCase() === repo.toLowerCase() && pr.number === number;
+    });
 }
 
 const lastPreviewCheck = new Map<number, number>();
@@ -767,8 +801,9 @@ export async function mergeRun(run: Run, sub: string): Promise<{ ok: true } | { 
     const tool = allTools().find((t) => t.name === "github_merge_pr");
     const r = (await tool?.handler(sub, { repo: pr.repo, number: pr.number })) as any;
     if (!r || r.error) return { ok: false, error: String(r?.error ?? "GitHub no contestó") };
-    const done = await applyEvent(run, "merged").catch(() => null);
-    await postInThread(done ?? run, "build", mergedMessage(run));
+    // Si el webhook ya cerró el pedido, `onPrEvent` no repite el confeti (antes posteaba con
+    // `done ?? run` aunque `applyEvent` hubiera fallado: dos mensajes de «terminado»).
+    await onPrEvent(run, "merged", "build");
     return { ok: true };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : String(e) };

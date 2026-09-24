@@ -51,6 +51,7 @@ import { Route as ApiProspeccionAgentRouteImport } from './routes/api.prospeccio
 import { Route as ApiPSesRouteImport } from './routes/api.p.ses'
 import { Route as ApiInternalProspeccionRunRouteImport } from './routes/api.internal.prospeccion-run'
 import { Route as ApiInternalMembersRouteImport } from './routes/api.internal.members'
+import { Route as ApiInternalGithubEventRouteImport } from './routes/api.internal.github-event'
 import { Route as ApiInternalFactoryTaskRouteImport } from './routes/api.internal.factory-task'
 import { Route as ApiInternalBoardEventRouteImport } from './routes/api.internal.board-event'
 import { Route as ApiInternalAnnouncementsRouteImport } from './routes/api.internal.announcements'
@@ -293,6 +294,11 @@ const ApiInternalMembersRoute = ApiInternalMembersRouteImport.update({
   path: '/api/internal/members',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiInternalGithubEventRoute = ApiInternalGithubEventRouteImport.update({
+  id: '/api/internal/github-event',
+  path: '/api/internal/github-event',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiInternalFactoryTaskRoute = ApiInternalFactoryTaskRouteImport.update({
   id: '/api/internal/factory-task',
   path: '/api/internal/factory-task',
@@ -499,6 +505,7 @@ export interface FileRoutesByFullPath {
   '/api/internal/announcements': typeof ApiInternalAnnouncementsRoute
   '/api/internal/board-event': typeof ApiInternalBoardEventRoute
   '/api/internal/factory-task': typeof ApiInternalFactoryTaskRoute
+  '/api/internal/github-event': typeof ApiInternalGithubEventRoute
   '/api/internal/members': typeof ApiInternalMembersRoute
   '/api/internal/prospeccion-run': typeof ApiInternalProspeccionRunRoute
   '/api/p/ses': typeof ApiPSesRoute
@@ -572,6 +579,7 @@ export interface FileRoutesByTo {
   '/api/internal/announcements': typeof ApiInternalAnnouncementsRoute
   '/api/internal/board-event': typeof ApiInternalBoardEventRoute
   '/api/internal/factory-task': typeof ApiInternalFactoryTaskRoute
+  '/api/internal/github-event': typeof ApiInternalGithubEventRoute
   '/api/internal/members': typeof ApiInternalMembersRoute
   '/api/internal/prospeccion-run': typeof ApiInternalProspeccionRunRoute
   '/api/p/ses': typeof ApiPSesRoute
@@ -647,6 +655,7 @@ export interface FileRoutesById {
   '/api/internal/announcements': typeof ApiInternalAnnouncementsRoute
   '/api/internal/board-event': typeof ApiInternalBoardEventRoute
   '/api/internal/factory-task': typeof ApiInternalFactoryTaskRoute
+  '/api/internal/github-event': typeof ApiInternalGithubEventRoute
   '/api/internal/members': typeof ApiInternalMembersRoute
   '/api/internal/prospeccion-run': typeof ApiInternalProspeccionRunRoute
   '/api/p/ses': typeof ApiPSesRoute
@@ -723,6 +732,7 @@ export interface FileRouteTypes {
     | '/api/internal/announcements'
     | '/api/internal/board-event'
     | '/api/internal/factory-task'
+    | '/api/internal/github-event'
     | '/api/internal/members'
     | '/api/internal/prospeccion-run'
     | '/api/p/ses'
@@ -796,6 +806,7 @@ export interface FileRouteTypes {
     | '/api/internal/announcements'
     | '/api/internal/board-event'
     | '/api/internal/factory-task'
+    | '/api/internal/github-event'
     | '/api/internal/members'
     | '/api/internal/prospeccion-run'
     | '/api/p/ses'
@@ -870,6 +881,7 @@ export interface FileRouteTypes {
     | '/api/internal/announcements'
     | '/api/internal/board-event'
     | '/api/internal/factory-task'
+    | '/api/internal/github-event'
     | '/api/internal/members'
     | '/api/internal/prospeccion-run'
     | '/api/p/ses'
@@ -944,6 +956,7 @@ export interface RootRouteChildren {
   ApiInternalAnnouncementsRoute: typeof ApiInternalAnnouncementsRoute
   ApiInternalBoardEventRoute: typeof ApiInternalBoardEventRoute
   ApiInternalFactoryTaskRoute: typeof ApiInternalFactoryTaskRoute
+  ApiInternalGithubEventRoute: typeof ApiInternalGithubEventRoute
   ApiInternalMembersRoute: typeof ApiInternalMembersRoute
   ApiInternalProspeccionRunRoute: typeof ApiInternalProspeccionRunRoute
   ApiPSesRoute: typeof ApiPSesRoute
@@ -1259,6 +1272,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiInternalMembersRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/internal/github-event': {
+      id: '/api/internal/github-event'
+      path: '/api/internal/github-event'
+      fullPath: '/api/internal/github-event'
+      preLoaderRoute: typeof ApiInternalGithubEventRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/internal/factory-task': {
       id: '/api/internal/factory-task'
       path: '/api/internal/factory-task'
@@ -1552,6 +1572,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiInternalAnnouncementsRoute: ApiInternalAnnouncementsRoute,
   ApiInternalBoardEventRoute: ApiInternalBoardEventRoute,
   ApiInternalFactoryTaskRoute: ApiInternalFactoryTaskRoute,
+  ApiInternalGithubEventRoute: ApiInternalGithubEventRoute,
   ApiInternalMembersRoute: ApiInternalMembersRoute,
   ApiInternalProspeccionRunRoute: ApiInternalProspeccionRunRoute,
   ApiPSesRoute: ApiPSesRoute,

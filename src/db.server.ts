@@ -2237,6 +2237,17 @@ export async function roomsOfSalesBoard(boardId: string): Promise<number[]> {
   return rows.map((r) => Number(r.channel_id));
 }
 
+/** Rooms vivos (no archivados) que tienen `repo` entre sus repos. Case-insensitive: el repo se
+ *  guarda como lo tecleó la persona y GitHub lo manda con su capitalización. */
+export async function roomsOfRepo(repo: string): Promise<number[]> {
+  const rows = await dbq(
+    `SELECT DISTINCT r.channel_id FROM gt_room_repos r JOIN gc_channels c ON c.id = r.channel_id
+     WHERE LOWER(r.repo) = LOWER(?) AND COALESCE(c.archived, 0) = 0`,
+    [repo],
+  );
+  return rows.map((r) => Number(r.channel_id));
+}
+
 // ── Repos del room ──
 // Los repos que un room declara suyos. Es la frontera del conector de GitHub: el agente
 // sólo ve éstos, y en un room sin ninguno no ve ninguno. Ver gt_room_repos en
