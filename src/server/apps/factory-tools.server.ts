@@ -157,6 +157,14 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
         if (!run) return { ok: false, error: "no encuentro la corrida de este hilo" };
         const url = String(a.pr_url ?? "");
         if (!R.parsePrUrl(url)) return { ok: false, error: "pr_url tiene que ser la URL de un PR de GitHub" };
+        // CI en rojo no llega a @check: se ahorra una vuelta y lo arregla quien construyó.
+        const ci = await R.prCi(sub, url);
+        if (ci?.state === "failure") {
+          return {
+            ok: false,
+            error: `el CI del PR falló (${ci.failed.join(", ") || "ver checks"}). Lee el log con github_workflow_run_logs, corrígelo en la misma rama y vuelve a cerrar.`,
+          };
+        }
         const head = await R.prHead(sub, url);
         const next = await R.applyEvent(run, "build_done", {
           pr_url: url,
@@ -172,7 +180,9 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
           "revisar el PR",
           `Revisa el PR ${url} contra el plan APROBADO (v${run.planVersion}). Resultado que reporta @build: ${String(a.tests).slice(0, 500)}\n\n` +
             `## Plan aprobado\n${plan?.planMd ?? "(no encontré el plan)"}\n\n` +
-            `Lee el diff con github_pr_files y el CI con github_pr_checks. NO edites ni empujes nada. ` +
+            `Lee el diff con github_pr_files y el CI con github_pr_checks. Si el CI sigue corriendo, usa ` +
+            `github_watch_pr y espera el aviso antes de dar tu veredicto (no apruebes con CI pendiente). ` +
+            `NO edites ni empujes nada. ` +
             `Cierra con factory_check_verdict (runId ${run.id}).`,
           await origin(),
         );
@@ -212,12 +222,23 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
           }
         }
         const findings = String(a.findings ?? "").trim();
+        // Aprobar exige CI en verde, verificado aquí y no en la palabra del modelo. `none` (el
+        // repo no tiene CI) se permite, pero se dice en la tarjeta.
+        let ciNote = "";
+        if (a.pass === true && run.prUrl) {
+          const ci = await R.prCi(sub, run.prUrl);
+          if (ci?.state === "pending")
+            return { ok: false, error: "el CI todavía corre: usa github_watch_pr y da tu veredicto cuando termine." };
+          if (ci?.state === "failure")
+            return { ok: false, error: `el CI está en rojo (${ci.failed.join(", ") || "ver checks"}): no puede pasar. Repórtalo con pass=false.` };
+          if (ci?.state === "none") ciNote = "\n\n⚠️ Este repo no tiene CI: nada corrió las pruebas fuera de la caja.";
+        }
         if (a.pass === true) {
           const next = await R.applyEvent(run, "check_pass");
           await R.postInThread(
             next,
             "check",
-            `✅ **Listo para tu revisión** — pasó el check contra el plan v${run.planVersion}.${findings ? `\n\n${findings}` : ""}\n\n${run.prUrl ?? ""}`,
+            `✅ **Listo para tu revisión** — pasó el check contra el plan v${run.planVersion}.${findings ? `\n\n${findings}` : ""}${ciNote}\n\n${run.prUrl ?? ""}`,
           );
           return { ok: true, status: next.status, note: "Márcalo listo para revisión con github_mark_ready y avisa en una línea." };
         }

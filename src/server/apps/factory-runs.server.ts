@@ -418,3 +418,22 @@ export async function ensureRunCard(run: Run): Promise<void> {
     console.error("[factory] no pude publicar la tarjeta viva", e);
   }
 }
+
+/**
+ * Estado del CI del PR (Actions y statuses externos: Vercel, CircleCI…), con la misma tool
+ * que usa el agente. `none` = el repo no tiene CI (NO es verde). null si GitHub no contesta.
+ */
+export async function prCi(sub: string, url: string): Promise<{ state: string; failed: string[] } | null> {
+  const pr = parsePrUrl(url);
+  if (!pr) return null;
+  try {
+    const { allTools } = await import("../connectors/github.server");
+    const tool = allTools().find((t) => t.name === "github_pr_checks");
+    const r = (await tool?.handler(sub, { repo: pr.repo, number: pr.number })) as any;
+    if (!r || r.error) return null;
+    const failed = Array.isArray(r.failed) ? r.failed.map((f: any) => String(f?.name ?? f)).slice(0, 5) : [];
+    return { state: String(r.state ?? "none"), failed };
+  } catch {
+    return null;
+  }
+}
