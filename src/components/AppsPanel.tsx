@@ -1,10 +1,11 @@
 // Ajustes → Apps: lo que se INSTALA en el espacio. La primera es la Software Factory
-// (server/apps/factory.ts). Instalar pide dos cosas —dónde vive (room) y sobre qué repo
-// trabaja— y deja los tres handles, el tablero y las tools listos.
+// (server/apps/factory.ts). Instalar pide dónde vive (room), sobre qué repo trabaja y qué
+// agente de Studio hace cada rol — la fábrica no crea agentes: motor y modelo se afinan en
+// /app/agents, como siempre.
 import { useEffect, useState } from "react";
 import { Factory, Loader2, ExternalLink } from "lucide-react";
 import { useT } from "../i18n";
-import { factoryStatusFn, installFactoryFn, setFactoryEnginesFn, uninstallFactoryFn, type FactoryStatus } from "../server/apps/factory";
+import { factoryStatusFn, installFactoryFn, setFactoryRolesFn, uninstallFactoryFn, type FactoryStatus } from "../server/apps/factory";
 import { githubInstallationReposFn } from "../server/room-repos";
 import { listChannelsFn } from "../server/chat";
 import ConfirmModal from "./ConfirmModal";
@@ -47,7 +48,7 @@ export function AppsPanel() {
               )}
             </div>
             <p className="mt-1 text-sm text-muted">
-              {t("Tres agentes en una caja: @plan escribe el plan y te pide firma, @build construye y abre el PR, @check lo revisa y nunca edita.")}
+              {t("Tres roles que asignas a tus agentes de Studio: @plan escribe el plan y te pide firma, @build construye y abre el PR, @check lo revisa y nunca edita.")}
             </p>
             <a
               href="https://factory.ghosty.studio"
@@ -60,7 +61,7 @@ export function AppsPanel() {
           </div>
         </div>
         <div className="mt-4 border-t border-border pt-4">
-          {status.installed ? <Installed status={status} onChange={load} /> : <Installer onDone={load} />}
+          {status.installed ? <Installed status={status} onChange={load} /> : <Installer status={status} onDone={load} />}
         </div>
       </div>
     </div>
@@ -112,8 +113,9 @@ function Installed({ status, onChange }: { status: FactoryStatus; onChange: () =
   );
 }
 
-function Installer({ onDone }: { onDone: () => void }) {
+function Installer({ status, onDone }: { status: FactoryStatus; onDone: () => void }) {
   const t = useT();
+  const [roles, setRoles] = useState<Record<string, string>>(() => defaultRoles(status));
   const [rooms, setRooms] = useState<Room[]>([]);
   const [repos, setRepos] = useState<Repos | null>(null);
   const [roomId, setRoomId] = useState<number>(0);
@@ -180,15 +182,19 @@ function Installer({ onDone }: { onDone: () => void }) {
           </select>
         )}
       </label>
+      <div>
+        <span className="text-xs font-semibold text-muted">3. {t("Qué agente hace cada rol")}</span>
+        <RolePickers status={status} value={roles} onChange={setRoles} />
+      </div>
       {error && <p className="text-danger">{error}</p>}
       <button
         type="button"
-        disabled={busy || !repo}
+        disabled={busy || !repo || HANDLES_UI.some((h) => !roles[h])}
         onClick={async () => {
           setBusy(true);
           setError(null);
           try {
-            await installFactoryFn({ data: { roomId: roomId || null, repo } });
+            await installFactoryFn({ data: { roomId: roomId || null, repo, roles } });
             onDone();
           } catch (e) {
             setError(e instanceof Error ? e.message : String(e));
@@ -199,64 +205,118 @@ function Installer({ onDone }: { onDone: () => void }) {
         className="inline-flex items-center gap-2 rounded-lg bg-brand px-4 py-2 text-xs font-semibold text-white hover:opacity-90 disabled:opacity-50"
       >
         {busy && <Loader2 className="size-3.5 animate-spin" />}
-        3. {busy ? t("Instalando…") : t("Instalar")}
+        {busy ? t("Instalando…") : t("Instalar")}
       </button>
     </div>
   );
 }
 
-// Los roles y su motor. Cada motor es una caja propia en gs; cambiar el de un rol crea (o
-// reusa) la caja de ese motor y repunta el handle. Modelo, prompt y llaves: en Studio.
-const ENGINE_LABEL: Record<string, string> = { claude: "Claude", deepseek: "DeepSeek", codex: "Codex (OpenAI)" };
+// Los roles: cada handle apunta a un agente de Studio. Se rotula con su motor y modelo reales
+// (los que dice Studio) y enlaza a su página para afinarlos; la fábrica no guarda modelos.
+const HANDLES_UI = ["plan", "build", "check"] as const;
 const ROLE_LABEL: Record<string, string> = { plan: "Planea", build: "Construye", check: "Revisa" };
 
-function RolesEditor({ status, onChange }: { status: FactoryStatus; onChange: () => void }) {
+const ENGINE_LABEL: Record<string, string> = { claude: "Claude", deepseek: "DeepSeek", codex: "Codex" };
+
+/** «Blue · DeepSeek · deepseek-v4-flash»: el mismo rótulo que las tarjetas de /app/agents. */
+function agentLabel(a: FactoryStatus["candidates"][number]): string {
+  return `${a.name} · ${ENGINE_LABEL[a.engine] ?? a.engine} · ${a.model}`;
+}
+
+/** Defaults sugeridos: plan y build en el primer Claude; check en otro motor si hay. */
+function defaultRoles(status: FactoryStatus): Record<string, string> {
+  const c = status.candidates;
+  const claude = c.find((a) => a.engine === "claude") ?? c[0];
+  const other = c.find((a) => a.engine !== (claude?.engine ?? "")) ?? claude;
+  return { plan: claude?.id ?? "", build: claude?.id ?? "", check: other?.id ?? "" };
+}
+
+function RolePickers({
+  status,
+  value,
+  onChange,
+}: {
+  status: FactoryStatus;
+  value: Record<string, string>;
+  onChange: (v: Record<string, string>) => void;
+}) {
   const t = useT();
-  const [draft, setDraft] = useState<Record<string, string>>(() => Object.fromEntries(status.roles.map((r) => [r.handle, r.engine])));
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const dirty = status.roles.some((r) => draft[r.handle] !== r.engine);
-  const sameModel = new Set(Object.values(draft)).size === 1;
+  if (!status.candidates.length) {
+    return (
+      <p className="mt-1 text-muted">
+        {t("No hay agentes de Studio con Claude, DeepSeek o Codex para este espacio.")}{" "}
+        <a href={status.studioAgentsUrl} target="_blank" rel="noreferrer" className="text-brand hover:underline">
+          {t("Crear agente en Studio")}
+        </a>
+      </p>
+    );
+  }
+  const engines = new Set(HANDLES_UI.map((h) => status.candidates.find((a) => a.id === value[h])?.engine));
+  const checkEngine = status.candidates.find((a) => a.id === value.check)?.engine;
+  const buildEngine = status.candidates.find((a) => a.id === value.build)?.engine;
   return (
-    <div className="mt-2 space-y-2">
-      <p className="text-xs font-semibold text-muted">{t("Roles y motor")}</p>
+    <div className="mt-1 space-y-2">
       <div className="divide-y divide-border rounded-lg border border-border bg-surface">
-        {status.roles.map((r) => (
-          <div key={r.handle} className="flex flex-wrap items-center gap-2 px-3 py-2">
-            <span className="w-16 font-mono text-sm font-semibold text-ink">@{r.handle}</span>
-            <span className="w-20 text-xs text-muted">{t(ROLE_LABEL[r.handle] ?? r.handle)}</span>
+        {HANDLES_UI.map((h) => (
+          <div key={h} className="flex flex-wrap items-center gap-2 px-3 py-2">
+            <span className="w-16 font-mono text-sm font-semibold text-ink">@{h}</span>
+            <span className="w-20 text-xs text-muted">{t(ROLE_LABEL[h])}</span>
             <select
-              value={draft[r.handle]}
-              onChange={(e) => setDraft((d) => ({ ...d, [r.handle]: e.target.value }))}
-              className="rounded-md border border-border bg-surface-2 px-2 py-1 text-sm text-ink"
+              value={value[h] ?? ""}
+              onChange={(e) => onChange({ ...value, [h]: e.target.value })}
+              className="min-w-0 flex-1 rounded-md border border-border bg-surface-2 px-2 py-1 text-sm text-ink"
             >
-              {status.engineOptions.map((e) => (
-                <option key={e} value={e}>
-                  {ENGINE_LABEL[e] ?? e}
+              <option value="">{t("Elige un agente")}</option>
+              {status.candidates.map((a) => (
+                <option key={a.id} value={a.id}>
+                  {agentLabel(a)}
                 </option>
               ))}
             </select>
-            {r.studioUrl && (
-              <a href={r.studioUrl} target="_blank" rel="noreferrer" className="ml-auto inline-flex items-center gap-1 text-xs text-brand hover:underline">
-                {t("Modelo y llaves en Studio")} <ExternalLink className="size-3" />
+            {value[h] && (
+              <a
+                href={`${status.studioAgentsUrl}/${value[h]}`}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-1 text-xs text-brand hover:underline"
+              >
+                {t("Afinar en Studio")} <ExternalLink className="size-3" />
               </a>
             )}
           </div>
         ))}
       </div>
-      {sameModel && (
-        <p className="text-xs text-muted">{t("Consejo: @check en otro motor revisa mejor; el mismo modelo comparte los puntos ciegos de quien construyó.")}</p>
-      )}
+      {engines.size === 1 || checkEngine === buildEngine ? (
+        <p className="text-xs text-muted">{t("Consejo: @check con un agente de otro motor revisa mejor; el mismo modelo comparte los puntos ciegos de quien construyó.")}</p>
+      ) : null}
+      <a href={status.studioAgentsUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-xs text-muted hover:text-ink">
+        {t("Crear o afinar agentes en Studio")} <ExternalLink className="size-3" />
+      </a>
+    </div>
+  );
+}
+
+function RolesEditor({ status, onChange }: { status: FactoryStatus; onChange: () => void }) {
+  const t = useT();
+  const current = Object.fromEntries(status.roles.map((r) => [r.handle, r.agentId ?? ""]));
+  const [draft, setDraft] = useState<Record<string, string>>(current);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const dirty = HANDLES_UI.some((h) => draft[h] !== current[h]);
+  return (
+    <div className="mt-2 space-y-2">
+      <p className="text-xs font-semibold text-muted">{t("Qué agente hace cada rol")}</p>
+      <RolePickers status={status} value={draft} onChange={setDraft} />
       {error && <p className="text-xs text-danger">{error}</p>}
       {dirty && (
         <button
           type="button"
-          disabled={busy}
+          disabled={busy || HANDLES_UI.some((h) => !draft[h])}
           onClick={async () => {
             setBusy(true);
             setError(null);
             try {
-              await setFactoryEnginesFn({ data: { engines: draft } });
+              await setFactoryRolesFn({ data: { roles: draft } });
               onChange();
             } catch (e) {
               setError(e instanceof Error ? e.message : String(e));
@@ -267,7 +327,7 @@ function RolesEditor({ status, onChange }: { status: FactoryStatus; onChange: ()
           className="inline-flex items-center gap-2 rounded-lg bg-brand px-3 py-1.5 text-xs font-semibold text-white hover:opacity-90 disabled:opacity-50"
         >
           {busy && <Loader2 className="size-3.5 animate-spin" />}
-          {busy ? t("Aplicando…") : t("Guardar motores")}
+          {busy ? t("Aplicando…") : t("Guardar roles")}
         </button>
       )}
     </div>

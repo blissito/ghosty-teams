@@ -30,6 +30,15 @@ describe("factoryTools", () => {
     expect(await factoryContext({ channelId: 1 })).toContain("SOFTWARE FACTORY");
   });
 
+  it("el contexto trae las instrucciones del ROL con que te invocaron", async () => {
+    installed = true;
+    const check = (await factoryContext({ channelId: 1, handle: "check" }))!;
+    expect(check).toContain("Eres @check");
+    expect(check).not.toContain("Eres @build");
+    const otro = (await factoryContext({ channelId: 1, handle: "ghosty" }))!;
+    expect(otro).not.toContain("Eres @");
+  });
+
   it("las familias acotan: sólo `fabrica` o `completo` las alcanzan", () => {
     expect(toolEnScope("alert_webhook_create", new Set(["fabrica"]) as any)).toBe(true);
     expect(toolEnScope("factory_plan_submit", new Set(["fabrica"]) as any)).toBe(true);

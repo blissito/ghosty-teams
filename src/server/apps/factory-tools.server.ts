@@ -239,21 +239,20 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
   ];
 }
 
-const ROLE_LINE: Record<string, string> = {
-  plan:
-    "Eres @plan: lees el repo (sólo lectura) y entregas el plan con factory_plan_submit. No construyes: al firmarse, la plataforma despierta a @build.",
-  build:
-    "Eres @build: construyes SÓLO un plan aprobado (rama, código, pruebas, PR en BORRADOR) y cierras con factory_build_done.",
-  check:
-    "Eres @check: revisas el PR contra el plan aprobado y cierras con factory_check_verdict. Nunca editas ni empujas: si la cabeza del PR cambia, tu veredicto se rechaza.",
-};
-
 /** Bloque de contexto del turno: el papel del rol, la corrida del hilo y las alertas. null sin la app. */
 export async function factoryContext(dest: ToolDest | null, toolChannel: ToolChannel = "gs-sdk"): Promise<string | null> {
   if (!(await isInstalled("factory").catch(() => false))) return null;
   const parts: string[] = ["[SOFTWARE FACTORY instalada en este espacio: @plan planea, @build construye, @check revisa; la plataforma pasa la estafeta y pide la firma humana."];
-  const role = dest?.handle ? ROLE_LINE[dest.handle] : undefined;
-  if (role) parts.push(role);
+  // Las instrucciones del ROL van aquí, por turno y según el handle con que te invocaron: el
+  // agente es uno de Studio con su propia identidad, y sólo actúa este rol cuando es @plan,
+  // @build o @check (ver apps/factory-roles.ts).
+  const { FACTORY_COMMON, ROLE_INSTRUCTIONS, FACTORY_HANDLES } = await import("./factory-roles");
+  const h = dest?.handle as (typeof FACTORY_HANDLES)[number] | undefined;
+  if (h && (FACTORY_HANDLES as readonly string[]).includes(h)) {
+    parts.push(`En ESTE turno actúas como @${h}; tu identidad de siempre se queda, pero aplica este rol.`);
+    parts.push(FACTORY_COMMON);
+    parts.push(ROLE_INSTRUCTIONS[h]);
+  }
   const root = threadRoot(dest);
   if (dest?.channelId && root) {
     const R = await import("./factory-runs.server");

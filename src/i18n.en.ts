@@ -1467,4 +1467,13 @@ export const en: Record<string, string> = {
   "Consejo: @check en otro motor revisa mejor; el mismo modelo comparte los puntos ciegos de quien construyó.": "Tip: @check on a different engine reviews better; the same model shares the builder's blind spots.",
   "Aplicando…": "Applying…",
   "Guardar motores": "Save engines",
+  "Tres roles que asignas a tus agentes de Studio: @plan escribe el plan y te pide firma, @build construye y abre el PR, @check lo revisa y nunca edita.": "Three roles you assign to your Studio agents: @plan writes the plan and asks for your sign-off, @build builds and opens the PR, @check reviews it and never edits.",
+  "Qué agente hace cada rol": "Which agent plays each role",
+  "No hay agentes de Studio con Claude, DeepSeek o Codex para este espacio.": "There are no Studio agents with Claude, DeepSeek or Codex for this space.",
+  "Crear agente en Studio": "Create an agent in Studio",
+  "Elige un agente": "Pick an agent",
+  "Afinar en Studio": "Tune in Studio",
+  "Consejo: @check con un agente de otro motor revisa mejor; el mismo modelo comparte los puntos ciegos de quien construyó.": "Tip: @check on an agent with a different engine reviews better; the same model shares the builder's blind spots.",
+  "Crear o afinar agentes en Studio": "Create or tune agents in Studio",
+  "Guardar roles": "Save roles",
 };
