@@ -584,13 +584,17 @@ const PR_CHECK_EVERY_MS = 120_000;
  * cierra sin mezclar), con un mensaje al final del hilo: así nadie tiene que adivinar si
  * la fábrica sigue trabajando. Lo llama el tick de `factory-schedules.server.ts`.
  */
-let titlesRepaired = false;
+// Una vez por ESPACIO (por proceso): con una bandera global, el primer tenant del tick se
+// la llevaba y los demás nunca se reparaban.
+const titlesRepaired = new Set<string>();
 
 /** Una vez por proceso: pedidos que quedaron titulados con un encabezado de sección
  *  («Historia») recuperan su nombre del plan v1. */
 async function repairRunTitles(): Promise<void> {
-  if (titlesRepaired) return;
-  titlesRepaired = true;
+  const { currentNamespace } = await import("../tenant.server");
+  const ns = await currentNamespace().catch(() => "");
+  if (titlesRepaired.has(ns)) return;
+  titlesRepaired.add(ns);
   const rows = await dbq(
     `SELECT r.id, r.title, p.plan_md FROM gt_factory_runs r JOIN gt_factory_plans p ON p.run_id = r.id AND p.version = 1`,
     [],
