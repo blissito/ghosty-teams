@@ -783,6 +783,8 @@ async function migrate(): Promise<void> {
   // La tarjeta VIVA de la corrida en el room (top-level): el estado de un vistazo y la firma
   // sin abrir el hilo. Una por corrida; el detalle sigue en el hilo del pedido.
   await addColumn("gt_factory_runs", "card_msg_id", "INTEGER");
+  // Ya se preguntó «¿lo mezclo?» (PR aprobado y CI en verde): se pregunta UNA vez.
+  await addColumn("gt_factory_runs", "merge_asked", "INTEGER");
   // Tareas programadas de la Software Factory (revisión nocturna, dependencias): a su hora
   // la plataforma despierta a @plan en el room de la fábrica con un encargo fijo. Una fila
   // por tipo; `owner_sub` = con qué credenciales (GitHub) trabaja @plan.

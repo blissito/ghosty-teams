@@ -832,6 +832,11 @@ export const postMessage = createServerFn({ method: "POST" })
       const origin = await reqOrigin().catch(() => "");
       const { maybeThreadDecision } = await import("./apps/factory-runs.server");
       factorySigned = await maybeThreadDecision({ channelId: channel.id, rootId: data.parentId, text: body, sub: me.sub, who: name, origin });
+      // «mézclalo» tras la pregunta del agente: mezcla con las credenciales de quien contesta.
+      if (!factorySigned) {
+        const { maybeMergeReply } = await import("./apps/factory-runs.server");
+        factorySigned = await maybeMergeReply({ channelId: channel.id, rootId: data.parentId, text: body, sub: me.sub });
+      }
     }
     // Push a los usuarios @tagged (fire-and-forget resiliente).
     // `unresolved` viaja al cliente: un `@algo` que no es nadie y no despierta a ningún

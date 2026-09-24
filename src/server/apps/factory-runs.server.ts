@@ -518,8 +518,8 @@ export async function afterFactoryTurn(
 
 // ── Cierre solo: el PR se mezcló (o se cerró) ────────────────────────────────
 
-/** Estado del PR en GitHub: mezclado, cerrado sin mezclar o abierto. null si no contesta. */
-async function prOutcome(sub: string, url: string): Promise<"merged" | "closed" | "open" | null> {
+/** Estado del PR en GitHub y si ya tiene una aprobación. null si no contesta. */
+async function prOutcome(sub: string, url: string): Promise<{ outcome: "merged" | "closed" | "open"; approved: boolean } | null> {
   const pr = parsePrUrl(url);
   if (!pr) return null;
   try {
@@ -527,8 +527,9 @@ async function prOutcome(sub: string, url: string): Promise<"merged" | "closed" 
     const tool = allTools().find((t) => t.name === "github_get_pr");
     const r = (await tool?.handler(sub, { repo: pr.repo, number: pr.number })) as any;
     if (!r || r.error) return null;
-    if (r.merged) return "merged";
-    return String(r.state ?? "").toLowerCase() === "closed" ? "closed" : "open";
+    const approved = Array.isArray(r.reviews) && r.reviews.some((v: any) => String(v?.state).toUpperCase() === "APPROVED");
+    if (r.merged) return { outcome: "merged", approved };
+    return { outcome: String(r.state ?? "").toLowerCase() === "closed" ? "closed" : "open", approved };
   } catch {
     return null;
   }
@@ -552,7 +553,22 @@ export async function closeFinishedRuns(): Promise<void> {
     const last = lastPrCheck.get(run.id) ?? 0;
     if (Date.now() - last < PR_CHECK_EVERY_MS) continue;
     lastPrCheck.set(run.id, Date.now());
-    const outcome = await prOutcome(run.approvedBy ?? run.requestedBy, run.prUrl!);
+    const pr = await prOutcome(run.approvedBy ?? run.requestedBy, run.prUrl!);
+    const outcome = pr?.outcome ?? null;
+    // Aprobado por una persona y CI en verde: el agente PROPONE mezclar y pregunta. Mezcla
+    // sólo si le contestan que sí (`maybeMergeReply`), con las credenciales de quien contesta.
+    if (outcome === "open" && pr?.approved && !row.merge_asked) {
+      const ci = await prCi(run.approvedBy ?? run.requestedBy, run.prUrl!);
+      if (ci?.state === "success" || ci?.state === "none") {
+        const asked = await dbq("UPDATE gt_factory_runs SET merge_asked = 1 WHERE id = ? AND merge_asked IS NULL RETURNING id", [run.id]);
+        if (asked.length)
+          await postInThread(
+            run,
+            "build",
+            `✅ El PR ya tiene aprobación${ci.state === "success" ? " y el CI está en verde" : ""}. ¿Lo mezclo? Contesta **«mézclalo»** en este hilo y lo hago. ${run.prUrl}`,
+          );
+      }
+    }
     if (outcome === "merged") {
       const done = await applyEvent(run, "close").catch(() => null);
       if (done) await postInThread(done, "check", `✅ **Pedido terminado:** el PR se mezcló. ${run.prUrl}`);
@@ -560,5 +576,34 @@ export async function closeFinishedRuns(): Promise<void> {
       const gone = await applyEvent(run, "cancel").catch(() => null);
       if (gone) await postInThread(gone, "check", `⏹️ El PR se cerró sin mezclar: pedido cancelado. ${run.prUrl}`);
     }
+  }
+}
+
+/**
+ * «mézclalo» (o «sí», «dale», «merge») en el hilo de un pedido al que ya se le preguntó:
+ * mezcla el PR con las credenciales de QUIEN contesta y avisa. true = el mensaje se consumió
+ * (nadie más lo contesta). Nunca lanza.
+ */
+export async function maybeMergeReply(opts: { channelId: number; rootId: number; text: string; sub: string }): Promise<boolean> {
+  try {
+    if (!/^(s[ií]|m[eé]zclalo|mezcla|mergea(lo)?|merge|dale|va|adelante)[\s.!]*$/i.test(opts.text.trim())) return false;
+    const run = await runOfThread(opts.channelId, opts.rootId);
+    if (!run || run.status !== "pr_review" || !run.prUrl) return false;
+    const asked = await dbq("SELECT merge_asked FROM gt_factory_runs WHERE id = ?", [run.id]);
+    if (!asked[0]?.merge_asked) return false;
+    const pr = parsePrUrl(run.prUrl)!;
+    const { allTools } = await import("../connectors/github.server");
+    const tool = allTools().find((t) => t.name === "github_merge_pr");
+    const r = (await tool?.handler(opts.sub, { repo: pr.repo, number: pr.number })) as any;
+    if (!r || r.error) {
+      await postInThread(run, "build", `⚠️ No pude mezclarlo: ${r?.error ?? "GitHub no contestó"}. ${run.prUrl}`);
+      return true;
+    }
+    const done = await applyEvent(run, "close").catch(() => null);
+    await postInThread(done ?? run, "build", `✅ **Pedido terminado:** mezclé el PR. ${run.prUrl}`);
+    return true;
+  } catch (e) {
+    console.error("[factory] mezclar desde el hilo", e);
+    return false;
   }
 }
