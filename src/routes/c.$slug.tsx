@@ -5588,6 +5588,14 @@ function SalesBoardButton({ channelId }: { channelId: number }) {
       .then((r) => setMine(r ? { boardId: r.boardId, boardName: r.boardName } : null))
       .catch(() => setMine(null));
   }, [channelId]);
+  // Un room con repo es de desarrollo: el tablero de ventas ahí sólo estorba. Se oculta,
+  // salvo que ya tenga uno vinculado (entonces se sigue viendo para poder quitarlo).
+  const [hasRepo, setHasRepo] = useState(false);
+  useEffect(() => {
+    roomReposFn({ data: { channelId } })
+      .then((r) => setHasRepo(Array.isArray(r) && r.length > 0))
+      .catch(() => setHasRepo(false));
+  }, [channelId]);
 
   // La lista se pide al ABRIR: es una llamada a gs.
   useEffect(() => {
@@ -5623,6 +5631,7 @@ function SalesBoardButton({ channelId }: { channelId: number }) {
 
   const actual = boards?.find((b) => b.id === mine?.boardId);
 
+  if (hasRepo && !mine) return null;
   return (
     <div className="relative shrink-0">
       <button

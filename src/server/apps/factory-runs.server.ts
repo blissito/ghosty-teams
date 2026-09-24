@@ -515,3 +515,50 @@ export async function afterFactoryTurn(
   void refreshRoom(run.channelId);
   void ref;
 }
+
+// ── Cierre solo: el PR se mezcló (o se cerró) ────────────────────────────────
+
+/** Estado del PR en GitHub: mezclado, cerrado sin mezclar o abierto. null si no contesta. */
+async function prOutcome(sub: string, url: string): Promise<"merged" | "closed" | "open" | null> {
+  const pr = parsePrUrl(url);
+  if (!pr) return null;
+  try {
+    const { allTools } = await import("../connectors/github.server");
+    const tool = allTools().find((t) => t.name === "github_get_pr");
+    const r = (await tool?.handler(sub, { repo: pr.repo, number: pr.number })) as any;
+    if (!r || r.error) return null;
+    if (r.merged) return "merged";
+    return String(r.state ?? "").toLowerCase() === "closed" ? "closed" : "open";
+  } catch {
+    return null;
+  }
+}
+
+const lastPrCheck = new Map<number, number>();
+const PR_CHECK_EVERY_MS = 120_000;
+
+/**
+ * Los pedidos en etapa PR se cierran SOLOS cuando su PR se mezcla (o se cancelan si se
+ * cierra sin mezclar), con un mensaje al final del hilo: así nadie tiene que adivinar si
+ * la fábrica sigue trabajando. Lo llama el tick de `factory-schedules.server.ts`.
+ */
+export async function closeFinishedRuns(): Promise<void> {
+  const rows = await dbq(
+    `SELECT * FROM gt_factory_runs WHERE status = 'pr_review' AND pr_url IS NOT NULL ORDER BY updated_at LIMIT 10`,
+    [],
+  ).catch(() => []);
+  for (const row of rows) {
+    const run = toRun(row);
+    const last = lastPrCheck.get(run.id) ?? 0;
+    if (Date.now() - last < PR_CHECK_EVERY_MS) continue;
+    lastPrCheck.set(run.id, Date.now());
+    const outcome = await prOutcome(run.approvedBy ?? run.requestedBy, run.prUrl!);
+    if (outcome === "merged") {
+      const done = await applyEvent(run, "close").catch(() => null);
+      if (done) await postInThread(done, "check", `✅ **Pedido terminado:** el PR se mezcló. ${run.prUrl}`);
+    } else if (outcome === "closed") {
+      const gone = await applyEvent(run, "cancel").catch(() => null);
+      if (gone) await postInThread(gone, "check", `⏹️ El PR se cerró sin mezclar: pedido cancelado. ${run.prUrl}`);
+    }
+  }
+}

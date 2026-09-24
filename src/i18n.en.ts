@@ -1514,4 +1514,6 @@ export const en: Record<string, string> = {
   "Poco usados": "Less used",
   "Quitar de fijados": "Unpin",
   "Fijar arriba": "Pin to top",
+  "Terminado: el PR se mezcló.": "Done: the PR was merged.",
+  "🏁 La fábrica terminó su parte: el PR espera tu revisión. Nadie está trabajando en este pedido.": "🏁 The factory finished its part: the PR is waiting for your review. Nobody is working on this request.",
 };

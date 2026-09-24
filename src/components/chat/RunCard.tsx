@@ -89,7 +89,9 @@ export function RunCard({ card, channelId }: { card: RunCardData; channelId: num
             : st.status === "cancelled"
               ? t("Cancelado.")
               : st.status === "done"
-                ? t("Terminado.")
+                ? t("Terminado: el PR se mezcló.")
+                : st.status === "pr_review"
+                  ? t("🏁 La fábrica terminó su parte: el PR espera tu revisión. Nadie está trabajando en este pedido.")
                 : st.loops
                   ? `${t("Vueltas de check")}: ${st.loops}`
                   : ""}

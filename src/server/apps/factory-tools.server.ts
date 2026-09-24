@@ -261,7 +261,11 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
           await R.postInThread(
             next,
             "check",
-            `✅ **Listo para tu revisión** — pasó el check contra el plan v${run.planVersion}${ready ? " y el PR ya no es borrador" : ""}.${findings ? `\n\n${findings}` : ""}${ciNote}${draftNote}\n\n${run.prUrl ?? ""}`,
+            // Cierre explícito de la fábrica: quien lee el hilo tiene que saber que ya NADIE está
+            // trabajando y que lo que sigue es de una persona (revisar y mezclar).
+            `🏁 **La fábrica terminó su parte.** Pasó el check contra el plan v${run.planVersion}${ready ? " y el PR ya no es borrador" : ""}. ` +
+              `Nadie está trabajando en este pedido: el PR espera **tu revisión** (apruébalo y mézclalo). Al mezclarlo, el pedido se cierra solo.` +
+              `${findings ? `\n\n${findings}` : ""}${ciNote}${draftNote}\n\n${run.prUrl ?? ""}`,
           );
           return { ok: true, status: next.status, note: "La plataforma ya avisó en el hilo y sacó el PR de borrador. Termina sin repetirlo." };
         }
