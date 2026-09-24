@@ -727,6 +727,15 @@ async function migrate(): Promise<void> {
     delivery   TEXT PRIMARY KEY,
     created_at INTEGER NOT NULL DEFAULT (unixepoch())
   )`);
+  // La tarjeta de cada PR en cada room: el siguiente evento (mezclado, cerrado) EDITA esa tarjeta
+  // en vez de dejarla diciendo «abierto» y publicar otra suelta. `repo` en minúsculas.
+  await exec(`CREATE TABLE IF NOT EXISTS gt_pr_cards (
+    repo       TEXT NOT NULL,
+    number     INTEGER NOT NULL,
+    channel_id INTEGER NOT NULL,
+    msg_id     INTEGER NOT NULL,
+    PRIMARY KEY (repo, number, channel_id)
+  )`);
 
   // El tablero de Ghosty Tasks que este room viene usando. Se escribe SOLA la primera vez
   // que una petición resuelve uno ahí: no hay nada que configurar antes de que sirva.

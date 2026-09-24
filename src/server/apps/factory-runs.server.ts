@@ -640,10 +640,11 @@ export async function onPrEvent(run: Run, outcome: "merged" | "closed", role: "c
   return gone;
 }
 
-/** Pedidos cuyo PR es `repo#number` (webhook). Los cancelados entran por la autocorrección. */
+/** Pedidos cuyo PR es `repo#number` (webhook), en cualquier estado: `onPrEvent` es idempotente
+ *  (un pedido ya terminado no cambia) y los cancelados entran por la autocorrección. */
 export async function runsByPr(repo: string, number: number): Promise<Run[]> {
   const rows = await dbq(
-    `SELECT * FROM gt_factory_runs WHERE pr_url IS NOT NULL AND status NOT IN ('done') AND LOWER(pr_url) LIKE ?`,
+    `SELECT * FROM gt_factory_runs WHERE pr_url IS NOT NULL AND LOWER(pr_url) LIKE ?`,
     [`%github.com/${repo.toLowerCase()}/pull/${number}%`],
   ).catch(() => []);
   return rows

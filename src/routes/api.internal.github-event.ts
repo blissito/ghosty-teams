@@ -51,6 +51,24 @@ export function prMessageBody(ev: PrEvent): string {
   return `${LINE[ev.action](ev)} · \`${ev.repo}\`\n\n\`\`\`gt-gh\n${JSON.stringify(card)}\n\`\`\``;
 }
 
+/**
+ * Quién da el aviso: un AGENTE del room, no un «GitHub» sin cara. El último agente que habló en
+ * ese room (fuera de los roles de la fábrica), o el primero del espacio. Se publica con
+ * `postAgent`, que no despierta a nadie (`mentions_ghosty = 0`).
+ */
+async function roomAgent(channelId: number): Promise<{ handle: string; name: string; avatar: string }> {
+  const { resolvedAgents } = await import("../agents.server");
+  const { dbq } = await import("../dbq.server");
+  const agents = (await resolvedAgents()).filter((a) => !["plan", "build", "check"].includes(a.handle));
+  const [last] = await dbq(
+    `SELECT agent_handle FROM gc_messages WHERE channel_id = ? AND agent_handle IS NOT NULL AND agent_handle NOT IN ('plan','build','check')
+     ORDER BY id DESC LIMIT 1`,
+    [channelId],
+  ).catch(() => []);
+  const a = agents.find((x) => x.handle === last?.agent_handle) ?? agents[0];
+  return a ? { handle: a.handle, name: a.name, avatar: a.avatar } : { handle: "ghosty", name: "Ghosty", avatar: "" };
+}
+
 export const Route = createFileRoute("/api/internal/github-event")({
   server: {
     handlers: {
@@ -78,30 +96,58 @@ export const Route = createFileRoute("/api/internal/github-event")({
 
         try {
           const db = await import("../db.server");
-          // 1. Pedidos de la fábrica con ese PR: se cierran ya (el hilo del pedido lo dice).
+          // 1. Pedidos de la fábrica con ese PR: se cierran ya y lo dice el HILO del pedido (con la
+          //    cara de @check/@build). En esos rooms no va tarjeta suelta: la de veredicto del
+          //    pedido ya trae «Ver PR / Mezclar», y repetirla es ruido.
           const runRooms = new Set<number>();
-          if (ev.action === "merged" || ev.action === "closed") {
-            const { runsByPr, onPrEvent } = await import("../server/apps/factory-runs.server");
-            for (const run of await runsByPr(ev.repo, ev.number)) {
-              await onPrEvent(run, ev.action);
-              runRooms.add(run.channelId);
-            }
+          const { runsByPr, onPrEvent } = await import("../server/apps/factory-runs.server");
+          for (const run of await runsByPr(ev.repo, ev.number)) {
+            runRooms.add(run.channelId);
+            if (ev.action === "merged" || ev.action === "closed") await onPrEvent(run, ev.action);
           }
-          // 2. Aviso en cada room con ese repo. En el room de la fábrica no se repite si el PR es
-          //    de un pedido: ahí ya lo dice su hilo y su tarjeta.
-          if (ev.action === "opened" && ev.draft) return Response.json({ ok: true, rooms: 0, draft: true });
           const rooms = (await db.roomsOfRepo(ev.repo)).filter((c) => !runRooms.has(c));
-          if (!rooms.length) return Response.json({ ok: true, rooms: 0 });
+          if (!rooms.length) return Response.json({ ok: true, rooms: 0, factoryRooms: runRooms.size });
+
           const bus = await import("../server/bus.server");
           const { currentNamespace } = await import("../server/tenant.server");
+          const { dbq: q } = await import("../dbq.server");
           const ns = await currentNamespace();
           const body = prMessageBody(ev);
+          let posted = 0;
           for (const channelId of rooms) {
-            const { id } = await db.createMessage({ channelId, parentId: null, sender: "GitHub", senderSub: null, body, topic: "general" });
+            const [card] = await q("SELECT msg_id FROM gt_pr_cards WHERE repo = ? AND number = ? AND channel_id = ?", [
+              ev.repo.toLowerCase(),
+              ev.number,
+              channelId,
+            ]);
+            const cardMsg = card ? await db.getMessage(Number(card.msg_id)) : null;
+            if (cardMsg) {
+              // Ya hay tarjeta de este PR en el room: se ACTUALIZA (deja de decir «abierto») y el
+              // cambio se cuenta en su hilo, para que el merge se note y no sólo se corrija en silencio.
+              await db.editMessage(cardMsg.id, body);
+              bus.publish(bus.ch.room(ns, channelId), { t: "message:edited", id: cardMsg.id, body, edited_at: Math.floor(Date.now() / 1000) });
+              const who = await roomAgent(channelId);
+              const { id } = await db.postAgent(channelId, cardMsg.id, LINE[ev.action](ev), "msg", who.handle, who.name, "general", who.avatar);
+              const reply = await db.getMessage(id);
+              if (reply) bus.publish(bus.ch.room(ns, channelId), { t: "message:new", msg: reply });
+              posted++;
+              continue;
+            }
+            // Un borrador recién abierto todavía no es noticia: se avisa cuando pase a revisión.
+            if (ev.action === "opened" && ev.draft) continue;
+            const who = await roomAgent(channelId);
+            const { id } = await db.postAgent(channelId, null, body, "msg", who.handle, who.name, "general", who.avatar);
+            await q("INSERT OR REPLACE INTO gt_pr_cards (repo, number, channel_id, msg_id) VALUES (?, ?, ?, ?)", [
+              ev.repo.toLowerCase(),
+              ev.number,
+              channelId,
+              id,
+            ]);
             const creado = await db.getMessage(id);
             if (creado) bus.publish(bus.ch.room(ns, channelId), { t: "message:new", msg: creado });
+            posted++;
           }
-          return Response.json({ ok: true, rooms: rooms.length });
+          return Response.json({ ok: true, rooms: posted, factoryRooms: runRooms.size });
         } catch (e) {
           await dbq("DELETE FROM gt_github_deliveries WHERE delivery = ?", [ev.delivery]).catch(() => {});
           console.error(`[github-event] ${ev.repo}#${ev.number} ${ev.action}: ${e instanceof Error ? e.message : e}`);
