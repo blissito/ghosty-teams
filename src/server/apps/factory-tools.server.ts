@@ -218,6 +218,8 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
             (touchesGithub
               ? `⚠️ Este PR modifica archivos de .github/ (CI o CODEOWNERS). Si el pedido NO es agregar o arreglar el CI, es un hallazgo: repórtalo con pass=false. `
               : "") +
+            `Si el repo publica previews, pide la URL con factory_preview (runId ${run.id}): comprueba AHÍ los criterios de ` +
+            `aceptación que se ven en pantalla y cita la URL en tu veredicto; si está en camino, espera a que esté lista. ` +
             `Lee el diff con github_pr_files y el CI con github_pr_checks. Si el CI sigue corriendo, usa ` +
             `github_watch_pr y espera el aviso antes de dar tu veredicto (no apruebes con CI pendiente). ` +
             `NO edites ni empujes nada. ` +
@@ -432,6 +434,29 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
       },
     },
     {
+      name: "factory_preview",
+      description:
+        "La preview del PR del pedido (Vercel, Netlify, Cloudflare Pages, review apps): state ready|pending|failed|none y su URL. " +
+        "Úsala para probar el cambio como lo verá la persona antes de mezclar.",
+      inputSchema: { type: "object", properties: { runId: { type: "number" } } },
+      handler: async (sub, a) => {
+        const run = await runOf(dest, a.runId);
+        if (!run) return { ok: false, error: "no hay pedido en este hilo" };
+        if (!run.prUrl) return { ok: true, state: "none", note: "el pedido todavía no tiene PR" };
+        const { prPreview } = await import("./preview.server");
+        const p = await prPreview(run.approvedBy ?? sub, run.prUrl);
+        const note =
+          p.state === "ready"
+            ? "Ábrela y prueba ahí los criterios de aceptación visibles."
+            : p.state === "pending"
+              ? "Se está publicando: vuelve a preguntar en un minuto."
+              : p.state === "failed"
+                ? "La preview falló al publicarse: es un hallazgo (el build de producción no pasa)."
+                : "Este repo no publica previews: revisa con el diff y las pruebas.";
+        return { ok: true, ...p, note };
+      },
+    },
+    {
       name: "factory_status",
       description: "Estado del pedido de este hilo (o de runId): etapa, versión del plan, vueltas, PR y tarea.",
       inputSchema: { type: "object", properties: { runId: { type: "number" } } },
@@ -484,7 +509,7 @@ export async function factoryContext(dest: ToolDest | null, toolChannel: ToolCha
   }
   // Misma frase que Tasks: tenerlas y no llamarlas es el otro modo de falla.
   parts.push(
-    "Tus tools de la fábrica (factory_plan_submit, factory_build_done, factory_check_verdict, factory_status, factory_close, factory_ci_starter, factory_repo_prep) " +
+    "Tus tools de la fábrica (factory_plan_submit, factory_build_done, factory_check_verdict, factory_status, factory_close, factory_ci_starter, factory_repo_prep, factory_preview) " +
       "ya están disponibles en este turno: LLÁMALAS para cerrar tu paso; sin ellas la estafeta no avanza." +
       notaNombres(toolChannel),
   );

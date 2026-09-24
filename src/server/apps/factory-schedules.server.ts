@@ -101,6 +101,8 @@ export async function sweepTenant(ns: string): Promise<void> {
   // De paso, los pedidos cuyo PR ya se mezcló se cierran solos (mismo tick, sin otro timer).
   const { closeFinishedRuns } = await import("./factory-runs.server");
   await closeFinishedRuns().catch(() => {});
+  const { announcePreviews } = await import("./factory-runs.server");
+  await announcePreviews().catch(() => {});
   const rows = await dbq(
     `SELECT * FROM gt_factory_schedules WHERE enabled = 1 AND next_at IS NOT NULL AND next_at <= unixepoch()`,
     [],

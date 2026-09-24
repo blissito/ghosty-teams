@@ -581,6 +581,38 @@ export async function closeFinishedRuns(): Promise<void> {
   }
 }
 
+const lastPreviewCheck = new Map<number, number>();
+const PREVIEW_CHECK_EVERY_MS = 60_000;
+
+/**
+ * Cuando el PR de un pedido tiene preview lista (Vercel, Netlify…), se anuncia UNA vez por
+ * commit en el hilo: así quien revisa la abre sin buscarla. La tarjeta viva la enseña también.
+ * Lo llama el mismo tick que `closeFinishedRuns`.
+ */
+export async function announcePreviews(): Promise<void> {
+  const rows = await dbq(
+    `SELECT * FROM gt_factory_runs WHERE status IN ('checking','pr_review') AND pr_url IS NOT NULL
+       AND (preview_sha IS NULL OR head_sha IS NULL OR preview_sha != head_sha) ORDER BY updated_at DESC LIMIT 10`,
+    [],
+  ).catch(() => []);
+  const { prPreview } = await import("./preview.server");
+  for (const row of rows) {
+    const run = toRun(row);
+    if (Date.now() - (lastPreviewCheck.get(run.id) ?? 0) < PREVIEW_CHECK_EVERY_MS) continue;
+    lastPreviewCheck.set(run.id, Date.now());
+    const p = await prPreview(run.approvedBy ?? run.requestedBy, run.prUrl!);
+    if (p.state !== "ready" || !p.url || p.sha === row.preview_sha) continue;
+    const claimed = await dbq(
+      "UPDATE gt_factory_runs SET preview_url = ?, preview_sha = ? WHERE id = ? AND (preview_sha IS NULL OR preview_sha != ?) RETURNING id",
+      [p.url, p.sha, run.id, p.sha],
+    );
+    if (!claimed.length) continue;
+    const again = row.preview_sha ? " actualizada" : " lista";
+    await postInThread(run, "build", `🔎 **Preview${again}**${p.provider ? ` (${p.provider})` : ""}: ${p.url}`);
+    void refreshRoom(run.channelId);
+  }
+}
+
 /**
  * «mézclalo» (o «sí», «dale», «merge») en el hilo de un pedido al que ya se le preguntó:
  * mezcla el PR con las credenciales de QUIEN contesta y avisa. true = el mensaje se consumió

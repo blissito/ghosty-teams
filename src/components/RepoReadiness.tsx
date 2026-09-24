@@ -27,6 +27,7 @@ const CRITERIA: Record<ReadinessKey, { label: string; detail: string }> = {
   codeowners: { label: "Una persona revisa los cambios al CI", detail: "CODEOWNERS que cubre .github/. OpenSSF Scorecard: Code-Review." },
   dependabot: { label: "Dependencias al día", detail: "dependabot.yml (o Renovate). OpenSSF Scorecard: Dependency-Update-Tool." },
   protected: { label: "Nada entra a main sin tu aprobación", detail: "Regla en la rama principal: PR, aprobación de una persona y CI en verde. OpenSSF Scorecard: Branch-Protection." },
+  preview: { label: "Cada cambio se ve antes de mezclar", detail: "Una preview por PR (Vercel, Netlify, Cloudflare Pages o review apps de Fly). La fábrica la encuentra sola y @check prueba ahí." },
 };
 
 export function RepoReadiness({ channelId, repo, compact = false, onLevel }: {
@@ -181,6 +182,9 @@ export function RepoReadiness({ channelId, repo, compact = false, onLevel }: {
                         {busy === "protect" ? <Loader2 size={11} className="animate-spin" /> : <ShieldCheck size={11} />}
                         {t("Activar")}
                       </button>
+                    )}
+                    {!c.ok && c.key === "preview" && (
+                      <span className="shrink-0 text-[11px] text-muted">{t("en tu hosting")}</span>
                     )}
                     {!c.ok && c.key === "scripts" && (
                       <span className="shrink-0 text-[11px] text-muted">{r.facts.missingScripts.join(", ")}</span>

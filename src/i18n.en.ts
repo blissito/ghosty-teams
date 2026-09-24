@@ -1563,6 +1563,12 @@ export const en: Record<string, string> = {
   "El dueño del espacio puede prepararlo en un clic.": "The space owner can prepare it in one click.",
   "Se prepara desde el room de la Software Factory.": "It's prepared from the Software Factory room.",
   "Sólo falta proteger la rama principal.": "Only protecting the main branch is left.",
+  "Cada cambio se ve antes de mezclar": "Every change can be seen before merging",
+  "Una preview por PR (Vercel, Netlify, Cloudflare Pages o review apps de Fly). La fábrica la encuentra sola y @check prueba ahí.": "A preview per PR (Vercel, Netlify, Cloudflare Pages or Fly review apps). The factory finds it on its own and @check tests there.",
+  "en tu hosting": "in your hosting",
+  "Ver preview": "Open preview",
+  "Preview en camino…": "Preview on its way…",
+  "La preview falló": "Preview failed",
   "Criterios de": "Criteria from",
   "Al repo le falta preparación para agentes": "This repo isn't fully agent-ready yet",
 };

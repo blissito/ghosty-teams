@@ -5,7 +5,9 @@
 //  - OpenSSF Scorecard (checks CI-Tests, Code-Review, Dependency-Update-Tool, Branch-Protection);
 //  - AGENTS.md (formato abierto de la Agentic AI Foundation / Linux Foundation, lo leen Codex,
 //    Copilot, Cursor, goose, Factory…);
-//  - Agent Readiness de Factory (niveles; «Functional» = README, dependencias, build/test).
+//  - Agent Readiness de Factory (niveles; «Functional» = README, dependencias, build/test);
+//  - previews por PR (Vercel, Netlify, Cloudflare Pages, review apps): el cambio se VE antes
+//    de mezclarse, y @check lo prueba ahí.
 // La UI enseña la fuente de cada criterio, para que el cliente vea por qué se le pide.
 //
 // Todo se comprueba contra GitHub con el token de quien conectó el repo al room (así lo ve
@@ -21,7 +23,8 @@ export type ReadinessKey =
   | "ci"
   | "codeowners"
   | "dependabot"
-  | "protected";
+  | "protected"
+  | "preview";
 
 export type ReadinessCheck = {
   key: ReadinessKey;
@@ -55,7 +58,7 @@ export type RepoFacts = {
 export const LEVELS: Record<1 | 2 | 3, ReadinessKey[]> = {
   1: ["readme", "lockfile", "scripts"],
   2: ["agents_md", "ci"],
-  3: ["codeowners", "dependabot", "protected"],
+  3: ["codeowners", "dependabot", "protected", "preview"],
 };
 
 /** Qué criterio arregla «Preparar repo». Los scripts piden dependencias: nunca a ciegas. */
@@ -68,6 +71,8 @@ const FIXABLE: Record<ReadinessKey, boolean> = {
   codeowners: true,
   dependabot: true,
   protected: false,
+  // Se conecta en el proveedor de hosting, no con un archivo.
+  preview: false,
 };
 
 /** Nivel alcanzado a partir de los criterios (puro, para probarlo). */
@@ -146,6 +151,8 @@ export async function repoReadiness(sub: string, repo: string, opts: { fresh?: b
   // Protegida = el ruleset de la fábrica, o cualquier protección que GitHub reporte en la rama.
   const { protectionState } = await import("./ci-starter.server");
   const protection = await protectionState(sub, repo).catch(() => "error" as const);
+  const { repoHasPreviews } = await import("./preview.server");
+  const previews = await repoHasPreviews(sub, repo, defaultBranch).catch(() => false);
 
   const ok: Record<ReadinessKey, boolean> = {
     readme: rootFiles.some((n) => /^readme(\.|$)/i.test(n)),
@@ -156,6 +163,7 @@ export async function repoReadiness(sub: string, repo: string, opts: { fresh?: b
     codeowners: codeownersCoversGithub(codeowners),
     dependabot: ghFiles.some((n) => /^dependabot\.ya?ml$/i.test(n)) || has("renovate.json"),
     protected: protection === "protected" || branch?.protected === true,
+    preview: previews,
   };
   const checks: ReadinessCheck[] = ([1, 2, 3] as const).flatMap((level) =>
     LEVELS[level].map((key) => ({ key, level, ok: ok[key], fixable: FIXABLE[key] })),
@@ -282,6 +290,8 @@ export function preparationPlan(r: Readiness): { title: string; planMd: string; 
   if (miss("scripts"))
     later.push(`- Faltan scripts en package.json: ${r.facts.missingScripts.map((s) => `\`${s}\``).join(", ")}. Piden elegir herramientas: va en su propio pedido.`);
   if (miss("lockfile")) later.push("- No hay lockfile: instala una vez en local y súbelo (`npm install` genera `package-lock.json`).");
+  if (miss("preview"))
+    later.push("- Previews por PR: conecta el repo a Vercel, Netlify o Cloudflare Pages (o review apps de Fly). La fábrica las encuentra sola y @check prueba ahí.");
   if (miss("protected")) later.push("- Proteger la rama principal: lo activa el dueño con un clic en «Listo para agentes» cuando este PR se mezcle.");
 
   const planMd = `# Preparar ${r.repo} para agentes

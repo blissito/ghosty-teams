@@ -117,6 +117,26 @@ export function RunCard({ card, channelId }: { card: RunCardData; channelId: num
               </button>
             </>
           )}
+          {st.preview?.state === "ready" && st.preview.url && (
+            <a
+              href={st.preview.url}
+              target="_blank"
+              rel="noreferrer"
+              title={st.preview.provider ?? undefined}
+              className="rounded-full border border-emerald-600 px-3 py-1 text-xs font-semibold text-emerald-700 hover:bg-emerald-600/10 dark:text-emerald-400"
+            >
+              {t("Ver preview")} ↗
+            </a>
+          )}
+          {st.preview?.state === "pending" && (
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-surface-3 px-3 py-1 text-xs text-muted">
+              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-amber-500 motion-reduce:animate-none" />
+              {t("Preview en camino…")}
+            </span>
+          )}
+          {st.preview?.state === "failed" && (
+            <span className="rounded-full bg-red-600/10 px-3 py-1 text-xs text-red-700 dark:text-red-400">{t("La preview falló")}</span>
+          )}
           {st.prUrl && (
             <a href={st.prUrl} target="_blank" rel="noreferrer" className="rounded-full border border-border px-3 py-1 text-xs font-semibold text-ink hover:bg-surface-3">
               {t("Ver PR")} ↗

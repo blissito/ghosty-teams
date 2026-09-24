@@ -7,6 +7,7 @@ let workflows: string[] = [];
 let contents: Record<string, string> = {};
 let rulesets: { name: string }[] = [];
 let branchProtected = false;
+let deployments: { environment: string; production_environment?: boolean }[] = [];
 let calls = 0;
 
 const b64 = (s: string) => Buffer.from(s).toString("base64");
@@ -20,6 +21,8 @@ vi.mock("../connectors/github.server", () => ({
     if (path === "/repos/acme/app/contents/.github/workflows") return workflows.length ? workflows.map((name) => ({ name })) : { error: "404" };
     if (path === "/repos/acme/app/branches/main") return { protected: branchProtected };
     if (path.endsWith("/rulesets")) return rulesets;
+    if (path.startsWith("/repos/acme/app/deployments")) return deployments;
+    if (/\/commits\/[^/]+\/statuses/.test(path)) return [];
     const f = path.replace("/repos/acme/app/contents/", "");
     if (contents[f] !== undefined) return { content: b64(contents[f]) };
     const m = /\/commits\/(v\d+)$/.exec(path);
@@ -46,6 +49,7 @@ function bare() {
   contents = { "package.json": JSON.stringify({ scripts: { dev: "vite", build: "vite build" } }) };
   rulesets = [];
   branchProtected = false;
+  deployments = [{ environment: "Production", production_environment: true }];
 }
 
 function complete() {
@@ -57,6 +61,7 @@ function complete() {
     ".github/CODEOWNERS": "/.github/ @acme\n",
   };
   rulesets = [{ name: "Ghosty Factory" }];
+  deployments = [{ environment: "Preview" }, { environment: "Production", production_environment: true }];
 }
 
 async function check(): Promise<Readiness> {
@@ -76,9 +81,9 @@ describe("Listo para agentes", () => {
     expect(levelOf({})).toBe(0);
     expect(levelOf({ readme: true, lockfile: true, scripts: true })).toBe(1);
     // Nivel 3 completo pero sin el 2: se queda en 1.
-    expect(levelOf({ readme: true, lockfile: true, scripts: true, codeowners: true, dependabot: true, protected: true })).toBe(1);
+    expect(levelOf({ readme: true, lockfile: true, scripts: true, codeowners: true, dependabot: true, protected: true, preview: true })).toBe(1);
     expect(
-      levelOf({ readme: true, lockfile: true, scripts: true, agents_md: true, ci: true, codeowners: true, dependabot: true, protected: true }),
+      levelOf({ readme: true, lockfile: true, scripts: true, agents_md: true, ci: true, codeowners: true, dependabot: true, protected: true, preview: true }),
     ).toBe(3);
   });
 
@@ -94,17 +99,26 @@ describe("Listo para agentes", () => {
     const r = await check();
     expect(r.level).toBe(0);
     expect(r.passed).toBe(0);
-    expect(r.total).toBe(8);
+    expect(r.total).toBe(9);
     expect(r.facts.missingScripts).toEqual(["test", "typecheck"]);
     expect(r.facts.pm).toBeNull();
   });
 
-  it("repo completo: nivel 3, 8/8", async () => {
+  it("repo completo: nivel 3, 9/9", async () => {
     complete();
     const r = await check();
     expect(r.level).toBe(3);
-    expect(r.passed).toBe(8);
+    expect(r.passed).toBe(9);
     expect(r.facts.pm).toBe("pnpm");
+  });
+
+  it("sólo deployments de producción NO cuentan como previews", async () => {
+    complete();
+    deployments = [{ environment: "production" }];
+    const r = await check();
+    expect(r.checks.find((c) => c.key === "preview")!.ok).toBe(false);
+    expect(r.level).toBe(2);
+    expect(preparationPlan(r).planMd).toContain("Previews por PR");
   });
 
   it("protección clásica de rama también cuenta", async () => {

@@ -790,6 +790,9 @@ async function migrate(): Promise<void> {
   // Tipo de pedido: NULL = pedido normal; `prep` = «Preparar repo» (el plan lo arma la
   // plataforma). Sirve para no abrir dos preparaciones del mismo repo a la vez.
   await addColumn("gt_factory_runs", "kind", "TEXT");
+  // La preview del PR ya se anunció en el hilo, y para qué commit (un push nuevo trae otra).
+  await addColumn("gt_factory_runs", "preview_url", "TEXT");
+  await addColumn("gt_factory_runs", "preview_sha", "TEXT");
   // Tareas programadas de la Software Factory (revisión nocturna, dependencias): a su hora
   // la plataforma despierta a @plan en el room de la fábrica con un encargo fijo. Una fila
   // por tipo; `owner_sub` = con qué credenciales (GitHub) trabaja @plan.
