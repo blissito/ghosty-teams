@@ -484,7 +484,7 @@ export async function ambientContext(
     `Lectura: github_list_repos, github_list_issues, github_get_issue, ` +
     `github_list_prs, github_get_pr, github_pr_files, github_read_file, github_search_code, ` +
     `github_checkout, github_workflow_runs, github_workflow_run_logs, github_pr_checks. Escritura: github_create_review, github_merge_pr, github_comment, github_update_issue, github_create_issue, ` +
-    `github_create_branch, github_write_file, github_delete_file, github_create_pr, github_mark_ready, github_enable_auto_merge, ` +
+    `github_create_branch, github_write_file, github_push_files, github_delete_file, github_create_pr, github_update_pr, github_mark_ready, github_enable_auto_merge, ` +
     `github_update_branch, github_update_pr_base, github_watch_pr. ` +
     notaNombres(opts?.toolChannel) +
     `Si te piden "conecta mi repo" o "agrega este repo", contesta con github_install_link. ` +
@@ -1222,6 +1222,278 @@ const ALL_TOOLS: ConnectorTool[] = [
         return r;
       }
       return { ok: true, message: r?.message ?? "Actualización encolada; CI vuelve a correr." };
+    },
+  },
+  {
+    name: "github_update_pr",
+    description:
+      "Edita el título o la descripción de un pull request. Úsala para que la descripción diga lo que HOY hace la rama (p. ej. tras corregir hallazgos): una descripción vieja contradice el código.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        ...repoProp,
+        number: { type: "number", description: "Número del PR." },
+        title: str("Título nuevo (opcional)."),
+        body: str("Descripción nueva completa, en markdown (opcional)."),
+      },
+      required: ["repo", "number"],
+    },
+    handler: async (sub, a) => {
+      const p = repoPath(a.repo);
+      if (!p) return BAD_REPO;
+      const patch: Record<string, string> = {};
+      if (typeof a.title === "string" && a.title.trim()) patch.title = a.title.trim();
+      if (typeof a.body === "string") patch.body = a.body;
+      if (!Object.keys(patch).length) return { error: "Pasa title o body." };
+      const w = await writeToken(sub, p);
+      if ("error" in w) return w;
+      const r = await apiWith(w.token, `/repos/${p}/pulls/${Number(a.number)}`, { method: "PATCH", body: JSON.stringify(patch) });
+      return r?.error ? r : { ok: true, url: r?.html_url };
+    },
+  },
+  // ── Paridad con el MCP oficial de GitHub (github/github-mcp-server), lo que usa la
+  // Software Factory: commit de varios archivos, árbol, commits, comentarios en línea del
+  // PR, reintentar CI, avisos de Dependabot y búsqueda de issues/PRs.
+  {
+    name: "github_push_files",
+    description:
+      "Varios archivos (crear, reemplazar o BORRAR) en UN solo commit sobre una rama de trabajo (nunca la principal). Prefiérela a github_write_file cuando el cambio toca más de un archivo: un commit por archivo deja la rama rota a medias.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        ...repoProp,
+        branch: str("Rama de trabajo."),
+        message: str("Mensaje del commit."),
+        files: {
+          type: "array",
+          description: "Cambios. `content` para crear/reemplazar; `delete: true` para borrar.",
+          items: {
+            type: "object",
+            properties: { path: str("Ruta."), content: str("Contenido completo."), delete: { type: "boolean" } },
+            required: ["path"],
+          },
+        },
+      },
+      required: ["repo", "branch", "message", "files"],
+    },
+    handler: async (sub, a) => {
+      const p = repoPath(a.repo);
+      if (!p) return BAD_REPO;
+      const files = Array.isArray(a.files) ? (a.files as any[]) : [];
+      if (!files.length) return { error: "Sin archivos." };
+      if (files.length > 100) return { error: "Máximo 100 archivos por commit." };
+      for (const f of files) {
+        if (!f?.path) return { error: "Cada archivo lleva `path`." };
+        if (!f.delete && typeof f.content !== "string") return { error: `${f.path}: falta \`content\` (o \`delete: true\`).` };
+      }
+      const w = await writeToken(sub, p);
+      if ("error" in w) return w;
+      const branch = String(a.branch ?? "").trim();
+      const info = await apiWith(w.token, `/repos/${p}`);
+      if (info?.error) return info;
+      if (!branch || branch === String(info?.default_branch ?? "main"))
+        return { error: "No se commitea en la rama principal: usa tu rama de trabajo y entra por PR." };
+      const ref = await apiWith(w.token, `/repos/${p}/git/ref/heads/${encodeURIComponent(branch)}`);
+      if (ref?.error) return { error: `No encuentro la rama ${branch}: ${ref.error}` };
+      const parent = String(ref?.object?.sha ?? "");
+      const base = await apiWith(w.token, `/repos/${p}/git/commits/${parent}`);
+      if (base?.error) return base;
+      const tree = await apiWith(w.token, `/repos/${p}/git/trees`, {
+        method: "POST",
+        body: JSON.stringify({
+          base_tree: base?.tree?.sha,
+          tree: files.map((f) =>
+            f.delete
+              ? { path: String(f.path).replace(/^\/+/, ""), mode: "100644", type: "blob", sha: null }
+              : { path: String(f.path).replace(/^\/+/, ""), mode: "100644", type: "blob", content: String(f.content) },
+          ),
+        }),
+      });
+      if (tree?.error) return tree;
+      const meta = w.bot ? await readMeta(sub) : null;
+      const message = String(a.message) + (meta?.login ? coAuthorTrailer(meta.login) : "");
+      const commit = await apiWith(w.token, `/repos/${p}/git/commits`, {
+        method: "POST",
+        body: JSON.stringify({ message, tree: tree?.sha, parents: [parent] }),
+      });
+      if (commit?.error) return commit;
+      const moved = await apiWith(w.token, `/repos/${p}/git/refs/heads/${encodeURIComponent(branch)}`, {
+        method: "PATCH",
+        body: JSON.stringify({ sha: commit?.sha }),
+      });
+      if (moved?.error) return moved;
+      return { ok: true, commit: commit?.sha, files: files.length, deleted: files.filter((f) => f.delete).length, asBot: w.bot };
+    },
+  },
+  {
+    name: "github_repo_tree",
+    description: "El árbol COMPLETO de archivos del repo (o de una rama) en una sola llamada, para ubicarse antes de leer. Si es enorme, filtra con `prefix`.",
+    inputSchema: {
+      type: "object",
+      properties: { ...repoProp, ref: str("Rama o commit. Default: la principal."), prefix: str("Sólo rutas que empiezan así (p. ej. app/routes/).") },
+      required: ["repo"],
+    },
+    handler: async (sub, a) => {
+      const p = repoPath(a.repo);
+      if (!p) return BAD_REPO;
+      let ref = String(a.ref ?? "").trim();
+      if (!ref) {
+        const info = await api(sub, `/repos/${p}`);
+        if (info?.error) return info;
+        ref = String(info?.default_branch ?? "main");
+      }
+      const r = await api(sub, `/repos/${p}/git/trees/${encodeURIComponent(ref)}?recursive=1`);
+      if (r?.error) return r;
+      const prefix = String(a.prefix ?? "");
+      const paths = (Array.isArray(r?.tree) ? r.tree : [])
+        .filter((e: any) => e?.type === "blob" && String(e.path).startsWith(prefix))
+        .map((e: any) => String(e.path));
+      return { ref, count: paths.length, paths: paths.slice(0, 3000), truncated: !!r?.truncated || paths.length > 3000 };
+    },
+  },
+  {
+    name: "github_list_commits",
+    description: "Los últimos commits de una rama (o de una ruta): quién cambió qué y cuándo.",
+    inputSchema: {
+      type: "object",
+      properties: { ...repoProp, ref: str("Rama. Default: la principal."), path: str("Sólo los que tocan esta ruta."), since: str("Desde esta fecha ISO.") },
+      required: ["repo"],
+    },
+    handler: async (sub, a) => {
+      const p = repoPath(a.repo);
+      if (!p) return BAD_REPO;
+      const q = new URLSearchParams({ per_page: "30" });
+      if (a.ref) q.set("sha", String(a.ref));
+      if (a.path) q.set("path", String(a.path));
+      if (a.since) q.set("since", String(a.since));
+      const r = await api(sub, `/repos/${p}/commits?${q}`);
+      if (r?.error) return r;
+      return (Array.isArray(r) ? r : []).map((c: any) => ({
+        sha: String(c?.sha ?? "").slice(0, 12),
+        author: c?.author?.login ?? c?.commit?.author?.name,
+        date: c?.commit?.author?.date,
+        message: String(c?.commit?.message ?? "").split("\n")[0].slice(0, 200),
+      }));
+    },
+  },
+  {
+    name: "github_get_commit",
+    description: "Un commit: su mensaje completo y qué archivos cambió (con +/−).",
+    inputSchema: { type: "object", properties: { ...repoProp, sha: str("SHA del commit.") }, required: ["repo", "sha"] },
+    handler: async (sub, a) => {
+      const p = repoPath(a.repo);
+      if (!p) return BAD_REPO;
+      const r = await api(sub, `/repos/${p}/commits/${encodeURIComponent(String(a.sha))}`);
+      if (r?.error) return r;
+      return {
+        sha: r?.sha,
+        author: r?.author?.login ?? r?.commit?.author?.name,
+        date: r?.commit?.author?.date,
+        message: r?.commit?.message,
+        files: (Array.isArray(r?.files) ? r.files : []).slice(0, 100).map((f: any) => ({ path: f?.filename, status: f?.status, additions: f?.additions, deletions: f?.deletions })),
+      };
+    },
+  },
+  {
+    name: "github_pr_review_comments",
+    description: "Los comentarios EN LÍNEA de un PR (los que una persona deja sobre una línea del diff), con su id para contestarlos.",
+    inputSchema: { type: "object", properties: { ...repoProp, number: { type: "number", description: "Número del PR." } }, required: ["repo", "number"] },
+    handler: async (sub, a) => {
+      const p = repoPath(a.repo);
+      if (!p) return BAD_REPO;
+      const r = await api(sub, `/repos/${p}/pulls/${Number(a.number)}/comments?per_page=100`);
+      if (r?.error) return r;
+      return (Array.isArray(r) ? r : []).map((c: any) => ({
+        id: c?.id,
+        inReplyTo: c?.in_reply_to_id ?? null,
+        author: c?.user?.login,
+        path: c?.path,
+        line: c?.line ?? c?.original_line,
+        body: String(c?.body ?? "").slice(0, 2000),
+        at: c?.created_at,
+      }));
+    },
+  },
+  {
+    name: "github_reply_review_comment",
+    description: "Contesta un comentario en línea de un PR, en su mismo hilo (usa el `id` de github_pr_review_comments).",
+    inputSchema: {
+      type: "object",
+      properties: { ...repoProp, number: { type: "number", description: "Número del PR." }, comment_id: { type: "number", description: "id del comentario." }, body: str("Respuesta.") },
+      required: ["repo", "number", "comment_id", "body"],
+    },
+    handler: async (sub, a) => {
+      const p = repoPath(a.repo);
+      if (!p) return BAD_REPO;
+      const w = await writeToken(sub, p);
+      if ("error" in w) return w;
+      const r = await apiWith(w.token, `/repos/${p}/pulls/${Number(a.number)}/comments/${Number(a.comment_id)}/replies`, {
+        method: "POST",
+        body: JSON.stringify({ body: String(a.body) }),
+      });
+      return r?.error ? r : { ok: true, url: r?.html_url };
+    },
+  },
+  {
+    name: "github_rerun_workflow",
+    description: "Reintenta los jobs FALLIDOS de un workflow run (CI que falló por algo pasajero), sin empujar un commit vacío. El id sale de github_workflow_runs.",
+    inputSchema: { type: "object", properties: { ...repoProp, run_id: { type: "number", description: "id del workflow run." } }, required: ["repo", "run_id"] },
+    handler: async (sub, a) => {
+      const p = repoPath(a.repo);
+      if (!p) return BAD_REPO;
+      const r = await api(sub, `/repos/${p}/actions/runs/${Number(a.run_id)}/rerun-failed-jobs`, { method: "POST" });
+      if (r?.error && /Sin permiso/.test(String(r.error)))
+        return { error: "La GitHub App de Ghosty todavía no tiene el permiso «Actions: write» en este repo: el dueño lo acepta en GitHub (Settings → Applications → Ghosty)." };
+      return r?.error ? r : { ok: true };
+    },
+  },
+  {
+    name: "github_dependabot_alerts",
+    description: "Avisos de seguridad ABIERTOS de Dependabot del repo (paquete, severidad, versión que lo arregla). Para revisar dependencias con datos reales.",
+    inputSchema: { type: "object", properties: { ...repoProp, severity: str("low | medium | high | critical (opcional).") }, required: ["repo"] },
+    handler: async (sub, a) => {
+      const p = repoPath(a.repo);
+      if (!p) return BAD_REPO;
+      const q = new URLSearchParams({ state: "open", per_page: "50" });
+      if (a.severity) q.set("severity", String(a.severity));
+      const r = await api(sub, `/repos/${p}/dependabot/alerts?${q}`);
+      if (r?.error && /Sin permiso/.test(String(r.error)))
+        return { error: "La GitHub App de Ghosty todavía no tiene el permiso «Dependabot alerts: read» en este repo: el dueño lo acepta en GitHub (Settings → Applications → Ghosty)." };
+      if (r?.error) return r;
+      return (Array.isArray(r) ? r : []).map((x: any) => ({
+        number: x?.number,
+        package: x?.dependency?.package?.name,
+        ecosystem: x?.dependency?.package?.ecosystem,
+        severity: x?.security_advisory?.severity,
+        summary: x?.security_advisory?.summary,
+        fixedIn: x?.security_vulnerability?.first_patched_version?.identifier ?? null,
+        url: x?.html_url,
+      }));
+    },
+  },
+  {
+    name: "github_search",
+    description: "Busca issues y PRs de un repo por texto (títulos, cuerpo, comentarios). `type`: issue | pr. Úsala antes de planear para no duplicar trabajo.",
+    inputSchema: {
+      type: "object",
+      properties: { ...repoProp, query: str("Qué buscar."), type: str("issue | pr (opcional)"), state: str("open | closed (opcional)") },
+      required: ["repo", "query"],
+    },
+    handler: async (sub, a) => {
+      const p = repoPath(a.repo);
+      if (!p) return BAD_REPO;
+      const parts = [String(a.query), `repo:${p}`];
+      if (a.type === "issue" || a.type === "pr") parts.push(`is:${a.type}`);
+      if (a.state === "open" || a.state === "closed") parts.push(`is:${a.state}`);
+      const r = await api(sub, `/search/issues?per_page=20&q=${encodeURIComponent(parts.join(" "))}`);
+      if (r?.error) return r;
+      return (Array.isArray(r?.items) ? r.items : []).map((i: any) => ({
+        number: i?.number,
+        kind: i?.pull_request ? "pr" : "issue",
+        title: i?.title,
+        state: i?.state,
+        url: i?.html_url,
+      }));
     },
   },
   {
