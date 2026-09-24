@@ -570,6 +570,8 @@ export async function closeFinishedRuns(): Promise<void> {
       }
     }
     if (outcome === "merged") {
+      // Lo mezclado cambia la calificación «Listo para agentes» del repo.
+      if (run.repo) void import("./readiness.server").then((m) => m.invalidateReadiness(run.repo!));
       const done = await applyEvent(run, "close").catch(() => null);
       if (done) await postInThread(done, "check", `✅ **Pedido terminado:** el PR se mezcló. ${run.prUrl}`);
     } else if (outcome === "closed") {

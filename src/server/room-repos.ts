@@ -10,7 +10,7 @@ import { sessionUser } from "./chat";
 // miembro el techo de permisos del que la conectó.
 
 /** El room, comprobando que esta persona pueda verlo. Un privado ajeno no existe. */
-async function visibleChannel(channelId: number) {
+export async function visibleChannel(channelId: number) {
   const me = await sessionUser();
   if (!me) throw new Error("no autenticado");
   const db = await import("../db.server");

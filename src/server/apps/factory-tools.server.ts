@@ -406,6 +406,32 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
       },
     },
     {
+      name: "factory_repo_prep",
+      description:
+        "Los archivos de «Preparar repo» (pedido armado por la plataforma): SÓLO lo que le falta al repo — CI (.github/workflows/ci.yml), " +
+        ".github/CODEOWNERS, .github/dependabot.yml, AGENTS.md y README.md. @build los escribe TAL CUAL con github_write_file en una rama " +
+        "y sólo completa los comentarios `<!-- @build: … -->` leyendo el repo.",
+      inputSchema: {
+        type: "object",
+        properties: { repo: { type: "string", description: '"dueño/repo" (si no, el del room)' } },
+      },
+      handler: async (sub, a) => {
+        if (!dest?.channelId) return { ok: false, error: "la fábrica trabaja en un room" };
+        const db = await import("../../db.server");
+        const repos = (await db.listRoomRepos(dest.channelId)).map((r) => r.repo);
+        const repo = a.repo ? String(a.repo) : repos.length === 1 ? repos[0] : "";
+        if (!repo || !repos.includes(repo)) return { ok: false, error: "di cuál repo del room" };
+        const { getAppConfig } = await import("./installed.server");
+        const cfg = await getAppConfig<{ ciLabel?: string }>("factory");
+        const { repoReadiness, preparationFiles } = await import("./readiness.server");
+        const r = await repoReadiness(sub, repo, { fresh: true });
+        if ("error" in r) return { ok: false, error: r.error };
+        const out = await preparationFiles(sub, r, cfg?.ciLabel ?? null);
+        if ("error" in out) return { ok: false, error: out.error };
+        return { ok: true, repo, ...out };
+      },
+    },
+    {
       name: "factory_status",
       description: "Estado del pedido de este hilo (o de runId): etapa, versión del plan, vueltas, PR y tarea.",
       inputSchema: { type: "object", properties: { runId: { type: "number" } } },
@@ -453,12 +479,12 @@ export async function factoryContext(dest: ToolDest | null, toolChannel: ToolCha
     if (noCi.length)
       parts.push(
         `El repo ${noCi.join(", ")} NO tiene CI: nada corre las pruebas fuera de la caja. Si no te piden otra cosa, ` +
-          `tu primera sugerencia es el pedido «Agregar CI» usando factory_ci_starter.`,
+          `dile al dueño que lo prepare con «Preparar repo» (el ícono de GitHub del room → «Listo para agentes»): un solo PR con CI, AGENTS.md, CODEOWNERS y Dependabot.`,
       );
   }
   // Misma frase que Tasks: tenerlas y no llamarlas es el otro modo de falla.
   parts.push(
-    "Tus tools de la fábrica (factory_plan_submit, factory_build_done, factory_check_verdict, factory_status, factory_close, factory_ci_starter) " +
+    "Tus tools de la fábrica (factory_plan_submit, factory_build_done, factory_check_verdict, factory_status, factory_close, factory_ci_starter, factory_repo_prep) " +
       "ya están disponibles en este turno: LLÁMALAS para cerrar tu paso; sin ellas la estafeta no avanza." +
       notaNombres(toolChannel),
   );

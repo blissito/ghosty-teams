@@ -134,6 +134,8 @@ import { Markdown } from "../components/Markdown";
 import { Avatar } from "../components/Avatar";
 import { SettingsContent, loadSettingsData } from "../components/SettingsContent";
 import { Toggle } from "../components/Toggle";
+import { RepoReadiness } from "../components/RepoReadiness";
+import { repoReadinessFn } from "../server/apps/readiness";
 import { getTheme, subscribeTheme, resolveDark, presetById, paletteVars } from "../utils/theme";
 import { subscribeMentions } from "../utils/mentions-bus";
 import { subscribeEmojis } from "../utils/emojis-bus";
@@ -5540,6 +5542,20 @@ function RepoButton({ channelId }: { channelId: number }) {
   const atado = mine?.[0]?.repo ?? null;
   const extra = (mine?.length ?? 0) - 1;
 
+  // Nivel «Listo para agentes» del repo atado: el punto junto al nombre dice si le falta algo
+  // sin abrir el panel. El servidor lo cachea 10 min por repo.
+  const [level, setLevel] = useState<number | null>(null);
+  useEffect(() => {
+    if (!atado) return setLevel(null);
+    let alive = true;
+    repoReadinessFn({ data: { channelId, repo: atado } })
+      .then((v) => alive && setLevel(v.readiness?.level ?? null))
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [channelId, atado]);
+
   return (
     <div className="relative shrink-0">
       <button
@@ -5559,6 +5575,12 @@ function RepoButton({ channelId }: { channelId: number }) {
             <span className="hidden max-w-[13ch] truncate text-xs @lg/hdr:inline">
               {atado.split("/")[1]}
             </span>
+            {level !== null && (
+              <span
+                className={`size-1.5 shrink-0 rounded-full ${level === 3 ? "bg-emerald-500" : "bg-amber-500"}`}
+                title={level === 3 ? t("Listo para agentes") : t("Al repo le falta preparación para agentes")}
+              />
+            )}
             {extra > 0 && <span className="hidden text-[11px] text-muted @lg/hdr:inline">+{extra}</span>}
           </>
         )}
@@ -5569,6 +5591,7 @@ function RepoButton({ channelId }: { channelId: number }) {
           mine={mine ?? []}
           onClose={() => setOpen(false)}
           onChange={(next) => setMine(next.map((x) => ({ repo: x.repo, connectedBy: x.connectedBy })))}
+          onLevel={(repo, l) => repo === atado && setLevel(l)}
         />
       )}
     </div>
@@ -5715,11 +5738,13 @@ function RepoPanel({
   mine,
   onClose,
   onChange,
+  onLevel,
 }: {
   channelId: number;
   mine: { repo: string; connectedBy: string }[];
   onClose: () => void;
   onChange: (next: { repo: string; connectedBy: string }[]) => void;
+  onLevel?: (repo: string, level: number | null) => void;
 }) {
   const t = useT();
   const [q, setQ] = useState("");
@@ -5761,6 +5786,7 @@ function RepoPanel({
   }, [focus]);
 
   const ya = new Set(mine.map((m) => m.repo.toLowerCase()));
+  const readinessLevel = (l: number | null) => focus && onLevel?.(focus, l);
   const candidatos = (disponibles ?? [])
     .filter((r) => !ya.has(r.repo.toLowerCase()))
     .filter((r) => !q.trim() || r.repo.toLowerCase().includes(q.trim().toLowerCase()))
@@ -5845,6 +5871,14 @@ function RepoPanel({
                   </button>
                 </div>
               ))}
+            </section>
+          )}
+
+          {/* «Listo para agentes» del repo conectado que se está mirando: la calificación y el
+              botón que lo prepara, donde la gente ya mira su repo. */}
+          {focus && ya.has(focus.toLowerCase()) && (
+            <section className="border-b border-border py-1">
+              <RepoReadiness channelId={channelId} repo={focus} compact onLevel={readinessLevel} />
             </section>
           )}
 

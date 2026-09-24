@@ -436,11 +436,11 @@ export const factorySuggestFn = createServerFn({ method: "POST" }).handler(async
 export type RepoGuard = { repo: string; ci: boolean; protection: "protected" | "unprotected" | "no_permission" | "error" };
 
 /** Por repo del room de la fábrica: ¿tiene CI? ¿está protegida la rama principal? */
-export const factoryReposFn = createServerFn({ method: "GET" }).handler(async (): Promise<{ repos: RepoGuard[]; ciLabel: string | null }> => {
+export const factoryReposFn = createServerFn({ method: "GET" }).handler(async (): Promise<{ repos: RepoGuard[]; ciLabel: string | null; roomId: number | null }> => {
   const user = await requireOwner();
   const { getAppConfig, recordInstall } = await import("./installed.server");
   const cfg = await getAppConfig<FactoryCfg>("factory");
-  if (!cfg?.roomId) return { repos: [], ciLabel: null };
+  if (!cfg?.roomId) return { repos: [], ciLabel: null, roomId: null };
   const db = await import("../../db.server");
   const repos = (await db.listRoomRepos(cfg.roomId)).map((r) => r.repo);
   // Espacios instalados antes de la caja de CI: se pide aquí, la primera vez que se abre.
@@ -457,7 +457,7 @@ export const factoryReposFn = createServerFn({ method: "GET" }).handler(async ()
       protection: await protectionState(user.sub, repo).catch(() => "error" as const),
     })),
   );
-  return { repos: out, ciLabel };
+  return { repos: out, ciLabel, roomId: cfg.roomId };
 });
 
 /**
@@ -477,5 +477,7 @@ export const protectMainFn = createServerFn({ method: "POST" })
     const { protectMain } = await import("./ci-starter.server");
     const r = await protectMain(user.sub, data.repo);
     if ("error" in r) throw new Error(r.error);
+    const { invalidateReadiness } = await import("./readiness.server");
+    invalidateReadiness(data.repo);
     return r;
   });
