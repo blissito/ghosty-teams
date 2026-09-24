@@ -66,7 +66,7 @@ export function VerdictCard({ card, channelId }: { card: { runId: number }; chan
       <div className={`w-1 shrink-0 ${merged ? "bg-violet-500" : "bg-emerald-500"}`} aria-hidden="true" />
       <div className="min-w-0 flex-1 p-3">
         <p className="text-sm font-semibold text-ink">
-          {merged ? t("✅ Mezclado") : t("✅ Listo para tu revisión")}
+          {merged ? t("🟣 Mezclado") : t("✅ Listo para tu revisión")}
           {v.prNumber ? <span className="ml-1.5 font-mono text-xs font-normal text-muted">PR #{v.prNumber}</span> : null}
         </p>
         <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-xs">

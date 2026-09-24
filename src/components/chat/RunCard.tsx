@@ -80,7 +80,8 @@ export function RunCard({ card, channelId }: { card: RunCardData; channelId: num
               <li key={s.key} className="flex flex-1 items-center gap-1">
                 <span
                   className={`flex-1 rounded-full px-2 py-1 text-center text-[11px] font-semibold ${
-                    now ? "bg-brand text-white" : done ? "bg-emerald-600/15 text-emerald-700" : "bg-surface-3 text-muted"
+                    // Mezclado = el morado «merged» de GitHub; en curso, verde por paso hecho.
+                    now ? "bg-brand text-white" : done ? (st.status === "done" ? "bg-violet-600/15 text-violet-700 dark:text-violet-300" : "bg-emerald-600/15 text-emerald-700") : "bg-surface-3 text-muted"
                   }`}
                 >
                   {done ? "✓ " : ""}
@@ -91,7 +92,7 @@ export function RunCard({ card, channelId }: { card: RunCardData; channelId: num
           })}
         </ol>
         {st.status === "done" && (
-          <p className="mt-2 rounded-md bg-emerald-600/10 px-2.5 py-1.5 text-xs font-semibold text-emerald-700 dark:text-emerald-400">
+          <p className="mt-2 rounded-md bg-violet-600/10 px-2.5 py-1.5 text-xs font-semibold text-violet-700 dark:text-violet-300">
             🎉 {t("Terminado: el PR se mezcló.")}
           </p>
         )}

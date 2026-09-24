@@ -187,7 +187,7 @@ function FactoryPage() {
                 <li
                   key={r.id}
                   className={`group relative flex items-center gap-3 px-3 py-2.5 ${
-                    r.status === "done" ? "bg-emerald-600/10 hover:bg-emerald-600/15" : "hover:bg-surface-2"
+                    r.status === "done" ? "bg-violet-600/10 hover:bg-violet-600/15" : "hover:bg-surface-2"
                   }`}
                 >
                   <span className="w-10 shrink-0 font-mono text-xs text-muted">#{r.id}</span>
@@ -204,7 +204,7 @@ function FactoryPage() {
                   <span
                     className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold ${
                       r.status === "done"
-                        ? "bg-emerald-600/12 text-emerald-700 dark:text-emerald-400"
+                        ? "bg-violet-600/15 text-violet-700 dark:text-violet-300"
                         : r.status === "cancelled"
                           ? "bg-surface-3 text-muted"
                           : r.status === "escalated"

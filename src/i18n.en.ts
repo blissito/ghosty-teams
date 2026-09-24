@@ -509,6 +509,7 @@ export const en: Record<string, string> = {
   "Reenvía canales y menciones desde tu workspace de Slack.": "Forwards channels and mentions from your Slack workspace.",
   "Refrescar": "Refresh",
   "Reintentar": "Retry",
+  "🟣 Mezclado": "🟣 Merged",
   "Límite de GitHub, no de Ghosty: en cuentas gratis, GitHub no deja proteger la rama de un repo privado. Con GitHub Pro o Team (o un repo público) se activa con un clic.": "A GitHub limit, not Ghosty's: on free accounts, GitHub doesn't allow protecting a private repo's branch. With GitHub Pro or Team (or a public repo) it's one click.",
   "Límite de GitHub, no de Ghosty: proteger la rama de un repo privado pide GitHub Pro o Team. Mientras, la fábrica nunca mezcla sin tu aprobación.": "A GitHub limit, not Ghosty's: protecting a private repo's branch requires GitHub Pro or Team. Meanwhile, the factory never merges without your approval.",
   "Requiere GitHub Pro": "Requires GitHub Pro",

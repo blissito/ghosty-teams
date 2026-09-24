@@ -164,9 +164,16 @@ export async function repoReadiness(sub: string, repo: string, opts: { fresh?: b
   const previewHosting = await P.repoHasPreviews(sub, repo, defaultBranch).catch(() => false);
   const previewRunnable = (has("package.json") && !!(scripts.start || scripts.preview || scripts.dev)) || has("index.html");
   const envExampleKeys = has(".env.example") ? P.envExampleKeys(decode(await githubApi(sub, `/repos/${repo}/contents/.env.example`))) : [];
-  const envSavedKeys: string[] | null = await P.gsPreview("env-keys", { repo })
-    .then((r) => (Array.isArray(r?.keys) ? r.keys : null))
-    .catch(() => null);
+  // Un fallo al PREGUNTAR (gs desplegándose, red) no es «no hay variables»: se reintenta
+  // una vez y, si sigue fallando, este resultado no se cachea (se veían como perdidas).
+  let envLookupFailed = false;
+  const envKeysOnce = () => P.gsPreview("env-keys", { repo }).then((r) => (Array.isArray(r?.keys) ? (r.keys as string[]) : null));
+  const envSavedKeys: string[] | null = await envKeysOnce()
+    .catch(() => new Promise((ok) => setTimeout(ok, 800)).then(envKeysOnce))
+    .catch(() => {
+      envLookupFailed = true;
+      return hit?.facts.envSavedKeys ?? null;
+    });
   const previews = previewHosting || (previewRunnable && (envExampleKeys.length === 0 || !!envSavedKeys));
 
   const ok: Record<ReadinessKey, boolean> = {
@@ -204,7 +211,7 @@ export async function repoReadiness(sub: string, repo: string, opts: { fresh?: b
     },
     checkedAt: Date.now(),
   };
-  cache.set(repo, out);
+  if (!envLookupFailed) cache.set(repo, out);
   return out;
 }
 

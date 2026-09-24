@@ -635,6 +635,52 @@ function applyReaction(
     : { ...m, reactions: [...cur, updated] };
 }
 
+// ── Qué ofrece el menú de @ ────────────────────────────────────────────────────
+// Con sólo «@»: las últimas menciones que usaste (como Slack), no una lista fija que
+// empezaba con cinco «Notificar a todo…». Al escribir, filtra entre todos: primero lo
+// reciente, luego agentes y personas, y al final las grupales — sin sus sinónimos
+// (@everyone, @todos, @here, @aquí) salvo que los escribas.
+const RECENT_MENTIONS_KEY = "gt-recent-mentions";
+const GROUP_SYNONYMS = new Set(["everyone", "todos", "here", "aquí"]);
+
+function recentMentions(): string[] {
+  try {
+    const v = JSON.parse(localStorage.getItem(RECENT_MENTIONS_KEY) ?? "[]");
+    return Array.isArray(v) ? v.filter((x) => typeof x === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+function rememberMention(handle: string): void {
+  try {
+    const next = [handle, ...recentMentions().filter((h) => h !== handle)].slice(0, 6);
+    localStorage.setItem(RECENT_MENTIONS_KEY, JSON.stringify(next));
+  } catch {
+    /* sin storage: el menú cae a los agentes */
+  }
+}
+
+function suggestMentions(all: Mention[], query: string): Mention[] {
+  const q = query.toLowerCase();
+  const recent = recentMentions();
+  const rank = (m: Mention) => {
+    const r = recent.indexOf(m.handle);
+    return r >= 0 ? r : m.kind === "group" ? 100 : m.kind === "agent" ? 10 : 20;
+  };
+  if (!q) {
+    const byHandle = new Map(all.map((m) => [m.handle, m]));
+    const out = recent.map((h) => byHandle.get(h)).filter((m): m is Mention => !!m);
+    // Sin historial todavía: los agentes (lo que más se menciona aquí).
+    if (out.length < 3) for (const m of all) if (m.kind === "agent" && !out.includes(m) && out.length < 6) out.push(m);
+    return out;
+  }
+  return all
+    .filter((m) => m.handle.startsWith(q) && (!GROUP_SYNONYMS.has(m.handle) || q.length >= 2))
+    .sort((a, b) => rank(a) - rank(b))
+    .slice(0, 8);
+}
+
 // Menciones disponibles (agentes + usuarios) para el typeahead @. Cache módulo.
 let mentionsCache: Mention[] | null = null;
 function useMentions(): Mention[] {
@@ -7967,9 +8013,9 @@ const Composer = forwardRef<ComposerHandle, {
         renderText: ({ node }: any) => `@${node.attrs.id}`,
         suggestion: {
           char: "@",
-          items: ({ query }: { query: string }) =>
-            mentionsRef.current.filter((a) => a.handle.startsWith(query.toLowerCase())).slice(0, 8),
+          items: ({ query }: { query: string }) => suggestMentions(mentionsRef.current, query),
           command: ({ editor, range, props }: any) => {
+            rememberMention(props.handle);
             // Warm seam: elegir un @agente = alta intención de enviarle → pre-calienta su
             // turno (fire-and-forget, el server no-opea si el handle no es agente de flota).
             warmAgentFn({ data: { handle: props.handle } }).catch(() => {});

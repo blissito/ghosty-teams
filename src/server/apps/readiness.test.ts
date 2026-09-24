@@ -31,6 +31,12 @@ vi.mock("../connectors/github.server", () => ({
   },
 }));
 
+// gs (variables de la preview) contesta «ninguna guardada».
+vi.mock("./preview.server", async (orig) => ({
+  ...(await orig<typeof import("./preview.server")>()),
+  gsPreview: async () => ({ keys: null }),
+}));
+
 import {
   agentsMdSkeleton,
   codeownersCoversGithub,
