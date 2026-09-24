@@ -23,6 +23,8 @@ import { FACTORY_ENGINES, FACTORY_HANDLES as HANDLES, ROLE_NAMES, roleAvatar, ty
  * `fleetAgentId`/`boxes` = formato viejo (cajas propias de la fábrica, ya retirado).
  */
 type FactoryCfg = {
+  /** Etiqueta del runner de la caja de CI del espacio (`ws-<slug>`), una vez pedida a gs. */
+  ciLabel?: string;
   roles?: Partial<Record<FactoryHandle, string>>;
   ownedHandles?: string[];
   roomId?: number;
@@ -35,6 +37,32 @@ async function requireOwner() {
   const user = await sessionUser();
   if (!user?.isOwner) throw new Error("sólo el dueño del espacio instala apps");
   return user;
+}
+
+/**
+ * Pide a gs la caja de CI del espacio con estos repos (la crea, la registra como runner con
+ * la GitHub App; sin configuración). Devuelve la etiqueta del runner o null. Nunca lanza.
+ */
+export async function requestCiBox(repos: string[]): Promise<string | null> {
+  try {
+    const { currentSlug } = await import("../tenant.server");
+    const slug = await currentSlug();
+    if (!slug || !repos.length) return null;
+    const body = JSON.stringify({ repos });
+    const crypto = await import("node:crypto");
+    const ts = Math.floor(Date.now() / 1000);
+    const sig = crypto.createHmac("sha256", process.env.GHOSTY_PARTNER_SECRET!).update(`${ts}.${slug}.${body}`).digest("hex");
+    const IDP = process.env.GHOSTY_IDENTITY_URL ?? "https://www.ghosty.studio";
+    const res = await fetch(`${IDP}/internal/workspace-ci/${encodeURIComponent(slug)}?ts=${ts}&sig=${sig}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body,
+    });
+    const out = (await res.json().catch(() => null)) as { ok?: boolean; label?: string } | null;
+    return res.ok && out?.ok && out.label ? out.label : null;
+  } catch {
+    return null;
+  }
 }
 
 /** Agentes de Studio que puede usar este espacio (scopeado por la firma, como "De Studio"). */
@@ -222,8 +250,11 @@ export const installFactoryFn = createServerFn({ method: "POST" })
     }
     if (boardId) await rememberRoomBoard(roomId, boardId, user.sub);
 
-    // 4. La fila que enciende las tools.
-    await recordInstall("factory", user.sub, { ...assigned, roomId, boardId });
+    // 4. La caja de CI del espacio (se crea y registra sola, en segundo plano en gs).
+    const ciLabel = (await requestCiBox((await db.listRoomRepos(roomId)).map((r) => r.repo))) ?? prev?.ciLabel;
+
+    // 5. La fila que enciende las tools.
+    await recordInstall("factory", user.sub, { ...assigned, roomId, boardId, ...(ciLabel ? { ciLabel } : {}) });
     const ch = await db.getChannelById(roomId);
     return { ok: true as const, room: ch ? { id: ch.id, slug: ch.slug, name: ch.name } : null, boardId };
   });
@@ -237,7 +268,7 @@ export const setFactoryRolesFn = createServerFn({ method: "POST" })
     const cfg = await getAppConfig<FactoryCfg>("factory");
     if (!cfg) throw new Error("la fábrica no está instalada");
     const assigned = await assignRoles(user.sub, data.roles ?? {}, cfg);
-    await recordInstall("factory", user.sub, { roomId: cfg.roomId, boardId: cfg.boardId ?? null, ...assigned });
+    await recordInstall("factory", user.sub, { roomId: cfg.roomId, boardId: cfg.boardId ?? null, ...(cfg.ciLabel ? { ciLabel: cfg.ciLabel } : {}), ...assigned });
     return { ok: true as const };
   });
 
@@ -399,3 +430,52 @@ export const factorySuggestFn = createServerFn({ method: "POST" }).handler(async
   armWakeups(ns);
   return { ok: true as const };
 });
+
+// ── Repos de la fábrica: CI y protección de la rama principal ────────────────
+
+export type RepoGuard = { repo: string; ci: boolean; protection: "protected" | "unprotected" | "no_permission" | "error" };
+
+/** Por repo del room de la fábrica: ¿tiene CI? ¿está protegida la rama principal? */
+export const factoryReposFn = createServerFn({ method: "GET" }).handler(async (): Promise<{ repos: RepoGuard[]; ciLabel: string | null }> => {
+  const user = await requireOwner();
+  const { getAppConfig, recordInstall } = await import("./installed.server");
+  const cfg = await getAppConfig<FactoryCfg>("factory");
+  if (!cfg?.roomId) return { repos: [], ciLabel: null };
+  const db = await import("../../db.server");
+  const repos = (await db.listRoomRepos(cfg.roomId)).map((r) => r.repo);
+  // Espacios instalados antes de la caja de CI: se pide aquí, la primera vez que se abre.
+  let ciLabel = cfg.ciLabel ?? null;
+  if (!ciLabel && repos.length) {
+    ciLabel = await requestCiBox(repos);
+    if (ciLabel) await recordInstall("factory", user.sub, { ...cfg, ciLabel });
+  }
+  const { hasWorkflows, protectionState } = await import("./ci-starter.server");
+  const out = await Promise.all(
+    repos.map(async (repo) => ({
+      repo,
+      ci: await hasWorkflows(user.sub, repo).catch(() => false),
+      protection: await protectionState(user.sub, repo).catch(() => "error" as const),
+    })),
+  );
+  return { repos: out, ciLabel };
+});
+
+/**
+ * Protege la rama principal de un repo del room de la fábrica (ruleset «Ghosty Factory»).
+ * Lo hace la PLATAFORMA con el token de quien hace clic (tiene que ser admin del repo),
+ * nunca un agente: con ese permiso, un agente podría quitar la protección.
+ */
+export const protectMainFn = createServerFn({ method: "POST" })
+  .validator((d: { repo: string }) => d)
+  .handler(async ({ data }) => {
+    const user = await requireOwner();
+    const { getAppConfig } = await import("./installed.server");
+    const cfg = await getAppConfig<FactoryCfg>("factory");
+    const db = await import("../../db.server");
+    const repos = cfg?.roomId ? (await db.listRoomRepos(cfg.roomId)).map((r) => r.repo) : [];
+    if (!repos.includes(data.repo)) throw new Error("ese repo no es de la fábrica");
+    const { protectMain } = await import("./ci-starter.server");
+    const r = await protectMain(user.sub, data.repo);
+    if ("error" in r) throw new Error(r.error);
+    return r;
+  });

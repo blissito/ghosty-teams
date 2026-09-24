@@ -179,13 +179,29 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
         // CI en rojo no llega a @check: se ahorra una vuelta y lo arregla quien construyó.
         const ci = await R.prCi(sub, url);
         if (ci?.state === "failure") {
+          // Ciclo acotado (Stripe: máximo 2 rondas de CI): a la 2ª falla seguida, que lo vea
+          // una persona en vez de seguir quemando vueltas.
+          const { dbq } = await import("../../dbq.server");
+          const f = await dbq("UPDATE gt_factory_runs SET ci_fails = COALESCE(ci_fails,0) + 1 WHERE id = ? RETURNING ci_fails", [run.id]);
+          if (Number(f[0]?.ci_fails ?? 0) >= 2) {
+            await R.postInThread(
+              run,
+              "build",
+              `⚠️ El CI del PR sigue en rojo tras ${f[0].ci_fails} intentos (${ci.failed.join(", ") || "ver checks"}). ` +
+                `Necesita una persona: revisa el log o dile a @build qué cambiar. ${url}`,
+            );
+          }
           return {
             ok: false,
             error: `el CI del PR falló (${ci.failed.join(", ") || "ver checks"}). Lee el log con github_workflow_run_logs, corrígelo en la misma rama y vuelve a cerrar.`,
           };
         }
+        // Un PR que toca `.github/` (CI, CODEOWNERS) sólo se espera en el pedido de CI: en
+        // cualquier otro, es justo la vía clásica para que un agente se salte los controles.
+        const touchesGithub = await R.prTouchesGithubDir(sub, url);
         const head = await R.prHead(sub, url);
         const next = await R.applyEvent(run, "build_done", {
+          ci_fails: 0,
           pr_url: url,
           branch: a.branch ? String(a.branch) : run.branch,
           head_sha: head?.sha ?? null,
@@ -199,6 +215,9 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
           "revisar el PR",
           `Revisa el PR ${url} contra el plan APROBADO (v${run.planVersion}). Resultado que reporta @build: ${String(a.tests).slice(0, 500)}\n\n` +
             `## Plan aprobado\n${plan?.planMd ?? "(no encontré el plan)"}\n\n` +
+            (touchesGithub
+              ? `⚠️ Este PR modifica archivos de .github/ (CI o CODEOWNERS). Si el pedido NO es agregar o arreglar el CI, es un hallazgo: repórtalo con pass=false. `
+              : "") +
             `Lee el diff con github_pr_files y el CI con github_pr_checks. Si el CI sigue corriendo, usa ` +
             `github_watch_pr y espera el aviso antes de dar tu veredicto (no apruebes con CI pendiente). ` +
             `NO edites ni empujes nada. ` +
@@ -364,6 +383,29 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
       },
     },
     {
+      name: "factory_ci_starter",
+      description:
+        "El CI estándar de la Software Factory para un repo SIN CI: devuelve los archivos listos (.github/workflows/ci.yml con " +
+        "typecheck/lint/test/build, escaneo de secretos y revisión de dependencias, actions fijadas por SHA; y .github/CODEOWNERS). " +
+        "@plan lo propone como pedido «Agregar CI»; @build escribe esos archivos TAL CUAL con github_write_file en una rama y abre el PR. " +
+        "No lo edites a mano: la protección de la rama exige exactamente esos checks.",
+      inputSchema: {
+        type: "object",
+        properties: { repo: { type: "string", description: '"dueño/repo" (si no, el del room)' } },
+      },
+      handler: async (sub, a) => {
+        if (!dest?.channelId) return { ok: false, error: "la fábrica trabaja en un room" };
+        const db = await import("../../db.server");
+        const repos = (await db.listRoomRepos(dest.channelId)).map((r) => r.repo);
+        const repo = a.repo ? String(a.repo) : repos.length === 1 ? repos[0] : "";
+        if (!repo || !repos.includes(repo)) return { ok: false, error: "di cuál repo del room" };
+        const { getAppConfig } = await import("./installed.server");
+        const cfg = await getAppConfig<{ ciLabel?: string }>("factory");
+        const { buildCiStarter } = await import("./ci-starter.server");
+        return buildCiStarter(sub, repo, cfg?.ciLabel ?? null);
+      },
+    },
+    {
       name: "factory_status",
       description: "Estado del pedido de este hilo (o de runId): etapa, versión del plan, vueltas, PR y tarea.",
       inputSchema: { type: "object", properties: { runId: { type: "number" } } },
@@ -405,9 +447,18 @@ export async function factoryContext(dest: ToolDest | null, toolChannel: ToolCha
       );
     }
   }
+  // Sin CI, «verde» no significa nada: el primer pedido que conviene es el CI starter.
+  if (h === "plan" && dest?.channelId) {
+    const noCi = await reposWithoutCi(dest.channelId).catch(() => []);
+    if (noCi.length)
+      parts.push(
+        `El repo ${noCi.join(", ")} NO tiene CI: nada corre las pruebas fuera de la caja. Si no te piden otra cosa, ` +
+          `tu primera sugerencia es el pedido «Agregar CI» usando factory_ci_starter.`,
+      );
+  }
   // Misma frase que Tasks: tenerlas y no llamarlas es el otro modo de falla.
   parts.push(
-    "Tus tools de la fábrica (factory_plan_submit, factory_build_done, factory_check_verdict, factory_status, factory_close) " +
+    "Tus tools de la fábrica (factory_plan_submit, factory_build_done, factory_check_verdict, factory_status, factory_close, factory_ci_starter) " +
       "ya están disponibles en este turno: LLÁMALAS para cerrar tu paso; sin ellas la estafeta no avanza." +
       notaNombres(toolChannel),
   );
@@ -415,4 +466,23 @@ export async function factoryContext(dest: ToolDest | null, toolChannel: ToolCha
     "ALERTAS DE MONITOREO: si piden conectar su monitoreo (Datadog, Grafana, Better Stack, UptimeRobot o cualquier herramienta con webhooks), usa alert_webhook_create { name } en el canal donde deben caer; la URL es SECRETA (sólo a quien la pidió). También alert_webhook_list y alert_webhook_delete. Para Sentry usa su conector.]",
   );
   return parts.join(" ");
+}
+
+// Cuáles repos del room no tienen CI (cacheado 10 min: esto corre en cada turno de @plan).
+const ciCache = new Map<string, { at: number; has: boolean }>();
+async function reposWithoutCi(channelId: number): Promise<string[]> {
+  const db = await import("../../db.server");
+  const rows = await db.listRoomRepos(channelId);
+  const out: string[] = [];
+  for (const r of rows) {
+    const hit = ciCache.get(r.repo);
+    let has = hit && Date.now() - hit.at < 600_000 ? hit.has : null;
+    if (has === null) {
+      const { hasWorkflows } = await import("./ci-starter.server");
+      has = await hasWorkflows(r.connectedBy, r.repo).catch(() => true);
+      ciCache.set(r.repo, { at: Date.now(), has });
+    }
+    if (!has) out.push(r.repo);
+  }
+  return out;
 }

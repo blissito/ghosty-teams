@@ -785,6 +785,8 @@ async function migrate(): Promise<void> {
   await addColumn("gt_factory_runs", "card_msg_id", "INTEGER");
   // Ya se preguntó «¿lo mezclo?» (PR aprobado y CI en verde): se pregunta UNA vez.
   await addColumn("gt_factory_runs", "merge_asked", "INTEGER");
+  // Veces seguidas que @build quiso cerrar con el CI en rojo: a la 2ª se escala a una persona.
+  await addColumn("gt_factory_runs", "ci_fails", "INTEGER");
   // Tareas programadas de la Software Factory (revisión nocturna, dependencias): a su hora
   // la plataforma despierta a @plan en el room de la fábrica con un encargo fijo. Una fila
   // por tipo; `owner_sub` = con qué credenciales (GitHub) trabaja @plan.

@@ -49,6 +49,11 @@ async function readMeta(sub: string): Promise<GithubMeta | null> {
  * que el repo no existe cuando casi siempre significa "no lo incluiste al
  * instalar la app".
  */
+/** Para la Software Factory (CI starter, proteger main): el mismo cliente, con el token de `sub`. */
+export function githubApi(sub: string, path: string, init?: RequestInit): Promise<any> {
+  return api(sub, path, init);
+}
+
 async function api(sub: string, path: string, init?: RequestInit): Promise<any> {
   const token = await getValidToken(sub, "github");
   if (!token) {

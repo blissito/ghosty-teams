@@ -607,3 +607,16 @@ export async function maybeMergeReply(opts: { channelId: number; rootId: number;
     return false;
   }
 }
+
+/** ¿El PR toca `.github/` (workflows, CODEOWNERS)? false si GitHub no contesta. */
+export async function prTouchesGithubDir(sub: string, url: string): Promise<boolean> {
+  const pr = parsePrUrl(url);
+  if (!pr) return false;
+  try {
+    const { githubApi } = await import("../connectors/github.server");
+    const files = await githubApi(sub, `/repos/${pr.repo}/pulls/${pr.number}/files?per_page=100`);
+    return Array.isArray(files) && files.some((f: any) => String(f?.filename ?? "").startsWith(".github/"));
+  } catch {
+    return false;
+  }
+}

@@ -5,7 +5,7 @@
 import { useEffect, useState } from "react";
 import { Factory, Loader2, ExternalLink } from "lucide-react";
 import { useT } from "../i18n";
-import { createFactoryAgentFn, factorySchedulesFn, factorySuggestFn, setFactoryScheduleFn, factoryStatusFn, installFactoryFn, setFactoryRolesFn, uninstallFactoryFn, type FactoryStatus } from "../server/apps/factory";
+import { createFactoryAgentFn, factoryReposFn, protectMainFn, factorySchedulesFn, factorySuggestFn, setFactoryScheduleFn, factoryStatusFn, installFactoryFn, setFactoryRolesFn, uninstallFactoryFn, type FactoryStatus } from "../server/apps/factory";
 import { githubInstallationReposFn } from "../server/room-repos";
 import { listChannelsFn } from "../server/chat";
 import ConfirmModal from "./ConfirmModal";
@@ -80,6 +80,7 @@ function Installed({ status, onChange }: { status: FactoryStatus; onChange: () =
       </p>
       <RolesEditor status={status} onChange={onChange} />
       <SuggestAsks roomSlug={status.room?.slug ?? null} />
+      <RepoGuards />
       <SchedulesEditor />
       <div className="flex gap-2 pt-1">
         {status.room && (
@@ -526,6 +527,75 @@ function SchedulesEditor() {
         })}
       </div>
       <p className="text-xs text-muted">{t("@plan revisa a esa hora y, si encuentra algo, propone un plan que espera tu firma. Si no hay nada, no deja mensaje.")}</p>
+    </div>
+  );
+}
+
+// Por repo de la fábrica: ¿tiene CI? ¿está protegida la rama principal? Todo con un clic; el
+// usuario no tiene que saber de rulesets ni de runners.
+function RepoGuards() {
+  const t = useT();
+  const [data, setData] = useState<Awaited<ReturnType<typeof factoryReposFn>> | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const load = () => factoryReposFn().then(setData).catch(() => setData({ repos: [], ciLabel: null }));
+  useEffect(() => {
+    void load();
+  }, []);
+  if (!data || !data.repos.length) return null;
+  return (
+    <div className="mt-3 space-y-2">
+      <p className="text-xs font-semibold text-muted">{t("Repos y candados")}</p>
+      <div className="divide-y divide-border rounded-lg border border-border bg-surface">
+        {data.repos.map((r) => (
+          <div key={r.repo} className="flex flex-wrap items-center gap-2 px-3 py-2 text-sm">
+            <span className="font-mono text-ink">{r.repo}</span>
+            <span className={`rounded-md px-1.5 text-[11px] font-semibold ${r.ci ? "bg-emerald-600/12 text-emerald-700" : "bg-amber-500/15 text-amber-700"}`}>
+              {r.ci ? t("CI activo") : t("Sin CI · pídeselo a @plan")}
+            </span>
+            <span className="ml-auto">
+              {r.protection === "protected" ? (
+                <span className="text-xs font-semibold text-emerald-700">🛡️ {t("main protegido")}</span>
+              ) : r.protection === "no_permission" ? (
+                <a
+                  href="https://github.com/settings/installations"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-xs text-brand hover:underline"
+                >
+                  {t("Acepta el permiso nuevo de Ghosty en GitHub")} ↗
+                </a>
+              ) : (
+                <button
+                  type="button"
+                  disabled={busy === r.repo}
+                  onClick={async () => {
+                    setBusy(r.repo);
+                    setError(null);
+                    try {
+                      await protectMainFn({ data: { repo: r.repo } });
+                      await load();
+                    } catch (e) {
+                      setError(e instanceof Error ? e.message : String(e));
+                    } finally {
+                      setBusy(null);
+                    }
+                  }}
+                  className="inline-flex items-center gap-1 rounded-lg bg-brand px-3 py-1 text-xs font-semibold text-white hover:opacity-90 disabled:opacity-50"
+                >
+                  {busy === r.repo && <Loader2 className="size-3 animate-spin" />}
+                  {t("Proteger main")}
+                </button>
+              )}
+            </span>
+          </div>
+        ))}
+      </div>
+      {error && <p className="text-xs text-danger">{error}</p>}
+      <p className="text-xs text-muted">
+        {t("Proteger main: nada entra sin PR, aprobación de una persona y CI en verde.")}
+        {data.ciLabel ? ` ${t("⚡ El CI corre en la caja de CI de tu espacio: caché caliente y sin fila.")}` : ""}
+      </p>
     </div>
   );
 }

@@ -1516,4 +1516,12 @@ export const en: Record<string, string> = {
   "Fijar arriba": "Pin to top",
   "Terminado: el PR se mezcló.": "Done: the PR was merged.",
   "🏁 La fábrica terminó su parte: el PR espera tu revisión. Nadie está trabajando en este pedido.": "🏁 The factory finished its part: the PR is waiting for your review. Nobody is working on this request.",
+  "Repos y candados": "Repos and locks",
+  "CI activo": "CI active",
+  "Sin CI · pídeselo a @plan": "No CI · ask @plan",
+  "main protegido": "main protected",
+  "Acepta el permiso nuevo de Ghosty en GitHub": "Accept Ghosty's new permission on GitHub",
+  "Proteger main": "Protect main",
+  "Proteger main: nada entra sin PR, aprobación de una persona y CI en verde.": "Protect main: nothing gets in without a PR, a person's approval and green CI.",
+  "⚡ El CI corre en la caja de CI de tu espacio: caché caliente y sin fila.": "⚡ CI runs on your space's CI box: warm cache and no queue.",
 };
