@@ -481,7 +481,7 @@ export async function afterFactoryTurn(
       ref: w.ref,
       cause: "cerrar el paso",
       text:
-        `[Corrida #${run.id}] Terminaste tu turno sin cerrar tu paso y la corrida está detenida. ` +
+        `[Pedido #${run.id}] Terminaste tu turno sin cerrar tu paso y el pedido está detenido. ` +
         `Si ya acabaste, ciérralo AHORA con ${CLOSE_TOOL[role]} (runId ${run.id}). ` +
         `Si no puedes terminar, dilo en una línea con el motivo concreto.`,
       origin: w.origin,
@@ -496,7 +496,7 @@ export async function afterFactoryTurn(
   await postInThread(
     run,
     role,
-    `⚠️ ${who}@${role} terminó dos veces sin cerrar su paso y la corrida #${run.id} está detenida. ` +
+    `⚠️ ${who}@${role} terminó dos veces sin cerrar su paso y el pedido #${run.id} está detenido. ` +
       `Revisa su último mensaje en este hilo y dile qué hacer (o menciónalo para que retome).`,
   );
   void refreshRoom(run.channelId);
