@@ -243,14 +243,50 @@ function RolePickers({
   const t = useT();
   if (!status.candidates.length) {
     return (
-      <p className="mt-1 text-muted">
-        {t("No hay agentes de Studio con Claude, DeepSeek o Codex para este espacio.")}{" "}
-        <a href={status.studioAgentsUrl} target="_blank" rel="noreferrer" className="text-brand hover:underline">
-          {t("Crear agente en Studio")}
-        </a>
+      <div className="mt-1 space-y-2">
+      <CreateAgentsCta url={status.studioAgentsUrl} />
+      <p className="text-muted">
+        {t("No hay agentes de Studio con Claude, DeepSeek o Codex para este espacio.")}
       </p>
+      </div>
     );
   }
+  return <RolePickersList status={status} value={value} onChange={onChange} />;
+}
+
+/**
+ * «Crea agentes nuevos para tu Factory»: abre el creador de /app/agents YA LLENO con la
+ * receta `factory-dev` (constructor en Claude, revisor en DeepSeek). Los agentes quedan en
+ * Studio como cualquier otro: visibles y afinables; luego se eligen aquí.
+ */
+function CreateAgentsCta({ url }: { url: string }) {
+  const t = useT();
+  const link = (motor?: string) => `${url}?crear=1&receta=factory-dev${motor ? `&motor=${motor}` : ""}`;
+  return (
+    <div className="rounded-lg border border-dashed border-border p-3">
+      <p className="text-xs font-semibold text-ink">{t("Crea agentes nuevos para tu Factory")}</p>
+      <div className="mt-2 flex flex-wrap gap-2">
+        <a href={link()} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 rounded-full border border-border px-3 py-1 text-xs font-semibold text-ink hover:bg-surface-3">
+          {t("Constructor (Claude)")} <ExternalLink className="size-3" />
+        </a>
+        <a href={link("deepseek")} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 rounded-full border border-border px-3 py-1 text-xs font-semibold text-ink hover:bg-surface-3">
+          {t("Revisor (DeepSeek)")} <ExternalLink className="size-3" />
+        </a>
+      </div>
+    </div>
+  );
+}
+
+function RolePickersList({
+  status,
+  value,
+  onChange,
+}: {
+  status: FactoryStatus;
+  value: Record<string, string>;
+  onChange: (v: Record<string, string>) => void;
+}) {
+  const t = useT();
   const engines = new Set(HANDLES_UI.map((h) => status.candidates.find((a) => a.id === value[h])?.engine));
   const checkEngine = status.candidates.find((a) => a.id === value.check)?.engine;
   const buildEngine = status.candidates.find((a) => a.id === value.build)?.engine;
@@ -289,9 +325,7 @@ function RolePickers({
       {engines.size === 1 || checkEngine === buildEngine ? (
         <p className="text-xs text-muted">{t("Consejo: @check con un agente de otro motor revisa mejor; el mismo modelo comparte los puntos ciegos de quien construyó.")}</p>
       ) : null}
-      <a href={status.studioAgentsUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-xs text-muted hover:text-ink">
-        {t("Crear o afinar agentes en Studio")} <ExternalLink className="size-3" />
-      </a>
+      <CreateAgentsCta url={status.studioAgentsUrl} />
     </div>
   );
 }

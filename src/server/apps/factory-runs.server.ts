@@ -172,6 +172,8 @@ async function tasksCall(sub: string, name: string, args: Record<string, unknown
 }
 
 export async function createTaskFor(run: Run, planMd: string): Promise<void> {
+  // La corrida nació de una tarea de Tasks (asignada a @plan): ya tiene la suya.
+  if (run.taskRef) return;
   const r = await tasksCall(run.requestedBy, "task_create", {
     title: run.title,
     description: planMd.slice(0, 8000),
@@ -319,4 +321,62 @@ export async function maybeThreadDecision(opts: {
     console.error("[factory] firma en el hilo", e);
     return false;
   }
+}
+
+// ── Arranque desde Tasks: una tarea asignada a @plan ─────────────────────────
+
+/**
+ * Abre una corrida a partir de una tarea de Tasks asignada a `@plan`: publica el pedido en el
+ * room de la fábrica (con la cara de @plan) y lo despierta en ese hilo. La tarea YA existe:
+ * la corrida guarda su `task_ref` y no se crea otra (`createTaskFor` la respeta).
+ *
+ * Idempotente por `task_ref`: reasignar la misma tarea con una corrida viva no abre otra.
+ */
+export async function startRunFromTask(opts: {
+  taskRef: string;
+  title: string;
+  description: string;
+  requestedBy: string;
+  origin: string;
+}): Promise<{ runId: number; existing: boolean } | { error: string }> {
+  const { getAppConfig } = await import("./installed.server");
+  const cfg = await getAppConfig<{ roomId?: number }>("factory");
+  if (!cfg?.roomId) return { error: "la Software Factory no está instalada en este espacio" };
+  const alive = await dbq(
+    `SELECT id FROM gt_factory_runs WHERE task_ref = ? AND status NOT IN ('done','cancelled') ORDER BY id DESC LIMIT 1`,
+    [opts.taskRef],
+  );
+  if (alive[0]) return { runId: Number(alive[0].id), existing: true };
+
+  const title = opts.title.trim().slice(0, 120) || `Tarea ${opts.taskRef}`;
+  const db = await import("../../db.server");
+  const repos = (await db.listRoomRepos(cfg.roomId)).map((r) => r.repo);
+  // El mensaje raíz del pedido, en el room de la fábrica y con la cara de @plan: todo lo de la
+  // corrida (tarjeta de plan, firmas, PR) cuelga de este hilo.
+  const who = await agentIdentity("plan");
+  const bus = await import("../bus.server");
+  const { currentNamespace } = await import("../tenant.server");
+  const body =
+    `📋 **Tarea #${opts.taskRef} asignada a @plan desde Tasks:** ${title}` +
+    (opts.description.trim() ? `\n\n${opts.description.trim().slice(0, 1500)}` : "");
+  const { id: rootId } = await db.postAgent(cfg.roomId, null, body, "msg", who.handle, who.name, "general", who.avatar);
+  const msg = await db.getMessage(rootId);
+  if (msg) bus.publish(bus.ch.room(await currentNamespace(), cfg.roomId), { t: "message:new", msg });
+
+  const rows = await dbq(
+    `INSERT INTO gt_factory_runs (channel_id, root_msg_id, topic, title, status, repo, task_ref, requested_by)
+     VALUES (?, ?, 'general', ?, 'planning', ?, ?, ?) RETURNING id`,
+    [cfg.roomId, rootId, title, repos.length === 1 ? repos[0] : null, opts.taskRef, opts.requestedBy],
+  );
+  const run = (await getRun(Number(rows[0].id)))!;
+  await handoff(
+    run,
+    "plan",
+    opts.requestedBy,
+    "tarea asignada desde Tasks",
+    `Te asignaron la tarea #${opts.taskRef} en Tasks. Es el pedido de esta corrida:\n\n**${title}**\n${opts.description.trim().slice(0, 4000)}\n\n` +
+      `Lee el repo y entrega el plan con factory_plan_submit (runId ${run.id}). La tarea ya existe en el tablero: no crees otra.`,
+    opts.origin,
+  );
+  return { runId: run.id, existing: false };
 }

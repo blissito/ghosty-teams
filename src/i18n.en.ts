@@ -1476,4 +1476,7 @@ export const en: Record<string, string> = {
   "Consejo: @check con un agente de otro motor revisa mejor; el mismo modelo comparte los puntos ciegos de quien construyó.": "Tip: @check on an agent with a different engine reviews better; the same model shares the builder's blind spots.",
   "Crear o afinar agentes en Studio": "Create or tune agents in Studio",
   "Guardar roles": "Save roles",
+  "Crea agentes nuevos para tu Factory": "Create new agents for your Factory",
+  "Constructor (Claude)": "Builder (Claude)",
+  "Revisor (DeepSeek)": "Reviewer (DeepSeek)",
 };

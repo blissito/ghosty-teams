@@ -50,6 +50,7 @@ import { Route as ApiProspeccionAgentRouteImport } from './routes/api.prospeccio
 import { Route as ApiPSesRouteImport } from './routes/api.p.ses'
 import { Route as ApiInternalProspeccionRunRouteImport } from './routes/api.internal.prospeccion-run'
 import { Route as ApiInternalMembersRouteImport } from './routes/api.internal.members'
+import { Route as ApiInternalFactoryTaskRouteImport } from './routes/api.internal.factory-task'
 import { Route as ApiInternalBoardEventRouteImport } from './routes/api.internal.board-event'
 import { Route as ApiInternalAnnouncementsRouteImport } from './routes/api.internal.announcements'
 import { Route as ApiInternalAlertRouteImport } from './routes/api.internal.alert'
@@ -286,6 +287,11 @@ const ApiInternalMembersRoute = ApiInternalMembersRouteImport.update({
   path: '/api/internal/members',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiInternalFactoryTaskRoute = ApiInternalFactoryTaskRouteImport.update({
+  id: '/api/internal/factory-task',
+  path: '/api/internal/factory-task',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiInternalBoardEventRoute = ApiInternalBoardEventRouteImport.update({
   id: '/api/internal/board-event',
   path: '/api/internal/board-event',
@@ -485,6 +491,7 @@ export interface FileRoutesByFullPath {
   '/api/internal/alert': typeof ApiInternalAlertRoute
   '/api/internal/announcements': typeof ApiInternalAnnouncementsRoute
   '/api/internal/board-event': typeof ApiInternalBoardEventRoute
+  '/api/internal/factory-task': typeof ApiInternalFactoryTaskRoute
   '/api/internal/members': typeof ApiInternalMembersRoute
   '/api/internal/prospeccion-run': typeof ApiInternalProspeccionRunRoute
   '/api/p/ses': typeof ApiPSesRoute
@@ -556,6 +563,7 @@ export interface FileRoutesByTo {
   '/api/internal/alert': typeof ApiInternalAlertRoute
   '/api/internal/announcements': typeof ApiInternalAnnouncementsRoute
   '/api/internal/board-event': typeof ApiInternalBoardEventRoute
+  '/api/internal/factory-task': typeof ApiInternalFactoryTaskRoute
   '/api/internal/members': typeof ApiInternalMembersRoute
   '/api/internal/prospeccion-run': typeof ApiInternalProspeccionRunRoute
   '/api/p/ses': typeof ApiPSesRoute
@@ -629,6 +637,7 @@ export interface FileRoutesById {
   '/api/internal/alert': typeof ApiInternalAlertRoute
   '/api/internal/announcements': typeof ApiInternalAnnouncementsRoute
   '/api/internal/board-event': typeof ApiInternalBoardEventRoute
+  '/api/internal/factory-task': typeof ApiInternalFactoryTaskRoute
   '/api/internal/members': typeof ApiInternalMembersRoute
   '/api/internal/prospeccion-run': typeof ApiInternalProspeccionRunRoute
   '/api/p/ses': typeof ApiPSesRoute
@@ -703,6 +712,7 @@ export interface FileRouteTypes {
     | '/api/internal/alert'
     | '/api/internal/announcements'
     | '/api/internal/board-event'
+    | '/api/internal/factory-task'
     | '/api/internal/members'
     | '/api/internal/prospeccion-run'
     | '/api/p/ses'
@@ -774,6 +784,7 @@ export interface FileRouteTypes {
     | '/api/internal/alert'
     | '/api/internal/announcements'
     | '/api/internal/board-event'
+    | '/api/internal/factory-task'
     | '/api/internal/members'
     | '/api/internal/prospeccion-run'
     | '/api/p/ses'
@@ -846,6 +857,7 @@ export interface FileRouteTypes {
     | '/api/internal/alert'
     | '/api/internal/announcements'
     | '/api/internal/board-event'
+    | '/api/internal/factory-task'
     | '/api/internal/members'
     | '/api/internal/prospeccion-run'
     | '/api/p/ses'
@@ -918,6 +930,7 @@ export interface RootRouteChildren {
   ApiInternalAlertRoute: typeof ApiInternalAlertRoute
   ApiInternalAnnouncementsRoute: typeof ApiInternalAnnouncementsRoute
   ApiInternalBoardEventRoute: typeof ApiInternalBoardEventRoute
+  ApiInternalFactoryTaskRoute: typeof ApiInternalFactoryTaskRoute
   ApiInternalMembersRoute: typeof ApiInternalMembersRoute
   ApiInternalProspeccionRunRoute: typeof ApiInternalProspeccionRunRoute
   ApiPSesRoute: typeof ApiPSesRoute
@@ -1226,6 +1239,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiInternalMembersRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/internal/factory-task': {
+      id: '/api/internal/factory-task'
+      path: '/api/internal/factory-task'
+      fullPath: '/api/internal/factory-task'
+      preLoaderRoute: typeof ApiInternalFactoryTaskRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/internal/board-event': {
       id: '/api/internal/board-event'
       path: '/api/internal/board-event'
@@ -1510,6 +1530,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiInternalAlertRoute: ApiInternalAlertRoute,
   ApiInternalAnnouncementsRoute: ApiInternalAnnouncementsRoute,
   ApiInternalBoardEventRoute: ApiInternalBoardEventRoute,
+  ApiInternalFactoryTaskRoute: ApiInternalFactoryTaskRoute,
   ApiInternalMembersRoute: ApiInternalMembersRoute,
   ApiInternalProspeccionRunRoute: ApiInternalProspeccionRunRoute,
   ApiPSesRoute: ApiPSesRoute,
