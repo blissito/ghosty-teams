@@ -75,6 +75,7 @@ import { Route as ApiPUTokenRouteImport } from './routes/api.p.u.$token'
 import { Route as ApiPOTokenRouteImport } from './routes/api.p.o.$token'
 import { Route as ApiPCTokenRouteImport } from './routes/api.p.c.$token'
 import { Route as ApiHooksSentryTokenRouteImport } from './routes/api.hooks.sentry.$token'
+import { Route as ApiHooksAlertTokenRouteImport } from './routes/api.hooks.alert.$token'
 import { Route as ApiCollabDocIdStateRouteImport } from './routes/api.collab.$docId.state'
 import { Route as ApiCollabDocIdSessionEndRouteImport } from './routes/api.collab.$docId.session-end'
 import { Route as ApiHooksWhatsappTokenMessageRouteImport } from './routes/api.hooks.whatsapp.$token.message'
@@ -412,6 +413,11 @@ const ApiHooksSentryTokenRoute = ApiHooksSentryTokenRouteImport.update({
   path: '/api/hooks/sentry/$token',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiHooksAlertTokenRoute = ApiHooksAlertTokenRouteImport.update({
+  id: '/api/hooks/alert/$token',
+  path: '/api/hooks/alert/$token',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiCollabDocIdStateRoute = ApiCollabDocIdStateRouteImport.update({
   id: '/api/collab/$docId/state',
   path: '/api/collab/$docId/state',
@@ -492,6 +498,7 @@ export interface FileRoutesByFullPath {
   '/setup/easybits/connect': typeof SetupEasybitsConnectRoute
   '/api/collab/$docId/session-end': typeof ApiCollabDocIdSessionEndRoute
   '/api/collab/$docId/state': typeof ApiCollabDocIdStateRoute
+  '/api/hooks/alert/$token': typeof ApiHooksAlertTokenRoute
   '/api/hooks/sentry/$token': typeof ApiHooksSentryTokenRoute
   '/api/p/c/$token': typeof ApiPCTokenRoute
   '/api/p/o/$token': typeof ApiPOTokenRoute
@@ -562,6 +569,7 @@ export interface FileRoutesByTo {
   '/setup/easybits/connect': typeof SetupEasybitsConnectRoute
   '/api/collab/$docId/session-end': typeof ApiCollabDocIdSessionEndRoute
   '/api/collab/$docId/state': typeof ApiCollabDocIdStateRoute
+  '/api/hooks/alert/$token': typeof ApiHooksAlertTokenRoute
   '/api/hooks/sentry/$token': typeof ApiHooksSentryTokenRoute
   '/api/p/c/$token': typeof ApiPCTokenRoute
   '/api/p/o/$token': typeof ApiPOTokenRoute
@@ -634,6 +642,7 @@ export interface FileRoutesById {
   '/setup/easybits/connect': typeof SetupEasybitsConnectRoute
   '/api/collab/$docId/session-end': typeof ApiCollabDocIdSessionEndRoute
   '/api/collab/$docId/state': typeof ApiCollabDocIdStateRoute
+  '/api/hooks/alert/$token': typeof ApiHooksAlertTokenRoute
   '/api/hooks/sentry/$token': typeof ApiHooksSentryTokenRoute
   '/api/p/c/$token': typeof ApiPCTokenRoute
   '/api/p/o/$token': typeof ApiPOTokenRoute
@@ -707,6 +716,7 @@ export interface FileRouteTypes {
     | '/setup/easybits/connect'
     | '/api/collab/$docId/session-end'
     | '/api/collab/$docId/state'
+    | '/api/hooks/alert/$token'
     | '/api/hooks/sentry/$token'
     | '/api/p/c/$token'
     | '/api/p/o/$token'
@@ -777,6 +787,7 @@ export interface FileRouteTypes {
     | '/setup/easybits/connect'
     | '/api/collab/$docId/session-end'
     | '/api/collab/$docId/state'
+    | '/api/hooks/alert/$token'
     | '/api/hooks/sentry/$token'
     | '/api/p/c/$token'
     | '/api/p/o/$token'
@@ -848,6 +859,7 @@ export interface FileRouteTypes {
     | '/setup/easybits/connect'
     | '/api/collab/$docId/session-end'
     | '/api/collab/$docId/state'
+    | '/api/hooks/alert/$token'
     | '/api/hooks/sentry/$token'
     | '/api/p/c/$token'
     | '/api/p/o/$token'
@@ -914,6 +926,7 @@ export interface RootRouteChildren {
   OauthProviderCallbackRoute: typeof OauthProviderCallbackRoute
   ApiCollabDocIdSessionEndRoute: typeof ApiCollabDocIdSessionEndRoute
   ApiCollabDocIdStateRoute: typeof ApiCollabDocIdStateRoute
+  ApiHooksAlertTokenRoute: typeof ApiHooksAlertTokenRoute
   ApiHooksSentryTokenRoute: typeof ApiHooksSentryTokenRoute
   ApiPCTokenRoute: typeof ApiPCTokenRoute
   ApiPOTokenRoute: typeof ApiPOTokenRoute
@@ -1388,6 +1401,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiHooksSentryTokenRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/hooks/alert/$token': {
+      id: '/api/hooks/alert/$token'
+      path: '/api/hooks/alert/$token'
+      fullPath: '/api/hooks/alert/$token'
+      preLoaderRoute: typeof ApiHooksAlertTokenRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/collab/$docId/state': {
       id: '/api/collab/$docId/state'
       path: '/api/collab/$docId/state'
@@ -1498,6 +1518,7 @@ const rootRouteChildren: RootRouteChildren = {
   OauthProviderCallbackRoute: OauthProviderCallbackRoute,
   ApiCollabDocIdSessionEndRoute: ApiCollabDocIdSessionEndRoute,
   ApiCollabDocIdStateRoute: ApiCollabDocIdStateRoute,
+  ApiHooksAlertTokenRoute: ApiHooksAlertTokenRoute,
   ApiHooksSentryTokenRoute: ApiHooksSentryTokenRoute,
   ApiPCTokenRoute: ApiPCTokenRoute,
   ApiPOTokenRoute: ApiPOTokenRoute,
