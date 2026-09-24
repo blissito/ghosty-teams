@@ -47,6 +47,12 @@ export type HookRef = {
    * deja pasar.
    */
   ownerSub: string;
+  /**
+   * Nombre del webhook GENÉRICO de alertas (`alert_webhook_create`). Con él el endpoint
+   * comprueba que la fila de `gt_connector_hooks` siga viva: borrar el webhook corta la
+   * entrega aunque el token no caduque. Vacío en los de Sentry.
+   */
+  hook?: string;
 };
 
 export function mintHookToken(ref: HookRef): string {
@@ -73,6 +79,7 @@ export function verifyHookToken(token: string): HookRef | null {
       name: p.name || "Ghosty",
       avatar: p.avatar || "",
       ownerSub: p.ownerSub || "",
+      hook: p.hook || "",
     };
   } catch {
     return null;

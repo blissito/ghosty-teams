@@ -736,6 +736,17 @@ async function migrate(): Promise<void> {
   // nuevo, cambio de columna) caen en el room. NO da acceso: abrir el tablero pasa por el
   // acceso de cada quien en sales.ghosty.studio. `board_name` es un espejo para pintar el
   // botón sin llamar a gs.
+  // Apps INSTALADAS en este espacio (2026-09-24). La primera es la Software Factory: al
+  // instalarla aparecen sus handles (@plan, @build, @check) y sus tools (`factory_*`,
+  // `alert_webhook_*`); sin la fila no existen para nadie. Es por namespace porque cada
+  // espacio ya es su propia base. `config` es JSON propio de cada app (caja, room, tablero).
+  await exec(`CREATE TABLE IF NOT EXISTS gt_installed_apps (
+    app          TEXT PRIMARY KEY,
+    installed_by TEXT NOT NULL,
+    installed_at INTEGER NOT NULL DEFAULT (unixepoch()),
+    config       TEXT NOT NULL DEFAULT '{}'
+  )`);
+
   await exec(`CREATE TABLE IF NOT EXISTS gt_room_sales_boards (
     channel_id   INTEGER PRIMARY KEY,
     board_id     TEXT NOT NULL,

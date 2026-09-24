@@ -9,6 +9,7 @@
 import { loaderFor, toolsOf } from "./impl";
 import { nativeTools, type ToolDest } from "./native.server";
 import { taskTools } from "./tasks.native.server";
+import { factoryTools } from "../apps/factory-tools.server";
 import { SCOPE_COMPLETO, type ToolScope } from "./tool-token.server";
 
 // Declaración expuesta al modelo (sin el handler).
@@ -45,6 +46,9 @@ const FAMILIAS: Array<[prefijo: string, familia: string]> = [
   ["doc_", "docs"],
   ["memory_", "memoria"],
   ["prospect_", "prospeccion"],
+  // Software Factory: sólo existen si el espacio la instaló (`apps/factory-tools.server.ts`).
+  ["factory_", "fabrica"],
+  ["alert_webhook_", "fabrica"],
 ];
 
 function familiaDe(name: string): string | null {
@@ -96,6 +100,9 @@ export async function listUserTools(
   // Las de Ghosty Tasks van aparte de `nativeTools` porque ésa es síncrona y éstas piden sus
   // schemas al tablero. Un Tasks caído no puede dejar al usuario sin el resto de sus tools.
   for (const t of await taskTools(sub, dest).catch(() => []))
+    out.push({ name: t.name, description: t.description, inputSchema: t.inputSchema });
+  // Las de apps instaladas (hoy la Software Factory): [] si el espacio no la tiene.
+  for (const t of await factoryTools(sub, dest).catch(() => []))
     out.push({ name: t.name, description: t.description, inputSchema: t.inputSchema });
   for (const id of connected) {
     const load = loaderFor(id);
@@ -192,6 +199,16 @@ export async function runTool(
     if (!tt) return { ok: false, error: `tool de tablero no disponible: ${toolName}` };
     try {
       return { ok: true, result: await tt.handler(sub, args ?? {}) };
+    } catch (e) {
+      return { ok: false, error: e instanceof Error ? e.message : String(e) };
+    }
+  }
+  // Las de la fábrica: nombres reservados; si no está instalada, no existen.
+  if (toolName.startsWith("factory_") || toolName.startsWith("alert_webhook_")) {
+    const ft = (await factoryTools(sub, dest).catch(() => [])).find((t) => t.name === toolName);
+    if (!ft) return { ok: false, error: `${toolName} sólo existe con la Software Factory instalada en este espacio` };
+    try {
+      return { ok: true, result: await ft.handler(sub, args ?? {}) };
     } catch (e) {
       return { ok: false, error: e instanceof Error ? e.message : String(e) };
     }

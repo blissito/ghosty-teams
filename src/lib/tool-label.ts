@@ -115,6 +115,10 @@ export const TOOL_LABELS: Record<string, { ing: string; done: string }> = {
   reminder_list: { ing: "Revisando tus recordatorios", done: "Revisé tus recordatorios" },
   reminder_update: { ing: "Ajustando el recordatorio", done: "Ajusté el recordatorio" },
   reminder_cancel: { ing: "Cancelando el recordatorio", done: "Cancelé el recordatorio" },
+  // Webhook genérico de alertas de monitoreo (hooks/generic-alert.server.ts).
+  alert_webhook_create: { ing: "Creando el webhook de alertas", done: "Creé el webhook de alertas" },
+  alert_webhook_list: { ing: "Revisando los webhooks de alertas", done: "Revisé los webhooks de alertas" },
+  alert_webhook_delete: { ing: "Borrando el webhook de alertas", done: "Borré el webhook de alertas" },
   // Ciclo de un PR (GitHub). Llegan como gs_connector:github_*; con etiqueta propia para
   // que no salgan como "Github: mark ready".
   github_pr_checks: { ing: "Revisando CI del PR", done: "Revisé CI del PR" },
