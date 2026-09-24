@@ -3753,6 +3753,28 @@ function Sidebar({
   }, [closedDms]);
   const cerrarDm = (id: number) => setClosedDms((prev) => new Set(prev).add(id));
 
+  // Rooms FIJADOS arriba (por persona, en este navegador, como los DMs cerrados). El orden de
+  // la lista es estable a propósito: una lista que se reacomoda sola rompe la memoria de
+  // dónde está cada room. Lo único que se mueve es lo que tú fijas, y los rooms sin
+  // mensajes en 7 días, que bajan a «Poco usados».
+  const [pinnedRooms, setPinnedRooms] = useState<number[]>(() => {
+    if (typeof window === "undefined") return [];
+    try {
+      return JSON.parse(window.localStorage.getItem("gt:pinnedRooms") || "[]") as number[];
+    } catch {
+      return [];
+    }
+  });
+  useEffect(() => {
+    try {
+      window.localStorage.setItem("gt:pinnedRooms", JSON.stringify(pinnedRooms));
+    } catch {
+      /* modo privado: sin fijados no se rompe nada */
+    }
+  }, [pinnedRooms]);
+  const togglePinRoom = (id: number) =>
+    setPinnedRooms((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+
   const [collapsedThreads, setCollapsedThreads] = useState<Set<string>>(() => {
     if (typeof window === "undefined") return new Set();
     try {
@@ -3991,8 +4013,21 @@ function Sidebar({
             <Plus size={17} />
           </button>
         </div>
-        {channels.map((c) => {
+        {(() => {
+          // Fijados (en el orden en que se fijaron) → con movimiento en la semana → «Poco usados».
+          const weekAgo = Math.floor(Date.now() / 1000) - 7 * 86_400;
+          const pinned = pinnedRooms.map((id) => channels.find((c) => c.id === id)).filter((c): c is (typeof channels)[number] => !!c);
+          const rest = channels.filter((c) => !pinnedRooms.includes(c.id));
+          const quiet = (c: (typeof channels)[number]) => (c.last_activity_at ?? 0) < weekAgo && c.slug !== active;
+          return [
+            ...pinned.map((c) => ({ c, group: "pinned" as const })),
+            ...rest.filter((c) => !quiet(c)).map((c) => ({ c, group: "active" as const })),
+            ...rest.filter(quiet).map((c) => ({ c, group: "quiet" as const })),
+          ];
+        })().map(({ c, group }, i, all) => {
           const muted = mutes.has(`room:${c.id}`);
+          const isPinned = group === "pinned";
+          const firstQuiet = group === "quiet" && all[i - 1]?.group !== "quiet";
           // Hilos POR room desde el cache de módulo: si un room ya los cargó, se
           // quedan listados aunque no sea el activo (y no se recargan al volver).
           // El activo usa la lista viva (más fresca); los demás, lo cacheado.
@@ -4002,6 +4037,9 @@ function Sidebar({
             c.slug === active ? threads : threadsCache.get(c.slug) ?? c.threads ?? [];
           return (
           <div key={c.id}>
+            {firstQuiet && (
+              <p className="px-2 pb-1 pt-3 text-[10px] font-semibold uppercase tracking-wider text-muted/70">{t("Poco usados")}</p>
+            )}
             <div className="group flex items-center">
               {roomThreads.length > 0 ? (
                 <button
@@ -4039,6 +4077,13 @@ function Sidebar({
                   {c.is_private ? <Lock size={13} className="text-muted" /> : null}
                 </span>
               </Link>
+              <button
+                onClick={() => togglePinRoom(c.id)}
+                title={isPinned ? t("Quitar de fijados") : t("Fijar arriba")}
+                className={`p-1 transition hover:text-ink ${isPinned ? "text-brand" : "text-muted opacity-100 md:opacity-0 md:group-hover:opacity-100"}`}
+              >
+                <Pin size={14} className={isPinned ? "fill-current" : ""} />
+              </button>
               <button
                 onClick={() => onToggleMute("room", c.id)}
                 title={muted ? t("Reactivar notificaciones") : t("Silenciar room")}

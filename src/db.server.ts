@@ -34,6 +34,8 @@ export type Channel = {
   call_recording_since?: number | null;
   call_recorded_at?: number | null;
   threads?: Message[]; // hilos raíz (adjuntados por getChannelView para el sidebar)
+  /** Último mensaje del room (epoch). El sidebar manda al fondo los que llevan 7 días quietos. */
+  last_activity_at?: number | null;
 };
 
 function toChannel(r: Row): Channel {
@@ -60,6 +62,7 @@ function toChannel(r: Row): Channel {
     call_recording_by: r.call_recording_by ?? null,
     call_recording_since: r.call_recording_since == null ? null : num(r.call_recording_since),
     call_recorded_at: r.call_recorded_at == null ? null : num(r.call_recorded_at),
+    last_activity_at: r.last_activity_at == null ? null : num(r.last_activity_at),
   };
 }
 
@@ -1862,8 +1865,12 @@ export async function listPushSubsForUsers(subs: string[]): Promise<StoredPushSu
 export async function listChannels(userSub: string, isOwner: boolean): Promise<Channel[]> {
   // Archivados fuera del sidebar (columna dormida hasta Fase 4). COALESCE por si
   // la fila es previa a la migración (NULL → 0).
+  // `last_activity_at`: el último mensaje del room. Lo usa el sidebar para mandar al fondo
+  // los rooms sin movimiento en la semana (el orden de los demás no cambia).
   const rows = await dbq(
-    `SELECT * FROM gc_channels
+    `SELECT gc_channels.*,
+            (SELECT MAX(created_at) FROM gc_messages m WHERE m.channel_id = gc_channels.id) AS last_activity_at
+       FROM gc_channels
       WHERE COALESCE(archived, 0) = 0
         AND (is_private = 0 OR ? = 1
          OR id IN (SELECT channel_id FROM gc_channel_members WHERE user_sub = ?))

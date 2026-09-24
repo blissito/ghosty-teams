@@ -1511,4 +1511,7 @@ export const en: Record<string, string> = {
   "Replanear": "Re-plan",
   "Ver PR": "See PR",
   "Ver hilo": "See thread",
+  "Poco usados": "Less used",
+  "Quitar de fijados": "Unpin",
+  "Fijar arriba": "Pin to top",
 };
