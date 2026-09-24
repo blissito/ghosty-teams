@@ -3673,6 +3673,24 @@ function Sidebar({
   onDismissTurn: (id: number) => void;
 }) {
   const t = useT();
+  // Accesos del sidebar contraídos por default (sólo la Fábrica a la vista).
+  const [navOpen, setNavOpen] = useState(false);
+  useEffect(() => {
+    try {
+      setNavOpen(localStorage.getItem("gt-nav-open") === "1");
+    } catch {
+      /* sin storage: contraído */
+    }
+  }, []);
+  const toggleNav = () =>
+    setNavOpen((v) => {
+      try {
+        localStorage.setItem("gt-nav-open", v ? "0" : "1");
+      } catch {
+        /* sin storage: sólo en esta sesión */
+      }
+      return !v;
+    });
   // «Fábrica» sólo aparece donde la Software Factory está instalada.
   const [factoryOn, setFactoryOn] = useState(false);
   useEffect(() => {
@@ -3934,95 +3952,110 @@ function Sidebar({
             );
           }}
         />
-        {/* Home: dashboard de inicio con el personaje Ghosty. */}
-        <button
-          onClick={onOpenHome}
-          className={`flex w-full items-center gap-2 rounded-lg px-2 py-2.5 text-sm md:py-1.5 ${
-            homeActive ? "bg-brand/15 font-medium text-ink" : "text-muted hover:bg-surface-3 hover:text-ink"
-          }`}
-        >
-          <HomeIcon size={16} className="shrink-0" /> {t("Inicio")}
-        </button>
-        {/* Tareas del equipo: Ghosty Tasks, mismo workspace y misma DB. El subdominio
-            es el mismo cambiando el producto (acme.teams… → acme.tasks…); el slug del
-            workspace vive en el host, no en la ruta ($slug aquí es el canal). */}
-        <a
-          href={tasksUrl}
-          target="_blank"
-          rel="noreferrer"
-          className="mb-1 flex w-full items-center gap-2 rounded-lg px-2 py-2.5 text-sm text-muted transition hover:bg-surface-3 hover:text-ink md:py-1.5"
-        >
-          <CheckCircle2 size={16} className="shrink-0" /> {t("Tareas")}
-        </a>
-        {/* Vistas (Zulip): recientes / menciones / destacados, enfocadas en el centro. */}
-        <div className="mb-1 space-y-0.5">
-          {([
-            ["recent", t("Recientes"), Waves],
-            ["mentions", t("Menciones"), Megaphone],
-            ["starred", t("Destacados"), Star],
-          ] as const).map(([key, label, Icon]) => (
-            <button
-              key={key}
-              onClick={() => onOpenView(key)}
-              className={`flex w-full items-center gap-2 rounded-lg px-2 py-2.5 text-sm md:py-1.5 ${
-                activeView === key
-                  ? "bg-brand/15 font-medium text-ink"
-                  : "text-muted hover:bg-surface-3 hover:text-ink"
-              }`}
-            >
-              <Icon size={16} className="shrink-0" />
-              <span className="truncate">{label}</span>
-            </button>
-          ))}
-          {/* Formularios de intake del team (ruta propia, no una vista de mensajes). */}
+        {/* Accesos contraídos por default: sólo queda a la vista la Fábrica Agéntica. «Más»
+            abre el resto (Inicio, Tareas, vistas, Formularios…) y se recuerda por navegador. */}
+        {/* Fábrica: pedidos, repos y equipo de la Software Factory (antes en Ajustes → Apps). */}
+        {factoryOn && (
           <Link
-            to="/forms"
+            to="/factory"
+            search={{ repo: undefined }}
             className="flex w-full items-center gap-2 rounded-lg px-2 py-2.5 text-sm md:py-1.5 text-muted hover:bg-surface-3 hover:text-ink"
           >
-            <FileText size={16} className="shrink-0" />
-            <span className="truncate">{t("Formularios")}</span>
+            <FactoryIcon size={16} className="shrink-0" />
+            <span className="truncate">{t("Fábrica Agéntica")}</span>
           </Link>
-          {/* Documentos del team: los que redacta @ghosty (eb-doc) + los subidos al
-              chat (pdf/office). Ruta /artifacts, página "Documentos". */}
-          <Link
-            to="/artifacts"
-            className="flex w-full items-center gap-2 rounded-lg px-2 py-2.5 text-sm md:py-1.5 text-muted hover:bg-surface-3 hover:text-ink"
+        )}
+        {navOpen && (
+          <>
+          {/* Home: dashboard de inicio con el personaje Ghosty. */}
+          <button
+            onClick={onOpenHome}
+            className={`flex w-full items-center gap-2 rounded-lg px-2 py-2.5 text-sm md:py-1.5 ${
+              homeActive ? "bg-brand/15 font-medium text-ink" : "text-muted hover:bg-surface-3 hover:text-ink"
+            }`}
           >
-            <Layers size={16} className="shrink-0" />
-            <span className="truncate">{t("Documentos")}</span>
-          </Link>
-          {/* Prospección: listas de prospectos que se enriquecen por columna y se
-              tocan por correo. El WhatsApp sólo entra cuando el prospecto escribió. */}
-          <Link
-            to="/prospeccion"
-            className="flex w-full items-center gap-2 rounded-lg px-2 py-2.5 text-sm md:py-1.5 text-muted hover:bg-surface-3 hover:text-ink"
+            <HomeIcon size={16} className="shrink-0" /> {t("Inicio")}
+          </button>
+          {/* Tareas del equipo: Ghosty Tasks, mismo workspace y misma DB. El subdominio
+              es el mismo cambiando el producto (acme.teams… → acme.tasks…); el slug del
+              workspace vive en el host, no en la ruta ($slug aquí es el canal). */}
+          <a
+            href={tasksUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="mb-1 flex w-full items-center gap-2 rounded-lg px-2 py-2.5 text-sm text-muted transition hover:bg-surface-3 hover:text-ink md:py-1.5"
           >
-            <Target size={16} className="shrink-0" />
-            <span className="truncate">{t("Prospección")}</span>
-            {/* Beta a la vista: está en desarrollo y puede fallar. Se dice en la entrada y en
-                la página, para que nadie lo descubra a mitad de una campaña. */}
-            <span className="ml-auto shrink-0 rounded-md border border-amber-500/40 bg-amber-500/10 px-1.5 py-px text-[10px] font-semibold uppercase tracking-wide text-amber-500">beta</span>
-          </Link>
-          {/* Fábrica: pedidos, repos y equipo de la Software Factory (antes en Ajustes → Apps). */}
-          {factoryOn && (
+            <CheckCircle2 size={16} className="shrink-0" /> {t("Tareas")}
+          </a>
+          {/* Vistas (Zulip): recientes / menciones / destacados, enfocadas en el centro. */}
+          <div className="mb-1 space-y-0.5">
+            {([
+              ["recent", t("Recientes"), Waves],
+              ["mentions", t("Menciones"), Megaphone],
+              ["starred", t("Destacados"), Star],
+            ] as const).map(([key, label, Icon]) => (
+              <button
+                key={key}
+                onClick={() => onOpenView(key)}
+                className={`flex w-full items-center gap-2 rounded-lg px-2 py-2.5 text-sm md:py-1.5 ${
+                  activeView === key
+                    ? "bg-brand/15 font-medium text-ink"
+                    : "text-muted hover:bg-surface-3 hover:text-ink"
+                }`}
+              >
+                <Icon size={16} className="shrink-0" />
+                <span className="truncate">{label}</span>
+              </button>
+            ))}
+            {/* Formularios de intake del team (ruta propia, no una vista de mensajes). */}
             <Link
-              to="/factory"
-              search={{ repo: undefined }}
+              to="/forms"
               className="flex w-full items-center gap-2 rounded-lg px-2 py-2.5 text-sm md:py-1.5 text-muted hover:bg-surface-3 hover:text-ink"
             >
-              <FactoryIcon size={16} className="shrink-0" />
-              <span className="truncate">{t("Fábrica Agéntica")}</span>
+              <FileText size={16} className="shrink-0" />
+              <span className="truncate">{t("Formularios")}</span>
             </Link>
-          )}
-          {/* Memoria del workspace: lo que los agentes saben de la empresa. Curaduría. */}
-          <Link
-            to="/memory"
-            className="flex w-full items-center gap-2 rounded-lg px-2 py-2.5 text-sm md:py-1.5 text-muted hover:bg-surface-3 hover:text-ink"
-          >
-            <Brain size={16} className="shrink-0" />
-            <span className="truncate">{t("Memoria")}</span>
-          </Link>
-        </div>
+            {/* Documentos del team: los que redacta @ghosty (eb-doc) + los subidos al
+                chat (pdf/office). Ruta /artifacts, página "Documentos". */}
+            <Link
+              to="/artifacts"
+              className="flex w-full items-center gap-2 rounded-lg px-2 py-2.5 text-sm md:py-1.5 text-muted hover:bg-surface-3 hover:text-ink"
+            >
+              <Layers size={16} className="shrink-0" />
+              <span className="truncate">{t("Documentos")}</span>
+            </Link>
+            {/* Prospección: listas de prospectos que se enriquecen por columna y se
+                tocan por correo. El WhatsApp sólo entra cuando el prospecto escribió. */}
+            <Link
+              to="/prospeccion"
+              className="flex w-full items-center gap-2 rounded-lg px-2 py-2.5 text-sm md:py-1.5 text-muted hover:bg-surface-3 hover:text-ink"
+            >
+              <Target size={16} className="shrink-0" />
+              <span className="truncate">{t("Prospección")}</span>
+              {/* Beta a la vista: está en desarrollo y puede fallar. Se dice en la entrada y en
+                  la página, para que nadie lo descubra a mitad de una campaña. */}
+              <span className="ml-auto shrink-0 rounded-md border border-amber-500/40 bg-amber-500/10 px-1.5 py-px text-[10px] font-semibold uppercase tracking-wide text-amber-500">beta</span>
+            </Link>
+            {/* Memoria del workspace: lo que los agentes saben de la empresa. Curaduría. */}
+            <Link
+              to="/memory"
+              className="flex w-full items-center gap-2 rounded-lg px-2 py-2.5 text-sm md:py-1.5 text-muted hover:bg-surface-3 hover:text-ink"
+            >
+              <Brain size={16} className="shrink-0" />
+              <span className="truncate">{t("Memoria")}</span>
+            </Link>
+          </div>
+          </>
+        )}
+        <button
+          type="button"
+          onClick={() => toggleNav()}
+          aria-expanded={navOpen}
+          className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-xs text-muted hover:bg-surface-3 hover:text-ink"
+        >
+          <ChevronDown size={14} className={`shrink-0 transition-transform ${navOpen ? "rotate-180" : ""}`} />
+          {navOpen ? t("Menos") : t("Más")}
+        </button>
         <div className="flex items-center justify-between px-2 pb-1 pt-2">
           <p className="text-[11px] font-semibold uppercase tracking-wider text-muted">{t("Rooms")}</p>
           <button

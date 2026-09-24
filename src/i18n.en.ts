@@ -509,6 +509,8 @@ export const en: Record<string, string> = {
   "Reenvía canales y menciones desde tu workspace de Slack.": "Forwards channels and mentions from your Slack workspace.",
   "Refrescar": "Refresh",
   "Reintentar": "Retry",
+  "Más": "More",
+  "Menos": "Less",
   "Pregúntale a": "Ask",
   "Pregúntale": "Ask",
   "¿Cómo funciona?": "How does it work?",
