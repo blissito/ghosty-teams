@@ -149,6 +149,14 @@ function allowAttempt(sub: string): boolean {
 export const relayConnectorFn = createServerFn({ method: "GET" })
   .validator((d: { provider: string; code: string; state: string }) => d)
   .handler(async ({ data }) => {
+    const qsRaw = `?code=${encodeURIComponent(data.code)}&state=${encodeURIComponent(data.state)}`;
+    // La GitHub App es la misma que usa EasyBits para «importar repo» en su hosting, y
+    // GitHub vuelve SIEMPRE a este callback. Su state lleva prefijo `eb.` y lo verifica
+    // EasyBits contra su propia cookie; aquí sólo se rebota a un destino FIJO.
+    if (data.provider === "github" && data.state.startsWith("eb.")) {
+      const eb = process.env.EASYBITS_URL ?? "https://www.easybits.cloud";
+      return { target: `${eb}/dash/hosting/github/callback${qsRaw}` };
+    }
     const { verifyState } = await import("./connectors/oauth.server");
     const parsed = verifyState(data.state);
     const ROOT = process.env.TEAMS_ROOT_DOMAIN ?? "teams.ghosty.studio";
