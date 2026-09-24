@@ -641,6 +641,7 @@ function applyReaction(
 // reciente, luego agentes y personas, y al final las grupales — sin sus sinónimos
 // (@everyone, @todos, @here, @aquí) salvo que los escribas.
 const RECENT_MENTIONS_KEY = "gt-recent-mentions";
+const roomSubsCache = new Map<string, Set<string>>();
 const GROUP_SYNONYMS = new Set(["everyone", "todos", "here", "aquí"]);
 
 function recentMentions(): string[] {
@@ -661,7 +662,7 @@ function rememberMention(handle: string): void {
   }
 }
 
-function suggestMentions(all: Mention[], query: string): Mention[] {
+function suggestMentions(all: Mention[], query: string, roomSubs: Set<string> = new Set()): Mention[] {
   const q = query.toLowerCase();
   const recent = recentMentions();
   const rank = (m: Mention) => {
@@ -671,8 +672,9 @@ function suggestMentions(all: Mention[], query: string): Mention[] {
   if (!q) {
     const byHandle = new Map(all.map((m) => [m.handle, m]));
     const out = recent.map((h) => byHandle.get(h)).filter((m): m is Mention => !!m);
-    // Sin historial todavía: los agentes (lo que más se menciona aquí).
-    if (out.length < 3) for (const m of all) if (m.kind === "agent" && !out.includes(m) && out.length < 6) out.push(m);
+    // Después de lo reciente: la gente de ESTE room y luego los agentes (nunca las grupales).
+    for (const m of all) if (m.kind === "user" && m.sub && roomSubs.has(m.sub) && !out.includes(m) && out.length < 8) out.push(m);
+    for (const m of all) if (m.kind === "agent" && !out.includes(m) && out.length < 8) out.push(m);
     return out;
   }
   return all
@@ -7859,6 +7861,21 @@ const Composer = forwardRef<ComposerHandle, {
   const mentions = useMentions();
   const mentionsRef = useRef(mentions);
   mentionsRef.current = mentions; // el suggestion de TipTap lee la lista fresca por ref
+  // Miembros del room: el menú de @ los ofrece de entrada (tras lo reciente).
+  const roomSubsRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (dmId != null) return;
+    const hit = roomSubsCache.get(slug);
+    if (hit) roomSubsRef.current = hit;
+    // listRoomMembersFn (no getChannelMembersFn): la lee cualquiera que vea el room.
+    listRoomMembersFn({ data: { slug } })
+      .then((r) => {
+        const set = new Set(r.members.map((m) => m.sub));
+        roomSubsCache.set(slug, set);
+        roomSubsRef.current = set;
+      })
+      .catch(() => {});
+  }, [slug, dmId]);
   const lastTypingPing = useRef(0);
   const submitRef = useRef<() => void>(() => {}); // handleKeyDown llama al submit más reciente
   // Toolbar de formato: toggle recordado en localStorage.
@@ -8013,7 +8030,7 @@ const Composer = forwardRef<ComposerHandle, {
         renderText: ({ node }: any) => `@${node.attrs.id}`,
         suggestion: {
           char: "@",
-          items: ({ query }: { query: string }) => suggestMentions(mentionsRef.current, query),
+          items: ({ query }: { query: string }) => suggestMentions(mentionsRef.current, query, roomSubsRef.current),
           command: ({ editor, range, props }: any) => {
             rememberMention(props.handle);
             // Warm seam: elegir un @agente = alta intención de enviarle → pre-calienta su
