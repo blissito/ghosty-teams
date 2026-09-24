@@ -179,10 +179,13 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
       handler: async (sub, a) => {
         if (dest?.handle && dest.handle !== "build") return { ok: false, error: "sólo @build cierra la construcción" };
         const R = await import("./factory-runs.server");
-        const run = await runOf(dest, a.runId);
+        let run = await runOf(dest, a.runId);
         if (!run) return { ok: false, error: "no encuentro el pedido de este hilo" };
         const url = String(a.pr_url ?? "");
         if (!R.parsePrUrl(url)) return { ok: false, error: "pr_url tiene que ser la URL de un PR de GitHub" };
+        // Pedido escalado y una persona despertó a @build en el hilo («reintenta»): eso ES la
+        // decisión de otra vuelta. Sin esto @build hacía el trabajo y no podía cerrar su paso.
+        if (run.status === "escalated") run = await R.applyEvent(run, "approve");
         // CI en rojo no llega a @check: se ahorra una vuelta y lo arregla quien construyó.
         const ci = await R.prCi(sub, url);
         if (ci?.state === "failure") {
