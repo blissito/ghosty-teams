@@ -134,11 +134,18 @@ ${pm === "pnpm" ? `      - uses: ${a.pnpm}\n` : ""}      - uses: ${a.setupNode}
 
 export const RULESET_NAME = "Ghosty Factory";
 
-export type ProtectionState = "protected" | "unprotected" | "no_permission" | "error";
+/** `plan_required`: repo PRIVADO en una cuenta gratis — GitHub no deja proteger ramas ahí
+ *  (rulesets ni protección clásica) sin GitHub Pro/Team. No es un permiso nuestro. */
+export type ProtectionState = "protected" | "unprotected" | "no_permission" | "plan_required" | "error";
+
+export const PLAN_REQUIRED = /upgrade to github pro|make this repository public/i;
 
 export async function protectionState(sub: string, repo: string): Promise<ProtectionState> {
   const r = await githubApi(sub, `/repos/${repo}/rulesets`);
-  if (r?.error) return /permiso|permission/i.test(String(r.error)) ? "no_permission" : "error";
+  if (r?.error) {
+    if (PLAN_REQUIRED.test(String(r.error))) return "plan_required";
+    return /permiso|permission/i.test(String(r.error)) ? "no_permission" : "error";
+  }
   return Array.isArray(r) && r.some((x: any) => x?.name === RULESET_NAME) ? "protected" : "unprotected";
 }
 

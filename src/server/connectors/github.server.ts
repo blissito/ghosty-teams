@@ -87,6 +87,11 @@ async function api(sub: string, path: string, init?: RequestInit): Promise<any> 
     if (res.headers.get("x-ratelimit-remaining") === "0") {
       return { error: "GitHub está limitando las peticiones. Espera unos minutos." };
     }
+    // Función de plan, no de permiso: rulesets y protección de ramas en repos PRIVADOS de
+    // cuentas gratis. Se deja el texto de GitHub para que quien lo lea sepa qué pide.
+    if (/upgrade to github pro|make this repository public/i.test(body)) {
+      return { error: "GitHub pide GitHub Pro o Team para esto en repos privados (Upgrade to GitHub Pro or make this repository public)." };
+    }
     return {
       error:
         "Sin permiso para eso en GitHub. La app se instaló con un conjunto de permisos fijo; " +

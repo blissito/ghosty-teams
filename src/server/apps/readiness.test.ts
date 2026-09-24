@@ -202,6 +202,7 @@ describe("Listo para agentes", () => {
       previewRunnable: false,
       envExampleKeys: [],
       envSavedKeys: null,
+      protectionPlanRequired: false,
     });
     expect(md).toContain("pnpm install --frozen-lockfile");
     expect(md).toContain("`pnpm typecheck`");

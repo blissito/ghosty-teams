@@ -60,6 +60,8 @@ export type RepoFacts = {
   envExampleKeys: string[];
   /** Nombres de las variables guardadas para la preview (null = ninguna). */
   envSavedKeys: string[] | null;
+  /** Repo privado en cuenta gratis: GitHub no deja proteger la rama sin Pro/Team. */
+  protectionPlanRequired: boolean;
 };
 
 export const LEVELS: Record<1 | 2 | 3, ReadinessKey[]> = {
@@ -198,6 +200,7 @@ export async function repoReadiness(sub: string, repo: string, opts: { fresh?: b
       previewRunnable,
       envExampleKeys,
       envSavedKeys,
+      protectionPlanRequired: protection === "plan_required",
     },
     checkedAt: Date.now(),
   };
@@ -320,7 +323,9 @@ export function preparationPlan(r: Readiness): { title: string; planMd: string; 
         ? "- Previews por PR: guarda las variables de la preview (con datos de prueba) en «Listo para agentes» → Variables. La fábrica levanta una por PR y @check prueba ahí."
         : "- Previews por PR: el repo no tiene cómo arrancarse (`start`, `preview` o `dev` en package.json). Con eso, la fábrica levanta una por PR.",
     );
-  if (miss("protected")) later.push("- Proteger la rama principal: lo activa el dueño con un clic en «Listo para agentes» cuando este PR se mezcle.");
+  if (miss("protected") && r.facts.protectionPlanRequired)
+    later.push("- Proteger la rama principal: GitHub sólo lo permite en repos privados con GitHub Pro o Team (o si el repo es público).");
+  else if (miss("protected")) later.push("- Proteger la rama principal: lo activa el dueño con un clic en «Listo para agentes» cuando este PR se mezcle.");
 
   const planMd = `# Preparar ${r.repo} para agentes
 

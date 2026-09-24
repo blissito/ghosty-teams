@@ -151,7 +151,13 @@ export function RepoReadiness({ channelId, repo, compact = false, onLevel, autoO
       await load(true);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      setError(/permiso|permission|403/i.test(msg) ? t("Tienes que ser admin del repo y aceptar el permiso de Ghosty en GitHub.") : msg);
+      setError(
+        /upgrade to github pro|make this repository public/i.test(msg)
+          ? t("GitHub sólo deja proteger ramas de repos privados con GitHub Pro o Team (o si el repo es público).")
+          : /permiso|permission|403/i.test(msg)
+            ? t("Tienes que ser admin del repo y aceptar el permiso de Ghosty en GitHub.")
+            : msg,
+      );
     } finally {
       setBusy(null);
     }
@@ -205,7 +211,18 @@ export function RepoReadiness({ channelId, repo, compact = false, onLevel, autoO
                       <Circle size={14} className="shrink-0 text-faint" aria-label={t("falta")} />
                     )}
                     <span className={`min-w-0 flex-1 leading-snug ${c.ok ? "text-muted" : "text-ink"}`}>{t(CRITERIA[c.key].label)}</span>
-                    {!c.ok && c.key === "protected" && view!.canPrepare && (
+                    {!c.ok && c.key === "protected" && r.facts.protectionPlanRequired && (
+                      <a
+                        href="https://github.com/pricing"
+                        target="_blank"
+                        rel="noreferrer"
+                        title={t("GitHub sólo deja proteger ramas de repos privados con GitHub Pro o Team (o si el repo es público).")}
+                        className="inline-flex shrink-0 items-center gap-1 rounded-md border border-border px-2 py-0.5 text-[11px] font-semibold text-muted hover:bg-surface-3 hover:text-ink"
+                      >
+                        {t("Requiere GitHub Pro")} <ExternalLink size={9} />
+                      </a>
+                    )}
+                    {!c.ok && c.key === "protected" && !r.facts.protectionPlanRequired && view!.canPrepare && (
                       <button
                         type="button"
                         onClick={protect}
@@ -315,6 +332,8 @@ export function RepoReadiness({ channelId, repo, compact = false, onLevel, autoO
           <p className="text-xs text-muted">{t("El dueño del espacio puede prepararlo en un clic.")}</p>
         ) : fixable > 0 ? (
           <p className="text-xs text-muted">{t("Se prepara desde el room de la Software Factory.")}</p>
+        ) : !protectedOk && r.facts.protectionPlanRequired ? (
+          <p className="text-xs text-muted">{t("Para proteger la rama de un repo privado, GitHub pide GitHub Pro o Team. Mientras, la fábrica nunca mezcla sin tu aprobación.")}</p>
         ) : !protectedOk ? (
           <p className="text-xs text-muted">{t("Sólo falta proteger la rama principal.")}</p>
         ) : null}

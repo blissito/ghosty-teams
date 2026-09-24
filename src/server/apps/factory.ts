@@ -571,7 +571,7 @@ export const factorySuggestFn = createServerFn({ method: "POST" }).handler(async
 
 // ── Repos de la fábrica: CI y protección de la rama principal ────────────────
 
-export type RepoGuard = { repo: string; ci: boolean; protection: "protected" | "unprotected" | "no_permission" | "error" };
+export type RepoGuard = { repo: string; ci: boolean; protection: "protected" | "unprotected" | "no_permission" | "plan_required" | "error" };
 
 /** Por repo del room de la fábrica: ¿tiene CI? ¿está protegida la rama principal? */
 export const factoryReposFn = createServerFn({ method: "GET" }).handler(async (): Promise<{ repos: RepoGuard[]; ciLabel: string | null; roomId: number | null }> => {
