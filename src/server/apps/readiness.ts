@@ -7,7 +7,7 @@ import type { Readiness } from "./readiness.server";
 export type ReadinessView = {
   readiness: Readiness | null;
   error: string | null;
-  /** ¿Se puede preparar desde aquí? (fábrica instalada, repo de su room, eres dueño) */
+  /** ¿Se puede preparar desde aquí? (fábrica instalada, repo del room, eres dueño) */
   canPrepare: boolean;
   factoryInstalled: boolean;
   isOwner: boolean;
@@ -15,10 +15,9 @@ export type ReadinessView = {
   activePrep: { runId: number; status: string; threadUrl: string | null } | null;
 };
 
-async function factoryRoom(): Promise<number | null> {
-  const { getAppConfig } = await import("./installed.server");
-  const cfg = await getAppConfig<{ roomId?: number }>("factory").catch(() => null);
-  return cfg?.roomId ?? null;
+async function factoryInstalled(): Promise<boolean> {
+  const { isInstalled } = await import("./installed.server");
+  return isInstalled("factory").catch(() => false);
 }
 
 async function threadUrl(channelId: number, rootMsgId: number): Promise<string | null> {
@@ -51,34 +50,35 @@ export const repoReadinessFn = createServerFn({ method: "POST" })
     const { repoReadiness } = await import("./readiness.server");
     // Con el token de quien CONECTÓ el repo: así lo ve cualquier miembro del room.
     const r = await repoReadiness(row.connectedBy, data.repo, { fresh: !!data.fresh }).catch((e) => ({ error: String(e?.message ?? e) }));
-    const room = await factoryRoom();
-    const factoryRepos = room ? (await db.listRoomRepos(room)).map((x) => x.repo) : [];
+    // Todo room con repos es fábrica: el repo ya se validó arriba contra ESTE room.
+    const installed = await factoryInstalled();
     return {
       readiness: "error" in r ? null : r,
       error: "error" in r ? r.error : null,
-      factoryInstalled: !!room,
+      factoryInstalled: installed,
       isOwner: !!me.isOwner,
-      canPrepare: !!me.isOwner && factoryRepos.includes(data.repo),
+      canPrepare: !!me.isOwner && installed,
       activePrep: await activePrepFor(data.repo),
     };
   });
 
 /**
- * «Preparar repo»: abre un pedido en el room de la fábrica con el plan YA armado (lo que
+ * «Preparar repo»: abre un pedido en el room del repo con el plan YA armado (lo que
  * falta, nada más) y la tarjeta para firmar. No despierta a @plan: el plan es determinista y
  * no vale un turno. Al firmar, la estafeta de siempre despierta a @build.
  */
 export const prepareRepoFn = createServerFn({ method: "POST" })
-  .validator((d: { repo: string }) => d)
+  .validator((d: { repo: string; channelId?: number | null }) => d)
   .handler(async ({ data }) => {
     const { sessionUser } = await import("../chat");
     const me = await sessionUser();
     if (!me?.isOwner) throw new Error("sólo el dueño del espacio prepara repos");
-    const room = await factoryRoom();
-    if (!room) throw new Error("la Software Factory no está instalada");
+    if (!(await factoryInstalled())) throw new Error("la Software Factory no está instalada");
     const db = await import("../../db.server");
-    const row = (await db.listRoomRepos(room)).find((r) => r.repo === data.repo);
-    if (!row) throw new Error("ese repo no es de la fábrica");
+    // El room desde donde se pica; si no viene (llamadas viejas), el primero que tenga el repo.
+    const room = Number(data.channelId) || (await db.roomsOfRepo(data.repo))[0] || 0;
+    const row = room ? (await db.listRoomRepos(room)).find((r) => r.repo === data.repo) : null;
+    if (!row) throw new Error("ese repo no está en este room");
 
     const alive = await activePrepFor(data.repo);
     if (alive) return { ...alive, existing: true };

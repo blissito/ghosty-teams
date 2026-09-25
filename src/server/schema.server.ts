@@ -794,6 +794,16 @@ async function migrate(): Promise<void> {
     updated_at   INTEGER NOT NULL DEFAULT (unixepoch())
   )`);
   await exec("CREATE UNIQUE INDEX IF NOT EXISTS gt_factory_runs_root ON gt_factory_runs(channel_id, root_msg_id)");
+  // Lo que se pidió EN el mensaje para un hilo de la fábrica («@build con opus», «en agenda»).
+  // Va por HILO (canal + raíz) y no por corrida: el primer «@plan con opus» llega antes de que
+  // exista la corrida, y los relevos del mismo pedido lo heredan. Ver apps/factory-team.ts.
+  await exec(`CREATE TABLE IF NOT EXISTS gt_factory_thread_overrides (
+    channel_id  INTEGER NOT NULL,
+    root_msg_id INTEGER NOT NULL,
+    overrides   TEXT NOT NULL,
+    updated_at  INTEGER NOT NULL DEFAULT (unixepoch()),
+    PRIMARY KEY (channel_id, root_msg_id)
+  )`);
   // Quién firmó el plan vigente: con SUS credenciales (GitHub) trabaja @build en cada vuelta.
   await addColumn("gt_factory_runs", "approved_by", "TEXT");
   // La tarjeta VIVA de la corrida en el room (top-level): el estado de un vistazo y la firma

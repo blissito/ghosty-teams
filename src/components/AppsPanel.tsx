@@ -431,7 +431,7 @@ export function RolesEditor({ status, onChange }: { status: FactoryStatus; onCha
 
 // «Sugerir pedidos»: @plan lee el repo y deja en el room una tarjeta con pedidos listos para
 // mandar (un botón «Pedir» cada uno). Es el arranque cuando nadie sabe qué pedir primero.
-export function SuggestAsks({ roomSlug, repos = [] }: { roomSlug: string | null; repos?: string[] }) {
+export function SuggestAsks({ roomSlug, roomId = null, repos = [] }: { roomSlug: string | null; roomId?: number | null; repos?: string[] }) {
   const t = useT();
   const [state, setState] = useState<"idle" | "busy" | "sent" | "error">("idle");
   // Con varios repos, de cuál sugerir (con uno, ése).
@@ -439,7 +439,7 @@ export function SuggestAsks({ roomSlug, repos = [] }: { roomSlug: string | null;
   const run = async () => {
     setState("busy");
     try {
-      await factorySuggestFn({ data: repo ? { repo } : {} });
+      await factorySuggestFn({ data: { ...(repo ? { repo } : {}), ...(roomId ? { roomId } : {}) } });
       setState("sent");
     } catch {
       setState("error");

@@ -2183,6 +2183,21 @@ export async function callAgentBackendStream(
   // afirma en vez de asumirlo para que añadir un backend nuevo falle aquí y no en un
   // `undefined` a mitad del turno.
   if (agent.backend.kind !== "fleet") throw new Error(`backend no soportado en este camino: ${agent.backend.kind}`);
+  // SOFTWARE FACTORY: el equipo es por repo y por pedido (`.ghosty/factory.md`, «@build con
+  // opus»). La fila del handle recibe la mención; aquí se decide a qué agente de Studio va el
+  // turno y con qué modelo. Fuera de la fábrica devuelve null y nada cambia.
+  const defaultFleetId = agent.backend.id;
+  const factoryTurn = await import("./server/apps/factory-team.server")
+    .then((m) => m.factoryTurnFor(agent.handle, dest, defaultFleetId))
+    .catch((e) => {
+      console.error("[factory] equipo del turno", e);
+      return null;
+    });
+  if (factoryTurn?.refusal) {
+    await onChunk(factoryTurn.refusal);
+    return factoryTurn.refusal;
+  }
+  const fleetAgentId = factoryTurn?.fleetId ?? defaultFleetId;
 
   const native = rt.kind === "gs-native";
   const base = rt.base;
@@ -2376,8 +2391,10 @@ export async function callAgentBackendStream(
       ...(wakeUrl && wakeRef ? { wakeUrl, wakeRef } : {}),
       ...(inject ? { inject: true } : {}),
       ...(salesBoardId ? { boardId: salesBoardId } : {}),
+      // Modelo de ESTE turno (fábrica). gs lo valida contra el motor y lo topa por plan.
+      ...(native && factoryTurn?.model ? { model: factoryTurn.model } : {}),
     });
-    const url = `${base}/api/v2/fleet-agents/${(agent.backend as { id: string }).id}/message-stream`;
+    const url = `${base}/api/v2/fleet-agents/${fleetAgentId}/message-stream`;
     const doStream = (tok: string) =>
       fetch(url, { method: "POST", headers: rt.headers(streamBody, tok), body: streamBody, signal });
     // SELF-HEAL: el fleet_token de EasyBits (pool) CADUCA. Ante 401 refrescamos el

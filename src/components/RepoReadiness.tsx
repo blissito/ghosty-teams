@@ -112,7 +112,7 @@ export function RepoReadiness({ channelId, repo, compact = false, onLevel, autoO
     setBusy("prep");
     setError(null);
     try {
-      const out = await prepareRepoFn({ data: { repo } });
+      const out = await prepareRepoFn({ data: { repo, channelId } });
       setDone({ threadUrl: out.threadUrl });
       await load();
     } catch (e) {

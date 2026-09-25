@@ -7,7 +7,8 @@ const wakes: { key: string; text?: string }[] = [];
 let roomRepos: string[] = [];
 
 vi.mock("../../db.server", () => ({ listRoomRepos: async () => roomRepos.map((repo) => ({ repo })) }));
-vi.mock("./installed.server", () => ({ getAppConfig: async () => cfg }));
+vi.mock("./installed.server", () => ({ getAppConfig: async () => cfg, isInstalled: async () => !!cfg }));
+vi.mock("./factory", () => ({ factoryRoomIds: async () => (cfg ? [12] : []) }));
 vi.mock("../tenant.server", () => ({ withNamespace: (_ns: string, fn: () => unknown) => fn() }));
 vi.mock("../../dbq.server", () => ({
   dbq: async (sql: string) => {
@@ -47,8 +48,8 @@ describe("sweep de tareas programadas", () => {
     roomRepos = ["acme/web", "acme/api"];
     await sweepTenant("ns");
     expect(wakes.map((w) => w.key)).toEqual([
-      expect.stringMatching(/^sched:factory-nightly:acme\/web:/),
-      expect.stringMatching(/^sched:factory-nightly:acme\/api:/),
+      expect.stringMatching(/^sched:factory-nightly:12:acme\/web:/),
+      expect.stringMatching(/^sched:factory-nightly:12:acme\/api:/),
     ]);
     expect(wakes[1].text).toContain("SÓLO sobre el repo acme/api");
   });
@@ -60,6 +61,7 @@ describe("sweep de tareas programadas", () => {
 
   it("con la fábrica despierta a @plan con llave sched: (la del OK sin burbuja)", async () => {
     cfg = { roomId: 12 };
+    roomRepos = ["acme/web"];
     await sweepTenant("ns");
     expect(wakes).toHaveLength(1);
     expect(wakes[0].key).toMatch(/^sched:factory-nightly:/);
@@ -67,6 +69,7 @@ describe("sweep de tareas programadas", () => {
 
   it("si otro tick ya la reclamó, no dispara dos veces", async () => {
     cfg = { roomId: 12 };
+    roomRepos = ["acme/web"];
     claimOk = false;
     await sweepTenant("ns");
     expect(wakes).toHaveLength(0);

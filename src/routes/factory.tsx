@@ -1,26 +1,33 @@
 // «Fábrica»: la Software Factory del espacio en un solo lugar (antes, en Ajustes → Apps).
 //  - Pedidos: los números del espacio (cuántos se concretan, vueltas, tiempo al PR) y la
 //    lista con liga al hilo y al PR. Hoy se MIDE; con esto se fijarán los límites por plan.
-//  - Repos: «Listo para agentes» de cada repo del room de la fábrica (preparar, proteger,
-//    variables de la preview). `?repo=` abre las Variables de ése.
-//  - Equipo y Automático: sólo el dueño (roles de @plan/@build/@check y tareas programadas).
+//  - Rooms: todo room con repos es una fábrica; la página trabaja uno a la vez (`?room=`, y
+//    sin él el de la instalación). Tablero, sprints, pedidos y repos son de ése.
+//  - Repos: «Listo para agentes» de cada repo del room (preparar, proteger, variables de la
+//    preview) y su equipo (`.ghosty/factory.md`). `?repo=` abre las Variables de ése.
+//  - Equipo del espacio y Automático: sólo el dueño (el equipo por defecto y tareas programadas).
 // Misma forma que /forms: el loader sólo resuelve auth; los datos llegan por server fns.
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useEffect, useMemo, useState } from "react";
-import { ArrowLeft, Check, CircleDot, Factory } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { ArrowLeft, Check, ChevronDown, CircleDot, Factory } from "lucide-react";
 import { useLocale, useT } from "../i18n";
 import { intlLocale } from "../i18n.core";
 import { me } from "../server/auth";
 import { factoryEnsureBoardFn, factoryOverviewFn, factoryProposeSprintFn, factoryStatusFn, type FactoryStatus } from "../server/apps/factory";
 import { RepoReadiness } from "../components/RepoReadiness";
+import { RepoTeam } from "../components/RepoTeam";
 import { RolesEditor, SchedulesEditor, SuggestAsks } from "../components/AppsPanel";
 import { AskAgentHint } from "../components/AskAgentHint";
 
 type Overview = Awaited<ReturnType<typeof factoryOverviewFn>>;
-let cache: Overview | null = null;
+// Por room: cambiar de room y volver pinta al instante lo último que se vio.
+const cache = new Map<number | "default", Overview>();
 
 export const Route = createFileRoute("/factory")({
-  validateSearch: (s: Record<string, unknown>) => ({ repo: typeof s.repo === "string" ? s.repo : undefined }),
+  validateSearch: (s: Record<string, unknown>) => ({
+    repo: typeof s.repo === "string" ? s.repo : undefined,
+    room: Number(s.room) > 0 ? Number(s.room) : undefined,
+  }),
   loader: async () => ({ user: await me() }),
   component: FactoryPage,
 });
@@ -50,13 +57,13 @@ const HINT: Record<string, string> = {
   "Del pedido al PR": "Mediana del tiempo desde que se pide hasta que @check deja el PR listo para tu revisión.",
 };
 
-function MissingBoard({ onDone }: { onDone: () => void }) {
+function MissingBoard({ roomId, onDone }: { roomId: number | null; onDone: () => void }) {
   const t = useT();
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   return (
     <div className="mt-4 flex flex-wrap items-center gap-2 rounded-xl border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-800 dark:text-amber-300">
-      <span className="min-w-0 flex-1">{t("La fábrica no tiene tablero en Tasks: sus pedidos no pueden crear tareas.")}</span>
+      <span className="min-w-0 flex-1">{t("Este room no tiene tablero en Tasks: sus pedidos no pueden crear tareas.")}</span>
       <button
         type="button"
         disabled={busy}
@@ -64,7 +71,7 @@ function MissingBoard({ onDone }: { onDone: () => void }) {
           setBusy(true);
           setErr("");
           try {
-            await factoryEnsureBoardFn();
+            await factoryEnsureBoardFn({ data: { roomId } });
             onDone();
           } catch (e) {
             setErr(e instanceof Error ? e.message : String(e));
@@ -82,7 +89,7 @@ function MissingBoard({ onDone }: { onDone: () => void }) {
 }
 
 /** «¿Qué quieres lograr?» → @plan propone el sprint como borrador en el room de la fábrica. */
-function NewSprint({ roomSlug, repos }: { roomSlug: string | null; repos: string[] }) {
+function NewSprint({ roomId, roomSlug, repos }: { roomId: number | null; roomSlug: string | null; repos: string[] }) {
   const t = useT();
   const [goal, setGoal] = useState("");
   const [repo, setRepo] = useState(repos[0] ?? "");
@@ -92,7 +99,7 @@ function NewSprint({ roomSlug, repos }: { roomSlug: string | null; repos: string
     setState("busy");
     setErr("");
     try {
-      await factoryProposeSprintFn({ data: { goal, ...(repo ? { repo } : {}) } });
+      await factoryProposeSprintFn({ data: { goal, ...(repo ? { repo } : {}), ...(roomId ? { roomId } : {}) } });
       setState("sent");
       setGoal("");
     } catch (e) {
@@ -161,31 +168,109 @@ function RepoRow({ repo, channelId, initiallyOpen, focus }: { repo: string; chan
       {/* Montado siempre (así el renglón contraído sabe su nivel); sólo se oculta. */}
       <div className={open ? "border-t border-border p-3" : "hidden"}>
         <RepoReadiness channelId={channelId} repo={repo} autoOpenEnv={focus} onLevel={setLevel} />
+        {/* El equipo se pide al abrir: lee un archivo de GitHub y no hace falta contraído. */}
+        {open && <RepoTeam channelId={channelId} repo={repo} />}
       </div>
     </div>
+  );
+}
+
+type RoomOption = Overview["rooms"][number];
+
+/** «Trabaja en #room ▾»: cada room con repos es una fábrica; aquí se elige cuál se ve. */
+function RoomSwitcher({ rooms, current, onPick }: { rooms: RoomOption[]; current: RoomOption; onPick: (id: number) => void }) {
+  const t = useT();
+  const [open, setOpen] = useState(false);
+  const box = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const close = (e: MouseEvent | KeyboardEvent) => {
+      if (e instanceof KeyboardEvent ? e.key === "Escape" : !box.current?.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", close);
+    document.addEventListener("keydown", close);
+    return () => {
+      document.removeEventListener("mousedown", close);
+      document.removeEventListener("keydown", close);
+    };
+  }, [open]);
+  if (rooms.length < 2) {
+    return (
+      <a href={`/c/${current.slug}`} className="text-brand hover:underline">
+        #{current.slug}
+      </a>
+    );
+  }
+  return (
+    <span ref={box} className="relative inline-block">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        className="inline-flex items-center gap-1 rounded-md border border-border bg-surface-2 px-2 py-0.5 font-medium text-ink hover:border-brand"
+      >
+        #{current.slug}
+        <ChevronDown size={13} className={`text-muted transition-transform ${open ? "rotate-180" : ""}`} />
+      </button>
+      {open && (
+        <ul
+          role="listbox"
+          aria-label={t("Rooms de la fábrica")}
+          className="absolute left-0 top-full z-20 mt-1 w-64 overflow-hidden rounded-xl border border-border bg-surface py-1 shadow-lg"
+        >
+          {rooms.map((r) => (
+            <li key={r.id} role="option" aria-selected={r.id === current.id}>
+              <button
+                type="button"
+                onClick={() => {
+                  setOpen(false);
+                  if (r.id !== current.id) onPick(r.id);
+                }}
+                className={`flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-surface-2 ${r.id === current.id ? "font-semibold text-ink" : "text-ink"}`}
+              >
+                <span className="min-w-0 flex-1 truncate">#{r.slug}</span>
+                {r.isDefault && <span className="shrink-0 rounded-full bg-surface-3 px-1.5 py-0.5 text-[10px] text-muted">{t("principal")}</span>}
+                <span className="shrink-0 text-[11px] text-muted">
+                  {r.repos} {r.repos === 1 ? t("repo") : t("repos")}
+                </span>
+                {r.id === current.id && <Check size={14} className="shrink-0 text-brand" />}
+              </button>
+            </li>
+          ))}
+          <li className="border-t border-border px-3 py-2 text-[11px] leading-snug text-muted">
+            {t("Todo room con un repo conectado trabaja como fábrica. Conecta uno desde el ícono de GitHub del room.")}
+          </li>
+        </ul>
+      )}
+    </span>
   );
 }
 
 function FactoryPage() {
   const t = useT();
   const locale = useLocale();
-  const { repo: focusRepo } = Route.useSearch();
-  const [data, setData] = useState<Overview | null>(cache);
+  const { repo: focusRepo, room: roomParam } = Route.useSearch();
+  const navigate = Route.useNavigate();
+  const [data, setData] = useState<Overview | null>(cache.get(roomParam ?? "default") ?? null);
   const [owner, setOwner] = useState<FactoryStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<"open" | "closed">("open");
 
   const load = () =>
-    factoryOverviewFn()
+    factoryOverviewFn({ data: roomParam ? { roomId: roomParam } : {} })
       .then((d) => {
-        cache = d;
+        cache.set(roomParam ?? "default", d);
         setData(d);
         if (d.isOwner) factoryStatusFn().then(setOwner).catch(() => {});
       })
       .catch((e) => setError(e instanceof Error ? e.message : String(e)));
   useEffect(() => {
+    const hit = cache.get(roomParam ?? "default");
+    if (hit) setData(hit);
     void load();
-  }, []);
+  }, [roomParam]);
+  const currentRoom = data?.room ? (data.rooms.find((r) => r.id === data.room!.id) ?? { ...data.room, repos: data.repos.length, isDefault: false }) : null;
 
   const runs = useMemo(
     () => (data?.runs ?? []).filter((r) => ["done", "cancelled"].includes(r.status) === (filter === "closed")),
@@ -205,9 +290,10 @@ function FactoryPage() {
         <div>
           <h1 className="text-lg font-semibold text-ink">{t("Fábrica Agéntica")}</h1>
           <p className="text-sm text-muted">
-            {data?.room ? (
+            {data?.room && currentRoom ? (
               <>
-                {t("Trabaja en")} <a href={`/c/${data.room.slug}`} className="text-brand hover:underline">#{data.room.slug}</a>
+                {t("Trabaja en")}{" "}
+                <RoomSwitcher rooms={data.rooms} current={currentRoom} onPick={(id) => void navigate({ search: { room: id, repo: undefined } })} />
               </>
             ) : (
               t("@plan planea, @build construye, @check revisa. Tú firmas y mezclas.")
@@ -229,7 +315,7 @@ function FactoryPage() {
       {data?.installed && (
         <>
           {/* Sin tablero en Tasks los pedidos no tienen tarea: se dice y se arregla aquí. */}
-          {!data.board && data.isOwner && <MissingBoard onDone={() => void load()} />}
+          {!data.board && data.isOwner && data.room && <MissingBoard roomId={data.room.id} onDone={() => void load()} />}
           {data.board?.url && (
             <p className="mt-2 text-xs text-muted">
               {t("Tablero")}:{" "}
@@ -240,7 +326,7 @@ function FactoryPage() {
           )}
 
           {/* Sprint: el objetivo entra aquí; @plan lo parte en tickets (borrador en el room). */}
-          <NewSprint roomSlug={data.room?.slug ?? null} repos={data.repos} />
+          <NewSprint key={data.room?.id ?? 0} roomId={data.room?.id ?? null} roomSlug={data.room?.slug ?? null} repos={data.repos} />
           {data.sprints.length > 0 && (
             <section className="mt-6">
               <h2 className="text-sm font-semibold text-ink">{t("Sprints")}</h2>
@@ -363,7 +449,7 @@ function FactoryPage() {
             </div>
           </section>
 
-          {/* Repos del room de la fábrica. */}
+          {/* Repos del room: su «Listo para agentes» y su equipo. */}
           {data.room && data.repos.length > 0 && (
             <section className="mt-8">
               <h2 className="text-sm font-semibold text-ink">{t("Repos")}</h2>
@@ -386,7 +472,8 @@ function FactoryPage() {
           {owner && (
             <>
               <section className="mt-8">
-                <h2 className="text-sm font-semibold text-ink">{t("Equipo")}</h2>
+                <h2 className="text-sm font-semibold text-ink">{t("Equipo del espacio")}</h2>
+                <p className="text-[11px] text-muted">{t("Lo usan todos los repos, salvo lo que cambie el .ghosty/factory.md de cada uno.")}</p>
                 <div className="mt-2 rounded-xl border border-border bg-surface-2 p-3 text-sm">
                   <RolesEditor status={owner} onChange={() => void load()} />
                 </div>
@@ -394,8 +481,8 @@ function FactoryPage() {
               <section className="mt-8">
                 <h2 className="text-sm font-semibold text-ink">{t("Automático")}</h2>
                 <div className="mt-2 rounded-xl border border-border bg-surface-2 p-3 text-sm">
-                  <SuggestAsks roomSlug={owner.room?.slug ?? null} repos={owner.repos} />
-                  <SchedulesEditor roomSlug={owner.room?.slug ?? null} />
+                  <SuggestAsks key={data.room?.id ?? 0} roomSlug={data.room?.slug ?? null} roomId={data.room?.id ?? null} repos={data.repos} />
+                  <SchedulesEditor roomSlug={data.room?.slug ?? null} />
                 </div>
               </section>
             </>

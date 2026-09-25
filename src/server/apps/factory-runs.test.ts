@@ -10,6 +10,10 @@ const tasksCalls: string[] = [];
 let warnedAlready = false;
 
 vi.mock("./installed.server", () => ({ getAppConfig: async () => cfg, isInstalled: async () => !!cfg }));
+// El tablero del room: el de la instalación en el room de la instalación (lo que hace factoryBoardOf).
+vi.mock("./factory", () => ({
+  factoryBoardOf: async (ch: number) => (cfg?.boardId && ch === (cfg.roomId ?? 3) ? { id: Number(cfg.boardId), slug: "f", name: "Fábrica" } : null),
+}));
 vi.mock("../../dbq.server", () => ({
   dbq: async (sql: string, args: unknown[] = []) => {
     if (sql.includes("WHERE task_ref")) return alive;

@@ -173,25 +173,29 @@ export async function tasksTry(
   sub: string,
   name: string,
   args: Record<string, unknown>,
+  /** Room del pedido: cada room de la fábrica tiene su tablero. Sin él, el de la instalación. */
+  channelId?: number | null,
 ): Promise<{ ok: true; result: Record<string, any> } | { ok: false; error: string }> {
   const { getAppConfig } = await import("./installed.server");
-  const cfg = await getAppConfig<{ boardId?: number | null }>("factory");
+  const cfg = await getAppConfig<{ boardId?: number | null; roomId?: number }>("factory");
   const fail = (error: string) => {
     console.error(`[factory] Tasks ${name}: ${error}`);
     return { ok: false as const, error };
   };
-  if (!cfg?.boardId) return fail("la fábrica no tiene tablero en Tasks");
+  const { factoryBoardOf } = await import("./factory");
+  const boardId = channelId ? ((await factoryBoardOf(channelId))?.id ?? null) : (cfg?.boardId ?? null);
+  if (!boardId) return fail(channelId && channelId !== cfg?.roomId ? "este room no tiene tablero en Tasks (créalo en la Fábrica)" : "la fábrica no tiene tablero en Tasks");
   const { currentSlug } = await import("../tenant.server");
   const slug = await currentSlug();
   if (!slug) return fail("no se pudo resolver el espacio");
   const { callTasks } = await import("../tasks-bridge.server");
-  const r = await callTasks(slug, sub, cfg.boardId, name, args).catch((e) => ({ ok: false as const, error: String(e?.message ?? e) }));
+  const r = await callTasks(slug, sub, boardId, name, args).catch((e) => ({ ok: false as const, error: String(e?.message ?? e) }));
   if (!r.ok) return fail(r.error);
   return { ok: true, result: (r.result ?? {}) as Record<string, any> };
 }
 
-export async function tasksCall(sub: string, name: string, args: Record<string, unknown>) {
-  const r = await tasksTry(sub, name, args);
+export async function tasksCall(sub: string, name: string, args: Record<string, unknown>, channelId?: number | null) {
+  const r = await tasksTry(sub, name, args, channelId);
   return r.ok ? r.result : null;
 }
 
@@ -202,7 +206,7 @@ export async function createTaskFor(run: Run, planMd: string): Promise<void> {
     title: run.title,
     description: planMd.slice(0, 8000),
     labels: [stageLabel(run.status)],
-  });
+  }, run.channelId);
   const ref = r.ok ? String(r.result.ref ?? r.result.id ?? "") : "";
   if (ref) {
     await dbq("UPDATE gt_factory_runs SET task_ref = ? WHERE id = ?", [ref, run.id]);
@@ -224,15 +228,15 @@ async function syncTask(run: Run): Promise<void> {
     id: run.taskRef,
     add: [now],
     remove: all.map(stageLabel).filter((l) => l !== now),
-  });
-  if (run.status === "building") await tasksCall(run.requestedBy, "task_move", { id: run.taskRef, column: "In Progress" });
+  }, run.channelId);
+  if (run.status === "building") await tasksCall(run.requestedBy, "task_move", { id: run.taskRef, column: "In Progress" }, run.channelId);
   if (run.status === "done" || run.status === "cancelled")
-    await tasksCall(run.requestedBy, "task_move", { id: run.taskRef, column: "Done" });
+    await tasksCall(run.requestedBy, "task_move", { id: run.taskRef, column: "Done" }, run.channelId);
 }
 
 export async function linkPrToTask(run: Run, url: string): Promise<void> {
   if (!run.taskRef) return;
-  await tasksCall(run.requestedBy, "task_link", { id: run.taskRef, url, title: `PR · ${run.title}` }).catch(() => null);
+  await tasksCall(run.requestedBy, "task_link", { id: run.taskRef, url, title: `PR · ${run.title}` }, run.channelId).catch(() => null);
 }
 
 // ── GitHub ───────────────────────────────────────────────────────────────────
@@ -378,6 +382,18 @@ export async function maybeThreadDecision(opts: {
  *
  * Idempotente por `task_ref`: reasignar la misma tarea con una corrida viva no abre otra.
  */
+/** El room de la fábrica cuyo tablero tiene esta tarea (Tasks comparte la base). */
+async function roomOfTask(taskRef: string): Promise<number | null> {
+  const rows = await dbq(
+    `SELECT b.channel_id FROM task_tasks t
+       JOIN gt_room_board b ON b.project_id = t.project_id
+       JOIN gt_room_repos r ON r.channel_id = b.channel_id
+      WHERE t.id = ? LIMIT 1`,
+    [Number(taskRef)],
+  ).catch(() => []);
+  return rows[0] ? Number(rows[0].channel_id) : null;
+}
+
 export async function startRunFromTask(opts: {
   taskRef: string;
   title: string;
@@ -388,6 +404,9 @@ export async function startRunFromTask(opts: {
   const { getAppConfig } = await import("./installed.server");
   const cfg = await getAppConfig<{ roomId?: number }>("factory");
   if (!cfg?.roomId) return { error: "la Software Factory no está instalada en este espacio" };
+  // El room del pedido es el del TABLERO de la tarea (cada room de la fábrica tiene el suyo);
+  // si ese tablero no es de ningún room con repos, el de la instalación.
+  const roomId = (await roomOfTask(opts.taskRef)) ?? cfg.roomId;
   const alive = await dbq(
     `SELECT id FROM gt_factory_runs WHERE task_ref = ? AND status NOT IN ('done','cancelled') ORDER BY id DESC LIMIT 1`,
     [opts.taskRef],
@@ -396,7 +415,7 @@ export async function startRunFromTask(opts: {
 
   const title = opts.title.trim().slice(0, 120) || `Tarea ${opts.taskRef}`;
   const db = await import("../../db.server");
-  const repos = (await db.listRoomRepos(cfg.roomId)).map((r) => r.repo);
+  const repos = (await db.listRoomRepos(roomId)).map((r) => r.repo);
   // El mensaje raíz del pedido, en el room de la fábrica y con la cara de @plan: todo lo de la
   // corrida (tarjeta de plan, firmas, PR) cuelga de este hilo.
   const who = await agentIdentity("plan");
@@ -405,14 +424,14 @@ export async function startRunFromTask(opts: {
   const body =
     `📋 **Tarea #${opts.taskRef} asignada a @plan desde Tasks:** ${title}` +
     (opts.description.trim() ? `\n\n${opts.description.trim().slice(0, 1500)}` : "");
-  const { id: rootId } = await db.postAgent(cfg.roomId, null, body, "msg", who.handle, who.name, "general", who.avatar);
+  const { id: rootId } = await db.postAgent(roomId, null, body, "msg", who.handle, who.name, "general", who.avatar);
   const msg = await db.getMessage(rootId);
-  if (msg) bus.publish(bus.ch.room(await currentNamespace(), cfg.roomId), { t: "message:new", msg });
+  if (msg) bus.publish(bus.ch.room(await currentNamespace(), roomId), { t: "message:new", msg });
 
   const rows = await dbq(
     `INSERT INTO gt_factory_runs (channel_id, root_msg_id, topic, title, status, repo, task_ref, requested_by)
      VALUES (?, ?, 'general', ?, 'planning', ?, ?, ?) RETURNING id`,
-    [cfg.roomId, rootId, title, repos.length === 1 ? repos[0] : null, opts.taskRef, opts.requestedBy],
+    [roomId, rootId, title, repos.length === 1 ? repos[0] : null, opts.taskRef, opts.requestedBy],
   );
   const run = (await getRun(Number(rows[0].id)))!;
   await ensureRunCard(run);

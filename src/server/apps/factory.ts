@@ -66,7 +66,7 @@ export async function requestCiBox(repos: string[]): Promise<string | null> {
 }
 
 /** Agentes de Studio que puede usar este espacio (scopeado por la firma, como "De Studio"). */
-async function studioAgents() {
+export async function studioAgents() {
   const { nativeRuntimeBase } = await import("../ghosty-runtime.server");
   const base = await nativeRuntimeBase();
   if (!base) return [];
@@ -171,6 +171,41 @@ export type FactoryStatus = {
 };
 
 const IDP = () => process.env.GHOSTY_IDENTITY_URL ?? "https://www.ghosty.studio";
+
+/**
+ * Rooms que trabajan como fábrica: TODOS los que tienen repos. La instalación sólo fija el
+ * room por defecto (`cfg.roomId`): el de la barra, el de los horarios si no hay otro y el que
+ * se abre primero en /factory. Las tools `factory_*` ya servían en cualquier room con repos.
+ */
+export async function factoryRoomIds(): Promise<number[]> {
+  const { dbq } = await import("../../dbq.server");
+  const rows = await dbq(
+    `SELECT DISTINCT r.channel_id FROM gt_room_repos r JOIN gc_channels c ON c.id = r.channel_id WHERE COALESCE(c.archived, 0) = 0`,
+    [],
+  ).catch(() => []);
+  return rows.map((r) => Number(r.channel_id));
+}
+
+/** El room pedido si es de fábrica y lo ves; si no, el de la instalación. Lanza si no ves ninguno. */
+async function pickFactoryRoom(me: { sub: string; isOwner?: boolean }, cfg: FactoryCfg | null, roomId?: number | null) {
+  const db = await import("../../db.server");
+  const ids = new Set(await factoryRoomIds());
+  const channels = (await db.listChannels(me.sub, !!me.isOwner)).filter((c) => ids.has(c.id));
+  const room = channels.find((c) => c.id === Number(roomId)) ?? channels.find((c) => c.id === cfg?.roomId) ?? channels[0] ?? null;
+  if (!room) throw new Error("no ves ningún room con repos de la fábrica");
+  return { room, channels, repos: (await db.listRoomRepos(room.id)).map((r) => r.repo) };
+}
+
+/** El tablero de Tasks de un room de la fábrica: el que el room recuerda o, en el de la instalación, el suyo. */
+export async function factoryBoardOf(channelId: number): Promise<{ id: number; slug: string; name: string } | null> {
+  const { roomBoard, listBoards } = await import("../tasks-boards.server");
+  const own = await roomBoard(channelId).catch(() => null);
+  if (own) return own;
+  const { getAppConfig } = await import("./installed.server");
+  const cfg = await getAppConfig<FactoryCfg>("factory").catch(() => null);
+  if (cfg?.roomId !== channelId || !cfg.boardId) return null;
+  return (await listBoards().catch(() => [])).find((b) => b.id === cfg.boardId) ?? null;
+}
 
 export const factoryStatusFn = createServerFn({ method: "GET" }).handler(async (): Promise<FactoryStatus> => {
   await requireOwner();
@@ -441,7 +476,9 @@ export type FactoryRunRow = {
  * del espacio), el room de la fábrica y sus repos. Lo del dueño (roles, horarios) sigue en
  * `factoryStatusFn`.
  */
-export const factoryOverviewFn = createServerFn({ method: "GET" }).handler(async () => {
+export const factoryOverviewFn = createServerFn({ method: "GET" })
+  .validator((d: { roomId?: number | null } | undefined) => d ?? {})
+  .handler(async ({ data }) => {
   const me = await sessionUser();
   if (!me) throw new Error("no autenticado");
   const { isInstalled, getAppConfig } = await import("./installed.server");
@@ -450,21 +487,31 @@ export const factoryOverviewFn = createServerFn({ method: "GET" }).handler(async
   const db = await import("../../db.server");
   const channels = await db.listChannels(me.sub, me.isOwner);
   const byId = new Map(channels.map((c) => [c.id, c]));
-  const room = cfg?.roomId ? (byId.get(cfg.roomId) ?? null) : null;
-  // El tablero de la fábrica en Tasks (misma base del espacio): liga a cada tarea, y si no
+  // Cada room con repos es una fábrica; la página trabaja uno a la vez (el pedido o el de la
+  // instalación). Todo lo de abajo —tablero, sprints, pedidos, números, repos— es de ÉSE.
+  const picked = installed ? await pickFactoryRoom(me, cfg, data.roomId).catch(() => null) : null;
+  const room = picked?.room ?? null;
+  const roomIds = new Set(await factoryRoomIds());
+  const rooms = await Promise.all(
+    channels
+      .filter((c) => roomIds.has(c.id))
+      .map(async (c) => ({ id: c.id, slug: c.slug, name: c.name, repos: (await db.listRoomRepos(c.id)).length, isDefault: c.id === cfg?.roomId })),
+  );
+  // El tablero del room en Tasks (misma base del espacio): liga a cada tarea, y si no
   // existe, se dice (sin tablero los pedidos no tienen tarea).
-  const { listBoards } = await import("../tasks-boards.server");
-  const board = cfg?.boardId ? ((await listBoards().catch(() => [])).find((b) => b.id === cfg.boardId) ?? null) : null;
+  const board = room ? await factoryBoardOf(room.id) : null;
   const { currentSlug } = await import("../tenant.server");
   const wsSlug = await currentSlug();
   const tasksBase = wsSlug && board ? `https://${wsSlug}.${process.env.TASKS_ROOT_DOMAIN ?? "tasks.ghosty.studio"}/p/${board.slug}` : null;
-  const repos = room ? (await db.listRoomRepos(room.id)).map((r) => r.repo) : [];
+  const repos = picked?.repos ?? [];
   const { dbq } = await import("../../dbq.server");
-  const rows = await dbq(
-    `SELECT id, channel_id, root_msg_id, title, status, repo, loops, created_at, pr_ready_at, pr_url, kind, task_ref
-     FROM gt_factory_runs ORDER BY id DESC LIMIT 500`,
-    [],
-  ).catch(() => []);
+  const rows = room
+    ? await dbq(
+        `SELECT id, channel_id, root_msg_id, title, status, repo, loops, created_at, pr_ready_at, pr_url, kind, task_ref
+         FROM gt_factory_runs WHERE channel_id = ? ORDER BY id DESC LIMIT 500`,
+        [room.id],
+      ).catch(() => [])
+    : [];
   // Sólo los pedidos de rooms que esta persona ve (mismo criterio que la tarjeta viva).
   const runs: FactoryRunRow[] = rows
     .filter((r) => byId.has(Number(r.channel_id)))
@@ -483,14 +530,16 @@ export const factoryOverviewFn = createServerFn({ method: "GET" }).handler(async
     }));
   const { runStats } = await import("./factory-stats");
   // Sprints de los rooms que ve (con su avance: tickets con merge / incluidos).
-  const sprintRows = await dbq(
-    `SELECT s.id, s.channel_id, s.card_msg_id, s.title, s.status, s.repo, s.created_at,
-            SUM(CASE WHEN i.included = 1 THEN 1 ELSE 0 END) AS total,
-            SUM(CASE WHEN i.included = 1 AND i.status IN ('merged','skipped') THEN 1 ELSE 0 END) AS merged
-     FROM gt_factory_sprints s LEFT JOIN gt_factory_sprint_items i ON i.sprint_id = s.id
-     GROUP BY s.id ORDER BY s.id DESC LIMIT 50`,
-    [],
-  ).catch(() => []);
+  const sprintRows = room
+    ? await dbq(
+        `SELECT s.id, s.channel_id, s.card_msg_id, s.title, s.status, s.repo, s.created_at,
+                SUM(CASE WHEN i.included = 1 THEN 1 ELSE 0 END) AS total,
+                SUM(CASE WHEN i.included = 1 AND i.status IN ('merged','skipped') THEN 1 ELSE 0 END) AS merged
+         FROM gt_factory_sprints s LEFT JOIN gt_factory_sprint_items i ON i.sprint_id = s.id
+         WHERE s.channel_id = ? GROUP BY s.id ORDER BY s.id DESC LIMIT 50`,
+        [room.id],
+      ).catch(() => [])
+    : [];
   const sprints = sprintRows
     .filter((r) => byId.has(Number(r.channel_id)))
     .map((r) => ({
@@ -508,11 +557,12 @@ export const factoryOverviewFn = createServerFn({ method: "GET" }).handler(async
     installed,
     isOwner: !!me.isOwner,
     room: room ? { id: room.id, slug: room.slug, name: room.name } : null,
+    rooms,
     repos,
     runs,
     stats: runStats(runs),
   };
-});
+  });
 
 /** Datos de la tarjeta de veredicto de @check. */
 export const factoryVerdictFn = createServerFn({ method: "POST" })
@@ -564,24 +614,28 @@ export const factoryMergeFn = createServerFn({ method: "POST" })
   });
 
 /** La fábrica sin tablero en Tasks (se borró, o la instalación no pudo crearlo): crearlo. */
-export const factoryEnsureBoardFn = createServerFn({ method: "POST" }).handler(async () => {
+export const factoryEnsureBoardFn = createServerFn({ method: "POST" })
+  .validator((d: { roomId?: number | null } | undefined) => d ?? {})
+  .handler(async ({ data }) => {
   const user = await requireOwner();
   const { getAppConfig, recordInstall } = await import("./installed.server");
   const cfg = await getAppConfig<FactoryCfg>("factory");
   if (!cfg?.roomId) throw new Error("la fábrica no está instalada");
-  const { listBoards, rememberRoomBoard } = await import("../tasks-boards.server");
-  if (cfg.boardId && (await listBoards().catch(() => [])).some((b) => b.id === cfg.boardId)) return { ok: true as const };
+  const { room } = await pickFactoryRoom(user, cfg, data.roomId);
+  if (await factoryBoardOf(room.id)) return { ok: true as const };
   const { currentSlug } = await import("../tenant.server");
   const slug = await currentSlug();
   if (!slug) throw new Error("no pude resolver el espacio");
   const { callTasks } = await import("../tasks-bridge.server");
-  const r = await callTasks(slug, user.sub, 0, "task_board_create", { name: "Fábrica" });
+  const isDefault = room.id === cfg.roomId;
+  const r = await callTasks(slug, user.sub, 0, "task_board_create", { name: isDefault ? "Fábrica" : `Fábrica · ${room.name}` });
   const id = Number((r as any)?.result?.id);
   if (!r.ok || !Number.isFinite(id) || id <= 0) throw new Error(r.ok ? "Tasks no devolvió el tablero" : r.error);
-  await rememberRoomBoard(cfg.roomId, id, user.sub);
-  await recordInstall("factory", user.sub, { ...cfg, boardId: id });
+  const { rememberRoomBoard } = await import("../tasks-boards.server");
+  await rememberRoomBoard(room.id, id, user.sub);
+  if (isDefault) await recordInstall("factory", user.sub, { ...cfg, boardId: id });
   return { ok: true as const };
-});
+  });
 
 // ── Sprints (ver apps/sprint.server.ts) ─────────────────────────────────────
 
@@ -699,7 +753,7 @@ export const factorySprintItemFn = createServerFn({ method: "POST" })
 
 /** «Proponer sprint» desde la Fábrica: despierta a @plan con el objetivo. */
 export const factoryProposeSprintFn = createServerFn({ method: "POST" })
-  .validator((d: { goal: string; repo?: string }) => d)
+  .validator((d: { goal: string; repo?: string; roomId?: number | null }) => d)
   .handler(async ({ data }) => {
     const me = await sessionUser();
     if (!me) throw new Error("no autenticado");
@@ -708,12 +762,10 @@ export const factoryProposeSprintFn = createServerFn({ method: "POST" })
     const { getAppConfig } = await import("./installed.server");
     const cfg = await getAppConfig<FactoryCfg>("factory");
     if (!cfg?.roomId) throw new Error("la fábrica no está instalada");
-    const db = await import("../../db.server");
-    if (!(await db.listChannels(me.sub, me.isOwner)).some((c) => c.id === cfg.roomId)) throw new Error("no ves el room de la fábrica");
-    const repos = (await db.listRoomRepos(cfg.roomId)).map((r) => r.repo);
+    const { room, repos } = await pickFactoryRoom(me, cfg, data.roomId);
     const repo = data.repo && repos.includes(data.repo) ? data.repo : repos.length === 1 ? repos[0] : "";
     if (repos.length > 1 && !repo) throw new Error("elige el repo");
-    await wakePlanForSprint(me.sub, cfg.roomId, null, "sprint-propose",
+    await wakePlanForSprint(me.sub, room.id, null, "sprint-propose",
       `${me.name ?? "Una persona"} quiere lograr: «${goal}»${repo ? ` en el repo ${repo}` : ""}.\n` +
         `Lee el repo (estructura, código relevante, issues abiertos) y propón un sprint con factory_sprint_submit${repo ? ` (repo ${repo})` : ""}: ` +
         `3 a 8 tickets de ≤ ~3 h, en orden, cada uno con criterios de aceptación verificables y dependencias sólo si son reales. ` +
@@ -753,15 +805,14 @@ async function wakePlanForSprint(sub: string, channelId: number, parentId: numbe
  * caer en la rama de encargo de `fire()` (sin la cláusula del OK: aquí siempre hay trabajo).
  */
 export const factorySuggestFn = createServerFn({ method: "POST" })
-  .validator((d: { repo?: string } | undefined) => d ?? {})
+  .validator((d: { repo?: string; roomId?: number | null } | undefined) => d ?? {})
   .handler(async ({ data }) => {
   const user = await requireOwner();
   const { getAppConfig } = await import("./installed.server");
   const cfg = await getAppConfig<FactoryCfg>("factory");
   if (!cfg?.roomId) throw new Error("la fábrica no está instalada");
   // Con varios repos en el room, sobre cuál se sugiere (lo elige quien pica el botón).
-  const db = await import("../../db.server");
-  const roomRepos = (await db.listRoomRepos(cfg.roomId)).map((r) => r.repo);
+  const { room, repos: roomRepos } = await pickFactoryRoom(user, cfg, data.roomId);
   const repo = data.repo && roomRepos.includes(data.repo) ? data.repo : roomRepos.length === 1 ? roomRepos[0] : "";
   if (roomRepos.length > 1 && !repo) throw new Error("elige de qué repo sugerir");
   const { resolvedAgents, agentGroupId } = await import("../../agents.server");
@@ -777,7 +828,7 @@ export const factorySuggestFn = createServerFn({ method: "POST" })
       sub: user.sub,
       ns,
       groupId: await agentGroupId(plan, "factory-suggest"),
-      dest: { channelId: cfg.roomId, topic: "general", handle: plan.handle, name: plan.name, avatar: plan.avatar },
+      dest: { channelId: room.id, topic: "general", handle: plan.handle, name: plan.name, avatar: plan.avatar },
     }),
     cause: "sugerir pedidos",
     text:
@@ -796,13 +847,14 @@ export const factorySuggestFn = createServerFn({ method: "POST" })
 export type RepoGuard = { repo: string; ci: boolean; protection: "protected" | "unprotected" | "no_permission" | "plan_required" | "error" };
 
 /** Por repo del room de la fábrica: ¿tiene CI? ¿está protegida la rama principal? */
-export const factoryReposFn = createServerFn({ method: "GET" }).handler(async (): Promise<{ repos: RepoGuard[]; ciLabel: string | null; roomId: number | null }> => {
+export const factoryReposFn = createServerFn({ method: "GET" })
+  .validator((d: { roomId?: number | null } | undefined) => d ?? {})
+  .handler(async ({ data }): Promise<{ repos: RepoGuard[]; ciLabel: string | null; roomId: number | null }> => {
   const user = await requireOwner();
   const { getAppConfig, recordInstall } = await import("./installed.server");
   const cfg = await getAppConfig<FactoryCfg>("factory");
   if (!cfg?.roomId) return { repos: [], ciLabel: null, roomId: null };
-  const db = await import("../../db.server");
-  const repos = (await db.listRoomRepos(cfg.roomId)).map((r) => r.repo);
+  const { room, repos } = await pickFactoryRoom(user, cfg, data.roomId);
   // Espacios instalados antes de la caja de CI: se pide aquí, la primera vez que se abre.
   let ciLabel = cfg.ciLabel ?? null;
   if (!ciLabel && repos.length) {
@@ -817,8 +869,8 @@ export const factoryReposFn = createServerFn({ method: "GET" }).handler(async ()
       protection: await protectionState(user.sub, repo).catch(() => "error" as const),
     })),
   );
-  return { repos: out, ciLabel, roomId: cfg.roomId };
-});
+  return { repos: out, ciLabel, roomId: room.id };
+  });
 
 /**
  * Protege la rama principal de un repo del room de la fábrica (ruleset «Ghosty Factory»).
@@ -829,15 +881,60 @@ export const protectMainFn = createServerFn({ method: "POST" })
   .validator((d: { repo: string }) => d)
   .handler(async ({ data }) => {
     const user = await requireOwner();
-    const { getAppConfig } = await import("./installed.server");
-    const cfg = await getAppConfig<FactoryCfg>("factory");
+    const { isInstalled } = await import("./installed.server");
+    if (!(await isInstalled("factory").catch(() => false))) throw new Error("la fábrica no está instalada");
     const db = await import("../../db.server");
-    const repos = cfg?.roomId ? (await db.listRoomRepos(cfg.roomId)).map((r) => r.repo) : [];
-    if (!repos.includes(data.repo)) throw new Error("ese repo no es de la fábrica");
+    if (!(await db.roomsOfRepo(data.repo)).length) throw new Error("ese repo no está en ningún room");
     const { protectMain } = await import("./ci-starter.server");
     const r = await protectMain(user.sub, data.repo);
     if ("error" in r) throw new Error(r.error);
     const { invalidateReadiness } = await import("./readiness.server");
     invalidateReadiness(data.repo);
     return r;
+  });
+
+// ── Equipo por repo (`.ghosty/factory.md`) ───────────────────────────────────
+
+export type RepoTeamView = {
+  repo: string;
+  hasFile: boolean;
+  /** Abre el archivo en GitHub: editarlo si existe, crearlo (con la plantilla) si no. */
+  fileUrl: string;
+  roles: {
+    handle: FactoryHandle;
+    agent: { id: string; name: string; engine: string } | null;
+    model: string | null;
+    agentSource: "message" | "repo" | "space";
+    modelSource: "message" | "repo" | "space";
+    problem: string | null;
+  }[];
+};
+
+/**
+ * El equipo EFECTIVO de un repo de un room: el del espacio con lo que sobreescriba el archivo
+ * del repo. Cualquiera que vea el room lo ve (es lo mismo que verá en el hilo del pedido).
+ */
+export const factoryRepoTeamFn = createServerFn({ method: "POST" })
+  .validator((d: { channelId: number; repo: string; fresh?: boolean }) => d)
+  .handler(async ({ data }): Promise<RepoTeamView> => {
+    const { visibleChannel } = await import("../room-repos");
+    const { db } = await visibleChannel(Number(data.channelId));
+    const row = (await db.listRoomRepos(Number(data.channelId))).find((r) => r.repo === data.repo);
+    if (!row) throw new Error("ese repo no está en este room");
+    const T = await import("./factory-team.server");
+    if (data.fresh) T.invalidateRepoTeamFile(row.repo);
+    const rows = await db.listAgents();
+    const space = Object.fromEntries(HANDLES.map((h) => [h, rows.find((a) => a.handle === h && a.enabled)?.fleet_id ?? null]));
+    const team = await T.effectiveTeam(row.repo, row.connectedBy, space);
+    const { githubApi } = await import("../connectors/github.server");
+    const info = await githubApi(row.connectedBy, `/repos/${row.repo}`).catch(() => null);
+    const branch = encodeURIComponent(String(info?.default_branch ?? "main"));
+    const { TEAM_FILE, teamFileTemplate } = await import("./factory-team");
+    const template = teamFileTemplate(
+      Object.fromEntries(team.roles.filter((r) => r.agent).map((r) => [r.handle, { name: r.agent!.name, model: r.model ?? "" }])),
+    );
+    const fileUrl = team.hasFile
+      ? `https://github.com/${row.repo}/edit/${branch}/${TEAM_FILE}`
+      : `https://github.com/${row.repo}/new/${branch}?filename=${encodeURIComponent(TEAM_FILE)}&value=${encodeURIComponent(template)}`;
+    return { repo: row.repo, hasFile: team.hasFile, fileUrl, roles: team.roles };
   });

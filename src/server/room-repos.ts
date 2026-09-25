@@ -95,6 +95,14 @@ export const addRoomRepoFn = createServerFn({ method: "POST" })
     const repo = normalizeRepo(data.repo);
     if (!repo) throw new Error('el repositorio va como "dueño/repo"');
     await db.addRoomRepo(Number(data.channelId), repo, me.sub);
+    // Con la fábrica instalada, este room ya es fábrica: su repo entra a la caja de CI del
+    // espacio (gs suma los repos, no los reemplaza). En segundo plano y sin tumbar nada.
+    void (async () => {
+      const { isInstalled } = await import("./apps/installed.server");
+      if (!(await isInstalled("factory").catch(() => false))) return;
+      const { requestCiBox } = await import("./apps/factory");
+      await requestCiBox([repo]);
+    })().catch(() => {});
     return await db.listRoomRepos(Number(data.channelId));
   });
 

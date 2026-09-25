@@ -122,37 +122,35 @@ export async function sweepTenant(ns: string): Promise<void> {
 }
 
 async function fireSchedule(ns: string, kind: ScheduleKind, ownerSub: string, origin: string): Promise<void> {
-  const { getAppConfig } = await import("./installed.server");
-  const cfg = await getAppConfig<{ roomId?: number }>("factory");
-  if (!cfg?.roomId) return; // sin fábrica instalada no hay a quién despertar
+  const { isInstalled } = await import("./installed.server");
+  if (!(await isInstalled("factory").catch(() => false))) return; // sin fábrica no hay a quién despertar
   const { resolvedAgents, agentGroupId } = await import("../../agents.server");
   const plan = (await resolvedAgents()).find((a) => a.handle === "plan");
   if (!plan) return;
   const { enqueueWakeup, mintWakeRef, armWakeups } = await import("../wakeups.server");
   const day = new Date().toISOString().slice(0, 10);
-  // UN despertar por repo del room: cada revisión es un turno aislado (si uno falla o tarda,
-  // los demás no), y el plan que proponga ya sabe de qué repo es.
+  // UN despertar por repo de CADA room de la fábrica (todo room con repos lo es): cada revisión
+  // es un turno aislado (si uno falla o tarda, los demás no) y cae en el room de su repo.
   const db = await import("../../db.server");
-  const repos = (await db.listRoomRepos(cfg.roomId)).map((r) => r.repo);
-  for (const repo of repos.length ? repos : [null]) {
-    await enqueueWakeup({
-      key: `sched:factory-${kind}:${repo ?? "room"}:${day}`,
-      ref: mintWakeRef({
-        sub: ownerSub,
-        ns,
-        groupId: await agentGroupId(plan, `factory-sched-${kind}${repo ? `-${repo}` : ""}`),
-        // Top-level en el room: si propone un plan, `factory_plan_submit` publica la raíz.
-        dest: { channelId: cfg.roomId, topic: "general", handle: plan.handle, name: plan.name, avatar: plan.avatar },
-      }),
-      cause: kind === "nightly" ? "revisión nocturna" : "revisión de dependencias",
-      text:
-        `[factory-sched:${kind}] ` +
-        (repo ? `Trabaja SÓLO sobre el repo ${repo} (pásalo en \`repo\` si propones un plan). ` : "") +
-        ENCARGO[kind],
-      // El origin guardado al programar (aquí no hay request).
-      origin,
-      dueAt: Math.floor(Date.now() / 1000),
-    });
+  const { factoryRoomIds } = await import("./factory");
+  for (const roomId of await factoryRoomIds()) {
+    for (const { repo } of await db.listRoomRepos(roomId)) {
+      await enqueueWakeup({
+        key: `sched:factory-${kind}:${roomId}:${repo}:${day}`,
+        ref: mintWakeRef({
+          sub: ownerSub,
+          ns,
+          groupId: await agentGroupId(plan, `factory-sched-${kind}-${repo}`),
+          // Top-level en el room: si propone un plan, `factory_plan_submit` publica la raíz.
+          dest: { channelId: roomId, topic: "general", handle: plan.handle, name: plan.name, avatar: plan.avatar },
+        }),
+        cause: kind === "nightly" ? "revisión nocturna" : "revisión de dependencias",
+        text: `[factory-sched:${kind}] Trabaja SÓLO sobre el repo ${repo} (pásalo en \`repo\` si propones un plan). ` + ENCARGO[kind],
+        // El origin guardado al programar (aquí no hay request).
+        origin,
+        dueAt: Math.floor(Date.now() / 1000),
+      });
+    }
   }
   armWakeups(ns);
 }

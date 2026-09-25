@@ -628,6 +628,10 @@ export async function factoryContext(dest: ToolDest | null, toolChannel: ToolCha
     parts.push(`En ESTE turno actúas como @${h}; tu identidad de siempre se queda, pero aplica este rol.`);
     parts.push(FACTORY_COMMON);
     parts.push(ROLE_INSTRUCTIONS[h]);
+    // Convenciones del repo (`.ghosty/factory.md`): le ganan a lo genérico de arriba.
+    const { factoryTurnFor } = await import("./factory-team.server");
+    const ft = await factoryTurnFor(h, dest, "").catch(() => null);
+    if (ft?.notes) parts.push(`Convenciones del repo ${ft.repo} (.ghosty/factory.md, las escribió el equipo; le ganan a lo general): ${ft.notes}`);
   }
   const root = threadRoot(dest);
   if (dest?.channelId && root) {
