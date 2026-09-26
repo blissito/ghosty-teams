@@ -14,6 +14,7 @@ export const Route = createFileRoute("/")({
     const landing = await takeLanding().catch(() => null);
     if (landing) throw redirect({ to: "/c/$slug", params: { slug: landing } });
     const channels = await listChannelsFn();
-    throw redirect({ to: "/c/$slug", params: { slug: channels[0]?.slug ?? "general" } });
+    // `home`: entrar a Teams abre Inicio (ver el foco inicial en c.$slug.tsx).
+    throw redirect({ to: "/c/$slug", params: { slug: channels[0]?.slug ?? "general" }, search: { home: 1 } });
   },
 });

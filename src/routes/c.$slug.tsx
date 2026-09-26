@@ -279,15 +279,17 @@ export const Route = createFileRoute("/c/$slug")({
    * parámetro y el router redirigiría a la URL sin él — el mismo tropiezo que costó el `?v=`
    * de los artefactos.
    */
-  validateSearch: (search: Record<string, unknown>): { thread?: number; dm?: number } => {
+  validateSearch: (search: Record<string, unknown>): { thread?: number; dm?: number; home?: 1 } => {
     const id = (v: unknown) => {
       const n = Number(v);
       return Number.isFinite(n) && n > 0 ? n : undefined;
     };
     const thread = id(search.thread);
     const dm = id(search.dm);
-    // Mutuamente excluyentes: el centro enseña una cosa a la vez.
-    return thread != null ? { thread } : dm != null ? { dm } : {};
+    // Mutuamente excluyentes: el centro enseña una cosa a la vez. `home` lo pone sólo la
+    // raíz `/` (routes/index.tsx): entrar a Teams abre Inicio; un link a un room, el room.
+    const home = search.home === 1 || search.home === "1" || search.home === true;
+    return thread != null ? { thread } : dm != null ? { dm } : home ? { home: 1 } : {};
   },
   // El hilo y el flujo NO van en el loader (se cargan client-side con cache +
   // skeleton → abrir es instantáneo). El loader solo trae rooms + meta + user.
@@ -2116,18 +2118,26 @@ function ChannelPage() {
       // La URL manda, y la aplica el efecto de `search` de abajo. Aquí sólo se sale para no
       // pisarla con el foco guardado.
       if (search.thread != null || search.dm != null) return;
+      // Entrar a Teams por la raíz → INICIO. Antes «sin foco guardado» también era Inicio, y
+      // eso rompía todo link directo a un room (`/c/anuncios` desde /ads o /factory abría
+      // Inicio): la raíz ahora lo dice en la URL y un room pedido por URL abre el room.
+      if (search.home) {
+        setHomeOpen(true);
+        return;
+      }
       try {
         const raw = sessionStorage.getItem(`focus:${channel.slug}`);
         if (raw) {
           const f = JSON.parse(raw) as { view?: typeof view; dm?: number; thread?: number; home?: boolean; room?: boolean };
-          if (f.home) setHomeOpen(true);
-          else if (f.view) setView(f.view);
+          // Inicio guardado sólo se restaura en un RELOAD (deploy/refresh estando en Inicio);
+          // una navegación nueva a este room abre el room.
+          const reload = (performance.getEntriesByType("navigation")[0] as PerformanceNavigationTiming | undefined)?.type === "reload";
+          if (f.home) {
+            if (reload) setHomeOpen(true);
+          } else if (f.view) setView(f.view);
           else if (f.dm != null) setOpenDmId(f.dm);
           else if (f.thread != null) setOpenThreadId(f.thread);
           // f.room → canal plano (homeOpen queda false).
-        } else {
-          // Primera entrada (sin foco guardado) → Teams arranca en INICIO, no en el canal.
-          setHomeOpen(true);
         }
       } catch {
         /* sessionStorage/JSON inválido → arranca en el flujo */
