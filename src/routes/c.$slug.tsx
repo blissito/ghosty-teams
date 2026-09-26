@@ -2413,7 +2413,7 @@ function ChannelPage() {
         // Editando un artefacto, ESC es del editor (y el panel pide confirmación
         // para cerrar): este atajo global NO debe tirar el panel con cambios vivos.
         if (document.body.dataset.artifactEditing) return;
-        if (openArtifactRef.current) { descartarPanel(); marcarCierre(); playArtifactClose(); setOpenArtifact(null); return; }
+        if (openArtifactRef.current) { descartarPanel(); marcarCierre(); playArtifactClose(); setPanelInstant(false); setOpenArtifact(null); return; }
         if (openThreadId != null) { setOpenThreadId(null); return; }
       }
     };
@@ -2705,6 +2705,8 @@ function ChannelPage() {
    * cualquier automatismo; se libera al cerrar el panel.
    */
   const panelManualRef = useRef(false);
+  /** El panel se abrió desde un link directo: sin slide (ver `instant` en ArtifactPanel). */
+  const [panelInstant, setPanelInstant] = useState(false);
   /** Campañas de Ghosty Ads cuyo panel cerró la persona: ya no se abren solas en esta sesión. */
   const campaignDismissedRef = useRef<Set<number>>(new Set());
   const openArtifactWithSound = useCallback((v: ArtifactView) => {
@@ -2763,11 +2765,14 @@ function ChannelPage() {
       return;
     }
     const id = search.campaign;
-    const h = requestAnimationFrame(() => {
+    // Sin slide (ver `instant` en ArtifactPanel) y con setTimeout, no requestAnimationFrame: en
+    // una pestaña en segundo plano rAF no corre y el panel no se abría hasta volver a ella.
+    const h = setTimeout(() => {
       urlCampaignPending.current = null;
+      setPanelInstant(true);
       openArtifactWithSound({ kind: "campaign", title: `Ghosty Ads · #${id}`, campaignId: id, channelId: channel.id });
-    });
-    return () => cancelAnimationFrame(h);
+    }, 0);
+    return () => clearTimeout(h);
   }, [search.campaign, search.thread, openThreadId, channel.id]);
   const reopenHiddenDraft = useCallback(() => {
     setHiddenDraft((d) => {
@@ -3009,7 +3014,7 @@ function ChannelPage() {
         )}
       </AnimatePresence>
       <ArtifactBoundary resetKey={openArtifact?.title ?? "none"}>
-        <ArtifactPanel artifact={openArtifact} onClose={() => { descartarPanel(); marcarCierre(); playArtifactClose(); setOpenArtifact(null); }} onOpen={(a) => { limpiarCierre(); setOpenArtifact(a); }} />
+        <ArtifactPanel artifact={openArtifact} instant={panelInstant} onClose={() => { descartarPanel(); marcarCierre(); playArtifactClose(); setPanelInstant(false); setOpenArtifact(null); }} onOpen={(a) => { limpiarCierre(); setOpenArtifact(a); }} />
       </ArtifactBoundary>
       <AnimatePresence>
         {paletteOpen && (

@@ -81,7 +81,8 @@ const toCampaign = (r: Record<string, any>): Campaign => {
     requestedBy: String(r.requested_by),
     approvedBy: r.approved_by ?? null,
     error: r.error ?? null,
-    imported: !!r.imported,
+    // sqld devuelve TODO como texto: `!!"0"` es true (así salían #2–#5 como «importada»).
+    imported: Number(r.imported) === 1,
     pending: parseJson<PendingChange | null>(r.pending_json, null),
     createdAt: Number(r.created_at ?? 0),
     updatedAt: Number(r.updated_at ?? 0),

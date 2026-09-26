@@ -336,9 +336,16 @@ const maxPanelW = (vw: number) => Math.max(MIN_W, vw - SIDEBAR_W - CHAT_MIN);
 export default function ArtifactPanel({
   artifact: rootArtifact,
   onClose,
+  instant = false,
 }: {
   artifact: ArtifactView | null;
   onClose: () => void;
+  /**
+   * Abrir YA a su ancho, sin el slide. Para un link directo: el panel se abre mientras la página
+   * aún hidrata (o con la pestaña en segundo plano, donde el navegador pausa las animaciones) y
+   * el slide se quedaba a medio camino — 85 px pegado a la derecha.
+   */
+  instant?: boolean;
   onOpen?: (a: ArtifactView) => void; // (compat) el caller aún lo pasa; el drill-down es interno (`detail`)
 }) {
   // Drill-down índice→doc como estado INTERNO (`detail`): NO cambia `rootArtifact` (el
@@ -1300,7 +1307,7 @@ export default function ArtifactPanel({
                   "fixed inset-y-0 right-0 z-[100] flex max-w-none overflow-hidden bg-surface pt-[env(safe-area-inset-top)] lg:pt-0"
                 : "fixed right-0 top-0 z-50 flex h-full max-w-full overflow-hidden border-l border-border bg-surface shadow-2xl pt-[env(safe-area-inset-top)] lg:pt-0 lg:relative lg:z-auto lg:h-auto lg:max-w-[75vw] lg:shrink-0 lg:shadow-none lg:self-stretch"
             }
-            initial={{ width: 0 }}
+            initial={instant ? false : { width: 0 }}
             animate={{ width: effectiveW }}
             exit={{ width: 0 }}
             // Al arrastrar, sin animación. Para expandir/contraer a pantalla completa un

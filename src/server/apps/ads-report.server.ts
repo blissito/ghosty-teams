@@ -27,7 +27,7 @@ export async function getSchedule(): Promise<AdsSchedule> {
   } catch {
     /* default */
   }
-  return { enabled: !!r.enabled, hours: normalizeHours(hours), tz: String(r.tz), nextAt: r.next_at != null ? Number(r.next_at) : null };
+  return { enabled: Number(r.enabled) === 1, hours: normalizeHours(hours), tz: String(r.tz), nextAt: r.next_at != null ? Number(r.next_at) : null };
 }
 
 export async function saveSchedule(patch: { enabled: boolean; hours?: number[] }, ownerSub: string, tz?: string): Promise<number | null> {
