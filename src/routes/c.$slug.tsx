@@ -1368,6 +1368,16 @@ function ChannelPage() {
   // dispara el turno es esta llamada, porque el turno necesita la sesión de la persona —
   // un barrido de servidor no tiene ninguna, y por eso esto es un botón y no un automatismo.
   const retryTurnLocal = (messageId: number) => {
+    // Cada salida sin turno se avisa: antes el botón no hacía NADA y se leía como «no recibe
+    // clic» (26-sep, @ads: quien lo pulsó no era quien pidió el turno).
+    const avisar = (preview: string) =>
+      pushToast({ sender: t("Retomar"), avatar: "", preview, kind: "room", onOpen: () => {} });
+    const porQue = (razon: string) =>
+      razon === "ajeno"
+        ? t("Sólo quien pidió este turno puede retomarlo.")
+        : razon === "no-retomable"
+          ? t("Este turno ya no se puede retomar. Vuelve a mencionar al agente.")
+          : t("No se pudo retomar. Intenta de nuevo.");
     void prepareRetryFn({ data: { messageId } })
       .then(async (r) => {
         if (!r.ok && r.razon === "confirmar") {
@@ -1379,13 +1389,13 @@ function ChannelPage() {
             : t("Antes de cortarse ya ejecutó:") + " " + r.tools.join(", ") + ".";
           if (!window.confirm(`${qué}\n\n${t("¿Retomar de todos modos?")}`)) return;
           const r2 = await prepareRetryFn({ data: { messageId, confirmado: true } });
-          if (!r2.ok) return;
+          if (!r2.ok) return avisar(porQue(r2.razon));
           return disparar(r2);
         }
-        if (!r.ok) return;
+        if (!r.ok) return avisar(porQue(r.razon));
         return disparar(r);
       })
-      .catch(() => {});
+      .catch(() => avisar(t("No se pudo retomar. Intenta de nuevo.")));
 
     type Preparado = Extract<Awaited<ReturnType<typeof prepareRetryFn>>, { ok: true }>;
     function disparar(r: Preparado) {
