@@ -168,7 +168,7 @@ export function AdsProposalCard({ card, channelId }: { card: { campaignId: numbe
 // su ancho real y con alto de sobra para el post completo, SIN scroll, y se escala para caber:
 // se ve el anuncio entero como en el celular.
 const META_W = 335;
-const META_H = 700;
+const META_H = 630;
 
 function MetaPreview({ src, title, loadingLabel }: { src: string; title: string; loadingLabel: string }) {
   const box = useRef<HTMLDivElement>(null);
