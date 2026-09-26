@@ -14,6 +14,8 @@ import {
   parseTargeting,
   reportDigest,
   submitMode,
+  mergeSubmit,
+  summarizeProposal,
   removeZone,
   zoneRemovable,
 } from "./ads-proposal";
@@ -298,5 +300,42 @@ describe("quitar zonas", () => {
     const noRegion = applyEdit(withCity, { targeting: removeZone(t, { kind: "region", key: "2513" }) }, NOW);
     if (typeof noRegion === "string") throw new Error(noRegion);
     expect(noRegion.targeting.regions).toBeUndefined();
+  });
+});
+
+describe("ads_proposal_submit con cambios parciales", () => {
+  const cur = parseProposal({ ...base, cta: "BOOK_NOW", headline: "Entrega hoy", targeting: { countries: ["MX"], interests: [{ id: "6003107902433", name: "Ferretería" }] } }, NOW);
+  if (typeof cur === "string") throw new Error(cur);
+
+  it("lo que no se manda se hereda de la vigente (el copy y el botón editados a mano no se pisan)", () => {
+    const next = parseProposal(mergeSubmit(cur, { targeting: { regions: [{ key: "2513", name: "Jalisco" }] } }), NOW);
+    if (typeof next === "string") throw new Error(next);
+    expect(next.message).toBe(cur.message);
+    expect(next.cta).toBe("BOOK_NOW");
+    expect(next.headline).toBe("Entrega hoy");
+    expect(next.dailyBudget).toBe(cur.dailyBudget);
+    expect(next.mediaUrl).toBe(cur.mediaUrl);
+    // `targeting` se reemplaza ENTERO: los intereses que no se mandaron se van.
+    expect(next.targeting).toEqual({ ageMin: 25, ageMax: 55, regions: [{ key: "2513", name: "Jalisco" }] });
+    expect(changedFields(cur, next)).toEqual(["targeting"]);
+  });
+
+  it("un campo mandado gana, en snake_case o camelCase; null no borra", () => {
+    const a = parseProposal(mergeSubmit(cur, { daily_budget: 150, message: null }), NOW);
+    const b = parseProposal(mergeSubmit(cur, { dailyBudget: 150 }), NOW);
+    if (typeof a === "string" || typeof b === "string") throw new Error("inválida");
+    expect(a.dailyBudget).toBe(150);
+    expect(a.message).toBe(cur.message);
+    expect(b).toEqual(a);
+    expect(changedFields(cur, a)).toEqual(["dailyBudget"]);
+  });
+
+  it("el resumen del contexto trae copy, botón, presupuesto, zonas y edad", () => {
+    const s = summarizeProposal(cur);
+    expect(s).toContain(cur.message);
+    expect(s).toContain("BOOK_NOW");
+    expect(s).toContain("$50 MXN al día");
+    expect(s).toContain("zonas MX");
+    expect(s).toContain("edad 25–55");
   });
 });

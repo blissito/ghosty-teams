@@ -311,6 +311,60 @@ export function describeChanges(fields: ProposalField[]): string {
   return parts.length === 1 ? parts[0] : `${parts.slice(0, -1).join(", ")} y ${parts[parts.length - 1]}`;
 }
 
+/** Los campos que manda `ads_proposal_submit` (snake_case, como su inputSchema). */
+const SUBMIT_KEYS = ["name", "message", "headline", "greeting", "cta", "media_url", "targeting", "daily_budget", "end_time"] as const;
+
+/**
+ * `ads_proposal_submit` sobre una propuesta abierta: lo que NO se manda se hereda de la
+ * vigente (merge superficial por campo; `targeting` se reemplaza entero si viene). Así
+ * «cambia la zona» es mandar sólo `targeting`, sin pisar el copy que editó una persona.
+ * Acepta también las llaves camelCase de la propuesta.
+ */
+export function mergeSubmit(current: Proposal, raw: Record<string, unknown>): Record<string, unknown> {
+  const base: Record<string, unknown> = {
+    name: current.name,
+    message: current.message,
+    headline: current.headline ?? "",
+    greeting: current.greeting ?? "",
+    cta: current.cta ?? CTA_DEFAULT,
+    media_url: current.mediaUrl,
+    targeting: current.targeting,
+    daily_budget: current.dailyBudget,
+    end_time: current.endTime,
+  };
+  const camel: Record<string, string> = { media_url: "mediaUrl", daily_budget: "dailyBudget", end_time: "endTime" };
+  for (const k of SUBMIT_KEYS) {
+    const v = raw[k] !== undefined && raw[k] !== null ? raw[k] : camel[k] ? raw[camel[k]] : undefined;
+    if (v !== undefined && v !== null) base[k] = v;
+  }
+  return base;
+}
+
+/** La propuesta en una línea por campo, para el contexto de @ads (no tiene que preguntarla). */
+export function summarizeProposal(p: Proposal): string {
+  const t = p.targeting ?? { ageMin: AGE_DEFAULT.min, ageMax: AGE_DEFAULT.max };
+  const zones = [
+    ...(t.countries ?? []),
+    ...(t.regions ?? []).map((r) => r.name ?? r.key),
+    ...(t.cities ?? []).map((c) => `${c.name ?? c.key}${c.radiusKm ? ` +${c.radiusKm} km` : ""}`),
+  ];
+  const cta = p.cta ?? CTA_DEFAULT;
+  return [
+    `título «${p.name}»`,
+    `copy «${p.message.replace(/\s+/g, " ").slice(0, 400)}»`,
+    p.headline ? `encabezado «${p.headline}»` : null,
+    p.greeting ? `saludo «${p.greeting}»` : null,
+    `botón ${cta} («${CTA_LABELS[cta] ?? cta}»)`,
+    `presupuesto $${p.dailyBudget} MXN al día hasta ${p.endTime}`,
+    `zonas ${zones.join(", ") || "MX"}`,
+    `edad ${t.ageMin}–${t.ageMax}`,
+    `intereses ${(t.interests ?? []).map((i) => i.name).join(", ") || "ninguno (amplia)"}`,
+    `creativo ${p.mediaUrl}`,
+  ]
+    .filter(Boolean)
+    .join("; ");
+}
+
 /** Fecha de fin desde un `<input type="date">`: ese día a las 23:59 en la Ciudad de México. */
 export function endTimeFromDate(date: string): string {
   return /^\d{4}-\d{2}-\d{2}$/.test(date) ? `${date}T23:59:00-06:00` : date;
