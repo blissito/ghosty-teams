@@ -199,7 +199,7 @@ function tools(dest: ToolDest | null): ConnectorTool[] {
     {
       name: "ads_proposal_submit",
       description:
-        "SÓLO @ads. Entrega la propuesta de una campaña click-to-Messenger: la plataforma publica en el hilo la tarjeta con la vista " +
+        "SÓLO @ads. Entrega la propuesta de una campaña click-to-Messenger (o, con `link`, un anuncio web de columna derecha): la plataforma publica en el hilo la tarjeta con la vista " +
         "previa real, la audiencia estimada y el techo total, con [Crear en pausa] y [Cancelar] para una PERSONA. No gasta nada ni " +
         "crea nada en Meta. Montos en pesos MXN; `end_time` en ISO.",
       inputSchema: {
@@ -208,7 +208,13 @@ function tools(dest: ToolDest | null): ConnectorTool[] {
           name: { type: "string", description: "Nombre de la campaña (se ve en Ads Manager)" },
           message: { type: "string", description: "El copy: texto principal del anuncio, corto" },
           headline: { type: "string", description: "Título corto (opcional)" },
-          greeting: { type: "string", description: "Saludo de Messenger (opcional)" },
+          greeting: { type: "string", description: "Saludo de Messenger (opcional; no aplica con link)" },
+          link: {
+            type: "string",
+            description:
+              "Sitio https al que lleva el anuncio. Con él sale SÓLO en la columna derecha de Facebook, en escritorio, con imagen " +
+              "cuadrada (sin video) y botón LEARN_MORE por default. Sin link es click-to-Messenger. \"\" lo quita.",
+          },
           campaign_id: { type: "number", description: "La propuesta que ajustas (#N), desde cualquier hilo del room" },
           new_campaign: { type: "boolean", description: "true SÓLO si de verdad es una campaña nueva (no un ajuste)" },
           cta: {

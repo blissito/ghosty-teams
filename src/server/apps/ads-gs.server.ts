@@ -20,7 +20,7 @@ export type MetaStatus = {
   page: { id: string; name: string } | null;
 };
 
-export type GsInsights = { spend: number; impressions: number; clicks: number; conversations: number };
+export type GsInsights = { spend: number; impressions: number; clicks: number; linkClicks?: number; conversations: number };
 export type GsLeadStats = { byAd: Record<string, { leads: number; qualified: number }>; leads: number; qualified: number };
 export type GsLocation = { key: string; name: string; type: "country" | "region" | "city"; countryCode: string; region?: string | null };
 export type GsPlacementRow = { platform: string; position: string; spend: number; impressions: number; conversations: number };
@@ -45,7 +45,7 @@ type Ops = {
   select: [{ adAccountId: string; pageId: string }, Record<string, never>];
   locations: [{ q: string }, { items: GsLocation[] }];
   interests: [{ q: string }, { items: { id: string; name: string; audienceMin: number; audienceMax: number; path: string[] }[] }];
-  estimate: [{ targeting: Targeting }, { lower: number; upper: number }];
+  estimate: [{ targeting: Targeting; web?: boolean }, { lower: number; upper: number }];
   // En video Meta no da iframe: viene `note` para enseñarla en su lugar.
   preview: [{ proposal: Proposal }, { iframeSrc: string | null; note: string | null }];
   campaigns: [Record<string, never>, { items: GsCampaign[] }];
@@ -61,7 +61,7 @@ type Ops = {
   placements: [{ campaignId: string }, { rows: GsPlacementRow[] }];
   set_placements: [{ campaignId: string; publisherPlatforms: string[]; by: string }, Record<string, never>];
   // Anuncio nuevo con otro copy/botón/creativo; el viejo se pausa. Meta lo revisa de nuevo.
-  replace_ad: [{ campaignId: string; message: string; headline?: string; cta?: string; mediaUrl: string; by: string }, { adId: string }];
+  replace_ad: [{ campaignId: string; message: string; headline?: string; cta?: string; mediaUrl: string; link?: string; by: string }, { adId: string }];
   archive: [{ campaignId: string; by: string }, Record<string, never>];
   set_budget: [{ campaignId: string; dailyBudget: number; by: string }, Record<string, never>];
 };

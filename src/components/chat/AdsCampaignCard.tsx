@@ -29,7 +29,7 @@ export function FunnelRow({ f }: { f: Funnel }) {
   const t = useT();
   const steps: [string, string][] = [
     [t("Gasto"), mxn(f.spend)],
-    [t("Mensajes"), String(f.conversations)],
+    [f.web ? t("Clics") : t("Mensajes"), String(f.conversations)],
     [t("Leads"), String(f.leads)],
     [t("Calificados"), String(f.qualified)],
   ];

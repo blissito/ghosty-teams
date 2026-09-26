@@ -263,10 +263,10 @@ export async function recordFirstVersion(campaignId: number, p: StoredProposal, 
  * igual y la tarjeta los vuelve a pedir. El estimado se reusa si la segmentación no cambió.
  */
 export async function previewFor(channelId: number, p: Proposal, prev?: StoredProposal | null): Promise<StoredProposal & { previewError?: string }> {
-  const sameTargeting = !!prev?.estimate && JSON.stringify(prev.targeting) === JSON.stringify(p.targeting);
+  const sameTargeting = !!prev?.estimate && JSON.stringify(prev.targeting) === JSON.stringify(p.targeting) && !prev.link === !p.link;
   const media = await forGs({ channelId, proposal: p });
   const [est, pv] = await Promise.all([
-    sameTargeting ? Promise.resolve(null) : gsAds("estimate", { targeting: p.targeting }),
+    sameTargeting ? Promise.resolve(null) : gsAds("estimate", { targeting: p.targeting, web: Boolean(p.link) }),
     "error" in media ? Promise.resolve(null) : gsAds("preview", { proposal: media }),
   ]);
   return {
@@ -511,6 +511,7 @@ export async function applyPending(c: Campaign, me: Who): Promise<Campaign> {
         message: pending.ad.message,
         ...(pending.ad.headline ? { headline: pending.ad.headline } : {}),
         ...(pending.ad.cta ? { cta: pending.ad.cta } : {}),
+        ...(pending.ad.link ? { link: pending.ad.link } : {}),
         mediaUrl: media.mediaUrl,
         by: me.sub,
       });
@@ -625,7 +626,9 @@ export async function funnels(cs: Campaign[]): Promise<{ byId: Map<number, Funne
         l += Number(leads.byAd?.[ad]?.leads ?? 0);
         q += Number(leads.byAd?.[ad]?.qualified ?? 0);
       }
-    byId.set(c.id, funnelOf({ spend: i?.spend, conversations: i?.conversations, leads: l, qualified: q }));
+    // Un anuncio web (columna derecha) no abre conversaciones: su paso del embudo son los clics al sitio.
+    const web = Boolean(c.proposal.link);
+    byId.set(c.id, funnelOf({ spend: i?.spend, conversations: web ? i?.linkClicks : i?.conversations, leads: l, qualified: q, web }));
   }
   const error = !ins.ok ? ins.error : leads && !leads.ok ? leads.error : null;
   return { byId, error };

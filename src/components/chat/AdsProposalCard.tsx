@@ -24,6 +24,7 @@ import {
   zoneRemovable,
   type ProposalEdit,
   type Targeting,
+  WEB_CTA_TYPES,
 } from "../../server/apps/ads-proposal";
 import ConfirmModal from "../ConfirmModal";
 import { compactSummary } from "../../lib/ads-links";
@@ -334,7 +335,13 @@ export function AdsProposalView({
             />
             {/* El botón del anuncio, como se ve en Meta. */}
             <span className="inline-block rounded-md bg-surface-3 px-3 py-1 text-xs font-semibold text-ink">{t(CTA_LABELS[cta])}</span>
-            {(editable || p.greeting) && (
+            {p.link ? (
+            <div className="text-muted">
+              {t("Lleva a")}:{" "}
+              <a href={p.link} target="_blank" rel="noreferrer" className="break-all text-ink underline">{p.link}</a>
+              <div>{t("Columna derecha de Facebook · escritorio")}</div>
+            </div>
+            ) : (editable || p.greeting) && (
             <div className="text-muted">
               {t("Saludo en Messenger")}:{" "}
               <EditableText
@@ -356,7 +363,7 @@ export function AdsProposalView({
                   onChange={(e) => void save({ cta: e.target.value }).catch(() => {})}
                   className="rounded-full border border-brand/40 bg-brand/10 px-2 py-0.5 text-[11px] font-semibold text-brand"
                 >
-                  {CTA_TYPES.map((c) => (
+                  {(p.link ? WEB_CTA_TYPES : CTA_TYPES).map((c) => (
                     <option key={c} value={c}>
                       {t("Botón")}: {t(CTA_LABELS[c])}
                     </option>

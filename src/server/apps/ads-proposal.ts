@@ -74,6 +74,24 @@ export function isCta(v: unknown): v is CtaType {
   return (CTA_TYPES as readonly string[]).includes(String(v));
 }
 
+/** Botones de un anuncio con `link` (columna derecha, va a un sitio); el mismo set que gs. */
+export const WEB_CTA_TYPES = ["LEARN_MORE", "SIGN_UP", "GET_OFFER", "CONTACT_US", "APPLY_NOW", "SHOP_NOW", "BOOK_NOW", "GET_QUOTE"] as const;
+export const WEB_CTA_DEFAULT: CtaType = "LEARN_MORE";
+
+/** El link de un anuncio web: https o nada. */
+export function webLinkOf(v: unknown): string | null {
+  const raw = String(v ?? "").trim();
+  if (!raw) return null;
+  try {
+    const u = new URL(raw);
+    return u.protocol === "https:" ? u.toString() : null;
+  } catch {
+    return null;
+  }
+}
+
+const looksLikeVideo = (url: string) => /\.(mp4|mov|m4v|webm)(\?|#|$)/i.test(url);
+
 export type Proposal = {
   name: string;
   /** Botón del anuncio; sin él gs usa MESSAGE_PAGE. */
@@ -82,6 +100,9 @@ export type Proposal = {
   headline?: string;
   mediaUrl: string;
   greeting?: string;
+  /** Sitio al que lleva. Con él el anuncio sale en la columna derecha de Facebook (escritorio,
+   *  sólo imagen) en vez de abrir Messenger. */
+  link?: string;
   targeting: Targeting;
   dailyBudget: number;
   endTime: string;
@@ -239,13 +260,22 @@ export function parseProposal(raw: Record<string, unknown>, nowMs: number): Prop
   const message = str(raw.message, 1000);
   if (message.length < 10) return "falta el copy en `message` (el texto principal del anuncio)";
   const headline = str(raw.headline, 80);
-  const greeting = str(raw.greeting, 300);
-  const ctaRaw = str(raw.cta, 40).toUpperCase();
+  const linkRaw = str(raw.link, 2000);
+  const link = webLinkOf(linkRaw);
+  if (linkRaw && !link) return "`link` tiene que ser una URL https (el sitio al que lleva el anuncio)";
+  // Un anuncio web no abre Messenger: sin saludo.
+  const greeting = link ? "" : str(raw.greeting, 300);
+  let ctaRaw = str(raw.cta, 40).toUpperCase();
   if (ctaRaw && !isCta(ctaRaw)) return `\`cta\` va como uno de: ${CTA_TYPES.join(", ")}`;
-  const cta = (ctaRaw || CTA_DEFAULT) as CtaType;
+  // Al pasar a web, «Enviar mensaje» (el default de Messenger) se vuelve «Más información».
+  if (link && ctaRaw === "MESSAGE_PAGE") ctaRaw = WEB_CTA_DEFAULT;
+  if (link && ctaRaw && !(WEB_CTA_TYPES as readonly string[]).includes(ctaRaw))
+    return `con \`link\` el \`cta\` va como uno de: ${WEB_CTA_TYPES.join(", ")}`;
+  const cta = (ctaRaw || (link ? WEB_CTA_DEFAULT : CTA_DEFAULT)) as CtaType;
   const mediaUrl = str(raw.media_url ?? raw.mediaUrl, 2000);
   if (!mediaUrl) return "falta el creativo en `media_url`: una imagen o video público (https) o un adjunto del room";
   if (!isMediaUrl(mediaUrl)) return "`media_url` tiene que ser https o un adjunto del room (/api/attachment/…)";
+  if (link && looksLikeVideo(mediaUrl)) return "la columna derecha sólo acepta imagen (cuadrada, 1080×1080): cambia `media_url`";
   const targeting = parseTargeting(raw.targeting);
   if (typeof targeting === "string") return targeting;
   const dailyBudget = Math.round(Number(raw.daily_budget ?? raw.dailyBudget) * 100) / 100;
@@ -262,6 +292,7 @@ export function parseProposal(raw: Record<string, unknown>, nowMs: number): Prop
     ...(headline ? { headline } : {}),
     mediaUrl,
     ...(greeting ? { greeting } : {}),
+    ...(link ? { link } : {}),
     cta,
     targeting,
     dailyBudget,
@@ -277,6 +308,7 @@ export type ProposalEdit = {
   message?: string;
   headline?: string;
   greeting?: string;
+  link?: string;
   dailyBudget?: number;
   endTime?: string;
   cta?: string;
@@ -308,6 +340,7 @@ export function applyEdit(current: Proposal, edit: ProposalEdit, nowMs: number):
     message: edit.message ?? current.message,
     headline: edit.headline ?? current.headline ?? "",
     greeting: edit.greeting ?? current.greeting ?? "",
+    link: edit.link ?? current.link ?? "",
     media_url: current.mediaUrl,
     cta: edit.cta ?? current.cta ?? CTA_DEFAULT,
     targeting: { ...restTargeting, ...(interests.length ? { interests } : {}) },
@@ -317,7 +350,7 @@ export function applyEdit(current: Proposal, edit: ProposalEdit, nowMs: number):
   return parseProposal(merged, nowMs);
 }
 
-const FIELD_KEYS = ["name", "message", "headline", "greeting", "cta", "dailyBudget", "endTime", "targeting", "mediaUrl"] as const;
+const FIELD_KEYS = ["name", "message", "headline", "greeting", "link", "cta", "dailyBudget", "endTime", "targeting", "mediaUrl"] as const;
 export type ProposalField = (typeof FIELD_KEYS)[number];
 
 /** Qué cambió entre dos versiones (para la línea del hilo y el contexto de @ads). */
@@ -325,7 +358,7 @@ export function changedFields(prev: Partial<Proposal>, next: Partial<Proposal>):
   const same = (a: unknown, b: unknown) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
   return FIELD_KEYS.filter((k) => {
     if (k === "cta") return (prev.cta ?? CTA_DEFAULT) !== (next.cta ?? CTA_DEFAULT);
-    if (k === "headline" || k === "greeting") return (prev[k] ?? "") !== (next[k] ?? "");
+    if (k === "headline" || k === "greeting" || k === "link") return (prev[k] ?? "") !== (next[k] ?? "");
     return !same(prev[k], next[k]);
   });
 }
@@ -335,6 +368,7 @@ const FIELD_LABEL: Record<ProposalField, string> = {
   message: "el copy",
   headline: "el encabezado",
   greeting: "el saludo",
+  link: "el link",
   cta: "el botón",
   dailyBudget: "el presupuesto",
   endTime: "la fecha de fin",
@@ -350,7 +384,7 @@ export function describeChanges(fields: ProposalField[]): string {
 }
 
 /** Los campos que manda `ads_proposal_submit` (snake_case, como su inputSchema). */
-const SUBMIT_KEYS = ["name", "message", "headline", "greeting", "cta", "media_url", "targeting", "daily_budget", "end_time"] as const;
+const SUBMIT_KEYS = ["name", "message", "headline", "greeting", "link", "cta", "media_url", "targeting", "daily_budget", "end_time"] as const;
 
 /**
  * `ads_proposal_submit` sobre una propuesta abierta: lo que NO se manda se hereda de la
@@ -364,6 +398,7 @@ export function mergeSubmit(current: Proposal, raw: Record<string, unknown>): Re
     message: current.message,
     headline: current.headline ?? "",
     greeting: current.greeting ?? "",
+    link: current.link ?? "",
     cta: current.cta ?? CTA_DEFAULT,
     media_url: current.mediaUrl,
     targeting: current.targeting,
@@ -392,6 +427,7 @@ export function summarizeProposal(p: Proposal): string {
     `copy «${p.message.replace(/\s+/g, " ").slice(0, 400)}»`,
     p.headline ? `encabezado «${p.headline}»` : null,
     p.greeting ? `saludo «${p.greeting}»` : null,
+    p.link ? `lleva a ${p.link} (anuncio web: columna derecha de Facebook, escritorio, sólo imagen; sin link sería Messenger)` : "lleva a Messenger",
     `botón «${CTA_LABELS[cta] ?? cta}» (cta ${cta}; en tus mensajes di la etiqueta, no el código)`,
     `presupuesto $${p.dailyBudget} MXN al día hasta ${p.endTime}`,
     `zonas ${zones.join(", ") || "MX"}`,
@@ -406,7 +442,7 @@ export function summarizeProposal(p: Proposal): string {
 // ── Cambios pendientes de una campaña ya creada ──────────────────────────────
 
 /** El anuncio (copy, botón, creativo) de una campaña ya creada: cambiarlo crea un anuncio nuevo. */
-export type AdChange = { message: string; headline?: string; cta?: CtaType; mediaUrl: string };
+export type AdChange = { message: string; headline?: string; cta?: CtaType; mediaUrl: string; link?: string };
 
 /**
  * Lo que se puede cambiar en una campaña que ya está en Meta. `targeting` y `endTime` van por
@@ -570,7 +606,9 @@ export function endTimeFromDate(date: string): string {
 
 export type Funnel = {
   spend: number;
+  /** Conversaciones de Messenger; en un anuncio web (`web`), clics al sitio. */
   conversations: number;
+  web?: boolean;
   leads: number;
   qualified: number;
   /** Costo por lead calificado: EL número. null sin calificados (no es 0 ni infinito). */
@@ -581,7 +619,7 @@ export type Funnel = {
 
 const per = (spend: number, n: number) => (n > 0 ? Math.round((spend / n) * 100) / 100 : null);
 
-export function funnelOf(x: { spend?: number; conversations?: number; leads?: number; qualified?: number }): Funnel {
+export function funnelOf(x: { spend?: number; conversations?: number; leads?: number; qualified?: number; web?: boolean }): Funnel {
   const spend = Number(x.spend ?? 0) || 0;
   const conversations = Number(x.conversations ?? 0) || 0;
   const leads = Number(x.leads ?? 0) || 0;
@@ -589,6 +627,7 @@ export function funnelOf(x: { spend?: number; conversations?: number; leads?: nu
   return {
     spend,
     conversations,
+    ...(x.web ? { web: true } : {}),
     leads,
     qualified,
     costPerQualified: per(spend, qualified),

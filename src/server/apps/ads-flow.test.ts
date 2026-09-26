@@ -436,3 +436,46 @@ describe("comportamientos", () => {
     expect(parseTargeting({ behaviors: [{ id: "x" }] })).toMatch(/comportamiento/);
   });
 });
+
+describe("anuncio web (link → columna derecha)", () => {
+  it("con link: botón «Más información» por default, sin saludo, y «Enviar mensaje» se vuelve «Más información»", () => {
+    const p = parseProposal({ ...base, link: "https://www.ghosty.studio/", greeting: "Hola" }, NOW);
+    if (typeof p === "string") throw new Error(p);
+    expect(p.link).toBe("https://www.ghosty.studio/");
+    expect(p.cta).toBe("LEARN_MORE");
+    expect(p.greeting).toBeUndefined();
+    const q = parseProposal({ ...base, link: "https://www.ghosty.studio/", cta: "MESSAGE_PAGE" }, NOW);
+    expect(typeof q === "object" && q.cta).toBe("LEARN_MORE");
+  });
+
+  it("rechaza link sin https, video y botones que sólo sirven en Messenger", () => {
+    expect(parseProposal({ ...base, link: "http://ghosty.studio" }, NOW)).toMatch(/https/);
+    expect(parseProposal({ ...base, link: "https://ghosty.studio", media_url: "https://cdn.example.com/a.mp4" }, NOW)).toMatch(/sólo acepta imagen/);
+    expect(parseProposal({ ...base, link: "https://ghosty.studio", cta: "ORDER_NOW" }, NOW)).toMatch(/LEARN_MORE/);
+  });
+
+  it("sin link todo sigue como Messenger", () => {
+    const p = parseProposal(base, NOW);
+    expect(typeof p === "object" && p.link).toBeUndefined();
+    expect(typeof p === "object" && p.cta).toBe("MESSAGE_PAGE");
+  });
+
+  it("mergeSubmit conserva el link, lo agrega y \"\" lo quita", () => {
+    const cur = parseProposal({ ...base, link: "https://www.ghosty.studio/" }, NOW);
+    if (typeof cur === "string") throw new Error(cur);
+    const kept = parseProposal(mergeSubmit(cur, { daily_budget: 80 }), NOW);
+    expect(typeof kept === "object" && kept.link).toBe("https://www.ghosty.studio/");
+    const off = parseProposal(mergeSubmit(cur, { link: "", cta: "MESSAGE_PAGE" }), NOW);
+    expect(typeof off === "object" && off.link).toBeUndefined();
+    if (typeof off === "object") expect(changedFields(cur, off)).toContain("link");
+    const plain = parseProposal(base, NOW);
+    if (typeof plain === "string") throw new Error(plain);
+    const on = parseProposal(mergeSubmit(plain, { link: "https://www.ghosty.studio/c" }), NOW);
+    expect(typeof on === "object" && on.cta).toBe("LEARN_MORE");
+  });
+
+  it("el embudo de un anuncio web se marca para decir «Clics»", () => {
+    expect(funnelOf({ spend: 10, conversations: 5, web: true }).web).toBe(true);
+    expect(funnelOf({ spend: 10, conversations: 5 }).web).toBeUndefined();
+  });
+});
