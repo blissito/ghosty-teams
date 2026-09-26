@@ -2194,6 +2194,10 @@ function ChannelPage() {
     if (quiere.thread === tiene.thread && quiere.dm === tiene.dm) return;
     router.navigate({ to: "/c/$slug", params: { slug: channel.slug }, search: quiere, replace: true });
   }, [openThreadId, openDmId, search.thread, search.dm, channel.slug]);
+  // El último room abierto: entrar a Teams por la raíz vuelve aquí (routes/index.tsx).
+  useEffect(() => {
+    document.cookie = `gt_last_room=${encodeURIComponent(channel.slug)}; path=/; max-age=31536000; samesite=lax`;
+  }, [channel.slug]);
   // Persiste el foco actual (mutuamente excluyente) para sobrevivir un reload.
   useEffect(() => {
     // Siempre persiste algo (incluido `{room}` = canal plano) para que un reload en un
