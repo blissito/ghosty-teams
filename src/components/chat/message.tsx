@@ -78,6 +78,7 @@ import { AdsProposalCard } from "./AdsProposalCard";
 import { AdsVersionLink } from "./AdsVersionLink";
 import { parseVersionLine } from "../../lib/ads-links";
 import { AdsCampaignCard, AdsReportCard } from "./AdsCampaignCard";
+import { AdsPendingCard } from "./AdsLiveEditor";
 import { SprintCard } from "./SprintCard";
 import { AsksCard } from "./AsksCard";
 import { Markdown } from "../../components/Markdown";
@@ -87,7 +88,7 @@ import { registerModalEsc } from "../../utils/modal-esc";
 import { useScrollLock } from "../../utils/scroll-lock";
 import { type ArtifactView, viewFromAttachment } from "../../components/ArtifactPanel";
 import { FxOverlay } from "./FxOverlay";
-import { extractFx, extractEbDoc, bubbleWithoutEbDoc, extractToolState, extractSteps, extractTodos, extractAlert, extractAsk, extractPermission, extractAllPr, extractAllGh, extractTask, extractTests, extractPlanCard, extractRunCard, extractVerdictCard, extractPreviewErrorCard, extractSprintCard, extractAsksCard, extractAdsProposalCard, extractAdsCampaignCard, extractAdsReportCard, type ToolState, type TodoState, type AlertCardData, type AskCardData, type PermissionCardData, type GhCardData, type PrCardData, type TaskCardData, type TestsCardData } from "../../lib/ebdoc";
+import { extractFx, extractEbDoc, bubbleWithoutEbDoc, extractToolState, extractSteps, extractTodos, extractAlert, extractAsk, extractPermission, extractAllPr, extractAllGh, extractTask, extractTests, extractPlanCard, extractRunCard, extractVerdictCard, extractPreviewErrorCard, extractSprintCard, extractAsksCard, extractAdsProposalCard, extractAdsCampaignCard, extractAdsReportCard, extractAdsPendingCard, type ToolState, type TodoState, type AlertCardData, type AskCardData, type PermissionCardData, type GhCardData, type PrCardData, type TaskCardData, type TestsCardData } from "../../lib/ebdoc";
 import { prCardStateFn, runCardActionFn, taskCardStateFn, runTaskCardActionFn } from "../../server/connectors";
 import { answerAgentAskFn } from "../../server/agent-ask";
 import { answerAcpPermissionFn } from "../../server/agent-permission";
@@ -3100,6 +3101,7 @@ export function MessageRow({
                 const ap = extractAdsProposalCard(m.body);
                 const acm = extractAdsCampaignCard(m.body);
                 const ar = extractAdsReportCard(m.body);
+                const apd = extractAdsPendingCard(m.body);
                 return (
                   <>
                     {ap && (
@@ -3122,6 +3124,13 @@ export function MessageRow({
                       />
                     )}
                     {ar && <AdsReportCard card={ar} channelId={m.channel_id ?? 0} />}
+                    {apd && (
+                      <AdsPendingCard
+                        card={apd}
+                        channelId={m.channel_id ?? 0}
+                        onOpen={onOpenArtifact ? (id, title) => onOpenArtifact({ kind: "campaign", title, campaignId: id, channelId: m.channel_id ?? 0 }) : undefined}
+                      />
+                    )}
                   </>
                 );
               })()}

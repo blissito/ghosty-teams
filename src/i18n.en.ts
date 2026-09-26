@@ -1748,6 +1748,8 @@ export const en: Record<string, string> = {
   "Cambiar anuncio": "Change ad",
   "Se crea un anuncio nuevo y el viejo se pausa; Meta lo revisa de nuevo.": "A new ad is created and the old one is paused; Meta reviews it again.",
   "Cambios pendientes": "Pending changes",
+  "Ver campaña": "View campaign",
+  "Sin cambios pendientes: ya se aplicaron o se descartaron.": "No pending changes: they were applied or discarded.",
   "Sin diferencias con lo que hoy tiene Meta.": "No differences from what Meta has today.",
   "Aplicar en Meta": "Apply in Meta",
   "¿Aplicar los cambios en Meta?": "Apply the changes in Meta?",

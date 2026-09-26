@@ -73,7 +73,6 @@ export function AdsLiveEditor({ campaignId, channelId }: { campaignId: number; c
   const { st, refresh } = useAdsCard<Live | null>(load, channelId);
   const [busy, setBusy] = useState<string | null>(null);
   const [err, setErr] = useState("");
-  const [confirmApply, setConfirmApply] = useState(false);
   const [adOpen, setAdOpen] = useState(false);
   if (!st) return <div className="h-24 animate-pulse rounded-xl bg-surface-2 motion-reduce:animate-none" />;
   const editable = (st.status === "paused" || st.status === "active") && !busy;
@@ -102,6 +101,9 @@ export function AdsLiveEditor({ campaignId, channelId }: { campaignId: number; c
         <ReviewChip review={st.review} />
         {!st.metaReachable && <span className="text-[11px] text-amber-700 dark:text-amber-400">{t("Meta no contestó: se muestra lo último guardado.")}</span>}
       </div>
+
+      {/* Lo pendiente va ARRIBA: es lo único que espera una decisión. Al fondo nadie lo encontraba. */}
+      <PendingChanges st={st} campaignId={campaignId} onChanged={refresh} />
 
       <section className="space-y-1.5">
         <h3 className="text-[11px] font-semibold uppercase tracking-wider text-muted">{t("Segmentación")}</h3>
@@ -150,40 +152,64 @@ export function AdsLiveEditor({ campaignId, channelId }: { campaignId: number; c
         )}
       </section>
 
-      {st.pending && (
-        <section className="space-y-1.5 rounded-md border border-amber-500/40 bg-amber-500/10 p-2">
-          <h3 className="text-[11px] font-semibold uppercase tracking-wider text-amber-800 dark:text-amber-300">
-            {t("Cambios pendientes")} · {st.pendingBy}
-          </h3>
-          <ul className="list-disc pl-4 text-ink">
-            {(st.diff.length ? st.diff : [t("Sin diferencias con lo que hoy tiene Meta.")]).map((d) => (
-              <li key={d}>{d}</li>
-            ))}
-          </ul>
-          <div className="flex flex-wrap gap-1.5">
-            <button
-              type="button"
-              disabled={!!busy || !st.diff.length}
-              onClick={() => setConfirmApply(true)}
-              className={`${btn} border-emerald-600 text-emerald-700 hover:bg-emerald-600/10 dark:text-emerald-400`}
-            >
-              {busy === "apply" ? <Loader2 className="inline size-3.5 animate-spin" /> : null} {busy === "apply" ? t("Aplicando…") : t("Aplicar en Meta")}
-            </button>
-            <button
-              type="button"
-              disabled={!!busy}
-              onClick={() => void run("discard", () => adsDiscardPendingFn({ data: { campaignId } })).catch(() => {})}
-              className={`${btn} border-border text-muted hover:text-ink`}
-            >
-              {t("Descartar")}
-            </button>
-          </div>
-        </section>
-      )}
-
       {err && <p className="text-red-600 dark:text-red-400">{err}</p>}
       <ArchiveBox name={st.archiveName} campaignId={campaignId} onDone={refresh} />
 
+    </div>
+  );
+}
+
+/**
+ * Cambios pendientes con [Aplicar en Meta] y [Descartar]. Lo usan el panel lateral y la
+ * tarjeta del hilo (`gt-ads-pending`): el botón tiene que estar donde se lee el aviso.
+ */
+export function PendingChanges({ st, campaignId, onChanged }: { st: Live; campaignId: number; onChanged: () => void }) {
+  const t = useT();
+  const [busy, setBusy] = useState<"apply" | "discard" | null>(null);
+  const [err, setErr] = useState("");
+  const [confirmApply, setConfirmApply] = useState(false);
+  if (!st.pending) return null;
+  const run = async (key: "apply" | "discard", fn: () => Promise<unknown>) => {
+    setBusy(key);
+    setErr("");
+    try {
+      await fn();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(null);
+      onChanged();
+    }
+  };
+  return (
+    <section className="space-y-1.5 rounded-md border border-amber-500/40 bg-amber-500/10 p-2 text-xs">
+      <h3 className="text-[11px] font-semibold uppercase tracking-wider text-amber-800 dark:text-amber-300">
+        {t("Cambios pendientes")} · {st.pendingBy}
+      </h3>
+      <ul className="list-disc pl-4 text-ink">
+        {(st.diff.length ? st.diff : [t("Sin diferencias con lo que hoy tiene Meta.")]).map((d) => (
+          <li key={d}>{d}</li>
+        ))}
+      </ul>
+      <div className="flex flex-wrap gap-1.5">
+        <button
+          type="button"
+          disabled={!!busy || !st.diff.length}
+          onClick={() => setConfirmApply(true)}
+          className={`${btn} border-emerald-600 text-emerald-700 hover:bg-emerald-600/10 dark:text-emerald-400`}
+        >
+          {busy === "apply" ? <Loader2 className="inline size-3.5 animate-spin" /> : null} {busy === "apply" ? t("Aplicando…") : t("Aplicar en Meta")}
+        </button>
+        <button
+          type="button"
+          disabled={!!busy}
+          onClick={() => void run("discard", () => adsDiscardPendingFn({ data: { campaignId } }))}
+          className={`${btn} border-border text-muted hover:text-ink`}
+        >
+          {t("Descartar")}
+        </button>
+      </div>
+      {err && <p className="text-red-600 dark:text-red-400">{err}</p>}
       {confirmApply && (
         <ConfirmModal
           title={t("¿Aplicar los cambios en Meta?")}
@@ -203,10 +229,48 @@ export function AdsLiveEditor({ campaignId, channelId }: { campaignId: number; c
           onCancel={() => setConfirmApply(false)}
           onConfirm={async () => {
             setConfirmApply(false);
-            await run("apply", () => adsApplyPendingFn({ data: { campaignId } })).catch(() => {});
+            await run("apply", () => adsApplyPendingFn({ data: { campaignId } }));
           }}
         />
       )}
+    </section>
+  );
+}
+
+/**
+ * ```gt-ads-pending```: el cambio que propuso @ads, en el HILO donde se pidió, con el botón
+ * para aplicarlo ahí mismo. Antes el aviso era texto con un link que abría otra pestaña y el
+ * botón vivía al fondo del panel lateral: nadie lo encontraba (26-sep).
+ */
+export function AdsPendingCard({
+  card,
+  channelId,
+  onOpen,
+}: {
+  card: { campaignId: number };
+  channelId: number;
+  onOpen?: (campaignId: number, title: string) => void;
+}) {
+  const t = useT();
+  const load = useCallback(() => adsLiveCampaignFn({ data: { campaignId: card.campaignId } }), [card.campaignId]);
+  const { st, refresh } = useAdsCard<Live | null>(load, channelId);
+  if (!st) return null;
+  const open = onOpen ? (
+    <button type="button" onClick={() => onOpen(st.campaignId, st.title)} className={`${btn} border-brand text-brand hover:bg-brand/10`}>
+      {t("Ver campaña")}
+    </button>
+  ) : null;
+  return (
+    <div className="mt-0.5 max-w-xl space-y-2 rounded-lg p-3 text-xs gt-card">
+      <p className="text-sm font-semibold text-ink">
+        📝 {t("Campaña")} #{st.campaignId} <span className="font-normal text-muted">· {st.title}</span>
+      </p>
+      {st.pending ? (
+        <PendingChanges st={st} campaignId={st.campaignId} onChanged={refresh} />
+      ) : (
+        <p className="text-muted">✅ {t("Sin cambios pendientes: ya se aplicaron o se descartaron.")}</p>
+      )}
+      {open}
     </div>
   );
 }

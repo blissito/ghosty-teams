@@ -68,3 +68,12 @@ describe("tarjeta compacta y link directo", () => {
     expect(campaignLink("anuncios", null, 4)).toBe("/c/anuncios?campaign=4");
   });
 });
+
+describe("tarjeta de cambios pendientes (gt-ads-pending)", () => {
+  it("lee el id y se quita del texto", async () => {
+    const { extractAdsPendingCard, stripAdsCards } = await import("./ebdoc");
+    const body = "📝 Cambios pendientes en la campaña #1\n\n```gt-ads-pending\n{\"campaignId\":1}\n```";
+    expect(extractAdsPendingCard(body)).toEqual({ campaignId: 1 });
+    expect(stripAdsCards(body)).toBe("📝 Cambios pendientes en la campaña #1");
+  });
+});

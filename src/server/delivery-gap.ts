@@ -27,10 +27,12 @@
 // patrón cazó UNO. Los otros tres decían «Ahí tienes el .docx», «Ahí va, en la tarjeta de
 // arriba» — la forma que más usa el agente cuando cree que ya entregó, y la única que no
 // estaba. La red de `AMBIGUOS` sigue cubriendo el falso positivo («Ahí va el panorama»).
+// ⚠️ `\b` al inicio de cada uno: sin él «lo dejo» casaba DENTRO de «so*lo dejo*» y una respuesta
+// de @ads sin ninguna promesa («Yo solo dejo los cambios pendientes») salió con el aviso (26-sep).
 const ANUNCIOS = [
-  /(?:aqu[ií]|ah[ií]) (?:est[aá]|tienes|va|lo tienes|la tienes|te dejo|te la dejo|te lo dejo)/i,
-  /(?:te )?(?:la|lo|las|los) (?:mando|env[ií]o|adjunto|dejo|comparto)/i,
-  /(?:ya )?(?:qued[oó]|sali[oó]) (?:as[ií]|listo|lista)/i,
+  /\b(?:aqu[ií]|ah[ií]) (?:est[aá]|tienes|va|lo tienes|la tienes|te dejo|te la dejo|te lo dejo)/i,
+  /\b(?:te )?(?:la|lo|las|los) (?:mando|env[ií]o|adjunto|dejo|comparto)/i,
+  /\b(?:ya )?(?:qued[oó]|sali[oó]) (?:as[ií]|listo|lista)/i,
   /va como imagen/i,
   /est[aá] (?:lista|listo) (?:la|el)/i,
 ];
@@ -77,6 +79,7 @@ const LLEVA_ALGO = [
   /!\[[^\]]*\]\([^)]+\)/,          // imagen markdown
   /<img\b/i,                        // imagen HTML
   /\]\(https?:\/\//i,               // enlace markdown
+  /\]\(\/[^)\s]+\)/,                  // enlace markdown relativo (una ruta de la app)
   /https?:\/\/\S{8,}/i,             // URL suelta
   /```(?:gt|eb)-[a-z-]+/i,          // fence de la plataforma
 ];

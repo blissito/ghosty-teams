@@ -571,6 +571,8 @@ export type AdsCampaignRow = {
   qualified: number | null;
   costPerQualified: number | null;
   threadUrl: string | null;
+  /** Hay cambios que @ads (o alguien) dejó sin aplicar en Meta. */
+  hasPending: boolean;
 };
 
 /** Lo que ve cualquier miembro en /ads: las campañas de los rooms que ve, con su embudo. */
@@ -606,6 +608,7 @@ export const adsOverviewFn = createServerFn({ method: "GET" }).handler(async () 
       costPerQualified: f?.costPerQualified ?? null,
       // Abre el hilo con la campaña en el panel lateral.
       threadUrl: campaignLink(ch.slug, thread ?? null, c.id),
+      hasPending: !!c.pending,
     };
   });
   return {

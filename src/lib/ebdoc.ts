@@ -1631,6 +1631,11 @@ export function extractAdsCampaignCard(body: string): { campaignId: number } | n
   return id ? { campaignId: id } : null;
 }
 
+export function extractAdsPendingCard(body: string): { campaignId: number } | null {
+  const id = adsFenceId(body, "gt-ads-pending", "campaignId");
+  return id ? { campaignId: id } : null;
+}
+
 export function extractAdsReportCard(body: string): { reportId: number } | null {
   const id = adsFenceId(body, "gt-ads-report", "reportId");
   return id ? { reportId: id } : null;
@@ -1638,6 +1643,6 @@ export function extractAdsReportCard(body: string): { reportId: number } | null 
 
 export function stripAdsCards(body: string): string {
   if (!/```gt-ads-/.test(body)) return body;
-  return body.replace(/```gt-ads-(?:proposal|campaign|report)[^\n]*\n[\s\S]*?```/g, "").trim();
+  return body.replace(/```gt-ads-(?:proposal|campaign|report|pending)[^\n]*\n[\s\S]*?```/g, "").trim();
 }
 

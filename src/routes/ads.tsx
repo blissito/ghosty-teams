@@ -135,6 +135,11 @@ function AdsPage() {
                     <span className="block text-[10px] text-muted">{t("por calificado")}</span>
                     <b className="tabular-nums text-ink">{c.costPerQualified == null ? "—" : mxn(c.costPerQualified)}</b>
                   </span>
+                  {c.hasPending && (
+                    <span className="shrink-0 rounded-full bg-amber-500/15 px-2 py-0.5 text-[11px] font-semibold text-amber-700 dark:text-amber-400">
+                      {t("Cambios pendientes")}
+                    </span>
+                  )}
                   <span className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold ${STATUS_CLS[c.status] ?? "bg-surface-3 text-muted"}`}>
                     {t(adsStatusLabel(c.status))}
                   </span>

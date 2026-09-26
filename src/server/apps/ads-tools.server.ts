@@ -99,6 +99,10 @@ async function roomCampaigns(dest: ToolDest | null) {
   return C.campaignsOf([dest.channelId]);
 }
 
+/** Cuerpo del mensaje con la tarjeta de cambios pendientes (`gt-ads-pending`, sólo el id). */
+const pendingCardBody = (campaignId: number) =>
+  `📝 Cambios pendientes en la campaña #${campaignId}\n\n` + "```gt-ads-pending\n" + JSON.stringify({ campaignId }) + "\n```";
+
 const TARGETING_SCHEMA = {
   type: "object",
   description: "Segmentación. Edad 25–55 si no se dice; México si no hay países ni ciudades.",
@@ -385,25 +389,40 @@ function tools(dest: ToolDest | null): ConnectorTool[] {
         const diff = liveChangeDiff(before, change);
         if (!diff.length) return { ok: false, error: "eso ya es lo que tiene la campaña en Meta: no hay nada que cambiar" };
         await C.setPending(c, change, C.AGENT_EDITOR);
-        // Con link directo al panel (donde está [Aplicar en Meta] y el estado en Meta): sin él,
-        // «aplícalos en su panel» no decía dónde estaba ese panel.
-        const db = await import("../../db.server");
-        const room = await db.getChannelById(c.channelId).catch(() => null);
-        const panel = room && c.rootMsgId ? ` [Abrir campaña #${c.id}](/c/${room.slug}?thread=${c.rootMsgId}&campaign=${c.id})` : "";
-        const note = `📝 @ads dejó cambios pendientes en la campaña #${c.id}: ${diff.join(" · ")}. Revísalos y aplícalos en su panel.${panel}`;
-        await C.postAsAds(c.channelId, c.rootMsgId, note);
-        // Pedido desde otro hilo: el aviso (que abre el panel) también va donde se pidió.
-        // Antes sólo iba al hilo de la campaña y quien preguntó no veía «ni cambios ni tarjeta».
+        // La tarjeta `gt-ads-pending` lleva el diff y [Aplicar en Meta] ahí mismo. Antes era un
+        // texto con un link que abría otra pestaña, y el botón vivía al fondo del panel lateral.
+        const card = pendingCardBody(c.id);
+        await C.postAsAds(c.channelId, c.rootMsgId, card);
+        // Pedido desde otro hilo: la tarjeta también va donde se pidió.
         const here = threadRoot(dest);
-        if (here !== c.rootMsgId || dest.channelId !== c.channelId) await C.postAsAds(dest.channelId, here, note).catch(() => {});
+        if (here !== c.rootMsgId || dest.channelId !== c.channelId) await C.postAsAds(dest.channelId, here, card).catch(() => {});
         return {
           ok: true,
           campaignId: c.id,
           diff,
           note:
-            "Quedaron como cambios PENDIENTES en el panel de la campaña: una persona los aplica con [Aplicar en Meta]. No digas que ya cambiaron. " +
+            "Ya publiqué en el hilo la tarjeta de cambios pendientes con [Aplicar en Meta]: una persona lo toca ahí. No digas que ya cambiaron ni mandes a nadie a otro panel. " +
             "Avisa que Meta reinicia el aprendizaje al cambiar el público, y que un anuncio nuevo pasa otra vez por revisión.",
         };
+      },
+    },
+    {
+      name: "ads_pending_show",
+      description:
+        "SÓLO @ads. Vuelve a publicar EN ESTE HILO la tarjeta de cambios pendientes de una campaña, con su botón [Aplicar en Meta]. " +
+        "Úsala cuando te pidan aplicar, confirmar o ver los cambios pendientes: tú no aplicas nada, la persona toca el botón de la tarjeta.",
+      inputSchema: { type: "object", properties: { campaign_id: { type: "number", description: "El #N (si no, la del hilo)" } } },
+      handler: async (_sub, a) => {
+        if (dest?.handle && dest.handle !== ADS_HANDLE) return { ok: false, error: "sólo @ads" };
+        if (!dest?.channelId) return { ok: false, error: "las campañas viven en un room" };
+        const target = await resolveTarget(dest.channelId, threadRoot(dest), a.campaign_id, false, "live");
+        if ("error" in target) return { ok: false, error: target.error };
+        const c = target.campaign;
+        if (!c) return { ok: false, error: "no encuentro la campaña; pasa su `campaign_id`" };
+        if (!c.pending) return { ok: false, error: `la campaña #${c.id} no tiene cambios pendientes; propón uno con ads_campaign_change_propose` };
+        const C = await import("./ads-campaigns.server");
+        await C.postAsAds(dest.channelId, threadRoot(dest), pendingCardBody(c.id));
+        return { ok: true, campaignId: c.id, note: "Tarjeta publicada en el hilo. Di en una línea: «toca [Aplicar en Meta] en la tarjeta de abajo»." };
       },
     },
     {
@@ -548,7 +567,7 @@ export async function adsContext(dest: ToolDest | null, toolChannel: ToolChannel
     }
   }
   parts.push(
-    "Tus tools (ads_account_info, ads_proposal_get, ads_campaign_change_propose, ads_review_status, ads_interest_search, ads_location_search, ads_delivery_estimate, ads_proposal_submit, ads_campaigns_list, ads_insights) ya están disponibles en este turno: LLÁMALAS; ninguna gasta." +
+    "Tus tools (ads_account_info, ads_proposal_get, ads_campaign_change_propose, ads_pending_show, ads_review_status, ads_interest_search, ads_location_search, ads_delivery_estimate, ads_proposal_submit, ads_campaigns_list, ads_insights) ya están disponibles en este turno: LLÁMALAS; ninguna gasta." +
       notaNombres(toolChannel) +
       "]",
   );

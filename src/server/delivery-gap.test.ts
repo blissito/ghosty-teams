@@ -3,6 +3,14 @@ import { deliveryGapNotice, hayHuecoPrevio, GAP_MARK } from "./delivery-gap";
 
 // Los casos salen de la conversación REAL que lo destapó (business, DM 6, 2026-08-24).
 describe("deliveryGapNotice", () => {
+  it("no confunde «solo dejo» con «lo dejo» (@ads, 26-sep)", () => {
+    const real =
+      "Ese botón me toca dármelo a mí de dientes para afuera, pero la acción real la hace una persona: abre la tarjeta de «GV · Tablero gratis · Messenger · sep26» en el panel y toca [Aplicar en Meta] ahí. Yo solo dejo los cambios pendientes, no los aplico.";
+    expect(deliveryGapNotice(real, false)).toBe("");
+  });
+  it("un enlace relativo de la app cuenta como algo que se lleva", () => {
+    expect(deliveryGapNotice("Aquí está la tarjeta: [Abrir campaña #1](/c/anuncios?thread=9&campaign=1)", false)).toBe("");
+  });
   it("caza el mensaje que promete y no lleva nada", () => {
     const real =
       '```gt-tools\n{"tools":[{"label":"Ejecuté un comando","detail":"label.html"}]}\n```\n\n' +
