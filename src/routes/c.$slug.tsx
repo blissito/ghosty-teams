@@ -4054,6 +4054,7 @@ function Sidebar({
           >
             <Megaphone size={16} className="shrink-0" />
             <span className="truncate">{t("Ghosty Ads")}</span>
+            <span className="ml-auto shrink-0 rounded-md border border-amber-500/40 bg-amber-500/10 px-1.5 py-px text-[10px] font-semibold uppercase tracking-wide text-amber-500">beta</span>
           </Link>
         )}
         {navOpen && (
