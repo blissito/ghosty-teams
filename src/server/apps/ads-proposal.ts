@@ -147,6 +147,30 @@ export function parseTargeting(raw: unknown): Targeting | string {
   };
 }
 
+// ── Zonas en la tarjeta ──────────────────────────────────────────────────────
+
+export type Zone = { kind: "country"; code: string } | { kind: "region"; key: string } | { kind: "city"; key: string };
+
+/** Cuántas zonas se VEN en la tarjeta (países, estados y ciudades). */
+export function zoneCount(t: Partial<Targeting>): number {
+  return (t.countries?.length ?? 0) + (t.regions?.length ?? 0) + (t.cities?.length ?? 0);
+}
+
+/**
+ * ¿Esa zona lleva «×»? Con 2 o más visibles, TODAS (México incluido); sólo la única que
+ * queda va sin «×»: sin zona gs usa México y quitarla no cambiaría nada.
+ */
+export function zoneRemovable(t: Partial<Targeting>): boolean {
+  return zoneCount(t) > 1;
+}
+
+/** La segmentación sin esa zona. Quitar México con otra zona deja sólo la otra. */
+export function removeZone<T extends Partial<Targeting>>(t: T, z: Zone): T {
+  if (z.kind === "country") return { ...t, countries: (t.countries ?? []).filter((c) => c !== z.code) };
+  if (z.kind === "region") return { ...t, regions: (t.regions ?? []).filter((r) => r.key !== z.key) };
+  return { ...t, cities: (t.cities ?? []).filter((c) => c.key !== z.key) };
+}
+
 /** Días que dura la campaña desde `nowMs` hasta `endTime` (mínimo 1). */
 export function campaignDays(endTime: string, nowMs: number): number {
   const end = Date.parse(endTime);

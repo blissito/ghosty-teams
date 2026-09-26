@@ -20,6 +20,8 @@ import {
   maxTotal,
   mxn,
   RADIUS_LIMITS,
+  removeZone,
+  zoneRemovable,
   type ProposalEdit,
   type Targeting,
 } from "../../server/apps/ads-proposal";
@@ -421,13 +423,25 @@ function TargetingChips({
   const regions = targeting.regions ?? [];
   const cities = targeting.cities ?? [];
   const interests = targeting.interests ?? [];
-  const put = (patch: Partial<Targeting>) => void onSave({ ...targeting, ...patch }).catch(() => {});
+  // El error se enseña AQUÍ, junto a los chips: abajo de la tarjeta pasaba desapercibido.
+  const save = (next: Targeting) => {
+    setSaveErr("");
+    void onSave(next).catch((e) => setSaveErr(e instanceof Error ? e.message : String(e)));
+  };
+  const put = (patch: Partial<Targeting>) => save({ ...targeting, ...patch });
   // Sin ninguna zona gs usa México: quitar la ÚLTIMA no cambiaría nada, así que no lleva «×».
-  const zoneCount = countries.length + regions.length + cities.length;
+  const canRemoveZone = zoneRemovable(targeting);
+  const [saveErr, setSaveErr] = useState("");
   const removeBtn = (label: string, onClick: () => void, allowed = true) =>
     editable && allowed ? (
-      <button type="button" aria-label={t("Quitar {x}").replace("{x}", label)} onClick={onClick} className="grid size-4 place-items-center rounded-full text-muted hover:bg-surface-2 hover:text-ink">
-        <X className="size-3" />
+      <button
+        type="button"
+        title={t("Quitar {x}").replace("{x}", label)}
+        aria-label={t("Quitar {x}").replace("{x}", label)}
+        onClick={onClick}
+        className="ml-0.5 grid size-4 place-items-center rounded-full bg-ink/10 text-ink hover:bg-red-500/20 hover:text-red-600"
+      >
+        <X className="size-3" strokeWidth={2.5} />
       </button>
     ) : null;
   const min = Number(ageMin);
@@ -478,13 +492,13 @@ function TargetingChips({
         {countries.map((c) => (
           <span key={`c:${c}`} className={chip}>
             {c}
-            {removeBtn(c, () => put({ countries: countries.filter((x) => x !== c) }), zoneCount > 1)}
+            {removeBtn(c, () => save(removeZone(targeting, { kind: "country", code: c })), canRemoveZone)}
           </span>
         ))}
         {regions.map((r) => (
           <span key={`r:${r.key}`} className={chip}>
             {r.name ?? r.key}
-            {removeBtn(r.name ?? r.key, () => put({ regions: regions.filter((x) => x.key !== r.key) }), zoneCount > 1)}
+            {removeBtn(r.name ?? r.key, () => save(removeZone(targeting, { kind: "region", key: r.key })), canRemoveZone)}
           </span>
         ))}
         {cities.map((c) => (
@@ -506,7 +520,7 @@ function TargetingChips({
             ) : c.radiusKm ? (
               <span className="text-muted"> +{c.radiusKm} km</span>
             ) : null}
-            {removeBtn(c.name ?? c.key, () => put({ cities: cities.filter((x) => x.key !== c.key) }), zoneCount > 1)}
+            {removeBtn(c.name ?? c.key, () => save(removeZone(targeting, { kind: "city", key: c.key })), canRemoveZone)}
           </span>
         ))}
         {editable && (
@@ -528,6 +542,7 @@ function TargetingChips({
           </button>
         )}
       </div>
+      {saveErr && <p className="text-[11px] text-red-600 dark:text-red-400">{saveErr}</p>}
       {editable && adding && (
         <TargetingSearch
           kind={adding}

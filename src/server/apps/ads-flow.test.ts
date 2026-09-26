@@ -14,6 +14,8 @@ import {
   parseTargeting,
   reportDigest,
   submitMode,
+  removeZone,
+  zoneRemovable,
 } from "./ads-proposal";
 import { nextReportAt, normalizeHours } from "./ads-report-time";
 
@@ -263,5 +265,38 @@ describe("segmentación editable", () => {
     });
     expect(changedFields(cur, next)).toEqual(["targeting"]);
     expect(applyEdit(cur, { targeting: { ageMin: 50, ageMax: 40 } }, NOW)).toMatch(/18 a 65/);
+  });
+});
+
+describe("quitar zonas", () => {
+  const withCity = parseProposal({ ...base, targeting: { countries: ["MX"], cities: [{ key: "2673660", name: "Monterrey", radiusKm: 25 }] } }, NOW);
+  if (typeof withCity === "string") throw new Error(withCity);
+
+  it("con 2 o más zonas todas llevan «×» (México incluido); la única que queda, no", () => {
+    expect(zoneRemovable(withCity.targeting)).toBe(true);
+    expect(zoneRemovable({ countries: ["MX"] })).toBe(false);
+    expect(zoneRemovable({ cities: [{ key: "1" }] })).toBe(false);
+    expect(zoneRemovable({ regions: [{ key: "2513" }], cities: [{ key: "1" }] })).toBe(true);
+  });
+
+  it("quitar México deja sólo la otra zona, y es un cambio real que se guarda", () => {
+    const next = applyEdit(withCity, { targeting: removeZone(withCity.targeting, { kind: "country", code: "MX" }) }, NOW);
+    if (typeof next === "string") throw new Error(next);
+    expect(next.targeting.countries).toBeUndefined();
+    expect(next.targeting.cities).toEqual([{ key: "2673660", name: "Monterrey", radiusKm: 25 }]);
+    expect(changedFields(withCity, next)).toEqual(["targeting"]);
+    expect(zoneRemovable(next.targeting)).toBe(false);
+  });
+
+  it("quitar la ciudad o el estado agregado también guarda", () => {
+    const noCity = applyEdit(withCity, { targeting: removeZone(withCity.targeting, { kind: "city", key: "2673660" }) }, NOW);
+    if (typeof noCity === "string") throw new Error(noCity);
+    expect(noCity.targeting).toMatchObject({ countries: ["MX"] });
+    expect(noCity.targeting.cities).toBeUndefined();
+    expect(changedFields(withCity, noCity)).toEqual(["targeting"]);
+    const t = { ...withCity.targeting, regions: [{ key: "2513", name: "Jalisco" }] };
+    const noRegion = applyEdit(withCity, { targeting: removeZone(t, { kind: "region", key: "2513" }) }, NOW);
+    if (typeof noRegion === "string") throw new Error(noRegion);
+    expect(noRegion.targeting.regions).toBeUndefined();
   });
 });
