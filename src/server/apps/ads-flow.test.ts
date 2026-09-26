@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { nextAdsStatus, inMeta } from "./ads-flow";
+import type { LiveChange } from "./ads-proposal";
 import {
   applyEdit,
   attachmentIdOf,

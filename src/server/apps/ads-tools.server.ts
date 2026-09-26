@@ -385,7 +385,12 @@ function tools(dest: ToolDest | null): ConnectorTool[] {
         const diff = liveChangeDiff(before, change);
         if (!diff.length) return { ok: false, error: "eso ya es lo que tiene la campaña en Meta: no hay nada que cambiar" };
         await C.setPending(c, change, C.AGENT_EDITOR);
-        const note = `📝 @ads dejó cambios pendientes en la campaña #${c.id}: ${diff.join(" · ")}. Revísalos y aplícalos en su panel.`;
+        // Con link directo al panel (donde está [Aplicar en Meta] y el estado en Meta): sin él,
+        // «aplícalos en su panel» no decía dónde estaba ese panel.
+        const db = await import("../../db.server");
+        const room = await db.getChannelById(c.channelId).catch(() => null);
+        const panel = room && c.rootMsgId ? ` [Abrir campaña #${c.id}](/c/${room.slug}?thread=${c.rootMsgId}&campaign=${c.id})` : "";
+        const note = `📝 @ads dejó cambios pendientes en la campaña #${c.id}: ${diff.join(" · ")}. Revísalos y aplícalos en su panel.${panel}`;
         await C.postAsAds(c.channelId, c.rootMsgId, note);
         // Pedido desde otro hilo: el aviso (que abre el panel) también va donde se pidió.
         // Antes sólo iba al hilo de la campaña y quien preguntó no veía «ni cambios ni tarjeta».

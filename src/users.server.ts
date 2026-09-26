@@ -404,15 +404,23 @@ export async function resolveMentionedUsers(
 ): Promise<Array<{ sub: string; handle: string }>> {
   if (!handles.length) return [];
   const ph = handles.map(() => "?").join(",");
+  const wanted = handles.map((h) => h.toLowerCase());
+  // También por NOMBRE (sin espacios): en todo Teams se ve «blissmo» y no el handle
+  // «fixtergeek», así que la gente escribe @blissmo a mano. Resolver sólo por handle daba
+  // «@blissmo no es nadie en este espacio» y el aviso no llegaba (26-sep, Brendi en móvil).
   const { rows, cols } = await dbq(
-    `SELECT sub, handle FROM gc_users WHERE handle IN (${ph}) AND sub != ?`,
-    [...handles.map((h) => h.toLowerCase()), excludeSub]
+    `SELECT sub, handle, name FROM gc_users
+      WHERE (lower(handle) IN (${ph}) OR lower(replace(name, ' ', '')) IN (${ph})) AND sub != ?`,
+    [...wanted, ...wanted, excludeSub]
   );
   const idx = (c: string) => cols.indexOf(c);
-  return rows.map((r) => ({
-    sub: r[idx("sub")] as string,
-    handle: ((r[idx("handle")] as string) ?? "").toLowerCase(),
-  }));
+  // `handle` es el TOKEN tal como se escribió: quien llama marca como alcanzado lo que sí
+  // resolvió, y un @nombre que resolvió no es un «@ que no es nadie».
+  return rows.map((r) => {
+    const h = ((r[idx("handle")] as string) ?? "").toLowerCase();
+    const n = ((r[idx("name")] as string) ?? "").toLowerCase().replace(/ /g, "");
+    return { sub: r[idx("sub")] as string, handle: wanted.includes(h) ? h : n };
+  });
 }
 
 // Subs de usuarios cuyos @handle aparecen (para push). Excluye a excludeSub.
