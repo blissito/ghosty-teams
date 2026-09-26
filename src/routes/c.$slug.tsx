@@ -146,7 +146,8 @@ import { subscribeUsers, bumpUsers } from "../utils/users-bus";
 import { clearMeCache } from "../server/auth";
 import ArtifactPanel, { type ArtifactView} from "../components/ArtifactPanel";
 import { belongsToOpenConversation } from "../lib/conversation-scope";
-import { extractEbDoc, extractEbPatches, draftTitle} from "../lib/ebdoc";
+import { extractEbDoc, extractEbPatches, draftTitle, extractAdsProposalCard } from "../lib/ebdoc";
+import { parseVersionLine } from "../lib/ads-links";
 import { showSystemNotification } from "../utils/system-notification";
 import { marcarCierre, limpiarCierre } from "../lib/panel-cerrando";
 import { playNotificationSound, playGhostySound, playSelfSound, playMentionSound, playDmSound, playReadySound, playDeleteSound, playArtifactOpen, playArtifactClose, playArtifactReady } from "../utils/notificationSound";
@@ -279,7 +280,7 @@ export const Route = createFileRoute("/c/$slug")({
    * parámetro y el router redirigiría a la URL sin él — el mismo tropiezo que costó el `?v=`
    * de los artefactos.
    */
-  validateSearch: (search: Record<string, unknown>): { thread?: number; dm?: number; home?: 1 } => {
+  validateSearch: (search: Record<string, unknown>): { thread?: number; dm?: number; home?: 1; campaign?: number } => {
     const id = (v: unknown) => {
       const n = Number(v);
       return Number.isFinite(n) && n > 0 ? n : undefined;
@@ -289,7 +290,11 @@ export const Route = createFileRoute("/c/$slug")({
     // Mutuamente excluyentes: el centro enseña una cosa a la vez. `home` lo pone sólo la
     // raíz `/` (routes/index.tsx): entrar a Teams abre Inicio; un link a un room, el room.
     const home = search.home === 1 || search.home === "1" || search.home === true;
-    return thread != null ? { thread } : dm != null ? { dm } : home ? { home: 1 } : {};
+    // `campaign` = una campaña de Ghosty Ads abierta en el panel lateral (link para compartir).
+    // Va con el hilo, o sola; nunca con un DM ni con Inicio.
+    const campaign = id(search.campaign);
+    const withCampaign = campaign != null ? { campaign } : {};
+    return thread != null ? { thread, ...withCampaign } : dm != null ? { dm } : home ? { home: 1 } : withCampaign;
   },
   // El hilo y el flujo NO van en el loader (se cargan client-side con cache +
   // skeleton → abrir es instantáneo). El loader solo trae rooms + meta + user.
@@ -1803,6 +1808,9 @@ function ChannelPage() {
           applyPatch();
           return;
         }
+        // Ghosty Ads: una propuesta o versión nueva de @ads en el hilo que estás viendo abre
+        // (o pone al día) el panel de la campaña, con la regla de los borradores.
+        if (ev.msg.agent_handle === "ads" && openThreadId != null && ev.msg.parent_id === openThreadId) autoOpenCampaign(ev.msg);
         // ¿El mensaje es MÍO? (llegó por SSE sin match de nonce: eco tardío, u otra
         // pestaña/dispositivo). Identidad estable por sub; fallback a nombre en legacy.
         // Nunca debe sonar ni badgear (yo lo envié).
@@ -2679,9 +2687,12 @@ function ChannelPage() {
    * cualquier automatismo; se libera al cerrar el panel.
    */
   const panelManualRef = useRef(false);
+  /** Campañas de Ghosty Ads cuyo panel cerró la persona: ya no se abren solas en esta sesión. */
+  const campaignDismissedRef = useRef<Set<number>>(new Set());
   const openArtifactWithSound = useCallback((v: ArtifactView) => {
     if (!openArtifactRef.current) playArtifactOpen();
     panelManualRef.current = true;
+    if (v.kind === "campaign") campaignDismissedRef.current.delete(v.campaignId);
     setOpenArtifact(v);
   }, []);
 
@@ -2697,11 +2708,48 @@ function ChannelPage() {
     // Cerrar libera el panel: a partir de aquí un borrador en vivo puede volver a tomarlo.
     panelManualRef.current = false;
     const v = openArtifactRef.current;
+    if (v?.kind === "campaign") campaignDismissedRef.current.add(v.campaignId);
     // `ArtifactView` es una unión y sólo algunas variantes llevan `messageId` (un pdf o una
     // imagen no cuelgan de un borrador), de ahí el `in`.
     const id = (v && "messageId" in v ? v.messageId : null) ?? draftMsgIdRef.current;
     if (id != null) draftDismissedRef.current.add(id);
   }, []);
+  /**
+   * Una propuesta (o versión) nueva de @ads en el hilo que estás viendo: el panel de esa
+   * campaña se abre o se pone al día solo. Misma regla que los borradores: si la cerraste, no
+   * vuelve sola; si abriste TÚ otra cosa, no te la quita.
+   */
+  const autoOpenCampaign = (msg: { body: string; channel_id: number | null }) => {
+    const cid = extractAdsProposalCard(msg.body)?.campaignId ?? parseVersionLine(msg.body)?.campaignId ?? null;
+    if (cid == null || campaignDismissedRef.current.has(cid)) return;
+    const cur = openArtifactRef.current;
+    const view: ArtifactView = { kind: "campaign", title: `Ghosty Ads · #${cid}`, campaignId: cid, channelId: msg.channel_id ?? channel.id };
+    if (cur?.kind === "campaign" && cur.campaignId === cid) {
+      // Ya la tienes abierta: se repinta sola (refresh del room); sólo se vuelve a la vigente.
+      if (cur.version != null) setOpenArtifact(view);
+      return;
+    }
+    if (cur && (panelManualRef.current || cur.kind !== "draft")) return;
+    if (!cur) playArtifactOpen();
+    setOpenArtifact(view);
+  };
+  // Link directo `?campaign=N`: abre la campaña en el panel (con el hilo, si lo trae).
+  useEffect(() => {
+    if (search.campaign == null) return;
+    const cur = openArtifactRef.current;
+    if (cur?.kind === "campaign" && cur.campaignId === search.campaign) return;
+    openArtifactWithSound({ kind: "campaign", title: `Ghosty Ads · #${search.campaign}`, campaignId: search.campaign, channelId: channel.id });
+  }, [search.campaign, channel.id]);
+  // …y al cerrar ese panel, el `campaign` sale de la URL (si no, recargar lo reabriría).
+  const prevPanelRef = useRef<ArtifactView | null>(null);
+  useEffect(() => {
+    const prev = prevPanelRef.current;
+    prevPanelRef.current = openArtifact;
+    if (prev?.kind === "campaign" && openArtifact?.kind !== "campaign" && search.campaign != null) {
+      const { campaign: _c, ...rest } = search;
+      router.navigate({ to: "/c/$slug", params: { slug: channel.slug }, search: rest, replace: true });
+    }
+  }, [openArtifact]);
   const reopenHiddenDraft = useCallback(() => {
     setHiddenDraft((d) => {
       if (d) {

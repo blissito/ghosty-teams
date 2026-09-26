@@ -236,7 +236,7 @@ export const adsProposalCardFn = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     const v = await visibleCampaign(Number(data.campaignId));
     if (!v) return null;
-    const { c, C } = v;
+    const { c, C, ch } = v;
     let previewSrc = c.proposal.previewSrc ?? null;
     let previewNote = c.proposal.previewNote ?? null;
     // Sin vista previa al proponer (gs no contestó): se pide otra vez mientras siga en propuesta.
@@ -268,8 +268,44 @@ export const adsProposalCardFn = createServerFn({ method: "POST" })
       versions: versions.slice(1),
       /** El mensaje que es la tarjeta de la campaña: si es ésta, al crearse se vuelve la de campaña. */
       cardMsgId: c.cardMsgId,
+      title: c.title,
+      roomSlug: ch.slug,
+      rootMsgId: c.rootMsgId,
       approvedBy: await nameOf(c.approvedBy),
     };
+  });
+
+/** La campaña de un hilo (para las líneas «✏️ … → vN» viejas, que no traen el #N). */
+export const adsThreadCampaignFn = createServerFn({ method: "POST" })
+  .validator((d: { channelId: number; rootId: number }) => d)
+  .handler(async ({ data }) => {
+    const me = await requireUser();
+    const db = await import("../../db.server");
+    if (!(await db.listChannels(me.sub, me.isOwner)).some((x) => x.id === Number(data.channelId))) return null;
+    const C = await import("./ads-campaigns.server");
+    const c = await C.campaignOfThread(Number(data.channelId), Number(data.rootId));
+    return c ? c.id : null;
+  });
+
+/**
+ * El creativo de la campaña para la pestaña «Creativo» del panel: el último artefacto
+ * «Creativo · …» publicado en su hilo (lo arma @ads con el brand kit). null si no hay.
+ */
+export const adsCreativeFn = createServerFn({ method: "POST" })
+  .validator((d: { campaignId: number }) => d)
+  .handler(async ({ data }) => {
+    const v = await visibleCampaign(Number(data.campaignId));
+    if (!v?.c.rootMsgId) return null;
+    const { dbq } = await import("../../dbq.server");
+    const rows = await dbq(
+      `SELECT a.title, a.md, a.src, a.url, a.message_id FROM gc_artifacts a JOIN gc_messages m ON m.id = a.message_id
+       WHERE m.channel_id = ? AND (m.id = ? OR m.parent_id = ?) AND a.kind = 'artifact' AND a.title LIKE 'Creativo%'
+         AND a.archived_at IS NULL ORDER BY a.id DESC LIMIT 1`,
+      [v.c.channelId, v.c.rootMsgId, v.c.rootMsgId],
+    ).catch(() => []);
+    const r = rows[0];
+    if (!r?.md) return null;
+    return { title: String(r.title), html: String(r.md), src: r.src ? String(r.src) : null, documentId: String(r.url), messageId: Number(r.message_id) };
   });
 
 /** Quien edita en la tarjeta: su correo queda en `edited_by`; su nombre, en el hilo. */

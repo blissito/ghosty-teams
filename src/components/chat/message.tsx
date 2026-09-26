@@ -75,6 +75,8 @@ import { PlanCard } from "./PlanCard";
 import { RunCard } from "./RunCard";
 import { VerdictCard, PreviewErrorCard } from "./VerdictCard";
 import { AdsProposalCard } from "./AdsProposalCard";
+import { AdsVersionLink } from "./AdsVersionLink";
+import { parseVersionLine } from "../../lib/ads-links";
 import { AdsCampaignCard, AdsReportCard } from "./AdsCampaignCard";
 import { SprintCard } from "./SprintCard";
 import { AsksCard } from "./AsksCard";
@@ -3013,7 +3015,19 @@ export function MessageRow({
               {/* Con tarjeta de alerta el bubble se calla: la línea de texto plano que
                   acompaña al fence es el RESPALDO (citas, buscador, notificación), y
                   repetirla debajo de la tarjeta sería decir dos veces lo mismo. */}
-              {!extractAlert(m.body) && bubbleWithoutEbDoc(m.body).trim() ? (
+              {(() => {
+                // Ghosty Ads: la línea «✏️ … → vN» de la plataforma es el link a esa versión.
+                const vl = isAgent && m.agent_handle === "ads" ? parseVersionLine(m.body) : null;
+                return vl ? (
+                  <AdsVersionLink
+                    line={vl}
+                    channelId={m.channel_id ?? 0}
+                    rootId={m.parent_id ?? m.id}
+                    onOpen={onOpenArtifact}
+                  />
+                ) : null;
+              })()}
+              {!extractAlert(m.body) && !(isAgent && m.agent_handle === "ads" && parseVersionLine(m.body)) && bubbleWithoutEbDoc(m.body).trim() ? (
               <Markdown
                 body={bubbleWithoutEbDoc(m.body)}
                 artifactUrl={m.artifact?.url}
@@ -3088,7 +3102,18 @@ export function MessageRow({
                 const ar = extractAdsReportCard(m.body);
                 return (
                   <>
-                    {ap && <AdsProposalCard card={ap} channelId={m.channel_id ?? 0} msgId={m.id} />}
+                    {ap && (
+                      <AdsProposalCard
+                        card={ap}
+                        channelId={m.channel_id ?? 0}
+                        msgId={m.id}
+                        onOpen={
+                          onOpenArtifact
+                            ? (campaignId, title) => onOpenArtifact({ kind: "campaign", title, campaignId, channelId: m.channel_id ?? 0 })
+                            : undefined
+                        }
+                      />
+                    )}
                     {acm && <AdsCampaignCard card={acm} channelId={m.channel_id ?? 0} />}
                     {ar && <AdsReportCard card={ar} channelId={m.channel_id ?? 0} />}
                   </>

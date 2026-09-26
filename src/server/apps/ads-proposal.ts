@@ -354,7 +354,7 @@ export function summarizeProposal(p: Proposal): string {
     `copy «${p.message.replace(/\s+/g, " ").slice(0, 400)}»`,
     p.headline ? `encabezado «${p.headline}»` : null,
     p.greeting ? `saludo «${p.greeting}»` : null,
-    `botón ${cta} («${CTA_LABELS[cta] ?? cta}»)`,
+    `botón «${CTA_LABELS[cta] ?? cta}» (cta ${cta}; en tus mensajes di la etiqueta, no el código)`,
     `presupuesto $${p.dailyBudget} MXN al día hasta ${p.endTime}`,
     `zonas ${zones.join(", ") || "MX"}`,
     `edad ${t.ageMin}–${t.ageMax}`,

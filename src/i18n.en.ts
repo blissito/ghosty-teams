@@ -1737,6 +1737,7 @@ export const en: Record<string, string> = {
   "Lo usan todos los repos, salvo lo que cambie el .ghosty/factory.md de cada uno.": "Every repo uses it, except what each repo's .ghosty/factory.md changes.",
 
   // Ghosty Ads (Ajustes → Apps, /ads y las tarjetas gt-ads-*).
+  "Creativo": "Creative",
   "Edad mínima": "Minimum age",
   "Edad máxima": "Maximum age",
   "Radio alrededor de {x}": "Radius around {x}",

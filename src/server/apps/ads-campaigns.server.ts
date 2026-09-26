@@ -19,6 +19,7 @@ import {
   type StoredProposal,
 } from "./ads-proposal";
 import { gsAds, type GsCampaign } from "./ads-gs.server";
+import { versionLine } from "../../lib/ads-links";
 
 export const ADS_HANDLE = "ads";
 
@@ -293,7 +294,8 @@ export async function saveVersion(
   if (!rows.length) throw new Error(`la campaña #${c.id} cambió mientras tanto; vuelve a mirarla`);
   await postInThread(
     c,
-    editor.editedBy === AGENT_EDITOR ? `✏️ @ads ajustó la propuesta → v${version}` : `✏️ ${editor.display} cambió ${describeChanges(changed)} → v${version}`,
+    // Formato fijo (lib/ads-links): en el hilo la línea se vuelve el link a esa versión.
+    editor.editedBy === AGENT_EDITOR ? versionLine("@ads", null, c.id, version) : versionLine(editor.display, describeChanges(changed), c.id, version),
   );
   const { refreshRoom } = await import("./factory-runs.server");
   void refreshRoom(c.channelId);

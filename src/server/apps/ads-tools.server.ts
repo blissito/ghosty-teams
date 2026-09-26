@@ -235,9 +235,13 @@ function tools(dest: ToolDest | null): ConnectorTool[] {
         if (!c) return { ok: false, error: "este hilo no tiene campaña; pasa `campaign_id` o propón una con ads_proposal_submit" };
         const versions = await C.listVersions(c.id);
         const { estimate, previewSrc: _s, previewNote, ...proposal } = c.proposal;
+        const { CTA_LABELS, CTA_DEFAULT } = await import("./ads-proposal");
+        const cta = proposal.cta ?? CTA_DEFAULT;
         return {
           campaignId: c.id,
           status: c.status,
+          // En tus mensajes nombra el botón por esta etiqueta, nunca por su código.
+          cta_label: CTA_LABELS[cta] ?? cta,
           version: versions[0]?.version ?? 1,
           changedFields: versions[0]?.changedFields ?? [],
           editedBy: versions[0]?.editedBy ?? C.AGENT_EDITOR,

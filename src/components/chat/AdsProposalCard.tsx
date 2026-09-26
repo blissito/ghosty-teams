@@ -9,7 +9,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Loader2, X } from "lucide-react";
 import { useT } from "../../i18n";
 import { adsActionFn, adsEditProposalFn, adsProposalCardFn, adsTargetingSearchFn, adsUseVersionFn } from "../../server/apps/ads";
-import { adsStatusLabel, inMeta } from "../../server/apps/ads-flow";
+import { adsStatusLabel } from "../../server/apps/ads-flow";
 import {
   AGE_LIMITS,
   CTA_DEFAULT,
@@ -26,7 +26,7 @@ import {
   type Targeting,
 } from "../../server/apps/ads-proposal";
 import ConfirmModal from "../ConfirmModal";
-import { AdsCampaignCard } from "./AdsCampaignCard";
+import { compactSummary } from "../../lib/ads-links";
 import { useAdsCard } from "./useAdsCard";
 
 export { useAdsCard };
@@ -49,19 +49,97 @@ const dateInput = (iso: string) => {
 
 const fmtPeople = (n: number) => (n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)} M` : n >= 1000 ? `${Math.round(n / 1000)} mil` : String(n));
 
-export function AdsProposalCard({ card, channelId, msgId }: { card: { campaignId: number }; channelId: number; msgId?: number }) {
+/**
+ * La tarjeta en el HILO. Las del flujo nuevo (este mensaje ES la tarjeta de la campaña) son
+ * COMPACTAS: una línea viva con [Abrir], que lleva todo al panel lateral para que no se pierda
+ * al avanzar la conversación. Las propuestas viejas, sin tarjeta ligada, se quedan grandes.
+ */
+export function AdsProposalCard({
+  card,
+  channelId,
+  msgId,
+  onOpen,
+}: {
+  card: { campaignId: number };
+  channelId: number;
+  msgId?: number;
+  onOpen?: (campaignId: number, title: string, version?: number) => void;
+}) {
   const t = useT();
   const load = useCallback(() => adsProposalCardFn({ data: { campaignId: card.campaignId } }), [card.campaignId]);
+  const { st } = useAdsCard<State | null>(load, channelId);
+  if (!st) return null;
+  if (msgId == null || st.cardMsgId !== msgId) return <AdsProposalView campaignId={card.campaignId} channelId={channelId} />;
+  const proposal = st.status === "proposal";
+  const summary = compactSummary({
+    campaignId: st.campaignId,
+    proposal,
+    version: st.version,
+    dailyBudget: st.proposal.dailyBudget ?? null,
+    endTime: st.proposal.endTime || null,
+  });
+  return (
+    <div className="mt-0.5 flex max-w-xl items-center gap-2 rounded-lg px-3 py-2 gt-card">
+      <span aria-hidden="true">📣</span>
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-sm text-ink">
+          <b>{summary}</b> · <span className={STATUS_TEXT[st.status] ?? "text-muted"}>{t(adsStatusLabel(st.status))}</span>
+        </p>
+        <p className="truncate text-[11px] text-muted">{st.title}</p>
+      </div>
+      <button
+        type="button"
+        onClick={() => onOpen?.(st.campaignId, st.title)}
+        disabled={!onOpen}
+        className={`${btn} shrink-0 border-brand text-brand hover:bg-brand/10`}
+      >
+        {t("Abrir")}
+      </button>
+    </div>
+  );
+}
+
+const STATUS_TEXT: Record<string, string> = {
+  proposal: "text-amber-700 dark:text-amber-400",
+  active: "text-emerald-600",
+  paused: "text-amber-700 dark:text-amber-400",
+  error: "text-red-600 dark:text-red-400",
+};
+
+/**
+ * La propuesta completa: vista previa de Meta, edición en línea, versiones y botones. Vive en
+ * el panel lateral (`layout="panel"`) y en las tarjetas grandes viejas del hilo.
+ * `initialVersion` abre esa versión (el link de una línea «✏️ … → vN»).
+ */
+export function AdsProposalView({
+  campaignId,
+  channelId,
+  initialVersion,
+  layout = "card",
+}: {
+  campaignId: number;
+  channelId: number;
+  initialVersion?: number;
+  layout?: "card" | "panel";
+}) {
+  const t = useT();
+  const load = useCallback(() => adsProposalCardFn({ data: { campaignId } }), [campaignId]);
   const { st, refresh } = useAdsCard<State | null>(load, channelId);
   const [busy, setBusy] = useState<string | null>(null);
   const [confirm, setConfirm] = useState(false);
   const [err, setErr] = useState("");
   const [showVersions, setShowVersions] = useState(false);
   const [viewing, setViewing] = useState<OldVersion | null>(null);
+  // El link de una versión: se aplica una vez, cuando llega el estado.
+  const appliedVersion = useRef<number | null>(null);
+  useEffect(() => {
+    if (!st || initialVersion == null || appliedVersion.current === initialVersion) return;
+    appliedVersion.current = initialVersion;
+    const old = st.versions.find((v) => v.version === initialVersion) ?? null;
+    setViewing(old);
+    if (old) setShowVersions(true);
+  }, [st, initialVersion]);
   if (!st) return null;
-  // Creada en Meta: si ESTE mensaje es la tarjeta de la campaña, se vuelve la de la campaña
-  // (las propuestas viejas, sin tarjeta ligada, tienen la suya aparte y se quedan como están).
-  if (inMeta(st.status) && msgId != null && st.cardMsgId === msgId) return <AdsCampaignCard card={card} channelId={channelId} />;
 
   const shown = viewing
     ? { proposal: viewing.proposal, estimate: viewing.estimate, previewSrc: viewing.previewSrc, previewNote: viewing.previewNote, version: viewing.version }
@@ -118,7 +196,7 @@ export function AdsProposalCard({ card, channelId, msgId }: { card: { campaignId
   };
 
   return (
-    <div className="mt-0.5 flex max-w-2xl overflow-hidden rounded-lg gt-card">
+    <div className={layout === "panel" ? "flex overflow-hidden rounded-lg gt-card" : "mt-0.5 flex max-w-2xl overflow-hidden rounded-lg gt-card"}>
       <div className={`w-1 shrink-0 ${st.status === "error" ? "bg-red-500" : open ? "bg-amber-500" : "bg-brand"}`} aria-hidden="true" />
       <div className="min-w-0 flex-1 p-3">
         <div className="flex flex-wrap items-center gap-1.5">
@@ -182,11 +260,16 @@ export function AdsProposalCard({ card, channelId, msgId }: { card: { campaignId
           className="mt-1 text-sm font-semibold text-ink"
           onSave={(v) => save({ name: v })}
         />
-        <div className="mt-2 flex flex-col gap-3 sm:flex-row">
+        <div className={`mt-2 flex flex-col gap-3 ${layout === "panel" ? "" : "sm:flex-row"}`}>
           {shown.previewSrc && /^https:\/\//.test(shown.previewSrc) ? (
-            <MetaPreview src={shown.previewSrc} title={t("Vista previa del anuncio")} loadingLabel={t("Cargando la vista previa de Meta…")} />
+            <MetaPreview
+              src={shown.previewSrc}
+              title={t("Vista previa del anuncio")}
+              loadingLabel={t("Cargando la vista previa de Meta…")}
+              large={layout === "panel"}
+            />
           ) : (
-            <p className="grid min-h-24 w-full shrink-0 place-items-center rounded-md border border-dashed border-border p-3 text-center text-xs text-muted sm:w-[300px]">
+            <p className={`grid min-h-24 w-full shrink-0 place-items-center rounded-md border border-dashed border-border p-3 text-center text-xs text-muted ${layout === "panel" ? "" : "sm:w-[300px]"}`}>
               {shown.previewNote ?? t("Sin vista previa de Meta todavía")}
             </p>
           )}
@@ -742,24 +825,25 @@ function BudgetEditor({ dailyBudget, endTime, onSave }: { dailyBudget: number; e
 const META_W = 335;
 const META_H = 630;
 
-function MetaPreview({ src, title, loadingLabel }: { src: string; title: string; loadingLabel: string }) {
+function MetaPreview({ src, title, loadingLabel, large }: { src: string; title: string; loadingLabel: string; large?: boolean }) {
   const box = useRef<HTMLDivElement>(null);
   const [scale, setScale] = useState(300 / META_W);
   const [loaded, setLoaded] = useState(false);
   useEffect(() => {
     const el = box.current;
     if (!el) return;
-    const fit = () => setScale(Math.min(1, el.clientWidth / META_W));
+    // En el panel se ve GRANDE: puede crecer hasta 1.35× (en la tarjeta, nunca más que su tamaño real).
+    const fit = () => setScale(Math.min(large ? 1.35 : 1, el.clientWidth / META_W));
     fit();
     const ro = new ResizeObserver(fit);
     ro.observe(el);
     return () => ro.disconnect();
-  }, []);
+  }, [large]);
   useEffect(() => setLoaded(false), [src]);
   return (
     <div
       ref={box}
-      className="relative w-full shrink-0 overflow-hidden rounded-md border border-border bg-white sm:w-[300px]"
+      className={`relative w-full shrink-0 overflow-hidden rounded-md border border-border bg-white ${large ? "mx-auto max-w-[452px]" : "sm:w-[300px]"}`}
       style={{ height: Math.round(META_H * scale) }}
     >
       <iframe

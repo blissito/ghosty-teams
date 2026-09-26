@@ -1,4 +1,5 @@
 import { AnimatePresence, motion } from "motion/react";
+import { AdsCampaignPanel } from "./chat/AdsCampaignPanel";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ARTIFACT_CHROME_CSS } from "../lib/artifact-stream-doc";
 import {
@@ -186,6 +187,9 @@ export type ArtifactView =
   // ask-user: pregunta con opciones clicables. Se pinta INLINE en el bubble (AskUserCard);
   // esta variante solo cubre el fallback read-only si se abriera en el panel.
   | { kind: "ask-user"; title: string; question: string; options: string[] }
+  // Ghosty Ads: la propuesta/campaña #N. NATIVO (componentes React + server fns), no iframe:
+  // un agente no puede falsear sus botones. `version` = abrir en esa versión (link «→ vN»).
+  | { kind: "campaign"; title: string; campaignId: number; channelId: number; version?: number }
   // Índice Cowork: lista los documentos de UN caso (room) como tiles; clic abre uno.
   // channelSlug para subir archivos al caso directo desde el panel (sin el agente).
   // threadRootId (opcional): abierto desde un HILO → toggle "Este hilo / Todo el caso".
@@ -751,7 +755,9 @@ export default function ArtifactPanel({
                   ? `docindex:${artifact.channelId}`
                   : artifact.kind === "ask-user"
                     ? "ask-user"
-                    : `${artifact.kind}:${artifact.src}`;
+                    : artifact.kind === "campaign"
+                      ? `campaign:${artifact.campaignId}`
+                      : `${artifact.kind}:${artifact.src}`;
   // Al cambiar a OTRO artefacto, resetea el preview office.
   useEffect(() => {
     setOfficeHtml(null);
@@ -1250,7 +1256,8 @@ export default function ArtifactPanel({
     artifact.kind === "doc" ||
     artifact.kind === "sheet" ||
     artifact.kind === "ask-user" ||
-    artifact.kind === "artifact"
+    artifact.kind === "artifact" ||
+    artifact.kind === "campaign"
       ? undefined
       : artifact.kind === "docindex"
         ? "/artifacts"
@@ -2390,6 +2397,12 @@ export default function ArtifactPanel({
                           </div>
                         ) : null}
                       </div>
+                    ) : artifact.kind === "campaign" ? (
+                      <AdsCampaignPanel
+                        campaignId={artifact.campaignId}
+                        channelId={artifact.channelId}
+                        version={artifact.version}
+                      />
                     ) : artifact.kind === "ask-user" ? (
                       // Fallback read-only (lo normal es que se pinte inline en el chat, no aquí).
                       <div className="grid min-h-full place-items-center p-6">
