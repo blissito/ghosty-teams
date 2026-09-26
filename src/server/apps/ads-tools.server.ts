@@ -407,6 +407,31 @@ function tools(dest: ToolDest | null): ConnectorTool[] {
       },
     },
     {
+      name: "ads_campaign_show",
+      description:
+        "SÓLO @ads. Publica EN ESTE HILO la tarjeta viva de una campaña que ya está en Meta (estado, gasto → mensajes → leads → calificados, " +
+        "[Pausar]/[Prender], [Cambiar presupuesto] y [Abrir]). Úsala cuando pregunten cómo va, si está corriendo, o pidan ver la campaña " +
+        "en un hilo que no es el suyo. Si tiene cambios pendientes, publica también su tarjeta con [Aplicar en Meta].",
+      inputSchema: { type: "object", properties: { campaign_id: { type: "number", description: "El #N (si no, la del hilo o la única activa)" } } },
+      handler: async (_sub, a) => {
+        if (dest?.handle && dest.handle !== ADS_HANDLE) return { ok: false, error: "sólo @ads" };
+        if (!dest?.channelId) return { ok: false, error: "las campañas viven en un room" };
+        const target = await resolveTarget(dest.channelId, threadRoot(dest), a.campaign_id, false, "live");
+        if ("error" in target) return { ok: false, error: target.error };
+        const c = target.campaign;
+        if (!c?.metaCampaignId) return { ok: false, error: "esa campaña todavía no existe en Meta; una propuesta se ve en su propia tarjeta" };
+        const C = await import("./ads-campaigns.server");
+        const here = threadRoot(dest);
+        await C.postAsAds(dest.channelId, here, C.adsCampaignFence(c.id));
+        if (c.pending) await C.postAsAds(dest.channelId, here, pendingCardBody(c.id));
+        return {
+          ok: true,
+          campaignId: c.id,
+          note: "Tarjeta publicada en el hilo; no repitas sus números. Di en una línea qué mirar" + (c.pending ? " y que los cambios pendientes se aplican con [Aplicar en Meta] en la tarjeta de abajo." : "."),
+        };
+      },
+    },
+    {
       name: "ads_pending_show",
       description:
         "SÓLO @ads. Vuelve a publicar EN ESTE HILO la tarjeta de cambios pendientes de una campaña, con su botón [Aplicar en Meta]. " +
@@ -567,7 +592,7 @@ export async function adsContext(dest: ToolDest | null, toolChannel: ToolChannel
     }
   }
   parts.push(
-    "Tus tools (ads_account_info, ads_proposal_get, ads_campaign_change_propose, ads_pending_show, ads_review_status, ads_interest_search, ads_location_search, ads_delivery_estimate, ads_proposal_submit, ads_campaigns_list, ads_insights) ya están disponibles en este turno: LLÁMALAS; ninguna gasta." +
+    "Tus tools (ads_account_info, ads_proposal_get, ads_campaign_change_propose, ads_campaign_show, ads_pending_show, ads_review_status, ads_interest_search, ads_location_search, ads_delivery_estimate, ads_proposal_submit, ads_campaigns_list, ads_insights) ya están disponibles en este turno: LLÁMALAS; ninguna gasta." +
       notaNombres(toolChannel) +
       "]",
   );
