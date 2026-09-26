@@ -11,7 +11,7 @@ import { adsActionFn, adsCampaignCardFn, adsReportCardFn } from "../../server/ap
 import { adsStatusLabel } from "../../server/apps/ads-flow";
 import { BUDGET_MAX, BUDGET_MIN, mxn, type Funnel } from "../../server/apps/ads-proposal";
 import ConfirmModal from "../ConfirmModal";
-import { useAdsCard } from "./AdsProposalCard";
+import { useAdsCard } from "./useAdsCard";
 
 type State = Awaited<ReturnType<typeof adsCampaignCardFn>>;
 type Pending = { action: "activate" | "pause" | "budget"; amount?: number };

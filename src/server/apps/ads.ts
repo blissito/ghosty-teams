@@ -1,5 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 import { sessionUser } from "../chat";
+import type { ProposalEdit } from "./ads-proposal";
 
 // Ghosty Ads: campañas de Meta que llevan a Messenger, desde un room con `@ads`.
 //
@@ -253,6 +254,8 @@ export const adsProposalCardFn = createServerFn({ method: "POST" })
       }
     }
     const { estimate: _e, previewSrc: _p, previewNote: _n, ...proposal } = c.proposal;
+    // Las anteriores, para verlas en sólo lectura (la vigente es la de arriba).
+    const versions = await C.listVersions(c.id);
     return {
       campaignId: c.id,
       status: c.status,
@@ -261,8 +264,67 @@ export const adsProposalCardFn = createServerFn({ method: "POST" })
       estimate: c.proposal.estimate ?? null,
       previewSrc,
       previewNote,
+      version: versions[0]?.version ?? 1,
+      versions: versions.slice(1),
+      /** El mensaje que es la tarjeta de la campaña: si es ésta, al crearse se vuelve la de campaña. */
+      cardMsgId: c.cardMsgId,
       approvedBy: await nameOf(c.approvedBy),
     };
+  });
+
+/** Quien edita en la tarjeta: su correo queda en `edited_by`; su nombre, en el hilo. */
+async function editorOf(me: { sub: string; name?: string | null }) {
+  const db = await import("../../db.server");
+  const email = (await db.emailsForSubsAny([me.sub]).catch(() => []))[0]?.email ?? me.sub;
+  return { editedBy: email, display: me.name || email };
+}
+
+/**
+ * Edición en línea de la propuesta (copy, título, saludo, presupuesto, fecha, botón, quitar
+ * intereses). Cualquiera que vea el room; sólo en propuesta. Se valida con las reglas de
+ * `ads-proposal.ts`, se pide vista previa nueva y queda como versión nueva.
+ */
+export const adsEditProposalFn = createServerFn({ method: "POST" })
+  .validator((d: { campaignId: number; edit: ProposalEdit }) => d)
+  .handler(async ({ data }) => {
+    const v = await visibleCampaign(Number(data.campaignId));
+    if (!v) throw new Error("no ves esa campaña");
+    const { me, C, c } = v;
+    if (c.status !== "proposal") throw new Error("sólo se edita mientras es propuesta");
+    const { applyEdit } = await import("./ads-proposal");
+    const e = data.edit ?? {};
+    const edit: ProposalEdit = {
+      ...(e.name != null ? { name: String(e.name) } : {}),
+      ...(e.message != null ? { message: String(e.message) } : {}),
+      ...(e.headline != null ? { headline: String(e.headline) } : {}),
+      ...(e.greeting != null ? { greeting: String(e.greeting) } : {}),
+      ...(e.dailyBudget != null ? { dailyBudget: Number(e.dailyBudget) } : {}),
+      ...(e.endTime != null ? { endTime: String(e.endTime) } : {}),
+      ...(e.cta != null ? { cta: String(e.cta) } : {}),
+      ...(Array.isArray(e.removeInterestIds) ? { removeInterestIds: e.removeInterestIds.map(String) } : {}),
+    };
+    const { estimate: _e, previewSrc: _p, previewNote: _n, ...current } = c.proposal;
+    const next = applyEdit(current, edit, Date.now());
+    if (typeof next === "string") throw new Error(next);
+    const r = await C.saveVersion(c, next, await editorOf(me));
+    return { ok: true as const, version: r.version, previewError: r.previewError ?? null };
+  });
+
+/** «Usar esta versión»: copia una versión anterior como versión nueva (vigente). */
+export const adsUseVersionFn = createServerFn({ method: "POST" })
+  .validator((d: { campaignId: number; version: number }) => d)
+  .handler(async ({ data }) => {
+    const v = await visibleCampaign(Number(data.campaignId));
+    if (!v) throw new Error("no ves esa campaña");
+    const { me, C, c } = v;
+    const old = (await C.listVersions(c.id)).find((x) => x.version === Number(data.version));
+    if (!old) throw new Error("esa versión no existe");
+    // Se revalida: una fecha de fin que ya pasó no vuelve a ser vigente.
+    const { applyEdit } = await import("./ads-proposal");
+    const next = applyEdit(old.proposal, {}, Date.now());
+    if (typeof next === "string") throw new Error(`la v${old.version} ya no es válida: ${next}`);
+    const r = await C.saveVersion(c, next, await editorOf(me));
+    return { ok: true as const, version: r.version };
   });
 
 /** Lo que pinta `gt-ads-campaign`: estado y embudo en vivo. */

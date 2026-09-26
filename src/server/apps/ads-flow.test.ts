@@ -1,6 +1,20 @@
 import { describe, it, expect } from "vitest";
 import { nextAdsStatus, inMeta } from "./ads-flow";
-import { attachmentIdOf, funnelOf, maxTotal, parseProposal, parseTargeting, reportDigest, campaignDays } from "./ads-proposal";
+import {
+  applyEdit,
+  attachmentIdOf,
+  campaignDays,
+  changedFields,
+  CTA_TYPES,
+  describeChanges,
+  endTimeFromDate,
+  funnelOf,
+  maxTotal,
+  parseProposal,
+  parseTargeting,
+  reportDigest,
+  submitMode,
+} from "./ads-proposal";
 import { nextReportAt, normalizeHours } from "./ads-report-time";
 
 describe("nextAdsStatus", () => {
@@ -138,5 +152,59 @@ describe("nextReportAt", () => {
     expect(normalizeHours([])).toEqual([9, 21]);
     expect(normalizeHours([25, "x"])).toEqual([9, 21]);
     expect(normalizeHours([21, 9, 9])).toEqual([9, 21]);
+  });
+});
+
+describe("versiones de la propuesta", () => {
+  it("en un hilo con propuesta abierta es versión nueva; si ya se creó o no hay, fila nueva", () => {
+    expect(submitMode({ status: "proposal" })).toBe("version");
+    expect(submitMode({ status: "paused" })).toBe("new");
+    expect(submitMode({ status: "cancelled" })).toBe("new");
+    expect(submitMode({ status: "error" })).toBe("new");
+    expect(submitMode(null)).toBe("new");
+  });
+
+  const current = parseProposal({ ...base, cta: "GET_QUOTE", targeting: { interests: [{ id: "6003107902433", name: "Ferretería" }, { id: "6003384248805", name: "Remodelación" }] } }, NOW);
+  if (typeof current === "string") throw new Error(current);
+
+  it("la edición se valida con las mismas reglas", () => {
+    expect(applyEdit(current, { message: "corto" }, NOW)).toMatch(/copy/);
+    expect(applyEdit(current, { dailyBudget: 5 }, NOW)).toMatch(/mínimo/);
+    expect(applyEdit(current, { cta: "CALL_NOW" }, NOW)).toMatch(/cta/);
+    expect(applyEdit(current, { endTime: "2026-09-01T00:00:00Z" }, NOW)).toMatch(/futuro/);
+    const ok = applyEdit(current, { message: "Material para tu obra, hoy mismo. Mándanos mensaje.", cta: "BOOK_NOW" }, NOW);
+    expect(typeof ok).toBe("object");
+    if (typeof ok === "string") return;
+    expect(ok.cta).toBe("BOOK_NOW");
+    expect(ok.mediaUrl).toBe(current.mediaUrl);
+    expect(changedFields(current, ok)).toEqual(["message", "cta"]);
+    expect(describeChanges(changedFields(current, ok))).toBe("el copy y el botón");
+  });
+
+  it("la «×» quita un interés; quitar el último deja la segmentación amplia", () => {
+    const one = applyEdit(current, { removeInterestIds: ["6003107902433"] }, NOW);
+    if (typeof one === "string") throw new Error(one);
+    expect(one.targeting.interests).toEqual([{ id: "6003384248805", name: "Remodelación" }]);
+    const none = applyEdit(one, { removeInterestIds: ["6003384248805"] }, NOW);
+    if (typeof none === "string") throw new Error(none);
+    expect(none.targeting.interests).toBeUndefined();
+    expect(changedFields(one, none)).toEqual(["targeting"]);
+  });
+
+  it("el máximo total se recalcula al editar presupuesto o fecha", () => {
+    const e = applyEdit(current, { dailyBudget: 120, endTime: endTimeFromDate("2026-10-06") }, NOW);
+    if (typeof e === "string") throw new Error(e);
+    // 1 oct 12:00Z → 6 oct 23:59 CDMX (7 oct 05:59Z): 5.75 días → 6 días × $120
+    expect(maxTotal(e.dailyBudget, e.endTime, NOW)).toBe(720);
+    expect(maxTotal(current.dailyBudget, current.endTime, NOW)).toBe(500);
+  });
+
+  it("sin cta es MESSAGE_PAGE; los 10 botones de gs son válidos", () => {
+    const p = parseProposal(base, NOW);
+    if (typeof p === "string") throw new Error(p);
+    expect(p.cta).toBe("MESSAGE_PAGE");
+    expect(CTA_TYPES).toHaveLength(10);
+    for (const c of CTA_TYPES) expect(typeof parseProposal({ ...base, cta: c.toLowerCase() }, NOW)).toBe("object");
+    expect(changedFields({ ...p, cta: undefined }, p)).toEqual([]);
   });
 });

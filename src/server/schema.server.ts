@@ -936,6 +936,23 @@ async function migrate(): Promise<void> {
     last_digest TEXT,
     updated_at  INTEGER NOT NULL DEFAULT (unixepoch())
   )`);
+  // Versiones de una PROPUESTA (2026-09-26): una sola tarjeta por campaña; cada
+  // `ads_proposal_submit` en su hilo o cada edición en línea guarda aquí una versión y la
+  // tarjeta se repinta. `gt_ads_campaigns.proposal_json` es siempre la vigente (la última).
+  // `edited_by` = `@ads` o el correo de la persona; `changed_fields` = JSON con los campos
+  // que cambiaron respecto a la anterior (para el hilo y para que @ads respete la edición).
+  await exec(`CREATE TABLE IF NOT EXISTS gt_ads_proposal_versions (
+    campaign_id    INTEGER NOT NULL,
+    version        INTEGER NOT NULL,
+    proposal_json  TEXT NOT NULL,
+    preview_src    TEXT,
+    preview_note   TEXT,
+    estimate_json  TEXT,
+    edited_by      TEXT NOT NULL,
+    changed_fields TEXT,
+    created_at     INTEGER NOT NULL DEFAULT (unixepoch()),
+    PRIMARY KEY (campaign_id, version)
+  )`);
   // Cada reporte publicado, con los números de ESE momento. El fence sólo lleva el id: un
   // agente que escribiera un `gt-ads-report` con números inventados no pinta nada.
   await exec(`CREATE TABLE IF NOT EXISTS gt_ads_reports (

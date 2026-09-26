@@ -8,6 +8,7 @@ import { notaNombres, type ConnectorTool, type ToolChannel } from "../connectors
 import type { ToolDest } from "../connectors/tool-token.server";
 import { isInstalled } from "./installed.server";
 import { ADS_HANDLE } from "./ads-campaigns.server";
+import { CTA_TYPES } from "./ads-proposal";
 
 /** ¿Este turno es de @ads? Sin handle (p.ej. un cliente MCP) también se ofrecen. */
 const isAdsTurn = (dest: ToolDest | null) => !dest?.handle || dest.handle === ADS_HANDLE;
@@ -117,6 +118,11 @@ function tools(dest: ToolDest | null): ConnectorTool[] {
           message: { type: "string", description: "El copy: texto principal del anuncio, corto" },
           headline: { type: "string", description: "Título corto (opcional)" },
           greeting: { type: "string", description: "Saludo de Messenger (opcional)" },
+          cta: {
+            type: "string",
+            enum: [...CTA_TYPES],
+            description: "Botón del anuncio según el giro; si dudas, MESSAGE_PAGE (default)",
+          },
           media_url: { type: "string", description: "Imagen o video: https público o un adjunto del room (/api/attachment/…)" },
           targeting: TARGETING_SCHEMA,
           daily_budget: { type: "number", description: "Presupuesto diario en pesos MXN" },
@@ -134,23 +140,32 @@ function tools(dest: ToolDest | null): ConnectorTool[] {
         const fileId = attachmentIdOf(p.mediaUrl);
         if (fileId && !(await C.attachmentInChannel(fileId, dest.channelId)))
           return { ok: false, error: "ese adjunto no es de este room: usa uno que se haya subido aquí o una URL https" };
-        const { gsAds, metaStatus } = await import("./ads-gs.server");
+        const { metaStatus } = await import("./ads-gs.server");
         const st = await metaStatus();
         if (!st.connected)
           return { ok: false, error: st.error ?? "Meta no está conectado en este espacio: el dueño lo conecta en Ajustes → Apps → Ghosty Ads" };
-        // Estimado y vista previa: best-effort (la tarjeta se publica igual y los pide otra vez).
-        const media = await C.forGs({ channelId: dest.channelId, proposal: p });
-        const [est, prev] = await Promise.all([
-          gsAds("estimate", { targeting: p.targeting }),
-          "error" in media ? Promise.resolve(null) : gsAds("preview", { proposal: media }),
-        ]);
-        const stored = {
-          ...p,
-          estimate: est.ok ? { lower: est.lower, upper: est.upper } : null,
-          previewSrc: prev?.ok ? prev.iframeSrc : null,
-          previewNote: prev?.ok ? prev.note : null,
-        };
         let root = threadRoot(dest);
+        // Una tarjeta por campaña: en un hilo que ya tiene una propuesta abierta, esto es su
+        // versión nueva (misma tarjeta, se repinta); no otra fila ni otra tarjeta.
+        const existing = root ? await C.campaignOfThread(dest.channelId, root) : null;
+        const { submitMode } = await import("./ads-proposal");
+        if (existing && submitMode(existing) === "version") {
+          try {
+            const r = await C.saveVersion(existing, p, { editedBy: C.AGENT_EDITOR, display: "@ads" });
+            return {
+              ok: true,
+              campaignId: existing.id,
+              version: r.version,
+              maxTotal: maxTotal(p.dailyBudget, p.endTime, Date.now()),
+              ...(r.previewError ? { previewError: r.previewError } : {}),
+              note: `La tarjeta de la propuesta #${existing.id} ya muestra la v${r.version} (misma tarjeta, no otra). Di en una línea qué cambió.`,
+            };
+          } catch (e) {
+            return { ok: false, error: e instanceof Error ? e.message : String(e) };
+          }
+        }
+        // Estimado y vista previa: best-effort (la tarjeta se publica igual y los pide otra vez).
+        const { previewError, ...stored } = await C.previewFor(dest.channelId, p);
         const { dbq } = await import("../../dbq.server");
         const rows = await dbq(
           `INSERT INTO gt_ads_campaigns (channel_id, root_msg_id, title, status, proposal_json, requested_by)
@@ -158,19 +173,21 @@ function tools(dest: ToolDest | null): ConnectorTool[] {
           [dest.channelId, root, p.name, JSON.stringify(stored), sub],
         );
         const id = Number(rows[0].id);
+        await C.recordFirstVersion(id, stored, C.AGENT_EDITOR);
         // Sin hilo (un turno top-level sin mensaje que lo invocó): la tarjeta es la raíz.
         const msgId = await C.postAsAds(dest.channelId, root, C.adsProposalFence(id));
-        if (!root && msgId) {
-          root = msgId;
-          await dbq("UPDATE gt_ads_campaigns SET root_msg_id = ? WHERE id = ?", [root, id]);
+        if (msgId) {
+          // La tarjeta de la propuesta es también la de la campaña cuando se cree en pausa.
+          await dbq("UPDATE gt_ads_campaigns SET card_msg_id = ?, root_msg_id = COALESCE(root_msg_id, ?) WHERE id = ?", [msgId, msgId, id]);
         }
         return {
           ok: true,
           campaignId: id,
+          version: 1,
           maxTotal: maxTotal(p.dailyBudget, p.endTime, Date.now()),
           estimate: stored.estimate,
-          ...(prev && !prev.ok ? { previewError: prev.error } : {}),
-          note: `Tarjeta de la propuesta #${id} publicada. Una persona decide con [Crear en pausa] o [Cancelar]: no digas que la creaste. Di en una línea qué revisar.`,
+          ...(previewError ? { previewError } : {}),
+          note: `Tarjeta de la propuesta #${id} publicada. Una persona decide con [Crear en pausa] o [Cancelar]: no digas que la creaste. Si te piden cambios, vuelve a llamar ads_proposal_submit en este hilo: se actualiza la MISMA tarjeta. Di en una línea qué revisar.`,
         };
       },
     },
@@ -234,6 +251,17 @@ export async function adsContext(dest: ToolDest | null, toolChannel: ToolChannel
     if (c) {
       const { adsStatusLabel } = await import("./ads-flow");
       parts.push(`Campaña de ESTE hilo: #${c.id} «${c.title}», ${adsStatusLabel(c.status).toLowerCase()}${c.error ? ` (error: ${c.error})` : ""}.`);
+      if (c.status === "proposal") {
+        const versions = await C.listVersions(c.id).catch(() => []);
+        const human = versions.find((v) => v.editedBy !== C.AGENT_EDITOR);
+        const { describeChanges } = await import("./ads-proposal");
+        if (versions[0]) parts.push(`La tarjeta va en la v${versions[0].version}; ads_proposal_submit aquí guarda la siguiente versión en la MISMA tarjeta.`);
+        if (human)
+          parts.push(
+            `${human.editedBy} editó la propuesta a mano en la v${human.version} (cambió ${describeChanges(human.changedFields)}). ` +
+              "Respeta sus cambios y su estilo en la siguiente versión; no los deshagas.",
+          );
+      }
     }
   }
   parts.push(

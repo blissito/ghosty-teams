@@ -3088,7 +3088,7 @@ export function MessageRow({
                 const ar = extractAdsReportCard(m.body);
                 return (
                   <>
-                    {ap && <AdsProposalCard card={ap} channelId={m.channel_id ?? 0} />}
+                    {ap && <AdsProposalCard card={ap} channelId={m.channel_id ?? 0} msgId={m.id} />}
                     {acm && <AdsCampaignCard card={acm} channelId={m.channel_id ?? 0} />}
                     {ar && <AdsReportCard card={ar} channelId={m.channel_id ?? 0} />}
                   </>

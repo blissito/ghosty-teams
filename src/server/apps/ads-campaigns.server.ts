@@ -6,7 +6,18 @@
 // desde su tarjeta, y cada uno queda en el hilo con su nombre.
 import { dbq } from "../../dbq.server";
 import { adsStatusLabel, nextAdsStatus, type AdsEvent, type AdsStatus } from "./ads-flow";
-import { attachmentIdOf, budgetRejection, funnelOf, mxn, type Funnel, type Proposal, type StoredProposal } from "./ads-proposal";
+import {
+  attachmentIdOf,
+  budgetRejection,
+  changedFields,
+  describeChanges,
+  funnelOf,
+  mxn,
+  type Funnel,
+  type Proposal,
+  type ProposalField,
+  type StoredProposal,
+} from "./ads-proposal";
 import { gsAds, type GsCampaign } from "./ads-gs.server";
 
 export const ADS_HANDLE = "ads";
@@ -175,6 +186,120 @@ export async function forGs(c: { channelId: number; proposal: StoredProposal }):
   return url ? { ...p, mediaUrl: url } : { error: "no pude abrir el creativo adjunto" };
 }
 
+// ── Versiones de la propuesta ────────────────────────────────────────────────
+
+export const AGENT_EDITOR = "@ads";
+
+export type ProposalVersion = {
+  version: number;
+  proposal: Proposal;
+  previewSrc: string | null;
+  previewNote: string | null;
+  estimate: { lower: number; upper: number } | null;
+  editedBy: string;
+  changedFields: ProposalField[];
+  createdAt: number;
+};
+
+const bare = (p: StoredProposal): Proposal => {
+  const { estimate: _e, previewSrc: _s, previewNote: _n, ...rest } = p;
+  return rest;
+};
+
+export async function listVersions(campaignId: number): Promise<ProposalVersion[]> {
+  const rows = await dbq("SELECT * FROM gt_ads_proposal_versions WHERE campaign_id = ? ORDER BY version DESC", [campaignId]).catch(() => []);
+  return rows.map((r) => ({
+    version: Number(r.version),
+    proposal: parseJson<Proposal>(r.proposal_json, {} as Proposal),
+    previewSrc: r.preview_src ?? null,
+    previewNote: r.preview_note ?? null,
+    estimate: parseJson<{ lower: number; upper: number } | null>(r.estimate_json, null),
+    editedBy: String(r.edited_by),
+    changedFields: parseJson<ProposalField[]>(r.changed_fields, []),
+    createdAt: Number(r.created_at ?? 0),
+  }));
+}
+
+async function insertVersion(campaignId: number, version: number, p: StoredProposal, editedBy: string, changed: ProposalField[] | null) {
+  await dbq(
+    `INSERT INTO gt_ads_proposal_versions (campaign_id, version, proposal_json, preview_src, preview_note, estimate_json, edited_by, changed_fields)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      campaignId,
+      version,
+      JSON.stringify(bare(p)),
+      p.previewSrc ?? null,
+      p.previewNote ?? null,
+      p.estimate ? JSON.stringify(p.estimate) : null,
+      editedBy,
+      changed ? JSON.stringify(changed) : null,
+    ],
+  );
+}
+
+/** La v1 de una campaña recién propuesta. */
+export async function recordFirstVersion(campaignId: number, p: StoredProposal, editedBy: string): Promise<void> {
+  await insertVersion(campaignId, 1, p, editedBy, null).catch(() => {});
+}
+
+/**
+ * Estimado y vista previa de gs para una versión. Best-effort: sin ellos la versión se guarda
+ * igual y la tarjeta los vuelve a pedir. El estimado se reusa si la segmentación no cambió.
+ */
+export async function previewFor(channelId: number, p: Proposal, prev?: StoredProposal | null): Promise<StoredProposal & { previewError?: string }> {
+  const sameTargeting = !!prev?.estimate && JSON.stringify(prev.targeting) === JSON.stringify(p.targeting);
+  const media = await forGs({ channelId, proposal: p });
+  const [est, pv] = await Promise.all([
+    sameTargeting ? Promise.resolve(null) : gsAds("estimate", { targeting: p.targeting }),
+    "error" in media ? Promise.resolve(null) : gsAds("preview", { proposal: media }),
+  ]);
+  return {
+    ...p,
+    estimate: sameTargeting ? prev!.estimate : est?.ok ? { lower: est.lower, upper: est.upper } : null,
+    previewSrc: pv?.ok ? pv.iframeSrc : null,
+    previewNote: pv?.ok ? pv.note : null,
+    ...(pv && !pv.ok ? { previewError: pv.error } : "error" in media ? { previewError: media.error } : {}),
+  };
+}
+
+/**
+ * Guarda una versión nueva de la propuesta (de @ads o de una persona que editó la tarjeta)
+ * y la vuelve la vigente. La MISMA tarjeta se repinta (refresh del room) y el hilo lo dice en
+ * una línea. Sólo mientras la campaña siga en propuesta.
+ */
+export async function saveVersion(
+  c: Campaign,
+  next: Proposal,
+  editor: { editedBy: string; display: string },
+): Promise<{ version: number; changed: ProposalField[]; previewError?: string }> {
+  if (c.status !== "proposal") throw new Error(`la campaña #${c.id} ya no es propuesta: su propuesta no se edita`);
+  const changed = changedFields(bare(c.proposal), next);
+  if (!changed.length) throw new Error("no cambió nada respecto a la versión vigente");
+  const versions = await listVersions(c.id);
+  // Propuestas anteriores a las versiones: la de hoy queda como v1 antes de guardar la v2.
+  if (!versions.length) await insertVersion(c.id, 1, c.proposal, AGENT_EDITOR, null).catch(() => {});
+  const version = (versions[0]?.version ?? 1) + 1;
+  const stored = await previewFor(c.channelId, next, c.proposal);
+  const { previewError, ...clean } = stored;
+  try {
+    await insertVersion(c.id, version, clean, editor.editedBy, changed);
+  } catch {
+    throw new Error("alguien más guardó una versión al mismo tiempo; vuelve a mirarla");
+  }
+  const rows = await dbq(
+    "UPDATE gt_ads_campaigns SET proposal_json = ?, title = ?, updated_at = unixepoch() WHERE id = ? AND status = 'proposal' RETURNING id",
+    [JSON.stringify(clean), next.name.slice(0, 120), c.id],
+  );
+  if (!rows.length) throw new Error(`la campaña #${c.id} cambió mientras tanto; vuelve a mirarla`);
+  await postInThread(
+    c,
+    editor.editedBy === AGENT_EDITOR ? `✏️ @ads ajustó la propuesta → v${version}` : `✏️ ${editor.display} cambió ${describeChanges(changed)} → v${version}`,
+  );
+  const { refreshRoom } = await import("./factory-runs.server");
+  void refreshRoom(c.channelId);
+  return { version, changed, ...(previewError ? { previewError } : {}) };
+}
+
 // ── Los botones ──────────────────────────────────────────────────────────────
 
 type Who = { sub: string; name?: string | null };
@@ -200,6 +325,8 @@ export async function createPaused(c: Campaign, me: Who): Promise<Campaign> {
     done,
     `⏸️ ${whoName(me)} creó la campaña #${c.id} **en pausa** en Meta. No gasta nada hasta que alguien la prenda desde su tarjeta.`,
   );
+  // La tarjeta de la propuesta ES la de la campaña (card_msg_id apunta a ella desde que se
+  // propuso): esto sólo publica otra para las propuestas viejas que no la tenían ligada.
   await ensureCampaignCard(done);
   return done;
 }

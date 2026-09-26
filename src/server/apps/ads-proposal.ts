@@ -12,8 +12,44 @@ export type Targeting = {
   interests?: { id: string; name: string }[];
 };
 
+/** Botones (call to action) que gs acepta en `proposal.cta`; todos probados con la vista previa de Meta. */
+export const CTA_TYPES = [
+  "MESSAGE_PAGE",
+  "GET_QUOTE",
+  "SHOP_NOW",
+  "BOOK_NOW",
+  "ORDER_NOW",
+  "LEARN_MORE",
+  "GET_OFFER",
+  "CONTACT_US",
+  "SIGN_UP",
+  "APPLY_NOW",
+] as const;
+export type CtaType = (typeof CTA_TYPES)[number];
+export const CTA_DEFAULT: CtaType = "MESSAGE_PAGE";
+
+/** Cómo se lee cada botón en el anuncio (copy de la UI: pasa por t()). */
+export const CTA_LABELS: Record<CtaType, string> = {
+  MESSAGE_PAGE: "Enviar mensaje",
+  GET_QUOTE: "Solicitar cotización",
+  SHOP_NOW: "Comprar",
+  BOOK_NOW: "Reservar",
+  ORDER_NOW: "Pedir ahora",
+  LEARN_MORE: "Más información",
+  GET_OFFER: "Obtener oferta",
+  CONTACT_US: "Contactarnos",
+  SIGN_UP: "Registrarte",
+  APPLY_NOW: "Solicitar",
+};
+
+export function isCta(v: unknown): v is CtaType {
+  return (CTA_TYPES as readonly string[]).includes(String(v));
+}
+
 export type Proposal = {
   name: string;
+  /** Botón del anuncio; sin él gs usa MESSAGE_PAGE. */
+  cta?: CtaType;
   message: string;
   headline?: string;
   mediaUrl: string;
@@ -124,6 +160,9 @@ export function parseProposal(raw: Record<string, unknown>, nowMs: number): Prop
   if (message.length < 10) return "falta el copy en `message` (el texto principal del anuncio)";
   const headline = str(raw.headline, 80);
   const greeting = str(raw.greeting, 300);
+  const ctaRaw = str(raw.cta, 40).toUpperCase();
+  if (ctaRaw && !isCta(ctaRaw)) return `\`cta\` va como uno de: ${CTA_TYPES.join(", ")}`;
+  const cta = (ctaRaw || CTA_DEFAULT) as CtaType;
   const mediaUrl = str(raw.media_url ?? raw.mediaUrl, 2000);
   if (!mediaUrl) return "falta el creativo en `media_url`: una imagen o video público (https) o un adjunto del room";
   if (!isMediaUrl(mediaUrl)) return "`media_url` tiene que ser https o un adjunto del room (/api/attachment/…)";
@@ -143,10 +182,93 @@ export function parseProposal(raw: Record<string, unknown>, nowMs: number): Prop
     ...(headline ? { headline } : {}),
     mediaUrl,
     ...(greeting ? { greeting } : {}),
+    cta,
     targeting,
     dailyBudget,
     endTime: new Date(end).toISOString(),
   };
+}
+
+// ── Versiones y edición en línea ─────────────────────────────────────────────
+
+/** Los campos que una persona edita desde la tarjeta (el resto lo cambia @ads). */
+export type ProposalEdit = {
+  name?: string;
+  message?: string;
+  headline?: string;
+  greeting?: string;
+  dailyBudget?: number;
+  endTime?: string;
+  cta?: string;
+  /** Intereses que se quitan con la «×» de su chip. */
+  removeInterestIds?: string[];
+};
+
+/**
+ * `ads_proposal_submit` en un hilo que ya tiene campaña: si sigue en propuesta, es una
+ * VERSIÓN nueva de la misma tarjeta; si ya se creó, se canceló o falló, es una campaña nueva.
+ */
+export function submitMode(existing: { status: string } | null): "version" | "new" {
+  return existing?.status === "proposal" ? "version" : "new";
+}
+
+/**
+ * Aplica una edición de la tarjeta y la valida con las MISMAS reglas que la propuesta de
+ * @ads (string = por qué no). Quitar el último interés deja la segmentación amplia.
+ */
+export function applyEdit(current: Proposal, edit: ProposalEdit, nowMs: number): Proposal | string {
+  const remove = new Set(edit.removeInterestIds ?? []);
+  const interests = (current.targeting?.interests ?? []).filter((i) => !remove.has(i.id));
+  const { interests: _i, ...restTargeting } = current.targeting ?? { ageMin: AGE_DEFAULT.min, ageMax: AGE_DEFAULT.max };
+  const merged = {
+    name: edit.name ?? current.name,
+    message: edit.message ?? current.message,
+    headline: edit.headline ?? current.headline ?? "",
+    greeting: edit.greeting ?? current.greeting ?? "",
+    media_url: current.mediaUrl,
+    cta: edit.cta ?? current.cta ?? CTA_DEFAULT,
+    targeting: { ...restTargeting, ...(interests.length ? { interests } : {}) },
+    daily_budget: edit.dailyBudget ?? current.dailyBudget,
+    end_time: edit.endTime ?? current.endTime,
+  };
+  return parseProposal(merged, nowMs);
+}
+
+const FIELD_KEYS = ["name", "message", "headline", "greeting", "cta", "dailyBudget", "endTime", "targeting", "mediaUrl"] as const;
+export type ProposalField = (typeof FIELD_KEYS)[number];
+
+/** Qué cambió entre dos versiones (para la línea del hilo y el contexto de @ads). */
+export function changedFields(prev: Partial<Proposal>, next: Partial<Proposal>): ProposalField[] {
+  const same = (a: unknown, b: unknown) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+  return FIELD_KEYS.filter((k) => {
+    if (k === "cta") return (prev.cta ?? CTA_DEFAULT) !== (next.cta ?? CTA_DEFAULT);
+    if (k === "headline" || k === "greeting") return (prev[k] ?? "") !== (next[k] ?? "");
+    return !same(prev[k], next[k]);
+  });
+}
+
+const FIELD_LABEL: Record<ProposalField, string> = {
+  name: "el título",
+  message: "el copy",
+  headline: "el encabezado",
+  greeting: "el saludo",
+  cta: "el botón",
+  dailyBudget: "el presupuesto",
+  endTime: "la fecha de fin",
+  targeting: "la segmentación",
+  mediaUrl: "el creativo",
+};
+
+/** «el copy», «el copy y el presupuesto», «el copy, el botón y la fecha de fin». */
+export function describeChanges(fields: ProposalField[]): string {
+  const parts = fields.map((f) => FIELD_LABEL[f]);
+  if (!parts.length) return "la propuesta";
+  return parts.length === 1 ? parts[0] : `${parts.slice(0, -1).join(", ")} y ${parts[parts.length - 1]}`;
+}
+
+/** Fecha de fin desde un `<input type="date">`: ese día a las 23:59 en la Ciudad de México. */
+export function endTimeFromDate(date: string): string {
+  return /^\d{4}-\d{2}-\d{2}$/.test(date) ? `${date}T23:59:00-06:00` : date;
 }
 
 // ── El embudo: gasto → mensajes → leads → calificados ────────────────────────
