@@ -1,4 +1,3 @@
-import { Link } from "@tanstack/react-router";
 // Ajustes → Apps → Ghosty Ads (server/apps/ads.ts). Instalar pide dónde vive (room) y qué
 // agente de Studio hace de @ads; la app no crea agentes. Instalada: «Conectar Meta» (el OAuth
 // vive en gs y se abre en otra pestaña), la cuenta y la página conectadas, el selector si hay
@@ -271,9 +270,9 @@ function Installed({ status, onChange }: { status: AdsAppStatus; onChange: () =>
           {t("Abrir Ghosty Ads")} →
         </a>
         {status.room && (
-          <Link to="/c/$slug" params={{ slug: status.room.slug }} className="rounded-lg bg-brand px-3 py-1.5 text-xs font-semibold text-white hover:opacity-90">
+          <a href={`/c/${status.room.slug}`} className="rounded-lg bg-brand px-3 py-1.5 text-xs font-semibold text-white hover:opacity-90">
             {t("Ir al room")}
-          </Link>
+          </a>
         )}
         <button
           type="button"
