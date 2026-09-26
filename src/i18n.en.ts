@@ -1737,6 +1737,17 @@ export const en: Record<string, string> = {
   "Lo usan todos los repos, salvo lo que cambie el .ghosty/factory.md de cada uno.": "Every repo uses it, except what each repo's .ghosty/factory.md changes.",
 
   // Ghosty Ads (Ajustes → Apps, /ads y las tarjetas gt-ads-*).
+  "Edad mínima": "Minimum age",
+  "Edad máxima": "Maximum age",
+  "Radio alrededor de {x}": "Radius around {x}",
+  "+ zona": "+ location",
+  "+ interés": "+ interest",
+  "Busca país, estado o ciudad…": "Search country, state or city…",
+  "Busca un interés…": "Search an interest…",
+  "Buscar zona": "Search location",
+  "Buscar interés": "Search interest",
+  "País": "Country",
+  "Ciudad": "City",
   "versiones": "versions",
   "Guardando versión…": "Saving version…",
   "vigente": "current",

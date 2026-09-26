@@ -8,9 +8,21 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Loader2, X } from "lucide-react";
 import { useT } from "../../i18n";
-import { adsActionFn, adsEditProposalFn, adsProposalCardFn, adsUseVersionFn } from "../../server/apps/ads";
+import { adsActionFn, adsEditProposalFn, adsProposalCardFn, adsTargetingSearchFn, adsUseVersionFn } from "../../server/apps/ads";
 import { adsStatusLabel, inMeta } from "../../server/apps/ads-flow";
-import { CTA_DEFAULT, CTA_LABELS, CTA_TYPES, endTimeFromDate, isCta, maxTotal, mxn, type ProposalEdit } from "../../server/apps/ads-proposal";
+import {
+  AGE_LIMITS,
+  CTA_DEFAULT,
+  CTA_LABELS,
+  CTA_TYPES,
+  endTimeFromDate,
+  isCta,
+  maxTotal,
+  mxn,
+  RADIUS_LIMITS,
+  type ProposalEdit,
+  type Targeting,
+} from "../../server/apps/ads-proposal";
 import ConfirmModal from "../ConfirmModal";
 import { AdsCampaignCard } from "./AdsCampaignCard";
 import { useAdsCard } from "./useAdsCard";
@@ -228,30 +240,13 @@ export function AdsProposalCard({ card, channelId, msgId }: { card: { campaignId
                   {t("Botón")}: {t(CTA_LABELS[cta])}
                 </span>
               )}
-              <span className="rounded-full bg-surface-3 px-2 py-0.5 text-[11px] text-ink">
-                {tg.ageMin}–{tg.ageMax} {t("años")}
-              </span>
-              {[...(tg.countries ?? []), ...(tg.cities ?? []).map((c) => `${c.name ?? c.key}${c.radiusKm ? ` +${c.radiusKm} km` : ""}`)].map((c) => (
-                <span key={c} className="rounded-full bg-surface-3 px-2 py-0.5 text-[11px] text-ink">
-                  {c}
-                </span>
-              ))}
-              {(tg.interests ?? []).map((i) => (
-                <span key={i.id} className="inline-flex items-center gap-0.5 rounded-full bg-surface-3 py-0.5 pl-2 pr-1 text-[11px] text-ink">
-                  {i.name}
-                  {editable && (
-                    <button
-                      type="button"
-                      aria-label={t("Quitar {x}").replace("{x}", i.name)}
-                      onClick={() => void save({ removeInterestIds: [i.id] }).catch(() => {})}
-                      className="grid size-4 place-items-center rounded-full text-muted hover:bg-surface-2 hover:text-ink"
-                    >
-                      <X className="size-3" />
-                    </button>
-                  )}
-                </span>
-              ))}
             </div>
+            <TargetingChips
+              targeting={tg}
+              editable={editable}
+              campaignId={st.campaignId}
+              onSave={(targeting) => save({ targeting })}
+            />
             <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
               <dt className="text-muted">{t("Audiencia estimada")}</dt>
               <dd className="text-ink">{shown.estimate ? `${fmtPeople(shown.estimate.lower)} – ${fmtPeople(shown.estimate.upper)} ${t("personas")}` : "—"}</dd>
@@ -395,6 +390,251 @@ function EditableText({
     >
       {value || placeholder}
     </button>
+  );
+}
+
+const chip = "inline-flex items-center gap-0.5 rounded-full bg-surface-3 py-0.5 pl-2 pr-1 text-[11px] text-ink";
+const RADII = [17, 25, 40, 50, 65, 80].filter((r) => r >= RADIUS_LIMITS.min && r <= RADIUS_LIMITS.max);
+
+/**
+ * La segmentación como chips. En propuesta, TODO se edita: la edad (mín./máx.), las zonas
+ * (país, estado o ciudad con radio; se mezclan) y los intereses, con «×» y buscadores que
+ * piden a Meta por gs. Cada cambio guarda la segmentación completa como versión nueva.
+ */
+function TargetingChips({
+  targeting,
+  editable,
+  campaignId,
+  onSave,
+}: {
+  targeting: Targeting;
+  editable: boolean;
+  campaignId: number;
+  onSave: (t: Targeting) => Promise<void>;
+}) {
+  const t = useT();
+  const [ageOpen, setAgeOpen] = useState(false);
+  const [ageMin, setAgeMin] = useState(String(targeting.ageMin));
+  const [ageMax, setAgeMax] = useState(String(targeting.ageMax));
+  const [adding, setAdding] = useState<"locations" | "interests" | null>(null);
+  const countries = targeting.countries ?? [];
+  const regions = targeting.regions ?? [];
+  const cities = targeting.cities ?? [];
+  const interests = targeting.interests ?? [];
+  const put = (patch: Partial<Targeting>) => void onSave({ ...targeting, ...patch }).catch(() => {});
+  // Sin ninguna zona gs usa México: quitar la ÚLTIMA no cambiaría nada, así que no lleva «×».
+  const zoneCount = countries.length + regions.length + cities.length;
+  const removeBtn = (label: string, onClick: () => void, allowed = true) =>
+    editable && allowed ? (
+      <button type="button" aria-label={t("Quitar {x}").replace("{x}", label)} onClick={onClick} className="grid size-4 place-items-center rounded-full text-muted hover:bg-surface-2 hover:text-ink">
+        <X className="size-3" />
+      </button>
+    ) : null;
+  const min = Number(ageMin);
+  const max = Number(ageMax);
+  const ageOk = Number.isInteger(min) && Number.isInteger(max) && min >= AGE_LIMITS.min && max <= AGE_LIMITS.max && min <= max;
+  return (
+    <div className="space-y-1">
+      <div className="flex flex-wrap items-center gap-1">
+        {ageOpen ? (
+          <span className="inline-flex items-center gap-1 rounded-full border border-border px-2 py-0.5 text-[11px]">
+            <input type="number" min={AGE_LIMITS.min} max={AGE_LIMITS.max} value={ageMin} onChange={(e) => setAgeMin(e.target.value)} aria-label={t("Edad mínima")} className="w-10 bg-transparent text-ink" />
+            –
+            <input type="number" min={AGE_LIMITS.min} max={AGE_LIMITS.max} value={ageMax} onChange={(e) => setAgeMax(e.target.value)} aria-label={t("Edad máxima")} className="w-10 bg-transparent text-ink" />
+            {t("años")}
+            <button
+              type="button"
+              disabled={!ageOk}
+              onClick={() => {
+                setAgeOpen(false);
+                put({ ageMin: min, ageMax: max });
+              }}
+              className="font-semibold text-brand disabled:opacity-40"
+            >
+              {t("Guardar")}
+            </button>
+            <button type="button" onClick={() => setAgeOpen(false)} className="text-muted hover:text-ink">
+              {t("Cancelar")}
+            </button>
+          </span>
+        ) : editable ? (
+          <button
+            type="button"
+            title={t("Clic para editar")}
+            onClick={() => {
+              setAgeMin(String(targeting.ageMin));
+              setAgeMax(String(targeting.ageMax));
+              setAgeOpen(true);
+            }}
+            className="rounded-full bg-surface-3 px-2 py-0.5 text-[11px] text-ink decoration-dotted hover:underline"
+          >
+            {targeting.ageMin}–{targeting.ageMax} {t("años")}
+          </button>
+        ) : (
+          <span className="rounded-full bg-surface-3 px-2 py-0.5 text-[11px] text-ink">
+            {targeting.ageMin}–{targeting.ageMax} {t("años")}
+          </span>
+        )}
+        {countries.map((c) => (
+          <span key={`c:${c}`} className={chip}>
+            {c}
+            {removeBtn(c, () => put({ countries: countries.filter((x) => x !== c) }), zoneCount > 1)}
+          </span>
+        ))}
+        {regions.map((r) => (
+          <span key={`r:${r.key}`} className={chip}>
+            {r.name ?? r.key}
+            {removeBtn(r.name ?? r.key, () => put({ regions: regions.filter((x) => x.key !== r.key) }), zoneCount > 1)}
+          </span>
+        ))}
+        {cities.map((c) => (
+          <span key={`ci:${c.key}`} className={chip}>
+            {c.name ?? c.key}
+            {editable ? (
+              <select
+                value={c.radiusKm ?? RADIUS_LIMITS.default}
+                aria-label={t("Radio alrededor de {x}").replace("{x}", c.name ?? c.key)}
+                onChange={(e) => put({ cities: cities.map((x) => (x.key === c.key ? { ...x, radiusKm: Number(e.target.value) } : x)) })}
+                className="bg-transparent text-[11px] text-muted"
+              >
+                {[...new Set([...RADII, c.radiusKm ?? RADIUS_LIMITS.default])].sort((a, b) => a - b).map((r) => (
+                  <option key={r} value={r}>
+                    +{r} km
+                  </option>
+                ))}
+              </select>
+            ) : c.radiusKm ? (
+              <span className="text-muted"> +{c.radiusKm} km</span>
+            ) : null}
+            {removeBtn(c.name ?? c.key, () => put({ cities: cities.filter((x) => x.key !== c.key) }), zoneCount > 1)}
+          </span>
+        ))}
+        {editable && (
+          <button type="button" onClick={() => setAdding(adding === "locations" ? null : "locations")} className="rounded-full border border-dashed border-border px-2 py-0.5 text-[11px] text-muted hover:text-ink">
+            {t("+ zona")}
+          </button>
+        )}
+      </div>
+      <div className="flex flex-wrap items-center gap-1">
+        {interests.map((i) => (
+          <span key={i.id} className={chip}>
+            {i.name}
+            {removeBtn(i.name, () => put({ interests: interests.filter((x) => x.id !== i.id) }))}
+          </span>
+        ))}
+        {editable && (
+          <button type="button" onClick={() => setAdding(adding === "interests" ? null : "interests")} className="rounded-full border border-dashed border-border px-2 py-0.5 text-[11px] text-muted hover:text-ink">
+            {t("+ interés")}
+          </button>
+        )}
+      </div>
+      {editable && adding && (
+        <TargetingSearch
+          kind={adding}
+          campaignId={campaignId}
+          onClose={() => setAdding(null)}
+          onPickLocation={(l) => {
+            setAdding(null);
+            if (l.type === "country") put({ countries: [...new Set([...countries, l.countryCode.toUpperCase()])] });
+            else if (l.type === "region") put({ regions: [...regions.filter((x) => x.key !== l.key), { key: l.key, name: l.name }] });
+            else put({ cities: [...cities.filter((x) => x.key !== l.key), { key: l.key, name: l.name, radiusKm: RADIUS_LIMITS.default }] });
+          }}
+          onPickInterest={(i) => {
+            setAdding(null);
+            put({ interests: [...interests.filter((x) => x.id !== i.id), { id: i.id, name: i.name }] });
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+type SearchResult = Awaited<ReturnType<typeof adsTargetingSearchFn>>;
+const TYPE_LABEL: Record<string, string> = { country: "País", region: "Estado", city: "Ciudad" };
+
+/** Buscador de zonas o intereses de Meta (por gs), con espera corta entre teclas. */
+function TargetingSearch({
+  kind,
+  campaignId,
+  onClose,
+  onPickLocation,
+  onPickInterest,
+}: {
+  kind: "locations" | "interests";
+  campaignId: number;
+  onClose: () => void;
+  onPickLocation: (l: SearchResult["locations"][number]) => void;
+  onPickInterest: (i: SearchResult["interests"][number]) => void;
+}) {
+  const t = useT();
+  const [q, setQ] = useState("");
+  const [res, setRes] = useState<SearchResult | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState("");
+  useEffect(() => {
+    if (q.trim().length < 2) {
+      setRes(null);
+      return;
+    }
+    let alive = true;
+    const id = setTimeout(() => {
+      setLoading(true);
+      setErr("");
+      adsTargetingSearchFn({ data: { campaignId, kind, q } })
+        .then((r) => alive && setRes(r))
+        .catch((e) => alive && setErr(e instanceof Error ? e.message : String(e)))
+        .finally(() => alive && setLoading(false));
+    }, 300);
+    return () => {
+      alive = false;
+      clearTimeout(id);
+    };
+  }, [q, kind, campaignId]);
+  const items = kind === "locations" ? (res?.locations ?? []) : (res?.interests ?? []);
+  return (
+    <div className="rounded-md border border-border bg-surface p-1.5">
+      <div className="flex items-center gap-1">
+        <input
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          autoFocus
+          placeholder={kind === "locations" ? t("Busca país, estado o ciudad…") : t("Busca un interés…")}
+          aria-label={kind === "locations" ? t("Buscar zona") : t("Buscar interés")}
+          onKeyDown={(e) => e.key === "Escape" && onClose()}
+          className="min-w-0 flex-1 rounded border border-border bg-surface-2 px-2 py-1 text-xs text-ink"
+        />
+        {loading && <Loader2 className="size-3.5 animate-spin text-muted" />}
+        <button type="button" onClick={onClose} aria-label={t("Cerrar")} className="grid size-5 place-items-center text-muted hover:text-ink">
+          <X className="size-3.5" />
+        </button>
+      </div>
+      {err && <p className="mt-1 text-[11px] text-red-600 dark:text-red-400">{err}</p>}
+      {res && !items.length && !loading && <p className="mt-1 px-1 text-[11px] text-muted">{t("Sin resultados.")}</p>}
+      {items.length > 0 && (
+        <ul className="mt-1 max-h-48 overflow-y-auto text-xs">
+          {kind === "locations"
+            ? res!.locations.map((l) => (
+                <li key={`${l.type}:${l.key}`}>
+                  <button type="button" onClick={() => onPickLocation(l)} className="flex w-full items-baseline gap-2 rounded px-1.5 py-1 text-left hover:bg-surface-3">
+                    <span className="text-ink">{l.name}</span>
+                    <span className="text-[10px] text-muted">
+                      {t(TYPE_LABEL[l.type] ?? l.type)}
+                      {l.region && l.type === "city" ? ` · ${l.region}` : ""} · {l.countryCode}
+                    </span>
+                  </button>
+                </li>
+              ))
+            : res!.interests.map((i) => (
+                <li key={i.id}>
+                  <button type="button" onClick={() => onPickInterest(i)} className="flex w-full items-baseline gap-2 rounded px-1.5 py-1 text-left hover:bg-surface-3">
+                    <span className="text-ink">{i.name}</span>
+                    {i.audienceMax ? <span className="text-[10px] text-muted">≤ {i.audienceMax.toLocaleString("es-MX")}</span> : null}
+                  </button>
+                </li>
+              ))}
+        </ul>
+      )}
+    </div>
   );
 }
 

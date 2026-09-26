@@ -8,6 +8,8 @@ export type Targeting = {
   ageMin: number;
   ageMax: number;
   countries?: string[];
+  /** Estados (regiones de Meta), con su key de `locations`. */
+  regions?: { key: string; name?: string }[];
   cities?: { key: string; name?: string; radiusKm?: number }[];
   interests?: { id: string; name: string }[];
 };
@@ -68,6 +70,9 @@ export type StoredProposal = Proposal & {
 };
 
 export const AGE_DEFAULT = { min: 25, max: 55 };
+/** Lo que Meta permite: edad 18–65 y radio de ciudad 17–80 km (25 por default al agregarla). */
+export const AGE_LIMITS = { min: 18, max: 65 };
+export const RADIUS_LIMITS = { min: 17, max: 80, default: 25 };
 export const BUDGET_MIN = 20;
 export const BUDGET_MAX = 50_000;
 const MAX_DAYS = 90;
@@ -90,13 +95,22 @@ export function parseTargeting(raw: unknown): Targeting | string {
   const t = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
   const ageMin = t.ageMin ?? t.age_min;
   const ageMax = t.ageMax ?? t.age_max;
-  const min = ageMin == null ? AGE_DEFAULT.min : Math.round(Number(ageMin));
-  const max = ageMax == null ? AGE_DEFAULT.max : Math.round(Number(ageMax));
-  if (!Number.isFinite(min) || !Number.isFinite(max) || min < 18 || max > 65 || min > max)
-    return "la edad va de 18 a 65 y la mínima no puede pasar a la máxima";
+  const min = ageMin == null ? AGE_DEFAULT.min : Number(ageMin);
+  const max = ageMax == null ? AGE_DEFAULT.max : Number(ageMax);
+  if (!Number.isInteger(min) || !Number.isInteger(max) || min < AGE_LIMITS.min || max > AGE_LIMITS.max || min > max)
+    return `la edad va de ${AGE_LIMITS.min} a ${AGE_LIMITS.max} y la mínima no puede pasar a la máxima`;
   const countries = Array.isArray(t.countries)
-    ? t.countries.map((c) => String(c).trim().toUpperCase()).filter((c) => /^[A-Z]{2}$/.test(c))
+    ? [...new Set(t.countries.map((c) => String(c).trim().toUpperCase()))]
     : [];
+  if (countries.some((c) => !/^[A-Z]{2}$/.test(c))) return "cada país va con su código ISO de 2 letras (MX, US…)";
+  const regions: NonNullable<Targeting["regions"]> = [];
+  if (Array.isArray(t.regions)) {
+    for (const r of t.regions as Record<string, unknown>[]) {
+      const key = str(r?.key, 40);
+      if (!/^\d+$/.test(key)) return "cada estado lleva la `key` que devolvió la búsqueda de zonas";
+      if (!regions.some((x) => x.key === key)) regions.push({ key, ...(r?.name ? { name: str(r.name, 80) } : {}) });
+    }
+  }
   const cities: NonNullable<Targeting["cities"]> = [];
   if (Array.isArray(t.cities)) {
     for (const c of t.cities as Record<string, unknown>[]) {
@@ -104,10 +118,12 @@ export function parseTargeting(raw: unknown): Targeting | string {
       if (!key) return "cada ciudad lleva su `key` de Meta";
       const radius = c?.radiusKm ?? c?.radius_km;
       const radiusKm = radius == null ? undefined : Math.round(Number(radius));
-      if (radiusKm != null && (!Number.isFinite(radiusKm) || radiusKm < 1 || radiusKm > 80)) return "el radio de una ciudad va de 1 a 80 km";
-      cities.push({ key, ...(c?.name ? { name: str(c.name, 80) } : {}), ...(radiusKm != null ? { radiusKm } : {}) });
+      if (radiusKm != null && (!Number.isFinite(radiusKm) || radiusKm < RADIUS_LIMITS.min || radiusKm > RADIUS_LIMITS.max))
+        return `el radio de una ciudad va de ${RADIUS_LIMITS.min} a ${RADIUS_LIMITS.max} km`;
+      if (!cities.some((x) => x.key === key)) cities.push({ key, ...(c?.name ? { name: str(c.name, 80) } : {}), ...(radiusKm != null ? { radiusKm } : {}) });
     }
   }
+  if (countries.length + regions.length + cities.length > 50) return "máximo 50 zonas";
   const interests: NonNullable<Targeting["interests"]> = [];
   if (Array.isArray(t.interests)) {
     for (const i of t.interests as Record<string, unknown>[]) {
@@ -115,15 +131,17 @@ export function parseTargeting(raw: unknown): Targeting | string {
       const name = str(i?.name, 80);
       // Los ids de Meta son numéricos: uno inventado («cocina») sale de aquí antes de llegar a Meta.
       if (!/^\d{5,}$/.test(id) || !name) return "cada interés lleva el `id` y el `name` que devolvió ads_interest_search (no los inventes)";
-      interests.push({ id, name });
+      if (!interests.some((x) => x.id === id)) interests.push({ id, name });
     }
     if (interests.length > 25) return "máximo 25 intereses";
   }
-  if (!countries.length && !cities.length) countries.push("MX");
+  // Sin ninguna zona, México (lo mismo que haría gs).
+  if (!countries.length && !regions.length && !cities.length) countries.push("MX");
   return {
     ageMin: min,
     ageMax: max,
     ...(countries.length ? { countries } : {}),
+    ...(regions.length ? { regions } : {}),
     ...(cities.length ? { cities } : {}),
     ...(interests.length ? { interests } : {}),
   };
@@ -202,6 +220,8 @@ export type ProposalEdit = {
   cta?: string;
   /** Intereses que se quitan con la «×» de su chip. */
   removeInterestIds?: string[];
+  /** La segmentación completa editada en la tarjeta (edad, zonas, intereses). */
+  targeting?: Targeting;
 };
 
 /**
@@ -218,8 +238,9 @@ export function submitMode(existing: { status: string } | null): "version" | "ne
  */
 export function applyEdit(current: Proposal, edit: ProposalEdit, nowMs: number): Proposal | string {
   const remove = new Set(edit.removeInterestIds ?? []);
-  const interests = (current.targeting?.interests ?? []).filter((i) => !remove.has(i.id));
-  const { interests: _i, ...restTargeting } = current.targeting ?? { ageMin: AGE_DEFAULT.min, ageMax: AGE_DEFAULT.max };
+  const base = edit.targeting ?? current.targeting ?? { ageMin: AGE_DEFAULT.min, ageMax: AGE_DEFAULT.max };
+  const interests = (base.interests ?? []).filter((i) => !remove.has(i.id));
+  const { interests: _i, ...restTargeting } = base;
   const merged = {
     name: edit.name ?? current.name,
     message: edit.message ?? current.message,

@@ -39,6 +39,11 @@ const TARGETING_SCHEMA = {
     ageMin: { type: "number" },
     ageMax: { type: "number" },
     countries: { type: "array", items: { type: "string" }, description: 'Códigos ISO, p.ej. ["MX"]' },
+    regions: {
+      type: "array",
+      items: { type: "object", properties: { key: { type: "string" }, name: { type: "string" } }, required: ["key"] },
+      description: "Estados con su key de ads_location_search",
+    },
     cities: {
       type: "array",
       items: {
@@ -46,7 +51,7 @@ const TARGETING_SCHEMA = {
         properties: { key: { type: "string" }, name: { type: "string" }, radiusKm: { type: "number" } },
         required: ["key"],
       },
-      description: "Ciudades con su key de Meta y radio opcional (1–80 km)",
+      description: "Ciudades con su key de ads_location_search y radio de 17 a 80 km (25 si no sabes)",
     },
     interests: {
       type: "array",
@@ -89,6 +94,20 @@ function tools(dest: ToolDest | null): ConnectorTool[] {
         if (q.length < 2) return { ok: false, error: "escribe qué buscar en `q`" };
         const { gsAds } = await import("./ads-gs.server");
         const r = await gsAds("interests", { q });
+        return r.ok ? { items: (r.items ?? []).slice(0, 25) } : { ok: false, error: r.error };
+      },
+    },
+    {
+      name: "ads_location_search",
+      description:
+        "Ghosty Ads: busca zonas de Meta para segmentar (país, estado o ciudad), p.ej. «Monterrey», «Jalisco». Devuelve key, nombre, " +
+        "tipo y país. País → targeting.countries con countryCode; estado → targeting.regions {key,name}; ciudad → targeting.cities {key,name,radiusKm 17–80}.",
+      inputSchema: { type: "object", properties: { q: { type: "string", description: "Nombre de la zona" } }, required: ["q"] },
+      handler: async (_sub, a) => {
+        const q = String(a.q ?? "").trim().slice(0, 80);
+        if (q.length < 2) return { ok: false, error: "escribe qué zona buscar en `q`" };
+        const { gsAds } = await import("./ads-gs.server");
+        const r = await gsAds("locations", { q });
         return r.ok ? { items: (r.items ?? []).slice(0, 25) } : { ok: false, error: r.error };
       },
     },
@@ -265,7 +284,7 @@ export async function adsContext(dest: ToolDest | null, toolChannel: ToolChannel
     }
   }
   parts.push(
-    "Tus tools (ads_account_info, ads_interest_search, ads_delivery_estimate, ads_proposal_submit, ads_campaigns_list, ads_insights) ya están disponibles en este turno: LLÁMALAS; ninguna gasta." +
+    "Tus tools (ads_account_info, ads_interest_search, ads_location_search, ads_delivery_estimate, ads_proposal_submit, ads_campaigns_list, ads_insights) ya están disponibles en este turno: LLÁMALAS; ninguna gasta." +
       notaNombres(toolChannel) +
       "]",
   );

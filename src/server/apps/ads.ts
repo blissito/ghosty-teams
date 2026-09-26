@@ -302,12 +302,36 @@ export const adsEditProposalFn = createServerFn({ method: "POST" })
       ...(e.endTime != null ? { endTime: String(e.endTime) } : {}),
       ...(e.cta != null ? { cta: String(e.cta) } : {}),
       ...(Array.isArray(e.removeInterestIds) ? { removeInterestIds: e.removeInterestIds.map(String) } : {}),
+      // La segmentación completa: la valida `parseTargeting` dentro de `applyEdit`.
+      ...(e.targeting && typeof e.targeting === "object" ? { targeting: e.targeting } : {}),
     };
     const { estimate: _e, previewSrc: _p, previewNote: _n, ...current } = c.proposal;
     const next = applyEdit(current, edit, Date.now());
     if (typeof next === "string") throw new Error(next);
     const r = await C.saveVersion(c, next, await editorOf(me));
     return { ok: true as const, version: r.version, previewError: r.previewError ?? null };
+  });
+
+/**
+ * Buscadores de la tarjeta (zonas e intereses) para editar la segmentación. Cualquiera que
+ * vea el room de la campaña; sólo leen de Meta, por gs.
+ */
+export const adsTargetingSearchFn = createServerFn({ method: "POST" })
+  .validator((d: { campaignId: number; kind: "locations" | "interests"; q: string }) => d)
+  .handler(async ({ data }) => {
+    const v = await visibleCampaign(Number(data.campaignId));
+    if (!v) throw new Error("no ves esa campaña");
+    const q = String(data.q ?? "").trim().slice(0, 80);
+    if (q.length < 2) return { locations: [], interests: [] };
+    const { gsAds } = await import("./ads-gs.server");
+    if (data.kind === "locations") {
+      const r = await gsAds("locations", { q });
+      if (!r.ok) throw new Error(r.error);
+      return { locations: (r.items ?? []).slice(0, 12), interests: [] };
+    }
+    const r = await gsAds("interests", { q });
+    if (!r.ok) throw new Error(r.error);
+    return { locations: [], interests: (r.items ?? []).slice(0, 12) };
   });
 
 /** «Usar esta versión»: copia una versión anterior como versión nueva (vigente). */

@@ -20,6 +20,7 @@ export type MetaStatus = {
 
 export type GsInsights = { spend: number; impressions: number; clicks: number; conversations: number };
 export type GsLeadStats = { byAd: Record<string, { leads: number; qualified: number }>; leads: number; qualified: number };
+export type GsLocation = { key: string; name: string; type: "country" | "region" | "city"; countryCode: string; region?: string | null };
 export type GsCampaign = { id: string; name: string; status: string; dailyBudget: number | null; endTime: string | null; adIds: string[] };
 
 type Ops = {
@@ -28,6 +29,7 @@ type Ops = {
   connect_url: [{ returnTo: string; email?: string | null }, { url: string }];
   assets: [Record<string, never>, { adAccounts: { id: string; name: string; currency: string }[]; pages: { id: string; name: string }[] }];
   select: [{ adAccountId: string; pageId: string }, Record<string, never>];
+  locations: [{ q: string }, { items: GsLocation[] }];
   interests: [{ q: string }, { items: { id: string; name: string; audienceMin: number; audienceMax: number; path: string[] }[] }];
   estimate: [{ targeting: Targeting }, { lower: number; upper: number }];
   // En video Meta no da iframe: viene `note` para enseñarla en su lugar.

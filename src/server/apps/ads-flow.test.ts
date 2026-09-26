@@ -208,3 +208,60 @@ describe("versiones de la propuesta", () => {
     expect(changedFields({ ...p, cta: undefined }, p)).toEqual([]);
   });
 });
+
+describe("segmentación editable", () => {
+  it("edad: enteros de 18 a 65 y mín. ≤ máx.", () => {
+    expect(parseTargeting({ ageMin: 18, ageMax: 65 })).toMatchObject({ ageMin: 18, ageMax: 65 });
+    expect(parseTargeting({ ageMin: 17 })).toMatch(/18 a 65/);
+    expect(parseTargeting({ ageMax: 66 })).toMatch(/18 a 65/);
+    expect(parseTargeting({ ageMin: 30, ageMax: 29 })).toMatch(/18 a 65/);
+    expect(parseTargeting({ ageMin: 25.5 })).toMatch(/18 a 65/);
+  });
+
+  it("zonas: país, estado y ciudad con radio se mezclan; sin zona, México", () => {
+    expect(
+      parseTargeting({
+        countries: ["us"],
+        regions: [{ key: "2513", name: "Jalisco" }],
+        cities: [{ key: "2673660", name: "Monterrey", radiusKm: 25 }],
+      }),
+    ).toEqual({
+      ageMin: 25,
+      ageMax: 55,
+      countries: ["US"],
+      regions: [{ key: "2513", name: "Jalisco" }],
+      cities: [{ key: "2673660", name: "Monterrey", radiusKm: 25 }],
+    });
+    expect(parseTargeting({ regions: [{ key: "2513" }] })).not.toHaveProperty("countries");
+    expect(parseTargeting({})).toMatchObject({ countries: ["MX"] });
+  });
+
+  it("rechaza estados sin key, países inválidos y radios fuera de 17–80", () => {
+    expect(parseTargeting({ regions: [{ name: "Jalisco" }] })).toMatch(/estado/);
+    expect(parseTargeting({ countries: ["México"] })).toMatch(/ISO/);
+    expect(parseTargeting({ cities: [{ key: "1", radiusKm: 10 }] })).toMatch(/17 a 80/);
+    expect(parseTargeting({ cities: [{ key: "1", radiusKm: 81 }] })).toMatch(/17 a 80/);
+  });
+
+  it("la edición manda la segmentación completa y se valida", () => {
+    const cur = parseProposal(base, NOW);
+    if (typeof cur === "string") throw new Error(cur);
+    const next = applyEdit(
+      cur,
+      { targeting: { ageMin: 30, ageMax: 45, regions: [{ key: "2513", name: "Jalisco" }], interests: [...(cur.targeting.interests ?? []), { id: "6003384248805", name: "Remodelación" }] } },
+      NOW,
+    );
+    if (typeof next === "string") throw new Error(next);
+    expect(next.targeting).toEqual({
+      ageMin: 30,
+      ageMax: 45,
+      regions: [{ key: "2513", name: "Jalisco" }],
+      interests: [
+        { id: "6003107902433", name: "Ferretería" },
+        { id: "6003384248805", name: "Remodelación" },
+      ],
+    });
+    expect(changedFields(cur, next)).toEqual(["targeting"]);
+    expect(applyEdit(cur, { targeting: { ageMin: 50, ageMax: 40 } }, NOW)).toMatch(/18 a 65/);
+  });
+});
