@@ -326,7 +326,9 @@ export function AdsPlacements({ campaignId, channelId }: { campaignId: number; c
       .then(setRows)
       .catch((e) => setErr(e instanceof Error ? e.message : String(e)));
   }, [campaignId]);
-  const active: PublisherPlatform[] = (live?.pending?.publisherPlatforms ?? live?.publisherPlatforms ?? [...PUBLISHER_PLATFORMS]) as PublisherPlatform[];
+  // Sin lista (o vacía) Meta elige dónde sale: todas cuentan como encendidas.
+  const chosen = live?.pending?.publisherPlatforms ?? live?.publisherPlatforms;
+  const active: PublisherPlatform[] = (chosen?.length ? chosen : [...PUBLISHER_PLATFORMS]) as PublisherPlatform[];
   const toggle = async (p: PublisherPlatform) => {
     const next = active.includes(p) ? active.filter((x) => x !== p) : [...active, p];
     if (!next.length) return setErr(t("Deja al menos una plataforma."));
