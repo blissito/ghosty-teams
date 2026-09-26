@@ -89,7 +89,7 @@ async function gsAdsRaw<K extends AdsOp>(op: K, args: Ops[K][0]): Promise<GsResu
       method: "POST",
       headers: partnerHeaders(body, await currentNamespace()),
       body,
-      signal: AbortSignal.timeout(op === "create_paused" ? 120_000 : ["update_targeting", "replace_ad", "set_placements", "archive"].includes(op) ? 60_000 : 20_000),
+      signal: AbortSignal.timeout(op === "create_paused" ? 120_000 : ["update_targeting", "replace_ad", "set_placements", "set_budget", "archive"].includes(op) ? 60_000 : 20_000),
     });
     const j = (await res.json().catch(() => null)) as ({ ok?: boolean; error?: string } & Record<string, unknown>) | null;
     if (res.status === 404 && !j?.error) return { ok: false, error: "Ghosty Studio todavía no tiene la conexión con Meta Ads" };
