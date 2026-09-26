@@ -20,6 +20,7 @@ import { Route as CanvasDemoRouteImport } from './routes/canvas-demo'
 import { Route as BusyRouteImport } from './routes/busy'
 import { Route as BrandProbeRouteImport } from './routes/brand-probe'
 import { Route as ArtifactsRouteImport } from './routes/artifacts'
+import { Route as AdsRouteImport } from './routes/ads'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as SetupIndexRouteImport } from './routes/setup.index'
 import { Route as ProspeccionIndexRouteImport } from './routes/prospeccion.index'
@@ -136,6 +137,11 @@ const BrandProbeRoute = BrandProbeRouteImport.update({
 const ArtifactsRoute = ArtifactsRouteImport.update({
   id: '/artifacts',
   path: '/artifacts',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AdsRoute = AdsRouteImport.update({
+  id: '/ads',
+  path: '/ads',
   getParentRoute: () => rootRouteImport,
 } as any)
 const IndexRoute = IndexRouteImport.update({
@@ -456,6 +462,7 @@ const ApiHooksWhatsappTokenMessageRoute =
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/ads': typeof AdsRoute
   '/artifacts': typeof ArtifactsRoute
   '/brand-probe': typeof BrandProbeRoute
   '/busy': typeof BusyRoute
@@ -531,6 +538,7 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/ads': typeof AdsRoute
   '/artifacts': typeof ArtifactsRoute
   '/brand-probe': typeof BrandProbeRoute
   '/busy': typeof BusyRoute
@@ -606,6 +614,7 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/ads': typeof AdsRoute
   '/artifacts': typeof ArtifactsRoute
   '/brand-probe': typeof BrandProbeRoute
   '/busy': typeof BusyRoute
@@ -683,6 +692,7 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/ads'
     | '/artifacts'
     | '/brand-probe'
     | '/busy'
@@ -758,6 +768,7 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/ads'
     | '/artifacts'
     | '/brand-probe'
     | '/busy'
@@ -832,6 +843,7 @@ export interface FileRouteTypes {
   id:
     | '__root__'
     | '/'
+    | '/ads'
     | '/artifacts'
     | '/brand-probe'
     | '/busy'
@@ -908,6 +920,7 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  AdsRoute: typeof AdsRoute
   ArtifactsRoute: typeof ArtifactsRoute
   BrandProbeRoute: typeof BrandProbeRoute
   BusyRoute: typeof BusyRoute
@@ -1053,6 +1066,13 @@ declare module '@tanstack/react-router' {
       path: '/artifacts'
       fullPath: '/artifacts'
       preLoaderRoute: typeof ArtifactsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/ads': {
+      id: '/ads'
+      path: '/ads'
+      fullPath: '/ads'
+      preLoaderRoute: typeof AdsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/': {
@@ -1524,6 +1544,7 @@ const ArtefactoIdRouteWithChildren = ArtefactoIdRoute._addFileChildren(
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  AdsRoute: AdsRoute,
   ArtifactsRoute: ArtifactsRoute,
   BrandProbeRoute: BrandProbeRoute,
   BusyRoute: BusyRoute,

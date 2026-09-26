@@ -82,6 +82,9 @@ export async function buildConnectorContext(
     const { factoryContext } = await import("../apps/factory-tools.server");
     const fabrica = await factoryContext(dest, toolChannel).catch(() => null);
     if (fabrica) blocks.push(fabrica);
+    const { adsContext } = await import("../apps/ads-tools.server");
+    const anuncios = await adsContext(dest, toolChannel).catch(() => null);
+    if (anuncios) blocks.push(anuncios);
     const ajenos = await contextoDeConectoresDelEquipo(sub);
     if (ajenos) blocks.push(ajenos);
     const sinGithub = await contextoSinGithub(sub);

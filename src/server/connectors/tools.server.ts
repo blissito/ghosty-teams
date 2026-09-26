@@ -10,6 +10,7 @@ import { loaderFor, toolsOf } from "./impl";
 import { nativeTools, type ToolDest } from "./native.server";
 import { taskTools } from "./tasks.native.server";
 import { factoryTools } from "../apps/factory-tools.server";
+import { adsTools } from "../apps/ads-tools.server";
 import { SCOPE_COMPLETO, type ToolScope } from "./tool-token.server";
 
 // Declaración expuesta al modelo (sin el handler).
@@ -103,6 +104,9 @@ export async function listUserTools(
     out.push({ name: t.name, description: t.description, inputSchema: t.inputSchema });
   // Las de apps instaladas (hoy la Software Factory): [] si el espacio no la tiene.
   for (const t of await factoryTools(sub, dest).catch(() => []))
+    out.push({ name: t.name, description: t.description, inputSchema: t.inputSchema });
+  // Ghosty Ads: sólo con la app instalada y en turnos de @ads.
+  for (const t of await adsTools(sub, dest).catch(() => []))
     out.push({ name: t.name, description: t.description, inputSchema: t.inputSchema });
   for (const id of connected) {
     const load = loaderFor(id);
@@ -209,6 +213,16 @@ export async function runTool(
     if (!ft) return { ok: false, error: `${toolName} sólo existe con la Software Factory instalada en este espacio` };
     try {
       return { ok: true, result: await ft.handler(sub, args ?? {}) };
+    } catch (e) {
+      return { ok: false, error: e instanceof Error ? e.message : String(e) };
+    }
+  }
+  // Las de Ghosty Ads: nombres reservados; sin la app (o fuera de @ads) no existen.
+  if (toolName.startsWith("ads_")) {
+    const at = (await adsTools(sub, dest).catch(() => [])).find((t) => t.name === toolName);
+    if (!at) return { ok: false, error: `${toolName} sólo existe con Ghosty Ads instalada en este espacio, en turnos de @ads` };
+    try {
+      return { ok: true, result: await at.handler(sub, args ?? {}) };
     } catch (e) {
       return { ok: false, error: e instanceof Error ? e.message : String(e) };
     }

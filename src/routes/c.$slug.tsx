@@ -75,6 +75,7 @@ import {
   Brain,
 } from "lucide-react";
 import { factoryInstalledFn } from "../server/apps/factory";
+import { adsInstalledFn } from "../server/apps/ads";
 import { searchMessagesFn } from "../server/search";
 import {
   roomReposFn,
@@ -3756,8 +3757,11 @@ function Sidebar({
     });
   // «Fábrica» sólo aparece donde la Software Factory está instalada.
   const [factoryOn, setFactoryOn] = useState(false);
+  // «Anuncios», igual: sólo con Ghosty Ads instalada.
+  const [adsOn, setAdsOn] = useState(false);
   useEffect(() => {
     factoryInstalledFn().then(setFactoryOn).catch(() => {});
+    adsInstalledFn().then(setAdsOn).catch(() => {});
   }, []);
   const router = useRouter();
   const { openPrefs } = useContext(ChatCtx); // Ajustes in-panel (modal a nivel shell)
@@ -4026,6 +4030,15 @@ function Sidebar({
           >
             <FactoryIcon size={16} className="shrink-0" />
             <span className="truncate">{t("Fábrica Agéntica")}</span>
+          </Link>
+        )}
+        {adsOn && (
+          <Link
+            to="/ads"
+            className="flex w-full items-center gap-2 rounded-lg px-2 py-2.5 text-sm md:py-1.5 text-muted hover:bg-surface-3 hover:text-ink"
+          >
+            <Megaphone size={16} className="shrink-0" />
+            <span className="truncate">{t("Anuncios")}</span>
           </Link>
         )}
         {navOpen && (

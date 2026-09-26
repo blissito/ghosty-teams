@@ -11,6 +11,7 @@ import { listChannelsFn } from "../server/chat";
 import ConfirmModal from "./ConfirmModal";
 import { AskAgentHint } from "./AskAgentHint";
 import { Toggle } from "./Toggle";
+import { AdsAppPanel } from "./AdsAppPanel";
 
 type Repos = Awaited<ReturnType<typeof githubInstallationReposFn>>;
 type Room = { id: number; name: string; slug: string };
@@ -66,6 +67,7 @@ export function AppsPanel() {
           {status.installed ? <Installed status={status} onChange={load} /> : <Installer status={status} onDone={load} />}
         </div>
       </div>
+      <AdsAppPanel />
     </div>
   );
 }

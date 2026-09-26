@@ -60,6 +60,10 @@ export async function ensureSchema(): Promise<void> {
           armFactorySchedules(ns);
         } catch { /* best-effort */ }
         try {
+          const { armAdsReports } = await import("./apps/ads-report.server");
+          armAdsReports(ns);
+        } catch { /* best-effort */ }
+        try {
           const { armPrWatches } = await import("./pr-watches.server");
           armPrWatches(ns);
         } catch { /* best-effort */ }
@@ -889,6 +893,56 @@ async function migrate(): Promise<void> {
     note       TEXT,
     at         INTEGER NOT NULL DEFAULT (unixepoch()),
     PRIMARY KEY (run_id, version)
+  )`);
+
+  // Campañas de Ghosty Ads (2026-09-26): el #N de cada campaña de Meta que se propuso en un
+  // room con @ads o que se importó. La credencial de Meta y la Marketing API viven en gs
+  // (API de partner `meta-ads`); aquí sólo el hilo, el estado y quién decidió. El agente
+  // llega hasta `proposal`: todo lo que gasta lo pica una persona (apps/ads-flow.ts).
+  // `proposal_json` = copy, creativo, segmentación, presupuesto, fechas, estimado y preview.
+  await exec(`CREATE TABLE IF NOT EXISTS gt_ads_campaigns (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    channel_id       INTEGER NOT NULL,
+    root_msg_id      INTEGER,
+    card_msg_id      INTEGER,
+    title            TEXT NOT NULL,
+    status           TEXT NOT NULL,
+    proposal_json    TEXT NOT NULL DEFAULT '{}',
+    meta_campaign_id TEXT,
+    meta_adset_id    TEXT,
+    meta_ad_id       TEXT,
+    requested_by     TEXT NOT NULL,
+    approved_by      TEXT,
+    error            TEXT,
+    imported         INTEGER NOT NULL DEFAULT 0,
+    created_at       INTEGER NOT NULL DEFAULT (unixepoch()),
+    updated_at       INTEGER NOT NULL DEFAULT (unixepoch())
+  )`);
+  await exec("CREATE INDEX IF NOT EXISTS gt_ads_campaigns_channel ON gt_ads_campaigns(channel_id, id)");
+  // Una campaña de Meta se importa UNA vez (dos filas sumarían dos veces su gasto).
+  await exec("CREATE UNIQUE INDEX IF NOT EXISTS gt_ads_campaigns_meta ON gt_ads_campaigns(meta_campaign_id) WHERE meta_campaign_id IS NOT NULL");
+  // Los ids de TODOS los anuncios de la campaña (una importada puede traer varios): con ellos
+  // se piden los leads del tablero (`lead_stats`). JSON; vacío = sólo `meta_ad_id`.
+  await addColumn("gt_ads_campaigns", "ad_ids", "TEXT");
+  // El reporte automático (9:00 y 21:00 CDMX por default). Una sola fila por espacio;
+  // `last_digest` = huella del último publicado: si nada cambió, no se publica otro.
+  await exec(`CREATE TABLE IF NOT EXISTS gt_ads_schedule (
+    id          INTEGER PRIMARY KEY CHECK (id = 1),
+    enabled     INTEGER NOT NULL DEFAULT 1,
+    hours       TEXT NOT NULL DEFAULT '[9,21]',
+    tz          TEXT NOT NULL DEFAULT 'America/Mexico_City',
+    next_at     INTEGER,
+    owner_sub   TEXT NOT NULL,
+    last_digest TEXT,
+    updated_at  INTEGER NOT NULL DEFAULT (unixepoch())
+  )`);
+  // Cada reporte publicado, con los números de ESE momento. El fence sólo lleva el id: un
+  // agente que escribiera un `gt-ads-report` con números inventados no pinta nada.
+  await exec(`CREATE TABLE IF NOT EXISTS gt_ads_reports (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    channel_id INTEGER NOT NULL,
+    data_json  TEXT NOT NULL,
+    created_at INTEGER NOT NULL DEFAULT (unixepoch())
   )`);
 
   await exec(`CREATE TABLE IF NOT EXISTS gt_room_sales_boards (

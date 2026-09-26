@@ -74,6 +74,8 @@ import { useRtSubscribe } from "../../utils/rt-bus";
 import { PlanCard } from "./PlanCard";
 import { RunCard } from "./RunCard";
 import { VerdictCard, PreviewErrorCard } from "./VerdictCard";
+import { AdsProposalCard } from "./AdsProposalCard";
+import { AdsCampaignCard, AdsReportCard } from "./AdsCampaignCard";
 import { SprintCard } from "./SprintCard";
 import { AsksCard } from "./AsksCard";
 import { Markdown } from "../../components/Markdown";
@@ -83,7 +85,7 @@ import { registerModalEsc } from "../../utils/modal-esc";
 import { useScrollLock } from "../../utils/scroll-lock";
 import { type ArtifactView, viewFromAttachment } from "../../components/ArtifactPanel";
 import { FxOverlay } from "./FxOverlay";
-import { extractFx, extractEbDoc, bubbleWithoutEbDoc, extractToolState, extractSteps, extractTodos, extractAlert, extractAsk, extractPermission, extractAllPr, extractAllGh, extractTask, extractTests, extractPlanCard, extractRunCard, extractVerdictCard, extractPreviewErrorCard, extractSprintCard, extractAsksCard, type ToolState, type TodoState, type AlertCardData, type AskCardData, type PermissionCardData, type GhCardData, type PrCardData, type TaskCardData, type TestsCardData } from "../../lib/ebdoc";
+import { extractFx, extractEbDoc, bubbleWithoutEbDoc, extractToolState, extractSteps, extractTodos, extractAlert, extractAsk, extractPermission, extractAllPr, extractAllGh, extractTask, extractTests, extractPlanCard, extractRunCard, extractVerdictCard, extractPreviewErrorCard, extractSprintCard, extractAsksCard, extractAdsProposalCard, extractAdsCampaignCard, extractAdsReportCard, type ToolState, type TodoState, type AlertCardData, type AskCardData, type PermissionCardData, type GhCardData, type PrCardData, type TaskCardData, type TestsCardData } from "../../lib/ebdoc";
 import { prCardStateFn, runCardActionFn, taskCardStateFn, runTaskCardActionFn } from "../../server/connectors";
 import { answerAgentAskFn } from "../../server/agent-ask";
 import { answerAcpPermissionFn } from "../../server/agent-permission";
@@ -3078,6 +3080,19 @@ export function MessageRow({
               {(() => {
                 const ac = extractAsksCard(m.body);
                 return ac ? <AsksCard card={ac} /> : null;
+              })()}
+              {(() => {
+                // Ghosty Ads: las publica la plataforma y sólo llevan un id (ver lib/ebdoc).
+                const ap = extractAdsProposalCard(m.body);
+                const acm = extractAdsCampaignCard(m.body);
+                const ar = extractAdsReportCard(m.body);
+                return (
+                  <>
+                    {ap && <AdsProposalCard card={ap} channelId={m.channel_id ?? 0} />}
+                    {acm && <AdsCampaignCard card={acm} channelId={m.channel_id ?? 0} />}
+                    {ar && <AdsReportCard card={ar} channelId={m.channel_id ?? 0} />}
+                  </>
+                );
               })()}
               {(() => {
                 const ts = extractTests(m.body);

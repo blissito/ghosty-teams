@@ -6,7 +6,7 @@
 import { dbq } from "../../dbq.server";
 import { currentNamespace } from "../tenant.server";
 
-export type AppId = "factory";
+export type AppId = "factory" | "ads";
 
 export type FactoryConfig = {
   /** Caja de gs que corre los tres roles. */

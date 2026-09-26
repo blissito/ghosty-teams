@@ -1139,6 +1139,7 @@ export function bubbleWithoutEbDoc(
     body = stripPreviewErrorCard(body);
     body = stripSprintCard(body);
     body = stripAsksCard(body);
+    body = stripAdsCards(body);
     // El efecto no deja nada en el cuerpo: no es una tarjeta que se lea después, es algo que
     // PASA al llegar el mensaje. Sin esto, el `{"fx":"confetti"}` queda de recuadro de código
     // en la burbuja para siempre — el mismo bug que describe el comentario de `stripTask`.
@@ -1604,3 +1605,39 @@ export function stripFx(body: string): string {
   const after = closeIdx === -1 ? "" : rest.slice(closeIdx + 3);
   return [before.trim(), after.trim()].filter(Boolean).join("\n\n");
 }
+
+/* ── Tarjetas de Ghosty Ads (```gt-ads-proposal```, ```gt-ads-campaign```, ```gt-ads-report```) ── */
+// Las publica la PLATAFORMA (server/apps/ads-*.server.ts). Sólo llevan un id: la tarjeta lee
+// estado, números y botones del servidor, así que un fence escrito a mano no pinta nada ajeno.
+
+function adsFenceId(body: string, fence: string, key: string): number | null {
+  const m = body.match(new RegExp("```" + fence + "[^\\n]*\\n([\\s\\S]*?)```"));
+  if (!m) return null;
+  try {
+    const id = Number((JSON.parse(m[1].trim()) as Record<string, unknown>)[key]);
+    return Number.isInteger(id) && id > 0 ? id : null;
+  } catch {
+    return null;
+  }
+}
+
+export function extractAdsProposalCard(body: string): { campaignId: number } | null {
+  const id = adsFenceId(body, "gt-ads-proposal", "campaignId");
+  return id ? { campaignId: id } : null;
+}
+
+export function extractAdsCampaignCard(body: string): { campaignId: number } | null {
+  const id = adsFenceId(body, "gt-ads-campaign", "campaignId");
+  return id ? { campaignId: id } : null;
+}
+
+export function extractAdsReportCard(body: string): { reportId: number } | null {
+  const id = adsFenceId(body, "gt-ads-report", "reportId");
+  return id ? { reportId: id } : null;
+}
+
+export function stripAdsCards(body: string): string {
+  if (!/```gt-ads-/.test(body)) return body;
+  return body.replace(/```gt-ads-(?:proposal|campaign|report)[^\n]*\n[\s\S]*?```/g, "").trim();
+}
+
