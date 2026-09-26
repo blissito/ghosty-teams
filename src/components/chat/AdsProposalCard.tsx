@@ -631,6 +631,12 @@ export function TargetingChips({
             {removeBtn(i.name, () => put({ interests: interests.filter((x) => x.id !== i.id) }))}
           </span>
         ))}
+        {/* Comportamientos: sólo lectura (no se editan aquí, pero viajan en cada cambio). */}
+        {(targeting.behaviors ?? []).map((b) => (
+          <span key={`b:${b.id}`} title={t("Se conserva al guardar; no se edita aquí.")} className="rounded-full border border-border px-2 py-0.5 text-[11px] text-muted">
+            {t("Comportamiento")}: {b.name}
+          </span>
+        ))}
         {editable && (
           <button type="button" onClick={() => setAdding(adding === "interests" ? null : "interests")} className="rounded-full border border-dashed border-border px-2 py-0.5 text-[11px] text-muted hover:text-ink">
             {t("+ interés")}

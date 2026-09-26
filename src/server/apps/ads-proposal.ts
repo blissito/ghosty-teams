@@ -12,6 +12,11 @@ export type Targeting = {
   regions?: { key: string; name?: string }[];
   cities?: { key: string; name?: string; radiusKm?: number }[];
   interests?: { id: string; name: string }[];
+  /**
+   * Comportamientos de Meta (p.ej. «Administradores de páginas de negocios»). No se editan en la
+   * tarjeta, pero VIAJAN siempre: una segmentación que los perdiera los borraría del público.
+   */
+  behaviors?: { id: string; name: string }[];
   /** Dónde sale: sin esto, Meta elige (Advantage+ placements). */
   publisherPlatforms?: PublisherPlatform[];
 };
@@ -156,6 +161,14 @@ export function parseTargeting(raw: unknown): Targeting | string {
     }
     if (interests.length > 25) return "máximo 25 intereses";
   }
+  const behaviors: NonNullable<Targeting["behaviors"]> = [];
+  if (Array.isArray(t.behaviors)) {
+    for (const b of t.behaviors as Record<string, unknown>[]) {
+      const id = str(b?.id, 40);
+      if (!/^\d{5,}$/.test(id)) return "cada comportamiento lleva el `id` que dio Meta";
+      if (!behaviors.some((x) => x.id === id)) behaviors.push({ id, name: str(b?.name, 80) || id });
+    }
+  }
   const platforms = parsePlatforms(t.publisherPlatforms ?? t.publisher_platforms);
   if (typeof platforms === "string") return platforms;
   // Sin ninguna zona, México (lo mismo que haría gs).
@@ -167,6 +180,7 @@ export function parseTargeting(raw: unknown): Targeting | string {
     ...(regions.length ? { regions } : {}),
     ...(cities.length ? { cities } : {}),
     ...(interests.length ? { interests } : {}),
+    ...(behaviors.length ? { behaviors } : {}),
     ...(platforms ? { publisherPlatforms: platforms } : {}),
   };
 }

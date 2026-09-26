@@ -424,3 +424,15 @@ describe("revisión de Meta y token", () => {
     expect(tokenWarning(0, null)).toMatch(/venció/);
   });
 });
+
+describe("comportamientos", () => {
+  it("se conservan al editar la segmentación de una campaña (si no, se borrarían del público)", () => {
+    const detail = { ageMin: 25, ageMax: 55, countries: ["MX"], regions: [], cities: [], interests: [], behaviors: [{ id: "6002714898572", name: "Administradores de páginas de negocios" }] };
+    const edited = { ...detail, ageMax: 45 };
+    const c = parseLiveChange({ targeting: edited }, NOW);
+    if (typeof c === "string") throw new Error(c);
+    expect(c.targeting?.behaviors).toEqual(detail.behaviors);
+    expect(liveChangeDiff({ targeting: detail, endTime: null }, c)).toEqual(["Edad 25–55 → 25–45"]);
+    expect(parseTargeting({ behaviors: [{ id: "x" }] })).toMatch(/comportamiento/);
+  });
+});

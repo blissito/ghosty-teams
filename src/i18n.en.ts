@@ -1737,6 +1737,8 @@ export const en: Record<string, string> = {
   "Lo usan todos los repos, salvo lo que cambie el .ghosty/factory.md de cada uno.": "Every repo uses it, except what each repo's .ghosty/factory.md changes.",
 
   // Ghosty Ads (Ajustes → Apps, /ads y las tarjetas gt-ads-*).
+  "Comportamiento": "Behavior",
+  "Se conserva al guardar; no se edita aquí.": "Kept when saving; not edited here.",
   "Meta no contestó: se muestra lo último guardado.": "Meta didn't respond: showing the last saved data.",
   "Segmentación": "Targeting",
   "Anuncio": "Ad",
