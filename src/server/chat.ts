@@ -877,6 +877,7 @@ export const postMessage = createServerFn({ method: "POST" })
     // room"). Aquel commit movió `parentFor` y dejó `fleetThread` quieto; éste mueve las
     // dos, que es lo que permite la UX sin pagar la sesión por mensaje.
     const respondents: { handle: string; parent: number | null; fleetThread: string; shellId: number; steered?: boolean }[] = [];
+    let threadAgent: string | null = null;
     if (mentionedList.length) {
       const parentFor = data.parentId ?? id; // top-level → abre hilo bajo TU mensaje
       // «@a coordina con @b» arranca sólo a @a, que llama a @b cuando lo necesite. Antes
@@ -886,8 +887,8 @@ export const postMessage = createServerFn({ method: "POST" })
     } else if (
       !factorySigned &&
       data.parentId !== null &&
-      parent?.agent_handle &&
-      agents.some((a) => a.handle === parent.agent_handle) &&
+      (threadAgent = await threadFollowAgent(data.parentId, parent?.agent_handle ?? null)) &&
+      agents.some((a) => a.handle === threadAgent) &&
       !mencionaAAlguienMas(body)
     ) {
       // AUTO-SEGUIR: en un hilo que abrió un agente, ese agente sigue contestando SIN que
@@ -904,7 +905,9 @@ export const postMessage = createServerFn({ method: "POST" })
       // responder a todo y el silencio se lee como que se rompió. El caso que #8019
       // describe ya está cubierto por el candado de la mención: si le hablas a otro, éste
       // no se mete.
-      respondents.push({ handle: parent.agent_handle, parent: data.parentId, fleetThread: FLEET_THREAD, shellId: 0 });
+      // Si la raíz es de una persona (sin @), sigue el ÚLTIMO agente que contestó en el
+      // hilo: Brendi preguntó a @ads en el hilo y su siguiente mensaje sin @ quedaba mudo.
+      respondents.push({ handle: threadAgent, parent: data.parentId, fleetThread: FLEET_THREAD, shellId: 0 });
     } else if (!factorySigned && quoted?.agent_handle && quoted.sender_sub == null && agents.some((a) => a.handle === quoted.agent_handle)) {
       // Citar el mensaje ESCRITO POR un agente (sin re-@mención) = responderle → ese agente
       // contesta en el MISMO contexto. `sender_sub == null` distingue un mensaje AUTORADO por
@@ -1873,3 +1876,14 @@ export const warmAgentFn = createServerFn({ method: "POST" })
     await warmAgent(data.handle).catch(() => {});
     return { ok: true as const };
   });
+
+/** Agente que «sigue» un hilo sin re-@mención: el que lo abrió o, si la raíz es de una
+ *  persona, el último agente que contestó en él. */
+async function threadFollowAgent(rootId: number, rootAgent: string | null): Promise<string | null> {
+  const { dbq } = await import("../dbq.server");
+  const [last] = await dbq(
+    `SELECT agent_handle FROM gc_messages WHERE parent_id = ? AND sender_sub IS NULL AND agent_handle IS NOT NULL ORDER BY id DESC LIMIT 1`,
+    [rootId],
+  ).catch(() => []);
+  return (last?.agent_handle as string | undefined) ?? rootAgent;
+}
