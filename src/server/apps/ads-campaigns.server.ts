@@ -166,7 +166,7 @@ export async function attachmentInChannel(fileId: string, channelId: number): Pr
  * tardar días en decidir). Meta la baja una vez al crear el anuncio.
  */
 export async function forGs(c: { channelId: number; proposal: StoredProposal }): Promise<Proposal | { error: string }> {
-  const { estimate: _e, previewSrc: _p, ...p } = c.proposal;
+  const { estimate: _e, previewSrc: _p, previewNote: _n, ...p } = c.proposal;
   const fileId = attachmentIdOf(p.mediaUrl);
   if (!fileId) return p;
   if (!(await attachmentInChannel(fileId, c.channelId))) return { error: "el creativo no es un adjunto de este room" };

@@ -57,7 +57,7 @@ function AdsPage() {
           <Megaphone className="size-5" />
         </span>
         <div className="min-w-0">
-          <h1 className="text-lg font-semibold text-ink">{t("Anuncios")}</h1>
+          <h1 className="text-lg font-semibold text-ink">{t("Ghosty Ads")}</h1>
           <p className="truncate text-sm text-muted">
             {data?.meta.connected
               ? `${data.meta.adAccount?.name ?? t("Cuenta sin elegir")} · ${data.meta.page?.name ?? t("página sin elegir")}`

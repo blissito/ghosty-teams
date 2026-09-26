@@ -4032,13 +4032,14 @@ function Sidebar({
             <span className="truncate">{t("Fábrica Agéntica")}</span>
           </Link>
         )}
+        {/* Ghosty Ads: a la vista, justo abajo de la Fábrica (fuera de «Más»). */}
         {adsOn && (
           <Link
             to="/ads"
             className="flex w-full items-center gap-2 rounded-lg px-2 py-2.5 text-sm md:py-1.5 text-muted hover:bg-surface-3 hover:text-ink"
           >
             <Megaphone size={16} className="shrink-0" />
-            <span className="truncate">{t("Anuncios")}</span>
+            <span className="truncate">{t("Ghosty Ads")}</span>
           </Link>
         )}
         {navOpen && (

@@ -90,8 +90,8 @@ export function AdsProposalCard({ card, channelId }: { card: { campaignId: numbe
               className="h-[420px] w-full shrink-0 rounded-md border border-border bg-white sm:w-[300px]"
             />
           ) : (
-            <p className="grid h-24 w-full shrink-0 place-items-center rounded-md border border-dashed border-border text-center text-xs text-muted sm:w-[300px]">
-              {t("Sin vista previa de Meta todavía")}
+            <p className="grid min-h-24 w-full shrink-0 place-items-center rounded-md border border-dashed border-border p-3 text-center text-xs text-muted sm:w-[300px]">
+              {st.previewNote ?? t("Sin vista previa de Meta todavía")}
             </p>
           )}
           <div className="min-w-0 flex-1 space-y-2 text-xs">

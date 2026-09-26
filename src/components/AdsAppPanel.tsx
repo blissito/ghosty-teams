@@ -194,6 +194,11 @@ function Installed({ status, onChange }: { status: AdsAppStatus; onChange: () =>
             ✓ {t("Cuenta")}: <b>{meta.adAccount?.name ?? t("sin elegir")}</b>
             {meta.adAccount?.currency ? <span className="text-muted"> · {meta.adAccount.currency}</span> : null} · {t("Página")}:{" "}
             <b>{meta.page?.name ?? t("sin elegir")}</b>
+            {meta.expiresAt && (
+              <span className="block text-xs text-muted">
+                {t("La conexión vence el {d}; reconéctala antes.").replace("{d}", new Date(meta.expiresAt).toLocaleDateString("es-MX", { day: "numeric", month: "long" }))}
+              </span>
+            )}
           </p>
         ) : (
           <p className="mt-1 text-muted">{meta.error ?? t("Sin conectar. Conecta la cuenta de anuncios y la página que atiende Messenger.")}</p>
@@ -262,7 +267,7 @@ function Installed({ status, onChange }: { status: AdsAppStatus; onChange: () =>
       {error && <p className="text-danger">{error}</p>}
       <div className="flex flex-wrap gap-2 pt-1">
         <a href="/ads" className="rounded-lg border border-brand px-3 py-1.5 text-xs font-semibold text-brand hover:bg-brand/10">
-          {t("Abrir Anuncios")} →
+          {t("Abrir Ghosty Ads")} →
         </a>
         {status.room && (
           <a href={`/c/${status.room.slug}`} className="rounded-lg bg-brand px-3 py-1.5 text-xs font-semibold text-white hover:opacity-90">

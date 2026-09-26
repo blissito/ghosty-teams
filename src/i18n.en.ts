@@ -1736,6 +1736,9 @@ export const en: Record<string, string> = {
   "Lo usan todos los repos, salvo lo que cambie el .ghosty/factory.md de cada uno.": "Every repo uses it, except what each repo's .ghosty/factory.md changes.",
 
   // Ghosty Ads (Ajustes → Apps, /ads y las tarjetas gt-ads-*).
+  "Ghosty Ads": "Ghosty Ads",
+  "Abrir Ghosty Ads": "Open Ghosty Ads",
+  "La conexión vence el {d}; reconéctala antes.": "The connection expires on {d}; reconnect before then.",
   "Campañas de Meta que llevan a Messenger. @ads las propone con vista previa y segmentación real; tú las creas, prendes y pausas desde su tarjeta. Mide el costo por lead calificado.": "Meta campaigns that lead to Messenger. @ads proposes them with a real preview and targeting; you create, turn on and pause them from their card. It measures cost per qualified lead.",
   "Todavía no hay agentes con Claude, DeepSeek o Codex.": "There are no agents with Claude, DeepSeek or Codex yet.",
   "Crea uno en Studio": "Create one in Studio",

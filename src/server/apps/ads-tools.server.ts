@@ -148,6 +148,7 @@ function tools(dest: ToolDest | null): ConnectorTool[] {
           ...p,
           estimate: est.ok ? { lower: est.lower, upper: est.upper } : null,
           previewSrc: prev?.ok ? prev.iframeSrc : null,
+          previewNote: prev?.ok ? prev.note : null,
         };
         let root = threadRoot(dest);
         const { dbq } = await import("../../dbq.server");

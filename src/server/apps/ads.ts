@@ -185,9 +185,13 @@ export const adsConnectUrlFn = createServerFn({ method: "POST" }).handler(async 
   const { reqOrigin } = await import("../../origin.server");
   const origin = await reqOrigin().catch(() => "");
   if (!origin) throw new Error("no pude resolver la dirección de este espacio");
+  // gs sólo regresa a https de *.ghosty.studio: desde otro host (local) se dice aquí.
+  if (!/^https:\/\/([a-z0-9-]+\.)*ghosty\.studio$/i.test(origin)) throw new Error("conectar Meta sólo funciona desde tu espacio en ghosty.studio");
   const { gsAds } = await import("./ads-gs.server");
   // El correo liga la conexión a la cuenta de gs de quien conectó (su rol en Meta es el que vale).
-  const email = (me as { email?: string | null }).email ?? null;
+  // La sesión no siempre trae el correo: si falta, sale del padrón del espacio.
+  const db = await import("../../db.server");
+  const email = (me as { email?: string | null }).email ?? (await db.emailsForSubsAny([me.sub]).catch(() => []))[0]?.email ?? null;
   const r = await gsAds("connect_url", { returnTo: `${origin}/ads`, email });
   if (!r.ok) throw new Error(r.error);
   return { url: r.url };
@@ -233,20 +237,22 @@ export const adsProposalCardFn = createServerFn({ method: "POST" })
     if (!v) return null;
     const { c, C } = v;
     let previewSrc = c.proposal.previewSrc ?? null;
+    let previewNote = c.proposal.previewNote ?? null;
     // Sin vista previa al proponer (gs no contestó): se pide otra vez mientras siga en propuesta.
-    if (!previewSrc && c.status === "proposal") {
+    if (!previewSrc && !previewNote && c.status === "proposal") {
       const p = await C.forGs(c);
       if (!("error" in p)) {
         const { gsAds } = await import("./ads-gs.server");
         const r = await gsAds("preview", { proposal: p });
         if (r.ok) {
-          previewSrc = r.iframeSrc;
+          previewSrc = r.iframeSrc ?? null;
+          previewNote = r.note ?? null;
           const { dbq } = await import("../../dbq.server");
-          await dbq("UPDATE gt_ads_campaigns SET proposal_json = ? WHERE id = ?", [JSON.stringify({ ...c.proposal, previewSrc }), c.id]).catch(() => {});
+          await dbq("UPDATE gt_ads_campaigns SET proposal_json = ? WHERE id = ?", [JSON.stringify({ ...c.proposal, previewSrc, previewNote }), c.id]).catch(() => {});
         }
       }
     }
-    const { estimate: _e, previewSrc: _p, ...proposal } = c.proposal;
+    const { estimate: _e, previewSrc: _p, previewNote: _n, ...proposal } = c.proposal;
     return {
       campaignId: c.id,
       status: c.status,
@@ -254,6 +260,7 @@ export const adsProposalCardFn = createServerFn({ method: "POST" })
       proposal,
       estimate: c.proposal.estimate ?? null,
       previewSrc,
+      previewNote,
       approvedBy: await nameOf(c.approvedBy),
     };
   });
@@ -363,7 +370,7 @@ export const adsOverviewFn = createServerFn({ method: "GET" }).handler(async () 
   const byId = new Map(channels.map((c) => [c.id, c]));
   const room = cfg?.roomId ? (byId.get(cfg.roomId) ?? null) : null;
   const { metaStatus } = await import("./ads-gs.server");
-  const meta: Awaited<ReturnType<typeof metaStatus>> = installed ? await metaStatus() : { connected: false, adAccount: null, page: null };
+  const meta: Awaited<ReturnType<typeof metaStatus>> = installed ? await metaStatus() : { connected: false, expiresAt: null, adAccount: null, page: null };
   const C = await import("./ads-campaigns.server");
   const cs = installed ? await C.campaignsOf([...byId.keys()]) : [];
   const { inMeta } = await import("./ads-flow");

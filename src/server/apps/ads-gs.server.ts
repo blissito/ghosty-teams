@@ -12,6 +12,8 @@ export type GsResult<T> = ({ ok: true } & T) | { ok: false; error: string };
 
 export type MetaStatus = {
   connected: boolean;
+  /** Cuándo vence el token de Meta (ISO) o null si no vence / no se sabe. */
+  expiresAt: string | null;
   adAccount: { id: string; name: string; currency: string } | null;
   page: { id: string; name: string } | null;
 };
@@ -22,12 +24,14 @@ export type GsCampaign = { id: string; name: string; status: string; dailyBudget
 
 type Ops = {
   status: [Record<string, never>, MetaStatus];
+  // `returnTo` tiene que ser https y de *.ghosty.studio (gs lo valida); `email` = quien conecta.
   connect_url: [{ returnTo: string; email?: string | null }, { url: string }];
   assets: [Record<string, never>, { adAccounts: { id: string; name: string; currency: string }[]; pages: { id: string; name: string }[] }];
   select: [{ adAccountId: string; pageId: string }, Record<string, never>];
   interests: [{ q: string }, { items: { id: string; name: string; audienceMin: number; audienceMax: number; path: string[] }[] }];
   estimate: [{ targeting: Targeting }, { lower: number; upper: number }];
-  preview: [{ proposal: Proposal }, { iframeSrc: string }];
+  // En video Meta no da iframe: viene `note` para enseñarla en su lugar.
+  preview: [{ proposal: Proposal }, { iframeSrc: string | null; note: string | null }];
   campaigns: [Record<string, never>, { items: GsCampaign[] }];
   insights: [{ campaignIds: string[] }, { byCampaign: Record<string, GsInsights> }];
   lead_stats: [{ adIds: string[] }, GsLeadStats];
@@ -65,6 +69,6 @@ export async function gsAds<K extends AdsOp>(op: K, args: Ops[K][0] = {} as Ops[
 /** Estado de la conexión con Meta; desconectado si gs no contesta (la UI no se rompe). */
 export async function metaStatus(): Promise<MetaStatus & { error?: string }> {
   const r = await gsAds("status");
-  if (!r.ok) return { connected: false, adAccount: null, page: null, error: r.error };
-  return { connected: !!r.connected, adAccount: r.adAccount ?? null, page: r.page ?? null };
+  if (!r.ok) return { connected: false, expiresAt: null, adAccount: null, page: null, error: r.error };
+  return { connected: !!r.connected, expiresAt: r.expiresAt ?? null, adAccount: r.adAccount ?? null, page: r.page ?? null };
 }

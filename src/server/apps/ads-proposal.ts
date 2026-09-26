@@ -27,6 +27,8 @@ export type Proposal = {
 export type StoredProposal = Proposal & {
   estimate?: { lower: number; upper: number } | null;
   previewSrc?: string | null;
+  /** Lo que dice Meta cuando no hay vista previa (p.ej. en video). */
+  previewNote?: string | null;
 };
 
 export const AGE_DEFAULT = { min: 25, max: 55 };
