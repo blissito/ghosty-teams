@@ -14,6 +14,11 @@ import {
   parseTargeting,
   reportDigest,
   submitMode,
+  liveChangeDiff,
+  parseLiveChange,
+  parseReview,
+  reviewNotice,
+  tokenWarning,
   mergeSubmit,
   summarizeProposal,
   removeZone,
@@ -337,5 +342,85 @@ describe("ads_proposal_submit con cambios parciales", () => {
     expect(s).toContain("$50 MXN al día");
     expect(s).toContain("zonas MX");
     expect(s).toContain("edad 25–55");
+  });
+});
+
+describe("cambios pendientes de una campaña en Meta", () => {
+  const live = {
+    targeting: { ageMin: 25, ageMax: 55, countries: ["MX"], interests: [{ id: "6003107902433", name: "Ferretería" }] },
+    endTime: "2026-10-31T23:59:00-06:00",
+    message: "Todo para tu obra.",
+    headline: null,
+    cta: "MESSAGE_PAGE",
+  };
+
+  it("diff legible de edad, zonas, intereses y fecha; nada si no cambia", () => {
+    const change = parseLiveChange(
+      {
+        targeting: { ageMin: 25, ageMax: 45, cities: [{ key: "2673660", name: "Monterrey", radiusKm: 25 }], interests: [{ id: "6003384248805", name: "Remodelación" }] },
+        endTime: "2026-11-15T23:59:00-06:00",
+      },
+      NOW,
+    );
+    if (typeof change === "string") throw new Error(change);
+    expect(liveChangeDiff(live, change)).toEqual([
+      "Edad 25–55 → 25–45",
+      "Zonas MX → Monterrey +25 km",
+      "Intereses +Remodelación −Ferretería",
+      "Fin 31 oct 2026 → 15 nov 2026",
+    ]);
+    const same = parseLiveChange({ targeting: live.targeting }, NOW);
+    if (typeof same === "string") throw new Error(same);
+    expect(liveChangeDiff(live, same)).toEqual([]);
+  });
+
+  it("ubicaciones y anuncio nuevo", () => {
+    const c = parseLiveChange({ publisherPlatforms: ["facebook", "instagram"], ad: { message: "Material para tu obra, hoy.", cta: "get_quote", mediaUrl: "https://cdn.example.com/b.jpg" } }, NOW);
+    if (typeof c === "string") throw new Error(c);
+    expect(liveChangeDiff(live, c)).toEqual(["Ubicaciones automáticas → Facebook, Instagram", "Anuncio nuevo: copy, botón «Solicitar cotización», creativo"]);
+  });
+
+  it("las plataformas que vienen dentro de la segmentación se separan (van por set_placements)", () => {
+    const c = parseLiveChange({ targeting: { ageMin: 30, ageMax: 50, publisherPlatforms: ["facebook"] } }, NOW);
+    if (typeof c === "string") throw new Error(c);
+    expect(c.targeting).not.toHaveProperty("publisherPlatforms");
+    expect(c.publisherPlatforms).toEqual(["facebook"]);
+  });
+
+  it("valida: vacío, fecha pasada, plataformas, anuncio sin creativo", () => {
+    expect(parseLiveChange({}, NOW)).toMatch(/nada que cambiar/);
+    expect(parseLiveChange({ endTime: "2026-09-01T00:00:00Z" }, NOW)).toMatch(/futuro/);
+    expect(parseLiveChange({ publisherPlatforms: ["tiktok"] }, NOW)).toMatch(/tiktok/);
+    expect(parseLiveChange({ publisherPlatforms: [] }, NOW)).toMatch(/al menos una/);
+    expect(parseLiveChange({ ad: { message: "Un copy largo de verdad", mediaUrl: "" } }, NOW)).toMatch(/creativo/);
+    expect(parseLiveChange({ targeting: { ageMin: 10 } }, NOW)).toMatch(/18 a 65/);
+  });
+});
+
+describe("revisión de Meta y token", () => {
+  it("parser de review: estado y motivos (del anuncio también), sin repetir", () => {
+    expect(parseReview({ state: "rejected", reasons: ["Texto en la imagen"], ads: [{ id: "1", status: "DISAPPROVED", reasons: ["Texto en la imagen", "Promesa de resultado"] }] })).toEqual({
+      state: "rejected",
+      reasons: ["Texto en la imagen", "Promesa de resultado"],
+    });
+    expect(parseReview({ state: "raro" })).toBeNull();
+    expect(parseReview(null)).toBeNull();
+  });
+
+  it("el aviso sale una vez por cambio de estado", () => {
+    expect(reviewNotice(4, "in_review", { state: "rejected", reasons: ["Texto en la imagen"] })).toBe("🛑 Meta rechazó el anuncio de #4: Texto en la imagen");
+    expect(reviewNotice(4, "rejected", { state: "rejected", reasons: ["x"] })).toBeNull();
+    expect(reviewNotice(4, "in_review", { state: "approved", reasons: [] })).toBe("✅ Meta aprobó el anuncio de #4.");
+    // La primera vez que se revisa y ya está aprobada: no hace falta avisar.
+    expect(reviewNotice(4, null, { state: "approved", reasons: [] })).toBeNull();
+    expect(reviewNotice(4, null, { state: "with_issues", reasons: [] })).toMatch(/observaciones/);
+  });
+
+  it("token: aviso con 10 días o menos", () => {
+    expect(tokenWarning(30, null)).toBeNull();
+    expect(tokenWarning(null, null)).toBeNull();
+    expect(tokenWarning(10, "2026-10-11T00:00:00Z")).toMatch(/Reconecta Meta antes del 10 oct 2026 \(quedan 10 días\)/);
+    expect(tokenWarning(1, "2026-10-02T12:00:00Z")).toMatch(/queda|quedan 1 día/);
+    expect(tokenWarning(0, null)).toMatch(/venció/);
   });
 });

@@ -12,7 +12,28 @@ export type Targeting = {
   regions?: { key: string; name?: string }[];
   cities?: { key: string; name?: string; radiusKm?: number }[];
   interests?: { id: string; name: string }[];
+  /** Dónde sale: sin esto, Meta elige (Advantage+ placements). */
+  publisherPlatforms?: PublisherPlatform[];
 };
+
+export const PUBLISHER_PLATFORMS = ["facebook", "instagram", "messenger", "audience_network"] as const;
+export type PublisherPlatform = (typeof PUBLISHER_PLATFORMS)[number];
+export const PLATFORM_LABELS: Record<PublisherPlatform, string> = {
+  facebook: "Facebook",
+  instagram: "Instagram",
+  messenger: "Messenger",
+  audience_network: "Audience Network",
+};
+
+/** Valida plataformas (string = por qué no). Vacío o ausente = Meta elige. */
+export function parsePlatforms(raw: unknown): PublisherPlatform[] | string | undefined {
+  if (raw == null) return undefined;
+  if (!Array.isArray(raw)) return "`publisherPlatforms` va como lista (facebook, instagram, messenger, audience_network)";
+  const out = [...new Set(raw.map((x) => String(x).trim().toLowerCase()))];
+  const bad = out.find((x) => !(PUBLISHER_PLATFORMS as readonly string[]).includes(x));
+  if (bad) return `plataforma desconocida «${bad}»: usa ${PUBLISHER_PLATFORMS.join(", ")}`;
+  return out.length ? (out as PublisherPlatform[]) : undefined;
+}
 
 /** Botones (call to action) que gs acepta en `proposal.cta`; todos probados con la vista previa de Meta. */
 export const CTA_TYPES = [
@@ -135,6 +156,8 @@ export function parseTargeting(raw: unknown): Targeting | string {
     }
     if (interests.length > 25) return "máximo 25 intereses";
   }
+  const platforms = parsePlatforms(t.publisherPlatforms ?? t.publisher_platforms);
+  if (typeof platforms === "string") return platforms;
   // Sin ninguna zona, México (lo mismo que haría gs).
   if (!countries.length && !regions.length && !cities.length) countries.push("MX");
   return {
@@ -144,6 +167,7 @@ export function parseTargeting(raw: unknown): Targeting | string {
     ...(regions.length ? { regions } : {}),
     ...(cities.length ? { cities } : {}),
     ...(interests.length ? { interests } : {}),
+    ...(platforms ? { publisherPlatforms: platforms } : {}),
   };
 }
 
@@ -363,6 +387,164 @@ export function summarizeProposal(p: Proposal): string {
   ]
     .filter(Boolean)
     .join("; ");
+}
+
+// ── Cambios pendientes de una campaña ya creada ──────────────────────────────
+
+/** El anuncio (copy, botón, creativo) de una campaña ya creada: cambiarlo crea un anuncio nuevo. */
+export type AdChange = { message: string; headline?: string; cta?: CtaType; mediaUrl: string };
+
+/**
+ * Lo que se puede cambiar en una campaña que ya está en Meta. `targeting` y `endTime` van por
+ * `update_targeting`, las plataformas por `set_placements` y el anuncio por `replace_ad`.
+ */
+export type LiveChange = { targeting?: Targeting; endTime?: string; publisherPlatforms?: PublisherPlatform[]; ad?: AdChange };
+
+const zonesOf = (t: Partial<Targeting>) => [
+  ...(t.countries ?? []),
+  ...(t.regions ?? []).map((r) => r.name ?? r.key),
+  ...(t.cities ?? []).map((c) => `${c.name ?? c.key}${c.radiusKm ? ` +${c.radiusKm} km` : ""}`),
+];
+
+const dayOf = (iso: string | null | undefined) => {
+  const d = iso ? new Date(iso) : null;
+  return d && Number.isFinite(d.getTime())
+    ? d.toLocaleDateString("es-MX", { day: "numeric", month: "short", year: "numeric", timeZone: "America/Mexico_City" }).replace(".", "")
+    : "—";
+};
+
+const platformsText = (p: PublisherPlatform[] | undefined) => (p?.length ? p.map((x) => PLATFORM_LABELS[x]).join(", ") : "automáticas");
+
+export type LiveState = {
+  targeting: Partial<Targeting> | null;
+  endTime: string | null;
+  message?: string | null;
+  headline?: string | null;
+  cta?: string | null;
+};
+
+/**
+ * El diff legible de un cambio pendiente contra lo que hoy tiene Meta: «Edad 25–55 → 25–45»,
+ * «Zonas MX → Monterrey +25 km», «Intereses +Remodelación −Ferretería», «Fin 31 oct → …»,
+ * «Ubicaciones automáticas → Facebook, Instagram», «Anuncio nuevo: copy y botón». Sólo lo que cambia.
+ */
+export function liveChangeDiff(current: LiveState, change: LiveChange): string[] {
+  const out: string[] = [];
+  const a = current.targeting ?? {};
+  const b = change.targeting;
+  if (b) {
+    if (a.ageMin !== b.ageMin || a.ageMax !== b.ageMax) out.push(`Edad ${a.ageMin ?? "?"}–${a.ageMax ?? "?"} → ${b.ageMin}–${b.ageMax}`);
+    const za = zonesOf(a).join(", ") || "MX";
+    const zb = zonesOf(b).join(", ") || "MX";
+    if (za !== zb) out.push(`Zonas ${za} → ${zb}`);
+    const ia = new Map((a.interests ?? []).map((i) => [i.id, i.name]));
+    const ib = new Map((b.interests ?? []).map((i) => [i.id, i.name]));
+    const added = [...ib].filter(([id]) => !ia.has(id)).map(([, n]) => `+${n}`);
+    const removed = [...ia].filter(([id]) => !ib.has(id)).map(([, n]) => `−${n}`);
+    if (added.length || removed.length) out.push(`Intereses ${[...added, ...removed].join(" ")}`);
+  }
+  if (change.endTime && dayOf(change.endTime) !== dayOf(current.endTime)) out.push(`Fin ${dayOf(current.endTime)} → ${dayOf(change.endTime)}`);
+  if (change.publisherPlatforms) {
+    const pa = platformsText(a.publisherPlatforms);
+    const pb = platformsText(change.publisherPlatforms);
+    if (pa !== pb) out.push(`Ubicaciones ${pa} → ${pb}`);
+  }
+  if (change.ad) {
+    const what: string[] = [];
+    if ((change.ad.message ?? "") !== (current.message ?? "")) what.push("copy");
+    if ((change.ad.headline ?? "") !== (current.headline ?? "")) what.push("título");
+    if ((change.ad.cta ?? CTA_DEFAULT) !== (current.cta ?? CTA_DEFAULT)) what.push(`botón «${CTA_LABELS[change.ad.cta ?? CTA_DEFAULT]}»`);
+    what.push("creativo");
+    out.push(`Anuncio nuevo: ${what.join(", ")}`);
+  }
+  return out;
+}
+
+/** Valida un cambio pendiente (string = por qué no). */
+export function parseLiveChange(
+  raw: { targeting?: unknown; endTime?: unknown; publisherPlatforms?: unknown; ad?: unknown },
+  nowMs: number,
+): LiveChange | string {
+  const out: LiveChange = {};
+  if (raw.targeting != null) {
+    const t = parseTargeting(raw.targeting);
+    if (typeof t === "string") return t;
+    // Las plataformas de una campaña creada van aparte (set_placements), no en la segmentación.
+    const { publisherPlatforms: tp, ...rest } = t;
+    out.targeting = rest;
+    if (tp) out.publisherPlatforms = tp;
+  }
+  if (raw.publisherPlatforms != null) {
+    const pp = parsePlatforms(raw.publisherPlatforms);
+    if (typeof pp === "string") return pp;
+    if (!pp) return "deja al menos una plataforma";
+    out.publisherPlatforms = pp;
+  }
+  if (raw.endTime != null && raw.endTime !== "") {
+    const end = Date.parse(String(raw.endTime));
+    if (!Number.isFinite(end)) return "la fecha de fin va en ISO";
+    if (end < nowMs + 3_600_000) return "la fecha de fin tiene que quedar al menos una hora en el futuro";
+    if (end > nowMs + 90 * 86_400_000) return "la campaña dura máximo 90 días más";
+    out.endTime = new Date(end).toISOString();
+  }
+  if (raw.ad != null) {
+    const ad = raw.ad as Record<string, unknown>;
+    const message = str(ad.message, 1000);
+    if (message.length < 10) return "el anuncio nuevo necesita su copy (`message`)";
+    const mediaUrl = str(ad.mediaUrl ?? ad.media_url, 2000);
+    if (!isMediaUrl(mediaUrl)) return "el anuncio nuevo necesita su creativo: https público o un adjunto del room";
+    const ctaRaw = str(ad.cta, 40).toUpperCase();
+    if (ctaRaw && !isCta(ctaRaw)) return `\`cta\` va como uno de: ${CTA_TYPES.join(", ")}`;
+    const headline = str(ad.headline, 80);
+    out.ad = { message, mediaUrl, cta: (ctaRaw || CTA_DEFAULT) as CtaType, ...(headline ? { headline } : {}) };
+  }
+  if (!out.targeting && !out.endTime && !out.publisherPlatforms && !out.ad)
+    return "no hay nada que cambiar: manda targeting, end_time, publisher_platforms o el anuncio nuevo";
+  return out;
+}
+
+// ── Revisión de Meta y token ─────────────────────────────────────────────────
+
+export type ReviewState = "approved" | "in_review" | "rejected" | "with_issues";
+export type Review = { state: ReviewState; reasons: string[] };
+const REVIEW_STATES: ReviewState[] = ["approved", "in_review", "rejected", "with_issues"];
+
+/** Normaliza la respuesta de `review` de gs; null si no se entiende. */
+export function parseReview(raw: unknown): Review | null {
+  const r = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+  const state = String(r.state ?? "") as ReviewState;
+  if (!REVIEW_STATES.includes(state)) return null;
+  const own = Array.isArray(r.reasons) ? r.reasons.map(String) : [];
+  const fromAds = Array.isArray(r.ads) ? (r.ads as Record<string, unknown>[]).flatMap((a) => (Array.isArray(a?.reasons) ? a.reasons.map(String) : [])) : [];
+  const reasons = [...new Set([...own, ...fromAds].map((x) => x.trim()).filter(Boolean))].slice(0, 6);
+  return { state, reasons };
+}
+
+export const REVIEW_LABELS: Record<ReviewState, string> = {
+  approved: "Aprobado",
+  in_review: "En revisión",
+  rejected: "Rechazado",
+  with_issues: "Con observaciones",
+};
+
+/**
+ * El aviso del hilo cuando cambia la revisión de Meta; null si no hay que decir nada. Se dice
+ * UNA vez por cambio de estado (el anterior se guarda en la fila).
+ */
+export function reviewNotice(campaignId: number, prev: ReviewState | null, next: Review): string | null {
+  if (prev === next.state) return null;
+  const why = next.reasons.length ? `: ${next.reasons.join("; ")}` : "";
+  if (next.state === "rejected") return `🛑 Meta rechazó el anuncio de #${campaignId}${why}`;
+  if (next.state === "with_issues") return `⚠️ Meta marcó observaciones en el anuncio de #${campaignId}${why}`;
+  if (next.state === "approved" && prev != null) return `✅ Meta aprobó el anuncio de #${campaignId}.`;
+  return null;
+}
+
+/** Aviso de token: con 10 días o menos para vencer (null si falta más o no se sabe). */
+export function tokenWarning(daysLeft: number | null | undefined, expiresAt: string | null | undefined): string | null {
+  if (daysLeft == null || !Number.isFinite(daysLeft) || daysLeft > 10) return null;
+  if (daysLeft <= 0) return "La conexión con Meta venció: reconéctala para que las campañas sigan midiéndose.";
+  return `Reconecta Meta antes del ${dayOf(expiresAt ?? new Date(Date.now() + daysLeft * 86_400_000).toISOString())} (quedan ${daysLeft} ${daysLeft === 1 ? "día" : "días"}).`;
 }
 
 /** Fecha de fin desde un `<input type="date">`: ese día a las 23:59 en la Ciudad de México. */

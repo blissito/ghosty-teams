@@ -924,6 +924,13 @@ async function migrate(): Promise<void> {
   // Los ids de TODOS los anuncios de la campaña (una importada puede traer varios): con ellos
   // se piden los leads del tablero (`lead_stats`). JSON; vacío = sólo `meta_ad_id`.
   await addColumn("gt_ads_campaigns", "ad_ids", "TEXT");
+  // Cambios PENDIENTES a una campaña ya creada (segmentación y/o fecha de fin), en JSON
+  // `{targeting?, endTime?, proposedBy, at}`. Los deja @ads o una persona desde el panel; sólo
+  // una persona los aplica en Meta con [Aplicar en Meta]. NULL = nada pendiente.
+  await addColumn("gt_ads_campaigns", "pending_json", "TEXT");
+  // Último estado de revisión de Meta que se avisó en el hilo (approved | in_review |
+  // rejected | with_issues): el aviso sale UNA vez por cambio. NULL = aún no se revisa.
+  await addColumn("gt_ads_campaigns", "review_state", "TEXT");
   // El reporte automático (9:00 y 21:00 CDMX por default). Una sola fila por espacio;
   // `last_digest` = huella del último publicado: si nada cambió, no se publica otro.
   await exec(`CREATE TABLE IF NOT EXISTS gt_ads_schedule (
@@ -936,6 +943,8 @@ async function migrate(): Promise<void> {
     last_digest TEXT,
     updated_at  INTEGER NOT NULL DEFAULT (unixepoch())
   )`);
+  // Día (YYYY-MM-DD) del último aviso al dueño de que el token de Meta está por vencer.
+  await addColumn("gt_ads_schedule", "token_warned_on", "TEXT");
   // Versiones de una PROPUESTA (2026-09-26): una sola tarjeta por campaña; cada
   // `ads_proposal_submit` en su hilo o cada edición en línea guarda aquí una versión y la
   // tarjeta se repinta. `gt_ads_campaigns.proposal_json` es siempre la vigente (la última).

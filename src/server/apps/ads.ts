@@ -1,6 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { sessionUser } from "../chat";
 import type { ProposalEdit } from "./ads-proposal";
+import { campaignLink } from "../../lib/ads-links";
 
 // Ghosty Ads: campañas de Meta que llevan a Messenger, desde un room con `@ads`.
 //
@@ -427,6 +428,97 @@ export const adsReportCardFn = createServerFn({ method: "POST" })
     };
   });
 
+// ── Campaña ya creada: lo real de Meta, cambios pendientes, ubicaciones, archivar ──
+
+/** Lo que pinta el panel de una campaña en pausa o activa: Meta hoy, pendientes, revisión. */
+export const adsLiveCampaignFn = createServerFn({ method: "POST" })
+  .validator((d: { campaignId: number }) => d)
+  .handler(async ({ data }) => {
+    const v = await visibleCampaign(Number(data.campaignId));
+    if (!v) return null;
+    const { c, C } = v;
+    const [detail, review] = await Promise.all([C.liveDetail(c).catch(() => null), C.reviewOf(c).catch(() => null)]);
+    const current = C.liveStateOf(c, detail);
+    const { liveChangeDiff } = await import("./ads-proposal");
+    return {
+      campaignId: c.id,
+      title: detail?.name ?? c.title,
+      status: c.status,
+      metaReachable: !!detail,
+      current,
+      publisherPlatforms: (detail?.targeting ?? c.proposal.targeting)?.publisherPlatforms ?? null,
+      pending: c.pending,
+      pendingBy: c.pending ? (c.pending.proposedBy === C.AGENT_EDITOR ? "@ads" : c.pending.proposedBy) : null,
+      diff: c.pending ? liveChangeDiff(current, c.pending) : [],
+      review,
+      hasProposal: !!c.proposal.message && !c.imported,
+      /** Lo que hay que escribir para archivar (el nombre de la fila, que valida el servidor). */
+      archiveName: c.title,
+    };
+  });
+
+/** Pestaña «Ubicaciones»: gasto y resultados por plataforma y posición. */
+export const adsPlacementsFn = createServerFn({ method: "POST" })
+  .validator((d: { campaignId: number }) => d)
+  .handler(async ({ data }) => {
+    const v = await visibleCampaign(Number(data.campaignId));
+    if (!v?.c.metaCampaignId) return null;
+    const { gsAds } = await import("./ads-gs.server");
+    const r = await gsAds("placements", { campaignId: v.c.metaCampaignId });
+    if (!r.ok) throw new Error(r.error);
+    return { rows: r.rows ?? [] };
+  });
+
+/** Deja (o suma) cambios pendientes desde el panel. No toca Meta. Cualquiera que vea el room. */
+export const adsSetPendingFn = createServerFn({ method: "POST" })
+  .validator((d: { campaignId: number; change: { targeting?: unknown; endTime?: string; publisherPlatforms?: string[]; ad?: unknown } }) => d)
+  .handler(async ({ data }) => {
+    const v = await visibleCampaign(Number(data.campaignId));
+    if (!v) throw new Error("no ves esa campaña");
+    const { me, C, c } = v;
+    const { parseLiveChange, attachmentIdOf } = await import("./ads-proposal");
+    const change = parseLiveChange(data.change ?? {}, Date.now());
+    if (typeof change === "string") throw new Error(change);
+    if (change.ad) {
+      const fileId = attachmentIdOf(change.ad.mediaUrl);
+      if (fileId && !(await C.attachmentInChannel(fileId, c.channelId))) throw new Error("ese adjunto no es de este room");
+    }
+    await C.setPending(c, change, (await editorOf(me)).editedBy);
+    return { ok: true as const };
+  });
+
+export const adsDiscardPendingFn = createServerFn({ method: "POST" })
+  .validator((d: { campaignId: number }) => d)
+  .handler(async ({ data }) => {
+    const v = await visibleCampaign(Number(data.campaignId));
+    if (!v) throw new Error("no ves esa campaña");
+    await v.C.clearPending(v.c);
+    return { ok: true as const };
+  });
+
+/** [Aplicar en Meta]: lo pica una persona, con confirmación en la UI. */
+export const adsApplyPendingFn = createServerFn({ method: "POST" })
+  .validator((d: { campaignId: number }) => d)
+  .handler(async ({ data }) => {
+    const v = await visibleCampaign(Number(data.campaignId));
+    if (!v) throw new Error("no ves esa campaña");
+    const { me, C, c } = v;
+    await C.applyPending(c, { sub: me.sub, name: me.name });
+    return { ok: true as const };
+  });
+
+/** [Archivar campaña]: doble confirmación — hay que escribir su nombre. */
+export const adsArchiveFn = createServerFn({ method: "POST" })
+  .validator((d: { campaignId: number; confirmName: string }) => d)
+  .handler(async ({ data }) => {
+    const v = await visibleCampaign(Number(data.campaignId));
+    if (!v) throw new Error("no ves esa campaña");
+    const { me, C, c } = v;
+    if (String(data.confirmName ?? "").trim() !== c.title.trim()) throw new Error("escribe el nombre exacto de la campaña para archivarla");
+    await C.archiveCampaign(c, { sub: me.sub, name: me.name });
+    return { ok: true as const };
+  });
+
 export type AdsAction = "create" | "cancel" | "retry" | "activate" | "pause" | "budget";
 
 /**
@@ -512,7 +604,8 @@ export const adsOverviewFn = createServerFn({ method: "GET" }).handler(async () 
       conversations: f?.conversations ?? null,
       qualified: f?.qualified ?? null,
       costPerQualified: f?.costPerQualified ?? null,
-      threadUrl: thread ? `/c/${ch.slug}?thread=${thread}` : `/c/${ch.slug}`,
+      // Abre el hilo con la campaña en el panel lateral.
+      threadUrl: campaignLink(ch.slug, thread ?? null, c.id),
     };
   });
   return {

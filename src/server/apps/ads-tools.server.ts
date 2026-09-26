@@ -16,13 +16,80 @@ const isAdsTurn = (dest: ToolDest | null) => !dest?.handle || dest.handle === AD
 export async function adsTools(_sub: string, dest: ToolDest | null): Promise<ConnectorTool[]> {
   if (!isAdsTurn(dest)) return [];
   if (!(await isInstalled("ads").catch(() => false))) return [];
-  return tools(dest);
+  return tools(dest).map(guarded);
+}
+
+/** Ninguna tool de ads puede quedarse colgada: a los 28 s devuelve error (y el journal lo dice). */
+const TOOL_TIMEOUT_MS = 28_000;
+
+function guarded(t: ConnectorTool): ConnectorTool {
+  return {
+    ...t,
+    handler: async (sub, args) => {
+      const t0 = Date.now();
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      let outcome = "ok";
+      try {
+        return await Promise.race([
+          t.handler(sub, args),
+          new Promise<{ ok: false; error: string }>((resolve) => {
+            timer = setTimeout(() => {
+              outcome = "timeout";
+              resolve({ ok: false, error: `${t.name} tardó más de ${TOOL_TIMEOUT_MS / 1000} s; Meta o Ghosty Studio no contestaron. Inténtalo otra vez en un momento.` });
+            }, TOOL_TIMEOUT_MS);
+          }),
+        ]);
+      } catch (e) {
+        outcome = "error";
+        return { ok: false, error: e instanceof Error ? e.message : String(e) };
+      } finally {
+        clearTimeout(timer);
+        console.log(`[ads tool ${t.name} ${Date.now() - t0}ms] ${outcome}`);
+      }
+    },
+  };
 }
 
 /** Hilo del turno: la raíz si estamos en uno; si no, el mensaje que invocó. */
 function threadRoot(dest: ToolDest | null): number | null {
   if (!dest?.channelId) return null;
   return dest.parentId ?? dest.invokerMessageIds?.[0] ?? null;
+}
+
+/**
+ * La campaña a la que va una tool: `campaign_id` (de este room) > la del hilo > si el room
+ * tiene UNA sola candidata, ésa; con varias, error que las lista para que @ads pregunte.
+ * `mode`: "proposal" (ajustar una propuesta; `fresh` = pidió una nueva a propósito),
+ * "live" (en pausa o activa), "any".
+ */
+async function resolveTarget(
+  channelId: number,
+  root: number | null,
+  campaignId: unknown,
+  fresh: boolean,
+  mode: "proposal" | "live" | "any" = "proposal",
+): Promise<{ campaign: import("./ads-campaigns.server").Campaign | null } | { error: string }> {
+  const C = await import("./ads-campaigns.server");
+  const n = Number(campaignId);
+  if (n > 0) {
+    const c = await C.getCampaign(n);
+    if (!c || c.channelId !== channelId) return { error: `no hay campaña #${n} en este room` };
+    return { campaign: c };
+  }
+  if (fresh) return { campaign: null };
+  const inThread = root ? await C.campaignOfThread(channelId, root) : null;
+  if (inThread) return { campaign: inThread };
+  const fits = (s: string) => (mode === "proposal" ? s === "proposal" : mode === "live" ? s === "paused" || s === "active" : s !== "cancelled");
+  const candidates = (await C.campaignsOf([channelId])).filter((c) => fits(c.status));
+  if (candidates.length === 1) return { campaign: candidates[0] };
+  if (candidates.length > 1)
+    return {
+      error:
+        `Este hilo no tiene campaña y en el room hay varias: ${candidates.map((c) => `#${c.id} «${c.title}» (${c.status})`).join(", ")}. ` +
+        "Pregunta a cuál se refiere y vuelve a llamar con su campaign_id." +
+        (mode === "proposal" ? " Si de verdad es una campaña nueva, pasa new_campaign: true." : ""),
+    };
+  return { campaign: null };
 }
 
 /** Campañas que este turno puede leer: las del room donde está. */
@@ -57,6 +124,11 @@ const TARGETING_SCHEMA = {
       type: "array",
       items: { type: "object", properties: { id: { type: "string" }, name: { type: "string" } }, required: ["id", "name"] },
       description: "Intereses tal como los devolvió ads_interest_search",
+    },
+    publisherPlatforms: {
+      type: "array",
+      items: { type: "string", enum: ["facebook", "instagram", "messenger", "audience_network"] },
+      description: "Dónde sale (opcional; sin esto Meta elige)",
     },
   },
 };
@@ -137,6 +209,8 @@ function tools(dest: ToolDest | null): ConnectorTool[] {
           message: { type: "string", description: "El copy: texto principal del anuncio, corto" },
           headline: { type: "string", description: "Título corto (opcional)" },
           greeting: { type: "string", description: "Saludo de Messenger (opcional)" },
+          campaign_id: { type: "number", description: "La propuesta que ajustas (#N), desde cualquier hilo del room" },
+          new_campaign: { type: "boolean", description: "true SÓLO si de verdad es una campaña nueva (no un ajuste)" },
           cta: {
             type: "string",
             enum: [...CTA_TYPES],
@@ -156,7 +230,17 @@ function tools(dest: ToolDest | null): ConnectorTool[] {
         const { parseProposal, maxTotal, attachmentIdOf, mergeSubmit, submitMode } = await import("./ads-proposal");
         const C = await import("./ads-campaigns.server");
         const root0 = threadRoot(dest);
-        const open0 = root0 ? await C.campaignOfThread(dest.channelId, root0) : null;
+        // ¿A qué campaña va? `campaign_id` (desde cualquier hilo del room) > la del hilo > la
+        // única propuesta abierta del room. Nunca se duplica una propuesta por pedir un ajuste
+        // desde otro hilo (así nació la #5, casi igual a la #4).
+        const target = await resolveTarget(dest.channelId, root0, a.campaign_id, !!a.new_campaign);
+        if ("error" in target) return { ok: false, error: target.error };
+        const open0 = target.campaign;
+        if (open0 && open0.status !== "proposal" && Number(a.campaign_id) > 0)
+          return {
+            ok: false,
+            error: `la campaña #${open0.id} ya está en Meta (${open0.status}). Para cambiar su segmentación o su fecha usa ads_campaign_change_propose; para cambiar texto o imagen, propón una campaña nueva con new_campaign: true.`,
+          };
         const isVersion = !!open0 && submitMode(open0) === "version";
         const { estimate: _e, previewSrc: _s, previewNote: _n, ...current } = open0?.proposal ?? ({} as NonNullable<typeof open0>["proposal"]);
         // Versión nueva: lo que no se manda se hereda de la vigente (no se pisa lo editado a mano).
@@ -175,7 +259,10 @@ function tools(dest: ToolDest | null): ConnectorTool[] {
         const existing = isVersion ? open0 : null;
         if (existing) {
           try {
-            const r = await C.saveVersion(existing, p, { editedBy: C.AGENT_EDITOR, display: "@ads" });
+            // Pedido desde OTRO hilo: la tarjeta y la línea van al hilo de la campaña, y aquí una
+            // nota corta (la misma línea, que abre el panel).
+            const elsewhere = existing.rootMsgId !== root0 ? { channelId: dest.channelId, parentId: root0 } : null;
+            const r = await C.saveVersion(existing, p, { editedBy: C.AGENT_EDITOR, display: "@ads" }, elsewhere);
             return {
               ok: true,
               campaignId: existing.id,
@@ -216,6 +303,95 @@ function tools(dest: ToolDest | null): ConnectorTool[] {
       },
     },
     {
+      name: "ads_campaign_change_propose",
+      description:
+        "SÓLO @ads. Propone cambiar la segmentación y/o la fecha de fin de una campaña que YA está en Meta (en pausa o activa). " +
+        "NO la aplica: deja «Cambios pendientes» en su panel con el diff y una PERSONA los aplica con [Aplicar en Meta]. " +
+        "Sirve para: `targeting` (va COMPLETO, se reemplaza), `end_time`, `publisher_platforms` (quitar o poner Facebook, Instagram, " +
+        "Messenger, Audience Network) y un ANUNCIO NUEVO (`message` + `media_url`, y opcionales `headline` y `cta`): al aplicarse se crea " +
+        "otro anuncio y el viejo se pausa; Meta lo revisa de nuevo. Lee antes lo real con ads_proposal_get (trae `live`).",
+      inputSchema: {
+        type: "object",
+        properties: {
+          campaign_id: { type: "number", description: "El #N (si no, la del hilo)" },
+          targeting: TARGETING_SCHEMA,
+          end_time: { type: "string", description: "Nueva fecha de fin en ISO (opcional)" },
+          publisher_platforms: {
+            type: "array",
+            items: { type: "string", enum: ["facebook", "instagram", "messenger", "audience_network"] },
+            description: "Dónde sale (opcional): las que se quedan",
+          },
+          message: { type: "string", description: "Anuncio nuevo: el copy (opcional)" },
+          headline: { type: "string", description: "Anuncio nuevo: título corto (opcional)" },
+          cta: { type: "string", enum: [...CTA_TYPES], description: "Anuncio nuevo: el botón (opcional)" },
+          media_url: { type: "string", description: "Anuncio nuevo: el creativo, https o adjunto del room (obligatorio si cambias el anuncio)" },
+        },
+      },
+      handler: async (_sub, a) => {
+        if (dest?.handle && dest.handle !== ADS_HANDLE) return { ok: false, error: "sólo @ads propone cambios" };
+        if (!dest?.channelId) return { ok: false, error: "las campañas viven en un room" };
+        const C = await import("./ads-campaigns.server");
+        const target = await resolveTarget(dest.channelId, threadRoot(dest), a.campaign_id, false, "live");
+        if ("error" in target) return { ok: false, error: target.error };
+        const c = target.campaign;
+        if (!c || (c.status !== "paused" && c.status !== "active"))
+          return { ok: false, error: "no encuentro una campaña en pausa o activa; pasa su `campaign_id`" };
+        const { parseLiveChange, liveChangeDiff } = await import("./ads-proposal");
+        const wantsAd = a.message != null || a.media_url != null || a.headline != null || a.cta != null;
+        const detail = await C.liveDetail(c);
+        const before = C.liveStateOf(c, detail);
+        const change = parseLiveChange(
+          {
+            targeting: a.targeting,
+            endTime: a.end_time,
+            publisherPlatforms: a.publisher_platforms,
+            // Lo que no mande del anuncio se hereda del que corre hoy (salvo el creativo, que es obligatorio).
+            ...(wantsAd
+              ? { ad: { message: a.message ?? before.message ?? "", headline: a.headline ?? before.headline ?? "", cta: a.cta ?? before.cta ?? "", mediaUrl: a.media_url ?? "" } }
+              : {}),
+          },
+          Date.now(),
+        );
+        if (typeof change === "string") return { ok: false, error: change };
+        if (change.ad) {
+          const { attachmentIdOf } = await import("./ads-proposal");
+          const fileId = attachmentIdOf(change.ad.mediaUrl);
+          if (fileId && !(await C.attachmentInChannel(fileId, c.channelId))) return { ok: false, error: "ese adjunto no es de este room" };
+        }
+        const diff = liveChangeDiff(before, change);
+        if (!diff.length) return { ok: false, error: "eso ya es lo que tiene la campaña en Meta: no hay nada que cambiar" };
+        await C.setPending(c, change, C.AGENT_EDITOR);
+        await C.postAsAds(c.channelId, c.rootMsgId, `📝 @ads dejó cambios pendientes en la campaña #${c.id}: ${diff.join(" · ")}. Revísalos y aplícalos en su panel.`);
+        return {
+          ok: true,
+          campaignId: c.id,
+          diff,
+          note:
+            "Quedaron como cambios PENDIENTES en el panel de la campaña: una persona los aplica con [Aplicar en Meta]. No digas que ya cambiaron. " +
+            "Avisa que Meta reinicia el aprendizaje al cambiar el público, y que un anuncio nuevo pasa otra vez por revisión.",
+        };
+      },
+    },
+    {
+      name: "ads_review_status",
+      description:
+        "Ghosty Ads: cómo va la revisión de Meta del anuncio de una campaña creada (Aprobado, En revisión, Rechazado, Con observaciones) y " +
+        "los motivos. Sin `campaign_id`, la del hilo (o la única en Meta del room).",
+      inputSchema: { type: "object", properties: { campaign_id: { type: "number", description: "El #N (opcional)" } } },
+      handler: async (_sub, a) => {
+        if (!dest?.channelId) return { ok: false, error: "las campañas viven en un room" };
+        const target = await resolveTarget(dest.channelId, threadRoot(dest), a.campaign_id, false, "live");
+        if ("error" in target) return { ok: false, error: target.error };
+        const c = target.campaign;
+        if (!c?.metaCampaignId) return { ok: false, error: "esa campaña todavía no existe en Meta (una propuesta no se revisa)" };
+        const C = await import("./ads-campaigns.server");
+        const r = await C.reviewOf(c);
+        if (!r) return { ok: false, error: "Meta no contestó la revisión; inténtalo en un momento" };
+        const { REVIEW_LABELS } = await import("./ads-proposal");
+        return { campaignId: c.id, state: r.state, stateLabel: REVIEW_LABELS[r.state], reasons: r.reasons };
+      },
+    },
+    {
       name: "ads_proposal_get",
       description:
         "Ghosty Ads: la propuesta VIGENTE completa (copy, título, botón, creativo, segmentación, presupuesto, fechas), su versión y " +
@@ -225,14 +401,10 @@ function tools(dest: ToolDest | null): ConnectorTool[] {
       handler: async (_sub, a) => {
         if (!dest?.channelId) return { ok: false, error: "las campañas viven en un room" };
         const C = await import("./ads-campaigns.server");
-        const n = Number(a.campaign_id);
-        let c = n > 0 ? await C.getCampaign(n) : null;
-        if (n > 0 && c?.channelId !== dest.channelId) return { ok: false, error: `no hay campaña #${n} en este room` };
-        if (!c) {
-          const root = threadRoot(dest);
-          c = root ? await C.campaignOfThread(dest.channelId, root) : null;
-        }
-        if (!c) return { ok: false, error: "este hilo no tiene campaña; pasa `campaign_id` o propón una con ads_proposal_submit" };
+        const target = await resolveTarget(dest.channelId, threadRoot(dest), a.campaign_id, false, "any");
+        if ("error" in target) return { ok: false, error: target.error };
+        const c = target.campaign;
+        if (!c) return { ok: false, error: "este room no tiene campañas; propón una con ads_proposal_submit" };
         const versions = await C.listVersions(c.id);
         const { estimate, previewSrc: _s, previewNote, ...proposal } = c.proposal;
         const { CTA_LABELS, CTA_DEFAULT } = await import("./ads-proposal");
@@ -249,6 +421,8 @@ function tools(dest: ToolDest | null): ConnectorTool[] {
           estimate: estimate ?? null,
           ...(previewNote ? { previewNote } : {}),
           versions: versions.map((v) => ({ version: v.version, editedBy: v.editedBy, changedFields: v.changedFields, createdAt: v.createdAt })),
+          // Ya en Meta: lo que HOY tiene allá y lo que espera [Aplicar en Meta].
+          ...(c.metaCampaignId ? { live: await C.liveDetail(c).catch(() => null), pending: c.pending } : {}),
         };
       },
     },
@@ -312,6 +486,13 @@ export async function adsContext(dest: ToolDest | null, toolChannel: ToolChannel
     if (c) {
       const { adsStatusLabel } = await import("./ads-flow");
       parts.push(`Campaña de ESTE hilo: #${c.id} «${c.title}», ${adsStatusLabel(c.status).toLowerCase()}${c.error ? ` (error: ${c.error})` : ""}.`);
+      if (c.status === "paused" || c.status === "active") {
+        parts.push(
+          `Es una CAMPAÑA EN META (no una propuesta): lee lo real con ads_proposal_get (campo live). Para cambiar segmentación, fecha, ubicaciones ` +
+            `o el anuncio usa ads_campaign_change_propose (quedan pendientes; una persona los aplica).` +
+            (c.pending ? ` Ya hay cambios pendientes de ${c.pending.proposedBy}: no los repitas.` : ""),
+        );
+      }
       if (c.status === "proposal") {
         const versions = await C.listVersions(c.id).catch(() => []);
         // Las ediciones humanas desde la última versión de @ads (si no hay, la humana más reciente).
@@ -333,7 +514,7 @@ export async function adsContext(dest: ToolDest | null, toolChannel: ToolChannel
     }
   }
   parts.push(
-    "Tus tools (ads_account_info, ads_proposal_get, ads_interest_search, ads_location_search, ads_delivery_estimate, ads_proposal_submit, ads_campaigns_list, ads_insights) ya están disponibles en este turno: LLÁMALAS; ninguna gasta." +
+    "Tus tools (ads_account_info, ads_proposal_get, ads_campaign_change_propose, ads_review_status, ads_interest_search, ads_location_search, ads_delivery_estimate, ads_proposal_submit, ads_campaigns_list, ads_insights) ya están disponibles en este turno: LLÁMALAS; ninguna gasta." +
       notaNombres(toolChannel) +
       "]",
   );

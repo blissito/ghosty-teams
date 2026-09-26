@@ -8,6 +8,7 @@ import { useT } from "../i18n";
 import { adsConnectUrlFn, adsSelectFn, adsStatusFn, installAdsFn, setAdsAgentFn, uninstallAdsFn, type AdsAppStatus } from "../server/apps/ads";
 import { listChannelsFn } from "../server/chat";
 import ConfirmModal from "./ConfirmModal";
+import { tokenWarning } from "../server/apps/ads-proposal";
 
 type Room = { id: number; slug: string };
 
@@ -194,11 +195,15 @@ function Installed({ status, onChange }: { status: AdsAppStatus; onChange: () =>
             ✓ {t("Cuenta")}: <b>{meta.adAccount?.name ?? t("sin elegir")}</b>
             {meta.adAccount?.currency ? <span className="text-muted"> · {meta.adAccount.currency}</span> : null} · {t("Página")}:{" "}
             <b>{meta.page?.name ?? t("sin elegir")}</b>
-            {meta.expiresAt && (
+            {tokenWarning(meta.daysLeft, meta.expiresAt) ? (
+              <span className="mt-1 block rounded-md bg-amber-500/10 px-2 py-1 text-xs font-semibold text-amber-800 dark:text-amber-300">
+                ⚠️ {tokenWarning(meta.daysLeft, meta.expiresAt)}
+              </span>
+            ) : meta.expiresAt ? (
               <span className="block text-xs text-muted">
                 {t("La conexión vence el {d}; reconéctala antes.").replace("{d}", new Date(meta.expiresAt).toLocaleDateString("es-MX", { day: "numeric", month: "long" }))}
               </span>
-            )}
+            ) : null}
           </p>
         ) : (
           <p className="mt-1 text-muted">{meta.error ?? t("Sin conectar. Conecta la cuenta de anuncios y la página que atiende Messenger.")}</p>

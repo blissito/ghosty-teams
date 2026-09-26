@@ -48,7 +48,16 @@ export function FunnelRow({ f }: { f: Funnel }) {
   );
 }
 
-export function AdsCampaignCard({ card, channelId }: { card: { campaignId: number }; channelId: number }) {
+export function AdsCampaignCard({
+  card,
+  channelId,
+  onOpen,
+}: {
+  card: { campaignId: number };
+  channelId: number;
+  /** En el hilo: abre la campaña en el panel lateral (segmentación, ubicaciones, anuncio, archivar). */
+  onOpen?: (campaignId: number, title: string) => void;
+}) {
   const t = useT();
   const load = useCallback(() => adsCampaignCardFn({ data: { campaignId: card.campaignId } }), [card.campaignId]);
   const { st, refresh } = useAdsCard<State>(load, channelId);
@@ -170,6 +179,11 @@ export function AdsCampaignCard({ card, channelId }: { card: { campaignId: numbe
                 className={`${btn} border-border text-ink hover:bg-surface-3`}
               >
                 {t("Cambiar presupuesto")}
+              </button>
+            )}
+            {onOpen && (
+              <button type="button" onClick={() => onOpen(st.campaignId, st.title)} className={`${btn} border-brand text-brand hover:bg-brand/10`}>
+                {t("Abrir")}
               </button>
             )}
             {st.adsManagerUrl && (

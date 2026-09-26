@@ -12,7 +12,7 @@ import { useT } from "../i18n";
 import { me } from "../server/auth";
 import { adsImportableFn, adsImportFn, adsOverviewFn, adsRunReportFn, adsScheduleFn, setAdsScheduleFn } from "../server/apps/ads";
 import { adsStatusLabel } from "../server/apps/ads-flow";
-import { mxn } from "../server/apps/ads-proposal";
+import { mxn, tokenWarning } from "../server/apps/ads-proposal";
 import { Toggle } from "../components/Toggle";
 
 type Overview = Awaited<ReturnType<typeof adsOverviewFn>>;
@@ -76,6 +76,11 @@ function AdsPage() {
 
       {data?.installed && (
         <>
+          {data.meta.connected && tokenWarning(data.meta.daysLeft, data.meta.expiresAt) && (
+            <p className="mt-4 rounded-xl border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs font-semibold text-amber-800 dark:text-amber-300">
+              ⚠️ {tokenWarning(data.meta.daysLeft, data.meta.expiresAt)} {data.isOwner ? t("Reconéctala en Ajustes → Apps → Ghosty Ads.") : t("Pídeselo al dueño del espacio.")}
+            </p>
+          )}
           {!data.meta.connected && (
             <p className="mt-4 rounded-xl border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-800 dark:text-amber-300">
               {data.meta.error ?? t("Meta no está conectado.")} {data.isOwner ? t("Conéctalo en Ajustes → Apps → Ghosty Ads.") : t("Pídeselo al dueño del espacio.")}

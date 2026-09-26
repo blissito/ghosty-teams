@@ -69,7 +69,52 @@ async function sweep(): Promise<void> {
   }
 }
 
+const REVIEW_EVERY_MS = 30 * 60_000;
+const lastReviewSweep = new Map<string, number>();
+
+/**
+ * Cada ~30 min: la revisión de Meta de las campañas que no están aprobadas (o que nunca se
+ * revisaron). Un rechazo sale en el hilo UNA vez (`syncReview`). Las aprobadas se revisan en
+ * cada reporte.
+ */
+async function sweepReviews(ns: string): Promise<void> {
+  const last = lastReviewSweep.get(ns) ?? 0;
+  if (Date.now() - last < REVIEW_EVERY_MS) return;
+  lastReviewSweep.set(ns, Date.now());
+  const { isInstalled } = await import("./installed.server");
+  if (!(await isInstalled("ads").catch(() => false))) return;
+  const rows = await dbq(
+    `SELECT id FROM gt_ads_campaigns WHERE status IN ('paused','active') AND meta_campaign_id IS NOT NULL
+       AND COALESCE(review_state, '') <> 'approved'`,
+    [],
+  ).catch(() => []);
+  const C = await import("./ads-campaigns.server");
+  for (const r of rows) {
+    const c = await C.getCampaign(Number(r.id));
+    if (c) await C.syncReview(c, ns).catch(() => {});
+  }
+}
+
+/** Una vez al día: si el token de Meta vence en ≤ 10 días, se le avisa al dueño. */
+async function warnToken(ns: string): Promise<void> {
+  const today = new Date().toISOString().slice(0, 10);
+  const row = (await dbq("SELECT owner_sub, token_warned_on FROM gt_ads_schedule WHERE id = 1", []).catch(() => []))[0];
+  if (!row?.owner_sub || row.token_warned_on === today) return;
+  const { isInstalled } = await import("./installed.server");
+  if (!(await isInstalled("ads").catch(() => false))) return;
+  const { metaStatus } = await import("./ads-gs.server");
+  const st = await metaStatus();
+  const { tokenWarning } = await import("./ads-proposal");
+  const text = st.connected ? tokenWarning(st.daysLeft, st.expiresAt) : null;
+  const claimed = await dbq("UPDATE gt_ads_schedule SET token_warned_on = ? WHERE id = 1 AND COALESCE(token_warned_on, '') <> ? RETURNING id", [today, today]).catch(() => []);
+  if (!text || !claimed.length) return;
+  const { notify } = await import("../notify.server");
+  await notify({ kind: "ads", recipients: [String(row.owner_sub)], title: "Ghosty Ads · la conexión con Meta vence pronto", body: text, url: "/ads", tag: `ads-token:${today}` }, ns).catch(() => {});
+}
+
 async function sweepTenant(ns: string): Promise<void> {
+  await sweepReviews(ns).catch(() => {});
+  await warnToken(ns).catch(() => {});
   const rows = await dbq("SELECT * FROM gt_ads_schedule WHERE id = 1 AND enabled = 1 AND next_at IS NOT NULL AND next_at <= unixepoch()", []).catch(() => []);
   const r = rows[0];
   if (!r) return;
@@ -106,6 +151,8 @@ export async function runReport(ns: string, opts: { force: boolean }): Promise<{
     if (c.status === "active") campaigns.push(c);
   }
   if (!campaigns.length) return { posted: false, reason: "no hay campañas activas" };
+  // De paso, la revisión de Meta de las que corren (un rechazo sale en su hilo una sola vez).
+  for (const c of campaigns) await C.syncReview(c, ns).catch(() => {});
   const { byId, error } = await C.funnels(campaigns);
   if (error && !byId.size) return { posted: false, reason: error };
   const items: AdsReportItem[] = campaigns

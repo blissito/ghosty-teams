@@ -498,7 +498,7 @@ const RADII = [17, 25, 40, 50, 65, 80].filter((r) => r >= RADIUS_LIMITS.min && r
  * (país, estado o ciudad con radio; se mezclan) y los intereses, con «×» y buscadores que
  * piden a Meta por gs. Cada cambio guarda la segmentación completa como versión nueva.
  */
-function TargetingChips({
+export function TargetingChips({
   targeting,
   editable,
   campaignId,

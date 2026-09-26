@@ -3114,7 +3114,13 @@ export function MessageRow({
                         }
                       />
                     )}
-                    {acm && <AdsCampaignCard card={acm} channelId={m.channel_id ?? 0} />}
+                    {acm && (
+                      <AdsCampaignCard
+                        card={acm}
+                        channelId={m.channel_id ?? 0}
+                        onOpen={onOpenArtifact ? (id, title) => onOpenArtifact({ kind: "campaign", title, campaignId: id, channelId: m.channel_id ?? 0 }) : undefined}
+                      />
+                    )}
                     {ar && <AdsReportCard card={ar} channelId={m.channel_id ?? 0} />}
                   </>
                 );

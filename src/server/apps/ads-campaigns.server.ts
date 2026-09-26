@@ -13,7 +13,16 @@ import {
   describeChanges,
   funnelOf,
   mxn,
+  liveChangeDiff,
+  parseReview,
+  reviewNotice,
+  REVIEW_LABELS,
   type Funnel,
+  type LiveChange,
+  type LiveState,
+  type Review,
+  type ReviewState,
+  type Targeting,
   type Proposal,
   type ProposalField,
   type StoredProposal,
@@ -22,6 +31,8 @@ import { gsAds, type GsCampaign } from "./ads-gs.server";
 import { versionLine } from "../../lib/ads-links";
 
 export const ADS_HANDLE = "ads";
+
+export type PendingChange = LiveChange & { proposedBy: string; at: number };
 
 export type Campaign = {
   id: number;
@@ -39,6 +50,8 @@ export type Campaign = {
   approvedBy: string | null;
   error: string | null;
   imported: boolean;
+  /** Cambios a la campaña en Meta que esperan [Aplicar en Meta]. */
+  pending: PendingChange | null;
   createdAt: number;
   updatedAt: number;
 };
@@ -69,6 +82,7 @@ const toCampaign = (r: Record<string, any>): Campaign => {
     approvedBy: r.approved_by ?? null,
     error: r.error ?? null,
     imported: !!r.imported,
+    pending: parseJson<PendingChange | null>(r.pending_json, null),
     createdAt: Number(r.created_at ?? 0),
     updatedAt: Number(r.updated_at ?? 0),
   };
@@ -272,6 +286,8 @@ export async function saveVersion(
   c: Campaign,
   next: Proposal,
   editor: { editedBy: string; display: string },
+  /** Se pidió desde otro hilo: ahí va también la línea (que abre el panel). */
+  alsoIn: { channelId: number; parentId: number | null } | null = null,
 ): Promise<{ version: number; changed: ProposalField[]; previewError?: string }> {
   if (c.status !== "proposal") throw new Error(`la campaña #${c.id} ya no es propuesta: su propuesta no se edita`);
   const changed = changedFields(bare(c.proposal), next);
@@ -297,6 +313,13 @@ export async function saveVersion(
     // Formato fijo (lib/ads-links): en el hilo la línea se vuelve el link a esa versión.
     editor.editedBy === AGENT_EDITOR ? versionLine("@ads", null, c.id, version) : versionLine(editor.display, describeChanges(changed), c.id, version),
   );
+  if (alsoIn) {
+    await postAsAds(
+      alsoIn.channelId,
+      alsoIn.parentId,
+      editor.editedBy === AGENT_EDITOR ? versionLine("@ads", null, c.id, version) : versionLine(editor.display, describeChanges(changed), c.id, version),
+    );
+  }
   const { refreshRoom } = await import("./factory-runs.server");
   void refreshRoom(c.channelId);
   return { version, changed, ...(previewError ? { previewError } : {}) };
@@ -389,6 +412,191 @@ export async function setBudget(c: Campaign, me: Who, dailyBudget: number): Prom
   });
   await postInThread(next, `💰 ${whoName(me)} cambió el presupuesto de la campaña #${c.id}: ${mxn(before)} → **${mxn(amount)} al día**.`);
   return next;
+}
+
+// ── Cambios a una campaña que ya está en Meta ────────────────────────────────
+
+/** Lo que HOY tiene la campaña en Meta (segmentación, fecha, copy). null si gs no contesta. */
+export async function liveDetail(c: Campaign) {
+  if (!c.metaCampaignId) return null;
+  const r = await gsAds("campaign_detail", { campaignId: c.metaCampaignId });
+  return r.ok ? r : null;
+}
+
+/**
+ * Deja cambios PENDIENTES (se suman a los que ya hubiera, campo por campo). No toca Meta:
+ * los aplica una persona con [Aplicar en Meta]. Sólo en campañas en pausa o activas.
+ */
+export async function setPending(c: Campaign, change: LiveChange, proposedBy: string): Promise<PendingChange> {
+  if (c.status !== "paused" && c.status !== "active") throw new Error(`la campaña #${c.id} está «${adsStatusLabel(c.status)}»: no se cambia`);
+  const next: PendingChange = { ...(c.pending ?? {}), ...change, proposedBy, at: Math.floor(Date.now() / 1000) };
+  await dbq("UPDATE gt_ads_campaigns SET pending_json = ?, updated_at = unixepoch() WHERE id = ?", [JSON.stringify(next), c.id]);
+  const { refreshRoom } = await import("./factory-runs.server");
+  void refreshRoom(c.channelId);
+  return next;
+}
+
+export async function clearPending(c: Campaign): Promise<void> {
+  await dbq("UPDATE gt_ads_campaigns SET pending_json = NULL, updated_at = unixepoch() WHERE id = ?", [c.id]);
+  const { refreshRoom } = await import("./factory-runs.server");
+  void refreshRoom(c.channelId);
+}
+
+/** Lo que HOY tiene la campaña, para comparar: Meta si contesta; si no, lo guardado. */
+export function liveStateOf(c: Campaign, detail: Awaited<ReturnType<typeof liveDetail>>): LiveState {
+  return {
+    targeting: detail?.targeting ?? c.proposal.targeting ?? null,
+    endTime: detail?.endTime ?? c.proposal.endTime ?? null,
+    message: detail?.message ?? c.proposal.message ?? null,
+    headline: detail?.headline ?? c.proposal.headline ?? null,
+    cta: detail?.cta ?? c.proposal.cta ?? null,
+  };
+}
+
+/**
+ * [Aplicar en Meta]: lo pendiente se aplica en este orden — segmentación y fecha
+ * (`update_targeting`, a todos los conjuntos), ubicaciones (`set_placements`) y anuncio nuevo
+ * (`replace_ad`, el viejo se pausa). Lo pica una persona; queda en el hilo quién y qué.
+ * Si una parte falla, lo que ya se aplicó sale de lo pendiente y el resto se queda.
+ */
+export async function applyPending(c: Campaign, me: Who): Promise<Campaign> {
+  const pending = c.pending;
+  if (!pending) throw new Error("no hay cambios pendientes");
+  if (!c.metaCampaignId) throw new Error("la campaña todavía no existe en Meta");
+  if (c.status !== "paused" && c.status !== "active") throw new Error(`la campaña #${c.id} está «${adsStatusLabel(c.status)}»: no se cambia`);
+  const detail = await liveDetail(c);
+  const before = liveStateOf(c, detail);
+  const diff = liveChangeDiff(before, pending);
+  let proposal: StoredProposal = { ...c.proposal };
+  let rest: PendingChange | null = { ...pending };
+  let adIds = [...c.adIds];
+  let metaAdId = c.metaAdId;
+  const save = async () => {
+    const left = rest && (rest.targeting || rest.endTime || rest.publisherPlatforms || rest.ad) ? rest : null;
+    await dbq("UPDATE gt_ads_campaigns SET proposal_json = ?, pending_json = ?, meta_ad_id = ?, ad_ids = ?, approved_by = ?, updated_at = unixepoch() WHERE id = ?", [
+      JSON.stringify(proposal),
+      left ? JSON.stringify(left) : null,
+      metaAdId,
+      JSON.stringify(adIds),
+      me.sub,
+      c.id,
+    ]);
+  };
+  try {
+    if (pending.targeting || pending.endTime) {
+      const targeting = pending.targeting ?? (before.targeting as Targeting | null);
+      if (!targeting) throw new Error("no pude leer la segmentación actual de Meta; inténtalo otra vez");
+      const r = await gsAds("update_targeting", {
+        campaignId: c.metaCampaignId,
+        targeting,
+        ...(pending.endTime ? { endTime: pending.endTime } : {}),
+        by: me.sub,
+      });
+      if (!r.ok) throw new Error(r.error);
+      proposal = { ...proposal, targeting: { ...targeting, ...(proposal.targeting?.publisherPlatforms ? { publisherPlatforms: proposal.targeting.publisherPlatforms } : {}) }, ...(pending.endTime ? { endTime: pending.endTime } : {}) };
+      rest = { ...rest!, targeting: undefined, endTime: undefined };
+    }
+    if (pending.publisherPlatforms) {
+      const r = await gsAds("set_placements", { campaignId: c.metaCampaignId, publisherPlatforms: pending.publisherPlatforms, by: me.sub });
+      if (!r.ok) throw new Error(r.error);
+      proposal = { ...proposal, targeting: { ...(proposal.targeting ?? { ageMin: 25, ageMax: 55 }), publisherPlatforms: pending.publisherPlatforms } };
+      rest = { ...rest!, publisherPlatforms: undefined };
+    }
+    if (pending.ad) {
+      const media = await forGs({ channelId: c.channelId, proposal: { ...proposal, mediaUrl: pending.ad.mediaUrl } as StoredProposal });
+      if ("error" in media) throw new Error(media.error);
+      const r = await gsAds("replace_ad", {
+        campaignId: c.metaCampaignId,
+        message: pending.ad.message,
+        ...(pending.ad.headline ? { headline: pending.ad.headline } : {}),
+        ...(pending.ad.cta ? { cta: pending.ad.cta } : {}),
+        mediaUrl: media.mediaUrl,
+        by: me.sub,
+      });
+      if (!r.ok) throw new Error(r.error);
+      // Los leads del anuncio viejo siguen contando: se agrega el nuevo, no se reemplaza.
+      adIds = [...new Set([...adIds, r.adId])];
+      metaAdId = r.adId;
+      proposal = { ...proposal, ...pending.ad, previewSrc: null, previewNote: null };
+      rest = { ...rest!, ad: undefined };
+      await dbq("UPDATE gt_ads_campaigns SET review_state = NULL WHERE id = ?", [c.id]).catch(() => {});
+    }
+    rest = null;
+  } catch (e) {
+    await save();
+    const { refreshRoom } = await import("./factory-runs.server");
+    void refreshRoom(c.channelId);
+    throw e;
+  }
+  await save();
+  await postInThread(c, `🎯 ${whoName(me)} aplicó en Meta cambios a la campaña #${c.id}: ${diff.join(" · ") || "sin diferencias visibles"}.`);
+  const { refreshRoom } = await import("./factory-runs.server");
+  void refreshRoom(c.channelId);
+  return (await getCampaign(c.id))!;
+}
+
+/**
+ * [Archivar campaña]: la archiva en Meta (deja de correr para siempre) y la fila pasa a
+ * terminada. Lo pica una persona que escribió el nombre para confirmar.
+ */
+export async function archiveCampaign(c: Campaign, me: Who): Promise<Campaign> {
+  if (!c.metaCampaignId) throw new Error("la campaña no existe en Meta: una propuesta se cancela, no se archiva");
+  if (c.status !== "paused" && c.status !== "active" && c.status !== "ended") throw new Error(`la campaña #${c.id} está «${adsStatusLabel(c.status)}»`);
+  const r = await gsAds("archive", { campaignId: c.metaCampaignId, by: me.sub });
+  if (!r.ok) throw new Error(r.error);
+  const next = c.status === "ended" ? c : await applyAdsEvent(c, "end", { approved_by: me.sub, pending_json: null });
+  await postInThread(next, `🗄️ ${whoName(me)} archivó la campaña #${c.id} en Meta. Ya no corre; sus números se conservan.`);
+  return next;
+}
+
+// ── Revisión de Meta ─────────────────────────────────────────────────────────
+
+/** Estado de revisión de Meta ahora mismo. null si gs no contesta. */
+export async function reviewOf(c: Campaign): Promise<Review | null> {
+  if (!c.metaCampaignId) return null;
+  const r = await gsAds("review", { campaignId: c.metaCampaignId });
+  return r.ok ? parseReview(r) : null;
+}
+
+/**
+ * Revisa y, si cambió respecto a lo guardado, lo dice UNA vez en el hilo y avisa con
+ * `notify()` a quien pidió, a quien decidió y al dueño del reporte.
+ */
+export async function syncReview(c: Campaign, ns: string): Promise<Review | null> {
+  const review = await reviewOf(c);
+  if (!review) return null;
+  const rows = await dbq("SELECT review_state FROM gt_ads_campaigns WHERE id = ?", [c.id]).catch(() => []);
+  const prev = (rows[0]?.review_state ?? null) as ReviewState | null;
+  if (prev === review.state) return review;
+  // Guardia: sólo quien mueve el estado avisa (dos ticks a la vez, un aviso).
+  const moved = await dbq(
+    "UPDATE gt_ads_campaigns SET review_state = ? WHERE id = ? AND COALESCE(review_state, '') = ? RETURNING id",
+    [review.state, c.id, prev ?? ""],
+  ).catch(() => []);
+  if (!moved.length) return review;
+  const text = reviewNotice(c.id, prev, review);
+  if (text) {
+    await postInThread(c, text);
+    const owner = (await dbq("SELECT owner_sub FROM gt_ads_schedule WHERE id = 1", []).catch(() => []))[0]?.owner_sub;
+    const recipients = [...new Set([c.requestedBy, c.approvedBy, owner].filter(Boolean) as string[])];
+    const db = await import("../../db.server");
+    const room = await db.getChannelById(c.channelId).catch(() => null);
+    const { notify } = await import("../notify.server");
+    await notify(
+      {
+        kind: "ads",
+        recipients,
+        title: `Ghosty Ads · #${c.id} ${REVIEW_LABELS[review.state].toLowerCase()}`,
+        body: text.replace(/^\S+\s/, ""),
+        url: room ? `/c/${room.slug}${c.rootMsgId ? `?thread=${c.rootMsgId}&campaign=${c.id}` : ""}` : "/ads",
+        tag: `ads-review:${c.id}:${review.state}`,
+      },
+      ns,
+    ).catch(() => {});
+  }
+  const { refreshRoom } = await import("./factory-runs.server");
+  void refreshRoom(c.channelId);
+  return review;
 }
 
 // ── Números: insights de Meta + leads del tablero ────────────────────────────

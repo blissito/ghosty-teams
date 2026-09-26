@@ -14,6 +14,8 @@ export type MetaStatus = {
   connected: boolean;
   /** Cuándo vence el token de Meta (ISO) o null si no vence / no se sabe. */
   expiresAt: string | null;
+  /** Días para que venza el token (null si no vence o no se sabe). */
+  daysLeft?: number | null;
   adAccount: { id: string; name: string; currency: string } | null;
   page: { id: string; name: string } | null;
 };
@@ -21,6 +23,18 @@ export type MetaStatus = {
 export type GsInsights = { spend: number; impressions: number; clicks: number; conversations: number };
 export type GsLeadStats = { byAd: Record<string, { leads: number; qualified: number }>; leads: number; qualified: number };
 export type GsLocation = { key: string; name: string; type: "country" | "region" | "city"; countryCode: string; region?: string | null };
+export type GsPlacementRow = { platform: string; position: string; spend: number; impressions: number; conversations: number };
+export type GsCampaignDetail = {
+  id: string;
+  name: string;
+  status: string;
+  dailyBudget: number | null;
+  endTime: string | null;
+  targeting: Targeting | null;
+  message: string | null;
+  headline: string | null;
+  cta: string | null;
+};
 export type GsCampaign = { id: string; name: string; status: string; dailyBudget: number | null; endTime: string | null; adIds: string[] };
 
 type Ops = {
@@ -39,12 +53,32 @@ type Ops = {
   lead_stats: [{ adIds: string[] }, GsLeadStats];
   create_paused: [{ proposal: Proposal; requestedBy: string }, { campaignId: string; adsetId: string; adId: string }];
   set_status: [{ campaignId: string; status: "ACTIVE" | "PAUSED"; by: string }, Record<string, never>];
+  // Lo que HOY tiene la campaña en Meta (la segmentación, en nuestro formato).
+  campaign_detail: [{ campaignId: string }, GsCampaignDetail];
+  // Cambia la segmentación (y la fecha de fin) de TODOS sus conjuntos. Lo pica una persona.
+  update_targeting: [{ campaignId: string; targeting: Targeting; endTime?: string; by: string }, Record<string, never>];
+  review: [{ campaignId: string }, { state: string; reasons: string[]; ads: { id: string; status: string; reasons: string[] }[] }];
+  placements: [{ campaignId: string }, { rows: GsPlacementRow[] }];
+  set_placements: [{ campaignId: string; publisherPlatforms: string[]; by: string }, Record<string, never>];
+  // Anuncio nuevo con otro copy/botón/creativo; el viejo se pausa. Meta lo revisa de nuevo.
+  replace_ad: [{ campaignId: string; message: string; headline?: string; cta?: string; mediaUrl: string; by: string }, { adId: string }];
+  archive: [{ campaignId: string; by: string }, Record<string, never>];
   set_budget: [{ campaignId: string; dailyBudget: number; by: string }, Record<string, never>];
 };
 
 export type AdsOp = keyof Ops;
 
 export async function gsAds<K extends AdsOp>(op: K, args: Ops[K][0] = {} as Ops[K][0]): Promise<GsResult<Ops[K][1]>> {
+  const t0 = Date.now();
+  const done = <R extends { ok: boolean }>(r: R): R => {
+    // Traza de cada llamada: si una tool de ads «se cuelga», el journal dice si fue gs o no.
+    console.log(`[ads gs ${op} ${Date.now() - t0}ms] ${r.ok ? "ok" : `error: ${String((r as { error?: string }).error).slice(0, 160)}`}`);
+    return r;
+  };
+  return done(await gsAdsRaw(op, args));
+}
+
+async function gsAdsRaw<K extends AdsOp>(op: K, args: Ops[K][0]): Promise<GsResult<Ops[K][1]>> {
   try {
     const { nativeRuntimeBase, partnerHeaders } = await import("../ghosty-runtime.server");
     const { currentNamespace } = await import("../tenant.server");
@@ -55,7 +89,7 @@ export async function gsAds<K extends AdsOp>(op: K, args: Ops[K][0] = {} as Ops[
       method: "POST",
       headers: partnerHeaders(body, await currentNamespace()),
       body,
-      signal: AbortSignal.timeout(op === "create_paused" ? 120_000 : 30_000),
+      signal: AbortSignal.timeout(op === "create_paused" ? 120_000 : ["update_targeting", "replace_ad", "set_placements", "archive"].includes(op) ? 60_000 : 20_000),
     });
     const j = (await res.json().catch(() => null)) as ({ ok?: boolean; error?: string } & Record<string, unknown>) | null;
     if (res.status === 404 && !j?.error) return { ok: false, error: "Ghosty Studio todavía no tiene la conexión con Meta Ads" };
@@ -71,6 +105,6 @@ export async function gsAds<K extends AdsOp>(op: K, args: Ops[K][0] = {} as Ops[
 /** Estado de la conexión con Meta; desconectado si gs no contesta (la UI no se rompe). */
 export async function metaStatus(): Promise<MetaStatus & { error?: string }> {
   const r = await gsAds("status");
-  if (!r.ok) return { connected: false, expiresAt: null, adAccount: null, page: null, error: r.error };
-  return { connected: !!r.connected, expiresAt: r.expiresAt ?? null, adAccount: r.adAccount ?? null, page: r.page ?? null };
+  if (!r.ok) return { connected: false, expiresAt: null, daysLeft: null, adAccount: null, page: null, error: r.error };
+  return { connected: !!r.connected, expiresAt: r.expiresAt ?? null, daysLeft: r.daysLeft ?? null, adAccount: r.adAccount ?? null, page: r.page ?? null };
 }

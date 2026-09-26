@@ -11,9 +11,10 @@ import { inMeta } from "../../server/apps/ads-flow";
 import { campaignLink } from "../../lib/ads-links";
 import { AdsProposalView } from "./AdsProposalCard";
 import { AdsCampaignCard } from "./AdsCampaignCard";
+import { AdsLiveEditor, AdsPlacements } from "./AdsLiveEditor";
 import { useAdsCard } from "./useAdsCard";
 
-type Tab = "proposal" | "creative";
+type Tab = "proposal" | "placements" | "creative";
 
 export function AdsCampaignPanel({ campaignId, channelId, version }: { campaignId: number; channelId: number; version?: number }) {
   const t = useT();
@@ -51,6 +52,7 @@ export function AdsCampaignPanel({ campaignId, channelId, version }: { campaignI
     <div className="space-y-2 p-3">
       <div className="flex items-center gap-1" role="tablist">
         {tabBtn("proposal", inMeta(st.status) ? t("Campaña") : t("Propuesta"))}
+        {inMeta(st.status) && tabBtn("placements", t("Ubicaciones"))}
         {creative && tabBtn("creative", t("Creativo"))}
         <button
           type="button"
@@ -61,7 +63,9 @@ export function AdsCampaignPanel({ campaignId, channelId, version }: { campaignI
           {copied ? <Check size={14} className="text-brand" /> : <LinkIcon size={14} />} {copied ? t("¡Copiado!") : t("Copiar enlace")}
         </button>
       </div>
-      {tab === "creative" && creative ? (
+      {tab === "placements" && inMeta(st.status) ? (
+        <AdsPlacements campaignId={campaignId} channelId={channelId} />
+      ) : tab === "creative" && creative ? (
         <div className="space-y-2">
           <p className="text-xs font-semibold text-ink">{creative.title}</p>
           <iframe
@@ -78,9 +82,24 @@ export function AdsCampaignPanel({ campaignId, channelId, version }: { campaignI
         </div>
       ) : (
         <>
-          {/* Ya existe en Meta: el embudo en vivo y [Prender]/[Pausar]/[Presupuesto] arriba. */}
-          {inMeta(st.status) && <AdsCampaignCard card={{ campaignId }} channelId={channelId} />}
-          <AdsProposalView key={`${campaignId}:${version ?? "v"}`} campaignId={campaignId} channelId={channelId} initialVersion={version} layout="panel" />
+          {inMeta(st.status) ? (
+            <>
+              {/* Ya existe en Meta: embudo y [Prender]/[Pausar]/[Presupuesto]; abajo, lo que HOY
+                  tiene Meta, editable como cambios pendientes. La propuesta original, plegada. */}
+              <AdsCampaignCard card={{ campaignId }} channelId={channelId} />
+              <AdsLiveEditor campaignId={campaignId} channelId={channelId} />
+              {st.proposal.message && (
+                <details className="rounded-lg border border-border px-3 py-2 text-xs">
+                  <summary className="cursor-pointer text-muted">{t("Propuesta original")} (v{st.version})</summary>
+                  <div className="mt-2">
+                    <AdsProposalView campaignId={campaignId} channelId={channelId} initialVersion={version} layout="panel" />
+                  </div>
+                </details>
+              )}
+            </>
+          ) : (
+            <AdsProposalView key={`${campaignId}:${version ?? "v"}`} campaignId={campaignId} channelId={channelId} initialVersion={version} layout="panel" />
+          )}
         </>
       )}
     </div>
