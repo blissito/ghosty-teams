@@ -3,7 +3,7 @@
 // mostrar (vista previa real), a quién (chips y audiencia estimada) y cuánto puede gastar
 // como máximo. [Crear en pausa] lo pica una PERSONA: nace en PAUSED y no gasta hasta que
 // alguien la prenda desde la tarjeta de la campaña.
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { useT } from "../../i18n";
 import { useRtSubscribe } from "../../utils/rt-bus";
@@ -82,13 +82,7 @@ export function AdsProposalCard({ card, channelId }: { card: { campaignId: numbe
         <p className="mt-1 text-sm font-semibold text-ink">{p.name}</p>
         <div className="mt-2 flex flex-col gap-3 sm:flex-row">
           {st.previewSrc && /^https:\/\//.test(st.previewSrc) ? (
-            <iframe
-              title={t("Vista previa del anuncio")}
-              src={st.previewSrc}
-              loading="lazy"
-              sandbox="allow-scripts allow-same-origin allow-popups"
-              className="h-[420px] w-full shrink-0 rounded-md border border-border bg-white sm:w-[300px]"
-            />
+            <MetaPreview src={st.previewSrc} title={t("Vista previa del anuncio")} loadingLabel={t("Cargando la vista previa de Meta…")} />
           ) : (
             <p className="grid min-h-24 w-full shrink-0 place-items-center rounded-md border border-dashed border-border p-3 text-center text-xs text-muted sm:w-[300px]">
               {st.previewNote ?? t("Sin vista previa de Meta todavía")}
@@ -164,6 +158,52 @@ export function AdsProposalCard({ card, channelId }: { card: { campaignId: numbe
             await act("create");
           }}
         />
+      )}
+    </div>
+  );
+}
+
+// El iframe de Meta (`generatepreviews`) mide 335 px de ancho y trae su propio scroll: a
+// 335×450 un post 4:5 no cabe y la tarjeta enseñaba medio anuncio con dos barras. Se pinta a
+// su ancho real y con alto de sobra para el post completo, SIN scroll, y se escala para caber:
+// se ve el anuncio entero como en el celular.
+const META_W = 335;
+const META_H = 700;
+
+function MetaPreview({ src, title, loadingLabel }: { src: string; title: string; loadingLabel: string }) {
+  const box = useRef<HTMLDivElement>(null);
+  const [scale, setScale] = useState(300 / META_W);
+  const [loaded, setLoaded] = useState(false);
+  useEffect(() => {
+    const el = box.current;
+    if (!el) return;
+    const fit = () => setScale(Math.min(1, el.clientWidth / META_W));
+    fit();
+    const ro = new ResizeObserver(fit);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  useEffect(() => setLoaded(false), [src]);
+  return (
+    <div
+      ref={box}
+      className="relative w-full shrink-0 overflow-hidden rounded-md border border-border bg-white sm:w-[300px]"
+      style={{ height: Math.round(META_H * scale) }}
+    >
+      <iframe
+        title={title}
+        src={src}
+        scrolling="no"
+        onLoad={() => setLoaded(true)}
+        sandbox="allow-scripts allow-same-origin allow-popups"
+        style={{ width: META_W, height: META_H, transform: `scale(${scale})`, transformOrigin: "top left", border: 0 }}
+      />
+      {!loaded && (
+        <div className="absolute inset-0 grid place-items-center bg-white">
+          <span className="flex items-center gap-1.5 text-xs text-muted">
+            <Loader2 className="size-3.5 animate-spin" /> {loadingLabel}
+          </span>
+        </div>
       )}
     </div>
   );

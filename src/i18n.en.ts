@@ -185,6 +185,7 @@ export const en: Record<string, string> = {
   "Capa que se suma a la base SOLO en este espacio. No cambia quién es el agente; su identidad y el prompt base (todos los canales) van a la derecha. Déjala vacía para usar solo la base.": "A layer added on top of the base ONLY in this space. It doesn't change who the agent is; its identity and base prompt (all channels) are on the right. Leave it empty to use only the base.",
   "Capacidades de flota": "Fleet capabilities",
   "Cargando capacidades…": "Loading capabilities…",
+  "Cargando la vista previa de Meta…": "Loading Meta preview…",
   "Cargando emojis…": "Loading emojis…",
   "Cargando flota…": "Loading fleet…",
   "Cargando…": "Loading…",
