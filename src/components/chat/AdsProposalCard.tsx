@@ -195,8 +195,47 @@ export function AdsProposalView({
     }
   };
 
+  // Errores, quién decidió y los botones: al pie en la tarjeta; en el panel, al final de la
+  // columna de la derecha (así la propuesta cabe en una pantalla sin scroll).
+  const footer = (
+    <>
+        {st.status === "error" && st.error && <p className="mt-2 text-xs text-red-600 dark:text-red-400">{st.error}</p>}
+        {st.approvedBy && !open && (
+          <p className="mt-2 text-[11px] text-muted">
+            {st.status === "cancelled" ? t("Cancelada por") : t("Decidió")}: {st.approvedBy}
+          </p>
+        )}
+        {/* Sólo la vigente tiene botones. */}
+        {!viewing && (
+          <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
+            {open && (
+              <>
+                <button type="button" disabled={!!busy} onClick={() => setConfirm(true)} className={`${btn} border-emerald-600 text-emerald-700 hover:bg-emerald-600/10 dark:text-emerald-400`}>
+                  {busy === "create" ? <Loader2 className="inline size-3.5 animate-spin" /> : null} {busy === "create" ? t("Creando en Meta…") : t("Crear en pausa")}
+                </button>
+                <button type="button" disabled={!!busy} onClick={() => act("cancel")} className={`${btn} border-border text-muted hover:text-ink`}>
+                  {t("Cancelar")}
+                </button>
+              </>
+            )}
+            {st.status === "error" && (
+              <>
+                <button type="button" disabled={!!busy} onClick={() => act("retry")} className={`${btn} border-brand text-brand hover:bg-brand/10`}>
+                  {t("Reintentar")}
+                </button>
+                <button type="button" disabled={!!busy} onClick={() => act("cancel")} className={`${btn} border-border text-muted hover:text-ink`}>
+                  {t("Cancelar")}
+                </button>
+              </>
+            )}
+          </div>
+        )}
+        {err && <p className="mt-1.5 text-xs text-red-600 dark:text-red-400">{err}</p>}
+    </>
+  );
+
   return (
-    <div className={layout === "panel" ? "flex overflow-hidden rounded-lg gt-card" : "mt-0.5 flex max-w-2xl overflow-hidden rounded-lg gt-card"}>
+    <div className={layout === "panel" ? "@container/ads flex overflow-hidden rounded-lg gt-card" : "mt-0.5 flex max-w-2xl overflow-hidden rounded-lg gt-card"}>
       <div className={`w-1 shrink-0 ${st.status === "error" ? "bg-red-500" : open ? "bg-amber-500" : "bg-brand"}`} aria-hidden="true" />
       <div className="min-w-0 flex-1 p-3">
         <div className="flex flex-wrap items-center gap-1.5">
@@ -260,7 +299,10 @@ export function AdsProposalView({
           className="mt-1 text-sm font-semibold text-ink"
           onSave={(v) => save({ name: v })}
         />
-        <div className={`mt-2 flex flex-col gap-3 ${layout === "panel" ? "" : "sm:flex-row"}`}>
+        {/* Panel: dos columnas (vista previa a tamaño natural | configuración) si el PANEL es
+            ancho; en uno angosto o en móvil se apila con la vista previa arriba. Se decide por
+            el ancho del contenedor, no del viewport. */}
+        <div className={`mt-2 flex flex-col gap-3 ${layout === "panel" ? "@min-[600px]/ads:flex-row @min-[600px]/ads:items-start" : "sm:flex-row"}`}>
           {shown.previewSrc && /^https:\/\//.test(shown.previewSrc) ? (
             <MetaPreview
               src={shown.previewSrc}
@@ -269,7 +311,7 @@ export function AdsProposalView({
               large={layout === "panel"}
             />
           ) : (
-            <p className={`grid min-h-24 w-full shrink-0 place-items-center rounded-md border border-dashed border-border p-3 text-center text-xs text-muted ${layout === "panel" ? "" : "sm:w-[300px]"}`}>
+            <p className={`grid min-h-24 w-full shrink-0 place-items-center rounded-md border border-dashed border-border p-3 text-center text-xs text-muted ${layout === "panel" ? "@min-[600px]/ads:w-[335px]" : "sm:w-[300px]"}`}>
               {shown.previewNote ?? t("Sin vista previa de Meta todavía")}
             </p>
           )}
@@ -348,40 +390,10 @@ export function AdsProposalView({
                 <dd className="font-semibold text-ink">{mxn(total)} MXN</dd>
               </dl>
             )}
+            {layout === "panel" && footer}
           </div>
         </div>
-        {st.status === "error" && st.error && <p className="mt-2 text-xs text-red-600 dark:text-red-400">{st.error}</p>}
-        {st.approvedBy && !open && (
-          <p className="mt-2 text-[11px] text-muted">
-            {st.status === "cancelled" ? t("Cancelada por") : t("Decidió")}: {st.approvedBy}
-          </p>
-        )}
-        {/* Sólo la vigente tiene botones. */}
-        {!viewing && (
-          <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
-            {open && (
-              <>
-                <button type="button" disabled={!!busy} onClick={() => setConfirm(true)} className={`${btn} border-emerald-600 text-emerald-700 hover:bg-emerald-600/10 dark:text-emerald-400`}>
-                  {busy === "create" ? <Loader2 className="inline size-3.5 animate-spin" /> : null} {busy === "create" ? t("Creando en Meta…") : t("Crear en pausa")}
-                </button>
-                <button type="button" disabled={!!busy} onClick={() => act("cancel")} className={`${btn} border-border text-muted hover:text-ink`}>
-                  {t("Cancelar")}
-                </button>
-              </>
-            )}
-            {st.status === "error" && (
-              <>
-                <button type="button" disabled={!!busy} onClick={() => act("retry")} className={`${btn} border-brand text-brand hover:bg-brand/10`}>
-                  {t("Reintentar")}
-                </button>
-                <button type="button" disabled={!!busy} onClick={() => act("cancel")} className={`${btn} border-border text-muted hover:text-ink`}>
-                  {t("Cancelar")}
-                </button>
-              </>
-            )}
-          </div>
-        )}
-        {err && <p className="mt-1.5 text-xs text-red-600 dark:text-red-400">{err}</p>}
+        {layout === "card" && footer}
       </div>
       {confirm && (
         <ConfirmModal
@@ -832,8 +844,8 @@ function MetaPreview({ src, title, loadingLabel, large }: { src: string; title: 
   useEffect(() => {
     const el = box.current;
     if (!el) return;
-    // En el panel se ve GRANDE: puede crecer hasta 1.35× (en la tarjeta, nunca más que su tamaño real).
-    const fit = () => setScale(Math.min(large ? 1.35 : 1, el.clientWidth / META_W));
+    // Tamaño natural (335 px) y, si no cabe, escalada; nunca más grande que el real.
+    const fit = () => setScale(Math.min(1, el.clientWidth / META_W));
     fit();
     const ro = new ResizeObserver(fit);
     ro.observe(el);
@@ -843,7 +855,7 @@ function MetaPreview({ src, title, loadingLabel, large }: { src: string; title: 
   return (
     <div
       ref={box}
-      className={`relative w-full shrink-0 overflow-hidden rounded-md border border-border bg-white ${large ? "mx-auto max-w-[452px]" : "sm:w-[300px]"}`}
+      className={`relative w-full shrink-0 overflow-hidden rounded-md border border-border bg-white ${large ? "mx-auto max-w-[335px] @min-[600px]/ads:mx-0 @min-[600px]/ads:w-[335px]" : "sm:w-[300px]"}`}
       style={{ height: Math.round(META_H * scale) }}
     >
       <iframe

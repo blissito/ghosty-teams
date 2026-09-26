@@ -48,7 +48,7 @@ export function AdsCampaignPanel({ campaignId, channelId, version }: { campaignI
   );
 
   return (
-    <div className="space-y-3 p-3 sm:p-4">
+    <div className="space-y-2 p-3">
       <div className="flex items-center gap-1" role="tablist">
         {tabBtn("proposal", inMeta(st.status) ? t("Campaña") : t("Propuesta"))}
         {creative && tabBtn("creative", t("Creativo"))}
