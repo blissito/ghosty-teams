@@ -22,7 +22,7 @@ export type GsCampaign = { id: string; name: string; status: string; dailyBudget
 
 type Ops = {
   status: [Record<string, never>, MetaStatus];
-  connect_url: [{ returnTo: string }, { url: string }];
+  connect_url: [{ returnTo: string; email?: string | null }, { url: string }];
   assets: [Record<string, never>, { adAccounts: { id: string; name: string; currency: string }[]; pages: { id: string; name: string }[] }];
   select: [{ adAccountId: string; pageId: string }, Record<string, never>];
   interests: [{ q: string }, { items: { id: string; name: string; audienceMin: number; audienceMax: number; path: string[] }[] }];

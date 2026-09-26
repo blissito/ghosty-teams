@@ -181,12 +181,14 @@ export const uninstallAdsFn = createServerFn({ method: "POST" }).handler(async (
 
 /** El link firmado de gs al OAuth de Meta (vale 15 min). Vuelve a /ads al terminar. */
 export const adsConnectUrlFn = createServerFn({ method: "POST" }).handler(async () => {
-  await requireOwner();
+  const me = await requireOwner();
   const { reqOrigin } = await import("../../origin.server");
   const origin = await reqOrigin().catch(() => "");
   if (!origin) throw new Error("no pude resolver la dirección de este espacio");
   const { gsAds } = await import("./ads-gs.server");
-  const r = await gsAds("connect_url", { returnTo: `${origin}/ads?meta=connected` });
+  // El correo liga la conexión a la cuenta de gs de quien conectó (su rol en Meta es el que vale).
+  const email = (me as { email?: string | null }).email ?? null;
+  const r = await gsAds("connect_url", { returnTo: `${origin}/ads`, email });
   if (!r.ok) throw new Error(r.error);
   return { url: r.url };
 });
