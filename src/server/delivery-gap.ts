@@ -209,7 +209,21 @@ export async function warnIfNothingDelivered(
   const msg = await db.getMessage(messageId);
   if (!msg) return;
   const [conArtefacto] = await db.attachArtifacts([msg]);
-  const aviso = deliveryGapNotice(msg.body, !!conArtefacto?.artifact);
+  // Las tools de @ads (y otras) hacen que la PLATAFORMA publique la tarjeta como mensaje
+  // aparte, en el mismo hilo y durante el turno. «Ahí está la tarjeta» es verdad, pero este
+  // mensaje no la lleva: se buscan tarjetas `gt-` publicadas después de la burbuja (26-sep).
+  const { dbq } = await import("../dbq.server");
+  const scope =
+    msg.dm_id != null
+      ? { sql: "dm_id = ?", arg: msg.dm_id }
+      : msg.parent_id != null
+        ? { sql: "parent_id = ?", arg: msg.parent_id }
+        : { sql: "channel_id = ? AND parent_id IS NULL", arg: msg.channel_id };
+  const tarjetas = await dbq(
+    `SELECT 1 FROM gc_messages WHERE ${scope.sql} AND id > ? AND body LIKE '%\`\`\`gt-%' LIMIT 1`,
+    [scope.arg, messageId],
+  ).catch(() => []);
+  const aviso = deliveryGapNotice(msg.body, !!conArtefacto?.artifact || tarjetas.length > 0);
   if (!aviso) return;
   const body = `${msg.body}\n\n${aviso}`.trim();
   await db.setMessageBody(messageId, body);
