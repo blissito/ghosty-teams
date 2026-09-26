@@ -479,3 +479,19 @@ describe("anuncio web (link → columna derecha)", () => {
     expect(funnelOf({ spend: 10, conversations: 5 }).web).toBeUndefined();
   });
 });
+
+describe("cambio a campaña viva: presupuesto y comportamientos", () => {
+  const NOW2 = Date.parse("2026-09-26T21:00:00Z");
+  it("el presupuesto viaja en el cambio pendiente y sale en el diff", () => {
+    const ch = parseLiveChange({ dailyBudget: 120 }, NOW2);
+    expect(ch).toEqual({ dailyBudget: 120 });
+    expect(liveChangeDiff({ targeting: null, endTime: null, dailyBudget: 250 }, ch as LiveChange)).toEqual(["Presupuesto $250 → $120 al día"]);
+  });
+  it("quitar comportamientos se ve en el diff", () => {
+    const before = { targeting: { ageMin: 25, ageMax: 45, behaviors: [{ id: "6002714898572", name: "Dueños de negocio" }] }, endTime: null };
+    const ch = parseLiveChange({ targeting: { ageMin: 28, ageMax: 55 } }, NOW2) as LiveChange;
+    expect(liveChangeDiff(before, ch)).toContain("Comportamientos −Dueños de negocio");
+    const keep = parseLiveChange({ targeting: { ageMin: 28, ageMax: 55, behaviors: before.targeting.behaviors } }, NOW2) as LiveChange;
+    expect(liveChangeDiff(before, keep)).toEqual(["Edad 25–45 → 28–55"]);
+  });
+});

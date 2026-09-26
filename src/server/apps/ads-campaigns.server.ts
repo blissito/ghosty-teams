@@ -451,6 +451,7 @@ export function liveStateOf(c: Campaign, detail: Awaited<ReturnType<typeof liveD
     message: detail?.message ?? c.proposal.message ?? null,
     headline: detail?.headline ?? c.proposal.headline ?? null,
     cta: detail?.cta ?? c.proposal.cta ?? null,
+    dailyBudget: detail?.dailyBudget ?? c.proposal.dailyBudget ?? null,
   };
 }
 
@@ -473,7 +474,7 @@ export async function applyPending(c: Campaign, me: Who): Promise<Campaign> {
   let adIds = [...c.adIds];
   let metaAdId = c.metaAdId;
   const save = async () => {
-    const left = rest && (rest.targeting || rest.endTime || rest.publisherPlatforms || rest.ad) ? rest : null;
+    const left = rest && (rest.targeting || rest.endTime || rest.publisherPlatforms || rest.ad || rest.dailyBudget != null) ? rest : null;
     await dbq("UPDATE gt_ads_campaigns SET proposal_json = ?, pending_json = ?, meta_ad_id = ?, ad_ids = ?, approved_by = ?, updated_at = unixepoch() WHERE id = ?", [
       JSON.stringify(proposal),
       left ? JSON.stringify(left) : null,
@@ -502,6 +503,12 @@ export async function applyPending(c: Campaign, me: Who): Promise<Campaign> {
       if (!r.ok) throw new Error(r.error);
       proposal = { ...proposal, targeting: { ...(proposal.targeting ?? { ageMin: 25, ageMax: 55 }), publisherPlatforms: pending.publisherPlatforms } };
       rest = { ...rest!, publisherPlatforms: undefined };
+    }
+    if (pending.dailyBudget != null) {
+      const r = await gsAds("set_budget", { campaignId: c.metaCampaignId, dailyBudget: pending.dailyBudget, by: me.sub });
+      if (!r.ok) throw new Error(r.error);
+      proposal = { ...proposal, dailyBudget: pending.dailyBudget };
+      rest = { ...rest!, dailyBudget: undefined };
     }
     if (pending.ad) {
       const media = await forGs({ channelId: c.channelId, proposal: { ...proposal, mediaUrl: pending.ad.mediaUrl } as StoredProposal });

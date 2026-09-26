@@ -125,6 +125,13 @@ const TARGETING_SCHEMA = {
       items: { type: "object", properties: { id: { type: "string" }, name: { type: "string" } }, required: ["id", "name"] },
       description: "Intereses tal como los devolvió ads_interest_search",
     },
+    behaviors: {
+      type: "array",
+      items: { type: "object", properties: { id: { type: "string" }, name: { type: "string" } }, required: ["id", "name"] },
+      description:
+        "Comportamientos de Meta (dueños de negocio, admins de página…), tal como vienen en `live` de ads_proposal_get. " +
+        "En un cambio a campaña viva, si no los mandas se CONSERVAN los que ya tiene; manda [] sólo para quitarlos todos.",
+    },
     publisherPlatforms: {
       type: "array",
       items: { type: "string", enum: ["facebook", "instagram", "messenger", "audience_network"] },
@@ -313,7 +320,8 @@ function tools(dest: ToolDest | null): ConnectorTool[] {
       description:
         "SÓLO @ads. Propone cambiar la segmentación y/o la fecha de fin de una campaña que YA está en Meta (en pausa o activa). " +
         "NO la aplica: deja «Cambios pendientes» en su panel con el diff y una PERSONA los aplica con [Aplicar en Meta]. " +
-        "Sirve para: `targeting` (va COMPLETO, se reemplaza), `end_time`, `publisher_platforms` (quitar o poner Facebook, Instagram, " +
+        "Sirve para: `targeting` (va COMPLETO y reemplaza edad, zonas e intereses; los comportamientos se conservan si no mandas `behaviors`), " +
+        "`daily_budget` (pesos al día), `end_time`, `publisher_platforms` (quitar o poner Facebook, Instagram, " +
         "Messenger, Audience Network) y un ANUNCIO NUEVO (`message` + `media_url`, y opcionales `headline` y `cta`): al aplicarse se crea " +
         "otro anuncio y el viejo se pausa; Meta lo revisa de nuevo. Lee antes lo real con ads_proposal_get (trae `live`).",
       inputSchema: {
@@ -322,6 +330,7 @@ function tools(dest: ToolDest | null): ConnectorTool[] {
           campaign_id: { type: "number", description: "El #N (si no, la del hilo)" },
           targeting: TARGETING_SCHEMA,
           end_time: { type: "string", description: "Nueva fecha de fin en ISO (opcional)" },
+          daily_budget: { type: "number", description: "Nuevo presupuesto diario en pesos MXN (opcional)" },
           publisher_platforms: {
             type: "array",
             items: { type: "string", enum: ["facebook", "instagram", "messenger", "audience_network"] },
@@ -346,9 +355,18 @@ function tools(dest: ToolDest | null): ConnectorTool[] {
         const wantsAd = a.message != null || a.media_url != null || a.headline != null || a.cta != null;
         const detail = await C.liveDetail(c);
         const before = C.liveStateOf(c, detail);
+        // Los comportamientos no los edita nadie a mano: si el agente no los manda, se heredan
+        // de lo que corre hoy. Antes el `targeting` los reemplazaba y un ajuste de edad borraba
+        // los 6 comportamientos de la campaña (26-sep).
+        const liveBehaviors = (before.targeting as { behaviors?: unknown[] } | null)?.behaviors;
+        const targetingIn =
+          a.targeting && typeof a.targeting === "object" && !("behaviors" in a.targeting) && liveBehaviors?.length
+            ? { ...a.targeting, behaviors: liveBehaviors }
+            : a.targeting;
         const change = parseLiveChange(
           {
-            targeting: a.targeting,
+            targeting: targetingIn,
+            dailyBudget: a.daily_budget,
             endTime: a.end_time,
             publisherPlatforms: a.publisher_platforms,
             // Lo que no mande del anuncio se hereda del que corre hoy (salvo el creativo, que es obligatorio).
@@ -367,7 +385,12 @@ function tools(dest: ToolDest | null): ConnectorTool[] {
         const diff = liveChangeDiff(before, change);
         if (!diff.length) return { ok: false, error: "eso ya es lo que tiene la campaña en Meta: no hay nada que cambiar" };
         await C.setPending(c, change, C.AGENT_EDITOR);
-        await C.postAsAds(c.channelId, c.rootMsgId, `📝 @ads dejó cambios pendientes en la campaña #${c.id}: ${diff.join(" · ")}. Revísalos y aplícalos en su panel.`);
+        const note = `📝 @ads dejó cambios pendientes en la campaña #${c.id}: ${diff.join(" · ")}. Revísalos y aplícalos en su panel.`;
+        await C.postAsAds(c.channelId, c.rootMsgId, note);
+        // Pedido desde otro hilo: el aviso (que abre el panel) también va donde se pidió.
+        // Antes sólo iba al hilo de la campaña y quien preguntó no veía «ni cambios ni tarjeta».
+        const here = threadRoot(dest);
+        if (here !== c.rootMsgId || dest.channelId !== c.channelId) await C.postAsAds(dest.channelId, here, note).catch(() => {});
         return {
           ok: true,
           campaignId: c.id,

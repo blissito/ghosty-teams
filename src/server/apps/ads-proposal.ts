@@ -448,7 +448,7 @@ export type AdChange = { message: string; headline?: string; cta?: CtaType; medi
  * Lo que se puede cambiar en una campaña que ya está en Meta. `targeting` y `endTime` van por
  * `update_targeting`, las plataformas por `set_placements` y el anuncio por `replace_ad`.
  */
-export type LiveChange = { targeting?: Targeting; endTime?: string; publisherPlatforms?: PublisherPlatform[]; ad?: AdChange };
+export type LiveChange = { targeting?: Targeting; endTime?: string; publisherPlatforms?: PublisherPlatform[]; ad?: AdChange; dailyBudget?: number };
 
 const zonesOf = (t: Partial<Targeting>) => [
   ...(t.countries ?? []),
@@ -471,6 +471,7 @@ export type LiveState = {
   message?: string | null;
   headline?: string | null;
   cta?: string | null;
+  dailyBudget?: number | null;
 };
 
 /**
@@ -492,7 +493,14 @@ export function liveChangeDiff(current: LiveState, change: LiveChange): string[]
     const added = [...ib].filter(([id]) => !ia.has(id)).map(([, n]) => `+${n}`);
     const removed = [...ia].filter(([id]) => !ib.has(id)).map(([, n]) => `−${n}`);
     if (added.length || removed.length) out.push(`Intereses ${[...added, ...removed].join(" ")}`);
+    const ba = new Map((a.behaviors ?? []).map((i) => [i.id, i.name]));
+    const bb = new Map((b.behaviors ?? []).map((i) => [i.id, i.name]));
+    const bAdded = [...bb].filter(([id]) => !ba.has(id)).map(([, n]) => `+${n}`);
+    const bRemoved = [...ba].filter(([id]) => !bb.has(id)).map(([, n]) => `−${n}`);
+    if (bAdded.length || bRemoved.length) out.push(`Comportamientos ${[...bAdded, ...bRemoved].join(" ")}`);
   }
+  if (change.dailyBudget != null && change.dailyBudget !== current.dailyBudget)
+    out.push(`Presupuesto $${current.dailyBudget ?? "?"} → $${change.dailyBudget} al día`);
   if (change.endTime && dayOf(change.endTime) !== dayOf(current.endTime)) out.push(`Fin ${dayOf(current.endTime)} → ${dayOf(change.endTime)}`);
   if (change.publisherPlatforms) {
     const pa = platformsText(a.publisherPlatforms);
@@ -512,7 +520,7 @@ export function liveChangeDiff(current: LiveState, change: LiveChange): string[]
 
 /** Valida un cambio pendiente (string = por qué no). */
 export function parseLiveChange(
-  raw: { targeting?: unknown; endTime?: unknown; publisherPlatforms?: unknown; ad?: unknown },
+  raw: { targeting?: unknown; endTime?: unknown; publisherPlatforms?: unknown; ad?: unknown; dailyBudget?: unknown },
   nowMs: number,
 ): LiveChange | string {
   const out: LiveChange = {};
@@ -548,8 +556,14 @@ export function parseLiveChange(
     const headline = str(ad.headline, 80);
     out.ad = { message, mediaUrl, cta: (ctaRaw || CTA_DEFAULT) as CtaType, ...(headline ? { headline } : {}) };
   }
-  if (!out.targeting && !out.endTime && !out.publisherPlatforms && !out.ad)
-    return "no hay nada que cambiar: manda targeting, end_time, publisher_platforms o el anuncio nuevo";
+  if (raw.dailyBudget != null && raw.dailyBudget !== "") {
+    const amount = Math.round(Number(raw.dailyBudget) * 100) / 100;
+    const bad = budgetRejection(amount);
+    if (bad) return bad;
+    out.dailyBudget = amount;
+  }
+  if (!out.targeting && !out.endTime && !out.publisherPlatforms && !out.ad && out.dailyBudget == null)
+    return "no hay nada que cambiar: manda targeting, end_time, publisher_platforms, daily_budget o el anuncio nuevo";
   return out;
 }
 
