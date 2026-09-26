@@ -2169,8 +2169,15 @@ function ChannelPage() {
    * que un deep-link funciona igual entrando en frío, cambiando de room dentro de la SPA o
    * con el botón atrás — sin leer `location` a mano ni duplicar la lógica en dos efectos.
    */
+  // El foco que llegó por URL y todavía no llega al estado: mientras tanto, el efecto que
+  // escribe la URL no puede «corregirla» con el estado viejo (borraba `thread` y `campaign`
+  // al cargar un link directo y ese ir y venir de la ruta frenaba la animación del panel).
+  const urlFocusPending = useRef<number | null>(null);
+  // `?campaign=N` todavía sin abrir en el panel: la URL lo conserva hasta que abra.
+  const urlCampaignPending = useRef<number | null>(search.campaign ?? null);
   useEffect(() => {
     if (search.thread != null) {
+      if (search.thread !== openThreadId) urlFocusPending.current = search.thread;
       setOpenThreadId(search.thread);
       setOpenDmId(null);
       setView(null);
@@ -2197,11 +2204,22 @@ function ChannelPage() {
       if (channel.slug === saltandoA.current) saltandoA.current = null;
       return;
     }
-    const quiere = openThreadId != null ? { thread: openThreadId } : openDmId != null ? { dm: openDmId } : {};
+    if (urlFocusPending.current != null) {
+      // Aún no se aplica el hilo del link: no se escribe nada. En cuanto hay un hilo abierto
+      // (ése u otro que abrió la persona), la URL vuelve a seguir al estado.
+      if (openThreadId == null) return;
+      urlFocusPending.current = null;
+    }
+    // La campaña de Ghosty Ads abierta en el panel también va en la URL (link para compartir).
+    const campaign =
+      openArtifact?.kind === "campaign" ? openArtifact.campaignId : (urlCampaignPending.current ?? undefined);
+    const withCampaign = campaign != null ? { campaign } : {};
+    const quiere: { thread?: number; dm?: number; campaign?: number } =
+      openThreadId != null ? { thread: openThreadId, ...withCampaign } : openDmId != null ? { dm: openDmId } : withCampaign;
     const tiene = search.thread != null ? { thread: search.thread } : search.dm != null ? { dm: search.dm } : {};
-    if (quiere.thread === tiene.thread && quiere.dm === tiene.dm) return;
+    if (quiere.thread === tiene.thread && quiere.dm === tiene.dm && quiere.campaign === search.campaign) return;
     router.navigate({ to: "/c/$slug", params: { slug: channel.slug }, search: quiere, replace: true });
-  }, [openThreadId, openDmId, search.thread, search.dm, channel.slug]);
+  }, [openThreadId, openDmId, search.thread, search.dm, search.campaign, channel.slug, openArtifact?.kind === "campaign" ? openArtifact.campaignId : null]);
   // El último room abierto: entrar a Teams por la raíz vuelve aquí (routes/index.tsx).
   useEffect(() => {
     document.cookie = `gt_last_room=${encodeURIComponent(channel.slug)}; path=/; max-age=31536000; samesite=lax`;
@@ -2733,23 +2751,24 @@ function ChannelPage() {
     if (!cur) playArtifactOpen();
     setOpenArtifact(view);
   };
-  // Link directo `?campaign=N`: abre la campaña en el panel (con el hilo, si lo trae).
+  // Link directo `?campaign=N`: abre la campaña en el panel igual que [Abrir], cuando el hilo
+  // del link ya está abierto y en el siguiente cuadro (abrirlo a media hidratación dejaba el
+  // panel a medio animar). Al cerrarlo, el efecto que escribe la URL quita `campaign`.
   useEffect(() => {
     if (search.campaign == null) return;
+    if (search.thread != null && openThreadId !== search.thread) return;
     const cur = openArtifactRef.current;
-    if (cur?.kind === "campaign" && cur.campaignId === search.campaign) return;
-    openArtifactWithSound({ kind: "campaign", title: `Ghosty Ads · #${search.campaign}`, campaignId: search.campaign, channelId: channel.id });
-  }, [search.campaign, channel.id]);
-  // …y al cerrar ese panel, el `campaign` sale de la URL (si no, recargar lo reabriría).
-  const prevPanelRef = useRef<ArtifactView | null>(null);
-  useEffect(() => {
-    const prev = prevPanelRef.current;
-    prevPanelRef.current = openArtifact;
-    if (prev?.kind === "campaign" && openArtifact?.kind !== "campaign" && search.campaign != null) {
-      const { campaign: _c, ...rest } = search;
-      router.navigate({ to: "/c/$slug", params: { slug: channel.slug }, search: rest, replace: true });
+    if (cur?.kind === "campaign" && cur.campaignId === search.campaign) {
+      urlCampaignPending.current = null;
+      return;
     }
-  }, [openArtifact]);
+    const id = search.campaign;
+    const h = requestAnimationFrame(() => {
+      urlCampaignPending.current = null;
+      openArtifactWithSound({ kind: "campaign", title: `Ghosty Ads · #${id}`, campaignId: id, channelId: channel.id });
+    });
+    return () => cancelAnimationFrame(h);
+  }, [search.campaign, search.thread, openThreadId, channel.id]);
   const reopenHiddenDraft = useCallback(() => {
     setHiddenDraft((d) => {
       if (d) {
