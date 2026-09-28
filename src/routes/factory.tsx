@@ -55,11 +55,19 @@ function duration(seconds: number | null): string {
 // dueño (gasta tokens de su llave). El juez califica en el hilo del eval y la tabla lo resume.
 function EvalButton({ runId, agents, onStarted }: { runId: number; agents: FactoryStatus["candidates"]; onStarted: () => void }) {
   const t = useT();
-  const [open, setOpen] = useState(false);
+  // Posición fija (en pantalla) calculada del botón: la lista de pedidos recorta con overflow.
+  const [open, setOpen] = useState<{ top: number; right: number } | null>(null);
   const [agent, setAgent] = useState("");
   const [model, setModel] = useState("");
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
+  // Fijo en pantalla: al hacer scroll se cierra en vez de quedarse flotando lejos del botón.
+  useEffect(() => {
+    if (!open) return;
+    const close = () => setOpen(null);
+    window.addEventListener("scroll", close, { once: true, capture: true });
+    return () => window.removeEventListener("scroll", close, { capture: true });
+  }, [open]);
   const engine = agents.find((a) => a.id === agent)?.engine ?? null;
   const models = Object.entries(engine ? (MODEL_ALIASES[engine] ?? {}) : Object.assign({}, ...Object.values(MODEL_ALIASES)));
   const run = async () => {
@@ -77,11 +85,17 @@ function EvalButton({ runId, agents, onStarted }: { runId: number; agents: Facto
   };
   return (
     <span className="relative z-10 shrink-0">
-      <button type="button" onClick={() => setOpen((o) => !o)} title={t("Volver a correrlo con otro agente o modelo y calificarlo")} className="text-xs text-muted hover:text-ink">
+      <button
+        type="button"
+        onClick={(e) => {
+          const r = e.currentTarget.getBoundingClientRect();
+          setOpen((o) => (o ? null : { top: r.bottom + 6, right: window.innerWidth - r.right }));
+        }}
+        title={t("Volver a correrlo con otro agente o modelo y calificarlo")} className="text-xs text-muted hover:text-ink">
         🧪
       </button>
       {open && (
-        <div className="absolute right-0 top-6 z-20 w-64 rounded-lg border border-border bg-surface p-3 text-xs shadow-lg">
+        <div style={{ top: open.top, right: open.right }} className="fixed z-50 w-64 rounded-lg border border-border bg-surface p-3 text-xs shadow-lg">
           <p className="font-semibold text-ink">{t("Evaluar con otro @build")}</p>
           <label className="mt-2 block text-muted">
             {t("Agente")}
