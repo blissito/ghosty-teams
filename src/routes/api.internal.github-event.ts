@@ -26,7 +26,7 @@ async function verify(ts: string, sig: string, rawBody: string): Promise<boolean
 /** Lo que manda gs (`PrEvent` en app-hook.server.ts). */
 type PrEvent = {
   delivery: string;
-  action: "opened" | "reopened" | "ready_for_review" | "merged" | "closed";
+  action: "opened" | "reopened" | "ready_for_review" | "merged" | "closed" | "review";
   repo: string;
   number: number;
   title: string;
@@ -34,6 +34,8 @@ type PrEvent = {
   author: string | null;
   by: string | null;
   draft: boolean;
+  /** Sólo en `review`: una PERSONA revisó (gs ya filtró los bots). */
+  review?: { state: string; at: string };
 };
 
 const LINE: Record<PrEvent["action"], (ev: PrEvent) => string> = {
@@ -42,6 +44,8 @@ const LINE: Record<PrEvent["action"], (ev: PrEvent) => string> = {
   reopened: (ev) => `🔄 **PR #${ev.number} reabierto**${ev.by ? ` por @${ev.by}` : ""}`,
   merged: (ev) => `🟣 **PR #${ev.number} mezclado**${ev.by ? ` por @${ev.by}` : ""}`,
   closed: (ev) => `⚪ **PR #${ev.number} cerrado sin mezclar**${ev.by ? ` por @${ev.by}` : ""}`,
+  // Una review no se anuncia en los rooms (se sale antes de avisar); sólo se mide.
+  review: () => "",
 };
 
 /** Aviso + tarjeta `gt-gh` (sin botones: es un hecho, no algo que accionar desde aquí). */
@@ -100,7 +104,13 @@ export const Route = createFileRoute("/api/internal/github-event")({
           //    cara de @check/@build). En esos rooms no va tarjeta suelta: la de veredicto del
           //    pedido ya trae «Ver PR / Mezclar», y repetirla es ruido.
           const runRooms = new Set<number>();
-          const { runsByPr, onPrEvent } = await import("../server/apps/factory-runs.server");
+          const { runsByPr, onPrEvent, recordFirstReview } = await import("../server/apps/factory-runs.server");
+          // Una review no se anuncia en los rooms: sólo se mide (¿la fábrica pasó a la primera?).
+          if (ev.action === "review") {
+            let recorded = 0;
+            if (ev.review) for (const run of await runsByPr(ev.repo, ev.number)) recorded += (await recordFirstReview(run.id, ev.review.state, ev.review.at)) ? 1 : 0;
+            return Response.json({ ok: true, recorded });
+          }
           for (const run of await runsByPr(ev.repo, ev.number)) {
             runRooms.add(run.channelId);
             if (ev.action === "merged" || ev.action === "closed") await onPrEvent(run, ev.action);

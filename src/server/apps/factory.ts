@@ -464,6 +464,9 @@ export type FactoryRunRow = {
   loops: number;
   createdAt: number;
   prReadyAt: number | null;
+  firstReviewAt: number | null;
+  firstReviewState: string | null;
+  mergedAt: number | null;
   prUrl: string | null;
   threadUrl: string | null;
   kind: string | null;
@@ -507,7 +510,7 @@ export const factoryOverviewFn = createServerFn({ method: "GET" })
   const { dbq } = await import("../../dbq.server");
   const rows = room
     ? await dbq(
-        `SELECT id, channel_id, root_msg_id, title, status, repo, loops, created_at, pr_ready_at, pr_url, kind, task_ref
+        `SELECT id, channel_id, root_msg_id, title, status, repo, loops, created_at, pr_ready_at, first_review_at, first_review_state, merged_at, pr_url, kind, task_ref
          FROM gt_factory_runs WHERE channel_id = ? ORDER BY id DESC LIMIT 500`,
         [room.id],
       ).catch(() => [])
@@ -523,6 +526,9 @@ export const factoryOverviewFn = createServerFn({ method: "GET" })
       loops: Number(r.loops ?? 0),
       createdAt: Number(r.created_at ?? 0),
       prReadyAt: r.pr_ready_at != null ? Number(r.pr_ready_at) : null,
+      firstReviewAt: r.first_review_at != null ? Number(r.first_review_at) : null,
+      firstReviewState: r.first_review_state ?? null,
+      mergedAt: r.merged_at != null ? Number(r.merged_at) : null,
       prUrl: r.pr_url ?? null,
       threadUrl: `/c/${byId.get(Number(r.channel_id))!.slug}?thread=${r.root_msg_id}`,
       kind: r.kind ?? null,
@@ -587,6 +593,10 @@ export const factoryVerdictFn = createServerFn({ method: "POST" })
       planVersion: number;
       loops: number;
       findings: string;
+      // Desde el 28-sep; los veredictos anteriores no los traen.
+      risk?: import("./factory-risk").RiskLevel;
+      riskReasons?: import("./factory-risk").RiskReason[];
+      readFirst?: import("./factory-risk").ReadFirst[];
     } | null = null;
     try {
       verdict = rows[0]?.verdict_json ? JSON.parse(String(rows[0].verdict_json)) : null;

@@ -28,6 +28,15 @@ function useRunState(runId: number, channelId: number) {
   return { st, refresh };
 }
 
+const RISK_REASON: Record<string, string> = {
+  github: "CI/.github",
+  migration: "migración",
+  auth: "autenticación",
+  deps: "dependencias",
+  api: "API pública",
+  size: "PR grande",
+};
+
 const btn = "rounded-md border px-2.5 py-1 text-xs font-medium transition disabled:opacity-50";
 
 export function VerdictCard({ card, channelId }: { card: { runId: number }; channelId: number }) {
@@ -60,6 +69,18 @@ export function VerdictCard({ card, channelId }: { card: { runId: number }; chan
     ["CI", <span className={ci.cls}>{ci.txt}</span>],
     [t("Revisión"), <span>{t("contra el plan")} v{v.planVersion}{v.loops ? ` · ${v.loops} ${v.loops === 1 ? t("vuelta") : t("vueltas")}` : ""}</span>],
   ];
+  // Riesgo: dice cuánto cuidado pide la revisión humana (veredictos anteriores al 28-sep no lo traen).
+  if (v.risk) {
+    const why = (v.riskReasons ?? []).map((r) => t(RISK_REASON[r] ?? r)).join(", ");
+    rows.unshift([
+      t("Riesgo"),
+      v.risk === "high" ? (
+        <span className="font-medium text-amber-600">{t("Alto")}{why ? `: ${why}` : ""} · {t("léelo con calma")}</span>
+      ) : (
+        <span className="text-emerald-600">{t("Bajo")} · {t("revisión rápida")}</span>
+      ),
+    ]);
+  }
 
   return (
     <div className="mt-0.5 flex max-w-xl overflow-hidden rounded-lg gt-card">
@@ -77,6 +98,22 @@ export function VerdictCard({ card, channelId }: { card: { runId: number }; chan
             </div>
           ))}
         </dl>
+        {!!v.readFirst?.length && (
+          <div className="mt-2.5 border-t border-border pt-2 text-xs">
+            <p className="font-medium text-ink">{t("Lee primero")}</p>
+            <ol className="mt-1 space-y-0.5">
+              {v.readFirst.map((r, i) => (
+                <li key={i} className="min-w-0 text-muted">
+                  <a href={st.prUrl ? `${st.prUrl}/files` : undefined} target="_blank" rel="noreferrer" className="font-mono text-ink hover:underline">
+                    {r.file}
+                    {r.lines ? `:${r.lines}` : ""}
+                  </a>
+                  {r.why ? ` — ${r.why}` : ""}
+                </li>
+              ))}
+            </ol>
+          </div>
+        )}
         <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
           {st.preview.state === "ready" && st.preview.url && (
             <a href={st.preview.url} target="_blank" rel="noreferrer" className={`${btn} border-brand text-brand hover:bg-brand/10`}>

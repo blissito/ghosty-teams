@@ -830,6 +830,11 @@ async function migrate(): Promise<void> {
   // (mide el tiempo pedido→PR en la página de la Fábrica).
   await addColumn("gt_factory_runs", "verdict_json", "TEXT");
   await addColumn("gt_factory_runs", "pr_ready_at", "INTEGER");
+  // La revisión HUMANA (webhook `pull_request_review`): la primera decide si la fábrica pasó a
+  // la primera; `merged_at` cierra el tiempo de revisión. Métrica norte desde el 28-sep.
+  await addColumn("gt_factory_runs", "first_review_at", "INTEGER");
+  await addColumn("gt_factory_runs", "first_review_state", "TEXT");
+  await addColumn("gt_factory_runs", "merged_at", "INTEGER");
   // Sprints de la Fábrica: una épica con tickets ordenados y dependencias. Lo propone @plan
   // (borrador), una persona lo aprueba UNA vez y la plataforma arranca cada ticket como un
   // pedido cuando sus dependencias ya tienen merge (ver apps/sprint.server.ts).

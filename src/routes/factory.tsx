@@ -54,6 +54,8 @@ function duration(seconds: number | null): string {
 const HINT: Record<string, string> = {
   "Se concretan": "Merged entre los pedidos ya cerrados (merged + cancelados).",
   "Correcciones de @check": "Cuántas veces, en promedio, @check le regresó el PR a @build para corregir algo antes de aprobarlo.",
+  "Pasan a la primera": "De los PRs que ya revisó una persona, cuántos aprobó sin pedir cambios (o mezcló directo). Es la métrica que importa: un PR que regresa cuesta más que uno que tarda.",
+  "Tiempo de revisión": "Mediana desde que @check deja el PR listo hasta la primera revisión humana (o el merge).",
   "Del pedido al PR": "Mediana del tiempo desde que se pide hasta que @check deja el PR listo para tu revisión.",
 };
 
@@ -354,11 +356,13 @@ function FactoryPage() {
           {/* Pedidos: números y lista. */}
           <section className="mt-6">
             <h2 className="text-sm font-semibold text-ink">{t("Pedidos")}</h2>
-            <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
+            <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-3">
               {/* Sólo lo que ya tiene datos: un «—» es una métrica que no mide nada. */}
               {(
                 [
                   [t("Pedidos"), String(data.stats.total)],
+                  [t("Pasan a la primera"), data.stats.firstPassRate == null ? null : `${Math.round(data.stats.firstPassRate * 100)}%`],
+                  [t("Tiempo de revisión"), data.stats.medianReviewSeconds == null ? null : duration(data.stats.medianReviewSeconds)],
                   [t("Se concretan"), data.stats.successRate == null ? null : `${Math.round(data.stats.successRate * 100)}%`],
                   [t("Correcciones de @check"), data.stats.avgLoops == null ? null : data.stats.avgLoops.toFixed(1)],
                   [t("Del pedido al PR"), data.stats.medianToPrSeconds == null ? null : duration(data.stats.medianToPrSeconds)],

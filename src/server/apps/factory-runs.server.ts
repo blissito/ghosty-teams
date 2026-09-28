@@ -6,6 +6,7 @@
 // plan no se construye sin firma y @check no se salta.
 import { dbq } from "../../dbq.server";
 import { nextStatus, stageLabel, type RunEvent, type RunStatus } from "./factory-flow";
+import { classifyPrRisk, type PrFile } from "./factory-risk";
 
 export type Run = {
   id: number;
@@ -688,13 +689,25 @@ export async function closeFinishedRuns(): Promise<void> {
  * segundos. Idempotente: `applyEvent` sólo avanza una vez, así que webhook + sondeo (o un
  * reenvío de GitHub) no dejan dos mensajes. Devuelve la corrida si ESTA llamada la cerró.
  */
+/** Primera revisión humana del PR de un pedido (las siguientes no cambian nada). Sólo cuenta
+ *  si el PR ya había salido de la fábrica (`pr_ready_at`): comentar un borrador no es revisar. */
+export async function recordFirstReview(runId: number, state: string, at: string): Promise<boolean> {
+  const ts = Math.floor(Date.parse(at) / 1000) || Math.floor(Date.now() / 1000);
+  const rows = await dbq(
+    `UPDATE gt_factory_runs SET first_review_at = ?, first_review_state = ?
+     WHERE id = ? AND first_review_at IS NULL AND pr_ready_at IS NOT NULL AND ? >= pr_ready_at RETURNING id`,
+    [ts, state, runId, ts],
+  );
+  return rows.length > 0;
+}
+
 export async function onPrEvent(run: Run, outcome: "merged" | "closed", role: "check" | "build" = "check"): Promise<Run | null> {
   if (outcome === "merged") {
     // Lo mezclado cambia la calificación «Listo para agentes» del repo.
     if (run.repo) void import("./readiness.server").then((m) => m.invalidateReadiness(run.repo!));
     if (run.status === "cancelled") {
       // Cancelado a mano antes de que alguien viera el merge: el pedido sí terminó.
-      const fixed = await dbq("UPDATE gt_factory_runs SET status = 'done', updated_at = unixepoch() WHERE id = ? AND status = 'cancelled' RETURNING *", [run.id]);
+      const fixed = await dbq("UPDATE gt_factory_runs SET status = 'done', merged_at = COALESCE(merged_at, unixepoch()), updated_at = unixepoch() WHERE id = ? AND status = 'cancelled' RETURNING *", [run.id]);
       if (!fixed[0]) return null;
       const done = toRun(fixed[0]);
       void syncTask(done).catch(() => {});
@@ -702,6 +715,7 @@ export async function onPrEvent(run: Run, outcome: "merged" | "closed", role: "c
       void import("./sprint.server").then((S) => S.onSprintRunChanged(done.id)).catch(() => {});
       return done;
     }
+    await dbq("UPDATE gt_factory_runs SET merged_at = COALESCE(merged_at, unixepoch()) WHERE id = ?", [run.id]);
     const done = await applyEvent(run, "merged").catch(() => null);
     if (done) await postInThread(done, role, mergedMessage(run));
     return done;
@@ -883,14 +897,21 @@ export async function mergeRun(run: Run, sub: string): Promise<{ ok: true } | { 
 }
 
 /** ¿El PR toca `.github/` (workflows, CODEOWNERS)? false si GitHub no contesta. */
-export async function prTouchesGithubDir(sub: string, url: string): Promise<boolean> {
+// Archivos del PR (los primeros 100) con sus líneas; [] si GitHub no contesta.
+export async function prFiles(sub: string, url: string): Promise<PrFile[]> {
   const pr = parsePrUrl(url);
-  if (!pr) return false;
+  if (!pr) return [];
   try {
     const { githubApi } = await import("../connectors/github.server");
     const files = await githubApi(sub, `/repos/${pr.repo}/pulls/${pr.number}/files?per_page=100`);
-    return Array.isArray(files) && files.some((f: any) => String(f?.filename ?? "").startsWith(".github/"));
+    return Array.isArray(files)
+      ? files.map((f: any) => ({ filename: String(f?.filename ?? ""), additions: Number(f?.additions ?? 0), deletions: Number(f?.deletions ?? 0) }))
+      : [];
   } catch {
-    return false;
+    return [];
   }
+}
+
+export async function prTouchesGithubDir(sub: string, url: string): Promise<boolean> {
+  return classifyPrRisk(await prFiles(sub, url)).reasons.includes("github");
 }

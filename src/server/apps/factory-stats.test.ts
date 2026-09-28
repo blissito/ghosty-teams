@@ -21,4 +21,19 @@ describe("números de la fábrica", () => {
   it("mediana con número impar", () => {
     expect(runStats([row("done", 0, 0, 100), row("done", 0, 0, 300), row("pr_review", 0, 0, 200)]).medianToPrSeconds).toBe(200);
   });
+
+  it("pasa a la primera: aprobado o mezclado sin pedir cambios; lo pendiente no cuenta", () => {
+    const r = (x: Partial<Parameters<typeof runStats>[0][number]>) => ({ status: "pr_review", loops: 0, createdAt: 0, prReadyAt: 100, ...x });
+    const s = runStats([
+      r({ firstReviewState: "approved", firstReviewAt: 400 }),
+      r({ status: "done", mergedAt: 700 }),
+      r({ firstReviewState: "changes_requested", firstReviewAt: 1100 }),
+      r({ firstReviewState: "commented", firstReviewAt: 200 }),
+      r({ prReadyAt: null, status: "building" }),
+    ]);
+    expect(s.firstPassRate).toBeCloseTo(2 / 3);
+    // 300, 600, 1000, 100 → mediana 450.
+    expect(s.medianReviewSeconds).toBe(450);
+    expect(runStats([]).firstPassRate).toBeNull();
+  });
 });

@@ -272,6 +272,27 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
               "true si lo que falta NO lo puede resolver @build con sus herramientas (falta una tool, un permiso o un acceso). " +
               "No se le regresa: pasa directo a una persona. Úsalo en vez de regresar lo mismo varias veces.",
           },
+          risk: {
+            type: "string",
+            enum: ["low", "high"],
+            description:
+              "Con pass=true: cuánto cuidado necesita la revisión humana. La plataforma ya lo sube a high si el PR toca " +
+              "auth, migraciones, dependencias, API pública, .github/ o es grande; tú puedes subirlo por lógica delicada, nunca bajarlo.",
+          },
+          readFirst: {
+            type: "array",
+            maxItems: 5,
+            description: "Con pass=true: lo que una persona debe leer primero para revisar en 2 minutos (máx. 5), lo más delicado arriba.",
+            items: {
+              type: "object",
+              properties: {
+                file: { type: "string" },
+                lines: { type: "string", description: "p. ej. 40-72" },
+                why: { type: "string", description: "Por qué mirarlo, en una frase" },
+              },
+              required: ["file"],
+            },
+          },
         },
         required: ["pass"],
       },
@@ -314,6 +335,8 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
           const { githubApi } = await import("../connectors/github.server");
           const info = pr ? await githubApi(sub, `/repos/${pr.repo}/pulls/${pr.number}`).catch(() => null) : null;
           const ciState = run.prUrl ? ((await R.prCi(sub, run.prUrl))?.state ?? "none") : "none";
+          const { classifyPrRisk, mergeCheckRisk } = await import("./factory-risk");
+          const risk = mergeCheckRisk(classifyPrRisk(run.prUrl ? await R.prFiles(sub, run.prUrl) : []), a);
           const verdict = {
             prNumber: pr?.number ?? null,
             files: Number(info?.changed_files ?? 0),
@@ -324,6 +347,9 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
             planVersion: run.planVersion,
             loops: run.loops,
             findings: findings.slice(0, 4000),
+            risk: risk.level,
+            riskReasons: risk.reasons,
+            readFirst: risk.readFirst,
           };
           const { dbq } = await import("../../dbq.server");
           await dbq("UPDATE gt_factory_runs SET verdict_json = ?, pr_ready_at = unixepoch() WHERE id = ?", [JSON.stringify(verdict), run.id]);
