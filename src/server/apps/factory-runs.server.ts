@@ -137,7 +137,16 @@ export const planCardFence = (runId: number, version: number) =>
  * Despierta al rol siguiente en el hilo del pedido. `sub` = de quién son las credenciales
  * del turno (su GitHub): quien firmó, o quien pidió.
  */
-export async function handoff(run: Run, to: "plan" | "build" | "check", sub: string, cause: string, text: string, origin: string): Promise<boolean> {
+export async function handoff(
+  run: Run,
+  to: "plan" | "build" | "check",
+  sub: string,
+  cause: string,
+  text: string,
+  origin: string,
+  /** Otra conversación del mismo rol en el mismo pedido (el juez de un eval de @check). */
+  groupSuffix = "",
+): Promise<boolean> {
   const { resolvedAgents, agentGroupId } = await import("../../agents.server");
   const agent = (await resolvedAgents()).find((a) => a.handle === to);
   if (!agent) {
@@ -148,7 +157,7 @@ export async function handoff(run: Run, to: "plan" | "build" | "check", sub: str
   const ns = await currentNamespace();
   // Una conversación por corrida y rol: el contexto viaja en el encargo, y @check no hereda
   // lo que @build pensó.
-  const groupId = await agentGroupId(agent, `factory-${run.id}`);
+  const groupId = await agentGroupId(agent, `factory-${run.id}${groupSuffix}`);
   const { enqueueWakeup, mintWakeRef, armWakeups } = await import("../wakeups.server");
   const ok = await enqueueWakeup({
     key: `factory:${run.id}:${to}:${Date.now()}`,
@@ -538,7 +547,9 @@ export async function afterFactoryTurn(
   }
   const nudged = w.key.endsWith(":nudge");
   // En un eval, el juez cierra con su propia tool.
-  const closeTool = role === "check" && (await import("./factory-evals.server").then((E) => E.evalMeta(run.id)).catch(() => null)) ? "factory_eval_score" : CLOSE_TOOL[role];
+  const meta = role === "check" ? await import("./factory-evals.server").then((E) => E.evalMeta(run.id)).catch(() => null) : null;
+  // En un eval, el juez cierra con su propia tool (el @check evaluado, con su veredicto de siempre).
+  const closeTool = meta && (meta.config.role !== "check" || meta.stepDoneAt) ? "factory_eval_score" : CLOSE_TOOL[role];
   if (!nudged) {
     const { enqueueWakeup, armWakeups } = await import("../wakeups.server");
     const { currentNamespace } = await import("../tenant.server");

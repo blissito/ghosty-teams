@@ -575,7 +575,7 @@ export const factoryOverviewFn = createServerFn({ method: "GET" })
 
 /** Arranca un eval de un pedido mezclado (sólo el dueño: gasta tokens de su llave). */
 export const factoryStartEvalFn = createServerFn({ method: "POST" })
-  .validator((d: { runId: number; agent?: string | null; model?: string | null }) => d)
+  .validator((d: { runId: number; role?: "plan" | "build" | "check"; agent?: string | null; model?: string | null }) => d)
   .handler(async ({ data }) => {
     const me = await sessionUser();
     if (!me?.isOwner) throw new Error("sólo el dueño del espacio corre evals");
@@ -585,7 +585,8 @@ export const factoryStartEvalFn = createServerFn({ method: "POST" })
     if (!src || !(await db.listChannels(me.sub, me.isOwner)).some((c) => c.id === src.channelId)) throw new Error("no encuentro ese pedido");
     const { startEval } = await import("./factory-evals.server");
     const origin = await (await import("../../origin.server")).reqOrigin().catch(() => "");
-    const r = await startEval({ sourceRunId: src.id, agent: data.agent ?? null, model: data.model ?? null, sub: me.sub, origin });
+    const role = data.role && ["plan", "build", "check"].includes(data.role) ? data.role : "build";
+    const r = await startEval({ sourceRunId: src.id, role, agent: data.agent ?? null, model: data.model ?? null, sub: me.sub, origin });
     if ("error" in r) throw new Error(r.error);
     return r;
   });

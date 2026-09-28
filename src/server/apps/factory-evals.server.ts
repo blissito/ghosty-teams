@@ -1,31 +1,43 @@
 // Evals de la fábrica: el lado con I/O (ver factory-evals.ts para la rúbrica y el resumen).
 //
 // Un eval es un pedido más (`gt_factory_runs.kind = 'eval'`), con su hilo en el room del
-// original, para que se pueda ver qué hizo el agente. Diferencias con un pedido real:
-//  - nace en `building` con el plan YA firmado del original (no hay @plan ni firma);
-//  - @build trabaja en `ghosty-eval/<id>`, que la plataforma crea en el commit BASE del PR
-//    original (el repo como estaba antes del cambio), y NO abre PR;
-//  - @check no revisa: es el juez. Recibe los dos diffs y califica con factory_eval_score;
-//  - al calificar, la rama se borra y el pedido cierra en `done`. No cuenta en los números.
+// original, para que se pueda ver qué hizo el agente. Vuelve a correr UN rol de un pedido ya
+// mezclado con otro agente o modelo (override del HILO) y un juez lo califica contra lo que se
+// hizo de verdad. Por rol:
+//  - plan:  recibe el pedido original, entrega su plan (sin tarjeta ni firma) → juez vs el plan firmado.
+//  - build: el plan firmado, en `ghosty-eval/<id>` creada en el commit BASE del PR, sin PR →
+//           juez vs el PR mezclado; la rama se borra al calificar.
+//  - check: revisa el PR original contra el plan firmado → juez vs la revisión humana y el
+//           @check original. El juez es el @check POR DEFECTO (se quita el override antes).
+// El juez siempre es @check y califica con factory_eval_score. No cuenta en los números.
 import { dbq } from "../../dbq.server";
-import { evalBranch, type EvalConfig, type EvalResult, type EvalRow, EVAL_CRITERIA, configLabel, evalResultMarkdown } from "./factory-evals";
+import { evalBranch, type EvalConfig, type EvalResult, type EvalRole, type EvalRow, configLabel, evalResultMarkdown, rubricText } from "./factory-evals";
 import type { Run } from "./factory-runs.server";
 
 export type EvalMeta = {
   of: number;
   config: EvalConfig;
-  base: string;
+  /** Commit base del PR original (sólo build). */
+  base?: string;
   originalPr: string;
   startedAt: number;
+  /** Cuándo el rol evaluado cerró su paso (antes `buildDoneAt`). */
+  stepDoneAt?: number;
   buildDoneAt?: number;
+  /** Lo que entregó el rol evaluado cuando no queda en GitHub (plan o veredicto). */
+  output?: string;
   result?: EvalResult;
+  costUsd?: number | null;
+  models?: string[];
 };
 
 export async function evalMeta(runId: number): Promise<EvalMeta | null> {
   const rows = await dbq("SELECT kind, eval_json FROM gt_factory_runs WHERE id = ?", [runId]).catch(() => []);
   if (rows[0]?.kind !== "eval" || !rows[0]?.eval_json) return null;
   try {
-    return JSON.parse(String(rows[0].eval_json)) as EvalMeta;
+    const m = JSON.parse(String(rows[0].eval_json)) as EvalMeta;
+    // Evals de antes del 28-sep: sólo build, con `buildDoneAt`.
+    return { ...m, stepDoneAt: m.stepDoneAt ?? m.buildDoneAt };
   } catch {
     return null;
   }
@@ -35,9 +47,18 @@ async function saveMeta(runId: number, meta: EvalMeta) {
   await dbq("UPDATE gt_factory_runs SET eval_json = ?, updated_at = unixepoch() WHERE id = ?", [JSON.stringify(meta), runId]);
 }
 
-/** Arranca un eval sobre un pedido mezclado. `sub` pone el GitHub (crear y borrar la rama). */
+const now = () => Math.floor(Date.now() / 1000);
+
+/** Deja el eval en la etapa del juez sin pasar por la máquina de estados de un pedido real. */
+async function toJudging(run: Run): Promise<Run> {
+  await dbq("UPDATE gt_factory_runs SET status = 'checking', updated_at = unixepoch() WHERE id = ?", [run.id]);
+  return { ...run, status: "checking" };
+}
+
+/** Arranca un eval sobre un pedido mezclado. `sub` pone el GitHub (y la llave de los turnos). */
 export async function startEval(opts: {
   sourceRunId: number;
+  role: EvalRole;
   agent?: string | null;
   model?: string | null;
   sub: string;
@@ -46,53 +67,105 @@ export async function startEval(opts: {
   const R = await import("./factory-runs.server");
   const src = await R.getRun(opts.sourceRunId);
   if (!src || src.status !== "done" || !src.prUrl || !src.repo) return { error: "sólo se evalúan pedidos mezclados, con su PR" };
-  if (!opts.agent && !opts.model) return { error: "elige el agente o el modelo que quieres probar en @build" };
+  if (!opts.agent && !opts.model) return { error: `elige el agente o el modelo que quieres probar en @${opts.role}` };
   const pr = R.parsePrUrl(src.prUrl);
   if (!pr) return { error: "el PR del pedido no es de GitHub" };
-  const { githubApi, createEvalBranch } = await import("../connectors/github.server");
-  const info = await githubApi(opts.sub, `/repos/${pr.repo}/pulls/${pr.number}`).catch(() => null);
-  const base = info?.base?.sha ? String(info.base.sha) : null;
-  if (!base) return { error: info?.error ? String(info.error) : "no pude leer el commit base del PR" };
   const plan = await R.getPlan(src.id, src.planVersion);
   if (!plan?.planMd) return { error: "el pedido no tiene plan firmado" };
-
-  const config: EvalConfig = { role: "build", agent: opts.agent?.trim() || null, model: opts.model?.trim() || null };
   const db = await import("../../db.server");
+
+  let base: string | undefined;
+  if (opts.role === "build") {
+    const { githubApi } = await import("../connectors/github.server");
+    const info = await githubApi(opts.sub, `/repos/${pr.repo}/pulls/${pr.number}`).catch(() => null);
+    base = info?.base?.sha ? String(info.base.sha) : undefined;
+    if (!base) return { error: info?.error ? String(info.error) : "no pude leer el commit base del PR" };
+  }
+  const ask = opts.role === "plan" ? ((await db.getMessage(src.rootMsgId).catch(() => null))?.body ?? src.title) : null;
+
+  const config: EvalConfig = { role: opts.role, agent: opts.agent?.trim() || null, model: opts.model?.trim() || null };
   const bus = await import("../bus.server");
   const { currentNamespace } = await import("../tenant.server");
   const { resolvedAgents } = await import("../../agents.server");
   const who = (await resolvedAgents()).find((a) => a.handle === "check");
+  const from =
+    opts.role === "plan"
+      ? "el mismo pedido original, sin ver el plan firmado"
+      : opts.role === "build"
+        ? `el mismo plan firmado (v${src.planVersion}) y el commit base \`${base!.slice(0, 7)}\` del PR original`
+        : `el PR original contra el plan firmado (v${src.planVersion})`;
+  const against = opts.role === "plan" ? "el plan que se firmó" : opts.role === "build" ? src.prUrl : "la revisión humana y la del @check original";
   const body =
     `🧪 **Eval del pedido #${src.id}:** «${src.title}»\n\n` +
-    `- **Construye:** ${configLabel(config)}\n` +
-    `- **Parte de:** el mismo plan firmado (v${src.planVersion}) y el commit base \`${base.slice(0, 7)}\` del PR original\n` +
-    `- **Compara con:** ${src.prUrl}\n\n` +
-    `_No abre PR: la rama se borra al calificar._`;
+    `- **Prueba a:** ${configLabel(config)}\n` +
+    `- **Parte de:** ${from}\n` +
+    `- **Compara con:** ${against}\n\n` +
+    (opts.role === "build" ? `_No abre PR: la rama se borra al calificar._` : `_No toca el repo ni el pedido original._`);
   const { id: rootId } = await db.postAgent(src.channelId, null, body, "msg", who?.handle ?? "check", who?.name ?? "check", "general", who?.avatar ?? "");
   const msg = await db.getMessage(rootId);
   if (msg) bus.publish(bus.ch.room(await currentNamespace(), src.channelId), { t: "message:new", msg });
 
-  const meta: EvalMeta = { of: src.id, config, base, originalPr: src.prUrl, startedAt: Math.floor(Date.now() / 1000) };
+  const meta: EvalMeta = { of: src.id, config, base, originalPr: src.prUrl, startedAt: now() };
+  const status = opts.role === "plan" ? "planning" : opts.role === "build" ? "building" : "checking";
   const rows = await dbq(
+    // Sin pr_url a propósito, también en el de @check: con él, el sondeo de PRs y el webhook lo
+    // tratarían como el pedido original (cierre al merge, previews).
     `INSERT INTO gt_factory_runs (channel_id, root_msg_id, topic, title, status, plan_version, repo, requested_by, approved_by, kind, eval_json)
-     VALUES (?, ?, 'general', ?, 'building', 1, ?, ?, ?, 'eval', ?) RETURNING id`,
-    [src.channelId, rootId, `Eval · ${src.title}`.slice(0, 120), src.repo, opts.sub, opts.sub, JSON.stringify(meta)],
-  );
-  const run = (await R.getRun(Number(rows[0].id)))!;
-  const branch = evalBranch(run.id);
-  await dbq("UPDATE gt_factory_runs SET branch = ? WHERE id = ?", [branch, run.id]);
-  await dbq("INSERT INTO gt_factory_plans (run_id, version, plan_md, decision, decided_by) VALUES (?, 1, ?, 'approve', ?)", [run.id, plan.planMd, opts.sub]);
-  // El agente/modelo del eval viaja como override del HILO: factoryTurnFor lo aplica a cada turno.
-  await dbq(
-    `INSERT INTO gt_factory_thread_overrides (channel_id, root_msg_id, overrides) VALUES (?, ?, ?)
-     ON CONFLICT(channel_id, root_msg_id) DO UPDATE SET overrides = excluded.overrides, updated_at = unixepoch()`,
+     VALUES (?, ?, 'general', ?, ?, ?, ?, ?, ?, 'eval', ?) RETURNING id`,
     [
       src.channelId,
       rootId,
-      JSON.stringify({ repo: src.repo, ...(config.model ? { models: { build: config.model } } : {}), ...(config.agent ? { agents: { build: config.agent } } : {}) }),
+      `Eval · ${src.title}`.slice(0, 120),
+      status,
+      opts.role === "plan" ? 0 : 1,
+      src.repo,
+      opts.sub,
+      opts.sub,
+      JSON.stringify(meta),
     ],
   );
-  const made = await createEvalBranch(opts.sub, src.repo, branch, base);
+  const run = (await R.getRun(Number(rows[0].id)))!;
+  if (opts.role !== "plan")
+    await dbq("INSERT INTO gt_factory_plans (run_id, version, plan_md, decision, decided_by) VALUES (?, 1, ?, 'approve', ?)", [run.id, plan.planMd, opts.sub]);
+  // El agente/modelo del eval viaja como override del HILO: factoryTurnFor lo aplica a cada turno.
+  await setThreadOverrides(src.channelId, rootId, {
+    repo: src.repo,
+    ...(config.model ? { models: { [opts.role]: config.model } } : {}),
+    ...(config.agent ? { agents: { [opts.role]: config.agent } } : {}),
+  });
+  const origin = opts.origin;
+
+  if (opts.role === "plan") {
+    await R.handoff(
+      run,
+      "plan",
+      opts.sub,
+      "eval",
+      `🧪 Esto es un EVAL: planea este pedido como si fuera real (lee el repo, sólo lectura) y entrégalo con ` +
+        `factory_plan_submit (runId ${run.id}). No hay firma: al entregarlo lo califica un juez.\n\n## El pedido\n${String(ask).slice(0, 4000)}`,
+      origin,
+    );
+    return { runId: run.id };
+  }
+
+  if (opts.role === "check") {
+    await R.handoff(
+      run,
+      "check",
+      opts.sub,
+      "eval",
+      `🧪 Esto es un EVAL: revisa el PR ${src.prUrl} contra el plan firmado como si fuera un pedido real. ` +
+        `El PR ya se mezcló: NO comentes en GitHub ni edites nada. Lee el diff con github_pr_files; puedes correr pruebas en tu caja. ` +
+        `Cierra con factory_check_verdict (runId ${run.id}): pass y hallazgos concretos (archivo:línea).\n\n## Plan firmado\n${plan.planMd}`,
+      origin,
+    );
+    return { runId: run.id };
+  }
+
+  const branch = evalBranch(run.id);
+  await dbq("UPDATE gt_factory_runs SET branch = ? WHERE id = ?", [branch, run.id]);
+  const { createEvalBranch } = await import("../connectors/github.server");
+  const made = await createEvalBranch(opts.sub, src.repo, branch, base!);
   if ("error" in made) {
     await R.applyEvent({ ...run, branch }, "cancel").catch(() => {});
     await R.postInThread(run, "check", `⚠️ No pude crear la rama del eval: ${made.error}`);
@@ -104,56 +177,142 @@ export async function startEval(opts: {
     opts.sub,
     "eval",
     `🧪 Esto es un EVAL: construye el plan firmado de abajo como si fuera un pedido real, pero:\n` +
-      `- Trabaja SÓLO en la rama \`${branch}\`, que ya existe y parte del commit base \`${base.slice(0, 7)}\` (no de la principal). No crees otra rama.\n` +
+      `- Trabaja SÓLO en la rama \`${branch}\`, que ya existe y parte del commit base \`${base!.slice(0, 7)}\` (no de la principal). No crees otra rama.\n` +
       `- NO abras PR. Empuja tus commits a esa rama con github_push_files / github_write_file.\n` +
       `- Corre pruebas, lint y typecheck como siempre.\n` +
       `Cierra con factory_build_done (runId ${run.id}, branch ${branch}, sin pr_url).\n\n## Plan firmado\n${plan.planMd}`,
-    opts.origin,
+    origin,
   );
   return { runId: run.id };
 }
+
+async function setThreadOverrides(channelId: number, rootId: number, ov: Record<string, unknown>) {
+  await dbq(
+    `INSERT INTO gt_factory_thread_overrides (channel_id, root_msg_id, overrides) VALUES (?, ?, ?)
+     ON CONFLICT(channel_id, root_msg_id) DO UPDATE SET overrides = excluded.overrides, updated_at = unixepoch()`,
+    [channelId, rootId, JSON.stringify(ov)],
+  );
+}
+
+const judgeHead = (meta: EvalMeta, what: string) =>
+  `🧪 Eres el JUEZ de un eval. No revisas para aprobar: calificas. ${what}\n` +
+  `Califica la A del 1 al 5 en cada criterio de la rúbrica y di si es worse, same o better que la B. No edites nada.\n\n` +
+  `## Rúbrica (claves de scores)\n${rubricText(meta.config.role)}\n\n`;
 
 /** @build cerró un eval: se guarda el tiempo y se despierta al juez con los dos diffs. */
 export async function evalBuildDone(run: Run, meta: EvalMeta, sub: string, tests: string, origin: string): Promise<{ ok: true } | { error: string }> {
   const R = await import("./factory-runs.server");
   const branch = run.branch ?? evalBranch(run.id);
   const { compareDiff, prDiff } = await import("../connectors/github.server");
-  const repo = run.repo!;
-  const diff = await compareDiff(sub, repo, meta.base, branch);
+  const diff = await compareDiff(sub, run.repo!, meta.base!, branch);
   if (!diff || diff === "(sin cambios)") return { error: `la rama ${branch} no tiene cambios contra el commit base: empuja tu trabajo ahí antes de cerrar` };
   const orig = R.parsePrUrl(meta.originalPr);
   const origDiff = orig ? await prDiff(sub, orig.repo, orig.number) : null;
   const next = await R.applyEvent(run, "build_done", { ci_fails: 0 });
-  await saveMeta(run.id, { ...meta, buildDoneAt: Math.floor(Date.now() / 1000) });
+  await saveMeta(run.id, { ...meta, stepDoneAt: now() });
   const plan = await R.getPlan(run.id, 1);
-  const rubric = Object.entries(EVAL_CRITERIA)
-    .map(([k, v]) => `- ${k}: ${v}`)
-    .join("\n");
   await R.handoff(
     next,
     "check",
     sub,
     "calificar el eval",
-    `🧪 Eres el JUEZ de un eval. No revisas para aprobar: calificas. Dos implementaciones del MISMO plan firmado, ` +
-      `desde el mismo commit base: la A la escribió ${configLabel(meta.config)} (rama \`${branch}\`); la B es la que se mezcló de verdad (${meta.originalPr}).\n` +
-      `Califica la A del 1 al 5 en cada criterio y di si es worse, same o better que la B. Puedes leer archivos completos con github_read_file (ref ${branch}). ` +
-      `No edites nada. Resultado que reporta quien construyó: ${tests.slice(0, 400)}\n\n` +
-      `## Rúbrica\n${rubric}\n\n## Plan firmado\n${plan?.planMd ?? "(sin plan)"}\n\n## A · ${configLabel(meta.config)}\n${diff}\n\n## B · el PR mezclado\n${origDiff ?? "(no pude leer su diff)"}\n\n` +
+    judgeHead(
+      meta,
+      `Dos implementaciones del MISMO plan firmado, desde el mismo commit base: la A la escribió ${configLabel(meta.config)} (rama \`${branch}\`); ` +
+        `la B es la que se mezcló de verdad (${meta.originalPr}). Puedes leer archivos completos con github_read_file (ref ${branch}). ` +
+        `Resultado que reporta quien construyó: ${tests.slice(0, 400)}`,
+    ) +
+      `## Plan firmado\n${plan?.planMd ?? "(sin plan)"}\n\n## A · ${configLabel(meta.config)}\n${diff}\n\n## B · el PR mezclado\n${origDiff ?? "(no pude leer su diff)"}\n\n` +
       `Cierra con factory_eval_score (runId ${run.id}).`,
     origin,
   );
   return { ok: true };
 }
 
-/** El juez calificó: se guarda, se borra la rama y el eval cierra. */
+/** @plan entregó su plan en un eval: se guarda (sin tarjeta ni firma) y se despierta al juez. */
+export async function evalPlanDone(run: Run, meta: EvalMeta, sub: string, planMd: string, origin: string): Promise<void> {
+  const R = await import("./factory-runs.server");
+  await saveMeta(run.id, { ...meta, stepDoneAt: now(), output: planMd.slice(0, 20000) });
+  const judging = await toJudging(run);
+  const src = await R.getRun(meta.of);
+  const signed = src ? await R.getPlan(src.id, src.planVersion) : null;
+  await R.handoff(
+    judging,
+    "check",
+    sub,
+    "calificar el eval",
+    judgeHead(
+      meta,
+      `Dos planes para el MISMO pedido: la A la escribió ${configLabel(meta.config)}; la B es el plan que se firmó ` +
+        `(v${src?.planVersion ?? "?"}: ${Math.max(0, (src?.planVersion ?? 1) - 1)} corrección(es) antes de firmarse; @check le regresó el PR ${src?.loops ?? 0} vez/veces).`,
+    ) + `## A · ${configLabel(meta.config)}\n${planMd}\n\n## B · el plan firmado\n${signed?.planMd ?? "(no encontré el plan)"}\n\nCierra con factory_eval_score (runId ${run.id}).`,
+    origin,
+  );
+}
+
+/** El @check evaluado dio su veredicto: se guarda y se despierta al juez (el @check por defecto). */
+export async function evalCheckDone(run: Run, meta: EvalMeta, sub: string, pass: boolean, findings: string, origin: string): Promise<void> {
+  const R = await import("./factory-runs.server");
+  const output = `${pass ? "✅ pasa" : "❌ no pasa"}\n${findings}`.slice(0, 8000);
+  await saveMeta(run.id, { ...meta, stepDoneAt: now(), output });
+  // El juez NO es el @check evaluado: fuera el override del hilo, y otra conversación.
+  const src = await R.getRun(meta.of);
+  await setThreadOverrides(run.channelId, run.rootMsgId, { repo: run.repo });
+  const orig = await dbq("SELECT verdict_json, first_review_state, loops FROM gt_factory_runs WHERE id = ?", [meta.of]).catch(() => []);
+  let origFindings = "";
+  try {
+    origFindings = orig[0]?.verdict_json ? String(JSON.parse(String(orig[0].verdict_json)).findings ?? "") : "";
+  } catch {
+    origFindings = "";
+  }
+  const human = orig[0]?.first_review_state ? String(orig[0].first_review_state) : "sin review (se mezcló directo)";
+  await R.handoff(
+    run,
+    "check",
+    sub,
+    "calificar el eval",
+    judgeHead(
+      meta,
+      `Dos revisiones del MISMO PR (${meta.originalPr}) contra el mismo plan: la A la hizo ${configLabel(meta.config)}; la B es la del @check original. ` +
+        `Lo que pasó de verdad: @check le regresó el PR a @build ${orig[0]?.loops ?? src?.loops ?? 0} vez/veces antes de aprobarlo, ` +
+        `la primera revisión humana fue «${human}» y el PR se mezcló. Puedes leer el diff con github_pr_files.`,
+    ) + `## A · ${configLabel(meta.config)}\n${output}\n\n## B · el @check original (al aprobar)\n${origFindings || "(sin hallazgos guardados)"}\n\nCierra con factory_eval_score (runId ${run.id}).`,
+    origin,
+    ":judge",
+  );
+}
+
+/** Costo en gs del rol evaluado (su conversación `…-<rol>-factory-<id>`). null si gs no contesta. */
+async function evalCost(run: Run, role: EvalRole): Promise<{ costUsd: number; models: string[] } | null> {
+  try {
+    const { nativeRuntimeBase, partnerHeaders } = await import("../ghosty-runtime.server");
+    const base = await nativeRuntimeBase();
+    if (!base) return null;
+    const { currentNamespace } = await import("../tenant.server");
+    const suffix = `-${role}-factory-${run.id}`;
+    const body = JSON.stringify({ suffixes: [suffix] });
+    const res = await fetch(`${base}/api/v2/usage/groups`, { method: "POST", headers: partnerHeaders(body, await currentNamespace()), body, signal: AbortSignal.timeout(15_000) });
+    if (!res.ok) return null;
+    const j = (await res.json()) as { groups?: Record<string, { costUsd: number; models: string[]; turns: number }> };
+    const g = j.groups?.[suffix];
+    return g && g.turns ? { costUsd: g.costUsd, models: g.models } : null;
+  } catch {
+    return null;
+  }
+}
+
+/** El juez calificó: se guarda (con el costo del rol), se borra la rama si hay y el eval cierra. */
 export async function evalScored(run: Run, meta: EvalMeta, result: EvalResult, sub: string): Promise<void> {
   const R = await import("./factory-runs.server");
-  await saveMeta(run.id, { ...meta, result });
-  const { deleteEvalBranch } = await import("../connectors/github.server");
-  if (run.repo && run.branch) await deleteEvalBranch(sub, run.repo, run.branch).catch(() => false);
-  const passed = await R.applyEvent(run, "check_pass").catch(() => null);
-  if (passed) await R.applyEvent(passed, "close").catch(() => null);
-  await R.postInThread(run, "check", evalResultMarkdown(meta.config, result));
+  const cost = await evalCost(run, meta.config.role);
+  await saveMeta(run.id, { ...meta, result, costUsd: cost?.costUsd ?? null, models: cost?.models ?? [] });
+  if (meta.config.role === "build" && run.repo && run.branch) {
+    const { deleteEvalBranch } = await import("../connectors/github.server");
+    await deleteEvalBranch(sub, run.repo, run.branch).catch(() => false);
+  }
+  await dbq("UPDATE gt_factory_runs SET status = 'done', updated_at = unixepoch() WHERE id = ?", [run.id]);
+  void R.refreshRoom(run.channelId);
+  await R.postInThread(run, "check", evalResultMarkdown(meta.config, result, cost?.costUsd ?? null, cost?.models));
 }
 
 /** Evals de un room para la tabla de la página. */
@@ -165,7 +324,8 @@ export async function evalRows(channelId: number): Promise<EvalRow[]> {
   for (const r of rows) {
     try {
       const m = JSON.parse(String(r.eval_json)) as EvalMeta;
-      out.push({ config: m.config, result: m.result ?? null, buildSeconds: m.buildDoneAt ? m.buildDoneAt - m.startedAt : null });
+      const done = m.stepDoneAt ?? m.buildDoneAt;
+      out.push({ config: m.config, result: m.result ?? null, seconds: done ? done - m.startedAt : null, costUsd: m.costUsd ?? null });
     } catch {
       /* fila rota: no cuenta */
     }

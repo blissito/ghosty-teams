@@ -16,6 +16,7 @@ import { intlLocale } from "../i18n.core";
 import { me } from "../server/auth";
 import { factoryEnsureBoardFn, factoryOverviewFn, factoryProposeSprintFn, factoryStartEvalFn, factoryStatusFn, type FactoryStatus } from "../server/apps/factory";
 import { MODEL_ALIASES } from "../server/apps/factory-team";
+import { formatUsd } from "../server/apps/factory-evals";
 import { RepoReadiness } from "../components/RepoReadiness";
 import { RepoTeam } from "../components/RepoTeam";
 import { RolesEditor, SchedulesEditor, SuggestAsks } from "../components/AppsPanel";
@@ -54,10 +55,11 @@ function duration(seconds: number | null): string {
 
 // «🧪 Evaluar»: vuelve a correr un pedido mezclado con otro agente o modelo en @build. Sólo el
 // dueño (gasta tokens de su llave). El juez califica en el hilo del eval y la tabla lo resume.
-function EvalButton({ runId, agents, buildAgentId, onStarted }: { runId: number; agents: FactoryStatus["candidates"]; buildAgentId: string | null; onStarted: () => void }) {
+function EvalButton({ runId, agents, roleAgentIds, onStarted }: { runId: number; agents: FactoryStatus["candidates"]; roleAgentIds: Partial<Record<"plan" | "build" | "check", string | null>>; onStarted: () => void }) {
   const t = useT();
   // Posición fija (en pantalla) calculada del botón: la lista de pedidos recorta con overflow.
   const [open, setOpen] = useState<{ top: number; right: number } | null>(null);
+  const [role, setRole] = useState<"plan" | "build" | "check">("build");
   const [agent, setAgent] = useState("");
   const [model, setModel] = useState("");
   const [busy, setBusy] = useState(false);
@@ -69,14 +71,14 @@ function EvalButton({ runId, agents, buildAgentId, onStarted }: { runId: number;
     window.addEventListener("scroll", close, { once: true, capture: true });
     return () => window.removeEventListener("scroll", close, { capture: true });
   }, [open]);
-  // Sólo modelos del motor que va a correr (el elegido, o el de @build): uno de otro motor se rechaza.
-  const engine = agents.find((a) => a.id === (agent || buildAgentId))?.engine ?? null;
+  // Sólo modelos del motor que va a correr (el elegido, o el del rol): uno de otro motor se rechaza.
+  const engine = agents.find((a) => a.id === (agent || roleAgentIds[role]))?.engine ?? null;
   const models = Object.entries(engine ? (MODEL_ALIASES[engine] ?? {}) : {});
   const run = async () => {
     setBusy(true);
     setMsg("");
     try {
-      const r = await factoryStartEvalFn({ data: { runId, agent: agent ? (agents.find((a) => a.id === agent)?.name ?? agent) : null, model: model || null } });
+      const r = await factoryStartEvalFn({ data: { runId, role, agent: agent ? (agents.find((a) => a.id === agent)?.name ?? agent) : null, model: model || null } });
       setMsg(t("Eval #{n} en marcha: el resultado llega a su hilo.").replace("{n}", String(r.runId)));
       onStarted();
     } catch (e) {
@@ -99,11 +101,26 @@ function EvalButton({ runId, agents, buildAgentId, onStarted }: { runId: number;
       {open &&
         createPortal(
         <div style={{ top: open.top, right: open.right }} className="fixed z-50 w-64 rounded-lg border border-border bg-surface p-3 text-xs shadow-lg">
-          <p className="font-semibold text-ink">{t("Evaluar con otro @build")}</p>
+          <p className="font-semibold text-ink">{t("Evaluar otro agente o modelo")}</p>
+          <label className="mt-2 block text-muted">
+            {t("Rol")}
+            <select
+              value={role}
+              onChange={(e) => {
+                setRole(e.target.value as "plan" | "build" | "check");
+                setModel("");
+              }}
+              className="mt-1 w-full rounded border border-border bg-surface-2 px-2 py-1 text-ink"
+            >
+              <option value="plan">{t("@plan · el plan del pedido")}</option>
+              <option value="build">{t("@build · el código")}</option>
+              <option value="check">{t("@check · la revisión")}</option>
+            </select>
+          </label>
           <label className="mt-2 block text-muted">
             {t("Agente")}
             <select value={agent} onChange={(e) => { setAgent(e.target.value); setModel(""); }} className="mt-1 w-full rounded border border-border bg-surface-2 px-2 py-1 text-ink">
-              <option value="">{t("El de @build")}</option>
+              <option value="">{t("El del rol")}</option>
               {agents.map((a) => (
                 <option key={a.id} value={a.id}>
                   {a.name} · {a.engine}
@@ -525,7 +542,7 @@ function FactoryPage() {
                       PR ↗
                     </a>
                   )}
-                  {owner && r.status === "done" && r.prUrl && <EvalButton runId={r.id} agents={owner.candidates} buildAgentId={owner.roles.find((x) => x.handle === "build")?.agentId ?? null} onStarted={() => void load()} />}
+                  {owner && r.status === "done" && r.prUrl && <EvalButton runId={r.id} agents={owner.candidates} roleAgentIds={Object.fromEntries(owner.roles.map((x) => [x.handle, x.agentId]))} onStarted={() => void load()} />}
                   {r.taskUrl && (
                     <a href={r.taskUrl} target="_blank" rel="noreferrer" className="relative z-10 shrink-0 text-xs text-muted hover:text-ink">
                       {t("Tarea")} ↗
@@ -542,15 +559,16 @@ function FactoryPage() {
           {data.evals.length > 0 && (
             <section className="mt-8">
               <h2 className="text-sm font-semibold text-ink">{t("Evals")}</h2>
-              <p className="mt-0.5 text-[11px] text-muted">{t("Mismo plan y mismo commit base; el juez califica del 1 al 5 contra el PR que se mezcló.")}</p>
+              <p className="mt-0.5 text-[11px] text-muted">{t("Se vuelve a correr un rol de un pedido mezclado; el juez califica del 1 al 5 contra lo que se hizo de verdad. Costo y tiempo: la mediana del rol evaluado.")}</p>
               <div className="mt-2 overflow-x-auto rounded-xl border border-border">
                 <table className="w-full text-left text-xs">
                   <thead className="bg-surface-2 text-muted">
                     <tr>
-                      <th className="px-3 py-2 font-medium">{t("Quién construyó")}</th>
+                      <th className="px-3 py-2 font-medium">{t("Rol y agente")}</th>
                       <th className="px-3 py-2 font-medium">{t("Calificación")}</th>
                       <th className="px-3 py-2 font-medium">{t("Contra el original")}</th>
-                      <th className="px-3 py-2 font-medium">{t("Construcción")}</th>
+                      <th className="px-3 py-2 font-medium">{t("Tiempo")}</th>
+                      <th className="px-3 py-2 font-medium">{t("Costo")}</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border">
@@ -564,7 +582,8 @@ function FactoryPage() {
                         <td className="px-3 py-2 tabular-nums text-muted">
                           <span className="text-emerald-600">↑{e.better}</span> ={e.same} <span className="text-red-500">↓{e.worse}</span>
                         </td>
-                        <td className="px-3 py-2 tabular-nums text-muted">{duration(e.medianBuildSeconds)}</td>
+                        <td className="px-3 py-2 tabular-nums text-muted">{duration(e.medianSeconds)}</td>
+                        <td className="px-3 py-2 tabular-nums text-muted">{e.medianCostUsd == null ? "—" : formatUsd(e.medianCostUsd)}</td>
                       </tr>
                     ))}
                   </tbody>

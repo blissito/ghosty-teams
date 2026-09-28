@@ -115,6 +115,16 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
         const R = await import("./factory-runs.server");
         const { dbq } = await import("../../dbq.server");
         let run = await runOf(dest, a.runId);
+        // Eval de @plan: el plan va al juez, sin tarjeta ni firma.
+        if (run) {
+          const E = await import("./factory-evals.server");
+          const meta = await E.evalMeta(run.id);
+          if (meta) {
+            if (meta.config.role !== "plan" || run.status !== "planning") return { ok: false, error: "este eval no espera un plan" };
+            await E.evalPlanDone(run, meta, sub, planMd, await origin());
+            return { ok: true, runId: run.id, note: "Es un eval: el juez ya tiene tu plan. Tu paso terminó; no esperes firma." };
+          }
+        }
         if (!run) {
           // El repo del pedido: con un solo repo en el room es ése; con VARIOS es obligatorio.
           // Sin esto el pedido nacía con repo NULL y la preview, «Listo para agentes» y el
@@ -200,7 +210,7 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
         const E = await import("./factory-evals.server");
         const meta = await E.evalMeta(run.id);
         if (meta) {
-          if (run.status !== "building") return { ok: false, error: `el eval no está en construcción (está en ${run.status})` };
+          if (meta.config.role !== "build" || run.status !== "building") return { ok: false, error: `este eval no espera construcción (está en ${run.status})` };
           const r = await E.evalBuildDone(run, meta, sub, String(a.tests ?? ""), await origin());
           return "error" in r ? { ok: false, error: r.error } : { ok: true, runId: run.id, note: "El juez ya tiene el eval. Tu paso terminó." };
         }
@@ -309,8 +319,18 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
         const R = await import("./factory-runs.server");
         const run = await runOf(dest, a.runId);
         if (!run) return { ok: false, error: "no encuentro el pedido de este hilo" };
-        if (await (await import("./factory-evals.server")).evalMeta(run.id))
-          return { ok: false, error: "esto es un eval: califícalo con factory_eval_score, no con un veredicto" };
+        {
+          // Eval de @check: el veredicto del rol evaluado va al juez. El juez califica con factory_eval_score.
+          const E = await import("./factory-evals.server");
+          const meta = await E.evalMeta(run.id);
+          if (meta) {
+            if (meta.config.role !== "check" || meta.stepDoneAt) return { ok: false, error: "esto es un eval: califícalo con factory_eval_score, no con un veredicto" };
+            const f = String(a.findings ?? "").trim();
+            if (a.pass !== true && !f) return { ok: false, error: "con pass=false los hallazgos son obligatorios" };
+            await E.evalCheckDone(run, meta, sub, a.pass === true, f, await origin());
+            return { ok: true, note: "Es un eval: tu veredicto ya está con el juez. Tu paso terminó." };
+          }
+        }
         if (run.status !== "checking") return { ok: false, error: `el pedido no está en revisión (está en ${run.status})` };
         // La regla de @check se cumple aquí, no en su prompt: si la cabeza del PR se movió
         // desde que @build cerró, alguien empujó durante la revisión.
@@ -411,22 +431,18 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
     {
       name: "factory_eval_score",
       description:
-        "SÓLO @check, SÓLO en un eval (🧪). Tu calificación como juez: del 1 al 5 en cada criterio de la rúbrica y si la " +
-        "implementación del eval es worse, same o better que el PR que se mezcló de verdad. La plataforma la guarda, borra la rama y cierra el eval.",
+        "SÓLO @check como JUEZ de un eval (🧪). Del 1 al 5 en cada criterio de la rúbrica que llegó en tu encargo (las claves " +
+        "dependen del rol evaluado) y si lo evaluado es worse, same o better que lo que se hizo de verdad. La plataforma la guarda y cierra el eval.",
       inputSchema: {
         type: "object",
         properties: {
           runId: { type: "number", description: "El eval (si no, el del hilo)" },
           scores: {
             type: "object",
-            description: "Enteros del 1 al 5",
-            properties: {
-              plan: { type: "number" },
-              tests: { type: "number" },
-              maintainability: { type: "number" },
-              scope: { type: "number" },
-            },
-            required: ["plan", "tests", "maintainability", "scope"],
+            description:
+              "Enteros del 1 al 5 con las claves de la rúbrica del encargo: plan → coverage, concrete, risks, signable; " +
+              "build → plan, tests, maintainability, scope; check → catches, precision, actionable, verdict.",
+            additionalProperties: { type: "number" },
           },
           vs_original: { type: "string", enum: ["worse", "same", "better"] },
           notes: { type: "string", description: "Por qué, en 2-4 líneas: lo mejor y lo peor frente al original" },
@@ -440,9 +456,10 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
         const E = await import("./factory-evals.server");
         const meta = await E.evalMeta(run.id);
         if (!meta) return { ok: false, error: "este pedido no es un eval: usa factory_check_verdict" };
-        if (run.status !== "checking") return { ok: false, error: `el eval no espera calificación (está en ${run.status})` };
+        if (run.status !== "checking" || !meta.stepDoneAt || meta.result)
+          return { ok: false, error: `el eval no espera calificación todavía (está en ${run.status})` };
         const { parseEvalScore } = await import("./factory-evals");
-        const result = parseEvalScore(a);
+        const result = parseEvalScore(meta.config.role, a);
         if ("error" in result) return { ok: false, error: result.error };
         await E.evalScored(run, meta, result, sub);
         return { ok: true, note: "Calificación guardada y publicada en el hilo. Termina sin repetirla." };
