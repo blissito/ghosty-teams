@@ -9,6 +9,7 @@
 // Misma forma que /forms: el loader sólo resuelve auth; los datos llegan por server fns.
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { ArrowLeft, Check, ChevronDown, CircleDot, Factory } from "lucide-react";
 import { useLocale, useT } from "../i18n";
 import { intlLocale } from "../i18n.core";
@@ -53,7 +54,7 @@ function duration(seconds: number | null): string {
 
 // «🧪 Evaluar»: vuelve a correr un pedido mezclado con otro agente o modelo en @build. Sólo el
 // dueño (gasta tokens de su llave). El juez califica en el hilo del eval y la tabla lo resume.
-function EvalButton({ runId, agents, onStarted }: { runId: number; agents: FactoryStatus["candidates"]; onStarted: () => void }) {
+function EvalButton({ runId, agents, buildAgentId, onStarted }: { runId: number; agents: FactoryStatus["candidates"]; buildAgentId: string | null; onStarted: () => void }) {
   const t = useT();
   // Posición fija (en pantalla) calculada del botón: la lista de pedidos recorta con overflow.
   const [open, setOpen] = useState<{ top: number; right: number } | null>(null);
@@ -68,8 +69,9 @@ function EvalButton({ runId, agents, onStarted }: { runId: number; agents: Facto
     window.addEventListener("scroll", close, { once: true, capture: true });
     return () => window.removeEventListener("scroll", close, { capture: true });
   }, [open]);
-  const engine = agents.find((a) => a.id === agent)?.engine ?? null;
-  const models = Object.entries(engine ? (MODEL_ALIASES[engine] ?? {}) : Object.assign({}, ...Object.values(MODEL_ALIASES)));
+  // Sólo modelos del motor que va a correr (el elegido, o el de @build): uno de otro motor se rechaza.
+  const engine = agents.find((a) => a.id === (agent || buildAgentId))?.engine ?? null;
+  const models = Object.entries(engine ? (MODEL_ALIASES[engine] ?? {}) : {});
   const run = async () => {
     setBusy(true);
     setMsg("");
@@ -94,7 +96,8 @@ function EvalButton({ runId, agents, onStarted }: { runId: number; agents: Facto
         title={t("Volver a correrlo con otro agente o modelo y calificarlo")} className="text-xs text-muted hover:text-ink">
         🧪
       </button>
-      {open && (
+      {open &&
+        createPortal(
         <div style={{ top: open.top, right: open.right }} className="fixed z-50 w-64 rounded-lg border border-border bg-surface p-3 text-xs shadow-lg">
           <p className="font-semibold text-ink">{t("Evaluar con otro @build")}</p>
           <label className="mt-2 block text-muted">
@@ -123,8 +126,10 @@ function EvalButton({ runId, agents, onStarted }: { runId: number; agents: Facto
             {busy ? t("Arrancando…") : t("Correr eval")}
           </button>
           {msg && <p className="mt-2 text-muted">{msg}</p>}
-        </div>
-      )}
+        </div>,
+          // En <body>: dentro de la fila, las ligas de las filas siguientes (z-10) lo tapaban.
+          document.body,
+        )}
     </span>
   );
 }
@@ -520,7 +525,7 @@ function FactoryPage() {
                       PR ↗
                     </a>
                   )}
-                  {owner && r.status === "done" && r.prUrl && <EvalButton runId={r.id} agents={owner.candidates} onStarted={() => void load()} />}
+                  {owner && r.status === "done" && r.prUrl && <EvalButton runId={r.id} agents={owner.candidates} buildAgentId={owner.roles.find((x) => x.handle === "build")?.agentId ?? null} onStarted={() => void load()} />}
                   {r.taskUrl && (
                     <a href={r.taskUrl} target="_blank" rel="noreferrer" className="relative z-10 shrink-0 text-xs text-muted hover:text-ink">
                       {t("Tarea")} ↗
