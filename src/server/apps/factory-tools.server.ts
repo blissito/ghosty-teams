@@ -185,17 +185,25 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
         type: "object",
         properties: {
           runId: { type: "number", description: "El pedido (si no, el del hilo)" },
-          pr_url: { type: "string", description: "URL del PR en GitHub" },
+          pr_url: { type: "string", description: "URL del PR en GitHub (obligatoria, salvo en un eval)" },
           branch: { type: "string", description: "Rama del PR" },
           tests: { type: "string", description: "Resultado de pruebas, lint y typecheck, en una o dos líneas" },
         },
-        required: ["pr_url", "tests"],
+        required: ["tests"],
       },
       handler: async (sub, a) => {
         if (dest?.handle && dest.handle !== "build") return { ok: false, error: "sólo @build cierra la construcción" };
         const R = await import("./factory-runs.server");
         let run = await runOf(dest, a.runId);
         if (!run) return { ok: false, error: "no encuentro el pedido de este hilo" };
+        // Un eval no tiene PR: se cierra con la rama y lo califica el juez.
+        const E = await import("./factory-evals.server");
+        const meta = await E.evalMeta(run.id);
+        if (meta) {
+          if (run.status !== "building") return { ok: false, error: `el eval no está en construcción (está en ${run.status})` };
+          const r = await E.evalBuildDone(run, meta, sub, String(a.tests ?? ""), await origin());
+          return "error" in r ? { ok: false, error: r.error } : { ok: true, runId: run.id, note: "El juez ya tiene el eval. Tu paso terminó." };
+        }
         const url = String(a.pr_url ?? "");
         if (!R.parsePrUrl(url)) return { ok: false, error: "pr_url tiene que ser la URL de un PR de GitHub" };
         // Pedido escalado y una persona despertó a @build en el hilo («reintenta»): eso ES la
@@ -301,6 +309,8 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
         const R = await import("./factory-runs.server");
         const run = await runOf(dest, a.runId);
         if (!run) return { ok: false, error: "no encuentro el pedido de este hilo" };
+        if (await (await import("./factory-evals.server")).evalMeta(run.id))
+          return { ok: false, error: "esto es un eval: califícalo con factory_eval_score, no con un veredicto" };
         if (run.status !== "checking") return { ok: false, error: `el pedido no está en revisión (está en ${run.status})` };
         // La regla de @check se cumple aquí, no en su prompt: si la cabeza del PR se movió
         // desde que @build cerró, alguien empujó durante la revisión.
@@ -396,6 +406,46 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
           await origin(),
         );
         return { ok: true, status: next.status, note: "Regresado a @build." };
+      },
+    },
+    {
+      name: "factory_eval_score",
+      description:
+        "SÓLO @check, SÓLO en un eval (🧪). Tu calificación como juez: del 1 al 5 en cada criterio de la rúbrica y si la " +
+        "implementación del eval es worse, same o better que el PR que se mezcló de verdad. La plataforma la guarda, borra la rama y cierra el eval.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          runId: { type: "number", description: "El eval (si no, el del hilo)" },
+          scores: {
+            type: "object",
+            description: "Enteros del 1 al 5",
+            properties: {
+              plan: { type: "number" },
+              tests: { type: "number" },
+              maintainability: { type: "number" },
+              scope: { type: "number" },
+            },
+            required: ["plan", "tests", "maintainability", "scope"],
+          },
+          vs_original: { type: "string", enum: ["worse", "same", "better"] },
+          notes: { type: "string", description: "Por qué, en 2-4 líneas: lo mejor y lo peor frente al original" },
+        },
+        required: ["scores", "vs_original"],
+      },
+      handler: async (sub, a) => {
+        if (dest?.handle && dest.handle !== "check") return { ok: false, error: "sólo @check califica un eval" };
+        const run = await runOf(dest, a.runId);
+        if (!run) return { ok: false, error: "no encuentro el eval de este hilo" };
+        const E = await import("./factory-evals.server");
+        const meta = await E.evalMeta(run.id);
+        if (!meta) return { ok: false, error: "este pedido no es un eval: usa factory_check_verdict" };
+        if (run.status !== "checking") return { ok: false, error: `el eval no espera calificación (está en ${run.status})` };
+        const { parseEvalScore } = await import("./factory-evals");
+        const result = parseEvalScore(a);
+        if ("error" in result) return { ok: false, error: result.error };
+        await E.evalScored(run, meta, result, sub);
+        return { ok: true, note: "Calificación guardada y publicada en el hilo. Termina sin repetirla." };
       },
     },
     {

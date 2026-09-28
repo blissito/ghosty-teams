@@ -835,6 +835,8 @@ async function migrate(): Promise<void> {
   await addColumn("gt_factory_runs", "first_review_at", "INTEGER");
   await addColumn("gt_factory_runs", "first_review_state", "TEXT");
   await addColumn("gt_factory_runs", "merged_at", "INTEGER");
+  // Evals (kind = 'eval'): de qué pedido, con qué agente/modelo, commit base y la calificación.
+  await addColumn("gt_factory_runs", "eval_json", "TEXT");
   // Sprints de la Fábrica: una épica con tickets ordenados y dependencias. Lo propone @plan
   // (borrador), una persona lo aprueba UNA vez y la plataforma arranca cada ticket como un
   // pedido cuando sus dependencias ya tienen merge (ver apps/sprint.server.ts).

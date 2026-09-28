@@ -130,7 +130,8 @@ export async function factoryTurnFor(handle: string, dest: ToolDest | null | und
   const repo = run?.repo ?? ov.repo ?? (roomRepos.length === 1 ? roomRepos[0].repo : null);
   const connectedBy = roomRepos.find((r) => r.repo === repo)?.connectedBy;
   const file = repo && connectedBy ? await repoTeamFile(repo, connectedBy).catch(() => null) : null;
-  const spec = file?.roles[h] ?? {};
+  // Un agente fijado en el hilo (un eval) le gana al del archivo del repo.
+  const spec = { ...(file?.roles[h] ?? {}), ...(ov.agents?.[h] ? { agent: ov.agents[h] } : {}) };
 
   const agents = await studioAgentsCached();
   let fleetId = defaultFleetId;
@@ -139,9 +140,15 @@ export async function factoryTurnFor(handle: string, dest: ToolDest | null | und
     const want = spec.agent.toLowerCase();
     const a = agents.find((x) => x.id === spec.agent || x.name.toLowerCase() === want);
     if (!a)
-      return refuse(h, repo, `⚠️ \`${TEAM_FILE}\` de ${repo} pone a **${spec.agent}** en @${h}, y no hay un agente de Studio con ese nombre en este espacio. Corrige el nombre en el archivo o créalo en Studio.`);
+      return refuse(
+        h,
+        repo,
+        ov.agents?.[h]
+          ? `⚠️ Este hilo pide a **${spec.agent}** en @${h}, y no hay un agente de Studio con ese nombre en este espacio.`
+          : `⚠️ \`${TEAM_FILE}\` de ${repo} pone a **${spec.agent}** en @${h}, y no hay un agente de Studio con ese nombre en este espacio. Corrige el nombre en el archivo o créalo en Studio.`,
+      );
     fleetId = a.id;
-    agentSource = "repo";
+    agentSource = ov.agents?.[h] ? "message" : "repo";
   }
   const engine = agents.find((x) => x.id === fleetId)?.engine ?? null;
 

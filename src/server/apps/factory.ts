@@ -1,4 +1,5 @@
 import { createServerFn } from "@tanstack/react-start";
+import { summarizeEvals } from "./factory-evals";
 import { sessionUser } from "../chat";
 import { FACTORY_ENGINES, FACTORY_HANDLES as HANDLES, ROLE_NAMES, roleAvatar, type FactoryHandle } from "./factory-roles";
 
@@ -511,7 +512,7 @@ export const factoryOverviewFn = createServerFn({ method: "GET" })
   const rows = room
     ? await dbq(
         `SELECT id, channel_id, root_msg_id, title, status, repo, loops, created_at, pr_ready_at, first_review_at, first_review_state, merged_at, pr_url, kind, task_ref
-         FROM gt_factory_runs WHERE channel_id = ? ORDER BY id DESC LIMIT 500`,
+         FROM gt_factory_runs WHERE channel_id = ? AND COALESCE(kind, '') != 'eval' ORDER BY id DESC LIMIT 500`,
         [room.id],
       ).catch(() => [])
     : [];
@@ -567,7 +568,26 @@ export const factoryOverviewFn = createServerFn({ method: "GET" })
     repos,
     runs,
     stats: runStats(runs),
+    // Evals: fuera de los números de pedidos; su propia tabla por agente/modelo.
+    evals: room ? summarizeEvals(await (await import("./factory-evals.server")).evalRows(room.id).catch(() => [])) : [],
   };
+  });
+
+/** Arranca un eval de un pedido mezclado (sólo el dueño: gasta tokens de su llave). */
+export const factoryStartEvalFn = createServerFn({ method: "POST" })
+  .validator((d: { runId: number; agent?: string | null; model?: string | null }) => d)
+  .handler(async ({ data }) => {
+    const me = await sessionUser();
+    if (!me?.isOwner) throw new Error("sólo el dueño del espacio corre evals");
+    const R = await import("./factory-runs.server");
+    const src = await R.getRun(Number(data.runId));
+    const db = await import("../../db.server");
+    if (!src || !(await db.listChannels(me.sub, me.isOwner)).some((c) => c.id === src.channelId)) throw new Error("no encuentro ese pedido");
+    const { startEval } = await import("./factory-evals.server");
+    const origin = await (await import("../../origin.server")).reqOrigin().catch(() => "");
+    const r = await startEval({ sourceRunId: src.id, agent: data.agent ?? null, model: data.model ?? null, sub: me.sub, origin });
+    if ("error" in r) throw new Error(r.error);
+    return r;
   });
 
 /** Datos de la tarjeta de veredicto de @check. */

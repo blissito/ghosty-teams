@@ -13,7 +13,8 @@ import { ArrowLeft, Check, ChevronDown, CircleDot, Factory } from "lucide-react"
 import { useLocale, useT } from "../i18n";
 import { intlLocale } from "../i18n.core";
 import { me } from "../server/auth";
-import { factoryEnsureBoardFn, factoryOverviewFn, factoryProposeSprintFn, factoryStatusFn, type FactoryStatus } from "../server/apps/factory";
+import { factoryEnsureBoardFn, factoryOverviewFn, factoryProposeSprintFn, factoryStartEvalFn, factoryStatusFn, type FactoryStatus } from "../server/apps/factory";
+import { MODEL_ALIASES } from "../server/apps/factory-team";
 import { RepoReadiness } from "../components/RepoReadiness";
 import { RepoTeam } from "../components/RepoTeam";
 import { RolesEditor, SchedulesEditor, SuggestAsks } from "../components/AppsPanel";
@@ -48,6 +49,70 @@ function duration(seconds: number | null): string {
   if (seconds < 3600) return `${Math.max(1, Math.round(seconds / 60))} min`;
   if (seconds < 86400) return `${(seconds / 3600).toFixed(1)} h`;
   return `${(seconds / 86400).toFixed(1)} d`;
+}
+
+// «🧪 Evaluar»: vuelve a correr un pedido mezclado con otro agente o modelo en @build. Sólo el
+// dueño (gasta tokens de su llave). El juez califica en el hilo del eval y la tabla lo resume.
+function EvalButton({ runId, agents, onStarted }: { runId: number; agents: FactoryStatus["candidates"]; onStarted: () => void }) {
+  const t = useT();
+  const [open, setOpen] = useState(false);
+  const [agent, setAgent] = useState("");
+  const [model, setModel] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState("");
+  const engine = agents.find((a) => a.id === agent)?.engine ?? null;
+  const models = Object.entries(engine ? (MODEL_ALIASES[engine] ?? {}) : Object.assign({}, ...Object.values(MODEL_ALIASES)));
+  const run = async () => {
+    setBusy(true);
+    setMsg("");
+    try {
+      const r = await factoryStartEvalFn({ data: { runId, agent: agent ? (agents.find((a) => a.id === agent)?.name ?? agent) : null, model: model || null } });
+      setMsg(t("Eval #{n} en marcha: el resultado llega a su hilo.").replace("{n}", String(r.runId)));
+      onStarted();
+    } catch (e) {
+      setMsg(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <span className="relative z-10 shrink-0">
+      <button type="button" onClick={() => setOpen((o) => !o)} title={t("Volver a correrlo con otro agente o modelo y calificarlo")} className="text-xs text-muted hover:text-ink">
+        🧪
+      </button>
+      {open && (
+        <div className="absolute right-0 top-6 z-20 w-64 rounded-lg border border-border bg-surface p-3 text-xs shadow-lg">
+          <p className="font-semibold text-ink">{t("Evaluar con otro @build")}</p>
+          <label className="mt-2 block text-muted">
+            {t("Agente")}
+            <select value={agent} onChange={(e) => { setAgent(e.target.value); setModel(""); }} className="mt-1 w-full rounded border border-border bg-surface-2 px-2 py-1 text-ink">
+              <option value="">{t("El de @build")}</option>
+              {agents.map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.name} · {a.engine}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="mt-2 block text-muted">
+            {t("Modelo")}
+            <select value={model} onChange={(e) => setModel(e.target.value)} className="mt-1 w-full rounded border border-border bg-surface-2 px-2 py-1 text-ink">
+              <option value="">{t("El del agente")}</option>
+              {models.map(([alias, id]) => (
+                <option key={alias} value={alias}>
+                  {alias} ({id as string})
+                </option>
+              ))}
+            </select>
+          </label>
+          <button type="button" disabled={busy || (!agent && !model)} onClick={run} className="mt-3 w-full rounded-md bg-brand px-2 py-1.5 font-semibold text-white disabled:opacity-50">
+            {busy ? t("Arrancando…") : t("Correr eval")}
+          </button>
+          {msg && <p className="mt-2 text-muted">{msg}</p>}
+        </div>
+      )}
+    </span>
+  );
 }
 
 // Qué significa cada número (tooltip).
@@ -441,6 +506,7 @@ function FactoryPage() {
                       PR ↗
                     </a>
                   )}
+                  {owner && r.status === "done" && r.prUrl && <EvalButton runId={r.id} agents={owner.candidates} onStarted={() => void load()} />}
                   {r.taskUrl && (
                     <a href={r.taskUrl} target="_blank" rel="noreferrer" className="relative z-10 shrink-0 text-xs text-muted hover:text-ink">
                       {t("Tarea")} ↗
@@ -452,6 +518,41 @@ function FactoryPage() {
             </ul>
             </div>
           </section>
+
+          {/* Evals: el mismo pedido con otro @build, calificado por el juez contra el PR real. */}
+          {data.evals.length > 0 && (
+            <section className="mt-8">
+              <h2 className="text-sm font-semibold text-ink">{t("Evals")}</h2>
+              <p className="mt-0.5 text-[11px] text-muted">{t("Mismo plan y mismo commit base; el juez califica del 1 al 5 contra el PR que se mezcló.")}</p>
+              <div className="mt-2 overflow-x-auto rounded-xl border border-border">
+                <table className="w-full text-left text-xs">
+                  <thead className="bg-surface-2 text-muted">
+                    <tr>
+                      <th className="px-3 py-2 font-medium">{t("Quién construyó")}</th>
+                      <th className="px-3 py-2 font-medium">{t("Calificación")}</th>
+                      <th className="px-3 py-2 font-medium">{t("Contra el original")}</th>
+                      <th className="px-3 py-2 font-medium">{t("Construcción")}</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border">
+                    {data.evals.map((e) => (
+                      <tr key={e.label}>
+                        <td className="px-3 py-2 font-mono text-ink">{e.label}</td>
+                        <td className="px-3 py-2 tabular-nums text-ink">
+                          {e.avg == null ? t("calificando…") : `${e.avg}/5`}
+                          <span className="ml-1 text-muted">({e.scored}/{e.runs})</span>
+                        </td>
+                        <td className="px-3 py-2 tabular-nums text-muted">
+                          <span className="text-emerald-600">↑{e.better}</span> ={e.same} <span className="text-red-500">↓{e.worse}</span>
+                        </td>
+                        <td className="px-3 py-2 tabular-nums text-muted">{duration(e.medianBuildSeconds)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          )}
 
           {/* Repos del room: su «Listo para agentes» y su equipo. */}
           {data.room && data.repos.length > 0 && (

@@ -39,7 +39,12 @@ export type RoleSpec = { agent?: string; model?: string };
 export type TeamFile = { roles: Partial<Record<FactoryHandle, RoleSpec>>; notes: string };
 
 /** Lo que se pidió EN el mensaje: modelo por rol y, si se nombró, el repo. */
-export type TurnOverrides = { models?: Partial<Record<FactoryHandle, string>>; repo?: string };
+export type TurnOverrides = {
+  models?: Partial<Record<FactoryHandle, string>>;
+  /** Agente de Studio por rol (nombre o id). Hoy sólo lo fija un eval, no el mensaje. */
+  agents?: Partial<Record<FactoryHandle, string>>;
+  repo?: string;
+};
 
 const unquote = (s: string) => s.trim().replace(/^["']|["']$/g, "").trim();
 

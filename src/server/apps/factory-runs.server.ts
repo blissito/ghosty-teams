@@ -537,6 +537,8 @@ export async function afterFactoryTurn(
     return;
   }
   const nudged = w.key.endsWith(":nudge");
+  // En un eval, el juez cierra con su propia tool.
+  const closeTool = role === "check" && (await import("./factory-evals.server").then((E) => E.evalMeta(run.id)).catch(() => null)) ? "factory_eval_score" : CLOSE_TOOL[role];
   if (!nudged) {
     const { enqueueWakeup, armWakeups } = await import("../wakeups.server");
     const { currentNamespace } = await import("../tenant.server");
@@ -546,7 +548,7 @@ export async function afterFactoryTurn(
       cause: "cerrar el paso",
       text:
         `[Pedido #${run.id}] Terminaste tu turno sin cerrar tu paso y el pedido está detenido. ` +
-        `Si ya acabaste, ciérralo AHORA con ${CLOSE_TOOL[role]} (runId ${run.id}). ` +
+        `Si ya acabaste, ciérralo AHORA con ${closeTool} (runId ${run.id}). ` +
         `Si no puedes terminar, dilo en una línea con el motivo concreto.`,
       origin: w.origin,
       dueAt: Math.floor(Date.now() / 1000) + 5,

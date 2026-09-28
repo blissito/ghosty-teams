@@ -334,6 +334,51 @@ async function graphql(sub: string, query: string, variables: Record<string, unk
  * Lo que la vigilancia de un PR necesita saber en cada vuelta: si sigue abierto, su HEAD,
  * cómo va CI y si tiene auto-merge. `repo` va como "dueño/repo" (sin escapar).
  */
+// ── Ramas de los evals de la fábrica (apps/factory-evals.ts) ──────────────────
+// La plataforma crea la rama del eval en el commit base del PR original y la borra al
+// calificar. Sólo toca ramas `ghosty-eval/`: nunca una rama de trabajo de nadie.
+
+const EVAL_REF = /^ghosty-eval\/\d+$/;
+
+export async function createEvalBranch(sub: string, repo: string, branch: string, sha: string): Promise<{ ok: true } | { error: string }> {
+  if (!EVAL_REF.test(branch)) return { error: "sólo ramas ghosty-eval/<n>" };
+  const w = await writeToken(sub, repo);
+  if ("error" in w) return w;
+  const r = await apiWith(w.token, `/repos/${repo}/git/refs`, { method: "POST", body: JSON.stringify({ ref: `refs/heads/${branch}`, sha }) });
+  return r?.error ? { error: String(r.error) } : { ok: true };
+}
+
+export async function deleteEvalBranch(sub: string, repo: string, branch: string): Promise<boolean> {
+  if (!EVAL_REF.test(branch)) return false;
+  const w = await writeToken(sub, repo);
+  if ("error" in w) return false;
+  const r = await apiWith(w.token, `/repos/${repo}/git/refs/heads/${branch}`, { method: "DELETE" });
+  return !r?.error;
+}
+
+/** Diff legible (archivo + patch) de una lista de archivos de GitHub, recortado a `max`. */
+function patchText(files: any[], max: number): string {
+  let out = "";
+  for (const f of files) {
+    const chunk = `--- ${f?.filename} (+${f?.additions ?? 0} −${f?.deletions ?? 0})\n${f?.patch ?? "(sin patch: binario o muy grande)"}\n\n`;
+    if (out.length + chunk.length > max) return out + `… (diff recortado a ${max} caracteres; lee el resto con github_read_file)`;
+    out += chunk;
+  }
+  return out || "(sin cambios)";
+}
+
+/** Diff de `base...head` (la rama de un eval contra su commit base). */
+export async function compareDiff(sub: string, repo: string, base: string, head: string, max = 30000): Promise<string | null> {
+  const r = await api(sub, `/repos/${repo}/compare/${base}...${encodeURIComponent(head)}`);
+  return Array.isArray(r?.files) ? patchText(r.files, max) : null;
+}
+
+/** Diff de un PR (el original, para compararlo con el eval). */
+export async function prDiff(sub: string, repo: string, number: number, max = 30000): Promise<string | null> {
+  const r = await api(sub, `/repos/${repo}/pulls/${number}/files?per_page=100`);
+  return Array.isArray(r) ? patchText(r, max) : null;
+}
+
 export async function prSnapshot(sub: string, repo: string, number: number): Promise<PrSnapshot | { error: string }> {
   const p = repoPath(repo);
   if (!p) return BAD_REPO;
