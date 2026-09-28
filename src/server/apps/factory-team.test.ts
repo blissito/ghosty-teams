@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseTeamFile, parseMessageOverrides, resolveModel, teamFileTemplate } from "./factory-team";
+import { knowledgeLine, parseTeamFile, parseMessageOverrides, resolveModel, teamFileTemplate } from "./factory-team";
 
 describe("parseTeamFile", () => {
   it("lee las dos formas del frontmatter y el cuerpo", () => {
@@ -41,5 +41,13 @@ describe("resolveModel", () => {
     expect(resolveModel("claude", "claude-sonnet-5")).toBe("claude-sonnet-5");
     expect(resolveModel("codex", "opus")).toBeNull();
     expect(resolveModel("deepseek", "pro")).toBe("deepseek-v4-pro");
+  });
+});
+
+describe("base de conocimiento del repo", () => {
+  it("lista las fichas con su carpeta, o dice cómo empezar", () => {
+    expect(knowledgeLine("a/b", ["pagos.md", "glosario.md"])).toContain("docs/agents/pagos.md, docs/agents/glosario.md");
+    expect(knowledgeLine("a/b", [])).toContain("todavía no hay fichas");
+    expect(knowledgeLine("a/b", Array.from({ length: 45 }, (_, i) => `f${i}.md`))).toContain("y 5 más");
   });
 });

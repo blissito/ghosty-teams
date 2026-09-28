@@ -22,6 +22,19 @@ import { FACTORY_HANDLES, type FactoryHandle } from "./factory-roles";
 
 export const TEAM_FILE = ".ghosty/factory.md";
 
+// Base de conocimiento del repo: fichas cortas en el PROPIO repo (versionadas, revisadas por PR
+// y legibles por cualquier arnés), con `AGENTS.md` como índice. La fábrica no guarda índice
+// propio: sólo le dice a cada rol qué fichas hay.
+export const KNOWLEDGE_DIR = "docs/agents";
+
+/** Renglón de contexto con las fichas del repo (o cómo empezar si aún no hay). */
+export function knowledgeLine(repo: string, files: string[]): string {
+  if (!files.length)
+    return `Base de conocimiento de ${repo}: todavía no hay fichas en ${KNOWLEDGE_DIR}/. La primera la escribe @build cuando un cambio fije una convención o descubra una trampa.`;
+  const list = files.slice(0, 40).map((f) => `${KNOWLEDGE_DIR}/${f}`).join(", ");
+  return `Base de conocimiento de ${repo} (${KNOWLEDGE_DIR}/, índice en AGENTS.md; léela con github_read_file ANTES de tocar el tema y le gana a tu intuición): ${list}${files.length > 40 ? ` y ${files.length - 40} más` : ""}.`;
+}
+
 export type RoleSpec = { agent?: string; model?: string };
 export type TeamFile = { roles: Partial<Record<FactoryHandle, RoleSpec>>; notes: string };
 

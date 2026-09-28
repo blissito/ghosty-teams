@@ -259,6 +259,12 @@ Antes de abrir un PR, todo lo anterior tiene que pasar en local.
 - Secretos y archivos \`.env*\`: nunca se suben al repo.
 <!-- @build: agrega aquí lo que no deba tocarse (datos de producción, migraciones ya aplicadas…). -->
 
+## Conocimiento
+Fichas cortas en \`docs/agents/\`: decisiones, trampas y glosario que el código no dice solo.
+Léelas antes de tocar su tema; si tu cambio fija una convención o descubres una trampa, escribe o
+pon al día la ficha en el mismo PR y agrega aquí su renglón.
+<!-- - [Tema](docs/agents/tema.md) — de qué trata, en una línea -->
+
 ## Pull requests
 - Rama nueva desde \`${f.defaultBranch}\`; el PR explica qué cambia y cómo se probó.
 - El CI tiene que quedar en verde.

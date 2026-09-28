@@ -658,6 +658,10 @@ export async function factoryContext(dest: ToolDest | null, toolChannel: ToolCha
     const { factoryTurnFor } = await import("./factory-team.server");
     const ft = await factoryTurnFor(h, dest, "").catch(() => null);
     if (ft?.notes) parts.push(`Convenciones del repo ${ft.repo} (.ghosty/factory.md, las escribió el equipo; le ganan a lo general): ${ft.notes}`);
+    if (ft?.repo && !ft.refusal) {
+      const { knowledgeLine } = await import("./factory-team");
+      parts.push(knowledgeLine(ft.repo, ft.knowledge));
+    }
   }
   const root = threadRoot(dest);
   if (dest?.channelId && root) {

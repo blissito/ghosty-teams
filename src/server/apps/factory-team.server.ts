@@ -8,7 +8,7 @@
 import { dbq } from "../../dbq.server";
 import type { ToolDest } from "../connectors/tool-token.server";
 import { FACTORY_HANDLES, type FactoryHandle } from "./factory-roles";
-import { TEAM_FILE, engineOfModel, parseMessageOverrides, parseTeamFile, resolveModel, type TeamFile, type TurnOverrides } from "./factory-team";
+import { KNOWLEDGE_DIR, TEAM_FILE, engineOfModel, parseMessageOverrides, parseTeamFile, resolveModel, type TeamFile, type TurnOverrides } from "./factory-team";
 
 type StudioAgent = { id: string; name: string; engine: string; model: string };
 export type RoleSource = "message" | "repo" | "space";
@@ -23,6 +23,8 @@ export type FactoryTurn = {
   source: { agent: RoleSource; model: RoleSource };
   /** Cuerpo de `.ghosty/factory.md`: convenciones del repo para el contexto del turno. */
   notes: string | null;
+  /** Fichas `.md` de `docs/agents/` del repo (nombres, sin la carpeta). */
+  knowledge: string[];
   /** Lo pedido no se puede (modelo de otro motor, agente que no existe): se dice y no se corre. */
   refusal: string | null;
 };
@@ -53,8 +55,22 @@ export async function repoTeamFile(repo: string, sub: string, opts: { fresh?: bo
   return file;
 }
 
+const knowledgeCache = new Map<string, { at: number; files: string[] }>();
+
+/** Fichas de la base de conocimiento del repo (sólo los nombres: el rol las lee si le tocan). */
+export async function repoKnowledge(repo: string, sub: string): Promise<string[]> {
+  const hit = knowledgeCache.get(repo.toLowerCase());
+  if (hit && Date.now() - hit.at < FILE_TTL) return hit.files;
+  const { githubApi } = await import("../connectors/github.server");
+  const r = await githubApi(sub, `/repos/${repo}/contents/${KNOWLEDGE_DIR}`).catch(() => null);
+  const files = Array.isArray(r) ? r.filter((f: any) => f?.type === "file" && /\.md$/i.test(String(f.name))).map((f: any) => String(f.name)) : [];
+  knowledgeCache.set(repo.toLowerCase(), { at: Date.now(), files });
+  return files;
+}
+
 export function invalidateRepoTeamFile(repo: string) {
   fileCache.delete(repo.toLowerCase());
+  knowledgeCache.delete(repo.toLowerCase());
 }
 
 // ── Lo pedido en el hilo ─────────────────────────────────────────────────────
@@ -154,11 +170,12 @@ export async function factoryTurnFor(handle: string, dest: ToolDest | null | und
     model,
     source: { agent: agentSource, model: modelSource },
     notes: file?.notes ? file.notes.slice(0, 4000) : null,
+    knowledge: repo && connectedBy ? await repoKnowledge(repo, connectedBy).catch(() => []) : [],
     refusal: null,
   };
 
   function refuse(handle: FactoryHandle, repo: string | null, text: string): FactoryTurn {
-    return { handle, repo, fleetId: null, model: null, source: { agent: "space", model: "space" }, notes: null, refusal: text };
+    return { handle, repo, fleetId: null, model: null, source: { agent: "space", model: "space" }, notes: null, knowledge: [], refusal: text };
   }
 }
 
