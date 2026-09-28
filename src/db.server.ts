@@ -105,6 +105,7 @@ export type Message = {
   quoted_author?: string | null;
   quoted_excerpt?: string | null;
   forwarded_from?: string | null; // reenviado: autor original (rótulo "Reenviado")
+  turn_model?: string | null; // modelo que corrió el turno del agente (el pie de la respuesta)
 };
 
 export type Attachment = {
@@ -158,7 +159,13 @@ function toMessage(r: Row): Message {
     quoted_author: (r.quoted_author as string | null) ?? null,
     quoted_excerpt: (r.quoted_excerpt as string | null) ?? null,
     forwarded_from: (r.forwarded_from as string | null) ?? null,
+    turn_model: (r.turn_model as string | null) ?? null,
   };
+}
+
+/** El modelo que corrió el turno del agente (gs lo manda en el `done`). */
+export async function setMessageModel(messageId: number, model: string): Promise<void> {
+  await dbq("UPDATE gc_messages SET turn_model = ? WHERE id = ?", [model.slice(0, 80), messageId]);
 }
 
 // Marca un mensaje como REENVIADO (guarda el autor original) — lo usa el forward al copiar.

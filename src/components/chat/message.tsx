@@ -2596,14 +2596,16 @@ function useAgentMeta(handle: string): AgentMeta | null {
   return meta;
 }
 
-export function AgentFooter({ handle }: { handle: string }) {
+export function AgentFooter({ handle, turnModel }: { handle: string; turnModel?: string | null }) {
   const tr = useT();
   const meta = useAgentMeta(handle);
-  if (!meta || (!meta.model && !meta.configUrl)) return null;
+  if (!meta || (!meta.model && !turnModel && !meta.configUrl)) return null;
+  // El modelo que corrió ESTE turno le gana al configurado en el handle.
+  const model = turnModel || meta.model;
   return (
     <div className="mt-1 flex items-center gap-1 text-[10px] text-muted/80">
       <span>{meta.name}</span>
-      {meta.model ? <span>· {meta.model}</span> : null}
+      {model ? <span>· {model}</span> : null}
       {meta.configUrl ? (
         <>
           <span>·</span>
@@ -3156,7 +3158,7 @@ export function MessageRow({
                   a la vista (ver TurnLiveFooter). */}
               {isAgent ? <TurnLiveFooter id={m.id} /> : null}
               {isAgent ? <TurnFailedFooter id={m.id} body={m.body} /> : null}
-              {isAgent && m.agent_handle && !turns.has(m.id) ? <AgentFooter handle={m.agent_handle} /> : null}
+              {isAgent && m.agent_handle && !turns.has(m.id) ? <AgentFooter handle={m.agent_handle} turnModel={m.turn_model} /> : null}
             </div>
           ) : isAgent && !m.attachments?.length && !m.artifact ? (
             // Caja caliente: cáscara del agente aún sin texto → indicador inline (la fila

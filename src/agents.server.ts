@@ -1667,7 +1667,9 @@ export async function callAgentBackendStream(
    * agente siguió produciendo llega solo— y si la caja ya no lo tiene, se manda `text` como
    * un turno normal (el de continuación). Sólo aplica al camino ACP.
    */
-  adoptar?: boolean
+  adoptar?: boolean,
+  /** El modelo que corrió el turno (lo manda gs en el `done`; sólo camino nativo). */
+  onModel?: (model: string) => void,
 ): Promise<string> {
   // El webhook sigue sin SSE: junta el reply y lo emite de un tirón. Un agente A2A NO cae
   // aquí — tiene streaming de verdad y se atiende más abajo.
@@ -2451,7 +2453,7 @@ export async function callAgentBackendStream(
           buf = buf.slice(nl + 2);
           const line = frame.split("\n").find((l) => l.startsWith("data:"));
           if (!line) continue;
-          let ev: { type?: string; value?: string; message?: string; name?: string; id?: string; phase?: "start" | "end"; ok?: boolean; detail?: string; todos?: TodoItem[] } & Partial<TruncatedEvent>;
+          let ev: { type?: string; value?: string; model?: string; message?: string; name?: string; id?: string; phase?: "start" | "end"; ok?: boolean; detail?: string; todos?: TodoItem[] } & Partial<TruncatedEvent>;
           try {
             ev = JSON.parse(line.slice(5).trim());
           } catch {
@@ -2473,6 +2475,7 @@ export async function callAgentBackendStream(
             onTruncated?.({ subtype: String(ev.subtype ?? "unknown"), classification: ev.classification, numTurns: ev.numTurns, stopReason: ev.stopReason, notice: ev.notice });
           } else if (ev.type === "done") {
             authoritative = ev.value ?? streamed;
+            if (typeof ev.model === "string" && ev.model) onModel?.(ev.model);
           } else if (ev.type === "error") {
             throw new Error(ev.message || "fleet stream error");
           }
@@ -3144,6 +3147,13 @@ async function runAgentTurnInner(opts: {
   const corte: { ev: TruncatedEvent | null } = { ev: null };
   /** El turno murió por transporte. Mismo patrón de contenedor que `corte`, y por lo mismo. */
   const fallo: { message: string | null } = { message: null };
+  /** Modelo real del turno (del `done` de gs). Contenedor, como `corte`, por el mismo motivo. */
+  const turnModel: { value: string | null } = { value: null };
+  const saveTurnModel = async (id: number) => {
+    if (!turnModel.value || !id) return;
+    const db = await import("./db.server");
+    await db.setMessageModel(id, turnModel.value).catch(() => {});
+  };
   /** Nombres crudos de las tools que corrieron. Sólo se persisten si el turno MUERE. */
   const toolsCrudas = new Set<string>();
   if (!opts.agent) {
@@ -3151,7 +3161,7 @@ async function runAgentTurnInner(opts: {
     await onChunk(reply);
   } else {
     try {
-      reply = await callAgentBackendStream(opts.agent, opts.groupId, opts.sender, opts.text, onChunk, opts.parts ?? [], onTool, opts.currentDoc, opts.invokerSub, opts.signal, opts.dest, opts.inject, opts.originOverride, opts.publicChannel, (t) => { corte.ev = t; }, (f) => { fallo.message = f.message; }, opts.adoptar);
+      reply = await callAgentBackendStream(opts.agent, opts.groupId, opts.sender, opts.text, onChunk, opts.parts ?? [], onTool, opts.currentDoc, opts.invokerSub, opts.signal, opts.dest, opts.inject, opts.originOverride, opts.publicChannel, (t) => { corte.ev = t; }, (f) => { fallo.message = f.message; }, opts.adoptar, (m) => { turnModel.value = m; });
     } catch (e) {
       // Detenido: NO es un error del agente. Se conserva lo que alcanzó a escribir y se
       // dice que se detuvo — borrarlo tiraría trabajo que el usuario ya estaba leyendo.
@@ -3202,14 +3212,17 @@ async function runAgentTurnInner(opts: {
       const planBody = (renderTodos() + renderToolBlock(true) + bloquePasos).trim();
       opts.emitBody(shellId, planBody);
       const newId = await opts.createFollowUp(shellId);
+      await saveTurnModel(newId);
       // `plan` = la burbuja del turno ya cerrada: el caller la persiste AUTORITATIVA
       // (`setMessageBody`, streaming = 0), o al recargar se vería como turno a medias.
       return { id: newId, reply: respuesta, failure: null, toolsCorridas: [...toolsCrudas], plan: { id: shellId, body: planBody } };
     }
   }
   // Body final autoritativo: bloque gt-tools TODO ✅ + texto separado. El caller lo persiste.
+  const finalId = await ensure();
+  await saveTurnModel(finalId);
   return {
-    id: await ensure(),
+    id: finalId,
     reply: renderToolBlock(true) + finalText + avisoCorte,
     failure: fallo.message,
     // Sólo importan si murió; el llamador las persiste en ese caso.

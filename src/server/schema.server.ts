@@ -181,6 +181,9 @@ async function migrate(): Promise<void> {
   // Reenviar (forward estilo WhatsApp): al reenviar un mensaje a otro canal/DM se copia su
   // contenido; este campo guarda el AUTOR original para pintar el rótulo "Reenviado".
   await addColumn("gc_messages", "forwarded_from", "TEXT");
+  // Modelo que corrió el turno del agente: el pie dice ése y no el del handle (escalada,
+  // «@build con opus», evals, tope del plan). Los mensajes anteriores caen al del handle.
+  await addColumn("gc_messages", "turn_model", "TEXT");
 
   await exec(`CREATE INDEX IF NOT EXISTS gc_messages_chan_topic
               ON gc_messages(channel_id, topic, created_at)`);
