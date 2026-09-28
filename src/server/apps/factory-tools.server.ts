@@ -468,7 +468,7 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
         const result = parseEvalScore(meta.config.role, a);
         if ("error" in result) return { ok: false, error: result.error };
         await E.evalScored(run, meta, result, sub);
-        return { ok: true, note: "Calificación guardada y publicada en el hilo. Termina sin repetirla." };
+        return { ok: true, note: "Calificación guardada: la tabla ya está en el hilo. Cierra con UNA línea con lo más importante que viste (sin repetir notas ni tabla)." };
       },
     },
     {
