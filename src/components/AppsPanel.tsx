@@ -5,7 +5,7 @@
 import { useEffect, useState } from "react";
 import { Factory, Loader2, ExternalLink } from "lucide-react";
 import { useT } from "../i18n";
-import { createFactoryAgentFn, factorySchedulesFn, factorySuggestFn, setFactoryScheduleFn, factoryStatusFn, installFactoryFn, setFactoryRolesFn, uninstallFactoryFn, type FactoryStatus } from "../server/apps/factory";
+import { createFactoryAgentFn, factorySchedulesFn, factorySuggestFn, setFactoryJudgeFn, setFactoryScheduleFn, factoryStatusFn, installFactoryFn, setFactoryRolesFn, uninstallFactoryFn, type FactoryStatus } from "../server/apps/factory";
 import { githubInstallationReposFn } from "../server/room-repos";
 import { listChannelsFn } from "../server/chat";
 import ConfirmModal from "./ConfirmModal";
@@ -427,6 +427,53 @@ export function RolesEditor({ status, onChange }: { status: FactoryStatus; onCha
           {busy ? t("Aplicando…") : t("Guardar roles")}
         </button>
       )}
+      <JudgePicker status={status} onChange={onChange} />
+    </div>
+  );
+}
+
+// @eval: el juez OPCIONAL de los evals. Sin él juzga @check. Se guarda al elegir, aparte de los
+// tres roles (no es parte de la cadena).
+function JudgePicker({ status, onChange }: { status: FactoryStatus; onChange: () => void }) {
+  const t = useT();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const pick = async (agentId: string) => {
+    setBusy(true);
+    setError(null);
+    try {
+      await setFactoryJudgeFn({ data: { agentId: agentId || null } });
+      onChange();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="mt-3 border-t border-border pt-3">
+      <div className="flex items-center gap-2 text-xs">
+        <span className="w-14 shrink-0 font-mono font-semibold text-ink">@eval</span>
+        <span className="w-20 shrink-0 text-muted">{t("Juzga evals")}</span>
+        <select
+          value={status.judgeAgentId ?? ""}
+          disabled={busy}
+          onChange={(e) => void pick(e.target.value)}
+          className="min-w-0 flex-1 rounded-md border border-border bg-surface-2 px-2 py-1 text-ink"
+        >
+          <option value="">{t("Usa @check")}</option>
+          {status.candidates.map((a) => (
+            <option key={a.id} value={a.id}>
+              {a.name} · {a.engine} · {a.model}
+            </option>
+          ))}
+        </select>
+        {busy && <Loader2 className="size-3.5 animate-spin text-muted" />}
+      </div>
+      <p className="mt-1 text-[11px] text-muted">
+        {t("Opcional. Un juez fijo hace comparables los evals en el tiempo; uno de otro motor y más barato basta: califica, no programa.")}
+      </p>
+      {error && <p className="text-xs text-danger">{error}</p>}
     </div>
   );
 }

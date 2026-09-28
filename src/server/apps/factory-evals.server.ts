@@ -9,7 +9,11 @@
 //           juez vs el PR mezclado; la rama se borra al calificar.
 //  - check: revisa el PR original contra el plan firmado → juez vs la revisión humana y el
 //           @check original. El juez es el @check POR DEFECTO (se quita el override antes).
-// El juez siempre es @check y califica con factory_eval_score. No cuenta en los números.
+// El juez es @eval si el espacio lo tiene (fijo, para comparar evals en el tiempo) y si no @check;
+// califica con factory_eval_score. No cuenta en los números.
+//
+// Para que salga barato: el juez recibe TODO en su encargo (no explora), diffs recortados, no se
+// repite un eval igual y build/check sólo sobre PRs chicos. El costo del juez también se mide.
 import { dbq } from "../../dbq.server";
 import { evalBranch, type EvalConfig, type EvalResult, type EvalRole, type EvalRow, configLabel, evalResultMarkdown, rubricText } from "./factory-evals";
 import type { Run } from "./factory-runs.server";
@@ -29,6 +33,9 @@ export type EvalMeta = {
   result?: EvalResult;
   costUsd?: number | null;
   models?: string[];
+  /** Quién calificó y cuánto costó calificar (el juez se mide aparte del rol evaluado). */
+  judge?: "eval" | "check";
+  judgeCostUsd?: number | null;
 };
 
 export async function evalMeta(runId: number): Promise<EvalMeta | null> {
@@ -48,6 +55,31 @@ async function saveMeta(runId: number, meta: EvalMeta) {
 }
 
 const now = () => Math.floor(Date.now() / 1000);
+
+/** Diff por lado en el encargo del juez: suficiente para calificar y la mitad de tokens. */
+const JUDGE_DIFF_CHARS = 15_000;
+/** build/check sólo sobre PRs de este tamaño (additions + deletions): más grande sale caro y se parece poco a otros. */
+export const EVAL_MAX_PR_LINES = 800;
+
+/** Quién juzga: @eval si está activo; si no, @check. */
+export async function judgeHandle(): Promise<"eval" | "check"> {
+  const { resolvedAgents } = await import("../../agents.server");
+  return (await resolvedAgents()).some((a) => a.handle === "eval") ? "eval" : "check";
+}
+
+/** ¿Ya hay un eval igual (mismo pedido, rol, agente y modelo) vivo o calificado? */
+async function sameEval(sourceRunId: number, c: EvalConfig): Promise<number | null> {
+  const rows = await dbq("SELECT id, eval_json FROM gt_factory_runs WHERE kind = 'eval' AND status != 'cancelled' ORDER BY id DESC LIMIT 300", []).catch(() => []);
+  for (const r of rows) {
+    try {
+      const m = JSON.parse(String(r.eval_json)) as EvalMeta;
+      if (m.of === sourceRunId && m.config.role === c.role && (m.config.agent ?? null) === (c.agent ?? null) && (m.config.model ?? null) === (c.model ?? null)) return Number(r.id);
+    } catch {
+      /* fila rota */
+    }
+  }
+  return null;
+}
 
 /** Deja el eval en la etapa del juez sin pasar por la máquina de estados de un pedido real. */
 async function toJudging(run: Run): Promise<Run> {
@@ -70,6 +102,16 @@ export async function startEval(opts: {
   if (!opts.agent && !opts.model) return { error: `elige el agente o el modelo que quieres probar en @${opts.role}` };
   const pr = R.parsePrUrl(src.prUrl);
   if (!pr) return { error: "el PR del pedido no es de GitHub" };
+  const cfg0: EvalConfig = { role: opts.role, agent: opts.agent?.trim() || null, model: opts.model?.trim() || null };
+  const dup = await sameEval(src.id, cfg0);
+  if (dup) return { error: `ya hay un eval igual (#${dup}) de este pedido: míralo en su hilo antes de gastar otro` };
+  if (opts.role !== "plan") {
+    const { githubApi } = await import("../connectors/github.server");
+    const info = await githubApi(opts.sub, `/repos/${pr.repo}/pulls/${pr.number}`).catch(() => null);
+    const lines = Number(info?.additions ?? 0) + Number(info?.deletions ?? 0);
+    if (lines > EVAL_MAX_PR_LINES)
+      return { error: `el PR original cambia ${lines} líneas: los evals de @${opts.role} son para PRs de hasta ${EVAL_MAX_PR_LINES} (salen caros y se parecen poco a otros)` };
+  }
   const plan = await R.getPlan(src.id, src.planVersion);
   if (!plan?.planMd) return { error: "el pedido no tiene plan firmado" };
   const db = await import("../../db.server");
@@ -83,11 +125,12 @@ export async function startEval(opts: {
   }
   const ask = opts.role === "plan" ? ((await db.getMessage(src.rootMsgId).catch(() => null))?.body ?? src.title) : null;
 
-  const config: EvalConfig = { role: opts.role, agent: opts.agent?.trim() || null, model: opts.model?.trim() || null };
+  const config = cfg0;
   const bus = await import("../bus.server");
   const { currentNamespace } = await import("../tenant.server");
   const { resolvedAgents } = await import("../../agents.server");
-  const who = (await resolvedAgents()).find((a) => a.handle === "check");
+  const judge = await judgeHandle();
+  const who = (await resolvedAgents()).find((a) => a.handle === judge);
   const from =
     opts.role === "plan"
       ? "el mismo pedido original, sin ver el plan firmado"
@@ -99,7 +142,8 @@ export async function startEval(opts: {
     `🧪 **Eval del pedido #${src.id}:** «${src.title}»\n\n` +
     `- **Prueba a:** ${configLabel(config)}\n` +
     `- **Parte de:** ${from}\n` +
-    `- **Compara con:** ${against}\n\n` +
+    `- **Compara con:** ${against}\n` +
+    `- **Juez:** @${judge}\n\n` +
     (opts.role === "build" ? `_No abre PR: la rama se borra al calificar._` : `_No toca el repo ni el pedido original._`);
   const { id: rootId } = await db.postAgent(src.channelId, null, body, "msg", who?.handle ?? "check", who?.name ?? "check", "general", who?.avatar ?? "");
   const msg = await db.getMessage(rootId);
@@ -196,7 +240,8 @@ async function setThreadOverrides(channelId: number, rootId: number, ov: Record<
 
 const judgeHead = (meta: EvalMeta, what: string) =>
   `🧪 Eres el JUEZ de un eval. No revisas para aprobar: calificas. ${what}\n` +
-  `Califica la A del 1 al 5 en cada criterio de la rúbrica y di si es worse, same o better que la B. No edites nada.\n\n` +
+  `Califica la A del 1 al 5 en cada criterio de la rúbrica y di si es worse, same o better que la B. No edites nada.\n` +
+  `Todo lo que necesitas está en este encargo: NO corras comandos ni explores el repo; como mucho 2 lecturas con github_read_file para una duda concreta.\n\n` +
   `## Rúbrica (claves de scores)\n${rubricText(meta.config.role)}\n\n`;
 
 /** @build cerró un eval: se guarda el tiempo y se despierta al juez con los dos diffs. */
@@ -204,16 +249,16 @@ export async function evalBuildDone(run: Run, meta: EvalMeta, sub: string, tests
   const R = await import("./factory-runs.server");
   const branch = run.branch ?? evalBranch(run.id);
   const { compareDiff, prDiff } = await import("../connectors/github.server");
-  const diff = await compareDiff(sub, run.repo!, meta.base!, branch);
+  const diff = await compareDiff(sub, run.repo!, meta.base!, branch, JUDGE_DIFF_CHARS);
   if (!diff || diff === "(sin cambios)") return { error: `la rama ${branch} no tiene cambios contra el commit base: empuja tu trabajo ahí antes de cerrar` };
   const orig = R.parsePrUrl(meta.originalPr);
-  const origDiff = orig ? await prDiff(sub, orig.repo, orig.number) : null;
+  const origDiff = orig ? await prDiff(sub, orig.repo, orig.number, JUDGE_DIFF_CHARS) : null;
   const next = await R.applyEvent(run, "build_done", { ci_fails: 0 });
   await saveMeta(run.id, { ...meta, stepDoneAt: now() });
   const plan = await R.getPlan(run.id, 1);
   await R.handoff(
     next,
-    "check",
+    await judgeHandle(),
     sub,
     "calificar el eval",
     judgeHead(
@@ -238,7 +283,7 @@ export async function evalPlanDone(run: Run, meta: EvalMeta, sub: string, planMd
   const signed = src ? await R.getPlan(src.id, src.planVersion) : null;
   await R.handoff(
     judging,
-    "check",
+    await judgeHandle(),
     sub,
     "calificar el eval",
     judgeHead(
@@ -255,9 +300,14 @@ export async function evalCheckDone(run: Run, meta: EvalMeta, sub: string, pass:
   const R = await import("./factory-runs.server");
   const output = `${pass ? "✅ pasa" : "❌ no pasa"}\n${findings}`.slice(0, 8000);
   await saveMeta(run.id, { ...meta, stepDoneAt: now(), output });
-  // El juez NO es el @check evaluado: fuera el override del hilo, y otra conversación.
   const src = await R.getRun(meta.of);
-  await setThreadOverrides(run.channelId, run.rootMsgId, { repo: run.repo });
+  const judge = await judgeHandle();
+  // Si el juez cae en @check, NO puede ser el @check evaluado: fuera el override del hilo y
+  // otra conversación. Con @eval no hace falta.
+  if (judge === "check") await setThreadOverrides(run.channelId, run.rootMsgId, { repo: run.repo });
+  const pr = R.parsePrUrl(meta.originalPr);
+  const { prDiff } = await import("../connectors/github.server");
+  const diff = pr ? await prDiff(sub, pr.repo, pr.number, JUDGE_DIFF_CHARS) : null;
   const orig = await dbq("SELECT verdict_json, first_review_state, loops FROM gt_factory_runs WHERE id = ?", [meta.of]).catch(() => []);
   let origFindings = "";
   try {
@@ -268,28 +318,29 @@ export async function evalCheckDone(run: Run, meta: EvalMeta, sub: string, pass:
   const human = orig[0]?.first_review_state ? String(orig[0].first_review_state) : "sin review (se mezcló directo)";
   await R.handoff(
     run,
-    "check",
+    judge,
     sub,
     "calificar el eval",
     judgeHead(
       meta,
       `Dos revisiones del MISMO PR (${meta.originalPr}) contra el mismo plan: la A la hizo ${configLabel(meta.config)}; la B es la del @check original. ` +
         `Lo que pasó de verdad: @check le regresó el PR a @build ${orig[0]?.loops ?? src?.loops ?? 0} vez/veces antes de aprobarlo, ` +
-        `la primera revisión humana fue «${human}» y el PR se mezcló. Puedes leer el diff con github_pr_files.`,
-    ) + `## A · ${configLabel(meta.config)}\n${output}\n\n## B · el @check original (al aprobar)\n${origFindings || "(sin hallazgos guardados)"}\n\nCierra con factory_eval_score (runId ${run.id}).`,
+        `la primera revisión humana fue «${human}» y el PR se mezcló.`,
+    ) +
+      `## El PR\n${diff ?? "(no pude leer su diff)"}\n\n## A · ${configLabel(meta.config)}\n${output}\n\n## B · el @check original (al aprobar)\n${origFindings || "(sin hallazgos guardados)"}\n\n` +
+      `Cierra con factory_eval_score (runId ${run.id}).`,
     origin,
-    ":judge",
+    judge === "check" ? ":judge" : "",
   );
 }
 
-/** Costo en gs del rol evaluado (su conversación `…-<rol>-factory-<id>`). null si gs no contesta. */
-async function evalCost(run: Run, role: EvalRole): Promise<{ costUsd: number; models: string[] } | null> {
+/** Costo en gs de una conversación de este eval (sufijo de `agentGroupId`). null si gs no contesta o no hay turnos. */
+async function groupCost(suffix: string): Promise<{ costUsd: number; models: string[] } | null> {
   try {
     const { nativeRuntimeBase, partnerHeaders } = await import("../ghosty-runtime.server");
     const base = await nativeRuntimeBase();
     if (!base) return null;
     const { currentNamespace } = await import("../tenant.server");
-    const suffix = `-${role}-factory-${run.id}`;
     const body = JSON.stringify({ suffixes: [suffix] });
     const res = await fetch(`${base}/api/v2/usage/groups`, { method: "POST", headers: partnerHeaders(body, await currentNamespace()), body, signal: AbortSignal.timeout(15_000) });
     if (!res.ok) return null;
@@ -301,18 +352,31 @@ async function evalCost(run: Run, role: EvalRole): Promise<{ costUsd: number; mo
   }
 }
 
+/** La conversación del juez: @eval, o @check (en otra conversación si también es el evaluado). */
+export const judgeSuffix = (runId: number, role: EvalRole, judge: "eval" | "check") =>
+  judge === "eval" ? `-eval-factory-${runId}` : role === "check" ? `-check-factory-${runId}:judge` : `-check-factory-${runId}`;
+
 /** El juez calificó: se guarda (con el costo del rol), se borra la rama si hay y el eval cierra. */
-export async function evalScored(run: Run, meta: EvalMeta, result: EvalResult, sub: string): Promise<void> {
+export async function evalScored(run: Run, meta: EvalMeta, result: EvalResult, sub: string, judge: "eval" | "check"): Promise<void> {
   const R = await import("./factory-runs.server");
-  const cost = await evalCost(run, meta.config.role);
-  await saveMeta(run.id, { ...meta, result, costUsd: cost?.costUsd ?? null, models: cost?.models ?? [] });
+  const cost = await groupCost(`-${meta.config.role}-factory-${run.id}`);
+  await saveMeta(run.id, { ...meta, result, costUsd: cost?.costUsd ?? null, models: cost?.models ?? [], judge });
   if (meta.config.role === "build" && run.repo && run.branch) {
     const { deleteEvalBranch } = await import("../connectors/github.server");
     await deleteEvalBranch(sub, run.repo, run.branch).catch(() => false);
   }
   await dbq("UPDATE gt_factory_runs SET status = 'done', updated_at = unixepoch() WHERE id = ?", [run.id]);
   void R.refreshRoom(run.channelId);
-  await R.postInThread(run, "check", evalResultMarkdown(meta.config, result, cost?.costUsd ?? null, cost?.models));
+  await R.postInThread(run, judge, evalResultMarkdown(meta.config, result, cost?.costUsd ?? null, cost?.models));
+  // El costo del JUEZ se sabe cuando su turno termina y el worker lo reporta: se pide después.
+  const suffix = judgeSuffix(run.id, meta.config.role, judge);
+  setTimeout(() => {
+    void (async () => {
+      const jc = await groupCost(suffix);
+      const now = await evalMeta(run.id);
+      if (jc && now) await saveMeta(run.id, { ...now, judgeCostUsd: jc.costUsd });
+    })().catch(() => {});
+  }, 120_000);
 }
 
 /** Evals de un room para la tabla de la página. */
@@ -325,7 +389,7 @@ export async function evalRows(channelId: number): Promise<EvalRow[]> {
     try {
       const m = JSON.parse(String(r.eval_json)) as EvalMeta;
       const done = m.stepDoneAt ?? m.buildDoneAt;
-      out.push({ config: m.config, result: m.result ?? null, seconds: done ? done - m.startedAt : null, costUsd: m.costUsd ?? null });
+      out.push({ config: m.config, result: m.result ?? null, seconds: done ? done - m.startedAt : null, costUsd: m.costUsd ?? null, judgeCostUsd: m.judgeCostUsd ?? null });
     } catch {
       /* fila rota: no cuenta */
     }

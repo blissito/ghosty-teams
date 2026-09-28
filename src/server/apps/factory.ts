@@ -167,6 +167,8 @@ export type FactoryStatus = {
   repos: string[];
   boardId: number | null;
   roles: FactoryRoleView[];
+  /** @eval, el juez opcional de los evals (null = juzga @check). */
+  judgeAgentId?: string | null;
   candidates: StudioAgentOption[];
   studioAgentsUrl: string;
 };
@@ -230,12 +232,15 @@ export const factoryStatusFn = createServerFn({ method: "GET" }).handler(async (
       studioUrl: id ? `${IDP()}/app/agents/${id}` : null,
     };
   });
+  // @eval (opcional): el juez de los evals. Sin fila activa, juzga @check.
+  const judgeId = rows.find((a) => a.handle === "eval" && a.enabled)?.fleet_id ?? null;
   return {
     installed: true,
     room: ch ? { id: ch.id, slug: ch.slug, name: ch.name } : null,
     repos,
     boardId: cfg.boardId ?? null,
     roles,
+    judgeAgentId: judgeId,
     ...base,
   };
 });
@@ -308,12 +313,61 @@ export const setFactoryRolesFn = createServerFn({ method: "POST" })
     return { ok: true as const };
   });
 
+/**
+ * @eval, el juez opcional de los evals. `agentId: null` lo apaga (vuelve a juzgar @check). Misma
+ * activación «De Studio» que los roles, pero aparte: no forma parte de la cadena ni del instalador.
+ */
+export const setFactoryJudgeFn = createServerFn({ method: "POST" })
+  .validator((d: { agentId: string | null }) => d)
+  .handler(async ({ data }) => {
+    const user = await requireOwner();
+    const { getAppConfig, recordInstall } = await import("./installed.server");
+    const cfg = await getAppConfig<FactoryCfg>("factory");
+    if (!cfg) throw new Error("la fábrica no está instalada");
+    const db = await import("../../db.server");
+    const { dbq } = await import("../../dbq.server");
+    const { JUDGE_HANDLE, JUDGE_NAME } = await import("./factory-roles");
+    const owned = new Set(cfg.ownedHandles ?? []);
+    const row = await db.getAgentByHandle(JUDGE_HANDLE);
+    if (row && !owned.has(JUDGE_HANDLE)) throw new Error(`@${JUDGE_HANDLE} ya lo usa otro agente de este espacio: renómbralo primero`);
+    if (!data.agentId) {
+      if (row) await dbq("UPDATE gc_agents SET enabled = 0 WHERE handle = ?", [JUDGE_HANDLE]);
+      return { ok: true as const };
+    }
+    const agent = (await studioAgents()).find((a) => a.id === data.agentId);
+    if (!agent) throw new Error("elige un agente de Studio (Claude, DeepSeek o Codex)");
+    if (!row) {
+      await db.createAgent({
+        handle: JUDGE_HANDLE,
+        name: JUDGE_NAME,
+        kind: "fleet",
+        fleetId: agent.id,
+        fleetToken: null,
+        runtime: "gs-native",
+        groupNs: true,
+        avatar: roleAvatar(JUDGE_HANDLE),
+        systemPrompt: null,
+        createdBy: user.sub,
+      });
+    } else {
+      await dbq(
+        `UPDATE gc_agents SET fleet_id = ?, kind = 'fleet', runtime = 'gs-native', runtime_url = NULL, fleet_token = NULL,
+                              enabled = 1, name = ?, avatar = ?, group_ns = 1 WHERE handle = ?`,
+        [agent.id, JUDGE_NAME, roleAvatar(JUDGE_HANDLE), JUDGE_HANDLE],
+      );
+    }
+    const { connectTeamsChannel } = await import("../agent-config");
+    await connectTeamsChannel(agent.id, "", "gs-native").catch(() => {});
+    if (!owned.has(JUDGE_HANDLE)) await recordInstall("factory", user.sub, { ...cfg, ownedHandles: [...owned, JUDGE_HANDLE] });
+    return { ok: true as const };
+  });
+
 export const uninstallFactoryFn = createServerFn({ method: "POST" }).handler(async () => {
   await requireOwner();
   const { getAppConfig, recordUninstall } = await import("./installed.server");
   const cfg = await getAppConfig<FactoryCfg>("factory");
   // Sólo los handles que creó la fábrica; los agentes de Studio no se tocan.
-  const owned = (cfg?.ownedHandles ?? []).filter((h) => (HANDLES as readonly string[]).includes(h));
+  const owned = (cfg?.ownedHandles ?? []).filter((h) => (HANDLES as readonly string[]).includes(h) || h === "eval");
   if (owned.length) {
     const { dbq } = await import("../../dbq.server");
     await dbq(`UPDATE gc_agents SET enabled = 0 WHERE handle IN (${owned.map(() => "?").join(",")})`, owned);

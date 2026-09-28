@@ -63,9 +63,9 @@ export function prMessageBody(ev: PrEvent): string {
 async function roomAgent(channelId: number): Promise<{ handle: string; name: string; avatar: string }> {
   const { resolvedAgents } = await import("../agents.server");
   const { dbq } = await import("../dbq.server");
-  const agents = (await resolvedAgents()).filter((a) => !["plan", "build", "check"].includes(a.handle));
+  const agents = (await resolvedAgents()).filter((a) => !["plan", "build", "check", "eval"].includes(a.handle));
   const [last] = await dbq(
-    `SELECT agent_handle FROM gc_messages WHERE channel_id = ? AND agent_handle IS NOT NULL AND agent_handle NOT IN ('plan','build','check')
+    `SELECT agent_handle FROM gc_messages WHERE channel_id = ? AND agent_handle IS NOT NULL AND agent_handle NOT IN ('plan','build','check','eval')
      ORDER BY id DESC LIMIT 1`,
     [channelId],
   ).catch(() => []);

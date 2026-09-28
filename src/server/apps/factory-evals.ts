@@ -101,6 +101,8 @@ export type EvalRow = {
   seconds: number | null;
   /** Costo del rol evaluado (tokens en gs × precio). null si todavía no se sabe. */
   costUsd: number | null;
+  /** Costo de calificar (el juez). */
+  judgeCostUsd?: number | null;
 };
 
 export type EvalSummary = {
@@ -114,6 +116,7 @@ export type EvalSummary = {
   worse: number;
   medianSeconds: number | null;
   medianCostUsd: number | null;
+  medianJudgeCostUsd: number | null;
 };
 
 function median(xs: (number | null)[]): number | null {
@@ -145,6 +148,7 @@ export function summarizeEvals(rows: EvalRow[]): EvalSummary[] {
       worse: scored.filter((r) => r.result!.vsOriginal === "worse").length,
       medianSeconds: secs == null ? null : Math.round(secs),
       medianCostUsd: median(list.map((r) => r.costUsd)),
+      medianJudgeCostUsd: median(list.map((r) => r.judgeCostUsd ?? null)),
     });
   }
   return out.sort((a, b) => EVAL_ROLES.indexOf(a.role) - EVAL_ROLES.indexOf(b.role) || (b.avg ?? -1) - (a.avg ?? -1));

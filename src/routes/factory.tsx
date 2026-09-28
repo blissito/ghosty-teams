@@ -569,6 +569,7 @@ function FactoryPage() {
                       <th className="px-3 py-2 font-medium">{t("Contra el original")}</th>
                       <th className="px-3 py-2 font-medium">{t("Tiempo")}</th>
                       <th className="px-3 py-2 font-medium">{t("Costo")}</th>
+                      <th className="px-3 py-2 font-medium">{t("Juez")}</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border">
@@ -584,6 +585,7 @@ function FactoryPage() {
                         </td>
                         <td className="px-3 py-2 tabular-nums text-muted">{duration(e.medianSeconds)}</td>
                         <td className="px-3 py-2 tabular-nums text-muted">{e.medianCostUsd == null ? "—" : formatUsd(e.medianCostUsd)}</td>
+                        <td className="px-3 py-2 tabular-nums text-muted">{e.medianJudgeCostUsd == null ? "—" : formatUsd(e.medianJudgeCostUsd)}</td>
                       </tr>
                     ))}
                   </tbody>

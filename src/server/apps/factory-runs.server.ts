@@ -139,7 +139,7 @@ export const planCardFence = (runId: number, version: number) =>
  */
 export async function handoff(
   run: Run,
-  to: "plan" | "build" | "check",
+  to: "plan" | "build" | "check" | "eval",
   sub: string,
   cause: string,
   text: string,
@@ -515,8 +515,8 @@ export async function prCi(sub: string, url: string): Promise<{ state: string; f
 // ── Rol que termina sin cerrar su paso ───────────────────────────────────────
 
 /** En qué estado se queda la corrida mientras el rol no cierra su paso. */
-const OPEN_STATUS: Record<string, RunStatus> = { plan: "planning", build: "building", check: "checking" };
-const CLOSE_TOOL: Record<string, string> = { plan: "factory_plan_submit", build: "factory_build_done", check: "factory_check_verdict" };
+const OPEN_STATUS: Record<string, RunStatus> = { plan: "planning", build: "building", check: "checking", eval: "checking" };
+const CLOSE_TOOL: Record<string, string> = { plan: "factory_plan_submit", build: "factory_build_done", check: "factory_check_verdict", eval: "factory_eval_score" };
 
 /**
  * Llamado al terminar un turno de la estafeta (`factory:<run>:<rol>:…`). Si la corrida
@@ -528,7 +528,7 @@ export async function afterFactoryTurn(
   ref: { sub: string },
   reply = "",
 ): Promise<void> {
-  const m = /^factory:(\d+):(plan|build|check):/.exec(w.key);
+  const m = /^factory:(\d+):(plan|build|check|eval):/.exec(w.key);
   if (!m) return;
   const run = await getRun(Number(m[1]));
   const role = m[2];

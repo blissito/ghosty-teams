@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { configLabel, evalBranch, evalResultMarkdown, formatUsd, parseEvalScore, summarizeEvals } from "./factory-evals";
+import { judgeSuffix } from "./factory-evals.server";
 
 const ok = { scores: { plan: 5, tests: 4, maintainability: 3, scope: 5 }, vs_original: "same", notes: "bien" };
 const okPlan = { scores: { coverage: 4, concrete: 4, risks: 3, signable: 5 }, vs_original: "better" };
@@ -47,5 +48,13 @@ describe("evals de la fábrica", () => {
     expect(md).not.toContain("@build");
     expect(evalResultMarkdown({ role: "plan", agent: "Grey" }, parseEvalScore("plan", okPlan) as any)).toContain("mejor que el plan firmado");
     expect(formatUsd(0.004)).toBe("< $0.01 USD");
+  });
+});
+
+describe("conversación del juez (para medir su costo)", () => {
+  it("@eval tiene la suya; @check como juez usa otra si también es el evaluado", () => {
+    expect(judgeSuffix(9, "plan", "eval")).toBe("-eval-factory-9");
+    expect(judgeSuffix(9, "build", "check")).toBe("-check-factory-9");
+    expect(judgeSuffix(9, "check", "check")).toBe("-check-factory-9:judge");
   });
 });

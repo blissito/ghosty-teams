@@ -437,7 +437,7 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
     {
       name: "factory_eval_score",
       description:
-        "SÓLO @check como JUEZ de un eval (🧪). Del 1 al 5 en cada criterio de la rúbrica que llegó en tu encargo (las claves " +
+        "SÓLO el JUEZ de un eval (🧪): @eval, o @check si el espacio no tiene @eval. Del 1 al 5 en cada criterio de la rúbrica que llegó en tu encargo (las claves " +
         "dependen del rol evaluado) y si lo evaluado es worse, same o better que lo que se hizo de verdad. La plataforma la guarda y cierra el eval.",
       inputSchema: {
         type: "object",
@@ -456,7 +456,7 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
         required: ["scores", "vs_original"],
       },
       handler: async (sub, a) => {
-        if (dest?.handle && dest.handle !== "check") return { ok: false, error: "sólo @check califica un eval" };
+        if (dest?.handle && dest.handle !== "check" && dest.handle !== "eval") return { ok: false, error: "sólo el juez (@eval, o @check si no hay) califica un eval" };
         const run = await runOf(dest, a.runId);
         if (!run) return { ok: false, error: "no encuentro el eval de este hilo" };
         const E = await import("./factory-evals.server");
@@ -467,7 +467,7 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
         const { parseEvalScore } = await import("./factory-evals");
         const result = parseEvalScore(meta.config.role, a);
         if ("error" in result) return { ok: false, error: result.error };
-        await E.evalScored(run, meta, result, sub);
+        await E.evalScored(run, meta, result, sub, dest?.handle === "eval" ? "eval" : "check");
         return { ok: true, note: "Calificación guardada: la tabla ya está en el hilo. Cierra con UNA línea con lo más importante que viste (sin repetir notas ni tabla)." };
       },
     },
@@ -723,6 +723,11 @@ export async function factoryContext(dest: ToolDest | null, toolChannel: ToolCha
   // @build o @check (ver apps/factory-roles.ts).
   const { FACTORY_COMMON, ROLE_INSTRUCTIONS, FACTORY_HANDLES } = await import("./factory-roles");
   const h = dest?.handle as (typeof FACTORY_HANDLES)[number] | undefined;
+  if (dest?.handle === "eval") {
+    const { JUDGE_INSTRUCTIONS } = await import("./factory-roles");
+    parts.push("En ESTE turno actúas como @eval; tu identidad de siempre se queda, pero aplica este rol.");
+    parts.push(JUDGE_INSTRUCTIONS);
+  }
   if (h && (FACTORY_HANDLES as readonly string[]).includes(h)) {
     parts.push(`En ESTE turno actúas como @${h}; tu identidad de siempre se queda, pero aplica este rol.`);
     parts.push(FACTORY_COMMON);

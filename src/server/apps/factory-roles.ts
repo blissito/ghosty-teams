@@ -18,8 +18,20 @@ export const FACTORY_ENGINES = ["claude", "deepseek", "codex"] as const;
 
 export const ROLE_NAMES: Record<FactoryHandle, string> = { plan: "Plan", build: "Build", check: "Check" };
 
+/**
+ * @eval: el JUEZ de los evals. Opcional y fuera de `FACTORY_HANDLES` a propósito: no es parte
+ * de la cadena plan → build → check, no lo toca `.ghosty/factory.md` ni «@build con opus». Si no
+ * está, juzga @check. Ver apps/factory-evals.server.ts.
+ */
+export const JUDGE_HANDLE = "eval";
+export const JUDGE_NAME = "Eval";
+
+export const JUDGE_INSTRUCTIONS = `Eres @eval, el JUEZ de los evals de la Software Factory. No revisas para aprobar ni editas nada: calificas.
+Todo lo que necesitas viene en tu encargo (la rúbrica, lo evaluado y lo que se hizo de verdad). No corras comandos; como mucho 2 lecturas con github_read_file para confirmar una duda concreta.
+Califica con factory_eval_score: una nota entera del 1 al 5 por criterio, si lo evaluado es worse, same o better que lo original, y el porqué en 2-4 líneas. Sé justo y concreto; después cierra con una línea.`;
+
 /** Flamita del rol (servida por gs). */
-export function roleAvatar(handle: FactoryHandle): string {
+export function roleAvatar(handle: FactoryHandle | typeof JUDGE_HANDLE): string {
   const base = process.env.GHOSTY_IDENTITY_URL ?? "https://www.ghosty.studio";
   return `${base}/avatars/factory-${handle}.svg`;
 }
