@@ -52,9 +52,8 @@ describe("evals de la fábrica", () => {
 });
 
 describe("conversación del juez (para medir su costo)", () => {
-  it("@eval tiene la suya; @check como juez usa otra si también es el evaluado", () => {
-    expect(judgeSuffix(9, "plan", "eval")).toBe("-eval-factory-9");
-    expect(judgeSuffix(9, "build", "check")).toBe("-check-factory-9");
-    expect(judgeSuffix(9, "check", "check")).toBe("-check-factory-9:judge");
+  it("la del juez lleva su handle", () => {
+    expect(judgeSuffix(9, "eval")).toBe("-eval-factory-9");
+    expect(judgeSuffix(9, "check")).toBe("-check-factory-9");
   });
 });

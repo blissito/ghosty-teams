@@ -130,6 +130,10 @@ export async function startEval(opts: {
   const { currentNamespace } = await import("../tenant.server");
   const { resolvedAgents } = await import("../../agents.server");
   const judge = await judgeHandle();
+  // Visto en vivo (eval #7): el @check evaluado se calificó a sí mismo 5/5 antes de que llegara el
+  // juez. Evaluar a @check exige un juez con OTRO handle.
+  if (opts.role === "check" && judge === "check")
+    return { error: "para evaluar a @check primero elige un @eval en «Equipo del espacio»: si no, @check se calificaría a sí mismo" };
   const who = (await resolvedAgents()).find((a) => a.handle === judge);
   const from =
     opts.role === "plan"
@@ -149,7 +153,7 @@ export async function startEval(opts: {
   const msg = await db.getMessage(rootId);
   if (msg) bus.publish(bus.ch.room(await currentNamespace(), src.channelId), { t: "message:new", msg });
 
-  const meta: EvalMeta = { of: src.id, config, base, originalPr: src.prUrl, startedAt: now() };
+  const meta: EvalMeta = { of: src.id, config, base, originalPr: src.prUrl, startedAt: now(), judge };
   const status = opts.role === "plan" ? "planning" : opts.role === "build" ? "building" : "checking";
   const rows = await dbq(
     // Sin pr_url a propósito, también en el de @check: con él, el sondeo de PRs y el webhook lo
@@ -301,10 +305,8 @@ export async function evalCheckDone(run: Run, meta: EvalMeta, sub: string, pass:
   const output = `${pass ? "✅ pasa" : "❌ no pasa"}\n${findings}`.slice(0, 8000);
   await saveMeta(run.id, { ...meta, stepDoneAt: now(), output });
   const src = await R.getRun(meta.of);
-  const judge = await judgeHandle();
-  // Si el juez cae en @check, NO puede ser el @check evaluado: fuera el override del hilo y
-  // otra conversación. Con @eval no hace falta.
-  if (judge === "check") await setThreadOverrides(run.channelId, run.rootMsgId, { repo: run.repo });
+  // El juez de un eval de @check siempre es @eval (lo exige startEval).
+  const judge = meta.judge ?? "eval";
   const pr = R.parsePrUrl(meta.originalPr);
   const { prDiff } = await import("../connectors/github.server");
   const diff = pr ? await prDiff(sub, pr.repo, pr.number, JUDGE_DIFF_CHARS) : null;
@@ -330,7 +332,6 @@ export async function evalCheckDone(run: Run, meta: EvalMeta, sub: string, pass:
       `## El PR\n${diff ?? "(no pude leer su diff)"}\n\n## A · ${configLabel(meta.config)}\n${output}\n\n## B · el @check original (al aprobar)\n${origFindings || "(sin hallazgos guardados)"}\n\n` +
       `Cierra con factory_eval_score (runId ${run.id}).`,
     origin,
-    judge === "check" ? ":judge" : "",
   );
 }
 
@@ -353,8 +354,7 @@ async function groupCost(suffix: string): Promise<{ costUsd: number; models: str
 }
 
 /** La conversación del juez: @eval, o @check (en otra conversación si también es el evaluado). */
-export const judgeSuffix = (runId: number, role: EvalRole, judge: "eval" | "check") =>
-  judge === "eval" ? `-eval-factory-${runId}` : role === "check" ? `-check-factory-${runId}:judge` : `-check-factory-${runId}`;
+export const judgeSuffix = (runId: number, judge: "eval" | "check") => `-${judge}-factory-${runId}`;
 
 /** El juez calificó: se guarda (con el costo del rol), se borra la rama si hay y el eval cierra. */
 export async function evalScored(run: Run, meta: EvalMeta, result: EvalResult, sub: string, judge: "eval" | "check"): Promise<void> {
@@ -369,7 +369,7 @@ export async function evalScored(run: Run, meta: EvalMeta, result: EvalResult, s
   void R.refreshRoom(run.channelId);
   await R.postInThread(run, judge, evalResultMarkdown(meta.config, result, cost?.costUsd ?? null, cost?.models));
   // El costo del JUEZ se sabe cuando su turno termina y el worker lo reporta: se pide después.
-  const suffix = judgeSuffix(run.id, meta.config.role, judge);
+  const suffix = judgeSuffix(run.id, judge);
   setTimeout(() => {
     void (async () => {
       const jc = await groupCost(suffix);

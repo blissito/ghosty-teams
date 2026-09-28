@@ -456,18 +456,20 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
         required: ["scores", "vs_original"],
       },
       handler: async (sub, a) => {
-        if (dest?.handle && dest.handle !== "check" && dest.handle !== "eval") return { ok: false, error: "sólo el juez (@eval, o @check si no hay) califica un eval" };
         const run = await runOf(dest, a.runId);
         if (!run) return { ok: false, error: "no encuentro el eval de este hilo" };
         const E = await import("./factory-evals.server");
         const meta = await E.evalMeta(run.id);
         if (!meta) return { ok: false, error: "este pedido no es un eval: usa factory_check_verdict" };
+        // Sólo el juez que el eval fijó al nacer: el rol evaluado no se califica a sí mismo.
+        const judge = meta.judge ?? "check";
+        if (dest?.handle !== judge) return { ok: false, error: `sólo @${judge} califica este eval; tu paso ya terminó` };
         if (run.status !== "checking" || !meta.stepDoneAt || meta.result)
           return { ok: false, error: `el eval no espera calificación todavía (está en ${run.status})` };
         const { parseEvalScore } = await import("./factory-evals");
         const result = parseEvalScore(meta.config.role, a);
         if ("error" in result) return { ok: false, error: result.error };
-        await E.evalScored(run, meta, result, sub, dest?.handle === "eval" ? "eval" : "check");
+        await E.evalScored(run, meta, result, sub, judge);
         return { ok: true, note: "Calificación guardada: la tabla ya está en el hilo. Cierra con UNA línea con lo más importante que viste (sin repetir notas ni tabla)." };
       },
     },
