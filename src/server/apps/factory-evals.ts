@@ -15,6 +15,14 @@ export const EVAL_CRITERIA = {
   scope: "Sólo lo pedido: nada fuera de alcance",
 } as const;
 export type EvalCriterion = keyof typeof EVAL_CRITERIA;
+
+// Nombre corto de cada criterio para la tabla del hilo.
+export const EVAL_SHORT: Record<EvalCriterion, string> = {
+  plan: "Cumple el plan",
+  tests: "Pruebas",
+  maintainability: "Mantenible",
+  scope: "Alcance",
+};
 export type EvalVerdict = "worse" | "same" | "better";
 
 export type EvalConfig = { role: "build"; agent?: string | null; model?: string | null };
@@ -43,9 +51,22 @@ export function parseEvalScore(a: Record<string, unknown>): EvalResult | { error
 export const evalAverage = (s: Record<EvalCriterion, number>) =>
   Math.round((Object.values(s).reduce((n, x) => n + x, 0) / Object.keys(s).length) * 10) / 10;
 
-/** Nombre corto de una configuración para la tabla: «@build · deepseek · flash». */
+/** Nombre de una configuración: «build con Grey · terra». Sin «@»: en el chat sería una mención. */
 export function configLabel(c: EvalConfig): string {
-  return [`@${c.role}`, c.agent, c.model].filter(Boolean).join(" · ");
+  const who = [c.agent, c.model].filter(Boolean).join(" · ");
+  return who ? `${c.role} con ${who}` : c.role;
+}
+
+/** El resultado del juez como lo lee una persona en el hilo: veredicto arriba, tabla, porqué. */
+export function evalResultMarkdown(c: EvalConfig, r: EvalResult): string {
+  const vs = { worse: "⬇️ peor que el PR original", same: "↔️ igual que el PR original", better: "⬆️ mejor que el PR original" }[r.vsOriginal];
+  const rows = (Object.keys(EVAL_SHORT) as EvalCriterion[]).map((k) => `| ${EVAL_SHORT[k]} | ${r.scores[k]}/5 |`).join("\n");
+  return (
+    `🧪 **Eval: ${configLabel(c)} — ${evalAverage(r.scores)}/5** · ${vs}\n\n` +
+    `| Criterio | Nota |\n|---|---|\n${rows}\n` +
+    (r.notes ? `\n**Por qué:** ${r.notes}\n` : "") +
+    `\n_La rama del eval ya se borró. El resumen por modelo está en la página de la Fábrica._`
+  );
 }
 
 export type EvalRow = {

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { configLabel, evalBranch, parseEvalScore, summarizeEvals } from "./factory-evals";
+import { configLabel, evalBranch, evalResultMarkdown, parseEvalScore, summarizeEvals } from "./factory-evals";
 
 const ok = { scores: { plan: 5, tests: 4, maintainability: 3, scope: 5 }, vs_original: "same", notes: "bien" };
 
@@ -25,9 +25,17 @@ describe("evals de la fábrica", () => {
       { config: opus, result: r, buildSeconds: 300 },
       { config: opus, result: null, buildSeconds: 500 },
     ]);
-    expect(s.map((x) => x.label)).toEqual(["@build · opus", "@build · flash"]);
+    expect(s.map((x) => x.label)).toEqual(["build con opus", "build con flash"]);
     expect(s[0]).toMatchObject({ runs: 2, scored: 1, avg: 4.3, same: 1, medianBuildSeconds: 400 });
     expect(s[1]).toMatchObject({ avg: 2, worse: 1 });
-    expect(configLabel({ role: "build", agent: "Gaspar", model: null })).toBe("@build · Gaspar");
+    expect(configLabel({ role: "build", agent: "Gaspar", model: null })).toBe("build con Gaspar");
+    expect(configLabel({ role: "build", agent: "Grey", model: "terra" })).toBe("build con Grey · terra");
+  });
+
+  it("el resultado sale como tabla y sin menciones", () => {
+    const md = evalResultMarkdown({ role: "build", agent: "Grey" }, parseEvalScore(ok) as any);
+    expect(md).toContain("build con Grey — 4.3/5");
+    expect(md).toContain("| Mantenible | 3/5 |");
+    expect(md).not.toContain("@build");
   });
 });

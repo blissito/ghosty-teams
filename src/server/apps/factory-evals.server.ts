@@ -8,7 +8,7 @@
 //  - @check no revisa: es el juez. Recibe los dos diffs y califica con factory_eval_score;
 //  - al calificar, la rama se borra y el pedido cierra en `done`. No cuenta en los números.
 import { dbq } from "../../dbq.server";
-import { evalBranch, type EvalConfig, type EvalResult, type EvalRow, EVAL_CRITERIA, configLabel, evalAverage } from "./factory-evals";
+import { evalBranch, type EvalConfig, type EvalResult, type EvalRow, EVAL_CRITERIA, configLabel, evalResultMarkdown } from "./factory-evals";
 import type { Run } from "./factory-runs.server";
 
 export type EvalMeta = {
@@ -63,9 +63,11 @@ export async function startEval(opts: {
   const { resolvedAgents } = await import("../../agents.server");
   const who = (await resolvedAgents()).find((a) => a.handle === "check");
   const body =
-    `🧪 **Eval del pedido #${src.id}** «${src.title}» · ${configLabel(config)}\n\n` +
-    `Mismo plan firmado (v${src.planVersion}), desde el commit base \`${base.slice(0, 7)}\` del PR original. ` +
-    `No abre PR: la rama se borra al calificar. Al final @check lo compara con ${src.prUrl}.`;
+    `🧪 **Eval del pedido #${src.id}:** «${src.title}»\n\n` +
+    `- **Construye:** ${configLabel(config)}\n` +
+    `- **Parte de:** el mismo plan firmado (v${src.planVersion}) y el commit base \`${base.slice(0, 7)}\` del PR original\n` +
+    `- **Compara con:** ${src.prUrl}\n\n` +
+    `_No abre PR: la rama se borra al calificar._`;
   const { id: rootId } = await db.postAgent(src.channelId, null, body, "msg", who?.handle ?? "check", who?.name ?? "check", "general", who?.avatar ?? "");
   const msg = await db.getMessage(rootId);
   if (msg) bus.publish(bus.ch.room(await currentNamespace(), src.channelId), { t: "message:new", msg });
@@ -151,17 +153,7 @@ export async function evalScored(run: Run, meta: EvalMeta, result: EvalResult, s
   if (run.repo && run.branch) await deleteEvalBranch(sub, run.repo, run.branch).catch(() => false);
   const passed = await R.applyEvent(run, "check_pass").catch(() => null);
   if (passed) await R.applyEvent(passed, "close").catch(() => null);
-  const vs = { worse: "peor que", same: "igual que", better: "mejor que" }[result.vsOriginal];
-  const lines = Object.entries(result.scores)
-    .map(([k, v]) => `${EVAL_CRITERIA[k as keyof typeof EVAL_CRITERIA]}: **${v}**/5`)
-    .join(" · ");
-  await R.postInThread(
-    run,
-    "check",
-    `🧪 **${configLabel(meta.config)}: ${evalAverage(result.scores)}/5**, ${vs} el PR original.\n${lines}` +
-      (result.notes ? `\n\n${result.notes}` : "") +
-      `\n\nLa rama del eval ya se borró. El resumen por modelo está en la página de la Fábrica.`,
-  );
+  await R.postInThread(run, "check", evalResultMarkdown(meta.config, result));
 }
 
 /** Evals de un room para la tabla de la página. */
