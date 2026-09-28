@@ -297,6 +297,10 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
               "Con pass=true: cuánto cuidado necesita la revisión humana. La plataforma ya lo sube a high si el PR toca " +
               "auth, migraciones, dependencias, API pública, .github/ o es grande; tú puedes subirlo por lógica delicada, nunca bajarlo.",
           },
+          evidencePath: {
+            type: "string",
+            description: "Con pass=true y preview: la ruta de la pantalla que cambió (p. ej. /agenda). La plataforma la captura en escritorio y móvil para la tarjeta.",
+          },
           readFirst: {
             type: "array",
             maxItems: 5,
@@ -392,6 +396,8 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
             "```gt-verdict\n" + JSON.stringify({ runId: run.id }) + "\n```\n" +
               "🏁 La fábrica terminó su parte: el PR espera tu revisión.",
           );
+          // Evidencia visual: la preview capturada en escritorio y móvil, en segundo plano.
+          void import("./factory-shots.server").then((S) => S.captureVerdictShots(run.id, a.evidencePath ? String(a.evidencePath) : null));
           return { ok: true, status: next.status, note: "La plataforma ya avisó en el hilo y sacó el PR de borrador. Termina sin repetirlo." };
         }
         if (!findings) return { ok: false, error: "con pass=false los hallazgos son obligatorios" };

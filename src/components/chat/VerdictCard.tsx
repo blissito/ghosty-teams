@@ -114,6 +114,21 @@ export function VerdictCard({ card, channelId }: { card: { runId: number }; chan
             </ol>
           </div>
         )}
+        {st.shots.length > 0 && (
+          // Cómo se ve la preview (escritorio y móvil). Clic = tamaño completo.
+          <div className="mt-2.5 flex items-start gap-2">
+            {st.shots.map((s) => (
+              <a key={s.label} href={s.url} target="_blank" rel="noreferrer" className="block overflow-hidden rounded-md border border-border hover:border-brand">
+                <img
+                  src={s.url}
+                  alt={s.label === "mobile" ? t("Preview en móvil") : t("Preview en escritorio")}
+                  loading="lazy"
+                  className={s.label === "mobile" ? "h-32 w-auto" : "h-32 w-auto max-w-[14rem] object-cover object-top"}
+                />
+              </a>
+            ))}
+          </div>
+        )}
         <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
           {st.preview.state === "ready" && st.preview.url && (
             <a href={st.preview.url} target="_blank" rel="noreferrer" className={`${btn} border-brand text-brand hover:bg-brand/10`}>

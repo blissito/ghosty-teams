@@ -618,13 +618,18 @@ export const factoryVerdictFn = createServerFn({ method: "POST" })
       risk?: import("./factory-risk").RiskLevel;
       riskReasons?: import("./factory-risk").RiskReason[];
       readFirst?: import("./factory-risk").ReadFirst[];
+      shots?: import("./factory-shots.server").Shot[];
+      shotPath?: string | null;
     } | null = null;
     try {
       verdict = rows[0]?.verdict_json ? JSON.parse(String(rows[0].verdict_json)) : null;
     } catch {
       verdict = null;
     }
-    return { runId: run.id, status: run.status, repo: run.repo, prUrl: run.prUrl, verdict, preview: await R.runPreview(run.id) };
+    // Las capturas se firman al pintar (la llave es del storage de Teams, privada).
+    const storage = await import("../storage.server");
+    const shots = (verdict?.shots ?? []).map((s) => ({ label: s.label, url: storage.signedUrlEstable(s.key, 3600) }));
+    return { runId: run.id, status: run.status, repo: run.repo, prUrl: run.prUrl, verdict, shots, preview: await R.runPreview(run.id) };
   });
 
 /** «Mezclar» desde la tarjeta del veredicto: con el GitHub de quien pica. */

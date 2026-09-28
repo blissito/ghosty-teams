@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { classifyPrRisk, mergeCheckRisk } from "./factory-risk";
+import { shotUrl } from "./factory-shots.server";
 
 const f = (filename: string, additions = 5, deletions = 0) => ({ filename, additions, deletions });
 
@@ -33,5 +34,16 @@ describe("riesgo de un PR", () => {
     const many = Array.from({ length: 8 }, (_, i) => ({ file: `a${i}.ts`, lines: "1-2" }));
     expect(mergeCheckRisk(low, { readFirst: [...many, { nope: 1 }] }).readFirst).toHaveLength(5);
     expect(mergeCheckRisk(low, { readFirst: "x" }).readFirst).toEqual([]);
+  });
+});
+
+describe("URL de la captura de la preview", () => {
+  it("conserva la llave y cambia sólo la ruta", () => {
+    const p = "https://sb-x-3000.sandboxes.easybits.cloud/?k=abc";
+    expect(shotUrl(p)).toBe(p);
+    expect(shotUrl(p, "/ventas")).toBe("https://sb-x-3000.sandboxes.easybits.cloud/ventas?k=abc");
+    expect(shotUrl(p, "/agenda?dia=2")).toBe("https://sb-x-3000.sandboxes.easybits.cloud/agenda?k=abc&dia=2");
+    expect(shotUrl(p, "https://evil.com/")).toBe(p);
+    expect(shotUrl(p, "//evil.com/x")).toBe(p);
   });
 });

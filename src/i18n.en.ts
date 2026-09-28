@@ -617,6 +617,8 @@ export const en: Record<string, string> = {
   "léelo con calma": "read it carefully",
   "revisión rápida": "quick review",
   "Lee primero": "Read first",
+  "Preview en móvil": "Preview on mobile",
+  "Preview en escritorio": "Preview on desktop",
   "Pasan a la primera": "Pass first review",
   "Tiempo de revisión": "Review time",
   "Eval #{n} en marcha: el resultado llega a su hilo.": "Eval #{n} running: the result lands in its thread.",
