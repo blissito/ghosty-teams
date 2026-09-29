@@ -370,12 +370,16 @@ export async function evalScored(run: Run, meta: EvalMeta, result: EvalResult, s
   await R.postInThread(run, judge, evalResultMarkdown(meta.config, result, cost?.costUsd ?? null, cost?.models));
   // El costo del JUEZ se sabe cuando su turno termina y el worker lo reporta: se pide después.
   const suffix = judgeSuffix(run.id, judge);
+  // Fuera del request no hay tenant: sin `withNamespace` todo lo del timer fallaba en silencio
+  // (así se quedó el #8 sin costo del juez).
+  const { currentNamespace, withNamespace } = await import("../tenant.server");
+  const ns = await currentNamespace();
   setTimeout(() => {
-    void (async () => {
+    void withNamespace(ns, async () => {
       const jc = await groupCost(suffix);
       const now = await evalMeta(run.id);
       if (jc && now) await saveMeta(run.id, { ...now, judgeCostUsd: jc.costUsd });
-    })().catch(() => {});
+    }).catch(() => {});
   }, 120_000);
 }
 
