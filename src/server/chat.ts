@@ -1004,7 +1004,13 @@ export const askAgent = createServerFn({ method: "POST" })
         return { ok: false as const, drenando: true as const };
       }
     }
-    const channel = await db.getChannel(data.slug);
+    // En un hilo, el room es el de la RAÍZ, no el `slug` que manda el cliente (el room que
+    // tiene abierto). Con un hilo de #Denik abierto desde #Mailmask, el turno corría «en
+    // Mailmask»: GitHub decía que agenda no estaba conectado y el relevo salía a otro room
+    // (2026-10-01). Mismo criterio que `postMessage`.
+    const rootForChannel = data.parentId != null ? await db.getMessage(data.parentId).catch(() => null) : null;
+    const channel =
+      rootForChannel?.channel_id != null ? await db.getChannelById(rootForChannel.channel_id) : await db.getChannel(data.slug);
     if (!channel) throw new Error("Canal no encontrado");
 
     // ⚠️ AUTORIZACIÓN — ver `canInvokeAgent`. Antes no había ninguna.
@@ -1328,7 +1334,7 @@ export const askAgent = createServerFn({ method: "POST" })
         tarea: tareaDelTurno,
         // Con qué RETOMARLO si muere. `tarea` va recortada a 60 para nombrar la fila del
         // panel, así que no sirve para re-disparar: hace falta el texto íntegro.
-        body: data.body, slug: data.slug, shellId: data.shellId ?? null,
+        body: data.body, slug: channel.slug, shellId: data.shellId ?? null,
         attachments: data.attachments ?? [],
         handle: data.handle,
         invokerMessageIds,
