@@ -834,8 +834,10 @@ export async function announcePreviews(): Promise<void> {
     if (next.state === "ready")
       // Mientras Build sigue empujando commits no se anuncia cada uno (sería ruido): la tarjeta
       // ya muestra la liga vigente. Se anuncia al llegar a revisión, escalado o PR listo.
-      if (run.status !== "building")
-        await postInThread(run, "build", `🔎 **Preview ${row.preview_sha && !sameSha ? "actualizada" : "lista"}**${next.provider ? ` (${next.provider})` : ""} · [Abrir](${next.url})`);
+      {
+        if (run.status !== "building")
+          await postInThread(run, "build", `🔎 **Preview ${row.preview_sha && !sameSha ? "actualizada" : "lista"}**${next.provider ? ` (${next.provider})` : ""} · [Abrir](${next.url})`);
+      }
     else if (next.state === "needs_env")
       await postInThread(
         run,
