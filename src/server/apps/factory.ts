@@ -194,7 +194,15 @@ async function pickFactoryRoom(me: { sub: string; isOwner?: boolean }, cfg: Fact
   const db = await import("../../db.server");
   const ids = new Set(await factoryRoomIds());
   const channels = (await db.listChannels(me.sub, !!me.isOwner)).filter((c) => ids.has(c.id));
-  const room = channels.find((c) => c.id === Number(roomId)) ?? channels.find((c) => c.id === cfg?.roomId) ?? channels[0] ?? null;
+  // Sin room pedido: el que tiene el pedido más reciente (donde se está trabajando), no el de la
+  // instalación — con MailMask activo, /factory abría #denik y parecía que faltaba el pedido.
+  const { dbq } = await import("../../dbq.server");
+  const [latest] = await dbq(
+    `SELECT channel_id FROM gt_factory_runs WHERE COALESCE(kind, '') != 'eval' ORDER BY updated_at DESC LIMIT 1`,
+    [],
+  ).catch(() => []);
+  const recent = latest ? channels.find((c) => c.id === Number(latest.channel_id)) : undefined;
+  const room = channels.find((c) => c.id === Number(roomId)) ?? recent ?? channels.find((c) => c.id === cfg?.roomId) ?? channels[0] ?? null;
   if (!room) throw new Error("no ves ningún room con repos de la fábrica");
   return { room, channels, repos: (await db.listRoomRepos(room.id)).map((r) => r.repo) };
 }
