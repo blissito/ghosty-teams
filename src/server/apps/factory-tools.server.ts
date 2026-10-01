@@ -753,6 +753,25 @@ export async function factoryContext(dest: ToolDest | null, toolChannel: ToolCha
           (run.loops ? `, ${run.loops} vuelta(s) de check` : "") +
           ". Usa su runId en las tools factory_*.",
       );
+    } else if (h) {
+      // Hilo SIN pedido pero colgado de la tarjeta de un PR (el aviso «PR #44 abierto»): «@check
+      // revisa» es revisar ESE PR, como «@coderabbit review» en GitHub. Antes @check contestaba
+      // «no hay pedido, ¿qué PR?» con la tarjeta del PR justo arriba (Denik, 2026-09-30).
+      const db = await import("../../db.server");
+      const rootMsg = await db.getMessage(root).catch(() => null);
+      const { extractAllPr } = await import("../../lib/ebdoc");
+      const pr = rootMsg?.body ? extractAllPr(rootMsg.body)[0] : undefined;
+      if (pr) {
+        const ref = `${pr.repo}#${pr.number}`;
+        parts.push(
+          `Este hilo es del PR ${ref} «${pr.title}» de ${pr.author} (https://github.com/${pr.repo}/pull/${pr.number}). NO hay pedido de la fábrica: ` +
+            (h === "check"
+              ? `es una REVISIÓN SUELTA de ese PR. Léelo con github_get_pr, github_pr_files y github_pr_checks, aplica tus mismos criterios (seguridad, pruebas, mantenibilidad, CI) y deja la revisión en GitHub con github_create_review (APPROVE o REQUEST_CHANGES, hallazgos con archivo:línea). En el hilo, 1 a 4 renglones con el veredicto. No uses factory_check_verdict ni preguntes qué PR es.`
+              : h === "build"
+                ? `si te piden un cambio, hazlo en la rama de ese PR (github_checkout / github_push_files) y no abras otro. No uses factory_build_done.`
+                : `si te piden planear algo sobre él, planéalo a partir de ese PR.`),
+        );
+      }
     }
   }
   // Sin CI, «verde» no significa nada: el primer pedido que conviene es el CI starter.
