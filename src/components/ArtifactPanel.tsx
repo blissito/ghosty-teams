@@ -1,4 +1,5 @@
 import { RunPanel } from "./chat/RunPanel";
+import { SprintCard } from "./chat/SprintCard";
 import { SubagentPanel } from "./chat/SubagentPanel";
 import { AnimatePresence, motion } from "motion/react";
 import { AdsCampaignPanel } from "./chat/AdsCampaignPanel";
@@ -194,6 +195,8 @@ export type ArtifactView =
   | { kind: "campaign"; title: string; campaignId: number; channelId: number; version?: number }
   // Un pedido de la Software Factory: etapas, plan, veredicto y bitácora (RunPanel).
   | { kind: "run"; title: string; runId: number; channelId: number }
+  // Un sprint de la fábrica: tickets, detalle, ediciones y aprobación (SprintCard expandida).
+  | { kind: "sprint"; title: string; sprintId: number; channelId: number }
   // Un subagente del turno: tarea, contadores, pasos y resultado (SubagentPanel).
   | { kind: "subagent"; title: string; runId: string; handle: string; channelId: number | null; preview?: import("../lib/ebdoc").SubagentState }
   // Índice Cowork: lista los documentos de UN caso (room) como tiles; clic abre uno.
@@ -772,6 +775,8 @@ export default function ArtifactPanel({
                       ? `campaign:${artifact.campaignId}`
                       : artifact.kind === "run"
                         ? `run:${artifact.runId}`
+                        : artifact.kind === "sprint"
+                          ? `sprint:${artifact.sprintId}`
                         : artifact.kind === "subagent"
                           ? `subagent:${artifact.runId}`
                         : `${artifact.kind}:${artifact.src}`;
@@ -1276,6 +1281,7 @@ export default function ArtifactPanel({
     artifact.kind === "artifact" ||
     artifact.kind === "campaign" ||
     artifact.kind === "run" ||
+    artifact.kind === "sprint" ||
     artifact.kind === "subagent"
       ? undefined
       : artifact.kind === "docindex"
@@ -2416,6 +2422,8 @@ export default function ArtifactPanel({
                           </div>
                         ) : null}
                       </div>
+                    ) : artifact.kind === "sprint" ? (
+                      <div className="p-4"><SprintCard card={{ sprintId: artifact.sprintId }} channelId={artifact.channelId} expanded /></div>
                     ) : artifact.kind === "subagent" ? (
                       <SubagentPanel runId={artifact.runId} handle={artifact.handle} preview={artifact.preview} />
                     ) : artifact.kind === "run" ? (

@@ -554,8 +554,20 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
         // Repo no listo para agentes → el primer ticket es prepararlo (como empieza Factory).
         const withPrep = await S.withPrepFirst(sub, repo, items);
         try {
+          // Sin `sprint_id` pero con un BORRADOR en este hilo: es una versión nueva de ése, no
+          // otro sprint. Antes cada corrección de @plan publicaba otra tarjeta (MailMask, 01-oct).
+          let sprintId = a.sprint_id ? Number(a.sprint_id) : undefined;
+          const root = threadRoot(dest);
+          if (!sprintId && root) {
+            const { dbq } = await import("../../dbq.server");
+            const [draft] = await dbq(
+              "SELECT id FROM gt_factory_sprints WHERE channel_id = ? AND root_msg_id = ? AND status = 'draft' ORDER BY id DESC LIMIT 1",
+              [dest.channelId, root],
+            ).catch(() => []);
+            if (draft) sprintId = Number(draft.id);
+          }
           const sprint = await S.submitSprint({
-            sprintId: a.sprint_id ? Number(a.sprint_id) : undefined,
+            sprintId,
             channelId: dest.channelId,
             repo,
             goal,

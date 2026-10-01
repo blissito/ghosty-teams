@@ -1977,4 +1977,5 @@ export const en: Record<string, string> = {
   "Falló": "Failed",
   "Detenido": "Stopped",
   "Sin detalle guardado para este subagente.": "No saved detail for this subagent.",
+  "Ver sprint": "View sprint",
 };

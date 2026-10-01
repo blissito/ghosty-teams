@@ -248,7 +248,7 @@ export async function handoff(
   // Una conversación por corrida y rol: el contexto viaja en el encargo, y @check no hereda
   // lo que @build pensó.
   const groupId = await agentGroupId(agent, `factory-${run.id}${groupSuffix}`);
-  const { enqueueWakeup, mintWakeRef, armWakeups } = await import("../wakeups.server");
+  const { enqueueWakeup, mintWakeRef } = await import("../wakeups.server");
   const ok = await enqueueWakeup({
     key: `factory:${run.id}:${to}:${Date.now()}`,
     ref: mintWakeRef({
@@ -262,7 +262,9 @@ export async function handoff(
     origin,
     dueAt: Math.floor(Date.now() / 1000) + 2,
   });
-  if (ok) armWakeups(ns);
+  // `kick`, no `arm`: con sólo armar, el relevo esperaba al siguiente tick (hasta 30 s) y la
+  // persona veía «nada pasó» tras firmar (MailMask, 2026-10-01).
+  if (ok) (await import("../wakeups.server")).kickWakeups(ns);
   return ok;
 }
 

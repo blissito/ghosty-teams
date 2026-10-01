@@ -6,7 +6,8 @@
 //    cerró sin merge pide decisión (reintentar o quitar).
 //  - Terminado: morado «merged», como todo lo mezclado.
 // Lee su estado de la base (el fence sólo trae el id) y se refresca con los `refresh` del room.
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useContext, useEffect, useState } from "react";
+import { ChatCtx } from "./message";
 import { Check, ChevronDown, Loader2, Pencil } from "lucide-react";
 import { useT } from "../../i18n";
 import { useRtSubscribe } from "../../utils/rt-bus";
@@ -29,8 +30,14 @@ const STATUS: Record<string, { label: string; cls: string }> = {
   skipped: { label: "Quitado", cls: "bg-surface-3 text-muted line-through" },
 };
 
-export function SprintCard({ card, channelId }: { card: { sprintId: number }; channelId: number }) {
+/**
+ * En el hilo va COMPACTA (título, avance, la acción principal y «Ver sprint»); los tickets,
+ * su detalle y las ediciones viven en el panel lateral (`expanded`). Antes la tarjeta entera
+ * —8 tickets— se pintaba en el hilo y cada versión empujaba la conversación (01-oct).
+ */
+export function SprintCard({ card, channelId, expanded = false }: { card: { sprintId: number }; channelId: number; expanded?: boolean }) {
   const t = useT();
+  const { onOpenArtifact } = useContext(ChatCtx);
   const [st, setSt] = useState<SprintView | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [err, setErr] = useState("");
@@ -73,6 +80,55 @@ export function SprintCard({ card, channelId }: { card: { sprintId: number }; ch
   const included = st.items.filter((i) => i.included);
   const merged = included.filter((i) => i.status === "merged" || i.status === "skipped").length;
   const byKey = new Map(st.items.map((i) => [i.key, i]));
+  const working = included.filter((i) => i.status === "active" || i.status === "pr").length;
+  const openPanel = () => onOpenArtifact?.({ kind: "sprint", title: st.title, sprintId: st.id, channelId });
+
+  if (!expanded) {
+    return (
+      <div className="mt-1.5 max-w-xl overflow-hidden rounded-lg gt-card">
+        <button type="button" onClick={openPanel} className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-surface-3/40">
+          <span className="text-[11px] font-bold uppercase tracking-wide text-ink">🧩 {t("Sprint")}</span>
+          <span className="min-w-0 flex-1 truncate text-sm font-semibold text-ink">{st.title}</span>
+          <span
+            className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold ${
+              draft ? "bg-amber-500/15 text-amber-700 dark:text-amber-400" : done ? STATUS.merged.cls : "bg-brand/15 text-brand"
+            }`}
+          >
+            {draft ? t("Borrador") : done ? t("Terminado") : `${merged}/${included.length}`}
+          </span>
+        </button>
+        <div className="px-3 pb-3">
+          <div className="flex gap-1" role="img" aria-label={`${merged} / ${included.length}`}>
+            {included.map((i) => (
+              <div key={i.id} className={`h-1.5 flex-1 rounded-full ${i.status === "merged" || i.status === "skipped" ? "bg-violet-500" : i.status === "pr" ? "bg-emerald-500" : i.status === "active" ? "bg-brand" : "bg-surface-3"}`} />
+            ))}
+          </div>
+          <p className="mt-1.5 text-xs text-muted">
+            {included.length} {included.length === 1 ? t("ticket") : t("tickets")}
+            {!draft && working ? ` · ${working} ${t("en curso")}` : ""}
+            {st.repo && <span className="ml-1 font-mono">· {st.repo}</span>}
+          </p>
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            {draft && st.canEdit && (
+              <button
+                type="button"
+                disabled={!!busy || included.length === 0}
+                onClick={() => void run("approve", () => factorySprintApproveFn({ data: { sprintId: st.id } }))}
+                className="flex items-center gap-1.5 rounded-full bg-brand px-3 py-1 text-xs font-bold text-brand-fg hover:opacity-90 disabled:opacity-60"
+              >
+                {busy === "approve" ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />}
+                {t("Crear sprint")} · {included.length}
+              </button>
+            )}
+            <button type="button" onClick={openPanel} className="rounded-full border border-border px-3 py-1 text-xs font-semibold text-muted hover:text-ink">
+              {t("Ver sprint")}
+            </button>
+          </div>
+          {err && <p className="mt-2 text-xs text-red-600 dark:text-red-400">{err}</p>}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="mt-1.5 max-w-xl overflow-hidden rounded-lg gt-card">
