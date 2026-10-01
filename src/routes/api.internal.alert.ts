@@ -77,8 +77,12 @@ export const Route = createFileRoute("/api/internal/alert")({
 
         // @ghosty la revisa en su hilo (una vez por problema al día). Best-effort: si falla,
         // la alerta ya está publicada.
+        // El origin sale de las cabeceras del proxy (`reqOrigin`), no de `request.url`: detrás
+        // del proxy éste llega en http, el 308 a https tira el Authorization y todas las tools
+        // del turno contestan «credencial inválida» (debut de @minighosty, 1-oct).
+        const origin = await (await import("../origin.server")).reqOrigin();
         await import("../server/alert-triage.server")
-          .then((m) => m.enqueueAlertTriage({ ns, roomId: room.id, alertId: id, title, detail, origin: new URL(request.url).origin }))
+          .then((m) => m.enqueueAlertTriage({ ns, roomId: room.id, alertId: id, title, detail, origin }))
           .catch((e) => console.warn("[alert] triage", e));
 
         return Response.json({ ok: true, messageId: id });

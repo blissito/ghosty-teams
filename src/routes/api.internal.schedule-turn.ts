@@ -122,7 +122,8 @@ export const Route = createFileRoute("/api/internal/schedule-turn")({
           }),
           cause: String(body.by ?? "programado").slice(0, 60),
           text: text.slice(0, 4000),
-          origin: new URL(request.url).origin,
+          // `reqOrigin`, no `request.url`: tras el proxy llega en http y el 308 tira el Authorization.
+          origin: await (await import("../origin.server")).reqOrigin(),
           dueAt: Math.floor(dueAt),
         });
         armWakeups(ns);
