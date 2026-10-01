@@ -282,7 +282,7 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
         properties: {
           runId: { type: "number", description: "El pedido (si no, el del hilo)" },
           pass: { type: "boolean", description: "true = listo para revisión humana" },
-          findings: { type: "string", description: "Hallazgos (obligatorio si pass=false), en markdown breve" },
+          findings: { type: "string", description: "Hallazgos (obligatorio si pass=false), en markdown breve: una línea por hallazgo con archivo:línea y qué falta. Texto, no una lista de objetos." },
           blocked: {
             type: "boolean",
             description:
@@ -346,7 +346,10 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
             };
           }
         }
-        const findings = String(a.findings ?? "").trim();
+        // El esquema pide texto, pero el modelo a veces manda una LISTA de objetos
+        // ({file, line, issue}…): con `String()` le llegaba a @build «[object Object] ×4» y no
+        // sabía qué corregir (pedido #10, 01-oct). Se normaliza a markdown legible.
+        const findings = findingsText(a.findings);
         // Aprobar exige CI en verde, verificado aquí y no en la palabra del modelo. `none` (el
         // repo no tiene CI) se permite, pero se dice en la tarjeta.
         if (a.pass === true && run.prUrl) {
@@ -757,6 +760,25 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
       },
     },
   ];
+}
+
+/** Hallazgos de @check como markdown, vengan como texto, lista u objeto. */
+export function findingsText(raw: unknown): string {
+  if (raw == null) return "";
+  if (typeof raw === "string") return raw.trim();
+  const uno = (x: unknown): string => {
+    if (x == null) return "";
+    if (typeof x === "string") return x.trim();
+    if (typeof x !== "object") return String(x);
+    const o = x as Record<string, unknown>;
+    const lugar = [o.file ?? o.path, o.line ?? o.lines].filter((v) => v != null && v !== "").join(":");
+    const texto = [o.issue, o.message, o.finding, o.description, o.problem, o.detail, o.title].find((v) => typeof v === "string" && v.trim());
+    const arreglo = [o.fix, o.suggestion, o.expected].find((v) => typeof v === "string" && v.trim());
+    if (!texto && !lugar) return JSON.stringify(o);
+    return `${lugar ? `\`${lugar}\` — ` : ""}${texto ?? JSON.stringify(o)}${arreglo ? ` (arreglo: ${arreglo})` : ""}`;
+  };
+  if (Array.isArray(raw)) return raw.map(uno).filter(Boolean).map((t) => `- ${t}`).join("\n");
+  return uno(raw);
 }
 
 /** Bloque de contexto del turno: el papel del rol, la corrida del hilo y las alertas. null sin la app. */

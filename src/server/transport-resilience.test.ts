@@ -81,3 +81,13 @@ describe("un reinicio de Teams no mata los turnos durables", () => {
     expect(a).toMatch(/durableOpts\?\.onDurable\?\.\(durableTurnId\)/);
   });
 });
+
+describe("hallazgos de @check legibles", () => {
+  it("una lista de objetos se vuelve markdown, no [object Object]", async () => {
+    const { findingsText } = await import("./apps/factory-tools.server");
+    const t = findingsText([{ file: "src/login.ts", line: 12, issue: "no valida el token", fix: "rechazar vacío" }, "falta prueba de whoami"]);
+    expect(t).toBe("- `src/login.ts:12` — no valida el token (arreglo: rechazar vacío)\n- falta prueba de whoami");
+    expect(findingsText("  texto  ")).toBe("texto");
+    expect(t).not.toMatch(/object Object/);
+  });
+});
