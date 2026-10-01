@@ -4,6 +4,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // (candado perdido) no deja ninguno; y sólo se avisa cuando le toca a una persona.
 const sqls: { sql: string; args: unknown[] }[] = [];
 let updateWins = true;
+let pendingNotes: { id: number; by: string; text: string }[] = [];
 const notified: { recipients: string[]; body: string; url: string }[] = [];
 
 const row = (status: string) => ({ id: 7, channel_id: 3, root_msg_id: 99, topic: "general", title: "t", status, plan_version: 1, loops: 0, requested_by: "ana", approved_by: "beto" });
@@ -11,7 +12,17 @@ const row = (status: string) => ({ id: 7, channel_id: 3, root_msg_id: 99, topic:
 vi.mock("../../dbq.server", () => ({
   dbq: async (sql: string, args: unknown[] = []) => {
     sqls.push({ sql, args });
-    if (sql.startsWith("UPDATE gt_factory_runs SET status")) return updateWins ? [row(String(args[0]))] : [];
+    if (sql.startsWith("UPDATE gt_factory_runs SET status")) {
+      // Las columnas del patch van después del estado: `loops` se refleja en la fila.
+      const r: Record<string, unknown> = row(String(args[0]));
+      const cols = [...sql.matchAll(/, (\w+) = \?/g)].map((m) => m[1]);
+      cols.forEach((c, i) => (r[c] = args[1 + i]));
+      return updateWins ? [r] : [];
+    }
+    if (sql.startsWith("UPDATE gt_factory_notes")) {
+      const out = pendingNotes.splice(0);
+      return out;
+    }
     return [];
   },
 }));
@@ -27,7 +38,7 @@ vi.mock("../notify.server", () => ({
 vi.mock("../bus.server", () => ({ publish: () => {}, ch: { room: () => "r" } }));
 vi.mock("../tenant.server", () => ({ currentNamespace: async () => "ns" }));
 
-import { applyEvent } from "./factory-runs.server";
+import { applyEvent, takeNotes } from "./factory-runs.server";
 import type { Run } from "./factory-runs.server";
 
 const run = (status: Run["status"]): Run => ({
@@ -87,3 +98,34 @@ describe("avisos sólo cuando le toca a una persona", () => {
   });
 });
 
+
+describe("vueltas de check", () => {
+  it("un check_fail que no contó no suma vuelta ni escala", async () => {
+    const r = { ...run("checking"), loops: 2 };
+    const next = await applyEvent(r, "check_fail", { loops: 2 }, { actor: "check", data: { counted: false } });
+    expect(next.status).toBe("building");
+    expect(next.loops).toBe(2);
+  });
+  it("con la vuelta contada, la tercera escala", async () => {
+    const r = { ...run("checking"), loops: 2 };
+    const next = await applyEvent(r, "check_fail", { loops: 3 }, { actor: "check", data: { counted: true } });
+    expect(next.status).toBe("escalated");
+  });
+});
+
+describe("notas del pedido", () => {
+  it("el encargo de @build las incluye y las marca consumidas", async () => {
+    pendingNotes = [
+      { id: 2, by: "ana", text: "y el changelog" },
+      { id: 1, by: "@check", text: "faltan los docs del CLI" },
+    ];
+    const block = await takeNotes(7);
+    expect(block).toContain("## Notas de la persona y del equipo");
+    expect(block.indexOf("faltan los docs del CLI")).toBeLessThan(block.indexOf("y el changelog"));
+    const upd = sqls.find((s) => s.sql.startsWith("UPDATE gt_factory_notes"))!;
+    expect(upd.sql).toContain("consumed_at = unixepoch()");
+    expect(upd.sql).toContain("consumed_at IS NULL");
+    // Ya consumidas: el siguiente encargo no las repite.
+    expect(await takeNotes(7)).toBe("");
+  });
+});

@@ -1646,6 +1646,8 @@ export const en: Record<string, string> = {
   "Revisé el uptime del room": "Checked the room's uptime",
   "Quitando la URL del uptime": "Removing the URL from uptime",
   "Quité la URL del uptime": "Removed the URL from uptime",
+  "Dejando una nota en el pedido": "Leaving a note on the request",
+  "Dejé una nota en el pedido": "Left a note on the request",
 
   // Tarjeta de plan de la Software Factory.
   "Ver el plan completo": "See the full plan",
@@ -1701,7 +1703,9 @@ export const en: Record<string, string> = {
   "No pude despertar a @plan. Intenta otra vez.": "Couldn't wake @plan. Try again.",
   "¿No sabes qué pedir primero? @plan lee el repo y te propone pedidos listos para mandar.": "Not sure what to ask first? @plan reads the repo and proposes requests ready to send.",
   "Firma": "Sign-off",
-  "@check no pudo cerrarlo en 3 vueltas: decide si otra vuelta o replanear.": "@check couldn't close it in 3 rounds: decide whether to run another round or re-plan.",
+  "Te toca decidir": "Your call",
+  "{n} vueltas sin cerrar: ¿otra vuelta o replanear?": "{n} rounds without closing: another round or re-plan?",
+  "@build no puede resolverlo con sus herramientas: ¿otra vuelta o replanear?": "@build can't solve it with its tools: another round or re-plan?",
   "Cancelado.": "Cancelled.",
   "Terminado.": "Done.",
   "Vueltas de check": "Check rounds",

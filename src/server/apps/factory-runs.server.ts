@@ -25,6 +25,8 @@ export type Run = {
   requestedBy: string;
   /** Quien firmó el plan vigente; @build trabaja con sus credenciales. */
   approvedBy: string | null;
+  /** La cabeza del PR que @check revisó en su último veredicto (ver `countsLoop`). */
+  checkedSha?: string | null;
 };
 
 const toRun = (r: Record<string, any>): Run => ({
@@ -43,6 +45,7 @@ const toRun = (r: Record<string, any>): Run => ({
   taskRef: r.task_ref ?? null,
   requestedBy: String(r.requested_by),
   approvedBy: r.approved_by ?? null,
+  checkedSha: r.checked_sha ?? null,
 });
 
 export async function getRun(id: number): Promise<Run | null> {
@@ -82,7 +85,10 @@ export async function applyEvent(
   /** Para la bitácora: quién (persona o @rol) y el dato que explica la transición. */
   meta: { actor?: string | null; data?: Record<string, unknown> } = {},
 ): Promise<Run> {
-  const next = nextStatus(run.status, event, run.loops);
+  // `check_fail` llega con las vueltas YA decididas (`countsLoop`): `nextStatus` suma una a lo
+  // que recibe, así que se le pasa lo de antes de esa suma. Sin vuelta contada, no escala.
+  const loopsBefore = event === "check_fail" && typeof patch.loops === "number" ? patch.loops - 1 : run.loops;
+  const next = nextStatus(run.status, event, loopsBefore);
   if (!next) throw new Error(`el pedido #${run.id} está en «${stageLabel(run.status)}»: no se puede ${event} ahora`);
   const cols = Object.keys(patch);
   const sets = ["status = ?", "updated_at = unixepoch()", ...cols.map((c) => `${c} = ?`)];
@@ -119,6 +125,48 @@ export async function logEvent(runId: number, type: string, actor: string | null
     type,
     data ? JSON.stringify(data) : null,
   ]).catch((e) => console.error("[factory] bitácora", e));
+}
+
+/** ¿El último `check_fail` del pedido fue una vuelta NO contada? (bitácora, `counted: false`) */
+export async function lastFailUncounted(runId: number): Promise<boolean> {
+  const [row] = await dbq("SELECT data_json FROM gt_factory_events WHERE run_id = ? AND type = 'check_fail' ORDER BY id DESC LIMIT 1", [runId]).catch(() => []);
+  try {
+    return row?.data_json ? JSON.parse(String(row.data_json)).counted === false : false;
+  } catch {
+    return false;
+  }
+}
+
+// ── Notas del pedido (`factory_note`) ───────────────────────────────────────
+
+export type RunNote = { by: string; text: string };
+
+/** El bloque que se agrega al encargo de @build. Vacío sin notas. */
+export function notesBlock(notes: RunNote[]): string {
+  if (!notes.length) return "";
+  return `\n\n## Notas de la persona y del equipo\n${notes.map((n) => `- ${n.by}: ${n.text}`).join("\n")}`;
+}
+
+/** Guarda una nota sobre el pedido (tabla + bitácora). */
+export async function addNote(runId: number, by: string, text: string): Promise<void> {
+  await dbq("INSERT INTO gt_factory_notes (run_id, text, by) VALUES (?, ?, ?)", [runId, text, by]);
+  await logEvent(runId, "note", by, { text: text.slice(0, 500) });
+}
+
+/**
+ * Las notas sin consumir, ya marcadas como consumidas (un solo UPDATE … RETURNING: dos
+ * encargos encimados no se las llevan las dos veces). Las llama cada encargo de @build.
+ */
+export async function takeNotes(runId: number): Promise<string> {
+  const rows = await dbq(
+    "UPDATE gt_factory_notes SET consumed_at = unixepoch() WHERE run_id = ? AND consumed_at IS NULL RETURNING id, by, text",
+    [runId],
+  ).catch(() => []);
+  return notesBlock(
+    rows
+      .sort((a, b) => Number(a.id) - Number(b.id))
+      .map((r) => ({ by: String(r.by), text: String(r.text) })),
+  );
 }
 
 /**
@@ -351,6 +399,7 @@ export async function decide(opts: {
       (again
         ? `${who} pidió otra vuelta. Revisa los últimos hallazgos de @check en este hilo, corrige en la misma rama y cierra con factory_build_done.`
         : `${who} aprobó el plan v${version}. Constrúyelo: rama nueva, código, pruebas, PR en BORRADOR, y cierra con factory_build_done.`) +
+        (await takeNotes(run.id)) +
         `\n\n## Plan aprobado (v${version})\n${plan?.planMd ?? ""}`,
       opts.origin,
     );

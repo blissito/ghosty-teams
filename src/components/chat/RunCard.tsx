@@ -25,6 +25,16 @@ const STEPS = [
   { key: "pr", label: "PR", statuses: ["pr_review", "done"] },
 ] as const;
 
+/**
+ * Pedido escalado: qué pasó, en una línea. Con las vueltas agotadas lo dice con el número; si
+ * no, escaló porque @build no lo puede resolver con sus herramientas (`check_blocked`).
+ */
+export function escalationLine(loops: number, t: (s: string) => string): string {
+  return loops >= 3
+    ? t("{n} vueltas sin cerrar: ¿otra vuelta o replanear?").replace("{n}", String(loops))
+    : t("@build no puede resolverlo con sus herramientas: ¿otra vuelta o replanear?");
+}
+
 export function RunCard({ card, channelId }: { card: RunCardData; channelId: number }) {
   const t = useT();
   const [st, setSt] = useState<State>(null);
@@ -76,16 +86,26 @@ export function RunCard({ card, channelId }: { card: RunCardData; channelId: num
           {STEPS.map((s, i) => {
             const done = closed ? st.status === "done" : i < current;
             const now = !closed && i === current;
+            // Escalado: el paso actual ya no es de @check sino de la persona, en ámbar.
+            const deciding = now && st.status === "escalated";
             return (
               <li key={s.key} className="flex flex-1 items-center gap-1">
                 <span
                   className={`flex-1 rounded-full px-2 py-1 text-center text-[11px] font-semibold ${
                     // Mezclado = el morado «merged» de GitHub; en curso, verde por paso hecho.
-                    now ? "bg-brand text-white" : done ? (st.status === "done" ? "bg-violet-600/15 text-violet-700 dark:text-violet-300" : "bg-emerald-600/15 text-emerald-700") : "bg-surface-3 text-muted"
+                    deciding
+                      ? "bg-amber-500 text-white"
+                      : now
+                        ? "bg-brand text-white"
+                        : done
+                          ? st.status === "done"
+                            ? "bg-violet-600/15 text-violet-700 dark:text-violet-300"
+                            : "bg-emerald-600/15 text-emerald-700"
+                          : "bg-surface-3 text-muted"
                   }`}
                 >
                   {done ? "✓ " : ""}
-                  {t(s.label)}
+                  {deciding ? t("Te toca decidir") : t(s.label)}
                 </span>
               </li>
             );
@@ -106,11 +126,11 @@ export function RunCard({ card, channelId }: { card: RunCardData; channelId: num
             {st.loops ? <span className="text-muted">· {t("Vueltas de check")}: {st.loops}</span> : null}
           </p>
         )}
-        <p className="mt-2 text-xs text-muted empty:hidden">
+        <p className={`mt-2 text-xs empty:hidden ${st.status === "escalated" ? "font-semibold text-amber-700 dark:text-amber-300" : "text-muted"}`}>
           {WORKING[st.status]
             ? ""
             : st.status === "escalated"
-            ? t("@check no pudo cerrarlo en 3 vueltas: decide si otra vuelta o replanear.")
+            ? escalationLine(st.loops, t)
             : st.status === "cancelled"
               ? t("Cancelado.")
               : st.status === "done"

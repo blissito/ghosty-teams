@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { nextStatus, parseThreadDecision, MAX_LOOPS, viewState } from "./factory-flow";
+import { nextStatus, parseThreadDecision, MAX_LOOPS, viewState, countsLoop } from "./factory-flow";
 
 describe("nextStatus", () => {
   it("camino feliz", () => {
@@ -80,5 +80,19 @@ describe("viewState", () => {
     expect(viewState(run("building"), { ...old, busy: true }).stale).toBe(false);
     // Esperando a una persona nunca es «colgado»: es su turno.
     expect(viewState(run("plan_review"), old).stale).toBe(false);
+  });
+});
+
+describe("countsLoop", () => {
+  it("la primera revisión y una cabeza nueva cuentan", () => {
+    expect(countsLoop({ checkedSha: null, headSha: "a", prevUncounted: false })).toBe(true);
+    expect(countsLoop({ checkedSha: "a", headSha: "b", prevUncounted: false })).toBe(true);
+  });
+  it("la misma cabeza no cuenta, salvo que la anterior tampoco haya contado", () => {
+    expect(countsLoop({ checkedSha: "a", headSha: "a", prevUncounted: false })).toBe(false);
+    expect(countsLoop({ checkedSha: "a", headSha: "a", prevUncounted: true })).toBe(true);
+  });
+  it("sin dato de GitHub, cuenta", () => {
+    expect(countsLoop({ checkedSha: "a", headSha: null, prevUncounted: false })).toBe(true);
   });
 });

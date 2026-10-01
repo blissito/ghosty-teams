@@ -932,6 +932,20 @@ async function migrate(): Promise<void> {
   await exec("CREATE INDEX IF NOT EXISTS gt_factory_events_run ON gt_factory_events(run_id, id)");
   // El pedido se quedó sin actividad (stale): se avisó UNA vez a quien lo pidió.
   await addColumn("gt_factory_runs", "stale_warned_at", "INTEGER");
+  // La cabeza del PR que @check revisó en su último veredicto: un `check_fail` sólo gasta vuelta
+  // si @build la movió (`countsLoop` en apps/factory-flow.ts).
+  await addColumn("gt_factory_runs", "checked_sha", "TEXT");
+  // Notas sobre un pedido que llegan de cualquier hilo (`factory_note`): «faltan los docs del CLI»
+  // dicho en el hilo del PR. El siguiente encargo de @build las incluye y las marca consumidas.
+  await exec(`CREATE TABLE IF NOT EXISTS gt_factory_notes (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id      INTEGER NOT NULL,
+    text        TEXT NOT NULL,
+    by          TEXT NOT NULL,
+    at          INTEGER NOT NULL DEFAULT (unixepoch()),
+    consumed_at INTEGER
+  )`);
+  await exec("CREATE INDEX IF NOT EXISTS gt_factory_notes_run ON gt_factory_notes(run_id, consumed_at)");
   // Tareas programadas de la Software Factory (revisión nocturna, dependencias): a su hora
   // la plataforma despierta a @plan en el room de la fábrica con un encargo fijo. Una fila
   // por tipo; `owner_sub` = con qué credenciales (GitHub) trabaja @plan.

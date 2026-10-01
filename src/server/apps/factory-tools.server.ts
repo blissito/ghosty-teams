@@ -7,6 +7,7 @@
 import { notaNombres, type ConnectorTool, type ToolChannel } from "../connectors/impl";
 import type { ToolDest } from "../connectors/tool-token.server";
 import { isInstalled } from "./installed.server";
+import { countsLoop } from "./factory-flow";
 
 export async function factoryTools(_sub: string, dest: ToolDest | null): Promise<ConnectorTool[]> {
   if (!(await isInstalled("factory").catch(() => false))) return [];
@@ -37,6 +38,76 @@ async function runOf(dest: ToolDest | null, runId: unknown) {
   }
   const root = threadRoot(dest);
   return dest?.channelId && root ? R.runOfThread(dest.channelId, root) : null;
+}
+
+/**
+ * PRs que menciona un texto: la URL completa (`github.com/o/r/pull/8`) o `#8` suelto, que
+ * sólo se puede atar a un repo del room (`repo: null`). Sin duplicados.
+ */
+export function prMentions(text: string): { repo: string | null; number: number }[] {
+  const out: { repo: string | null; number: number }[] = [];
+  const seen = new Set<string>();
+  const push = (repo: string | null, number: number) => {
+    const k = `${repo?.toLowerCase() ?? ""}#${number}`;
+    if (!seen.has(k) && number > 0) (seen.add(k), out.push({ repo, number }));
+  };
+  for (const m of String(text ?? "").matchAll(/github\.com\/([\w.-]+\/[\w.-]+)\/pull\/(\d+)/gi)) push(m[1], Number(m[2]));
+  for (const m of String(text ?? "").matchAll(/(?:^|[\s(])#(\d{1,6})\b/g)) push(null, Number(m[1]));
+  return out;
+}
+
+/**
+ * Pedidos de la fábrica cuyo PR menciona este hilo SIN ser el hilo del pedido: la tarjeta del
+ * PR en la raíz, o «#8» / la URL en la raíz o en el mensaje que invocó. Más reciente primero.
+ * Si se da `sub`, sólo los de rooms que esa persona ve (una nota no cruza a un privado ajeno).
+ */
+export async function runsMentionedInThread(dest: ToolDest | null, sub?: string) {
+  const root = threadRoot(dest);
+  if (!dest?.channelId || !root) return [];
+  const db = await import("../../db.server");
+  const R = await import("./factory-runs.server");
+  const { prOfMessage } = await import("../../lib/ebdoc");
+  const bodies: string[] = [];
+  for (const id of new Set([root, ...(dest.invokerMessageIds ?? [])])) {
+    const m = await db.getMessage(id).catch(() => null);
+    if (m?.body) bodies.push(m.body);
+  }
+  const prs: { repo: string; number: number }[] = [];
+  const card = bodies[0] ? prOfMessage(bodies[0]) : null;
+  if (card) prs.push({ repo: card.repo, number: card.number });
+  const repos = (await db.listRoomRepos(dest.channelId).catch(() => [])).map((r) => r.repo);
+  for (const m of bodies.flatMap(prMentions)) {
+    if (m.repo) prs.push({ repo: m.repo, number: m.number });
+    else for (const repo of repos) prs.push({ repo, number: m.number });
+  }
+  const byId = new Map<number, Awaited<ReturnType<typeof R.runsByPr>>[number]>();
+  for (const pr of prs) for (const run of await R.runsByPr(pr.repo, pr.number)) byId.set(run.id, run);
+  let runs = [...byId.values()];
+  if (sub) {
+    const visible = new Set((await db.listChannels(sub, false).catch(() => [])).map((c) => c.id));
+    runs = runs.filter((r) => r.channelId === dest.channelId || visible.has(r.channelId));
+  }
+  return runs.sort((a, b) => b.id - a.id);
+}
+
+/**
+ * El pedido de una nota: el `runId` explícito (de este room o de uno que `sub` vea), el del
+ * hilo, o el del PR que el hilo menciona. null si no hay pedido.
+ */
+export async function resolveNoteRun(dest: ToolDest | null, sub: string, runId: unknown) {
+  const R = await import("./factory-runs.server");
+  const id = Number(runId);
+  if (Number.isFinite(id) && id > 0) {
+    const run = await R.getRun(id);
+    if (!run) return null;
+    if (run.channelId === dest?.channelId) return run;
+    const db = await import("../../db.server");
+    const visible = (await db.listChannels(sub, false).catch(() => [])).some((c) => c.id === run.channelId);
+    return visible ? run : null;
+  }
+  const own = await runOf(dest, undefined);
+  if (own) return own;
+  return (await runsMentionedInThread(dest, sub))[0] ?? null;
 }
 
 /** Por qué un plan no se acepta (null = pasa). El 2026-09-24 @plan en deepseek-v4-flash
@@ -337,8 +408,10 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
         if (run.status !== "checking") return { ok: false, error: `el pedido no está en revisión (está en ${run.status})` };
         // La regla de @check se cumple aquí, no en su prompt: si la cabeza del PR se movió
         // desde que @build cerró, alguien empujó durante la revisión.
+        const head = run.prUrl ? await R.prHead(sub, run.prUrl) : null;
+        // Lo que @check revisó; se guarda con cada veredicto para decidir si la próxima vuelta cuenta.
+        const checked = { checked_sha: head?.sha ?? run.checkedSha ?? null };
         if (run.prUrl && run.headSha) {
-          const head = await R.prHead(sub, run.prUrl);
           if (head && head.sha !== run.headSha) {
             return {
               ok: false,
@@ -361,7 +434,7 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
           // `none` (sin CI) pasa, pero la tarjeta lo dice.
         }
         if (a.pass === true) {
-          const next = await R.applyEvent(run, "check_pass", {}, { actor: "check" });
+          const next = await R.applyEvent(run, "check_pass", checked, { actor: "check" });
           // Sacarlo de borrador lo hace la plataforma, no el prompt: antes dependía de que
           // @check se acordara de github_mark_ready, y la tarjeta ya decía «listo».
           const ready = run.prUrl ? await R.markPrReady(sub, run.prUrl) : false;
@@ -404,7 +477,7 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
         }
         if (!findings) return { ok: false, error: "con pass=false los hallazgos son obligatorios" };
         if (a.blocked === true) {
-          const next = await R.applyEvent(run, "check_blocked", {}, { actor: "check", data: { findings: findings.slice(0, 500) } });
+          const next = await R.applyEvent(run, "check_blocked", checked, { actor: "check", data: { findings: findings.slice(0, 500) } });
           await R.postInThread(
             next,
             "check",
@@ -413,12 +486,19 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
           );
           return { ok: true, status: next.status, note: "Escalado a una persona. No lo repitas." };
         }
-        const next = await R.applyEvent(run, "check_fail", { loops: run.loops + 1 }, { actor: "check", data: { findings: findings.slice(0, 500) } });
+        // Una vuelta cuenta sólo si @build movió el código desde la revisión anterior.
+        const counted = countsLoop({ checkedSha: run.checkedSha ?? null, headSha: head?.sha ?? null, prevUncounted: await R.lastFailUncounted(run.id) });
+        const next = await R.applyEvent(
+          run,
+          "check_fail",
+          { loops: run.loops + (counted ? 1 : 0), ...checked },
+          { actor: "check", data: { findings: findings.slice(0, 500), counted } },
+        );
         if (next.status === "escalated") {
           await R.postInThread(
             next,
             "check",
-            `⚠️ **Necesita una decisión** — ${run.loops + 1} vueltas entre @build y @check sin cerrar. Lo último que encontré:\n\n${findings}\n\n` +
+            `⚠️ **Necesita una decisión** — ${next.loops} vueltas entre @build y @check sin cerrar. Lo último que encontré:\n\n${findings}\n\n` +
               `Contesta «✅» para otra vuelta de @build, o «cambios: …» para replanear.`,
           );
           return { ok: true, status: next.status };
@@ -430,7 +510,9 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
           // puede no tener GitHub.
           next.approvedBy ?? next.requestedBy,
           "corregir hallazgos de @check",
-          `@check regresó el PR ${run.prUrl ?? ""} (vuelta ${next.loops} de 3). Corrige en la MISMA rama y cierra otra vez con factory_build_done (runId ${run.id}).\n\n## Hallazgos\n${findings}`,
+          `@check regresó el PR ${run.prUrl ?? ""} (vuelta ${next.loops} de 3${counted ? "" : "; ésta no contó porque el PR no cambió desde la revisión anterior"}). ` +
+            `Corrige en la MISMA rama, EMPUJA los commits y cierra otra vez con factory_build_done (runId ${run.id}).\n\n## Hallazgos\n${findings}` +
+            (await R.takeNotes(run.id)),
           await origin(),
         );
         return { ok: true, status: next.status, note: "Regresado a @build." };
@@ -749,6 +831,50 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
       },
     },
     {
+      name: "factory_note",
+      description:
+        "Cualquier rol. Registra una NOTA en un pedido de la fábrica para que llegue a @build en su siguiente encargo: " +
+        "un cambio que pidió una persona («faltan los docs del CLI») o algo que viste revisando su PR desde OTRO hilo. " +
+        "Un comentario en GitHub o en otro hilo NO le llega a @build; esto sí. El pedido sale solo si este hilo es el del " +
+        "pedido o el de su PR; si no, pasa runId.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          runId: { type: "number", description: "El pedido (si no, el del hilo o el del PR que el hilo menciona)" },
+          text: { type: "string", description: "La nota, breve y accionable (qué falta y dónde)" },
+        },
+        required: ["text"],
+      },
+      handler: async (sub, a) => {
+        const text = String(a.text ?? "").trim().slice(0, 2000);
+        if (!text) return { ok: false, error: "la nota está vacía" };
+        const run = await resolveNoteRun(dest, sub, a.runId);
+        if (!run) return { ok: false, error: "no encuentro un pedido de la fábrica para esta nota: este hilo no es de un pedido ni de su PR. Pasa runId." };
+        if (run.status === "done" || run.status === "cancelled")
+          return { ok: false, error: `el pedido #${run.id} ya terminó (${run.status}): pide uno nuevo con @plan` };
+        const R = await import("./factory-runs.server");
+        const by = dest?.handle ? `@${dest.handle}` : sub;
+        await R.addNote(run.id, by, text);
+        // En el hilo del pedido, con liga al hilo de origen si viene de otro.
+        const root = threadRoot(dest);
+        const elsewhere = !(dest?.channelId === run.channelId && root === run.rootMsgId);
+        let from = "";
+        if (elsewhere && dest?.channelId && root) {
+          const db = await import("../../db.server");
+          const ch = await db.getChannelById(dest.channelId).catch(() => null);
+          if (ch) from = ` ([hilo](/c/${ch.slug}?thread=${root}))`;
+        }
+        await R.postInThread(run, dest?.handle ?? "plan", `📝 Nota de ${by}${elsewhere ? ` desde otro hilo${from}` : ""}: ${text}`);
+        return {
+          ok: true,
+          runId: run.id,
+          note: run.status === "building" || run.status === "checking"
+            ? "Guardada: @build la recibe en su siguiente encargo (la próxima vuelta)."
+            : "Guardada: @build la recibe en su siguiente encargo.",
+        };
+      },
+    },
+    {
       name: "factory_status",
       description: "Estado del pedido de este hilo (o de runId): etapa, versión del plan, vueltas, PR y tarea.",
       inputSchema: { type: "object", properties: { runId: { type: "number" } } },
@@ -840,6 +966,18 @@ export async function factoryContext(dest: ToolDest | null, toolChannel: ToolCha
         );
       }
     }
+    // Hilo sin pedido que habla del PR de un pedido: lo que se pida aquí no le llega a @build
+    // por sí solo (el comentario del PR #8 quedó en GitHub, 01-oct). Se le dice cómo hacerlo llegar.
+    if (!run && h) {
+      const [other] = await runsMentionedInThread(dest).catch(() => []);
+      if (other) {
+        const { stageLabel } = await import("./factory-flow");
+        parts.push(
+          `Este PR es del pedido #${other.id} «${other.title}» (etapa «${stageLabel(other.status)}»): si es un cambio para @build, ` +
+            `regístralo con factory_note (runId ${other.id}); no basta un comentario en GitHub ni en este hilo.`,
+        );
+      }
+    }
   }
   // Sin CI, «verde» no significa nada: el primer pedido que conviene es el CI starter.
   if (h === "plan" && dest?.channelId) {
@@ -852,7 +990,7 @@ export async function factoryContext(dest: ToolDest | null, toolChannel: ToolCha
   }
   // Misma frase que Tasks: tenerlas y no llamarlas es el otro modo de falla.
   parts.push(
-    "Tus tools de la fábrica (factory_plan_submit, factory_build_done, factory_check_verdict, factory_status, factory_close, factory_ci_starter, factory_repo_prep, factory_preview, factory_sprint_submit) " +
+    "Tus tools de la fábrica (factory_plan_submit, factory_build_done, factory_check_verdict, factory_status, factory_close, factory_ci_starter, factory_repo_prep, factory_preview, factory_sprint_submit, factory_note) " +
       "ya están disponibles en este turno: LLÁMALAS para cerrar tu paso; sin ellas la estafeta no avanza." +
       notaNombres(toolChannel),
   );

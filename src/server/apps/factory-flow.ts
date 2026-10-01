@@ -60,6 +60,19 @@ export function nextStatus(status: RunStatus, event: RunEvent, loops = 0): RunSt
   }
 }
 
+/**
+ * ¿El `check_fail` gasta una vuelta? Sólo si @build cambió código: la cabeza del PR es otra
+ * que la que @check revisó la última vez. Si re-cerró sin commits o el ciclo se repitió por un
+ * error de la plataforma, no se cobra (pedido #10: 2 de sus 3 vueltas las gastó la plataforma).
+ * Una sola vuelta gratis por cabeza: si la anterior tampoco contó, ésta sí, para que un @build
+ * que re-cierra sin cambiar nada no gire para siempre. Sin dato de GitHub, cuenta.
+ */
+export function countsLoop(opts: { checkedSha: string | null; headSha: string | null; prevUncounted: boolean }): boolean {
+  if (!opts.checkedSha || !opts.headSha) return true;
+  if (opts.headSha !== opts.checkedSha) return true;
+  return opts.prevUncounted;
+}
+
 /** Etiqueta de la etapa en la tarea de Tasks. */
 export function stageLabel(status: RunStatus): string {
   return (
