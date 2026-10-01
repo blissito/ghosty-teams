@@ -86,7 +86,17 @@ export async function enqueueWakeup(w: Omit<Wakeup, "id" | "dueAt"> & { dueAt?: 
 const tenants = new Set<string>();
 let timer: ReturnType<typeof setInterval> | null = null;
 
+// Cuándo arrancó ESTE proceso: un relevo disparado antes de esto sin `result` murió con el
+// proceso anterior (deploy). Se marca para que `/busy` no lo cuente como trabajo vivo.
+const PROCESS_STARTED_S = Math.floor(Date.now() / 1000);
+
 export function armWakeups(ns: string): void {
+  if (!tenants.has(ns))
+    void withNamespace(ns, () =>
+      dbq(`UPDATE gt_agent_wakeups SET result = 'interrumpido por reinicio' WHERE fired_at IS NOT NULL AND result IS NULL AND fired_at < ?`, [
+        PROCESS_STARTED_S,
+      ]),
+    ).catch(() => {});
   tenants.add(ns);
   if (timer) return;
   timer = setInterval(() => { void sweep(); }, TICK_MS);
@@ -110,7 +120,15 @@ export async function wakeupsDueSoon(windowS = 90): Promise<number> {
   let n = 0;
   for (const ns of Array.from(tenants)) {
     const rows = await withNamespace(ns, () =>
-      dbq(`SELECT COUNT(*) AS n FROM gt_agent_wakeups WHERE fired_at IS NULL AND due_at <= unixepoch() + ?`, [windowS]),
+      // También los YA disparados que no han terminado (`result` se escribe al final): entre el
+      // claim y el arranque del turno hay una ventana donde no son «por salir» ni «en vuelo», y
+      // con la base lenta duró 13 s — un deploy reinició ahí y mató a @build (01-oct).
+      dbq(
+        `SELECT COUNT(*) AS n FROM gt_agent_wakeups
+          WHERE (fired_at IS NULL AND due_at <= unixepoch() + ?)
+             OR (fired_at IS NOT NULL AND result IS NULL AND fired_at > unixepoch() - 7200)`,
+        [windowS],
+      ),
     ).catch(() => []);
     n += Number(rows[0]?.n ?? 0);
   }
