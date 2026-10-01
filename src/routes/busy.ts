@@ -24,7 +24,10 @@ export const Route = createFileRoute("/busy")({
       GET: async () => {
         try {
           const { agentTurnsInflight } = await import("../agents.server");
-          const inflight = agentTurnsInflight();
+          const { wakeupsDueSoon } = await import("../server/wakeups.server");
+          // Un relevo a punto de salir cuenta como trabajo: reiniciar en ese hueco deja al
+          // turno siguiente sin tools (ver `wakeupsDueSoon`).
+          const inflight = agentTurnsInflight() + (await wakeupsDueSoon());
           return Response.json({ busy: inflight > 0, inflight });
         } catch (e) {
           // Si ni siquiera se puede mirar, hay que declararse OCUPADO: mejor una caja

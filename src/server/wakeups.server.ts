@@ -100,7 +100,27 @@ export function kickWakeups(ns: string): void {
   void sweep();
 }
 
+/**
+ * Relevos que están por salir (en `windowS` segundos) en todos los tenants de este proceso.
+ * Lo suma `/busy`: entre el fin de un turno y su relevo (el empujón de la fábrica sale a los
+ * 5 s) Teams parecía libre, el deploy lo reiniciaba justo ahí y el turno siguiente se quedaba
+ * sin tools (502) — @build, pedido #10, 2026-10-01.
+ */
+export async function wakeupsDueSoon(windowS = 90): Promise<number> {
+  let n = 0;
+  for (const ns of Array.from(tenants)) {
+    const rows = await withNamespace(ns, () =>
+      dbq(`SELECT COUNT(*) AS n FROM gt_agent_wakeups WHERE fired_at IS NULL AND due_at <= unixepoch() + ?`, [windowS]),
+    ).catch(() => []);
+    n += Number(rows[0]?.n ?? 0);
+  }
+  return n;
+}
+
 async function sweep(): Promise<void> {
+  // Apagándose (deploy): no se abre ningún turno nuevo. Lo toma el proceso que arranca.
+  const { seEstaApagando } = await import("./shutdown.server");
+  if (seEstaApagando()) return;
   for (const ns of Array.from(tenants)) {
     try {
       await withNamespace(ns, () => sweepTenant(ns));
