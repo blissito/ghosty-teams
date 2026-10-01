@@ -86,11 +86,14 @@ export async function handoffFromReply(p: {
   const prosa = [eb.stripEbAudio, eb.stripEbFile, eb.stripAskUser]
     .reduce((s, f) => f(s), eb.bubbleWithoutEbDoc(p.reply))
     .trim();
+  // Un @ entre backticks es CITAR al agente, no encargarle nada: «dile a `@build` que…»
+  // despertaba a @build en cada respuesta de @plan (hilo de MailMask, 30-sep).
+  const mentionable = prosa.replace(/```[\s\S]*?```/g, " ").replace(/`[^`\n]*`/g, " ");
   if (!prosa) return "";
   const agents = await resolvedAgents();
   const users = await import("../users.server");
   const userHandles = (await users.listUsers().catch(() => [])).map((u) => u.handle).filter(Boolean) as string[];
-  const targets = detectMentions(prosa, agents.map((a) => a.handle), userHandles).filter((h) => h !== p.fromHandle);
+  const targets = detectMentions(mentionable, agents.map((a) => a.handle), userHandles).filter((h) => h !== p.fromHandle);
   if (!targets.length) return "";
 
   // Tope: relevos de este hilo desde el último mensaje de una PERSONA en él.
