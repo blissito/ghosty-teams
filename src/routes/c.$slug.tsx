@@ -395,6 +395,10 @@ function RoomIcon({ name, size = 18, className }: { name?: string | null; size?:
 // (mostramos lo cacheado y revalidamos en background, sin skeleton ni glitch).
 const flowCache = new Map<string, Message[]>();
 const threadsCache = new Map<string, Message[]>();
+// Raíces de hilo borradas en esta sesión. El menú lateral de un room que no se ha abierto pinta
+// los hilos de la CARGA INICIAL (`c.threads`), que nadie actualiza: sin esto un hilo borrado
+// seguía listado hasta recargar (MailMask, 2026-09-30).
+const deletedThreadRoots = new Set<number>();
 // `hydrated` = false hasta que el primer render del cliente se monta. Ya NO gatea el
 // prefetch del loader (desde 2026-07-24 el flujo SIEMPRE entra client-side), pero se
 // mantiene por si algún camino necesita distinguir la hidratación inicial.
@@ -1728,6 +1732,7 @@ function ChannelPage() {
     for (const [slug, roots] of threadsCache)
       if (roots.some((m) => m.id === id)) threadsCache.set(slug, roots.filter((m) => m.id !== id));
     if (threadCache.has(id)) threadCache.delete(id);
+    deletedThreadRoots.add(id);
     applyPatch();
   };
 
@@ -4288,8 +4293,9 @@ function Sidebar({
           // El activo usa la lista viva (más fresca); los demás, lo cacheado.
           // Room activo: lista viva (más fresca). Los demás: los hilos que el
           // loader adjuntó a cada room (persisten siempre) o el cache si ya se vio.
-          const roomThreads =
-            c.slug === active ? threads : threadsCache.get(c.slug) ?? c.threads ?? [];
+          const roomThreads = (c.slug === active ? threads : threadsCache.get(c.slug) ?? c.threads ?? []).filter(
+            (thr) => !deletedThreadRoots.has(thr.id),
+          );
           return (
           <div key={c.id}>
             {firstQuiet && (
