@@ -83,7 +83,8 @@ function EvalButton({ runId, agents, roleAgentIds, onStarted }: { runId: number;
   }, [open]);
   // Sólo modelos del motor que va a correr (el elegido, o el del rol): uno de otro motor se rechaza.
   const engine = agents.find((a) => a.id === (agent || roleAgentIds[role]))?.engine ?? null;
-  const models = Object.entries(engine ? (MODEL_ALIASES[engine] ?? {}) : {});
+  // Un renglón por MODELO (varios alias apuntan al mismo id): el más explícito, con versión.
+  const models = [...new Map(Object.entries(engine ? (MODEL_ALIASES[engine] ?? {}) : {}).map(([a, id]) => [id, a] as const)).entries()].map(([id, a]) => [a, id] as const);
   const run = async () => {
     setBusy(true);
     setMsg("");

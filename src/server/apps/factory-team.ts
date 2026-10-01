@@ -89,7 +89,20 @@ function assign(spec: RoleSpec, key: string, value: string) {
 
 /** Alias cortos por motor, para «@build con opus». El id completo también vale. */
 export const MODEL_ALIASES: Record<string, Record<string, string>> = {
-  claude: { opus: "claude-opus-5", fable: "claude-fable-5-1", sonnet: "claude-sonnet-5" },
+  // Todas las opciones del catálogo de Studio (engines.ts), sin quitar ninguna: el alias corto
+  // es la versión de siempre y la versión explícita elige otra («con opus-5.5», «con opus-4.8»).
+  claude: {
+    opus: "claude-opus-5",
+    "opus-5": "claude-opus-5",
+    "opus-5.5": "claude-opus-5-5",
+    "opus-4.8": "claude-opus-4-8",
+    fable: "claude-fable-5-1",
+    "fable-5.1": "claude-fable-5-1",
+    "fable-5": "claude-fable-5",
+    sonnet: "claude-sonnet-5",
+    "sonnet-5": "claude-sonnet-5",
+    "sonnet-4.6": "claude-sonnet-4-6",
+  },
   deepseek: { pro: "deepseek-v4-pro", flash: "deepseek-v4-flash" },
   codex: { sol: "gpt-5.6-sol", terra: "gpt-5.6-terra", luna: "gpt-5.6-luna" },
 };

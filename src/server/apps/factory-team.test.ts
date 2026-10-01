@@ -38,6 +38,8 @@ describe("parseMessageOverrides", () => {
 describe("resolveModel", () => {
   it("alias e id del mismo motor; null si es de otro", () => {
     expect(resolveModel("claude", "opus")).toBe("claude-opus-5");
+    expect(resolveModel("claude", "opus-5.5")).toBe("claude-opus-5-5");
+    expect(resolveModel("claude", "claude-opus-5-5")).toBe("claude-opus-5-5");
     expect(resolveModel("claude", "claude-sonnet-5")).toBe("claude-sonnet-5");
     expect(resolveModel("codex", "opus")).toBeNull();
     expect(resolveModel("deepseek", "pro")).toBe("deepseek-v4-pro");
