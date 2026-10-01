@@ -24,6 +24,7 @@ export const en: Record<string, string> = {
   "turnos": "turns",
   "turno": "turn",
   "Saldo de este mes": "This month's balance",
+  "carga única, no se recarga": "one-time balance, doesn't refill",
   "quedan ~": "~",
   "a este ritmo": "left at this pace",
   // Interruptor de la marca en las descargas de un documento.

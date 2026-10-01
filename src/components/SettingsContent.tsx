@@ -1096,6 +1096,14 @@ function UsagePanel({ isOwner }: { isOwner: boolean }) {
                 {/* "1 turnos" es de las cosas que hacen sentir una pantalla sin terminar. */}
                 {e.turns.toLocaleString(intlLocale(locale))}{" "}
                 {e.turns === 1 ? t("turno") : t("turnos")}
+                {/* Carga única: no sigue la fecha de arriba. Sin esto el encabezado le
+                    prometía un «se reinicia» que nunca llega. */}
+                {e.bag?.recurring === false && (
+                  <>
+                    {" · "}
+                    {t("carga única, no se recarga")}
+                  </>
+                )}
                 {q !== null && (
                   <>
                     {" · "}

@@ -107,7 +107,7 @@ export const workspaceUsageFn = createServerFn({ method: "GET" }).handler(async 
        *  enseña; no se corta. */
       /** `chargedUsed` es el saldo que DECIDE: con bolsa compartida es el total de la
        *  bolsa, no lo de este agente. `bag` sólo viene cuando tiene bolsa propia. */
-      engines?: { engine: string; used: number; included: number | null; turns: number; ownKey: boolean; agentId?: string | null; agentName?: string | null; chargedUsed?: number; bag?: { id: string; name: string; agents: number } | null; name?: string; avatar?: string; handle?: string }[];
+      engines?: { engine: string; used: number; included: number | null; turns: number; ownKey: boolean; agentId?: string | null; agentName?: string | null; chargedUsed?: number; bag?: { id: string; name: string; agents: number; recurring?: boolean } | null; name?: string; avatar?: string; handle?: string }[];
     };
 
     // ⚠️ UNA TARJETA POR AGENTE USABLE, y ninguna más. La lista de este tab tiene que
