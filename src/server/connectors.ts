@@ -216,6 +216,16 @@ export const finishConnectFn = createServerFn({ method: "POST" })
       externalId,
       meta,
     });
+    // GitHub: autorizado no es instalado. Sin la app instalada todas las tools dan 404, así
+    // que se manda a elegir repos (al instalar, GitHub vuelve aquí con otro `code`).
+    if (def.id === "github") {
+      const r = await fetch("https://api.github.com/user/installations", {
+        headers: { Authorization: `Bearer ${tok.access_token}`, Accept: "application/vnd.github+json" },
+      }).catch(() => null);
+      const j = r?.ok ? ((await r.json().catch(() => null)) as { total_count?: number } | null) : null;
+      if (j && !j.total_count)
+        return { ok: true as const, next: `https://github.com/apps/${process.env.GITHUB_APP_SLUG ?? "ghosty-studio"}/installations/new?state=${encodeURIComponent(data.state)}` };
+    }
     return { ok: true as const };
   });
 

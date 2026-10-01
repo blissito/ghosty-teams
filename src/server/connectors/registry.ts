@@ -269,7 +269,14 @@ export const CONNECTORS: ConnectorDef[] = [
       // De las URLs de instalación, `/installations/new` es la ÚNICA que
       // propaga `state` — y el state lleva el workspace, así que sin él el
       // relay del apex no sabría a qué subdominio volver.
-      authUrl: `https://github.com/apps/${process.env.GITHUB_APP_SLUG ?? "ghosty-studio"}/installations/new`,
+      //
+      // ⚠️ 2026-09-30: CAMBIA a /login/oauth/authorize. Con la app YA instalada (reconectar tras
+      // perder el token), `/installations/new` enseña la página de configuración de la
+      // instalación, el «Save» está deshabilitado y GitHub nunca regresa con `code`: no había
+      // forma de reconectar. Ahora: autorizar (siempre regresa con code + state) y, si la
+      // cuenta no tiene la app instalada, `finishConnectFn` manda a `/installations/new` a
+      // elegir repos — el flujo documentado de GitHub (GET /user/installations).
+      authUrl: "https://github.com/login/oauth/authorize",
       tokenUrl: "https://github.com/login/oauth/access_token",
       noRedirectUri: true,
       // ⚠️ Sin esto GitHub responde form-encoded y el res.json() del cliente

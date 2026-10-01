@@ -144,7 +144,21 @@ async function refresh(def: ConnectorDef, refreshToken: string): Promise<TokenRe
 // Access token válido para (sub, provider): usa el cacheado si no venció; si venció y
 // hay refresh_token, refresca y re-persiste; ante grant inválido borra la fila (fuerza
 // re-connect) y devuelve null. Es el único punto que el wrapper Calendly (Fase B) usa.
+// Un refresh a la vez por (sub, provider). GitHub ROTA el refresh token: dos refrescos en
+// paralelo con el mismo token → el segundo recibe `bad_refresh_token` y borraba la conexión
+// aunque el primero acababa de guardar una buena (business perdió GitHub así, 30-sep).
+const refreshing = new Map<string, Promise<string | null>>();
+
 export async function getValidToken(sub: string, provider: string): Promise<string | null> {
+  const key = `${sub}:${provider}`;
+  const inflight = refreshing.get(key);
+  if (inflight) return inflight;
+  const p = getValidTokenOnce(sub, provider).finally(() => refreshing.delete(key));
+  refreshing.set(key, p);
+  return p;
+}
+
+async function getValidTokenOnce(sub: string, provider: string): Promise<string | null> {
   const def = getConnector(provider);
   if (!def?.oauth) return null;
   const row = await getConnectorRow(sub, provider);
@@ -173,6 +187,10 @@ export async function getValidToken(sub: string, provider: string): Promise<stri
     // los manda con status 200 (ver readTokenResponse). Sin ellos la fila muerta
     // se quedaba para siempre y cada turno reintentaba un refresh imposible.
     if (/invalid_grant|invalid_token|bad_refresh_token|bad_verification_code|\b400\b|\b401\b/.test(String(e))) {
+      // Otro proceso (o el deploy blue/green) ya lo refrescó: la fila trae un refresh token
+      // distinto al que usamos. Ése es el bueno; borrar aquí tiraba la conexión viva.
+      const now2 = await getConnectorRow(sub, provider).catch(() => null);
+      if (now2?.access_token && now2.refresh_token !== row.refresh_token) return now2.access_token;
       await deleteConnectorRow(sub, provider);
       return null;
     }

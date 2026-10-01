@@ -16,6 +16,9 @@ export const Route = createFileRoute("/setup/$provider/callback")({
     if (deps.code && deps.state) {
       const r = await finishConnectFn({ data: { provider: params.provider, code: deps.code, state: deps.state } });
       ok = !!(r as { ok?: boolean })?.ok;
+      // GitHub autorizado pero sin la app instalada: falta elegir repos.
+      const next = (r as { next?: string })?.next;
+      if (ok && next) throw redirect({ href: next });
     }
     const key = ok ? "connected" : "conn_error";
     throw redirect({ href: `/c/general?${key}=${encodeURIComponent(params.provider)}` });
