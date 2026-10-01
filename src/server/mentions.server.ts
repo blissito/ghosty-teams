@@ -19,6 +19,21 @@ const ROOM_MENTIONS = new Set(["room", "here", "aqui", "aquí", "channel"]);
 const GROUP_MENTIONS = new Set([...WORKSPACE_MENTIONS, ...ROOM_MENTIONS]);
 
 /** ¿El mensaje etiqueta a alguien? (a cualquiera: humano o agente). */
+/**
+ * Los @handle de un texto, sin falsos positivos (2026-10-01: Check escribió
+ * `nodemailer@9.1.1` y `@xmldom/xmldom` y la burbuja dijo «No avisé a @9, @0, @xmldom»):
+ * - nada dentro de código (`inline` ni bloques ```);
+ * - el @ no puede ir pegado a una palabra (`pkg@1.2`, correos);
+ * - un `@scope/paquete` de npm no es una persona.
+ */
+export function mentionTokens(body: string): string[] {
+  const sinCodigo = (body || "").replace(/```[\s\S]*?```/g, " ").replace(/`[^`\n]*`/g, " ");
+  const re = /(?<![\wáéíóúñ@./])@([\wáéíóúñ]+)(?![\wáéíóúñ]*\/)/gi;
+  const out: string[] = [];
+  for (const m of sinCodigo.matchAll(re)) out.push(m[1].toLowerCase());
+  return out;
+}
+
 export function mencionaAAlguienMas(body: string): boolean {
   return /(?<![\w@.])@[a-z0-9._-]{2,}/i.test(body || "");
 }
@@ -48,7 +63,7 @@ export async function notifyMentions(
 ): Promise<MentionOutcome> {
   const { id: channelId, slug, name: channelName } = channel;
   const isPrivate = channel.is_private === 1;
-  const tokens = (body.match(/@([\wáéíóúñ]+)/gi) ?? []).map((t) => t.slice(1).toLowerCase());
+  const tokens = mentionTokens(body);
   if (!tokens.length) return SIN_MENCIONES;
   const users = await import("../users.server");
   const db = await import("../db.server");
