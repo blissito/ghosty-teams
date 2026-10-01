@@ -1,7 +1,8 @@
 // Tarjeta de PLAN de la Software Factory (```gt-plan```). Gemela de TaskCard/PrCard, con sus
 // dos reglas: el estado se lee al pintar (el mensaje diría «esperando firma» para siempre) y
 // los botones firman con la sesión de QUIEN HACE CLIC, sin mandar texto al chat.
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useContext, useEffect, useState } from "react";
+import { ChatCtx } from "./message";
 import { useT } from "../../i18n";
 import { useRtSubscribe } from "../../utils/rt-bus";
 import { Markdown } from "../Markdown";
@@ -10,8 +11,13 @@ import type { PlanCardData } from "../../lib/ebdoc";
 
 type State = Awaited<ReturnType<typeof factoryPlanCardFn>>;
 
-export function PlanCard({ card, channelId }: { card: PlanCardData; channelId: number }) {
+/**
+ * En el hilo va COMPACTA (encabezado + firma + «Ver plan»): el plan completo vive en el panel
+ * del pedido, para no empujar la conversación. `expanded` = dentro del panel, completo.
+ */
+export function PlanCard({ card, channelId, expanded = false }: { card: PlanCardData; channelId: number; expanded?: boolean }) {
   const t = useT();
+  const { onOpenArtifact } = useContext(ChatCtx);
   const [st, setSt] = useState<State>(null);
   const [busy, setBusy] = useState<"" | "approve" | "changes">("");
   const [err, setErr] = useState("");
@@ -66,11 +72,20 @@ export function PlanCard({ card, channelId }: { card: PlanCardData; channelId: n
         <span className="truncate text-[11px] text-muted">#{st.runId} · {st.title}</span>
       </div>
       <div className="p-3">
-        <div className={`relative text-sm ${open ? "" : "max-h-40 overflow-hidden"}`}>
-          <Markdown body={st.planMd} />
-        </div>
-        {!open && (
-          <button type="button" onClick={() => setOpen(true)} className="mt-1 text-xs font-semibold text-brand hover:underline">
+        {expanded || open ? (
+          <div className="relative text-sm">
+            <Markdown body={st.planMd} />
+          </div>
+        ) : (
+          <button
+            type="button"
+            onClick={() =>
+              onOpenArtifact
+                ? onOpenArtifact({ kind: "run", title: `${t("Pedido")} #${st.runId}`, runId: st.runId, channelId })
+                : setOpen(true)
+            }
+            className="text-xs font-semibold text-brand hover:underline"
+          >
             {t("Ver el plan completo")}
           </button>
         )}

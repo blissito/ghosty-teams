@@ -1,3 +1,4 @@
+import { RunBar } from "../components/chat/RunBar";
 import { forwardRef, Fragment, useCallback, useContext, useEffect, useImperativeHandle, useMemo, useReducer, useRef, useState } from "react";
 import { IDLE_MS } from "../lib/presence";
 import { shouldChime } from "../lib/chime";
@@ -280,7 +281,7 @@ export const Route = createFileRoute("/c/$slug")({
    * parámetro y el router redirigiría a la URL sin él — el mismo tropiezo que costó el `?v=`
    * de los artefactos.
    */
-  validateSearch: (search: Record<string, unknown>): { thread?: number; dm?: number; home?: 1; campaign?: number } => {
+  validateSearch: (search: Record<string, unknown>): { thread?: number; dm?: number; home?: 1; campaign?: number; run?: number } => {
     const id = (v: unknown) => {
       const n = Number(v);
       return Number.isFinite(n) && n > 0 ? n : undefined;
@@ -293,7 +294,9 @@ export const Route = createFileRoute("/c/$slug")({
     // `campaign` = una campaña de Ghosty Ads abierta en el panel lateral (link para compartir).
     // Va con el hilo, o sola; nunca con un DM ni con Inicio.
     const campaign = id(search.campaign);
-    const withCampaign = campaign != null ? { campaign } : {};
+    // `run` = un pedido de la fábrica abierto en el panel (lo manda el aviso push y /factory).
+    const run = id(search.run);
+    const withCampaign = { ...(campaign != null ? { campaign } : {}), ...(run != null ? { run } : {}) };
     return thread != null ? { thread, ...withCampaign } : dm != null ? { dm } : home ? { home: 1 } : withCampaign;
   },
   // El hilo y el flujo NO van en el loader (se cargan client-side con cache +
@@ -2784,6 +2787,20 @@ function ChannelPage() {
     }, 0);
     return () => clearTimeout(h);
   }, [search.campaign, search.thread, openThreadId, channel.id]);
+  // Link directo `?run=N` (aviso push, /factory): abre el pedido en el panel, igual que ?campaign.
+  // Es de una sola vez: la URL no lo conserva al cerrar el panel.
+  useEffect(() => {
+    if (search.run == null) return;
+    if (search.thread != null && openThreadId !== search.thread) return;
+    const cur = openArtifactRef.current;
+    if (cur?.kind === "run" && cur.runId === search.run) return;
+    const id = search.run;
+    const h = setTimeout(() => {
+      setPanelInstant(true);
+      openArtifactWithSound({ kind: "run", title: `Pedido #${id}`, runId: id, channelId: channel.id });
+    }, 0);
+    return () => clearTimeout(h);
+  }, [search.run, search.thread, openThreadId, channel.id]);
   const reopenHiddenDraft = useCallback(() => {
     setHiddenDraft((d) => {
       if (d) {
@@ -7405,6 +7422,8 @@ function ThreadView({
           <DocsButton channelId={channel.id} channelSlug={channel.slug} threadRootId={threadId} />
         </div>
       </header>
+      {/* Pedido de la fábrica: estado y acción principal SIEMPRE a la vista, sin scroll. */}
+      <RunBar channelId={channel.id} threadId={threadId} />
       {/* overflow-anchor:none → desactiva el scroll-anchoring nativo del navegador. Al cargar
           una imagen ARRIBA del viewport el browser movía scrollTop para conservar la vista, lo
           que disparaba onScroll → apagaba `stick` a media carga y el ResizeObserver dejaba de

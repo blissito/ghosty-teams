@@ -14,7 +14,9 @@
 // "turn" = tu agente terminó. Va sólo a quien lo pidió; `notify` ya salta el push si esa
 // persona está online, así que llega justo cuando hace falta: cuando te fuiste.
 // "ads" = el reporte automático de Ghosty Ads (9:00 y 21:00): sólo sale si algo cambió.
-export type NotifyKind = "mention" | "dm" | "call" | "call-end" | "reminder" | "form" | "turn" | "ads";
+// "factory" = un pedido de la Software Factory te necesita (firmar, mezclar, decidir) o terminó.
+// Sólo en esas transiciones: planear/construir/revisar no avisan (sólo refrescan la tarjeta).
+export type NotifyKind = "mention" | "dm" | "call" | "call-end" | "reminder" | "form" | "turn" | "ads" | "factory";
 export type NotifyEvent = {
   kind: NotifyKind;
   recipients: string[]; // user subs a notificar (el emisor ya viene excluido)

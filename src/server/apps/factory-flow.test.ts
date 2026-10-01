@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { nextStatus, parseThreadDecision, MAX_LOOPS } from "./factory-flow";
+import { nextStatus, parseThreadDecision, MAX_LOOPS, viewState } from "./factory-flow";
 
 describe("nextStatus", () => {
   it("camino feliz", () => {
@@ -56,5 +56,29 @@ describe("atajos al cierre y al bloqueo", () => {
     expect(nextStatus("checking", "merged")).toBe("done");
     expect(nextStatus("escalated", "merged")).toBe("done");
     expect(nextStatus("cancelled", "merged")).toBeNull();
+  });
+});
+
+describe("viewState", () => {
+  const now = 10_000;
+  const run = (status: Parameters<typeof viewState>[0]["status"]) => ({ status, requestedBy: "ana", approvedBy: "beto" });
+  const fresh = { lastActivityAt: now - 60, now, busy: false };
+  const old = { lastActivityAt: now - 31 * 60, now, busy: false };
+
+  it("cada estado cae en su columna con su acción", () => {
+    expect(viewState(run("planning"), fresh)).toMatchObject({ column: "planning", primary: "stop", whoseTurn: { kind: "agent", handle: "plan" } });
+    expect(viewState(run("plan_review"), fresh)).toMatchObject({ column: "waiting", primary: "sign", whoseTurn: { kind: "person", sub: "ana" } });
+    expect(viewState(run("building"), fresh)).toMatchObject({ column: "building", whoseTurn: { kind: "agent", handle: "build" } });
+    expect(viewState(run("checking"), fresh)).toMatchObject({ column: "checking", whoseTurn: { kind: "agent", handle: "check" } });
+    expect(viewState(run("pr_review"), fresh)).toMatchObject({ column: "ready", primary: "merge", whoseTurn: { kind: "person", sub: "beto" } });
+    expect(viewState(run("escalated"), fresh)).toMatchObject({ column: "waiting", primary: "decide" });
+    expect(viewState(run("done"), fresh)).toMatchObject({ column: "closed", primary: null, whoseTurn: null });
+  });
+
+  it("colgado: 30 min sin actividad y sin turno en vuelo", () => {
+    expect(viewState(run("building"), old)).toMatchObject({ stale: true, column: "waiting", primary: "resume", whoseTurn: { kind: "person", sub: "ana" } });
+    expect(viewState(run("building"), { ...old, busy: true }).stale).toBe(false);
+    // Esperando a una persona nunca es «colgado»: es su turno.
+    expect(viewState(run("plan_review"), old).stale).toBe(false);
   });
 });

@@ -90,3 +90,49 @@ export function parseThreadDecision(text: string): { decision: "approve" } | { d
   if (/^(aprobad[oa]|apruebo|aprobar|va|dale|s[ií]|ok|adelante|lgtm)[\s.!]*$/i.test(t)) return { decision: "approve" };
   return null;
 }
+
+// ── Lo que ve la persona (barra del hilo, panel y tablero) ───────────────────
+//
+// Lo CALCULA la plataforma con el estado y la última actividad; el modelo nunca declara
+// «listo» (patrón de Linear: el estado de la sesión sale de sus actividades).
+
+export type ViewColumn = "planning" | "waiting" | "building" | "checking" | "ready" | "closed";
+export type PrimaryAction = "sign" | "merge" | "decide" | "resume" | "stop" | null;
+
+export type RunView = {
+  column: ViewColumn;
+  /** Texto corto de la etapa para la barra. */
+  label: string;
+  /** Abierto, sin actividad en `staleAfter` s y sin turno en vuelo. */
+  stale: boolean;
+  /** A quién le toca: una persona o el rol que trabaja. */
+  whoseTurn: { kind: "person"; sub: string } | { kind: "agent"; handle: "plan" | "build" | "check" } | null;
+  primary: PrimaryAction;
+};
+
+export function viewState(
+  run: { status: RunStatus; requestedBy: string; approvedBy?: string | null },
+  opts: { lastActivityAt: number; now: number; busy: boolean; staleAfter?: number },
+): RunView {
+  const open = !["done", "cancelled"].includes(run.status);
+  const working = ["planning", "building", "checking"].includes(run.status);
+  const stale = working && !opts.busy && opts.now - opts.lastActivityAt >= (opts.staleAfter ?? 30 * 60);
+  const owner = { kind: "person" as const, sub: run.requestedBy };
+  const reviewer = { kind: "person" as const, sub: run.approvedBy || run.requestedBy };
+  switch (run.status) {
+    case "planning":
+      return { column: stale ? "waiting" : "planning", label: stale ? "Sin avanzar" : "Planeando", stale, whoseTurn: stale ? owner : { kind: "agent", handle: "plan" }, primary: stale ? "resume" : "stop" };
+    case "plan_review":
+      return { column: "waiting", label: "Espera tu firma", stale: false, whoseTurn: owner, primary: "sign" };
+    case "building":
+      return { column: stale ? "waiting" : "building", label: stale ? "Sin avanzar" : "Construyendo", stale, whoseTurn: stale ? owner : { kind: "agent", handle: "build" }, primary: stale ? "resume" : "stop" };
+    case "checking":
+      return { column: stale ? "waiting" : "checking", label: stale ? "Sin avanzar" : "En revisión", stale, whoseTurn: stale ? owner : { kind: "agent", handle: "check" }, primary: stale ? "resume" : "stop" };
+    case "pr_review":
+      return { column: "ready", label: "Listo para mezclar", stale: false, whoseTurn: reviewer, primary: "merge" };
+    case "escalated":
+      return { column: "waiting", label: "Necesita tu decisión", stale: false, whoseTurn: owner, primary: "decide" };
+    default:
+      return { column: "closed", label: run.status === "done" ? "Terminado" : "Cancelado", stale: false, whoseTurn: open ? owner : null, primary: null };
+  }
+}

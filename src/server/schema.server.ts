@@ -878,6 +878,20 @@ async function migrate(): Promise<void> {
   await addColumn("gt_factory_runs", "sprint_item_id", "INTEGER");
   // Ya se avisó en el hilo que no se pudo crear su tarea en Tasks (una vez).
   await addColumn("gt_factory_runs", "task_warned", "INTEGER");
+  // Bitácora INMUTABLE de cada pedido (2026-09-30, patrón de las «activities» de Linear): un
+  // renglón por transición o hecho (firma, PR, veredicto, merge). Nunca se edita ni se borra;
+  // la tarjeta, la barra del hilo y el tablero son proyecciones de esto + gt_factory_runs.
+  await exec(`CREATE TABLE IF NOT EXISTS gt_factory_events (
+    id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id    INTEGER NOT NULL,
+    at        INTEGER NOT NULL DEFAULT (unixepoch()),
+    actor     TEXT,
+    type      TEXT NOT NULL,
+    data_json TEXT
+  )`);
+  await exec("CREATE INDEX IF NOT EXISTS gt_factory_events_run ON gt_factory_events(run_id, id)");
+  // El pedido se quedó sin actividad (stale): se avisó UNA vez a quien lo pidió.
+  await addColumn("gt_factory_runs", "stale_warned_at", "INTEGER");
   // Tareas programadas de la Software Factory (revisión nocturna, dependencias): a su hora
   // la plataforma despierta a @plan en el room de la fábrica con un encargo fijo. Una fila
   // por tipo; `owner_sub` = con qué credenciales (GitHub) trabaja @plan.

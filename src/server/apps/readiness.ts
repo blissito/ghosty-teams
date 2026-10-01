@@ -112,7 +112,6 @@ export const prepareRepoFn = createServerFn({ method: "POST" })
     await dbq("INSERT INTO gt_factory_plans (run_id, version, plan_md) VALUES (?, 1, ?)", [run.id, planMd]);
     const msgId = await R.postInThread(run, "plan", R.planCardFence(run.id, 1));
     if (msgId) await dbq("UPDATE gt_factory_plans SET msg_id = ? WHERE run_id = ? AND version = 1", [msgId, run.id]);
-    void R.createTaskFor(run, planMd).catch(() => {});
     await R.ensureRunCard(run);
     void R.refreshRoom(room);
     return { runId: run.id, status: run.status, threadUrl: await threadUrl(room, rootId), existing: false };

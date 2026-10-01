@@ -169,11 +169,10 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
           await dbq("UPDATE gt_factory_runs SET title = ? WHERE id = ?", [title, run.id]);
           run = { ...run, title };
         }
-        run = await R.applyEvent(run, "plan_submitted", { plan_version: version });
+        run = await R.applyEvent(run, "plan_submitted", { plan_version: version }, { actor: "plan", data: { version } });
         await dbq("INSERT INTO gt_factory_plans (run_id, version, plan_md) VALUES (?, ?, ?)", [run.id, version, planMd]);
         const msgId = await R.postInThread(run, "plan", R.planCardFence(run.id, version));
         if (msgId) await dbq("UPDATE gt_factory_plans SET msg_id = ? WHERE run_id = ? AND version = ?", [msgId, run.id, version]);
-        if (firstPlan) void R.createTaskFor(run, planMd).catch(() => {});
         // La tarjeta viva en el room (la primera vez) y el aviso de que hay plan nuevo.
         await R.ensureRunCard(run);
         void R.refreshRoom(run.channelId);
@@ -248,8 +247,7 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
           pr_url: url,
           branch: a.branch ? String(a.branch) : run.branch,
           head_sha: head?.sha ?? null,
-        });
-        if (!run.prUrl) void R.linkPrToTask(next, url);
+        }, { actor: "build", data: { pr: url, tests: String(a.tests ?? "").slice(0, 300) } });
         const plan = await R.getPlan(run.id, run.planVersion);
         await R.handoff(
           next,
@@ -359,7 +357,7 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
           // `none` (sin CI) pasa, pero la tarjeta lo dice.
         }
         if (a.pass === true) {
-          const next = await R.applyEvent(run, "check_pass");
+          const next = await R.applyEvent(run, "check_pass", {}, { actor: "check" });
           // Sacarlo de borrador lo hace la plataforma, no el prompt: antes dependía de que
           // @check se acordara de github_mark_ready, y la tarjeta ya decía «listo».
           const ready = run.prUrl ? await R.markPrReady(sub, run.prUrl) : false;
@@ -402,7 +400,7 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
         }
         if (!findings) return { ok: false, error: "con pass=false los hallazgos son obligatorios" };
         if (a.blocked === true) {
-          const next = await R.applyEvent(run, "check_blocked");
+          const next = await R.applyEvent(run, "check_blocked", {}, { actor: "check", data: { findings: findings.slice(0, 500) } });
           await R.postInThread(
             next,
             "check",
@@ -411,7 +409,7 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
           );
           return { ok: true, status: next.status, note: "Escalado a una persona. No lo repitas." };
         }
-        const next = await R.applyEvent(run, "check_fail", { loops: run.loops + 1 });
+        const next = await R.applyEvent(run, "check_fail", { loops: run.loops + 1 }, { actor: "check", data: { findings: findings.slice(0, 500) } });
         if (next.status === "escalated") {
           await R.postInThread(
             next,

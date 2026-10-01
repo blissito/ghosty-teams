@@ -104,10 +104,27 @@ async function sweep(): Promise<void> {
   for (const ns of Array.from(tenants)) {
     try {
       await withNamespace(ns, () => sweepTenant(ns));
+      await withNamespace(ns, () => sweepStale(ns));
     } catch {
       /* un tenant con la DB flapeando no deja sin despertadores a los demás */
     }
   }
+}
+
+// Pedidos de la fábrica colgados (30 min sin actividad): cada 5 min por tenant, no en cada tick.
+const lastStale = new Map<string, number>();
+async function sweepStale(ns: string): Promise<void> {
+  if (Date.now() - (lastStale.get(ns) ?? 0) < 5 * 60_000) return;
+  lastStale.set(ns, Date.now());
+  const turns = await import("./turns.server");
+  const live = turns.allLiveTurnStates(ns);
+  const pending = await dbq(`SELECT key FROM gt_agent_wakeups WHERE fired_at IS NULL`).catch(() => []);
+  const { sweepStaleRuns } = await import("./apps/factory-runs.server");
+  await sweepStaleRuns(
+    (run) =>
+      live.some((t) => t.channelId === run.channelId && t.parentId === run.rootMsgId) ||
+      pending.some((w) => String(w.key).startsWith(`factory:${run.id}:`) || String(w.key).startsWith(`handoff:${run.channelId}:${run.rootMsgId}:`)),
+  );
 }
 
 async function sweepTenant(ns: string): Promise<void> {

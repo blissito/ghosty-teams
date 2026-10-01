@@ -268,26 +268,9 @@ export async function approveSprint(id: number, sub: string, origin: string): Pr
     [sub, origin, id],
   );
   if (!claimed[0]) throw new Error("ese sprint ya no está en borrador");
-  const sprint = toSprint(claimed[0]);
   const items = (await getSprintItems(id)).filter((i) => i.included);
   if (!items.length) throw new Error("el sprint quedó sin tickets");
-  const R = await import("./factory-runs.server");
-  // Tasks es best-effort (como en cada pedido): el sprint corre aunque el tablero no conteste.
-  const goal = await R.tasksCall(sub, "task_goal_create", { title: sprint.title, description: sprint.goal }, sprint.channelId).catch(() => null);
-  const goalId = goal?.id != null ? Number(goal.id) : null;
-  if (goalId) await dbq("UPDATE gt_factory_sprints SET goal_ref = ? WHERE id = ?", [String(goalId), id]);
-  const byKey = new Map(items.map((i) => [i.key, i]));
-  for (const it of items) {
-    const blockedBy = it.dependsOn.map((d) => byKey.get(d)).filter(Boolean).map((d) => `#${d!.idx}`);
-    const t = await R.tasksCall(sub, "task_create", {
-      title: `${it.idx}. ${it.title}`,
-      description: it.bodyMd.slice(0, 8000),
-      labels: ["sprint", `tamaño ${it.size}`, ...(blockedBy.length ? ["bloqueado"] : [])],
-      ...(goalId ? { goal: goalId } : {}),
-    }, sprint.channelId).catch(() => null);
-    const ref = t ? String(t.ref ?? t.id ?? "") : "";
-    if (ref) await dbq("UPDATE gt_factory_sprint_items SET task_ref = ? WHERE id = ?", [ref, it.id]);
-  }
+  // El sprint vive en gt_factory_sprint_items: la tarjeta y /factory lo pintan de ahí (sin Tasks desde 30-sep).
   await advanceSprint(id);
   return (await getSprint(id))!;
 }
@@ -368,7 +351,6 @@ async function startItem(sprint: SprintRow, it: SprintItemRow, all: SprintItemRo
   await dbq("INSERT INTO gt_factory_plans (run_id, version, plan_md) VALUES (?, 1, ?)", [run.id, it.bodyMd]);
   const msgId = await R.postInThread(run, "plan", R.planCardFence(run.id, 1));
   if (msgId) await dbq("UPDATE gt_factory_plans SET msg_id = ? WHERE run_id = ? AND version = 1", [msgId, run.id]);
-  if (it.taskRef) void R.tasksCall(approver, "task_labels", { id: it.taskRef, add: [], remove: ["bloqueado"] }, sprint.channelId).catch(() => {});
   await R.ensureRunCard(run);
   const who = (await dbq("SELECT name FROM gc_users WHERE sub = ?", [approver]).catch(() => []))[0]?.name ?? "Quien aprobó el sprint";
   await R.decide({ run, version: 1, decision: "approve", sub: approver, who: String(who), origin: sprint.origin ?? "" });

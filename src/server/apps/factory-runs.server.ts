@@ -75,7 +75,13 @@ export async function getPlan(runId: number, version: number) {
  * Aplica un evento: valida la transición y guarda. Lanza con un mensaje para el agente o
  * la persona si el evento no aplica (p.ej. construir sin firma).
  */
-export async function applyEvent(run: Run, event: RunEvent, patch: Partial<Record<string, unknown>> = {}): Promise<Run> {
+export async function applyEvent(
+  run: Run,
+  event: RunEvent,
+  patch: Partial<Record<string, unknown>> = {},
+  /** Para la bitácora: quién (persona o @rol) y el dato que explica la transición. */
+  meta: { actor?: string | null; data?: Record<string, unknown> } = {},
+): Promise<Run> {
   const next = nextStatus(run.status, event, run.loops);
   if (!next) throw new Error(`el pedido #${run.id} está en «${stageLabel(run.status)}»: no se puede ${event} ahora`);
   const cols = Object.keys(patch);
@@ -89,7 +95,8 @@ export async function applyEvent(run: Run, event: RunEvent, patch: Partial<Recor
   );
   if (!rows[0]) throw new Error(`el pedido #${run.id} cambió mientras tanto; vuelve a mirarla`);
   const updated = toRun(rows[0]);
-  void syncTask(updated).catch(() => {});
+  void logEvent(updated.id, event, meta.actor ?? null, { from: run.status, to: next, ...meta.data });
+  void notifyRunTurn(updated, run.status);
   // Pedido de un sprint que llega a PR, merge o se cancela: puede destrabar el siguiente ticket.
   if (updated.status === "done" || updated.status === "cancelled" || updated.status === "pr_review")
     void import("./sprint.server").then((S) => S.onSprintRunChanged(updated.id)).catch(() => {});
@@ -100,6 +107,89 @@ export async function applyEvent(run: Run, event: RunEvent, patch: Partial<Recor
   }
   void refreshRoom(updated.channelId);
   return updated;
+}
+
+// ── Bitácora y avisos ────────────────────────────────────────────────────────
+
+/** Un renglón INMUTABLE de la bitácora del pedido. Best-effort: nunca tumba la transición. */
+export async function logEvent(runId: number, type: string, actor: string | null = null, data: Record<string, unknown> | null = null): Promise<void> {
+  await dbq("INSERT INTO gt_factory_events (run_id, actor, type, data_json) VALUES (?, ?, ?, ?)", [
+    runId,
+    actor,
+    type,
+    data ? JSON.stringify(data) : null,
+  ]).catch((e) => console.error("[factory] bitácora", e));
+}
+
+/**
+ * Aviso (push/correo) SÓLO cuando el pedido espera a una persona o terminó. Planear,
+ * construir y revisar no avisan: sólo refrescan la tarjeta (patrón de Slack/Linear: editar
+ * en silencio, timbrar cuando te toca).
+ */
+export async function notifyRunTurn(run: Run, from: RunStatus | null): Promise<void> {
+  if (from === run.status) return;
+  const copy: Partial<Record<RunStatus, string>> = {
+    plan_review: "El plan está listo: falta tu firma.",
+    pr_review: "El PR está listo para que lo revises y lo mezcles.",
+    escalated: "La fábrica necesita que decidas cómo seguir.",
+    done: "Terminó.",
+  };
+  const body = copy[run.status];
+  if (!body) return;
+  const to = new Set([run.requestedBy, run.status === "pr_review" || run.status === "done" ? run.approvedBy : null].filter(Boolean) as string[]);
+  await notifyRun(run, [...to], body, `factory:${run.id}:${run.status}`);
+}
+
+async function notifyRun(run: Run, subs: string[], body: string, tag: string): Promise<void> {
+  try {
+    const db = await import("../../db.server");
+    const ch = await db.getChannelById(run.channelId);
+    if (!ch || !subs.length) return;
+    const recipients = await db.filterMutedOut(subs, "room", run.channelId).catch(() => subs);
+    const { notify } = await import("../notify.server");
+    const { currentNamespace } = await import("../tenant.server");
+    await notify(
+      {
+        kind: "factory",
+        recipients,
+        title: `Pedido #${run.id} · ${run.title}`.slice(0, 120),
+        body,
+        url: `/c/${ch.slug}?thread=${run.rootMsgId}&run=${run.id}`,
+        tag,
+      },
+      await currentNamespace(),
+    );
+  } catch (e) {
+    console.error("[factory] aviso", e);
+  }
+}
+
+/** Minutos sin actividad para que un pedido abierto cuente como colgado (Linear: 30). */
+export const STALE_SECONDS = 30 * 60;
+
+/**
+ * Barrido: pedidos abiertos sin un solo evento ni mensaje en 30 min y sin turno en vuelo →
+ * un aviso, UNA vez, a quien lo pidió. Lo llama el timer de wakeups.
+ */
+export async function sweepStaleRuns(isBusy: (run: Run) => boolean): Promise<void> {
+  const now = Math.floor(Date.now() / 1000);
+  const rows = await dbq(
+    `SELECT r.*, MAX(COALESCE((SELECT MAX(at) FROM gt_factory_events e WHERE e.run_id = r.id), 0),
+            COALESCE((SELECT MAX(created_at) FROM gc_messages m WHERE m.parent_id = r.root_msg_id AND m.channel_id = r.channel_id), 0),
+            r.updated_at) AS last_at
+       FROM gt_factory_runs r
+      WHERE r.status IN ('planning','building','checking') AND r.stale_warned_at IS NULL AND (r.kind IS NULL OR r.kind != 'eval')`,
+  ).catch(() => []);
+  for (const r of rows) {
+    if (now - Number(r.last_at ?? now) < STALE_SECONDS) continue;
+    const run = toRun(r);
+    if (isBusy(run)) continue;
+    const marked = await dbq("UPDATE gt_factory_runs SET stale_warned_at = ? WHERE id = ? AND stale_warned_at IS NULL RETURNING id", [now, run.id]).catch(() => []);
+    if (!marked.length) continue;
+    await logEvent(run.id, "stale", null, { status: run.status });
+    await notifyRun(run, [run.requestedBy], "Lleva 30 min sin avanzar. Ábrelo para retomarlo o detenerlo.", `factory:${run.id}:stale`);
+    void refreshRoom(run.channelId);
+  }
 }
 
 // ── Publicar en el hilo ──────────────────────────────────────────────────────
@@ -176,79 +266,6 @@ export async function handoff(
   return ok;
 }
 
-// ── Tasks (best-effort: la corrida no depende del tablero) ───────────────────
-
-/** Llamada a Tasks con el MOTIVO si falla (nunca calla: cada camino deja rastro). */
-export async function tasksTry(
-  sub: string,
-  name: string,
-  args: Record<string, unknown>,
-  /** Room del pedido: cada room de la fábrica tiene su tablero. Sin él, el de la instalación. */
-  channelId?: number | null,
-): Promise<{ ok: true; result: Record<string, any> } | { ok: false; error: string }> {
-  const { getAppConfig } = await import("./installed.server");
-  const cfg = await getAppConfig<{ boardId?: number | null; roomId?: number }>("factory");
-  const fail = (error: string) => {
-    console.error(`[factory] Tasks ${name}: ${error}`);
-    return { ok: false as const, error };
-  };
-  const { factoryBoardOf } = await import("./factory");
-  const boardId = channelId ? ((await factoryBoardOf(channelId))?.id ?? null) : (cfg?.boardId ?? null);
-  if (!boardId) return fail(channelId && channelId !== cfg?.roomId ? "este room no tiene tablero en Tasks (créalo en la Fábrica)" : "la fábrica no tiene tablero en Tasks");
-  const { currentSlug } = await import("../tenant.server");
-  const slug = await currentSlug();
-  if (!slug) return fail("no se pudo resolver el espacio");
-  const { callTasks } = await import("../tasks-bridge.server");
-  const r = await callTasks(slug, sub, boardId, name, args).catch((e) => ({ ok: false as const, error: String(e?.message ?? e) }));
-  if (!r.ok) return fail(r.error);
-  return { ok: true, result: (r.result ?? {}) as Record<string, any> };
-}
-
-export async function tasksCall(sub: string, name: string, args: Record<string, unknown>, channelId?: number | null) {
-  const r = await tasksTry(sub, name, args, channelId);
-  return r.ok ? r.result : null;
-}
-
-export async function createTaskFor(run: Run, planMd: string): Promise<void> {
-  // La corrida nació de una tarea de Tasks (asignada a @plan): ya tiene la suya.
-  if (run.taskRef) return;
-  const r = await tasksTry(run.requestedBy, "task_create", {
-    title: run.title,
-    description: planMd.slice(0, 8000),
-    labels: [stageLabel(run.status)],
-  }, run.channelId);
-  const ref = r.ok ? String(r.result.ref ?? r.result.id ?? "") : "";
-  if (ref) {
-    await dbq("UPDATE gt_factory_runs SET task_ref = ? WHERE id = ?", [ref, run.id]);
-    void refreshRoom(run.channelId);
-    return;
-  }
-  // Sin tarea: se dice UNA vez en el hilo del pedido, con el motivo (antes fallaba mudo).
-  const warned = await dbq("UPDATE gt_factory_runs SET task_warned = 1 WHERE id = ? AND task_warned IS NULL RETURNING id", [run.id]).catch(() => []);
-  if (warned.length)
-    await postInThread(run, "plan", `⚠️ No pude crear la tarea de este pedido en Tasks: ${r.ok ? "Tasks no devolvió su id" : r.error}. El pedido sigue igual.`);
-}
-
-async function syncTask(run: Run): Promise<void> {
-  if (!run.taskRef) return;
-  // `set_labels` de Tasks es add/remove: la etapa nueva entra y las demás salen.
-  const all: RunStatus[] = ["planning", "plan_review", "building", "checking", "pr_review", "escalated", "done", "cancelled"];
-  const now = stageLabel(run.status);
-  await tasksCall(run.requestedBy, "task_labels", {
-    id: run.taskRef,
-    add: [now],
-    remove: all.map(stageLabel).filter((l) => l !== now),
-  }, run.channelId);
-  if (run.status === "building") await tasksCall(run.requestedBy, "task_move", { id: run.taskRef, column: "In Progress" }, run.channelId);
-  if (run.status === "done" || run.status === "cancelled")
-    await tasksCall(run.requestedBy, "task_move", { id: run.taskRef, column: "Done" }, run.channelId);
-}
-
-export async function linkPrToTask(run: Run, url: string): Promise<void> {
-  if (!run.taskRef) return;
-  await tasksCall(run.requestedBy, "task_link", { id: run.taskRef, url, title: `PR · ${run.title}` }, run.channelId).catch(() => null);
-}
-
 // ── GitHub ───────────────────────────────────────────────────────────────────
 
 export function parsePrUrl(url: string): { repo: string; number: number } | null {
@@ -311,6 +328,7 @@ export async function decide(opts: {
     run,
     decision === "approve" ? "approve" : "changes",
     decision === "approve" ? (run.status === "escalated" ? { approved_by: sub } : { approved_by: sub, loops: 0 }) : { loops: 0 },
+    { actor: who, data: { version, ...(note ? { note } : {}) } },
   );
   await dbq("UPDATE gt_factory_plans SET decision = ?, decided_by = ?, note = ? WHERE run_id = ? AND version = ?", [
     decision,
@@ -381,80 +399,6 @@ export async function maybeThreadDecision(opts: {
     console.error("[factory] firma en el hilo", e);
     return false;
   }
-}
-
-// ── Arranque desde Tasks: una tarea asignada a @plan ─────────────────────────
-
-/**
- * Abre una corrida a partir de una tarea de Tasks asignada a `@plan`: publica el pedido en el
- * room de la fábrica (con la cara de @plan) y lo despierta en ese hilo. La tarea YA existe:
- * la corrida guarda su `task_ref` y no se crea otra (`createTaskFor` la respeta).
- *
- * Idempotente por `task_ref`: reasignar la misma tarea con una corrida viva no abre otra.
- */
-/** El room de la fábrica cuyo tablero tiene esta tarea (Tasks comparte la base). */
-async function roomOfTask(taskRef: string): Promise<number | null> {
-  const rows = await dbq(
-    `SELECT b.channel_id FROM task_tasks t
-       JOIN gt_room_board b ON b.project_id = t.project_id
-       JOIN gt_room_repos r ON r.channel_id = b.channel_id
-      WHERE t.id = ? LIMIT 1`,
-    [Number(taskRef)],
-  ).catch(() => []);
-  return rows[0] ? Number(rows[0].channel_id) : null;
-}
-
-export async function startRunFromTask(opts: {
-  taskRef: string;
-  title: string;
-  description: string;
-  requestedBy: string;
-  origin: string;
-}): Promise<{ runId: number; existing: boolean } | { error: string }> {
-  const { getAppConfig } = await import("./installed.server");
-  const cfg = await getAppConfig<{ roomId?: number }>("factory");
-  if (!cfg?.roomId) return { error: "la Software Factory no está instalada en este espacio" };
-  // El room del pedido es el del TABLERO de la tarea (cada room de la fábrica tiene el suyo);
-  // si ese tablero no es de ningún room con repos, el de la instalación.
-  const roomId = (await roomOfTask(opts.taskRef)) ?? cfg.roomId;
-  const alive = await dbq(
-    `SELECT id FROM gt_factory_runs WHERE task_ref = ? AND status NOT IN ('done','cancelled') ORDER BY id DESC LIMIT 1`,
-    [opts.taskRef],
-  );
-  if (alive[0]) return { runId: Number(alive[0].id), existing: true };
-
-  const title = opts.title.trim().slice(0, 120) || `Tarea ${opts.taskRef}`;
-  const db = await import("../../db.server");
-  const repos = (await db.listRoomRepos(roomId)).map((r) => r.repo);
-  // El mensaje raíz del pedido, en el room de la fábrica y con la cara de @plan: todo lo de la
-  // corrida (tarjeta de plan, firmas, PR) cuelga de este hilo.
-  const who = await agentIdentity("plan");
-  const bus = await import("../bus.server");
-  const { currentNamespace } = await import("../tenant.server");
-  const body =
-    `📋 **Tarea #${opts.taskRef} asignada a @plan desde Tasks:** ${title}` +
-    (opts.description.trim() ? `\n\n${opts.description.trim().slice(0, 1500)}` : "");
-  const { id: rootId } = await db.postAgent(roomId, null, body, "msg", who.handle, who.name, "general", who.avatar);
-  const msg = await db.getMessage(rootId);
-  if (msg) bus.publish(bus.ch.room(await currentNamespace(), roomId), { t: "message:new", msg });
-
-  const rows = await dbq(
-    `INSERT INTO gt_factory_runs (channel_id, root_msg_id, topic, title, status, repo, task_ref, requested_by)
-     VALUES (?, ?, 'general', ?, 'planning', ?, ?, ?) RETURNING id`,
-    [roomId, rootId, title, repos.length === 1 ? repos[0] : null, opts.taskRef, opts.requestedBy],
-  );
-  const run = (await getRun(Number(rows[0].id)))!;
-  await ensureRunCard(run);
-  await handoff(
-    run,
-    "plan",
-    opts.requestedBy,
-    "tarea asignada desde Tasks",
-    `Te asignaron la tarea #${opts.taskRef} en Tasks. Es el pedido:\n\n**${title}**\n${opts.description.trim().slice(0, 4000)}\n\n` +
-      `Lee el repo y entrega el plan con factory_plan_submit (runId ${run.id}). La tarea ya existe en el tablero: no crees otra.`,
-    opts.origin,
-  );
-  return { runId: run.id, existing: false };
 }
 
 // ── La tarjeta viva de la corrida (top-level en el room) ─────────────────────
@@ -660,7 +604,7 @@ export async function closeFinishedRuns(): Promise<void> {
     const fixed = await dbq("UPDATE gt_factory_runs SET status = 'done', updated_at = unixepoch() WHERE id = ? AND status = 'cancelled' RETURNING *", [run.id]);
     if (fixed[0]) {
       const done = toRun(fixed[0]);
-      void syncTask(done).catch(() => {});
+      void logEvent(done.id, "merged", null, { from: "cancelled", to: "done" });
       void refreshRoom(done.channelId);
       void import("./sprint.server").then((S) => S.onSprintRunChanged(done.id)).catch(() => {});
     }
@@ -723,7 +667,7 @@ export async function onPrEvent(run: Run, outcome: "merged" | "closed", role: "c
       const fixed = await dbq("UPDATE gt_factory_runs SET status = 'done', merged_at = COALESCE(merged_at, unixepoch()), updated_at = unixepoch() WHERE id = ? AND status = 'cancelled' RETURNING *", [run.id]);
       if (!fixed[0]) return null;
       const done = toRun(fixed[0]);
-      void syncTask(done).catch(() => {});
+      void logEvent(done.id, "merged", null, { from: "cancelled", to: "done" });
       void refreshRoom(done.channelId);
       void import("./sprint.server").then((S) => S.onSprintRunChanged(done.id)).catch(() => {});
       return done;

@@ -199,17 +199,6 @@ async function pickFactoryRoom(me: { sub: string; isOwner?: boolean }, cfg: Fact
   return { room, channels, repos: (await db.listRoomRepos(room.id)).map((r) => r.repo) };
 }
 
-/** El tablero de Tasks de un room de la fábrica: el que el room recuerda o, en el de la instalación, el suyo. */
-export async function factoryBoardOf(channelId: number): Promise<{ id: number; slug: string; name: string } | null> {
-  const { roomBoard, listBoards } = await import("../tasks-boards.server");
-  const own = await roomBoard(channelId).catch(() => null);
-  if (own) return own;
-  const { getAppConfig } = await import("./installed.server");
-  const cfg = await getAppConfig<FactoryCfg>("factory").catch(() => null);
-  if (cfg?.roomId !== channelId || !cfg.boardId) return null;
-  return (await listBoards().catch(() => [])).find((b) => b.id === cfg.boardId) ?? null;
-}
-
 export const factoryStatusFn = createServerFn({ method: "GET" }).handler(async (): Promise<FactoryStatus> => {
   await requireOwner();
   const { getAppConfig } = await import("./installed.server");
@@ -276,28 +265,13 @@ export const installFactoryFn = createServerFn({ method: "POST" })
     }
     await db.addRoomRepo(roomId, repo, user.sub);
 
-    // 3. El tablero (reusa el de una instalación anterior si sigue vivo).
-    const { currentSlug } = await import("../tenant.server");
-    const slug = await currentSlug();
-    if (!slug) throw new Error("no pude resolver el espacio");
-    let boardId: number | null = prev?.boardId ?? null;
-    const { listBoards, rememberRoomBoard } = await import("../tasks-boards.server");
-    if (boardId && !(await listBoards().catch(() => [])).some((b) => b.id === boardId)) boardId = null;
-    if (!boardId) {
-      const { callTasks } = await import("../tasks-bridge.server");
-      const r = await callTasks(slug, user.sub, 0, "task_board_create", { name: "Fábrica" });
-      const id = Number((r as any)?.result?.id);
-      boardId = r.ok && Number.isFinite(id) && id > 0 ? id : null;
-    }
-    if (boardId) await rememberRoomBoard(roomId, boardId, user.sub);
-
     // 4. La caja de CI del espacio (se crea y registra sola, en segundo plano en gs).
     const ciLabel = (await requestCiBox((await db.listRoomRepos(roomId)).map((r) => r.repo))) ?? prev?.ciLabel;
 
     // 5. La fila que enciende las tools.
-    await recordInstall("factory", user.sub, { ...assigned, roomId, boardId, ...(ciLabel ? { ciLabel } : {}) });
+    await recordInstall("factory", user.sub, { ...assigned, roomId, ...(ciLabel ? { ciLabel } : {}) });
     const ch = await db.getChannelById(roomId);
-    return { ok: true as const, room: ch ? { id: ch.id, slug: ch.slug, name: ch.name } : null, boardId };
+    return { ok: true as const, room: ch ? { id: ch.id, slug: ch.slug, name: ch.name } : null };
   });
 
 /** Cambia a qué agente apunta cada rol, sin reinstalar. El siguiente turno ya corre en él. */
@@ -484,8 +458,124 @@ export const factoryRunCardFn = createServerFn({ method: "POST" })
       threadUrl: `/c/${ch.slug}?thread=${run.rootMsgId}`,
       // Firmable desde la tarjeta: el plan vigente espera firma (o hay que decidir tras escalar).
       canSign: (run.status === "plan_review" && !!plan && !plan.decision) || run.status === "escalated",
+      ...(await runLive(run)),
     };
   });
+
+/**
+ * Lo vivo del pedido para la barra del hilo y el panel: estado CALCULADO (`viewState`), el
+ * paso que narra el agente ahora y la última actividad. Nada de esto lo declara el modelo.
+ */
+async function runLive(run: import("./factory-runs.server").Run) {
+  const { dbq } = await import("../../dbq.server");
+  const { viewState } = await import("./factory-flow");
+  const turns = await import("../turns.server");
+  const { currentNamespace } = await import("../tenant.server");
+  const live = turns.allLiveTurnStates(await currentNamespace()).find((t) => t.channelId === run.channelId && t.parentId === run.rootMsgId) ?? null;
+  const [last] = await dbq(
+    `SELECT MAX(COALESCE((SELECT MAX(at) FROM gt_factory_events WHERE run_id = ?), 0),
+            COALESCE((SELECT MAX(created_at) FROM gc_messages WHERE channel_id = ? AND parent_id = ?), 0)) AS t`,
+    [run.id, run.channelId, run.rootMsgId],
+  ).catch(() => [{ t: 0 }]);
+  const now = Math.floor(Date.now() / 1000);
+  const lastActivityAt = Number(last?.t || now);
+  const view = viewState(run, { lastActivityAt, now, busy: !!live });
+  return {
+    view,
+    lastActivityAt,
+    currentStep: live?.paso ?? null,
+    liveTurnId: live?.id ?? null,
+    rootMsgId: run.rootMsgId,
+    requestedBy: run.requestedBy,
+  };
+}
+
+/** ¿Este hilo es un pedido de la fábrica? Su id, o null. La barra del hilo empieza aquí. */
+export const factoryRunOfThreadFn = createServerFn({ method: "POST" })
+  .validator((d: { channelId: number; rootMsgId: number }) => d)
+  .handler(async ({ data }) => {
+    const me = await sessionUser();
+    if (!me) return null;
+    const R = await import("./factory-runs.server");
+    const run = await R.runOfThread(Number(data.channelId), Number(data.rootMsgId)).catch(() => null);
+    return run ? { runId: run.id } : null;
+  });
+
+/** El detalle del pedido para el panel lateral: plan vigente, veredicto y bitácora. */
+export const factoryRunDetailFn = createServerFn({ method: "POST" })
+  .validator((d: { runId: number }) => d)
+  .handler(async ({ data }) => {
+    const me = await sessionUser();
+    if (!me) throw new Error("no autenticado");
+    const R = await import("./factory-runs.server");
+    const run = await R.getRun(Number(data.runId));
+    if (!run) return null;
+    const db = await import("../../db.server");
+    if (!(await db.listChannels(me.sub, me.isOwner)).some((c) => c.id === run.channelId)) return null;
+    const { dbq } = await import("../../dbq.server");
+    const plan = run.planVersion ? await R.getPlan(run.id, run.planVersion) : null;
+    const [v] = await dbq("SELECT verdict_json FROM gt_factory_runs WHERE id = ?", [run.id]).catch(() => []);
+    const events = await dbq("SELECT id, at, actor, type, data_json FROM gt_factory_events WHERE run_id = ? ORDER BY id DESC LIMIT 100", [run.id]).catch(() => []);
+    // JSON crudo: el server fn sólo serializa tipos concretos; el panel lo parsea.
+    return {
+      planMd: plan?.planMd ?? null,
+      planVersion: run.planVersion,
+      verdictJson: (v?.verdict_json ?? null) as string | null,
+      events: events.map((e) => ({ id: Number(e.id), at: Number(e.at), actor: (e.actor ?? null) as string | null, type: String(e.type), dataJson: (e.data_json ?? null) as string | null })),
+    };
+  });
+
+/**
+ * Acciones de una persona sobre el pedido desde la barra o el panel (las mismas que el agente
+ * hace por tool): detener el turno en vuelo, retomar uno colgado, cancelar.
+ */
+export const factoryRunActionFn = createServerFn({ method: "POST" })
+  .validator((d: { runId: number; action: "stop" | "resume" | "cancel" }) => d)
+  .handler(async ({ data }) => {
+    const me = await sessionUser();
+    if (!me) throw new Error("no autenticado");
+    const R = await import("./factory-runs.server");
+    const run = await R.getRun(Number(data.runId));
+    if (!run) throw new Error("pedido no encontrado");
+    const db = await import("../../db.server");
+    if (!(await db.listChannels(me.sub, me.isOwner)).some((c) => c.id === run.channelId)) throw new Error("no ves ese room");
+    if (data.action === "cancel") {
+      const next = await R.applyEvent(run, "cancel", {}, { actor: me.name || me.sub });
+      return { ok: true as const, status: next.status };
+    }
+    const live = await runLive(run);
+    if (data.action === "stop") {
+      if (!live.liveTurnId) throw new Error("no hay nadie trabajando en este pedido ahora");
+      const turns = await import("../turns.server");
+      const { currentNamespace } = await import("../tenant.server");
+      if (!turns.stopTurn(await currentNamespace(), live.liveTurnId, me.sub)) throw new Error("no pude detenerlo (sólo quien lo pidió puede)");
+      await R.logEvent(run.id, "stopped", me.name || me.sub);
+      return { ok: true as const, status: run.status };
+    }
+    // Retomar: el rol de la etapa vuelve a trabajar en el mismo hilo, con un encargo explícito.
+    const role = ({ planning: "plan", building: "build", checking: "check" } as const)[run.status as "planning" | "building" | "checking"];
+    if (!role) throw new Error("en esta etapa no hay nada que retomar");
+    if (live.liveTurnId) throw new Error("ya hay alguien trabajando en este pedido");
+    const { reqOrigin } = await import("../../origin.server");
+    const ok = await R.handoff(
+      run,
+      role,
+      run.approvedBy ?? me.sub,
+      "retomar",
+      `${me.name || "Una persona"} pidió retomar este pedido: se quedó sin avanzar. Revisa lo último del hilo y continúa tu paso; ciérralo con tu tool factory_*.`,
+      await reqOrigin().catch(() => ""),
+    );
+    if (!ok) throw new Error("no pude despertar al agente");
+    await dbq0("UPDATE gt_factory_runs SET stale_warned_at = NULL WHERE id = ?", [run.id]);
+    await R.logEvent(run.id, "resumed", me.name || me.sub, { role });
+    void R.refreshRoom(run.channelId);
+    return { ok: true as const, status: run.status };
+  });
+
+async function dbq0(sql: string, args: unknown[]) {
+  const { dbq } = await import("../../dbq.server");
+  return dbq(sql, args as never[]).catch(() => []);
+}
 
 /** «Reintentar» la preview del pedido desde su tarjeta. Cualquiera que vea el room. */
 export const factoryRetryPreviewFn = createServerFn({ method: "POST" })
@@ -525,8 +615,10 @@ export type FactoryRunRow = {
   prUrl: string | null;
   threadUrl: string | null;
   kind: string | null;
-  /** Liga a su tarea en el tablero de la fábrica (Tasks), si la tiene. */
-  taskUrl: string | null;
+  /** Estado calculado (columna del tablero) y a quién le toca: sólo en pedidos abiertos. */
+  column: string | null;
+  label: string | null;
+  turnSub: string | null;
 };
 
 /**
@@ -555,21 +647,33 @@ export const factoryOverviewFn = createServerFn({ method: "GET" })
       .filter((c) => roomIds.has(c.id))
       .map(async (c) => ({ id: c.id, slug: c.slug, name: c.name, repos: (await db.listRoomRepos(c.id)).length, isDefault: c.id === cfg?.roomId })),
   );
-  // El tablero del room en Tasks (misma base del espacio): liga a cada tarea, y si no
-  // existe, se dice (sin tablero los pedidos no tienen tarea).
-  const board = room ? await factoryBoardOf(room.id) : null;
-  const { currentSlug } = await import("../tenant.server");
-  const wsSlug = await currentSlug();
-  const tasksBase = wsSlug && board ? `https://${wsSlug}.${process.env.TASKS_ROOT_DOMAIN ?? "tasks.ghosty.studio"}/p/${board.slug}` : null;
   const repos = picked?.repos ?? [];
   const { dbq } = await import("../../dbq.server");
   const rows = room
     ? await dbq(
-        `SELECT id, channel_id, root_msg_id, title, status, repo, loops, created_at, pr_ready_at, first_review_at, first_review_state, merged_at, pr_url, kind, task_ref
+        `SELECT id, channel_id, root_msg_id, title, status, repo, loops, created_at, pr_ready_at, first_review_at, first_review_state, merged_at, pr_url, kind, requested_by, approved_by,
+                MAX(COALESCE((SELECT MAX(at) FROM gt_factory_events e WHERE e.run_id = gt_factory_runs.id), 0),
+                    COALESCE((SELECT MAX(created_at) FROM gc_messages m WHERE m.channel_id = gt_factory_runs.channel_id AND m.parent_id = gt_factory_runs.root_msg_id), 0),
+                    updated_at) AS last_at
          FROM gt_factory_runs WHERE channel_id = ? AND COALESCE(kind, '') != 'eval' ORDER BY id DESC LIMIT 500`,
         [room.id],
       ).catch(() => [])
     : [];
+  // El tablero es una VISTA: la columna sale de `viewState` (estado + última actividad + turno
+  // en vuelo), igual que la barra del hilo. Sin datos propios.
+  const { viewState } = await import("./factory-flow");
+  const turns = await import("../turns.server");
+  const { currentNamespace } = await import("../tenant.server");
+  const live = turns.allLiveTurnStates(await currentNamespace());
+  const now = Math.floor(Date.now() / 1000);
+  const viewOf = (r: Record<string, any>) => {
+    if (["done", "cancelled"].includes(String(r.status))) return { column: null, label: null, turnSub: null };
+    const v = viewState(
+      { status: r.status, requestedBy: String(r.requested_by), approvedBy: r.approved_by ?? null },
+      { lastActivityAt: Number(r.last_at ?? now), now, busy: live.some((t) => t.channelId === Number(r.channel_id) && t.parentId === Number(r.root_msg_id)) },
+    );
+    return { column: v.column, label: v.label, turnSub: v.whoseTurn?.kind === "person" ? v.whoseTurn.sub : null };
+  };
   // Sólo los pedidos de rooms que esta persona ve (mismo criterio que la tarjeta viva).
   const runs: FactoryRunRow[] = rows
     .filter((r) => byId.has(Number(r.channel_id)))
@@ -585,9 +689,9 @@ export const factoryOverviewFn = createServerFn({ method: "GET" })
       firstReviewState: r.first_review_state ?? null,
       mergedAt: r.merged_at != null ? Number(r.merged_at) : null,
       prUrl: r.pr_url ?? null,
-      threadUrl: `/c/${byId.get(Number(r.channel_id))!.slug}?thread=${r.root_msg_id}`,
+      threadUrl: `/c/${byId.get(Number(r.channel_id))!.slug}?thread=${r.root_msg_id}&run=${r.id}`,
       kind: r.kind ?? null,
-      taskUrl: tasksBase && r.task_ref ? `${tasksBase}${/^\d+$/.test(String(r.task_ref)) ? `?task=${r.task_ref}` : ""}` : null,
+      ...viewOf(r),
     }));
   const { runStats } = await import("./factory-stats");
   // Sprints de los rooms que ve (con su avance: tickets con merge / incluidos).
@@ -613,10 +717,10 @@ export const factoryOverviewFn = createServerFn({ method: "GET" })
       url: r.card_msg_id ? `/c/${byId.get(Number(r.channel_id))!.slug}?thread=${r.card_msg_id}` : null,
     }));
   return {
-    board: board ? { name: board.name, url: tasksBase } : null,
     sprints,
     installed,
     isOwner: !!me.isOwner,
+    meSub: me.sub,
     room: room ? { id: room.id, slug: room.slug, name: room.name } : null,
     rooms,
     repos,
@@ -703,29 +807,7 @@ export const factoryMergeFn = createServerFn({ method: "POST" })
     return { ok: true as const };
   });
 
-/** La fábrica sin tablero en Tasks (se borró, o la instalación no pudo crearlo): crearlo. */
-export const factoryEnsureBoardFn = createServerFn({ method: "POST" })
-  .validator((d: { roomId?: number | null } | undefined) => d ?? {})
-  .handler(async ({ data }) => {
-  const user = await requireOwner();
-  const { getAppConfig, recordInstall } = await import("./installed.server");
-  const cfg = await getAppConfig<FactoryCfg>("factory");
-  if (!cfg?.roomId) throw new Error("la fábrica no está instalada");
-  const { room } = await pickFactoryRoom(user, cfg, data.roomId);
-  if (await factoryBoardOf(room.id)) return { ok: true as const };
-  const { currentSlug } = await import("../tenant.server");
-  const slug = await currentSlug();
-  if (!slug) throw new Error("no pude resolver el espacio");
-  const { callTasks } = await import("../tasks-bridge.server");
-  const isDefault = room.id === cfg.roomId;
-  const r = await callTasks(slug, user.sub, 0, "task_board_create", { name: isDefault ? "Fábrica" : `Fábrica · ${room.name}` });
-  const id = Number((r as any)?.result?.id);
-  if (!r.ok || !Number.isFinite(id) || id <= 0) throw new Error(r.ok ? "Tasks no devolvió el tablero" : r.error);
-  const { rememberRoomBoard } = await import("../tasks-boards.server");
-  await rememberRoomBoard(room.id, id, user.sub);
-  if (isDefault) await recordInstall("factory", user.sub, { ...cfg, boardId: id });
-  return { ok: true as const };
-  });
+
 
 // ── Sprints (ver apps/sprint.server.ts) ─────────────────────────────────────
 

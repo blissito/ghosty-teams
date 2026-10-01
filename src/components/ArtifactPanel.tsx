@@ -1,3 +1,4 @@
+import { RunPanel } from "./chat/RunPanel";
 import { AnimatePresence, motion } from "motion/react";
 import { AdsCampaignPanel } from "./chat/AdsCampaignPanel";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -190,6 +191,8 @@ export type ArtifactView =
   // Ghosty Ads: la propuesta/campaña #N. NATIVO (componentes React + server fns), no iframe:
   // un agente no puede falsear sus botones. `version` = abrir en esa versión (link «→ vN»).
   | { kind: "campaign"; title: string; campaignId: number; channelId: number; version?: number }
+  // Un pedido de la Software Factory: etapas, plan, veredicto y bitácora (RunPanel).
+  | { kind: "run"; title: string; runId: number; channelId: number }
   // Índice Cowork: lista los documentos de UN caso (room) como tiles; clic abre uno.
   // channelSlug para subir archivos al caso directo desde el panel (sin el agente).
   // threadRootId (opcional): abierto desde un HILO → toggle "Este hilo / Todo el caso".
@@ -764,7 +767,9 @@ export default function ArtifactPanel({
                     ? "ask-user"
                     : artifact.kind === "campaign"
                       ? `campaign:${artifact.campaignId}`
-                      : `${artifact.kind}:${artifact.src}`;
+                      : artifact.kind === "run"
+                        ? `run:${artifact.runId}`
+                        : `${artifact.kind}:${artifact.src}`;
   // Al cambiar a OTRO artefacto, resetea el preview office.
   useEffect(() => {
     setOfficeHtml(null);
@@ -1264,7 +1269,8 @@ export default function ArtifactPanel({
     artifact.kind === "sheet" ||
     artifact.kind === "ask-user" ||
     artifact.kind === "artifact" ||
-    artifact.kind === "campaign"
+    artifact.kind === "campaign" ||
+    artifact.kind === "run"
       ? undefined
       : artifact.kind === "docindex"
         ? "/artifacts"
@@ -2404,6 +2410,8 @@ export default function ArtifactPanel({
                           </div>
                         ) : null}
                       </div>
+                    ) : artifact.kind === "run" ? (
+                      <RunPanel runId={artifact.runId} channelId={artifact.channelId} />
                     ) : artifact.kind === "campaign" ? (
                       <AdsCampaignPanel
                         campaignId={artifact.campaignId}

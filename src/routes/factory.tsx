@@ -14,13 +14,14 @@ import { ArrowLeft, Check, ChevronDown, CircleDot, Factory } from "lucide-react"
 import { useLocale, useT } from "../i18n";
 import { intlLocale } from "../i18n.core";
 import { me } from "../server/auth";
-import { factoryEnsureBoardFn, factoryOverviewFn, factoryProposeSprintFn, factoryStartEvalFn, factoryStatusFn, type FactoryStatus } from "../server/apps/factory";
+import { factoryOverviewFn, factoryProposeSprintFn, factoryStartEvalFn, factoryStatusFn, type FactoryStatus } from "../server/apps/factory";
 import { MODEL_ALIASES } from "../server/apps/factory-team";
 import { formatUsd } from "../server/apps/factory-evals";
 import { RepoReadiness } from "../components/RepoReadiness";
 import { RepoTeam } from "../components/RepoTeam";
 import { RolesEditor, SchedulesEditor, SuggestAsks } from "../components/AppsPanel";
 import { AskAgentHint } from "../components/AskAgentHint";
+import { Toggle } from "../components/Toggle";
 
 type Overview = Awaited<ReturnType<typeof factoryOverviewFn>>;
 // Por room: cambiar de room y volver pinta al instante lo último que se vio.
@@ -34,6 +35,15 @@ export const Route = createFileRoute("/factory")({
   loader: async () => ({ user: await me() }),
   component: FactoryPage,
 });
+
+/** Columnas del tablero, en orden: lo que espera a una persona arriba. Ver `viewState`. */
+const COLUMNS = [
+  { key: "waiting", label: "Espera a una persona" },
+  { key: "ready", label: "Listo para mezclar" },
+  { key: "planning", label: "Planeando" },
+  { key: "building", label: "Construyendo" },
+  { key: "checking", label: "En revisión" },
+] as const;
 
 const STAGE: Record<string, string> = {
   planning: "Plan",
@@ -159,37 +169,6 @@ const HINT: Record<string, string> = {
   "Tiempo de revisión": "Mediana desde que @check deja el PR listo hasta la primera revisión humana (o el merge).",
   "Del pedido al PR": "Mediana del tiempo desde que se pide hasta que @check deja el PR listo para tu revisión.",
 };
-
-function MissingBoard({ roomId, onDone }: { roomId: number | null; onDone: () => void }) {
-  const t = useT();
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState("");
-  return (
-    <div className="mt-4 flex flex-wrap items-center gap-2 rounded-xl border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-800 dark:text-amber-300">
-      <span className="min-w-0 flex-1">{t("Este room no tiene tablero en Tasks: sus pedidos no pueden crear tareas.")}</span>
-      <button
-        type="button"
-        disabled={busy}
-        onClick={async () => {
-          setBusy(true);
-          setErr("");
-          try {
-            await factoryEnsureBoardFn({ data: { roomId } });
-            onDone();
-          } catch (e) {
-            setErr(e instanceof Error ? e.message : String(e));
-          } finally {
-            setBusy(false);
-          }
-        }}
-        className="rounded-md border border-current px-2 py-1 font-semibold disabled:opacity-50"
-      >
-        {busy ? t("Creando…") : t("Crear tablero")}
-      </button>
-      {err && <span className="w-full text-red-600 dark:text-red-400">{err}</span>}
-    </div>
-  );
-}
 
 /** «¿Qué quieres lograr?» → @plan propone el sprint como borrador en el room de la fábrica. */
 function NewSprint({ roomId, roomSlug, repos }: { roomId: number | null; roomSlug: string | null; repos: string[] }) {
@@ -359,6 +338,7 @@ function FactoryPage() {
   const [owner, setOwner] = useState<FactoryStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<"open" | "closed">("open");
+  const [onlyMine, setOnlyMine] = useState(false);
 
   const load = () =>
     factoryOverviewFn({ data: roomParam ? { roomId: roomParam } : {} })
@@ -376,8 +356,11 @@ function FactoryPage() {
   const currentRoom = data?.room ? (data.rooms.find((r) => r.id === data.room!.id) ?? { ...data.room, repos: data.repos.length, isDefault: false }) : null;
 
   const runs = useMemo(
-    () => (data?.runs ?? []).filter((r) => ["done", "cancelled"].includes(r.status) === (filter === "closed")),
-    [data, filter],
+    () =>
+      (data?.runs ?? [])
+        .filter((r) => ["done", "cancelled"].includes(r.status) === (filter === "closed"))
+        .filter((r) => filter === "closed" || !onlyMine || r.turnSub === data?.meSub),
+    [data, filter, onlyMine],
   );
   const fmt = (ts: number) => new Date(ts * 1000).toLocaleDateString(intlLocale(locale), { day: "numeric", month: "short" });
 
@@ -417,17 +400,6 @@ function FactoryPage() {
 
       {data?.installed && (
         <>
-          {/* Sin tablero en Tasks los pedidos no tienen tarea: se dice y se arregla aquí. */}
-          {!data.board && data.isOwner && data.room && <MissingBoard roomId={data.room.id} onDone={() => void load()} />}
-          {data.board?.url && (
-            <p className="mt-2 text-xs text-muted">
-              {t("Tablero")}:{" "}
-              <a href={data.board.url} target="_blank" rel="noreferrer" className="text-brand hover:underline">
-                {data.board.name} ↗
-              </a>
-            </p>
-          )}
-
           {/* Sprint: el objetivo entra aquí; @plan lo parte en tickets (borrador en el room). */}
           <NewSprint key={data.room?.id ?? 0} roomId={data.room?.id ?? null} roomSlug={data.room?.slug ?? null} repos={data.repos} />
           {data.sprints.length > 0 && (
@@ -504,9 +476,24 @@ function FactoryPage() {
                   );
                 })}
               </div>
-            <ul className="divide-y divide-border">
-              {runs.length === 0 && <li className="px-3 py-4 text-sm text-muted">{filter === "open" ? t("Nadie está trabajando en un pedido ahora.") : t("Todavía no hay pedidos cerrados.")}</li>}
-              {runs.map((r) => (
+            {filter === "open" && (
+              <div className="flex items-center gap-2 border-b border-border px-3 py-1.5">
+                <span className="text-xs text-muted">{t("Me toca")}</span>
+                <Toggle on={onlyMine} onChange={setOnlyMine} label={t("Me toca")} />
+              </div>
+            )}
+            {runs.length === 0 && <p className="px-3 py-4 text-sm text-muted">{filter === "open" ? t("Nadie está trabajando en un pedido ahora.") : t("Todavía no hay pedidos cerrados.")}</p>}
+            {/* Abiertos: agrupados por columna (la vista de lista agrupada de Linear). La columna
+                la calcula el servidor; lo que espera a una persona va primero. */}
+            {(filter === "open" ? COLUMNS.map((c) => ({ ...c, rows: runs.filter((r) => r.column === c.key) })).filter((g) => g.rows.length) : [{ key: "closed", label: "", rows: runs }]).map((g) => (
+              <div key={g.key}>
+                {g.label && (
+                  <h3 className="border-b border-border bg-surface-2/60 px-3 py-1 text-[11px] font-bold uppercase tracking-wide text-muted">
+                    {t(g.label)} · {g.rows.length}
+                  </h3>
+                )}
+                <ul className="divide-y divide-border">
+                  {g.rows.map((r) => (
                 <li
                   key={r.id}
                   className={`group relative flex items-center gap-3 px-3 py-2.5 ${
@@ -535,7 +522,7 @@ function FactoryPage() {
                             : "bg-brand/12 text-brand"
                     }`}
                   >
-                    {t(STAGE[r.status] ?? r.status)}
+                    {t(r.label ?? STAGE[r.status] ?? r.status)}
                   </span>
                   {r.prUrl && (
                     <a href={r.prUrl} target="_blank" rel="noreferrer" className="relative z-10 shrink-0 text-xs text-muted hover:text-ink">
@@ -543,15 +530,12 @@ function FactoryPage() {
                     </a>
                   )}
                   {owner && r.status === "done" && r.prUrl && <EvalButton runId={r.id} agents={owner.candidates} roleAgentIds={Object.fromEntries(owner.roles.map((x) => [x.handle, x.agentId]))} onStarted={() => void load()} />}
-                  {r.taskUrl && (
-                    <a href={r.taskUrl} target="_blank" rel="noreferrer" className="relative z-10 shrink-0 text-xs text-muted hover:text-ink">
-                      {t("Tarea")} ↗
-                    </a>
-                  )}
                   <span className="shrink-0 text-xs font-semibold text-brand group-hover:underline">{t("Hilo")} →</span>
                 </li>
-              ))}
-            </ul>
+                  ))}
+                </ul>
+              </div>
+            ))}
             </div>
           </section>
 
