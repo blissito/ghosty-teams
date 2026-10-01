@@ -3080,6 +3080,21 @@ async function runAgentTurnInner(opts: {
   };
   const onTool = async (ev: ToolEvent) => {
     anyActivity = true;
+    // Última acción de un subagente hijo (gs, `detail` = «tool|detalle»): no es una tool del
+    // padre, sólo actualiza el detalle de SU fila — «Busqué en la web · nytimes.com» mientras
+    // corre; al cerrar, la duración lo reemplaza. Tools ocultas (plumbing) no cambian nada.
+    if (ev.name === "gs_subagent_child_step") {
+      const entry = ev.id ? idToEntry.get(ev.id) : undefined;
+      if (!entry || (ev.id && entry.ended.has(ev.id))) return;
+      const sep = (ev.detail ?? "").indexOf("|");
+      const tool = sep >= 0 ? ev.detail!.slice(0, sep) : ev.detail ?? "";
+      const detalle = sep >= 0 ? ev.detail!.slice(sep + 1).trim() : "";
+      const label = toolLabel(tool);
+      if (!label) return;
+      entry.detail = detalle ? `${label.ing} · ${detalle.slice(0, 60)}` : label.ing;
+      if (opts.emitBody) await paint();
+      return;
+    }
     // Nombre CRUDO, para poder retomar el turno si muere: el prompt de continuación enumera
     // hechos ("ya ejecutaste Bash, Read") y de aquí sale también si corrió algo irreversible.
     if (ev.phase !== "end" && ev.name && !toolsCrudas.has(ev.name)) {

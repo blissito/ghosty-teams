@@ -43,9 +43,21 @@ export const NOTA_PREFIJO_MCP =
   "llámala con el nombre exacto que veas en TU lista y nunca concluyas que no la tienes " +
   "porque el nombre no coincida letra por letra con el de este texto. ";
 
-/** El aviso, sólo cuando aplica. Vacío para el SDK, donde los nombres son literales. */
+/**
+ * La otra mitad del mismo fallo, del lado del SDK: un worker nativo las ejerce por
+ * `connectors.mjs`, así que NO aparecen en su lista de herramientas. El 30-sep @plan buscó
+ * `task_create` entre sus tools (y en ToolSearch), no la encontró y le dijo a bliss que
+ * reconectara Tasks — tres veces, con el bloque de Tasks delante. Tras una compactación el
+ * modelo pierde el «cómo» que aprendió en turnos anteriores; tiene que venir en el bloque.
+ */
+export const NOTA_LLAMADA_SDK =
+  "CÓMO se llaman: por NOMBRE, con `const { run } = await import('/opt/gs-sdk/connectors.mjs')` " +
+  "y `await run('<nombre>', { …args })`. NO aparecen en tu lista de herramientas ni en ToolSearch, " +
+  "y eso no significa que no las tengas: si `run` devuelve error, repórtalo tal cual. ";
+
+/** El aviso que toca según por dónde llegan las tools. */
 export function notaNombres(toolChannel: ToolChannel = "gs-sdk"): string {
-  return toolChannel === "mcp" ? NOTA_PREFIJO_MCP : "";
+  return toolChannel === "mcp" ? NOTA_PREFIJO_MCP : NOTA_LLAMADA_SDK;
 }
 
 /**
