@@ -2186,6 +2186,8 @@ function ChannelPage() {
   // escribe la URL no puede «corregirla» con el estado viejo (borraba `thread` y `campaign`
   // al cargar un link directo y ese ir y venir de la ruta frenaba la animación del panel).
   const urlFocusPending = useRef<number | null>(null);
+  // El room para el que el efecto que escribe la URL ya corrió (ver la guarda de ese efecto).
+  const urlWriterSlug = useRef(channel.slug);
   // `?campaign=N` todavía sin abrir en el panel: la URL lo conserva hasta que abra.
   const urlCampaignPending = useRef<number | null>(search.campaign ?? null);
   useEffect(() => {
@@ -2211,6 +2213,15 @@ function ChannelPage() {
    * otro el estado, en redondo.
    */
   useEffect(() => {
+    // En el render donde CAMBIA el room, el estado todavía trae el hilo/DM del room anterior:
+    // el reset del efecto de `channel.slug` aplica hasta el siguiente render. Escribir aquí
+    // pegaba `?thread=` del room viejo a la URL del nuevo, el efecto de `search` lo reabría y
+    // la persona se quedaba en el hilo viejo con el badge del room nuevo ya borrado (1-oct).
+    // Se salta este render; el siguiente, ya con el estado limpio, escribe lo correcto.
+    if (urlWriterSlug.current !== channel.slug) {
+      urlWriterSlug.current = channel.slug;
+      return;
+    }
     // Hay un salto de canal en vuelo: este efecto NO puede escribir la ruta con el slug
     // viejo. Se suelta en cuanto el canal ya es el destino.
     if (saltandoA.current) {
