@@ -1280,6 +1280,11 @@ async function migrate(): Promise<void> {
   // ⚠️ Se compara contra `unixepoch()`, el reloj de la BASE, nunca contra el de Node: son dos
   // relojes distintos y el desfase se manifiesta como turnos cerrados a destiempo.
   await addColumn("gt_turns", "heartbeat_at", "INTEGER");
+  // Recuperación (2026-10-01): el turno durable de gs con el que corre este turno de Teams, y
+  // la clave del despertador que lo abrió. Si Teams se reinicia a media respuesta, el proceso
+  // nuevo ADOPTA ese turno (sigue vivo en gs) en vez de cerrarlo con «⏹ Detenido».
+  await addColumn("gt_turns", "durable_turn_id", "TEXT");
+  await addColumn("gt_turns", "wake_key", "TEXT");
   // Cursor de reanudación: hasta qué evento del turno se entregó ya. Sirve para reabrir el
   // stream con `> seq` sin perder ni duplicar — el `sequence_number` de OpenAI, el
   // `Last-Event-ID` de SSE, y lo que deepseek-worker ya hace con su log de ghostycode.

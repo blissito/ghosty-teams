@@ -27,7 +27,19 @@ const TICK_MS = 30_000;
 const DEFER_S = 60;
 const REF_TTL_S = 7 * 24 * 3600; // lo que dura la liga firmada de un entregable
 
-export type WakeRef = { sub: string; ns: string; groupId: string; dest: ToolDest; exp: number };
+export type WakeRef = {
+  sub: string;
+  ns: string;
+  groupId: string;
+  dest: ToolDest;
+  exp: number;
+  /**
+   * ADOPTAR un turno durable de gs en vez de abrir uno nuevo: Teams se reinició con el turno
+   * a medias, gs lo siguió corriendo, y el proceso nuevo se reengancha en la MISMA burbuja
+   * (repite el backlog desde el inicio para rehacerla). Ver `sweepOrphans`.
+   */
+  adopt?: { shellId: number; turnId: string };
+};
 
 function secret(): string {
   const s = process.env.GHOSTY_PARTNER_SECRET;
@@ -276,6 +288,9 @@ async function fire(ns: string, w: Wakeup, ref: WakeRef): Promise<void> {
   const register = (mid: number) => {
     if (registeredId === mid) return;
     registeredId = mid;
+    // La clave del despertador viaja con el turno: si se adopta tras un reinicio, la fábrica
+    // sigue reconociéndolo como su relevo (`afterFactoryTurn` lee la clave).
+    void turns.setTurnDurable(mid, { wakeKey: w.key });
     turns.registerTurn({
       ns, messageId: mid, groupId: ref.groupId, invokerSub: ref.sub, controller,
       channelId: dest.channelId ?? null, parentId: dest.parentId ?? null, dmId: dest.dmId ?? null,
@@ -300,7 +315,16 @@ async function fire(ns: string, w: Wakeup, ref: WakeRef): Promise<void> {
     invokerSub: ref.sub,
     originOverride: w.origin || undefined,
     dest: { ...dest, handle, name, avatar },
+    // Adopción: el turno sigue vivo en gs y su burbuja ya existe — se reusa y se rehace entera
+    // con el backlog (no se crea otra).
+    ...(ref.adopt ? { durableResume: ref.adopt.turnId } : {}),
     createShell: async () => {
+      if (ref.adopt) {
+        shellId = ref.adopt.shellId;
+        await db.setMessageBody(shellId, "").catch(() => {});
+        publish({ t: "message:body", id: shellId, body: "" });
+        return shellId;
+      }
       let mid: number;
       if (dest.dmId != null) {
         mid = (await db.postDmAgent(dest.dmId, "", "msg", handle, name, avatar)).id;

@@ -1686,6 +1686,12 @@ export async function callAgentBackendStream(
   adoptar?: boolean,
   /** El modelo que corrió el turno (lo manda gs en el `done`; sólo camino nativo). */
   onModel?: (model: string) => void,
+  /**
+   * Turno durable: `resumeTurnId` = reengancharse a ESE turno de gs (no se crea otro; se repite
+   * su backlog desde el inicio). `onDurable` avisa el turnId en cuanto gs lo acepta, para
+   * guardarlo y poder adoptarlo si este proceso muere.
+   */
+  durableOpts?: { resumeTurnId?: string; onDurable?: (turnId: string) => void },
 ): Promise<string> {
   // El webhook sigue sin SSE: junta el reply y lo emite de un tirón. Un agente A2A NO cae
   // aquí — tiene streaming de verdad y se atiende más abajo.
@@ -2381,8 +2387,9 @@ export async function callAgentBackendStream(
   // lee con `Last-Event-ID`. Si la conexión se cae, se REENGANCHA al mismo turno: no se repite
   // trabajo y no hay que adivinar si una tool fue sucia. Detener = `POST …/cancel`.
   // `durable` = null hasta saber si gs tiene la ruta (404 → camino viejo de message-stream).
-  const durableTurnId = `teams:${crypto.randomUUID()}`;
-  let durable: boolean | null = null;
+  const durableTurnId = durableOpts?.resumeTurnId ?? `teams:${crypto.randomUUID()}`;
+  // Adoptar: el turno ya existe en gs, no se manda POST /turns.
+  let durable: boolean | null = durableOpts?.resumeTurnId ? true : null;
   let lastSeq = -1;
   let cancelSent = false;
   let cancelHooked = false;
@@ -2470,6 +2477,7 @@ export async function callAgentBackendStream(
           if (st.status === 202 || st.ok) {
             await st.text().catch(() => "");
             durable = true;
+            durableOpts?.onDurable?.(durableTurnId);
           }
         }
       }
@@ -2965,6 +2973,8 @@ async function runAgentTurnInner(opts: {
   publicChannel?: boolean;
   /** Retomar: adoptar el turno ACP huérfano si la caja lo conserva. Ver callAgentBackendStream. */
   adoptar?: boolean;
+  /** Adoptar un turno DURABLE de gs (Teams se reinició con él a medias): su turnId. */
+  durableResume?: string;
   /**
    * Con qué EMPIEZA la burbuja: lo que el turno muerto alcanzó a escribir. Al adoptar, lo que
    * llega es la SEGUNDA mitad de la misma respuesta, y repintar desde vacío la tiraría.
@@ -2990,6 +3000,12 @@ async function runAgentTurnInner(opts: {
       opts.onShell?.(id);
     }
     return id;
+  };
+  // El turnId durable se guarda en la fila del turno: si este proceso muere, el siguiente lo adopta.
+  const rememberDurable = async (turnId: string) => {
+    const mid = await ensure();
+    const { setTurnDurable } = await import("./server/turns.server");
+    await setTurnDurable(mid, { turnId });
   };
   // Estado del turno. El BODY visible = checklist + texto acumulado, SIEMPRE re-pintado
   // entero por emitBody (nunca se clobbea el texto ni se pierde en el flicker). `acc`
@@ -3301,7 +3317,7 @@ async function runAgentTurnInner(opts: {
     await onChunk(reply);
   } else {
     try {
-      reply = await callAgentBackendStream(opts.agent, opts.groupId, opts.sender, opts.text, onChunk, opts.parts ?? [], onTool, opts.currentDoc, opts.invokerSub, opts.signal, opts.dest, opts.inject, opts.originOverride, opts.publicChannel, (t) => { corte.ev = t; }, (f) => { fallo.message = f.message; }, opts.adoptar, (m) => { turnModel.value = m; });
+      reply = await callAgentBackendStream(opts.agent, opts.groupId, opts.sender, opts.text, onChunk, opts.parts ?? [], onTool, opts.currentDoc, opts.invokerSub, opts.signal, opts.dest, opts.inject, opts.originOverride, opts.publicChannel, (t) => { corte.ev = t; }, (f) => { fallo.message = f.message; }, opts.adoptar, (m) => { turnModel.value = m; }, { resumeTurnId: opts.durableResume, onDurable: (tid) => void rememberDurable(tid) });
     } catch (e) {
       // Detenido: NO es un error del agente. Se conserva lo que alcanzó a escribir y se
       // dice que se detuvo — borrarlo tiraría trabajo que el usuario ya estaba leyendo.

@@ -360,6 +360,24 @@ export function setTurnStep(ns: string, messageId: number, paso: string): void {
   t.announce?.(stateOf(t));
 }
 
+/**
+ * Guarda el turno durable de gs con el que corre este turno (y, si lo abrió un despertador,
+ * su clave). Con eso, si este proceso muere, el siguiente lo ADOPTA en vez de darlo por
+ * muerto (ver `sweepOrphans`). La fila puede no existir aún —el INSERT de `registerTurn` va
+ * en paralelo—, así que se reintenta un par de veces.
+ */
+export async function setTurnDurable(messageId: number, fields: { turnId?: string; wakeKey?: string }): Promise<void> {
+  const { dbq } = await import("../dbq.server");
+  for (let i = 0; i < 4; i++) {
+    const rows = await dbq(
+      `UPDATE gt_turns SET durable_turn_id = COALESCE(?, durable_turn_id), wake_key = COALESCE(?, wake_key) WHERE message_id = ? RETURNING message_id`,
+      [fields.turnId ?? null, fields.wakeKey ?? null, messageId],
+    ).catch(() => []);
+    if (rows.length) return;
+    await new Promise((r) => setTimeout(r, 750));
+  }
+}
+
 export function finishTurn(ns: string, messageId: number): void {
   const t = live.get(claveDe(ns, messageId));
   if (!t) return;
@@ -562,15 +580,47 @@ export async function sweepOrphans(ns?: string): Promise<number> {
     const muertos = await dbq(
       `UPDATE gt_turns SET state = 'expired', ended_at = ?, error = ?
          WHERE state = 'running'${late}${excluir}
-       RETURNING message_id, invoker_message_ids, agent_handle`,
+       RETURNING message_id, invoker_message_ids, agent_handle, durable_turn_id, wake_key, group_id, invoker_sub, dest_json, origin, body`,
       [Date.now(), "el proceso que lo atendía dejó de latir"],
-    ).catch(() => [] as { message_id?: unknown; invoker_message_ids?: unknown; agent_handle?: unknown }[]);
+    ).catch(() => [] as Record<string, unknown>[]);
+    // ADOPCIÓN (2026-10-01): un turno durable sigue vivo en gs aunque este proceso haya muerto.
+    // En vez de cerrarlo con «⏹ Detenido», se reengancha en la MISMA burbuja (repite su
+    // backlog). Sólo si gs ya no lo tiene, el reenganche falla y queda el «Retomar» de siempre.
+    const adoptados = new Set<number>();
+    if (ns && muertos.some((f) => typeof f.durable_turn_id === "string" && f.durable_turn_id)) {
+      const { enqueueWakeup, mintWakeRef, kickWakeups } = await import("./wakeups.server");
+      for (const f of muertos) {
+        const turnId = typeof f.durable_turn_id === "string" ? f.durable_turn_id : "";
+        const mid = Number(f.message_id);
+        if (!turnId || !Number.isFinite(mid) || typeof f.dest_json !== "string" || typeof f.group_id !== "string") continue;
+        const ok = await enqueueWakeup({
+          key: typeof f.wake_key === "string" && f.wake_key ? `${f.wake_key}:adopt` : `adopt:${mid}`,
+          ref: mintWakeRef({
+            sub: typeof f.invoker_sub === "string" ? f.invoker_sub : "",
+            ns,
+            groupId: f.group_id,
+            dest: JSON.parse(f.dest_json),
+            adopt: { shellId: mid, turnId },
+          }),
+          cause: "Teams se reinició: retomo el mismo turno",
+          text: typeof f.body === "string" ? f.body : "",
+          origin: typeof f.origin === "string" ? f.origin : "",
+          dueAt: Math.floor(Date.now() / 1000),
+        }).catch(() => false);
+        if (ok) adoptados.add(mid);
+      }
+      if (adoptados.size) {
+        kickWakeups(ns);
+        console.log(`[turns] adopción: ${adoptados.size} turno(s) durable(s) se reenganchan`);
+      }
+    }
     // Cierra el acuse 👀 de los turnos que acaban de darse por muertos. Es el caso COMÚN,
     // no el raro: cada deploy mata los turnos en vuelo. Sin esto el 👀 queda clavado y ya
     // nadie vuelve por él — el turno ni siquiera existe en memoria.
     // ⚠️ El estado del proceso ya no sirve aquí: los ids salen de la columna, que es para
     // lo que se persiste.
     for (const fila of muertos) {
+      if (adoptados.has(Number(fila.message_id))) continue; // sigue vivo: su acuse lo cierra la adopción
       const handle = typeof fila.agent_handle === "string" ? fila.agent_handle : "";
       if (!handle || typeof fila.invoker_message_ids !== "string") continue;
       const ids = JSON.parse(fila.invoker_message_ids) as unknown;
@@ -583,7 +633,7 @@ export async function sweepOrphans(ns?: string): Promise<number> {
     // Sólo se cierran las cáscaras de los turnos que ACABAN de darse por muertos. Antes se
     // barría por edad del mensaje (60 s / 600 s), que es de dónde salían los dos falsos
     // positivos documentados aquí abajo: un motor lento y un turno que empezó justo antes.
-    const huerfanos = muertos.map((f) => Number(f.message_id)).filter(Number.isFinite);
+    const huerfanos = muertos.map((f) => Number(f.message_id)).filter((n) => Number.isFinite(n) && !adoptados.has(n));
     if (huerfanos.length) {
       const enIds = `(${huerfanos.join(",")})`;
       // Al huérfano CON texto no se le borra lo escrito: se le añade el aviso. Lo que el

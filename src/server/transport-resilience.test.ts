@@ -64,3 +64,20 @@ describe("el PR del hilo", () => {
     expect(prOfMessage("hola")).toBeNull();
   });
 });
+
+describe("un reinicio de Teams no mata los turnos durables", () => {
+  it("el barrido de huérfanos ADOPTA el turno durable en vez de cerrarlo", () => {
+    const src = leer("server/turns.server.ts");
+    expect(src).toMatch(/RETURNING message_id, invoker_message_ids, agent_handle, durable_turn_id/);
+    expect(src).toMatch(/adopt: \{ shellId: mid, turnId \}/);
+    expect(src).toMatch(/!adoptados\.has\(n\)/);
+  });
+  it("el despertador adopta en la MISMA burbuja y se reengancha sin crear otro turno", () => {
+    const w = leer("server/wakeups.server.ts");
+    expect(w).toMatch(/durableResume: ref\.adopt\.turnId/);
+    expect(w).toMatch(/shellId = ref\.adopt\.shellId/);
+    const a = leer("agents.server.ts");
+    expect(a).toMatch(/let durable: boolean \| null = durableOpts\?\.resumeTurnId \? true : null;/);
+    expect(a).toMatch(/durableOpts\?\.onDurable\?\.\(durableTurnId\)/);
+  });
+});
