@@ -683,9 +683,39 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
         "La preview del PR del pedido: state ready|pending|failed|none, su URL y, si falló, por qué. " +
         "Si el hosting del repo no las publica, la plataforma la construye en una caja propia. Úsala para probar el cambio como lo verá la persona antes de mezclar.",
       inputSchema: { type: "object", properties: { runId: { type: "number" } } },
-      handler: async (_sub, a) => {
+      handler: async (sub, a) => {
         const run = await runOf(dest, a.runId);
-        if (!run) return { ok: false, error: "no hay pedido en este hilo" };
+        // Sin pedido pero en el hilo de un PR (uno de una persona, p. ej. el aviso «PR #44
+        // abierto»): la MISMA preview oficial de gs, con las variables del repo y PREVIEW_HOST.
+        // Antes @check levantaba la app a mano en su caja, sin variables, y daba el 404 de la
+        // app (2026-10-01).
+        if (!run) {
+          const root = threadRoot(dest);
+          const db = await import("../../db.server");
+          const rootMsg = root ? await db.getMessage(root).catch(() => null) : null;
+          const { prOfMessage } = await import("../../lib/ebdoc");
+          const pr = rootMsg?.body ? prOfMessage(rootMsg.body) : null;
+          if (!pr) return { ok: false, error: "no hay pedido ni PR en este hilo" };
+          const R0 = await import("./factory-runs.server");
+          const P = await import("./preview.server");
+          const head = await R0.prHead(sub, `https://github.com/${pr.repo}/pull/${pr.number}`);
+          if (!head) return { ok: false, error: "no pude leer el PR en GitHub (¿tu GitHub está conectado?)" };
+          let b = (await P.gsPreview("status", { repo: pr.repo, pr: pr.number }).catch(() => null))?.status;
+          if (!b || b.sha !== head.sha || b.phase === "failed") b = await P.gsPreview("up", { repo: pr.repo, pr: pr.number, sha: head.sha });
+          const state = !b ? "pending" : b.phase === "ready" ? "ready" : b.phase === "failed" ? "failed" : "pending";
+          return {
+            ok: true,
+            state,
+            url: state === "ready" ? b.url : null,
+            error: state === "failed" ? b.error : null,
+            note:
+              state === "ready"
+                ? "Ábrela y prueba ahí el cambio."
+                : state === "failed"
+                  ? "La preview no arrancó (el motivo va en error). Si faltan variables de entorno, dile al dueño que las guarde en /factory."
+                  : "Se está construyendo: vuelve a preguntar en un minuto. No levantes la app tú en una caja.",
+          };
+        }
         if (!run.prUrl) return { ok: true, state: "none", note: "el pedido todavía no tiene PR" };
         const R = await import("./factory-runs.server");
         const p = await R.runPreview(run.id);
@@ -768,7 +798,7 @@ export async function factoryContext(dest: ToolDest | null, toolChannel: ToolCha
         parts.push(
           `Este hilo es del PR ${ref} «${pr.title}» de ${pr.author} (https://github.com/${pr.repo}/pull/${pr.number}). NO hay pedido de la fábrica: ` +
             (h === "check"
-              ? `es una REVISIÓN SUELTA de ese PR. Léelo con github_get_pr, github_pr_files y github_pr_checks, aplica tus mismos criterios (seguridad, pruebas, mantenibilidad, CI) y deja la revisión en GitHub con github_create_review (APPROVE o REQUEST_CHANGES, hallazgos con archivo:línea). En el hilo, 1 a 4 renglones con el veredicto. No uses factory_check_verdict ni preguntes qué PR es.`
+              ? `es una REVISIÓN SUELTA de ese PR. Léelo con github_get_pr, github_pr_files y github_pr_checks, aplica tus mismos criterios (seguridad, pruebas, mantenibilidad, CI) y deja la revisión en GitHub con github_create_review (APPROVE o REQUEST_CHANGES, hallazgos con archivo:línea). Para verlo corriendo usa factory_preview (la preview oficial, con las variables del repo); NUNCA levantes la app tú en una caja: sin sus variables da 404. En el hilo, 1 a 4 renglones con el veredicto. No uses factory_check_verdict ni preguntes qué PR es.`
               : h === "build"
                 ? `si te piden un cambio, hazlo en la rama de ese PR (github_checkout / github_push_files) y no abras otro. No uses factory_build_done.`
                 : `si te piden planear algo sobre él, planéalo a partir de ese PR.`),

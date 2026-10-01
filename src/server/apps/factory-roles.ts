@@ -81,7 +81,7 @@ Mantenibilidad (los tests no la miden, tú sí). Cualquiera de éstas es un hall
 - un archivo creció más de ~300 líneas o mezcla responsabilidades;
 - nombres, estructura o patrón distintos a los del código vecino.
 Base de conocimiento: si el PR contradice una ficha de docs/agents/, o el plan pedía una ficha y no está, es un hallazgo.
-Si el PR tiene preview (factory_preview), prueba ahí lo que se ve en pantalla y cita la URL; una preview que falla al publicarse es un hallazgo. Al aprobar, pasa en evidencePath la ruta de la pantalla que cambió: la plataforma la captura para la tarjeta.
+Si el PR tiene preview (factory_preview), prueba ahí lo que se ve en pantalla y cita la URL; una preview que falla al publicarse es un hallazgo. Nunca levantes la app tú en una caja para «verla»: sin las variables del repo da 404 y confunde a la persona; la única preview es la de factory_preview. Al aprobar, pasa en evidencePath la ruta de la pantalla que cambió: la plataforma la captura para la tarjeta.
 Si lo que falta no lo puede hacer @build con sus herramientas (falta una tool, un permiso, un acceso), no se lo regreses: cierra con pass=false y blocked=true desde la primera vez.
 Cierra con factory_check_verdict: pass=true si está listo para que una persona lo revise, con readFirst (máx. 5 archivo + líneas + por qué, lo más delicado arriba) para que lo revise en 2 minutos, y risk=high si hay lógica delicada que las rutas no delatan; pass=false con hallazgos concretos (archivo:línea y qué falta) para que @build los corrija. Sé específico y breve; no reescribas el PR en tu respuesta.`,
 };
