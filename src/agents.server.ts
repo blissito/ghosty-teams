@@ -1518,7 +1518,23 @@ async function clockHint(invokerSub?: string): Promise<string> {
 import { toolLabel } from "./lib/tool-label";
 
 // `todos` = el plan completo del agente (TodoWrite) cuando la tool es ésa. Ver `gt-todos`.
-export type ToolEvent = { name?: string; id?: string; phase?: "start" | "end"; ok?: boolean; detail?: string; todos?: TodoItem[] };
+/** Progreso completo de un subagente (gs ≥ 2026-10-01). Ver `SubagentState` en lib/ebdoc.ts. */
+export type SubEvent = {
+  kind: "start" | "step" | "end";
+  id?: string;
+  idx?: number;
+  name?: string;
+  task?: string;
+  startedAt?: number;
+  tool?: string;
+  detail?: string;
+  toolUses?: number;
+  tokens?: number;
+  status?: "done" | "failed" | "canceled";
+  ms?: number;
+  preview?: string;
+};
+export type ToolEvent = { name?: string; id?: string; phase?: "start" | "end"; ok?: boolean; detail?: string; todos?: TodoItem[]; sub?: SubEvent };
 
 /**
  * El turno NO terminó: lo cortó el runtime (se acabaron los pasos o el presupuesto, o la
@@ -2467,7 +2483,7 @@ export async function callAgentBackendStream(
           buf = buf.slice(nl + 2);
           const line = frame.split("\n").find((l) => l.startsWith("data:"));
           if (!line) continue;
-          let ev: { type?: string; value?: string; model?: string; message?: string; name?: string; id?: string; phase?: "start" | "end"; ok?: boolean; detail?: string; todos?: TodoItem[] } & Partial<TruncatedEvent>;
+          let ev: { type?: string; value?: string; model?: string; message?: string; name?: string; id?: string; phase?: "start" | "end"; ok?: boolean; detail?: string; todos?: TodoItem[]; sub?: SubEvent } & Partial<TruncatedEvent>;
           try {
             ev = JSON.parse(line.slice(5).trim());
           } catch {
@@ -2482,7 +2498,7 @@ export async function callAgentBackendStream(
           } else if (ev.type === "tool") {
             if (ev.phase !== "end" && !isCleanTool(ev.name)) huboTool = true;
             // start trae name+id+detail; end trae id+ok. Correlación por id en runAgentTurn.
-            await onTool?.({ name: ev.name, id: ev.id, phase: ev.phase ?? "start", ok: ev.ok, detail: ev.detail, todos: Array.isArray(ev.todos) ? ev.todos : undefined });
+            await onTool?.({ name: ev.name, id: ev.id, phase: ev.phase ?? "start", ok: ev.ok, detail: ev.detail, todos: Array.isArray(ev.todos) ? ev.todos : undefined, sub: ev.sub && typeof ev.sub === "object" ? ev.sub : undefined });
           } else if (ev.type === "truncated") {
             // ⚠️ NO lanza. Sólo `error` lanza, y así debe seguir: un corte que tire el turno
             // perdería el trabajo parcial, que es justo lo que este aviso viene a conservar.
@@ -2935,6 +2951,10 @@ async function runAgentTurnInner(opts: {
   type ToolEntry = { ing: string; done: string; started: Set<string>; ended: Set<string>; fallos: number; exitos: number; detail?: string };
   const tools: ToolEntry[] = [];
   const idToEntry = new Map<string, ToolEntry>(); // id de tool_use → su entrada (para el 'end')
+  // Subagentes con progreso completo (gs manda `sub`): lista APARTE de las tools, como en
+  // Claude Code — nombre, tarea, estado, tools, tokens y reloj por cada uno. Sin `sub` (gs
+  // viejo) siguen siendo filas de tools como antes.
+  const subagents = new Map<string, import("./lib/ebdoc").SubagentState>();
   // Segmentos de narración: cada corte lo produce una tool. El agente dice "voy a
   // sacar el brandkit", corre algo, dice "listo, ahora la paleta"… Son PASOS, y
   // como párrafos seguidos se leían como un muro donde nada se distingue.
@@ -2974,8 +2994,11 @@ async function runAgentTurnInner(opts: {
   // en c.$slug.tsx). done → label pasado ("Generé la imagen"); running/error → gerundio (el
   // ícono ❌ marca el fallo). `n` = nº de tools concurrentes con el mismo label (ej. subagentes).
   const renderToolBlock = (allDone: boolean): string => {
+    // Al cerrar el turno, un subagente sin `end` (worker viejo, corte) ya no corre.
+    const subs = [...subagents.values()].map((x) => (allDone && x.status === "running" ? { ...x, status: "done" as const } : x));
     const emit = (arr: { label: string; status: string; n?: number }[]) =>
-      "```gt-tools\n" + JSON.stringify({ tools: arr }) + "\n```\n\n";
+      "```gt-tools\n" + JSON.stringify(subs.length ? { tools: arr, subagents: subs } : { tools: arr }) + "\n```\n\n";
+    if (!tools.length && subs.length) return emit([]);
     if (tools.length) {
       return emit(
         tools.map((tl) => {
@@ -3097,6 +3120,37 @@ async function runAgentTurnInner(opts: {
     // Última acción de un subagente hijo (gs, `detail` = «tool|detalle»): no es una tool del
     // padre, sólo actualiza el detalle de SU fila — «Busqué en la web · nytimes.com» mientras
     // corre; al cerrar, la duración lo reemplaza. Tools ocultas (plumbing) no cambian nada.
+    if (ev.sub && ev.id && (ev.name === "gs_subagent_child" || ev.name === "gs_subagent_child_step")) {
+      const s = ev.sub;
+      const cur = subagents.get(ev.id);
+      if (s.kind === "start" || !cur) {
+        subagents.set(ev.id, {
+          id: ev.id,
+          name: (s.name || s.task || "Subagente").slice(0, 40),
+          task: (s.task ?? "").slice(0, 500),
+          status: "running",
+          startedAt: s.startedAt ?? Date.now(),
+          toolUses: s.toolUses ?? 0,
+          tokens: s.tokens ?? 0,
+        });
+      }
+      const it = subagents.get(ev.id)!;
+      if (typeof s.toolUses === "number") it.toolUses = s.toolUses;
+      if (typeof s.tokens === "number") it.tokens = s.tokens;
+      if (s.kind === "step" && s.tool) {
+        const label = toolLabel(s.tool);
+        const d = (s.detail ?? "").trim();
+        it.last = (label ? label.ing : s.tool) + (d ? ` · ${d.slice(0, 60)}` : "");
+      }
+      if (s.kind === "end") {
+        it.status = s.status === "failed" ? "failed" : s.status === "canceled" ? "canceled" : "done";
+        if (typeof s.ms === "number") it.ms = s.ms;
+        if (s.preview) it.preview = s.preview.slice(0, 300);
+      }
+      brokeByTool = true;
+      if (opts.emitBody) await paint(false, true);
+      return;
+    }
     if (ev.name === "gs_subagent_child_step") {
       const entry = ev.id ? idToEntry.get(ev.id) : undefined;
       if (!entry || (ev.id && entry.ended.has(ev.id))) return;

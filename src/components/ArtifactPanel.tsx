@@ -1,4 +1,5 @@
 import { RunPanel } from "./chat/RunPanel";
+import { SubagentPanel } from "./chat/SubagentPanel";
 import { AnimatePresence, motion } from "motion/react";
 import { AdsCampaignPanel } from "./chat/AdsCampaignPanel";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -193,6 +194,8 @@ export type ArtifactView =
   | { kind: "campaign"; title: string; campaignId: number; channelId: number; version?: number }
   // Un pedido de la Software Factory: etapas, plan, veredicto y bitácora (RunPanel).
   | { kind: "run"; title: string; runId: number; channelId: number }
+  // Un subagente del turno: tarea, contadores, pasos y resultado (SubagentPanel).
+  | { kind: "subagent"; title: string; runId: string; handle: string; channelId: number | null; preview?: import("../lib/ebdoc").SubagentState }
   // Índice Cowork: lista los documentos de UN caso (room) como tiles; clic abre uno.
   // channelSlug para subir archivos al caso directo desde el panel (sin el agente).
   // threadRootId (opcional): abierto desde un HILO → toggle "Este hilo / Todo el caso".
@@ -769,6 +772,8 @@ export default function ArtifactPanel({
                       ? `campaign:${artifact.campaignId}`
                       : artifact.kind === "run"
                         ? `run:${artifact.runId}`
+                        : artifact.kind === "subagent"
+                          ? `subagent:${artifact.runId}`
                         : `${artifact.kind}:${artifact.src}`;
   // Al cambiar a OTRO artefacto, resetea el preview office.
   useEffect(() => {
@@ -1270,7 +1275,8 @@ export default function ArtifactPanel({
     artifact.kind === "ask-user" ||
     artifact.kind === "artifact" ||
     artifact.kind === "campaign" ||
-    artifact.kind === "run"
+    artifact.kind === "run" ||
+    artifact.kind === "subagent"
       ? undefined
       : artifact.kind === "docindex"
         ? "/artifacts"
@@ -2410,6 +2416,8 @@ export default function ArtifactPanel({
                           </div>
                         ) : null}
                       </div>
+                    ) : artifact.kind === "subagent" ? (
+                      <SubagentPanel runId={artifact.runId} handle={artifact.handle} preview={artifact.preview} />
                     ) : artifact.kind === "run" ? (
                       <RunPanel runId={artifact.runId} channelId={artifact.channelId} />
                     ) : artifact.kind === "campaign" ? (

@@ -972,6 +972,37 @@ export function bubbleWithoutEbAudio(body: string): string {
 export type ToolStatus = "running" | "done" | "error";
 export type ToolState = { label: string; status: ToolStatus; n?: number; detail?: string };
 
+/** Un subagente vivo del turno (lista estilo Claude Code). `id` = SubagentRun.id en gs. */
+export type SubagentState = {
+  id: string;
+  name: string;
+  task: string;
+  status: "running" | "done" | "failed" | "canceled";
+  startedAt: number;
+  ms?: number;
+  toolUses: number;
+  tokens: number;
+  last?: string;
+  preview?: string;
+};
+
+/** Los subagentes del bloque ```gt-tools``` (campo `subagents`), o null si no hay. */
+export function extractSubagents(body: string): SubagentState[] | null {
+  const open = body.match(/```gt-tools[^\n]*\n/);
+  if (!open || open.index == null) return null;
+  const rest = body.slice(open.index + open[0].length);
+  const closeIdx = rest.indexOf("```");
+  if (closeIdx === -1) return null;
+  try {
+    const obj = JSON.parse(rest.slice(0, closeIdx).trim()) as { subagents?: unknown };
+    if (!Array.isArray(obj.subagents)) return null;
+    const subs = (obj.subagents as SubagentState[]).filter((x) => x && typeof x.id === "string" && typeof x.name === "string");
+    return subs.length ? subs : null;
+  } catch {
+    return null;
+  }
+}
+
 export function extractToolState(body: string): ToolState[] | null {
   const open = body.match(/```gt-tools[^\n]*\n/);
   if (!open || open.index == null) return null;

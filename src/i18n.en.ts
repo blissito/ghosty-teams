@@ -1964,4 +1964,17 @@ export const en: Record<string, string> = {
   "Necesita tu decisión": "Needs your decision",
   "Sin avanzar": "Stalled",
   "Me toca": "Mine",
+  // Subagentes estilo Claude Code (2026-10-01)
+  "subagente": "subagent",
+  "subagentes": "subagents",
+  "en curso": "running",
+  "tools": "tools",
+  "tokens": "tokens",
+  "Subagente": "Subagent",
+  "Pasos": "Steps",
+  "Resultado": "Result",
+  "Terminó": "Finished",
+  "Falló": "Failed",
+  "Detenido": "Stopped",
+  "Sin detalle guardado para este subagente.": "No saved detail for this subagent.",
 };

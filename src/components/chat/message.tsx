@@ -88,7 +88,8 @@ import { registerModalEsc } from "../../utils/modal-esc";
 import { useScrollLock } from "../../utils/scroll-lock";
 import { type ArtifactView, viewFromAttachment } from "../../components/ArtifactPanel";
 import { FxOverlay } from "./FxOverlay";
-import { extractFx, extractEbDoc, bubbleWithoutEbDoc, extractToolState, extractSteps, extractTodos, extractAlert, extractAsk, extractPermission, extractAllPr, extractAllGh, extractTask, extractTests, extractPlanCard, extractRunCard, extractVerdictCard, extractPreviewErrorCard, extractSprintCard, extractAsksCard, extractAdsProposalCard, extractAdsCampaignCard, extractAdsReportCard, extractAdsPendingCard, type ToolState, type TodoState, type AlertCardData, type AskCardData, type PermissionCardData, type GhCardData, type PrCardData, type TaskCardData, type TestsCardData } from "../../lib/ebdoc";
+import { extractFx, extractEbDoc, bubbleWithoutEbDoc, extractToolState, extractSubagents, extractSteps, extractTodos, extractAlert, extractAsk, extractPermission, extractAllPr, extractAllGh, extractTask, extractTests, extractPlanCard, extractRunCard, extractVerdictCard, extractPreviewErrorCard, extractSprintCard, extractAsksCard, extractAdsProposalCard, extractAdsCampaignCard, extractAdsReportCard, extractAdsPendingCard, type ToolState, type TodoState, type AlertCardData, type AskCardData, type PermissionCardData, type GhCardData, type PrCardData, type TaskCardData, type TestsCardData } from "../../lib/ebdoc";
+import { SubagentList } from "./SubagentList";
 import { prCardStateFn, runCardActionFn, taskCardStateFn, runTaskCardActionFn } from "../../server/connectors";
 import { answerAgentAskFn } from "../../server/agent-ask";
 import { answerAcpPermissionFn } from "../../server/agent-permission";
@@ -2850,6 +2851,10 @@ export function MessageRow({
               const ts = extractToolState(m.body);
               return ts ? <ToolGroup tools={ts} vivo={turns.has(m.id)} /> : null;
             })()}
+            {(() => {
+              const subs = extractSubagents(m.body);
+              return subs ? <SubagentList subs={subs} vivo={turns.has(m.id)} handle={m.agent_handle ?? null} channelId={m.channel_id ?? null} /> : null;
+            })()}
             {m.attachments && m.attachments.length > 0 && <AttachmentList attachments={m.attachments} />}
             <ReactionBar m={m} />
           </>
@@ -2993,6 +2998,10 @@ export function MessageRow({
               {(() => {
                 const ts = extractToolState(m.body);
                 return ts ? <ToolGroup tools={ts} vivo={turns.has(m.id)} /> : null;
+              })()}
+              {(() => {
+                const subs = extractSubagents(m.body);
+                return subs ? <SubagentList subs={subs} vivo={turns.has(m.id)} handle={m.agent_handle ?? null} channelId={m.channel_id ?? null} /> : null;
               })()}
               {(() => {
                 const st = extractSteps(m.body);
