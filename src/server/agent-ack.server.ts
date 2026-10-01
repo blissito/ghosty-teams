@@ -103,3 +103,8 @@ async function factoryRunRoots(messageIds: number[]): Promise<Set<number>> {
     return new Set();
   }
 }
+
+/** Una reacción del agente fuera de un turno (el ✅ del deploy después del merge). Best-effort. */
+export async function agentReact(ns: string, messageId: number, handle: string, emoji: string): Promise<void> {
+  await react(ns, messageId, handle, emoji, true).catch(() => {});
+}

@@ -744,6 +744,46 @@ async function migrate(): Promise<void> {
     PRIMARY KEY (repo, number, channel_id)
   )`);
 
+  // Después del merge: vigilar que el deploy de ese PR llegue bien a producción
+  // (`apps/post-merge.server.ts`). Una fila por room y PR; la barre el tick de wakeups.
+  // `parent_id` = hilo donde se avisa; `notice_msg_id` = el «PR #N mezclado» que recibe el ✅;
+  // `sub` = de quién son las credenciales de GitHub (`gt_room_repos.connected_by`).
+  // `state`: pending → ok | failed | timeout.
+  await exec(`CREATE TABLE IF NOT EXISTS gt_post_merge (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    channel_id    INTEGER NOT NULL,
+    parent_id     INTEGER,
+    repo          TEXT NOT NULL,
+    pr            INTEGER NOT NULL,
+    merge_sha     TEXT,
+    sub           TEXT NOT NULL,
+    state         TEXT NOT NULL DEFAULT 'pending',
+    next_at       INTEGER NOT NULL,
+    started_at    INTEGER NOT NULL DEFAULT (unixepoch()),
+    notice_msg_id INTEGER,
+    result        TEXT
+  )`);
+  await exec("CREATE UNIQUE INDEX IF NOT EXISTS gt_post_merge_uniq ON gt_post_merge(channel_id, repo, pr)");
+  await exec("CREATE INDEX IF NOT EXISTS gt_post_merge_due ON gt_post_merge(state, next_at)");
+
+  // Uptime propio, sin terceros (`apps/uptime.server.ts`): URLs que un room vigila cada 60 s.
+  // `alert_root_id` = el mensaje 🔴 de la caída en curso; el 🟢 va en su hilo.
+  await exec(`CREATE TABLE IF NOT EXISTS gt_uptime_checks (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    channel_id    INTEGER NOT NULL,
+    url           TEXT NOT NULL,
+    created_by    TEXT NOT NULL,
+    state         TEXT NOT NULL DEFAULT 'up',
+    fails         INTEGER NOT NULL DEFAULT 0,
+    last_status   INTEGER,
+    last_ms       INTEGER,
+    last_check_at INTEGER,
+    down_since    INTEGER,
+    alert_root_id INTEGER,
+    created_at    INTEGER NOT NULL DEFAULT (unixepoch())
+  )`);
+  await exec("CREATE UNIQUE INDEX IF NOT EXISTS gt_uptime_checks_uniq ON gt_uptime_checks(channel_id, url)");
+
   // El tablero de Ghosty Tasks que este room viene usando. Se escribe SOLA la primera vez
   // que una petición resuelve uno ahí: no hay nada que configurar antes de que sirva.
   //

@@ -233,3 +233,56 @@ export async function guardedFetch(
 export function __resetDnsCache(): void {
   resolved.clear();
 }
+
+// ── Monitores de producción (post-merge y uptime) ───────────────────────────────
+//
+// Mismo guard, otra forma de entrada: aquí la URL es una PÁGINA (con ruta) que alguien quiere
+// vigilar, no el origin de una API. Por eso se admite http (muchos `homepage` de GitHub
+// todavía lo dicen) y se SIGUEN las redirecciones, revalidando cada salto: `denik.me` →
+// `https://www.denik.me/` es lo normal en un sitio, y no seguirlo daría un falso «caído».
+
+/** Valida la URL a vigilar y la devuelve normalizada (sin credenciales ni hash). Lanza con el motivo. */
+export async function assertMonitorUrl(raw: string): Promise<string> {
+  const value = String(raw ?? "").trim();
+  if (!value) throw new Error("falta la dirección");
+  let u: URL;
+  try {
+    u = new URL(/^https?:\/\//i.test(value) ? value : `https://${value}`);
+  } catch {
+    throw new Error("esa dirección no es una URL válida");
+  }
+  if (u.protocol !== "https:" && u.protocol !== "http:") throw new Error("tiene que ser http o https");
+  if (u.username || u.password) throw new Error("la dirección no puede llevar usuario y contraseña");
+  if (u.port && u.port !== "80" && u.port !== "443") throw new Error(`ese puerto no está permitido (${u.port})`);
+  const host = u.hostname.toLowerCase();
+  if (isIpLiteral(host)) throw new Error("hay que usar el nombre de dominio, no una dirección IP");
+  if (host === "localhost" || BLOCKED_SUFFIXES.some((s) => host.endsWith(s))) throw new Error("no se puede apuntar a la red interna");
+  if (!/\.[a-z]{2,}$/.test(host)) throw new Error("esa dirección no parece un dominio público");
+  const dnsError = await checkDns(host);
+  if (dnsError) throw new Error(dnsError);
+  u.hash = "";
+  return u.toString();
+}
+
+/**
+ * GET a una página pública siguiendo hasta 5 redirecciones; cada salto pasa otra vez por
+ * `assertMonitorUrl` (un 302 a `http://172.20.0.1` no se sigue). No lee el cuerpo: sólo
+ * importa el código. Lanza si la dirección no pasa el guard, si no contesta o si se agota
+ * el tiempo.
+ */
+export async function guardedGet(raw: string, opts: { timeoutMs?: number } = {}): Promise<{ status: number; url: string; ms: number }> {
+  const t0 = Date.now();
+  const signal = AbortSignal.timeout(opts.timeoutMs ?? 15_000);
+  let url = await assertMonitorUrl(raw);
+  for (let hop = 0; hop <= 5; hop++) {
+    const res = await fetch(url, { redirect: "manual", signal, headers: { "user-agent": "GhostyTeams-Uptime/1.0" } });
+    await res.body?.cancel().catch(() => {});
+    const location = res.headers.get("location");
+    if (res.status >= 300 && res.status < 400 && location) {
+      url = await assertMonitorUrl(new URL(location, url).toString());
+      continue;
+    }
+    return { status: res.status, url, ms: Date.now() - t0 };
+  }
+  throw new Error("demasiadas redirecciones");
+}

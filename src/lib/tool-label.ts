@@ -119,6 +119,9 @@ export const TOOL_LABELS: Record<string, { ing: string; done: string }> = {
   alert_webhook_create: { ing: "Creando el webhook de alertas", done: "Creé el webhook de alertas" },
   alert_webhook_list: { ing: "Revisando los webhooks de alertas", done: "Revisé los webhooks de alertas" },
   alert_webhook_delete: { ing: "Borrando el webhook de alertas", done: "Borré el webhook de alertas" },
+  uptime_add: { ing: "Agregando la URL al uptime", done: "Agregué la URL al uptime" },
+  uptime_list: { ing: "Revisando el uptime del room", done: "Revisé el uptime del room" },
+  uptime_remove: { ing: "Quitando la URL del uptime", done: "Quité la URL del uptime" },
   // Ciclo de un PR (GitHub). Llegan como gs_connector:github_*; con etiqueta propia para
   // que no salgan como "Github: mark ready".
   github_pr_checks: { ing: "Revisando CI del PR", done: "Revisé CI del PR" },

@@ -108,7 +108,24 @@ async function sweep(): Promise<void> {
     } catch {
       /* un tenant con la DB flapeando no deja sin despertadores a los demás */
     }
+    sweepProduction(ns);
   }
+}
+
+// Producción (post-merge y uptime): red con timeouts de 10-15 s, así que corre APARTE del
+// barrido de despertadores —no lo retrasa— y nunca dos veces encimadas por tenant.
+const productionBusy = new Set<string>();
+function sweepProduction(ns: string): void {
+  if (productionBusy.has(ns)) return;
+  productionBusy.add(ns);
+  void withNamespace(ns, async () => {
+    const { sweepPostMerge } = await import("./apps/post-merge.server");
+    await sweepPostMerge().catch((e) => console.error("[post-merge]", e));
+    const { sweepUptime } = await import("./apps/uptime.server");
+    await sweepUptime().catch((e) => console.error("[uptime]", e));
+  })
+    .catch(() => {})
+    .finally(() => productionBusy.delete(ns));
 }
 
 // Pedidos de la fábrica colgados (30 min sin actividad): cada 5 min por tenant, no en cada tick.

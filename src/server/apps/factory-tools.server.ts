@@ -2,8 +2,8 @@
 // (`gt_installed_apps`): sin la fila, esto devuelve [] y ni se anuncian ni se ejecutan.
 // Decidido 2026-09-24 — la fábrica se INSTALA por espacio y sus tools aparecen con ella.
 //
-// Hoy: el webhook genérico de alertas de monitoreo. Las `factory_*` (corrida, estafeta,
-// tarjeta de plan) se suman aquí mismo.
+// Hoy: el webhook genérico de alertas de monitoreo y el uptime del room (`uptime_*`). Las
+// `factory_*` (corrida, estafeta, tarjeta de plan) se suman aquí mismo.
 import { notaNombres, type ConnectorTool, type ToolChannel } from "../connectors/impl";
 import type { ToolDest } from "../connectors/tool-token.server";
 import { isInstalled } from "./installed.server";
@@ -11,7 +11,8 @@ import { isInstalled } from "./installed.server";
 export async function factoryTools(_sub: string, dest: ToolDest | null): Promise<ConnectorTool[]> {
   if (!(await isInstalled("factory").catch(() => false))) return [];
   const { alertWebhookTools } = await import("../hooks/generic-alert.server");
-  return [...runTools(dest), ...alertWebhookTools(dest)];
+  const { uptimeTools } = await import("./uptime.server");
+  return [...runTools(dest), ...alertWebhookTools(dest), ...uptimeTools(dest)];
 }
 
 const origin = async () => {

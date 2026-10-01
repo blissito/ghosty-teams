@@ -102,6 +102,9 @@ export const addRoomRepoFn = createServerFn({ method: "POST" })
       if (!(await isInstalled("factory").catch(() => false))) return;
       const { requestCiBox } = await import("./apps/factory");
       await requestCiBox([repo]);
+      // Y su `homepage` como primer monitor de uptime del room, si todavía no vigila nada.
+      const { autoMonitorRepo } = await import("./apps/uptime.server");
+      await autoMonitorRepo(Number(data.channelId), repo, me.sub);
     })().catch(() => {});
     return await db.listRoomRepos(Number(data.channelId));
   });

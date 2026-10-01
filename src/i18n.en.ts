@@ -1396,6 +1396,21 @@ export const en: Record<string, string> = {
   // Repos del room. "room" se queda como está: es el vocabulario del producto en los dos
   // idiomas, igual que en el resto del diccionario.
   "Repos": "Repos",
+  // /factory → Producción (uptime del room)
+  "Producción": "Production",
+  "URLs que este room vigila cada minuto. Si una se cae, se avisa aquí y @plan investiga.": "URLs this room checks every minute. If one goes down, it's posted here and @plan investigates.",
+  "Todavía no vigila ninguna URL.": "Not watching any URL yet.",
+  "Sin revisar": "Not checked yet",
+  "Caída": "Down",
+  "Arriba": "Up",
+  "sin respuesta": "no response",
+  "caída desde {d}": "down since {d}",
+  "Dejar de vigilar": "Stop watching",
+  "https://tu-sitio.com/ruta": "https://your-site.com/path",
+  "URL a vigilar": "URL to watch",
+  "Vigilar": "Watch",
+  "¿Dejar de vigilar esta URL?": "Stop watching this URL?",
+  "Ya no se revisará ni se avisará si se cae. Puedes volver a agregarla cuando quieras.": "It won't be checked anymore and nobody will be told if it goes down. You can add it again anytime.",
   "Conectar un repositorio": "Connect a repository",
   "Conectados a este room": "Connected to this room",
   "Buscar un repositorio…": "Search a repository…",
@@ -1625,6 +1640,12 @@ export const en: Record<string, string> = {
   "Revisé los webhooks de alertas": "Checked the alerts webhooks",
   "Borrando el webhook de alertas": "Deleting the alerts webhook",
   "Borré el webhook de alertas": "Deleted the alerts webhook",
+  "Agregando la URL al uptime": "Adding the URL to uptime",
+  "Agregué la URL al uptime": "Added the URL to uptime",
+  "Revisando el uptime del room": "Checking the room's uptime",
+  "Revisé el uptime del room": "Checked the room's uptime",
+  "Quitando la URL del uptime": "Removing the URL from uptime",
+  "Quité la URL del uptime": "Removed the URL from uptime",
 
   // Tarjeta de plan de la Software Factory.
   "Ver el plan completo": "See the full plan",

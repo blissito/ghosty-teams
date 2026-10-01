@@ -6,7 +6,8 @@ import { createFileRoute } from "@tanstack/react-router";
 // app-hook.server.ts`): verifica, guarda y reparte con reintentos al Teams de cada workspace.
 // Aquí se avisa en los rooms que tienen ese repo (gt_room_repos) y, si el PR es de un pedido de
 // la fábrica, se cierra el pedido AL INSTANTE (antes lo veía un sondeo cada 2 min y un PR normal
-// no lo veía nadie).
+// no lo veía nadie). Un merge además ENCOLA la vigilancia del deploy (`apps/post-merge.server`);
+// la red la hace el tick, nunca esta petición.
 //
 // Firma de partner sobre el CUERPO crudo (`ts.<rawBody>`), como `api/internal/board-event`; el
 // namespace lo resuelve el HOST. Idempotente por `delivery` (gt_github_deliveries): gs reintenta
@@ -111,9 +112,26 @@ export const Route = createFileRoute("/api/internal/github-event")({
             if (ev.review) for (const run of await runsByPr(ev.repo, ev.number)) recorded += (await recordFirstReview(run.id, ev.review.state, ev.review.at)) ? 1 : 0;
             return Response.json({ ok: true, recorded });
           }
+          const { enqueuePostMerge } = await import("../server/apps/post-merge.server");
           for (const run of await runsByPr(ev.repo, ev.number)) {
             runRooms.add(run.channelId);
             if (ev.action === "merged" || ev.action === "closed") await onPrEvent(run, ev.action);
+            if (ev.action === "merged") {
+              // El ✅ del deploy va en el «Pedido terminado» del hilo (no en la raíz: ahí el ✅ es la firma).
+              const [notice] = await dbq(
+                `SELECT id FROM gc_messages WHERE channel_id = ? AND parent_id = ? AND agent_handle IS NOT NULL
+                 ORDER BY (body LIKE '%Pedido terminado%') DESC, id DESC LIMIT 1`,
+                [run.channelId, run.rootMsgId],
+              ).catch(() => []);
+              await enqueuePostMerge({
+                channelId: run.channelId,
+                parentId: run.rootMsgId,
+                noticeMsgId: notice ? Number(notice.id) : null,
+                repo: ev.repo,
+                pr: ev.number,
+                fallbackSub: run.approvedBy ?? run.requestedBy,
+              }).catch((e) => console.error("[github-event] post-merge", e));
+            }
           }
           const rooms = (await db.roomsOfRepo(ev.repo)).filter((c) => !runRooms.has(c));
           if (!rooms.length) return Response.json({ ok: true, rooms: 0, factoryRooms: runRooms.size });
@@ -140,6 +158,7 @@ export const Route = createFileRoute("/api/internal/github-event")({
               const { id } = await db.postAgent(channelId, cardMsg.id, LINE[ev.action](ev), "msg", who.handle, who.name, "general", who.avatar);
               const reply = await db.getMessage(id);
               if (reply) bus.publish(bus.ch.room(ns, channelId), { t: "message:new", msg: reply });
+              if (ev.action === "merged") await enqueuePostMerge({ channelId, parentId: cardMsg.id, noticeMsgId: id, repo: ev.repo, pr: ev.number }).catch(() => {});
               posted++;
               continue;
             }
@@ -155,6 +174,7 @@ export const Route = createFileRoute("/api/internal/github-event")({
             ]);
             const creado = await db.getMessage(id);
             if (creado) bus.publish(bus.ch.room(ns, channelId), { t: "message:new", msg: creado });
+            if (ev.action === "merged") await enqueuePostMerge({ channelId, parentId: id, noticeMsgId: id, repo: ev.repo, pr: ev.number }).catch(() => {});
             posted++;
           }
           return Response.json({ ok: true, rooms: posted, factoryRooms: runRooms.size });

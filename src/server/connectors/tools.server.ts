@@ -50,6 +50,7 @@ const FAMILIAS: Array<[prefijo: string, familia: string]> = [
   // Software Factory: sólo existen si el espacio la instaló (`apps/factory-tools.server.ts`).
   ["factory_", "fabrica"],
   ["alert_webhook_", "fabrica"],
+  ["uptime_", "fabrica"],
 ];
 
 function familiaDe(name: string): string | null {
@@ -208,7 +209,7 @@ export async function runTool(
     }
   }
   // Las de la fábrica: nombres reservados; si no está instalada, no existen.
-  if (toolName.startsWith("factory_") || toolName.startsWith("alert_webhook_")) {
+  if (toolName.startsWith("factory_") || toolName.startsWith("alert_webhook_") || toolName.startsWith("uptime_")) {
     const ft = (await factoryTools(sub, dest).catch(() => [])).find((t) => t.name === toolName);
     if (!ft) return { ok: false, error: `${toolName} sólo existe con la Software Factory instalada en este espacio` };
     try {

@@ -10,11 +10,20 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { ArrowLeft, Check, ChevronDown, CircleDot, Factory } from "lucide-react";
+import { ArrowLeft, Check, ChevronDown, CircleDot, Factory, Plus, Trash2 } from "lucide-react";
 import { useLocale, useT } from "../i18n";
 import { intlLocale } from "../i18n.core";
 import { me } from "../server/auth";
-import { factoryOverviewFn, factoryProposeSprintFn, factoryStartEvalFn, factoryStatusFn, type FactoryStatus } from "../server/apps/factory";
+import {
+  factoryOverviewFn,
+  factoryProposeSprintFn,
+  factoryStartEvalFn,
+  factoryStatusFn,
+  factoryUptimeAddFn,
+  factoryUptimeFn,
+  factoryUptimeRemoveFn,
+  type FactoryStatus,
+} from "../server/apps/factory";
 import { MODEL_ALIASES } from "../server/apps/factory-team";
 import { formatUsd } from "../server/apps/factory-evals";
 import { RepoReadiness } from "../components/RepoReadiness";
@@ -22,6 +31,7 @@ import { RepoTeam } from "../components/RepoTeam";
 import { RolesEditor, SchedulesEditor, SuggestAsks } from "../components/AppsPanel";
 import { AskAgentHint } from "../components/AskAgentHint";
 import { Toggle } from "../components/Toggle";
+import ConfirmModal from "../components/ConfirmModal";
 
 type Overview = Awaited<ReturnType<typeof factoryOverviewFn>>;
 // Por room: cambiar de room y volver pinta al instante lo último que se vio.
@@ -255,6 +265,133 @@ function RepoRow({ repo, channelId, initiallyOpen, focus }: { repo: string; chan
         {open && <RepoTeam channelId={channelId} repo={repo} />}
       </div>
     </div>
+  );
+}
+
+type UptimeRow = Awaited<ReturnType<typeof factoryUptimeFn>>[number];
+
+const hostOf = (url: string) => {
+  try {
+    const u = new URL(url);
+    return `${u.hostname.replace(/^www\./, "")}${u.pathname === "/" ? "" : u.pathname.replace(/\/$/, "")}`;
+  } catch {
+    return url;
+  }
+};
+
+// «Producción»: las URLs que el room vigila cada 60 s (uptime propio, sin terceros). Lo mismo
+// que las tools `uptime_*`: si se cae, 🔴 en el room y @plan investiga; al volver, 🟢.
+function ProductionSection({ channelId }: { channelId: number }) {
+  const t = useT();
+  const locale = useLocale();
+  const [rows, setRows] = useState<UptimeRow[] | null>(null);
+  const [url, setUrl] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const [removing, setRemoving] = useState<UptimeRow | null>(null);
+  useEffect(() => {
+    setRows(null);
+    const load = () => factoryUptimeFn({ data: { channelId } }).then(setRows).catch(() => setRows([]));
+    void load();
+    // Se refresca solo: el chequeo corre cada minuto en el servidor.
+    const id = setInterval(load, 60_000);
+    return () => clearInterval(id);
+  }, [channelId]);
+  const add = async () => {
+    setBusy(true);
+    setErr("");
+    try {
+      setRows(await factoryUptimeAddFn({ data: { channelId, url } }));
+      setUrl("");
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const since = (ts: number) => new Date(ts * 1000).toLocaleString(intlLocale(locale), { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+  return (
+    <section className="mt-8">
+      <h2 className="text-sm font-semibold text-ink">{t("Producción")}</h2>
+      <p className="text-[11px] text-muted">{t("URLs que este room vigila cada minuto. Si una se cae, se avisa aquí y @plan investiga.")}</p>
+      <div className="mt-2 overflow-hidden rounded-xl border border-border bg-surface-2">
+        {rows === null && <div className="h-10 animate-pulse bg-surface-2 motion-reduce:animate-none" />}
+        {rows && rows.length === 0 && <p className="px-3 py-2.5 text-xs text-muted">{t("Todavía no vigila ninguna URL.")}</p>}
+        {rows && rows.length > 0 && (
+          <ul className="divide-y divide-border">
+            {rows.map((r) => {
+              const pending = r.lastCheckAt == null;
+              return (
+                <li key={r.id} className="flex items-center gap-2 px-3 py-2 text-xs">
+                  <span
+                    className={`h-2 w-2 shrink-0 rounded-full ${pending ? "bg-muted" : r.state === "down" ? "bg-red-500" : "bg-emerald-500"}`}
+                    aria-label={pending ? t("Sin revisar") : r.state === "down" ? t("Caída") : t("Arriba")}
+                  />
+                  <a href={r.url} target="_blank" rel="noreferrer" className="min-w-0 flex-1 truncate font-mono text-ink hover:underline">
+                    {hostOf(r.url)}
+                  </a>
+                  <span className="shrink-0 text-muted">
+                    {pending
+                      ? t("Sin revisar")
+                      : [r.lastStatus != null ? `HTTP ${r.lastStatus}` : t("sin respuesta"), r.lastMs != null ? `${r.lastMs} ms` : null].filter(Boolean).join(" · ")}
+                  </span>
+                  {r.state === "down" && r.downSince != null && (
+                    <span className="shrink-0 text-red-600 dark:text-red-400">{t("caída desde {d}").replace("{d}", since(r.downSince))}</span>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setRemoving(r)}
+                    aria-label={t("Dejar de vigilar")}
+                    title={t("Dejar de vigilar")}
+                    className="shrink-0 rounded p-1 text-muted hover:bg-surface hover:text-red-600"
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+        <form
+          className="flex items-center gap-2 border-t border-border p-2"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void add();
+          }}
+        >
+          <input
+            value={url}
+            onChange={(e) => setUrl(e.target.value)}
+            placeholder={t("https://tu-sitio.com/ruta")}
+            aria-label={t("URL a vigilar")}
+            className="min-w-0 flex-1 rounded-md border border-border bg-surface px-2 py-1 text-xs text-ink"
+          />
+          <button
+            type="submit"
+            disabled={!url.trim() || busy || (rows?.length ?? 0) >= 10}
+            aria-label={t("Vigilar")}
+            title={t("Vigilar")}
+            className="shrink-0 rounded-md bg-brand p-1.5 text-brand-fg hover:opacity-90 disabled:opacity-50"
+          >
+            <Plus size={14} />
+          </button>
+        </form>
+        {err && <p className="px-3 pb-2 text-xs text-red-600 dark:text-red-400">{err}</p>}
+      </div>
+      {removing && (
+        <ConfirmModal
+          title={t("¿Dejar de vigilar esta URL?")}
+          body={t("Ya no se revisará ni se avisará si se cae. Puedes volver a agregarla cuando quieras.")}
+          confirmLabel={t("Dejar de vigilar")}
+          danger
+          onCancel={() => setRemoving(null)}
+          onConfirm={async () => {
+            setRows(await factoryUptimeRemoveFn({ data: { channelId, id: removing.id } }));
+            setRemoving(null);
+          }}
+        />
+      )}
+    </section>
   );
 }
 
@@ -597,6 +734,9 @@ function FactoryPage() {
               </div>
             </section>
           )}
+
+          {/* Producción: el uptime del room. */}
+          {data.room && <ProductionSection key={data.room.id} channelId={data.room.id} />}
 
           {/* Lo del dueño. */}
           {owner && (

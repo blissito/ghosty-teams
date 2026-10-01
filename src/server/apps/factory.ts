@@ -11,8 +11,8 @@ import { FACTORY_ENGINES, FACTORY_HANDLES as HANDLES, ROLE_NAMES, roleAvatar, ty
 //     el dueño (la fábrica NO crea agentes: motor, modelo y llaves se afinan en /app/agents);
 //  3. un tablero de Tasks «Fábrica» recordado para el room (las tres columnas estándar: la
 //     etapa de cada corrida va en su tarea y su tarjeta, no en columnas propias);
-//  4. la fila en `gt_installed_apps`, que es lo que hace aparecer las tools `factory_*` y
-//     `alert_webhook_*`.
+//  4. la fila en `gt_installed_apps`, que es lo que hace aparecer las tools `factory_*`,
+//     `alert_webhook_*` y `uptime_*`.
 // Desinstalar apaga los handles y borra la fila; la caja, el tablero y las corridas se
 // quedan (desactivar no borra, igual que los agentes de Studio).
 
@@ -272,6 +272,8 @@ export const installFactoryFn = createServerFn({ method: "POST" })
       roomId = ch.id;
     }
     await db.addRoomRepo(roomId, repo, user.sub);
+    // Su `homepage` como primer monitor de uptime del room (en segundo plano: habla con GitHub).
+    void import("./uptime.server").then((U) => U.autoMonitorRepo(roomId, repo, user.sub)).catch(() => {});
 
     // 4. La caja de CI del espacio (se crea y registra sola, en segundo plano en gs).
     const ciLabel = (await requestCiBox((await db.listRoomRepos(roomId)).map((r) => r.repo))) ?? prev?.ciLabel;
@@ -1117,4 +1119,37 @@ export const factoryRepoTeamFn = createServerFn({ method: "POST" })
       ? `https://github.com/${row.repo}/edit/${branch}/${TEAM_FILE}`
       : `https://github.com/${row.repo}/new/${branch}?filename=${encodeURIComponent(TEAM_FILE)}&value=${encodeURIComponent(template)}`;
     return { repo: row.repo, hasFile: team.hasFile, fileUrl, roles: team.roles };
+  });
+
+// ── Producción: el uptime del room (sección de /factory) ─────────────────────
+// La misma acción que las tools `uptime_*`: la UI y el agente pasan por `uptime.server`.
+
+/** Monitores de un room que esta persona ve. */
+export const factoryUptimeFn = createServerFn({ method: "POST" })
+  .validator((d: { channelId: number }) => d)
+  .handler(async ({ data }) => {
+    const { visibleChannel } = await import("../room-repos");
+    await visibleChannel(Number(data.channelId));
+    const { listUptimeChecks } = await import("./uptime.server");
+    return await listUptimeChecks(Number(data.channelId));
+  });
+
+export const factoryUptimeAddFn = createServerFn({ method: "POST" })
+  .validator((d: { channelId: number; url: string }) => d)
+  .handler(async ({ data }) => {
+    const { visibleChannel } = await import("../room-repos");
+    const { me } = await visibleChannel(Number(data.channelId));
+    const U = await import("./uptime.server");
+    await U.addUptimeCheck(Number(data.channelId), String(data.url ?? ""), me.sub);
+    return await U.listUptimeChecks(Number(data.channelId));
+  });
+
+export const factoryUptimeRemoveFn = createServerFn({ method: "POST" })
+  .validator((d: { channelId: number; id: number }) => d)
+  .handler(async ({ data }) => {
+    const { visibleChannel } = await import("../room-repos");
+    await visibleChannel(Number(data.channelId));
+    const U = await import("./uptime.server");
+    await U.removeUptimeCheck(Number(data.channelId), Number(data.id));
+    return await U.listUptimeChecks(Number(data.channelId));
   });
