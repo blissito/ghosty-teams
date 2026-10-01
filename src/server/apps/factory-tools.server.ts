@@ -759,8 +759,8 @@ export async function factoryContext(dest: ToolDest | null, toolChannel: ToolCha
       // «no hay pedido, ¿qué PR?» con la tarjeta del PR justo arriba (Denik, 2026-09-30).
       const db = await import("../../db.server");
       const rootMsg = await db.getMessage(root).catch(() => null);
-      const { extractAllPr } = await import("../../lib/ebdoc");
-      const pr = rootMsg?.body ? extractAllPr(rootMsg.body)[0] : undefined;
+      const { prOfMessage } = await import("../../lib/ebdoc");
+      const pr = rootMsg?.body ? prOfMessage(rootMsg.body) : null;
       if (pr) {
         const ref = `${pr.repo}#${pr.number}`;
         parts.push(

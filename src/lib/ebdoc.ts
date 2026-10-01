@@ -1210,6 +1210,18 @@ export function bubbleWithoutEbDoc(
   return around ? `${around}\n\n${writing}` : writing;
 }
 
+/**
+ * El PR del que cuelga un mensaje, venga en la tarjeta con botones (`gt-pr`) o en la simple
+ * (`gt-gh` con `kind:"pr"`, la del aviso «PR #44 abierto»). Para que «@check revisa» en ese
+ * hilo sepa qué revisar sin preguntar.
+ */
+export function prOfMessage(body: string): { repo: string; number: number; title: string; author: string } | null {
+  const pr = extractAllPr(body)[0];
+  if (pr) return { repo: pr.repo, number: pr.number, title: pr.title, author: pr.author };
+  const gh = extractAllGh(body).find((g) => g.kind === "pr" && /^\d+$/.test(g.ref));
+  return gh ? { repo: gh.repo, number: Number(gh.ref), title: gh.title, author: gh.author } : null;
+}
+
 /* ── Tarjeta simple de GitHub (```gt-gh```) ───────────────────────────────── */
 //
 // Hermana pobre de `gt-pr`, y a propósito. `gt-pr` existe para un PR que se puede APROBAR o

@@ -54,3 +54,13 @@ describe("un turno de despertador es un turno como cualquier otro", () => {
     expect(src).toMatch(/dueAt: Math\.floor\(Date\.now\(\) \/ 1000\) \+ 60/);
   });
 });
+
+describe("el PR del hilo", () => {
+  it("se lee de la tarjeta simple gt-gh (aviso «PR #44 abierto»)", async () => {
+    const { prOfMessage } = await import("../lib/ebdoc");
+    const body =
+      '🟢 **PR #44 abierto** por @BrendaOrtega · `blissito/agenda`\n\n```gt-gh\n{"kind":"pr","repo":"blissito/agenda","ref":"44","title":"Parches de seguridad","url":"https://github.com/blissito/agenda/pull/44","state":"open","author":"BrendaOrtega"}\n```';
+    expect(prOfMessage(body)).toEqual({ repo: "blissito/agenda", number: 44, title: "Parches de seguridad", author: "BrendaOrtega" });
+    expect(prOfMessage("hola")).toBeNull();
+  });
+});
