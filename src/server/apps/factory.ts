@@ -881,8 +881,25 @@ export const factorySprintEditFn = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     const { sprint, canEdit } = await sprintAccess(Number(data.sprintId));
     if (!canEdit) throw new Error("sólo el dueño o quien pidió el sprint lo edita");
-    if (sprint.status !== "draft") throw new Error("el sprint ya se aprobó");
     const { dbq } = await import("../../dbq.server");
+    // Sprint ya aprobado: sólo se puede SUMAR un ticket que se dejó fuera (arranca solo cuando
+    // sus dependencias tengan merge). Antes, lo que no entraba al aprobar quedaba fuera para
+    // siempre (MailMask, 01-oct: se aprobaron 2 de 8).
+    if (sprint.status !== "draft") {
+      if (data.included !== true || sprint.status === "cancelled") throw new Error("el sprint ya se aprobó: sólo puedes sumar tickets que dejaste fuera");
+      const { S } = await sprintAccess(Number(data.sprintId));
+      const items = await S.getSprintItems(sprint.id);
+      const it = items.find((i) => i.id === Number(data.itemId));
+      if (!it || it.included) return readSprint(sprint.id);
+      const out = new Set(items.filter((i) => !i.included && i.id !== it.id).map((i) => i.key));
+      const falta = it.dependsOn.find((d) => out.has(d));
+      if (falta) throw new Error(`«${it.title}» depende del ticket ${falta}, que también está fuera: inclúyelo primero`);
+      await dbq("UPDATE gt_factory_sprint_items SET included = 1 WHERE id = ? AND sprint_id = ?", [it.id, sprint.id]);
+      // Un sprint terminado vuelve a correr con el ticket nuevo.
+      await dbq("UPDATE gt_factory_sprints SET status = 'active', updated_at = unixepoch() WHERE id = ? AND status = 'done'", [sprint.id]);
+      await S.advanceSprint(sprint.id);
+      return readSprint(sprint.id);
+    }
     if (typeof data.included === "boolean")
       await dbq("UPDATE gt_factory_sprint_items SET included = ? WHERE id = ? AND sprint_id = ?", [data.included ? 1 : 0, data.itemId, sprint.id]);
     const title = String(data.title ?? "").trim().slice(0, 120);

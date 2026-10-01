@@ -106,6 +106,7 @@ export function SprintCard({ card, channelId, expanded = false }: { card: { spri
           <p className="mt-1.5 text-xs text-muted">
             {included.length} {included.length === 1 ? t("ticket") : t("tickets")}
             {!draft && working ? ` · ${working} ${t("en curso")}` : ""}
+            {!draft && st.items.length > included.length ? ` · ${st.items.length - included.length} ${t("fuera")}` : ""}
             {st.repo && <span className="ml-1 font-mono">· {st.repo}</span>}
           </p>
           <div className="mt-2 flex flex-wrap items-center gap-2">
@@ -201,6 +202,17 @@ export function SprintCard({ card, channelId, expanded = false }: { card: { spri
                     </>
                   ) : !draft && i.included ? (
                     <span className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold ${s.cls}`}>{t(s.label)}</span>
+                  ) : !draft && !i.included && st.canEdit && st.status !== "cancelled" ? (
+                    // Lo que quedó fuera al aprobar se puede sumar después: arranca solo cuando sus
+                    // dependencias tengan merge.
+                    <button
+                      type="button"
+                      disabled={!!busy}
+                      onClick={() => void run(`i${i.id}`, () => factorySprintEditFn({ data: { sprintId: st.id, itemId: i.id, included: true } }))}
+                      className="shrink-0 rounded-full border border-brand px-2 py-0.5 text-[11px] font-semibold text-brand hover:bg-brand/10 disabled:opacity-50"
+                    >
+                      {busy === `i${i.id}` ? <Loader2 size={11} className="animate-spin" /> : t("Incluir")}
+                    </button>
                   ) : null}
                 </div>
                 {!draft && (i.threadUrl || i.prUrl) && (
