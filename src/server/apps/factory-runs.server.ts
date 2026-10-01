@@ -777,7 +777,10 @@ const lastPreviewCheck = new Map<number, number>();
  */
 export async function announcePreviews(): Promise<void> {
   const rows = await dbq(
-    `SELECT * FROM gt_factory_runs WHERE status IN ('checking','pr_review') AND pr_url IS NOT NULL ORDER BY updated_at DESC LIMIT 10`,
+    // También construyendo y escalado: con cada commit nuevo del PR la preview se rehace, para
+    // que la persona vea el cambio antes de decidir (antes se quedaba en el commit viejo hasta
+    // la siguiente revisión — pedido #10, 01-oct).
+    `SELECT * FROM gt_factory_runs WHERE status IN ('building','checking','escalated','pr_review') AND pr_url IS NOT NULL ORDER BY updated_at DESC LIMIT 10`,
     [],
   ).catch(() => []);
   const P = await import("./preview.server");
@@ -829,7 +832,10 @@ export async function announcePreviews(): Promise<void> {
     if (!changed.length) continue;
     void refreshRoom(run.channelId);
     if (next.state === "ready")
-      await postInThread(run, "build", `🔎 **Preview ${row.preview_sha && !sameSha ? "actualizada" : "lista"}**${next.provider ? ` (${next.provider})` : ""} · [Abrir](${next.url})`);
+      // Mientras Build sigue empujando commits no se anuncia cada uno (sería ruido): la tarjeta
+      // ya muestra la liga vigente. Se anuncia al llegar a revisión, escalado o PR listo.
+      if (run.status !== "building")
+        await postInThread(run, "build", `🔎 **Preview ${row.preview_sha && !sameSha ? "actualizada" : "lista"}**${next.provider ? ` (${next.provider})` : ""} · [Abrir](${next.url})`);
     else if (next.state === "needs_env")
       await postInThread(
         run,
