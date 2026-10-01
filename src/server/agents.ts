@@ -211,19 +211,23 @@ export const listStudioAgentsFn = createServerFn({ method: "GET" }).handler(asyn
   await requireOwner();
   const { nativeRuntimeBase } = await import("./ghosty-runtime.server");
   const base = await nativeRuntimeBase();
-  if (!base) return { native: false as const, agents: [] };
+  // El slug del espacio viaja con el listado para que «Crear en Studio» abra el creador
+  // con ESTE espacio ya elegido (`?espacio=<slug>`).
+  const { currentSlug } = await import("./tenant.server");
+  const slug = (await currentSlug()) ?? null;
+  if (!base) return { native: false as const, slug, agents: [] };
 
   const { listNativeFleetAgents } = await import("./fleet-native.server");
   const db = await import("../db.server");
-  const [pools, locales] = await Promise.all([
-    listNativeFleetAgents(base, "").catch(() => []),
-    db.listAgents(),
-  ]);
+  // Sin `.catch`: si Studio no contesta, el error sube y la UI dice «No pudimos leer tus
+  // agentes» con reintento, en vez de fingir un «Aún no tienes agentes» que no es cierto.
+  const [pools, locales] = await Promise.all([listNativeFleetAgents(base, ""), db.listAgents()]);
   // Ya activado = hay fila local con ese fleet_id. Se marca en vez de esconderse:
   // saber que un agente YA está y con qué @handle es justo lo que evita duplicarlo.
   const porFleetId = new Map(locales.filter((a) => a.fleet_id).map((a) => [a.fleet_id!, a]));
   return {
     native: true as const,
+    slug,
     agents: pools.map((p) => {
       const local = porFleetId.get(p.id);
       return {

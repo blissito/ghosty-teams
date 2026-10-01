@@ -81,7 +81,11 @@ import {
 
 // Panel de flota de Studio (gs): dónde se crean+configuran los agentes gestionados.
 // Los agentes NO se crean inline en Teams; se dan de alta aquí y aparecen solos.
-const STUDIO_AGENTS_URL = "https://ghosty.studio/app/agents";
+// Creador de Studio ya abierto con ESTE espacio elegido; gs activa ahí mismo el agente nuevo.
+const STUDIO_CREATE_URL = (slug: string | null) =>
+  slug
+    ? `https://www.ghosty.studio/app/agents?espacio=${encodeURIComponent(slug)}&crear=1`
+    : "https://www.ghosty.studio/app/agents?crear=1";
 // El dueño arma lo que paga el mes que entra en Studio (mismo configurador que /planes).
 const STUDIO_PLAN_URL = (slug: string) => `https://ghosty.studio/app/workspaces/${encodeURIComponent(slug)}/plan`;
 
@@ -1976,6 +1980,7 @@ function AddAgentForm({
   // viviendo allá (persona, motor, modelo); acá sólo se les da @handle.
   const [studio, setStudio] = useState<{
     native: boolean;
+    slug?: string | null;
     agents: {
       id: string;
       name: string;
@@ -1986,13 +1991,36 @@ function AddAgentForm({
     }[];
   } | null>(null);
   const [picked, setPicked] = useState<string>("");
+  // El listado falló (Studio no contestó): se dice tal cual con reintento, no se finge vacío.
+  const [studioErr, setStudioErr] = useState(false);
+  const [studioReload, setStudioReload] = useState(0);
 
   useEffect(() => {
     if (tab !== "create") return;
-    listStudioAgentsFn()
-      .then((r) => setStudio(r as typeof studio))
-      .catch(() => setStudio({ native: false, agents: [] }));
-  }, [tab]);
+    let alive = true;
+    const load = () =>
+      listStudioAgentsFn()
+        .then((r) => {
+          if (!alive) return;
+          setStudio(r as typeof studio);
+          setStudioErr(false);
+        })
+        .catch(() => {
+          if (alive) setStudioErr(true);
+        });
+    load();
+    // Al volver de Studio (otra pestaña) el agente recién creado aparece sin recargar.
+    const onVisible = () => {
+      if (document.visibilityState === "visible") load();
+    };
+    window.addEventListener("focus", load);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      alive = false;
+      window.removeEventListener("focus", load);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [tab, studioReload]);
 
   async function create() {
     if (busy) return;
@@ -2082,7 +2110,21 @@ function AddAgentForm({
           /* Los agentes gestionados se CREAN y configuran (prompt, modelo, canales) en
              Studio (gs), no inline en Teams. Redirige al panel de flota. */
           <div className="space-y-2.5">
-            {studio === null ? (
+            {studioErr ? (
+              <div className="rounded-xl border border-dashed border-border bg-surface-2 px-4 py-6 text-center">
+                <p className="text-sm font-medium">{t("No pudimos leer tus agentes")}</p>
+                <button
+                  onClick={() => {
+                    setStudioErr(false);
+                    setStudio(null);
+                    setStudioReload((n) => n + 1);
+                  }}
+                  className="mt-3 inline-flex items-center gap-1.5 rounded-lg bg-brand px-4 py-1.5 text-sm font-semibold text-brand-fg transition-transform hover:scale-[1.02] active:scale-[0.98]"
+                >
+                  {t("Reintentar")}
+                </button>
+              </div>
+            ) : studio === null ? (
               /* Skeleton en vez de spinner: el listado va a Studio y puede tardar;
                  mostrar la FORMA de lo que viene se siente instantáneo. */
               <div className="space-y-1.5" aria-busy="true">
@@ -2111,10 +2153,10 @@ function AddAgentForm({
                 </div>
                 <p className="text-sm font-medium">{t("Aún no tienes agentes")}</p>
                 <p className="mx-auto mt-1 mb-3 max-w-[34ch] text-xs text-muted">
-                  {t("Se crean y configuran en Studio — persona, modelo y canales. Vuelve aquí para darles un @handle.")}
+                  {t("Al crearlo en Studio queda activo en este espacio.")}
                 </p>
                 <a
-                  href={STUDIO_AGENTS_URL}
+                  href={STUDIO_CREATE_URL(studio.slug ?? null)}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="inline-flex items-center gap-1.5 rounded-lg bg-brand px-4 py-1.5 text-sm font-semibold text-brand-fg transition-transform hover:scale-[1.02] active:scale-[0.98]"
@@ -2222,7 +2264,7 @@ function AddAgentForm({
                 </AnimatePresence>
 
                 <a
-                  href={STUDIO_AGENTS_URL}
+                  href={STUDIO_CREATE_URL(studio.slug ?? null)}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="inline-flex items-center gap-1 px-0.5 text-xs text-muted transition-colors hover:text-ink"

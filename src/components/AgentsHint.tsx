@@ -1,8 +1,10 @@
 import { motion } from "motion/react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useContext, useEffect, useRef, useState } from "react";
 
 import { useT } from "../i18n";
 import { Avatar } from "./Avatar";
+import { ChatCtx } from "./chat/message";
+import { loadSettingsData } from "./SettingsContent";
 
 /**
  * El cartel de "tus agentes están aquí", que se quita de en medio solo.
@@ -28,6 +30,26 @@ export function AgentsHint({
   agentes: { handle: string; name: string; avatar?: string | null }[];
 }) {
   const t = useT();
+  // Ajustes es un modal del shell: se abre por el contexto del chat, no navegando.
+  const { openPrefs } = useContext(ChatCtx);
+  // Mismo criterio que la pestaña Agentes de Ajustes (`agentAccess.canManage`): sin
+  // permiso, la tarjeta llevaría a una pestaña que no existe. Sólo se consulta si no hay
+  // agentes; si la consulta falla, no se ofrece (fallo explícito hacia el lado seguro).
+  const [canManageAgents, setCanManageAgents] = useState(false);
+  const noAgents = agentes.length === 0;
+  useEffect(() => {
+    if (!noAgents) return;
+    let alive = true;
+    loadSettingsData()
+      .then((d) => alive && setCanManageAgents(d.agentAccess.canManage))
+      .catch((err) => {
+        console.warn("[AgentsHint] agentAccess falló; no se muestra el CTA", err);
+        if (alive) setCanManageAgents(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [noAgents]);
   // `null` mientras no sepamos si es la primera vez: pintar abierto y plegar de golpe se ve
   // como un parpadeo. Se resuelve en el primer efecto, antes de la primera pintura visible.
   const [abierto, setAbierto] = useState<boolean | null>(null);
@@ -78,7 +100,30 @@ export function AgentsHint({
     }
   }, [abierto]);
 
-  if (!agentes.length) return null;
+  // Sin agentes, el cartel no tiene handles que enseñar: se vuelve la invitación a crear
+  // el primero. Mismo marco que la tarjeta abierta, para que se lea como la misma pieza.
+  // Sin `openPrefs` (fuera del proveedor del chat) o sin permiso no hay a dónde llevar:
+  // mejor nada que un botón muerto.
+  if (!agentes.length) {
+    if (!openPrefs || !canManageAgents) return null;
+    return (
+      <div className="mx-2 mb-2">
+        <button
+          onClick={() => openPrefs("agentes")}
+          className="w-full rounded-xl border border-border bg-surface p-3 text-left transition-colors hover:bg-surface-3"
+        >
+          <span className="flex items-center gap-1.5 text-sm font-medium text-ink">
+            <img src="/ghosty.svg" alt="" className="h-4 w-4" />
+            <span className="min-w-0 flex-1 truncate">{t("Crea tu primer agente")}</span>
+          </span>
+          <span className="mt-1.5 block text-xs text-muted">
+            {t("Dale un @handle y menciónalo en cualquier room o hilo.")}{" "}
+            <span className="text-brand">{t("Ir a Ajustes → Agentes")}</span>
+          </span>
+        </button>
+      </div>
+    );
+  }
 
   const uno = agentes.length === 1 ? agentes[0] : null;
   const icono = uno?.avatar ? (

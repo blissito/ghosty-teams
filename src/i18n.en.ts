@@ -2004,4 +2004,11 @@ export const en: Record<string, string> = {
   "Sin detalle guardado para este subagente.": "No saved detail for this subagent.",
   "Ver sprint": "View sprint",
   "Incluir": "Include",
+
+  // Invitación a crear el primer agente (AgentsHint) y listado de Studio (Ajustes → Agentes)
+  "Crea tu primer agente": "Create your first agent",
+  "Dale un @handle y menciónalo en cualquier room o hilo.": "Give it an @handle and mention it in any room or thread.",
+  "Ir a Ajustes → Agentes": "Go to Settings → Agents",
+  "No pudimos leer tus agentes": "We couldn't load your agents",
+  "Al crearlo en Studio queda activo en este espacio.": "Once you create it in Studio, it's active in this space.",
 };
