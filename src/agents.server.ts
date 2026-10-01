@@ -2376,6 +2376,16 @@ export async function callAgentBackendStream(
   // socket siga abierto: se corta como `terminated` para que reintente o avise. Antes se quedaba
   // colgado para siempre con la burbuja vacía (@build, 2026-10-01).
   const IDLE_MS = 90_000;
+  // TURNO DURABLE (2026-10-01): con gs nuevo, el turno nativo vive en gs y no en esta
+  // conexión — `POST /turns` lo arranca (idempotente por turnId) y `GET /turns/:id/events` lo
+  // lee con `Last-Event-ID`. Si la conexión se cae, se REENGANCHA al mismo turno: no se repite
+  // trabajo y no hay que adivinar si una tool fue sucia. Detener = `POST …/cancel`.
+  // `durable` = null hasta saber si gs tiene la ruta (404 → camino viejo de message-stream).
+  const durableTurnId = `teams:${crypto.randomUUID()}`;
+  let durable: boolean | null = null;
+  let lastSeq = -1;
+  let cancelSent = false;
+  let cancelHooked = false;
   for (let intento = 0; ; intento++) {
   try {
     // `parts` = FileParts A2A (media); EasyBits los normaliza por MIME (Slice E1).
@@ -2426,7 +2436,46 @@ export async function callAgentBackendStream(
     // SELF-HEAL: el fleet_token de EasyBits (pool) CADUCA. Ante 401 refrescamos el
     // OAuth + re-obtenemos el token fresco y reintentamos UNA vez (incidente
     // 2026-07-14). El runtime lo declara — la HMAC del nativo no caduca por turno.
-    let res = await doStream(agent.backend.token);
+    const turnsBase = `${base}/api/v2/fleet-agents/${fleetAgentId}/turns`;
+    const agentTok = agent.backend.token;
+    const openEvents = () => {
+      const h: Record<string, string> = { ...rt.headers("", agentTok), Accept: "text/event-stream" };
+      if (lastSeq >= 0) h["Last-Event-ID"] = String(lastSeq);
+      return fetch(`${turnsBase}/${encodeURIComponent(durableTurnId)}/events`, { headers: h, signal });
+    };
+    if (native && durable !== false && signal && !cancelHooked) {
+      cancelHooked = true;
+      // Detener: además de cortar ESTA conexión, se le dice a gs que pare el turno (si no, el
+      // turno durable seguiría trabajando sin nadie que lo lea).
+      signal.addEventListener(
+        "abort",
+        () => {
+          if (cancelSent || !durable) return;
+          cancelSent = true;
+          void fetch(`${turnsBase}/${encodeURIComponent(durableTurnId)}/cancel`, { method: "POST", headers: rt.headers("{}", agentTok), body: "{}" }).catch(() => {});
+        },
+        { once: true },
+      );
+    }
+    let res: Response | undefined;
+    if (native && durable !== false) {
+      if (durable === null) {
+        const startBody = JSON.stringify({ ...JSON.parse(streamBody), turnId: durableTurnId });
+        const st = await fetch(turnsBase, { method: "POST", headers: rt.headers(startBody, agentTok), body: startBody, signal });
+        if (st.status === 404 || st.status === 405) {
+          await st.text().catch(() => "");
+          durable = false; // gs viejo: camino de siempre
+        } else {
+          res = st;
+          if (st.status === 202 || st.ok) {
+            await st.text().catch(() => "");
+            durable = true;
+          }
+        }
+      }
+      if (durable) res = await openEvents();
+    }
+    if (!res) res = await doStream(agent.backend.token);
     if (rt.refreshesOn401 && res.status === 401) {
       // El body del 401 se DRENA antes de reasignar `res`: una respuesta sin consumir
       // retiene su socket hasta que el GC la recoja, y esto corre en cada caducidad
@@ -2481,6 +2530,14 @@ export async function callAgentBackendStream(
         while ((nl = buf.indexOf("\n\n")) !== -1) {
           const frame = buf.slice(0, nl);
           buf = buf.slice(nl + 2);
+          const idLine = frame.split("\n").find((l) => l.startsWith("id:"));
+          if (idLine) {
+            const n = Number(idLine.slice(3).trim());
+            if (Number.isFinite(n)) {
+              if (n <= lastSeq) continue; // ya procesado antes del reenganche
+              lastSeq = n;
+            }
+          }
           const line = frame.split("\n").find((l) => l.startsWith("data:"));
           if (!line) continue;
           let ev: { type?: string; value?: string; model?: string; message?: string; name?: string; id?: string; phase?: "start" | "end"; ok?: boolean; detail?: string; todos?: TodoItem[]; sub?: SubEvent } & Partial<TruncatedEvent>;
@@ -2522,7 +2579,7 @@ export async function callAgentBackendStream(
     // el usuario no provocó… cuando lo provocó él (visto en prod 2026-07-29). Se relanza:
     // runAgentTurn ya sabe cerrar el turno con "⏹ Detenido" conservando lo escrito.
     if (signal?.aborted || (e instanceof Error && e.name === "AbortError")) throw e;
-    if (!streamed && !huboTool && intento < ESPERAS_MS.length && esFalloDeTransporte(e)) {
+    if ((durable === true || (!streamed && !huboTool)) && intento < ESPERAS_MS.length && esFalloDeTransporte(e)) {
       const ms = (e as { retryAfterMs?: number }).retryAfterMs ?? ESPERAS_MS[intento];
       console.warn(`[fleet-stream] @${agent.handle} ${String((e as Error)?.message ?? e).slice(0, 80)} → reintento ${intento + 1}/${ESPERAS_MS.length} en ${ms} ms`);
       await esperar(ms, signal);
