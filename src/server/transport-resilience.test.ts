@@ -91,3 +91,16 @@ describe("hallazgos de @check legibles", () => {
     expect(t).not.toMatch(/object Object/);
   });
 });
+
+describe("el historial de un hilo llega al agente que mencionas", () => {
+  it("la respuesta de OTRO agente no corta el hueco", async () => {
+    const { gapDesdeUltimaRespuesta } = await import("../agents.server");
+    const m = (agent_handle: string | null, body: string, mentions_ghosty = 0) => ({ agent_handle, body, mentions_ghosty });
+    const recientes = [m("build", "listo el PR"), m(null, "@check revisa"), m("check", "faltan los docs del CLI"), m("build", "@build agrega", 1)];
+    const gap = gapDesdeUltimaRespuesta(recientes, () => false, "build").map((x) => x.body);
+    expect(gap).toEqual(["@check revisa", "faltan los docs del CLI", "@build agrega"]);
+  });
+  it("en un hilo se suman la raíz y sus respuestas", () => {
+    expect(leer("server/chat.ts")).toMatch(/db\.recentContext\(\{ channelId: channel\.id, parentId: data\.parentId \}/);
+  });
+});

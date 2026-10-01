@@ -641,11 +641,17 @@ export function clampQuote(body: string, max = 2000): string {
  * trabajo viejo que sí recordaba.
  */
 export function gapDesdeUltimaRespuesta<
-  T extends { agent_handle: string | null; body: string | null },
->(recientes: T[], esRecordatorio: (b: string | null) => boolean): T[] {
+  T extends { agent_handle: string | null; body: string | null; mentions_ghosty?: number | null },
+>(recientes: T[], esRecordatorio: (b: string | null) => boolean, handle?: string): T[] {
   let ultima = -1;
   recientes.forEach((m, i) => {
-    if (m.agent_handle && (m.body ?? "").trim() && !esRecordatorio(m.body)) ultima = i;
+    if (!m.agent_handle || !(m.body ?? "").trim() || esRecordatorio(m.body)) return;
+    // Con `handle`: sólo cuenta como corte una respuesta de ESTE agente. Antes cortaba en la de
+    // CUALQUIER agente, y lo que dijo @check justo antes de que mencionaras a @build quedaba
+    // fuera de su contexto (MailMask, 2026-10-01: @build contestó «¿qué agrego?»). Un mensaje
+    // de PERSONA que menciona al agente también lleva agent_handle: ése no es respuesta suya.
+    if (handle && (m.agent_handle !== handle || (m.mentions_ghosty ?? 0) !== 0)) return;
+    ultima = i;
   });
   return recientes.slice(ultima + 1);
 }

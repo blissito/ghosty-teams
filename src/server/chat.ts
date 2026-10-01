@@ -1095,7 +1095,19 @@ export const askAgent = createServerFn({ method: "POST" })
       // Se traen 40 y NO 8: el render sigue acotado por presupuesto, pero traer de más es
       // lo que hace el hueco OBSERVABLE. Sin esto no hay forma de saber si detrás quedaron
       // 3 mensajes o 300, y el agente contestaba sobre un recorte sin enterarse.
-      const recent = await db.recentContext(scope, CATCHUP_FETCH).catch(() => []);
+      const roomRecent = await db.recentContext(scope, CATCHUP_FETCH).catch(() => []);
+      // En un HILO, además del room, lo dicho en ESE hilo: su raíz y sus respuestas. Sin esto
+      // la respuesta de otro agente justo arriba (p. ej. @check pidiendo cambios) nunca le
+      // llegaba al agente que mencionas después — el room sólo trae mensajes de primer nivel.
+      const recent = data.parentId != null
+        ? await (async () => {
+            const hilo = await db.recentContext({ channelId: channel.id, parentId: data.parentId }, CATCHUP_FETCH).catch(() => []);
+            const raiz = await db.getMessage(data.parentId!).catch(() => null);
+            const todos = new Map<number, (typeof roomRecent)[number]>();
+            for (const m of [...roomRecent, ...(raiz ? [raiz] : []), ...hilo]) todos.set(m.id, m);
+            return [...todos.values()].sort((a, b) => (a.created_at === b.created_at ? a.id - b.id : a.created_at - b.created_at)).slice(-CATCHUP_FETCH);
+          })()
+        : roomRecent;
       const { esRecordatorio } = await import("./reminders.server");
       // ⚠️ El hueco desde su última respuesta SÓLO vale si el agente conserva sus propios
       // turnos. Un agente ACP cuya sesión no sobrevive a la reconexión empieza cada turno en
@@ -1111,7 +1123,7 @@ export const askAgent = createServerFn({ method: "POST" })
       const retiene =
         agent?.backend.kind !== "acp" ||
         (await db.acpRetains(agent.handle, gidCatchup).catch(() => true));
-      const gap = retiene ? gapDesdeUltimaRespuesta(recent, esRecordatorio) : recent;
+      const gap = retiene ? gapDesdeUltimaRespuesta(recent, esRecordatorio, data.handle) : recent;
       // El COUNT sólo se paga si el fetch volvió lleno: si volvió corto ya tenemos la
       // conversación entera y el total es el largo del gap, sin query.
       let totalGap = gap.length;
