@@ -50,6 +50,7 @@ import { Route as CoeditarInvitacionTokenRouteImport } from './routes/coeditar.i
 import { Route as ArtefactoIdRawRouteImport } from './routes/artefacto.$id.raw'
 import { Route as ApiProspeccionAgentRouteImport } from './routes/api.prospeccion.agent'
 import { Route as ApiPSesRouteImport } from './routes/api.p.ses'
+import { Route as ApiInternalScheduleTurnRouteImport } from './routes/api.internal.schedule-turn'
 import { Route as ApiInternalProspeccionRunRouteImport } from './routes/api.internal.prospeccion-run'
 import { Route as ApiInternalMembersRouteImport } from './routes/api.internal.members'
 import { Route as ApiInternalGithubEventRouteImport } from './routes/api.internal.github-event'
@@ -288,6 +289,11 @@ const ApiPSesRoute = ApiPSesRouteImport.update({
   path: '/api/p/ses',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiInternalScheduleTurnRoute = ApiInternalScheduleTurnRouteImport.update({
+  id: '/api/internal/schedule-turn',
+  path: '/api/internal/schedule-turn',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiInternalProspeccionRunRoute =
   ApiInternalProspeccionRunRouteImport.update({
     id: '/api/internal/prospeccion-run',
@@ -508,6 +514,7 @@ export interface FileRoutesByFullPath {
   '/api/internal/github-event': typeof ApiInternalGithubEventRoute
   '/api/internal/members': typeof ApiInternalMembersRoute
   '/api/internal/prospeccion-run': typeof ApiInternalProspeccionRunRoute
+  '/api/internal/schedule-turn': typeof ApiInternalScheduleTurnRoute
   '/api/p/ses': typeof ApiPSesRoute
   '/api/prospeccion/agent': typeof ApiProspeccionAgentRoute
   '/artefacto/$id/raw': typeof ArtefactoIdRawRoute
@@ -582,6 +589,7 @@ export interface FileRoutesByTo {
   '/api/internal/github-event': typeof ApiInternalGithubEventRoute
   '/api/internal/members': typeof ApiInternalMembersRoute
   '/api/internal/prospeccion-run': typeof ApiInternalProspeccionRunRoute
+  '/api/internal/schedule-turn': typeof ApiInternalScheduleTurnRoute
   '/api/p/ses': typeof ApiPSesRoute
   '/api/prospeccion/agent': typeof ApiProspeccionAgentRoute
   '/artefacto/$id/raw': typeof ArtefactoIdRawRoute
@@ -658,6 +666,7 @@ export interface FileRoutesById {
   '/api/internal/github-event': typeof ApiInternalGithubEventRoute
   '/api/internal/members': typeof ApiInternalMembersRoute
   '/api/internal/prospeccion-run': typeof ApiInternalProspeccionRunRoute
+  '/api/internal/schedule-turn': typeof ApiInternalScheduleTurnRoute
   '/api/p/ses': typeof ApiPSesRoute
   '/api/prospeccion/agent': typeof ApiProspeccionAgentRoute
   '/artefacto/$id/raw': typeof ArtefactoIdRawRoute
@@ -735,6 +744,7 @@ export interface FileRouteTypes {
     | '/api/internal/github-event'
     | '/api/internal/members'
     | '/api/internal/prospeccion-run'
+    | '/api/internal/schedule-turn'
     | '/api/p/ses'
     | '/api/prospeccion/agent'
     | '/artefacto/$id/raw'
@@ -809,6 +819,7 @@ export interface FileRouteTypes {
     | '/api/internal/github-event'
     | '/api/internal/members'
     | '/api/internal/prospeccion-run'
+    | '/api/internal/schedule-turn'
     | '/api/p/ses'
     | '/api/prospeccion/agent'
     | '/artefacto/$id/raw'
@@ -884,6 +895,7 @@ export interface FileRouteTypes {
     | '/api/internal/github-event'
     | '/api/internal/members'
     | '/api/internal/prospeccion-run'
+    | '/api/internal/schedule-turn'
     | '/api/p/ses'
     | '/api/prospeccion/agent'
     | '/artefacto/$id/raw'
@@ -959,6 +971,7 @@ export interface RootRouteChildren {
   ApiInternalGithubEventRoute: typeof ApiInternalGithubEventRoute
   ApiInternalMembersRoute: typeof ApiInternalMembersRoute
   ApiInternalProspeccionRunRoute: typeof ApiInternalProspeccionRunRoute
+  ApiInternalScheduleTurnRoute: typeof ApiInternalScheduleTurnRoute
   ApiPSesRoute: typeof ApiPSesRoute
   ApiProspeccionAgentRoute: typeof ApiProspeccionAgentRoute
   CoeditarInvitacionTokenRoute: typeof CoeditarInvitacionTokenRoute
@@ -1263,6 +1276,13 @@ declare module '@tanstack/react-router' {
       path: '/api/p/ses'
       fullPath: '/api/p/ses'
       preLoaderRoute: typeof ApiPSesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/internal/schedule-turn': {
+      id: '/api/internal/schedule-turn'
+      path: '/api/internal/schedule-turn'
+      fullPath: '/api/internal/schedule-turn'
+      preLoaderRoute: typeof ApiInternalScheduleTurnRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/internal/prospeccion-run': {
@@ -1575,6 +1595,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiInternalGithubEventRoute: ApiInternalGithubEventRoute,
   ApiInternalMembersRoute: ApiInternalMembersRoute,
   ApiInternalProspeccionRunRoute: ApiInternalProspeccionRunRoute,
+  ApiInternalScheduleTurnRoute: ApiInternalScheduleTurnRoute,
   ApiPSesRoute: ApiPSesRoute,
   ApiProspeccionAgentRoute: ApiProspeccionAgentRoute,
   CoeditarInvitacionTokenRoute: CoeditarInvitacionTokenRoute,
@@ -1594,12 +1615,3 @@ const rootRouteChildren: RootRouteChildren = {
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
-
-import type { getRouter } from './router.tsx'
-import type { createStart } from '@tanstack/react-start'
-declare module '@tanstack/react-start' {
-  interface Register {
-    ssr: true
-    router: Awaited<ReturnType<typeof getRouter>>
-  }
-}

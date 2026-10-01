@@ -189,6 +189,10 @@ async function fire(ns: string, w: Wakeup, ref: WakeRef): Promise<void> {
       ? `🏭 Encargo de la Software Factory (${w.cause}). ${w.text}`
       : w.key.startsWith("handoff:")
         ? w.text
+        // Turno programado desde el CLI (`api/internal/schedule-turn`): el encargo tal cual, como
+        // si alguien lo mencionara a esa hora. Sin la cláusula del OK: se programa para que hable.
+        : w.key.startsWith("sched:turn:")
+          ? `⏰ Turno que programó ${w.cause} para esta hora en este hilo:\n\n${w.text}`
         : `⏰ Turno programado por la plataforma (${w.cause}). ${w.text}\nSi no hay nada nuevo que entregar, contesta exactamente: OK`;
   // Relevo entre agentes (`agent-handoff.server.ts`): llega con el pedido original del hilo y
   // sus adjuntos, porque el relevado corre en su memoria del room y ése pedido no lo vio.
