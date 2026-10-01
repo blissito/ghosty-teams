@@ -544,6 +544,7 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
         const goal = String(a.goal ?? "").trim();
         const title = String(a.title ?? "").trim().slice(0, 120);
         if (!goal || !title) return { ok: false, error: "el sprint lleva goal y title" };
+        if (title.length < 6) return { ok: false, error: "el título parece de prueba. No pruebes la tool: mándala UNA vez con el sprint real" };
         const db = await import("../../db.server");
         const repos = (await db.listRoomRepos(dest.channelId)).map((r) => r.repo);
         const asked = a.repo ? String(a.repo).trim() : "";
@@ -561,6 +562,7 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
             title,
             items: withPrep,
             createdBy: sub,
+            parentId: threadRoot(dest),
           });
           return {
             ok: true,
@@ -792,6 +794,14 @@ export async function factoryContext(dest: ToolDest | null, toolChannel: ToolCha
   parts.push(
     "ALERTAS DE MONITOREO: si piden conectar su monitoreo (Datadog, Grafana, Better Stack, UptimeRobot o cualquier herramienta con webhooks), usa alert_webhook_create { name } en el canal donde deben caer; la URL es SECRETA (sólo a quien la pidió). También alert_webhook_list y alert_webhook_delete. Para Sentry usa su conector.]",
   );
+  // La brevedad va AL FINAL a propósito: en medio del contexto el modelo la ignoraba y
+  // contestaba con viñetas y la historia de sus intentos (MailMask, 2026-10-01).
+  if (h && (FACTORY_HANDLES as readonly string[]).includes(h))
+    parts.push(
+      "ÚLTIMA REGLA, la más importante: tu respuesta en el hilo son 1 a 4 renglones de prosa, sin viñetas ni encabezados. " +
+        "Di qué hiciste, dónde quedó (la tarjeta, el documento, el PR) y qué falta de la persona. " +
+        "No cuentes tus intentos, pruebas ni errores internos, y no repitas lo que ya muestra la tarjeta.",
+    );
   return parts.join(" ");
 }
 

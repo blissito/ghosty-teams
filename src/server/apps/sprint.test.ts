@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { findCycle, itemStatusOf, nextReady, validateSprintItems } from "./sprint.server";
 
-const t = (key: string, depends_on: string[] = [], size = "S") => ({ key, title: `T ${key}`, size, depends_on, criteria: "- pasa `npm test`" });
+const t = (key: string, depends_on: string[] = [], size = "S") => ({ key, title: `Ticket ${key} del CLI`, size, depends_on, criteria: "- pasa `npm test` y el lint" });
 
 describe("sprint: validación de lo que manda @plan", () => {
   it("3 a 8 tickets, keys únicas, tamaños S/M/L, criterios", () => {
@@ -12,6 +12,11 @@ describe("sprint: validación de lo que manda @plan", () => {
     const ok = validateSprintItems([t("A"), t("B", ["A"]), t("C")]);
     expect(Array.isArray(ok) && ok[1].dependsOn).toEqual(["A"]);
     expect(Array.isArray(ok) && ok[0].bodyMd).toContain("## Criterios de aceptación");
+  });
+
+  it("un sprint de prueba (títulos o criterios de relleno) se rechaza sin crear nada", () => {
+    expect(validateSprintItems([{ ...t("A"), title: "t" }, t("B"), t("C")])).toMatch(/parece de prueba/);
+    expect(validateSprintItems([t("A"), { ...t("B"), criteria: "g" }, t("C")])).toMatch(/parece de prueba/);
   });
 
   it("dependencias que no existen o en círculo se rechazan", () => {

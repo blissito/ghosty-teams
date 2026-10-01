@@ -44,6 +44,11 @@ export function validateSprintItems(raw: unknown): SprintItemInput[] | string {
     if (!title) return `el ticket ${key} no tiene título`;
     if (!["S", "M", "L"].includes(size)) return `el ticket ${key}: size va como S, M o L (≤ ~3 h de agente)`;
     if (!criteria) return `el ticket ${key} necesita criterios de aceptación verificables`;
+    // Un sprint de PRUEBA (títulos «t», criterios «g») creaba una tarjeta basura en el room:
+    // @plan probaba el esquema mandando datos de relleno (MailMask, 2026-10-01). Mismo criterio
+    // que `planRejection`: se rechaza sin crear nada.
+    if (title.length < 6 || criteria.length < 15)
+      return `el ticket ${key} parece de prueba (título o criterios demasiado cortos). No pruebes la tool: mándala UNA vez con el sprint real`;
     const dependsOn = Array.isArray(it?.depends_on) ? [...new Set((it.depends_on as unknown[]).map((d) => String(d).trim()).filter(Boolean))] : [];
     const bodyMd =
       `# ${title}\n\n` +
@@ -221,6 +226,8 @@ export async function submitSprint(opts: {
   title: string;
   items: SprintItemInput[];
   createdBy: string;
+  /** Hilo donde se pidió: la tarjeta va AHÍ, no como mensaje suelto en el room. */
+  parentId?: number | null;
 }): Promise<SprintRow> {
   const R = await import("./factory-runs.server");
   if (opts.sprintId) {
@@ -251,8 +258,11 @@ export async function submitSprint(opts: {
   const { resolvedAgents } = await import("../../agents.server");
   const plan = (await resolvedAgents()).find((a) => a.handle === "plan");
   const body = "```gt-sprint\n" + JSON.stringify({ sprintId: id }) + "\n```\n🧩 Sprint propuesto: " + opts.title;
-  const { id: msgId } = await db.postAgent(opts.channelId, null, body, "msg", "plan", plan?.name ?? "Plan", "general", plan?.avatar ?? "");
-  await dbq("UPDATE gt_factory_sprints SET card_msg_id = ?, root_msg_id = ? WHERE id = ?", [msgId, msgId, id]);
+  // En el hilo donde se pidió (si lo hay): ahí se está conversando. Antes salía como mensaje
+  // suelto arriba en el room y en el hilo no se veía nada (MailMask, 2026-10-01).
+  const parentId = opts.parentId ?? null;
+  const { id: msgId } = await db.postAgent(opts.channelId, parentId, body, "msg", "plan", plan?.name ?? "Plan", "general", plan?.avatar ?? "");
+  await dbq("UPDATE gt_factory_sprints SET card_msg_id = ?, root_msg_id = ? WHERE id = ?", [msgId, parentId ?? msgId, id]);
   const msg = await db.getMessage(msgId);
   if (msg) bus.publish(bus.ch.room(await currentNamespace(), opts.channelId), { t: "message:new", msg });
   return (await getSprint(id))!;
