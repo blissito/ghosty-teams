@@ -477,9 +477,28 @@ export async function afterFactoryTurn(
   const run = await getRun(Number(m[1]));
   const role = m[2];
   if (!run || run.status !== OPEN_STATUS[role]) return; // cerró su paso (o el pedido siguió)
+  // CORTE DE TRANSPORTE (infra reiniciando, gs caído un momento): el agente no falló, se cayó
+  // el camino. Se repite el MISMO encargo en 60 s, una vez. Empujarlo a los 5 s con «cierra tu
+  // paso» caía en la misma ventana caída (MailMask, 2026-10-01).
+  if (/No pude contactar a @/.test(reply) && !w.key.endsWith(":retry")) {
+    await logEvent(run.id, "stalled", role, { reason: reply.replace(/^[\s\S]*No pude contactar a @\w+:\s*/, "").slice(0, 200) });
+    const { enqueueWakeup, armWakeups } = await import("../wakeups.server");
+    const { currentNamespace } = await import("../tenant.server");
+    const original = await dbq("SELECT cause, text FROM gt_agent_wakeups WHERE key = ?", [w.key]).catch(() => []);
+    await enqueueWakeup({
+      key: `${w.key.replace(/:nudge$/, "")}:retry`,
+      ref: w.ref,
+      cause: String(original[0]?.cause ?? "retomar tras un corte"),
+      text: String(original[0]?.text ?? `[Pedido #${run.id}] Se cortó la conexión a media tarea. Retoma tu paso donde lo dejaste.`),
+      origin: w.origin,
+      dueAt: Math.floor(Date.now() / 1000) + 60,
+    });
+    armWakeups(await currentNamespace());
+    return;
+  }
   // El turno SE CAYÓ (vacío o cortado): empujar no sirve, el agente no está contestando.
   // Se dice una vez qué pasa y dónde revisarlo (su motor, modelo o llave en Studio).
-  if (!reply.trim() || /se cort[óo] antes de terminar/i.test(reply)) {
+  if (!reply.trim() || /se cort[óo] antes de terminar|No pude contactar a @/i.test(reply)) {
     if (w.key.endsWith(":nudge")) return; // ya se avisó en el intento anterior
     await postInThread(
       run,

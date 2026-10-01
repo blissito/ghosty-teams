@@ -1,0 +1,56 @@
+// Un corte corto de infra (reinicio del daemon, gs drenando) no puede tirar el trabajo de un
+// agente. Medido el 2026-10-01 en el hilo de MailMask: @plan murió por haber leído la
+// conversación antes del corte (cualquier tool apagaba el reintento), @build quedó colgado
+// con la burbuja vacía (el stream no tenía límite sin datos) y, como su turno nació de un
+// despertador, ni el barrido ni «Retomar» lo veían.
+//
+// Mismo criterio que turno-muerto.test.ts: lo estructural se comprueba sobre el TEXTO del
+// módulo; lo puro, con su función.
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
+import { describe, expect, it } from "vitest";
+import { isCleanTool } from "./turns.server";
+
+const raiz = join(import.meta.dirname, "..");
+const leer = (p: string) => readFileSync(join(raiz, p), "utf8");
+
+describe("tools que se pueden repetir", () => {
+  it("leer la conversación es limpio, con o sin prefijo MCP", () => {
+    expect(isCleanTool("chat_history")).toBe(true);
+    expect(isCleanTool("mcp__ghosty__chat_history")).toBe(true);
+    expect(isCleanTool("Read")).toBe(true);
+  });
+  it("lo demás es sucio por default", () => {
+    expect(isCleanTool("Bash")).toBe(false);
+    expect(isCleanTool("chat_message")).toBe(false);
+    expect(isCleanTool("mcp__ghosty__factory_plan_submit")).toBe(false);
+    expect(isCleanTool(undefined)).toBe(false);
+  });
+});
+
+describe("el stream de un turno aguanta un corte corto", () => {
+  const src = leer("agents.server.ts");
+  it("sólo una tool SUCIA apaga el reintento", () => {
+    expect(src).toMatch(/if \(ev\.phase !== "end" && !isCleanTool\(ev\.name\)\) huboTool = true;/);
+  });
+  it("un stream sin datos se corta como `terminated` (cae en el reintento)", () => {
+    expect(src).toMatch(/IDLE_MS = 90_000/);
+    expect(src).toMatch(/Promise\.race\(\[\s*reader\.read\(\)/);
+    expect(src).toMatch(/new Error\(`terminated \(sin datos/);
+  });
+});
+
+describe("un turno de despertador es un turno como cualquier otro", () => {
+  it("se registra en gt_turns y se cierra al terminar", () => {
+    const src = leer("server/wakeups.server.ts");
+    expect(src).toMatch(/turns\.registerTurn\(\{/);
+    expect(src).toMatch(/onShell: register/);
+    expect(src).toMatch(/turns\.finishTurn\(ns, registeredId\)/);
+  });
+  it("la fábrica repite el encargo UNA vez a los 60 s si se cayó el camino", () => {
+    const src = leer("server/apps/factory-runs.server.ts");
+    expect(src).toMatch(/No pude contactar a @\/\.test\(reply\) && !w\.key\.endsWith\(":retry"\)/);
+    expect(src).toMatch(/dueAt: Math\.floor\(Date\.now\(\) \/ 1000\) \+ 60/);
+  });
+});

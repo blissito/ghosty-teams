@@ -2350,8 +2350,16 @@ export async function callAgentBackendStream(
   // espera creciente —hasta ~2 min, lo que dura el drain de gs— y SÓLO si aún no llegó
   // texto ni tool: con trabajo a medias en la caja, repetir el turno lo duplicaría.
   const ESPERAS_MS = [5_000, 15_000, 30_000, 60_000];
+  // 2026-10-01: una tool de sólo lectura (`chat_history`) ya no impide reintentar — repetirla
+  // no hace nada. Antes cualquier tool apagaba el reintento y @plan murió en un reinicio de
+  // infra por haber leído la conversación. Sólo una tool SUCIA (Bash, escribir, mandar) lo apaga.
+  const { isCleanTool } = await import("./server/turns.server");
   let streamed = "";
   let huboTool = false;
+  // Sin un solo byte en IDLE_MS (gs manda `: hb` cada 15 s) el stream está muerto aunque el
+  // socket siga abierto: se corta como `terminated` para que reintente o avise. Antes se quedaba
+  // colgado para siempre con la burbuja vacía (@build, 2026-10-01).
+  const IDLE_MS = 90_000;
   for (let intento = 0; ; intento++) {
   try {
     // `parts` = FileParts A2A (media); EasyBits los normaliza por MIME (Slice E1).
@@ -2444,7 +2452,13 @@ export async function callAgentBackendStream(
     // respuesta SSE queda sin drenar y el socket retenido de los dos lados.
     try {
       for (;;) {
-        const { value, done } = await reader.read();
+        let idle: ReturnType<typeof setTimeout> | undefined;
+        const { value, done } = await Promise.race([
+          reader.read(),
+          new Promise<never>((_, reject) => {
+            idle = setTimeout(() => reject(new Error(`terminated (sin datos en ${IDLE_MS / 1000} s)`)), IDLE_MS);
+          }),
+        ]).finally(() => clearTimeout(idle));
         if (done) break;
         buf += dec.decode(value, { stream: true });
         let nl: number;
@@ -2466,7 +2480,7 @@ export async function callAgentBackendStream(
             streamed += ev.value;
             await onChunk(ev.value);
           } else if (ev.type === "tool") {
-            huboTool = true;
+            if (ev.phase !== "end" && !isCleanTool(ev.name)) huboTool = true;
             // start trae name+id+detail; end trae id+ok. Correlación por id en runAgentTurn.
             await onTool?.({ name: ev.name, id: ev.id, phase: ev.phase ?? "start", ok: ev.ok, detail: ev.detail, todos: Array.isArray(ev.todos) ? ev.todos : undefined });
           } else if (ev.type === "truncated") {

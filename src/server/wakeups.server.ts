@@ -211,7 +211,31 @@ async function fire(ns: string, w: Wakeup, ref: WakeRef): Promise<void> {
     }
   };
 
+  // El turno de un despertador se REGISTRA igual que uno de chat (2026-10-01): sin fila en
+  // gt_turns, un corte de infra lo dejaba como burbuja vacía para siempre — ni el barrido lo
+  // cerraba, ni «Retomar» lo encontraba, ni la barra del pedido podía detenerlo.
+  const turns = await import("./turns.server");
+  const controller = new AbortController();
+  const channelSlug = dest.channelId != null ? ((await db.getChannelById(dest.channelId).catch(() => null))?.slug ?? null) : null;
+  let registeredId: number | null = null;
+  const register = (mid: number) => {
+    if (registeredId === mid) return;
+    registeredId = mid;
+    turns.registerTurn({
+      ns, messageId: mid, groupId: ref.groupId, invokerSub: ref.sub, controller,
+      channelId: dest.channelId ?? null, parentId: dest.parentId ?? null, dmId: dest.dmId ?? null,
+      dest: { ...dest, handle, name, avatar },
+      publicChannel: false,
+      agent: name, avatar,
+      tarea: (handoff?.text ?? text).slice(0, 60),
+      body: handoff?.text ?? text, slug: channelSlug ?? undefined, shellId: mid,
+      attachments: [], handle, origin: w.origin || undefined,
+    });
+  };
+
   const { id, reply } = await runAgentTurn({
+    signal: controller.signal,
+    onShell: register,
     agent,
     handle,
     groupId: ref.groupId,
@@ -238,6 +262,8 @@ async function fire(ns: string, w: Wakeup, ref: WakeRef): Promise<void> {
     emitDelta: (mid, chunk) =>
       publish({ t: "message:delta", id: mid, chunk, channelId: dest.channelId ?? null, parentId: dest.parentId ?? null, dmId: dest.dmId ?? null }),
     emitBody: (mid, body) => publish({ t: "message:body", id: mid, body }),
+  }).finally(() => {
+    if (registeredId != null) turns.finishTurn(ns, registeredId);
   });
 
   const finalBody = reply.trim();

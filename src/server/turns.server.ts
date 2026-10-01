@@ -714,6 +714,12 @@ export async function withGroupLock<T>(
  */
 const LIMPIAS = new Set(["Read", "Grep", "Glob", "chat_history", "chat_search", "chat_message_read", "doc_read"]);
 
+/** ¿Repetir esta tool es inofensivo? Acepta el nombre con prefijo MCP (`mcp__ghosty__chat_history`). */
+export function isCleanTool(name: string | null | undefined): boolean {
+  if (!name) return false;
+  return LIMPIAS.has(name) || LIMPIAS.has(name.split("__").pop() ?? "");
+}
+
 export type TurnoMuerto = {
   messageId: number;
   groupId: string;
