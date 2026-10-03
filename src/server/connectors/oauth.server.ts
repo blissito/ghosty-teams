@@ -176,6 +176,7 @@ async function getValidTokenOnce(sub: string, provider: string): Promise<string 
       expiresAt: j.expires_in ? now + j.expires_in : null,
       // CAS: si otro proceso ya rotó (la fila es global desde el 3-oct), no se pisa la suya.
       ifRefresh: row.refresh_token,
+      ...(typeof row.account === "string" ? { account: row.account } : {}),
     });
     if (saved === "stale") {
       forgetConnectorCache(sub, provider);

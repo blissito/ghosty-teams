@@ -22,15 +22,40 @@ export const forgetConnectorCache = forget;
 /** Sólo tests: el caché de 30 s sobrevive entre casos. */
 export const resetConnectorCacheForTests = () => cache.clear();
 
+/** Qué cuenta usa ESTE espacio (`gc_user_connectors.account`); undefined = sin fijar. */
+async function markerAccount(sub: string, provider: string): Promise<string | undefined> {
+  const rows = await dbq("SELECT account FROM gc_user_connectors WHERE user_sub=? AND provider=?", [sub, provider]).catch(() => []);
+  const a = rows[0]?.account;
+  return typeof a === "string" ? a : undefined;
+}
+
+/** Fija la cuenta de este espacio (crea la marca si no existe). */
+async function pinAccount(sub: string, provider: string, account: string): Promise<void> {
+  await ensureMarker(sub, provider);
+  await dbq("UPDATE gc_user_connectors SET account=? WHERE user_sub=? AND provider=?", [account, sub, provider]).catch(() => {});
+}
+
 /** La fila en gs; `undefined` = gs no contestó (se usa la copia local). */
 async function gsGet(sub: string, provider: string): Promise<GsRow | null | undefined> {
   const hit = cache.get(ck(sub, provider));
   if (hit && Date.now() - hit.at < CACHE_MS) return hit.row;
-  const r = await call<{ ok: boolean; row?: GsRow | null }>(sub, { action: "cred.get", provider });
+  const account = await markerAccount(sub, provider);
+  const r = await call<{ ok: boolean; row?: GsRow | null }>(sub, { action: "cred.get", provider, ...(account !== undefined ? { account } : {}) });
   if (!r?.ok) return undefined;
   const row = r.row ?? null;
+  // Sin cuenta fijada: se fija la que se está usando, para que conectar OTRA cuenta en otro
+  // espacio no le cambie la suya a éste (auditoría 3-oct). Sólo si este espacio ya tiene marca.
+  if (row && account === undefined && typeof row.account === "string") {
+    await dbq("UPDATE gc_user_connectors SET account=? WHERE user_sub=? AND provider=? AND account IS NULL", [row.account, sub, provider]).catch(() => {});
+  }
   cache.set(ck(sub, provider), { at: Date.now(), row });
   return row;
+}
+
+/** Cuerpo de las llamadas que tocan UNA cuenta: la de este espacio si está fijada. */
+async function withAccount(sub: string, provider: string, body: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const account = await markerAccount(sub, provider);
+  return account !== undefined ? { ...body, account } : body;
 }
 
 async function gs(sub: string, body: Record<string, unknown>): Promise<boolean> {
@@ -61,10 +86,10 @@ async function legacyRow(sub: string, provider: string): Promise<ConnectorRow | 
 /** La copia de este espacio sube a gs y aquí queda sólo la marca (sin tokens). */
 async function legacyToGs(row: ConnectorRow): Promise<boolean> {
   if (!row.access_token) return false;
-  const ok = await gs(row.user_sub, {
+  const ok = await gs(row.user_sub, await withAccount(row.user_sub, row.provider, {
     action: "cred.set", provider: row.provider, accessToken: row.access_token, refreshToken: row.refresh_token,
     expiresAt: row.expires_at, externalId: row.external_id, meta: row.meta, metaAt: row.meta_at,
-  });
+  }));
   if (ok) {
     await dbq("UPDATE gc_user_connectors SET access_token=NULL, refresh_token=NULL WHERE user_sub=? AND provider=?", [row.user_sub, row.provider]).catch(() => {});
   }
@@ -95,6 +120,8 @@ export type ConnectorRow = {
   meta: string | null;
   /** Última relectura del userinfo. NULL = nunca → se trata como vencido. */
   meta_at: number | null;
+  /** Qué cuenta del proveedor (gs). Ausente en copias locales de antes. */
+  account?: string;
 };
 
 export async function getConnectorRow(sub: string, provider: string): Promise<ConnectorRow | null> {
@@ -120,19 +147,25 @@ export async function setConnectorRow(row: {
   meta?: unknown;
   /** Refresco: sólo escribe si gs sigue guardando ESTE refresh token (otro proceso no rotó). */
   ifRefresh?: string | null;
+  /** La cuenta que se refresca. En una conexión nueva sale del `externalId`. */
+  account?: string;
 }): Promise<"gs" | "stale" | "local"> {
   const metaStr =
     row.meta == null ? null : typeof row.meta === "string" ? row.meta : JSON.stringify(row.meta);
   forget(row.sub, row.provider);
-  const r = await call<{ ok: boolean; written?: boolean }>(row.sub, {
+  const r = await call<{ ok: boolean; written?: boolean; account?: string }>(row.sub, {
     action: "cred.set", provider: row.provider, accessToken: row.accessToken, refreshToken: row.refreshToken ?? null,
     expiresAt: row.expiresAt ?? null, externalId: row.externalId ?? null, meta: metaStr,
     ...(row.ifRefresh !== undefined ? { ifRefresh: row.ifRefresh } : {}),
+    ...(row.account !== undefined ? { account: row.account } : {}),
   });
   if (r?.ok && r.written === false) return "stale";
   const ok = !!r?.ok;
   if (ok) {
-    await ensureMarker(row.sub, row.provider);
+    // Este espacio usa la cuenta que se acaba de conectar (o refrescar): conectar OTRA en otro
+    // espacio ya no la pisa, conviven.
+    if (typeof r?.account === "string") await pinAccount(row.sub, row.provider, r.account);
+    else await ensureMarker(row.sub, row.provider);
     // Ya vive en gs: una copia vieja aquí sólo confundiría al siguiente refresco.
     await dbq("UPDATE gc_user_connectors SET access_token=NULL, refresh_token=NULL WHERE user_sub=? AND provider=? AND access_token IS NOT NULL", [row.sub, row.provider]).catch(() => {});
     return "gs";
@@ -175,7 +208,7 @@ export async function setConnectorMeta(
 ): Promise<void> {
   const metaStr =
     patch.meta == null ? null : typeof patch.meta === "string" ? patch.meta : JSON.stringify(patch.meta);
-  if (await gs(sub, { action: "cred.meta", provider, meta: metaStr, externalId: patch.externalId ?? null })) return;
+  if (await gs(sub, await withAccount(sub, provider, { action: "cred.meta", provider, meta: metaStr, externalId: patch.externalId ?? null }))) return;
   await dbq(
     `UPDATE gc_user_connectors
         SET meta = COALESCE(?, meta),
@@ -194,7 +227,7 @@ export async function setConnectorMeta(
  * stale-while-error de tenant.server.ts.
  */
 export async function touchConnectorMeta(sub: string, provider: string): Promise<void> {
-  if (await gs(sub, { action: "cred.meta", provider })) return;
+  if (await gs(sub, await withAccount(sub, provider, { action: "cred.meta", provider }))) return;
   await dbq("UPDATE gc_user_connectors SET meta_at=unixepoch() WHERE user_sub=? AND provider=?", [
     sub,
     provider,
@@ -203,13 +236,16 @@ export async function touchConnectorMeta(sub: string, provider: string): Promise
 
 /** Marca el meta como vencido sin esperar (0, no NULL: ver `invalidateConnectorMeta`). */
 export async function invalidateConnectorMetaRow(sub: string, provider: string): Promise<void> {
-  if (await gs(sub, { action: "cred.meta", provider, metaAt: 0 })) return;
+  if (await gs(sub, await withAccount(sub, provider, { action: "cred.meta", provider, metaAt: 0 }))) return;
   await dbq("UPDATE gc_user_connectors SET meta_at=0 WHERE user_sub=? AND provider=?", [sub, provider]).catch(() => {});
 }
 
-/** Desconectar es de la PERSONA: se borra en gs (todos sus espacios) y la marca de aquí. */
+/** Desconectar es de la PERSONA: se borra en gs la cuenta que usa este espacio (deja de servir
+ *  en todos los espacios que usaban esa misma cuenta) y la marca de aquí. Otras cuentas siguen. */
 export async function deleteConnectorRow(sub: string, provider: string): Promise<void> {
-  const ok = await gs(sub, { action: "cred.delete", provider });
+  const row = await getConnectorRow(sub, provider).catch(() => null);
+  const account = (await markerAccount(sub, provider)) ?? row?.account;
+  const ok = await gs(sub, { action: "cred.delete", provider, ...(account !== undefined ? { account } : {}) });
   if (!ok) throw new Error("no pude desconectar: Ghosty Studio no contestó; vuelve a intentarlo");
   await dbq("DELETE FROM gc_user_connectors WHERE user_sub=? AND provider=?", [sub, provider]);
 }

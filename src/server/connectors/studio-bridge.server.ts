@@ -22,7 +22,8 @@ export type StudioTool = { name: string; description: string; inputSchema: Recor
 export type StudioConnector = { id: string; nombre: string; descripcion: string; conectado: boolean; disponible: boolean; logo?: string | null };
 
 export async function call<T>(sub: string, body: Record<string, unknown>): Promise<T | null> {
-  const secret = process.env.GHOSTY_PARTNER_SECRET;
+  // Secreto propio del puente (sólo gs y esta caja); el de partner, mientras se cambia.
+  const secret = process.env.CONNECTORS_BRIDGE_SECRET || process.env.GHOSTY_PARTNER_SECRET;
   if (!secret || !sub) return null;
   const { currentNamespace } = await import("../tenant.server");
   const ns = await currentNamespace().catch(() => "");

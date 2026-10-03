@@ -664,6 +664,9 @@ async function migrate(): Promise<void> {
   // conecte su Sentry UNA vez y podamos ayudarle sin que nos dé cuenta en su Sentry.
   // `0` = personal, o sea el comportamiento de siempre: nada cambia para quien no la use.
   await addColumn("gc_user_connectors", "shared", "INTEGER NOT NULL DEFAULT 0");
+  // QUÉ cuenta del proveedor usa ESTE espacio (la conexión vive en gs y una persona puede tener
+  // varias: el Odoo del cliente A y el del B). NULL = la más reciente, y se fija al primer uso.
+  await addColumn("gc_user_connectors", "account", "TEXT");
 
   // Bitácora de compartir/dejar de compartir. Existe porque staff y owner pueden compartir
   // la conexión de OTRO —es lo que destraba el caso de alguien ausente— y una cuenta ajena
