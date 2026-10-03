@@ -123,9 +123,6 @@ export async function refreshConnectorMetaIfStale(sub: string, provider: string)
  * pero conocido → fire-and-forget.
  */
 export async function invalidateConnectorMeta(sub: string, provider: string): Promise<void> {
-  const { dbq } = await import("../../dbq.server");
-  await dbq("UPDATE gc_user_connectors SET meta_at=0 WHERE user_sub=? AND provider=?", [
-    sub,
-    provider,
-  ]).catch(() => {});
+  const { invalidateConnectorMetaRow } = await import("./store.server");
+  await invalidateConnectorMetaRow(sub, provider).catch(() => {});
 }

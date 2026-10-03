@@ -21,7 +21,7 @@ export const studioConnectUrl = (id: string) => `${STUDIO}/app/connectors?connec
 export type StudioTool = { name: string; description: string; inputSchema: Record<string, unknown> };
 export type StudioConnector = { id: string; nombre: string; descripcion: string; conectado: boolean; disponible: boolean; logo?: string | null };
 
-async function call<T>(sub: string, body: Record<string, unknown>): Promise<T | null> {
+export async function call<T>(sub: string, body: Record<string, unknown>): Promise<T | null> {
   const secret = process.env.GHOSTY_PARTNER_SECRET;
   if (!secret || !sub) return null;
   const { currentNamespace } = await import("../tenant.server");
