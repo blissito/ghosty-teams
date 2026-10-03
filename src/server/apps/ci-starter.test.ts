@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 let files: Record<string, boolean> = {};
 let checkRuns: string[] = [];
+let priv = false;
 const posts: { path: string; body: any; method?: string }[] = [];
 
 vi.mock("../connectors/github.server", () => ({
@@ -10,7 +11,7 @@ vi.mock("../connectors/github.server", () => ({
       posts.push({ path, body: JSON.parse(String(init.body)), method: init.method });
       return { id: 9 };
     }
-    if (path === "/repos/acme/app") return { default_branch: "main", owner: { login: "acme", type: "User" } };
+    if (path === "/repos/acme/app") return { default_branch: "main", owner: { login: "acme", type: "User" }, private: priv };
     const m = /^\/repos\/([^/]+\/[^/]+)\/commits\/(v\d+)$/.exec(path);
     if (m) return { sha: `${m[1].replace("/", "-")}-${m[2]}-sha` };
     if (path.startsWith("/repos/acme/app/contents/")) {
@@ -31,6 +32,17 @@ describe("CI starter", () => {
     files = {};
     checkRuns = [];
     posts.length = 0;
+    priv = false;
+  });
+
+  it("dependency-review sólo en repo público (en privado sin GHAS falla siempre)", async () => {
+    const pub = (await buildCiStarter("u", "acme/app")) as any;
+    expect(pub.files[0].content).toContain("dependency-review-action@");
+    priv = true;
+    const pr = (await buildCiStarter("u", "acme/app")) as any;
+    expect(pr.files[0].content).not.toContain("dependency-review-action");
+    expect(pr.files[0].content).toContain("gitleaks-action@");
+    expect(pr.notes.join(" ")).toContain("Advanced Security");
   });
 
   it("npm por default, actions fijadas por SHA con su tag, y runner de GitHub sin caja", async () => {

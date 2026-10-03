@@ -19,6 +19,11 @@ describe("sprint: validación de lo que manda @plan", () => {
     expect(validateSprintItems([t("A"), { ...t("B"), criteria: "g" }, t("C")])).toMatch(/parece de prueba/);
   });
 
+  it("un ticket que no termina en PR (decisión de la persona) se rechaza", () => {
+    expect(validateSprintItems([t("A"), t("B"), { ...t("C"), title: "Decisión: dominio y hosting" }])).toMatch(/no termina en un PR/);
+    expect(validateSprintItems([t("A"), t("B"), { ...t("C"), criteria: "No lleva PR: se anota la decisión" }])).toMatch(/no termina en un PR/);
+  });
+
   it("dependencias que no existen o en círculo se rechazan", () => {
     expect(validateSprintItems([t("A", ["Z"]), t("B"), t("C")])).toMatch(/«Z», que no existe/);
     expect(validateSprintItems([t("A", ["C"]), t("B", ["A"]), t("C", ["B"])])).toMatch(/en círculo/);

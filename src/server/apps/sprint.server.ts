@@ -49,6 +49,10 @@ export function validateSprintItems(raw: unknown): SprintItemInput[] | string {
     // que `planRejection`: se rechaza sin crear nada.
     if (title.length < 6 || criteria.length < 15)
       return `el ticket ${key} parece de prueba (título o criterios demasiado cortos). No pruebes la tool: mándala UNA vez con el sprint real`;
+    // Un ticket sin PR («Decisión: dominio y hosting», «no lleva PR») se iba a @build, que no
+    // puede decidir por la persona, y trababa la fila del sprint (palmera-legal, 3-oct).
+    if (/^decisi[oó]n\b/i.test(title) || /\b(no lleva|sin) PR\b/i.test(criteria))
+      return `el ticket ${key} no termina en un PR: es una decisión de la persona. Quítalo del sprint y pregúntalo en el hilo`;
     const dependsOn = Array.isArray(it?.depends_on) ? [...new Set((it.depends_on as unknown[]).map((d) => String(d).trim()).filter(Boolean))] : [];
     const bodyMd =
       `# ${title}\n\n` +

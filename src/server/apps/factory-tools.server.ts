@@ -592,7 +592,8 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
         "SÓLO @plan. Propone un SPRINT para un objetivo: épica + 3 a 8 tickets en orden, cada uno de ≤ ~3 h de agente (size S/M/L), " +
         "con criterios de aceptación VERIFICABLES (pruebas o CI) y dependencias sólo si son reales (`depends_on` con las keys). " +
         "La plataforma publica la tarjeta en borrador; una persona la edita y la aprueba con un clic, y entonces cada ticket se " +
-        "construye en orden sin volver a pedir firma. Para ajustar un borrador (te piden cambios), manda `sprint_id`. No construyas.",
+        "construye en orden sin volver a pedir firma. Cada ticket TERMINA EN UN PR: una decisión que le toca a una persona (diseño, dominio, " +
+        "hosting) no es ticket; pregúntala en el hilo antes o después del sprint. Para ajustar un borrador (te piden cambios), manda `sprint_id`. No construyas.",
       inputSchema: {
         type: "object",
         properties: {

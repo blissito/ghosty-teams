@@ -55,6 +55,10 @@ export async function buildCiStarter(
   if (info?.error) return { error: info.error };
   const owner = String(info?.owner?.login ?? repo.split("/")[0]);
   const isOrg = String(info?.owner?.type ?? "") === "Organization";
+  // dependency-review sólo corre en repos públicos o con Advanced Security. En un privado
+  // sin GHAS falla SIEMPRE («Dependency review is not supported on this repository») y el
+  // pedido de preparar el repo daba vueltas build→check sin salida (palmera-legal, 2-oct).
+  const depReviewOk = !info?.private || info?.security_and_analysis?.advanced_security?.status === "enabled";
 
   const [pnpm, yarn, nvmrc] = await Promise.all([
     exists(sub, repo, "pnpm-lock.yaml"),
@@ -112,14 +116,12 @@ ${pm === "pnpm" ? `      - uses: ${a.pnpm}\n` : ""}      - uses: ${a.setupNode}
       - uses: ${a.gitleaks}
         env:
           GITHUB_TOKEN: \${{ secrets.GITHUB_TOKEN }}
-      - uses: ${a.depReview}
-        with:
-          fail-on-severity: high
-`;
+${depReviewOk ? `      - uses: ${a.depReview}\n        with:\n          fail-on-severity: high\n` : ""}`;
   const codeowners = `# Los cambios al CI y a esta regla los revisa una persona (Software Factory de Ghosty).\n/.github/ @${owner}\n`;
   const notes: string[] = [];
   if (unpinned.length) notes.push(`No pude fijar por SHA: ${unpinned.join(", ")} (quedaron con su tag).`);
   if (runnerLabel) notes.push(`Corre en la caja de CI del espacio (${runnerLabel}): caché caliente y sin fila.`);
+  if (!depReviewOk) notes.push("Repo privado sin Advanced Security: no agregué dependency-review (GitHub no lo deja correr ahí). Se suma cuando se active en Settings → Code security.");
   if (isOrg) notes.push("El repo es de una organización: gitleaks-action pide el secreto GITLEAKS_LICENSE (gratis para uso no comercial).");
   return {
     files: [
