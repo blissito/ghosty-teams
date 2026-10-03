@@ -5,6 +5,7 @@
 // mantiene contexto por-request (getRequestHeader) → resolvemos lazy dentro de dbq,
 // sin middleware global.
 import crypto from "node:crypto";
+import { knownSlug, rememberSlug } from "./known-tenants.server";
 
 const IDP = process.env.GHOSTY_IDENTITY_URL ?? "https://www.ghosty.studio";
 const ROOT = process.env.TEAMS_ROOT_DOMAIN ?? "teams.ghosty.studio";
@@ -20,8 +21,8 @@ const cache = new Map<string, { ns: string; exp: number }>();
 // namespace → slug, aprendido al resolver. Lo necesita el código que corre en un tick
 // (`withNamespace`), donde no hay host: sin esto `currentSlug()` daba null y todo lo que
 // habla con otra app del espacio (Tasks, gs) fallaba sin avisar — p.ej. la tarea que no
-// pasaba a Done al mezclarse el PR en GitHub. El tick sólo se arma desde un request, así que
-// el mapa ya está lleno cuando corre.
+// pasaba a Done al mezclarse el PR en GitHub. Tras un arranque, `warmKnownTenants` arma los
+// ticks por namespace sin request: ahí el slug sale de `knownSlug` (persistido en disco).
 const slugByNs = new Map<string, string>();
 const TTL_MS = 60_000;
 
@@ -73,6 +74,7 @@ async function resolveNamespace(slug: string): Promise<string> {
     if (!j.namespace) throw new Error(`workspace "${slug}" sin namespace`);
     cache.set(slug, { ns: j.namespace, exp: Date.now() + TTL_MS });
     slugByNs.set(j.namespace, slug);
+    rememberSlug(j.namespace, slug);
     return j.namespace;
   } catch (e) {
     if (hit) {
@@ -120,7 +122,7 @@ export async function currentSlug(): Promise<string | null> {
   // firmaba las previews de TODOS los espacios con el slug del que armó el timer (la de
   // palmera-legal #6, de abogados, nació a nombre de `mera`; 3-oct).
   const forced = nsStore.getStore();
-  if (forced) return slugByNs.get(forced) ?? null;
+  if (forced) return slugByNs.get(forced) ?? knownSlug(forced);
   return slugFromHost(await currentHost());
 }
 

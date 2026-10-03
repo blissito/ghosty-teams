@@ -46,6 +46,42 @@ export function rememberTenant(ns: string): void {
   writeTimer.unref?.();
 }
 
+// namespace → slug, para que un tick tras el arranque sepa a nombre de qué espacio firma
+// (`currentSlug` dentro de `withNamespace`). `warmKnownTenants` despierta por namespace y
+// sin esto el slug sólo se aprendía cuando alguien visitaba el espacio: las previews y la
+// tarea a Done fallaban con «sin espacio» hasta entonces (auditoría del 3-oct).
+const SLUGS_FILE = FILE.replace(/\.json$/, "") + "-slugs.json";
+let slugs: Record<string, string> | null = null;
+
+function loadSlugs(): Record<string, string> {
+  if (slugs) return slugs;
+  try {
+    slugs = JSON.parse(fs.readFileSync(SLUGS_FILE, "utf8")) as Record<string, string>;
+  } catch {
+    slugs = {};
+  }
+  return slugs;
+}
+
+/** Slug del espacio `ns` visto en una corrida anterior del proceso, o null. */
+export function knownSlug(ns: string): string | null {
+  if (process.env.NODE_ENV === "test") return null;
+  return loadSlugs()[ns] ?? null;
+}
+
+/** Guarda `ns → slug` en disco cuando cambia (best-effort). */
+export function rememberSlug(ns: string, slug: string): void {
+  if (!ns || !slug || process.env.NODE_ENV === "test") return;
+  const m = loadSlugs();
+  if (m[ns] === slug) return;
+  m[ns] = slug;
+  try {
+    fs.writeFileSync(SLUGS_FILE, JSON.stringify(m));
+  } catch {
+    /* best-effort */
+  }
+}
+
 let warmed = false;
 
 /** Una vez por proceso: corre `ensureSchema` en cada espacio de la última semana. */
