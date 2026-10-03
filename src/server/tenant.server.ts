@@ -115,10 +115,13 @@ export async function currentNamespace(): Promise<string> {
 
 /** Slug del workspace de este request (o null en apex/dev sin subdominio). */
 export async function currentSlug(): Promise<string | null> {
-  const fromHost = slugFromHost(await currentHost());
-  if (fromHost) return fromHost;
+  // El explícito gana, igual que en `currentNamespace`. Un timer armado dentro de un request
+  // hereda ese host por AsyncLocalStorage: con el host primero, el barrido de la fábrica
+  // firmaba las previews de TODOS los espacios con el slug del que armó el timer (la de
+  // palmera-legal #6, de abogados, nació a nombre de `mera`; 3-oct).
   const forced = nsStore.getStore();
-  return forced ? (slugByNs.get(forced) ?? null) : null;
+  if (forced) return slugByNs.get(forced) ?? null;
+  return slugFromHost(await currentHost());
 }
 
 /** Invalida la cache de un slug (p.ej. tras re-provisionar). */
