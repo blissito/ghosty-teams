@@ -29,6 +29,9 @@ assertEnv();
 // Y con la misma lógica se arman aquí los manejadores de proceso: hasta ahora
 // se armaban con el primer SSE, así que un fallo del arranque no dejaba rastro.
 import("./server/shutdown.server").then((m) => m.armarProteccionDeProceso()).catch(() => {});
+// Al arrancar, despertar los espacios de la última semana: tras un deploy, sus turnos durables y
+// relevos no esperan a que alguien abra el espacio (`known-tenants.server.ts`).
+import("./server/known-tenants.server").then((m) => m.warmKnownTenants()).catch(() => {});
 
 const SQLD_URL = process.env.SQLD_URL ?? "http://127.0.0.1:8080";
 /** Clave privada Ed25519 (base64) con la que se firman los tokens por namespace. */

@@ -37,6 +37,11 @@ export async function ensureSchema(): Promise<void> {
   if (!p) {
     p = migrate()
       .then(async () => {
+        // Que el siguiente arranque lo despierte aunque nadie lo abra (`known-tenants.server.ts`).
+        try {
+          const { rememberTenant } = await import("./known-tenants.server");
+          rememberTenant(ns);
+        } catch { /* best-effort */ }
         // El tick de recordatorios se arma LAZY, como el reaper de quick-calls: aquí es
         // donde sabemos que este tenant existe y ya tiene su tabla. Import dinámico para
         // no crear un ciclo (reminders → db.server → schema).
