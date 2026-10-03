@@ -6,6 +6,7 @@
 // (listConnectorProviders) → un user no puede invocar la tool de una integración ajena/no
 // conectada. El handler resuelve el token del `sub` internamente (getValidToken).
 
+import { isStudioTool, runStudioTool, STUDIO_READ_TOOLS, studioTools } from "./studio-bridge.server";
 import { loaderFor, toolsOf } from "./impl";
 import { nativeTools, type ToolDest } from "./native.server";
 import { taskTools } from "./tasks.native.server";
@@ -69,6 +70,8 @@ export function toolEnScope(name: string, scope: ToolScope): boolean {
   // Las de lectura de la conversación van por lista blanca y no por prefijo: `doc_read` lee y
   // `doc_share` reparte, y las dos empiezan igual. Aquí la precisión importa más que la regla.
   if (SOLO_LECTURA.has(name)) return scope.has("lectura");
+  // Las de Drive (gs): leer entra con `lectura`; escribir en el archivo sólo con `completo`.
+  if (isStudioTool(name)) return STUDIO_READ_TOOLS.has(name) && scope.has("lectura");
   const f = familiaDe(name);
   return f !== null && scope.has(f);
 }
@@ -119,6 +122,9 @@ export async function listUserTools(
       // un conector roto no rompe el listado de los demás
     }
   }
+  // Los conectores de Ghosty Studio (Drive) con la cuenta de quien escribe: se conectan en
+  // ghosty.studio y sirven aquí sin conectar otra vez (`studio-bridge.server.ts`).
+  for (const t of await studioTools(sub).catch(() => [])) out.push(t);
   // Un solo filtro al final, sobre TODO lo reunido: nativas, tablero y conectores. Filtrar en
   // cada rama era lo que dejaba huecos.
   return out.filter((t) => toolEnScope(t.name, scope));
@@ -228,6 +234,8 @@ export async function runTool(
       return { ok: false, error: e instanceof Error ? e.message : String(e) };
     }
   }
+  // Las de Ghosty Studio (Drive): corren en gs con la cuenta de quien escribe.
+  if (isStudioTool(toolName)) return runStudioTool(sub, toolName, args ?? {}, !scope.has("completo"));
   // Las nativas primero: no requieren conector y su nombre está reservado.
   const nat = nativeTools(dest).find((t) => t.name === toolName);
   if (nat) {

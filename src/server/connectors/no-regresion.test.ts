@@ -6,6 +6,7 @@
 // necesita romperlo, que lo rompa a propósito y con este archivo en rojo.
 import { describe, expect, it, vi } from "vitest";
 
+vi.mock("./studio-bridge.server", async (orig) => ({ ...(await orig<any>()), studioTools: async () => [] }));
 vi.mock("./store.server", () => ({
   listAvailableProviders: async () => ["github", "sentry"],
   resolveConnectorOwner: async () => null,

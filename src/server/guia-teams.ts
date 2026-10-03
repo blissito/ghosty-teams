@@ -40,7 +40,8 @@ export const GUIA_TEAMS_NOTE = `Guía de uso de Ghosty Teams. Léela completa cu
 - Pedírselos al agente: "recuérdame el jueves a las 10 mandar el contrato". Avisan en la conversación donde se pidieron.
 
 ## Integraciones (Ajustes → Integraciones)
-- Son PERSONALES: cada persona conecta su cuenta (GitHub, Gmail, Calendario, Sentry, Odoo…). El agente actúa con la cuenta de quien le escribe.
+- Son PERSONALES: cada persona conecta su cuenta (GitHub, Google Drive, Calendly, Sentry, Odoo, Deník). El agente actúa con la cuenta de quien le escribe.
+- Google Drive se conecta una vez en Ghosty Studio (ghosty.studio/app/connectors) con la misma cuenta y sirve aquí y en la app: el agente lee las hojas y documentos que la persona eligió y puede llenarlos.
 - Una integración se puede compartir con el equipo desde ese mismo panel.
 - GitHub, en 2 pasos: (1) conectar la cuenta en Ajustes → Integraciones; (2) en el room, botón de GitHub del encabezado → elegir los repositorios de ese room. Sin el paso 2 el agente no tiene herramientas de GitHub en ese room. En un mensaje directo no hay ese límite.
 - Con GitHub el agente lee código, revisa PRs (tarjeta con Aprobar / Pedir cambios / Mergear que ejecuta quien hace clic, con su cuenta), abre issues y pull requests (los PRs los firma el bot ghosty-studio[bot]) y lee los logs de un workflow rojo.

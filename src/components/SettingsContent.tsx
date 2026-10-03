@@ -29,7 +29,7 @@ import { bumpUsers } from "../utils/users-bus";
 import type { CustomEmoji } from "../db.server";
 import { useT, useLocale, useSetLocale, type Locale } from "../i18n";
 import { intlLocale } from "../i18n.core";
-import { Monitor, Sun, Moon, Check, SlidersHorizontal, Palette, SwatchBook, Github, Plug, Users, Calendar, CalendarClock, CalendarCheck, Link2, RefreshCw, Gauge, Bug, Boxes } from "lucide-react";
+import { Monitor, Sun, Moon, Check, SlidersHorizontal, Palette, SwatchBook, Github, Plug, Users, Calendar, CalendarClock, CalendarCheck, Link2, RefreshCw, Gauge, Bug, Boxes, HardDrive } from "lucide-react";
 import { workspaceUsageFn } from "../server/workspaces";
 import { listMyConnectorsFn, disconnectConnectorFn, shareConnectorFn, connectCredentialsFn } from "../server/connectors";
 import { probeAcpBoxFn } from "../server/agent-ask";
@@ -417,6 +417,9 @@ type ConnItem = {
   /** Lo que dejamos configurado en la cuenta del proveedor (alertas hacia un canal). */
   hooks: { project: string; channelId: number }[];
   /** Conectores que NO son OAuth: la forma del formulario, nunca valores. */
+  /** Vive en Ghosty Studio (Drive): se conecta y administra allá, sirve aquí. */
+  studio: boolean;
+  connectUrl: string | null;
   credentials: {
     intro: string | null;
     docsUrl: string | null;
@@ -433,6 +436,7 @@ function connIcon(icon: string) {
     case "hubspot": return Users;
     case "google-calendar": return Calendar;
     case "odoo": return Boxes;
+    case "google-drive": return HardDrive;
     default: return Plug;
   }
 }
@@ -693,7 +697,13 @@ function IntegrationsPanel() {
   const [busy, setBusy] = useState<string | null>(null);
   const [creds, setCreds] = useState<ConnItem | null>(null);
   const load = () => { listMyConnectorsFn().then(setItems).catch(() => setItems([])); };
-  useEffect(() => { load(); }, []);
+  // Drive se conecta en una pestaña de Ghosty Studio: al volver aquí se ve ya conectado.
+  useEffect(() => {
+    load();
+    const onFocus = () => load();
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, []);
 
   async function disconnect(id: string) {
     setBusy(id);
@@ -838,6 +848,35 @@ function IntegrationsPanel() {
                     <span className="rounded-full border border-border px-2.5 py-1 text-[11px] font-medium text-muted">
                       {t("Próximamente")}
                     </span>
+                  ) : c.studio ? (
+                    /* Vive en Ghosty Studio con la misma cuenta: se conecta y se eligen los
+                       archivos allá, en pestaña nueva; al volver, el foco recarga el estado. */
+                    c.connected ? (
+                      <div className="flex items-center gap-2">
+                        <span className="inline-flex items-center gap-1 text-xs font-medium text-emerald-500">
+                          <Check size={14} />{t("Conectado")}
+                        </span>
+                        <a
+                          href={c.connectUrl ?? "#"}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-flex items-center gap-1 rounded-lg border border-border px-2.5 py-1 text-xs text-muted hover:text-ink"
+                        >
+                          {t("Elegir archivos")}
+                          <ExternalLink size={11} />
+                        </a>
+                      </div>
+                    ) : (
+                      <a
+                        href={c.connectUrl ?? "#"}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center gap-1 rounded-lg bg-brand px-3 py-1.5 text-xs font-semibold text-brand-fg hover:brightness-110"
+                      >
+                        {t("Conectar")}
+                        <ExternalLink size={11} />
+                      </a>
+                    )
                   ) : c.connected ? (
                     <div className="flex items-center gap-2">
                       <span className="inline-flex items-center gap-1 text-xs font-medium text-emerald-500">

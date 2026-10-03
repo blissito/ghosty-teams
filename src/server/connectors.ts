@@ -30,7 +30,7 @@ export const listMyConnectorsFn = createServerFn({ method: "GET" }).handler(asyn
   const { listHooks } = await import("./hooks/registry.server");
   const hooks = await listHooks().catch(() => []);
 
-  return CONNECTORS.map((c) => ({
+  const ours = CONNECTORS.map((c) => ({
     id: c.id,
     name: c.name,
     blurb: c.blurb,
@@ -68,7 +68,22 @@ export const listMyConnectorsFn = createServerFn({ method: "GET" }).handler(asyn
       .map((s) => gente.get(s))
       .filter((u): u is NonNullable<typeof u> => !!u)
       .map((u) => ({ sub: u.sub, name: u.name, avatar: u.avatar })),
+    studio: false,
   }));
+  // Los de Ghosty Studio (hoy Drive): se conectan en ghosty.studio con la MISMA cuenta y
+  // sirven aquí sin conectar otra vez. Se administran allá (pestaña nueva).
+  const S = await import("./connectors/studio-bridge.server");
+  S.forgetStudioCache(me.sub); // el panel abierto = quizá acaba de conectar: que el turno lo vea ya
+  const studio = (await S.studioCatalog(me.sub).catch(() => []))
+    .filter((c) => c.id === "google-drive" && c.disponible)
+    .map((c) => ({
+      id: c.id, name: c.nombre, blurb: c.descripcion, icon: c.id, type: "Ghosty Studio",
+      custom: false, status: "available" as const,
+      manage: c.conectado ? { url: S.studioConnectUrl(c.id), label: "Elegir archivos" } : null,
+      credentials: null, connected: c.conectado, shared: null, mineShared: false, canShareOthers: false,
+      hooks: [], holders: [], studio: true, connectUrl: S.studioConnectUrl(c.id),
+    }));
+  return [...ours.map((x) => ({ ...x, connectUrl: null as string | null })), ...studio];
 });
 
 // Inicia el OAuth de un proveedor: setea cookies (state, y verifier PKCE si aplica) y

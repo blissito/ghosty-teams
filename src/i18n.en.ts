@@ -214,6 +214,7 @@ export const en: Record<string, string> = {
   "lo tiene conectado": "has it connected",
   "Del equipo": "Team",
   "Compartida": "Shared",
+  "Elegir archivos": "Choose files",
   "Compartir con el equipo": "Share with the team",
   "La compartiste con el equipo": "You shared it with the team",
   "Conexión de": "Connection from",

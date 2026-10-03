@@ -89,6 +89,8 @@ export async function buildConnectorContext(
     if (ajenos) blocks.push(ajenos);
     const sinGithub = await contextoSinGithub(sub);
     if (sinGithub) blocks.push(sinGithub);
+    const drive = await contextoDrive(sub, sender, message);
+    if (drive) blocks.push(drive);
     if (!blocks.length) return "";
     // ⚠️ La sesión del worker es PERSISTENTE, así que el agente arrastra lo que concluyó
     // en turnos anteriores. El 2026-08-04 uno dijo "no tengo Sentry conectado" a las 11:07
@@ -182,6 +184,38 @@ async function contextoSinGithub(sub: string): Promise<string | null> {
       `vía: explica que existe y que hace falta (1) conectar GitHub en Ajustes → Integraciones ` +
       `con la cuenta de quien te escribe y (2) atar el repositorio al room con el botón de ` +
       `GitHub del encabezado. Después de eso tendrás las herramientas github_* en este room.]`
+    );
+  } catch {
+    return null;
+  }
+}
+
+// Liga de Google o mención de Drive/hojas de Google: lo que dispara ofrecer el conector.
+const GOOGLE_FILE = /https?:\/\/(?:docs|drive|sheets)\.google\.com\/\S+|\bgoogle\s+(?:drive|sheets?|docs?)\b|\bmi\s+drive\b|\bhoja\s+de\s+google\b/i;
+
+/**
+ * Google Drive vive en Ghosty Studio y se presta aquí con la cuenta de quien escribe
+ * (`studio-bridge.server.ts`). Conectado: se dice cómo usarlo. Sin conectar y con una liga de
+ * Google en el mensaje: que ofrezca conectarlo con la liga de un clic en vez de rendirse con
+ * «es privada» (mismo caso que `google-link-hint.ts` en gs, MiniGhosty 1-oct).
+ */
+async function contextoDrive(sub: string, sender: string, message: string): Promise<string | null> {
+  try {
+    const { studioTools, studioConnectUrl } = await import("./studio-bridge.server");
+    const conectado = (await studioTools(sub)).length > 0;
+    const url = studioConnectUrl("google-drive");
+    if (conectado) {
+      return (
+        `[GOOGLE DRIVE de ${sender}: conectado. drive_archivos lista los archivos que eligió y drive_leer lee una hoja ` +
+        `(todas sus pestañas) o un documento; hoja_agregar_fila / hoja_actualizar / documento_agregar escriben (confirma antes). ` +
+        `Si el archivo que menciona no está en la lista, pídele que lo agregue aquí: ${url}]`
+      );
+    }
+    if (!GOOGLE_FILE.test(message)) return null;
+    return (
+      `[GOOGLE DRIVE: ${sender} no lo ha conectado. Si te pide leer o llenar su hoja o documento de Google y la liga es ` +
+      `privada, NO digas sólo «es privada»: ofrécele conectarlo en un clic con esta liga (${url}); al elegir el archivo, ` +
+      `lo podrás leer completo y escribir en él. La otra salida: compartirlo como «Cualquier persona con el enlace».]`
     );
   } catch {
     return null;
