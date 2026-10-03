@@ -1257,7 +1257,8 @@ export function nativeTools(dest: ToolDest | null): ConnectorTool[] {
     {
       name: "chat_history",
       description:
-        "Lee hacia atrás el historial de ESTA conversación, en orden cronológico. Sin `before` " +
+        "Lee hacia atrás el historial de ESTA conversación, en orden cronológico; en un hilo, al llegar " +
+        "a su primer mensaje sigue con lo que se escribió ANTES en el canal. Sin `before` " +
         "devuelve lo más reciente. Para seguir subiendo, vuelve a llamar con `before` = el " +
         "`oldestId` de la respuesta anterior. Úsalo cuando te pidan algo de 'antes' o necesites " +
         "el hilo de una decisión; si sabes qué palabras buscar, chat_search es más directo. Los " +

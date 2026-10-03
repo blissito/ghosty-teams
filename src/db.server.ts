@@ -2927,6 +2927,19 @@ export async function historyBefore(
         ORDER BY created_at DESC, id DESC LIMIT ?`,
       cur ? [scope.parentId, scope.parentId, cur, tope] : [scope.parentId, scope.parentId, tope]
     );
+    // Al llegar a la raíz se sigue con el CANAL de arriba: a un agente se le invoca con un
+    // mensaje nuevo («@becario lee lo de arriba») y su respuesta abre hilo bajo ESE mensaje,
+    // así que lo escrito antes en el canal quedaba fuera y contestaba «no aparece» (Palmera
+    // Legal, 3-oct). Mismo cursor: `before` = el id más viejo devuelto.
+    if (rows.length < tope && "channelId" in scope) {
+      const desde = Math.min(cur ?? scope.parentId, scope.parentId);
+      const arriba = await dbq(
+        `SELECT * FROM gc_messages WHERE channel_id = ? AND parent_id IS NULL AND kind = 'msg' AND id < ?
+          ORDER BY created_at DESC, id DESC LIMIT ?`,
+        [scope.channelId, desde, tope - rows.length]
+      );
+      rows = [...rows, ...arriba];
+    }
   } else {
     rows = await dbq(
       `SELECT * FROM gc_messages WHERE channel_id = ? AND parent_id IS NULL AND kind = 'msg' ${cur ? "AND id < ?" : ""}
