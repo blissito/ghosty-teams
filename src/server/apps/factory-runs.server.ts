@@ -750,7 +750,7 @@ async function onPrConflict(run: Run, headSha: string | null): Promise<void> {
     "build",
     run.approvedBy ?? run.requestedBy,
     "PR con choques",
-    `El PR ${run.prUrl} tiene choques con la rama principal (otro PR se mezcló antes). Trae la rama principal a tu rama, resuelve los choques SIN cambiar el alcance del plan, corre las pruebas, empuja y cierra con factory_build_done.`,
+    `El PR ${run.prUrl} tiene choques con la rama principal (otro PR se mezcló antes). Fusiona la rama principal en la tuya con github_push_files y \`mergeFrom\` = la rama principal: lo que cambió allá y tú no tocaste entra solo, y en \`files\` va el contenido final de los archivos que chocan (resuélvelos SIN cambiar el alcance del plan). Corre las pruebas y cierra con factory_build_done.`,
     origin,
   );
 }

@@ -52,6 +52,45 @@ describe("tools de GitHub para la fábrica", () => {
     expect(calls.find((c) => c.method === "POST" && c.url.endsWith("/git/commits"))!.body.parents).toEqual(["p1"]);
   });
 
+  it("push_files con mergeFrom: commit de dos padres; lo que la principal cambió y la rama no tocó entra solo", async () => {
+    const rutas = {
+      "GET /repos/acme/app/git/ref/heads/feat": { json: { object: { sha: "p1" } } },
+      "GET /repos/acme/app/git/ref/heads/main": { json: { object: { sha: "m1" } } },
+      "GET /repos/acme/app/git/commits/p1": { json: { tree: { sha: "t0" } } },
+      "GET /repos/acme/app/compare/p1...m1": { json: { ahead_by: 2, files: [
+        { filename: "src/app/page.tsx", status: "modified", sha: "x" },
+        { filename: "README.md", status: "modified", sha: "r2" },
+      ] } },
+      "GET /repos/acme/app/compare/m1...p1": { json: { files: [
+        { filename: "src/app/page.tsx", status: "removed" },
+        { filename: "src/app/[locale]/page.tsx", status: "added" },
+      ] } },
+      "GET /repos/acme/app": { json: { default_branch: "main" } },
+      "POST /repos/acme/app/git/trees": { json: { sha: "t1" } },
+      "POST /repos/acme/app/git/commits": { json: { sha: "c1" } },
+      "PATCH /repos/acme/app/git/refs/heads/feat": { json: {} },
+    };
+    // Sin resolver el que chocó (lo cambiaron los dos lados): se rechaza y no escribe nada.
+    fakeGithub(rutas);
+    const sin: any = await tool("github_push_files").handler("u", {
+      repo: "acme/app", branch: "feat", message: "merge", mergeFrom: "main",
+      files: [{ path: "src/app/[locale]/page.tsx", content: "con el correo nuevo" }],
+    });
+    expect(sin.error).toMatch(/Choques sin resolver: src\/app\/page\.tsx/);
+    expect(calls.some((c) => c.method !== "GET")).toBe(false);
+    // Resuelto: README de la principal entra por su sha, page.tsx queda borrado, dos padres.
+    fakeGithub(rutas);
+    const con: any = await tool("github_push_files").handler("u", {
+      repo: "acme/app", branch: "feat", message: "merge", mergeFrom: "main",
+      files: [{ path: "src/app/[locale]/page.tsx", content: "con el correo nuevo" }, { path: "src/app/page.tsx", delete: true }],
+    });
+    expect(con).toMatchObject({ ok: true, commit: "c1", merged: "main" });
+    const tree = calls.find((c) => c.method === "POST" && c.url.endsWith("/git/trees"))!.body.tree;
+    expect(tree).toContainEqual({ path: "README.md", mode: "100644", type: "blob", sha: "r2" });
+    expect(tree).toContainEqual({ path: "src/app/page.tsx", mode: "100644", type: "blob", sha: null });
+    expect(calls.find((c) => c.method === "POST" && c.url.endsWith("/git/commits"))!.body.parents).toEqual(["p1", "m1"]);
+  });
+
   it("push_files se niega en la rama principal", async () => {
     fakeGithub({ "GET /repos/acme/app": { json: { default_branch: "main" } } });
     const r: any = await tool("github_push_files").handler("u", { repo: "acme/app", branch: "main", message: "x", files: [{ path: "a", content: "b" }] });

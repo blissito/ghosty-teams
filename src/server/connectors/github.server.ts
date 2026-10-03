@@ -1324,13 +1324,15 @@ const ALL_TOOLS: ConnectorTool[] = [
   {
     name: "github_push_files",
     description:
-      "Varios archivos (crear, reemplazar o BORRAR) en UN solo commit sobre una rama de trabajo (nunca la principal). Prefiérela a github_write_file cuando el cambio toca más de un archivo: un commit por archivo deja la rama rota a medias.",
+      "Varios archivos (crear, reemplazar o BORRAR) en UN solo commit sobre una rama de trabajo (nunca la principal). Prefiérela a github_write_file cuando el cambio toca más de un archivo: un commit por archivo deja la rama rota a medias. " +
+      "Con `mergeFrom` (p. ej. \"main\") el commit es un MERGE de esa rama en la tuya: así se resuelve un PR con choques. Lo que cambió allá y tú no tocaste entra solo; en `files` va el contenido FINAL de los archivos que chocan (si falta uno, te dice cuáles).",
     inputSchema: {
       type: "object",
       properties: {
         ...repoProp,
         branch: str("Rama de trabajo."),
         message: str("Mensaje del commit."),
+        mergeFrom: str("Opcional: rama (o commit) a fusionar en la tuya con este commit, para resolver choques. Normalmente la principal."),
         files: {
           type: "array",
           description: "Cambios. `content` para crear/reemplazar; `delete: true` para borrar.",
@@ -1365,23 +1367,61 @@ const ALL_TOOLS: ConnectorTool[] = [
       const parent = String(ref?.object?.sha ?? "");
       const base = await apiWith(w.token, `/repos/${p}/git/commits/${parent}`);
       if (base?.error) return base;
+      const clean = (x: string) => String(x).replace(/^\/+/, "");
+      const entries: Record<string, unknown>[] = files.map((f) =>
+        f.delete
+          ? { path: clean(f.path), mode: "100644", type: "blob", sha: null }
+          : { path: clean(f.path), mode: "100644", type: "blob", content: String(f.content) },
+      );
+      // MERGE (choques de un PR): el commit lleva DOS padres, la rama y `mergeFrom`. El árbol es
+      // el de la rama + lo que cambió en `mergeFrom` desde el ancestro común y la rama no tocó
+      // (entra solo) + lo que manda el agente (los que chocan, ya resueltos). Un archivo que
+      // cambiaron los dos lados y no viene en `files` es un choque sin resolver: se rechaza en
+      // vez de pisar en silencio el cambio de la principal.
+      const parents = [parent];
+      if (a.mergeFrom) {
+        const fromRef = String(a.mergeFrom).trim();
+        const r2 = /^[0-9a-f]{40}$/i.test(fromRef) ? { object: { sha: fromRef } } : await apiWith(w.token, `/repos/${p}/git/ref/heads/${encodeURIComponent(fromRef)}`);
+        const fromSha = String(r2?.object?.sha ?? "");
+        if (!fromSha) return { error: `No encuentro ${fromRef} para fusionar.` };
+        const [theirs, ours] = await Promise.all([
+          apiWith(w.token, `/repos/${p}/compare/${parent}...${fromSha}`),
+          apiWith(w.token, `/repos/${p}/compare/${fromSha}...${parent}`),
+        ]);
+        if (theirs?.error || ours?.error) return { error: `No pude comparar las ramas: ${theirs?.error ?? ours?.error}` };
+        if (Number(theirs?.ahead_by ?? 0) === 0) return { error: `${fromRef} no trae nada nuevo: no hace falta fusionar.` };
+        const mine = new Set(entries.map((e) => String(e.path)));
+        const touchedHere = new Set<string>(((ours?.files ?? []) as any[]).flatMap((f) => [f.filename, f.previous_filename].filter(Boolean)));
+        const pendientes: string[] = [];
+        for (const f of (theirs?.files ?? []) as any[]) {
+          const path = String(f.filename);
+          if (mine.has(path)) continue;
+          if (touchedHere.has(path) || (f.previous_filename && touchedHere.has(f.previous_filename))) { pendientes.push(path); continue; }
+          if (f.status === "removed") entries.push({ path, mode: "100644", type: "blob", sha: null });
+          else {
+            if (f.status === "renamed" && f.previous_filename && !mine.has(f.previous_filename))
+              entries.push({ path: f.previous_filename, mode: "100644", type: "blob", sha: null });
+            entries.push({ path, mode: "100644", type: "blob", sha: f.sha });
+          }
+        }
+        if (pendientes.length)
+          return {
+            error:
+              `Choques sin resolver: ${pendientes.join(", ")} cambiaron en ${fromRef} y en tu rama. Lee las dos versiones ` +
+              `(github_read_file con ref) y manda en \`files\` el contenido final de cada uno (o \`delete: true\` si en tu rama ya no existe y su cambio se movió a otro archivo).`,
+          };
+        parents.push(fromSha);
+      }
       const tree = await apiWith(w.token, `/repos/${p}/git/trees`, {
         method: "POST",
-        body: JSON.stringify({
-          base_tree: base?.tree?.sha,
-          tree: files.map((f) =>
-            f.delete
-              ? { path: String(f.path).replace(/^\/+/, ""), mode: "100644", type: "blob", sha: null }
-              : { path: String(f.path).replace(/^\/+/, ""), mode: "100644", type: "blob", content: String(f.content) },
-          ),
-        }),
+        body: JSON.stringify({ base_tree: base?.tree?.sha, tree: entries }),
       });
       if (tree?.error) return tree;
       const meta = w.bot ? await readMeta(sub) : null;
       const message = String(a.message) + (meta?.login ? coAuthorTrailer(meta.login) : "");
       const commit = await apiWith(w.token, `/repos/${p}/git/commits`, {
         method: "POST",
-        body: JSON.stringify({ message, tree: tree?.sha, parents: [parent] }),
+        body: JSON.stringify({ message, tree: tree?.sha, parents }),
       });
       if (commit?.error) return commit;
       const moved = await apiWith(w.token, `/repos/${p}/git/refs/heads/${encodeURIComponent(branch)}`, {
@@ -1389,7 +1429,7 @@ const ALL_TOOLS: ConnectorTool[] = [
         body: JSON.stringify({ sha: commit?.sha }),
       });
       if (moved?.error) return moved;
-      return { ok: true, commit: commit?.sha, files: files.length, deleted: files.filter((f) => f.delete).length, asBot: w.bot };
+      return { ok: true, commit: commit?.sha, files: files.length, deleted: files.filter((f) => f.delete).length, asBot: w.bot, ...(parents.length > 1 ? { merged: String(a.mergeFrom) } : {}) };
     },
   },
   {
