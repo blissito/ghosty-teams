@@ -5,9 +5,15 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // detrás de `dbq` (sólo las consultas que usa el store).
 type Row = { user_sub: string; provider: string; access_token: string | null; refresh_token: string | null; shared: number; banned?: number; account?: string | null };
 let gsRows: Map<string, any>;
+const localOf = () => { if (!porEspacio.has(ns)) porEspacio.set(ns, []); return porEspacio.get(ns)!; };
 let local: Row[];
 let gsDown: boolean;
 const k = (s: string, p: string) => `${s}|${p}`;
+
+let ns = "esp-a";
+vi.mock("../tenant.server", () => ({ currentNamespace: async () => ns }));
+// Cada espacio tiene sus filas locales (marcas): se simula con una tabla por namespace.
+const porEspacio = new Map<string, Row[]>();
 
 vi.mock("./studio-bridge.server", () => ({
   call: async (sub: string, b: any) => {
@@ -40,6 +46,7 @@ vi.mock("./studio-bridge.server", () => ({
 
 vi.mock("../../dbq.server", () => ({
   dbq: async (sql: string, p: any[] = []) => {
+    let local = localOf();
     const q = sql.replace(/\s+/g, " ");
     const banned = (s: string) => local.some((r) => r.user_sub === s && r.banned);
     if (q.startsWith("SELECT user_sub, provider, access_token")) return local.filter((r) => r.user_sub === p[0] && r.provider === p[1]);
@@ -53,7 +60,7 @@ vi.mock("../../dbq.server", () => ({
     if (q.startsWith("SELECT provider FROM gc_user_connectors WHERE user_sub=? AND access_token IS NOT NULL")) return local.filter((r) => r.user_sub === p[0] && r.access_token);
     if (q.startsWith("SELECT sub FROM gc_users")) return [...new Set(local.map((r) => r.user_sub))].filter((s) => !banned(s)).map((sub) => ({ sub }));
     if (q.startsWith("SELECT user_sub, provider FROM gc_user_connectors WHERE access_token IS NOT NULL")) return local.filter((r) => r.access_token);
-    if (q.startsWith("DELETE FROM gc_user_connectors")) { local = local.filter((r) => !(r.user_sub === p[0] && r.provider === p[1])); return []; }
+    if (q.startsWith("DELETE FROM gc_user_connectors")) { for (let i = local.length - 1; i >= 0; i--) if (local[i].user_sub === p[0] && local[i].provider === p[1]) local.splice(i, 1); return []; }
     return [];
   },
   dbqMany: vi.fn(),
@@ -64,7 +71,9 @@ const S = await import("./store.server");
 
 beforeEach(() => {
   gsRows = new Map();
-  local = [];
+  porEspacio.clear();
+  ns = "esp-a";
+  local = localOf();
   gsDown = false;
   S.resetConnectorCacheForTests();
 });
@@ -121,6 +130,19 @@ describe("varias cuentas por conector", () => {
     S.resetConnectorCacheForTests();
     expect((await S.getConnectorRow("ana", "odoo"))?.access_token).toBe("tok-A"); // este espacio fijó A
     expect([...gsRows.values()].filter((r) => r.provider === "odoo").length).toBe(2);
+  });
+
+  it("dos espacios con cuentas distintas no se cruzan aunque la caché esté caliente", async () => {
+    ns = "esp-a";
+    await S.setConnectorRow({ sub: "ana", provider: "odoo", accessToken: "tok-A", externalId: "a" });
+    ns = "esp-b";
+    await S.setConnectorRow({ sub: "ana", provider: "odoo", accessToken: "tok-B", externalId: "b" });
+    ns = "esp-a";
+    expect((await S.getConnectorRow("ana", "odoo"))?.access_token).toBe("tok-A");
+    ns = "esp-b";
+    expect((await S.getConnectorRow("ana", "odoo"))?.access_token).toBe("tok-B");
+    ns = "esp-a";
+    expect((await S.getConnectorRow("ana", "odoo"))?.access_token).toBe("tok-A");
   });
 
   it("un espacio sin cuenta fijada usa la más reciente y la fija", async () => {

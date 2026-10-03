@@ -182,6 +182,9 @@ export async function saveCredentials(
     expiresAt: null,
     externalId: verdict.externalId ?? null,
     meta,
+    // QUÉ cuenta es: el host + los campos públicos + el id del usuario allá. Sólo el id no basta:
+    // en Odoo el admin es `uid=2` en CUALQUIER instancia, y el Odoo del cliente B pisaba al del A.
+    account: [origin, ...Object.keys(publicFields).sort().map((k) => publicFields[k]), verdict.externalId ?? ""].join("|"),
   });
   // `setConnectorRow` usa COALESCE en meta/external_id (no pisa con null), así que para
   // REconectar con datos distintos hay que reescribirlos explícitamente.

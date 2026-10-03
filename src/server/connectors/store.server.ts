@@ -15,8 +15,18 @@ import { call } from "./studio-bridge.server";
 type GsRow = ConnectorRow;
 const CACHE_MS = 30_000;
 const cache = new Map<string, { at: number; row: GsRow | null }>();
-const ck = (sub: string, provider: string) => `${sub}\n${provider}`;
-const forget = (sub: string, provider: string) => cache.delete(ck(sub, provider));
+// La caché va POR ESPACIO: un mismo proceso atiende todos, y cada espacio puede tener fijada otra
+// cuenta del mismo proveedor (cliente A aquí, cliente B allá). Sin el namespace en la llave, el
+// espacio B recibía 30 s el token del cliente A (segunda auditoría, 3-oct).
+async function nsOf(): Promise<string> {
+  const { currentNamespace } = await import("../tenant.server");
+  return currentNamespace().catch(() => "");
+}
+const ck = (ns: string, sub: string, provider: string) => `${ns}\n${sub}\n${provider}`;
+/** Olvida la fila de (sub, provider) en TODOS los espacios de este proceso. */
+const forget = (sub: string, provider: string) => {
+  for (const key of [...cache.keys()]) if (key.endsWith(`\n${sub}\n${provider}`)) cache.delete(key);
+};
 /** Antes de una decisión que borra o compara tokens: leer lo de gs, no el caché. */
 export const forgetConnectorCache = forget;
 /** Sólo tests: el caché de 30 s sobrevive entre casos. */
@@ -37,7 +47,8 @@ async function pinAccount(sub: string, provider: string, account: string): Promi
 
 /** La fila en gs; `undefined` = gs no contestó (se usa la copia local). */
 async function gsGet(sub: string, provider: string): Promise<GsRow | null | undefined> {
-  const hit = cache.get(ck(sub, provider));
+  const key = ck(await nsOf(), sub, provider);
+  const hit = cache.get(key);
   if (hit && Date.now() - hit.at < CACHE_MS) return hit.row;
   const account = await markerAccount(sub, provider);
   const r = await call<{ ok: boolean; row?: GsRow | null }>(sub, { action: "cred.get", provider, ...(account !== undefined ? { account } : {}) });
@@ -48,7 +59,7 @@ async function gsGet(sub: string, provider: string): Promise<GsRow | null | unde
   if (row && account === undefined && typeof row.account === "string") {
     await dbq("UPDATE gc_user_connectors SET account=? WHERE user_sub=? AND provider=? AND account IS NULL", [row.account, sub, provider]).catch(() => {});
   }
-  cache.set(ck(sub, provider), { at: Date.now(), row });
+  cache.set(key, { at: Date.now(), row });
   return row;
 }
 

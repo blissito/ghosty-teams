@@ -150,7 +150,9 @@ async function refresh(def: ConnectorDef, refreshToken: string): Promise<TokenRe
 const refreshing = new Map<string, Promise<string | null>>();
 
 export async function getValidToken(sub: string, provider: string): Promise<string | null> {
-  const key = `${sub}:${provider}`;
+  // Por espacio: cada uno puede tener fijada otra cuenta del proveedor (ver store.server.ts).
+  const { currentNamespace } = await import("../tenant.server");
+  const key = `${await currentNamespace().catch(() => "")}:${sub}:${provider}`;
   const inflight = refreshing.get(key);
   if (inflight) return inflight;
   const p = getValidTokenOnce(sub, provider).finally(() => refreshing.delete(key));
