@@ -79,6 +79,20 @@ describe("conexión global", () => {
     expect(local[0].access_token).toBe("k");
   });
 
+  it("una copia local CON token (gs no alcanzó a guardar un refresco) gana sobre la de gs y se sube", async () => {
+    gsRows.set("ana|github", { user_sub: "ana", provider: "github", access_token: "viejo", refresh_token: "r-viejo" });
+    local.push({ user_sub: "ana", provider: "github", access_token: "nuevo", refresh_token: "r-nuevo", shared: 0 });
+    expect((await S.getConnectorRow("ana", "github"))?.refresh_token).toBe("r-nuevo");
+    expect(gsRows.get("ana|github").access_token).toBe("nuevo");
+  });
+
+  it("desconectar sin gs no borra la marca (no queda a medias) y avisa", async () => {
+    local.push({ user_sub: "ana", provider: "github", access_token: null, refresh_token: null, shared: 1 });
+    gsDown = true;
+    await expect(S.deleteConnectorRow("ana", "github")).rejects.toThrow(/no contestó/);
+    expect(local.length).toBe(1);
+  });
+
   it("desconectar borra en gs y la marca del espacio", async () => {
     await S.setConnectorRow({ sub: "ana", provider: "github", accessToken: "tok" });
     await S.deleteConnectorRow("ana", "github");

@@ -17,6 +17,8 @@ const CACHE_MS = 30_000;
 const cache = new Map<string, { at: number; row: GsRow | null }>();
 const ck = (sub: string, provider: string) => `${sub}\n${provider}`;
 const forget = (sub: string, provider: string) => cache.delete(ck(sub, provider));
+/** Antes de una decisión que borra o compara tokens: leer lo de gs, no el caché. */
+export const forgetConnectorCache = forget;
 /** Sólo tests: el caché de 30 s sobrevive entre casos. */
 export const resetConnectorCacheForTests = () => cache.clear();
 
@@ -97,12 +99,15 @@ export type ConnectorRow = {
 
 export async function getConnectorRow(sub: string, provider: string): Promise<ConnectorRow | null> {
   const remote = await gsGet(sub, provider);
-  if (remote) return remote;
-  const local = await legacyRow(sub, provider);
-  if (!local?.access_token) return remote === undefined ? local : null;
-  // gs contestó que no la tiene: es una copia de antes → se sube y se sirve.
-  if (remote === null) await legacyToGs(local);
-  return local;
+  const local = await legacyRow(sub, provider).catch(() => null);
+  // Una copia CON token aquí es o de antes de la migración, o un refresco que gs no alcanzó a
+  // guardar (estaba caído): en los dos casos es la más nueva. Se sube y se sirve; servir la de
+  // gs haría refrescar con un refresh token ya rotado y borraría la conexión (auditoría 3-oct).
+  if (local?.access_token) {
+    if (remote !== undefined) await legacyToGs(local);
+    return local;
+  }
+  return remote ?? null;
 }
 
 export async function setConnectorRow(row: {
@@ -113,18 +118,24 @@ export async function setConnectorRow(row: {
   expiresAt?: number | null;
   externalId?: string | null;
   meta?: unknown;
-}): Promise<void> {
+  /** Refresco: sólo escribe si gs sigue guardando ESTE refresh token (otro proceso no rotó). */
+  ifRefresh?: string | null;
+}): Promise<"gs" | "stale" | "local"> {
   const metaStr =
     row.meta == null ? null : typeof row.meta === "string" ? row.meta : JSON.stringify(row.meta);
-  const ok = await gs(row.sub, {
+  forget(row.sub, row.provider);
+  const r = await call<{ ok: boolean; written?: boolean }>(row.sub, {
     action: "cred.set", provider: row.provider, accessToken: row.accessToken, refreshToken: row.refreshToken ?? null,
     expiresAt: row.expiresAt ?? null, externalId: row.externalId ?? null, meta: metaStr,
+    ...(row.ifRefresh !== undefined ? { ifRefresh: row.ifRefresh } : {}),
   });
+  if (r?.ok && r.written === false) return "stale";
+  const ok = !!r?.ok;
   if (ok) {
     await ensureMarker(row.sub, row.provider);
     // Ya vive en gs: una copia vieja aquí sólo confundiría al siguiente refresco.
     await dbq("UPDATE gc_user_connectors SET access_token=NULL, refresh_token=NULL WHERE user_sub=? AND provider=? AND access_token IS NOT NULL", [row.sub, row.provider]).catch(() => {});
-    return;
+    return "gs";
   }
   // gs no contestó: como antes, en este espacio.
   // COALESCE en refresh/external/meta → un refresh que no re-emite refresh_token no lo borra.
@@ -147,6 +158,7 @@ export async function setConnectorRow(row: {
       metaStr,
     ]
   );
+  return "local";
 }
 
 /**
@@ -197,7 +209,8 @@ export async function invalidateConnectorMetaRow(sub: string, provider: string):
 
 /** Desconectar es de la PERSONA: se borra en gs (todos sus espacios) y la marca de aquí. */
 export async function deleteConnectorRow(sub: string, provider: string): Promise<void> {
-  await gs(sub, { action: "cred.delete", provider });
+  const ok = await gs(sub, { action: "cred.delete", provider });
+  if (!ok) throw new Error("no pude desconectar: Ghosty Studio no contestó; vuelve a intentarlo");
   await dbq("DELETE FROM gc_user_connectors WHERE user_sub=? AND provider=?", [sub, provider]);
 }
 

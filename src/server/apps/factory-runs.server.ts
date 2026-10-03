@@ -519,7 +519,9 @@ const CLOSE_TOOL: Record<string, string> = { plan: "factory_plan_submit", build:
  * misma conversación) y, si tampoco cierra, se avisa en el hilo a quien pidió.
  */
 /** Se cayó el CAMINO, no el agente: gs o Teams reiniciando, conexión cortada. */
-const TRANSPORT_CUT = /No pude contactar a @|turno no existe|upstream unreachable|terminated|socket hang up|ECONNRESET|se reinici[óo]/i;
+// Sólo los mensajes que escribe la PLATAFORMA cuando se cae el camino (`⚠️ No pude contactar a @…`
+// y sus motivos), no palabras sueltas: un agente que cita «process terminated» no es un corte.
+const TRANSPORT_CUT = /⚠️ No pude contactar a @|fleet-stream 404|turno no existe|upstream unreachable/i;
 const CUT_GRACE_MS = process.env.NODE_ENV === "test" ? 0 : 90_000;
 
 export async function afterFactoryTurn(
@@ -735,13 +737,23 @@ export async function closeFinishedRuns(): Promise<void> {
  * rama y @check vuelve a mirar. Una vez por cabeza: si @build no lo resolvió, decide una persona.
  */
 async function onPrConflict(run: Run, headSha: string | null): Promise<void> {
-  const [prev] = await dbq("SELECT data_json FROM gt_factory_events WHERE run_id = ? AND type = 'conflict' ORDER BY id DESC LIMIT 1", [run.id]).catch(() => []);
-  const prevSha = prev?.data_json ? (JSON.parse(String(prev.data_json)).sha ?? null) : undefined;
-  if (prev && prevSha === headSha) return; // ya se intentó con esta cabeza: lo ve una persona
+  const prevs = await dbq("SELECT data_json FROM gt_factory_events WHERE run_id = ? AND type = 'conflict' ORDER BY id DESC", [run.id]).catch(() => []);
+  const prevSha = prevs[0]?.data_json ? (JSON.parse(String(prevs[0].data_json)).sha ?? null) : undefined;
+  if (prevs.length && prevSha === headSha) return; // ya se intentó con esta cabeza: lo ve una persona
+  // Tope: dos vueltas por choques. Si vuelve a chocar, que lo vea una persona (una vez).
+  const pideAyuda = async (por: string) => {
+    const ya = await dbq("SELECT 1 FROM gt_factory_events WHERE run_id = ? AND type = 'conflict_help' AND json_extract(data_json, '$.sha') IS ?", [run.id, headSha]).catch(() => []);
+    if (ya.length) return;
+    await logEvent(run.id, "conflict_help", null, { sha: headSha, por });
+    await postInThread(run, "build", `⚠️ El PR ${run.prUrl ?? ""} sigue con choques con la rama principal (${por}). Necesita que una persona lo resuelva o pida a @build que lo intente otra vez.`);
+  };
+  if (prevs.length >= 2) return pideAyuda("ya lo intenté dos veces");
   // El tick no tiene request: el origin sale del último encargo de este pedido.
   const [w] = await dbq("SELECT origin FROM gt_agent_wakeups WHERE key LIKE ? AND origin IS NOT NULL AND origin != '' ORDER BY rowid DESC LIMIT 1", [`factory:${run.id}:%`]).catch(() => []);
   const origin = String(w?.origin ?? "");
-  if (!origin) return;
+  if (!origin) return pideAyuda("no pude mandarle el encargo a @build");
+  // Al resolverse, se vuelve a preguntar «¿hago merge?» con la cabeza nueva.
+  await dbq("UPDATE gt_factory_runs SET merge_asked = NULL WHERE id = ?", [run.id]).catch(() => {});
   const next = await applyEvent(run, "conflict", {}, { data: { sha: headSha } }).catch(() => null);
   if (!next) return;
   await postInThread(next, "build", `🔀 Otro PR entró antes y éste ya no mezcla limpio con la rama principal. Lo pongo al día. ${run.prUrl ?? ""}`);

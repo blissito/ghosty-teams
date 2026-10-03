@@ -50,7 +50,7 @@ describe("un turno de despertador es un turno como cualquier otro", () => {
   });
   it("la fábrica repite el encargo UNA vez a los 60 s si se cayó el camino", () => {
     const src = leer("server/apps/factory-runs.server.ts");
-    expect(src).toMatch(/TRANSPORT_CUT = \/No pude contactar a @\|turno no existe/);
+    expect(src).toMatch(/TRANSPORT_CUT = \/⚠️ No pude contactar a @\|fleet-stream 404/);
     expect(src).toMatch(/if \(cut && !w\.key\.endsWith\(":retry"\)\)/);
     expect(src).toMatch(/dueAt: Math\.floor\(Date\.now\(\) \/ 1000\) \+ 60/);
   });

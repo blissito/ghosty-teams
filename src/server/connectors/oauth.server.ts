@@ -5,7 +5,7 @@
 import crypto from "node:crypto";
 import type { ConnectorDef } from "./registry";
 import { getConnector } from "./registry";
-import { getConnectorRow, setConnectorRow, deleteConnectorRow } from "./store.server";
+import { getConnectorRow, setConnectorRow, deleteConnectorRow, forgetConnectorCache } from "./store.server";
 
 const RENEW_BUFFER_S = 60; // refresca si al token le quedan < 60s
 
@@ -168,13 +168,20 @@ async function getValidTokenOnce(sub: string, provider: string): Promise<string 
   if (!row.refresh_token) return row.access_token; // sin refresh → intenta con el actual
   try {
     const j = await refresh(def, row.refresh_token);
-    await setConnectorRow({
+    const saved = await setConnectorRow({
       sub,
       provider,
       accessToken: j.access_token,
       refreshToken: j.refresh_token ?? row.refresh_token,
       expiresAt: j.expires_in ? now + j.expires_in : null,
+      // CAS: si otro proceso ya rotó (la fila es global desde el 3-oct), no se pisa la suya.
+      ifRefresh: row.refresh_token,
     });
+    if (saved === "stale") {
+      forgetConnectorCache(sub, provider);
+      const otra = await getConnectorRow(sub, provider).catch(() => null);
+      return otra?.access_token ?? j.access_token;
+    }
     // Si la credencial dio la vuelta, asumimos que el mundo del otro lado pudo
     // cambiar: marcamos el `meta` como vencido para que se relea. Sin bloquear
     // — el refresco real ocurre en el próximo turno. Ver connectors/meta.server.ts.
@@ -189,9 +196,11 @@ async function getValidTokenOnce(sub: string, provider: string): Promise<string 
     if (/invalid_grant|invalid_token|bad_refresh_token|bad_verification_code|\b400\b|\b401\b/.test(String(e))) {
       // Otro proceso (o el deploy blue/green) ya lo refrescó: la fila trae un refresh token
       // distinto al que usamos. Ése es el bueno; borrar aquí tiraba la conexión viva.
+      // Sin caché: la fila es global y otro proceso pudo rotarla hace un segundo.
+      forgetConnectorCache(sub, provider);
       const now2 = await getConnectorRow(sub, provider).catch(() => null);
       if (now2?.access_token && now2.refresh_token !== row.refresh_token) return now2.access_token;
-      await deleteConnectorRow(sub, provider);
+      await deleteConnectorRow(sub, provider).catch(() => {}); // gs caído: se reintenta en el siguiente turno
       return null;
     }
     return row.access_token; // error transitorio → reintenta el próximo turno

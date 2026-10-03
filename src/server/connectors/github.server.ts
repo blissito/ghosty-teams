@@ -1390,6 +1390,13 @@ const ALL_TOOLS: ConnectorTool[] = [
         ]);
         if (theirs?.error || ours?.error) return { error: `No pude comparar las ramas: ${theirs?.error ?? ours?.error}` };
         if (Number(theirs?.ahead_by ?? 0) === 0) return { error: `${fromRef} no trae nada nuevo: no hace falta fusionar.` };
+        // La API de compare corta en 300 archivos: con más, el merge declararía a la principal como
+        // padre sin traer todo lo suyo y al mezclar se REVERTIRÍA. Mejor no hacerlo.
+        if ((theirs?.files ?? []).length >= 300 || (ours?.files ?? []).length >= 300)
+          return { error: `Son demasiados archivos para fusionar por la API (≥300). Hay que traer ${fromRef} con git normal.` };
+        // Modos reales (ejecutables, symlinks) del árbol de la principal: no todo es 100644.
+        const fromTree = await apiWith(w.token, `/repos/${p}/git/trees/${fromSha}?recursive=1`);
+        const modeOf = new Map<string, string>(((fromTree?.tree ?? []) as any[]).map((t) => [String(t.path), String(t.mode)]));
         const mine = new Set(entries.map((e) => String(e.path)));
         const touchedHere = new Set<string>(((ours?.files ?? []) as any[]).flatMap((f) => [f.filename, f.previous_filename].filter(Boolean)));
         const pendientes: string[] = [];
@@ -1401,7 +1408,9 @@ const ALL_TOOLS: ConnectorTool[] = [
           else {
             if (f.status === "renamed" && f.previous_filename && !mine.has(f.previous_filename))
               entries.push({ path: f.previous_filename, mode: "100644", type: "blob", sha: null });
-            entries.push({ path, mode: "100644", type: "blob", sha: f.sha });
+            const mode = modeOf.get(path) ?? "100644";
+            if (mode === "160000") { pendientes.push(path); continue; } // submódulo: a mano
+            entries.push({ path, mode, type: "blob", sha: f.sha });
           }
         }
         if (pendientes.length)
