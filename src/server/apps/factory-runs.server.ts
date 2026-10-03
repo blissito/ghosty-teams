@@ -607,7 +607,10 @@ export function mergedMessage(run: Run): string {
   return "```gt-fx\n" + JSON.stringify({ fx: "confetti" }) + "\n```\n" + `🎉 **Pedido terminado:** PR merged. ${run.prUrl ?? ""}`;
 }
 
-async function prOutcome(sub: string, url: string): Promise<{ outcome: "merged" | "closed" | "open"; approved: boolean } | null> {
+async function prOutcome(
+  sub: string,
+  url: string,
+): Promise<{ outcome: "merged" | "closed" | "open"; approved: boolean; conflicted?: boolean; headSha?: string } | null> {
   const pr = parsePrUrl(url);
   if (!pr) return null;
   try {
@@ -617,7 +620,8 @@ async function prOutcome(sub: string, url: string): Promise<{ outcome: "merged" 
     if (!r || r.error) return null;
     const approved = Array.isArray(r.reviews) && r.reviews.some((v: any) => String(v?.state).toUpperCase() === "APPROVED");
     if (r.merged) return { outcome: "merged", approved };
-    return { outcome: String(r.state ?? "").toLowerCase() === "closed" ? "closed" : "open", approved };
+    // `mergeable: false` = choques con la base; `null` = GitHub aún lo calcula (no se toca).
+    return { outcome: String(r.state ?? "").toLowerCase() === "closed" ? "closed" : "open", approved, conflicted: r.mergeable === false, headSha: r.headSha };
   } catch {
     return null;
   }
@@ -706,8 +710,35 @@ export async function closeFinishedRuns(): Promise<void> {
           );
       }
     }
+    if (outcome === "open" && run.status === "pr_review" && pr?.conflicted) await onPrConflict(run, pr.headSha ?? null);
     if (outcome === "merged" || outcome === "closed") await onPrEvent(run, outcome);
   }
+}
+
+/**
+ * El PR esperaba merge y otro PR del mismo repo entró antes: ya no mezcla limpio. Sin esto se
+ * quedaba en «PR listo» con un botón de merge que GitHub no deja usar. @build trae la base a su
+ * rama y @check vuelve a mirar. Una vez por cabeza: si @build no lo resolvió, decide una persona.
+ */
+async function onPrConflict(run: Run, headSha: string | null): Promise<void> {
+  const [prev] = await dbq("SELECT data_json FROM gt_factory_events WHERE run_id = ? AND type = 'conflict' ORDER BY id DESC LIMIT 1", [run.id]).catch(() => []);
+  const prevSha = prev?.data_json ? (JSON.parse(String(prev.data_json)).sha ?? null) : undefined;
+  if (prev && prevSha === headSha) return; // ya se intentó con esta cabeza: lo ve una persona
+  // El tick no tiene request: el origin sale del último encargo de este pedido.
+  const [w] = await dbq("SELECT origin FROM gt_agent_wakeups WHERE key LIKE ? AND origin IS NOT NULL AND origin != '' ORDER BY rowid DESC LIMIT 1", [`factory:${run.id}:%`]).catch(() => []);
+  const origin = String(w?.origin ?? "");
+  if (!origin) return;
+  const next = await applyEvent(run, "conflict", {}, { data: { sha: headSha } }).catch(() => null);
+  if (!next) return;
+  await postInThread(next, "build", `🔀 Otro PR entró antes y éste ya no mezcla limpio con la rama principal. Lo pongo al día. ${run.prUrl ?? ""}`);
+  await handoff(
+    next,
+    "build",
+    run.approvedBy ?? run.requestedBy,
+    "PR con choques",
+    `El PR ${run.prUrl} tiene choques con la rama principal (otro PR se mezcló antes). Trae la rama principal a tu rama, resuelve los choques SIN cambiar el alcance del plan, corre las pruebas, empuja y cierra con factory_build_done.`,
+    origin,
+  );
 }
 
 /**

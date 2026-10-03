@@ -23,6 +23,7 @@ const EVENT_LABEL: Record<string, string> = {
   check_blocked: "escaló: falta algo que Build no puede hacer",
   close: "cerró",
   merged: "mezclado",
+  conflict: "PR con choques: lo pone al día",
   cancel: "canceló",
   stale: "sin avanzar 30 min",
   stopped: "detuvo el turno",

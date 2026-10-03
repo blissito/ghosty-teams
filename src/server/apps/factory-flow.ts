@@ -5,6 +5,7 @@
 //      └──────────changes───────────┘                        └──check_fail (<3)──────┤
 //                                                                                    ├─check_fail (3ª)──▶ escalated
 //                                                                                    └─check_pass──▶ pr_review ──close──▶ done
+//   pr_review ──conflict──▶ building   (otro PR entró antes y éste ya no mezcla limpio)
 //   cualquiera ──cancel──▶ cancelled
 //
 // Por qué un tope de 3 vueltas build↔check: si @check sigue encontrando huecos después de
@@ -20,7 +21,7 @@ export type RunStatus =
   | "done"
   | "cancelled";
 
-export type RunEvent = "plan_submitted" | "approve" | "changes" | "build_done" | "check_pass" | "check_fail" | "check_blocked" | "close" | "merged" | "cancel";
+export type RunEvent = "plan_submitted" | "approve" | "changes" | "build_done" | "check_pass" | "check_fail" | "check_blocked" | "close" | "merged" | "cancel" | "conflict";
 
 export const MAX_LOOPS = 3;
 
@@ -54,6 +55,7 @@ export function nextStatus(status: RunStatus, event: RunEvent, loops = 0): RunSt
       if (event === "changes") return "planning";
       return null;
     case "pr_review":
+      if (event === "conflict") return "building";
       return event === "close" ? "done" : null;
     default:
       return null;
