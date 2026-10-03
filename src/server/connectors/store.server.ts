@@ -77,12 +77,13 @@ async function gs(sub: string, body: Record<string, unknown>): Promise<boolean> 
 
 async function legacyRow(sub: string, provider: string): Promise<ConnectorRow | null> {
   const rows = await dbq(
-    "SELECT user_sub, provider, access_token, refresh_token, expires_at, external_id, meta, meta_at FROM gc_user_connectors WHERE user_sub=? AND provider=?",
+    "SELECT user_sub, provider, access_token, refresh_token, expires_at, external_id, meta, meta_at, account FROM gc_user_connectors WHERE user_sub=? AND provider=?",
     [sub, provider]
   );
   const r = rows[0];
   if (!r) return null;
   return {
+    ...(typeof r.account === "string" ? { account: r.account } : {}),
     user_sub: r.user_sub!,
     provider: r.provider!,
     access_token: r.access_token,
@@ -97,10 +98,14 @@ async function legacyRow(sub: string, provider: string): Promise<ConnectorRow | 
 /** La copia de este espacio sube a gs y aquí queda sólo la marca (sin tokens). */
 async function legacyToGs(row: ConnectorRow): Promise<boolean> {
   if (!row.access_token) return false;
-  const ok = await gs(row.user_sub, await withAccount(row.user_sub, row.provider, {
+  // Con la cuenta de la PROPIA copia (su externalId), no la fijada: si mientras gs estaba caído se
+  // conectó otra cuenta aquí, subirla con la fijada pisaría la fila de la cuenta anterior.
+  const account = row.account ?? row.external_id ?? "";
+  const ok = await gs(row.user_sub, {
     action: "cred.set", provider: row.provider, accessToken: row.access_token, refreshToken: row.refresh_token,
-    expiresAt: row.expires_at, externalId: row.external_id, meta: row.meta, metaAt: row.meta_at,
-  }));
+    expiresAt: row.expires_at, externalId: row.external_id, meta: row.meta, metaAt: row.meta_at, account,
+  });
+  if (ok) await pinAccount(row.user_sub, row.provider, account);
   if (ok) {
     await dbq("UPDATE gc_user_connectors SET access_token=NULL, refresh_token=NULL WHERE user_sub=? AND provider=?", [row.user_sub, row.provider]).catch(() => {});
   }
@@ -181,7 +186,7 @@ export async function setConnectorRow(row: {
     await dbq("UPDATE gc_user_connectors SET access_token=NULL, refresh_token=NULL WHERE user_sub=? AND provider=? AND access_token IS NOT NULL", [row.sub, row.provider]).catch(() => {});
     return "gs";
   }
-  // gs no contestó: como antes, en este espacio.
+  // gs no contestó: como antes, en este espacio (con su cuenta, para subirla bien cuando vuelva).
   // COALESCE en refresh/external/meta → un refresh que no re-emite refresh_token no lo borra.
   await dbq(
     `INSERT INTO gc_user_connectors (user_sub, provider, access_token, refresh_token, expires_at, external_id, meta, created_at)
@@ -202,6 +207,8 @@ export async function setConnectorRow(row: {
       metaStr,
     ]
   );
+  const account = row.account ?? row.externalId ?? undefined;
+  if (account !== undefined) await dbq("UPDATE gc_user_connectors SET account=? WHERE user_sub=? AND provider=?", [account, row.sub, row.provider]).catch(() => {});
   return "local";
 }
 
@@ -258,13 +265,23 @@ export async function deleteConnectorRow(sub: string, provider: string): Promise
   const account = (await markerAccount(sub, provider)) ?? row?.account;
   const ok = await gs(sub, { action: "cred.delete", provider, ...(account !== undefined ? { account } : {}) });
   if (!ok) throw new Error("no pude desconectar: Ghosty Studio no contestó; vuelve a intentarlo");
-  await dbq("DELETE FROM gc_user_connectors WHERE user_sub=? AND provider=?", [sub, provider]);
+  // La marca se queda FIJADA a la cuenta borrada (lápida): sin ella, este espacio caería a «la más
+  // reciente» y empezaría a usar la cuenta de OTRO cliente (auditoría final, 3-oct). Conectar de
+  // nuevo aquí la vuelve a fijar.
+  if (account !== undefined) {
+    await dbq("UPDATE gc_user_connectors SET access_token=NULL, refresh_token=NULL, shared=0, account=? WHERE user_sub=? AND provider=?", [account, sub, provider]);
+  } else {
+    await dbq("DELETE FROM gc_user_connectors WHERE user_sub=? AND provider=?", [sub, provider]);
+  }
+  forget(sub, provider);
 }
 
 // Providers con conexión viva para un usuario → para el panel. Los de gs ∪ copias de antes.
 export async function listConnectorProviders(sub: string): Promise<Set<string>> {
   const r = await call<{ ok: boolean; providers?: string[] }>(sub, { action: "cred.list" });
-  const out = new Set<string>(r?.ok ? r.providers ?? [] : []);
+  const out = new Set<string>();
+  // Sólo los que ESTE espacio puede usar: con cuenta fijada (o lápida), que ésa exista.
+  for (const p of r?.ok ? r.providers ?? [] : []) if ((await getConnectorRow(sub, p).catch(() => null))?.access_token) out.add(p);
   const rows = await dbq(
     "SELECT provider FROM gc_user_connectors WHERE user_sub=? AND access_token IS NOT NULL",
     [sub]

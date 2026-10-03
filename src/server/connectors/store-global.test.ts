@@ -20,8 +20,9 @@ vi.mock("./studio-bridge.server", () => ({
     if (gsDown) return null;
     if (b.action === "cred.get") {
       const mine = [...gsRows.values()].filter((r) => r.user_sub === sub && r.provider === b.provider);
-      const hit = typeof b.account === "string" ? mine.find((r) => (r.account ?? "") === b.account) : undefined;
-      return { ok: true, row: hit ?? mine[mine.length - 1] ?? null };
+      // Como gs: cuenta pedida → ésa o ninguna; sin cuenta → la más reciente.
+      if (typeof b.account === "string") return { ok: true, row: mine.find((r) => (r.account ?? "") === b.account) ?? null };
+      return { ok: true, row: mine[mine.length - 1] ?? null };
     }
     if (b.action === "cred.set") {
       const account = typeof b.account === "string" ? b.account : b.externalId ?? "";
@@ -118,7 +119,8 @@ describe("conexión global", () => {
     await S.setConnectorRow({ sub: "ana", provider: "github", accessToken: "tok" });
     await S.deleteConnectorRow("ana", "github");
     expect([...gsRows.values()].some((r) => r.provider === "github")).toBe(false);
-    expect(local).toEqual([]);
+    expect(local).toMatchObject([{ provider: "github", access_token: null, account: "" }]); // lápida
+    expect(await S.getConnectorRow("ana", "github")).toBeNull();
   });
 });
 
@@ -150,6 +152,14 @@ describe("varias cuentas por conector", () => {
     local.push({ user_sub: "ana", provider: "odoo", access_token: null, refresh_token: null, shared: 0, account: null });
     expect((await S.getConnectorRow("ana", "odoo"))?.access_token).toBe("tok-A");
     expect(local[0].account).toBe("a");
+  });
+
+  it("desconectar aquí NO hace que este espacio caiga a la cuenta de otro cliente", async () => {
+    await S.setConnectorRow({ sub: "ana", provider: "odoo", accessToken: "tok-B", externalId: "b" });
+    gsRows.set("ana|odoo|a", { user_sub: "ana", provider: "odoo", access_token: "tok-A", account: "a" });
+    await S.deleteConnectorRow("ana", "odoo");
+    expect(await S.getConnectorRow("ana", "odoo")).toBeNull();
+    expect((await S.listConnectorProviders("ana")).has("odoo")).toBe(false);
   });
 
   it("desconectar quita sólo la cuenta de este espacio", async () => {
