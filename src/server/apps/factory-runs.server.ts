@@ -518,6 +518,10 @@ const CLOSE_TOOL: Record<string, string> = { plan: "factory_plan_submit", build:
  * sigue en el estado de ese rol, el rol no cerró su paso: se le da UN empujón (mismo hilo,
  * misma conversación) y, si tampoco cierra, se avisa en el hilo a quien pidió.
  */
+/** Se cayó el CAMINO, no el agente: gs o Teams reiniciando, conexión cortada. */
+const TRANSPORT_CUT = /No pude contactar a @|turno no existe|upstream unreachable|terminated|socket hang up|ECONNRESET|se reinici[óo]/i;
+const CUT_GRACE_MS = process.env.NODE_ENV === "test" ? 0 : 90_000;
+
 export async function afterFactoryTurn(
   w: { key: string; ref: string; origin: string },
   ref: { sub: string },
@@ -531,7 +535,8 @@ export async function afterFactoryTurn(
   // CORTE DE TRANSPORTE (infra reiniciando, gs caído un momento): el agente no falló, se cayó
   // el camino. Se repite el MISMO encargo en 60 s, una vez. Empujarlo a los 5 s con «cierra tu
   // paso» caía en la misma ventana caída (MailMask, 2026-10-01).
-  if (/No pude contactar a @/.test(reply) && !w.key.endsWith(":retry")) {
+  const cut = TRANSPORT_CUT.test(reply);
+  if (cut && !w.key.endsWith(":retry")) {
     await logEvent(run.id, "stalled", role, { reason: reply.replace(/^[\s\S]*No pude contactar a @\w+:\s*/, "").slice(0, 200) });
     const { enqueueWakeup, armWakeups } = await import("../wakeups.server");
     const { currentNamespace } = await import("../tenant.server");
@@ -548,14 +553,23 @@ export async function afterFactoryTurn(
     return;
   }
   // El turno SE CAYÓ (vacío o cortado): empujar no sirve, el agente no está contestando.
-  // Se dice una vez qué pasa y dónde revisarlo (su motor, modelo o llave en Studio).
-  if (!reply.trim() || /se cort[óo] antes de terminar|No pude contactar a @/i.test(reply)) {
+  if (!reply.trim() || cut || /se cort[óo] antes de terminar/i.test(reply)) {
     if (w.key.endsWith(":nudge")) return; // ya se avisó en el intento anterior
+    // Un corte de conexión NO termina el turno en gs: el agente suele cerrar su paso segundos
+    // después (palmera-legal, 3-oct: el veredicto llegó 40 s tras el aviso). Se espera antes
+    // de decir nada, y si el pedido avanzó, no hay nada que avisar.
+    const lastEvent = async () => Number((await dbq("SELECT MAX(id) AS n FROM gt_factory_events WHERE run_id = ?", [run.id]).catch(() => []))[0]?.n ?? 0);
+    const before = await lastEvent();
+    await new Promise((r) => setTimeout(r, CUT_GRACE_MS));
+    const now = await getRun(run.id);
+    if (!now || now.status !== run.status || (await lastEvent()) !== before) return;
     await postInThread(
       run,
       role,
-      `⚠️ @${role} no pudo contestar (su turno se cortó). Revisa su agente en Studio (motor, modelo o llave) ` +
-        `o asígnale otro en Ajustes → Apps, y vuelve a mencionarlo.`,
+      cut
+        ? `⚠️ Se cortó dos veces la conexión con @${role} (el servidor se reinició). Menciónalo en este hilo para que retome su paso.`
+        : `⚠️ @${role} no pudo contestar (su turno se cortó). Revisa su agente en Studio (motor, modelo o llave) ` +
+            `o asígnale otro en Ajustes → Apps, y vuelve a mencionarlo.`,
     );
     return;
   }
