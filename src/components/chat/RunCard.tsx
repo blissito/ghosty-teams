@@ -6,6 +6,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useT } from "../../i18n";
 import { useRtSubscribe } from "../../utils/rt-bus";
 import { factoryRunCardFn, factoryDecisionFn, factoryRetryPreviewFn, factoryRunActionFn } from "../../server/apps/factory";
+import { prepareRepoFn } from "../../server/apps/readiness";
 import type { RunCardData } from "../../lib/ebdoc";
 
 type State = Awaited<ReturnType<typeof factoryRunCardFn>>;
@@ -42,6 +43,7 @@ export function RunCard({ card, channelId }: { card: RunCardData; channelId: num
   const [asking, setAsking] = useState(false);
   const [note, setNote] = useState("");
   const [err, setErr] = useState("");
+  const [prepUrl, setPrepUrl] = useState("");
 
   const refresh = useCallback(() => {
     factoryRunCardFn({ data: { runId: card.runId } }).then(setSt).catch(() => {});
@@ -170,6 +172,36 @@ export function RunCard({ card, channelId }: { card: RunCardData; channelId: num
                   ? `${t("Vueltas de check")}: ${st.loops}`
                   : ""}
         </p>
+        {st.noCi && (
+          <p className="mt-2 flex flex-wrap items-center gap-2 text-xs font-semibold text-amber-700 dark:text-amber-300" role="status">
+            {t("Sin CI: nadie corrió las pruebas fuera de la caja de los agentes. Prepara el repo antes de mezclar.")}
+            {prepUrl ? (
+              <a href={prepUrl} className="rounded-full border border-amber-600 px-3 py-1 text-xs font-bold hover:bg-amber-600/10">
+                {t("Ver preparación")} →
+              </a>
+            ) : st.canPrep && st.repo ? (
+              <button
+                type="button"
+                disabled={busy}
+                onClick={async () => {
+                  setBusy(true);
+                  setErr("");
+                  try {
+                    const r = await prepareRepoFn({ data: { repo: st.repo!, channelId } });
+                    setPrepUrl(r.threadUrl || st.threadUrl);
+                  } catch (e) {
+                    setErr(e instanceof Error ? e.message : String(e));
+                  } finally {
+                    setBusy(false);
+                  }
+                }}
+                className="rounded-full border border-amber-600 px-3 py-1 text-xs font-bold hover:bg-amber-600/10 disabled:opacity-50"
+              >
+                {t("Preparar repo")}
+              </button>
+            ) : null}
+          </p>
+        )}
         <div className="mt-2 flex flex-wrap items-center gap-2">
           {st.canSign && (
             <>

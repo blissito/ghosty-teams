@@ -473,9 +473,21 @@ export const factoryRunCardFn = createServerFn({ method: "POST" })
       threadUrl: `/c/${ch.slug}?thread=${run.rootMsgId}`,
       // Firmable desde la tarjeta: el plan vigente espera firma (o hay que decidir tras escalar).
       canSign: (run.status === "plan_review" && !!plan && !plan.decision) || run.status === "escalated",
+      // PR listo pero revisado sin CI: la persona decide aquí, así que aquí se dice (MailMask #10, 4-oct).
+      noCi: run.status === "pr_review" && (await prVerdictCi(run.id)) === "none",
+      canPrep: !!me.isOwner && !!run.repo,
       ...(await runLive(run)),
     };
   });
+
+async function prVerdictCi(runId: number): Promise<string | null> {
+  const [r] = await dbq0("SELECT verdict_json FROM gt_factory_runs WHERE id = ?", [runId]);
+  try {
+    return r?.verdict_json ? String(JSON.parse(String(r.verdict_json))?.ci ?? "") || null : null;
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Lo vivo del pedido para la barra del hilo y el panel: estado CALCULADO (`viewState`), el

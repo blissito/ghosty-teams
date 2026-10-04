@@ -1595,6 +1595,8 @@ export const en: Record<string, string> = {
   "wss://sb-….sandboxes.easybits.cloud/acp": "wss://sb-….sandboxes.easybits.cloud/acp",
   "{n} sesión(es) abiertas": "{n} open session(s)",
   "Retomar": "Resume",
+  "Sin CI: nadie corrió las pruebas fuera de la caja de los agentes. Prepara el repo antes de mezclar.": "No CI: no one ran the tests outside the agents' sandbox. Prepare the repo before merging.",
+  "Ver preparación": "View preparation",
   "Sólo quien pidió este turno puede retomarlo.": "Only whoever asked for this turn can resume it.",
   "Este turno ya no se puede retomar. Vuelve a mencionar al agente.": "This turn can no longer be resumed. Mention the agent again.",
   "No se pudo retomar. Intenta de nuevo.": "Could not resume. Try again.",
