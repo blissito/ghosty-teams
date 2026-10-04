@@ -1996,6 +1996,7 @@ export const en: Record<string, string> = {
   "Listo para mezclar": "Ready to merge",
   "Necesita tu decisión": "Needs your decision",
   "Sin avanzar": "Stalled",
+  "Sin avanzar: nadie está trabajando en este pedido.": "Stalled: nobody is working on this request.",
   "Me toca": "Mine",
   // Subagentes estilo Claude Code (2026-10-01)
   "subagente": "subagent",

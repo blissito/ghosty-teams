@@ -293,6 +293,34 @@ export async function sweepStaleRuns(isBusy: (run: Run) => boolean): Promise<voi
     if (now - Number(r.last_at ?? now) < STALE_SECONDS) continue;
     const run = toRun(r);
     if (isBusy(run)) continue;
+    // Primero la plataforma lo retoma SOLA, una vez por atasco: el rol terminó su turno sin
+    // cerrar su paso y nadie lo iba a mover. Una persona no sabe que existe «Retomar» (MailMask,
+    // 4-oct: @build parado una hora con la tarjeta diciendo «construyendo…»). Si tras eso sigue
+    // parado (su último evento sigue siendo el auto-retomar), ahora sí se avisa.
+    const [lastEv] = await dbq("SELECT type FROM gt_factory_events WHERE run_id = ? ORDER BY id DESC LIMIT 1", [run.id]).catch(() => []);
+    if (lastEv?.type !== "auto_resumed") {
+      const role = ({ planning: "plan", building: "build", checking: "check" } as const)[run.status as "planning" | "building" | "checking"];
+      const [w] = await dbq("SELECT origin FROM gt_agent_wakeups WHERE key LIKE ? AND origin IS NOT NULL AND origin != '' ORDER BY rowid DESC LIMIT 1", [`factory:${run.id}:%`]).catch(() => []);
+      const origin = String(w?.origin ?? "");
+      if (role && origin) {
+        const ok = await handoff(
+          run,
+          role,
+          run.approvedBy ?? run.requestedBy,
+          "retomar (automático)",
+          `Este pedido lleva 30 min sin avanzar y nadie está trabajando en él: tu turno anterior terminó sin cerrar tu paso. ` +
+            `Revisa lo último del hilo, continúa y ciérralo con tu tool factory_*.` +
+            (role === "build" ? await takeNotes(run.id) : ""),
+          origin,
+        ).catch(() => false);
+        if (ok) {
+          await logEvent(run.id, "auto_resumed", null, { role });
+          await postInThread(run, role, `🔁 Llevaba 30 min sin avanzar: retomo el pedido.`).catch(() => null);
+          void refreshRoom(run.channelId);
+          continue;
+        }
+      }
+    }
     const marked = await dbq("UPDATE gt_factory_runs SET stale_warned_at = ? WHERE id = ? AND stale_warned_at IS NULL RETURNING id", [now, run.id]).catch(() => []);
     if (!marked.length) continue;
     await logEvent(run.id, "stale", null, { status: run.status });

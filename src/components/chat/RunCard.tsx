@@ -5,7 +5,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useT } from "../../i18n";
 import { useRtSubscribe } from "../../utils/rt-bus";
-import { factoryRunCardFn, factoryDecisionFn, factoryRetryPreviewFn } from "../../server/apps/factory";
+import { factoryRunCardFn, factoryDecisionFn, factoryRetryPreviewFn, factoryRunActionFn } from "../../server/apps/factory";
 import type { RunCardData } from "../../lib/ebdoc";
 
 type State = Awaited<ReturnType<typeof factoryRunCardFn>>;
@@ -57,6 +57,9 @@ export function RunCard({ card, channelId }: { card: RunCardData; channelId: num
   if (!st) return null;
 
   const current = STEPS.findIndex((s) => (s.statuses as readonly string[]).includes(st.status));
+  // «Construyendo…» sólo si alguien trabaja de verdad. Parado = se dice y se ofrece «Retomar»
+  // aquí mismo: la persona no tiene por qué saber que existe la barra del hilo (MailMask, 4-oct).
+  const stalled = !!WORKING[st.status] && !st.liveTurnId && st.view.stale;
   const closed = st.status === "done" || st.status === "cancelled";
 
   const decide = async (decision: "approve" | "changes") => {
@@ -116,7 +119,31 @@ export function RunCard({ card, channelId }: { card: RunCardData; channelId: num
             🎉 {t("Terminado: PR merged.")}
           </p>
         )}
-        {WORKING[st.status] && (
+        {stalled && (
+          <p className="mt-2 flex flex-wrap items-center gap-2 text-xs font-semibold text-amber-700 dark:text-amber-300" role="status">
+            {t("Sin avanzar: nadie está trabajando en este pedido.")}
+            <button
+              type="button"
+              disabled={busy}
+              onClick={async () => {
+                setBusy(true);
+                setErr("");
+                try {
+                  await factoryRunActionFn({ data: { runId: st.runId, action: "resume" } });
+                  refresh();
+                } catch (e) {
+                  setErr(e instanceof Error ? e.message : String(e));
+                } finally {
+                  setBusy(false);
+                }
+              }}
+              className="rounded-full border border-amber-600 px-3 py-1 text-xs font-bold text-amber-700 hover:bg-amber-600/10 disabled:opacity-50 dark:text-amber-300"
+            >
+              {t("Retomar")}
+            </button>
+          </p>
+        )}
+        {WORKING[st.status] && !stalled && (
           <p className="mt-2 flex items-center gap-1.5 text-xs text-ink" role="status">
             <span className="relative flex h-2 w-2">
               <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-brand opacity-60 motion-reduce:animate-none" />

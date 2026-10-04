@@ -27,6 +27,7 @@ const EVENT_LABEL: Record<string, string> = {
   rework: "pidieron más sobre el PR: vuelve a construir",
   cancel: "canceló",
   stale: "sin avanzar 30 min",
+  auto_resumed: "lo retomó la plataforma",
   stopped: "detuvo el turno",
   resumed: "pidió retomar",
 };
