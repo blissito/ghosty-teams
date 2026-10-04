@@ -63,7 +63,7 @@ export function VerdictCard({ card, channelId }: { card: { runId: number }; chan
   };
 
   const ci =
-    v.ci === "success" ? { txt: t("✓ en verde"), cls: "text-emerald-600" } : v.ci === "none" ? { txt: t("sin CI en el repo"), cls: "text-amber-600" } : { txt: v.ci, cls: "text-muted" };
+    v.ci === "success" ? { txt: t("✓ en verde"), cls: "text-emerald-600" } : v.ci === "none" ? { txt: t("sin CI en este PR"), cls: "text-amber-600" } : { txt: v.ci, cls: "text-muted" };
   const rows: [string, React.ReactNode][] = [
     [t("Cambios"), <span className="font-mono">{v.files} {v.files === 1 ? t("archivo") : t("archivos")} · <span className="text-emerald-600">+{v.additions}</span> <span className="text-red-500">−{v.deletions}</span></span>],
     ["CI", <span className={ci.cls}>{ci.txt}</span>],

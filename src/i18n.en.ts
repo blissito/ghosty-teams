@@ -606,7 +606,7 @@ export const en: Record<string, string> = {
   "archivo": "file",
   "archivos": "files",
   "✓ en verde": "✓ green",
-  "sin CI en el repo": "no CI in the repo",
+  "sin CI en este PR": "no CI on this PR",
   "Revisión": "Review",
   "contra el plan": "against plan",
   "vuelta": "round",
