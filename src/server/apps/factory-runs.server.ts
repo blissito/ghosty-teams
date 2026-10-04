@@ -1058,7 +1058,25 @@ export async function announcePreviews(): Promise<void> {
     if (!pr || !head) continue;
     // Sin estado (nuevo o «Reintentar») cuenta como commit nuevo: se vuelve a pedir `up`.
     const sameSha = row.preview_sha === head.sha && !!row.preview_state;
+    // Una preview «lista» de NUESTRA caja puede morir (la caja se recicla o caduca) y la tarjeta
+    // seguía en verde con un 404 (MailMask #10, 4-oct). Se pregunta a gs si la caja sigue; si no,
+    // se borra el estado y el siguiente tick la reconstruye.
+    if (sameSha && row.preview_state === "ready" && !(await P.hostingHasPreviews(sub, pr.repo))) {
+      const st = await P.gsPreview("status", { repo: pr.repo, pr: pr.number }).catch(() => undefined);
+      if (st !== undefined && (!st?.status || st.status.phase !== "ready" || st.status.sha !== head.sha)) {
+        await dbq("UPDATE gt_factory_runs SET preview_state = NULL, preview_url = NULL WHERE id = ?", [run.id]).catch(() => {});
+        lastPreviewCheck.delete(run.id);
+        void refreshRoom(run.channelId);
+      }
+      continue;
+    }
     if (sameSha && (row.preview_state === "ready" || row.preview_state === "failed" || row.preview_state === "needs_env")) continue;
+    // Commit nuevo: la liga vieja ya no muestra el PR de hoy. Se quita YA (pendiente), aunque
+    // pedir la nueva falle; antes, si `up` fallaba, la tarjeta seguía en verde con la vieja.
+    if (!sameSha && row.preview_state === "ready") {
+      await dbq("UPDATE gt_factory_runs SET preview_state = 'pending', preview_url = NULL, preview_sha = ? WHERE id = ?", [head.sha, run.id]).catch(() => {});
+      void refreshRoom(run.channelId);
+    }
 
     let next: { state: "pending" | "ready" | "failed" | "needs_env"; url: string | null; provider: string | null; error: string | null } | null = null;
     if (await P.hostingHasPreviews(sub, pr.repo)) {
@@ -1072,10 +1090,10 @@ export async function announcePreviews(): Promise<void> {
       next = { state: "needs_env", url: null, provider: null, error: null };
     } else {
       try {
-        const b: import("./preview.server").BoxPreview | null =
-          sameSha && row.preview_state === "pending"
-            ? (await P.gsPreview("status", { repo: pr.repo, pr: pr.number })).status
-            : await P.gsPreview("up", { repo: pr.repo, pr: pr.number, sha: head.sha });
+        // Pendiente del mismo commit: se pregunta cómo va; si la caja ya no existe, se vuelve a pedir.
+        let b: import("./preview.server").BoxPreview | null =
+          sameSha && row.preview_state === "pending" ? (await P.gsPreview("status", { repo: pr.repo, pr: pr.number })).status : null;
+        if (!b) b = await P.gsPreview("up", { repo: pr.repo, pr: pr.number, sha: head.sha });
         if (!b || b.sha !== head.sha) next = { state: "pending", url: null, provider: null, error: null };
         else if (b.phase === "ready") next = { state: "ready", url: b.url, provider: null, error: null };
         else if (b.phase === "failed") next = { state: "failed", url: null, provider: null, error: b.error };
