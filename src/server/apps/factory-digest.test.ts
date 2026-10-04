@@ -19,6 +19,10 @@ vi.mock("./factory-runs.server", () => ({
   runPreview: async () => ({ state: "ready", url: "https://p", error: null }),
 }));
 
+vi.mock("./factory", () => ({
+  runLive: async () => ({ liveTurnId: null, currentStep: null, lastActivityAt: Math.floor(Date.now() / 1000) - 3600, view: { label: "Sin avanzar", stale: true } }),
+}));
+
 import { runDigest, roomIndex } from "./factory-digest.server";
 
 const run = { id: 10, title: "CLI", status: "building", planVersion: 1, loops: 0, repo: "o/r", branch: "b", prUrl: "https://github.com/o/r/pull/8" } as never;
@@ -31,6 +35,8 @@ describe("runDigest", () => {
     expect(d).toContain("agrega un test de whoami");
     expect(d).toContain("CI success");
     expect(d).toContain("rework (@plan)");
+    expect(d).toContain("NADIE está trabajando");
+    expect(d).toContain("Retomar");
     expect(d.length).toBeLessThan(2000);
     expect(sqls.some((s) => s.startsWith("UPDATE gt_factory_notes"))).toBe(false);
   });

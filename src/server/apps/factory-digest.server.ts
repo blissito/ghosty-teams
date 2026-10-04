@@ -52,6 +52,18 @@ export async function runDigest(run: Run, opts: { detail?: boolean } = {}): Prom
       (run.prUrl ? `, PR ${run.prUrl}` : ", sin PR todavía") +
       ".",
   );
+  // Quién lo tiene AHORA: sin esto el rol decía «no te toca nada» con @build parado (MailMask, 4-oct).
+  if (run.status !== "done" && run.status !== "cancelled") {
+    const { runLive } = await import("./factory");
+    const live = await runLive(run).catch(() => null);
+    if (live)
+      out.push(
+        live.liveTurnId
+          ? `Ahora: alguien está trabajando en el pedido${live.currentStep ? ` (${cut(String(live.currentStep), 80)})` : ""}.`
+          : `Ahora: NADIE está trabajando en él (última actividad ${ago(live.lastActivityAt, now)}; ${live.view.label}).` +
+              (live.view.stale ? " Está PARADO: si le toca a un rol, la persona lo destraba con «Retomar» en la barra del pedido." : ""),
+      );
+  }
   const [extra] = await dbq("SELECT verdict_json, sprint_item_id FROM gt_factory_runs WHERE id = ?", [run.id]).catch(() => []);
   // Ticket del sprint (el que lo creó o uno atado a él).
   const [item] = await dbq(

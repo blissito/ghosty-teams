@@ -481,7 +481,7 @@ export const factoryRunCardFn = createServerFn({ method: "POST" })
  * Lo vivo del pedido para la barra del hilo y el panel: estado CALCULADO (`viewState`), el
  * paso que narra el agente ahora y la última actividad. Nada de esto lo declara el modelo.
  */
-async function runLive(run: import("./factory-runs.server").Run) {
+export async function runLive(run: import("./factory-runs.server").Run) {
   const { dbq } = await import("../../dbq.server");
   const { viewState } = await import("./factory-flow");
   const turns = await import("../turns.server");
@@ -577,7 +577,9 @@ export const factoryRunActionFn = createServerFn({ method: "POST" })
       role,
       run.approvedBy ?? me.sub,
       "retomar",
-      `${me.name || "Una persona"} pidió retomar este pedido: se quedó sin avanzar. Revisa lo último del hilo y continúa tu paso; ciérralo con tu tool factory_*.`,
+      `${me.name || "Una persona"} pidió retomar este pedido: se quedó sin avanzar. Revisa lo último del hilo y continúa tu paso; ciérralo con tu tool factory_*.` +
+        // Las notas pendientes sólo llegan al encargar: retomar también es encargar.
+        (role === "build" ? await R.takeNotes(run.id) : ""),
       await reqOrigin().catch(() => ""),
     );
     if (!ok) throw new Error("no pude despertar al agente");
