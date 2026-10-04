@@ -2271,7 +2271,10 @@ export async function callAgentBackendStream(
       // El ns va DENTRO del token: sin él, un token de este workspace serviría contra el
       // host de otro y usaría sus conexiones compartidas. Ver tool-token.server.ts.
       const { currentNamespace } = await import("./server/tenant.server");
-      toolToken = mintToolToken(invokerSub, await currentNamespace(), dest ?? null);
+      // Un turno de la fábrica dura lo que el worker le deja (hasta 2 h, `turnos-largos.md`):
+      // con los 15 min de siempre, @build se quedó sin herramientas a media resolución de un
+      // choque y no pudo cerrar (MailMask #10, 4-oct: turno de 17 min).
+      toolToken = mintToolToken(invokerSub, await currentNamespace(), dest ?? null, factoryTurn ? 2 * 3600 : undefined);
       if (!turnOrigin) throw new Error("sin origin: no puedo decirle al box a dónde llamar");
       toolsUrl = `${turnOrigin}/api/connectors/tools`;
     } catch { /* sin secret/origin → sin tools este turno, no rompe */ }
