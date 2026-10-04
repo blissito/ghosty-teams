@@ -18,13 +18,14 @@ vi.mock("../connectors/github.server", () => ({
     if (path === "/repos/acme/app") return { default_branch: "main", owner: { login: "acme", type: "User" } };
     if (path === "/repos/acme/app/contents/") return root.map((name) => ({ name }));
     if (path === "/repos/acme/app/contents/.github") return gh.length ? gh.map((name) => ({ name })) : { error: "404" };
-    if (path === "/repos/acme/app/contents/.github/workflows") return workflows.length ? workflows.map((name) => ({ name })) : { error: "404" };
+    if (path === "/repos/acme/app/contents/.github/workflows") return workflows.length ? workflows.map((name) => ({ name, path: `.github/workflows/${name}` })) : { error: "404" };
     if (path === "/repos/acme/app/branches/main") return { protected: branchProtected };
     if (path.endsWith("/rulesets")) return rulesets;
     if (path.startsWith("/repos/acme/app/deployments")) return deployments;
     if (/\/commits\/[^/]+\/statuses/.test(path)) return [];
     const f = path.replace("/repos/acme/app/contents/", "");
     if (contents[f] !== undefined) return { content: b64(contents[f]) };
+    if (f.startsWith(".github/workflows/")) return { content: b64("on:\n  pull_request:\n") };
     const m = /\/commits\/(v\d+)$/.exec(path);
     if (m) return { sha: `sha-${m[1]}` };
     return { error: "404" };

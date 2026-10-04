@@ -37,9 +37,23 @@ async function exists(sub: string, repo: string, path: string): Promise<boolean>
 }
 
 /** ¿El repo ya tiene workflows de CI? */
-export async function hasWorkflows(sub: string, repo: string): Promise<boolean> {
-  const r = await githubApi(sub, `/repos/${repo}/contents/.github/workflows`);
-  return Array.isArray(r) && r.some((f: any) => /\.ya?ml$/i.test(String(f?.name ?? "")));
+/**
+ * ¿El repo corre CI en los PR? Tener un `.yml` no basta: MailMask sólo tenía `deploy.yml` (push a
+ * main), «Preparar repo» lo dio por CI y sus PR llegaban a @check sin un solo check (4-oct).
+ * `listing` = lo que ya devolvió `contents/.github/workflows`, para no pedirlo dos veces.
+ */
+export async function hasWorkflows(sub: string, repo: string, listing?: unknown): Promise<boolean> {
+  const r = listing ?? (await githubApi(sub, `/repos/${repo}/contents/.github/workflows`));
+  if (!Array.isArray(r)) return false;
+  const files = r.filter((f: any) => /\.ya?ml$/i.test(String(f?.name ?? ""))).slice(0, 10);
+  const texts = await Promise.all(
+    files.map((f: any) =>
+      githubApi(sub, `/repos/${repo}/contents/${String(f.path)}`)
+        .then((c: any) => (typeof c?.content === "string" ? Buffer.from(c.content, "base64").toString("utf8") : ""))
+        .catch(() => ""),
+    ),
+  );
+  return texts.some((t) => /\bpull_request(_target)?\b/.test(t));
 }
 
 export type CiStarter = { files: { path: string; content: string }[]; notes: string[] };

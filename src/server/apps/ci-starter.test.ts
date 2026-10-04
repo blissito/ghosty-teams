@@ -25,7 +25,7 @@ vi.mock("../connectors/github.server", () => ({
   },
 }));
 
-import { buildCiStarter, protectMain } from "./ci-starter.server";
+import { buildCiStarter, protectMain, hasWorkflows } from "./ci-starter.server";
 
 describe("CI starter", () => {
   beforeEach(() => {
@@ -33,6 +33,20 @@ describe("CI starter", () => {
     checkRuns = [];
     posts.length = 0;
     priv = false;
+  });
+
+  it("un workflow que sólo despliega no cuenta como CI; uno que corre en PR sí (MailMask, 4-oct)", async () => {
+    const listing = [{ name: "deploy.yml", path: ".github/workflows/deploy.yml" }];
+    const yml = (on: string) => ({ content: Buffer.from(`name: X\non:\n  ${on}\njobs: {}\n`).toString("base64") });
+    const api = (await import("../connectors/github.server")) as any;
+    const orig = api.githubApi;
+    const spy = vi.spyOn(api, "githubApi");
+    spy.mockImplementation(async () => yml("push:\n    branches: [main]"));
+    expect(await hasWorkflows("u", "acme/app", listing)).toBe(false);
+    spy.mockImplementation(async () => yml("pull_request:"));
+    expect(await hasWorkflows("u", "acme/app", listing)).toBe(true);
+    expect(await hasWorkflows("u", "acme/app", { error: "404" })).toBe(false);
+    spy.mockImplementation(orig);
   });
 
   it("dependency-review sólo en repo público (en privado sin GHAS falla siempre)", async () => {

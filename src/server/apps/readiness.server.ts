@@ -158,7 +158,7 @@ export async function repoReadiness(sub: string, repo: string, opts: { fresh?: b
   const codeowners = coPath ? decode(await githubApi(sub, `/repos/${repo}/contents/${coPath}`)) : null;
 
   // Protegida = el ruleset de la fábrica, o cualquier protección que GitHub reporte en la rama.
-  const { protectionState } = await import("./ci-starter.server");
+  const { protectionState, hasWorkflows: hasPrCi } = await import("./ci-starter.server");
   const protection = await protectionState(sub, repo).catch(() => "error" as const);
   const P = await import("./preview.server");
   const previewHosting = await P.repoHasPreviews(sub, repo, defaultBranch).catch(() => false);
@@ -181,7 +181,7 @@ export async function repoReadiness(sub: string, repo: string, opts: { fresh?: b
     lockfile: !!pm,
     scripts: missingScripts.length === 0,
     agents_md: has("AGENTS.md"),
-    ci: names(workflows).some((n) => /\.ya?ml$/i.test(n)),
+    ci: await hasPrCi(sub, repo, workflows),
     codeowners: codeownersCoversGithub(codeowners),
     dependabot: ghFiles.some((n) => /^dependabot\.ya?ml$/i.test(n)) || has("renovate.json"),
     protected: protection === "protected" || branch?.protected === true,
