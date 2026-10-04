@@ -169,6 +169,11 @@ export async function factoryTurnFor(handle: string, dest: ToolDest | null | und
     }
     modelSource = ov.models?.[h] ? "message" : "repo";
   }
+  if (!model) {
+    const { ROLE_DEFAULT_MODEL } = await import("./factory-team");
+    const def = ROLE_DEFAULT_MODEL[h];
+    if (def && def.engine === engine) model = def.model;
+  }
 
   return {
     handle: h,

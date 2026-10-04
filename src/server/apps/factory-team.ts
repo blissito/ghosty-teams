@@ -88,6 +88,15 @@ function assign(spec: RoleSpec, key: string, value: string) {
 }
 
 /** Alias cortos por motor, para «@build con opus». El id completo también vale. */
+/**
+ * Modelo de casa por rol cuando nadie pide otro (ni el mensaje ni `.ghosty/factory.md`). @plan
+ * diagnostica el estado entero de la fábrica y decide qué reparar: va en el modelo más fuerte
+ * aunque su agente de Studio corra en otro (decisión de bliss, 4-oct). Sólo si el motor es ése.
+ */
+export const ROLE_DEFAULT_MODEL: Partial<Record<string, { engine: string; model: string }>> = {
+  plan: { engine: "claude", model: "claude-opus-5-5" },
+};
+
 export const MODEL_ALIASES: Record<string, Record<string, string>> = {
   // Todas las opciones del catálogo de Studio (engines.ts), sin quitar ninguna: el alias corto
   // es la versión de siempre y la versión explícita elige otra («con opus-5.5», «con opus-4.8»).
