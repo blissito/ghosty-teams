@@ -1996,7 +1996,8 @@ function watchTool(dest: ToolDest | null): ConnectorTool {
         const rows = await dbq(`SELECT slug FROM gc_channels WHERE id = ?`, [dest.channelId]);
         const slug = String(rows[0]?.slug ?? "");
         if (!slug) return { error: "No encontré el room de esta conversación." };
-        suffix = `${slug}-flow`;
+        const { fleetSuffixFor } = await import("../apps/factory-session.server");
+        suffix = await fleetSuffixFor(dest.handle, { id: Number(dest.channelId), slug }, dest.parentId ?? null);
       }
       const groupId = await agentGroupId(agent ?? { handle: dest.handle }, suffix);
 

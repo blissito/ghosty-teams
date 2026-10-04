@@ -986,6 +986,43 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
         return { ok: true, ...run, stage: stageLabel(run.status) };
       },
     },
+    {
+      name: "factory_context",
+      description:
+        "Lectura. Un pedido A DETALLE: plan vigente completo, notas pendientes para @build, últimos 20 eventos de su bitácora, " +
+        "veredicto de @check, ticket/sprint y preview. Sin argumentos: el pedido de este hilo (o el del PR que el hilo menciona). " +
+        "Úsala antes de decidir sobre un pedido si la foto del turno no te alcanza.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          runId: { type: "number", description: "Id del PEDIDO, no el número del PR" },
+          pr: { type: "string", description: "Número o URL del PR de GitHub" },
+        },
+      },
+      handler: async (sub, a) => {
+        const run =
+          a.pr != null && a.pr !== ""
+            ? await runOfPr(dest, sub, a.pr)
+            : a.runId != null
+              ? await resolveNoteRun(dest, sub, a.runId)
+              : ((await runOf(dest, undefined)) ?? (await runsMentionedInThread(dest, sub))[0] ?? null);
+        if (!run) return { ok: false, error: "no encuentro ese pedido en los rooms que ves. Pasa `pr` (número del PR) o `runId` (el #N del pedido), o usa factory_room para listarlos." };
+        const { runDigest } = await import("./factory-digest.server");
+        return { ok: true, runId: run.id, context: await runDigest(run, { detail: true }) };
+      },
+    },
+    {
+      name: "factory_room",
+      description:
+        "Lectura. Todo lo de la fábrica en este room: pedidos abiertos y los cerrados de los últimos 7 días (etapa, PR, última actividad) " +
+        "y sprints activos o en borrador con su avance. Úsala para ubicar el pedido correcto antes de anotar, re-partir o proponer un sprint.",
+      inputSchema: { type: "object", properties: {} },
+      handler: async () => {
+        if (!dest?.channelId) return { ok: false, error: "la fábrica trabaja en un room, no en un DM" };
+        const { roomIndex } = await import("./factory-digest.server");
+        return { ok: true, room: await roomIndex(dest.channelId, { closedDays: 7 }) };
+      },
+    },
   ];
 }
 
@@ -1041,11 +1078,16 @@ export async function factoryContext(dest: ToolDest | null, toolChannel: ToolCha
     const run = await R.runOfThread(dest.channelId, root).catch(() => null);
     if (run) {
       const { stageLabel } = await import("./factory-flow");
+      // La FOTO del pedido (factory-digest): el rol no tiene que buscar su estado.
+      const { runDigest } = await import("./factory-digest.server");
+      const digest = h ? await runDigest(run).catch(() => null) : null;
       parts.push(
-        `Pedido de ESTE hilo: #${run.id} «${run.title}», etapa «${stageLabel(run.status)}», plan v${run.planVersion}` +
-          (run.prUrl ? `, PR ${run.prUrl}` : "") +
-          (run.loops ? `, ${run.loops} vuelta(s) de check` : "") +
-          ". Usa su runId en las tools factory_*.",
+        digest
+          ? `FOTO del pedido de ESTE hilo (de la DB, al día; usa su runId ${run.id} en las tools factory_*):\n${digest}`
+          : `Pedido de ESTE hilo: #${run.id} «${run.title}», etapa «${stageLabel(run.status)}», plan v${run.planVersion}` +
+              (run.prUrl ? `, PR ${run.prUrl}` : "") +
+              (run.loops ? `, ${run.loops} vuelta(s) de check` : "") +
+              ". Usa su runId en las tools factory_*.",
       );
     } else if (h) {
       // Hilo SIN pedido pero colgado de la tarjeta de un PR (el aviso «PR #44 abierto»): «@check
@@ -1073,12 +1115,26 @@ export async function factoryContext(dest: ToolDest | null, toolChannel: ToolCha
       const [other] = await runsMentionedInThread(dest).catch(() => []);
       if (other) {
         const { stageLabel } = await import("./factory-flow");
+        const { runDigest } = await import("./factory-digest.server");
+        const digest = await runDigest(other).catch(() => null);
         parts.push(
-          `Este PR es del pedido #${other.id} «${other.title}» (etapa «${stageLabel(other.status)}»): si es un cambio para @build, ` +
-            `regístralo con factory_note (runId ${other.id}); no basta un comentario en GitHub ni en este hilo.`,
+          `Este hilo habla del PR del pedido #${other.id} «${other.title}» (etapa «${stageLabel(other.status)}»): si es un cambio para @build, ` +
+            `regístralo con factory_note (pr o runId ${other.id}); no basta un comentario en GitHub ni en este hilo.` +
+            (digest ? `\nFOTO de ese pedido:\n${digest}` : ""),
         );
       }
     }
+  }
+  // Lo abierto del room: un rol que contesta sin mirarlo duplica trabajo (sprint encima de otro,
+  // ticket que ya está en otro PR). Va siempre; para más, factory_room / factory_context.
+  if (h && dest?.channelId) {
+    const { roomIndex } = await import("./factory-digest.server");
+    const idx = await roomIndex(dest.channelId).catch(() => null);
+    if (idx) parts.push(`ABIERTO EN ESTE ROOM:\n${idx}`);
+    parts.push(
+      "Tu foto del pedido y del room ya viene arriba. Si necesitas más, usa factory_context (un pedido a detalle: plan completo, notas, bitácora), " +
+        "factory_room (todo el room) o chat_search con room:true (lo que se dijo en otros hilos); no adivines ni digas que no tienes acceso.",
+    );
   }
   // Sin CI, «verde» no significa nada: el primer pedido que conviene es el CI starter.
   if (h === "plan" && dest?.channelId) {
@@ -1091,7 +1147,7 @@ export async function factoryContext(dest: ToolDest | null, toolChannel: ToolCha
   }
   // Misma frase que Tasks: tenerlas y no llamarlas es el otro modo de falla.
   parts.push(
-    "Tus tools de la fábrica (factory_plan_submit, factory_build_done, factory_check_verdict, factory_status, factory_close, factory_ci_starter, factory_repo_prep, factory_preview, factory_sprint_submit, factory_note) " +
+    "Tus tools de la fábrica (factory_plan_submit, factory_build_done, factory_check_verdict, factory_status, factory_close, factory_ci_starter, factory_repo_prep, factory_preview, factory_sprint_submit, factory_note, factory_context, factory_room) " +
       "ya están disponibles en este turno: LLÁMALAS para cerrar tu paso; sin ellas la estafeta no avanza." +
       notaNombres(toolChannel),
   );

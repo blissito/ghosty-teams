@@ -930,7 +930,8 @@ export const postMessage = createServerFn({ method: "POST" })
     const turns = await import("./turns.server");
     for (const r of respondents) {
       const ag = agents.find((a) => a.handle === r.handle);
-      const groupId = await agentGroupId(ag ?? { handle: r.handle }, `${channel.slug}-${r.fleetThread}`);
+      const { fleetSuffixFor } = await import("./apps/factory-session.server");
+      const groupId = await agentGroupId(ag ?? { handle: r.handle }, await fleetSuffixFor(r.handle, channel, r.parent, r.fleetThread));
       if (turns.hasOwnInflight(groupId, me?.sub)) {
         r.steered = true;
         continue;
@@ -1119,7 +1120,8 @@ export const askAgent = createServerFn({ method: "POST" })
       // `loadSession`, porque un agente puede no saber retomar y aun así conservar su sesión.
       // La MISMA clave con la que el turno guardará su sesión más abajo: la conversación es
       // por room, no por hilo (ver el comentario de `fleetThread`).
-      const gidCatchup = await agentGroupId(agent ?? { handle: data.handle }, `${channel.slug}-${data.fleetThread ?? FLEET_THREAD}`);
+      const { fleetSuffixFor } = await import("./apps/factory-session.server");
+      const gidCatchup = await agentGroupId(agent ?? { handle: data.handle }, await fleetSuffixFor(data.handle, channel, data.parentId, data.fleetThread ?? FLEET_THREAD));
       const retiene =
         agent?.backend.kind !== "acp" ||
         (await db.acpRetains(agent.handle, gidCatchup).catch(() => true));
@@ -1197,7 +1199,9 @@ export const askAgent = createServerFn({ method: "POST" })
     // duda, la clave del room es la respuesta correcta — como mucho comparte contexto de
     // más; la otra rama perdía el contexto entero en silencio.
     const fleetThread = data.fleetThread ?? FLEET_THREAD;
-    const groupId = await agentGroupId(agent ?? { handle: data.handle }, `${channel.slug}-${fleetThread}`);
+    // Los roles de la fábrica van por pedido o por hilo (factory-session.server.ts).
+    const { fleetSuffixFor } = await import("./apps/factory-session.server");
+    const groupId = await agentGroupId(agent ?? { handle: data.handle }, await fleetSuffixFor(data.handle, channel, data.parentId, fleetThread));
     // Identidad conversacional durable: el documentId (local) del artefacto ACTUAL de este
     // hilo + su contenido fuente (doc=markdown | sheet=csv). El contenido se re-inyecta al
     // turno → al modificar, el agente re-emite el artefacto COMPLETO (misma vía de streaming

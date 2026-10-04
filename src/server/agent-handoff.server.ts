@@ -116,7 +116,8 @@ export async function handoffFromReply(p: {
     if (budget <= 0) { cortados.push(to); continue; }
     const agent = agents.find((a) => a.handle === to);
     if (!agent) continue;
-    const groupId = await agentGroupId(agent, `${p.channel.slug}-${FLEET_THREAD}`);
+    const { fleetSuffixFor } = await import("./apps/factory-session.server");
+    const groupId = await agentGroupId(agent, await fleetSuffixFor(agent.handle, p.channel, p.parentId, FLEET_THREAD));
     const ok = await enqueueWakeup({
       key: `${prefix}${to}:${Date.now()}`,
       ref: mintWakeRef({

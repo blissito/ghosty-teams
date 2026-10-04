@@ -1652,6 +1652,10 @@ export const en: Record<string, string> = {
   "Quité la URL del uptime": "Removed the URL from uptime",
   "Dejando una nota en el pedido": "Leaving a note on the request",
   "Dejé una nota en el pedido": "Left a note on the request",
+  "Leyendo el pedido": "Reading the request",
+  "Leí el pedido": "Read the request",
+  "Revisando lo abierto en el room": "Checking what's open in the room",
+  "Revisé lo abierto en el room": "Checked what's open in the room",
 
   // Tarjeta de plan de la Software Factory.
   "Ver el plan completo": "See the full plan",

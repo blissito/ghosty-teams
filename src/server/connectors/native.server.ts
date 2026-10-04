@@ -1152,6 +1152,7 @@ export function nativeTools(dest: ToolDest | null): ConnectorTool[] {
       name: "chat_search",
       description:
         "Busca por palabras en el historial de ESTA conversación (todo lo que se dijo aquí, " +
+        "o en todo el room con `room: true` si estás en un hilo y lo que buscas se dijo en otro; " +
         "también antes de que tú llegaras). Úsalo ANTES de decir que algo no existe o que no lo " +
         "recuerdas: tu contexto sólo trae los mensajes recientes. Cada resultado trae su `id`; " +
         "con ese id puedes leer lo que había alrededor usando chat_history({before: id}), y si el " +
@@ -1161,11 +1162,12 @@ export function nativeTools(dest: ToolDest | null): ConnectorTool[] {
         properties: {
           query: { type: "string", description: "Palabras a buscar, tal cual aparecerían escritas" },
           limit: { type: "number", description: "Máximo de resultados (tope 20, default 20)" },
+          room: { type: "boolean", description: "true = buscar en TODO el room (todos sus hilos), no sólo en este hilo" },
         },
         required: ["query"],
       },
       handler: async (_sub, args) => {
-        const scope = scopeDelTurno(dest);
+        const scope = scopeConRoom(dest, args.room);
         if (!scope) return { ok: false, error: "no hay conversación en este turno" };
         const q = String(args.query ?? "").trim();
         if (!q) return { ok: false, error: "falta query" };
@@ -1308,11 +1310,12 @@ export function nativeTools(dest: ToolDest | null): ConnectorTool[] {
             items: { type: "number" },
             description: "Ids de mensaje (los `id` que devolvieron chat_search / chat_history)",
           },
+          room: { type: "boolean", description: "true si los ids salieron de chat_search con room:true" },
         },
         required: ["ids"],
       },
       handler: async (_sub, args) => {
-        const scope = scopeDelTurno(dest);
+        const scope = scopeConRoom(dest, args.room);
         if (!scope) return { ok: false, error: "no hay conversación en este turno" };
         const ids = Array.isArray(args.ids) ? args.ids.map(Number) : [];
         if (!ids.length) return { ok: false, error: "falta ids" };
@@ -1865,6 +1868,13 @@ export function nativeTools(dest: ToolDest | null): ConnectorTool[] {
  * El scope de lectura del turno, sacado del destino FIRMADO. Un turno dentro de un hilo se
  * queda en el hilo: es la conversación donde te invocaron.
  */
+/** `room: true` saca la búsqueda del hilo al room entero (sus hilos incluidos). El room sigue
+ *  siendo el del destino firmado: no abre otra conversación. */
+function scopeConRoom(dest: ToolDest | null, room: unknown) {
+  const scope = scopeDelTurno(dest);
+  return room === true && scope && "channelId" in scope ? { channelId: scope.channelId } : scope;
+}
+
 function scopeDelTurno(
   dest: ToolDest | null
 ): { dmId: number } | { channelId: number; parentId?: number | null } | null {
