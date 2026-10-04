@@ -24,6 +24,7 @@ const EVENT_LABEL: Record<string, string> = {
   close: "cerró",
   merged: "mezclado",
   conflict: "PR con choques: lo pone al día",
+  rework: "pidieron más sobre el PR: vuelve a construir",
   cancel: "canceló",
   stale: "sin avanzar 30 min",
   stopped: "detuvo el turno",

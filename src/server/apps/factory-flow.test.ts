@@ -10,6 +10,8 @@ describe("nextStatus", () => {
     expect(nextStatus("pr_review", "close")).toBe("done");
     expect(nextStatus("pr_review", "conflict")).toBe("building");
     expect(nextStatus("checking", "conflict")).toBeNull();
+    expect(nextStatus("pr_review", "rework")).toBe("building");
+    expect(nextStatus("done", "rework")).toBeNull();
   });
 
   it("pedir cambios regresa a planear, y una v2 vuelve a firma", () => {

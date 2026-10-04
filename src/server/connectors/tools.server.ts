@@ -219,7 +219,11 @@ export async function runTool(
     const ft = (await factoryTools(sub, dest).catch(() => [])).find((t) => t.name === toolName);
     if (!ft) return { ok: false, error: `${toolName} sólo existe con la Software Factory instalada en este espacio` };
     try {
-      return { ok: true, result: await ft.handler(sub, args ?? {}) };
+      const r = await ft.handler(sub, args ?? {});
+      // Un `{ ok: false }` de la tool es un fallo: envuelto en `ok: true` llegaba al chip como
+      // «hecho» (las dos notas fallidas de MailMask, 4-oct).
+      if ((r as { ok?: unknown } | null)?.ok === false) return r as RunResult;
+      return { ok: true, result: r };
     } catch (e) {
       return { ok: false, error: e instanceof Error ? e.message : String(e) };
     }

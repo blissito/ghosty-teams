@@ -15,6 +15,9 @@ const applied: { event: string; patch: Run; data: Run }[] = [];
 const notes: { runId: number; by: string; text: string }[] = [];
 const posted: string[] = [];
 const messages: Record<number, { body: string }> = {};
+const threads: Record<number, { body: string }[]> = {};
+const handoffs: { to: string; cause: string; text: string }[] = [];
+const absorbCalls: { runId: number; keys: string[] }[] = [];
 
 vi.mock("./installed.server", () => ({ isInstalled: async () => true }));
 vi.mock("../hooks/generic-alert.server", () => ({ alertWebhookTools: () => [] }));
@@ -23,6 +26,7 @@ vi.mock("./factory-evals.server", () => ({ evalMeta: async () => null }));
 vi.mock("../../origin.server", () => ({ reqOrigin: async () => "https://x.test" }));
 vi.mock("../../db.server", () => ({
   getMessage: async (id: number) => messages[id] ?? null,
+  listThread: async (id: number) => threads[id] ?? [],
   listRoomRepos: async () => [{ repo: "o/r" }],
   listChannels: async () => [{ id: 3 }, { id: 4 }],
   getChannelById: async (id: number) => ({ id, slug: `room${id}` }),
@@ -38,11 +42,17 @@ vi.mock("./factory-runs.server", () => ({
     return { ...run, ...patch, status: "building" };
   },
   postInThread: async (_r: Run, _h: string, body: string) => (posted.push(body), 1),
-  handoff: async () => true,
+  handoff: async (_r: Run, to: string, _s: string, cause: string, text: string) => (handoffs.push({ to, cause, text }), true),
   takeNotes: async () => "",
   prConflicted: async () => null,
   MERGE_FROM_HINT: "",
   addNote: async (runId: number, by: string, text: string) => void notes.push({ runId, by, text }),
+}));
+
+vi.mock("./sprint.server", () => ({
+  absorbItems: async (runId: number, keys: string[]) => (
+    absorbCalls.push({ runId, keys }), keys.filter((k) => k !== "Z").map((k) => ({ key: k, title: `Ticket ${k}`, bodyMd: `cuerpo ${k}` }))
+  ),
 }));
 
 import { factoryTools, prMentions } from "./factory-tools.server";
@@ -56,7 +66,10 @@ beforeEach(() => {
   applied.length = 0;
   notes.length = 0;
   posted.length = 0;
+  handoffs.length = 0;
+  absorbCalls.length = 0;
   for (const k of Object.keys(messages)) delete messages[Number(k)];
+  for (const k of Object.keys(threads)) delete threads[Number(k)];
 });
 
 describe("factory_check_verdict: una vuelta cuenta sólo si el PR cambió", () => {
@@ -89,6 +102,39 @@ describe("factory_note", () => {
   it("sin pedido se rechaza", async () => {
     messages[51] = { body: "hola, ¿cómo va todo?" };
     const r: any = await (await tool("factory_note", { channelId: 3, parentId: 51, handle: "check" })).handler("beto", { text: "algo" });
+    expect(r.ok).toBe(false);
+    expect(notes).toHaveLength(0);
+  });
+});
+
+describe("factory_note: el PR por número y el PR listo que se reabre (MailMask, 4-oct)", () => {
+  const dest = { channelId: 3, parentId: 60, handle: "plan" };
+  it("encuentra el pedido por un «PR #8» que sólo dijo un agente en el hilo", async () => {
+    byPr = [baseRun({ status: "building" })];
+    messages[60] = { body: "¿qué tenemos pendiente para el cli?" };
+    threads[60] = [{ body: "PR #8 (ticket A) sigue abierto en vuelta 3" }, { body: "no, quiero que expandas el pr existente" }];
+    const r: any = await (await tool("factory_note", dest)).handler("beto", { text: "mete B–H" });
+    expect(r.ok).toBe(true);
+    expect(notes[0]).toMatchObject({ runId: 10 });
+  });
+  it("con `pr` va al pedido dueño del PR, no al pedido con ese número", async () => {
+    byPr = [baseRun({ id: 10, status: "building" })];
+    current = baseRun({ id: 8, status: "done", prUrl: "https://github.com/o/r/pull/3" });
+    const r: any = await (await tool("factory_note", dest)).handler("beto", { pr: "#8", text: "mete B–H" });
+    expect(r).toMatchObject({ ok: true, runId: 10 });
+  });
+  it("un PR listo se reabre, se le encarga a @build en la misma rama y absorbe los tickets", async () => {
+    byPr = [baseRun({ status: "pr_review", loops: 3 })];
+    const r: any = await (await tool("factory_note", dest)).handler("beto", { pr: "https://github.com/o/r/pull/8", text: "mete lo que falta", absorbs: ["B", "C", "Z"] });
+    expect(r).toMatchObject({ ok: true, status: "building", absorbed: ["B", "C"] });
+    expect(applied[0]).toMatchObject({ event: "rework", patch: { merge_asked: null, loops: 0 } });
+    expect(absorbCalls).toEqual([{ runId: 10, keys: ["B", "C", "Z"] }]);
+    expect(handoffs[0].to).toBe("build");
+    expect(handoffs[0].text).toContain("MISMA rama");
+    expect(handoffs[0].text).toContain("## Ticket B: Ticket B");
+  });
+  it("un PR desconocido falla con ok:false", async () => {
+    const r: any = await (await tool("factory_note", dest)).handler("beto", { pr: "99", text: "x" });
     expect(r.ok).toBe(false);
     expect(notes).toHaveLength(0);
   });

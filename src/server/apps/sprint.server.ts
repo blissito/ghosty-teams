@@ -313,6 +313,27 @@ export async function approveSprint(id: number, sub: string, origin: string): Pr
   return (await getSprint(id))!;
 }
 
+/**
+ * La persona pidió meter tickets pendientes del sprint en el PR de otro pedido («expande el PR
+ * con lo que falta», MailMask 4-oct). Quedan atados a ese pedido: siguen su estado y no se
+ * abren como PRs aparte. Devuelve los tickets que sí se absorbieron (con su cuerpo, para @build).
+ */
+export async function absorbItems(runId: number, keys: string[]): Promise<{ key: string; title: string; bodyMd: string }[]> {
+  if (!keys.length) return [];
+  const [own] = await dbq(
+    "SELECT i.sprint_id FROM gt_factory_runs r JOIN gt_factory_sprint_items i ON i.id = r.sprint_item_id WHERE r.id = ?",
+    [runId],
+  ).catch(() => []);
+  if (!own) return [];
+  const got = await dbq(
+    `UPDATE gt_factory_sprint_items SET run_id = ? WHERE sprint_id = ? AND status = 'pending' AND run_id IS NULL
+     AND key IN (${keys.map(() => "?").join(",")}) RETURNING key, title, body_md`,
+    [runId, own.sprint_id, ...keys],
+  ).catch(() => []);
+  if (got.length) await advanceSprint(Number(own.sprint_id)).catch(() => {});
+  return got.map((r) => ({ key: String(r.key), title: String(r.title), bodyMd: String(r.body_md ?? "") }));
+}
+
 /** Relee el estado de cada ticket desde su pedido y arranca el siguiente si toca. */
 export async function advanceSprint(id: number): Promise<void> {
   const sprint = await getSprint(id);

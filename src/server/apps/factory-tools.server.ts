@@ -72,6 +72,10 @@ export async function runsMentionedInThread(dest: ToolDest | null, sub?: string)
     const m = await db.getMessage(id).catch(() => null);
     if (m?.body) bodies.push(m.body);
   }
+  // Y las últimas respuestas del hilo: el «PR #8» suele decirlo un agente, no la raíz ni quien
+  // invocó, y sin leerlas la nota no encontraba su pedido (MailMask, 4-oct).
+  const replies = await db.listThread(root).catch(() => []);
+  for (const m of replies.slice(-10).reverse()) if (m.body) bodies.push(m.body);
   const prs: { repo: string; number: number }[] = [];
   const card = bodies[0] ? prOfMessage(bodies[0]) : null;
   if (card) prs.push({ repo: card.repo, number: card.number });
@@ -91,11 +95,30 @@ export async function runsMentionedInThread(dest: ToolDest | null, sub?: string)
 }
 
 /**
- * El pedido de una nota: el `runId` explícito (de este room o de uno que `sub` vea), el del
- * hilo, o el del PR que el hilo menciona. null si no hay pedido.
+ * Pedido dueño de un PR dado como número («8», «#8») o URL. El número se ata a los repos del
+ * room; sólo pedidos de este room o de uno que `sub` vea. El más reciente si hay varios.
  */
-export async function resolveNoteRun(dest: ToolDest | null, sub: string, runId: unknown) {
+export async function runOfPr(dest: ToolDest | null, sub: string, pr: unknown) {
+  if (pr == null || pr === "" || !dest?.channelId) return null;
+  const db = await import("../../db.server");
   const R = await import("./factory-runs.server");
+  const raw = String(pr).trim();
+  const url = /github\.com\/([\w.-]+\/[\w.-]+)\/pull\/(\d+)/i.exec(raw);
+  const n = url ? Number(url[2]) : Number(raw.replace(/^#/, ""));
+  if (!Number.isFinite(n) || n <= 0) return null;
+  const repos = url ? [url[1]] : (await db.listRoomRepos(dest.channelId).catch(() => [])).map((r) => r.repo);
+  const visible = new Set((await db.listChannels(sub, false).catch(() => [])).map((c) => c.id));
+  const runs = (await Promise.all(repos.map((repo) => R.runsByPr(repo, n)))).flat();
+  return runs.filter((r) => r.channelId === dest.channelId || visible.has(r.channelId)).sort((a, b) => b.id - a.id)[0] ?? null;
+}
+
+/**
+ * El pedido de una nota: el `runId` explícito (de este room o de uno que `sub` vea), el del PR
+ * explícito, el del hilo, o el del PR que el hilo menciona. null si no hay pedido.
+ */
+export async function resolveNoteRun(dest: ToolDest | null, sub: string, runId: unknown, pr?: unknown) {
+  const R = await import("./factory-runs.server");
+  if (pr != null && pr !== "") return runOfPr(dest, sub, pr);
   const id = Number(runId);
   if (Number.isFinite(id) && id > 0) {
     const run = await R.getRun(id);
@@ -841,28 +864,45 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
     {
       name: "factory_note",
       description:
-        "Cualquier rol. Registra una NOTA en un pedido de la fábrica para que llegue a @build en su siguiente encargo: " +
-        "un cambio que pidió una persona («faltan los docs del CLI») o algo que viste revisando su PR desde OTRO hilo. " +
-        "Un comentario en GitHub o en otro hilo NO le llega a @build; esto sí. El pedido sale solo si este hilo es el del " +
-        "pedido o el de su PR; si no, pasa runId.",
+        "Cualquier rol. Registra una NOTA en un pedido de la fábrica para que llegue a @build: " +
+        "un cambio que pidió una persona («faltan los docs del CLI», «mete lo que falta en este PR») o algo que viste revisando su PR desde OTRO hilo. " +
+        "Un comentario en GitHub o en otro hilo NO le llega a @build; esto sí. Si el pedido ya tiene su PR listo (esperando merge), " +
+        "la nota lo REABRE y @build trabaja en la MISMA rama de inmediato. Identifica el pedido con `pr` (número o URL del PR de GitHub) " +
+        "o con `runId` (el #N del PEDIDO en su tarjeta, que NO es el número del PR); si este hilo es el del pedido o el de su PR, sale solo.",
       inputSchema: {
         type: "object",
         properties: {
-          runId: { type: "number", description: "El pedido (si no, el del hilo o el del PR que el hilo menciona)" },
+          runId: { type: "number", description: "Id del PEDIDO (el #N de la tarjeta de la fábrica). NO es el número del PR: para eso usa `pr`." },
+          pr: { type: "string", description: "El PR de GitHub del pedido: número («8») o URL. Úsalo cuando la persona habla del PR." },
           text: { type: "string", description: "La nota, breve y accionable (qué falta y dónde)" },
+          absorbs: {
+            type: "array",
+            items: { type: "string" },
+            description: "Claves de tickets PENDIENTES del mismo sprint («B», «C»…) que la persona pidió meter en este PR en vez de abrirlos aparte",
+          },
         },
         required: ["text"],
       },
       handler: async (sub, a) => {
         const text = String(a.text ?? "").trim().slice(0, 2000);
         if (!text) return { ok: false, error: "la nota está vacía" };
-        const run = await resolveNoteRun(dest, sub, a.runId);
-        if (!run) return { ok: false, error: "no encuentro un pedido de la fábrica para esta nota: este hilo no es de un pedido ni de su PR. Pasa runId." };
+        const run = await resolveNoteRun(dest, sub, a.runId, a.pr);
+        if (!run)
+          return {
+            ok: false,
+            error: a.pr
+              ? `no encuentro un pedido de la fábrica con el PR ${a.pr} en los repos de este room`
+              : "no encuentro un pedido de la fábrica para esta nota: este hilo no es de un pedido ni de su PR. Pasa `pr` (el número del PR) o `runId` (el #N del pedido).",
+          };
         if (run.status === "done" || run.status === "cancelled")
           return { ok: false, error: `el pedido #${run.id} ya terminó (${run.status}): pide uno nuevo con @plan` };
         const R = await import("./factory-runs.server");
         const by = dest?.handle ? `@${dest.handle}` : sub;
         await R.addNote(run.id, by, text);
+        // Tickets del sprint que la persona quiere en ESTE PR: quedan atados al pedido.
+        const keys = Array.isArray(a.absorbs) ? a.absorbs.map((k) => String(k).trim()).filter(Boolean).slice(0, 20) : [];
+        const S = await import("./sprint.server");
+        const absorbed = keys.length ? await S.absorbItems(run.id, keys).catch(() => []) : [];
         // En el hilo del pedido, con liga al hilo de origen si viene de otro.
         const root = threadRoot(dest);
         const elsewhere = !(dest?.channelId === run.channelId && root === run.rootMsgId);
@@ -872,10 +912,38 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
           const ch = await db.getChannelById(dest.channelId).catch(() => null);
           if (ch) from = ` ([hilo](/c/${ch.slug}?thread=${root}))`;
         }
-        await R.postInThread(run, dest?.handle ?? "plan", `📝 Nota de ${by}${elsewhere ? ` desde otro hilo${from}` : ""}: ${text}`);
+        const extra = absorbed.length ? `\nEntran a este PR: ${absorbed.map((t) => `${t.key} «${t.title}»`).join(", ")}.` : "";
+        await R.postInThread(run, dest?.handle ?? "plan", `📝 Nota de ${by}${elsewhere ? ` desde otro hilo${from}` : ""}: ${text}${extra}`);
+        // PR listo esperando merge: nadie más le iba a mandar la nota a @build (sólo se leen al
+        // encargar), así que se reabre y se le encarga ya, en la misma rama (MailMask, 4-oct).
+        if (run.status === "pr_review") {
+          const next = await R.applyEvent(run, "rework", { merge_asked: null, loops: 0 }, { actor: by, data: { absorbs: absorbed.map((t) => t.key) } }).catch(() => null);
+          if (!next) return { ok: true, runId: run.id, absorbed: absorbed.map((t) => t.key), note: "Guardada, pero el pedido cambió de etapa mientras tanto: @build la recibe en su siguiente encargo." };
+          let o = await origin();
+          if (!o) {
+            const [w] = await (await import("../../dbq.server")).dbq(
+              "SELECT origin FROM gt_agent_wakeups WHERE key LIKE ? AND origin IS NOT NULL AND origin != '' ORDER BY rowid DESC LIMIT 1",
+              [`factory:${run.id}:%`],
+            ).catch(() => []);
+            o = String(w?.origin ?? "");
+          }
+          await R.handoff(
+            next,
+            "build",
+            next.approvedBy ?? next.requestedBy,
+            "ampliar el PR",
+            `Pidieron más sobre el PR ${run.prUrl ?? ""}, que ya estaba listo. Trabaja en la MISMA rama (no abras otro PR), corre las pruebas, ` +
+              `EMPUJA y cierra otra vez con factory_build_done (runId ${run.id}); @check lo vuelve a revisar.` +
+              (await R.takeNotes(run.id)) +
+              absorbed.map((t) => `\n\n## Ticket ${t.key}: ${t.title}\n${t.bodyMd}`).join(""),
+            o,
+          );
+          return { ok: true, runId: run.id, status: next.status, absorbed: absorbed.map((t) => t.key), note: `Reabrí el pedido #${run.id}: @build ya está trabajando en la misma rama del PR.` };
+        }
         return {
           ok: true,
           runId: run.id,
+          absorbed: absorbed.map((t) => t.key),
           note: run.status === "building" || run.status === "checking"
             ? "Guardada: @build la recibe en su siguiente encargo (la próxima vuelta)."
             : "Guardada: @build la recibe en su siguiente encargo.",
@@ -884,10 +952,17 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
     },
     {
       name: "factory_status",
-      description: "Estado del pedido de este hilo (o de runId): etapa, versión del plan, vueltas, PR y tarea.",
-      inputSchema: { type: "object", properties: { runId: { type: "number" } } },
-      handler: async (_sub, a) => {
-        const run = await runOf(dest, a.runId);
+      description:
+        "Estado del pedido de este hilo, de runId (el #N del PEDIDO) o de pr (número o URL del PR de GitHub): etapa, versión del plan, vueltas, PR y tarea.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          runId: { type: "number", description: "Id del PEDIDO, no el número del PR" },
+          pr: { type: "string", description: "Número o URL del PR de GitHub" },
+        },
+      },
+      handler: async (sub, a) => {
+        const run = a.pr != null && a.pr !== "" ? await runOfPr(dest, sub, a.pr) : await runOf(dest, a.runId);
         if (!run) return { ok: false, error: "no hay pedido en este hilo" };
         const { stageLabel } = await import("./factory-flow");
         return { ok: true, ...run, stage: stageLabel(run.status) };
