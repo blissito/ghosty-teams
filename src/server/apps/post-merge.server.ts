@@ -6,7 +6,8 @@
 // aquí, en el tick de wakeups:
 //   1. `merge_commit_sha` del PR.
 //   2. Los runs de Actions de ese sha (`event=push`, rama por defecto). Mientras alguno corra,
-//      se espera (tope 30 min). Uno en failure/cancelled → aviso en el hilo con la liga al log.
+//      se espera (tope 30 min). Uno en failure/cancelled → aviso en el hilo con la liga al log y,
+//      si el PR era de un pedido, @build abre el arreglo (`onDeployFailed`).
 //   3. Todo verde → smoke: GET al `homepage` del repo y a las URLs de uptime del room (15 s).
 //      Falla un 5xx, un timeout o un 404 en `/`.
 //   4. Sin workflows en ese sha (repo sin deploy por Actions): sólo la smoke, a los 3 min.
@@ -147,7 +148,9 @@ async function step(row: Row): Promise<void> {
     return finish(row, "timeout", verdict.name);
   }
   if (verdict.kind === "failed") {
-    await postThread(row, `⚠️ El deploy de #${row.pr} falló en «${verdict.name}» · [ver log](${verdict.url})`);
+    const R = await import("./factory-runs.server");
+    const handed = await R.onDeployFailed(row.repo, row.pr, row.channelId, { sha, workflow: verdict.name, url: verdict.url, conclusion: verdict.conclusion }).catch(() => false);
+    await postThread(row, `⚠️ El deploy de #${row.pr} falló en «${verdict.name}» · [ver log](${verdict.url})${handed ? " · se lo pasé a @build" : ""}`);
     return finish(row, "failed", `${verdict.name}: ${verdict.conclusion}`);
   }
 

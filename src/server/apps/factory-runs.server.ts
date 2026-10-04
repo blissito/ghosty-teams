@@ -839,6 +839,51 @@ async function onPrConflict(run: Run, headSha: string | null): Promise<void> {
 }
 
 /**
+ * El PR de un pedido ya se mezcló y el CI de la rama principal truena (lo detecta
+ * `post-merge.server.ts`). Antes sólo quedaba un ⚠️ en el hilo y producción se quedaba en el
+ * PR anterior sin que nadie actuara (palmera-legal #9, 3-oct). Ahora queda en la bitácora del
+ * pedido y @build abre un PR de arreglo desde la principal; lo mezcla una persona, como siempre.
+ * Una vez por sha; a la segunda caída seguida del mismo pedido, que lo vea una persona.
+ * Devuelve true si le pasó el encargo a @build.
+ */
+export async function onDeployFailed(
+  repo: string,
+  prNumber: number,
+  channelId: number,
+  failure: { sha: string | null; workflow: string; url: string; conclusion: string },
+): Promise<boolean> {
+  let handed = false;
+  for (const run of await runsByPr(repo, prNumber)) {
+    if (run.channelId !== channelId) continue;
+    const prevs = await dbq("SELECT data_json FROM gt_factory_events WHERE run_id = ? AND type = 'deploy_failed' ORDER BY id DESC", [run.id]).catch(() => []);
+    if (prevs.some((e) => e?.data_json && JSON.parse(String(e.data_json)).sha === failure.sha)) continue;
+    await logEvent(run.id, "deploy_failed", null, failure);
+    if (prevs.length >= 1) {
+      await postInThread(run, "build", `⚠️ La rama principal sigue sin pasar el CI después de #${prNumber}. Necesita que una persona lo revise o pida a @build que lo intente otra vez. ${failure.url}`);
+      continue;
+    }
+    // El tick no tiene request: el origin sale del último encargo de este pedido.
+    const [w] = await dbq("SELECT origin FROM gt_agent_wakeups WHERE key LIKE ? AND origin IS NOT NULL AND origin != '' ORDER BY rowid DESC LIMIT 1", [`factory:${run.id}:%`]).catch(() => []);
+    const origin = String(w?.origin ?? "");
+    if (!origin) continue;
+    const ok = await handoff(
+      run,
+      "build",
+      run.approvedBy ?? run.requestedBy,
+      "Rama principal rota tras el merge",
+      `El PR ${run.prUrl ?? `#${prNumber}`} ya se mezcló, pero el CI de la rama principal falló en «${failure.workflow}» (${failure.conclusion}): ${failure.url}
+` +
+        `Lee el log con github_workflow_run_logs (el id del run es el número final de esa url). Crea una rama nueva desde la principal, ` +
+        `haz el arreglo mínimo para que el CI pase, corre lint/typecheck/build, abre un PR con github_create_pr y deja la liga en el hilo. ` +
+        `Este pedido ya está cerrado: NO uses factory_build_done ni lo mezcles tú.`,
+      origin,
+    );
+    handed ||= ok;
+  }
+  return handed;
+}
+
+/**
  * El PR de un pedido se mezcló o se cerró. Un solo lugar para el sondeo de arriba, para
  * `mergeRun` y para el webhook de la GitHub App (`api.internal.github-event`), que llega en
  * segundos. Idempotente: `applyEvent` sólo avanza una vez, así que webhook + sondeo (o un
