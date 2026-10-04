@@ -11,7 +11,7 @@ let gsDown: boolean;
 const k = (s: string, p: string) => `${s}|${p}`;
 
 let ns = "esp-a";
-vi.mock("../tenant.server", () => ({ currentNamespace: async () => ns }));
+vi.mock("../tenant.server", () => ({ currentNamespace: async () => ns, isPersonalNs: (n: string) => n.startsWith("personal:") }));
 // Cada espacio tiene sus filas locales (marcas): se simula con una tabla por namespace.
 const porEspacio = new Map<string, Row[]>();
 

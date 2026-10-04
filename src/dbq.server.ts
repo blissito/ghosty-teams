@@ -15,7 +15,14 @@
 //
 // API pipeline de sqld: POST /v2/pipeline con header x-namespace; body
 // { requests: [{type:"execute", stmt:{sql,args}}, {type:"close"}] }.
-import { currentNamespace } from "./server/tenant.server";
+import { currentNamespace, isPersonalNs } from "./server/tenant.server";
+
+/** Namespace de la query; el modo personal no tiene base: una query ahí es un bug. */
+async function queryNamespace(): Promise<string> {
+  const ns = await currentNamespace();
+  if (isPersonalNs(ns)) throw new Error("sqld: el modo personal no tiene base de datos");
+  return ns;
+}
 
 import { createPrivateKey, sign as cryptoSign } from "node:crypto";
 
@@ -104,7 +111,7 @@ export async function dbqRaw(
   args: unknown[] = []
 ): Promise<{ cols: string[]; rows: (string | null)[][] }> {
   const t0 = performance.now();
-  const namespace = await currentNamespace();
+  const namespace = await queryNamespace();
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     "x-namespace": namespace,
@@ -151,7 +158,7 @@ export async function dbqMany(
 ): Promise<Row[][]> {
   if (!stmts.length) return [];
   const t0 = performance.now();
-  const namespace = await currentNamespace();
+  const namespace = await queryNamespace();
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     "x-namespace": namespace,
@@ -191,7 +198,7 @@ export async function dbqManySettled(
   stmts: { sql: string; args?: unknown[] }[]
 ): Promise<{ ok: boolean; rows: Row[]; error?: string }[]> {
   if (!stmts.length) return [];
-  const namespace = await currentNamespace();
+  const namespace = await queryNamespace();
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     "x-namespace": namespace,

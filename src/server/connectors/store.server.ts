@@ -18,6 +18,11 @@ const cache = new Map<string, { at: number; row: GsRow | null }>();
 // La caché va POR ESPACIO: un mismo proceso atiende todos, y cada espacio puede tener fijada otra
 // cuenta del mismo proveedor (cliente A aquí, cliente B allá). Sin el namespace en la llave, el
 // espacio B recibía 30 s el token del cliente A (segunda auditoría, 3-oct).
+/** ¿Modo personal (sin espacio de Teams)? Ahí no hay marca, copia local ni compartidas. */
+async function personal(): Promise<boolean> {
+  const { isPersonalNs } = await import("../tenant.server");
+  return isPersonalNs(await nsOf());
+}
 async function nsOf(): Promise<string> {
   const { currentNamespace } = await import("../tenant.server");
   return currentNamespace().catch(() => "");
@@ -282,6 +287,7 @@ export async function listConnectorProviders(sub: string): Promise<Set<string>> 
   const out = new Set<string>();
   // Sólo los que ESTE espacio puede usar: con cuenta fijada (o lápida), que ésa exista.
   for (const p of r?.ok ? r.providers ?? [] : []) if ((await getConnectorRow(sub, p).catch(() => null))?.access_token) out.add(p);
+  if (await personal()) return out;
   const rows = await dbq(
     "SELECT provider FROM gc_user_connectors WHERE user_sub=? AND access_token IS NOT NULL",
     [sub]
@@ -338,6 +344,7 @@ export async function resolveConnectorOwner(
   // la fila elegida sería arbitraria y podría cambiar entre llamadas — el panel nombraría
   // a una y el agente usaría la de la otra. Alfabético es arbitrario pero ESTABLE.
   if (await hasConnection(sub, provider)) return { ownerSub: sub, shared: false };
+  if (await personal()) return null;
   const rows = await dbq(
     `SELECT c.user_sub FROM gc_user_connectors c
        LEFT JOIN gc_users u ON u.sub = c.user_sub
@@ -378,6 +385,7 @@ export async function setConnectorShared(
 export async function listSharedConnectors(): Promise<Map<string, string>> {
   // Mismo desempate que `resolveConnectorOwner`, o el panel nombraría a una persona y el
   // agente usaría la conexión de otra. Y sin expulsados, y sólo si el dueño sigue conectado.
+  if (await personal()) return new Map();
   const rows = await dbq(
     `SELECT c.user_sub, c.provider FROM gc_user_connectors c
        LEFT JOIN gc_users u ON u.sub = c.user_sub

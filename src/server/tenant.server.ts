@@ -126,6 +126,14 @@ export async function currentSlug(): Promise<string | null> {
   return slugFromHost(await currentHost());
 }
 
+/**
+ * Namespace del MODO PERSONAL: quien usa sus conectores (GitHub, Calendly, Deník, Sentry, Odoo)
+ * desde gs sin tener un espacio de Teams. No existe en sqld: sólo nombra a la persona para el
+ * puente con gs (`personal:<sub>`) y para las cachés. Ninguna query puede tocarlo (`dbqRaw`).
+ */
+export const PERSONAL_NS_PREFIX = "personal:";
+export const isPersonalNs = (ns: string | null | undefined): boolean => !!ns && ns.startsWith(PERSONAL_NS_PREFIX);
+
 /** Invalida la cache de un slug (p.ej. tras re-provisionar). */
 export function invalidateTenant(slug: string): void {
   cache.delete(slug);

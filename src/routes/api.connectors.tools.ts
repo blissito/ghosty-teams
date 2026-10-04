@@ -37,6 +37,26 @@ export const Route = createFileRoute("/api/connectors/tools")({
         // pasar —ventana de 15 min para los turnos en vuelo de aquel deploy— y eso convertía
         // el candado en opcional: cualquier emisor que omitiera el ns lo esquivaba. La
         // ventana ya pasó; `mintToolToken` lo exige en el tipo y sólo hay un emisor.
+        // Modo PERSONAL (gs sin espacio de Teams): el ns lleva el propio sub y se llega por el
+        // host sin tenant. Sólo los conectores de la persona (`personal-tools.server.ts`).
+        const { isPersonalClaim, listPersonalTools, runPersonalTool } = await import("../server/connectors/personal-tools.server");
+        if (isPersonalClaim(claims.sub, claims.ns)) {
+          const { getRequestHost } = await import("@tanstack/react-start/server");
+          const { slugFromHost } = await import("../server/tenant.server");
+          if (slugFromHost(getRequestHost() ?? "")) return json({ error: "el modo personal no va por un espacio" }, 403);
+          let b: { action?: string; name?: string; args?: Record<string, unknown> };
+          try {
+            b = await request.json();
+          } catch {
+            return json({ error: "body inválido" }, 400);
+          }
+          if (b.action === "list") return json({ tools: await listPersonalTools(claims.sub) });
+          if (b.action === "run") {
+            if (!b.name) return json({ error: "falta name" }, 400);
+            return json(await runPersonalTool(claims.sub, b.name, b.args ?? {}));
+          }
+          return json({ error: "action debe ser 'list' o 'run'" }, 400);
+        }
         const { currentNamespace } = await import("../server/tenant.server");
         const aqui = await currentNamespace().catch(() => null);
         if (!claims.ns || !aqui || aqui !== claims.ns) {
