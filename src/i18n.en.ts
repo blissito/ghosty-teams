@@ -1202,6 +1202,7 @@ export const en: Record<string, string> = {
   "terminó": "finished",
   "tú": "you",
   "ya activo como": "already active as",
+  "en pausa como": "paused as",
   "«{title}» sale del espacio y deja de compartirse. Puedes recuperarlo hasta el {fecha}; después se elimina.":
     "\"{title}\" leaves the workspace and stops being shared. You can restore it until {fecha}; after that it's deleted.",
   "¿Archivar este documento?": "Archive this document?",

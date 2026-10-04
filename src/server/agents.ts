@@ -239,6 +239,9 @@ export const listStudioAgentsFn = createServerFn({ method: "GET" }).handler(asyn
         // tiene su propia caja y no comparte la del nativo, y eso explica su capacidad.
         protocol: p.protocol ?? "sse",
         activatedAs: local ? local.handle : null,
+        // En pausa (`enabled = 0`, desde la ficha de Studio o desde aquí): conserva su @handle
+        // y no contesta. Se enseña así y no como libre: activarlo otra vez chocaría con su fila.
+        paused: local ? !local.enabled : false,
       };
     }),
   };

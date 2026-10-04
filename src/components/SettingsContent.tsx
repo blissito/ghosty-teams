@@ -2027,6 +2027,7 @@ function AddAgentForm({
       model: string | null;
       protocol?: string;
       activatedAs: string | null;
+      paused?: boolean;
     }[];
   } | null>(null);
   const [picked, setPicked] = useState<string>("");
@@ -2244,7 +2245,7 @@ function AddAgentForm({
                           <p className="truncate text-xs text-muted">
                             {taken ? (
                               <>
-                                {t("ya activo como")} <span className="font-medium">@{a.activatedAs}</span>
+                                {a.paused ? t("en pausa como") : t("ya activo como")} <span className="font-medium">@{a.activatedAs}</span>
                               </>
                             ) : (
                               <>
