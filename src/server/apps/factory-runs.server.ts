@@ -111,8 +111,63 @@ export async function applyEvent(
     const pr = parsePrUrl(updated.prUrl);
     if (pr) void import("./preview.server").then((P) => P.gsPreview("down", { repo: pr.repo, pr: pr.number })).catch(() => {});
   }
+  void syncRunTask(updated, run.status).catch(() => {});
   void refreshRoom(updated.channelId);
   return updated;
+}
+
+// ── La tarjeta de Tasks sigue al pedido ──────────────────────────────────────
+// `task_ref` existía y nadie lo leía: la única vía a Done era el botón «Merge» de la tarjeta
+// de PR (`cierraTareaDelPr`), así que un PR mezclado en GitHub o un pedido en construcción
+// dejaban el tablero mintiendo (palmera-legal, 3-oct: SEO en To Do con su PR en revisión).
+// Columnas por NOMBRE (cada proyecto nombra las suyas): la primera que exista gana.
+const TASK_COLUMNS: Partial<Record<RunStatus, string[]>> = {
+  building: ["In Progress", "Doing", "En curso", "En progreso"],
+  pr_review: ["QA/Review", "Review", "In Review", "En revisión", "Revisión"],
+  done: ["Done", "Hecho", "Terminado"],
+};
+
+/** La tarea del pedido: `task_ref` (id numérico) o, si no hay, la que tenga ligado su PR. */
+async function runTaskId(run: Run): Promise<number | null> {
+  const ref = Number(String(run.taskRef ?? "").replace(/^#/, ""));
+  if (Number.isInteger(ref) && ref > 0) return ref;
+  if (!run.prUrl) return null;
+  const rows = await dbq("SELECT task_id FROM task_links WHERE LOWER(url) = LOWER(?) LIMIT 1", [run.prUrl]).catch(() => []);
+  const id = Number(rows[0]?.task_id);
+  return Number.isInteger(id) && id > 0 ? id : null;
+}
+
+/**
+ * Mueve la tarjeta del pedido a la columna de su etapa (y liga el PR al llegar a revisión).
+ * Va por el puente de Tasks, como `cierraTareaDelPr`: publica en el bus, deja bitácora y
+ * comprueba permisos. Best-effort: un tablero sin esa columna o sin Tasks no pasa nada.
+ */
+export async function syncRunTask(run: Run, prevStatus: string): Promise<void> {
+  if (run.status === prevStatus) return;
+  const wanted = TASK_COLUMNS[run.status];
+  if (!wanted) return;
+  const taskId = await runTaskId(run);
+  if (!taskId) return;
+  const [task] = await dbq("SELECT project_id FROM task_tasks WHERE id = ?", [taskId]).catch(() => []);
+  const projectId = Number(task?.project_id);
+  if (!Number.isInteger(projectId)) return;
+  const sub = run.approvedBy ?? run.requestedBy;
+  if (run.status === "pr_review" && run.prUrl) {
+    const ya = await dbq("SELECT 1 FROM task_links WHERE task_id = ? AND LOWER(url) = LOWER(?)", [taskId, run.prUrl]).catch(() => []);
+    const pr = parsePrUrl(run.prUrl);
+    if (!ya.length)
+      await dbq("INSERT INTO task_links (task_id, kind, url, ref, title, state, created_by) VALUES (?, 'pr', ?, ?, ?, 'open', ?)", [
+        taskId, run.prUrl, pr ? `#${pr.number}` : null, run.title ?? null, sub,
+      ]).catch(() => {});
+  }
+  const cols = (await dbq("SELECT name FROM task_columns WHERE project_id = ?", [projectId]).catch(() => [])).map((c) => String(c.name));
+  const column = wanted.map((w) => cols.find((c) => c.toLowerCase() === w.toLowerCase())).find(Boolean);
+  if (!column) return;
+  const { currentSlug } = await import("../tenant.server");
+  const slug = await currentSlug();
+  if (!slug || !sub) return;
+  const { callTasks } = await import("../tasks-bridge.server");
+  await callTasks(slug, sub, projectId, "task_move", { id: taskId, column });
 }
 
 // ── Bitácora y avisos ────────────────────────────────────────────────────────

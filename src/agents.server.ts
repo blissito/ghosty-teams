@@ -1541,7 +1541,9 @@ export type SubEvent = {
   ms?: number;
   preview?: string;
 };
-export type ToolEvent = { name?: string; id?: string; phase?: "start" | "end"; ok?: boolean; detail?: string; todos?: TodoItem[]; sub?: SubEvent };
+// `progress` = latido de gs mientras una tool sigue abierta (`elapsedMs`): una tool larga
+// (Bash con build/tests) no emite nada por minutos y la burbuja parecía colgada (3-oct).
+export type ToolEvent = { name?: string; id?: string; phase?: "start" | "end" | "progress"; ok?: boolean; detail?: string; todos?: TodoItem[]; sub?: SubEvent; elapsedMs?: number };
 
 /**
  * El turno NO terminó: lo cortó el runtime (se acabaron los pasos o el presupuesto, o la
@@ -2555,7 +2557,7 @@ export async function callAgentBackendStream(
           }
           const line = frame.split("\n").find((l) => l.startsWith("data:"));
           if (!line) continue;
-          let ev: { type?: string; value?: string; model?: string; message?: string; name?: string; id?: string; phase?: "start" | "end"; ok?: boolean; detail?: string; todos?: TodoItem[]; sub?: SubEvent } & Partial<TruncatedEvent>;
+          let ev: { type?: string; value?: string; model?: string; message?: string; name?: string; id?: string; phase?: "start" | "end"; ok?: boolean; detail?: string; todos?: TodoItem[]; sub?: SubEvent; elapsedMs?: number } & Partial<TruncatedEvent>;
           try {
             ev = JSON.parse(line.slice(5).trim());
           } catch {
@@ -2571,6 +2573,9 @@ export async function callAgentBackendStream(
             if (ev.phase !== "end" && !isCleanTool(ev.name)) huboTool = true;
             // start trae name+id+detail; end trae id+ok. Correlación por id en runAgentTurn.
             await onTool?.({ name: ev.name, id: ev.id, phase: ev.phase ?? "start", ok: ev.ok, detail: ev.detail, todos: Array.isArray(ev.todos) ? ev.todos : undefined, sub: ev.sub && typeof ev.sub === "object" ? ev.sub : undefined });
+          } else if (ev.type === "progress") {
+            // Latido de una tool abierta (gs, cada 20 s). No es actividad nueva: sólo el reloj.
+            if (ev.id && typeof ev.elapsedMs === "number") await onTool?.({ id: ev.id, phase: "progress", elapsedMs: ev.elapsedMs });
           } else if (ev.type === "truncated") {
             // ⚠️ NO lanza. Sólo `error` lanza, y así debe seguir: un corte que tire el turno
             // perdería el trabajo parcial, que es justo lo que este aviso viene a conservar.
@@ -3028,7 +3033,7 @@ async function runAgentTurnInner(opts: {
   // equivoca y se corrige es lo normal, y pintarlo como fallo es mentir. Pasó de verdad
   // (2026-07-29): "Ajustando el recordatorio ×2" salió en rojo con los dos recordatorios
   // correctamente actualizados en la base. Una ✗ que miente entrena a ignorar las de verdad.
-  type ToolEntry = { ing: string; done: string; started: Set<string>; ended: Set<string>; fallos: number; exitos: number; detail?: string };
+  type ToolEntry = { ing: string; done: string; started: Set<string>; ended: Set<string>; fallos: number; exitos: number; detail?: string; elapsedMs?: number };
   const tools: ToolEntry[] = [];
   const idToEntry = new Map<string, ToolEntry>(); // id de tool_use → su entrada (para el 'end')
   // Subagentes con progreso completo (gs manda `sub`): lista APARTE de las tools, como en
@@ -3094,7 +3099,12 @@ async function runAgentTurnInner(opts: {
             // informativo que hay. Con ×n el detalle es el de la llamada MÁS RECIENTE: no
             // resume las diez, pero dice qué está pasando AHORA, que es lo que se mira.
             ...(many ? { n: tl.started.size } : {}),
-            ...(tl.detail ? { detail: tl.detail } : {}),
+            ...(() => {
+              // Una tool que lleva ≥ 1 min sigue viva: el reloj lo dice (latido de gs).
+              const reloj = st === "running" && (tl.elapsedMs ?? 0) >= 60_000 ? `⏱ ${Math.floor(tl.elapsedMs! / 60_000)} min` : "";
+              const d = [tl.detail, reloj].filter(Boolean).join(" · ");
+              return d ? { detail: d } : {};
+            })(),
           };
         })
       );
@@ -3196,6 +3206,13 @@ async function runAgentTurnInner(opts: {
     }
   };
   const onTool = async (ev: ToolEvent) => {
+    if (ev.phase === "progress") {
+      const entry = ev.id ? idToEntry.get(ev.id) : undefined;
+      if (!entry || (ev.id && entry.ended.has(ev.id))) return;
+      entry.elapsedMs = ev.elapsedMs;
+      if (opts.emitBody) await paint();
+      return;
+    }
     anyActivity = true;
     // Última acción de un subagente hijo (gs, `detail` = «tool|detalle»): no es una tool del
     // padre, sólo actualiza el detalle de SU fila — «Busqué en la web · nytimes.com» mientras
