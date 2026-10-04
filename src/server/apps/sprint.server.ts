@@ -107,7 +107,20 @@ export function itemStatusOf(runStatus: string | null, current: ItemStatus): Ite
   return "active";
 }
 
-type PlanItem = { key: string; included: boolean; status: ItemStatus; dependsOn: string[] };
+type PlanItem = { key: string; included: boolean; status: ItemStatus; dependsOn: string[]; bodyMd?: string };
+
+/** Los «Archivos principales» que @plan anotó en el ticket (van en `body_md`). */
+export function ticketFiles(bodyMd: string | undefined): string[] {
+  const m = /## Archivos principales\n([\s\S]*?)(?:\n## |$)/.exec(bodyMd ?? "");
+  if (!m) return [];
+  return [...m[1].matchAll(/^- `([^`]+)`/gm)].map((x) => x[1].trim().replace(/^\.\//, "")).filter(Boolean);
+}
+
+/** ¿Tocan lo mismo? Mismo archivo, o uno es carpeta (`src/app/`) del otro. */
+function overlaps(a: string[], b: string[]): boolean {
+  const hit = (x: string, y: string) => x === y || (x.endsWith("/") && y.startsWith(x)) || (y.endsWith("/") && x.startsWith(y));
+  return a.some((x) => b.some((y) => hit(x, y)));
+}
 
 /**
  * El siguiente ticket que arranca, o null. Reglas: nada del sprint construyéndose
@@ -119,7 +132,18 @@ export function nextReady(items: PlanItem[]): PlanItem | null {
   const live = items.filter((i) => i.included);
   if (live.some((i) => i.status === "active" || i.status === "failed")) return null;
   const doneKeys = new Set(items.filter((i) => i.status === "merged" || i.status === "skipped" || !i.included).map((i) => i.key));
-  return live.find((i) => i.status === "pending" && i.dependsOn.every((d) => doneKeys.has(d))) ?? null;
+  // Un ticket que toca los MISMOS archivos que otro con PR abierto espera a que ése se mezcle:
+  // construirlo ya garantiza choques al mezclar (palmera-legal, 3-oct: i18n y lint chocaron
+  // en el layout y package.json). Toma el siguiente que no se cruce; si ninguno, espera.
+  const inPr = live.filter((i) => i.status === "pr").map((i) => ticketFiles(i.bodyMd));
+  return (
+    live.find(
+      (i) =>
+        i.status === "pending" &&
+        i.dependsOn.every((d) => doneKeys.has(d)) &&
+        !inPr.some((files) => overlaps(ticketFiles(i.bodyMd), files)),
+    ) ?? null
+  );
 }
 
 // ── Persistencia ─────────────────────────────────────────────────────────────

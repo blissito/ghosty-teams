@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { findCycle, itemStatusOf, nextReady, validateSprintItems } from "./sprint.server";
+import { findCycle, itemStatusOf, nextReady, ticketFiles, validateSprintItems } from "./sprint.server";
 
 const t = (key: string, depends_on: string[] = [], size = "S") => ({ key, title: `Ticket ${key} del CLI`, size, depends_on, criteria: "- pasa `npm test` y el lint" });
 
@@ -40,6 +40,19 @@ describe("sprint: qué arranca y cuándo", () => {
     // A en PR (esperando a una persona): C no depende de A, así que arranca.
     expect(nextReady([item("A", "pr"), item("B", "pending", ["A"]), item("C", "pending")])?.key).toBe("C");
     expect(nextReady([item("A", "merged"), item("B", "pending", ["A"]), item("C", "merged")])?.key).toBe("B");
+  });
+
+  it("un ticket que toca lo mismo que un PR abierto espera; toma el que no se cruza", () => {
+    const md = (...f: string[]) => `# t\n\n## Criterios de aceptación\nx\n\n## Archivos principales\n${f.map((x) => `- \`${x}\``).join("\n")}\n`;
+    const withFiles = (key: string, status: any, files: string[]) => ({ ...item(key, status), bodyMd: md(...files) });
+    expect(ticketFiles(md("package.json", "./src/app/"))).toEqual(["package.json", "src/app/"]);
+    // D (pr) toca package.json; B también → espera; C no se cruza → arranca.
+    const its = [withFiles("D", "pr", ["package.json", ".github/workflows/ci.yml"]), withFiles("B", "pending", ["package.json"]), withFiles("C", "pending", ["src/app/sitemap.ts"])];
+    expect(nextReady(its)?.key).toBe("C");
+    // Carpeta contra archivo dentro de ella también cuenta.
+    expect(nextReady([withFiles("A", "pr", ["src/app/"]), withFiles("B", "pending", ["src/app/[locale]/layout.tsx"])])).toBeNull();
+    // Sin archivos anotados no se bloquea (como antes).
+    expect(nextReady([withFiles("A", "pr", ["package.json"]), item("B", "pending")])?.key).toBe("B");
   });
 
   it("un ticket fallido detiene el sprint hasta decidir; uno quitado cuenta como resuelto", () => {

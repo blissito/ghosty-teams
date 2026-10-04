@@ -15,6 +15,8 @@ export type FleetPool = {
   workerTemplate?: string;
   engine?: string;
   model?: string;
+  /** Corre con la llave de otro (`sponsorUserId` en Studio): no se ofrece como rol. */
+  sponsored?: boolean;
   /**
    * Cómo se le habla a ese agente. Ausente = `sse`, el camino nativo de siempre
    * (`message-stream` contra Studio).

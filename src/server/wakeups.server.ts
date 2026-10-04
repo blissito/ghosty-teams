@@ -369,7 +369,10 @@ async function fire(ns: string, w: Wakeup, ref: WakeRef): Promise<void> {
     }
   }
   // Un `OK` es "nada que entregar": no se deja burbuja. Igual que en gs.
-  if (!finalBody || finalBody === "OK") {
+  // «(sin respuesta)» es el relleno de `runAgentTurn` para un turno que no dijo nada: en un
+  // despertador no se deja como burbuja (palmera-legal, 3-oct: un @check de 2 s quedó así en el
+  // hilo). `afterFactoryTurn` ya recibió la respuesta tal cual y empuja al rol igual.
+  if (!finalBody || finalBody === "OK" || finalBody === "(sin respuesta)") {
     if (shellId != null) await db.deleteMessage(shellId).catch(() => {});
     return;
   }

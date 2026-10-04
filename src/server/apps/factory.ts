@@ -74,7 +74,10 @@ export async function studioAgents() {
   const { listNativeFleetAgents } = await import("../fleet-native.server");
   const pools = await listNativeFleetAgents(base, "").catch(() => []);
   return pools
-    .filter((p) => (p.protocol ?? "sse") === "sse" && (FACTORY_ENGINES as readonly string[]).includes(p.engine ?? ""))
+    // Sin los patrocinados (corren con la llave de otro, p.ej. la de testers): un rol de la
+    // fábrica quema tokens a lo grande y la preselección los ponía sin que nadie lo notara
+    // (@plan de abogados, 3-oct).
+    .filter((p) => (p.protocol ?? "sse") === "sse" && !p.sponsored && (FACTORY_ENGINES as readonly string[]).includes(p.engine ?? ""))
     .map((p) => ({ id: p.id, name: p.name || p.assistantName || p.id, engine: p.engine ?? "", model: p.model ?? "" }));
 }
 
