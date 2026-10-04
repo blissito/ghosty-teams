@@ -1718,7 +1718,7 @@ const ALL_TOOLS: ConnectorTool[] = [
   {
     name: "github_comment",
     description:
-      "Comenta en un issue o pull request (en GitHub es el mismo hilo). Aparece con el nombre del usuario: confírmalo con él antes.",
+      "Comenta en un issue o pull request (en GitHub es el mismo hilo). Sale como el bot de Ghosty si la App está instalada en el repo (si no, con el nombre del usuario): confírmalo con él antes, salvo que te lo hayan pedido en el PR.",
     inputSchema: {
       type: "object",
       properties: { ...repoProp, number: { type: "number" }, body: str("El comentario, en Markdown.") },
@@ -1727,10 +1727,13 @@ const ALL_TOOLS: ConnectorTool[] = [
     handler: async (sub, a) => {
       const p = repoPath(a.repo);
       if (!p) return BAD_REPO;
-      const r = await api(sub, `/repos/${p}/issues/${Number(a.number)}/comments`, {
+      // Como el bot (como Copilot/CodeRabbit): con la cuenta de la persona, Ghosty le contestaba a
+      // su propio @ghosty con su cara (MailMask, 4-oct). Sin App, con la cuenta y constancia.
+      const w = await writeToken(sub, p);
+      if ("error" in w) return w;
+      const r = await apiWith(w.token, `/repos/${p}/issues/${Number(a.number)}/comments`, {
         method: "POST",
-        // Sale con la cuenta de la persona, así que lleva constancia de quién lo redactó.
-        body: JSON.stringify({ body: String(a.body) + agentTrailer() }),
+        body: JSON.stringify({ body: String(a.body) + (w.bot ? "" : agentTrailer()) }),
       });
       return r?.error ? r : { ok: true, url: r?.html_url };
     },
