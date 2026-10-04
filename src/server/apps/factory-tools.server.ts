@@ -310,6 +310,9 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
         }
         const url = String(a.pr_url ?? "");
         if (!R.parsePrUrl(url)) return { ok: false, error: "pr_url tiene que ser la URL de un PR de GitHub" };
+        // Sin resultado de pruebas @check revisa a ciegas y la persona no sabe qué corrió (MailMask #10, 4-oct).
+        if (String(a.tests ?? "").trim().length < 10)
+          return { ok: false, error: "falta el resultado de las pruebas: córrelas (tests, lint, typecheck) y pon en tests qué corrió y cuántas pasaron" };
         // Pedido escalado y una persona despertó a @build en el hilo («reintenta»): eso ES la
         // decisión de otra vuelta. Sin esto @build hacía el trabajo y no podía cerrar su paso.
         if (run.status === "escalated") run = await R.applyEvent(run, "approve");
