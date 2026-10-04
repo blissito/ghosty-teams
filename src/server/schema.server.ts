@@ -923,6 +923,8 @@ async function migrate(): Promise<void> {
     status TEXT NOT NULL DEFAULT 'pending'
   )`);
   await exec("CREATE INDEX IF NOT EXISTS gt_factory_sprint_items_sprint ON gt_factory_sprint_items(sprint_id, idx)");
+  // Sprint activo que éste reemplaza al aprobarse (la persona re-partió el trabajo, MailMask 4-oct).
+  await addColumn("gt_factory_sprints", "replaces", "INTEGER");
   await addColumn("gt_factory_runs", "sprint_item_id", "INTEGER");
   // Ya se avisó en el hilo que no se pudo crear su tarea en Tasks (una vez).
   await addColumn("gt_factory_runs", "task_warned", "INTEGER");

@@ -623,11 +623,14 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
         "con criterios de aceptación VERIFICABLES (pruebas o CI) y dependencias sólo si son reales (`depends_on` con las keys). " +
         "La plataforma publica la tarjeta en borrador; una persona la edita y la aprueba con un clic, y entonces cada ticket se " +
         "construye en orden sin volver a pedir firma. Cada ticket TERMINA EN UN PR: una decisión que le toca a una persona (diseño, dominio, " +
-        "hosting) no es ticket; pregúntala en el hilo antes o después del sprint. Para ajustar un borrador (te piden cambios), manda `sprint_id`. No construyas.",
+        "hosting) no es ticket; pregúntala en el hilo antes o después del sprint. Para ajustar un borrador (te piden cambios), manda `sprint_id`. " +
+        "Si la persona RE-PARTE un sprint ya aprobado, manda `replaces` con su id (al aprobarse el nuevo, el viejo se cancela), y si un ticket sigue " +
+        "en un PR que ya existe, pon `continues_pr` en ese ticket (no se abre otro PR: el pedido de ese PR recibe el alcance nuevo). No construyas.",
       inputSchema: {
         type: "object",
         properties: {
           sprint_id: { type: "number", description: "Sólo para rehacer un sprint en borrador" },
+          replaces: { type: "number", description: "Id del sprint ACTIVO que éste reemplaza (la persona lo re-partió)" },
           repo: { type: "string", description: 'Repo "dueño/repo" (obligatorio si el room tiene varios)' },
           goal: { type: "string", description: "El objetivo, en una o dos frases" },
           title: { type: "string", description: "Título corto de la épica" },
@@ -645,6 +648,7 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
                 brief: { type: "string", description: "Qué y cómo, en markdown breve" },
                 criteria: { type: "string", description: "Criterios de aceptación verificables (lista markdown)" },
                 files: { type: "array", items: { type: "string" }, description: "Archivos principales que toca" },
+                continues_pr: { type: "string", description: "Número o URL del PR que este ticket CONTINÚA (misma rama, sin PR nuevo)" },
               },
               required: ["key", "title", "size", "criteria"],
             },
@@ -668,6 +672,22 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
         if (asked && repos.length && !repos.includes(asked)) return { ok: false, error: `«${asked}» no está en este room (${repos.join(", ")})` };
         if (!asked && repos.length > 1) return { ok: false, error: `Este room tiene varios repos: di en \`repo\` de cuál es el sprint (${repos.join(", ")}).` };
         const repo = asked || repos[0] || null;
+        // Tickets que continúan un PR existente: se atan al pedido dueño de ese PR.
+        for (const raw of a.items as Record<string, unknown>[]) {
+          if (raw?.continues_pr == null || raw.continues_pr === "") continue;
+          const run = await runOfPr(dest, sub, raw.continues_pr);
+          if (!run || run.status === "done" || run.status === "cancelled")
+            return { ok: false, error: `el ticket ${raw.key}: no hay un pedido abierto con el PR ${raw.continues_pr} en este room` };
+          const it = items.find((i) => i.key === String(raw.key ?? "").trim());
+          if (it) it.runId = run.id;
+        }
+        let replaces: number | null = null;
+        if (a.replaces != null && a.replaces !== "") {
+          const old = await S.getSprint(Number(a.replaces));
+          if (!old || old.channelId !== dest.channelId || old.status !== "active")
+            return { ok: false, error: `el sprint ${a.replaces} no es un sprint activo de este room` };
+          replaces = old.id;
+        }
         // Repo no listo para agentes → el primer ticket es prepararlo (como empieza Factory).
         const withPrep = await S.withPrepFirst(sub, repo, items);
         try {
@@ -692,6 +712,7 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
             items: withPrep,
             createdBy: sub,
             parentId: threadRoot(dest),
+            replaces,
           });
           return {
             ok: true,
@@ -917,27 +938,9 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
         // PR listo esperando merge: nadie más le iba a mandar la nota a @build (sólo se leen al
         // encargar), así que se reabre y se le encarga ya, en la misma rama (MailMask, 4-oct).
         if (run.status === "pr_review") {
-          const next = await R.applyEvent(run, "rework", { merge_asked: null, loops: 0 }, { actor: by, data: { absorbs: absorbed.map((t) => t.key) } }).catch(() => null);
+          const extra = absorbed.map((t) => `\n\n## Ticket ${t.key}: ${t.title}\n${t.bodyMd}`).join("");
+          const next = await R.reopenWithNotes(run, by, extra, await origin(), { absorbs: absorbed.map((t) => t.key) });
           if (!next) return { ok: true, runId: run.id, absorbed: absorbed.map((t) => t.key), note: "Guardada, pero el pedido cambió de etapa mientras tanto: @build la recibe en su siguiente encargo." };
-          let o = await origin();
-          if (!o) {
-            const [w] = await (await import("../../dbq.server")).dbq(
-              "SELECT origin FROM gt_agent_wakeups WHERE key LIKE ? AND origin IS NOT NULL AND origin != '' ORDER BY rowid DESC LIMIT 1",
-              [`factory:${run.id}:%`],
-            ).catch(() => []);
-            o = String(w?.origin ?? "");
-          }
-          await R.handoff(
-            next,
-            "build",
-            next.approvedBy ?? next.requestedBy,
-            "ampliar el PR",
-            `Pidieron más sobre el PR ${run.prUrl ?? ""}, que ya estaba listo. Trabaja en la MISMA rama (no abras otro PR), corre las pruebas, ` +
-              `EMPUJA y cierra otra vez con factory_build_done (runId ${run.id}); @check lo vuelve a revisar.` +
-              (await R.takeNotes(run.id)) +
-              absorbed.map((t) => `\n\n## Ticket ${t.key}: ${t.title}\n${t.bodyMd}`).join(""),
-            o,
-          );
           return { ok: true, runId: run.id, status: next.status, absorbed: absorbed.map((t) => t.key), note: `Reabrí el pedido #${run.id}: @build ya está trabajando en la misma rama del PR.` };
         }
         return {

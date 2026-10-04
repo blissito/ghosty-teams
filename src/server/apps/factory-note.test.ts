@@ -44,6 +44,11 @@ vi.mock("./factory-runs.server", () => ({
   postInThread: async (_r: Run, _h: string, body: string) => (posted.push(body), 1),
   handoff: async (_r: Run, to: string, _s: string, cause: string, text: string) => (handoffs.push({ to, cause, text }), true),
   takeNotes: async () => "",
+  reopenWithNotes: async (run: Run, by: string, extra: string, _o: string, data: Run) => {
+    applied.push({ event: "rework", patch: { merge_asked: null, loops: 0 }, data });
+    handoffs.push({ to: "build", cause: "ampliar el PR", text: `MISMA rama${extra}` });
+    return { ...run, status: "building" };
+  },
   prConflicted: async () => null,
   MERGE_FROM_HINT: "",
   addNote: async (runId: number, by: string, text: string) => void notes.push({ runId, by, text }),

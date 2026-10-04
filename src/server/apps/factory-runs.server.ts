@@ -371,6 +371,34 @@ export async function handoff(
   return ok;
 }
 
+/**
+ * Un pedido con su PR listo recibe más trabajo (nota de una persona o ticket de un sprint que
+ * lo continúa): se reabre (`rework` → building) y se le encarga ya a @build en la MISMA rama.
+ * Las notas sólo se leían al encargar, así que sin esto se quedaban dormidas (MailMask, 4-oct).
+ * null si el pedido ya no estaba en `pr_review`.
+ */
+export async function reopenWithNotes(run: Run, by: string, extra: string, origin: string, data: Record<string, unknown> = {}): Promise<Run | null> {
+  if (run.status !== "pr_review") return null;
+  const next = await applyEvent(run, "rework", { merge_asked: null, loops: 0 }, { actor: by, data }).catch(() => null);
+  if (!next) return null;
+  if (!origin) {
+    const [w] = await dbq("SELECT origin FROM gt_agent_wakeups WHERE key LIKE ? AND origin IS NOT NULL AND origin != '' ORDER BY rowid DESC LIMIT 1", [`factory:${run.id}:%`]).catch(() => []);
+    origin = String(w?.origin ?? "");
+  }
+  await handoff(
+    next,
+    "build",
+    next.approvedBy ?? next.requestedBy,
+    "ampliar el PR",
+    `Pidieron más sobre el PR ${run.prUrl ?? ""}, que ya estaba listo. Trabaja en la MISMA rama (no abras otro PR), corre las pruebas, ` +
+      `EMPUJA y cierra otra vez con factory_build_done (runId ${run.id}); @check lo vuelve a revisar.` +
+      (await takeNotes(run.id)) +
+      extra,
+    origin,
+  );
+  return next;
+}
+
 // ── GitHub ───────────────────────────────────────────────────────────────────
 
 export function parsePrUrl(url: string): { repo: string; number: number } | null {

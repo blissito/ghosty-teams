@@ -19,6 +19,8 @@ export type SprintItemInput = {
   size: SprintSize;
   dependsOn: string[];
   bodyMd: string;
+  /** Pedido que este ticket CONTINÚA (su PR ya existe): no se abre otro, se le encarga a ése. */
+  runId?: number | null;
 };
 export type ItemStatus = "pending" | "active" | "pr" | "merged" | "failed" | "skipped";
 
@@ -224,8 +226,8 @@ export async function getSprintItems(id: number): Promise<SprintItemRow[]> {
 async function insertItems(sprintId: number, items: SprintItemInput[]): Promise<void> {
   for (const [i, it] of items.entries()) {
     await dbq(
-      "INSERT INTO gt_factory_sprint_items (sprint_id, idx, key, title, size, depends_on, body_md) VALUES (?, ?, ?, ?, ?, ?, ?)",
-      [sprintId, i + 1, it.key, it.title, it.size, JSON.stringify(it.dependsOn), it.bodyMd],
+      "INSERT INTO gt_factory_sprint_items (sprint_id, idx, key, title, size, depends_on, body_md, run_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+      [sprintId, i + 1, it.key, it.title, it.size, JSON.stringify(it.dependsOn), it.bodyMd, it.runId ?? null],
     );
   }
 }
@@ -256,6 +258,8 @@ export async function submitSprint(opts: {
   createdBy: string;
   /** Hilo donde se pidió: la tarjeta va AHÍ, no como mensaje suelto en el room. */
   parentId?: number | null;
+  /** Sprint ACTIVO que éste reemplaza al aprobarse. */
+  replaces?: number | null;
 }): Promise<SprintRow> {
   const R = await import("./factory-runs.server");
   if (opts.sprintId) {
@@ -264,17 +268,18 @@ export async function submitSprint(opts: {
     if (cur.status !== "draft") throw new Error("ese sprint ya se aprobó: propón uno nuevo");
     await dbq("DELETE FROM gt_factory_sprint_items WHERE sprint_id = ?", [cur.id]);
     await insertItems(cur.id, opts.items);
-    await dbq("UPDATE gt_factory_sprints SET title = ?, goal = ?, version = version + 1, updated_at = unixepoch() WHERE id = ?", [
+    await dbq("UPDATE gt_factory_sprints SET title = ?, goal = ?, replaces = ?, version = version + 1, updated_at = unixepoch() WHERE id = ?", [
       opts.title,
       opts.goal,
+      opts.replaces ?? null,
       cur.id,
     ]);
     void R.refreshRoom(cur.channelId);
     return (await getSprint(cur.id))!;
   }
   const rows = await dbq(
-    "INSERT INTO gt_factory_sprints (channel_id, repo, goal, title, created_by) VALUES (?, ?, ?, ?, ?) RETURNING id",
-    [opts.channelId, opts.repo, opts.goal, opts.title, opts.createdBy],
+    "INSERT INTO gt_factory_sprints (channel_id, repo, goal, title, created_by, replaces) VALUES (?, ?, ?, ?, ?, ?) RETURNING id",
+    [opts.channelId, opts.repo, opts.goal, opts.title, opts.createdBy, opts.replaces ?? null],
   );
   const id = Number(rows[0].id);
   await insertItems(id, opts.items);
@@ -308,6 +313,24 @@ export async function approveSprint(id: number, sub: string, origin: string): Pr
   if (!claimed[0]) throw new Error("ese sprint ya no está en borrador");
   const items = (await getSprintItems(id)).filter((i) => i.included);
   if (!items.length) throw new Error("el sprint quedó sin tickets");
+  // Reemplaza a un sprint activo: ése se cancela y lo que no arrancó se salta (si no, sus
+  // tickets se abrían como PRs además de los del sprint nuevo).
+  const replaces = claimed[0].replaces != null ? Number(claimed[0].replaces) : null;
+  if (replaces && replaces !== id) {
+    const old = await dbq("UPDATE gt_factory_sprints SET status = 'cancelled', updated_at = unixepoch() WHERE id = ? AND channel_id = ? AND status = 'active' RETURNING id", [replaces, claimed[0].channel_id]);
+    if (old.length) await dbq("UPDATE gt_factory_sprint_items SET status = 'skipped' WHERE sprint_id = ? AND status = 'pending'", [replaces]);
+  }
+  // Tickets que continúan un pedido vivo: el alcance nuevo le llega a @build como nota, y si
+  // su PR ya estaba listo se reabre en la misma rama.
+  const R = await import("./factory-runs.server");
+  for (const it of items) {
+    if (!it.runId) continue;
+    const run = await R.getRun(it.runId);
+    if (!run || run.status === "done" || run.status === "cancelled") continue;
+    await R.addNote(run.id, "@plan", `Nuevo alcance de este PR (sprint «${claimed[0].title}», ticket ${it.key}). Haz SÓLO esto; lo demás va en otros tickets:\n${it.bodyMd}`);
+    if (run.status === "pr_review") await R.reopenWithNotes(run, "@plan", "", origin, { sprint: id, ticket: it.key });
+    else await R.postInThread(run, "plan", `🧩 Este pedido ahora es el ticket ${it.key} del sprint «${claimed[0].title}»: @build recibe el alcance nuevo en su siguiente encargo.`);
+  }
   // El sprint vive en gt_factory_sprint_items: la tarjeta y /factory lo pintan de ahí (sin Tasks desde 30-sep).
   await advanceSprint(id);
   return (await getSprint(id))!;
@@ -417,11 +440,13 @@ async function startItem(sprint: SprintRow, it: SprintItemRow, all: SprintItemRo
 
 /** Del pedido al sprint: cualquier cambio de un pedido de sprint puede destrabar el siguiente. */
 export async function onSprintRunChanged(runId: number): Promise<void> {
+  // El sprint que lo creó y cualquiera con un ticket atado a él (ticket que continúa o absorbe su PR).
   const rows = await dbq(
-    "SELECT i.sprint_id FROM gt_factory_runs r JOIN gt_factory_sprint_items i ON i.id = r.sprint_item_id WHERE r.id = ?",
-    [runId],
+    `SELECT i.sprint_id FROM gt_factory_runs r JOIN gt_factory_sprint_items i ON i.id = r.sprint_item_id WHERE r.id = ?
+     UNION SELECT sprint_id FROM gt_factory_sprint_items WHERE run_id = ?`,
+    [runId, runId],
   ).catch(() => []);
-  if (rows[0]) await advanceSprint(Number(rows[0].sprint_id));
+  for (const r of rows) await advanceSprint(Number(r.sprint_id));
 }
 
 /** Ticket fallido (PR cerrado sin merge): reintentarlo desde cero o quitarlo del sprint. */
