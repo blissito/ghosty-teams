@@ -174,6 +174,12 @@ export const relayConnectorFn = createServerFn({ method: "GET" })
       const eb = process.env.EASYBITS_URL ?? "https://www.easybits.cloud";
       return { target: `${eb}/dash/hosting/github/callback${qsRaw}` };
     }
+    // Conexiones que arranca Ghosty Studio (sin espacio de Teams, o desde la app): su state lleva
+    // prefijo `gs.` y lo cierra gs, que escribe la misma fila que leemos por el puente.
+    if (data.state.startsWith("gs.")) {
+      const gs = (process.env.GHOSTY_IDENTITY_URL ?? "https://www.ghosty.studio").replace(/\/+$/, "");
+      return { target: `${gs}/connect/callback${qsRaw}&provider=${encodeURIComponent(data.provider)}` };
+    }
     const { verifyState } = await import("./connectors/oauth.server");
     const parsed = verifyState(data.state);
     const ROOT = process.env.TEAMS_ROOT_DOMAIN ?? "teams.ghosty.studio";
