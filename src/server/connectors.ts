@@ -70,20 +70,22 @@ export const listMyConnectorsFn = createServerFn({ method: "GET" }).handler(asyn
       .map((u) => ({ sub: u.sub, name: u.name, avatar: u.avatar })),
     studio: false,
   }));
-  // Los de Ghosty Studio (hoy Drive): se conectan en ghosty.studio con la MISMA cuenta y
-  // sirven aquí sin conectar otra vez. Se administran allá (pestaña nueva).
+  // El catálogo de Ghosty Studio es LA fuente (Drive, Mercado Pago, Stripe, Notion… y lo que
+  // viene): se conectan allá con la MISMA cuenta y sirven aquí sin conectar otra vez. Aquí sólo
+  // quedan, con su mecánica propia, los que viven en Teams (`ours`); el resto sale de gs.
   const S = await import("./connectors/studio-bridge.server");
   S.forgetStudioCache(me.sub); // el panel abierto = quizá acaba de conectar: que el turno lo vea ya
+  const ourIds = new Set(CONNECTORS.map((c) => c.id));
   const studio = (await S.studioCatalog(me.sub).catch(() => []))
-    .filter((c) => c.id === "google-drive" && c.disponible)
+    .filter((c) => !ourIds.has(c.id) && c.store !== "teams")
     .map((c) => ({
-      id: c.id, name: c.nombre, blurb: c.descripcion, icon: c.id, type: "Ghosty Studio",
-      custom: false, status: "available" as const,
-      manage: c.conectado ? { url: S.studioConnectUrl(c.id), label: "Elegir archivos" } : null,
+      id: c.id, name: c.nombre, blurb: c.descripcion, icon: c.logo?.icon ?? c.id, logoUrl: S.studioLogoUrl(c), type: "Ghosty Studio",
+      custom: false, status: c.disponible ? ("available" as const) : ("soon" as const),
+      manage: c.conectado ? { url: S.studioConnectUrl(c.id), label: c.id === "google-drive" ? "Elegir archivos" : c.kind === "credential" ? "Cambiar llave" : "Administrar" } : null,
       credentials: null, connected: c.conectado, shared: null, mineShared: false, canShareOthers: false,
       hooks: [], holders: [], studio: true, connectUrl: S.studioConnectUrl(c.id),
     }));
-  return [...ours.map((x) => ({ ...x, connectUrl: null as string | null })), ...studio];
+  return [...ours.map((x) => ({ ...x, connectUrl: null as string | null, logoUrl: null as string | null })), ...studio];
 });
 
 // Inicia el OAuth de un proveedor: setea cookies (state, y verifier PKCE si aplica) y

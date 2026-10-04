@@ -420,6 +420,8 @@ type ConnItem = {
   /** Vive en Ghosty Studio (Drive): se conecta y administra allá, sirve aquí. */
   studio: boolean;
   connectUrl: string | null;
+  /** Logo de Studio (imagen), cuando lo trae. */
+  logoUrl: string | null;
   credentials: {
     intro: string | null;
     docsUrl: string | null;
@@ -768,7 +770,7 @@ function IntegrationsPanel() {
               <div key={c.id} className="grid grid-cols-[1fr_auto_auto] items-center gap-3 border-b border-border px-4 py-3 last:border-0">
                 <div className="flex min-w-0 items-center gap-3">
                   <div className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-surface-3 text-ink">
-                    <Icon size={18} />
+                    {c.logoUrl ? <img src={c.logoUrl} alt="" className="h-5 w-5 rounded object-contain" /> : <Icon size={18} />}
                   </div>
                   <div className="min-w-0">
                     <div className="flex items-center gap-2">
@@ -862,7 +864,7 @@ function IntegrationsPanel() {
                           rel="noreferrer"
                           className="inline-flex items-center gap-1 rounded-lg border border-border px-2.5 py-1 text-xs text-muted hover:text-ink"
                         >
-                          {t("Elegir archivos")}
+                          {t(c.manage?.label ?? "Administrar")}
                           <ExternalLink size={11} />
                         </a>
                       </div>

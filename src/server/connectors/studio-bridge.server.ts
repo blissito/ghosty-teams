@@ -19,7 +19,15 @@ export const STUDIO_READ_TOOLS = new Set(["drive_archivos", "drive_leer"]);
 export const studioConnectUrl = (id: string) => `${STUDIO}/app/connectors?connect=${encodeURIComponent(id)}`;
 
 export type StudioTool = { name: string; description: string; inputSchema: Record<string, unknown> };
-export type StudioConnector = { id: string; nombre: string; descripcion: string; conectado: boolean; disponible: boolean; logo?: string | null };
+export type StudioConnector = {
+  id: string; nombre: string; descripcion: string; conectado: boolean; disponible: boolean;
+  logo?: { icon?: string; src?: string; color: string } | null;
+  kind?: "oauth" | "credential" | null;
+  store?: "teams" | null;
+};
+
+/** URL absoluta de un logo de Studio (los `src` vienen relativos a ghosty.studio). */
+export const studioLogoUrl = (c: StudioConnector) => (c.logo?.src ? `${STUDIO}${c.logo.src}` : null);
 
 export async function call<T>(sub: string, body: Record<string, unknown>): Promise<T | null> {
   // Secreto propio del puente (sólo gs y esta caja); el de partner, mientras se cambia.

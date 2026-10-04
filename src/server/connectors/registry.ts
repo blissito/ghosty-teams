@@ -346,9 +346,8 @@ export const CONNECTORS: ConnectorDef[] = [
       ],
     },
   },
-  // Próximamente (sin oauth aún → el panel los muestra como "Próximamente"):
-  { id: "hubspot", name: "HubSpot", blurb: "Trae contactos y negocios de tu CRM; @ghosty responde con ese contexto.", icon: "hubspot", type: "Web", status: "soon" },
-  { id: "google-calendar", name: "Google Calendar", blurb: "Recordatorios y contexto de reuniones dentro del room.", icon: "google-calendar", type: "Web", status: "soon" },
+  // Lo que está «en camino» y los conectores nativos de gs (HubSpot, Calendar…) ya NO se
+  // declaran aquí: el panel los toma del catálogo de Ghosty Studio (`studioCatalog`), la fuente única.
 ];
 
 export function getConnector(id: string): ConnectorDef | undefined {
