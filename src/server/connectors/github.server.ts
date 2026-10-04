@@ -50,6 +50,31 @@ async function readMeta(sub: string): Promise<GithubMeta | null> {
  * instalar la app".
  */
 /** Para la Software Factory (CI starter, proteger main): el mismo cliente, con el token de `sub`. */
+/**
+ * 👀 del bot sobre un comentario de GitHub: «lo recibí». Como Copilot/CodeRabbit: sin esto la
+ * persona comentaba @ghosty y en GitHub no se notaba nada (MailMask, 4-oct). Nunca lanza.
+ */
+export async function ackGithubComment(repo: string, commentUrl: string): Promise<boolean> {
+  const issue = /#issuecomment-(\d+)/.exec(commentUrl)?.[1];
+  const review = /#discussion_r(\d+)/.exec(commentUrl)?.[1];
+  if (!issue && !review) return false;
+  try {
+    const instId = await installationIdFor(repo);
+    const token = instId ? await installationToken(instId) : null;
+    if (!token) return false;
+    const path = issue ? `/repos/${repo}/issues/comments/${issue}/reactions` : `/repos/${repo}/pulls/comments/${review}/reactions`;
+    const r = await fetch(`${API}${path}`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, Accept: "application/vnd.github+json", "Content-Type": "application/json" },
+      body: JSON.stringify({ content: "eyes" }),
+      signal: AbortSignal.timeout(8000),
+    });
+    return r.ok;
+  } catch {
+    return false;
+  }
+}
+
 export function githubApi(sub: string, path: string, init?: RequestInit): Promise<any> {
   return api(sub, path, init);
 }

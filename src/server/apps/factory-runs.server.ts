@@ -442,9 +442,14 @@ export async function reopenWithNotes(run: Run, by: string, extra: string, origi
 export async function noteFromGithub(run: Run, by: string, ask: { text: string; url: string; path?: string; line?: number }): Promise<"reopened" | "steered" | "queued" | "closed"> {
   if (run.status === "done" || run.status === "cancelled") return "closed";
   const where = ask.path ? ` (en \`${ask.path}${ask.line ? `:${ask.line}` : ""}\`)` : "";
-  const text = `${ask.text}${where} — ${ask.url}`;
+  // Como Copilot/Devin/Cursor: 👀 al recibir (lo pone la plataforma) y respuesta en el MISMO lugar al terminar.
+  const reply = ask.path
+    ? "Al terminar, contéstale en ese comentario en línea con github_reply_review_comment"
+    : "Al terminar, contéstale en el PR con github_comment";
+  const text = `${ask.text}${where} — ${ask.url}\n${reply}: 1 o 2 renglones con qué cambiaste y en qué commit (sin escribir @ghosty).`;
   const who = `@${by} en GitHub`;
   const noteId = await addNote(run.id, who, text);
+  if (run.repo) void import("../connectors/github.server").then((g) => g.ackGithubComment(run.repo!, ask.url));
   await postInThread(run, "plan", `💬 ${who}${where}: ${ask.text.slice(0, 600)}${ask.text.length > 600 ? "…" : ""} ([ver](${ask.url}))`);
   if (run.status === "pr_review") return (await reopenWithNotes(run, who, "", "", { github: ask.url })) ? "reopened" : "queued";
   if (run.status === "building" && (await steerRole(run, "build", `Pedido de ${who} sobre este PR (le gana a lo anterior si choca): ${text}`))) {
