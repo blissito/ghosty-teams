@@ -18,6 +18,10 @@ const messages: Record<number, { body: string }> = {};
 const threads: Record<number, { body: string }[]> = {};
 const handoffs: { to: string; cause: string; text: string }[] = [];
 const absorbCalls: { runId: number; keys: string[] }[] = [];
+let steerOk = false;
+const steers: string[] = [];
+const consumed: number[] = [];
+let activeSprint: { id: number; title: string } | null = null;
 
 vi.mock("./installed.server", () => ({ isInstalled: async () => true }));
 vi.mock("../hooks/generic-alert.server", () => ({ alertWebhookTools: () => [] }));
@@ -44,17 +48,26 @@ vi.mock("./factory-runs.server", () => ({
   postInThread: async (_r: Run, _h: string, body: string) => (posted.push(body), 1),
   handoff: async (_r: Run, to: string, _s: string, cause: string, text: string) => (handoffs.push({ to, cause, text }), true),
   takeNotes: async () => "",
-  reopenWithNotes: async (run: Run, by: string, extra: string, _o: string, data: Run) => {
+  reopenWithNotes: async (run: Run, _by: string, extra: string, _o: string, data: Run) => {
     applied.push({ event: "rework", patch: { merge_asked: null, loops: 0 }, data });
     handoffs.push({ to: "build", cause: "ampliar el PR", text: `MISMA rama${extra}` });
     return { ...run, status: "building" };
   },
   prConflicted: async () => null,
   MERGE_FROM_HINT: "",
-  addNote: async (runId: number, by: string, text: string) => void notes.push({ runId, by, text }),
+  addNote: async (runId: number, by: string, text: string) => (notes.push({ runId, by, text }), 77),
+  consumeNote: async (id: number) => void consumed.push(id),
+  steerRole: async (_r: Run, _role: string, text: string) => (steers.push(text), steerOk),
 }));
 
+vi.mock("../../dbq.server", () => ({
+  dbq: async (sql: string) => (sql.includes("status = 'active'") && activeSprint ? [activeSprint] : []),
+}));
 vi.mock("./sprint.server", () => ({
+  validateSprintItems: (raw: any[]) => raw.map((i) => ({ key: i.key, title: i.title, size: i.size, dependsOn: [], bodyMd: i.title })),
+  withPrepFirst: async (_s: string, _r: string, items: unknown[]) => items,
+  getSprint: async (id: number) => (activeSprint && activeSprint.id === id ? { ...activeSprint, channelId: 3, status: "active" } : null),
+  submitSprint: async () => ({ id: 9 }),
   absorbItems: async (runId: number, keys: string[]) => (
     absorbCalls.push({ runId, keys }), keys.filter((k) => k !== "Z").map((k) => ({ key: k, title: `Ticket ${k}`, bodyMd: `cuerpo ${k}` }))
   ),
@@ -73,6 +86,10 @@ beforeEach(() => {
   posted.length = 0;
   handoffs.length = 0;
   absorbCalls.length = 0;
+  steerOk = false;
+  steers.length = 0;
+  consumed.length = 0;
+  activeSprint = null;
   for (const k of Object.keys(messages)) delete messages[Number(k)];
   for (const k of Object.keys(threads)) delete threads[Number(k)];
 });
@@ -142,6 +159,46 @@ describe("factory_note: el PR por número y el PR listo que se reabre (MailMask,
     const r: any = await (await tool("factory_note", dest)).handler("beto", { pr: "99", text: "x" });
     expect(r.ok).toBe(false);
     expect(notes).toHaveLength(0);
+  });
+});
+
+describe("factory_note en vivo: @build a media obra recibe la nota en su turno", () => {
+  const dest = { channelId: 3, parentId: 99, handle: "plan" };
+  it("si el steer entra, la nota queda consumida", async () => {
+    current = baseRun({ status: "building" });
+    steerOk = true;
+    const r: any = await (await tool("factory_note", dest)).handler("beto", { text: "sólo auth+domains+dns" });
+    expect(r.ok).toBe(true);
+    expect(steers[0]).toContain("sólo auth+domains+dns");
+    expect(consumed).toEqual([77]);
+  });
+  it("sin turno vivo queda para el siguiente encargo", async () => {
+    current = baseRun({ status: "building" });
+    const r: any = await (await tool("factory_note", dest)).handler("beto", { text: "x y z" });
+    expect(r.ok).toBe(true);
+    expect(consumed).toHaveLength(0);
+  });
+  it("en checking no se le inyecta a nadie", async () => {
+    current = baseRun({ status: "checking" });
+    steerOk = true;
+    await (await tool("factory_note", dest)).handler("beto", { text: "x y z" });
+    expect(steers).toHaveLength(0);
+  });
+});
+
+describe("factory_sprint_submit: no encima de otro activo", () => {
+  const dest = { channelId: 3, parentId: 70, handle: "plan" };
+  const items = ["A", "B", "C"].map((k) => ({ key: k, title: `Ticket largo ${k}`, size: "M", criteria: "criterios verificables de verdad" }));
+  it("sin replaces se rechaza", async () => {
+    activeSprint = { id: 3, title: "CLI viejo" };
+    const r: any = await (await tool("factory_sprint_submit", dest)).handler("beto", { goal: "El CLI", title: "CLI de MailMask", items });
+    expect(r.ok).toBe(false);
+    expect(r.error).toContain("replaces: 3");
+  });
+  it("con replaces pasa", async () => {
+    activeSprint = { id: 3, title: "CLI viejo" };
+    const r: any = await (await tool("factory_sprint_submit", dest)).handler("beto", { goal: "El CLI", title: "CLI de MailMask", items, replaces: 3 });
+    expect(r.ok).toBe(true);
   });
 });
 

@@ -682,6 +682,16 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
           if (it) it.runId = run.id;
         }
         let replaces: number | null = null;
+        if (a.replaces == null || a.replaces === "") {
+          // Un sprint encima de otro activo duplicaba tickets (MailMask, 4-oct): o lo reemplaza, o se ajusta el que hay.
+          const { dbq } = await import("../../dbq.server");
+          const [act] = await dbq("SELECT id, title FROM gt_factory_sprints WHERE channel_id = ? AND repo IS ? AND status = 'active' ORDER BY id DESC LIMIT 1", [dest.channelId, repo]).catch(() => []);
+          if (act)
+            return {
+              ok: false,
+              error: `Ya hay un sprint activo (#${act.id} «${act.title}») en este repo. Si éste lo reemplaza, manda replaces: ${act.id}; si sólo faltan tickets, ajústalo en vez de abrir otro.`,
+            };
+        }
         if (a.replaces != null && a.replaces !== "") {
           const old = await S.getSprint(Number(a.replaces));
           if (!old || old.channelId !== dest.channelId || old.status !== "active")
@@ -919,7 +929,7 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
           return { ok: false, error: `el pedido #${run.id} ya terminó (${run.status}): pide uno nuevo con @plan` };
         const R = await import("./factory-runs.server");
         const by = dest?.handle ? `@${dest.handle}` : sub;
-        await R.addNote(run.id, by, text);
+        const noteId = await R.addNote(run.id, by, text);
         // Tickets del sprint que la persona quiere en ESTE PR: quedan atados al pedido.
         const keys = Array.isArray(a.absorbs) ? a.absorbs.map((k) => String(k).trim()).filter(Boolean).slice(0, 20) : [];
         const S = await import("./sprint.server");
@@ -942,6 +952,11 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
           const next = await R.reopenWithNotes(run, by, extra, await origin(), { absorbs: absorbed.map((t) => t.key) });
           if (!next) return { ok: true, runId: run.id, absorbed: absorbed.map((t) => t.key), note: "Guardada, pero el pedido cambió de etapa mientras tanto: @build la recibe en su siguiente encargo." };
           return { ok: true, runId: run.id, status: next.status, absorbed: absorbed.map((t) => t.key), note: `Reabrí el pedido #${run.id}: @build ya está trabajando en la misma rama del PR.` };
+        }
+        // @build a media obra: la nota entra YA a su turno; si no hay turno vivo, va en el siguiente encargo.
+        if (run.status === "building" && (await R.steerRole(run, "build", `Nota de ${by} sobre este pedido (le gana a lo anterior si choca): ${text}${extra}`))) {
+          if (noteId) await R.consumeNote(noteId);
+          return { ok: true, runId: run.id, absorbed: absorbed.map((t) => t.key), note: "@build ya la recibió en vivo, en su turno en curso." };
         }
         return {
           ok: true,

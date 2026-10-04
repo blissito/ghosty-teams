@@ -203,9 +203,15 @@ export function notesBlock(notes: RunNote[]): string {
 }
 
 /** Guarda una nota sobre el pedido (tabla + bitácora). */
-export async function addNote(runId: number, by: string, text: string): Promise<void> {
-  await dbq("INSERT INTO gt_factory_notes (run_id, text, by) VALUES (?, ?, ?)", [runId, text, by]);
+export async function addNote(runId: number, by: string, text: string): Promise<number | null> {
+  const rows = await dbq("INSERT INTO gt_factory_notes (run_id, text, by) VALUES (?, ?, ?) RETURNING id", [runId, text, by]);
   await logEvent(runId, "note", by, { text: text.slice(0, 500) });
+  return rows[0]?.id != null ? Number(rows[0].id) : null;
+}
+
+/** La nota ya le llegó en vivo al rol: no se repite en su siguiente encargo. */
+export async function consumeNote(noteId: number): Promise<void> {
+  await dbq("UPDATE gt_factory_notes SET consumed_at = unixepoch() WHERE id = ? AND consumed_at IS NULL", [noteId]).catch(() => {});
 }
 
 /**
@@ -397,6 +403,58 @@ export async function reopenWithNotes(run: Run, by: string, extra: string, origi
     origin,
   );
   return next;
+}
+
+/**
+ * Mete `text` al turno VIVO del rol en este pedido (steer), sin abrir uno nuevo: `injectOnly`
+ * hace que gs conteste `not_live` si no hay turno. true sólo si gs confirma `injected`. Sin
+ * esto una nota a media obra esperaba al siguiente encargo y @build terminaba con el alcance
+ * viejo (MailMask, 4-oct). Nunca lanza.
+ */
+export async function steerRole(run: Run, role: "build" | "check", text: string): Promise<boolean> {
+  try {
+    const { resolvedAgents, agentGroupId } = await import("../../agents.server");
+    const agent = (await resolvedAgents()).find((a) => a.handle === role);
+    if (!agent || agent.backend.kind !== "fleet") return false;
+    const { runtimeFor } = await import("../agent-runtime.server");
+    const rt = await runtimeFor(agent.backend);
+    if (rt.kind !== "gs-native" || !rt.headers) return false;
+    const { factoryTurnFor } = await import("./factory-team.server");
+    const ft = await factoryTurnFor(role, { channelId: run.channelId, parentId: run.rootMsgId }, agent.backend.id).catch(() => null);
+    const fleetId = ft?.fleetId ?? agent.backend.id;
+    const groupId = await agentGroupId(agent, `factory-${run.id}`);
+    const body = JSON.stringify({ groupId, configGroupId: "teams", sender: "plataforma", text, inject: true, injectOnly: true });
+    const res = await fetch(`${rt.base}/api/v2/fleet-agents/${fleetId}/message-stream`, {
+      method: "POST",
+      headers: rt.headers(body, agent.backend.token),
+      body,
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!res.ok || !res.body) return false;
+    // `injected` = entró; `not_live`/`error`/`done` = no. Lo demás (progreso) se ignora.
+    const reader = res.body.getReader();
+    const dec = new TextDecoder();
+    let buf = "";
+    try {
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) return false;
+        buf += dec.decode(value, { stream: true });
+        for (const line of buf.split("\n")) {
+          const m = /^data:\s*(.+)$/.exec(line.trim());
+          if (!m) continue;
+          const ev = JSON.parse(m[1]) as { type?: string };
+          if (ev.type === "injected") return true;
+          if (ev.type === "not_live" || ev.type === "error" || ev.type === "done") return false;
+        }
+        buf = buf.slice(buf.lastIndexOf("\n") + 1);
+      }
+    } finally {
+      void reader.cancel().catch(() => {});
+    }
+  } catch {
+    return false;
+  }
 }
 
 // ── GitHub ───────────────────────────────────────────────────────────────────
@@ -1094,7 +1152,26 @@ export async function mergeRun(run: Run, sub: string): Promise<{ ok: true } | { 
   const pr = run.prUrl ? parsePrUrl(run.prUrl) : null;
   if (!pr) return { ok: false, error: "el pedido no tiene PR" };
   try {
-    const { allTools } = await import("../connectors/github.server");
+    const { allTools, githubApi } = await import("../connectors/github.server");
+    // Base vieja: su CI verde no dice nada del main de hoy (palmera-legal #9 entró sobre el #7 y
+    // main tronó). Se pone al día y el merge se vuelve a ofrecer con el CI de la cabeza nueva.
+    // Si GitHub no contesta, se mezcla como antes: una caída no traba los merges.
+    const info = await githubApi(sub, `/repos/${pr.repo}/pulls/${pr.number}`).catch(() => null);
+    const base = info?.base?.ref, head = info?.head?.sha;
+    if (base && head) {
+      const cmp = await githubApi(sub, `/repos/${pr.repo}/compare/${encodeURIComponent(base)}...${head}`).catch(() => null);
+      if (Number(cmp?.behind_by) > 0) {
+        const up = await githubApi(sub, `/repos/${pr.repo}/pulls/${pr.number}/update-branch`, { method: "PUT", body: "{}" }).catch(() => null);
+        await dbq("UPDATE gt_factory_runs SET merge_asked = NULL WHERE id = ?", [run.id]).catch(() => {});
+        await logEvent(run.id, "behind_main", null, { behindBy: Number(cmp.behind_by), updated: !up?.error });
+        return {
+          ok: false,
+          error: up?.error
+            ? `El PR va ${cmp.behind_by} commit(s) atrás de ${base} y no lo pude poner al día (¿choques?): ${up.error}`
+            : `El PR iba ${cmp.behind_by} commit(s) atrás de ${base}: lo puse al día y vuelvo a ofrecer el merge cuando su CI pase.`,
+        };
+      }
+    }
     const tool = allTools().find((t) => t.name === "github_merge_pr");
     const r = (await tool?.handler(sub, { repo: pr.repo, number: pr.number })) as any;
     if (!r || r.error) return { ok: false, error: String(r?.error ?? "GitHub no contestó") };
