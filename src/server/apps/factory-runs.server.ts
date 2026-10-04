@@ -434,6 +434,27 @@ export async function reopenWithNotes(run: Run, by: string, extra: string, origi
 }
 
 /**
+ * Lo que alguien del repo le pidió a Ghosty en el PR desde GitHub (comentario con @ghosty o
+ * review «Request changes»). Mismo camino que la nota de @plan: PR listo → se reabre y @build
+ * trabaja en la misma rama; @build a media obra → entra a su turno vivo; si no, va en su
+ * siguiente encargo. Devuelve qué pasó, para contarlo en el hilo.
+ */
+export async function noteFromGithub(run: Run, by: string, ask: { text: string; url: string; path?: string; line?: number }): Promise<"reopened" | "steered" | "queued" | "closed"> {
+  if (run.status === "done" || run.status === "cancelled") return "closed";
+  const where = ask.path ? ` (en \`${ask.path}${ask.line ? `:${ask.line}` : ""}\`)` : "";
+  const text = `${ask.text}${where} — ${ask.url}`;
+  const who = `@${by} en GitHub`;
+  const noteId = await addNote(run.id, who, text);
+  await postInThread(run, "plan", `💬 ${who}${where}: ${ask.text.slice(0, 600)}${ask.text.length > 600 ? "…" : ""} ([ver](${ask.url}))`);
+  if (run.status === "pr_review") return (await reopenWithNotes(run, who, "", "", { github: ask.url })) ? "reopened" : "queued";
+  if (run.status === "building" && (await steerRole(run, "build", `Pedido de ${who} sobre este PR (le gana a lo anterior si choca): ${text}`))) {
+    if (noteId) await consumeNote(noteId);
+    return "steered";
+  }
+  return "queued";
+}
+
+/**
  * Mete `text` al turno VIVO del rol en este pedido (steer), sin abrir uno nuevo: `injectOnly`
  * hace que gs conteste `not_live` si no hay turno. true sólo si gs confirma `injected`. Sin
  * esto una nota a media obra esperaba al siguiente encargo y @build terminaba con el alcance

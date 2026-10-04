@@ -27,7 +27,7 @@ async function verify(ts: string, sig: string, rawBody: string): Promise<boolean
 /** Lo que manda gs (`PrEvent` en app-hook.server.ts). */
 type PrEvent = {
   delivery: string;
-  action: "opened" | "reopened" | "ready_for_review" | "merged" | "closed" | "review";
+  action: "opened" | "reopened" | "ready_for_review" | "merged" | "closed" | "review" | "comment";
   repo: string;
   number: number;
   title: string;
@@ -37,6 +37,8 @@ type PrEvent = {
   draft: boolean;
   /** Sólo en `review`: una PERSONA revisó (gs ya filtró los bots). */
   review?: { state: string; at: string };
+  /** Lo que alguien del repo le pidió a Ghosty (comentario con @ghosty o «Request changes»). */
+  ask?: { text: string; url: string; path?: string; line?: number };
 };
 
 const LINE: Record<PrEvent["action"], (ev: PrEvent) => string> = {
@@ -47,6 +49,7 @@ const LINE: Record<PrEvent["action"], (ev: PrEvent) => string> = {
   closed: (ev) => `⚪ **PR #${ev.number} cerrado sin mezclar**${ev.by ? ` por @${ev.by}` : ""}`,
   // Una review no se anuncia en los rooms (se sale antes de avisar); sólo se mide.
   review: () => "",
+  comment: () => "",
 };
 
 /** Aviso + tarjeta `gt-gh` (sin botones: es un hecho, no algo que accionar desde aquí). */
@@ -107,10 +110,16 @@ export const Route = createFileRoute("/api/internal/github-event")({
           const runRooms = new Set<number>();
           const { runsByPr, onPrEvent, recordFirstReview } = await import("../server/apps/factory-runs.server");
           // Una review no se anuncia en los rooms: sólo se mide (¿la fábrica pasó a la primera?).
-          if (ev.action === "review") {
+          if (ev.action === "review" || ev.action === "comment") {
             let recorded = 0;
-            if (ev.review) for (const run of await runsByPr(ev.repo, ev.number)) recorded += (await recordFirstReview(run.id, ev.review.state, ev.review.at)) ? 1 : 0;
-            return Response.json({ ok: true, recorded });
+            const asked: string[] = [];
+            const { noteFromGithub } = await import("../server/apps/factory-runs.server");
+            for (const run of await runsByPr(ev.repo, ev.number)) {
+              if (ev.review) recorded += (await recordFirstReview(run.id, ev.review.state, ev.review.at)) ? 1 : 0;
+              // Un pedido desde GitHub le llega a @build como la nota de @plan.
+              if (ev.ask?.text && ev.by) asked.push(await noteFromGithub(run, ev.by, ev.ask));
+            }
+            return Response.json({ ok: true, recorded, asked });
           }
           const { enqueuePostMerge } = await import("../server/apps/post-merge.server");
           for (const run of await runsByPr(ev.repo, ev.number)) {
