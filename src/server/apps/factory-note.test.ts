@@ -40,6 +40,8 @@ vi.mock("./factory-runs.server", () => ({
   postInThread: async (_r: Run, _h: string, body: string) => (posted.push(body), 1),
   handoff: async () => true,
   takeNotes: async () => "",
+  prConflicted: async () => null,
+  MERGE_FROM_HINT: "",
   addNote: async (runId: number, by: string, text: string) => void notes.push({ runId, by, text }),
 }));
 

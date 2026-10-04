@@ -1284,7 +1284,9 @@ const ALL_TOOLS: ConnectorTool[] = [
       if (r?.error) {
         // 422 aquí casi siempre es conflicto: eso NO lo resuelve un botón, hay que tocar código.
         if (String(r.error).includes("rechazó")) {
-          return { error: `GitHub no pudo actualizar la rama (¿conflictos con la base?). ${r.error}` };
+          return {
+            error: `GitHub no pudo actualizar la rama (¿conflictos con la base?). ${r.error} Resuélvelo con github_push_files y \`mergeFrom\` = la rama base: commit de merge con los archivos que chocan ya resueltos.`,
+          };
         }
         return r;
       }

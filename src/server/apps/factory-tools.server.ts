@@ -310,6 +310,10 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
             error: `el CI del PR falló (${ci.failed.join(", ") || "ver checks"}). Lee el log con github_workflow_run_logs, corrígelo en la misma rama y vuelve a cerrar.`,
           };
         }
+        // Con choques contra la principal @check lo iba a regresar igual: se ahorra la vuelta.
+        if ((await R.prConflicted(sub, url)) === true) {
+          return { ok: false, error: `el PR sigue con choques contra la rama principal. ${R.MERGE_FROM_HINT} Luego vuelve a cerrar.` };
+        }
         // Un PR que toca `.github/` (CI, CODEOWNERS) sólo se espera en el pedido de CI: en
         // cualquier otro, es justo la vía clásica para que un agente se salte los controles.
         const touchesGithub = await R.prTouchesGithubDir(sub, url);
@@ -512,6 +516,9 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
           "corregir hallazgos de @check",
           `@check regresó el PR ${run.prUrl ?? ""} (vuelta ${next.loops} de 3${counted ? "" : "; ésta no contó porque el PR no cambió desde la revisión anterior"}). ` +
             `Corrige en la MISMA rama, EMPUJA los commits y cierra otra vez con factory_build_done (runId ${run.id}).\n\n## Hallazgos\n${findings}` +
+            (run.prUrl && (await R.prConflicted(next.approvedBy ?? next.requestedBy, run.prUrl)) === true
+              ? `\n\n## El PR tiene choques con la rama principal\n${R.MERGE_FROM_HINT}`
+              : "") +
             (await R.takeNotes(run.id)),
           await origin(),
         );

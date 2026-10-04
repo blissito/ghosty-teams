@@ -623,6 +623,22 @@ export function mergedMessage(run: Run): string {
   return "```gt-fx\n" + JSON.stringify({ fx: "confetti" }) + "\n```\n" + `🎉 **Pedido terminado:** PR merged. ${run.prUrl ?? ""}`;
 }
 
+/**
+ * Cómo se resuelve un PR con choques. Va en todo encargo a @build que lo necesite: el de
+ * `onPrConflict` y el regreso de @check. Sin él, @build copiaba los archivos de la principal
+ * encima SIN commit de merge y GitHub seguía marcando choques (PR #8 de palmera-legal, 3-oct).
+ */
+export const MERGE_FROM_HINT =
+  "Fusiona la rama principal en la tuya con github_push_files y `mergeFrom` = la rama principal: es un commit de MERGE de verdad (dos padres). " +
+  "Lo que cambió allá y tú no tocaste entra solo, y en `files` va el contenido final de los archivos que chocan (resuélvelos SIN cambiar el alcance del plan). " +
+  "Copiar los archivos de la principal sin `mergeFrom` NO quita los choques: GitHub mira la historia, no el contenido.";
+
+/** ¿GitHub marca el PR con choques contra su base? `null` si no se sabe (aún lo calcula). */
+export async function prConflicted(sub: string, url: string): Promise<boolean | null> {
+  const o = await prOutcome(sub, url);
+  return o?.outcome === "open" ? (o.conflicted ?? null) : null;
+}
+
 async function prOutcome(
   sub: string,
   url: string,
@@ -762,7 +778,7 @@ async function onPrConflict(run: Run, headSha: string | null): Promise<void> {
     "build",
     run.approvedBy ?? run.requestedBy,
     "PR con choques",
-    `El PR ${run.prUrl} tiene choques con la rama principal (otro PR se mezcló antes). Fusiona la rama principal en la tuya con github_push_files y \`mergeFrom\` = la rama principal: lo que cambió allá y tú no tocaste entra solo, y en \`files\` va el contenido final de los archivos que chocan (resuélvelos SIN cambiar el alcance del plan). Corre las pruebas y cierra con factory_build_done.`,
+    `El PR ${run.prUrl} tiene choques con la rama principal (otro PR se mezcló antes). ${MERGE_FROM_HINT} Corre las pruebas y cierra con factory_build_done.`,
     origin,
   );
 }
