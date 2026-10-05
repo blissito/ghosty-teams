@@ -857,6 +857,32 @@ export const factoryRunCiFn = createServerFn({ method: "POST" })
     return { ok: true as const };
   });
 
+/** «Pedir arreglo a @build» con el CI del PR en rojo: se reabre en la misma rama con qué falló. */
+export const factoryFixCiFn = createServerFn({ method: "POST" })
+  .validator((d: { runId: number }) => d)
+  .handler(async ({ data }) => {
+    const me = await sessionUser();
+    if (!me) throw new Error("no autenticado");
+    const R = await import("./factory-runs.server");
+    const run = await R.getRun(Number(data.runId));
+    if (!run) throw new Error("no existe el pedido");
+    const db = await import("../../db.server");
+    if (!(await db.listChannels(me.sub, me.isOwner)).some((c) => c.id === run.channelId)) throw new Error("no ves ese room");
+    if (run.status !== "pr_review" || !run.prUrl) throw new Error("el pedido no está esperando revisión");
+    const ci = await R.prCi(me.sub, run.prUrl);
+    if (ci?.state !== "failure") throw new Error("el CI de este PR ya no está en rojo");
+    const by = me.name || me.sub;
+    const text = `El CI del PR falló (${ci.failed.join(", ") || "ver checks"}). Lee el log con github_workflow_run_logs y corrígelo en la misma rama; no cierres hasta verlo en verde.`;
+    await R.addNote(run.id, by, text);
+    await R.postInThread(run, "plan", `🔧 ${by} pidió arreglar el CI del PR (${ci.failed.join(", ") || "checks en rojo"}).`);
+    const { reqOrigin } = await import("../../origin.server");
+    const next = await R.reopenWithNotes(run, by, "", await reqOrigin().catch(() => ""), { ci: ci.failed });
+    if (!next) throw new Error("no pude reabrir el pedido");
+    ciCache.delete(run.prUrl);
+    void R.refreshRoom(run.channelId);
+    return { ok: true as const };
+  });
+
 /** «Mezclar» desde la tarjeta del veredicto: con el GitHub de quien pica. */
 export const factoryMergeFn = createServerFn({ method: "POST" })
   .validator((d: { runId: number }) => d)

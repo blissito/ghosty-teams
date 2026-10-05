@@ -5,7 +5,7 @@
 import { Fragment, useCallback, useEffect, useState } from "react";
 import { useT } from "../../i18n";
 import { useRtSubscribe } from "../../utils/rt-bus";
-import { factoryRunCardFn, factoryDecisionFn, factoryRetryPreviewFn, factoryRunActionFn, factoryRunCiFn } from "../../server/apps/factory";
+import { factoryRunCardFn, factoryDecisionFn, factoryRetryPreviewFn, factoryRunActionFn, factoryRunCiFn, factoryFixCiFn } from "../../server/apps/factory";
 import { prepareRepoFn } from "../../server/apps/readiness";
 import type { RunCardData } from "../../lib/ebdoc";
 
@@ -109,7 +109,7 @@ export function RunCard({ card, channelId }: { card: RunCardData; channelId: num
               <Fragment key={s.key}>
               <li className="flex flex-1 items-center gap-1">
                 <span
-                  className={`flex-1 rounded-full px-2 py-1 text-center text-[11px] font-semibold ${
+                  className={`flex-1 whitespace-nowrap rounded-full px-1.5 py-1 text-center text-[11px] font-semibold ${
                     // Mezclado = el morado «merged» de GitHub; en curso, verde por paso hecho.
                     deciding
                       ? "bg-amber-500 text-white"
@@ -182,7 +182,9 @@ export function RunCard({ card, channelId }: { card: RunCardData; channelId: num
               : st.status === "done"
                 ? ""
                 : st.status === "pr_review"
-                  ? st.ci?.state === "pending"
+                  ? st.ci?.state === "failure"
+                    ? ""
+                    : st.ci?.state === "pending"
                     ? t("⏳ El CI está corriendo en este PR. Cuando termine, el PR queda para tu revisión.")
                     : st.preview?.state === "pending"
                     ? t("🏁 La fábrica terminó su parte. Se está construyendo la preview del PR para que lo revises.")
@@ -191,9 +193,28 @@ export function RunCard({ card, channelId }: { card: RunCardData; channelId: num
                   ? `${t("Vueltas de check")}: ${st.loops}`
                   : ""}
         </p>
-        {st.ci?.state === "failure" && (
-          <p className="mt-2 text-xs font-semibold text-red-600 dark:text-red-400" role="status">
-            {t("El CI falló en este PR: revisa los checks antes de mezclar.")}
+        {st.ci?.state === "failure" && st.status === "pr_review" && (
+          <p className="mt-2 flex flex-wrap items-center gap-2 text-xs font-semibold text-red-600 dark:text-red-400" role="status">
+            {t("El CI falló en este PR.")}
+            <button
+              type="button"
+              disabled={busy}
+              onClick={async () => {
+                setBusy(true);
+                setErr("");
+                try {
+                  await factoryFixCiFn({ data: { runId: st.runId } });
+                  refresh();
+                } catch (e) {
+                  setErr(e instanceof Error ? e.message : String(e));
+                } finally {
+                  setBusy(false);
+                }
+              }}
+              className="rounded-full border border-red-600 px-3 py-1 text-xs font-bold hover:bg-red-600/10 disabled:opacity-50"
+            >
+              {t("Pedir arreglo a @build")}
+            </button>
           </p>
         )}
         {st.ci?.state === "none" && !st.ci.repoHasCi && (
@@ -333,7 +354,7 @@ function CiStep({ ci, closed, busy, onRun, t }: {
   onRun: () => void;
   t: (s: string) => string;
 }) {
-  const base = "flex-1 rounded-full px-2 py-1 text-center text-[11px] font-semibold";
+  const base = "flex-1 whitespace-nowrap rounded-full px-1.5 py-1 text-center text-[11px] font-semibold";
   if (!closed && ci?.state === "none" && ci.repoHasCi)
     return (
       <li className="flex flex-1 items-center gap-1">
