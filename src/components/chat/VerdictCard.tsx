@@ -7,7 +7,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useT } from "../../i18n";
 import { useRtSubscribe } from "../../utils/rt-bus";
-import { factoryMergeFn, factoryRetryPreviewFn, factoryVerdictFn } from "../../server/apps/factory";
+import { factoryMergeFn, factoryRetryPreviewFn, factorySetPreviewOffFn, factoryVerdictFn } from "../../server/apps/factory";
 import { diagnosePreview, STEP_LABEL } from "../../lib/preview-errors";
 
 type State = Awaited<ReturnType<typeof factoryVerdictFn>>;
@@ -170,7 +170,7 @@ export function PreviewErrorCard({ card, channelId }: { card: { runId: number };
   if (!current && !st.preview.error) {
     return (
       <p className="mt-0.5 text-xs text-muted">
-        {st.preview.state === "ready" ? t("✓ La preview ya arrancó.") : t("↻ Reintentando la preview…")}
+        {st.preview.state === "ready" ? t("✓ La preview ya arrancó.") : st.preview.state === "off" ? t("Preview apagada para este repo.") : t("↻ Reintentando la preview…")}
       </p>
     );
   }
@@ -178,6 +178,13 @@ export function PreviewErrorCard({ card, channelId }: { card: { runId: number };
   const retry = async () => {
     setBusy(true);
     await factoryRetryPreviewFn({ data: { runId: st.runId } }).catch(() => {});
+    setBusy(false);
+    refresh();
+  };
+
+  const turnOff = async () => {
+    setBusy(true);
+    await factorySetPreviewOffFn({ data: { runId: st.runId, off: true } }).catch(() => {});
     setBusy(false);
     refresh();
   };
@@ -198,6 +205,9 @@ export function PreviewErrorCard({ card, channelId }: { card: { runId: number };
         <div className="mt-2 flex flex-wrap items-center gap-1.5">
           <button type="button" disabled={busy} onClick={retry} className={`${btn} border-brand text-brand hover:bg-brand/10`}>
             {busy ? t("Reintentando…") : t("Reintentar")}
+          </button>
+          <button type="button" disabled={busy} onClick={turnOff} className={`${btn} border-border text-muted hover:text-ink`}>
+            {t("Sin preview")}
           </button>
           {d.envRelated && st.repo && (
             <a href={`/factory?repo=${encodeURIComponent(st.repo)}`} className={`${btn} border-border text-ink hover:bg-surface-3`}>

@@ -1134,6 +1134,14 @@ export async function announcePreviews(): Promise<void> {
     const pr = parsePrUrl(run.prUrl!);
     const head = await prHead(sub, run.prUrl!);
     if (!pr || !head) continue;
+    // Preview apagada para el repo: gris y sin avisos en el hilo.
+    if (await repoPreviewOff(pr.repo)) {
+      if (row.preview_state !== "off") {
+        await dbq("UPDATE gt_factory_runs SET preview_state = 'off', preview_url = NULL, preview_error = NULL WHERE id = ?", [run.id]).catch(() => {});
+        void refreshRoom(run.channelId);
+      }
+      continue;
+    }
     // Sin estado (nuevo o «Reintentar») cuenta como commit nuevo: se vuelve a pedir `up`.
     const sameSha = row.preview_sha === head.sha && !!row.preview_state;
     // Una preview «lista» de NUESTRA caja puede morir (la caja se recicla o caduca) y la tarjeta
@@ -1228,6 +1236,41 @@ export async function retryPreviews(by: { runId?: number; repo?: string }): Prom
   return rows.length;
 }
 
+/** ¿El dueño apagó la preview de este repo («Sin preview»)? */
+export async function repoPreviewOff(repo: string): Promise<boolean> {
+  const rows = await dbq("SELECT preview_off FROM gt_factory_repo_prefs WHERE repo = ?", [repo.toLowerCase()]).catch(() => []);
+  return Number(rows[0]?.preview_off ?? 0) === 1;
+}
+
+/**
+ * «Sin preview» / «Encender» desde la tarjeta: vale para TODO el repo. Al apagar se bajan las
+ * cajas de sus PRs vivos y los pedidos quedan en `off`; al encender se olvida el estado y el
+ * siguiente tick la levanta (o pide variables) como siempre.
+ */
+export async function setRepoPreviewOff(repo: string, off: boolean, by: string): Promise<void> {
+  const key = repo.toLowerCase();
+  await dbq(
+    `INSERT INTO gt_factory_repo_prefs (repo, preview_off, updated_by, updated_at) VALUES (?, ?, ?, unixepoch())
+     ON CONFLICT(repo) DO UPDATE SET preview_off = excluded.preview_off, updated_by = excluded.updated_by, updated_at = excluded.updated_at`,
+    [key, off ? 1 : 0, by],
+  );
+  const rows = await dbq(
+    off
+      ? `UPDATE gt_factory_runs SET preview_state = 'off', preview_url = NULL, preview_error = NULL WHERE LOWER(repo) = ? AND status NOT IN ('done','cancelled') RETURNING id, channel_id, pr_url`
+      : `UPDATE gt_factory_runs SET preview_state = NULL, preview_sha = NULL WHERE LOWER(repo) = ? AND preview_state = 'off' RETURNING id, channel_id, pr_url`,
+    [key],
+  ).catch(() => []);
+  const P = off ? await import("./preview.server") : null;
+  for (const r of rows) {
+    lastPreviewCheck.delete(Number(r.id));
+    const pr = r.pr_url ? parsePrUrl(String(r.pr_url)) : null;
+    if (P && pr) void P.gsPreview("down", { repo: pr.repo, pr: pr.number }).catch(() => {});
+    void refreshRoom(Number(r.channel_id));
+  }
+  const { invalidateReadiness } = await import("./readiness.server");
+  invalidateReadiness(repo);
+}
+
 /** ¿El repo pide variables (.env.example) y no hay ninguna guardada para su preview? */
 async function missingPreviewEnv(sub: string, repo: string): Promise<boolean> {
   const { repoReadiness } = await import("./readiness.server");
@@ -1236,7 +1279,7 @@ async function missingPreviewEnv(sub: string, repo: string): Promise<boolean> {
   return r.facts.envExampleKeys.length > 0 && !r.facts.envSavedKeys;
 }
 
-export type RunPreviewState = "none" | "pending" | "ready" | "failed" | "needs_env";
+export type RunPreviewState = "none" | "pending" | "ready" | "failed" | "needs_env" | "off";
 
 /** Lo que la tarjeta y @check saben de la preview del pedido (leído de la fila). */
 export async function runPreview(runId: number): Promise<{ state: RunPreviewState; url: string | null; error: string | null }> {

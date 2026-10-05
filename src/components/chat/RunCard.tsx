@@ -5,7 +5,7 @@
 import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { useT } from "../../i18n";
 import { useRtSubscribe } from "../../utils/rt-bus";
-import { factoryRunCardFn, factoryDecisionFn, factoryRetryPreviewFn, factoryRunActionFn, factoryRunCiFn, factoryFixCiFn } from "../../server/apps/factory";
+import { factoryRunCardFn, factoryDecisionFn, factoryRetryPreviewFn, factorySetPreviewOffFn, factoryRunActionFn, factoryRunCiFn, factoryFixCiFn } from "../../server/apps/factory";
 import { prepareRepoFn } from "../../server/apps/readiness";
 import type { RunCardData } from "../../lib/ebdoc";
 
@@ -78,6 +78,19 @@ export function RunCard({ card, channelId }: { card: RunCardData; channelId: num
     try {
       await factoryRunCiFn({ data: { runId: st.runId } });
       setTimeout(refresh, 8000);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const setPreviewOff = async (off: boolean) => {
+    setBusy(true);
+    setErr("");
+    try {
+      await factorySetPreviewOffFn({ data: { runId: st.runId, off } });
+      refresh();
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
@@ -302,12 +315,22 @@ export function RunCard({ card, channelId }: { card: RunCardData; channelId: num
             </span>
           )}
           {st.preview?.state === "needs_env" && st.repo && (
-            <a
-              href={`/factory?repo=${encodeURIComponent(st.repo)}`}
-              className="rounded-full bg-amber-500/15 px-3 py-1 text-xs font-semibold text-amber-700 hover:bg-amber-500/25 dark:text-amber-400"
-            >
-              🔑 {t("Faltan variables")}
-            </a>
+            <span className="inline-flex items-center gap-2 rounded-full bg-amber-500/15 py-1 pl-3 pr-1 text-xs">
+              <a href={`/factory?repo=${encodeURIComponent(st.repo)}`} className="font-semibold text-amber-700 hover:underline dark:text-amber-400">
+                🔑 {t("Faltan variables")}
+              </a>
+              <button type="button" disabled={busy} onClick={() => setPreviewOff(true)} className="rounded-full bg-surface px-2 py-0.5 font-semibold text-muted hover:bg-surface-3 hover:text-ink disabled:opacity-50">
+                {t("Sin preview")}
+              </button>
+            </span>
+          )}
+          {st.preview?.state === "off" && (
+            <span className="inline-flex items-center gap-2 rounded-full bg-surface-3 py-1 pl-3 pr-1 text-xs text-muted" title={t("Apagada para todo el repo")}>
+              {t("Preview apagada")}
+              <button type="button" disabled={busy} onClick={() => setPreviewOff(false)} className="rounded-full bg-surface px-2 py-0.5 font-semibold text-ink hover:bg-surface-3 disabled:opacity-50">
+                {t("Encender")}
+              </button>
+            </span>
           )}
           {st.preview?.state === "failed" && (
             <span className="inline-flex items-center gap-2 rounded-full bg-red-600/10 py-1 pl-3 pr-1 text-xs text-red-700 dark:text-red-400" title={st.preview.error ?? undefined}>
@@ -324,6 +347,9 @@ export function RunCard({ card, channelId }: { card: RunCardData; channelId: num
                 className="rounded-full bg-surface px-2 py-0.5 font-semibold text-ink hover:bg-surface-3 disabled:opacity-50"
               >
                 {t("Reintentar")}
+              </button>
+              <button type="button" disabled={busy} onClick={() => setPreviewOff(true)} className="rounded-full bg-surface px-2 py-0.5 font-semibold text-muted hover:bg-surface-3 hover:text-ink disabled:opacity-50">
+                {t("Sin preview")}
               </button>
             </span>
           )}

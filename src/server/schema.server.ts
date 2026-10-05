@@ -970,6 +970,14 @@ async function migrate(): Promise<void> {
     origin        TEXT NOT NULL DEFAULT '',
     updated_at    INTEGER NOT NULL DEFAULT (unixepoch())
   )`);
+  // Repos con la preview apagada a mano («Sin preview» en la tarjeta): sus variables son de
+  // prod y nadie quiere la caja. La tarjeta queda gris en vez de pedir variables o fallar en rojo.
+  await exec(`CREATE TABLE IF NOT EXISTS gt_factory_repo_prefs (
+    repo        TEXT PRIMARY KEY,
+    preview_off INTEGER NOT NULL DEFAULT 0,
+    updated_by  TEXT,
+    updated_at  INTEGER NOT NULL DEFAULT (unixepoch())
+  )`);
   // Cada versión del plan con su firma: la tarjeta de un plan viejo dice «reemplazado por vN».
   await exec(`CREATE TABLE IF NOT EXISTS gt_factory_plans (
     run_id     INTEGER NOT NULL,

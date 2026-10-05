@@ -175,6 +175,8 @@ export async function repoReadiness(sub: string, repo: string, opts: { fresh?: b
       return hit?.facts.envSavedKeys ?? null;
     });
   const previews = previewHosting || (previewRunnable && (envExampleKeys.length === 0 || !!envSavedKeys));
+  // «Sin preview» en la tarjeta: el dueño decidió no tenerla; no cuenta como pendiente.
+  const previewOff = await import("./factory-runs.server").then((R) => R.repoPreviewOff(repo)).catch(() => false);
 
   const ok: Record<ReadinessKey, boolean> = {
     readme: rootFiles.some((n) => /^readme(\.|$)/i.test(n)),
@@ -185,7 +187,7 @@ export async function repoReadiness(sub: string, repo: string, opts: { fresh?: b
     codeowners: codeownersCoversGithub(codeowners),
     dependabot: ghFiles.some((n) => /^dependabot\.ya?ml$/i.test(n)) || has("renovate.json"),
     protected: protection === "protected" || branch?.protected === true,
-    preview: previews,
+    preview: previews || previewOff,
   };
   const checks: ReadinessCheck[] = ([1, 2, 3] as const).flatMap((level) =>
     LEVELS[level].map((key) => ({ key, level, ok: ok[key], fixable: FIXABLE[key] })),

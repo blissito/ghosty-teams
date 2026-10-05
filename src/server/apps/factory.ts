@@ -639,6 +639,25 @@ export const factoryRetryPreviewFn = createServerFn({ method: "POST" })
     return { retried: await R.retryPreviews({ runId: run.id }) };
   });
 
+/** «Sin preview» / «Encender» desde la tarjeta: apaga o prende la preview de TODO el repo del pedido. */
+export const factorySetPreviewOffFn = createServerFn({ method: "POST" })
+  .validator((d: { runId: number; off: boolean }) => d)
+  .handler(async ({ data }) => {
+    const me = await sessionUser();
+    if (!me) throw new Error("no autenticado");
+    const R = await import("./factory-runs.server");
+    const run = await R.getRun(Number(data.runId));
+    if (!run) throw new Error("no existe el pedido");
+    const db = await import("../../db.server");
+    if (!(await db.listChannels(me.sub, me.isOwner)).some((c) => c.id === run.channelId)) throw new Error("no ves ese room");
+    const pr = run.prUrl ? R.parsePrUrl(run.prUrl) : null;
+    const repo = run.repo ?? pr?.repo;
+    if (!repo) throw new Error("el pedido no tiene repo");
+    await R.setRepoPreviewOff(repo, !!data.off, me.sub);
+    await R.logEvent(run.id, data.off ? "preview_off" : "preview_on", me.name || me.sub, { repo });
+    return { ok: true as const };
+  });
+
 // ── La página «Fábrica» (/factory) ───────────────────────────────────────────
 
 /** ¿La fábrica está instalada? Para la barra lateral: cualquiera con sesión. */

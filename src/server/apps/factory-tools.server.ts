@@ -867,6 +867,8 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
           const pr = rootMsg?.body ? prOfMessage(rootMsg.body) : null;
           if (!pr) return { ok: false, error: "no hay pedido ni PR en este hilo" };
           const R0 = await import("./factory-runs.server");
+          if (await R0.repoPreviewOff(pr.repo))
+            return { ok: true, state: "off", note: "El dueño apagó la preview de este repo: revisa con el diff y las pruebas, sin mencionarla." };
           const P = await import("./preview.server");
           const head = await R0.prHead(sub, `https://github.com/${pr.repo}/pull/${pr.number}`);
           if (!head) return { ok: false, error: "no pude leer el PR en GitHub (¿tu GitHub está conectado?)" };
@@ -894,6 +896,8 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
             ? "Ábrela y prueba ahí los criterios de aceptación visibles."
             : p.state === "pending"
               ? "Se está publicando: vuelve a preguntar en un minuto."
+              : p.state === "off"
+                ? "El dueño apagó la preview de este repo: revisa con el diff y las pruebas, sin mencionarla."
               : p.state === "needs_env"
                 ? "La preview espera que el dueño guarde sus variables: revisa con el diff y las pruebas."
                 : p.state === "failed"

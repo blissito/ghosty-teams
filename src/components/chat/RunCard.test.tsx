@@ -13,6 +13,7 @@ vi.mock("../../server/apps/factory", () => ({
   }),
   factoryDecisionFn: async () => ({}),
   factoryRetryPreviewFn: async () => ({}),
+  factorySetPreviewOffFn: async () => ({}),
 }));
 
 import { RunCard, escalationLine } from "./RunCard";
