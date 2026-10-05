@@ -787,6 +787,9 @@ export async function afterFactoryTurn(
   // no lo retoma solo. Su respuesta en el hilo (sin @) le llega a este rol (`factoryFollowHandle`).
   if (asksPerson(reply)) {
     await logEvent(run.id, "waiting_person", role);
+    // Push a quien pidió: un rol esperando respuesta es justo el momento de avisar. Si el rol ya
+    // lo @mencionó, `notify` agrupa por tag y no llega doble.
+    await notifyRun(run, [run.requestedBy], `@${role} te hizo una pregunta: contéstale en el hilo.`, `factory:${run.id}:waiting`);
     void refreshRoom(run.channelId);
     return;
   }

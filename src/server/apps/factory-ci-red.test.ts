@@ -34,7 +34,8 @@ vi.mock("../../db.server", () => ({
   postAgent: async (_c: number, _p: number, body: string) => (posts.push(body), { id: posts.length }),
   getMessage: async () => null,
 }));
-vi.mock("../notify.server", () => ({ notify: async () => {} }));
+const pushes: { recipients: string[]; body: string }[] = [];
+vi.mock("../notify.server", () => ({ notify: async (ev: { recipients: string[]; body: string }) => void pushes.push(ev) }));
 vi.mock("../bus.server", () => ({ publish: () => {}, ch: { room: () => "r" } }));
 vi.mock("../tenant.server", () => ({ currentNamespace: async () => "ns" }));
 vi.mock("../../agents.server", () => ({
@@ -145,6 +146,8 @@ describe("el rol le pregunta algo a la persona", () => {
     expect(events()).toEqual(["waiting_person"]);
     expect(wakeups).toHaveLength(0);
     expect(posts).toHaveLength(0);
+    // …y le llega push a quien pidió.
+    expect(pushes.at(-1)).toMatchObject({ recipients: ["ana"], body: expect.stringContaining("@build te hizo una pregunta") });
   });
 
   it("sin pregunta: el empujón de siempre", async () => {

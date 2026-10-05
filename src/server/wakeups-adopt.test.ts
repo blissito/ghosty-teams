@@ -9,6 +9,7 @@ const finished: number[] = [];
 const steps: string[] = [];
 let ranTurn = false;
 let calls: string[] = [];
+const mentioned: string[] = [];
 
 vi.mock("../dbq.server", () => ({ dbq: async () => [] }));
 vi.mock("./tenant.server", () => ({ withNamespace: (_ns: string, f: () => unknown) => f(), freshOrigin: async (o: string) => o }));
@@ -27,6 +28,7 @@ vi.mock("./turns.server", () => ({
   finishTurn: (_ns: string, id: number) => void finished.push(id),
   setTurnStep: (_ns: string, _id: number, p: string) => void steps.push(p),
 }));
+vi.mock("./mentions.server", () => ({ notificarMencionesDelAgente: async (_ns: string, _c: unknown, reply: string) => (mentioned.push(reply), "") }));
 vi.mock("./apps/factory-runs.server", () => ({ afterFactoryTurn: async () => {} }));
 vi.mock("./delivery-fences.server", () => ({ attachDeliveryFences: async () => null }));
 vi.mock("../agents.server", () => ({
@@ -55,6 +57,7 @@ beforeEach(() => {
   steps.length = 0;
   ranTurn = false;
   calls = [];
+  mentioned.length = 0;
 });
 
 describe("adopción tras un reinicio", () => {
@@ -85,5 +88,13 @@ describe("turno de despertador", () => {
     expect(bodies.some((b) => b.body.includes("Voy a medio camino"))).toBe(true);
     expect(bodies[bodies.length - 1].body).toBe("Listo: aprobado.");
     expect(finished).toHaveLength(1);
+  });
+});
+
+// @build le pidió los datos del equipo a Oswaldo y a su celular no llegó nada (palmera-legal, 4-oct).
+describe("menciones en un turno de despertador", () => {
+  it("la respuesta final pasa por el aviso de menciones (push a la persona)", async () => {
+    await fire("ns", wake("sched:turn:3"), ref());
+    expect(mentioned).toEqual(["Listo: aprobado."]);
   });
 });

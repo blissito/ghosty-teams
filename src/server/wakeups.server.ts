@@ -410,7 +410,18 @@ export async function fire(ns: string, w: Wakeup, ref: WakeRef): Promise<void> {
   // despertador se quedaba sin tarjeta.
   const { attachDeliveryFences } = await import("./delivery-fences.server");
   const delivered = await attachDeliveryFences(id, finalBody, dest);
-  const body = [delivered?.body ?? finalBody, handoffNotice].filter(Boolean).join("\n\n");
+  // Un @persona en la respuesta le avisa (push/correo), como en un turno de chat. Los turnos de
+  // despertador (estafeta de la fábrica, relevos, programados) no lo hacían: @build le pidió los
+  // datos del equipo a Oswaldo y a su celular no llegó nada (palmera-legal, 4-oct).
+  let gapNotice = "";
+  if (dest.channelId != null) {
+    const channel = await db.getChannelById(dest.channelId).catch(() => null);
+    if (channel) {
+      const { notificarMencionesDelAgente } = await import("./mentions.server");
+      gapNotice = await notificarMencionesDelAgente(ns, channel, finalBody, name).catch(() => "");
+    }
+  }
+  const body = [delivered?.body ?? finalBody, handoffNotice, gapNotice].filter(Boolean).join("\n\n");
   await db.setMessageBody(id, body);
   publish({ t: "message:body", id, body });
   if (delivered?.attached) publish({ t: "refresh", channelId: dest.channelId ?? null, parentId: dest.parentId ?? null, dmId: dest.dmId ?? null });
