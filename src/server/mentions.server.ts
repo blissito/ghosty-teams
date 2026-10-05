@@ -59,7 +59,10 @@ export async function notifyMentions(
   // Las grupales (@all, @todos, @room) sólo para humanos. Un agente que puede escribir
   // @todos le suena el teléfono a la empresa entera por iniciativa propia, y no tiene
   // forma de medir ese coste. Se le ignora el token en vez de negarle el mensaje.
-  allowGroup = true
+  allowGroup = true,
+  // Del agente que escribió: su conversación, para que el push abra ESE chat en la app móvil,
+  // y el hilo, para que la liga caiga en él y no en el room.
+  extra: { app?: { agentId: string; sessionId: string }; parentId?: number | null } = {}
 ): Promise<MentionOutcome> {
   const { id: channelId, slug, name: channelName } = channel;
   const isPrivate = channel.is_private === 1;
@@ -128,7 +131,8 @@ export async function notifyMentions(
     recipients: subs,
     title: `${senderName} te mencionó en #${channelName}`,
     body: excerpt,
-    url: `/c/${slug}`,
+    url: extra.parentId ? `/c/${slug}?thread=${extra.parentId}` : `/c/${slug}`,
+    ...(extra.app ? { app: extra.app } : {}),
   }, ns);
   return { notified: subs, unresolved };
 }
@@ -145,7 +149,8 @@ export async function notificarMencionesDelAgente(
   ns: string,
   channel: Channel,
   reply: string,
-  agentName: string
+  agentName: string,
+  extra: { app?: { agentId: string; sessionId: string }; parentId?: number | null } = {}
 ): Promise<string> {
   if (!reply.trim() || !mencionaAAlguienMas(reply)) return "";
   const eb = await import("../lib/ebdoc");
@@ -157,7 +162,7 @@ export async function notificarMencionesDelAgente(
     eb.bubbleWithoutEbDoc(reply)
   );
   // senderSub vacío: el agente no tiene sub que excluir. allowGroup=false: nada de @todos.
-  const { unresolved } = await notifyMentions(ns, channel, prosa, agentName, "", false);
+  const { unresolved } = await notifyMentions(ns, channel, prosa, agentName, "", false, extra);
   const { mentionGapNotice } = await import("./artifacts");
   return mentionGapNotice(unresolved);
 }

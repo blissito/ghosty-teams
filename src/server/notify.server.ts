@@ -27,6 +27,8 @@ export type NotifyEvent = {
   tag?: string;
   /** El destinatario pidió correo para ESTE aviso → ignora el toggle global. */
   forceEmail?: boolean;
+  /** Aviso de un agente: su id en gs y la conversación, para que la app móvil abra ESE chat. */
+  app?: { agentId: string; sessionId: string };
 };
 
 export async function notify(ev: NotifyEvent, ns: string): Promise<void> {
@@ -49,10 +51,32 @@ export async function notify(ev: NotifyEvent, ns: string): Promise<void> {
   }
   // Best-effort y en paralelo: un canal que falle no tumba a los demás. Los rechazos se
   // LOGUEAN: `allSettled` los descarta, y un canal roto en silencio no se nota nunca.
-  const r = await Promise.allSettled([deliverWebPush(ev, ns), deliverEmail(ev, ns)]);
+  const r = await Promise.allSettled([deliverWebPush(ev, ns), deliverEmail(ev, ns), deliverAppPush(ev, ns)]);
   r.forEach((x, i) => {
-    if (x.status === "rejected") console.warn(`[notify ${ev.kind}] canal ${i === 0 ? "push" : "email"} falló:`, String(x.reason).slice(0, 200));
+    if (x.status === "rejected") console.warn(`[notify ${ev.kind}] canal ${["push", "email", "app"][i]} falló:`, String(x.reason).slice(0, 200));
   });
+}
+
+// Canal: la app móvil de Ghosty (iOS/Android), por gs (`/api/v2/push`, que tiene los teléfonos y
+// las llaves de APNs/FCM). Mucha gente no instala Teams como PWA pero sí tiene la app: Oswaldo
+// tenía iOS y Android y no le llegaba nada de la fábrica (palmera-legal, 4-oct). Mismo criterio
+// que el Web Push: sólo a quien no está conectado.
+async function deliverAppPush(ev: NotifyEvent, ns: string): Promise<void> {
+  if (ev.kind === "ads") return;
+  const { isOnline } = await import("./bus.server");
+  const userIds = ev.recipients.filter((sub) => !isOnline(ns, sub));
+  if (!userIds.length) return;
+  const { nativeRuntimeBase, partnerHeaders } = await import("./ghosty-runtime.server");
+  const base = await nativeRuntimeBase();
+  if (!base) return;
+  const { currentSlug } = await import("./tenant.server");
+  const slug = await currentSlug().catch(() => null);
+  const root = process.env.TEAMS_ROOT_DOMAIN ?? "teams.ghosty.studio";
+  const url = /^https?:\/\//.test(ev.url) ? ev.url : slug ? `https://${slug}.${root}${ev.url}` : "";
+  if (!url) return;
+  const body = JSON.stringify({ userIds, title: ev.title, body: ev.body, url, tag: ev.tag, kind: ev.kind, urgent: ev.kind === "factory" || ev.kind === "mention", ...(ev.app ?? {}) });
+  const res = await fetch(`${base}/api/v2/push`, { method: "POST", headers: partnerHeaders(body, ns), body, signal: AbortSignal.timeout(10_000) });
+  console.log(`[push app ${ev.kind}] ${userIds.length} persona(s) → ${res.status}`);
 }
 
 // Canal: Web Push (PWA). Ya operativo (VAPID + gc_push_subs).

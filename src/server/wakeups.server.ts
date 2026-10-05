@@ -418,7 +418,8 @@ export async function fire(ns: string, w: Wakeup, ref: WakeRef): Promise<void> {
     const channel = await db.getChannelById(dest.channelId).catch(() => null);
     if (channel) {
       const { notificarMencionesDelAgente } = await import("./mentions.server");
-      gapNotice = await notificarMencionesDelAgente(ns, channel, finalBody, name).catch(() => "");
+      const app = agent?.backend?.kind === "fleet" ? { agentId: agent.backend.id, sessionId: ref.groupId } : undefined;
+      gapNotice = await notificarMencionesDelAgente(ns, channel, finalBody, name, { app, parentId: dest.parentId ?? null }).catch(() => "");
     }
   }
   const body = [delivered?.body ?? finalBody, handoffNotice, gapNotice].filter(Boolean).join("\n\n");
