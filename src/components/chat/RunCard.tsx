@@ -172,7 +172,22 @@ export function RunCard({ card, channelId }: { card: RunCardData; channelId: num
                   ? `${t("Vueltas de check")}: ${st.loops}`
                   : ""}
         </p>
-        {st.noCi && (
+        {st.ci?.state === "none" && st.ci.repoHasCi && (
+          <p className="mt-2 text-xs font-semibold text-amber-700 dark:text-amber-300" role="status">
+            {t("El CI ya está en el repo, pero este PR todavía no lo corre: «Merge» primero le trae lo último y lo corre.")}
+          </p>
+        )}
+        {st.ci?.state === "pending" && (
+          <p className="mt-2 text-xs text-muted" role="status">
+            {t("El CI está corriendo en este PR…")}
+          </p>
+        )}
+        {st.ci?.state === "failure" && (
+          <p className="mt-2 text-xs font-semibold text-red-600 dark:text-red-400" role="status">
+            {t("El CI falló en este PR: revisa los checks antes de mezclar.")}
+          </p>
+        )}
+        {st.ci?.state === "none" && !st.ci.repoHasCi && (
           <p className="mt-2 flex flex-wrap items-center gap-2 text-xs font-semibold text-amber-700 dark:text-amber-300" role="status">
             {t("Sin CI: nadie corrió las pruebas fuera de la caja de los agentes. Prepara el repo antes de mezclar.")}
             {prepUrl ? (

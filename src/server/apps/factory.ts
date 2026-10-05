@@ -473,20 +473,30 @@ export const factoryRunCardFn = createServerFn({ method: "POST" })
       threadUrl: `/c/${ch.slug}?thread=${run.rootMsgId}`,
       // Firmable desde la tarjeta: el plan vigente espera firma (o hay que decidir tras escalar).
       canSign: (run.status === "plan_review" && !!plan && !plan.decision) || run.status === "escalated",
-      // PR listo pero revisado sin CI: la persona decide aquí, así que aquí se dice (MailMask #10, 4-oct).
-      noCi: run.status === "pr_review" && (await prVerdictCi(run.id)) === "none",
+      // El CI del PR EN VIVO (no el del veredicto): tras preparar el repo, el aviso seguía pidiendo
+      // «Prepara el repo» con el CI ya en main (MailMask #10, 4-oct).
+      ci: run.status === "pr_review" && run.prUrl ? await liveCi(me.sub, run.prUrl, run.repo) : null,
       canPrep: !!me.isOwner && !!run.repo,
       ...(await runLive(run)),
     };
   });
 
-async function prVerdictCi(runId: number): Promise<string | null> {
-  const [r] = await dbq0("SELECT verdict_json FROM gt_factory_runs WHERE id = ?", [runId]);
-  try {
-    return r?.verdict_json ? String(JSON.parse(String(r.verdict_json))?.ci ?? "") || null : null;
-  } catch {
-    return null;
+// La tarjeta se refresca con cada evento del room: GitHub se pregunta como mucho cada minuto por PR.
+const ciCache = new Map<string, { at: number; v: { state: string; repoHasCi: boolean } | null }>();
+async function liveCi(sub: string, prUrl: string, repo: string | null): Promise<{ state: string; repoHasCi: boolean } | null> {
+  const hit = ciCache.get(prUrl);
+  if (hit && Date.now() - hit.at < 60_000) return hit.v;
+  const R = await import("./factory-runs.server");
+  const ci = await R.prCi(sub, prUrl).catch(() => null);
+  let v: { state: string; repoHasCi: boolean } | null = null;
+  if (ci) {
+    // Sin checks en el PR: ¿es que el repo no tiene CI, o que el PR todavía no lo corre?
+    const { hasWorkflows } = await import("./ci-starter.server");
+    const repoHasCi = ci.state === "none" && repo ? await hasWorkflows(sub, repo).catch(() => false) : ci.state !== "none";
+    v = { state: ci.state, repoHasCi };
   }
+  ciCache.set(prUrl, { at: Date.now(), v });
+  return v;
 }
 
 /**
