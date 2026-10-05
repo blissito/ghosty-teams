@@ -475,7 +475,8 @@ export const factoryRunCardFn = createServerFn({ method: "POST" })
       canSign: (run.status === "plan_review" && !!plan && !plan.decision) || run.status === "escalated",
       // El CI del PR EN VIVO (no el del veredicto): tras preparar el repo, el aviso seguía pidiendo
       // «Prepara el repo» con el CI ya en main (MailMask #10, 4-oct).
-      ci: run.prUrl && !["done", "cancelled"].includes(run.status) ? await liveCi(me.sub, run.prUrl, run.repo) : null,
+      // Con el GitHub de quien aprobó/pidió (como el tick): quien mira sin GitHub conectado también ve el paso.
+      ci: run.prUrl && !["done", "cancelled"].includes(run.status) ? await liveCi(run.approvedBy ?? run.requestedBy ?? me.sub, run.prUrl, run.repo, me.sub) : null,
       canPrep: !!me.isOwner && !!run.repo,
       ...(await runLive(run)),
     };
@@ -483,11 +484,15 @@ export const factoryRunCardFn = createServerFn({ method: "POST" })
 
 // La tarjeta se refresca con cada evento del room: GitHub se pregunta como mucho cada minuto por PR.
 const ciCache = new Map<string, { at: number; v: { state: string; repoHasCi: boolean } | null }>();
-async function liveCi(sub: string, prUrl: string, repo: string | null): Promise<{ state: string; repoHasCi: boolean } | null> {
+async function liveCi(sub: string, prUrl: string, repo: string | null, fallbackSub?: string): Promise<{ state: string; repoHasCi: boolean } | null> {
   const hit = ciCache.get(prUrl);
   if (hit && Date.now() - hit.at < 60_000) return hit.v;
   const R = await import("./factory-runs.server");
-  const ci = await R.prCi(sub, prUrl).catch(() => null);
+  let ci = await R.prCi(sub, prUrl).catch(() => null);
+  if (!ci && fallbackSub && fallbackSub !== sub) {
+    ci = await R.prCi(fallbackSub, prUrl).catch(() => null);
+    if (ci) sub = fallbackSub;
+  }
   let v: { state: string; repoHasCi: boolean } | null = null;
   if (ci) {
     // Sin checks en el PR: ¿es que el repo no tiene CI, o que el PR todavía no lo corre?

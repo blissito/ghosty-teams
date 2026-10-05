@@ -28,6 +28,9 @@ const EVENT_LABEL: Record<string, string> = {
   cancel: "canceló",
   stale: "sin avanzar 30 min",
   auto_resumed: "lo retomó la plataforma",
+  ci_red: "CI en rojo: se lo regresó a Build",
+  ci_red_help: "CI sigue en rojo: necesita una persona",
+  ci_requested: "pidió correr el CI",
   stopped: "detuvo el turno",
   resumed: "pidió retomar",
 };

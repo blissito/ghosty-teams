@@ -925,8 +925,10 @@ export async function closeFinishedRuns(): Promise<void> {
     const outcome = pr?.outcome ?? null;
     // Aprobado por una persona y CI en verde: el agente PROPONE mezclar y pregunta. Mezcla
     // sólo si le contestan que sí (`maybeMergeReply`), con las credenciales de quien contesta.
+    // Un solo `prCi` por vuelta: lo usan la propuesta de merge y el regreso por CI en rojo.
+    const ci = outcome === "open" && run.status === "pr_review" ? await prCi(run.approvedBy ?? run.requestedBy, run.prUrl!) : null;
+    if (ci?.state === "failure") await onPrCiRed(run, pr?.headSha ?? null, ci.failed);
     if (outcome === "open" && run.status === "pr_review" && pr?.approved && !row.merge_asked) {
-      const ci = await prCi(run.approvedBy ?? run.requestedBy, run.prUrl!);
       if (ci?.state === "success" || ci?.state === "none") {
         const asked = await dbq("UPDATE gt_factory_runs SET merge_asked = 1 WHERE id = ? AND merge_asked IS NULL RETURNING id", [run.id]);
         if (asked.length)
@@ -976,6 +978,33 @@ async function onPrConflict(run: Run, headSha: string | null): Promise<void> {
     `El PR ${run.prUrl} tiene choques con la rama principal (otro PR se mezcló antes). ${MERGE_FROM_HINT} Corre las pruebas y cierra con factory_build_done.`,
     origin,
   );
+}
+
+/**
+ * El PR esperaba revisión y su CI está en rojo (llegó el CI después, o un check cambió): vuelve
+ * solo a @build en la misma rama, como Copilot/Stripe; antes dependía de que alguien picara
+ * «Pedir arreglo» (MailMask #8, 4-oct). Mismo patrón que `onPrConflict`: una vez por cabeza y
+ * dos vueltas; a la tercera lo ve una persona.
+ */
+export async function onPrCiRed(run: Run, headSha: string | null, failed: string[]): Promise<void> {
+  const prevs = await dbq("SELECT data_json FROM gt_factory_events WHERE run_id = ? AND type = 'ci_red' ORDER BY id DESC", [run.id]).catch(() => []);
+  const prevSha = prevs[0]?.data_json ? (JSON.parse(String(prevs[0].data_json)).sha ?? null) : undefined;
+  if (prevs.length && prevSha === headSha) return; // ya se regresó con esta cabeza
+  const what = failed.join(", ") || "checks en rojo";
+  const pideAyuda = async (por: string) => {
+    const ya = await dbq("SELECT 1 FROM gt_factory_events WHERE run_id = ? AND type = 'ci_red_help' AND json_extract(data_json, '$.sha') IS ?", [run.id, headSha]).catch(() => []);
+    if (ya.length) return;
+    await logEvent(run.id, "ci_red_help", null, { sha: headSha, por });
+    await postInThread(run, "build", `⚠️ El CI del PR ${run.prUrl ?? ""} sigue en rojo (${what}; ${por}). Necesita que una persona revise el log o le diga a @build qué cambiar.`);
+  };
+  if (prevs.length >= 2) return pideAyuda("ya se lo regresé a @build dos veces");
+  const [w] = await dbq("SELECT origin FROM gt_agent_wakeups WHERE key LIKE ? AND origin IS NOT NULL AND origin != '' ORDER BY rowid DESC LIMIT 1", [`factory:${run.id}:%`]).catch(() => []);
+  const origin = String(w?.origin ?? "");
+  if (!origin) return pideAyuda("no pude mandarle el encargo a @build");
+  await logEvent(run.id, "ci_red", null, { sha: headSha, failed });
+  await addNote(run.id, "plataforma", `El CI del PR falló (${what}). Lee el log con github_workflow_run_logs, corrígelo en la misma rama y no cierres hasta verlo en verde.`);
+  await postInThread(run, "plan", `🔧 El CI del PR falló (${what}): se lo regresé a @build.`);
+  await reopenWithNotes(run, "plataforma", "", origin, { ci: failed });
 }
 
 /**
@@ -1244,6 +1273,12 @@ export async function mergeRun(run: Run, sub: string): Promise<{ ok: true } | { 
         };
       }
     }
+    // CI en rojo o corriendo: no se mezcla. Sin CI (`none`) o si GitHub no contesta, como antes:
+    // el chip de la tarjeta era la única señal y «Merge» entraba igual (MailMask #8, 4-oct).
+    const ci = await prCi(sub, run.prUrl!);
+    if (ci?.state === "failure")
+      return { ok: false, error: `El CI del PR está en rojo (${ci.failed.join(", ") || "ver checks"}): pídele el arreglo a @build antes de mezclar.` };
+    if (ci?.state === "pending") return { ok: false, error: "El CI del PR sigue corriendo: espera a que termine." };
     const tool = allTools().find((t) => t.name === "github_merge_pr");
     const r = (await tool?.handler(sub, { repo: pr.repo, number: pr.number })) as any;
     if (!r || r.error) return { ok: false, error: String(r?.error ?? "GitHub no contestó") };
