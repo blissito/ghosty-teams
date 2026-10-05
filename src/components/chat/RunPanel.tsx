@@ -31,6 +31,8 @@ const EVENT_LABEL: Record<string, string> = {
   ci_red: "CI en rojo: se lo regresó a Build",
   ci_red_help: "CI sigue en rojo: necesita una persona",
   ci_requested: "pidió correr el CI",
+  waiting_person: "preguntó algo: espera tu respuesta",
+  head_moved: "el PR cambió durante la revisión: revisa lo nuevo",
   stopped: "detuvo el turno",
   resumed: "pidió retomar",
 };

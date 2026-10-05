@@ -521,9 +521,13 @@ export async function runLive(run: import("./factory-runs.server").Run) {
   ).catch(() => [{ t: 0 }]);
   const now = Math.floor(Date.now() / 1000);
   const lastActivityAt = Number(last?.t || now);
-  const view = viewState(run, { lastActivityAt, now, busy: !!live });
+  // El rol preguntó y espera a la persona (`waiting_person` es el último evento).
+  const [ev] = await dbq("SELECT type, actor FROM gt_factory_events WHERE run_id = ? ORDER BY id DESC LIMIT 1", [run.id]).catch(() => []);
+  const waitingOn = !live && ev?.type === "waiting_person" ? String(ev.actor ?? "") || null : null;
+  const view = viewState(run, { lastActivityAt, now, busy: !!live, waitingOn });
   return {
     view,
+    waitingOn,
     lastActivityAt,
     currentStep: live?.paso ?? null,
     liveTurnId: live?.id ?? null,

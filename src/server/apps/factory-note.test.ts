@@ -22,6 +22,8 @@ let steerOk = false;
 const steers: string[] = [];
 const consumed: number[] = [];
 let activeSprint: { id: number; title: string } | null = null;
+const sqlLog: { sql: string; args: unknown[] }[] = [];
+const logged: { type: string; data: Run }[] = [];
 
 vi.mock("./installed.server", () => ({ isInstalled: async () => true }));
 vi.mock("../hooks/generic-alert.server", () => ({ alertWebhookTools: () => [] }));
@@ -58,10 +60,13 @@ vi.mock("./factory-runs.server", () => ({
   addNote: async (runId: number, by: string, text: string) => (notes.push({ runId, by, text }), 77),
   consumeNote: async (id: number) => void consumed.push(id),
   steerRole: async (_r: Run, _role: string, text: string) => (steers.push(text), steerOk),
+  logEvent: async (_id: number, type: string, _a: string, data: Run) => void logged.push({ type, data }),
+  prCi: async () => ({ state: "success", failed: [] }),
+  markPrReady: async () => true,
 }));
 
 vi.mock("../../dbq.server", () => ({
-  dbq: async (sql: string) => (sql.includes("status = 'active'") && activeSprint ? [activeSprint] : []),
+  dbq: async (sql: string, args: unknown[] = []) => (sqlLog.push({ sql, args }), sql.includes("status = 'active'") && activeSprint ? [activeSprint] : []),
 }));
 vi.mock("./sprint.server", () => ({
   validateSprintItems: (raw: any[]) => raw.map((i) => ({ key: i.key, title: i.title, size: i.size, dependsOn: [], bodyMd: i.title })),
@@ -82,6 +87,8 @@ beforeEach(() => {
   head = "aaa";
   byPr = [];
   applied.length = 0;
+  sqlLog.length = 0;
+  logged.length = 0;
   notes.length = 0;
   posted.length = 0;
   handoffs.length = 0;
@@ -106,6 +113,29 @@ describe("factory_check_verdict: una vuelta cuenta sólo si el PR cambió", () =
     head = "bbb";
     await (await tool("factory_check_verdict", dest)).handler("beto", { pass: false, findings: "falta X" });
     expect(applied[0]).toMatchObject({ patch: { loops: 2, checked_sha: "bbb" }, data: { counted: true } });
+  });
+});
+
+// La cabeza se movió durante la revisión (update-branch de la plataforma, «Correr CI»): antes se
+// rechazaba siempre y @check se quedaba sin salida (palmera-legal #4, 3-oct).
+describe("factory_check_verdict: la cabeza del PR se movió durante la revisión", () => {
+  const dest = { channelId: 3, parentId: 99, handle: "check" };
+  it("con hallazgos (pass=false) se acepta: siguen valiendo", async () => {
+    current = baseRun({ headSha: "aaa" });
+    head = "ccc";
+    const r: any = await (await tool("factory_check_verdict", dest)).handler("beto", { pass: false, findings: "falta X" });
+    expect(r.ok).not.toBe(false);
+    expect(applied[0]).toMatchObject({ event: "check_fail" });
+  });
+  it("aprobar: fija la cabeza nueva y pide revisar sólo ese tramo", async () => {
+    current = baseRun({ headSha: "aaa1111" });
+    head = "ccc2222";
+    const r: any = await (await tool("factory_check_verdict", dest)).handler("beto", { pass: true });
+    expect(r.ok).toBe(false);
+    expect(r.error).toContain("aaa1111...ccc2222");
+    expect(sqlLog.some((q) => q.sql.startsWith("UPDATE gt_factory_runs SET head_sha") && q.args[0] === "ccc2222")).toBe(true);
+    expect(logged).toEqual([{ type: "head_moved", data: { from: "aaa1111", to: "ccc2222" } }]);
+    expect(applied).toHaveLength(0);
   });
 });
 

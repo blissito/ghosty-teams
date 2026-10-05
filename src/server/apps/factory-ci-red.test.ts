@@ -8,12 +8,14 @@ const wakeups: { key: string; text: string }[] = [];
 let ciRedPrev: { sha: string | null }[] = [];
 let origin = "https://business.teams.ghosty.studio";
 let notes: { id: number; by: string; text: string }[] = [];
+let current = "building";
 
 const row = (status: string) => ({ id: 10, channel_id: 14, root_msg_id: 3970, topic: "general", title: "CLI", status, plan_version: 1, loops: 0, requested_by: "ana", approved_by: "beto", pr_url: "https://github.com/o/r/pull/8" });
 
 vi.mock("../../dbq.server", () => ({
   dbq: async (sql: string, args: unknown[] = []) => {
     sqls.push({ sql, args });
+    if (sql === "SELECT * FROM gt_factory_runs WHERE id = ?") return [row(current)];
     if (sql.includes("type = 'ci_red' ORDER BY")) return ciRedPrev.map((p) => ({ data_json: JSON.stringify(p) }));
     if (sql.includes("FROM gt_agent_wakeups")) return origin ? [{ origin }] : [];
     if (sql.startsWith("UPDATE gt_factory_runs SET status")) return [row(String(args[0]))];
@@ -43,10 +45,11 @@ vi.mock("../wakeups.server", () => ({
   enqueueWakeup: async (w: { key: string; text: string }) => (wakeups.push(w), true),
   mintWakeRef: () => "ref",
   kickWakeups: () => {},
+  armWakeups: () => {},
 }));
 vi.mock("../connectors/github.server", () => ({ ackGithubComment: async () => true }));
 
-import { onPrCiRed, noteFromGithub, type Run } from "./factory-runs.server";
+import { onPrCiRed, noteFromGithub, asksPerson, afterFactoryTurn, type Run } from "./factory-runs.server";
 
 const run = (status: Run["status"]): Run => ({
   id: 10, channelId: 14, rootMsgId: 3970, topic: "general", title: "CLI", status, planVersion: 1, loops: 0,
@@ -61,6 +64,7 @@ beforeEach(() => {
   wakeups.length = 0;
   ciRedPrev = [];
   notes = [];
+  current = "building";
   origin = "https://business.teams.ghosty.studio";
 });
 
@@ -122,5 +126,30 @@ describe("pedido desde GitHub (@ghosty)", () => {
   it("pedido terminado: no hace nada", async () => {
     expect(await noteFromGithub(run("done"), "bliss", ask)).toBe("closed");
     expect(sqls).toHaveLength(0);
+  });
+});
+
+// @build pidió los datos del equipo y salió «terminó dos veces sin cerrar su paso» (palmera-legal, 4-oct).
+describe("el rol le pregunta algo a la persona", () => {
+  it("asksPerson: pregunta al final o gt-ask sí; un ? en código o una afirmación no", () => {
+    expect(asksPerson("Armé el esqueleto.\n\n¿Me pasas los nombres del equipo?")).toBe(true);
+    expect(asksPerson("Necesito un dato:\n```gt-ask\n{}\n```")).toBe(true);
+    expect(asksPerson("Listo, PR abierto.\n\n```ts\nconst x = a ? b : c?\n```")).toBe(false);
+    expect(asksPerson("¿Quedó? Sí: PR abierto y pruebas en verde.")).toBe(false);
+  });
+
+  it("afterFactoryTurn con pregunta: espera, sin empujón ni alarma", async () => {
+    const w = { key: "factory:10:build:1", ref: "r", origin: "o" };
+    await afterFactoryTurn(w, { sub: "ana" }, "Me faltan datos.\n\n¿Quiénes son los socios del despacho?");
+    await flush();
+    expect(events()).toEqual(["waiting_person"]);
+    expect(wakeups).toHaveLength(0);
+    expect(posts).toHaveLength(0);
+  });
+
+  it("sin pregunta: el empujón de siempre", async () => {
+    await afterFactoryTurn({ key: "factory:10:build:1", ref: "r", origin: "o" }, { sub: "ana" }, "Listo, ya quedó.");
+    expect(events()).not.toContain("waiting_person");
+    expect(wakeups.some((x) => x.key.endsWith(":nudge"))).toBe(true);
   });
 });

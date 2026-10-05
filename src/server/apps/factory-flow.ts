@@ -128,9 +128,12 @@ export type RunView = {
 
 export function viewState(
   run: { status: RunStatus; requestedBy: string; approvedBy?: string | null },
-  opts: { lastActivityAt: number; now: number; busy: boolean; staleAfter?: number },
+  opts: { lastActivityAt: number; now: number; busy: boolean; staleAfter?: number; waitingOn?: string | null },
 ): RunView {
   const open = !["done", "cancelled"].includes(run.status);
+  // Un rol le preguntó algo a la persona: le toca a ella, no está «parado».
+  if (opts.waitingOn && !opts.busy && ["planning", "building", "checking"].includes(run.status))
+    return { column: "waiting", label: "Espera tu respuesta", stale: false, whoseTurn: { kind: "person", sub: run.requestedBy }, primary: null };
   const working = ["planning", "building", "checking"].includes(run.status);
   const stale = working && !opts.busy && opts.now - opts.lastActivityAt >= (opts.staleAfter ?? 30 * 60);
   const owner = { kind: "person" as const, sub: run.requestedBy };

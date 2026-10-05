@@ -2,7 +2,7 @@
 // Dice en qué etapa va el pedido y deja firmar el plan AQUÍ, sin abrir el hilo; el detalle
 // (plan completo, hallazgos, PR) sigue en el hilo. Estado leído al pintar; se refresca con
 // los `refresh` del room que publica cada transición.
-import { Fragment, useCallback, useEffect, useState } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { useT } from "../../i18n";
 import { useRtSubscribe } from "../../utils/rt-bus";
 import { factoryRunCardFn, factoryDecisionFn, factoryRetryPreviewFn, factoryRunActionFn, factoryRunCiFn, factoryFixCiFn } from "../../server/apps/factory";
@@ -51,9 +51,16 @@ export function RunCard({ card, channelId }: { card: RunCardData; channelId: num
   useEffect(() => {
     refresh();
   }, [refresh]);
+  // Los pasos del turno (`turn`) también: así se ve desde el room qué hace el rol AHORA. Con
+  // varias tarjetas en el room, como mucho una consulta cada 3 s por tarjeta.
+  const lastTurnRefresh = useRef(0);
   useRtSubscribe({
     onEvent: (ev) => {
       if (ev.t === "refresh" && ev.channelId === channelId) refresh();
+      else if (ev.t === "turn" && (ev as { channelId?: number }).channelId === channelId && Date.now() - lastTurnRefresh.current > 3000) {
+        lastTurnRefresh.current = Date.now();
+        refresh();
+      }
     },
   });
   if (!st) return null;
@@ -62,6 +69,8 @@ export function RunCard({ card, channelId }: { card: RunCardData; channelId: num
   // «Construyendo…» sólo si alguien trabaja de verdad. Parado = se dice y se ofrece «Retomar»
   // aquí mismo: la persona no tiene por qué saber que existe la barra del hilo (MailMask, 4-oct).
   const stalled = !!WORKING[st.status] && !st.liveTurnId && st.view.stale;
+  // Un rol le preguntó algo a la persona: ni «construyendo…» ni «Sin avanzar».
+  const waiting = !!WORKING[st.status] && !st.liveTurnId && !!st.waitingOn;
   const closed = st.status === "done" || st.status === "cancelled";
   const runCi = async () => {
     setBusy(true);
@@ -138,7 +147,7 @@ export function RunCard({ card, channelId }: { card: RunCardData; channelId: num
             🎉 {t("Terminado: PR merged.")}
           </p>
         )}
-        {stalled && (
+        {stalled && !waiting && (
           <p className="mt-2 flex flex-wrap items-center gap-2 text-xs font-semibold text-amber-700 dark:text-amber-300" role="status">
             {t("Sin avanzar: nadie está trabajando en este pedido.")}
             <button
@@ -162,14 +171,21 @@ export function RunCard({ card, channelId }: { card: RunCardData; channelId: num
             </button>
           </p>
         )}
-        {WORKING[st.status] && !stalled && (
-          <p className="mt-2 flex items-center gap-1.5 text-xs text-ink" role="status">
+        {waiting && (
+          <p className="mt-2 text-xs font-semibold text-amber-700 dark:text-amber-300" role="status">
+            💬 {t("@{rol} te hizo una pregunta en el hilo: contéstale ahí.").replace("{rol}", String(st.waitingOn))}
+          </p>
+        )}
+        {WORKING[st.status] && !stalled && !waiting && (
+          <p className="mt-2 flex min-w-0 items-center gap-1.5 text-xs text-ink" role="status">
             <span className="relative flex h-2 w-2">
               <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-brand opacity-60 motion-reduce:animate-none" />
               <span className="relative inline-flex h-2 w-2 rounded-full bg-brand" />
             </span>
             {t(WORKING[st.status])}
             {st.loops ? <span className="text-muted">· {t("Vueltas de check")}: {st.loops}</span> : null}
+            {/* Lo que narra el rol AHORA (mismo dato que la barra del hilo): desde el room se ve que avanza. */}
+            {st.currentStep ? <span className="min-w-0 truncate text-muted">· {st.currentStep}</span> : null}
           </p>
         )}
         <p className={`mt-2 text-xs empty:hidden ${st.status === "escalated" ? "font-semibold text-amber-700 dark:text-amber-300" : "text-muted"}`}>

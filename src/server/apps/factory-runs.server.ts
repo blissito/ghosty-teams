@@ -298,7 +298,8 @@ export async function sweepStaleRuns(isBusy: (run: Run) => boolean): Promise<voi
     // 4-oct: @build parado una hora con la tarjeta diciendo «construyendo…»). Si tras eso sigue
     // parado (su último evento sigue siendo el auto-retomar), ahora sí se avisa.
     const [lastEv] = await dbq("SELECT type FROM gt_factory_events WHERE run_id = ? ORDER BY id DESC LIMIT 1", [run.id]).catch(() => []);
-    if (lastEv?.type !== "auto_resumed") {
+    // `waiting_person`: el rol preguntó y espera a la persona; retomarlo solo sería contestarse.
+    if (lastEv?.type !== "auto_resumed" && lastEv?.type !== "waiting_person") {
       const role = ({ planning: "plan", building: "build", checking: "check" } as const)[run.status as "planning" | "building" | "checking"];
       const [w] = await dbq("SELECT origin FROM gt_agent_wakeups WHERE key LIKE ? AND origin IS NOT NULL AND origin != '' ORDER BY rowid DESC LIMIT 1", [`factory:${run.id}:%`]).catch(() => []);
       const origin = String(w?.origin ?? "");
@@ -719,6 +720,18 @@ const CLOSE_TOOL: Record<string, string> = { plan: "factory_plan_submit", build:
 const TRANSPORT_CUT = /⚠️ No pude contactar a @|fleet-stream 404|turno no existe|upstream unreachable/i;
 const CUT_GRACE_MS = process.env.NODE_ENV === "test" ? 0 : 90_000;
 
+/**
+ * ¿El rol terminó su turno con una PREGUNTA para la persona? Un `gt-ask`, o prosa (sin bloques de
+ * código ni fences) cuyo último párrafo termina en «?». Entonces no se le empuja ni se alarma:
+ * @build pidió los datos del equipo y salió «terminó dos veces sin cerrar su paso» (palmera-legal, 4-oct).
+ */
+export function asksPerson(reply: string): boolean {
+  if (/```gt-ask\b/.test(reply)) return true;
+  const prose = reply.replace(/```[\s\S]*?```/g, " ").replace(/`[^`\n]*`/g, " ").trim();
+  const last = prose.split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean).pop() ?? "";
+  return /[?？]\s*[)*_]*\s*$/.test(last);
+}
+
 export async function afterFactoryTurn(
   w: { key: string; ref: string; origin: string },
   ref: { sub: string },
@@ -768,6 +781,13 @@ export async function afterFactoryTurn(
         : `⚠️ @${role} no pudo contestar (su turno se cortó). Revisa su agente en Studio (motor, modelo o llave) ` +
             `o asígnale otro en Ajustes → Apps, y vuelve a mencionarlo.`,
     );
+    return;
+  }
+  // Pregunta legítima a la persona: se espera su respuesta, sin empujón ni alarma, y el barrido
+  // no lo retoma solo. Su respuesta en el hilo (sin @) le llega a este rol (`factoryFollowHandle`).
+  if (asksPerson(reply)) {
+    await logEvent(run.id, "waiting_person", role);
+    void refreshRoom(run.channelId);
     return;
   }
   const nudged = w.key.endsWith(":nudge");

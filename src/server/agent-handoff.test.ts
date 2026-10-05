@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { pickRespondents } from "./agent-handoff.server";
+import { pickRespondents, relayTargets } from "./agent-handoff.server";
 
 describe("pickRespondents", () => {
   it("un pedido de coordinación arranca sólo al primero (el caso real de #divi, con su errata)", () => {
@@ -13,5 +13,20 @@ describe("pickRespondents", () => {
   it("sin verbo de coordinación siguen contestando todos", () => {
     expect(pickRespondents("@ghosty @fable ¿qué opinan de este oficio?", ["ghosty", "fable"])).toEqual(["ghosty", "fable"]);
     expect(pickRespondents("@ghosty coordina la reunión del lunes", ["ghosty"])).toEqual(["ghosty"]);
+  });
+});
+
+describe("relayTargets", () => {
+  it("entre roles de la fábrica no hay relevo por mención (la estafeta es de la plataforma)", () => {
+    expect(relayTargets(["build", "check"], "plan")).toEqual([]);
+  });
+  it("un rol sí despierta a un agente que no es de la fábrica", () => {
+    expect(relayTargets(["build", "ventas"], "plan")).toEqual(["ventas"]);
+  });
+  it("cualquier otro agente despierta a quien menciona, roles incluidos", () => {
+    expect(relayTargets(["build", "aria"], "ghosty")).toEqual(["build", "aria"]);
+  });
+  it("nadie se despierta a sí mismo", () => {
+    expect(relayTargets(["aria"], "aria")).toEqual([]);
   });
 });

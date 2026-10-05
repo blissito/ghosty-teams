@@ -17,6 +17,7 @@
 // El despertar va por la cola durable de `wakeups.server.ts` (clave `handoff:`), igual que
 // la estafeta de la Software Factory: si hay turno en vuelo del destinatario se difiere, y
 // un reinicio no pierde el relevo.
+import { FACTORY_HANDLES } from "./apps/factory-roles";
 import type { Channel } from "../db.server";
 import { dbq } from "../dbq.server";
 
@@ -61,6 +62,17 @@ export async function coordinationHint(body: string, self: string, agentHandles:
 }
 
 /**
+ * A quién despierta la respuesta de `from`: los mencionados menos él mismo y, si `from` es un rol
+ * de la fábrica, menos los otros roles. Entre ellos la estafeta la lleva la plataforma (handoff /
+ * factory_*), no la mención: un «a chambear» despertó a los tres y salieron 4 respuestas
+ * (palmera-legal, 4-oct).
+ */
+export function relayTargets(mentioned: string[], from: string): string[] {
+  const roles = FACTORY_HANDLES as readonly string[];
+  return mentioned.filter((h) => h !== from && !(roles.includes(from) && roles.includes(h)));
+}
+
+/**
  * Despierta a los agentes que `reply` menciona, en el hilo `parentId`. Devuelve el aviso
  * para la burbuja cuando el tope cortó un relevo ("" si no hubo nada que decir).
  *
@@ -93,7 +105,7 @@ export async function handoffFromReply(p: {
   const agents = await resolvedAgents();
   const users = await import("../users.server");
   const userHandles = (await users.listUsers().catch(() => [])).map((u) => u.handle).filter(Boolean) as string[];
-  const targets = detectMentions(mentionable, agents.map((a) => a.handle), userHandles).filter((h) => h !== p.fromHandle);
+  const targets = relayTargets(detectMentions(mentionable, agents.map((a) => a.handle), userHandles), p.fromHandle);
   if (!targets.length) return "";
 
   // Tope: relevos de este hilo desde el último mensaje de una PERSONA en él.

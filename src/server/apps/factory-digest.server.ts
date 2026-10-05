@@ -56,7 +56,9 @@ export async function runDigest(run: Run, opts: { detail?: boolean } = {}): Prom
   if (run.status !== "done" && run.status !== "cancelled") {
     const { runLive } = await import("./factory");
     const live = await runLive(run).catch(() => null);
-    if (live)
+    if (live?.waitingOn)
+      out.push(`Ahora: @${live.waitingOn} le hizo una pregunta a la persona y espera su respuesta en el hilo (no está parado).`);
+    else if (live)
       out.push(
         live.liveTurnId
           ? `Ahora: alguien está trabajando en el pedido${live.currentStep ? ` (${cut(String(live.currentStep), 80)})` : ""}.`

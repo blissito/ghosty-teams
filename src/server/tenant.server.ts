@@ -116,6 +116,27 @@ export async function currentNamespace(): Promise<string> {
 }
 
 /** Slug del workspace de este request (o null en apex/dev sin subdominio). */
+/**
+ * El origin guardado en un encargo (`gt_agent_wakeups.origin`), llevado al slug ACTUAL del
+ * espacio. Tras renombrar abogados → palmera-legal, los encargos en segundo plano seguían
+ * llamando a `abogados.teams…`, que ya no resuelve a su namespace: las tools daban 403 «token
+ * de otro workspace» (3-oct). Dominios propios, APP_URL o vacío quedan igual.
+ */
+export function rebaseOrigin(stored: string, slug: string | null): string {
+  if (!stored || !slug) return stored;
+  try {
+    const u = new URL(stored);
+    const was = slugFromHost(u.host);
+    return was && was !== slug ? `${u.protocol}//${slug}.${ROOT}` : stored;
+  } catch {
+    return stored;
+  }
+}
+
+export async function freshOrigin(stored: string): Promise<string> {
+  return rebaseOrigin(stored, await currentSlug().catch(() => null));
+}
+
 export async function currentSlug(): Promise<string | null> {
   // El explícito gana, igual que en `currentNamespace`. Un timer armado dentro de un request
   // hereda ese host por AsyncLocalStorage: con el host primero, el barrido de la fábrica

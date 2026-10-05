@@ -441,13 +441,20 @@ function runTools(dest: ToolDest | null): ConnectorTool[] {
         const head = run.prUrl ? await R.prHead(sub, run.prUrl) : null;
         // Lo que @check revisó; se guarda con cada veredicto para decidir si la próxima vuelta cuenta.
         const checked = { checked_sha: head?.sha ?? run.checkedSha ?? null };
-        if (run.prUrl && run.headSha) {
-          if (head && head.sha !== run.headSha) {
-            return {
-              ok: false,
-              error: "la cabeza del PR cambió durante la revisión: @check no empuja código. Reporta hallazgos con pass=false para que @build los corrija.",
-            };
-          }
+        // La cabeza se movió durante la revisión (la plataforma lo puso al día con main, «Correr CI»,
+        // o empujó una persona). Unos hallazgos siguen valiendo; aprobar exige mirar lo nuevo: se
+        // fija la cabeza nueva y @check revisa sólo ese tramo. Antes se rechazaba siempre y @check
+        // se quedaba sin salida (palmera-legal #4, 3-oct).
+        if (run.prUrl && run.headSha && head && head.sha !== run.headSha && a.pass === true) {
+          const { dbq } = await import("../../dbq.server");
+          await dbq("UPDATE gt_factory_runs SET head_sha = ? WHERE id = ?", [head.sha, run.id]);
+          await R.logEvent(run.id, "head_moved", "check", { from: run.headSha, to: head.sha });
+          return {
+            ok: false,
+            error:
+              `la cabeza del PR cambió durante tu revisión (${run.headSha.slice(0, 7)}→${head.sha.slice(0, 7)}; p. ej. la plataforma lo puso al día con main). ` +
+              `Revisa sólo ese cambio (compare ${run.headSha.slice(0, 7)}...${head.sha.slice(0, 7)}) y vuelve a dar tu veredicto.`,
+          };
         }
         // El esquema pide texto, pero el modelo a veces manda una LISTA de objetos
         // ({file, line, issue}…): con `String()` le llegaba a @build «[object Object] ×4» y no

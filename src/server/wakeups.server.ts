@@ -198,10 +198,14 @@ async function sweepTenant(ns: string): Promise<void> {
   const rows = await dbq(
     `SELECT * FROM gt_agent_wakeups WHERE fired_at IS NULL AND due_at <= unixepoch() ORDER BY due_at LIMIT 10`,
   );
+  const { freshOrigin } = await import("./tenant.server");
   for (const row of rows) {
     const w: Wakeup = {
       id: String(row.id), key: String(row.key), ref: String(row.ref), cause: String(row.cause),
-      text: String(row.text), origin: String(row.origin ?? ""), dueAt: Number(row.due_at),
+      // Con el slug ACTUAL: un encargo guardado antes de renombrar el espacio apuntaba al host
+      // viejo y sus tools daban 403 (abogados → palmera-legal, 3-oct). Cubre todo lo que se
+      // encola con un origin copiado de otro encargo (relevos, retomar, nudge, CI, choques).
+      text: String(row.text), origin: await freshOrigin(String(row.origin ?? "")), dueAt: Number(row.due_at),
     };
     const ref = verifyWakeRef(w.ref);
     if (!ref) {

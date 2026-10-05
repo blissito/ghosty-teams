@@ -887,7 +887,7 @@ export const postMessage = createServerFn({ method: "POST" })
     } else if (
       !factorySigned &&
       data.parentId !== null &&
-      (threadAgent = await threadFollowAgent(data.parentId, parent?.agent_handle ?? null)) &&
+      (threadAgent = await threadFollowAgent(channel.id, data.parentId, parent?.agent_handle ?? null)) &&
       agents.some((a) => a.handle === threadAgent) &&
       !mencionaAAlguienMas(body)
     ) {
@@ -1901,7 +1901,11 @@ export const warmAgentFn = createServerFn({ method: "POST" })
 
 /** Agente que «sigue» un hilo sin re-@mención: el que lo abrió o, si la raíz es de una
  *  persona, el último agente que contestó en él. */
-async function threadFollowAgent(rootId: number, rootAgent: string | null): Promise<string | null> {
+async function threadFollowAgent(channelId: number, rootId: number, rootAgent: string | null): Promise<string | null> {
+  // Hilo de un pedido de la fábrica: decide la fábrica (@plan, o el rol que espera respuesta).
+  const { factoryFollowHandle } = await import("./apps/factory-session.server");
+  const factory = await factoryFollowHandle(channelId, rootId).catch(() => null);
+  if (factory) return factory;
   const { dbq } = await import("../dbq.server");
   const [last] = await dbq(
     `SELECT agent_handle FROM gc_messages WHERE parent_id = ? AND sender_sub IS NULL AND agent_handle IS NOT NULL ORDER BY id DESC LIMIT 1`,

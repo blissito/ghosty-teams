@@ -69,6 +69,12 @@ describe("viewState", () => {
   const fresh = { lastActivityAt: now - 60, now, busy: false };
   const old = { lastActivityAt: now - 31 * 60, now, busy: false };
 
+  it("un rol preguntó algo: le toca a la persona, aunque pasen 30 min (no está parado)", () => {
+    expect(viewState(run("building"), { ...old, waitingOn: "build" })).toMatchObject({ column: "waiting", label: "Espera tu respuesta", stale: false, whoseTurn: { kind: "person", sub: "ana" } });
+    // Con un turno vivo ya contestó la persona: sigue trabajando.
+    expect(viewState(run("building"), { ...fresh, busy: true, waitingOn: "build" })).toMatchObject({ column: "building" });
+  });
+
   it("cada estado cae en su columna con su acción", () => {
     expect(viewState(run("planning"), fresh)).toMatchObject({ column: "planning", primary: "stop", whoseTurn: { kind: "agent", handle: "plan" } });
     expect(viewState(run("plan_review"), fresh)).toMatchObject({ column: "waiting", primary: "sign", whoseTurn: { kind: "person", sub: "ana" } });
