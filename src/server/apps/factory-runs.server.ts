@@ -110,6 +110,8 @@ export async function applyEvent(
   if ((updated.status === "done" || updated.status === "cancelled") && updated.prUrl) {
     const pr = parsePrUrl(updated.prUrl);
     if (pr) void import("./preview.server").then((P) => P.gsPreview("down", { repo: pr.repo, pr: pr.number })).catch(() => {});
+    // Y se olvida la liga: @plan la leía del pedido cerrado y la daba como «lista» (MailMask #11, 5-oct).
+    void dbq("UPDATE gt_factory_runs SET preview_state = NULL, preview_url = NULL WHERE id = ?", [updated.id]).catch(() => {});
   }
   void syncRunTask(updated, run.status).catch(() => {});
   void refreshRoom(updated.channelId);
@@ -1283,9 +1285,11 @@ export type RunPreviewState = "none" | "pending" | "ready" | "failed" | "needs_e
 
 /** Lo que la tarjeta y @check saben de la preview del pedido (leído de la fila). */
 export async function runPreview(runId: number): Promise<{ state: RunPreviewState; url: string | null; error: string | null }> {
-  const rows = await dbq("SELECT preview_state, preview_url, preview_error FROM gt_factory_runs WHERE id = ?", [runId]).catch(() => []);
+  const rows = await dbq("SELECT status, preview_state, preview_url, preview_error FROM gt_factory_runs WHERE id = ?", [runId]).catch(() => []);
   const r = rows[0];
-  const state = (r?.preview_state ?? "none") as RunPreviewState;
+  // Cerrado = su caja ya se bajó: las filas viejas aún guardan la liga muerta.
+  const closed = r?.status === "done" || r?.status === "cancelled";
+  const state = (closed ? "none" : (r?.preview_state ?? "none")) as RunPreviewState;
   return { state, url: state === "ready" ? (r?.preview_url ?? null) : null, error: state === "failed" ? (r?.preview_error ?? null) : null };
 }
 
